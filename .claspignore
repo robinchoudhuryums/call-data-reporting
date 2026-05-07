@@ -1,0 +1,8 @@
+# Clasp pushes everything under rootDir (./src) by default.
+# These patterns are relative to .clasp.json and exclude repo-level
+# files that should never reach Apps Script.
+.git/**
+node_modules/**
+README.md
+.claspignore
+.clasp.json
