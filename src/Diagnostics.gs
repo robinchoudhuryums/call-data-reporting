@@ -75,3 +75,67 @@ function diagnoseDate() {
                foundIn.length ? JSON.stringify(foundIn) : '(none)');
   }
 }
+
+/**
+ * Surveys all departments for a given date. Shows how many roster
+ * agents have at least one row in the historical sheet on TEST_DATE,
+ * and lists any historical agents on that date who aren't in any
+ * roster (orphans -- usually a typo or alias mismatch).
+ *
+ * Edit TEST_DATE below before running.
+ */
+function whyNoMatches() {
+  const TEST_DATE = '2026-03-09';  // YYYY-MM-DD
+
+  const ss = openSpreadsheet_();
+  const sheet = ss.getSheetByName(SHEETS.HISTORICAL);
+  if (!sheet) { Logger.log('Historical sheet not found.'); return; }
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) { Logger.log('No data rows.'); return; }
+
+  const values = sheet
+    .getRange(2, 1, lastRow - 1, HISTORICAL_COLS.AGENT)
+    .getValues();
+
+  const onDateAgents = {};
+  let onDateRows = 0;
+  for (let i = 0; i < values.length; i++) {
+    const dateIso = rowDateIso_(values[i][HISTORICAL_COLS.DATE - 1]);
+    if (dateIso !== TEST_DATE) continue;
+    onDateRows++;
+    const agent = String(values[i][HISTORICAL_COLS.AGENT - 1] || '').trim();
+    if (agent) onDateAgents[agent] = true;
+  }
+
+  Logger.log('=== whyNoMatches: %s ===', TEST_DATE);
+  Logger.log('Rows on %s: %s', TEST_DATE, onDateRows);
+  Logger.log('Unique agents on %s: %s',
+             TEST_DATE, Object.keys(onDateAgents).length);
+
+  const depts = getAllDepartments_();
+  const allRosterAgents = {};
+  Logger.log('');
+  Logger.log('Per-dept match counts:');
+  for (let i = 0; i < depts.length; i++) {
+    const roster = getAgentsForDepartment_(depts[i]);
+    let matched = 0;
+    for (let j = 0; j < roster.length; j++) {
+      allRosterAgents[roster[j]] = true;
+      if (onDateAgents[roster[j]]) matched++;
+    }
+    Logger.log('  %s: %s of %s roster agents have data on %s',
+               depts[i], matched, roster.length, TEST_DATE);
+  }
+
+  const orphans = [];
+  for (const a in onDateAgents) {
+    if (!allRosterAgents[a]) orphans.push(a);
+  }
+  Logger.log('');
+  if (orphans.length) {
+    Logger.log('Agents in historical NOT in ANY roster (%s): %s',
+               orphans.length, JSON.stringify(orphans));
+  } else {
+    Logger.log('All historical agents on this date are in some roster.');
+  }
+}
