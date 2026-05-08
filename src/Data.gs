@@ -276,17 +276,37 @@ function getAgentsForDepartment_(dept) {
 /**
  * Normalizes a date cell into YYYY-MM-DD. Accepts Date objects (the
  * common case when the cell is formatted as date), MM/DD/YYYY strings,
- * and YYYY-MM-DD strings. Anything else returns '' and the row is
+ * MM/DD/YY strings (2-digit year, pivoted at 70: 00-69 -> 2000s,
+ * 70-99 -> 1900s), YYYY-MM-DD strings, and Sheets serial-date numbers
+ * (days since 1899-12-30). Anything else returns '' and the row is
  * filtered out.
  */
 function rowDateIso_(v) {
   if (v instanceof Date) {
     return Utilities.formatDate(v, TZ, 'yyyy-MM-dd');
   }
+  // Sheets serial date: e.g. 45726 = 2025-03-09. Plausible date range
+  // (~1982 to ~2100) keeps us from misinterpreting small ints.
+  if (typeof v === 'number' && v > 30000 && v < 100000) {
+    const ms = Math.round((v - 25569) * 86400 * 1000);
+    const d = new Date(ms);
+    if (!isNaN(d.getTime())) {
+      return Utilities.formatDate(d, TZ, 'yyyy-MM-dd');
+    }
+    return '';
+  }
   const s = String(v == null ? '' : v).trim();
   if (!s) return '';
-  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  // MM/DD/YYYY or M/D/YYYY
+  let m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
   if (m) return m[3] + '-' + pad2_(Number(m[1])) + '-' + pad2_(Number(m[2]));
+  // MM/DD/YY or M/D/YY -- pivot 00-69 to 2000s, 70-99 to 1900s.
+  m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2})$/);
+  if (m) {
+    const yy = Number(m[3]);
+    const yyyy = yy < 70 ? 2000 + yy : 1900 + yy;
+    return yyyy + '-' + pad2_(Number(m[1])) + '-' + pad2_(Number(m[2]));
+  }
   if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
   return '';
 }
