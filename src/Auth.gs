@@ -87,9 +87,10 @@ function getManagerDepartment_(normalizedEmail) {
 
 /**
  * Returns all department names from the DO NOT EDIT! sheet's right
- * block. Department headers are in row 2, starting at column F.
- * Used for the admin dept dropdown in Step C; returns [] if the sheet
- * isn't shaped as expected.
+ * block. Headers are read from ROSTER.HEADER_ROW starting at
+ * ROSTER.DEPT_FIRST_COL. The dept block ends at the first blank cell
+ * -- anything past that gap (e.g., the unrelated reference data
+ * currently in cols X-AG) is ignored.
  */
 function getAllDepartments_() {
   const ss = openSpreadsheet_();
@@ -97,13 +98,20 @@ function getAllDepartments_() {
   if (!sheet) return [];
 
   const lastCol = sheet.getLastColumn();
-  if (lastCol < 6) return [];
+  if (lastCol < ROSTER.DEPT_FIRST_COL) return [];
 
-  // Row 2, cols F (=6) through last column. Trim empties.
-  const headerRow = sheet.getRange(2, 6, 1, lastCol - 5).getValues()[0];
-  return headerRow
-    .map(function (v) { return String(v || '').trim(); })
-    .filter(function (v) { return v.length > 0; });
+  const headerRow = sheet
+    .getRange(ROSTER.HEADER_ROW, ROSTER.DEPT_FIRST_COL,
+              1, lastCol - ROSTER.DEPT_FIRST_COL + 1)
+    .getValues()[0];
+
+  const depts = [];
+  for (let i = 0; i < headerRow.length; i++) {
+    const v = String(headerRow[i] || '').trim();
+    if (!v) break; // first blank ends the dept block
+    depts.push(v);
+  }
+  return depts;
 }
 
 /**
