@@ -1,0 +1,267 @@
+<script>
+(function () {
+  'use strict';
+
+  // window.__USER__ is injected by the dashboard template.
+  const USER = window.__USER__ || { role: 'none', email: '', department: null, departments: [] };
+
+  const state = {
+    rows: [],
+    totals: null,
+    meta: null,
+    sortKey: 'totalMissed',
+    sortDir: 'desc',     // 'asc' | 'desc'
+  };
+
+  // -- Formatting helpers --------------------------------------------------
+
+  function pad2(n) { return String(n).padStart(2, '0'); }
+
+  function fmtDuration(seconds) {
+    seconds = Math.max(0, Math.round(Number(seconds) || 0));
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = seconds % 60;
+    return h + ':' + pad2(m) + ':' + pad2(s);
+  }
+
+  function fmtNumber(n) {
+    n = Number(n) || 0;
+    return n.toLocaleString('en-US');
+  }
+
+  function escapeHtml(s) {
+    return String(s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  function toIsoDate(d) {
+    return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
+  }
+
+  function defaultRange() {
+    const now = new Date();
+    const first = new Date(now.getFullYear(), now.getMonth(), 1);
+    return { from: toIsoDate(first), to: toIsoDate(now) };
+  }
+
+  // -- Column model --------------------------------------------------------
+  // Order matches the <thead>; sortKey maps to a row property.
+  const COLUMNS = [
+    { key: 'agent',                label: 'Agent',           type: 'text' },
+    { key: 'totalUnique',          label: 'Unique',          type: 'num' },
+    { key: 'totalRung',            label: 'Rung',            type: 'num' },
+    { key: 'totalMissed',          label: 'Missed',          type: 'num', highlight: 'missed' },
+    { key: 'totalAnswered',        label: 'Answered',        type: 'num' },
+    { key: 'tttSeconds',           label: 'TTT',             type: 'duration' },
+    { key: 'attSeconds',           label: 'ATT',             type: 'duration' },
+    { key: 'avgAbdWaitSeconds',    label: 'Avg Abd Wait',    type: 'duration' },
+    { key: 'csrAvgAbdWaitSeconds', label: 'CSR Avg Abd Wait', type: 'duration' },
+  ];
+
+  // -- DOM ----------------------------------------------------------------
+
+  const $ = function (id) { return document.getElementById(id); };
+
+  function init() {
+    // Header
+    $('user-email').textContent = USER.email || '(unknown)';
+    const tag = $('role-tag');
+    tag.textContent = USER.role;
+    tag.classList.add('tag-' + USER.role);
+
+    // Department selector vs static label
+    if (USER.role === 'admin' && USER.departments && USER.departments.length) {
+      const sel = $('dept-selector');
+      USER.departments.forEach(function (d) {
+        const opt = document.createElement('option');
+        opt.value = d; opt.textContent = d;
+        sel.appendChild(opt);
+      });
+      $('dept-selector-wrap').style.display = '';
+      sel.addEventListener('change', refresh);
+      $('dept-name').textContent = sel.value;
+    } else {
+      $('dept-name').textContent = USER.department || '(no department)';
+    }
+
+    // Date range defaults
+    const range = defaultRange();
+    $('from-date').value = range.from;
+    $('to-date').value = range.to;
+    $('from-date').addEventListener('change', refresh);
+    $('to-date').addEventListener('change', refresh);
+
+    $('refresh-btn').addEventListener('click', refresh);
+
+    // Sortable headers
+    document.querySelectorAll('#agents-table thead th[data-sort]').forEach(function (th) {
+      th.addEventListener('click', function () { onSort(th.getAttribute('data-sort')); });
+    });
+
+    refresh();
+  }
+
+  function getRequestedDept() {
+    if (USER.role === 'admin') {
+      const sel = $('dept-selector');
+      return sel ? sel.value : '';
+    }
+    return USER.department || '';
+  }
+
+  function setStatus(kind, msg) {
+    const el = $('status');
+    if (!kind) { el.style.display = 'none'; el.textContent = ''; return; }
+    el.className = 'status status-' + kind;
+    el.textContent = msg;
+    el.style.display = '';
+  }
+
+  function refresh() {
+    const dept = getRequestedDept();
+    if (!dept) {
+      setStatus('error', 'No department available.');
+      return;
+    }
+    const req = {
+      department: dept,
+      from: $('from-date').value,
+      to: $('to-date').value,
+    };
+    if (!req.from || !req.to) {
+      setStatus('error', 'Pick a from and to date.');
+      return;
+    }
+
+    setStatus('loading', 'Loading...');
+    $('refresh-btn').disabled = true;
+    $('dept-name').textContent = dept;
+
+    google.script.run
+      .withSuccessHandler(onData)
+      .withFailureHandler(onError)
+      .getDepartmentSummary(req);
+  }
+
+  function onData(data) {
+    $('refresh-btn').disabled = false;
+    state.rows = (data && data.rows) || [];
+    state.totals = (data && data.totals) || null;
+    state.meta = (data && data.meta) || null;
+
+    // Mock banner
+    const banner = $('mock-banner');
+    if (state.meta && state.meta.mock) {
+      banner.style.display = '';
+    } else {
+      banner.style.display = 'none';
+    }
+
+    if (!state.rows.length) {
+      setStatus('empty', 'No rows for this department in the selected range.');
+    } else {
+      setStatus(null);
+    }
+    render();
+  }
+
+  function onError(err) {
+    $('refresh-btn').disabled = false;
+    state.rows = [];
+    state.totals = null;
+    setStatus('error', 'Error: ' + (err && err.message ? err.message : String(err)));
+    render();
+  }
+
+  // -- Sort ---------------------------------------------------------------
+
+  function onSort(key) {
+    if (state.sortKey === key) {
+      state.sortDir = state.sortDir === 'asc' ? 'desc' : 'asc';
+    } else {
+      state.sortKey = key;
+      // Numbers default desc (most useful first), text asc.
+      const col = COLUMNS.find(function (c) { return c.key === key; });
+      state.sortDir = (col && col.type === 'text') ? 'asc' : 'desc';
+    }
+    render();
+  }
+
+  function sortRows(rows) {
+    const key = state.sortKey;
+    const dir = state.sortDir === 'asc' ? 1 : -1;
+    const col = COLUMNS.find(function (c) { return c.key === key; });
+    const isText = col && col.type === 'text';
+    return rows.slice().sort(function (a, b) {
+      const av = a[key], bv = b[key];
+      if (isText) {
+        return String(av).localeCompare(String(bv)) * dir;
+      }
+      return ((Number(av) || 0) - (Number(bv) || 0)) * dir;
+    });
+  }
+
+  // -- Render -------------------------------------------------------------
+
+  function fmtCell(col, row) {
+    const v = row[col.key];
+    if (col.type === 'text') return escapeHtml(v == null ? '' : v);
+    if (col.type === 'duration') return fmtDuration(v);
+    return fmtNumber(v);
+  }
+
+  function render() {
+    // Header sort arrows
+    document.querySelectorAll('#agents-table thead th[data-sort]').forEach(function (th) {
+      const key = th.getAttribute('data-sort');
+      const arrow = th.querySelector('.arrow');
+      if (!arrow) return;
+      if (key === state.sortKey) {
+        arrow.textContent = state.sortDir === 'asc' ? '▲' : '▼';
+        arrow.style.color = '#374151';
+      } else {
+        arrow.textContent = '▽';
+        arrow.style.color = '#9ca3af';
+      }
+    });
+
+    const tbody = $('agents-tbody');
+    const tfoot = $('agents-tfoot');
+
+    if (!state.rows.length) {
+      tbody.innerHTML = '';
+      tfoot.innerHTML = '';
+      return;
+    }
+
+    const sorted = sortRows(state.rows);
+    tbody.innerHTML = sorted.map(function (row) {
+      return '<tr>' + COLUMNS.map(function (col, i) {
+        const cls = i === 0 ? 'agent-name' : 'num';
+        const extra = (col.highlight === 'missed' && Number(row.totalMissed) > 0) ? ' missed-high' : '';
+        return '<td class="' + cls + extra + '">' + fmtCell(col, row) + '</td>';
+      }).join('') + '</tr>';
+    }).join('');
+
+    if (state.totals) {
+      tfoot.innerHTML = '<tr>' + COLUMNS.map(function (col, i) {
+        if (i === 0) return '<td>Total</td>';
+        // Some keys (like totalUnique, totalRung) live on totals; ATT
+        // and abd-wait are weighted on the server.
+        return '<td class="num">' + fmtCell(col, state.totals) + '</td>';
+      }).join('') + '</tr>';
+    } else {
+      tfoot.innerHTML = '';
+    }
+  }
+
+  // Wait for DOM, then go.
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+})();
+</script>

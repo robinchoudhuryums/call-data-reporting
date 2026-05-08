@@ -1,0 +1,70 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Department Dashboard</title>
+  <?!= include('styles') ?>
+</head>
+<body>
+  <div class="container">
+    <header class="dash-header">
+      <div>
+        <h1 id="dept-name">Loading...</h1>
+        <div class="sub">Department Dashboard</div>
+      </div>
+      <div class="header-meta">
+        <div><span class="email" id="user-email"></span><span id="role-tag" class="tag"></span></div>
+      </div>
+    </header>
+
+    <div id="mock-banner" class="mock-banner" style="display:none;">
+      <strong>Mock data.</strong> Step C uses placeholder rows so the UI is verifiable end-to-end before the data layer is wired. Step D replaces this with real reads from <code>DQE Historical Data</code>.
+    </div>
+
+    <div class="controls">
+      <div class="control" id="dept-selector-wrap" style="display:none;">
+        <label for="dept-selector">Department</label>
+        <select id="dept-selector"></select>
+      </div>
+      <div class="control">
+        <label for="from-date">From</label>
+        <input type="date" id="from-date">
+      </div>
+      <div class="control">
+        <label for="to-date">To</label>
+        <input type="date" id="to-date">
+      </div>
+      <div class="control">
+        <label>&nbsp;</label>
+        <button class="btn" id="refresh-btn">Refresh</button>
+      </div>
+    </div>
+
+    <div id="status" class="status" style="display:none;"></div>
+
+    <table id="agents-table" class="agents">
+      <thead>
+        <tr>
+          <th data-sort="agent">Agent <span class="arrow"></span></th>
+          <th data-sort="totalUnique">Unique <span class="arrow"></span></th>
+          <th data-sort="totalRung">Rung <span class="arrow"></span></th>
+          <th data-sort="totalMissed">Missed <span class="arrow"></span></th>
+          <th data-sort="totalAnswered">Answered <span class="arrow"></span></th>
+          <th data-sort="tttSeconds">TTT <span class="arrow"></span></th>
+          <th data-sort="attSeconds">ATT <span class="arrow"></span></th>
+          <th data-sort="avgAbdWaitSeconds">Avg Abd Wait <span class="arrow"></span></th>
+          <th data-sort="csrAvgAbdWaitSeconds">CSR Avg Abd Wait <span class="arrow"></span></th>
+        </tr>
+      </thead>
+      <tbody id="agents-tbody"></tbody>
+      <tfoot id="agents-tfoot"></tfoot>
+    </table>
+  </div>
+
+  <script>
+    window.__USER__ = <?!= JSON.stringify(user) ?>;
+  </script>
+  <?!= include('script') ?>
+</body>
+</html>
