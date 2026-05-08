@@ -39,6 +39,28 @@ const ROSTER = Object.freeze({
   QUEUE_EXT_COL: 2,      // column B: comma-separated extensions
 });
 
+// Column positions in the "DQE Historical Data" sheet (1-indexed).
+// Centralized so a column shift is a one-line edit. Row 1 is headers;
+// data starts in row 2.
+const HISTORICAL_COLS = Object.freeze({
+  MONTH_YEAR: 1,         // A
+  DATE: 2,               // B
+  AGENT: 3,              // C
+  QUEUE_EXT: 4,          // D - comma-separated extensions
+  TOTAL_UNIQUE: 5,       // E
+  TOTAL_RUNG: 6,         // F
+  TOTAL_MISSED: 7,       // G
+  TOTAL_ANSWERED: 8,     // H
+  TTT: 9,                // I - H:MM:SS
+  ATT: 10,               // J - H:MM:SS
+  AVG_ABD_WAIT: 33,      // AG - H:MM:SS
+  CSR_AVG_ABD_WAIT: 34,  // AH - H:MM:SS
+});
+
+// Script timezone for date formatting. Matches appsscript.json. CST/CT
+// because the historical timestamps are CST.
+const TZ = 'America/Chicago';
+
 // CacheService TTL for aggregated department results.
 const CACHE_TTL_SECONDS = 5 * 60;
 
