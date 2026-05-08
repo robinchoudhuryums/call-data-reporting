@@ -26,6 +26,19 @@ const SHEETS = Object.freeze({
 const ACCESS_CONTROL_HEADERS = Object.freeze(['Email', 'Department', 'Notes']);
 const DEPT_QUEUES_HEADERS = Object.freeze(['Department', 'Queue Extensions']);
 
+// Layout of the "DO NOT EDIT!" roster sheet. Centralized so a future
+// row/column shift is a one-line edit. The right-block (departments +
+// agents) starts at column F. The dept block ends at the first blank
+// cell in the header row -- columns past that gap (currently X-AG)
+// hold unrelated reference data that should be ignored.
+const ROSTER = Object.freeze({
+  HEADER_ROW: 1,         // dept names + left-block "Call Queue" headers
+  DATA_START_ROW: 2,     // agent names + queue/extension rows begin here
+  DEPT_FIRST_COL: 6,     // column F
+  QUEUE_NAME_COL: 1,     // column A: queue name
+  QUEUE_EXT_COL: 2,      // column B: comma-separated extensions
+});
+
 // CacheService TTL for aggregated department results.
 const CACHE_TTL_SECONDS = 5 * 60;
 
