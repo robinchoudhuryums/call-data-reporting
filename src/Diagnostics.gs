@@ -139,3 +139,66 @@ function whyNoMatches() {
     Logger.log('All historical agents on this date are in some roster.');
   }
 }
+
+/**
+ * Dumps the raw cell values and types for TTT, ATT, and the
+ * abandoned-wait columns on the first 5 historical rows, alongside
+ * what toSeconds_ parses them to and what the dashboard would
+ * reformat them as. Use to diagnose H:MM:SS mismatches between the
+ * dashboard and the source sheet.
+ */
+function diagnoseTimes() {
+  const ss = openSpreadsheet_();
+  const sheet = ss.getSheetByName(SHEETS.HISTORICAL);
+  if (!sheet) { Logger.log('Historical sheet not found.'); return; }
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) { Logger.log('No data rows.'); return; }
+
+  const numCols = HISTORICAL_COLS.CSR_AVG_ABD_WAIT;
+  const numToShow = Math.min(5, lastRow - 1);
+  const values = sheet.getRange(2, 1, numToShow, numCols).getValues();
+
+  Logger.log('=== Time-column sample (first 5 rows) ===');
+  for (let i = 0; i < values.length; i++) {
+    const r = values[i];
+    const agent = r[HISTORICAL_COLS.AGENT - 1];
+    const answered = Number(r[HISTORICAL_COLS.TOTAL_ANSWERED - 1]) || 0;
+    const ttt = r[HISTORICAL_COLS.TTT - 1];
+    const att = r[HISTORICAL_COLS.ATT - 1];
+    const aaw = r[HISTORICAL_COLS.AVG_ABD_WAIT - 1];
+    const caw = r[HISTORICAL_COLS.CSR_AVG_ABD_WAIT - 1];
+
+    Logger.log('Row %s | agent="%s" | answered=%s', i + 2, agent, answered);
+    Logger.log('  TTT  -> type=%s raw=%s parsed=%s sec reformatted=%s',
+               typeOfCell_(ttt), JSON.stringify(ttt),
+               toSeconds_(ttt), formatHms_(toSeconds_(ttt)));
+    Logger.log('  ATT  -> type=%s raw=%s parsed=%s sec reformatted=%s',
+               typeOfCell_(att), JSON.stringify(att),
+               toSeconds_(att), formatHms_(toSeconds_(att)));
+    Logger.log('  AvgAbdWait    -> type=%s raw=%s parsed=%s sec',
+               typeOfCell_(aaw), JSON.stringify(aaw), toSeconds_(aaw));
+    Logger.log('  CSRAvgAbdWait -> type=%s raw=%s parsed=%s sec',
+               typeOfCell_(caw), JSON.stringify(caw), toSeconds_(caw));
+
+    const tttSec = toSeconds_(ttt);
+    const computedAtt = answered ? Math.round(tttSec / answered) : 0;
+    Logger.log('  Dashboard ATT for this row alone = TTT/Answered = %s sec = %s',
+               computedAtt, formatHms_(computedAtt));
+    Logger.log('');
+  }
+}
+
+function typeOfCell_(v) {
+  if (v instanceof Date) return 'Date';
+  if (v === null) return 'null';
+  return typeof v;
+}
+
+function formatHms_(seconds) {
+  seconds = Math.max(0, Math.round(seconds || 0));
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  const pad = function (n) { return n < 10 ? '0' + n : String(n); };
+  return h + ':' + pad(m) + ':' + pad(s);
+}
