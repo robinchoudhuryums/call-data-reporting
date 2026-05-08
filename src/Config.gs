@@ -29,6 +29,10 @@ const DEPT_QUEUES_HEADERS = Object.freeze(['Department', 'Queue Extensions']);
 // CacheService TTL for aggregated department results.
 const CACHE_TTL_SECONDS = 5 * 60;
 
+// Shorter TTL for identity/access lookups so new managers don't have to
+// wait 5 minutes after being added to the Access Control sheet.
+const AUTH_CACHE_TTL_SECONDS = 60;
+
 /**
  * Returns the SPREADSHEET_ID Script Property. Throws a clear error if
  * unset so first-run misconfiguration is obvious in the execution log.
