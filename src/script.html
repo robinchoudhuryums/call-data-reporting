@@ -151,7 +151,8 @@
     state.totals = (data && data.totals) || null;
     state.meta = (data && data.meta) || null;
 
-    // Mock banner
+    // Mock banner (only shown if the server flagged a mocked response;
+    // Step D returns real data so this should always hide).
     const banner = $('mock-banner');
     if (state.meta && state.meta.mock) {
       banner.style.display = '';
@@ -160,19 +161,43 @@
     }
 
     if (!state.rows.length) {
-      setStatus('empty', 'No rows for this department in the selected range.');
+      setStatus('empty',
+        state.meta && state.meta.rosterSize === 0
+          ? 'No agents found for this department in the roster sheet.'
+          : 'No rows for this department in the selected range.');
     } else {
       setStatus(null);
     }
     render();
+    renderInfoLine();
+  }
+
+  function renderInfoLine() {
+    const el = $('info-line');
+    if (!state.meta) { el.style.display = 'none'; return; }
+    const m = state.meta;
+    const parts = [
+      'Roster: ' + (m.rosterSize || 0) + ' agents',
+      'Matched: ' + (m.rowsMatched || 0) + ' / ' + (m.rowsScanned || 0) + ' rows',
+    ];
+    if (typeof m.computeMs === 'number') {
+      parts.push('Computed in ' + m.computeMs + ' ms');
+    }
+    const cachePill = m.cacheHit
+      ? '<span class="pill pill-cache">cache hit</span>'
+      : '<span class="pill pill-fresh">fresh read</span>';
+    el.innerHTML = parts.join(' &middot; ') + cachePill;
+    el.style.display = '';
   }
 
   function onError(err) {
     $('refresh-btn').disabled = false;
     state.rows = [];
     state.totals = null;
+    state.meta = null;
     setStatus('error', 'Error: ' + (err && err.message ? err.message : String(err)));
     render();
+    renderInfoLine();
   }
 
   // -- Sort ---------------------------------------------------------------
