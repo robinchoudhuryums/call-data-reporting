@@ -239,6 +239,11 @@ function emptySummary_(dept, from, to, rosterSize, rowsScanned) {
 /**
  * Returns the agent-name list for a department from DO NOT EDIT!.
  * Empty array if the dept column doesn't exist or the sheet's missing.
+ *
+ * Roster cells embed each agent's queue extensions after the name,
+ * comma-separated: "Robin Choudhury, 139" or "Robin Choudhury, 139,
+ * 165". This function strips the extensions and returns only names;
+ * Step E reads the same cells to extract per-dept queue lists.
  */
 function getAgentsForDepartment_(dept) {
   const ss = openSpreadsheet_();
@@ -268,9 +273,26 @@ function getAgentsForDepartment_(dept) {
     .getRange(ROSTER.DATA_START_ROW, foundCol,
               lastRow - ROSTER.DATA_START_ROW + 1, 1)
     .getValues();
-  return cells
-    .map(function (r) { return String(r[0] || '').trim(); })
-    .filter(function (s) { return s.length > 0; });
+  const names = [];
+  for (let i = 0; i < cells.length; i++) {
+    const name = parseRosterAgentName_(cells[i][0]);
+    if (name) names.push(name);
+  }
+  return names;
+}
+
+/**
+ * Extracts the agent name from a roster cell. The cell may contain
+ * just a name ("Dalia Nared") or a name with extensions appended
+ * ("Robin Choudhury, 139" or "Robin Choudhury, 139, 165"). Returns
+ * everything before the first comma, trimmed. Empty string if the
+ * cell is blank.
+ */
+function parseRosterAgentName_(cellValue) {
+  const raw = String(cellValue == null ? '' : cellValue).trim();
+  if (!raw) return '';
+  const commaIdx = raw.indexOf(',');
+  return commaIdx === -1 ? raw : raw.substring(0, commaIdx).trim();
 }
 
 /**
