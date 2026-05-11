@@ -98,6 +98,14 @@ function computeSummary_(dept, from, to) {
     return emptySummary_(dept, from, to, roster.length, 0);
   }
 
+  // Pre-fetch the spreadsheet's TZ once. Used by rowDateIso_ to
+  // correctly interpret any date cells that come back as Date
+  // objects (currently your dates are strings, so this is mostly
+  // belt-and-suspenders -- but if the column is ever reformatted
+  // to a date type, this prevents the same TZ-shift bug we hit on
+  // the duration columns.
+  const ssTZ = ss.getSpreadsheetTimeZone();
+
   // Read both numeric/Date values AND display strings on the same
   // range. Duration cells (TTT/ATT/abd-wait) get parsed from their
   // display strings to avoid spreadsheet-vs-script timezone drift:
@@ -116,7 +124,7 @@ function computeSummary_(dept, from, to) {
 
   for (let i = 0; i < values.length; i++) {
     const r = values[i];
-    const dateIso = rowDateIso_(r[HISTORICAL_COLS.DATE - 1]);
+    const dateIso = rowDateIso_(r[HISTORICAL_COLS.DATE - 1], ssTZ);
     if (!dateIso || dateIso < from || dateIso > to) continue;
 
     const agent = String(r[HISTORICAL_COLS.AGENT - 1] || '').trim();
@@ -312,10 +320,17 @@ function parseRosterAgentName_(cellValue) {
  * 70-99 -> 1900s), YYYY-MM-DD strings, and Sheets serial-date numbers
  * (days since 1899-12-30). Anything else returns '' and the row is
  * filtered out.
+ *
+ * tz is the spreadsheet's timezone, used to interpret Date objects
+ * returned by getValue() for date-formatted cells. Pass it explicitly
+ * (computeSummary_ does) so the spreadsheet TZ is honored even if it
+ * differs from the script's TZ -- same root cause as the duration
+ * column issue. Falls back to the script's TZ if omitted.
  */
-function rowDateIso_(v) {
+function rowDateIso_(v, tz) {
+  const useTz = tz || TZ;
   if (v instanceof Date) {
-    return Utilities.formatDate(v, TZ, 'yyyy-MM-dd');
+    return Utilities.formatDate(v, useTz, 'yyyy-MM-dd');
   }
   // Sheets serial date: e.g. 45726 = 2025-03-09. Plausible date range
   // (~1982 to ~2100) keeps us from misinterpreting small ints.
@@ -323,7 +338,7 @@ function rowDateIso_(v) {
     const ms = Math.round((v - 25569) * 86400 * 1000);
     const d = new Date(ms);
     if (!isNaN(d.getTime())) {
-      return Utilities.formatDate(d, TZ, 'yyyy-MM-dd');
+      return Utilities.formatDate(d, useTz, 'yyyy-MM-dd');
     }
     return '';
   }
