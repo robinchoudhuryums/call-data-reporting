@@ -155,6 +155,24 @@ function diagnoseTimes() {
   if (lastRow < 2) { Logger.log('No data rows.'); return; }
 
   const numCols = HISTORICAL_COLS.CSR_AVG_ABD_WAIT;
+
+  // Print the header row first so we can verify columns match what
+  // HISTORICAL_COLS expects.
+  const headers = sheet.getRange(1, 1, 1, numCols).getValues()[0];
+  Logger.log('=== Header row (first %s columns) ===', numCols);
+  const expected = {
+    1: 'MONTH_YEAR', 2: 'DATE', 3: 'AGENT', 4: 'QUEUE_EXT',
+    5: 'TOTAL_UNIQUE', 6: 'TOTAL_RUNG', 7: 'TOTAL_MISSED',
+    8: 'TOTAL_ANSWERED', 9: 'TTT', 10: 'ATT',
+    33: 'AVG_ABD_WAIT', 34: 'CSR_AVG_ABD_WAIT',
+  };
+  for (let c = 1; c <= numCols; c++) {
+    const tag = expected[c] ? '  <- ' + expected[c] : '';
+    Logger.log('  Col %s (%s): "%s"%s',
+               c, columnLetter_(c), headers[c - 1], tag);
+  }
+  Logger.log('');
+
   const numToShow = Math.min(5, lastRow - 1);
   const values = sheet.getRange(2, 1, numToShow, numCols).getValues();
 
@@ -201,4 +219,15 @@ function formatHms_(seconds) {
   const s = seconds % 60;
   const pad = function (n) { return n < 10 ? '0' + n : String(n); };
   return h + ':' + pad(m) + ':' + pad(s);
+}
+
+function columnLetter_(col) {
+  let s = '';
+  let n = col;
+  while (n > 0) {
+    const r = (n - 1) % 26;
+    s = String.fromCharCode(65 + r) + s;
+    n = Math.floor((n - 1) / 26);
+  }
+  return s;
 }
