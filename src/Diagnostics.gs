@@ -23,6 +23,10 @@ function diagnoseDate() {
     return;
   }
 
+  const ssTZ = ss.getSpreadsheetTimeZone();
+  Logger.log('Spreadsheet TZ: %s | Script TZ: %s',
+             ssTZ, Session.getScriptTimeZone());
+  Logger.log('');
   Logger.log('=== Historical Data sample (first 5 rows) ===');
   const numToShow = Math.min(5, lastRow - 1);
   const values = sheet.getRange(2, 1, numToShow, HISTORICAL_COLS.AGENT).getValues();
@@ -36,7 +40,7 @@ function diagnoseDate() {
       : JSON.stringify(dateCell);
     Logger.log('Row %s: dateType=%s dateRaw=%s parsedIso="%s" agent="%s"',
                i + 2, dateType, dateRaw,
-               rowDateIso_(dateCell),
+               rowDateIso_(dateCell, ssTZ),
                String(agentCell));
   }
 
@@ -93,6 +97,7 @@ function whyNoMatches() {
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) { Logger.log('No data rows.'); return; }
 
+  const ssTZ = ss.getSpreadsheetTimeZone();
   const values = sheet
     .getRange(2, 1, lastRow - 1, HISTORICAL_COLS.AGENT)
     .getValues();
@@ -100,7 +105,7 @@ function whyNoMatches() {
   const onDateAgents = {};
   let onDateRows = 0;
   for (let i = 0; i < values.length; i++) {
-    const dateIso = rowDateIso_(values[i][HISTORICAL_COLS.DATE - 1]);
+    const dateIso = rowDateIso_(values[i][HISTORICAL_COLS.DATE - 1], ssTZ);
     if (dateIso !== TEST_DATE) continue;
     onDateRows++;
     const agent = String(values[i][HISTORICAL_COLS.AGENT - 1] || '').trim();

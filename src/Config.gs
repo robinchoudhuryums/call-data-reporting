@@ -57,8 +57,11 @@ const HISTORICAL_COLS = Object.freeze({
   CSR_AVG_ABD_WAIT: 34,  // AH - H:MM:SS
 });
 
-// Script timezone for date formatting. Matches appsscript.json. CST/CT
-// because the historical timestamps are CST.
+// Fallback timezone for formatting Date objects from spreadsheet
+// cells when the spreadsheet's own TZ isn't passed explicitly.
+// Production reads in computeSummary_ pass the spreadsheet's TZ
+// (via getSpreadsheetTimeZone) so this fallback is rarely used.
+// Set to America/Chicago to match appsscript.json runtime TZ.
 const TZ = 'America/Chicago';
 
 // CacheService TTL for aggregated department results.

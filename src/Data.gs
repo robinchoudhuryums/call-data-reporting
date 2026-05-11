@@ -98,16 +98,33 @@ function computeSummary_(dept, from, to) {
     return emptySummary_(dept, from, to, roster.length, 0);
   }
 
-  // Read only the columns we need (1..AH = 1..34). Single bulk read.
+  // Pre-fetch the spreadsheet's TZ once. Used by rowDateIso_ to
+  // correctly interpret any date cells that come back as Date
+  // objects (currently your dates are strings, so this is mostly
+  // belt-and-suspenders -- but if the column is ever reformatted
+  // to a date type, this prevents the same TZ-shift bug we hit on
+  // the duration columns.
+  const ssTZ = ss.getSpreadsheetTimeZone();
+
+  // Read both numeric/Date values AND display strings on the same
+  // range. Duration cells (TTT/ATT/abd-wait) get parsed from their
+  // display strings to avoid spreadsheet-vs-script timezone drift:
+  // when getValue() returns a Date for a duration cell, the Date is
+  // interpreted using the SPREADSHEET'S timezone, while our local-
+  // time extraction (getHours/Min/Sec) uses the SCRIPT'S timezone.
+  // Any mismatch (e.g. Mexico City TZ vs Chicago TZ) silently shifts
+  // every duration by the offset. Display values are TZ-free.
   const numCols = HISTORICAL_COLS.CSR_AVG_ABD_WAIT;
-  const values = sheet.getRange(2, 1, lastRow - 1, numCols).getValues();
+  const range = sheet.getRange(2, 1, lastRow - 1, numCols);
+  const values = range.getValues();
+  const displays = range.getDisplayValues();
 
   const acc = {};
   let rowsMatched = 0;
 
   for (let i = 0; i < values.length; i++) {
     const r = values[i];
-    const dateIso = rowDateIso_(r[HISTORICAL_COLS.DATE - 1]);
+    const dateIso = rowDateIso_(r[HISTORICAL_COLS.DATE - 1], ssTZ);
     if (!dateIso || dateIso < from || dateIso > to) continue;
 
     const agent = String(r[HISTORICAL_COLS.AGENT - 1] || '').trim();
@@ -136,19 +153,20 @@ function computeSummary_(dept, from, to) {
       acc[agent] = a;
     }
 
+    const rd = displays[i];
     a.totalUnique   += Number(r[HISTORICAL_COLS.TOTAL_UNIQUE - 1])   || 0;
     a.totalRung     += Number(r[HISTORICAL_COLS.TOTAL_RUNG - 1])     || 0;
     a.totalMissed   += Number(r[HISTORICAL_COLS.TOTAL_MISSED - 1])   || 0;
     a.totalAnswered += Number(r[HISTORICAL_COLS.TOTAL_ANSWERED - 1]) || 0;
-    a.tttSeconds    += toSeconds_(r[HISTORICAL_COLS.TTT - 1]);
+    a.tttSeconds    += parseHmsDisplay_(rd[HISTORICAL_COLS.TTT - 1]);
 
-    const att = toSeconds_(r[HISTORICAL_COLS.ATT - 1]);
+    const att = parseHmsDisplay_(rd[HISTORICAL_COLS.ATT - 1]);
     if (att) { a.attSecondsSum += att; a.attSecondsCount++; }
 
-    const aaw = toSeconds_(r[HISTORICAL_COLS.AVG_ABD_WAIT - 1]);
+    const aaw = parseHmsDisplay_(rd[HISTORICAL_COLS.AVG_ABD_WAIT - 1]);
     if (aaw) { a.avgAbdWaitSecondsSum += aaw; a.avgAbdWaitSecondsCount++; }
 
-    const caw = toSeconds_(r[HISTORICAL_COLS.CSR_AVG_ABD_WAIT - 1]);
+    const caw = parseHmsDisplay_(rd[HISTORICAL_COLS.CSR_AVG_ABD_WAIT - 1]);
     if (caw) { a.csrAvgAbdWaitSecondsSum += caw; a.csrAvgAbdWaitSecondsCount++; }
 
     a.days[dateIso] = true;
@@ -302,10 +320,17 @@ function parseRosterAgentName_(cellValue) {
  * 70-99 -> 1900s), YYYY-MM-DD strings, and Sheets serial-date numbers
  * (days since 1899-12-30). Anything else returns '' and the row is
  * filtered out.
+ *
+ * tz is the spreadsheet's timezone, used to interpret Date objects
+ * returned by getValue() for date-formatted cells. Pass it explicitly
+ * (computeSummary_ does) so the spreadsheet TZ is honored even if it
+ * differs from the script's TZ -- same root cause as the duration
+ * column issue. Falls back to the script's TZ if omitted.
  */
-function rowDateIso_(v) {
+function rowDateIso_(v, tz) {
+  const useTz = tz || TZ;
   if (v instanceof Date) {
-    return Utilities.formatDate(v, TZ, 'yyyy-MM-dd');
+    return Utilities.formatDate(v, useTz, 'yyyy-MM-dd');
   }
   // Sheets serial date: e.g. 45726 = 2025-03-09. Plausible date range
   // (~1982 to ~2100) keeps us from misinterpreting small ints.
@@ -313,7 +338,7 @@ function rowDateIso_(v) {
     const ms = Math.round((v - 25569) * 86400 * 1000);
     const d = new Date(ms);
     if (!isNaN(d.getTime())) {
-      return Utilities.formatDate(d, TZ, 'yyyy-MM-dd');
+      return Utilities.formatDate(d, useTz, 'yyyy-MM-dd');
     }
     return '';
   }
@@ -336,11 +361,36 @@ function rowDateIso_(v) {
 function pad2_(n) { return n < 10 ? ('0' + n) : String(n); }
 
 /**
+ * Display-string -> seconds. Parses the formatted text shown in a
+ * duration cell, e.g. "6:04:50" or "0:23:17" or "45" (raw seconds).
+ * Preferred over toSeconds_ for duration cells because it bypasses
+ * the spreadsheet-vs-script timezone issue described in
+ * computeSummary_.
+ */
+function parseHmsDisplay_(s) {
+  if (s == null || s === '') return 0;
+  const str = String(s).trim();
+  if (!str) return 0;
+  if (str.indexOf(':') === -1) {
+    return Number(str) || 0;
+  }
+  const parts = str.split(':');
+  const nums = [];
+  for (let i = 0; i < parts.length; i++) nums.push(Number(parts[i]) || 0);
+  if (nums.length === 3) return nums[0] * 3600 + nums[1] * 60 + nums[2];
+  if (nums.length === 2) return nums[0] * 60 + nums[1];
+  return 0;
+}
+
+/**
  * Cell value -> seconds. Accepts:
  *   - Number (Sheets duration, fraction of a day)
  *   - Date (time-of-day; happens when cell is formatted as time)
  *   - String "H:MM:SS" or "M:SS"
  *   - Anything else -> 0
+ *
+ * Kept for diagnostics. Production summary code uses parseHmsDisplay_
+ * on the display strings instead -- see computeSummary_.
  */
 function toSeconds_(v) {
   if (v == null || v === '') return 0;
