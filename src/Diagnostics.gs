@@ -231,3 +231,39 @@ function columnLetter_(col) {
   }
   return s;
 }
+
+/**
+ * Reads a single cell from DQE Historical Data and prints both the
+ * underlying value (what getValue() returns -- what the dashboard
+ * sees) and the display value (the formatted string the user sees).
+ * Disagreement between the two means a formula, custom number format,
+ * or some other display vs. storage divergence.
+ *
+ * Edit ADDRESS below before running. A1 notation, e.g. "I6", "J6",
+ * "AG6", "AH6".
+ */
+function dumpCell() {
+  const ADDRESS = 'I6';  // edit this to inspect a different cell
+
+  const ss = openSpreadsheet_();
+  const sheet = ss.getSheetByName(SHEETS.HISTORICAL);
+  if (!sheet) { Logger.log('Historical sheet not found.'); return; }
+
+  const range = sheet.getRange(ADDRESS);
+  const value = range.getValue();
+  const display = range.getDisplayValue();
+  const formula = range.getFormula();
+  const numberFormat = range.getNumberFormat();
+
+  Logger.log('=== Cell %s in "%s" ===', ADDRESS, SHEETS.HISTORICAL);
+  Logger.log('Display value (what you see):  "%s"', display);
+  Logger.log('Raw value (what code reads):    type=%s value=%s',
+             (value instanceof Date) ? 'Date'
+               : (value === null ? 'null' : typeof value),
+             JSON.stringify(value));
+  Logger.log('Formula (if any):               "%s"', formula);
+  Logger.log('Number format:                  "%s"', numberFormat);
+  Logger.log('toSeconds_(value):              %s', toSeconds_(value));
+  Logger.log('reformatted by dashboard:       %s',
+             formatHms_(toSeconds_(value)));
+}
