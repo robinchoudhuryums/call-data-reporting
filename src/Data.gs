@@ -47,7 +47,11 @@ function getDepartmentSummary(req) {
   }
 
   const cache = CacheService.getScriptCache();
-  const cacheKey = 'summary:v1:' + dept + ':' + from + ':' + to;
+  // Bump the version suffix any time the aggregation rules change so
+  // stale caches are invalidated instantly across all dept/range
+  // tuples. v2: switched ATT from weighted (TTT/Answered) to simple
+  // mean of source-stored ATT values.
+  const cacheKey = 'summary:v2:' + dept + ':' + from + ':' + to;
   const cached = cache.get(cacheKey);
   if (cached) {
     try {
@@ -184,11 +188,16 @@ function computeSummary_(dept, from, to) {
       totalMissed: a.totalMissed,
       totalAnswered: a.totalAnswered,
       tttSeconds: a.tttSeconds,
-      // Prefer weighted ATT (TTT / Answered); fall back to mean of row
-      // ATTs if no answered calls in range (rare but possible).
-      attSeconds: a.totalAnswered
-        ? Math.round(a.tttSeconds / a.totalAnswered)
-        : (a.attSecondsCount ? Math.round(a.attSecondsSum / a.attSecondsCount) : 0),
+      // ATT: simple mean of the source sheet's stored per-row ATT
+      // values. For single-day ranges this matches the source row
+      // exactly (which is what the existing DQE Report shows); for
+      // multi-day, it's the simple mean across that agent's rows in
+      // range. We intentionally do NOT compute weighted TTT/Answered
+      // here: the source's stored ATT is sometimes derived from a
+      // denominator other than Total Answered, so a weighted formula
+      // would silently disagree with the source for those rows.
+      attSeconds: a.attSecondsCount
+        ? Math.round(a.attSecondsSum / a.attSecondsCount) : 0,
       avgAbdWaitSeconds: a.avgAbdWaitSecondsCount
         ? Math.round(a.avgAbdWaitSecondsSum / a.avgAbdWaitSecondsCount) : 0,
       csrAvgAbdWaitSeconds: a.csrAvgAbdWaitSecondsCount
@@ -204,7 +213,9 @@ function computeSummary_(dept, from, to) {
     return x.agent.localeCompare(y.agent);
   });
 
-  // Totals: sum the summables; weighted ATT; simple-mean abd waits.
+  // Totals: sum the summables; simple-mean the per-row averages so
+  // every "average" column in the totals row uses the same method
+  // it uses in the agent rows.
   const totals = { totalUnique:0, totalRung:0, totalMissed:0, totalAnswered:0, tttSeconds:0 };
   for (let i = 0; i < rows.length; i++) {
     totals.totalUnique   += rows[i].totalUnique;
@@ -213,8 +224,7 @@ function computeSummary_(dept, from, to) {
     totals.totalAnswered += rows[i].totalAnswered;
     totals.tttSeconds    += rows[i].tttSeconds;
   }
-  totals.attSeconds = totals.totalAnswered
-    ? Math.round(totals.tttSeconds / totals.totalAnswered) : 0;
+  totals.attSeconds = avg_(rows, 'attSeconds');
   totals.avgAbdWaitSeconds = avg_(rows, 'avgAbdWaitSeconds');
   totals.csrAvgAbdWaitSeconds = avg_(rows, 'csrAvgAbdWaitSeconds');
 
