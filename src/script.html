@@ -9,8 +9,10 @@
     rows: [],
     totals: null,
     meta: null,
+    diagnostics: null,
     sortKey: 'totalMissed',
     sortDir: 'desc',     // 'asc' | 'desc'
+    scope: 'roster',     // 'roster' | 'queue' | 'both'
   };
 
   // -- Formatting helpers --------------------------------------------------
@@ -95,6 +97,21 @@
 
     $('refresh-btn').addEventListener('click', refresh);
 
+    // Scope segmented control
+    document.querySelectorAll('#scope-toggle .seg-btn').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        const next = btn.getAttribute('data-scope');
+        if (next === state.scope) return;
+        state.scope = next;
+        document.querySelectorAll('#scope-toggle .seg-btn').forEach(function (b) {
+          const active = b.getAttribute('data-scope') === next;
+          b.classList.toggle('active', active);
+          b.setAttribute('aria-checked', active ? 'true' : 'false');
+        });
+        refresh();
+      });
+    });
+
     // Sortable headers
     document.querySelectorAll('#agents-table thead th[data-sort]').forEach(function (th) {
       th.addEventListener('click', function () { onSort(th.getAttribute('data-sort')); });
@@ -129,6 +146,7 @@
       department: dept,
       from: $('from-date').value,
       to: $('to-date').value,
+      scope: state.scope,
     };
     if (!req.from || !req.to) {
       setStatus('error', 'Pick a from and to date.');
@@ -150,6 +168,7 @@
     state.rows = (data && data.rows) || [];
     state.totals = (data && data.totals) || null;
     state.meta = (data && data.meta) || null;
+    state.diagnostics = (data && data.diagnostics) || null;
 
     // Mock banner (only shown if the server flagged a mocked response;
     // Step D returns real data so this should always hide).
@@ -170,6 +189,7 @@
     }
     render();
     renderInfoLine();
+    renderDiagnostics();
   }
 
   function renderInfoLine() {
@@ -177,6 +197,7 @@
     if (!state.meta) { el.style.display = 'none'; return; }
     const m = state.meta;
     const parts = [
+      'Scope: ' + (m.scope || 'roster'),
       'Roster: ' + (m.rosterSize || 0) + ' agents',
       'Matched: ' + (m.rowsMatched || 0) + ' / ' + (m.rowsScanned || 0) + ' rows',
     ];
@@ -190,14 +211,63 @@
     el.style.display = '';
   }
 
+  function renderDiagnostics() {
+    const wrap = $('diagnostics');
+    const content = $('diag-content');
+    const count = $('diag-count');
+    if (!state.diagnostics) {
+      wrap.style.display = 'none';
+      return;
+    }
+    const d = state.diagnostics;
+    const rosterMissing = d.rosterWithNoData || [];
+    const queueOnly = d.queueOnlyMatched || [];
+    const total = rosterMissing.length + queueOnly.length;
+    if (total === 0) {
+      wrap.style.display = 'none';
+      return;
+    }
+    count.textContent = '(' + total + ')';
+
+    const sections = [];
+    if (rosterMissing.length) {
+      sections.push(
+        '<div class="diag-section">' +
+        '<h3>Roster agents with no data in this range (' + rosterMissing.length + ')</h3>' +
+        '<p>These agents are on the department roster but had no rows in <code>DQE Historical Data</code> for the selected dates. They may have been off, or the data hasn\'t been imported yet.</p>' +
+        '<div class="diag-chips">' +
+          rosterMissing.map(function (n) {
+            return '<span class="diag-chip">' + escapeHtml(n) + '</span>';
+          }).join('') +
+        '</div></div>'
+      );
+    }
+    if (queueOnly.length) {
+      sections.push(
+        '<div class="diag-section">' +
+        '<h3>Agents matched only via queue (' + queueOnly.length + ')</h3>' +
+        '<p>These agents handled this department\'s queue extensions but aren\'t on the department roster. Either they covered for the dept, or they belong on the roster and the <code>DO NOT EDIT!</code> sheet should be updated.</p>' +
+        '<div class="diag-chips">' +
+          queueOnly.map(function (n) {
+            return '<span class="diag-chip">' + escapeHtml(n) + '</span>';
+          }).join('') +
+        '</div></div>'
+      );
+    }
+    content.innerHTML = sections.join('');
+    wrap.style.display = '';
+  }
+
   function onError(err) {
     $('refresh-btn').disabled = false;
     state.rows = [];
     state.totals = null;
     state.meta = null;
+    state.diagnostics = null;
     setStatus('error', 'Error: ' + (err && err.message ? err.message : String(err)));
     render();
     renderInfoLine();
+    renderDiagnostics();
   }
 
   // -- Sort ---------------------------------------------------------------
@@ -263,7 +333,10 @@
 
     const sorted = sortRows(state.rows);
     tbody.innerHTML = sorted.map(function (row) {
-      return '<tr>' + COLUMNS.map(function (col, i) {
+      // Agents matched only via queue (not in the roster) get a small
+      // "(queue-only)" tag next to the name in CSS.
+      const rowClass = (row.matchedViaQueue && !row.matchedViaRoster) ? 'via-queue' : '';
+      return '<tr' + (rowClass ? ' class="' + rowClass + '"' : '') + '>' + COLUMNS.map(function (col, i) {
         const cls = i === 0 ? 'agent-name' : 'num';
         const extra = (col.highlight === 'missed' && Number(row.totalMissed) > 0) ? ' missed-high' : '';
         return '<td class="' + cls + extra + '">' + fmtCell(col, row) + '</td>';

@@ -36,6 +36,17 @@
         <input type="date" id="to-date">
       </div>
       <div class="control">
+        <label>Scope</label>
+        <div class="segmented" id="scope-toggle" role="radiogroup" aria-label="Scope">
+          <button type="button" class="seg-btn active" data-scope="roster" role="radio" aria-checked="true"
+                  title="Only agents assigned to this department in the roster sheet">Roster</button>
+          <button type="button" class="seg-btn" data-scope="queue" role="radio" aria-checked="false"
+                  title="Any agent who handled this department's queue extensions">Queue</button>
+          <button type="button" class="seg-btn" data-scope="both" role="radio" aria-checked="false"
+                  title="Union of Roster and Queue">Both</button>
+        </div>
+      </div>
+      <div class="control">
         <label>&nbsp;</label>
         <button class="btn" id="refresh-btn">Refresh</button>
       </div>
@@ -62,6 +73,11 @@
     </table>
 
     <div id="info-line" class="info-line" style="display:none;"></div>
+
+    <details id="diagnostics" class="diagnostics" style="display:none;">
+      <summary>Diagnostics <span id="diag-count" class="diag-count"></span></summary>
+      <div id="diag-content"></div>
+    </details>
   </div>
 
   <script>

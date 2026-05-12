@@ -46,8 +46,18 @@ function getDepartmentSummary(req) {
     throw new Error('from must be on or before to.');
   }
 
+  // Scope: 'roster' (default), 'queue', or 'both'.
+  let scope = String((req && req.scope) || 'roster').trim();
+  if (scope !== 'roster' && scope !== 'queue' && scope !== 'both') {
+    scope = 'roster';
+  }
+
   const cache = CacheService.getScriptCache();
-  const cacheKey = 'summary:v1:' + dept + ':' + from + ':' + to;
+  // Bump the version suffix any time the aggregation rules change so
+  // stale caches are invalidated instantly across all dept/range
+  // tuples. v2: ATT switched to simple mean. v3: scope param added,
+  // diagnostics field added to response.
+  const cacheKey = 'summary:v3:' + dept + ':' + scope + ':' + from + ':' + to;
   const cached = cache.get(cacheKey);
   if (cached) {
     try {
@@ -61,7 +71,7 @@ function getDepartmentSummary(req) {
   }
 
   const t0 = Date.now();
-  const data = computeSummary_(dept, from, to);
+  const data = computeSummary_(dept, from, to, scope);
   data.meta.computeMs = Date.now() - t0;
   data.meta.cacheHit = false;
 
@@ -82,11 +92,20 @@ function isIsoDate_(s) {
 
 /**
  * Reads + aggregates. Pure -- no caching here, that's the caller's job.
+ *
+ * scope:
+ *   'roster' - only rows whose Agent Name is in this dept's roster
+ *   'queue'  - only rows whose Col D queue extensions overlap this
+ *              dept's queue extension union
+ *   'both'   - union of the above (an agent matched by either path)
  */
-function computeSummary_(dept, from, to) {
-  const roster = getAgentsForDepartment_(dept);
-  const agentSet = {};
-  for (let i = 0; i < roster.length; i++) agentSet[roster[i]] = true;
+function computeSummary_(dept, from, to, scope) {
+  scope = scope || 'roster';
+
+  const roster = getRosterForDepartment_(dept);
+  const rosterSet = {};
+  for (let i = 0; i < roster.names.length; i++) rosterSet[roster.names[i]] = true;
+  const deptExtensions = roster.allExtensions; // { ext: true }
 
   const ss = openSpreadsheet_();
   const sheet = ss.getSheetByName(SHEETS.HISTORICAL);
@@ -95,7 +114,8 @@ function computeSummary_(dept, from, to) {
   }
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) {
-    return emptySummary_(dept, from, to, roster.length, 0);
+    return emptySummary_(dept, from, to, scope, roster.names.length, 0,
+                         Object.keys(deptExtensions).sort());
   }
 
   // Pre-fetch the spreadsheet's TZ once. Used by rowDateIso_ to
@@ -121,6 +141,9 @@ function computeSummary_(dept, from, to) {
 
   const acc = {};
   let rowsMatched = 0;
+  // For diagnostics: agents that matched only via queue extension
+  // overlap (not on the dept roster). Empty when scope === 'roster'.
+  const queueOnlyAgents = {};
 
   for (let i = 0; i < values.length; i++) {
     const r = values[i];
@@ -128,29 +151,51 @@ function computeSummary_(dept, from, to) {
     if (!dateIso || dateIso < from || dateIso > to) continue;
 
     const agent = String(r[HISTORICAL_COLS.AGENT - 1] || '').trim();
-    if (!agent || !agentSet[agent]) continue;
+    if (!agent) continue;
+
+    const inRoster = !!rosterSet[agent];
+    let inQueue = false;
+    if (scope !== 'roster') {
+      const rowExts = parseExtensions_(r[HISTORICAL_COLS.QUEUE_EXT - 1]);
+      for (let j = 0; j < rowExts.length; j++) {
+        if (deptExtensions[rowExts[j]]) { inQueue = true; break; }
+      }
+    }
+
+    let include;
+    if (scope === 'roster')      include = inRoster;
+    else if (scope === 'queue')  include = inQueue;
+    else /* both */              include = inRoster || inQueue;
+    if (!include) continue;
+
+    if (!inRoster && inQueue) queueOnlyAgents[agent] = true;
 
     rowsMatched++;
     let a = acc[agent];
     if (!a) {
       a = {
         agent: agent,
+        matchedViaRoster: inRoster,
+        matchedViaQueue: inQueue,
         totalUnique: 0,
         totalRung: 0,
         totalMissed: 0,
         totalAnswered: 0,
         tttSeconds: 0,
-        // Fallback ATT averaging if totalAnswered is zero on a row.
         attSecondsSum: 0, attSecondsCount: 0,
-        // Abandoned-wait columns are already-averaged per row; we take
-        // a simple mean across rows. True weighting would need raw
-        // abandoned-call counts, which the historical sheet doesn't
-        // expose as a separate column.
+        // Abandoned-wait columns are already-averaged per row; simple
+        // mean across rows. True weighting would need raw abandoned-
+        // call counts, which the historical sheet doesn't expose
+        // separately.
         avgAbdWaitSecondsSum: 0, avgAbdWaitSecondsCount: 0,
         csrAvgAbdWaitSecondsSum: 0, csrAvgAbdWaitSecondsCount: 0,
         days: {},
       };
       acc[agent] = a;
+    } else {
+      // Promote flags if a later row matched via the other path too.
+      if (inRoster) a.matchedViaRoster = true;
+      if (inQueue)  a.matchedViaQueue  = true;
     }
 
     const rd = displays[i];
@@ -179,16 +224,23 @@ function computeSummary_(dept, from, to) {
     const a = acc[k];
     rows.push({
       agent: a.agent,
+      matchedViaRoster: a.matchedViaRoster,
+      matchedViaQueue: a.matchedViaQueue,
       totalUnique: a.totalUnique,
       totalRung: a.totalRung,
       totalMissed: a.totalMissed,
       totalAnswered: a.totalAnswered,
       tttSeconds: a.tttSeconds,
-      // Prefer weighted ATT (TTT / Answered); fall back to mean of row
-      // ATTs if no answered calls in range (rare but possible).
-      attSeconds: a.totalAnswered
-        ? Math.round(a.tttSeconds / a.totalAnswered)
-        : (a.attSecondsCount ? Math.round(a.attSecondsSum / a.attSecondsCount) : 0),
+      // ATT: simple mean of the source sheet's stored per-row ATT
+      // values. For single-day ranges this matches the source row
+      // exactly (which is what the existing DQE Report shows); for
+      // multi-day, it's the simple mean across that agent's rows in
+      // range. We intentionally do NOT compute weighted TTT/Answered
+      // here: the source's stored ATT is sometimes derived from a
+      // denominator other than Total Answered, so a weighted formula
+      // would silently disagree with the source for those rows.
+      attSeconds: a.attSecondsCount
+        ? Math.round(a.attSecondsSum / a.attSecondsCount) : 0,
       avgAbdWaitSeconds: a.avgAbdWaitSecondsCount
         ? Math.round(a.avgAbdWaitSecondsSum / a.avgAbdWaitSecondsCount) : 0,
       csrAvgAbdWaitSeconds: a.csrAvgAbdWaitSecondsCount
@@ -204,7 +256,9 @@ function computeSummary_(dept, from, to) {
     return x.agent.localeCompare(y.agent);
   });
 
-  // Totals: sum the summables; weighted ATT; simple-mean abd waits.
+  // Totals: sum the summables; simple-mean the per-row averages so
+  // every "average" column in the totals row uses the same method
+  // it uses in the agent rows.
   const totals = { totalUnique:0, totalRung:0, totalMissed:0, totalAnswered:0, tttSeconds:0 };
   for (let i = 0; i < rows.length; i++) {
     totals.totalUnique   += rows[i].totalUnique;
@@ -213,36 +267,56 @@ function computeSummary_(dept, from, to) {
     totals.totalAnswered += rows[i].totalAnswered;
     totals.tttSeconds    += rows[i].tttSeconds;
   }
-  totals.attSeconds = totals.totalAnswered
-    ? Math.round(totals.tttSeconds / totals.totalAnswered) : 0;
+  totals.attSeconds = avg_(rows, 'attSeconds');
   totals.avgAbdWaitSeconds = avg_(rows, 'avgAbdWaitSeconds');
   totals.csrAvgAbdWaitSeconds = avg_(rows, 'csrAvgAbdWaitSeconds');
+
+  // Diagnostics: roster agents with no data in this range; agents
+  // matched only via queue extension overlap (not on roster).
+  const agentsWithData = {};
+  for (const k in acc) agentsWithData[k] = true;
+  const rosterWithNoData = [];
+  for (let i = 0; i < roster.names.length; i++) {
+    if (!agentsWithData[roster.names[i]]) {
+      rosterWithNoData.push(roster.names[i]);
+    }
+  }
+  rosterWithNoData.sort();
+  const queueOnlyMatched = Object.keys(queueOnlyAgents).sort();
 
   return {
     meta: {
       department: dept,
       from: from,
       to: to,
+      scope: scope,
       rowsScanned: values.length,
       rowsMatched: rowsMatched,
-      rosterSize: roster.length,
+      rosterSize: roster.names.length,
       agentsWithData: rows.length,
+      deptExtensions: Object.keys(deptExtensions).sort(),
       generatedAt: new Date().toISOString(),
     },
     rows: rows,
     totals: totals,
+    diagnostics: {
+      rosterWithNoData: rosterWithNoData,
+      queueOnlyMatched: queueOnlyMatched,
+    },
   };
 }
 
-function emptySummary_(dept, from, to, rosterSize, rowsScanned) {
+function emptySummary_(dept, from, to, scope, rosterSize, rowsScanned, deptExtensions) {
   return {
     meta: {
       department: dept,
       from: from, to: to,
+      scope: scope || 'roster',
       rowsScanned: rowsScanned || 0,
       rowsMatched: 0,
       rosterSize: rosterSize || 0,
       agentsWithData: 0,
+      deptExtensions: deptExtensions || [],
       generatedAt: new Date().toISOString(),
     },
     rows: [],
@@ -251,25 +325,34 @@ function emptySummary_(dept, from, to, rosterSize, rowsScanned) {
       tttSeconds: 0, attSeconds: 0,
       avgAbdWaitSeconds: 0, csrAvgAbdWaitSeconds: 0,
     },
+    diagnostics: {
+      rosterWithNoData: [],
+      queueOnlyMatched: [],
+    },
   };
 }
 
 /**
- * Returns the agent-name list for a department from DO NOT EDIT!.
- * Empty array if the dept column doesn't exist or the sheet's missing.
+ * Returns the full roster for a department: agent names + their
+ * queue extensions, all parsed from the DO NOT EDIT! cells.
  *
- * Roster cells embed each agent's queue extensions after the name,
- * comma-separated: "Robin Choudhury, 139" or "Robin Choudhury, 139,
- * 165". This function strips the extensions and returns only names;
- * Step E reads the same cells to extract per-dept queue lists.
+ *   {
+ *     names: ["Robin Choudhury", "Darrell Compton", ...],
+ *     byAgent: { "Robin Choudhury": ["139"], ... },
+ *     allExtensions: { "139": true, "165": true, ... },
+ *   }
+ *
+ * Empty shape (all collections empty) if the dept column doesn't
+ * exist or the sheet is missing.
  */
-function getAgentsForDepartment_(dept) {
+function getRosterForDepartment_(dept) {
+  const empty = { names: [], byAgent: {}, allExtensions: {} };
   const ss = openSpreadsheet_();
   const sheet = ss.getSheetByName(SHEETS.ROSTER);
-  if (!sheet) return [];
+  if (!sheet) return empty;
 
   const lastCol = sheet.getLastColumn();
-  if (lastCol < ROSTER.DEPT_FIRST_COL) return [];
+  if (lastCol < ROSTER.DEPT_FIRST_COL) return empty;
 
   const headerRow = sheet
     .getRange(ROSTER.HEADER_ROW, ROSTER.DEPT_FIRST_COL,
@@ -282,35 +365,81 @@ function getAgentsForDepartment_(dept) {
     if (!v) break; // first blank ends the dept block
     if (v === dept) { foundCol = ROSTER.DEPT_FIRST_COL + i; break; }
   }
-  if (foundCol === -1) return [];
+  if (foundCol === -1) return empty;
 
   const lastRow = sheet.getLastRow();
-  if (lastRow < ROSTER.DATA_START_ROW) return [];
+  if (lastRow < ROSTER.DATA_START_ROW) return empty;
 
   const cells = sheet
     .getRange(ROSTER.DATA_START_ROW, foundCol,
               lastRow - ROSTER.DATA_START_ROW + 1, 1)
     .getValues();
+
   const names = [];
+  const byAgent = {};
+  const allExtensions = {};
   for (let i = 0; i < cells.length; i++) {
-    const name = parseRosterAgentName_(cells[i][0]);
-    if (name) names.push(name);
+    const parsed = parseRosterCell_(cells[i][0]);
+    if (!parsed) continue;
+    names.push(parsed.name);
+    byAgent[parsed.name] = parsed.extensions.slice();
+    for (let j = 0; j < parsed.extensions.length; j++) {
+      allExtensions[parsed.extensions[j]] = true;
+    }
   }
-  return names;
+  return { names: names, byAgent: byAgent, allExtensions: allExtensions };
 }
 
 /**
- * Extracts the agent name from a roster cell. The cell may contain
- * just a name ("Dalia Nared") or a name with extensions appended
- * ("Robin Choudhury, 139" or "Robin Choudhury, 139, 165"). Returns
- * everything before the first comma, trimmed. Empty string if the
- * cell is blank.
+ * Backward-compat shim used by diagnostics. Returns just the agent
+ * names for a department. Production code (computeSummary_) calls
+ * getRosterForDepartment_ directly to get the extensions too.
  */
-function parseRosterAgentName_(cellValue) {
+function getAgentsForDepartment_(dept) {
+  return getRosterForDepartment_(dept).names;
+}
+
+/**
+ * Parses a DO NOT EDIT! roster cell into { name, extensions }.
+ *
+ * Cell shapes:
+ *   "Dalia Nared"               -> { name: "Dalia Nared",      extensions: [] }
+ *   "Robin Choudhury, 139"      -> { name: "Robin Choudhury",  extensions: ["139"] }
+ *   "Robin Choudhury, 139, 165" -> { name: "Robin Choudhury",  extensions: ["139","165"] }
+ *
+ * The first comma-separated token is the agent name. Subsequent
+ * tokens are kept as extensions only if they're digit-only -- guards
+ * against odd cells like "Smith, Jr., 139" where "Jr." isn't an ext.
+ * Returns null for blank cells.
+ */
+function parseRosterCell_(cellValue) {
   const raw = String(cellValue == null ? '' : cellValue).trim();
-  if (!raw) return '';
-  const commaIdx = raw.indexOf(',');
-  return commaIdx === -1 ? raw : raw.substring(0, commaIdx).trim();
+  if (!raw) return null;
+  const parts = raw.split(',');
+  const name = (parts[0] || '').trim();
+  if (!name) return null;
+  const extensions = [];
+  for (let i = 1; i < parts.length; i++) {
+    const ext = parts[i].trim();
+    if (/^\d+$/.test(ext)) extensions.push(ext);
+  }
+  return { name: name, extensions: extensions };
+}
+
+/**
+ * Parses a comma-separated extension list from Col D of historical
+ * data (e.g. "108,165"). Returns digit-only tokens, trimmed.
+ */
+function parseExtensions_(cellValue) {
+  const raw = String(cellValue == null ? '' : cellValue).trim();
+  if (!raw) return [];
+  const parts = raw.split(',');
+  const exts = [];
+  for (let i = 0; i < parts.length; i++) {
+    const t = parts[i].trim();
+    if (/^\d+$/.test(t)) exts.push(t);
+  }
+  return exts;
 }
 
 /**

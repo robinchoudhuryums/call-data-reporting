@@ -2,23 +2,22 @@
  * One-time / idempotent setup. Run once from the Apps Script editor's
  * "Run" dropdown after first deploy: select setup, click Run.
  *
- * Creates the Access Control and Department Queues sheets in the CDR
- * Report spreadsheet if they don't exist. Safe to re-run; existing
- * sheets are left untouched (no data overwritten).
+ * Creates the Access Control sheet in the CDR Report spreadsheet if
+ * it doesn't exist. Safe to re-run; existing sheets are left
+ * untouched (no data overwritten).
  *
- * After running, populate Access Control with manager emails and
- * Department Queues with the queue extensions per department.
+ * After running, populate Access Control with manager emails.
+ *
+ * Note: Step E onwards parses queue extensions inline from the
+ * DO NOT EDIT! roster cells (cell format "Name, ext1, ext2"). The
+ * earlier-planned "Department Queues" sheet is not used. If your
+ * spreadsheet already has an auto-created Department Queues sheet
+ * from a previous setup, you can safely delete it.
  */
 function setup() {
   const ss = openSpreadsheet_();
-
   ensureSheet_(ss, SHEETS.ACCESS_CONTROL, ACCESS_CONTROL_HEADERS);
-  ensureSheet_(ss, SHEETS.DEPT_QUEUES, DEPT_QUEUES_HEADERS);
-
-  Logger.log(
-    'Setup complete. Verified sheets: "%s", "%s".',
-    SHEETS.ACCESS_CONTROL, SHEETS.DEPT_QUEUES
-  );
+  Logger.log('Setup complete. Verified sheet: "%s".', SHEETS.ACCESS_CONTROL);
 }
 
 /**

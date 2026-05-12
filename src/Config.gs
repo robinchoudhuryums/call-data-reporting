@@ -15,16 +15,17 @@ const ADMIN_EMAILS = Object.freeze([
 ]);
 
 // Sheet names. Roster sheet is the existing "DO NOT EDIT!" tab; the
-// other two are auto-created by setup_() on first run if missing.
+// Access Control sheet is auto-created by setup_() on first run if
+// missing. Queue extensions are parsed inline from the roster cells
+// (e.g. "Robin Choudhury, 139"), so no separate Department Queues
+// sheet is needed.
 const SHEETS = Object.freeze({
   HISTORICAL: 'DQE Historical Data',
   ROSTER: 'DO NOT EDIT!',
   ACCESS_CONTROL: 'Access Control',
-  DEPT_QUEUES: 'Department Queues',
 });
 
 const ACCESS_CONTROL_HEADERS = Object.freeze(['Email', 'Department', 'Notes']);
-const DEPT_QUEUES_HEADERS = Object.freeze(['Department', 'Queue Extensions']);
 
 // Layout of the "DO NOT EDIT!" roster sheet. Centralized so a future
 // row/column shift is a one-line edit. The right-block (departments +
