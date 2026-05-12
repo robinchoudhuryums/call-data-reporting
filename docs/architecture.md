@@ -54,8 +54,9 @@ External CDR system (telephony provider)
         ▼                                       ▼
 ┌──────────────────────┐         ┌─────────────────────────┐
 │ DQE Report (legacy   │         │ Department Dashboard    │
-│ spreadsheet,         │         │ (this repo, Apps Script │
-│ being retired)       │         │ web app under src/)     │
+│ spreadsheet,         │         │ (this repo, web app at  │
+│ being retired)       │         │ apps-script/department- │
+│                      │         │ dashboard/)             │
 │ - Per-dept tabs with │         │ - Reads DQE Historical  │
 │   formulas filtering │         │   Data + DO NOT EDIT!   │
 │   DQE Historical     │         │ - Caches in CacheService│
@@ -73,7 +74,7 @@ External CDR system (telephony provider)
 |---|---|---|---|
 | CSV ingest | CDR Import | `autoImport.gs`, `neonWrite.gs` | `apps-script/cdr-import/` (not yet pulled in) |
 | Per-agent aggregation | CDR Report | `buildDQEHistoricalData.gs`, `dqeDrilldown.gs`, `DQEDrilldownSidebar.html`, `neonWrite.gs`, `neonBackfill.gs` | `apps-script/cdr-report/` (only the build script so far) |
-| Manager dashboard | Department Dashboard (standalone) | `Code.gs`, `Auth.gs`, `Data.gs`, `Config.gs`, `Setup.gs`, `Diagnostics.gs`, `dashboard.html`, `styles.html`, `script.html`, `access_denied.html` | `src/` |
+| Manager dashboard | Department Dashboard (standalone) | `Code.gs`, `Auth.gs`, `Data.gs`, `Config.gs`, `Setup.gs`, `Diagnostics.gs`, `dashboard.html`, `styles.html`, `script.html`, `access_denied.html` | `apps-script/department-dashboard/` |
 | Postgres mirror | shared lib used by both CDR Import and CDR Report | `neonWrite.gs` (duplicated) | see [known-issues.md](known-issues.md) |
 | Legacy dashboard | DQE Report (spreadsheet, being retired) | Sheet formulas only — no code | n/a |
 

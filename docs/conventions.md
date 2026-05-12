@@ -162,7 +162,7 @@ how the legacy DQE Report worked.
 
 ## Auth and access
 
-- **Admins**: hardcoded in `ADMIN_EMAILS` in `src/Config.gs`. Bypass the
+- **Admins**: hardcoded in `ADMIN_EMAILS` in `apps-script/department-dashboard/Config.gs`. Bypass the
   manager dept check; can pick any department from the admin dropdown.
 - **Managers**: rows in the `Access Control` sheet (`Email | Department |
   Notes`). One row per manager. Pinned to a single department.

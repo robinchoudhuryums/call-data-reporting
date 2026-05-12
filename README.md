@@ -33,17 +33,17 @@ If you're new to this codebase or chasing a bug, start with the docs:
 call-data-reporting/
 ├── README.md                       ← this file
 ├── docs/                           ← architecture / known issues / conventions
-├── src/                            ← Department Dashboard web app source (clasp pushes from here)
-├── apps-script/                    ← reference copies of sibling Apps Script projects
-│   └── cdr-report/                 ← code from the CDR Report project
+├── apps-script/                    ← all Apps Script project sources
+│   ├── department-dashboard/       ← the web app this repo deploys (clasp pushes from here)
+│   └── cdr-report/                 ← reference copies from the CDR Report project
 │       └── buildDQEHistoricalData.gs
 ├── .clasp.json                     ← scriptId + rootDir for the dashboard project
 └── .claspignore
 ```
 
-This structure is mid-migration. The dashboard's own code still lives at
-`src/` (not yet moved to `apps-script/department-dashboard/`); other
-projects (CDR Import, full CDR Report) aren't pulled in yet either. See
+This structure is mid-migration. The Department Dashboard's source has
+been moved into `apps-script/department-dashboard/`; other projects (CDR
+Import, the rest of CDR Report) aren't pulled in yet. See
 `docs/architecture.md` for the planned end state.
 
 ## Deploying the Department Dashboard
@@ -74,7 +74,7 @@ clasp push -f
 - Project Settings -> Script Properties -> add `SPREADSHEET_ID`
   pointing at the CDR Report spreadsheet's ID (from its URL).
 - Run the `setup` function once to create the `Access Control` sheet.
-- Add yourself as an admin email in `src/Config.gs` (`ADMIN_EMAILS`).
+- Add yourself as an admin email in `apps-script/department-dashboard/Config.gs` (`ADMIN_EMAILS`).
 - Deploy as Web app: **Execute as: Me**, **Who has access: Anyone within
   [your domain]**.
 
