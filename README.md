@@ -37,8 +37,10 @@ call-data-reporting/
 │   ├── department-dashboard/       ← the web app this repo deploys (clasp pushes from here)
 │   └── cdr-report/                 ← reference copies from the CDR Report project
 │       └── buildDQEHistoricalData.gs
-├── .clasp.json                     ← scriptId + rootDir for the dashboard project
-└── .claspignore
+├── .clasp.example.json             ← template; copy to .clasp.json on first checkout
+├── .clasp.json                     ← per-developer, gitignored (scriptId varies per checkout)
+├── .claspignore
+└── .gitignore
 ```
 
 This structure is mid-migration. The Department Dashboard's source has
@@ -56,8 +58,13 @@ via clasp from this repo.
 
 ```bash
 npm install -g @google/clasp
-clasp login
-# Edit .clasp.json -> scriptId from your Apps Script project's Settings
+clasp login --no-localhost   # --no-localhost if you're in Cloud Shell
+
+# Create your local .clasp.json from the template. It's gitignored so
+# your scriptId stays per-checkout and doesn't conflict on pulls.
+cp .clasp.example.json .clasp.json
+# Edit .clasp.json -> set scriptId to your Apps Script project's ID
+# (Project Settings -> IDs -> Script ID)
 ```
 
 **Each push:**
