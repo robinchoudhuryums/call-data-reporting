@@ -1,5 +1,5 @@
 // ============================================================================
-// buildDQEHistoricalData.gs  (CORRECTED — see CHANGES below)
+// buildDQEHistoricalData.gs
 // ----------------------------------------------------------------------------
 // Builds per-agent DQE metrics from Raw Data and writes them to the
 // "DQE Historical Data" sheet. After successful sheet write, mirrors the
@@ -11,23 +11,6 @@
 //
 // Requires: neonWrite.gs (writeDQERowsToNeon, notifyNeonWriteFailure)
 //           neonBackfill.gs (parseDateForNeon)
-//
-// CHANGES vs. the previous version (all in buildDQEHistoricalData):
-//   1) Pass 2 loop is now indexed (for i ... rather than for ... of) so we
-//      can read timeVals[i]. Each pushed queueLeg now carries its own
-//      talkSec (the agent's own leg.talk_time).
-//   2) Pass 3's TTT/ATT block now iterates windowLegs (in-window only) and
-//      attributes the agent's own leg.talkSec per parent call -- not
-//      parent.talkSec, which is max across all legs and was misattributing
-//      another agent's talk time to this one.
-//
-// Effect of the fix on Sonia (03/09/2026) for example:
-//   Before:  Answered=5,  TTT=0:23:17, ATT=0:03:53
-//   After:   Answered=5,  TTT=0:15:03, ATT=0:03:01
-//   - TTT/ATT no longer include the after-5pm call
-//   - ATT denominator is now Answered (5), not the all-hours count (6)
-//   - Call 1762242119044 attributes Sonia's 0:01:01 leg to her, not the
-//     other agent's 0:01:58 leg
 // ============================================================================
 
 // ── Constants (module-level so they don't re-allocate on every call) ─────────
@@ -173,10 +156,9 @@ function buildDQEHistoricalData(rawSheet, dqeSheet) {
 
 
   // ── Pass 1: Build parentMap ────────────────────────────────────────────────
-  // Aggregates parent-row metadata used downstream for wait times and
-  // abandoned-call tracking. parent.talkSec is no longer used for per-
-  // agent TTT (the new Pass 3 uses the agent's own leg.talkSec instead),
-  // but we keep computing it here in case other callers rely on it.
+  // Each parent leg captures calleeName (col L) so Pass 3 can look up the
+  // specific leg where THIS agent talked, instead of taking the max across
+  // all legs (which incorrectly attributed other agents' talk time).
 
   const parentMap = {};
 
@@ -185,9 +167,10 @@ function buildDQEHistoricalData(rawSheet, dqeSheet) {
     const parentId = String(row[DQE_C.PARENT_CALL]).trim();
     if (parentId !== 'N/A' && parentId !== '') continue;
 
-    const callId    = String(row[DQE_C.CALL_ID]).trim();
-    const legId     = parseInt(row[DQE_C.LEG_ID]) || 0;
-    const abandoned = String(row[DQE_C.ABANDONED]).trim() === 'Abandoned';
+    const callId      = String(row[DQE_C.CALL_ID]).trim();
+    const legId       = parseInt(row[DQE_C.LEG_ID]) || 0;
+    const abandoned   = String(row[DQE_C.ABANDONED]).trim() === 'Abandoned';
+    const calleeName  = String(row[DQE_C.CALLEE_NAME]).trim();
 
     const talkSec = timeToSec(timeVals[i] ? timeVals[i][0] : '');
     const callSec = timeToSec(timeVals[i] ? timeVals[i][1] : '');
@@ -195,7 +178,7 @@ function buildDQEHistoricalData(rawSheet, dqeSheet) {
     if (!parentMap[callId]) {
       parentMap[callId] = { legs: [], waitSec: 0, talkSec: 0, abandoned: false };
     }
-    parentMap[callId].legs.push({ legId, talkSec, callSec });
+    parentMap[callId].legs.push({ legId, talkSec, callSec, calleeName });
     if (abandoned) parentMap[callId].abandoned = true;
   }
 
@@ -214,15 +197,15 @@ function buildDQEHistoricalData(rawSheet, dqeSheet) {
 
 
   // ── Pass 2: Index queue legs ───────────────────────────────────────────────
-  // FIX: indexed loop so we can read timeVals[i] for each leg's own
-  // talk_time (added as queueLegs[].talkSec). Pass 3 then attributes
-  // talk time using the agent's own leg, not parent.talkSec.
+  // Note: queue legs themselves don't carry talk-time duration (col G = 0).
+  // The agent's actual conversation duration lives on a separate parent-level
+  // leg where col L = agent name — captured in Pass 1's parentMap. Pass 3
+  // looks up the right talk time by matching agent name on parent legs.
 
   const queueLegs = [];
 
   for (let i = 0; i < data.length; i++) {
-    const row = data[i];
-
+    const row         = data[i];
     const callerIdRaw = String(row[DQE_C.CALLER_ID]).trim();
     const qnMatch     = callerIdRaw.match(/(A_Q_\w+|Backup CSR)/);
     if (!qnMatch) continue;
@@ -249,14 +232,12 @@ function buildDQEHistoricalData(rawSheet, dqeSheet) {
     const missed       = String(row[DQE_C.MISSED]).trim()   === 'Missed';
     const answered     = String(row[DQE_C.ANSWERED]).trim() === 'Answered';
     const startPST     = displayToTimeSec(row[DQE_C.START_TIME]);
-    const legTalkSec   = timeToSec(timeVals[i] ? timeVals[i][0] : '');
 
     queueLegs.push({
       agentName, queueExt, queueName,
       parentCallId, callId,
       missed, answered,
-      startPST,
-      talkSec: legTalkSec
+      startPST
     });
   }
 
@@ -304,32 +285,46 @@ function buildDQEHistoricalData(rawSheet, dqeSheet) {
     const totalMissed   = windowLegs.filter(l => l.missed).length;
     const totalAnswered = windowLegs.filter(l => l.answered).length;
 
-    // FIX: TTT/ATT use windowLegs only (was: legs), and attribute the
-    // agent's OWN leg.talkSec per parent (was: parent.talkSec which
-    // is max across all legs and misattributes another agent's talk
-    // time to this one). If an agent had multiple legs on the same
-    // parent call, use their longest leg.
+    // TTT/ATT computation — fixes three bugs from the prior implementation:
+    //   - Bug 1: iterated `legs` (all-day) instead of `windowLegs`
+    //   - Bug 2: ATT denominator was unique answered parents across all hours
+    //   - Bug 3: used parent.talkSec (max across all legs of all agents on
+    //            the parent) instead of the agent's own leg's talk time
+    //
+    // The agent's actual conversation duration lives on a parent-level leg
+    // where col L matches the agent's name. We look that up for each parent
+    // call this agent had an answered queue leg on within the window.
+
+    function findAgentTalkOnParent(parentCallId, agent) {
+      const parent = parentMap[parentCallId];
+      if (!parent) return 0;
+      // If an agent has multiple parent legs on the same call, take the
+      // longest (handles rare transfer-back or re-pickup scenarios).
+      let maxTalk = 0;
+      for (const leg of parent.legs) {
+        if (leg.calleeName === agent && leg.talkSec > maxTalk) {
+          maxTalk = leg.talkSec;
+        }
+      }
+      return maxTalk;
+    }
+
     const agentTalkPerParent = {};
     for (const leg of windowLegs) {
       if (!leg.parentCallId || !leg.answered) continue;
-      const prev = agentTalkPerParent[leg.parentCallId] || 0;
-      if (leg.talkSec > prev) {
-        agentTalkPerParent[leg.parentCallId] = leg.talkSec;
+      const t = findAgentTalkOnParent(leg.parentCallId, agentName);
+      if (t > (agentTalkPerParent[leg.parentCallId] || 0)) {
+        agentTalkPerParent[leg.parentCallId] = t;
       }
     }
-
     let tttSec = 0;
     const talkTimes = [];
-    for (const parentId in agentTalkPerParent) {
-      const t = agentTalkPerParent[parentId];
-      if (t > 0) {
-        tttSec += t;
-        talkTimes.push(t);
-      }
+    for (const pid in agentTalkPerParent) {
+      const t = agentTalkPerParent[pid];
+      if (t > 0) { tttSec += t; talkTimes.push(t); }
     }
-
     const attSec = talkTimes.length
-      ? talkTimes.reduce((a,b) => a+b, 0) / talkTimes.length : 0;
+      ? talkTimes.reduce((a, b) => a + b, 0) / talkTimes.length : 0;
 
     const slotValues = DQE_TIME_SLOTS.map(slot => {
       const hits = windowLegs.filter(l =>
