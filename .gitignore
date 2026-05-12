@@ -1,0 +1,13 @@
+# Per-developer clasp config: scriptId varies per checkout. See
+# .clasp.example.json for the template, README.md for setup steps.
+.clasp.json
+
+# Node tooling (clasp install footprint, etc.)
+node_modules/
+
+# Editor / OS noise
+.DS_Store
+*.swp
+*.swo
+.idea/
+.vscode/
