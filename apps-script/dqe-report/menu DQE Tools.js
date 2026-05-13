@@ -1,11 +1,6 @@
 function onOpen() {
   SpreadsheetApp.getUi()
     .createMenu('DQE Tools')
-    .addSubMenu(SpreadsheetApp.getUi().createMenu('Set Dates')
-      .addItem('Last 30 Days', 'setLast30Days')
-      .addItem('Last 60 Days', 'setLast60Days')
-      .addItem('Last 90 Days', 'setLast90Days')
-      .addItem('All Time', 'setAllTime'))
     .addItem('Force Low Ans % Alert', 'sendManualAlert_Restricted')
     .addItem('Single Range Report', 'openSingleRangeTool')
     .addItem('Comparison Range Report', 'multiComparisonTool_showForm_Restricted')
