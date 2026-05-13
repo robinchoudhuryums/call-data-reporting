@@ -117,7 +117,44 @@
       th.addEventListener('click', function () { onSort(th.getAttribute('data-sort')); });
     });
 
+    initHelpModal();
+
     refresh();
+  }
+
+  // -- Help & FAQ modal ---------------------------------------------------
+  // Opens on "?" button in header. Closes on backdrop click, X button, or
+  // Escape key. Returns focus to the help button on close. Reuses the same
+  // modal infrastructure that upcoming report views will use.
+  function initHelpModal() {
+    const btn = $('help-btn');
+    const modal = $('help-modal');
+    if (!btn || !modal) return;
+
+    const closeBtn = modal.querySelector('.modal-close');
+    const backdrop = modal.querySelector('[data-close]');
+
+    function openModal() {
+      modal.style.display = '';
+      modal.setAttribute('aria-hidden', 'false');
+      document.body.style.overflow = 'hidden';
+      if (closeBtn) closeBtn.focus();
+      document.addEventListener('keydown', onKeyDown);
+    }
+    function closeModal() {
+      modal.style.display = 'none';
+      modal.setAttribute('aria-hidden', 'true');
+      document.body.style.overflow = '';
+      document.removeEventListener('keydown', onKeyDown);
+      btn.focus();
+    }
+    function onKeyDown(e) {
+      if (e.key === 'Escape') closeModal();
+    }
+
+    btn.addEventListener('click', openModal);
+    if (closeBtn) closeBtn.addEventListener('click', closeModal);
+    if (backdrop) backdrop.addEventListener('click', closeModal);
   }
 
   function getRequestedDept() {
