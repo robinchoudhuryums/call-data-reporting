@@ -34,19 +34,20 @@ call-data-reporting/
 ├── README.md                       ← this file
 ├── docs/                           ← architecture / known issues / conventions
 ├── apps-script/                    ← all Apps Script project sources
-│   ├── department-dashboard/       ← the web app this repo deploys (clasp pushes from here)
-│   └── cdr-report/                 ← reference copies from the CDR Report project
-│       └── buildDQEHistoricalData.gs
+│   ├── department-dashboard/       ← the web app this repo deploys (top-level clasp pushes from here)
+│   ├── cdr-report/                 ← the CDR Report project (data hub spreadsheet)
+│   │   └── (cd in, then `clasp push -f` to deploy that project)
+│   └── cdr-import/                 ← the CDR Import project (CSV ingester)
+│       └── (cd in, then `clasp push -f` to deploy that project)
 ├── .clasp.example.json             ← template; copy to .clasp.json on first checkout
 ├── .clasp.json                     ← per-developer, gitignored (scriptId varies per checkout)
 ├── .claspignore
 └── .gitignore
 ```
 
-This structure is mid-migration. The Department Dashboard's source has
-been moved into `apps-script/department-dashboard/`; other projects (CDR
-Import, the rest of CDR Report) aren't pulled in yet. See
-`docs/architecture.md` for the planned end state.
+Each subdirectory under `apps-script/` has its own gitignored
+`.clasp.json` so per-project deploys are independent. The legacy DQE
+Report spreadsheet is being retired and isn't pulled in.
 
 ## Deploying the Department Dashboard
 
@@ -85,16 +86,34 @@ clasp push -f
 - Deploy as Web app: **Execute as: Me**, **Who has access: Anyone within
   [your domain]**.
 
-## Applying fixes to sibling Apps Script projects
+## Working on sibling Apps Script projects
 
-Files under `apps-script/<project>/` are reference copies of code that
-lives in other Apps Script projects (CDR Report, etc.). To apply a fix:
+`apps-script/cdr-report/` and `apps-script/cdr-import/` are full clasp
+projects pulled from their live Apps Script counterparts (Phase R3
+complete). Each has its own gitignored `.clasp.json`. To deploy a fix
+to one of them:
 
-1. Open the target Apps Script project (`script.google.com` -> open the
-   relevant project).
-2. Replace the corresponding file's contents with the version from this
-   repo.
-3. Verify and run the project's own test function (e.g., `testDQEBuild`).
+```bash
+cd apps-script/cdr-report          # or cdr-import
+clasp pull                          # if you suspect the live project drifted
+# ... edit files ...
+clasp push -f
+```
 
-Eventually these will be pushable directly via per-subfolder `.clasp.json`
-files (Phase R3 in the planned reorg); for now they're paste-targets.
+The `cd` matters: clasp looks at the nearest `.clasp.json` walking up
+from the current directory. Running `clasp push` from the repo root
+pushes the dashboard project, not the sibling.
+
+**First-time setup for a sibling project** (e.g., after a fresh clone of
+this repo): each subfolder needs a `.clasp.json` with the project's
+scriptId. The file is gitignored on purpose. Either ask the maintainer
+for the scriptId, or look it up in the live project's Apps Script
+**Project Settings → IDs → Script ID** and write your own:
+
+```bash
+cd apps-script/cdr-report
+cat > .clasp.json <<'EOF'
+{ "scriptId": "<paste-scriptId-here>" }
+EOF
+clasp pull
+```

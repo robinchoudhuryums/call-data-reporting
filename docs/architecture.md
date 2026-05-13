@@ -70,13 +70,27 @@ External CDR system (telephony provider)
 
 ## Where each piece of code lives
 
-| Layer | Apps Script project | Files | This repo path |
+| Layer | Apps Script project | Files (representative) | This repo path |
 |---|---|---|---|
-| CSV ingest | CDR Import | `autoImport.gs`, `neonWrite.gs` | `apps-script/cdr-import/` (not yet pulled in) |
-| Per-agent aggregation | CDR Report | `buildDQEHistoricalData.gs`, `dqeDrilldown.gs`, `DQEDrilldownSidebar.html`, `neonWrite.gs`, `neonBackfill.gs` | `apps-script/cdr-report/` (only the build script so far) |
-| Manager dashboard | Department Dashboard (standalone) | `Code.gs`, `Auth.gs`, `Data.gs`, `Config.gs`, `Setup.gs`, `Diagnostics.gs`, `dashboard.html`, `styles.html`, `script.html`, `access_denied.html` | `apps-script/department-dashboard/` |
-| Postgres mirror | shared lib used by both CDR Import and CDR Report | `neonWrite.gs` (duplicated) | see [known-issues.md](known-issues.md) |
+| CSV ingest | CDR Import | `autoImport.js`, `importBulkCSVsFromDrive.js`, `transferDailyReportsData.js`, `AbandonedFilter.js`, `CDR Tools.js`, `DeleteOldSheets.js`, `neonWrite.js`, `appsscript.json` | `apps-script/cdr-import/` |
+| Per-agent aggregation + downstream tooling | CDR Report | `buildDQEHistoricalData.js`, `DQEdrilldown.js`, `DQEDrilldownSidebar.html`, `dashboardCDR.js`, `dataFilters.js`, `calcDCQR.js`, `runCalc.js`, `csrTransferCalc.js`, `transferDailyReportsData.js`, `dbHistorical.js`, `dbReporting.js`, `emailDailyReport.js`, `neonWrite.js`, `neonbackfill.js`, `benchmarkCalcSpeed.js`, `CDR Tools menu.js`, `appsscript.json` | `apps-script/cdr-report/` |
+| Manager dashboard | Department Dashboard (standalone) | `Code.gs`, `Auth.gs`, `Data.gs`, `Config.gs`, `Setup.gs`, `Diagnostics.gs`, `dashboard.html`, `styles.html`, `script.html`, `access_denied.html`, `appsscript.json` | `apps-script/department-dashboard/` |
+| Postgres mirror | shared lib used by both CDR Import and CDR Report | `neonWrite.js` (duplicated across both projects, currently identical) | see [known-issues.md](known-issues.md) |
 | Legacy dashboard | DQE Report (spreadsheet, being retired) | Sheet formulas only — no code | n/a |
+
+Each subdirectory under `apps-script/` has its own `.clasp.json` (gitignored,
+per-developer) so each project deploys independently:
+
+```bash
+cd apps-script/department-dashboard && clasp push -f     # the web app
+cd apps-script/cdr-report          && clasp push -f      # the data hub
+cd apps-script/cdr-import          && clasp push -f      # the CSV ingester
+```
+
+A first-time checkout needs to populate each `.clasp.json` with the
+corresponding scriptId (from the Apps Script project's Settings page).
+The top-level `.clasp.json` controls the dashboard's push from the repo
+root, as before.
 
 ## Key cross-project assumptions
 
