@@ -114,18 +114,36 @@ flipping.
 
 ---
 
-## `neonWrite.gs` duplicated across projects
+## `neonWrite.js` duplicated across projects (currently identical)
 
-**Status:** Accepted drift risk.
+**Status:** Accepted drift risk; verified byte-identical as of Phase R3 pull.
 
 Both **CDR Import** and **CDR Report** Apps Script projects need
-`neonWrite.gs` (to write to the Neon `dqe_history` and related tables).
+`neonWrite.js` (to write to the Neon `dqe_history` and related tables).
 Apps Script has no native cross-project sharing, so the file is
 duplicated. If you fix a bug in one copy, **fix it in the other too**.
 
-**Mitigation:** None right now. Eventually we may consolidate to a single
-project or extract a separate "Neon utilities" lib, but that's a Phase
-2/3 concern. For now, treat any change to either copy as a two-file edit.
+Currently both copies are identical:
+
+- `apps-script/cdr-report/neonWrite.js`
+- `apps-script/cdr-import/neonWrite.js`
+
+Quick check before changing either:
+
+```bash
+diff apps-script/cdr-report/neonWrite.js apps-script/cdr-import/neonWrite.js
+```
+
+If the diff is empty, you're starting from sync. If non-empty, **reconcile
+before adding your change**, otherwise you'll bake the drift in further.
+
+**Mitigation options for the future:**
+- Consolidate Neon writes into a single Apps Script Web App / Library and
+  have both projects call it. Apps Script Libraries are first-class.
+- Or use a sync script in this repo that diffs + copies the canonical
+  version into the other location.
+
+For now, treat any change to either copy as a two-file edit.
 
 ---
 
