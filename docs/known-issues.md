@@ -147,42 +147,6 @@ For now, treat any change to either copy as a two-file edit.
 
 ---
 
-## `transferDailyReportsData.js` has already drifted between projects
-
-**Status:** Real drift in production; cleanup needed.
-
-The file exists in both `apps-script/cdr-report/` and
-`apps-script/cdr-import/`, **and the two copies disagree**:
-
-- **CDR Report version** (newer/safer):
-  - Uses `SpreadsheetApp.getActiveSpreadsheet()`
-  - Calls `SpreadsheetApp.flush()` to force formulas to resolve before reading
-  - Shows a UI alert ("Formulas are still calculating") if `Raw Data`'s
-    date cell is still loading — prevents writing stale historical data
-  - Validates the date before proceeding
-- **CDR Import version** (older):
-  - Uses `SpreadsheetApp.openById('1VSkH...')` — a hardcoded spreadsheet ID
-  - No flush, no date-loading guard
-  - Errors silently instead of alerting the user
-  - Less defensive overall
-
-The CDR Report version is the canonical one; the CDR Import copy appears
-to be stale code from an earlier point.
-
-**Recommended cleanup:** decide whether CDR Import actually needs this
-function at all (does it run in the CDR Import context? or only in CDR
-Report?). If it doesn't need it, delete the CDR Import copy entirely. If
-it does, copy the CDR Report version over and remove the hardcoded
-spreadsheet ID assumption (or factor the ID into a Script Property).
-
-To find out which contexts use it: open each Apps Script project and
-search the project for `transferDailyReportsData` — wherever it's called
-is a context that depends on the file.
-
-Until cleaned up, treat changes to either copy with extra care.
-
----
-
 ## Source-data quirks (not code bugs)
 
 ### "Sales Voicemails" and similar pseudo-agents
