@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <style>
+    body {
+      font-family: Proxima Nova, sans-serif;
+      line-height: 1.6;
+      padding: 20px;
+      max-width: 600px;
+    }
+    h3 {
+      color: #223b5d;
+      margin-top: 20px;
+      margin-bottom: 10px;
+    }
+    ul {
+      margin: 0 0 15px 20px;
+    }
+    li {
+      margin-bottom: 8px;
+    }
+    .logo {
+      text-align: center;
+      margin-bottom: 20px;
+    }
+    .logo img {
+      max-width: 200px;
+    }
+    p.contact {
+      margin-top: 20px;
+      font-size: 14px;
+    }
+    .footer {
+      margin-top: 25px;
+      font-size: 12px;
+      text-align: center;
+      color: #555;
+    }
+  </style>
+</head>
+<body>
+  <div class="logo">
+    <img src="https://s3-media0.fl.yelpcdn.com/bphoto/kMtOTND0uHJ2xd2ThHITuQ/l.jpg" alt="Universal Logo">
+  </div>
+
+  <h3>DQE Guide</h3>
+  <ul>
+    <li><b>Agent Names:</b> Employees will only appear if they were rung on the selected date.
+    <li><b>Total Unique vs Total Rung:</b> "Unique" refers to a single caller attempt, while "Rung" refers to the number of times someone was notified of an incoming call. For example, if a caller is waiting on hold for 2 minutes and disconnects, that will register as 1 "unique", but several "rings". "Total Missed" & "% Answered" are based off "Total Rung", not "Total Unique".</li>
+    <li><b>TTT & ATT:</b> "Total Talk Time" & "Average Talk Time" (only counts talk time for inbound calls from a call queue).</li>
+    <li><b>Abandon Highlight:</b> The missed call timestamp table (times are in PST) will "highlight" timestamps that were part of an abandoned call with a red siren emoji.</li>
+    <li><b>X2 & Z2:</b> Set start/end dates for desired data range.</li>
+    <li><b>Employee Select:</b> Use dropdown to focus on a single employee (useful to share an individual's numbers without including other employees).</li>
+    <li><b>Quick Set Dates:</b> There are menu options under "DQE Tools" to quickly set start & end dates to last 30, 60, or 90 calendar days.</li>
+    <li><b>Compare Employee:</b> Tool to pick two periods for a specific employee and compare to see changes and evaluate progression over time.</li>
+    <li><b>Alerts:</b> Automatic alert emails are sent to department leaders if their team's Answer % dropped below specific thresholds on the previous workday.</li>
+  </ul>
+
+  <h3>FAQ</h3>
+  <ul>
+    <li><b>Why is my table missing information?</b> Check that your X2 (start) and Z2 (end) date range include possible dates for the desired employee(s).</li>
+    <li><b>Why didn't I get an alert email?</b> It only triggers if Answer % is below specified thresholds (and if B1 date matches the previous workday, i.e it is possible an alert was not sent if your department's sheet was not updated the next day).</li>
+    <li><b>Why does my agent not appear in the dropdown selector?</b> The dropdown only lists agents who had calls in the selected date range.</li>
+    <li><b>Why do I see 'N/A' for Answer %?</b> This means no calls were (officially) routed, so Answer % is not calculated.</li>
+    <li><b>Why are there more missed call timestamps for an employee than the official "Missed Calls" count?</b> That is because those rings were missed, but did not meet the criteria to officially count on record (usually because it was before or after official office hours).</li>
+    <li><b>Why is there a siren next to a timestamp, but the Q's Abandoned Call count is 0?</b> This can be for a couple of reasons, most commonly that it was technically abandoned but it occurred outside of office hours, or because the abandoned calls were manually removed from the record as exceptions after review.</li>
+    <li><b>How come the Q shows 1+ Abandoned Calls, but no timestamps are highlighted with a siren?</b> This will happen if a call <i>was</i> abandoned, but did not actually ring anyone because no agents were available in that timeframe.</li>
+    <li><b>What if an agent is in multiple Qs?</b> Currently agents' data is not separated by Q, so if they appear in multiple, the day's data will be the same on both pages (this will eventually be updated).</li>
+    <li><b>The numbers for an agent don't seem to add up?</b> (Ex: 1+ "Total Missed" but 100% "% Answered") Currently if an agent misses a call to their direct extension, it will show under "Total Missed", but does not actually count against them in "% Answered" This discrepancy is intentional, but please notify Robin if something else appears incorrect.</li>
+    <li><b>Can I adjust thresholds?</b> Contact Robin to adjust any thresholds for a department.</li>
+  </ul>
+
+  <p class="contact">
+    📬 For help, contact <b>Robin Choudhury</b><br>
+    <a href="mailto:robin.choudhury@universalmedsupply.com">robin.choudhury@universalmedsupply.com</a>
+  </p>
+
+  <div style="margin-top: 30px;">
+  <p style="font-size: 12px; color: #666; text-align: right;">
+    Last updated on: July 3, 2025
+  </p>
+</div>
+
+
+  <div class="footer">
+    Universal Med Supply - Department Queue Efficiency Dashboard
+  </div>
+</body>
+</html>

@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+  
+  <style>
+    body { font-family: 'Segoe UI', sans-serif; padding: 25px; background-color: #f4f6f9; color: #333; }
+    .form-container { background: white; padding: 30px; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.05); margin-bottom: 25px; }
+    .section-title { font-weight: bold; margin-bottom: 15px; color: #007bff; border-bottom: 2px solid #eee; padding-bottom: 5px; font-size: 16px;}
+    .date-split-container { display: flex; gap: 30px; align-items: flex-start; margin-bottom: 20px;}
+    .date-col { flex: 1; display: flex; flex-direction: column; gap: 10px; }
+    .date-divider { width: 1px; background: #ddd; align-self: stretch; }
+    .date-header { font-weight: bold; color: #444; font-size: 14px; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.5px; }
+    label { display: block; font-weight: 600; font-size: 12px; color: #666; margin-bottom: 2px; }
+    input[type="date"], select { width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+    .agent-list-box { border: 1px solid #ddd; border-radius: 4px; height: 180px; overflow-y: auto; padding: 15px; background: #fff; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+    .agent-item { display: flex; align-items: center; font-size: 13px; background: #f9f9f9; padding: 5px; border-radius: 4px;}
+    .agent-item:hover { background: #e9ecef; }
+    .agent-item input { margin-right: 8px; transform: scale(1.1); }
+    button { background: #007bff; color: white; border: none; padding: 10px 16px; border-radius: 4px; font-weight: bold; cursor: pointer; width: 100%; font-size: 14px; transition: background 0.2s; white-space: nowrap; }
+    button:hover { background: #0056b3; }
+    button:disabled { background: #ccc; cursor: not-allowed; }
+    .btn-group { display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; justify-content: flex-start; }
+    .btn-group button { width: auto; font-size: 13px; } 
+    #resultsArea { display: none; }
+    .agent-card { background: white; border: 1px solid #ccc; border-radius: 8px; margin-bottom: 40px; overflow: hidden; box-shadow: 0 6px 12px rgba(0,0,0,0.08); }
+    
+    /* UPDATED HEADER: Flexbox to position copy button */
+    .agent-header { background: #f1f3f4; padding: 15px 25px; font-weight: bold; font-size: 20px; border-bottom: 1px solid #ccc; color: #222; display: flex; justify-content: space-between; align-items: center; }
+    
+    /* COPY BUTTON STYLE */
+    .copy-data-btn { font-size: 12px; color: #007bff; cursor: pointer; text-decoration: none; font-weight: normal; margin-left: 15px; }
+    .copy-data-btn:hover { text-decoration: underline; }
+
+    .table-responsive { width: 100%; overflow-x: auto; padding-bottom: 10px;}
+    table { width: 100%; border-collapse: collapse; font-size: 14px; min-width: 800px; margin-bottom: 15px;}
+    th, td { padding: 14px 18px; text-align: center; border-bottom: 1px solid #eee; white-space: nowrap; vertical-align: middle; }
+    th { background: #f8f9fa; color: #555; font-weight: 700; border-bottom: 2px solid #ddd; }
+    td:first-child { text-align: left; font-weight: bold; background: #fafafa; border-right: 2px solid #eee;}
+    
+    .subtext { display: block; font-size: 11px; color: #888; font-weight: normal; margin-top: 3px; }
+    .total-sub { font-size: 11px; color: #888; font-weight: normal; display: block; margin-top: 4px; }
+    
+    .diff-neutral { color: #888; font-size: 11px; margin-left: 5px; }
+    .diff-pos { color: #28a745; font-weight: bold; font-size: 11px; margin-left: 5px; }
+    .diff-neg { color: #dc3545; font-weight: bold; font-size: 11px; margin-left: 5px; }
+    .pos { color: #28a745; font-weight: bold;} .neg { color: #dc3545; font-weight: bold;} .neutral { color: #888; } 
+    
+    .chart-box { padding: 20px 30px; border-top: 1px solid #444; background: #343a40; color: #fff; }
+    .chart-legend { margin-bottom: 15px; text-align: center; }
+    .legend-title { font-size: 13px; font-weight: bold; color: #fff; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.5px;}
+    .legend-keys { font-size: 11px; color: #eee; display: flex; justify-content: center; gap: 15px; align-items: center; flex-wrap: wrap;}
+    .key-item { display: flex; align-items: center; gap: 4px; }
+    .color-box { width: 10px; height: 10px; display: inline-block; border-radius: 2px; }
+    .bg-green { background: #28a745; } .bg-red { background: #dc3545; } .bg-blue { background: #17a2b8; } .bg-grey { background: #6c757d; }
+    
+    .chart-row { display: flex; align-items: center; margin-bottom: 8px; font-size: 12px; height: 28px; }
+    .chart-label { width: 120px; text-align: center; font-weight: 600; color: #fff; flex-shrink: 0; }
+    .bar-side { flex: 1; display: flex; align-items: center; position: relative; }
+    .bar-left { justify-content: flex-end; border-right: 1px solid #666; padding-right: 5px; }
+    .bar-right { justify-content: flex-start; padding-left: 5px; }
+    .comp-container { flex: 2; display: flex; flex-direction: column; gap: 2px; border-left: 1px solid #666; padding-left: 10px;}
+    .comp-bar-row { display: flex; align-items: center; height: 12px; }
+    .comp-bar-label { font-size: 10px; color: #fff; width: 30px; text-align: right; margin-right: 5px; }
+    .comp-track { flex: 1; display: flex; align-items: center; }
+    .bar-fill { height: 100%; border-radius: 3px; font-size: 10px; display: flex; align-items: center; padding: 0 5px; white-space: nowrap; overflow: visible; color: white !important; text-shadow: 0 0 3px rgba(0,0,0,0.9); font-weight: bold; }
+    .bar-green { background: #28a745; } .bar-red { background: #dc3545; } .bar-blue { background: #17a2b8; } .bar-grey { background: #6c757d; }
+    
+    .loading { text-align: center; color: #666; font-style: italic; margin-top: 10px; display: none; }
+    #agentLoader { text-align: center; padding: 20px; color: #666; }
+    #statusText { font-size: 11px; color: #999; text-align: center; margin-top: 5px; }
+  </style>
+</head>
+<body>
+
+  <div class="form-container" id="inputForm">
+    <div class="section-title">1. Select Date Ranges</div>
+    <div style="margin-bottom:15px;">
+      <label>Quick Select</label>
+      <select id="datePreset" onchange="applyPreset()">
+        <option value="custom">Custom</option>
+        <option value="lastMonthVsThis">Last Month vs This Month</option>
+        <option value="lastYearVsThis">Last Year vs This Year</option>
+        <option value="last30vsPrev30">Last 30 Days vs Previous 30 Days</option>
+      </select>
+    </div>
+    <div class="date-split-container">
+       <div class="date-col">
+         <div class="date-header">Period 1 (Baseline)</div>
+         <label>Start <input type="date" id="start1" onchange="refreshAgents(); resetPreset()"></label>
+         <label>End <input type="date" id="end1" onchange="refreshAgents(); resetPreset()"></label>
+       </div>
+       <div class="date-divider"></div>
+       <div class="date-col">
+         <div class="date-header">Period 2 (Comparison)</div>
+         <label>Start <input type="date" id="start2" onchange="refreshAgents(); resetPreset()"></label>
+         <label>End <input type="date" id="end2" onchange="refreshAgents(); resetPreset()"></label>
+       </div>
+    </div>
+    <div class="section-title" style="margin-top:20px;">2. Select Agents to Compare</div>
+    <div id="agentLoader">Initializing...</div>
+    <div id="statusText" style="font-style:italic;"></div>
+    <div class="agent-list-box" id="agentContainer" style="display:none;"></div>
+    <div style="text-align:right; margin-bottom:20px; font-size:12px;">
+      <a href="#" onclick="toggleAll(true)">Select All</a> | <a href="#" onclick="toggleAll(false)">Select None</a>
+    </div>
+    <button onclick="runComparison()" id="runBtn" disabled>Generate Comparison</button>
+    <div class="loading" id="loader">Processing data... this may take a moment.</div>
+  </div>
+
+  <div id="resultsArea">
+    <div class="btn-group" id="actionButtons">
+      <button onclick="resetForm()" style="background: #6c757d;">&laquo; Back</button>
+      <button onclick="copyReportImage()" style="background: #17a2b8;" id="copyBtn">&#128247; Copy Image</button>
+      <button onclick="sendVisualEmail()" style="background: #28a745;" id="emailImgBtn">&#9993; Email (Image)</button>
+    </div>
+    <div id="reportContainer"></div>
+  </div>
+
+  <script>
+    window.lastReportData = null;
+
+    document.addEventListener('DOMContentLoaded', function() {
+      document.getElementById('statusText').innerText = "Loading defaults...";
+      try {
+        const today = new Date().toISOString().split('T')[0];
+        document.getElementById('datePreset').value = "custom";
+        document.getElementById('start1').value = today;
+        document.getElementById('end1').value = today;
+        document.getElementById('start2').value = today;
+        document.getElementById('end2').value = today;
+      } catch(e) {}
+      document.getElementById('statusText').innerText = "Fetching agents...";
+      google.script.run.withSuccessHandler(populateAgents).withFailureHandler(agentLoadError).getCompToolData();
+    });
+
+    function populateAgents(data) {
+      document.getElementById('agentLoader').style.display = 'none';
+      document.getElementById('statusText').innerText = "";
+      const container = document.getElementById('agentContainer');
+      container.style.display = 'grid';
+      container.innerHTML = ""; 
+      if (!data || !data.agents || data.agents.length === 0) { 
+        container.innerHTML = "<div style='grid-column:1/-1; color:red; padding:10px;'>No agents found. Check dates.</div>"; 
+        return; 
+      }
+      data.agents.forEach(function(agent) {
+        const div = document.createElement('div');
+        div.className = 'agent-item';
+        div.innerHTML = '<label><input type="checkbox" name="agentCheck" value="' + agent + '"> ' + agent + '</label>';
+        container.appendChild(div);
+      });
+      document.getElementById('runBtn').disabled = false;
+    }
+
+    function refreshAgents() {
+        const s1 = document.getElementById('start1').value;
+        const e1 = document.getElementById('end1').value;
+        const s2 = document.getElementById('start2').value;
+        const e2 = document.getElementById('end2').value;
+        if (s1 && e1 && s2 && e2) {
+            document.getElementById('statusText').innerText = "Refreshing agent list...";
+            document.getElementById('runBtn').disabled = true;
+            const d1 = new Date(s1); const d2 = new Date(s2);
+            const minStart = d1 < d2 ? s1 : s2;
+            const de1 = new Date(e1); const de2 = new Date(e2);
+            const maxEnd = de1 > de2 ? e1 : e2;
+            google.script.run.withSuccessHandler(populateAgents).withFailureHandler(agentLoadError).getCompToolData(minStart, maxEnd);
+        }
+    }
+
+    function applyPreset() {
+      const preset = document.getElementById('datePreset').value;
+      const today = new Date();
+      let s1, e1, s2, e2;
+      const fmt = function(d) { return d.toISOString().split('T')[0]; };
+      if(preset === 'custom') return;
+      if(preset === 'lastMonthVsThis') { s1 = new Date(today.getFullYear(), today.getMonth()-1, 1); e1 = new Date(today.getFullYear(), today.getMonth(), 0); s2 = new Date(today.getFullYear(), today.getMonth(), 1); e2 = today; }
+      else if(preset === 'lastYearVsThis') { s1 = new Date(today.getFullYear()-1, 0, 1); e1 = new Date(today.getFullYear()-1, 11, 31); s2 = new Date(today.getFullYear(), 0, 1); e2 = today; }
+      else if(preset === 'last30vsPrev30') { e2 = new Date(today); s2 = new Date(today); s2.setDate(today.getDate()-30); e1 = new Date(s2); e1.setDate(s2.getDate()-1); s1 = new Date(e1); s1.setDate(e1.getDate()-30); }
+      if(s1 && e1 && s2 && e2) { document.getElementById('start1').value = fmt(s1); document.getElementById('end1').value = fmt(e1); document.getElementById('start2').value = fmt(s2); document.getElementById('end2').value = fmt(e2); refreshAgents(); }
+    }
+
+    function resetPreset() { document.getElementById('datePreset').value = "custom"; }
+    function agentLoadError(e) { document.getElementById('agentLoader').innerHTML = '<span style="color:red; font-weight:bold;">Error: ' + e.message + '</span>'; document.getElementById('statusText').innerText = "Error"; }
+    function toggleAll(check) { const boxes = document.getElementsByName('agentCheck'); for(let b of boxes) b.checked = check; }
+    function resetForm() { document.getElementById('inputForm').style.display = 'block'; document.getElementById('resultsArea').style.display = 'none'; }
+
+    function runComparison() {
+      const s1 = document.getElementById('start1').value;
+      const e1 = document.getElementById('end1').value;
+      const s2 = document.getElementById('start2').value;
+      const e2 = document.getElementById('end2').value;
+      const boxes = document.getElementsByName('agentCheck');
+      const selected = [];
+      for(let b of boxes) if(b.checked) selected.push(b.value);
+      if(!s1 || !e1 || !s2 || !e2) { alert("Please select all dates."); return; }
+      if(selected.length === 0) { alert("Please select at least one agent."); return; }
+      document.getElementById('runBtn').disabled = true;
+      document.getElementById('loader').style.display = 'block';
+      google.script.run.withSuccessHandler(showResults).withFailureHandler(showError).processComparison(s1, e1, s2, e2, selected);
+    }
+
+    // === NEW: Copy Data Function (One per card) ===
+    function copyTableData(btn) {
+        // Find the closest table within this specific agent card
+        const card = btn.closest('.agent-card');
+        const table = card.querySelector('table');
+        if(!table) return;
+        
+        let tsv = "";
+        for(let row of table.rows) {
+            // Helper to get pure text, removing diff/subtext noise for clean copy
+            let cells = Array.from(row.cells).map(cell => {
+                // Clone to not mess up UI
+                let clone = cell.cloneNode(true);
+                // InnerText will include "Day / (Total)" which is fine.
+                return clone.innerText.replace(/\n/g, " ").trim(); 
+            });
+            tsv += cells.join("\t") + "\n";
+        }
+        navigator.clipboard.writeText(tsv).then(() => alert("Data for this agent copied to clipboard!"));
+    }
+
+    function showResults(data) {
+      window.lastReportData = data; 
+      const container = document.getElementById('reportContainer');
+      container.innerHTML = ""; 
+      if (data.length === 0) { container.innerHTML = "<p>No data found.</p>"; }
+
+      data.forEach(function(agent) {
+        const chartHtml = generateCharts(agent);
+        
+        const renderCompoundCell = function(perDay, total) {
+            return `<div>${perDay}<span class="total-sub">(Total: ${total})</span></div>`;
+        };
+
+        const renderCompoundDiff = function(dailyDiffStr, totalDiffStr, type) {
+            const getCls = (s, t) => {
+                if(!s || s==='N/A' || s==='-') return 'neutral';
+                const n = parseFloat(s);
+                if(n === 0) return 'neutral';
+                if(t === 'inverted') return n < 0 ? 'pos' : 'neg'; 
+                return n > 0 ? 'pos' : 'neg'; 
+            };
+            return `<div class="${getCls(dailyDiffStr, type)}">${dailyDiffStr || '-'}<span style="font-weight:normal; color:#888; display:block; font-size:10px;">(${totalDiffStr || '-'})</span></div>`;
+        };
+
+        const getSimpleDiff = function(p1, p2, isTime, inverse) {
+           let diff = p2 - p1;
+           if(diff === 0) return '';
+           let color = 'diff-neutral';
+           if(inverse) { color = diff < 0 ? 'diff-pos' : 'diff-neg'; } 
+           else { color = diff > 0 ? 'diff-pos' : 'diff-neg'; }
+           
+           let valStr = "";
+           if(isTime) {
+              let absSec = Math.abs(diff);
+              let h = Math.floor(absSec / 3600); let m = Math.floor((absSec % 3600) / 60); let s = Math.floor(absSec % 60);
+              if (h > 0) { valStr = (diff>0?"+":"-") + h + ":" + (m < 10 ? "0" : "") + m + ":" + (s < 10 ? "0" : "") + s; } 
+              else { valStr = (diff>0?"+":"-") + m + ":" + (s < 10 ? "0" : "") + s; }
+           } else { 
+              valStr = (diff>0?"+":"-") + Math.abs(diff).toFixed(1); 
+           }
+           return `<span class="${color}">(${valStr})</span>`;
+        };
+
+        const html = '<div class="agent-card">' +
+            // HEADER WITH COPY BUTTON
+            '<div class="agent-header">' + 
+                agent.name + 
+                '<span class="copy-data-btn" onclick="copyTableData(this)">&#128203; Copy Data</span>' +
+            '</div>' +
+            '<div class="table-responsive">' +
+              '<table>' +
+                '<thead><tr><th>Period</th><th>Rung<div class="subtext">Day / (Total)</div></th><th>Missed<div class="subtext">Day / (Total)</div></th><th>Answered<div class="subtext">Day / (Total)</div></th><th>% Answered</th><th>TTT</th><th>ATT</th></tr></thead>' +
+                '<tbody>' +
+                  '<tr><td>Period 1<div class="subtext">(' + agent.dates.p1 + ')</div></td>' +
+                      '<td>' + renderCompoundCell(agent.p1.formatted.rungPerDay, agent.p1.formatted.rung) + '</td>' +
+                      '<td>' + renderCompoundCell(agent.p1.formatted.missedPerDay, agent.p1.formatted.missed) + '</td>' +
+                      '<td>' + renderCompoundCell(agent.p1.formatted.answeredPerDay, agent.p1.formatted.answered) + '</td>' +
+                      '<td>' + agent.p1.formatted.pctAnswered + '</td>' +
+                      '<td>' + agent.p1.formatted.ttt + '</td>' +
+                      '<td>' + agent.p1.formatted.att + '</td>' +
+                  '</tr>' +
+                  '<tr><td>Period 2<div class="subtext">(' + agent.dates.p2 + ')</div></td>' +
+                      '<td>' + renderCompoundCell(agent.p2.formatted.rungPerDay, agent.p2.formatted.rung) + getSimpleDiff(agent.p1.raw.rungPerDay, agent.p2.raw.rungPerDay, false) + '</td>' +
+                      '<td>' + renderCompoundCell(agent.p2.formatted.missedPerDay, agent.p2.formatted.missed) + getSimpleDiff(agent.p1.raw.missedPerDay, agent.p2.raw.missedPerDay, false, true) + '</td>' +
+                      '<td>' + renderCompoundCell(agent.p2.formatted.answeredPerDay, agent.p2.formatted.answered) + getSimpleDiff(agent.p1.raw.answeredPerDay, agent.p2.raw.answeredPerDay, false) + '</td>' +
+                      '<td>' + agent.p2.formatted.pctAnswered + '</td>' + 
+                      '<td>' + agent.p2.formatted.ttt + getSimpleDiff(agent.p1.raw.tttSeconds, agent.p2.raw.tttSeconds, true, true) + '</td>' +
+                      '<td>' + agent.p2.formatted.att + getSimpleDiff(agent.p1.raw.attSeconds, agent.p2.raw.attSeconds, true, true) + '</td>' +
+                  '</tr>' +
+                  '<tr class="delta-row"><td>% Change<div class="subtext">Daily / (Total)</div></td>' + 
+                      '<td>' + renderCompoundDiff(agent.delta.rung.daily, agent.delta.rung.total, 'standard') + '</td>' +
+                      '<td>' + renderCompoundDiff(agent.delta.missed.daily, agent.delta.missed.total, 'inverted') + '</td>' +
+                      '<td>' + renderCompoundDiff(agent.delta.answered.daily, agent.delta.answered.total, 'standard') + '</td>' +
+                      '<td class="' + getColor(agent.delta.pctAnswered, 'standard') + '">' + agent.delta.pctAnswered + '</td>' +
+                      '<td class="' + getColor(agent.delta.ttt, 'neutral') + '">' + agent.delta.ttt + '</td>' +
+                      '<td class="' + getColor(agent.delta.att, 'inverted') + '">' + agent.delta.att + '</td>' +
+                  '</tr>' +
+                '</tbody>' +
+              '</table>' +
+            '</div>' +
+            chartHtml +
+          '</div>';
+        container.innerHTML += html;
+      });
+
+      document.getElementById('inputForm').style.display = 'none';
+      document.getElementById('resultsArea').style.display = 'block';
+      document.getElementById('runBtn').disabled = false;
+      document.getElementById('loader').style.display = 'none';
+    }
+
+    function generateCharts(agent) {
+      const renderComparisonRow = function(p1, p2, label, colorClass) {
+        let n1 = parseFloat(p1) || 0; let n2 = parseFloat(p2) || 0; let max = Math.max(n1, n2) || 1;
+        let w1 = Math.round((n1 / max) * 70); let w2 = Math.round((n2 / max) * 70);
+        return '<div class="chart-row" style="height:auto; align-items:flex-start; margin-bottom:12px;"><div class="chart-label" style="margin-top:4px;">' + label + '</div><div class="comp-container"><div class="comp-bar-row"><div class="comp-bar-label">P1</div><div class="comp-track"><div class="bar-fill bar-grey" style="width:' + w1 + '%">' + n1 + '</div></div></div><div class="comp-bar-row"><div class="comp-bar-label">P2</div><div class="comp-track"><div class="bar-fill ' + colorClass + '" style="width:' + w2 + '%">' + n2 + '</div></div></div></div></div>';
+      };
+      const renderDivergingRow = function(val, label, type) {
+        if (!val || val === 'N/A' || val === '-') return ''; 
+        let num = parseFloat(val); if (isNaN(num) || num === 0) return ''; 
+        let displayVal = val; if (num > 0 && !val.includes('+')) displayVal = "+" + val;
+        let width = Math.min(Math.abs(num), 90); let colorClass = ''; let isLeft = false;
+        if (type === 'neutral') { colorClass = 'bar-blue'; isLeft = (num < 0); } 
+        else if (type === 'standard') { colorClass = (num > 0) ? 'bar-green' : 'bar-red'; isLeft = (num < 0); } 
+        else if (type === 'inverted') { isLeft = (num > 0); colorClass = (num > 0) ? 'bar-red' : 'bar-green'; }
+        const barHtml = '<div class="bar-fill ' + colorClass + '" style="width: ' + width + '%">' + displayVal + '</div>';
+        return '<div class="chart-row"><div class="bar-side bar-left">' + (isLeft ? barHtml : '') + '</div><div class="chart-label">' + label + '</div><div class="bar-side bar-right">' + (!isLeft ? barHtml : '') + '</div></div>';
+      };
+      return '<div class="chart-box"><div class="chart-legend"><div class="legend-title">Performance Impact (Per Day Avg)</div><div class="legend-keys"><span class="key-item"><span class="color-box bg-grey"></span> P1</span><span class="key-item"><span class="color-box bg-blue"></span> Neutral</span><span class="key-item"><span class="color-box bg-red"></span> Negative Outcome</span><span class="key-item"><span class="color-box bg-green"></span> Positive Outcome</span></div></div>' + 
+      renderComparisonRow(agent.p1.formatted.rungPerDay, agent.p2.formatted.rungPerDay, 'Rung / Day', 'bar-blue') + 
+      renderComparisonRow(agent.p1.formatted.missedPerDay, agent.p2.formatted.missedPerDay, 'Missed / Day', 'bar-red') + 
+      renderComparisonRow(agent.p1.formatted.answeredPerDay, agent.p2.formatted.answeredPerDay, 'Answered / Day', 'bar-green') + 
+      '<hr style="border:0; border-top:1px solid #666; margin:10px 0;">' + 
+      renderDivergingRow(agent.delta.pctAnswered, '% Answered', 'standard') + 
+      renderDivergingRow(agent.delta.answered.daily, 'Ans / Day', 'standard') + 
+      renderDivergingRow(agent.delta.att, 'ATT', 'inverted') + '</div>';
+    }
+
+    function getColor(val, type) { if (!val || val === '-' || val === 'N/A') return 'neutral'; let num = parseFloat(val); if (isNaN(num) || num === 0) return 'neutral'; if (type === 'neutral') return 'special'; if (type === 'standard') return num > 0 ? 'pos' : 'neg'; if (type === 'inverted') return num < 0 ? 'pos' : 'neg'; return 'neutral'; }
+    function showError(e) { alert("Error: " + e.message); document.getElementById('runBtn').disabled = false; document.getElementById('loader').style.display = 'none'; }
+
+    function getCaptureOptions() {
+      return {
+        scale: 2, 
+        useCORS: true, 
+        backgroundColor: null, 
+        onclone: function(clonedDoc) {
+          const el = clonedDoc.getElementById('resultsArea');
+          const btn = clonedDoc.getElementById('actionButtons');
+          if(btn) btn.style.display = 'none';
+          
+          // HIDE COPY BUTTONS IN EXPORT
+          const copyBtns = clonedDoc.querySelectorAll('.copy-data-btn');
+          copyBtns.forEach(b => b.style.display = 'none');
+          
+          el.style.backgroundColor = "#f4f6f9"; 
+          el.style.backgroundImage = "url('https://cdn.jsdelivr.net/gh/robinchoudhuryums/marketing-images@main/Patient%20Portal%20Background_portrait.png')"; 
+          el.style.backgroundSize = "cover"; 
+          el.style.backgroundPosition = "center"; 
+          el.style.padding = "40px"; 
+          el.style.boxSizing = "border-box"; 
+          el.style.width = "1200px"; 
+          el.style.height = "auto"; 
+        }
+      };
+    }
+    
+    function copyReportImage() { const btn = document.getElementById('copyBtn'); const originalText = btn.innerHTML; btn.innerText = "Capturing..."; html2canvas(document.getElementById('resultsArea'), getCaptureOptions()).then(function(canvas) { canvas.toBlob(function(blob) { navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]); alert('Copied!'); btn.innerHTML = originalText; }); }); }
+    function sendVisualEmail() { const btn = document.getElementById('emailImgBtn'); const originalText = btn.innerHTML; btn.innerText = "Sending..."; html2canvas(document.getElementById('resultsArea'), getCaptureOptions()).then(function(canvas) { google.script.run.withSuccessHandler(function() { alert("Sent!"); btn.innerHTML = originalText; }).sendVisualComparisonEmail(canvas.toDataURL('image/png')); }); }
+  </script>
+</body>
+</html>

@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.0.0"></script>
+  
+  <style>
+    body { font-family: 'Segoe UI', sans-serif; padding: 25px; background-color: #f4f6f9; color: #333; }
+    .form-container { background: white; padding: 25px; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.05); margin-bottom: 25px; }
+    .section-title { font-weight: bold; margin-bottom: 15px; color: #007bff; border-bottom: 2px solid #eee; padding-bottom: 5px; font-size: 16px;}
+    .row { display: flex; gap: 20px; margin-bottom: 20px; }
+    .col { flex: 1; }
+    label { display: block; font-weight: 600; font-size: 12px; color: #666; margin-bottom: 2px; }
+    input[type="date"], input[type="text"], select { width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; font-size: 13px; }
+    button { background: #007bff; color: white; border: none; padding: 12px 15px; border-radius: 4px; font-weight: bold; cursor: pointer; width: 100%; font-size: 14px; transition: background 0.2s; white-space: nowrap; }
+    button:hover { background: #0056b3; }
+    button:disabled { background: #ccc; cursor: not-allowed; }
+    .btn-group { display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; justify-content: flex-start; }
+    .btn-group button { width: auto; font-size: 13px; padding: 8px 16px;} 
+    #resultsArea { display: none; }
+    .main-report-header { display: flex; align-items: baseline; border-bottom: 2px solid #007bff; padding-bottom: 10px; margin-bottom: 20px; }
+    .main-report-title { font-size: 22px; font-weight: bold; color: #333; }
+    .main-report-date { font-size: 16px; color: #666; margin-left: 12px; font-weight: normal; }
+    
+    .report-flex { display: flex; gap: 20px; align-items: flex-start; }
+    
+    /* LIVE VIEW: 1:2 Ratio (Chart:Table) */
+    .chart-panel { 
+        flex: 1; 
+        background: white; border: 1px solid #ccc; border-radius: 8px; padding: 10px; 
+        min-width: 350px; 
+        height: 500px; 
+        display: flex; flex-direction: column; justify-content: flex-start;
+    }
+    
+    .table-panel { flex: 2; background: white; border: 1px solid #ccc; border-radius: 8px; overflow: hidden; }
+    
+    .table-wrapper { width: 100%; overflow-x: auto; max-height: 500px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; table-layout: auto; }
+    th { background: #f8f9fa; color: #555; font-weight: 700; padding: 10px; border-bottom: 2px solid #ddd; border-right: 1px solid #ccc; text-align: left; position: sticky; top: 0; white-space: nowrap; z-index: 10; }
+    td { padding: 8px 10px; border-bottom: 1px solid #eee; border-right: 1px solid #eee; vertical-align: top; white-space: nowrap; }
+    tr:nth-child(even) { background-color: #fcfcfc; }
+    .date-separator td { border-top: 2px solid #007bff !important; background-color: #eef6ff !important; }
+    
+    .loading { text-align: center; color: #666; font-style: italic; margin-top: 10px; display: none; }
+    #statusText { font-size: 11px; color: #999; text-align: center; margin-top: 5px; }
+    
+    /* Toggle Box at Bottom */
+    .toggle-box {
+        margin-top: auto;
+        padding: 10px;
+        background: #f8f9fa;
+        border-top: 1px solid #eee;
+        text-align: center;
+        border-radius: 0 0 8px 8px;
+    }
+    .toggle-label { cursor: pointer; font-size: 12px; color: #555; font-weight: 600; display: inline-flex; align-items: center; }
+    .toggle-label input { width: auto; margin-right: 6px; }
+  </style>
+</head>
+<body>
+  <div class="form-container" id="inputForm">
+    <div class="section-title">Report Configuration</div>
+    <div class="row"><div class="col"><label>Quick Select</label><select id="datePreset" onchange="applyPreset()"><option value="custom">Custom Range</option><option value="lastMonth">Last Month</option><option value="lastYear">Last Year</option><option value="thisMonth">This Month</option><option value="last30">Last 30 Days</option></select></div></div>
+    <div class="row"><div class="col"><label>Start Date</label><input type="date" id="start" onchange="resetPreset()"></div><div class="col"><label>End Date</label><input type="date" id="end" onchange="resetPreset()"></div></div>
+    <div class="row"><div class="col"><label>Target Extensions (Read-Only)</label><input type="text" id="extDisplay" disabled style="background:#f0f0f0; color:#666;"></div></div>
+    <button onclick="runReport()" id="runBtn" disabled>Generate Report</button>
+    <div class="loading" id="loader">Processing data...</div>
+    <div id="statusText">Loading...</div>
+  </div>
+  <div id="resultsArea">
+    <div class="main-report-header">
+      <span class="main-report-title" id="deptTitle">Missed Call Report</span>
+      <span id="dateLabel" class="main-report-date"></span>
+    </div>
+    <div class="btn-group" id="actionButtons">
+      <button onclick="resetForm()" style="background: #6c757d;">&laquo; Back</button>
+      <button onclick="copyReportImage()" style="background: #17a2b8;" id="copyBtn">&#128247; Copy Image</button>
+      <button onclick="sendVisualEmail()" style="background: #28a745;" id="emailImgBtn">&#9993; Email (Image)</button>
+    </div>
+    <div class="report-flex" id="visualContainer">
+      <div class="chart-panel" id="chartPanel">
+        <div style="text-align:center; font-weight:bold; color:#666; margin-bottom:5px;" id="chartTitle">Time of Day Distribution (CST)</div>
+        
+        <div style="position: relative; flex: 1; width: 100%; min-height: 0;">
+            <canvas id="missedChart"></canvas>
+        </div>
+        <div class="toggle-box" id="toggleContainer">
+            <label class="toggle-label">
+                <input type="checkbox" id="showLabels" checked onchange="updateChartLabels()"> Show Data Labels
+            </label>
+        </div>
+      </div>
+      <div class="table-panel">
+        <div class="table-wrapper">
+          <table id="dataTable"></table>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script>
+    window.lastData = null;
+    let chartInstance = null;
+    Chart.register(ChartDataLabels);
+    
+    window.onload = function() {
+      document.getElementById('statusText').innerText = "Fetching defaults...";
+      google.script.run.withSuccessHandler(populateDefaults).withFailureHandler(handleError).getMissedToolDefaults();
+    };
+    
+    function populateDefaults(data) {
+      if(data.defaultStart) document.getElementById('start').value = data.defaultStart;
+      if(data.defaultEnd) document.getElementById('end').value = data.defaultEnd;
+      if(data.extensions) document.getElementById('extDisplay').value = data.extensions;
+      document.getElementById('runBtn').disabled = false;
+      document.getElementById('statusText').innerText = "";
+    }
+    
+    function applyPreset() {
+      const preset = document.getElementById('datePreset').value;
+      const today = new Date();
+      let start, end;
+      if (preset === 'custom') return;
+      if (preset === 'lastMonth') { start = new Date(today.getFullYear(), today.getMonth() - 1, 1); end = new Date(today.getFullYear(), today.getMonth(), 0); }
+      else if (preset === 'lastYear') { start = new Date(today.getFullYear() - 1, 0, 1); end = new Date(today.getFullYear() - 1, 11, 31); }
+      else if (preset === 'thisMonth') { start = new Date(today.getFullYear(), today.getMonth(), 1); end = today; }
+      else if (preset === 'last30') { end = new Date(today); start = new Date(today); start.setDate(today.getDate() - 30); }
+      if(start && end) { 
+        document.getElementById('start').valueAsDate = start; 
+        document.getElementById('end').valueAsDate = end; 
+      }
+    }
+    
+    function resetPreset() { document.getElementById('datePreset').value = "custom"; }
+    
+    function runReport() {
+      const s = document.getElementById('start').value;
+      const e = document.getElementById('end').value;
+      const ext = document.getElementById('extDisplay').value;
+      if(!s || !e) return alert("Select dates");
+      document.getElementById('runBtn').disabled = true;
+      document.getElementById('loader').style.display = 'block';
+      google.script.run.withSuccessHandler(renderReport).withFailureHandler(handleError).processMissedReport(s, e, ext);
+    }
+    
+    function updateChartLabels() {
+        if(window.lastData) {
+            renderChart(window.lastData.chartLabels, window.lastData.chartData);
+        }
+    }
+    
+    function renderReport(data) {
+      window.lastData = data;
+      document.getElementById('deptTitle').innerText = data.deptName + " (Missed Calls)";
+      document.getElementById('dateLabel').innerText = "(" + data.dateLabel + ")";
+      renderTable(data.agents);
+      renderChart(data.chartLabels, data.chartData);
+      document.getElementById('inputForm').style.display = 'none';
+      document.getElementById('resultsArea').style.display = 'block';
+      document.getElementById('runBtn').disabled = false;
+      document.getElementById('loader').style.display = 'none';
+    }
+    
+    function renderTable(agentsMap) {
+      const table = document.getElementById('dataTable');
+      table.innerHTML = "";
+      const agents = Object.keys(agentsMap).sort();
+      const thead = document.createElement('thead');
+      let tr = document.createElement('tr');
+      agents.forEach(a => { let th = document.createElement('th'); th.innerText = a; tr.appendChild(th); });
+      thead.appendChild(tr);
+      table.appendChild(thead);
+      const tbody = document.createElement('tbody');
+      const maxLen = Math.max(...agents.map(a => agentsMap[a].length));
+      const getDate = (str) => str ? str.split('-')[0].trim() : "";
+      const lastDateMap = {}; 
+      for(let r=0; r<maxLen; r++) {
+        let row = document.createElement('tr');
+        const cells = [];
+        agents.forEach(a => {
+          let val = agentsMap[a][r] || "";
+          let currentDate = getDate(val);
+          let cell = { text: val, isNewDate: false };
+          if (currentDate && lastDateMap[a] !== currentDate) {
+             cell.isNewDate = true;
+             lastDateMap[a] = currentDate;
+          }
+          cells.push(cell);
+        });
+        cells.forEach(c => {
+          let td = document.createElement('td');
+          if (c.isNewDate && r > 0) { td.style.borderTop = "2px solid #007bff"; td.style.backgroundColor = "#f0f8ff"; }
+          if(c.text.includes("🚨")) td.innerHTML = `<span style="color:#dc3545; font-weight:bold;">${c.text}</span>`;
+          else td.innerText = c.text;
+          row.appendChild(td);
+        });
+        tbody.appendChild(row);
+      }
+      table.appendChild(tbody);
+    }
+    
+    function renderChart(labels, data) {
+      const canvas = document.getElementById('missedChart');
+      const ctx = canvas.getContext('2d');
+      
+      // IMPROVEMENT: Device Pixel Ratio handling for high-DPI displays
+      const dpr = window.devicePixelRatio || 1;
+      const rect = canvas.getBoundingClientRect();
+      canvas.width = rect.width * dpr;
+      canvas.height = rect.height * dpr;
+      ctx.scale(dpr, dpr);
+      canvas.style.width = rect.width + 'px';
+      canvas.style.height = rect.height + 'px';
+      
+      if(chartInstance) chartInstance.destroy();
+      
+      const showLabels = document.getElementById('showLabels').checked;
+      chartInstance = new Chart(ctx, {
+        type: 'radar',
+        data: { 
+          labels: labels, 
+          datasets: [{ 
+            label: 'Missed Calls', 
+            data: data, 
+            fill: true, 
+            backgroundColor: 'rgba(255, 99, 132, 0.2)', 
+            borderColor: 'rgb(255, 99, 132)', 
+            pointBackgroundColor: 'rgb(255, 99, 132)', 
+            pointRadius: 3 
+          }] 
+        },
+        options: { 
+          responsive: true, 
+          maintainAspectRatio: true,  // Changed to true for better scaling
+          devicePixelRatio: dpr,  // Explicit DPR setting
+          scales: { 
+            r: { 
+              beginAtZero: true, 
+              ticks: { display: false, stepSize: 1 }, 
+              pointLabels: { font: { size: 10 } } 
+            } 
+          }, 
+          layout: { padding: 10 },
+          plugins: { 
+            legend: { display: false },
+            datalabels: {
+              display: showLabels,
+              color: '#444', 
+              font: { weight: 'bold', size: 10 },
+              align: 'top', 
+              anchor: 'start', 
+              formatter: function(value) { return value > 0 ? value : ''; }
+            }
+          } 
+        }
+      });
+    }
+    
+    function handleError(e) { 
+      alert("Error: " + e.message); 
+      document.getElementById('runBtn').disabled = false; 
+      document.getElementById('loader').style.display = 'none'; 
+    }
+    
+    function resetForm() { 
+      document.getElementById('inputForm').style.display = 'block'; 
+      document.getElementById('resultsArea').style.display = 'none'; 
+    }
+    
+    /* === OPTIMIZED CAPTURE ENGINE === */
+    function getCaptureOptions() {
+      const cvs = document.querySelector('canvas');
+      
+      // IMPROVEMENT: Capture chart at 2x resolution for better quality
+      const tempCanvas = document.createElement('canvas');
+      const ctx = tempCanvas.getContext('2d');
+      tempCanvas.width = cvs.width * 2;
+      tempCanvas.height = cvs.height * 2;
+      ctx.scale(2, 2);
+      ctx.drawImage(cvs, 0, 0);
+      const imgData = tempCanvas.toDataURL("image/png", 1.0);  // Max quality
+      
+      return {
+        scale: 2,  // Keep at 2 for performance (chart is already 2x)
+        useCORS: true, 
+        backgroundColor: null,
+        onclone: (clonedDoc) => {
+          const el = clonedDoc.getElementById('resultsArea');
+          const btn = clonedDoc.getElementById('actionButtons');
+          const container = clonedDoc.getElementById('visualContainer');
+          const chartPanel = clonedDoc.getElementById('chartPanel');
+          const tablePanel = clonedDoc.querySelector('.table-panel');
+          const tableWrapper = clonedDoc.querySelector('.table-wrapper');
+          
+          if(btn) btn.style.display = 'none';
+          
+          // Hide toggle box in captured image
+          const toggleBox = clonedDoc.getElementById('toggleContainer');
+          if(toggleBox) toggleBox.style.display = 'none';
+          
+          el.style.backgroundColor = "#f4f6f9"; 
+          el.style.backgroundImage = "url('https://cdn.jsdelivr.net/gh/robinchoudhuryums/marketing-images@main/Patient%20Portal%20Background_portrait.png')";
+          el.style.backgroundSize = "cover"; 
+          el.style.backgroundPosition = "center";
+          el.style.padding = "40px"; 
+          el.style.boxSizing = "border-box";
+          
+          container.style.display = "block"; 
+          container.style.height = "auto";
+          chartPanel.style.width = "100%";
+          chartPanel.style.marginBottom = "0px";  // REDUCED: Tighter gap to table
+          
+          // ADJUSTED: Smaller container height for smaller chart
+          chartPanel.style.height = "700px";  // Reduced from 850px
+          chartPanel.style.background = "transparent";
+          chartPanel.style.border = "none";
+          chartPanel.style.boxShadow = "none";
+          
+          const title = clonedDoc.getElementById('chartTitle');
+          if(title) {
+             title.style.fontSize = "24px";  // Slightly smaller title
+             title.style.fontWeight = "bold";
+             title.style.marginBottom = "-20px";  // Less negative margin
+             title.style.position = "relative";
+             title.style.zIndex = "10"; 
+          }
+          
+          if(tableWrapper) { 
+            tableWrapper.style.overflow = "visible"; 
+            tableWrapper.style.maxHeight = "none"; 
+            tableWrapper.style.width = "100%"; 
+          }
+          if(tablePanel) { 
+            tablePanel.style.overflow = "visible"; 
+            tablePanel.style.width = "100%"; 
+          }
+          
+          el.style.width = "fit-content"; 
+          el.style.minWidth = "1200px"; 
+          el.style.height = "auto";
+          
+          const cloneCvs = clonedDoc.getElementById('missedChart');
+          if(cloneCvs) {
+             const img = clonedDoc.createElement('img');
+             img.src = imgData;  // Using the 2x resolution image
+             
+             // ADJUSTED: Smaller chart size (650x650 instead of 800x800)
+             img.style.width = "650px"; 
+             img.style.height = "650px"; 
+             img.style.marginTop = "0px";
+             img.style.display = "block"; 
+             img.style.margin = "0 auto";
+             
+             cloneCvs.parentNode.replaceChild(img, cloneCvs);
+          }
+          
+          // Truncate table to 15 rows max
+          const MAX_ROWS = 15;
+          const tbody = tableWrapper.querySelector('tbody');
+          if(tbody) {
+             const rows = Array.from(tbody.rows);
+             const colCount = rows[0].cells.length;
+             for (let r = MAX_ROWS; r < rows.length; r++) {
+                for (let c = 0; c < colCount; c++) {
+                   if (rows[r].cells[c].innerText.trim() !== "") {
+                      if (r === MAX_ROWS) {
+                         let hiddenCount = 0;
+                         for(let subR = MAX_ROWS; subR < rows.length; subR++) {
+                            if(rows[subR].cells[c].innerText.trim() !== "") hiddenCount++;
+                         }
+                         rows[r].cells[c].innerHTML = `<div style="color:#888; font-style:italic; font-size:11px; padding:5px;">... +${hiddenCount} more</div>`;
+                         rows[r].cells[c].style.backgroundColor = "#f9f9f9";
+                         rows[r].cells[c].style.borderTop = "none"; 
+                      }
+                   }
+                }
+             }
+             for (let i = rows.length - 1; i > MAX_ROWS; i--) { tbody.deleteRow(i); }
+          }
+        }
+      };
+    }
+    
+    function copyReportImage() { 
+      const btn = document.getElementById('copyBtn'); 
+      const originalText = btn.innerHTML; 
+      btn.innerText = "Capturing..."; 
+      btn.disabled = true;  // Prevent double-clicks
+      
+      // Show progress feedback after 1 second
+      const timeout = setTimeout(() => {
+        btn.innerText = "Still processing...";
+      }, 1000);
+      
+      html2canvas(document.getElementById('resultsArea'), getCaptureOptions())
+        .then(canvas => { 
+          clearTimeout(timeout);
+          canvas.toBlob(blob => { 
+            navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]); 
+            alert('Copied!'); 
+            btn.innerHTML = originalText; 
+            btn.disabled = false;
+          }); 
+        })
+        .catch(err => {
+          clearTimeout(timeout);
+          alert('Capture failed: ' + err.message);
+          btn.innerHTML = originalText;
+          btn.disabled = false;
+        });
+    }
+    
+    function sendVisualEmail() { 
+      const btn = document.getElementById('emailImgBtn'); 
+      const originalText = btn.innerHTML; 
+      btn.innerText = "Sending..."; 
+      btn.disabled = true;  // Prevent double-clicks
+      
+      // Show progress feedback after 1 second
+      const timeout = setTimeout(() => {
+        btn.innerText = "Still processing...";
+      }, 1000);
+      
+      html2canvas(document.getElementById('resultsArea'), getCaptureOptions())
+        .then(canvas => { 
+          clearTimeout(timeout);
+          // IMPROVEMENT: Use JPEG with 92% quality for smaller email attachments
+          const imageData = canvas.toDataURL('image/jpeg', 0.92);
+          
+          google.script.run
+            .withSuccessHandler(() => { 
+              alert("Sent!"); 
+              btn.innerHTML = originalText; 
+              btn.disabled = false;
+            })
+            .withFailureHandler((err) => {
+              alert("Email failed: " + err.message);
+              btn.innerHTML = originalText;
+              btn.disabled = false;
+            })
+            .sendVisualMissedEmail(imageData, window.lastData.deptName); 
+        })
+        .catch(err => {
+          clearTimeout(timeout);
+          alert('Capture failed: ' + err.message);
+          btn.innerHTML = originalText;
+          btn.disabled = false;
+        });
+    }
+  </script>
+</body>
+</html>
