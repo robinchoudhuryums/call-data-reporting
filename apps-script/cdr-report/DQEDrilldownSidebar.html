@@ -1,0 +1,729 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top">
+    <style>
+      body {
+        font-family: 'Roboto', Arial, sans-serif;
+        font-size: 13px;
+        color: #202124;
+        margin: 0;
+        padding: 12px;
+      }
+
+      /* Top bar */
+      .topbar {
+        display: flex;
+        gap: 6px;
+        margin-bottom: 10px;
+      }
+      .topbar button {
+        flex: 1;
+        padding: 6px 10px;
+        font-size: 12px;
+        border: 1px solid #1a73e8;
+        background: #1a73e8;
+        color: #fff;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      .topbar button:hover  { background: #1762c5; }
+      .topbar button.secondary {
+        background: #fff;
+        color: #1a73e8;
+      }
+      .topbar button.secondary:hover { background: #e8f0fe; }
+      .topbar button.active {
+        background: #c5221f;
+        border-color: #c5221f;
+      }
+      .topbar button.active:hover { background: #a8201d; }
+
+      /* Header block */
+      .header {
+        border-bottom: 1px solid #dadce0;
+        padding-bottom: 10px;
+        margin-bottom: 10px;
+      }
+      .header .label {
+        color: #5f6368;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+      .header .value { font-size: 14px; font-weight: 500; }
+      .header .metric {
+        font-size: 16px;
+        font-weight: 600;
+        color: #1a73e8;
+        margin-top: 4px;
+      }
+
+      /* Controls panel */
+      .controls {
+        background: #f8f9fa;
+        border: 1px solid #dadce0;
+        border-radius: 4px;
+        padding: 8px;
+        margin-bottom: 10px;
+      }
+      .controls .row {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .controls .row + .row {
+        margin-top: 6px;
+      }
+      .controls .row .label {
+        color: #5f6368;
+        font-size: 11px;
+        min-width: 42px;
+      }
+      .controls input[type=text] {
+        flex: 1;
+        padding: 4px 6px;
+        font-size: 12px;
+        border: 1px solid #dadce0;
+        border-radius: 3px;
+      }
+      .controls .match-count {
+        font-size: 11px;
+        color: #5f6368;
+        min-width: 60px;
+        text-align: right;
+      }
+      .filter-btns {
+        display: flex;
+        gap: 4px;
+        flex: 1;
+      }
+      .filter-btns button {
+        flex: 1;
+        font-size: 11px;
+        padding: 3px 6px;
+        border: 1px solid #dadce0;
+        background: #fff;
+        color: #202124;
+        border-radius: 3px;
+        cursor: pointer;
+      }
+      .filter-btns button:hover { background: #f1f3f4; }
+      .filter-btns button.active {
+        background: #1a73e8;
+        color: #fff;
+        border-color: #1a73e8;
+      }
+      .controls select {
+        flex: 1;
+        font-size: 12px;
+        padding: 3px 4px;
+        border: 1px solid #dadce0;
+        border-radius: 3px;
+        background: #fff;
+      }
+
+      /* Summary panel */
+      .summary {
+        background: #f1f3f4;
+        padding: 10px;
+        border-radius: 4px;
+        margin-bottom: 10px;
+        font-size: 12px;
+      }
+      .summary .row { display: flex; justify-content: space-between; margin: 3px 0; }
+      .summary .row .lbl { color: #5f6368; }
+      .summary .row .val { font-weight: 500; }
+      .summary .breakdown {
+        margin-top: 6px;
+        padding-top: 6px;
+        border-top: 1px solid #dadce0;
+        font-size: 11px;
+        color: #5f6368;
+      }
+      .near-miss-note {
+        background: #fef7e0;
+        border: 1px solid #fcd96a;
+        color: #b06000;
+        font-size: 11px;
+        padding: 6px 10px;
+        border-radius: 4px;
+        margin-bottom: 10px;
+      }
+
+      /* Group container */
+      .group {
+        border: 1px solid #1a73e8;
+        border-radius: 4px;
+        margin-bottom: 10px;
+        overflow: hidden;
+      }
+      .group-head {
+        background: #e8f0fe;
+        padding: 8px 10px;
+        font-size: 11px;
+      }
+      .group-head .pid {
+        font-family: 'Roboto Mono', monospace;
+        color: #1a73e8;
+        font-weight: 600;
+      }
+      .group-head .meta {
+        display: flex;
+        gap: 12px;
+        margin-top: 3px;
+        color: #5f6368;
+      }
+      .group-head .meta strong { color: #202124; }
+      .group-body {
+        padding: 6px;
+        background: #fafbfc;
+      }
+
+      /* Individual leg row */
+      .leg {
+        background: #fff;
+        border: 1px solid #e0e0e0;
+        border-radius: 3px;
+        padding: 7px 9px;
+        margin-bottom: 5px;
+        transition: background 0.1s, border-color 0.1s;
+      }
+      .leg:last-child { margin-bottom: 0; }
+
+      /* Search highlight */
+      .leg.search-match {
+        border-color: #fbbc04;
+        border-width: 2px;
+        background: #fef7e0;
+      }
+
+      /* Outside hours dimmed */
+      .leg.outside-window {
+        opacity: 0.55;
+      }
+      .leg.outside-window:hover { opacity: 1; }
+
+      /* Rejected (in show-all-rejects mode) */
+      .leg.rejected {
+        border-color: #fcd7d4;
+        background: #fef7f7;
+      }
+
+      /* Filter-hidden */
+      .leg.filter-hidden { display: none; }
+
+      .leg .row-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 4px;
+      }
+      .leg .row-head .id {
+        font-family: 'Roboto Mono', monospace;
+        font-size: 11px;
+        color: #5f6368;
+      }
+      .leg .row-head button {
+        font-size: 11px;
+        padding: 2px 8px;
+        border: 1px solid #1a73e8;
+        background: #fff;
+        color: #1a73e8;
+        border-radius: 3px;
+        cursor: pointer;
+      }
+      .leg .row-head button:hover { background: #e8f0fe; }
+      .leg .field { font-size: 12px; margin: 2px 0; }
+      .leg .field .lbl {
+        color: #5f6368;
+        display: inline-block;
+        min-width: 65px;
+      }
+      .leg .reject-reason, .leg .outside-reason {
+        font-size: 11px;
+        font-style: italic;
+        margin-top: 3px;
+      }
+      .leg .reject-reason  { color: #c5221f; }
+      .leg .outside-reason { color: #b06000; }
+
+      /* Status badges */
+      .badge {
+        display: inline-block;
+        padding: 1px 6px;
+        border-radius: 3px;
+        font-size: 10px;
+        font-weight: 600;
+        text-transform: uppercase;
+        margin-left: 6px;
+      }
+      .badge-missed   { background: #fce8e6; color: #c5221f; }
+      .badge-answered { background: #e6f4ea; color: #137333; }
+      .badge-talk     { background: #fef7e0; color: #b06000; }
+      .badge-outside  { background: #fef7e0; color: #b06000; border: 1px solid #fcd96a; }
+
+      /* Reject reasons summary */
+      .reject-summary {
+        background: #fef7f7;
+        border: 1px solid #fcd7d4;
+        padding: 8px 10px;
+        border-radius: 4px;
+        margin-bottom: 10px;
+        font-size: 12px;
+      }
+      .reject-summary .heading {
+        font-weight: 600;
+        color: #c5221f;
+        margin-bottom: 4px;
+      }
+      .reject-summary .reason {
+        display: flex;
+        justify-content: space-between;
+        font-size: 11px;
+        margin: 2px 0;
+      }
+
+      /* States */
+      .loading, .empty, .error {
+        text-align: center;
+        padding: 20px;
+        font-size: 12px;
+      }
+      .loading, .empty { color: #5f6368; }
+      .error {
+        color: #c5221f;
+        background: #fce8e6;
+        border-radius: 4px;
+      }
+      .hidden { display: none !important; }
+    </style>
+  </head>
+  <body>
+
+    <div class="topbar">
+      <button onclick="loadFromSelection(false)">Refresh</button>
+      <button class="secondary" id="rejectsBtn" onclick="toggleRejects()">Show rejected rows</button>
+    </div>
+
+    <div id="header" class="header hidden">
+      <div class="label">Agent</div>
+      <div class="value" id="agentName"></div>
+      <div class="label" style="margin-top: 6px;">Date</div>
+      <div class="value" id="dateStr"></div>
+      <div class="metric" id="metricLine"></div>
+    </div>
+
+    <div id="controls" class="controls hidden">
+      <div class="row">
+        <span class="label">Search</span>
+        <input type="text" id="searchInput" placeholder="Call ID, caller, queue..." oninput="applySearch()">
+        <span class="match-count" id="matchCount"></span>
+      </div>
+      <div class="row">
+        <span class="label">Show</span>
+        <div class="filter-btns" id="filterBtns">
+          <button data-filter="all" class="active">All</button>
+          <button data-filter="missed">Missed</button>
+          <button data-filter="answered">Answered</button>
+          <button data-filter="talk">With talk</button>
+        </div>
+      </div>
+      <div class="row">
+        <span class="label">Sort</span>
+        <select id="sortSelect" onchange="applySort()">
+          <option value="time-asc">Time (earliest first)</option>
+          <option value="time-desc">Time (latest first)</option>
+          <option value="talk-desc">Talk time (longest first)</option>
+          <option value="caller-asc">Caller name (A-Z)</option>
+        </select>
+      </div>
+    </div>
+
+    <div id="content">
+      <div class="loading">Click "Refresh" to load source rows for the currently selected cell.</div>
+    </div>
+
+    <script>
+      var lastResult       = null;
+      var showAllRejects   = false;
+      var currentFilter    = 'all';
+
+      function escapeHtml(s) {
+        if (s === null || s === undefined) return '';
+        return String(s)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;');
+      }
+
+      function loadFromSelection(forceRefresh) {
+        document.getElementById('content').innerHTML =
+          '<div class="loading">Reading current selection...</div>';
+
+        google.script.run
+          .withSuccessHandler(function(ctx) {
+            if (ctx.error) {
+              document.getElementById('content').innerHTML =
+                '<div class="error">' + escapeHtml(ctx.error) + '</div>';
+              document.getElementById('header').classList.add('hidden');
+              document.getElementById('controls').classList.add('hidden');
+              return;
+            }
+
+            document.getElementById('agentName').textContent  = ctx.agentName;
+            document.getElementById('dateStr').textContent    = ctx.dateStr;
+            document.getElementById('metricLine').textContent =
+              ctx.metricLabel + ': ' + ctx.metricValue;
+            document.getElementById('header').classList.remove('hidden');
+
+            fetchRows({
+              dateStr:        ctx.dateStr,
+              agentName:      ctx.agentName,
+              column:         ctx.column,
+              showAllRejects: showAllRejects
+            });
+          })
+          .withFailureHandler(function(err) {
+            document.getElementById('content').innerHTML =
+              '<div class="error">Error reading selection: ' + escapeHtml(err.message || err) + '</div>';
+          })
+          .getCurrentSelectionContext();
+      }
+
+      function toggleRejects() {
+        showAllRejects = !showAllRejects;
+        var btn = document.getElementById('rejectsBtn');
+        if (showAllRejects) {
+          btn.classList.add('active');
+          btn.textContent = 'Show normal view';
+        } else {
+          btn.classList.remove('active');
+          btn.textContent = 'Show rejected rows';
+        }
+        loadFromSelection(true);
+      }
+
+      function fetchRows(params) {
+        document.getElementById('content').innerHTML =
+          '<div class="loading">Loading source rows...</div>';
+
+        google.script.run
+          .withSuccessHandler(function(result) {
+            lastResult = result;
+            renderResult(result);
+          })
+          .withFailureHandler(function(err) {
+            document.getElementById('content').innerHTML =
+              '<div class="error">Error: ' + escapeHtml(err.message || err) + '</div>';
+          })
+          .getDQEDrilldownRows(params);
+      }
+
+      function renderResult(result) {
+        var content  = document.getElementById('content');
+        var controls = document.getElementById('controls');
+
+        if (result.error) {
+          content.innerHTML = '<div class="error">' + escapeHtml(result.error) + '</div>';
+          controls.classList.add('hidden');
+          return;
+        }
+
+        var html = '';
+
+        // Summary panel (only in normal mode)
+        if (result.summary && !result.showAllRejects) {
+          html += renderSummary(result.summary);
+        }
+
+        // Near-miss note (only in normal mode and when there are near-misses)
+        if (!result.showAllRejects && result.nearMissCount > 0) {
+          html += '<div class="near-miss-note">' +
+            result.nearMissCount + ' additional row' + (result.nearMissCount === 1 ? '' : 's') +
+            ' shown dimmed below would have counted but fell outside the time window (8:30 AM-5:00 PM CST).' +
+            '</div>';
+        }
+
+        // Reject reasons summary (only in show-all-rejects mode)
+        if (result.showAllRejects && result.rejectedCount > 0) {
+          html += '<div class="reject-summary">';
+          html += '<div class="heading">Rejected rows: ' + result.rejectedCount + '</div>';
+          for (var reason in result.rejectReasons) {
+            html += '<div class="reason"><span>' + escapeHtml(reason) + '</span><strong>' +
+              result.rejectReasons[reason] + '</strong></div>';
+          }
+          html += '</div>';
+        }
+
+        // Show controls panel if any rows present
+        if (result.groups && result.groups.length) {
+          controls.classList.remove('hidden');
+        } else {
+          controls.classList.add('hidden');
+        }
+
+        // Sort groups before rendering (across-group sort)
+        var sortedGroups = sortGroups(result.groups || [], document.getElementById('sortSelect').value);
+
+        if (!sortedGroups.length) {
+          html += '<div class="empty">' +
+            (result.showAllRejects
+              ? 'No rows were rejected.'
+              : 'No source rows match this metric.') +
+            '</div>';
+        } else {
+          html += '<div id="rowsContainer">' + renderGroups(sortedGroups, result.showAllRejects) + '</div>';
+        }
+
+        content.innerHTML = html;
+
+        // Wire filter buttons
+        var btns = document.querySelectorAll('#filterBtns button');
+        btns.forEach(function(b) {
+          b.onclick = function() {
+            btns.forEach(function(x) { x.classList.remove('active'); });
+            b.classList.add('active');
+            currentFilter = b.getAttribute('data-filter');
+            applyFilter();
+            applySearch();
+          };
+        });
+
+        // Apply existing filter/search state to newly rendered rows
+        applyFilter();
+        applySearch();
+      }
+
+      function renderSummary(s) {
+        if (!s) return '';
+        var html = '<div class="summary">';
+        html += '<div class="row"><span class="lbl">Total counted</span><span class="val">' + s.totalRows + '</span></div>';
+        if (s.answeredCount > 0) {
+          html += '<div class="row"><span class="lbl">Answered</span><span class="val">' + s.answeredCount + '</span></div>';
+        }
+        if (s.missedCount > 0) {
+          html += '<div class="row"><span class="lbl">Missed</span><span class="val">' + s.missedCount + '</span></div>';
+        }
+        if (s.totalTalkSec > 0) {
+          html += '<div class="row"><span class="lbl">Total talk time</span><span class="val">' + escapeHtml(s.totalTalkStr) + '</span></div>';
+        }
+        if (s.queueExts && s.queueExts.length) {
+          html += '<div class="breakdown">Queues: ' +
+            s.queueExts.map(function(q) { return 'ext ' + escapeHtml(q.ext) + ' (' + q.count + ')'; }).join(', ') +
+            '</div>';
+        }
+        if (s.hourBuckets && s.hourBuckets.length) {
+          html += '<div class="breakdown">By hour (CST): ' +
+            s.hourBuckets.map(function(h) {
+              var hr12 = h.hour === 0 ? '12am' : h.hour < 12 ? h.hour + 'am' : h.hour === 12 ? '12pm' : (h.hour - 12) + 'pm';
+              return hr12 + ': ' + h.count;
+            }).join(', ') +
+            '</div>';
+        }
+        html += '</div>';
+        return html;
+      }
+
+      // Sort groups across all groups
+      function sortGroups(groups, sortKey) {
+        var copy = groups.slice();
+
+        function getSortValue(group) {
+          var legs = group.legs;
+          if (!legs || !legs.length) return 0;
+          switch (sortKey) {
+            case 'time-asc':
+            case 'time-desc':
+              return Math.min.apply(null, legs.map(function(l) { return parseTimeOfDay(l.startTime); }));
+            case 'talk-desc':
+              // Use agent's own talk time so sort matches what's displayed
+              return group.agentTalkSec || 0;
+            case 'caller-asc':
+              return (legs[0].callerName || '').toLowerCase();
+            default:
+              return 0;
+          }
+        }
+
+        copy.sort(function(a, b) {
+          var av = getSortValue(a);
+          var bv = getSortValue(b);
+          if (sortKey === 'time-desc' || sortKey === 'talk-desc') {
+            if (av < bv) return 1;
+            if (av > bv) return -1;
+            return 0;
+          }
+          if (av < bv) return -1;
+          if (av > bv) return 1;
+          return 0;
+        });
+
+        // Sort legs within each group too (mirrors group sort)
+        copy.forEach(function(g) {
+          g.legs = g.legs.slice().sort(function(a, b) {
+            switch (sortKey) {
+              case 'time-asc':
+                return parseTimeOfDay(a.startTime) - parseTimeOfDay(b.startTime);
+              case 'time-desc':
+                return parseTimeOfDay(b.startTime) - parseTimeOfDay(a.startTime);
+              case 'talk-desc':
+                return (b.talkSec || 0) - (a.talkSec || 0);
+              case 'caller-asc':
+                return (a.callerName || '').localeCompare(b.callerName || '');
+              default:
+                return 0;
+            }
+          });
+        });
+
+        return copy;
+      }
+
+      function parseTimeOfDay(str) {
+        if (!str) return 0;
+        var parts = String(str).trim().split(' ');
+        if (parts.length < 2) return 0;
+        var t = parts[1].split(':');
+        return (parseInt(t[0]) || 0) * 3600 + (parseInt(t[1]) || 0) * 60 + (parseInt(t[2]) || 0);
+      }
+
+      function renderGroups(groups, showAllRejects) {
+        return groups.map(function(g) {
+          var headMeta = '';
+          if (g.parentExists) {
+            headMeta += '<span><strong>Wait:</strong> ' + escapeHtml(g.parentWaitStr) + '</span>';
+            // Agent's actual talk on this call (primary metric)
+            if (g.agentTalkSec > 0) {
+              headMeta += '<span><strong>Agent talk:</strong> ' + escapeHtml(g.agentTalkStr) + '</span>';
+            }
+            // Total call duration for context (was previously labeled "Talk")
+            headMeta += '<span style="color:#9aa0a6;"><strong>Call total:</strong> ' + escapeHtml(g.parentTalkStr) + '</span>';
+            if (g.parentAbandoned) {
+              headMeta += '<span><strong style="color:#7627bb;">Abandoned</strong></span>';
+            }
+          } else {
+            headMeta = '<span style="color:#5f6368;">Parent call data not in this dataset</span>';
+          }
+
+          var legsHtml = g.legs.map(function(leg) { return renderLeg(leg, showAllRejects); }).join('');
+
+          return '<div class="group">' +
+            '<div class="group-head">' +
+              '<div>Parent <span class="pid">' + escapeHtml(g.parentCallId) + '</span> &middot; ' + g.legs.length + ' leg' + (g.legs.length === 1 ? '' : 's') + '</div>' +
+              '<div class="meta">' + headMeta + '</div>' +
+            '</div>' +
+            '<div class="group-body">' + legsHtml + '</div>' +
+          '</div>';
+        }).join('');
+      }
+
+      function renderLeg(leg, showAllRejects) {
+        var statusBadge = '';
+        if (leg.missed)         statusBadge += '<span class="badge badge-missed">Missed</span>';
+        if (leg.answered)       statusBadge += '<span class="badge badge-answered">Answered</span>';
+        if (leg.talkSec > 0)    statusBadge += '<span class="badge badge-talk">Talk ' + escapeHtml(leg.talkTime) + '</span>';
+        if (leg._outsideWindow) statusBadge += '<span class="badge badge-outside">Outside hours</span>';
+
+        var reasonLine = '';
+        if (showAllRejects && leg._rejectReason) {
+          reasonLine = '<div class="reject-reason">Filtered out: ' + escapeHtml(leg._rejectReason) + '</div>';
+        } else if (leg._outsideWindow) {
+          reasonLine = '<div class="outside-reason">Outside window 8:30 AM-5:00 PM CST</div>';
+        }
+
+        var classNames = ['leg'];
+        if (leg._outsideWindow)               classNames.push('outside-window');
+        if (showAllRejects && leg._rejectReason) classNames.push('rejected');
+
+        var searchData = [
+          leg.callId, leg.legId, leg.callerI, leg.callerName,
+          leg.calleeK, leg.calleeName, leg.parentCallId, leg.callerIdW,
+          leg.startTime
+        ].join(' ').toLowerCase();
+
+        var statusData = [];
+        if (leg.missed)      statusData.push('missed');
+        if (leg.answered)    statusData.push('answered');
+        if (leg.talkSec > 0) statusData.push('talk');
+
+        return '<div class="' + classNames.join(' ') + '" ' +
+          'data-search="' + escapeHtml(searchData) + '" ' +
+          'data-status="' + statusData.join(' ') + '">' +
+          '<div class="row-head">' +
+            '<span class="id">Row ' + leg.rowNum + ' / Leg ' + escapeHtml(leg.legId) + '</span>' +
+            '<button onclick="jumpTo(' + leg.rowNum + ')">Open row</button>' +
+          '</div>' +
+          '<div class="field"><span class="lbl">Time:</span>' + escapeHtml(leg.startTime) + '</div>' +
+          '<div class="field"><span class="lbl">Call ID:</span>' + escapeHtml(leg.callId) + '</div>' +
+          '<div class="field"><span class="lbl">Caller:</span>' + escapeHtml(leg.callerName) + ' (' + escapeHtml(leg.callerI) + ')</div>' +
+          '<div class="field"><span class="lbl">Queue:</span>' + escapeHtml(leg.callerIdW) + '</div>' +
+          '<div class="field"><span class="lbl">Status:</span>' + (statusBadge || '<span style="color:#5f6368;">--</span>') + '</div>' +
+          reasonLine +
+          '</div>';
+      }
+
+      function applyFilter() {
+        var legs = document.querySelectorAll('.leg');
+        legs.forEach(function(el) {
+          var statuses = (el.getAttribute('data-status') || '').split(' ');
+          var keep = false;
+          switch (currentFilter) {
+            case 'all':      keep = true; break;
+            case 'missed':   keep = statuses.indexOf('missed')   !== -1; break;
+            case 'answered': keep = statuses.indexOf('answered') !== -1; break;
+            case 'talk':     keep = statuses.indexOf('talk')     !== -1; break;
+          }
+          if (keep) el.classList.remove('filter-hidden');
+          else      el.classList.add('filter-hidden');
+        });
+        hideEmptyGroups();
+      }
+
+      function applySearch() {
+        var query = document.getElementById('searchInput').value.trim().toLowerCase();
+        var legs = document.querySelectorAll('.leg');
+        var matchCount = 0;
+
+        legs.forEach(function(el) {
+          var matches = query && el.getAttribute('data-search').indexOf(query) !== -1;
+          if (matches && !el.classList.contains('filter-hidden')) {
+            el.classList.add('search-match');
+            matchCount++;
+          } else {
+            el.classList.remove('search-match');
+          }
+        });
+
+        var counter = document.getElementById('matchCount');
+        if (query) {
+          counter.textContent = matchCount + ' match' + (matchCount === 1 ? '' : 'es');
+        } else {
+          counter.textContent = '';
+        }
+      }
+
+      function hideEmptyGroups() {
+        var groups = document.querySelectorAll('.group');
+        groups.forEach(function(g) {
+          var visible = g.querySelectorAll('.leg:not(.filter-hidden)');
+          g.style.display = visible.length > 0 ? '' : 'none';
+        });
+      }
+
+      function applySort() {
+        // Re-render with new sort key
+        if (lastResult) renderResult(lastResult);
+      }
+
+      function jumpTo(rowNum) {
+        google.script.run.jumpToRawDataRow(rowNum);
+      }
+
+      // Auto-load on sidebar open
+      loadFromSelection(false);
+    </script>
+
+  </body>
+</html>

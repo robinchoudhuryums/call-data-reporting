@@ -5,10 +5,7 @@
 // "DQE Historical Data" sheet. After successful sheet write, mirrors the
 // same rows to the Neon dqe_history table (Phase 3).
 //
-// Lives in the CDR Report Apps Script project (NOT the Department Dashboard
-// project). This file is a reference copy in the dashboard repo so the fix
-// can be reviewed/diffed; paste into the CDR Report project to apply.
-//
+// Lives in the CDR Report Apps Script project.
 // Requires: neonWrite.gs (writeDQERowsToNeon, notifyNeonWriteFailure)
 //           neonBackfill.gs (parseDateForNeon)
 // ============================================================================
