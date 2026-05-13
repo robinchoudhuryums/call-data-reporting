@@ -14,6 +14,7 @@
         <div class="sub">Department Dashboard</div>
       </div>
       <div class="header-meta">
+        <button class="help-btn" id="help-btn" type="button" aria-label="Help & FAQ" title="Help & FAQ">?</button>
         <div><span class="email" id="user-email"></span><span id="role-tag" class="tag"></span></div>
       </div>
     </header>
@@ -78,6 +79,52 @@
       <summary>Diagnostics <span id="diag-count" class="diag-count"></span></summary>
       <div id="diag-content"></div>
     </details>
+  </div>
+
+  <div id="help-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="help-modal-title" style="display:none;">
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-panel" role="document">
+      <button class="modal-close" id="help-close" type="button" aria-label="Close">&times;</button>
+      <h2 id="help-modal-title">Help &amp; FAQ</h2>
+      <div class="modal-content">
+        <h3>Quick guide to the table columns</h3>
+        <ul>
+          <li><strong>Agent</strong> &mdash; agents appear here only if they had data for the selected date range and the chosen <strong>scope</strong> (see below). The <strong>Diagnostics</strong> panel below the table will list roster agents who had no data in range, and any agents matched via queue extensions but not on the roster.</li>
+          <li><strong>Unique vs Rung</strong> &mdash; &ldquo;Unique&rdquo; is a single caller attempt; &ldquo;Rung&rdquo; is the number of times an agent was notified of an incoming call. A caller on hold for 2 minutes who disconnects counts as 1 Unique but several rings. <strong>Total Missed</strong> and any &ldquo;% Answered&rdquo; metric are based on Rung, not Unique.</li>
+          <li><strong>TTT &middot; ATT</strong> &mdash; Total Talk Time and Average Talk Time. Only counts inbound calls from a call queue.</li>
+          <li><strong>Avg Abd Wait &middot; CSR Avg Abd Wait</strong> &mdash; Average abandoned-caller wait time, dept-wide and CSR-specific.</li>
+        </ul>
+
+        <h3>Scope toggle (Roster / Queue / Both)</h3>
+        <ul>
+          <li><strong>Roster</strong> (default): only agents officially assigned to your department in the roster sheet.</li>
+          <li><strong>Queue</strong>: any agent who handled your department&rsquo;s queue extensions, even if they aren&rsquo;t on your roster &mdash; useful for spotting cross-coverage and floaters.</li>
+          <li><strong>Both</strong>: union of the two. Agents matched only via queue (not on the roster) get a small &ldquo;(queue-only)&rdquo; tag next to their name.</li>
+        </ul>
+
+        <h3>Common questions</h3>
+        <ul>
+          <li><strong>Why is my table empty?</strong> Check the From/To dates and the scope toggle. If both look right, the &ldquo;Roster agents with no data in this range&rdquo; section of the Diagnostics panel will list anyone expected but absent.</li>
+          <li><strong>Why do some numbers differ from the old DQE Report spreadsheet?</strong> The legacy report had a few bugs around the work-window (calls before 8:30 AM or after 5:00 PM CST were sometimes counted in TTT/ATT but not Answered). The dashboard reads the same source sheet and inherits whatever it currently produces. If a specific number still looks wrong after a source rebuild, email Robin with date + agent.</li>
+          <li><strong>Why are there more missed-call timestamps for an agent than the official &ldquo;Missed&rdquo; count?</strong> Some rings happen before/after the 6:30 AM &ndash; 3:00 PM PST work window. Those appear as raw timestamps but don&rsquo;t count in &ldquo;Total Missed&rdquo;. <em>(Missed-call timestamps are part of the upcoming Missed Calls Report.)</em></li>
+          <li><strong>What if an agent appears in multiple departments?</strong> That&rsquo;s fine &mdash; agents can be on multiple rosters. The same daily numbers will show up on each department&rsquo;s view that they&rsquo;re rostered under.</li>
+          <li><strong>Why does the manager see only their department?</strong> Access is controlled by an Email &rarr; Department mapping. Managers see only their own department; admins can switch via the dropdown.</li>
+        </ul>
+
+        <h3>Coming soon</h3>
+        <p>Migrating from the legacy DQE Report spreadsheet:</p>
+        <ul>
+          <li><strong>Missed Calls Report</strong> &mdash; per-agent missed timestamps + hour-of-day chart.</li>
+          <li><strong>Individual Report</strong> &mdash; per-agent detail with monthly trends.</li>
+          <li><strong>Performance Report</strong> &mdash; current-vs-prior-period deltas + trend chart.</li>
+          <li><strong>Compare Ranges</strong> (admin-only) &mdash; side-by-side comparison of two arbitrary date ranges.</li>
+          <li><strong>Low Answer Rate Alerts</strong> (admin-driven) &mdash; sends per-dept alert emails when a threshold is crossed.</li>
+        </ul>
+
+        <h3>Contact</h3>
+        <p>Questions, access requests, or threshold changes: <a href="mailto:robin.choudhury@universalmedsupply.com">robin.choudhury@universalmedsupply.com</a></p>
+      </div>
+    </div>
   </div>
 
   <script>
