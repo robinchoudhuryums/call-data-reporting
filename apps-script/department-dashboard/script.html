@@ -118,6 +118,7 @@
     });
 
     initHelpModal();
+    initMissedReport();
 
     refresh();
   }
@@ -155,6 +156,187 @@
     btn.addEventListener('click', openModal);
     if (closeBtn) closeBtn.addEventListener('click', closeModal);
     if (backdrop) backdrop.addEventListener('click', closeModal);
+  }
+
+  // -- Missed Calls Report modal -----------------------------------------
+  // Opens with the dashboard's current dept/from/to/scope. Fetches via
+  // google.script.run.getMissedCallsReport, renders a Chart.js bar chart
+  // for the hour-of-day distribution + a per-agent card grid with each
+  // agent's missed-call timestamps (abandoned ones marked).
+  //
+  // Re-fetches every time the modal opens (cheap; respects 5-min server
+  // cache). The Chart instance is kept on a closure variable and updated
+  // on subsequent renders rather than re-instantiated.
+
+  let missedChart = null;
+
+  function initMissedReport() {
+    const btn = $('missed-report-btn');
+    const modal = $('missed-modal');
+    if (!btn || !modal) return;
+
+    const closeBtn = modal.querySelector('.modal-close');
+    const backdrop = modal.querySelector('[data-close]');
+
+    function openModal() {
+      modal.style.display = '';
+      modal.setAttribute('aria-hidden', 'false');
+      document.body.style.overflow = 'hidden';
+      document.addEventListener('keydown', onKeyDown);
+      if (closeBtn) closeBtn.focus();
+      fetchAndRender();
+    }
+    function closeModal() {
+      modal.style.display = 'none';
+      modal.setAttribute('aria-hidden', 'true');
+      document.body.style.overflow = '';
+      document.removeEventListener('keydown', onKeyDown);
+      btn.focus();
+    }
+    function onKeyDown(e) {
+      if (e.key === 'Escape') closeModal();
+    }
+
+    btn.addEventListener('click', openModal);
+    if (closeBtn) closeBtn.addEventListener('click', closeModal);
+    if (backdrop) backdrop.addEventListener('click', closeModal);
+
+    function fetchAndRender() {
+      const dept = getRequestedDept();
+      const req = {
+        department: dept,
+        from: $('from-date').value,
+        to:   $('to-date').value,
+        scope: state.scope,
+      };
+
+      setMissedStatus('loading', 'Loading missed-call data...');
+      $('missed-summary').innerHTML = '';
+      $('missed-agents').innerHTML = '';
+
+      google.script.run
+        .withSuccessHandler(renderMissedReport)
+        .withFailureHandler(function (err) {
+          setMissedStatus('error', 'Error: ' + (err && err.message ? err.message : String(err)));
+        })
+        .getMissedCallsReport(req);
+    }
+  }
+
+  function setMissedStatus(kind, msg) {
+    const el = $('missed-status');
+    if (!el) return;
+    if (!kind) { el.style.display = 'none'; el.textContent = ''; return; }
+    el.className = 'status status-' + kind;
+    el.textContent = msg;
+    el.style.display = '';
+  }
+
+  function renderMissedReport(data) {
+    if (!data) {
+      setMissedStatus('error', 'No data returned.');
+      return;
+    }
+    setMissedStatus(null);
+
+    const m = data.meta || {};
+    const summaryHtml = [
+      '<span class="label">Department:</span><span class="val">', escapeHtml(m.department || ''), '</span>',
+      '<span class="sep">|</span>',
+      '<span class="label">Range:</span><span class="val">', escapeHtml(m.from || ''), ' to ', escapeHtml(m.to || ''), '</span>',
+      '<span class="sep">|</span>',
+      '<span class="label">Scope:</span><span class="val">', escapeHtml(m.scope || 'roster'), '</span>',
+      '<span class="sep">|</span>',
+      '<span class="label">Total missed:</span><span class="val">', fmtNumber(m.totalMissed || 0), '</span>',
+      '<span class="sep">|</span>',
+      '<span class="label">Agents:</span><span class="val">', fmtNumber(m.agentCount || 0), '</span>',
+    ].join('');
+    $('missed-summary').innerHTML = summaryHtml;
+
+    renderMissedChart(data.chart || { labels: [], counts: [] });
+    renderMissedAgents(data.agents || []);
+  }
+
+  function renderMissedChart(chart) {
+    const canvas = $('missed-chart');
+    if (!canvas) return;
+    if (typeof Chart === 'undefined') {
+      // Chart.js failed to load (CDN blocked?). Surface a fallback.
+      canvas.parentElement.innerHTML = '<p class="muted small">Chart library failed to load. The agent grid below still shows the data.</p>';
+      return;
+    }
+
+    const ctx = canvas.getContext('2d');
+    const cfg = {
+      type: 'bar',
+      data: {
+        labels: chart.labels || [],
+        datasets: [{
+          label: 'Missed calls',
+          data: chart.counts || [],
+          backgroundColor: 'rgba(185, 28, 28, 0.7)',
+          borderColor: 'rgba(185, 28, 28, 1)',
+          borderWidth: 1,
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              title: function (items) { return items[0].label + ' CST'; },
+              label: function (item) { return item.parsed.y + ' missed call' + (item.parsed.y === 1 ? '' : 's'); }
+            }
+          }
+        },
+        scales: {
+          x: {
+            grid: { display: false },
+            ticks: { font: { size: 11 }, maxRotation: 0, autoSkip: false }
+          },
+          y: {
+            beginAtZero: true,
+            ticks: { precision: 0, font: { size: 11 } },
+            grid: { color: '#f1f5f9' }
+          }
+        }
+      }
+    };
+
+    if (missedChart) {
+      missedChart.data = cfg.data;
+      missedChart.options = cfg.options;
+      missedChart.update();
+    } else {
+      missedChart = new Chart(ctx, cfg);
+    }
+  }
+
+  function renderMissedAgents(agents) {
+    const wrap = $('missed-agents');
+    if (!wrap) return;
+
+    if (!agents.length) {
+      wrap.innerHTML = '<div class="agent-card no-data">No missed calls in this range for any agent in scope.</div>';
+      return;
+    }
+
+    wrap.innerHTML = agents.map(function (a) {
+      const itemsHtml = a.missedTimes.map(function (m) {
+        const dateLabel = m.date ? '<span class="date">' + escapeHtml(m.date.slice(5)) + '</span>' : '';
+        const cls = m.abandoned ? 'abandoned' : '';
+        const siren = m.abandoned ? ' 🚨' : '';
+        return '<li class="' + cls + '">' + dateLabel + escapeHtml(m.label) + siren + '</li>';
+      }).join('');
+
+      return '<div class="agent-card">'
+           +   '<div class="agent-name">' + escapeHtml(a.name) + '</div>'
+           +   '<div class="agent-total">' + a.total + ' missed</div>'
+           +   '<ul class="missed-list">' + itemsHtml + '</ul>'
+           + '</div>';
+    }).join('');
   }
 
   function getRequestedDept() {
