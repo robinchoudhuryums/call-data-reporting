@@ -448,19 +448,20 @@
   .report-summary .val { color: #111827; font-weight: 600; }
   .report-summary .sep { color: #d1d5db; }
 
-  /* Chart container */
+  /* Chart container — sized to give the radar a roughly square area
+     within a centered ~480px box. maintainAspectRatio=true on the
+     Chart.js side keeps the radar circular regardless of width. */
   .chart-section {
     background: #fff;
     border: 1px solid #e5e7eb;
     border-radius: 8px;
     padding: 14px 16px 10px;
-    margin-bottom: 16px;
-    /* Constrain height so Chart.js's responsive sizing doesn't blow up */
-    height: 280px;
+    margin: 0 auto 16px;
+    max-width: 480px;
   }
   .chart-section canvas {
-    width: 100% !important;
-    height: 100% !important;
+    display: block;
+    max-width: 100%;
   }
 
   /* Per-agent card grid for the Missed Calls report */

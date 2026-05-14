@@ -70,7 +70,9 @@ function getMissedCallsReport(req) {
   }
 
   const cache = CacheService.getScriptCache();
-  const cacheKey = 'missed:v1:' + dept + ':' + scope + ':' + from + ':' + to;
+  // v2: added normalized abandoned matching (handles AM/PM + hour-padding
+  // mismatches between K-AC and AF) and meta.abandonedCount diagnostic.
+  const cacheKey = 'missed:v2:' + dept + ':' + scope + ':' + from + ':' + to;
   const cached = cache.get(cacheKey);
   if (cached) {
     try {
@@ -131,6 +133,7 @@ function computeMissedCallsReport_(dept, from, to, scope) {
   const agentMap = {};   // agent -> { missedTimes: [], total: 0 }
   let rowsMatched = 0;
   let totalMissed = 0;
+  let abandonedCount = 0;  // diagnostic: how many matched as abandoned
 
   for (let i = 0; i < values.length; i++) {
     const r  = values[i];
@@ -159,26 +162,31 @@ function computeMissedCallsReport_(dept, from, to, scope) {
 
     rowsMatched++;
 
-    // Collect all missed-call timestamps from K-AC (19 columns)
-    const slotTimes = [];
+    // Collect all missed-call timestamps from K-AC (19 columns).
+    // We keep both the raw display label (for rendering) and a
+    // normalized 24-hour key (for matching against AF).
+    const slotTimes = [];  // [{ label, key }]
     for (let c = HISTORICAL_TIME_SLOTS_START; c <= HISTORICAL_TIME_SLOTS_END; c++) {
       const cell = String(rd[c - 1] || '').trim();
       if (!cell) continue;
       cell.split(',').forEach(function (t) {
         const trimmed = t.trim();
-        if (trimmed) slotTimes.push(trimmed);
+        if (!trimmed) return;
+        slotTimes.push({ label: trimmed, key: normTimeKey_(trimmed) });
       });
     }
 
     if (slotTimes.length === 0) continue;
 
-    // Build the set of abandoned-missed timestamps (col AF) for cross-ref
+    // Build the set of abandoned-missed timestamps (col AF). Normalize
+    // the same way as slot times so AM/PM differences or 24-vs-12 hour
+    // formatting in either column don't break the cross-reference.
     const abandonedStr = String(rd[HISTORICAL_ABANDONED_MISSED_TIMES - 1] || '').trim();
-    const abandonedSet = {};
+    const abandonedKeys = {};
     if (abandonedStr) {
       abandonedStr.split(',').forEach(function (t) {
-        const trimmed = t.trim();
-        if (trimmed) abandonedSet[trimmed] = true;
+        const k = normTimeKey_(t.trim());
+        if (k) abandonedKeys[k] = true;
       });
     }
 
@@ -186,19 +194,23 @@ function computeMissedCallsReport_(dept, from, to, scope) {
       agentMap[agent] = { missedTimes: [], total: 0 };
     }
 
-    slotTimes.forEach(function (timeStr) {
-      const isAbandoned = !!abandonedSet[timeStr];
+    slotTimes.forEach(function (item) {
+      const isAbandoned = !!abandonedKeys[item.key];
+      if (isAbandoned) abandonedCount++;
       agentMap[agent].missedTimes.push({
         date: dateIso,
-        time: timeStr,
-        label: formatHmsToAmPm_(timeStr),
+        time: item.label,
+        // Use the normalized 24h key as the formatter input so AM/PM
+        // is computed from the hour value, not from any AM/PM suffix
+        // that may already be present in the raw cell display.
+        label: formatHmsToAmPm_(item.key),
         abandoned: isAbandoned,
       });
       agentMap[agent].total++;
       totalMissed++;
 
-      // Bucket into the histogram
-      const minutes = parseHmsToMinutes_(timeStr);
+      // Bucket into the histogram (uses normalized key's hour/min)
+      const minutes = parseHmsKeyToMinutes_(item.key);
       if (minutes >= startMin && minutes < endMin) {
         const bucketIdx = Math.floor((minutes - startMin) / MISSED_BUCKET_MINUTES);
         if (bucketIdx >= 0 && bucketIdx < totalBuckets) {
@@ -239,6 +251,7 @@ function computeMissedCallsReport_(dept, from, to, scope) {
       rowsMatched: rowsMatched,
       agentCount: agents.length,
       totalMissed: totalMissed,
+      abandonedCount: abandonedCount,
       generatedAt: new Date().toISOString(),
     },
     agents: agents,
@@ -267,11 +280,44 @@ function emptyMissedReport_(dept, from, to, scope, rosterSize) {
 }
 
 /**
- * "H:MM:SS" -> total minutes past midnight (integer). Returns -1 if unparseable.
+ * Normalizes a time string to a canonical 24-hour "H:MM:SS" key for
+ * cross-column matching. Handles:
+ *   - 24-hour "21:15:23"     -> "21:15:23"
+ *   - 12-hour "9:15:23 PM"   -> "21:15:23"
+ *   - 12-hour "9:15:23 AM"   -> "9:15:23"
+ *   - "12:30:00 AM"          -> "0:30:00"
+ *   - "12:30:00 PM"          -> "12:30:00"
+ *   - Hour-padding "09:15:23" -> "9:15:23"
+ *   - Missing seconds "9:15"  -> "9:15:00"
+ *
+ * Returns '' if unparseable.
  */
-function parseHmsToMinutes_(timeStr) {
-  if (!timeStr) return -1;
-  const parts = String(timeStr).trim().split(':');
+function normTimeKey_(s) {
+  if (s == null || s === '') return '';
+  let str = String(s).trim().toUpperCase();
+  const isPM = /\bPM\b/.test(str);
+  const isAM = /\bAM\b/.test(str);
+  str = str.replace(/\s*(AM|PM)\s*/, '').trim();
+
+  const parts = str.split(':');
+  if (parts.length < 2) return '';
+  let h = parseInt(parts[0]) || 0;
+  const m = parseInt(parts[1]) || 0;
+  const sec = parts.length >= 3 ? (parseInt(parts[2]) || 0) : 0;
+
+  if (isPM && h < 12) h += 12;
+  else if (isAM && h === 12) h = 0;
+
+  const pad = function (n) { return n < 10 ? '0' + n : String(n); };
+  return h + ':' + pad(m) + ':' + pad(sec);
+}
+
+/**
+ * Normalized "H:MM:SS" key -> minutes past midnight.
+ */
+function parseHmsKeyToMinutes_(key) {
+  if (!key) return -1;
+  const parts = key.split(':');
   if (parts.length < 2) return -1;
   const h = parseInt(parts[0]) || 0;
   const m = parseInt(parts[1]) || 0;
