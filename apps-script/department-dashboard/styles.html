@@ -147,6 +147,13 @@
   }
   .btn:hover { background: #111827; }
   .btn:disabled { background: #9ca3af; cursor: not-allowed; }
+  .btn-secondary {
+    background: #fff;
+    color: #1f2937;
+    border: 1px solid #d1d5db;
+  }
+  .btn-secondary:hover { background: #f3f4f6; color: #111827; }
+  .control-reports { margin-left: auto; }
 
   /* Status */
   .status {
@@ -414,4 +421,98 @@
   .modal-content a { color: #1d4ed8; text-decoration: none; }
   .modal-content a:hover { text-decoration: underline; }
   .modal-content em { color: #6b7280; }
+
+  /* Wide modal variant (for reports with charts + tables) */
+  .modal.modal-wide { padding: 16px; }
+  .modal-panel.modal-panel-wide {
+    max-width: 1200px;
+    width: 100%;
+    max-height: 92vh;
+    padding: 24px 28px 20px;
+  }
+
+  /* Report summary line at top of report modals */
+  .report-summary {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin: 0 0 16px;
+    padding: 12px 16px;
+    background: #f9fafb;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    font-size: 13px;
+  }
+  .report-summary .label { color: #6b7280; }
+  .report-summary .val { color: #111827; font-weight: 600; }
+  .report-summary .sep { color: #d1d5db; }
+
+  /* Chart container */
+  .chart-section {
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 14px 16px 10px;
+    margin-bottom: 16px;
+    /* Constrain height so Chart.js's responsive sizing doesn't blow up */
+    height: 280px;
+  }
+  .chart-section canvas {
+    width: 100% !important;
+    height: 100% !important;
+  }
+
+  /* Per-agent card grid for the Missed Calls report */
+  .agent-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 12px;
+  }
+  .agent-card {
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 12px 14px;
+    font-size: 13px;
+  }
+  .agent-card .agent-name {
+    font-weight: 600;
+    color: #111827;
+    margin-bottom: 4px;
+  }
+  .agent-card .agent-total {
+    color: #6b7280;
+    font-size: 12px;
+    margin-bottom: 8px;
+  }
+  .agent-card .missed-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    max-height: 220px;
+    overflow-y: auto;
+    font-variant-numeric: tabular-nums;
+    font-size: 12px;
+  }
+  .agent-card .missed-list li {
+    padding: 2px 0;
+    color: #374151;
+    border-bottom: 1px solid #f3f4f6;
+  }
+  .agent-card .missed-list li:last-child { border-bottom: 0; }
+  .agent-card .missed-list li.abandoned {
+    color: #b91c1c;
+    font-weight: 500;
+  }
+  .agent-card .missed-list .date {
+    color: #6b7280;
+    margin-right: 6px;
+  }
+  .agent-card.no-data {
+    background: #f9fafb;
+    color: #6b7280;
+    text-align: center;
+    padding: 20px;
+  }
 </style>
