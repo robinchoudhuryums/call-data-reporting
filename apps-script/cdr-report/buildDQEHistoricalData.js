@@ -175,14 +175,26 @@ function buildDQEHistoricalData(rawSheet, dqeSheet) {
     if (!parentMap[callId]) {
       parentMap[callId] = { legs: [], waitSec: 0, talkSec: 0, abandoned: false };
     }
-    parentMap[callId].legs.push({ legId, talkSec, callSec, calleeName });
+    // Store the per-leg `abandoned` flag too. IVR-routed calls have
+    // the actual abandoned event on leg 3+ (after menu navigation),
+    // not leg 0 -- so we need to know which leg was abandoned, not
+    // just whether ANY leg of the parent was. See finalization
+    // below for how this drives waitSec.
+    parentMap[callId].legs.push({ legId, talkSec, callSec, calleeName, abandoned });
     if (abandoned) parentMap[callId].abandoned = true;
   }
 
   for (const entry of Object.values(parentMap)) {
     if (!entry.legs.length) continue;
     entry.legs.sort((a, b) => a.legId - b.legId);
-    entry.waitSec = entry.legs[0].callSec;
+    // waitSec semantics: the wait time of the *abandoned event*, not
+    // necessarily leg 0. For IVR-routed calls, leg 0 is the menu
+    // interaction (typically <15s) while the queue-ring leg that
+    // actually got abandoned is leg 3+ (with the real hold duration).
+    // Single-leg / non-routed cases: legs.find returns leg 0 = same
+    // as before; no behavior change for that shape.
+    const abandonedLeg = entry.legs.find(function (l) { return l.abandoned; });
+    entry.waitSec = abandonedLeg ? abandonedLeg.callSec : entry.legs[0].callSec;
     entry.talkSec = Math.max.apply(null, entry.legs.map(function(l) { return l.talkSec; }));
   }
 
