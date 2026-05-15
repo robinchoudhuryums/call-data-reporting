@@ -169,6 +169,8 @@
   // on subsequent renders rather than re-instantiated.
 
   let missedChart = null;
+  let lastMissedData = null;       // last server response (for chart-click drill-in)
+  let activeBucketIdx = -1;        // currently-shown detail bucket; -1 = none
 
   function initMissedReport() {
     const btn = $('missed-report-btn');
@@ -201,6 +203,10 @@
     if (closeBtn) closeBtn.addEventListener('click', closeModal);
     if (backdrop) backdrop.addEventListener('click', closeModal);
 
+    // Close button on the bucket-detail panel (chart drill-in).
+    const detailClose = $('bucket-detail-close');
+    if (detailClose) detailClose.addEventListener('click', hideBucketDetail);
+
     function fetchAndRender() {
       const dept = getRequestedDept();
       const req = {
@@ -216,6 +222,8 @@
       // Destroy any previous chart + canvas so the stale visual
       // doesn't linger while the new fetch is in flight.
       clearMissedChart();
+      hideBucketDetail();
+      lastMissedData = null;
 
       google.script.run
         .withSuccessHandler(renderMissedReport)
@@ -252,6 +260,7 @@
       return;
     }
     setMissedStatus(null);
+    lastMissedData = data;
 
     const m = data.meta || {};
     const summaryParts = [
@@ -259,7 +268,10 @@
       '<span class="label">Range:</span><span class="val">' + escapeHtml(m.from || '') + ' to ' + escapeHtml(m.to || '') + '</span>',
       '<span class="label">Scope:</span><span class="val">' + escapeHtml(m.scope || 'roster') + '</span>',
       '<span class="label">Total missed:</span><span class="val">' + fmtNumber(m.totalMissed || 0) + '</span>',
-      '<span class="label">Abandoned:</span><span class="val">' + fmtNumber(m.abandonedCount || 0) + '</span>',
+      // Unique abandoned-call count (col AD) -- one abandoned call
+      // ringing N agents counts as 1 here. Per-ring count lives in
+      // m.abandonedRings if needed for debugging.
+      '<span class="label">Abandoned calls:</span><span class="val">' + fmtNumber(m.abandonedCallCount || 0) + '</span>',
       '<span class="label">Agents:</span><span class="val">' + fmtNumber(m.agentCount || 0) + '</span>',
     ];
     $('missed-summary').innerHTML = summaryParts.join('<span class="sep">|</span>');
@@ -316,16 +328,113 @@
           r: {
             beginAtZero: true,
             ticks: { display: false, stepSize: 1 },
-            pointLabels: { font: { size: 10 } }
+            pointLabels: {
+              font: { size: 10 },
+              // Make the 18 axis labels feel clickable too -- they
+              // open the same detail panel as a data-point click.
+              padding: 6
+            }
           }
         },
-        layout: { padding: 10 }
+        layout: { padding: 10 },
+        // Click a data point (or the axis label nearest a point) to
+        // see the contributing rings for that 30-min bucket.
+        onClick: function (evt, items, chartObj) {
+          if (items && items.length) {
+            toggleBucketDetail(items[0].index);
+            return;
+          }
+          // Allow clicking near an axis label even if not exactly on a
+          // data point: snap to the nearest point.
+          const near = chartObj.getElementsAtEventForMode(evt, 'nearest', { intersect: false }, true);
+          if (near && near.length) toggleBucketDetail(near[0].index);
+        }
       }
     };
 
     // Canvas is always freshly recreated above, so we always
     // instantiate a new Chart rather than update an existing one.
     missedChart = new Chart(ctx, cfg);
+  }
+
+  // -- Bucket detail (chart drill-in) ------------------------------------
+  // Click a chart bucket -> show all rings (date, agent, time) that
+  // contributed to that 30-min slot. Click the same bucket again, or
+  // the "Close" link, to dismiss. Hidden on every fresh fetch.
+
+  function toggleBucketDetail(idx) {
+    if (idx === activeBucketIdx) {
+      hideBucketDetail();
+    } else {
+      showBucketDetail(idx);
+    }
+  }
+
+  function showBucketDetail(idx) {
+    if (!lastMissedData || !lastMissedData.chart || !lastMissedData.agents) return;
+    const labels = lastMissedData.chart.labels || [];
+    if (idx < 0 || idx >= labels.length) return;
+
+    activeBucketIdx = idx;
+    const bucketLabel = labels[idx];
+
+    // Collect every ring whose .bucket matches idx, across all agents.
+    // Server already returns missedTimes sorted by date+sortKey, so
+    // the bucket subset stays in order.
+    const rings = [];
+    lastMissedData.agents.forEach(function (a) {
+      a.missedTimes.forEach(function (m) {
+        if (m.bucket === idx) {
+          rings.push({
+            agent: a.name,
+            date: m.date,
+            label: m.label,
+            abandoned: m.abandoned,
+            sortKey: m.sortKey,
+          });
+        }
+      });
+    });
+    rings.sort(function (a, b) {
+      if (a.date !== b.date) return a.date < b.date ? -1 : 1;
+      return (a.sortKey || 0) - (b.sortKey || 0);
+    });
+
+    const titleEl = $('bucket-detail-title');
+    const bodyEl  = $('bucket-detail-body');
+    const wrap    = $('missed-bucket-detail');
+    if (!titleEl || !bodyEl || !wrap) return;
+
+    titleEl.textContent = bucketLabel + ' CST  ·  ' + rings.length
+                        + ' ring' + (rings.length === 1 ? '' : 's');
+
+    if (!rings.length) {
+      bodyEl.innerHTML = '<p class="bucket-detail-empty">No rings in this bucket.</p>';
+    } else {
+      bodyEl.innerHTML = '<ul class="bucket-detail-list">' + rings.map(function (r) {
+        const cls = r.abandoned ? 'abandoned' : '';
+        const siren = r.abandoned ? ' 🚨' : '';
+        const dateLabel = r.date ? r.date.slice(5) : '';   // MM-DD
+        return '<li class="' + cls + '">'
+             +   '<span class="ring-date">'  + escapeHtml(dateLabel) + '</span>'
+             +   '<span class="ring-agent">' + escapeHtml(r.agent)   + '</span>'
+             +   '<span class="ring-time">'  + escapeHtml(r.label) + siren + '</span>'
+             + '</li>';
+      }).join('') + '</ul>';
+    }
+
+    wrap.style.display = '';
+    // Scroll the panel into view if it's offscreen below the chart.
+    wrap.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+
+  function hideBucketDetail() {
+    activeBucketIdx = -1;
+    const wrap = $('missed-bucket-detail');
+    if (!wrap) return;
+    wrap.style.display = 'none';
+    const bodyEl = $('bucket-detail-body');
+    if (bodyEl) bodyEl.innerHTML = '';
   }
 
   function renderMissedAgents(agents) {

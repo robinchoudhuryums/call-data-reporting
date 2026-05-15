@@ -39,7 +39,8 @@ const MISSED_BUCKET_MINUTES   = 30;   // 30-min buckets -> 18 total
 
 const HISTORICAL_TIME_SLOTS_START = 11;  // K
 const HISTORICAL_TIME_SLOTS_END   = 29;  // AC
-const HISTORICAL_ABANDONED_MISSED_TIMES = 32;  // AF
+const HISTORICAL_ABANDONED_PARENT_IDS    = 30;  // AD
+const HISTORICAL_ABANDONED_MISSED_TIMES  = 32;  // AF
 
 function getMissedCallsReport(req) {
   const email = Session.getActiveUser().getEmail();
@@ -70,9 +71,11 @@ function getMissedCallsReport(req) {
   }
 
   const cache = CacheService.getScriptCache();
-  // v3: chronological sort fixed (numeric sortKey instead of string
-  // compare on H:MM:SS, which incorrectly placed 10:xx before 9:xx).
-  const cacheKey = 'missed:v3:' + dept + ':' + scope + ':' + from + ':' + to;
+  // v4: meta now includes abandonedCallCount (unique parent-call
+  // count across the dept's matched rows, from col AD), each
+  // missedTime entry tags its chart bucket index for click-to-
+  // detail rendering on the client.
+  const cacheKey = 'missed:v4:' + dept + ':' + scope + ':' + from + ':' + to;
   const cached = cache.get(cacheKey);
   if (cached) {
     try {
@@ -133,7 +136,8 @@ function computeMissedCallsReport_(dept, from, to, scope) {
   const agentMap = {};   // agent -> { missedTimes: [], total: 0 }
   let rowsMatched = 0;
   let totalMissed = 0;
-  let abandonedCount = 0;  // diagnostic: how many matched as abandoned
+  let abandonedRings = 0;            // per-ring count (one per red timestamp)
+  const uniqueAbandonedParents = {}; // dept-wide unique parent IDs from col AD
 
   for (let i = 0; i < values.length; i++) {
     const r  = values[i];
@@ -190,13 +194,42 @@ function computeMissedCallsReport_(dept, from, to, scope) {
       });
     }
 
+    // Col AD ("Abandoned Parent Call IDs") holds unique parent call
+    // IDs that were abandoned. Several agent rows can carry the SAME
+    // parent ID (one abandoned call ringing N agents -> N rows ->
+    // 1 unique parent), so collecting these into a dept-wide set
+    // gives us "unique abandoned calls", which is what the summary
+    // line shows. abandonedRings (incremented per timestamp below)
+    // is the per-ring count for diagnostics.
+    const abandonedIdsCell = String(rd[HISTORICAL_ABANDONED_PARENT_IDS - 1] || '').trim();
+    if (abandonedIdsCell) {
+      abandonedIdsCell.split(',').forEach(function (id) {
+        const trimmed = id.trim();
+        if (trimmed) uniqueAbandonedParents[trimmed] = true;
+      });
+    }
+
     if (!agentMap[agent]) {
       agentMap[agent] = { missedTimes: [], total: 0 };
     }
 
     slotTimes.forEach(function (item) {
       const isAbandoned = !!abandonedKeys[item.key];
-      if (isAbandoned) abandonedCount++;
+      if (isAbandoned) abandonedRings++;
+
+      // Compute bucket index once; -1 means "outside the 8 AM-5 PM
+      // chart range". The client uses this on chart-bar clicks to
+      // pull up just the rings that contributed to a given bucket.
+      const minutes = parseHmsKeyToMinutes_(item.key);
+      let bucketIdx = -1;
+      if (minutes >= startMin && minutes < endMin) {
+        const candidate = Math.floor((minutes - startMin) / MISSED_BUCKET_MINUTES);
+        if (candidate >= 0 && candidate < totalBuckets) {
+          bucketIdx = candidate;
+          chartCounts[candidate]++;
+        }
+      }
+
       agentMap[agent].missedTimes.push({
         date: dateIso,
         time: item.label,
@@ -208,18 +241,12 @@ function computeMissedCallsReport_(dept, from, to, scope) {
         // Numeric sort key (seconds past midnight, from the 24h key)
         // so chronological sort works correctly across 9 vs 10 hours.
         sortKey: hmsKeyToSeconds_(item.key),
+        // Chart bucket this ring contributes to (-1 if outside the
+        // 8 AM-5 PM CST chart range).
+        bucket: bucketIdx,
       });
       agentMap[agent].total++;
       totalMissed++;
-
-      // Bucket into the histogram (uses normalized key's hour/min)
-      const minutes = parseHmsKeyToMinutes_(item.key);
-      if (minutes >= startMin && minutes < endMin) {
-        const bucketIdx = Math.floor((minutes - startMin) / MISSED_BUCKET_MINUTES);
-        if (bucketIdx >= 0 && bucketIdx < totalBuckets) {
-          chartCounts[bucketIdx]++;
-        }
-      }
     });
   }
 
@@ -254,7 +281,13 @@ function computeMissedCallsReport_(dept, from, to, scope) {
       rowsMatched: rowsMatched,
       agentCount: agents.length,
       totalMissed: totalMissed,
-      abandonedCount: abandonedCount,
+      // Unique abandoned-CALL count (from col AD), which is what the
+      // summary line displays. A single abandoned call ringing N
+      // agents counts as 1 here.
+      abandonedCallCount: Object.keys(uniqueAbandonedParents).length,
+      // Per-ring count for diagnostics (one increment per red
+      // timestamp). Same as the number of red rows in the agent grid.
+      abandonedRings: abandonedRings,
       generatedAt: new Date().toISOString(),
     },
     agents: agents,
@@ -275,6 +308,8 @@ function emptyMissedReport_(dept, from, to, scope, rosterSize) {
       rowsMatched: 0,
       agentCount: 0,
       totalMissed: 0,
+      abandonedCallCount: 0,
+      abandonedRings: 0,
       generatedAt: new Date().toISOString(),
     },
     agents: [],

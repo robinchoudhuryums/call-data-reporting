@@ -471,6 +471,66 @@
     font-size: 13px;
   }
 
+  /* Inline detail panel that appears when a chart bucket is clicked */
+  .bucket-detail {
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 12px 16px 14px;
+    margin-bottom: 16px;
+  }
+  .bucket-detail-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 8px;
+    border-bottom: 1px solid #f1f5f9;
+    padding-bottom: 6px;
+  }
+  .bucket-detail-header strong {
+    font-size: 14px;
+    color: #111827;
+  }
+  .link-btn {
+    background: none;
+    border: 0;
+    color: #6b7280;
+    font-size: 12px;
+    cursor: pointer;
+    padding: 0;
+  }
+  .link-btn:hover { color: #111827; text-decoration: underline; }
+  .bucket-detail-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+    max-height: 280px;
+    overflow-y: auto;
+  }
+  .bucket-detail-list li {
+    padding: 4px 0;
+    border-bottom: 1px solid #f3f4f6;
+    display: grid;
+    grid-template-columns: 80px 1fr 110px;
+    gap: 12px;
+    align-items: baseline;
+  }
+  .bucket-detail-list li:last-child { border-bottom: 0; }
+  .bucket-detail-list li.abandoned {
+    color: #b91c1c;
+    font-weight: 500;
+  }
+  .bucket-detail-list .ring-date  { color: #6b7280; }
+  .bucket-detail-list .ring-agent { color: #111827; }
+  .bucket-detail-list .ring-time  { text-align: right; }
+  .bucket-detail-empty {
+    color: #6b7280;
+    font-size: 13px;
+    margin: 0;
+  }
+
   /* Per-agent card grid for the Missed Calls report */
   .agent-grid {
     display: grid;
