@@ -451,6 +451,8 @@
     }
 
     wrap.style.display = '';
+    const row = $('chart-row');
+    if (row) row.classList.remove('no-detail');
     // Scroll the panel into view if it's offscreen below the chart.
     wrap.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }
@@ -462,6 +464,8 @@
     wrap.style.display = 'none';
     const bodyEl = $('bucket-detail-body');
     if (bodyEl) bodyEl.innerHTML = '';
+    const row = $('chart-row');
+    if (row) row.classList.add('no-detail');
   }
 
   // -- Queue-only abandoned section --------------------------------------
