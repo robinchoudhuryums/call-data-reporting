@@ -70,9 +70,9 @@ function getMissedCallsReport(req) {
   }
 
   const cache = CacheService.getScriptCache();
-  // v2: added normalized abandoned matching (handles AM/PM + hour-padding
-  // mismatches between K-AC and AF) and meta.abandonedCount diagnostic.
-  const cacheKey = 'missed:v2:' + dept + ':' + scope + ':' + from + ':' + to;
+  // v3: chronological sort fixed (numeric sortKey instead of string
+  // compare on H:MM:SS, which incorrectly placed 10:xx before 9:xx).
+  const cacheKey = 'missed:v3:' + dept + ':' + scope + ':' + from + ':' + to;
   const cached = cache.get(cacheKey);
   if (cached) {
     try {
@@ -205,6 +205,9 @@ function computeMissedCallsReport_(dept, from, to, scope) {
         // that may already be present in the raw cell display.
         label: formatHmsToAmPm_(item.key),
         abandoned: isAbandoned,
+        // Numeric sort key (seconds past midnight, from the 24h key)
+        // so chronological sort works correctly across 9 vs 10 hours.
+        sortKey: hmsKeyToSeconds_(item.key),
       });
       agentMap[agent].total++;
       totalMissed++;
@@ -227,7 +230,7 @@ function computeMissedCallsReport_(dept, from, to, scope) {
       const list = agentMap[name].missedTimes.slice();
       list.sort(function (a, b) {
         if (a.date !== b.date) return a.date < b.date ? -1 : 1;
-        return a.time < b.time ? -1 : a.time > b.time ? 1 : 0;
+        return a.sortKey - b.sortKey;
       });
       return {
         name: name,
@@ -322,6 +325,20 @@ function parseHmsKeyToMinutes_(key) {
   const h = parseInt(parts[0]) || 0;
   const m = parseInt(parts[1]) || 0;
   return h * 60 + m;
+}
+
+/**
+ * Normalized "H:MM:SS" key -> total seconds past midnight (used as a
+ * numeric chronological sort key).
+ */
+function hmsKeyToSeconds_(key) {
+  if (!key) return 0;
+  const parts = key.split(':');
+  if (parts.length < 2) return 0;
+  const h = parseInt(parts[0]) || 0;
+  const m = parseInt(parts[1]) || 0;
+  const s = parts.length >= 3 ? (parseInt(parts[2]) || 0) : 0;
+  return h * 3600 + m * 60 + s;
 }
 
 /**

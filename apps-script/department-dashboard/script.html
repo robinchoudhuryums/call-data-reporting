@@ -213,6 +213,9 @@
       setMissedStatus('loading', 'Loading missed-call data...');
       $('missed-summary').innerHTML = '';
       $('missed-agents').innerHTML = '';
+      // Destroy any previous chart + canvas so the stale visual
+      // doesn't linger while the new fetch is in flight.
+      clearMissedChart();
 
       google.script.run
         .withSuccessHandler(renderMissedReport)
@@ -220,6 +223,17 @@
           setMissedStatus('error', 'Error: ' + (err && err.message ? err.message : String(err)));
         })
         .getMissedCallsReport(req);
+    }
+  }
+
+  function clearMissedChart() {
+    if (missedChart) {
+      missedChart.destroy();
+      missedChart = null;
+    }
+    const wrap = $('missed-chart-wrap');
+    if (wrap) {
+      wrap.innerHTML = '<div class="chart-loading">Loading chart&hellip;</div>';
     }
   }
 
@@ -255,11 +269,17 @@
   }
 
   function renderMissedChart(chart) {
+    const wrap = $('missed-chart-wrap');
+    if (!wrap) return;
+
+    // Recreate the canvas (clearMissedChart() replaced the container
+    // contents with a loading placeholder).
+    wrap.innerHTML = '<canvas id="missed-chart" aria-label="Hour-of-day distribution of missed calls"></canvas>';
     const canvas = $('missed-chart');
-    if (!canvas) return;
+
     if (typeof Chart === 'undefined') {
       // Chart.js failed to load (CDN blocked?). Surface a fallback.
-      canvas.parentElement.innerHTML = '<p class="muted small">Chart library failed to load. The agent grid below still shows the data.</p>';
+      wrap.innerHTML = '<p class="chart-loading">Chart library failed to load. The agent grid below still shows the data.</p>';
       return;
     }
 
@@ -303,13 +323,9 @@
       }
     };
 
-    if (missedChart) {
-      missedChart.data = cfg.data;
-      missedChart.options = cfg.options;
-      missedChart.update();
-    } else {
-      missedChart = new Chart(ctx, cfg);
-    }
+    // Canvas is always freshly recreated above, so we always
+    // instantiate a new Chart rather than update an existing one.
+    missedChart = new Chart(ctx, cfg);
   }
 
   function renderMissedAgents(agents) {
