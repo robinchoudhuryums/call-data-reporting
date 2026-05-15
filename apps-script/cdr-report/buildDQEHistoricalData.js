@@ -458,12 +458,20 @@ function buildDQEHistoricalData(rawSheet, dqeSheet) {
     const parent = parentMap[parentId];
     if (!parent || !parent.legs.length) return;
 
-    // Which queue(s) did this parent hit? Collected from parent legs whose
-    // calleeName is a queue identifier.
-    const queueNamesHit = {};
+    // Which queue(s) did this parent hit? Collected from parent legs
+    // whose calleeName contains a queue identifier (A_Q_* or
+    // "Backup CSR"). The regex is intentionally NOT anchored so we
+    // match even when the calleeName has surrounding text (display
+    // names, domain suffixes, etc.) -- same shape as Pass 2's
+    // queue-name detection on caller_id.
+    const queueNamesHit = {};   // queueName -> the parent leg that hit it
     parent.legs.forEach(function (l) {
-      const m = String(l.calleeName || '').match(/^(A_Q_\w+|Backup CSR)$/);
-      if (m) queueNamesHit[m[1]] = true;
+      const m = String(l.calleeName || '').match(/(A_Q_\w+|Backup CSR)/);
+      if (!m) return;
+      const name = m[1];
+      // Keep the FIRST leg that hit this queue (lowest legId, since
+      // parent.legs was sorted in the Pass 1 finalization step).
+      if (!queueNamesHit[name]) queueNamesHit[name] = l;
     });
     if (!Object.keys(queueNamesHit).length) return;
 
@@ -476,22 +484,23 @@ function buildDQEHistoricalData(rawSheet, dqeSheet) {
       }
     });
 
-    // The abandoned event's leg (for timestamp + wait). After the Pass 1
-    // fix, the abandoned leg is found via .find on the parent's sorted
-    // legs.
-    const abandonedLeg = parent.legs.find(function (l) { return l.abandoned; });
-    if (!abandonedLeg || abandonedLeg.startPST == null) return;
-
     Object.keys(queueNamesHit).forEach(function (queueName) {
       if (ringedQueues[queueName]) return;  // already covered by per-agent rows
+
+      // Use the timestamp + wait of the parent leg that hit THIS
+      // queue, not the abandoned leg. A multi-queue call (CSR ->
+      // Backup CSR) needs each queue's sentinel timestamped at its
+      // own ring time so chart placement is correct.
+      const queueLeg = queueNamesHit[queueName];
+      if (queueLeg.startPST == null) return;
 
       if (!queueOnlyByQueue[queueName]) {
         queueOnlyByQueue[queueName] = { parentIds: [], events: [] };
       }
       queueOnlyByQueue[queueName].parentIds.push(parentId);
       queueOnlyByQueue[queueName].events.push({
-        startPST: abandonedLeg.startPST,
-        callSec:  abandonedLeg.callSec
+        startPST: queueLeg.startPST,
+        callSec:  queueLeg.callSec
       });
     });
   });

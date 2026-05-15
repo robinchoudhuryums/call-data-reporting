@@ -448,16 +448,27 @@
   .report-summary .val { color: #111827; font-weight: 600; }
   .report-summary .sep { color: #d1d5db; }
 
-  /* Chart container — sized to give the radar a roughly square area
-     within a centered ~480px box. maintainAspectRatio=true on the
-     Chart.js side keeps the radar circular regardless of width. */
+  /* Chart row: grid that holds the radar chart on the left and (when
+     visible) the bucket-detail drill-in on the right. With .no-detail
+     the row collapses to a single centered column. */
+  .chart-row {
+    display: grid;
+    gap: 16px;
+    grid-template-columns: 480px minmax(0, 1fr);
+    margin-bottom: 16px;
+    align-items: start;
+  }
+  .chart-row.no-detail {
+    grid-template-columns: 480px;
+    justify-content: center;
+  }
   .chart-section {
     background: #fff;
     border: 1px solid #e5e7eb;
     border-radius: 8px;
     padding: 14px 16px 10px;
-    margin: 0 auto 16px;
-    max-width: 480px;
+    margin: 0;
+    min-width: 0;
   }
   .chart-section canvas {
     display: block;
@@ -471,13 +482,16 @@
     font-size: 13px;
   }
 
-  /* Inline detail panel that appears when a chart bucket is clicked */
+  /* Drill-in panel that appears next to the chart when a bucket is
+     clicked. Lives inside the .chart-row grid so it sits to the right
+     of the chart; collapses entirely when display:none. */
   .bucket-detail {
     background: #fff;
     border: 1px solid #e5e7eb;
     border-radius: 8px;
     padding: 12px 16px 14px;
-    margin-bottom: 16px;
+    margin: 0;
+    min-width: 0;
   }
   .bucket-detail-header {
     display: flex;
