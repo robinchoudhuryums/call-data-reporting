@@ -152,6 +152,11 @@ function computeSummary_(dept, from, to, scope) {
 
     const agent = String(r[HISTORICAL_COLS.AGENT - 1] || '').trim();
     if (!agent) continue;
+    // Skip queue-sentinel rows (used by MissedCallsReport for queue-only
+    // abandoned calls). These have agent name = a queue identifier and
+    // are not real agents -- shouldn't appear in the per-agent table or
+    // in the diagnostics' roster/queue match counts.
+    if (/^A_Q_/.test(agent) || agent === 'Backup CSR') continue;
 
     const inRoster = !!rosterSet[agent];
     let inQueue = false;

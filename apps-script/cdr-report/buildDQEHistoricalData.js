@@ -171,6 +171,7 @@ function buildDQEHistoricalData(rawSheet, dqeSheet) {
 
     const talkSec = timeToSec(timeVals[i] ? timeVals[i][0] : '');
     const callSec = timeToSec(timeVals[i] ? timeVals[i][1] : '');
+    const startPST = displayToTimeSec(row[DQE_C.START_TIME]);
 
     if (!parentMap[callId]) {
       parentMap[callId] = { legs: [], waitSec: 0, talkSec: 0, abandoned: false };
@@ -179,8 +180,9 @@ function buildDQEHistoricalData(rawSheet, dqeSheet) {
     // the actual abandoned event on leg 3+ (after menu navigation),
     // not leg 0 -- so we need to know which leg was abandoned, not
     // just whether ANY leg of the parent was. See finalization
-    // below for how this drives waitSec.
-    parentMap[callId].legs.push({ legId, talkSec, callSec, calleeName, abandoned });
+    // below for how this drives waitSec. Also store startPST so we
+    // can timestamp queue-only abandoned events (no agent rang).
+    parentMap[callId].legs.push({ legId, talkSec, callSec, calleeName, abandoned, startPST });
     if (abandoned) parentMap[callId].abandoned = true;
   }
 
@@ -375,6 +377,162 @@ function buildDQEHistoricalData(rawSheet, dqeSheet) {
       secToHMS(Math.round(csrAvgAbanWaitSec))   // AH CSR Avg Abd Wait Time
     ]);
   }
+
+
+  // ── Pass 4: Queue-only abandoned sentinel rows ─────────────────────────────
+  // An abandoned call can hit a queue without ringing any agent (all agents
+  // busy). These events have no agent row, so they're invisible to the
+  // dashboard via the per-agent path. We emit ONE sentinel row per queue
+  // per day with:
+  //   - Col C (Agent Name)   = the queue name itself ("A_Q_CSR", "Backup CSR")
+  //   - Col D (Queue Exts)   = the queue's extensions (so dept-by-extension
+  //                            filtering in the dashboard still works)
+  //   - Cols K-AC            = the no-ring abandoned timestamps bucketed
+  //                            into 30-min slots (CST), same shape as agent
+  //                            rows so the Missed Calls Report reads them
+  //                            with the same code path
+  //   - Col AD               = the no-ring parent call IDs (drives unique-
+  //                            call counts in the dashboard's summary)
+  //   - Col AF               = same timestamps as K-AC flattened (all of
+  //                            them are abandoned by definition, so the
+  //                            existing abandoned-cross-reference logic
+  //                            in the dashboard naturally flags them)
+  //   - Cols E-J / AG-AH     = 0 / "0:00:00" (these are queue-level, not
+  //                            agent-level)
+  //
+  // Sentinel rows are filtered out by the main dashboard's per-agent table
+  // (Data.gs) and by the whyNoMatches diagnostic (Diagnostics.gs) via an
+  // agent-name regex; only the Missed Calls Report consumes them as queue-
+  // only entries.
+
+  function buildQueueNameToExts_() {
+    const map = {};
+
+    // Primary: today's queue legs already give us queue-name -> extension
+    // pairs we actually observed in raw data.
+    queueLegs.forEach(function (leg) {
+      if (leg.queueName && leg.queueExt) {
+        if (!map[leg.queueName]) map[leg.queueName] = {};
+        map[leg.queueName][leg.queueExt] = true;
+      }
+    });
+
+    // Fallback: read DO NOT EDIT! sheet's left block (cols A-B) so we have
+    // extension info even for queues with zero agent rings today.
+    try {
+      const ss = dqeSheet.getParent();
+      const lookup = ss.getSheetByName('DO NOT EDIT!');
+      if (lookup) {
+        const lastRow = lookup.getLastRow();
+        if (lastRow >= 2) {
+          const rows = lookup.getRange(2, 1, lastRow - 1, 2).getValues();
+          rows.forEach(function (r) {
+            const qn  = String(r[0]).trim();
+            const exs = String(r[1]).trim();
+            if (!qn || !exs) return;
+            if (!map[qn]) map[qn] = {};
+            exs.split(',').forEach(function (e) {
+              const t = e.trim();
+              if (t) map[qn][t] = true;
+            });
+          });
+        }
+      }
+    } catch (e) {
+      Logger.log('DQE: queue->ext lookup from DO NOT EDIT! failed: ' + e.message);
+    }
+
+    const out = {};
+    for (const qn in map) {
+      out[qn] = Object.keys(map[qn]).sort();
+    }
+    return out;
+  }
+
+  const queueNameToExts = buildQueueNameToExts_();
+
+  // queueName -> { parentIds: Set, events: [{ startPST, callSec }] }
+  const queueOnlyByQueue = {};
+
+  abandonedParentIds.forEach(function (parentId) {
+    const parent = parentMap[parentId];
+    if (!parent || !parent.legs.length) return;
+
+    // Which queue(s) did this parent hit? Collected from parent legs whose
+    // calleeName is a queue identifier.
+    const queueNamesHit = {};
+    parent.legs.forEach(function (l) {
+      const m = String(l.calleeName || '').match(/^(A_Q_\w+|Backup CSR)$/);
+      if (m) queueNamesHit[m[1]] = true;
+    });
+    if (!Object.keys(queueNamesHit).length) return;
+
+    // For each queue hit by this parent, did any agent leg ring it?
+    // queueLegs is the agent-ring list (one entry per ring event).
+    const ringedQueues = {};
+    queueLegs.forEach(function (l) {
+      if (l.parentCallId === parentId && l.queueName) {
+        ringedQueues[l.queueName] = true;
+      }
+    });
+
+    // The abandoned event's leg (for timestamp + wait). After the Pass 1
+    // fix, the abandoned leg is found via .find on the parent's sorted
+    // legs.
+    const abandonedLeg = parent.legs.find(function (l) { return l.abandoned; });
+    if (!abandonedLeg || abandonedLeg.startPST == null) return;
+
+    Object.keys(queueNamesHit).forEach(function (queueName) {
+      if (ringedQueues[queueName]) return;  // already covered by per-agent rows
+
+      if (!queueOnlyByQueue[queueName]) {
+        queueOnlyByQueue[queueName] = { parentIds: [], events: [] };
+      }
+      queueOnlyByQueue[queueName].parentIds.push(parentId);
+      queueOnlyByQueue[queueName].events.push({
+        startPST: abandonedLeg.startPST,
+        callSec:  abandonedLeg.callSec
+      });
+    });
+  });
+
+  Object.keys(queueOnlyByQueue).sort().forEach(function (queueName) {
+    const data = queueOnlyByQueue[queueName];
+    if (!data.events.length) return;
+
+    const exts = queueNameToExts[queueName] || [];
+
+    const slotValues = DQE_TIME_SLOTS.map(function (slot) {
+      const hits = data.events.filter(function (e) {
+        return e.startPST !== null && e.startPST >= slot.start && e.startPST < slot.end;
+      });
+      return hits.length ? hits.map(function (e) { return pstToCSTStr(e.startPST); }).join(',') : '';
+    });
+
+    const allTimesCST = data.events
+      .filter(function (e) { return e.startPST !== null; })
+      .map(function (e) { return pstToCSTStr(e.startPST); })
+      .join(',');
+
+    outputRows.push([
+      monthYr,                                  // A  Month Year
+      callDateStr,                              // B  Date
+      queueName,                                // C  Agent Name (queue sentinel)
+      exts.join(','),                           // D  Queue Extensions
+      0,                                        // E  Total Unique
+      0,                                        // F  Total Rung
+      0,                                        // G  Total Missed
+      0,                                        // H  Total Answered
+      '0:00:00',                                // I  TTT
+      '0:00:00',                                // J  ATT
+      ...slotValues,                            // K-AC (19 cols)
+      data.parentIds.join(','),                 // AD Abandoned Parent IDs
+      '',                                       // AE Abandoned Missed Leg IDs (n/a for queue-only)
+      allTimesCST,                              // AF Abandoned Missed Leg Times
+      '0:00:00',                                // AG Avg Abd Wait Time (queue-level not meaningful here)
+      '0:00:00'                                 // AH CSR Avg Abd Wait Time
+    ]);
+  });
 
   if (!outputRows.length) {
     Logger.log('DQE: No agent rows produced for ' + callDateStr + '.');
