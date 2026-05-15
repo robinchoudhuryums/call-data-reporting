@@ -71,11 +71,12 @@ function getMissedCallsReport(req) {
   }
 
   const cache = CacheService.getScriptCache();
-  // v4: meta now includes abandonedCallCount (unique parent-call
-  // count across the dept's matched rows, from col AD), each
-  // missedTime entry tags its chart bucket index for click-to-
-  // detail rendering on the client.
-  const cacheKey = 'missed:v4:' + dept + ':' + scope + ':' + from + ':' + to;
+  // v5: queue-only abandoned support. The source pipeline now emits
+  // sentinel rows for queue-only abandoned calls (agent name = queue
+  // name, K-AC/AD/AF populated). Response shape adds a queueOnly[]
+  // array and meta.noRingAbandonCount; abandonedCallCount now spans
+  // both rang-an-agent and queue-only abandons.
+  const cacheKey = 'missed:v5:' + dept + ':' + scope + ':' + from + ':' + to;
   const cached = cache.get(cacheKey);
   if (cached) {
     try {
@@ -132,12 +133,15 @@ function computeMissedCallsReport_(dept, from, to, scope) {
   const startMin = MISSED_CHART_START_HOUR * 60;
   const endMin   = MISSED_CHART_END_HOUR   * 60;
 
-  // Per-agent aggregator
+  // Per-agent aggregator (real agent rings)
   const agentMap = {};   // agent -> { missedTimes: [], total: 0 }
+  // Per-queue aggregator (sentinel rows = queue-only abandoned events)
+  const queueOnlyMap = {}; // queueName -> { entries: [], total: 0, parentIds: {} }
   let rowsMatched = 0;
   let totalMissed = 0;
   let abandonedRings = 0;            // per-ring count (one per red timestamp)
-  const uniqueAbandonedParents = {}; // dept-wide unique parent IDs from col AD
+  const uniqueAbandonedParents = {}; // ALL abandoned parents (col AD across all rows)
+  const uniqueNoRingParents = {};    // subset: those that came from sentinel rows
 
   for (let i = 0; i < values.length; i++) {
     const r  = values[i];
@@ -149,19 +153,32 @@ function computeMissedCallsReport_(dept, from, to, scope) {
     const agent = String(r[HISTORICAL_COLS.AGENT - 1] || '').trim();
     if (!agent) continue;
 
-    // Scope filter (same semantics as Data.gs computeSummary_)
-    const inRoster = !!rosterSet[agent];
+    // Sentinel rows carry queue-only abandoned events (no agent rang).
+    // Their "agent name" is the queue identifier itself. These don't go
+    // through roster matching -- they're intrinsically queue-level data.
+    const isSentinel = /^A_Q_/.test(agent) || agent === 'Backup CSR';
+
+    // For matching purposes we always need to know whether the row's
+    // extensions overlap the dept's. Sentinels rely entirely on this;
+    // real agent rows use it when scope != 'roster'.
     let inQueue = false;
-    if (scope !== 'roster') {
+    if (isSentinel || scope !== 'roster') {
       const rowExts = parseExtensions_(r[HISTORICAL_COLS.QUEUE_EXT - 1]);
       for (let j = 0; j < rowExts.length; j++) {
         if (deptExtensions[rowExts[j]]) { inQueue = true; break; }
       }
     }
+    const inRoster = !isSentinel && !!rosterSet[agent];
+
     let include;
-    if (scope === 'roster')     include = inRoster;
-    else if (scope === 'queue') include = inQueue;
-    else                        include = inRoster || inQueue;
+    if (isSentinel) {
+      // Queue-only entries are always included when their queue
+      // serves this dept, regardless of the user's scope toggle.
+      // Roster matching doesn't apply (no agent).
+      include = inQueue;
+    } else if (scope === 'roster')     { include = inRoster; }
+    else if (scope === 'queue')        { include = inQueue; }
+    else                               { include = inRoster || inQueue; }
     if (!include) continue;
 
     rowsMatched++;
@@ -197,20 +214,32 @@ function computeMissedCallsReport_(dept, from, to, scope) {
     // Col AD ("Abandoned Parent Call IDs") holds unique parent call
     // IDs that were abandoned. Several agent rows can carry the SAME
     // parent ID (one abandoned call ringing N agents -> N rows ->
-    // 1 unique parent), so collecting these into a dept-wide set
-    // gives us "unique abandoned calls", which is what the summary
-    // line shows. abandonedRings (incremented per timestamp below)
-    // is the per-ring count for diagnostics.
+    // 1 unique parent). Collecting these into a dept-wide set gives
+    // unique-abandoned-call counts. Sentinel rows additionally feed
+    // uniqueNoRingParents so we can show the "No-ring abandons: K"
+    // breakdown.
     const abandonedIdsCell = String(rd[HISTORICAL_ABANDONED_PARENT_IDS - 1] || '').trim();
     if (abandonedIdsCell) {
       abandonedIdsCell.split(',').forEach(function (id) {
         const trimmed = id.trim();
-        if (trimmed) uniqueAbandonedParents[trimmed] = true;
+        if (!trimmed) return;
+        uniqueAbandonedParents[trimmed] = true;
+        if (isSentinel) uniqueNoRingParents[trimmed] = true;
       });
     }
 
-    if (!agentMap[agent]) {
-      agentMap[agent] = { missedTimes: [], total: 0 };
+    // Pick the accumulator + push function based on row type.
+    let target;
+    if (isSentinel) {
+      if (!queueOnlyMap[agent]) {
+        queueOnlyMap[agent] = { entries: [], total: 0 };
+      }
+      target = queueOnlyMap[agent];
+    } else {
+      if (!agentMap[agent]) {
+        agentMap[agent] = { missedTimes: [], total: 0 };
+      }
+      target = agentMap[agent];
     }
 
     slotTimes.forEach(function (item) {
@@ -220,6 +249,9 @@ function computeMissedCallsReport_(dept, from, to, scope) {
       // Compute bucket index once; -1 means "outside the 8 AM-5 PM
       // chart range". The client uses this on chart-bar clicks to
       // pull up just the rings that contributed to a given bucket.
+      // Queue-only entries also feed the chart per the user's design
+      // (every missed event at a real time counts toward the
+      // hour-of-day distribution).
       const minutes = parseHmsKeyToMinutes_(item.key);
       let bucketIdx = -1;
       if (minutes >= startMin && minutes < endMin) {
@@ -230,7 +262,7 @@ function computeMissedCallsReport_(dept, from, to, scope) {
         }
       }
 
-      agentMap[agent].missedTimes.push({
+      const entry = {
         date: dateIso,
         time: item.label,
         // Use the normalized 24h key as the formatter input so AM/PM
@@ -238,15 +270,22 @@ function computeMissedCallsReport_(dept, from, to, scope) {
         // that may already be present in the raw cell display.
         label: formatHmsToAmPm_(item.key),
         abandoned: isAbandoned,
-        // Numeric sort key (seconds past midnight, from the 24h key)
-        // so chronological sort works correctly across 9 vs 10 hours.
+        // Numeric sort key (seconds past midnight) so chronological
+        // sort works across 9 vs 10 hours.
         sortKey: hmsKeyToSeconds_(item.key),
-        // Chart bucket this ring contributes to (-1 if outside the
-        // 8 AM-5 PM CST chart range).
+        // Chart bucket this ring contributes to (-1 if out of range).
         bucket: bucketIdx,
-      });
-      agentMap[agent].total++;
-      totalMissed++;
+      };
+
+      if (isSentinel) {
+        target.entries.push(entry);
+      } else {
+        target.missedTimes.push(entry);
+        // totalMissed counts agent rings only -- queue-only abandoned
+        // calls aren't "missed rings" because no agent was rung.
+        totalMissed++;
+      }
+      target.total++;
     });
   }
 
@@ -266,6 +305,23 @@ function computeMissedCallsReport_(dept, from, to, scope) {
       };
     });
 
+  // Build queue-only sections (one per queue with no-ring entries),
+  // sorted by queue name; entries within each sorted by date + time.
+  const queueOnly = Object.keys(queueOnlyMap)
+    .sort()
+    .map(function (queueName) {
+      const list = queueOnlyMap[queueName].entries.slice();
+      list.sort(function (a, b) {
+        if (a.date !== b.date) return a.date < b.date ? -1 : 1;
+        return a.sortKey - b.sortKey;
+      });
+      return {
+        queue: queueName,
+        entries: list,
+        total: queueOnlyMap[queueName].total,
+      };
+    });
+
   // Chart labels
   const chartLabels = [];
   for (let i = 0; i < totalBuckets; i++) {
@@ -281,16 +337,21 @@ function computeMissedCallsReport_(dept, from, to, scope) {
       rowsMatched: rowsMatched,
       agentCount: agents.length,
       totalMissed: totalMissed,
-      // Unique abandoned-CALL count (from col AD), which is what the
-      // summary line displays. A single abandoned call ringing N
-      // agents counts as 1 here.
+      // ALL abandoned calls in scope (both rang-an-agent and queue-
+      // only). One abandoned parent counts as 1 regardless of how
+      // many agents rang or whether any did.
       abandonedCallCount: Object.keys(uniqueAbandonedParents).length,
+      // Subset: abandoned calls that NEVER rang an agent. Surfaced
+      // separately in the summary line when > 0.
+      noRingAbandonCount: Object.keys(uniqueNoRingParents).length,
       // Per-ring count for diagnostics (one increment per red
-      // timestamp). Same as the number of red rows in the agent grid.
+      // timestamp; agent rings only). Same as the number of red
+      // rows in the agent grid.
       abandonedRings: abandonedRings,
       generatedAt: new Date().toISOString(),
     },
     agents: agents,
+    queueOnly: queueOnly,
     chart: {
       labels: chartLabels,
       counts: chartCounts,
@@ -309,10 +370,12 @@ function emptyMissedReport_(dept, from, to, scope, rosterSize) {
       agentCount: 0,
       totalMissed: 0,
       abandonedCallCount: 0,
+      noRingAbandonCount: 0,
       abandonedRings: 0,
       generatedAt: new Date().toISOString(),
     },
     agents: [],
+    queueOnly: [],
     chart: { labels: [], counts: [] },
   };
 }

@@ -223,6 +223,7 @@
       // doesn't linger while the new fetch is in flight.
       clearMissedChart();
       hideBucketDetail();
+      hideQueueOnlySection();
       lastMissedData = null;
 
       google.script.run
@@ -268,15 +269,25 @@
       '<span class="label">Range:</span><span class="val">' + escapeHtml(m.from || '') + ' to ' + escapeHtml(m.to || '') + '</span>',
       '<span class="label">Scope:</span><span class="val">' + escapeHtml(m.scope || 'roster') + '</span>',
       '<span class="label">Total missed:</span><span class="val">' + fmtNumber(m.totalMissed || 0) + '</span>',
-      // Unique abandoned-call count (col AD) -- one abandoned call
-      // ringing N agents counts as 1 here. Per-ring count lives in
-      // m.abandonedRings if needed for debugging.
+      // Total abandoned (rang-an-agent + queue-only). One abandoned
+      // parent counts as 1 regardless of how many agents rang.
       '<span class="label">Abandoned calls:</span><span class="val">' + fmtNumber(m.abandonedCallCount || 0) + '</span>',
-      '<span class="label">Agents:</span><span class="val">' + fmtNumber(m.agentCount || 0) + '</span>',
     ];
+    // Only surface "No-ring abandons" when there are any, so the
+    // summary stays tidy on typical days.
+    if ((m.noRingAbandonCount || 0) > 0) {
+      summaryParts.push(
+        '<span class="label">No-ring abandons:</span><span class="val">' +
+          fmtNumber(m.noRingAbandonCount) + '</span>'
+      );
+    }
+    summaryParts.push(
+      '<span class="label">Agents:</span><span class="val">' + fmtNumber(m.agentCount || 0) + '</span>'
+    );
     $('missed-summary').innerHTML = summaryParts.join('<span class="sep">|</span>');
 
     renderMissedChart(data.chart || { labels: [], counts: [] });
+    renderQueueOnly(data.queueOnly || []);
     renderMissedAgents(data.agents || []);
   }
 
@@ -378,11 +389,12 @@
     activeBucketIdx = idx;
     const bucketLabel = labels[idx];
 
-    // Collect every ring whose .bucket matches idx, across all agents.
-    // Server already returns missedTimes sorted by date+sortKey, so
-    // the bucket subset stays in order.
+    // Collect every event whose .bucket matches idx, across both
+    // agent rings AND queue-only abandoned entries. Queue entries
+    // are displayed with the queue name in the agent column and a
+    // "(no agent rang)" suffix.
     const rings = [];
-    lastMissedData.agents.forEach(function (a) {
+    (lastMissedData.agents || []).forEach(function (a) {
       a.missedTimes.forEach(function (m) {
         if (m.bucket === idx) {
           rings.push({
@@ -391,6 +403,21 @@
             label: m.label,
             abandoned: m.abandoned,
             sortKey: m.sortKey,
+            isQueueOnly: false,
+          });
+        }
+      });
+    });
+    (lastMissedData.queueOnly || []).forEach(function (q) {
+      q.entries.forEach(function (m) {
+        if (m.bucket === idx) {
+          rings.push({
+            agent: q.queue + ' (no agent rang)',
+            date: m.date,
+            label: m.label,
+            abandoned: true,
+            sortKey: m.sortKey,
+            isQueueOnly: true,
           });
         }
       });
@@ -435,6 +462,53 @@
     wrap.style.display = 'none';
     const bodyEl = $('bucket-detail-body');
     if (bodyEl) bodyEl.innerHTML = '';
+  }
+
+  // -- Queue-only abandoned section --------------------------------------
+  // Renders a banner + per-queue lists for abandoned calls that never
+  // rang an agent (queue had no available agent). Hidden when empty.
+
+  function renderQueueOnly(queueOnly) {
+    const wrap = $('missed-queue-only');
+    const body = $('queue-only-body');
+    const sub  = $('queue-only-subhead');
+    if (!wrap || !body) return;
+
+    if (!queueOnly.length) {
+      hideQueueOnlySection();
+      return;
+    }
+
+    const totalCalls = queueOnly.reduce(function (s, q) { return s + q.total; }, 0);
+    sub.textContent = '(no agent rang) — '
+                    + totalCalls + ' call' + (totalCalls === 1 ? '' : 's')
+                    + ' across ' + queueOnly.length
+                    + ' queue' + (queueOnly.length === 1 ? '' : 's');
+
+    body.innerHTML = queueOnly.map(function (q) {
+      const itemsHtml = q.entries.map(function (m) {
+        const dateLabel = m.date ? m.date.slice(5) : '';   // MM-DD
+        return '<li>'
+             +   '<span class="ring-date">' + escapeHtml(dateLabel) + '</span>'
+             +   '<span class="ring-time">' + escapeHtml(m.label)   + ' 🚨</span>'
+             + '</li>';
+      }).join('');
+      return '<div class="queue-only-card">'
+           +   '<div class="qname">' + escapeHtml(q.queue) + ' &middot; '
+           +     q.total + ' abandoned</div>'
+           +   '<ul class="queue-only-list">' + itemsHtml + '</ul>'
+           + '</div>';
+    }).join('');
+
+    wrap.style.display = '';
+  }
+
+  function hideQueueOnlySection() {
+    const wrap = $('missed-queue-only');
+    if (!wrap) return;
+    wrap.style.display = 'none';
+    const body = $('queue-only-body');
+    if (body) body.innerHTML = '';
   }
 
   function renderMissedAgents(agents) {

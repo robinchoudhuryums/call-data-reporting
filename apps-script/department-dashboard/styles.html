@@ -531,6 +531,53 @@
     margin: 0;
   }
 
+  /* Queue-only abandoned section (no agent rang) */
+  .queue-only-section {
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    border-radius: 8px;
+    padding: 12px 16px 14px;
+    margin-bottom: 16px;
+  }
+  .queue-only-header {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    margin-bottom: 8px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid rgba(220, 38, 38, 0.15);
+  }
+  .queue-only-header strong { color: #991b1b; font-size: 14px; }
+  .queue-only-header .muted { color: #b45309; font-size: 12px; }
+  .queue-only-card {
+    margin-top: 8px;
+  }
+  .queue-only-card:first-child { margin-top: 0; }
+  .queue-only-card .qname {
+    color: #991b1b;
+    font-weight: 600;
+    font-size: 13px;
+    margin-bottom: 4px;
+  }
+  .queue-only-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+  }
+  .queue-only-list li {
+    color: #b91c1c;
+    padding: 2px 0;
+    border-bottom: 1px solid rgba(220, 38, 38, 0.1);
+    display: grid;
+    grid-template-columns: 80px 1fr;
+    gap: 12px;
+  }
+  .queue-only-list li:last-child { border-bottom: 0; }
+  .queue-only-list .ring-date { color: #b45309; }
+  .queue-only-list .ring-time { text-align: right; }
+
   /* Per-agent card grid for the Missed Calls report */
   .agent-grid {
     display: grid;

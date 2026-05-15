@@ -109,7 +109,11 @@ function whyNoMatches() {
     if (dateIso !== TEST_DATE) continue;
     onDateRows++;
     const agent = String(values[i][HISTORICAL_COLS.AGENT - 1] || '').trim();
-    if (agent) onDateAgents[agent] = true;
+    if (!agent) continue;
+    // Skip queue-sentinel rows (queue-only abandoned data); these aren't
+    // real agents and would noisily appear as orphans here.
+    if (/^A_Q_/.test(agent) || agent === 'Backup CSR') continue;
+    onDateAgents[agent] = true;
   }
 
   Logger.log('=== whyNoMatches: %s ===', TEST_DATE);
