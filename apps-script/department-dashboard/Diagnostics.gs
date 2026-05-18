@@ -276,3 +276,138 @@ function dumpCell() {
   Logger.log('reformatted by dashboard:       %s',
              formatHms_(toSeconds_(value)));
 }
+
+/**
+ * Traces the Missed Calls Report's abandoned-call calculation for a
+ * single department + date range. Logs:
+ *   - The dept's allExtensions (set of phone/queue extensions on the
+ *     dept's DO NOT EDIT! roster cells).
+ *   - Every queue-sentinel row in range: queue name, col D contents,
+ *     whether its col-D extensions overlap allExtensions, and the
+ *     parent-call IDs in col AD.
+ *   - Every per-agent row in range whose agent IS on the roster:
+ *     same info plus the parent IDs from col AD.
+ *   - Final tallies: distinct abandoned parent IDs from agent rows,
+ *     from sentinel rows, and the union (what abandonedCallCount
+ *     should equal).
+ *
+ * Edit DEPT, FROM, TO below before running.
+ */
+function diagnoseAbandoned() {
+  const DEPT = 'CSR';
+  const FROM = '2026-05-15';
+  const TO   = '2026-05-18';
+
+  const ss = openSpreadsheet_();
+  const sheet = ss.getSheetByName(SHEETS.HISTORICAL);
+  if (!sheet) { Logger.log('Historical sheet not found.'); return; }
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) { Logger.log('No data rows.'); return; }
+
+  const roster = getRosterForDepartment_(DEPT);
+  const rosterSet = {};
+  roster.names.forEach(function (n) { rosterSet[n] = true; });
+  const deptExtensions = roster.allExtensions;
+
+  Logger.log('=== diagnoseAbandoned: %s  %s..%s ===', DEPT, FROM, TO);
+  Logger.log('Roster agents (%s): %s',
+             roster.names.length, JSON.stringify(roster.names));
+  Logger.log('Dept allExtensions: %s',
+             JSON.stringify(Object.keys(deptExtensions).sort()));
+
+  const ssTZ = ss.getSpreadsheetTimeZone();
+  const numCols = HISTORICAL_COLS.CSR_AVG_ABD_WAIT;
+  const values   = sheet.getRange(2, 1, lastRow - 1, numCols).getValues();
+  const displays = sheet.getRange(2, 1, lastRow - 1, numCols).getDisplayValues();
+
+  const sentinelHits = [];   // matched sentinel rows
+  const sentinelMiss = [];   // sentinel rows whose col D didn't overlap
+  const agentHits    = [];   // matched agent rows that had any abandoned IDs
+  const parentsAgent = {};
+  const parentsSentinel = {};
+
+  for (let i = 0; i < values.length; i++) {
+    const r  = values[i];
+    const rd = displays[i];
+    const dateIso = rowDateIso_(r[HISTORICAL_COLS.DATE - 1], ssTZ);
+    if (!dateIso || dateIso < FROM || dateIso > TO) continue;
+    const agent = String(r[HISTORICAL_COLS.AGENT - 1] || '').trim();
+    if (!agent) continue;
+
+    const isSentinel = /^A_Q_/.test(agent) || agent === 'Backup CSR';
+    const colDRaw = String(rd[HISTORICAL_COLS.QUEUE_EXT - 1] || '');
+    const rowExts = parseExtensions_(r[HISTORICAL_COLS.QUEUE_EXT - 1]);
+    let extMatch = false;
+    const matchedExt = [];
+    for (let j = 0; j < rowExts.length; j++) {
+      if (deptExtensions[rowExts[j]]) {
+        extMatch = true;
+        matchedExt.push(rowExts[j]);
+      }
+    }
+    const adRaw = String(rd[HISTORICAL_ABANDONED_PARENT_IDS - 1] || '').trim();
+    const adIds = adRaw ? adRaw.split(',').map(function (s) { return s.trim(); })
+                          .filter(function (s) { return !!s; })
+                        : [];
+
+    if (isSentinel) {
+      const rec = {
+        date: dateIso, queue: agent, colD: colDRaw,
+        parsedExts: rowExts, matchedExts: matchedExt,
+        adIds: adIds,
+      };
+      if (extMatch) {
+        sentinelHits.push(rec);
+        adIds.forEach(function (id) { parentsSentinel[id] = true; });
+      } else {
+        sentinelMiss.push(rec);
+      }
+    } else {
+      const onRoster = !!rosterSet[agent];
+      if (!onRoster) continue;
+      if (!adIds.length) continue;
+      agentHits.push({
+        date: dateIso, agent: agent, colD: colDRaw, adIds: adIds,
+      });
+      adIds.forEach(function (id) { parentsAgent[id] = true; });
+    }
+  }
+
+  Logger.log('');
+  Logger.log('--- Sentinel rows (queue-only abandoned) MATCHED to %s by extension overlap: %s', DEPT, sentinelHits.length);
+  sentinelHits.forEach(function (s) {
+    Logger.log('  %s  %s  colD="%s"  matched=%s  parentIDs=%s',
+               s.date, s.queue, s.colD, JSON.stringify(s.matchedExts),
+               JSON.stringify(s.adIds));
+  });
+
+  Logger.log('');
+  Logger.log('--- Sentinel rows in date range REJECTED (col-D had no overlap with dept allExtensions): %s', sentinelMiss.length);
+  sentinelMiss.forEach(function (s) {
+    Logger.log('  %s  %s  colD="%s"  parsedExts=%s  parentIDs=%s',
+               s.date, s.queue, s.colD, JSON.stringify(s.parsedExts),
+               JSON.stringify(s.adIds));
+  });
+
+  Logger.log('');
+  Logger.log('--- Roster agent rows in range with non-empty col AD: %s', agentHits.length);
+  agentHits.forEach(function (a) {
+    Logger.log('  %s  %s  colD="%s"  parentIDs=%s',
+               a.date, a.agent, a.colD, JSON.stringify(a.adIds));
+  });
+
+  const union = {};
+  Object.keys(parentsAgent).forEach(function (k)    { union[k] = true; });
+  Object.keys(parentsSentinel).forEach(function (k) { union[k] = true; });
+
+  Logger.log('');
+  Logger.log('=== Tallies ===');
+  Logger.log('Distinct abandoned parent IDs from agent rows:    %s',
+             Object.keys(parentsAgent).length);
+  Logger.log('Distinct abandoned parent IDs from sentinel rows: %s',
+             Object.keys(parentsSentinel).length);
+  Logger.log('Union (== abandonedCallCount the report will show): %s',
+             Object.keys(union).length);
+  Logger.log('No-ring subset (noRingAbandonCount):              %s',
+             Object.keys(parentsSentinel).length);
+}
