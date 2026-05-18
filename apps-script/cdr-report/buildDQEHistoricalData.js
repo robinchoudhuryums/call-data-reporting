@@ -551,6 +551,15 @@ function buildDQEHistoricalData(rawSheet, dqeSheet) {
   // Force col D to plain text so "1003,183" isn't reformatted as a number
   dqeSheet.getRange(1, 4, dqeSheet.getMaxRows(), 1).setNumberFormat('@');
 
+  // Same treatment for cols AD/AE/AF: these store comma-joined parent
+  // IDs / leg IDs / timestamps. Without plain-text format, Sheets
+  // coerces multi-value strings like "1776834710895,1776834710896" to
+  // a Number, loses precision past 2^53, and re-renders the value with
+  // thousand separators -- which downstream code then splits on the
+  // commas as if they were ID separators. Single-value rows happened
+  // to escape the bug.
+  dqeSheet.getRange(1, 30, dqeSheet.getMaxRows(), 3).setNumberFormat('@');
+
   const firstBlank = dqeSheet.getLastRow() + 1;
   dqeSheet.getRange(firstBlank, 1, outputRows.length, outputRows[0].length).setValues(outputRows);
 

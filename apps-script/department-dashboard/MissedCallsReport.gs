@@ -71,12 +71,12 @@ function getMissedCallsReport(req) {
   }
 
   const cache = CacheService.getScriptCache();
-  // v5: queue-only abandoned support. The source pipeline now emits
-  // sentinel rows for queue-only abandoned calls (agent name = queue
-  // name, K-AC/AD/AF populated). Response shape adds a queueOnly[]
-  // array and meta.noRingAbandonCount; abandonedCallCount now spans
-  // both rang-an-agent and queue-only abandons.
-  const cacheKey = 'missed:v5:' + dept + ':' + scope + ':' + from + ':' + to;
+  // v6: pairs with the source-pipeline fix that forces cols AD/AE/AF
+  // to plain-text format. Without that, multi-value sentinel rows had
+  // their parent-ID strings corrupted by Sheets' number coercion + the
+  // resulting fragments masqueraded as separate parent IDs. Bumping
+  // the version invalidates any pre-fix cached responses.
+  const cacheKey = 'missed:v6:' + dept + ':' + scope + ':' + from + ':' + to;
   const cached = cache.get(cacheKey);
   if (cached) {
     try {
