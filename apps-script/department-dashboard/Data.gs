@@ -56,8 +56,11 @@ function getDepartmentSummary(req) {
   // Bump the version suffix any time the aggregation rules change so
   // stale caches are invalidated instantly across all dept/range
   // tuples. v2: ATT switched to simple mean. v3: scope param added,
-  // diagnostics field added to response.
-  const cacheKey = 'summary:v3:' + dept + ':' + scope + ':' + from + ':' + to;
+  // diagnostics field added to response. v4: queue-scope matching
+  // switched from roster.allExtensions (personal exts) to the dept's
+  // deptQueueExts (override or derived from data). Queue/Both scope
+  // now actually match shared-queue extensions in col D.
+  const cacheKey = 'summary:v4:' + dept + ':' + scope + ':' + from + ':' + to;
   const cached = cache.get(cacheKey);
   if (cached) {
     try {
@@ -105,7 +108,6 @@ function computeSummary_(dept, from, to, scope) {
   const roster = getRosterForDepartment_(dept);
   const rosterSet = {};
   for (let i = 0; i < roster.names.length; i++) rosterSet[roster.names[i]] = true;
-  const deptExtensions = roster.allExtensions; // { ext: true }
 
   const ss = openSpreadsheet_();
   const sheet = ss.getSheetByName(SHEETS.HISTORICAL);
@@ -114,8 +116,7 @@ function computeSummary_(dept, from, to, scope) {
   }
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) {
-    return emptySummary_(dept, from, to, scope, roster.names.length, 0,
-                         Object.keys(deptExtensions).sort());
+    return emptySummary_(dept, from, to, scope, roster.names.length, 0, []);
   }
 
   // Pre-fetch the spreadsheet's TZ once. Used by rowDateIso_ to
@@ -138,6 +139,13 @@ function computeSummary_(dept, from, to, scope) {
   const range = sheet.getRange(2, 1, lastRow - 1, numCols);
   const values = range.getValues();
   const displays = range.getDisplayValues();
+
+  // Queue-scope/Both-scope matching uses this set, NOT
+  // roster.allExtensions (which holds personal exts and never overlaps
+  // col D's shared-queue exts -- a longstanding bug that made Queue
+  // scope return empty in practice). See getDeptQueueExts_ docstring.
+  const deptQueueResult = getDeptQueueExts_(dept, rosterSet, values);
+  const deptQueueExts = deptQueueResult.exts;
 
   const acc = {};
   let rowsMatched = 0;
@@ -163,7 +171,7 @@ function computeSummary_(dept, from, to, scope) {
     if (scope !== 'roster') {
       const rowExts = parseExtensions_(r[HISTORICAL_COLS.QUEUE_EXT - 1]);
       for (let j = 0; j < rowExts.length; j++) {
-        if (deptExtensions[rowExts[j]]) { inQueue = true; break; }
+        if (deptQueueExts[rowExts[j]]) { inQueue = true; break; }
       }
     }
 
@@ -299,7 +307,8 @@ function computeSummary_(dept, from, to, scope) {
       rowsMatched: rowsMatched,
       rosterSize: roster.names.length,
       agentsWithData: rows.length,
-      deptExtensions: Object.keys(deptExtensions).sort(),
+      deptQueueExts: Object.keys(deptQueueExts).sort(),
+      deptQueueExtsSource: deptQueueResult.source,
       generatedAt: new Date().toISOString(),
     },
     rows: rows,
@@ -311,7 +320,7 @@ function computeSummary_(dept, from, to, scope) {
   };
 }
 
-function emptySummary_(dept, from, to, scope, rosterSize, rowsScanned, deptExtensions) {
+function emptySummary_(dept, from, to, scope, rosterSize, rowsScanned, deptQueueExts) {
   return {
     meta: {
       department: dept,
@@ -321,7 +330,8 @@ function emptySummary_(dept, from, to, scope, rosterSize, rowsScanned, deptExten
       rowsMatched: 0,
       rosterSize: rosterSize || 0,
       agentsWithData: 0,
-      deptExtensions: deptExtensions || [],
+      deptQueueExts: deptQueueExts || [],
+      deptQueueExtsSource: 'derived',
       generatedAt: new Date().toISOString(),
     },
     rows: [],
@@ -429,6 +439,48 @@ function parseRosterCell_(cellValue) {
     if (/^\d+$/.test(ext)) extensions.push(ext);
   }
   return { name: name, extensions: extensions };
+}
+
+/**
+ * Resolves the set of queue extensions that belong to this dept, used
+ * for queue-scope matching (Data.gs) and sentinel-row matching
+ * (MissedCallsReport.gs). Two sources, in priority order:
+ *
+ *   1. Config.DEPT_QUEUE_EXT_OVERRIDES[dept] -- explicit list. Use
+ *      when this dept's agents ring on queues that belong to OTHER
+ *      depts (e.g. CSR agents covering A_Q_Spanish) and those queues
+ *      should NOT count toward this dept.
+ *   2. Derived: scan `values` (the bulk DQE Historical Data read) and
+ *      collect col D extensions from any row whose agent is on this
+ *      dept's roster. Across ALL history loaded into `values`, not
+ *      just the report's date range -- so a queue with no rings in
+ *      the current window is still recognized.
+ *
+ * Returns { exts: { ext: true, ... }, source: 'override'|'derived' }.
+ *
+ * Why this exists at all: roster cells in DO NOT EDIT! parse out as
+ * PERSONAL extensions (each agent's direct line), while col D in
+ * historical data is the SHARED-QUEUE extension. The two domains never
+ * overlap, so matching agent-row col D against roster.allExtensions
+ * always fails. deptQueueExts gives us the right comparison set.
+ */
+function getDeptQueueExts_(dept, rosterSet, values) {
+  const set = {};
+  const overrideList = (typeof DEPT_QUEUE_EXT_OVERRIDES !== 'undefined')
+                       && DEPT_QUEUE_EXT_OVERRIDES[dept];
+  if (overrideList && overrideList.length) {
+    for (let i = 0; i < overrideList.length; i++) {
+      set[String(overrideList[i])] = true;
+    }
+    return { exts: set, source: 'override' };
+  }
+  for (let i = 0; i < values.length; i++) {
+    const agent = String(values[i][HISTORICAL_COLS.AGENT - 1] || '').trim();
+    if (!agent || !rosterSet[agent]) continue;
+    const exts = parseExtensions_(values[i][HISTORICAL_COLS.QUEUE_EXT - 1]);
+    for (let j = 0; j < exts.length; j++) set[exts[j]] = true;
+  }
+  return { exts: set, source: 'derived' };
 }
 
 /**
