@@ -71,12 +71,12 @@ function getMissedCallsReport(req) {
   }
 
   const cache = CacheService.getScriptCache();
-  // v6: pairs with the source-pipeline fix that forces cols AD/AE/AF
-  // to plain-text format. Without that, multi-value sentinel rows had
-  // their parent-ID strings corrupted by Sheets' number coercion + the
-  // resulting fragments masqueraded as separate parent IDs. Bumping
-  // the version invalidates any pre-fix cached responses.
-  const cacheKey = 'missed:v6:' + dept + ':' + scope + ':' + from + ':' + to;
+  // v7: sentinel-row matching switched from roster.allExtensions (the
+  // dept's personal-extension set) to a data-derived deptQueueExts
+  // (queue extensions any roster agent has ever rung on). Required
+  // because sentinel rows store the QUEUE's own extension in col D,
+  // which never overlapped the personal-extension set.
+  const cacheKey = 'missed:v7:' + dept + ':' + scope + ':' + from + ':' + to;
   const cached = cache.get(cacheKey);
   if (cached) {
     try {
@@ -126,6 +126,24 @@ function computeMissedCallsReport_(dept, from, to, scope) {
   const values = range.getValues();
   const displays = range.getDisplayValues();
 
+  // Build the set of queue extensions this dept's agents serve, derived
+  // from historical data: for every row whose agent is on the roster,
+  // collect that row's col D extensions. Aggregated across ALL history
+  // (not just in-range) so a queue we haven't seen this week is still
+  // recognized. Required for sentinel matching: sentinel rows carry the
+  // QUEUE's own extension in col D (e.g., A_Q_CSR -> "103"), which never
+  // overlaps the personal-extension set in roster.allExtensions.
+  // Trade-off the user accepted: incidental cross-coverage (e.g. a CSR
+  // agent taking one A_Q_Spanish call) will attribute that queue's
+  // no-ring abandons to this dept too.
+  const deptQueueExts = {};
+  for (let i = 0; i < values.length; i++) {
+    const agent = String(values[i][HISTORICAL_COLS.AGENT - 1] || '').trim();
+    if (!agent || !rosterSet[agent]) continue;
+    const exts = parseExtensions_(values[i][HISTORICAL_COLS.QUEUE_EXT - 1]);
+    for (let j = 0; j < exts.length; j++) deptQueueExts[exts[j]] = true;
+  }
+
   // Chart buckets: 8 AM-5 PM CST in 30-min slots = 18 buckets
   const totalBuckets = (MISSED_CHART_END_HOUR - MISSED_CHART_START_HOUR)
                        * (60 / MISSED_BUCKET_MINUTES);
@@ -158,14 +176,18 @@ function computeMissedCallsReport_(dept, from, to, scope) {
     // through roster matching -- they're intrinsically queue-level data.
     const isSentinel = /^A_Q_/.test(agent) || agent === 'Backup CSR';
 
-    // For matching purposes we always need to know whether the row's
-    // extensions overlap the dept's. Sentinels rely entirely on this;
-    // real agent rows use it when scope != 'roster'.
+    // For matching purposes we need to know whether the row's
+    // extensions overlap the dept's. Sentinel rows use deptQueueExts
+    // (queue extensions the dept's agents serve, derived above) since
+    // sentinel col D is a queue's own extension. Agent rows continue
+    // to use deptExtensions (the roster's personal-extension set), to
+    // match the main dashboard's queue-scope behavior.
     let inQueue = false;
     if (isSentinel || scope !== 'roster') {
       const rowExts = parseExtensions_(r[HISTORICAL_COLS.QUEUE_EXT - 1]);
+      const matchSet = isSentinel ? deptQueueExts : deptExtensions;
       for (let j = 0; j < rowExts.length; j++) {
-        if (deptExtensions[rowExts[j]]) { inQueue = true; break; }
+        if (matchSet[rowExts[j]]) { inQueue = true; break; }
       }
     }
     const inRoster = !isSentinel && !!rosterSet[agent];
