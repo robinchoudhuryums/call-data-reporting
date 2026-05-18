@@ -312,13 +312,36 @@ function diagnoseAbandoned() {
   Logger.log('=== diagnoseAbandoned: %s  %s..%s ===', DEPT, FROM, TO);
   Logger.log('Roster agents (%s): %s',
              roster.names.length, JSON.stringify(roster.names));
-  Logger.log('Dept allExtensions: %s',
+  Logger.log('Dept allExtensions (personal exts from roster cells): %s',
              JSON.stringify(Object.keys(deptExtensions).sort()));
 
   const ssTZ = ss.getSpreadsheetTimeZone();
   const numCols = HISTORICAL_COLS.CSR_AVG_ABD_WAIT;
   const values   = sheet.getRange(2, 1, lastRow - 1, numCols).getValues();
   const displays = sheet.getRange(2, 1, lastRow - 1, numCols).getDisplayValues();
+
+  // Mirror MissedCallsReport.gs's deptQueueExts logic: explicit
+  // Config override if present, else derived from data.
+  const deptQueueExts = {};
+  const overrideList = (typeof DEPT_QUEUE_EXT_OVERRIDES !== 'undefined')
+                       && DEPT_QUEUE_EXT_OVERRIDES[DEPT];
+  let queueExtSource;
+  if (overrideList && overrideList.length) {
+    for (let i = 0; i < overrideList.length; i++) {
+      deptQueueExts[String(overrideList[i])] = true;
+    }
+    queueExtSource = 'Config.DEPT_QUEUE_EXT_OVERRIDES';
+  } else {
+    for (let i = 0; i < values.length; i++) {
+      const agent = String(values[i][HISTORICAL_COLS.AGENT - 1] || '').trim();
+      if (!agent || !rosterSet[agent]) continue;
+      const exts = parseExtensions_(values[i][HISTORICAL_COLS.QUEUE_EXT - 1]);
+      for (let j = 0; j < exts.length; j++) deptQueueExts[exts[j]] = true;
+    }
+    queueExtSource = 'derived from roster agents col D';
+  }
+  Logger.log('Dept queue exts (%s): %s',
+             queueExtSource, JSON.stringify(Object.keys(deptQueueExts).sort()));
 
   const sentinelHits = [];   // matched sentinel rows
   const sentinelMiss = [];   // sentinel rows whose col D didn't overlap
@@ -337,10 +360,14 @@ function diagnoseAbandoned() {
     const isSentinel = /^A_Q_/.test(agent) || agent === 'Backup CSR';
     const colDRaw = String(rd[HISTORICAL_COLS.QUEUE_EXT - 1] || '');
     const rowExts = parseExtensions_(r[HISTORICAL_COLS.QUEUE_EXT - 1]);
+    // Sentinel rows are matched against deptQueueExts (queue exts);
+    // agent rows against deptExtensions (personal exts) -- same split
+    // the MissedCallsReport applies.
+    const matchSet = isSentinel ? deptQueueExts : deptExtensions;
     let extMatch = false;
     const matchedExt = [];
     for (let j = 0; j < rowExts.length; j++) {
-      if (deptExtensions[rowExts[j]]) {
+      if (matchSet[rowExts[j]]) {
         extMatch = true;
         matchedExt.push(rowExts[j]);
       }
