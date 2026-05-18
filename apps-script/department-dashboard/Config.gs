@@ -72,6 +72,24 @@ const CACHE_TTL_SECONDS = 5 * 60;
 // wait 5 minutes after being added to the Access Control sheet.
 const AUTH_CACHE_TTL_SECONDS = 60;
 
+// Override: which queue extensions count as belonging to a given dept,
+// for the Missed Calls Report's queue-only (no-agent-rang) sentinel
+// matching. Use when a dept's agents ring across queues that belong to
+// OTHER depts -- without an override, the data-derived fallback would
+// pull those other queues' abandons into this dept's chart.
+//
+// Most depts have a single queue, so the data-derived fallback (queue
+// extensions observed on this dept's roster agents' col D) is fine and
+// no entry is needed here. Add an entry only when a dept's agents cover
+// queues that should NOT count toward this dept.
+//
+// Entries here REPLACE the derived set entirely for that dept.
+const DEPT_QUEUE_EXT_OVERRIDES = Object.freeze({
+  // CSR's CSR agents also ring on A_Q_Spanish (ext 138), but Spanish
+  // metrics are tracked separately and should not be folded into CSR.
+  'CSR': ['103', '108', '1003'],   // A_Q_CSR, A_Q_Intake, Backup CSR
+});
+
 /**
  * Returns the SPREADSHEET_ID Script Property. Throws a clear error if
  * unset so first-run misconfiguration is obvious in the execution log.

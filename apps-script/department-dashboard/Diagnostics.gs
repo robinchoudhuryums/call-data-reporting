@@ -320,18 +320,28 @@ function diagnoseAbandoned() {
   const values   = sheet.getRange(2, 1, lastRow - 1, numCols).getValues();
   const displays = sheet.getRange(2, 1, lastRow - 1, numCols).getDisplayValues();
 
-  // Mirror MissedCallsReport.gs's deptQueueExts derivation: queue
-  // extensions observed in col D of any roster agent's rows. This is
-  // the set sentinel rows are matched against.
+  // Mirror MissedCallsReport.gs's deptQueueExts logic: explicit
+  // Config override if present, else derived from data.
   const deptQueueExts = {};
-  for (let i = 0; i < values.length; i++) {
-    const agent = String(values[i][HISTORICAL_COLS.AGENT - 1] || '').trim();
-    if (!agent || !rosterSet[agent]) continue;
-    const exts = parseExtensions_(values[i][HISTORICAL_COLS.QUEUE_EXT - 1]);
-    for (let j = 0; j < exts.length; j++) deptQueueExts[exts[j]] = true;
+  const overrideList = (typeof DEPT_QUEUE_EXT_OVERRIDES !== 'undefined')
+                       && DEPT_QUEUE_EXT_OVERRIDES[DEPT];
+  let queueExtSource;
+  if (overrideList && overrideList.length) {
+    for (let i = 0; i < overrideList.length; i++) {
+      deptQueueExts[String(overrideList[i])] = true;
+    }
+    queueExtSource = 'Config.DEPT_QUEUE_EXT_OVERRIDES';
+  } else {
+    for (let i = 0; i < values.length; i++) {
+      const agent = String(values[i][HISTORICAL_COLS.AGENT - 1] || '').trim();
+      if (!agent || !rosterSet[agent]) continue;
+      const exts = parseExtensions_(values[i][HISTORICAL_COLS.QUEUE_EXT - 1]);
+      for (let j = 0; j < exts.length; j++) deptQueueExts[exts[j]] = true;
+    }
+    queueExtSource = 'derived from roster agents col D';
   }
-  Logger.log('Dept queue exts (derived from roster agents col D): %s',
-             JSON.stringify(Object.keys(deptQueueExts).sort()));
+  Logger.log('Dept queue exts (%s): %s',
+             queueExtSource, JSON.stringify(Object.keys(deptQueueExts).sort()));
 
   const sentinelHits = [];   // matched sentinel rows
   const sentinelMiss = [];   // sentinel rows whose col D didn't overlap

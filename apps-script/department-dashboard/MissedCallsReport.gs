@@ -71,12 +71,11 @@ function getMissedCallsReport(req) {
   }
 
   const cache = CacheService.getScriptCache();
-  // v7: sentinel-row matching switched from roster.allExtensions (the
-  // dept's personal-extension set) to a data-derived deptQueueExts
-  // (queue extensions any roster agent has ever rung on). Required
-  // because sentinel rows store the QUEUE's own extension in col D,
-  // which never overlapped the personal-extension set.
-  const cacheKey = 'missed:v7:' + dept + ':' + scope + ':' + from + ':' + to;
+  // v8: deptQueueExts now honors DEPT_QUEUE_EXT_OVERRIDES (Config.gs)
+  // when set, falling back to the data-derived set otherwise. Lets
+  // CSR-style depts whose agents ring queues belonging to OTHER depts
+  // exclude those queues from their abandoned-call attribution.
+  const cacheKey = 'missed:v8:' + dept + ':' + scope + ':' + from + ':' + to;
   const cached = cache.get(cacheKey);
   if (cached) {
     try {
@@ -126,22 +125,34 @@ function computeMissedCallsReport_(dept, from, to, scope) {
   const values = range.getValues();
   const displays = range.getDisplayValues();
 
-  // Build the set of queue extensions this dept's agents serve, derived
-  // from historical data: for every row whose agent is on the roster,
-  // collect that row's col D extensions. Aggregated across ALL history
-  // (not just in-range) so a queue we haven't seen this week is still
-  // recognized. Required for sentinel matching: sentinel rows carry the
-  // QUEUE's own extension in col D (e.g., A_Q_CSR -> "103"), which never
-  // overlaps the personal-extension set in roster.allExtensions.
-  // Trade-off the user accepted: incidental cross-coverage (e.g. a CSR
-  // agent taking one A_Q_Spanish call) will attribute that queue's
-  // no-ring abandons to this dept too.
+  // Build the set of queue extensions this dept's agents serve, used to
+  // match sentinel rows (which carry the QUEUE's own extension in col D
+  // and never overlap the personal-extension set in roster.allExtensions).
+  //
+  // Priority:
+  //   1. Explicit Config.DEPT_QUEUE_EXT_OVERRIDES[dept] if present --
+  //      lets ops cleanly exclude queues a dept covers but doesn't own
+  //      (e.g., CSR agents ring A_Q_Spanish but Spanish is tracked
+  //      separately).
+  //   2. Otherwise: derive from data -- scan all historical rows and
+  //      collect col D extensions for any row whose agent is on the
+  //      dept's roster. Across ALL history, not just in-range, so a
+  //      queue with no rings this week is still recognized. Works for
+  //      single-queue depts where no override is needed.
   const deptQueueExts = {};
-  for (let i = 0; i < values.length; i++) {
-    const agent = String(values[i][HISTORICAL_COLS.AGENT - 1] || '').trim();
-    if (!agent || !rosterSet[agent]) continue;
-    const exts = parseExtensions_(values[i][HISTORICAL_COLS.QUEUE_EXT - 1]);
-    for (let j = 0; j < exts.length; j++) deptQueueExts[exts[j]] = true;
+  const overrideList = (typeof DEPT_QUEUE_EXT_OVERRIDES !== 'undefined')
+                       && DEPT_QUEUE_EXT_OVERRIDES[dept];
+  if (overrideList && overrideList.length) {
+    for (let i = 0; i < overrideList.length; i++) {
+      deptQueueExts[String(overrideList[i])] = true;
+    }
+  } else {
+    for (let i = 0; i < values.length; i++) {
+      const agent = String(values[i][HISTORICAL_COLS.AGENT - 1] || '').trim();
+      if (!agent || !rosterSet[agent]) continue;
+      const exts = parseExtensions_(values[i][HISTORICAL_COLS.QUEUE_EXT - 1]);
+      for (let j = 0; j < exts.length; j++) deptQueueExts[exts[j]] = true;
+    }
   }
 
   // Chart buckets: 8 AM-5 PM CST in 30-min slots = 18 buckets
