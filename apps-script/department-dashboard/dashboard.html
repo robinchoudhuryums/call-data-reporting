@@ -501,6 +501,12 @@
           </div>
         </div>
 
+        <div class="cr-swap-row">
+          <button type="button" class="cr-swap-btn" id="cr-swap-periods" title="Swap Period 1 and Period 2 dates">
+            <span aria-hidden="true">&#8645;</span> Swap P1 &amp; P2
+          </button>
+        </div>
+
         <div class="cr-period-block cr-period-compare">
           <div class="cr-period-label">Period 2 (Comparison)</div>
           <div class="ir-row">
@@ -514,6 +520,8 @@
             </div>
           </div>
         </div>
+
+        <div class="cr-length-hint" id="cr-length-hint"></div>
 
         <div class="ir-section-title">2. Agents</div>
         <div class="ir-hint">Compare each agent's performance across both periods. Active/inactive grouping reflects the union of both ranges.</div>
@@ -557,6 +565,11 @@
                 <div class="pr-date-value" id="cr-p2-label">&nbsp;</div>
               </div>
             </div>
+            <div class="ir-editing-line">
+              <span class="ir-editing-label">Showing:</span>
+              <span class="ir-editing-agents" id="cr-editing-agents"></span>
+              <button class="ir-editing-edit" id="cr-edit-selection-btn" type="button">change</button>
+            </div>
           </div>
           <div class="ir-action-buttons">
             <button class="btn btn-secondary" id="cr-back-btn" type="button">&laquo; Back</button>
@@ -568,13 +581,32 @@
                 <button type="button" role="menuitem" data-action="copy">Copy image</button>
                 <button type="button" role="menuitem" data-action="email">Email image</button>
                 <button type="button" role="menuitem" data-action="print">Print</button>
+                <button type="button" role="menuitem" data-action="csv">Download CSV</button>
               </div>
             </div>
           </div>
         </div>
 
+        <div id="cr-edit-popover" class="ir-edit-popover" style="display:none;" role="dialog" aria-label="Edit selection">
+          <div class="ir-edit-popover-header">
+            <strong>Edit selection</strong>
+            <button class="ir-edit-popover-close" id="cr-edit-popover-close" type="button" aria-label="Close">&times;</button>
+          </div>
+          <div class="ir-search-row">
+            <input type="search" id="cr-edit-search" placeholder="Search agents..." autocomplete="off">
+          </div>
+          <div id="cr-edit-list" class="ir-agent-list ir-agent-list-compact"></div>
+          <div class="ir-edit-popover-actions">
+            <a href="#" id="cr-edit-select-all">Select all active</a>
+            <span class="sep">|</span>
+            <a href="#" id="cr-edit-select-none">Select none</a>
+            <button class="btn" id="cr-edit-apply-btn" type="button" disabled>Apply</button>
+          </div>
+        </div>
+
         <div id="cr-results-status" class="status" style="display:none;"></div>
 
+        <div id="cr-length-warning" class="cr-length-warning" style="display:none;"></div>
         <div id="cr-team-insights"></div>
         <div id="cr-team-tiles" class="pr-kpi-row"></div>
 
@@ -592,10 +624,28 @@
 
         <div class="cr-chart-wrap" id="cr-chart-wrap">
           <div class="ir-chart-header" id="cr-chart-header">Answered Calls: Period 1 vs Period 2</div>
+          <div class="cr-chart-summary" id="cr-chart-summary"></div>
           <div class="ir-chart-canvas-wrap"><canvas id="cr-chart"></canvas></div>
         </div>
 
+        <div class="ir-cards-toolbar" id="cr-cards-toolbar">
+          <label class="ir-sort-control">
+            <span class="ir-sort-label">Sort agents:</span>
+            <select id="cr-card-sort">
+              <option value="selection">Selection order</option>
+              <option value="name">Name (A-Z)</option>
+              <option value="improvers">Biggest improvers</option>
+              <option value="regressors">Biggest regressors</option>
+            </select>
+          </label>
+        </div>
+
         <div id="cr-agent-cards" class="cr-agent-cards"></div>
+
+        <details id="cr-quiet-details" class="cr-quiet-details" style="display:none;">
+          <summary class="cr-quiet-summary"></summary>
+          <div id="cr-quiet-cards" class="cr-agent-cards"></div>
+        </details>
       </div>
     </div>
   </div>

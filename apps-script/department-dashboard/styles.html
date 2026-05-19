@@ -1538,6 +1538,65 @@
   .cr-period-baseline .cr-period-label { color: #6b7280; }
   .cr-period-compare  .cr-period-label { color: #1d4ed8; }
 
+  /* Centered Swap button between the two Period blocks. Lets
+     admins flip P1/P2 in place when they realize they picked the
+     dates in the wrong order. */
+  .cr-swap-row {
+    display: flex;
+    justify-content: center;
+    margin: -2px 0 8px;
+  }
+  .cr-swap-btn {
+    background: #fff;
+    border: 1px solid #d1d5db;
+    color: #4b5563;
+    border-radius: 999px;
+    padding: 4px 14px;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .cr-swap-btn:hover { background: #f3f4f6; color: #1f2937; }
+
+  /* Period length hint below the date blocks. Equal-length
+     periods get a check; unequal periods get a warning so
+     users notice that volume comparisons are skewed. */
+  .cr-length-hint {
+    font-size: 11px;
+    color: #6b7280;
+    margin: -4px 2px 14px;
+  }
+  .cr-length-spec strong { color: #1f2937; }
+  .cr-length-ok { color: #047857; font-weight: 600; }
+  .cr-length-warn { color: #9A3412; font-weight: 600; }
+
+  /* Length-mismatch banner above the report body when periods
+     differ in length. Muted-orange tone matches the negative
+     valence color so it reads as "needs attention" without
+     screaming. */
+  .cr-length-warning {
+    background: #FFEDD5;
+    color: #9A3412;
+    border-left: 3px solid #EA580C;
+    border-radius: 4px;
+    padding: 10px 14px;
+    font-size: 12.5px;
+    margin-bottom: 12px;
+  }
+  .cr-length-warning strong { color: #7C2D12; }
+
+  /* Per-day caption inside KPI tiles (volume + time metrics
+     when length-mismatch). Small line under the delta. */
+  .pr-kpi-perday {
+    font-size: 11px;
+    color: #4b5563;
+    border-top: 1px dashed #e5e7eb;
+    margin-top: 4px;
+    padding-top: 4px;
+  }
+  .pr-kpi-perday strong { color: #111827; }
+
   /* Comparison chart wrapper: matches the ir-chart-wrap shape but
      fixed taller height for the bar chart. */
   .cr-chart-wrap {
@@ -1545,11 +1604,19 @@
     border-radius: 8px;
     background: #fff;
     padding: 12px;
-    height: 360px;
+    height: 380px;
     display: flex;
     flex-direction: column;
     margin-bottom: 16px;
   }
+  .cr-chart-summary {
+    text-align: center;
+    font-size: 12px;
+    color: #4b5563;
+    margin-bottom: 4px;
+    font-variant-numeric: tabular-nums;
+  }
+  .cr-chart-summary strong { color: #111827; }
 
   /* Per-agent cards stack vertically; on wide screens flow into a
      two-column grid for density. */
@@ -1564,17 +1631,78 @@
   .cr-agent-card {
     background: #fff;
     border: 1px solid #e5e7eb;
+    border-left-width: 4px;
     border-radius: 8px;
     padding: 14px 16px;
   }
+  /* Left-border color encodes the agent's aggregate direction
+     across the 4 valenced metrics so scanning the grid surfaces
+     the movers. */
+  .cr-card-improved  { border-left-color: #2563EB; }
+  .cr-card-regressed { border-left-color: #EA580C; }
+  .cr-card-mixed     { border-left-color: #9CA3AF; }
+
   .cr-agent-card-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
+    gap: 8px;
     border-bottom: 1px solid #e5e7eb;
     padding-bottom: 8px;
     margin-bottom: 8px;
   }
+  /* "vs Team" badge in card header. Three states: above team,
+     in line, below team. Same color tokens as the existing
+     valence palette for consistency. */
+  .cr-vs-team {
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+    margin-left: auto;
+  }
+  .cr-vs-team-pos  { background: #DBEAFE; color: #1E40AF; }
+  .cr-vs-team-neg  { background: #FFEDD5; color: #9A3412; }
+  .cr-vs-team-flat { background: #E5E7EB; color: #4B5563; }
+
+  /* Per-cell "X/day" annotation inside the cards' P1/P2 cells
+     when periods differ. Small subline under the main value. */
+  .cr-cell-perday {
+    display: block;
+    font-size: 10px;
+    color: #6b7280;
+    font-style: italic;
+  }
+
+  /* Collapsible "quiet agents" section below the main card grid.
+     Agents whose metrics didn't move beyond the noise floor are
+     stashed here so the main grid focuses on the notable movers. */
+  .cr-quiet-details {
+    margin-top: 14px;
+    border-top: 1px dashed #e5e7eb;
+    padding-top: 14px;
+  }
+  .cr-quiet-summary {
+    cursor: pointer;
+    user-select: none;
+    list-style: none;
+    color: #6b7280;
+    font-size: 12px;
+    font-weight: 600;
+    margin-bottom: 10px;
+  }
+  .cr-quiet-summary::-webkit-details-marker { display: none; }
+  .cr-quiet-summary::before {
+    content: "\25B8";
+    display: inline-block;
+    margin-right: 4px;
+    font-size: 10px;
+    transition: transform 0.15s ease;
+  }
+  .cr-quiet-details[open] > .cr-quiet-summary::before {
+    transform: rotate(90deg);
+  }
+  .cr-quiet-details .cr-agent-card { opacity: 0.85; }
   .cr-agent-name { font-size: 14px; font-weight: 700; color: #111827; }
   .cr-agent-table {
     width: 100%;
@@ -1692,12 +1820,22 @@
     body.cr-printing #compare-form,
     body.cr-printing #compare-modal .modal-close,
     body.cr-printing #compare-results .ir-action-buttons,
+    body.cr-printing .ir-editing-edit,
+    body.cr-printing #cr-edit-popover,
     body.cr-printing #cr-chart-tabs,
+    body.cr-printing #cr-cards-toolbar,
     body.cr-printing #cr-datalabels-box,
     body.cr-printing .ir-copy-tsv,
     body.cr-printing #cr-results-status {
       display: none !important;
     }
+    /* Open the quiet-agents section for print so the full
+       comparison is on the page. */
+    body.cr-printing .cr-quiet-details > .cr-quiet-summary {
+      display: none !important;
+    }
+    body.cr-printing .cr-quiet-details { border-top: 0 !important; padding-top: 0 !important; }
+    body.cr-printing .cr-quiet-details > #cr-quiet-cards { display: grid !important; }
     body.cr-printing .cr-chart-wrap,
     body.cr-printing .pr-kpi-tile,
     body.cr-printing .cr-agent-card { page-break-inside: avoid; }
