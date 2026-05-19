@@ -39,7 +39,9 @@
  * per-value 100KB limit; on cache-put failure we log + continue.
  */
 
-const INDIVIDUAL_CACHE_KEY_PREFIX = 'individual:v1';
+// Bump when aggregation rules change so stale cached values don't
+// linger. v3 = per-agent share-of-dept + insights array.
+const INDIVIDUAL_CACHE_KEY_PREFIX = 'individual:v3';
 
 function getIndividualReportInit(req) {
   const email = Session.getActiveUser().getEmail();
@@ -56,8 +58,6 @@ function getIndividualReportInit(req) {
   }
 
   const roster = getRosterForDepartment_(dept);
-  // Sensible default range = current month-to-date, matching the
-  // main dashboard's default behavior.
   const tz = TZ;
   const now = new Date();
   const fmt = function (d) {
@@ -65,12 +65,77 @@ function getIndividualReportInit(req) {
   };
   const firstOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 
+  // Optional: when from/to are passed, also return the subset of
+  // roster names with any rung/answered/missed activity in range.
+  // Lets the client show an Active / Inactive split in the picker
+  // so managers can pre-filter to people who actually had data.
+  let activeAgents = null;
+  const from = String((req && req.from) || '').trim();
+  const to   = String((req && req.to)   || '').trim();
+  if (isIsoDate_(from) && isIsoDate_(to) && from <= to) {
+    activeAgents = computeActiveAgentsInRange_(dept, from, to, roster);
+  }
+
   return {
     department: dept,
     agents: roster.names.slice().sort(),
     defaultStart: fmt(firstOfMonth),
     defaultEnd: fmt(now),
+    activeAgents: activeAgents,
   };
+}
+
+/**
+ * Returns the subset of `roster.names` that had at least one
+ * rung/answered/missed event in [from, to]. Used by the picker's
+ * Active / Inactive grouping. Skips queue-sentinel rows (same
+ * filter as the main report) and per-dept TEAM_AVG_EXCLUDES are
+ * NOT applied here -- the manager might want to pick themselves.
+ *
+ * Cached for 5 min per (dept, from, to) tuple. Separate cache key
+ * prefix from the main report so the smaller payload doesn't share
+ * the same TTL bucket.
+ */
+function computeActiveAgentsInRange_(dept, from, to, roster) {
+  const cache = CacheService.getScriptCache();
+  const cacheKey = 'individual_active:v1:' + dept + ':' + from + ':' + to;
+  const cached = cache.get(cacheKey);
+  if (cached) {
+    try { return JSON.parse(cached); } catch (e) { /* recompute */ }
+  }
+
+  const rosterSet = {};
+  for (let i = 0; i < roster.names.length; i++) rosterSet[roster.names[i]] = true;
+
+  const ss = openSpreadsheet_();
+  const sheet = ss.getSheetByName(SHEETS.HISTORICAL);
+  if (!sheet) return [];
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return [];
+  const ssTZ = ss.getSpreadsheetTimeZone();
+
+  // Only the cols we actually filter on -- skip the duration display
+  // strings (parsing those is the slow part of the main read).
+  const range = sheet.getRange(2, 1, lastRow - 1, HISTORICAL_COLS.TOTAL_ANSWERED);
+  const values = range.getValues();
+
+  const active = {};
+  for (let i = 0; i < values.length; i++) {
+    const r = values[i];
+    const dateIso = rowDateIso_(r[HISTORICAL_COLS.DATE - 1], ssTZ);
+    if (!dateIso || dateIso < from || dateIso > to) continue;
+    const agent = String(r[HISTORICAL_COLS.AGENT - 1] || '').trim();
+    if (!agent || !rosterSet[agent]) continue;
+    if (/^A_Q_/.test(agent) || agent === 'Backup CSR') continue;
+    const rung     = Number(r[HISTORICAL_COLS.TOTAL_RUNG - 1])     || 0;
+    const missed   = Number(r[HISTORICAL_COLS.TOTAL_MISSED - 1])   || 0;
+    const answered = Number(r[HISTORICAL_COLS.TOTAL_ANSWERED - 1]) || 0;
+    if (rung > 0 || missed > 0 || answered > 0) active[agent] = true;
+  }
+  const out = Object.keys(active).sort();
+  try { cache.put(cacheKey, JSON.stringify(out), CACHE_TTL_SECONDS); }
+  catch (e) { /* harmless */ }
+  return out;
 }
 
 function getIndividualReport(req) {
@@ -221,7 +286,19 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster) {
     summaryStats[a]    = { rung: 0, missed: 0, answered: 0, ttt: 0, attTotal: 0 };
   });
   const teamTotal = { rung: 0, missed: 0, answered: 0, ttt: 0, attTotal: 0 };
-  const activeDaySet = {};   // ISO day -> true; for dept "per day" stats
+  const activeDaySet  = {};   // ISO day -> true; for dept "per day" stats
+  // Track which roster agents actually had ANY activity in range,
+  // so the team-avg denominator only counts agents who took calls
+  // (zero-call roster members shouldn't drag the average down).
+  const activeAgentSet = {};
+
+  // Per-dept exclusion list for managers / others who are on the
+  // roster but shouldn't factor into the team average. Resolved at
+  // request time so config edits take effect on next request (after
+  // cache TTL).
+  const excludedAgents = {};
+  const excludeList = (TEAM_AVG_EXCLUDES && TEAM_AVG_EXCLUDES[dept]) || [];
+  for (let i = 0; i < excludeList.length; i++) excludedAgents[excludeList[i]] = true;
 
   for (let i = 0; i < values.length; i++) {
     const r  = values[i];
@@ -249,14 +326,19 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster) {
     // so unanswered/abandoned days don't drag down the weighted ATT.
     const attTotal = answered > 0 ? attAvg * answered : 0;
 
-    // Team totals (dept-wide, over user's selected range).
-    if (inUserRange && rosterSet[agent]) {
+    // Team totals (dept-wide, over user's selected range). Excludes
+    // configured managers; only counts agents with at least one call
+    // event so zero-call roster members don't dilute the average.
+    if (inUserRange && rosterSet[agent] && !excludedAgents[agent]) {
       teamTotal.rung     += rung;
       teamTotal.missed   += missed;
       teamTotal.answered += answered;
       teamTotal.ttt      += tttSec;
       teamTotal.attTotal += attTotal;
       activeDaySet[dateIso] = true;
+      if (rung > 0 || answered > 0 || missed > 0) {
+        activeAgentSet[agent] = true;
+      }
     }
 
     // Per-selected-agent.
@@ -285,13 +367,16 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster) {
     }
   }
 
-  // Team average (per-agent simple mean across the roster), with
-  // weighted % / TTT / ATT computed across the whole team's data.
-  const rosterSize = roster.names.length || 1;
+  // Team average (per-agent simple mean across active, non-excluded
+  // roster members), with weighted % / TTT / ATT computed across
+  // those agents' calls. activeAgentCount is the denominator; if
+  // every roster member was inactive or excluded, fall back to 1 to
+  // avoid divide-by-zero (totals will be 0 anyway).
+  const activeAgentCount = Math.max(1, Object.keys(activeAgentSet).length);
   const teamAvg = {
-    rung:     Math.round(teamTotal.rung     / rosterSize),
-    missed:   Math.round(teamTotal.missed   / rosterSize),
-    answered: Math.round(teamTotal.answered / rosterSize),
+    rung:     Math.round(teamTotal.rung     / activeAgentCount),
+    missed:   Math.round(teamTotal.missed   / activeAgentCount),
+    answered: Math.round(teamTotal.answered / activeAgentCount),
     pctAnswered: teamTotal.rung     > 0 ? (teamTotal.answered / teamTotal.rung)    * 100 : 0,
     tttPerCall:  teamTotal.answered > 0 ? (teamTotal.ttt       / teamTotal.answered)     : 0,
     att:         teamTotal.answered > 0 ? (teamTotal.attTotal  / teamTotal.answered)     : 0,
@@ -343,12 +428,23 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster) {
     });
   });
 
-  // Per-agent summary cards.
+  // Per-agent summary cards. Includes:
+  //   share -- agent's portion of the dept's volume on each metric
+  //   insights -- rules-based notable comparisons vs team avg
   const summaryData = selectedAgents.map(function (agent) {
     const s = summaryStats[agent];
     const agPct = s.rung > 0 ? (s.answered / s.rung) * 100 : 0;
     const agTtt = s.answered > 0 ? s.ttt      / s.answered : 0;
     const agAtt = s.answered > 0 ? s.attTotal / s.answered : 0;
+    const share = {
+      rung:     teamTotal.rung     > 0 ? (s.rung     / teamTotal.rung)     * 100 : 0,
+      answered: teamTotal.answered > 0 ? (s.answered / teamTotal.answered) * 100 : 0,
+      missed:   teamTotal.missed   > 0 ? (s.missed   / teamTotal.missed)   * 100 : 0,
+    };
+    const agentRaw = {
+      rung: s.rung, missed: s.missed, answered: s.answered,
+      pct: agPct, ttt: agTtt, att: agAtt,
+    };
     return {
       name: agent,
       stats: {
@@ -359,10 +455,16 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster) {
         ttt:      formatSecondsHms_(agTtt),
         att:      formatSecondsHms_(agAtt),
       },
-      raw: {
-        rung: s.rung, missed: s.missed, answered: s.answered,
-        pct: agPct, ttt: agTtt, att: agAtt,
+      raw: agentRaw,
+      share: {
+        rung:     share.rung.toFixed(1)     + '%',
+        answered: share.answered.toFixed(1) + '%',
+        missed:   share.missed.toFixed(1)   + '%',
+        rawRung:     share.rung,
+        rawAnswered: share.answered,
+        rawMissed:   share.missed,
       },
+      insights: buildAgentInsights_(agentRaw, teamAvg),
     };
   });
 
@@ -379,7 +481,9 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster) {
       trendEnd:   trendEndIso,
       agents: selectedAgents,
       mode: selectedAgents.length > 1 ? 'comparison' : 'individual',
-      rosterSize: rosterSize,
+      rosterSize: roster.names.length,
+      activeAgentCount: activeAgentCount,
+      excludedAgents: excludeList,
       generatedAt: new Date().toISOString(),
     },
     dateLabel: dateLabel,
@@ -419,6 +523,9 @@ function emptyIndividualReport_(dept, from, to, selectedAgents, masterMonthKeys)
         name: a,
         stats: { rung: 0, missed: 0, answered: 0, pct: '0.0%', ttt: '0:00:00', att: '0:00:00' },
         raw:   { rung: 0, missed: 0, answered: 0, pct: 0, ttt: 0, att: 0 },
+        share: { rung: '0.0%', answered: '0.0%', missed: '0.0%',
+                 rawRung: 0, rawAnswered: 0, rawMissed: 0 },
+        insights: [],
       };
     }),
     teamAvg: {
@@ -428,6 +535,73 @@ function emptyIndividualReport_(dept, from, to, selectedAgents, masterMonthKeys)
     deptStats: { dailyRung: '0.0', dailyMissed: '0.0', dailyAnswered: '0.0', ansPct: '0.0%', activeDays: 0 },
     mode: selectedAgents.length > 1 ? 'comparison' : 'individual',
   };
+}
+
+/**
+ * Rules-based notable comparisons between this agent and the team
+ * average. Returns up to 3 short strings; empty if nothing rises
+ * above the noise floor. Thresholds set to surface meaningful
+ * differences without flagging routine variance.
+ *
+ * Rule order = surfacing priority:
+ *   1. % Answered     (>= 5 pt absolute spread, agent rung >= 10)
+ *   2. Call volume    (>= 25% relative spread, team rung > 0)
+ *   3. Avg talk time  (>= 25% relative spread, agent answered >= 10)
+ *   4. Missed-call    (>= 30% relative spread, agent missed >= 3)
+ *
+ * Tuning notes:
+ *   - "Volume" thresholds use answered>=10 / missed>=3 minimums so
+ *     a one-call outlier day doesn't trigger noise.
+ *   - 25-30% relative spreads catch real outliers but spare the
+ *     ~20% normal day-to-day variance most depts see.
+ */
+function buildAgentInsights_(agent, teamAvg) {
+  const out = [];
+  if (!agent || agent.rung < 5) return out;
+
+  if (agent.rung >= 10 && teamAvg.pctAnswered > 0) {
+    const pctDelta = agent.pct - teamAvg.pctAnswered;
+    if (Math.abs(pctDelta) >= 5) {
+      const dir = pctDelta > 0 ? 'above' : 'below';
+      out.push('Answer rate is ' + Math.abs(pctDelta).toFixed(1)
+             + ' pts ' + dir + ' team avg ('
+             + agent.pct.toFixed(1) + '% vs '
+             + teamAvg.pctAnswered.toFixed(1) + '%).');
+    }
+  }
+
+  if (teamAvg.rung > 0) {
+    const rungDelta = ((agent.rung - teamAvg.rung) / teamAvg.rung) * 100;
+    if (Math.abs(rungDelta) >= 25) {
+      const dir = rungDelta > 0 ? 'higher' : 'lower';
+      out.push('Call volume is ' + Math.abs(rungDelta).toFixed(0)
+             + '% ' + dir + ' than team avg ('
+             + agent.rung + ' vs ' + teamAvg.rung + ' rung).');
+    }
+  }
+
+  if (teamAvg.att > 0 && agent.answered >= 10) {
+    const attDelta = ((agent.att - teamAvg.att) / teamAvg.att) * 100;
+    if (Math.abs(attDelta) >= 25) {
+      const dir = attDelta > 0 ? 'longer' : 'shorter';
+      out.push('Avg talk time is ' + Math.abs(attDelta).toFixed(0)
+             + '% ' + dir + ' than team avg ('
+             + formatSecondsHms_(agent.att) + ' vs '
+             + formatSecondsHms_(teamAvg.att) + ').');
+    }
+  }
+
+  if (teamAvg.missed > 0 && agent.missed >= 3) {
+    const missedDelta = ((agent.missed - teamAvg.missed) / teamAvg.missed) * 100;
+    if (Math.abs(missedDelta) >= 30) {
+      const dir = missedDelta > 0 ? 'above' : 'below';
+      out.push('Missed-call count is ' + Math.abs(missedDelta).toFixed(0)
+             + '% ' + dir + ' team avg ('
+             + agent.missed + ' vs ' + teamAvg.missed + ' missed).');
+    }
+  }
+
+  return out.slice(0, 3);
 }
 
 /**

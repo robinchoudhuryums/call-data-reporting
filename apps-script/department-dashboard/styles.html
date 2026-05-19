@@ -737,7 +737,48 @@
     background: #fff;
   }
   .ir-hint { font-size: 11px; color: #6b7280; margin-bottom: 8px; }
-  .ir-loader { padding: 8px; font-size: 12px; color: #6b7280; font-style: italic; }
+  .ir-loader { padding: 0; }
+  .ir-skeleton-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 6px;
+    padding: 10px;
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 4px;
+  }
+  .ir-skeleton-row {
+    height: 24px;
+    border-radius: 4px;
+    background: linear-gradient(90deg, #f3f4f6 0%, #e5e7eb 50%, #f3f4f6 100%);
+    background-size: 200% 100%;
+    animation: irShimmer 1.2s linear infinite;
+  }
+  .ir-skeleton-label {
+    text-align: center;
+    margin-top: 8px;
+    font-size: 11px;
+    color: #9ca3af;
+    font-style: italic;
+  }
+  @keyframes irShimmer {
+    0%   { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+
+  /* No-data empty state shown when every selected agent had zero
+     activity in the chosen range. */
+  .ir-empty-card {
+    background: #fff;
+    border: 1px dashed #d1d5db;
+    border-radius: 8px;
+    padding: 32px 24px;
+    text-align: center;
+    margin-bottom: 14px;
+  }
+  .ir-empty-icon  { font-size: 28px; opacity: 0.45; margin-bottom: 6px; }
+  .ir-empty-title { font-size: 14px; font-weight: 700; color: #374151; margin-bottom: 4px; }
+  .ir-empty-sub   { font-size: 12px; color: #6b7280; }
   .ir-agent-list {
     border: 1px solid #e5e7eb;
     border-radius: 4px;
@@ -761,6 +802,50 @@
   }
   .ir-agent-item input { margin-right: 6px; transform: scale(1.05); }
   .ir-agent-empty { padding: 12px; font-size: 13px; color: #6b7280; text-align: center; }
+
+  /* Active / inactive groupings inside the agent picker. Active
+     items render normally; inactive (no data in range) get muted
+     styling so they're still pickable but visually de-prioritized. */
+  .ir-agent-group-label {
+    grid-column: 1 / -1;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #4b5563;
+    margin: 8px 2px 4px;
+  }
+  .ir-agent-group-label-muted { color: #9ca3af; margin-top: 12px; }
+  .ir-agent-group-count { color: #9ca3af; font-weight: 500; }
+  .ir-agent-group {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 6px;
+  }
+  .ir-agent-group-muted .ir-agent-item {
+    background: #fafafa;
+    color: #9ca3af;
+    font-style: italic;
+  }
+  .ir-agent-group-muted .ir-agent-item input { accent-color: #9ca3af; }
+
+  /* Search row shared by main form picker and edit popover. */
+  .ir-search-row { margin-bottom: 8px; }
+  .ir-search-row input[type="search"] {
+    width: 100%;
+    padding: 7px 10px;
+    border: 1px solid #d1d5db;
+    border-radius: 4px;
+    font-size: 13px;
+    background: #fff;
+    box-sizing: border-box;
+  }
+  .ir-search-row input[type="search"]:focus {
+    outline: none;
+    border-color: #1d4ed8;
+    box-shadow: 0 0 0 2px rgba(29, 78, 216, 0.12);
+  }
   .ir-agent-actions {
     text-align: right;
     margin: 8px 2px 14px;
@@ -782,10 +867,90 @@
     margin-bottom: 14px;
     flex-wrap: wrap;
   }
+  .ir-results-header-left { flex: 1; min-width: 0; }
+  .ir-results-title-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px; }
   .ir-results-title { font-size: 18px; font-weight: 700; color: #111827; }
-  .ir-results-date  { font-size: 13px; color: #6b7280; margin-left: 8px; }
+  .ir-results-date  { font-size: 13px; color: #6b7280; margin-left: 4px; }
   .ir-action-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
   .ir-action-buttons .btn { width: auto; padding: 6px 12px; font-size: 12px; }
+
+  /* "Showing: Sarah, Maria · change" sticky in the results header.
+     Click the change link to open the inline edit popover. */
+  .ir-editing-line {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    margin-top: 4px;
+    font-size: 12px;
+    color: #6b7280;
+    flex-wrap: wrap;
+  }
+  .ir-editing-label { font-weight: 600; color: #6b7280; }
+  .ir-editing-agents {
+    color: #111827;
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 60vw;
+  }
+  .ir-editing-edit {
+    background: transparent;
+    border: 0;
+    color: #1d4ed8;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    padding: 0 2px;
+    text-decoration: underline;
+  }
+  .ir-editing-edit:hover { color: #1e3a8a; }
+
+  /* Edit-selection popover: floats below the results header,
+     contains a compact agent picker that lets the user re-run
+     the report with different agents without going back to the
+     form. */
+  .ir-edit-popover {
+    position: relative;
+    background: #fff;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+    padding: 12px 14px;
+    margin: 0 0 14px;
+  }
+  .ir-edit-popover-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+  }
+  .ir-edit-popover-close {
+    background: transparent;
+    border: 0;
+    font-size: 18px;
+    color: #6b7280;
+    cursor: pointer;
+    line-height: 1;
+  }
+  .ir-edit-popover-close:hover { color: #1f2937; }
+  .ir-agent-list-compact { max-height: 220px; }
+  .ir-edit-popover-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 10px;
+    font-size: 12px;
+  }
+  .ir-edit-popover-actions a { color: #1d4ed8; text-decoration: none; }
+  .ir-edit-popover-actions a:hover { text-decoration: underline; }
+  .ir-edit-popover-actions .sep { color: #d1d5db; }
+  .ir-edit-popover-actions .btn {
+    margin-left: auto;
+    width: auto;
+    padding: 6px 14px;
+    font-size: 12px;
+  }
 
   /* Per-agent summary card. Comp table inside lays out
      Metric | Agent | Team Avg | Diff. */
@@ -820,30 +985,107 @@
   }
   .ir-copy-tsv:hover { background: #eef2ff; }
 
-  .ir-comp-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 13px;
+  /* KPI tile grid: a single row of metric tiles per agent. Big
+     number + sparkline up top, team-avg + delta badge below. */
+  .ir-kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 10px;
+  }
+  .ir-kpi-tile {
+    background: #f9fafb;
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
     font-variant-numeric: tabular-nums;
+    min-width: 0;
   }
-  .ir-comp-table th {
-    text-align: left;
-    padding: 6px 8px;
-    color: #6b7280;
-    border-bottom: 1px solid #e5e7eb;
-    font-size: 11px;
+  .ir-kpi-row-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+  }
+  .ir-kpi-label {
+    font-size: 10px;
+    font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.02em;
+    letter-spacing: 0.03em;
+    color: #6b7280;
   }
-  .ir-comp-table td {
-    padding: 7px 8px;
-    border-bottom: 1px solid #f3f4f6;
+  .ir-kpi-spark { height: 22px; line-height: 0; }
+  .ir-spark-svg { display: block; }
+  .ir-kpi-value-row {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    min-width: 0;
+  }
+  .ir-kpi-value {
+    font-size: 22px;
+    font-weight: 700;
     color: #111827;
+    line-height: 1.1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
-  .ir-comp-table .ir-metric { font-weight: 600; color: #4b5563; width: 26%; }
-  .ir-comp-table .ir-agent-val { font-weight: 700; width: 22%; }
-  .ir-comp-table .ir-team-val  { color: #6b7280; font-style: italic; width: 22%; }
-  .ir-comp-table .ir-diff-col  { width: 30%; text-align: right; }
+  /* Subtle "X.X% of dept" tag inline with the big value. Lighter
+     weight + smaller size so the absolute number stays primary. */
+  .ir-kpi-share {
+    font-size: 11px;
+    color: #6b7280;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* Insights callout: rendered above the KPI grid per agent. Lists
+     up to 3 rules-based observations vs team avg. */
+  .ir-insights {
+    background: #EFF6FF;
+    border-left: 3px solid #2563EB;
+    border-radius: 4px;
+    padding: 8px 12px;
+    margin-bottom: 10px;
+  }
+  .ir-insights-label {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #1E40AF;
+    margin-bottom: 4px;
+  }
+  .ir-insights-list {
+    margin: 0;
+    padding-left: 18px;
+    font-size: 12.5px;
+    color: #1F2937;
+    line-height: 1.5;
+  }
+  .ir-insights-list li { margin: 2px 0; }
+  .ir-kpi-row-bot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+  }
+  .ir-kpi-team {
+    font-size: 11px;
+    color: #6b7280;
+    font-style: italic;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  @media (max-width: 900px) {
+    .ir-kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
   .ir-badge {
     padding: 3px 8px;
     border-radius: 4px;
@@ -853,9 +1095,12 @@
     min-width: 60px;
     text-align: center;
   }
-  .ir-badge-pos { background: #d1fae5; color: #065f46; }
-  .ir-badge-neg { background: #fee2e2; color: #991b1b; }
-  .ir-badge-neu { background: #e5e7eb; color: #374151; }
+  /* Diverging blue (good) / orange (bad) pair instead of green/red:
+     readable for deuteranopia + protanopia users, who can't reliably
+     distinguish red and green badges. */
+  .ir-badge-pos { background: #DBEAFE; color: #1E40AF; }
+  .ir-badge-neg { background: #FFEDD5; color: #9A3412; }
+  .ir-badge-neu { background: #E5E7EB; color: #374151; }
 
   /* Charts: stacked grid. Volume goes full-width, efficiency + duration
      side-by-side below. */
@@ -875,18 +1120,76 @@
   .ir-toggle-label:hover { background: #f9fafb; }
   .ir-toggle-label input { margin-right: 6px; }
 
-  .ir-chart-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 14px;
+  /* Tabbed chart container: only one of Volume/Efficiency/Duration
+     is visible at a time so each gets the full container width. */
+  .ir-chart-tabs {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 8px;
+    border-bottom: 2px solid #e5e7eb;
   }
-  .ir-chart-wide { grid-column: 1 / -1; }
+  .ir-tab {
+    background: transparent;
+    border: 0;
+    padding: 8px 16px;
+    font-size: 13px;
+    font-weight: 600;
+    color: #6b7280;
+    cursor: pointer;
+    border-bottom: 3px solid transparent;
+    margin-bottom: -2px;
+    transition: color 0.15s, border-color 0.15s;
+  }
+  .ir-tab:hover { color: #1f2937; }
+  .ir-tab.active {
+    color: #1d4ed8;
+    border-bottom-color: #1d4ed8;
+  }
+
+  /* Shared chip legend rendered above the chart panels in
+     comparison mode. Each chip toggles its agent's series across
+     all three charts; hover dims the others. */
+  .ir-shared-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 8px 4px;
+    margin-bottom: 6px;
+  }
+  .ir-legend-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 10px 5px 6px;
+    background: #f9fafb;
+    border: 1px solid #e5e7eb;
+    border-radius: 999px;
+    font-size: 12px;
+    color: #1f2937;
+    cursor: pointer;
+    transition: opacity 0.15s, background 0.15s;
+  }
+  .ir-legend-chip:hover { background: #f3f4f6; }
+  .ir-legend-chip.inactive {
+    opacity: 0.42;
+    text-decoration: line-through;
+  }
+  .ir-legend-swatch {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--chip-color, #4E79A7);
+    flex-shrink: 0;
+  }
+  .ir-legend-name { font-weight: 600; }
+
+  .ir-chart-area { display: block; }
   .ir-chart-wrap {
     border: 1px solid #e5e7eb;
     border-radius: 8px;
     background: #fff;
     padding: 12px;
-    height: 320px;
+    height: 420px;
     display: flex;
     flex-direction: column;
   }
@@ -901,4 +1204,46 @@
 
   /* Reset .btn defaults that look out of place inside the modal. */
   #individual-modal .btn { width: auto; }
+
+  /* -------- Print stylesheet ------------------------------------- */
+  /* Only activates when the user clicks Print on the Individual
+     Report; the body gets `.ir-printing` set just before
+     window.print() and unset right after. Everything outside the
+     report panel is hidden so the page contains just the report. */
+  @media print {
+    body.ir-printing > .container { display: none !important; }
+    body.ir-printing .modal-backdrop { display: none !important; }
+    body.ir-printing #individual-modal {
+      position: static !important;
+      background: transparent !important;
+    }
+    body.ir-printing #individual-modal .modal-panel {
+      box-shadow: none !important;
+      border-radius: 0 !important;
+      max-width: 100% !important;
+      width: 100% !important;
+      max-height: none !important;
+      padding: 0 !important;
+      overflow: visible !important;
+    }
+    body.ir-printing #individual-form,
+    body.ir-printing .modal-close,
+    body.ir-printing #ir-action-buttons,
+    body.ir-printing #ir-datalabels-box,
+    body.ir-printing #ir-chart-tabs,
+    body.ir-printing #ir-edit-popover,
+    body.ir-printing .ir-editing-edit,
+    body.ir-printing .ir-copy-tsv,
+    body.ir-printing #ir-results-status {
+      display: none !important;
+    }
+    /* Force all three chart panels visible for print -- the tab UI
+       only shows one at a time on screen. */
+    body.ir-printing #ir-charts-container [data-panel] {
+      display: flex !important;
+      margin-bottom: 14px !important;
+    }
+    body.ir-printing .ir-chart-wrap { page-break-inside: avoid; }
+    body.ir-printing .ir-summary-card { page-break-inside: avoid; }
+  }
 </style>

@@ -51,6 +51,41 @@ function buildDQEHistoricalData(rawSheet, dqeSheet) {
 
   // ── Helpers ────────────────────────────────────────────────────────────────
 
+  // Roster-driven agent-name canonicalization. The CDR feed sometimes
+  // spells an agent's name without their parenthesized nickname (e.g.
+  // "Roman Robin Paulose" instead of "Roman (Robin) Paulose"), which
+  // produces split daily rows for the same person. We treat the
+  // roster sheet (DO NOT EDIT! in the same spreadsheet) as the source
+  // of canonical names and rewrite any raw name whose paren-stripped
+  // form unambiguously matches a roster entry.
+  //
+  // Edge cases:
+  //   - Raw name already matches a roster entry exactly  -> no-op.
+  //   - Stripped form matches >1 roster entry            -> no-op
+  //     (ambiguous; preserve raw rather than guess).
+  //   - Raw name not on roster at all                    -> no-op
+  //     (new hire not yet rostered; same behavior as before).
+  //
+  // Soft coupling: this read pulls from a sheet whose schema is owned
+  // by the Department Dashboard project (DO NOT EDIT!, agent cells
+  // formatted "Name, ext1, ext2"). Keep in mind if changing the
+  // roster layout there.
+  const ROSTER_CANONICAL = loadRosterCanonicalNames_(rawSheet);
+
+  function stripParens_(name) {
+    return String(name || '').replace(/\([^)]*\)/g, '').replace(/\s+/g, ' ').trim();
+  }
+
+  function canonicalizeAgentName(rawName) {
+    if (!rawName) return rawName;
+    if (ROSTER_CANONICAL.canonicalSet[rawName]) return rawName;
+    const stripped = stripParens_(rawName);
+    if (!stripped) return rawName;
+    const matches = ROSTER_CANONICAL.strippedMap[stripped];
+    if (matches && matches.length === 1) return matches[0];
+    return rawName;
+  }
+
   function timeToSec(val) {
     if (!val) return 0;
     const str = String(val).trim();
@@ -167,7 +202,7 @@ function buildDQEHistoricalData(rawSheet, dqeSheet) {
     const callId      = String(row[DQE_C.CALL_ID]).trim();
     const legId       = parseInt(row[DQE_C.LEG_ID]) || 0;
     const abandoned   = String(row[DQE_C.ABANDONED]).trim() === 'Abandoned';
-    const calleeName  = String(row[DQE_C.CALLEE_NAME]).trim();
+    const calleeName  = canonicalizeAgentName(String(row[DQE_C.CALLEE_NAME]).trim());
 
     const talkSec = timeToSec(timeVals[i] ? timeVals[i][0] : '');
     const callSec = timeToSec(timeVals[i] ? timeVals[i][1] : '');
@@ -225,7 +260,7 @@ function buildDQEHistoricalData(rawSheet, dqeSheet) {
     const calleeK = String(row[DQE_C.CALLEE]).trim();
     if (/^CallForking/i.test(calleeK)) continue;
 
-    const agentName = String(row[DQE_C.CALLEE_NAME]).trim();
+    const agentName = canonicalizeAgentName(String(row[DQE_C.CALLEE_NAME]).trim());
     if (!agentName || agentName === 'N/A') continue;
     if (DQE_EXCLUDED_AGENTS.indexOf(agentName) !== -1) continue;
 
@@ -601,6 +636,70 @@ function buildDQEHistoricalData(rawSheet, dqeSheet) {
   }
 }
 
+
+// ── Roster canonical-name loader ──────────────────────────────────────────────
+// Reads the "DO NOT EDIT!" roster sheet (Department Dashboard's
+// roster) from the same spreadsheet that holds Raw Data, builds two
+// lookups used to canonicalize agent names in the build:
+//   canonicalSet[name]              -> true if name is on the roster exactly
+//   strippedMap[strippedName]       -> array of canonical roster names whose
+//                                      paren-stripped form equals strippedName
+//
+// Returns empty maps if the roster sheet is missing or empty so the
+// build still runs (just without name canonicalization).
+//
+// Roster layout pinned by the dashboard's Config.gs ROSTER constants:
+//   HEADER_ROW=1, DATA_START_ROW=2, DEPT_FIRST_COL=6 (F).
+// Dept block ends at the first blank cell in the header row; columns
+// past that are unrelated reference data and must be ignored.
+// Agent cells are formatted "Name, ext1, ext2" -- name is everything
+// before the first comma.
+function loadRosterCanonicalNames_(anySheet) {
+  const empty = { canonicalSet: {}, strippedMap: {} };
+  try {
+    const ss = anySheet ? anySheet.getParent() : SpreadsheetApp.getActive();
+    const sheet = ss.getSheetByName('DO NOT EDIT!');
+    if (!sheet) return empty;
+    const lastRow = sheet.getLastRow();
+    const lastCol = sheet.getLastColumn();
+    const DEPT_FIRST_COL = 6;
+    if (lastRow < 2 || lastCol < DEPT_FIRST_COL) return empty;
+
+    const headerRow = sheet.getRange(1, DEPT_FIRST_COL, 1, lastCol - DEPT_FIRST_COL + 1)
+                           .getValues()[0];
+    let deptColCount = 0;
+    for (let i = 0; i < headerRow.length; i++) {
+      if (!String(headerRow[i] || '').trim()) break;
+      deptColCount++;
+    }
+    if (deptColCount === 0) return empty;
+
+    const block = sheet.getRange(2, DEPT_FIRST_COL, lastRow - 1, deptColCount).getValues();
+    const canonicalSet = {};
+    const strippedMap = {};
+
+    for (let r = 0; r < block.length; r++) {
+      for (let c = 0; c < block[r].length; c++) {
+        const raw = String(block[r][c] || '').trim();
+        if (!raw) continue;
+        const name = (raw.split(',')[0] || '').trim();
+        if (!name) continue;
+        if (canonicalSet[name]) continue;
+        canonicalSet[name] = true;
+        const stripped = name.replace(/\([^)]*\)/g, '').replace(/\s+/g, ' ').trim();
+        if (!stripped) continue;
+        if (!strippedMap[stripped]) strippedMap[stripped] = [];
+        if (strippedMap[stripped].indexOf(name) === -1) {
+          strippedMap[stripped].push(name);
+        }
+      }
+    }
+    return { canonicalSet: canonicalSet, strippedMap: strippedMap };
+  } catch (e) {
+    Logger.log('loadRosterCanonicalNames_ failed: %s', e);
+    return empty;
+  }
+}
 
 // ── Test function ─────────────────────────────────────────────────────────────
 

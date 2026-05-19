@@ -196,7 +196,18 @@
 
         <div class="ir-section-title">2. Agents</div>
         <div class="ir-hint">Select 1 for Individual Report. Select multiple for Peer Comparison.</div>
-        <div id="ir-agent-loader" class="ir-loader">Loading agent roster&hellip;</div>
+        <div class="ir-search-row">
+          <input type="search" id="ir-agent-search" placeholder="Search agents by name..." autocomplete="off">
+        </div>
+        <div id="ir-agent-loader" class="ir-loader">
+          <div class="ir-skeleton-grid" aria-hidden="true">
+            <div class="ir-skeleton-row"></div><div class="ir-skeleton-row"></div>
+            <div class="ir-skeleton-row"></div><div class="ir-skeleton-row"></div>
+            <div class="ir-skeleton-row"></div><div class="ir-skeleton-row"></div>
+            <div class="ir-skeleton-row"></div><div class="ir-skeleton-row"></div>
+          </div>
+          <div class="ir-skeleton-label">Loading agent roster&hellip;</div>
+        </div>
         <div id="ir-agent-list" class="ir-agent-list" style="display:none;"></div>
         <div class="ir-agent-actions">
           <a href="#" id="ir-select-all">Select all</a>
@@ -211,14 +222,39 @@
 
       <div id="individual-results" class="ir-results" style="display:none;">
         <div class="ir-results-header">
-          <div>
-            <span class="ir-results-title" id="ir-results-title">Individual Report</span>
-            <span class="ir-results-date" id="ir-results-date"></span>
+          <div class="ir-results-header-left">
+            <div class="ir-results-title-line">
+              <span class="ir-results-title" id="ir-results-title">Individual Report</span>
+              <span class="ir-results-date" id="ir-results-date"></span>
+            </div>
+            <div class="ir-editing-line">
+              <span class="ir-editing-label">Showing:</span>
+              <span class="ir-editing-agents" id="ir-editing-agents"></span>
+              <button class="ir-editing-edit" id="ir-edit-selection-btn" type="button">change</button>
+            </div>
           </div>
           <div class="ir-action-buttons" id="ir-action-buttons">
             <button class="btn btn-secondary" id="ir-back-btn" type="button">&laquo; Back</button>
             <button class="btn btn-secondary" id="ir-copy-img-btn" type="button">Copy image</button>
             <button class="btn btn-secondary" id="ir-email-img-btn" type="button">Email image</button>
+            <button class="btn btn-secondary" id="ir-print-btn" type="button">Print</button>
+          </div>
+        </div>
+
+        <div id="ir-edit-popover" class="ir-edit-popover" style="display:none;" role="dialog" aria-label="Edit selection">
+          <div class="ir-edit-popover-header">
+            <strong>Edit selection</strong>
+            <button class="ir-edit-popover-close" id="ir-edit-popover-close" type="button" aria-label="Close">&times;</button>
+          </div>
+          <div class="ir-search-row">
+            <input type="search" id="ir-edit-search" placeholder="Search agents..." autocomplete="off">
+          </div>
+          <div id="ir-edit-list" class="ir-agent-list ir-agent-list-compact"></div>
+          <div class="ir-edit-popover-actions">
+            <a href="#" id="ir-edit-select-all">Select all</a>
+            <span class="sep">|</span>
+            <a href="#" id="ir-edit-select-none">Select none</a>
+            <button class="btn" id="ir-edit-apply-btn" type="button" disabled>Apply</button>
           </div>
         </div>
 
@@ -232,16 +268,24 @@
           </label>
         </div>
 
-        <div class="ir-chart-grid" id="ir-charts-container">
-          <div class="ir-chart-wrap ir-chart-wide" id="ir-wrap-vol">
+        <div class="ir-chart-tabs" id="ir-chart-tabs" role="tablist">
+          <button type="button" class="ir-tab active" data-tab="vol" role="tab" aria-selected="true">Volume</button>
+          <button type="button" class="ir-tab" data-tab="eff" role="tab" aria-selected="false">Efficiency</button>
+          <button type="button" class="ir-tab" data-tab="dur" role="tab" aria-selected="false">Duration</button>
+        </div>
+
+        <div id="ir-shared-legend" class="ir-shared-legend" style="display:none;"></div>
+
+        <div id="ir-charts-container" class="ir-chart-area">
+          <div class="ir-chart-wrap" id="ir-wrap-vol" data-panel="vol">
             <div class="ir-chart-header">Volume Trends</div>
             <div class="ir-chart-canvas-wrap"><canvas id="ir-vol-chart"></canvas></div>
           </div>
-          <div class="ir-chart-wrap" id="ir-wrap-eff">
+          <div class="ir-chart-wrap" id="ir-wrap-eff" data-panel="eff" style="display:none;">
             <div class="ir-chart-header">Efficiency (% Answered)</div>
             <div class="ir-chart-canvas-wrap"><canvas id="ir-eff-chart"></canvas></div>
           </div>
-          <div class="ir-chart-wrap" id="ir-wrap-dur">
+          <div class="ir-chart-wrap" id="ir-wrap-dur" data-panel="dur" style="display:none;">
             <div class="ir-chart-header">Duration (ATT)</div>
             <div class="ir-chart-canvas-wrap"><canvas id="ir-dur-chart"></canvas></div>
           </div>

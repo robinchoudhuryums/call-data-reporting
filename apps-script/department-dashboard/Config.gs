@@ -90,6 +90,20 @@ const DEPT_QUEUE_EXT_OVERRIDES = Object.freeze({
   'CSR': ['103', '108', '1003'],   // A_Q_CSR, A_Q_Intake, Backup CSR
 });
 
+// Per-dept agent names excluded from the Individual Report's team
+// average (numerator AND denominator). Used for managers who are on
+// the roster but only take a token number of calls -- including them
+// drags the team-avg unrealistically low.
+//
+// Match must be EXACT (case + whitespace) against the agent's roster
+// name. To exclude the same person from multiple depts, list them
+// under each dept.
+const TEAM_AVG_EXCLUDES = Object.freeze({
+  // CSR's manager is on the roster but takes only a token number of
+  // calls; including in the average drags it artificially low.
+  'CSR': ['Robin Choudhury'],
+});
+
 /**
  * Returns the SPREADSHEET_ID Script Property. Throws a clear error if
  * unset so first-run misconfiguration is obvious in the execution log.
