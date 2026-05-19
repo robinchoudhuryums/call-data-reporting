@@ -874,6 +874,42 @@
   .ir-action-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
   .ir-action-buttons .btn { width: auto; padding: 6px 12px; font-size: 12px; }
 
+  /* Export dropdown: single button collapses Copy / Email / Print
+     menu items. Caret rotates slightly when the menu is open. */
+  .ir-export-wrap { position: relative; display: inline-block; }
+  .ir-export-caret {
+    display: inline-block;
+    margin-left: 4px;
+    font-size: 9px;
+    transition: transform 0.15s;
+  }
+  #ir-export-btn.open .ir-export-caret { transform: rotate(180deg); }
+  .ir-export-menu {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    background: #fff;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.10);
+    min-width: 160px;
+    padding: 4px;
+    z-index: 100;
+  }
+  .ir-export-menu button {
+    display: block;
+    width: 100%;
+    text-align: left;
+    background: transparent;
+    border: 0;
+    padding: 8px 12px;
+    font-size: 13px;
+    color: #1f2937;
+    cursor: pointer;
+    border-radius: 4px;
+  }
+  .ir-export-menu button:hover { background: #f3f4f6; }
+
   /* "Showing: Sarah, Maria · change" sticky in the results header.
      Click the change link to open the inline edit popover. */
   .ir-editing-line {
@@ -1063,12 +1099,39 @@
   }
   .ir-insights-list {
     margin: 0;
-    padding-left: 18px;
+    padding-left: 0;
+    list-style: none;
     font-size: 12.5px;
     color: #1F2937;
     line-height: 1.5;
   }
-  .ir-insights-list li { margin: 2px 0; }
+  .ir-insight-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin: 3px 0;
+  }
+  .ir-insight-text { flex: 1; }
+  /* Colored circular markers double-encode direction: blue / up
+     arrow = positive, orange / down arrow = negative, grey / bullet
+     = neutral. Color + shape distinction so CVD users get the same
+     signal as everyone else. */
+  .ir-insight-mark {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1;
+    flex-shrink: 0;
+    margin-top: 1px;
+  }
+  .ir-insight-mark-positive { background: #DBEAFE; color: #1E40AF; }
+  .ir-insight-mark-negative { background: #FFEDD5; color: #9A3412; }
+  .ir-insight-mark-neutral  { background: #E5E7EB; color: #4B5563; }
   .ir-kpi-row-bot {
     display: flex;
     align-items: center;
@@ -1205,6 +1268,112 @@
   /* Reset .btn defaults that look out of place inside the modal. */
   #individual-modal .btn { width: auto; }
 
+  /* -------- Performance Report ----------------------------------- */
+  /* Inline prior-period hint on the form -- shows the user what
+     "vs prior" will compare against before they click Generate. */
+  .pr-prior-hint {
+    font-size: 11px;
+    color: #6b7280;
+    font-style: italic;
+    margin: -4px 2px 12px;
+  }
+  .pr-compare-line {
+    font-size: 12px;
+    color: #6b7280;
+    margin-top: 4px;
+  }
+
+  /* KPI tile row at the top of the report: 6 tiles, big number +
+     delta vs prior period. Distinct from the Individual Report's
+     KPI tiles -- no sparkline, no team-avg context. */
+  .pr-kpi-row {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 10px;
+    margin-bottom: 16px;
+  }
+  .pr-kpi-tile {
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 12px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-variant-numeric: tabular-nums;
+    min-width: 0;
+  }
+  .pr-kpi-label {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #6b7280;
+  }
+  .pr-kpi-value {
+    font-size: 22px;
+    font-weight: 700;
+    color: #111827;
+    line-height: 1.1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .pr-kpi-delta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+  }
+  .pr-delta {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-weight: 700;
+    font-size: 11px;
+  }
+  .pr-delta-pos { background: #DBEAFE; color: #1E40AF; }
+  .pr-delta-neg { background: #FFEDD5; color: #9A3412; }
+  .pr-delta-neu { background: #E5E7EB; color: #4B5563; }
+  .pr-delta-cap { color: #9ca3af; font-weight: 500; font-style: italic; }
+  @media (max-width: 1100px) {
+    .pr-kpi-row { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  }
+  @media (max-width: 700px) {
+    .pr-kpi-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+
+  /* Per-agent table sitting between KPI tiles and the chart trio. */
+  .pr-agent-table-wrap { overflow-x: auto; margin-bottom: 16px; }
+  .pr-agent-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .pr-agent-table th, .pr-agent-table td {
+    padding: 8px 12px;
+    border-bottom: 1px solid #f3f4f6;
+    text-align: left;
+  }
+  .pr-agent-table th {
+    background: #f9fafb;
+    color: #6b7280;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  .pr-agent-table .num { text-align: right; }
+  .pr-agent-table tbody tr:last-child td { border-bottom: 0; }
+  .pr-agent-table tbody tr:hover { background: #f9fafb; }
+
   /* -------- Print stylesheet ------------------------------------- */
   /* Only activates when the user clicks Print on the Individual
      Report; the body gets `.ir-printing` set just before
@@ -1245,5 +1414,35 @@
     }
     body.ir-printing .ir-chart-wrap { page-break-inside: avoid; }
     body.ir-printing .ir-summary-card { page-break-inside: avoid; }
+
+    body.pr-printing > .container { display: none !important; }
+    body.pr-printing .modal-backdrop { display: none !important; }
+    body.pr-printing #performance-modal {
+      position: static !important;
+      background: transparent !important;
+    }
+    body.pr-printing #performance-modal .modal-panel {
+      box-shadow: none !important;
+      border-radius: 0 !important;
+      max-width: 100% !important;
+      width: 100% !important;
+      max-height: none !important;
+      padding: 0 !important;
+      overflow: visible !important;
+    }
+    body.pr-printing #performance-form,
+    body.pr-printing #performance-modal .modal-close,
+    body.pr-printing #performance-results .ir-action-buttons,
+    body.pr-printing #pr-chart-tabs,
+    body.pr-printing #pr-results-status {
+      display: none !important;
+    }
+    body.pr-printing #pr-charts-container [data-panel] {
+      display: flex !important;
+      margin-bottom: 14px !important;
+    }
+    body.pr-printing .ir-chart-wrap,
+    body.pr-printing .pr-kpi-tile,
+    body.pr-printing .pr-agent-table { page-break-inside: avoid; }
   }
 </style>

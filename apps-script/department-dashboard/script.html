@@ -126,6 +126,7 @@
     initHelpModal();
     initMissedReport();
     initIndividualReport();
+    initPerformanceReport();
 
     refresh();
   }
@@ -1016,11 +1017,37 @@
       if (irLastData) irRenderCharts(irLastData);
     });
 
-    const copyBtn = $('ir-copy-img-btn');
-    if (copyBtn) copyBtn.addEventListener('click', irCopyImage);
-
-    const emailBtn = $('ir-email-img-btn');
-    if (emailBtn) emailBtn.addEventListener('click', irEmailImage);
+    // Export dropdown: consolidates Copy image / Email image /
+    // Print under one button. Click toggles open; click on an
+    // item runs the action and closes; outside click + Escape
+    // dismiss.
+    const exportBtn  = $('ir-export-btn');
+    const exportMenu = $('ir-export-menu');
+    if (exportBtn && exportMenu) {
+      exportBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        irSetExportMenuOpen_(exportMenu.style.display === 'none');
+      });
+      exportMenu.addEventListener('click', function (e) {
+        const item = e.target.closest('[data-action]');
+        if (!item) return;
+        const action = item.getAttribute('data-action');
+        irSetExportMenuOpen_(false);
+        if (action === 'copy')  irCopyImage();
+        else if (action === 'email') irEmailImage();
+        else if (action === 'print') irPrintReport_();
+      });
+      document.addEventListener('click', function (e) {
+        if (exportMenu.style.display === 'none') return;
+        if (exportMenu.contains(e.target) || e.target === exportBtn) return;
+        irSetExportMenuOpen_(false);
+      });
+      document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && exportMenu.style.display !== 'none') {
+          irSetExportMenuOpen_(false);
+        }
+      });
+    }
 
     // Chart panel tabs. Only one of the three charts is visible at
     // a time so each gets the full container width. Default: Volume.
@@ -1043,19 +1070,27 @@
       irChartInstances.forEach(function (c) { c.resize(); });
     });
 
-    const printBtn = $('ir-print-btn');
-    if (printBtn) printBtn.addEventListener('click', function () {
-      // A print stylesheet (styles.html @media print) hides the
-      // dashboard chrome and the modal backdrop / action buttons so
-      // only the report content lands on the page. Browser's
-      // built-in print preview can "save as PDF" for sharing.
-      document.body.classList.add('ir-printing');
-      window.print();
-      document.body.classList.remove('ir-printing');
-    });
-
     // Defaults: this-month-to-date.
     setIrDefaultDates();
+  }
+
+  function irSetExportMenuOpen_(open) {
+    const btn  = $('ir-export-btn');
+    const menu = $('ir-export-menu');
+    if (!btn || !menu) return;
+    menu.style.display = open ? '' : 'none';
+    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    btn.classList.toggle('open', open);
+  }
+
+  function irPrintReport_() {
+    // A print stylesheet (styles.html @media print) hides the
+    // dashboard chrome and the modal backdrop / action buttons so
+    // only the report content lands on the page. Browser's
+    // built-in print preview can "save as PDF" for sharing.
+    document.body.classList.add('ir-printing');
+    window.print();
+    document.body.classList.remove('ir-printing');
   }
 
   function setIrDefaultDates() {
@@ -1609,15 +1644,35 @@
   }
 
   /**
-   * Renders the per-agent insights callout. Server-side rules
-   * produce up to 3 short strings comparing this agent to team
-   * avg on % Answered, volume, ATT, and missed-call count.
-   * Returns empty string if no insights -- no empty box.
+   * Renders the per-agent insights callout. Each insight is an
+   * object { type, text } where type is "positive" | "negative" |
+   * "neutral" -- shown as a colored circular marker before the
+   * text so managers can scan the list at a glance:
+   *
+   *   blue  up arrow   : favorable comparison (positive)
+   *   orange down arrow: unfavorable comparison (negative)
+   *   grey  bullet     : direction-ambiguous (neutral, e.g. ATT)
+   *
+   * Returns empty string when there are no insights so empty
+   * callout boxes never appear.
    */
   function irInsightsBlock_(insights) {
     if (!insights || !insights.length) return '';
-    const items = insights.map(function (s) {
-      return '<li>' + escapeHtml(s) + '</li>';
+    const items = insights.map(function (item) {
+      // Accept legacy v3 string-form for cache transition safety.
+      const type = (item && item.type) || 'neutral';
+      const text = (item && item.text)
+        ? item.text
+        : (typeof item === 'string' ? item : '');
+      const mark = type === 'positive' ? '↑'    // up arrow
+                 : type === 'negative' ? '↓'    // down arrow
+                 : '•';                          // bullet
+      return '<li class="ir-insight-item">'
+           +   '<span class="ir-insight-mark ir-insight-mark-' + type + '" aria-hidden="true">'
+           +     mark
+           +   '</span>'
+           +   '<span class="ir-insight-text">' + escapeHtml(text) + '</span>'
+           + '</li>';
     }).join('');
     return '<div class="ir-insights">'
          +   '<div class="ir-insights-label">Insights</div>'
@@ -1959,100 +2014,784 @@
   function irBuildCanvas(onDone) {
     const root = $('individual-results');
     if (!root) return;
-    // Snapshot the canvases NOW (before clone) so the cloned doc
-    // can use the rendered pixels rather than re-rendering Chart.js
-    // off-screen, where layout differs.
-    const canvasMap = {};
-    document.querySelectorAll('#individual-results canvas').forEach(function (cvs) {
-      canvasMap[cvs.id] = cvs.toDataURL('image/png');
+
+    // Temporarily reveal every chart panel and resize its Chart.js
+    // instance so the canvas has rendered pixels before we read it.
+    // Hidden panels (the inactive tabs) leave their canvases at 0x0
+    // -- toDataURL on those returns a blank PNG, which was showing
+    // up as empty chart slots in the exported image / email.
+    const panels = root.querySelectorAll('#ir-charts-container [data-panel]');
+    const savedDisplays = [];
+    panels.forEach(function (p) {
+      savedDisplays.push(p.style.display);
+      p.style.display = '';
     });
+    irChartInstances.forEach(function (c) { c.resize(); });
 
-    html2canvas(root, {
-      scale: 2, useCORS: true, backgroundColor: '#f4f6f9',
-      onclone: function (clonedDoc) {
-        const btns = clonedDoc.getElementById('ir-action-buttons');
-        if (btns) btns.style.display = 'none';
-        const toggle = clonedDoc.getElementById('ir-datalabels-box');
-        if (toggle) toggle.style.display = 'none';
-        const tabs = clonedDoc.getElementById('ir-chart-tabs');
-        if (tabs) tabs.style.display = 'none';
-        const editPop = clonedDoc.getElementById('ir-edit-popover');
-        if (editPop) editPop.style.display = 'none';
-        const editLine = clonedDoc.querySelector('.ir-editing-edit');
-        if (editLine) editLine.style.display = 'none';
-        clonedDoc.querySelectorAll('.ir-copy-tsv').forEach(function (b) { b.style.display = 'none'; });
-        const status = clonedDoc.getElementById('ir-results-status');
-        if (status) status.style.display = 'none';
+    // Two rAFs: one for Chart.js's internal re-layout to settle,
+    // one for the browser to actually paint the resized canvas.
+    requestAnimationFrame(function () { requestAnimationFrame(function () {
+      const canvasMap = {};
+      root.querySelectorAll('canvas').forEach(function (cvs) {
+        canvasMap[cvs.id] = cvs.toDataURL('image/png');
+      });
 
-        // In the tabbed UI only the active chart panel is visible,
-        // but a captured image should include all three. Force all
-        // panels visible in the clone and lay them out stacked.
-        clonedDoc.querySelectorAll('#ir-charts-container [data-panel]').forEach(function (p) {
-          p.style.display = '';
-          p.style.marginBottom = '14px';
-        });
+      // Restore tab visibility before html2canvas snapshots the
+      // live DOM. onclone re-reveals all panels in the cloned doc
+      // and swaps each canvas for the captured PNG so the export
+      // includes all three charts regardless of which tab is
+      // currently visible on screen.
+      panels.forEach(function (p, i) { p.style.display = savedDisplays[i]; });
+      irChartInstances.forEach(function (c) { c.resize(); });
 
-        // Replace each <canvas> in the clone with an <img> of the
-        // pre-captured PNG. Avoids the "blank chart" problem where
-        // Chart.js has nothing to draw on in the detached clone.
-        Object.keys(canvasMap).forEach(function (id) {
-          const cvs = clonedDoc.getElementById(id);
-          if (!cvs) return;
-          const img = clonedDoc.createElement('img');
-          img.src = canvasMap[id];
-          img.style.width = '100%';
-          img.style.height = 'auto';
-          img.style.display = 'block';
-          cvs.parentNode.replaceChild(img, cvs);
-        });
-      },
-    }).then(function (canvas) { onDone(canvas); });
+      html2canvas(root, {
+        scale: 2, useCORS: true, backgroundColor: '#f4f6f9',
+        onclone: function (clonedDoc) {
+          const btns = clonedDoc.getElementById('ir-action-buttons');
+          if (btns) btns.style.display = 'none';
+          const toggle = clonedDoc.getElementById('ir-datalabels-box');
+          if (toggle) toggle.style.display = 'none';
+          const tabs = clonedDoc.getElementById('ir-chart-tabs');
+          if (tabs) tabs.style.display = 'none';
+          const editPop = clonedDoc.getElementById('ir-edit-popover');
+          if (editPop) editPop.style.display = 'none';
+          const editLine = clonedDoc.querySelector('.ir-editing-edit');
+          if (editLine) editLine.style.display = 'none';
+          clonedDoc.querySelectorAll('.ir-copy-tsv').forEach(function (b) { b.style.display = 'none'; });
+          const status = clonedDoc.getElementById('ir-results-status');
+          if (status) status.style.display = 'none';
+
+          // In the tabbed UI only the active chart panel is visible,
+          // but a captured image should include all three. Force all
+          // panels visible in the clone and lay them out stacked.
+          clonedDoc.querySelectorAll('#ir-charts-container [data-panel]').forEach(function (p) {
+            p.style.display = '';
+            p.style.marginBottom = '14px';
+          });
+
+          // Replace each <canvas> in the clone with an <img> of the
+          // pre-captured PNG. Avoids the "blank chart" problem where
+          // Chart.js has nothing to draw on in the detached clone.
+          Object.keys(canvasMap).forEach(function (id) {
+            const cvs = clonedDoc.getElementById(id);
+            if (!cvs) return;
+            const img = clonedDoc.createElement('img');
+            img.src = canvasMap[id];
+            img.style.width = '100%';
+            img.style.height = 'auto';
+            img.style.display = 'block';
+            cvs.parentNode.replaceChild(img, cvs);
+          });
+        },
+      }).then(function (canvas) { onDone(canvas); });
+    }); });
+  }
+
+  /**
+   * Transient feedback on the Export button while a copy/email
+   * is in flight. Saves the original label, swaps it, restores
+   * after `holdMs` (or immediately if `holdMs` is 0).
+   */
+  function irExportBtnFeedback_(label, holdMs) {
+    const btn = $('ir-export-btn');
+    if (!btn) return function () {};
+    if (!btn.dataset.label) btn.dataset.label = btn.innerHTML;
+    btn.disabled = true;
+    btn.textContent = label;
+    if (holdMs) {
+      setTimeout(function () {
+        btn.innerHTML = btn.dataset.label;
+        btn.disabled = false;
+      }, holdMs);
+    }
+    return function restore() {
+      btn.innerHTML = btn.dataset.label;
+      btn.disabled = false;
+    };
   }
 
   function irCopyImage() {
-    const btn = $('ir-copy-img-btn');
-    const prev = btn.textContent;
-    btn.disabled = true;
-    btn.textContent = 'Capturing…';
+    const restore = irExportBtnFeedback_('Capturing…', 0);
     irBuildCanvas(function (canvas) {
       canvas.toBlob(function (blob) {
         if (navigator.clipboard && window.ClipboardItem) {
           navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
             .then(function () {
-              btn.textContent = 'Copied!';
-              setTimeout(function () { btn.textContent = prev; btn.disabled = false; }, 1200);
+              restore();
+              irExportBtnFeedback_('Copied!', 1200);
             }, function (err) {
               irSetResultsStatus('error', 'Clipboard copy failed: ' + (err && err.message ? err.message : err));
-              btn.textContent = prev; btn.disabled = false;
+              restore();
             });
         } else {
           irSetResultsStatus('error', 'Clipboard API not available in this browser.');
-          btn.textContent = prev; btn.disabled = false;
+          restore();
         }
       }, 'image/png');
     });
   }
 
   function irEmailImage() {
-    const btn = $('ir-email-img-btn');
-    const prev = btn.textContent;
-    btn.disabled = true;
-    btn.textContent = 'Capturing…';
+    const restore = irExportBtnFeedback_('Capturing…', 0);
     irBuildCanvas(function (canvas) {
       const dataUrl = canvas.toDataURL('image/png');
-      btn.textContent = 'Sending…';
+      irExportBtnFeedback_('Sending…', 0);
       google.script.run
         .withSuccessHandler(function (res) {
-          btn.textContent = 'Sent to ' + (res && res.to ? res.to : 'you');
-          setTimeout(function () { btn.textContent = prev; btn.disabled = false; }, 2000);
+          restore();
+          irExportBtnFeedback_('Sent to ' + (res && res.to ? res.to : 'you'), 2000);
         })
         .withFailureHandler(function (err) {
           irSetResultsStatus('error', 'Email failed: ' + (err && err.message ? err.message : err));
-          btn.textContent = prev; btn.disabled = false;
+          restore();
         })
         .sendIndividualReportEmail({
           imageBase64: dataUrl,
           dateLabel: irLastData && irLastData.dateLabel ? irLastData.dateLabel : '',
+        });
+    });
+  }
+
+  // -- Performance Report modal ----------------------------------------
+  // Dept-level summary that compares the selected range against an
+  // immediately-preceding prior period of the same length, plus a
+  // per-agent breakdown and three charts (Share of Answered pie,
+  // Volume & Efficiency stacked bars, 12-month Answered trend line).
+  // Picker UX mirrors Individual Report (search + active/inactive
+  // grouping); export menu wires to the same html2canvas-based
+  // image capture pattern.
+
+  let prLastRoster = { dept: null, agents: [], activeAgents: null, rangeKey: '' };
+  let prLastData = null;
+  let prActiveFetchTimer = null;
+  let prChartInstances = [];
+
+  function initPerformanceReport() {
+    const btn = $('performance-report-btn');
+    const modal = $('performance-modal');
+    if (!btn || !modal) return;
+
+    const closeBtn = modal.querySelector('.modal-close');
+    const backdrop = modal.querySelector('[data-close]');
+
+    function openModal() {
+      modal.style.display = '';
+      modal.setAttribute('aria-hidden', 'false');
+      document.body.style.overflow = 'hidden';
+      document.addEventListener('keydown', onKeyDown);
+      if (closeBtn) closeBtn.focus();
+      showPrForm();
+      ensurePrRoster();
+      prUpdatePriorHint_();
+    }
+    function closeModal() {
+      modal.style.display = 'none';
+      modal.setAttribute('aria-hidden', 'true');
+      document.body.style.overflow = '';
+      document.removeEventListener('keydown', onKeyDown);
+      btn.focus();
+    }
+    function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
+
+    btn.addEventListener('click', openModal);
+    if (closeBtn) closeBtn.addEventListener('click', closeModal);
+    if (backdrop) backdrop.addEventListener('click', closeModal);
+
+    // Form wiring.
+    const preset = $('pr-preset');
+    if (preset) preset.addEventListener('change', applyPrPreset);
+
+    const fromEl = $('pr-from');
+    const toEl   = $('pr-to');
+    if (fromEl) fromEl.addEventListener('change', function () {
+      resetPrPreset(); prUpdatePriorHint_(); schedulePrActiveAgentRefetch_();
+    });
+    if (toEl) toEl.addEventListener('change', function () {
+      resetPrPreset(); prUpdatePriorHint_(); schedulePrActiveAgentRefetch_();
+    });
+
+    const selAll  = $('pr-select-all');
+    const selNone = $('pr-select-none');
+    if (selAll)  selAll.addEventListener('click',  function (e) { e.preventDefault(); prToggleAgents_(true);  });
+    if (selNone) selNone.addEventListener('click', function (e) { e.preventDefault(); prToggleAgents_(false); });
+
+    const search = $('pr-agent-search');
+    if (search) search.addEventListener('input', function () {
+      irFilterAgentList_($('pr-agent-list'), search.value);
+    });
+
+    const genBtn = $('pr-generate-btn');
+    if (genBtn) genBtn.addEventListener('click', runPrReport);
+
+    const backBtn = $('pr-back-btn');
+    if (backBtn) backBtn.addEventListener('click', showPrForm);
+
+    // Chart-tab wiring (shared CSS but separate elements).
+    const tabContainer = $('pr-chart-tabs');
+    if (tabContainer) tabContainer.addEventListener('click', function (e) {
+      const tab = e.target.closest('.ir-tab');
+      if (!tab) return;
+      const which = tab.getAttribute('data-tab');
+      tabContainer.querySelectorAll('.ir-tab').forEach(function (b) {
+        const active = b.getAttribute('data-tab') === which;
+        b.classList.toggle('active', active);
+        b.setAttribute('aria-selected', active ? 'true' : 'false');
+      });
+      document.querySelectorAll('#pr-charts-container [data-panel]').forEach(function (p) {
+        p.style.display = p.getAttribute('data-panel') === which ? '' : 'none';
+      });
+      prChartInstances.forEach(function (c) { c.resize(); });
+    });
+
+    // Export dropdown -- same pattern as Individual Report.
+    const exportBtn  = $('pr-export-btn');
+    const exportMenu = $('pr-export-menu');
+    if (exportBtn && exportMenu) {
+      exportBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        prSetExportMenuOpen_(exportMenu.style.display === 'none');
+      });
+      exportMenu.addEventListener('click', function (e) {
+        const item = e.target.closest('[data-action]');
+        if (!item) return;
+        const action = item.getAttribute('data-action');
+        prSetExportMenuOpen_(false);
+        if (action === 'copy')  prCopyImage_();
+        else if (action === 'email') prEmailImage_();
+        else if (action === 'print') prPrint_();
+      });
+      document.addEventListener('click', function (e) {
+        if (exportMenu.style.display === 'none') return;
+        if (exportMenu.contains(e.target) || e.target === exportBtn) return;
+        prSetExportMenuOpen_(false);
+      });
+      document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && exportMenu.style.display !== 'none') {
+          prSetExportMenuOpen_(false);
+        }
+      });
+    }
+
+    setPrDefaultDates();
+  }
+
+  function setPrDefaultDates() {
+    const today = new Date();
+    const first = new Date(today.getFullYear(), today.getMonth(), 1);
+    const isoOf = function (d) {
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return d.getFullYear() + '-' + m + '-' + day;
+    };
+    if ($('pr-from')) $('pr-from').value = isoOf(first);
+    if ($('pr-to'))   $('pr-to').value   = isoOf(today);
+  }
+
+  function showPrForm() {
+    $('performance-form').style.display = '';
+    $('performance-results').style.display = 'none';
+    prSetFormError('');
+  }
+  function showPrResults() {
+    $('performance-form').style.display = 'none';
+    $('performance-results').style.display = '';
+  }
+
+  function prSetFormError(msg) {
+    const el = $('pr-form-error');
+    if (!el) return;
+    if (!msg) { el.style.display = 'none'; el.textContent = ''; return; }
+    el.textContent = msg;
+    el.style.display = '';
+  }
+
+  function prSetResultsStatus(kind, msg) {
+    const el = $('pr-results-status');
+    if (!el) return;
+    if (!kind) { el.style.display = 'none'; el.textContent = ''; return; }
+    el.className = 'status status-' + kind;
+    el.textContent = msg;
+    el.style.display = '';
+  }
+
+  function applyPrPreset() {
+    const v = $('pr-preset').value;
+    if (v === 'custom') return;
+    const today = new Date();
+    let s, e;
+    e = new Date(today);
+    if (v === 'thisMonth')        { s = new Date(today.getFullYear(), today.getMonth(), 1); }
+    else if (v === 'lastMonth')   { s = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+                                     e = new Date(today.getFullYear(), today.getMonth(), 0); }
+    else if (v === 'last30')      { s = new Date(today); s.setDate(today.getDate() - 30); }
+    else if (v === 'last3Months') { s = new Date(today); s.setMonth(today.getMonth() - 3); }
+    else if (v === 'last12Months'){ s = new Date(today); s.setFullYear(today.getFullYear() - 1); }
+    else if (v === 'lastYear')    { s = new Date(today.getFullYear() - 1, 0, 1);
+                                     e = new Date(today.getFullYear() - 1, 11, 31); }
+    if (!s) return;
+    const isoOf = function (d) {
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return d.getFullYear() + '-' + m + '-' + day;
+    };
+    $('pr-from').value = isoOf(s);
+    $('pr-to').value   = isoOf(e);
+    prUpdatePriorHint_();
+    schedulePrActiveAgentRefetch_();
+  }
+  function resetPrPreset() {
+    const p = $('pr-preset');
+    if (p) p.value = 'custom';
+  }
+
+  /**
+   * Renders an inline hint on the form showing the prior period
+   * that the report will compare against, so the user understands
+   * what "vs prior" means before they generate.
+   */
+  function prUpdatePriorHint_() {
+    const el = $('pr-prior-hint');
+    if (!el) return;
+    const from = $('pr-from').value;
+    const to   = $('pr-to').value;
+    if (!from || !to || from > to) { el.textContent = ''; return; }
+    const start = new Date(from + 'T12:00:00');
+    const end   = new Date(to   + 'T12:00:00');
+    const days  = Math.floor((end - start) / 86400000);
+    const priorEnd   = new Date(start.getTime() - 86400000);
+    const priorStart = new Date(priorEnd.getTime() - days * 86400000);
+    const fmt = function (d) {
+      return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+    };
+    el.textContent = 'Will compare against the immediately-preceding '
+                   + (days + 1) + ' days ('
+                   + fmt(priorStart) + ' – ' + fmt(priorEnd) + ').';
+  }
+
+  // ── Roster fetch + render (mirrors Individual Report) ──────────────
+  function ensurePrRoster() {
+    const dept = getRequestedDept();
+    if (!dept) {
+      $('pr-agent-loader').textContent = 'No department selected.';
+      $('pr-agent-list').style.display = 'none';
+      return;
+    }
+    const from = $('pr-from').value;
+    const to   = $('pr-to').value;
+    const rangeKey = from + '|' + to;
+
+    if (prLastRoster.dept === dept && prLastRoster.agents.length
+        && prLastRoster.rangeKey === rangeKey) {
+      renderPrAgentList(prLastRoster.agents, prLastRoster.activeAgents);
+      return;
+    }
+    $('pr-agent-loader').style.display = '';
+    $('pr-agent-list').style.display = 'none';
+    $('pr-generate-btn').disabled = true;
+
+    google.script.run
+      .withSuccessHandler(function (data) {
+        prLastRoster = {
+          dept: dept,
+          agents: (data && data.agents) || [],
+          activeAgents: (data && data.activeAgents) || null,
+          rangeKey: rangeKey,
+        };
+        renderPrAgentList(prLastRoster.agents, prLastRoster.activeAgents);
+      })
+      .withFailureHandler(function (err) {
+        $('pr-agent-loader').textContent = 'Error loading roster: '
+          + (err && err.message ? err.message : String(err));
+      })
+      .getPerformanceReportInit({ department: dept, from: from, to: to });
+  }
+
+  function schedulePrActiveAgentRefetch_() {
+    if (prActiveFetchTimer) clearTimeout(prActiveFetchTimer);
+    prActiveFetchTimer = setTimeout(function () {
+      const dept = getRequestedDept();
+      if (!dept) return;
+      const from = $('pr-from').value;
+      const to   = $('pr-to').value;
+      if (!from || !to || from > to) return;
+      const rangeKey = from + '|' + to;
+      if (prLastRoster.dept === dept && prLastRoster.rangeKey === rangeKey) return;
+
+      google.script.run
+        .withSuccessHandler(function (data) {
+          prLastRoster.activeAgents = (data && data.activeAgents) || null;
+          prLastRoster.rangeKey = rangeKey;
+          const checked = irGetCheckedAgents_($('pr-agent-list'));
+          renderPrAgentList(prLastRoster.agents, prLastRoster.activeAgents);
+          irApplyCheckedAgents_($('pr-agent-list'), checked);
+          prUpdateGenerateEnabled_();
+        })
+        .withFailureHandler(function () { /* keep existing grouping */ })
+        .getPerformanceReportInit({ department: dept, from: from, to: to });
+    }, 350);
+  }
+
+  function renderPrAgentList(agents, activeAgents) {
+    const list = $('pr-agent-list');
+    $('pr-agent-loader').style.display = 'none';
+    if (!agents.length) {
+      list.innerHTML = '<div class="ir-agent-empty">No agents on this department\'s roster.</div>';
+      list.style.display = '';
+      $('pr-generate-btn').disabled = true;
+      return;
+    }
+    list.innerHTML = irBuildAgentListHtml_(agents, activeAgents);
+    list.style.display = '';
+    list.addEventListener('change', prUpdateGenerateEnabled_);
+    prUpdateGenerateEnabled_();
+  }
+
+  function prUpdateGenerateEnabled_() {
+    const boxes = $('pr-agent-list').querySelectorAll('.ir-agent-cb:checked');
+    $('pr-generate-btn').disabled = boxes.length === 0;
+  }
+
+  function prToggleAgents_(checked) {
+    $('pr-agent-list').querySelectorAll('.ir-agent-cb').forEach(function (cb) { cb.checked = checked; });
+    prUpdateGenerateEnabled_();
+  }
+
+  // ── Run + render ────────────────────────────────────────────────────
+  function runPrReport() {
+    prSetFormError('');
+    const dept = getRequestedDept();
+    const from = $('pr-from').value;
+    const to   = $('pr-to').value;
+    if (!from || !to) { prSetFormError('Pick a start and end date.'); return; }
+    if (from > to)    { prSetFormError('Start date must be on or before end date.'); return; }
+    const agents = irGetCheckedAgents_($('pr-agent-list'));
+    if (!agents.length) { prSetFormError('Select at least one agent.'); return; }
+
+    const btn = $('pr-generate-btn');
+    btn.disabled = true;
+    const originalLabel = btn.textContent;
+    btn.textContent = 'Loading…';
+
+    google.script.run
+      .withSuccessHandler(function (data) {
+        btn.disabled = false;
+        btn.textContent = originalLabel;
+        prRenderReport_(data);
+      })
+      .withFailureHandler(function (err) {
+        btn.disabled = false;
+        btn.textContent = originalLabel;
+        prSetFormError('Error: ' + (err && err.message ? err.message : String(err)));
+      })
+      .getPerformanceReport({ department: dept, from: from, to: to, agents: agents });
+  }
+
+  function prRenderReport_(data) {
+    prLastData = data;
+    $('pr-results-date').textContent = '(' + (data.dateLabel || '') + ')';
+    $('pr-compare-line').textContent = 'Comparing against prior period: '
+                                      + (data.priorDateLabel || '');
+    showPrResults();
+    prSetResultsStatus('');
+    prResetTabs_();
+    prRenderKpis_(data.teamStats);
+    prRenderAgentTable_(data.agentData);
+    prRenderCharts_(data);
+  }
+
+  function prResetTabs_() {
+    const container = $('pr-chart-tabs');
+    if (!container) return;
+    container.querySelectorAll('.ir-tab').forEach(function (b) {
+      const active = b.getAttribute('data-tab') === 'share';
+      b.classList.toggle('active', active);
+      b.setAttribute('aria-selected', active ? 'true' : 'false');
+    });
+    document.querySelectorAll('#pr-charts-container [data-panel]').forEach(function (p) {
+      p.style.display = p.getAttribute('data-panel') === 'share' ? '' : 'none';
+    });
+  }
+
+  /**
+   * Renders the 6 KPI tiles: Rung, Missed, Answered, % Answered,
+   * TTT, ATT -- each with current value and a delta vs the
+   * prior-period value. Delta color semantics:
+   *   - Rung / Answered / % Answered: above = positive (blue)
+   *   - Missed: above = negative (orange)
+   *   - TTT / ATT: neutral (longer can be thorough or slow)
+   */
+  function prRenderKpis_(teamStats) {
+    const t = teamStats || {};
+    const tiles = [
+      prKpiTile_('Total Rung',  t.rung,     'pos'),
+      prKpiTile_('Total Missed',t.missed,   'neg'),
+      prKpiTile_('Answered',    t.answered, 'pos'),
+      prKpiTile_('% Answered',  t.pct,      'pos'),
+      prKpiTile_('Total TTT',   t.ttt,      'neu'),
+      prKpiTile_('Avg ATT',     t.att,      'neu'),
+    ].join('');
+    $('pr-kpi-row').innerHTML = tiles;
+  }
+
+  function prKpiTile_(label, stat, valenceDirection) {
+    const s = stat || { formatted: '-', deltaPct: 0, type: 'volume' };
+    const isPctType = s.type === 'pctPoints';
+    const dp = Number(s.deltaPct || 0);
+    let badge;
+    if (Math.abs(dp) < 0.05) {
+      badge = '<span class="pr-delta pr-delta-neu">no change</span>';
+    } else {
+      // valenceDirection 'pos' = bigger is better, 'neg' = smaller
+      // is better, 'neu' = ambiguous (always neutral styling).
+      let cls = 'pr-delta-neu';
+      if (valenceDirection === 'pos')      cls = dp > 0 ? 'pr-delta-pos' : 'pr-delta-neg';
+      else if (valenceDirection === 'neg') cls = dp > 0 ? 'pr-delta-neg' : 'pr-delta-pos';
+      const arrow = dp > 0 ? '▲' : '▼';
+      const suffix = isPctType ? ' pts' : '%';
+      badge = '<span class="pr-delta ' + cls + '">'
+            +   arrow + ' ' + Math.abs(dp).toFixed(1) + suffix
+            + '</span>';
+    }
+    return '<div class="pr-kpi-tile">'
+         +   '<div class="pr-kpi-label">' + label + '</div>'
+         +   '<div class="pr-kpi-value">' + escapeHtml(String(s.formatted)) + '</div>'
+         +   '<div class="pr-kpi-delta">' + badge + ' <span class="pr-delta-cap">vs prior</span></div>'
+         + '</div>';
+  }
+
+  function prRenderAgentTable_(agentData) {
+    const rows = (agentData || []).map(function (a) {
+      return '<tr>'
+           +   '<td>' + escapeHtml(a.name) + '</td>'
+           +   '<td class="num">' + a.stats.rung + '</td>'
+           +   '<td class="num">' + a.stats.missed + '</td>'
+           +   '<td class="num">' + a.stats.answered + '</td>'
+           +   '<td class="num">' + a.stats.pct + '</td>'
+           +   '<td class="num">' + a.stats.ttt + '</td>'
+           +   '<td class="num">' + a.stats.att + '</td>'
+           + '</tr>';
+    }).join('');
+    $('pr-agent-table-wrap').innerHTML =
+      '<table class="pr-agent-table">'
+      +   '<thead><tr>'
+      +     '<th>Agent</th>'
+      +     '<th class="num">Rung</th>'
+      +     '<th class="num">Missed</th>'
+      +     '<th class="num">Answered</th>'
+      +     '<th class="num">% Answered</th>'
+      +     '<th class="num">TTT</th>'
+      +     '<th class="num">ATT</th>'
+      +   '</tr></thead>'
+      +   '<tbody>' + rows + '</tbody>'
+      + '</table>';
+  }
+
+  function prRenderCharts_(data) {
+    prChartInstances.forEach(function (c) { c.destroy(); });
+    prChartInstances = [];
+
+    // Pie: share of answered.
+    const pieData = (data.chartData && data.chartData.sharePie) || [];
+    const pieColors = pieData.map(function (_, i) {
+      return IR_CHART_COLORS[i % IR_CHART_COLORS.length];
+    });
+    const pie = new Chart($('pr-share-chart').getContext('2d'), {
+      type: 'doughnut',
+      data: {
+        labels: pieData.map(function (d) { return d.label; }),
+        datasets: [{
+          data:            pieData.map(function (d) { return d.value; }),
+          backgroundColor: pieColors,
+          borderColor: '#fff',
+          borderWidth: 2,
+        }],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false, animation: false,
+        plugins: {
+          legend: { position: 'right', labels: { boxWidth: 12, font: { size: 12 } } },
+          tooltip: {
+            callbacks: {
+              label: function (ctx) {
+                const total = ctx.dataset.data.reduce(function (a, b) { return a + b; }, 0);
+                const pct = total > 0 ? (ctx.parsed / total) * 100 : 0;
+                return ctx.label + ': ' + ctx.parsed + ' (' + pct.toFixed(1) + '%)';
+              },
+            },
+          },
+        },
+      },
+    });
+    prChartInstances.push(pie);
+
+    // Stacked bar: Answered (green) + Missed (orange) per agent.
+    const volData = (data.chartData && data.chartData.volumeBar) || [];
+    const bar = new Chart($('pr-volume-chart').getContext('2d'), {
+      type: 'bar',
+      data: {
+        labels: volData.map(function (d) { return d.label; }),
+        datasets: [
+          { label: 'Answered', data: volData.map(function (d) { return d.answered; }),
+            backgroundColor: IR_VOLUME_COLORS.answered, stack: 'vol' },
+          { label: 'Missed',   data: volData.map(function (d) { return d.missed;   }),
+            backgroundColor: IR_VOLUME_COLORS.missed,   stack: 'vol' },
+        ],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false, animation: false,
+        plugins: { legend: { position: 'bottom' } },
+        scales: {
+          x: { stacked: true, ticks: { autoSkip: false, maxRotation: 30, minRotation: 0 } },
+          y: { stacked: true, beginAtZero: true },
+        },
+      },
+    });
+    prChartInstances.push(bar);
+
+    // Trend line: team Answered count per month over 12-mo window.
+    const labels = (data.trendData && data.trendData.labels) || [];
+    const series = (data.trendData && data.trendData.series) || [];
+    const trend = new Chart($('pr-trend-chart').getContext('2d'), {
+      type: 'line',
+      data: {
+        labels: labels,
+        datasets: [{
+          label: 'Answered',
+          data: series.map(function (s) { return s.answered; }),
+          borderColor: IR_VOLUME_COLORS.answered,
+          backgroundColor: function (ctx) {
+            return irGradientFill_(ctx.chart, IR_VOLUME_COLORS.answered);
+          },
+          tension: 0.4, fill: true,
+          pointBackgroundColor: IR_VOLUME_COLORS.answered,
+          pointBorderColor: '#fff', pointBorderWidth: 1.5,
+          pointRadius: 3, pointHoverRadius: 5,
+        }],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false, animation: false,
+        plugins: { legend: { display: false } },
+        scales: { y: { beginAtZero: true } },
+      },
+    });
+    prChartInstances.push(trend);
+  }
+
+  function prSetExportMenuOpen_(open) {
+    const btn  = $('pr-export-btn');
+    const menu = $('pr-export-menu');
+    if (!btn || !menu) return;
+    menu.style.display = open ? '' : 'none';
+    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    btn.classList.toggle('open', open);
+  }
+
+  function prPrint_() {
+    document.body.classList.add('pr-printing');
+    window.print();
+    document.body.classList.remove('pr-printing');
+  }
+
+  function prBtnFeedback_(label, holdMs) {
+    const btn = $('pr-export-btn');
+    if (!btn) return function () {};
+    if (!btn.dataset.label) btn.dataset.label = btn.innerHTML;
+    btn.disabled = true;
+    btn.textContent = label;
+    if (holdMs) setTimeout(function () { btn.innerHTML = btn.dataset.label; btn.disabled = false; }, holdMs);
+    return function restore() { btn.innerHTML = btn.dataset.label; btn.disabled = false; };
+  }
+
+  /**
+   * Shared html2canvas capture for Performance Report. Same trick
+   * as the Individual Report: reveal all chart panels + resize
+   * before snapshotting so each canvas has rendered pixels.
+   */
+  function prBuildCanvas_(onDone) {
+    const root = $('performance-results');
+    if (!root) return;
+    const panels = root.querySelectorAll('#pr-charts-container [data-panel]');
+    const savedDisplays = [];
+    panels.forEach(function (p) {
+      savedDisplays.push(p.style.display);
+      p.style.display = '';
+    });
+    prChartInstances.forEach(function (c) { c.resize(); });
+
+    requestAnimationFrame(function () { requestAnimationFrame(function () {
+      const canvasMap = {};
+      root.querySelectorAll('canvas').forEach(function (cvs) {
+        canvasMap[cvs.id] = cvs.toDataURL('image/png');
+      });
+      panels.forEach(function (p, i) { p.style.display = savedDisplays[i]; });
+      prChartInstances.forEach(function (c) { c.resize(); });
+
+      html2canvas(root, {
+        scale: 2, useCORS: true, backgroundColor: '#f4f6f9',
+        onclone: function (clonedDoc) {
+          const btns = clonedDoc.querySelector('#performance-results .ir-action-buttons');
+          if (btns) btns.style.display = 'none';
+          const tabs = clonedDoc.getElementById('pr-chart-tabs');
+          if (tabs) tabs.style.display = 'none';
+          const status = clonedDoc.getElementById('pr-results-status');
+          if (status) status.style.display = 'none';
+          clonedDoc.querySelectorAll('#pr-charts-container [data-panel]').forEach(function (p) {
+            p.style.display = '';
+            p.style.marginBottom = '14px';
+          });
+          Object.keys(canvasMap).forEach(function (id) {
+            const cvs = clonedDoc.getElementById(id);
+            if (!cvs) return;
+            const img = clonedDoc.createElement('img');
+            img.src = canvasMap[id];
+            img.style.width = '100%';
+            img.style.height = 'auto';
+            img.style.display = 'block';
+            cvs.parentNode.replaceChild(img, cvs);
+          });
+        },
+      }).then(function (canvas) { onDone(canvas); });
+    }); });
+  }
+
+  function prCopyImage_() {
+    const restore = prBtnFeedback_('Capturing…', 0);
+    prBuildCanvas_(function (canvas) {
+      canvas.toBlob(function (blob) {
+        if (navigator.clipboard && window.ClipboardItem) {
+          navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
+            .then(function () {
+              restore();
+              prBtnFeedback_('Copied!', 1200);
+            }, function (err) {
+              prSetResultsStatus('error', 'Clipboard copy failed: ' + (err && err.message ? err.message : err));
+              restore();
+            });
+        } else {
+          prSetResultsStatus('error', 'Clipboard API not available in this browser.');
+          restore();
+        }
+      }, 'image/png');
+    });
+  }
+
+  function prEmailImage_() {
+    const restore = prBtnFeedback_('Capturing…', 0);
+    prBuildCanvas_(function (canvas) {
+      const dataUrl = canvas.toDataURL('image/png');
+      prBtnFeedback_('Sending…', 0);
+      google.script.run
+        .withSuccessHandler(function (res) {
+          restore();
+          prBtnFeedback_('Sent to ' + (res && res.to ? res.to : 'you'), 2000);
+        })
+        .withFailureHandler(function (err) {
+          prSetResultsStatus('error', 'Email failed: ' + (err && err.message ? err.message : err));
+          restore();
+        })
+        .sendPerformanceReportEmail({
+          imageBase64: dataUrl,
+          dateLabel: prLastData && prLastData.dateLabel ? prLastData.dateLabel : '',
         });
     });
   }
