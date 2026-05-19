@@ -830,6 +830,30 @@
   }
   .ir-agent-group-muted .ir-agent-item input { accent-color: #9ca3af; }
 
+  /* Collapsible inactive group. Hides the default disclosure marker
+     and renders our own caret next to the label that rotates when
+     the details element is open. */
+  .ir-agent-details { grid-column: 1 / -1; }
+  .ir-agent-details > summary {
+    cursor: pointer;
+    list-style: none;
+    user-select: none;
+  }
+  .ir-agent-details > summary::-webkit-details-marker { display: none; }
+  .ir-agent-details > summary::before {
+    content: "\25B8";   /* right-pointing triangle */
+    display: inline-block;
+    width: 12px;
+    font-size: 10px;
+    color: #9ca3af;
+    margin-right: 2px;
+    transition: transform 0.15s ease;
+  }
+  .ir-agent-details[open] > summary::before {
+    transform: rotate(90deg);
+  }
+  .ir-agent-details > .ir-agent-group { margin-top: 6px; }
+
   /* Search row shared by main form picker and edit popover. */
   .ir-search-row { margin-bottom: 8px; }
   .ir-search-row input[type="search"] {
@@ -987,6 +1011,36 @@
     padding: 6px 14px;
     font-size: 12px;
   }
+
+  /* Sort dropdown above the per-agent summary cards. Only shown
+     in peer-comparison mode (2+ agents); hidden for single-agent
+     reports where sort is meaningless. */
+  .ir-cards-toolbar {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 10px;
+  }
+  .ir-sort-control {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: #fff;
+    padding: 4px 10px;
+    border: 1px solid #d1d5db;
+    border-radius: 4px;
+    font-size: 12px;
+    color: #4b5563;
+  }
+  .ir-sort-label { font-weight: 600; }
+  .ir-sort-control select {
+    background: transparent;
+    border: 0;
+    padding: 2px 4px;
+    font-size: 12px;
+    color: #1f2937;
+    cursor: pointer;
+  }
+  .ir-sort-control select:focus { outline: none; }
 
   /* Per-agent summary card. Comp table inside lays out
      Metric | Agent | Team Avg | Diff. */
@@ -1277,10 +1331,51 @@
     font-style: italic;
     margin: -4px 2px 12px;
   }
-  .pr-compare-line {
-    font-size: 12px;
-    color: #6b7280;
+  /* Side-by-side current vs prior date display in the results
+     header. Replaces the inline "(date)" + a quiet "Comparing
+     against..." line with a single structured pair. */
+  .pr-date-pair {
+    display: flex;
+    align-items: stretch;
+    gap: 10px;
     margin-top: 4px;
+  }
+  .pr-date-block {
+    background: #f9fafb;
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    padding: 6px 10px;
+    line-height: 1.25;
+    min-width: 0;
+  }
+  .pr-date-current { border-left: 3px solid #1d4ed8; }
+  .pr-date-prior   { border-left: 3px solid #9CA3AF; }
+  .pr-date-label {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #6b7280;
+  }
+  .pr-date-value { font-size: 13px; color: #111827; font-weight: 500; }
+  .pr-date-divider {
+    align-self: center;
+    color: #9ca3af;
+    font-size: 16px;
+    font-weight: 700;
+  }
+
+  /* Subset hint banner: appears when the user picked fewer than
+     the full roster. Subtle blue bar to disambiguate "team totals
+     reflect selection". */
+  .pr-subset-hint {
+    background: #EFF6FF;
+    color: #1E40AF;
+    border-left: 3px solid #2563EB;
+    border-radius: 4px;
+    padding: 8px 12px;
+    font-size: 12px;
+    margin-bottom: 12px;
   }
 
   /* KPI tile row at the top of the report: 6 tiles, big number +
@@ -1303,6 +1398,15 @@
     font-variant-numeric: tabular-nums;
     min-width: 0;
   }
+  /* Label + inline sparkline on the top row. Mirrors the IR
+     summary-card tile layout for visual consistency. */
+  .pr-kpi-row-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+  }
+  .pr-kpi-spark { height: 22px; line-height: 0; }
   .pr-kpi-label {
     font-size: 10px;
     font-weight: 700;
@@ -1374,6 +1478,128 @@
   .pr-agent-table tbody tr:last-child td { border-bottom: 0; }
   .pr-agent-table tbody tr:hover { background: #f9fafb; }
 
+  /* Sortable headers: cursor + hover affordance + active-sort
+     highlight when this column is the current sort key. */
+  .pr-th-sortable {
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+  }
+  .pr-th-sortable:hover { background: #f3f4f6 !important; color: #1f2937 !important; }
+
+  /* Sub-tabs inside the 12-Month Trend chart panel: switches the
+     metric shown on the line chart (Answered / % Answered / ATT). */
+  .pr-trend-subtabs {
+    display: flex;
+    gap: 4px;
+    justify-content: center;
+    margin-bottom: 6px;
+  }
+  .pr-trend-subtab {
+    background: transparent;
+    border: 1px solid #e5e7eb;
+    color: #4b5563;
+    padding: 4px 12px;
+    font-size: 11px;
+    font-weight: 600;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .pr-trend-subtab:hover { background: #f3f4f6; }
+  .pr-trend-subtab.active {
+    background: #1d4ed8;
+    color: #fff;
+    border-color: #1d4ed8;
+  }
+
+  /* -------- Compare Ranges Report -------------------------------- */
+  /* Period blocks in the form: visually separate "Period 1
+     (Baseline)" and "Period 2 (Comparison)" so the user can't
+     mix up which set of dates belongs to which. */
+  .cr-period-block {
+    border: 1px solid #e5e7eb;
+    border-left-width: 3px;
+    border-radius: 6px;
+    padding: 10px 12px 4px;
+    margin-bottom: 12px;
+    background: #fafafa;
+  }
+  .cr-period-baseline { border-left-color: #9CA3AF; }
+  .cr-period-compare  { border-left-color: #1d4ed8; }
+  .cr-period-label {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #4b5563;
+    margin-bottom: 6px;
+  }
+  .cr-period-baseline .cr-period-label { color: #6b7280; }
+  .cr-period-compare  .cr-period-label { color: #1d4ed8; }
+
+  /* Comparison chart wrapper: matches the ir-chart-wrap shape but
+     fixed taller height for the bar chart. */
+  .cr-chart-wrap {
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    background: #fff;
+    padding: 12px;
+    height: 360px;
+    display: flex;
+    flex-direction: column;
+    margin-bottom: 16px;
+  }
+
+  /* Per-agent cards stack vertically; on wide screens flow into a
+     two-column grid for density. */
+  .cr-agent-cards {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+  @media (min-width: 1200px) {
+    .cr-agent-cards { grid-template-columns: 1fr 1fr; }
+  }
+  .cr-agent-card {
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 14px 16px;
+  }
+  .cr-agent-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #e5e7eb;
+    padding-bottom: 8px;
+    margin-bottom: 8px;
+  }
+  .cr-agent-name { font-size: 14px; font-weight: 700; color: #111827; }
+  .cr-agent-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+  }
+  .cr-agent-table th {
+    text-align: left;
+    padding: 6px 8px;
+    color: #6b7280;
+    border-bottom: 1px solid #e5e7eb;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+  }
+  .cr-agent-table td {
+    padding: 7px 8px;
+    border-bottom: 1px solid #f3f4f6;
+    color: #111827;
+  }
+  .cr-agent-table .num { text-align: right; }
+  .cr-agent-table tbody tr:last-child td { border-bottom: 0; }
+  .cr-metric { font-weight: 600; color: #4b5563; }
+
   /* -------- Print stylesheet ------------------------------------- */
   /* Only activates when the user clicks Print on the Individual
      Report; the body gets `.ir-printing` set just before
@@ -1400,6 +1626,7 @@
     body.ir-printing #ir-action-buttons,
     body.ir-printing #ir-datalabels-box,
     body.ir-printing #ir-chart-tabs,
+    body.ir-printing #ir-cards-toolbar,
     body.ir-printing #ir-edit-popover,
     body.ir-printing .ir-editing-edit,
     body.ir-printing .ir-copy-tsv,
@@ -1434,6 +1661,8 @@
     body.pr-printing #performance-modal .modal-close,
     body.pr-printing #performance-results .ir-action-buttons,
     body.pr-printing #pr-chart-tabs,
+    body.pr-printing #pr-trend-subtabs,
+    body.pr-printing #pr-datalabels-box,
     body.pr-printing #pr-results-status {
       display: none !important;
     }
@@ -1444,5 +1673,33 @@
     body.pr-printing .ir-chart-wrap,
     body.pr-printing .pr-kpi-tile,
     body.pr-printing .pr-agent-table { page-break-inside: avoid; }
+
+    body.cr-printing > .container { display: none !important; }
+    body.cr-printing .modal-backdrop { display: none !important; }
+    body.cr-printing #compare-modal {
+      position: static !important;
+      background: transparent !important;
+    }
+    body.cr-printing #compare-modal .modal-panel {
+      box-shadow: none !important;
+      border-radius: 0 !important;
+      max-width: 100% !important;
+      width: 100% !important;
+      max-height: none !important;
+      padding: 0 !important;
+      overflow: visible !important;
+    }
+    body.cr-printing #compare-form,
+    body.cr-printing #compare-modal .modal-close,
+    body.cr-printing #compare-results .ir-action-buttons,
+    body.cr-printing #cr-chart-tabs,
+    body.cr-printing #cr-datalabels-box,
+    body.cr-printing .ir-copy-tsv,
+    body.cr-printing #cr-results-status {
+      display: none !important;
+    }
+    body.cr-printing .cr-chart-wrap,
+    body.cr-printing .pr-kpi-tile,
+    body.cr-printing .cr-agent-card { page-break-inside: avoid; }
   }
 </style>

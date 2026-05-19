@@ -74,7 +74,7 @@ External CDR system (telephony provider)
 |---|---|---|---|
 | CSV ingest | CDR Import | `autoImport.js`, `importBulkCSVsFromDrive.js` (pending Drive auth), `AbandonedFilter.js`, `CDR Tools.js`, `DeleteOldSheets.js`, `neonWrite.js`, `appsscript.json` | `apps-script/cdr-import/` |
 | Per-agent aggregation + downstream tooling | CDR Report | `buildDQEHistoricalData.js`, `DQEdrilldown.js`, `DQEDrilldownSidebar.html`, `dashboardCDR.js`, `dataFilters.js` (extraction sidebar), `dbHistorical.js`, `dbReporting.js`, `emailDailyReport.js`, `neonWrite.js`, `neonbackfill.js`, `CDR Tools menu.js`, `appsscript.json` | `apps-script/cdr-report/` |
-| Manager dashboard | Department Dashboard (standalone) | `Code.gs`, `Auth.gs`, `Data.gs`, `Config.gs`, `Setup.gs`, `Diagnostics.gs`, `dashboard.html`, `styles.html`, `script.html`, `access_denied.html`, `appsscript.json` | `apps-script/department-dashboard/` |
+| Manager dashboard | Department Dashboard (standalone) | `Code.gs`, `Auth.gs`, `Data.gs`, `Config.gs`, `Setup.gs`, `Diagnostics.gs`, `MissedCallsReport.gs`, `IndividualReport.gs`, `PerformanceReport.gs`, `dashboard.html`, `styles.html`, `script.html`, `access_denied.html`, `appsscript.json` | `apps-script/department-dashboard/` |
 | Postgres mirror | shared lib used by both CDR Import and CDR Report | `neonWrite.js` (duplicated across both projects, currently identical) | see [known-issues.md](known-issues.md) |
 | Legacy reports (being migrated into the dashboard) | DQE Report (spreadsheet) | `DQEdashboard.js`, `syncHistoricalData.js`, 4 report pairs (`SingleRangeReport`, `IndividualReport`, `MissedCallsReport`, `MultiComparisonTool` + their `.html` modals), `sendManualAlert.js`, `checkLowAnswerRate.js`, `showFAQ.js` + `FAQGuide.html`, `setDateRange.js`, `autoDropdown.js`, `menu DQE Tools.js`, `appsscript.json` | `apps-script/dqe-report/` |
 
@@ -112,14 +112,54 @@ several of these — see [known-issues.md](known-issues.md)).
    parses this in `Data.gs` (`parseRosterCell_`). Whoever maintains the
    roster sheet must keep the format consistent or agents silently drop
    off the roster.
-5. **Agent-name matching is exact** between `DQE Historical Data`'s Agent
-   column and the names in `DO NOT EDIT!` cells (after stripping
-   extensions). No alias normalization. A typo on either side means the
-   agent disappears from their dept's view.
+5. **Agent-name matching at the dashboard layer is exact** between
+   `DQE Historical Data`'s Agent column and the names in `DO NOT EDIT!`
+   cells (after stripping extensions). The pipeline canonicalizes
+   paren-variant names against the roster before writing (see "Pipeline
+   reads roster" below), so the downstream exact-match remains reliable
+   even when the CDR feed varies. Genuinely-mismatched names (not just
+   paren differences) still disappear silently — diagnose via the
+   dashboard's Diagnostics panel.
 6. **Spreadsheet timezone** is currently set to Mexico City; script
    timezone (in `appsscript.json`) is `America/Chicago`. These don't match
    but the dashboard works around it. See `known-issues.md` if you ever
    touch this.
+
+## Pipeline reads the roster for name canonicalization
+
+`buildDQEHistoricalData` (CDR Report project) reads the dashboard's
+`DO NOT EDIT!` roster sheet at the start of every build. The roster is
+the source of truth for canonical agent names; any incoming CDR row
+whose `calleeName`, paren-stripped, matches exactly one roster entry
+is rewritten to that roster name before per-agent aggregation.
+
+This is the *only* cross-project read (the pipeline owns the write
+path to `DQE Historical Data`; everything else is read by the
+dashboard). It's documented in `loadRosterCanonicalNames_` and
+called out as INV-24 in `CLAUDE.md`. If the roster sheet's layout
+ever changes (column F start, name-comma-extensions cell format),
+update `loadRosterCanonicalNames_` in the pipeline at the same time
+as `Data.gs`'s `parseRosterCell_` in the dashboard.
+
+## Report server entry points (Department Dashboard)
+
+The dashboard now serves four distinct reports, each backed by its own
+`.gs` file with public entry points callable via `google.script.run`.
+All public functions follow the read-only safety rule (INV-01) — any
+function that touches spreadsheet state ends in `_`.
+
+| Report | File | Public entries | Cache prefix |
+|---|---|---|---|
+| Main per-agent table | `Data.gs` | `getDepartmentSummary` | `summary:v3:` |
+| Missed Calls Report | `MissedCallsReport.gs` | `getMissedCallsReport` | (no per-report cache; reuses main) |
+| Individual / Peer Comparison | `IndividualReport.gs` | `getIndividualReportInit`, `getIndividualReport`, `sendIndividualReportEmail` | `individual:v4:`, `individual_active:v1:` |
+| Performance Report (current vs prior) | `PerformanceReport.gs` | `getPerformanceReportInit` (delegates to Individual's init), `getPerformanceReport`, `sendPerformanceReportEmail` | `performance:v1:` |
+
+All reports use the same auth resolution (`resolveUser_(email)`), the
+same roster reader (`getRosterForDepartment_`), and — for the picker —
+the same active-in-range subset cache (`individual_active:v1:`). The
+Individual + Performance "Email image" exports both require the
+`script.send_mail` OAuth scope declared in `appsscript.json`.
 
 ## Where Neon fits in
 

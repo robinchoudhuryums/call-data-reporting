@@ -59,6 +59,7 @@
         <button class="btn btn-secondary" id="missed-report-btn" type="button">Missed Calls</button>
         <button class="btn btn-secondary" id="individual-report-btn" type="button">Individual Report</button>
         <button class="btn btn-secondary" id="performance-report-btn" type="button">Performance Report</button>
+        <button class="btn btn-secondary" id="compare-ranges-btn" type="button" style="display:none;" data-admin-only>Compare Ranges</button>
       </div>
     </div>
 
@@ -123,7 +124,6 @@
         <h3>Coming soon</h3>
         <p>Still migrating from the legacy DQE Report spreadsheet:</p>
         <ul>
-          <li><strong>Compare Ranges</strong> (admin-only) &mdash; side-by-side comparison of two arbitrary date ranges.</li>
           <li><strong>Low Answer Rate Alerts</strong> (admin-driven) &mdash; sends per-dept alert emails when a threshold is crossed.</li>
         </ul>
 
@@ -267,6 +267,19 @@
 
         <div id="ir-results-status" class="status" style="display:none;"></div>
 
+        <div class="ir-cards-toolbar" id="ir-cards-toolbar" style="display:none;">
+          <label class="ir-sort-control">
+            <span class="ir-sort-label">Sort agents:</span>
+            <select id="ir-card-sort">
+              <option value="selection">Selection order</option>
+              <option value="name">Name (A-Z)</option>
+              <option value="answered-desc">Answered (high to low)</option>
+              <option value="answered-asc">Answered (low to high)</option>
+              <option value="pct-desc">% Answered (high to low)</option>
+            </select>
+          </label>
+        </div>
+
         <div id="ir-summary-container"></div>
 
         <div class="ir-toggle-box" id="ir-datalabels-box">
@@ -331,6 +344,24 @@
             <input type="date" id="pr-to">
           </div>
         </div>
+
+        <div class="ir-row">
+          <div class="ir-col">
+            <label for="pr-compare-mode">Compare with</label>
+            <select id="pr-compare-mode">
+              <option value="auto">Immediately-preceding period</option>
+              <option value="custom">Custom prior range&hellip;</option>
+            </select>
+          </div>
+          <div class="ir-col" id="pr-prior-from-wrap" style="display:none;">
+            <label for="pr-prior-from">Prior start</label>
+            <input type="date" id="pr-prior-from">
+          </div>
+          <div class="ir-col" id="pr-prior-to-wrap" style="display:none;">
+            <label for="pr-prior-to">Prior end</label>
+            <input type="date" id="pr-prior-to">
+          </div>
+        </div>
         <div class="pr-prior-hint" id="pr-prior-hint"></div>
 
         <div class="ir-section-title">2. Agents</div>
@@ -363,9 +394,18 @@
           <div class="ir-results-header-left">
             <div class="ir-results-title-line">
               <span class="ir-results-title">Performance Report</span>
-              <span class="ir-results-date" id="pr-results-date"></span>
             </div>
-            <div class="pr-compare-line" id="pr-compare-line"></div>
+            <div class="pr-date-pair">
+              <div class="pr-date-block pr-date-current">
+                <div class="pr-date-label">Current</div>
+                <div class="pr-date-value" id="pr-current-date">&nbsp;</div>
+              </div>
+              <div class="pr-date-divider" aria-hidden="true">&rarr;</div>
+              <div class="pr-date-block pr-date-prior">
+                <div class="pr-date-label" id="pr-prior-label">vs Prior</div>
+                <div class="pr-date-value" id="pr-prior-date">&nbsp;</div>
+              </div>
+            </div>
           </div>
           <div class="ir-action-buttons">
             <button class="btn btn-secondary" id="pr-back-btn" type="button">&laquo; Back</button>
@@ -384,8 +424,17 @@
 
         <div id="pr-results-status" class="status" style="display:none;"></div>
 
+        <div id="pr-subset-hint" class="pr-subset-hint" style="display:none;"></div>
+        <div id="pr-team-insights"></div>
+
         <div id="pr-kpi-row" class="pr-kpi-row"></div>
         <div id="pr-agent-table-wrap" class="pr-agent-table-wrap"></div>
+
+        <div class="ir-toggle-box" id="pr-datalabels-box">
+          <label class="ir-toggle-label">
+            <input type="checkbox" id="pr-show-datalabels" checked> Show data labels
+          </label>
+        </div>
 
         <div class="ir-chart-tabs" id="pr-chart-tabs" role="tablist">
           <button type="button" class="ir-tab active" data-tab="share" role="tab" aria-selected="true">Share of Answered</button>
@@ -403,10 +452,150 @@
             <div class="ir-chart-canvas-wrap"><canvas id="pr-volume-chart"></canvas></div>
           </div>
           <div class="ir-chart-wrap" data-panel="trend" style="display:none;">
-            <div class="ir-chart-header">12-Month Team Trend (Answered)</div>
+            <div class="ir-chart-header">12-Month Team Trend</div>
+            <div class="pr-trend-subtabs" id="pr-trend-subtabs" role="tablist">
+              <button type="button" class="pr-trend-subtab active" data-metric="answered" role="tab" aria-selected="true">Answered</button>
+              <button type="button" class="pr-trend-subtab" data-metric="pct" role="tab" aria-selected="false">% Answered</button>
+              <button type="button" class="pr-trend-subtab" data-metric="att" role="tab" aria-selected="false">Avg Talk Time</button>
+            </div>
             <div class="ir-chart-canvas-wrap"><canvas id="pr-trend-chart"></canvas></div>
           </div>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="compare-modal" class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="compare-modal-title" style="display:none;">
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-panel modal-panel-wide" role="document">
+      <button class="modal-close" id="compare-close" type="button" aria-label="Close">&times;</button>
+      <h2 id="compare-modal-title">Compare Ranges</h2>
+
+      <div id="compare-form" class="ir-form">
+        <div class="ir-section-title">1. Date Ranges</div>
+        <div class="ir-row">
+          <div class="ir-col">
+            <label for="cr-preset">Quick select</label>
+            <select id="cr-preset">
+              <option value="custom">Custom ranges</option>
+              <option value="lastVsThisMonth">Last month vs This month</option>
+              <option value="yoyMonth">Same month last year vs This month</option>
+              <option value="last30VsPrev30">Last 30 days vs Previous 30 days</option>
+              <option value="last3MoVsPrev3Mo">Last 3 months vs Previous 3 months</option>
+              <option value="lastYearVsThisYear">Last year vs This year-to-date</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="cr-period-block cr-period-baseline">
+          <div class="cr-period-label">Period 1 (Baseline)</div>
+          <div class="ir-row">
+            <div class="ir-col">
+              <label for="cr-p1-from">Start date</label>
+              <input type="date" id="cr-p1-from">
+            </div>
+            <div class="ir-col">
+              <label for="cr-p1-to">End date</label>
+              <input type="date" id="cr-p1-to">
+            </div>
+          </div>
+        </div>
+
+        <div class="cr-period-block cr-period-compare">
+          <div class="cr-period-label">Period 2 (Comparison)</div>
+          <div class="ir-row">
+            <div class="ir-col">
+              <label for="cr-p2-from">Start date</label>
+              <input type="date" id="cr-p2-from">
+            </div>
+            <div class="ir-col">
+              <label for="cr-p2-to">End date</label>
+              <input type="date" id="cr-p2-to">
+            </div>
+          </div>
+        </div>
+
+        <div class="ir-section-title">2. Agents</div>
+        <div class="ir-hint">Compare each agent's performance across both periods. Active/inactive grouping reflects the union of both ranges.</div>
+        <div class="ir-search-row">
+          <input type="search" id="cr-agent-search" placeholder="Search agents by name..." autocomplete="off">
+        </div>
+        <div id="cr-agent-loader" class="ir-loader">
+          <div class="ir-skeleton-grid" aria-hidden="true">
+            <div class="ir-skeleton-row"></div><div class="ir-skeleton-row"></div>
+            <div class="ir-skeleton-row"></div><div class="ir-skeleton-row"></div>
+            <div class="ir-skeleton-row"></div><div class="ir-skeleton-row"></div>
+            <div class="ir-skeleton-row"></div><div class="ir-skeleton-row"></div>
+          </div>
+          <div class="ir-skeleton-label">Loading agent roster&hellip;</div>
+        </div>
+        <div id="cr-agent-list" class="ir-agent-list" style="display:none;"></div>
+        <div class="ir-agent-actions">
+          <a href="#" id="cr-select-all">Select all</a>
+          <span class="sep">|</span>
+          <a href="#" id="cr-select-none">Select none</a>
+        </div>
+
+        <div id="cr-form-error" class="status status-error" style="display:none;"></div>
+        <button class="btn" id="cr-generate-btn" type="button" disabled>Generate report</button>
+      </div>
+
+      <div id="compare-results" class="ir-results" style="display:none;">
+        <div class="ir-results-header">
+          <div class="ir-results-header-left">
+            <div class="ir-results-title-line">
+              <span class="ir-results-title">Compare Ranges Report</span>
+            </div>
+            <div class="pr-date-pair">
+              <div class="pr-date-block pr-date-prior">
+                <div class="pr-date-label">Period 1 (Baseline)</div>
+                <div class="pr-date-value" id="cr-p1-label">&nbsp;</div>
+              </div>
+              <div class="pr-date-divider" aria-hidden="true">&rarr;</div>
+              <div class="pr-date-block pr-date-current">
+                <div class="pr-date-label">Period 2 (Comparison)</div>
+                <div class="pr-date-value" id="cr-p2-label">&nbsp;</div>
+              </div>
+            </div>
+          </div>
+          <div class="ir-action-buttons">
+            <button class="btn btn-secondary" id="cr-back-btn" type="button">&laquo; Back</button>
+            <div class="ir-export-wrap">
+              <button class="btn btn-secondary" id="cr-export-btn" type="button" aria-haspopup="menu" aria-expanded="false">
+                Export <span class="ir-export-caret">&#9662;</span>
+              </button>
+              <div class="ir-export-menu" id="cr-export-menu" role="menu" style="display:none;">
+                <button type="button" role="menuitem" data-action="copy">Copy image</button>
+                <button type="button" role="menuitem" data-action="email">Email image</button>
+                <button type="button" role="menuitem" data-action="print">Print</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div id="cr-results-status" class="status" style="display:none;"></div>
+
+        <div id="cr-team-insights"></div>
+        <div id="cr-team-tiles" class="pr-kpi-row"></div>
+
+        <div class="ir-toggle-box" id="cr-datalabels-box">
+          <label class="ir-toggle-label">
+            <input type="checkbox" id="cr-show-datalabels" checked> Show data labels
+          </label>
+        </div>
+
+        <div class="ir-chart-tabs" id="cr-chart-tabs" role="tablist">
+          <button type="button" class="ir-tab active" data-metric="answered" role="tab" aria-selected="true">Answered</button>
+          <button type="button" class="ir-tab" data-metric="rung" role="tab" aria-selected="false">Rung</button>
+          <button type="button" class="ir-tab" data-metric="pct" role="tab" aria-selected="false">% Answered</button>
+        </div>
+
+        <div class="cr-chart-wrap" id="cr-chart-wrap">
+          <div class="ir-chart-header" id="cr-chart-header">Answered Calls: Period 1 vs Period 2</div>
+          <div class="ir-chart-canvas-wrap"><canvas id="cr-chart"></canvas></div>
+        </div>
+
+        <div id="cr-agent-cards" class="cr-agent-cards"></div>
       </div>
     </div>
   </div>

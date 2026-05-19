@@ -55,7 +55,10 @@
  * `performance:v1:` prefix.
  */
 
-const PERFORMANCE_CACHE_KEY_PREFIX = 'performance:v1';
+// Bump when aggregation rules / response shape change so stale
+// entries don't bleed in. v2 = adds team insights, rosterSize,
+// volumeBar.pct, trend.ttt, and optional custom prior range.
+const PERFORMANCE_CACHE_KEY_PREFIX = 'performance:v2';
 
 function getPerformanceReportInit(req) {
   // Same init shape as Individual Report -- roster + default
@@ -86,6 +89,21 @@ function getPerformanceReport(req) {
   }
   if (from > to) throw new Error('from must be on or before to.');
 
+  // Optional custom prior range. When both provided, overrides the
+  // auto-computed immediately-preceding window. Used by the
+  // "Compare with..." picker so managers can hand-pick a baseline
+  // (e.g., same month last year for seasonality checks).
+  const customPriorFrom = String((req && req.priorFrom) || '').trim();
+  const customPriorTo   = String((req && req.priorTo)   || '').trim();
+  if (customPriorFrom || customPriorTo) {
+    if (!isIsoDate_(customPriorFrom) || !isIsoDate_(customPriorTo)) {
+      throw new Error('priorFrom/priorTo must be YYYY-MM-DD.');
+    }
+    if (customPriorFrom > customPriorTo) {
+      throw new Error('priorFrom must be on or before priorTo.');
+    }
+  }
+
   const rawAgents = (req && req.agents) || [];
   if (!Array.isArray(rawAgents) || rawAgents.length === 0) {
     throw new Error('Select at least one agent.');
@@ -105,10 +123,13 @@ function getPerformanceReport(req) {
     throw new Error('No selected agent is on this department\'s roster.');
   }
   const agentsKey = selectedAgents.slice().sort().join('|');
+  const priorKey = (customPriorFrom && customPriorTo)
+    ? customPriorFrom + '..' + customPriorTo
+    : 'auto';
 
   const cache = CacheService.getScriptCache();
   const cacheKey = PERFORMANCE_CACHE_KEY_PREFIX + ':'
-                 + dept + ':' + from + ':' + to + ':' + agentsKey;
+                 + dept + ':' + from + ':' + to + ':' + agentsKey + ':' + priorKey;
   const cached = cache.get(cacheKey);
   if (cached) {
     try {
@@ -119,7 +140,8 @@ function getPerformanceReport(req) {
   }
 
   const t0 = Date.now();
-  const data = computePerformanceReport_(dept, from, to, selectedAgents, roster);
+  const data = computePerformanceReport_(dept, from, to, selectedAgents, roster,
+                                         customPriorFrom, customPriorTo);
   data.meta.computeMs = Date.now() - t0;
   data.meta.cacheHit = false;
 
@@ -129,7 +151,8 @@ function getPerformanceReport(req) {
   return data;
 }
 
-function computePerformanceReport_(dept, from, to, selectedAgents, roster) {
+function computePerformanceReport_(dept, from, to, selectedAgents, roster,
+                                   customPriorFrom, customPriorTo) {
   const selectedSet = {};
   for (let i = 0; i < selectedAgents.length; i++) selectedSet[selectedAgents[i]] = true;
   const rosterSet = {};
@@ -143,16 +166,27 @@ function computePerformanceReport_(dept, from, to, selectedAgents, roster) {
   const startDate = parseIso_(from);
   const endDate   = parseIso_(to);
 
-  // Prior period: same duration ending one day before the current
-  // start. Match legacy semantics: 30-day current -> previous 30
-  // days, NOT same-calendar-month-prior.
+  // Prior period. Default = same duration ending one day before
+  // the current start (legacy semantics). When the request supplies
+  // a custom prior range, use it instead -- lets managers compare
+  // against same-month-last-year or any other arbitrary baseline.
   const msPerDay = 86400000;
-  const durationDays = Math.floor((endDate - startDate) / msPerDay);
-  const priorEndDate   = new Date(startDate.getTime() - msPerDay);
-  const priorStartDate = new Date(priorEndDate.getTime() - durationDays * msPerDay);
   const isoOf = function (d) { return Utilities.formatDate(d, TZ, 'yyyy-MM-dd'); };
-  const priorFrom = isoOf(priorStartDate);
-  const priorTo   = isoOf(priorEndDate);
+  let priorStartDate, priorEndDate, priorFrom, priorTo, priorIsCustom;
+  if (customPriorFrom && customPriorTo) {
+    priorStartDate = parseIso_(customPriorFrom);
+    priorEndDate   = parseIso_(customPriorTo);
+    priorFrom      = customPriorFrom;
+    priorTo        = customPriorTo;
+    priorIsCustom  = true;
+  } else {
+    const durationDays = Math.floor((endDate - startDate) / msPerDay);
+    priorEndDate   = new Date(startDate.getTime() - msPerDay);
+    priorStartDate = new Date(priorEndDate.getTime() - durationDays * msPerDay);
+    priorFrom      = isoOf(priorStartDate);
+    priorTo        = isoOf(priorEndDate);
+    priorIsCustom  = false;
+  }
 
   // Trend window resolution -- mirror Individual Report's logic.
   const diffDays = Math.ceil(Math.abs(endDate - startDate) / msPerDay) + 1;
@@ -304,17 +338,27 @@ function computePerformanceReport_(dept, from, to, selectedAgents, roster) {
   }).sort(function (a, b) { return b.raw.answered - a.raw.answered; });
 
   // ── Chart-data helpers (just the pre-shaped series the client
-  //    needs; the client renders Chart.js bar + pie). ────────────
+  //    needs; the client renders Chart.js bar + pie). volumeBar
+  //    carries per-agent pct so the bar chart can overlay a
+  //    % Answered line on its second y-axis. ──────────────────────
   const chartData = {
     sharePie: agentData.map(function (a) {
       return { label: a.name, value: a.raw.answered };
     }),
     volumeBar: agentData.map(function (a) {
-      return { label: a.name, answered: a.raw.answered, missed: a.raw.missed };
+      return {
+        label: a.name,
+        answered: a.raw.answered,
+        missed:   a.raw.missed,
+        pct:      a.raw.pct,
+      };
     }),
   };
 
-  // ── Monthly trend rolled up to selected-agent dept totals ─────
+  // ── Monthly trend rolled up to selected-agent dept totals.
+  //    Includes ttt + att so the client can render multi-metric
+  //    trend sub-tabs (Answered / % Answered / ATT) and sparklines
+  //    on every KPI tile. ──────────────────────────────────────────
   const trendLabels = monthKeys.map(function (m) {
     const parts = m.split('-');
     const d = new Date(Number(parts[0]), Number(parts[1]) - 1, 1);
@@ -329,9 +373,27 @@ function computePerformanceReport_(dept, from, to, selectedAgents, roster) {
       missed:   b.missed,
       answered: b.answered,
       pct:      pct,
+      ttt:      b.ttt,
       att:      att,
     };
   });
+
+  // ── Team-level insights vs prior period ──────────────────────────
+  const currForInsights = {
+    rung:     teamCurr.rung,
+    missed:   teamCurr.missed,
+    answered: teamCurr.answered,
+    pct:      currPct,
+    att:      currAtt,
+  };
+  const prevForInsights = {
+    rung:     teamPrev.rung,
+    missed:   teamPrev.missed,
+    answered: teamPrev.answered,
+    pct:      prevPct,
+    att:      prevAtt,
+  };
+  const teamInsights = buildTeamInsights_(currForInsights, prevForInsights);
 
   // Human-readable labels.
   const fmt = function (d) { return Utilities.formatDate(d, TZ, 'MMM d, yyyy'); };
@@ -343,8 +405,10 @@ function computePerformanceReport_(dept, from, to, selectedAgents, roster) {
       department: dept,
       from: from, to: to,
       priorFrom: priorFrom, priorTo: priorTo,
+      priorIsCustom: priorIsCustom,
       trendStart: trendFrom, trendEnd: trendTo,
       agents: selectedAgents,
+      rosterSize: roster.names.length,
       generatedAt: new Date().toISOString(),
     },
     dateLabel: dateLabel,
@@ -353,6 +417,7 @@ function computePerformanceReport_(dept, from, to, selectedAgents, roster) {
     agentData: agentData,
     chartData: chartData,
     trendData: { labels: trendLabels, series: trendSeries },
+    teamInsights: teamInsights,
   };
 }
 
@@ -396,14 +461,16 @@ function emptyPerformanceReport_(dept, from, to, priorFrom, priorTo,
     return Utilities.formatDate(d, TZ, 'MMM, yy');
   });
   const series = labels.map(function () {
-    return { rung: 0, missed: 0, answered: 0, pct: 0, att: 0 };
+    return { rung: 0, missed: 0, answered: 0, pct: 0, ttt: 0, att: 0 };
   });
   return {
     meta: {
       department: dept, from: from, to: to,
       priorFrom: priorFrom, priorTo: priorTo,
+      priorIsCustom: false,
       trendStart: from, trendEnd: to,
       agents: selectedAgents,
+      rosterSize: 0,
       generatedAt: new Date().toISOString(),
     },
     dateLabel: from + ' - ' + to,
@@ -425,10 +492,95 @@ function emptyPerformanceReport_(dept, from, to, priorFrom, priorTo,
     }),
     chartData: {
       sharePie:  selectedAgents.map(function (a) { return { label: a, value: 0 }; }),
-      volumeBar: selectedAgents.map(function (a) { return { label: a, answered: 0, missed: 0 }; }),
+      volumeBar: selectedAgents.map(function (a) { return { label: a, answered: 0, missed: 0, pct: 0 }; }),
     },
     trendData: { labels: labels, series: series },
+    teamInsights: [],
   };
+}
+
+/**
+ * Team-level rules-based observations comparing current to prior
+ * period. Returns up to 3 objects { type, text } where type is
+ * 'positive' | 'negative' | 'neutral'. Same shape as the per-agent
+ * insights in IndividualReport.gs so the client's renderer can
+ * be reused.
+ *
+ * Rules:
+ *   1. % Answered     -- absolute pt change >= 5 pts
+ *   2. Answered count -- relative change >= 15%
+ *   3. Missed count   -- relative change >= 20%
+ *   4. Avg talk time  -- relative change >= 20% (neutral; direction
+ *                        is ambiguous: longer can be thorough or
+ *                        slow)
+ *
+ * Activity gates (curr or prev rung >= 10, answered >= 10 for ATT
+ * rule, missed >= 5 for missed rule) suppress noise on tiny teams.
+ */
+function buildTeamInsights_(curr, prev) {
+  const out = [];
+  const nonTrivial = (curr.rung || 0) >= 10 || (prev.rung || 0) >= 10;
+  if (!nonTrivial) return out;
+
+  const pctDelta = (curr.pct || 0) - (prev.pct || 0);
+  if (Math.abs(pctDelta) >= 5) {
+    const up = pctDelta > 0;
+    out.push({
+      type: up ? 'positive' : 'negative',
+      text: 'Answer rate ' + (up ? 'rose' : 'fell') + ' '
+          + Math.abs(pctDelta).toFixed(1) + ' pts vs prior period ('
+          + (curr.pct || 0).toFixed(1) + '% vs '
+          + (prev.pct || 0).toFixed(1) + '%).',
+    });
+  }
+
+  if ((prev.answered || 0) > 0) {
+    const change = ((curr.answered - prev.answered) / prev.answered) * 100;
+    if (Math.abs(change) >= 15) {
+      const up = change > 0;
+      out.push({
+        type: up ? 'positive' : 'negative',
+        text: 'Answered call volume ' + (up ? 'rose' : 'fell') + ' '
+            + Math.abs(change).toFixed(0) + '% vs prior ('
+            + curr.answered + ' vs ' + prev.answered + ').',
+      });
+    }
+  } else if (curr.answered >= 10) {
+    out.push({
+      type: 'positive',
+      text: 'Team answered ' + curr.answered + ' calls this period (no comparable prior data).',
+    });
+  }
+
+  if ((prev.missed || 0) >= 5 || (curr.missed || 0) >= 5) {
+    if ((prev.missed || 0) > 0) {
+      const change = ((curr.missed - prev.missed) / prev.missed) * 100;
+      if (Math.abs(change) >= 20) {
+        const up = change > 0;
+        out.push({
+          type: up ? 'negative' : 'positive',
+          text: 'Missed-call count ' + (up ? 'rose' : 'fell') + ' '
+              + Math.abs(change).toFixed(0) + '% vs prior ('
+              + curr.missed + ' vs ' + prev.missed + ' missed).',
+        });
+      }
+    }
+  }
+
+  if ((prev.att || 0) > 0 && (curr.answered || 0) >= 10) {
+    const change = ((curr.att - prev.att) / prev.att) * 100;
+    if (Math.abs(change) >= 20) {
+      out.push({
+        type: 'neutral',
+        text: 'Avg talk time ' + (change > 0 ? 'lengthened' : 'shortened') + ' '
+            + Math.abs(change).toFixed(0) + '% vs prior ('
+            + formatSecondsHms_(curr.att) + ' vs '
+            + formatSecondsHms_(prev.att) + ').',
+      });
+    }
+  }
+
+  return out.slice(0, 3);
 }
 
 /**

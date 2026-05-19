@@ -73,6 +73,14 @@
     tag.textContent = USER.role;
     tag.classList.add('tag-' + USER.role);
 
+    // Compare Ranges is admin-only -- reveal the launcher button
+    // only for users whose role resolved to admin. The server
+    // enforces the same check independently.
+    if (USER.role === 'admin') {
+      const crBtn = $('compare-ranges-btn');
+      if (crBtn) crBtn.style.display = '';
+    }
+
     // Department selector vs static label
     if (USER.role === 'admin' && USER.departments && USER.departments.length) {
       const sel = $('dept-selector');
@@ -83,10 +91,12 @@
       });
       $('dept-selector-wrap').style.display = '';
       sel.addEventListener('change', function () {
-        // Admin switched depts; the Individual Report's cached agent
-        // roster is now stale, so wipe it so the next modal open
-        // refetches.
-        irLastRoster = { dept: null, agents: [] };
+        // Admin switched depts; all per-report cached agent
+        // rosters are now stale -- wipe so the next modal open
+        // refetches against the new dept.
+        irLastRoster = { dept: null, agents: [], activeAgents: null, rangeKey: '' };
+        prLastRoster = { dept: null, agents: [], activeAgents: null, rangeKey: '' };
+        crLastRoster = { dept: null, agents: [], activeAgents: null, rangeKey: '' };
         refresh();
       });
       $('dept-name').textContent = sel.value;
@@ -127,6 +137,7 @@
     initMissedReport();
     initIndividualReport();
     initPerformanceReport();
+    initCompareRanges();
 
     refresh();
   }
@@ -933,6 +944,13 @@
   // has changed.
   let irLastRoster = { dept: null, agents: [], activeAgents: null, rangeKey: '' };
   let irActiveFetchTimer = null;
+  // Persisted user preferences (mirrors the Performance Report's
+  // prefs model). Restored on modal init, saved on every state
+  // change so the next visit picks up where the user left off.
+  let irSortOrder = 'selection';   // selection | name | answered-desc | answered-asc | pct-desc
+  let irActiveChartTab = 'vol';    // vol | eff | dur
+  let irPendingAgentSelection_ = null;
+  const IR_PREFS_KEY = 'cdr.ir.prefs.v1';
 
   function initIndividualReport() {
     const btn = $('individual-report-btn');
@@ -969,8 +987,12 @@
 
     const fromEl = $('ir-from');
     const toEl   = $('ir-to');
-    if (fromEl) fromEl.addEventListener('change', function () { resetIrPreset(); scheduleActiveAgentRefetch_(); });
-    if (toEl)   toEl.addEventListener('change',   function () { resetIrPreset(); scheduleActiveAgentRefetch_(); });
+    if (fromEl) fromEl.addEventListener('change', function () {
+      resetIrPreset(); scheduleActiveAgentRefetch_(); irSavePrefs_();
+    });
+    if (toEl) toEl.addEventListener('change', function () {
+      resetIrPreset(); scheduleActiveAgentRefetch_(); irSavePrefs_();
+    });
 
     const selAll  = $('ir-select-all');
     const selNone = $('ir-select-none');
@@ -1014,6 +1036,7 @@
 
     const labelToggle = $('ir-show-datalabels');
     if (labelToggle) labelToggle.addEventListener('change', function () {
+      irSavePrefs_();
       if (irLastData) irRenderCharts(irLastData);
     });
 
@@ -1068,10 +1091,68 @@
       // measurable container -- Chart.js can't compute layout while
       // a panel is display:none, so we ask it explicitly.
       irChartInstances.forEach(function (c) { c.resize(); });
+      irActiveChartTab = which;
+      irSavePrefs_();
+    });
+
+    // Card-sort dropdown: re-renders the summary cards in place.
+    const sortSel = $('ir-card-sort');
+    if (sortSel) sortSel.addEventListener('change', function () {
+      irSortOrder = sortSel.value;
+      irSavePrefs_();
+      if (irLastData) irRenderSummary(irLastData.summaryData, irLastData.teamAvg);
     });
 
     // Defaults: this-month-to-date.
     setIrDefaultDates();
+    // Restore last-used form state if any. Runs after default
+    // dates so a saved preset/dates pair overrides the defaults.
+    irRestorePrefs_();
+  }
+
+  /**
+   * Persists the user's Individual Report state to localStorage so
+   * the next modal open picks up where they left off. Best-effort.
+   */
+  function irSavePrefs_() {
+    try {
+      const prefs = {
+        preset:     $('ir-preset') ? $('ir-preset').value : 'custom',
+        from:       $('ir-from')   ? $('ir-from').value   : '',
+        to:         $('ir-to')     ? $('ir-to').value     : '',
+        agents:     irGetCheckedAgents_($('ir-agent-list')),
+        showLabels: $('ir-show-datalabels') ? $('ir-show-datalabels').checked : false,
+        sortOrder:  irSortOrder,
+        chartTab:   irActiveChartTab,
+      };
+      localStorage.setItem(IR_PREFS_KEY, JSON.stringify(prefs));
+    } catch (e) { /* ignore */ }
+  }
+
+  function irRestorePrefs_() {
+    let prefs;
+    try {
+      const raw = localStorage.getItem(IR_PREFS_KEY);
+      if (!raw) return;
+      prefs = JSON.parse(raw);
+    } catch (e) { return; }
+    if (!prefs || typeof prefs !== 'object') return;
+
+    if (prefs.preset && $('ir-preset')) $('ir-preset').value = prefs.preset;
+    if (prefs.from   && $('ir-from'))   $('ir-from').value   = prefs.from;
+    if (prefs.to     && $('ir-to'))     $('ir-to').value     = prefs.to;
+    if (typeof prefs.showLabels === 'boolean' && $('ir-show-datalabels')) {
+      $('ir-show-datalabels').checked = prefs.showLabels;
+    }
+    if (prefs.sortOrder) irSortOrder = prefs.sortOrder;
+    if (prefs.chartTab)  irActiveChartTab = prefs.chartTab;
+    if ($('ir-card-sort')) $('ir-card-sort').value = irSortOrder;
+
+    // Stash agents so we can pre-check the boxes once the roster
+    // list finishes rendering.
+    if (Array.isArray(prefs.agents) && prefs.agents.length) {
+      irPendingAgentSelection_ = prefs.agents;
+    }
   }
 
   function irSetExportMenuOpen_(open) {
@@ -1229,7 +1310,15 @@
 
     // Listen once per render; container.innerHTML wipes previous
     // listeners so no accumulation.
-    list.addEventListener('change', updateIrGenerateEnabled);
+    list.addEventListener('change', function () {
+      updateIrGenerateEnabled();
+      irSavePrefs_();
+    });
+    // Apply any pending selection from restored prefs once.
+    if (irPendingAgentSelection_) {
+      irApplyCheckedAgents_(list, irPendingAgentSelection_);
+      irPendingAgentSelection_ = null;
+    }
     updateIrGenerateEnabled();
   }
 
@@ -1252,10 +1341,17 @@
             + '</div>'
             + '<div class="ir-agent-group">' + irAgentItemsHtml_(active) + '</div>';
     }
-    html += '<div class="ir-agent-group-label ir-agent-group-label-muted">'
-          + 'No activity in range <span class="ir-agent-group-count">(' + inactive.length + ')</span>'
-          + '</div>'
-          + '<div class="ir-agent-group ir-agent-group-muted">' + irAgentItemsHtml_(inactive) + '</div>';
+    // Inactive group wrapped in <details>, collapsed by default --
+    // managers rarely need to pick zero-activity agents and the
+    // collapsed state cleans up the picker. Search auto-expands it
+    // (see irFilterAgentList_) when a query matches an inactive
+    // name.
+    html += '<details class="ir-agent-details">'
+          +   '<summary class="ir-agent-group-label ir-agent-group-label-muted">'
+          +     'No activity in range <span class="ir-agent-group-count">(' + inactive.length + ')</span>'
+          +   '</summary>'
+          +   '<div class="ir-agent-group ir-agent-group-muted">' + irAgentItemsHtml_(inactive) + '</div>'
+          + '</details>';
     return html;
   }
 
@@ -1272,7 +1368,10 @@
   /**
    * Client-side substring filter across whatever list element is
    * passed (main form picker or edit-popover list). Hides items +
-   * group-labels whose visible text doesn't match the query.
+   * group-labels whose visible text doesn't match the query. The
+   * collapsed "No activity in range" <details> auto-expands while
+   * the query is non-empty so users can see matches inside it
+   * without manually clicking the disclosure.
    */
   function irFilterAgentList_(listEl, query) {
     if (!listEl) return;
@@ -1282,12 +1381,23 @@
       const name = (it.textContent || '').trim().toLowerCase();
       it.style.display = (!q || name.indexOf(q) !== -1) ? '' : 'none';
     });
-    // Hide a group label if no items in its group are visible.
+    // For each agent-group container: hide if no children are
+    // visible. Two structural shapes:
+    //   1. Group is inside a <details> (the "No activity" wrapper)
+    //      -- toggle the details visibility + auto-open on search.
+    //   2. Standalone group (the "Active" block) -- also hide its
+    //      previous-sibling label.
     listEl.querySelectorAll('.ir-agent-group').forEach(function (g) {
       const anyVisible = Array.prototype.some.call(
         g.querySelectorAll('.ir-agent-item'),
         function (it) { return it.style.display !== 'none'; }
       );
+      const det = g.closest('details');
+      if (det) {
+        det.style.display = anyVisible ? '' : 'none';
+        if (q && anyVisible) det.open = true;
+        return;
+      }
       g.style.display = anyVisible ? '' : 'none';
       const prevLabel = g.previousElementSibling;
       if (prevLabel && prevLabel.classList.contains('ir-agent-group-label')) {
@@ -1323,6 +1433,7 @@
 
   function applyIrPreset() {
     const v = $('ir-preset').value;
+    irSavePrefs_();
     if (v === 'custom') return;
     const today = new Date();
     let s, e;
@@ -1343,6 +1454,7 @@
     };
     $('ir-from').value = isoOf(s);
     $('ir-to').value   = isoOf(e);
+    irSavePrefs_();
   }
   function resetIrPreset() {
     const p = $('ir-preset');
@@ -1387,10 +1499,9 @@
     showIrResults();
     irSetResultsStatus('');
     irCloseEditPopover_();
-    // Reset to the Volume tab on each render so the user lands on
-    // the default view rather than wherever they happened to leave
-    // the previous report.
-    irResetTabsToVolume_();
+    // Restore the user's last-viewed chart tab (defaults to
+    // Volume on first visit). Persisted in prefs.
+    irActivateChartTab_();
     irRenderSummary(data.summaryData, data.teamAvg);
     irRenderCharts(data);
   }
@@ -1489,22 +1600,25 @@
       .getIndividualReport({ department: dept, from: from, to: to, agents: newAgents });
   }
 
-  function irResetTabsToVolume_() {
+  function irActivateChartTab_() {
     const container = $('ir-chart-tabs');
     if (!container) return;
     container.querySelectorAll('.ir-tab').forEach(function (b) {
-      const active = b.getAttribute('data-tab') === 'vol';
+      const active = b.getAttribute('data-tab') === irActiveChartTab;
       b.classList.toggle('active', active);
       b.setAttribute('aria-selected', active ? 'true' : 'false');
     });
     document.querySelectorAll('#ir-charts-container [data-panel]').forEach(function (p) {
-      p.style.display = p.getAttribute('data-panel') === 'vol' ? '' : 'none';
+      p.style.display = p.getAttribute('data-panel') === irActiveChartTab ? '' : 'none';
     });
   }
 
   function irRenderSummary(summaryData, teamAvg) {
     const container = $('ir-summary-container');
     if (!container) return;
+    const toolbar = $('ir-cards-toolbar');
+    // Sort toolbar only makes sense with 2+ cards.
+    if (toolbar) toolbar.style.display = (summaryData && summaryData.length > 1) ? '' : 'none';
 
     // Friendly empty state when no selected agent had any call
     // activity in range. Hides the trend chart trio too since it
@@ -1544,7 +1658,7 @@
     // is drawn inline from irLastData.trendData -- no extra Chart
     // instances created. Tiles per agent:
     //   Total Rung | Answered | Missed | % Answered | Avg Talk Time
-    container.innerHTML = (summaryData || []).map(function (agent) {
+    container.innerHTML = irSortSummaryData_(summaryData || []).map(function (agent) {
       const trendForAgent = (irLastData && irLastData.trendData && irLastData.trendData.datasets)
                           ? (irLastData.trendData.datasets[agent.name] || [])
                           : [];
@@ -1612,6 +1726,32 @@
         }
       });
     });
+  }
+
+  /**
+   * Returns summaryData reordered per irSortOrder. "selection"
+   * preserves the order the server sent (which mirrors the order
+   * the user checked agents in the picker). Other keys sort by
+   * the corresponding numeric field on each agent's raw stats.
+   */
+  function irSortSummaryData_(summaryData) {
+    if (!Array.isArray(summaryData) || summaryData.length < 2) return summaryData;
+    if (irSortOrder === 'selection') return summaryData;
+    const out = summaryData.slice();
+    if (irSortOrder === 'name') {
+      out.sort(function (a, b) {
+        const an = (a.name || '').toLowerCase();
+        const bn = (b.name || '').toLowerCase();
+        return an < bn ? -1 : an > bn ? 1 : 0;
+      });
+    } else if (irSortOrder === 'answered-desc') {
+      out.sort(function (a, b) { return (b.raw.answered || 0) - (a.raw.answered || 0); });
+    } else if (irSortOrder === 'answered-asc') {
+      out.sort(function (a, b) { return (a.raw.answered || 0) - (b.raw.answered || 0); });
+    } else if (irSortOrder === 'pct-desc') {
+      out.sort(function (a, b) { return (b.raw.pct || 0) - (a.raw.pct || 0); });
+    }
+    return out;
   }
 
   /**
@@ -2053,6 +2193,8 @@
           if (toggle) toggle.style.display = 'none';
           const tabs = clonedDoc.getElementById('ir-chart-tabs');
           if (tabs) tabs.style.display = 'none';
+          const cardsToolbar = clonedDoc.getElementById('ir-cards-toolbar');
+          if (cardsToolbar) cardsToolbar.style.display = 'none';
           const editPop = clonedDoc.getElementById('ir-edit-popover');
           if (editPop) editPop.style.display = 'none';
           const editLine = clonedDoc.querySelector('.ir-editing-edit');
@@ -2165,6 +2307,14 @@
   let prLastData = null;
   let prActiveFetchTimer = null;
   let prChartInstances = [];
+  // Sort + sub-tab state, persisted via localStorage so opening
+  // the modal a second time picks up where the user left off.
+  let prSortKey = 'answered';
+  let prSortDir = 'desc';
+  let prActiveTrendMetric = 'answered';
+  // localStorage keys collected so the prefs helpers stay close to
+  // their consumers.
+  const PR_PREFS_KEY = 'cdr.pr.prefs.v1';
 
   function initPerformanceReport() {
     const btn = $('performance-report-btn');
@@ -2210,6 +2360,17 @@
       resetPrPreset(); prUpdatePriorHint_(); schedulePrActiveAgentRefetch_();
     });
 
+    // Compare-with dropdown: toggles the custom prior date inputs.
+    const compareMode = $('pr-compare-mode');
+    if (compareMode) compareMode.addEventListener('change', function () {
+      prApplyCompareMode_();
+      prUpdatePriorHint_();
+    });
+    const priorFromEl = $('pr-prior-from');
+    const priorToEl   = $('pr-prior-to');
+    if (priorFromEl) priorFromEl.addEventListener('change', prUpdatePriorHint_);
+    if (priorToEl)   priorToEl.addEventListener('change',   prUpdatePriorHint_);
+
     const selAll  = $('pr-select-all');
     const selNone = $('pr-select-none');
     if (selAll)  selAll.addEventListener('click',  function (e) { e.preventDefault(); prToggleAgents_(true);  });
@@ -2225,6 +2386,29 @@
 
     const backBtn = $('pr-back-btn');
     if (backBtn) backBtn.addEventListener('click', showPrForm);
+
+    // Data-labels toggle: re-renders all three charts in place.
+    const labelToggle = $('pr-show-datalabels');
+    if (labelToggle) labelToggle.addEventListener('change', function () {
+      prSavePrefs_();
+      if (prLastData) prRenderCharts_(prLastData);
+    });
+
+    // Trend sub-tabs: switch the metric shown on the 12-month
+    // trend line chart (Answered / % Answered / Avg Talk Time).
+    const trendTabs = $('pr-trend-subtabs');
+    if (trendTabs) trendTabs.addEventListener('click', function (e) {
+      const tab = e.target.closest('.pr-trend-subtab');
+      if (!tab) return;
+      prActiveTrendMetric = tab.getAttribute('data-metric') || 'answered';
+      trendTabs.querySelectorAll('.pr-trend-subtab').forEach(function (b) {
+        const active = b === tab;
+        b.classList.toggle('active', active);
+        b.setAttribute('aria-selected', active ? 'true' : 'false');
+      });
+      prSavePrefs_();
+      if (prLastData) prRenderTrendChart_(prLastData);
+    });
 
     // Chart-tab wiring (shared CSS but separate elements).
     const tabContainer = $('pr-chart-tabs');
@@ -2273,6 +2457,9 @@
     }
 
     setPrDefaultDates();
+    // Restore last-used form state if any (preset, dates, prior
+    // mode + custom prior, agents, show-labels, trend sub-tab).
+    prRestorePrefs_();
   }
 
   function setPrDefaultDates() {
@@ -2347,7 +2534,9 @@
   /**
    * Renders an inline hint on the form showing the prior period
    * that the report will compare against, so the user understands
-   * what "vs prior" means before they generate.
+   * what "vs prior" means before they generate. Handles both auto
+   * (same-duration-immediately-preceding) and custom (user-picked)
+   * prior ranges.
    */
   function prUpdatePriorHint_() {
     const el = $('pr-prior-hint');
@@ -2355,18 +2544,142 @@
     const from = $('pr-from').value;
     const to   = $('pr-to').value;
     if (!from || !to || from > to) { el.textContent = ''; return; }
+    const mode = $('pr-compare-mode') ? $('pr-compare-mode').value : 'auto';
+    const fmt = function (d) {
+      return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+    };
+    if (mode === 'custom') {
+      const pf = $('pr-prior-from').value;
+      const pt = $('pr-prior-to').value;
+      if (!pf || !pt) {
+        el.textContent = 'Pick prior start and end dates to define the comparison baseline.';
+        return;
+      }
+      if (pf > pt) {
+        el.textContent = 'Prior start must be on or before prior end.';
+        return;
+      }
+      el.textContent = 'Will compare against your custom prior range ('
+                     + fmt(new Date(pf + 'T12:00:00')) + ' – '
+                     + fmt(new Date(pt + 'T12:00:00')) + ').';
+      return;
+    }
     const start = new Date(from + 'T12:00:00');
     const end   = new Date(to   + 'T12:00:00');
     const days  = Math.floor((end - start) / 86400000);
     const priorEnd   = new Date(start.getTime() - 86400000);
     const priorStart = new Date(priorEnd.getTime() - days * 86400000);
-    const fmt = function (d) {
-      return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
-    };
     el.textContent = 'Will compare against the immediately-preceding '
                    + (days + 1) + ' days ('
                    + fmt(priorStart) + ' – ' + fmt(priorEnd) + ').';
   }
+
+  /**
+   * Toggles the visibility of the custom prior date inputs based
+   * on the compare-mode dropdown. When switching to custom for
+   * the first time in a session, prefill the prior dates with the
+   * auto-computed window so the user has a sensible starting
+   * point.
+   */
+  function prApplyCompareMode_() {
+    const mode = $('pr-compare-mode') ? $('pr-compare-mode').value : 'auto';
+    const wrapFrom = $('pr-prior-from-wrap');
+    const wrapTo   = $('pr-prior-to-wrap');
+    const show = (mode === 'custom');
+    if (wrapFrom) wrapFrom.style.display = show ? '' : 'none';
+    if (wrapTo)   wrapTo.style.display   = show ? '' : 'none';
+
+    if (show) {
+      // Prefill with auto-computed prior if blank, so the user
+      // starts from a meaningful baseline rather than empty fields.
+      const pf = $('pr-prior-from');
+      const pt = $('pr-prior-to');
+      if (pf && pt && (!pf.value || !pt.value)) {
+        const from = $('pr-from').value;
+        const to   = $('pr-to').value;
+        if (from && to && from <= to) {
+          const start = new Date(from + 'T12:00:00');
+          const end   = new Date(to   + 'T12:00:00');
+          const days  = Math.floor((end - start) / 86400000);
+          const priorEnd   = new Date(start.getTime() - 86400000);
+          const priorStart = new Date(priorEnd.getTime() - days * 86400000);
+          const isoOf = function (d) {
+            const m = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            return d.getFullYear() + '-' + m + '-' + day;
+          };
+          if (!pf.value) pf.value = isoOf(priorStart);
+          if (!pt.value) pt.value = isoOf(priorEnd);
+        }
+      }
+    }
+    prSavePrefs_();
+  }
+
+  /**
+   * Persists the user's form state to localStorage so the next
+   * modal open picks up where they left off. Best-effort: silent
+   * on storage failures (private mode, quota exceeded, etc.).
+   */
+  function prSavePrefs_() {
+    try {
+      const prefs = {
+        preset:    $('pr-preset').value,
+        from:      $('pr-from').value,
+        to:        $('pr-to').value,
+        mode:      $('pr-compare-mode') ? $('pr-compare-mode').value : 'auto',
+        priorFrom: $('pr-prior-from') ? $('pr-prior-from').value : '',
+        priorTo:   $('pr-prior-to')   ? $('pr-prior-to').value   : '',
+        agents:    irGetCheckedAgents_($('pr-agent-list')),
+        showLabels: $('pr-show-datalabels') ? $('pr-show-datalabels').checked : true,
+        trendMetric: prActiveTrendMetric,
+        sortKey:   prSortKey,
+        sortDir:   prSortDir,
+      };
+      localStorage.setItem(PR_PREFS_KEY, JSON.stringify(prefs));
+    } catch (e) { /* ignore */ }
+  }
+
+  function prRestorePrefs_() {
+    let prefs;
+    try {
+      const raw = localStorage.getItem(PR_PREFS_KEY);
+      if (!raw) return;
+      prefs = JSON.parse(raw);
+    } catch (e) { return; }
+    if (!prefs || typeof prefs !== 'object') return;
+
+    if (prefs.preset && $('pr-preset')) $('pr-preset').value = prefs.preset;
+    if (prefs.from   && $('pr-from'))   $('pr-from').value   = prefs.from;
+    if (prefs.to     && $('pr-to'))     $('pr-to').value     = prefs.to;
+    if (prefs.mode   && $('pr-compare-mode')) $('pr-compare-mode').value = prefs.mode;
+    if (prefs.priorFrom && $('pr-prior-from')) $('pr-prior-from').value = prefs.priorFrom;
+    if (prefs.priorTo   && $('pr-prior-to'))   $('pr-prior-to').value   = prefs.priorTo;
+    if (typeof prefs.showLabels === 'boolean' && $('pr-show-datalabels')) {
+      $('pr-show-datalabels').checked = prefs.showLabels;
+    }
+    if (prefs.trendMetric) prActiveTrendMetric = prefs.trendMetric;
+    if (prefs.sortKey) prSortKey = prefs.sortKey;
+    if (prefs.sortDir) prSortDir = prefs.sortDir;
+
+    prApplyCompareMode_();
+    prUpdatePriorHint_();
+    // Sync the trend sub-tab active state to the restored metric.
+    const tabs = $('pr-trend-subtabs');
+    if (tabs) tabs.querySelectorAll('.pr-trend-subtab').forEach(function (b) {
+      const active = b.getAttribute('data-metric') === prActiveTrendMetric;
+      b.classList.toggle('active', active);
+      b.setAttribute('aria-selected', active ? 'true' : 'false');
+    });
+    // Stash agents so we can pre-check the boxes once the roster
+    // list finishes rendering.
+    if (Array.isArray(prefs.agents) && prefs.agents.length) {
+      prPendingAgentSelection_ = prefs.agents;
+    }
+  }
+  // Holds an agent list to apply once the picker renders. Cleared
+  // after apply so it doesn't override later renders.
+  let prPendingAgentSelection_ = null;
 
   // ── Roster fetch + render (mirrors Individual Report) ──────────────
   function ensurePrRoster() {
@@ -2442,7 +2755,15 @@
     }
     list.innerHTML = irBuildAgentListHtml_(agents, activeAgents);
     list.style.display = '';
-    list.addEventListener('change', prUpdateGenerateEnabled_);
+    list.addEventListener('change', function () {
+      prUpdateGenerateEnabled_();
+      prSavePrefs_();
+    });
+    // Apply any pending selection from restored prefs once.
+    if (prPendingAgentSelection_) {
+      irApplyCheckedAgents_(list, prPendingAgentSelection_);
+      prPendingAgentSelection_ = null;
+    }
     prUpdateGenerateEnabled_();
   }
 
@@ -2467,6 +2788,21 @@
     const agents = irGetCheckedAgents_($('pr-agent-list'));
     if (!agents.length) { prSetFormError('Select at least one agent.'); return; }
 
+    // Custom prior range -- send only if mode is custom and both
+    // dates are valid. The server fills in the auto window when
+    // these are absent.
+    const mode = $('pr-compare-mode') ? $('pr-compare-mode').value : 'auto';
+    const req = { department: dept, from: from, to: to, agents: agents };
+    if (mode === 'custom') {
+      const pf = $('pr-prior-from').value;
+      const pt = $('pr-prior-to').value;
+      if (!pf || !pt) { prSetFormError('Pick a custom prior start and end date.'); return; }
+      if (pf > pt)    { prSetFormError('Custom prior start must be on or before prior end.'); return; }
+      req.priorFrom = pf;
+      req.priorTo   = pt;
+    }
+    prSavePrefs_();
+
     const btn = $('pr-generate-btn');
     btn.disabled = true;
     const originalLabel = btn.textContent;
@@ -2483,20 +2819,69 @@
         btn.textContent = originalLabel;
         prSetFormError('Error: ' + (err && err.message ? err.message : String(err)));
       })
-      .getPerformanceReport({ department: dept, from: from, to: to, agents: agents });
+      .getPerformanceReport(req);
   }
 
   function prRenderReport_(data) {
     prLastData = data;
-    $('pr-results-date').textContent = '(' + (data.dateLabel || '') + ')';
-    $('pr-compare-line').textContent = 'Comparing against prior period: '
-                                      + (data.priorDateLabel || '');
+    // Side-by-side date pair instead of inline (date)+below line.
+    if ($('pr-current-date')) $('pr-current-date').textContent = data.dateLabel || '';
+    if ($('pr-prior-date'))   $('pr-prior-date').textContent   = data.priorDateLabel || '';
+    if ($('pr-prior-label')) {
+      $('pr-prior-label').textContent = (data.meta && data.meta.priorIsCustom)
+        ? 'vs Custom Prior'
+        : 'vs Prior';
+    }
     showPrResults();
     prSetResultsStatus('');
     prResetTabs_();
-    prRenderKpis_(data.teamStats);
+    prRenderSubsetHint_(data.meta);
+    prRenderTeamInsights_(data.teamInsights);
+    prRenderKpis_(data.teamStats, data.trendData);
     prRenderAgentTable_(data.agentData);
     prRenderCharts_(data);
+  }
+
+  /**
+   * Subtle banner when the user picked only a subset of the dept
+   * roster. Prevents the "why are my totals low?" confusion --
+   * makes it explicit that the report reflects selection, not the
+   * full dept.
+   */
+  function prRenderSubsetHint_(meta) {
+    const el = $('pr-subset-hint');
+    if (!el || !meta) return;
+    const selected = (meta.agents || []).length;
+    const rosterSize = meta.rosterSize || 0;
+    if (rosterSize === 0 || selected >= rosterSize) {
+      el.style.display = 'none';
+      el.textContent = '';
+      return;
+    }
+    el.textContent = 'Showing ' + selected + ' of ' + rosterSize
+                   + ' dept agents. Totals reflect this selection only.';
+    el.style.display = '';
+  }
+
+  /**
+   * Team insights callout: server-side rules render up to 3 short
+   * observations about the team's current vs prior period. Reuses
+   * the Individual Report's irInsightsBlock_ HTML helper since the
+   * insight shape is identical (`{ type, text }`).
+   */
+  function prRenderTeamInsights_(insights) {
+    const host = $('pr-team-insights');
+    if (!host) return;
+    if (!insights || !insights.length) {
+      host.innerHTML = '';
+      return;
+    }
+    host.innerHTML = irInsightsBlock_(insights)
+      // Subtle override: the IR callout label says "Insights" --
+      // for PR we want "Team insights" to disambiguate from the
+      // per-agent insights users see on the Individual Report.
+      .replace('<div class="ir-insights-label">Insights</div>',
+               '<div class="ir-insights-label">Team insights</div>');
   }
 
   function prResetTabs_() {
@@ -2514,26 +2899,36 @@
 
   /**
    * Renders the 6 KPI tiles: Rung, Missed, Answered, % Answered,
-   * TTT, ATT -- each with current value and a delta vs the
-   * prior-period value. Delta color semantics:
+   * TTT, ATT -- each with current value, delta vs prior, and an
+   * inline 12-month sparkline from the trend series. Delta color
+   * semantics:
    *   - Rung / Answered / % Answered: above = positive (blue)
    *   - Missed: above = negative (orange)
    *   - TTT / ATT: neutral (longer can be thorough or slow)
    */
-  function prRenderKpis_(teamStats) {
+  function prRenderKpis_(teamStats, trendData) {
     const t = teamStats || {};
+    const series = (trendData && trendData.series) || [];
+    const sparks = {
+      rung:     series.map(function (s) { return s.rung; }),
+      missed:   series.map(function (s) { return s.missed; }),
+      answered: series.map(function (s) { return s.answered; }),
+      pct:      series.map(function (s) { return s.pct; }),
+      ttt:      series.map(function (s) { return s.ttt; }),
+      att:      series.map(function (s) { return s.att; }),
+    };
     const tiles = [
-      prKpiTile_('Total Rung',  t.rung,     'pos'),
-      prKpiTile_('Total Missed',t.missed,   'neg'),
-      prKpiTile_('Answered',    t.answered, 'pos'),
-      prKpiTile_('% Answered',  t.pct,      'pos'),
-      prKpiTile_('Total TTT',   t.ttt,      'neu'),
-      prKpiTile_('Avg ATT',     t.att,      'neu'),
+      prKpiTile_('Total Rung',  t.rung,     'pos', sparks.rung,     IR_VOLUME_COLORS.rung),
+      prKpiTile_('Total Missed',t.missed,   'neg', sparks.missed,   IR_VOLUME_COLORS.missed),
+      prKpiTile_('Answered',    t.answered, 'pos', sparks.answered, IR_VOLUME_COLORS.answered),
+      prKpiTile_('% Answered',  t.pct,      'pos', sparks.pct,      '#4E79A7'),
+      prKpiTile_('Total TTT',   t.ttt,      'neu', sparks.ttt,      '#9C755F'),
+      prKpiTile_('Avg ATT',     t.att,      'neu', sparks.att,      '#9C755F'),
     ].join('');
     $('pr-kpi-row').innerHTML = tiles;
   }
 
-  function prKpiTile_(label, stat, valenceDirection) {
+  function prKpiTile_(label, stat, valenceDirection, sparklineData, sparklineColor) {
     const s = stat || { formatted: '-', deltaPct: 0, type: 'volume' };
     const isPctType = s.type === 'pctPoints';
     const dp = Number(s.deltaPct || 0);
@@ -2541,8 +2936,6 @@
     if (Math.abs(dp) < 0.05) {
       badge = '<span class="pr-delta pr-delta-neu">no change</span>';
     } else {
-      // valenceDirection 'pos' = bigger is better, 'neg' = smaller
-      // is better, 'neu' = ambiguous (always neutral styling).
       let cls = 'pr-delta-neu';
       if (valenceDirection === 'pos')      cls = dp > 0 ? 'pr-delta-pos' : 'pr-delta-neg';
       else if (valenceDirection === 'neg') cls = dp > 0 ? 'pr-delta-neg' : 'pr-delta-pos';
@@ -2552,45 +2945,132 @@
             +   arrow + ' ' + Math.abs(dp).toFixed(1) + suffix
             + '</span>';
     }
+    const spark = irSparkline_(sparklineData || [], sparklineColor || '#4E79A7');
     return '<div class="pr-kpi-tile">'
-         +   '<div class="pr-kpi-label">' + label + '</div>'
+         +   '<div class="pr-kpi-row-top">'
+         +     '<div class="pr-kpi-label">' + label + '</div>'
+         +     '<div class="pr-kpi-spark">' + spark + '</div>'
+         +   '</div>'
          +   '<div class="pr-kpi-value">' + escapeHtml(String(s.formatted)) + '</div>'
          +   '<div class="pr-kpi-delta">' + badge + ' <span class="pr-delta-cap">vs prior</span></div>'
          + '</div>';
   }
 
+  /**
+   * Per-agent table with sortable column headers + a per-agent
+   * share-of-team-answered column. Click a header to toggle sort
+   * direction; arrows in the header indicate current sort key.
+   */
   function prRenderAgentTable_(agentData) {
-    const rows = (agentData || []).map(function (a) {
+    const teamAnswered = (agentData || []).reduce(function (a, b) {
+      return a + (b.raw.answered || 0);
+    }, 0);
+    const cols = [
+      { key: 'name',     label: 'Agent',      isNum: false },
+      { key: 'rung',     label: 'Rung',       isNum: true },
+      { key: 'missed',   label: 'Missed',     isNum: true },
+      { key: 'answered', label: 'Answered',   isNum: true },
+      { key: 'share',    label: 'Share',      isNum: true,
+        title: 'This agent\'s share of total Answered calls across the selected team.' },
+      { key: 'pct',      label: '% Answered', isNum: true },
+      { key: 'ttt',      label: 'TTT',        isNum: true },
+      { key: 'att',      label: 'ATT',        isNum: true },
+    ];
+    const sorted = prSortAgentData_(agentData || []);
+
+    const head = cols.map(function (c) {
+      const arrow = (prSortKey === c.key)
+        ? (prSortDir === 'asc' ? ' &#9650;' : ' &#9660;')
+        : '';
+      const titleAttr = c.title ? ' title="' + escapeHtml(c.title) + '"' : '';
+      return '<th class="pr-th-sortable' + (c.isNum ? ' num' : '') + '"'
+           + ' data-sort-key="' + c.key + '"' + titleAttr + '>'
+           +   escapeHtml(c.label) + arrow
+           + '</th>';
+    }).join('');
+
+    const rows = sorted.map(function (a) {
+      const share = teamAnswered > 0
+        ? ((a.raw.answered / teamAnswered) * 100).toFixed(1) + '%'
+        : '-';
       return '<tr>'
            +   '<td>' + escapeHtml(a.name) + '</td>'
            +   '<td class="num">' + a.stats.rung + '</td>'
            +   '<td class="num">' + a.stats.missed + '</td>'
            +   '<td class="num">' + a.stats.answered + '</td>'
+           +   '<td class="num">' + share + '</td>'
            +   '<td class="num">' + a.stats.pct + '</td>'
            +   '<td class="num">' + a.stats.ttt + '</td>'
            +   '<td class="num">' + a.stats.att + '</td>'
            + '</tr>';
     }).join('');
+
     $('pr-agent-table-wrap').innerHTML =
       '<table class="pr-agent-table">'
-      +   '<thead><tr>'
-      +     '<th>Agent</th>'
-      +     '<th class="num">Rung</th>'
-      +     '<th class="num">Missed</th>'
-      +     '<th class="num">Answered</th>'
-      +     '<th class="num">% Answered</th>'
-      +     '<th class="num">TTT</th>'
-      +     '<th class="num">ATT</th>'
-      +   '</tr></thead>'
+      +   '<thead><tr>' + head + '</tr></thead>'
       +   '<tbody>' + rows + '</tbody>'
       + '</table>';
+
+    // Click handlers on the sortable column headers. Re-renders
+    // the table in place so the sort indicator updates too.
+    $('pr-agent-table-wrap').querySelectorAll('.pr-th-sortable').forEach(function (th) {
+      th.addEventListener('click', function () {
+        const key = th.getAttribute('data-sort-key');
+        if (prSortKey === key) {
+          prSortDir = (prSortDir === 'asc') ? 'desc' : 'asc';
+        } else {
+          prSortKey = key;
+          // Sensible default direction by column: numeric desc, name asc.
+          prSortDir = (key === 'name') ? 'asc' : 'desc';
+        }
+        prSavePrefs_();
+        prRenderAgentTable_(agentData);
+      });
+    });
+  }
+
+  /**
+   * Returns a sorted copy of agentData per prSortKey + prSortDir.
+   * Numeric columns sort on raw values; name sorts case-insensitively.
+   * Share is derived from raw.answered (it's a ratio against the
+   * team total, so sort order matches raw.answered).
+   */
+  function prSortAgentData_(agentData) {
+    const sorted = agentData.slice();
+    const key = prSortKey;
+    const dir = prSortDir;
+    sorted.sort(function (a, b) {
+      let av, bv;
+      if (key === 'name') {
+        av = (a.name || '').toLowerCase();
+        bv = (b.name || '').toLowerCase();
+      } else if (key === 'share') {
+        // Share is a function of raw.answered against the team
+        // total, so ordering by raw.answered is equivalent.
+        av = a.raw.answered || 0;
+        bv = b.raw.answered || 0;
+      } else {
+        av = a.raw[key] || 0;
+        bv = b.raw[key] || 0;
+      }
+      if (av === bv) return 0;
+      return dir === 'asc' ? (av < bv ? -1 : 1) : (av < bv ? 1 : -1);
+    });
+    return sorted;
   }
 
   function prRenderCharts_(data) {
     prChartInstances.forEach(function (c) { c.destroy(); });
     prChartInstances = [];
 
-    // Pie: share of answered.
+    const showLabels = $('pr-show-datalabels') ? $('pr-show-datalabels').checked : true;
+    // Per-chart registration (rather than Chart.register'ing
+    // globally) so the Missed Calls bar chart isn't affected by
+    // the data labels plugin.
+    const prPlugins = (typeof ChartDataLabels !== 'undefined') ? [ChartDataLabels] : [];
+
+    // Pie: share of answered. Labels show "N (X%)" inside each
+    // slice when the toggle is on; hidden when off.
     const pieData = (data.chartData && data.chartData.sharePie) || [];
     const pieColors = pieData.map(function (_, i) {
       return IR_CHART_COLORS[i % IR_CHART_COLORS.length];
@@ -2606,6 +3086,7 @@
           borderWidth: 2,
         }],
       },
+      plugins: prPlugins,
       options: {
         responsive: true, maintainAspectRatio: false, animation: false,
         plugins: {
@@ -2619,59 +3100,222 @@
               },
             },
           },
+          datalabels: {
+            display: function (ctx) {
+              if (!showLabels) return false;
+              // Don't render labels on tiny slices -- they overlap
+              // and look messy. Threshold: < 4% of total.
+              const total = ctx.dataset.data.reduce(function (a, b) { return a + b; }, 0);
+              return total > 0 && (ctx.dataset.data[ctx.dataIndex] / total) >= 0.04;
+            },
+            color: '#fff',
+            font: { size: 11, weight: 'bold' },
+            textAlign: 'center',
+            formatter: function (value, ctx) {
+              const total = ctx.dataset.data.reduce(function (a, b) { return a + b; }, 0);
+              const pct = total > 0 ? (value / total * 100).toFixed(1) : '0';
+              return value + '\n(' + pct + '%)';
+            },
+          },
         },
       },
     });
     prChartInstances.push(pie);
 
-    // Stacked bar: Answered (green) + Missed (orange) per agent.
+    // Stacked bar (Answered/Missed) + line overlay (% Answered) on
+    // a second y-axis. The bars show volume per agent; the line
+    // shows efficiency in one shared view. Mixed chart so the line
+    // datasets carry `type: 'line'` explicitly.
     const volData = (data.chartData && data.chartData.volumeBar) || [];
     const bar = new Chart($('pr-volume-chart').getContext('2d'), {
       type: 'bar',
       data: {
         labels: volData.map(function (d) { return d.label; }),
         datasets: [
-          { label: 'Answered', data: volData.map(function (d) { return d.answered; }),
-            backgroundColor: IR_VOLUME_COLORS.answered, stack: 'vol' },
-          { label: 'Missed',   data: volData.map(function (d) { return d.missed;   }),
-            backgroundColor: IR_VOLUME_COLORS.missed,   stack: 'vol' },
+          { label: 'Answered', type: 'bar',
+            data: volData.map(function (d) { return d.answered; }),
+            backgroundColor: IR_VOLUME_COLORS.answered, stack: 'vol', yAxisID: 'y',
+            order: 2 },
+          { label: 'Missed', type: 'bar',
+            data: volData.map(function (d) { return d.missed; }),
+            backgroundColor: IR_VOLUME_COLORS.missed,   stack: 'vol', yAxisID: 'y',
+            order: 2 },
+          { label: '% Answered', type: 'line',
+            data: volData.map(function (d) { return Number((d.pct || 0).toFixed(1)); }),
+            borderColor: '#4E79A7', backgroundColor: '#4E79A7',
+            tension: 0.3, fill: false, yAxisID: 'y1',
+            pointRadius: 4, pointBackgroundColor: '#4E79A7',
+            pointBorderColor: '#fff', pointBorderWidth: 1.5,
+            order: 1 },
         ],
       },
+      plugins: prPlugins,
       options: {
         responsive: true, maintainAspectRatio: false, animation: false,
-        plugins: { legend: { position: 'bottom' } },
+        plugins: {
+          legend: { position: 'bottom' },
+          tooltip: {
+            callbacks: {
+              label: function (ctx) {
+                const ds = ctx.dataset.label;
+                if (ds === '% Answered') return ds + ': ' + ctx.parsed.y + '%';
+                return ds + ': ' + ctx.parsed.y;
+              },
+            },
+          },
+          datalabels: {
+            display: function (ctx) {
+              if (!showLabels) return false;
+              // Suppress 0 values on bars and the pct line; the
+              // line gets its own pill-style label below.
+              return Number(ctx.parsed.y || ctx.parsed) > 0;
+            },
+            color: function (ctx) {
+              return ctx.dataset.type === 'line' ? '#1E40AF' : '#fff';
+            },
+            backgroundColor: function (ctx) {
+              return ctx.dataset.type === 'line' ? 'rgba(255,255,255,0.9)' : null;
+            },
+            borderColor: function (ctx) {
+              return ctx.dataset.type === 'line' ? '#4E79A7' : null;
+            },
+            borderWidth: function (ctx) { return ctx.dataset.type === 'line' ? 1 : 0; },
+            borderRadius: 3,
+            align: function (ctx) { return ctx.dataset.type === 'line' ? 'top' : 'center'; },
+            anchor: function (ctx) { return ctx.dataset.type === 'line' ? 'center' : 'center'; },
+            font: { size: 10, weight: 'bold' },
+            formatter: function (value, ctx) {
+              if (ctx.dataset.type === 'line') return value + '%';
+              return value > 0 ? value : '';
+            },
+          },
+        },
         scales: {
           x: { stacked: true, ticks: { autoSkip: false, maxRotation: 30, minRotation: 0 } },
-          y: { stacked: true, beginAtZero: true },
+          y: { stacked: true, beginAtZero: true, position: 'left',
+               title: { display: true, text: 'Calls', font: { size: 11 } } },
+          y1: { beginAtZero: true, max: 100, position: 'right',
+                title: { display: true, text: '% Answered', font: { size: 11 } },
+                grid: { drawOnChartArea: false },
+                ticks: { callback: function (v) { return v + '%'; } } },
         },
       },
     });
     prChartInstances.push(bar);
 
-    // Trend line: team Answered count per month over 12-mo window.
+    // Trend chart -- factored out so the metric sub-tabs can
+    // re-render it without rebuilding the pie + bar.
+    prRenderTrendChart_(data);
+  }
+
+  /**
+   * Renders (or re-renders) only the 12-month trend chart, using
+   * prActiveTrendMetric to pick which series to plot. Destroys
+   * any previously-tracked trend chart instance and replaces the
+   * tail of prChartInstances so re-renders don't accumulate.
+   */
+  function prRenderTrendChart_(data) {
+    // Destroy any existing trend chart instance.
+    const remaining = [];
+    prChartInstances.forEach(function (c) {
+      if (c.canvas && c.canvas.id === 'pr-trend-chart') c.destroy();
+      else remaining.push(c);
+    });
+    prChartInstances = remaining;
+
+    const showLabels = $('pr-show-datalabels') ? $('pr-show-datalabels').checked : true;
+    const prPlugins = (typeof ChartDataLabels !== 'undefined') ? [ChartDataLabels] : [];
     const labels = (data.trendData && data.trendData.labels) || [];
     const series = (data.trendData && data.trendData.series) || [];
+
+    // Per-metric chart config: color, data, label formatter, and
+    // y-axis treatment (% gets a 0-100 ceiling with a "%" suffix;
+    // ATT formats as minutes; volume is raw counts).
+    let dataPoints, color, label, isPercent, isMinutes;
+    if (prActiveTrendMetric === 'pct') {
+      dataPoints = series.map(function (s) { return Number((s.pct || 0).toFixed(1)); });
+      color = '#4E79A7';
+      label = '% Answered';
+      isPercent = true;
+    } else if (prActiveTrendMetric === 'att') {
+      dataPoints = series.map(function (s) { return Number(((s.att || 0) / 60).toFixed(2)); });
+      color = '#9C755F';
+      label = 'Avg Talk Time';
+      isMinutes = true;
+    } else {
+      dataPoints = series.map(function (s) { return s.answered; });
+      color = IR_VOLUME_COLORS.answered;
+      label = 'Answered';
+    }
+
+    const fmtMin = function (val) {
+      const n = parseFloat(val); if (isNaN(n)) return '';
+      const m = Math.floor(n);
+      const s = Math.round((n - m) * 60);
+      return m + ':' + (s < 10 ? '0' + s : s);
+    };
+
     const trend = new Chart($('pr-trend-chart').getContext('2d'), {
       type: 'line',
       data: {
         labels: labels,
         datasets: [{
-          label: 'Answered',
-          data: series.map(function (s) { return s.answered; }),
-          borderColor: IR_VOLUME_COLORS.answered,
+          label: label,
+          data: dataPoints,
+          borderColor: color,
           backgroundColor: function (ctx) {
-            return irGradientFill_(ctx.chart, IR_VOLUME_COLORS.answered);
+            return irGradientFill_(ctx.chart, color);
           },
           tension: 0.4, fill: true,
-          pointBackgroundColor: IR_VOLUME_COLORS.answered,
+          pointBackgroundColor: color,
           pointBorderColor: '#fff', pointBorderWidth: 1.5,
           pointRadius: 3, pointHoverRadius: 5,
         }],
       },
+      plugins: prPlugins,
       options: {
         responsive: true, maintainAspectRatio: false, animation: false,
-        plugins: { legend: { display: false } },
-        scales: { y: { beginAtZero: true } },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label: function (ctx) {
+                if (isPercent) return label + ': ' + ctx.parsed.y + '%';
+                if (isMinutes) return label + ': ' + fmtMin(ctx.parsed.y);
+                return label + ': ' + ctx.parsed.y;
+              },
+            },
+          },
+          datalabels: {
+            display: function (ctx) {
+              if (!showLabels) return false;
+              return Number(ctx.parsed.y || 0) > 0;
+            },
+            align: 'top', anchor: 'center',
+            backgroundColor: 'rgba(255,255,255,0.9)',
+            borderColor: color, borderWidth: 1, borderRadius: 3,
+            color: color,
+            font: { size: 10, weight: 'bold' },
+            formatter: function (value) {
+              if (isPercent) return value + '%';
+              if (isMinutes) return fmtMin(value);
+              return value > 0 ? value : '';
+            },
+          },
+        },
+        scales: {
+          y: {
+            beginAtZero: true,
+            suggestedMax: isPercent ? 100 : undefined,
+            ticks: {
+              callback: function (val) {
+                if (isPercent) return val + '%';
+                if (isMinutes) return fmtMin(val);
+                return val;
+              },
+            },
+          },
+        },
       },
     });
     prChartInstances.push(trend);
@@ -2733,6 +3377,10 @@
           if (btns) btns.style.display = 'none';
           const tabs = clonedDoc.getElementById('pr-chart-tabs');
           if (tabs) tabs.style.display = 'none';
+          const subTabs = clonedDoc.getElementById('pr-trend-subtabs');
+          if (subTabs) subTabs.style.display = 'none';
+          const toggle = clonedDoc.getElementById('pr-datalabels-box');
+          if (toggle) toggle.style.display = 'none';
           const status = clonedDoc.getElementById('pr-results-status');
           if (status) status.style.display = 'none';
           clonedDoc.querySelectorAll('#pr-charts-container [data-panel]').forEach(function (p) {
@@ -2794,6 +3442,750 @@
           dateLabel: prLastData && prLastData.dateLabel ? prLastData.dateLabel : '',
         });
     });
+  }
+
+  // -- Compare Ranges modal (admin-only) --------------------------------
+  // Side-by-side comparison of two arbitrary date ranges for the
+  // same set of agents. P1 is the baseline; P2 is the comparison.
+  // Renders team KPI tiles with P1/P2/delta, a grouped bar chart
+  // (Answered / Rung / % Answered per agent, switchable via the
+  // tab strip), and a per-agent card showing all six metrics in a
+  // P1 vs P2 vs delta table.
+
+  let crLastRoster = { dept: null, agents: [], activeAgents: null, rangeKey: '' };
+  let crLastData = null;
+  let crActiveFetchTimer = null;
+  let crChartInstance = null;
+  let crActiveChartMetric = 'answered';
+  let crPendingAgentSelection_ = null;
+  const CR_PREFS_KEY = 'cdr.cr.prefs.v1';
+
+  function initCompareRanges() {
+    const btn = $('compare-ranges-btn');
+    const modal = $('compare-modal');
+    if (!btn || !modal) return;
+
+    const closeBtn = modal.querySelector('.modal-close');
+    const backdrop = modal.querySelector('[data-close]');
+
+    function openModal() {
+      modal.style.display = '';
+      modal.setAttribute('aria-hidden', 'false');
+      document.body.style.overflow = 'hidden';
+      document.addEventListener('keydown', onKeyDown);
+      if (closeBtn) closeBtn.focus();
+      showCrForm();
+      ensureCrDefaultDates_();
+      ensureCrRoster();
+    }
+    function closeModal() {
+      modal.style.display = 'none';
+      modal.setAttribute('aria-hidden', 'true');
+      document.body.style.overflow = '';
+      document.removeEventListener('keydown', onKeyDown);
+      btn.focus();
+    }
+    function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
+
+    btn.addEventListener('click', openModal);
+    if (closeBtn) closeBtn.addEventListener('click', closeModal);
+    if (backdrop) backdrop.addEventListener('click', closeModal);
+
+    // Preset dropdown handler.
+    const preset = $('cr-preset');
+    if (preset) preset.addEventListener('change', applyCrPreset);
+
+    // Each of the four date inputs triggers a debounced re-fetch
+    // of the active-agent subset (union of both ranges).
+    ['cr-p1-from','cr-p1-to','cr-p2-from','cr-p2-to'].forEach(function (id) {
+      const el = $(id);
+      if (el) el.addEventListener('change', function () {
+        resetCrPreset_();
+        scheduleCrActiveAgentRefetch_();
+        crSavePrefs_();
+      });
+    });
+
+    const selAll  = $('cr-select-all');
+    const selNone = $('cr-select-none');
+    if (selAll)  selAll.addEventListener('click',  function (e) { e.preventDefault(); crToggleAgents_(true);  });
+    if (selNone) selNone.addEventListener('click', function (e) { e.preventDefault(); crToggleAgents_(false); });
+
+    const search = $('cr-agent-search');
+    if (search) search.addEventListener('input', function () {
+      irFilterAgentList_($('cr-agent-list'), search.value);
+    });
+
+    const genBtn = $('cr-generate-btn');
+    if (genBtn) genBtn.addEventListener('click', runCrReport);
+    const backBtn = $('cr-back-btn');
+    if (backBtn) backBtn.addEventListener('click', showCrForm);
+
+    const labelToggle = $('cr-show-datalabels');
+    if (labelToggle) labelToggle.addEventListener('change', function () {
+      crSavePrefs_();
+      if (crLastData) crRenderChart_(crLastData);
+    });
+
+    // Chart metric tabs: switch which metric the grouped bar shows.
+    const tabContainer = $('cr-chart-tabs');
+    if (tabContainer) tabContainer.addEventListener('click', function (e) {
+      const tab = e.target.closest('.ir-tab');
+      if (!tab) return;
+      crActiveChartMetric = tab.getAttribute('data-metric') || 'answered';
+      tabContainer.querySelectorAll('.ir-tab').forEach(function (b) {
+        const active = b === tab;
+        b.classList.toggle('active', active);
+        b.setAttribute('aria-selected', active ? 'true' : 'false');
+      });
+      crSavePrefs_();
+      if (crLastData) crRenderChart_(crLastData);
+    });
+
+    // Export dropdown.
+    const exportBtn  = $('cr-export-btn');
+    const exportMenu = $('cr-export-menu');
+    if (exportBtn && exportMenu) {
+      exportBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        crSetExportMenuOpen_(exportMenu.style.display === 'none');
+      });
+      exportMenu.addEventListener('click', function (e) {
+        const item = e.target.closest('[data-action]');
+        if (!item) return;
+        const action = item.getAttribute('data-action');
+        crSetExportMenuOpen_(false);
+        if (action === 'copy')  crCopyImage_();
+        else if (action === 'email') crEmailImage_();
+        else if (action === 'print') crPrint_();
+      });
+      document.addEventListener('click', function (e) {
+        if (exportMenu.style.display === 'none') return;
+        if (exportMenu.contains(e.target) || e.target === exportBtn) return;
+        crSetExportMenuOpen_(false);
+      });
+      document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && exportMenu.style.display !== 'none') {
+          crSetExportMenuOpen_(false);
+        }
+      });
+    }
+
+    crRestorePrefs_();
+  }
+
+  function ensureCrDefaultDates_() {
+    // Only fill if blank -- preserves the user's edits and saved
+    // prefs. The init endpoint also returns defaults, but we set
+    // locally first so the form renders without waiting on the
+    // server.
+    const today = new Date();
+    const firstOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+    const firstOfLastMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+    const endOfLastMonth = new Date(today.getFullYear(), today.getMonth(), 0);
+    const iso = function (d) {
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return d.getFullYear() + '-' + m + '-' + day;
+    };
+    if ($('cr-p1-from') && !$('cr-p1-from').value) $('cr-p1-from').value = iso(firstOfLastMonth);
+    if ($('cr-p1-to')   && !$('cr-p1-to').value)   $('cr-p1-to').value   = iso(endOfLastMonth);
+    if ($('cr-p2-from') && !$('cr-p2-from').value) $('cr-p2-from').value = iso(firstOfMonth);
+    if ($('cr-p2-to')   && !$('cr-p2-to').value)   $('cr-p2-to').value   = iso(today);
+  }
+
+  function showCrForm() {
+    $('compare-form').style.display = '';
+    $('compare-results').style.display = 'none';
+    crSetFormError('');
+  }
+  function showCrResults() {
+    $('compare-form').style.display = 'none';
+    $('compare-results').style.display = '';
+  }
+
+  function crSetFormError(msg) {
+    const el = $('cr-form-error');
+    if (!el) return;
+    if (!msg) { el.style.display = 'none'; el.textContent = ''; return; }
+    el.textContent = msg;
+    el.style.display = '';
+  }
+
+  function crSetResultsStatus(kind, msg) {
+    const el = $('cr-results-status');
+    if (!el) return;
+    if (!kind) { el.style.display = 'none'; el.textContent = ''; return; }
+    el.className = 'status status-' + kind;
+    el.textContent = msg;
+    el.style.display = '';
+  }
+
+  function applyCrPreset() {
+    const v = $('cr-preset').value;
+    if (v === 'custom') { crSavePrefs_(); return; }
+    const today = new Date();
+    const iso = function (d) {
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return d.getFullYear() + '-' + m + '-' + day;
+    };
+    let p1From, p1To, p2From, p2To;
+
+    if (v === 'lastVsThisMonth') {
+      p1From = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+      p1To   = new Date(today.getFullYear(), today.getMonth(), 0);
+      p2From = new Date(today.getFullYear(), today.getMonth(), 1);
+      p2To   = new Date(today);
+    } else if (v === 'yoyMonth') {
+      p1From = new Date(today.getFullYear() - 1, today.getMonth(), 1);
+      p1To   = new Date(today.getFullYear() - 1, today.getMonth(), today.getDate());
+      p2From = new Date(today.getFullYear(),     today.getMonth(), 1);
+      p2To   = new Date(today);
+    } else if (v === 'last30VsPrev30') {
+      p2To   = new Date(today);
+      p2From = new Date(today); p2From.setDate(today.getDate() - 29);
+      p1To   = new Date(p2From); p1To.setDate(p1To.getDate() - 1);
+      p1From = new Date(p1To);  p1From.setDate(p1To.getDate() - 29);
+    } else if (v === 'last3MoVsPrev3Mo') {
+      p2To   = new Date(today);
+      p2From = new Date(today); p2From.setMonth(today.getMonth() - 3);
+      p1To   = new Date(p2From); p1To.setDate(p1To.getDate() - 1);
+      p1From = new Date(p1To);  p1From.setMonth(p1To.getMonth() - 3);
+    } else if (v === 'lastYearVsThisYear') {
+      p1From = new Date(today.getFullYear() - 1, 0, 1);
+      p1To   = new Date(today.getFullYear() - 1, today.getMonth(), today.getDate());
+      p2From = new Date(today.getFullYear(),     0, 1);
+      p2To   = new Date(today);
+    } else {
+      return;
+    }
+
+    $('cr-p1-from').value = iso(p1From);
+    $('cr-p1-to').value   = iso(p1To);
+    $('cr-p2-from').value = iso(p2From);
+    $('cr-p2-to').value   = iso(p2To);
+    crSavePrefs_();
+    scheduleCrActiveAgentRefetch_();
+  }
+  function resetCrPreset_() {
+    const p = $('cr-preset');
+    if (p) p.value = 'custom';
+  }
+
+  // ── Roster fetch (mirrors PR) ─────────────────────────────────────
+  function ensureCrRoster() {
+    const dept = getRequestedDept();
+    if (!dept) {
+      $('cr-agent-loader').textContent = 'No department selected.';
+      $('cr-agent-list').style.display = 'none';
+      return;
+    }
+    const p1From = $('cr-p1-from').value;
+    const p1To   = $('cr-p1-to').value;
+    const p2From = $('cr-p2-from').value;
+    const p2To   = $('cr-p2-to').value;
+    const rangeKey = p1From + '|' + p1To + '|' + p2From + '|' + p2To;
+
+    if (crLastRoster.dept === dept && crLastRoster.agents.length
+        && crLastRoster.rangeKey === rangeKey) {
+      renderCrAgentList(crLastRoster.agents, crLastRoster.activeAgents);
+      return;
+    }
+    $('cr-agent-loader').style.display = '';
+    $('cr-agent-list').style.display = 'none';
+    $('cr-generate-btn').disabled = true;
+
+    google.script.run
+      .withSuccessHandler(function (data) {
+        crLastRoster = {
+          dept: dept,
+          agents: (data && data.agents) || [],
+          activeAgents: (data && data.activeAgents) || null,
+          rangeKey: rangeKey,
+        };
+        renderCrAgentList(crLastRoster.agents, crLastRoster.activeAgents);
+      })
+      .withFailureHandler(function (err) {
+        $('cr-agent-loader').textContent = 'Error loading roster: '
+          + (err && err.message ? err.message : String(err));
+      })
+      .getCompareRangesInit({
+        department: dept,
+        p1From: p1From, p1To: p1To, p2From: p2From, p2To: p2To,
+      });
+  }
+
+  function scheduleCrActiveAgentRefetch_() {
+    if (crActiveFetchTimer) clearTimeout(crActiveFetchTimer);
+    crActiveFetchTimer = setTimeout(function () {
+      const dept = getRequestedDept();
+      if (!dept) return;
+      const p1From = $('cr-p1-from').value;
+      const p1To   = $('cr-p1-to').value;
+      const p2From = $('cr-p2-from').value;
+      const p2To   = $('cr-p2-to').value;
+      if (!p1From || !p1To || !p2From || !p2To) return;
+      if (p1From > p1To || p2From > p2To) return;
+      const rangeKey = p1From + '|' + p1To + '|' + p2From + '|' + p2To;
+      if (crLastRoster.dept === dept && crLastRoster.rangeKey === rangeKey) return;
+
+      google.script.run
+        .withSuccessHandler(function (data) {
+          crLastRoster.activeAgents = (data && data.activeAgents) || null;
+          crLastRoster.rangeKey = rangeKey;
+          const checked = irGetCheckedAgents_($('cr-agent-list'));
+          renderCrAgentList(crLastRoster.agents, crLastRoster.activeAgents);
+          irApplyCheckedAgents_($('cr-agent-list'), checked);
+          crUpdateGenerateEnabled_();
+        })
+        .withFailureHandler(function () { /* keep existing grouping */ })
+        .getCompareRangesInit({
+          department: dept,
+          p1From: p1From, p1To: p1To, p2From: p2From, p2To: p2To,
+        });
+    }, 350);
+  }
+
+  function renderCrAgentList(agents, activeAgents) {
+    const list = $('cr-agent-list');
+    $('cr-agent-loader').style.display = 'none';
+    if (!agents.length) {
+      list.innerHTML = '<div class="ir-agent-empty">No agents on this department\'s roster.</div>';
+      list.style.display = '';
+      $('cr-generate-btn').disabled = true;
+      return;
+    }
+    list.innerHTML = irBuildAgentListHtml_(agents, activeAgents);
+    list.style.display = '';
+    list.addEventListener('change', function () {
+      crUpdateGenerateEnabled_();
+      crSavePrefs_();
+    });
+    if (crPendingAgentSelection_) {
+      irApplyCheckedAgents_(list, crPendingAgentSelection_);
+      crPendingAgentSelection_ = null;
+    }
+    crUpdateGenerateEnabled_();
+  }
+
+  function crUpdateGenerateEnabled_() {
+    const boxes = $('cr-agent-list').querySelectorAll('.ir-agent-cb:checked');
+    $('cr-generate-btn').disabled = boxes.length === 0;
+  }
+
+  function crToggleAgents_(checked) {
+    $('cr-agent-list').querySelectorAll('.ir-agent-cb').forEach(function (cb) { cb.checked = checked; });
+    crUpdateGenerateEnabled_();
+    crSavePrefs_();
+  }
+
+  function runCrReport() {
+    crSetFormError('');
+    const dept = getRequestedDept();
+    const p1From = $('cr-p1-from').value;
+    const p1To   = $('cr-p1-to').value;
+    const p2From = $('cr-p2-from').value;
+    const p2To   = $('cr-p2-to').value;
+    if (!p1From || !p1To) { crSetFormError('Pick Period 1 start and end dates.'); return; }
+    if (!p2From || !p2To) { crSetFormError('Pick Period 2 start and end dates.'); return; }
+    if (p1From > p1To)    { crSetFormError('Period 1 start must be on or before end.'); return; }
+    if (p2From > p2To)    { crSetFormError('Period 2 start must be on or before end.'); return; }
+    const agents = irGetCheckedAgents_($('cr-agent-list'));
+    if (!agents.length) { crSetFormError('Select at least one agent.'); return; }
+
+    const btn = $('cr-generate-btn');
+    btn.disabled = true;
+    const originalLabel = btn.textContent;
+    btn.textContent = 'Loading…';
+    crSavePrefs_();
+
+    google.script.run
+      .withSuccessHandler(function (data) {
+        btn.disabled = false;
+        btn.textContent = originalLabel;
+        crRenderReport_(data);
+      })
+      .withFailureHandler(function (err) {
+        btn.disabled = false;
+        btn.textContent = originalLabel;
+        crSetFormError('Error: ' + (err && err.message ? err.message : String(err)));
+      })
+      .getCompareRanges({
+        department: dept, agents: agents,
+        p1From: p1From, p1To: p1To, p2From: p2From, p2To: p2To,
+      });
+  }
+
+  function crRenderReport_(data) {
+    crLastData = data;
+    if ($('cr-p1-label')) $('cr-p1-label').textContent = data.p1Label || '';
+    if ($('cr-p2-label')) $('cr-p2-label').textContent = data.p2Label || '';
+    showCrResults();
+    crSetResultsStatus('');
+    crRenderTeamInsights_(data.teamInsights);
+    crRenderTeamTiles_(data.teamStats);
+    crRenderAgentCards_(data.agentData);
+    crRenderChart_(data);
+  }
+
+  function crRenderTeamInsights_(insights) {
+    const host = $('cr-team-insights');
+    if (!host) return;
+    if (!insights || !insights.length) { host.innerHTML = ''; return; }
+    host.innerHTML = irInsightsBlock_(insights)
+      .replace('<div class="ir-insights-label">Insights</div>',
+               '<div class="ir-insights-label">Team insights (P1 → P2)</div>');
+  }
+
+  /**
+   * Six KPI tiles showing P2's value (the comparison period) with
+   * a delta vs P1 and the P1 value shown below as context. Same
+   * tile structure as the Performance Report's KPI row so the
+   * shared .pr-kpi-tile / .pr-delta CSS applies.
+   */
+  function crRenderTeamTiles_(teamStats) {
+    const t = teamStats || {};
+    const tiles = [
+      crTeamTile_('Total Rung',  t.rung,     'pos'),
+      crTeamTile_('Total Missed',t.missed,   'neg'),
+      crTeamTile_('Answered',    t.answered, 'pos'),
+      crTeamTile_('% Answered',  t.pct,      'pos'),
+      crTeamTile_('Total TTT',   t.ttt,      'neu'),
+      crTeamTile_('Avg ATT',     t.att,      'neu'),
+    ].join('');
+    $('cr-team-tiles').innerHTML = tiles;
+  }
+
+  function crTeamTile_(label, stat, valenceDirection) {
+    const s = stat || { formatted: '-', prevFormatted: '-', deltaPct: 0, type: 'volume' };
+    const isPctType = s.type === 'pctPoints';
+    const dp = Number(s.deltaPct || 0);
+    let badge;
+    if (Math.abs(dp) < 0.05) {
+      badge = '<span class="pr-delta pr-delta-neu">no change</span>';
+    } else {
+      let cls = 'pr-delta-neu';
+      if (valenceDirection === 'pos')      cls = dp > 0 ? 'pr-delta-pos' : 'pr-delta-neg';
+      else if (valenceDirection === 'neg') cls = dp > 0 ? 'pr-delta-neg' : 'pr-delta-pos';
+      const arrow = dp > 0 ? '▲' : '▼';
+      const suffix = isPctType ? ' pts' : '%';
+      badge = '<span class="pr-delta ' + cls + '">'
+            +   arrow + ' ' + Math.abs(dp).toFixed(1) + suffix
+            + '</span>';
+    }
+    return '<div class="pr-kpi-tile">'
+         +   '<div class="pr-kpi-row-top">'
+         +     '<div class="pr-kpi-label">' + label + '</div>'
+         +   '</div>'
+         +   '<div class="pr-kpi-value">' + escapeHtml(String(s.formatted)) + '</div>'
+         +   '<div class="pr-kpi-delta">'
+         +     badge + ' <span class="pr-delta-cap">vs ' + escapeHtml(String(s.prevFormatted)) + ' (P1)</span>'
+         +   '</div>'
+         + '</div>';
+  }
+
+  /**
+   * Per-agent comparison cards. Each card has a 6-row table:
+   * Rung / Missed / Answered / % Answered / TTT / ATT, with
+   * columns for Period 1, Period 2, and Δ (color-coded by metric
+   * valence).
+   */
+  function crRenderAgentCards_(agentData) {
+    const cards = (agentData || []).map(function (a) {
+      const rows = [
+        crCardRow_('Total Rung',  a.p1.formatted.rung,     a.p2.formatted.rung,     a.deltas.rung,     'pos'),
+        crCardRow_('Missed',      a.p1.formatted.missed,   a.p2.formatted.missed,   a.deltas.missed,   'neg'),
+        crCardRow_('Answered',    a.p1.formatted.answered, a.p2.formatted.answered, a.deltas.answered, 'pos'),
+        crCardRow_('% Answered',  a.p1.formatted.pct,      a.p2.formatted.pct,      a.deltas.pct,      'pos'),
+        crCardRow_('TTT',         a.p1.formatted.ttt,      a.p2.formatted.ttt,      a.deltas.ttt,      'neu'),
+        crCardRow_('Avg ATT',     a.p1.formatted.att,      a.p2.formatted.att,      a.deltas.att,      'neu'),
+      ].join('');
+      const safe = escapeHtml(a.name);
+      return '<div class="cr-agent-card">'
+           +   '<div class="cr-agent-card-header">'
+           +     '<span class="cr-agent-name">' + safe + '</span>'
+           +     '<button type="button" class="ir-copy-tsv" data-agent="' + safe + '">Copy data</button>'
+           +   '</div>'
+           +   '<table class="cr-agent-table">'
+           +     '<thead><tr>'
+           +       '<th>Metric</th><th class="num">Period 1</th><th class="num">Period 2</th><th class="num">&Delta;</th>'
+           +     '</tr></thead>'
+           +     '<tbody>' + rows + '</tbody>'
+           +   '</table>'
+           + '</div>';
+    }).join('');
+    $('cr-agent-cards').innerHTML = cards;
+
+    // Per-card "Copy data" -> TSV.
+    $('cr-agent-cards').querySelectorAll('.ir-copy-tsv').forEach(function (b) {
+      b.addEventListener('click', function () {
+        const card = b.closest('.cr-agent-card');
+        const table = card && card.querySelector('table');
+        if (!table) return;
+        const lines = [];
+        Array.prototype.forEach.call(table.rows, function (row) {
+          lines.push(Array.prototype.map.call(row.cells, function (c) {
+            return (c.innerText || '').replace(/\s+/g, ' ').trim();
+          }).join('\t'));
+        });
+        const tsv = lines.join('\n') + '\n';
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(tsv).then(function () { irFlashButton(b, 'Copied'); });
+        }
+      });
+    });
+  }
+
+  function crCardRow_(metric, p1Val, p2Val, deltaObj, valence) {
+    const dp = Number((deltaObj && deltaObj.deltaPct) || 0);
+    const isPctType = deltaObj && deltaObj.type === 'pctPoints';
+    let badge;
+    if (Math.abs(dp) < 0.05) {
+      badge = '<span class="pr-delta pr-delta-neu">no change</span>';
+    } else {
+      let cls = 'pr-delta-neu';
+      if (valence === 'pos')      cls = dp > 0 ? 'pr-delta-pos' : 'pr-delta-neg';
+      else if (valence === 'neg') cls = dp > 0 ? 'pr-delta-neg' : 'pr-delta-pos';
+      const arrow = dp > 0 ? '▲' : '▼';
+      const suffix = isPctType ? ' pts' : '%';
+      badge = '<span class="pr-delta ' + cls + '">'
+            +   arrow + ' ' + Math.abs(dp).toFixed(1) + suffix
+            + '</span>';
+    }
+    return '<tr>'
+         +   '<td class="cr-metric">' + metric + '</td>'
+         +   '<td class="num">' + escapeHtml(String(p1Val)) + '</td>'
+         +   '<td class="num">' + escapeHtml(String(p2Val)) + '</td>'
+         +   '<td class="num">' + badge + '</td>'
+         + '</tr>';
+  }
+
+  /**
+   * Grouped bar chart: P1 vs P2 per agent, on the metric chosen
+   * via the tab strip (Answered / Rung / % Answered). Re-rendered
+   * by destroying the existing chart instance so toggle changes
+   * are clean.
+   */
+  function crRenderChart_(data) {
+    if (crChartInstance) { crChartInstance.destroy(); crChartInstance = null; }
+    const showLabels = $('cr-show-datalabels') ? $('cr-show-datalabels').checked : true;
+    const crPlugins = (typeof ChartDataLabels !== 'undefined') ? [ChartDataLabels] : [];
+
+    const metric = crActiveChartMetric;
+    const series = (data.chartData && data.chartData[metric]) || { labels: [], p1: [], p2: [] };
+    const isPercent = (metric === 'pct');
+
+    const header = $('cr-chart-header');
+    if (header) {
+      const label = metric === 'answered' ? 'Answered Calls'
+                  : metric === 'rung'     ? 'Total Rung'
+                  : '% Answered';
+      header.textContent = label + ': Period 1 vs Period 2';
+    }
+
+    const formatVal = function (v) {
+      if (isPercent) return (Number(v) || 0).toFixed(1) + '%';
+      return v;
+    };
+
+    const p1Data = series.p1.map(function (v) {
+      return isPercent ? Number((v || 0).toFixed(1)) : v;
+    });
+    const p2Data = series.p2.map(function (v) {
+      return isPercent ? Number((v || 0).toFixed(1)) : v;
+    });
+
+    crChartInstance = new Chart($('cr-chart').getContext('2d'), {
+      type: 'bar',
+      data: {
+        labels: series.labels,
+        datasets: [
+          { label: 'Period 1 (Baseline)', data: p1Data,
+            backgroundColor: '#9CA3AF', borderColor: '#6B7280', borderWidth: 1 },
+          { label: 'Period 2 (Comparison)', data: p2Data,
+            backgroundColor: '#4E79A7', borderColor: '#1E3A8A', borderWidth: 1 },
+        ],
+      },
+      plugins: crPlugins,
+      options: {
+        responsive: true, maintainAspectRatio: false, animation: false,
+        plugins: {
+          legend: { position: 'bottom' },
+          tooltip: {
+            callbacks: {
+              label: function (ctx) { return ctx.dataset.label + ': ' + formatVal(ctx.parsed.y); },
+            },
+          },
+          datalabels: {
+            display: function (ctx) { return showLabels && Number(ctx.parsed.y || 0) > 0; },
+            color: '#fff',
+            font: { size: 10, weight: 'bold' },
+            formatter: function (value) { return isPercent ? value + '%' : (value > 0 ? value : ''); },
+          },
+        },
+        scales: {
+          x: { ticks: { autoSkip: false, maxRotation: 30, minRotation: 0 } },
+          y: {
+            beginAtZero: true,
+            suggestedMax: isPercent ? 100 : undefined,
+            ticks: { callback: function (v) { return isPercent ? v + '%' : v; } },
+          },
+        },
+      },
+    });
+  }
+
+  // ── Export menu plumbing (mirrors PR) ─────────────────────────────
+  function crSetExportMenuOpen_(open) {
+    const btn  = $('cr-export-btn');
+    const menu = $('cr-export-menu');
+    if (!btn || !menu) return;
+    menu.style.display = open ? '' : 'none';
+    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    btn.classList.toggle('open', open);
+  }
+
+  function crPrint_() {
+    document.body.classList.add('cr-printing');
+    window.print();
+    document.body.classList.remove('cr-printing');
+  }
+
+  function crBtnFeedback_(label, holdMs) {
+    const btn = $('cr-export-btn');
+    if (!btn) return function () {};
+    if (!btn.dataset.label) btn.dataset.label = btn.innerHTML;
+    btn.disabled = true;
+    btn.textContent = label;
+    if (holdMs) setTimeout(function () { btn.innerHTML = btn.dataset.label; btn.disabled = false; }, holdMs);
+    return function restore() { btn.innerHTML = btn.dataset.label; btn.disabled = false; };
+  }
+
+  function crBuildCanvas_(onDone) {
+    const root = $('compare-results');
+    if (!root) return;
+    // Pre-render the chart canvas (no inactive tabs to worry about
+    // since CR uses a single chart instance, but resize for safety
+    // and consistency with the other reports' export pattern).
+    if (crChartInstance) crChartInstance.resize();
+    requestAnimationFrame(function () { requestAnimationFrame(function () {
+      const canvasMap = {};
+      root.querySelectorAll('canvas').forEach(function (cvs) {
+        canvasMap[cvs.id] = cvs.toDataURL('image/png');
+      });
+      html2canvas(root, {
+        scale: 2, useCORS: true, backgroundColor: '#f4f6f9',
+        onclone: function (clonedDoc) {
+          const btns = clonedDoc.querySelector('#compare-results .ir-action-buttons');
+          if (btns) btns.style.display = 'none';
+          const tabs = clonedDoc.getElementById('cr-chart-tabs');
+          if (tabs) tabs.style.display = 'none';
+          const toggle = clonedDoc.getElementById('cr-datalabels-box');
+          if (toggle) toggle.style.display = 'none';
+          const status = clonedDoc.getElementById('cr-results-status');
+          if (status) status.style.display = 'none';
+          clonedDoc.querySelectorAll('.ir-copy-tsv').forEach(function (b) { b.style.display = 'none'; });
+          Object.keys(canvasMap).forEach(function (id) {
+            const cvs = clonedDoc.getElementById(id);
+            if (!cvs) return;
+            const img = clonedDoc.createElement('img');
+            img.src = canvasMap[id];
+            img.style.width = '100%';
+            img.style.height = 'auto';
+            img.style.display = 'block';
+            cvs.parentNode.replaceChild(img, cvs);
+          });
+        },
+      }).then(function (canvas) { onDone(canvas); });
+    }); });
+  }
+
+  function crCopyImage_() {
+    const restore = crBtnFeedback_('Capturing…', 0);
+    crBuildCanvas_(function (canvas) {
+      canvas.toBlob(function (blob) {
+        if (navigator.clipboard && window.ClipboardItem) {
+          navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
+            .then(function () { restore(); crBtnFeedback_('Copied!', 1200); },
+                  function (err) {
+                    crSetResultsStatus('error', 'Clipboard copy failed: ' + (err && err.message ? err.message : err));
+                    restore();
+                  });
+        } else {
+          crSetResultsStatus('error', 'Clipboard API not available in this browser.');
+          restore();
+        }
+      }, 'image/png');
+    });
+  }
+
+  function crEmailImage_() {
+    const restore = crBtnFeedback_('Capturing…', 0);
+    crBuildCanvas_(function (canvas) {
+      const dataUrl = canvas.toDataURL('image/png');
+      crBtnFeedback_('Sending…', 0);
+      google.script.run
+        .withSuccessHandler(function (res) {
+          restore();
+          crBtnFeedback_('Sent to ' + (res && res.to ? res.to : 'you'), 2000);
+        })
+        .withFailureHandler(function (err) {
+          crSetResultsStatus('error', 'Email failed: ' + (err && err.message ? err.message : err));
+          restore();
+        })
+        .sendCompareRangesEmail({
+          imageBase64: dataUrl,
+          p1Label: crLastData && crLastData.p1Label ? crLastData.p1Label : '',
+          p2Label: crLastData && crLastData.p2Label ? crLastData.p2Label : '',
+        });
+    });
+  }
+
+  // ── Prefs persistence (mirrors IR/PR) ─────────────────────────────
+  function crSavePrefs_() {
+    try {
+      const prefs = {
+        preset: $('cr-preset') ? $('cr-preset').value : 'custom',
+        p1From: $('cr-p1-from') ? $('cr-p1-from').value : '',
+        p1To:   $('cr-p1-to')   ? $('cr-p1-to').value   : '',
+        p2From: $('cr-p2-from') ? $('cr-p2-from').value : '',
+        p2To:   $('cr-p2-to')   ? $('cr-p2-to').value   : '',
+        agents: irGetCheckedAgents_($('cr-agent-list')),
+        showLabels: $('cr-show-datalabels') ? $('cr-show-datalabels').checked : false,
+        chartMetric: crActiveChartMetric,
+      };
+      localStorage.setItem(CR_PREFS_KEY, JSON.stringify(prefs));
+    } catch (e) { /* ignore */ }
+  }
+
+  function crRestorePrefs_() {
+    let prefs;
+    try {
+      const raw = localStorage.getItem(CR_PREFS_KEY);
+      if (!raw) return;
+      prefs = JSON.parse(raw);
+    } catch (e) { return; }
+    if (!prefs || typeof prefs !== 'object') return;
+    if (prefs.preset && $('cr-preset')) $('cr-preset').value = prefs.preset;
+    if (prefs.p1From && $('cr-p1-from')) $('cr-p1-from').value = prefs.p1From;
+    if (prefs.p1To   && $('cr-p1-to'))   $('cr-p1-to').value   = prefs.p1To;
+    if (prefs.p2From && $('cr-p2-from')) $('cr-p2-from').value = prefs.p2From;
+    if (prefs.p2To   && $('cr-p2-to'))   $('cr-p2-to').value   = prefs.p2To;
+    if (typeof prefs.showLabels === 'boolean' && $('cr-show-datalabels')) {
+      $('cr-show-datalabels').checked = prefs.showLabels;
+    }
+    if (prefs.chartMetric) crActiveChartMetric = prefs.chartMetric;
+    // Sync chart-tab DOM to restored metric.
+    const tabs = $('cr-chart-tabs');
+    if (tabs) tabs.querySelectorAll('.ir-tab').forEach(function (b) {
+      const active = b.getAttribute('data-metric') === crActiveChartMetric;
+      b.classList.toggle('active', active);
+      b.setAttribute('aria-selected', active ? 'true' : 'false');
+    });
+    if (Array.isArray(prefs.agents) && prefs.agents.length) {
+      crPendingAgentSelection_ = prefs.agents;
+    }
   }
 
   // Wait for DOM, then go.
