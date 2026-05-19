@@ -76,6 +76,44 @@ The Pass 1 finalization sets `entry.talkSec` per parent, but after the
 Bug 3 fix Pass 3 no longer reads it. Safe to delete in a future cleanup.
 Kept for now to minimize diff churn.
 
+### Roster-driven name canonicalization (paren-variant fix)
+
+**Status:** Fixed in `buildDQEHistoricalData.js`.
+
+**Symptom:** ~100+ employees have parenthesized nicknames in their
+roster name (e.g. `Roman (Robin) Paulose`). The upstream CDR feed
+occasionally writes the same person's leg without the parens
+(`Roman Robin Paulose`). Pre-fix, the two variants produced split
+daily rows for the same agent in `DQE Historical Data` and one of
+them silently dropped out of the dashboard's roster join (INV-04
+requires exact match).
+
+**Fix:** At the start of every build, `loadRosterCanonicalNames_`
+reads the `DO NOT EDIT!` sheet (same spreadsheet as Raw Data) and
+builds two lookups: a Set of all canonical names plus a
+`strippedForm -> [canonical, ...]` map. The agent-read loop calls
+`canonicalizeAgentName(rawName)`:
+
+1. If `rawName` exactly matches a roster entry → no-op.
+2. Else compute `stripParens_(rawName)` (drop `\([^)]*\)` segments).
+3. If exactly one roster entry has the same stripped form → use it.
+4. Otherwise (zero or >1 match) → write raw, same as before.
+
+Soft coupling: the pipeline now reads a sheet whose schema is owned
+by the dashboard. If the roster cell format changes
+(`"Name, ext1, ..."` → something else), update
+`loadRosterCanonicalNames_` and `Data.gs`'s `parseRosterCell_` in
+lockstep.
+
+**Historical rows** written before this fix keep their old names; no
+backfill ran. Either edit the stray cells manually or accept the
+small noise.
+
+**Why we didn't use a static alias map:** wouldn't scale to 100+
+paren employees; would require code edits per new hire. The roster
+is already the canonical source of "who works here" so deriving
+canonicalization rules from it is robust to new hires.
+
 ---
 
 ## Spreadsheet vs script timezone mismatch (Mexico City vs Chicago)
@@ -199,6 +237,28 @@ Keep it that way.
 
 ### Cache key version bumping
 
-`Data.gs` uses a versioned cache key (`'summary:vN:'`). Bump `N` whenever
-the response shape or aggregation rules change so stale caches invalidate
-on deploy. Current version: `v3` (scope param + diagnostics field added).
+Each report file uses its own versioned cache key prefix. Bump the
+version whenever the response shape or aggregation rules change so
+stale caches invalidate on deploy.
+
+| Source file | Cache prefix | Current version | Bumps on |
+|---|---|---|---|
+| `Data.gs` (main table) | `summary:vN:` | `v3` | scope param + diagnostics field added |
+| `IndividualReport.gs` | `individual:vN:` | `v4` | insight objects with `type` field (was bare strings) |
+| `IndividualReport.gs` (active-in-range subset shared by Individual + Performance pickers) | `individual_active:vN:` | `v1` | initial |
+| `PerformanceReport.gs` | `performance:vN:` | `v1` | initial |
+
+If you change ATT or % Answered semantics anywhere, you almost
+certainly need to bump every prefix downstream of it. When in doubt,
+bump.
+
+### Pipeline depends on the dashboard's roster sheet
+
+`buildDQEHistoricalData` (CDR Report project) reads `DO NOT EDIT!` —
+the dashboard's roster — for name canonicalization. See
+"Roster-driven name canonicalization" above. This is the only
+cross-project read; both projects live in the same spreadsheet so the
+coupling is layout-level, not deploy-level. If you ever move the
+roster to a different spreadsheet, update the pipeline's
+`loadRosterCanonicalNames_` to open by ID instead of from the active
+spreadsheet.

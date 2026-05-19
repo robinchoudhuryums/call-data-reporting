@@ -66,12 +66,35 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
 - **Roster cells embed extensions**: `DO NOT EDIT!` cells follow
   `"Name, ext1, ext2"`. Take everything before the first comma as the name;
   digit-only tokens after are queue extensions.
-- **Agent-name match is exact** — no case folding, no whitespace
-  normalization, no alias mapping. A typo on either side silently drops
-  the agent from their dept's view.
-- **ATT is the simple mean of stored per-row ATT values**, NOT weighted
-  `TTT / Answered`. The source's stored ATT denominator is sometimes ≠
-  Answered (a known source-pipeline quirk).
+- **Agent-name match at the dashboard layer is exact** — no case folding,
+  no whitespace normalization. The pipeline canonicalizes paren variants
+  to roster names before writing, so downstream code can rely on exact
+  match against the roster.
+- **Pipeline canonicalizes paren variants via the roster.**
+  `buildDQEHistoricalData` reads `DO NOT EDIT!` at the start of every
+  build; if an incoming CDR row's agent name's paren-stripped form
+  matches exactly one roster entry, the pipeline rewrites it to the
+  canonical roster form (so "Roman Robin Paulose" becomes
+  "Roman (Robin) Paulose"). Ambiguous (>1 match) and unknown (0
+  matches) names are written as-is. Soft coupling: the pipeline now
+  depends on the dashboard's roster sheet schema — see
+  `loadRosterCanonicalNames_` in the pipeline.
+- **ATT semantics differ between the main dashboard and the per-agent
+  reports.** Main dashboard table uses the SIMPLE MEAN of stored per-row
+  ATT values (INV-05); the Individual Report and Performance Report use
+  a WEIGHTED average (`sum(att * answered) / sum(answered)`) so days
+  where the agent didn't answer any calls don't drag the ATT down.
+  Intentional — matches the legacy reports they migrated from.
+- **`TEAM_AVG_EXCLUDES` in `Config.gs`** lists per-dept agent names to
+  subtract from BOTH numerator and denominator of the Individual
+  Report's team-average. Used for managers who are on the roster but
+  take only a token number of calls (currently
+  `'CSR': ['Robin Choudhury']`). Match is exact on the roster name.
+- **Performance Report prior period = same duration ending one day
+  before current start**, NOT "previous calendar month". A 31-day
+  current window compares against the immediately-preceding 31 days.
+  Surfaced in the form's inline hint + the results header so the
+  comparison basis is visible to users.
 - **`neonWrite.js` is duplicated** between `apps-script/cdr-report/` and
   `apps-script/cdr-import/`. Currently byte-identical. Any change to one
   is a two-file edit; `diff` before editing.
@@ -123,7 +146,7 @@ Data Accuracy (DQE), Access Control Integrity, Source Pipeline Reliability, Migr
 
 ### Subsystems
 Department Dashboard:
-  apps-script/department-dashboard/Auth.gs, apps-script/department-dashboard/Code.gs, apps-script/department-dashboard/Config.gs, apps-script/department-dashboard/Data.gs, apps-script/department-dashboard/Diagnostics.gs, apps-script/department-dashboard/Setup.gs, apps-script/department-dashboard/MissedCallsReport.gs, apps-script/department-dashboard/access_denied.html, apps-script/department-dashboard/dashboard.html, apps-script/department-dashboard/script.html, apps-script/department-dashboard/styles.html, apps-script/department-dashboard/appsscript.json
+  apps-script/department-dashboard/Auth.gs, apps-script/department-dashboard/Code.gs, apps-script/department-dashboard/Config.gs, apps-script/department-dashboard/Data.gs, apps-script/department-dashboard/Diagnostics.gs, apps-script/department-dashboard/Setup.gs, apps-script/department-dashboard/MissedCallsReport.gs, apps-script/department-dashboard/IndividualReport.gs, apps-script/department-dashboard/PerformanceReport.gs, apps-script/department-dashboard/access_denied.html, apps-script/department-dashboard/dashboard.html, apps-script/department-dashboard/script.html, apps-script/department-dashboard/styles.html, apps-script/department-dashboard/appsscript.json
 
 CDR DQE Pipeline:
   apps-script/cdr-report/buildDQEHistoricalData.js, apps-script/cdr-report/DQEdrilldown.js, apps-script/cdr-report/DQEDrilldownSidebar.html, apps-script/cdr-report/dataFilters.js, apps-script/cdr-report/CDR Tools menu.js, apps-script/cdr-report/appsscript.json
@@ -161,6 +184,14 @@ INV-20 | Time-slot columns K-AC in DQE Historical Data store CST timestamps (alr
 INV-21 | parentMap in buildDQEHistoricalData builds from rows with parentId='N/A' or ''; each parent leg's calleeName must be captured for findAgentTalkOnParent. | Subsystem: CDR DQE Pipeline
 INV-22 | DQE Report Legacy is frozen — accepts only deletions and minimal menu cleanups during migration; no new features or improvements. | Subsystem: DQE Report Legacy
 INV-23 | Queue-sentinel rows in DQE Historical Data carry queue-only abandoned data (no agent rang). Agent Name (col C) holds a queue identifier (`A_Q_*` or `Backup CSR`); col D holds the queue's extensions; K-AC, AD, AF are populated normally; cols E-J and AG/AH are 0/"0:00:00". Consumers must filter these out by agent-name pattern: the main per-agent dashboard (Data.gs) and Diagnostics (whyNoMatches) skip them; MissedCallsReport.gs reads them specifically for the queue-only section. | Subsystem: CDR DQE Pipeline / Department Dashboard
+INV-24 | buildDQEHistoricalData canonicalizes raw CDR agent names against the DO NOT EDIT! roster on every build: if the paren-stripped form of an incoming name matches exactly one roster entry, the row is written under that roster name. Ambiguous (>1 match) or unknown (0 match) names are written as-is. Soft coupling: pipeline depends on the dashboard's roster sheet schema. Edits to roster layout must keep `loadRosterCanonicalNames_` working. | Subsystem: CDR DQE Pipeline
+INV-25 | The Individual Report and Performance Report compute ATT as weighted by Answered (`sum(att * answered) / sum(answered)`), NOT the simple-mean used by the main dashboard table (INV-05). Days with answered=0 contribute 0 to both numerator and denominator, so unanswered/abandoned days don't drag the ATT down. Intentional — matches each legacy report's source semantics. | Subsystem: Department Dashboard
+INV-26 | TEAM_AVG_EXCLUDES in Config.gs lists per-dept agent names removed from BOTH numerator and denominator of the Individual Report's team-average. Used for managers on the roster who take only a token number of calls (current entry: 'CSR': ['Robin Choudhury']). Match is exact on the roster name. Does NOT apply to the Performance Report, which treats the user's selection AS the team. | Subsystem: Department Dashboard
+INV-27 | Individual Report's team-avg denominator counts only roster members with ANY call activity (rung/answered/missed > 0) in the selected range, NOT the full roster size. Zero-call roster members don't dilute the average. | Subsystem: Department Dashboard
+INV-28 | Performance Report's prior period is the immediately-preceding window of the same duration (durationDays before currentStart, ending one day before currentStart) -- NOT "previous calendar month". Documented in the form's inline hint and the results-header "Comparing against..." line. Match legacy SingleRangeReport semantics. | Subsystem: Department Dashboard
+INV-29 | Individual Report's monthly trend window: range itself when selected range > 366 days OR equals a full calendar year (Jan 1 - Dec 31 of one year); else `first-of-month(end - 12 months)` to `end`. Performance Report uses identical logic so the 12-mo trends align across both reports for the same dept. | Subsystem: Department Dashboard
+INV-30 | Each report has its own versioned cache key prefix; bump on any aggregation rule change so stale entries don't bleed in. Current: `summary:v3` (Data.gs), `individual:v4` (IndividualReport.gs), `individual_active:v1` (active-agents-in-range subset used by both Individual + Performance pickers), `performance:v1` (PerformanceReport.gs). | Subsystem: Department Dashboard
+INV-31 | `script.send_mail` OAuth scope in appsscript.json is required for Individual Report + Performance Report "Email image" exports via MailApp. Removing the scope breaks both reports' email path; adding new send-mail features here doesn't need a re-scope. | Subsystem: Department Dashboard
 
 ### Policy Configuration
 Policy threshold: 6/10
@@ -225,6 +256,43 @@ S10 | setup() is safely re-runnable | Subsystem: Department Dashboard
     - Run setup() in editor.
     - Run again.
   Expected: first run creates Access Control if missing; second logs "already exists, skipping" — no data overwrite.
+
+S11 | Individual Report renders for one agent with monthly trend | Subsystem: Department Dashboard
+  Steps:
+    - Open dashboard. Click Individual Report.
+    - Pick a single agent + a date range that includes activity.
+    - Generate.
+  Expected: KPI tiles per agent (with sparklines), insights callout (if rules trigger), three trend charts in tabs (Volume / Efficiency / Duration). 1 agent = "Individual Performance Report" title. Edit-selection popover in the results header re-runs without going back to the form.
+
+S12 | Individual Report peer comparison with shared legend | Subsystem: Department Dashboard
+  Steps:
+    - Open Individual Report. Pick 2+ agents in the picker.
+    - Generate.
+  Expected: title flips to "Peer Comparison Report"; shared chip legend renders above the chart tabs; clicking a chip hides that agent's series across all three charts; hovering dims the others.
+
+S13 | Individual Report agent picker active/inactive grouping | Subsystem: Department Dashboard
+  Steps:
+    - Open Individual Report; pick a date range with known no-data agents.
+    - Wait for active set to load (350ms debounce after last date edit).
+  Expected: picker splits into "Active in range (N)" and "No activity in range (N)"; inactive items are muted but still pickable; search box filters live across both groups.
+
+S14 | Performance Report current vs prior deltas | Subsystem: Department Dashboard
+  Steps:
+    - Open Performance Report. Pick the full dept roster + "Last month".
+    - Generate.
+  Expected: 6 KPI tiles with delta vs the immediately-preceding 30 days; Missed delta colored as orange when above; Rung/Answered/% Answered colored blue when above; TTT/ATT always neutral. "Comparing against..." line + form hint both show the explicit prior dates.
+
+S15 | Pipeline canonicalizes paren-variant agent names | Subsystem: CDR DQE Pipeline
+  Steps:
+    - In Raw Data, ensure a leg exists with calleeName "Roman Robin Paulose" (no parens) on a date where the roster has "Roman (Robin) Paulose".
+    - Run buildDQEHistoricalData for that day.
+  Expected: the resulting DQE Historical Data row's Agent Name (col C) is "Roman (Robin) Paulose" -- consolidated under the canonical form. No duplicate rows for the same person on the same day.
+
+S16 | Export menu captures all chart tabs | Subsystem: Department Dashboard
+  Steps:
+    - Generate any Individual or Performance Report.
+    - Without clicking through every chart tab, click Export -> Email image.
+  Expected: emailed PNG contains all three chart panels rendered (not blank slots). Same expectation for Copy image and Print.
 
 ### Frozen Subsystems
 - DQE Report Legacy — manager-facing reports in `apps-script/dqe-report/`. Frozen because being migrated into Department Dashboard one report at a time (FAQ migrated; Missed Calls Report in progress as of this setup). Replacement: Department Dashboard. Unfreeze conditions: migration abandoned (unlikely), or a discovered bug in a not-yet-migrated report that affects manager decisions immediately.

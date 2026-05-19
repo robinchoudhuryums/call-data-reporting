@@ -85,14 +85,22 @@ may reference it. Don't touch it without checking.
 
 ## Agent name matching
 
-**Exact string match.** No normalization for whitespace, case, or
-parenthetical aliases.
+**Exact string match at the dashboard layer.** No normalization for
+whitespace or case at read time. The pipeline canonicalizes
+parenthesized-nickname variants against the roster before writing, so
+the exact match stays reliable across CDR feed spelling variations.
 
 - `DQE Historical Data` Col C (Agent Name) must match `DO NOT EDIT!`
   cell values byte-for-byte (after the cell is parsed via the rules
   above).
-- A typo on either side causes the agent to silently disappear from
-  their dept's view.
+- A typo on either side that is *not* just a parens difference will
+  still cause the agent to silently disappear from their dept's view.
+- Paren-variant case: `buildDQEHistoricalData` reads the roster once
+  per build; any incoming CDR row whose paren-stripped name matches
+  exactly one roster entry is rewritten to the roster's canonical
+  form. So roster `Roman (Robin) Paulose` consolidates an incoming
+  `Roman Robin Paulose`. See `docs/known-issues.md` → "Roster-driven
+  name canonicalization" for details + edge cases.
 - The Department Dashboard surfaces orphans in its Diagnostics panel
   (and via the `whyNoMatches` editor diagnostic) — check there first
   when an expected agent doesn't show up.
@@ -130,6 +138,27 @@ For multi-row ranges, simple mean is also what the abd-wait columns do
 
 If we ever fix the source ATT to truly equal `TTT / Answered`, we can
 switch the dashboard to weighted without managers noticing a change.
+
+### Why Individual / Performance Reports use weighted ATT
+
+The Individual Report and Performance Report compute ATT as
+`sum(att * answered) / sum(answered)` across days in range, NOT the
+simple mean above. Two reasons:
+
+1. **Matches the legacy reports each migrated from.** Both were
+   weighted in the DQE Report spreadsheet — switching to simple mean
+   would have visibly changed manager-facing numbers on the same data.
+2. **Days with answered=0 contribute 0 to both numerator and
+   denominator**, so unanswered/abandoned days don't drag the ATT
+   down. Useful for agents who routinely have low-activity days
+   (sick leave, training, etc.).
+
+If you ever consolidate ATT semantics across all dashboard surfaces,
+you'll need to either also fix the main table (and accept managers
+seeing different numbers) or accept that the two surfaces serve
+slightly different reading semantics. Document any change in
+`known-issues.md` and bump every cache prefix
+(`summary:`, `individual:`, `performance:`).
 
 ### Totals row
 
@@ -185,8 +214,71 @@ a redeploy.
 - Constants: `UPPER_SNAKE_CASE` (`ADMIN_EMAILS`, `CACHE_TTL_SECONDS`,
   `ROSTER`, `HISTORICAL_COLS`).
 
+## Per-report semantics
+
+### Individual / Peer Comparison Report
+
+- **Mode** is chosen by the picker, not the user: 1 selected agent =
+  Individual; 2+ = Peer Comparison.
+- **Team avg denominator** = count of roster agents with *any* call
+  activity in the selected range. Zero-call roster members are
+  excluded so they don't dilute the per-agent baseline (INV-27).
+- **`TEAM_AVG_EXCLUDES` config** (`Config.gs`) is a per-dept map of
+  agent names removed from BOTH numerator and denominator of the team
+  avg. Used for managers on the roster who take only a token number
+  of calls. Current entry: `'CSR': ['Robin Choudhury']`. Match is
+  exact on the roster name. To remove your own name from the team
+  baseline for some dept, append it to this map. Does NOT apply to
+  the Performance Report.
+- **Trend window**: range itself when selected range > 366 days OR
+  equals a full calendar year (Jan 1 - Dec 31); else
+  `first-of-month(end - 12 months)` to `end`. Performance Report
+  uses the same logic so the two reports' 12-mo trends align.
+- **Insights** are objects `{ type, text }` where `type ∈
+  {positive, negative, neutral}`. The UI renders a colored circular
+  marker before the text (blue ↑ / orange ↓ / grey •). Direction
+  encoding doubles up color + arrow shape for CVD users. ATT
+  comparisons are always neutral by policy — longer can mean
+  thorough service or slow handling, depends on context.
+
+### Performance Report
+
+- **Treats the user's selection AS the team** — the team total = sum
+  over the SELECTED agents only, not the full roster. To get
+  full-dept totals, select the full roster from the picker.
+- **`TEAM_AVG_EXCLUDES` does NOT apply.** If you don't want a
+  manager's calls in the totals, just don't select them.
+- **Prior period = same duration ending one day before current
+  start** (INV-28). A 31-day current window compares against the
+  immediately-preceding 31 days, NOT against the previous calendar
+  month. So "Last Month" preset for Dec (31 days) compares against
+  Oct 31 - Nov 30 (31 days). Surfaced in the form's inline hint +
+  the results header.
+- **Delta semantics**:
+  - Volume metrics (Rung / Missed / Answered / TTT): relative
+    percent change `((curr - prev) / prev) * 100`. `0 -> 0` returns
+    `0`; `0 -> nonzero` returns `+100`.
+  - % Answered: ABSOLUTE point difference `(curr_pct - prev_pct)`.
+    Multiplying a percentage by a percentage reads as confusing.
+  - ATT: relative percent change of the weighted average.
+- **Delta valence (UI coloring)**:
+  - Rung / Answered / % Answered: above = blue (positive)
+  - Missed: above = orange (negative)
+  - TTT / ATT: always neutral grey
+
 ## Cache key versioning
 
-`Data.gs` uses a versioned cache key (`'summary:v3:...'`). Bump the
+Each report file uses its own versioned cache key prefix. Bump the
 version any time the response shape or aggregation rules change so
-stale caches invalidate on deploy. Currently `v3`.
+stale caches invalidate on deploy.
+
+| Source file | Cache prefix | Current version |
+|---|---|---|
+| `Data.gs` (main table) | `summary:vN:` | `v3` |
+| `IndividualReport.gs` | `individual:vN:` | `v4` |
+| `IndividualReport.gs` (active-in-range subset, shared with picker) | `individual_active:vN:` | `v1` |
+| `PerformanceReport.gs` | `performance:vN:` | `v1` |
+
+If you change ATT or % Answered semantics anywhere, bump every
+downstream prefix — they share helpers (`formatSecondsHms_`,
+`parseHmsDisplay_`) and a behavior change can leak across.
