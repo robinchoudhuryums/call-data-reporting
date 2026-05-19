@@ -1252,10 +1252,17 @@
             + '</div>'
             + '<div class="ir-agent-group">' + irAgentItemsHtml_(active) + '</div>';
     }
-    html += '<div class="ir-agent-group-label ir-agent-group-label-muted">'
-          + 'No activity in range <span class="ir-agent-group-count">(' + inactive.length + ')</span>'
-          + '</div>'
-          + '<div class="ir-agent-group ir-agent-group-muted">' + irAgentItemsHtml_(inactive) + '</div>';
+    // Inactive group wrapped in <details>, collapsed by default --
+    // managers rarely need to pick zero-activity agents and the
+    // collapsed state cleans up the picker. Search auto-expands it
+    // (see irFilterAgentList_) when a query matches an inactive
+    // name.
+    html += '<details class="ir-agent-details">'
+          +   '<summary class="ir-agent-group-label ir-agent-group-label-muted">'
+          +     'No activity in range <span class="ir-agent-group-count">(' + inactive.length + ')</span>'
+          +   '</summary>'
+          +   '<div class="ir-agent-group ir-agent-group-muted">' + irAgentItemsHtml_(inactive) + '</div>'
+          + '</details>';
     return html;
   }
 
@@ -1272,7 +1279,10 @@
   /**
    * Client-side substring filter across whatever list element is
    * passed (main form picker or edit-popover list). Hides items +
-   * group-labels whose visible text doesn't match the query.
+   * group-labels whose visible text doesn't match the query. The
+   * collapsed "No activity in range" <details> auto-expands while
+   * the query is non-empty so users can see matches inside it
+   * without manually clicking the disclosure.
    */
   function irFilterAgentList_(listEl, query) {
     if (!listEl) return;
@@ -1282,12 +1292,23 @@
       const name = (it.textContent || '').trim().toLowerCase();
       it.style.display = (!q || name.indexOf(q) !== -1) ? '' : 'none';
     });
-    // Hide a group label if no items in its group are visible.
+    // For each agent-group container: hide if no children are
+    // visible. Two structural shapes:
+    //   1. Group is inside a <details> (the "No activity" wrapper)
+    //      -- toggle the details visibility + auto-open on search.
+    //   2. Standalone group (the "Active" block) -- also hide its
+    //      previous-sibling label.
     listEl.querySelectorAll('.ir-agent-group').forEach(function (g) {
       const anyVisible = Array.prototype.some.call(
         g.querySelectorAll('.ir-agent-item'),
         function (it) { return it.style.display !== 'none'; }
       );
+      const det = g.closest('details');
+      if (det) {
+        det.style.display = anyVisible ? '' : 'none';
+        if (q && anyVisible) det.open = true;
+        return;
+      }
       g.style.display = anyVisible ? '' : 'none';
       const prevLabel = g.previousElementSibling;
       if (prevLabel && prevLabel.classList.contains('ir-agent-group-label')) {
@@ -2226,6 +2247,12 @@
     const backBtn = $('pr-back-btn');
     if (backBtn) backBtn.addEventListener('click', showPrForm);
 
+    // Data-labels toggle: re-renders all three charts in place.
+    const labelToggle = $('pr-show-datalabels');
+    if (labelToggle) labelToggle.addEventListener('change', function () {
+      if (prLastData) prRenderCharts_(prLastData);
+    });
+
     // Chart-tab wiring (shared CSS but separate elements).
     const tabContainer = $('pr-chart-tabs');
     if (tabContainer) tabContainer.addEventListener('click', function (e) {
@@ -2590,7 +2617,14 @@
     prChartInstances.forEach(function (c) { c.destroy(); });
     prChartInstances = [];
 
-    // Pie: share of answered.
+    const showLabels = $('pr-show-datalabels') ? $('pr-show-datalabels').checked : true;
+    // Per-chart registration (rather than Chart.register'ing
+    // globally) so the Missed Calls bar chart isn't affected by
+    // the data labels plugin.
+    const prPlugins = (typeof ChartDataLabels !== 'undefined') ? [ChartDataLabels] : [];
+
+    // Pie: share of answered. Labels show "N (X%)" inside each
+    // slice when the toggle is on; hidden when off.
     const pieData = (data.chartData && data.chartData.sharePie) || [];
     const pieColors = pieData.map(function (_, i) {
       return IR_CHART_COLORS[i % IR_CHART_COLORS.length];
@@ -2606,6 +2640,7 @@
           borderWidth: 2,
         }],
       },
+      plugins: prPlugins,
       options: {
         responsive: true, maintainAspectRatio: false, animation: false,
         plugins: {
@@ -2619,12 +2654,30 @@
               },
             },
           },
+          datalabels: {
+            display: function (ctx) {
+              if (!showLabels) return false;
+              // Don't render labels on tiny slices -- they overlap
+              // and look messy. Threshold: < 4% of total.
+              const total = ctx.dataset.data.reduce(function (a, b) { return a + b; }, 0);
+              return total > 0 && (ctx.dataset.data[ctx.dataIndex] / total) >= 0.04;
+            },
+            color: '#fff',
+            font: { size: 11, weight: 'bold' },
+            textAlign: 'center',
+            formatter: function (value, ctx) {
+              const total = ctx.dataset.data.reduce(function (a, b) { return a + b; }, 0);
+              const pct = total > 0 ? (value / total * 100).toFixed(1) : '0';
+              return value + '\n(' + pct + '%)';
+            },
+          },
         },
       },
     });
     prChartInstances.push(pie);
 
     // Stacked bar: Answered (green) + Missed (orange) per agent.
+    // Labels render on each segment; zero-segments are blanked.
     const volData = (data.chartData && data.chartData.volumeBar) || [];
     const bar = new Chart($('pr-volume-chart').getContext('2d'), {
       type: 'bar',
@@ -2637,9 +2690,18 @@
             backgroundColor: IR_VOLUME_COLORS.missed,   stack: 'vol' },
         ],
       },
+      plugins: prPlugins,
       options: {
         responsive: true, maintainAspectRatio: false, animation: false,
-        plugins: { legend: { position: 'bottom' } },
+        plugins: {
+          legend: { position: 'bottom' },
+          datalabels: {
+            display: showLabels,
+            color: '#fff',
+            font: { size: 10, weight: 'bold' },
+            formatter: function (value) { return value > 0 ? value : ''; },
+          },
+        },
         scales: {
           x: { stacked: true, ticks: { autoSkip: false, maxRotation: 30, minRotation: 0 } },
           y: { stacked: true, beginAtZero: true },
@@ -2649,6 +2711,7 @@
     prChartInstances.push(bar);
 
     // Trend line: team Answered count per month over 12-mo window.
+    // Labels float above each point in pill style (matches IR).
     const labels = (data.trendData && data.trendData.labels) || [];
     const series = (data.trendData && data.trendData.series) || [];
     const trend = new Chart($('pr-trend-chart').getContext('2d'), {
@@ -2668,9 +2731,22 @@
           pointRadius: 3, pointHoverRadius: 5,
         }],
       },
+      plugins: prPlugins,
       options: {
         responsive: true, maintainAspectRatio: false, animation: false,
-        plugins: { legend: { display: false } },
+        plugins: {
+          legend: { display: false },
+          datalabels: {
+            display: showLabels,
+            align: 'top', anchor: 'center',
+            backgroundColor: 'rgba(255,255,255,0.9)',
+            borderColor: IR_VOLUME_COLORS.answered,
+            borderWidth: 1, borderRadius: 3,
+            color: IR_VOLUME_COLORS.answered,
+            font: { size: 10, weight: 'bold' },
+            formatter: function (value) { return value > 0 ? value : ''; },
+          },
+        },
         scales: { y: { beginAtZero: true } },
       },
     });
@@ -2733,6 +2809,8 @@
           if (btns) btns.style.display = 'none';
           const tabs = clonedDoc.getElementById('pr-chart-tabs');
           if (tabs) tabs.style.display = 'none';
+          const toggle = clonedDoc.getElementById('pr-datalabels-box');
+          if (toggle) toggle.style.display = 'none';
           const status = clonedDoc.getElementById('pr-results-status');
           if (status) status.style.display = 'none';
           clonedDoc.querySelectorAll('#pr-charts-container [data-panel]').forEach(function (p) {

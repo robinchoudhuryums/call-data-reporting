@@ -830,6 +830,30 @@
   }
   .ir-agent-group-muted .ir-agent-item input { accent-color: #9ca3af; }
 
+  /* Collapsible inactive group. Hides the default disclosure marker
+     and renders our own caret next to the label that rotates when
+     the details element is open. */
+  .ir-agent-details { grid-column: 1 / -1; }
+  .ir-agent-details > summary {
+    cursor: pointer;
+    list-style: none;
+    user-select: none;
+  }
+  .ir-agent-details > summary::-webkit-details-marker { display: none; }
+  .ir-agent-details > summary::before {
+    content: "\25B8";   /* right-pointing triangle */
+    display: inline-block;
+    width: 12px;
+    font-size: 10px;
+    color: #9ca3af;
+    margin-right: 2px;
+    transition: transform 0.15s ease;
+  }
+  .ir-agent-details[open] > summary::before {
+    transform: rotate(90deg);
+  }
+  .ir-agent-details > .ir-agent-group { margin-top: 6px; }
+
   /* Search row shared by main form picker and edit popover. */
   .ir-search-row { margin-bottom: 8px; }
   .ir-search-row input[type="search"] {
@@ -1434,6 +1458,7 @@
     body.pr-printing #performance-modal .modal-close,
     body.pr-printing #performance-results .ir-action-buttons,
     body.pr-printing #pr-chart-tabs,
+    body.pr-printing #pr-datalabels-box,
     body.pr-printing #pr-results-status {
       display: none !important;
     }
