@@ -892,7 +892,35 @@
   // The agent roster is fetched once on first open per dept; if the
   // user switches dept on the main page (admin only), we re-fetch.
 
-  const IR_CHART_COLORS = ['#007bff', '#28a745', '#dc3545', '#fd7e14', '#6610f2', '#17a2b8'];
+  // Tableau-10-derived palette; tested against deuteranopia + protanopia
+  // simulators. Chart series cycle through this for peer comparison.
+  const IR_CHART_COLORS = [
+    '#4E79A7', '#F28E2B', '#76B7B2', '#59A14F', '#EDC948',
+    '#B07AA1', '#FF9DA7', '#9C755F', '#BAB0AC', '#E15759',
+  ];
+
+  // Used in Individual mode where the three Rung/Answered/Missed
+  // series should be unambiguous even for color-blind viewers.
+  // Blue / Teal / Orange instead of red/green for the missed series.
+  const IR_VOLUME_COLORS = {
+    rung:     '#4E79A7',  // blue
+    answered: '#59A14F',  // green (kept; "answered = good" reads well)
+    missed:   '#F28E2B',  // orange (replaces red; readable for CVD users)
+  };
+
+  // Translates a hex color to a Chart.js fill callback that paints a
+  // top-to-bottom gradient from the line color (alpha .25) down to
+  // transparent. Applied to every IR line chart so single-agent views
+  // have visual weight without dominating the comparison ones.
+  function irGradientFill_(chart, hexColor) {
+    const ctx = chart.ctx;
+    const area = chart.chartArea;
+    if (!area) return 'rgba(0,0,0,0)';
+    const gradient = ctx.createLinearGradient(0, area.top, 0, area.bottom);
+    gradient.addColorStop(0, hexColor + '40');   // hex + 25% alpha
+    gradient.addColorStop(1, hexColor + '00');   // fully transparent
+    return gradient;
+  }
 
   let irChartInstances = [];
   let irLastData = null;
@@ -957,6 +985,17 @@
 
     const emailBtn = $('ir-email-img-btn');
     if (emailBtn) emailBtn.addEventListener('click', irEmailImage);
+
+    const printBtn = $('ir-print-btn');
+    if (printBtn) printBtn.addEventListener('click', function () {
+      // A print stylesheet (styles.html @media print) hides the
+      // dashboard chrome and the modal backdrop / action buttons so
+      // only the report content lands on the page. Browser's
+      // built-in print preview can "save as PDF" for sharing.
+      document.body.classList.add('ir-printing');
+      window.print();
+      document.body.classList.remove('ir-printing');
+    });
 
     // Defaults: this-month-to-date.
     setIrDefaultDates();
@@ -1140,6 +1179,32 @@
     const container = $('ir-summary-container');
     if (!container) return;
 
+    // Friendly empty state when no selected agent had any call
+    // activity in range. Hides the trend chart trio too since it
+    // would just be 12 months of zeros.
+    const anyActivity = (summaryData || []).some(function (a) {
+      return a.raw.rung > 0 || a.raw.answered > 0 || a.raw.missed > 0;
+    });
+    if (!anyActivity) {
+      container.innerHTML =
+        '<div class="ir-empty-card">'
+        +   '<div class="ir-empty-icon">&#x1F4ED;</div>'
+        +   '<div class="ir-empty-title">No call data for this selection</div>'
+        +   '<div class="ir-empty-sub">No rung, answered, or missed calls for the selected '
+        +     'agent(s) in this date range. Try broadening the date range or picking '
+        +     'different agents.</div>'
+        + '</div>';
+      const charts = $('ir-charts-container');
+      if (charts) charts.style.display = 'none';
+      const toggle = $('ir-datalabels-box');
+      if (toggle) toggle.style.display = 'none';
+      return;
+    }
+    const charts = $('ir-charts-container');
+    if (charts) charts.style.display = '';
+    const toggle = $('ir-datalabels-box');
+    if (toggle) toggle.style.display = '';
+
     container.innerHTML = (summaryData || []).map(function (agent) {
       return '<div class="ir-summary-card">'
            +   '<div class="ir-summary-title">'
@@ -1240,23 +1305,41 @@
     const agents   = Object.keys(datasets);
     if (!agents.length) return;
 
+    // Build dataset descriptors with a `hexColor` field; the chart
+    // factory wires up gradient fill callbacks per-dataset against
+    // that color (so single-agent views feel less spartan).
+    const makeDs = function (label, vals, hex, opts) {
+      const o = opts || {};
+      return {
+        label: label,
+        data: vals,
+        borderColor: hex,
+        backgroundColor: hex,
+        hexColor: hex,
+        tension: 0.4,
+        fill: o.fill !== false,
+        pointBackgroundColor: hex,
+        pointBorderColor: '#fff',
+        pointBorderWidth: 1.5,
+        pointRadius: 3,
+        pointHoverRadius: 5,
+      };
+    };
+
     // Volume chart: in individual mode show Rung/Answered/Missed for
     // the single agent; in comparison mode show each agent's Answered.
     const volData = [];
     if (data.mode === 'individual') {
       const d = datasets[agents[0]];
-      volData.push({ label: 'Total Rung', data: d.map(function (x) { return x.rung; }),
-                     borderColor: IR_CHART_COLORS[0], backgroundColor: IR_CHART_COLORS[0], tension: 0.4 });
-      volData.push({ label: 'Answered',   data: d.map(function (x) { return x.answered; }),
-                     borderColor: IR_CHART_COLORS[1], backgroundColor: IR_CHART_COLORS[1], tension: 0.4 });
-      volData.push({ label: 'Missed',     data: d.map(function (x) { return x.missed; }),
-                     borderColor: IR_CHART_COLORS[2], backgroundColor: IR_CHART_COLORS[2], tension: 0.4 });
+      volData.push(makeDs('Total Rung', d.map(function (x) { return x.rung; }),     IR_VOLUME_COLORS.rung));
+      volData.push(makeDs('Answered',   d.map(function (x) { return x.answered; }), IR_VOLUME_COLORS.answered));
+      volData.push(makeDs('Missed',     d.map(function (x) { return x.missed; }),   IR_VOLUME_COLORS.missed));
     } else {
       agents.forEach(function (ag, i) {
         const color = IR_CHART_COLORS[i % IR_CHART_COLORS.length];
-        volData.push({ label: ag + ' (Ans)',
-                       data: datasets[ag].map(function (x) { return x.answered; }),
-                       borderColor: color, backgroundColor: color, tension: 0.4 });
+        volData.push(makeDs(ag + ' (Ans)',
+                            datasets[ag].map(function (x) { return x.answered; }),
+                            color));
       });
     }
     irCreateChart($('ir-vol-chart'), 'Call Volume', labels, volData,
@@ -1265,25 +1348,24 @@
     // Efficiency chart: % Answered per agent + a 95% goal line.
     const effData = agents.map(function (ag, i) {
       const color = IR_CHART_COLORS[i % IR_CHART_COLORS.length];
-      return {
-        label: ag + ' %',
-        data: datasets[ag].map(function (x) { return Number(x.pct.toFixed(1)); }),
-        borderColor: color, backgroundColor: color, tension: 0.4,
-      };
+      return makeDs(ag + ' %',
+                    datasets[ag].map(function (x) { return Number(x.pct.toFixed(1)); }),
+                    color);
     });
-    effData.push({ label: 'Goal', data: new Array(labels.length).fill(95),
-                   borderColor: '#ffc107', borderDash: [5, 5], pointRadius: 0 });
+    effData.push({
+      label: 'Goal', data: new Array(labels.length).fill(95),
+      borderColor: '#9CA3AF', borderDash: [4, 4], pointRadius: 0,
+      fill: false, tension: 0, hexColor: '#9CA3AF',
+    });
     irCreateChart($('ir-eff-chart'), '% Answered', labels, effData,
                   { isPercent: true, isTimeMinutes: false, showLabels: showLabels });
 
     // Duration chart: ATT in minutes (legacy converts seconds -> minutes).
     const durData = agents.map(function (ag, i) {
       const color = IR_CHART_COLORS[i % IR_CHART_COLORS.length];
-      return {
-        label: ag + ' ATT',
-        data: datasets[ag].map(function (x) { return Number((x.att / 60).toFixed(2)); }),
-        borderColor: color, backgroundColor: color, tension: 0.4,
-      };
+      return makeDs(ag + ' ATT',
+                    datasets[ag].map(function (x) { return Number((x.att / 60).toFixed(2)); }),
+                    color);
     });
     irCreateChart($('ir-dur-chart'), 'Avg Talk Time', labels, durData,
                   { isPercent: false, isTimeMinutes: true, showLabels: showLabels });
@@ -1308,6 +1390,18 @@
     // globally) so the existing Missed Calls bar chart isn't affected
     // by data labels. Falls back gracefully if the CDN didn't load.
     const irPlugins = (typeof ChartDataLabels !== 'undefined') ? [ChartDataLabels] : [];
+
+    // Replace each dataset's `backgroundColor` with a function that
+    // returns a vertical gradient (line color -> transparent) once
+    // the chart's chartArea exists. Skip if `fill: false` is set.
+    datasets.forEach(function (ds) {
+      if (ds.fill === false || !ds.hexColor) return;
+      const hex = ds.hexColor;
+      ds.backgroundColor = function (ctx) {
+        return irGradientFill_(ctx.chart, hex);
+      };
+    });
+
     const chart = new Chart(canvas.getContext('2d'), {
       type: 'line',
       data: { labels: labels, datasets: datasets },

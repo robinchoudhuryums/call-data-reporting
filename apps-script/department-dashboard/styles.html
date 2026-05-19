@@ -737,7 +737,48 @@
     background: #fff;
   }
   .ir-hint { font-size: 11px; color: #6b7280; margin-bottom: 8px; }
-  .ir-loader { padding: 8px; font-size: 12px; color: #6b7280; font-style: italic; }
+  .ir-loader { padding: 0; }
+  .ir-skeleton-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 6px;
+    padding: 10px;
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 4px;
+  }
+  .ir-skeleton-row {
+    height: 24px;
+    border-radius: 4px;
+    background: linear-gradient(90deg, #f3f4f6 0%, #e5e7eb 50%, #f3f4f6 100%);
+    background-size: 200% 100%;
+    animation: irShimmer 1.2s linear infinite;
+  }
+  .ir-skeleton-label {
+    text-align: center;
+    margin-top: 8px;
+    font-size: 11px;
+    color: #9ca3af;
+    font-style: italic;
+  }
+  @keyframes irShimmer {
+    0%   { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+
+  /* No-data empty state shown when every selected agent had zero
+     activity in the chosen range. */
+  .ir-empty-card {
+    background: #fff;
+    border: 1px dashed #d1d5db;
+    border-radius: 8px;
+    padding: 32px 24px;
+    text-align: center;
+    margin-bottom: 14px;
+  }
+  .ir-empty-icon  { font-size: 28px; opacity: 0.45; margin-bottom: 6px; }
+  .ir-empty-title { font-size: 14px; font-weight: 700; color: #374151; margin-bottom: 4px; }
+  .ir-empty-sub   { font-size: 12px; color: #6b7280; }
   .ir-agent-list {
     border: 1px solid #e5e7eb;
     border-radius: 4px;
@@ -853,9 +894,12 @@
     min-width: 60px;
     text-align: center;
   }
-  .ir-badge-pos { background: #d1fae5; color: #065f46; }
-  .ir-badge-neg { background: #fee2e2; color: #991b1b; }
-  .ir-badge-neu { background: #e5e7eb; color: #374151; }
+  /* Diverging blue (good) / orange (bad) pair instead of green/red:
+     readable for deuteranopia + protanopia users, who can't reliably
+     distinguish red and green badges. */
+  .ir-badge-pos { background: #DBEAFE; color: #1E40AF; }
+  .ir-badge-neg { background: #FFEDD5; color: #9A3412; }
+  .ir-badge-neu { background: #E5E7EB; color: #374151; }
 
   /* Charts: stacked grid. Volume goes full-width, efficiency + duration
      side-by-side below. */
@@ -901,4 +945,37 @@
 
   /* Reset .btn defaults that look out of place inside the modal. */
   #individual-modal .btn { width: auto; }
+
+  /* -------- Print stylesheet ------------------------------------- */
+  /* Only activates when the user clicks Print on the Individual
+     Report; the body gets `.ir-printing` set just before
+     window.print() and unset right after. Everything outside the
+     report panel is hidden so the page contains just the report. */
+  @media print {
+    body.ir-printing > .container { display: none !important; }
+    body.ir-printing .modal-backdrop { display: none !important; }
+    body.ir-printing #individual-modal {
+      position: static !important;
+      background: transparent !important;
+    }
+    body.ir-printing #individual-modal .modal-panel {
+      box-shadow: none !important;
+      border-radius: 0 !important;
+      max-width: 100% !important;
+      width: 100% !important;
+      max-height: none !important;
+      padding: 0 !important;
+      overflow: visible !important;
+    }
+    body.ir-printing #individual-form,
+    body.ir-printing .modal-close,
+    body.ir-printing #ir-action-buttons,
+    body.ir-printing #ir-datalabels-box,
+    body.ir-printing .ir-copy-tsv,
+    body.ir-printing #ir-results-status {
+      display: none !important;
+    }
+    body.ir-printing .ir-chart-wrap { page-break-inside: avoid; }
+    body.ir-printing .ir-summary-card { page-break-inside: avoid; }
+  }
 </style>

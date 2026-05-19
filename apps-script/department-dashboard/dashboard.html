@@ -196,7 +196,15 @@
 
         <div class="ir-section-title">2. Agents</div>
         <div class="ir-hint">Select 1 for Individual Report. Select multiple for Peer Comparison.</div>
-        <div id="ir-agent-loader" class="ir-loader">Loading agent roster&hellip;</div>
+        <div id="ir-agent-loader" class="ir-loader">
+          <div class="ir-skeleton-grid" aria-hidden="true">
+            <div class="ir-skeleton-row"></div><div class="ir-skeleton-row"></div>
+            <div class="ir-skeleton-row"></div><div class="ir-skeleton-row"></div>
+            <div class="ir-skeleton-row"></div><div class="ir-skeleton-row"></div>
+            <div class="ir-skeleton-row"></div><div class="ir-skeleton-row"></div>
+          </div>
+          <div class="ir-skeleton-label">Loading agent roster&hellip;</div>
+        </div>
         <div id="ir-agent-list" class="ir-agent-list" style="display:none;"></div>
         <div class="ir-agent-actions">
           <a href="#" id="ir-select-all">Select all</a>
@@ -219,6 +227,7 @@
             <button class="btn btn-secondary" id="ir-back-btn" type="button">&laquo; Back</button>
             <button class="btn btn-secondary" id="ir-copy-img-btn" type="button">Copy image</button>
             <button class="btn btn-secondary" id="ir-email-img-btn" type="button">Email image</button>
+            <button class="btn btn-secondary" id="ir-print-btn" type="button">Print</button>
           </div>
         </div>
 
