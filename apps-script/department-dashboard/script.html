@@ -986,6 +986,27 @@
     const emailBtn = $('ir-email-img-btn');
     if (emailBtn) emailBtn.addEventListener('click', irEmailImage);
 
+    // Chart panel tabs. Only one of the three charts is visible at
+    // a time so each gets the full container width. Default: Volume.
+    const tabContainer = $('ir-chart-tabs');
+    if (tabContainer) tabContainer.addEventListener('click', function (e) {
+      const tab = e.target.closest('.ir-tab');
+      if (!tab) return;
+      const which = tab.getAttribute('data-tab');
+      tabContainer.querySelectorAll('.ir-tab').forEach(function (b) {
+        const active = b.getAttribute('data-tab') === which;
+        b.classList.toggle('active', active);
+        b.setAttribute('aria-selected', active ? 'true' : 'false');
+      });
+      document.querySelectorAll('#ir-charts-container [data-panel]').forEach(function (p) {
+        p.style.display = p.getAttribute('data-panel') === which ? '' : 'none';
+      });
+      // Force the now-visible chart to resize against its newly-
+      // measurable container -- Chart.js can't compute layout while
+      // a panel is display:none, so we ask it explicitly.
+      irChartInstances.forEach(function (c) { c.resize(); });
+    });
+
     const printBtn = $('ir-print-btn');
     if (printBtn) printBtn.addEventListener('click', function () {
       // A print stylesheet (styles.html @media print) hides the
@@ -1171,8 +1192,25 @@
     $('ir-results-date').textContent = '(' + (data.dateLabel || '') + ')';
     showIrResults();
     irSetResultsStatus('');
+    // Reset to the Volume tab on each render so the user lands on
+    // the default view rather than wherever they happened to leave
+    // the previous report.
+    irResetTabsToVolume_();
     irRenderSummary(data.summaryData, data.teamAvg);
     irRenderCharts(data);
+  }
+
+  function irResetTabsToVolume_() {
+    const container = $('ir-chart-tabs');
+    if (!container) return;
+    container.querySelectorAll('.ir-tab').forEach(function (b) {
+      const active = b.getAttribute('data-tab') === 'vol';
+      b.classList.toggle('active', active);
+      b.setAttribute('aria-selected', active ? 'true' : 'false');
+    });
+    document.querySelectorAll('#ir-charts-container [data-panel]').forEach(function (p) {
+      p.style.display = p.getAttribute('data-panel') === 'vol' ? '' : 'none';
+    });
   }
 
   function irRenderSummary(summaryData, teamAvg) {
@@ -1198,72 +1236,143 @@
       if (charts) charts.style.display = 'none';
       const toggle = $('ir-datalabels-box');
       if (toggle) toggle.style.display = 'none';
+      const tabs = $('ir-chart-tabs');
+      if (tabs) tabs.style.display = 'none';
+      const sharedLegend = $('ir-shared-legend');
+      if (sharedLegend) sharedLegend.style.display = 'none';
       return;
     }
     const charts = $('ir-charts-container');
     if (charts) charts.style.display = '';
     const toggle = $('ir-datalabels-box');
     if (toggle) toggle.style.display = '';
+    const tabs = $('ir-chart-tabs');
+    if (tabs) tabs.style.display = '';
 
+    // KPI-tile layout per agent. Replaces the dense comparison
+    // table from Phase 1 with a row of metric tiles (big number,
+    // vs-team-avg delta badge, sparkline). Each tile's sparkline
+    // is drawn inline from irLastData.trendData -- no extra Chart
+    // instances created. Tiles per agent:
+    //   Total Rung | Answered | Missed | % Answered | Avg Talk Time
     container.innerHTML = (summaryData || []).map(function (agent) {
+      const trendForAgent = (irLastData && irLastData.trendData && irLastData.trendData.datasets)
+                          ? (irLastData.trendData.datasets[agent.name] || [])
+                          : [];
+      const safeName = escapeHtml(agent.name);
       return '<div class="ir-summary-card">'
            +   '<div class="ir-summary-title">'
-           +     escapeHtml(agent.name)
+           +     safeName
            +     ' <span class="ir-vs">vs Team Avg</span>'
-           +     ' <button type="button" class="ir-copy-tsv" data-agent="' + escapeHtml(agent.name) + '">Copy data</button>'
+           +     ' <button type="button" class="ir-copy-tsv" data-agent="' + safeName + '">Copy data</button>'
            +   '</div>'
-           +   '<table class="ir-comp-table">'
-           +     '<thead><tr>'
-           +       '<th>Metric</th>'
-           +       '<th>' + escapeHtml(agent.name) + '</th>'
-           +       '<th>Team Avg</th>'
-           +       '<th class="ir-diff-col">Diff</th>'
-           +     '</tr></thead>'
-           +     '<tbody>'
-           +       irRow('Total Rung',  agent.stats.rung,     teamAvg.rung,     irDiffBadge(agent.raw.rung,     teamAvg.raw.rung,        'pos'))
-           +       irRow('Answered',    agent.stats.answered, teamAvg.answered, irDiffBadge(agent.raw.answered, teamAvg.raw.answered,    'pos'))
-           +       irRow('Missed',      agent.stats.missed,   teamAvg.missed,   irDiffBadge(agent.raw.missed,   teamAvg.raw.missed,      'neg'))
-           +       irRow('% Answered',  agent.stats.pct,      teamAvg.pct,      irDiffBadge(agent.raw.pct,      teamAvg.raw.pctAnswered, 'pos'))
-           +       irRow('Talk Time (ATT)', agent.stats.att,  teamAvg.att,      irAttCompare(agent.raw.att, teamAvg.raw.att))
-           +     '</tbody>'
-           +   '</table>'
+           +   '<div class="ir-kpi-grid">'
+           +     irKpiTile('Total Rung',  agent.stats.rung,     teamAvg.rung,
+                            irDiffBadge(agent.raw.rung,     teamAvg.raw.rung,        'pos'),
+                            trendForAgent.map(function (x) { return x.rung; }),     IR_VOLUME_COLORS.rung)
+           +     irKpiTile('Answered',    agent.stats.answered, teamAvg.answered,
+                            irDiffBadge(agent.raw.answered, teamAvg.raw.answered,    'pos'),
+                            trendForAgent.map(function (x) { return x.answered; }), IR_VOLUME_COLORS.answered)
+           +     irKpiTile('Missed',      agent.stats.missed,   teamAvg.missed,
+                            irDiffBadge(agent.raw.missed,   teamAvg.raw.missed,      'neg'),
+                            trendForAgent.map(function (x) { return x.missed; }),   IR_VOLUME_COLORS.missed)
+           +     irKpiTile('% Answered',  agent.stats.pct,      teamAvg.pct,
+                            irDiffBadge(agent.raw.pct,      teamAvg.raw.pctAnswered, 'pos'),
+                            trendForAgent.map(function (x) { return x.pct; }),      '#4E79A7')
+           +     irKpiTile('Avg Talk',    agent.stats.att,      teamAvg.att,
+                            irAttCompare(agent.raw.att, teamAvg.raw.att),
+                            trendForAgent.map(function (x) { return x.att; }),      '#9C755F')
+           +   '</div>'
            + '</div>';
     }).join('');
 
-    // Wire copy-data-as-TSV buttons.
+    // Wire copy-data-as-TSV buttons (re-attaches every render; OK
+    // since `container.innerHTML` wipes the previous handlers too).
     container.querySelectorAll('.ir-copy-tsv').forEach(function (b) {
       b.addEventListener('click', function () {
+        // Build TSV from the card's KPI tiles: header + value rows.
         const card = b.closest('.ir-summary-card');
-        const table = card && card.querySelector('table');
-        if (!table) return;
-        let tsv = '';
-        Array.prototype.forEach.call(table.rows, function (row) {
-          tsv += Array.prototype.map.call(row.cells, function (c) {
-            return (c.innerText || '').replace(/\s+/g, ' ').trim();
-          }).join('\t') + '\n';
+        if (!card) return;
+        const rows = [];
+        rows.push(['Metric', 'Agent', 'Team Avg'].join('\t'));
+        card.querySelectorAll('.ir-kpi-tile').forEach(function (tile) {
+          const label = (tile.querySelector('.ir-kpi-label') || {}).textContent || '';
+          const value = (tile.querySelector('.ir-kpi-value') || {}).textContent || '';
+          const team  = (tile.querySelector('.ir-kpi-team')  || {}).textContent || '';
+          rows.push([label.trim(), value.trim(), team.replace(/^Team\s*/i, '').trim()].join('\t'));
         });
+        const tsv = rows.join('\n') + '\n';
         if (navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText(tsv).then(function () {
-            irFlashButton(b, 'Copied');
-          });
+          navigator.clipboard.writeText(tsv).then(function () { irFlashButton(b, 'Copied'); });
         }
       });
     });
+  }
+
+  /**
+   * Single KPI tile markup. `sparklineData` is a numeric array;
+   * `sparklineColor` is a hex.
+   */
+  function irKpiTile(label, value, teamVal, diffBadgeHtml, sparklineData, sparklineColor) {
+    const spark = irSparkline_(sparklineData || [], sparklineColor || '#4E79A7');
+    return '<div class="ir-kpi-tile">'
+         +   '<div class="ir-kpi-row-top">'
+         +     '<div class="ir-kpi-label">' + label + '</div>'
+         +     '<div class="ir-kpi-spark">' + spark + '</div>'
+         +   '</div>'
+         +   '<div class="ir-kpi-value">' + escapeHtml(String(value)) + '</div>'
+         +   '<div class="ir-kpi-row-bot">'
+         +     '<span class="ir-kpi-team">Team ' + escapeHtml(String(teamVal)) + '</span>'
+         +     diffBadgeHtml
+         +   '</div>'
+         + '</div>';
+  }
+
+  /**
+   * Inline SVG sparkline (no Chart.js dependency, no extra Chart
+   * instances). Returns the SVG markup as a string ready for
+   * innerHTML. Renders a 70x22 stroke with subtle area fill below;
+   * collapses to a flat baseline if all values are 0.
+   */
+  function irSparkline_(values, color) {
+    const W = 70, H = 22;
+    const n = (values || []).length;
+    if (n < 2) {
+      return '<svg class="ir-spark-svg" width="' + W + '" height="' + H + '"></svg>';
+    }
+    let min = Infinity, max = -Infinity;
+    for (let i = 0; i < n; i++) {
+      const v = Number(values[i]) || 0;
+      if (v < min) min = v;
+      if (v > max) max = v;
+    }
+    if (!isFinite(min) || !isFinite(max)) { min = 0; max = 0; }
+    const range = max - min;
+    const xStep = W / (n - 1);
+    const pad = 2;
+    const innerH = H - pad * 2;
+    const pts = [];
+    for (let i = 0; i < n; i++) {
+      const v = Number(values[i]) || 0;
+      const y = range === 0
+        ? H / 2
+        : pad + innerH - ((v - min) / range) * innerH;
+      pts.push((i * xStep).toFixed(1) + ',' + y.toFixed(1));
+    }
+    const linePath = 'M' + pts.join(' L');
+    const areaPath = linePath
+                   + ' L' + ((n - 1) * xStep).toFixed(1) + ',' + H
+                   + ' L0,' + H + ' Z';
+    return '<svg class="ir-spark-svg" width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '">'
+         +   '<path d="' + areaPath + '" fill="' + color + '" fill-opacity="0.15" stroke="none"/>'
+         +   '<path d="' + linePath + '" fill="none" stroke="' + color + '" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>'
+         + '</svg>';
   }
 
   function irFlashButton(btn, text) {
     const prev = btn.textContent;
     btn.textContent = text;
     setTimeout(function () { btn.textContent = prev; }, 1000);
-  }
-
-  function irRow(metric, agentVal, teamVal, diffHtml) {
-    return '<tr>'
-         +   '<td class="ir-metric">' + metric + '</td>'
-         +   '<td class="ir-agent-val">' + escapeHtml(String(agentVal)) + '</td>'
-         +   '<td class="ir-team-val">'  + escapeHtml(String(teamVal))  + '</td>'
-         +   '<td class="ir-diff-col">'  + diffHtml + '</td>'
-         + '</tr>';
   }
 
   function irDiffBadge(agentVal, teamVal, type) {
@@ -1307,7 +1416,9 @@
 
     // Build dataset descriptors with a `hexColor` field; the chart
     // factory wires up gradient fill callbacks per-dataset against
-    // that color (so single-agent views feel less spartan).
+    // that color (so single-agent views feel less spartan). The
+    // `_irAgent` tag lets the shared comparison-mode legend find a
+    // given agent's dataset across all three charts.
     const makeDs = function (label, vals, hex, opts) {
       const o = opts || {};
       return {
@@ -1316,6 +1427,7 @@
         borderColor: hex,
         backgroundColor: hex,
         hexColor: hex,
+        _irAgent: o.agent || null,
         tension: 0.4,
         fill: o.fill !== false,
         pointBackgroundColor: hex,
@@ -1339,36 +1451,104 @@
         const color = IR_CHART_COLORS[i % IR_CHART_COLORS.length];
         volData.push(makeDs(ag + ' (Ans)',
                             datasets[ag].map(function (x) { return x.answered; }),
-                            color));
+                            color, { agent: ag }));
       });
     }
     irCreateChart($('ir-vol-chart'), 'Call Volume', labels, volData,
-                  { isPercent: false, isTimeMinutes: false, showLabels: showLabels });
+                  { isPercent: false, isTimeMinutes: false, showLabels: showLabels, sharedLegend: data.mode === 'comparison' });
 
     // Efficiency chart: % Answered per agent + a 95% goal line.
     const effData = agents.map(function (ag, i) {
       const color = IR_CHART_COLORS[i % IR_CHART_COLORS.length];
       return makeDs(ag + ' %',
                     datasets[ag].map(function (x) { return Number(x.pct.toFixed(1)); }),
-                    color);
+                    color, { agent: ag });
     });
     effData.push({
       label: 'Goal', data: new Array(labels.length).fill(95),
       borderColor: '#9CA3AF', borderDash: [4, 4], pointRadius: 0,
-      fill: false, tension: 0, hexColor: '#9CA3AF',
+      fill: false, tension: 0, hexColor: '#9CA3AF', _irAgent: null,
     });
     irCreateChart($('ir-eff-chart'), '% Answered', labels, effData,
-                  { isPercent: true, isTimeMinutes: false, showLabels: showLabels });
+                  { isPercent: true, isTimeMinutes: false, showLabels: showLabels, sharedLegend: data.mode === 'comparison' });
 
     // Duration chart: ATT in minutes (legacy converts seconds -> minutes).
     const durData = agents.map(function (ag, i) {
       const color = IR_CHART_COLORS[i % IR_CHART_COLORS.length];
       return makeDs(ag + ' ATT',
                     datasets[ag].map(function (x) { return Number((x.att / 60).toFixed(2)); }),
-                    color);
+                    color, { agent: ag });
     });
     irCreateChart($('ir-dur-chart'), 'Avg Talk Time', labels, durData,
-                  { isPercent: false, isTimeMinutes: true, showLabels: showLabels });
+                  { isPercent: false, isTimeMinutes: true, showLabels: showLabels, sharedLegend: data.mode === 'comparison' });
+
+    irRenderSharedLegend(data, agents);
+  }
+
+  /**
+   * Single legend rendered ABOVE the chart-tab container in
+   * comparison mode (>1 agent). Clicking a chip toggles that
+   * agent's series visibility across all three charts; hovering
+   * highlights it across all three.
+   *
+   * In individual mode the shared legend is hidden -- the volume
+   * chart's three series (Rung/Answered/Missed) are unambiguous
+   * via their colored title legend within the chart itself, and
+   * Eff/Dur each have a single series.
+   */
+  function irRenderSharedLegend(data, agents) {
+    const el = $('ir-shared-legend');
+    if (!el) return;
+    if (data.mode !== 'comparison' || !agents.length) {
+      el.style.display = 'none';
+      el.innerHTML = '';
+      return;
+    }
+    const chips = agents.map(function (ag, i) {
+      const color = IR_CHART_COLORS[i % IR_CHART_COLORS.length];
+      const safe = escapeHtml(ag);
+      return '<button type="button" class="ir-legend-chip" data-agent="' + safe + '" '
+           + 'style="--chip-color: ' + color + ';">'
+           +   '<span class="ir-legend-swatch"></span>'
+           +   '<span class="ir-legend-name">' + safe + '</span>'
+           + '</button>';
+    }).join('');
+    el.innerHTML = chips;
+    el.style.display = '';
+
+    el.querySelectorAll('.ir-legend-chip').forEach(function (chip) {
+      const agent = chip.getAttribute('data-agent');
+      chip.addEventListener('click', function () {
+        const willHide = !chip.classList.contains('inactive');
+        chip.classList.toggle('inactive', willHide);
+        irChartInstances.forEach(function (chart) {
+          chart.data.datasets.forEach(function (ds, idx) {
+            if (ds._irAgent === agent) {
+              chart.getDatasetMeta(idx).hidden = willHide;
+            }
+          });
+          chart.update();
+        });
+      });
+      // Hover: dim the OTHER agents' series across all charts to
+      // emphasize the hovered one. Restore on mouseleave.
+      chip.addEventListener('mouseenter', function () { irHighlightAgent_(agent); });
+      chip.addEventListener('mouseleave', function () { irHighlightAgent_(null); });
+    });
+  }
+
+  function irHighlightAgent_(agent) {
+    irChartInstances.forEach(function (chart) {
+      chart.data.datasets.forEach(function (ds) {
+        if (ds._irAgent && ds.hexColor) {
+          // Faded if a specific agent is highlighted and this isn't them.
+          const dim = (agent !== null && ds._irAgent !== agent);
+          ds.borderColor = dim ? ds.hexColor + '33' : ds.hexColor;
+          ds.borderWidth = dim ? 1 : (agent && ds._irAgent === agent ? 3 : 2);
+        }
+      });
+      chart.update('none');
+    });
   }
 
   function irCreateChart(canvas, title, labels, datasets, opts) {
@@ -1413,7 +1593,11 @@
         devicePixelRatio: 1,
         plugins: {
           title:   { display: true, text: title },
-          legend:  { position: 'bottom', labels: { boxWidth: 10 } },
+          legend:  {
+            display: !opts.sharedLegend,
+            position: 'bottom',
+            labels: { boxWidth: 10 },
+          },
           datalabels: {
             display: showLabels,
             align: 'top', anchor: 'center',
@@ -1493,9 +1677,19 @@
         if (btns) btns.style.display = 'none';
         const toggle = clonedDoc.getElementById('ir-datalabels-box');
         if (toggle) toggle.style.display = 'none';
+        const tabs = clonedDoc.getElementById('ir-chart-tabs');
+        if (tabs) tabs.style.display = 'none';
         clonedDoc.querySelectorAll('.ir-copy-tsv').forEach(function (b) { b.style.display = 'none'; });
         const status = clonedDoc.getElementById('ir-results-status');
         if (status) status.style.display = 'none';
+
+        // In the tabbed UI only the active chart panel is visible,
+        // but a captured image should include all three. Force all
+        // panels visible in the clone and lay them out stacked.
+        clonedDoc.querySelectorAll('#ir-charts-container [data-panel]').forEach(function (p) {
+          p.style.display = '';
+          p.style.marginBottom = '14px';
+        });
 
         // Replace each <canvas> in the clone with an <img> of the
         // pre-captured PNG. Avoids the "blank chart" problem where

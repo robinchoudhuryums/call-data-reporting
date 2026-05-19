@@ -241,16 +241,24 @@
           </label>
         </div>
 
-        <div class="ir-chart-grid" id="ir-charts-container">
-          <div class="ir-chart-wrap ir-chart-wide" id="ir-wrap-vol">
+        <div class="ir-chart-tabs" id="ir-chart-tabs" role="tablist">
+          <button type="button" class="ir-tab active" data-tab="vol" role="tab" aria-selected="true">Volume</button>
+          <button type="button" class="ir-tab" data-tab="eff" role="tab" aria-selected="false">Efficiency</button>
+          <button type="button" class="ir-tab" data-tab="dur" role="tab" aria-selected="false">Duration</button>
+        </div>
+
+        <div id="ir-shared-legend" class="ir-shared-legend" style="display:none;"></div>
+
+        <div id="ir-charts-container" class="ir-chart-area">
+          <div class="ir-chart-wrap" id="ir-wrap-vol" data-panel="vol">
             <div class="ir-chart-header">Volume Trends</div>
             <div class="ir-chart-canvas-wrap"><canvas id="ir-vol-chart"></canvas></div>
           </div>
-          <div class="ir-chart-wrap" id="ir-wrap-eff">
+          <div class="ir-chart-wrap" id="ir-wrap-eff" data-panel="eff" style="display:none;">
             <div class="ir-chart-header">Efficiency (% Answered)</div>
             <div class="ir-chart-canvas-wrap"><canvas id="ir-eff-chart"></canvas></div>
           </div>
-          <div class="ir-chart-wrap" id="ir-wrap-dur">
+          <div class="ir-chart-wrap" id="ir-wrap-dur" data-panel="dur" style="display:none;">
             <div class="ir-chart-header">Duration (ATT)</div>
             <div class="ir-chart-canvas-wrap"><canvas id="ir-dur-chart"></canvas></div>
           </div>

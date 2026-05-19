@@ -861,30 +861,65 @@
   }
   .ir-copy-tsv:hover { background: #eef2ff; }
 
-  .ir-comp-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 13px;
+  /* KPI tile grid: a single row of metric tiles per agent. Big
+     number + sparkline up top, team-avg + delta badge below. */
+  .ir-kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 10px;
+  }
+  .ir-kpi-tile {
+    background: #f9fafb;
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
     font-variant-numeric: tabular-nums;
+    min-width: 0;
   }
-  .ir-comp-table th {
-    text-align: left;
-    padding: 6px 8px;
-    color: #6b7280;
-    border-bottom: 1px solid #e5e7eb;
-    font-size: 11px;
+  .ir-kpi-row-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+  }
+  .ir-kpi-label {
+    font-size: 10px;
+    font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.02em;
+    letter-spacing: 0.03em;
+    color: #6b7280;
   }
-  .ir-comp-table td {
-    padding: 7px 8px;
-    border-bottom: 1px solid #f3f4f6;
+  .ir-kpi-spark { height: 22px; line-height: 0; }
+  .ir-spark-svg { display: block; }
+  .ir-kpi-value {
+    font-size: 22px;
+    font-weight: 700;
     color: #111827;
+    line-height: 1.1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
-  .ir-comp-table .ir-metric { font-weight: 600; color: #4b5563; width: 26%; }
-  .ir-comp-table .ir-agent-val { font-weight: 700; width: 22%; }
-  .ir-comp-table .ir-team-val  { color: #6b7280; font-style: italic; width: 22%; }
-  .ir-comp-table .ir-diff-col  { width: 30%; text-align: right; }
+  .ir-kpi-row-bot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+  }
+  .ir-kpi-team {
+    font-size: 11px;
+    color: #6b7280;
+    font-style: italic;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  @media (max-width: 900px) {
+    .ir-kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
   .ir-badge {
     padding: 3px 8px;
     border-radius: 4px;
@@ -919,18 +954,76 @@
   .ir-toggle-label:hover { background: #f9fafb; }
   .ir-toggle-label input { margin-right: 6px; }
 
-  .ir-chart-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 14px;
+  /* Tabbed chart container: only one of Volume/Efficiency/Duration
+     is visible at a time so each gets the full container width. */
+  .ir-chart-tabs {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 8px;
+    border-bottom: 2px solid #e5e7eb;
   }
-  .ir-chart-wide { grid-column: 1 / -1; }
+  .ir-tab {
+    background: transparent;
+    border: 0;
+    padding: 8px 16px;
+    font-size: 13px;
+    font-weight: 600;
+    color: #6b7280;
+    cursor: pointer;
+    border-bottom: 3px solid transparent;
+    margin-bottom: -2px;
+    transition: color 0.15s, border-color 0.15s;
+  }
+  .ir-tab:hover { color: #1f2937; }
+  .ir-tab.active {
+    color: #1d4ed8;
+    border-bottom-color: #1d4ed8;
+  }
+
+  /* Shared chip legend rendered above the chart panels in
+     comparison mode. Each chip toggles its agent's series across
+     all three charts; hover dims the others. */
+  .ir-shared-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 8px 4px;
+    margin-bottom: 6px;
+  }
+  .ir-legend-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 10px 5px 6px;
+    background: #f9fafb;
+    border: 1px solid #e5e7eb;
+    border-radius: 999px;
+    font-size: 12px;
+    color: #1f2937;
+    cursor: pointer;
+    transition: opacity 0.15s, background 0.15s;
+  }
+  .ir-legend-chip:hover { background: #f3f4f6; }
+  .ir-legend-chip.inactive {
+    opacity: 0.42;
+    text-decoration: line-through;
+  }
+  .ir-legend-swatch {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--chip-color, #4E79A7);
+    flex-shrink: 0;
+  }
+  .ir-legend-name { font-weight: 600; }
+
+  .ir-chart-area { display: block; }
   .ir-chart-wrap {
     border: 1px solid #e5e7eb;
     border-radius: 8px;
     background: #fff;
     padding: 12px;
-    height: 320px;
+    height: 420px;
     display: flex;
     flex-direction: column;
   }
@@ -971,9 +1064,16 @@
     body.ir-printing .modal-close,
     body.ir-printing #ir-action-buttons,
     body.ir-printing #ir-datalabels-box,
+    body.ir-printing #ir-chart-tabs,
     body.ir-printing .ir-copy-tsv,
     body.ir-printing #ir-results-status {
       display: none !important;
+    }
+    /* Force all three chart panels visible for print -- the tab UI
+       only shows one at a time on screen. */
+    body.ir-printing #ir-charts-container [data-panel] {
+      display: flex !important;
+      margin-bottom: 14px !important;
     }
     body.ir-printing .ir-chart-wrap { page-break-inside: avoid; }
     body.ir-printing .ir-summary-card { page-break-inside: avoid; }
