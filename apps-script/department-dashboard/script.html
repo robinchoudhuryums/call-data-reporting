@@ -1412,8 +1412,34 @@
   }
 
   function toggleIrAgents(checked) {
-    $('ir-agent-list').querySelectorAll('.ir-agent-cb').forEach(function (cb) { cb.checked = checked; });
+    selectAllActiveAgents_($('ir-agent-list'), checked);
     updateIrGenerateEnabled();
+  }
+
+  /**
+   * Shared "Select all active / Select none" toggle. When checked
+   * is true, only the agents in the non-muted (Active in range)
+   * group are ticked -- the inactive group (hidden under the
+   * collapsible details) is left alone, so users have to opt in
+   * explicitly to those. When checked is false, every checkbox
+   * (active + inactive) is cleared.
+   *
+   * Falls back to "select all" when the picker has no
+   * active/inactive grouping (e.g. the active-in-range fetch
+   * hasn't returned yet, or every roster member fell into one
+   * bucket).
+   */
+  function selectAllActiveAgents_(listEl, checked) {
+    if (!listEl) return;
+    if (checked) {
+      const activeGroup = listEl.querySelector('.ir-agent-group:not(.ir-agent-group-muted)');
+      const target = activeGroup
+        ? activeGroup.querySelectorAll('.ir-agent-cb')
+        : listEl.querySelectorAll('.ir-agent-cb');
+      target.forEach(function (cb) { cb.checked = true; });
+    } else {
+      listEl.querySelectorAll('.ir-agent-cb').forEach(function (cb) { cb.checked = false; });
+    }
   }
 
   function irGetCheckedAgents_(listEl) {
@@ -1564,7 +1590,7 @@
   }
 
   function irTogglePopoverAgents_(checked) {
-    $('ir-edit-list').querySelectorAll('.ir-agent-cb').forEach(function (cb) { cb.checked = checked; });
+    selectAllActiveAgents_($('ir-edit-list'), checked);
     irUpdateEditApplyEnabled_();
   }
 
@@ -1900,6 +1926,16 @@
     irChartInstances.forEach(function (c) { c.destroy(); });
     irChartInstances = [];
 
+    // Reveal every chart panel temporarily so each canvas has
+    // non-zero dimensions at Chart.js instantiation time. Without
+    // this, charts created in display:none panels come up 0x0 and
+    // never recover when their tab is clicked. Restore visibility
+    // at the end (active tab visible, others hidden).
+    const irPanels = Array.prototype.slice.call(
+      document.querySelectorAll('#ir-charts-container [data-panel]'));
+    const irSavedDisplays = irPanels.map(function (p) { return p.style.display; });
+    irPanels.forEach(function (p) { p.style.display = ''; });
+
     const showLabels = $('ir-show-datalabels') && $('ir-show-datalabels').checked;
     const labels   = data.trendData.labels || [];
     const datasets = data.trendData.datasets || {};
@@ -1975,6 +2011,12 @@
                   { isPercent: false, isTimeMinutes: true, showLabels: showLabels, sharedLegend: data.mode === 'comparison' });
 
     irRenderSharedLegend(data, agents);
+
+    // Restore panel visibility so only the active tab shows. The
+    // charts in the just-hidden panels keep their layout state
+    // (computed during the brief reveal above) and re-paint
+    // correctly when their tab is clicked.
+    irPanels.forEach(function (p, i) { p.style.display = irSavedDisplays[i]; });
   }
 
   /**
@@ -2773,7 +2815,7 @@
   }
 
   function prToggleAgents_(checked) {
-    $('pr-agent-list').querySelectorAll('.ir-agent-cb').forEach(function (cb) { cb.checked = checked; });
+    selectAllActiveAgents_($('pr-agent-list'), checked);
     prUpdateGenerateEnabled_();
   }
 
@@ -3063,6 +3105,16 @@
     prChartInstances.forEach(function (c) { c.destroy(); });
     prChartInstances = [];
 
+    // Reveal every chart panel temporarily so each canvas has
+    // non-zero dimensions at Chart.js instantiation time. Without
+    // this, the inactive-tab charts (Volume & Efficiency,
+    // 12-Month Trend) come up 0x0 and don't recover when their
+    // tab is clicked.
+    const prPanels = Array.prototype.slice.call(
+      document.querySelectorAll('#pr-charts-container [data-panel]'));
+    const prSavedDisplays = prPanels.map(function (p) { return p.style.display; });
+    prPanels.forEach(function (p) { p.style.display = ''; });
+
     const showLabels = $('pr-show-datalabels') ? $('pr-show-datalabels').checked : true;
     // Per-chart registration (rather than Chart.register'ing
     // globally) so the Missed Calls bar chart isn't affected by
@@ -3206,6 +3258,11 @@
     // Trend chart -- factored out so the metric sub-tabs can
     // re-render it without rebuilding the pie + bar.
     prRenderTrendChart_(data);
+
+    // Restore panel visibility (only the active tab visible).
+    // Chart layout state is preserved across the re-hide so the
+    // now-hidden charts paint correctly when their tab clicks.
+    prPanels.forEach(function (p, i) { p.style.display = prSavedDisplays[i]; });
   }
 
   /**
@@ -3775,7 +3832,7 @@
   }
 
   function crToggleAgents_(checked) {
-    $('cr-agent-list').querySelectorAll('.ir-agent-cb').forEach(function (cb) { cb.checked = checked; });
+    selectAllActiveAgents_($('cr-agent-list'), checked);
     crUpdateGenerateEnabled_();
     crSavePrefs_();
   }
@@ -3826,7 +3883,11 @@
     crRenderTeamInsights_(data.teamInsights);
     crRenderTeamTiles_(data.teamStats);
     crRenderAgentCards_(data.agentData);
-    crRenderChart_(data);
+    // Defer chart creation one frame so the just-revealed
+    // compare-results container is fully laid out before
+    // Chart.js measures the canvas. Without this the canvas can
+    // come up 0x0 on first render after the modal opens.
+    requestAnimationFrame(function () { crRenderChart_(data); });
   }
 
   function crRenderTeamInsights_(insights) {
