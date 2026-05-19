@@ -99,7 +99,9 @@ const DEPT_QUEUE_EXT_OVERRIDES = Object.freeze({
 // name. To exclude the same person from multiple depts, list them
 // under each dept.
 const TEAM_AVG_EXCLUDES = Object.freeze({
-  // 'CSR': ['Manager Name Here'],
+  // CSR's manager is on the roster but takes only a token number of
+  // calls; including in the average drags it artificially low.
+  'CSR': ['Robin Choudhury'],
 });
 
 /**
