@@ -71,10 +71,10 @@ function getMissedCallsReport(req) {
   }
 
   const cache = CacheService.getScriptCache();
-  // v9: agent-row queue matching now also uses deptQueueExts (was
-  // deptExtensions / roster.allExtensions, which never overlapped col
-  // D). Aligns Missed Calls Report queue-scope semantics with Data.gs.
-  const cacheKey = 'missed:v9:' + dept + ':' + scope + ':' + from + ':' + to;
+  // v10: per-entry parentId attached to each abandoned timestamp;
+  // queue-only entries gain alsoIn[] for cross-queue overflow; new
+  // queueOnlyUniqueCount/EventCount in meta.
+  const cacheKey = 'missed:v10:' + dept + ':' + scope + ':' + from + ':' + to;
   const cached = cache.get(cacheKey);
   if (cached) {
     try {
@@ -204,31 +204,44 @@ function computeMissedCallsReport_(dept, from, to, scope) {
     // Build the set of abandoned-missed timestamps (col AF). Normalize
     // the same way as slot times so AM/PM differences or 24-vs-12 hour
     // formatting in either column don't break the cross-reference.
+    //
+    // Also build a positional pairing of AF timestamps -> AD parent
+    // IDs. The two columns are populated in lockstep by the source
+    // pipeline: AF[i] is the timestamp of the i-th abandoned event in
+    // this row, AD[i] is its parent call ID. Pairing them gives us a
+    // {timeKey -> parentId} map so each red 🚨 timestamp can carry
+    // its own parent ID through to the client.
     const abandonedStr = String(rd[HISTORICAL_ABANDONED_MISSED_TIMES - 1] || '').trim();
     const abandonedKeys = {};
+    const abandonedTimeToParent = {};  // timeKey -> parentId
+    let abandonedTimeList = [];
     if (abandonedStr) {
       abandonedStr.split(',').forEach(function (t) {
         const k = normTimeKey_(t.trim());
         if (k) abandonedKeys[k] = true;
+        abandonedTimeList.push(k);
       });
+    }
+    const abandonedIdsCell = String(rd[HISTORICAL_ABANDONED_PARENT_IDS - 1] || '').trim();
+    const abandonedIdList = abandonedIdsCell
+      ? abandonedIdsCell.split(',').map(function (s) { return s.trim(); })
+                        .filter(function (s) { return !!s; })
+      : [];
+    // Pair positionally. Mismatched lengths shouldn't happen given the
+    // source-pipeline invariant, but pair only up to the shorter list
+    // so a malformed row doesn't throw -- it just shows missing IDs.
+    const pairLen = Math.min(abandonedTimeList.length, abandonedIdList.length);
+    for (let p = 0; p < pairLen; p++) {
+      if (abandonedTimeList[p]) abandonedTimeToParent[abandonedTimeList[p]] = abandonedIdList[p];
     }
 
-    // Col AD ("Abandoned Parent Call IDs") holds unique parent call
-    // IDs that were abandoned. Several agent rows can carry the SAME
-    // parent ID (one abandoned call ringing N agents -> N rows ->
-    // 1 unique parent). Collecting these into a dept-wide set gives
-    // unique-abandoned-call counts. Sentinel rows additionally feed
-    // uniqueNoRingParents so we can show the "No-ring abandons: K"
-    // breakdown.
-    const abandonedIdsCell = String(rd[HISTORICAL_ABANDONED_PARENT_IDS - 1] || '').trim();
-    if (abandonedIdsCell) {
-      abandonedIdsCell.split(',').forEach(function (id) {
-        const trimmed = id.trim();
-        if (!trimmed) return;
-        uniqueAbandonedParents[trimmed] = true;
-        if (isSentinel) uniqueNoRingParents[trimmed] = true;
-      });
-    }
+    // Col AD ("Abandoned Parent Call IDs") feeds dept-wide unique-
+    // abandoned-call counts. Sentinel rows additionally feed
+    // uniqueNoRingParents for the "No-ring abandons: K" breakdown.
+    abandonedIdList.forEach(function (id) {
+      uniqueAbandonedParents[id] = true;
+      if (isSentinel) uniqueNoRingParents[id] = true;
+    });
 
     // Pick the accumulator + push function based on row type.
     let target;
@@ -272,6 +285,9 @@ function computeMissedCallsReport_(dept, from, to, scope) {
         // that may already be present in the raw cell display.
         label: formatHmsToAmPm_(item.key),
         abandoned: isAbandoned,
+        // Parent call ID for abandoned entries -- null otherwise.
+        // Sourced from AF<->AD positional pairing within this row.
+        parentId: isAbandoned ? (abandonedTimeToParent[item.key] || null) : null,
         // Numeric sort key (seconds past midnight) so chronological
         // sort works across 9 vs 10 hours.
         sortKey: hmsKeyToSeconds_(item.key),
@@ -307,12 +323,45 @@ function computeMissedCallsReport_(dept, from, to, scope) {
       };
     });
 
+  // Cross-queue overlap: a single abandoned call that progressed
+  // through multiple queues (e.g. A_Q_CSR -> Backup CSR overflow)
+  // shows up under each queue's sentinel row. Building a global
+  // parentId -> Set<queueName> map lets us:
+  //   1. Tag each entry with "[also rang X, Y]" so the relationship
+  //      is visible to the user.
+  //   2. Report a unique-parents count alongside the per-queue total
+  //      ("8 unique calls across 3 queues (10 ring events)").
+  const parentToQueues = {};   // parentId -> { qname: true, ... }
+  Object.keys(queueOnlyMap).forEach(function (qname) {
+    queueOnlyMap[qname].entries.forEach(function (e) {
+      if (!e.parentId) return;
+      if (!parentToQueues[e.parentId]) parentToQueues[e.parentId] = {};
+      parentToQueues[e.parentId][qname] = true;
+    });
+  });
+
   // Build queue-only sections (one per queue with no-ring entries),
   // sorted by queue name; entries within each sorted by date + time.
+  // Per-entry `alsoIn`: queues OTHER than this one where the same
+  // parent ID also appears. Empty when the call only hit one queue.
   const queueOnly = Object.keys(queueOnlyMap)
     .sort()
     .map(function (queueName) {
-      const list = queueOnlyMap[queueName].entries.slice();
+      const list = queueOnlyMap[queueName].entries.slice().map(function (e) {
+        const others = [];
+        if (e.parentId && parentToQueues[e.parentId]) {
+          Object.keys(parentToQueues[e.parentId]).forEach(function (q) {
+            if (q !== queueName) others.push(q);
+          });
+          others.sort();
+        }
+        return {
+          date: e.date, time: e.time, label: e.label,
+          abandoned: e.abandoned, parentId: e.parentId,
+          sortKey: e.sortKey, bucket: e.bucket,
+          alsoIn: others,
+        };
+      });
       list.sort(function (a, b) {
         if (a.date !== b.date) return a.date < b.date ? -1 : 1;
         return a.sortKey - b.sortKey;
@@ -323,6 +372,12 @@ function computeMissedCallsReport_(dept, from, to, scope) {
         total: queueOnlyMap[queueName].total,
       };
     });
+
+  // Unique queue-only abandoned calls across all queues (parent IDs).
+  // Total ring events = sum of per-queue totals (10 in the sample).
+  const queueOnlyUniqueCount = Object.keys(parentToQueues).length;
+  const queueOnlyEventCount = queueOnly.reduce(
+    function (s, q) { return s + q.total; }, 0);
 
   // Chart labels
   const chartLabels = [];
@@ -350,6 +405,12 @@ function computeMissedCallsReport_(dept, from, to, scope) {
       // timestamp; agent rings only). Same as the number of red
       // rows in the agent grid.
       abandonedRings: abandonedRings,
+      // Queue-only headline counts. queueOnlyUniqueCount dedupes by
+      // parent ID across queues (overflow calls); queueOnlyEventCount
+      // is the raw sum of per-queue entries (still useful to surface
+      // the overflow signal in the headline).
+      queueOnlyUniqueCount: queueOnlyUniqueCount,
+      queueOnlyEventCount: queueOnlyEventCount,
       generatedAt: new Date().toISOString(),
     },
     agents: agents,
@@ -374,6 +435,8 @@ function emptyMissedReport_(dept, from, to, scope, rosterSize) {
       abandonedCallCount: 0,
       noRingAbandonCount: 0,
       abandonedRings: 0,
+      queueOnlyUniqueCount: 0,
+      queueOnlyEventCount: 0,
       generatedAt: new Date().toISOString(),
     },
     agents: [],
