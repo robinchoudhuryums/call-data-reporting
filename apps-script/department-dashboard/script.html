@@ -2186,6 +2186,14 @@
   let prLastData = null;
   let prActiveFetchTimer = null;
   let prChartInstances = [];
+  // Sort + sub-tab state, persisted via localStorage so opening
+  // the modal a second time picks up where the user left off.
+  let prSortKey = 'answered';
+  let prSortDir = 'desc';
+  let prActiveTrendMetric = 'answered';
+  // localStorage keys collected so the prefs helpers stay close to
+  // their consumers.
+  const PR_PREFS_KEY = 'cdr.pr.prefs.v1';
 
   function initPerformanceReport() {
     const btn = $('performance-report-btn');
@@ -2231,6 +2239,17 @@
       resetPrPreset(); prUpdatePriorHint_(); schedulePrActiveAgentRefetch_();
     });
 
+    // Compare-with dropdown: toggles the custom prior date inputs.
+    const compareMode = $('pr-compare-mode');
+    if (compareMode) compareMode.addEventListener('change', function () {
+      prApplyCompareMode_();
+      prUpdatePriorHint_();
+    });
+    const priorFromEl = $('pr-prior-from');
+    const priorToEl   = $('pr-prior-to');
+    if (priorFromEl) priorFromEl.addEventListener('change', prUpdatePriorHint_);
+    if (priorToEl)   priorToEl.addEventListener('change',   prUpdatePriorHint_);
+
     const selAll  = $('pr-select-all');
     const selNone = $('pr-select-none');
     if (selAll)  selAll.addEventListener('click',  function (e) { e.preventDefault(); prToggleAgents_(true);  });
@@ -2250,7 +2269,24 @@
     // Data-labels toggle: re-renders all three charts in place.
     const labelToggle = $('pr-show-datalabels');
     if (labelToggle) labelToggle.addEventListener('change', function () {
+      prSavePrefs_();
       if (prLastData) prRenderCharts_(prLastData);
+    });
+
+    // Trend sub-tabs: switch the metric shown on the 12-month
+    // trend line chart (Answered / % Answered / Avg Talk Time).
+    const trendTabs = $('pr-trend-subtabs');
+    if (trendTabs) trendTabs.addEventListener('click', function (e) {
+      const tab = e.target.closest('.pr-trend-subtab');
+      if (!tab) return;
+      prActiveTrendMetric = tab.getAttribute('data-metric') || 'answered';
+      trendTabs.querySelectorAll('.pr-trend-subtab').forEach(function (b) {
+        const active = b === tab;
+        b.classList.toggle('active', active);
+        b.setAttribute('aria-selected', active ? 'true' : 'false');
+      });
+      prSavePrefs_();
+      if (prLastData) prRenderTrendChart_(prLastData);
     });
 
     // Chart-tab wiring (shared CSS but separate elements).
@@ -2300,6 +2336,9 @@
     }
 
     setPrDefaultDates();
+    // Restore last-used form state if any (preset, dates, prior
+    // mode + custom prior, agents, show-labels, trend sub-tab).
+    prRestorePrefs_();
   }
 
   function setPrDefaultDates() {
@@ -2374,7 +2413,9 @@
   /**
    * Renders an inline hint on the form showing the prior period
    * that the report will compare against, so the user understands
-   * what "vs prior" means before they generate.
+   * what "vs prior" means before they generate. Handles both auto
+   * (same-duration-immediately-preceding) and custom (user-picked)
+   * prior ranges.
    */
   function prUpdatePriorHint_() {
     const el = $('pr-prior-hint');
@@ -2382,18 +2423,142 @@
     const from = $('pr-from').value;
     const to   = $('pr-to').value;
     if (!from || !to || from > to) { el.textContent = ''; return; }
+    const mode = $('pr-compare-mode') ? $('pr-compare-mode').value : 'auto';
+    const fmt = function (d) {
+      return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+    };
+    if (mode === 'custom') {
+      const pf = $('pr-prior-from').value;
+      const pt = $('pr-prior-to').value;
+      if (!pf || !pt) {
+        el.textContent = 'Pick prior start and end dates to define the comparison baseline.';
+        return;
+      }
+      if (pf > pt) {
+        el.textContent = 'Prior start must be on or before prior end.';
+        return;
+      }
+      el.textContent = 'Will compare against your custom prior range ('
+                     + fmt(new Date(pf + 'T12:00:00')) + ' – '
+                     + fmt(new Date(pt + 'T12:00:00')) + ').';
+      return;
+    }
     const start = new Date(from + 'T12:00:00');
     const end   = new Date(to   + 'T12:00:00');
     const days  = Math.floor((end - start) / 86400000);
     const priorEnd   = new Date(start.getTime() - 86400000);
     const priorStart = new Date(priorEnd.getTime() - days * 86400000);
-    const fmt = function (d) {
-      return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
-    };
     el.textContent = 'Will compare against the immediately-preceding '
                    + (days + 1) + ' days ('
                    + fmt(priorStart) + ' – ' + fmt(priorEnd) + ').';
   }
+
+  /**
+   * Toggles the visibility of the custom prior date inputs based
+   * on the compare-mode dropdown. When switching to custom for
+   * the first time in a session, prefill the prior dates with the
+   * auto-computed window so the user has a sensible starting
+   * point.
+   */
+  function prApplyCompareMode_() {
+    const mode = $('pr-compare-mode') ? $('pr-compare-mode').value : 'auto';
+    const wrapFrom = $('pr-prior-from-wrap');
+    const wrapTo   = $('pr-prior-to-wrap');
+    const show = (mode === 'custom');
+    if (wrapFrom) wrapFrom.style.display = show ? '' : 'none';
+    if (wrapTo)   wrapTo.style.display   = show ? '' : 'none';
+
+    if (show) {
+      // Prefill with auto-computed prior if blank, so the user
+      // starts from a meaningful baseline rather than empty fields.
+      const pf = $('pr-prior-from');
+      const pt = $('pr-prior-to');
+      if (pf && pt && (!pf.value || !pt.value)) {
+        const from = $('pr-from').value;
+        const to   = $('pr-to').value;
+        if (from && to && from <= to) {
+          const start = new Date(from + 'T12:00:00');
+          const end   = new Date(to   + 'T12:00:00');
+          const days  = Math.floor((end - start) / 86400000);
+          const priorEnd   = new Date(start.getTime() - 86400000);
+          const priorStart = new Date(priorEnd.getTime() - days * 86400000);
+          const isoOf = function (d) {
+            const m = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            return d.getFullYear() + '-' + m + '-' + day;
+          };
+          if (!pf.value) pf.value = isoOf(priorStart);
+          if (!pt.value) pt.value = isoOf(priorEnd);
+        }
+      }
+    }
+    prSavePrefs_();
+  }
+
+  /**
+   * Persists the user's form state to localStorage so the next
+   * modal open picks up where they left off. Best-effort: silent
+   * on storage failures (private mode, quota exceeded, etc.).
+   */
+  function prSavePrefs_() {
+    try {
+      const prefs = {
+        preset:    $('pr-preset').value,
+        from:      $('pr-from').value,
+        to:        $('pr-to').value,
+        mode:      $('pr-compare-mode') ? $('pr-compare-mode').value : 'auto',
+        priorFrom: $('pr-prior-from') ? $('pr-prior-from').value : '',
+        priorTo:   $('pr-prior-to')   ? $('pr-prior-to').value   : '',
+        agents:    irGetCheckedAgents_($('pr-agent-list')),
+        showLabels: $('pr-show-datalabels') ? $('pr-show-datalabels').checked : true,
+        trendMetric: prActiveTrendMetric,
+        sortKey:   prSortKey,
+        sortDir:   prSortDir,
+      };
+      localStorage.setItem(PR_PREFS_KEY, JSON.stringify(prefs));
+    } catch (e) { /* ignore */ }
+  }
+
+  function prRestorePrefs_() {
+    let prefs;
+    try {
+      const raw = localStorage.getItem(PR_PREFS_KEY);
+      if (!raw) return;
+      prefs = JSON.parse(raw);
+    } catch (e) { return; }
+    if (!prefs || typeof prefs !== 'object') return;
+
+    if (prefs.preset && $('pr-preset')) $('pr-preset').value = prefs.preset;
+    if (prefs.from   && $('pr-from'))   $('pr-from').value   = prefs.from;
+    if (prefs.to     && $('pr-to'))     $('pr-to').value     = prefs.to;
+    if (prefs.mode   && $('pr-compare-mode')) $('pr-compare-mode').value = prefs.mode;
+    if (prefs.priorFrom && $('pr-prior-from')) $('pr-prior-from').value = prefs.priorFrom;
+    if (prefs.priorTo   && $('pr-prior-to'))   $('pr-prior-to').value   = prefs.priorTo;
+    if (typeof prefs.showLabels === 'boolean' && $('pr-show-datalabels')) {
+      $('pr-show-datalabels').checked = prefs.showLabels;
+    }
+    if (prefs.trendMetric) prActiveTrendMetric = prefs.trendMetric;
+    if (prefs.sortKey) prSortKey = prefs.sortKey;
+    if (prefs.sortDir) prSortDir = prefs.sortDir;
+
+    prApplyCompareMode_();
+    prUpdatePriorHint_();
+    // Sync the trend sub-tab active state to the restored metric.
+    const tabs = $('pr-trend-subtabs');
+    if (tabs) tabs.querySelectorAll('.pr-trend-subtab').forEach(function (b) {
+      const active = b.getAttribute('data-metric') === prActiveTrendMetric;
+      b.classList.toggle('active', active);
+      b.setAttribute('aria-selected', active ? 'true' : 'false');
+    });
+    // Stash agents so we can pre-check the boxes once the roster
+    // list finishes rendering.
+    if (Array.isArray(prefs.agents) && prefs.agents.length) {
+      prPendingAgentSelection_ = prefs.agents;
+    }
+  }
+  // Holds an agent list to apply once the picker renders. Cleared
+  // after apply so it doesn't override later renders.
+  let prPendingAgentSelection_ = null;
 
   // ── Roster fetch + render (mirrors Individual Report) ──────────────
   function ensurePrRoster() {
@@ -2469,7 +2634,15 @@
     }
     list.innerHTML = irBuildAgentListHtml_(agents, activeAgents);
     list.style.display = '';
-    list.addEventListener('change', prUpdateGenerateEnabled_);
+    list.addEventListener('change', function () {
+      prUpdateGenerateEnabled_();
+      prSavePrefs_();
+    });
+    // Apply any pending selection from restored prefs once.
+    if (prPendingAgentSelection_) {
+      irApplyCheckedAgents_(list, prPendingAgentSelection_);
+      prPendingAgentSelection_ = null;
+    }
     prUpdateGenerateEnabled_();
   }
 
@@ -2494,6 +2667,21 @@
     const agents = irGetCheckedAgents_($('pr-agent-list'));
     if (!agents.length) { prSetFormError('Select at least one agent.'); return; }
 
+    // Custom prior range -- send only if mode is custom and both
+    // dates are valid. The server fills in the auto window when
+    // these are absent.
+    const mode = $('pr-compare-mode') ? $('pr-compare-mode').value : 'auto';
+    const req = { department: dept, from: from, to: to, agents: agents };
+    if (mode === 'custom') {
+      const pf = $('pr-prior-from').value;
+      const pt = $('pr-prior-to').value;
+      if (!pf || !pt) { prSetFormError('Pick a custom prior start and end date.'); return; }
+      if (pf > pt)    { prSetFormError('Custom prior start must be on or before prior end.'); return; }
+      req.priorFrom = pf;
+      req.priorTo   = pt;
+    }
+    prSavePrefs_();
+
     const btn = $('pr-generate-btn');
     btn.disabled = true;
     const originalLabel = btn.textContent;
@@ -2510,20 +2698,69 @@
         btn.textContent = originalLabel;
         prSetFormError('Error: ' + (err && err.message ? err.message : String(err)));
       })
-      .getPerformanceReport({ department: dept, from: from, to: to, agents: agents });
+      .getPerformanceReport(req);
   }
 
   function prRenderReport_(data) {
     prLastData = data;
-    $('pr-results-date').textContent = '(' + (data.dateLabel || '') + ')';
-    $('pr-compare-line').textContent = 'Comparing against prior period: '
-                                      + (data.priorDateLabel || '');
+    // Side-by-side date pair instead of inline (date)+below line.
+    if ($('pr-current-date')) $('pr-current-date').textContent = data.dateLabel || '';
+    if ($('pr-prior-date'))   $('pr-prior-date').textContent   = data.priorDateLabel || '';
+    if ($('pr-prior-label')) {
+      $('pr-prior-label').textContent = (data.meta && data.meta.priorIsCustom)
+        ? 'vs Custom Prior'
+        : 'vs Prior';
+    }
     showPrResults();
     prSetResultsStatus('');
     prResetTabs_();
-    prRenderKpis_(data.teamStats);
+    prRenderSubsetHint_(data.meta);
+    prRenderTeamInsights_(data.teamInsights);
+    prRenderKpis_(data.teamStats, data.trendData);
     prRenderAgentTable_(data.agentData);
     prRenderCharts_(data);
+  }
+
+  /**
+   * Subtle banner when the user picked only a subset of the dept
+   * roster. Prevents the "why are my totals low?" confusion --
+   * makes it explicit that the report reflects selection, not the
+   * full dept.
+   */
+  function prRenderSubsetHint_(meta) {
+    const el = $('pr-subset-hint');
+    if (!el || !meta) return;
+    const selected = (meta.agents || []).length;
+    const rosterSize = meta.rosterSize || 0;
+    if (rosterSize === 0 || selected >= rosterSize) {
+      el.style.display = 'none';
+      el.textContent = '';
+      return;
+    }
+    el.textContent = 'Showing ' + selected + ' of ' + rosterSize
+                   + ' dept agents. Totals reflect this selection only.';
+    el.style.display = '';
+  }
+
+  /**
+   * Team insights callout: server-side rules render up to 3 short
+   * observations about the team's current vs prior period. Reuses
+   * the Individual Report's irInsightsBlock_ HTML helper since the
+   * insight shape is identical (`{ type, text }`).
+   */
+  function prRenderTeamInsights_(insights) {
+    const host = $('pr-team-insights');
+    if (!host) return;
+    if (!insights || !insights.length) {
+      host.innerHTML = '';
+      return;
+    }
+    host.innerHTML = irInsightsBlock_(insights)
+      // Subtle override: the IR callout label says "Insights" --
+      // for PR we want "Team insights" to disambiguate from the
+      // per-agent insights users see on the Individual Report.
+      .replace('<div class="ir-insights-label">Insights</div>',
+               '<div class="ir-insights-label">Team insights</div>');
   }
 
   function prResetTabs_() {
@@ -2541,26 +2778,36 @@
 
   /**
    * Renders the 6 KPI tiles: Rung, Missed, Answered, % Answered,
-   * TTT, ATT -- each with current value and a delta vs the
-   * prior-period value. Delta color semantics:
+   * TTT, ATT -- each with current value, delta vs prior, and an
+   * inline 12-month sparkline from the trend series. Delta color
+   * semantics:
    *   - Rung / Answered / % Answered: above = positive (blue)
    *   - Missed: above = negative (orange)
    *   - TTT / ATT: neutral (longer can be thorough or slow)
    */
-  function prRenderKpis_(teamStats) {
+  function prRenderKpis_(teamStats, trendData) {
     const t = teamStats || {};
+    const series = (trendData && trendData.series) || [];
+    const sparks = {
+      rung:     series.map(function (s) { return s.rung; }),
+      missed:   series.map(function (s) { return s.missed; }),
+      answered: series.map(function (s) { return s.answered; }),
+      pct:      series.map(function (s) { return s.pct; }),
+      ttt:      series.map(function (s) { return s.ttt; }),
+      att:      series.map(function (s) { return s.att; }),
+    };
     const tiles = [
-      prKpiTile_('Total Rung',  t.rung,     'pos'),
-      prKpiTile_('Total Missed',t.missed,   'neg'),
-      prKpiTile_('Answered',    t.answered, 'pos'),
-      prKpiTile_('% Answered',  t.pct,      'pos'),
-      prKpiTile_('Total TTT',   t.ttt,      'neu'),
-      prKpiTile_('Avg ATT',     t.att,      'neu'),
+      prKpiTile_('Total Rung',  t.rung,     'pos', sparks.rung,     IR_VOLUME_COLORS.rung),
+      prKpiTile_('Total Missed',t.missed,   'neg', sparks.missed,   IR_VOLUME_COLORS.missed),
+      prKpiTile_('Answered',    t.answered, 'pos', sparks.answered, IR_VOLUME_COLORS.answered),
+      prKpiTile_('% Answered',  t.pct,      'pos', sparks.pct,      '#4E79A7'),
+      prKpiTile_('Total TTT',   t.ttt,      'neu', sparks.ttt,      '#9C755F'),
+      prKpiTile_('Avg ATT',     t.att,      'neu', sparks.att,      '#9C755F'),
     ].join('');
     $('pr-kpi-row').innerHTML = tiles;
   }
 
-  function prKpiTile_(label, stat, valenceDirection) {
+  function prKpiTile_(label, stat, valenceDirection, sparklineData, sparklineColor) {
     const s = stat || { formatted: '-', deltaPct: 0, type: 'volume' };
     const isPctType = s.type === 'pctPoints';
     const dp = Number(s.deltaPct || 0);
@@ -2568,8 +2815,6 @@
     if (Math.abs(dp) < 0.05) {
       badge = '<span class="pr-delta pr-delta-neu">no change</span>';
     } else {
-      // valenceDirection 'pos' = bigger is better, 'neg' = smaller
-      // is better, 'neu' = ambiguous (always neutral styling).
       let cls = 'pr-delta-neu';
       if (valenceDirection === 'pos')      cls = dp > 0 ? 'pr-delta-pos' : 'pr-delta-neg';
       else if (valenceDirection === 'neg') cls = dp > 0 ? 'pr-delta-neg' : 'pr-delta-pos';
@@ -2579,38 +2824,118 @@
             +   arrow + ' ' + Math.abs(dp).toFixed(1) + suffix
             + '</span>';
     }
+    const spark = irSparkline_(sparklineData || [], sparklineColor || '#4E79A7');
     return '<div class="pr-kpi-tile">'
-         +   '<div class="pr-kpi-label">' + label + '</div>'
+         +   '<div class="pr-kpi-row-top">'
+         +     '<div class="pr-kpi-label">' + label + '</div>'
+         +     '<div class="pr-kpi-spark">' + spark + '</div>'
+         +   '</div>'
          +   '<div class="pr-kpi-value">' + escapeHtml(String(s.formatted)) + '</div>'
          +   '<div class="pr-kpi-delta">' + badge + ' <span class="pr-delta-cap">vs prior</span></div>'
          + '</div>';
   }
 
+  /**
+   * Per-agent table with sortable column headers + a per-agent
+   * share-of-team-answered column. Click a header to toggle sort
+   * direction; arrows in the header indicate current sort key.
+   */
   function prRenderAgentTable_(agentData) {
-    const rows = (agentData || []).map(function (a) {
+    const teamAnswered = (agentData || []).reduce(function (a, b) {
+      return a + (b.raw.answered || 0);
+    }, 0);
+    const cols = [
+      { key: 'name',     label: 'Agent',      isNum: false },
+      { key: 'rung',     label: 'Rung',       isNum: true },
+      { key: 'missed',   label: 'Missed',     isNum: true },
+      { key: 'answered', label: 'Answered',   isNum: true },
+      { key: 'share',    label: 'Share',      isNum: true,
+        title: 'This agent\'s share of total Answered calls across the selected team.' },
+      { key: 'pct',      label: '% Answered', isNum: true },
+      { key: 'ttt',      label: 'TTT',        isNum: true },
+      { key: 'att',      label: 'ATT',        isNum: true },
+    ];
+    const sorted = prSortAgentData_(agentData || []);
+
+    const head = cols.map(function (c) {
+      const arrow = (prSortKey === c.key)
+        ? (prSortDir === 'asc' ? ' &#9650;' : ' &#9660;')
+        : '';
+      const titleAttr = c.title ? ' title="' + escapeHtml(c.title) + '"' : '';
+      return '<th class="pr-th-sortable' + (c.isNum ? ' num' : '') + '"'
+           + ' data-sort-key="' + c.key + '"' + titleAttr + '>'
+           +   escapeHtml(c.label) + arrow
+           + '</th>';
+    }).join('');
+
+    const rows = sorted.map(function (a) {
+      const share = teamAnswered > 0
+        ? ((a.raw.answered / teamAnswered) * 100).toFixed(1) + '%'
+        : '-';
       return '<tr>'
            +   '<td>' + escapeHtml(a.name) + '</td>'
            +   '<td class="num">' + a.stats.rung + '</td>'
            +   '<td class="num">' + a.stats.missed + '</td>'
            +   '<td class="num">' + a.stats.answered + '</td>'
+           +   '<td class="num">' + share + '</td>'
            +   '<td class="num">' + a.stats.pct + '</td>'
            +   '<td class="num">' + a.stats.ttt + '</td>'
            +   '<td class="num">' + a.stats.att + '</td>'
            + '</tr>';
     }).join('');
+
     $('pr-agent-table-wrap').innerHTML =
       '<table class="pr-agent-table">'
-      +   '<thead><tr>'
-      +     '<th>Agent</th>'
-      +     '<th class="num">Rung</th>'
-      +     '<th class="num">Missed</th>'
-      +     '<th class="num">Answered</th>'
-      +     '<th class="num">% Answered</th>'
-      +     '<th class="num">TTT</th>'
-      +     '<th class="num">ATT</th>'
-      +   '</tr></thead>'
+      +   '<thead><tr>' + head + '</tr></thead>'
       +   '<tbody>' + rows + '</tbody>'
       + '</table>';
+
+    // Click handlers on the sortable column headers. Re-renders
+    // the table in place so the sort indicator updates too.
+    $('pr-agent-table-wrap').querySelectorAll('.pr-th-sortable').forEach(function (th) {
+      th.addEventListener('click', function () {
+        const key = th.getAttribute('data-sort-key');
+        if (prSortKey === key) {
+          prSortDir = (prSortDir === 'asc') ? 'desc' : 'asc';
+        } else {
+          prSortKey = key;
+          // Sensible default direction by column: numeric desc, name asc.
+          prSortDir = (key === 'name') ? 'asc' : 'desc';
+        }
+        prSavePrefs_();
+        prRenderAgentTable_(agentData);
+      });
+    });
+  }
+
+  /**
+   * Returns a sorted copy of agentData per prSortKey + prSortDir.
+   * Numeric columns sort on raw values; name sorts case-insensitively.
+   * Share is derived from raw.answered (it's a ratio against the
+   * team total, so sort order matches raw.answered).
+   */
+  function prSortAgentData_(agentData) {
+    const sorted = agentData.slice();
+    const key = prSortKey;
+    const dir = prSortDir;
+    sorted.sort(function (a, b) {
+      let av, bv;
+      if (key === 'name') {
+        av = (a.name || '').toLowerCase();
+        bv = (b.name || '').toLowerCase();
+      } else if (key === 'share') {
+        // Share is a function of raw.answered against the team
+        // total, so ordering by raw.answered is equivalent.
+        av = a.raw.answered || 0;
+        bv = b.raw.answered || 0;
+      } else {
+        av = a.raw[key] || 0;
+        bv = b.raw[key] || 0;
+      }
+      if (av === bv) return 0;
+      return dir === 'asc' ? (av < bv ? -1 : 1) : (av < bv ? 1 : -1);
+    });
+    return sorted;
   }
 
   function prRenderCharts_(data) {
@@ -2676,18 +3001,31 @@
     });
     prChartInstances.push(pie);
 
-    // Stacked bar: Answered (green) + Missed (orange) per agent.
-    // Labels render on each segment; zero-segments are blanked.
+    // Stacked bar (Answered/Missed) + line overlay (% Answered) on
+    // a second y-axis. The bars show volume per agent; the line
+    // shows efficiency in one shared view. Mixed chart so the line
+    // datasets carry `type: 'line'` explicitly.
     const volData = (data.chartData && data.chartData.volumeBar) || [];
     const bar = new Chart($('pr-volume-chart').getContext('2d'), {
       type: 'bar',
       data: {
         labels: volData.map(function (d) { return d.label; }),
         datasets: [
-          { label: 'Answered', data: volData.map(function (d) { return d.answered; }),
-            backgroundColor: IR_VOLUME_COLORS.answered, stack: 'vol' },
-          { label: 'Missed',   data: volData.map(function (d) { return d.missed;   }),
-            backgroundColor: IR_VOLUME_COLORS.missed,   stack: 'vol' },
+          { label: 'Answered', type: 'bar',
+            data: volData.map(function (d) { return d.answered; }),
+            backgroundColor: IR_VOLUME_COLORS.answered, stack: 'vol', yAxisID: 'y',
+            order: 2 },
+          { label: 'Missed', type: 'bar',
+            data: volData.map(function (d) { return d.missed; }),
+            backgroundColor: IR_VOLUME_COLORS.missed,   stack: 'vol', yAxisID: 'y',
+            order: 2 },
+          { label: '% Answered', type: 'line',
+            data: volData.map(function (d) { return Number((d.pct || 0).toFixed(1)); }),
+            borderColor: '#4E79A7', backgroundColor: '#4E79A7',
+            tension: 0.3, fill: false, yAxisID: 'y1',
+            pointRadius: 4, pointBackgroundColor: '#4E79A7',
+            pointBorderColor: '#fff', pointBorderWidth: 1.5,
+            order: 1 },
         ],
       },
       plugins: prPlugins,
@@ -2695,38 +3033,120 @@
         responsive: true, maintainAspectRatio: false, animation: false,
         plugins: {
           legend: { position: 'bottom' },
+          tooltip: {
+            callbacks: {
+              label: function (ctx) {
+                const ds = ctx.dataset.label;
+                if (ds === '% Answered') return ds + ': ' + ctx.parsed.y + '%';
+                return ds + ': ' + ctx.parsed.y;
+              },
+            },
+          },
           datalabels: {
-            display: showLabels,
-            color: '#fff',
+            display: function (ctx) {
+              if (!showLabels) return false;
+              // Suppress 0 values on bars and the pct line; the
+              // line gets its own pill-style label below.
+              return Number(ctx.parsed.y || ctx.parsed) > 0;
+            },
+            color: function (ctx) {
+              return ctx.dataset.type === 'line' ? '#1E40AF' : '#fff';
+            },
+            backgroundColor: function (ctx) {
+              return ctx.dataset.type === 'line' ? 'rgba(255,255,255,0.9)' : null;
+            },
+            borderColor: function (ctx) {
+              return ctx.dataset.type === 'line' ? '#4E79A7' : null;
+            },
+            borderWidth: function (ctx) { return ctx.dataset.type === 'line' ? 1 : 0; },
+            borderRadius: 3,
+            align: function (ctx) { return ctx.dataset.type === 'line' ? 'top' : 'center'; },
+            anchor: function (ctx) { return ctx.dataset.type === 'line' ? 'center' : 'center'; },
             font: { size: 10, weight: 'bold' },
-            formatter: function (value) { return value > 0 ? value : ''; },
+            formatter: function (value, ctx) {
+              if (ctx.dataset.type === 'line') return value + '%';
+              return value > 0 ? value : '';
+            },
           },
         },
         scales: {
           x: { stacked: true, ticks: { autoSkip: false, maxRotation: 30, minRotation: 0 } },
-          y: { stacked: true, beginAtZero: true },
+          y: { stacked: true, beginAtZero: true, position: 'left',
+               title: { display: true, text: 'Calls', font: { size: 11 } } },
+          y1: { beginAtZero: true, max: 100, position: 'right',
+                title: { display: true, text: '% Answered', font: { size: 11 } },
+                grid: { drawOnChartArea: false },
+                ticks: { callback: function (v) { return v + '%'; } } },
         },
       },
     });
     prChartInstances.push(bar);
 
-    // Trend line: team Answered count per month over 12-mo window.
-    // Labels float above each point in pill style (matches IR).
+    // Trend chart -- factored out so the metric sub-tabs can
+    // re-render it without rebuilding the pie + bar.
+    prRenderTrendChart_(data);
+  }
+
+  /**
+   * Renders (or re-renders) only the 12-month trend chart, using
+   * prActiveTrendMetric to pick which series to plot. Destroys
+   * any previously-tracked trend chart instance and replaces the
+   * tail of prChartInstances so re-renders don't accumulate.
+   */
+  function prRenderTrendChart_(data) {
+    // Destroy any existing trend chart instance.
+    const remaining = [];
+    prChartInstances.forEach(function (c) {
+      if (c.canvas && c.canvas.id === 'pr-trend-chart') c.destroy();
+      else remaining.push(c);
+    });
+    prChartInstances = remaining;
+
+    const showLabels = $('pr-show-datalabels') ? $('pr-show-datalabels').checked : true;
+    const prPlugins = (typeof ChartDataLabels !== 'undefined') ? [ChartDataLabels] : [];
     const labels = (data.trendData && data.trendData.labels) || [];
     const series = (data.trendData && data.trendData.series) || [];
+
+    // Per-metric chart config: color, data, label formatter, and
+    // y-axis treatment (% gets a 0-100 ceiling with a "%" suffix;
+    // ATT formats as minutes; volume is raw counts).
+    let dataPoints, color, label, isPercent, isMinutes;
+    if (prActiveTrendMetric === 'pct') {
+      dataPoints = series.map(function (s) { return Number((s.pct || 0).toFixed(1)); });
+      color = '#4E79A7';
+      label = '% Answered';
+      isPercent = true;
+    } else if (prActiveTrendMetric === 'att') {
+      dataPoints = series.map(function (s) { return Number(((s.att || 0) / 60).toFixed(2)); });
+      color = '#9C755F';
+      label = 'Avg Talk Time';
+      isMinutes = true;
+    } else {
+      dataPoints = series.map(function (s) { return s.answered; });
+      color = IR_VOLUME_COLORS.answered;
+      label = 'Answered';
+    }
+
+    const fmtMin = function (val) {
+      const n = parseFloat(val); if (isNaN(n)) return '';
+      const m = Math.floor(n);
+      const s = Math.round((n - m) * 60);
+      return m + ':' + (s < 10 ? '0' + s : s);
+    };
+
     const trend = new Chart($('pr-trend-chart').getContext('2d'), {
       type: 'line',
       data: {
         labels: labels,
         datasets: [{
-          label: 'Answered',
-          data: series.map(function (s) { return s.answered; }),
-          borderColor: IR_VOLUME_COLORS.answered,
+          label: label,
+          data: dataPoints,
+          borderColor: color,
           backgroundColor: function (ctx) {
-            return irGradientFill_(ctx.chart, IR_VOLUME_COLORS.answered);
+            return irGradientFill_(ctx.chart, color);
           },
           tension: 0.4, fill: true,
-          pointBackgroundColor: IR_VOLUME_COLORS.answered,
+          pointBackgroundColor: color,
           pointBorderColor: '#fff', pointBorderWidth: 1.5,
           pointRadius: 3, pointHoverRadius: 5,
         }],
@@ -2736,18 +3156,45 @@
         responsive: true, maintainAspectRatio: false, animation: false,
         plugins: {
           legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label: function (ctx) {
+                if (isPercent) return label + ': ' + ctx.parsed.y + '%';
+                if (isMinutes) return label + ': ' + fmtMin(ctx.parsed.y);
+                return label + ': ' + ctx.parsed.y;
+              },
+            },
+          },
           datalabels: {
-            display: showLabels,
+            display: function (ctx) {
+              if (!showLabels) return false;
+              return Number(ctx.parsed.y || 0) > 0;
+            },
             align: 'top', anchor: 'center',
             backgroundColor: 'rgba(255,255,255,0.9)',
-            borderColor: IR_VOLUME_COLORS.answered,
-            borderWidth: 1, borderRadius: 3,
-            color: IR_VOLUME_COLORS.answered,
+            borderColor: color, borderWidth: 1, borderRadius: 3,
+            color: color,
             font: { size: 10, weight: 'bold' },
-            formatter: function (value) { return value > 0 ? value : ''; },
+            formatter: function (value) {
+              if (isPercent) return value + '%';
+              if (isMinutes) return fmtMin(value);
+              return value > 0 ? value : '';
+            },
           },
         },
-        scales: { y: { beginAtZero: true } },
+        scales: {
+          y: {
+            beginAtZero: true,
+            suggestedMax: isPercent ? 100 : undefined,
+            ticks: {
+              callback: function (val) {
+                if (isPercent) return val + '%';
+                if (isMinutes) return fmtMin(val);
+                return val;
+              },
+            },
+          },
+        },
       },
     });
     prChartInstances.push(trend);
@@ -2809,6 +3256,8 @@
           if (btns) btns.style.display = 'none';
           const tabs = clonedDoc.getElementById('pr-chart-tabs');
           if (tabs) tabs.style.display = 'none';
+          const subTabs = clonedDoc.getElementById('pr-trend-subtabs');
+          if (subTabs) subTabs.style.display = 'none';
           const toggle = clonedDoc.getElementById('pr-datalabels-box');
           if (toggle) toggle.style.display = 'none';
           const status = clonedDoc.getElementById('pr-results-status');

@@ -1301,10 +1301,51 @@
     font-style: italic;
     margin: -4px 2px 12px;
   }
-  .pr-compare-line {
-    font-size: 12px;
-    color: #6b7280;
+  /* Side-by-side current vs prior date display in the results
+     header. Replaces the inline "(date)" + a quiet "Comparing
+     against..." line with a single structured pair. */
+  .pr-date-pair {
+    display: flex;
+    align-items: stretch;
+    gap: 10px;
     margin-top: 4px;
+  }
+  .pr-date-block {
+    background: #f9fafb;
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    padding: 6px 10px;
+    line-height: 1.25;
+    min-width: 0;
+  }
+  .pr-date-current { border-left: 3px solid #1d4ed8; }
+  .pr-date-prior   { border-left: 3px solid #9CA3AF; }
+  .pr-date-label {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #6b7280;
+  }
+  .pr-date-value { font-size: 13px; color: #111827; font-weight: 500; }
+  .pr-date-divider {
+    align-self: center;
+    color: #9ca3af;
+    font-size: 16px;
+    font-weight: 700;
+  }
+
+  /* Subset hint banner: appears when the user picked fewer than
+     the full roster. Subtle blue bar to disambiguate "team totals
+     reflect selection". */
+  .pr-subset-hint {
+    background: #EFF6FF;
+    color: #1E40AF;
+    border-left: 3px solid #2563EB;
+    border-radius: 4px;
+    padding: 8px 12px;
+    font-size: 12px;
+    margin-bottom: 12px;
   }
 
   /* KPI tile row at the top of the report: 6 tiles, big number +
@@ -1327,6 +1368,15 @@
     font-variant-numeric: tabular-nums;
     min-width: 0;
   }
+  /* Label + inline sparkline on the top row. Mirrors the IR
+     summary-card tile layout for visual consistency. */
+  .pr-kpi-row-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+  }
+  .pr-kpi-spark { height: 22px; line-height: 0; }
   .pr-kpi-label {
     font-size: 10px;
     font-weight: 700;
@@ -1398,6 +1448,41 @@
   .pr-agent-table tbody tr:last-child td { border-bottom: 0; }
   .pr-agent-table tbody tr:hover { background: #f9fafb; }
 
+  /* Sortable headers: cursor + hover affordance + active-sort
+     highlight when this column is the current sort key. */
+  .pr-th-sortable {
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+  }
+  .pr-th-sortable:hover { background: #f3f4f6 !important; color: #1f2937 !important; }
+
+  /* Sub-tabs inside the 12-Month Trend chart panel: switches the
+     metric shown on the line chart (Answered / % Answered / ATT). */
+  .pr-trend-subtabs {
+    display: flex;
+    gap: 4px;
+    justify-content: center;
+    margin-bottom: 6px;
+  }
+  .pr-trend-subtab {
+    background: transparent;
+    border: 1px solid #e5e7eb;
+    color: #4b5563;
+    padding: 4px 12px;
+    font-size: 11px;
+    font-weight: 600;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .pr-trend-subtab:hover { background: #f3f4f6; }
+  .pr-trend-subtab.active {
+    background: #1d4ed8;
+    color: #fff;
+    border-color: #1d4ed8;
+  }
+
   /* -------- Print stylesheet ------------------------------------- */
   /* Only activates when the user clicks Print on the Individual
      Report; the body gets `.ir-printing` set just before
@@ -1458,6 +1543,7 @@
     body.pr-printing #performance-modal .modal-close,
     body.pr-printing #performance-results .ir-action-buttons,
     body.pr-printing #pr-chart-tabs,
+    body.pr-printing #pr-trend-subtabs,
     body.pr-printing #pr-datalabels-box,
     body.pr-printing #pr-results-status {
       display: none !important;

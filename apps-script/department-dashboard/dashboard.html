@@ -331,6 +331,24 @@
             <input type="date" id="pr-to">
           </div>
         </div>
+
+        <div class="ir-row">
+          <div class="ir-col">
+            <label for="pr-compare-mode">Compare with</label>
+            <select id="pr-compare-mode">
+              <option value="auto">Immediately-preceding period</option>
+              <option value="custom">Custom prior range&hellip;</option>
+            </select>
+          </div>
+          <div class="ir-col" id="pr-prior-from-wrap" style="display:none;">
+            <label for="pr-prior-from">Prior start</label>
+            <input type="date" id="pr-prior-from">
+          </div>
+          <div class="ir-col" id="pr-prior-to-wrap" style="display:none;">
+            <label for="pr-prior-to">Prior end</label>
+            <input type="date" id="pr-prior-to">
+          </div>
+        </div>
         <div class="pr-prior-hint" id="pr-prior-hint"></div>
 
         <div class="ir-section-title">2. Agents</div>
@@ -363,9 +381,18 @@
           <div class="ir-results-header-left">
             <div class="ir-results-title-line">
               <span class="ir-results-title">Performance Report</span>
-              <span class="ir-results-date" id="pr-results-date"></span>
             </div>
-            <div class="pr-compare-line" id="pr-compare-line"></div>
+            <div class="pr-date-pair">
+              <div class="pr-date-block pr-date-current">
+                <div class="pr-date-label">Current</div>
+                <div class="pr-date-value" id="pr-current-date">&nbsp;</div>
+              </div>
+              <div class="pr-date-divider" aria-hidden="true">&rarr;</div>
+              <div class="pr-date-block pr-date-prior">
+                <div class="pr-date-label" id="pr-prior-label">vs Prior</div>
+                <div class="pr-date-value" id="pr-prior-date">&nbsp;</div>
+              </div>
+            </div>
           </div>
           <div class="ir-action-buttons">
             <button class="btn btn-secondary" id="pr-back-btn" type="button">&laquo; Back</button>
@@ -383,6 +410,9 @@
         </div>
 
         <div id="pr-results-status" class="status" style="display:none;"></div>
+
+        <div id="pr-subset-hint" class="pr-subset-hint" style="display:none;"></div>
+        <div id="pr-team-insights"></div>
 
         <div id="pr-kpi-row" class="pr-kpi-row"></div>
         <div id="pr-agent-table-wrap" class="pr-agent-table-wrap"></div>
@@ -409,7 +439,12 @@
             <div class="ir-chart-canvas-wrap"><canvas id="pr-volume-chart"></canvas></div>
           </div>
           <div class="ir-chart-wrap" data-panel="trend" style="display:none;">
-            <div class="ir-chart-header">12-Month Team Trend (Answered)</div>
+            <div class="ir-chart-header">12-Month Team Trend</div>
+            <div class="pr-trend-subtabs" id="pr-trend-subtabs" role="tablist">
+              <button type="button" class="pr-trend-subtab active" data-metric="answered" role="tab" aria-selected="true">Answered</button>
+              <button type="button" class="pr-trend-subtab" data-metric="pct" role="tab" aria-selected="false">% Answered</button>
+              <button type="button" class="pr-trend-subtab" data-metric="att" role="tab" aria-selected="false">Avg Talk Time</button>
+            </div>
             <div class="ir-chart-canvas-wrap"><canvas id="pr-trend-chart"></canvas></div>
           </div>
         </div>
