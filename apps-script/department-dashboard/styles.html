@@ -1268,6 +1268,112 @@
   /* Reset .btn defaults that look out of place inside the modal. */
   #individual-modal .btn { width: auto; }
 
+  /* -------- Performance Report ----------------------------------- */
+  /* Inline prior-period hint on the form -- shows the user what
+     "vs prior" will compare against before they click Generate. */
+  .pr-prior-hint {
+    font-size: 11px;
+    color: #6b7280;
+    font-style: italic;
+    margin: -4px 2px 12px;
+  }
+  .pr-compare-line {
+    font-size: 12px;
+    color: #6b7280;
+    margin-top: 4px;
+  }
+
+  /* KPI tile row at the top of the report: 6 tiles, big number +
+     delta vs prior period. Distinct from the Individual Report's
+     KPI tiles -- no sparkline, no team-avg context. */
+  .pr-kpi-row {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 10px;
+    margin-bottom: 16px;
+  }
+  .pr-kpi-tile {
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 12px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-variant-numeric: tabular-nums;
+    min-width: 0;
+  }
+  .pr-kpi-label {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #6b7280;
+  }
+  .pr-kpi-value {
+    font-size: 22px;
+    font-weight: 700;
+    color: #111827;
+    line-height: 1.1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .pr-kpi-delta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+  }
+  .pr-delta {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-weight: 700;
+    font-size: 11px;
+  }
+  .pr-delta-pos { background: #DBEAFE; color: #1E40AF; }
+  .pr-delta-neg { background: #FFEDD5; color: #9A3412; }
+  .pr-delta-neu { background: #E5E7EB; color: #4B5563; }
+  .pr-delta-cap { color: #9ca3af; font-weight: 500; font-style: italic; }
+  @media (max-width: 1100px) {
+    .pr-kpi-row { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  }
+  @media (max-width: 700px) {
+    .pr-kpi-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+
+  /* Per-agent table sitting between KPI tiles and the chart trio. */
+  .pr-agent-table-wrap { overflow-x: auto; margin-bottom: 16px; }
+  .pr-agent-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .pr-agent-table th, .pr-agent-table td {
+    padding: 8px 12px;
+    border-bottom: 1px solid #f3f4f6;
+    text-align: left;
+  }
+  .pr-agent-table th {
+    background: #f9fafb;
+    color: #6b7280;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  .pr-agent-table .num { text-align: right; }
+  .pr-agent-table tbody tr:last-child td { border-bottom: 0; }
+  .pr-agent-table tbody tr:hover { background: #f9fafb; }
+
   /* -------- Print stylesheet ------------------------------------- */
   /* Only activates when the user clicks Print on the Individual
      Report; the body gets `.ir-printing` set just before
@@ -1308,5 +1414,35 @@
     }
     body.ir-printing .ir-chart-wrap { page-break-inside: avoid; }
     body.ir-printing .ir-summary-card { page-break-inside: avoid; }
+
+    body.pr-printing > .container { display: none !important; }
+    body.pr-printing .modal-backdrop { display: none !important; }
+    body.pr-printing #performance-modal {
+      position: static !important;
+      background: transparent !important;
+    }
+    body.pr-printing #performance-modal .modal-panel {
+      box-shadow: none !important;
+      border-radius: 0 !important;
+      max-width: 100% !important;
+      width: 100% !important;
+      max-height: none !important;
+      padding: 0 !important;
+      overflow: visible !important;
+    }
+    body.pr-printing #performance-form,
+    body.pr-printing #performance-modal .modal-close,
+    body.pr-printing #performance-results .ir-action-buttons,
+    body.pr-printing #pr-chart-tabs,
+    body.pr-printing #pr-results-status {
+      display: none !important;
+    }
+    body.pr-printing #pr-charts-container [data-panel] {
+      display: flex !important;
+      margin-bottom: 14px !important;
+    }
+    body.pr-printing .ir-chart-wrap,
+    body.pr-printing .pr-kpi-tile,
+    body.pr-printing .pr-agent-table { page-break-inside: avoid; }
   }
 </style>

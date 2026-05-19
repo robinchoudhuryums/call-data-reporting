@@ -58,6 +58,7 @@
         <label>Reports</label>
         <button class="btn btn-secondary" id="missed-report-btn" type="button">Missed Calls</button>
         <button class="btn btn-secondary" id="individual-report-btn" type="button">Individual Report</button>
+        <button class="btn btn-secondary" id="performance-report-btn" type="button">Performance Report</button>
       </div>
     </div>
 
@@ -122,7 +123,6 @@
         <h3>Coming soon</h3>
         <p>Still migrating from the legacy DQE Report spreadsheet:</p>
         <ul>
-          <li><strong>Performance Report</strong> &mdash; current-vs-prior-period deltas + trend chart.</li>
           <li><strong>Compare Ranges</strong> (admin-only) &mdash; side-by-side comparison of two arbitrary date ranges.</li>
           <li><strong>Low Answer Rate Alerts</strong> (admin-driven) &mdash; sends per-dept alert emails when a threshold is crossed.</li>
         </ul>
@@ -295,6 +295,116 @@
           <div class="ir-chart-wrap" id="ir-wrap-dur" data-panel="dur" style="display:none;">
             <div class="ir-chart-header">Duration (ATT)</div>
             <div class="ir-chart-canvas-wrap"><canvas id="ir-dur-chart"></canvas></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="performance-modal" class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="performance-modal-title" style="display:none;">
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-panel modal-panel-wide" role="document">
+      <button class="modal-close" id="performance-close" type="button" aria-label="Close">&times;</button>
+      <h2 id="performance-modal-title">Performance Report</h2>
+
+      <div id="performance-form" class="ir-form">
+        <div class="ir-section-title">1. Date Range</div>
+        <div class="ir-row">
+          <div class="ir-col">
+            <label for="pr-preset">Quick select</label>
+            <select id="pr-preset">
+              <option value="custom">Custom range</option>
+              <option value="thisMonth">This month</option>
+              <option value="lastMonth">Last month</option>
+              <option value="last30">Last 30 days</option>
+              <option value="last3Months">Last 3 months</option>
+              <option value="last12Months">Last 12 months</option>
+              <option value="lastYear">Last year</option>
+            </select>
+          </div>
+          <div class="ir-col">
+            <label for="pr-from">Start date</label>
+            <input type="date" id="pr-from">
+          </div>
+          <div class="ir-col">
+            <label for="pr-to">End date</label>
+            <input type="date" id="pr-to">
+          </div>
+        </div>
+        <div class="pr-prior-hint" id="pr-prior-hint"></div>
+
+        <div class="ir-section-title">2. Agents</div>
+        <div class="ir-hint">Select the agents whose performance you want to roll up into department-level deltas.</div>
+        <div class="ir-search-row">
+          <input type="search" id="pr-agent-search" placeholder="Search agents by name..." autocomplete="off">
+        </div>
+        <div id="pr-agent-loader" class="ir-loader">
+          <div class="ir-skeleton-grid" aria-hidden="true">
+            <div class="ir-skeleton-row"></div><div class="ir-skeleton-row"></div>
+            <div class="ir-skeleton-row"></div><div class="ir-skeleton-row"></div>
+            <div class="ir-skeleton-row"></div><div class="ir-skeleton-row"></div>
+            <div class="ir-skeleton-row"></div><div class="ir-skeleton-row"></div>
+          </div>
+          <div class="ir-skeleton-label">Loading agent roster&hellip;</div>
+        </div>
+        <div id="pr-agent-list" class="ir-agent-list" style="display:none;"></div>
+        <div class="ir-agent-actions">
+          <a href="#" id="pr-select-all">Select all</a>
+          <span class="sep">|</span>
+          <a href="#" id="pr-select-none">Select none</a>
+        </div>
+
+        <div id="pr-form-error" class="status status-error" style="display:none;"></div>
+        <button class="btn" id="pr-generate-btn" type="button" disabled>Generate report</button>
+      </div>
+
+      <div id="performance-results" class="ir-results" style="display:none;">
+        <div class="ir-results-header">
+          <div class="ir-results-header-left">
+            <div class="ir-results-title-line">
+              <span class="ir-results-title">Performance Report</span>
+              <span class="ir-results-date" id="pr-results-date"></span>
+            </div>
+            <div class="pr-compare-line" id="pr-compare-line"></div>
+          </div>
+          <div class="ir-action-buttons">
+            <button class="btn btn-secondary" id="pr-back-btn" type="button">&laquo; Back</button>
+            <div class="ir-export-wrap">
+              <button class="btn btn-secondary" id="pr-export-btn" type="button" aria-haspopup="menu" aria-expanded="false">
+                Export <span class="ir-export-caret">&#9662;</span>
+              </button>
+              <div class="ir-export-menu" id="pr-export-menu" role="menu" style="display:none;">
+                <button type="button" role="menuitem" data-action="copy">Copy image</button>
+                <button type="button" role="menuitem" data-action="email">Email image</button>
+                <button type="button" role="menuitem" data-action="print">Print</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div id="pr-results-status" class="status" style="display:none;"></div>
+
+        <div id="pr-kpi-row" class="pr-kpi-row"></div>
+        <div id="pr-agent-table-wrap" class="pr-agent-table-wrap"></div>
+
+        <div class="ir-chart-tabs" id="pr-chart-tabs" role="tablist">
+          <button type="button" class="ir-tab active" data-tab="share" role="tab" aria-selected="true">Share of Answered</button>
+          <button type="button" class="ir-tab" data-tab="volume" role="tab" aria-selected="false">Volume &amp; Efficiency</button>
+          <button type="button" class="ir-tab" data-tab="trend" role="tab" aria-selected="false">12-Month Trend</button>
+        </div>
+
+        <div id="pr-charts-container" class="ir-chart-area">
+          <div class="ir-chart-wrap" data-panel="share">
+            <div class="ir-chart-header">Share of Answered Calls</div>
+            <div class="ir-chart-canvas-wrap"><canvas id="pr-share-chart"></canvas></div>
+          </div>
+          <div class="ir-chart-wrap" data-panel="volume" style="display:none;">
+            <div class="ir-chart-header">Volume &amp; Efficiency</div>
+            <div class="ir-chart-canvas-wrap"><canvas id="pr-volume-chart"></canvas></div>
+          </div>
+          <div class="ir-chart-wrap" data-panel="trend" style="display:none;">
+            <div class="ir-chart-header">12-Month Team Trend (Answered)</div>
+            <div class="ir-chart-canvas-wrap"><canvas id="pr-trend-chart"></canvas></div>
           </div>
         </div>
       </div>
