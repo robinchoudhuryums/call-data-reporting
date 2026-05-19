@@ -933,6 +933,13 @@
   // has changed.
   let irLastRoster = { dept: null, agents: [], activeAgents: null, rangeKey: '' };
   let irActiveFetchTimer = null;
+  // Persisted user preferences (mirrors the Performance Report's
+  // prefs model). Restored on modal init, saved on every state
+  // change so the next visit picks up where the user left off.
+  let irSortOrder = 'selection';   // selection | name | answered-desc | answered-asc | pct-desc
+  let irActiveChartTab = 'vol';    // vol | eff | dur
+  let irPendingAgentSelection_ = null;
+  const IR_PREFS_KEY = 'cdr.ir.prefs.v1';
 
   function initIndividualReport() {
     const btn = $('individual-report-btn');
@@ -969,8 +976,12 @@
 
     const fromEl = $('ir-from');
     const toEl   = $('ir-to');
-    if (fromEl) fromEl.addEventListener('change', function () { resetIrPreset(); scheduleActiveAgentRefetch_(); });
-    if (toEl)   toEl.addEventListener('change',   function () { resetIrPreset(); scheduleActiveAgentRefetch_(); });
+    if (fromEl) fromEl.addEventListener('change', function () {
+      resetIrPreset(); scheduleActiveAgentRefetch_(); irSavePrefs_();
+    });
+    if (toEl) toEl.addEventListener('change', function () {
+      resetIrPreset(); scheduleActiveAgentRefetch_(); irSavePrefs_();
+    });
 
     const selAll  = $('ir-select-all');
     const selNone = $('ir-select-none');
@@ -1014,6 +1025,7 @@
 
     const labelToggle = $('ir-show-datalabels');
     if (labelToggle) labelToggle.addEventListener('change', function () {
+      irSavePrefs_();
       if (irLastData) irRenderCharts(irLastData);
     });
 
@@ -1068,10 +1080,68 @@
       // measurable container -- Chart.js can't compute layout while
       // a panel is display:none, so we ask it explicitly.
       irChartInstances.forEach(function (c) { c.resize(); });
+      irActiveChartTab = which;
+      irSavePrefs_();
+    });
+
+    // Card-sort dropdown: re-renders the summary cards in place.
+    const sortSel = $('ir-card-sort');
+    if (sortSel) sortSel.addEventListener('change', function () {
+      irSortOrder = sortSel.value;
+      irSavePrefs_();
+      if (irLastData) irRenderSummary(irLastData.summaryData, irLastData.teamAvg);
     });
 
     // Defaults: this-month-to-date.
     setIrDefaultDates();
+    // Restore last-used form state if any. Runs after default
+    // dates so a saved preset/dates pair overrides the defaults.
+    irRestorePrefs_();
+  }
+
+  /**
+   * Persists the user's Individual Report state to localStorage so
+   * the next modal open picks up where they left off. Best-effort.
+   */
+  function irSavePrefs_() {
+    try {
+      const prefs = {
+        preset:     $('ir-preset') ? $('ir-preset').value : 'custom',
+        from:       $('ir-from')   ? $('ir-from').value   : '',
+        to:         $('ir-to')     ? $('ir-to').value     : '',
+        agents:     irGetCheckedAgents_($('ir-agent-list')),
+        showLabels: $('ir-show-datalabels') ? $('ir-show-datalabels').checked : false,
+        sortOrder:  irSortOrder,
+        chartTab:   irActiveChartTab,
+      };
+      localStorage.setItem(IR_PREFS_KEY, JSON.stringify(prefs));
+    } catch (e) { /* ignore */ }
+  }
+
+  function irRestorePrefs_() {
+    let prefs;
+    try {
+      const raw = localStorage.getItem(IR_PREFS_KEY);
+      if (!raw) return;
+      prefs = JSON.parse(raw);
+    } catch (e) { return; }
+    if (!prefs || typeof prefs !== 'object') return;
+
+    if (prefs.preset && $('ir-preset')) $('ir-preset').value = prefs.preset;
+    if (prefs.from   && $('ir-from'))   $('ir-from').value   = prefs.from;
+    if (prefs.to     && $('ir-to'))     $('ir-to').value     = prefs.to;
+    if (typeof prefs.showLabels === 'boolean' && $('ir-show-datalabels')) {
+      $('ir-show-datalabels').checked = prefs.showLabels;
+    }
+    if (prefs.sortOrder) irSortOrder = prefs.sortOrder;
+    if (prefs.chartTab)  irActiveChartTab = prefs.chartTab;
+    if ($('ir-card-sort')) $('ir-card-sort').value = irSortOrder;
+
+    // Stash agents so we can pre-check the boxes once the roster
+    // list finishes rendering.
+    if (Array.isArray(prefs.agents) && prefs.agents.length) {
+      irPendingAgentSelection_ = prefs.agents;
+    }
   }
 
   function irSetExportMenuOpen_(open) {
@@ -1229,7 +1299,15 @@
 
     // Listen once per render; container.innerHTML wipes previous
     // listeners so no accumulation.
-    list.addEventListener('change', updateIrGenerateEnabled);
+    list.addEventListener('change', function () {
+      updateIrGenerateEnabled();
+      irSavePrefs_();
+    });
+    // Apply any pending selection from restored prefs once.
+    if (irPendingAgentSelection_) {
+      irApplyCheckedAgents_(list, irPendingAgentSelection_);
+      irPendingAgentSelection_ = null;
+    }
     updateIrGenerateEnabled();
   }
 
@@ -1344,6 +1422,7 @@
 
   function applyIrPreset() {
     const v = $('ir-preset').value;
+    irSavePrefs_();
     if (v === 'custom') return;
     const today = new Date();
     let s, e;
@@ -1364,6 +1443,7 @@
     };
     $('ir-from').value = isoOf(s);
     $('ir-to').value   = isoOf(e);
+    irSavePrefs_();
   }
   function resetIrPreset() {
     const p = $('ir-preset');
@@ -1408,10 +1488,9 @@
     showIrResults();
     irSetResultsStatus('');
     irCloseEditPopover_();
-    // Reset to the Volume tab on each render so the user lands on
-    // the default view rather than wherever they happened to leave
-    // the previous report.
-    irResetTabsToVolume_();
+    // Restore the user's last-viewed chart tab (defaults to
+    // Volume on first visit). Persisted in prefs.
+    irActivateChartTab_();
     irRenderSummary(data.summaryData, data.teamAvg);
     irRenderCharts(data);
   }
@@ -1510,22 +1589,25 @@
       .getIndividualReport({ department: dept, from: from, to: to, agents: newAgents });
   }
 
-  function irResetTabsToVolume_() {
+  function irActivateChartTab_() {
     const container = $('ir-chart-tabs');
     if (!container) return;
     container.querySelectorAll('.ir-tab').forEach(function (b) {
-      const active = b.getAttribute('data-tab') === 'vol';
+      const active = b.getAttribute('data-tab') === irActiveChartTab;
       b.classList.toggle('active', active);
       b.setAttribute('aria-selected', active ? 'true' : 'false');
     });
     document.querySelectorAll('#ir-charts-container [data-panel]').forEach(function (p) {
-      p.style.display = p.getAttribute('data-panel') === 'vol' ? '' : 'none';
+      p.style.display = p.getAttribute('data-panel') === irActiveChartTab ? '' : 'none';
     });
   }
 
   function irRenderSummary(summaryData, teamAvg) {
     const container = $('ir-summary-container');
     if (!container) return;
+    const toolbar = $('ir-cards-toolbar');
+    // Sort toolbar only makes sense with 2+ cards.
+    if (toolbar) toolbar.style.display = (summaryData && summaryData.length > 1) ? '' : 'none';
 
     // Friendly empty state when no selected agent had any call
     // activity in range. Hides the trend chart trio too since it
@@ -1565,7 +1647,7 @@
     // is drawn inline from irLastData.trendData -- no extra Chart
     // instances created. Tiles per agent:
     //   Total Rung | Answered | Missed | % Answered | Avg Talk Time
-    container.innerHTML = (summaryData || []).map(function (agent) {
+    container.innerHTML = irSortSummaryData_(summaryData || []).map(function (agent) {
       const trendForAgent = (irLastData && irLastData.trendData && irLastData.trendData.datasets)
                           ? (irLastData.trendData.datasets[agent.name] || [])
                           : [];
@@ -1633,6 +1715,32 @@
         }
       });
     });
+  }
+
+  /**
+   * Returns summaryData reordered per irSortOrder. "selection"
+   * preserves the order the server sent (which mirrors the order
+   * the user checked agents in the picker). Other keys sort by
+   * the corresponding numeric field on each agent's raw stats.
+   */
+  function irSortSummaryData_(summaryData) {
+    if (!Array.isArray(summaryData) || summaryData.length < 2) return summaryData;
+    if (irSortOrder === 'selection') return summaryData;
+    const out = summaryData.slice();
+    if (irSortOrder === 'name') {
+      out.sort(function (a, b) {
+        const an = (a.name || '').toLowerCase();
+        const bn = (b.name || '').toLowerCase();
+        return an < bn ? -1 : an > bn ? 1 : 0;
+      });
+    } else if (irSortOrder === 'answered-desc') {
+      out.sort(function (a, b) { return (b.raw.answered || 0) - (a.raw.answered || 0); });
+    } else if (irSortOrder === 'answered-asc') {
+      out.sort(function (a, b) { return (a.raw.answered || 0) - (b.raw.answered || 0); });
+    } else if (irSortOrder === 'pct-desc') {
+      out.sort(function (a, b) { return (b.raw.pct || 0) - (a.raw.pct || 0); });
+    }
+    return out;
   }
 
   /**
@@ -2074,6 +2182,8 @@
           if (toggle) toggle.style.display = 'none';
           const tabs = clonedDoc.getElementById('ir-chart-tabs');
           if (tabs) tabs.style.display = 'none';
+          const cardsToolbar = clonedDoc.getElementById('ir-cards-toolbar');
+          if (cardsToolbar) cardsToolbar.style.display = 'none';
           const editPop = clonedDoc.getElementById('ir-edit-popover');
           if (editPop) editPop.style.display = 'none';
           const editLine = clonedDoc.querySelector('.ir-editing-edit');

@@ -1012,6 +1012,36 @@
     font-size: 12px;
   }
 
+  /* Sort dropdown above the per-agent summary cards. Only shown
+     in peer-comparison mode (2+ agents); hidden for single-agent
+     reports where sort is meaningless. */
+  .ir-cards-toolbar {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 10px;
+  }
+  .ir-sort-control {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: #fff;
+    padding: 4px 10px;
+    border: 1px solid #d1d5db;
+    border-radius: 4px;
+    font-size: 12px;
+    color: #4b5563;
+  }
+  .ir-sort-label { font-weight: 600; }
+  .ir-sort-control select {
+    background: transparent;
+    border: 0;
+    padding: 2px 4px;
+    font-size: 12px;
+    color: #1f2937;
+    cursor: pointer;
+  }
+  .ir-sort-control select:focus { outline: none; }
+
   /* Per-agent summary card. Comp table inside lays out
      Metric | Agent | Team Avg | Diff. */
   .ir-summary-card {
@@ -1509,6 +1539,7 @@
     body.ir-printing #ir-action-buttons,
     body.ir-printing #ir-datalabels-box,
     body.ir-printing #ir-chart-tabs,
+    body.ir-printing #ir-cards-toolbar,
     body.ir-printing #ir-edit-popover,
     body.ir-printing .ir-editing-edit,
     body.ir-printing .ir-copy-tsv,
