@@ -60,6 +60,7 @@
         <button class="btn btn-secondary" id="individual-report-btn" type="button">Individual Report</button>
         <button class="btn btn-secondary" id="performance-report-btn" type="button">Performance Report</button>
         <button class="btn btn-secondary" id="compare-ranges-btn" type="button" style="display:none;" data-admin-only>Compare Ranges</button>
+        <button class="btn btn-secondary" id="alerts-btn" type="button" style="display:none;" data-admin-only>Alerts</button>
       </div>
     </div>
 
@@ -121,10 +122,13 @@
           <li><strong>Why does the manager see only their department?</strong> Access is controlled by an Email &rarr; Department mapping. Managers see only their own department; admins can switch via the dropdown.</li>
         </ul>
 
-        <h3>Coming soon</h3>
-        <p>Still migrating from the legacy DQE Report spreadsheet:</p>
+        <h3>Reports overview</h3>
+        <p>All legacy DQE Report features are now migrated to this dashboard:</p>
         <ul>
-          <li><strong>Low Answer Rate Alerts</strong> (admin-driven) &mdash; sends per-dept alert emails when a threshold is crossed.</li>
+          <li><strong>Individual Report</strong> &mdash; per-agent KPIs + 12-month trend, with peer-comparison mode for multiple agents.</li>
+          <li><strong>Performance Report</strong> &mdash; dept-level current-vs-prior-period deltas, share-of-answered pie, and 12-month team trend.</li>
+          <li><strong>Compare Ranges</strong> (admin-only) &mdash; side-by-side comparison of two arbitrary date ranges.</li>
+          <li><strong>Alerts</strong> (admin-only) &mdash; per-dept low answer rate alert emails, manually or via a daily trigger.</li>
         </ul>
 
         <h3>Contact</h3>
@@ -646,6 +650,95 @@
           <summary class="cr-quiet-summary"></summary>
           <div id="cr-quiet-cards" class="cr-agent-cards"></div>
         </details>
+      </div>
+    </div>
+  </div>
+
+  <div id="alerts-modal" class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="alerts-modal-title" style="display:none;">
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-panel modal-panel-wide" role="document">
+      <button class="modal-close" id="alerts-close" type="button" aria-label="Close">&times;</button>
+      <h2 id="alerts-modal-title">Low Answer Rate Alerts</h2>
+
+      <div id="al-loading" class="ir-loader" style="text-align: center; padding: 24px;">Loading alert configuration&hellip;</div>
+
+      <div id="al-body" style="display:none;">
+        <div class="al-section">
+          <div class="al-section-title">Configuration</div>
+          <p class="al-hint">
+            Threshold (%) and Extra Recipients are configured in the
+            <strong>Alert Config</strong> sheet in the dashboard spreadsheet.
+            Dept managers from <strong>Access Control</strong> are added
+            automatically. Admins are always cc'd.
+            <a href="#" id="al-open-sheet" target="_blank">Open Alert Config sheet &rarr;</a>
+          </p>
+          <table class="al-config-table">
+            <thead><tr>
+              <th>Department</th>
+              <th class="num">Threshold</th>
+              <th>Extra Recipients</th>
+              <th>Active</th>
+              <th>Notes</th>
+            </tr></thead>
+            <tbody id="al-config-tbody"></tbody>
+          </table>
+        </div>
+
+        <div class="al-section">
+          <div class="al-section-title">Run alerts</div>
+          <div class="al-run-row">
+            <label for="al-date">Date to check</label>
+            <input type="date" id="al-date">
+            <button class="btn btn-secondary" id="al-preview-btn" type="button">Preview</button>
+            <button class="btn" id="al-send-btn" type="button" disabled>Send alerts</button>
+          </div>
+          <div id="al-run-status" class="status" style="display:none;"></div>
+          <div id="al-results-wrap" style="display:none;">
+            <div class="al-results-summary" id="al-results-summary"></div>
+            <table class="al-results-table">
+              <thead><tr>
+                <th>Dept</th>
+                <th class="num">Answer Rate</th>
+                <th class="num">Threshold</th>
+                <th>Recipients</th>
+                <th>Status</th>
+                <th>Notes</th>
+              </tr></thead>
+              <tbody id="al-results-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="al-section">
+          <div class="al-section-title">Daily trigger</div>
+          <p class="al-hint" id="al-trigger-status"></p>
+          <div class="al-trigger-actions">
+            <button class="btn btn-secondary" id="al-install-trigger-btn" type="button">Install daily trigger (8 AM)</button>
+            <button class="btn btn-secondary" id="al-uninstall-trigger-btn" type="button" style="display:none;">Uninstall trigger</button>
+          </div>
+          <p class="al-hint" style="margin-top: 8px;">
+            The daily trigger runs at 8 AM and checks the previous day's answer rate per
+            active dept. Weekends (Sat / Sun) are skipped automatically.
+          </p>
+        </div>
+
+        <div class="al-section">
+          <div class="al-section-title">Recent log</div>
+          <p class="al-hint">Last 20 entries from the Alert Log sheet (most recent first).</p>
+          <table class="al-log-table">
+            <thead><tr>
+              <th>When</th>
+              <th>Dept</th>
+              <th>Date</th>
+              <th class="num">Rate</th>
+              <th class="num">Threshold</th>
+              <th>Sent</th>
+              <th>By</th>
+              <th>Notes</th>
+            </tr></thead>
+            <tbody id="al-log-tbody"></tbody>
+          </table>
+        </div>
       </div>
     </div>
   </div>
