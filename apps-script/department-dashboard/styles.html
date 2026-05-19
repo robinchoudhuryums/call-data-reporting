@@ -894,6 +894,12 @@
   }
   .ir-kpi-spark { height: 22px; line-height: 0; }
   .ir-spark-svg { display: block; }
+  .ir-kpi-value-row {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    min-width: 0;
+  }
   .ir-kpi-value {
     font-size: 22px;
     font-weight: 700;
@@ -903,6 +909,42 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  /* Subtle "X.X% of dept" tag inline with the big value. Lighter
+     weight + smaller size so the absolute number stays primary. */
+  .ir-kpi-share {
+    font-size: 11px;
+    color: #6b7280;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* Insights callout: rendered above the KPI grid per agent. Lists
+     up to 3 rules-based observations vs team avg. */
+  .ir-insights {
+    background: #EFF6FF;
+    border-left: 3px solid #2563EB;
+    border-radius: 4px;
+    padding: 8px 12px;
+    margin-bottom: 10px;
+  }
+  .ir-insights-label {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #1E40AF;
+    margin-bottom: 4px;
+  }
+  .ir-insights-list {
+    margin: 0;
+    padding-left: 18px;
+    font-size: 12.5px;
+    color: #1F2937;
+    line-height: 1.5;
+  }
+  .ir-insights-list li { margin: 2px 0; }
   .ir-kpi-row-bot {
     display: flex;
     align-items: center;

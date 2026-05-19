@@ -1260,28 +1260,35 @@
                           ? (irLastData.trendData.datasets[agent.name] || [])
                           : [];
       const safeName = escapeHtml(agent.name);
+      const share = agent.share || {};
       return '<div class="ir-summary-card">'
            +   '<div class="ir-summary-title">'
            +     safeName
            +     ' <span class="ir-vs">vs Team Avg</span>'
            +     ' <button type="button" class="ir-copy-tsv" data-agent="' + safeName + '">Copy data</button>'
            +   '</div>'
+           +   irInsightsBlock_(agent.insights || [])
            +   '<div class="ir-kpi-grid">'
            +     irKpiTile('Total Rung',  agent.stats.rung,     teamAvg.rung,
                             irDiffBadge(agent.raw.rung,     teamAvg.raw.rung,        'pos'),
-                            trendForAgent.map(function (x) { return x.rung; }),     IR_VOLUME_COLORS.rung)
+                            trendForAgent.map(function (x) { return x.rung; }),     IR_VOLUME_COLORS.rung,
+                            share.rung)
            +     irKpiTile('Answered',    agent.stats.answered, teamAvg.answered,
                             irDiffBadge(agent.raw.answered, teamAvg.raw.answered,    'pos'),
-                            trendForAgent.map(function (x) { return x.answered; }), IR_VOLUME_COLORS.answered)
+                            trendForAgent.map(function (x) { return x.answered; }), IR_VOLUME_COLORS.answered,
+                            share.answered)
            +     irKpiTile('Missed',      agent.stats.missed,   teamAvg.missed,
                             irDiffBadge(agent.raw.missed,   teamAvg.raw.missed,      'neg'),
-                            trendForAgent.map(function (x) { return x.missed; }),   IR_VOLUME_COLORS.missed)
+                            trendForAgent.map(function (x) { return x.missed; }),   IR_VOLUME_COLORS.missed,
+                            share.missed)
            +     irKpiTile('% Answered',  agent.stats.pct,      teamAvg.pct,
                             irDiffBadge(agent.raw.pct,      teamAvg.raw.pctAnswered, 'pos'),
-                            trendForAgent.map(function (x) { return x.pct; }),      '#4E79A7')
+                            trendForAgent.map(function (x) { return x.pct; }),      '#4E79A7',
+                            null)
            +     irKpiTile('Avg Talk',    agent.stats.att,      teamAvg.att,
                             irAttCompare(agent.raw.att, teamAvg.raw.att),
-                            trendForAgent.map(function (x) { return x.att; }),      '#9C755F')
+                            trendForAgent.map(function (x) { return x.att; }),      '#9C755F',
+                            null)
            +   '</div>'
            + '</div>';
     }).join('');
@@ -1294,12 +1301,21 @@
         const card = b.closest('.ir-summary-card');
         if (!card) return;
         const rows = [];
-        rows.push(['Metric', 'Agent', 'Team Avg'].join('\t'));
+        rows.push(['Metric', 'Agent', 'Team Avg', '% of Dept'].join('\t'));
         card.querySelectorAll('.ir-kpi-tile').forEach(function (tile) {
           const label = (tile.querySelector('.ir-kpi-label') || {}).textContent || '';
           const value = (tile.querySelector('.ir-kpi-value') || {}).textContent || '';
           const team  = (tile.querySelector('.ir-kpi-team')  || {}).textContent || '';
-          rows.push([label.trim(), value.trim(), team.replace(/^Team\s*/i, '').trim()].join('\t'));
+          const shareEl = tile.querySelector('.ir-kpi-share');
+          const share = shareEl
+            ? shareEl.textContent.replace(/\s*of\s+dept\s*$/i, '').trim()
+            : '';
+          rows.push([
+            label.trim(),
+            value.trim(),
+            team.replace(/^Team\s*/i, '').trim(),
+            share,
+          ].join('\t'));
         });
         const tsv = rows.join('\n') + '\n';
         if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -1311,20 +1327,47 @@
 
   /**
    * Single KPI tile markup. `sparklineData` is a numeric array;
-   * `sparklineColor` is a hex.
+   * `sparklineColor` is a hex. `share` is an optional pre-formatted
+   * "X.X%" string -- when present (volume tiles only), shown as a
+   * small "X.X% of dept" tag inline with the value to communicate
+   * this agent's portion of the dept's total volume.
    */
-  function irKpiTile(label, value, teamVal, diffBadgeHtml, sparklineData, sparklineColor) {
+  function irKpiTile(label, value, teamVal, diffBadgeHtml, sparklineData, sparklineColor, share) {
     const spark = irSparkline_(sparklineData || [], sparklineColor || '#4E79A7');
+    const shareHtml = share
+      ? '<span class="ir-kpi-share" title="Share of dept volume in range">'
+        + escapeHtml(String(share)) + ' of dept</span>'
+      : '';
     return '<div class="ir-kpi-tile">'
          +   '<div class="ir-kpi-row-top">'
          +     '<div class="ir-kpi-label">' + label + '</div>'
          +     '<div class="ir-kpi-spark">' + spark + '</div>'
          +   '</div>'
-         +   '<div class="ir-kpi-value">' + escapeHtml(String(value)) + '</div>'
+         +   '<div class="ir-kpi-value-row">'
+         +     '<div class="ir-kpi-value">' + escapeHtml(String(value)) + '</div>'
+         +     shareHtml
+         +   '</div>'
          +   '<div class="ir-kpi-row-bot">'
          +     '<span class="ir-kpi-team">Team ' + escapeHtml(String(teamVal)) + '</span>'
          +     diffBadgeHtml
          +   '</div>'
+         + '</div>';
+  }
+
+  /**
+   * Renders the per-agent insights callout. Server-side rules
+   * produce up to 3 short strings comparing this agent to team
+   * avg on % Answered, volume, ATT, and missed-call count.
+   * Returns empty string if no insights -- no empty box.
+   */
+  function irInsightsBlock_(insights) {
+    if (!insights || !insights.length) return '';
+    const items = insights.map(function (s) {
+      return '<li>' + escapeHtml(s) + '</li>';
+    }).join('');
+    return '<div class="ir-insights">'
+         +   '<div class="ir-insights-label">Insights</div>'
+         +   '<ul class="ir-insights-list">' + items + '</ul>'
          + '</div>';
   }
 
