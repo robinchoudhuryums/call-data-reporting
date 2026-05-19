@@ -1412,8 +1412,34 @@
   }
 
   function toggleIrAgents(checked) {
-    $('ir-agent-list').querySelectorAll('.ir-agent-cb').forEach(function (cb) { cb.checked = checked; });
+    selectAllActiveAgents_($('ir-agent-list'), checked);
     updateIrGenerateEnabled();
+  }
+
+  /**
+   * Shared "Select all active / Select none" toggle. When checked
+   * is true, only the agents in the non-muted (Active in range)
+   * group are ticked -- the inactive group (hidden under the
+   * collapsible details) is left alone, so users have to opt in
+   * explicitly to those. When checked is false, every checkbox
+   * (active + inactive) is cleared.
+   *
+   * Falls back to "select all" when the picker has no
+   * active/inactive grouping (e.g. the active-in-range fetch
+   * hasn't returned yet, or every roster member fell into one
+   * bucket).
+   */
+  function selectAllActiveAgents_(listEl, checked) {
+    if (!listEl) return;
+    if (checked) {
+      const activeGroup = listEl.querySelector('.ir-agent-group:not(.ir-agent-group-muted)');
+      const target = activeGroup
+        ? activeGroup.querySelectorAll('.ir-agent-cb')
+        : listEl.querySelectorAll('.ir-agent-cb');
+      target.forEach(function (cb) { cb.checked = true; });
+    } else {
+      listEl.querySelectorAll('.ir-agent-cb').forEach(function (cb) { cb.checked = false; });
+    }
   }
 
   function irGetCheckedAgents_(listEl) {
@@ -1564,7 +1590,7 @@
   }
 
   function irTogglePopoverAgents_(checked) {
-    $('ir-edit-list').querySelectorAll('.ir-agent-cb').forEach(function (cb) { cb.checked = checked; });
+    selectAllActiveAgents_($('ir-edit-list'), checked);
     irUpdateEditApplyEnabled_();
   }
 
@@ -1900,6 +1926,16 @@
     irChartInstances.forEach(function (c) { c.destroy(); });
     irChartInstances = [];
 
+    // Reveal every chart panel temporarily so each canvas has
+    // non-zero dimensions at Chart.js instantiation time. Without
+    // this, charts created in display:none panels come up 0x0 and
+    // never recover when their tab is clicked. Restore visibility
+    // at the end (active tab visible, others hidden).
+    const irPanels = Array.prototype.slice.call(
+      document.querySelectorAll('#ir-charts-container [data-panel]'));
+    const irSavedDisplays = irPanels.map(function (p) { return p.style.display; });
+    irPanels.forEach(function (p) { p.style.display = ''; });
+
     const showLabels = $('ir-show-datalabels') && $('ir-show-datalabels').checked;
     const labels   = data.trendData.labels || [];
     const datasets = data.trendData.datasets || {};
@@ -1975,6 +2011,12 @@
                   { isPercent: false, isTimeMinutes: true, showLabels: showLabels, sharedLegend: data.mode === 'comparison' });
 
     irRenderSharedLegend(data, agents);
+
+    // Restore panel visibility so only the active tab shows. The
+    // charts in the just-hidden panels keep their layout state
+    // (computed during the brief reveal above) and re-paint
+    // correctly when their tab is clicked.
+    irPanels.forEach(function (p, i) { p.style.display = irSavedDisplays[i]; });
   }
 
   /**
@@ -2773,7 +2815,7 @@
   }
 
   function prToggleAgents_(checked) {
-    $('pr-agent-list').querySelectorAll('.ir-agent-cb').forEach(function (cb) { cb.checked = checked; });
+    selectAllActiveAgents_($('pr-agent-list'), checked);
     prUpdateGenerateEnabled_();
   }
 
@@ -3063,6 +3105,16 @@
     prChartInstances.forEach(function (c) { c.destroy(); });
     prChartInstances = [];
 
+    // Reveal every chart panel temporarily so each canvas has
+    // non-zero dimensions at Chart.js instantiation time. Without
+    // this, the inactive-tab charts (Volume & Efficiency,
+    // 12-Month Trend) come up 0x0 and don't recover when their
+    // tab is clicked.
+    const prPanels = Array.prototype.slice.call(
+      document.querySelectorAll('#pr-charts-container [data-panel]'));
+    const prSavedDisplays = prPanels.map(function (p) { return p.style.display; });
+    prPanels.forEach(function (p) { p.style.display = ''; });
+
     const showLabels = $('pr-show-datalabels') ? $('pr-show-datalabels').checked : true;
     // Per-chart registration (rather than Chart.register'ing
     // globally) so the Missed Calls bar chart isn't affected by
@@ -3206,6 +3258,11 @@
     // Trend chart -- factored out so the metric sub-tabs can
     // re-render it without rebuilding the pie + bar.
     prRenderTrendChart_(data);
+
+    // Restore panel visibility (only the active tab visible).
+    // Chart layout state is preserved across the re-hide so the
+    // now-hidden charts paint correctly when their tab clicks.
+    prPanels.forEach(function (p, i) { p.style.display = prSavedDisplays[i]; });
   }
 
   /**
@@ -3457,6 +3514,7 @@
   let crActiveFetchTimer = null;
   let crChartInstance = null;
   let crActiveChartMetric = 'answered';
+  let crCardSort = 'selection';     // selection | name | improvers | regressors
   let crPendingAgentSelection_ = null;
   const CR_PREFS_KEY = 'cdr.cr.prefs.v1';
 
@@ -3496,15 +3554,21 @@
     if (preset) preset.addEventListener('change', applyCrPreset);
 
     // Each of the four date inputs triggers a debounced re-fetch
-    // of the active-agent subset (union of both ranges).
+    // of the active-agent subset (union of both ranges) and an
+    // immediate refresh of the period-length hint.
     ['cr-p1-from','cr-p1-to','cr-p2-from','cr-p2-to'].forEach(function (id) {
       const el = $(id);
       if (el) el.addEventListener('change', function () {
         resetCrPreset_();
+        crUpdatePeriodLengths_();
         scheduleCrActiveAgentRefetch_();
         crSavePrefs_();
       });
     });
+
+    // Swap button: flips P1 and P2 dates in place.
+    const swapBtn = $('cr-swap-periods');
+    if (swapBtn) swapBtn.addEventListener('click', crSwapPeriods_);
 
     const selAll  = $('cr-select-all');
     const selNone = $('cr-select-none');
@@ -3539,7 +3603,41 @@
         b.setAttribute('aria-selected', active ? 'true' : 'false');
       });
       crSavePrefs_();
-      if (crLastData) crRenderChart_(crLastData);
+      if (crLastData) {
+        crRenderChart_(crLastData);
+        crRenderChartSummary_(crLastData);
+      }
+    });
+
+    // Card sort dropdown.
+    const cardSortSel = $('cr-card-sort');
+    if (cardSortSel) cardSortSel.addEventListener('change', function () {
+      crCardSort = cardSortSel.value;
+      crSavePrefs_();
+      if (crLastData) crRenderAgentCards_(crLastData.agentData, crLastData.meta, crLastData.teamStats);
+    });
+
+    // Edit-selection popover wiring (results header).
+    const editBtn = $('cr-edit-selection-btn');
+    if (editBtn) editBtn.addEventListener('click', crOpenEditPopover_);
+    const editClose = $('cr-edit-popover-close');
+    if (editClose) editClose.addEventListener('click', crCloseEditPopover_);
+    const editApply = $('cr-edit-apply-btn');
+    if (editApply) editApply.addEventListener('click', crApplyEditPopover_);
+    const editSelAll  = $('cr-edit-select-all');
+    const editSelNone = $('cr-edit-select-none');
+    if (editSelAll)  editSelAll.addEventListener('click',  function (e) { e.preventDefault(); crTogglePopoverAgents_(true);  });
+    if (editSelNone) editSelNone.addEventListener('click', function (e) { e.preventDefault(); crTogglePopoverAgents_(false); });
+    const editSearch = $('cr-edit-search');
+    if (editSearch) editSearch.addEventListener('input', function () {
+      irFilterAgentList_($('cr-edit-list'), editSearch.value);
+    });
+    document.addEventListener('click', function (e) {
+      const pop = $('cr-edit-popover');
+      if (!pop || pop.style.display === 'none') return;
+      if (pop.contains(e.target)) return;
+      if (e.target === editBtn) return;
+      crCloseEditPopover_();
     });
 
     // Export dropdown.
@@ -3558,6 +3656,7 @@
         if (action === 'copy')  crCopyImage_();
         else if (action === 'email') crEmailImage_();
         else if (action === 'print') crPrint_();
+        else if (action === 'csv')   crDownloadCsv_();
       });
       document.addEventListener('click', function (e) {
         if (exportMenu.style.display === 'none') return;
@@ -3572,6 +3671,7 @@
     }
 
     crRestorePrefs_();
+    crUpdatePeriodLengths_();
   }
 
   function ensureCrDefaultDates_() {
@@ -3665,12 +3765,271 @@
     $('cr-p1-to').value   = iso(p1To);
     $('cr-p2-from').value = iso(p2From);
     $('cr-p2-to').value   = iso(p2To);
+    crUpdatePeriodLengths_();
     crSavePrefs_();
     scheduleCrActiveAgentRefetch_();
   }
   function resetCrPreset_() {
     const p = $('cr-preset');
     if (p) p.value = 'custom';
+  }
+
+  /**
+   * Displays the period-length hint under the date inputs.
+   * Equal-length periods get a "Equal length" check; unequal
+   * periods get a warning indicating the ratio so users notice
+   * that volume comparisons aren't apples-to-apples.
+   */
+  function crUpdatePeriodLengths_() {
+    const el = $('cr-length-hint');
+    if (!el) return;
+    const p1F = $('cr-p1-from') && $('cr-p1-from').value;
+    const p1T = $('cr-p1-to')   && $('cr-p1-to').value;
+    const p2F = $('cr-p2-from') && $('cr-p2-from').value;
+    const p2T = $('cr-p2-to')   && $('cr-p2-to').value;
+    if (!p1F || !p1T || !p2F || !p2T) { el.innerHTML = ''; return; }
+    if (p1F > p1T || p2F > p2T)       { el.innerHTML = ''; return; }
+    const ms = 86400000;
+    const p1Days = Math.round((new Date(p1T+'T12:00:00') - new Date(p1F+'T12:00:00')) / ms) + 1;
+    const p2Days = Math.round((new Date(p2T+'T12:00:00') - new Date(p2F+'T12:00:00')) / ms) + 1;
+    const mismatch = (Math.min(p1Days, p2Days) > 0)
+                  && (Math.max(p1Days, p2Days) / Math.min(p1Days, p2Days) >= 1.2);
+    let extra = '';
+    if (mismatch) {
+      const ratio = (Math.max(p1Days, p2Days) / Math.min(p1Days, p2Days)).toFixed(1);
+      extra = '<span class="cr-length-warn">'
+            + '&#9888; Period 2 is ' + ratio + '&times; '
+            + (p2Days > p1Days ? 'longer than P1' : 'shorter than P1')
+            + ' &mdash; volume totals aren\'t directly comparable.'
+            + '</span>';
+    } else {
+      extra = '<span class="cr-length-ok">&#10003; Equal length</span>';
+    }
+    el.innerHTML = '<span class="cr-length-spec">Period 1: <strong>' + p1Days + '</strong> day'
+                 + (p1Days === 1 ? '' : 's') + '</span>'
+                 + ' &middot; '
+                 + '<span class="cr-length-spec">Period 2: <strong>' + p2Days + '</strong> day'
+                 + (p2Days === 1 ? '' : 's') + '</span>'
+                 + ' &middot; '
+                 + extra;
+  }
+
+  /**
+   * Swaps Period 1 and Period 2 date inputs in place. Triggers
+   * the same downstream updates as a normal date change.
+   */
+  function crSwapPeriods_() {
+    const p1F = $('cr-p1-from'); const p1T = $('cr-p1-to');
+    const p2F = $('cr-p2-from'); const p2T = $('cr-p2-to');
+    if (!p1F || !p1T || !p2F || !p2T) return;
+    const tmpF = p1F.value, tmpT = p1T.value;
+    p1F.value = p2F.value;  p1T.value = p2T.value;
+    p2F.value = tmpF;       p2T.value = tmpT;
+    resetCrPreset_();
+    crUpdatePeriodLengths_();
+    scheduleCrActiveAgentRefetch_();
+    crSavePrefs_();
+  }
+
+  // ── Edit-selection popover (mirrors IR's pattern) ────────────────
+  function crOpenEditPopover_() {
+    const pop = $('cr-edit-popover');
+    if (!pop) return;
+    const list = $('cr-edit-list');
+    if (!list) return;
+    list.innerHTML = irBuildAgentListHtml_(crLastRoster.agents || [], crLastRoster.activeAgents);
+    const current = (crLastData && crLastData.meta && crLastData.meta.agents) || [];
+    irApplyCheckedAgents_(list, current);
+    crUpdateEditApplyEnabled_();
+    list.addEventListener('change', crUpdateEditApplyEnabled_);
+    pop.style.display = '';
+    const search = $('cr-edit-search');
+    if (search) { search.value = ''; setTimeout(function () { search.focus(); }, 0); }
+    irFilterAgentList_(list, '');
+  }
+
+  function crCloseEditPopover_() {
+    const pop = $('cr-edit-popover');
+    if (pop) pop.style.display = 'none';
+  }
+
+  function crUpdateEditApplyEnabled_() {
+    const checked = irGetCheckedAgents_($('cr-edit-list'));
+    $('cr-edit-apply-btn').disabled = checked.length === 0;
+  }
+
+  function crTogglePopoverAgents_(checked) {
+    selectAllActiveAgents_($('cr-edit-list'), checked);
+    crUpdateEditApplyEnabled_();
+  }
+
+  function crApplyEditPopover_() {
+    const newAgents = irGetCheckedAgents_($('cr-edit-list'));
+    if (!newAgents.length) return;
+    // Mirror to the main form picker so going Back keeps state.
+    irApplyCheckedAgents_($('cr-agent-list'), newAgents);
+    crCloseEditPopover_();
+
+    const dept = getRequestedDept();
+    const p1From = $('cr-p1-from').value;
+    const p1To   = $('cr-p1-to').value;
+    const p2From = $('cr-p2-from').value;
+    const p2To   = $('cr-p2-to').value;
+
+    const btn = $('cr-edit-apply-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Loading…'; }
+    crSetResultsStatus('loading', 'Refreshing report…');
+
+    google.script.run
+      .withSuccessHandler(function (data) {
+        if (btn) { btn.textContent = 'Apply'; btn.disabled = false; }
+        crRenderReport_(data);
+      })
+      .withFailureHandler(function (err) {
+        if (btn) { btn.textContent = 'Apply'; btn.disabled = false; }
+        crSetResultsStatus('error', 'Error: ' + (err && err.message ? err.message : String(err)));
+      })
+      .getCompareRanges({
+        department: dept, agents: newAgents,
+        p1From: p1From, p1To: p1To, p2From: p2From, p2To: p2To,
+      });
+  }
+
+  // ── CSV download (no Apps Script call -- pure client) ──────────
+  /**
+   * Builds a CSV string of the per-agent comparison and triggers
+   * a browser download. Includes the team summary row, per-agent
+   * P1 / P2 / Delta / direction. Volume metrics with length
+   * mismatch include a per-day column.
+   */
+  function crDownloadCsv_() {
+    if (!crLastData) return;
+    const meta = crLastData.meta || {};
+    const includePerDay = !!meta.lengthMismatch;
+    const csv = crBuildCsv_(crLastData, includePerDay);
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'compare-ranges_' + (meta.department || 'report')
+               + '_' + (meta.p1From || '') + '_vs_' + (meta.p2From || '')
+               + '.csv';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 0);
+  }
+
+  function crBuildCsv_(data, includePerDay) {
+    const meta = data.meta || {};
+    const t    = data.teamStats || {};
+    const p1Days = meta.p1Days || 0;
+    const p2Days = meta.p2Days || 0;
+    const lines = [];
+    const esc = function (v) {
+      const s = (v == null ? '' : String(v));
+      // Escape per RFC 4180: wrap in quotes if contains comma/quote/newline.
+      if (/[",\n]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+      return s;
+    };
+
+    lines.push(esc('Compare Ranges Report'));
+    lines.push(esc('Department') + ',' + esc(meta.department || ''));
+    lines.push(esc('Period 1') + ',' + esc(data.p1Label || '') + ',' + esc(p1Days + ' days'));
+    lines.push(esc('Period 2') + ',' + esc(data.p2Label || '') + ',' + esc(p2Days + ' days'));
+    lines.push('');
+
+    const headers = ['Agent', 'Metric', 'Period 1', 'Period 2', 'Delta %'];
+    if (includePerDay) headers.push('P1/day', 'P2/day');
+    lines.push(headers.map(esc).join(','));
+
+    // Team summary row across the same metrics first so the CSV
+    // opens with the dept-wide view.
+    const teamRows = [
+      crCsvRow_('TEAM TOTAL', 'Rung',       t.rung,     p1Days, p2Days, includePerDay, 'volume'),
+      crCsvRow_('TEAM TOTAL', 'Missed',     t.missed,   p1Days, p2Days, includePerDay, 'volume'),
+      crCsvRow_('TEAM TOTAL', 'Answered',   t.answered, p1Days, p2Days, includePerDay, 'volume'),
+      crCsvRow_('TEAM TOTAL', '% Answered', t.pct,      p1Days, p2Days, false,         'rate'),
+      crCsvRow_('TEAM TOTAL', 'TTT',        t.ttt,      p1Days, p2Days, includePerDay, 'time'),
+      crCsvRow_('TEAM TOTAL', 'Avg ATT',    t.att,      p1Days, p2Days, false,         'rate'),
+    ];
+    teamRows.forEach(function (r) { lines.push(r); });
+    lines.push('');
+
+    (data.agentData || []).forEach(function (a) {
+      const mkPairStat = function (raw, formatted) {
+        // Synthesize a stat-shaped object for crCsvRow_'s helper.
+        return { val: raw.p2, prev: raw.p1, formatted: formatted.p2,
+                 prevFormatted: formatted.p1, type: 'volume' };
+      };
+      const mkRateStat = function (raw, formatted, isPctType) {
+        return { val: raw.p2, prev: raw.p1, formatted: formatted.p2,
+                 prevFormatted: formatted.p1, type: isPctType ? 'pctPoints' : 'volume' };
+      };
+      const rung     = { p1: a.p1.raw.rung,     p2: a.p2.raw.rung };
+      const missed   = { p1: a.p1.raw.missed,   p2: a.p2.raw.missed };
+      const answered = { p1: a.p1.raw.answered, p2: a.p2.raw.answered };
+      const ttt      = { p1: a.p1.raw.ttt,      p2: a.p2.raw.ttt };
+      const att      = { p1: a.p1.raw.att,      p2: a.p2.raw.att };
+      const pct      = { p1: a.p1.raw.pct,      p2: a.p2.raw.pct };
+
+      lines.push(crCsvRow_(a.name, 'Rung',
+        Object.assign({}, a.deltas.rung,     { val: rung.p2,     prev: rung.p1,
+          formatted: a.p2.formatted.rung,     prevFormatted: a.p1.formatted.rung }),
+        p1Days, p2Days, includePerDay, 'volume'));
+      lines.push(crCsvRow_(a.name, 'Missed',
+        Object.assign({}, a.deltas.missed,   { val: missed.p2,   prev: missed.p1,
+          formatted: a.p2.formatted.missed,   prevFormatted: a.p1.formatted.missed }),
+        p1Days, p2Days, includePerDay, 'volume'));
+      lines.push(crCsvRow_(a.name, 'Answered',
+        Object.assign({}, a.deltas.answered, { val: answered.p2, prev: answered.p1,
+          formatted: a.p2.formatted.answered, prevFormatted: a.p1.formatted.answered }),
+        p1Days, p2Days, includePerDay, 'volume'));
+      lines.push(crCsvRow_(a.name, '% Answered',
+        Object.assign({}, a.deltas.pct,      { val: pct.p2,      prev: pct.p1,
+          formatted: a.p2.formatted.pct,      prevFormatted: a.p1.formatted.pct }),
+        p1Days, p2Days, false, 'rate'));
+      lines.push(crCsvRow_(a.name, 'TTT',
+        Object.assign({}, a.deltas.ttt,      { val: ttt.p2,      prev: ttt.p1,
+          formatted: a.p2.formatted.ttt,      prevFormatted: a.p1.formatted.ttt }),
+        p1Days, p2Days, includePerDay, 'time'));
+      lines.push(crCsvRow_(a.name, 'Avg ATT',
+        Object.assign({}, a.deltas.att,      { val: att.p2,      prev: att.p1,
+          formatted: a.p2.formatted.att,      prevFormatted: a.p1.formatted.att }),
+        p1Days, p2Days, false, 'rate'));
+    });
+
+    return lines.join('\n') + '\n';
+  }
+
+  function crCsvRow_(agentLabel, metric, stat, p1Days, p2Days, includePerDay, kind) {
+    const esc = function (v) {
+      const s = (v == null ? '' : String(v));
+      if (/[",\n]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+      return s;
+    };
+    const isPctType = stat && stat.type === 'pctPoints';
+    const dp = Number((stat && stat.deltaPct) || 0);
+    const deltaStr = isPctType
+      ? dp.toFixed(1) + ' pts'
+      : dp.toFixed(1) + '%';
+    const cells = [
+      agentLabel, metric,
+      (stat && stat.prevFormatted) || '',
+      (stat && stat.formatted)     || '',
+      deltaStr,
+    ];
+    if (includePerDay && stat && stat.val != null && stat.prev != null
+        && (kind === 'volume' || kind === 'time')
+        && p1Days > 0 && p2Days > 0) {
+      const fmt = (kind === 'time')
+        ? function (v) { return crFormatSecondsShort_(v); }
+        : function (v) { return v.toFixed(1); };
+      cells.push(fmt(stat.prev / p1Days));
+      cells.push(fmt(stat.val  / p2Days));
+    } else if (includePerDay) {
+      cells.push(''); cells.push('');
+    }
+    return cells.map(esc).join(',');
   }
 
   // ── Roster fetch (mirrors PR) ─────────────────────────────────────
@@ -3775,7 +4134,7 @@
   }
 
   function crToggleAgents_(checked) {
-    $('cr-agent-list').querySelectorAll('.ir-agent-cb').forEach(function (cb) { cb.checked = checked; });
+    selectAllActiveAgents_($('cr-agent-list'), checked);
     crUpdateGenerateEnabled_();
     crSavePrefs_();
   }
@@ -3821,12 +4180,91 @@
     crLastData = data;
     if ($('cr-p1-label')) $('cr-p1-label').textContent = data.p1Label || '';
     if ($('cr-p2-label')) $('cr-p2-label').textContent = data.p2Label || '';
+    crRenderEditingLine_(data.meta && data.meta.agents);
     showCrResults();
+    crCloseEditPopover_();
     crSetResultsStatus('');
+    crRenderLengthWarning_(data.meta);
     crRenderTeamInsights_(data.teamInsights);
-    crRenderTeamTiles_(data.teamStats);
-    crRenderAgentCards_(data.agentData);
-    crRenderChart_(data);
+    crRenderTeamTiles_(data.teamStats, data.meta);
+    crRenderAgentCards_(data.agentData, data.meta, data.teamStats);
+    crRenderChartSummary_(data);
+    // Defer chart creation one frame so the just-revealed
+    // compare-results container is fully laid out before
+    // Chart.js measures the canvas. Without this the canvas can
+    // come up 0x0 on first render after the modal opens.
+    requestAnimationFrame(function () { crRenderChart_(data); });
+  }
+
+  /**
+   * Compact "Showing: Sarah, Maria · change" line under the date
+   * pair. Truncates beyond 3 agents with the full list as a hover
+   * tooltip. Mirrors the IR pattern.
+   */
+  function crRenderEditingLine_(agents) {
+    const el = $('cr-editing-agents');
+    if (!el) return;
+    const list = Array.isArray(agents) ? agents : [];
+    let visible, tooltip;
+    if (list.length <= 3) {
+      visible = list.join(', '); tooltip = visible;
+    } else {
+      visible = list.slice(0, 2).join(', ') + ', +' + (list.length - 2) + ' more';
+      tooltip = list.join(', ');
+    }
+    el.textContent = visible || '(none)';
+    el.title = tooltip;
+  }
+
+  /**
+   * Banner above the report body when the two periods differ in
+   * length by >= 20%. Volume-metric totals aren't directly
+   * comparable in that case; the per-day annotations on KPI
+   * tiles + cards are the actionable signal.
+   */
+  function crRenderLengthWarning_(meta) {
+    const el = $('cr-length-warning');
+    if (!el) return;
+    if (!meta || !meta.lengthMismatch) { el.style.display = 'none'; el.innerHTML = ''; return; }
+    const p1d = meta.p1Days || 0;
+    const p2d = meta.p2Days || 0;
+    el.innerHTML = '<strong>Different period lengths:</strong> '
+                 + 'Period 1 is ' + p1d + ' days, Period 2 is ' + p2d + ' days. '
+                 + 'Volume totals (Rung / Missed / Answered) aren\'t directly comparable; '
+                 + 'compare the per-day averages shown on the KPI tiles + agent cards instead.';
+    el.style.display = '';
+  }
+
+  /**
+   * One-line summary above the chart showing the team-level
+   * totals for the active metric. Lets the user read the
+   * aggregate without eye-jumping back to the KPI tiles.
+   */
+  function crRenderChartSummary_(data) {
+    const el = $('cr-chart-summary');
+    if (!el) return;
+    if (!data || !data.teamStats) { el.textContent = ''; return; }
+    const t = data.teamStats;
+    const metric = crActiveChartMetric;
+    let stat, label;
+    if (metric === 'pct')        { stat = t.pct;      label = 'Team % Answered'; }
+    else if (metric === 'rung')  { stat = t.rung;     label = 'Team Rung'; }
+    else                         { stat = t.answered; label = 'Team Answered'; }
+    if (!stat) { el.textContent = ''; return; }
+    const dp = Number(stat.deltaPct || 0);
+    let badge = '';
+    if (Math.abs(dp) >= 0.05) {
+      const cls = dp > 0 ? 'pr-delta-pos' : 'pr-delta-neg';
+      const arrow = dp > 0 ? '▲' : '▼';
+      const suffix = stat.type === 'pctPoints' ? ' pts' : '%';
+      badge = '<span class="pr-delta ' + cls + '">'
+            + arrow + ' ' + Math.abs(dp).toFixed(1) + suffix + '</span>';
+    }
+    el.innerHTML = label + ': '
+                 + '<strong>' + escapeHtml(stat.prevFormatted) + '</strong> (P1) '
+                 + '→ '
+                 + '<strong>' + escapeHtml(stat.formatted) + '</strong> (P2) '
+                 + badge;
   }
 
   function crRenderTeamInsights_(insights) {
@@ -3844,20 +4282,24 @@
    * tile structure as the Performance Report's KPI row so the
    * shared .pr-kpi-tile / .pr-delta CSS applies.
    */
-  function crRenderTeamTiles_(teamStats) {
+  function crRenderTeamTiles_(teamStats, meta) {
     const t = teamStats || {};
+    const m = meta || {};
+    // Volume tiles get per-day captions when periods differ in
+    // length so users can compare apples-to-apples. % Answered
+    // and ATT are already averages and don't need normalizing.
     const tiles = [
-      crTeamTile_('Total Rung',  t.rung,     'pos'),
-      crTeamTile_('Total Missed',t.missed,   'neg'),
-      crTeamTile_('Answered',    t.answered, 'pos'),
-      crTeamTile_('% Answered',  t.pct,      'pos'),
-      crTeamTile_('Total TTT',   t.ttt,      'neu'),
-      crTeamTile_('Avg ATT',     t.att,      'neu'),
+      crTeamTile_('Total Rung',  t.rung,     'pos', m, 'volume'),
+      crTeamTile_('Total Missed',t.missed,   'neg', m, 'volume'),
+      crTeamTile_('Answered',    t.answered, 'pos', m, 'volume'),
+      crTeamTile_('% Answered',  t.pct,      'pos', m, 'rate'),
+      crTeamTile_('Total TTT',   t.ttt,      'neu', m, 'time'),
+      crTeamTile_('Avg ATT',     t.att,      'neu', m, 'rate'),
     ].join('');
     $('cr-team-tiles').innerHTML = tiles;
   }
 
-  function crTeamTile_(label, stat, valenceDirection) {
+  function crTeamTile_(label, stat, valenceDirection, meta, kind) {
     const s = stat || { formatted: '-', prevFormatted: '-', deltaPct: 0, type: 'volume' };
     const isPctType = s.type === 'pctPoints';
     const dp = Number(s.deltaPct || 0);
@@ -3874,6 +4316,24 @@
             +   arrow + ' ' + Math.abs(dp).toFixed(1) + suffix
             + '</span>';
     }
+    // Per-day caption: only for raw volume/time metrics, only
+    // when meta says the two periods differ in length enough to
+    // matter.
+    let perDayCaption = '';
+    if (meta && meta.lengthMismatch && (kind === 'volume' || kind === 'time')
+        && s.val != null && s.prev != null
+        && meta.p1Days > 0 && meta.p2Days > 0) {
+      const p2PerDay = s.val  / meta.p2Days;
+      const p1PerDay = s.prev / meta.p1Days;
+      const formatPerDay = (kind === 'time')
+        ? function (v) { return crFormatSecondsShort_(v); }
+        : function (v) { return v.toFixed(1); };
+      perDayCaption =
+        '<div class="pr-kpi-perday">'
+        +   'Per day: <strong>' + formatPerDay(p2PerDay) + '</strong>'
+        +   ' <span class="pr-delta-cap">vs ' + formatPerDay(p1PerDay) + ' (P1)</span>'
+        + '</div>';
+    }
     return '<div class="pr-kpi-tile">'
          +   '<div class="pr-kpi-row-top">'
          +     '<div class="pr-kpi-label">' + label + '</div>'
@@ -3882,62 +4342,137 @@
          +   '<div class="pr-kpi-delta">'
          +     badge + ' <span class="pr-delta-cap">vs ' + escapeHtml(String(s.prevFormatted)) + ' (P1)</span>'
          +   '</div>'
+         +   perDayCaption
          + '</div>';
   }
 
-  /**
-   * Per-agent comparison cards. Each card has a 6-row table:
-   * Rung / Missed / Answered / % Answered / TTT / ATT, with
-   * columns for Period 1, Period 2, and Δ (color-coded by metric
-   * valence).
-   */
-  function crRenderAgentCards_(agentData) {
-    const cards = (agentData || []).map(function (a) {
-      const rows = [
-        crCardRow_('Total Rung',  a.p1.formatted.rung,     a.p2.formatted.rung,     a.deltas.rung,     'pos'),
-        crCardRow_('Missed',      a.p1.formatted.missed,   a.p2.formatted.missed,   a.deltas.missed,   'neg'),
-        crCardRow_('Answered',    a.p1.formatted.answered, a.p2.formatted.answered, a.deltas.answered, 'pos'),
-        crCardRow_('% Answered',  a.p1.formatted.pct,      a.p2.formatted.pct,      a.deltas.pct,      'pos'),
-        crCardRow_('TTT',         a.p1.formatted.ttt,      a.p2.formatted.ttt,      a.deltas.ttt,      'neu'),
-        crCardRow_('Avg ATT',     a.p1.formatted.att,      a.p2.formatted.att,      a.deltas.att,      'neu'),
-      ].join('');
-      const safe = escapeHtml(a.name);
-      return '<div class="cr-agent-card">'
-           +   '<div class="cr-agent-card-header">'
-           +     '<span class="cr-agent-name">' + safe + '</span>'
-           +     '<button type="button" class="ir-copy-tsv" data-agent="' + safe + '">Copy data</button>'
-           +   '</div>'
-           +   '<table class="cr-agent-table">'
-           +     '<thead><tr>'
-           +       '<th>Metric</th><th class="num">Period 1</th><th class="num">Period 2</th><th class="num">&Delta;</th>'
-           +     '</tr></thead>'
-           +     '<tbody>' + rows + '</tbody>'
-           +   '</table>'
-           + '</div>';
-    }).join('');
-    $('cr-agent-cards').innerHTML = cards;
-
-    // Per-card "Copy data" -> TSV.
-    $('cr-agent-cards').querySelectorAll('.ir-copy-tsv').forEach(function (b) {
-      b.addEventListener('click', function () {
-        const card = b.closest('.cr-agent-card');
-        const table = card && card.querySelector('table');
-        if (!table) return;
-        const lines = [];
-        Array.prototype.forEach.call(table.rows, function (row) {
-          lines.push(Array.prototype.map.call(row.cells, function (c) {
-            return (c.innerText || '').replace(/\s+/g, ' ').trim();
-          }).join('\t'));
-        });
-        const tsv = lines.join('\n') + '\n';
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText(tsv).then(function () { irFlashButton(b, 'Copied'); });
-        }
-      });
-    });
+  function crFormatSecondsShort_(totalSeconds) {
+    if (!totalSeconds || totalSeconds <= 0) return '0:00';
+    totalSeconds = Math.round(totalSeconds);
+    const h = Math.floor(totalSeconds / 3600);
+    const m = Math.floor((totalSeconds % 3600) / 60);
+    const s = totalSeconds % 60;
+    const pad = function (n) { return n < 10 ? '0' + n : String(n); };
+    if (h > 0) return h + ':' + pad(m) + ':' + pad(s);
+    return m + ':' + pad(s);
   }
 
-  function crCardRow_(metric, p1Val, p2Val, deltaObj, valence) {
+  /**
+   * Per-agent comparison cards. Each card carries:
+   *   - Color-coded left border based on aggregate direction
+   *     (improved / regressed / mixed -- see crClassifyAgent_).
+   *   - 6-row table: Rung / Missed / Answered / % Answered / TTT
+   *     / ATT with P1 / P2 / delta columns. P1+P2 cells gain a
+   *     per-day caption when meta.lengthMismatch.
+   *   - "vs Team" badge in the header when the agent's overall
+   *     improvement score is above or below the team's score.
+   *
+   * Quiet agents (no metric changed by more than a small noise
+   * threshold) collapse into a <details> section below the main
+   * grid so the eye-catching cards are the notable movers.
+   */
+  function crRenderAgentCards_(agentData, meta, teamStats) {
+    const data = agentData || [];
+    // Team's improvement score is the reference for the per-card
+    // "vs Team" badge.
+    const teamScore = crTeamImprovementScore_(teamStats);
+    const enriched = data.map(function (a) {
+      return {
+        agent: a,
+        score: crImprovementScore_(a),
+        direction: crClassifyAgent_(a),
+        quiet: crIsQuietAgent_(a),
+      };
+    });
+
+    // Split out quiet agents into the collapsible section.
+    const main  = enriched.filter(function (x) { return !x.quiet; });
+    const quiet = enriched.filter(function (x) { return  x.quiet; });
+
+    // Sort the main set; quiet stays in selection order.
+    const sortedMain = crSortEnriched_(main);
+
+    const renderCard = function (x) { return crBuildCard_(x, teamScore, meta); };
+    $('cr-agent-cards').innerHTML = sortedMain.map(renderCard).join('');
+
+    const det = $('cr-quiet-details');
+    if (det) {
+      if (quiet.length > 0) {
+        det.style.display = '';
+        det.querySelector('.cr-quiet-summary').textContent =
+          'Show ' + quiet.length + ' quiet agent' + (quiet.length === 1 ? '' : 's')
+          + ' (no notable changes)';
+        $('cr-quiet-cards').innerHTML = quiet.map(renderCard).join('');
+      } else {
+        det.style.display = 'none';
+        $('cr-quiet-cards').innerHTML = '';
+      }
+    }
+
+    // Per-card "Copy data" -> TSV. Single delegated listener
+    // covers both the main grid and the quiet-details grid.
+    const wireCopy = function (host) {
+      if (!host) return;
+      host.querySelectorAll('.ir-copy-tsv').forEach(function (b) {
+        b.addEventListener('click', function () {
+          const card = b.closest('.cr-agent-card');
+          const table = card && card.querySelector('table');
+          if (!table) return;
+          const lines = [];
+          Array.prototype.forEach.call(table.rows, function (row) {
+            lines.push(Array.prototype.map.call(row.cells, function (c) {
+              return (c.innerText || '').replace(/\s+/g, ' ').trim();
+            }).join('\t'));
+          });
+          const tsv = lines.join('\n') + '\n';
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(tsv).then(function () { irFlashButton(b, 'Copied'); });
+          }
+        });
+      });
+    };
+    wireCopy($('cr-agent-cards'));
+    wireCopy($('cr-quiet-cards'));
+  }
+
+  function crBuildCard_(x, teamScore, meta) {
+    const a = x.agent;
+    const safe = escapeHtml(a.name);
+    const dirClass = x.direction === 'improved' ? 'cr-card-improved'
+                   : x.direction === 'regressed' ? 'cr-card-regressed'
+                   : 'cr-card-mixed';
+    const vsTeam = crVsTeamBadge_(x.score, teamScore);
+    const rows = [
+      crCardRow_('Total Rung',  a.p1.formatted.rung,     a.p2.formatted.rung,     a.deltas.rung,
+                  'pos', a.p1.raw.rung,     a.p2.raw.rung,     meta, 'volume'),
+      crCardRow_('Missed',      a.p1.formatted.missed,   a.p2.formatted.missed,   a.deltas.missed,
+                  'neg', a.p1.raw.missed,   a.p2.raw.missed,   meta, 'volume'),
+      crCardRow_('Answered',    a.p1.formatted.answered, a.p2.formatted.answered, a.deltas.answered,
+                  'pos', a.p1.raw.answered, a.p2.raw.answered, meta, 'volume'),
+      crCardRow_('% Answered',  a.p1.formatted.pct,      a.p2.formatted.pct,      a.deltas.pct,
+                  'pos', null, null, meta, 'rate'),
+      crCardRow_('TTT',         a.p1.formatted.ttt,      a.p2.formatted.ttt,      a.deltas.ttt,
+                  'neu', a.p1.raw.ttt,      a.p2.raw.ttt,      meta, 'time'),
+      crCardRow_('Avg ATT',     a.p1.formatted.att,      a.p2.formatted.att,      a.deltas.att,
+                  'neu', null, null, meta, 'rate'),
+    ].join('');
+    return '<div class="cr-agent-card ' + dirClass + '">'
+         +   '<div class="cr-agent-card-header">'
+         +     '<span class="cr-agent-name">' + safe + '</span>'
+         +     vsTeam
+         +     '<button type="button" class="ir-copy-tsv" data-agent="' + safe + '">Copy data</button>'
+         +   '</div>'
+         +   '<table class="cr-agent-table">'
+         +     '<thead><tr>'
+         +       '<th>Metric</th><th class="num">Period 1</th><th class="num">Period 2</th><th class="num">&Delta;</th>'
+         +     '</tr></thead>'
+         +     '<tbody>' + rows + '</tbody>'
+         +   '</table>'
+         + '</div>';
+  }
+
+  function crCardRow_(metric, p1Val, p2Val, deltaObj, valence,
+                      p1Raw, p2Raw, meta, kind) {
     const dp = Number((deltaObj && deltaObj.deltaPct) || 0);
     const isPctType = deltaObj && deltaObj.type === 'pctPoints';
     let badge;
@@ -3953,12 +4488,119 @@
             +   arrow + ' ' + Math.abs(dp).toFixed(1) + suffix
             + '</span>';
     }
+
+    // Compose the per-cell display: just the formatted value
+    // unless lengthMismatch + kind is normalizable, in which
+    // case append a small "(X/day)" subline.
+    const cellHtml = function (formattedVal, rawVal, days) {
+      const escaped = escapeHtml(String(formattedVal));
+      if (!meta || !meta.lengthMismatch || rawVal == null || !days
+          || (kind !== 'volume' && kind !== 'time')) {
+        return escaped;
+      }
+      const perDay = rawVal / days;
+      const fmt = (kind === 'time')
+        ? crFormatSecondsShort_(perDay)
+        : perDay.toFixed(1);
+      return escaped + '<span class="cr-cell-perday">' + fmt + '/day</span>';
+    };
+
     return '<tr>'
          +   '<td class="cr-metric">' + metric + '</td>'
-         +   '<td class="num">' + escapeHtml(String(p1Val)) + '</td>'
-         +   '<td class="num">' + escapeHtml(String(p2Val)) + '</td>'
+         +   '<td class="num">' + cellHtml(p1Val, p1Raw, meta && meta.p1Days) + '</td>'
+         +   '<td class="num">' + cellHtml(p2Val, p2Raw, meta && meta.p2Days) + '</td>'
          +   '<td class="num">' + badge + '</td>'
          + '</tr>';
+  }
+
+  // ── Agent classification helpers ────────────────────────────────
+  /**
+   * Numeric improvement score per agent: sum of signed deltas
+   * with each metric's good direction counted positive. Used for
+   * sorting (biggest improvers / regressors) and the per-card vs
+   * team badge.
+   *
+   * Weighting:
+   *   + rung delta %
+   *   - missed delta %
+   *   + answered delta %
+   *   + 5 * pct delta pts   (pp differences are tighter scale)
+   *   0 for TTT / ATT       (direction-ambiguous)
+   */
+  function crImprovementScore_(a) {
+    const d = (a && a.deltas) || {};
+    const v = function (k) { return Number((d[k] && d[k].deltaPct) || 0); };
+    return v('rung') - v('missed') + v('answered') + 5 * v('pct');
+  }
+
+  function crTeamImprovementScore_(teamStats) {
+    if (!teamStats) return 0;
+    const v = function (s) { return Number((s && s.deltaPct) || 0); };
+    return v(teamStats.rung) - v(teamStats.missed) + v(teamStats.answered) + 5 * v(teamStats.pct);
+  }
+
+  /**
+   * Classify an agent's overall direction (left-border color).
+   * Adds up signed-by-valence votes across the 4 valenced
+   * metrics. Threshold of >=2 / <=-2 prevents 1-metric noise
+   * from tipping the classification.
+   */
+  function crClassifyAgent_(a) {
+    const d = (a && a.deltas) || {};
+    const sign = function (v) { return v > 0.05 ? 1 : v < -0.05 ? -1 : 0; };
+    let score = 0;
+    score += sign(Number((d.rung     && d.rung.deltaPct)     || 0));      // up = good
+    score -= sign(Number((d.missed   && d.missed.deltaPct)   || 0));      // up = bad
+    score += sign(Number((d.answered && d.answered.deltaPct) || 0));      // up = good
+    score += sign(Number((d.pct      && d.pct.deltaPct)      || 0));      // up = good
+    if (score >=  2) return 'improved';
+    if (score <= -2) return 'regressed';
+    return 'mixed';
+  }
+
+  /**
+   * Quiet agent test: every meaningful metric moved by less than
+   * a small noise threshold. Cuts visual noise so users can
+   * focus on agents that actually shifted.
+   */
+  function crIsQuietAgent_(a) {
+    const d = (a && a.deltas) || {};
+    const absV = function (k) { return Math.abs(Number((d[k] && d[k].deltaPct) || 0)); };
+    return absV('rung')     < 10
+        && absV('missed')   < 10
+        && absV('answered') < 10
+        && absV('pct')      < 3;   // pp difference
+  }
+
+  /**
+   * Per-card "vs Team" header badge: compares this agent's
+   * improvement score to the team's. Renders nothing when the
+   * gap is in the noise band so we don't litter every card with
+   * "in line with team" labels.
+   */
+  function crVsTeamBadge_(agentScore, teamScore) {
+    const diff = agentScore - teamScore;
+    if (Math.abs(diff) < 5) return '<span class="cr-vs-team cr-vs-team-flat">in line with team</span>';
+    if (diff > 0)  return '<span class="cr-vs-team cr-vs-team-pos">▲ above team</span>';
+    return '<span class="cr-vs-team cr-vs-team-neg">▼ below team</span>';
+  }
+
+  function crSortEnriched_(enriched) {
+    if (!Array.isArray(enriched) || enriched.length < 2) return enriched;
+    if (crCardSort === 'selection') return enriched;
+    const out = enriched.slice();
+    if (crCardSort === 'name') {
+      out.sort(function (a, b) {
+        const an = (a.agent.name || '').toLowerCase();
+        const bn = (b.agent.name || '').toLowerCase();
+        return an < bn ? -1 : an > bn ? 1 : 0;
+      });
+    } else if (crCardSort === 'improvers') {
+      out.sort(function (a, b) { return b.score - a.score; });
+    } else if (crCardSort === 'regressors') {
+      out.sort(function (a, b) { return a.score - b.score; });
+    }
+    return out;
   }
 
   /**
@@ -4081,10 +4723,24 @@
           if (btns) btns.style.display = 'none';
           const tabs = clonedDoc.getElementById('cr-chart-tabs');
           if (tabs) tabs.style.display = 'none';
+          const cardsToolbar = clonedDoc.getElementById('cr-cards-toolbar');
+          if (cardsToolbar) cardsToolbar.style.display = 'none';
           const toggle = clonedDoc.getElementById('cr-datalabels-box');
           if (toggle) toggle.style.display = 'none';
+          const editPop = clonedDoc.getElementById('cr-edit-popover');
+          if (editPop) editPop.style.display = 'none';
+          const editLine = clonedDoc.querySelector('#compare-results .ir-editing-edit');
+          if (editLine) editLine.style.display = 'none';
           const status = clonedDoc.getElementById('cr-results-status');
           if (status) status.style.display = 'none';
+          // Reveal quiet-agents section in the cloned doc so the
+          // captured image includes every selected agent.
+          const quietDet = clonedDoc.getElementById('cr-quiet-details');
+          if (quietDet) {
+            quietDet.open = true;
+            const quietSum = quietDet.querySelector('.cr-quiet-summary');
+            if (quietSum) quietSum.style.display = 'none';
+          }
           clonedDoc.querySelectorAll('.ir-copy-tsv').forEach(function (b) { b.style.display = 'none'; });
           Object.keys(canvasMap).forEach(function (id) {
             const cvs = clonedDoc.getElementById(id);
@@ -4154,6 +4810,7 @@
         agents: irGetCheckedAgents_($('cr-agent-list')),
         showLabels: $('cr-show-datalabels') ? $('cr-show-datalabels').checked : false,
         chartMetric: crActiveChartMetric,
+        cardSort: crCardSort,
       };
       localStorage.setItem(CR_PREFS_KEY, JSON.stringify(prefs));
     } catch (e) { /* ignore */ }
@@ -4176,6 +4833,7 @@
       $('cr-show-datalabels').checked = prefs.showLabels;
     }
     if (prefs.chartMetric) crActiveChartMetric = prefs.chartMetric;
+    if (prefs.cardSort)    crCardSort = prefs.cardSort;
     // Sync chart-tab DOM to restored metric.
     const tabs = $('cr-chart-tabs');
     if (tabs) tabs.querySelectorAll('.ir-tab').forEach(function (b) {
@@ -4183,6 +4841,7 @@
       b.classList.toggle('active', active);
       b.setAttribute('aria-selected', active ? 'true' : 'false');
     });
+    if ($('cr-card-sort')) $('cr-card-sort').value = crCardSort;
     if (Array.isArray(prefs.agents) && prefs.agents.length) {
       crPendingAgentSelection_ = prefs.agents;
     }

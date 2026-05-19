@@ -34,7 +34,10 @@
  * Caching: 5 min per (dept, p1, p2, sortedAgents) tuple.
  */
 
-const COMPARE_RANGES_CACHE_KEY_PREFIX = 'compareRanges:v1';
+// Bump on response-shape changes so stale entries don't bleed in.
+// v2 adds meta.p1Days / p2Days / lengthMismatch for client-side
+// per-day normalization when the two periods differ in length.
+const COMPARE_RANGES_CACHE_KEY_PREFIX = 'compareRanges:v2';
 
 function getCompareRangesInit(req) {
   const email = Session.getActiveUser().getEmail();
@@ -317,11 +320,29 @@ function computeCompareRanges_(dept, selectedAgents,
   const p1Label = fmt(p1From) + ' – ' + fmt(p1To);
   const p2Label = fmt(p2From) + ' – ' + fmt(p2To);
 
+  // Period-length metadata so the client can render per-day
+  // normalized volume metrics when the two periods are of
+  // different lengths (e.g., 7 days vs 30 days). lengthMismatch
+  // is true when the longer period is at least 20% longer than
+  // the shorter -- the client uses it to decide whether to show
+  // "X/day" annotations and the warning banner.
+  const msPerDay = 86400000;
+  const parseIso_ = function (iso) {
+    const p = iso.split('-');
+    return new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]), 12);
+  };
+  const p1Days = Math.floor((parseIso_(p1To) - parseIso_(p1From)) / msPerDay) + 1;
+  const p2Days = Math.floor((parseIso_(p2To) - parseIso_(p2From)) / msPerDay) + 1;
+  const lengthMismatch = (Math.min(p1Days, p2Days) > 0)
+    && (Math.max(p1Days, p2Days) / Math.min(p1Days, p2Days) >= 1.2);
+
   return {
     meta: {
       department: dept,
       p1From: p1From, p1To: p1To,
       p2From: p2From, p2To: p2To,
+      p1Days: p1Days, p2Days: p2Days,
+      lengthMismatch: lengthMismatch,
       agents: selectedAgents,
       rosterSize: roster.names.length,
       generatedAt: new Date().toISOString(),
@@ -410,6 +431,8 @@ function emptyCompareRanges_(dept, selectedAgents, roster,
       department: dept,
       p1From: p1From, p1To: p1To,
       p2From: p2From, p2To: p2To,
+      p1Days: 0, p2Days: 0,
+      lengthMismatch: false,
       agents: selectedAgents,
       rosterSize: roster ? roster.names.length : 0,
       generatedAt: new Date().toISOString(),
