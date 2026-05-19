@@ -924,7 +924,14 @@
 
   let irChartInstances = [];
   let irLastData = null;
-  let irLastRoster = { dept: null, agents: [] };
+  // Cached roster + active subset for the current modal session.
+  // `activeAgents` is null until the first init call with from/to
+  // succeeds; null means "we don't know yet, show all as one
+  // group". `rangeKey` is the (from|to) the activeAgents were
+  // computed for, so we can skip a re-fetch when neither input
+  // has changed.
+  let irLastRoster = { dept: null, agents: [], activeAgents: null, rangeKey: '' };
+  let irActiveFetchTimer = null;
 
   function initIndividualReport() {
     const btn = $('individual-report-btn');
@@ -961,13 +968,42 @@
 
     const fromEl = $('ir-from');
     const toEl   = $('ir-to');
-    if (fromEl) fromEl.addEventListener('change', function () { resetIrPreset(); });
-    if (toEl)   toEl.addEventListener('change',   function () { resetIrPreset(); });
+    if (fromEl) fromEl.addEventListener('change', function () { resetIrPreset(); scheduleActiveAgentRefetch_(); });
+    if (toEl)   toEl.addEventListener('change',   function () { resetIrPreset(); scheduleActiveAgentRefetch_(); });
 
     const selAll  = $('ir-select-all');
     const selNone = $('ir-select-none');
     if (selAll)  selAll.addEventListener('click',  function (e) { e.preventDefault(); toggleIrAgents(true);  });
     if (selNone) selNone.addEventListener('click', function (e) { e.preventDefault(); toggleIrAgents(false); });
+
+    const search = $('ir-agent-search');
+    if (search) search.addEventListener('input', function () {
+      irFilterAgentList_($('ir-agent-list'), search.value);
+    });
+
+    // Edit-selection popover wiring (results header).
+    const editBtn = $('ir-edit-selection-btn');
+    if (editBtn) editBtn.addEventListener('click', irOpenEditPopover_);
+    const editClose = $('ir-edit-popover-close');
+    if (editClose) editClose.addEventListener('click', irCloseEditPopover_);
+    const editApply = $('ir-edit-apply-btn');
+    if (editApply) editApply.addEventListener('click', irApplyEditPopover_);
+    const editSelAll  = $('ir-edit-select-all');
+    const editSelNone = $('ir-edit-select-none');
+    if (editSelAll)  editSelAll.addEventListener('click',  function (e) { e.preventDefault(); irTogglePopoverAgents_(true);  });
+    if (editSelNone) editSelNone.addEventListener('click', function (e) { e.preventDefault(); irTogglePopoverAgents_(false); });
+    const editSearch = $('ir-edit-search');
+    if (editSearch) editSearch.addEventListener('input', function () {
+      irFilterAgentList_($('ir-edit-list'), editSearch.value);
+    });
+    // Close on click outside the popover.
+    document.addEventListener('click', function (e) {
+      const pop = $('ir-edit-popover');
+      if (!pop || pop.style.display === 'none') return;
+      if (pop.contains(e.target)) return;
+      if (e.target === editBtn) return;
+      irCloseEditPopover_();
+    });
 
     const genBtn = $('ir-generate-btn');
     if (genBtn) genBtn.addEventListener('click', runIrReport);
@@ -1066,7 +1102,9 @@
 
   // Fetches the dept roster (agent picker source) the first time the
   // modal opens for a given dept; subsequent opens reuse the cached
-  // list as long as the dashboard's dept hasn't changed.
+  // list as long as the dashboard's dept hasn't changed. Also asks
+  // for the active-in-range subset using the current modal dates so
+  // the picker can show an Active / Inactive split.
   function ensureIrRoster() {
     const dept = getRequestedDept();
     if (!dept) {
@@ -1074,28 +1112,75 @@
       $('ir-agent-list').style.display = 'none';
       return;
     }
-    if (irLastRoster.dept === dept && irLastRoster.agents.length) {
-      renderIrAgentList(irLastRoster.agents);
+    const from = $('ir-from').value;
+    const to   = $('ir-to').value;
+    const rangeKey = from + '|' + to;
+
+    if (irLastRoster.dept === dept && irLastRoster.agents.length
+        && irLastRoster.rangeKey === rangeKey) {
+      renderIrAgentList(irLastRoster.agents, irLastRoster.activeAgents);
       return;
     }
     $('ir-agent-loader').style.display = '';
-    $('ir-agent-loader').textContent = 'Loading agent roster…';
     $('ir-agent-list').style.display = 'none';
     $('ir-generate-btn').disabled = true;
 
     google.script.run
       .withSuccessHandler(function (data) {
-        irLastRoster = { dept: dept, agents: (data && data.agents) || [] };
-        renderIrAgentList(irLastRoster.agents);
+        irLastRoster = {
+          dept: dept,
+          agents: (data && data.agents) || [],
+          activeAgents: (data && data.activeAgents) || null,
+          rangeKey: rangeKey,
+        };
+        renderIrAgentList(irLastRoster.agents, irLastRoster.activeAgents);
       })
       .withFailureHandler(function (err) {
         $('ir-agent-loader').textContent = 'Error loading roster: '
           + (err && err.message ? err.message : String(err));
       })
-      .getIndividualReportInit({ department: dept });
+      .getIndividualReportInit({ department: dept, from: from, to: to });
   }
 
-  function renderIrAgentList(agents) {
+  /**
+   * Re-fetches the active-in-range subset 350ms after the user
+   * stops changing the date inputs. Doesn't block the form -- the
+   * full roster is already rendered and selectable; the response
+   * just splits it into Active / Inactive groups visually.
+   */
+  function scheduleActiveAgentRefetch_() {
+    if (irActiveFetchTimer) clearTimeout(irActiveFetchTimer);
+    irActiveFetchTimer = setTimeout(function () {
+      const dept = getRequestedDept();
+      if (!dept) return;
+      const from = $('ir-from').value;
+      const to   = $('ir-to').value;
+      if (!from || !to || from > to) return;
+      const rangeKey = from + '|' + to;
+      if (irLastRoster.dept === dept && irLastRoster.rangeKey === rangeKey) return;
+
+      google.script.run
+        .withSuccessHandler(function (data) {
+          irLastRoster.activeAgents = (data && data.activeAgents) || null;
+          irLastRoster.rangeKey = rangeKey;
+          // Preserve current selection across the regroup.
+          const checked = irGetCheckedAgents_($('ir-agent-list'));
+          renderIrAgentList(irLastRoster.agents, irLastRoster.activeAgents);
+          irApplyCheckedAgents_($('ir-agent-list'), checked);
+          updateIrGenerateEnabled();
+        })
+        .withFailureHandler(function () { /* keep existing grouping */ })
+        .getIndividualReportInit({ department: dept, from: from, to: to });
+    }, 350);
+  }
+
+  /**
+   * Renders the agent picker into `list` with Active / Inactive
+   * grouping when an activeAgents subset is provided; otherwise a
+   * single flat list. Used by both the main form picker and the
+   * results-header edit popover.
+   */
+  function renderIrAgentList(agents, activeAgents) {
     const list = $('ir-agent-list');
     $('ir-agent-loader').style.display = 'none';
     if (!agents.length) {
@@ -1104,27 +1189,101 @@
       $('ir-generate-btn').disabled = true;
       return;
     }
-    list.innerHTML = agents.map(function (a) {
+    list.innerHTML = irBuildAgentListHtml_(agents, activeAgents);
+    list.style.display = '';
+
+    // Listen once per render; container.innerHTML wipes previous
+    // listeners so no accumulation.
+    list.addEventListener('change', updateIrGenerateEnabled);
+    updateIrGenerateEnabled();
+  }
+
+  function irBuildAgentListHtml_(agents, activeAgents) {
+    // No activity info or no inactive members -> flat list.
+    if (!activeAgents) return irAgentItemsHtml_(agents);
+    const activeSet = {};
+    for (let i = 0; i < activeAgents.length; i++) activeSet[activeAgents[i]] = true;
+    const active = [];
+    const inactive = [];
+    for (let i = 0; i < agents.length; i++) {
+      (activeSet[agents[i]] ? active : inactive).push(agents[i]);
+    }
+    if (!inactive.length) return irAgentItemsHtml_(active);
+
+    let html = '';
+    if (active.length) {
+      html += '<div class="ir-agent-group-label">'
+            + 'Active in range <span class="ir-agent-group-count">(' + active.length + ')</span>'
+            + '</div>'
+            + '<div class="ir-agent-group">' + irAgentItemsHtml_(active) + '</div>';
+    }
+    html += '<div class="ir-agent-group-label ir-agent-group-label-muted">'
+          + 'No activity in range <span class="ir-agent-group-count">(' + inactive.length + ')</span>'
+          + '</div>'
+          + '<div class="ir-agent-group ir-agent-group-muted">' + irAgentItemsHtml_(inactive) + '</div>';
+    return html;
+  }
+
+  function irAgentItemsHtml_(agents) {
+    return agents.map(function (a) {
       const safe = escapeHtml(a);
       return '<label class="ir-agent-item">'
            +   '<input type="checkbox" class="ir-agent-cb" value="' + safe + '"> '
            +   safe
            + '</label>';
     }).join('');
-    list.style.display = '';
+  }
 
-    list.addEventListener('change', updateIrGenerateEnabled);
-    updateIrGenerateEnabled();
+  /**
+   * Client-side substring filter across whatever list element is
+   * passed (main form picker or edit-popover list). Hides items +
+   * group-labels whose visible text doesn't match the query.
+   */
+  function irFilterAgentList_(listEl, query) {
+    if (!listEl) return;
+    const q = String(query || '').trim().toLowerCase();
+    const items = listEl.querySelectorAll('.ir-agent-item');
+    items.forEach(function (it) {
+      const name = (it.textContent || '').trim().toLowerCase();
+      it.style.display = (!q || name.indexOf(q) !== -1) ? '' : 'none';
+    });
+    // Hide a group label if no items in its group are visible.
+    listEl.querySelectorAll('.ir-agent-group').forEach(function (g) {
+      const anyVisible = Array.prototype.some.call(
+        g.querySelectorAll('.ir-agent-item'),
+        function (it) { return it.style.display !== 'none'; }
+      );
+      g.style.display = anyVisible ? '' : 'none';
+      const prevLabel = g.previousElementSibling;
+      if (prevLabel && prevLabel.classList.contains('ir-agent-group-label')) {
+        prevLabel.style.display = anyVisible ? '' : 'none';
+      }
+    });
   }
 
   function updateIrGenerateEnabled() {
-    const boxes = document.querySelectorAll('.ir-agent-cb:checked');
+    const boxes = $('ir-agent-list').querySelectorAll('.ir-agent-cb:checked');
     $('ir-generate-btn').disabled = boxes.length === 0;
   }
 
   function toggleIrAgents(checked) {
-    document.querySelectorAll('.ir-agent-cb').forEach(function (cb) { cb.checked = checked; });
+    $('ir-agent-list').querySelectorAll('.ir-agent-cb').forEach(function (cb) { cb.checked = checked; });
     updateIrGenerateEnabled();
+  }
+
+  function irGetCheckedAgents_(listEl) {
+    if (!listEl) return [];
+    return Array.prototype.slice.call(listEl.querySelectorAll('.ir-agent-cb:checked'))
+                .map(function (cb) { return cb.value; });
+  }
+
+  function irApplyCheckedAgents_(listEl, agents) {
+    if (!listEl) return;
+    const set = {};
+    for (let i = 0; i < agents.length; i++) set[agents[i]] = true;
+    listEl.querySelectorAll('.ir-agent-cb').forEach(function (cb) {
+      cb.checked = !!set[cb.value];
+    });
   }
 
   function applyIrPreset() {
@@ -1162,8 +1321,7 @@
     const to   = $('ir-to').value;
     if (!from || !to) { irSetFormError('Pick a start and end date.'); return; }
     if (from > to)    { irSetFormError('Start date must be on or before end date.'); return; }
-    const agents = Array.prototype.slice.call(document.querySelectorAll('.ir-agent-cb:checked'))
-                   .map(function (cb) { return cb.value; });
+    const agents = irGetCheckedAgents_($('ir-agent-list'));
     if (!agents.length) { irSetFormError('Select at least one agent.'); return; }
 
     const btn = $('ir-generate-btn');
@@ -1190,14 +1348,110 @@
     $('ir-results-title').textContent = data.mode === 'comparison'
       ? 'Peer Comparison Report' : 'Individual Performance Report';
     $('ir-results-date').textContent = '(' + (data.dateLabel || '') + ')';
+    irRenderEditingLine_(data.meta && data.meta.agents);
     showIrResults();
     irSetResultsStatus('');
+    irCloseEditPopover_();
     // Reset to the Volume tab on each render so the user lands on
     // the default view rather than wherever they happened to leave
     // the previous report.
     irResetTabsToVolume_();
     irRenderSummary(data.summaryData, data.teamAvg);
     irRenderCharts(data);
+  }
+
+  /**
+   * Compact label for the agents in the current report. With 3 or
+   * fewer agents we list them all; beyond that we list two and add
+   * "+N more". Hover-tooltip on the truncated form shows the full
+   * comma-separated list.
+   */
+  function irRenderEditingLine_(agents) {
+    const el = $('ir-editing-agents');
+    if (!el) return;
+    const list = Array.isArray(agents) ? agents : [];
+    let visible, tooltip;
+    if (list.length <= 3) {
+      visible = list.join(', ');
+      tooltip = visible;
+    } else {
+      visible = list.slice(0, 2).join(', ') + ', +' + (list.length - 2) + ' more';
+      tooltip = list.join(', ');
+    }
+    el.textContent = visible || '(none)';
+    el.title = tooltip;
+  }
+
+  /**
+   * Opens the edit-selection popover positioned below the "change"
+   * link in the results header. Mirrors the agent picker into the
+   * popover with the current selection pre-checked, then focuses
+   * the search input for fast filtering.
+   */
+  function irOpenEditPopover_() {
+    const pop = $('ir-edit-popover');
+    if (!pop) return;
+    const list = $('ir-edit-list');
+    if (!list) return;
+    list.innerHTML = irBuildAgentListHtml_(irLastRoster.agents || [], irLastRoster.activeAgents);
+    // Pre-check the currently-reported agents.
+    const current = (irLastData && irLastData.meta && irLastData.meta.agents) || [];
+    irApplyCheckedAgents_(list, current);
+    irUpdateEditApplyEnabled_();
+    list.addEventListener('change', irUpdateEditApplyEnabled_);
+    pop.style.display = '';
+    // Reset search + filter state.
+    const search = $('ir-edit-search');
+    if (search) { search.value = ''; setTimeout(function () { search.focus(); }, 0); }
+    irFilterAgentList_(list, '');
+  }
+
+  function irCloseEditPopover_() {
+    const pop = $('ir-edit-popover');
+    if (!pop) return;
+    pop.style.display = 'none';
+  }
+
+  function irUpdateEditApplyEnabled_() {
+    const checked = irGetCheckedAgents_($('ir-edit-list'));
+    $('ir-edit-apply-btn').disabled = checked.length === 0;
+  }
+
+  function irTogglePopoverAgents_(checked) {
+    $('ir-edit-list').querySelectorAll('.ir-agent-cb').forEach(function (cb) { cb.checked = checked; });
+    irUpdateEditApplyEnabled_();
+  }
+
+  /**
+   * Apply the popover selection: runs the report with the popover's
+   * agent list while keeping the existing dept and date range.
+   * Also propagates the new selection back into the main form
+   * picker so going Back shows the same checkboxes.
+   */
+  function irApplyEditPopover_() {
+    const newAgents = irGetCheckedAgents_($('ir-edit-list'));
+    if (!newAgents.length) return;
+    irApplyCheckedAgents_($('ir-agent-list'), newAgents);
+    irCloseEditPopover_();
+
+    const dept = getRequestedDept();
+    const from = $('ir-from').value;
+    const to   = $('ir-to').value;
+
+    const btn = $('ir-edit-apply-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Loading…'; }
+    irSetResultsStatus('loading', 'Refreshing report…');
+
+    google.script.run
+      .withSuccessHandler(function (data) {
+        if (btn) { btn.textContent = 'Apply'; btn.disabled = false; }
+        irRenderReport(data);
+      })
+      .withFailureHandler(function (err) {
+        if (btn) { btn.textContent = 'Apply'; btn.disabled = false; }
+        irSetResultsStatus('error', 'Error: ' + (err && err.message ? err.message : String(err)));
+      })
+      .getIndividualReport({ department: dept, from: from, to: to, agents: newAgents });
   }
 
   function irResetTabsToVolume_() {
@@ -1722,6 +1976,10 @@
         if (toggle) toggle.style.display = 'none';
         const tabs = clonedDoc.getElementById('ir-chart-tabs');
         if (tabs) tabs.style.display = 'none';
+        const editPop = clonedDoc.getElementById('ir-edit-popover');
+        if (editPop) editPop.style.display = 'none';
+        const editLine = clonedDoc.querySelector('.ir-editing-edit');
+        if (editLine) editLine.style.display = 'none';
         clonedDoc.querySelectorAll('.ir-copy-tsv').forEach(function (b) { b.style.display = 'none'; });
         const status = clonedDoc.getElementById('ir-results-status');
         if (status) status.style.display = 'none';
