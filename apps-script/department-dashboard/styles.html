@@ -539,6 +539,59 @@
   .bucket-detail-list .ring-date  { color: #6b7280; }
   .bucket-detail-list .ring-agent { color: #111827; }
   .bucket-detail-list .ring-time  { text-align: right; }
+  /* Widen the time column when parent-id chips are present so the
+     #1776... ID doesn't squeeze the timestamp out. */
+  .bucket-detail-list li {
+    grid-template-columns: 80px 1fr auto;
+  }
+
+  /* Parent-call-ID chip + copy button. Renders inline next to the
+     siren on abandoned timestamps. Compact in normal flow, with the
+     ID in monospace so it's recognizable at a glance and the copy
+     button click target is large enough on mobile. */
+  .parent-id {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: 6px;
+    padding: 1px 4px 1px 6px;
+    border: 1px solid rgba(127, 29, 29, 0.18);
+    border-radius: 999px;
+    background: rgba(254, 226, 226, 0.55);
+    font-size: 11px;
+    line-height: 1.4;
+    color: #7f1d1d;
+    font-weight: 500;
+    vertical-align: baseline;
+    white-space: nowrap;
+  }
+  .parent-id .pid-num {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 10.5px;
+  }
+  .parent-id .pid-copy {
+    border: 0;
+    background: transparent;
+    color: inherit;
+    padding: 0 2px;
+    cursor: pointer;
+    font-size: 11px;
+    line-height: 1;
+    border-radius: 3px;
+  }
+  .parent-id .pid-copy:hover { background: rgba(127, 29, 29, 0.12); }
+  .parent-id .pid-copy.copied { color: #065f46; }
+
+  /* Cross-queue overflow tag on queue-only entries:
+     "[also rang Backup CSR]". Muted so it reads as metadata. */
+  .also-in {
+    margin-left: 6px;
+    font-size: 11px;
+    color: #92400e;
+    font-style: italic;
+    font-weight: 400;
+    white-space: nowrap;
+  }
   .bucket-detail-empty {
     color: #6b7280;
     font-size: 13px;

@@ -402,6 +402,7 @@
             date: m.date,
             label: m.label,
             abandoned: m.abandoned,
+            parentId: m.parentId || null,
             sortKey: m.sortKey,
             isQueueOnly: false,
           });
@@ -416,6 +417,7 @@
             date: m.date,
             label: m.label,
             abandoned: true,
+            parentId: m.parentId || null,
             sortKey: m.sortKey,
             isQueueOnly: true,
           });
@@ -445,7 +447,9 @@
         return '<li class="' + cls + '">'
              +   '<span class="ring-date">'  + escapeHtml(dateLabel) + '</span>'
              +   '<span class="ring-agent">' + escapeHtml(r.agent)   + '</span>'
-             +   '<span class="ring-time">'  + escapeHtml(r.label) + siren + '</span>'
+             +   '<span class="ring-time">'  + escapeHtml(r.label) + siren
+             +     parentIdBadge(r.parentId)
+             +   '</span>'
              + '</li>';
       }).join('') + '</ul>';
     }
@@ -453,6 +457,7 @@
     wrap.style.display = '';
     const row = $('chart-row');
     if (row) row.classList.remove('no-detail');
+    initClipboardOnce();
     // Scroll the panel into view if it's offscreen below the chart.
     wrap.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }
@@ -466,6 +471,79 @@
     if (bodyEl) bodyEl.innerHTML = '';
     const row = $('chart-row');
     if (row) row.classList.add('no-detail');
+  }
+
+  // Renders the parent-call-ID chip + copy button used on every
+  // abandoned timestamp. Pasting the parent ID into raw CDR search
+  // is the manual verification step, so the copy button is worth
+  // the extra DOM. Returns '' for falsy IDs (non-abandoned rows).
+  function parentIdBadge(parentId) {
+    if (!parentId) return '';
+    const safe = escapeHtml(String(parentId));
+    return ' <span class="parent-id" title="Parent call ID">'
+         +   '<span class="pid-num">#' + safe + '</span>'
+         +   '<button type="button" class="pid-copy" '
+         +     'data-pid="' + safe + '" '
+         +     'aria-label="Copy parent ID ' + safe + '" '
+         +     'title="Copy">📋</button>'
+         + '</span>';
+  }
+
+  // Renders the "[also rang Backup CSR, A_Q_Spanish]" suffix used on
+  // queue-only entries when the same parent ID appears under multiple
+  // queue sentinels (overflow). Empty when the call only hit this
+  // queue, so no visual noise on the common case.
+  function alsoInBadge(alsoIn) {
+    if (!alsoIn || !alsoIn.length) return '';
+    return ' <span class="also-in">'
+         +   '[also rang ' + alsoIn.map(escapeHtml).join(', ') + ']'
+         + '</span>';
+  }
+
+  // Wire a single delegated click handler for ALL copy buttons inside
+  // the missed-calls modal. data-pid carries the value; we use the
+  // async Clipboard API with a fallback no-op + visual confirmation
+  // (button flips to ✓ for ~1s) so the user knows it worked.
+  function initClipboardOnce() {
+    if (initClipboardOnce.done) return;
+    initClipboardOnce.done = true;
+    const modal = $('missed-modal');
+    if (!modal) return;
+    modal.addEventListener('click', function (e) {
+      const btn = e.target.closest && e.target.closest('.pid-copy');
+      if (!btn) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const pid = btn.getAttribute('data-pid') || '';
+      if (!pid) return;
+      const flashOk = function () {
+        const prev = btn.textContent;
+        btn.textContent = '✓';
+        btn.classList.add('copied');
+        setTimeout(function () {
+          btn.textContent = prev;
+          btn.classList.remove('copied');
+        }, 1000);
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(pid).then(flashOk, function () {});
+      } else {
+        // Apps Script web app may run in a sandboxed iframe where
+        // clipboard API is unavailable; fall back to a hidden textarea
+        // + execCommand so copy still works in older paths.
+        try {
+          const ta = document.createElement('textarea');
+          ta.value = pid;
+          ta.style.position = 'fixed';
+          ta.style.opacity = '0';
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand('copy');
+          document.body.removeChild(ta);
+          flashOk();
+        } catch (err) { /* swallow */ }
+      }
+    });
   }
 
   // -- Queue-only abandoned section --------------------------------------
@@ -483,18 +561,36 @@
       return;
     }
 
-    const totalCalls = queueOnly.reduce(function (s, q) { return s + q.total; }, 0);
-    sub.textContent = '(no agent rang) — '
-                    + totalCalls + ' call' + (totalCalls === 1 ? '' : 's')
-                    + ' across ' + queueOnly.length
-                    + ' queue' + (queueOnly.length === 1 ? '' : 's');
+    // Headline uses unique-by-parent-ID count alongside the per-queue
+    // event sum, so overflow (one call ringing two queues) is visible:
+    //   "8 unique calls across 3 queues (10 ring events)"
+    // Fall back to the raw sum if the server didn't send the unique
+    // count (older cached payload).
+    const meta = (lastMissedData && lastMissedData.meta) || {};
+    const eventSum = (typeof meta.queueOnlyEventCount === 'number')
+                   ? meta.queueOnlyEventCount
+                   : queueOnly.reduce(function (s, q) { return s + q.total; }, 0);
+    const uniqueCalls = (typeof meta.queueOnlyUniqueCount === 'number')
+                      ? meta.queueOnlyUniqueCount
+                      : eventSum;
+    const headParts = [
+      uniqueCalls + ' unique call' + (uniqueCalls === 1 ? '' : 's'),
+      'across ' + queueOnly.length + ' queue' + (queueOnly.length === 1 ? '' : 's'),
+    ];
+    if (eventSum !== uniqueCalls) {
+      headParts.push('(' + eventSum + ' ring events)');
+    }
+    sub.textContent = '(no agent rang) — ' + headParts.join(' ');
 
     body.innerHTML = queueOnly.map(function (q) {
       const itemsHtml = q.entries.map(function (m) {
         const dateLabel = m.date ? m.date.slice(5) : '';   // MM-DD
         return '<li>'
              +   '<span class="ring-date">' + escapeHtml(dateLabel) + '</span>'
-             +   '<span class="ring-time">' + escapeHtml(m.label)   + ' 🚨</span>'
+             +   '<span class="ring-time">' + escapeHtml(m.label)   + ' 🚨'
+             +     parentIdBadge(m.parentId)
+             +     alsoInBadge(m.alsoIn)
+             +   '</span>'
              + '</li>';
       }).join('');
       return '<div class="queue-only-card">'
@@ -505,6 +601,7 @@
     }).join('');
 
     wrap.style.display = '';
+    initClipboardOnce();
   }
 
   function hideQueueOnlySection() {
@@ -529,7 +626,10 @@
         const dateLabel = m.date ? '<span class="date">' + escapeHtml(m.date.slice(5)) + '</span>' : '';
         const cls = m.abandoned ? 'abandoned' : '';
         const siren = m.abandoned ? ' 🚨' : '';
-        return '<li class="' + cls + '">' + dateLabel + escapeHtml(m.label) + siren + '</li>';
+        return '<li class="' + cls + '">'
+             +   dateLabel + escapeHtml(m.label) + siren
+             +   parentIdBadge(m.parentId)
+             + '</li>';
       }).join('');
 
       return '<div class="agent-card">'
@@ -538,6 +638,7 @@
            +   '<ul class="missed-list">' + itemsHtml + '</ul>'
            + '</div>';
     }).join('');
+    initClipboardOnce();
   }
 
   function getRequestedDept() {
