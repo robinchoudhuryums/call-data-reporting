@@ -82,7 +82,13 @@
         sel.appendChild(opt);
       });
       $('dept-selector-wrap').style.display = '';
-      sel.addEventListener('change', refresh);
+      sel.addEventListener('change', function () {
+        // Admin switched depts; the Individual Report's cached agent
+        // roster is now stale, so wipe it so the next modal open
+        // refetches.
+        irLastRoster = { dept: null, agents: [] };
+        refresh();
+      });
       $('dept-name').textContent = sel.value;
     } else {
       $('dept-name').textContent = USER.department || '(no department)';
@@ -119,6 +125,7 @@
 
     initHelpModal();
     initMissedReport();
+    initIndividualReport();
 
     refresh();
   }
@@ -874,6 +881,591 @@
     } else {
       tfoot.innerHTML = '';
     }
+  }
+
+  // -- Individual Report modal -------------------------------------------
+  // Opens a form for date range + agent multi-select, then runs the
+  // report server-side and renders per-agent summary cards + 3 Chart.js
+  // line charts (volume / efficiency / duration). 1 agent = individual
+  // mode; 2+ = peer comparison.
+  //
+  // The agent roster is fetched once on first open per dept; if the
+  // user switches dept on the main page (admin only), we re-fetch.
+
+  const IR_CHART_COLORS = ['#007bff', '#28a745', '#dc3545', '#fd7e14', '#6610f2', '#17a2b8'];
+
+  let irChartInstances = [];
+  let irLastData = null;
+  let irLastRoster = { dept: null, agents: [] };
+
+  function initIndividualReport() {
+    const btn = $('individual-report-btn');
+    const modal = $('individual-modal');
+    if (!btn || !modal) return;
+
+    const closeBtn = modal.querySelector('.modal-close');
+    const backdrop = modal.querySelector('[data-close]');
+
+    function openModal() {
+      modal.style.display = '';
+      modal.setAttribute('aria-hidden', 'false');
+      document.body.style.overflow = 'hidden';
+      document.addEventListener('keydown', onKeyDown);
+      showIrForm();
+      ensureIrRoster();
+    }
+    function closeModal() {
+      modal.style.display = 'none';
+      modal.setAttribute('aria-hidden', 'true');
+      document.body.style.overflow = '';
+      document.removeEventListener('keydown', onKeyDown);
+      btn.focus();
+    }
+    function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
+
+    btn.addEventListener('click', openModal);
+    if (closeBtn) closeBtn.addEventListener('click', closeModal);
+    if (backdrop) backdrop.addEventListener('click', closeModal);
+
+    // Wire form controls.
+    const preset = $('ir-preset');
+    if (preset) preset.addEventListener('change', applyIrPreset);
+
+    const fromEl = $('ir-from');
+    const toEl   = $('ir-to');
+    if (fromEl) fromEl.addEventListener('change', function () { resetIrPreset(); });
+    if (toEl)   toEl.addEventListener('change',   function () { resetIrPreset(); });
+
+    const selAll  = $('ir-select-all');
+    const selNone = $('ir-select-none');
+    if (selAll)  selAll.addEventListener('click',  function (e) { e.preventDefault(); toggleIrAgents(true);  });
+    if (selNone) selNone.addEventListener('click', function (e) { e.preventDefault(); toggleIrAgents(false); });
+
+    const genBtn = $('ir-generate-btn');
+    if (genBtn) genBtn.addEventListener('click', runIrReport);
+
+    const backBtn = $('ir-back-btn');
+    if (backBtn) backBtn.addEventListener('click', showIrForm);
+
+    const labelToggle = $('ir-show-datalabels');
+    if (labelToggle) labelToggle.addEventListener('change', function () {
+      if (irLastData) irRenderCharts(irLastData);
+    });
+
+    const copyBtn = $('ir-copy-img-btn');
+    if (copyBtn) copyBtn.addEventListener('click', irCopyImage);
+
+    const emailBtn = $('ir-email-img-btn');
+    if (emailBtn) emailBtn.addEventListener('click', irEmailImage);
+
+    // Defaults: this-month-to-date.
+    setIrDefaultDates();
+  }
+
+  function setIrDefaultDates() {
+    // Match the main dashboard's default behavior: current month to
+    // today. Lets a manager glance at the report without futzing
+    // with dates first.
+    const today = new Date();
+    const first = new Date(today.getFullYear(), today.getMonth(), 1);
+    const isoOf = function (d) {
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return d.getFullYear() + '-' + m + '-' + day;
+    };
+    if ($('ir-from')) $('ir-from').value = isoOf(first);
+    if ($('ir-to'))   $('ir-to').value   = isoOf(today);
+  }
+
+  function showIrForm() {
+    $('individual-form').style.display = '';
+    $('individual-results').style.display = 'none';
+    irSetFormError('');
+  }
+  function showIrResults() {
+    $('individual-form').style.display = 'none';
+    $('individual-results').style.display = '';
+  }
+
+  function irSetFormError(msg) {
+    const el = $('ir-form-error');
+    if (!el) return;
+    if (!msg) { el.style.display = 'none'; el.textContent = ''; return; }
+    el.textContent = msg;
+    el.style.display = '';
+  }
+
+  function irSetResultsStatus(kind, msg) {
+    const el = $('ir-results-status');
+    if (!el) return;
+    if (!kind) { el.style.display = 'none'; el.textContent = ''; return; }
+    el.className = 'status status-' + kind;
+    el.textContent = msg;
+    el.style.display = '';
+  }
+
+  // Fetches the dept roster (agent picker source) the first time the
+  // modal opens for a given dept; subsequent opens reuse the cached
+  // list as long as the dashboard's dept hasn't changed.
+  function ensureIrRoster() {
+    const dept = getRequestedDept();
+    if (!dept) {
+      $('ir-agent-loader').textContent = 'No department selected.';
+      $('ir-agent-list').style.display = 'none';
+      return;
+    }
+    if (irLastRoster.dept === dept && irLastRoster.agents.length) {
+      renderIrAgentList(irLastRoster.agents);
+      return;
+    }
+    $('ir-agent-loader').style.display = '';
+    $('ir-agent-loader').textContent = 'Loading agent roster…';
+    $('ir-agent-list').style.display = 'none';
+    $('ir-generate-btn').disabled = true;
+
+    google.script.run
+      .withSuccessHandler(function (data) {
+        irLastRoster = { dept: dept, agents: (data && data.agents) || [] };
+        renderIrAgentList(irLastRoster.agents);
+      })
+      .withFailureHandler(function (err) {
+        $('ir-agent-loader').textContent = 'Error loading roster: '
+          + (err && err.message ? err.message : String(err));
+      })
+      .getIndividualReportInit({ department: dept });
+  }
+
+  function renderIrAgentList(agents) {
+    const list = $('ir-agent-list');
+    $('ir-agent-loader').style.display = 'none';
+    if (!agents.length) {
+      list.innerHTML = '<div class="ir-agent-empty">No agents on this department\'s roster.</div>';
+      list.style.display = '';
+      $('ir-generate-btn').disabled = true;
+      return;
+    }
+    list.innerHTML = agents.map(function (a) {
+      const safe = escapeHtml(a);
+      return '<label class="ir-agent-item">'
+           +   '<input type="checkbox" class="ir-agent-cb" value="' + safe + '"> '
+           +   safe
+           + '</label>';
+    }).join('');
+    list.style.display = '';
+
+    list.addEventListener('change', updateIrGenerateEnabled);
+    updateIrGenerateEnabled();
+  }
+
+  function updateIrGenerateEnabled() {
+    const boxes = document.querySelectorAll('.ir-agent-cb:checked');
+    $('ir-generate-btn').disabled = boxes.length === 0;
+  }
+
+  function toggleIrAgents(checked) {
+    document.querySelectorAll('.ir-agent-cb').forEach(function (cb) { cb.checked = checked; });
+    updateIrGenerateEnabled();
+  }
+
+  function applyIrPreset() {
+    const v = $('ir-preset').value;
+    if (v === 'custom') return;
+    const today = new Date();
+    let s, e;
+    e = new Date(today);
+    if (v === 'thisMonth')       { s = new Date(today.getFullYear(), today.getMonth(), 1); }
+    else if (v === 'lastMonth')  { s = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+                                    e = new Date(today.getFullYear(), today.getMonth(), 0); }
+    else if (v === 'last30')     { s = new Date(today); s.setDate(today.getDate() - 30); }
+    else if (v === 'last3Months'){ s = new Date(today); s.setMonth(today.getMonth() - 3); }
+    else if (v === 'last12Months'){ s = new Date(today); s.setFullYear(today.getFullYear() - 1); }
+    else if (v === 'lastYear')   { s = new Date(today.getFullYear() - 1, 0, 1);
+                                    e = new Date(today.getFullYear() - 1, 11, 31); }
+    if (!s) return;
+    const isoOf = function (d) {
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return d.getFullYear() + '-' + m + '-' + day;
+    };
+    $('ir-from').value = isoOf(s);
+    $('ir-to').value   = isoOf(e);
+  }
+  function resetIrPreset() {
+    const p = $('ir-preset');
+    if (p) p.value = 'custom';
+  }
+
+  function runIrReport() {
+    irSetFormError('');
+    const dept = getRequestedDept();
+    const from = $('ir-from').value;
+    const to   = $('ir-to').value;
+    if (!from || !to) { irSetFormError('Pick a start and end date.'); return; }
+    if (from > to)    { irSetFormError('Start date must be on or before end date.'); return; }
+    const agents = Array.prototype.slice.call(document.querySelectorAll('.ir-agent-cb:checked'))
+                   .map(function (cb) { return cb.value; });
+    if (!agents.length) { irSetFormError('Select at least one agent.'); return; }
+
+    const btn = $('ir-generate-btn');
+    btn.disabled = true;
+    const originalLabel = btn.textContent;
+    btn.textContent = 'Loading…';
+
+    google.script.run
+      .withSuccessHandler(function (data) {
+        btn.disabled = false;
+        btn.textContent = originalLabel;
+        irRenderReport(data);
+      })
+      .withFailureHandler(function (err) {
+        btn.disabled = false;
+        btn.textContent = originalLabel;
+        irSetFormError('Error: ' + (err && err.message ? err.message : String(err)));
+      })
+      .getIndividualReport({ department: dept, from: from, to: to, agents: agents });
+  }
+
+  function irRenderReport(data) {
+    irLastData = data;
+    $('ir-results-title').textContent = data.mode === 'comparison'
+      ? 'Peer Comparison Report' : 'Individual Performance Report';
+    $('ir-results-date').textContent = '(' + (data.dateLabel || '') + ')';
+    showIrResults();
+    irSetResultsStatus('');
+    irRenderSummary(data.summaryData, data.teamAvg);
+    irRenderCharts(data);
+  }
+
+  function irRenderSummary(summaryData, teamAvg) {
+    const container = $('ir-summary-container');
+    if (!container) return;
+
+    container.innerHTML = (summaryData || []).map(function (agent) {
+      return '<div class="ir-summary-card">'
+           +   '<div class="ir-summary-title">'
+           +     escapeHtml(agent.name)
+           +     ' <span class="ir-vs">vs Team Avg</span>'
+           +     ' <button type="button" class="ir-copy-tsv" data-agent="' + escapeHtml(agent.name) + '">Copy data</button>'
+           +   '</div>'
+           +   '<table class="ir-comp-table">'
+           +     '<thead><tr>'
+           +       '<th>Metric</th>'
+           +       '<th>' + escapeHtml(agent.name) + '</th>'
+           +       '<th>Team Avg</th>'
+           +       '<th class="ir-diff-col">Diff</th>'
+           +     '</tr></thead>'
+           +     '<tbody>'
+           +       irRow('Total Rung',  agent.stats.rung,     teamAvg.rung,     irDiffBadge(agent.raw.rung,     teamAvg.raw.rung,        'pos'))
+           +       irRow('Answered',    agent.stats.answered, teamAvg.answered, irDiffBadge(agent.raw.answered, teamAvg.raw.answered,    'pos'))
+           +       irRow('Missed',      agent.stats.missed,   teamAvg.missed,   irDiffBadge(agent.raw.missed,   teamAvg.raw.missed,      'neg'))
+           +       irRow('% Answered',  agent.stats.pct,      teamAvg.pct,      irDiffBadge(agent.raw.pct,      teamAvg.raw.pctAnswered, 'pos'))
+           +       irRow('Talk Time (ATT)', agent.stats.att,  teamAvg.att,      irAttCompare(agent.raw.att, teamAvg.raw.att))
+           +     '</tbody>'
+           +   '</table>'
+           + '</div>';
+    }).join('');
+
+    // Wire copy-data-as-TSV buttons.
+    container.querySelectorAll('.ir-copy-tsv').forEach(function (b) {
+      b.addEventListener('click', function () {
+        const card = b.closest('.ir-summary-card');
+        const table = card && card.querySelector('table');
+        if (!table) return;
+        let tsv = '';
+        Array.prototype.forEach.call(table.rows, function (row) {
+          tsv += Array.prototype.map.call(row.cells, function (c) {
+            return (c.innerText || '').replace(/\s+/g, ' ').trim();
+          }).join('\t') + '\n';
+        });
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(tsv).then(function () {
+            irFlashButton(b, 'Copied');
+          });
+        }
+      });
+    });
+  }
+
+  function irFlashButton(btn, text) {
+    const prev = btn.textContent;
+    btn.textContent = text;
+    setTimeout(function () { btn.textContent = prev; }, 1000);
+  }
+
+  function irRow(metric, agentVal, teamVal, diffHtml) {
+    return '<tr>'
+         +   '<td class="ir-metric">' + metric + '</td>'
+         +   '<td class="ir-agent-val">' + escapeHtml(String(agentVal)) + '</td>'
+         +   '<td class="ir-team-val">'  + escapeHtml(String(teamVal))  + '</td>'
+         +   '<td class="ir-diff-col">'  + diffHtml + '</td>'
+         + '</tr>';
+  }
+
+  function irDiffBadge(agentVal, teamVal, type) {
+    // type: 'pos' = higher is better (Rung, Answered, % Answered).
+    //       'neg' = lower is better (Missed).
+    if (!teamVal) return '<span class="ir-badge ir-badge-neu">-</span>';
+    const pct = ((agentVal - teamVal) / teamVal) * 100;
+    const label = (pct > 0 ? '+' : '') + pct.toFixed(1) + '%';
+    let cls = 'ir-badge-neu';
+    if (type === 'pos') {
+      if (pct > 0) cls = 'ir-badge-pos'; else if (pct < 0) cls = 'ir-badge-neg';
+    } else if (type === 'neg') {
+      if (pct < 0) cls = 'ir-badge-pos'; else if (pct > 0) cls = 'ir-badge-neg';
+    }
+    return '<span class="ir-badge ' + cls + '">' + label + '</span>';
+  }
+
+  function irAttCompare(agentAtt, teamAtt) {
+    // ATT is reported as "> Avg / < Avg (+x.x%)" since neither
+    // direction is unambiguously "better" -- shorter ATT can mean
+    // efficiency, longer can mean more thorough service. Neutral
+    // styling.
+    if (!teamAtt) return '<span class="ir-badge ir-badge-neu">-</span>';
+    const pct = ((agentAtt - teamAtt) / teamAtt) * 100;
+    const sign = agentAtt > teamAtt ? '> Avg' : '< Avg';
+    return '<span class="ir-badge ir-badge-neu">'
+         + sign + ' (' + (pct > 0 ? '+' : '') + pct.toFixed(1) + '%)'
+         + '</span>';
+  }
+
+  function irRenderCharts(data) {
+    // Destroy old charts to avoid Chart.js leaks / canvas reuse errors.
+    irChartInstances.forEach(function (c) { c.destroy(); });
+    irChartInstances = [];
+
+    const showLabels = $('ir-show-datalabels') && $('ir-show-datalabels').checked;
+    const labels   = data.trendData.labels || [];
+    const datasets = data.trendData.datasets || {};
+    const agents   = Object.keys(datasets);
+    if (!agents.length) return;
+
+    // Volume chart: in individual mode show Rung/Answered/Missed for
+    // the single agent; in comparison mode show each agent's Answered.
+    const volData = [];
+    if (data.mode === 'individual') {
+      const d = datasets[agents[0]];
+      volData.push({ label: 'Total Rung', data: d.map(function (x) { return x.rung; }),
+                     borderColor: IR_CHART_COLORS[0], backgroundColor: IR_CHART_COLORS[0], tension: 0.4 });
+      volData.push({ label: 'Answered',   data: d.map(function (x) { return x.answered; }),
+                     borderColor: IR_CHART_COLORS[1], backgroundColor: IR_CHART_COLORS[1], tension: 0.4 });
+      volData.push({ label: 'Missed',     data: d.map(function (x) { return x.missed; }),
+                     borderColor: IR_CHART_COLORS[2], backgroundColor: IR_CHART_COLORS[2], tension: 0.4 });
+    } else {
+      agents.forEach(function (ag, i) {
+        const color = IR_CHART_COLORS[i % IR_CHART_COLORS.length];
+        volData.push({ label: ag + ' (Ans)',
+                       data: datasets[ag].map(function (x) { return x.answered; }),
+                       borderColor: color, backgroundColor: color, tension: 0.4 });
+      });
+    }
+    irCreateChart($('ir-vol-chart'), 'Call Volume', labels, volData,
+                  { isPercent: false, isTimeMinutes: false, showLabels: showLabels });
+
+    // Efficiency chart: % Answered per agent + a 95% goal line.
+    const effData = agents.map(function (ag, i) {
+      const color = IR_CHART_COLORS[i % IR_CHART_COLORS.length];
+      return {
+        label: ag + ' %',
+        data: datasets[ag].map(function (x) { return Number(x.pct.toFixed(1)); }),
+        borderColor: color, backgroundColor: color, tension: 0.4,
+      };
+    });
+    effData.push({ label: 'Goal', data: new Array(labels.length).fill(95),
+                   borderColor: '#ffc107', borderDash: [5, 5], pointRadius: 0 });
+    irCreateChart($('ir-eff-chart'), '% Answered', labels, effData,
+                  { isPercent: true, isTimeMinutes: false, showLabels: showLabels });
+
+    // Duration chart: ATT in minutes (legacy converts seconds -> minutes).
+    const durData = agents.map(function (ag, i) {
+      const color = IR_CHART_COLORS[i % IR_CHART_COLORS.length];
+      return {
+        label: ag + ' ATT',
+        data: datasets[ag].map(function (x) { return Number((x.att / 60).toFixed(2)); }),
+        borderColor: color, backgroundColor: color, tension: 0.4,
+      };
+    });
+    irCreateChart($('ir-dur-chart'), 'Avg Talk Time', labels, durData,
+                  { isPercent: false, isTimeMinutes: true, showLabels: showLabels });
+  }
+
+  function irCreateChart(canvas, title, labels, datasets, opts) {
+    if (!canvas) return;
+    const isPercent      = !!opts.isPercent;
+    const isTimeMinutes  = !!opts.isTimeMinutes;
+    const showLabels     = !!opts.showLabels;
+    let globalMax = 0;
+    datasets.forEach(function (ds) {
+      if (!ds.data) return;
+      ds.data.forEach(function (v) {
+        const n = parseFloat(v) || 0;
+        if (n > globalMax) globalMax = n;
+      });
+    });
+    const suggestedMax = globalMax > 0 ? globalMax * 1.1 : 1;
+
+    // Per-chart plugin registration (rather than Chart.register'ing
+    // globally) so the existing Missed Calls bar chart isn't affected
+    // by data labels. Falls back gracefully if the CDN didn't load.
+    const irPlugins = (typeof ChartDataLabels !== 'undefined') ? [ChartDataLabels] : [];
+    const chart = new Chart(canvas.getContext('2d'), {
+      type: 'line',
+      data: { labels: labels, datasets: datasets },
+      plugins: irPlugins,
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: false,
+        devicePixelRatio: 1,
+        plugins: {
+          title:   { display: true, text: title },
+          legend:  { position: 'bottom', labels: { boxWidth: 10 } },
+          datalabels: {
+            display: showLabels,
+            align: 'top', anchor: 'center',
+            backgroundColor: 'rgba(255,255,255,0.9)',
+            borderColor: function (ctx) { return ctx.dataset.borderColor; },
+            borderWidth: 1, borderRadius: 3,
+            color: function (ctx) { return ctx.dataset.borderColor; },
+            font: { size: 10, weight: 'bold' },
+            formatter: function (value, ctx) {
+              if (ctx.dataset.label === 'Goal') return '';
+              if (!value || value == 0) return '';
+              if (isTimeMinutes) return irFormatMinutes(value);
+              if (isPercent)     return parseFloat(value).toFixed(1) + '%';
+              return value;
+            },
+          },
+          tooltip: {
+            callbacks: {
+              label: function (ctx) {
+                let l = ctx.dataset.label || '';
+                if (l) l += ': ';
+                if (isTimeMinutes) return l + irFormatMinutes(ctx.parsed.y);
+                if (isPercent)     return l + ctx.parsed.y + '%';
+                return l + ctx.parsed.y;
+              },
+            },
+          },
+        },
+        scales: {
+          y: {
+            beginAtZero: true,
+            suggestedMax: suggestedMax,
+            grid: { borderDash: [5, 5] },
+            ticks: {
+              callback: function (val) {
+                if (isPercent)     return val + '%';
+                if (isTimeMinutes) return irFormatMinutes(val);
+                return val;
+              },
+            },
+          },
+          x: { grid: { borderDash: [5, 5] } },
+        },
+      },
+    });
+    irChartInstances.push(chart);
+  }
+
+  function irFormatMinutes(val) {
+    if (val == null) return '';
+    const n = parseFloat(val);
+    if (isNaN(n)) return '';
+    const m = Math.floor(n);
+    const s = Math.round((n - m) * 60);
+    return m + ':' + (s < 10 ? '0' + s : s);
+  }
+
+  // Image-export helpers. Both Copy and Email pass through
+  // html2canvas; the only difference is the destination of the
+  // resulting data URL.
+
+  function irBuildCanvas(onDone) {
+    const root = $('individual-results');
+    if (!root) return;
+    // Snapshot the canvases NOW (before clone) so the cloned doc
+    // can use the rendered pixels rather than re-rendering Chart.js
+    // off-screen, where layout differs.
+    const canvasMap = {};
+    document.querySelectorAll('#individual-results canvas').forEach(function (cvs) {
+      canvasMap[cvs.id] = cvs.toDataURL('image/png');
+    });
+
+    html2canvas(root, {
+      scale: 2, useCORS: true, backgroundColor: '#f4f6f9',
+      onclone: function (clonedDoc) {
+        const btns = clonedDoc.getElementById('ir-action-buttons');
+        if (btns) btns.style.display = 'none';
+        const toggle = clonedDoc.getElementById('ir-datalabels-box');
+        if (toggle) toggle.style.display = 'none';
+        clonedDoc.querySelectorAll('.ir-copy-tsv').forEach(function (b) { b.style.display = 'none'; });
+        const status = clonedDoc.getElementById('ir-results-status');
+        if (status) status.style.display = 'none';
+
+        // Replace each <canvas> in the clone with an <img> of the
+        // pre-captured PNG. Avoids the "blank chart" problem where
+        // Chart.js has nothing to draw on in the detached clone.
+        Object.keys(canvasMap).forEach(function (id) {
+          const cvs = clonedDoc.getElementById(id);
+          if (!cvs) return;
+          const img = clonedDoc.createElement('img');
+          img.src = canvasMap[id];
+          img.style.width = '100%';
+          img.style.height = 'auto';
+          img.style.display = 'block';
+          cvs.parentNode.replaceChild(img, cvs);
+        });
+      },
+    }).then(function (canvas) { onDone(canvas); });
+  }
+
+  function irCopyImage() {
+    const btn = $('ir-copy-img-btn');
+    const prev = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Capturing…';
+    irBuildCanvas(function (canvas) {
+      canvas.toBlob(function (blob) {
+        if (navigator.clipboard && window.ClipboardItem) {
+          navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
+            .then(function () {
+              btn.textContent = 'Copied!';
+              setTimeout(function () { btn.textContent = prev; btn.disabled = false; }, 1200);
+            }, function (err) {
+              irSetResultsStatus('error', 'Clipboard copy failed: ' + (err && err.message ? err.message : err));
+              btn.textContent = prev; btn.disabled = false;
+            });
+        } else {
+          irSetResultsStatus('error', 'Clipboard API not available in this browser.');
+          btn.textContent = prev; btn.disabled = false;
+        }
+      }, 'image/png');
+    });
+  }
+
+  function irEmailImage() {
+    const btn = $('ir-email-img-btn');
+    const prev = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Capturing…';
+    irBuildCanvas(function (canvas) {
+      const dataUrl = canvas.toDataURL('image/png');
+      btn.textContent = 'Sending…';
+      google.script.run
+        .withSuccessHandler(function (res) {
+          btn.textContent = 'Sent to ' + (res && res.to ? res.to : 'you');
+          setTimeout(function () { btn.textContent = prev; btn.disabled = false; }, 2000);
+        })
+        .withFailureHandler(function (err) {
+          irSetResultsStatus('error', 'Email failed: ' + (err && err.message ? err.message : err));
+          btn.textContent = prev; btn.disabled = false;
+        })
+        .sendIndividualReportEmail({
+          imageBase64: dataUrl,
+          dateLabel: irLastData && irLastData.dateLabel ? irLastData.dateLabel : '',
+        });
+    });
   }
 
   // Wait for DOM, then go.

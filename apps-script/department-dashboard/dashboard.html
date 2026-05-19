@@ -6,6 +6,8 @@
   <title>Department Dashboard</title>
   <?!= include('styles') ?>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 </head>
 <body>
   <div class="container">
@@ -55,6 +57,7 @@
       <div class="control control-reports">
         <label>Reports</label>
         <button class="btn btn-secondary" id="missed-report-btn" type="button">Missed Calls</button>
+        <button class="btn btn-secondary" id="individual-report-btn" type="button">Individual Report</button>
       </div>
     </div>
 
@@ -119,7 +122,6 @@
         <h3>Coming soon</h3>
         <p>Still migrating from the legacy DQE Report spreadsheet:</p>
         <ul>
-          <li><strong>Individual Report</strong> &mdash; per-agent detail with monthly trends.</li>
           <li><strong>Performance Report</strong> &mdash; current-vs-prior-period deltas + trend chart.</li>
           <li><strong>Compare Ranges</strong> (admin-only) &mdash; side-by-side comparison of two arbitrary date ranges.</li>
           <li><strong>Low Answer Rate Alerts</strong> (admin-driven) &mdash; sends per-dept alert emails when a threshold is crossed.</li>
@@ -158,6 +160,93 @@
         <div id="queue-only-body"></div>
       </div>
       <div id="missed-agents" class="agent-grid"></div>
+    </div>
+  </div>
+
+  <div id="individual-modal" class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="individual-modal-title" style="display:none;">
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-panel modal-panel-wide" role="document">
+      <button class="modal-close" id="individual-close" type="button" aria-label="Close">&times;</button>
+      <h2 id="individual-modal-title">Individual Report</h2>
+
+      <div id="individual-form" class="ir-form">
+        <div class="ir-section-title">1. Date Range</div>
+        <div class="ir-row">
+          <div class="ir-col">
+            <label for="ir-preset">Quick select</label>
+            <select id="ir-preset">
+              <option value="custom">Custom range</option>
+              <option value="thisMonth">This month</option>
+              <option value="lastMonth">Last month</option>
+              <option value="last30">Last 30 days</option>
+              <option value="last3Months">Last 3 months</option>
+              <option value="last12Months">Last 12 months</option>
+              <option value="lastYear">Last year</option>
+            </select>
+          </div>
+          <div class="ir-col">
+            <label for="ir-from">Start date</label>
+            <input type="date" id="ir-from">
+          </div>
+          <div class="ir-col">
+            <label for="ir-to">End date</label>
+            <input type="date" id="ir-to">
+          </div>
+        </div>
+
+        <div class="ir-section-title">2. Agents</div>
+        <div class="ir-hint">Select 1 for Individual Report. Select multiple for Peer Comparison.</div>
+        <div id="ir-agent-loader" class="ir-loader">Loading agent roster&hellip;</div>
+        <div id="ir-agent-list" class="ir-agent-list" style="display:none;"></div>
+        <div class="ir-agent-actions">
+          <a href="#" id="ir-select-all">Select all</a>
+          <span class="sep">|</span>
+          <a href="#" id="ir-select-none">Select none</a>
+        </div>
+
+        <div id="ir-form-error" class="status status-error" style="display:none;"></div>
+
+        <button class="btn" id="ir-generate-btn" type="button" disabled>Generate report</button>
+      </div>
+
+      <div id="individual-results" class="ir-results" style="display:none;">
+        <div class="ir-results-header">
+          <div>
+            <span class="ir-results-title" id="ir-results-title">Individual Report</span>
+            <span class="ir-results-date" id="ir-results-date"></span>
+          </div>
+          <div class="ir-action-buttons" id="ir-action-buttons">
+            <button class="btn btn-secondary" id="ir-back-btn" type="button">&laquo; Back</button>
+            <button class="btn btn-secondary" id="ir-copy-img-btn" type="button">Copy image</button>
+            <button class="btn btn-secondary" id="ir-email-img-btn" type="button">Email image</button>
+          </div>
+        </div>
+
+        <div id="ir-results-status" class="status" style="display:none;"></div>
+
+        <div id="ir-summary-container"></div>
+
+        <div class="ir-toggle-box" id="ir-datalabels-box">
+          <label class="ir-toggle-label">
+            <input type="checkbox" id="ir-show-datalabels"> Show data labels
+          </label>
+        </div>
+
+        <div class="ir-chart-grid" id="ir-charts-container">
+          <div class="ir-chart-wrap ir-chart-wide" id="ir-wrap-vol">
+            <div class="ir-chart-header">Volume Trends</div>
+            <div class="ir-chart-canvas-wrap"><canvas id="ir-vol-chart"></canvas></div>
+          </div>
+          <div class="ir-chart-wrap" id="ir-wrap-eff">
+            <div class="ir-chart-header">Efficiency (% Answered)</div>
+            <div class="ir-chart-canvas-wrap"><canvas id="ir-eff-chart"></canvas></div>
+          </div>
+          <div class="ir-chart-wrap" id="ir-wrap-dur">
+            <div class="ir-chart-header">Duration (ATT)</div>
+            <div class="ir-chart-canvas-wrap"><canvas id="ir-dur-chart"></canvas></div>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 
