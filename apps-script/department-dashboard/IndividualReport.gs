@@ -39,7 +39,10 @@
  * per-value 100KB limit; on cache-put failure we log + continue.
  */
 
-const INDIVIDUAL_CACHE_KEY_PREFIX = 'individual:v1';
+// Bump when aggregation rules change so stale cached values don't
+// linger. v2 = team-avg uses active-agent denominator + per-dept
+// exclusion list (TEAM_AVG_EXCLUDES).
+const INDIVIDUAL_CACHE_KEY_PREFIX = 'individual:v2';
 
 function getIndividualReportInit(req) {
   const email = Session.getActiveUser().getEmail();
@@ -221,7 +224,19 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster) {
     summaryStats[a]    = { rung: 0, missed: 0, answered: 0, ttt: 0, attTotal: 0 };
   });
   const teamTotal = { rung: 0, missed: 0, answered: 0, ttt: 0, attTotal: 0 };
-  const activeDaySet = {};   // ISO day -> true; for dept "per day" stats
+  const activeDaySet  = {};   // ISO day -> true; for dept "per day" stats
+  // Track which roster agents actually had ANY activity in range,
+  // so the team-avg denominator only counts agents who took calls
+  // (zero-call roster members shouldn't drag the average down).
+  const activeAgentSet = {};
+
+  // Per-dept exclusion list for managers / others who are on the
+  // roster but shouldn't factor into the team average. Resolved at
+  // request time so config edits take effect on next request (after
+  // cache TTL).
+  const excludedAgents = {};
+  const excludeList = (TEAM_AVG_EXCLUDES && TEAM_AVG_EXCLUDES[dept]) || [];
+  for (let i = 0; i < excludeList.length; i++) excludedAgents[excludeList[i]] = true;
 
   for (let i = 0; i < values.length; i++) {
     const r  = values[i];
@@ -249,14 +264,19 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster) {
     // so unanswered/abandoned days don't drag down the weighted ATT.
     const attTotal = answered > 0 ? attAvg * answered : 0;
 
-    // Team totals (dept-wide, over user's selected range).
-    if (inUserRange && rosterSet[agent]) {
+    // Team totals (dept-wide, over user's selected range). Excludes
+    // configured managers; only counts agents with at least one call
+    // event so zero-call roster members don't dilute the average.
+    if (inUserRange && rosterSet[agent] && !excludedAgents[agent]) {
       teamTotal.rung     += rung;
       teamTotal.missed   += missed;
       teamTotal.answered += answered;
       teamTotal.ttt      += tttSec;
       teamTotal.attTotal += attTotal;
       activeDaySet[dateIso] = true;
+      if (rung > 0 || answered > 0 || missed > 0) {
+        activeAgentSet[agent] = true;
+      }
     }
 
     // Per-selected-agent.
@@ -285,13 +305,16 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster) {
     }
   }
 
-  // Team average (per-agent simple mean across the roster), with
-  // weighted % / TTT / ATT computed across the whole team's data.
-  const rosterSize = roster.names.length || 1;
+  // Team average (per-agent simple mean across active, non-excluded
+  // roster members), with weighted % / TTT / ATT computed across
+  // those agents' calls. activeAgentCount is the denominator; if
+  // every roster member was inactive or excluded, fall back to 1 to
+  // avoid divide-by-zero (totals will be 0 anyway).
+  const activeAgentCount = Math.max(1, Object.keys(activeAgentSet).length);
   const teamAvg = {
-    rung:     Math.round(teamTotal.rung     / rosterSize),
-    missed:   Math.round(teamTotal.missed   / rosterSize),
-    answered: Math.round(teamTotal.answered / rosterSize),
+    rung:     Math.round(teamTotal.rung     / activeAgentCount),
+    missed:   Math.round(teamTotal.missed   / activeAgentCount),
+    answered: Math.round(teamTotal.answered / activeAgentCount),
     pctAnswered: teamTotal.rung     > 0 ? (teamTotal.answered / teamTotal.rung)    * 100 : 0,
     tttPerCall:  teamTotal.answered > 0 ? (teamTotal.ttt       / teamTotal.answered)     : 0,
     att:         teamTotal.answered > 0 ? (teamTotal.attTotal  / teamTotal.answered)     : 0,
@@ -379,7 +402,9 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster) {
       trendEnd:   trendEndIso,
       agents: selectedAgents,
       mode: selectedAgents.length > 1 ? 'comparison' : 'individual',
-      rosterSize: rosterSize,
+      rosterSize: roster.names.length,
+      activeAgentCount: activeAgentCount,
+      excludedAgents: excludeList,
       generatedAt: new Date().toISOString(),
     },
     dateLabel: dateLabel,
