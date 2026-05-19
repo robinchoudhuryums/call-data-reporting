@@ -40,8 +40,9 @@
  */
 
 // Bump when aggregation rules change so stale cached values don't
-// linger. v3 = per-agent share-of-dept + insights array.
-const INDIVIDUAL_CACHE_KEY_PREFIX = 'individual:v3';
+// linger. v4 = insights are objects { type, text } instead of bare
+// strings (client uses `type` to color-code the marker).
+const INDIVIDUAL_CACHE_KEY_PREFIX = 'individual:v4';
 
 function getIndividualReportInit(req) {
   const email = Session.getActiveUser().getEmail();
@@ -539,9 +540,14 @@ function emptyIndividualReport_(dept, from, to, selectedAgents, masterMonthKeys)
 
 /**
  * Rules-based notable comparisons between this agent and the team
- * average. Returns up to 3 short strings; empty if nothing rises
- * above the noise floor. Thresholds set to surface meaningful
- * differences without flagging routine variance.
+ * average. Returns up to 3 insights of shape { type, text }, where
+ * `type` is one of:
+ *   positive -- agent is on the favorable side of the metric
+ *   negative -- agent is on the unfavorable side
+ *   neutral  -- direction-ambiguous metric (e.g. ATT, where longer
+ *               could mean "more thorough" or "slower" depending
+ *               on context; surface but don't color-code as good/
+ *               bad).
  *
  * Rule order = surfacing priority:
  *   1. % Answered     (>= 5 pt absolute spread, agent rung >= 10)
@@ -550,8 +556,8 @@ function emptyIndividualReport_(dept, from, to, selectedAgents, masterMonthKeys)
  *   4. Missed-call    (>= 30% relative spread, agent missed >= 3)
  *
  * Tuning notes:
- *   - "Volume" thresholds use answered>=10 / missed>=3 minimums so
- *     a one-call outlier day doesn't trigger noise.
+ *   - Activity-minimum gates (rung>=5/10, answered>=10, missed>=3)
+ *     suppress one-call outliers from triggering noise.
  *   - 25-30% relative spreads catch real outliers but spare the
  *     ~20% normal day-to-day variance most depts see.
  */
@@ -562,42 +568,56 @@ function buildAgentInsights_(agent, teamAvg) {
   if (agent.rung >= 10 && teamAvg.pctAnswered > 0) {
     const pctDelta = agent.pct - teamAvg.pctAnswered;
     if (Math.abs(pctDelta) >= 5) {
-      const dir = pctDelta > 0 ? 'above' : 'below';
-      out.push('Answer rate is ' + Math.abs(pctDelta).toFixed(1)
-             + ' pts ' + dir + ' team avg ('
-             + agent.pct.toFixed(1) + '% vs '
-             + teamAvg.pctAnswered.toFixed(1) + '%).');
+      const above = pctDelta > 0;
+      out.push({
+        type: above ? 'positive' : 'negative',
+        text: 'Answer rate is ' + Math.abs(pctDelta).toFixed(1)
+            + ' pts ' + (above ? 'above' : 'below') + ' team avg ('
+            + agent.pct.toFixed(1) + '% vs '
+            + teamAvg.pctAnswered.toFixed(1) + '%).',
+      });
     }
   }
 
   if (teamAvg.rung > 0) {
     const rungDelta = ((agent.rung - teamAvg.rung) / teamAvg.rung) * 100;
     if (Math.abs(rungDelta) >= 25) {
-      const dir = rungDelta > 0 ? 'higher' : 'lower';
-      out.push('Call volume is ' + Math.abs(rungDelta).toFixed(0)
-             + '% ' + dir + ' than team avg ('
-             + agent.rung + ' vs ' + teamAvg.rung + ' rung).');
+      const above = rungDelta > 0;
+      out.push({
+        type: above ? 'positive' : 'negative',
+        text: 'Call volume is ' + Math.abs(rungDelta).toFixed(0)
+            + '% ' + (above ? 'higher' : 'lower') + ' than team avg ('
+            + agent.rung + ' vs ' + teamAvg.rung + ' rung).',
+      });
     }
   }
 
+  // ATT direction is genuinely ambiguous -- longer can mean
+  // thorough service or slow handling. Mark neutral so the UI
+  // surfaces it without coloring as good/bad.
   if (teamAvg.att > 0 && agent.answered >= 10) {
     const attDelta = ((agent.att - teamAvg.att) / teamAvg.att) * 100;
     if (Math.abs(attDelta) >= 25) {
-      const dir = attDelta > 0 ? 'longer' : 'shorter';
-      out.push('Avg talk time is ' + Math.abs(attDelta).toFixed(0)
-             + '% ' + dir + ' than team avg ('
-             + formatSecondsHms_(agent.att) + ' vs '
-             + formatSecondsHms_(teamAvg.att) + ').');
+      out.push({
+        type: 'neutral',
+        text: 'Avg talk time is ' + Math.abs(attDelta).toFixed(0)
+            + '% ' + (attDelta > 0 ? 'longer' : 'shorter') + ' than team avg ('
+            + formatSecondsHms_(agent.att) + ' vs '
+            + formatSecondsHms_(teamAvg.att) + ').',
+      });
     }
   }
 
   if (teamAvg.missed > 0 && agent.missed >= 3) {
     const missedDelta = ((agent.missed - teamAvg.missed) / teamAvg.missed) * 100;
     if (Math.abs(missedDelta) >= 30) {
-      const dir = missedDelta > 0 ? 'above' : 'below';
-      out.push('Missed-call count is ' + Math.abs(missedDelta).toFixed(0)
-             + '% ' + dir + ' team avg ('
-             + agent.missed + ' vs ' + teamAvg.missed + ' missed).');
+      const above = missedDelta > 0;
+      out.push({
+        type: above ? 'negative' : 'positive',
+        text: 'Missed-call count is ' + Math.abs(missedDelta).toFixed(0)
+            + '% ' + (above ? 'above' : 'below') + ' team avg ('
+            + agent.missed + ' vs ' + teamAvg.missed + ' missed).',
+      });
     }
   }
 

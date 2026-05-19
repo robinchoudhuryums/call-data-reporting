@@ -235,9 +235,16 @@
           </div>
           <div class="ir-action-buttons" id="ir-action-buttons">
             <button class="btn btn-secondary" id="ir-back-btn" type="button">&laquo; Back</button>
-            <button class="btn btn-secondary" id="ir-copy-img-btn" type="button">Copy image</button>
-            <button class="btn btn-secondary" id="ir-email-img-btn" type="button">Email image</button>
-            <button class="btn btn-secondary" id="ir-print-btn" type="button">Print</button>
+            <div class="ir-export-wrap">
+              <button class="btn btn-secondary" id="ir-export-btn" type="button" aria-haspopup="menu" aria-expanded="false">
+                Export <span class="ir-export-caret">&#9662;</span>
+              </button>
+              <div class="ir-export-menu" id="ir-export-menu" role="menu" style="display:none;">
+                <button type="button" role="menuitem" data-action="copy">Copy image</button>
+                <button type="button" role="menuitem" data-action="email">Email image</button>
+                <button type="button" role="menuitem" data-action="print">Print</button>
+              </div>
+            </div>
           </div>
         </div>
 

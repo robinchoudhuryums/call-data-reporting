@@ -1016,11 +1016,37 @@
       if (irLastData) irRenderCharts(irLastData);
     });
 
-    const copyBtn = $('ir-copy-img-btn');
-    if (copyBtn) copyBtn.addEventListener('click', irCopyImage);
-
-    const emailBtn = $('ir-email-img-btn');
-    if (emailBtn) emailBtn.addEventListener('click', irEmailImage);
+    // Export dropdown: consolidates Copy image / Email image /
+    // Print under one button. Click toggles open; click on an
+    // item runs the action and closes; outside click + Escape
+    // dismiss.
+    const exportBtn  = $('ir-export-btn');
+    const exportMenu = $('ir-export-menu');
+    if (exportBtn && exportMenu) {
+      exportBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        irSetExportMenuOpen_(exportMenu.style.display === 'none');
+      });
+      exportMenu.addEventListener('click', function (e) {
+        const item = e.target.closest('[data-action]');
+        if (!item) return;
+        const action = item.getAttribute('data-action');
+        irSetExportMenuOpen_(false);
+        if (action === 'copy')  irCopyImage();
+        else if (action === 'email') irEmailImage();
+        else if (action === 'print') irPrintReport_();
+      });
+      document.addEventListener('click', function (e) {
+        if (exportMenu.style.display === 'none') return;
+        if (exportMenu.contains(e.target) || e.target === exportBtn) return;
+        irSetExportMenuOpen_(false);
+      });
+      document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && exportMenu.style.display !== 'none') {
+          irSetExportMenuOpen_(false);
+        }
+      });
+    }
 
     // Chart panel tabs. Only one of the three charts is visible at
     // a time so each gets the full container width. Default: Volume.
@@ -1043,19 +1069,27 @@
       irChartInstances.forEach(function (c) { c.resize(); });
     });
 
-    const printBtn = $('ir-print-btn');
-    if (printBtn) printBtn.addEventListener('click', function () {
-      // A print stylesheet (styles.html @media print) hides the
-      // dashboard chrome and the modal backdrop / action buttons so
-      // only the report content lands on the page. Browser's
-      // built-in print preview can "save as PDF" for sharing.
-      document.body.classList.add('ir-printing');
-      window.print();
-      document.body.classList.remove('ir-printing');
-    });
-
     // Defaults: this-month-to-date.
     setIrDefaultDates();
+  }
+
+  function irSetExportMenuOpen_(open) {
+    const btn  = $('ir-export-btn');
+    const menu = $('ir-export-menu');
+    if (!btn || !menu) return;
+    menu.style.display = open ? '' : 'none';
+    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    btn.classList.toggle('open', open);
+  }
+
+  function irPrintReport_() {
+    // A print stylesheet (styles.html @media print) hides the
+    // dashboard chrome and the modal backdrop / action buttons so
+    // only the report content lands on the page. Browser's
+    // built-in print preview can "save as PDF" for sharing.
+    document.body.classList.add('ir-printing');
+    window.print();
+    document.body.classList.remove('ir-printing');
   }
 
   function setIrDefaultDates() {
@@ -1609,15 +1643,35 @@
   }
 
   /**
-   * Renders the per-agent insights callout. Server-side rules
-   * produce up to 3 short strings comparing this agent to team
-   * avg on % Answered, volume, ATT, and missed-call count.
-   * Returns empty string if no insights -- no empty box.
+   * Renders the per-agent insights callout. Each insight is an
+   * object { type, text } where type is "positive" | "negative" |
+   * "neutral" -- shown as a colored circular marker before the
+   * text so managers can scan the list at a glance:
+   *
+   *   blue  up arrow   : favorable comparison (positive)
+   *   orange down arrow: unfavorable comparison (negative)
+   *   grey  bullet     : direction-ambiguous (neutral, e.g. ATT)
+   *
+   * Returns empty string when there are no insights so empty
+   * callout boxes never appear.
    */
   function irInsightsBlock_(insights) {
     if (!insights || !insights.length) return '';
-    const items = insights.map(function (s) {
-      return '<li>' + escapeHtml(s) + '</li>';
+    const items = insights.map(function (item) {
+      // Accept legacy v3 string-form for cache transition safety.
+      const type = (item && item.type) || 'neutral';
+      const text = (item && item.text)
+        ? item.text
+        : (typeof item === 'string' ? item : '');
+      const mark = type === 'positive' ? '↑'    // up arrow
+                 : type === 'negative' ? '↓'    // down arrow
+                 : '•';                          // bullet
+      return '<li class="ir-insight-item">'
+           +   '<span class="ir-insight-mark ir-insight-mark-' + type + '" aria-hidden="true">'
+           +     mark
+           +   '</span>'
+           +   '<span class="ir-insight-text">' + escapeHtml(text) + '</span>'
+           + '</li>';
     }).join('');
     return '<div class="ir-insights">'
          +   '<div class="ir-insights-label">Insights</div>'
@@ -1959,96 +2013,136 @@
   function irBuildCanvas(onDone) {
     const root = $('individual-results');
     if (!root) return;
-    // Snapshot the canvases NOW (before clone) so the cloned doc
-    // can use the rendered pixels rather than re-rendering Chart.js
-    // off-screen, where layout differs.
-    const canvasMap = {};
-    document.querySelectorAll('#individual-results canvas').forEach(function (cvs) {
-      canvasMap[cvs.id] = cvs.toDataURL('image/png');
+
+    // Temporarily reveal every chart panel and resize its Chart.js
+    // instance so the canvas has rendered pixels before we read it.
+    // Hidden panels (the inactive tabs) leave their canvases at 0x0
+    // -- toDataURL on those returns a blank PNG, which was showing
+    // up as empty chart slots in the exported image / email.
+    const panels = root.querySelectorAll('#ir-charts-container [data-panel]');
+    const savedDisplays = [];
+    panels.forEach(function (p) {
+      savedDisplays.push(p.style.display);
+      p.style.display = '';
     });
+    irChartInstances.forEach(function (c) { c.resize(); });
 
-    html2canvas(root, {
-      scale: 2, useCORS: true, backgroundColor: '#f4f6f9',
-      onclone: function (clonedDoc) {
-        const btns = clonedDoc.getElementById('ir-action-buttons');
-        if (btns) btns.style.display = 'none';
-        const toggle = clonedDoc.getElementById('ir-datalabels-box');
-        if (toggle) toggle.style.display = 'none';
-        const tabs = clonedDoc.getElementById('ir-chart-tabs');
-        if (tabs) tabs.style.display = 'none';
-        const editPop = clonedDoc.getElementById('ir-edit-popover');
-        if (editPop) editPop.style.display = 'none';
-        const editLine = clonedDoc.querySelector('.ir-editing-edit');
-        if (editLine) editLine.style.display = 'none';
-        clonedDoc.querySelectorAll('.ir-copy-tsv').forEach(function (b) { b.style.display = 'none'; });
-        const status = clonedDoc.getElementById('ir-results-status');
-        if (status) status.style.display = 'none';
+    // Two rAFs: one for Chart.js's internal re-layout to settle,
+    // one for the browser to actually paint the resized canvas.
+    requestAnimationFrame(function () { requestAnimationFrame(function () {
+      const canvasMap = {};
+      root.querySelectorAll('canvas').forEach(function (cvs) {
+        canvasMap[cvs.id] = cvs.toDataURL('image/png');
+      });
 
-        // In the tabbed UI only the active chart panel is visible,
-        // but a captured image should include all three. Force all
-        // panels visible in the clone and lay them out stacked.
-        clonedDoc.querySelectorAll('#ir-charts-container [data-panel]').forEach(function (p) {
-          p.style.display = '';
-          p.style.marginBottom = '14px';
-        });
+      // Restore tab visibility before html2canvas snapshots the
+      // live DOM. onclone re-reveals all panels in the cloned doc
+      // and swaps each canvas for the captured PNG so the export
+      // includes all three charts regardless of which tab is
+      // currently visible on screen.
+      panels.forEach(function (p, i) { p.style.display = savedDisplays[i]; });
+      irChartInstances.forEach(function (c) { c.resize(); });
 
-        // Replace each <canvas> in the clone with an <img> of the
-        // pre-captured PNG. Avoids the "blank chart" problem where
-        // Chart.js has nothing to draw on in the detached clone.
-        Object.keys(canvasMap).forEach(function (id) {
-          const cvs = clonedDoc.getElementById(id);
-          if (!cvs) return;
-          const img = clonedDoc.createElement('img');
-          img.src = canvasMap[id];
-          img.style.width = '100%';
-          img.style.height = 'auto';
-          img.style.display = 'block';
-          cvs.parentNode.replaceChild(img, cvs);
-        });
-      },
-    }).then(function (canvas) { onDone(canvas); });
+      html2canvas(root, {
+        scale: 2, useCORS: true, backgroundColor: '#f4f6f9',
+        onclone: function (clonedDoc) {
+          const btns = clonedDoc.getElementById('ir-action-buttons');
+          if (btns) btns.style.display = 'none';
+          const toggle = clonedDoc.getElementById('ir-datalabels-box');
+          if (toggle) toggle.style.display = 'none';
+          const tabs = clonedDoc.getElementById('ir-chart-tabs');
+          if (tabs) tabs.style.display = 'none';
+          const editPop = clonedDoc.getElementById('ir-edit-popover');
+          if (editPop) editPop.style.display = 'none';
+          const editLine = clonedDoc.querySelector('.ir-editing-edit');
+          if (editLine) editLine.style.display = 'none';
+          clonedDoc.querySelectorAll('.ir-copy-tsv').forEach(function (b) { b.style.display = 'none'; });
+          const status = clonedDoc.getElementById('ir-results-status');
+          if (status) status.style.display = 'none';
+
+          // In the tabbed UI only the active chart panel is visible,
+          // but a captured image should include all three. Force all
+          // panels visible in the clone and lay them out stacked.
+          clonedDoc.querySelectorAll('#ir-charts-container [data-panel]').forEach(function (p) {
+            p.style.display = '';
+            p.style.marginBottom = '14px';
+          });
+
+          // Replace each <canvas> in the clone with an <img> of the
+          // pre-captured PNG. Avoids the "blank chart" problem where
+          // Chart.js has nothing to draw on in the detached clone.
+          Object.keys(canvasMap).forEach(function (id) {
+            const cvs = clonedDoc.getElementById(id);
+            if (!cvs) return;
+            const img = clonedDoc.createElement('img');
+            img.src = canvasMap[id];
+            img.style.width = '100%';
+            img.style.height = 'auto';
+            img.style.display = 'block';
+            cvs.parentNode.replaceChild(img, cvs);
+          });
+        },
+      }).then(function (canvas) { onDone(canvas); });
+    }); });
+  }
+
+  /**
+   * Transient feedback on the Export button while a copy/email
+   * is in flight. Saves the original label, swaps it, restores
+   * after `holdMs` (or immediately if `holdMs` is 0).
+   */
+  function irExportBtnFeedback_(label, holdMs) {
+    const btn = $('ir-export-btn');
+    if (!btn) return function () {};
+    if (!btn.dataset.label) btn.dataset.label = btn.innerHTML;
+    btn.disabled = true;
+    btn.textContent = label;
+    if (holdMs) {
+      setTimeout(function () {
+        btn.innerHTML = btn.dataset.label;
+        btn.disabled = false;
+      }, holdMs);
+    }
+    return function restore() {
+      btn.innerHTML = btn.dataset.label;
+      btn.disabled = false;
+    };
   }
 
   function irCopyImage() {
-    const btn = $('ir-copy-img-btn');
-    const prev = btn.textContent;
-    btn.disabled = true;
-    btn.textContent = 'Capturing…';
+    const restore = irExportBtnFeedback_('Capturing…', 0);
     irBuildCanvas(function (canvas) {
       canvas.toBlob(function (blob) {
         if (navigator.clipboard && window.ClipboardItem) {
           navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
             .then(function () {
-              btn.textContent = 'Copied!';
-              setTimeout(function () { btn.textContent = prev; btn.disabled = false; }, 1200);
+              restore();
+              irExportBtnFeedback_('Copied!', 1200);
             }, function (err) {
               irSetResultsStatus('error', 'Clipboard copy failed: ' + (err && err.message ? err.message : err));
-              btn.textContent = prev; btn.disabled = false;
+              restore();
             });
         } else {
           irSetResultsStatus('error', 'Clipboard API not available in this browser.');
-          btn.textContent = prev; btn.disabled = false;
+          restore();
         }
       }, 'image/png');
     });
   }
 
   function irEmailImage() {
-    const btn = $('ir-email-img-btn');
-    const prev = btn.textContent;
-    btn.disabled = true;
-    btn.textContent = 'Capturing…';
+    const restore = irExportBtnFeedback_('Capturing…', 0);
     irBuildCanvas(function (canvas) {
       const dataUrl = canvas.toDataURL('image/png');
-      btn.textContent = 'Sending…';
+      irExportBtnFeedback_('Sending…', 0);
       google.script.run
         .withSuccessHandler(function (res) {
-          btn.textContent = 'Sent to ' + (res && res.to ? res.to : 'you');
-          setTimeout(function () { btn.textContent = prev; btn.disabled = false; }, 2000);
+          restore();
+          irExportBtnFeedback_('Sent to ' + (res && res.to ? res.to : 'you'), 2000);
         })
         .withFailureHandler(function (err) {
           irSetResultsStatus('error', 'Email failed: ' + (err && err.message ? err.message : err));
-          btn.textContent = prev; btn.disabled = false;
+          restore();
         })
         .sendIndividualReportEmail({
           imageBase64: dataUrl,
