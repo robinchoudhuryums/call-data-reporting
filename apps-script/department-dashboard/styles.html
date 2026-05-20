@@ -134,6 +134,18 @@
     border-radius: 2px;
   }
 
+  /* Top-level page sections. The Overview and My Department views
+     live side by side in the DOM and are toggled via the body's
+     data-page attribute (driven by the header buttons). Default
+     state is overview-visible; switch by clicking "My Department"
+     in the nav. */
+  .page { display: block; margin-top: 6px; }
+  body[data-page="overview"] #dept-page { display: none; }
+  body[data-page="dept"]     #overview-page { display: none; }
+  /* Loading skeleton is centered with extra breathing room for
+     the inline (non-modal) presentation. */
+  #overview-page > #ov-loading { padding: 64px 32px; }
+
   /* Header — document-style: small mono kicker over a display-font
      dept name. Hairline divider below. */
   .dash-header {
@@ -213,6 +225,16 @@
   .header-menu-btn[aria-expanded="true"] {
     background: var(--paper-2);
     border-color: var(--muted);
+  }
+  /* Active-page indicator on the Overview / My Department nav
+     buttons. Inverted styling matches the .btn primary pattern
+     (var(--ink) on var(--paper)) so light and dark modes both
+     read as "this button is the current page". */
+  .header-menu-btn.header-nav-current,
+  .header-menu-btn.header-nav-current:hover {
+    background: var(--ink);
+    border-color: var(--ink);
+    color: var(--paper);
   }
   .header-menu-caret {
     font-size: 13px;
@@ -2466,20 +2488,48 @@
   }
   /* Each parent dept + its sub-queues stack vertically in a
      single grid cell. Children inherit the parent's tile color
-     (slot in IR_CHART_COLORS) via inline-set color but get a
-     muted accent strip on the left to signal the relationship. */
+     (slot in IR_CHART_COLORS) via inline-set color but get an
+     accent strip on the left + accent-tinted background to
+     signal the relationship. */
   .ov-dept-group {
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 4px;
   }
   .ov-dept-tile-child {
-    border-left-width: 3px;
-    border-left-color: var(--accent);
-    margin-left: 14px;
-    /* Slightly smaller font, dimmer background to communicate
-       "sub-queue, less primary". */
-    background: var(--paper-2);
+    border-left: 4px solid var(--accent);
+    margin-left: 24px;
+    padding: 9px 13px;
+    background: var(--accent-soft);
+    /* Distinct rounded-corner profile vs parent's square tile,
+       reinforcing "this is a child element of the row above". */
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+    position: relative;
+  }
+  /* Tree-line connector: a short L-shape suggesting the child
+     branches off its parent. Sits in the indent gap so it
+     doesn't push the tile content around. */
+  .ov-dept-tile-child::before {
+    content: '';
+    position: absolute;
+    left: -16px;
+    top: -4px;
+    width: 12px;
+    height: 22px;
+    border-left: 1px solid var(--accent);
+    border-bottom: 1px solid var(--accent);
+    border-bottom-left-radius: 4px;
+    opacity: 0.55;
+  }
+  .ov-dept-tile-child .ov-dept-name {
+    font-size: 14px;
+  }
+  .ov-dept-tile-child .ov-dept-name::before {
+    content: '↳ ';
+    color: var(--accent);
+    font-weight: 600;
+    margin-right: 1px;
   }
   .ov-dept-tile-child .ov-dept-tile-pct {
     font-size: 18px;
@@ -2487,9 +2537,10 @@
   .ov-dept-parent-tag {
     font-family: var(--mono);
     font-size: 10px;
-    color: var(--muted);
+    color: var(--accent);
     text-transform: uppercase;
     letter-spacing: 0.05em;
+    font-weight: 500;
   }
   .ov-dept-tile {
     background: var(--paper-card);

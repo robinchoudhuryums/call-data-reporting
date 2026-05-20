@@ -7,7 +7,8 @@
  *     trendIsoLabels:   ['yyyy-MM-dd', ...]    (30 entries, oldest first)
  *     trendLabels:      ['Apr 21', ...],        (human-readable, x-axis)
  *     depts: [
- *       { name, parent, activeAgents, rosterSize, alertedOnLatest,
+ *       { name, parent, activeAgents, recentlyActiveCount,
+ *         rosterSize, alertedOnLatest,
  *         latest: { rung, missed, answered, pct, pctFormatted,
  *                   attFormatted },
  *         wow:   { curPct, prevPct, deltaPct } | null,
@@ -19,7 +20,7 @@
  *     ],
  *     companyAggregate: {            // admin only; stripped for managers
  *       rung, missed, answered, pct, pctFormatted, attFormatted,
- *       activeAgents, rosterSize,
+ *       activeAgents, recentlyActiveCount, rosterSize,
  *     } | undefined,
  *     viewerRole: 'admin' | 'manager',
  *     viewerDept: string | null,
@@ -30,7 +31,7 @@
  * (read-only), and reinstating that visibility is part of the
  * design intent for this view.
  *
- * Caching: 5 min under `companyOverview:v3`. Cached blob is shared
+ * Caching: 5 min under `companyOverview:v4`. Cached blob is shared
  * across all users; the admin-only `companyAggregate` field is
  * stripped on serve for non-admins, and viewer-personalized fields
  * (viewerRole/viewerDept) are injected per-request, never cached.
@@ -41,7 +42,15 @@
  * this fits comfortably in a single Apps Script execution.
  */
 
-const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v3';
+const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v4';
+
+// Window (in days) over which we consider an agent "recently
+// active". Used as the denominator for the "X of Y agents" caption
+// on each tile -- ex-employees who are kept on the roster sheet for
+// historical-data preservation should fall out of this count. Tied
+// to the same trend window we already scan, so it costs nothing
+// extra to compute.
+const OVERVIEW_RECENT_ACTIVE_DAYS = 30;
 
 /**
  * Overview-only parent->children dept relationships. The "Overview"
@@ -129,12 +138,17 @@ function getCompanyOverview() {
   });
 
   // Per-dept aggregators. trendByDate keyed on ISO day; latestDay
-  // is the same shape but only for latestDate.
+  // is the same shape but only for latestDate. recentlyActiveAgents
+  // captures anyone with ANY activity in the trend window -- used
+  // as the denominator for the "X of Y agents" caption so ex-
+  // employees still on the roster sheet (kept for historical-data
+  // preservation) don't dilute the count.
   const deptStats = {};
   allDepts.forEach(function (d) {
     deptStats[d] = {
       latestDay: { rung: 0, missed: 0, answered: 0, att_sum: 0, activeAgents: {} },
       trendByDate: {},  // iso -> { rung, answered }
+      recentlyActiveAgents: {},
     };
   });
 
@@ -147,6 +161,7 @@ function getCompanyOverview() {
   const companyLatest = {
     rung: 0, missed: 0, answered: 0, att_sum: 0, activeAgents: {},
   };
+  const companyRecentlyActive = {};
 
   // Bulk scan -- only the last `trendDays` worth of rows matter.
   const range = sheet.getRange(2, 1, lastRow - 1, HISTORICAL_COLS.CSR_AVG_ABD_WAIT);
@@ -171,15 +186,15 @@ function getCompanyOverview() {
     // any per-dept attribution. Agents not on any roster still count
     // here (real volume), but they won't be attributed to any dept
     // tile below.
+    const hadActivity = rung > 0 || answered > 0 || missed > 0;
     if (dateIso === latestDate) {
       companyLatest.rung     += rung;
       companyLatest.missed   += missed;
       companyLatest.answered += answered;
       companyLatest.att_sum  += attTotal;
-      if (rung > 0 || answered > 0 || missed > 0) {
-        companyLatest.activeAgents[agent] = true;
-      }
+      if (hadActivity) companyLatest.activeAgents[agent] = true;
     }
+    if (hadActivity) companyRecentlyActive[agent] = true;
 
     const ownerDepts = deptsForAgent[agent];
     if (!ownerDepts || !ownerDepts.length) continue;
@@ -193,6 +208,7 @@ function getCompanyOverview() {
       }
       trendDay.rung     += rung;
       trendDay.answered += answered;
+      if (hadActivity) stats.recentlyActiveAgents[agent] = true;
 
       if (dateIso === latestDate) {
         const ld = stats.latestDay;
@@ -200,9 +216,7 @@ function getCompanyOverview() {
         ld.missed   += missed;
         ld.answered += answered;
         ld.att_sum  += attTotal;
-        if (rung > 0 || answered > 0 || missed > 0) {
-          ld.activeAgents[agent] = true;
-        }
+        if (hadActivity) ld.activeAgents[agent] = true;
       }
     });
   }
@@ -229,6 +243,12 @@ function getCompanyOverview() {
       name: d,
       parent: OVERVIEW_PARENT_OF[d] || null,
       activeAgents: Object.keys(ld.activeAgents).length,
+      // "Recently active" = anyone with any call activity in the
+      // last OVERVIEW_RECENT_ACTIVE_DAYS days. Used as the
+      // denominator in tile captions; ex-employees who are kept on
+      // the roster sheet for historical-data preservation fall out
+      // of this count naturally.
+      recentlyActiveCount: Object.keys(stats.recentlyActiveAgents).length,
       rosterSize: rosterByDept[d].names.length,
       alertedOnLatest: !!alertedSet[d],
       latest: {
@@ -287,6 +307,10 @@ function getCompanyOverview() {
     pctFormatted: cPct.toFixed(1) + '%',
     attFormatted: formatSecondsHms_(cAtt),
     activeAgents: Object.keys(companyLatest.activeAgents).length,
+    // Recently-active union across non-hidden depts (last
+    // OVERVIEW_RECENT_ACTIVE_DAYS days). Excludes ex-employees on
+    // the roster sheet.
+    recentlyActiveCount: Object.keys(companyRecentlyActive).length,
     rosterSize:   Object.keys(companyRosterUnion).length,
   };
 
