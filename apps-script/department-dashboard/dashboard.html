@@ -28,10 +28,14 @@
             Reports <span class="header-menu-caret" aria-hidden="true">&#9662;</span>
           </button>
           <div class="header-menu-list" id="reports-menu-list" role="menu" style="display:none;">
-            <button class="header-menu-item" id="missed-report-btn"     type="button" role="menuitem">Missed Calls</button>
-            <button class="header-menu-item" id="individual-report-btn" type="button" role="menuitem">Individual Report</button>
-            <button class="header-menu-item" id="performance-report-btn"type="button" role="menuitem">Performance Report</button>
-            <button class="header-menu-item" id="compare-ranges-btn"    type="button" role="menuitem" data-admin-only style="display:none;">Compare Ranges</button>
+            <button class="header-menu-item" id="missed-report-btn"     type="button" role="menuitem"
+                    title="Per-agent missed-call timeline + queue-only abandoned events for a chosen date range.">Missed Calls</button>
+            <button class="header-menu-item" id="individual-report-btn" type="button" role="menuitem"
+                    title="Per-agent KPIs vs team avg + 12-month trend. Pick 2+ agents to switch to peer-comparison mode.">Individual Report</button>
+            <button class="header-menu-item" id="performance-report-btn"type="button" role="menuitem"
+                    title="Department-level current-vs-prior-period deltas, share-of-answered pie, and 12-month team trend.">Performance Report</button>
+            <button class="header-menu-item" id="compare-ranges-btn"    type="button" role="menuitem" data-admin-only style="display:none;"
+                    title="Side-by-side comparison of two arbitrary date ranges (admin-only). Useful for year-over-year or pre/post-change analyses.">Compare Ranges</button>
           </div>
         </div>
         <div class="header-menu" id="admin-menu-wrap" data-admin-only style="display:none;">
@@ -40,12 +44,14 @@
             Admin <span class="header-menu-caret" aria-hidden="true">&#9662;</span>
           </button>
           <div class="header-menu-list" id="admin-menu-list" role="menu" style="display:none;">
-            <button class="header-menu-item" id="alerts-btn" type="button" role="menuitem">Alerts</button>
+            <button class="header-menu-item" id="alerts-btn" type="button" role="menuitem"
+                    title="Configure low-answer-rate alerts: per-dept thresholds + recipients, manual send, or schedule a daily check.">Alerts</button>
           </div>
         </div>
       </nav>
       <div class="header-meta">
         <button class="help-btn" id="mode-btn" type="button" aria-label="Toggle dark mode" title="Toggle dark mode">◐</button>
+        <button class="help-btn" id="settings-btn" type="button" aria-label="Settings" title="Personal preferences (background theme, etc.)">⚙</button>
         <button class="help-btn" id="help-btn" type="button" aria-label="Help & FAQ" title="Help & FAQ">?</button>
         <div><span class="email" id="user-email"></span><span id="role-tag" class="tag"></span></div>
       </div>
@@ -155,6 +161,33 @@
 
         <h3>Contact</h3>
         <p>Questions, access requests, or threshold changes: <a href="mailto:robin.choudhury@universalmedsupply.com">robin.choudhury@universalmedsupply.com</a></p>
+      </div>
+    </div>
+  </div>
+
+  <div id="settings-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="settings-modal-title" style="display:none;">
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-panel" role="document">
+      <button class="modal-close" id="settings-close" type="button" aria-label="Close">&times;</button>
+      <div class="modal-kicker">Personal preferences</div>
+      <h2 id="settings-modal-title">Settings</h2>
+      <div class="modal-content">
+        <h3>Background theme</h3>
+        <p>Affects your view only; other users see their own setting. The dark-mode toggle (<span aria-hidden="true">◐</span>) in the header is independent of this -- pick a light-mode theme here, and the dark palette still applies when you toggle dark mode.</p>
+        <div class="theme-chip-grid" id="theme-chip-grid">
+          <button class="theme-chip" type="button" data-theme="warm" title="Warm-paper cream background — default">
+            <span class="theme-chip-swatch" style="background:#f7f2e6; border-color:#d6d1c2;"></span>
+            <span class="theme-chip-label">Warm Paper</span>
+          </button>
+          <button class="theme-chip" type="button" data-theme="cool" title="Cool blue paper background">
+            <span class="theme-chip-swatch" style="background:#f0f6fa; border-color:#c8d8e6;"></span>
+            <span class="theme-chip-label">Cool Blue</span>
+          </button>
+          <button class="theme-chip" type="button" data-theme="clinical" title="Neutral white background">
+            <span class="theme-chip-swatch" style="background:#fafafa; border-color:#d8d8d8;"></span>
+            <span class="theme-chip-label">Clinical White</span>
+          </button>
+        </div>
       </div>
     </div>
   </div>

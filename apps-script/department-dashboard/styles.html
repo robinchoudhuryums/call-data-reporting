@@ -49,6 +49,23 @@
       --warn-soft:   oklch(93% 0.04 30);
     }
   }
+  /* Light-mode theme variants -- swapped via body[data-theme="..."]
+     from the Settings modal. Default (no attribute) = warm paper
+     from :root above. Each theme override only redefines the
+     neutrals; accent / good / warn stay constant so chart palette
+     semantics don't drift across themes. body[data-mode="dark"]
+     below takes precedence over any light theme. */
+  body[data-theme="cool"] {
+    --paper:       #f0f6fa;
+    --paper-2:     #dde9f3;
+    --line:        #c8d8e6;
+  }
+  body[data-theme="clinical"] {
+    --paper:       #fafafa;
+    --paper-2:     #f0f0f0;
+    --line:        #d8d8d8;
+  }
+
   /* Dark mode overlay — toggled via body[data-mode="dark"] from the
      header button. Only the token values shift; every selector below
      keeps using the same var() refs. color-scheme: dark hints the
@@ -198,9 +215,11 @@
     border-color: var(--muted);
   }
   .header-menu-caret {
-    font-size: 9px;
+    font-size: 13px;
+    line-height: 1;
     color: var(--muted);
     transition: transform 0.15s;
+    margin-top: 1px;
   }
   .header-menu-btn[aria-expanded="true"] .header-menu-caret {
     transform: rotate(180deg);
@@ -2382,5 +2401,48 @@
     body.cr-printing .cr-chart-wrap,
     body.cr-printing .pr-kpi-tile,
     body.cr-printing .cr-agent-card { page-break-inside: avoid; }
+  }
+
+  /* -------- Settings modal -------------------------------------- */
+  /* Background-theme picker. Each chip is a click target with a
+     color swatch + label; the active chip gets an accented
+     outline so the current selection is unambiguous. */
+  .theme-chip-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 10px;
+    margin-top: 8px;
+  }
+  .theme-chip {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: var(--paper-card);
+    border: 1px solid var(--line);
+    border-radius: 2px;
+    padding: 10px 12px;
+    cursor: pointer;
+    font-family: var(--ui);
+    font-size: 13px;
+    color: var(--ink);
+    text-align: left;
+    transition: border-color 0.12s, box-shadow 0.12s;
+  }
+  .theme-chip:hover { border-color: var(--muted); }
+  .theme-chip.active {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent-soft);
+  }
+  .theme-chip-swatch {
+    display: inline-block;
+    width: 24px;
+    height: 24px;
+    border-radius: 2px;
+    border: 1px solid var(--line);
+    flex-shrink: 0;
+  }
+  .theme-chip-label {
+    font-weight: 500;
+    line-height: 1.2;
   }
 </style>
