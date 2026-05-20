@@ -21,6 +21,7 @@
  *     companyAggregate: {            // admin only; stripped for managers
  *       rung, missed, answered, pct, pctFormatted, attFormatted,
  *       activeAgents, recentlyActiveCount, rosterSize,
+ *       trend: [pct | null, ...],     // 30-day company-wide trend
  *     } | undefined,
  *     viewerRole: 'admin' | 'manager',
  *     viewerDept: string | null,
@@ -31,7 +32,7 @@
  * (read-only), and reinstating that visibility is part of the
  * design intent for this view.
  *
- * Caching: 5 min under `companyOverview:v4`. Cached blob is shared
+ * Caching: 5 min under `companyOverview:v5`. Cached blob is shared
  * across all users; the admin-only `companyAggregate` field is
  * stripped on serve for non-admins, and viewer-personalized fields
  * (viewerRole/viewerDept) are injected per-request, never cached.
@@ -42,7 +43,7 @@
  * this fits comfortably in a single Apps Script execution.
  */
 
-const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v4';
+const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v5';
 
 // Window (in days) over which we consider an agent "recently
 // active". Used as the denominator for the "X of Y agents" caption
@@ -157,11 +158,13 @@ function getCompanyOverview() {
   // via personalizeOverview_. Unlike the per-dept aggregator, this
   // counts each row ONCE regardless of which roster(s) the agent
   // belongs to -- so total company volume isn't inflated by floaters
-  // on multiple rosters.
+  // on multiple rosters. companyTrendByDate is the per-day series
+  // used for the aggregate tile's sparkline.
   const companyLatest = {
     rung: 0, missed: 0, answered: 0, att_sum: 0, activeAgents: {},
   };
   const companyRecentlyActive = {};
+  const companyTrendByDate = {};
 
   // Bulk scan -- only the last `trendDays` worth of rows matter.
   const range = sheet.getRange(2, 1, lastRow - 1, HISTORICAL_COLS.CSR_AVG_ABD_WAIT);
@@ -185,8 +188,16 @@ function getCompanyOverview() {
     // Company aggregate: count this row once on latestDate before
     // any per-dept attribution. Agents not on any roster still count
     // here (real volume), but they won't be attributed to any dept
-    // tile below.
+    // tile below. companyTrendByDate accumulates the per-day series
+    // for the aggregate tile's sparkline.
     const hadActivity = rung > 0 || answered > 0 || missed > 0;
+    let cTrend = companyTrendByDate[dateIso];
+    if (!cTrend) {
+      cTrend = { rung: 0, answered: 0 };
+      companyTrendByDate[dateIso] = cTrend;
+    }
+    cTrend.rung     += rung;
+    cTrend.answered += answered;
     if (dateIso === latestDate) {
       companyLatest.rung     += rung;
       companyLatest.missed   += missed;
@@ -299,6 +310,15 @@ function getCompanyOverview() {
     ? (companyLatest.answered / companyLatest.rung) * 100 : 0;
   const cAtt = companyLatest.answered > 0
     ? companyLatest.att_sum / companyLatest.answered : 0;
+  // Company trend series in the same shape as per-dept trend
+  // (per-ISO-day % Answered, null on no-data days). Reused for the
+  // aggregate tile's sparkline.
+  const companyTrend = trendIsoLabels.map(function (iso) {
+    const day = companyTrendByDate[iso];
+    if (!day || day.rung <= 0) return null;
+    return round1_((day.answered / day.rung) * 100);
+  });
+
   const companyAggregate = {
     rung:         companyLatest.rung,
     missed:       companyLatest.missed,
@@ -312,6 +332,7 @@ function getCompanyOverview() {
     // the roster sheet.
     recentlyActiveCount: Object.keys(companyRecentlyActive).length,
     rosterSize:   Object.keys(companyRosterUnion).length,
+    trend:        companyTrend,
   };
 
   const result = {

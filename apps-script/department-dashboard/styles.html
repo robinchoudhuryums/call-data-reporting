@@ -2830,9 +2830,46 @@
     font-size: 15px;
     color: var(--ink);
   }
-  @media (max-width: 720px) {
-    .ov-agg-row { grid-template-columns: 1fr; }
+  /* Mini 30-day company-wide trend sparkline. Sits to the right of
+     the stats grid; collapses below on narrow viewports. */
+  .ov-agg-spark {
+    line-height: 0;
+    border-left: 1px dashed var(--line);
+    padding-left: 14px;
+    min-width: 110px;
   }
+  .ov-agg-spark svg { width: 100%; height: 44px; }
+  /* Grow the row to accommodate the sparkline column; falls back to
+     2 columns + sparkline below on narrow viewports. */
+  .ov-company-aggregate .ov-agg-row {
+    grid-template-columns: minmax(160px, 1fr) minmax(0, 2.5fr) minmax(110px, 0.8fr);
+  }
+  @media (max-width: 720px) {
+    .ov-agg-row,
+    .ov-company-aggregate .ov-agg-row { grid-template-columns: 1fr; }
+    .ov-agg-spark { border-left: none; padding-left: 0; border-top: 1px dashed var(--line); padding-top: 8px; }
+  }
+
+  /* Child sub-queue tiles nested INSIDE the user-hero block, used
+     when the viewer's dept is a top-level parent (e.g. Sales viewer
+     gets Sales hero + a PAP Q child tile underneath; CSR viewer
+     gets CSR hero + Spanish child). Renders as a horizontal row of
+     compact child tiles that fall back to grid wrapping on narrow
+     viewports. */
+  .ov-user-hero-children {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 8px;
+    margin-top: 8px;
+    margin-left: 24px;
+  }
+  .ov-user-hero-children .ov-dept-tile-child {
+    /* Inside the hero we don't need the tree connector twice -- the
+       hero already visually anchors the parent above. Just keep the
+       indent + accent strip. */
+    margin-left: 0;
+  }
+  .ov-user-hero-children .ov-dept-tile-child::before { display: none; }
 
   /* Embedded user-dept agent table inside the Overview modal.
      Reuses the .agents table styles from the main dashboard; this

@@ -199,6 +199,15 @@
         return;   // already registered
       }
       Chart.register(ChartDataLabels);
+      // Plugin defaults to display=false starting in v1.0.0. Enable
+      // globally; per-chart `display: ...` settings still override
+      // (Missed Calls radar + Overview trend opt out via
+      // `options.plugins.datalabels.display = false`).
+      try {
+        if (!Chart.defaults.plugins) Chart.defaults.plugins = {};
+        if (!Chart.defaults.plugins.datalabels) Chart.defaults.plugins.datalabels = {};
+        Chart.defaults.plugins.datalabels.display = true;
+      } catch (e2) { /* defaults not ready; per-chart display still works */ }
     } catch (e) { /* ignore -- fall back to per-chart `plugins` option */ }
   })();
 
@@ -608,7 +617,7 @@
 
   // Company-wide aggregate hero, admin-only. Renders a single wide
   // tile above the dept grid with totals across all non-hidden
-  // depts for the latest date.
+  // depts for the latest date plus a 30-day company-wide sparkline.
   function ovRenderCompanyAggregate_(data) {
     const wrap = $('ov-company-aggregate');
     const agg  = data && data.companyAggregate;
@@ -618,6 +627,13 @@
       wrap.innerHTML = '';
       return;
     }
+    // Use the design system's accent color so the company tile
+    // visually anchors above the dept tiles (which cycle through
+    // the IR palette starting at the same accent slot).
+    const sparkColor = (THEME && THEME.accent) || IR_CHART_COLORS[0] || '#4E79A7';
+    const trend = (agg.trend || []).map(function (v) { return v == null ? 0 : v; });
+    const spark = trend.length ? irSparkline_(trend, sparkColor) : '';
+
     wrap.style.display = '';
     wrap.innerHTML =
         '<div class="ov-agg-kicker">Company snapshot &middot; admin only</div>'
@@ -633,45 +649,80 @@
       +     '<div class="ov-agg-stat"><span class="ov-agg-stat-label">ATT</span><span class="ov-agg-stat-val">' + escapeHtml(agg.attFormatted) + '</span></div>'
       +     '<div class="ov-agg-stat" title="' + escapeHtml(ovActiveTooltip_(agg)) + '"><span class="ov-agg-stat-label">Active</span><span class="ov-agg-stat-val">' + agg.activeAgents + ' of ' + (agg.recentlyActiveCount != null ? agg.recentlyActiveCount : agg.rosterSize) + '</span></div>'
       +   '</div>'
+      +   (spark ? '<div class="ov-agg-spark" title="30-day company % answered trend">' + spark + '</div>' : '')
       + '</div>';
   }
 
-  // Hero tile: featured rendering of the viewer's own department,
+  // Hero block: featured rendering of the viewer's own department,
   // sitting above the grid. Manager: their dept. Admin: whichever
-  // dept is selected in the header dropdown. Hidden if we can't
-  // resolve a viewer dept or that dept isn't in the overview data
-  // (e.g. it's in OVERVIEW_HIDDEN_DEPTS).
+  // dept is selected in the header dropdown.
+  //
+  // Three shapes depending on the viewer's dept position:
+  //   - Top-level parent with children (e.g. Sales has PAP Q):
+  //     hero shows the big parent tile + its child sub-queue tiles
+  //     stacked underneath. Keeps the parent-child relationship
+  //     visible even when the parent is the hero.
+  //   - Top-level dept with no children: hero is just that tile.
+  //   - Child sub-queue (e.g. Spanish): hero is just that child
+  //     tile, with a "sub-queue · <Parent>" tag so the relationship
+  //     is still visible even though the parent renders below in
+  //     the grid (with the child removed from its group).
+  //
+  // Hidden entirely if we can't resolve a viewer dept or it isn't
+  // present in the overview data (e.g. listed in
+  // OVERVIEW_HIDDEN_DEPTS).
   function ovRenderUserHero_(data) {
     const wrap = $('ov-user-hero');
     if (!wrap) return;
     const viewerDept = ovViewerDept_(data);
     if (!viewerDept) { wrap.style.display = 'none'; wrap.innerHTML = ''; return; }
-    const dept = (data.depts || []).find(function (d) { return d.name === viewerDept; });
+    const depts = data.depts || [];
+    const dept = depts.find(function (d) { return d.name === viewerDept; });
     if (!dept) { wrap.style.display = 'none'; wrap.innerHTML = ''; return; }
 
-    const colors = IR_CHART_COLORS;
+    // The viewer's children if the viewer is a top-level parent.
+    const heroChildren = depts.filter(function (d) { return d.parent === dept.name; });
+
     // Find the dept's slot in the top-level color cycle (children
     // inherit their parent's slot color); used for the hero's
     // spark + accent.
-    let slot = 0, found = -1, topIdx = -1;
-    (data.depts || []).forEach(function (d) {
-      if (!d.parent) {
-        if (d.name === viewerDept) found = slot;
-        if (d.name === (dept.parent || viewerDept)) topIdx = slot;
-        slot++;
-      } else if (d.name === viewerDept && dept.parent) {
-        // Sub-queue: inherit parent's slot if we've seen it.
-        found = topIdx;
-      }
+    const colors = IR_CHART_COLORS;
+    let slot = 0, ownIdx = -1, parentIdx = -1;
+    depts.forEach(function (d) {
+      if (d.parent) return;
+      if (d.name === viewerDept)         ownIdx    = slot;
+      if (dept.parent && d.name === dept.parent) parentIdx = slot;
+      slot++;
     });
-    const color = colors[((found >= 0 ? found : 0)) % colors.length];
+    // Use the viewer's own slot if top-level; otherwise inherit
+    // the parent's slot. Fallback to 0 if neither matched (e.g.
+    // viewer dept was orphaned for some reason).
+    const colorIdx = ownIdx >= 0 ? ownIdx : (parentIdx >= 0 ? parentIdx : 0);
+    const color = colors[colorIdx % colors.length];
 
     wrap.style.display = '';
-    wrap.innerHTML = ovBuildHeroTile_(dept, color);
+    const childTiles = heroChildren.map(function (c) {
+      return ovBuildGridTile_(c, color, /*isChild=*/true,
+                              /*routable=*/USER.role === 'admin');
+    }).join('');
+    const childBlock = heroChildren.length
+      ? '<div class="ov-user-hero-children">' + childTiles + '</div>'
+      : '';
+    wrap.innerHTML = ovBuildHeroTile_(dept, color) + childBlock;
 
     // Hero is always clickable -- routes to the My Department
     // page where the full configurable date-range detail lives.
-    wrap.onclick = function () { setPage('dept'); };
+    // Children inside the hero are clickable separately (admin
+    // route-to-child); we use closest() to disambiguate.
+    wrap.onclick = function (e) {
+      const childTile = e.target.closest('.ov-user-hero-children .ov-dept-tile-clickable');
+      if (childTile && USER.role === 'admin') {
+        const target = childTile.getAttribute('data-dept');
+        if (target) { ovRouteToDept_(target); return; }
+      }
+      // Click anywhere else in the hero -> go to dept detail page.
+      setPage('dept');
+    };
   }
 
   function ovBuildHeroTile_(dept, color) {
@@ -751,26 +802,68 @@
          + '<span aria-hidden="true">🚨</span> Alerted today</span>';
   }
 
+  // Shared grid tile builder. Used by both the main grid and the
+  // hero block (for parent-viewers' nested child sub-queues).
+  // Set `isChild=true` for sub-queues -- they pick up the
+  // accent-tinted background + tree-line connector via CSS.
+  function ovBuildGridTile_(dept, color, isChild, routable) {
+    const spark = irSparkline_(
+      (dept.trend || []).map(function (v) { return v == null ? 0 : v; }),
+      color);
+    const parentTag = isChild
+      ? '<span class="ov-dept-parent-tag">sub-queue &middot; ' + escapeHtml(dept.parent) + '</span>'
+      : '';
+    const cls = 'ov-dept-tile'
+              + (isChild ? ' ov-dept-tile-child' : '')
+              + (routable ? ' ov-dept-tile-clickable' : '');
+    return '<div class="' + cls + '" data-dept="' + escapeHtml(dept.name) + '">'
+         +   '<div class="ov-dept-tile-head">'
+         +     '<span class="ov-dept-name">' + escapeHtml(dept.name) + '</span>'
+         +     '<span class="ov-dept-active" title="' + escapeHtml(ovActiveTooltip_(dept)) + '">'
+         +       dept.activeAgents + ' of ' + (dept.recentlyActiveCount != null ? dept.recentlyActiveCount : dept.rosterSize) + ' agents'
+         +     '</span>'
+         +   '</div>'
+         +   parentTag
+         +   ovBuildAlertPill_(dept)
+         +   '<div class="ov-dept-tile-pct">'
+         +     escapeHtml(dept.latest.pctFormatted)
+         +     ' <span class="ov-dept-pct-cap">answered</span>'
+         +     ovBuildWowChip_(dept)
+         +   '</div>'
+         +   '<div class="ov-dept-tile-row">'
+         +     '<span><span class="ov-dept-stat-label">Rung</span> ' + dept.latest.rung + '</span>'
+         +     '<span><span class="ov-dept-stat-label">Ans</span> ' + dept.latest.answered + '</span>'
+         +     '<span><span class="ov-dept-stat-label">Miss</span> ' + dept.latest.missed + '</span>'
+         +   '</div>'
+         +   '<div class="ov-dept-tile-row">'
+         +     '<span><span class="ov-dept-stat-label">ATT</span> ' + escapeHtml(dept.latest.attFormatted) + '</span>'
+         +   '</div>'
+         +   '<div class="ov-dept-tile-spark" title="30-day % answered trend">' + spark + '</div>'
+         + '</div>';
+  }
+
   function ovRenderTiles_(data) {
     const colors = IR_CHART_COLORS;
     const viewerDept = ovViewerDept_(data);
     const depts = data.depts || [];
+    const viewerObj = viewerDept ? depts.find(function (d) { return d.name === viewerDept; }) : null;
+    // If the viewer is a top-level PARENT, the entire group (parent
+    // + its children) is hoisted into the hero block above. So the
+    // grid needs to skip that whole group -- otherwise the parent
+    // appears twice (hero + grid) or the children appear orphaned
+    // below their hoisted parent. If the viewer is a CHILD, we only
+    // skip that one tile from its parent group; the parent still
+    // appears in the grid (with one fewer sub-queue).
+    const skippedParent = viewerObj && !viewerObj.parent ? viewerObj.name : null;
+    const skippedChild  = viewerObj &&  viewerObj.parent ? viewerObj.name : null;
 
-    // Group parent depts with their sub-queue children so each
-    // parent's children stack underneath it in a single grid
-    // cell. Each top-level dept gets a slot index for color
-    // cycling; children inherit their parent's slot color to
-    // signal the relationship. The viewer's own dept is pulled
-    // out into the hero block above the grid -- so we skip it
-    // here. If the viewer is a parent, only that parent tile is
-    // skipped; its children still appear in the grid (as a
-    // standalone group). If the viewer is a child, the child is
-    // skipped from its parent group.
     const groups = [];
     const slotByName = {};
     let slot = 0;
     depts.forEach(function (d) {
-      if (d.name === viewerDept) return;     // already in hero
+      if (d.name === skippedChild) return;
+      if (d.parent === skippedParent) return;   // parent + its kids in hero
+      if (d.name === skippedParent) return;
       if (!d.parent) {
         slotByName[d.name] = slot++;
         groups.push({ parent: d, children: [] });
@@ -778,7 +871,7 @@
         const last = groups[groups.length - 1];
         if (last && last.parent.name === d.parent) last.children.push(d);
         else {
-          // Parent was filtered out (e.g. viewer is on it) -- the
+          // Parent was filtered out for some other reason -- the
           // child becomes a standalone top-level tile in the grid
           // so it still surfaces.
           slotByName[d.name] = slot++;
@@ -788,58 +881,21 @@
     });
 
     const tileRoutable = (USER.role === 'admin');
-
-    const buildTile = function (dept, color, isChild) {
-      const spark = irSparkline_(
-        (dept.trend || []).map(function (v) { return v == null ? 0 : v; }),
-        color);
-      const parentTag = isChild
-        ? '<span class="ov-dept-parent-tag">sub-queue &middot; ' + escapeHtml(dept.parent) + '</span>'
-        : '';
-      const cls = 'ov-dept-tile'
-                + (isChild ? ' ov-dept-tile-child' : '')
-                + (tileRoutable ? ' ov-dept-tile-clickable' : '');
-      return '<div class="' + cls + '" data-dept="' + escapeHtml(dept.name) + '">'
-           +   '<div class="ov-dept-tile-head">'
-           +     '<span class="ov-dept-name">' + escapeHtml(dept.name) + '</span>'
-           +     '<span class="ov-dept-active" title="' + escapeHtml(ovActiveTooltip_(dept)) + '">'
-           +       dept.activeAgents + ' of ' + (dept.recentlyActiveCount != null ? dept.recentlyActiveCount : dept.rosterSize) + ' agents'
-           +     '</span>'
-           +   '</div>'
-           +   parentTag
-           +   ovBuildAlertPill_(dept)
-           +   '<div class="ov-dept-tile-pct">'
-           +     escapeHtml(dept.latest.pctFormatted)
-           +     ' <span class="ov-dept-pct-cap">answered</span>'
-           +     ovBuildWowChip_(dept)
-           +   '</div>'
-           +   '<div class="ov-dept-tile-row">'
-           +     '<span><span class="ov-dept-stat-label">Rung</span> ' + dept.latest.rung + '</span>'
-           +     '<span><span class="ov-dept-stat-label">Ans</span> ' + dept.latest.answered + '</span>'
-           +     '<span><span class="ov-dept-stat-label">Miss</span> ' + dept.latest.missed + '</span>'
-           +   '</div>'
-           +   '<div class="ov-dept-tile-row">'
-           +     '<span><span class="ov-dept-stat-label">ATT</span> ' + escapeHtml(dept.latest.attFormatted) + '</span>'
-           +   '</div>'
-           +   '<div class="ov-dept-tile-spark" title="30-day % answered trend">' + spark + '</div>'
-           + '</div>';
-    };
-
     const html = groups.map(function (g) {
       const color = colors[(slotByName[g.parent.name] || 0) % colors.length];
-      const parentTile = buildTile(g.parent, color, false);
+      const parentTile = ovBuildGridTile_(g.parent, color, false, tileRoutable);
       const childTiles = g.children.map(function (c) {
-        return buildTile(c, color, true);
+        return ovBuildGridTile_(c, color, true, tileRoutable);
       }).join('');
       return '<div class="ov-dept-group">' + parentTile + childTiles + '</div>';
     }).join('');
     $('ov-dept-grid').innerHTML = html;
 
     // Admin tile-click: route the main dashboard to that dept and
-    // close the Overview. Cheap because google.script.run.refresh
-    // is cached server-side. For managers, tiles are non-routing
-    // (they can't switch); their data is fully visible in the tile
-    // so no extra hover state is needed for now.
+    // navigate to the My Department page. Cheap because the server
+    // summary is cached. For managers, tiles are non-routing (they
+    // can't switch); their data is fully visible in the tile so no
+    // extra hover state is needed.
     if (tileRoutable) {
       $('ov-dept-grid').querySelectorAll('.ov-dept-tile-clickable')
         .forEach(function (tile) {
@@ -4168,32 +4224,30 @@
             },
           },
           datalabels: {
-            display: function (ctx) {
-              if (!showLabels) return false;
-              // Defensive: ctx.parsed can be undefined during
-              // Chart.js's pre-layout pass (esp. on mixed bar+line
-              // charts).  Reading .y on undefined throws and breaks
-              // the chart construction.
-              const p = ctx && ctx.parsed;
-              if (p == null) return false;
-              const v = (typeof p === 'object') ? Number(p.y || 0) : Number(p);
-              return v > 0;
-            },
+            // Boolean form matches IR's working pattern. Conditional
+            // hiding (zero-value bars, etc.) is handled by formatter
+            // returning '' below -- a function-form `display` callback
+            // appears to suppress labels on mixed bar+line charts in
+            // chartjs-plugin-datalabels@2.2.0.
+            display: showLabels,
             color: function (ctx) {
-              return ctx.dataset.type === 'line' ? THEME.accent : THEME.paper;
+              // Line dot labels: accent ink on paper-card pill.
+              // Bar labels: ink on paper-card pill (always readable
+              // regardless of bar color).
+              return ctx.dataset.type === 'line' ? THEME.accent : THEME.ink;
             },
-            backgroundColor: function (ctx) {
-              return ctx.dataset.type === 'line' ? THEME.paperCard : null;
-            },
+            backgroundColor: THEME.paperCard,
             borderColor: function (ctx) {
-              return ctx.dataset.type === 'line' ? THEME.accent : null;
+              return ctx.dataset.type === 'line' ? THEME.accent : THEME.line;
             },
-            borderWidth: function (ctx) { return ctx.dataset.type === 'line' ? 1 : 0; },
+            borderWidth: 1,
             borderRadius: 2,
-            align: function (ctx) { return ctx.dataset.type === 'line' ? 'top' : 'center'; },
-            anchor: function (ctx) { return ctx.dataset.type === 'line' ? 'center' : 'center'; },
+            padding: { top: 2, bottom: 2, left: 4, right: 4 },
+            align: function (ctx) { return ctx.dataset.type === 'line' ? 'top' : 'end'; },
+            anchor: function (ctx) { return ctx.dataset.type === 'line' ? 'center' : 'end'; },
             font: { family: "'IBM Plex Mono', monospace", size: 10, weight: '500' },
             formatter: function (value, ctx) {
+              if (value == null) return '';
               if (ctx.dataset.type === 'line') return value + '%';
               return value > 0 ? value : '';
             },
@@ -4309,19 +4363,16 @@
             },
           },
           datalabels: {
-            display: function (ctx) {
-              if (!showLabels) return false;
-              const p = ctx && ctx.parsed;
-              if (p == null) return false;
-              const v = (typeof p === 'object') ? Number(p.y || 0) : Number(p);
-              return v > 0;
-            },
+            // Boolean form. Zero/null values suppressed via formatter.
+            display: showLabels,
             align: 'top', anchor: 'center',
             backgroundColor: THEME.paperCard,
             borderColor: color, borderWidth: 1, borderRadius: 2,
             color: color,
+            padding: { top: 2, bottom: 2, left: 4, right: 4 },
             font: { family: "'IBM Plex Mono', monospace", size: 10, weight: '500' },
             formatter: function (value) {
+              if (value == null) return '';
               if (isPercent) return value + '%';
               if (isMinutes) return fmtMin(value);
               return value > 0 ? value : '';
@@ -5651,16 +5702,21 @@
             },
           },
           datalabels: {
-            display: function (ctx) {
-              if (!showLabels) return false;
-              const p = ctx && ctx.parsed;
-              if (p == null) return false;
-              const v = (typeof p === 'object') ? Number(p.y || 0) : Number(p);
-              return v > 0;
-            },
-            color: THEME.paper,
+            // Boolean form. Conditional zero-hiding lives in formatter.
+            display: showLabels,
+            color: THEME.ink,
+            backgroundColor: THEME.paperCard,
+            borderColor: THEME.line,
+            borderWidth: 1,
+            borderRadius: 2,
+            padding: { top: 2, bottom: 2, left: 4, right: 4 },
+            anchor: 'end',
+            align: 'end',
             font: { family: "'IBM Plex Mono', monospace", size: 10, weight: '500' },
-            formatter: function (value) { return isPercent ? value + '%' : (value > 0 ? value : ''); },
+            formatter: function (value) {
+              if (value == null) return '';
+              return isPercent ? value + '%' : (value > 0 ? value : '');
+            },
           },
         },
         scales: {

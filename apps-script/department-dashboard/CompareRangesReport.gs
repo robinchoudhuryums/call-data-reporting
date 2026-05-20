@@ -37,7 +37,7 @@
 // Bump on response-shape changes so stale entries don't bleed in.
 // v2 adds meta.p1Days / p2Days / lengthMismatch for client-side
 // per-day normalization when the two periods differ in length.
-const COMPARE_RANGES_CACHE_KEY_PREFIX = 'compareRanges:v2';
+const COMPARE_RANGES_CACHE_KEY_PREFIX = 'compareRanges:v3';
 
 function getCompareRangesInit(req) {
   const email = Session.getActiveUser().getEmail();
@@ -137,7 +137,10 @@ function getCompareRanges(req) {
   if (selectedAgents.length === 0) {
     throw new Error('No selected agent is on this department\'s roster.');
   }
-  const agentsKey = selectedAgents.slice().sort().join('|');
+  // MD5 hash keeps the cache key length-bounded (CacheService rejects
+  // keys > 250 chars; raw join blows past that on big rosters like
+  // Sales). Order-insensitive by design.
+  const agentsKey = hashAgents_(selectedAgents);
 
   const cache = CacheService.getScriptCache();
   const cacheKey = COMPARE_RANGES_CACHE_KEY_PREFIX + ':' + dept
