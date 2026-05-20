@@ -23,9 +23,16 @@ const SHEETS = Object.freeze({
   HISTORICAL: 'DQE Historical Data',
   ROSTER: 'DO NOT EDIT!',
   ACCESS_CONTROL: 'Access Control',
+  ALERT_CONFIG: 'Alert Config',
+  ALERT_LOG: 'Alert Log',
 });
 
 const ACCESS_CONTROL_HEADERS = Object.freeze(['Email', 'Department', 'Notes']);
+const ALERT_CONFIG_HEADERS   = Object.freeze(['Department', 'Threshold %', 'Extra Recipients', 'Active', 'Notes']);
+const ALERT_LOG_HEADERS      = Object.freeze([
+  'Timestamp', 'Department', 'Date Checked', 'Threshold %', 'Answer Rate %',
+  'Sent', 'Recipients', 'Triggered By', 'Notes', 'Status',
+]);
 
 // Layout of the "DO NOT EDIT!" roster sheet. Centralized so a future
 // row/column shift is a one-line edit. The right-block (departments +

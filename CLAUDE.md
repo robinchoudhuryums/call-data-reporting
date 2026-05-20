@@ -8,8 +8,10 @@ Pair with the longer docs in [`docs/`](docs/) for full context.
 A multi-spreadsheet Google Apps Script stack that ingests call detail records
 (CDR) from a telephony provider, aggregates them into per-agent per-day
 metrics ("DQE"), and serves them to ~14 department managers via a web app.
-Currently migrating: a new web-app **Department Dashboard** replaces a legacy
-DQE Report spreadsheet, one report at a time.
+The **Department Dashboard** web app has replaced the legacy DQE Report
+spreadsheet (migration complete: 4 reports + low-answer-rate alerts ported);
+legacy `apps-script/dqe-report/` is kept frozen for reference until the
+spreadsheet is decommissioned.
 
 - **Owner / admin**: Robin Choudhury (`robin.choudhury@universalmedsupply.com`)
 - **Domain**: Universal Med Supply (Google Workspace)
@@ -81,10 +83,10 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `loadRosterCanonicalNames_` in the pipeline.
 - **ATT semantics differ between the main dashboard and the per-agent
   reports.** Main dashboard table uses the SIMPLE MEAN of stored per-row
-  ATT values (INV-05); the Individual Report and Performance Report use
-  a WEIGHTED average (`sum(att * answered) / sum(answered)`) so days
-  where the agent didn't answer any calls don't drag the ATT down.
-  Intentional — matches the legacy reports they migrated from.
+  ATT values (INV-05); the Individual, Performance, and Compare Ranges
+  reports use a WEIGHTED average (`sum(att * answered) / sum(answered)`)
+  so days where the agent didn't answer any calls don't drag the ATT
+  down. Intentional — matches the legacy reports they migrated from.
 - **`TEAM_AVG_EXCLUDES` in `Config.gs`** lists per-dept agent names to
   subtract from BOTH numerator and denominator of the Individual
   Report's team-average. Used for managers who are on the roster but
@@ -98,6 +100,11 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
 - **`neonWrite.js` is duplicated** between `apps-script/cdr-report/` and
   `apps-script/cdr-import/`. Currently byte-identical. Any change to one
   is a two-file edit; `diff` before editing.
+- **Per-report client prefs in localStorage.** Each report persists its
+  own form state under `cdr.ir.prefs.v1`, `cdr.pr.prefs.v1`, and
+  `cdr.cr.prefs.v1`. Bump the trailing version when the prefs schema
+  changes; older saved blobs are silently dropped if JSON parsing
+  fails.
 
 ## Key Design Decisions
 
@@ -112,15 +119,19 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
 - **Per-project gitignored `.clasp.json`**. Each developer keeps their own
   `scriptId` locally; pulls never conflict on it. Template at
   `.clasp.example.json`.
-- **CacheService tiers**: 5 min on aggregated dashboard responses,
-  60 sec on auth lookups. Cache key is versioned (`summary:vN:...`); bump
-  N on any aggregation-rule change to invalidate stale entries instantly.
+- **CacheService tiers**: 5 min on aggregated dashboard responses, 60 sec
+  on auth lookups. Each report file owns its own versioned cache prefix
+  (`summary:`, `individual:`, `individual_active:`, `performance:`,
+  `compareRanges:`); bump the relevant version on any aggregation-rule
+  change. See INV-30 for current versions.
 - **Scope toggle (`roster | queue | both`)**: managers can see strictly
   their roster, anyone who handled their queue extensions, or the union.
   Default is `roster` (matches the legacy DQE Report's behavior).
-- **DQE Report Legacy is FROZEN**. Being migrated to Department Dashboard
-  one report at a time. No improvements there — only deletions as items
-  finish migrating.
+- **DQE Report Legacy is FROZEN and the migration is COMPLETE.** All four
+  legacy reports (Individual / Performance / Compare Ranges / Missed
+  Calls) plus the Low Answer Rate Alerts engine are in the dashboard.
+  Awaiting decommission of the spreadsheet; meanwhile accepts only
+  cleanup deletions.
 
 ## Operator State Checklist
 
@@ -131,10 +142,20 @@ When something looks wrong, before assuming a code bug, check:
    Script editor → Deploy → Manage deployments → check the timestamp.
 3. Did the user actually have access? `Access Control` sheet rows are
    case-sensitive on email.
-4. Is the cache stale? Bump cache version in `Data.gs` or wait 5 min.
+4. Is the cache stale? Bump the relevant per-report prefix (see INV-30)
+   or wait 5 min.
 5. Did the source-pipeline bugs (window inclusion / ATT denominator / leg
    attribution — see `known-issues.md`) get re-introduced? Spot-check Sonia
    2026-03-09: TTT should be `0:15:03`, ATT should be `0:03:01`.
+6. After pulling the Alerts code, was `setup()` re-run? It now creates
+   `Alert Config` + `Alert Log` alongside `Access Control` and is
+   idempotent on re-runs (existing data untouched).
+7. For alerts: is the `DASHBOARD_URL` Script Property set? Without it,
+   alert emails still send — they just omit the "Open Dashboard" link.
+8. For alerts: is the daily trigger installed? Apps Script editor →
+   Triggers should list `runDailyAlerts_` (or use the "Install daily
+   trigger" button in the Alerts modal). Without it, alerts only fire
+   when an admin clicks "Send alerts" manually.
 
 ## Cycle Workflow Config
 
@@ -146,7 +167,7 @@ Data Accuracy (DQE), Access Control Integrity, Source Pipeline Reliability, Migr
 
 ### Subsystems
 Department Dashboard:
-  apps-script/department-dashboard/Auth.gs, apps-script/department-dashboard/Code.gs, apps-script/department-dashboard/Config.gs, apps-script/department-dashboard/Data.gs, apps-script/department-dashboard/Diagnostics.gs, apps-script/department-dashboard/Setup.gs, apps-script/department-dashboard/MissedCallsReport.gs, apps-script/department-dashboard/IndividualReport.gs, apps-script/department-dashboard/PerformanceReport.gs, apps-script/department-dashboard/access_denied.html, apps-script/department-dashboard/dashboard.html, apps-script/department-dashboard/script.html, apps-script/department-dashboard/styles.html, apps-script/department-dashboard/appsscript.json
+  apps-script/department-dashboard/Auth.gs, apps-script/department-dashboard/Code.gs, apps-script/department-dashboard/Config.gs, apps-script/department-dashboard/Data.gs, apps-script/department-dashboard/Diagnostics.gs, apps-script/department-dashboard/Setup.gs, apps-script/department-dashboard/MissedCallsReport.gs, apps-script/department-dashboard/IndividualReport.gs, apps-script/department-dashboard/PerformanceReport.gs, apps-script/department-dashboard/CompareRangesReport.gs, apps-script/department-dashboard/Alerts.gs, apps-script/department-dashboard/access_denied.html, apps-script/department-dashboard/dashboard.html, apps-script/department-dashboard/script.html, apps-script/department-dashboard/styles.html, apps-script/department-dashboard/appsscript.json
 
 CDR DQE Pipeline:
   apps-script/cdr-report/buildDQEHistoricalData.js, apps-script/cdr-report/DQEdrilldown.js, apps-script/cdr-report/DQEDrilldownSidebar.html, apps-script/cdr-report/dataFilters.js, apps-script/cdr-report/CDR Tools menu.js, apps-script/cdr-report/appsscript.json
@@ -190,8 +211,12 @@ INV-26 | TEAM_AVG_EXCLUDES in Config.gs lists per-dept agent names removed from 
 INV-27 | Individual Report's team-avg denominator counts only roster members with ANY call activity (rung/answered/missed > 0) in the selected range, NOT the full roster size. Zero-call roster members don't dilute the average. | Subsystem: Department Dashboard
 INV-28 | Performance Report's prior period is the immediately-preceding window of the same duration (durationDays before currentStart, ending one day before currentStart) -- NOT "previous calendar month". Documented in the form's inline hint and the results-header "Comparing against..." line. Match legacy SingleRangeReport semantics. | Subsystem: Department Dashboard
 INV-29 | Individual Report's monthly trend window: range itself when selected range > 366 days OR equals a full calendar year (Jan 1 - Dec 31 of one year); else `first-of-month(end - 12 months)` to `end`. Performance Report uses identical logic so the 12-mo trends align across both reports for the same dept. | Subsystem: Department Dashboard
-INV-30 | Each report has its own versioned cache key prefix; bump on any aggregation rule change so stale entries don't bleed in. Current: `summary:v3` (Data.gs), `individual:v4` (IndividualReport.gs), `individual_active:v1` (active-agents-in-range subset used by both Individual + Performance pickers), `performance:v1` (PerformanceReport.gs). | Subsystem: Department Dashboard
-INV-31 | `script.send_mail` OAuth scope in appsscript.json is required for Individual Report + Performance Report "Email image" exports via MailApp. Removing the scope breaks both reports' email path; adding new send-mail features here doesn't need a re-scope. | Subsystem: Department Dashboard
+INV-30 | Each report has its own versioned cache key prefix; bump on any aggregation rule change so stale entries don't bleed in. Current: `summary:v3` (Data.gs), `individual:v4` (IndividualReport.gs), `individual_active:v1` (active-agents-in-range subset used by Individual + Performance + Compare Ranges pickers), `performance:v2` (PerformanceReport.gs), `compareRanges:v2` (CompareRangesReport.gs). Alerts.gs holds no cached compute. | Subsystem: Department Dashboard
+INV-31 | `script.send_mail` OAuth scope in appsscript.json is required for the Individual / Performance / Compare Ranges "Email image" exports AND for the Low Answer Rate Alerts engine (MailApp.sendEmail). Removing the scope breaks all four paths; adding new send-mail features here doesn't need a re-scope. | Subsystem: Department Dashboard
+INV-32 | Compare Ranges and Low Answer Rate Alerts are admin-only at the server boundary. Every public callable in CompareRangesReport.gs and Alerts.gs starts with an admin role check (`assertAdmin_` in Alerts.gs; inline `user.role !== 'admin'` in CR). The launcher buttons are hidden client-side too, but server checks are the source of truth. Adding a new admin = editing `ADMIN_EMAILS` in Config.gs. | Subsystem: Department Dashboard
+INV-33 | `runDailyAlerts_` (time-triggered alerts) skips Saturdays and Sundays. Holiday handling is intentionally not built in -- if it becomes noise in practice, add a skip-dates column to the Alert Config sheet rather than hardcoding in Alerts.gs. Manual sends via the UI ignore this skip. | Subsystem: Department Dashboard
+INV-34 | `Alert Config` columns: Department \| Threshold % \| Extra Recipients \| Active \| Notes. `Alert Log` columns: Timestamp \| Department \| Date Checked \| Threshold % \| Answer Rate % \| Sent \| Recipients \| Triggered By \| Notes \| Status. Both sheets idempotently created by setup(); never overwritten. Alerts.gs's `readAlertConfig_` and `appendAlertLog_` depend on these schemas. | Subsystem: Department Dashboard
+INV-35 | Compare Ranges flags `meta.lengthMismatch=true` when the longer of the two periods is at least 1.2x the shorter (`Math.max(p1Days,p2Days) / Math.min(...) >= 1.2`). The flag drives the form's warning hint, the results-page banner, KPI per-day captions, and CSV per-day columns. Tunable threshold in `computeCompareRanges_`. | Subsystem: Department Dashboard
 
 ### Policy Configuration
 Policy threshold: 6/10
@@ -294,8 +319,45 @@ S16 | Export menu captures all chart tabs | Subsystem: Department Dashboard
     - Without clicking through every chart tab, click Export -> Email image.
   Expected: emailed PNG contains all three chart panels rendered (not blank slots). Same expectation for Copy image and Print.
 
+S17 | Compare Ranges is admin-only | Subsystem: Department Dashboard
+  Steps:
+    - Open the dashboard as a manager (non-admin).
+    - Inspect the Reports row; attempt to call `getCompareRanges` via the browser console.
+  Expected: the "Compare Ranges" button is hidden in the UI; direct google.script.run calls throw "Compare Ranges is admin-only" on the server.
+
+S18 | Compare Ranges length-mismatch surfaces per-day | Subsystem: Department Dashboard
+  Steps:
+    - Open Compare Ranges. Pick P1 = 7 days, P2 = 30 days (or any pair with >= 1.2x ratio).
+    - Generate.
+  Expected: form shows a "(period 2 is N.Nx longer)" warning hint; results show an orange length-mismatch banner; KPI volume tiles gain a "Per day: X vs Y (P1)" caption; agent cards' P1/P2 cells show "X/day" sublines.
+
+S19 | Compare Ranges custom prior range round-trip | Subsystem: Department Dashboard
+  Steps:
+    - Open Compare Ranges; set P1 = same month last year and P2 = this month-to-date.
+    - Generate, then click "change" in the results header, swap one agent out, Apply.
+  Expected: report re-runs in place against the same P1/P2; editing-line updates; the edit-selection popover dismisses; the new agent's card appears.
+
+S20 | Alerts preview + send flow | Subsystem: Department Dashboard
+  Steps:
+    - Open Alerts (admin only). Pick a date with known low-answer-rate activity.
+    - Click Preview; review the table; click Send alerts; confirm the prompt.
+  Expected: preview shows "Will alert" badges (red rows) and "Healthy" (green) per dept; Send disabled until preview matches the date; after Send, status flips to "Sent" and the Alert Log table refreshes with new entries.
+
+S21 | Alerts daily trigger install/uninstall | Subsystem: Department Dashboard
+  Steps:
+    - In the Alerts modal "Daily trigger" section, click "Install daily trigger (8 AM)".
+    - Refresh via the Apps Script editor's Triggers panel.
+    - Back in the modal, click "Uninstall trigger".
+  Expected: status line updates to "Daily trigger is installed... runs at 8:00 CST. Weekends are skipped."; Apps Script editor shows a `runDailyAlerts_` trigger; after uninstall, status line reverts to "No daily trigger installed."
+
+S22 | setup() creates Alert Config + Alert Log idempotently | Subsystem: Department Dashboard
+  Steps:
+    - In a fresh spreadsheet without those sheets, run setup() once.
+    - Run setup() again.
+  Expected: first run creates Access Control + Alert Config + Alert Log (each with their header row + frozen first row); second run logs "already exists, skipping" for all three -- no data overwritten.
+
 ### Frozen Subsystems
-- DQE Report Legacy — manager-facing reports in `apps-script/dqe-report/`. Frozen because being migrated into Department Dashboard one report at a time (FAQ migrated; Missed Calls Report in progress as of this setup). Replacement: Department Dashboard. Unfreeze conditions: migration abandoned (unlikely), or a discovered bug in a not-yet-migrated report that affects manager decisions immediately.
+- DQE Report Legacy — manager-facing reports in `apps-script/dqe-report/`. Frozen because migration to Department Dashboard is complete: Individual Report, Performance Report, Compare Ranges, Missed Calls Report, and Low Answer Rate Alerts all live in the dashboard. Replacement: Department Dashboard. Awaiting decommission of the legacy spreadsheet. Unfreeze only if a bug is found in legacy that affects production decisions before the spreadsheet is retired.
 
 ### Deploy Command
 Department Dashboard: `clasp push -f` from repo root, then Apps Script editor → Deploy → Manage deployments → pencil → Version: New version → Deploy

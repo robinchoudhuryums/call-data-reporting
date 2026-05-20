@@ -81,10 +81,30 @@ clasp push -f
 
 - Project Settings -> Script Properties -> add `SPREADSHEET_ID`
   pointing at the CDR Report spreadsheet's ID (from its URL).
-- Run the `setup` function once to create the `Access Control` sheet.
+- Run the `setup` function once to create the `Access Control`, `Alert
+  Config`, and `Alert Log` sheets. Safe to re-run later (idempotent;
+  existing data untouched) — re-run after pulling new code that
+  introduces additional sheets.
+- Populate the `Access Control` sheet with one row per manager
+  (Email | Department | Notes).
 - Add yourself as an admin email in `apps-script/department-dashboard/Config.gs` (`ADMIN_EMAILS`).
 - Deploy as Web app: **Execute as: Me**, **Who has access: Anyone within
   [your domain]**.
+
+**Optional (alerts):**
+
+- Populate the `Alert Config` sheet with one row per dept that should
+  receive low-answer-rate alerts:
+  Department | Threshold % | Extra Recipients (comma-separated) |
+  Active (TRUE/FALSE) | Notes.
+- Project Settings -> Script Properties -> add `DASHBOARD_URL`
+  pointing at the deployed web app's URL. Used as the "Open
+  Dashboard" link target in alert emails; without it the emails
+  still send, they just omit the link.
+- Install the daily trigger: open the dashboard as an admin, click
+  Alerts → Install daily trigger (8 AM). The trigger calls
+  `runDailyAlerts_` for the previous day, skipping Saturdays and
+  Sundays automatically.
 
 ## Working on sibling Apps Script projects
 

@@ -2076,6 +2076,114 @@
     color: var(--muted);
   }
 
+  /* -------- Alerts modal (admin-only) ---------------------------- */
+  /* All color values use the design-system tokens (introduced by
+     the visual-redesign branch) so the modal participates in the
+     light/dark mode toggle. */
+  .al-section { margin-bottom: 22px; }
+  .al-section-title {
+    font-weight: 600;
+    color: var(--accent);
+    border-bottom: 2px solid var(--line);
+    padding-bottom: 4px;
+    margin-bottom: 10px;
+    font-size: 14px;
+  }
+  .al-hint { font-size: 12px; color: var(--muted); margin: 0 0 10px; }
+  .al-hint a { color: var(--accent); text-decoration: none; }
+  .al-hint a:hover { text-decoration: underline; }
+
+  /* Config table + log table + results table share base
+     treatment so the alerts modal reads as a single panel. */
+  .al-config-table, .al-log-table, .al-results-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+    background: var(--paper-card);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .al-config-table th, .al-log-table th, .al-results-table th {
+    background: var(--paper-2);
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    text-align: left;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--line);
+  }
+  .al-config-table td, .al-log-table td, .al-results-table td {
+    padding: 7px 12px;
+    border-bottom: 1px solid var(--line);
+    color: var(--ink);
+  }
+  .al-config-table .num,
+  .al-log-table .num,
+  .al-results-table .num { text-align: right; }
+  .al-config-table tbody tr:last-child td,
+  .al-log-table tbody tr:last-child td,
+  .al-results-table tbody tr:last-child td { border-bottom: 0; }
+  .al-empty {
+    color: var(--muted);
+    font-style: italic;
+    text-align: center;
+    padding: 16px;
+  }
+  .al-empty-inline { color: var(--muted); opacity: 0.7; }
+  .al-active {
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+  }
+  .al-active-yes { background: var(--accent-soft); color: var(--accent); }
+  .al-active-no  { background: var(--paper-2);     color: var(--muted); }
+
+  /* Run section: date + Preview + Send sit on one row; results
+     summary + table render below when populated. */
+  .al-run-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+  }
+  .al-run-row label { font-size: 12px; color: var(--muted); font-weight: 600; }
+  .al-run-row input[type="date"] {
+    padding: 6px 10px;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    font-size: 13px;
+    background: var(--paper-card);
+    color: var(--ink);
+  }
+  .al-run-row .btn { width: auto; padding: 6px 14px; font-size: 13px; }
+  .al-results-summary {
+    font-size: 12px;
+    color: var(--muted);
+    margin: 10px 0 6px;
+    font-style: italic;
+  }
+  .al-recipients-cell {
+    max-width: 320px;
+    word-break: break-word;
+    font-size: 12px;
+  }
+  /* Subtle row tinting by status so the "will alert" rows pop.
+     Soft-tint tokens carry through into dark mode automatically. */
+  .al-row-would-send,
+  .al-row-sent { background: var(--warn-soft); }
+  .al-row-above-threshold { background: var(--good-soft); }
+  .al-row-error,
+  .al-row-no-recipients { background: var(--warn-soft); }
+
+  .al-trigger-actions { display: flex; gap: 8px; }
+  .al-trigger-actions .btn { width: auto; padding: 6px 14px; font-size: 12px; }
+
   /* -------- Print stylesheet ------------------------------------- */
   /* Only activates when the user clicks Print on the Individual
      Report; the body gets `.ir-printing` set just before

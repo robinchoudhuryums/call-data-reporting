@@ -74,7 +74,7 @@ External CDR system (telephony provider)
 |---|---|---|---|
 | CSV ingest | CDR Import | `autoImport.js`, `importBulkCSVsFromDrive.js` (pending Drive auth), `AbandonedFilter.js`, `CDR Tools.js`, `DeleteOldSheets.js`, `neonWrite.js`, `appsscript.json` | `apps-script/cdr-import/` |
 | Per-agent aggregation + downstream tooling | CDR Report | `buildDQEHistoricalData.js`, `DQEdrilldown.js`, `DQEDrilldownSidebar.html`, `dashboardCDR.js`, `dataFilters.js` (extraction sidebar), `dbHistorical.js`, `dbReporting.js`, `emailDailyReport.js`, `neonWrite.js`, `neonbackfill.js`, `CDR Tools menu.js`, `appsscript.json` | `apps-script/cdr-report/` |
-| Manager dashboard | Department Dashboard (standalone) | `Code.gs`, `Auth.gs`, `Data.gs`, `Config.gs`, `Setup.gs`, `Diagnostics.gs`, `MissedCallsReport.gs`, `IndividualReport.gs`, `PerformanceReport.gs`, `dashboard.html`, `styles.html`, `script.html`, `access_denied.html`, `appsscript.json` | `apps-script/department-dashboard/` |
+| Manager dashboard | Department Dashboard (standalone) | `Code.gs`, `Auth.gs`, `Data.gs`, `Config.gs`, `Setup.gs`, `Diagnostics.gs`, `MissedCallsReport.gs`, `IndividualReport.gs`, `PerformanceReport.gs`, `CompareRangesReport.gs`, `Alerts.gs`, `dashboard.html`, `styles.html`, `script.html`, `access_denied.html`, `appsscript.json` | `apps-script/department-dashboard/` |
 | Postgres mirror | shared lib used by both CDR Import and CDR Report | `neonWrite.js` (duplicated across both projects, currently identical) | see [known-issues.md](known-issues.md) |
 | Legacy reports (being migrated into the dashboard) | DQE Report (spreadsheet) | `DQEdashboard.js`, `syncHistoricalData.js`, 4 report pairs (`SingleRangeReport`, `IndividualReport`, `MissedCallsReport`, `MultiComparisonTool` + their `.html` modals), `sendManualAlert.js`, `checkLowAnswerRate.js`, `showFAQ.js` + `FAQGuide.html`, `setDateRange.js`, `autoDropdown.js`, `menu DQE Tools.js`, `appsscript.json` | `apps-script/dqe-report/` |
 
@@ -143,23 +143,28 @@ as `Data.gs`'s `parseRosterCell_` in the dashboard.
 
 ## Report server entry points (Department Dashboard)
 
-The dashboard now serves four distinct reports, each backed by its own
-`.gs` file with public entry points callable via `google.script.run`.
-All public functions follow the read-only safety rule (INV-01) — any
-function that touches spreadsheet state ends in `_`.
+The dashboard serves five distinct reports + an alerts engine, each
+backed by its own `.gs` file with public entry points callable via
+`google.script.run`. All public functions follow the read-only safety
+rule (INV-01) — any function that touches spreadsheet state ends in
+`_`. Compare Ranges and Alerts additionally enforce an admin role
+check at the server boundary (INV-32).
 
-| Report | File | Public entries | Cache prefix |
-|---|---|---|---|
-| Main per-agent table | `Data.gs` | `getDepartmentSummary` | `summary:v3:` |
-| Missed Calls Report | `MissedCallsReport.gs` | `getMissedCallsReport` | (no per-report cache; reuses main) |
-| Individual / Peer Comparison | `IndividualReport.gs` | `getIndividualReportInit`, `getIndividualReport`, `sendIndividualReportEmail` | `individual:v4:`, `individual_active:v1:` |
-| Performance Report (current vs prior) | `PerformanceReport.gs` | `getPerformanceReportInit` (delegates to Individual's init), `getPerformanceReport`, `sendPerformanceReportEmail` | `performance:v1:` |
+| Report | File | Public entries | Cache prefix | Admin-only |
+|---|---|---|---|---|
+| Main per-agent table | `Data.gs` | `getDepartmentSummary` | `summary:v3:` | no |
+| Missed Calls Report | `MissedCallsReport.gs` | `getMissedCallsReport` | (reuses main) | no |
+| Individual / Peer Comparison | `IndividualReport.gs` | `getIndividualReportInit`, `getIndividualReport`, `sendIndividualReportEmail` | `individual:v4:`, `individual_active:v1:` | no |
+| Performance Report (current vs prior) | `PerformanceReport.gs` | `getPerformanceReportInit` (delegates to Individual's init), `getPerformanceReport`, `sendPerformanceReportEmail` | `performance:v2:` | no |
+| Compare Ranges (two arbitrary ranges) | `CompareRangesReport.gs` | `getCompareRangesInit`, `getCompareRanges`, `sendCompareRangesEmail` | `compareRanges:v2:` | yes |
+| Low Answer Rate Alerts | `Alerts.gs` | `getAlertsInit`, `previewAlerts`, `sendAlerts`, `installAlertTrigger`, `uninstallAlertTrigger` (+ `runDailyAlerts_` time trigger) | (no cache) | yes |
 
 All reports use the same auth resolution (`resolveUser_(email)`), the
 same roster reader (`getRosterForDepartment_`), and — for the picker —
 the same active-in-range subset cache (`individual_active:v1:`). The
-Individual + Performance "Email image" exports both require the
-`script.send_mail` OAuth scope declared in `appsscript.json`.
+Individual / Performance / Compare Ranges "Email image" exports AND
+the Alerts engine all require the `script.send_mail` OAuth scope
+declared in `appsscript.json`.
 
 ## Where Neon fits in
 

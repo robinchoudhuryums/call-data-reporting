@@ -2,22 +2,27 @@
  * One-time / idempotent setup. Run once from the Apps Script editor's
  * "Run" dropdown after first deploy: select setup, click Run.
  *
- * Creates the Access Control sheet in the CDR Report spreadsheet if
- * it doesn't exist. Safe to re-run; existing sheets are left
- * untouched (no data overwritten).
+ * Creates these sheets in the CDR Report spreadsheet if missing:
+ *   - Access Control  (manager -> dept mapping)
+ *   - Alert Config    (low-answer-rate alert thresholds + recipients)
+ *   - Alert Log       (history of alert checks / sends)
  *
- * After running, populate Access Control with manager emails.
+ * Safe to re-run; existing sheets are left untouched (no data
+ * overwritten).
  *
- * Note: Step E onwards parses queue extensions inline from the
- * DO NOT EDIT! roster cells (cell format "Name, ext1, ext2"). The
- * earlier-planned "Department Queues" sheet is not used. If your
- * spreadsheet already has an auto-created Department Queues sheet
- * from a previous setup, you can safely delete it.
+ * After running, populate Access Control with manager emails and
+ * Alert Config with one row per dept that should receive alerts.
+ *
+ * Note: queue extensions are parsed inline from the DO NOT EDIT!
+ * roster cells (format "Name, ext1, ext2"). The earlier-planned
+ * "Department Queues" sheet is not used.
  */
 function setup() {
   const ss = openSpreadsheet_();
   ensureSheet_(ss, SHEETS.ACCESS_CONTROL, ACCESS_CONTROL_HEADERS);
-  Logger.log('Setup complete. Verified sheet: "%s".', SHEETS.ACCESS_CONTROL);
+  ensureSheet_(ss, SHEETS.ALERT_CONFIG,   ALERT_CONFIG_HEADERS);
+  ensureSheet_(ss, SHEETS.ALERT_LOG,      ALERT_LOG_HEADERS);
+  Logger.log('Setup complete.');
 }
 
 /**

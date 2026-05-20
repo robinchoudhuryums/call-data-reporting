@@ -231,9 +231,11 @@ through a public function that explicitly checks `resolveUser_(email).role
 
 ### `setup()` is idempotent
 
-`setup()` only creates the Access Control sheet if it doesn't exist. It
-never overwrites existing rows. Safe to re-run as many times as you want.
-Keep it that way.
+`setup()` creates `Access Control`, `Alert Config`, and `Alert Log`
+sheets if they don't exist (each with a frozen header row). It never
+overwrites existing rows on any of the three. Safe to re-run as many
+times as you want. Keep it that way; the alerts engine assumes
+`appendAlertLog_` can blindly append without coordinating reads.
 
 ### Cache key version bumping
 
@@ -245,8 +247,12 @@ stale caches invalidate on deploy.
 |---|---|---|---|
 | `Data.gs` (main table) | `summary:vN:` | `v3` | scope param + diagnostics field added |
 | `IndividualReport.gs` | `individual:vN:` | `v4` | insight objects with `type` field (was bare strings) |
-| `IndividualReport.gs` (active-in-range subset shared by Individual + Performance pickers) | `individual_active:vN:` | `v1` | initial |
-| `PerformanceReport.gs` | `performance:vN:` | `v1` | initial |
+| `IndividualReport.gs` (active-in-range subset shared by all three report pickers) | `individual_active:vN:` | `v1` | initial |
+| `PerformanceReport.gs` | `performance:vN:` | `v2` | 10-polish-items shape (rosterSize, priorIsCustom, volumeBar.pct, trend.ttt, teamInsights) |
+| `CompareRangesReport.gs` | `compareRanges:vN:` | `v2` | adds meta.p1Days, p2Days, lengthMismatch |
+
+`Alerts.gs` holds no cached compute. Preview/send always re-reads the
+DQE Historical Data for the chosen date.
 
 If you change ATT or % Answered semantics anywhere, you almost
 certainly need to bump every prefix downstream of it. When in doubt,
@@ -262,3 +268,55 @@ coupling is layout-level, not deploy-level. If you ever move the
 roster to a different spreadsheet, update the pipeline's
 `loadRosterCanonicalNames_` to open by ID instead of from the active
 spreadsheet.
+
+---
+
+## Low Answer Rate Alerts (Alerts.gs)
+
+### Sheet-driven config, not hardcoded
+
+Unlike the legacy `checkLowAnswerRate.js` which hardcoded a 13-dept
+threshold map + recipient map, the new engine reads two sheets:
+
+- `Alert Config` — Department | Threshold % | Extra Recipients |
+  Active | Notes. One row per dept that should receive alerts.
+- `Alert Log` — append-only history of every preview / send /
+  skip with timestamp, threshold, observed answer rate,
+  recipients, and a status enum.
+
+Both schemas are pinned in `Config.gs` (`ALERT_CONFIG_HEADERS`,
+`ALERT_LOG_HEADERS`) and idempotently created by `setup()`.
+
+### Recipient resolution
+
+For each dept, `to:` = dept managers from Access Control ∪ Extra
+Recipients (Alert Config), and `cc:` = `ADMIN_EMAILS`. Dedup;
+managers first. If neither side yields any address the dept is
+skipped with `status: 'no-recipients'` and logged.
+
+### Status enum
+
+`sent` (fired live), `would-send` (preview / dry-run), `above-threshold`
+(healthy, no email), `no-data` (zero rung in range), `no-recipients`
+(see above), `skipped` (Active=FALSE in Alert Config), `error` (caught
+exception with message captured in Notes).
+
+### Weekend skip
+
+`runDailyAlerts_` returns early on Saturdays + Sundays so the
+daily trigger doesn't fire alarmist Sunday alerts. Manual runs via
+the UI ignore this skip — if an admin clicks "Send alerts" on a
+Saturday, alerts fire as configured.
+
+### Crash notification
+
+If `runDailyAlerts_` throws (e.g., transient sheet read failure),
+the catch block emails ADMIN_EMAILS so a silent trigger crash
+doesn't go unnoticed. The notification includes the exception
+message + stack and the date being checked.
+
+### Optional Script Properties
+
+- `DASHBOARD_URL` — sets the link target of the "Open Department
+  Dashboard" button in alert emails. Unset = emails still send,
+  just without the link.

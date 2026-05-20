@@ -253,7 +253,8 @@ a redeploy.
   immediately-preceding 31 days, NOT against the previous calendar
   month. So "Last Month" preset for Dec (31 days) compares against
   Oct 31 - Nov 30 (31 days). Surfaced in the form's inline hint +
-  the results header.
+  the results header. A "Compare with..." form control lets the
+  user override the auto-computed prior with a custom range.
 - **Delta semantics**:
   - Volume metrics (Rung / Missed / Answered / TTT): relative
     percent change `((curr - prev) / prev) * 100`. `0 -> 0` returns
@@ -266,6 +267,53 @@ a redeploy.
   - Missed: above = orange (negative)
   - TTT / ATT: always neutral grey
 
+### Compare Ranges (admin-only)
+
+- **Admin-only at the server boundary** (INV-32). Every public
+  callable in `CompareRangesReport.gs` rejects non-admin requests;
+  the launcher button is hidden client-side for non-admins.
+- **Agent-centric**: like Individual / Performance, the user's
+  selection IS the team. No `TEAM_AVG_EXCLUDES` filter applies.
+- **Two arbitrary periods**: P1 (baseline) and P2 (comparison).
+  Periods may overlap, may be different lengths, do not have to be
+  adjacent. Deltas computed as P2 vs P1.
+- **Length-mismatch handling** (INV-35): if
+  `max(p1Days,p2Days) / min(p1Days,p2Days) >= 1.2`, the server
+  emits `meta.lengthMismatch=true`. The client renders a
+  length-mismatch banner, per-tile "per day" captions on volume +
+  time KPIs, and a `P1/day` + `P2/day` pair in the CSV export.
+- **Agent classification** (left-border color on each card):
+  votes across 4 valenced metrics (rung up = +1, missed up = -1,
+  answered up = +1, % answered up = +1). Score >= 2 = improved
+  (blue), <= -2 = regressed (orange), else mixed (grey).
+- **Quiet agents** (no metric moved beyond a noise floor) collapse
+  into a `<details>` below the main grid; image-export + print
+  force them open so captures are complete.
+- **Improvement score** (used for sorting + the per-card "vs Team"
+  badge): `rungDeltaPct - missedDeltaPct + answeredDeltaPct + 5 *
+  pctDeltaPts`. The 5x scaling for percentage points is a
+  judgment call to align magnitude with relative volume changes.
+
+### Low Answer Rate Alerts (admin-only)
+
+- **Admin-only at the server boundary** (INV-32). All public
+  callables in `Alerts.gs` call `assertAdmin_` first.
+- **Sheet-driven config** (INV-34): thresholds + extra recipients
+  live in the `Alert Config` sheet; per-fire results live in
+  `Alert Log`. Both idempotently created by `setup()`.
+- **Recipients per dept** = dept managers from Access Control ∪
+  Extra Recipients (from Alert Config), with `ADMIN_EMAILS`
+  always cc'd. Deduped; managers first.
+- **Status enum** (used in UI + log Sent column): `sent` /
+  `would-send` (dry-run / preview) / `above-threshold` (healthy)
+  / `no-data` / `no-recipients` / `skipped` (inactive) / `error`.
+- **Daily trigger** (`runDailyAlerts_`) skips Saturdays + Sundays
+  (INV-33). Holiday handling is intentional dropped from v1 — if
+  it becomes noisy, add a skip-dates column to Alert Config.
+- **DASHBOARD_URL Script Property** is consulted by
+  `sendAlertEmail_` to build the "Open Dashboard" link. Unset =
+  emails still send, just without the link button.
+
 ## Cache key versioning
 
 Each report file uses its own versioned cache key prefix. Bump the
@@ -276,8 +324,12 @@ stale caches invalidate on deploy.
 |---|---|---|
 | `Data.gs` (main table) | `summary:vN:` | `v3` |
 | `IndividualReport.gs` | `individual:vN:` | `v4` |
-| `IndividualReport.gs` (active-in-range subset, shared with picker) | `individual_active:vN:` | `v1` |
-| `PerformanceReport.gs` | `performance:vN:` | `v1` |
+| `IndividualReport.gs` (active-in-range subset, shared with all three pickers) | `individual_active:vN:` | `v1` |
+| `PerformanceReport.gs` | `performance:vN:` | `v2` |
+| `CompareRangesReport.gs` | `compareRanges:vN:` | `v2` |
+
+`Alerts.gs` holds no cached compute — preview / send always re-reads
+the source sheet for the chosen date.
 
 If you change ATT or % Answered semantics anywhere, bump every
 downstream prefix — they share helpers (`formatSecondsHms_`,
