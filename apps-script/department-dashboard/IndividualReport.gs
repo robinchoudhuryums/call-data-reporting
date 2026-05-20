@@ -42,7 +42,7 @@
 // Bump when aggregation rules change so stale cached values don't
 // linger. v4 = insights are objects { type, text } instead of bare
 // strings (client uses `type` to color-code the marker).
-const INDIVIDUAL_CACHE_KEY_PREFIX = 'individual:v4';
+const INDIVIDUAL_CACHE_KEY_PREFIX = 'individual:v5';
 
 function getIndividualReportInit(req) {
   const email = Session.getActiveUser().getEmail();
@@ -181,8 +181,10 @@ function getIndividualReport(req) {
   if (selectedAgents.length === 0) {
     throw new Error('No selected agent is on this department\'s roster.');
   }
-  // Stable key for cache regardless of input order.
-  const agentsKey = selectedAgents.slice().sort().join('|');
+  // MD5 hash of the agent list keeps the cache key length-bounded
+  // (CacheService rejects keys > 250 chars; raw join blows past
+  // that on big rosters like Sales). Order-insensitive by design.
+  const agentsKey = hashAgents_(selectedAgents);
 
   const cache = CacheService.getScriptCache();
   const cacheKey = INDIVIDUAL_CACHE_KEY_PREFIX + ':'

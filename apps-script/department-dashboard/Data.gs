@@ -642,3 +642,25 @@ function avg_(arr, key) {
   }
   return n ? Math.round(s / n) : 0;
 }
+
+/**
+ * Stable, length-bounded hash of an agent selection for use in
+ * CacheService keys. Apps Script's CacheService rejects keys
+ * longer than 250 characters; agent names + a long roster blow
+ * past that quickly (Sales alone has enough agents to overflow).
+ * MD5 hex is 32 chars regardless of input size, which keeps the
+ * compound cache key (dept + dates + agentsKey) safely bounded.
+ *
+ * Order-insensitive: input is sorted before hashing so cache
+ * lookups hit regardless of selection order in the client.
+ */
+function hashAgents_(agents) {
+  const joined = (agents || []).slice().sort().join('|');
+  const bytes = Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, joined);
+  let hex = '';
+  for (let i = 0; i < bytes.length; i++) {
+    const v = bytes[i] < 0 ? bytes[i] + 256 : bytes[i];
+    hex += (v < 16 ? '0' : '') + v.toString(16);
+  }
+  return hex;
+}

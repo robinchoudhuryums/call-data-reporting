@@ -58,7 +58,7 @@
 // Bump when aggregation rules / response shape change so stale
 // entries don't bleed in. v2 = adds team insights, rosterSize,
 // volumeBar.pct, trend.ttt, and optional custom prior range.
-const PERFORMANCE_CACHE_KEY_PREFIX = 'performance:v2';
+const PERFORMANCE_CACHE_KEY_PREFIX = 'performance:v3';
 
 function getPerformanceReportInit(req) {
   // Same init shape as Individual Report -- roster + default
@@ -122,7 +122,10 @@ function getPerformanceReport(req) {
   if (selectedAgents.length === 0) {
     throw new Error('No selected agent is on this department\'s roster.');
   }
-  const agentsKey = selectedAgents.slice().sort().join('|');
+  // MD5 hash keeps the cache key length-bounded (CacheService rejects
+  // keys > 250 chars; raw join blows past that on big rosters like
+  // Sales). Order-insensitive by design.
+  const agentsKey = hashAgents_(selectedAgents);
   const priorKey = (customPriorFrom && customPriorTo)
     ? customPriorFrom + '..' + customPriorTo
     : 'auto';
