@@ -36,6 +36,43 @@
     });
   })();
 
+  // -- Background-theme settings ---------------------------------------
+  // Personal-preference theme picker (Warm / Cool / Clinical) lives in
+  // the Settings modal. Persisted to localStorage; applied via a
+  // data-theme attribute on body so the CSS token overrides cascade
+  // without any per-selector code changes. Runs at module-load time
+  // so the saved theme is applied before any rendering happens; the
+  // modal wiring is hooked up later from init() once the DOM is
+  // settled.
+  (function initThemePreference_() {
+    const KEY = 'dash-theme.v1';
+    let saved = null;
+    try { saved = localStorage.getItem(KEY); } catch (e) {}
+    const initial = (saved === 'cool' || saved === 'clinical') ? saved : 'warm';
+    if (initial !== 'warm') document.body.dataset.theme = initial;
+    // Expose globally so the Settings modal init can read/write
+    // without re-parsing storage.
+    window.__themePref = {
+      get: function () {
+        return (document.body.dataset.theme === 'cool' ||
+                document.body.dataset.theme === 'clinical')
+          ? document.body.dataset.theme : 'warm';
+      },
+      set: function (theme) {
+        if (theme === 'cool' || theme === 'clinical') {
+          document.body.dataset.theme = theme;
+        } else {
+          delete document.body.dataset.theme;
+          theme = 'warm';
+        }
+        try { localStorage.setItem(KEY, theme); } catch (e) {}
+        // Tell chart renderers their tokens shifted so newly-built
+        // charts use the right palette.
+        window.dispatchEvent(new Event('dash-mode-change'));
+      },
+    };
+  })();
+
   // window.__USER__ is injected by the dashboard template.
   const USER = window.__USER__ || { role: 'none', email: '', department: null, departments: [] };
 
@@ -314,6 +351,7 @@
     });
 
     initHelpModal();
+    initSettingsModal();
     initMissedReport();
     initIndividualReport();
     initPerformanceReport();
@@ -356,6 +394,54 @@
     btn.addEventListener('click', openModal);
     if (closeBtn) closeBtn.addEventListener('click', closeModal);
     if (backdrop) backdrop.addEventListener('click', closeModal);
+  }
+
+  // -- Settings modal (theme picker etc.) -----------------------------
+  function initSettingsModal() {
+    const btn = $('settings-btn');
+    const modal = $('settings-modal');
+    if (!btn || !modal) return;
+    const closeBtn = modal.querySelector('.modal-close');
+    const backdrop = modal.querySelector('[data-close]');
+
+    function syncChips() {
+      const active = (window.__themePref && window.__themePref.get) ? window.__themePref.get() : 'warm';
+      document.querySelectorAll('.theme-chip').forEach(function (chip) {
+        chip.classList.toggle('active', chip.getAttribute('data-theme') === active);
+      });
+    }
+
+    function openModal() {
+      syncChips();
+      modal.style.display = '';
+      modal.setAttribute('aria-hidden', 'false');
+      document.body.style.overflow = 'hidden';
+      if (closeBtn) closeBtn.focus();
+      document.addEventListener('keydown', onKeyDown);
+    }
+    function closeModal() {
+      modal.style.display = 'none';
+      modal.setAttribute('aria-hidden', 'true');
+      document.body.style.overflow = '';
+      document.removeEventListener('keydown', onKeyDown);
+      btn.focus();
+    }
+    function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
+
+    btn.addEventListener('click', openModal);
+    if (closeBtn) closeBtn.addEventListener('click', closeModal);
+    if (backdrop) backdrop.addEventListener('click', closeModal);
+
+    // Chip click: apply + persist theme. Modal stays open so the
+    // user can visually verify the change (the background updates
+    // behind the modal panel).
+    document.querySelectorAll('.theme-chip').forEach(function (chip) {
+      chip.addEventListener('click', function () {
+        const t = chip.getAttribute('data-theme');
+        if (window.__themePref && window.__themePref.set) window.__themePref.set(t);
+        syncChips();
+      });
+    });
   }
 
   // -- Missed Calls Report modal -----------------------------------------
@@ -1114,13 +1200,36 @@
   // top-to-bottom gradient from the line color (alpha .25) down to
   // transparent. Applied to every IR line chart so single-agent views
   // have visual weight without dominating the comparison ones.
-  function irGradientFill_(chart, hexColor) {
+  /**
+   * Returns the given CSS color with the supplied alpha applied,
+   * as an `rgba(...)` string. Goes via a temp DOM element so the
+   * browser resolves whatever input format (#rrggbb, oklch(),
+   * hsl(), rgb(), named) into a parseable rgb triple. Necessary
+   * because the prior "color + '40'" hex-alpha concatenation
+   * trick only works on 6-char hex inputs -- the design-system
+   * tokens now resolve to oklch() in modern browsers, which
+   * broke gradient fills on every line chart.
+   */
+  function colorWithAlpha_(color, alpha) {
+    if (!color) return 'rgba(0,0,0,0)';
+    const el = document.createElement('div');
+    el.style.color = color;
+    el.style.display = 'none';
+    document.body.appendChild(el);
+    const resolved = getComputedStyle(el).color;
+    document.body.removeChild(el);
+    const m = resolved.match(/rgba?\((\d+(?:\.\d+)?)[,\s]+(\d+(?:\.\d+)?)[,\s]+(\d+(?:\.\d+)?)/);
+    if (!m) return color;   // unrecognized; let canvas try as-is
+    return 'rgba(' + m[1] + ', ' + m[2] + ', ' + m[3] + ', ' + alpha + ')';
+  }
+
+  function irGradientFill_(chart, color) {
     const ctx = chart.ctx;
     const area = chart.chartArea;
     if (!area) return 'rgba(0,0,0,0)';
     const gradient = ctx.createLinearGradient(0, area.top, 0, area.bottom);
-    gradient.addColorStop(0, hexColor + '40');   // hex + 25% alpha
-    gradient.addColorStop(1, hexColor + '00');   // fully transparent
+    gradient.addColorStop(0, colorWithAlpha_(color, 0.25));
+    gradient.addColorStop(1, colorWithAlpha_(color, 0));
     return gradient;
   }
 
