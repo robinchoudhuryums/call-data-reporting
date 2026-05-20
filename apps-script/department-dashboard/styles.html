@@ -2462,6 +2462,34 @@
     grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
     gap: 12px;
     margin-bottom: 18px;
+    align-items: start;
+  }
+  /* Each parent dept + its sub-queues stack vertically in a
+     single grid cell. Children inherit the parent's tile color
+     (slot in IR_CHART_COLORS) via inline-set color but get a
+     muted accent strip on the left to signal the relationship. */
+  .ov-dept-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .ov-dept-tile-child {
+    border-left-width: 3px;
+    border-left-color: var(--accent);
+    margin-left: 14px;
+    /* Slightly smaller font, dimmer background to communicate
+       "sub-queue, less primary". */
+    background: var(--paper-2);
+  }
+  .ov-dept-tile-child .ov-dept-tile-pct {
+    font-size: 18px;
+  }
+  .ov-dept-parent-tag {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
   }
   .ov-dept-tile {
     background: var(--paper-card);
@@ -2531,6 +2559,260 @@
     line-height: 0;
   }
   .ov-dept-tile-spark svg { width: 100%; max-width: 100%; height: 28px; }
+
+  /* Clickable tiles (admin only) -- subtle hover to communicate
+     "click to route to this dept's detail view". */
+  .ov-dept-tile-clickable {
+    cursor: pointer;
+    transition: border-color 0.12s, box-shadow 0.12s, transform 0.12s;
+  }
+  .ov-dept-tile-clickable:hover {
+    border-color: var(--accent);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+    transform: translateY(-1px);
+  }
+
+  /* Week-over-week chip on each tile (and the hero). Compares the
+     last 7 days vs the prior 7 -- color encodes direction. Tooltip
+     spells out the exact pre/post percentages so the chip is
+     glanceable without losing the precise numbers. */
+  .ov-wow-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 500;
+    padding: 2px 7px;
+    border-radius: 999px;
+    margin-left: 8px;
+    vertical-align: middle;
+    white-space: nowrap;
+    background: var(--paper-2);
+    color: var(--muted);
+    border: 1px solid var(--line);
+  }
+  .ov-wow-up   { color: var(--good); border-color: var(--good); background: var(--good-soft); }
+  .ov-wow-down { color: var(--warn); border-color: var(--warn); background: var(--warn-soft); }
+  .ov-wow-flat { color: var(--muted); border-color: var(--line); background: var(--paper-2); }
+
+  /* Alert pill: shown on the tile when this dept triggered a sent
+     low-answer-rate alert on the latest data date. Compact red
+     badge that visually competes with the % answered number to
+     draw the eye when there's a problem. */
+  .ov-alert-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--warn-soft);
+    color: var(--warn);
+    border: 1px solid var(--warn);
+    margin-top: 2px;
+    align-self: flex-start;
+  }
+
+  /* User-dept hero tile: featured rendering of the viewer's own
+     dept, sitting above the standard grid. Wider, more padding,
+     larger numerics. Top accent strip in the dept's slot color
+     so it visually anchors the section. */
+  .ov-user-hero {
+    margin-bottom: 14px;
+  }
+  .ov-dept-tile-hero {
+    background: var(--paper-card);
+    border: 1px solid var(--line);
+    border-top: 3px solid var(--accent);
+    border-radius: 2px;
+    padding: 16px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    cursor: pointer;
+    transition: border-color 0.12s, box-shadow 0.12s;
+  }
+  .ov-dept-tile-hero:hover {
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.05);
+  }
+  .ov-hero-kicker {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 2px;
+  }
+  .ov-hero-name {
+    font-size: 22px;
+    font-weight: 600;
+  }
+  .ov-hero-meta {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 6px;
+  }
+  .ov-hero-meta .ov-alert-pill {
+    /* Base rule is align-self: flex-start (for grid tiles). Inside
+       the hero's right-aligned meta column we want it flush right. */
+    align-self: flex-end;
+  }
+  .ov-hero-body {
+    display: grid;
+    grid-template-columns: minmax(160px, 1fr) minmax(0, 2fr) minmax(120px, 1fr);
+    gap: 18px;
+    align-items: center;
+  }
+  .ov-hero-pct-block {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .ov-hero-pct {
+    font-family: var(--mono);
+    font-size: 36px;
+    font-weight: 500;
+    color: var(--ink);
+    line-height: 1;
+  }
+  .ov-hero-stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px 18px;
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 15px;
+    color: var(--ink);
+  }
+  .ov-hero-stat {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+  .ov-hero-stat .ov-dept-stat-label {
+    font-size: 10px;
+    margin-right: 0;
+  }
+  .ov-hero-spark {
+    line-height: 0;
+    border-left: 1px dashed var(--line);
+    padding-left: 14px;
+  }
+  .ov-hero-spark svg { width: 100%; height: 56px; }
+  @media (max-width: 720px) {
+    .ov-hero-body { grid-template-columns: 1fr; }
+    .ov-hero-spark { border-left: none; padding-left: 0; border-top: 1px dashed var(--line); padding-top: 8px; }
+  }
+
+  /* Company-wide aggregate hero (admin only). Visually distinct from
+     the user-dept hero -- different accent and a small "admin only"
+     kicker so the audience scope is obvious. */
+  .ov-company-aggregate {
+    background: var(--paper-card);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--accent);
+    border-radius: 2px;
+    padding: 14px 18px;
+    margin-bottom: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .ov-agg-kicker {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .ov-agg-row {
+    display: grid;
+    grid-template-columns: minmax(160px, 1fr) minmax(0, 3fr);
+    gap: 18px;
+    align-items: center;
+  }
+  .ov-agg-pct-block {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .ov-agg-pct {
+    font-family: var(--mono);
+    font-size: 30px;
+    font-weight: 500;
+    color: var(--ink);
+    line-height: 1;
+  }
+  .ov-agg-pct-cap {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .ov-agg-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+    gap: 12px;
+  }
+  .ov-agg-stat {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+  }
+  .ov-agg-stat-label {
+    font-size: 10px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .ov-agg-stat-val {
+    font-size: 15px;
+    color: var(--ink);
+  }
+  @media (max-width: 720px) {
+    .ov-agg-row { grid-template-columns: 1fr; }
+  }
+
+  /* Embedded user-dept agent table inside the Overview modal.
+     Reuses the .agents table styles from the main dashboard; this
+     just wraps it with a header + date kicker and provides a
+     scroll container so it doesn't blow out the modal width. */
+  .ov-user-table-wrap {
+    margin-top: 18px;
+  }
+  .ov-user-table-wrap .ir-chart-header {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    justify-content: space-between;
+  }
+  .ov-user-table-date {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .ov-user-table {
+    width: 100%;
+    margin-top: 8px;
+  }
+  .ov-user-empty {
+    text-align: center;
+    color: var(--muted);
+    padding: 18px;
+    font-family: var(--ui);
+  }
 
   /* -------- Settings modal -------------------------------------- */
   /* Background-theme picker. Each chip is a click target with a
