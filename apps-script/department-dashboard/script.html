@@ -95,7 +95,16 @@
   };
   function refreshChartTheme() {
     const css = getComputedStyle(document.body);
-    const read = function (name) { return (css.getPropertyValue(name) || '').trim(); };
+    // Resolve each CSS custom property to a canvas-canonical
+    // form (#rrggbb / rgba(...)) so downstream Chart.js +
+    // chartjs-plugin-datalabels code never has to handle OKLCH
+    // -- some sub-paths in the plugin choke on OKLCH (silent
+    // failures: text rendered with empty fillStyle = invisible
+    // labels) even though core Chart.js does support it.
+    const read = function (name) {
+      const raw = (css.getPropertyValue(name) || '').trim();
+      return raw ? colorToCanvasRgb_(raw) : '';
+    };
     // Read into a local first; only commit to THEME / Chart.defaults
     // if the CSS variables actually resolved. If we run before the
     // browser has fully computed styles (rare but seen in field),
@@ -1200,6 +1209,27 @@
   // top-to-bottom gradient from the line color (alpha .25) down to
   // transparent. Applied to every IR line chart so single-agent views
   // have visual weight without dominating the comparison ones.
+  /**
+   * Resolves a CSS color string to canvas-canonical RGB form
+   * (`#rrggbb` for opaque colors, `rgba(r, g, b, a)` for
+   * transparent). Used by refreshChartTheme() to normalize the
+   * design-system tokens before they reach Chart.js / the
+   * datalabels plugin, which have inconsistent OKLCH support in
+   * their many sub-paths.
+   */
+  function colorToCanvasRgb_(color) {
+    try {
+      const cvs = document.createElement('canvas');
+      cvs.width = cvs.height = 1;
+      const ctx = cvs.getContext('2d');
+      ctx.fillStyle = 'rgb(1,2,3)';
+      const sentinel = ctx.fillStyle;
+      ctx.fillStyle = color;
+      if (ctx.fillStyle === sentinel) return color;
+      return ctx.fillStyle;
+    } catch (e) { return color; }
+  }
+
   /**
    * Returns the given CSS color with the supplied alpha applied,
    * as an `rgba(...)` string. Paints the color onto a 1x1 canvas
@@ -3329,7 +3359,7 @@
       const arrow = dp > 0 ? '▲' : '▼';
       const suffix = isPctType ? ' pts' : '%';
       badge = '<span class="pr-delta ' + cls + '">'
-            +   arrow + ' ' + Math.abs(dp).toFixed(1) + suffix
+            +   '<span class="pr-delta-arrow">' + arrow + '</span> ' + Math.abs(dp).toFixed(1) + suffix
             + '</span>';
     }
     const spark = irSparkline_(sparklineData || [], sparklineColor || '#4E79A7');
@@ -3544,10 +3574,17 @@
             order: 2 },
           { label: '% Answered', type: 'line',
             data: volData.map(function (d) { return Number((d.pct || 0).toFixed(1)); }),
+            // showLine: false renders the dataset as discrete
+            // points only. Connecting agents with a line was
+            // visually misleading -- agents are independent
+            // categories, not a time series. Points + larger
+            // radius reads as "per-agent dot" rather than trend.
+            showLine: false,
             borderColor: THEME.accent, backgroundColor: THEME.accent,
-            tension: 0.3, fill: false, yAxisID: 'y1',
-            pointRadius: 4, pointBackgroundColor: THEME.accent,
-            pointBorderColor: THEME.paperCard, pointBorderWidth: 1.5,
+            fill: false, yAxisID: 'y1',
+            pointRadius: 6, pointHoverRadius: 8,
+            pointBackgroundColor: THEME.accent,
+            pointBorderColor: THEME.paperCard, pointBorderWidth: 2,
             order: 1 },
         ],
       },
@@ -4161,7 +4198,11 @@
     const mismatch = (Math.min(p1Days, p2Days) > 0)
                   && (Math.max(p1Days, p2Days) / Math.min(p1Days, p2Days) >= 1.2);
     let extra = '';
-    if (mismatch) {
+    if (p1Days === p2Days) {
+      // Exactly equal -- only state in which we claim parity.
+      extra = '<span class="cr-length-ok">&#10003; Equal length</span>';
+    } else if (mismatch) {
+      // Big difference (>= 1.2x) -- volume totals not comparable.
       const ratio = (Math.max(p1Days, p2Days) / Math.min(p1Days, p2Days)).toFixed(1);
       extra = '<span class="cr-length-warn">'
             + '&#9888; Period 2 is ' + ratio + '&times; '
@@ -4169,7 +4210,13 @@
             + ' &mdash; volume totals aren\'t directly comparable.'
             + '</span>';
     } else {
-      extra = '<span class="cr-length-ok">&#10003; Equal length</span>';
+      // Small difference -- note it but don't sound the alarm.
+      const diff = Math.abs(p2Days - p1Days);
+      const direction = p2Days > p1Days ? 'longer' : 'shorter';
+      extra = '<span class="cr-length-diff">'
+            + 'Period 2 is <strong>' + diff + '</strong> day'
+            + (diff === 1 ? '' : 's') + ' ' + direction + ' than P1'
+            + '</span>';
     }
     el.innerHTML = '<span class="cr-length-spec">Period 1: <strong>' + p1Days + '</strong> day'
                  + (p1Days === 1 ? '' : 's') + '</span>'
@@ -4624,7 +4671,7 @@
       const arrow = dp > 0 ? '▲' : '▼';
       const suffix = stat.type === 'pctPoints' ? ' pts' : '%';
       badge = '<span class="pr-delta ' + cls + '">'
-            + arrow + ' ' + Math.abs(dp).toFixed(1) + suffix + '</span>';
+            + '<span class="pr-delta-arrow">' + arrow + '</span> ' + Math.abs(dp).toFixed(1) + suffix + '</span>';
     }
     el.innerHTML = label + ': '
                  + '<strong>' + escapeHtml(stat.prevFormatted) + '</strong> (P1) '
@@ -4679,7 +4726,7 @@
       const arrow = dp > 0 ? '▲' : '▼';
       const suffix = isPctType ? ' pts' : '%';
       badge = '<span class="pr-delta ' + cls + '">'
-            +   arrow + ' ' + Math.abs(dp).toFixed(1) + suffix
+            +   '<span class="pr-delta-arrow">' + arrow + '</span> ' + Math.abs(dp).toFixed(1) + suffix
             + '</span>';
     }
     // Per-day caption: only for raw volume/time metrics, only
@@ -4856,7 +4903,7 @@
       const arrow = dp > 0 ? '▲' : '▼';
       const suffix = isPctType ? ' pts' : '%';
       badge = '<span class="pr-delta ' + cls + '">'
-            +   arrow + ' ' + Math.abs(dp).toFixed(1) + suffix
+            +   '<span class="pr-delta-arrow">' + arrow + '</span> ' + Math.abs(dp).toFixed(1) + suffix
             + '</span>';
     }
 

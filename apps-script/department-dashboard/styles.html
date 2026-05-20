@@ -1856,6 +1856,16 @@
   .pr-delta-pos { background: var(--accent-soft); color: var(--accent); }
   .pr-delta-neg { background: var(--warn-soft); color: var(--warn); }
   .pr-delta-neu { background: var(--paper-2); color: var(--muted); }
+  /* Arrow span inside the delta badge -- bumped so the up/down
+     direction is legible at a glance instead of blending into
+     the digit run.  Sans-serif so the triangle glyph reads as a
+     directional cue rather than a mono character. */
+  .pr-delta-arrow {
+    font-family: var(--ui);
+    font-size: 13px;
+    line-height: 1;
+    font-weight: 700;
+  }
   .pr-delta-cap {
     font-family: var(--mono);
     font-size: 10px;
@@ -2000,6 +2010,11 @@
   }
   .cr-length-spec strong { color: var(--ink); font-weight: 500; }
   .cr-length-ok { color: var(--good); font-weight: 500; }
+  /* Sub-threshold difference -- noted but not alarming.  Muted
+     ink rather than warn-orange so it doesn't compete with the
+     real volume-incomparable warning. */
+  .cr-length-diff { color: var(--muted); }
+  .cr-length-diff strong { color: var(--ink); }
   .cr-length-warn { color: var(--warn); font-weight: 500; }
 
   /* Length-mismatch banner — warn-stripe panel with soft-bg fill,
@@ -2176,6 +2191,11 @@
   }
   .cr-agent-table .num { text-align: right; }
   .cr-agent-table tbody tr:last-child td { border-bottom: 0; }
+  /* Delta column (last cell) reads better center-aligned -- the
+     delta badge is a wide pill that looks marooned against the
+     right edge, especially when the percentage is small. */
+  .cr-agent-table thead th:last-child,
+  .cr-agent-table tbody td:last-child { text-align: center; }
   .cr-metric {
     font-family: var(--ui);
     font-weight: 500;
