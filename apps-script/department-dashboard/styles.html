@@ -104,19 +104,44 @@
     box-shadow: 0 1px 2px rgba(0,0,0,.04);
   }
 
-  /* Header */
+  /* Header — document-style: small mono kicker over a display-font
+     dept name. Hairline divider below. */
   .dash-header {
     display: flex;
     justify-content: space-between;
     align-items: flex-end;
     flex-wrap: wrap;
     gap: 12px;
-    padding-bottom: 16px;
+    padding-bottom: 18px;
     border-bottom: 1px solid var(--line);
-    margin-bottom: 20px;
+    margin-bottom: 24px;
   }
-  .dash-header h1 { font-size: 20px; }
-  .dash-header .sub { color: var(--muted); font-size: 13px; margin-top: 4px; }
+  .dash-kicker {
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    color: var(--muted);
+    margin-bottom: 4px;
+  }
+  .dash-header h1 {
+    font-family: var(--display);
+    font-size: 32px;
+    font-weight: 500;
+    letter-spacing: -0.6px;
+    line-height: 1.1;
+    color: var(--ink);
+  }
+  /* Legacy .sub selector kept around in case any include reuses it. */
+  .dash-header .sub {
+    font-family: var(--mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    color: var(--muted);
+    margin-bottom: 4px;
+  }
   .header-meta {
     font-size: 13px;
     color: var(--muted);
@@ -125,7 +150,7 @@
     align-items: center;
     gap: 10px;
   }
-  .header-meta .email { font-family: var(--mono); }
+  .header-meta .email { font-family: var(--mono); font-size: 12px; }
 
   /* Help button (opens FAQ modal) */
   .help-btn {
@@ -155,17 +180,18 @@
     outline-offset: 2px;
   }
 
-  /* Tags */
+  /* Tags — warm-paper soft-bg pills with mono uppercase labels. */
   .tag {
     display: inline-block;
     padding: 2px 8px;
-    border-radius: 4px;
-    font-size: 11px;
-    font-weight: 600;
+    border-radius: 2px;
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 500;
     margin-left: 6px;
     vertical-align: middle;
     text-transform: uppercase;
-    letter-spacing: .5px;
+    letter-spacing: 0.12em;
   }
   .tag-admin   { background: var(--good-soft); color: var(--good); }
   .tag-manager { background: var(--accent-soft); color: var(--accent); }
@@ -182,33 +208,36 @@
     margin-bottom: 16px;
   }
 
-  /* Controls */
+  /* Controls — mono-uppercase kicker labels, sharp-cornered inputs. */
   .controls {
     display: flex;
-    gap: 16px;
+    gap: 14px;
     flex-wrap: wrap;
     align-items: flex-end;
-    margin-bottom: 16px;
+    margin-bottom: 18px;
   }
-  .control { display: flex; flex-direction: column; gap: 4px; }
+  .control { display: flex; flex-direction: column; gap: 6px; }
   .control label {
-    font-size: 11px;
-    font-weight: 600;
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 500;
     color: var(--muted);
     text-transform: uppercase;
-    letter-spacing: .5px;
+    letter-spacing: 0.12em;
   }
   .control input[type="date"],
   .control select {
     padding: 7px 10px;
     border: 1px solid var(--line);
-    border-radius: 6px;
+    border-radius: 2px;
     background: var(--paper-card);
     min-width: 140px;
+    font-family: var(--ui);
   }
   .control input[type="date"]:focus,
   .control select:focus {
     outline: 2px solid var(--accent);
+    outline-offset: 0;
     border-color: var(--accent);
   }
   .btn {
@@ -216,7 +245,8 @@
     background: var(--ink);
     color: var(--paper);
     border: 0;
-    border-radius: 6px;
+    border-radius: 2px;
+    font-family: var(--ui);
     font-weight: 500;
     cursor: pointer;
   }
@@ -230,120 +260,167 @@
   .btn-secondary:hover { background: var(--paper-2); color: var(--ink); }
   .control-reports { margin-left: auto; }
 
-  /* Status */
+  /* Status — flat soft-bg banners with a 3px valence stripe on the left
+     instead of the prior pill chrome. Matches the Call Analyzer pattern. */
   .status {
-    padding: 10px 12px;
-    border-radius: 6px;
+    padding: 10px 14px;
+    border-radius: 2px;
     margin-bottom: 12px;
     font-size: 13px;
+    border-left: 3px solid var(--line);
   }
-  .status-loading { background: var(--accent-soft); color: var(--accent); }
-  .status-error   { background: var(--warn-soft); color: var(--warn); border: 1px solid var(--warn-soft); }
-  .status-empty   { background: var(--paper-2); color: var(--muted); }
+  .status-loading { background: var(--accent-soft); color: var(--accent); border-left-color: var(--accent); }
+  .status-error   { background: var(--warn-soft);   color: var(--warn);   border-left-color: var(--warn); }
+  .status-empty   { background: var(--paper-2);     color: var(--muted);  border-left-color: var(--muted); }
 
-  /* Table */
+  /* Agents table — document-row aesthetic: hairline rows, no rounded
+     card chrome, mono-uppercase column headers, mono numerics in the
+     stat columns. Hover lifts the row with a subtle paper-2 tint.
+     Top + bottom hairlines frame the table; .container provides the
+     surrounding paper bg. */
   .agents {
     width: 100%;
     border-collapse: collapse;
     background: var(--paper-card);
-    border: 1px solid var(--line);
-    border-radius: 10px;
-    overflow: hidden;
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
     font-size: 13px;
   }
   .agents th, .agents td {
-    padding: 10px 12px;
+    padding: 11px 12px;
     text-align: right;
     border-bottom: 1px solid var(--line);
   }
-  .agents th:first-child, .agents td:first-child { text-align: left; }
+  .agents tbody tr:last-child td { border-bottom: 0; }
+  .agents th:first-child, .agents td:first-child {
+    text-align: left;
+    padding-left: 14px;
+  }
+  .agents th:last-child, .agents td:last-child { padding-right: 14px; }
   .agents thead th {
     background: var(--paper-2);
-    font-weight: 600;
-    color: var(--ink);
+    font-family: var(--mono);
+    font-weight: 500;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--muted);
     cursor: pointer;
     user-select: none;
     white-space: nowrap;
     position: sticky;
     top: 0;
+    border-bottom: 1px solid var(--line);
   }
-  .agents thead th:hover { background: var(--paper-2); }
+  .agents thead th:hover { color: var(--ink); }
   .agents thead th .arrow {
     display: inline-block;
     width: 10px;
     margin-left: 4px;
-    color: var(--muted);
+    color: var(--accent);
     font-size: 10px;
   }
   .agents tbody tr:hover { background: var(--paper-2); }
-  .agents tbody td.agent-name { font-weight: 500; color: var(--ink); }
-  .agents .num { font-variant-numeric: tabular-nums; }
-  .agents .missed-high { color: var(--warn); font-weight: 600; }
+  .agents tbody td.agent-name {
+    font-weight: 500;
+    color: var(--ink);
+    font-family: var(--ui);
+  }
+  .agents .num {
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 12.5px;
+  }
+  .agents .missed-high { color: var(--warn); font-weight: 500; }
 
   .agents tfoot td {
     background: var(--paper-2);
-    font-weight: 600;
-    border-top: 2px solid var(--line);
+    font-family: var(--mono);
+    font-weight: 500;
+    color: var(--ink);
+    border-top: 1px solid var(--line);
     border-bottom: 0;
   }
+  .agents tfoot td:first-child {
+    font-family: var(--ui);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-size: 11px;
+    color: var(--muted);
+  }
 
-  /* Footer info line (rows scanned, cache state, compute time) */
+  /* Footer info line — mono kicker · status pills. Sits below the table
+     and surfaces "rows scanned · cache state · compute time" telemetry. */
   .info-line {
     margin-top: 12px;
-    font-size: 12px;
+    font-family: var(--mono);
+    font-size: 11px;
     color: var(--muted);
     text-align: right;
   }
   .info-line .pill {
     display: inline-block;
-    padding: 1px 7px;
-    border-radius: 999px;
+    padding: 2px 8px;
+    border-radius: 2px;
     background: var(--paper-2);
+    color: var(--muted);
     margin-left: 6px;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
   }
   .info-line .pill-cache  { background: var(--good-soft); color: var(--good); }
   .info-line .pill-fresh  { background: var(--accent-soft); color: var(--accent); }
 
-  /* Segmented control (scope toggle) */
+  /* Segmented control (scope toggle) — sharp corners, mono-uppercase labels. */
   .segmented {
     display: inline-flex;
     border: 1px solid var(--line);
-    border-radius: 6px;
+    border-radius: 2px;
     overflow: hidden;
     background: var(--paper-card);
   }
   .seg-btn {
-    padding: 7px 12px;
+    padding: 7px 14px;
     background: var(--paper-card);
-    color: var(--ink);
+    color: var(--muted);
     border: 0;
     border-right: 1px solid var(--line);
     cursor: pointer;
-    font-size: 13px;
+    font-family: var(--mono);
+    font-size: 11px;
     font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
     min-width: 70px;
   }
   .seg-btn:last-child { border-right: 0; }
-  .seg-btn:hover { background: var(--paper-2); }
+  .seg-btn:hover { background: var(--paper-2); color: var(--ink); }
   .seg-btn.active {
     background: var(--ink);
     color: var(--paper);
   }
   .seg-btn.active:hover { opacity: 0.88; }
 
-  /* Diagnostics panel */
+  /* Diagnostics panel — hairline-bordered, sharp corners. The summary
+     line is the click target; expanded content uses mono kicker
+     subheaders for each section. */
   .diagnostics {
-    margin-top: 20px;
+    margin-top: 24px;
     background: var(--paper-card);
     border: 1px solid var(--line);
-    border-radius: 8px;
-    padding: 12px 16px;
+    border-radius: 2px;
+    padding: 14px 16px;
     font-size: 13px;
   }
   .diagnostics summary {
     cursor: pointer;
-    font-weight: 600;
-    color: var(--ink);
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--muted);
     user-select: none;
     padding: 2px 0;
   }
@@ -354,15 +431,16 @@
     margin-left: 4px;
   }
   .diag-section {
-    margin-top: 12px;
+    margin-top: 14px;
   }
   .diag-section h3 {
-    font-size: 12px;
+    font-family: var(--mono);
+    font-size: 10px;
     color: var(--muted);
     margin: 0 0 6px;
-    font-weight: 600;
+    font-weight: 500;
     text-transform: uppercase;
-    letter-spacing: .5px;
+    letter-spacing: 0.12em;
   }
   .diag-section p { margin: 0; color: var(--muted); }
   .diag-chips {
@@ -376,16 +454,19 @@
     padding: 2px 8px;
     background: var(--paper-2);
     border: 1px solid var(--line);
-    border-radius: 4px;
+    border-radius: 2px;
     font-size: 12px;
     color: var(--ink);
   }
   .agents .via-queue td:first-child::after {
     content: " (queue-only)";
-    font-size: 11px;
+    font-family: var(--mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
     color: var(--warn);
-    font-weight: 400;
-    margin-left: 4px;
+    font-weight: 500;
+    margin-left: 6px;
   }
 
   /* Access denied */
