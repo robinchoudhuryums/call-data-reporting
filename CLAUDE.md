@@ -104,7 +104,47 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   own form state under `cdr.ir.prefs.v1`, `cdr.pr.prefs.v1`, and
   `cdr.cr.prefs.v1`. Bump the trailing version when the prefs schema
   changes; older saved blobs are silently dropped if JSON parsing
-  fails.
+  fails. The chrome layer also writes `dash-mode` (light/dark toggle)
+  and `dash-theme.v1` (warm / cool / clinical paper theme) — the
+  theme picker re-reads these on every render so no cache bump is
+  needed when palette tokens change.
+- **CacheService key length cap (250 chars).** Apps Script silently
+  rejects cache keys longer than 250 characters, surfacing as an
+  error on `cache.get`. The Individual / Performance / Compare
+  Ranges reports include the selected agent list in their cache
+  key, which overflows on big rosters (Sales is the canonical
+  trigger). `Data.gs::hashAgents_` MD5-hashes the sorted agent
+  list to a 32-char hex digest so the compound key stays bounded
+  regardless of selection size. Never concatenate raw agent names
+  into a cache key — always go through `hashAgents_`.
+- **Chart.js v4 + chartjs-plugin-datalabels needs explicit
+  registration.** v4 dropped the auto-register-on-script-tag
+  behavior the plugin relied on, and the plugin itself defaults
+  to `display: false` since v1.0.0. Both `Chart.register(ChartDataLabels)`
+  AND `Chart.defaults.plugins.datalabels.display = true` must run at
+  module load (see the `registerChartDataLabels_` IIFE in
+  script.html). Per-chart `display: false` (Missed Calls radar,
+  Overview multi-line trend) still wins via the normal options
+  override. Use the boolean form for `display`; the function form
+  (`display: function (ctx) {...}`) returned false unpredictably on
+  mixed bar+line charts in this plugin version.
+- **OKLCH colors break datalabels silently.** Modern browsers
+  resolve `var(--paper)` etc. to `oklch(...)` strings, which
+  chartjs-plugin-datalabels can't parse for `fillStyle` — labels
+  render with an empty fill (invisible). `refreshChartTheme()` in
+  script.html paints each CSS custom property onto a 1×1 canvas via
+  `colorToCanvasRgb_()` and reads back the canonical `rgba(...)` form
+  so the plugin always receives a parseable color. Don't pass raw
+  `getComputedStyle(...).getPropertyValue('--foo')` strings to chart
+  options — always go through `THEME.*`.
+- **Recently-active denominator.** The Overview tile caption "X of Y
+  agents" uses `recentlyActiveCount` (any rung / answered / missed
+  activity in the last `OVERVIEW_RECENT_ACTIVE_DAYS` = 30 days), NOT
+  full roster size. Ex-employees who are kept on the `DO NOT EDIT!`
+  sheet for historical-data preservation fall out of this count
+  naturally. The hover tooltip on the caption shows all three
+  numbers (today's active, recent active, full roster) so the
+  denominator choice is transparent.
 
 ## Key Design Decisions
 
@@ -132,6 +172,32 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   Calls) plus the Low Answer Rate Alerts engine are in the dashboard.
   Awaiting decommission of the spreadsheet; meanwhile accepts only
   cleanup deletions.
+- **Two-page architecture: Overview + My Department.** The dashboard
+  is one HTML doc with two top-level `<section>` pages toggled by
+  `body[data-page="overview|dept"]`. **Overview is the default
+  landing** for every page load; "My Department" is the per-dept
+  agent table view that used to be the landing. Modals (Help,
+  Settings, Missed Calls, Individual / Performance / Compare
+  Ranges, Alerts) overlay either page. Admin clicks on Overview
+  dept tiles route to the dept page via `setPage('dept')` + a
+  dept-selector swap.
+- **Overview-only sub-queue nesting.** `OVERVIEW_PARENT_OF` and
+  `OVERVIEW_HIDDEN_DEPTS` in CompanyOverview.gs shape the Overview
+  page only — dept dropdowns, Reports modals, and Alerts treat
+  every dept as independent. Adding a sub-queue means: (1) it
+  already appears as its own dept everywhere else (it's a real
+  column in `DO NOT EDIT!`), and (2) add a row to
+  `OVERVIEW_PARENT_OF` keyed on the column-header text
+  byte-for-byte. The hero block shows parent + all its children
+  together when the viewer is a parent, so the relationship stays
+  visible even when the parent is spotlighted.
+- **Company aggregate is admin-only via `personalizeOverview_`.**
+  `getCompanyOverview()` always computes the company-wide
+  aggregate and caches it inside the shared blob, but
+  `personalizeOverview_` strips the `companyAggregate` field on
+  serve for non-admins. Viewer-personalized fields (`viewerRole`,
+  `viewerDept`) are injected per-request so a payload warmed by
+  user A still personalizes correctly for user B.
 
 ## Operator State Checklist
 
@@ -156,6 +222,16 @@ When something looks wrong, before assuming a code bug, check:
    Triggers should list `runDailyAlerts_` (or use the "Install daily
    trigger" button in the Alerts modal). Without it, alerts only fire
    when an admin clicks "Send alerts" manually.
+9. Did the latest push add a new OAuth scope? Open the Apps Script
+   editor → Run → any function → grant the new permission. Scope-
+   gated calls (trigger install, mail send) otherwise throw
+   permission errors at runtime even though the dashboard page
+   loads fine.
+10. After adding a sub-queue to `OVERVIEW_PARENT_OF`, verify the
+    key matches the `DO NOT EDIT!` column header byte-for-byte
+    (case, spaces, and any ` Q` suffix). Mismatches silently
+    leave the sub-queue rendering as an unrelated top-level
+    dept. Use both spellings as aliases if you're unsure.
 
 ## Cycle Workflow Config
 
@@ -167,7 +243,7 @@ Data Accuracy (DQE), Access Control Integrity, Source Pipeline Reliability, Migr
 
 ### Subsystems
 Department Dashboard:
-  apps-script/department-dashboard/Auth.gs, apps-script/department-dashboard/Code.gs, apps-script/department-dashboard/Config.gs, apps-script/department-dashboard/Data.gs, apps-script/department-dashboard/Diagnostics.gs, apps-script/department-dashboard/Setup.gs, apps-script/department-dashboard/MissedCallsReport.gs, apps-script/department-dashboard/IndividualReport.gs, apps-script/department-dashboard/PerformanceReport.gs, apps-script/department-dashboard/CompareRangesReport.gs, apps-script/department-dashboard/Alerts.gs, apps-script/department-dashboard/access_denied.html, apps-script/department-dashboard/dashboard.html, apps-script/department-dashboard/script.html, apps-script/department-dashboard/styles.html, apps-script/department-dashboard/appsscript.json
+  apps-script/department-dashboard/Auth.gs, apps-script/department-dashboard/Code.gs, apps-script/department-dashboard/Config.gs, apps-script/department-dashboard/Data.gs, apps-script/department-dashboard/Diagnostics.gs, apps-script/department-dashboard/Setup.gs, apps-script/department-dashboard/MissedCallsReport.gs, apps-script/department-dashboard/IndividualReport.gs, apps-script/department-dashboard/PerformanceReport.gs, apps-script/department-dashboard/CompareRangesReport.gs, apps-script/department-dashboard/Alerts.gs, apps-script/department-dashboard/CompanyOverview.gs, apps-script/department-dashboard/access_denied.html, apps-script/department-dashboard/dashboard.html, apps-script/department-dashboard/script.html, apps-script/department-dashboard/styles.html, apps-script/department-dashboard/appsscript.json
 
 CDR DQE Pipeline:
   apps-script/cdr-report/buildDQEHistoricalData.js, apps-script/cdr-report/DQEdrilldown.js, apps-script/cdr-report/DQEDrilldownSidebar.html, apps-script/cdr-report/dataFilters.js, apps-script/cdr-report/CDR Tools menu.js, apps-script/cdr-report/appsscript.json
@@ -211,12 +287,20 @@ INV-26 | TEAM_AVG_EXCLUDES in Config.gs lists per-dept agent names removed from 
 INV-27 | Individual Report's team-avg denominator counts only roster members with ANY call activity (rung/answered/missed > 0) in the selected range, NOT the full roster size. Zero-call roster members don't dilute the average. | Subsystem: Department Dashboard
 INV-28 | Performance Report's prior period is the immediately-preceding window of the same duration (durationDays before currentStart, ending one day before currentStart) -- NOT "previous calendar month". Documented in the form's inline hint and the results-header "Comparing against..." line. Match legacy SingleRangeReport semantics. | Subsystem: Department Dashboard
 INV-29 | Individual Report's monthly trend window: range itself when selected range > 366 days OR equals a full calendar year (Jan 1 - Dec 31 of one year); else `first-of-month(end - 12 months)` to `end`. Performance Report uses identical logic so the 12-mo trends align across both reports for the same dept. | Subsystem: Department Dashboard
-INV-30 | Each report has its own versioned cache key prefix; bump on any aggregation rule change so stale entries don't bleed in. Current: `summary:v3` (Data.gs), `individual:v4` (IndividualReport.gs), `individual_active:v1` (active-agents-in-range subset used by Individual + Performance + Compare Ranges pickers), `performance:v2` (PerformanceReport.gs), `compareRanges:v2` (CompareRangesReport.gs). Alerts.gs holds no cached compute. | Subsystem: Department Dashboard
+INV-30 | Each report has its own versioned cache key prefix; bump on any aggregation rule change so stale entries don't bleed in. Current: `summary:v4` (Data.gs), `latestDate:v1` (Data.gs — most-recent ISO date with data; drives the dashboard's default From/To), `individual:v5` (IndividualReport.gs), `individual_active:v1` (active-agents-in-range subset used by Individual + Performance + Compare Ranges pickers), `performance:v3` (PerformanceReport.gs), `compareRanges:v3` (CompareRangesReport.gs), `companyOverview:v6` (CompanyOverview.gs). Alerts.gs holds no cached compute. | Subsystem: Department Dashboard
 INV-31 | `script.send_mail` OAuth scope in appsscript.json is required for the Individual / Performance / Compare Ranges "Email image" exports AND for the Low Answer Rate Alerts engine (MailApp.sendEmail). Removing the scope breaks all four paths; adding new send-mail features here doesn't need a re-scope. | Subsystem: Department Dashboard
 INV-32 | Compare Ranges and Low Answer Rate Alerts are admin-only at the server boundary. Every public callable in CompareRangesReport.gs and Alerts.gs starts with an admin role check (`assertAdmin_` in Alerts.gs; inline `user.role !== 'admin'` in CR). The launcher buttons are hidden client-side too, but server checks are the source of truth. Adding a new admin = editing `ADMIN_EMAILS` in Config.gs. | Subsystem: Department Dashboard
 INV-33 | `runDailyAlerts_` (time-triggered alerts) skips Saturdays and Sundays. Holiday handling is intentionally not built in -- if it becomes noise in practice, add a skip-dates column to the Alert Config sheet rather than hardcoding in Alerts.gs. Manual sends via the UI ignore this skip. | Subsystem: Department Dashboard
 INV-34 | `Alert Config` columns: Department \| Threshold % \| Extra Recipients \| Active \| Notes. `Alert Log` columns: Timestamp \| Department \| Date Checked \| Threshold % \| Answer Rate % \| Sent \| Recipients \| Triggered By \| Notes \| Status. Both sheets idempotently created by setup(); never overwritten. Alerts.gs's `readAlertConfig_` and `appendAlertLog_` depend on these schemas. | Subsystem: Department Dashboard
 INV-35 | Compare Ranges flags `meta.lengthMismatch=true` when the longer of the two periods is at least 1.2x the shorter (`Math.max(p1Days,p2Days) / Math.min(...) >= 1.2`). The flag drives the form's warning hint, the results-page banner, KPI per-day captions, and CSV per-day columns. Tunable threshold in `computeCompareRanges_`. | Subsystem: Department Dashboard
+INV-36 | Cache keys that embed agent selections must hash via `Data.gs::hashAgents_` (MD5 hex, 32 chars, order-insensitive). Apps Script CacheService silently rejects keys > 250 chars; raw-joined agent lists overflow on big rosters like Sales and surface as report-generation errors. IR / PR / CR all use the hash; future report code that caches per agent-selection must follow suit. | Subsystem: Department Dashboard
+INV-37 | The dashboard is a two-page web app toggled via `body[data-page="overview"|"dept"]`. Default landing is `overview` (set inline on the body tag so the right page paints before JS runs). `setPage(name)` swaps the page, updates the header kicker+h1, and (for `overview`) triggers a fresh `getCompanyOverview()` fetch. `refresh()` only writes the dept name into `#page-title` when the dept page is active, so swapping dept on Overview doesn't clobber "Departments Snapshot". | Subsystem: Department Dashboard
+INV-38 | `OVERVIEW_PARENT_OF` (CompanyOverview.gs) defines sub-queue parent-child relationships for the Overview tile grid ONLY. The dept dropdown, all Reports modals, and Alerts treat each dept as independent. Keys must match the `DO NOT EDIT!` column header byte-for-byte; aliases (e.g. both `PAP` and `PAP Q` mapping to Sales) are tolerated. `OVERVIEW_HIDDEN_DEPTS` excludes depts from the Overview only (e.g. `CSR Backup`). | Subsystem: Department Dashboard
+INV-39 | `companyAggregate` in the Overview payload is admin-only via `personalizeOverview_`: the full blob (including aggregate) is cached for everyone, but the aggregate field is stripped on serve for non-admins. Viewer-personalized fields `viewerRole` and `viewerDept` are injected per-request, never cached — so a payload warmed by user A still personalizes correctly for user B. Adding a new admin-only Overview field means stripping it inside `personalizeOverview_`. | Subsystem: Department Dashboard
+INV-40 | Overview "X of Y agents" caption denominator is `recentlyActiveCount` = any rung/answered/missed activity in the last `OVERVIEW_RECENT_ACTIVE_DAYS` (=30) days, NOT full roster size. Filters out ex-employees who are kept on the `DO NOT EDIT!` sheet for historical-data preservation. Hover tooltip exposes today-active / recent-active / full-roster numbers so the choice is transparent. Same logic powers the company aggregate's Active count. | Subsystem: Department Dashboard
+INV-41 | chartjs-plugin-datalabels requires `Chart.register(ChartDataLabels)` AND `Chart.defaults.plugins.datalabels.display = true` at module load (the `registerChartDataLabels_` IIFE in script.html does both). Chart.js v4 dropped script-tag auto-registration; the plugin defaults to display=false since v1.0.0. Per-chart `display: false` overrides still suppress labels (Missed Calls radar, Overview multi-line trend). Use the boolean form of `display` per chart — the function form returns false unpredictably on mixed bar+line charts in this plugin version. | Subsystem: Department Dashboard
+INV-42 | `refreshChartTheme()` (script.html) resolves every CSS custom property via `colorToCanvasRgb_()` — paints onto a 1×1 canvas and reads back canonical `rgba(...)`. Required because chartjs-plugin-datalabels' `fillStyle` path can't parse `oklch(...)` strings → silently renders empty fills (invisible labels). Never pass raw `getComputedStyle(...).getPropertyValue('--token')` to chart options; always go through `THEME.*`. Hook is re-run on dark-mode toggle so newly-rendered charts pick up the inverted palette. | Subsystem: Department Dashboard
+INV-43 | Default From/To on the My Department page snaps to the most-recent ISO date present in DQE Historical Data, via `Data.gs::getLatestDataDate()` (cached under `latestDate:v1`). Falls back to today on failure. Replaces the legacy "current-month-to-date" default so the table isn't empty when a manager opens the dashboard before today's ingest has run. | Subsystem: Department Dashboard
 
 ### Policy Configuration
 Policy threshold: 6/10
@@ -226,8 +310,9 @@ Consecutive cycles: 2
 S1 | Manager loads own-dept dashboard | Subsystem: Department Dashboard
   Steps:
     - Manager opens the deployed web app URL.
-    - Confirm header shows their dept + email + blue "manager" tag.
-    - Confirm From/To default to current-month-to-date; agent table populates within 3 seconds.
+    - Confirm the page lands on Overview ("Departments Snapshot" kicker + h1); the email + blue "manager" tag appear in the header.
+    - Click "My Department" in the header nav.
+    - Confirm header h1 swaps to the manager's dept name; From/To both default to the latest ISO date in DQE Historical Data; agent table populates within 3 seconds.
     - Confirm scope toggle defaults to "Roster".
   Expected: only that manager's dept agents appear; info-line shows "fresh read" first load, "cache hit" on immediate refresh.
 
@@ -355,6 +440,32 @@ S22 | setup() creates Alert Config + Alert Log idempotently | Subsystem: Departm
     - In a fresh spreadsheet without those sheets, run setup() once.
     - Run setup() again.
   Expected: first run creates Access Control + Alert Config + Alert Log (each with their header row + frozen first row); second run logs "already exists, skipping" for all three -- no data overwritten.
+
+S23 | Overview is the default landing + tile click routes admins | Subsystem: Department Dashboard
+  Steps:
+    - Open the deployed URL (admin or manager).
+    - Confirm Overview page loads first; header h1 is "Departments Snapshot"; the Overview button has the inverted (active) styling.
+    - As admin: click any dept tile in the grid.
+  Expected: page swaps to My Department; header h1 becomes that dept's name; dept-selector reflects the clicked dept; agent table renders for the latest ISO date.
+
+S24 | Sub-queue nests under parent hero on Overview | Subsystem: Department Dashboard
+  Steps:
+    - As admin: pick Sales from the dept-selector and return to Overview (or open Overview with Sales already selected).
+    - Inspect the user-hero block.
+  Expected: Sales renders as the big hero tile; PAP appears as an indented child tile directly underneath (accent-tinted background + ↳ glyph + "sub-queue · Sales" tag). PAP does NOT additionally appear as a standalone tile in the grid below. Same expectation for CSR (with Spanish nested) and Power (with PAK nested).
+
+S25 | Company aggregate visibility is admin-only | Subsystem: Department Dashboard
+  Steps:
+    - Open Overview as a manager (non-admin).
+    - Open Overview as an admin.
+  Expected: manager sees the dept grid + 30-day trend chart but no "Company snapshot · admin only" hero; admin sees that hero at the top with rung/answered/missed/ATT/active counts + a 30-day company-wide sparkline.
+
+S26 | Big-roster reports complete without cache-key error | Subsystem: Department Dashboard
+  Steps:
+    - As admin: open Individual Report for Sales (or any dept with > 12 agents).
+    - Select all active agents; pick a 30-day range; Generate.
+    - Repeat for Performance Report and Compare Ranges with the same selection.
+  Expected: all three reports return data without "Argument too large" or similar cache errors. The MD5 hash in the cache key (`hashAgents_`) keeps the compound key bounded regardless of roster size; second Generate of the same selection comes back as a cache hit.
 
 ### Frozen Subsystems
 - DQE Report Legacy — manager-facing reports in `apps-script/dqe-report/`. Frozen because migration to Department Dashboard is complete: Individual Report, Performance Report, Compare Ranges, Missed Calls Report, and Low Answer Rate Alerts all live in the dashboard. Replacement: Department Dashboard. Awaiting decommission of the legacy spreadsheet. Unfreeze only if a bug is found in legacy that affects production decisions before the spreadsheet is retired.

@@ -4,7 +4,10 @@ Source of truth for the call-data reporting stack:
 
 - **Department Dashboard** — a Google Apps Script web app that serves
   per-department managers a polished view of their team's DQE call metrics.
-  Replaces the legacy `DQE Report` spreadsheet.
+  Replaces the legacy `DQE Report` spreadsheet. Two-page UI: the
+  **Overview** page (cross-department snapshot, the default landing) and
+  the **My Department** page (per-agent detail table with date-range
+  controls), toggled via header buttons.
 - **Reference copies** of related Apps Script code from sibling projects
   (CDR Report, CDR Import) that the dashboard depends on. Pulled in
   gradually so changes across projects can be reviewed in one place.
@@ -90,6 +93,12 @@ clasp push -f
 - Add yourself as an admin email in `apps-script/department-dashboard/Config.gs` (`ADMIN_EMAILS`).
 - Deploy as Web app: **Execute as: Me**, **Who has access: Anyone within
   [your domain]**.
+- After any push that adds a new OAuth scope to `appsscript.json` (e.g.
+  `script.scriptapp` for the alerts trigger, `script.send_mail` for
+  email exports), open the Apps Script editor and Run → any function
+  once to trigger the re-auth consent prompt. Scope-gated calls
+  otherwise throw permission errors at runtime even though the
+  dashboard page loads fine.
 
 **Optional (alerts):**
 
