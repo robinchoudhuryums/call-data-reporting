@@ -32,7 +32,7 @@
  * (read-only), and reinstating that visibility is part of the
  * design intent for this view.
  *
- * Caching: 5 min under `companyOverview:v5`. Cached blob is shared
+ * Caching: 5 min under `companyOverview:v6`. Cached blob is shared
  * across all users; the admin-only `companyAggregate` field is
  * stripped on serve for non-admins, and viewer-personalized fields
  * (viewerRole/viewerDept) are injected per-request, never cached.
@@ -43,7 +43,7 @@
  * this fits comfortably in a single Apps Script execution.
  */
 
-const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v5';
+const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v6';
 
 // Window (in days) over which we consider an agent "recently
 // active". Used as the denominator for the "X of Y agents" caption
@@ -64,6 +64,10 @@ const OVERVIEW_RECENT_ACTIVE_DAYS = 30;
  * dept name must match the column header in DO NOT EDIT! exactly.
  */
 const OVERVIEW_PARENT_OF = Object.freeze({
+  // Sub-queue names appear here verbatim as they're written in the
+  // DO NOT EDIT! sheet's column headers. Aliases (e.g. "PAP" vs
+  // "PAP Q") are tolerated -- only the matching key takes effect.
+  'PAP':     'Sales',
   'PAP Q':   'Sales',
   'Spanish': 'CSR',
   'PAK':     'Power',

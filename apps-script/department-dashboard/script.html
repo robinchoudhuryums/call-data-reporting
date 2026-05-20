@@ -4230,21 +4230,33 @@
             // appears to suppress labels on mixed bar+line charts in
             // chartjs-plugin-datalabels@2.2.0.
             display: showLabels,
+            // Use each dataset's own color for text + border so each
+            // label visually identifies which series it belongs to
+            // (Answered = good, Missed = warn, % Answered = accent).
+            // Matches the colored-pill aesthetic of the line label.
             color: function (ctx) {
-              // Line dot labels: accent ink on paper-card pill.
-              // Bar labels: ink on paper-card pill (always readable
-              // regardless of bar color).
-              return ctx.dataset.type === 'line' ? THEME.accent : THEME.ink;
+              if (ctx.dataset.type === 'line') return THEME.accent;
+              const bg = ctx.dataset.backgroundColor;
+              return typeof bg === 'string' ? bg : THEME.ink;
             },
             backgroundColor: THEME.paperCard,
             borderColor: function (ctx) {
-              return ctx.dataset.type === 'line' ? THEME.accent : THEME.line;
+              if (ctx.dataset.type === 'line') return THEME.accent;
+              const bg = ctx.dataset.backgroundColor;
+              return typeof bg === 'string' ? bg : THEME.line;
             },
             borderWidth: 1,
             borderRadius: 2,
             padding: { top: 2, bottom: 2, left: 4, right: 4 },
-            align: function (ctx) { return ctx.dataset.type === 'line' ? 'top' : 'end'; },
-            anchor: function (ctx) { return ctx.dataset.type === 'line' ? 'center' : 'end'; },
+            // Stacked bars: center the label inside each segment so
+            // it sits on top of the bar's colored fill rather than
+            // floating above it (which overlapped the next bar's
+            // line dot at the top of the stack). Line dots stay
+            // above-the-point.
+            anchor: function (ctx) { return ctx.dataset.type === 'line' ? 'center' : 'center'; },
+            align: function (ctx) { return ctx.dataset.type === 'line' ? 'top' : 'center'; },
+            clamp: true,
+            clip: false,
             font: { family: "'IBM Plex Mono', monospace", size: 10, weight: '500' },
             formatter: function (value, ctx) {
               if (value == null) return '';
@@ -5704,14 +5716,27 @@
           datalabels: {
             // Boolean form. Conditional zero-hiding lives in formatter.
             display: showLabels,
-            color: THEME.ink,
+            // Per-period colored pill: P1 muted, P2 accent. Matches
+            // the bars' fill so the label visually pairs with its
+            // bar and reads as a styled badge rather than raw text.
+            color: function (ctx) {
+              const bg = ctx.dataset.backgroundColor;
+              return typeof bg === 'string' ? bg : THEME.ink;
+            },
             backgroundColor: THEME.paperCard,
-            borderColor: THEME.line,
+            borderColor: function (ctx) {
+              const bg = ctx.dataset.backgroundColor;
+              return typeof bg === 'string' ? bg : THEME.line;
+            },
             borderWidth: 1,
             borderRadius: 2,
             padding: { top: 2, bottom: 2, left: 4, right: 4 },
-            anchor: 'end',
-            align: 'end',
+            // Inside the bar (size permitting) -- pill background
+            // keeps the label readable on top of any bar color.
+            anchor: 'center',
+            align: 'center',
+            clamp: true,
+            clip: false,
             font: { family: "'IBM Plex Mono', monospace", size: 10, weight: '500' },
             formatter: function (value) {
               if (value == null) return '';
