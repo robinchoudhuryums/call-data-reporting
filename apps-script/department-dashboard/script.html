@@ -59,20 +59,34 @@
   function refreshChartTheme() {
     const css = getComputedStyle(document.body);
     const read = function (name) { return (css.getPropertyValue(name) || '').trim(); };
-    THEME.paper      = read('--paper');
-    THEME.paperCard  = read('--paper-card');
-    THEME.paper2     = read('--paper-2');
-    THEME.ink        = read('--ink');
-    THEME.muted      = read('--muted');
-    THEME.line       = read('--line');
-    THEME.accent     = read('--accent');
-    THEME.accentSoft = read('--accent-soft');
-    THEME.good       = read('--good');
-    THEME.goodSoft   = read('--good-soft');
-    THEME.warn       = read('--warn');
-    THEME.warnSoft   = read('--warn-soft');
+    // Read into a local first; only commit to THEME / Chart.defaults
+    // if the CSS variables actually resolved. If we run before the
+    // browser has fully computed styles (rare but seen in field),
+    // the reads return empty strings and would otherwise overwrite
+    // Chart.defaults with '' -- silently breaking scale rendering
+    // on bar / line charts (doughnut is unaffected because it has
+    // no scales).
+    const newValues = {
+      paper:      read('--paper'),      paperCard:  read('--paper-card'),
+      paper2:     read('--paper-2'),    ink:        read('--ink'),
+      muted:      read('--muted'),      line:       read('--line'),
+      accent:     read('--accent'),     accentSoft: read('--accent-soft'),
+      good:       read('--good'),       goodSoft:   read('--good-soft'),
+      warn:       read('--warn'),       warnSoft:   read('--warn-soft'),
+    };
+    // Commit only the non-empty values. THEME keeps any prior good
+    // values across re-runs.
+    Object.keys(newValues).forEach(function (k) {
+      if (newValues[k]) THEME[k] = newValues[k];
+    });
 
     if (typeof Chart === 'undefined') return;
+    // Skip Chart.defaults pollution if the critical theme values
+    // didn't resolve. Chart.js library defaults are perfectly
+    // serviceable; better that than empty-string color props that
+    // can make scale-based charts vanish.
+    if (!THEME.muted || !THEME.line || !THEME.paperCard) return;
+
     const FONT_MONO = "'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
     const FONT_DISPLAY = "'Inter Tight', -apple-system, BlinkMacSystemFont, sans-serif";
     Chart.defaults.font.family = FONT_MONO;
@@ -190,15 +204,62 @@
     tag.textContent = USER.role;
     tag.classList.add('tag-' + USER.role);
 
-    // Compare Ranges is admin-only -- reveal the launcher button
-    // only for users whose role resolved to admin. The server
-    // enforces the same check independently.
+    // Admin-only menu items: Compare Ranges (under Reports) and
+    // the entire Admin menu wrap (which holds Alerts). The Alerts
+    // menu item itself stays visible inside the admin wrap so a
+    // single role check governs both. Server enforces independently.
     if (USER.role === 'admin') {
-      const crBtn = $('compare-ranges-btn');
-      if (crBtn) crBtn.style.display = '';
-      const alBtn = $('alerts-btn');
-      if (alBtn) alBtn.style.display = '';
+      document.querySelectorAll('[data-admin-only]').forEach(function (el) {
+        el.style.display = '';
+      });
     }
+
+    // -- Header dropdown menus (Reports + Admin) --------------------
+    // Toggle behavior: clicking a menu button opens its list and
+    // closes any other open menu; clicking the same button again
+    // closes it; clicking outside or pressing Escape dismisses.
+    // Clicking a menu item dispatches the underlying button's
+    // click handler (the item IS the original report-launcher
+    // button, just restyled) and closes the menu.
+    (function initHeaderMenus_() {
+      const buttons = document.querySelectorAll('.header-menu-btn');
+      const lists   = document.querySelectorAll('.header-menu-list');
+      function closeAll() {
+        lists.forEach(function (l) { l.style.display = 'none'; });
+        buttons.forEach(function (b) { b.setAttribute('aria-expanded', 'false'); });
+      }
+      buttons.forEach(function (btn) {
+        const listId = btn.getAttribute('aria-controls');
+        const list = document.getElementById(listId);
+        if (!list) return;
+        btn.addEventListener('click', function (e) {
+          e.stopPropagation();
+          const open = list.style.display !== 'none';
+          closeAll();
+          if (!open) {
+            list.style.display = '';
+            btn.setAttribute('aria-expanded', 'true');
+          }
+        });
+      });
+      // Close on outside click. Items inside the list don't bubble
+      // up to here because we listen on document.
+      document.addEventListener('click', function (e) {
+        if (!e.target.closest('.header-menu')) closeAll();
+      });
+      // Close on Escape.
+      document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') closeAll();
+      });
+      // Close after a menu item is activated -- the modal-open
+      // handler already runs because the menu item IS the original
+      // launcher button.
+      lists.forEach(function (list) {
+        list.addEventListener('click', function (e) {
+          if (e.target.closest('.header-menu-item')) closeAll();
+        });
+      });
+    })();
 
     // Department selector vs static label
     if (USER.role === 'admin' && USER.departments && USER.departments.length) {
@@ -502,6 +563,9 @@
       }
     };
 
+    // Refresh THEME tokens right before chart creation so values
+    // resolved late reach Chart.defaults pre-instantiation.
+    refreshChartTheme();
     // Canvas is always freshly recreated above, so we always
     // instantiate a new Chart rather than update an existing one.
     missedChart = new Chart(ctx, cfg);
@@ -2048,6 +2112,10 @@
   }
 
   function irRenderCharts(data) {
+    // Refresh THEME tokens right before chart creation so values
+    // resolved late (slow CSS / font load) reach Chart.defaults
+    // before the first chart is instantiated.
+    refreshChartTheme();
     // Destroy old charts to avoid Chart.js leaks / canvas reuse errors.
     irChartInstances.forEach(function (c) { c.destroy(); });
     irChartInstances = [];
@@ -3228,6 +3296,9 @@
   }
 
   function prRenderCharts_(data) {
+    // Refresh THEME tokens right before chart creation so values
+    // resolved late reach Chart.defaults pre-instantiation.
+    refreshChartTheme();
     prChartInstances.forEach(function (c) { c.destroy(); });
     prChartInstances = [];
 
@@ -3398,6 +3469,9 @@
    * tail of prChartInstances so re-renders don't accumulate.
    */
   function prRenderTrendChart_(data) {
+    // Refresh THEME tokens right before chart creation so values
+    // resolved late reach Chart.defaults pre-instantiation.
+    refreshChartTheme();
     // Destroy any existing trend chart instance.
     const remaining = [];
     prChartInstances.forEach(function (c) {
@@ -4571,6 +4645,11 @@
                    : x.direction === 'regressed' ? 'cr-card-regressed'
                    : 'cr-card-mixed';
     const vsTeam = crVsTeamBadge_(x.score, teamScore);
+    // Surface the classifier inputs on the DOM so it's debuggable
+    // in DevTools without re-instrumenting the JS.
+    const debugAttrs =
+      ' data-direction="' + x.direction + '"'
+      + ' data-score="' + (x.score == null ? '' : x.score.toFixed(1)) + '"';
     const rows = [
       crCardRow_('Total Rung',  a.p1.formatted.rung,     a.p2.formatted.rung,     a.deltas.rung,
                   'pos', a.p1.raw.rung,     a.p2.raw.rung,     meta, 'volume'),
@@ -4585,7 +4664,7 @@
       crCardRow_('Avg ATT',     a.p1.formatted.att,      a.p2.formatted.att,      a.deltas.att,
                   'neu', null, null, meta, 'rate'),
     ].join('');
-    return '<div class="cr-agent-card ' + dirClass + '">'
+    return '<div class="cr-agent-card ' + dirClass + '"' + debugAttrs + '>'
          +   '<div class="cr-agent-card-header">'
          +     '<span class="cr-agent-name">' + safe + '</span>'
          +     vsTeam
@@ -4739,6 +4818,9 @@
    * are clean.
    */
   function crRenderChart_(data) {
+    // Refresh THEME tokens right before chart creation so values
+    // resolved late reach Chart.defaults pre-instantiation.
+    refreshChartTheme();
     if (crChartInstance) { crChartInstance.destroy(); crChartInstance = null; }
     const showLabels = $('cr-show-datalabels') ? $('cr-show-datalabels').checked : true;
     const crPlugins = (typeof ChartDataLabels !== 'undefined') ? [ChartDataLabels] : [];

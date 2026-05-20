@@ -17,12 +17,16 @@
      Fonts:    --display (Inter Tight), --ui (Inter), --mono (IBM Plex Mono)
      ============================================================== */
   :root {
-    --paper:       #f6f7f9;
-    --paper-2:     #eceef2;
+    /* Warm-paper neutrals: visibly warm/cream rather than the
+       earlier very-subtle blue-gray which read as "same light
+       gray as before". Tunable -- the design system holds these
+       in just the three tokens below. */
+    --paper:       #f7f2e6;
+    --paper-2:     #ede6d3;
     --paper-card:  #ffffff;
     --ink:         #101418;
     --muted:       #606872;
-    --line:        #dadde3;
+    --line:        #d6d1c2;
 
     --accent:      #4e7bc4;
     --accent-soft: #e3edf8;
@@ -47,8 +51,11 @@
   }
   /* Dark mode overlay — toggled via body[data-mode="dark"] from the
      header button. Only the token values shift; every selector below
-     keeps using the same var() refs. */
+     keeps using the same var() refs. color-scheme: dark hints the
+     browser to render native form controls (date pickers, scrollbars,
+     option lists) in a dark style instead of the default light one. */
   body[data-mode="dark"] {
+    color-scheme: dark;
     --paper:       #0c0f14;
     --paper-2:     #151a22;
     --paper-card:  #13171e;
@@ -58,6 +65,13 @@
     --accent-soft: #1d2945;
     --good-soft:   #1a2f24;
     --warn-soft:   #3a1e15;
+  }
+  /* Native calendar-picker icon: by default the WebKit/Chromium
+     SVG is black, which disappears against the dark paper. Invert
+     it for dark mode so the icon stays legible. */
+  body[data-mode="dark"] input[type="date"]::-webkit-calendar-picker-indicator {
+    filter: invert(1);
+    opacity: 0.85;
   }
   @supports (color: oklch(50% 0.1 240)) {
     body[data-mode="dark"] {
@@ -150,6 +164,79 @@
     gap: 10px;
   }
   .header-meta .email { font-family: var(--mono); font-size: 12px; }
+
+  /* Header nav menus (Reports + Admin dropdowns).  Sit between the
+     dept title block and the .header-meta utility cluster.  On
+     narrow viewports the whole header wraps and the nav drops to a
+     new row -- the dropdowns still anchor right-aligned to their
+     trigger buttons. */
+  .header-nav {
+    display: flex;
+    gap: 8px;
+    align-self: flex-end;
+    margin-bottom: 6px;
+  }
+  .header-menu { position: relative; }
+  .header-menu-btn {
+    background: transparent;
+    border: 1px solid var(--line);
+    border-radius: 2px;
+    color: var(--ink);
+    font-family: var(--ui);
+    font-size: 13px;
+    font-weight: 500;
+    padding: 6px 12px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    transition: background 0.12s, border-color 0.12s;
+  }
+  .header-menu-btn:hover { background: var(--paper-2); }
+  .header-menu-btn[aria-expanded="true"] {
+    background: var(--paper-2);
+    border-color: var(--muted);
+  }
+  .header-menu-caret {
+    font-size: 9px;
+    color: var(--muted);
+    transition: transform 0.15s;
+  }
+  .header-menu-btn[aria-expanded="true"] .header-menu-caret {
+    transform: rotate(180deg);
+  }
+  .header-menu-list {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    background: var(--paper-card);
+    border: 1px solid var(--line);
+    border-radius: 2px;
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.10);
+    min-width: 200px;
+    padding: 4px;
+    z-index: 100;
+  }
+  .header-menu-item {
+    display: block;
+    width: 100%;
+    text-align: left;
+    background: transparent;
+    border: 0;
+    padding: 8px 12px;
+    font-family: var(--ui);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--ink);
+    cursor: pointer;
+    border-radius: 2px;
+    line-height: 1.4;
+  }
+  .header-menu-item:hover { background: var(--paper-2); }
+  .header-menu-item:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+  }
 
   /* Help button (opens FAQ modal) */
   .help-btn {
