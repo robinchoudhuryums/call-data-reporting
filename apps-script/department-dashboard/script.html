@@ -2,8 +2,125 @@
 (function () {
   'use strict';
 
+  // -- Dark mode toggle (Step 1 of the Call-Analyzer visual parity work).
+  // Reads persisted preference and wires the header button. Runs before
+  // any other UI setup so the page paints in the right mode immediately.
+  // The script.html include sits at the end of <body>, so #mode-btn and
+  // document.body are already in the DOM when this executes.
+  (function initModeToggle() {
+    const MODE_KEY = 'dash-mode';
+    let saved = null;
+    try { saved = localStorage.getItem(MODE_KEY); } catch (e) {}
+    const initial = (saved === 'dark' || saved === 'light') ? saved : 'light';
+    if (initial === 'dark') document.body.dataset.mode = 'dark';
+
+    const btn = document.getElementById('mode-btn');
+    if (!btn) return;
+    const render = () => {
+      const dark = document.body.dataset.mode === 'dark';
+      btn.textContent = dark ? '☀' : '◐';
+      btn.setAttribute('aria-label', dark ? 'Switch to light mode' : 'Switch to dark mode');
+      btn.setAttribute('title', dark ? 'Switch to light mode' : 'Switch to dark mode');
+    };
+    render();
+    btn.addEventListener('click', () => {
+      const dark = document.body.dataset.mode === 'dark';
+      if (dark) delete document.body.dataset.mode;
+      else document.body.dataset.mode = 'dark';
+      try { localStorage.setItem(MODE_KEY, dark ? 'light' : 'dark'); } catch (e) {}
+      render();
+      // Notify the Chart.js theme bridge so its next render uses the
+      // new tokens. Already-mounted charts keep their pixels until
+      // they're rebuilt.
+      window.dispatchEvent(new Event('dash-mode-change'));
+    });
+  })();
+
   // window.__USER__ is injected by the dashboard template.
   const USER = window.__USER__ || { role: 'none', email: '', department: null, departments: [] };
+
+  // -- Chart.js theme bridge (Step 4 of the Call-Analyzer visual parity).
+  // Reads the same CSS custom properties styles.html publishes and applies
+  // them to Chart.defaults so every Chart() instance picks up the slate
+  // palette + Inter / IBM Plex Mono typography without per-chart wiring.
+  // Resolved values are also exposed via THEME for the few sites that
+  // need to set dataset/datalabel colors explicitly.
+  // Trade-off: existing chart canvases don't re-paint when the user
+  // toggles dark mode mid-session. The next chart instantiated after
+  // the toggle picks up the new values; previously-rendered ones keep
+  // their light-mode pixels until they're closed + reopened.
+  const THEME = {
+    paper: '', paperCard: '', paper2: '',
+    ink: '',   muted: '',     line: '',
+    accent: '', accentSoft: '',
+    good: '',   goodSoft: '',
+    warn: '',   warnSoft: '',
+  };
+  function refreshChartTheme() {
+    const css = getComputedStyle(document.body);
+    const read = function (name) { return (css.getPropertyValue(name) || '').trim(); };
+    THEME.paper      = read('--paper');
+    THEME.paperCard  = read('--paper-card');
+    THEME.paper2     = read('--paper-2');
+    THEME.ink        = read('--ink');
+    THEME.muted      = read('--muted');
+    THEME.line       = read('--line');
+    THEME.accent     = read('--accent');
+    THEME.accentSoft = read('--accent-soft');
+    THEME.good       = read('--good');
+    THEME.goodSoft   = read('--good-soft');
+    THEME.warn       = read('--warn');
+    THEME.warnSoft   = read('--warn-soft');
+
+    if (typeof Chart === 'undefined') return;
+    const FONT_MONO = "'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
+    const FONT_DISPLAY = "'Inter Tight', -apple-system, BlinkMacSystemFont, sans-serif";
+    Chart.defaults.font.family = FONT_MONO;
+    Chart.defaults.font.size = 10.5;
+    Chart.defaults.color = THEME.muted;
+    Chart.defaults.borderColor = THEME.line;
+    // Per-scale-type defaults (Chart.js v4): grid lines + tick color
+    ['linear', 'category', 'time', 'logarithmic'].forEach(function (k) {
+      const s = Chart.defaults.scales && Chart.defaults.scales[k];
+      if (!s) return;
+      if (s.grid)   s.grid.color   = THEME.line;
+      if (s.border) s.border.color = THEME.line;
+      if (s.ticks)  s.ticks.color  = THEME.muted;
+    });
+    const radial = Chart.defaults.scales && Chart.defaults.scales.radialLinear;
+    if (radial) {
+      if (radial.grid)        radial.grid.color        = THEME.line;
+      if (radial.angleLines)  radial.angleLines.color  = THEME.line;
+      if (radial.pointLabels) radial.pointLabels.color = THEME.muted;
+      if (radial.ticks)       radial.ticks.color       = THEME.muted;
+    }
+    // Tooltip — paper-card panel with ink text, mono body, display title
+    const tt = Chart.defaults.plugins.tooltip;
+    tt.backgroundColor = THEME.paperCard;
+    tt.titleColor      = THEME.ink;
+    tt.bodyColor       = THEME.ink;
+    tt.borderColor     = THEME.line;
+    tt.borderWidth     = 1;
+    tt.cornerRadius    = 2;
+    tt.padding         = 8;
+    tt.titleFont       = { family: FONT_DISPLAY, size: 12, weight: '500' };
+    tt.bodyFont        = { family: FONT_MONO,    size: 11 };
+    tt.boxPadding      = 4;
+    // Legend — muted mono labels (matches the kicker rhythm)
+    const lg = Chart.defaults.plugins.legend.labels;
+    lg.color = THEME.muted;
+    lg.font  = { family: FONT_MONO, size: 10 };
+    // Title (used by IR charts' chartHeader)
+    if (Chart.defaults.plugins.title) {
+      Chart.defaults.plugins.title.color = THEME.muted;
+      Chart.defaults.plugins.title.font  = { family: FONT_MONO, size: 11, weight: '500' };
+    }
+  }
+  refreshChartTheme();
+  // Hook the dark-mode toggle wiring above so newly-rendered charts
+  // pick up the inverted palette. (Already-rendered canvases keep
+  // their old pixels — acceptable trade-off; documented above.)
+  window.addEventListener('dash-mode-change', refreshChartTheme);
 
   const state = {
     rows: [],
@@ -339,9 +456,9 @@
           label: 'Missed calls',
           data: chart.counts || [],
           fill: true,
-          backgroundColor: 'rgba(255, 99, 132, 0.2)',
-          borderColor: 'rgb(255, 99, 132)',
-          pointBackgroundColor: 'rgb(255, 99, 132)',
+          backgroundColor: THEME.warnSoft,
+          borderColor: THEME.warn,
+          pointBackgroundColor: THEME.warn,
           pointRadius: 3,
         }]
       },
@@ -907,20 +1024,26 @@
   // The agent roster is fetched once on first open per dept; if the
   // user switches dept on the main page (admin only), we re-fetch.
 
-  // Tableau-10-derived palette; tested against deuteranopia + protanopia
-  // simulators. Chart series cycle through this for peer comparison.
+  // Peer-comparison palette. The first slot pulls from --accent so the
+  // primary agent matches the dashboard's slate-blue chrome; the rest
+  // are kept from the Tableau-10-derived CVD-safe palette so 2-10
+  // agents stay visually distinct in comparison mode.
   const IR_CHART_COLORS = [
-    '#4E79A7', '#F28E2B', '#76B7B2', '#59A14F', '#EDC948',
+    THEME.accent || '#4E79A7',
+    '#F28E2B', '#76B7B2', '#59A14F', '#EDC948',
     '#B07AA1', '#FF9DA7', '#9C755F', '#BAB0AC', '#E15759',
   ];
 
-  // Used in Individual mode where the three Rung/Answered/Missed
-  // series should be unambiguous even for color-blind viewers.
-  // Blue / Teal / Orange instead of red/green for the missed series.
+  // Single-agent volume chart triples (Rung / Answered / Missed).
+  // Route each to a design-token role so the visual semantics stay
+  // consistent with the rest of the app: accent = primary, good =
+  // success direction, warn = negative-valence direction. Falls
+  // back to the prior Tableau hex values when CSS tokens haven't
+  // resolved yet (defensive — refreshChartTheme runs at boot).
   const IR_VOLUME_COLORS = {
-    rung:     '#4E79A7',  // blue
-    answered: '#59A14F',  // green (kept; "answered = good" reads well)
-    missed:   '#F28E2B',  // orange (replaces red; readable for CVD users)
+    rung:     THEME.accent || '#4E79A7',
+    answered: THEME.good   || '#59A14F',
+    missed:   THEME.warn   || '#F28E2B',
   };
 
   // Translates a hex color to a Chart.js fill callback that paints a
@@ -1962,7 +2085,7 @@
         tension: 0.4,
         fill: o.fill !== false,
         pointBackgroundColor: hex,
-        pointBorderColor: '#fff',
+        pointBorderColor: THEME.paperCard,
         pointBorderWidth: 1.5,
         pointRadius: 3,
         pointHoverRadius: 5,
@@ -1997,8 +2120,8 @@
     });
     effData.push({
       label: 'Goal', data: new Array(labels.length).fill(95),
-      borderColor: '#9CA3AF', borderDash: [4, 4], pointRadius: 0,
-      fill: false, tension: 0, hexColor: '#9CA3AF', _irAgent: null,
+      borderColor: THEME.muted, borderDash: [4, 4], pointRadius: 0,
+      fill: false, tension: 0, hexColor: THEME.muted, _irAgent: null,
     });
     irCreateChart($('ir-eff-chart'), '% Answered', labels, effData,
                   { isPercent: true, isTimeMinutes: false, showLabels: showLabels, sharedLegend: data.mode === 'comparison' });
@@ -2138,11 +2261,11 @@
           datalabels: {
             display: showLabels,
             align: 'top', anchor: 'center',
-            backgroundColor: 'rgba(255,255,255,0.9)',
+            backgroundColor: THEME.paperCard,
             borderColor: function (ctx) { return ctx.dataset.borderColor; },
-            borderWidth: 1, borderRadius: 3,
+            borderWidth: 1, borderRadius: 2,
             color: function (ctx) { return ctx.dataset.borderColor; },
-            font: { size: 10, weight: 'bold' },
+            font: { family: "'IBM Plex Mono', monospace", size: 10, weight: '500' },
             formatter: function (value, ctx) {
               if (ctx.dataset.label === 'Goal') return '';
               if (!value || value == 0) return '';
@@ -2230,7 +2353,7 @@
       irChartInstances.forEach(function (c) { c.resize(); });
 
       html2canvas(root, {
-        scale: 2, useCORS: true, backgroundColor: '#f4f6f9',
+        scale: 2, useCORS: true, backgroundColor: '#f6f7f9',
         onclone: function (clonedDoc) {
           const btns = clonedDoc.getElementById('ir-action-buttons');
           if (btns) btns.style.display = 'none';
@@ -3137,7 +3260,7 @@
         datasets: [{
           data:            pieData.map(function (d) { return d.value; }),
           backgroundColor: pieColors,
-          borderColor: '#fff',
+          borderColor: THEME.paperCard,
           borderWidth: 2,
         }],
       },
@@ -3163,8 +3286,8 @@
               const total = ctx.dataset.data.reduce(function (a, b) { return a + b; }, 0);
               return total > 0 && (ctx.dataset.data[ctx.dataIndex] / total) >= 0.04;
             },
-            color: '#fff',
-            font: { size: 11, weight: 'bold' },
+            color: THEME.paper,
+            font: { family: "'IBM Plex Mono', monospace", size: 11, weight: '500' },
             textAlign: 'center',
             formatter: function (value, ctx) {
               const total = ctx.dataset.data.reduce(function (a, b) { return a + b; }, 0);
@@ -3197,10 +3320,10 @@
             order: 2 },
           { label: '% Answered', type: 'line',
             data: volData.map(function (d) { return Number((d.pct || 0).toFixed(1)); }),
-            borderColor: '#4E79A7', backgroundColor: '#4E79A7',
+            borderColor: THEME.accent, backgroundColor: THEME.accent,
             tension: 0.3, fill: false, yAxisID: 'y1',
-            pointRadius: 4, pointBackgroundColor: '#4E79A7',
-            pointBorderColor: '#fff', pointBorderWidth: 1.5,
+            pointRadius: 4, pointBackgroundColor: THEME.accent,
+            pointBorderColor: THEME.paperCard, pointBorderWidth: 1.5,
             order: 1 },
         ],
       },
@@ -3226,19 +3349,19 @@
               return Number(ctx.parsed.y || ctx.parsed) > 0;
             },
             color: function (ctx) {
-              return ctx.dataset.type === 'line' ? '#1E40AF' : '#fff';
+              return ctx.dataset.type === 'line' ? THEME.accent : THEME.paper;
             },
             backgroundColor: function (ctx) {
-              return ctx.dataset.type === 'line' ? 'rgba(255,255,255,0.9)' : null;
+              return ctx.dataset.type === 'line' ? THEME.paperCard : null;
             },
             borderColor: function (ctx) {
-              return ctx.dataset.type === 'line' ? '#4E79A7' : null;
+              return ctx.dataset.type === 'line' ? THEME.accent : null;
             },
             borderWidth: function (ctx) { return ctx.dataset.type === 'line' ? 1 : 0; },
-            borderRadius: 3,
+            borderRadius: 2,
             align: function (ctx) { return ctx.dataset.type === 'line' ? 'top' : 'center'; },
             anchor: function (ctx) { return ctx.dataset.type === 'line' ? 'center' : 'center'; },
-            font: { size: 10, weight: 'bold' },
+            font: { family: "'IBM Plex Mono', monospace", size: 10, weight: '500' },
             formatter: function (value, ctx) {
               if (ctx.dataset.type === 'line') return value + '%';
               return value > 0 ? value : '';
@@ -3290,16 +3413,19 @@
 
     // Per-metric chart config: color, data, label formatter, and
     // y-axis treatment (% gets a 0-100 ceiling with a "%" suffix;
-    // ATT formats as minutes; volume is raw counts).
+    // ATT formats as minutes; volume is raw counts). Colors route
+    // through the design tokens so the per-metric tint matches the
+    // app's chrome: accent (slate-blue) for %, muted for ATT,
+    // good (sage) for answered volume.
     let dataPoints, color, label, isPercent, isMinutes;
     if (prActiveTrendMetric === 'pct') {
       dataPoints = series.map(function (s) { return Number((s.pct || 0).toFixed(1)); });
-      color = '#4E79A7';
+      color = THEME.accent || '#4E79A7';
       label = '% Answered';
       isPercent = true;
     } else if (prActiveTrendMetric === 'att') {
       dataPoints = series.map(function (s) { return Number(((s.att || 0) / 60).toFixed(2)); });
-      color = '#9C755F';
+      color = THEME.muted || '#9C755F';
       label = 'Avg Talk Time';
       isMinutes = true;
     } else {
@@ -3328,7 +3454,7 @@
           },
           tension: 0.4, fill: true,
           pointBackgroundColor: color,
-          pointBorderColor: '#fff', pointBorderWidth: 1.5,
+          pointBorderColor: THEME.paperCard, pointBorderWidth: 1.5,
           pointRadius: 3, pointHoverRadius: 5,
         }],
       },
@@ -3352,10 +3478,10 @@
               return Number(ctx.parsed.y || 0) > 0;
             },
             align: 'top', anchor: 'center',
-            backgroundColor: 'rgba(255,255,255,0.9)',
-            borderColor: color, borderWidth: 1, borderRadius: 3,
+            backgroundColor: THEME.paperCard,
+            borderColor: color, borderWidth: 1, borderRadius: 2,
             color: color,
-            font: { size: 10, weight: 'bold' },
+            font: { family: "'IBM Plex Mono', monospace", size: 10, weight: '500' },
             formatter: function (value) {
               if (isPercent) return value + '%';
               if (isMinutes) return fmtMin(value);
@@ -3431,7 +3557,7 @@
       prChartInstances.forEach(function (c) { c.resize(); });
 
       html2canvas(root, {
-        scale: 2, useCORS: true, backgroundColor: '#f4f6f9',
+        scale: 2, useCORS: true, backgroundColor: '#f6f7f9',
         onclone: function (clonedDoc) {
           const btns = clonedDoc.querySelector('#performance-results .ir-action-buttons');
           if (btns) btns.style.display = 'none';
@@ -4647,9 +4773,9 @@
         labels: series.labels,
         datasets: [
           { label: 'Period 1 (Baseline)', data: p1Data,
-            backgroundColor: '#9CA3AF', borderColor: '#6B7280', borderWidth: 1 },
+            backgroundColor: THEME.muted, borderColor: THEME.ink, borderWidth: 1 },
           { label: 'Period 2 (Comparison)', data: p2Data,
-            backgroundColor: '#4E79A7', borderColor: '#1E3A8A', borderWidth: 1 },
+            backgroundColor: THEME.accent, borderColor: THEME.accent, borderWidth: 1 },
         ],
       },
       plugins: crPlugins,
@@ -4664,8 +4790,8 @@
           },
           datalabels: {
             display: function (ctx) { return showLabels && Number(ctx.parsed.y || 0) > 0; },
-            color: '#fff',
-            font: { size: 10, weight: 'bold' },
+            color: THEME.paper,
+            font: { family: "'IBM Plex Mono', monospace", size: 10, weight: '500' },
             formatter: function (value) { return isPercent ? value + '%' : (value > 0 ? value : ''); },
           },
         },
@@ -4720,7 +4846,7 @@
         canvasMap[cvs.id] = cvs.toDataURL('image/png');
       });
       html2canvas(root, {
-        scale: 2, useCORS: true, backgroundColor: '#f4f6f9',
+        scale: 2, useCORS: true, backgroundColor: '#f6f7f9',
         onclone: function (clonedDoc) {
           const btns = clonedDoc.querySelector('#compare-results .ir-action-buttons');
           if (btns) btns.style.display = 'none';
