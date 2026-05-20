@@ -2,6 +2,36 @@
 (function () {
   'use strict';
 
+  // -- Dark mode toggle (Step 1 of the Call-Analyzer visual parity work).
+  // Reads persisted preference and wires the header button. Runs before
+  // any other UI setup so the page paints in the right mode immediately.
+  // The script.html include sits at the end of <body>, so #mode-btn and
+  // document.body are already in the DOM when this executes.
+  (function initModeToggle() {
+    const MODE_KEY = 'dash-mode';
+    let saved = null;
+    try { saved = localStorage.getItem(MODE_KEY); } catch (e) {}
+    const initial = (saved === 'dark' || saved === 'light') ? saved : 'light';
+    if (initial === 'dark') document.body.dataset.mode = 'dark';
+
+    const btn = document.getElementById('mode-btn');
+    if (!btn) return;
+    const render = () => {
+      const dark = document.body.dataset.mode === 'dark';
+      btn.textContent = dark ? '☀' : '◐';
+      btn.setAttribute('aria-label', dark ? 'Switch to light mode' : 'Switch to dark mode');
+      btn.setAttribute('title', dark ? 'Switch to light mode' : 'Switch to dark mode');
+    };
+    render();
+    btn.addEventListener('click', () => {
+      const dark = document.body.dataset.mode === 'dark';
+      if (dark) delete document.body.dataset.mode;
+      else document.body.dataset.mode = 'dark';
+      try { localStorage.setItem(MODE_KEY, dark ? 'light' : 'dark'); } catch (e) {}
+      render();
+    });
+  })();
+
   // window.__USER__ is injected by the dashboard template.
   const USER = window.__USER__ || { role: 'none', email: '', department: null, departments: [] };
 

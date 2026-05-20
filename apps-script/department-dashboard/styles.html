@@ -1,15 +1,90 @@
 <style>
+  /* ==============================================================
+     Design tokens — slate palette, warm-paper-inspired.
+     Mirrors the Call Analyzer design bundle so the two tools read
+     as siblings. Hex fallbacks declared first; modern browsers
+     upgrade to OKLCH via @supports below. If html2canvas exports
+     come back washed out, delete the @supports blocks and the hex
+     fallbacks continue to work unchanged.
+
+     Surfaces: --paper, --paper-2, --paper-card
+     Text:     --ink (primary), --muted (secondary)
+     Lines:    --line (hairline borders, dividers)
+     Accent:   --accent, --accent-soft  (slate blue)
+     Good:     --good,   --good-soft    (sage — admin / success)
+     Warn:     --warn,   --warn-soft    (warm orange — negative valence)
+
+     Fonts:    --display (Inter Tight), --ui (Inter), --mono (IBM Plex Mono)
+     ============================================================== */
+  :root {
+    --paper:       #f6f7f9;
+    --paper-2:     #eceef2;
+    --paper-card:  #ffffff;
+    --ink:         #101418;
+    --muted:       #606872;
+    --line:        #dadde3;
+
+    --accent:      #4e7bc4;
+    --accent-soft: #e3edf8;
+    --good:        #3d9476;
+    --good-soft:   #e0efe6;
+    --warn:        #c66b4b;
+    --warn-soft:   #f6e2d4;
+
+    --display: 'Inter Tight', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --ui:      'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --mono:    'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  @supports (color: oklch(50% 0.1 240)) {
+    :root {
+      --accent:      oklch(55% 0.12 240);
+      --accent-soft: oklch(93% 0.04 240);
+      --good:        oklch(58% 0.10 160);
+      --good-soft:   oklch(93% 0.04 160);
+      --warn:        oklch(60% 0.16 30);
+      --warn-soft:   oklch(93% 0.04 30);
+    }
+  }
+  /* Dark mode overlay — toggled via body[data-mode="dark"] from the
+     header button. Only the token values shift; every selector below
+     keeps using the same var() refs. */
+  body[data-mode="dark"] {
+    --paper:       #0c0f14;
+    --paper-2:     #151a22;
+    --paper-card:  #13171e;
+    --ink:         #ecf0f6;
+    --muted:       #7d8694;
+    --line:        #242a34;
+    --accent-soft: #1d2945;
+    --good-soft:   #1a2f24;
+    --warn-soft:   #3a1e15;
+  }
+  @supports (color: oklch(50% 0.1 240)) {
+    body[data-mode="dark"] {
+      --accent-soft: oklch(28% 0.05 240);
+      --good-soft:   oklch(26% 0.04 160);
+      --warn-soft:   oklch(26% 0.05 30);
+    }
+  }
+
   /* Reset + baseline */
   *, *::before, *::after { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
   body {
-    font: 14px/1.55 -apple-system, system-ui, "Segoe UI", Roboto, sans-serif;
-    background: #f9fafb;
-    color: #1f2937;
+    font-family: var(--ui);
+    font-size: 14px;
+    line-height: 1.55;
+    background: var(--paper);
+    color: var(--ink);
     -webkit-font-smoothing: antialiased;
   }
-  h1, h2, h3 { margin: 0; font-weight: 600; }
-  a { color: #1d4ed8; text-decoration: none; }
+  h1, h2, h3 {
+    margin: 0;
+    font-weight: 500;
+    font-family: var(--display);
+    letter-spacing: -0.2px;
+  }
+  a { color: var(--accent); text-decoration: none; }
   a:hover { text-decoration: underline; }
   button, select, input {
     font: inherit;
@@ -23,8 +98,8 @@
     padding: 24px 24px 48px;
   }
   .card {
-    background: #fff;
-    border: 1px solid #e5e7eb;
+    background: var(--paper-card);
+    border: 1px solid var(--line);
     border-radius: 10px;
     box-shadow: 0 1px 2px rgba(0,0,0,.04);
   }
@@ -37,20 +112,20 @@
     flex-wrap: wrap;
     gap: 12px;
     padding-bottom: 16px;
-    border-bottom: 1px solid #e5e7eb;
+    border-bottom: 1px solid var(--line);
     margin-bottom: 20px;
   }
   .dash-header h1 { font-size: 20px; }
-  .dash-header .sub { color: #6b7280; font-size: 13px; margin-top: 4px; }
+  .dash-header .sub { color: var(--muted); font-size: 13px; margin-top: 4px; }
   .header-meta {
     font-size: 13px;
-    color: #4b5563;
+    color: var(--muted);
     text-align: right;
     display: flex;
     align-items: center;
     gap: 10px;
   }
-  .header-meta .email { font-family: ui-monospace, Menlo, Consolas, monospace; }
+  .header-meta .email { font-family: var(--mono); }
 
   /* Help button (opens FAQ modal) */
   .help-btn {
@@ -60,9 +135,9 @@
     width: 26px;
     height: 26px;
     border-radius: 50%;
-    border: 1px solid #d1d5db;
-    background: #fff;
-    color: #4b5563;
+    border: 1px solid var(--line);
+    background: var(--paper-card);
+    color: var(--muted);
     font-size: 13px;
     font-weight: 700;
     cursor: pointer;
@@ -71,12 +146,12 @@
     transition: background 0.15s, color 0.15s, border-color 0.15s;
   }
   .help-btn:hover {
-    background: #1f2937;
-    color: #fff;
-    border-color: #1f2937;
+    background: var(--ink);
+    color: var(--paper);
+    border-color: var(--ink);
   }
   .help-btn:focus-visible {
-    outline: 2px solid #93c5fd;
+    outline: 2px solid var(--accent);
     outline-offset: 2px;
   }
 
@@ -92,15 +167,15 @@
     text-transform: uppercase;
     letter-spacing: .5px;
   }
-  .tag-admin   { background: #dcfce7; color: #166534; }
-  .tag-manager { background: #dbeafe; color: #1e40af; }
-  .tag-none    { background: #fee2e2; color: #991b1b; }
+  .tag-admin   { background: var(--good-soft); color: var(--good); }
+  .tag-manager { background: var(--accent-soft); color: var(--accent); }
+  .tag-none    { background: var(--warn-soft); color: var(--warn); }
 
   /* Mock banner */
   .mock-banner {
-    background: #fef3c7;
-    border: 1px solid #fde68a;
-    color: #92400e;
+    background: var(--warn-soft);
+    border: 1px solid var(--warn-soft);
+    color: var(--muted);
     padding: 8px 12px;
     border-radius: 6px;
     font-size: 12px;
@@ -119,40 +194,40 @@
   .control label {
     font-size: 11px;
     font-weight: 600;
-    color: #6b7280;
+    color: var(--muted);
     text-transform: uppercase;
     letter-spacing: .5px;
   }
   .control input[type="date"],
   .control select {
     padding: 7px 10px;
-    border: 1px solid #d1d5db;
+    border: 1px solid var(--line);
     border-radius: 6px;
-    background: #fff;
+    background: var(--paper-card);
     min-width: 140px;
   }
   .control input[type="date"]:focus,
   .control select:focus {
-    outline: 2px solid #93c5fd;
-    border-color: #3b82f6;
+    outline: 2px solid var(--accent);
+    border-color: var(--accent);
   }
   .btn {
     padding: 7px 14px;
-    background: #1f2937;
-    color: #fff;
+    background: var(--ink);
+    color: var(--paper);
     border: 0;
     border-radius: 6px;
     font-weight: 500;
     cursor: pointer;
   }
-  .btn:hover { background: #111827; }
-  .btn:disabled { background: #9ca3af; cursor: not-allowed; }
+  .btn:hover { opacity: 0.88; }
+  .btn:disabled { background: var(--muted); cursor: not-allowed; }
   .btn-secondary {
-    background: #fff;
-    color: #1f2937;
-    border: 1px solid #d1d5db;
+    background: var(--paper-card);
+    color: var(--ink);
+    border: 1px solid var(--line);
   }
-  .btn-secondary:hover { background: #f3f4f6; color: #111827; }
+  .btn-secondary:hover { background: var(--paper-2); color: var(--ink); }
   .control-reports { margin-left: auto; }
 
   /* Status */
@@ -162,16 +237,16 @@
     margin-bottom: 12px;
     font-size: 13px;
   }
-  .status-loading { background: #eff6ff; color: #1e40af; }
-  .status-error   { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }
-  .status-empty   { background: #f3f4f6; color: #4b5563; }
+  .status-loading { background: var(--accent-soft); color: var(--accent); }
+  .status-error   { background: var(--warn-soft); color: var(--warn); border: 1px solid var(--warn-soft); }
+  .status-empty   { background: var(--paper-2); color: var(--muted); }
 
   /* Table */
   .agents {
     width: 100%;
     border-collapse: collapse;
-    background: #fff;
-    border: 1px solid #e5e7eb;
+    background: var(--paper-card);
+    border: 1px solid var(--line);
     border-radius: 10px;
     overflow: hidden;
     font-size: 13px;
@@ -179,36 +254,36 @@
   .agents th, .agents td {
     padding: 10px 12px;
     text-align: right;
-    border-bottom: 1px solid #f1f5f9;
+    border-bottom: 1px solid var(--line);
   }
   .agents th:first-child, .agents td:first-child { text-align: left; }
   .agents thead th {
-    background: #f9fafb;
+    background: var(--paper-2);
     font-weight: 600;
-    color: #374151;
+    color: var(--ink);
     cursor: pointer;
     user-select: none;
     white-space: nowrap;
     position: sticky;
     top: 0;
   }
-  .agents thead th:hover { background: #f3f4f6; }
+  .agents thead th:hover { background: var(--paper-2); }
   .agents thead th .arrow {
     display: inline-block;
     width: 10px;
     margin-left: 4px;
-    color: #9ca3af;
+    color: var(--muted);
     font-size: 10px;
   }
-  .agents tbody tr:hover { background: #f9fafb; }
-  .agents tbody td.agent-name { font-weight: 500; color: #111827; }
+  .agents tbody tr:hover { background: var(--paper-2); }
+  .agents tbody td.agent-name { font-weight: 500; color: var(--ink); }
   .agents .num { font-variant-numeric: tabular-nums; }
-  .agents .missed-high { color: #b91c1c; font-weight: 600; }
+  .agents .missed-high { color: var(--warn); font-weight: 600; }
 
   .agents tfoot td {
-    background: #f9fafb;
+    background: var(--paper-2);
     font-weight: 600;
-    border-top: 2px solid #e5e7eb;
+    border-top: 2px solid var(--line);
     border-bottom: 0;
   }
 
@@ -216,51 +291,51 @@
   .info-line {
     margin-top: 12px;
     font-size: 12px;
-    color: #6b7280;
+    color: var(--muted);
     text-align: right;
   }
   .info-line .pill {
     display: inline-block;
     padding: 1px 7px;
     border-radius: 999px;
-    background: #f3f4f6;
+    background: var(--paper-2);
     margin-left: 6px;
   }
-  .info-line .pill-cache  { background: #dcfce7; color: #166534; }
-  .info-line .pill-fresh  { background: #dbeafe; color: #1e40af; }
+  .info-line .pill-cache  { background: var(--good-soft); color: var(--good); }
+  .info-line .pill-fresh  { background: var(--accent-soft); color: var(--accent); }
 
   /* Segmented control (scope toggle) */
   .segmented {
     display: inline-flex;
-    border: 1px solid #d1d5db;
+    border: 1px solid var(--line);
     border-radius: 6px;
     overflow: hidden;
-    background: #fff;
+    background: var(--paper-card);
   }
   .seg-btn {
     padding: 7px 12px;
-    background: #fff;
-    color: #374151;
+    background: var(--paper-card);
+    color: var(--ink);
     border: 0;
-    border-right: 1px solid #d1d5db;
+    border-right: 1px solid var(--line);
     cursor: pointer;
     font-size: 13px;
     font-weight: 500;
     min-width: 70px;
   }
   .seg-btn:last-child { border-right: 0; }
-  .seg-btn:hover { background: #f9fafb; }
+  .seg-btn:hover { background: var(--paper-2); }
   .seg-btn.active {
-    background: #1f2937;
-    color: #fff;
+    background: var(--ink);
+    color: var(--paper);
   }
-  .seg-btn.active:hover { background: #111827; }
+  .seg-btn.active:hover { opacity: 0.88; }
 
   /* Diagnostics panel */
   .diagnostics {
     margin-top: 20px;
-    background: #fff;
-    border: 1px solid #e5e7eb;
+    background: var(--paper-card);
+    border: 1px solid var(--line);
     border-radius: 8px;
     padding: 12px 16px;
     font-size: 13px;
@@ -268,13 +343,13 @@
   .diagnostics summary {
     cursor: pointer;
     font-weight: 600;
-    color: #374151;
+    color: var(--ink);
     user-select: none;
     padding: 2px 0;
   }
-  .diagnostics summary:hover { color: #111827; }
+  .diagnostics summary:hover { color: var(--ink); }
   .diag-count {
-    color: #6b7280;
+    color: var(--muted);
     font-weight: 400;
     margin-left: 4px;
   }
@@ -283,13 +358,13 @@
   }
   .diag-section h3 {
     font-size: 12px;
-    color: #6b7280;
+    color: var(--muted);
     margin: 0 0 6px;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: .5px;
   }
-  .diag-section p { margin: 0; color: #4b5563; }
+  .diag-section p { margin: 0; color: var(--muted); }
   .diag-chips {
     display: flex;
     flex-wrap: wrap;
@@ -299,16 +374,16 @@
   .diag-chip {
     display: inline-block;
     padding: 2px 8px;
-    background: #f3f4f6;
-    border: 1px solid #e5e7eb;
+    background: var(--paper-2);
+    border: 1px solid var(--line);
     border-radius: 4px;
     font-size: 12px;
-    color: #1f2937;
+    color: var(--ink);
   }
   .agents .via-queue td:first-child::after {
     content: " (queue-only)";
     font-size: 11px;
-    color: #d97706;
+    color: var(--warn);
     font-weight: 400;
     margin-left: 4px;
   }
@@ -318,10 +393,10 @@
     max-width: 560px;
     margin: 60px auto;
     padding: 28px 32px;
-    border-left: 4px solid #ef4444;
+    border-left: 4px solid var(--warn);
   }
   .denied-card h1 { font-size: 18px; margin-bottom: 10px; }
-  .denied-card p { color: #4b5563; margin: 8px 0; }
+  .denied-card p { color: var(--muted); margin: 8px 0; }
   .kv {
     display: grid;
     grid-template-columns: auto 1fr;
@@ -329,9 +404,9 @@
     margin: 16px 0;
     font-size: 13px;
   }
-  .kv dt { color: #6b7280; font-weight: 500; }
-  .kv dd { margin: 0; font-family: ui-monospace, Menlo, Consolas, monospace; }
-  .small { font-size: 12px; color: #6b7280; }
+  .kv dt { color: var(--muted); font-weight: 500; }
+  .kv dd { margin: 0; font-family: var(--mono); }
+  .small { font-size: 12px; color: var(--muted); }
 
   /* Modal (used by Help & FAQ; will be reused by upcoming report modals) */
   .modal {
@@ -350,7 +425,7 @@
   }
   .modal-panel {
     position: relative;
-    background: #fff;
+    background: var(--paper-card);
     border-radius: 12px;
     box-shadow: 0 20px 60px rgba(0, 0, 0, 0.25);
     max-width: 720px;
@@ -367,7 +442,7 @@
     height: 32px;
     background: transparent;
     border: 0;
-    color: #6b7280;
+    color: var(--muted);
     font-size: 22px;
     line-height: 1;
     cursor: pointer;
@@ -377,20 +452,20 @@
     justify-content: center;
   }
   .modal-close:hover {
-    background: #f3f4f6;
-    color: #111827;
+    background: var(--paper-2);
+    color: var(--ink);
   }
   .modal-panel h2 {
     font-size: 20px;
     font-weight: 600;
     margin: 0 0 16px;
-    color: #111827;
+    color: var(--ink);
     padding-right: 40px;
   }
   .modal-content h3 {
     font-size: 12px;
     font-weight: 600;
-    color: #6b7280;
+    color: var(--muted);
     margin: 20px 0 8px;
     text-transform: uppercase;
     letter-spacing: 0.5px;
@@ -398,7 +473,7 @@
   .modal-content h3:first-of-type { margin-top: 0; }
   .modal-content p {
     margin: 8px 0;
-    color: #374151;
+    color: var(--ink);
     line-height: 1.55;
   }
   .modal-content ul {
@@ -407,20 +482,20 @@
   }
   .modal-content ul li {
     margin-bottom: 8px;
-    color: #374151;
+    color: var(--ink);
     line-height: 1.55;
   }
   .modal-content code {
-    background: #f3f4f6;
+    background: var(--paper-2);
     padding: 1px 6px;
     border-radius: 4px;
     font-size: 12px;
-    font-family: ui-monospace, Menlo, Consolas, monospace;
+    font-family: var(--mono);
   }
-  .modal-content strong { color: #111827; }
-  .modal-content a { color: #1d4ed8; text-decoration: none; }
+  .modal-content strong { color: var(--ink); }
+  .modal-content a { color: var(--accent); text-decoration: none; }
   .modal-content a:hover { text-decoration: underline; }
-  .modal-content em { color: #6b7280; }
+  .modal-content em { color: var(--muted); }
 
   /* Wide modal variant (for reports with charts + tables) */
   .modal.modal-wide { padding: 16px; }
@@ -439,14 +514,14 @@
     gap: 12px;
     margin: 0 0 16px;
     padding: 12px 16px;
-    background: #f9fafb;
-    border: 1px solid #e5e7eb;
+    background: var(--paper-2);
+    border: 1px solid var(--line);
     border-radius: 8px;
     font-size: 13px;
   }
-  .report-summary .label { color: #6b7280; }
-  .report-summary .val { color: #111827; font-weight: 600; }
-  .report-summary .sep { color: #d1d5db; }
+  .report-summary .label { color: var(--muted); }
+  .report-summary .val { color: var(--ink); font-weight: 600; }
+  .report-summary .sep { color: var(--line); }
 
   /* Chart row: grid that holds the radar chart on the left and (when
      visible) the bucket-detail drill-in on the right. With .no-detail
@@ -463,8 +538,8 @@
     justify-content: center;
   }
   .chart-section {
-    background: #fff;
-    border: 1px solid #e5e7eb;
+    background: var(--paper-card);
+    border: 1px solid var(--line);
     border-radius: 8px;
     padding: 14px 16px 10px;
     margin: 0;
@@ -478,7 +553,7 @@
     margin: 0;
     padding: 80px 0;
     text-align: center;
-    color: #6b7280;
+    color: var(--muted);
     font-size: 13px;
   }
 
@@ -486,8 +561,8 @@
      clicked. Lives inside the .chart-row grid so it sits to the right
      of the chart; collapses entirely when display:none. */
   .bucket-detail {
-    background: #fff;
-    border: 1px solid #e5e7eb;
+    background: var(--paper-card);
+    border: 1px solid var(--line);
     border-radius: 8px;
     padding: 12px 16px 14px;
     margin: 0;
@@ -498,22 +573,22 @@
     justify-content: space-between;
     align-items: baseline;
     margin-bottom: 8px;
-    border-bottom: 1px solid #f1f5f9;
+    border-bottom: 1px solid var(--line);
     padding-bottom: 6px;
   }
   .bucket-detail-header strong {
     font-size: 14px;
-    color: #111827;
+    color: var(--ink);
   }
   .link-btn {
     background: none;
     border: 0;
-    color: #6b7280;
+    color: var(--muted);
     font-size: 12px;
     cursor: pointer;
     padding: 0;
   }
-  .link-btn:hover { color: #111827; text-decoration: underline; }
+  .link-btn:hover { color: var(--ink); text-decoration: underline; }
   .bucket-detail-list {
     list-style: none;
     margin: 0;
@@ -525,7 +600,7 @@
   }
   .bucket-detail-list li {
     padding: 4px 0;
-    border-bottom: 1px solid #f3f4f6;
+    border-bottom: 1px solid var(--paper-2);
     display: grid;
     grid-template-columns: 80px 1fr 110px;
     gap: 12px;
@@ -533,11 +608,11 @@
   }
   .bucket-detail-list li:last-child { border-bottom: 0; }
   .bucket-detail-list li.abandoned {
-    color: #b91c1c;
+    color: var(--warn);
     font-weight: 500;
   }
-  .bucket-detail-list .ring-date  { color: #6b7280; }
-  .bucket-detail-list .ring-agent { color: #111827; }
+  .bucket-detail-list .ring-date  { color: var(--muted); }
+  .bucket-detail-list .ring-agent { color: var(--ink); }
   .bucket-detail-list .ring-time  { text-align: right; }
   /* Widen the time column when parent-id chips are present so the
      #1776... ID doesn't squeeze the timestamp out. */
@@ -555,18 +630,18 @@
     gap: 4px;
     margin-left: 6px;
     padding: 1px 4px 1px 6px;
-    border: 1px solid rgba(127, 29, 29, 0.18);
+    border: 1px solid var(--warn-soft);
     border-radius: 999px;
-    background: rgba(254, 226, 226, 0.55);
+    background: var(--warn-soft);
     font-size: 11px;
     line-height: 1.4;
-    color: #7f1d1d;
+    color: var(--warn);
     font-weight: 500;
     vertical-align: baseline;
     white-space: nowrap;
   }
   .parent-id .pid-num {
-    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-family: var(--mono);
     font-size: 10.5px;
   }
   .parent-id .pid-copy {
@@ -579,29 +654,29 @@
     line-height: 1;
     border-radius: 3px;
   }
-  .parent-id .pid-copy:hover { background: rgba(127, 29, 29, 0.12); }
-  .parent-id .pid-copy.copied { color: #065f46; }
+  .parent-id .pid-copy:hover { background: var(--paper-2); }
+  .parent-id .pid-copy.copied { color: var(--good); }
 
   /* Cross-queue overflow tag on queue-only entries:
      "[also rang Backup CSR]". Muted so it reads as metadata. */
   .also-in {
     margin-left: 6px;
     font-size: 11px;
-    color: #92400e;
+    color: var(--muted);
     font-style: italic;
     font-weight: 400;
     white-space: nowrap;
   }
   .bucket-detail-empty {
-    color: #6b7280;
+    color: var(--muted);
     font-size: 13px;
     margin: 0;
   }
 
   /* Queue-only abandoned section (no agent rang) */
   .queue-only-section {
-    background: #fef2f2;
-    border: 1px solid #fecaca;
+    background: var(--warn-soft);
+    border: 1px solid var(--warn-soft);
     border-radius: 8px;
     padding: 12px 16px 14px;
     margin-bottom: 16px;
@@ -612,16 +687,16 @@
     gap: 10px;
     margin-bottom: 8px;
     padding-bottom: 6px;
-    border-bottom: 1px solid rgba(220, 38, 38, 0.15);
+    border-bottom: 1px solid var(--line);
   }
-  .queue-only-header strong { color: #991b1b; font-size: 14px; }
-  .queue-only-header .muted { color: #b45309; font-size: 12px; }
+  .queue-only-header strong { color: var(--warn); font-size: 14px; }
+  .queue-only-header .muted { color: var(--muted); font-size: 12px; }
   .queue-only-card {
     margin-top: 8px;
   }
   .queue-only-card:first-child { margin-top: 0; }
   .queue-only-card .qname {
-    color: #991b1b;
+    color: var(--warn);
     font-weight: 600;
     font-size: 13px;
     margin-bottom: 4px;
@@ -634,15 +709,15 @@
     font-variant-numeric: tabular-nums;
   }
   .queue-only-list li {
-    color: #b91c1c;
+    color: var(--warn);
     padding: 2px 0;
-    border-bottom: 1px solid rgba(220, 38, 38, 0.1);
+    border-bottom: 1px solid var(--line);
     display: grid;
     grid-template-columns: 80px 1fr;
     gap: 12px;
   }
   .queue-only-list li:last-child { border-bottom: 0; }
-  .queue-only-list .ring-date { color: #b45309; }
+  .queue-only-list .ring-date { color: var(--muted); }
   .queue-only-list .ring-time { text-align: right; }
 
   /* Per-agent card grid for the Missed Calls report */
@@ -652,19 +727,19 @@
     gap: 12px;
   }
   .agent-card {
-    background: #fff;
-    border: 1px solid #e5e7eb;
+    background: var(--paper-card);
+    border: 1px solid var(--line);
     border-radius: 8px;
     padding: 12px 14px;
     font-size: 13px;
   }
   .agent-card .agent-name {
     font-weight: 600;
-    color: #111827;
+    color: var(--ink);
     margin-bottom: 4px;
   }
   .agent-card .agent-total {
-    color: #6b7280;
+    color: var(--muted);
     font-size: 12px;
     margin-bottom: 8px;
   }
@@ -679,21 +754,21 @@
   }
   .agent-card .missed-list li {
     padding: 2px 0;
-    color: #374151;
-    border-bottom: 1px solid #f3f4f6;
+    color: var(--ink);
+    border-bottom: 1px solid var(--paper-2);
   }
   .agent-card .missed-list li:last-child { border-bottom: 0; }
   .agent-card .missed-list li.abandoned {
-    color: #b91c1c;
+    color: var(--warn);
     font-weight: 500;
   }
   .agent-card .missed-list .date {
-    color: #6b7280;
+    color: var(--muted);
     margin-right: 6px;
   }
   .agent-card.no-data {
-    background: #f9fafb;
-    color: #6b7280;
+    background: var(--paper-2);
+    color: var(--muted);
     text-align: center;
     padding: 20px;
   }
@@ -704,8 +779,8 @@
   .ir-form { padding: 6px 4px; }
   .ir-section-title {
     font-weight: 600;
-    color: #1d4ed8;
-    border-bottom: 2px solid #e5e7eb;
+    color: var(--accent);
+    border-bottom: 2px solid var(--line);
     padding-bottom: 4px;
     margin: 14px 0 10px;
     font-size: 14px;
@@ -721,7 +796,7 @@
     display: block;
     font-weight: 600;
     font-size: 11px;
-    color: #6b7280;
+    color: var(--muted);
     margin-bottom: 4px;
     text-transform: uppercase;
     letter-spacing: 0.02em;
@@ -730,27 +805,27 @@
   .ir-col input[type="date"] {
     width: 100%;
     padding: 7px 8px;
-    border: 1px solid #d1d5db;
+    border: 1px solid var(--line);
     border-radius: 4px;
     box-sizing: border-box;
     font-size: 13px;
-    background: #fff;
+    background: var(--paper-card);
   }
-  .ir-hint { font-size: 11px; color: #6b7280; margin-bottom: 8px; }
+  .ir-hint { font-size: 11px; color: var(--muted); margin-bottom: 8px; }
   .ir-loader { padding: 0; }
   .ir-skeleton-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
     gap: 6px;
     padding: 10px;
-    background: #fff;
-    border: 1px solid #e5e7eb;
+    background: var(--paper-card);
+    border: 1px solid var(--line);
     border-radius: 4px;
   }
   .ir-skeleton-row {
     height: 24px;
     border-radius: 4px;
-    background: linear-gradient(90deg, #f3f4f6 0%, #e5e7eb 50%, #f3f4f6 100%);
+    background: linear-gradient(90deg, var(--paper-2) 0%, var(--line) 50%, var(--paper-2) 100%);
     background-size: 200% 100%;
     animation: irShimmer 1.2s linear infinite;
   }
@@ -758,7 +833,7 @@
     text-align: center;
     margin-top: 8px;
     font-size: 11px;
-    color: #9ca3af;
+    color: var(--muted);
     font-style: italic;
   }
   @keyframes irShimmer {
@@ -769,20 +844,20 @@
   /* No-data empty state shown when every selected agent had zero
      activity in the chosen range. */
   .ir-empty-card {
-    background: #fff;
-    border: 1px dashed #d1d5db;
+    background: var(--paper-card);
+    border: 1px dashed var(--line);
     border-radius: 8px;
     padding: 32px 24px;
     text-align: center;
     margin-bottom: 14px;
   }
   .ir-empty-icon  { font-size: 28px; opacity: 0.45; margin-bottom: 6px; }
-  .ir-empty-title { font-size: 14px; font-weight: 700; color: #374151; margin-bottom: 4px; }
-  .ir-empty-sub   { font-size: 12px; color: #6b7280; }
+  .ir-empty-title { font-size: 14px; font-weight: 700; color: var(--ink); margin-bottom: 4px; }
+  .ir-empty-sub   { font-size: 12px; color: var(--muted); }
   .ir-agent-list {
-    border: 1px solid #e5e7eb;
+    border: 1px solid var(--line);
     border-radius: 4px;
-    background: #fff;
+    background: var(--paper-card);
     padding: 10px;
     max-height: 180px;
     overflow-y: auto;
@@ -794,14 +869,14 @@
     display: flex;
     align-items: center;
     font-size: 13px;
-    background: #f9fafb;
+    background: var(--paper-2);
     padding: 4px 6px;
     border-radius: 4px;
     cursor: pointer;
     user-select: none;
   }
   .ir-agent-item input { margin-right: 6px; transform: scale(1.05); }
-  .ir-agent-empty { padding: 12px; font-size: 13px; color: #6b7280; text-align: center; }
+  .ir-agent-empty { padding: 12px; font-size: 13px; color: var(--muted); text-align: center; }
 
   /* Active / inactive groupings inside the agent picker. Active
      items render normally; inactive (no data in range) get muted
@@ -812,11 +887,11 @@
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    color: #4b5563;
+    color: var(--muted);
     margin: 8px 2px 4px;
   }
-  .ir-agent-group-label-muted { color: #9ca3af; margin-top: 12px; }
-  .ir-agent-group-count { color: #9ca3af; font-weight: 500; }
+  .ir-agent-group-label-muted { color: var(--muted); margin-top: 12px; }
+  .ir-agent-group-count { color: var(--muted); font-weight: 500; }
   .ir-agent-group {
     grid-column: 1 / -1;
     display: grid;
@@ -824,11 +899,11 @@
     gap: 6px;
   }
   .ir-agent-group-muted .ir-agent-item {
-    background: #fafafa;
-    color: #9ca3af;
+    background: var(--paper-2);
+    color: var(--muted);
     font-style: italic;
   }
-  .ir-agent-group-muted .ir-agent-item input { accent-color: #9ca3af; }
+  .ir-agent-group-muted .ir-agent-item input { accent-color: var(--muted); }
 
   /* Collapsible inactive group. Hides the default disclosure marker
      and renders our own caret next to the label that rotates when
@@ -845,7 +920,7 @@
     display: inline-block;
     width: 12px;
     font-size: 10px;
-    color: #9ca3af;
+    color: var(--muted);
     margin-right: 2px;
     transition: transform 0.15s ease;
   }
@@ -859,25 +934,25 @@
   .ir-search-row input[type="search"] {
     width: 100%;
     padding: 7px 10px;
-    border: 1px solid #d1d5db;
+    border: 1px solid var(--line);
     border-radius: 4px;
     font-size: 13px;
-    background: #fff;
+    background: var(--paper-card);
     box-sizing: border-box;
   }
   .ir-search-row input[type="search"]:focus {
     outline: none;
-    border-color: #1d4ed8;
-    box-shadow: 0 0 0 2px rgba(29, 78, 216, 0.12);
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent-soft);
   }
   .ir-agent-actions {
     text-align: right;
     margin: 8px 2px 14px;
     font-size: 12px;
   }
-  .ir-agent-actions a { color: #1d4ed8; text-decoration: none; }
+  .ir-agent-actions a { color: var(--accent); text-decoration: none; }
   .ir-agent-actions a:hover { text-decoration: underline; }
-  .ir-agent-actions .sep { color: #d1d5db; margin: 0 6px; }
+  .ir-agent-actions .sep { color: var(--line); margin: 0 6px; }
 
   /* Results area */
   .ir-results { padding-top: 4px; }
@@ -886,15 +961,15 @@
     justify-content: space-between;
     align-items: flex-start;
     gap: 14px;
-    border-bottom: 2px solid #1d4ed8;
+    border-bottom: 2px solid var(--accent);
     padding-bottom: 10px;
     margin-bottom: 14px;
     flex-wrap: wrap;
   }
   .ir-results-header-left { flex: 1; min-width: 0; }
   .ir-results-title-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px; }
-  .ir-results-title { font-size: 18px; font-weight: 700; color: #111827; }
-  .ir-results-date  { font-size: 13px; color: #6b7280; margin-left: 4px; }
+  .ir-results-title { font-size: 18px; font-weight: 700; color: var(--ink); }
+  .ir-results-date  { font-size: 13px; color: var(--muted); margin-left: 4px; }
   .ir-action-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
   .ir-action-buttons .btn { width: auto; padding: 6px 12px; font-size: 12px; }
 
@@ -912,8 +987,8 @@
     position: absolute;
     top: calc(100% + 4px);
     right: 0;
-    background: #fff;
-    border: 1px solid #d1d5db;
+    background: var(--paper-card);
+    border: 1px solid var(--line);
     border-radius: 6px;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.10);
     min-width: 160px;
@@ -928,11 +1003,11 @@
     border: 0;
     padding: 8px 12px;
     font-size: 13px;
-    color: #1f2937;
+    color: var(--ink);
     cursor: pointer;
     border-radius: 4px;
   }
-  .ir-export-menu button:hover { background: #f3f4f6; }
+  .ir-export-menu button:hover { background: var(--paper-2); }
 
   /* "Showing: Sarah, Maria · change" sticky in the results header.
      Click the change link to open the inline edit popover. */
@@ -942,12 +1017,12 @@
     gap: 6px;
     margin-top: 4px;
     font-size: 12px;
-    color: #6b7280;
+    color: var(--muted);
     flex-wrap: wrap;
   }
-  .ir-editing-label { font-weight: 600; color: #6b7280; }
+  .ir-editing-label { font-weight: 600; color: var(--muted); }
   .ir-editing-agents {
-    color: #111827;
+    color: var(--ink);
     font-weight: 500;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -957,14 +1032,14 @@
   .ir-editing-edit {
     background: transparent;
     border: 0;
-    color: #1d4ed8;
+    color: var(--accent);
     font-size: 12px;
     font-weight: 600;
     cursor: pointer;
     padding: 0 2px;
     text-decoration: underline;
   }
-  .ir-editing-edit:hover { color: #1e3a8a; }
+  .ir-editing-edit:hover { color: var(--accent); }
 
   /* Edit-selection popover: floats below the results header,
      contains a compact agent picker that lets the user re-run
@@ -972,8 +1047,8 @@
      form. */
   .ir-edit-popover {
     position: relative;
-    background: #fff;
-    border: 1px solid #d1d5db;
+    background: var(--paper-card);
+    border: 1px solid var(--line);
     border-radius: 8px;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
     padding: 12px 14px;
@@ -989,11 +1064,11 @@
     background: transparent;
     border: 0;
     font-size: 18px;
-    color: #6b7280;
+    color: var(--muted);
     cursor: pointer;
     line-height: 1;
   }
-  .ir-edit-popover-close:hover { color: #1f2937; }
+  .ir-edit-popover-close:hover { color: var(--ink); }
   .ir-agent-list-compact { max-height: 220px; }
   .ir-edit-popover-actions {
     display: flex;
@@ -1002,9 +1077,9 @@
     margin-top: 10px;
     font-size: 12px;
   }
-  .ir-edit-popover-actions a { color: #1d4ed8; text-decoration: none; }
+  .ir-edit-popover-actions a { color: var(--accent); text-decoration: none; }
   .ir-edit-popover-actions a:hover { text-decoration: underline; }
-  .ir-edit-popover-actions .sep { color: #d1d5db; }
+  .ir-edit-popover-actions .sep { color: var(--line); }
   .ir-edit-popover-actions .btn {
     margin-left: auto;
     width: auto;
@@ -1024,12 +1099,12 @@
     display: inline-flex;
     align-items: center;
     gap: 8px;
-    background: #fff;
+    background: var(--paper-card);
     padding: 4px 10px;
-    border: 1px solid #d1d5db;
+    border: 1px solid var(--line);
     border-radius: 4px;
     font-size: 12px;
-    color: #4b5563;
+    color: var(--muted);
   }
   .ir-sort-label { font-weight: 600; }
   .ir-sort-control select {
@@ -1037,7 +1112,7 @@
     border: 0;
     padding: 2px 4px;
     font-size: 12px;
-    color: #1f2937;
+    color: var(--ink);
     cursor: pointer;
   }
   .ir-sort-control select:focus { outline: none; }
@@ -1045,8 +1120,8 @@
   /* Per-agent summary card. Comp table inside lays out
      Metric | Agent | Team Avg | Diff. */
   .ir-summary-card {
-    background: #fff;
-    border: 1px solid #e5e7eb;
+    background: var(--paper-card);
+    border: 1px solid var(--line);
     border-radius: 8px;
     padding: 14px 16px;
     margin-bottom: 14px;
@@ -1054,26 +1129,26 @@
   .ir-summary-title {
     font-size: 14px;
     font-weight: 700;
-    color: #111827;
-    border-bottom: 1px solid #e5e7eb;
+    color: var(--ink);
+    border-bottom: 1px solid var(--line);
     padding-bottom: 8px;
     margin-bottom: 8px;
     display: flex;
     align-items: center;
     gap: 8px;
   }
-  .ir-summary-title .ir-vs { font-weight: 400; color: #6b7280; font-size: 12px; }
+  .ir-summary-title .ir-vs { font-weight: 400; color: var(--muted); font-size: 12px; }
   .ir-copy-tsv {
     margin-left: auto;
     font-size: 11px;
-    color: #1d4ed8;
+    color: var(--accent);
     background: transparent;
-    border: 1px solid #c7d2fe;
+    border: 1px solid var(--accent-soft);
     border-radius: 4px;
     padding: 3px 8px;
     cursor: pointer;
   }
-  .ir-copy-tsv:hover { background: #eef2ff; }
+  .ir-copy-tsv:hover { background: var(--accent-soft); }
 
   /* KPI tile grid: a single row of metric tiles per agent. Big
      number + sparkline up top, team-avg + delta badge below. */
@@ -1083,8 +1158,8 @@
     gap: 10px;
   }
   .ir-kpi-tile {
-    background: #f9fafb;
-    border: 1px solid #e5e7eb;
+    background: var(--paper-2);
+    border: 1px solid var(--line);
     border-radius: 6px;
     padding: 10px 12px;
     display: flex;
@@ -1104,7 +1179,7 @@
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.03em;
-    color: #6b7280;
+    color: var(--muted);
   }
   .ir-kpi-spark { height: 22px; line-height: 0; }
   .ir-spark-svg { display: block; }
@@ -1117,7 +1192,7 @@
   .ir-kpi-value {
     font-size: 22px;
     font-weight: 700;
-    color: #111827;
+    color: var(--ink);
     line-height: 1.1;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1127,7 +1202,7 @@
      weight + smaller size so the absolute number stays primary. */
   .ir-kpi-share {
     font-size: 11px;
-    color: #6b7280;
+    color: var(--muted);
     font-weight: 500;
     white-space: nowrap;
     overflow: hidden;
@@ -1137,8 +1212,8 @@
   /* Insights callout: rendered above the KPI grid per agent. Lists
      up to 3 rules-based observations vs team avg. */
   .ir-insights {
-    background: #EFF6FF;
-    border-left: 3px solid #2563EB;
+    background: var(--accent-soft);
+    border-left: 3px solid var(--accent);
     border-radius: 4px;
     padding: 8px 12px;
     margin-bottom: 10px;
@@ -1148,7 +1223,7 @@
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    color: #1E40AF;
+    color: var(--accent);
     margin-bottom: 4px;
   }
   .ir-insights-list {
@@ -1156,7 +1231,7 @@
     padding-left: 0;
     list-style: none;
     font-size: 12.5px;
-    color: #1F2937;
+    color: var(--ink);
     line-height: 1.5;
   }
   .ir-insight-item {
@@ -1183,9 +1258,9 @@
     flex-shrink: 0;
     margin-top: 1px;
   }
-  .ir-insight-mark-positive { background: #DBEAFE; color: #1E40AF; }
-  .ir-insight-mark-negative { background: #FFEDD5; color: #9A3412; }
-  .ir-insight-mark-neutral  { background: #E5E7EB; color: #4B5563; }
+  .ir-insight-mark-positive { background: var(--accent-soft); color: var(--accent); }
+  .ir-insight-mark-negative { background: var(--warn-soft); color: var(--warn); }
+  .ir-insight-mark-neutral  { background: var(--paper-2); color: var(--muted); }
   .ir-kpi-row-bot {
     display: flex;
     align-items: center;
@@ -1194,7 +1269,7 @@
   }
   .ir-kpi-team {
     font-size: 11px;
-    color: #6b7280;
+    color: var(--muted);
     font-style: italic;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1215,9 +1290,9 @@
   /* Diverging blue (good) / orange (bad) pair instead of green/red:
      readable for deuteranopia + protanopia users, who can't reliably
      distinguish red and green badges. */
-  .ir-badge-pos { background: #DBEAFE; color: #1E40AF; }
-  .ir-badge-neg { background: #FFEDD5; color: #9A3412; }
-  .ir-badge-neu { background: #E5E7EB; color: #374151; }
+  .ir-badge-pos { background: var(--accent-soft); color: var(--accent); }
+  .ir-badge-neg { background: var(--warn-soft); color: var(--warn); }
+  .ir-badge-neu { background: var(--paper-2); color: var(--ink); }
 
   /* Charts: stacked grid. Volume goes full-width, efficiency + duration
      side-by-side below. */
@@ -1227,14 +1302,14 @@
     align-items: center;
     cursor: pointer;
     font-size: 12px;
-    color: #4b5563;
-    background: #fff;
+    color: var(--muted);
+    background: var(--paper-card);
     padding: 5px 10px;
-    border: 1px solid #d1d5db;
+    border: 1px solid var(--line);
     border-radius: 4px;
     font-weight: 600;
   }
-  .ir-toggle-label:hover { background: #f9fafb; }
+  .ir-toggle-label:hover { background: var(--paper-2); }
   .ir-toggle-label input { margin-right: 6px; }
 
   /* Tabbed chart container: only one of Volume/Efficiency/Duration
@@ -1243,7 +1318,7 @@
     display: flex;
     gap: 4px;
     margin-bottom: 8px;
-    border-bottom: 2px solid #e5e7eb;
+    border-bottom: 2px solid var(--line);
   }
   .ir-tab {
     background: transparent;
@@ -1251,16 +1326,16 @@
     padding: 8px 16px;
     font-size: 13px;
     font-weight: 600;
-    color: #6b7280;
+    color: var(--muted);
     cursor: pointer;
     border-bottom: 3px solid transparent;
     margin-bottom: -2px;
     transition: color 0.15s, border-color 0.15s;
   }
-  .ir-tab:hover { color: #1f2937; }
+  .ir-tab:hover { color: var(--ink); }
   .ir-tab.active {
-    color: #1d4ed8;
-    border-bottom-color: #1d4ed8;
+    color: var(--accent);
+    border-bottom-color: var(--accent);
   }
 
   /* Shared chip legend rendered above the chart panels in
@@ -1278,15 +1353,15 @@
     align-items: center;
     gap: 6px;
     padding: 5px 10px 5px 6px;
-    background: #f9fafb;
-    border: 1px solid #e5e7eb;
+    background: var(--paper-2);
+    border: 1px solid var(--line);
     border-radius: 999px;
     font-size: 12px;
-    color: #1f2937;
+    color: var(--ink);
     cursor: pointer;
     transition: opacity 0.15s, background 0.15s;
   }
-  .ir-legend-chip:hover { background: #f3f4f6; }
+  .ir-legend-chip:hover { background: var(--paper-2); }
   .ir-legend-chip.inactive {
     opacity: 0.42;
     text-decoration: line-through;
@@ -1295,16 +1370,16 @@
     width: 14px;
     height: 14px;
     border-radius: 50%;
-    background: var(--chip-color, #4E79A7);
+    background: var(--chip-color, var(--accent));
     flex-shrink: 0;
   }
   .ir-legend-name { font-weight: 600; }
 
   .ir-chart-area { display: block; }
   .ir-chart-wrap {
-    border: 1px solid #e5e7eb;
+    border: 1px solid var(--line);
     border-radius: 8px;
-    background: #fff;
+    background: var(--paper-card);
     padding: 12px;
     height: 420px;
     display: flex;
@@ -1314,7 +1389,7 @@
     text-align: center;
     font-weight: 600;
     font-size: 13px;
-    color: #4b5563;
+    color: var(--muted);
     margin-bottom: 6px;
   }
   .ir-chart-canvas-wrap { flex: 1; position: relative; }
@@ -1327,7 +1402,7 @@
      "vs prior" will compare against before they click Generate. */
   .pr-prior-hint {
     font-size: 11px;
-    color: #6b7280;
+    color: var(--muted);
     font-style: italic;
     margin: -4px 2px 12px;
   }
@@ -1341,26 +1416,26 @@
     margin-top: 4px;
   }
   .pr-date-block {
-    background: #f9fafb;
-    border: 1px solid #e5e7eb;
+    background: var(--paper-2);
+    border: 1px solid var(--line);
     border-radius: 6px;
     padding: 6px 10px;
     line-height: 1.25;
     min-width: 0;
   }
-  .pr-date-current { border-left: 3px solid #1d4ed8; }
-  .pr-date-prior   { border-left: 3px solid #9CA3AF; }
+  .pr-date-current { border-left: 3px solid var(--accent); }
+  .pr-date-prior   { border-left: 3px solid var(--muted); }
   .pr-date-label {
     font-size: 10px;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    color: #6b7280;
+    color: var(--muted);
   }
-  .pr-date-value { font-size: 13px; color: #111827; font-weight: 500; }
+  .pr-date-value { font-size: 13px; color: var(--ink); font-weight: 500; }
   .pr-date-divider {
     align-self: center;
-    color: #9ca3af;
+    color: var(--muted);
     font-size: 16px;
     font-weight: 700;
   }
@@ -1369,9 +1444,9 @@
      the full roster. Subtle blue bar to disambiguate "team totals
      reflect selection". */
   .pr-subset-hint {
-    background: #EFF6FF;
-    color: #1E40AF;
-    border-left: 3px solid #2563EB;
+    background: var(--accent-soft);
+    color: var(--accent);
+    border-left: 3px solid var(--accent);
     border-radius: 4px;
     padding: 8px 12px;
     font-size: 12px;
@@ -1388,8 +1463,8 @@
     margin-bottom: 16px;
   }
   .pr-kpi-tile {
-    background: #fff;
-    border: 1px solid #e5e7eb;
+    background: var(--paper-card);
+    border: 1px solid var(--line);
     border-radius: 8px;
     padding: 12px 14px;
     display: flex;
@@ -1412,12 +1487,12 @@
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    color: #6b7280;
+    color: var(--muted);
   }
   .pr-kpi-value {
     font-size: 22px;
     font-weight: 700;
-    color: #111827;
+    color: var(--ink);
     line-height: 1.1;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1438,10 +1513,10 @@
     font-weight: 700;
     font-size: 11px;
   }
-  .pr-delta-pos { background: #DBEAFE; color: #1E40AF; }
-  .pr-delta-neg { background: #FFEDD5; color: #9A3412; }
-  .pr-delta-neu { background: #E5E7EB; color: #4B5563; }
-  .pr-delta-cap { color: #9ca3af; font-weight: 500; font-style: italic; }
+  .pr-delta-pos { background: var(--accent-soft); color: var(--accent); }
+  .pr-delta-neg { background: var(--warn-soft); color: var(--warn); }
+  .pr-delta-neu { background: var(--paper-2); color: var(--muted); }
+  .pr-delta-cap { color: var(--muted); font-weight: 500; font-style: italic; }
   @media (max-width: 1100px) {
     .pr-kpi-row { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   }
@@ -1456,19 +1531,19 @@
     border-collapse: collapse;
     font-size: 13px;
     font-variant-numeric: tabular-nums;
-    background: #fff;
-    border: 1px solid #e5e7eb;
+    background: var(--paper-card);
+    border: 1px solid var(--line);
     border-radius: 6px;
     overflow: hidden;
   }
   .pr-agent-table th, .pr-agent-table td {
     padding: 8px 12px;
-    border-bottom: 1px solid #f3f4f6;
+    border-bottom: 1px solid var(--paper-2);
     text-align: left;
   }
   .pr-agent-table th {
-    background: #f9fafb;
-    color: #6b7280;
+    background: var(--paper-2);
+    color: var(--muted);
     font-size: 11px;
     font-weight: 700;
     text-transform: uppercase;
@@ -1476,7 +1551,7 @@
   }
   .pr-agent-table .num { text-align: right; }
   .pr-agent-table tbody tr:last-child td { border-bottom: 0; }
-  .pr-agent-table tbody tr:hover { background: #f9fafb; }
+  .pr-agent-table tbody tr:hover { background: var(--paper-2); }
 
   /* Sortable headers: cursor + hover affordance + active-sort
      highlight when this column is the current sort key. */
@@ -1485,7 +1560,7 @@
     user-select: none;
     white-space: nowrap;
   }
-  .pr-th-sortable:hover { background: #f3f4f6 !important; color: #1f2937 !important; }
+  .pr-th-sortable:hover { background: var(--paper-2) !important; color: var(--ink) !important; }
 
   /* Sub-tabs inside the 12-Month Trend chart panel: switches the
      metric shown on the line chart (Answered / % Answered / ATT). */
@@ -1497,8 +1572,8 @@
   }
   .pr-trend-subtab {
     background: transparent;
-    border: 1px solid #e5e7eb;
-    color: #4b5563;
+    border: 1px solid var(--line);
+    color: var(--muted);
     padding: 4px 12px;
     font-size: 11px;
     font-weight: 600;
@@ -1506,11 +1581,11 @@
     cursor: pointer;
     transition: all 0.15s;
   }
-  .pr-trend-subtab:hover { background: #f3f4f6; }
+  .pr-trend-subtab:hover { background: var(--paper-2); }
   .pr-trend-subtab.active {
-    background: #1d4ed8;
-    color: #fff;
-    border-color: #1d4ed8;
+    background: var(--accent);
+    color: var(--paper);
+    border-color: var(--accent);
   }
 
   /* -------- Compare Ranges Report -------------------------------- */
@@ -1518,25 +1593,25 @@
      (Baseline)" and "Period 2 (Comparison)" so the user can't
      mix up which set of dates belongs to which. */
   .cr-period-block {
-    border: 1px solid #e5e7eb;
+    border: 1px solid var(--line);
     border-left-width: 3px;
     border-radius: 6px;
     padding: 10px 12px 4px;
     margin-bottom: 12px;
-    background: #fafafa;
+    background: var(--paper-2);
   }
-  .cr-period-baseline { border-left-color: #9CA3AF; }
-  .cr-period-compare  { border-left-color: #1d4ed8; }
+  .cr-period-baseline { border-left-color: var(--muted); }
+  .cr-period-compare  { border-left-color: var(--accent); }
   .cr-period-label {
     font-size: 11px;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    color: #4b5563;
+    color: var(--muted);
     margin-bottom: 6px;
   }
-  .cr-period-baseline .cr-period-label { color: #6b7280; }
-  .cr-period-compare  .cr-period-label { color: #1d4ed8; }
+  .cr-period-baseline .cr-period-label { color: var(--muted); }
+  .cr-period-compare  .cr-period-label { color: var(--accent); }
 
   /* Centered Swap button between the two Period blocks. Lets
      admins flip P1/P2 in place when they realize they picked the
@@ -1547,9 +1622,9 @@
     margin: -2px 0 8px;
   }
   .cr-swap-btn {
-    background: #fff;
-    border: 1px solid #d1d5db;
-    color: #4b5563;
+    background: var(--paper-card);
+    border: 1px solid var(--line);
+    color: var(--muted);
     border-radius: 999px;
     padding: 4px 14px;
     font-size: 11px;
@@ -1557,52 +1632,52 @@
     cursor: pointer;
     transition: background 0.15s;
   }
-  .cr-swap-btn:hover { background: #f3f4f6; color: #1f2937; }
+  .cr-swap-btn:hover { background: var(--paper-2); color: var(--ink); }
 
   /* Period length hint below the date blocks. Equal-length
      periods get a check; unequal periods get a warning so
      users notice that volume comparisons are skewed. */
   .cr-length-hint {
     font-size: 11px;
-    color: #6b7280;
+    color: var(--muted);
     margin: -4px 2px 14px;
   }
-  .cr-length-spec strong { color: #1f2937; }
-  .cr-length-ok { color: #047857; font-weight: 600; }
-  .cr-length-warn { color: #9A3412; font-weight: 600; }
+  .cr-length-spec strong { color: var(--ink); }
+  .cr-length-ok { color: var(--good); font-weight: 600; }
+  .cr-length-warn { color: var(--warn); font-weight: 600; }
 
   /* Length-mismatch banner above the report body when periods
      differ in length. Muted-orange tone matches the negative
      valence color so it reads as "needs attention" without
      screaming. */
   .cr-length-warning {
-    background: #FFEDD5;
-    color: #9A3412;
-    border-left: 3px solid #EA580C;
+    background: var(--warn-soft);
+    color: var(--warn);
+    border-left: 3px solid var(--warn);
     border-radius: 4px;
     padding: 10px 14px;
     font-size: 12.5px;
     margin-bottom: 12px;
   }
-  .cr-length-warning strong { color: #7C2D12; }
+  .cr-length-warning strong { color: var(--warn); }
 
   /* Per-day caption inside KPI tiles (volume + time metrics
      when length-mismatch). Small line under the delta. */
   .pr-kpi-perday {
     font-size: 11px;
-    color: #4b5563;
-    border-top: 1px dashed #e5e7eb;
+    color: var(--muted);
+    border-top: 1px dashed var(--line);
     margin-top: 4px;
     padding-top: 4px;
   }
-  .pr-kpi-perday strong { color: #111827; }
+  .pr-kpi-perday strong { color: var(--ink); }
 
   /* Comparison chart wrapper: matches the ir-chart-wrap shape but
      fixed taller height for the bar chart. */
   .cr-chart-wrap {
-    border: 1px solid #e5e7eb;
+    border: 1px solid var(--line);
     border-radius: 8px;
-    background: #fff;
+    background: var(--paper-card);
     padding: 12px;
     height: 380px;
     display: flex;
@@ -1612,11 +1687,11 @@
   .cr-chart-summary {
     text-align: center;
     font-size: 12px;
-    color: #4b5563;
+    color: var(--muted);
     margin-bottom: 4px;
     font-variant-numeric: tabular-nums;
   }
-  .cr-chart-summary strong { color: #111827; }
+  .cr-chart-summary strong { color: var(--ink); }
 
   /* Per-agent cards stack vertically; on wide screens flow into a
      two-column grid for density. */
@@ -1629,8 +1704,8 @@
     .cr-agent-cards { grid-template-columns: 1fr 1fr; }
   }
   .cr-agent-card {
-    background: #fff;
-    border: 1px solid #e5e7eb;
+    background: var(--paper-card);
+    border: 1px solid var(--line);
     border-left-width: 4px;
     border-radius: 8px;
     padding: 14px 16px;
@@ -1638,16 +1713,16 @@
   /* Left-border color encodes the agent's aggregate direction
      across the 4 valenced metrics so scanning the grid surfaces
      the movers. */
-  .cr-card-improved  { border-left-color: #2563EB; }
-  .cr-card-regressed { border-left-color: #EA580C; }
-  .cr-card-mixed     { border-left-color: #9CA3AF; }
+  .cr-card-improved  { border-left-color: var(--accent); }
+  .cr-card-regressed { border-left-color: var(--warn); }
+  .cr-card-mixed     { border-left-color: var(--muted); }
 
   .cr-agent-card-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
     gap: 8px;
-    border-bottom: 1px solid #e5e7eb;
+    border-bottom: 1px solid var(--line);
     padding-bottom: 8px;
     margin-bottom: 8px;
   }
@@ -1661,16 +1736,16 @@
     font-weight: 700;
     margin-left: auto;
   }
-  .cr-vs-team-pos  { background: #DBEAFE; color: #1E40AF; }
-  .cr-vs-team-neg  { background: #FFEDD5; color: #9A3412; }
-  .cr-vs-team-flat { background: #E5E7EB; color: #4B5563; }
+  .cr-vs-team-pos  { background: var(--accent-soft); color: var(--accent); }
+  .cr-vs-team-neg  { background: var(--warn-soft); color: var(--warn); }
+  .cr-vs-team-flat { background: var(--paper-2); color: var(--muted); }
 
   /* Per-cell "X/day" annotation inside the cards' P1/P2 cells
      when periods differ. Small subline under the main value. */
   .cr-cell-perday {
     display: block;
     font-size: 10px;
-    color: #6b7280;
+    color: var(--muted);
     font-style: italic;
   }
 
@@ -1679,14 +1754,14 @@
      stashed here so the main grid focuses on the notable movers. */
   .cr-quiet-details {
     margin-top: 14px;
-    border-top: 1px dashed #e5e7eb;
+    border-top: 1px dashed var(--line);
     padding-top: 14px;
   }
   .cr-quiet-summary {
     cursor: pointer;
     user-select: none;
     list-style: none;
-    color: #6b7280;
+    color: var(--muted);
     font-size: 12px;
     font-weight: 600;
     margin-bottom: 10px;
@@ -1703,7 +1778,7 @@
     transform: rotate(90deg);
   }
   .cr-quiet-details .cr-agent-card { opacity: 0.85; }
-  .cr-agent-name { font-size: 14px; font-weight: 700; color: #111827; }
+  .cr-agent-name { font-size: 14px; font-weight: 700; color: var(--ink); }
   .cr-agent-table {
     width: 100%;
     border-collapse: collapse;
@@ -1713,20 +1788,20 @@
   .cr-agent-table th {
     text-align: left;
     padding: 6px 8px;
-    color: #6b7280;
-    border-bottom: 1px solid #e5e7eb;
+    color: var(--muted);
+    border-bottom: 1px solid var(--line);
     font-size: 11px;
     text-transform: uppercase;
     letter-spacing: 0.02em;
   }
   .cr-agent-table td {
     padding: 7px 8px;
-    border-bottom: 1px solid #f3f4f6;
-    color: #111827;
+    border-bottom: 1px solid var(--paper-2);
+    color: var(--ink);
   }
   .cr-agent-table .num { text-align: right; }
   .cr-agent-table tbody tr:last-child td { border-bottom: 0; }
-  .cr-metric { font-weight: 600; color: #4b5563; }
+  .cr-metric { font-weight: 600; color: var(--muted); }
 
   /* -------- Print stylesheet ------------------------------------- */
   /* Only activates when the user clicks Print on the Individual
