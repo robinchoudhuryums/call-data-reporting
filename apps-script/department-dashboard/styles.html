@@ -635,8 +635,25 @@
     max-width: 720px;
     width: 100%;
     max-height: 85vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+  /* Sticky modal header: keeps the report title + close X
+     visible while the body scrolls. The close button stays at
+     the top-right of the modal panel via absolute positioning
+     within this relative-positioned header. */
+  .modal-panel-header {
+    position: relative;
+    flex-shrink: 0;
+    padding: 28px 40px 16px;
+    border-bottom: 1px solid var(--line);
+    background: var(--paper-card);
+  }
+  .modal-panel-body {
+    flex: 1;
     overflow-y: auto;
-    padding: 32px 40px 28px;
+    padding: 18px 40px 28px;
   }
   .modal-close {
     position: absolute;
@@ -727,8 +744,11 @@
     max-width: 1200px;
     width: 100%;
     max-height: 92vh;
-    padding: 28px 32px 24px;
   }
+  /* Wide modals get tighter header/body padding -- their content
+     is denser and the wider canvas can absorb less chrome. */
+  .modal-panel-wide .modal-panel-header { padding: 22px 28px 14px; }
+  .modal-panel-wide .modal-panel-body   { padding: 14px 28px 22px; }
 
   /* Report summary strip at the top of report modals — label / value
      pairs separated by hairline dividers. Mono labels for the kicker
@@ -2422,6 +2442,95 @@
     body.cr-printing .pr-kpi-tile,
     body.cr-printing .cr-agent-card { page-break-inside: avoid; }
   }
+
+  /* -------- Company Overview modal ------------------------------ */
+  /* Cross-dept landing snapshot.  Layout: small date kicker at top,
+     grid of dept tiles in the middle, multi-line answer-rate trend
+     chart below. */
+  .ov-summary-line {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--muted);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    margin-bottom: 14px;
+  }
+  .ov-summary-line strong { color: var(--ink); font-weight: 500; }
+  .ov-summary-label { color: var(--muted); }
+  .ov-dept-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 12px;
+    margin-bottom: 18px;
+  }
+  .ov-dept-tile {
+    background: var(--paper-card);
+    border: 1px solid var(--line);
+    border-radius: 2px;
+    padding: 12px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+  }
+  .ov-dept-tile-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 8px;
+  }
+  .ov-dept-name {
+    font-family: var(--display);
+    font-size: 15px;
+    font-weight: 500;
+    color: var(--ink);
+  }
+  .ov-dept-active {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+  }
+  .ov-dept-tile-pct {
+    font-family: var(--mono);
+    font-size: 22px;
+    font-weight: 500;
+    color: var(--ink);
+    line-height: 1.1;
+    margin: 2px 0;
+  }
+  .ov-dept-pct-cap {
+    font-size: 10px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-weight: 400;
+  }
+  .ov-dept-tile-row {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--ink);
+    display: flex;
+    gap: 14px;
+    flex-wrap: wrap;
+    font-variant-numeric: tabular-nums;
+  }
+  .ov-dept-stat-label {
+    color: var(--muted);
+    text-transform: uppercase;
+    font-size: 10px;
+    letter-spacing: 0.04em;
+    margin-right: 3px;
+  }
+  .ov-dept-tile-spark {
+    margin-top: 4px;
+    border-top: 1px dashed var(--line);
+    padding-top: 6px;
+    line-height: 0;
+  }
+  .ov-dept-tile-spark svg { width: 100%; max-width: 100%; height: 28px; }
 
   /* -------- Settings modal -------------------------------------- */
   /* Background-theme picker. Each chip is a click target with a

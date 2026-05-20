@@ -330,7 +330,11 @@
       $('dept-name').textContent = USER.department || '(no department)';
     }
 
-    // Date range defaults
+    // Date range defaults. Provisional value = today (fallback if
+    // the getLatestDataDate fetch below is slow or fails); the
+    // actual default lands on the most recent date with data in
+    // DQE Historical Data so the table isn't empty when a manager
+    // first opens the dashboard before today's ingest has run.
     const range = defaultRange();
     $('from-date').value = range.from;
     $('to-date').value = range.to;
@@ -361,13 +365,28 @@
 
     initHelpModal();
     initSettingsModal();
+    initCompanyOverview();
     initMissedReport();
     initIndividualReport();
     initPerformanceReport();
     initCompareRanges();
     initAlerts();
 
-    refresh();
+    // Fetch the most recent date with data in DQE Historical Data
+    // and snap From/To to that date. Defers the initial table
+    // render until either the date is known (typical) or the
+    // server call fails (falls back to today's range from
+    // defaultRange above).
+    google.script.run
+      .withSuccessHandler(function (latestDate) {
+        if (latestDate) {
+          $('from-date').value = latestDate;
+          $('to-date').value = latestDate;
+        }
+        refresh();
+      })
+      .withFailureHandler(function () { refresh(); })
+      .getLatestDataDate();
   }
 
   // -- Help & FAQ modal ---------------------------------------------------
@@ -450,6 +469,183 @@
         if (window.__themePref && window.__themePref.set) window.__themePref.set(t);
         syncChips();
       });
+    });
+  }
+
+  // -- Company Overview modal --------------------------------------------
+  // Cross-dept snapshot: per-dept tile grid showing the latest day's
+  // KPIs (rung / answered / missed / % / ATT) + a 30-day answer-rate
+  // trend chart with one line per dept. Accessible to all
+  // authenticated users (managers see other depts' numbers too --
+  // matches the legacy DQE Report's read-only cross-dept visibility).
+
+  let ovChartInstance = null;
+  let ovLastData = null;
+
+  function initCompanyOverview() {
+    const btn = $('overview-btn');
+    const modal = $('overview-modal');
+    if (!btn || !modal) return;
+
+    const closeBtn = modal.querySelector('.modal-close');
+    const backdrop = modal.querySelector('[data-close]');
+
+    function openModal() {
+      modal.style.display = '';
+      modal.setAttribute('aria-hidden', 'false');
+      document.body.style.overflow = 'hidden';
+      document.addEventListener('keydown', onKeyDown);
+      if (closeBtn) closeBtn.focus();
+      ovLoad_();
+    }
+    function closeModal() {
+      modal.style.display = 'none';
+      modal.setAttribute('aria-hidden', 'true');
+      document.body.style.overflow = '';
+      document.removeEventListener('keydown', onKeyDown);
+      btn.focus();
+    }
+    function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
+
+    btn.addEventListener('click', openModal);
+    if (closeBtn) closeBtn.addEventListener('click', closeModal);
+    if (backdrop) backdrop.addEventListener('click', closeModal);
+  }
+
+  function ovLoad_() {
+    $('ov-loading').style.display = '';
+    $('ov-body').style.display = 'none';
+    google.script.run
+      .withSuccessHandler(function (data) {
+        ovLastData = data;
+        $('ov-loading').style.display = 'none';
+        $('ov-body').style.display = '';
+        ovRender_(data);
+      })
+      .withFailureHandler(function (err) {
+        $('ov-loading').textContent = 'Error loading overview: '
+          + (err && err.message ? err.message : String(err));
+      })
+      .getCompanyOverview();
+  }
+
+  function ovRender_(data) {
+    if (!data || !data.depts) return;
+    const dateLabel = data.latestDate
+      ? ovFormatDateLabel_(data.latestDate)
+      : '(no data)';
+    $('ov-summary-line').innerHTML =
+      '<span class="ov-summary-label">Latest data:</span> '
+      + '<strong>' + escapeHtml(dateLabel) + '</strong>'
+      + ' &middot; <span class="ov-summary-label">' + (data.depts.length)
+      + ' department' + (data.depts.length === 1 ? '' : 's') + '</span>';
+    ovRenderTiles_(data.depts);
+    // Defer chart creation by one frame so the just-revealed
+    // modal body lays out before Chart.js measures the canvas.
+    requestAnimationFrame(function () { ovRenderChart_(data); });
+  }
+
+  function ovFormatDateLabel_(iso) {
+    const p = iso.split('-');
+    const d = new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]));
+    return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+  }
+
+  function ovRenderTiles_(depts) {
+    const colors = IR_CHART_COLORS;
+    const html = depts.map(function (dept, i) {
+      const color = colors[i % colors.length];
+      const spark = irSparkline_(
+        (dept.trend || []).map(function (v) { return v == null ? 0 : v; }),
+        color);
+      return '<div class="ov-dept-tile">'
+           +   '<div class="ov-dept-tile-head">'
+           +     '<span class="ov-dept-name">' + escapeHtml(dept.name) + '</span>'
+           +     '<span class="ov-dept-active">'
+           +       dept.activeAgents + ' of ' + dept.rosterSize + ' agents'
+           +     '</span>'
+           +   '</div>'
+           +   '<div class="ov-dept-tile-pct">'
+           +     escapeHtml(dept.latest.pctFormatted)
+           +     ' <span class="ov-dept-pct-cap">answered</span>'
+           +   '</div>'
+           +   '<div class="ov-dept-tile-row">'
+           +     '<span><span class="ov-dept-stat-label">Rung</span> ' + dept.latest.rung + '</span>'
+           +     '<span><span class="ov-dept-stat-label">Ans</span> ' + dept.latest.answered + '</span>'
+           +     '<span><span class="ov-dept-stat-label">Miss</span> ' + dept.latest.missed + '</span>'
+           +   '</div>'
+           +   '<div class="ov-dept-tile-row">'
+           +     '<span><span class="ov-dept-stat-label">ATT</span> ' + escapeHtml(dept.latest.attFormatted) + '</span>'
+           +   '</div>'
+           +   '<div class="ov-dept-tile-spark" title="30-day % answered trend">' + spark + '</div>'
+           + '</div>';
+    }).join('');
+    $('ov-dept-grid').innerHTML = html;
+  }
+
+  function ovRenderChart_(data) {
+    if (ovChartInstance) {
+      try { ovChartInstance.destroy(); } catch (e) {}
+      ovChartInstance = null;
+    }
+    destroyOrphanedChartOnCanvas_('ov-trend-chart');
+    refreshChartTheme();
+
+    const labels = data.trendLabels || [];
+    const colors = IR_CHART_COLORS;
+    const datasets = (data.depts || []).map(function (dept, i) {
+      const color = colors[i % colors.length];
+      return {
+        label: dept.name,
+        data: dept.trend || [],
+        borderColor: color,
+        backgroundColor: color,
+        tension: 0.3,
+        fill: false,
+        pointRadius: 2,
+        pointHoverRadius: 4,
+        pointBackgroundColor: color,
+        pointBorderColor: THEME.paperCard,
+        pointBorderWidth: 1,
+        spanGaps: false,    // honor nulls -> gaps for no-data days
+      };
+    });
+
+    const ovPlugins = (typeof ChartDataLabels !== 'undefined') ? [ChartDataLabels] : [];
+
+    ovChartInstance = new Chart($('ov-trend-chart').getContext('2d'), {
+      type: 'line',
+      data: { labels: labels, datasets: datasets },
+      plugins: ovPlugins,
+      options: {
+        responsive: true, maintainAspectRatio: false, animation: false,
+        plugins: {
+          legend: {
+            position: 'bottom',
+            labels: { boxWidth: 12, font: { size: 11 } },
+          },
+          tooltip: {
+            callbacks: {
+              label: function (ctx) {
+                const v = ctx.parsed && ctx.parsed.y;
+                if (v == null) return ctx.dataset.label + ': no data';
+                return ctx.dataset.label + ': ' + v.toFixed(1) + '%';
+              },
+            },
+          },
+          datalabels: { display: false },
+        },
+        scales: {
+          y: {
+            beginAtZero: true,
+            max: 100,
+            ticks: { callback: function (v) { return v + '%'; } },
+            title: { display: true, text: '% Answered', font: { size: 11 } },
+          },
+          x: { ticks: { autoSkip: true, maxTicksLimit: 10 } },
+        },
+        interaction: { mode: 'index', intersect: false },
+      },
     });
   }
 

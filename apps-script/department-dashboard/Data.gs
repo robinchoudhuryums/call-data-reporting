@@ -18,6 +18,43 @@
  *   read separately from DO NOT EDIT! (cheap, one column).
  */
 
+/**
+ * Returns the most-recent ISO date present in DQE Historical Data,
+ * across all agents (no dept filter). Cached for 5 min under
+ * `latestDate:v1`. The dashboard uses this at init time so the
+ * default From/To pair lands on a day with actual data instead of
+ * today (which may be before the daily ingest has run, or a
+ * weekend with no activity).
+ *
+ * Returns the ISO string ('YYYY-MM-DD') or null if the sheet is
+ * empty.
+ */
+function getLatestDataDate() {
+  const cache = CacheService.getScriptCache();
+  const KEY = 'latestDate:v1';
+  const cached = cache.get(KEY);
+  if (cached) return cached;
+
+  const ss = openSpreadsheet_();
+  const sheet = ss.getSheetByName(SHEETS.HISTORICAL);
+  if (!sheet) return null;
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return null;
+  const ssTZ = ss.getSpreadsheetTimeZone();
+
+  // The Date column is at HISTORICAL_COLS.DATE.  Scan only that
+  // column to keep the read cheap.
+  const values = sheet.getRange(2, HISTORICAL_COLS.DATE, lastRow - 1, 1).getValues();
+  let latest = '';
+  for (let i = 0; i < values.length; i++) {
+    const iso = rowDateIso_(values[i][0], ssTZ);
+    if (iso && iso > latest) latest = iso;
+  }
+  if (!latest) return null;
+  try { cache.put(KEY, latest, CACHE_TTL_SECONDS); } catch (e) {}
+  return latest;
+}
+
 function getDepartmentSummary(req) {
   const email = Session.getActiveUser().getEmail();
   const user = resolveUser_(email);
