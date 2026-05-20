@@ -1202,25 +1202,38 @@
   // have visual weight without dominating the comparison ones.
   /**
    * Returns the given CSS color with the supplied alpha applied,
-   * as an `rgba(...)` string. Goes via a temp DOM element so the
-   * browser resolves whatever input format (#rrggbb, oklch(),
-   * hsl(), rgb(), named) into a parseable rgb triple. Necessary
-   * because the prior "color + '40'" hex-alpha concatenation
-   * trick only works on 6-char hex inputs -- the design-system
-   * tokens now resolve to oklch() in modern browsers, which
-   * broke gradient fills on every line chart.
+   * as an `rgba(...)` string. Paints the color onto a 1x1 canvas
+   * and reads back the resulting RGB pixel -- canvas resolves any
+   * supported color format (#rrggbb, rgb(), hsl(), oklch(),
+   * oklab(), named) into an RGB triple. Cleaner than DOM-resolve
+   * (some browsers return getComputedStyle().color as oklch() for
+   * oklch() inputs, which the prior regex didn't parse; that
+   * produced opaque fills where we wanted faded gradients).
+   *
+   * Falls back to returning the input color unchanged if canvas
+   * doesn't recognize it (rare; CSS-supported but canvas-
+   * unsupported formats).
    */
   function colorWithAlpha_(color, alpha) {
     if (!color) return 'rgba(0,0,0,0)';
-    const el = document.createElement('div');
-    el.style.color = color;
-    el.style.display = 'none';
-    document.body.appendChild(el);
-    const resolved = getComputedStyle(el).color;
-    document.body.removeChild(el);
-    const m = resolved.match(/rgba?\((\d+(?:\.\d+)?)[,\s]+(\d+(?:\.\d+)?)[,\s]+(\d+(?:\.\d+)?)/);
-    if (!m) return color;   // unrecognized; let canvas try as-is
-    return 'rgba(' + m[1] + ', ' + m[2] + ', ' + m[3] + ', ' + alpha + ')';
+    try {
+      const cvs = document.createElement('canvas');
+      cvs.width = cvs.height = 1;
+      const ctx = cvs.getContext('2d');
+      // Sentinel: set a known fillStyle first. If the next
+      // assignment is rejected by canvas (unsupported format),
+      // fillStyle keeps the sentinel value -- we detect that and
+      // bail out instead of painting the wrong color.
+      ctx.fillStyle = 'rgb(1, 2, 3)';
+      const sentinel = ctx.fillStyle;
+      ctx.fillStyle = color;
+      if (ctx.fillStyle === sentinel) return color;
+      ctx.fillRect(0, 0, 1, 1);
+      const data = ctx.getImageData(0, 0, 1, 1).data;
+      return 'rgba(' + data[0] + ', ' + data[1] + ', ' + data[2] + ', ' + alpha + ')';
+    } catch (e) {
+      return color;
+    }
   }
 
   function irGradientFill_(chart, color) {
@@ -1713,6 +1726,10 @@
   function toggleIrAgents(checked) {
     selectAllActiveAgents_($('ir-agent-list'), checked);
     updateIrGenerateEnabled();
+    // Persist explicitly -- programmatic cb.checked flips don't
+    // fire 'change' events, so the change-listener-driven
+    // irSavePrefs_ doesn't catch this.
+    irSavePrefs_();
   }
 
   /**
@@ -2220,14 +2237,34 @@
          + '</span>';
   }
 
+  /**
+   * Defensive cleanup: destroys any Chart.js instance currently
+   * attached to the given canvas id, regardless of whether it's
+   * tracked in our own *ChartInstances arrays. Necessary because
+   * a previous render that crashed mid-construction may have
+   * left an orphaned chart bound to the canvas, which Chart.js
+   * refuses to overwrite ("Canvas is already in use").
+   */
+  function destroyOrphanedChartOnCanvas_(canvasId) {
+    if (typeof Chart === 'undefined' || !Chart.getChart) return;
+    const cvs = document.getElementById(canvasId);
+    if (!cvs) return;
+    try {
+      const existing = Chart.getChart(cvs);
+      if (existing) existing.destroy();
+    } catch (e) { /* ignore */ }
+  }
+
   function irRenderCharts(data) {
     // Refresh THEME tokens right before chart creation so values
     // resolved late (slow CSS / font load) reach Chart.defaults
     // before the first chart is instantiated.
     refreshChartTheme();
     // Destroy old charts to avoid Chart.js leaks / canvas reuse errors.
-    irChartInstances.forEach(function (c) { c.destroy(); });
+    irChartInstances.forEach(function (c) { try { c.destroy(); } catch (e) {} });
     irChartInstances = [];
+    // Sweep up any orphans left by a partial-crash on the previous render.
+    ['ir-vol-chart', 'ir-eff-chart', 'ir-dur-chart'].forEach(destroyOrphanedChartOnCanvas_);
 
     // Reveal every chart panel temporarily so each canvas has
     // non-zero dimensions at Chart.js instantiation time. Without
@@ -3120,6 +3157,11 @@
   function prToggleAgents_(checked) {
     selectAllActiveAgents_($('pr-agent-list'), checked);
     prUpdateGenerateEnabled_();
+    // selectAllActiveAgents_ flips cb.checked programmatically,
+    // which does NOT fire 'change' on the list -- so the
+    // change-listener-driven prSavePrefs_ never runs. Explicit
+    // call here so the new selection actually persists.
+    prSavePrefs_();
   }
 
   // ── Run + render ────────────────────────────────────────────────────
@@ -3408,8 +3450,10 @@
     // Refresh THEME tokens right before chart creation so values
     // resolved late reach Chart.defaults pre-instantiation.
     refreshChartTheme();
-    prChartInstances.forEach(function (c) { c.destroy(); });
+    prChartInstances.forEach(function (c) { try { c.destroy(); } catch (e) {} });
     prChartInstances = [];
+    // Sweep up any orphans left by a partial-crash on the previous render.
+    ['pr-share-chart', 'pr-volume-chart', 'pr-trend-chart'].forEach(destroyOrphanedChartOnCanvas_);
 
     // Reveal every chart panel temporarily so each canvas has
     // non-zero dimensions at Chart.js instantiation time. Without
@@ -3524,9 +3568,14 @@
           datalabels: {
             display: function (ctx) {
               if (!showLabels) return false;
-              // Suppress 0 values on bars and the pct line; the
-              // line gets its own pill-style label below.
-              return Number(ctx.parsed.y || ctx.parsed) > 0;
+              // Defensive: ctx.parsed can be undefined during
+              // Chart.js's pre-layout pass (esp. on mixed bar+line
+              // charts).  Reading .y on undefined throws and breaks
+              // the chart construction.
+              const p = ctx && ctx.parsed;
+              if (p == null) return false;
+              const v = (typeof p === 'object') ? Number(p.y || 0) : Number(p);
+              return v > 0;
             },
             color: function (ctx) {
               return ctx.dataset.type === 'line' ? THEME.accent : THEME.paper;
@@ -3581,6 +3630,8 @@
     // Refresh THEME tokens right before chart creation so values
     // resolved late reach Chart.defaults pre-instantiation.
     refreshChartTheme();
+    // Defensive orphan cleanup (in case a previous render crashed).
+    destroyOrphanedChartOnCanvas_('pr-trend-chart');
     // Destroy any existing trend chart instance.
     const remaining = [];
     prChartInstances.forEach(function (c) {
@@ -3658,7 +3709,10 @@
           datalabels: {
             display: function (ctx) {
               if (!showLabels) return false;
-              return Number(ctx.parsed.y || 0) > 0;
+              const p = ctx && ctx.parsed;
+              if (p == null) return false;
+              const v = (typeof p === 'object') ? Number(p.y || 0) : Number(p);
+              return v > 0;
             },
             align: 'top', anchor: 'center',
             backgroundColor: THEME.paperCard,
@@ -4930,7 +4984,12 @@
     // Refresh THEME tokens right before chart creation so values
     // resolved late reach Chart.defaults pre-instantiation.
     refreshChartTheme();
-    if (crChartInstance) { crChartInstance.destroy(); crChartInstance = null; }
+    if (crChartInstance) {
+      try { crChartInstance.destroy(); } catch (e) {}
+      crChartInstance = null;
+    }
+    // Sweep up any orphan left by a partial-crash on the previous render.
+    destroyOrphanedChartOnCanvas_('cr-chart');
     const showLabels = $('cr-show-datalabels') ? $('cr-show-datalabels').checked : true;
     const crPlugins = (typeof ChartDataLabels !== 'undefined') ? [ChartDataLabels] : [];
 
@@ -4980,7 +5039,13 @@
             },
           },
           datalabels: {
-            display: function (ctx) { return showLabels && Number(ctx.parsed.y || 0) > 0; },
+            display: function (ctx) {
+              if (!showLabels) return false;
+              const p = ctx && ctx.parsed;
+              if (p == null) return false;
+              const v = (typeof p === 'object') ? Number(p.y || 0) : Number(p);
+              return v > 0;
+            },
             color: THEME.paper,
             font: { family: "'IBM Plex Mono', monospace", size: 10, weight: '500' },
             formatter: function (value) { return isPercent ? value + '%' : (value > 0 ? value : ''); },
