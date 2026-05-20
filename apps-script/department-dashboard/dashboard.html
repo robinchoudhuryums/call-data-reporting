@@ -21,6 +21,29 @@
         <div class="dash-kicker">Department Dashboard</div>
         <h1 id="dept-name">Loading…</h1>
       </div>
+      <nav class="header-nav" aria-label="Reports and admin">
+        <div class="header-menu">
+          <button class="header-menu-btn" id="reports-menu-btn" type="button"
+                  aria-haspopup="menu" aria-expanded="false" aria-controls="reports-menu-list">
+            Reports <span class="header-menu-caret" aria-hidden="true">&#9662;</span>
+          </button>
+          <div class="header-menu-list" id="reports-menu-list" role="menu" style="display:none;">
+            <button class="header-menu-item" id="missed-report-btn"     type="button" role="menuitem">Missed Calls</button>
+            <button class="header-menu-item" id="individual-report-btn" type="button" role="menuitem">Individual Report</button>
+            <button class="header-menu-item" id="performance-report-btn"type="button" role="menuitem">Performance Report</button>
+            <button class="header-menu-item" id="compare-ranges-btn"    type="button" role="menuitem" data-admin-only style="display:none;">Compare Ranges</button>
+          </div>
+        </div>
+        <div class="header-menu" id="admin-menu-wrap" data-admin-only style="display:none;">
+          <button class="header-menu-btn" id="admin-menu-btn" type="button"
+                  aria-haspopup="menu" aria-expanded="false" aria-controls="admin-menu-list">
+            Admin <span class="header-menu-caret" aria-hidden="true">&#9662;</span>
+          </button>
+          <div class="header-menu-list" id="admin-menu-list" role="menu" style="display:none;">
+            <button class="header-menu-item" id="alerts-btn" type="button" role="menuitem">Alerts</button>
+          </div>
+        </div>
+      </nav>
       <div class="header-meta">
         <button class="help-btn" id="mode-btn" type="button" aria-label="Toggle dark mode" title="Toggle dark mode">◐</button>
         <button class="help-btn" id="help-btn" type="button" aria-label="Help & FAQ" title="Help & FAQ">?</button>
@@ -59,14 +82,6 @@
       <div class="control">
         <label>&nbsp;</label>
         <button class="btn" id="refresh-btn">Refresh</button>
-      </div>
-      <div class="control control-reports">
-        <label>Reports</label>
-        <button class="btn btn-secondary" id="missed-report-btn" type="button">Missed Calls</button>
-        <button class="btn btn-secondary" id="individual-report-btn" type="button">Individual Report</button>
-        <button class="btn btn-secondary" id="performance-report-btn" type="button">Performance Report</button>
-        <button class="btn btn-secondary" id="compare-ranges-btn" type="button" style="display:none;" data-admin-only>Compare Ranges</button>
-        <button class="btn btn-secondary" id="alerts-btn" type="button" style="display:none;" data-admin-only>Alerts</button>
       </div>
     </div>
 

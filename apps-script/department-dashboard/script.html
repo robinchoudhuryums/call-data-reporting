@@ -204,15 +204,62 @@
     tag.textContent = USER.role;
     tag.classList.add('tag-' + USER.role);
 
-    // Compare Ranges is admin-only -- reveal the launcher button
-    // only for users whose role resolved to admin. The server
-    // enforces the same check independently.
+    // Admin-only menu items: Compare Ranges (under Reports) and
+    // the entire Admin menu wrap (which holds Alerts). The Alerts
+    // menu item itself stays visible inside the admin wrap so a
+    // single role check governs both. Server enforces independently.
     if (USER.role === 'admin') {
-      const crBtn = $('compare-ranges-btn');
-      if (crBtn) crBtn.style.display = '';
-      const alBtn = $('alerts-btn');
-      if (alBtn) alBtn.style.display = '';
+      document.querySelectorAll('[data-admin-only]').forEach(function (el) {
+        el.style.display = '';
+      });
     }
+
+    // -- Header dropdown menus (Reports + Admin) --------------------
+    // Toggle behavior: clicking a menu button opens its list and
+    // closes any other open menu; clicking the same button again
+    // closes it; clicking outside or pressing Escape dismisses.
+    // Clicking a menu item dispatches the underlying button's
+    // click handler (the item IS the original report-launcher
+    // button, just restyled) and closes the menu.
+    (function initHeaderMenus_() {
+      const buttons = document.querySelectorAll('.header-menu-btn');
+      const lists   = document.querySelectorAll('.header-menu-list');
+      function closeAll() {
+        lists.forEach(function (l) { l.style.display = 'none'; });
+        buttons.forEach(function (b) { b.setAttribute('aria-expanded', 'false'); });
+      }
+      buttons.forEach(function (btn) {
+        const listId = btn.getAttribute('aria-controls');
+        const list = document.getElementById(listId);
+        if (!list) return;
+        btn.addEventListener('click', function (e) {
+          e.stopPropagation();
+          const open = list.style.display !== 'none';
+          closeAll();
+          if (!open) {
+            list.style.display = '';
+            btn.setAttribute('aria-expanded', 'true');
+          }
+        });
+      });
+      // Close on outside click. Items inside the list don't bubble
+      // up to here because we listen on document.
+      document.addEventListener('click', function (e) {
+        if (!e.target.closest('.header-menu')) closeAll();
+      });
+      // Close on Escape.
+      document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') closeAll();
+      });
+      // Close after a menu item is activated -- the modal-open
+      // handler already runs because the menu item IS the original
+      // launcher button.
+      lists.forEach(function (list) {
+        list.addEventListener('click', function (e) {
+          if (e.target.closest('.header-menu-item')) closeAll();
+        });
+      });
+    })();
 
     // Department selector vs static label
     if (USER.role === 'admin' && USER.departments && USER.departments.length) {
