@@ -4,6 +4,11 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Department Dashboard</title>
+  <!-- Design-system fonts (Call Analyzer parity): Inter Tight for display,
+       Inter for UI, IBM Plex Mono for kickers/numerics. -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
   <?!= include('styles') ?>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0"></script>
@@ -13,10 +18,11 @@
   <div class="container">
     <header class="dash-header">
       <div>
-        <h1 id="dept-name">Loading...</h1>
-        <div class="sub">Department Dashboard</div>
+        <div class="dash-kicker">Department Dashboard</div>
+        <h1 id="dept-name">Loading…</h1>
       </div>
       <div class="header-meta">
+        <button class="help-btn" id="mode-btn" type="button" aria-label="Toggle dark mode" title="Toggle dark mode">◐</button>
         <button class="help-btn" id="help-btn" type="button" aria-label="Help & FAQ" title="Help & FAQ">?</button>
         <div><span class="email" id="user-email"></span><span id="role-tag" class="tag"></span></div>
       </div>
@@ -95,6 +101,7 @@
     <div class="modal-backdrop" data-close></div>
     <div class="modal-panel" role="document">
       <button class="modal-close" id="help-close" type="button" aria-label="Close">&times;</button>
+      <div class="modal-kicker">Reference</div>
       <h2 id="help-modal-title">Help &amp; FAQ</h2>
       <div class="modal-content">
         <h3>Quick guide to the table columns</h3>
@@ -137,7 +144,8 @@
     <div class="modal-backdrop" data-close></div>
     <div class="modal-panel modal-panel-wide" role="document">
       <button class="modal-close" id="missed-close" type="button" aria-label="Close">&times;</button>
-      <h2 id="missed-modal-title">Missed Calls Report</h2>
+      <div class="modal-kicker">Report</div>
+      <h2 id="missed-modal-title">Missed Calls</h2>
       <div class="report-summary" id="missed-summary"></div>
       <div id="missed-status" class="status" style="display:none;"></div>
       <div id="chart-row" class="chart-row no-detail">
@@ -167,6 +175,7 @@
     <div class="modal-backdrop" data-close></div>
     <div class="modal-panel modal-panel-wide" role="document">
       <button class="modal-close" id="individual-close" type="button" aria-label="Close">&times;</button>
+      <div class="modal-kicker">Report</div>
       <h2 id="individual-modal-title">Individual Report</h2>
 
       <div id="individual-form" class="ir-form">
@@ -318,6 +327,7 @@
     <div class="modal-backdrop" data-close></div>
     <div class="modal-panel modal-panel-wide" role="document">
       <button class="modal-close" id="performance-close" type="button" aria-label="Close">&times;</button>
+      <div class="modal-kicker">Report</div>
       <h2 id="performance-modal-title">Performance Report</h2>
 
       <div id="performance-form" class="ir-form">
@@ -469,6 +479,7 @@
     <div class="modal-backdrop" data-close></div>
     <div class="modal-panel modal-panel-wide" role="document">
       <button class="modal-close" id="compare-close" type="button" aria-label="Close">&times;</button>
+      <div class="modal-kicker">Report · Admin</div>
       <h2 id="compare-modal-title">Compare Ranges</h2>
 
       <div id="compare-form" class="ir-form">
