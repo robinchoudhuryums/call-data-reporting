@@ -95,7 +95,16 @@
   };
   function refreshChartTheme() {
     const css = getComputedStyle(document.body);
-    const read = function (name) { return (css.getPropertyValue(name) || '').trim(); };
+    // Resolve each CSS custom property to a canvas-canonical
+    // form (#rrggbb / rgba(...)) so downstream Chart.js +
+    // chartjs-plugin-datalabels code never has to handle OKLCH
+    // -- some sub-paths in the plugin choke on OKLCH (silent
+    // failures: text rendered with empty fillStyle = invisible
+    // labels) even though core Chart.js does support it.
+    const read = function (name) {
+      const raw = (css.getPropertyValue(name) || '').trim();
+      return raw ? colorToCanvasRgb_(raw) : '';
+    };
     // Read into a local first; only commit to THEME / Chart.defaults
     // if the CSS variables actually resolved. If we run before the
     // browser has fully computed styles (rare but seen in field),
@@ -321,7 +330,11 @@
       $('dept-name').textContent = USER.department || '(no department)';
     }
 
-    // Date range defaults
+    // Date range defaults. Provisional value = today (fallback if
+    // the getLatestDataDate fetch below is slow or fails); the
+    // actual default lands on the most recent date with data in
+    // DQE Historical Data so the table isn't empty when a manager
+    // first opens the dashboard before today's ingest has run.
     const range = defaultRange();
     $('from-date').value = range.from;
     $('to-date').value = range.to;
@@ -352,13 +365,28 @@
 
     initHelpModal();
     initSettingsModal();
+    initCompanyOverview();
     initMissedReport();
     initIndividualReport();
     initPerformanceReport();
     initCompareRanges();
     initAlerts();
 
-    refresh();
+    // Fetch the most recent date with data in DQE Historical Data
+    // and snap From/To to that date. Defers the initial table
+    // render until either the date is known (typical) or the
+    // server call fails (falls back to today's range from
+    // defaultRange above).
+    google.script.run
+      .withSuccessHandler(function (latestDate) {
+        if (latestDate) {
+          $('from-date').value = latestDate;
+          $('to-date').value = latestDate;
+        }
+        refresh();
+      })
+      .withFailureHandler(function () { refresh(); })
+      .getLatestDataDate();
   }
 
   // -- Help & FAQ modal ---------------------------------------------------
@@ -441,6 +469,183 @@
         if (window.__themePref && window.__themePref.set) window.__themePref.set(t);
         syncChips();
       });
+    });
+  }
+
+  // -- Company Overview modal --------------------------------------------
+  // Cross-dept snapshot: per-dept tile grid showing the latest day's
+  // KPIs (rung / answered / missed / % / ATT) + a 30-day answer-rate
+  // trend chart with one line per dept. Accessible to all
+  // authenticated users (managers see other depts' numbers too --
+  // matches the legacy DQE Report's read-only cross-dept visibility).
+
+  let ovChartInstance = null;
+  let ovLastData = null;
+
+  function initCompanyOverview() {
+    const btn = $('overview-btn');
+    const modal = $('overview-modal');
+    if (!btn || !modal) return;
+
+    const closeBtn = modal.querySelector('.modal-close');
+    const backdrop = modal.querySelector('[data-close]');
+
+    function openModal() {
+      modal.style.display = '';
+      modal.setAttribute('aria-hidden', 'false');
+      document.body.style.overflow = 'hidden';
+      document.addEventListener('keydown', onKeyDown);
+      if (closeBtn) closeBtn.focus();
+      ovLoad_();
+    }
+    function closeModal() {
+      modal.style.display = 'none';
+      modal.setAttribute('aria-hidden', 'true');
+      document.body.style.overflow = '';
+      document.removeEventListener('keydown', onKeyDown);
+      btn.focus();
+    }
+    function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
+
+    btn.addEventListener('click', openModal);
+    if (closeBtn) closeBtn.addEventListener('click', closeModal);
+    if (backdrop) backdrop.addEventListener('click', closeModal);
+  }
+
+  function ovLoad_() {
+    $('ov-loading').style.display = '';
+    $('ov-body').style.display = 'none';
+    google.script.run
+      .withSuccessHandler(function (data) {
+        ovLastData = data;
+        $('ov-loading').style.display = 'none';
+        $('ov-body').style.display = '';
+        ovRender_(data);
+      })
+      .withFailureHandler(function (err) {
+        $('ov-loading').textContent = 'Error loading overview: '
+          + (err && err.message ? err.message : String(err));
+      })
+      .getCompanyOverview();
+  }
+
+  function ovRender_(data) {
+    if (!data || !data.depts) return;
+    const dateLabel = data.latestDate
+      ? ovFormatDateLabel_(data.latestDate)
+      : '(no data)';
+    $('ov-summary-line').innerHTML =
+      '<span class="ov-summary-label">Latest data:</span> '
+      + '<strong>' + escapeHtml(dateLabel) + '</strong>'
+      + ' &middot; <span class="ov-summary-label">' + (data.depts.length)
+      + ' department' + (data.depts.length === 1 ? '' : 's') + '</span>';
+    ovRenderTiles_(data.depts);
+    // Defer chart creation by one frame so the just-revealed
+    // modal body lays out before Chart.js measures the canvas.
+    requestAnimationFrame(function () { ovRenderChart_(data); });
+  }
+
+  function ovFormatDateLabel_(iso) {
+    const p = iso.split('-');
+    const d = new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]));
+    return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+  }
+
+  function ovRenderTiles_(depts) {
+    const colors = IR_CHART_COLORS;
+    const html = depts.map(function (dept, i) {
+      const color = colors[i % colors.length];
+      const spark = irSparkline_(
+        (dept.trend || []).map(function (v) { return v == null ? 0 : v; }),
+        color);
+      return '<div class="ov-dept-tile">'
+           +   '<div class="ov-dept-tile-head">'
+           +     '<span class="ov-dept-name">' + escapeHtml(dept.name) + '</span>'
+           +     '<span class="ov-dept-active">'
+           +       dept.activeAgents + ' of ' + dept.rosterSize + ' agents'
+           +     '</span>'
+           +   '</div>'
+           +   '<div class="ov-dept-tile-pct">'
+           +     escapeHtml(dept.latest.pctFormatted)
+           +     ' <span class="ov-dept-pct-cap">answered</span>'
+           +   '</div>'
+           +   '<div class="ov-dept-tile-row">'
+           +     '<span><span class="ov-dept-stat-label">Rung</span> ' + dept.latest.rung + '</span>'
+           +     '<span><span class="ov-dept-stat-label">Ans</span> ' + dept.latest.answered + '</span>'
+           +     '<span><span class="ov-dept-stat-label">Miss</span> ' + dept.latest.missed + '</span>'
+           +   '</div>'
+           +   '<div class="ov-dept-tile-row">'
+           +     '<span><span class="ov-dept-stat-label">ATT</span> ' + escapeHtml(dept.latest.attFormatted) + '</span>'
+           +   '</div>'
+           +   '<div class="ov-dept-tile-spark" title="30-day % answered trend">' + spark + '</div>'
+           + '</div>';
+    }).join('');
+    $('ov-dept-grid').innerHTML = html;
+  }
+
+  function ovRenderChart_(data) {
+    if (ovChartInstance) {
+      try { ovChartInstance.destroy(); } catch (e) {}
+      ovChartInstance = null;
+    }
+    destroyOrphanedChartOnCanvas_('ov-trend-chart');
+    refreshChartTheme();
+
+    const labels = data.trendLabels || [];
+    const colors = IR_CHART_COLORS;
+    const datasets = (data.depts || []).map(function (dept, i) {
+      const color = colors[i % colors.length];
+      return {
+        label: dept.name,
+        data: dept.trend || [],
+        borderColor: color,
+        backgroundColor: color,
+        tension: 0.3,
+        fill: false,
+        pointRadius: 2,
+        pointHoverRadius: 4,
+        pointBackgroundColor: color,
+        pointBorderColor: THEME.paperCard,
+        pointBorderWidth: 1,
+        spanGaps: false,    // honor nulls -> gaps for no-data days
+      };
+    });
+
+    const ovPlugins = (typeof ChartDataLabels !== 'undefined') ? [ChartDataLabels] : [];
+
+    ovChartInstance = new Chart($('ov-trend-chart').getContext('2d'), {
+      type: 'line',
+      data: { labels: labels, datasets: datasets },
+      plugins: ovPlugins,
+      options: {
+        responsive: true, maintainAspectRatio: false, animation: false,
+        plugins: {
+          legend: {
+            position: 'bottom',
+            labels: { boxWidth: 12, font: { size: 11 } },
+          },
+          tooltip: {
+            callbacks: {
+              label: function (ctx) {
+                const v = ctx.parsed && ctx.parsed.y;
+                if (v == null) return ctx.dataset.label + ': no data';
+                return ctx.dataset.label + ': ' + v.toFixed(1) + '%';
+              },
+            },
+          },
+          datalabels: { display: false },
+        },
+        scales: {
+          y: {
+            beginAtZero: true,
+            max: 100,
+            ticks: { callback: function (v) { return v + '%'; } },
+            title: { display: true, text: '% Answered', font: { size: 11 } },
+          },
+          x: { ticks: { autoSkip: true, maxTicksLimit: 10 } },
+        },
+        interaction: { mode: 'index', intersect: false },
+      },
     });
   }
 
@@ -1200,6 +1405,27 @@
   // top-to-bottom gradient from the line color (alpha .25) down to
   // transparent. Applied to every IR line chart so single-agent views
   // have visual weight without dominating the comparison ones.
+  /**
+   * Resolves a CSS color string to canvas-canonical RGB form
+   * (`#rrggbb` for opaque colors, `rgba(r, g, b, a)` for
+   * transparent). Used by refreshChartTheme() to normalize the
+   * design-system tokens before they reach Chart.js / the
+   * datalabels plugin, which have inconsistent OKLCH support in
+   * their many sub-paths.
+   */
+  function colorToCanvasRgb_(color) {
+    try {
+      const cvs = document.createElement('canvas');
+      cvs.width = cvs.height = 1;
+      const ctx = cvs.getContext('2d');
+      ctx.fillStyle = 'rgb(1,2,3)';
+      const sentinel = ctx.fillStyle;
+      ctx.fillStyle = color;
+      if (ctx.fillStyle === sentinel) return color;
+      return ctx.fillStyle;
+    } catch (e) { return color; }
+  }
+
   /**
    * Returns the given CSS color with the supplied alpha applied,
    * as an `rgba(...)` string. Paints the color onto a 1x1 canvas
@@ -3329,7 +3555,7 @@
       const arrow = dp > 0 ? '▲' : '▼';
       const suffix = isPctType ? ' pts' : '%';
       badge = '<span class="pr-delta ' + cls + '">'
-            +   arrow + ' ' + Math.abs(dp).toFixed(1) + suffix
+            +   '<span class="pr-delta-arrow">' + arrow + '</span> ' + Math.abs(dp).toFixed(1) + suffix
             + '</span>';
     }
     const spark = irSparkline_(sparklineData || [], sparklineColor || '#4E79A7');
@@ -3544,10 +3770,17 @@
             order: 2 },
           { label: '% Answered', type: 'line',
             data: volData.map(function (d) { return Number((d.pct || 0).toFixed(1)); }),
+            // showLine: false renders the dataset as discrete
+            // points only. Connecting agents with a line was
+            // visually misleading -- agents are independent
+            // categories, not a time series. Points + larger
+            // radius reads as "per-agent dot" rather than trend.
+            showLine: false,
             borderColor: THEME.accent, backgroundColor: THEME.accent,
-            tension: 0.3, fill: false, yAxisID: 'y1',
-            pointRadius: 4, pointBackgroundColor: THEME.accent,
-            pointBorderColor: THEME.paperCard, pointBorderWidth: 1.5,
+            fill: false, yAxisID: 'y1',
+            pointRadius: 6, pointHoverRadius: 8,
+            pointBackgroundColor: THEME.accent,
+            pointBorderColor: THEME.paperCard, pointBorderWidth: 2,
             order: 1 },
         ],
       },
@@ -4161,7 +4394,11 @@
     const mismatch = (Math.min(p1Days, p2Days) > 0)
                   && (Math.max(p1Days, p2Days) / Math.min(p1Days, p2Days) >= 1.2);
     let extra = '';
-    if (mismatch) {
+    if (p1Days === p2Days) {
+      // Exactly equal -- only state in which we claim parity.
+      extra = '<span class="cr-length-ok">&#10003; Equal length</span>';
+    } else if (mismatch) {
+      // Big difference (>= 1.2x) -- volume totals not comparable.
       const ratio = (Math.max(p1Days, p2Days) / Math.min(p1Days, p2Days)).toFixed(1);
       extra = '<span class="cr-length-warn">'
             + '&#9888; Period 2 is ' + ratio + '&times; '
@@ -4169,7 +4406,13 @@
             + ' &mdash; volume totals aren\'t directly comparable.'
             + '</span>';
     } else {
-      extra = '<span class="cr-length-ok">&#10003; Equal length</span>';
+      // Small difference -- note it but don't sound the alarm.
+      const diff = Math.abs(p2Days - p1Days);
+      const direction = p2Days > p1Days ? 'longer' : 'shorter';
+      extra = '<span class="cr-length-diff">'
+            + 'Period 2 is <strong>' + diff + '</strong> day'
+            + (diff === 1 ? '' : 's') + ' ' + direction + ' than P1'
+            + '</span>';
     }
     el.innerHTML = '<span class="cr-length-spec">Period 1: <strong>' + p1Days + '</strong> day'
                  + (p1Days === 1 ? '' : 's') + '</span>'
@@ -4624,7 +4867,7 @@
       const arrow = dp > 0 ? '▲' : '▼';
       const suffix = stat.type === 'pctPoints' ? ' pts' : '%';
       badge = '<span class="pr-delta ' + cls + '">'
-            + arrow + ' ' + Math.abs(dp).toFixed(1) + suffix + '</span>';
+            + '<span class="pr-delta-arrow">' + arrow + '</span> ' + Math.abs(dp).toFixed(1) + suffix + '</span>';
     }
     el.innerHTML = label + ': '
                  + '<strong>' + escapeHtml(stat.prevFormatted) + '</strong> (P1) '
@@ -4679,7 +4922,7 @@
       const arrow = dp > 0 ? '▲' : '▼';
       const suffix = isPctType ? ' pts' : '%';
       badge = '<span class="pr-delta ' + cls + '">'
-            +   arrow + ' ' + Math.abs(dp).toFixed(1) + suffix
+            +   '<span class="pr-delta-arrow">' + arrow + '</span> ' + Math.abs(dp).toFixed(1) + suffix
             + '</span>';
     }
     // Per-day caption: only for raw volume/time metrics, only
@@ -4856,7 +5099,7 @@
       const arrow = dp > 0 ? '▲' : '▼';
       const suffix = isPctType ? ' pts' : '%';
       badge = '<span class="pr-delta ' + cls + '">'
-            +   arrow + ' ' + Math.abs(dp).toFixed(1) + suffix
+            +   '<span class="pr-delta-arrow">' + arrow + '</span> ' + Math.abs(dp).toFixed(1) + suffix
             + '</span>';
     }
 

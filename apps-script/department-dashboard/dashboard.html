@@ -22,6 +22,10 @@
         <h1 id="dept-name">Loading…</h1>
       </div>
       <nav class="header-nav" aria-label="Reports and admin">
+        <button class="header-menu-btn" id="overview-btn" type="button"
+                title="Cross-department snapshot of the most recent day, with a 30-day answer-rate trend per dept.">
+          Overview
+        </button>
         <div class="header-menu">
           <button class="header-menu-btn" id="reports-menu-btn" type="button"
                   aria-haspopup="menu" aria-expanded="false" aria-controls="reports-menu-list">
@@ -122,9 +126,12 @@
   <div id="help-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="help-modal-title" style="display:none;">
     <div class="modal-backdrop" data-close></div>
     <div class="modal-panel" role="document">
-      <button class="modal-close" id="help-close" type="button" aria-label="Close">&times;</button>
-      <div class="modal-kicker">Reference</div>
-      <h2 id="help-modal-title">Help &amp; FAQ</h2>
+      <div class="modal-panel-header">
+        <button class="modal-close" id="help-close" type="button" aria-label="Close">&times;</button>
+        <div class="modal-kicker">Reference</div>
+        <h2 id="help-modal-title">Help &amp; FAQ</h2>
+      </div>
+      <div class="modal-panel-body">
       <div class="modal-content">
         <h3>Quick guide to the table columns</h3>
         <ul>
@@ -162,15 +169,19 @@
         <h3>Contact</h3>
         <p>Questions, access requests, or threshold changes: <a href="mailto:robin.choudhury@universalmedsupply.com">robin.choudhury@universalmedsupply.com</a></p>
       </div>
+      </div>
     </div>
   </div>
 
   <div id="settings-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="settings-modal-title" style="display:none;">
     <div class="modal-backdrop" data-close></div>
     <div class="modal-panel" role="document">
-      <button class="modal-close" id="settings-close" type="button" aria-label="Close">&times;</button>
-      <div class="modal-kicker">Personal preferences</div>
-      <h2 id="settings-modal-title">Settings</h2>
+      <div class="modal-panel-header">
+        <button class="modal-close" id="settings-close" type="button" aria-label="Close">&times;</button>
+        <div class="modal-kicker">Personal preferences</div>
+        <h2 id="settings-modal-title">Settings</h2>
+      </div>
+      <div class="modal-panel-body">
       <div class="modal-content">
         <h3>Background theme</h3>
         <p>Affects your view only; other users see their own setting. The dark-mode toggle (<span aria-hidden="true">◐</span>) in the header is independent of this -- pick a light-mode theme here, and the dark palette still applies when you toggle dark mode.</p>
@@ -189,15 +200,44 @@
           </button>
         </div>
       </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="overview-modal" class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="overview-modal-title" style="display:none;">
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-panel modal-panel-wide" role="document">
+      <div class="modal-panel-header">
+        <button class="modal-close" id="overview-close" type="button" aria-label="Close">&times;</button>
+        <div class="modal-kicker">Company &middot; Overview</div>
+        <h2 id="overview-modal-title">Departments Snapshot</h2>
+      </div>
+      <div class="modal-panel-body">
+        <div id="ov-loading" class="ir-loader" style="text-align: center; padding: 32px;">Loading company-wide data&hellip;</div>
+        <div id="ov-body" style="display:none;">
+          <div class="ov-summary-line" id="ov-summary-line"></div>
+          <div id="ov-dept-grid" class="ov-dept-grid"></div>
+          <div class="ir-chart-tabs" id="ov-chart-tabs" role="tablist">
+            <button type="button" class="ir-tab active" data-metric="pct" role="tab" aria-selected="true">% Answered (30 days)</button>
+          </div>
+          <div class="ir-chart-wrap" id="ov-chart-wrap">
+            <div class="ir-chart-header">Answer rate trend per department</div>
+            <div class="ir-chart-canvas-wrap"><canvas id="ov-trend-chart"></canvas></div>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 
   <div id="missed-modal" class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="missed-modal-title" style="display:none;">
     <div class="modal-backdrop" data-close></div>
     <div class="modal-panel modal-panel-wide" role="document">
-      <button class="modal-close" id="missed-close" type="button" aria-label="Close">&times;</button>
-      <div class="modal-kicker">Report</div>
-      <h2 id="missed-modal-title">Missed Calls</h2>
+      <div class="modal-panel-header">
+        <button class="modal-close" id="missed-close" type="button" aria-label="Close">&times;</button>
+        <div class="modal-kicker">Report</div>
+        <h2 id="missed-modal-title">Missed Calls</h2>
+      </div>
+      <div class="modal-panel-body">
       <div class="report-summary" id="missed-summary"></div>
       <div id="missed-status" class="status" style="display:none;"></div>
       <div id="chart-row" class="chart-row no-detail">
@@ -220,16 +260,19 @@
         <div id="queue-only-body"></div>
       </div>
       <div id="missed-agents" class="agent-grid"></div>
+      </div>
     </div>
   </div>
 
   <div id="individual-modal" class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="individual-modal-title" style="display:none;">
     <div class="modal-backdrop" data-close></div>
     <div class="modal-panel modal-panel-wide" role="document">
-      <button class="modal-close" id="individual-close" type="button" aria-label="Close">&times;</button>
-      <div class="modal-kicker">Report</div>
-      <h2 id="individual-modal-title">Individual Report</h2>
-
+      <div class="modal-panel-header">
+        <button class="modal-close" id="individual-close" type="button" aria-label="Close">&times;</button>
+        <div class="modal-kicker">Report</div>
+        <h2 id="individual-modal-title">Individual Report</h2>
+      </div>
+      <div class="modal-panel-body">
       <div id="individual-form" class="ir-form">
         <div class="ir-section-title">1. Date Range</div>
         <div class="ir-row">
@@ -372,16 +415,19 @@
           </div>
         </div>
       </div>
+      </div>
     </div>
   </div>
 
   <div id="performance-modal" class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="performance-modal-title" style="display:none;">
     <div class="modal-backdrop" data-close></div>
     <div class="modal-panel modal-panel-wide" role="document">
-      <button class="modal-close" id="performance-close" type="button" aria-label="Close">&times;</button>
-      <div class="modal-kicker">Report</div>
-      <h2 id="performance-modal-title">Performance Report</h2>
-
+      <div class="modal-panel-header">
+        <button class="modal-close" id="performance-close" type="button" aria-label="Close">&times;</button>
+        <div class="modal-kicker">Report</div>
+        <h2 id="performance-modal-title">Performance Report</h2>
+      </div>
+      <div class="modal-panel-body">
       <div id="performance-form" class="ir-form">
         <div class="ir-section-title">1. Date Range</div>
         <div class="ir-row">
@@ -524,16 +570,19 @@
           </div>
         </div>
       </div>
+      </div>
     </div>
   </div>
 
   <div id="compare-modal" class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="compare-modal-title" style="display:none;">
     <div class="modal-backdrop" data-close></div>
     <div class="modal-panel modal-panel-wide" role="document">
-      <button class="modal-close" id="compare-close" type="button" aria-label="Close">&times;</button>
-      <div class="modal-kicker">Report · Admin</div>
-      <h2 id="compare-modal-title">Compare Ranges</h2>
-
+      <div class="modal-panel-header">
+        <button class="modal-close" id="compare-close" type="button" aria-label="Close">&times;</button>
+        <div class="modal-kicker">Report · Admin</div>
+        <h2 id="compare-modal-title">Compare Ranges</h2>
+      </div>
+      <div class="modal-panel-body">
       <div id="compare-form" class="ir-form">
         <div class="ir-section-title">1. Date Ranges</div>
         <div class="ir-row">
@@ -710,16 +759,19 @@
           <div id="cr-quiet-cards" class="cr-agent-cards"></div>
         </details>
       </div>
+      </div>
     </div>
   </div>
 
   <div id="alerts-modal" class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="alerts-modal-title" style="display:none;">
     <div class="modal-backdrop" data-close></div>
     <div class="modal-panel modal-panel-wide" role="document">
-      <button class="modal-close" id="alerts-close" type="button" aria-label="Close">&times;</button>
-      <div class="modal-kicker">Operations &middot; Admin</div>
-      <h2 id="alerts-modal-title">Low Answer Rate Alerts</h2>
-
+      <div class="modal-panel-header">
+        <button class="modal-close" id="alerts-close" type="button" aria-label="Close">&times;</button>
+        <div class="modal-kicker">Operations &middot; Admin</div>
+        <h2 id="alerts-modal-title">Low Answer Rate Alerts</h2>
+      </div>
+      <div class="modal-panel-body">
       <div id="al-loading" class="ir-loader" style="text-align: center; padding: 24px;">Loading alert configuration&hellip;</div>
 
       <div id="al-body" style="display:none;">
@@ -799,6 +851,7 @@
             <tbody id="al-log-tbody"></tbody>
           </table>
         </div>
+      </div>
       </div>
     </div>
   </div>
