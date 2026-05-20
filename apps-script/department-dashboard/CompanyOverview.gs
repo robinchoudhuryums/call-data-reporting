@@ -31,7 +31,31 @@
  * this fits comfortably in a single Apps Script execution.
  */
 
-const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v1';
+const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v2';
+
+/**
+ * Overview-only parent->children dept relationships. The "Overview"
+ * tile grid renders each parent followed by its child sub-queues,
+ * visually nested. Each dept is still independent everywhere else
+ * (Reports modals, admin dept dropdown, alerts) -- this nesting
+ * only affects the Company Overview display.
+ *
+ * Add a row here when a new sub-queue is introduced; the child's
+ * dept name must match the column header in DO NOT EDIT! exactly.
+ */
+const OVERVIEW_PARENT_OF = Object.freeze({
+  'PAP Q':   'Sales',
+  'Spanish': 'CSR',
+  'PAK':     'Power',
+});
+
+/**
+ * Departments excluded from the Company Overview entirely. Still
+ * accessible elsewhere; this just hides them from the cross-dept
+ * landing view (e.g. "CSR Backup" is a coverage queue, not a
+ * department worth surfacing at a glance).
+ */
+const OVERVIEW_HIDDEN_DEPTS = Object.freeze(['CSR Backup']);
 
 function getCompanyOverview() {
   const email = Session.getActiveUser().getEmail();
@@ -142,9 +166,14 @@ function getCompanyOverview() {
     });
   }
 
-  // Format per-dept output. Departments sorted by latest-day rung
-  // descending so the busier teams surface first.
-  const depts = allDepts.map(function (d) {
+  // Format per-dept output. Hidden depts (OVERVIEW_HIDDEN_DEPTS)
+  // are skipped entirely; sub-queues get a `parent` reference and
+  // are slotted right after their parent in the output order.
+  // Top-level depts sorted by latest-day rung desc so busier
+  // teams surface first; children sorted alphabetically inside
+  // their parent group (their volumes vary too much to use rung
+  // for sub-ordering meaningfully).
+  const formatDept = function (d) {
     const stats = deptStats[d];
     const ld = stats.latestDay;
     const pct = ld.rung > 0 ? (ld.answered / ld.rung) * 100 : 0;
@@ -156,6 +185,7 @@ function getCompanyOverview() {
     });
     return {
       name: d,
+      parent: OVERVIEW_PARENT_OF[d] || null,
       activeAgents: Object.keys(ld.activeAgents).length,
       rosterSize: rosterByDept[d].names.length,
       latest: {
@@ -168,7 +198,30 @@ function getCompanyOverview() {
       },
       trend: trend,
     };
-  }).sort(function (a, b) { return b.latest.rung - a.latest.rung; });
+  };
+  const allFormatted = allDepts
+    .filter(function (d) { return OVERVIEW_HIDDEN_DEPTS.indexOf(d) === -1; })
+    .map(formatDept);
+
+  const topLevel = allFormatted
+    .filter(function (d) { return !d.parent; })
+    .sort(function (a, b) { return b.latest.rung - a.latest.rung; });
+  const childrenByParent = {};
+  allFormatted.forEach(function (d) {
+    if (!d.parent) return;
+    (childrenByParent[d.parent] = childrenByParent[d.parent] || []).push(d);
+  });
+  Object.keys(childrenByParent).forEach(function (parent) {
+    childrenByParent[parent].sort(function (a, b) {
+      return a.name.localeCompare(b.name);
+    });
+  });
+
+  const depts = [];
+  topLevel.forEach(function (p) {
+    depts.push(p);
+    (childrenByParent[p.name] || []).forEach(function (c) { depts.push(c); });
+  });
 
   const result = {
     latestDate:     latestDate,

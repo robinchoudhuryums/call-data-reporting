@@ -182,6 +182,26 @@
   // their old pixels — acceptable trade-off; documented above.)
   window.addEventListener('dash-mode-change', refreshChartTheme);
 
+  // -- chartjs-plugin-datalabels global registration ------------------
+  // Chart.js v4 requires explicit registration -- the auto-registration
+  // the plugin did via script tag was a v3 behavior that v4 dropped.
+  // Without this, per-chart `plugins: [ChartDataLabels]` references
+  // sometimes work and sometimes don't (we suspect a load-order quirk
+  // in the Apps Script HtmlService environment).  Registering globally
+  // here is belt-and-suspenders; idempotent via the registry check.
+  // Charts that DON'T want labels (Missed Calls radar, Overview multi-
+  // line) opt out via `options.plugins.datalabels = { display: false }`.
+  (function registerChartDataLabels_() {
+    if (typeof Chart === 'undefined' || typeof ChartDataLabels === 'undefined') return;
+    try {
+      if (Chart.registry && Chart.registry.plugins
+          && Chart.registry.plugins.get && Chart.registry.plugins.get('datalabels')) {
+        return;   // already registered
+      }
+      Chart.register(ChartDataLabels);
+    } catch (e) { /* ignore -- fall back to per-chart `plugins` option */ }
+  })();
+
   const state = {
     rows: [],
     totals: null,
@@ -553,18 +573,41 @@
 
   function ovRenderTiles_(depts) {
     const colors = IR_CHART_COLORS;
-    const html = depts.map(function (dept, i) {
-      const color = colors[i % colors.length];
+    // Group parent depts with their sub-queue children so each
+    // parent's children stack underneath it in a single grid
+    // cell. Each top-level dept gets a slot index for color
+    // cycling; children inherit their parent's slot color to
+    // signal the relationship.
+    const groups = [];
+    const slotByName = {};
+    let slot = 0;
+    depts.forEach(function (d) {
+      if (!d.parent) {
+        slotByName[d.name] = slot++;
+        groups.push({ parent: d, children: [] });
+      } else {
+        const g = groups[groups.length - 1];
+        if (g && g.parent.name === d.parent) g.children.push(d);
+        else groups.push({ parent: d, children: [] });   // orphan child fallback
+      }
+    });
+
+    const buildTile = function (dept, color, isChild) {
       const spark = irSparkline_(
         (dept.trend || []).map(function (v) { return v == null ? 0 : v; }),
         color);
-      return '<div class="ov-dept-tile">'
+      const parentTag = isChild
+        ? '<span class="ov-dept-parent-tag">sub-queue &middot; ' + escapeHtml(dept.parent) + '</span>'
+        : '';
+      const cls = 'ov-dept-tile' + (isChild ? ' ov-dept-tile-child' : '');
+      return '<div class="' + cls + '">'
            +   '<div class="ov-dept-tile-head">'
            +     '<span class="ov-dept-name">' + escapeHtml(dept.name) + '</span>'
            +     '<span class="ov-dept-active">'
            +       dept.activeAgents + ' of ' + dept.rosterSize + ' agents'
            +     '</span>'
            +   '</div>'
+           +   parentTag
            +   '<div class="ov-dept-tile-pct">'
            +     escapeHtml(dept.latest.pctFormatted)
            +     ' <span class="ov-dept-pct-cap">answered</span>'
@@ -579,6 +622,15 @@
            +   '</div>'
            +   '<div class="ov-dept-tile-spark" title="30-day % answered trend">' + spark + '</div>'
            + '</div>';
+    };
+
+    const html = groups.map(function (g) {
+      const color = colors[(slotByName[g.parent.name] || 0) % colors.length];
+      const parentTile = buildTile(g.parent, color, false);
+      const childTiles = g.children.map(function (c) {
+        return buildTile(c, color, true);
+      }).join('');
+      return '<div class="ov-dept-group">' + parentTile + childTiles + '</div>';
     }).join('');
     $('ov-dept-grid').innerHTML = html;
   }
@@ -824,7 +876,12 @@
               title: function (items) { return items[0].label + ' CST'; },
               label: function (item) { return item.parsed.r + ' missed call' + (item.parsed.r === 1 ? '' : 's'); }
             }
-          }
+          },
+          // Opt out of datalabels -- the plugin is registered
+          // globally for the report charts (PR / CR / IR) that DO
+          // want labels; the missed-calls radar would get
+          // default-rendered labels on all 18 buckets without this.
+          datalabels: { display: false }
         },
         scales: {
           r: {

@@ -2462,6 +2462,34 @@
     grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
     gap: 12px;
     margin-bottom: 18px;
+    align-items: start;
+  }
+  /* Each parent dept + its sub-queues stack vertically in a
+     single grid cell. Children inherit the parent's tile color
+     (slot in IR_CHART_COLORS) via inline-set color but get a
+     muted accent strip on the left to signal the relationship. */
+  .ov-dept-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .ov-dept-tile-child {
+    border-left-width: 3px;
+    border-left-color: var(--accent);
+    margin-left: 14px;
+    /* Slightly smaller font, dimmer background to communicate
+       "sub-queue, less primary". */
+    background: var(--paper-2);
+  }
+  .ov-dept-tile-child .ov-dept-tile-pct {
+    font-size: 18px;
+  }
+  .ov-dept-parent-tag {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
   }
   .ov-dept-tile {
     background: var(--paper-card);
