@@ -344,10 +344,18 @@
         prLastRoster = { dept: null, agents: [], activeAgents: null, rangeKey: '' };
         crLastRoster = { dept: null, agents: [], activeAgents: null, rangeKey: '' };
         refresh();
+        // If the Overview page is currently visible, re-render its
+        // viewer-personalized bits (hero + user-table) so they
+        // reflect the new dept without a full reload.
+        if (document.body.getAttribute('data-page') === 'overview' && ovLastData) {
+          ovRenderUserHero_(ovLastData);
+          ovRenderUserTable_(ovLastData);
+          ovRenderTiles_(ovLastData);  // exclude new viewer-dept from the grid
+        }
       });
-      $('dept-name').textContent = sel.value;
+      $('page-title').textContent = sel.value;
     } else {
-      $('dept-name').textContent = USER.department || '(no department)';
+      $('page-title').textContent = USER.department || '(no department)';
     }
 
     // Date range defaults. Provisional value = today (fallback if
@@ -408,22 +416,37 @@
       .withFailureHandler(function () { refresh(); })
       .getLatestDataDate();
 
-    // Auto-open the Overview as the landing view on the first visit
-    // per browser session. sessionStorage clears when the tab closes,
-    // so re-opening the dashboard in a fresh tab/window starts a new
-    // session and re-shows Overview. Users who close it mid-session
-    // can still reach it via the header button.
-    try {
-      if (!sessionStorage.getItem('ov.autoOpened')) {
-        sessionStorage.setItem('ov.autoOpened', '1');
-        // Defer so the dashboard backdrop has time to render first;
-        // the modal anim looks better that way.
-        setTimeout(function () {
-          const ovBtn = $('overview-btn');
-          if (ovBtn) ovBtn.click();
-        }, 80);
-      }
-    } catch (e) { /* sessionStorage unavailable -- skip auto-open */ }
+    // Default landing page is the Overview. Calling setPage here
+    // (after refresh() has been kicked off above) sets the body
+    // attribute that controls page visibility AND triggers the
+    // Overview's data fetch.
+    setPage('overview');
+  }
+
+  // Page switcher between the Overview "home" page and the dept
+  // detail page. Body[data-page] drives CSS visibility; this also
+  // updates the document title block and the active-nav state.
+  function setPage(page) {
+    if (page !== 'overview' && page !== 'dept') page = 'overview';
+    document.body.setAttribute('data-page', page);
+    const kicker = $('page-kicker');
+    const title  = $('page-title');
+    if (page === 'overview') {
+      if (kicker) kicker.textContent = 'Company · Overview';
+      if (title)  title.textContent  = 'Departments Snapshot';
+      ovLoad_();
+    } else {
+      if (kicker) kicker.textContent = 'Department Dashboard';
+      if (title)  title.textContent  = getRequestedDept() || '(no department)';
+    }
+    ['overview-btn', 'my-dept-btn'].forEach(function (id) {
+      const btn = $(id);
+      if (!btn) return;
+      const isCur = (id === 'overview-btn' && page === 'overview')
+                 || (id === 'my-dept-btn'  && page === 'dept');
+      btn.classList.toggle('header-nav-current', isCur);
+      btn.setAttribute('aria-pressed', isCur ? 'true' : 'false');
+    });
   }
 
   // -- Help & FAQ modal ---------------------------------------------------
@@ -509,44 +532,25 @@
     });
   }
 
-  // -- Company Overview modal --------------------------------------------
+  // -- Company Overview page --------------------------------------------
   // Cross-dept snapshot: per-dept tile grid showing the latest day's
   // KPIs (rung / answered / missed / % / ATT) + a 30-day answer-rate
   // trend chart with one line per dept. Accessible to all
   // authenticated users (managers see other depts' numbers too --
   // matches the legacy DQE Report's read-only cross-dept visibility).
+  //
+  // Rendered inline as a full page (#overview-page), toggled with
+  // the #dept-page section via body[data-page] from the header
+  // buttons in setPage().
 
   let ovChartInstance = null;
   let ovLastData = null;
 
   function initCompanyOverview() {
-    const btn = $('overview-btn');
-    const modal = $('overview-modal');
-    if (!btn || !modal) return;
-
-    const closeBtn = modal.querySelector('.modal-close');
-    const backdrop = modal.querySelector('[data-close]');
-
-    function openModal() {
-      modal.style.display = '';
-      modal.setAttribute('aria-hidden', 'false');
-      document.body.style.overflow = 'hidden';
-      document.addEventListener('keydown', onKeyDown);
-      if (closeBtn) closeBtn.focus();
-      ovLoad_();
-    }
-    function closeModal() {
-      modal.style.display = 'none';
-      modal.setAttribute('aria-hidden', 'true');
-      document.body.style.overflow = '';
-      document.removeEventListener('keydown', onKeyDown);
-      btn.focus();
-    }
-    function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
-
-    btn.addEventListener('click', openModal);
-    if (closeBtn) closeBtn.addEventListener('click', closeModal);
-    if (backdrop) backdrop.addEventListener('click', closeModal);
+    const overviewBtn = $('overview-btn');
+    const myDeptBtn   = $('my-dept-btn');
+    if (overviewBtn) overviewBtn.addEventListener('click', function () { setPage('overview'); });
+    if (myDeptBtn)   myDeptBtn.addEventListener('click',   function () { setPage('dept');     });
   }
 
   function ovLoad_() {
@@ -627,7 +631,7 @@
       +     '<div class="ov-agg-stat"><span class="ov-agg-stat-label">Answered</span><span class="ov-agg-stat-val">' + fmtNumber(agg.answered) + '</span></div>'
       +     '<div class="ov-agg-stat"><span class="ov-agg-stat-label">Missed</span><span class="ov-agg-stat-val">' + fmtNumber(agg.missed) + '</span></div>'
       +     '<div class="ov-agg-stat"><span class="ov-agg-stat-label">ATT</span><span class="ov-agg-stat-val">' + escapeHtml(agg.attFormatted) + '</span></div>'
-      +     '<div class="ov-agg-stat"><span class="ov-agg-stat-label">Active</span><span class="ov-agg-stat-val">' + agg.activeAgents + ' of ' + agg.rosterSize + '</span></div>'
+      +     '<div class="ov-agg-stat" title="' + escapeHtml(ovActiveTooltip_(agg)) + '"><span class="ov-agg-stat-label">Active</span><span class="ov-agg-stat-val">' + agg.activeAgents + ' of ' + (agg.recentlyActiveCount != null ? agg.recentlyActiveCount : agg.rosterSize) + '</span></div>'
       +   '</div>'
       + '</div>';
   }
@@ -665,12 +669,9 @@
     wrap.style.display = '';
     wrap.innerHTML = ovBuildHeroTile_(dept, color);
 
-    // Hero is always clickable (closes the modal -- the main
-    // dashboard is already showing this dept's detail).
-    wrap.onclick = function () {
-      const modal = $('overview-modal');
-      if (modal) modal.querySelector('.modal-close').click();
-    };
+    // Hero is always clickable -- routes to the My Department
+    // page where the full configurable date-range detail lives.
+    wrap.onclick = function () { setPage('dept'); };
   }
 
   function ovBuildHeroTile_(dept, color) {
@@ -688,8 +689,8 @@
          +     '</div>'
          +     '<div class="ov-hero-meta">'
          +       ovBuildAlertPill_(dept)
-         +       '<span class="ov-dept-active">'
-         +         dept.activeAgents + ' of ' + dept.rosterSize + ' agents active'
+         +       '<span class="ov-dept-active" title="' + escapeHtml(ovActiveTooltip_(dept)) + '">'
+         +         dept.activeAgents + ' of ' + (dept.recentlyActiveCount != null ? dept.recentlyActiveCount : dept.rosterSize) + ' agents active'
          +       '</span>'
          +     '</div>'
          +   '</div>'
@@ -721,6 +722,27 @@
               + dept.wow.prevPct.toFixed(1) + '%';
     return '<span class="ov-wow-chip ' + cls + '" title="' + escapeHtml(tip) + '">'
          + arrow + ' ' + Math.abs(d).toFixed(1) + '% WoW</span>';
+  }
+
+  // Tooltip text for the active-agents caption. Spells out the
+  // three counts (today's active / recently active / full roster)
+  // so the user understands why the denominator isn't the full
+  // roster size -- ex-employees on the roster sheet (kept for
+  // historical-data preservation) get filtered out of the
+  // "recently active" count.
+  function ovActiveTooltip_(rec) {
+    if (!rec) return '';
+    const recent  = rec.recentlyActiveCount;
+    const roster  = rec.rosterSize;
+    const parts = [];
+    parts.push(rec.activeAgents + ' agent(s) had activity on the latest date');
+    if (recent != null) {
+      parts.push(recent + ' agent(s) had activity in the past 30 days (the denominator)');
+    }
+    if (roster != null) {
+      parts.push(roster + ' agent(s) on the full roster sheet');
+    }
+    return parts.join('. ') + '.';
   }
 
   function ovBuildAlertPill_(dept) {
@@ -780,8 +802,8 @@
       return '<div class="' + cls + '" data-dept="' + escapeHtml(dept.name) + '">'
            +   '<div class="ov-dept-tile-head">'
            +     '<span class="ov-dept-name">' + escapeHtml(dept.name) + '</span>'
-           +     '<span class="ov-dept-active">'
-           +       dept.activeAgents + ' of ' + dept.rosterSize + ' agents'
+           +     '<span class="ov-dept-active" title="' + escapeHtml(ovActiveTooltip_(dept)) + '">'
+           +       dept.activeAgents + ' of ' + (dept.recentlyActiveCount != null ? dept.recentlyActiveCount : dept.rosterSize) + ' agents'
            +     '</span>'
            +   '</div>'
            +   parentTag
@@ -831,7 +853,8 @@
   }
 
   // Admin-only: switch the main dashboard to a different dept and
-  // close the Overview modal so the new dept's table is visible.
+  // navigate to the My Department page so the new dept's full
+  // detail is visible.
   function ovRouteToDept_(deptName) {
     const sel = $('dept-selector');
     if (sel && sel.value !== deptName) {
@@ -840,12 +863,7 @@
       // -- wipes stale roster caches and re-fetches the summary.
       sel.dispatchEvent(new Event('change'));
     }
-    // Close the modal so the routed-to dept's main table is visible.
-    const modal = $('overview-modal');
-    if (modal) {
-      const closeBtn = modal.querySelector('.modal-close');
-      if (closeBtn) closeBtn.click();
-    }
+    setPage('dept');
   }
 
   // Renders the user's own dept's agent table at the latest date
@@ -1516,7 +1534,12 @@
 
     setStatus('loading', 'Loading...');
     $('refresh-btn').disabled = true;
-    $('dept-name').textContent = dept;
+    // Page title belongs to the dept page; only update it when
+    // we're actually showing that page (otherwise we'd clobber
+    // "Departments Snapshot" on the Overview).
+    if (document.body.getAttribute('data-page') !== 'overview') {
+      $('page-title').textContent = dept;
+    }
 
     google.script.run
       .withSuccessHandler(onData)

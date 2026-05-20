@@ -14,17 +14,21 @@
   <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 </head>
-<body>
+<body data-page="overview">
   <div class="container">
     <header class="dash-header">
       <div>
-        <div class="dash-kicker">Department Dashboard</div>
-        <h1 id="dept-name">Loading…</h1>
+        <div class="dash-kicker" id="page-kicker">Department Dashboard</div>
+        <h1 id="page-title">Loading…</h1>
       </div>
       <nav class="header-nav" aria-label="Reports and admin">
-        <button class="header-menu-btn" id="overview-btn" type="button"
+        <button class="header-menu-btn header-nav-current" id="overview-btn" type="button"
                 title="Cross-department snapshot of the most recent day, with a 30-day answer-rate trend per dept.">
           Overview
+        </button>
+        <button class="header-menu-btn" id="my-dept-btn" type="button"
+                title="Your department's per-agent detail table with a configurable date range.">
+          My Department
         </button>
         <div class="header-menu">
           <button class="header-menu-btn" id="reports-menu-btn" type="button"
@@ -61,66 +65,116 @@
       </div>
     </header>
 
-    <div id="mock-banner" class="mock-banner" style="display:none;">
-      <strong>Mock data.</strong> Step C uses placeholder rows so the UI is verifiable end-to-end before the data layer is wired. Step D replaces this with real reads from <code>DQE Historical Data</code>.
-    </div>
-
-    <div class="controls">
-      <div class="control" id="dept-selector-wrap" style="display:none;">
-        <label for="dept-selector">Department</label>
-        <select id="dept-selector"></select>
-      </div>
-      <div class="control">
-        <label for="from-date">From</label>
-        <input type="date" id="from-date">
-      </div>
-      <div class="control">
-        <label for="to-date">To</label>
-        <input type="date" id="to-date">
-      </div>
-      <div class="control">
-        <label>Scope</label>
-        <div class="segmented" id="scope-toggle" role="radiogroup" aria-label="Scope">
-          <button type="button" class="seg-btn active" data-scope="roster" role="radio" aria-checked="true"
-                  title="Only agents assigned to this department in the roster sheet">Roster</button>
-          <button type="button" class="seg-btn" data-scope="queue" role="radio" aria-checked="false"
-                  title="Any agent who handled this department's queue extensions">Queue</button>
-          <button type="button" class="seg-btn" data-scope="both" role="radio" aria-checked="false"
-                  title="Union of Roster and Queue">Both</button>
+    <!-- Overview page (default landing). Inline section rather
+         than a modal so it has true page-level presence. Toggled
+         via body[data-page] from the Overview / My Department
+         header buttons. -->
+    <section id="overview-page" class="page page-overview">
+      <div id="ov-loading" class="ir-loader" style="text-align: center; padding: 32px;">Loading company-wide data&hellip;</div>
+      <div id="ov-body" style="display:none;">
+        <div class="ov-summary-line" id="ov-summary-line"></div>
+        <div id="ov-company-aggregate" class="ov-company-aggregate" style="display:none;"></div>
+        <div id="ov-user-hero" class="ov-user-hero" style="display:none;"></div>
+        <div id="ov-dept-grid" class="ov-dept-grid"></div>
+        <div class="ir-chart-tabs" id="ov-chart-tabs" role="tablist">
+          <button type="button" class="ir-tab active" data-metric="pct" role="tab" aria-selected="true">% Answered (30 days)</button>
+        </div>
+        <div class="ir-chart-wrap" id="ov-chart-wrap">
+          <div class="ir-chart-header">Answer rate trend per department</div>
+          <div class="ir-chart-canvas-wrap"><canvas id="ov-trend-chart"></canvas></div>
+        </div>
+        <div id="ov-user-table-wrap" class="ov-user-table-wrap" style="display:none;">
+          <div class="ir-chart-header">
+            <span id="ov-user-table-title">Department detail</span>
+            <span class="ov-user-table-date" id="ov-user-table-date"></span>
+          </div>
+          <div id="ov-user-table-status" class="status" style="display:none;"></div>
+          <table class="agents ov-user-table">
+            <thead>
+              <tr>
+                <th>Agent</th>
+                <th>Unique</th>
+                <th>Rung</th>
+                <th>Missed</th>
+                <th>Answered</th>
+                <th>TTT</th>
+                <th>ATT</th>
+                <th>Avg Abd Wait</th>
+                <th>CSR Avg Abd Wait</th>
+              </tr>
+            </thead>
+            <tbody id="ov-user-tbody"></tbody>
+            <tfoot id="ov-user-tfoot"></tfoot>
+          </table>
         </div>
       </div>
-      <div class="control">
-        <label>&nbsp;</label>
-        <button class="btn" id="refresh-btn">Refresh</button>
+    </section>
+
+    <!-- Department detail page. Holds the dept-scoped controls,
+         agent table, and diagnostics. Hidden by default; revealed
+         when the user clicks "My Department" in the header. -->
+    <section id="dept-page" class="page page-dept">
+      <div id="mock-banner" class="mock-banner" style="display:none;">
+        <strong>Mock data.</strong> Step C uses placeholder rows so the UI is verifiable end-to-end before the data layer is wired. Step D replaces this with real reads from <code>DQE Historical Data</code>.
       </div>
-    </div>
 
-    <div id="status" class="status" style="display:none;"></div>
+      <div class="controls">
+        <div class="control" id="dept-selector-wrap" style="display:none;">
+          <label for="dept-selector">Department</label>
+          <select id="dept-selector"></select>
+        </div>
+        <div class="control">
+          <label for="from-date">From</label>
+          <input type="date" id="from-date">
+        </div>
+        <div class="control">
+          <label for="to-date">To</label>
+          <input type="date" id="to-date">
+        </div>
+        <div class="control">
+          <label>Scope</label>
+          <div class="segmented" id="scope-toggle" role="radiogroup" aria-label="Scope">
+            <button type="button" class="seg-btn active" data-scope="roster" role="radio" aria-checked="true"
+                    title="Only agents assigned to this department in the roster sheet">Roster</button>
+            <button type="button" class="seg-btn" data-scope="queue" role="radio" aria-checked="false"
+                    title="Any agent who handled this department's queue extensions">Queue</button>
+            <button type="button" class="seg-btn" data-scope="both" role="radio" aria-checked="false"
+                    title="Union of Roster and Queue">Both</button>
+          </div>
+        </div>
+        <div class="control">
+          <label>&nbsp;</label>
+          <button class="btn" id="refresh-btn">Refresh</button>
+        </div>
+      </div>
 
-    <table id="agents-table" class="agents">
-      <thead>
-        <tr>
-          <th data-sort="agent">Agent <span class="arrow"></span></th>
-          <th data-sort="totalUnique">Unique <span class="arrow"></span></th>
-          <th data-sort="totalRung">Rung <span class="arrow"></span></th>
-          <th data-sort="totalMissed">Missed <span class="arrow"></span></th>
-          <th data-sort="totalAnswered">Answered <span class="arrow"></span></th>
-          <th data-sort="tttSeconds">TTT <span class="arrow"></span></th>
-          <th data-sort="attSeconds">ATT <span class="arrow"></span></th>
-          <th data-sort="avgAbdWaitSeconds">Avg Abd Wait <span class="arrow"></span></th>
-          <th data-sort="csrAvgAbdWaitSeconds">CSR Avg Abd Wait <span class="arrow"></span></th>
-        </tr>
-      </thead>
-      <tbody id="agents-tbody"></tbody>
-      <tfoot id="agents-tfoot"></tfoot>
-    </table>
+      <div id="status" class="status" style="display:none;"></div>
 
-    <div id="info-line" class="info-line" style="display:none;"></div>
+      <table id="agents-table" class="agents">
+        <thead>
+          <tr>
+            <th data-sort="agent">Agent <span class="arrow"></span></th>
+            <th data-sort="totalUnique">Unique <span class="arrow"></span></th>
+            <th data-sort="totalRung">Rung <span class="arrow"></span></th>
+            <th data-sort="totalMissed">Missed <span class="arrow"></span></th>
+            <th data-sort="totalAnswered">Answered <span class="arrow"></span></th>
+            <th data-sort="tttSeconds">TTT <span class="arrow"></span></th>
+            <th data-sort="attSeconds">ATT <span class="arrow"></span></th>
+            <th data-sort="avgAbdWaitSeconds">Avg Abd Wait <span class="arrow"></span></th>
+            <th data-sort="csrAvgAbdWaitSeconds">CSR Avg Abd Wait <span class="arrow"></span></th>
+          </tr>
+        </thead>
+        <tbody id="agents-tbody"></tbody>
+        <tfoot id="agents-tfoot"></tfoot>
+      </table>
 
-    <details id="diagnostics" class="diagnostics" style="display:none;">
-      <summary>Diagnostics <span id="diag-count" class="diag-count"></span></summary>
-      <div id="diag-content"></div>
-    </details>
+      <div id="info-line" class="info-line" style="display:none;"></div>
+
+      <details id="diagnostics" class="diagnostics" style="display:none;">
+        <summary>Diagnostics <span id="diag-count" class="diag-count"></span></summary>
+        <div id="diag-content"></div>
+      </details>
+    </section>
   </div>
 
   <div id="help-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="help-modal-title" style="display:none;">
@@ -200,57 +254,6 @@
           </button>
         </div>
       </div>
-      </div>
-    </div>
-  </div>
-
-  <div id="overview-modal" class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="overview-modal-title" style="display:none;">
-    <div class="modal-backdrop" data-close></div>
-    <div class="modal-panel modal-panel-wide" role="document">
-      <div class="modal-panel-header">
-        <button class="modal-close" id="overview-close" type="button" aria-label="Close">&times;</button>
-        <div class="modal-kicker">Company &middot; Overview</div>
-        <h2 id="overview-modal-title">Departments Snapshot</h2>
-      </div>
-      <div class="modal-panel-body">
-        <div id="ov-loading" class="ir-loader" style="text-align: center; padding: 32px;">Loading company-wide data&hellip;</div>
-        <div id="ov-body" style="display:none;">
-          <div class="ov-summary-line" id="ov-summary-line"></div>
-          <div id="ov-company-aggregate" class="ov-company-aggregate" style="display:none;"></div>
-          <div id="ov-user-hero" class="ov-user-hero" style="display:none;"></div>
-          <div id="ov-dept-grid" class="ov-dept-grid"></div>
-          <div class="ir-chart-tabs" id="ov-chart-tabs" role="tablist">
-            <button type="button" class="ir-tab active" data-metric="pct" role="tab" aria-selected="true">% Answered (30 days)</button>
-          </div>
-          <div class="ir-chart-wrap" id="ov-chart-wrap">
-            <div class="ir-chart-header">Answer rate trend per department</div>
-            <div class="ir-chart-canvas-wrap"><canvas id="ov-trend-chart"></canvas></div>
-          </div>
-          <div id="ov-user-table-wrap" class="ov-user-table-wrap" style="display:none;">
-            <div class="ir-chart-header">
-              <span id="ov-user-table-title">Department detail</span>
-              <span class="ov-user-table-date" id="ov-user-table-date"></span>
-            </div>
-            <div id="ov-user-table-status" class="status" style="display:none;"></div>
-            <table class="agents ov-user-table">
-              <thead>
-                <tr>
-                  <th>Agent</th>
-                  <th>Unique</th>
-                  <th>Rung</th>
-                  <th>Missed</th>
-                  <th>Answered</th>
-                  <th>TTT</th>
-                  <th>ATT</th>
-                  <th>Avg Abd Wait</th>
-                  <th>CSR Avg Abd Wait</th>
-                </tr>
-              </thead>
-              <tbody id="ov-user-tbody"></tbody>
-              <tfoot id="ov-user-tfoot"></tfoot>
-            </table>
-          </div>
-        </div>
       </div>
     </div>
   </div>
