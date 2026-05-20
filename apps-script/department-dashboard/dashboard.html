@@ -216,6 +216,8 @@
         <div id="ov-loading" class="ir-loader" style="text-align: center; padding: 32px;">Loading company-wide data&hellip;</div>
         <div id="ov-body" style="display:none;">
           <div class="ov-summary-line" id="ov-summary-line"></div>
+          <div id="ov-company-aggregate" class="ov-company-aggregate" style="display:none;"></div>
+          <div id="ov-user-hero" class="ov-user-hero" style="display:none;"></div>
           <div id="ov-dept-grid" class="ov-dept-grid"></div>
           <div class="ir-chart-tabs" id="ov-chart-tabs" role="tablist">
             <button type="button" class="ir-tab active" data-metric="pct" role="tab" aria-selected="true">% Answered (30 days)</button>
@@ -223,6 +225,30 @@
           <div class="ir-chart-wrap" id="ov-chart-wrap">
             <div class="ir-chart-header">Answer rate trend per department</div>
             <div class="ir-chart-canvas-wrap"><canvas id="ov-trend-chart"></canvas></div>
+          </div>
+          <div id="ov-user-table-wrap" class="ov-user-table-wrap" style="display:none;">
+            <div class="ir-chart-header">
+              <span id="ov-user-table-title">Department detail</span>
+              <span class="ov-user-table-date" id="ov-user-table-date"></span>
+            </div>
+            <div id="ov-user-table-status" class="status" style="display:none;"></div>
+            <table class="agents ov-user-table">
+              <thead>
+                <tr>
+                  <th>Agent</th>
+                  <th>Unique</th>
+                  <th>Rung</th>
+                  <th>Missed</th>
+                  <th>Answered</th>
+                  <th>TTT</th>
+                  <th>ATT</th>
+                  <th>Avg Abd Wait</th>
+                  <th>CSR Avg Abd Wait</th>
+                </tr>
+              </thead>
+              <tbody id="ov-user-tbody"></tbody>
+              <tfoot id="ov-user-tfoot"></tfoot>
+            </table>
           </div>
         </div>
       </div>

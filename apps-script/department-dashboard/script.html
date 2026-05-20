@@ -407,6 +407,23 @@
       })
       .withFailureHandler(function () { refresh(); })
       .getLatestDataDate();
+
+    // Auto-open the Overview as the landing view on the first visit
+    // per browser session. sessionStorage clears when the tab closes,
+    // so re-opening the dashboard in a fresh tab/window starts a new
+    // session and re-shows Overview. Users who close it mid-session
+    // can still reach it via the header button.
+    try {
+      if (!sessionStorage.getItem('ov.autoOpened')) {
+        sessionStorage.setItem('ov.autoOpened', '1');
+        // Defer so the dashboard backdrop has time to render first;
+        // the modal anim looks better that way.
+        setTimeout(function () {
+          const ovBtn = $('overview-btn');
+          if (ovBtn) ovBtn.click();
+        }, 80);
+      }
+    } catch (e) { /* sessionStorage unavailable -- skip auto-open */ }
   }
 
   // -- Help & FAQ modal ---------------------------------------------------
@@ -559,10 +576,13 @@
       + '<strong>' + escapeHtml(dateLabel) + '</strong>'
       + ' &middot; <span class="ov-summary-label">' + (data.depts.length)
       + ' department' + (data.depts.length === 1 ? '' : 's') + '</span>';
-    ovRenderTiles_(data.depts);
+    ovRenderCompanyAggregate_(data);
+    ovRenderUserHero_(data);
+    ovRenderTiles_(data);
     // Defer chart creation by one frame so the just-revealed
     // modal body lays out before Chart.js measures the canvas.
     requestAnimationFrame(function () { ovRenderChart_(data); });
+    ovRenderUserTable_(data);
   }
 
   function ovFormatDateLabel_(iso) {
@@ -571,26 +591,181 @@
     return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
   }
 
-  function ovRenderTiles_(depts) {
+  // Which dept the viewer "owns" -- managers always show their own;
+  // admins show whichever dept is currently selected in the header
+  // dropdown (so they can pin a focus dept).
+  function ovViewerDept_(data) {
+    if (USER.role === 'admin') {
+      const sel = $('dept-selector');
+      return (sel && sel.value) || (USER.departments && USER.departments[0]) || null;
+    }
+    return (data && data.viewerDept) || USER.department || null;
+  }
+
+  // Company-wide aggregate hero, admin-only. Renders a single wide
+  // tile above the dept grid with totals across all non-hidden
+  // depts for the latest date.
+  function ovRenderCompanyAggregate_(data) {
+    const wrap = $('ov-company-aggregate');
+    const agg  = data && data.companyAggregate;
+    if (!wrap) return;
+    if (!agg || data.viewerRole !== 'admin') {
+      wrap.style.display = 'none';
+      wrap.innerHTML = '';
+      return;
+    }
+    wrap.style.display = '';
+    wrap.innerHTML =
+        '<div class="ov-agg-kicker">Company snapshot &middot; admin only</div>'
+      + '<div class="ov-agg-row">'
+      +   '<div class="ov-agg-pct-block">'
+      +     '<div class="ov-agg-pct">' + escapeHtml(agg.pctFormatted) + '</div>'
+      +     '<div class="ov-agg-pct-cap">answered company-wide</div>'
+      +   '</div>'
+      +   '<div class="ov-agg-stats">'
+      +     '<div class="ov-agg-stat"><span class="ov-agg-stat-label">Rung</span><span class="ov-agg-stat-val">' + fmtNumber(agg.rung) + '</span></div>'
+      +     '<div class="ov-agg-stat"><span class="ov-agg-stat-label">Answered</span><span class="ov-agg-stat-val">' + fmtNumber(agg.answered) + '</span></div>'
+      +     '<div class="ov-agg-stat"><span class="ov-agg-stat-label">Missed</span><span class="ov-agg-stat-val">' + fmtNumber(agg.missed) + '</span></div>'
+      +     '<div class="ov-agg-stat"><span class="ov-agg-stat-label">ATT</span><span class="ov-agg-stat-val">' + escapeHtml(agg.attFormatted) + '</span></div>'
+      +     '<div class="ov-agg-stat"><span class="ov-agg-stat-label">Active</span><span class="ov-agg-stat-val">' + agg.activeAgents + ' of ' + agg.rosterSize + '</span></div>'
+      +   '</div>'
+      + '</div>';
+  }
+
+  // Hero tile: featured rendering of the viewer's own department,
+  // sitting above the grid. Manager: their dept. Admin: whichever
+  // dept is selected in the header dropdown. Hidden if we can't
+  // resolve a viewer dept or that dept isn't in the overview data
+  // (e.g. it's in OVERVIEW_HIDDEN_DEPTS).
+  function ovRenderUserHero_(data) {
+    const wrap = $('ov-user-hero');
+    if (!wrap) return;
+    const viewerDept = ovViewerDept_(data);
+    if (!viewerDept) { wrap.style.display = 'none'; wrap.innerHTML = ''; return; }
+    const dept = (data.depts || []).find(function (d) { return d.name === viewerDept; });
+    if (!dept) { wrap.style.display = 'none'; wrap.innerHTML = ''; return; }
+
     const colors = IR_CHART_COLORS;
+    // Find the dept's slot in the top-level color cycle (children
+    // inherit their parent's slot color); used for the hero's
+    // spark + accent.
+    let slot = 0, found = -1, topIdx = -1;
+    (data.depts || []).forEach(function (d) {
+      if (!d.parent) {
+        if (d.name === viewerDept) found = slot;
+        if (d.name === (dept.parent || viewerDept)) topIdx = slot;
+        slot++;
+      } else if (d.name === viewerDept && dept.parent) {
+        // Sub-queue: inherit parent's slot if we've seen it.
+        found = topIdx;
+      }
+    });
+    const color = colors[((found >= 0 ? found : 0)) % colors.length];
+
+    wrap.style.display = '';
+    wrap.innerHTML = ovBuildHeroTile_(dept, color);
+
+    // Hero is always clickable (closes the modal -- the main
+    // dashboard is already showing this dept's detail).
+    wrap.onclick = function () {
+      const modal = $('overview-modal');
+      if (modal) modal.querySelector('.modal-close').click();
+    };
+  }
+
+  function ovBuildHeroTile_(dept, color) {
+    const trend = (dept.trend || []).map(function (v) { return v == null ? 0 : v; });
+    const spark = irSparkline_(trend, color);
+    const subTag = dept.parent
+      ? '<span class="ov-dept-parent-tag">sub-queue &middot; ' + escapeHtml(dept.parent) + '</span>'
+      : '';
+    return '<div class="ov-dept-tile ov-dept-tile-hero" data-dept="' + escapeHtml(dept.name) + '" style="border-top-color:' + color + ';">'
+         +   '<div class="ov-dept-tile-head">'
+         +     '<div>'
+         +       '<div class="ov-hero-kicker">Your department</div>'
+         +       '<span class="ov-dept-name ov-hero-name">' + escapeHtml(dept.name) + '</span>'
+         +       (subTag ? ' ' + subTag : '')
+         +     '</div>'
+         +     '<div class="ov-hero-meta">'
+         +       ovBuildAlertPill_(dept)
+         +       '<span class="ov-dept-active">'
+         +         dept.activeAgents + ' of ' + dept.rosterSize + ' agents active'
+         +       '</span>'
+         +     '</div>'
+         +   '</div>'
+         +   '<div class="ov-hero-body">'
+         +     '<div class="ov-hero-pct-block">'
+         +       '<div class="ov-hero-pct">' + escapeHtml(dept.latest.pctFormatted) + '</div>'
+         +       '<div class="ov-dept-pct-cap">answered (latest day)</div>'
+         +       ovBuildWowChip_(dept)
+         +     '</div>'
+         +     '<div class="ov-hero-stats">'
+         +       '<div class="ov-hero-stat"><span class="ov-dept-stat-label">Rung</span><span>' + fmtNumber(dept.latest.rung) + '</span></div>'
+         +       '<div class="ov-hero-stat"><span class="ov-dept-stat-label">Answered</span><span>' + fmtNumber(dept.latest.answered) + '</span></div>'
+         +       '<div class="ov-hero-stat"><span class="ov-dept-stat-label">Missed</span><span>' + fmtNumber(dept.latest.missed) + '</span></div>'
+         +       '<div class="ov-hero-stat"><span class="ov-dept-stat-label">ATT</span><span>' + escapeHtml(dept.latest.attFormatted) + '</span></div>'
+         +     '</div>'
+         +     '<div class="ov-hero-spark" title="30-day % answered trend">' + spark + '</div>'
+         +   '</div>'
+         + '</div>';
+  }
+
+  function ovBuildWowChip_(dept) {
+    if (!dept.wow) return '';
+    const d = Number(dept.wow.deltaPct) || 0;
+    const arrow = d > 0 ? '▲' : (d < 0 ? '▼' : '◆');
+    let cls = 'ov-wow-flat';
+    if (d > 0.5)  cls = 'ov-wow-up';
+    if (d < -0.5) cls = 'ov-wow-down';
+    const tip = 'Last 7 days ' + dept.wow.curPct.toFixed(1) + '% vs prior 7 days '
+              + dept.wow.prevPct.toFixed(1) + '%';
+    return '<span class="ov-wow-chip ' + cls + '" title="' + escapeHtml(tip) + '">'
+         + arrow + ' ' + Math.abs(d).toFixed(1) + '% WoW</span>';
+  }
+
+  function ovBuildAlertPill_(dept) {
+    if (!dept.alertedOnLatest) return '';
+    return '<span class="ov-alert-pill" title="A low-answer-rate alert was sent for this department on the latest data date.">'
+         + '<span aria-hidden="true">🚨</span> Alerted today</span>';
+  }
+
+  function ovRenderTiles_(data) {
+    const colors = IR_CHART_COLORS;
+    const viewerDept = ovViewerDept_(data);
+    const depts = data.depts || [];
+
     // Group parent depts with their sub-queue children so each
     // parent's children stack underneath it in a single grid
     // cell. Each top-level dept gets a slot index for color
     // cycling; children inherit their parent's slot color to
-    // signal the relationship.
+    // signal the relationship. The viewer's own dept is pulled
+    // out into the hero block above the grid -- so we skip it
+    // here. If the viewer is a parent, only that parent tile is
+    // skipped; its children still appear in the grid (as a
+    // standalone group). If the viewer is a child, the child is
+    // skipped from its parent group.
     const groups = [];
     const slotByName = {};
     let slot = 0;
     depts.forEach(function (d) {
+      if (d.name === viewerDept) return;     // already in hero
       if (!d.parent) {
         slotByName[d.name] = slot++;
         groups.push({ parent: d, children: [] });
       } else {
-        const g = groups[groups.length - 1];
-        if (g && g.parent.name === d.parent) g.children.push(d);
-        else groups.push({ parent: d, children: [] });   // orphan child fallback
+        const last = groups[groups.length - 1];
+        if (last && last.parent.name === d.parent) last.children.push(d);
+        else {
+          // Parent was filtered out (e.g. viewer is on it) -- the
+          // child becomes a standalone top-level tile in the grid
+          // so it still surfaces.
+          slotByName[d.name] = slot++;
+          groups.push({ parent: d, children: [] });
+        }
       }
     });
+
+    const tileRoutable = (USER.role === 'admin');
 
     const buildTile = function (dept, color, isChild) {
       const spark = irSparkline_(
@@ -599,8 +774,10 @@
       const parentTag = isChild
         ? '<span class="ov-dept-parent-tag">sub-queue &middot; ' + escapeHtml(dept.parent) + '</span>'
         : '';
-      const cls = 'ov-dept-tile' + (isChild ? ' ov-dept-tile-child' : '');
-      return '<div class="' + cls + '">'
+      const cls = 'ov-dept-tile'
+                + (isChild ? ' ov-dept-tile-child' : '')
+                + (tileRoutable ? ' ov-dept-tile-clickable' : '');
+      return '<div class="' + cls + '" data-dept="' + escapeHtml(dept.name) + '">'
            +   '<div class="ov-dept-tile-head">'
            +     '<span class="ov-dept-name">' + escapeHtml(dept.name) + '</span>'
            +     '<span class="ov-dept-active">'
@@ -608,9 +785,11 @@
            +     '</span>'
            +   '</div>'
            +   parentTag
+           +   ovBuildAlertPill_(dept)
            +   '<div class="ov-dept-tile-pct">'
            +     escapeHtml(dept.latest.pctFormatted)
            +     ' <span class="ov-dept-pct-cap">answered</span>'
+           +     ovBuildWowChip_(dept)
            +   '</div>'
            +   '<div class="ov-dept-tile-row">'
            +     '<span><span class="ov-dept-stat-label">Rung</span> ' + dept.latest.rung + '</span>'
@@ -633,6 +812,116 @@
       return '<div class="ov-dept-group">' + parentTile + childTiles + '</div>';
     }).join('');
     $('ov-dept-grid').innerHTML = html;
+
+    // Admin tile-click: route the main dashboard to that dept and
+    // close the Overview. Cheap because google.script.run.refresh
+    // is cached server-side. For managers, tiles are non-routing
+    // (they can't switch); their data is fully visible in the tile
+    // so no extra hover state is needed for now.
+    if (tileRoutable) {
+      $('ov-dept-grid').querySelectorAll('.ov-dept-tile-clickable')
+        .forEach(function (tile) {
+          tile.addEventListener('click', function () {
+            const target = tile.getAttribute('data-dept');
+            if (!target) return;
+            ovRouteToDept_(target);
+          });
+        });
+    }
+  }
+
+  // Admin-only: switch the main dashboard to a different dept and
+  // close the Overview modal so the new dept's table is visible.
+  function ovRouteToDept_(deptName) {
+    const sel = $('dept-selector');
+    if (sel && sel.value !== deptName) {
+      sel.value = deptName;
+      // Trigger the same 'change' handler the manual dropdown uses
+      // -- wipes stale roster caches and re-fetches the summary.
+      sel.dispatchEvent(new Event('change'));
+    }
+    // Close the modal so the routed-to dept's main table is visible.
+    const modal = $('overview-modal');
+    if (modal) {
+      const closeBtn = modal.querySelector('.modal-close');
+      if (closeBtn) closeBtn.click();
+    }
+  }
+
+  // Renders the user's own dept's agent table at the latest date
+  // inside the Overview modal, below the trend chart. For admins,
+  // shows whichever dept they currently have selected in the
+  // header dropdown. Independent of the main dashboard's date
+  // range: always uses latestDate. Fetches via getDepartmentSummary,
+  // which is cached server-side per (dept, scope, from, to).
+  function ovRenderUserTable_(data) {
+    const wrap = $('ov-user-table-wrap');
+    const tbody = $('ov-user-tbody');
+    const tfoot = $('ov-user-tfoot');
+    const status = $('ov-user-table-status');
+    if (!wrap || !tbody || !tfoot) return;
+
+    const viewerDept = ovViewerDept_(data);
+    if (!viewerDept || !data.latestDate) {
+      wrap.style.display = 'none';
+      return;
+    }
+    wrap.style.display = '';
+
+    const title = (USER.role === 'admin' ? 'Selected dept: ' : 'Your dept: ') + viewerDept;
+    $('ov-user-table-title').textContent = title;
+    $('ov-user-table-date').textContent = ovFormatDateLabel_(data.latestDate);
+
+    status.style.display = '';
+    status.className = 'status status-loading';
+    status.textContent = 'Loading agent detail…';
+    tbody.innerHTML = '';
+    tfoot.innerHTML = '';
+
+    google.script.run
+      .withSuccessHandler(function (resp) {
+        status.style.display = 'none';
+        if (!resp || !resp.rows || !resp.rows.length) {
+          tbody.innerHTML = '<tr><td colspan="9" class="ov-user-empty">No agent rows for this dept on '
+                          + escapeHtml(data.latestDate) + '.</td></tr>';
+          return;
+        }
+        // Default sort: missed desc, then name asc -- matches the
+        // server's default. Users wanting more sort control can
+        // close the modal and use the main table.
+        const rows = resp.rows.slice().sort(function (a, b) {
+          if (b.totalMissed !== a.totalMissed) return b.totalMissed - a.totalMissed;
+          return a.agent.localeCompare(b.agent);
+        });
+        tbody.innerHTML = rows.map(function (row) {
+          const rowClass = (row.matchedViaQueue && !row.matchedViaRoster) ? 'via-queue' : '';
+          return '<tr' + (rowClass ? ' class="' + rowClass + '"' : '') + '>'
+               + COLUMNS.map(function (col, i) {
+                   const cls = i === 0 ? 'agent-name' : 'num';
+                   const extra = (col.highlight === 'missed' && Number(row.totalMissed) > 0) ? ' missed-high' : '';
+                   return '<td class="' + cls + extra + '">' + fmtCell(col, row) + '</td>';
+                 }).join('')
+               + '</tr>';
+        }).join('');
+        if (resp.totals) {
+          tfoot.innerHTML = '<tr>' + COLUMNS.map(function (col, i) {
+            const cls = i === 0 ? 'agent-name' : 'num';
+            if (i === 0) return '<td class="' + cls + '">Totals</td>';
+            return '<td class="' + cls + '">' + fmtCell(col, resp.totals) + '</td>';
+          }).join('') + '</tr>';
+        }
+      })
+      .withFailureHandler(function (err) {
+        status.className = 'status status-error';
+        status.textContent = 'Error loading detail: '
+          + (err && err.message ? err.message : String(err));
+      })
+      .getDepartmentSummary({
+        department: viewerDept,
+        from:       data.latestDate,
+        to:         data.latestDate,
+        scope:      'roster',
+      });
   }
 
   function ovRenderChart_(data) {
