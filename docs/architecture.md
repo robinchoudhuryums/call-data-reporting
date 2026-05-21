@@ -74,7 +74,7 @@ External CDR system (telephony provider)
 |---|---|---|---|
 | CSV ingest | CDR Import | `autoImport.js`, `importBulkCSVsFromDrive.js` (pending Drive auth), `AbandonedFilter.js`, `CDR Tools.js`, `DeleteOldSheets.js`, `neonWrite.js`, `appsscript.json` | `apps-script/cdr-import/` |
 | Per-agent aggregation + downstream tooling | CDR Report | `buildDQEHistoricalData.js`, `DQEdrilldown.js`, `DQEDrilldownSidebar.html`, `dashboardCDR.js`, `dataFilters.js` (extraction sidebar), `dbHistorical.js`, `dbReporting.js`, `emailDailyReport.js`, `neonWrite.js`, `neonbackfill.js`, `CDR Tools menu.js`, `appsscript.json` | `apps-script/cdr-report/` |
-| Manager dashboard | Department Dashboard (standalone) | `Code.gs`, `Auth.gs`, `Data.gs`, `Config.gs`, `Setup.gs`, `Diagnostics.gs`, `MissedCallsReport.gs`, `IndividualReport.gs`, `PerformanceReport.gs`, `CompareRangesReport.gs`, `Alerts.gs`, `dashboard.html`, `styles.html`, `script.html`, `access_denied.html`, `appsscript.json` | `apps-script/department-dashboard/` |
+| Manager dashboard | Department Dashboard (standalone) | `Code.gs`, `Auth.gs`, `Data.gs`, `Config.gs`, `Setup.gs`, `Diagnostics.gs`, `MissedCallsReport.gs`, `IndividualReport.gs`, `PerformanceReport.gs`, `CompareRangesReport.gs`, `CompanyOverview.gs`, `Alerts.gs`, `Digest.gs`, `OrphanFix.gs`, `dashboard.html`, `styles.html`, `script.html`, `access_denied.html`, `appsscript.json` | `apps-script/department-dashboard/` |
 | Postgres mirror | shared lib used by both CDR Import and CDR Report | `neonWrite.js` (duplicated across both projects, currently identical) | see [known-issues.md](known-issues.md) |
 | Legacy reports (being migrated into the dashboard) | DQE Report (spreadsheet) | `DQEdashboard.js`, `syncHistoricalData.js`, 4 report pairs (`SingleRangeReport`, `IndividualReport`, `MissedCallsReport`, `MultiComparisonTool` + their `.html` modals), `sendManualAlert.js`, `checkLowAnswerRate.js`, `showFAQ.js` + `FAQGuide.html`, `setDateRange.js`, `autoDropdown.js`, `menu DQE Tools.js`, `appsscript.json` | `apps-script/dqe-report/` |
 
@@ -133,22 +133,53 @@ the source of truth for canonical agent names; any incoming CDR row
 whose `calleeName`, paren-stripped, matches exactly one roster entry
 is rewritten to that roster name before per-agent aggregation.
 
-This is the *only* cross-project read (the pipeline owns the write
-path to `DQE Historical Data`; everything else is read by the
-dashboard). It's documented in `loadRosterCanonicalNames_` and
-called out as INV-24 in `CLAUDE.md`. If the roster sheet's layout
-ever changes (column F start, name-comma-extensions cell format),
-update `loadRosterCanonicalNames_` in the pipeline at the same time
-as `Data.gs`'s `parseRosterCell_` in the dashboard.
+It's documented in `loadRosterCanonicalNames_` and called out as
+INV-24 in `CLAUDE.md`. If the roster sheet's layout ever changes
+(column F start, name-comma-extensions cell format), update
+`loadRosterCanonicalNames_` in the pipeline at the same time as
+`Data.gs`'s `parseRosterCell_` in the dashboard.
+
+The same `loadRosterCanonicalNames_` also reads the
+`Agent Alias Overrides` sheet (created in the dashboard's
+`setup()`, written by the dashboard's `OrphanFix.gs` admin modal).
+Each active row -- `Old Name | Canonical Name | Active=TRUE` --
+becomes a higher-priority lookup in the canonicalization map (alias
+> roster-exact > paren-strip). The read is best-effort: missing or
+empty sheet leaves the build's behavior byte-identical to
+pre-OrphanFix. See INV-46 in `CLAUDE.md` for the full contract.
+
+## Cross-project writes from the dashboard
+
+Until OrphanFix.gs shipped, the dashboard had ZERO write paths into
+shared sheets -- everything in `apps-script/department-dashboard/`
+was read-only via the trailing-underscore convention (INV-01). The
+Orphan Fix engine introduced the first three admin-only public
+writes:
+
+| Function | Writes to | Notes |
+|---|---|---|
+| `addAgentAlias`, `removeAgentAlias` | `Agent Alias Overrides` (in CDR Report spreadsheet) | Forward-fix only; future builds honor the alias. |
+| `applyOrphanRename` | `DQE Historical Data` Agent Name column (in CDR Report spreadsheet) | Backfills past rows. Also typically writes to `Agent Alias Overrides` (`alsoAddAlias=true`) so the next build keeps the mapping. |
+
+All three are admin-only at the server boundary
+(`assertAdmin_()`), input-validated (no queue sentinels,
+length-capped, canonical destination must be on some roster),
+serialized via `LockService`, and audited to the `Orphan Fix Log`
+sheet (also in the CDR Report spreadsheet) before returning.
+INV-01's text was widened to spell out this carve-out; do not add
+more public writes outside `OrphanFix.gs` without the same four
+mitigations.
 
 ## Report server entry points (Department Dashboard)
 
-The dashboard serves five distinct reports + an alerts engine, each
-backed by its own `.gs` file with public entry points callable via
-`google.script.run`. All public functions follow the read-only safety
-rule (INV-01) — any function that touches spreadsheet state ends in
-`_`. Alerts additionally enforces an admin role check at the server
-boundary (INV-32).
+The dashboard serves the reports below plus three admin-only
+operations engines (Alerts, Digest, Orphan Fix). Each is backed by
+its own `.gs` file with public entry points callable via
+`google.script.run`. All public functions follow the read-only
+safety rule (INV-01) EXCEPT `OrphanFix.gs`'s three admin write
+callables, which have the documented carve-out. Helpers that touch
+spreadsheet state end in `_`. Alerts, Digest, and Orphan Fix
+enforce admin role checks at the server boundary (INV-32).
 
 Cache prefix versions below are reference-only; CLAUDE.md INV-30 is
 canonical and reflects current code.
@@ -162,6 +193,8 @@ canonical and reflects current code.
 | Compare Ranges (two arbitrary ranges) | `CompareRangesReport.gs` | `getCompareRangesInit`, `getCompareRanges`, `sendCompareRangesEmail` | `compareRanges:v3:` | no |
 | Company Overview | `CompanyOverview.gs` | `getCompanyOverview` | `companyOverview:v8` | partial (admin-only `companyAggregate` field) |
 | Low Answer Rate Alerts | `Alerts.gs` | `getAlertsInit`, `previewAlerts`, `sendAlerts`, `installAlertTrigger`, `uninstallAlertTrigger` (+ `runDailyAlerts_` time trigger) | (no cache) | yes |
+| Manager Digest engine | `Digest.gs` | `getDigestsInit`, `sendPreviewDigest`, `installDigestTriggers`, `uninstallDigestTriggers` (+ `runDailyDigests_`, `runWeeklyDigests_` time triggers) | (no cache) | yes |
+| Orphan Fix engine (admin write path) | `OrphanFix.gs` | `getOrphanFixInit`, `addAgentAlias`, `removeAgentAlias`, `applyOrphanRename` | (no cache; busts `companyOverview:v8` on write) | yes |
 
 All reports use the same auth resolution (`resolveUser_(email)`), the
 same roster reader (`getRosterForDepartment_`), and — for the picker —

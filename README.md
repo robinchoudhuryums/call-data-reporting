@@ -118,6 +118,25 @@ clasp push -f
   weekday mornings for the previous day; weekly fires Monday morning
   for the prior Mon&ndash;Fri window.
 
+**Optional (orphan fix):**
+
+- When the CDR feed produces an agent name that doesn't match any
+  roster entry (typos, marriages, hyphenations, exotic spellings),
+  the row appears in `DQE Historical Data` but doesn't show up
+  under any dept. Surface these via the dashboard's
+  **Admin → Orphan Fix** modal.
+- For each orphan, pick a canonical name from the roster dropdown
+  and click Apply. The action: (1) bulk-renames every row in
+  `DQE Historical Data` where Agent Name == orphan, (2) adds the
+  mapping to the `Agent Alias Overrides` sheet so the next CDR
+  build keeps the mapping, (3) appends a row to `Orphan Fix Log`.
+- The modal requires the `Agent Alias Overrides` and `Orphan Fix
+  Log` sheets to exist — created by `setup()`. Run `setup()` after
+  pulling this code if those sheets are missing in your
+  spreadsheet.
+- Admin-only at the server boundary. See CLAUDE.md INV-01 for the
+  full security model around the carve-out.
+
 **Optional (alerts):**
 
 - Populate the `Alert Config` sheet with one row per dept that should

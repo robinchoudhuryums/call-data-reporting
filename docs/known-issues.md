@@ -347,3 +347,133 @@ message + stack and the date being checked.
 - `DASHBOARD_URL` — sets the link target of the "Open Department
   Dashboard" button in alert emails. Unset = emails still send,
   just without the link.
+
+---
+
+## Pipeline Health observability sheet
+
+**Created by** `setup()`. Schema pinned in `Config.gs::PIPELINE_HEALTH_HEADERS`:
+`Timestamp | Step | Status | Rows | Duration (ms) | Notes`.
+
+Append-only telemetry of the two daily pipeline steps:
+
+- `autoImport` rows come from `apps-script/cdr-import/autoImport.js`
+  (`logPipelineHealth_` at the end of `processNewImport` on
+  success, in the catch block on failure).
+- `buildDQE` rows come from `apps-script/cdr-report/buildDQEHistoricalData.js`
+  (after the Neon mirror block on success, in `runDailyDQEBuild_`'s
+  catch on failure).
+
+Both writers wrap every write in try/catch and swallow failures so
+pipeline-health logging can never block or fail the pipeline. The
+schema is owned by the dashboard but the writers live in two
+different Apps Script projects -- each project has its own copy of
+the helper (same shape on both sides; INV-44 in `CLAUDE.md`).
+
+**Reader** is `Alerts.gs::readPipelineHealth_(maxRows)`; the
+dashboard's Alerts modal renders the last 20 entries under the
+"Pipeline Health" section (admin-only). A long quiet stretch on
+either step (rows from 2+ days ago and nothing since) is the
+diagnostic for "the daily ingest didn't run" before assuming a
+data bug.
+
+---
+
+## Manager Digest engine
+
+**Sheet:** `Digest Config` (`Email | Department | Cadence | Active | Notes`).
+Created by `setup()`. Schema pinned in
+`Config.gs::DIGEST_CONFIG_HEADERS`.
+
+**Cadence** is `daily` (sends each weekday morning for the previous
+day's data; weekends skipped) or `weekly` (sends Monday 8 AM for
+the prior Mon-Fri window). Anything else is treated as inactive.
+
+**Engine** is `Digest.gs`. Every public callable
+(`getDigestsInit`, `sendPreviewDigest`, `installDigestTriggers`,
+`uninstallDigestTriggers`) starts with `assertAdmin_`. Trigger
+entry points (`runDailyDigests_`, `runWeeklyDigests_`) end in `_`
+so `google.script.run` can't reach them, but `ScriptApp` dispatch
+still calls them by name.
+
+**Trigger lifecycle** is managed via the Alerts modal's
+"Manager Digest Subscribers" section. Install / uninstall buttons
+wrap `installDigestTriggers` / `uninstallDigestTriggers`. The
+per-row "Send preview" button invokes `sendPreviewDigest` --
+delivers a sample digest to the active admin's inbox so they can
+verify what the subscriber will see (with a yellow "Preview only"
+banner). On failure, `notifyDigestFailure_` emails the
+`ADMIN_EMAILS` set so a silent trigger crash doesn't go unnoticed.
+
+---
+
+## Orphan Fix engine (the first dashboard write path)
+
+**Sheets:**
+- `Agent Alias Overrides` (`Old Name | Canonical Name | Active |
+  Added By | Added At | Notes`) -- persistent rename map.
+- `Orphan Fix Log` (`Timestamp | Admin | Action | From Name |
+  To Name | Affected Rows | Notes`) -- append-only audit trail.
+
+Both created by `setup()`. Schemas pinned in
+`Config.gs::AGENT_ALIAS_OVERRIDES_HEADERS` and
+`ORPHAN_FIX_LOG_HEADERS`.
+
+**Engine** is `apps-script/department-dashboard/OrphanFix.gs`.
+Four admin-only public callables:
+
+- `getOrphanFixInit` -- read-only: orphan list (180-day lookback),
+  roster names, current aliases, last 20 fix-log rows.
+- `addAgentAlias({ oldName, canonicalName, notes? })` -- forward
+  fix only; appends or re-activates an entry in
+  `Agent Alias Overrides`. Doesn't touch DQE Historical Data.
+- `removeAgentAlias({ oldName })` -- soft-deactivates (Active=FALSE).
+- `applyOrphanRename({ fromName, toName, alsoAddAlias?, notes? })`
+  -- the **write path**. Bulk-renames every row in DQE Historical
+  Data where Agent Name === fromName; with `alsoAddAlias=true`,
+  also upserts the alias so the next CDR build keeps the mapping.
+
+**Why this exists.** Before OrphanFix, an admin had to either edit
+the roster cell to add the orphan as an alias, or wait for the
+orphan to recur and rename rows by hand in the spreadsheet.
+Neither scaled. The modal in the dashboard (Admin → Orphan Fix)
+surfaces orphans, lets admins map each to a canonical roster name,
+and applies the fix end-to-end with audit.
+
+**INV-01 carve-out.** `OrphanFix.gs` holds the dashboard's ONLY
+public write functions; the rest of the surface is read-only via
+the trailing-underscore convention. The carve-out is documented in
+CLAUDE.md's INV-01 (text was widened to spell out the four
+mitigations). Don't add new public writes outside `OrphanFix.gs`
+without the same belt-and-suspenders:
+
+1. `assertAdmin_()` at the top -- the same gate Alerts and Digest
+   use.
+2. Input validation: `sanitizeAgentName_` rejects queue sentinels
+   (`A_Q_*`, `Backup CSR`), empty strings, oversized values;
+   `assertOnSomeRoster_` rejects renames to names that aren't on
+   any dept's roster (prevents "rename everything to garbage").
+3. `LockService.tryLock` serializes concurrent admin / build so
+   the Agent column isn't half-written when both fire at once.
+4. Every action -- alias add, alias remove, rename, rename+alias
+   -- appends to `Orphan Fix Log` BEFORE returning to the client.
+
+**Cross-project soft coupling.** The dashboard writes
+`Agent Alias Overrides`; the CDR Report project's
+`buildDQEHistoricalData::loadRosterCanonicalNames_` reads it on
+every build and folds it into the canonicalization map (priority:
+alias > roster-exact > paren-strip). The pipeline-side read is
+best-effort -- a missing or empty sheet leaves the build's
+behavior byte-identical to pre-OrphanFix.
+
+**Cache invalidation.** `applyOrphanRename` removes the single
+fixed-key `companyOverview:v8` cache entry on success. Per-(dept,
+range) caches (`summary:v4`, `individual:v6`, `performance:v3`,
+etc.) are left to TTL out within 5 minutes. The Orphan Fix modal
+warns the user "may take up to 5 minutes to appear in dashboard."
+
+**Error message footgun.** `assertAdmin_` is defined in
+`Alerts.gs` and throws "Alerts are admin-only." Non-admin calls to
+OrphanFix surface that same message -- slightly misleading but
+correctly rejects the call. Worth noting if you ever see it in a
+log entry that has nothing to do with alerts.

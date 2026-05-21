@@ -106,7 +106,31 @@ the exact match stays reliable across CDR feed spelling variations.
   when an expected agent doesn't show up.
 
 When an agent's display name changes (marriage, alias, etc.), update
-both sides at once.
+both sides at once -- OR use the dashboard's **Admin → Orphan Fix**
+modal to map the orphan to an existing roster name (writes to
+`Agent Alias Overrides` so future builds keep the mapping, and
+optionally backfill-renames past rows in DQE Historical Data).
+
+### Canonicalization layers (priority order)
+
+`buildDQEHistoricalData`'s `canonicalizeAgentName` checks three
+layers in order, returning the first hit:
+
+1. **Admin alias overrides** -- `Agent Alias Overrides` sheet (only
+   `Active=TRUE` rows). Maintained via the Orphan Fix modal; the
+   highest-priority lookup so admins can override anything below.
+2. **Exact roster match** -- if `rawName` already appears in any
+   dept's roster cell (after the `"Name, ext1, ext2"` parse), it
+   passes through unchanged.
+3. **Paren-strip ambiguity-free match** -- strip `\(.*?\)` from
+   `rawName`, then check whether exactly one roster entry has the
+   same stripped form. Match = rewrite to canonical; >1 match or 0
+   match = pass through unchanged.
+
+Implemented in `apps-script/cdr-report/buildDQEHistoricalData.js`
+(`canonicalizeAgentName` + `loadRosterCanonicalNames_`). The alias
+sheet read is best-effort: a missing or empty sheet leaves the
+build's behavior byte-identical to pre-OrphanFix.
 
 ## Aggregation rules (Department Dashboard)
 
@@ -217,6 +241,19 @@ a redeploy.
   design rules".
 - Constants: `UPPER_SNAKE_CASE` (`ADMIN_EMAILS`, `CACHE_TTL_SECONDS`,
   `ROSTER`, `HISTORICAL_COLS`).
+
+## Dashboard chrome
+
+### Header freshness pill
+
+Small badge in `.header-meta` ("Data through Mon May 19 · 14h ago")
+populated by `setFreshnessPill_` once `getLatestDataDate` returns.
+Computes age from end-of-day on the most recent date in
+`DQE Historical Data`. Past 36h the pill picks up the `.is-stale`
+class and tints warm orange. Hidden on fetch failure / empty data
+so the header doesn't show a misleading fallback. Updates only on
+page load (not live). Tunable in `setFreshnessPill_` if 36h becomes
+too noisy in practice.
 
 ## Per-report semantics
 
