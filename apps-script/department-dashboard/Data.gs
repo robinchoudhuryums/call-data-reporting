@@ -32,14 +32,23 @@
 function getLatestDataDate() {
   const cache = CacheService.getScriptCache();
   const KEY = 'latestDate:v1';
+  // Sentinel for the negative case (sheet missing / empty) so we
+  // don't reopen the spreadsheet on every page load when the data
+  // pipeline is broken or before first ingest.
+  const NEGATIVE = '__none__';
   const cached = cache.get(KEY);
+  if (cached === NEGATIVE) return null;
   if (cached) return cached;
+
+  const cachePut = function (v) {
+    try { cache.put(KEY, v, CACHE_TTL_SECONDS); } catch (e) {}
+  };
 
   const ss = openSpreadsheet_();
   const sheet = ss.getSheetByName(SHEETS.HISTORICAL);
-  if (!sheet) return null;
+  if (!sheet) { cachePut(NEGATIVE); return null; }
   const lastRow = sheet.getLastRow();
-  if (lastRow < 2) return null;
+  if (lastRow < 2) { cachePut(NEGATIVE); return null; }
   const ssTZ = ss.getSpreadsheetTimeZone();
 
   // The Date column is at HISTORICAL_COLS.DATE.  Scan only that
@@ -50,8 +59,8 @@ function getLatestDataDate() {
     const iso = rowDateIso_(values[i][0], ssTZ);
     if (iso && iso > latest) latest = iso;
   }
-  if (!latest) return null;
-  try { cache.put(KEY, latest, CACHE_TTL_SECONDS); } catch (e) {}
+  if (!latest) { cachePut(NEGATIVE); return null; }
+  cachePut(latest);
   return latest;
 }
 

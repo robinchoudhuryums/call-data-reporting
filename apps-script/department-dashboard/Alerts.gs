@@ -19,7 +19,10 @@
  *   - A daily time-driven trigger (runDailyAlerts_) can be
  *     installed via installAlertTrigger_; runs the previous
  *     calendar day's check at 8am, skipping Saturdays + Sundays.
- *   - Every send is logged to the "Alert Log" sheet.
+ *   - Every per-dept outcome of every run is logged to the "Alert
+ *     Log" sheet -- including previews. Preview rows are marked by
+ *     a "preview:" prefix on the Triggered By column and use the
+ *     `would-send` status (vs the real-run `sent`).
  *
  * Public entries (callable via google.script.run, all admin-
  * only at the server boundary):
@@ -47,9 +50,41 @@ function getAlertsInit() {
     config: readAlertConfig_(),
     log: readAlertLog_(20),
     trigger: getAlertTriggerStatus_(),
+    pipelineHealth: readPipelineHealth_(20),
     spreadsheetUrl: 'https://docs.google.com/spreadsheets/d/' + getSpreadsheetId_() + '/edit',
     defaultDate: yesterdayIso_(),
   };
+}
+
+/**
+ * Reads the Pipeline Health sheet, newest-first, up to maxRows
+ * entries. Safe no-op if the sheet is missing (returns []).
+ * Admin-only: only called from getAlertsInit which asserts admin.
+ */
+function readPipelineHealth_(maxRows) {
+  const ss = openSpreadsheet_();
+  const sheet = ss.getSheetByName(SHEETS.PIPELINE_HEALTH);
+  if (!sheet) return [];
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return [];
+  const startRow = Math.max(2, lastRow - maxRows + 1);
+  const rows = sheet.getRange(startRow, 1, lastRow - startRow + 1,
+                              PIPELINE_HEALTH_HEADERS.length).getValues();
+  const out = [];
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const r = rows[i];
+    out.push({
+      timestamp: r[0] instanceof Date
+        ? Utilities.formatDate(r[0], TZ, 'yyyy-MM-dd HH:mm')
+        : String(r[0] || ''),
+      step:        String(r[1] || ''),
+      status:      String(r[2] || ''),
+      rows:        r[3] === '' || r[3] == null ? null : r[3],
+      durationMs:  r[4] === '' || r[4] == null ? null : r[4],
+      notes:       String(r[5] || ''),
+    });
+  }
+  return out;
 }
 
 function previewAlerts(req) {
@@ -107,7 +142,7 @@ function runDailyAlerts_() {
     // doesn't go unnoticed.
     try {
       MailApp.sendEmail({
-        to: ADMIN_EMAILS.join(','),
+        to: getAdminEmails_().join(','),
         subject: '[Dashboard] Daily alert trigger failed',
         body: 'runDailyAlerts_ threw: ' + (e && e.message ? e.message : String(e))
             + '\nDate: ' + dateIso + '\nStack: ' + (e && e.stack ? e.stack : '(no stack)'),
@@ -127,9 +162,22 @@ function runAlertsCore_(dateIso, dryRun, triggeredBy) {
   const cfg = readAlertConfig_();
   const results = [];
 
+  // Every per-dept outcome of every run -- preview or real -- is
+  // appended to the Alert Log. Preview rows are distinguished by
+  // prefixing the Triggered By column with "preview:" and by the
+  // `would-send` status (vs real `sent`); other statuses are shared
+  // between modes. Logging previews leaves a fingerprint of "Robin
+  // looked at 2026-05-19 at 9:13am" which would otherwise vanish at
+  // session end.
+  const loggedBy = dryRun ? ('preview:' + (triggeredBy || '')) : (triggeredBy || '');
+  const pushAndLog = function (rec) {
+    results.push(rec);
+    appendAlertLog_(rec, loggedBy, dateIso);
+  };
+
   cfg.forEach(function (entry) {
     if (!entry.active) {
-      results.push({
+      pushAndLog({
         department: entry.department,
         status: 'skipped',
         answerRate: null,
@@ -147,7 +195,7 @@ function runAlertsCore_(dateIso, dryRun, triggeredBy) {
       // Treat as "no data" rather than "0% answer rate" which
       // would otherwise misfire below-threshold every quiet day.
       if (stats.rung === 0) {
-        results.push({
+        pushAndLog({
           department: entry.department,
           status: 'no-data',
           answerRate: null,
@@ -159,11 +207,11 @@ function runAlertsCore_(dateIso, dryRun, triggeredBy) {
       }
 
       const recipientsTo = resolveRecipients_(entry);
-      const recipientsCc = (ADMIN_EMAILS || []).slice();
+      const recipientsCc = getAdminEmails_();
 
       // Above threshold = healthy. Log but don't send.
       if (stats.pct >= entry.threshold) {
-        results.push({
+        pushAndLog({
           department: entry.department,
           status: 'above-threshold',
           answerRate: round1_(stats.pct),
@@ -175,7 +223,7 @@ function runAlertsCore_(dateIso, dryRun, triggeredBy) {
       }
 
       if (recipientsTo.length === 0) {
-        results.push({
+        pushAndLog({
           department: entry.department,
           status: 'no-recipients',
           answerRate: round1_(stats.pct),
@@ -195,28 +243,24 @@ function runAlertsCore_(dateIso, dryRun, triggeredBy) {
         sentNotes  = 'Sent to ' + recipientsTo.length + ' recipient'
                    + (recipientsTo.length === 1 ? '' : 's');
       }
-      const rec = {
+      pushAndLog({
         department: entry.department,
         status: sentStatus,
         answerRate: round1_(stats.pct),
         threshold: entry.threshold,
         recipients: recipientsTo,
         notes: sentNotes,
-      };
-      results.push(rec);
-      if (!dryRun) appendAlertLog_(rec, triggeredBy, dateIso);
+      });
     } catch (e) {
       Logger.log('Alert processing failed for %s: %s', entry.department, e);
-      const rec = {
+      pushAndLog({
         department: entry.department,
         status: 'error',
         answerRate: null,
         threshold: entry.threshold,
         recipients: [],
         notes: (e && e.message) ? e.message : String(e),
-      };
-      results.push(rec);
-      if (!dryRun) appendAlertLog_(rec, triggeredBy, dateIso);
+      });
     }
   });
 
@@ -468,7 +512,7 @@ function sendAlertEmail_(cfgEntry, dateIso, stats, recipientsTo, recipientsCc) {
     +   '</div>'
     +   agentsTable
     +   (dashboardUrl
-        ? '<div style="margin-top: 20px;"><a href="' + dashboardUrl + '" style="display: inline-block; background: #1d4ed8; color: #fff; padding: 8px 16px; border-radius: 6px; text-decoration: none; font-size: 13px; font-weight: 600;">Open Department Dashboard</a></div>'
+        ? '<div style="margin-top: 20px;"><a href="' + escapeHtmlServer_(dashboardUrl) + '" style="display: inline-block; background: #1d4ed8; color: #fff; padding: 8px 16px; border-radius: 6px; text-decoration: none; font-size: 13px; font-weight: 600;">Open Department Dashboard</a></div>'
         : '')
     +   '<div style="margin-top: 24px; font-size: 11px; color: #9ca3af;">'
     +     'Sent by the Department Dashboard alert engine. Threshold and recipients are configured in the "Alert Config" sheet.'

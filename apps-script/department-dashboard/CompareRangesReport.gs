@@ -23,9 +23,12 @@
  *     do not have to be adjacent.
  *
  * Authorization:
- *   Compare Ranges is admin-only at the server boundary. The
- *   client also hides the launch button for non-admins, but the
- *   server check is the source of truth.
+ *   Same model as Individual / Performance Reports -- managers
+ *   are pinned to their own dept; admins can pick any dept that
+ *   exists in the dept list. Previously this report was admin-
+ *   only at the server boundary; opened to managers so they can
+ *   run year-over-year and month-over-month comparisons within
+ *   their own dept without admin help.
  *
  * ATT semantics: weighted by Answered (matches Individual /
  * Performance Reports -- see INV-25). Days with answered=0
@@ -34,21 +37,22 @@
  * Caching: 5 min per (dept, p1, p2, sortedAgents) tuple.
  */
 
-// Bump on response-shape changes so stale entries don't bleed in.
-// v2 adds meta.p1Days / p2Days / lengthMismatch for client-side
-// per-day normalization when the two periods differ in length.
+// Bump on response-shape or aggregation-rule changes so stale
+// entries don't bleed in. CLAUDE.md INV-30 is the canonical
+// current-version list -- keep this constant aligned with that.
 const COMPARE_RANGES_CACHE_KEY_PREFIX = 'compareRanges:v3';
 
 function getCompareRangesInit(req) {
   const email = Session.getActiveUser().getEmail();
   const user = resolveUser_(email);
-  if (user.role !== 'admin') {
-    throw new Error('Compare Ranges is admin-only.');
-  }
+  if (user.role === 'none') throw new Error('Not authorized.');
 
   const dept = String((req && req.department) || '').trim();
   if (!dept) throw new Error('Department is required.');
-  if (getAllDepartments_().indexOf(dept) === -1) {
+  if (user.role === 'manager' && dept !== user.department) {
+    throw new Error('Not authorized for this department.');
+  }
+  if (user.role === 'admin' && getAllDepartments_().indexOf(dept) === -1) {
     throw new Error('Unknown department: ' + dept);
   }
 
@@ -64,9 +68,18 @@ function getCompareRangesInit(req) {
   const endOfLastMonth    = new Date(now.getFullYear(), now.getMonth(), 0);
 
   // Optional active-agent subset: when all four range dates are
-  // supplied, return the roster names with activity in EITHER
-  // range (union). Lets the picker show an Active / Inactive
-  // grouping that reflects both periods together.
+  // supplied AND each is a valid ISO date in order, return the
+  // roster names with activity in EITHER range (union). Lets the
+  // picker show an Active / Inactive grouping that reflects both
+  // periods together.
+  //
+  // Validation policy: silently skip the activeAgents fetch if any
+  // date is missing or invalid -- the client legitimately calls
+  // this with partial state while a user is typing in the date
+  // inputs, so throwing would surface noisy errors mid-edit.
+  // Malformed dates that pass `isIsoDate_` (e.g. 2026-13-99) are
+  // tolerated too: `computeActiveAgentsInRange_` will simply find
+  // no matching rows and return [].
   let activeAgents = null;
   const p1From = String((req && req.p1From) || '').trim();
   const p1To   = String((req && req.p1To)   || '').trim();
@@ -96,13 +109,14 @@ function getCompareRangesInit(req) {
 function getCompareRanges(req) {
   const email = Session.getActiveUser().getEmail();
   const user = resolveUser_(email);
-  if (user.role !== 'admin') {
-    throw new Error('Compare Ranges is admin-only.');
-  }
+  if (user.role === 'none') throw new Error('Not authorized.');
 
   const dept = String((req && req.department) || '').trim();
   if (!dept) throw new Error('Department is required.');
-  if (getAllDepartments_().indexOf(dept) === -1) {
+  if (user.role === 'manager' && dept !== user.department) {
+    throw new Error('Not authorized for this department.');
+  }
+  if (user.role === 'admin' && getAllDepartments_().indexOf(dept) === -1) {
     throw new Error('Unknown department: ' + dept);
   }
 
@@ -336,6 +350,11 @@ function computeCompareRanges_(dept, selectedAgents,
   };
   const p1Days = Math.floor((parseIso_(p1To) - parseIso_(p1From)) / msPerDay) + 1;
   const p2Days = Math.floor((parseIso_(p2To) - parseIso_(p2From)) / msPerDay) + 1;
+  // `Math.min(...) > 0` guards the divide; inputs are already
+  // validated above to ensure from <= to, so p1Days/p2Days are
+  // always >= 1 in practice -- this is belt-and-suspenders for the
+  // empty-state shape (emptyCompareRanges_ returns p1Days:0
+  // p2Days:0) which sets lengthMismatch:false correctly.
   const lengthMismatch = (Math.min(p1Days, p2Days) > 0)
     && (Math.max(p1Days, p2Days) / Math.min(p1Days, p2Days) >= 1.2);
 
@@ -474,9 +493,7 @@ function emptyCompareRanges_(dept, selectedAgents, roster,
 function sendCompareRangesEmail(req) {
   const email = Session.getActiveUser().getEmail();
   const user = resolveUser_(email);
-  if (user.role !== 'admin') {
-    throw new Error('Compare Ranges is admin-only.');
-  }
+  if (user.role === 'none') throw new Error('Not authorized.');
 
   const dataUrl = String((req && req.imageBase64) || '');
   const p1Label = String((req && req.p1Label) || '');

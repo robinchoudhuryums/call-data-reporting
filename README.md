@@ -90,7 +90,14 @@ clasp push -f
   introduces additional sheets.
 - Populate the `Access Control` sheet with one row per manager
   (Email | Department | Notes).
-- Add yourself as an admin email in `apps-script/department-dashboard/Config.gs` (`ADMIN_EMAILS`).
+- Add yourself to the admin list. Two options:
+  - **Preferred:** Project Settings → Script Properties → add
+    `ADMIN_EMAILS` set to a comma-separated list of admin emails.
+    Read at request time via `Config.gs::getAdminEmails_()`; adding
+    a new admin is a one-click edit, no redeploy.
+  - **Fallback:** edit `ADMIN_EMAILS_FALLBACK` in
+    `apps-script/department-dashboard/Config.gs` and redeploy.
+    Used only when the Script Property is unset.
 - Deploy as Web app: **Execute as: Me**, **Who has access: Anyone within
   [your domain]**.
 - After any push that adds a new OAuth scope to `appsscript.json` (e.g.
@@ -99,6 +106,36 @@ clasp push -f
   once to trigger the re-auth consent prompt. Scope-gated calls
   otherwise throw permission errors at runtime even though the
   dashboard page loads fine.
+
+**Optional (manager digest emails):**
+
+- Populate the `Digest Config` sheet (created by `setup()`) with one
+  row per subscriber:
+  Email | Department | Cadence (`daily` or `weekly`) | Active
+  (TRUE/FALSE) | Notes.
+- In the deployed dashboard, open Alerts (admin-only) → **Manager
+  Digest Subscribers** → **Install digest triggers**. Daily fires
+  weekday mornings for the previous day; weekly fires Monday morning
+  for the prior Mon&ndash;Fri window.
+
+**Optional (orphan fix):**
+
+- When the CDR feed produces an agent name that doesn't match any
+  roster entry (typos, marriages, hyphenations, exotic spellings),
+  the row appears in `DQE Historical Data` but doesn't show up
+  under any dept. Surface these via the dashboard's
+  **Admin → Orphan Fix** modal.
+- For each orphan, pick a canonical name from the roster dropdown
+  and click Apply. The action: (1) bulk-renames every row in
+  `DQE Historical Data` where Agent Name == orphan, (2) adds the
+  mapping to the `Agent Alias Overrides` sheet so the next CDR
+  build keeps the mapping, (3) appends a row to `Orphan Fix Log`.
+- The modal requires the `Agent Alias Overrides` and `Orphan Fix
+  Log` sheets to exist — created by `setup()`. Run `setup()` after
+  pulling this code if those sheets are missing in your
+  spreadsheet.
+- Admin-only at the server boundary. See CLAUDE.md INV-01 for the
+  full security model around the carve-out.
 
 **Optional (alerts):**
 
@@ -114,6 +151,25 @@ clasp push -f
   Alerts → Install daily trigger (8 AM). The trigger calls
   `runDailyAlerts_` for the previous day, skipping Saturdays and
   Sundays automatically.
+
+## Daily DQE build trigger (CDR Report project)
+
+The DQE Historical Data rebuild that backs the dashboard runs from a
+time-based trigger inside the CDR Report Apps Script project. To
+install it on a fresh project:
+
+- Open the CDR Report spreadsheet → **CDR Tools** menu → **⏰ Daily
+  DQE Build Trigger** → **Install (runs at 7 AM)**, OR
+- Open the CDR Report Apps Script editor → run `installDQEBuildTrigger`
+  once. The Run dropdown will prompt for the `script.scriptapp` and
+  `script.send_mail` permissions if they haven't been granted yet.
+
+The trigger calls `runDailyDQEBuild_` at 7 AM script-time
+(`America/Chicago`), skipping Saturdays and Sundays. On failure it
+emails `NEON_WRITE_CONFIG.alertEmail` so a silent build crash doesn't
+leave the dashboard serving stale data.
+
+To uninstall, use the same menu (or run `uninstallDQEBuildTrigger`).
 
 ## Working on sibling Apps Script projects
 

@@ -8,11 +8,40 @@
  *     value: <id from the CDR Report sheet URL>
  */
 
-// Admins bypass the manager mapping and can pick any department.
-// Add more emails here as needed; redeploys are required for changes.
-const ADMIN_EMAILS = Object.freeze([
+// Admin emails. Read from the ADMIN_EMAILS Script Property at request
+// time (so add-an-admin is a one-click editor change, no redeploy),
+// and fall back to ADMIN_EMAILS_FALLBACK if the property is unset --
+// guarantees the original deployer keeps access even on a fresh
+// project where Script Properties haven't been populated yet.
+//
+// Script Property format: comma-separated emails, e.g.
+//   "robin.choudhury@universalmedsupply.com,other@universalmedsupply.com"
+// Whitespace around commas is trimmed; case is folded by callers
+// (isAdmin_ in Auth.gs).
+const ADMIN_EMAILS_FALLBACK = Object.freeze([
   'robin.choudhury@universalmedsupply.com',
 ]);
+
+// Public read accessor used by Auth.gs / Alerts.gs / CompanyOverview.gs.
+// Returns a fresh array each call so callers can mutate safely.
+function getAdminEmails_() {
+  const raw = PropertiesService.getScriptProperties().getProperty('ADMIN_EMAILS');
+  if (!raw) return ADMIN_EMAILS_FALLBACK.slice();
+  const out = raw.split(',')
+    .map(function (s) { return String(s || '').trim(); })
+    .filter(function (s) { return !!s; });
+  return out.length ? out : ADMIN_EMAILS_FALLBACK.slice();
+}
+
+// Backwards-compatible: existing code reads `ADMIN_EMAILS[0]` and
+// `ADMIN_EMAILS.join(',')` directly. Defining ADMIN_EMAILS as a getter
+// at module-load time would freeze the value at script start (Script
+// Properties read once), and Apps Script can't redefine the binding
+// for callers reading the symbol on each request. Instead, leave
+// ADMIN_EMAILS as a frozen reference to the fallback (for the
+// access_denied template's mailto link, which doesn't need to be
+// dynamic) and point all auth/alert paths at getAdminEmails_().
+const ADMIN_EMAILS = ADMIN_EMAILS_FALLBACK;
 
 // Sheet names. Roster sheet is the existing "DO NOT EDIT!" tab; the
 // Access Control sheet is auto-created by setup_() on first run if
@@ -25,6 +54,10 @@ const SHEETS = Object.freeze({
   ACCESS_CONTROL: 'Access Control',
   ALERT_CONFIG: 'Alert Config',
   ALERT_LOG: 'Alert Log',
+  PIPELINE_HEALTH: 'Pipeline Health',
+  DIGEST_CONFIG: 'Digest Config',
+  AGENT_ALIAS_OVERRIDES: 'Agent Alias Overrides',
+  ORPHAN_FIX_LOG: 'Orphan Fix Log',
 });
 
 const ACCESS_CONTROL_HEADERS = Object.freeze(['Email', 'Department', 'Notes']);
@@ -32,6 +65,43 @@ const ALERT_CONFIG_HEADERS   = Object.freeze(['Department', 'Threshold %', 'Extr
 const ALERT_LOG_HEADERS      = Object.freeze([
   'Timestamp', 'Department', 'Date Checked', 'Threshold %', 'Answer Rate %',
   'Sent', 'Recipients', 'Triggered By', 'Notes', 'Status',
+]);
+// Pipeline Health: append-only telemetry of daily-pipeline steps.
+// Step is one of: 'autoImport', 'buildDQE', 'neonWrite' (free-form;
+// new steps don't require a schema bump). Status is 'success' or
+// 'failure'. Rows is the count of rows the step touched (e.g. CSV
+// rows imported, DQE rows written); empty when not meaningful.
+// Duration is in milliseconds; Notes is free-form (typically an
+// error message on failure or a brief summary on success).
+const PIPELINE_HEALTH_HEADERS = Object.freeze([
+  'Timestamp', 'Step', 'Status', 'Rows', 'Duration (ms)', 'Notes',
+]);
+// Digest Config: per-recipient subscription rows. Cadence is one of
+// 'daily' (sends each weekday morning for the previous day's data)
+// or 'weekly' (sends Monday morning for the prior Mon-Fri window).
+// Active=FALSE pauses without deleting. Edited by admins by hand;
+// no in-app form.
+const DIGEST_CONFIG_HEADERS = Object.freeze([
+  'Email', 'Department', 'Cadence', 'Active', 'Notes',
+]);
+// Agent Alias Overrides: persistent rename map used by the CDR
+// pipeline's loadRosterCanonicalNames_ on every build. Each row
+// says "if you see this raw name from the CDR feed, write it under
+// this canonical roster name." Maintained by admins via the Orphan
+// Fix modal; manual edits via the sheet are also fine.
+//   Old Name      = the raw name we keep seeing as an orphan
+//   Canonical Name = the roster name to consolidate it under
+//   Active         = TRUE/FALSE (pause without deleting)
+const AGENT_ALIAS_OVERRIDES_HEADERS = Object.freeze([
+  'Old Name', 'Canonical Name', 'Active', 'Added By', 'Added At', 'Notes',
+]);
+// Orphan Fix Log: append-only audit trail of admin-driven orphan
+// fixes (alias adds + backfill renames). Affected Rows is the
+// number of DQE Historical Data rows changed by a backfill rename,
+// 0 for alias-only additions.
+const ORPHAN_FIX_LOG_HEADERS = Object.freeze([
+  'Timestamp', 'Admin', 'Action', 'From Name', 'To Name',
+  'Affected Rows', 'Notes',
 ]);
 
 // Layout of the "DO NOT EDIT!" roster sheet. Centralized so a future

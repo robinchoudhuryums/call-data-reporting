@@ -24,9 +24,14 @@ var DQE_DD_WINDOW_END   = 15 * 60 * 60;
 
 
 // -- Menu installation -------------------------------------------------------
+// The project's single onOpen lives in "CDR Tools menu.js" and calls
+// installDQEDrilldownMenu_ from there. Apps Script shares one global
+// scope across every .gs file in a project, so a second top-level
+// `function onOpen()` here would silently override the canonical one
+// (last-loaded wins).
 
-function onOpen() {
-  SpreadsheetApp.getUi()
+function installDQEDrilldownMenu_(ui) {
+  (ui || SpreadsheetApp.getUi())
     .createMenu('DQE Tools')
     .addItem('Show source rows for selection', 'showDQEDrilldownSidebar')
     .addToUi();

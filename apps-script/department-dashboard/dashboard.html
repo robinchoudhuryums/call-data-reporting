@@ -42,8 +42,8 @@
                     title="Per-agent KPIs vs team avg + 12-month trend. Pick 2+ agents to switch to peer-comparison mode.">Individual Report</button>
             <button class="header-menu-item" id="performance-report-btn"type="button" role="menuitem"
                     title="Department-level current-vs-prior-period deltas, share-of-answered pie, and 12-month team trend.">Performance Report</button>
-            <button class="header-menu-item" id="compare-ranges-btn"    type="button" role="menuitem" data-admin-only style="display:none;"
-                    title="Side-by-side comparison of two arbitrary date ranges (admin-only). Useful for year-over-year or pre/post-change analyses.">Compare Ranges</button>
+            <button class="header-menu-item" id="compare-ranges-btn"    type="button" role="menuitem"
+                    title="Side-by-side comparison of two arbitrary date ranges. Useful for year-over-year or pre/post-change analyses.">Compare Ranges</button>
           </div>
         </div>
         <div class="header-menu" id="admin-menu-wrap" data-admin-only style="display:none;">
@@ -54,10 +54,17 @@
           <div class="header-menu-list" id="admin-menu-list" role="menu" style="display:none;">
             <button class="header-menu-item" id="alerts-btn" type="button" role="menuitem"
                     title="Configure low-answer-rate alerts: per-dept thresholds + recipients, manual send, or schedule a daily check.">Alerts</button>
+            <button class="header-menu-item" id="orphan-fix-btn" type="button" role="menuitem"
+                    title="Map orphaned agent names in DQE Historical Data to existing roster entries. Admin-only.">Orphan Fix</button>
           </div>
         </div>
       </nav>
       <div class="header-meta">
+        <!-- Data-freshness pill -- "Data through Mon May 19 · 14h ago".
+             Populated by setFreshnessPill_ once getLatestDataDate
+             returns. Hidden until then so the header doesn't show a
+             stale fallback. -->
+        <span class="freshness-pill" id="freshness-pill" style="display:none;" title="The most recent date with data in DQE Historical Data, and how long ago it was."></span>
         <button class="help-btn" id="mode-btn" type="button" aria-label="Toggle dark mode" title="Toggle dark mode">◐</button>
         <button class="help-btn" id="settings-btn" type="button" aria-label="Settings" title="Personal preferences (background theme, etc.)">⚙</button>
         <button class="help-btn" id="help-btn" type="button" aria-label="Help & FAQ" title="Help & FAQ">?</button>
@@ -327,8 +334,29 @@
           </div>
         </div>
 
+        <div class="ir-row">
+          <div class="ir-col">
+            <label for="ir-compare-mode">Compare with</label>
+            <select id="ir-compare-mode">
+              <option value="none">No comparison</option>
+              <option value="yoy">Same window one year prior</option>
+              <option value="prevPeriod">Immediately-preceding period</option>
+              <option value="custom">Custom prior range&hellip;</option>
+            </select>
+          </div>
+          <div class="ir-col" id="ir-prior-from-wrap" style="display:none;">
+            <label for="ir-prior-from">Prior start</label>
+            <input type="date" id="ir-prior-from">
+          </div>
+          <div class="ir-col" id="ir-prior-to-wrap" style="display:none;">
+            <label for="ir-prior-to">Prior end</label>
+            <input type="date" id="ir-prior-to">
+          </div>
+        </div>
+        <div class="ir-hint ir-prior-hint" id="ir-prior-hint"></div>
+
         <div class="ir-section-title">2. Agents</div>
-        <div class="ir-hint">Select 1 for Individual Report. Select multiple for Peer Comparison.</div>
+        <div class="ir-hint">Select 1 for an Individual Report (with optional self-comparison above). Select multiple for Peer Comparison.</div>
         <div class="ir-search-row">
           <input type="search" id="ir-agent-search" placeholder="Search agents by name..." autocomplete="off">
         </div>
@@ -608,7 +636,7 @@
     <div class="modal-panel modal-panel-wide" role="document">
       <div class="modal-panel-header">
         <button class="modal-close" id="compare-close" type="button" aria-label="Close">&times;</button>
-        <div class="modal-kicker">Report · Admin</div>
+        <div class="modal-kicker">Report</div>
         <h2 id="compare-modal-title">Compare Ranges</h2>
       </div>
       <div class="modal-panel-body">
@@ -880,13 +908,149 @@
             <tbody id="al-log-tbody"></tbody>
           </table>
         </div>
+
+        <div class="al-section">
+          <div class="al-section-title">Manager Digest Subscribers</div>
+          <p class="al-hint">
+            Per-recipient subscriptions configured in the <strong>Digest Config</strong>
+            sheet (Email | Department | Cadence | Active | Notes). Cadence is
+            <code>daily</code> (sends each weekday morning for the previous day) or
+            <code>weekly</code> (sends Monday morning for the prior Mon-Fri).
+            <a href="#" id="al-open-digest-sheet" target="_blank">Open Digest Config sheet &rarr;</a>
+          </p>
+          <table class="al-config-table">
+            <thead><tr>
+              <th>Email</th>
+              <th>Department</th>
+              <th>Cadence</th>
+              <th>Active</th>
+              <th>Notes</th>
+              <th></th>
+            </tr></thead>
+            <tbody id="al-digest-tbody"></tbody>
+          </table>
+          <p class="al-hint" id="al-digest-trigger-status" style="margin-top: 10px;"></p>
+          <div class="al-trigger-actions">
+            <button class="btn btn-secondary" id="al-install-digest-btn"   type="button">Install digest triggers</button>
+            <button class="btn btn-secondary" id="al-uninstall-digest-btn" type="button" style="display:none;">Uninstall digest triggers</button>
+          </div>
+          <p class="al-hint" style="margin-top: 8px;">
+            Daily trigger runs 8 AM weekdays for the previous day's data.
+            Weekly trigger runs 8 AM Monday for the prior Mon&ndash;Fri window.
+          </p>
+        </div>
+
+        <div class="al-section">
+          <div class="al-section-title">Pipeline Health</div>
+          <p class="al-hint">Last 20 entries from the Pipeline Health sheet (most recent first). Failures are highlighted; a long quiet stretch on `autoImport` or `buildDQE` is a sign the daily ingest or rebuild hasn't run.</p>
+          <table class="al-log-table">
+            <thead><tr>
+              <th>When</th>
+              <th>Step</th>
+              <th>Status</th>
+              <th class="num">Rows</th>
+              <th class="num">Duration</th>
+              <th>Notes</th>
+            </tr></thead>
+            <tbody id="al-pipeline-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="orphan-fix-modal" class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="orphan-fix-modal-title" style="display:none;">
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-panel modal-panel-wide" role="document">
+      <div class="modal-panel-header">
+        <button class="modal-close" id="orphan-fix-close" type="button" aria-label="Close">&times;</button>
+        <div class="modal-kicker">Operations &middot; Admin</div>
+        <h2 id="orphan-fix-modal-title">Orphan Fix</h2>
+      </div>
+      <div class="modal-panel-body">
+      <div id="of-loading" class="ir-loader" style="text-align: center; padding: 24px;">Loading orphan list&hellip;</div>
+
+      <div id="of-body" style="display:none;">
+        <div class="al-section">
+          <p class="al-hint" id="of-intro-hint">
+            Agent names that appear in <strong>DQE Historical Data</strong> but
+            don't match any dept's roster entry. Common causes: marriage /
+            hyphenation, CDR feed spelling variants, brand-new hires not yet
+            on the roster. Map each orphan to an existing roster name to
+            consolidate. <strong>Renaming touches past data</strong> &mdash;
+            an audit row goes to the Orphan Fix Log.
+            <a href="#" id="of-open-sheet" target="_blank">Open audit log &rarr;</a>
+          </p>
+          <div id="of-run-status" class="status" style="display:none;"></div>
+        </div>
+
+        <div class="al-section">
+          <div class="al-section-title">Orphans (last 180 days)</div>
+          <table class="al-config-table">
+            <thead><tr>
+              <th>Orphan name</th>
+              <th class="num">Rows</th>
+              <th>Last seen</th>
+              <th>Sample queue exts</th>
+              <th>Map to roster name</th>
+              <th>Apply</th>
+            </tr></thead>
+            <tbody id="of-orphans-tbody"></tbody>
+          </table>
+        </div>
+
+        <div class="al-section">
+          <div class="al-section-title">Current aliases</div>
+          <p class="al-hint">
+            Persistent alias overrides read by the daily DQE build. Each row
+            here means "if the CDR feed produces 'Old Name', the pipeline
+            writes the row under 'Canonical Name' on the next build."
+            Deactivate via the X button (soft-removes; row stays for audit).
+          </p>
+          <table class="al-config-table">
+            <thead><tr>
+              <th>Old name</th>
+              <th>Canonical name</th>
+              <th>Active</th>
+              <th>Added by</th>
+              <th>Added at</th>
+              <th></th>
+            </tr></thead>
+            <tbody id="of-aliases-tbody"></tbody>
+          </table>
+        </div>
+
+        <div class="al-section">
+          <div class="al-section-title">Recent fix log</div>
+          <p class="al-hint">Last 20 entries from the Orphan Fix Log sheet (most recent first).</p>
+          <table class="al-log-table">
+            <thead><tr>
+              <th>When</th>
+              <th>Admin</th>
+              <th>Action</th>
+              <th>From</th>
+              <th>To</th>
+              <th class="num">Rows</th>
+              <th>Notes</th>
+            </tr></thead>
+            <tbody id="of-log-tbody"></tbody>
+          </table>
+        </div>
       </div>
       </div>
     </div>
   </div>
 
   <script>
-    window.__USER__ = <?!= JSON.stringify(user) ?>;
+    // JSON.stringify does NOT escape "<" inside string values, so a
+    // department or email value containing "</script>" would terminate
+    // this block at parse time. Replace every "<" with its JSON
+    // unicode-escape form (the literal 6 characters: backslash-u-0-0-3-c) before
+    // emitting via the force-print scriptlet. The browser's JS parser
+    // turns the escape back into "<" at runtime, so the in-memory
+    // value is preserved.
+    window.__USER__ = <?!= JSON.stringify(user).replace(/</g, '\\u003c') ?>;
   </script>
   <?!= include('script') ?>
 </body>

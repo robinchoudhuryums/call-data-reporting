@@ -106,7 +106,31 @@ the exact match stays reliable across CDR feed spelling variations.
   when an expected agent doesn't show up.
 
 When an agent's display name changes (marriage, alias, etc.), update
-both sides at once.
+both sides at once -- OR use the dashboard's **Admin → Orphan Fix**
+modal to map the orphan to an existing roster name (writes to
+`Agent Alias Overrides` so future builds keep the mapping, and
+optionally backfill-renames past rows in DQE Historical Data).
+
+### Canonicalization layers (priority order)
+
+`buildDQEHistoricalData`'s `canonicalizeAgentName` checks three
+layers in order, returning the first hit:
+
+1. **Admin alias overrides** -- `Agent Alias Overrides` sheet (only
+   `Active=TRUE` rows). Maintained via the Orphan Fix modal; the
+   highest-priority lookup so admins can override anything below.
+2. **Exact roster match** -- if `rawName` already appears in any
+   dept's roster cell (after the `"Name, ext1, ext2"` parse), it
+   passes through unchanged.
+3. **Paren-strip ambiguity-free match** -- strip `\(.*?\)` from
+   `rawName`, then check whether exactly one roster entry has the
+   same stripped form. Match = rewrite to canonical; >1 match or 0
+   match = pass through unchanged.
+
+Implemented in `apps-script/cdr-report/buildDQEHistoricalData.js`
+(`canonicalizeAgentName` + `loadRosterCanonicalNames_`). The alias
+sheet read is best-effort: a missing or empty sheet leaves the
+build's behavior byte-identical to pre-OrphanFix.
 
 ## Aggregation rules (Department Dashboard)
 
@@ -191,8 +215,12 @@ how the legacy DQE Report worked.
 
 ## Auth and access
 
-- **Admins**: hardcoded in `ADMIN_EMAILS` in `apps-script/department-dashboard/Config.gs`. Bypass the
+- **Admins**: resolved at request time via `Config.gs::getAdminEmails_()`,
+  which reads the `ADMIN_EMAILS` Script Property (comma-separated emails)
+  and falls back to the `ADMIN_EMAILS_FALLBACK` constant in
+  `apps-script/department-dashboard/Config.gs` if unset. Bypass the
   manager dept check; can pick any department from the admin dropdown.
+  Adding an admin is a Script-Property edit, no redeploy.
 - **Managers**: rows in the `Access Control` sheet (`Email | Department |
   Notes`). One row per manager. Pinned to a single department.
 - **Everyone else**: gets the access-denied page.
@@ -213,6 +241,19 @@ a redeploy.
   design rules".
 - Constants: `UPPER_SNAKE_CASE` (`ADMIN_EMAILS`, `CACHE_TTL_SECONDS`,
   `ROSTER`, `HISTORICAL_COLS`).
+
+## Dashboard chrome
+
+### Header freshness pill
+
+Small badge in `.header-meta` ("Data through Mon May 19 · 14h ago")
+populated by `setFreshnessPill_` once `getLatestDataDate` returns.
+Computes age from end-of-day on the most recent date in
+`DQE Historical Data`. Past 36h the pill picks up the `.is-stale`
+class and tints warm orange. Hidden on fetch failure / empty data
+so the header doesn't show a misleading fallback. Updates only on
+page load (not live). Tunable in `setFreshnessPill_` if 36h becomes
+too noisy in practice.
 
 ## Per-report semantics
 
@@ -267,11 +308,13 @@ a redeploy.
   - Missed: above = orange (negative)
   - TTT / ATT: always neutral grey
 
-### Compare Ranges (admin-only)
+### Compare Ranges
 
-- **Admin-only at the server boundary** (INV-32). Every public
-  callable in `CompareRangesReport.gs` rejects non-admin requests;
-  the launcher button is hidden client-side for non-admins.
+- **Per-dept authorization** (INV-32). Same model as the Individual
+  and Performance Reports: managers can only request their own dept;
+  admins can pick any dept. Previously admin-only; opened to managers
+  for year-over-year and month-over-month comparisons within their
+  own dept.
 - **Agent-centric**: like Individual / Performance, the user's
   selection IS the team. No `TEAM_AVG_EXCLUDES` filter applies.
 - **Two arbitrary periods**: P1 (baseline) and P2 (comparison).
@@ -320,13 +363,19 @@ Each report file uses its own versioned cache key prefix. Bump the
 version any time the response shape or aggregation rules change so
 stale caches invalidate on deploy.
 
+CLAUDE.md INV-30 is the canonical current-version list. This table
+mirrors it; if the two ever diverge, INV-30 wins.
+
 | Source file | Cache prefix | Current version |
 |---|---|---|
-| `Data.gs` (main table) | `summary:vN:` | `v3` |
-| `IndividualReport.gs` | `individual:vN:` | `v4` |
+| `Data.gs` (main table) | `summary:vN:` | `v4` |
+| `Data.gs` (latest-date snap for default From/To) | `latestDate:vN:` | `v1` |
+| `IndividualReport.gs` | `individual:vN:` | `v6` |
 | `IndividualReport.gs` (active-in-range subset, shared with all three pickers) | `individual_active:vN:` | `v1` |
-| `PerformanceReport.gs` | `performance:vN:` | `v2` |
-| `CompareRangesReport.gs` | `compareRanges:vN:` | `v2` |
+| `PerformanceReport.gs` | `performance:vN:` | `v3` |
+| `CompareRangesReport.gs` | `compareRanges:vN:` | `v3` |
+| `MissedCallsReport.gs` | `missed:vN:` | `v10` |
+| `CompanyOverview.gs` | `companyOverview:vN` | `v8` |
 
 `Alerts.gs` holds no cached compute — preview / send always re-reads
 the source sheet for the chosen date.
