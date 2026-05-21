@@ -3,9 +3,12 @@
  * "Run" dropdown after first deploy: select setup, click Run.
  *
  * Creates these sheets in the CDR Report spreadsheet if missing:
- *   - Access Control  (manager -> dept mapping)
- *   - Alert Config    (low-answer-rate alert thresholds + recipients)
- *   - Alert Log       (history of alert checks / sends)
+ *   - Access Control   (manager -> dept mapping)
+ *   - Alert Config     (low-answer-rate alert thresholds + recipients)
+ *   - Alert Log        (history of alert checks / sends)
+ *   - Pipeline Health  (append-only telemetry: autoImport, buildDQE,
+ *                       neonWrite success/failure with row counts and
+ *                       durations)
  *
  * Safe to re-run; existing sheets are left untouched (no data
  * overwritten).
@@ -19,9 +22,11 @@
  */
 function setup() {
   const ss = openSpreadsheet_();
-  ensureSheet_(ss, SHEETS.ACCESS_CONTROL, ACCESS_CONTROL_HEADERS);
-  ensureSheet_(ss, SHEETS.ALERT_CONFIG,   ALERT_CONFIG_HEADERS);
-  ensureSheet_(ss, SHEETS.ALERT_LOG,      ALERT_LOG_HEADERS);
+  ensureSheet_(ss, SHEETS.ACCESS_CONTROL,  ACCESS_CONTROL_HEADERS);
+  ensureSheet_(ss, SHEETS.ALERT_CONFIG,    ALERT_CONFIG_HEADERS);
+  ensureSheet_(ss, SHEETS.ALERT_LOG,       ALERT_LOG_HEADERS);
+  ensureSheet_(ss, SHEETS.PIPELINE_HEALTH, PIPELINE_HEALTH_HEADERS);
+  ensureSheet_(ss, SHEETS.DIGEST_CONFIG,   DIGEST_CONFIG_HEADERS);
   Logger.log('Setup complete.');
 }
 

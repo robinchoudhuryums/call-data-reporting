@@ -194,6 +194,29 @@
   }
   .header-meta .email { font-family: var(--mono); font-size: 12px; }
 
+  /* Data-freshness pill: sits in .header-meta showing "Data through
+     Mon May 19 · 14h ago".  Color cools when data is stale relative
+     to a normal daily-ingest cadence (24h+).  Hidden by default
+     until the client knows the latest data date; see
+     setFreshnessPill_ in script.html. */
+  .freshness-pill {
+    font-family: var(--mono);
+    font-size: 11px;
+    line-height: 1.2;
+    padding: 4px 8px;
+    border-radius: 999px;
+    background: var(--paper-2);
+    border: 1px solid var(--line);
+    color: var(--muted);
+    white-space: nowrap;
+  }
+  .freshness-pill.is-stale {
+    background: var(--warn-soft);
+    border-color: var(--warn);
+    color: var(--warn);
+  }
+  .freshness-pill .freshness-date { color: var(--ink); }
+
   /* Header nav menus (Reports + Admin dropdowns).  Sit between the
      dept title block and the .header-meta utility cluster.  On
      narrow viewports the whole header wraps and the nav drops to a

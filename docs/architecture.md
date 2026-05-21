@@ -147,8 +147,8 @@ The dashboard serves five distinct reports + an alerts engine, each
 backed by its own `.gs` file with public entry points callable via
 `google.script.run`. All public functions follow the read-only safety
 rule (INV-01) — any function that touches spreadsheet state ends in
-`_`. Compare Ranges and Alerts additionally enforce an admin role
-check at the server boundary (INV-32).
+`_`. Alerts additionally enforces an admin role check at the server
+boundary (INV-32).
 
 Cache prefix versions below are reference-only; CLAUDE.md INV-30 is
 canonical and reflects current code.
@@ -159,8 +159,8 @@ canonical and reflects current code.
 | Missed Calls Report | `MissedCallsReport.gs` | `getMissedCallsReport` | `missed:v10:` | no |
 | Individual / Peer Comparison | `IndividualReport.gs` | `getIndividualReportInit`, `getIndividualReport`, `sendIndividualReportEmail` | `individual:v5:`, `individual_active:v1:` | no |
 | Performance Report (current vs prior) | `PerformanceReport.gs` | `getPerformanceReportInit` (delegates to Individual's init), `getPerformanceReport`, `sendPerformanceReportEmail` | `performance:v3:` | no |
-| Compare Ranges (two arbitrary ranges) | `CompareRangesReport.gs` | `getCompareRangesInit`, `getCompareRanges`, `sendCompareRangesEmail` | `compareRanges:v3:` | yes |
-| Company Overview | `CompanyOverview.gs` | `getCompanyOverview` | `companyOverview:v6` | partial (admin-only `companyAggregate` field) |
+| Compare Ranges (two arbitrary ranges) | `CompareRangesReport.gs` | `getCompareRangesInit`, `getCompareRanges`, `sendCompareRangesEmail` | `compareRanges:v3:` | no |
+| Company Overview | `CompanyOverview.gs` | `getCompanyOverview` | `companyOverview:v7` | partial (admin-only `companyAggregate` field) |
 | Low Answer Rate Alerts | `Alerts.gs` | `getAlertsInit`, `previewAlerts`, `sendAlerts`, `installAlertTrigger`, `uninstallAlertTrigger` (+ `runDailyAlerts_` time trigger) | (no cache) | yes |
 
 All reports use the same auth resolution (`resolveUser_(email)`), the

@@ -271,6 +271,10 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
   const sourceSS  = SpreadsheetApp.getActiveSpreadsheet();
   const ui        = SpreadsheetApp.getUi();
   const startTime = new Date().getTime();
+  // Target SS for Pipeline Health logging -- the same workbook the
+  // dashboard's setup() creates "Pipeline Health" in. Resolved
+  // lazily inside logPipelineHealth_ so we don't open it twice.
+  let pipelineTargetSS = preOpenedTargetSS || null;
 
   try {
     let targetSheetInfo;
@@ -305,6 +309,7 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
     if (!silent) sourceSS.toast(`Processing: ${latestName}`, "Step 1/7", -1);
 
     const targetSS    = preOpenedTargetSS || SpreadsheetApp.openById(TARGET_SS_ID);
+    pipelineTargetSS  = targetSS;   // captured for the catch block's Pipeline Health log
     const rawDataSheet = targetSS.getSheetByName("Raw Data");
     const outputSheet  = targetSS.getSheetByName("CDR Output");
     const configSheet  = targetSS.getSheetByName("DO NOT EDIT!");
@@ -400,17 +405,49 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
     const endTime         = new Date().getTime();
     const durationSeconds = ((endTime - startTime) / 1000).toFixed(1);
 
-      if (!isHistoricalBackfill && historyReport.counts) {
+    // Pipeline Health: append a success row so the admin can see the
+    // ingest ran for $latestName in $durationSeconds. Best-effort.
+    let successCountLine = '';
+    let countTotal = null;
+    if (!isHistoricalBackfill && historyReport.counts) {
       const c = historyReport.counts;
-      const countLine = `CDR: +${c.cdr} | QPath: +${c.qpath} | QCD: +${c.qcd} | CSR: +${c.csr}`;
-      if (!silent) sourceSS.toast(countLine, `✅ Done in ${durationSeconds}s`, 8);
-      return `DONE: ${durationSeconds}s | ${countLine}`;
+      successCountLine = `CDR: +${c.cdr} | QPath: +${c.qpath} | QCD: +${c.qcd} | CSR: +${c.csr}`;
+      countTotal = (Number(c.cdr) || 0) + (Number(c.qpath) || 0)
+                 + (Number(c.qcd) || 0) + (Number(c.csr) || 0);
+    }
+    try {
+      logPipelineHealth_(pipelineTargetSS, {
+        step:       'autoImport',
+        status:     'success',
+        rows:       countTotal,
+        durationMs: endTime - startTime,
+        notes:      latestName + (successCountLine ? ' | ' + successCountLine : ''),
+      });
+    } catch (logErr) { /* best-effort */ }
+
+    if (!isHistoricalBackfill && historyReport.counts) {
+      if (!silent) sourceSS.toast(successCountLine, `✅ Done in ${durationSeconds}s`, 8);
+      return `DONE: ${durationSeconds}s | ${successCountLine}`;
     }
     if (!silent) sourceSS.toast(`Finished in ${durationSeconds}s`, "✅ Step 7/7 — Complete", 6);
     return `DONE: ${durationSeconds}s`;
 
   } catch (e) {
     console.error(e);
+    // Pipeline Health entry first (cheap; happens on the target SS)
+    // so admins see the failure in the dashboard's Alerts modal even
+    // if the email path also fails. Best-effort.
+    try {
+      logPipelineHealth_(pipelineTargetSS, {
+        step:       'autoImport',
+        status:     'failure',
+        rows:       null,
+        durationMs: new Date().getTime() - startTime,
+        notes:      (specificDateStr || 'latest')
+                    + ' | ' + ((e && e.message) ? e.message : String(e)),
+      });
+    } catch (logErr) { /* best-effort */ }
+
     // Email-on-failure so a trigger-context crash (onChange has no
     // UI, getUi().alert is invisible) doesn't go unnoticed and the
     // dashboard isn't left silently serving stale data. Best-effort:
@@ -467,6 +504,39 @@ function notifyImportFailure_(ctx) {
     + 'the next successful import. Investigate via the source spreadsheet\'s '
     + 'execution log.';
   MailApp.sendEmail(to, subject, body);
+}
+
+/**
+ * Appends a row to the Pipeline Health sheet in the target
+ * spreadsheet (created by the Department Dashboard's setup()). The
+ * `ss` arg may be null on early failures before the target was
+ * opened -- in that case we try to open it ourselves so the failure
+ * still surfaces. Best-effort: any logging failure is swallowed so
+ * pipeline-health telemetry can never block the pipeline.
+ *
+ * Schema (Timestamp, Step, Status, Rows, Duration (ms), Notes) is
+ * owned by the dashboard's Config.gs PIPELINE_HEALTH_HEADERS; if
+ * that changes, update the column order here in lockstep.
+ */
+function logPipelineHealth_(ss, event) {
+  try {
+    let target = ss;
+    if (!target) {
+      try { target = SpreadsheetApp.openById(TARGET_SS_ID); } catch (openErr) { return; }
+    }
+    const sheet = target.getSheetByName('Pipeline Health');
+    if (!sheet) return;
+    sheet.appendRow([
+      new Date(),
+      event && event.step       ? String(event.step)   : '',
+      event && event.status     ? String(event.status) : '',
+      event && event.rows       != null ? event.rows       : '',
+      event && event.durationMs != null ? event.durationMs : '',
+      event && event.notes      ? String(event.notes)  : '',
+    ]);
+  } catch (e) {
+    try { console.error('logPipelineHealth_ failed: ' + (e && e.message ? e.message : e)); } catch (e2) {}
+  }
 }
 
 // ─────────────────────────────────────────────

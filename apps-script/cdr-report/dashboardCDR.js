@@ -121,10 +121,30 @@ function createCustomReportDashboard() {
 
   const configSheet = ss.getSheetByName(CONFIG_SHEET_NAME);
   if (configSheet) {
-    const deptRule = SpreadsheetApp.newDataValidation()
-      .requireValueInRange(configSheet.getRange('F1:S1'))
-      .build();
-    sheet.getRange('B2').setDataValidation(deptRule);
+    // Dept headers start at column F and run until the first blank
+    // cell in row 1 -- same rule the Department Dashboard uses
+    // (Auth.gs::getAllDepartments_). Previously hardcoded to F1:S1
+    // (14 columns), which silently dropped the 15th dept if anyone
+    // ever added one.
+    const DEPT_FIRST_COL = 6;   // column F
+    const lastCol = configSheet.getLastColumn();
+    let deptCount = 0;
+    if (lastCol >= DEPT_FIRST_COL) {
+      const headerRow = configSheet
+        .getRange(1, DEPT_FIRST_COL, 1, lastCol - DEPT_FIRST_COL + 1)
+        .getValues()[0];
+      for (let i = 0; i < headerRow.length; i++) {
+        if (!String(headerRow[i] || '').trim()) break;
+        deptCount++;
+      }
+    }
+    if (deptCount > 0) {
+      const deptRange = configSheet.getRange(1, DEPT_FIRST_COL, 1, deptCount);
+      const deptRule = SpreadsheetApp.newDataValidation()
+        .requireValueInRange(deptRange)
+        .build();
+      sheet.getRange('B2').setDataValidation(deptRule);
+    }
   }
 
   const histSheet = ss.getSheetByName(HIST_SHEET_NAME);

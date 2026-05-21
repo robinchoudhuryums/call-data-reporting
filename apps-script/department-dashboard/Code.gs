@@ -49,7 +49,7 @@ function renderDashboard_(user) {
 function renderAccessDenied_(user) {
   const tmpl = HtmlService.createTemplateFromFile('access_denied');
   tmpl.visitorEmail = user.email || '';
-  tmpl.adminContact = ADMIN_EMAILS[0] || '';
+  tmpl.adminContact = getAdminEmails_()[0] || '';
   return tmpl.evaluate()
     .setTitle('Access Required')
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);

@@ -2,8 +2,10 @@
  * Identity resolution.
  *
  * Hybrid model:
- *   - Admins are baked into ADMIN_EMAILS (Config.gs). They see all
- *     departments (admin dropdown in Step C).
+ *   - Admins are resolved at request time via getAdminEmails_
+ *     (Config.gs) -- reads the ADMIN_EMAILS Script Property if set,
+ *     else falls back to ADMIN_EMAILS_FALLBACK. Adding an admin is a
+ *     Script Property edit; no redeploy required.
  *   - Managers are looked up in the Access Control sheet, which has
  *     columns: Email | Department | Notes. One row per manager. Email
  *     match is case-insensitive after trim.
@@ -46,8 +48,8 @@ function resolveUser_(email) {
 }
 
 function isAdmin_(normalizedEmail) {
-  return ADMIN_EMAILS.some(function (a) {
-    return a.toLowerCase() === normalizedEmail;
+  return getAdminEmails_().some(function (a) {
+    return String(a || '').toLowerCase() === normalizedEmail;
   });
 }
 

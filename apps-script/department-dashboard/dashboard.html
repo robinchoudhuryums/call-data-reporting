@@ -42,8 +42,8 @@
                     title="Per-agent KPIs vs team avg + 12-month trend. Pick 2+ agents to switch to peer-comparison mode.">Individual Report</button>
             <button class="header-menu-item" id="performance-report-btn"type="button" role="menuitem"
                     title="Department-level current-vs-prior-period deltas, share-of-answered pie, and 12-month team trend.">Performance Report</button>
-            <button class="header-menu-item" id="compare-ranges-btn"    type="button" role="menuitem" data-admin-only style="display:none;"
-                    title="Side-by-side comparison of two arbitrary date ranges (admin-only). Useful for year-over-year or pre/post-change analyses.">Compare Ranges</button>
+            <button class="header-menu-item" id="compare-ranges-btn"    type="button" role="menuitem"
+                    title="Side-by-side comparison of two arbitrary date ranges. Useful for year-over-year or pre/post-change analyses.">Compare Ranges</button>
           </div>
         </div>
         <div class="header-menu" id="admin-menu-wrap" data-admin-only style="display:none;">
@@ -58,6 +58,11 @@
         </div>
       </nav>
       <div class="header-meta">
+        <!-- Data-freshness pill -- "Data through Mon May 19 · 14h ago".
+             Populated by setFreshnessPill_ once getLatestDataDate
+             returns. Hidden until then so the header doesn't show a
+             stale fallback. -->
+        <span class="freshness-pill" id="freshness-pill" style="display:none;" title="The most recent date with data in DQE Historical Data, and how long ago it was."></span>
         <button class="help-btn" id="mode-btn" type="button" aria-label="Toggle dark mode" title="Toggle dark mode">◐</button>
         <button class="help-btn" id="settings-btn" type="button" aria-label="Settings" title="Personal preferences (background theme, etc.)">⚙</button>
         <button class="help-btn" id="help-btn" type="button" aria-label="Help & FAQ" title="Help & FAQ">?</button>
@@ -608,7 +613,7 @@
     <div class="modal-panel modal-panel-wide" role="document">
       <div class="modal-panel-header">
         <button class="modal-close" id="compare-close" type="button" aria-label="Close">&times;</button>
-        <div class="modal-kicker">Report · Admin</div>
+        <div class="modal-kicker">Report</div>
         <h2 id="compare-modal-title">Compare Ranges</h2>
       </div>
       <div class="modal-panel-body">
@@ -878,6 +883,52 @@
               <th>Notes</th>
             </tr></thead>
             <tbody id="al-log-tbody"></tbody>
+          </table>
+        </div>
+
+        <div class="al-section">
+          <div class="al-section-title">Manager Digest Subscribers</div>
+          <p class="al-hint">
+            Per-recipient subscriptions configured in the <strong>Digest Config</strong>
+            sheet (Email | Department | Cadence | Active | Notes). Cadence is
+            <code>daily</code> (sends each weekday morning for the previous day) or
+            <code>weekly</code> (sends Monday morning for the prior Mon-Fri).
+            <a href="#" id="al-open-digest-sheet" target="_blank">Open Digest Config sheet &rarr;</a>
+          </p>
+          <table class="al-config-table">
+            <thead><tr>
+              <th>Email</th>
+              <th>Department</th>
+              <th>Cadence</th>
+              <th>Active</th>
+              <th>Notes</th>
+            </tr></thead>
+            <tbody id="al-digest-tbody"></tbody>
+          </table>
+          <p class="al-hint" id="al-digest-trigger-status" style="margin-top: 10px;"></p>
+          <div class="al-trigger-actions">
+            <button class="btn btn-secondary" id="al-install-digest-btn"   type="button">Install digest triggers</button>
+            <button class="btn btn-secondary" id="al-uninstall-digest-btn" type="button" style="display:none;">Uninstall digest triggers</button>
+          </div>
+          <p class="al-hint" style="margin-top: 8px;">
+            Daily trigger runs 8 AM weekdays for the previous day's data.
+            Weekly trigger runs 8 AM Monday for the prior Mon&ndash;Fri window.
+          </p>
+        </div>
+
+        <div class="al-section">
+          <div class="al-section-title">Pipeline Health</div>
+          <p class="al-hint">Last 20 entries from the Pipeline Health sheet (most recent first). Failures are highlighted; a long quiet stretch on `autoImport` or `buildDQE` is a sign the daily ingest or rebuild hasn't run.</p>
+          <table class="al-log-table">
+            <thead><tr>
+              <th>When</th>
+              <th>Step</th>
+              <th>Status</th>
+              <th class="num">Rows</th>
+              <th class="num">Duration</th>
+              <th>Notes</th>
+            </tr></thead>
+            <tbody id="al-pipeline-tbody"></tbody>
           </table>
         </div>
       </div>

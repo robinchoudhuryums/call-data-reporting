@@ -48,6 +48,8 @@ const DQE_TIME_SLOTS = Array.from({ length: 19 }, (_, i) => ({
 // ── Main DQE build function ───────────────────────────────────────────────────
 
 function buildDQEHistoricalData(rawSheet, dqeSheet) {
+  // Wall-clock start used by the Pipeline Health log entry below.
+  const __pipelineStartMs = Date.now();
 
   // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -634,6 +636,48 @@ function buildDQEHistoricalData(rawSheet, dqeSheet) {
   } catch (neonErr) {
     notifyNeonWriteFailure('buildDQEHistoricalData (' + callDateStr + ')', neonErr.message);
   }
+
+  // Pipeline Health: append a success row so the admin can see at a
+  // glance "the daily DQE rebuild ran for 2026-05-19 and wrote 240
+  // rows in 4.2s". Best-effort; a logging failure must not affect
+  // the build's success.
+  try {
+    logPipelineHealth_(dqeSheet.getParent(), {
+      step:       'buildDQE',
+      status:     'success',
+      rows:       outputRows.length,
+      durationMs: Date.now() - __pipelineStartMs,
+      notes:      'callDate=' + callDateStr,
+    });
+  } catch (pipelineLogErr) {
+    Logger.log('buildDQE: pipeline-health log failed (non-fatal): %s', pipelineLogErr);
+  }
+}
+
+/**
+ * Appends a row to the Pipeline Health sheet in the supplied
+ * spreadsheet. Best-effort: any failure (missing sheet, schema
+ * change, etc.) is logged and swallowed -- pipeline-health logging
+ * must never block or fail the pipeline. Schema is owned by the
+ * Department Dashboard's Config.gs PIPELINE_HEALTH_HEADERS; if that
+ * changes, this writer's column ordering must change in lockstep.
+ */
+function logPipelineHealth_(ss, event) {
+  try {
+    if (!ss) return;
+    const sheet = ss.getSheetByName('Pipeline Health');
+    if (!sheet) return;   // setup() in the dashboard creates this
+    sheet.appendRow([
+      new Date(),
+      event && event.step       ? String(event.step)   : '',
+      event && event.status     ? String(event.status) : '',
+      event && event.rows       != null ? event.rows       : '',
+      event && event.durationMs != null ? event.durationMs : '',
+      event && event.notes      ? String(event.notes)  : '',
+    ]);
+  } catch (e) {
+    try { Logger.log('logPipelineHealth_ failed: %s', e); } catch (e2) {}
+  }
 }
 
 
@@ -713,3 +757,100 @@ function testDQEBuild() {
 
   buildDQEHistoricalData(rawSheet, dqeSheet);
 }
+
+// ── Daily trigger ─────────────────────────────────────────────────────────────
+// The daily DQE rebuild used to live as a time trigger created by hand
+// in the Apps Script editor -- invisible to the repo and easy to lose
+// on a fresh deploy.  Install / uninstall functions below let an
+// admin manage it from the CDR Tools menu (or by running these
+// functions directly from the editor).
+//
+// The trigger fires at DQE_DAILY_TRIGGER_HOUR each morning, runs the
+// build against the active spreadsheet, and emails the configured
+// alert address on failure (reuses NEON_WRITE_CONFIG.alertEmail from
+// neonWrite.js -- same Apps Script project, shared global scope).
+// Weekend skip is intentional: matches the alert engine's behavior
+// (INV-33) since there's no upstream raw data on Sat / Sun.
+
+const DQE_DAILY_TRIGGER_HOUR = 7;   // 7 AM script TZ (America/Chicago)
+
+function runDailyDQEBuild_() {
+  const startMs = Date.now();
+  try {
+    const now = new Date();
+    const dow = now.getDay();   // 0 = Sun, 6 = Sat
+    if (dow === 0 || dow === 6) {
+      Logger.log('runDailyDQEBuild_: skipping weekend (%s)', now);
+      return;
+    }
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const rawSheet = ss.getSheetByName('Raw Data');
+    const dqeSheet = ss.getSheetByName('DQE Historical Data');
+    if (!rawSheet || !dqeSheet) {
+      throw new Error('Raw Data or DQE Historical Data sheet missing.');
+    }
+    buildDQEHistoricalData(rawSheet, dqeSheet);
+  } catch (e) {
+    Logger.log('runDailyDQEBuild_ failed: %s', e);
+    // Pipeline Health entry first (cheap; happens locally) so the
+    // failure is visible in the admin UI even if the email path
+    // also fails.
+    try {
+      logPipelineHealth_(SpreadsheetApp.getActiveSpreadsheet(), {
+        step:       'buildDQE',
+        status:     'failure',
+        rows:       null,
+        durationMs: Date.now() - startMs,
+        notes:      (e && e.message) ? e.message : String(e),
+      });
+    } catch (logErr) { /* best-effort */ }
+
+    const to = (typeof NEON_WRITE_CONFIG !== 'undefined' && NEON_WRITE_CONFIG.alertEmail)
+      ? NEON_WRITE_CONFIG.alertEmail : null;
+    if (to) {
+      try {
+        MailApp.sendEmail(
+          to,
+          '[CDR Report] Daily DQE build failed',
+          'runDailyDQEBuild_ threw while rebuilding DQE Historical Data.\n\n'
+          + 'Time: ' + new Date() + '\n\n'
+          + 'Error: ' + ((e && e.message) ? e.message : String(e)) + '\n\n'
+          + 'Stack:\n' + ((e && e.stack) ? e.stack : '(no stack)') + '\n\n'
+          + 'The Department Dashboard will keep serving the previous '
+          + 'day\'s data until the next successful build.'
+        );
+      } catch (mailErr) {
+        Logger.log('Also failed to email failure: ' + (mailErr && mailErr.message ? mailErr.message : mailErr));
+      }
+    }
+  }
+}
+
+function installDQEBuildTrigger_() {
+  uninstallDQEBuildTrigger_();
+  ScriptApp.newTrigger('runDailyDQEBuild_')
+    .timeBased()
+    .everyDays(1)
+    .atHour(DQE_DAILY_TRIGGER_HOUR)
+    .create();
+  Logger.log('DQE daily build trigger installed (runs at %s:00 script-TZ).',
+             DQE_DAILY_TRIGGER_HOUR);
+}
+
+function uninstallDQEBuildTrigger_() {
+  const triggers = ScriptApp.getProjectTriggers();
+  let removed = 0;
+  for (let i = 0; i < triggers.length; i++) {
+    if (triggers[i].getHandlerFunction() === 'runDailyDQEBuild_') {
+      ScriptApp.deleteTrigger(triggers[i]);
+      removed++;
+    }
+  }
+  Logger.log('DQE daily build trigger: removed %s existing trigger(s).', removed);
+}
+
+// Editor-callable wrappers (no trailing underscore so they appear in
+// the Apps Script editor's Run dropdown and can be invoked from the
+// CDR Tools menu).  All they do is delegate.
+function installDQEBuildTrigger()   { installDQEBuildTrigger_(); }
+function uninstallDQEBuildTrigger() { uninstallDQEBuildTrigger_(); }

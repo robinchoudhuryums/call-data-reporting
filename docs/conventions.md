@@ -267,11 +267,13 @@ a redeploy.
   - Missed: above = orange (negative)
   - TTT / ATT: always neutral grey
 
-### Compare Ranges (admin-only)
+### Compare Ranges
 
-- **Admin-only at the server boundary** (INV-32). Every public
-  callable in `CompareRangesReport.gs` rejects non-admin requests;
-  the launcher button is hidden client-side for non-admins.
+- **Per-dept authorization** (INV-32). Same model as the Individual
+  and Performance Reports: managers can only request their own dept;
+  admins can pick any dept. Previously admin-only; opened to managers
+  for year-over-year and month-over-month comparisons within their
+  own dept.
 - **Agent-centric**: like Individual / Performance, the user's
   selection IS the team. No `TEAM_AVG_EXCLUDES` filter applies.
 - **Two arbitrary periods**: P1 (baseline) and P2 (comparison).
@@ -332,7 +334,7 @@ mirrors it; if the two ever diverge, INV-30 wins.
 | `PerformanceReport.gs` | `performance:vN:` | `v3` |
 | `CompareRangesReport.gs` | `compareRanges:vN:` | `v3` |
 | `MissedCallsReport.gs` | `missed:vN:` | `v10` |
-| `CompanyOverview.gs` | `companyOverview:vN` | `v6` |
+| `CompanyOverview.gs` | `companyOverview:vN` | `v7` |
 
 `Alerts.gs` holds no cached compute — preview / send always re-reads
 the source sheet for the chosen date.

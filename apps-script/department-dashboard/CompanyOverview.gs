@@ -32,7 +32,7 @@
  * (read-only), and reinstating that visibility is part of the
  * design intent for this view.
  *
- * Caching: 5 min under `companyOverview:v6`. Cached blob is shared
+ * Caching: 5 min under `companyOverview:v7`. Cached blob is shared
  * across all users; the admin-only `companyAggregate` field is
  * stripped on serve for non-admins, and viewer-personalized fields
  * (viewerRole/viewerDept) are injected per-request, never cached.
@@ -43,7 +43,7 @@
  * this fits comfortably in a single Apps Script execution.
  */
 
-const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v6';
+const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v7';
 
 // Window (in days) over which we consider an agent "recently
 // active". Used as the denominator for the "X of Y agents" caption
@@ -310,6 +310,21 @@ function getCompanyOverview() {
     if (OVERVIEW_HIDDEN_DEPTS.indexOf(d) !== -1) return;
     rosterByDept[d].names.forEach(function (n) { companyRosterUnion[n] = true; });
   });
+  // Filter the active / recently-active sets to the same on-roster,
+  // non-hidden-dept population that feeds rosterSize, so the tile's
+  // "X of Y agents active" caption can't go above 100% just because
+  // a hidden-dept-only agent (e.g. CSR Backup floater) had activity
+  // today. Without this filter the numerator and denominator are
+  // drawn from different populations and produce visibly wrong
+  // arithmetic on the admin Overview hero.
+  const activeAgentsFiltered = {};
+  Object.keys(companyLatest.activeAgents).forEach(function (a) {
+    if (companyRosterUnion[a]) activeAgentsFiltered[a] = true;
+  });
+  const recentlyActiveFiltered = {};
+  Object.keys(companyRecentlyActive).forEach(function (a) {
+    if (companyRosterUnion[a]) recentlyActiveFiltered[a] = true;
+  });
   const cPct = companyLatest.rung > 0
     ? (companyLatest.answered / companyLatest.rung) * 100 : 0;
   const cAtt = companyLatest.answered > 0
@@ -330,13 +345,13 @@ function getCompanyOverview() {
     pct:          round1_(cPct),
     pctFormatted: cPct.toFixed(1) + '%',
     attFormatted: formatSecondsHms_(cAtt),
-    activeAgents: Object.keys(companyLatest.activeAgents).length,
-    // Recently-active union across non-hidden depts (last
-    // OVERVIEW_RECENT_ACTIVE_DAYS days). Excludes ex-employees on
-    // the roster sheet.
-    recentlyActiveCount: Object.keys(companyRecentlyActive).length,
-    rosterSize:   Object.keys(companyRosterUnion).length,
-    trend:        companyTrend,
+    // Both counts drawn from the same on-roster, non-hidden-dept
+    // population that rosterSize uses, so the tile's "X of Y" caption
+    // is internally consistent.
+    activeAgents:        Object.keys(activeAgentsFiltered).length,
+    recentlyActiveCount: Object.keys(recentlyActiveFiltered).length,
+    rosterSize:          Object.keys(companyRosterUnion).length,
+    trend:               companyTrend,
   };
 
   const result = {

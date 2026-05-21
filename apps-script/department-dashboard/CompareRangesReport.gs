@@ -23,9 +23,12 @@
  *     do not have to be adjacent.
  *
  * Authorization:
- *   Compare Ranges is admin-only at the server boundary. The
- *   client also hides the launch button for non-admins, but the
- *   server check is the source of truth.
+ *   Same model as Individual / Performance Reports -- managers
+ *   are pinned to their own dept; admins can pick any dept that
+ *   exists in the dept list. Previously this report was admin-
+ *   only at the server boundary; opened to managers so they can
+ *   run year-over-year and month-over-month comparisons within
+ *   their own dept without admin help.
  *
  * ATT semantics: weighted by Answered (matches Individual /
  * Performance Reports -- see INV-25). Days with answered=0
@@ -42,13 +45,14 @@ const COMPARE_RANGES_CACHE_KEY_PREFIX = 'compareRanges:v3';
 function getCompareRangesInit(req) {
   const email = Session.getActiveUser().getEmail();
   const user = resolveUser_(email);
-  if (user.role !== 'admin') {
-    throw new Error('Compare Ranges is admin-only.');
-  }
+  if (user.role === 'none') throw new Error('Not authorized.');
 
   const dept = String((req && req.department) || '').trim();
   if (!dept) throw new Error('Department is required.');
-  if (getAllDepartments_().indexOf(dept) === -1) {
+  if (user.role === 'manager' && dept !== user.department) {
+    throw new Error('Not authorized for this department.');
+  }
+  if (user.role === 'admin' && getAllDepartments_().indexOf(dept) === -1) {
     throw new Error('Unknown department: ' + dept);
   }
 
@@ -96,13 +100,14 @@ function getCompareRangesInit(req) {
 function getCompareRanges(req) {
   const email = Session.getActiveUser().getEmail();
   const user = resolveUser_(email);
-  if (user.role !== 'admin') {
-    throw new Error('Compare Ranges is admin-only.');
-  }
+  if (user.role === 'none') throw new Error('Not authorized.');
 
   const dept = String((req && req.department) || '').trim();
   if (!dept) throw new Error('Department is required.');
-  if (getAllDepartments_().indexOf(dept) === -1) {
+  if (user.role === 'manager' && dept !== user.department) {
+    throw new Error('Not authorized for this department.');
+  }
+  if (user.role === 'admin' && getAllDepartments_().indexOf(dept) === -1) {
     throw new Error('Unknown department: ' + dept);
   }
 
@@ -474,9 +479,7 @@ function emptyCompareRanges_(dept, selectedAgents, roster,
 function sendCompareRangesEmail(req) {
   const email = Session.getActiveUser().getEmail();
   const user = resolveUser_(email);
-  if (user.role !== 'admin') {
-    throw new Error('Compare Ranges is admin-only.');
-  }
+  if (user.role === 'none') throw new Error('Not authorized.');
 
   const dataUrl = String((req && req.imageBase64) || '');
   const p1Label = String((req && req.p1Label) || '');

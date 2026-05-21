@@ -100,6 +100,17 @@ clasp push -f
   otherwise throw permission errors at runtime even though the
   dashboard page loads fine.
 
+**Optional (manager digest emails):**
+
+- Populate the `Digest Config` sheet (created by `setup()`) with one
+  row per subscriber:
+  Email | Department | Cadence (`daily` or `weekly`) | Active
+  (TRUE/FALSE) | Notes.
+- In the deployed dashboard, open Alerts (admin-only) → **Manager
+  Digest Subscribers** → **Install digest triggers**. Daily fires
+  weekday mornings for the previous day; weekly fires Monday morning
+  for the prior Mon&ndash;Fri window.
+
 **Optional (alerts):**
 
 - Populate the `Alert Config` sheet with one row per dept that should
@@ -114,6 +125,25 @@ clasp push -f
   Alerts → Install daily trigger (8 AM). The trigger calls
   `runDailyAlerts_` for the previous day, skipping Saturdays and
   Sundays automatically.
+
+## Daily DQE build trigger (CDR Report project)
+
+The DQE Historical Data rebuild that backs the dashboard runs from a
+time-based trigger inside the CDR Report Apps Script project. To
+install it on a fresh project:
+
+- Open the CDR Report spreadsheet → **CDR Tools** menu → **⏰ Daily
+  DQE Build Trigger** → **Install (runs at 7 AM)**, OR
+- Open the CDR Report Apps Script editor → run `installDQEBuildTrigger`
+  once. The Run dropdown will prompt for the `script.scriptapp` and
+  `script.send_mail` permissions if they haven't been granted yet.
+
+The trigger calls `runDailyDQEBuild_` at 7 AM script-time
+(`America/Chicago`), skipping Saturdays and Sundays. On failure it
+emails `NEON_WRITE_CONFIG.alertEmail` so a silent build crash doesn't
+leave the dashboard serving stale data.
+
+To uninstall, use the same menu (or run `uninstallDQEBuildTrigger`).
 
 ## Working on sibling Apps Script projects
 

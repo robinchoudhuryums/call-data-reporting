@@ -244,6 +244,52 @@
       .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
 
+  /**
+   * Renders the header data-freshness pill: "Data through Mon May 19
+   * · 14h ago".  Reads from the same getLatestDataDate value the
+   * dashboard already fetches at init time, so no extra server
+   * round-trip. The "Xh ago" subline is computed from end-of-day on
+   * the latest date in the user's local TZ (close enough -- the
+   * ingest typically lands the morning after the calendar day it
+   * covers).  Pill goes orange when 36h+ have passed since the
+   * latest date's end-of-day, which is the empirical threshold
+   * above which the operator usually wants to investigate.
+   */
+  function setFreshnessPill_(latestDateIso) {
+    const pill = $('freshness-pill');
+    if (!pill) return;
+    if (!latestDateIso) {
+      pill.style.display = 'none';
+      pill.textContent = '';
+      return;
+    }
+    const parts = String(latestDateIso).split('-');
+    if (parts.length !== 3) { pill.style.display = 'none'; return; }
+    // End-of-day local time on the latest date is the reference
+    // point for "how stale is the data": calls that came in at
+    // 14:55 PST land in that day's bucket.
+    const eod = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]), 23, 59, 59);
+    const dateLabel = eod.toLocaleDateString(undefined, {
+      weekday: 'short', month: 'short', day: 'numeric',
+    });
+    const ageMs = Date.now() - eod.getTime();
+    const ageHours = Math.max(0, Math.round(ageMs / 3600000));
+    let ageLabel;
+    if (ageHours < 1) {
+      ageLabel = 'just now';
+    } else if (ageHours < 48) {
+      ageLabel = ageHours + 'h ago';
+    } else {
+      const ageDays = Math.round(ageHours / 24);
+      ageLabel = ageDays + 'd ago';
+    }
+    pill.innerHTML = 'Data through <span class="freshness-date">'
+                   + escapeHtml(dateLabel) + '</span> &middot; '
+                   + escapeHtml(ageLabel);
+    pill.classList.toggle('is-stale', ageHours >= 36);
+    pill.style.display = '';
+  }
+
   function toIsoDate(d) {
     return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
   }
@@ -420,6 +466,7 @@
           $('from-date').value = latestDate;
           $('to-date').value = latestDate;
         }
+        setFreshnessPill_(latestDate);
         refresh();
       })
       .withFailureHandler(function () { refresh(); })
@@ -5973,6 +6020,12 @@
     const uninstallBtn = $('al-uninstall-trigger-btn');
     if (uninstallBtn) uninstallBtn.addEventListener('click', alUninstallTrigger_);
 
+    // Digest install / uninstall.
+    const installDigestBtn = $('al-install-digest-btn');
+    if (installDigestBtn) installDigestBtn.addEventListener('click', alInstallDigestTriggers_);
+    const uninstallDigestBtn = $('al-uninstall-digest-btn');
+    if (uninstallDigestBtn) uninstallDigestBtn.addEventListener('click', alUninstallDigestTriggers_);
+
     const dateEl = $('al-date');
     if (dateEl) dateEl.addEventListener('change', function () {
       // Date change invalidates the previous preview -- Send must
@@ -5991,12 +6044,123 @@
         $('al-loading').style.display = 'none';
         $('al-body').style.display = '';
         alRenderInit_(data);
+        // Digest subscribers + trigger status is loaded separately
+        // so a missing Digest.gs (e.g. mid-deploy) doesn't break the
+        // whole Alerts modal.
+        google.script.run
+          .withSuccessHandler(function (digestData) {
+            alRenderDigestInit_(digestData || { config: [], trigger: {} });
+          })
+          .withFailureHandler(function (err) {
+            // Fall back to an empty state with the error in the
+            // trigger-status caption so the admin notices.
+            alRenderDigestInit_({ config: [], trigger: {},
+              loadError: (err && err.message) ? err.message : String(err) });
+          })
+          .getDigestsInit();
       })
       .withFailureHandler(function (err) {
         $('al-loading').textContent = 'Error: '
           + (err && err.message ? err.message : String(err));
       })
       .getAlertsInit();
+  }
+
+  function alRenderDigestInit_(data) {
+    if (!data) return;
+    const tbody = $('al-digest-tbody');
+    if (tbody) {
+      const config = data.config || [];
+      if (!config.length) {
+        tbody.innerHTML = '<tr><td colspan="5" class="al-empty">'
+          + 'No digest subscribers yet. Add one row per recipient to the '
+          + 'Digest Config sheet (Email | Department | Cadence | Active | Notes).'
+          + '</td></tr>';
+      } else {
+        tbody.innerHTML = config.map(function (c) {
+          const activeCls = c.active ? 'al-active-yes' : 'al-active-no';
+          const activeLbl = c.active ? 'Yes' : 'No';
+          return '<tr>'
+               +   '<td>' + escapeHtml(c.email)      + '</td>'
+               +   '<td>' + escapeHtml(c.department) + '</td>'
+               +   '<td>' + escapeHtml(c.cadence)    + '</td>'
+               +   '<td><span class="al-active ' + activeCls + '">' + activeLbl + '</span></td>'
+               +   '<td>' + escapeHtml(c.notes || '') + '</td>'
+               + '</tr>';
+        }).join('');
+      }
+    }
+
+    // Trigger status caption + install/uninstall buttons.
+    const trig = data.trigger || { daily: false, weekly: false };
+    const installed = !!(trig.daily && trig.weekly);
+    const partial   = !installed && (trig.daily || trig.weekly);
+    const statusEl  = $('al-digest-trigger-status');
+    if (statusEl) {
+      if (data.loadError) {
+        statusEl.textContent = 'Could not load digest config: ' + data.loadError;
+      } else if (installed) {
+        statusEl.textContent = 'Daily + weekly digest triggers are installed.';
+      } else if (partial) {
+        statusEl.textContent = 'Partial install (daily=' + trig.daily + ', weekly=' + trig.weekly
+                            + '). Click "Install" to re-install both.';
+      } else {
+        statusEl.textContent = 'No digest triggers installed. Subscribers won\'t receive scheduled digests until you click Install.';
+      }
+    }
+    const installBtn   = $('al-install-digest-btn');
+    const uninstallBtn = $('al-uninstall-digest-btn');
+    if (installBtn)   installBtn.style.display   = installed ? 'none' : '';
+    if (uninstallBtn) uninstallBtn.style.display = installed ? ''     : 'none';
+
+    if (data.spreadsheetUrl) {
+      const link = $('al-open-digest-sheet');
+      if (link) link.href = data.spreadsheetUrl;
+    }
+  }
+
+  function alInstallDigestTriggers_() {
+    const btn = $('al-install-digest-btn');
+    if (!btn) return;
+    btn.disabled = true;
+    const prev = btn.textContent; btn.textContent = 'Installing…';
+    google.script.run
+      .withSuccessHandler(function (status) {
+        btn.disabled = false; btn.textContent = prev;
+        alRenderDigestInit_({ config: [], trigger: status || { daily: true, weekly: true } });
+        // Re-fetch the config too so the subscriber table re-renders.
+        google.script.run
+          .withSuccessHandler(function (data) { alRenderDigestInit_(data || { config: [], trigger: status }); })
+          .withFailureHandler(function () { /* keep current */ })
+          .getDigestsInit();
+      })
+      .withFailureHandler(function (err) {
+        btn.disabled = false; btn.textContent = prev;
+        alSetRunStatus_('error', 'Install failed: ' + (err && err.message ? err.message : String(err)));
+      })
+      .installDigestTriggers();
+  }
+
+  function alUninstallDigestTriggers_() {
+    const ok = window.confirm('Stop both digest triggers? Subscribers will stop receiving scheduled digests until you re-install.');
+    if (!ok) return;
+    const btn = $('al-uninstall-digest-btn');
+    if (!btn) return;
+    btn.disabled = true;
+    const prev = btn.textContent; btn.textContent = 'Uninstalling…';
+    google.script.run
+      .withSuccessHandler(function (status) {
+        btn.disabled = false; btn.textContent = prev;
+        google.script.run
+          .withSuccessHandler(function (data) { alRenderDigestInit_(data || { config: [], trigger: status }); })
+          .withFailureHandler(function () { /* keep current */ })
+          .getDigestsInit();
+      })
+      .withFailureHandler(function (err) {
+        btn.disabled = false; btn.textContent = prev;
+        alSetRunStatus_('error', 'Uninstall failed: ' + (err && err.message ? err.message : String(err)));
+      })
+      .uninstallDigestTriggers();
   }
 
   function alRenderInit_(data) {
@@ -6010,9 +6174,40 @@
     alRenderConfigTable_(data.config || []);
     alRenderTriggerStatus_(data.trigger || { installed: false });
     alRenderLog_(data.log || []);
+    alRenderPipelineHealth_(data.pipelineHealth || []);
     alClearResults_();
     alLastPreview = null;
     $('al-send-btn').disabled = true;
+  }
+
+  function alRenderPipelineHealth_(events) {
+    const tbody = $('al-pipeline-tbody');
+    if (!tbody) return;
+    if (!events.length) {
+      tbody.innerHTML = '<tr><td colspan="6" class="al-empty">'
+        + 'No pipeline events logged yet. The Pipeline Health sheet '
+        + 'starts capturing entries once the autoImport / buildDQE '
+        + 'steps next run (success or failure).'
+        + '</td></tr>';
+      return;
+    }
+    tbody.innerHTML = events.map(function (e) {
+      const statusCls = e.status === 'success' ? 'al-active-yes'
+                      : e.status === 'failure' ? 'al-active-no'
+                      : '';
+      const rowsCell = (e.rows == null || e.rows === '') ? '-'
+                                                         : escapeHtml(String(e.rows));
+      const durCell  = (e.durationMs == null || e.durationMs === '') ? '-'
+                       : (Math.round(Number(e.durationMs) / 100) / 10).toFixed(1) + 's';
+      return '<tr>'
+           +   '<td>' + escapeHtml(e.timestamp || '') + '</td>'
+           +   '<td>' + escapeHtml(e.step || '')      + '</td>'
+           +   '<td><span class="al-active ' + statusCls + '">' + escapeHtml(e.status || '') + '</span></td>'
+           +   '<td class="num">' + rowsCell + '</td>'
+           +   '<td class="num">' + durCell  + '</td>'
+           +   '<td>' + escapeHtml(e.notes || '') + '</td>'
+           + '</tr>';
+    }).join('');
   }
 
   function alRenderConfigTable_(config) {
