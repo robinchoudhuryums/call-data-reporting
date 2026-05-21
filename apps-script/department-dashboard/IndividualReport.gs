@@ -39,9 +39,9 @@
  * per-value 100KB limit; on cache-put failure we log + continue.
  */
 
-// Bump when aggregation rules change so stale cached values don't
-// linger. v4 = insights are objects { type, text } instead of bare
-// strings (client uses `type` to color-code the marker).
+// Bump when aggregation rules or response shape change so stale
+// cached values don't linger. CLAUDE.md INV-30 is the canonical
+// current-version list -- keep this constant aligned with that.
 const INDIVIDUAL_CACHE_KEY_PREFIX = 'individual:v5';
 
 function getIndividualReportInit(req) {

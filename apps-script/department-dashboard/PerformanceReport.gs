@@ -51,13 +51,13 @@
  *         confusing.
  *       * ATT: relative % change of weighted-avg ATT.
  *
- * Caching: 5 min per (dept, from, to, sortedAgents) tuple under
- * `performance:v1:` prefix.
+ * Caching: 5 min per (dept, from, to, sortedAgents, priorKey) tuple
+ * under the PERFORMANCE_CACHE_KEY_PREFIX below.
  */
 
-// Bump when aggregation rules / response shape change so stale
-// entries don't bleed in. v2 = adds team insights, rosterSize,
-// volumeBar.pct, trend.ttt, and optional custom prior range.
+// Bump when aggregation rules or response shape change so stale
+// entries don't bleed in. CLAUDE.md INV-30 is the canonical
+// current-version list -- keep this constant aligned with that.
 const PERFORMANCE_CACHE_KEY_PREFIX = 'performance:v3';
 
 function getPerformanceReportInit(req) {

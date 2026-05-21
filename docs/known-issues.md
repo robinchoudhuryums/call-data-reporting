@@ -243,13 +243,20 @@ Each report file uses its own versioned cache key prefix. Bump the
 version whenever the response shape or aggregation rules change so
 stale caches invalidate on deploy.
 
-| Source file | Cache prefix | Current version | Bumps on |
-|---|---|---|---|
-| `Data.gs` (main table) | `summary:vN:` | `v3` | scope param + diagnostics field added |
-| `IndividualReport.gs` | `individual:vN:` | `v4` | insight objects with `type` field (was bare strings) |
-| `IndividualReport.gs` (active-in-range subset shared by all three report pickers) | `individual_active:vN:` | `v1` | initial |
-| `PerformanceReport.gs` | `performance:vN:` | `v2` | 10-polish-items shape (rosterSize, priorIsCustom, volumeBar.pct, trend.ttt, teamInsights) |
-| `CompareRangesReport.gs` | `compareRanges:vN:` | `v2` | adds meta.p1Days, p2Days, lengthMismatch |
+CLAUDE.md INV-30 is the canonical current-version list. This table
+mirrors it; if the two ever diverge, INV-30 wins. Bump both at the
+same time as the code change.
+
+| Source file | Cache prefix | Current version |
+|---|---|---|
+| `Data.gs` (main table) | `summary:vN:` | `v4` |
+| `Data.gs` (latest-date snap for default From/To) | `latestDate:vN:` | `v1` |
+| `IndividualReport.gs` | `individual:vN:` | `v5` |
+| `IndividualReport.gs` (active-in-range subset shared by all three report pickers) | `individual_active:vN:` | `v1` |
+| `PerformanceReport.gs` | `performance:vN:` | `v3` |
+| `CompareRangesReport.gs` | `compareRanges:vN:` | `v3` |
+| `MissedCallsReport.gs` | `missed:vN:` | `v10` |
+| `CompanyOverview.gs` | `companyOverview:vN` | `v6` |
 
 `Alerts.gs` holds no cached compute. Preview/send always re-reads the
 DQE Historical Data for the chosen date.

@@ -320,13 +320,19 @@ Each report file uses its own versioned cache key prefix. Bump the
 version any time the response shape or aggregation rules change so
 stale caches invalidate on deploy.
 
+CLAUDE.md INV-30 is the canonical current-version list. This table
+mirrors it; if the two ever diverge, INV-30 wins.
+
 | Source file | Cache prefix | Current version |
 |---|---|---|
-| `Data.gs` (main table) | `summary:vN:` | `v3` |
-| `IndividualReport.gs` | `individual:vN:` | `v4` |
+| `Data.gs` (main table) | `summary:vN:` | `v4` |
+| `Data.gs` (latest-date snap for default From/To) | `latestDate:vN:` | `v1` |
+| `IndividualReport.gs` | `individual:vN:` | `v5` |
 | `IndividualReport.gs` (active-in-range subset, shared with all three pickers) | `individual_active:vN:` | `v1` |
-| `PerformanceReport.gs` | `performance:vN:` | `v2` |
-| `CompareRangesReport.gs` | `compareRanges:vN:` | `v2` |
+| `PerformanceReport.gs` | `performance:vN:` | `v3` |
+| `CompareRangesReport.gs` | `compareRanges:vN:` | `v3` |
+| `MissedCallsReport.gs` | `missed:vN:` | `v10` |
+| `CompanyOverview.gs` | `companyOverview:vN` | `v6` |
 
 `Alerts.gs` holds no cached compute — preview / send always re-reads
 the source sheet for the chosen date.

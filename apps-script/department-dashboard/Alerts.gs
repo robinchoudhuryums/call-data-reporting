@@ -19,7 +19,9 @@
  *   - A daily time-driven trigger (runDailyAlerts_) can be
  *     installed via installAlertTrigger_; runs the previous
  *     calendar day's check at 8am, skipping Saturdays + Sundays.
- *   - Every send is logged to the "Alert Log" sheet.
+ *   - Every per-dept outcome of a real (non-preview) run is logged
+ *     to the "Alert Log" sheet -- not just sends. Preview runs
+ *     (dryRun=true) stay out of the log.
  *
  * Public entries (callable via google.script.run, all admin-
  * only at the server boundary):
@@ -127,9 +129,18 @@ function runAlertsCore_(dateIso, dryRun, triggeredBy) {
   const cfg = readAlertConfig_();
   const results = [];
 
+  // Every per-dept outcome of a real (non-preview) run is appended to
+  // the Alert Log so the audit trail covers more than just `sent` and
+  // `error`. Preview runs (dryRun=true) stay out of the log -- they
+  // can fire many times per session and would drown the real signal.
+  const pushAndLog = function (rec) {
+    results.push(rec);
+    if (!dryRun) appendAlertLog_(rec, triggeredBy, dateIso);
+  };
+
   cfg.forEach(function (entry) {
     if (!entry.active) {
-      results.push({
+      pushAndLog({
         department: entry.department,
         status: 'skipped',
         answerRate: null,
@@ -147,7 +158,7 @@ function runAlertsCore_(dateIso, dryRun, triggeredBy) {
       // Treat as "no data" rather than "0% answer rate" which
       // would otherwise misfire below-threshold every quiet day.
       if (stats.rung === 0) {
-        results.push({
+        pushAndLog({
           department: entry.department,
           status: 'no-data',
           answerRate: null,
@@ -163,7 +174,7 @@ function runAlertsCore_(dateIso, dryRun, triggeredBy) {
 
       // Above threshold = healthy. Log but don't send.
       if (stats.pct >= entry.threshold) {
-        results.push({
+        pushAndLog({
           department: entry.department,
           status: 'above-threshold',
           answerRate: round1_(stats.pct),
@@ -175,7 +186,7 @@ function runAlertsCore_(dateIso, dryRun, triggeredBy) {
       }
 
       if (recipientsTo.length === 0) {
-        results.push({
+        pushAndLog({
           department: entry.department,
           status: 'no-recipients',
           answerRate: round1_(stats.pct),
@@ -195,28 +206,24 @@ function runAlertsCore_(dateIso, dryRun, triggeredBy) {
         sentNotes  = 'Sent to ' + recipientsTo.length + ' recipient'
                    + (recipientsTo.length === 1 ? '' : 's');
       }
-      const rec = {
+      pushAndLog({
         department: entry.department,
         status: sentStatus,
         answerRate: round1_(stats.pct),
         threshold: entry.threshold,
         recipients: recipientsTo,
         notes: sentNotes,
-      };
-      results.push(rec);
-      if (!dryRun) appendAlertLog_(rec, triggeredBy, dateIso);
+      });
     } catch (e) {
       Logger.log('Alert processing failed for %s: %s', entry.department, e);
-      const rec = {
+      pushAndLog({
         department: entry.department,
         status: 'error',
         answerRate: null,
         threshold: entry.threshold,
         recipients: [],
         notes: (e && e.message) ? e.message : String(e),
-      };
-      results.push(rec);
-      if (!dryRun) appendAlertLog_(rec, triggeredBy, dateIso);
+      });
     }
   });
 

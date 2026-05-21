@@ -150,13 +150,17 @@ rule (INV-01) — any function that touches spreadsheet state ends in
 `_`. Compare Ranges and Alerts additionally enforce an admin role
 check at the server boundary (INV-32).
 
+Cache prefix versions below are reference-only; CLAUDE.md INV-30 is
+canonical and reflects current code.
+
 | Report | File | Public entries | Cache prefix | Admin-only |
 |---|---|---|---|---|
-| Main per-agent table | `Data.gs` | `getDepartmentSummary` | `summary:v3:` | no |
-| Missed Calls Report | `MissedCallsReport.gs` | `getMissedCallsReport` | (reuses main) | no |
-| Individual / Peer Comparison | `IndividualReport.gs` | `getIndividualReportInit`, `getIndividualReport`, `sendIndividualReportEmail` | `individual:v4:`, `individual_active:v1:` | no |
-| Performance Report (current vs prior) | `PerformanceReport.gs` | `getPerformanceReportInit` (delegates to Individual's init), `getPerformanceReport`, `sendPerformanceReportEmail` | `performance:v2:` | no |
-| Compare Ranges (two arbitrary ranges) | `CompareRangesReport.gs` | `getCompareRangesInit`, `getCompareRanges`, `sendCompareRangesEmail` | `compareRanges:v2:` | yes |
+| Main per-agent table | `Data.gs` | `getDepartmentSummary` | `summary:v4:` | no |
+| Missed Calls Report | `MissedCallsReport.gs` | `getMissedCallsReport` | `missed:v10:` | no |
+| Individual / Peer Comparison | `IndividualReport.gs` | `getIndividualReportInit`, `getIndividualReport`, `sendIndividualReportEmail` | `individual:v5:`, `individual_active:v1:` | no |
+| Performance Report (current vs prior) | `PerformanceReport.gs` | `getPerformanceReportInit` (delegates to Individual's init), `getPerformanceReport`, `sendPerformanceReportEmail` | `performance:v3:` | no |
+| Compare Ranges (two arbitrary ranges) | `CompareRangesReport.gs` | `getCompareRangesInit`, `getCompareRanges`, `sendCompareRangesEmail` | `compareRanges:v3:` | yes |
+| Company Overview | `CompanyOverview.gs` | `getCompanyOverview` | `companyOverview:v6` | partial (admin-only `companyAggregate` field) |
 | Low Answer Rate Alerts | `Alerts.gs` | `getAlertsInit`, `previewAlerts`, `sendAlerts`, `installAlertTrigger`, `uninstallAlertTrigger` (+ `runDailyAlerts_` time trigger) | (no cache) | yes |
 
 All reports use the same auth resolution (`resolveUser_(email)`), the

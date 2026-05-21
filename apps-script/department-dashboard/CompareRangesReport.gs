@@ -34,9 +34,9 @@
  * Caching: 5 min per (dept, p1, p2, sortedAgents) tuple.
  */
 
-// Bump on response-shape changes so stale entries don't bleed in.
-// v2 adds meta.p1Days / p2Days / lengthMismatch for client-side
-// per-day normalization when the two periods differ in length.
+// Bump on response-shape or aggregation-rule changes so stale
+// entries don't bleed in. CLAUDE.md INV-30 is the canonical
+// current-version list -- keep this constant aligned with that.
 const COMPARE_RANGES_CACHE_KEY_PREFIX = 'compareRanges:v3';
 
 function getCompareRangesInit(req) {

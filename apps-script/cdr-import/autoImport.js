@@ -411,9 +411,62 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
 
   } catch (e) {
     console.error(e);
+    // Email-on-failure so a trigger-context crash (onChange has no
+    // UI, getUi().alert is invisible) doesn't go unnoticed and the
+    // dashboard isn't left silently serving stale data. Best-effort:
+    // any failure in the notify path is itself swallowed so it can't
+    // mask the underlying error.
+    try {
+      notifyImportFailure_({
+        context:       specificDateStr || 'latest',
+        force:         !!force,
+        silent:        !!silent,
+        err:           e,
+      });
+    } catch (notifyErr) {
+      console.error('notifyImportFailure_ itself failed: ' + (notifyErr && notifyErr.message ? notifyErr.message : notifyErr));
+    }
     if (silent) { throw e; }
-    else { SpreadsheetApp.getUi().alert("❌ Process Failed", e.message, SpreadsheetApp.getUi().ButtonSet.OK); }
+    else {
+      try {
+        SpreadsheetApp.getUi().alert("❌ Process Failed", e.message, SpreadsheetApp.getUi().ButtonSet.OK);
+      } catch (uiErr) {
+        // No UI in trigger context -- the email notification above
+        // is the durable signal.
+      }
+    }
   }
+}
+
+/**
+ * Emails NEON_WRITE_CONFIG.alertEmail when processNewImport throws,
+ * including trigger-context (onChange) crashes where getUi() is a
+ * no-op. NEON_WRITE_CONFIG comes from neonWrite.js -- same Apps
+ * Script project, shared global scope. Swallow any mail failure so
+ * the caller's error stays the visible one.
+ */
+function notifyImportFailure_(ctx) {
+  ctx = ctx || {};
+  const to = (typeof NEON_WRITE_CONFIG !== 'undefined' && NEON_WRITE_CONFIG.alertEmail)
+    ? NEON_WRITE_CONFIG.alertEmail
+    : null;
+  if (!to) return;
+  const err = ctx.err || {};
+  const msg = (err && err.message) ? err.message : String(err);
+  const stack = (err && err.stack) ? err.stack : '(no stack)';
+  const subject = '[CDR Import] Daily import failed: ' + (ctx.context || 'latest');
+  const body =
+      'processNewImport threw while ingesting CDR data.\n\n'
+    + 'Context: ' + (ctx.context || 'latest') + '\n'
+    + 'force:   ' + ctx.force   + '\n'
+    + 'silent:  ' + ctx.silent  + '\n'
+    + 'Time:    ' + new Date()  + '\n\n'
+    + 'Error: ' + msg + '\n\n'
+    + 'Stack:\n' + stack + '\n\n'
+    + 'The dashboard will keep serving the previous day\'s data until '
+    + 'the next successful import. Investigate via the source spreadsheet\'s '
+    + 'execution log.';
+  MailApp.sendEmail(to, subject, body);
 }
 
 // ─────────────────────────────────────────────
