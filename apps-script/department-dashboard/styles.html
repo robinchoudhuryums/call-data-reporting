@@ -556,6 +556,71 @@
   /* Diagnostics panel — hairline-bordered, sharp corners. The summary
      line is the click target; expanded content uses mono kicker
      subheaders for each section. */
+  /* "Yesterday's QCD" snapshot strip below the agent table on My
+     Department. Compact tile row; warn-tinted values when the
+     abandoned %% or violation thresholds are hit. */
+  .dept-qcd-snapshot {
+    margin-top: 24px;
+    padding: 14px 16px;
+    background: var(--paper-card);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+  }
+  .dept-qcd-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 8px;
+    margin-bottom: 12px;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .dept-qcd-header strong {
+    font-family: var(--display);
+    font-size: 14px;
+    color: var(--ink);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .dept-qcd-date {
+    color: var(--ink);
+    font-weight: 500;
+  }
+  .dept-qcd-hint {
+    flex: 1 1 100%;
+    font-size: 11px;
+    color: var(--muted);
+  }
+  .dept-qcd-tiles {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 10px;
+  }
+  .dept-qcd-tile {
+    padding: 8px 12px;
+    background: var(--paper-2);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    text-align: center;
+  }
+  .dept-qcd-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-weight: 600;
+  }
+  .dept-qcd-value {
+    font-family: var(--display);
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--ink);
+    margin-top: 2px;
+  }
+  .dept-qcd-value.dept-qcd-warn { color: var(--warn); }
+
   .diagnostics {
     margin-top: 24px;
     background: var(--paper-card);

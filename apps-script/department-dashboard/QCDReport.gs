@@ -18,7 +18,7 @@
  *   getQcdReportInit({ department }) -> { department, defaultStart,
  *     defaultEnd, sources }
  *   getQcdReport({ department, from, to }) -> { meta, dateLabel,
- *     totals, sourceBreakdown, trendData }
+ *     totals, queueBreakdown, trendData }
  *   sendQcdReportEmail({ imageBase64, dateLabel }) -> { to }
  *
  * Authorization: same per-dept model as IR / PR / CR. Managers can
@@ -38,20 +38,28 @@
  * sheet or aliased here.
  */
 
-const QCD_CACHE_KEY_PREFIX = 'qcd:v1';
+// v2: callQueue is a raw A_Q_* name, not a dept name; filter by
+//     DEPT_QCD_QUEUES[dept] (list of queue names) instead of strict
+//     equality. Per-queue breakdown table replaces the prior per-
+//     source breakdown.
+const QCD_CACHE_KEY_PREFIX = 'qcd:v2';
 
-// Sources we surface in the breakdown table, in display order.
-// The first entry MUST be 'Total Calls' (the daily roll-up row;
-// everything else sums per-source contributions). Pulled from the
-// QCDR Output static label sheet -- pinning here so the dashboard
-// renders the same source set regardless of label sheet drift.
-const QCD_SOURCES = Object.freeze([
-  'Total Calls',
-  'CSR',
-  'Ad-campaign',
-  'New Call Menu',
-  'Non-CSR (internal)',
-]);
+// Source filter: only the "Total Calls" callSource row carries the
+// daily aggregate we want; other callSource values are sub-counts
+// (CSR / Ad-campaign / etc. -- routing origin breakdowns) that
+// would double-count if summed alongside Total Calls. Pin here so
+// label-sheet drift doesn't change behavior.
+const QCD_TOTAL_CALLS_SOURCE = 'Total Calls';
+
+/**
+ * Returns the list of queue names that belong to `dept`, from the
+ * admin-curated DEPT_QCD_QUEUES map in Config.gs. Returns [] for
+ * unmapped depts (caller renders an empty report; no exception).
+ */
+function queuesForDept_(dept) {
+  const list = (typeof DEPT_QCD_QUEUES !== 'undefined') && DEPT_QCD_QUEUES[dept];
+  return Array.isArray(list) ? list.slice() : [];
+}
 
 function getQcdReportInit(req) {
   const email = Session.getActiveUser().getEmail();
@@ -76,7 +84,7 @@ function getQcdReportInit(req) {
     department:   dept,
     defaultStart: fmt(firstOfMonth),
     defaultEnd:   fmt(now),
-    sources:      QCD_SOURCES.slice(),
+    queues:       queuesForDept_(dept),
   };
 }
 
@@ -135,6 +143,18 @@ function computeQcdReport_(dept, from, to) {
   }
   const ssTZ = ss.getSpreadsheetTimeZone();
 
+  // Dept -> queue names. Empty = this dept isn't mapped in
+  // DEPT_QCD_QUEUES; return the empty shape so the modal shows
+  // "No queues mapped" instead of throwing.
+  const queues = queuesForDept_(dept);
+  if (queues.length === 0) {
+    const empty = emptyQcdReport_(dept, from, to);
+    empty.meta.unmapped = true;
+    return empty;
+  }
+  const queueSet = {};
+  queues.forEach(function (q) { queueSet[q] = true; });
+
   // Read all 12 cols. Display values for the H:MM:SS time fields
   // (longestWait / avgAnswer); raw values for everything else.
   const lastCol = 12;
@@ -168,24 +188,23 @@ function computeQcdReport_(dept, from, to) {
   const trendEndIso   = to;
   const monthKeys = generateMonthList_(trendStartDate, endDate);
 
-  // Per-source accumulators for the selected range. We don't accumulate
-  // every source -- only the ones in QCD_SOURCES -- so a label-sheet
-  // drift adding new sources doesn't silently dilute the dept totals.
-  const sourceAcc = {};
-  QCD_SOURCES.forEach(function (s) {
-    sourceAcc[s] = {
-      totalCalls:    0,
-      totalAnswered: 0,
-      abandoned:     0,
+  // Per-queue accumulators for the selected range. Only the
+  // QCD_TOTAL_CALLS_SOURCE rows are summed -- other callSource
+  // values are sub-counts (routing-origin breakdowns) that would
+  // double-count if added alongside Total Calls. Each queue
+  // tracks its own monthly buckets so the trend chart can roll
+  // up across all dept queues at render time.
+  const queueAcc = {};
+  queues.forEach(function (q) {
+    queueAcc[q] = {
+      totalCalls:     0,
+      totalAnswered:  0,
+      abandoned:      0,
       longestWaitSec: 0,
-      longestWaitN:   0,
       avgAnswerSec:   0,
       avgAnswerN:     0,
-      violations:    0,
-      // Per-day series for the per-source trend (only Total Calls
-      // surfaces in the trend chart today; kept per-source so the
-      // shape's available if we want sub-tabs later).
-      monthly: {},
+      violations:     0,
+      monthly:        {},   // monthKey -> { totalCalls, totalAnswered, abandoned, violations }
     };
   });
 
@@ -195,12 +214,11 @@ function computeQcdReport_(dept, from, to) {
     const dateIso = rowDateIso_(r[QCD_HISTORICAL_COLS.DATE - 1], ssTZ);
     if (!dateIso) continue;
     const callQueue = String(r[QCD_HISTORICAL_COLS.CALL_QUEUE - 1] || '').trim();
-    if (callQueue !== dept) continue;
+    if (!queueSet[callQueue]) continue;
     const source = String(r[QCD_HISTORICAL_COLS.CALL_SOURCE - 1] || '').trim();
-    const bucket = sourceAcc[source];
-    if (!bucket) continue;   // unknown source label -- skip
+    if (source !== QCD_TOTAL_CALLS_SOURCE) continue;   // skip sub-counts
 
-    const inUserRange = (dateIso >= from && dateIso <= to);
+    const inUserRange  = (dateIso >= from && dateIso <= to);
     const inTrendRange = (dateIso >= trendStartIso && dateIso <= trendEndIso);
     if (!inUserRange && !inTrendRange) continue;
 
@@ -214,13 +232,13 @@ function computeQcdReport_(dept, from, to) {
     const avgAnswerSec   = parseHmsDisplay_(rd[QCD_HISTORICAL_COLS.AVG_ANSWER   - 1]);
     const violations     = Number(r[QCD_HISTORICAL_COLS.VIOLATIONS - 1]) || 0;
 
+    const bucket = queueAcc[callQueue];
     if (inUserRange) {
       bucket.totalCalls    += totalCalls;
       bucket.totalAnswered += totalAnswered;
       bucket.abandoned     += abandoned;
-      // longest wait: take the MAX across days (longest wait observed
-      // anywhere in the range). avgAnswer: simple mean across days
-      // with non-zero values, matching legacy buildTable4 semantics.
+      // longestWait: MAX across days. avgAnswer: mean across days
+      // with non-zero values (matches legacy buildTable4 semantics).
       if (longestWaitSec > bucket.longestWaitSec) bucket.longestWaitSec = longestWaitSec;
       if (avgAnswerSec > 0) { bucket.avgAnswerSec += avgAnswerSec; bucket.avgAnswerN++; }
       bucket.violations += violations;
@@ -239,13 +257,12 @@ function computeQcdReport_(dept, from, to) {
     }
   }
 
-  // Build per-source breakdown rows (preserving QCD_SOURCES order).
-  const sourceBreakdown = QCD_SOURCES.map(function (src) {
-    const b = sourceAcc[src];
+  // Per-queue rows in DEPT_QCD_QUEUES order.
+  const queueBreakdown = queues.map(function (q) {
+    const b = queueAcc[q];
     const pct = b.totalCalls > 0 ? (b.abandoned / b.totalCalls) * 100 : 0;
     return {
-      source:           src,
-      isTotal:          src === 'Total Calls',
+      queue:            q,
       totalCalls:       b.totalCalls,
       totalAnswered:    b.totalAnswered,
       abandoned:        b.abandoned,
@@ -260,25 +277,53 @@ function computeQcdReport_(dept, from, to) {
     };
   });
 
-  const totalRow = sourceBreakdown[0];   // 'Total Calls'
+  // Dept totals: sum across all queues for the dept.
+  let tTotal = 0, tAns = 0, tAbnd = 0, tViol = 0;
+  let tLongest = 0;
+  let tAvgSum = 0, tAvgN = 0;
+  queueBreakdown.forEach(function (r) {
+    tTotal += r.totalCalls;
+    tAns   += r.totalAnswered;
+    tAbnd  += r.abandoned;
+    tViol  += r.violations;
+    if (r.longestWaitSec > tLongest) tLongest = r.longestWaitSec;
+    if (r.avgAnswerSec > 0) { tAvgSum += r.avgAnswerSec; tAvgN++; }
+  });
+  const tPct = tTotal > 0 ? (tAbnd / tTotal) * 100 : 0;
+  const totals = {
+    totalCalls:       tTotal,
+    totalAnswered:    tAns,
+    abandoned:        tAbnd,
+    abandonedPct:     tPct,
+    abandonedPctStr:  tPct.toFixed(2) + '%',
+    longestWait:      formatSecondsHms_(tLongest),
+    avgAnswer:        formatSecondsHms_(tAvgN > 0 ? Math.round(tAvgSum / tAvgN) : 0),
+    violations:       tViol,
+  };
 
-  // Trend chart series (Total Calls source only). Per-month
-  // totalCalls + abandoned + violations + abandonedPct.
+  // Trend chart series: roll up across all dept queues per month.
   const trendLabels = monthKeys.map(function (m) {
     const parts = m.split('-');
     const d = new Date(Number(parts[0]), Number(parts[1]) - 1, 1);
     return Utilities.formatDate(d, TZ, 'MMM, yy');
   });
   const trendSeries = monthKeys.map(function (m) {
-    const b = sourceAcc['Total Calls'].monthly[m]
-            || { totalCalls: 0, totalAnswered: 0, abandoned: 0, violations: 0 };
-    const pct = b.totalCalls > 0 ? (b.abandoned / b.totalCalls) * 100 : 0;
+    let total = 0, ans = 0, abnd = 0, viol = 0;
+    queues.forEach(function (q) {
+      const b = queueAcc[q].monthly[m];
+      if (!b) return;
+      total += b.totalCalls;
+      ans   += b.totalAnswered;
+      abnd  += b.abandoned;
+      viol  += b.violations;
+    });
+    const pct = total > 0 ? (abnd / total) * 100 : 0;
     return {
-      totalCalls:    b.totalCalls,
-      totalAnswered: b.totalAnswered,
-      abandoned:     b.abandoned,
+      totalCalls:    total,
+      totalAnswered: ans,
+      abandoned:     abnd,
       abandonedPct:  pct,
-      violations:    b.violations,
+      violations:    viol,
     };
   });
 
@@ -291,32 +336,26 @@ function computeQcdReport_(dept, from, to) {
       from: from, to: to,
       trendStart: trendStartIso,
       trendEnd:   trendEndIso,
-      sources: QCD_SOURCES.slice(),
+      queues:     queues,
+      unmapped:   false,
       generatedAt: new Date().toISOString(),
     },
-    dateLabel: dateLabel,
-    totals: {
-      totalCalls:      totalRow.totalCalls,
-      totalAnswered:   totalRow.totalAnswered,
-      abandoned:       totalRow.abandoned,
-      abandonedPct:    totalRow.abandonedPct,
-      abandonedPctStr: totalRow.abandonedPctStr,
-      longestWait:     totalRow.longestWait,
-      avgAnswer:       totalRow.avgAnswer,
-      violations:      totalRow.violations,
-    },
-    sourceBreakdown: sourceBreakdown,
-    trendData: { labels: trendLabels, series: trendSeries },
+    dateLabel:       dateLabel,
+    totals:          totals,
+    queueBreakdown:  queueBreakdown,
+    trendData:       { labels: trendLabels, series: trendSeries },
   };
 }
 
 function emptyQcdReport_(dept, from, to) {
+  const queues = queuesForDept_(dept);
   return {
     meta: {
       department: dept,
       from: from, to: to,
       trendStart: from, trendEnd: to,
-      sources: QCD_SOURCES.slice(),
+      queues:     queues,
+      unmapped:   queues.length === 0,
       generatedAt: new Date().toISOString(),
     },
     dateLabel: from + ' - ' + to,
@@ -325,9 +364,9 @@ function emptyQcdReport_(dept, from, to) {
       abandonedPct: 0, abandonedPctStr: '0.00%',
       longestWait: '0:00:00', avgAnswer: '0:00:00', violations: 0,
     },
-    sourceBreakdown: QCD_SOURCES.map(function (s) {
+    queueBreakdown: queues.map(function (q) {
       return {
-        source: s, isTotal: s === 'Total Calls',
+        queue: q,
         totalCalls: 0, totalAnswered: 0, abandoned: 0,
         abandonedPct: 0, abandonedPctStr: '0.00%',
         longestWait: '0:00:00', longestWaitSec: 0,

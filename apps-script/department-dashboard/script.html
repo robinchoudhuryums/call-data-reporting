@@ -826,27 +826,40 @@
          + ovBuildQcdCaption_(dept);
   }
 
-  // QCD snapshot caption next to the WoW chip. Renders only when
-  // the dept's latest QCD row carries violations > 0 OR abandoned %
-  // >= 5% (the same threshold the pipeline uses to flag violations).
-  // Stays quiet for healthy depts so the tile isn't cluttered.
+  // QCD info that isn't already covered by DQE on the dept tile.
+  // Two chips:
+  //   - "Abandoned: N (P%)" — always rendered when QCD data exists,
+  //     warn-tinted when % >= 5% (pipeline's violation threshold).
+  //   - "X viol MTD" — month-to-date violations across this dept's
+  //     mapped queues; only rendered when X > 0.
+  // Tooltip on the abandoned chip carries the latest-date context.
   function ovBuildQcdCaption_(dept) {
     if (!dept || !dept.qcd) return '';
     const q = dept.qcd;
     const pct = Number(q.abandonedPct) || 0;
-    const viol = Number(q.violations) || 0;
-    if (viol === 0 && pct < 5) return '';
-    const cls = viol > 0 ? 'ov-qcd-flag ov-qcd-violation' : 'ov-qcd-flag ov-qcd-elevated';
-    const label = viol > 0
-      ? (viol + ' QCD violation' + (viol === 1 ? '' : 's'))
-      : (q.abandonedPctStr + ' abandoned');
-    const tip = 'QCD snapshot (' + (q.date || '') + '): '
-              + (q.totalCalls || 0) + ' total calls · '
-              + (q.abandoned  || 0) + ' abandoned ('
-              + (q.abandonedPctStr || '0.00%') + ') · '
-              + viol + ' violations.';
-    return '<span class="' + cls + '" title="' + escapeHtml(tip) + '">'
-         + escapeHtml(label) + '</span>';
+    const abandoned = Number(q.abandoned) || 0;
+    const mtdViol = Number(q.violationsMtd) || 0;
+
+    const abndCls = pct >= 5
+      ? 'ov-qcd-flag ov-qcd-violation'
+      : 'ov-qcd-flag ov-qcd-elevated';
+    const abndLabel = 'Aban ' + fmtNumber(abandoned)
+                    + ' (' + (q.abandonedPctStr || '0.00%') + ')';
+    const abndTip = 'QCD snapshot (' + (q.date || '') + '): '
+                  + (q.totalCalls || 0) + ' total calls · '
+                  + abandoned + ' abandoned ('
+                  + (q.abandonedPctStr || '0.00%') + ').';
+    let html = '<span class="' + abndCls + '" title="' + escapeHtml(abndTip) + '">'
+             + escapeHtml(abndLabel) + '</span>';
+
+    if (mtdViol > 0) {
+      const violTip = mtdViol + ' QCD violation' + (mtdViol === 1 ? '' : 's')
+                    + ' month-to-date (Abandoned % > 5% on a daily roll-up).';
+      html += '<span class="ov-qcd-flag ov-qcd-violation" title="'
+            + escapeHtml(violTip) + '">'
+            + mtdViol + ' viol MTD</span>';
+    }
+    return html;
   }
 
   // "What changed" driver: surfaces the per-agent activity change
@@ -1723,7 +1736,43 @@
     }
     render();
     renderInfoLine();
+    renderDeptQcdSnapshot_(data && data.qcd);
     renderDiagnostics();
+  }
+
+  /**
+   * "Yesterday's QCD" mini-section under the agent table on My
+   * Department. Server returns data.qcd as the dept's most-recent
+   * QCD daily roll-up (sum across mapped queues; null when the
+   * dept isn't mapped in DEPT_QCD_QUEUES or has no recent rows).
+   * Hidden when null.
+   */
+  function renderDeptQcdSnapshot_(qcd) {
+    const wrap = $('dept-qcd-snapshot');
+    if (!wrap) return;
+    if (!qcd) { wrap.style.display = 'none'; return; }
+    const dateEl = $('dept-qcd-date');
+    if (dateEl) dateEl.textContent = '(' + (qcd.date || '') + ')';
+    const tiles = $('dept-qcd-tiles');
+    if (!tiles) return;
+
+    const tile = function (label, value, valueClass) {
+      return '<div class="dept-qcd-tile">'
+           +   '<div class="dept-qcd-label">' + escapeHtml(label) + '</div>'
+           +   '<div class="dept-qcd-value' + (valueClass ? ' ' + valueClass : '') + '">'
+           +     escapeHtml(String(value))
+           +   '</div>'
+           + '</div>';
+    };
+    const violCls = (Number(qcd.violations) || 0) > 0 ? 'dept-qcd-warn' : '';
+    const pctCls  = (Number(qcd.abandonedPct) || 0) >= 5 ? 'dept-qcd-warn' : '';
+    tiles.innerHTML =
+        tile('Total Calls', fmtNumber(qcd.totalCalls    || 0))
+      + tile('Answered',    fmtNumber(qcd.totalAnswered || 0))
+      + tile('Abandoned',   fmtNumber(qcd.abandoned     || 0))
+      + tile('Abandoned %', String(qcd.abandonedPctStr  || '0.00%'), pctCls)
+      + tile('Violations',  fmtNumber(qcd.violations    || 0),       violCls);
+    wrap.style.display = '';
   }
 
   function renderInfoLine() {
@@ -7128,8 +7177,21 @@
     $('qcd-results-title').textContent = 'QCD Report';
     $('qcd-results-date').textContent  = '(' + (data.dateLabel || '') + ')';
     showQcdResults_();
+    // Show the "no queues mapped" hint when the dept isn't listed in
+    // Config.gs::DEPT_QCD_QUEUES. The breakdown table renders empty
+    // in that case but the hint surfaces the cause.
+    const hint = $('qcd-queue-hint');
+    if (hint) {
+      if (data.meta && data.meta.unmapped) {
+        hint.textContent = 'No queues mapped for this department. Add a '
+          + 'row to DEPT_QCD_QUEUES in Config.gs and redeploy.';
+        hint.style.display = '';
+      } else {
+        hint.style.display = 'none';
+      }
+    }
     qcdRenderKpiTiles_(data.totals || {});
-    qcdRenderSourceTable_(data.sourceBreakdown || []);
+    qcdRenderQueueTable_(data.queueBreakdown || [], data.totals || {});
     requestAnimationFrame(function () { qcdRenderChart_(data); });
   }
 
@@ -7159,17 +7221,18 @@
       + tile('Violations',   fmtNumber(t.violations    || 0), violCls);
   }
 
-  function qcdRenderSourceTable_(rows) {
-    const tbody = $('qcd-source-tbody');
+  function qcdRenderQueueTable_(rows, totals) {
+    const tbody = $('qcd-queue-tbody');
+    const tfoot = $('qcd-queue-tfoot');
     if (!tbody) return;
     if (!rows.length) {
-      tbody.innerHTML = '<tr><td colspan="8" class="al-empty">No QCD rows for this dept in the selected range.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="8" class="al-empty">No QCD rows for this dept\'s mapped queues in the selected range.</td></tr>';
+      if (tfoot) tfoot.innerHTML = '';
       return;
     }
     tbody.innerHTML = rows.map(function (r) {
-      const cls = r.isTotal ? 'qcd-row-total' : '';
-      return '<tr class="' + cls + '">'
-           +   '<td>' + escapeHtml(r.source) + '</td>'
+      return '<tr>'
+           +   '<td>' + escapeHtml(r.queue) + '</td>'
            +   '<td class="num">' + fmtNumber(r.totalCalls)    + '</td>'
            +   '<td class="num">' + fmtNumber(r.totalAnswered) + '</td>'
            +   '<td class="num">' + fmtNumber(r.abandoned)     + '</td>'
@@ -7179,6 +7242,21 @@
            +   '<td class="num">' + fmtNumber(r.violations)    + '</td>'
            + '</tr>';
     }).join('');
+    if (tfoot && totals) {
+      // Dept aggregate row: sum-of-queues for volume cols, max for
+      // longest, mean for avg, sum for violations. Bolded via
+      // .qcd-row-total to match the Total Calls pattern users expect.
+      tfoot.innerHTML = '<tr class="qcd-row-total">'
+        +   '<td>Department total</td>'
+        +   '<td class="num">' + fmtNumber(totals.totalCalls)    + '</td>'
+        +   '<td class="num">' + fmtNumber(totals.totalAnswered) + '</td>'
+        +   '<td class="num">' + fmtNumber(totals.abandoned)     + '</td>'
+        +   '<td class="num">' + escapeHtml(totals.abandonedPctStr || '0.00%') + '</td>'
+        +   '<td class="num">' + escapeHtml(totals.longestWait || '0:00:00')   + '</td>'
+        +   '<td class="num">' + escapeHtml(totals.avgAnswer || '0:00:00')     + '</td>'
+        +   '<td class="num">' + fmtNumber(totals.violations)    + '</td>'
+        + '</tr>';
+    }
   }
 
   function qcdRenderChart_(data) {

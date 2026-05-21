@@ -49,7 +49,11 @@
 // v9: each dept gains a `qcd` field with the latest day's QCD
 //     snapshot (totalCalls / abandonedPct / violations) read from
 //     QCD Historical Data. Visible to everyone (no admin gate).
-const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v9';
+// v9: dept.qcd snapshot field added.
+// v10: dept.qcd switched to a dept->queues filter (was strict dept-name match,
+//      which never matched because QCD col D holds raw A_Q_* queue names).
+//      Also adds dept.qcd.violationsMtd = month-to-date violations sum.
+const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v10';
 
 // Window (in days) over which we consider an agent "recently
 // active". Used as the denominator for the "X of Y agents" caption
@@ -580,15 +584,18 @@ function computeWowDriver_(stats, curIsoSet, prevIsoSet, deltaPct) {
  * dept alerts. Safe no-op if the Alert Log sheet is missing.
  */
 /**
- * Reads QCD Historical Data and returns one snapshot per dept of
- * the most recent day's `Total Calls` row within the trend window.
- * Cheap: scans only rows where callSource === 'Total Calls' AND
- * callQueue matches one of the dept names; returns the latest by
- * date.
+ * Reads QCD Historical Data and returns one snapshot per dept,
+ * aggregated across the dept's mapped queues. Two parts per dept:
+ *   - Latest day's totals (sum across the dept's queues for the
+ *     most recent date that has Total Calls rows for any of them).
+ *   - Month-to-date violations count (sum across the dept's
+ *     queues, from the 1st of the current month through latest).
  *
- * Returns dept -> { date, totalCalls, abandoned, abandonedPct,
- * violations } or absent when no QCD rows for that dept in window.
- * Safe no-op if the QCD Historical Data sheet is missing.
+ * QCD col D holds raw A_Q_* queue names (not dept names), so we
+ * route through DEPT_QCD_QUEUES from Config.gs. Depts that aren't
+ * in the mapping return absent (no Overview QCD caption).
+ *
+ * Safe no-op if the sheet is missing.
  */
 function computeQcdSnapshots_(allDepts, sinceIso, ssTZ) {
   const out = {};
@@ -598,35 +605,89 @@ function computeQcdSnapshots_(allDepts, sinceIso, ssTZ) {
     if (!sheet) return out;
     const lastRow = sheet.getLastRow();
     if (lastRow < 2) return out;
-    const deptSet = {};
-    allDepts.forEach(function (d) { deptSet[d] = true; });
+
+    // Build queue -> dept lookup once. A queue can belong to only
+    // one dept; first-write wins on duplicates. Skip depts with no
+    // mapping in DEPT_QCD_QUEUES.
+    const queueToDept = {};
+    allDepts.forEach(function (d) {
+      const queues = (typeof DEPT_QCD_QUEUES !== 'undefined') && DEPT_QCD_QUEUES[d];
+      if (!Array.isArray(queues)) return;
+      queues.forEach(function (q) {
+        if (!queueToDept[q]) queueToDept[q] = d;
+      });
+    });
+
     const tz = ssTZ || TZ;
     const values = sheet.getRange(2, 1, lastRow - 1, 12).getValues();
 
-    // Iterate; keep the latest-by-date row per dept (Total Calls only).
+    // First pass: track the latest date per dept (so we can grab
+    // the right "latest day" totals in a second pass).
+    const latestDateByDept = {};   // dept -> isoDate
+    // Month-to-date cutoff: 1st of the current month.
+    const now = new Date();
+    const mtdStart = Utilities.formatDate(
+      new Date(now.getFullYear(), now.getMonth(), 1), tz, 'yyyy-MM-dd');
+
+    // Single pass accumulating both latestDay and MTD violations.
+    const acc = {};   // dept -> { latestDay: {date, total, abandoned, violations}, mtdViolations }
     for (let i = 0; i < values.length; i++) {
       const r = values[i];
       const source = String(r[QCD_HISTORICAL_COLS.CALL_SOURCE - 1] || '').trim();
       if (source !== 'Total Calls') continue;
-      const dept = String(r[QCD_HISTORICAL_COLS.CALL_QUEUE - 1] || '').trim();
-      if (!deptSet[dept]) continue;
+      const queue = String(r[QCD_HISTORICAL_COLS.CALL_QUEUE - 1] || '').trim();
+      const dept = queueToDept[queue];
+      if (!dept) continue;
       const dateIso = rowDateIso_(r[QCD_HISTORICAL_COLS.DATE - 1], tz);
       if (!dateIso || dateIso < sinceIso) continue;
-      const existing = out[dept];
-      if (existing && existing.date >= dateIso) continue;
+
       const totalCalls = Number(r[QCD_HISTORICAL_COLS.TOTAL_CALLS - 1]) || 0;
       const abandoned  = Number(r[QCD_HISTORICAL_COLS.ABANDONED   - 1]) || 0;
       const violations = Number(r[QCD_HISTORICAL_COLS.VIOLATIONS  - 1]) || 0;
-      const pct = totalCalls > 0 ? (abandoned / totalCalls) * 100 : 0;
+
+      let a = acc[dept];
+      if (!a) {
+        a = {
+          latestDate:      '',
+          latestTotal:     0,
+          latestAbandoned: 0,
+          latestViolations: 0,
+          mtdViolations:   0,
+        };
+        acc[dept] = a;
+      }
+
+      // MTD violations: any row dated >= mtdStart contributes.
+      if (dateIso >= mtdStart) a.mtdViolations += violations;
+
+      // Latest-day totals: accumulate across queues for the latest
+      // date we've seen. If we see a newer date, reset.
+      if (dateIso > a.latestDate) {
+        a.latestDate = dateIso;
+        a.latestTotal = totalCalls;
+        a.latestAbandoned = abandoned;
+        a.latestViolations = violations;
+      } else if (dateIso === a.latestDate) {
+        a.latestTotal     += totalCalls;
+        a.latestAbandoned += abandoned;
+        a.latestViolations += violations;
+      }
+    }
+
+    Object.keys(acc).forEach(function (dept) {
+      const a = acc[dept];
+      if (!a.latestDate) return;
+      const pct = a.latestTotal > 0 ? (a.latestAbandoned / a.latestTotal) * 100 : 0;
       out[dept] = {
-        date:             dateIso,
-        totalCalls:       totalCalls,
-        abandoned:        abandoned,
+        date:             a.latestDate,
+        totalCalls:       a.latestTotal,
+        abandoned:        a.latestAbandoned,
         abandonedPct:     round1_(pct),
         abandonedPctStr:  pct.toFixed(2) + '%',
-        violations:       violations,
+        violations:       a.latestViolations,
+        violationsMtd:    a.mtdViolations,
       };
-    }
+    });
   } catch (e) {
     Logger.log('computeQcdSnapshots_ failed: %s', e);
   }

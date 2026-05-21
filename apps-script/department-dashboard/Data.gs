@@ -105,8 +105,10 @@ function getDepartmentSummary(req) {
   // diagnostics field added to response. v4: queue-scope matching
   // switched from roster.allExtensions (personal exts) to the dept's
   // deptQueueExts (override or derived from data). Queue/Both scope
-  // now actually match shared-queue extensions in col D.
-  const cacheKey = 'summary:v4:' + dept + ':' + scope + ':' + from + ':' + to;
+  // now actually match shared-queue extensions in col D. v5: response
+  // gains a nullable `qcd` field with the dept's most-recent QCD
+  // snapshot (rendered as "Yesterday's QCD" on My Department).
+  const cacheKey = 'summary:v5:' + dept + ':' + scope + ':' + from + ':' + to;
   const cached = cache.get(cacheKey);
   if (cached) {
     try {
@@ -343,6 +345,12 @@ function computeSummary_(dept, from, to, scope) {
   rosterWithNoData.sort();
   const queueOnlyMatched = Object.keys(queueOnlyAgents).sort();
 
+  // Most-recent QCD snapshot for the dept (latest day across
+  // mapped queues from DEPT_QCD_QUEUES). Used by the My Department
+  // page's "Yesterday's QCD" section. Nullable when dept has no
+  // QCD mapping OR no recent QCD rows; client renders nothing.
+  const qcdSnapshot = computeDeptQcdSnapshot_(dept, ssTZ);
+
   return {
     meta: {
       department: dept,
@@ -359,6 +367,7 @@ function computeSummary_(dept, from, to, scope) {
     },
     rows: rows,
     totals: totals,
+    qcd: qcdSnapshot,
     diagnostics: {
       rosterWithNoData: rosterWithNoData,
       queueOnlyMatched: queueOnlyMatched,
@@ -386,11 +395,78 @@ function emptySummary_(dept, from, to, scope, rosterSize, rowsScanned, deptQueue
       tttSeconds: 0, attSeconds: 0,
       avgAbdWaitSeconds: 0, csrAvgAbdWaitSeconds: 0,
     },
+    qcd: null,
     diagnostics: {
       rosterWithNoData: [],
       queueOnlyMatched: [],
     },
   };
+}
+
+/**
+ * Returns the most-recent QCD snapshot for the dept, aggregated
+ * across the dept's mapped queues (DEPT_QCD_QUEUES). Same
+ * computation as CompanyOverview.gs::computeQcdSnapshots_ but
+ * scoped to a single dept and called from the My Department
+ * summary path.
+ *
+ * Returns null when the dept isn't mapped in DEPT_QCD_QUEUES OR
+ * when no recent QCD rows exist; client renders nothing.
+ */
+function computeDeptQcdSnapshot_(dept, ssTZ) {
+  try {
+    const queues = (typeof DEPT_QCD_QUEUES !== 'undefined') && DEPT_QCD_QUEUES[dept];
+    if (!Array.isArray(queues) || queues.length === 0) return null;
+    const queueSet = {};
+    queues.forEach(function (q) { queueSet[q] = true; });
+
+    const ss = openSpreadsheet_();
+    const sheet = ss.getSheetByName('QCD Historical Data');
+    if (!sheet) return null;
+    const lastRow = sheet.getLastRow();
+    if (lastRow < 2) return null;
+    const tz = ssTZ || ss.getSpreadsheetTimeZone();
+    const values = sheet.getRange(2, 1, lastRow - 1, 12).getValues();
+
+    let latestDate = '';
+    let total = 0, abandoned = 0, answered = 0, violations = 0;
+    for (let i = 0; i < values.length; i++) {
+      const r = values[i];
+      const source = String(r[QCD_HISTORICAL_COLS.CALL_SOURCE - 1] || '').trim();
+      if (source !== 'Total Calls') continue;
+      const queue = String(r[QCD_HISTORICAL_COLS.CALL_QUEUE - 1] || '').trim();
+      if (!queueSet[queue]) continue;
+      const dateIso = rowDateIso_(r[QCD_HISTORICAL_COLS.DATE - 1], tz);
+      if (!dateIso) continue;
+
+      if (dateIso > latestDate) {
+        latestDate = dateIso;
+        total = Number(r[QCD_HISTORICAL_COLS.TOTAL_CALLS - 1])    || 0;
+        answered = Number(r[QCD_HISTORICAL_COLS.TOTAL_ANSWERED - 1]) || 0;
+        abandoned = Number(r[QCD_HISTORICAL_COLS.ABANDONED   - 1]) || 0;
+        violations = Number(r[QCD_HISTORICAL_COLS.VIOLATIONS  - 1]) || 0;
+      } else if (dateIso === latestDate) {
+        total     += Number(r[QCD_HISTORICAL_COLS.TOTAL_CALLS - 1])    || 0;
+        answered  += Number(r[QCD_HISTORICAL_COLS.TOTAL_ANSWERED - 1]) || 0;
+        abandoned += Number(r[QCD_HISTORICAL_COLS.ABANDONED   - 1]) || 0;
+        violations += Number(r[QCD_HISTORICAL_COLS.VIOLATIONS  - 1]) || 0;
+      }
+    }
+    if (!latestDate) return null;
+    const pct = total > 0 ? (abandoned / total) * 100 : 0;
+    return {
+      date:             latestDate,
+      totalCalls:       total,
+      totalAnswered:    answered,
+      abandoned:        abandoned,
+      abandonedPct:     pct,
+      abandonedPctStr:  pct.toFixed(2) + '%',
+      violations:       violations,
+    };
+  } catch (e) {
+    Logger.log('computeDeptQcdSnapshot_ failed: %s', e);
+    return null;
+  }
 }
 
 /**

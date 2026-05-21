@@ -187,6 +187,39 @@ const DEPT_QUEUE_EXT_OVERRIDES = Object.freeze({
   'CSR': ['103', '108', '1003'],   // A_Q_CSR, A_Q_Intake, Backup CSR
 });
 
+// Per-dept QCD queue mapping. `QCD Historical Data`'s `Call Queue`
+// column (col D) carries raw queue names like "A_Q_CSR" / "Backup CSR",
+// NOT dashboard dept names like "CSR" -- the legacy `buildTable4` in
+// dqe-report/DQEdashboard.js had a misleading filter that suggested
+// otherwise. To filter QCD rows for a dashboard dept, look up the
+// list of queue names here.
+//
+// Used by:
+//   - QCDReport.gs (per-dept ranged report)
+//   - CompanyOverview.gs::computeQcdSnapshots_ (per-dept tile snapshot)
+//   - Data.gs::computeSummary_ (My Department's daily QCD snapshot)
+//
+// Values are exact strings from the QCDR Output sheet's column A,
+// which the import pipeline writes to `QCD Historical Data` col D.
+// Verify against the actual sheet after a fresh ingest; add or edit
+// rows here as new depts come online.
+const DEPT_QCD_QUEUES = Object.freeze({
+  'CSR':       ['A_Q_CSR', 'A_Q_Intake', 'Backup CSR'],
+  'Sales':     ['A_Q_Sales'],
+  'PAP':       ['A_Q_PAP'],
+  'Power':     ['A_Q_PowerChairs', 'A_Q_FieldOps_Power'],
+  'PAK':       ['A_Q_PAK'],
+  'Resupply':  ['A_Q_Resupply'],
+  'Spanish':   ['A_Q_Spanish'],
+  'Billing':   ['A_Q_Billing'],
+  'Denials':   ['A_Q_Denials'],
+  'Service':   ['A_Q_Service'],
+  'FieldOps':  ['A_Q_FieldOps', 'A_Q_BackUp_FieldOps'],
+  // Add more dept -> queue-list mappings here as new depts produce
+  // QCD rows. A dept not listed here returns an empty QCD report
+  // (and no Overview tile QCD caption).
+});
+
 // Per-dept agent names excluded from the Individual Report's team
 // average (numerator AND denominator). Used for managers who are on
 // the roster but only take a token number of calls -- including them

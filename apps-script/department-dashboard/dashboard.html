@@ -177,6 +177,15 @@
         <tfoot id="agents-tfoot"></tfoot>
       </table>
 
+      <div id="dept-qcd-snapshot" class="dept-qcd-snapshot" style="display:none;">
+        <div class="dept-qcd-header">
+          <strong id="dept-qcd-title">QCD snapshot</strong>
+          <span class="dept-qcd-date" id="dept-qcd-date"></span>
+          <span class="dept-qcd-hint">Daily roll-up across this dept's mapped queues from <code>QCD Historical Data</code>. For a date range, use Reports → QCD Report.</span>
+        </div>
+        <div class="dept-qcd-tiles" id="dept-qcd-tiles"></div>
+      </div>
+
       <div id="info-line" class="info-line" style="display:none;"></div>
 
       <details id="diagnostics" class="diagnostics" style="display:none;">
@@ -893,10 +902,11 @@
         <div id="qcd-kpi-row" class="pr-kpi-row"></div>
 
         <div class="al-section">
-          <div class="al-section-title">Per-source breakdown</div>
+          <div class="al-section-title">Per-queue breakdown</div>
+          <p class="al-hint" id="qcd-queue-hint" style="display:none;"></p>
           <table class="qcd-source-table">
             <thead><tr>
-              <th>Source</th>
+              <th>Queue</th>
               <th class="num">Total Calls</th>
               <th class="num">Answered</th>
               <th class="num">Abandoned</th>
@@ -905,7 +915,8 @@
               <th class="num">Avg Answer</th>
               <th class="num">Violations</th>
             </tr></thead>
-            <tbody id="qcd-source-tbody"></tbody>
+            <tbody id="qcd-queue-tbody"></tbody>
+            <tfoot id="qcd-queue-tfoot"></tfoot>
           </table>
         </div>
 

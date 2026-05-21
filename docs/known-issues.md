@@ -249,15 +249,15 @@ same time as the code change.
 
 | Source file | Cache prefix | Current version |
 |---|---|---|
-| `Data.gs` (main table) | `summary:vN:` | `v4` |
+| `Data.gs` (main table) | `summary:vN:` | `v5` |
 | `Data.gs` (latest-date snap for default From/To) | `latestDate:vN:` | `v1` |
 | `IndividualReport.gs` | `individual:vN:` | `v6` |
 | `IndividualReport.gs` (active-in-range subset shared by all three report pickers) | `individual_active:vN:` | `v1` |
 | `PerformanceReport.gs` | `performance:vN:` | `v3` |
 | `CompareRangesReport.gs` | `compareRanges:vN:` | `v3` |
 | `MissedCallsReport.gs` | `missed:vN:` | `v10` |
-| `CompanyOverview.gs` | `companyOverview:vN` | `v9` |
-| `QCDReport.gs` | `qcd:vN:` | `v1` |
+| `CompanyOverview.gs` | `companyOverview:vN` | `v10` |
+| `QCDReport.gs` | `qcd:vN:` | `v2` |
 
 `Alerts.gs` holds no cached compute. Preview/send always re-reads the
 DQE Historical Data for the chosen date.
@@ -469,7 +469,7 @@ behavior byte-identical to pre-OrphanFix.
 
 **Cache invalidation.** `applyOrphanRename` removes the single
 fixed-key `companyOverview:v8` cache entry on success. Per-(dept,
-range) caches (`summary:v4`, `individual:v6`, `performance:v3`,
+range) caches (`summary:v5`, `individual:v6`, `performance:v3`,
 etc.) are left to TTL out within 5 minutes. The Orphan Fix modal
 warns the user "may take up to 5 minutes to appear in dashboard."
 
