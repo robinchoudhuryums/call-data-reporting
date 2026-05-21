@@ -512,7 +512,7 @@ function sendAlertEmail_(cfgEntry, dateIso, stats, recipientsTo, recipientsCc) {
     +   '</div>'
     +   agentsTable
     +   (dashboardUrl
-        ? '<div style="margin-top: 20px;"><a href="' + dashboardUrl + '" style="display: inline-block; background: #1d4ed8; color: #fff; padding: 8px 16px; border-radius: 6px; text-decoration: none; font-size: 13px; font-weight: 600;">Open Department Dashboard</a></div>'
+        ? '<div style="margin-top: 20px;"><a href="' + escapeHtmlServer_(dashboardUrl) + '" style="display: inline-block; background: #1d4ed8; color: #fff; padding: 8px 16px; border-radius: 6px; text-decoration: none; font-size: 13px; font-weight: 600;">Open Department Dashboard</a></div>'
         : '')
     +   '<div style="margin-top: 24px; font-size: 11px; color: #9ca3af;">'
     +     'Sent by the Department Dashboard alert engine. Threshold and recipients are configured in the "Alert Config" sheet.'

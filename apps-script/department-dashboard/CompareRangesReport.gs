@@ -68,9 +68,18 @@ function getCompareRangesInit(req) {
   const endOfLastMonth    = new Date(now.getFullYear(), now.getMonth(), 0);
 
   // Optional active-agent subset: when all four range dates are
-  // supplied, return the roster names with activity in EITHER
-  // range (union). Lets the picker show an Active / Inactive
-  // grouping that reflects both periods together.
+  // supplied AND each is a valid ISO date in order, return the
+  // roster names with activity in EITHER range (union). Lets the
+  // picker show an Active / Inactive grouping that reflects both
+  // periods together.
+  //
+  // Validation policy: silently skip the activeAgents fetch if any
+  // date is missing or invalid -- the client legitimately calls
+  // this with partial state while a user is typing in the date
+  // inputs, so throwing would surface noisy errors mid-edit.
+  // Malformed dates that pass `isIsoDate_` (e.g. 2026-13-99) are
+  // tolerated too: `computeActiveAgentsInRange_` will simply find
+  // no matching rows and return [].
   let activeAgents = null;
   const p1From = String((req && req.p1From) || '').trim();
   const p1To   = String((req && req.p1To)   || '').trim();
@@ -341,6 +350,11 @@ function computeCompareRanges_(dept, selectedAgents,
   };
   const p1Days = Math.floor((parseIso_(p1To) - parseIso_(p1From)) / msPerDay) + 1;
   const p2Days = Math.floor((parseIso_(p2To) - parseIso_(p2From)) / msPerDay) + 1;
+  // `Math.min(...) > 0` guards the divide; inputs are already
+  // validated above to ensure from <= to, so p1Days/p2Days are
+  // always >= 1 in practice -- this is belt-and-suspenders for the
+  // empty-state shape (emptyCompareRanges_ returns p1Days:0
+  // p2Days:0) which sets lengthMismatch:false correctly.
   const lengthMismatch = (Math.min(p1Days, p2Days) > 0)
     && (Math.max(p1Days, p2Days) / Math.min(p1Days, p2Days) >= 1.2);
 

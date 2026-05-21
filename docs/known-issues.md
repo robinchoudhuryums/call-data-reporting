@@ -251,12 +251,12 @@ same time as the code change.
 |---|---|---|
 | `Data.gs` (main table) | `summary:vN:` | `v4` |
 | `Data.gs` (latest-date snap for default From/To) | `latestDate:vN:` | `v1` |
-| `IndividualReport.gs` | `individual:vN:` | `v5` |
+| `IndividualReport.gs` | `individual:vN:` | `v6` |
 | `IndividualReport.gs` (active-in-range subset shared by all three report pickers) | `individual_active:vN:` | `v1` |
 | `PerformanceReport.gs` | `performance:vN:` | `v3` |
 | `CompareRangesReport.gs` | `compareRanges:vN:` | `v3` |
 | `MissedCallsReport.gs` | `missed:vN:` | `v10` |
-| `CompanyOverview.gs` | `companyOverview:vN` | `v7` |
+| `CompanyOverview.gs` | `companyOverview:vN` | `v8` |
 
 `Alerts.gs` holds no cached compute. Preview/send always re-reads the
 DQE Historical Data for the chosen date.

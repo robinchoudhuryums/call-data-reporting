@@ -1645,6 +1645,29 @@
     justify-content: space-between;
     gap: 6px;
   }
+  /* Same-agent YoY vs Prior period row. Sits below ir-kpi-row-bot
+     when summaryData.priorStats is present (Individual Report
+     "Compare with" mode). Same layout / typography as the team-vs
+     row above but with a small top border to visually distinguish
+     "vs Team" from "vs Prior". */
+  .ir-kpi-row-prior {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    margin-top: 4px;
+    padding-top: 4px;
+    border-top: 1px dashed var(--line);
+  }
+
+  /* Compact form hint for the resolved prior-range preview under
+     the Compare-with row. */
+  .ir-prior-hint {
+    margin-top: -8px;
+    margin-bottom: 12px;
+    color: var(--muted);
+    font-size: 12px;
+  }
   .ir-kpi-team {
     font-family: var(--mono);
     font-size: 10px;
@@ -2669,6 +2692,23 @@
   .ov-wow-up   { color: var(--good); border-color: var(--good); background: var(--good-soft); }
   .ov-wow-down { color: var(--warn); border-color: var(--warn); background: var(--warn-soft); }
   .ov-wow-flat { color: var(--muted); border-color: var(--line); background: var(--paper-2); }
+
+  /* "What changed" driver caption next to the WoW chip. Smaller
+     and muted to read as supporting context, not as another KPI.
+     Tooltip carries the full prev->cur narrative. */
+  .ov-wow-driver {
+    display: inline-flex;
+    align-items: center;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--muted);
+    margin-left: 6px;
+    vertical-align: middle;
+    white-space: nowrap;
+    opacity: 0.85;
+  }
+  .ov-wow-driver-up   { color: var(--good); }
+  .ov-wow-driver-down { color: var(--warn); }
 
   /* Alert pill: shown on the tile when this dept triggered a sent
      low-answer-rate alert on the latest data date. Compact red

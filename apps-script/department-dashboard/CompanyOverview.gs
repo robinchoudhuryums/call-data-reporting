@@ -43,7 +43,10 @@
  * this fits comfortably in a single Apps Script execution.
  */
 
-const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v7';
+// v8: dept.wow gains an optional `driver` field describing the
+//     per-agent change that most contributed to the WoW shift
+//     (Strategic 5 -- "what changed" insight on Overview tiles).
+const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v8';
 
 // Window (in days) over which we consider an agent "recently
 // active". Used as the denominator for the "X of Y agents" caption
@@ -131,6 +134,24 @@ function getCompanyOverview() {
   // we can attribute each row to the right dept(s) in O(1) inside
   // the bulk scan.  Agents on multiple rosters count in each.
   const allDepts = getAllDepartments_();
+
+  // Surface OVERVIEW_PARENT_OF misconfigurations early: if a key
+  // doesn't match any real dept header, the sub-queue silently
+  // renders as a standalone top-level tile with no warning. A
+  // Logger entry shows up in the project's execution log and is
+  // grep-able when something looks off.
+  Object.keys(OVERVIEW_PARENT_OF).forEach(function (childKey) {
+    if (allDepts.indexOf(childKey) === -1) {
+      Logger.log(
+        'OVERVIEW_PARENT_OF: key "%s" -> parent "%s" does not match any '
+        + 'DO NOT EDIT! column header. The sub-queue nesting will not apply '
+        + '(the dept either does not exist or is named differently in the '
+        + 'roster sheet).',
+        childKey, OVERVIEW_PARENT_OF[childKey]
+      );
+    }
+  });
+
   const rosterByDept = {};
   const deptsForAgent = {};
   allDepts.forEach(function (d) {
@@ -154,6 +175,11 @@ function getCompanyOverview() {
       latestDay: { rung: 0, missed: 0, answered: 0, att_sum: 0, activeAgents: {} },
       trendByDate: {},  // iso -> { rung, answered }
       recentlyActiveAgents: {},
+      // Per-agent per-day series used by computeWowDriver_ to
+      // explain which agent contributed most to the dept's WoW
+      // delta. Keyed agent -> iso -> { rung, answered, missed }.
+      // Only populated for non-sentinel real agents.
+      agentTrendByDate: {},
     };
   });
 
@@ -224,6 +250,23 @@ function getCompanyOverview() {
       trendDay.rung     += rung;
       trendDay.answered += answered;
       if (hadActivity) stats.recentlyActiveAgents[agent] = true;
+
+      // Per-agent per-day breakdown -- only kept inside the trend
+      // window we already scan, so cost is bounded at ~14 depts ×
+      // ~14 agents × 30 days = a few thousand small objects.
+      let agentBuckets = stats.agentTrendByDate[agent];
+      if (!agentBuckets) {
+        agentBuckets = {};
+        stats.agentTrendByDate[agent] = agentBuckets;
+      }
+      let agentDay = agentBuckets[dateIso];
+      if (!agentDay) {
+        agentDay = { rung: 0, answered: 0, missed: 0 };
+        agentBuckets[dateIso] = agentDay;
+      }
+      agentDay.rung     += rung;
+      agentDay.answered += answered;
+      agentDay.missed   += missed;
 
       if (dateIso === latestDate) {
         const ld = stats.latestDay;
@@ -374,13 +417,27 @@ function getCompanyOverview() {
 /**
  * Personalize a cached Overview blob for a specific viewer. Strips
  * the admin-only companyAggregate field for non-admins and stamps
- * the viewer's role + dept onto the response. Always returns a new
- * object so the cached blob isn't mutated.
+ * the viewer's role + dept onto the response.
+ *
+ * Deep-clones via JSON round-trip so any future personalize step
+ * that mutates nested fields (e.g. `out.depts[i].foo = bar`) can't
+ * leak into the cached blob or into another viewer's response.
+ * Payload is small (~14 depts plus light metadata), so the
+ * round-trip cost is negligible.
  */
 function personalizeOverview_(blob, user) {
-  const out = {};
-  for (const k in blob) {
-    if (Object.prototype.hasOwnProperty.call(blob, k)) out[k] = blob[k];
+  let out;
+  try {
+    out = JSON.parse(JSON.stringify(blob || {}));
+  } catch (e) {
+    // Cached blob unexpectedly contains a non-serializable value.
+    // Fall back to a shallow copy so the request still serves --
+    // the personalize layer's contract is "no leakage", and at
+    // least the top-level fields are independent here.
+    out = {};
+    for (const k in blob) {
+      if (Object.prototype.hasOwnProperty.call(blob, k)) out[k] = blob[k];
+    }
   }
   if (user.role !== 'admin') delete out.companyAggregate;
   out.viewerRole = user.role;
@@ -393,9 +450,18 @@ function personalizeOverview_(blob, user) {
  * ending on latestDate against the 7 days immediately preceding it.
  * Returns null if either window has no rung activity (insufficient
  * data to compute a delta).
+ *
+ * When the WoW delta is "notable" (|deltaPct| >= WOW_DRIVER_THRESHOLD),
+ * also attaches a `driver` field describing the single agent whose
+ * activity change most explains the dept's shift. The driver is
+ * narrative-only: see computeWowDriver_ for the selection rule.
  */
+const WOW_DRIVER_THRESHOLD = 1.5;   // percentage points
+
 function computeWowDelta_(stats, latestDate) {
   const latestObj = parseIsoNoon_(latestDate);
+  const curIsoSet  = {};
+  const prevIsoSet = {};
   const cur  = { rung: 0, answered: 0 };
   const prev = { rung: 0, answered: 0 };
   for (let i = 0; i < 7; i++) {
@@ -403,6 +469,8 @@ function computeWowDelta_(stats, latestDate) {
       new Date(latestObj.getTime() - i * 86400000), TZ, 'yyyy-MM-dd');
     const isoPrev = Utilities.formatDate(
       new Date(latestObj.getTime() - (i + 7) * 86400000), TZ, 'yyyy-MM-dd');
+    curIsoSet[isoCur]   = true;
+    prevIsoSet[isoPrev] = true;
     const dC = stats.trendByDate[isoCur];
     if (dC) { cur.rung += dC.rung; cur.answered += dC.answered; }
     const dP = stats.trendByDate[isoPrev];
@@ -411,10 +479,85 @@ function computeWowDelta_(stats, latestDate) {
   if (cur.rung === 0 || prev.rung === 0) return null;
   const curPct  = (cur.answered  / cur.rung)  * 100;
   const prevPct = (prev.answered / prev.rung) * 100;
-  return {
+  const deltaPct = curPct - prevPct;
+  const out = {
     curPct:   round1_(curPct),
     prevPct:  round1_(prevPct),
-    deltaPct: round1_(curPct - prevPct),
+    deltaPct: round1_(deltaPct),
+  };
+  if (Math.abs(deltaPct) >= WOW_DRIVER_THRESHOLD) {
+    const driver = computeWowDriver_(stats, curIsoSet, prevIsoSet, deltaPct);
+    if (driver) out.driver = driver;
+  }
+  return out;
+}
+
+/**
+ * Picks the agent whose net activity change most "explains" the
+ * dept's WoW shift. Score per agent:
+ *   if dept WoW is positive (answer-rate went UP):
+ *     score = (cur.answered - prev.answered) - (cur.missed - prev.missed)
+ *   if dept WoW is negative:
+ *     score = (cur.missed - prev.missed) - (cur.answered - prev.answered)
+ *
+ * I.e. when the dept is improving we surface the biggest answered-
+ * delta (positive contributor); when regressing we surface the
+ * biggest missed-delta (biggest contributor to the slide). The
+ * agent with the largest score is the driver.
+ *
+ * Returns null if no agent meets a minimum activity bar (need at
+ * least 3 events in EITHER window to avoid one-call outliers).
+ */
+function computeWowDriver_(stats, curIsoSet, prevIsoSet, deltaPct) {
+  const isPositive = deltaPct > 0;
+  let bestAgent = null;
+  let bestScore = 0;
+  let bestData  = null;
+  Object.keys(stats.agentTrendByDate).forEach(function (agent) {
+    const buckets = stats.agentTrendByDate[agent];
+    const cur  = { answered: 0, missed: 0, total: 0 };
+    const prev = { answered: 0, missed: 0, total: 0 };
+    Object.keys(buckets).forEach(function (iso) {
+      const b = buckets[iso];
+      if (curIsoSet[iso]) {
+        cur.answered += b.answered; cur.missed += b.missed;
+        cur.total    += b.answered + b.missed;
+      } else if (prevIsoSet[iso]) {
+        prev.answered += b.answered; prev.missed += b.missed;
+        prev.total    += b.answered + b.missed;
+      }
+    });
+    if (cur.total < 3 && prev.total < 3) return;   // too quiet to attribute
+    const ansDelta = cur.answered - prev.answered;
+    const missDelta = cur.missed  - prev.missed;
+    const score = isPositive ? (ansDelta - missDelta) : (missDelta - ansDelta);
+    if (score > bestScore) {
+      bestScore = score;
+      bestAgent = agent;
+      bestData = {
+        answeredDelta: ansDelta,
+        missedDelta:   missDelta,
+        curAnswered:   cur.answered,
+        curMissed:     cur.missed,
+        prevAnswered:  prev.answered,
+        prevMissed:    prev.missed,
+      };
+    }
+  });
+  if (!bestAgent || bestScore <= 0) return null;
+  // Pick the narrative based on which delta dominates. Avoid
+  // attributing a "+50% answered" driver to a dept that's actually
+  // regressing -- the score guard above already filters those, but
+  // belt-and-suspenders.
+  const useMissedNarrative = !isPositive
+    && Math.abs(bestData.missedDelta) > Math.abs(bestData.answeredDelta);
+  return {
+    agent:    bestAgent,
+    metric:   useMissedNarrative ? 'missed' : 'answered',
+    delta:    useMissedNarrative ? bestData.missedDelta : bestData.answeredDelta,
+    cur:      useMissedNarrative ? bestData.curMissed   : bestData.curAnswered,
+    prev:     useMissedNarrative ? bestData.prevMissed  : bestData.prevAnswered,
+    positive: isPositive,
   };
 }
 

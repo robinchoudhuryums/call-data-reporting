@@ -332,8 +332,29 @@
           </div>
         </div>
 
+        <div class="ir-row">
+          <div class="ir-col">
+            <label for="ir-compare-mode">Compare with</label>
+            <select id="ir-compare-mode">
+              <option value="none">No comparison</option>
+              <option value="yoy">Same window one year prior</option>
+              <option value="prevPeriod">Immediately-preceding period</option>
+              <option value="custom">Custom prior range&hellip;</option>
+            </select>
+          </div>
+          <div class="ir-col" id="ir-prior-from-wrap" style="display:none;">
+            <label for="ir-prior-from">Prior start</label>
+            <input type="date" id="ir-prior-from">
+          </div>
+          <div class="ir-col" id="ir-prior-to-wrap" style="display:none;">
+            <label for="ir-prior-to">Prior end</label>
+            <input type="date" id="ir-prior-to">
+          </div>
+        </div>
+        <div class="ir-hint ir-prior-hint" id="ir-prior-hint"></div>
+
         <div class="ir-section-title">2. Agents</div>
-        <div class="ir-hint">Select 1 for Individual Report. Select multiple for Peer Comparison.</div>
+        <div class="ir-hint">Select 1 for an Individual Report (with optional self-comparison above). Select multiple for Peer Comparison.</div>
         <div class="ir-search-row">
           <input type="search" id="ir-agent-search" placeholder="Search agents by name..." autocomplete="off">
         </div>
@@ -902,6 +923,7 @@
               <th>Cadence</th>
               <th>Active</th>
               <th>Notes</th>
+              <th></th>
             </tr></thead>
             <tbody id="al-digest-tbody"></tbody>
           </table>

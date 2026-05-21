@@ -28,9 +28,14 @@
  *     denominator, so unanswered/abandoned days don't drag the ATT
  *     down -- matches the user's "only times the agent actually
  *     spoke with a caller" intent.
- *   - Team avg per-agent: teamTotal / roster.length. Includes roster
- *     members with zero activity in the range, so the avg "spreads"
- *     dept volume across the full roster (legacy behavior).
+ *   - Team avg per-agent: teamTotal / activeAgentCount, where
+ *     activeAgentCount = count of roster members with ANY call
+ *     activity (rung/answered/missed > 0) in the selected range
+ *     (INV-27). Zero-call roster members are excluded from BOTH
+ *     numerator and denominator so they don't dilute the per-agent
+ *     baseline. `TEAM_AVG_EXCLUDES` removes additional configured
+ *     names (e.g. managers on the roster who take only a token
+ *     number of calls).
  *   - Team % Answered, TTT, ATT: weighted across the whole team's
  *     calls in range (NOT per-agent mean of percentages).
  *
@@ -42,7 +47,12 @@
 // Bump when aggregation rules or response shape change so stale
 // cached values don't linger. CLAUDE.md INV-30 is the canonical
 // current-version list -- keep this constant aligned with that.
-const INDIVIDUAL_CACHE_KEY_PREFIX = 'individual:v5';
+//
+// v6: optional prior-period comparison (priorFrom/priorTo). When
+// supplied, each summary card carries a `priorStats` field so the
+// client can render a vs-prior delta badge alongside vs-team-avg
+// (Strategic 5 / same-agent YoY).
+const INDIVIDUAL_CACHE_KEY_PREFIX = 'individual:v6';
 
 function getIndividualReportInit(req) {
   const email = Session.getActiveUser().getEmail();
@@ -160,6 +170,20 @@ function getIndividualReport(req) {
   }
   if (from > to) throw new Error('from must be on or before to.');
 
+  // Optional prior-period for same-agent YoY / vs-self comparison.
+  // Both dates required if either is supplied; absent = no
+  // comparison (legacy behavior, no `priorStats` field in output).
+  const priorFrom = String((req && req.priorFrom) || '').trim();
+  const priorTo   = String((req && req.priorTo)   || '').trim();
+  if (priorFrom || priorTo) {
+    if (!isIsoDate_(priorFrom) || !isIsoDate_(priorTo)) {
+      throw new Error('priorFrom/priorTo must be YYYY-MM-DD.');
+    }
+    if (priorFrom > priorTo) {
+      throw new Error('priorFrom must be on or before priorTo.');
+    }
+  }
+
   const rawAgents = (req && req.agents) || [];
   if (!Array.isArray(rawAgents) || rawAgents.length === 0) {
     throw new Error('Select at least one agent.');
@@ -185,10 +209,11 @@ function getIndividualReport(req) {
   // (CacheService rejects keys > 250 chars; raw join blows past
   // that on big rosters like Sales). Order-insensitive by design.
   const agentsKey = hashAgents_(selectedAgents);
+  const priorKey = (priorFrom && priorTo) ? (priorFrom + '..' + priorTo) : 'none';
 
   const cache = CacheService.getScriptCache();
   const cacheKey = INDIVIDUAL_CACHE_KEY_PREFIX + ':'
-                 + dept + ':' + from + ':' + to + ':' + agentsKey;
+                 + dept + ':' + from + ':' + to + ':' + agentsKey + ':' + priorKey;
   const cached = cache.get(cacheKey);
   if (cached) {
     try {
@@ -199,7 +224,8 @@ function getIndividualReport(req) {
   }
 
   const t0 = Date.now();
-  const data = computeIndividualReport_(dept, from, to, selectedAgents, roster);
+  const data = computeIndividualReport_(dept, from, to, selectedAgents, roster,
+                                        priorFrom, priorTo);
   data.meta.computeMs = Date.now() - t0;
   data.meta.cacheHit = false;
 
@@ -222,11 +248,13 @@ function getIndividualReport(req) {
  *   - Otherwise, trend = first-of-month(end - 12 months) ... end.
  *   Matches legacy IndividualReport behavior.
  */
-function computeIndividualReport_(dept, from, to, selectedAgents, roster) {
+function computeIndividualReport_(dept, from, to, selectedAgents, roster,
+                                  priorFrom, priorTo) {
   const rosterSet = {};
   for (let i = 0; i < roster.names.length; i++) rosterSet[roster.names[i]] = true;
   const selectedSet = {};
   for (let i = 0; i < selectedAgents.length; i++) selectedSet[selectedAgents[i]] = true;
+  const hasPrior = !!(priorFrom && priorTo);
 
   // ISO -> Date (noon to avoid DST edges).
   const parseIso_ = function (iso) {
@@ -284,9 +312,14 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster) {
   //   the full dept roster.
   const aggregatedStats = {};
   const summaryStats = {};
+  // Per-agent stats for the optional prior window. Same shape as
+  // summaryStats. Only populated when hasPrior; surfaced in the
+  // response as `priorStats` on each summary card.
+  const priorSummaryStats = {};
   selectedAgents.forEach(function (a) {
-    aggregatedStats[a] = {};
-    summaryStats[a]    = { rung: 0, missed: 0, answered: 0, ttt: 0, attTotal: 0 };
+    aggregatedStats[a]    = {};
+    summaryStats[a]       = { rung: 0, missed: 0, answered: 0, ttt: 0, attTotal: 0 };
+    priorSummaryStats[a]  = { rung: 0, missed: 0, answered: 0, ttt: 0, attTotal: 0 };
   });
   const teamTotal = { rung: 0, missed: 0, answered: 0, ttt: 0, attTotal: 0 };
   const activeDaySet  = {};   // ISO day -> true; for dept "per day" stats
@@ -316,9 +349,11 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster) {
 
     const inUserRange   = (dateIso >= from && dateIso <= to);
     const inTrendRange  = (dateIso >= trendStartIso && dateIso <= trendEndIso);
+    const inPriorRange  = hasPrior
+      ? (dateIso >= priorFrom && dateIso <= priorTo) : false;
 
-    // Fast-path: row touches neither window we care about.
-    if (!inUserRange && !inTrendRange) continue;
+    // Fast-path: row touches no window we care about.
+    if (!inUserRange && !inTrendRange && !inPriorRange) continue;
 
     const rung     = Number(r[HISTORICAL_COLS.TOTAL_RUNG - 1])     || 0;
     const missed   = Number(r[HISTORICAL_COLS.TOTAL_MISSED - 1])   || 0;
@@ -366,6 +401,14 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster) {
         s.answered += answered;
         s.ttt      += tttSec;
         s.attTotal += attTotal;
+      }
+      if (inPriorRange) {
+        const p = priorSummaryStats[agent];
+        p.rung     += rung;
+        p.missed   += missed;
+        p.answered += answered;
+        p.ttt      += tttSec;
+        p.attTotal += attTotal;
       }
     }
   }
@@ -434,6 +477,8 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster) {
   // Per-agent summary cards. Includes:
   //   share -- agent's portion of the dept's volume on each metric
   //   insights -- rules-based notable comparisons vs team avg
+  //   priorStats / priorRaw -- same-agent prior-window stats when
+  //     hasPrior; the client renders a vs-prior delta badge.
   const summaryData = selectedAgents.map(function (agent) {
     const s = summaryStats[agent];
     const agPct = s.rung > 0 ? (s.answered / s.rung) * 100 : 0;
@@ -448,6 +493,28 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster) {
       rung: s.rung, missed: s.missed, answered: s.answered,
       pct: agPct, ttt: agTtt, att: agAtt,
     };
+
+    let priorStats = null;
+    let priorRaw   = null;
+    if (hasPrior) {
+      const p = priorSummaryStats[agent];
+      const pPct = p.rung > 0 ? (p.answered / p.rung) * 100 : 0;
+      const pTtt = p.answered > 0 ? p.ttt      / p.answered : 0;
+      const pAtt = p.answered > 0 ? p.attTotal / p.answered : 0;
+      priorStats = {
+        rung:     p.rung,
+        missed:   p.missed,
+        answered: p.answered,
+        pct:      pPct.toFixed(1) + '%',
+        ttt:      formatSecondsHms_(pTtt),
+        att:      formatSecondsHms_(pAtt),
+      };
+      priorRaw = {
+        rung: p.rung, missed: p.missed, answered: p.answered,
+        pct: pPct, ttt: pTtt, att: pAtt,
+      };
+    }
+
     return {
       name: agent,
       stats: {
@@ -468,6 +535,8 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster) {
         rawMissed:   share.missed,
       },
       insights: buildAgentInsights_(agentRaw, teamAvg),
+      priorStats: priorStats,
+      priorRaw:   priorRaw,
     };
   });
 
@@ -475,11 +544,21 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster) {
   const dateLabel = Utilities.formatDate(startDate, TZ, 'MMM d, yyyy')
                   + ' - '
                   + Utilities.formatDate(endDate,   TZ, 'MMM d, yyyy');
+  let priorDateLabel = null;
+  if (hasPrior) {
+    const priorStart = parseIso_(priorFrom);
+    const priorEnd   = parseIso_(priorTo);
+    priorDateLabel = Utilities.formatDate(priorStart, TZ, 'MMM d, yyyy')
+                   + ' - '
+                   + Utilities.formatDate(priorEnd,   TZ, 'MMM d, yyyy');
+  }
 
   return {
     meta: {
       department: dept,
       from: from, to: to,
+      priorFrom: hasPrior ? priorFrom : null,
+      priorTo:   hasPrior ? priorTo   : null,
       trendStart: trendStartIso,
       trendEnd:   trendEndIso,
       agents: selectedAgents,
@@ -490,6 +569,7 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster) {
       generatedAt: new Date().toISOString(),
     },
     dateLabel: dateLabel,
+    priorDateLabel: priorDateLabel,
     trendData: { labels: chartLabels, datasets: chartDatasets },
     summaryData: summaryData,
     teamAvg: teamAvgOut,
@@ -520,6 +600,7 @@ function emptyIndividualReport_(dept, from, to, selectedAgents, masterMonthKeys)
       generatedAt: new Date().toISOString(),
     },
     dateLabel: from + ' - ' + to,
+    priorDateLabel: null,
     trendData: { labels: labels, datasets: datasets },
     summaryData: selectedAgents.map(function (a) {
       return {
@@ -529,6 +610,8 @@ function emptyIndividualReport_(dept, from, to, selectedAgents, masterMonthKeys)
         share: { rung: '0.0%', answered: '0.0%', missed: '0.0%',
                  rawRung: 0, rawAnswered: 0, rawMissed: 0 },
         insights: [],
+        priorStats: null,
+        priorRaw:   null,
       };
     }),
     teamAvg: {

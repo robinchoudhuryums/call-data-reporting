@@ -819,7 +819,28 @@
     const tip = 'Last 7 days ' + dept.wow.curPct.toFixed(1) + '% vs prior 7 days '
               + dept.wow.prevPct.toFixed(1) + '%';
     return '<span class="ov-wow-chip ' + cls + '" title="' + escapeHtml(tip) + '">'
-         + arrow + ' ' + Math.abs(d).toFixed(1) + '% WoW</span>';
+         + arrow + ' ' + Math.abs(d).toFixed(1) + '% WoW</span>'
+         + ovBuildWowDriver_(dept);
+  }
+
+  // "What changed" driver: surfaces the per-agent activity change
+  // that most contributed to the dept's WoW shift. Server attaches
+  // a `driver` field on dept.wow when the delta is notable (>=1.5pt).
+  // Renders as a small caption next to the WoW chip, e.g.
+  //   "Sarah +12 answered" (positive WoW) or
+  //   "Mark +8 missed"     (negative WoW).
+  function ovBuildWowDriver_(dept) {
+    if (!dept.wow || !dept.wow.driver) return '';
+    const drv = dept.wow.driver;
+    const dlt = Number(drv.delta) || 0;
+    const sign = dlt > 0 ? '+' : '';
+    const cls = drv.positive ? 'ov-wow-driver-up' : 'ov-wow-driver-down';
+    const tip = drv.agent + ' ' + drv.metric + ': '
+              + drv.prev + ' → ' + drv.cur
+              + ' (vs prior week) — largest contributor to this dept’s shift.';
+    return '<span class="ov-wow-driver ' + cls + '" title="' + escapeHtml(tip) + '">'
+         +   escapeHtml(drv.agent) + ' ' + sign + dlt + ' ' + escapeHtml(drv.metric)
+         + '</span>';
   }
 
   // Tooltip text for the active-agents caption. Spells out the
@@ -2118,6 +2139,8 @@
     // Restore last-used form state if any. Runs after default
     // dates so a saved preset/dates pair overrides the defaults.
     irRestorePrefs_();
+    // Wire the Compare with dropdown + auto-update the hint.
+    irInitCompareMode_();
   }
 
   /**
@@ -2127,13 +2150,16 @@
   function irSavePrefs_() {
     try {
       const prefs = {
-        preset:     $('ir-preset') ? $('ir-preset').value : 'custom',
-        from:       $('ir-from')   ? $('ir-from').value   : '',
-        to:         $('ir-to')     ? $('ir-to').value     : '',
-        agents:     irGetCheckedAgents_($('ir-agent-list')),
-        showLabels: $('ir-show-datalabels') ? $('ir-show-datalabels').checked : false,
-        sortOrder:  irSortOrder,
-        chartTab:   irActiveChartTab,
+        preset:      $('ir-preset')       ? $('ir-preset').value       : 'custom',
+        from:        $('ir-from')         ? $('ir-from').value         : '',
+        to:          $('ir-to')           ? $('ir-to').value           : '',
+        compareMode: $('ir-compare-mode') ? $('ir-compare-mode').value : 'none',
+        priorFrom:   $('ir-prior-from')   ? $('ir-prior-from').value   : '',
+        priorTo:     $('ir-prior-to')     ? $('ir-prior-to').value     : '',
+        agents:      irGetCheckedAgents_($('ir-agent-list')),
+        showLabels:  $('ir-show-datalabels') ? $('ir-show-datalabels').checked : false,
+        sortOrder:   irSortOrder,
+        chartTab:    irActiveChartTab,
       };
       localStorage.setItem(IR_PREFS_KEY, JSON.stringify(prefs));
     } catch (e) { /* ignore */ }
@@ -2151,6 +2177,9 @@
     if (prefs.preset && $('ir-preset')) $('ir-preset').value = prefs.preset;
     if (prefs.from   && $('ir-from'))   $('ir-from').value   = prefs.from;
     if (prefs.to     && $('ir-to'))     $('ir-to').value     = prefs.to;
+    if (prefs.compareMode && $('ir-compare-mode')) $('ir-compare-mode').value = prefs.compareMode;
+    if (prefs.priorFrom   && $('ir-prior-from'))   $('ir-prior-from').value   = prefs.priorFrom;
+    if (prefs.priorTo     && $('ir-prior-to'))     $('ir-prior-to').value     = prefs.priorTo;
     if (typeof prefs.showLabels === 'boolean' && $('ir-show-datalabels')) {
       $('ir-show-datalabels').checked = prefs.showLabels;
     }
@@ -2511,10 +2540,16 @@
     const agents = irGetCheckedAgents_($('ir-agent-list'));
     if (!agents.length) { irSetFormError('Select at least one agent.'); return; }
 
+    const prior = irResolvePriorRange_(from, to);
+    if (prior && prior.error) { irSetFormError(prior.error); return; }
+
     const btn = $('ir-generate-btn');
     btn.disabled = true;
     const originalLabel = btn.textContent;
     btn.textContent = 'Loading…';
+
+    const req = { department: dept, from: from, to: to, agents: agents };
+    if (prior) { req.priorFrom = prior.from; req.priorTo = prior.to; }
 
     google.script.run
       .withSuccessHandler(function (data) {
@@ -2527,14 +2562,100 @@
         btn.textContent = originalLabel;
         irSetFormError('Error: ' + (err && err.message ? err.message : String(err)));
       })
-      .getIndividualReport({ department: dept, from: from, to: to, agents: agents });
+      .getIndividualReport(req);
+  }
+
+  /**
+   * Resolves the active "Compare with" selection into a concrete
+   * { from, to } prior range, or null when no comparison is wanted.
+   * Returns { error } on validation problems so the caller can
+   * surface a form-level message.
+   *
+   * Modes:
+   *   none        -> null
+   *   yoy         -> shift the current window back 1 calendar year
+   *   prevPeriod  -> immediately-preceding window of the same length
+   *   custom      -> pull from the ir-prior-from / ir-prior-to inputs
+   */
+  function irResolvePriorRange_(from, to) {
+    const mode = $('ir-compare-mode') ? $('ir-compare-mode').value : 'none';
+    if (!mode || mode === 'none') return null;
+    if (mode === 'custom') {
+      const pf = $('ir-prior-from') ? $('ir-prior-from').value : '';
+      const pt = $('ir-prior-to')   ? $('ir-prior-to').value   : '';
+      if (!pf || !pt) return { error: 'Pick prior start and end dates (or switch Compare with to a preset).' };
+      if (pf > pt)    return { error: 'Prior start must be on or before prior end.' };
+      return { from: pf, to: pt };
+    }
+    // Parse using noon-local-time to avoid DST edges.
+    const parts1 = from.split('-'), parts2 = to.split('-');
+    const start = new Date(Number(parts1[0]), Number(parts1[1]) - 1, Number(parts1[2]), 12);
+    const end   = new Date(Number(parts2[0]), Number(parts2[1]) - 1, Number(parts2[2]), 12);
+    const isoOf = function (d) {
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return d.getFullYear() + '-' + m + '-' + day;
+    };
+    if (mode === 'yoy') {
+      const ps = new Date(start.getFullYear() - 1, start.getMonth(), start.getDate(), 12);
+      const pe = new Date(end.getFullYear()   - 1, end.getMonth(),   end.getDate(),   12);
+      return { from: isoOf(ps), to: isoOf(pe) };
+    }
+    if (mode === 'prevPeriod') {
+      const ms = 86400000;
+      const durationDays = Math.floor((end - start) / ms);
+      const pe = new Date(start.getTime() - ms);
+      const ps = new Date(pe.getTime() - durationDays * ms);
+      return { from: isoOf(ps), to: isoOf(pe) };
+    }
+    return null;
+  }
+
+  // Wire the Compare with dropdown: show/hide custom date inputs;
+  // update the hint with a preview of the resolved prior range.
+  function irInitCompareMode_() {
+    const sel = $('ir-compare-mode');
+    if (!sel) return;
+    const refresh = function () {
+      const mode = sel.value;
+      const showCustom = (mode === 'custom');
+      const fromWrap = $('ir-prior-from-wrap');
+      const toWrap   = $('ir-prior-to-wrap');
+      if (fromWrap) fromWrap.style.display = showCustom ? '' : 'none';
+      if (toWrap)   toWrap.style.display   = showCustom ? '' : 'none';
+      const hint = $('ir-prior-hint');
+      if (!hint) return;
+      if (!mode || mode === 'none') { hint.textContent = ''; return; }
+      const from = $('ir-from').value, to = $('ir-to').value;
+      if (!from || !to) { hint.textContent = ''; return; }
+      const prior = irResolvePriorRange_(from, to);
+      if (!prior) { hint.textContent = ''; return; }
+      if (prior.error) { hint.textContent = prior.error; return; }
+      hint.textContent = 'Comparing against ' + prior.from + ' to ' + prior.to + '.';
+    };
+    sel.addEventListener('change', function () { refresh(); irSavePrefs_(); });
+    ['ir-from', 'ir-to', 'ir-prior-from', 'ir-prior-to'].forEach(function (id) {
+      const el = $(id);
+      if (el) el.addEventListener('change', refresh);
+    });
+    refresh();
   }
 
   function irRenderReport(data) {
     irLastData = data;
     $('ir-results-title').textContent = data.mode === 'comparison'
       ? 'Peer Comparison Report' : 'Individual Performance Report';
-    $('ir-results-date').textContent = '(' + (data.dateLabel || '') + ')';
+    const headerDate = '(' + (data.dateLabel || '')
+                     + (data.priorDateLabel
+                          ? ' &middot; vs ' + data.priorDateLabel
+                          : '')
+                     + ')';
+    // priorDateLabel comes from the server unescaped; the date
+    // string format is fixed (Utilities.formatDate with our own
+    // template), but use innerHTML here only because we already
+    // included the &middot; entity above. Date contents themselves
+    // are dates, not user input.
+    $('ir-results-date').innerHTML = headerDate;
     irRenderEditingLine_(data.meta && data.meta.agents);
     showIrResults();
     irSetResultsStatus('');
@@ -2623,10 +2744,18 @@
     const dept = getRequestedDept();
     const from = $('ir-from').value;
     const to   = $('ir-to').value;
+    // Re-resolve the prior range so re-running from the edit
+    // popover keeps the same Compare-with mode as the original
+    // Generate. Silent on validation issues -- the original
+    // form's Generate path is the place where errors surface.
+    const prior = irResolvePriorRange_(from, to);
 
     const btn = $('ir-edit-apply-btn');
     if (btn) { btn.disabled = true; btn.textContent = 'Loading…'; }
     irSetResultsStatus('loading', 'Refreshing report…');
+
+    const req = { department: dept, from: from, to: to, agents: newAgents };
+    if (prior && !prior.error) { req.priorFrom = prior.from; req.priorTo = prior.to; }
 
     google.script.run
       .withSuccessHandler(function (data) {
@@ -2637,7 +2766,7 @@
         if (btn) { btn.textContent = 'Apply'; btn.disabled = false; }
         irSetResultsStatus('error', 'Error: ' + (err && err.message ? err.message : String(err)));
       })
-      .getIndividualReport({ department: dept, from: from, to: to, agents: newAgents });
+      .getIndividualReport(req);
   }
 
   function irActivateChartTab_() {
@@ -2698,16 +2827,29 @@
     // is drawn inline from irLastData.trendData -- no extra Chart
     // instances created. Tiles per agent:
     //   Total Rung | Answered | Missed | % Answered | Avg Talk Time
+    const priorStatsAvailable = !!(irLastData && irLastData.meta
+                                   && irLastData.meta.priorFrom);
     container.innerHTML = irSortSummaryData_(summaryData || []).map(function (agent) {
       const trendForAgent = (irLastData && irLastData.trendData && irLastData.trendData.datasets)
                           ? (irLastData.trendData.datasets[agent.name] || [])
                           : [];
       const safeName = escapeHtml(agent.name);
       const share = agent.share || {};
+      const pStats = agent.priorStats;   // may be null when no comparison
+      const pRaw   = agent.priorRaw;
+      // Render the vs-prior row only when the server supplied
+      // priorStats. Pass per-metric formatted strings so the row
+      // shows the same precision/unit as the team row.
+      const priorRow = function (key, valence) {
+        if (!pStats || !pRaw) return '';
+        return irPriorRow_(pStats, pRaw[key], agent.raw[key], valence, pStats[key]);
+      };
       return '<div class="ir-summary-card">'
            +   '<div class="ir-summary-title">'
            +     safeName
-           +     ' <span class="ir-vs">vs Team Avg</span>'
+           +     ' <span class="ir-vs">vs Team Avg'
+           +       (priorStatsAvailable ? ' &middot; vs Prior period' : '')
+           +     '</span>'
            +     ' <button type="button" class="ir-copy-tsv" data-agent="' + safeName + '">Copy data</button>'
            +   '</div>'
            +   irInsightsBlock_(agent.insights || [])
@@ -2715,23 +2857,28 @@
            +     irKpiTile('Total Rung',  agent.stats.rung,     teamAvg.rung,
                             irDiffBadge(agent.raw.rung,     teamAvg.raw.rung,        'pos'),
                             trendForAgent.map(function (x) { return x.rung; }),     IR_VOLUME_COLORS.rung,
-                            share.rung)
+                            share.rung,
+                            priorRow('rung', 'pos'))
            +     irKpiTile('Answered',    agent.stats.answered, teamAvg.answered,
                             irDiffBadge(agent.raw.answered, teamAvg.raw.answered,    'pos'),
                             trendForAgent.map(function (x) { return x.answered; }), IR_VOLUME_COLORS.answered,
-                            share.answered)
+                            share.answered,
+                            priorRow('answered', 'pos'))
            +     irKpiTile('Missed',      agent.stats.missed,   teamAvg.missed,
                             irDiffBadge(agent.raw.missed,   teamAvg.raw.missed,      'neg'),
                             trendForAgent.map(function (x) { return x.missed; }),   IR_VOLUME_COLORS.missed,
-                            share.missed)
+                            share.missed,
+                            priorRow('missed', 'neg'))
            +     irKpiTile('% Answered',  agent.stats.pct,      teamAvg.pct,
                             irDiffBadge(agent.raw.pct,      teamAvg.raw.pctAnswered, 'pos'),
                             trendForAgent.map(function (x) { return x.pct; }),      (THEME.accent || '#4E79A7'),
-                            null)
+                            null,
+                            priorRow('pct', 'pos'))
            +     irKpiTile('Avg Talk',    agent.stats.att,      teamAvg.att,
                             irAttCompare(agent.raw.att, teamAvg.raw.att),
                             trendForAgent.map(function (x) { return x.att; }),      (THEME.muted || '#9C755F'),
-                            null)
+                            null,
+                            priorRow('att', 'neu'))
            +   '</div>'
            + '</div>';
     }).join('');
@@ -2801,7 +2948,7 @@
    * small "X.X% of dept" tag inline with the value to communicate
    * this agent's portion of the dept's total volume.
    */
-  function irKpiTile(label, value, teamVal, diffBadgeHtml, sparklineData, sparklineColor, share) {
+  function irKpiTile(label, value, teamVal, diffBadgeHtml, sparklineData, sparklineColor, share, priorHtml) {
     const spark = irSparkline_(sparklineData || [], sparklineColor || '#4E79A7');
     const shareHtml = share
       ? '<span class="ir-kpi-share" title="Share of dept volume in range">'
@@ -2820,6 +2967,46 @@
          +     '<span class="ir-kpi-team">Team ' + escapeHtml(String(teamVal)) + '</span>'
          +     diffBadgeHtml
          +   '</div>'
+         +   (priorHtml || '')
+         + '</div>';
+  }
+
+  /**
+   * Per-tile "vs prior" delta line, rendered below the team-vs row
+   * when summaryData.priorStats is present. Same valence model as
+   * irDiffBadge: 'pos' = higher is better, 'neg' = lower is better,
+   * 'neu' = direction-ambiguous (TTT/ATT). Returns empty string if
+   * priorRaw is null/undefined.
+   */
+  function irPriorRow_(priorStats, priorVal, currVal, type, displayPrior) {
+    if (!priorStats) return '';
+    const prev = Number(priorVal) || 0;
+    const cur  = Number(currVal)  || 0;
+    if (prev === 0 && cur === 0) {
+      return '<div class="ir-kpi-row-prior">'
+           +   '<span class="ir-kpi-team">Prior ' + escapeHtml(String(displayPrior)) + '</span>'
+           +   '<span class="ir-badge ir-badge-neu">-</span>'
+           + '</div>';
+    }
+    let cls = 'ir-badge-neu';
+    let label;
+    if (type === 'neu') {
+      // Direction-ambiguous metric (ATT / TTT). Show signed pct but
+      // don't colorize as good/bad.
+      const pct = prev > 0 ? ((cur - prev) / prev) * 100 : (cur > 0 ? 100 : 0);
+      label = (pct > 0 ? '+' : '') + pct.toFixed(1) + '%';
+    } else {
+      const pct = prev > 0 ? ((cur - prev) / prev) * 100 : (cur > 0 ? 100 : 0);
+      label = (pct > 0 ? '+' : '') + pct.toFixed(1) + '%';
+      if (type === 'pos') {
+        if (pct > 0) cls = 'ir-badge-pos'; else if (pct < 0) cls = 'ir-badge-neg';
+      } else if (type === 'neg') {
+        if (pct < 0) cls = 'ir-badge-pos'; else if (pct > 0) cls = 'ir-badge-neg';
+      }
+    }
+    return '<div class="ir-kpi-row-prior">'
+         +   '<span class="ir-kpi-team">Prior ' + escapeHtml(String(displayPrior)) + '</span>'
+         +   '<span class="ir-badge ' + cls + '">' + label + '</span>'
          + '</div>';
   }
 
@@ -6077,7 +6264,7 @@
           + 'Digest Config sheet (Email | Department | Cadence | Active | Notes).'
           + '</td></tr>';
       } else {
-        tbody.innerHTML = config.map(function (c) {
+        tbody.innerHTML = config.map(function (c, idx) {
           const activeCls = c.active ? 'al-active-yes' : 'al-active-no';
           const activeLbl = c.active ? 'Yes' : 'No';
           return '<tr>'
@@ -6086,8 +6273,23 @@
                +   '<td>' + escapeHtml(c.cadence)    + '</td>'
                +   '<td><span class="al-active ' + activeCls + '">' + activeLbl + '</span></td>'
                +   '<td>' + escapeHtml(c.notes || '') + '</td>'
+               +   '<td><button type="button" class="link-btn al-digest-preview-btn" '
+               +     'data-idx="' + idx + '">Send preview</button></td>'
                + '</tr>';
         }).join('');
+
+        // Wire the per-row Send Preview buttons. `data-idx` indexes
+        // into the same `config` array we just rendered from, so we
+        // pull the email/department/cadence directly without
+        // parsing the DOM.
+        tbody.querySelectorAll('.al-digest-preview-btn').forEach(function (btn) {
+          btn.addEventListener('click', function () {
+            const idx = Number(btn.getAttribute('data-idx'));
+            const row = config[idx];
+            if (!row) return;
+            alSendDigestPreview_(btn, row);
+          });
+        });
       }
     }
 
@@ -6117,6 +6319,28 @@
       const link = $('al-open-digest-sheet');
       if (link) link.href = data.spreadsheetUrl;
     }
+  }
+
+  function alSendDigestPreview_(btn, row) {
+    if (!btn || !row) return;
+    btn.disabled = true;
+    const prev = btn.textContent; btn.textContent = 'Sending…';
+    google.script.run
+      .withSuccessHandler(function (res) {
+        btn.disabled = false;
+        btn.textContent = 'Sent to ' + (res && res.to ? res.to : 'you');
+        setTimeout(function () { btn.textContent = prev; }, 2500);
+      })
+      .withFailureHandler(function (err) {
+        btn.disabled = false; btn.textContent = prev;
+        alSetRunStatus_('error', 'Preview failed: '
+          + (err && err.message ? err.message : String(err)));
+      })
+      .sendPreviewDigest({
+        email:      row.email,
+        department: row.department,
+        cadence:    row.cadence,
+      });
   }
 
   function alInstallDigestTriggers_() {
@@ -6240,7 +6464,7 @@
     if (!el) return;
     if (trigger && trigger.installed) {
       el.textContent = 'Daily trigger is installed (runs at '
-                     + (trigger.hour || 8) + ':00 ' + (TZ_SUFFIX_ || '')
+                     + (trigger.hour || 8) + ':00 ' + tzSuffix_()
                      + '). The trigger runs the previous day\'s check; weekends are skipped.';
       if (installBtn) installBtn.style.display = 'none';
       if (uninstallBtn) uninstallBtn.style.display = '';
@@ -6250,7 +6474,23 @@
       if (uninstallBtn) uninstallBtn.style.display = 'none';
     }
   }
-  const TZ_SUFFIX_ = 'CST';
+
+  // Returns "CST" or "CDT" (or whatever the user's browser
+  // observes for America/Chicago today). Apps Script triggers
+  // fire in the script TZ (America/Chicago) which is DST-aware,
+  // so the previous hardcoded "CST" was wrong half the year.
+  // Falls back to "CT" on browsers that don't expose timeZoneName.
+  function tzSuffix_() {
+    try {
+      const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'America/Chicago',
+        timeZoneName: 'short',
+      }).formatToParts(new Date());
+      const tzPart = parts.find(function (p) { return p.type === 'timeZoneName'; });
+      if (tzPart && tzPart.value) return tzPart.value;
+    } catch (e) { /* fall through */ }
+    return 'CT';
+  }
 
   function alRenderLog_(log) {
     const tbody = $('al-log-tbody');
