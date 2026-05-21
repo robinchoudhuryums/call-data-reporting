@@ -74,7 +74,7 @@ External CDR system (telephony provider)
 |---|---|---|---|
 | CSV ingest | CDR Import | `autoImport.js`, `importBulkCSVsFromDrive.js` (pending Drive auth), `AbandonedFilter.js`, `CDR Tools.js`, `DeleteOldSheets.js`, `neonWrite.js`, `appsscript.json` | `apps-script/cdr-import/` |
 | Per-agent aggregation + downstream tooling | CDR Report | `buildDQEHistoricalData.js`, `DQEdrilldown.js`, `DQEDrilldownSidebar.html`, `dashboardCDR.js`, `dataFilters.js` (extraction sidebar), `dbHistorical.js`, `dbReporting.js`, `emailDailyReport.js`, `neonWrite.js`, `neonbackfill.js`, `CDR Tools menu.js`, `appsscript.json` | `apps-script/cdr-report/` |
-| Manager dashboard | Department Dashboard (standalone) | `Code.gs`, `Auth.gs`, `Data.gs`, `Config.gs`, `Setup.gs`, `Diagnostics.gs`, `MissedCallsReport.gs`, `IndividualReport.gs`, `PerformanceReport.gs`, `CompareRangesReport.gs`, `CompanyOverview.gs`, `Alerts.gs`, `Digest.gs`, `OrphanFix.gs`, `dashboard.html`, `styles.html`, `script.html`, `access_denied.html`, `appsscript.json` | `apps-script/department-dashboard/` |
+| Manager dashboard | Department Dashboard (standalone) | `Code.gs`, `Auth.gs`, `Data.gs`, `Config.gs`, `Setup.gs`, `Diagnostics.gs`, `MissedCallsReport.gs`, `IndividualReport.gs`, `PerformanceReport.gs`, `CompareRangesReport.gs`, `CompanyOverview.gs`, `QCDReport.gs`, `Alerts.gs`, `Digest.gs`, `OrphanFix.gs`, `dashboard.html`, `styles.html`, `script.html`, `access_denied.html`, `appsscript.json` | `apps-script/department-dashboard/` |
 | Postgres mirror | shared lib used by both CDR Import and CDR Report | `neonWrite.js` (duplicated across both projects, currently identical) | see [known-issues.md](known-issues.md) |
 | Legacy reports (being migrated into the dashboard) | DQE Report (spreadsheet) | `DQEdashboard.js`, `syncHistoricalData.js`, 4 report pairs (`SingleRangeReport`, `IndividualReport`, `MissedCallsReport`, `MultiComparisonTool` + their `.html` modals), `sendManualAlert.js`, `checkLowAnswerRate.js`, `showFAQ.js` + `FAQGuide.html`, `setDateRange.js`, `autoDropdown.js`, `menu DQE Tools.js`, `appsscript.json` | `apps-script/dqe-report/` |
 
@@ -191,7 +191,8 @@ canonical and reflects current code.
 | Individual / Peer Comparison | `IndividualReport.gs` | `getIndividualReportInit`, `getIndividualReport`, `sendIndividualReportEmail` | `individual:v6:`, `individual_active:v1:` | no |
 | Performance Report (current vs prior) | `PerformanceReport.gs` | `getPerformanceReportInit` (delegates to Individual's init), `getPerformanceReport`, `sendPerformanceReportEmail` | `performance:v3:` | no |
 | Compare Ranges (two arbitrary ranges) | `CompareRangesReport.gs` | `getCompareRangesInit`, `getCompareRanges`, `sendCompareRangesEmail` | `compareRanges:v3:` | no |
-| Company Overview | `CompanyOverview.gs` | `getCompanyOverview` | `companyOverview:v8` | partial (admin-only `companyAggregate` field) |
+| Company Overview | `CompanyOverview.gs` | `getCompanyOverview` | `companyOverview:v9` | partial (admin-only `companyAggregate` field) |
+| QCD Report | `QCDReport.gs` | `getQcdReportInit`, `getQcdReport`, `sendQcdReportEmail` | `qcd:v1:` | no (per-dept gate like IR/PR/CR) |
 | Low Answer Rate Alerts | `Alerts.gs` | `getAlertsInit`, `previewAlerts`, `sendAlerts`, `installAlertTrigger`, `uninstallAlertTrigger` (+ `runDailyAlerts_` time trigger) | (no cache) | yes |
 | Manager Digest engine | `Digest.gs` | `getDigestsInit`, `sendPreviewDigest`, `installDigestTriggers`, `uninstallDigestTriggers` (+ `runDailyDigests_`, `runWeeklyDigests_` time triggers) | (no cache) | yes |
 | Orphan Fix engine (admin write path) | `OrphanFix.gs` | `getOrphanFixInit`, `addAgentAlias`, `removeAgentAlias`, `applyOrphanRename` | (no cache; busts `companyOverview:v8` on write) | yes |

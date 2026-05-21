@@ -455,6 +455,7 @@
     initCompareRanges();
     initAlerts();
     initOrphanFix();
+    initQcdReport();
 
     // Fetch the most recent date with data in DQE Historical Data
     // and snap From/To to that date. Defers the initial table
@@ -821,7 +822,31 @@
               + dept.wow.prevPct.toFixed(1) + '%';
     return '<span class="ov-wow-chip ' + cls + '" title="' + escapeHtml(tip) + '">'
          + arrow + ' ' + Math.abs(d).toFixed(1) + '% WoW</span>'
-         + ovBuildWowDriver_(dept);
+         + ovBuildWowDriver_(dept)
+         + ovBuildQcdCaption_(dept);
+  }
+
+  // QCD snapshot caption next to the WoW chip. Renders only when
+  // the dept's latest QCD row carries violations > 0 OR abandoned %
+  // >= 5% (the same threshold the pipeline uses to flag violations).
+  // Stays quiet for healthy depts so the tile isn't cluttered.
+  function ovBuildQcdCaption_(dept) {
+    if (!dept || !dept.qcd) return '';
+    const q = dept.qcd;
+    const pct = Number(q.abandonedPct) || 0;
+    const viol = Number(q.violations) || 0;
+    if (viol === 0 && pct < 5) return '';
+    const cls = viol > 0 ? 'ov-qcd-flag ov-qcd-violation' : 'ov-qcd-flag ov-qcd-elevated';
+    const label = viol > 0
+      ? (viol + ' QCD violation' + (viol === 1 ? '' : 's'))
+      : (q.abandonedPctStr + ' abandoned');
+    const tip = 'QCD snapshot (' + (q.date || '') + '): '
+              + (q.totalCalls || 0) + ' total calls · '
+              + (q.abandoned  || 0) + ' abandoned ('
+              + (q.abandonedPctStr || '0.00%') + ') · '
+              + viol + ' violations.';
+    return '<span class="' + cls + '" title="' + escapeHtml(tip) + '">'
+         + escapeHtml(label) + '</span>';
   }
 
   // "What changed" driver: surfaces the per-agent activity change
@@ -6916,6 +6941,385 @@
     el.className = 'status status-' + kind;
     el.textContent = msg;
     el.style.display = '';
+  }
+
+  // -- QCD Report modal ------------------------------------------------
+  // Queue Call Detail report. Per-dept gated; reads QCD Historical
+  // Data via QCDReport.gs. Layout: dept-level KPI tiles ->
+  // per-source breakdown table -> 12-month monthly trend chart
+  // with tab strip (Total Calls / Abandoned % / Violations).
+
+  let qcdLastData = null;
+  let qcdChartInstance = null;
+  let qcdActiveMetric = 'totalCalls';
+
+  function initQcdReport() {
+    const btn   = $('qcd-report-btn');
+    const modal = $('qcd-modal');
+    if (!btn || !modal) return;
+
+    const closeBtn = modal.querySelector('.modal-close');
+    const backdrop = modal.querySelector('[data-close]');
+
+    function openModal() {
+      modal.style.display = '';
+      modal.setAttribute('aria-hidden', 'false');
+      document.body.style.overflow = 'hidden';
+      document.addEventListener('keydown', onKeyDown);
+      if (closeBtn) closeBtn.focus();
+      showQcdForm();
+      setQcdDefaultDates_();
+    }
+    function closeModal() {
+      modal.style.display = 'none';
+      modal.setAttribute('aria-hidden', 'true');
+      document.body.style.overflow = '';
+      document.removeEventListener('keydown', onKeyDown);
+      btn.focus();
+    }
+    function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
+
+    btn.addEventListener('click', openModal);
+    if (closeBtn) closeBtn.addEventListener('click', closeModal);
+    if (backdrop) backdrop.addEventListener('click', closeModal);
+
+    const preset = $('qcd-preset');
+    if (preset) preset.addEventListener('change', applyQcdPreset);
+    ['qcd-from', 'qcd-to'].forEach(function (id) {
+      const el = $(id);
+      if (el) el.addEventListener('change', function () {
+        const p = $('qcd-preset');
+        if (p) p.value = 'custom';
+      });
+    });
+
+    const gen = $('qcd-generate-btn');
+    if (gen) gen.addEventListener('click', runQcdReport);
+    const back = $('qcd-back-btn');
+    if (back) back.addEventListener('click', showQcdForm);
+
+    // Chart metric tabs
+    const tabs = $('qcd-chart-tabs');
+    if (tabs) tabs.addEventListener('click', function (e) {
+      const tab = e.target.closest('.ir-tab');
+      if (!tab) return;
+      qcdActiveMetric = tab.getAttribute('data-metric') || 'totalCalls';
+      tabs.querySelectorAll('.ir-tab').forEach(function (b) {
+        const active = b === tab;
+        b.classList.toggle('active', active);
+        b.setAttribute('aria-selected', active ? 'true' : 'false');
+      });
+      if (qcdLastData) qcdRenderChart_(qcdLastData);
+    });
+
+    // Export menu
+    const exportBtn  = $('qcd-export-btn');
+    const exportMenu = $('qcd-export-menu');
+    if (exportBtn && exportMenu) {
+      exportBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        exportMenu.style.display = exportMenu.style.display === 'none' ? '' : 'none';
+      });
+      exportMenu.addEventListener('click', function (e) {
+        const item = e.target.closest('[data-action]');
+        if (!item) return;
+        const action = item.getAttribute('data-action');
+        exportMenu.style.display = 'none';
+        if (action === 'copy')  qcdCopyImage_();
+        else if (action === 'email') qcdEmailImage_();
+        else if (action === 'print') qcdPrint_();
+      });
+      document.addEventListener('click', function (e) {
+        if (exportMenu.style.display === 'none') return;
+        if (exportMenu.contains(e.target) || e.target === exportBtn) return;
+        exportMenu.style.display = 'none';
+      });
+    }
+  }
+
+  function setQcdDefaultDates_() {
+    const now = new Date();
+    const isoOf = function (d) {
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return d.getFullYear() + '-' + m + '-' + day;
+    };
+    const first = new Date(now.getFullYear(), now.getMonth(), 1);
+    if ($('qcd-from') && !$('qcd-from').value) $('qcd-from').value = isoOf(first);
+    if ($('qcd-to')   && !$('qcd-to').value)   $('qcd-to').value   = isoOf(now);
+  }
+
+  function applyQcdPreset() {
+    const v = $('qcd-preset').value;
+    if (v === 'custom') return;
+    const now = new Date();
+    const isoOf = function (d) {
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return d.getFullYear() + '-' + m + '-' + day;
+    };
+    let s, e;
+    if (v === 'thisMonth') {
+      s = new Date(now.getFullYear(), now.getMonth(), 1);
+      e = now;
+    } else if (v === 'lastMonth') {
+      s = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      e = new Date(now.getFullYear(), now.getMonth(), 0);
+    } else if (v === 'last30') {
+      s = new Date(now.getTime() - 29 * 86400000);
+      e = now;
+    } else if (v === 'last3Months') {
+      s = new Date(now.getFullYear(), now.getMonth() - 3, 1);
+      e = now;
+    } else if (v === 'last12Months') {
+      s = new Date(now.getFullYear(), now.getMonth() - 12, 1);
+      e = now;
+    } else if (v === 'lastYear') {
+      s = new Date(now.getFullYear() - 1, 0, 1);
+      e = new Date(now.getFullYear() - 1, 11, 31);
+    }
+    if (!s) return;
+    $('qcd-from').value = isoOf(s);
+    $('qcd-to').value   = isoOf(e);
+  }
+
+  function showQcdForm() {
+    $('qcd-form').style.display    = '';
+    $('qcd-results').style.display = 'none';
+    qcdSetFormError_('');
+  }
+  function showQcdResults_() {
+    $('qcd-form').style.display    = 'none';
+    $('qcd-results').style.display = '';
+  }
+  function qcdSetFormError_(msg) {
+    const el = $('qcd-form-error');
+    if (!el) return;
+    if (!msg) { el.style.display = 'none'; el.textContent = ''; return; }
+    el.textContent = msg; el.style.display = '';
+  }
+
+  function runQcdReport() {
+    qcdSetFormError_('');
+    const dept = getRequestedDept();
+    const from = $('qcd-from').value;
+    const to   = $('qcd-to').value;
+    if (!from || !to) { qcdSetFormError_('Pick a start and end date.'); return; }
+    if (from > to)    { qcdSetFormError_('Start date must be on or before end date.'); return; }
+
+    const btn = $('qcd-generate-btn');
+    btn.disabled = true;
+    const prev = btn.textContent; btn.textContent = 'Loading…';
+
+    google.script.run
+      .withSuccessHandler(function (data) {
+        btn.disabled = false; btn.textContent = prev;
+        qcdRenderReport_(data);
+      })
+      .withFailureHandler(function (err) {
+        btn.disabled = false; btn.textContent = prev;
+        qcdSetFormError_('Error: ' + (err && err.message ? err.message : String(err)));
+      })
+      .getQcdReport({ department: dept, from: from, to: to });
+  }
+
+  function qcdRenderReport_(data) {
+    qcdLastData = data;
+    $('qcd-results-title').textContent = 'QCD Report';
+    $('qcd-results-date').textContent  = '(' + (data.dateLabel || '') + ')';
+    showQcdResults_();
+    qcdRenderKpiTiles_(data.totals || {});
+    qcdRenderSourceTable_(data.sourceBreakdown || []);
+    requestAnimationFrame(function () { qcdRenderChart_(data); });
+  }
+
+  function qcdRenderKpiTiles_(t) {
+    const wrap = $('qcd-kpi-row');
+    if (!wrap) return;
+    // Reuse the Performance Report KPI tile DOM shape so existing
+    // styling carries over. No prev/delta on QCD's KPIs in this
+    // first cut -- absolute values only.
+    const tile = function (label, value, valueClass) {
+      return '<div class="pr-kpi-tile">'
+           +   '<div class="pr-kpi-label">' + escapeHtml(label) + '</div>'
+           +   '<div class="pr-kpi-value' + (valueClass ? ' ' + valueClass : '') + '">'
+           +     escapeHtml(String(value))
+           +   '</div>'
+           + '</div>';
+    };
+    // Violations get a warn-soft tile when >0 so they pop visually.
+    const violCls = (Number(t.violations) || 0) > 0 ? 'pr-delta-neg' : '';
+    wrap.innerHTML =
+        tile('Total Calls',  fmtNumber(t.totalCalls    || 0))
+      + tile('Answered',     fmtNumber(t.totalAnswered || 0))
+      + tile('Abandoned',    fmtNumber(t.abandoned     || 0))
+      + tile('Abandoned %',  String(t.abandonedPctStr  || '0.00%'))
+      + tile('Longest Wait', String(t.longestWait      || '0:00:00'))
+      + tile('Avg Answer',   String(t.avgAnswer        || '0:00:00'))
+      + tile('Violations',   fmtNumber(t.violations    || 0), violCls);
+  }
+
+  function qcdRenderSourceTable_(rows) {
+    const tbody = $('qcd-source-tbody');
+    if (!tbody) return;
+    if (!rows.length) {
+      tbody.innerHTML = '<tr><td colspan="8" class="al-empty">No QCD rows for this dept in the selected range.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = rows.map(function (r) {
+      const cls = r.isTotal ? 'qcd-row-total' : '';
+      return '<tr class="' + cls + '">'
+           +   '<td>' + escapeHtml(r.source) + '</td>'
+           +   '<td class="num">' + fmtNumber(r.totalCalls)    + '</td>'
+           +   '<td class="num">' + fmtNumber(r.totalAnswered) + '</td>'
+           +   '<td class="num">' + fmtNumber(r.abandoned)     + '</td>'
+           +   '<td class="num">' + escapeHtml(r.abandonedPctStr) + '</td>'
+           +   '<td class="num">' + escapeHtml(r.longestWait)  + '</td>'
+           +   '<td class="num">' + escapeHtml(r.avgAnswer)    + '</td>'
+           +   '<td class="num">' + fmtNumber(r.violations)    + '</td>'
+           + '</tr>';
+    }).join('');
+  }
+
+  function qcdRenderChart_(data) {
+    if (typeof Chart === 'undefined') return;
+    const canvas = document.getElementById('qcd-chart');
+    if (!canvas) return;
+    destroyOrphanedChartOnCanvas_('qcd-chart');
+    if (qcdChartInstance) { try { qcdChartInstance.destroy(); } catch (e) {} qcdChartInstance = null; }
+
+    const td = data.trendData || { labels: [], series: [] };
+    const labels = td.labels || [];
+    const metric = qcdActiveMetric;
+    const headerLabels = {
+      totalCalls:   'Total Calls (monthly)',
+      abandonedPct: 'Abandoned % (monthly)',
+      violations:   'Violations (monthly)',
+    };
+    $('qcd-chart-header').textContent = headerLabels[metric] || 'Trend';
+
+    let values, color, formatPct = false;
+    if (metric === 'totalCalls') {
+      values = (td.series || []).map(function (x) { return x.totalCalls; });
+      color  = (typeof THEME !== 'undefined' && THEME.accent) || '#4E79A7';
+    } else if (metric === 'abandonedPct') {
+      values = (td.series || []).map(function (x) { return Number((x.abandonedPct || 0).toFixed(2)); });
+      color  = (typeof THEME !== 'undefined' && THEME.warn) || '#c66b4b';
+      formatPct = true;
+    } else {
+      values = (td.series || []).map(function (x) { return x.violations; });
+      color  = (typeof THEME !== 'undefined' && THEME.warn) || '#c66b4b';
+    }
+
+    refreshChartTheme();
+    qcdChartInstance = new Chart(canvas, {
+      type: 'line',
+      data: {
+        labels: labels,
+        datasets: [{
+          label: headerLabels[metric] || metric,
+          data: values,
+          borderColor: color,
+          backgroundColor: color,
+          fill: false,
+          tension: 0.25,
+          pointRadius: 3,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          datalabels: { display: false },
+          legend:     { display: false },
+          tooltip: {
+            callbacks: {
+              label: function (ctx) {
+                if (formatPct) return ctx.formattedValue + '%';
+                return ctx.formattedValue;
+              },
+            },
+          },
+        },
+        scales: {
+          y: {
+            beginAtZero: true,
+            ticks: {
+              callback: function (v) { return formatPct ? v + '%' : v; },
+            },
+          },
+        },
+      },
+    });
+  }
+
+  // -- Export helpers (mirror IR/PR/CR pattern, simplified) ---------
+  function qcdBuildCanvas_(onDone) {
+    const root = $('qcd-results');
+    if (!root || typeof html2canvas === 'undefined') return;
+    // Capture the chart as an image so html2canvas can render it
+    // alongside the rest of the DOM (canvas elements don't make it
+    // into html2canvas output otherwise).
+    const cvs = document.getElementById('qcd-chart');
+    let dataUrl = null;
+    try { if (cvs) dataUrl = cvs.toDataURL('image/png'); } catch (e) { /* OK */ }
+    html2canvas(root, {
+      backgroundColor: getComputedStyle(document.body).getPropertyValue('--paper').trim() || '#ffffff',
+      scale: 2,
+      onclone: function (clonedDoc) {
+        const ab = clonedDoc.querySelector('#qcd-results .ir-action-buttons');
+        if (ab) ab.style.display = 'none';
+        const tabs = clonedDoc.getElementById('qcd-chart-tabs');
+        if (tabs) tabs.style.display = 'none';
+        const cClone = clonedDoc.getElementById('qcd-chart');
+        if (cClone && dataUrl) {
+          const img = clonedDoc.createElement('img');
+          img.src = dataUrl;
+          img.style.width = '100%';
+          img.style.height = 'auto';
+          cClone.parentNode.replaceChild(img, cClone);
+        }
+      },
+    }).then(onDone);
+  }
+
+  function qcdCopyImage_() {
+    qcdBuildCanvas_(function (canvas) {
+      canvas.toBlob(function (blob) {
+        if (navigator.clipboard && window.ClipboardItem) {
+          navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+        }
+      }, 'image/png');
+    });
+  }
+  function qcdEmailImage_() {
+    qcdBuildCanvas_(function (canvas) {
+      const dataUrl = canvas.toDataURL('image/png');
+      google.script.run
+        .withSuccessHandler(function () { /* OK */ })
+        .withFailureHandler(function (err) {
+          const el = $('qcd-results-status');
+          if (el) {
+            el.className = 'status status-error';
+            el.style.display = '';
+            el.textContent = 'Email failed: ' + (err && err.message ? err.message : err);
+          }
+        })
+        .sendQcdReportEmail({
+          imageBase64: dataUrl,
+          dateLabel:   qcdLastData && qcdLastData.dateLabel ? qcdLastData.dateLabel : '',
+        });
+    });
+  }
+  function qcdPrint_() {
+    qcdBuildCanvas_(function (canvas) {
+      const w = window.open('');
+      if (!w) return;
+      w.document.write('<img src="' + canvas.toDataURL('image/png') + '" style="width:100%">');
+      w.document.close();
+      w.focus();
+      w.print();
+    });
   }
 
   // Wait for DOM, then go.

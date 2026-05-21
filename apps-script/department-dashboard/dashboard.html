@@ -44,6 +44,8 @@
                     title="Department-level current-vs-prior-period deltas, share-of-answered pie, and 12-month team trend.">Performance Report</button>
             <button class="header-menu-item" id="compare-ranges-btn"    type="button" role="menuitem"
                     title="Side-by-side comparison of two arbitrary date ranges. Useful for year-over-year or pre/post-change analyses.">Compare Ranges</button>
+            <button class="header-menu-item" id="qcd-report-btn"        type="button" role="menuitem"
+                    title="Queue Call Detail report: dept-level totals, per-source breakdown, abandoned %, violations, and 12-month trend.">QCD Report</button>
           </div>
         </div>
         <div class="header-menu" id="admin-menu-wrap" data-admin-only style="display:none;">
@@ -815,6 +817,108 @@
           <summary class="cr-quiet-summary"></summary>
           <div id="cr-quiet-cards" class="cr-agent-cards"></div>
         </details>
+      </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="qcd-modal" class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="qcd-modal-title" style="display:none;">
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-panel modal-panel-wide" role="document">
+      <div class="modal-panel-header">
+        <button class="modal-close" id="qcd-close" type="button" aria-label="Close">&times;</button>
+        <div class="modal-kicker">Report</div>
+        <h2 id="qcd-modal-title">QCD Report</h2>
+      </div>
+      <div class="modal-panel-body">
+      <div id="qcd-form" class="ir-form">
+        <div class="ir-section-title">Date Range</div>
+        <div class="ir-row">
+          <div class="ir-col">
+            <label for="qcd-preset">Quick select</label>
+            <select id="qcd-preset">
+              <option value="custom">Custom range</option>
+              <option value="thisMonth">This month</option>
+              <option value="lastMonth">Last month</option>
+              <option value="last30">Last 30 days</option>
+              <option value="last3Months">Last 3 months</option>
+              <option value="last12Months">Last 12 months</option>
+              <option value="lastYear">Last year</option>
+            </select>
+          </div>
+          <div class="ir-col">
+            <label for="qcd-from">Start date</label>
+            <input type="date" id="qcd-from">
+          </div>
+          <div class="ir-col">
+            <label for="qcd-to">End date</label>
+            <input type="date" id="qcd-to">
+          </div>
+        </div>
+        <div class="ir-hint">
+          Reads from the <strong>QCD Historical Data</strong> sheet
+          (written daily by the import pipeline; one row per call
+          source per dept per day). KPIs are the per-day Total Calls
+          source roll-up; per-source breakdown is nested below.
+        </div>
+        <div id="qcd-form-error" class="status status-error" style="display:none;"></div>
+        <button class="btn" id="qcd-generate-btn" type="button">Generate report</button>
+      </div>
+
+      <div id="qcd-results" class="ir-results" style="display:none;">
+        <div class="ir-results-header">
+          <div class="ir-results-header-left">
+            <div class="ir-results-title-line">
+              <span class="ir-results-title" id="qcd-results-title">QCD Report</span>
+              <span class="ir-results-date" id="qcd-results-date"></span>
+            </div>
+          </div>
+          <div class="ir-action-buttons">
+            <button class="btn btn-secondary" id="qcd-back-btn" type="button">&laquo; Back</button>
+            <div class="ir-export-wrap">
+              <button class="btn btn-secondary" id="qcd-export-btn" type="button" aria-haspopup="menu" aria-expanded="false">
+                Export <span class="ir-export-caret">&#9662;</span>
+              </button>
+              <div class="ir-export-menu" id="qcd-export-menu" role="menu" style="display:none;">
+                <button type="button" role="menuitem" data-action="copy">Copy image</button>
+                <button type="button" role="menuitem" data-action="email">Email image</button>
+                <button type="button" role="menuitem" data-action="print">Print</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div id="qcd-results-status" class="status" style="display:none;"></div>
+
+        <div id="qcd-kpi-row" class="pr-kpi-row"></div>
+
+        <div class="al-section">
+          <div class="al-section-title">Per-source breakdown</div>
+          <table class="qcd-source-table">
+            <thead><tr>
+              <th>Source</th>
+              <th class="num">Total Calls</th>
+              <th class="num">Answered</th>
+              <th class="num">Abandoned</th>
+              <th class="num">Abandoned %</th>
+              <th class="num">Longest Wait</th>
+              <th class="num">Avg Answer</th>
+              <th class="num">Violations</th>
+            </tr></thead>
+            <tbody id="qcd-source-tbody"></tbody>
+          </table>
+        </div>
+
+        <div class="ir-chart-tabs" id="qcd-chart-tabs" role="tablist">
+          <button type="button" class="ir-tab active" data-metric="totalCalls" role="tab" aria-selected="true">Total Calls</button>
+          <button type="button" class="ir-tab" data-metric="abandonedPct" role="tab" aria-selected="false">Abandoned %</button>
+          <button type="button" class="ir-tab" data-metric="violations" role="tab" aria-selected="false">Violations</button>
+        </div>
+
+        <div class="ir-chart-wrap" id="qcd-chart-wrap">
+          <div class="ir-chart-header" id="qcd-chart-header">Total Calls (monthly)</div>
+          <div class="ir-chart-canvas-wrap"><canvas id="qcd-chart"></canvas></div>
+        </div>
       </div>
       </div>
     </div>

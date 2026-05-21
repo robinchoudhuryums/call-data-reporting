@@ -256,7 +256,8 @@ same time as the code change.
 | `PerformanceReport.gs` | `performance:vN:` | `v3` |
 | `CompareRangesReport.gs` | `compareRanges:vN:` | `v3` |
 | `MissedCallsReport.gs` | `missed:vN:` | `v10` |
-| `CompanyOverview.gs` | `companyOverview:vN` | `v8` |
+| `CompanyOverview.gs` | `companyOverview:vN` | `v9` |
+| `QCDReport.gs` | `qcd:vN:` | `v1` |
 
 `Alerts.gs` holds no cached compute. Preview/send always re-reads the
 DQE Historical Data for the chosen date.

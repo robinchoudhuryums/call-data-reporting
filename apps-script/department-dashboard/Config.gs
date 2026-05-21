@@ -135,6 +135,26 @@ const HISTORICAL_COLS = Object.freeze({
   CSR_AVG_ABD_WAIT: 34,  // AH - H:MM:SS
 });
 
+// Column positions in the "QCD Historical Data" sheet (1-indexed).
+// Sheet is written by apps-script/cdr-import/autoImport.js
+// (processIntegratedHistory's QCD block); schema is one row per
+// (dept, callSource, date) tuple. Total Calls source carries the
+// daily totals; other sources break down by call origin.
+const QCD_HISTORICAL_COLS = Object.freeze({
+  MONTH_YEAR:     1,     // A
+  WEEK:           2,     // B
+  DATE:           3,     // C
+  CALL_QUEUE:     4,     // D - dept-name-like ("CSR", "Sales", "Power", etc.)
+  CALL_SOURCE:    5,     // E - "Total Calls" | "CSR" | "Ad-campaign" | "New Call Menu" | "Non-CSR (internal)"
+  TOTAL_CALLS:    6,     // F
+  TOTAL_ANSWERED: 7,     // G
+  ABANDONED:      8,     // H
+  LONGEST_WAIT:   9,     // I - H:MM:SS
+  AVG_ANSWER:    10,     // J - H:MM:SS
+  ABANDONED_PCT: 11,     // K - 0..1 (decimal, NOT percent)
+  VIOLATIONS:    12,     // L - count of days/sources where abandonedPct > 5%
+});
+
 // Fallback timezone for formatting Date objects from spreadsheet
 // cells when the spreadsheet's own TZ isn't passed explicitly.
 // Production reads in computeSummary_ pass the spreadsheet's TZ

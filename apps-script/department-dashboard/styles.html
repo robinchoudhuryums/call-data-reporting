@@ -2309,6 +2309,45 @@
 
   /* Config table + log table + results table share base
      treatment so the alerts modal reads as a single panel. */
+  /* QCD per-source breakdown table. Same shape as .al-config-table
+     so the dashboard's existing table styling carries over; the
+     Total Calls row is bolded via .qcd-row-total. */
+  .qcd-source-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    background: var(--paper-card);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    overflow: hidden;
+    margin: 8px 0 16px;
+  }
+  .qcd-source-table th {
+    text-align: left;
+    padding: 8px 12px;
+    background: var(--paper-2);
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    border-bottom: 1px solid var(--line);
+  }
+  .qcd-source-table th.num,
+  .qcd-source-table td.num {
+    text-align: right;
+    font-family: var(--mono);
+  }
+  .qcd-source-table td {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--line);
+  }
+  .qcd-source-table tr:last-child td { border-bottom: none; }
+  .qcd-source-table .qcd-row-total td {
+    font-weight: 700;
+    background: var(--accent-soft);
+  }
+
   .al-config-table, .al-log-table, .al-results-table {
     width: 100%;
     border-collapse: collapse;
@@ -2709,6 +2748,34 @@
   }
   .ov-wow-driver-up   { color: var(--good); }
   .ov-wow-driver-down { color: var(--warn); }
+
+  /* QCD flag caption next to the WoW driver. Renders only when the
+     dept has QCD violations OR elevated abandoned %. Two tiers:
+     violation (red) and elevated (orange/warn). Quiet otherwise. */
+  .ov-qcd-flag {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    font-weight: 500;
+    padding: 2px 7px;
+    border-radius: 999px;
+    margin-left: 6px;
+    vertical-align: middle;
+    white-space: nowrap;
+    border: 1px solid var(--line);
+  }
+  .ov-qcd-violation {
+    color: var(--warn);
+    background: var(--warn-soft);
+    border-color: var(--warn);
+  }
+  .ov-qcd-elevated {
+    color: var(--muted);
+    background: var(--paper-2);
+    border-color: var(--line);
+  }
 
   /* Alert pill: shown on the tile when this dept triggered a sent
      low-answer-rate alert on the latest data date. Compact red
