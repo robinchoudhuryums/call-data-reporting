@@ -56,6 +56,8 @@ const SHEETS = Object.freeze({
   ALERT_LOG: 'Alert Log',
   PIPELINE_HEALTH: 'Pipeline Health',
   DIGEST_CONFIG: 'Digest Config',
+  AGENT_ALIAS_OVERRIDES: 'Agent Alias Overrides',
+  ORPHAN_FIX_LOG: 'Orphan Fix Log',
 });
 
 const ACCESS_CONTROL_HEADERS = Object.freeze(['Email', 'Department', 'Notes']);
@@ -81,6 +83,25 @@ const PIPELINE_HEALTH_HEADERS = Object.freeze([
 // no in-app form.
 const DIGEST_CONFIG_HEADERS = Object.freeze([
   'Email', 'Department', 'Cadence', 'Active', 'Notes',
+]);
+// Agent Alias Overrides: persistent rename map used by the CDR
+// pipeline's loadRosterCanonicalNames_ on every build. Each row
+// says "if you see this raw name from the CDR feed, write it under
+// this canonical roster name." Maintained by admins via the Orphan
+// Fix modal; manual edits via the sheet are also fine.
+//   Old Name      = the raw name we keep seeing as an orphan
+//   Canonical Name = the roster name to consolidate it under
+//   Active         = TRUE/FALSE (pause without deleting)
+const AGENT_ALIAS_OVERRIDES_HEADERS = Object.freeze([
+  'Old Name', 'Canonical Name', 'Active', 'Added By', 'Added At', 'Notes',
+]);
+// Orphan Fix Log: append-only audit trail of admin-driven orphan
+// fixes (alias adds + backfill renames). Affected Rows is the
+// number of DQE Historical Data rows changed by a backfill rename,
+// 0 for alias-only additions.
+const ORPHAN_FIX_LOG_HEADERS = Object.freeze([
+  'Timestamp', 'Admin', 'Action', 'From Name', 'To Name',
+  'Affected Rows', 'Notes',
 ]);
 
 // Layout of the "DO NOT EDIT!" roster sheet. Centralized so a future

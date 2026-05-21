@@ -454,6 +454,7 @@
     initPerformanceReport();
     initCompareRanges();
     initAlerts();
+    initOrphanFix();
 
     // Fetch the most recent date with data in DQE Historical Data
     // and snap From/To to that date. Defers the initial table
@@ -6682,6 +6683,239 @@
         alSetRunStatus_('error', 'Uninstall failed: ' + (err && err.message ? err.message : String(err)));
       })
       .uninstallAlertTrigger();
+  }
+
+  // -- Orphan Fix modal (admin-only) ----------------------------------
+  // The only admin UI that triggers WRITES from the dashboard. The
+  // server-side OrphanFix.gs enforces the security model (assertAdmin
+  // + input validation + LockService + audit log); this client is
+  // just the form layer.
+
+  let ofLastInit = null;
+
+  function initOrphanFix() {
+    const btn   = $('orphan-fix-btn');
+    const modal = $('orphan-fix-modal');
+    if (!btn || !modal) return;
+
+    const closeBtn = modal.querySelector('.modal-close');
+    const backdrop = modal.querySelector('[data-close]');
+
+    function openModal() {
+      modal.style.display = '';
+      modal.setAttribute('aria-hidden', 'false');
+      document.body.style.overflow = 'hidden';
+      document.addEventListener('keydown', onKeyDown);
+      if (closeBtn) closeBtn.focus();
+      ofLoadInit_();
+    }
+    function closeModal() {
+      modal.style.display = 'none';
+      modal.setAttribute('aria-hidden', 'true');
+      document.body.style.overflow = '';
+      document.removeEventListener('keydown', onKeyDown);
+      btn.focus();
+    }
+    function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
+
+    btn.addEventListener('click', openModal);
+    if (closeBtn) closeBtn.addEventListener('click', closeModal);
+    if (backdrop) backdrop.addEventListener('click', closeModal);
+  }
+
+  function ofLoadInit_() {
+    $('of-loading').style.display = '';
+    $('of-body').style.display = 'none';
+    ofSetStatus_(null);
+    google.script.run
+      .withSuccessHandler(function (data) {
+        $('of-loading').style.display = 'none';
+        $('of-body').style.display = '';
+        ofLastInit = data || { orphans: [], rosterNames: [], aliases: [], log: [] };
+        ofRender_(ofLastInit);
+      })
+      .withFailureHandler(function (err) {
+        $('of-loading').textContent = 'Error: '
+          + (err && err.message ? err.message : String(err));
+      })
+      .getOrphanFixInit();
+  }
+
+  function ofRender_(data) {
+    if (data.spreadsheetUrl) {
+      const link = $('of-open-sheet');
+      if (link) link.href = data.spreadsheetUrl;
+    }
+    ofRenderOrphans_(data.orphans || [], data.rosterNames || []);
+    ofRenderAliases_(data.aliases || []);
+    ofRenderLog_(data.log || []);
+  }
+
+  function ofRenderOrphans_(orphans, rosterNames) {
+    const tbody = $('of-orphans-tbody');
+    if (!tbody) return;
+    if (!orphans.length) {
+      tbody.innerHTML = '<tr><td colspan="6" class="al-empty">'
+        + 'No orphans in the last 180 days. Every agent name in DQE '
+        + 'Historical Data maps to a roster entry. &#x1F389;'
+        + '</td></tr>';
+      return;
+    }
+    // Build the roster-name <option> list once; reused per row.
+    const optionsHtml = '<option value="">(pick canonical name)</option>'
+      + rosterNames.map(function (n) {
+          return '<option value="' + escapeHtml(n) + '">' + escapeHtml(n) + '</option>';
+        }).join('');
+
+    tbody.innerHTML = orphans.map(function (o, idx) {
+      const exts = (o.sampleExts || []).join(', ') || '<span class="al-empty-inline">-</span>';
+      return '<tr data-orphan-idx="' + idx + '">'
+           +   '<td>' + escapeHtml(o.name) + '</td>'
+           +   '<td class="num">' + o.rows + '</td>'
+           +   '<td>' + escapeHtml(o.lastSeen || '') + '</td>'
+           +   '<td>' + exts + '</td>'
+           +   '<td><select class="of-row-select" data-idx="' + idx + '">'
+           +     optionsHtml
+           +     '</select></td>'
+           +   '<td><button type="button" class="btn btn-secondary of-row-apply" '
+           +     'data-idx="' + idx + '" disabled>Apply</button></td>'
+           + '</tr>';
+    }).join('');
+
+    // Wire selects to enable Apply when a non-empty value is chosen,
+    // and Apply buttons to fire the rename.
+    tbody.querySelectorAll('.of-row-select').forEach(function (sel) {
+      sel.addEventListener('change', function () {
+        const idx = sel.getAttribute('data-idx');
+        const applyBtn = tbody.querySelector('.of-row-apply[data-idx="' + idx + '"]');
+        if (applyBtn) applyBtn.disabled = !sel.value;
+      });
+    });
+    tbody.querySelectorAll('.of-row-apply').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        const idx = Number(btn.getAttribute('data-idx'));
+        const orphan = (ofLastInit.orphans || [])[idx];
+        const sel = tbody.querySelector('.of-row-select[data-idx="' + idx + '"]');
+        const canonical = sel ? sel.value : '';
+        if (!orphan || !canonical) return;
+        ofConfirmAndApply_(btn, orphan, canonical);
+      });
+    });
+  }
+
+  function ofConfirmAndApply_(btn, orphan, canonical) {
+    const msg = 'Rename "' + orphan.name + '" to "' + canonical + '" in '
+              + orphan.rows + ' historical row' + (orphan.rows === 1 ? '' : 's')
+              + '?\n\nThis modifies past data in DQE Historical Data. An '
+              + 'alias will also be added to Agent Alias Overrides so the '
+              + 'next daily build keeps the mapping. The action is audited '
+              + 'to Orphan Fix Log.';
+    if (!window.confirm(msg)) return;
+
+    btn.disabled = true;
+    const prev = btn.textContent; btn.textContent = 'Applying…';
+    ofSetStatus_('loading', 'Applying rename: ' + orphan.name + ' -> ' + canonical + '…');
+
+    google.script.run
+      .withSuccessHandler(function (res) {
+        btn.disabled = false; btn.textContent = prev;
+        const n = (res && res.renamed) || 0;
+        ofSetStatus_('success',
+          'Renamed ' + n + ' row' + (n === 1 ? '' : 's')
+          + '. Alias added so future imports map correctly. '
+          + 'Dashboard caches may take up to 5 minutes to reflect the change.');
+        ofLoadInit_();
+      })
+      .withFailureHandler(function (err) {
+        btn.disabled = false; btn.textContent = prev;
+        ofSetStatus_('error', 'Rename failed: '
+          + (err && err.message ? err.message : String(err)));
+      })
+      .applyOrphanRename({
+        fromName:     orphan.name,
+        toName:       canonical,
+        alsoAddAlias: true,
+        notes:        '',
+      });
+  }
+
+  function ofRenderAliases_(aliases) {
+    const tbody = $('of-aliases-tbody');
+    if (!tbody) return;
+    if (!aliases.length) {
+      tbody.innerHTML = '<tr><td colspan="6" class="al-empty">'
+        + 'No aliases yet. Aliases get added automatically when you Apply '
+        + 'a rename above.'
+        + '</td></tr>';
+      return;
+    }
+    tbody.innerHTML = aliases.map(function (a) {
+      const activeCls = a.active ? 'al-active-yes' : 'al-active-no';
+      const activeLbl = a.active ? 'Yes' : 'No';
+      const removeBtn = a.active
+        ? '<button type="button" class="link-btn of-alias-remove" '
+          + 'data-old="' + escapeHtml(a.oldName) + '" title="Deactivate this alias">Deactivate</button>'
+        : '';
+      return '<tr>'
+           +   '<td>' + escapeHtml(a.oldName) + '</td>'
+           +   '<td>' + escapeHtml(a.canonicalName) + '</td>'
+           +   '<td><span class="al-active ' + activeCls + '">' + activeLbl + '</span></td>'
+           +   '<td>' + escapeHtml(a.addedBy || '') + '</td>'
+           +   '<td>' + escapeHtml(a.addedAt || '') + '</td>'
+           +   '<td>' + removeBtn + '</td>'
+           + '</tr>';
+    }).join('');
+
+    tbody.querySelectorAll('.of-alias-remove').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        const oldName = btn.getAttribute('data-old');
+        if (!window.confirm('Deactivate alias for "' + oldName + '"? The pipeline will stop mapping this raw name on the next build. Historical rows that were already renamed stay renamed.')) return;
+        btn.disabled = true;
+        ofSetStatus_('loading', 'Deactivating alias…');
+        google.script.run
+          .withSuccessHandler(function (res) {
+            const n = (res && res.removed) || 0;
+            ofSetStatus_('success', 'Deactivated ' + n + ' alias row'
+              + (n === 1 ? '' : 's') + '.');
+            ofLoadInit_();
+          })
+          .withFailureHandler(function (err) {
+            btn.disabled = false;
+            ofSetStatus_('error', 'Deactivate failed: '
+              + (err && err.message ? err.message : String(err)));
+          })
+          .removeAgentAlias({ oldName: oldName });
+      });
+    });
+  }
+
+  function ofRenderLog_(log) {
+    const tbody = $('of-log-tbody');
+    if (!tbody) return;
+    if (!log.length) {
+      tbody.innerHTML = '<tr><td colspan="7" class="al-empty">No orphan-fix actions logged yet.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = log.map(function (e) {
+      return '<tr>'
+           +   '<td>' + escapeHtml(e.timestamp || '') + '</td>'
+           +   '<td>' + escapeHtml(e.admin || '')     + '</td>'
+           +   '<td>' + escapeHtml(e.action || '')    + '</td>'
+           +   '<td>' + escapeHtml(e.fromName || '')  + '</td>'
+           +   '<td>' + escapeHtml(e.toName || '')    + '</td>'
+           +   '<td class="num">' + (e.affectedRows == null ? '-' : escapeHtml(String(e.affectedRows))) + '</td>'
+           +   '<td>' + escapeHtml(e.notes || '')     + '</td>'
+           + '</tr>';
+    }).join('');
+  }
+
+  function ofSetStatus_(kind, msg) {
+    const el = $('of-run-status');
+    if (!el) return;
+    if (!kind) { el.style.display = 'none'; el.textContent = ''; return; }
+    el.className = 'status status-' + kind;
+    el.textContent = msg;
+    el.style.display = '';
   }
 
   // Wait for DOM, then go.

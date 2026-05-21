@@ -60,11 +60,17 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
 - **`clasp push -f` does NOT delete remote files** that are absent locally.
   Removing files from an Apps Script project requires manual deletion in
   the web editor.
-- **No write paths via `google.script.run`**. Every public-callable
-  function must be read-only. Helpers that touch spreadsheet state end in
-  `_` — Apps Script blocks trailing-underscore names from RPC. Belt-and-
-  suspenders against the "Execute as: Me" model letting any visitor reach
-  through Robin's permissions.
+- **Public write paths are admin-only and live in `OrphanFix.gs` only.**
+  Every other public-callable function is read-only; helpers that
+  touch spreadsheet state end in `_` so Apps Script blocks them
+  from RPC. Belt-and-suspenders against the "Execute as: Me" model
+  letting any visitor reach through Robin's permissions. The
+  carve-out for `OrphanFix.gs` is admin-gated (`assertAdmin_()`
+  first), input-validated (no queue-sentinel names, length cap,
+  must-be-on-some-roster for the canonical destination), serialized
+  via `LockService`, and every action is audited to the
+  `Orphan Fix Log` sheet. **Do not add new public write functions
+  outside `OrphanFix.gs` without the same four mitigations.**
 - **Roster cells embed extensions**: `DO NOT EDIT!` cells follow
   `"Name, ext1, ext2"`. Take everything before the first comma as the name;
   digit-only tokens after are queue extensions.
@@ -252,11 +258,13 @@ When something looks wrong, before assuming a code bug, check:
    2026-03-09: TTT should be `0:15:03`, ATT should be `0:03:01`.
 6. After pulling new code that adds sheets, was `setup()` re-run? It
    creates `Access Control`, `Alert Config`, `Alert Log`,
-   `Pipeline Health`, and `Digest Config` -- whichever are missing.
-   Idempotent on re-runs (existing data untouched). Without re-running
-   setup() after a fresh pull, downstream writers (Pipeline Health
-   appends, Digest config reads) silently no-op against the missing
-   sheet.
+   `Pipeline Health`, `Digest Config`, `Agent Alias Overrides`, and
+   `Orphan Fix Log` -- whichever are missing. Idempotent on re-runs
+   (existing data untouched). Without re-running setup() after a
+   fresh pull, downstream writers (Pipeline Health appends, Digest
+   config reads, Orphan Fix log appends) silently no-op against
+   the missing sheet, and the Orphan Fix modal will throw "sheet
+   missing -- run setup()" on first write.
 7. For alerts: is the `DASHBOARD_URL` Script Property set? Without it,
    alert emails still send — they just omit the "Open Dashboard" link.
 8. Are all three trigger types installed? Three independent triggers
@@ -312,7 +320,7 @@ Data Accuracy (DQE), Access Control Integrity, Source Pipeline Reliability, Migr
 
 ### Subsystems
 Department Dashboard:
-  apps-script/department-dashboard/Auth.gs, apps-script/department-dashboard/Code.gs, apps-script/department-dashboard/Config.gs, apps-script/department-dashboard/Data.gs, apps-script/department-dashboard/Diagnostics.gs, apps-script/department-dashboard/Setup.gs, apps-script/department-dashboard/MissedCallsReport.gs, apps-script/department-dashboard/IndividualReport.gs, apps-script/department-dashboard/PerformanceReport.gs, apps-script/department-dashboard/CompareRangesReport.gs, apps-script/department-dashboard/Alerts.gs, apps-script/department-dashboard/CompanyOverview.gs, apps-script/department-dashboard/Digest.gs, apps-script/department-dashboard/access_denied.html, apps-script/department-dashboard/dashboard.html, apps-script/department-dashboard/script.html, apps-script/department-dashboard/styles.html, apps-script/department-dashboard/appsscript.json
+  apps-script/department-dashboard/Auth.gs, apps-script/department-dashboard/Code.gs, apps-script/department-dashboard/Config.gs, apps-script/department-dashboard/Data.gs, apps-script/department-dashboard/Diagnostics.gs, apps-script/department-dashboard/Setup.gs, apps-script/department-dashboard/MissedCallsReport.gs, apps-script/department-dashboard/IndividualReport.gs, apps-script/department-dashboard/PerformanceReport.gs, apps-script/department-dashboard/CompareRangesReport.gs, apps-script/department-dashboard/Alerts.gs, apps-script/department-dashboard/CompanyOverview.gs, apps-script/department-dashboard/Digest.gs, apps-script/department-dashboard/OrphanFix.gs, apps-script/department-dashboard/access_denied.html, apps-script/department-dashboard/dashboard.html, apps-script/department-dashboard/script.html, apps-script/department-dashboard/styles.html, apps-script/department-dashboard/appsscript.json
 
 CDR DQE Pipeline:
   apps-script/cdr-report/buildDQEHistoricalData.js, apps-script/cdr-report/DQEdrilldown.js, apps-script/cdr-report/DQEDrilldownSidebar.html, apps-script/cdr-report/dataFilters.js, apps-script/cdr-report/CDR Tools menu.js, apps-script/cdr-report/appsscript.json
@@ -327,7 +335,7 @@ DQE Report Legacy:
   apps-script/dqe-report/DQEdashboard.js, apps-script/dqe-report/FAQGuide.html, apps-script/dqe-report/IndividualReport.js, apps-script/dqe-report/IndividualReportModal.html, apps-script/dqe-report/MissedCallsReport.js, apps-script/dqe-report/MissedReportModal.html, apps-script/dqe-report/MultiCompModal.html, apps-script/dqe-report/MultiComparisonTool.js, apps-script/dqe-report/SingleRangeReport.js, apps-script/dqe-report/SingleReportModal.html, apps-script/dqe-report/menu DQE Tools.js, apps-script/dqe-report/sendManualAlert.js, apps-script/dqe-report/showFAQ.js, apps-script/dqe-report/appsscript.json
 
 ### Invariant Library
-INV-01 | No public function (callable via google.script.run) writes to any spreadsheet; all write-capable helpers end in `_` so Apps Script blocks them from RPC. | Subsystem: Department Dashboard
+INV-01 | No public function (callable via google.script.run) writes to any spreadsheet EXCEPT the admin-only write path in `OrphanFix.gs` (`addAgentAlias`, `removeAgentAlias`, `applyOrphanRename`). Every other write-capable helper ends in `_` so Apps Script blocks it from RPC. The OrphanFix carve-out is gated by `assertAdmin_()` first, input-validated (queue-sentinel names rejected, length-capped, canonical destination must be on some roster), serialized by `LockService`, and audited to the `Orphan Fix Log` sheet. No new public write functions may be added outside `OrphanFix.gs` without the same four mitigations. | Subsystem: Department Dashboard
 INV-02 | Duration columns (TTT, ATT, AvgAbdWait, CSRAvgAbdWait) are read via getDisplayValues(), not getValue(), to bypass spreadsheet-vs-script TZ mismatch. | Subsystem: Department Dashboard
 INV-03 | DO NOT EDIT! roster cells follow the format "Name, ext1, ext2, …" — name is everything before the first comma; subsequent digit-only tokens are extensions. | Subsystem: Department Dashboard
 INV-04 | Agent-name match between DQE Historical Data Col C and DO NOT EDIT! roster cells is exact (case + whitespace sensitive); no alias normalization. | Subsystem: Department Dashboard
@@ -372,6 +380,8 @@ INV-42 | `refreshChartTheme()` (script.html) resolves every CSS custom property 
 INV-43 | Default From/To on the My Department page snaps to the most-recent ISO date present in DQE Historical Data, via `Data.gs::getLatestDataDate()` (cached under `latestDate:v1`). Falls back to today on failure. Replaces the legacy "current-month-to-date" default so the table isn't empty when a manager opens the dashboard before today's ingest has run. | Subsystem: Department Dashboard
 INV-44 | `Pipeline Health` sheet columns: `Timestamp \| Step \| Status \| Rows \| Duration (ms) \| Notes`. Schema pinned in `Config.gs::PIPELINE_HEALTH_HEADERS`; sheet is idempotently created by `setup()`. Append-only; never overwritten. Writers are `logPipelineHealth_` helpers in `apps-script/cdr-import/autoImport.js` and `apps-script/cdr-report/buildDQEHistoricalData.js` (cross-project; each owns its own copy of the helper). All writes are best-effort -- a logging failure must never block or fail the pipeline. Reader is `Alerts.gs::readPipelineHealth_(maxRows)`; UI surfaces the last 20 entries in the Alerts modal. Step values are free-form (currently `autoImport`, `buildDQE`); Status is `success` or `failure`. | Subsystem: Department Dashboard (+ CDR Import / CDR DQE Pipeline for the writers)
 INV-45 | `Digest Config` sheet columns: `Email \| Department \| Cadence \| Active \| Notes`. Schema pinned in `Config.gs::DIGEST_CONFIG_HEADERS`; sheet is idempotently created by `setup()`. Cadence is `daily` (sends each weekday morning for the previous day's data; weekends skipped) or `weekly` (sends Monday 8 AM for the prior Mon-Fri window). `Digest.gs` is the engine; every public callable (`getDigestsInit`, `sendPreviewDigest`, `installDigestTriggers`, `uninstallDigestTriggers`) starts with `assertAdmin_`. Trigger entry points (`runDailyDigests_`, `runWeeklyDigests_`) end in `_` so `google.script.run` can't reach them but ScriptApp dispatch still calls them by name. Trigger lifecycle is managed via the Alerts modal's "Manager Digest Subscribers" section. | Subsystem: Department Dashboard
+INV-46 | `Agent Alias Overrides` sheet columns: `Old Name \| Canonical Name \| Active \| Added By \| Added At \| Notes`. Schema pinned in `Config.gs::AGENT_ALIAS_OVERRIDES_HEADERS`; sheet is idempotently created by `setup()`. Soft-coupling across two Apps Script projects: the dashboard's `OrphanFix.gs` writes rows here; the CDR Report project's `buildDQEHistoricalData.js::loadRosterCanonicalNames_` reads them on every build and folds them into the canonicalization map. The pipeline-side check is best-effort (missing/empty sheet leaves the build's behavior unchanged) so an unsynced cdr-report deploy doesn't break the dashboard's UI. Aliases with `Active=FALSE` are skipped by the pipeline. | Subsystem: Department Dashboard + CDR DQE Pipeline
+INV-47 | `Orphan Fix Log` sheet columns: `Timestamp \| Admin \| Action \| From Name \| To Name \| Affected Rows \| Notes`. Schema pinned in `Config.gs::ORPHAN_FIX_LOG_HEADERS`; sheet is idempotently created by `setup()`. Append-only; never overwritten. `OrphanFix.gs::appendOrphanFixLog_` writes one row per action. Action values: `alias-add`, `alias-remove`, `rename`, `rename+alias`. Affected Rows is the count of DQE Historical Data rows modified by a `rename` (0 for alias-only actions). | Subsystem: Department Dashboard
 
 ### Policy Configuration
 Policy threshold: 6/10
@@ -512,7 +522,7 @@ S22 | setup() creates all dashboard-managed sheets idempotently | Subsystem: Dep
   Steps:
     - In a fresh spreadsheet without any of those sheets, run setup() once.
     - Run setup() again.
-  Expected: first run creates Access Control + Alert Config + Alert Log + Pipeline Health + Digest Config (each with their header row + frozen first row); second run logs "already exists, skipping" for all five -- no data overwritten on either run. New columns added in a later code change to an existing sheet are NOT applied by setup() -- the sheet's existence short-circuits ensureSheet_.
+  Expected: first run creates Access Control + Alert Config + Alert Log + Pipeline Health + Digest Config + Agent Alias Overrides + Orphan Fix Log (each with their header row + frozen first row); second run logs "already exists, skipping" for all seven -- no data overwritten on either run. New columns added in a later code change to an existing sheet are NOT applied by setup() -- the sheet's existence short-circuits ensureSheet_.
 
 S23 | Overview is the default landing + tile click routes admins | Subsystem: Department Dashboard
   Steps:
@@ -572,6 +582,18 @@ S30 | Header freshness pill renders and goes stale | Subsystem: Department Dashb
     - If the latest date is more than 36h old (e.g. nothing ingested Friday + today is Sunday), the pill picks up the `.is-stale` class and tints warm orange.
     - Hover the pill; the title attribute explains what it represents.
   Expected: pill is hidden on fetch failure or empty data; visible and color-coded otherwise. Updates only on page load -- not live.
+
+S31 | Orphan Fix end-to-end (admin) | Subsystem: Department Dashboard + CDR DQE Pipeline
+  Steps:
+    - As admin, open the dashboard. Admin menu -> Orphan Fix.
+    - Confirm the modal lists orphan agent names from DQE Historical Data (or "no orphans" if everyone canonicalizes cleanly).
+    - For one orphan, pick a canonical roster name from the dropdown; click Apply; confirm the prompt.
+    - Server returns the rename count; the orphan row disappears from the list on refresh; "Current aliases" gains a new row with Active=Yes; "Recent fix log" gains a `rename+alias` entry.
+    - Open the CDR Report spreadsheet -> DQE Historical Data; confirm the Agent Name column for the affected rows now shows the canonical name.
+    - As a non-admin manager, in the browser console: `google.script.run.withSuccessHandler(console.log).withFailureHandler(console.error).applyOrphanRename({fromName:'X', toName:'Y'})`.
+    - Expected: non-admin call throws "Alerts are admin-only." (the assertAdmin_ guard); admin Apply succeeds; renamed rows appear in subsequent dashboard reports after the 5-min cache TTL; the next daily DQE build does not re-introduce the orphan because the alias is honored by loadRosterCanonicalNames_.
+    - Negative test: try renaming to a name not on any dept's roster (e.g. "Garbage Name"); expected: "X is not on any dept roster..." error.
+    - Negative test: try renaming a queue-sentinel ("A_Q_CSR") as fromName or toName; expected: "Queue-sentinel names cannot be renamed..." error.
 
 ### Frozen Subsystems
 - DQE Report Legacy — manager-facing reports in `apps-script/dqe-report/`. Frozen because migration to Department Dashboard is complete: Individual Report, Performance Report, Compare Ranges, Missed Calls Report, and Low Answer Rate Alerts all live in the dashboard. Replacement: Department Dashboard. Awaiting decommission of the legacy spreadsheet. Unfreeze only if a bug is found in legacy that affects production decisions before the spreadsheet is retired.

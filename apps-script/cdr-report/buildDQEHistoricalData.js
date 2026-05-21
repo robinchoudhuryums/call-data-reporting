@@ -80,6 +80,14 @@ function buildDQEHistoricalData(rawSheet, dqeSheet) {
 
   function canonicalizeAgentName(rawName) {
     if (!rawName) return rawName;
+    // Admin-curated overrides (Agent Alias Overrides sheet) take
+    // precedence over both the roster-exact match and the paren
+    // strip. Lets an admin rename a typo-orphan like "Sarah Q. Smith"
+    // -> "Sarah Smith" without having to add the orphan form into
+    // the roster cell. Loaded inside ROSTER_CANONICAL.aliasMap.
+    if (ROSTER_CANONICAL.aliasMap && ROSTER_CANONICAL.aliasMap[rawName]) {
+      return ROSTER_CANONICAL.aliasMap[rawName];
+    }
     if (ROSTER_CANONICAL.canonicalSet[rawName]) return rawName;
     const stripped = stripParens_(rawName);
     if (!stripped) return rawName;
@@ -699,7 +707,7 @@ function logPipelineHealth_(ss, event) {
 // Agent cells are formatted "Name, ext1, ext2" -- name is everything
 // before the first comma.
 function loadRosterCanonicalNames_(anySheet) {
-  const empty = { canonicalSet: {}, strippedMap: {} };
+  const empty = { canonicalSet: {}, strippedMap: {}, aliasMap: {} };
   try {
     const ss = anySheet ? anySheet.getParent() : SpreadsheetApp.getActive();
     const sheet = ss.getSheetByName('DO NOT EDIT!');
@@ -738,7 +746,40 @@ function loadRosterCanonicalNames_(anySheet) {
         }
       }
     }
-    return { canonicalSet: canonicalSet, strippedMap: strippedMap };
+
+    // Admin-curated alias overrides. Schema owned by the dashboard's
+    // Config.gs AGENT_ALIAS_OVERRIDES_HEADERS: Old Name | Canonical
+    // Name | Active | Added By | Added At | Notes. The dashboard's
+    // Orphan Fix modal writes here; we read at build time so future
+    // imports get canonicalized without further admin action.
+    // Best-effort: missing or empty sheet leaves aliasMap = {} and
+    // the build behaves exactly as before this feature shipped.
+    const aliasMap = {};
+    try {
+      const aliasSheet = ss.getSheetByName('Agent Alias Overrides');
+      if (aliasSheet) {
+        const aLastRow = aliasSheet.getLastRow();
+        if (aLastRow >= 2) {
+          const aRows = aliasSheet.getRange(2, 1, aLastRow - 1, 3).getValues();
+          for (let i = 0; i < aRows.length; i++) {
+            const oldName = String(aRows[i][0] || '').trim();
+            const canonical = String(aRows[i][1] || '').trim();
+            if (!oldName || !canonical) continue;
+            const rawActive = aRows[i][2];
+            const active = !(rawActive === false || rawActive === 'FALSE'
+                          || rawActive === 'false' || rawActive === 0
+                          || rawActive === 'no' || rawActive === 'No');
+            if (!active) continue;
+            // First write wins on duplicate oldName entries.
+            if (!aliasMap[oldName]) aliasMap[oldName] = canonical;
+          }
+        }
+      }
+    } catch (aliasErr) {
+      Logger.log('loadRosterCanonicalNames_: alias overrides read failed: %s', aliasErr);
+    }
+
+    return { canonicalSet: canonicalSet, strippedMap: strippedMap, aliasMap: aliasMap };
   } catch (e) {
     Logger.log('loadRosterCanonicalNames_ failed: %s', e);
     return empty;
