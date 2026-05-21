@@ -165,10 +165,15 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
 - **`<?!= JSON.stringify(x) ?>` is not script-tag safe.** Apps
   Script's force-print scriptlet doesn't HTML-escape, and
   `JSON.stringify` does not escape `</script>` inside string
-  values. Any future template injection of server data into a
-  `<script>` block must chain `.replace(/</g, '\\u003c')` after
-  `JSON.stringify` -- see `dashboard.html:window.__USER__` for
-  the canonical pattern.
+  values. Do the escape SERVER-SIDE in `.gs` so the troublesome
+  pattern never appears in the `.html` template file -- not even
+  in comments. The HTML parser closes a `<script>` block on the
+  literal end-of-script-tag pattern wherever it appears
+  (including inside JS line comments inside the same script
+  block, which is how an earlier inline-replace bug bit us).
+  Canonical pattern: `tmpl.userJson = JSON.stringify(obj).replace(/</g, '\\u003c')`
+  in `Code.gs::renderDashboard_`, then `window.__USER__ = <?!= userJson ?>;`
+  in `dashboard.html`.
 - **`ADMIN_EMAILS` is resolved at request time.** Membership checks
   and admin recipient lookups go through `Config.gs::getAdminEmails_()`,
   which reads the `ADMIN_EMAILS` Script Property (comma-separated
