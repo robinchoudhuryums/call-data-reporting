@@ -1249,6 +1249,18 @@ if (!skipCDR && obcHD) {
     }
     cdrCount = raw.length;
     summaryLog.push(`- CDR HD: Archived ${cdrCount} Rows`);
+    // Per-output Pipeline Health row so a partial failure (e.g. CDR
+    // writes succeed but QCD throws) surfaces immediately in the
+    // dashboard's Alerts modal. Best-effort; never blocks.
+    try {
+      logPipelineHealth_(targetSS, {
+        step: 'processIntegratedHistory:CDR',
+        status: 'success',
+        rows: cdrCount,
+        durationMs: null,
+        notes: dateObj.toDateString(),
+      });
+    } catch (logErr) { /* best-effort */ }
   }
 }
 
@@ -1278,6 +1290,15 @@ if (!skipCDR && obcHD) {
       salesHD.getRange(next, 1, finalRows.length, 11).setValues(finalRows);
       qpathCount = finalRows.length;
       summaryLog.push(`- Q Path HD: Appended ${qpathCount} Summary Rows`);
+      try {
+        logPipelineHealth_(targetSS, {
+          step: 'processIntegratedHistory:QPath',
+          status: 'success',
+          rows: qpathCount,
+          durationMs: null,
+          notes: dateObj.toDateString(),
+        });
+      } catch (logErr) { /* best-effort */ }
     }
   }
 
@@ -1299,6 +1320,15 @@ if (!skipCDR && obcHD) {
       qcdHD.getRange(qcdHD.getLastRow() + 1, 1, qcdBatch.length, 12).setValues(qcdBatch);
       qcdCount = qcdBatch.length;
       summaryLog.push(`- QCD HD: Archived ${qcdCount} Rows`);
+      try {
+        logPipelineHealth_(targetSS, {
+          step: 'processIntegratedHistory:QCD',
+          status: 'success',
+          rows: qcdCount,
+          durationMs: null,
+          notes: dateObj.toDateString(),
+        });
+      } catch (logErr) { /* best-effort */ }
 
             // Phase 3: mirror to Neon. Failure is logged + emailed; sheet write stands.
       try {
@@ -1344,6 +1374,15 @@ if (!skipCDR && obcHD) {
       csrHD.getRange(csrHD.getLastRow() + 1, 1, csrBatch.length, 18).setValues(csrBatch);
       csrCount = csrBatch.length;
       summaryLog.push(`- CSR Transfer HD: Archived ${csrCount} Rows`);
+      try {
+        logPipelineHealth_(targetSS, {
+          step: 'processIntegratedHistory:CSR',
+          status: 'success',
+          rows: csrCount,
+          durationMs: null,
+          notes: dateObj.toDateString(),
+        });
+      } catch (logErr) { /* best-effort */ }
     }
   }
 

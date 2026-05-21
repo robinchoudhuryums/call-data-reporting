@@ -46,7 +46,10 @@
 // v8: dept.wow gains an optional `driver` field describing the
 //     per-agent change that most contributed to the WoW shift
 //     (Strategic 5 -- "what changed" insight on Overview tiles).
-const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v8';
+// v9: each dept gains a `qcd` field with the latest day's QCD
+//     snapshot (totalCalls / abandonedPct / violations) read from
+//     QCD Historical Data. Visible to everyone (no admin gate).
+const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v9';
 
 // Window (in days) over which we consider an agent "recently
 // active". Used as the denominator for the "X of Y agents" caption
@@ -287,6 +290,11 @@ function getCompanyOverview() {
   // their parent group (their volumes vary too much to use rung
   // for sub-ordering meaningfully).
   const alertedSet = computeAlertedDeptsForDate_(latestDate, ssTZ);
+  // Per-dept QCD snapshot read once for all depts; cheap (one extra
+  // sheet read of QCD Historical Data, scoped to the last 30 days).
+  // Returns dept -> { latestDate, totalCalls, abandonedPct,
+  // violations } or null if no QCD rows for that dept in window.
+  const qcdSnapshotsByDept = computeQcdSnapshots_(allDepts, trendStartIso, ssTZ);
   const formatDept = function (d) {
     const stats = deptStats[d];
     const ld = stats.latestDay;
@@ -318,6 +326,10 @@ function getCompanyOverview() {
         attFormatted:   formatSecondsHms_(att),
       },
       wow: computeWowDelta_(stats, latestDate),
+      // QCD snapshot from the most recent date in the trend window.
+      // Visible to everyone (no admin gate) -- managers see the same
+      // QCD numbers their own dept's full report shows.
+      qcd: qcdSnapshotsByDept[d] || null,
       trend: trend,
     };
   };
@@ -567,6 +579,60 @@ function computeWowDriver_(stats, curIsoSet, prevIsoSet, deltaPct) {
  * 200 log rows -- comfortably wider than any single day's worth of
  * dept alerts. Safe no-op if the Alert Log sheet is missing.
  */
+/**
+ * Reads QCD Historical Data and returns one snapshot per dept of
+ * the most recent day's `Total Calls` row within the trend window.
+ * Cheap: scans only rows where callSource === 'Total Calls' AND
+ * callQueue matches one of the dept names; returns the latest by
+ * date.
+ *
+ * Returns dept -> { date, totalCalls, abandoned, abandonedPct,
+ * violations } or absent when no QCD rows for that dept in window.
+ * Safe no-op if the QCD Historical Data sheet is missing.
+ */
+function computeQcdSnapshots_(allDepts, sinceIso, ssTZ) {
+  const out = {};
+  try {
+    const ss = openSpreadsheet_();
+    const sheet = ss.getSheetByName('QCD Historical Data');
+    if (!sheet) return out;
+    const lastRow = sheet.getLastRow();
+    if (lastRow < 2) return out;
+    const deptSet = {};
+    allDepts.forEach(function (d) { deptSet[d] = true; });
+    const tz = ssTZ || TZ;
+    const values = sheet.getRange(2, 1, lastRow - 1, 12).getValues();
+
+    // Iterate; keep the latest-by-date row per dept (Total Calls only).
+    for (let i = 0; i < values.length; i++) {
+      const r = values[i];
+      const source = String(r[QCD_HISTORICAL_COLS.CALL_SOURCE - 1] || '').trim();
+      if (source !== 'Total Calls') continue;
+      const dept = String(r[QCD_HISTORICAL_COLS.CALL_QUEUE - 1] || '').trim();
+      if (!deptSet[dept]) continue;
+      const dateIso = rowDateIso_(r[QCD_HISTORICAL_COLS.DATE - 1], tz);
+      if (!dateIso || dateIso < sinceIso) continue;
+      const existing = out[dept];
+      if (existing && existing.date >= dateIso) continue;
+      const totalCalls = Number(r[QCD_HISTORICAL_COLS.TOTAL_CALLS - 1]) || 0;
+      const abandoned  = Number(r[QCD_HISTORICAL_COLS.ABANDONED   - 1]) || 0;
+      const violations = Number(r[QCD_HISTORICAL_COLS.VIOLATIONS  - 1]) || 0;
+      const pct = totalCalls > 0 ? (abandoned / totalCalls) * 100 : 0;
+      out[dept] = {
+        date:             dateIso,
+        totalCalls:       totalCalls,
+        abandoned:        abandoned,
+        abandonedPct:     round1_(pct),
+        abandonedPctStr:  pct.toFixed(2) + '%',
+        violations:       violations,
+      };
+    }
+  } catch (e) {
+    Logger.log('computeQcdSnapshots_ failed: %s', e);
+  }
+  return out;
+}
+
 function computeAlertedDeptsForDate_(latestDate, ssTZ) {
   if (typeof readAlertLog_ !== 'function') return {};
   let log;
