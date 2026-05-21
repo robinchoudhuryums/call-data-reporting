@@ -90,7 +90,14 @@ clasp push -f
   introduces additional sheets.
 - Populate the `Access Control` sheet with one row per manager
   (Email | Department | Notes).
-- Add yourself as an admin email in `apps-script/department-dashboard/Config.gs` (`ADMIN_EMAILS`).
+- Add yourself to the admin list. Two options:
+  - **Preferred:** Project Settings → Script Properties → add
+    `ADMIN_EMAILS` set to a comma-separated list of admin emails.
+    Read at request time via `Config.gs::getAdminEmails_()`; adding
+    a new admin is a one-click edit, no redeploy.
+  - **Fallback:** edit `ADMIN_EMAILS_FALLBACK` in
+    `apps-script/department-dashboard/Config.gs` and redeploy.
+    Used only when the Script Property is unset.
 - Deploy as Web app: **Execute as: Me**, **Who has access: Anyone within
   [your domain]**.
 - After any push that adds a new OAuth scope to `appsscript.json` (e.g.

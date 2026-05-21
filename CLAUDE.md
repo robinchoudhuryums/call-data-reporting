@@ -145,6 +145,42 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   naturally. The hover tooltip on the caption shows all three
   numbers (today's active, recent active, full roster) so the
   denominator choice is transparent.
+- **Apps Script projects share one global scope across all .gs
+  files.** Multiple top-level `function onOpen()` (or any other
+  same-named global) declarations silently override each other --
+  the last-loaded file's definition wins. If a project needs more
+  than one menu, build them all from one `onOpen` (see
+  `cdr-report/CDR Tools menu.js` calling `installDQEDrilldownMenu_`).
+  The same pattern bit the cdr-report project before the F14 fix.
+- **`<?!= JSON.stringify(x) ?>` is not script-tag safe.** Apps
+  Script's force-print scriptlet doesn't HTML-escape, and
+  `JSON.stringify` does not escape `</script>` inside string
+  values. Any future template injection of server data into a
+  `<script>` block must chain `.replace(/</g, '\\u003c')` after
+  `JSON.stringify` -- see `dashboard.html:window.__USER__` for
+  the canonical pattern.
+- **`ADMIN_EMAILS` is resolved at request time.** Membership checks
+  and admin recipient lookups go through `Config.gs::getAdminEmails_()`,
+  which reads the `ADMIN_EMAILS` Script Property (comma-separated
+  emails) on every call and falls back to the `ADMIN_EMAILS_FALLBACK`
+  constant if unset. Adding an admin is a Script Property edit; no
+  redeploy. **Never read the `ADMIN_EMAILS` constant directly for
+  membership checks** -- always go through `getAdminEmails_()` so the
+  Script Property's value wins.
+- **Alert Log captures every outcome of every run** -- `sent`,
+  `would-send`, `above-threshold`, `no-data`, `no-recipients`,
+  `skipped`, `error`. Preview rows (from the modal's **Preview**
+  button) are marked by a `preview:` prefix on the Triggered By
+  column and use the `would-send` status (real fires use `sent`).
+  Filter on `triggeredBy NOT LIKE 'preview:%'` to scope to real
+  runs. The `Sent` boolean is `TRUE` only for `sent` outcomes.
+- **Header freshness pill goes orange past 36h.** The "Data through
+  Mon May 19 · 14h ago" badge in `.header-meta` computes hours
+  since end-of-day on the most recent date in `DQE Historical Data`
+  (via `getLatestDataDate`); past 36h it adds the `.is-stale` class
+  and tints warm orange. Tunable in `setFreshnessPill_` if 36h
+  becomes too noisy. Pill is hidden until the server returns the
+  latest date so the header doesn't show a stale fallback.
 
 ## Key Design Decisions
 
@@ -161,9 +197,10 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `.clasp.example.json`.
 - **CacheService tiers**: 5 min on aggregated dashboard responses, 60 sec
   on auth lookups. Each report file owns its own versioned cache prefix
-  (`summary:`, `individual:`, `individual_active:`, `performance:`,
-  `compareRanges:`); bump the relevant version on any aggregation-rule
-  change. See INV-30 for current versions.
+  (`summary:`, `latestDate:`, `individual:`, `individual_active:`,
+  `performance:`, `compareRanges:`, `missed:`, `companyOverview:`);
+  bump the relevant version on any aggregation-rule change. See INV-30
+  for current versions.
 - **Scope toggle (`roster | queue | both`)**: managers can see strictly
   their roster, anyone who handled their queue extensions, or the union.
   Default is `roster` (matches the legacy DQE Report's behavior).
@@ -213,15 +250,30 @@ When something looks wrong, before assuming a code bug, check:
 5. Did the source-pipeline bugs (window inclusion / ATT denominator / leg
    attribution — see `known-issues.md`) get re-introduced? Spot-check Sonia
    2026-03-09: TTT should be `0:15:03`, ATT should be `0:03:01`.
-6. After pulling the Alerts code, was `setup()` re-run? It now creates
-   `Alert Config` + `Alert Log` alongside `Access Control` and is
-   idempotent on re-runs (existing data untouched).
+6. After pulling new code that adds sheets, was `setup()` re-run? It
+   creates `Access Control`, `Alert Config`, `Alert Log`,
+   `Pipeline Health`, and `Digest Config` -- whichever are missing.
+   Idempotent on re-runs (existing data untouched). Without re-running
+   setup() after a fresh pull, downstream writers (Pipeline Health
+   appends, Digest config reads) silently no-op against the missing
+   sheet.
 7. For alerts: is the `DASHBOARD_URL` Script Property set? Without it,
    alert emails still send — they just omit the "Open Dashboard" link.
-8. For alerts: is the daily trigger installed? Apps Script editor →
-   Triggers should list `runDailyAlerts_` (or use the "Install daily
-   trigger" button in the Alerts modal). Without it, alerts only fire
-   when an admin clicks "Send alerts" manually.
+8. Are all three trigger types installed? Three independent triggers
+   now feed the dashboard's freshness, and each one missing is a
+   silent failure:
+   - **Daily alerts**: dashboard project → Triggers should list
+     `runDailyAlerts_` (or install via the Alerts modal). Without
+     it, alerts only fire when an admin clicks "Send alerts".
+   - **Daily DQE build** (CDR Report project, INV-44 prerequisite):
+     editor → Triggers should list `runDailyDQEBuild_` (or install
+     via CDR Tools → ⏰ Daily DQE Build Trigger → Install). Without
+     it, DQE Historical Data goes stale and the dashboard silently
+     serves yesterday's data.
+   - **Daily + weekly digests**: dashboard project → Triggers should
+     list both `runDailyDigests_` and `runWeeklyDigests_` (or install
+     via Alerts modal → Manager Digest Subscribers → Install). Without
+     them, Digest Config rows have no effect.
 9. Did the latest push add a new OAuth scope? Open the Apps Script
    editor → Run → any function → grant the new permission. Scope-
    gated calls (trigger install, mail send) otherwise throw
@@ -232,6 +284,23 @@ When something looks wrong, before assuming a code bug, check:
     (case, spaces, and any ` Q` suffix). Mismatches silently
     leave the sub-queue rendering as an unrelated top-level
     dept. Use both spellings as aliases if you're unsure.
+11. Pipeline Health sheet: open the dashboard's Alerts modal →
+    Pipeline Health section. A long quiet stretch on `autoImport`
+    or `buildDQE` (rows from 2+ days ago and nothing since) means
+    the daily ingest or DQE rebuild hasn't run. Cross-check with
+    Operator State #1 + #8. An empty sheet right after deploy
+    means setup() hasn't been re-run on this project.
+12. Manager digest delivery: if a subscriber says they didn't get
+    their digest, check (a) Digest Config row Active=TRUE,
+    (b) Cadence is `daily` or `weekly` (normalized -- other values
+    are dropped), (c) digest triggers installed (#8), (d) admin
+    inbox for a `notifyDigestFailure_` email if the run threw.
+13. `ADMIN_EMAILS` Script Property: if a recently-added admin
+    doesn't see admin-only features, verify Project Settings →
+    Script Properties → `ADMIN_EMAILS` includes their email
+    (comma-separated). Without the property, `getAdminEmails_()`
+    falls back to `ADMIN_EMAILS_FALLBACK` in Config.gs (which
+    requires a redeploy to change).
 
 ## Cycle Workflow Config
 
@@ -288,7 +357,7 @@ INV-27 | Individual Report's team-avg denominator counts only roster members wit
 INV-28 | Performance Report's prior period is the immediately-preceding window of the same duration (durationDays before currentStart, ending one day before currentStart) -- NOT "previous calendar month". Documented in the form's inline hint and the results-header "Comparing against..." line. Match legacy SingleRangeReport semantics. | Subsystem: Department Dashboard
 INV-29 | Individual Report's monthly trend window: range itself when selected range > 366 days OR equals a full calendar year (Jan 1 - Dec 31 of one year); else `first-of-month(end - 12 months)` to `end`. Performance Report uses identical logic so the 12-mo trends align across both reports for the same dept. | Subsystem: Department Dashboard
 INV-30 | Each report has its own versioned cache key prefix; bump on any aggregation rule change so stale entries don't bleed in. Current: `summary:v4` (Data.gs), `latestDate:v1` (Data.gs — most-recent ISO date with data; drives the dashboard's default From/To), `individual:v5` (IndividualReport.gs), `individual_active:v1` (active-agents-in-range subset used by Individual + Performance + Compare Ranges pickers), `performance:v3` (PerformanceReport.gs), `compareRanges:v3` (CompareRangesReport.gs), `companyOverview:v7` (CompanyOverview.gs). Alerts.gs holds no cached compute. | Subsystem: Department Dashboard
-INV-31 | `script.send_mail` OAuth scope in appsscript.json is required for the Individual / Performance / Compare Ranges "Email image" exports AND for the Low Answer Rate Alerts engine (MailApp.sendEmail). Removing the scope breaks all four paths; adding new send-mail features here doesn't need a re-scope. | Subsystem: Department Dashboard
+INV-31 | `script.send_mail` OAuth scope in appsscript.json is required for: (1) Individual / Performance / Compare Ranges "Email image" exports, (2) the Low Answer Rate Alerts engine, (3) the Manager Digest engine (Digest.gs), (4) the failure-notification paths (notifyImportFailure_ in autoImport.js, runDailyDQEBuild_ in buildDQEHistoricalData.js, notifyDigestFailure_ in Digest.gs). All seven paths use `MailApp.sendEmail`. Removing the scope breaks every one of them; adding new send-mail features here doesn't need a re-scope. | Subsystem: Department Dashboard (+ CDR Import / CDR DQE Pipeline for the notify-failure paths)
 INV-32 | Low Answer Rate Alerts is admin-only at the server boundary. Every public callable in Alerts.gs starts with `assertAdmin_`. The launcher button is also hidden client-side via `data-admin-only`, but the server check is the source of truth. Compare Ranges was previously admin-only too but was opened to managers (with the same `dept !== user.department` check the other reports use) so they can run year-over-year comparisons within their own dept. Adding a new admin = setting/editing the `ADMIN_EMAILS` Script Property (comma-separated emails); falls back to `ADMIN_EMAILS_FALLBACK` in Config.gs if unset. | Subsystem: Department Dashboard
 INV-33 | `runDailyAlerts_` (time-triggered alerts) skips Saturdays and Sundays. Holiday handling is intentionally not built in -- if it becomes noise in practice, add a skip-dates column to the Alert Config sheet rather than hardcoding in Alerts.gs. Manual sends via the UI ignore this skip. | Subsystem: Department Dashboard
 INV-34 | `Alert Config` columns: Department \| Threshold % \| Extra Recipients \| Active \| Notes. `Alert Log` columns: Timestamp \| Department \| Date Checked \| Threshold % \| Answer Rate % \| Sent \| Recipients \| Triggered By \| Notes \| Status. Both sheets idempotently created by setup(); never overwritten. Alerts.gs's `readAlertConfig_` and `appendAlertLog_` depend on these schemas. | Subsystem: Department Dashboard
@@ -301,6 +370,8 @@ INV-40 | Overview "X of Y agents" caption denominator is `recentlyActiveCount` =
 INV-41 | chartjs-plugin-datalabels requires `Chart.register(ChartDataLabels)` AND `Chart.defaults.plugins.datalabels.display = true` at module load (the `registerChartDataLabels_` IIFE in script.html does both). Chart.js v4 dropped script-tag auto-registration; the plugin defaults to display=false since v1.0.0. Per-chart `display: false` overrides still suppress labels (Missed Calls radar, Overview multi-line trend). Use the boolean form of `display` per chart — the function form returns false unpredictably on mixed bar+line charts in this plugin version. | Subsystem: Department Dashboard
 INV-42 | `refreshChartTheme()` (script.html) resolves every CSS custom property via `colorToCanvasRgb_()` — paints onto a 1×1 canvas and reads back canonical `rgba(...)`. Required because chartjs-plugin-datalabels' `fillStyle` path can't parse `oklch(...)` strings → silently renders empty fills (invisible labels). Never pass raw `getComputedStyle(...).getPropertyValue('--token')` to chart options; always go through `THEME.*`. Hook is re-run on dark-mode toggle so newly-rendered charts pick up the inverted palette. | Subsystem: Department Dashboard
 INV-43 | Default From/To on the My Department page snaps to the most-recent ISO date present in DQE Historical Data, via `Data.gs::getLatestDataDate()` (cached under `latestDate:v1`). Falls back to today on failure. Replaces the legacy "current-month-to-date" default so the table isn't empty when a manager opens the dashboard before today's ingest has run. | Subsystem: Department Dashboard
+INV-44 | `Pipeline Health` sheet columns: `Timestamp \| Step \| Status \| Rows \| Duration (ms) \| Notes`. Schema pinned in `Config.gs::PIPELINE_HEALTH_HEADERS`; sheet is idempotently created by `setup()`. Append-only; never overwritten. Writers are `logPipelineHealth_` helpers in `apps-script/cdr-import/autoImport.js` and `apps-script/cdr-report/buildDQEHistoricalData.js` (cross-project; each owns its own copy of the helper). All writes are best-effort -- a logging failure must never block or fail the pipeline. Reader is `Alerts.gs::readPipelineHealth_(maxRows)`; UI surfaces the last 20 entries in the Alerts modal. Step values are free-form (currently `autoImport`, `buildDQE`); Status is `success` or `failure`. | Subsystem: Department Dashboard (+ CDR Import / CDR DQE Pipeline for the writers)
+INV-45 | `Digest Config` sheet columns: `Email \| Department \| Cadence \| Active \| Notes`. Schema pinned in `Config.gs::DIGEST_CONFIG_HEADERS`; sheet is idempotently created by `setup()`. Cadence is `daily` (sends each weekday morning for the previous day's data; weekends skipped) or `weekly` (sends Monday 8 AM for the prior Mon-Fri window). `Digest.gs` is the engine; every public callable (`getDigestsInit`, `sendPreviewDigest`, `installDigestTriggers`, `uninstallDigestTriggers`) starts with `assertAdmin_`. Trigger entry points (`runDailyDigests_`, `runWeeklyDigests_`) end in `_` so `google.script.run` can't reach them but ScriptApp dispatch still calls them by name. Trigger lifecycle is managed via the Alerts modal's "Manager Digest Subscribers" section. | Subsystem: Department Dashboard
 
 ### Policy Configuration
 Policy threshold: 6/10
@@ -437,11 +508,11 @@ S21 | Alerts daily trigger install/uninstall | Subsystem: Department Dashboard
     - Back in the modal, click "Uninstall trigger".
   Expected: status line updates to "Daily trigger is installed... runs at 8:00 CST. Weekends are skipped."; Apps Script editor shows a `runDailyAlerts_` trigger; after uninstall, status line reverts to "No daily trigger installed."
 
-S22 | setup() creates Alert Config + Alert Log idempotently | Subsystem: Department Dashboard
+S22 | setup() creates all dashboard-managed sheets idempotently | Subsystem: Department Dashboard
   Steps:
-    - In a fresh spreadsheet without those sheets, run setup() once.
+    - In a fresh spreadsheet without any of those sheets, run setup() once.
     - Run setup() again.
-  Expected: first run creates Access Control + Alert Config + Alert Log (each with their header row + frozen first row); second run logs "already exists, skipping" for all three -- no data overwritten.
+  Expected: first run creates Access Control + Alert Config + Alert Log + Pipeline Health + Digest Config (each with their header row + frozen first row); second run logs "already exists, skipping" for all five -- no data overwritten on either run. New columns added in a later code change to an existing sheet are NOT applied by setup() -- the sheet's existence short-circuits ensureSheet_.
 
 S23 | Overview is the default landing + tile click routes admins | Subsystem: Department Dashboard
   Steps:
@@ -468,6 +539,39 @@ S26 | Big-roster reports complete without cache-key error | Subsystem: Departmen
     - Select all active agents; pick a 30-day range; Generate.
     - Repeat for Performance Report and Compare Ranges with the same selection.
   Expected: all three reports return data without "Argument too large" or similar cache errors. The MD5 hash in the cache key (`hashAgents_`) keeps the compound key bounded regardless of roster size; second Generate of the same selection comes back as a cache hit.
+
+S27 | Compare Ranges is per-dept gated for managers | Subsystem: Department Dashboard
+  Steps:
+    - Open the dashboard as a manager (non-admin).
+    - Confirm the "Compare Ranges" button is visible in the Reports menu (no longer admin-only after INV-32 update).
+    - Generate a Compare Ranges report for the manager's own dept; confirm it loads.
+    - In the browser console, attempt `google.script.run.withSuccessHandler(console.log).withFailureHandler(console.error).getCompareRanges({ department: 'SomeOtherDept', ...})`.
+  Expected: own-dept Generate succeeds; cross-dept console call throws "Not authorized for this department.". Admin users can request any dept that exists in the dept list (same gate as Individual / Performance).
+
+S28 | Pipeline Health logs autoImport + buildDQE outcomes | Subsystem: Department Dashboard + CDR Import + CDR DQE Pipeline
+  Steps:
+    - Trigger a successful daily import (or run processNewImport manually).
+    - Trigger a successful DQE build (or run testDQEBuild / runDailyDQEBuild_).
+    - Open the dashboard as admin -> Alerts modal -> Pipeline Health section.
+  Expected: most recent rows show a `success` entry for `autoImport` (with the imported sheet name in Notes and a row count) followed by `buildDQE` (with `callDate=YYYY-MM-DD` in Notes). For a forced failure (rename "Raw Data" sheet temporarily), the entry shows status `failure` with the exception message in Notes. Logging is best-effort -- a missing Pipeline Health sheet must not break the pipeline.
+
+S29 | Manager Digest install + preview flow | Subsystem: Department Dashboard
+  Steps:
+    - As admin: open Alerts modal -> Manager Digest Subscribers section.
+    - Confirm Digest Config rows render (or "no subscribers yet" empty state).
+    - Click Install digest triggers; trigger status caption switches to "Daily + weekly triggers are installed."
+    - In the Apps Script editor's Triggers panel, confirm both `runDailyDigests_` and `runWeeklyDigests_` are present.
+    - From the browser console: `google.script.run.withSuccessHandler(console.log).sendPreviewDigest({ department: 'CSR', cadence: 'daily', email: 'someone@universalmedsupply.com' })`.
+    - Click Uninstall digest triggers; confirm both triggers removed.
+  Expected: install/uninstall succeed; preview digest arrives in the admin's inbox (not the supplied `email`, which is shown only as "what would the subscriber see"); preview email body has a yellow "Preview only" banner.
+
+S30 | Header freshness pill renders and goes stale | Subsystem: Department Dashboard
+  Steps:
+    - Open the dashboard fresh (any role). The freshness pill in `.header-meta` is hidden initially.
+    - After `getLatestDataDate` returns, the pill renders "Data through <weekday short> · <Nh ago>".
+    - If the latest date is more than 36h old (e.g. nothing ingested Friday + today is Sunday), the pill picks up the `.is-stale` class and tints warm orange.
+    - Hover the pill; the title attribute explains what it represents.
+  Expected: pill is hidden on fetch failure or empty data; visible and color-coded otherwise. Updates only on page load -- not live.
 
 ### Frozen Subsystems
 - DQE Report Legacy — manager-facing reports in `apps-script/dqe-report/`. Frozen because migration to Department Dashboard is complete: Individual Report, Performance Report, Compare Ranges, Missed Calls Report, and Low Answer Rate Alerts all live in the dashboard. Replacement: Department Dashboard. Awaiting decommission of the legacy spreadsheet. Unfreeze only if a bug is found in legacy that affects production decisions before the spreadsheet is retired.

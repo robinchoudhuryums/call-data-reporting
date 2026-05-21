@@ -188,7 +188,9 @@ Neon Postgres is the long-term archive and the future query backend.
 - **Visitors** open the web app URL. Identity = `Session.getActiveUser().getEmail()`
   (Google Workspace domain only — the deployment is `access: DOMAIN`).
 - **`Code.gs` → `Auth.gs`** resolves them via:
-  - `ADMIN_EMAILS` constant in `Config.gs` (hardcoded; bypasses dept check)
+  - `Config.gs::getAdminEmails_()` — reads the `ADMIN_EMAILS` Script Property
+    (comma-separated) at request time, falls back to `ADMIN_EMAILS_FALLBACK`
+    constant if unset; bypasses dept check
   - `Access Control` sheet (Email | Department | Notes) for managers
 - **Execute-as: deployer.** The script runs with Robin's permissions, so
   managers don't need direct access to CDR Report. Read-only safety relies

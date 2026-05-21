@@ -308,6 +308,26 @@ skipped with `status: 'no-recipients'` and logged.
 (see above), `skipped` (Active=FALSE in Alert Config), `error` (caught
 exception with message captured in Notes).
 
+### What gets persisted to Alert Log
+
+Every per-dept outcome of every run — both real and preview — is
+appended to the `Alert Log` sheet. Preview rows (from the modal's
+**Preview** button) are distinguished by:
+
+- The status column carries the `would-send` enum value (vs. `sent`
+  on real runs).
+- The Triggered By column is prefixed with `preview:` (e.g.
+  `preview:robin.choudhury@…`).
+
+Real-only queries should filter on
+`triggeredBy NOT LIKE 'preview:%'`. The `Sent` boolean column is
+`TRUE` only for `sent` outcomes; everything else (preview,
+above-threshold, no-data, no-recipients, skipped, error) is `FALSE`.
+
+Earlier behavior (`sent` and `error` only; preview rows dropped on
+the floor) is no longer the case. Anyone with a saved query / script
+against the legacy shape should update it.
+
 ### Weekend skip
 
 `runDailyAlerts_` returns early on Saturdays + Sundays so the

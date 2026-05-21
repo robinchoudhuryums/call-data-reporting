@@ -9,6 +9,8 @@
  *   - Pipeline Health  (append-only telemetry: autoImport, buildDQE,
  *                       neonWrite success/failure with row counts and
  *                       durations)
+ *   - Digest Config    (manager digest subscribers: email | dept |
+ *                       cadence | active | notes)
  *
  * Safe to re-run; existing sheets are left untouched (no data
  * overwritten).

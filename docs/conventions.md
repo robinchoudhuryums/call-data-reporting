@@ -191,8 +191,12 @@ how the legacy DQE Report worked.
 
 ## Auth and access
 
-- **Admins**: hardcoded in `ADMIN_EMAILS` in `apps-script/department-dashboard/Config.gs`. Bypass the
+- **Admins**: resolved at request time via `Config.gs::getAdminEmails_()`,
+  which reads the `ADMIN_EMAILS` Script Property (comma-separated emails)
+  and falls back to the `ADMIN_EMAILS_FALLBACK` constant in
+  `apps-script/department-dashboard/Config.gs` if unset. Bypass the
   manager dept check; can pick any department from the admin dropdown.
+  Adding an admin is a Script-Property edit, no redeploy.
 - **Managers**: rows in the `Access Control` sheet (`Email | Department |
   Notes`). One row per manager. Pinned to a single department.
 - **Everyone else**: gets the access-denied page.
