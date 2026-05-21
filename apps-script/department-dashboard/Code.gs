@@ -35,12 +35,24 @@ function renderDashboard_(user) {
   // Trim user envelope before injection: don't leak admin email list,
   // and don't ship the full departments array to managers (they only
   // need their one).
-  tmpl.user = {
+  const userObj = {
     email: user.email,
     role: user.role,
     department: user.department,
     departments: user.role === 'admin' ? user.departments : [],
   };
+  // Pre-escape the JSON server-side and pass as a single template
+  // string. Two reasons we do this here instead of inline in the
+  // template scriptlet:
+  //   1. Keeps any "<" character out of the .html file entirely, so
+  //      there is zero possibility of an HTML parser closing the
+  //      host <script> block early (an earlier inline version had
+  //      that bug -- a comment literally contained the script-end
+  //      pattern).
+  //   2. The escape is the recommended JSON-in-script-tag pattern:
+  //      replace "<" with its JSON unicode-escape form so the
+  //      browser's JS parser turns it back into "<" at runtime.
+  tmpl.userJson = JSON.stringify(userObj).replace(/</g, '\\u003c');
   return tmpl.evaluate()
     .setTitle('Department Dashboard')
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);

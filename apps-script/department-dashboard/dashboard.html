@@ -1147,14 +1147,15 @@
   </div>
 
   <script>
-    // JSON.stringify does NOT escape "<" inside string values, so a
-    // department or email value containing "</script>" would terminate
-    // this block at parse time. Replace every "<" with its JSON
-    // unicode-escape form (the literal 6 characters: backslash-u-0-0-3-c) before
-    // emitting via the force-print scriptlet. The browser's JS parser
-    // turns the escape back into "<" at runtime, so the in-memory
-    // value is preserved.
-    window.__USER__ = <?!= JSON.stringify(user).replace(/</g, '\\u003c') ?>;
+    // Server-side JSON-encoded user envelope. Escape comes from
+    // Code.gs::renderDashboard_ (.replace(/</g, '\\u003c')) so the
+    // value can't terminate this script block even if a sheet cell
+    // contains an end-of-script-tag sequence. Doing the escape in
+    // the .gs avoids having any "<" or end-of-tag pattern in this
+    // file at all (a previous inline-replace had a comment that
+    // literally contained the bad pattern, which the HTML parser
+    // happily closed the script tag on).
+    window.__USER__ = <?!= userJson ?>;
   </script>
   <?!= include('script') ?>
 </body>
