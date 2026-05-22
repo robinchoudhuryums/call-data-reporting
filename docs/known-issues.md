@@ -371,6 +371,15 @@ free-form; current writers emit:
   written stay; the outer `autoImport` row logs the failure. The
   `:DQE` row was added when buildDQEHistoricalData was folded into
   the integrated path (INV-16 expanded).
+- `bulkBackfill:DQE` — DQE build outcome from cdr-import's
+  bulk-historical-backfill path (`bulkHistoricalUpdate` ->
+  `processBulkQueue` -> `processNewImport` in silent mode).
+  Bulk mode writes Raw Data per-date only when DQE actually
+  needs building (`willBuildDQE = !existsInDQE`) and calls
+  `buildDQEHistoricalData` inline right after queueing the
+  other 4 sheet types to Pending Archive. One row per date in
+  the bulk range; a failure on one date is logged and the loop
+  continues to the next.
 - `buildDQE` — DQE rebuild outcome, from
   `apps-script/cdr-report/buildDQEHistoricalData.js` standalone
   trigger path (`runDailyDQEBuild_`). Still installed as a safety

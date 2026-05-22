@@ -365,8 +365,14 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
     const cleanData = sourceData.map(row => row.slice(0, MAX_COLS));
 
     const isHistoricalBackfill = silent && specificDateStr;
+    // Even in bulk-backfill mode we write Raw Data when DQE still needs
+    // building for this date -- buildDQEHistoricalData reads Raw Data
+    // directly. CDR / QPath / QCD / CSR all flow through Pending Archive
+    // (in-memory results), so they don't need the sheet write.
+    const willBuildDQE = !existsInDQE;
+    const needsRawDataWrite = !isHistoricalBackfill || willBuildDQE;
 
-    if (!isHistoricalBackfill) {
+    if (needsRawDataWrite) {
       if (!silent) sourceSS.toast("Transferring...", "Step 2/7", -1);
       const valueData = cleanData.map(row => row.map(cell => {
         if (cell === "" || cell === null) return "";
@@ -379,7 +385,7 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
         const chunk = valueData.slice(i, i + CHUNK_SIZE);
         rawDataSheet.getRange(i + 1, 1, chunk.length, MAX_COLS).setValues(chunk);
       }
-      SpreadsheetApp.flush(); 
+      SpreadsheetApp.flush();
     }
 
     if (!silent) sourceSS.toast("Calculating Core...", "Step 3/7", -1);
@@ -401,12 +407,55 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
       if (!silent) sourceSS.toast("Archiving...", "Step 6/7", -1);
       historyReport = processIntegratedHistory(targetSS, outputSheet, results, dateObj, existsInCDR, existsInQPath, existsInQCD, existsInCSR, existsInDQE, rawDataSheet);
     } else {
-      // Bulk-archive path: Raw Data isn't written in this branch, so the
-      // DQE build (which reads Raw Data) is skipped here. The bulk run's
-      // post-archive step or cdr-report's runDailyDQEBuild_ trigger covers
-      // historical DQE rebuilds.
+      // Bulk-archive path: CDR / QPath / QCD / CSR go through Pending
+      // Archive for one bulk write at the end. DQE bypasses that path
+      // because buildDQEHistoricalData is purpose-built to read Raw Data
+      // and write directly to DQE Historical Data + Neon -- we already
+      // wrote Raw Data for this date above (needsRawDataWrite) when
+      // willBuildDQE was true, so the build has fresh data to consume.
       queueToPendingArchive(targetSS, results, dateObj, existsInCDR, existsInQPath, existsInQCD, existsInCSR);
       historyReport.push("- Queued for batch archive");
+
+      if (willBuildDQE) {
+        const dqeHD = targetSS.getSheetByName("DQE Historical Data");
+        if (dqeHD) {
+          const bulkDQEStart = Date.now();
+          try {
+            SpreadsheetApp.flush();
+            const dqeStartRow = dqeHD.getLastRow();
+            buildDQEHistoricalData(rawDataSheet, dqeHD);
+            const dqeEndRow = dqeHD.getLastRow();
+            const dqeCount = Math.max(0, dqeEndRow - dqeStartRow);
+            if (dqeCount > 0 && histDateCache) histDateCache.dqe.add(dateKey);
+            historyReport.push(`- DQE HD: built ${dqeCount} rows`);
+            try {
+              logPipelineHealth_(targetSS, {
+                step:       'bulkBackfill:DQE',
+                status:     'success',
+                rows:       dqeCount,
+                durationMs: Date.now() - bulkDQEStart,
+                notes:      dateObj.toDateString(),
+              });
+            } catch (logErr) { /* best-effort */ }
+          } catch (dqeErr) {
+            // Best-effort: DQE failure for one date doesn't abort the
+            // bulk run. The 4 legacy sheets' Pending Archive entries
+            // still stand and the next date proceeds.
+            const msg = (dqeErr && dqeErr.message) ? dqeErr.message : String(dqeErr);
+            console.error('bulkBackfill DQE block failed for ' + dateKey + ': ' + msg);
+            historyReport.push(`- DQE HD: FAILED (${msg})`);
+            try {
+              logPipelineHealth_(targetSS, {
+                step:       'bulkBackfill:DQE',
+                status:     'failure',
+                rows:       null,
+                durationMs: Date.now() - bulkDQEStart,
+                notes:      dateObj.toDateString() + ' | ' + msg,
+              });
+            } catch (logErr) { /* best-effort */ }
+          }
+        }
+      }
     }
 
     if (!lastKnown.includes(latestName)) {
