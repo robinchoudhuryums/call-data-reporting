@@ -356,20 +356,30 @@ message + stack and the date being checked.
 **Created by** `setup()`. Schema pinned in `Config.gs::PIPELINE_HEALTH_HEADERS`:
 `Timestamp | Step | Status | Rows | Duration (ms) | Notes`.
 
-Append-only telemetry of the two daily pipeline steps:
+Append-only telemetry of the daily pipeline. `Step` values are
+free-form; current writers emit:
 
-- `autoImport` rows come from `apps-script/cdr-import/autoImport.js`
-  (`logPipelineHealth_` at the end of `processNewImport` on
-  success, in the catch block on failure).
-- `buildDQE` rows come from `apps-script/cdr-report/buildDQEHistoricalData.js`
+- `autoImport` — overall import outcome, from
+  `apps-script/cdr-import/autoImport.js::processNewImport`
+  (success at the end, failure in the outer catch block).
+- `processIntegratedHistory:CDR` / `:QPath` / `:QCD` / `:CSR` —
+  one row per output type that produced > 0 rows. Added so a
+  partial failure (e.g. CDR + QPath succeed but QCD throws)
+  surfaces immediately instead of being hidden inside the outer
+  `autoImport` row's Notes count line. If a block fails
+  mid-`processIntegratedHistory`, the per-output rows already
+  written stay; the outer `autoImport` row logs the failure.
+- `buildDQE` — DQE rebuild outcome, from
+  `apps-script/cdr-report/buildDQEHistoricalData.js`
   (after the Neon mirror block on success, in `runDailyDQEBuild_`'s
   catch on failure).
 
-Both writers wrap every write in try/catch and swallow failures so
-pipeline-health logging can never block or fail the pipeline. The
-schema is owned by the dashboard but the writers live in two
+Every writer wraps every write in try/catch and swallows failures
+so pipeline-health logging can never block or fail the pipeline.
+The schema is owned by the dashboard but the writers live in two
 different Apps Script projects -- each project has its own copy of
-the helper (same shape on both sides; INV-44 in `CLAUDE.md`).
+the helper (same shape on both sides; INV-44 + INV-52 in
+`CLAUDE.md`).
 
 **Reader** is `Alerts.gs::readPipelineHealth_(maxRows)`; the
 dashboard's Alerts modal renders the last 20 entries under the
@@ -405,6 +415,80 @@ delivers a sample digest to the active admin's inbox so they can
 verify what the subscriber will see (with a yellow "Preview only"
 banner). On failure, `notifyDigestFailure_` emails the
 `ADMIN_EMAILS` set so a silent trigger crash doesn't go unnoticed.
+
+---
+
+## QCD Report engine
+
+**Sheet:** `QCD Historical Data` (12 cols), written daily by the
+import pipeline (`apps-script/cdr-import/autoImport.js::processIntegratedHistory`
+QCD block). Schema pinned in `Config.gs::QCD_HISTORICAL_COLS`:
+`Month Year | Week | Date | Call Queue | Call Source | Total Calls
+| Total Answered | Abandoned | Longest Wait | Avg Answer |
+Abandoned % | Violations`.
+
+**Key trap (don't repeat this mistake).** Col D (`Call Queue`)
+holds **raw queue names** like `A_Q_CSR` / `A_Q_Sales` / `Backup
+CSR`, NOT dashboard dept names. The legacy
+`dqe-report/DQEdashboard.js::buildTable4` filters with
+`r.callQueue === ctx.deptName` and reads like a working reference;
+it isn't, and copying its pattern produces an empty modal. The
+correct route is `Config.gs::DEPT_QCD_QUEUES`, an admin-curated
+dept → list-of-queue-names map.
+
+**Engine** is `apps-script/department-dashboard/QCDReport.gs`.
+Three public callables, all per-dept gated like Individual /
+Performance / Compare Ranges:
+
+- `getQcdReportInit({ department })` — returns roster, defaults,
+  and the dept's mapped queues.
+- `getQcdReport({ department, from, to })` — main aggregation.
+  Returns `meta` (with `queues` + `unmapped` flags), `dateLabel`,
+  `totals` (sum across the dept's queues), `queueBreakdown`
+  (one row per queue), `trendData` (12-month buckets matching the
+  IR/PR trend-window logic). Cache prefix `qcd:v2`.
+- `sendQcdReportEmail({ imageBase64, dateLabel })` — image
+  export like the IR/PR/CR send-email paths.
+
+**What gets summed.** Only `Call Source === 'Total Calls'` rows.
+The other sources (CSR / Ad-campaign / New Call Menu / Non-CSR
+(internal)) are sub-counts that would double-count if added
+alongside the Total Calls roll-up. Longest Wait is the **MAX**
+across days in range; Avg Answer is the **mean across days with
+non-zero values** (matches legacy `buildTable4` semantics).
+
+**UI surfaces** all visible to everyone (no admin gate beyond the
+existing per-dept dropdown):
+
+- **Reports → QCD Report** modal: dept-level KPI tiles, per-queue
+  breakdown table with a bolded "Department total" tfoot row,
+  12-month trend chart with tab strip (Total Calls / Abandoned %
+  / Violations).
+- **Overview tile chips**: an "Aban N (P%)" chip whenever QCD
+  data exists (warn-tinted when P >= 5%), and a "X viol MTD" chip
+  when month-to-date violations > 0. Powered by
+  `CompanyOverview.gs::computeQcdSnapshots_`.
+- **My Department "Yesterday's QCD"**: tile row below the agent
+  table showing the dept's most-recent QCD day. Powered by
+  `Data.gs::computeDeptQcdSnapshot_` and returned as the new
+  `qcd` field on `getDepartmentSummary` (cache prefix bumped to
+  `summary:v5` when this shipped).
+
+**Onboarding a new dept.** When a new dept starts producing rows
+in `QCD Historical Data`, the dashboard ignores them until a
+matching entry exists in `DEPT_QCD_QUEUES`. To onboard:
+
+1. Open `QCD Historical Data` and find the new dept's `A_Q_*`
+   values in col D for recent rows.
+2. Add a row to `Config.gs::DEPT_QCD_QUEUES` keyed on the
+   dashboard dept name (the value in `DO NOT EDIT!` row 1 header),
+   with the value as an array of those queue names.
+3. `clasp push -f` + create a new deployment version.
+
+The 5-min cache TTLs out automatically; no manual cache bump
+needed unless the aggregation logic itself changes (in which case
+bump `qcd:vN`, `companyOverview:vN`, AND `summary:vN` since all
+three read QCD now).
 
 ---
 

@@ -148,6 +148,36 @@ becomes a higher-priority lookup in the canonicalization map (alias
 empty sheet leaves the build's behavior byte-identical to
 pre-OrphanFix. See INV-46 in `CLAUDE.md` for the full contract.
 
+## QCD: dept ↔ queue coupling lives in the dashboard
+
+`QCD Historical Data` is written daily by the import pipeline
+(`autoImport.js::processIntegratedHistory`) with `Call Queue`
+populated from the `QCDR Output` sheet's column A labels --
+raw queue names like `A_Q_CSR` / `A_Q_PowerChairs`, not
+dashboard dept names. The dashboard reads from three sites
+(`QCDReport.gs`, `CompanyOverview.gs::computeQcdSnapshots_`,
+`Data.gs::computeDeptQcdSnapshot_`), and all three route the
+queue ↔ dept mapping through `Config.gs::DEPT_QCD_QUEUES`.
+
+That mapping is **dashboard-side only** -- the pipeline doesn't
+know about dashboard depts and the QCDR Output labels don't know
+about which dashboard dept owns which queue. Two consequences:
+
+1. **Renaming a queue upstream silently breaks the dashboard
+   until `DEPT_QCD_QUEUES` is updated.** If the CSR queue gets
+   renamed from `A_Q_CSR` to `A_Q_CustomerService` in QCDR
+   Output, QCD Historical Data starts emitting the new name on
+   the next ingest. The dashboard's CSR dept loses its QCD chips
+   + modal until `Config.gs::DEPT_QCD_QUEUES['CSR']` is updated.
+2. **New depts producing QCD rows don't surface in the
+   dashboard until they're added to the map.** The dashboard
+   doesn't auto-discover dept-name-like values in col D because
+   they aren't there to begin with.
+
+See INV-50 / INV-51 in `CLAUDE.md` for the full contract;
+`known-issues.md` → "QCD Report engine" covers the operator
+onboarding flow.
+
 ## Cross-project writes from the dashboard
 
 Until OrphanFix.gs shipped, the dashboard had ZERO write paths into

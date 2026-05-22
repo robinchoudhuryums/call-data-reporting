@@ -137,6 +137,27 @@ clasp push -f
 - Admin-only at the server boundary. See CLAUDE.md INV-01 for the
   full security model around the carve-out.
 
+**Optional (QCD Report):**
+
+- The **QCD Report** modal (Reports → QCD Report) reads from
+  `QCD Historical Data`, written daily by the import pipeline.
+  Visible to all managers + admins; per-dept gated.
+- **`Config.gs::DEPT_QCD_QUEUES` is the dept ↔ queue mapping.**
+  Each dashboard dept maps to one or more raw queue names
+  (`A_Q_CSR`, `A_Q_Sales`, etc.) — the values in
+  `QCD Historical Data` col D. Open the sheet and look at col D
+  for recent rows to find the canonical names for your install,
+  then edit this map and redeploy.
+- A dept not listed in `DEPT_QCD_QUEUES` renders an empty modal
+  with a "No queues mapped" hint and no Overview QCD chips. New
+  depts producing QCD rows won't show up in the dashboard until
+  added to the map.
+- After QCD data flows, the Overview page's per-dept tiles gain
+  an "Aban N (P%)" chip (warn-tinted when ≥ 5%) and a
+  "X viol MTD" badge when month-to-date violations are > 0. The
+  My Department page shows a "Yesterday's QCD" tile row below
+  the agent table.
+
 **Optional (alerts):**
 
 - Populate the `Alert Config` sheet with one row per dept that should

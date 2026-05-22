@@ -337,6 +337,49 @@ too noisy in practice.
   pctDeltaPts`. The 5x scaling for percentage points is a
   judgment call to align magnitude with relative volume changes.
 
+### QCD Report
+
+- **Per-dept authorization** (INV-32 model): managers see their own
+  dept's QCD report; admins pick any from the dropdown. Same gate
+  used by Individual / Performance / Compare Ranges.
+- **Dept ↔ queue mapping** lives in `Config.gs::DEPT_QCD_QUEUES`.
+  `QCD Historical Data` col D holds raw `A_Q_*` queue names; the
+  dashboard's dept labels (`CSR` / `Sales` / `Power`) only resolve
+  through this map. Unmapped depts render an empty modal with a
+  hint; see [`known-issues.md`](known-issues.md) → "QCD Report
+  engine" for onboarding details.
+- **Source filter**: only rows where `Call Source === 'Total Calls'`
+  are summed. Other sources (`CSR`, `Ad-campaign`, `New Call
+  Menu`, `Non-CSR (internal)`) are sub-counts that would
+  double-count if added alongside the daily roll-up.
+- **Aggregation across dept queues**:
+  - `Total Calls`, `Total Answered`, `Abandoned`, `Violations`: sum
+    across the dept's mapped queues in range.
+  - `Longest Wait`: **MAX** across all days in range (worst
+    observed). Avg per-day would dilute the operationally useful
+    "this was the worst" signal.
+  - `Avg Answer`: simple mean across days with non-zero values
+    (matches legacy `buildTable4` semantics).
+- **Per-queue breakdown table**: one row per queue in
+  `DEPT_QCD_QUEUES[dept]` (preserves config order), plus a bolded
+  "Department total" tfoot row. Each row carries its own
+  Total Calls / Answered / Abandoned / Abandoned % / Longest /
+  Avg / Violations.
+- **Trend chart**: 12-month monthly buckets rolled up across all
+  dept queues. Trend-window resolution matches IR/PR (range
+  itself when > 366 days OR a full calendar year, else
+  first-of-month(end - 12 months) → end).
+- **Overview tile chips**: when QCD data exists for a dept, an
+  "Aban N (P%)" chip always renders; warn-tinted when P >= 5%
+  (the pipeline's violation threshold). A "X viol MTD" chip
+  renders only when month-to-date violations > 0. Visible to
+  everyone -- managers see all depts' chips on Overview, same as
+  the rest of the cross-dept landing.
+- **My Department "Yesterday's QCD"**: tile row under the agent
+  table showing the dept's most-recent QCD day. Auto-refreshes
+  with the rest of the page. Hidden when the dept has no QCD
+  mapping or no recent rows.
+
 ### Low Answer Rate Alerts (admin-only)
 
 - **Admin-only at the server boundary** (INV-32). All public
