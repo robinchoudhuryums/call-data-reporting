@@ -84,10 +84,15 @@ clasp push -f
 
 - Project Settings -> Script Properties -> add `SPREADSHEET_ID`
   pointing at the CDR Report spreadsheet's ID (from its URL).
-- Run the `setup` function once to create the `Access Control`, `Alert
-  Config`, and `Alert Log` sheets. Safe to re-run later (idempotent;
-  existing data untouched) — re-run after pulling new code that
-  introduces additional sheets.
+- Run the `setup` function once to create the dashboard-managed
+  sheets: `Access Control`, `Alert Config`, `Alert Log`,
+  `Pipeline Health`, `Digest Config`, `Agent Alias Overrides`,
+  and `Orphan Fix Log` (seven total; created only if missing).
+  Safe to re-run later (idempotent; existing data untouched) —
+  re-run after pulling new code that introduces additional
+  sheets so downstream writers (Pipeline Health appends, Digest
+  reads, Orphan Fix log) don't silently no-op against missing
+  sheets.
 - Populate the `Access Control` sheet with one row per manager
   (Email | Department | Notes).
 - Add yourself to the admin list. Two options:
@@ -144,14 +149,21 @@ clasp push -f
   Visible to all managers + admins; per-dept gated.
 - **`Config.gs::DEPT_QCD_QUEUES` is the dept ↔ queue mapping.**
   Each dashboard dept maps to one or more raw queue names
-  (`A_Q_CSR`, `A_Q_Sales`, etc.) — the values in
-  `QCD Historical Data` col D. Open the sheet and look at col D
-  for recent rows to find the canonical names for your install,
-  then edit this map and redeploy.
+  (e.g. `A_Q_CustomerSuccess`, `A_Q_Sales`) — the values in
+  `QCD Historical Data` col D. Canonical spellings vary per
+  install (this one's CSR queue is `A_Q_CustomerSuccess`); open
+  the sheet and look at col D for recent rows to find the names
+  for your install, then edit this map and redeploy.
 - A dept not listed in `DEPT_QCD_QUEUES` renders an empty modal
   with a "No queues mapped" hint and no Overview QCD chips. New
   depts producing QCD rows won't show up in the dashboard until
   added to the map.
+- **Sub-queue rollup** is automatic via `OVERVIEW_PARENT_OF`
+  (CompanyOverview.gs): viewing a parent dept's QCD report
+  auto-includes its children's queues. Current parents are
+  Sales (rolls up PAP), Power (rolls up PAK), and CSR (rolls
+  up Spanish). Each child dept still has its own
+  `DEPT_QCD_QUEUES` entry so the child's own modal works.
 - After QCD data flows, the Overview page's per-dept tiles gain
   an "Aban N (P%)" chip (warn-tinted when ≥ 5%) and a
   "X viol MTD" badge when month-to-date violations are > 0. The
@@ -173,24 +185,39 @@ clasp push -f
   `runDailyAlerts_` for the previous day, skipping Saturdays and
   Sundays automatically.
 
-## Daily DQE build trigger (CDR Report project)
+## DQE Historical Data freshness
 
-The DQE Historical Data rebuild that backs the dashboard runs from a
-time-based trigger inside the CDR Report Apps Script project. To
-install it on a fresh project:
+The dashboard reads from `DQE Historical Data`; three paths
+keep it fresh, in order of preference:
 
-- Open the CDR Report spreadsheet → **CDR Tools** menu → **⏰ Daily
-  DQE Build Trigger** → **Install (runs at 7 AM)**, OR
-- Open the CDR Report Apps Script editor → run `installDQEBuildTrigger`
-  once. The Run dropdown will prompt for the `script.scriptapp` and
-  `script.send_mail` permissions if they haven't been granted yet.
+1. **Integrated daily path (primary)** — cdr-import's
+   `processIntegratedHistory` now builds DQE inline as the 5th
+   historical sheet write, alongside CDR / Q Path / QCD / CSR.
+   Every successful daily import (whether triggered by onChange
+   or `runManualExport`) refreshes DQE in one run. Telemetry
+   row: `processIntegratedHistory:DQE` in Pipeline Health.
+2. **Bulk historical backfill path** — `bulkHistoricalUpdate`
+   in cdr-import builds DQE per-date for the requested range,
+   writing Raw Data per-date only when DQE actually needs
+   rebuilding. Telemetry row: `bulkBackfill:DQE`.
+3. **Standalone safety-net trigger (transitional)** — the
+   cdr-report project's `runDailyDQEBuild_` time trigger
+   (originally the only DQE refresh mechanism) is preserved
+   while the integrated path stabilizes. Telemetry row:
+   `buildDQE`. Install via CDR Report spreadsheet's **CDR
+   Tools** menu → **⏰ Daily DQE Build Trigger** →
+   **Install (runs at 7 AM)**, or run `installDQEBuildTrigger`
+   from the editor. The Run dropdown will prompt for the
+   `script.scriptapp` and `script.send_mail` permissions if
+   they haven't been granted yet. Skips Saturdays/Sundays;
+   emails `NEON_WRITE_CONFIG.alertEmail` on failure. Uninstall
+   via the same menu (or `uninstallDQEBuildTrigger`) once a
+   week's worth of `processIntegratedHistory:DQE` rows appear
+   consistently in Pipeline Health.
 
-The trigger calls `runDailyDQEBuild_` at 7 AM script-time
-(`America/Chicago`), skipping Saturdays and Sundays. On failure it
-emails `NEON_WRITE_CONFIG.alertEmail` so a silent build crash doesn't
-leave the dashboard serving stale data.
-
-To uninstall, use the same menu (or run `uninstallDQEBuildTrigger`).
+INV-16 keeps the two `buildDQEHistoricalData.js` copies
+(cdr-import + cdr-report) byte-identical -- any edit to one is
+a two-file edit.
 
 ## Working on sibling Apps Script projects
 
