@@ -57,7 +57,7 @@
             <button class="header-menu-item" id="alerts-btn" type="button" role="menuitem"
                     title="Configure low-answer-rate alerts: per-dept thresholds + recipients, manual send, or schedule a daily check.">Alerts</button>
             <button class="header-menu-item" id="orphan-fix-btn" type="button" role="menuitem"
-                    title="Map orphaned agent names in DQE Historical Data to existing roster entries. Admin-only.">Orphan Fix</button>
+                    title="Map outlier agent names in DQE Historical Data to existing roster entries. Admin-only.">Outlier Fix</button>
           </div>
         </div>
       </nav>
@@ -1106,10 +1106,10 @@
       <div class="modal-panel-header">
         <button class="modal-close" id="orphan-fix-close" type="button" aria-label="Close">&times;</button>
         <div class="modal-kicker">Operations &middot; Admin</div>
-        <h2 id="orphan-fix-modal-title">Orphan Fix</h2>
+        <h2 id="orphan-fix-modal-title">Outlier Fix</h2>
       </div>
       <div class="modal-panel-body">
-      <div id="of-loading" class="ir-loader" style="text-align: center; padding: 24px;">Loading orphan list&hellip;</div>
+      <div id="of-loading" class="ir-loader" style="text-align: center; padding: 24px;">Loading outlier list&hellip;</div>
 
       <div id="of-body" style="display:none;">
         <div class="al-section">
@@ -1117,7 +1117,7 @@
             Agent names that appear in <strong>DQE Historical Data</strong> but
             don't match any dept's roster entry. Common causes: marriage /
             hyphenation, CDR feed spelling variants, brand-new hires not yet
-            on the roster. Map each orphan to an existing roster name to
+            on the roster. Map each outlier to an existing roster name to
             consolidate. <strong>Renaming touches past data</strong> &mdash;
             an audit row goes to the Orphan Fix Log.
             <a href="#" id="of-open-sheet" target="_blank">Open audit log &rarr;</a>
@@ -1126,10 +1126,10 @@
         </div>
 
         <div class="al-section">
-          <div class="al-section-title">Orphans (last 180 days)</div>
+          <div class="al-section-title">Outliers (last 180 days)</div>
           <table class="al-config-table">
             <thead><tr>
-              <th>Orphan name</th>
+              <th>Outlier name</th>
               <th class="num">Rows</th>
               <th>Last seen</th>
               <th>Sample queue exts</th>

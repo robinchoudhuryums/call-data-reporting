@@ -556,11 +556,14 @@
   /* Diagnostics panel — hairline-bordered, sharp corners. The summary
      line is the click target; expanded content uses mono kicker
      subheaders for each section. */
-  /* "Yesterday's QCD" snapshot strip below the agent table on My
+  /* "Yesterday's QCD" snapshot strip ABOVE the agent table on My
      Department. Compact tile row; warn-tinted values when the
-     abandoned %% or violation thresholds are hit. */
+     abandoned %% or violation thresholds are hit. The bottom
+     margin gives breathing room between the snapshot and the
+     agent table that immediately follows. */
   .dept-qcd-snapshot {
     margin-top: 24px;
+    margin-bottom: 16px;
     padding: 14px 16px;
     background: var(--paper-card);
     border: 1px solid var(--line);
