@@ -196,6 +196,17 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   and tints warm orange. Tunable in `setFreshnessPill_` if 36h
   becomes too noisy. Pill is hidden until the server returns the
   latest date so the header doesn't show a stale fallback.
+- **QCD Historical Data col D holds raw queue names, NOT dept
+  names.** Real values are `A_Q_CSR` / `A_Q_Sales` / `Backup CSR`
+  / etc. The legacy `dqe-report/DQEdashboard.js::buildTable4`
+  filters with `r.callQueue === ctx.deptName` and looks like a
+  reference -- it's misleading; live values don't match dashboard
+  dept headers. To filter QCD rows for a dashboard dept, look up
+  `Config.gs::DEPT_QCD_QUEUES[dept]` (admin-curated map of dept
+  name -> list of queue names). A dept not in that map renders
+  an empty QCD modal with a "No queues mapped" hint and no
+  Overview QCD chips. New depts producing QCD data require a row
+  added to `DEPT_QCD_QUEUES` before the dashboard surfaces them.
 
 ## Key Design Decisions
 
@@ -320,6 +331,14 @@ When something looks wrong, before assuming a code bug, check:
     (comma-separated). Without the property, `getAdminEmails_()`
     falls back to `ADMIN_EMAILS_FALLBACK` in Config.gs (which
     requires a redeploy to change).
+14. QCD modal empty for a dept, OR no Overview QCD chips, OR
+    "Yesterday's QCD" missing on My Department? Confirm
+    `Config.gs::DEPT_QCD_QUEUES[dept]` exists and lists the right
+    `A_Q_*` queue names. Open `QCD Historical Data` col D for
+    recent rows to see the canonical values written by the import
+    pipeline. Add or edit the row + redeploy if missing -- new
+    depts producing QCD data don't surface in the dashboard until
+    they're mapped here.
 
 ## Cycle Workflow Config
 
