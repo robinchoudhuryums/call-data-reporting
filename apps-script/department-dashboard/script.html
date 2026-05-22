@@ -7001,6 +7001,7 @@
   let qcdLastData = null;
   let qcdChartInstance = null;
   let qcdActiveMetric = 'totalCalls';
+  let qcdActiveView   = 'monthly';   // 'monthly' (default) | 'daily'
 
   function initQcdReport() {
     const btn   = $('qcd-report-btn');
@@ -7057,6 +7058,24 @@
         const active = b === tab;
         b.classList.toggle('active', active);
         b.setAttribute('aria-selected', active ? 'true' : 'false');
+      });
+      if (qcdLastData) qcdRenderChart_(qcdLastData);
+    });
+
+    // Chart-view toggle (Monthly / Daily). Switches the chart's
+    // x-axis between the 12-month trend window and one point per
+    // day within the selected From/To range.
+    const viewToggle = $('qcd-view-toggle');
+    if (viewToggle) viewToggle.addEventListener('click', function (e) {
+      const btn = e.target.closest('.seg-btn');
+      if (!btn) return;
+      const next = btn.getAttribute('data-view') || 'monthly';
+      if (next === qcdActiveView) return;
+      qcdActiveView = next;
+      viewToggle.querySelectorAll('.seg-btn').forEach(function (b) {
+        const active = b === btn;
+        b.classList.toggle('active', active);
+        b.setAttribute('aria-checked', active ? 'true' : 'false');
       });
       if (qcdLastData) qcdRenderChart_(qcdLastData);
     });
@@ -7192,6 +7211,7 @@
     }
     qcdRenderKpiTiles_(data.totals || {});
     qcdRenderQueueTable_(data.queueBreakdown || [], data.totals || {});
+    qcdRenderDailyTable_(data.dailySeries || []);
     requestAnimationFrame(function () { qcdRenderChart_(data); });
   }
 
@@ -7199,8 +7219,14 @@
     const wrap = $('qcd-kpi-row');
     if (!wrap) return;
     // Reuse the Performance Report KPI tile DOM shape so existing
-    // styling carries over. No prev/delta on QCD's KPIs in this
-    // first cut -- absolute values only.
+    // styling carries over. No prev/delta on QCD's KPIs -- absolute
+    // values only. Two tiles are color-coded:
+    //   - Abandoned %: warn-red when >= 5% (pipeline's violation
+    //     threshold). Mirrors the Overview tile chip color rule.
+    //   - Violations (current month): warn-red when > 0. Server
+    //     sources this as MTD across the dept's mapped queues, NOT
+    //     the selected-range sum -- operationally more useful as
+    //     "how many bad days this month?"
     const tile = function (label, value, valueClass) {
       return '<div class="pr-kpi-tile">'
            +   '<div class="pr-kpi-label">' + escapeHtml(label) + '</div>'
@@ -7209,16 +7235,38 @@
            +   '</div>'
            + '</div>';
     };
-    // Violations get a warn-soft tile when >0 so they pop visually.
+    const pct = Number(t.abandonedPct) || 0;
+    const pctCls  = pct >= 5 ? 'pr-delta-neg' : '';
     const violCls = (Number(t.violations) || 0) > 0 ? 'pr-delta-neg' : '';
     wrap.innerHTML =
         tile('Total Calls',  fmtNumber(t.totalCalls    || 0))
       + tile('Answered',     fmtNumber(t.totalAnswered || 0))
       + tile('Abandoned',    fmtNumber(t.abandoned     || 0))
-      + tile('Abandoned %',  String(t.abandonedPctStr  || '0.00%'))
+      + tile('Abandoned %',  String(t.abandonedPctStr  || '0.00%'), pctCls)
       + tile('Longest Wait', String(t.longestWait      || '0:00:00'))
       + tile('Avg Answer',   String(t.avgAnswer        || '0:00:00'))
-      + tile('Violations',   fmtNumber(t.violations    || 0), violCls);
+      + tile('Violations (current month)', fmtNumber(t.violations || 0), violCls);
+  }
+
+  function qcdRenderDailyTable_(rows) {
+    const tbody = $('qcd-daily-tbody');
+    if (!tbody) return;
+    if (!rows.length) {
+      tbody.innerHTML = '<tr><td colspan="6" class="al-empty">No daily QCD rows in the selected range for this dept\'s mapped queues.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = rows.map(function (r) {
+      const pct = Number(r.abandonedPct) || 0;
+      const pctCellCls = pct >= 5 ? 'num qcd-daily-warn' : 'num';
+      return '<tr>'
+           +   '<td>' + escapeHtml(r.date) + '</td>'
+           +   '<td class="num">' + fmtNumber(r.totalCalls)    + '</td>'
+           +   '<td class="num">' + fmtNumber(r.totalAnswered) + '</td>'
+           +   '<td class="num">' + fmtNumber(r.abandoned)     + '</td>'
+           +   '<td class="' + pctCellCls + '">' + escapeHtml(r.abandonedPctStr) + '</td>'
+           +   '<td class="num">' + fmtNumber(r.violations)    + '</td>'
+           + '</tr>';
+    }).join('');
   }
 
   function qcdRenderQueueTable_(rows, totals) {
@@ -7266,26 +7314,46 @@
     destroyOrphanedChartOnCanvas_('qcd-chart');
     if (qcdChartInstance) { try { qcdChartInstance.destroy(); } catch (e) {} qcdChartInstance = null; }
 
-    const td = data.trendData || { labels: [], series: [] };
-    const labels = td.labels || [];
+    // Pick the series shape based on the view toggle. Monthly is
+    // the 12-month trend window (labels are MMM, yy + series of
+    // {totalCalls, abandonedPct, violations} objects). Daily is
+    // one point per day within the selected From/To range (labels
+    // are MM-DD; series shape mirrors the dailySeries field).
+    const isDaily = (qcdActiveView === 'daily');
+    let labels, series;
+    if (isDaily) {
+      const daily = data.dailySeries || [];
+      labels = daily.map(function (r) {
+        // Compact "MM-DD" labels keep the x-axis legible on dense
+        // daily charts. Tooltip still shows the full ISO via the
+        // default Chart.js callback.
+        return r.date ? r.date.slice(5) : '';
+      });
+      series = daily;
+    } else {
+      const td = data.trendData || { labels: [], series: [] };
+      labels = td.labels || [];
+      series = td.series || [];
+    }
     const metric = qcdActiveMetric;
+    const viewLabel = isDaily ? 'daily' : 'monthly';
     const headerLabels = {
-      totalCalls:   'Total Calls (monthly)',
-      abandonedPct: 'Abandoned % (monthly)',
-      violations:   'Violations (monthly)',
+      totalCalls:   'Total Calls (' + viewLabel + ')',
+      abandonedPct: 'Abandoned % (' + viewLabel + ')',
+      violations:   'Violations (' + viewLabel + ')',
     };
     $('qcd-chart-header').textContent = headerLabels[metric] || 'Trend';
 
     let values, color, formatPct = false;
     if (metric === 'totalCalls') {
-      values = (td.series || []).map(function (x) { return x.totalCalls; });
+      values = series.map(function (x) { return x.totalCalls; });
       color  = (typeof THEME !== 'undefined' && THEME.accent) || '#4E79A7';
     } else if (metric === 'abandonedPct') {
-      values = (td.series || []).map(function (x) { return Number((x.abandonedPct || 0).toFixed(2)); });
+      values = series.map(function (x) { return Number((x.abandonedPct || 0).toFixed(2)); });
       color  = (typeof THEME !== 'undefined' && THEME.warn) || '#c66b4b';
       formatPct = true;
     } else {
-      values = (td.series || []).map(function (x) { return x.violations; });
+      values = series.map(function (x) { return x.violations; });
       color  = (typeof THEME !== 'undefined' && THEME.warn) || '#c66b4b';
     }
 
@@ -7361,27 +7429,64 @@
     }).then(onDone);
   }
 
+  // -- Status banner helper for export feedback ---------------------
+  // The previous round of exports failed silently because none of
+  // the three actions reported back to the user (no success ack,
+  // no error toast). Every export path now routes feedback through
+  // qcdSetExportStatus_; "loading" while async work runs, then
+  // "success" or "error" depending on outcome.
+  function qcdSetExportStatus_(kind, msg) {
+    const el = $('qcd-results-status');
+    if (!el) return;
+    if (!kind) { el.style.display = 'none'; el.textContent = ''; return; }
+    el.className = 'status status-' + kind;
+    el.textContent = msg || '';
+    el.style.display = '';
+    if (kind === 'success') {
+      setTimeout(function () {
+        if (el.className.indexOf('status-success') !== -1) {
+          el.style.display = 'none';
+        }
+      }, 3500);
+    }
+  }
+
   function qcdCopyImage_() {
+    if (!(navigator.clipboard && window.ClipboardItem)) {
+      qcdSetExportStatus_('error', 'Clipboard API not available in this browser.');
+      return;
+    }
+    qcdSetExportStatus_('loading', 'Capturing report…');
     qcdBuildCanvas_(function (canvas) {
       canvas.toBlob(function (blob) {
-        if (navigator.clipboard && window.ClipboardItem) {
-          navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+        if (!blob) {
+          qcdSetExportStatus_('error', 'Capture produced an empty image.');
+          return;
         }
+        navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
+          .then(function () {
+            qcdSetExportStatus_('success', 'Report image copied to clipboard.');
+          }, function (err) {
+            qcdSetExportStatus_('error', 'Clipboard write failed: '
+              + (err && err.message ? err.message : String(err)));
+          });
       }, 'image/png');
     });
   }
+
   function qcdEmailImage_() {
+    qcdSetExportStatus_('loading', 'Capturing report…');
     qcdBuildCanvas_(function (canvas) {
       const dataUrl = canvas.toDataURL('image/png');
+      qcdSetExportStatus_('loading', 'Sending email…');
       google.script.run
-        .withSuccessHandler(function () { /* OK */ })
+        .withSuccessHandler(function (res) {
+          const to = (res && res.to) ? res.to : 'your inbox';
+          qcdSetExportStatus_('success', 'Emailed report image to ' + to + '.');
+        })
         .withFailureHandler(function (err) {
-          const el = $('qcd-results-status');
-          if (el) {
-            el.className = 'status status-error';
-            el.style.display = '';
-            el.textContent = 'Email failed: ' + (err && err.message ? err.message : err);
-          }
+          qcdSetExportStatus_('error', 'Email failed: '
+            + (err && err.message ? err.message : String(err)));
         })
         .sendQcdReportEmail({
           imageBase64: dataUrl,
@@ -7389,14 +7494,37 @@
         });
     });
   }
+
+  // Print opens the new window SYNCHRONOUSLY inside the click
+  // handler so the browser preserves the user gesture and doesn't
+  // popup-block the call. The captured image is written into the
+  // already-open window once html2canvas finishes. Previous
+  // implementation called window.open inside the async .then() and
+  // got silently blocked.
   function qcdPrint_() {
-    qcdBuildCanvas_(function (canvas) {
-      const w = window.open('');
-      if (!w) return;
-      w.document.write('<img src="' + canvas.toDataURL('image/png') + '" style="width:100%">');
+    const w = window.open('about:blank');
+    if (!w) {
+      qcdSetExportStatus_('error', 'Browser blocked the print window. Allow popups for this dashboard and retry.');
+      return;
+    }
+    try {
+      w.document.write('<title>QCD Report — printing…</title>'
+        + '<p style="font-family:sans-serif;color:#666;padding:24px;">'
+        + 'Preparing print preview…</p>');
       w.document.close();
-      w.focus();
-      w.print();
+    } catch (e) { /* OK */ }
+    qcdSetExportStatus_('loading', 'Capturing report for print…');
+    qcdBuildCanvas_(function (canvas) {
+      try {
+        w.document.body.innerHTML = '<img src="' + canvas.toDataURL('image/png')
+          + '" style="width:100%;display:block;">';
+        w.focus();
+        w.print();
+        qcdSetExportStatus_('success', 'Sent to print preview.');
+      } catch (e) {
+        qcdSetExportStatus_('error', 'Print failed: '
+          + (e && e.message ? e.message : String(e)));
+      }
     });
   }
 

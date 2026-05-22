@@ -42,7 +42,11 @@
 //     DEPT_QCD_QUEUES[dept] (list of queue names) instead of strict
 //     equality. Per-queue breakdown table replaces the prior per-
 //     source breakdown.
-const QCD_CACHE_KEY_PREFIX = 'qcd:v2';
+// v3: parent depts auto-include sub-queue queues via
+//     OVERVIEW_PARENT_OF rollup (Sales+PAP, Power+PAK, CSR+Spanish).
+//     Adds dailySeries to response; totals.violations replaced
+//     with month-to-date count (was selected-range sum).
+const QCD_CACHE_KEY_PREFIX = 'qcd:v3';
 
 // Source filter: only the "Total Calls" callSource row carries the
 // daily aggregate we want; other callSource values are sub-counts
@@ -53,12 +57,68 @@ const QCD_TOTAL_CALLS_SOURCE = 'Total Calls';
 
 /**
  * Returns the list of queue names that belong to `dept`, from the
- * admin-curated DEPT_QCD_QUEUES map in Config.gs. Returns [] for
- * unmapped depts (caller renders an empty report; no exception).
+ * admin-curated DEPT_QCD_QUEUES map in Config.gs. When `dept` is a
+ * top-level parent per CompanyOverview.gs::OVERVIEW_PARENT_OF, the
+ * result also includes every child dept's queues -- so viewing
+ * Sales picks up PAP's queues, Power picks up PAK's, CSR picks
+ * up Spanish's. Order: parent first, children in OVERVIEW_PARENT_OF
+ * iteration order.
+ *
+ * Returns [] for unmapped depts (caller renders an empty report
+ * with a "No queues mapped" hint).
+ *
+ * Used by QCDReport.gs (the modal), CompanyOverview.gs's tile
+ * snapshot, AND Data.gs's My Department snapshot -- so all three
+ * QCD surfaces share the same rollup behavior.
  */
 function queuesForDept_(dept) {
-  const list = (typeof DEPT_QCD_QUEUES !== 'undefined') && DEPT_QCD_QUEUES[dept];
-  return Array.isArray(list) ? list.slice() : [];
+  const seen = {};
+  const out = [];
+  const add = function (q) {
+    if (q && !seen[q]) { seen[q] = true; out.push(q); }
+  };
+  const direct = (typeof DEPT_QCD_QUEUES !== 'undefined') && DEPT_QCD_QUEUES[dept];
+  if (Array.isArray(direct)) direct.forEach(add);
+
+  // Sub-queue rollup. OVERVIEW_PARENT_OF is owned by CompanyOverview.gs
+  // (shared Apps Script global scope). Walk its keys and append any
+  // child whose parent === this dept.
+  if (typeof OVERVIEW_PARENT_OF !== 'undefined') {
+    Object.keys(OVERVIEW_PARENT_OF).forEach(function (childDept) {
+      if (OVERVIEW_PARENT_OF[childDept] !== dept) return;
+      const childQueues = DEPT_QCD_QUEUES[childDept];
+      if (Array.isArray(childQueues)) childQueues.forEach(add);
+    });
+  }
+  return out;
+}
+
+/**
+ * Month-to-date violations count for the dept (sum across its
+ * mapped queues, including sub-queue rollup). Used for the
+ * "Violations (current month)" KPI tile.
+ */
+function computeMtdViolations_(dept, values, ssTZ) {
+  const queues = queuesForDept_(dept);
+  if (queues.length === 0) return 0;
+  const queueSet = {};
+  queues.forEach(function (q) { queueSet[q] = true; });
+  const tz = ssTZ || TZ;
+  const now = new Date();
+  const mtdStart = Utilities.formatDate(
+    new Date(now.getFullYear(), now.getMonth(), 1), tz, 'yyyy-MM-dd');
+  let total = 0;
+  for (let i = 0; i < values.length; i++) {
+    const r = values[i];
+    const source = String(r[QCD_HISTORICAL_COLS.CALL_SOURCE - 1] || '').trim();
+    if (source !== QCD_TOTAL_CALLS_SOURCE) continue;
+    const q = String(r[QCD_HISTORICAL_COLS.CALL_QUEUE - 1] || '').trim();
+    if (!queueSet[q]) continue;
+    const dateIso = rowDateIso_(r[QCD_HISTORICAL_COLS.DATE - 1], tz);
+    if (!dateIso || dateIso < mtdStart) continue;
+    total += Number(r[QCD_HISTORICAL_COLS.VIOLATIONS - 1]) || 0;
+  }
+  return total;
 }
 
 function getQcdReportInit(req) {
@@ -207,6 +267,11 @@ function computeQcdReport_(dept, from, to) {
       monthly:        {},   // monthKey -> { totalCalls, totalAnswered, abandoned, violations }
     };
   });
+  // Daily series: keyed iso date. Summed across all dept queues
+  // per day. Only populated for dates in the selected user range
+  // (the trend window's larger daily series would be too dense
+  // for the chart and table to be useful).
+  const dailyAcc = {};   // iso -> { totalCalls, answered, abandoned, violations }
 
   for (let i = 0; i < values.length; i++) {
     const r  = values[i];
@@ -242,6 +307,17 @@ function computeQcdReport_(dept, from, to) {
       if (longestWaitSec > bucket.longestWaitSec) bucket.longestWaitSec = longestWaitSec;
       if (avgAnswerSec > 0) { bucket.avgAnswerSec += avgAnswerSec; bucket.avgAnswerN++; }
       bucket.violations += violations;
+      // Daily series accumulates across dept queues so the daily
+      // chart + table show the rollup, same shape as totals.
+      let dayBucket = dailyAcc[dateIso];
+      if (!dayBucket) {
+        dayBucket = { totalCalls: 0, totalAnswered: 0, abandoned: 0, violations: 0 };
+        dailyAcc[dateIso] = dayBucket;
+      }
+      dayBucket.totalCalls    += totalCalls;
+      dayBucket.totalAnswered += totalAnswered;
+      dayBucket.abandoned     += abandoned;
+      dayBucket.violations    += violations;
     }
     if (inTrendRange) {
       const monthKey = dateIso.slice(0, 7);
@@ -278,18 +354,23 @@ function computeQcdReport_(dept, from, to) {
   });
 
   // Dept totals: sum across all queues for the dept.
-  let tTotal = 0, tAns = 0, tAbnd = 0, tViol = 0;
+  let tTotal = 0, tAns = 0, tAbnd = 0;
   let tLongest = 0;
   let tAvgSum = 0, tAvgN = 0;
   queueBreakdown.forEach(function (r) {
     tTotal += r.totalCalls;
     tAns   += r.totalAnswered;
     tAbnd  += r.abandoned;
-    tViol  += r.violations;
     if (r.longestWaitSec > tLongest) tLongest = r.longestWaitSec;
     if (r.avgAnswerSec > 0) { tAvgSum += r.avgAnswerSec; tAvgN++; }
   });
   const tPct = tTotal > 0 ? (tAbnd / tTotal) * 100 : 0;
+  // Violations on the totals row: month-to-date, NOT selected-range
+  // sum. Operationally more useful ("how many bad days has my dept
+  // had this month?") and matches the "Violations (current month)"
+  // label on the KPI tile. Range-scoped violations are still
+  // available per-queue in queueBreakdown[].violations.
+  const violationsMtd = computeMtdViolations_(dept, values, ssTZ);
   const totals = {
     totalCalls:       tTotal,
     totalAnswered:    tAns,
@@ -298,7 +379,7 @@ function computeQcdReport_(dept, from, to) {
     abandonedPctStr:  tPct.toFixed(2) + '%',
     longestWait:      formatSecondsHms_(tLongest),
     avgAnswer:        formatSecondsHms_(tAvgN > 0 ? Math.round(tAvgSum / tAvgN) : 0),
-    violations:       tViol,
+    violations:       violationsMtd,
   };
 
   // Trend chart series: roll up across all dept queues per month.
@@ -327,6 +408,23 @@ function computeQcdReport_(dept, from, to) {
     };
   });
 
+  // Daily series for the selected user range (chart "Daily" view +
+  // the scrollable daily table). Sorted oldest-first for chart
+  // continuity; the table can re-sort newest-first client-side.
+  const dailySeries = Object.keys(dailyAcc).sort().map(function (iso) {
+    const b = dailyAcc[iso];
+    const pct = b.totalCalls > 0 ? (b.abandoned / b.totalCalls) * 100 : 0;
+    return {
+      date:             iso,
+      totalCalls:       b.totalCalls,
+      totalAnswered:    b.totalAnswered,
+      abandoned:        b.abandoned,
+      abandonedPct:     pct,
+      abandonedPctStr:  pct.toFixed(2) + '%',
+      violations:       b.violations,
+    };
+  });
+
   const fmt = function (d) { return Utilities.formatDate(d, TZ, 'MMM d, yyyy'); };
   const dateLabel = fmt(startDate) + ' - ' + fmt(endDate);
 
@@ -343,7 +441,12 @@ function computeQcdReport_(dept, from, to) {
     dateLabel:       dateLabel,
     totals:          totals,
     queueBreakdown:  queueBreakdown,
+    // Two series shapes: monthly (12-mo trend window, default chart
+    // view) and daily (selected user range, granular view + table).
+    // Client picks one via a tab strip on the chart; the daily
+    // table always reads dailySeries.
     trendData:       { labels: trendLabels, series: trendSeries },
+    dailySeries:     dailySeries,
   };
 }
 
@@ -374,6 +477,7 @@ function emptyQcdReport_(dept, from, to) {
       };
     }),
     trendData: { labels: [], series: [] },
+    dailySeries: [],
   };
 }
 

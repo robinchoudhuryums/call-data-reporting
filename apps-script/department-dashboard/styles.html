@@ -2377,6 +2377,60 @@
   /* QCD per-source breakdown table. Same shape as .al-config-table
      so the dashboard's existing table styling carries over; the
      Total Calls row is bolded via .qcd-row-total. */
+  /* Chart-view toggle (Monthly / Daily) above the QCD trend chart.
+     Borrows the .segmented / .seg-btn look from the scope toggle so
+     it reads as part of the dashboard's existing chrome vocabulary. */
+  .qcd-view-toggle {
+    display: inline-flex;
+    gap: 0;
+    margin: -4px 0 12px;
+    border-radius: 6px;
+    overflow: hidden;
+    border: 1px solid var(--line);
+  }
+  .qcd-view-toggle .seg-btn {
+    background: var(--paper-card);
+    color: var(--muted);
+    border: none;
+    padding: 5px 12px;
+    font-size: 11px;
+    font-family: var(--mono);
+    cursor: pointer;
+    letter-spacing: 0.04em;
+  }
+  .qcd-view-toggle .seg-btn + .seg-btn { border-left: 1px solid var(--line); }
+  .qcd-view-toggle .seg-btn:hover { color: var(--ink); }
+  .qcd-view-toggle .seg-btn.active {
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-weight: 600;
+  }
+
+  /* Daily table below the chart. Scrolls vertically when the range
+     is long so the modal stays a sane height. Header is sticky so
+     the columns stay labeled while scrolling. */
+  .qcd-daily-table-wrap {
+    max-height: 380px;
+    overflow-y: auto;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--paper-card);
+  }
+  .qcd-daily-table {
+    /* override .qcd-source-table outer margins so it fills the
+       scroll container cleanly */
+    margin: 0;
+    border: none;
+    border-radius: 0;
+  }
+  .qcd-daily-table thead th {
+    position: sticky;
+    top: 0;
+    background: var(--paper-2);
+    z-index: 1;
+  }
+  .qcd-daily-table .qcd-daily-warn { color: var(--warn); font-weight: 600; }
+
   .qcd-source-table {
     width: 100%;
     border-collapse: collapse;
