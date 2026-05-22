@@ -362,17 +362,21 @@ free-form; current writers emit:
 - `autoImport` — overall import outcome, from
   `apps-script/cdr-import/autoImport.js::processNewImport`
   (success at the end, failure in the outer catch block).
-- `processIntegratedHistory:CDR` / `:QPath` / `:QCD` / `:CSR` —
-  one row per output type that produced > 0 rows. Added so a
-  partial failure (e.g. CDR + QPath succeed but QCD throws)
+- `processIntegratedHistory:CDR` / `:QPath` / `:QCD` / `:CSR` /
+  `:DQE` — one row per output type that produced > 0 rows. Added
+  so a partial failure (e.g. CDR + QPath succeed but QCD throws)
   surfaces immediately instead of being hidden inside the outer
   `autoImport` row's Notes count line. If a block fails
   mid-`processIntegratedHistory`, the per-output rows already
-  written stay; the outer `autoImport` row logs the failure.
+  written stay; the outer `autoImport` row logs the failure. The
+  `:DQE` row was added when buildDQEHistoricalData was folded into
+  the integrated path (INV-16 expanded).
 - `buildDQE` — DQE rebuild outcome, from
-  `apps-script/cdr-report/buildDQEHistoricalData.js`
-  (after the Neon mirror block on success, in `runDailyDQEBuild_`'s
-  catch on failure).
+  `apps-script/cdr-report/buildDQEHistoricalData.js` standalone
+  trigger path (`runDailyDQEBuild_`). Still installed as a safety
+  net during stabilization of the integrated path; uninstall once
+  every recent successful import shows a corresponding
+  `processIntegratedHistory:DQE` row.
 
 Every writer wraps every write in try/catch and swallows failures
 so pipeline-health logging can never block or fail the pipeline.
