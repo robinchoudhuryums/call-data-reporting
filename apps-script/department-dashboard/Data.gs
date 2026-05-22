@@ -108,7 +108,9 @@ function getDepartmentSummary(req) {
   // now actually match shared-queue extensions in col D. v5: response
   // gains a nullable `qcd` field with the dept's most-recent QCD
   // snapshot (rendered as "Yesterday's QCD" on My Department).
-  const cacheKey = 'summary:v5:' + dept + ':' + scope + ':' + from + ':' + to;
+  // v6: QCD snapshot uses queuesForDept_ rollup so parent depts
+  // (Sales / Power / CSR) include their sub-queues' QCD activity.
+  const cacheKey = 'summary:v6:' + dept + ':' + scope + ':' + from + ':' + to;
   const cached = cache.get(cacheKey);
   if (cached) {
     try {
@@ -415,8 +417,12 @@ function emptySummary_(dept, from, to, scope, rosterSize, rowsScanned, deptQueue
  */
 function computeDeptQcdSnapshot_(dept, ssTZ) {
   try {
-    const queues = (typeof DEPT_QCD_QUEUES !== 'undefined') && DEPT_QCD_QUEUES[dept];
-    if (!Array.isArray(queues) || queues.length === 0) return null;
+    // Use the shared rollup helper (in QCDReport.gs): parent depts
+    // pick up sub-queue queues so Sales's snapshot includes PAP,
+    // Power includes PAK, CSR includes Spanish.
+    const queues = (typeof queuesForDept_ === 'function')
+                   ? queuesForDept_(dept) : [];
+    if (!queues.length) return null;
     const queueSet = {};
     queues.forEach(function (q) { queueSet[q] = true; });
 

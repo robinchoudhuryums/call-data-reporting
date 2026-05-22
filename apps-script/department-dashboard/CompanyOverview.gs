@@ -53,7 +53,10 @@
 // v10: dept.qcd switched to a dept->queues filter (was strict dept-name match,
 //      which never matched because QCD col D holds raw A_Q_* queue names).
 //      Also adds dept.qcd.violationsMtd = month-to-date violations sum.
-const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v10';
+// v11: parent depts auto-include sub-queue queues via queuesForDept_
+//      (Sales+PAP, Power+PAK, CSR+Spanish), matching the QCD modal's
+//      and My Department's rollup behavior.
+const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v11';
 
 // Window (in days) over which we consider an agent "recently
 // active". Used as the denominator for the "X of Y agents" caption
@@ -606,9 +609,15 @@ function computeQcdSnapshots_(allDepts, sinceIso, ssTZ) {
     const lastRow = sheet.getLastRow();
     if (lastRow < 2) return out;
 
-    // Build queue -> dept lookup once. A queue can belong to only
-    // one dept; first-write wins on duplicates. Skip depts with no
-    // mapping in DEPT_QCD_QUEUES.
+    // Build queue -> dept lookup using the same rollup helper the
+    // modal uses (queuesForDept_ in QCDReport.gs). Parent depts
+    // claim their children's queues too -- so a row for A_Q_PAP
+    // counts toward both PAP (its direct dept) and Sales (its
+    // parent). First-write wins keeps each row attributed to the
+    // single most-specific dept that lists it; the parent's
+    // snapshot in Overview rolls in the child's contribution
+    // through the parent's expanded queue list, computed below
+    // in a separate per-dept aggregation pass.
     const queueToDept = {};
     allDepts.forEach(function (d) {
       const queues = (typeof DEPT_QCD_QUEUES !== 'undefined') && DEPT_QCD_QUEUES[d];
@@ -616,6 +625,20 @@ function computeQcdSnapshots_(allDepts, sinceIso, ssTZ) {
       queues.forEach(function (q) {
         if (!queueToDept[q]) queueToDept[q] = d;
       });
+    });
+    // Parent dept -> expanded queue set (including children). Used
+    // in a second pass below so parent tiles also reflect their
+    // sub-queues' QCD activity.
+    const parentDeptQueues = {};
+    allDepts.forEach(function (d) {
+      const expanded = (typeof queuesForDept_ === 'function')
+                       ? queuesForDept_(d) : [];
+      // Only track depts whose expansion adds queues beyond their
+      // direct mapping (i.e. depts with children).
+      const direct = (typeof DEPT_QCD_QUEUES !== 'undefined') && DEPT_QCD_QUEUES[d];
+      if (Array.isArray(direct) && expanded.length > direct.length) {
+        parentDeptQueues[d] = expanded;
+      }
     });
 
     const tz = ssTZ || TZ;
@@ -686,6 +709,47 @@ function computeQcdSnapshots_(allDepts, sinceIso, ssTZ) {
         abandonedPctStr:  pct.toFixed(2) + '%',
         violations:       a.latestViolations,
         violationsMtd:    a.mtdViolations,
+      };
+    });
+
+    // Second pass: for parent depts (Sales / Power / CSR), recompute
+    // the snapshot using the EXPANDED queue list so the parent tile
+    // reflects its sub-queues' QCD activity too. Overwrites the
+    // direct-only entry from the first pass.
+    Object.keys(parentDeptQueues).forEach(function (parentDept) {
+      const expandedQueues = parentDeptQueues[parentDept];
+      const expandedSet = {};
+      expandedQueues.forEach(function (q) { expandedSet[q] = true; });
+      let pLatestDate = '';
+      let pTotal = 0, pAbnd = 0, pViol = 0, pMtdViol = 0;
+      for (let i = 0; i < values.length; i++) {
+        const r = values[i];
+        const src = String(r[QCD_HISTORICAL_COLS.CALL_SOURCE - 1] || '').trim();
+        if (src !== 'Total Calls') continue;
+        const q = String(r[QCD_HISTORICAL_COLS.CALL_QUEUE - 1] || '').trim();
+        if (!expandedSet[q]) continue;
+        const dateIso = rowDateIso_(r[QCD_HISTORICAL_COLS.DATE - 1], tz);
+        if (!dateIso || dateIso < sinceIso) continue;
+        const tc = Number(r[QCD_HISTORICAL_COLS.TOTAL_CALLS - 1]) || 0;
+        const ab = Number(r[QCD_HISTORICAL_COLS.ABANDONED   - 1]) || 0;
+        const vi = Number(r[QCD_HISTORICAL_COLS.VIOLATIONS  - 1]) || 0;
+        if (dateIso >= mtdStart) pMtdViol += vi;
+        if (dateIso > pLatestDate) {
+          pLatestDate = dateIso; pTotal = tc; pAbnd = ab; pViol = vi;
+        } else if (dateIso === pLatestDate) {
+          pTotal += tc; pAbnd += ab; pViol += vi;
+        }
+      }
+      if (!pLatestDate) return;
+      const pPct = pTotal > 0 ? (pAbnd / pTotal) * 100 : 0;
+      out[parentDept] = {
+        date:             pLatestDate,
+        totalCalls:       pTotal,
+        abandoned:        pAbnd,
+        abandonedPct:     round1_(pPct),
+        abandonedPctStr:  pPct.toFixed(2) + '%',
+        violations:       pViol,
+        violationsMtd:    pMtdViol,
       };
     });
   } catch (e) {

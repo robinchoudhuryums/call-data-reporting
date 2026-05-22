@@ -204,20 +204,25 @@ const DEPT_QUEUE_EXT_OVERRIDES = Object.freeze({
 // Verify against the actual sheet after a fresh ingest; add or edit
 // rows here as new depts come online.
 const DEPT_QCD_QUEUES = Object.freeze({
-  'CSR':       ['A_Q_CSR', 'A_Q_Intake', 'Backup CSR'],
+  'CSR':       ['A_Q_CustomerSuccess', 'A_Q_Intake', 'Backup CSR'],
   'Sales':     ['A_Q_Sales'],
   'PAP':       ['A_Q_PAP'],
-  'Power':     ['A_Q_PowerChairs', 'A_Q_FieldOps_Power'],
+  'Power':     ['A_Q_PowerChairs'],
   'PAK':       ['A_Q_PAK'],
   'Resupply':  ['A_Q_Resupply'],
   'Spanish':   ['A_Q_Spanish'],
   'Billing':   ['A_Q_Billing'],
   'Denials':   ['A_Q_Denials'],
   'Service':   ['A_Q_Service'],
-  'FieldOps':  ['A_Q_FieldOps', 'A_Q_BackUp_FieldOps'],
-  // Add more dept -> queue-list mappings here as new depts produce
-  // QCD rows. A dept not listed here returns an empty QCD report
-  // (and no Overview tile QCD caption).
+  'FieldOps':  ['A_Q_FieldOps', 'A_Q_BackUp_FieldOps', 'A_Q_FieldOps_Power'],
+  // Sub-queue rollup: viewing a PARENT dept (per OVERVIEW_PARENT_OF
+  // in CompanyOverview.gs) automatically expands to include its
+  // children's queues -- so Sales picks up PAP's queues, Power
+  // picks up PAK's, CSR picks up Spanish's. Each child dept still
+  // gets its own listing here so the child's own modal works.
+  // Implemented in queuesForDept_ (QCDReport.gs); CompanyOverview
+  // and Data.gs go through the same helper so all three QCD
+  // readers stay consistent.
 });
 
 // Per-dept agent names excluded from the Individual Report's team
