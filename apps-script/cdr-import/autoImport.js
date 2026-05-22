@@ -178,7 +178,8 @@ function processBulkQueue() {
     cdr:   buildHistoryDateSet(targetSS, "CDR Historical Data"),
     qpath: buildHistoryDateSet(targetSS, "Q Path Historical Data"),
     qcd:   buildHistoryDateSet(targetSS, "QCD Historical Data"),
-    csr:   buildHistoryDateSet(targetSS, "CSR Transfer Historical Data")
+    csr:   buildHistoryDateSet(targetSS, "CSR Transfer Historical Data"),
+    dqe:   buildHistoryDateSet(targetSS, "DQE Historical Data", 2)
   };
 
   while (index < queue.length) {
@@ -321,8 +322,10 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
     let existsInQPath = histDateCache ? histDateCache.qpath.has(dateKey) : checkHistoryForDate(targetSS, "Q Path Historical Data", dateObj);
     let existsInQCD   = histDateCache ? histDateCache.qcd.has(dateKey)   : checkHistoryForDate(targetSS, "QCD Historical Data",    dateObj);
     let existsInCSR   = histDateCache ? histDateCache.csr.has(dateKey)   : checkHistoryForDate(targetSS, "CSR Transfer Historical Data", dateObj);
+    // DQE Historical Data stores its date in col B (col 2), not col 3 like the others.
+    let existsInDQE   = histDateCache ? histDateCache.dqe.has(dateKey)   : checkHistoryForDate(targetSS, "DQE Historical Data", dateObj, 2);
 
-    if (existsInCDR && existsInQPath && existsInQCD && existsInCSR && !force) {
+    if (existsInCDR && existsInQPath && existsInQCD && existsInCSR && existsInDQE && !force) {
       if (!silent) ui.alert("❌ Aborted", `Data for ${dateObj.toDateString()} already exists.`, ui.ButtonSet.OK);
       return "ALREADY IN HISTORY";
     }
@@ -348,6 +351,11 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
         if (csrHD) { deleteHistoricalRowsForDate(csrHD, dateObj, 3); if (histDateCache) histDateCache.csr.delete(dateKey); }
         existsInCSR = false;
       }
+      if (existsInDQE) {
+        const dqeHD = targetSS.getSheetByName("DQE Historical Data");
+        if (dqeHD) { deleteHistoricalRowsForDate(dqeHD, dateObj, 2); if (histDateCache) histDateCache.dqe.delete(dateKey); }
+        existsInDQE = false;
+      }
       SpreadsheetApp.flush();
     }
 
@@ -357,8 +365,14 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
     const cleanData = sourceData.map(row => row.slice(0, MAX_COLS));
 
     const isHistoricalBackfill = silent && specificDateStr;
+    // Even in bulk-backfill mode we write Raw Data when DQE still needs
+    // building for this date -- buildDQEHistoricalData reads Raw Data
+    // directly. CDR / QPath / QCD / CSR all flow through Pending Archive
+    // (in-memory results), so they don't need the sheet write.
+    const willBuildDQE = !existsInDQE;
+    const needsRawDataWrite = !isHistoricalBackfill || willBuildDQE;
 
-    if (!isHistoricalBackfill) {
+    if (needsRawDataWrite) {
       if (!silent) sourceSS.toast("Transferring...", "Step 2/7", -1);
       const valueData = cleanData.map(row => row.map(cell => {
         if (cell === "" || cell === null) return "";
@@ -371,7 +385,7 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
         const chunk = valueData.slice(i, i + CHUNK_SIZE);
         rawDataSheet.getRange(i + 1, 1, chunk.length, MAX_COLS).setValues(chunk);
       }
-      SpreadsheetApp.flush(); 
+      SpreadsheetApp.flush();
     }
 
     if (!silent) sourceSS.toast("Calculating Core...", "Step 3/7", -1);
@@ -391,10 +405,57 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
     let historyReport = [];
     if (!isHistoricalBackfill) {
       if (!silent) sourceSS.toast("Archiving...", "Step 6/7", -1);
-      historyReport = processIntegratedHistory(targetSS, outputSheet, results, dateObj, existsInCDR, existsInQPath, existsInQCD, existsInCSR);
+      historyReport = processIntegratedHistory(targetSS, outputSheet, results, dateObj, existsInCDR, existsInQPath, existsInQCD, existsInCSR, existsInDQE, rawDataSheet);
     } else {
+      // Bulk-archive path: CDR / QPath / QCD / CSR go through Pending
+      // Archive for one bulk write at the end. DQE bypasses that path
+      // because buildDQEHistoricalData is purpose-built to read Raw Data
+      // and write directly to DQE Historical Data + Neon -- we already
+      // wrote Raw Data for this date above (needsRawDataWrite) when
+      // willBuildDQE was true, so the build has fresh data to consume.
       queueToPendingArchive(targetSS, results, dateObj, existsInCDR, existsInQPath, existsInQCD, existsInCSR);
       historyReport.push("- Queued for batch archive");
+
+      if (willBuildDQE) {
+        const dqeHD = targetSS.getSheetByName("DQE Historical Data");
+        if (dqeHD) {
+          const bulkDQEStart = Date.now();
+          try {
+            SpreadsheetApp.flush();
+            const dqeStartRow = dqeHD.getLastRow();
+            buildDQEHistoricalData(rawDataSheet, dqeHD);
+            const dqeEndRow = dqeHD.getLastRow();
+            const dqeCount = Math.max(0, dqeEndRow - dqeStartRow);
+            if (dqeCount > 0 && histDateCache) histDateCache.dqe.add(dateKey);
+            historyReport.push(`- DQE HD: built ${dqeCount} rows`);
+            try {
+              logPipelineHealth_(targetSS, {
+                step:       'bulkBackfill:DQE',
+                status:     'success',
+                rows:       dqeCount,
+                durationMs: Date.now() - bulkDQEStart,
+                notes:      dateObj.toDateString(),
+              });
+            } catch (logErr) { /* best-effort */ }
+          } catch (dqeErr) {
+            // Best-effort: DQE failure for one date doesn't abort the
+            // bulk run. The 4 legacy sheets' Pending Archive entries
+            // still stand and the next date proceeds.
+            const msg = (dqeErr && dqeErr.message) ? dqeErr.message : String(dqeErr);
+            console.error('bulkBackfill DQE block failed for ' + dateKey + ': ' + msg);
+            historyReport.push(`- DQE HD: FAILED (${msg})`);
+            try {
+              logPipelineHealth_(targetSS, {
+                step:       'bulkBackfill:DQE',
+                status:     'failure',
+                rows:       null,
+                durationMs: Date.now() - bulkDQEStart,
+                notes:      dateObj.toDateString() + ' | ' + msg,
+              });
+            } catch (logErr) { /* best-effort */ }
+          }
+        }
+      }
     }
 
     if (!lastKnown.includes(latestName)) {
@@ -411,9 +472,10 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
     let countTotal = null;
     if (!isHistoricalBackfill && historyReport.counts) {
       const c = historyReport.counts;
-      successCountLine = `CDR: +${c.cdr} | QPath: +${c.qpath} | QCD: +${c.qcd} | CSR: +${c.csr}`;
+      successCountLine = `CDR: +${c.cdr} | QPath: +${c.qpath} | QCD: +${c.qcd} | CSR: +${c.csr} | DQE: +${c.dqe}`;
       countTotal = (Number(c.cdr) || 0) + (Number(c.qpath) || 0)
-                 + (Number(c.qcd) || 0) + (Number(c.csr) || 0);
+                 + (Number(c.qcd) || 0) + (Number(c.csr) || 0)
+                 + (Number(c.dqe) || 0);
     }
     try {
       logPipelineHealth_(pipelineTargetSS, {
@@ -1157,16 +1219,17 @@ function updateOutputSheet(sheet, res, dateObj) {
   });
 }
 
-function processIntegratedHistory(targetSS, outputSheet, results, dateObj, skipCDR, skipQPath, skipQCD, skipCSR) {
+function processIntegratedHistory(targetSS, outputSheet, results, dateObj, skipCDR, skipQPath, skipQCD, skipCSR, skipDQE, rawDataSheet) {
   const summaryLog = [];
   const salesHD    = targetSS.getSheetByName("Q Path Historical Data");
   const obcHD      = targetSS.getSheetByName("CDR Historical Data");
   const qcdHD      = targetSS.getSheetByName("QCD Historical Data");
   const csrHD      = targetSS.getSheetByName("CSR Transfer Historical Data");
+  const dqeHD      = targetSS.getSheetByName("DQE Historical Data");
   const monthStr   = getMonthYearStr(dateObj);
   const weekStr    = getWeekOfMonthStr(dateObj);
 
-  let cdrCount = 0, qpathCount = 0, qcdCount = 0, csrCount = 0;
+  let cdrCount = 0, qpathCount = 0, qcdCount = 0, csrCount = 0, dqeCount = 0;
   
   // 1. CDR History
 if (!skipCDR && obcHD) {
@@ -1386,9 +1449,53 @@ if (!skipCDR && obcHD) {
     }
   }
 
+  // 5. DQE History
+  // buildDQEHistoricalData reads Raw Data + DO NOT EDIT! (roster +
+  // alias overrides) and writes per-agent rows to DQE Historical Data;
+  // it also mirrors to Neon and writes its own Pipeline Health row.
+  // We flush first so any pending writes on the target SS are committed
+  // before the build re-reads from it. Best-effort: failure is logged
+  // but never blocks the import (CDR/QPath/QCD/CSR rows still stand).
+  if (!skipDQE && dqeHD && rawDataSheet) {
+    try {
+      SpreadsheetApp.flush();
+      const dqeStartRow = dqeHD.getLastRow();
+      buildDQEHistoricalData(rawDataSheet, dqeHD);
+      const dqeEndRow = dqeHD.getLastRow();
+      dqeCount = Math.max(0, dqeEndRow - dqeStartRow);
+      if (dqeCount > 0) {
+        summaryLog.push(`- DQE HD: Archived ${dqeCount} Rows`);
+        try {
+          logPipelineHealth_(targetSS, {
+            step: 'processIntegratedHistory:DQE',
+            status: 'success',
+            rows: dqeCount,
+            durationMs: null,
+            notes: dateObj.toDateString(),
+          });
+        } catch (logErr) { /* best-effort */ }
+      }
+    } catch (dqeErr) {
+      // Best-effort: failure surfaces in Pipeline Health and email
+      // alerts, but the other 4 sheets' writes still stand.
+      const msg = (dqeErr && dqeErr.message) ? dqeErr.message : String(dqeErr);
+      console.error('processIntegratedHistory DQE block failed: ' + msg);
+      summaryLog.push(`- DQE HD: FAILED (${msg})`);
+      try {
+        logPipelineHealth_(targetSS, {
+          step: 'processIntegratedHistory:DQE',
+          status: 'failure',
+          rows: null,
+          durationMs: null,
+          notes: dateObj.toDateString() + ' | ' + msg,
+        });
+      } catch (logErr) { /* best-effort */ }
+    }
+  }
+
   return {
   summaryLog,
-  counts: { cdr: cdrCount, qpath: qpathCount, qcd: qcdCount, csr: csrCount }
+  counts: { cdr: cdrCount, qpath: qpathCount, qcd: qcdCount, csr: csrCount, dqe: dqeCount }
   };
 }
 
@@ -1412,10 +1519,14 @@ function parsePendingDate(val) {
   return new Date(val);
 }
 
-function checkHistoryForDate(targetSS, sheetName, importDateObj) {
+// CDR / Q Path / QCD / CSR Historical Data hold their date in col 3;
+// DQE Historical Data holds it in col 2. Default keeps backward
+// compatibility for the four legacy callers; pass 2 explicitly for DQE.
+function checkHistoryForDate(targetSS, sheetName, importDateObj, dateColIndex) {
+  const col = dateColIndex || 3;
   const histSheet = targetSS.getSheetByName(sheetName);
   if (!histSheet || histSheet.getLastRow() < 2) return false;
-  const dates     = histSheet.getRange(2, 3, histSheet.getLastRow() - 1, 1).getValues().flat();
+  const dates     = histSheet.getRange(2, col, histSheet.getLastRow() - 1, 1).getValues().flat();
   const targetStr = importDateObj.toDateString();
   return dates.some(d => {
     if (d instanceof Date) return d.toDateString() === targetStr;
@@ -1425,12 +1536,13 @@ function checkHistoryForDate(targetSS, sheetName, importDateObj) {
   });
 }
 
-function buildHistoryDateSet(targetSS, sheetName) {
+function buildHistoryDateSet(targetSS, sheetName, dateColIndex) {
+  const col = dateColIndex || 3;
   const sheet  = targetSS.getSheetByName(sheetName);
   const result = new Set();
   if (!sheet || sheet.getLastRow() < 2) return result;
 
-  const dates = sheet.getRange(2, 3, sheet.getLastRow() - 1, 1).getValues().flat();
+  const dates = sheet.getRange(2, col, sheet.getLastRow() - 1, 1).getValues().flat();
   dates.forEach(d => {
     if (d instanceof Date && !isNaN(d.getTime())) {
       result.add(d.toDateString());

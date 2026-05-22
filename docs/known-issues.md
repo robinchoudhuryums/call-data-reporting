@@ -362,17 +362,30 @@ free-form; current writers emit:
 - `autoImport` — overall import outcome, from
   `apps-script/cdr-import/autoImport.js::processNewImport`
   (success at the end, failure in the outer catch block).
-- `processIntegratedHistory:CDR` / `:QPath` / `:QCD` / `:CSR` —
-  one row per output type that produced > 0 rows. Added so a
-  partial failure (e.g. CDR + QPath succeed but QCD throws)
+- `processIntegratedHistory:CDR` / `:QPath` / `:QCD` / `:CSR` /
+  `:DQE` — one row per output type that produced > 0 rows. Added
+  so a partial failure (e.g. CDR + QPath succeed but QCD throws)
   surfaces immediately instead of being hidden inside the outer
   `autoImport` row's Notes count line. If a block fails
   mid-`processIntegratedHistory`, the per-output rows already
-  written stay; the outer `autoImport` row logs the failure.
+  written stay; the outer `autoImport` row logs the failure. The
+  `:DQE` row was added when buildDQEHistoricalData was folded into
+  the integrated path (INV-16 expanded).
+- `bulkBackfill:DQE` — DQE build outcome from cdr-import's
+  bulk-historical-backfill path (`bulkHistoricalUpdate` ->
+  `processBulkQueue` -> `processNewImport` in silent mode).
+  Bulk mode writes Raw Data per-date only when DQE actually
+  needs building (`willBuildDQE = !existsInDQE`) and calls
+  `buildDQEHistoricalData` inline right after queueing the
+  other 4 sheet types to Pending Archive. One row per date in
+  the bulk range; a failure on one date is logged and the loop
+  continues to the next.
 - `buildDQE` — DQE rebuild outcome, from
-  `apps-script/cdr-report/buildDQEHistoricalData.js`
-  (after the Neon mirror block on success, in `runDailyDQEBuild_`'s
-  catch on failure).
+  `apps-script/cdr-report/buildDQEHistoricalData.js` standalone
+  trigger path (`runDailyDQEBuild_`). Still installed as a safety
+  net during stabilization of the integrated path; uninstall once
+  every recent successful import shows a corresponding
+  `processIntegratedHistory:DQE` row.
 
 Every writer wraps every write in try/catch and swallows failures
 so pipeline-health logging can never block or fail the pipeline.

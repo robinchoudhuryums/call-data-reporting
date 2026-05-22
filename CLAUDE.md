@@ -110,6 +110,19 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
 - **`neonWrite.js` is duplicated** between `apps-script/cdr-report/` and
   `apps-script/cdr-import/`. Currently byte-identical. Any change to one
   is a two-file edit; `diff` before editing.
+- **`buildDQEHistoricalData.js` is also duplicated** between
+  `apps-script/cdr-report/` and `apps-script/cdr-import/`. Same INV-16
+  byte-identical discipline as `neonWrite.js`. cdr-import calls it
+  inline as the 5th sheet write inside `processIntegratedHistory` so
+  DQE Historical Data refreshes alongside CDR / Q Path / QCD / CSR in
+  one run; cdr-report keeps its standalone `runDailyDQEBuild_` trigger
+  as a safety net while the integrated path stabilizes. `diff` the two
+  copies before editing either. Side note: `logPipelineHealth_` is now
+  defined in both `cdr-import/autoImport.js` and
+  `cdr-import/buildDQEHistoricalData.js` -- alphabetical load order
+  means buildDQE's version overrides autoImport's, but both
+  implementations behave identically for the actual call sites (all
+  pass a non-null `ss`).
 - **Per-report client prefs in localStorage.** Each report persists its
   own form state under `cdr.ir.prefs.v1`, `cdr.pr.prefs.v1`, and
   `cdr.cr.prefs.v1`. Bump the trailing version when the prefs schema
@@ -161,7 +174,6 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   the last-loaded file's definition wins. If a project needs more
   than one menu, build them all from one `onOpen` (see
   `cdr-report/CDR Tools menu.js` calling `installDQEDrilldownMenu_`).
-  The same pattern bit the cdr-report project before the F14 fix.
 - **`<?!= JSON.stringify(x) ?>` is not script-tag safe.** Apps
   Script's force-print scriptlet doesn't HTML-escape, and
   `JSON.stringify` does not escape `</script>` inside string
@@ -191,14 +203,26 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   runs. The `Sent` boolean is `TRUE` only for `sent` outcomes.
 - **Header freshness pill goes orange past 36h.** The "Data through
   Mon May 19 · 14h ago" badge in `.header-meta` computes hours
-  since end-of-day on the most recent date in `DQE Historical Data`
-  (via `getLatestDataDate`); past 36h it adds the `.is-stale` class
-  and tints warm orange. Tunable in `setFreshnessPill_` if 36h
-  becomes too noisy. Pill is hidden until the server returns the
-  latest date so the header doesn't show a stale fallback.
+  since end-of-day on the most recent date returned by
+  `getLatestDataDates` (plural) -- which scans both DQE Historical
+  Data and QCD Historical Data and returns the MAX, so the pill
+  stays fresh during periods where one source updates without
+  the other (e.g. integrated import refreshes QCD before the
+  cdr-report safety-net trigger refreshes DQE, or vice versa).
+  Past 36h adds the `.is-stale` class and tints warm orange.
+  Tunable in `setFreshnessPill_` if 36h becomes too noisy. Pill
+  is hidden until the server returns the latest date so the
+  header doesn't show a stale fallback. The single-source
+  `getLatestDataDate` is kept for the My Department From/To
+  default (which must snap to DQE specifically -- the agent
+  table draws from DQE).
 - **QCD Historical Data col D holds raw queue names, NOT dept
-  names.** Real values are `A_Q_CSR` / `A_Q_Sales` / `Backup CSR`
-  / etc. The legacy `dqe-report/DQEdashboard.js::buildTable4`
+  names.** Real values are queue identifiers like
+  `A_Q_CustomerSuccess` (CSR's queue in this install) /
+  `A_Q_Sales` / `Backup CSR` / etc. -- the canonical spellings
+  vary per install, so always check col D in recent rows to see
+  what the import pipeline actually wrote.
+  The legacy `dqe-report/DQEdashboard.js::buildTable4`
   filters with `r.callQueue === ctx.deptName` and looks like a
   reference -- it's misleading; live values don't match dashboard
   dept headers. To filter QCD rows for a dashboard dept, look up
@@ -293,11 +317,20 @@ When something looks wrong, before assuming a code bug, check:
    - **Daily alerts**: dashboard project → Triggers should list
      `runDailyAlerts_` (or install via the Alerts modal). Without
      it, alerts only fire when an admin clicks "Send alerts".
-   - **Daily DQE build** (CDR Report project, INV-44 prerequisite):
-     editor → Triggers should list `runDailyDQEBuild_` (or install
-     via CDR Tools → ⏰ Daily DQE Build Trigger → Install). Without
-     it, DQE Historical Data goes stale and the dashboard silently
-     serves yesterday's data.
+   - **Daily DQE build** is now integrated into cdr-import's
+     `processIntegratedHistory` (5th block; INV-16 expanded). Each
+     successful daily import now refreshes DQE Historical Data
+     alongside CDR / Q Path / QCD / CSR. The bulk-backfill path
+     (`bulkHistoricalUpdate`) also builds DQE per-date now, logged
+     as `bulkBackfill:DQE`. The cdr-report project's standalone
+     `runDailyDQEBuild_` trigger is preserved as a safety net
+     during stabilization; uninstall after the integrated path
+     proves reliable. Look for `processIntegratedHistory:DQE`
+     (or `bulkBackfill:DQE` if a backfill ran) rows in Pipeline
+     Health (INV-44) -- present = integrated path working.
+     Absent only = either no import ran today OR the DQE block
+     specifically failed (the autoImport row will still be
+     `success`; check the cdr-import execution log).
    - **Daily + weekly digests**: dashboard project → Triggers should
      list both `runDailyDigests_` and `runWeeklyDigests_` (or install
      via Alerts modal → Manager Digest Subscribers → Install). Without
@@ -316,10 +349,13 @@ When something looks wrong, before assuming a code bug, check:
     fixed. Use both spellings as aliases if you're unsure.
 11. Pipeline Health sheet: open the dashboard's Alerts modal →
     Pipeline Health section. A long quiet stretch on `autoImport`
-    or `buildDQE` (rows from 2+ days ago and nothing since) means
-    the daily ingest or DQE rebuild hasn't run. Cross-check with
-    Operator State #1 + #8. An empty sheet right after deploy
-    means setup() hasn't been re-run on this project.
+    (or on any of the DQE-freshness step names -- `buildDQE`,
+    `processIntegratedHistory:DQE`, `bulkBackfill:DQE`; see
+    INV-44 for the full list) with rows from 2+ days ago and
+    nothing since means the daily ingest or DQE rebuild hasn't
+    run. Cross-check with Operator State #1 + #8. An empty sheet
+    right after deploy means setup() hasn't been re-run on this
+    project.
 12. Manager digest delivery: if a subscriber says they didn't get
     their digest, check (a) Digest Config row Active=TRUE,
     (b) Cadence is `daily` or `weekly` (normalized -- other values
@@ -359,7 +395,7 @@ CDR Reporting Tools:
   apps-script/cdr-report/dashboardCDR.js, apps-script/cdr-report/dbHistorical.js, apps-script/cdr-report/dbReporting.js, apps-script/cdr-report/emailDailyReport.js, apps-script/cdr-report/neonbackfill.js, apps-script/cdr-report/neonWrite.js
 
 CDR Import:
-  apps-script/cdr-import/AbandonedFilter.js, apps-script/cdr-import/CDR Tools.js, apps-script/cdr-import/DeleteOldSheets.js, apps-script/cdr-import/autoImport.js, apps-script/cdr-import/importBulkCSVsFromDrive.js, apps-script/cdr-import/neonWrite.js, apps-script/cdr-import/appsscript.json
+  apps-script/cdr-import/AbandonedFilter.js, apps-script/cdr-import/CDR Tools.js, apps-script/cdr-import/DeleteOldSheets.js, apps-script/cdr-import/autoImport.js, apps-script/cdr-import/buildDQEHistoricalData.js, apps-script/cdr-import/importBulkCSVsFromDrive.js, apps-script/cdr-import/neonWrite.js, apps-script/cdr-import/appsscript.json
 
 DQE Report Legacy:
   apps-script/dqe-report/DQEdashboard.js, apps-script/dqe-report/FAQGuide.html, apps-script/dqe-report/IndividualReport.js, apps-script/dqe-report/IndividualReportModal.html, apps-script/dqe-report/MissedCallsReport.js, apps-script/dqe-report/MissedReportModal.html, apps-script/dqe-report/MultiCompModal.html, apps-script/dqe-report/MultiComparisonTool.js, apps-script/dqe-report/SingleRangeReport.js, apps-script/dqe-report/SingleReportModal.html, apps-script/dqe-report/menu DQE Tools.js, apps-script/dqe-report/sendManualAlert.js, apps-script/dqe-report/showFAQ.js, apps-script/dqe-report/appsscript.json
@@ -380,7 +416,7 @@ INV-12 | setup() in Department Dashboard is idempotent — creates Access Contro
 INV-13 | Web app deployment is "Execute as: Me" + "Anyone within domain"; deployer's spreadsheet permissions back the script. | Subsystem: Department Dashboard
 INV-14 | SPREADSHEET_ID is read from Script Properties, not hardcoded; missing property = clear error at request time. | Subsystem: Department Dashboard
 INV-15 | Per-project .clasp.json files are gitignored at any depth; scriptIds stay out of the repo. | Subsystem: operational/cross-cutting
-INV-16 | neonWrite.js is duplicated between cdr-report/ and cdr-import/; must stay byte-identical. Any change requires a two-file edit. | Subsystem: CDR Reporting Tools / CDR Import
+INV-16 | `neonWrite.js` AND `buildDQEHistoricalData.js` are duplicated between cdr-report/ and cdr-import/; both must stay byte-identical. Any change requires a two-file edit. cdr-import calls `buildDQEHistoricalData` inline inside `processIntegratedHistory` (as the 5th historical sheet write) so DQE Historical Data refreshes alongside CDR / Q Path / QCD / CSR in a single autoImport run; cdr-report keeps its `runDailyDQEBuild_` trigger as a safety net. `logPipelineHealth_` is defined in both `cdr-import/autoImport.js` and `cdr-import/buildDQEHistoricalData.js` -- buildDQE's version wins (alphabetical load order) but the two implementations behave identically for all real call sites. | Subsystem: CDR Reporting Tools / CDR Import / CDR DQE Pipeline
 INV-17 | `clasp push -f` does NOT delete remote files absent locally; removing files from a project requires manual web-editor deletion. | Subsystem: operational/cross-cutting
 INV-18 | Missed Calls Report chart range is 8:00 AM – 5:00 PM CST in 30-minute buckets (18 total). | Subsystem: Department Dashboard
 INV-19 | DQE_EXCLUDED_AGENTS allowlist in buildDQEHistoricalData.js is the canonical source for pseudo-agent exclusions; additions go upstream, not downstream. | Subsystem: CDR DQE Pipeline
@@ -394,8 +430,8 @@ INV-26 | TEAM_AVG_EXCLUDES in Config.gs lists per-dept agent names removed from 
 INV-27 | Individual Report's team-avg denominator counts only roster members with ANY call activity (rung/answered/missed > 0) in the selected range, NOT the full roster size. Zero-call roster members don't dilute the average. | Subsystem: Department Dashboard
 INV-28 | Performance Report's prior period is the immediately-preceding window of the same duration (durationDays before currentStart, ending one day before currentStart) -- NOT "previous calendar month". Documented in the form's inline hint and the results-header "Comparing against..." line. Match legacy SingleRangeReport semantics. | Subsystem: Department Dashboard
 INV-29 | Individual Report's monthly trend window: range itself when selected range > 366 days OR equals a full calendar year (Jan 1 - Dec 31 of one year); else `first-of-month(end - 12 months)` to `end`. Performance Report uses identical logic so the 12-mo trends align across both reports for the same dept. | Subsystem: Department Dashboard
-INV-30 | Each report has its own versioned cache key prefix; bump on any aggregation rule change so stale entries don't bleed in. Current: `summary:v6` (Data.gs), `latestDate:v1` (Data.gs — most-recent ISO date with data; drives the dashboard's default From/To), `individual:v6` (IndividualReport.gs), `individual_active:v1` (active-agents-in-range subset used by Individual + Performance + Compare Ranges pickers), `performance:v3` (PerformanceReport.gs), `compareRanges:v3` (CompareRangesReport.gs), `companyOverview:v11` (CompanyOverview.gs), `qcd:v3` (QCDReport.gs). Alerts.gs holds no cached compute. | Subsystem: Department Dashboard
-INV-31 | `script.send_mail` OAuth scope in appsscript.json is required for: (1) Individual / Performance / Compare Ranges / QCD "Email image" exports, (2) the Low Answer Rate Alerts engine, (3) the Manager Digest engine (Digest.gs), (4) the failure-notification paths (notifyImportFailure_ in autoImport.js, runDailyDQEBuild_ in buildDQEHistoricalData.js, notifyDigestFailure_ in Digest.gs). All eight paths use `MailApp.sendEmail`. Removing the scope breaks every one of them; adding new send-mail features here doesn't need a re-scope. | Subsystem: Department Dashboard (+ CDR Import / CDR DQE Pipeline for the notify-failure paths)
+INV-30 | Each report has its own versioned cache key prefix; bump on any aggregation rule change so stale entries don't bleed in. Current: `summary:v6` (Data.gs), `latestDate:v1` (Data.gs -- most-recent DQE ISO date; drives the My Department From/To default so the agent table lands on a non-empty day), `latestDates:v1` (Data.gs -- multi-source `{dqe, qcd, latest}` blob; drives the header freshness pill so it doesn't go stale when one source updates without the other), `individual:v6` (IndividualReport.gs), `individual_active:v1` (active-agents-in-range subset used by Individual + Performance + Compare Ranges pickers), `performance:v3` (PerformanceReport.gs), `compareRanges:v3` (CompareRangesReport.gs), `companyOverview:v11` (CompanyOverview.gs), `qcd:v3` (QCDReport.gs). Alerts.gs holds no cached compute. | Subsystem: Department Dashboard
+INV-31 | `script.send_mail` OAuth scope in appsscript.json is required for: (1) Individual / Performance / Compare Ranges / QCD "Email image" exports, (2) the Low Answer Rate Alerts engine, (3) the Manager Digest engine (Digest.gs), (4) the failure-notification paths (notifyImportFailure_ in autoImport.js, runDailyDQEBuild_ in buildDQEHistoricalData.js [present in BOTH cdr-import and cdr-report copies after INV-16 expansion], notifyDigestFailure_ in Digest.gs, plus the indirect path from cdr-import's integrated DQE block hitting notifyNeonWriteFailure on a Neon write failure). All paths use `MailApp.sendEmail`. Removing the scope breaks every one of them; adding new send-mail features here doesn't need a re-scope. | Subsystem: Department Dashboard (+ CDR Import / CDR DQE Pipeline for the notify-failure paths)
 INV-32 | Low Answer Rate Alerts is admin-only at the server boundary. Every public callable in Alerts.gs starts with `assertAdmin_`. The launcher button is also hidden client-side via `data-admin-only`, but the server check is the source of truth. Compare Ranges was previously admin-only too but was opened to managers (with the same `dept !== user.department` check the other reports use) so they can run year-over-year comparisons within their own dept. Adding a new admin = setting/editing the `ADMIN_EMAILS` Script Property (comma-separated emails); falls back to `ADMIN_EMAILS_FALLBACK` in Config.gs if unset. | Subsystem: Department Dashboard
 INV-33 | `runDailyAlerts_` (time-triggered alerts) skips Saturdays and Sundays. Holiday handling is intentionally not built in -- if it becomes noise in practice, add a skip-dates column to the Alert Config sheet rather than hardcoding in Alerts.gs. Manual sends via the UI ignore this skip. | Subsystem: Department Dashboard
 INV-34 | `Alert Config` columns: Department \| Threshold % \| Extra Recipients \| Active \| Notes. `Alert Log` columns: Timestamp \| Department \| Date Checked \| Threshold % \| Answer Rate % \| Sent \| Recipients \| Triggered By \| Notes \| Status. Both sheets idempotently created by setup(); never overwritten. Alerts.gs's `readAlertConfig_` and `appendAlertLog_` depend on these schemas. | Subsystem: Department Dashboard
@@ -408,13 +444,13 @@ INV-40 | Overview "X of Y agents" caption denominator is `recentlyActiveCount` =
 INV-41 | chartjs-plugin-datalabels requires `Chart.register(ChartDataLabels)` AND `Chart.defaults.plugins.datalabels.display = true` at module load (the `registerChartDataLabels_` IIFE in script.html does both). Chart.js v4 dropped script-tag auto-registration; the plugin defaults to display=false since v1.0.0. Per-chart `display: false` overrides still suppress labels (Missed Calls radar, Overview multi-line trend). Use the boolean form of `display` per chart — the function form returns false unpredictably on mixed bar+line charts in this plugin version. | Subsystem: Department Dashboard
 INV-42 | `refreshChartTheme()` (script.html) resolves every CSS custom property via `colorToCanvasRgb_()` — paints onto a 1×1 canvas and reads back canonical `rgba(...)`. Required because chartjs-plugin-datalabels' `fillStyle` path can't parse `oklch(...)` strings → silently renders empty fills (invisible labels). Never pass raw `getComputedStyle(...).getPropertyValue('--token')` to chart options; always go through `THEME.*`. Hook is re-run on dark-mode toggle so newly-rendered charts pick up the inverted palette. | Subsystem: Department Dashboard
 INV-43 | Default From/To on the My Department page snaps to the most-recent ISO date present in DQE Historical Data, via `Data.gs::getLatestDataDate()` (cached under `latestDate:v1`). Falls back to today on failure. Replaces the legacy "current-month-to-date" default so the table isn't empty when a manager opens the dashboard before today's ingest has run. | Subsystem: Department Dashboard
-INV-44 | `Pipeline Health` sheet columns: `Timestamp \| Step \| Status \| Rows \| Duration (ms) \| Notes`. Schema pinned in `Config.gs::PIPELINE_HEALTH_HEADERS`; sheet is idempotently created by `setup()`. Append-only; never overwritten. Writers are `logPipelineHealth_` helpers in `apps-script/cdr-import/autoImport.js` and `apps-script/cdr-report/buildDQEHistoricalData.js` (cross-project; each owns its own copy of the helper). All writes are best-effort -- a logging failure must never block or fail the pipeline. Reader is `Alerts.gs::readPipelineHealth_(maxRows)`; UI surfaces the last 20 entries in the Alerts modal. Step values are free-form (currently `autoImport`, `buildDQE`); Status is `success` or `failure`. | Subsystem: Department Dashboard (+ CDR Import / CDR DQE Pipeline for the writers)
+INV-44 | `Pipeline Health` sheet columns: `Timestamp \| Step \| Status \| Rows \| Duration (ms) \| Notes`. Schema pinned in `Config.gs::PIPELINE_HEALTH_HEADERS`; sheet is idempotently created by `setup()`. Append-only; never overwritten. Writers are `logPipelineHealth_` helpers in `apps-script/cdr-import/autoImport.js`, `apps-script/cdr-import/buildDQEHistoricalData.js`, and `apps-script/cdr-report/buildDQEHistoricalData.js` (cross-project; each owns its own copy of the helper -- INV-16 keeps the two buildDQE copies byte-identical). All writes are best-effort -- a logging failure must never block or fail the pipeline. Reader is `Alerts.gs::readPipelineHealth_(maxRows)`; UI surfaces the last 20 entries in the Alerts modal. Step values are free-form (currently `autoImport`, `buildDQE`, `processIntegratedHistory:CDR`, `:QPath`, `:QCD`, `:CSR`, `:DQE`, `bulkBackfill:DQE`); Status is `success` or `failure`. Looking up a recent fresh-DQE-write involves either `buildDQE` (cdr-report standalone trigger), `processIntegratedHistory:DQE` (cdr-import integrated daily path), OR `bulkBackfill:DQE` (cdr-import historical backfill path) -- all three share the freshness role. | Subsystem: Department Dashboard (+ CDR Import / CDR DQE Pipeline for the writers)
 INV-45 | `Digest Config` sheet columns: `Email \| Department \| Cadence \| Active \| Notes`. Schema pinned in `Config.gs::DIGEST_CONFIG_HEADERS`; sheet is idempotently created by `setup()`. Cadence is `daily` (sends each weekday morning for the previous day's data; weekends skipped) or `weekly` (sends Monday 8 AM for the prior Mon-Fri window). `Digest.gs` is the engine; every public callable (`getDigestsInit`, `sendPreviewDigest`, `installDigestTriggers`, `uninstallDigestTriggers`) starts with `assertAdmin_`. Trigger entry points (`runDailyDigests_`, `runWeeklyDigests_`) end in `_` so `google.script.run` can't reach them but ScriptApp dispatch still calls them by name. Trigger lifecycle is managed via the Alerts modal's "Manager Digest Subscribers" section. | Subsystem: Department Dashboard
 INV-46 | `Agent Alias Overrides` sheet columns: `Old Name \| Canonical Name \| Active \| Added By \| Added At \| Notes`. Schema pinned in `Config.gs::AGENT_ALIAS_OVERRIDES_HEADERS`; sheet is idempotently created by `setup()`. Soft-coupling across two Apps Script projects: the dashboard's `OrphanFix.gs` writes rows here; the CDR Report project's `buildDQEHistoricalData.js::loadRosterCanonicalNames_` reads them on every build and folds them into the canonicalization map. The pipeline-side check is best-effort (missing/empty sheet leaves the build's behavior unchanged) so an unsynced cdr-report deploy doesn't break the dashboard's UI. Aliases with `Active=FALSE` are skipped by the pipeline. | Subsystem: Department Dashboard + CDR DQE Pipeline
 INV-47 | `Orphan Fix Log` sheet columns: `Timestamp \| Admin \| Action \| From Name \| To Name \| Affected Rows \| Notes`. Schema pinned in `Config.gs::ORPHAN_FIX_LOG_HEADERS`; sheet is idempotently created by `setup()`. Append-only; never overwritten. `OrphanFix.gs::appendOrphanFixLog_` writes one row per action. Action values: `alias-add`, `alias-remove`, `rename`, `rename+alias`. Affected Rows is the count of DQE Historical Data rows modified by a `rename` (0 for alias-only actions). | Subsystem: Department Dashboard
 INV-48 | `dept.wow.driver` on the Overview payload ("what changed" insight) is attached only when `|dept.wow.deltaPct| >= WOW_DRIVER_THRESHOLD` (= 1.5 pts). The driver is the per-agent net answered/missed change that most explains the dept's WoW shift, picked by `computeWowDriver_` in CompanyOverview.gs. Requires at least 3 events in either week-window to avoid one-call outliers; positive WoW surfaces the biggest answered-delta, negative WoW surfaces the biggest missed-delta. `dept.wow.driver` may be null for low-activity / quiet-week depts; the client (`ovBuildWowDriver_`) renders nothing in that case. Per-dept (not admin-only) -- managers see drivers for their own dept; admins see them for all depts. | Subsystem: Department Dashboard
 INV-49 | `getIndividualReport` accepts optional `priorFrom`/`priorTo` for same-agent vs-self comparison. When supplied, every `summaryData[i]` carries `priorStats` (formatted) + `priorRaw` (numeric); `priorDateLabel` is set at the top level. Absence = legacy shape (`priorStats: null`). The cache key (`individual:v6`) adds a `priorKey` segment (`priorFrom..priorTo` or `none`) so the prior window is part of the cache identity. Client form (`ir-compare-mode` select) supports None / Same window one year prior / Immediately-preceding period / Custom prior range; resolved via `irResolvePriorRange_`. The same prior dates are re-applied automatically when the user re-runs from the edit-popover. | Subsystem: Department Dashboard
-INV-50 | `QCD Historical Data` columns (1-indexed): `Month Year \| Week \| Date \| Call Queue \| Call Source \| Total Calls \| Total Answered \| Abandoned \| Longest Wait \| Avg Answer \| Abandoned % \| Violations`. Pinned in `Config.gs::QCD_HISTORICAL_COLS`. Writer: `apps-script/cdr-import/autoImport.js::processIntegratedHistory` QCD block. Reader: `apps-script/department-dashboard/QCDReport.gs` (dept-scoped report) + `CompanyOverview.gs::computeQcdSnapshots_` (per-dept latest-day snapshot on the Overview tile grid) + `Data.gs::computeDeptQcdSnapshot_` (per-dept latest-day snapshot for My Department's "Yesterday's QCD" tiles). **`Call Queue` carries raw queue names like `A_Q_CSR` / `Backup CSR` -- NOT dashboard dept names.** To map a dept to its set of queue names, use `Config.gs::DEPT_QCD_QUEUES` (admin-curated). `Call Source` is one of `Total Calls` (daily roll-up; the only source the dashboard sums to avoid double-counting) plus sub-source breakdowns like `CSR` / `Ad-campaign` / `New Call Menu` / `Non-CSR (internal)` that the dashboard skips. `Violations` is the count of (source, day) tuples where Abandoned % > 5%. | Subsystem: Department Dashboard + CDR Import
+INV-50 | `QCD Historical Data` columns (1-indexed): `Month Year \| Week \| Date \| Call Queue \| Call Source \| Total Calls \| Total Answered \| Abandoned \| Longest Wait \| Avg Answer \| Abandoned % \| Violations`. Pinned in `Config.gs::QCD_HISTORICAL_COLS`. Writer: `apps-script/cdr-import/autoImport.js::processIntegratedHistory` QCD block. Reader: `apps-script/department-dashboard/QCDReport.gs` (dept-scoped report) + `CompanyOverview.gs::computeQcdSnapshots_` (per-dept latest-day snapshot on the Overview tile grid) + `Data.gs::computeDeptQcdSnapshot_` (per-dept latest-day snapshot for My Department's "Yesterday's QCD" tiles). **`Call Queue` carries raw queue names like `A_Q_CustomerSuccess` / `A_Q_Sales` / `Backup CSR` -- NOT dashboard dept names; canonical spellings vary per install.** To map a dept to its set of queue names, use `Config.gs::DEPT_QCD_QUEUES` (admin-curated). `Call Source` is one of `Total Calls` (daily roll-up; the only source the dashboard sums to avoid double-counting) plus sub-source breakdowns like `CSR` / `Ad-campaign` / `New Call Menu` / `Non-CSR (internal)` that the dashboard skips. `Violations` is the count of (source, day) tuples where Abandoned % > 5%. | Subsystem: Department Dashboard + CDR Import
 INV-51 | `QCD Report` is per-dept gated like Individual / Performance / Compare Ranges -- managers see their own dept, admins pick any. **Parent depts auto-include sub-queue queues** via `queuesForDept_` (Sales+PAP, Power+PAK, CSR+Spanish per `OVERVIEW_PARENT_OF`); all three QCD readers (modal, Overview snapshot, My Department snapshot) use the same helper so rollups stay consistent. `getQcdReport({ department, from, to })` returns `meta` (with `queues` + `unmapped` flags), `dateLabel`, `totals` (sum across expanded queue list; `totals.violations` is MONTH-TO-DATE across the dept's queues, not selected-range sum), `queueBreakdown` (per-queue rows, one entry per queue in the expanded list), `trendData` (12-month monthly buckets), `dailySeries` (per-day rollup across dept queues for the selected range -- drives the chart's Daily view and the scrollable daily table). Cache prefix `qcd:v3`. **The Overview page's per-dept tile shows two QCD chips: an "Aban N (P%)" chip whenever QCD data exists (warn-tinted when P>=5%), and a "X viol MTD" chip when month-to-date violations > 0.** My Department page's agent table is PRECEDED by a "Yesterday's QCD" tile row (Total Calls / Answered / Abandoned / Abandoned % / Violations) sourced from `Data.gs::computeDeptQcdSnapshot_`. All QCD UI surfaces are visible to everyone (no admin gate); per-dept gating is on the dropdown only. | Subsystem: Department Dashboard
 INV-52 | `CDR Historical Data` columns (1-indexed): `Month Year \| Week \| Date \| Dept \| Name \| C..W` (22 metric cols). `Q Path Historical Data` columns: `Month Year \| Week \| Date \| Dept \| Path \| Total \| VM \| NonVM \| Opt1 \| NonOpt1 \| Pct`. `CSR Transfer Historical Data` columns: `Month Year \| Week \| Date \| Agent \| Trans % \| Total Calls \| Transferred \| + 11 per-queue cols`. Writers: `apps-script/cdr-import/autoImport.js::processIntegratedHistory`; each block emits a separate `processIntegratedHistory:CDR` / `:QPath` / `:CSR` row to Pipeline Health (INV-44). NOT consumed by the dashboard today -- the read path lives in the legacy DQE Report Apps Script. | Subsystem: CDR Import (writer) / DQE Report Legacy (reader) |
 
@@ -593,12 +629,12 @@ S27 | Compare Ranges is per-dept gated for managers | Subsystem: Department Dash
     - In the browser console, attempt `google.script.run.withSuccessHandler(console.log).withFailureHandler(console.error).getCompareRanges({ department: 'SomeOtherDept', ...})`.
   Expected: own-dept Generate succeeds; cross-dept console call throws "Not authorized for this department.". Admin users can request any dept that exists in the dept list (same gate as Individual / Performance).
 
-S28 | Pipeline Health logs autoImport + buildDQE outcomes | Subsystem: Department Dashboard + CDR Import + CDR DQE Pipeline
+S28 | Pipeline Health logs autoImport + integrated DQE outcomes | Subsystem: Department Dashboard + CDR Import + CDR DQE Pipeline
   Steps:
     - Trigger a successful daily import (or run processNewImport manually).
-    - Trigger a successful DQE build (or run testDQEBuild / runDailyDQEBuild_).
     - Open the dashboard as admin -> Alerts modal -> Pipeline Health section.
-  Expected: most recent rows show a `success` entry for `autoImport` (with the imported sheet name in Notes and a row count) followed by `buildDQE` (with `callDate=YYYY-MM-DD` in Notes). For a forced failure (rename "Raw Data" sheet temporarily), the entry shows status `failure` with the exception message in Notes. Logging is best-effort -- a missing Pipeline Health sheet must not break the pipeline.
+    - (Optional, only if testing the cdr-report safety-net trigger) Run `testDQEBuild` or `runDailyDQEBuild_` from the cdr-report editor.
+  Expected: most recent rows show a `success` entry for `autoImport` (with the imported sheet name in Notes and a row count) plus per-output rows from the integrated path -- `processIntegratedHistory:CDR` / `:QPath` / `:QCD` / `:CSR` / `:DQE`. If the optional safety-net trigger is also run, a separate `buildDQE` row appears (with `callDate=YYYY-MM-DD` in Notes). For a forced failure (rename "Raw Data" sheet temporarily), the entry shows status `failure` with the exception message in Notes. Logging is best-effort -- a missing Pipeline Health sheet must not break the pipeline. S33 + S34 cover the per-output and integrated-DQE specifics; this scenario is the smoke test that telemetry plumbing is alive.
 
 S29 | Manager Digest install + preview flow | Subsystem: Department Dashboard
   Steps:
@@ -613,7 +649,7 @@ S29 | Manager Digest install + preview flow | Subsystem: Department Dashboard
 S30 | Header freshness pill renders and goes stale | Subsystem: Department Dashboard
   Steps:
     - Open the dashboard fresh (any role). The freshness pill in `.header-meta` is hidden initially.
-    - After `getLatestDataDate` returns, the pill renders "Data through <weekday short> · <Nh ago>".
+    - After `getLatestDataDates` (plural, multi-source) returns, the pill renders "Data through <weekday short> · <Nh ago>" using the MAX across DQE + QCD.
     - If the latest date is more than 36h old (e.g. nothing ingested Friday + today is Sunday), the pill picks up the `.is-stale` class and tints warm orange.
     - Hover the pill; the title attribute explains what it represents.
   Expected: pill is hidden on fetch failure or empty data; visible and color-coded otherwise. Updates only on page load -- not live.
@@ -639,13 +675,24 @@ S32 | QCD Report end-to-end | Subsystem: Department Dashboard + CDR Import
     - Switch the chart-tab metric (Total Calls / Abandoned % / Violations); chart re-renders with appropriate axis formatting.
     - Re-open the dashboard fresh and check the Overview tile for a dept with violations or elevated abandoned %; a small QCD flag caption appears next to the WoW chip (red if violations > 0, muted if just elevated %). Visible to managers + admins.
     - As a manager, in the browser console: `google.script.run.withSuccessHandler(console.log).withFailureHandler(console.error).getQcdReport({ department: 'SomeOtherDept', from: '2026-05-01', to: '2026-05-19' })`.
-  Expected: own-dept Generate succeeds; cross-dept console call throws "Not authorized for this department.". Admin users can request any dept that exists in the dept list. Cache prefix `qcd:v2` keys are bounded (no agent-list dimension, so no MD5 hashing needed). The breakdown table shows one row per queue in `DEPT_QCD_QUEUES[dept]` plus a "Department total" row in the tfoot. The dept tile on Overview shows "Aban N (P%)" always (warn-tinted when P>=5%) plus "X viol MTD" when month-to-date violations > 0. My Department page renders a "Yesterday's QCD" tile row below the agent table.
+  Expected: own-dept Generate succeeds; cross-dept console call throws "Not authorized for this department.". Admin users can request any dept that exists in the dept list. Cache prefix `qcd:v3` keys are bounded (no agent-list dimension, so no MD5 hashing needed). The breakdown table shows one row per queue in `DEPT_QCD_QUEUES[dept]` plus a "Department total" row in the tfoot. The dept tile on Overview shows "Aban N (P%)" always (warn-tinted when P>=5%) plus "X viol MTD" when month-to-date violations > 0. My Department page renders a "Yesterday's QCD" tile row below the agent table.
 
 S33 | Pipeline Health per-output rows | Subsystem: CDR Import + Department Dashboard
   Steps:
     - Trigger a successful daily import via `processNewImport` (manual run or onChange).
     - Open the dashboard as admin → Alerts modal → Pipeline Health section.
-  Expected: most recent rows include separate entries for `processIntegratedHistory:CDR`, `:QPath`, `:QCD`, `:CSR` (one per output type that produced > 0 rows), each with status `success`, a row count, and the dateObj.toDateString() in Notes. If any output block fails mid-`processIntegratedHistory`, the outer `autoImport` row will still log a `failure` (and the per-output rows for steps that already succeeded remain). Best-effort: a missing Pipeline Health sheet does not block any output.
+  Expected: most recent rows include separate entries for `processIntegratedHistory:CDR`, `:QPath`, `:QCD`, `:CSR`, `:DQE` (one per output type that produced > 0 rows), each with status `success`, a row count, and the dateObj.toDateString() in Notes. If any output block fails mid-`processIntegratedHistory`, the outer `autoImport` row will still log a `failure` (and the per-output rows for steps that already succeeded remain). Best-effort: a missing Pipeline Health sheet does not block any output.
+
+S34 | Integrated DQE build runs inside autoImport | Subsystem: CDR Import + CDR DQE Pipeline + Department Dashboard
+  Steps:
+    - Trigger a daily import via `runManualExport` (or onChange) for a date NOT already present in DQE Historical Data.
+    - Wait for the run to complete; the success toast should report `CDR: +X | QPath: +Y | QCD: +Z | CSR: +W | DQE: +N`.
+    - Open the CDR Report spreadsheet → DQE Historical Data; confirm new rows for the imported date.
+    - Open the dashboard; the header freshness pill should refresh to that date within 5 min (or after cache TTL).
+    - Open the dashboard as admin → Alerts modal → Pipeline Health; confirm the most recent rows include `processIntegratedHistory:DQE` `success` for that date alongside CDR / QPath / QCD / CSR entries.
+    - Re-run `runManualExport` for the SAME date (without force-mode); the dedup guard should short-circuit and the toast says `ALREADY IN HISTORY`.
+    - Force-re-run for the same date; DQE rows for that date are cleared (deleteHistoricalRowsForDate with col 2), rebuilt, and Pipeline Health gets a fresh `:DQE` row.
+  Expected: integrated DQE writes succeed alongside the four legacy sheets; Pipeline Health `:DQE` row appears; dashboard freshness pill updates from the integrated path (no separate `runDailyDQEBuild_` trigger required). If the DQE block itself throws, the outer `autoImport` row still logs `success` for the 4-sheet write -- the DQE failure surfaces as a `:DQE` `failure` row. Bulk-archive path (`bulkHistoricalUpdate`) ALSO builds DQE per-date now -- in bulk mode the Raw Data sheet write is gated on `willBuildDQE` (=!existsInDQE) so the DQE build still has fresh source data on each iteration; the per-date outcome is logged to Pipeline Health as `bulkBackfill:DQE`. The 4 legacy sheets still flow through Pending Archive → `processBatchArchive` unchanged.
 
 ### Frozen Subsystems
 - DQE Report Legacy — manager-facing reports in `apps-script/dqe-report/`. Frozen because migration to Department Dashboard is complete: Individual Report, Performance Report, Compare Ranges, Missed Calls Report, and Low Answer Rate Alerts all live in the dashboard. Replacement: Department Dashboard. Awaiting decommission of the legacy spreadsheet. Unfreeze only if a bug is found in legacy that affects production decisions before the spreadsheet is retired.

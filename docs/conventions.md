@@ -247,13 +247,17 @@ a redeploy.
 ### Header freshness pill
 
 Small badge in `.header-meta` ("Data through Mon May 19 · 14h ago")
-populated by `setFreshnessPill_` once `getLatestDataDate` returns.
-Computes age from end-of-day on the most recent date in
-`DQE Historical Data`. Past 36h the pill picks up the `.is-stale`
-class and tints warm orange. Hidden on fetch failure / empty data
-so the header doesn't show a misleading fallback. Updates only on
-page load (not live). Tunable in `setFreshnessPill_` if 36h becomes
-too noisy in practice.
+populated by `setFreshnessPill_` once `getLatestDataDates` (plural)
+returns. The plural variant returns `{dqe, qcd, latest}` -- the
+pill renders against `latest` (the MAX) so it doesn't go stale
+when one source updates without the other. Computes age from
+end-of-day on that date. Past 36h the pill picks up the
+`.is-stale` class and tints warm orange. Hidden on fetch failure
+/ empty data so the header doesn't show a misleading fallback.
+Updates only on page load (not live). Tunable in
+`setFreshnessPill_` if 36h becomes too noisy in practice. The
+singular `getLatestDataDate` still drives the My Department
+From/To default (which must snap to DQE specifically).
 
 ## Per-report semantics
 

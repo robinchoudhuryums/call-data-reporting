@@ -246,24 +246,43 @@
 
   /**
    * Renders the header data-freshness pill: "Data through Mon May 19
-   * · 14h ago".  Reads from the same getLatestDataDate value the
-   * dashboard already fetches at init time, so no extra server
-   * round-trip. The "Xh ago" subline is computed from end-of-day on
-   * the latest date in the user's local TZ (close enough -- the
-   * ingest typically lands the morning after the calendar day it
-   * covers).  Pill goes orange when 36h+ have passed since the
-   * latest date's end-of-day, which is the empirical threshold
-   * above which the operator usually wants to investigate.
+   * · 14h ago".  Source is getLatestDataDates -- which returns
+   * { dqe, qcd, latest }.  The pill's visible date is `latest`
+   * (max across sources); the tooltip surfaces the per-source
+   * breakdown so a mid-migration state where one source is fresh
+   * and the other is stale is visible on hover.
+   *
+   * Accepts a string for backward-compat with the single-source
+   * caller (treated as if it were both dqe and latest).
+   *
+   * "Xh ago" is computed from end-of-day on the latest date in the
+   * user's local TZ (close enough -- the ingest typically lands
+   * the morning after the calendar day it covers).  Pill goes
+   * orange when 36h+ have passed since the latest date's end-of-
+   * day, which is the empirical threshold above which the operator
+   * usually wants to investigate.
    */
-  function setFreshnessPill_(latestDateIso) {
+  function setFreshnessPill_(dates) {
     const pill = $('freshness-pill');
     if (!pill) return;
-    if (!latestDateIso) {
+
+    let dqeIso = null, qcdIso = null, latestIso = null;
+    if (typeof dates === 'string') {
+      latestIso = dates;
+      dqeIso = dates;
+    } else if (dates && typeof dates === 'object') {
+      dqeIso = dates.dqe || null;
+      qcdIso = dates.qcd || null;
+      latestIso = dates.latest || dqeIso || qcdIso || null;
+    }
+
+    if (!latestIso) {
       pill.style.display = 'none';
       pill.textContent = '';
+      pill.removeAttribute('title');
       return;
     }
-    const parts = String(latestDateIso).split('-');
+    const parts = String(latestIso).split('-');
     if (parts.length !== 3) { pill.style.display = 'none'; return; }
     // End-of-day local time on the latest date is the reference
     // point for "how stale is the data": calls that came in at
@@ -286,6 +305,22 @@
     pill.innerHTML = 'Data through <span class="freshness-date">'
                    + escapeHtml(dateLabel) + '</span> &middot; '
                    + escapeHtml(ageLabel);
+
+    // Tooltip: always include a per-source breakdown so a
+    // diverged DQE-vs-QCD state is visible. When the two agree,
+    // the breakdown reads as "DQE: X · QCD: X" -- redundant but
+    // honest. When they differ, the source of the recent number
+    // is the one the operator should trust.
+    const tipParts = ['Most recent date with data in any source.'];
+    if (dqeIso) tipParts.push('DQE Historical Data: ' + dqeIso);
+    if (qcdIso) tipParts.push('QCD Historical Data: ' + qcdIso);
+    if (dqeIso && qcdIso && dqeIso !== qcdIso) {
+      tipParts.push('Sources are out of sync -- the dashboard\'s '
+        + 'My Department agent table reads from DQE; the QCD report + '
+        + 'Overview QCD chips read from QCD. Pill shows whichever is '
+        + 'newest so a recent refresh on either path is visible.');
+    }
+    pill.setAttribute('title', tipParts.join('\n'));
     pill.classList.toggle('is-stale', ageHours >= 36);
     pill.style.display = '';
   }
@@ -463,16 +498,23 @@
     // server call fails (falls back to today's range from
     // defaultRange above).
     google.script.run
-      .withSuccessHandler(function (latestDate) {
-        if (latestDate) {
-          $('from-date').value = latestDate;
-          $('to-date').value = latestDate;
+      .withSuccessHandler(function (dates) {
+        // dates = { dqe, qcd, latest } per Data.gs::getLatestDataDates.
+        // From/To defaults use DQE specifically (the agent table
+        // draws from DQE; defaulting to a QCD-only date would
+        // empty the table). Pill uses the overall max + a
+        // per-source tooltip breakdown so an out-of-sync state
+        // (e.g. mid-migration) doesn't make the pill look stuck.
+        const dqe = dates && dates.dqe ? dates.dqe : null;
+        if (dqe) {
+          $('from-date').value = dqe;
+          $('to-date').value = dqe;
         }
-        setFreshnessPill_(latestDate);
+        setFreshnessPill_(dates || null);
         refresh();
       })
       .withFailureHandler(function () { refresh(); })
-      .getLatestDataDate();
+      .getLatestDataDates();
 
     // Default landing page is the Overview. Calling setPage here
     // (after refresh() has been kicked off above) sets the body
@@ -6759,11 +6801,20 @@
       .uninstallAlertTrigger();
   }
 
-  // -- Orphan Fix modal (admin-only) ----------------------------------
+  // -- Outlier Fix modal (admin-only) ---------------------------------
   // The only admin UI that triggers WRITES from the dashboard. The
   // server-side OrphanFix.gs enforces the security model (assertAdmin
   // + input validation + LockService + audit log); this client is
   // just the form layer.
+  //
+  // Naming note: the feature is labeled "Outlier Fix" in user-
+  // facing copy (button, modal title, empty states). The file name
+  // (OrphanFix.gs), sheet names (Agent Alias Overrides, Orphan
+  // Fix Log), audit-log action values (alias-add, rename, rename+
+  // alias), and JS internals (initOrphanFix, ofRenderOrphans_, etc.)
+  // all keep the original "Orphan" naming so existing sheet data
+  // doesn't have to migrate. Search either term to find the
+  // feature.
 
   let ofLastInit = null;
 
@@ -6830,7 +6881,7 @@
     if (!tbody) return;
     if (!orphans.length) {
       tbody.innerHTML = '<tr><td colspan="6" class="al-empty">'
-        + 'No orphans in the last 180 days. Every agent name in DQE '
+        + 'No outliers in the last 180 days. Every agent name in DQE '
         + 'Historical Data maps to a roster entry. &#x1F389;'
         + '</td></tr>';
       return;
@@ -6967,7 +7018,7 @@
     const tbody = $('of-log-tbody');
     if (!tbody) return;
     if (!log.length) {
-      tbody.innerHTML = '<tr><td colspan="7" class="al-empty">No orphan-fix actions logged yet.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="7" class="al-empty">No outlier-fix actions logged yet.</td></tr>';
       return;
     }
     tbody.innerHTML = log.map(function (e) {

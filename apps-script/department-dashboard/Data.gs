@@ -64,6 +64,78 @@ function getLatestDataDate() {
   return latest;
 }
 
+/**
+ * Returns latest-data dates per source plus the overall max, used
+ * by the header freshness pill so it doesn't go stale when one
+ * source (e.g. QCD Historical Data) is updated independently of
+ * another (e.g. DQE Historical Data via the cdr-report build).
+ *
+ * Shape:
+ *   { dqe: 'yyyy-MM-dd' | null,
+ *     qcd: 'yyyy-MM-dd' | null,
+ *     latest: 'yyyy-MM-dd' | null }   // MAX of the above
+ *
+ * Cached 5 min under `latestDates:v1`. The single-source
+ * `getLatestDataDate()` above is kept for the My Department From/To
+ * default (which should still snap to DQE specifically -- the
+ * agent table draws from DQE; defaulting to a QCD-only date would
+ * land the table on an empty day).
+ */
+function getLatestDataDates() {
+  const cache = CacheService.getScriptCache();
+  const KEY = 'latestDates:v1';
+  const cached = cache.get(KEY);
+  if (cached) {
+    try { return JSON.parse(cached); } catch (e) { /* recompute */ }
+  }
+
+  const result = { dqe: null, qcd: null, latest: null };
+  try {
+    const ss = openSpreadsheet_();
+    const ssTZ = ss.getSpreadsheetTimeZone();
+
+    // DQE Historical Data -- col B (date). Reuses the cached
+    // single-source result so we don't double-scan.
+    result.dqe = getLatestDataDate();
+
+    // QCD Historical Data -- col C. Pipeline writer is
+    // autoImport.js's processIntegratedHistory QCD block; the
+    // sheet may be absent on a fresh CDR Report ss that hasn't
+    // ingested QCD yet, in which case we leave result.qcd null.
+    const qcdSheet = ss.getSheetByName('QCD Historical Data');
+    if (qcdSheet) {
+      const lastRow = qcdSheet.getLastRow();
+      if (lastRow >= 2) {
+        const values = qcdSheet
+          .getRange(2, QCD_HISTORICAL_COLS.DATE, lastRow - 1, 1)
+          .getValues();
+        let qcdLatest = '';
+        for (let i = 0; i < values.length; i++) {
+          const iso = rowDateIso_(values[i][0], ssTZ);
+          if (iso && iso > qcdLatest) qcdLatest = iso;
+        }
+        if (qcdLatest) result.qcd = qcdLatest;
+      }
+    }
+
+    // Overall max -- drives the pill's visible date + age. When
+    // both sources agree, the pill matches DQE (normal steady
+    // state). When they differ (e.g. during a migration where
+    // QCD is fresh but DQE hasn't been rebuilt yet), the pill
+    // reflects the most recent any-data signal and the tooltip
+    // shows the per-source breakdown.
+    if (result.dqe && result.qcd) {
+      result.latest = result.dqe > result.qcd ? result.dqe : result.qcd;
+    } else {
+      result.latest = result.dqe || result.qcd || null;
+    }
+  } catch (e) {
+    Logger.log('getLatestDataDates failed: %s', e);
+  }
+  try { cache.put(KEY, JSON.stringify(result), CACHE_TTL_SECONDS); } catch (e) {}
+  return result;
+}
+
 function getDepartmentSummary(req) {
   const email = Session.getActiveUser().getEmail();
   const user = resolveUser_(email);
