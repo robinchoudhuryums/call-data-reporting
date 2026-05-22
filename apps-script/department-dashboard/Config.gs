@@ -204,7 +204,7 @@ const DEPT_QUEUE_EXT_OVERRIDES = Object.freeze({
 // Verify against the actual sheet after a fresh ingest; add or edit
 // rows here as new depts come online.
 const DEPT_QCD_QUEUES = Object.freeze({
-  'CSR':       ['A_Q_CSR', 'A_Q_Intake', 'Backup CSR'],
+  'CSR':       ['A_Q_CustomerSuccess', 'A_Q_Intake', 'Backup CSR'],
   'Sales':     ['A_Q_Sales'],
   'PAP':       ['A_Q_PAP'],
   'Power':     ['A_Q_PowerChairs'],
