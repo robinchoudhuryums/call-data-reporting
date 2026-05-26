@@ -12,8 +12,28 @@ var NEON_WRITE_CONFIG = {
 
 function getNeonConn_write() {
   var p   = PropertiesService.getScriptProperties();
-  var url = 'jdbc:postgresql://' + p.getProperty('NEON_HOST') + '/' + p.getProperty('NEON_DB');
+  var host = p.getProperty('NEON_HOST');
+  if (!host) { Logger.log('Neon: NEON_HOST not configured — skipping.'); return null; }
+  var url = 'jdbc:postgresql://' + host + '/' + p.getProperty('NEON_DB');
   return Jdbc.getConnection(url, p.getProperty('NEON_USER'), p.getProperty('NEON_PASS'));
+}
+
+function isNeonReachable_() {
+  var conn;
+  try {
+    conn = getNeonConn_write();
+    if (!conn) return false;
+    var stmt = conn.createStatement();
+    stmt.setQueryTimeout(5);
+    stmt.execute('SELECT 1');
+    stmt.close();
+    return true;
+  } catch (e) {
+    Logger.log('Neon unreachable: ' + (e.message || e));
+    return false;
+  } finally {
+    if (conn) try { conn.close(); } catch (ce) {}
+  }
 }
 
 function notifyNeonWriteFailure(context, errMsg) {
@@ -64,6 +84,10 @@ function normalizeDuration(val) {
 // -- DQE writer --------------------------------------------------------------
 function writeDQERowsToNeon(rows) {
   if (!rows || !rows.length) return { inserted: 0, skipped: 0 };
+  if (!isNeonReachable_()) {
+    Logger.log('writeDQERowsToNeon: Neon unreachable — skipping %s rows.', rows.length);
+    return { inserted: 0, skipped: rows.length };
+  }
 
   var conn = getNeonConn_write();
   conn.setAutoCommit(false);
@@ -126,6 +150,10 @@ function writeDQERowsToNeon(rows) {
 // -- QCD writer --------------------------------------------------------------
 function writeQCDRowsToNeon(rows) {
   if (!rows || !rows.length) return { inserted: 0 };
+  if (!isNeonReachable_()) {
+    Logger.log('writeQCDRowsToNeon: Neon unreachable — skipping %s rows.', rows.length);
+    return { inserted: 0, skipped: rows.length };
+  }
 
   var conn = getNeonConn_write();
   conn.setAutoCommit(false);

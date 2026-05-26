@@ -2891,6 +2891,16 @@
   }
   .ov-wow-driver-up   { color: var(--good); }
   .ov-wow-driver-down { color: var(--warn); }
+  .ov-qcd-queue-list { margin-top: 4px; }
+  .ov-qcd-queue-row {
+    display: flex; align-items: center; gap: 4px;
+    font-size: 10px; margin-top: 2px;
+  }
+  .ov-qcd-queue-name {
+    font-family: var(--mono); color: var(--muted);
+    min-width: 60px; white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis; max-width: 120px;
+  }
 
   /* QCD flag caption next to the WoW driver. Renders only when the
      dept has QCD violations OR elevated abandoned %. Two tiers:

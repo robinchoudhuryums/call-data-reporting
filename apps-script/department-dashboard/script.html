@@ -993,29 +993,48 @@
   // Tooltip on the abandoned chip carries the latest-date context.
   function ovBuildQcdCaption_(dept) {
     if (!dept || !dept.qcd) return '';
-    const q = dept.qcd;
-    const pct = Number(q.abandonedPct) || 0;
-    const abandoned = Number(q.abandoned) || 0;
-    const mtdViol = Number(q.violationsMtd) || 0;
+    var q = dept.qcd;
+    var queues = q.perQueue || [];
+    var multiQueue = queues.length > 1;
+    var html = '';
 
-    const abndCls = pct >= 5
-      ? 'ov-qcd-flag ov-qcd-violation'
-      : 'ov-qcd-flag ov-qcd-elevated';
-    const abndLabel = 'Aban ' + fmtNumber(abandoned)
-                    + ' (' + (q.abandonedPctStr || '0.00%') + ')';
-    const abndTip = 'QCD snapshot (' + (q.date || '') + '): '
-                  + (q.totalCalls || 0) + ' total calls · '
-                  + abandoned + ' abandoned ('
-                  + (q.abandonedPctStr || '0.00%') + ').';
-    let html = '<span class="' + abndCls + '" title="' + escapeHtml(abndTip) + '">'
-             + escapeHtml(abndLabel) + '</span>';
+    if (multiQueue) {
+      html += '<div class="ov-qcd-queue-list">';
+      queues.forEach(function (pq) {
+        var qPct = Number(pq.abandonedPct) || 0;
+        var qAbnd = Number(pq.abandoned) || 0;
+        var qViol = Number(pq.violations) || 0;
+        var chips = '';
+        chips += '<span class="ov-qcd-flag' + (qPct >= 5 ? ' ov-qcd-violation' : ' ov-qcd-elevated') + '">'
+              + escapeHtml(pq.abandonedPctStr || '0.00%') + '</span>';
+        if (qAbnd > 0) {
+          chips += '<span class="ov-qcd-flag' + (qPct >= 5 ? ' ov-qcd-violation' : '') + '">'
+                + fmtNumber(qAbnd) + ' aban</span>';
+        }
+        if (qViol > 0) {
+          chips += '<span class="ov-qcd-flag ov-qcd-violation">' + qViol + ' viol</span>';
+        }
+        html += '<div class="ov-qcd-queue-row"><span class="ov-qcd-queue-name">'
+             + escapeHtml(pq.queue) + '</span>' + chips + '</div>';
+      });
+      html += '</div>';
+    } else {
+      var pct = Number(q.abandonedPct) || 0;
+      var abandoned = Number(q.abandoned) || 0;
+      var abndCls = pct >= 5 ? 'ov-qcd-flag ov-qcd-violation' : 'ov-qcd-flag ov-qcd-elevated';
+      html += '<span class="' + abndCls + '">'
+           + escapeHtml(q.abandonedPctStr || '0.00%') + '</span>';
+      if (abandoned > 0) {
+        html += '<span class="' + abndCls + '">'
+             + fmtNumber(abandoned) + ' aban</span>';
+      }
+    }
 
+    var mtdViol = Number(q.violationsMtd) || 0;
     if (mtdViol > 0) {
-      const violTip = mtdViol + ' QCD violation' + (mtdViol === 1 ? '' : 's')
-                    + ' month-to-date (Abandoned % > 5% on a daily roll-up).';
       html += '<span class="ov-qcd-flag ov-qcd-violation" title="'
-            + escapeHtml(violTip) + '">'
-            + mtdViol + ' viol MTD</span>';
+            + mtdViol + ' QCD violation' + (mtdViol === 1 ? '' : 's')
+            + ' month-to-date">' + mtdViol + ' viol MTD</span>';
     }
     return html;
   }
