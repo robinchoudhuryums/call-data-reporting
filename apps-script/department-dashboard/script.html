@@ -1880,6 +1880,17 @@
     state.meta = (data && data.meta) || null;
     state.diagnostics = (data && data.diagnostics) || null;
 
+    var dqeHeader = $('dqe-table-header');
+    if (dqeHeader) {
+      dqeHeader.style.display = state.rows.length ? '' : 'none';
+      var dqeDateEl = $('dqe-table-date');
+      if (dqeDateEl) {
+        var f = $('from') ? $('from').value : '';
+        var t = $('to') ? $('to').value : '';
+        dqeDateEl.textContent = (f && t) ? (f === t ? f : f + ' to ' + t) : '';
+      }
+    }
+
     // Mock banner (only shown if the server flagged a mocked response;
     // Step D returns real data so this should always hide).
     const banner = $('mock-banner');
@@ -1911,11 +1922,23 @@
    * Hidden when null.
    */
   function renderDeptQcdSnapshot_(qcd) {
-    const wrap = $('dept-qcd-snapshot');
+    var wrap = $('dept-qcd-snapshot');
     if (!wrap) return;
     if (!qcd) { wrap.style.display = 'none'; return; }
-    const dateEl = $('dept-qcd-date');
-    if (dateEl) dateEl.textContent = '(' + (qcd.date || '') + ')';
+    var titleEl = $('dept-qcd-title');
+    if (titleEl) {
+      var dateStr = qcd.date || '';
+      if (dateStr) {
+        var parts = dateStr.split('-');
+        var d = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+        var days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+        var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        dateStr = days[d.getDay()] + ' ' + months[d.getMonth()] + ' ' + d.getDate();
+      }
+      titleEl.textContent = 'Queue Call Data — ' + dateStr;
+    }
+    var dateEl = $('dept-qcd-date');
+    if (dateEl) dateEl.textContent = '';
     const tiles = $('dept-qcd-tiles');
     if (!tiles) return;
 
