@@ -1,6 +1,6 @@
 function deleteOldCDRSheets() {
   const sheetNamePrefix = "Call_Legs_";
-  const cutoffDays = 14; // Sheets older than 30 days will be deleted.
+  const cutoffDays = 14; // Sheets older than 14 days will be deleted.
 
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sheets = ss.getSheets();

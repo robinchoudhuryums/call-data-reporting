@@ -364,7 +364,7 @@ function getWeekdaysInRange(startDate, endDate, timeZone) {
   let currentDay = startDay;
   
   let iterationCount = 0;
-  while (iterationCount < 100) { // Safety limit to prevent infinite loop
+  while (iterationCount < 400) { // Safety limit to prevent infinite loop
     // Create date using same local midnight approach as parseDateLocal
     const currentDate = new Date(currentYear, currentMonth, currentDay);
     

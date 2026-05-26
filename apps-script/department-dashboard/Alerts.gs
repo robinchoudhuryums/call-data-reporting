@@ -10,7 +10,7 @@
  *     by setup() if missing.
  *   - Recipients per dept resolved from Access Control (the
  *     dept's manager) UNION Extra Recipients column (manual
- *     additions); ADMIN_EMAILS always cc'd for visibility.
+ *     additions); admin emails always cc'd for visibility.
  *   - Data source is DQE Historical Data, not a separate dept-
  *     summary sheet. Per-dept answer-rate computed live by
  *     rolling up the dept's roster agents for the chosen date.

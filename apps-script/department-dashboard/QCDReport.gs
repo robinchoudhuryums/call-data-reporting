@@ -25,17 +25,16 @@
  * only request their own dept; admins can pick any dept from the
  * dropdown.
  *
- * Cache: 5 min per (dept, from, to) tuple under `qcd:v1:` prefix.
+ * Cache: 5 min per (dept, from, to) tuple under `qcd:v4:` prefix.
  * No agent-list dimension since QCD is queue/dept-scoped, not
  * agent-scoped.
  *
- * IMPORTANT: QCD Historical Data's `callQueue` column carries
- * DEPT-NAME-LIKE values ("CSR", "Sales", "Power"), NOT raw queue
- * names like "A_Q_CSR". Filtering against dept name is the right
- * approach -- legacy DQE Report's buildTable4 does the same.
- * If new depts produce QCD rows with names that don't match the
- * roster headers, they'll be invisible until added to the roster
- * sheet or aliased here.
+ * IMPORTANT: QCD Historical Data's `callQueue` column (col D) carries
+ * raw queue names like "A_Q_CustomerSuccess", "A_Q_Sales", "Backup CSR"
+ * -- NOT dashboard dept names. To filter QCD rows for a dashboard dept,
+ * use Config.gs::DEPT_QCD_QUEUES[dept] (admin-curated map of dept name
+ * to list of queue names). A dept not in that map renders an empty QCD
+ * modal with a "No queues mapped" hint.
  */
 
 // v2: callQueue is a raw A_Q_* name, not a dept name; filter by
@@ -46,7 +45,9 @@
 //     OVERVIEW_PARENT_OF rollup (Sales+PAP, Power+PAK, CSR+Spanish).
 //     Adds dailySeries to response; totals.violations replaced
 //     with month-to-date count (was selected-range sum).
-const QCD_CACHE_KEY_PREFIX = 'qcd:v3';
+// v4: avgAnswer changed from mean-of-daily-averages to volume-weighted
+//     average (weighted by totalAnswered per day/queue).
+const QCD_CACHE_KEY_PREFIX = 'qcd:v4';
 
 // Source filter: only the "Total Calls" callSource row carries the
 // daily aggregate we want; other callSource values are sub-counts
@@ -257,14 +258,14 @@ function computeQcdReport_(dept, from, to) {
   const queueAcc = {};
   queues.forEach(function (q) {
     queueAcc[q] = {
-      totalCalls:     0,
-      totalAnswered:  0,
-      abandoned:      0,
-      longestWaitSec: 0,
-      avgAnswerSec:   0,
-      avgAnswerN:     0,
-      violations:     0,
-      monthly:        {},   // monthKey -> { totalCalls, totalAnswered, abandoned, violations }
+      totalCalls:          0,
+      totalAnswered:       0,
+      abandoned:           0,
+      longestWaitSec:      0,
+      avgAnswerWeightedSum: 0,
+      avgAnswerWeightedN:   0,
+      violations:          0,
+      monthly:             {},   // monthKey -> { totalCalls, totalAnswered, abandoned, violations }
     };
   });
   // Daily series: keyed iso date. Summed across all dept queues
@@ -305,7 +306,10 @@ function computeQcdReport_(dept, from, to) {
       // longestWait: MAX across days. avgAnswer: mean across days
       // with non-zero values (matches legacy buildTable4 semantics).
       if (longestWaitSec > bucket.longestWaitSec) bucket.longestWaitSec = longestWaitSec;
-      if (avgAnswerSec > 0) { bucket.avgAnswerSec += avgAnswerSec; bucket.avgAnswerN++; }
+      if (avgAnswerSec > 0 && totalAnswered > 0) {
+        bucket.avgAnswerWeightedSum += avgAnswerSec * totalAnswered;
+        bucket.avgAnswerWeightedN   += totalAnswered;
+      }
       bucket.violations += violations;
       // Daily series accumulates across dept queues so the daily
       // chart + table show the rollup, same shape as totals.
@@ -346,23 +350,28 @@ function computeQcdReport_(dept, from, to) {
       abandonedPctStr:  pct.toFixed(2) + '%',
       longestWait:      formatSecondsHms_(b.longestWaitSec),
       longestWaitSec:   b.longestWaitSec,
-      avgAnswer:        formatSecondsHms_(b.avgAnswerN > 0
-                          ? Math.round(b.avgAnswerSec / b.avgAnswerN) : 0),
-      avgAnswerSec:     b.avgAnswerN > 0 ? Math.round(b.avgAnswerSec / b.avgAnswerN) : 0,
+      avgAnswer:        formatSecondsHms_(b.avgAnswerWeightedN > 0
+                          ? Math.round(b.avgAnswerWeightedSum / b.avgAnswerWeightedN) : 0),
+      avgAnswerSec:     b.avgAnswerWeightedN > 0 ? Math.round(b.avgAnswerWeightedSum / b.avgAnswerWeightedN) : 0,
       violations:       b.violations,
     };
   });
 
   // Dept totals: sum across all queues for the dept.
+  // Avg answer uses volume-weighted averaging (weight by totalAnswered
+  // per queue) so high-volume queues dominate the dept average.
   let tTotal = 0, tAns = 0, tAbnd = 0;
   let tLongest = 0;
-  let tAvgSum = 0, tAvgN = 0;
+  let tAvgWSum = 0, tAvgWN = 0;
   queueBreakdown.forEach(function (r) {
     tTotal += r.totalCalls;
     tAns   += r.totalAnswered;
     tAbnd  += r.abandoned;
     if (r.longestWaitSec > tLongest) tLongest = r.longestWaitSec;
-    if (r.avgAnswerSec > 0) { tAvgSum += r.avgAnswerSec; tAvgN++; }
+    if (r.avgAnswerSec > 0 && r.totalAnswered > 0) {
+      tAvgWSum += r.avgAnswerSec * r.totalAnswered;
+      tAvgWN   += r.totalAnswered;
+    }
   });
   const tPct = tTotal > 0 ? (tAbnd / tTotal) * 100 : 0;
   // Violations on the totals row: month-to-date, NOT selected-range
@@ -378,7 +387,7 @@ function computeQcdReport_(dept, from, to) {
     abandonedPct:     tPct,
     abandonedPctStr:  tPct.toFixed(2) + '%',
     longestWait:      formatSecondsHms_(tLongest),
-    avgAnswer:        formatSecondsHms_(tAvgN > 0 ? Math.round(tAvgSum / tAvgN) : 0),
+    avgAnswer:        formatSecondsHms_(tAvgWN > 0 ? Math.round(tAvgWSum / tAvgWN) : 0),
     violations:       violationsMtd,
   };
 

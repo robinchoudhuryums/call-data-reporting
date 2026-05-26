@@ -27,6 +27,7 @@
  * "Department Queues" sheet is not used.
  */
 function setup() {
+  assertAdmin_();
   const ss = openSpreadsheet_();
   ensureSheet_(ss, SHEETS.ACCESS_CONTROL,        ACCESS_CONTROL_HEADERS);
   ensureSheet_(ss, SHEETS.ALERT_CONFIG,          ALERT_CONFIG_HEADERS);

@@ -32,6 +32,35 @@ function notifyNeonWriteFailure(context, errMsg) {
   }
 }
 
+// -- Helpers (inlined so they travel with INV-16 duplication) -----------------
+function parseDateForNeon(str) {
+  if (!str) return null;
+  var s = String(str).trim();
+  var m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (!m) {
+    var d = new Date(s);
+    if (isNaN(d.getTime())) return null;
+    return Utilities.formatDate(d, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+  }
+  var month = String(parseInt(m[1])).padStart(2, '0');
+  var day   = String(parseInt(m[2])).padStart(2, '0');
+  return m[3] + '-' + month + '-' + day;
+}
+
+function normalizeDuration(val) {
+  if (val === null || val === undefined || val === '') return null;
+  var s = String(val).trim();
+  if (!s) return null;
+  if (s.indexOf(':') !== -1) return s;
+  var num = parseFloat(s);
+  if (isNaN(num)) return null;
+  var totalSec = Math.round(num * 86400);
+  var h = Math.floor(totalSec / 3600);
+  var mn = Math.floor((totalSec % 3600) / 60);
+  var sec = totalSec % 60;
+  return h + ':' + String(mn).padStart(2, '0') + ':' + String(sec).padStart(2, '0');
+}
+
 // -- DQE writer --------------------------------------------------------------
 function writeDQERowsToNeon(rows) {
   if (!rows || !rows.length) return { inserted: 0, skipped: 0 };

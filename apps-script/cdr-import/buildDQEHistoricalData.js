@@ -331,11 +331,12 @@ function buildDQEHistoricalData(rawSheet, dqeSheet) {
     const legs = queueLegs.filter(l => l.agentName === agentName);
 
     const queueExts = Array.from(new Set(legs.map(l => l.queueExt).filter(Boolean)));
-    const uniqueParentCalls = new Set(legs.map(l => l.parentCallId).filter(Boolean));
 
     const windowLegs = legs.filter(l =>
       l.startPST !== null && l.startPST >= DQE_WINDOW_START && l.startPST < DQE_WINDOW_END
     );
+
+    const uniqueParentCalls = new Set(windowLegs.map(l => l.parentCallId).filter(Boolean));
 
     const totalRung     = windowLegs.length;
     const totalMissed   = windowLegs.filter(l => l.missed).length;

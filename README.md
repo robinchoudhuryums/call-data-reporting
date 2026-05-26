@@ -88,6 +88,9 @@ clasp push -f
   sheets: `Access Control`, `Alert Config`, `Alert Log`,
   `Pipeline Health`, `Digest Config`, `Agent Alias Overrides`,
   and `Orphan Fix Log` (seven total; created only if missing).
+  Requires admin auth — run from the Apps Script editor while
+  logged in as an admin listed in `ADMIN_EMAILS` Script Property
+  (or `ADMIN_EMAILS_FALLBACK`).
   Safe to re-run later (idempotent; existing data untouched) —
   re-run after pulling new code that introduces additional
   sheets so downstream writers (Pipeline Health appends, Digest
