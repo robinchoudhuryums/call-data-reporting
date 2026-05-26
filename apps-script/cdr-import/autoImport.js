@@ -1415,8 +1415,12 @@ if (!skipCDR && obcHD) {
             violations:    r[11]
           };
         });
-        writeQCDRowsToNeon(neonQcdRows);
-        console.log('processIntegratedHistory: mirrored ' + neonQcdRows.length + ' QCD rows to Neon.');
+        var neonResult = writeQCDRowsToNeon(neonQcdRows);
+        if (neonResult && neonResult.skipped) {
+          console.log('processIntegratedHistory: Neon QCD write skipped (' + neonResult.skipped + ' rows — Neon unreachable).');
+        } else {
+          console.log('processIntegratedHistory: mirrored ' + neonQcdRows.length + ' QCD rows to Neon.');
+        }
       } catch (neonErr) {
         notifyNeonWriteFailure('processIntegratedHistory (' + dateObj.toDateString() + ')', neonErr.message);
       }
