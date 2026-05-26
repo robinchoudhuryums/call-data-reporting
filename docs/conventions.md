@@ -423,7 +423,7 @@ mirrors it; if the two ever diverge, INV-30 wins.
 | `CompareRangesReport.gs` | `compareRanges:vN:` | `v3` |
 | `MissedCallsReport.gs` | `missed:vN:` | `v10` |
 | `CompanyOverview.gs` | `companyOverview:vN` | `v11` |
-| `QCDReport.gs` | `qcd:vN:` | `v3` |
+| `QCDReport.gs` | `qcd:vN:` | `v4` |
 
 `Alerts.gs` holds no cached compute — preview / send always re-reads
 the source sheet for the chosen date.

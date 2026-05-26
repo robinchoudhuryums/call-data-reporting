@@ -180,7 +180,11 @@
   // Hook the dark-mode toggle wiring above so newly-rendered charts
   // pick up the inverted palette. (Already-rendered canvases keep
   // their old pixels — acceptable trade-off; documented above.)
-  window.addEventListener('dash-mode-change', refreshChartTheme);
+  window.addEventListener('dash-mode-change', function () {
+    refreshChartTheme();
+    IR_CHART_COLORS = irChartColors_();
+    IR_VOLUME_COLORS = irVolumeColors_();
+  });
 
   // -- chartjs-plugin-datalabels global registration ------------------
   // Chart.js v4 requires explicit registration -- the auto-registration
@@ -220,6 +224,33 @@
     sortDir: 'desc',     // 'asc' | 'desc'
     scope: 'roster',     // 'roster' | 'queue' | 'both'
   };
+
+  // -- Modal focus trap -----------------------------------------------------
+  var activeFocusTrap_ = null;
+  function trapFocus_(modal) {
+    releaseFocus_();
+    var FOCUSABLE = 'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
+    function handler(e) {
+      if (e.key !== 'Tab') return;
+      var els = modal.querySelectorAll(FOCUSABLE);
+      if (!els.length) return;
+      var first = els[0], last = els[els.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault(); last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault(); first.focus();
+      }
+    }
+    modal.addEventListener('keydown', handler);
+    activeFocusTrap_ = { modal: modal, handler: handler };
+    var first = modal.querySelector(FOCUSABLE);
+    if (first) setTimeout(function () { first.focus(); }, 0);
+  }
+  function releaseFocus_() {
+    if (!activeFocusTrap_) return;
+    activeFocusTrap_.modal.removeEventListener('keydown', activeFocusTrap_.handler);
+    activeFocusTrap_ = null;
+  }
 
   // -- Formatting helpers --------------------------------------------------
 
@@ -460,6 +491,8 @@
     $('to-date').addEventListener('change', refresh);
 
     $('refresh-btn').addEventListener('click', refresh);
+    var csvBtn = $('csv-export-btn');
+    if (csvBtn) csvBtn.addEventListener('click', exportTableCsv_);
 
     // Scope segmented control
     document.querySelectorAll('#scope-toggle .seg-btn').forEach(function (btn) {
@@ -565,12 +598,13 @@
       modal.style.display = '';
       modal.setAttribute('aria-hidden', 'false');
       document.body.style.overflow = 'hidden';
-      if (closeBtn) closeBtn.focus();
+      trapFocus_(modal);
       document.addEventListener('keydown', onKeyDown);
     }
     function closeModal() {
       modal.style.display = 'none';
       modal.setAttribute('aria-hidden', 'true');
+      releaseFocus_();
       document.body.style.overflow = '';
       document.removeEventListener('keydown', onKeyDown);
       btn.focus();
@@ -604,12 +638,13 @@
       modal.style.display = '';
       modal.setAttribute('aria-hidden', 'false');
       document.body.style.overflow = 'hidden';
-      if (closeBtn) closeBtn.focus();
+      trapFocus_(modal);
       document.addEventListener('keydown', onKeyDown);
     }
     function closeModal() {
       modal.style.display = 'none';
       modal.setAttribute('aria-hidden', 'true');
+      releaseFocus_();
       document.body.style.overflow = '';
       document.removeEventListener('keydown', onKeyDown);
       btn.focus();
@@ -1239,13 +1274,14 @@
       modal.style.display = '';
       modal.setAttribute('aria-hidden', 'false');
       document.body.style.overflow = 'hidden';
+      trapFocus_(modal);
       document.addEventListener('keydown', onKeyDown);
-      if (closeBtn) closeBtn.focus();
       fetchAndRender();
     }
     function closeModal() {
       modal.style.display = 'none';
       modal.setAttribute('aria-hidden', 'true');
+      releaseFocus_();
       document.body.style.overflow = '';
       document.removeEventListener('keydown', onKeyDown);
       btn.focus();
@@ -1756,6 +1792,8 @@
     $('refresh-btn').disabled = false;
     state.rows = (data && data.rows) || [];
     state.totals = (data && data.totals) || null;
+    var csvBtn = $('csv-export-btn');
+    if (csvBtn) csvBtn.style.display = state.rows.length ? '' : 'none';
     state.meta = (data && data.meta) || null;
     state.diagnostics = (data && data.diagnostics) || null;
 
@@ -1980,6 +2018,39 @@
     }
   }
 
+  // -- CSV export for the main agent table --------------------------------
+  function exportTableCsv_() {
+    var sorted = sortRows(state.rows);
+    if (!sorted.length) return;
+    var csvEscape = function (v) {
+      var s = String(v == null ? '' : v);
+      return (s.indexOf(',') !== -1 || s.indexOf('"') !== -1 || s.indexOf('\n') !== -1)
+        ? '"' + s.replace(/"/g, '""') + '"' : s;
+    };
+    var header = COLUMNS.map(function (c) { return csvEscape(c.label); }).join(',');
+    var rows = sorted.map(function (row) {
+      return COLUMNS.map(function (col) {
+        if (col.type === 'duration') return csvEscape(fmtDuration(row[col.key]));
+        return csvEscape(row[col.key]);
+      }).join(',');
+    });
+    if (state.totals) {
+      rows.push(COLUMNS.map(function (col, i) {
+        if (i === 0) return csvEscape('Total');
+        if (col.type === 'duration') return csvEscape(fmtDuration(state.totals[col.key]));
+        return csvEscape(state.totals[col.key]);
+      }).join(','));
+    }
+    var blob = new Blob([header + '\n' + rows.join('\n')], { type: 'text/csv' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = (getRequestedDept() || 'department') + '_' + ($('from').value || 'data') + '_to_' + ($('to').value || 'data') + '.csv';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(a.href);
+  }
+
   // -- Individual Report modal -------------------------------------------
   // Opens a form for date range + agent multi-select, then runs the
   // report server-side and renders per-agent summary cards + 3 Chart.js
@@ -1993,23 +2064,23 @@
   // primary agent matches the dashboard's slate-blue chrome; the rest
   // are kept from the Tableau-10-derived CVD-safe palette so 2-10
   // agents stay visually distinct in comparison mode.
-  const IR_CHART_COLORS = [
-    THEME.accent || '#4E79A7',
-    '#F28E2B', '#76B7B2', '#59A14F', '#EDC948',
-    '#B07AA1', '#FF9DA7', '#9C755F', '#BAB0AC', '#E15759',
-  ];
+  function irChartColors_() {
+    return [
+      THEME.accent || '#4E79A7',
+      '#F28E2B', '#76B7B2', '#59A14F', '#EDC948',
+      '#B07AA1', '#FF9DA7', '#9C755F', '#BAB0AC', '#E15759',
+    ];
+  }
+  var IR_CHART_COLORS = irChartColors_();
 
-  // Single-agent volume chart triples (Rung / Answered / Missed).
-  // Route each to a design-token role so the visual semantics stay
-  // consistent with the rest of the app: accent = primary, good =
-  // success direction, warn = negative-valence direction. Falls
-  // back to the prior Tableau hex values when CSS tokens haven't
-  // resolved yet (defensive — refreshChartTheme runs at boot).
-  const IR_VOLUME_COLORS = {
-    rung:     THEME.accent || '#4E79A7',
-    answered: THEME.good   || '#59A14F',
-    missed:   THEME.warn   || '#F28E2B',
-  };
+  function irVolumeColors_() {
+    return {
+      rung:     THEME.accent || '#4E79A7',
+      answered: THEME.good   || '#59A14F',
+      missed:   THEME.warn   || '#F28E2B',
+    };
+  }
+  var IR_VOLUME_COLORS = irVolumeColors_();
 
   // Translates a hex color to a Chart.js fill callback that paints a
   // top-to-bottom gradient from the line color (alpha .25) down to
@@ -2120,6 +2191,7 @@
     function closeModal() {
       modal.style.display = 'none';
       modal.setAttribute('aria-hidden', 'true');
+      releaseFocus_();
       document.body.style.overflow = '';
       document.removeEventListener('keydown', onKeyDown);
       btn.focus();
@@ -3714,8 +3786,8 @@
       modal.style.display = '';
       modal.setAttribute('aria-hidden', 'false');
       document.body.style.overflow = 'hidden';
+      trapFocus_(modal);
       document.addEventListener('keydown', onKeyDown);
-      if (closeBtn) closeBtn.focus();
       showPrForm();
       ensurePrRoster();
       prUpdatePriorHint_();
@@ -3723,6 +3795,7 @@
     function closeModal() {
       modal.style.display = 'none';
       modal.setAttribute('aria-hidden', 'true');
+      releaseFocus_();
       document.body.style.overflow = '';
       document.removeEventListener('keydown', onKeyDown);
       btn.focus();
@@ -4918,8 +4991,8 @@
       modal.style.display = '';
       modal.setAttribute('aria-hidden', 'false');
       document.body.style.overflow = 'hidden';
+      trapFocus_(modal);
       document.addEventListener('keydown', onKeyDown);
-      if (closeBtn) closeBtn.focus();
       showCrForm();
       ensureCrDefaultDates_();
       ensureCrRoster();
@@ -4927,6 +5000,7 @@
     function closeModal() {
       modal.style.display = 'none';
       modal.setAttribute('aria-hidden', 'true');
+      releaseFocus_();
       document.body.style.overflow = '';
       document.removeEventListener('keydown', onKeyDown);
       btn.focus();
@@ -6304,13 +6378,14 @@
       modal.style.display = '';
       modal.setAttribute('aria-hidden', 'false');
       document.body.style.overflow = 'hidden';
+      trapFocus_(modal);
       document.addEventListener('keydown', onKeyDown);
-      if (closeBtn) closeBtn.focus();
       alLoadInit_();
     }
     function closeModal() {
       modal.style.display = 'none';
       modal.setAttribute('aria-hidden', 'true');
+      releaseFocus_();
       document.body.style.overflow = '';
       document.removeEventListener('keydown', onKeyDown);
       btn.focus();
@@ -6838,13 +6913,14 @@
       modal.style.display = '';
       modal.setAttribute('aria-hidden', 'false');
       document.body.style.overflow = 'hidden';
+      trapFocus_(modal);
       document.addEventListener('keydown', onKeyDown);
-      if (closeBtn) closeBtn.focus();
       ofLoadInit_();
     }
     function closeModal() {
       modal.style.display = 'none';
       modal.setAttribute('aria-hidden', 'true');
+      releaseFocus_();
       document.body.style.overflow = '';
       document.removeEventListener('keydown', onKeyDown);
       btn.focus();
@@ -7074,14 +7150,15 @@
       modal.style.display = '';
       modal.setAttribute('aria-hidden', 'false');
       document.body.style.overflow = 'hidden';
+      trapFocus_(modal);
       document.addEventListener('keydown', onKeyDown);
-      if (closeBtn) closeBtn.focus();
       showQcdForm();
       setQcdDefaultDates_();
     }
     function closeModal() {
       modal.style.display = 'none';
       modal.setAttribute('aria-hidden', 'true');
+      releaseFocus_();
       document.body.style.overflow = '';
       document.removeEventListener('keydown', onKeyDown);
       btn.focus();

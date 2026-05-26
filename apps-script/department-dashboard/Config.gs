@@ -33,15 +33,12 @@ function getAdminEmails_() {
   return out.length ? out : ADMIN_EMAILS_FALLBACK.slice();
 }
 
-// Backwards-compatible: existing code reads `ADMIN_EMAILS[0]` and
-// `ADMIN_EMAILS.join(',')` directly. Defining ADMIN_EMAILS as a getter
-// at module-load time would freeze the value at script start (Script
-// Properties read once), and Apps Script can't redefine the binding
-// for callers reading the symbol on each request. Instead, leave
-// ADMIN_EMAILS as a frozen reference to the fallback (for the
-// access_denied template's mailto link, which doesn't need to be
-// dynamic) and point all auth/alert paths at getAdminEmails_().
-const ADMIN_EMAILS = ADMIN_EMAILS_FALLBACK;
+// Display-only fallback used by the access_denied template's mailto
+// link (does not need to be dynamic). All auth and alert paths use
+// getAdminEmails_() which reads the Script Property at request time.
+// Named _DISPLAY to discourage use in membership checks -- see
+// CLAUDE.md gotcha "Never read ADMIN_EMAILS directly."
+const ADMIN_EMAILS_DISPLAY = ADMIN_EMAILS_FALLBACK;
 
 // Sheet names. Roster sheet is the existing "DO NOT EDIT!" tab; the
 // Access Control sheet is auto-created by setup_() on first run if
@@ -144,7 +141,7 @@ const QCD_HISTORICAL_COLS = Object.freeze({
   MONTH_YEAR:     1,     // A
   WEEK:           2,     // B
   DATE:           3,     // C
-  CALL_QUEUE:     4,     // D - dept-name-like ("CSR", "Sales", "Power", etc.)
+  CALL_QUEUE:     4,     // D - raw queue names (A_Q_CustomerSuccess, A_Q_Sales, Backup CSR, etc.)
   CALL_SOURCE:    5,     // E - "Total Calls" | "CSR" | "Ad-campaign" | "New Call Menu" | "Non-CSR (internal)"
   TOTAL_CALLS:    6,     // F
   TOTAL_ANSWERED: 7,     // G

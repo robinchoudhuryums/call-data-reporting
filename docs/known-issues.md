@@ -231,9 +231,10 @@ through a public function that explicitly checks `resolveUser_(email).role
 
 ### `setup()` is idempotent
 
-`setup()` creates `Access Control`, `Alert Config`, and `Alert Log`
-sheets if they don't exist (each with a frozen header row). It never
-overwrites existing rows on any of the three. Safe to re-run as many
+`setup()` creates `Access Control`, `Alert Config`, `Alert Log`,
+`Pipeline Health`, `Digest Config`, `Agent Alias Overrides`, and
+`Orphan Fix Log` sheets if they don't exist (each with a frozen header
+row). It never overwrites existing rows on any of the seven. Safe to re-run as many
 times as you want. Keep it that way; the alerts engine assumes
 `appendAlertLog_` can blindly append without coordinating reads.
 
@@ -459,7 +460,7 @@ Performance / Compare Ranges:
   Returns `meta` (with `queues` + `unmapped` flags), `dateLabel`,
   `totals` (sum across the dept's queues), `queueBreakdown`
   (one row per queue), `trendData` (12-month buckets matching the
-  IR/PR trend-window logic). Cache prefix `qcd:v2`.
+  IR/PR trend-window logic). Cache prefix `qcd:v4`.
 - `sendQcdReportEmail({ imageBase64, dateLabel })` — image
   export like the IR/PR/CR send-email paths.
 
@@ -485,7 +486,7 @@ existing per-dept dropdown):
   table showing the dept's most-recent QCD day. Powered by
   `Data.gs::computeDeptQcdSnapshot_` and returned as the new
   `qcd` field on `getDepartmentSummary` (cache prefix bumped to
-  `summary:v5` when this shipped).
+  `summary:v6` when this shipped).
 
 **Onboarding a new dept.** When a new dept starts producing rows
 in `QCD Historical Data`, the dashboard ignores them until a
@@ -565,8 +566,8 @@ best-effort -- a missing or empty sheet leaves the build's
 behavior byte-identical to pre-OrphanFix.
 
 **Cache invalidation.** `applyOrphanRename` removes the single
-fixed-key `companyOverview:v8` cache entry on success. Per-(dept,
-range) caches (`summary:v5`, `individual:v6`, `performance:v3`,
+fixed-key `companyOverview:v11` cache entry on success. Per-(dept,
+range) caches (`summary:v6`, `individual:v6`, `performance:v3`,
 etc.) are left to TTL out within 5 minutes. The Orphan Fix modal
 warns the user "may take up to 5 minutes to appear in dashboard."
 

@@ -32,7 +32,7 @@
  * (read-only), and reinstating that visibility is part of the
  * design intent for this view.
  *
- * Caching: 5 min under `companyOverview:v7`. Cached blob is shared
+ * Caching: 5 min under `companyOverview:v11`. Cached blob is shared
  * across all users; the admin-only `companyAggregate` field is
  * stripped on serve for non-admins, and viewer-personalized fields
  * (viewerRole/viewerDept) are injected per-request, never cached.

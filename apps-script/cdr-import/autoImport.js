@@ -274,7 +274,7 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
   const startTime = new Date().getTime();
   // Target SS for Pipeline Health logging -- the same workbook the
   // dashboard's setup() creates "Pipeline Health" in. Resolved
-  // lazily inside logPipelineHealth_ so we don't open it twice.
+  // lazily inside logPipelineHealthWithFallback_ so we don't open it twice.
   let pipelineTargetSS = preOpenedTargetSS || null;
 
   try {
@@ -429,7 +429,7 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
             if (dqeCount > 0 && histDateCache) histDateCache.dqe.add(dateKey);
             historyReport.push(`- DQE HD: built ${dqeCount} rows`);
             try {
-              logPipelineHealth_(targetSS, {
+              logPipelineHealthWithFallback_(targetSS, {
                 step:       'bulkBackfill:DQE',
                 status:     'success',
                 rows:       dqeCount,
@@ -445,7 +445,7 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
             console.error('bulkBackfill DQE block failed for ' + dateKey + ': ' + msg);
             historyReport.push(`- DQE HD: FAILED (${msg})`);
             try {
-              logPipelineHealth_(targetSS, {
+              logPipelineHealthWithFallback_(targetSS, {
                 step:       'bulkBackfill:DQE',
                 status:     'failure',
                 rows:       null,
@@ -478,7 +478,7 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
                  + (Number(c.dqe) || 0);
     }
     try {
-      logPipelineHealth_(pipelineTargetSS, {
+      logPipelineHealthWithFallback_(pipelineTargetSS, {
         step:       'autoImport',
         status:     'success',
         rows:       countTotal,
@@ -500,7 +500,7 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
     // so admins see the failure in the dashboard's Alerts modal even
     // if the email path also fails. Best-effort.
     try {
-      logPipelineHealth_(pipelineTargetSS, {
+      logPipelineHealthWithFallback_(pipelineTargetSS, {
         step:       'autoImport',
         status:     'failure',
         rows:       null,
@@ -580,7 +580,7 @@ function notifyImportFailure_(ctx) {
  * owned by the dashboard's Config.gs PIPELINE_HEALTH_HEADERS; if
  * that changes, update the column order here in lockstep.
  */
-function logPipelineHealth_(ss, event) {
+function logPipelineHealthWithFallback_(ss, event) {
   try {
     let target = ss;
     if (!target) {
@@ -597,7 +597,7 @@ function logPipelineHealth_(ss, event) {
       event && event.notes      ? String(event.notes)  : '',
     ]);
   } catch (e) {
-    try { console.error('logPipelineHealth_ failed: ' + (e && e.message ? e.message : e)); } catch (e2) {}
+    try { console.error('logPipelineHealthWithFallback_ failed: ' + (e && e.message ? e.message : e)); } catch (e2) {}
   }
 }
 
@@ -1316,7 +1316,7 @@ if (!skipCDR && obcHD) {
     // writes succeed but QCD throws) surfaces immediately in the
     // dashboard's Alerts modal. Best-effort; never blocks.
     try {
-      logPipelineHealth_(targetSS, {
+      logPipelineHealthWithFallback_(targetSS, {
         step: 'processIntegratedHistory:CDR',
         status: 'success',
         rows: cdrCount,
@@ -1354,7 +1354,7 @@ if (!skipCDR && obcHD) {
       qpathCount = finalRows.length;
       summaryLog.push(`- Q Path HD: Appended ${qpathCount} Summary Rows`);
       try {
-        logPipelineHealth_(targetSS, {
+        logPipelineHealthWithFallback_(targetSS, {
           step: 'processIntegratedHistory:QPath',
           status: 'success',
           rows: qpathCount,
@@ -1384,7 +1384,7 @@ if (!skipCDR && obcHD) {
       qcdCount = qcdBatch.length;
       summaryLog.push(`- QCD HD: Archived ${qcdCount} Rows`);
       try {
-        logPipelineHealth_(targetSS, {
+        logPipelineHealthWithFallback_(targetSS, {
           step: 'processIntegratedHistory:QCD',
           status: 'success',
           rows: qcdCount,
@@ -1438,7 +1438,7 @@ if (!skipCDR && obcHD) {
       csrCount = csrBatch.length;
       summaryLog.push(`- CSR Transfer HD: Archived ${csrCount} Rows`);
       try {
-        logPipelineHealth_(targetSS, {
+        logPipelineHealthWithFallback_(targetSS, {
           step: 'processIntegratedHistory:CSR',
           status: 'success',
           rows: csrCount,
@@ -1466,7 +1466,7 @@ if (!skipCDR && obcHD) {
       if (dqeCount > 0) {
         summaryLog.push(`- DQE HD: Archived ${dqeCount} Rows`);
         try {
-          logPipelineHealth_(targetSS, {
+          logPipelineHealthWithFallback_(targetSS, {
             step: 'processIntegratedHistory:DQE',
             status: 'success',
             rows: dqeCount,
@@ -1482,7 +1482,7 @@ if (!skipCDR && obcHD) {
       console.error('processIntegratedHistory DQE block failed: ' + msg);
       summaryLog.push(`- DQE HD: FAILED (${msg})`);
       try {
-        logPipelineHealth_(targetSS, {
+        logPipelineHealthWithFallback_(targetSS, {
           step: 'processIntegratedHistory:DQE',
           status: 'failure',
           rows: null,

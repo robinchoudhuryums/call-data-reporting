@@ -25,17 +25,16 @@
  * only request their own dept; admins can pick any dept from the
  * dropdown.
  *
- * Cache: 5 min per (dept, from, to) tuple under `qcd:v1:` prefix.
+ * Cache: 5 min per (dept, from, to) tuple under `qcd:v4:` prefix.
  * No agent-list dimension since QCD is queue/dept-scoped, not
  * agent-scoped.
  *
- * IMPORTANT: QCD Historical Data's `callQueue` column carries
- * DEPT-NAME-LIKE values ("CSR", "Sales", "Power"), NOT raw queue
- * names like "A_Q_CSR". Filtering against dept name is the right
- * approach -- legacy DQE Report's buildTable4 does the same.
- * If new depts produce QCD rows with names that don't match the
- * roster headers, they'll be invisible until added to the roster
- * sheet or aliased here.
+ * IMPORTANT: QCD Historical Data's `callQueue` column (col D) carries
+ * raw queue names like "A_Q_CustomerSuccess", "A_Q_Sales", "Backup CSR"
+ * -- NOT dashboard dept names. To filter QCD rows for a dashboard dept,
+ * use Config.gs::DEPT_QCD_QUEUES[dept] (admin-curated map of dept name
+ * to list of queue names). A dept not in that map renders an empty QCD
+ * modal with a "No queues mapped" hint.
  */
 
 // v2: callQueue is a raw A_Q_* name, not a dept name; filter by
