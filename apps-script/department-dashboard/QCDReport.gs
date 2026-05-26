@@ -47,7 +47,9 @@
 //     with month-to-date count (was selected-range sum).
 // v4: avgAnswer changed from mean-of-daily-averages to volume-weighted
 //     average (weighted by totalAnswered per day/queue).
-const QCD_CACHE_KEY_PREFIX = 'qcd:v4';
+// v5: per-queue daily + monthly series for multi-line charts;
+//     violationDates per queue for expandable breakdown rows.
+const QCD_CACHE_KEY_PREFIX = 'qcd:v5';
 
 // Source filter: only the "Total Calls" callSource row carries the
 // daily aggregate we want; other callSource values are sub-counts
@@ -265,7 +267,9 @@ function computeQcdReport_(dept, from, to) {
       avgAnswerWeightedSum: 0,
       avgAnswerWeightedN:   0,
       violations:          0,
+      violationDates:      [],   // iso dates where violations > 0
       monthly:             {},   // monthKey -> { totalCalls, totalAnswered, abandoned, violations }
+      daily:               {},   // iso -> { totalCalls, totalAnswered, abandoned, abandonedPct, violations }
     };
   });
   // Daily series: keyed iso date. Summed across all dept queues
@@ -311,8 +315,18 @@ function computeQcdReport_(dept, from, to) {
         bucket.avgAnswerWeightedN   += totalAnswered;
       }
       bucket.violations += violations;
-      // Daily series accumulates across dept queues so the daily
-      // chart + table show the rollup, same shape as totals.
+      if (violations > 0) bucket.violationDates.push(dateIso);
+      // Per-queue daily accumulator for multi-line chart.
+      let qDay = bucket.daily[dateIso];
+      if (!qDay) {
+        qDay = { totalCalls: 0, totalAnswered: 0, abandoned: 0, violations: 0 };
+        bucket.daily[dateIso] = qDay;
+      }
+      qDay.totalCalls    += totalCalls;
+      qDay.totalAnswered += totalAnswered;
+      qDay.abandoned     += abandoned;
+      qDay.violations    += violations;
+      // Dept-level daily series (rollup across all queues).
       let dayBucket = dailyAcc[dateIso];
       if (!dayBucket) {
         dayBucket = { totalCalls: 0, totalAnswered: 0, abandoned: 0, violations: 0 };
@@ -354,6 +368,7 @@ function computeQcdReport_(dept, from, to) {
                           ? Math.round(b.avgAnswerWeightedSum / b.avgAnswerWeightedN) : 0),
       avgAnswerSec:     b.avgAnswerWeightedN > 0 ? Math.round(b.avgAnswerWeightedSum / b.avgAnswerWeightedN) : 0,
       violations:       b.violations,
+      violationDates:   b.violationDates.sort(),
     };
   });
 
@@ -434,6 +449,29 @@ function computeQcdReport_(dept, from, to) {
     };
   });
 
+  // Per-queue series for multi-line charts. Each queue gets its own
+  // monthly and daily arrays keyed on the same label sets as the
+  // dept-level data so Chart.js can overlay them.
+  const allDailyDates = Object.keys(dailyAcc).sort();
+  const perQueue = {};
+  queues.forEach(function (q) {
+    var acc = queueAcc[q];
+    perQueue[q] = {
+      monthly: monthKeys.map(function (m) {
+        var b = acc.monthly[m];
+        if (!b) return { totalCalls: 0, totalAnswered: 0, abandoned: 0, abandonedPct: 0, violations: 0 };
+        var pct = b.totalCalls > 0 ? (b.abandoned / b.totalCalls) * 100 : 0;
+        return { totalCalls: b.totalCalls, totalAnswered: b.totalAnswered, abandoned: b.abandoned, abandonedPct: pct, violations: b.violations };
+      }),
+      daily: allDailyDates.map(function (iso) {
+        var d = acc.daily[iso];
+        if (!d) return { date: iso, totalCalls: 0, totalAnswered: 0, abandoned: 0, abandonedPct: 0, violations: 0 };
+        var pct = d.totalCalls > 0 ? (d.abandoned / d.totalCalls) * 100 : 0;
+        return { date: iso, totalCalls: d.totalCalls, totalAnswered: d.totalAnswered, abandoned: d.abandoned, abandonedPct: pct, violations: d.violations };
+      }),
+    };
+  });
+
   const fmt = function (d) { return Utilities.formatDate(d, TZ, 'MMM d, yyyy'); };
   const dateLabel = fmt(startDate) + ' - ' + fmt(endDate);
 
@@ -450,12 +488,9 @@ function computeQcdReport_(dept, from, to) {
     dateLabel:       dateLabel,
     totals:          totals,
     queueBreakdown:  queueBreakdown,
-    // Two series shapes: monthly (12-mo trend window, default chart
-    // view) and daily (selected user range, granular view + table).
-    // Client picks one via a tab strip on the chart; the daily
-    // table always reads dailySeries.
-    trendData:       { labels: trendLabels, series: trendSeries },
+    trendData:       { labels: trendLabels, series: trendSeries, perQueue: perQueue },
     dailySeries:     dailySeries,
+    perQueue:        perQueue,
   };
 }
 
