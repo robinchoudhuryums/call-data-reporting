@@ -6,8 +6,8 @@
 // same rows to the Neon dqe_history table (Phase 3).
 //
 // Lives in the CDR Report Apps Script project.
-// Requires: neonWrite.gs (writeDQERowsToNeon, notifyNeonWriteFailure)
-//           neonBackfill.gs (parseDateForNeon)
+// Requires: neonWrite.gs (writeDQERowsToNeon, notifyNeonWriteFailure,
+//           parseDateForNeon — inlined in neonWrite.gs per INV-16)
 // ============================================================================
 
 // ── Constants (module-level so they don't re-allocate on every call) ─────────
@@ -640,8 +640,12 @@ function buildDQEHistoricalData(rawSheet, dqeSheet) {
         csrAvgAbdWait:    r[33]
       };
     });
-    writeDQERowsToNeon(neonRows);
-    Logger.log('DQE: Mirrored ' + neonRows.length + ' rows to Neon.');
+    var neonResult = writeDQERowsToNeon(neonRows);
+    if (neonResult && neonResult.skipped) {
+      Logger.log('DQE: Neon write skipped (%s rows — Neon unreachable).', neonResult.skipped);
+    } else {
+      Logger.log('DQE: Mirrored ' + neonRows.length + ' rows to Neon.');
+    }
   } catch (neonErr) {
     notifyNeonWriteFailure('buildDQEHistoricalData (' + callDateStr + ')', neonErr.message);
   }
