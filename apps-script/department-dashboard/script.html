@@ -2098,6 +2098,7 @@
   let irSortOrder = 'selection';   // selection | name | answered-desc | answered-asc | pct-desc
   let irActiveChartTab = 'vol';    // vol | eff | dur
   let irPendingAgentSelection_ = null;
+  let irListChangeHandler_ = null;
   const IR_PREFS_KEY = 'cdr.ir.prefs.v1';
 
   function initIndividualReport() {
@@ -2464,12 +2465,12 @@
     list.innerHTML = irBuildAgentListHtml_(agents, activeAgents);
     list.style.display = '';
 
-    // Listen once per render; container.innerHTML wipes previous
-    // listeners so no accumulation.
-    list.addEventListener('change', function () {
+    if (irListChangeHandler_) list.removeEventListener('change', irListChangeHandler_);
+    irListChangeHandler_ = function () {
       updateIrGenerateEnabled();
       irSavePrefs_();
-    });
+    };
+    list.addEventListener('change', irListChangeHandler_);
     // Apply any pending selection from restored prefs once.
     if (irPendingAgentSelection_) {
       irApplyCheckedAgents_(list, irPendingAgentSelection_);
@@ -2822,6 +2823,7 @@
     const current = (irLastData && irLastData.meta && irLastData.meta.agents) || [];
     irApplyCheckedAgents_(list, current);
     irUpdateEditApplyEnabled_();
+    list.removeEventListener('change', irUpdateEditApplyEnabled_);
     list.addEventListener('change', irUpdateEditApplyEnabled_);
     pop.style.display = '';
     // Reset search + filter state.
@@ -4064,6 +4066,7 @@
   // Holds an agent list to apply once the picker renders. Cleared
   // after apply so it doesn't override later renders.
   let prPendingAgentSelection_ = null;
+  let prListChangeHandler_ = null;
 
   // ── Roster fetch + render (mirrors Individual Report) ──────────────
   function ensurePrRoster() {
@@ -4139,10 +4142,12 @@
     }
     list.innerHTML = irBuildAgentListHtml_(agents, activeAgents);
     list.style.display = '';
-    list.addEventListener('change', function () {
+    if (prListChangeHandler_) list.removeEventListener('change', prListChangeHandler_);
+    prListChangeHandler_ = function () {
       prUpdateGenerateEnabled_();
       prSavePrefs_();
-    });
+    };
+    list.addEventListener('change', prListChangeHandler_);
     // Apply any pending selection from restored prefs once.
     if (prPendingAgentSelection_) {
       irApplyCheckedAgents_(list, prPendingAgentSelection_);
@@ -4898,6 +4903,7 @@
   let crActiveChartMetric = 'answered';
   let crCardSort = 'selection';     // selection | name | improvers | regressors
   let crPendingAgentSelection_ = null;
+  let crListChangeHandler_ = null;
   const CR_PREFS_KEY = 'cdr.cr.prefs.v1';
 
   function initCompareRanges() {
@@ -5509,10 +5515,12 @@
     }
     list.innerHTML = irBuildAgentListHtml_(agents, activeAgents);
     list.style.display = '';
-    list.addEventListener('change', function () {
+    if (crListChangeHandler_) list.removeEventListener('change', crListChangeHandler_);
+    crListChangeHandler_ = function () {
       crUpdateGenerateEnabled_();
       crSavePrefs_();
-    });
+    };
+    list.addEventListener('change', crListChangeHandler_);
     if (crPendingAgentSelection_) {
       irApplyCheckedAgents_(list, crPendingAgentSelection_);
       crPendingAgentSelection_ = null;
@@ -7461,7 +7469,7 @@
     let dataUrl = null;
     try { if (cvs) dataUrl = cvs.toDataURL('image/png'); } catch (e) { /* OK */ }
     html2canvas(root, {
-      backgroundColor: getComputedStyle(document.body).getPropertyValue('--paper').trim() || '#ffffff',
+      backgroundColor: (THEME.paper || '#f6f7f9'),
       scale: 2,
       onclone: function (clonedDoc) {
         const ab = clonedDoc.querySelector('#qcd-results .ir-action-buttons');

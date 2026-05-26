@@ -99,9 +99,13 @@ function uninstallDigestTriggers() {
 function runDailyDigests_() {
   try {
     const now = new Date();
-    const dow = now.getDay();    // 0=Sun, 6=Sat
+    // Check the DATA WINDOW date's day-of-week, not today's.
+    // On Monday (today=1), yesterday=Sunday (dow=0) → skip, so
+    // Friday data doesn't get lost. Matches runDailyAlerts_ logic.
+    const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 12);
+    const dow = yesterday.getDay();   // 0=Sun, 6=Sat
     if (dow === 0 || dow === 6) {
-      Logger.log('runDailyDigests_: skipping weekend (%s)', now);
+      Logger.log('runDailyDigests_: skipping weekend data date (%s)', yesterday);
       return;
     }
     sendDigestsForCadence_('daily');
