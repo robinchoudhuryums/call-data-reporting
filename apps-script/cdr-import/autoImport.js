@@ -12,7 +12,11 @@
 // -------------------------------------------------------------------------
 // CONFIGURATION CONSTANTS
 // -------------------------------------------------------------------------
-const TARGET_SS_ID = "15KgGg4ol_uSRGlUwLmUIRJ8fDlDqUcy2iQdnY9IbuE0";
+function getTargetSsId_() {
+  var id = PropertiesService.getScriptProperties().getProperty('TARGET_SS_ID');
+  if (!id) id = '15KgGg4ol_uSRGlUwLmUIRJ8fDlDqUcy2iQdnY9IbuE0';
+  return id;
+}
 const MAX_COLS = 44;
 
 const DEPT_COLORS = {
@@ -168,7 +172,7 @@ function processBulkQueue() {
 
   let targetSS = null;
   try {
-    targetSS = SpreadsheetApp.openById(TARGET_SS_ID);
+    targetSS = SpreadsheetApp.openById(getTargetSsId_());
   } catch (e) {
     ui.alert("Critical Error", "Could not open Target Spreadsheet. Aborting.", ui.ButtonSet.OK);
     return;
@@ -309,7 +313,7 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
     if (!shouldRun) { return "ALREADY PROCESSED"; }
     if (!silent) sourceSS.toast(`Processing: ${latestName}`, "Step 1/7", -1);
 
-    const targetSS    = preOpenedTargetSS || SpreadsheetApp.openById(TARGET_SS_ID);
+    const targetSS    = preOpenedTargetSS || SpreadsheetApp.openById(getTargetSsId_());
     pipelineTargetSS  = targetSS;   // captured for the catch block's Pipeline Health log
     const rawDataSheet = targetSS.getSheetByName("Raw Data");
     const outputSheet  = targetSS.getSheetByName("CDR Output");
@@ -584,7 +588,7 @@ function logPipelineHealthWithFallback_(ss, event) {
   try {
     let target = ss;
     if (!target) {
-      try { target = SpreadsheetApp.openById(TARGET_SS_ID); } catch (openErr) { return; }
+      try { target = SpreadsheetApp.openById(getTargetSsId_()); } catch (openErr) { return; }
     }
     const sheet = target.getSheetByName('Pipeline Health');
     if (!sheet) return;
@@ -734,7 +738,7 @@ function queueToPendingArchive(targetSS, results, dateObj, skipCDR, skipQPath, s
 
 function processBatchArchive(silent = false) {
   const ui           = SpreadsheetApp.getUi();
-  const targetSS     = SpreadsheetApp.openById(TARGET_SS_ID);
+  const targetSS     = SpreadsheetApp.openById(getTargetSsId_());
   const pendingSheet = targetSS.getSheetByName("Pending Archive");
 
   if (!pendingSheet || pendingSheet.getLastRow() <= 1) {
@@ -897,7 +901,7 @@ function clearPendingArchive() {
   const result = ui.alert("Clear Pending Archive?", "This will delete all pending archive data.\n\nAre you sure?", ui.ButtonSet.YES_NO);
 
   if (result == ui.Button.YES) {
-    const targetSS    = SpreadsheetApp.openById(TARGET_SS_ID);
+    const targetSS    = SpreadsheetApp.openById(getTargetSsId_());
     const pendingSheet = targetSS.getSheetByName("Pending Archive");
     if (pendingSheet) targetSS.deleteSheet(pendingSheet);
     ui.alert("✅ Cleared", "Pending Archive sheet deleted.", ui.ButtonSet.OK);
@@ -906,7 +910,7 @@ function clearPendingArchive() {
 
 function viewPendingArchiveStatus() {
   const ui          = SpreadsheetApp.getUi();
-  const targetSS    = SpreadsheetApp.openById(TARGET_SS_ID);
+  const targetSS    = SpreadsheetApp.openById(getTargetSsId_());
   const pendingSheet = targetSS.getSheetByName("Pending Archive");
 
   if (!pendingSheet || pendingSheet.getLastRow() <= 1) {

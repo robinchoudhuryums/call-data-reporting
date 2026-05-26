@@ -225,6 +225,83 @@
     scope: 'roster',     // 'roster' | 'queue' | 'both'
   };
 
+  // -- Modal drag & resize --------------------------------------------------
+  function initModalDragResize_(panel) {
+    if (window.innerWidth < 768) return;
+    var header = panel.querySelector('.modal-panel-header');
+    if (!header) return;
+
+    // Add resize handle if not present
+    if (!panel.querySelector('.modal-resize-handle')) {
+      var rh = document.createElement('div');
+      rh.className = 'modal-resize-handle';
+      rh.setAttribute('aria-hidden', 'true');
+      panel.appendChild(rh);
+    }
+
+    var dragging = false, resizing = false;
+    var startX, startY, startLeft, startTop, startW, startH;
+
+    function applyTransform() {
+      panel.style.position = 'absolute';
+      panel.style.margin = '0';
+    }
+
+    // Drag via header
+    header.addEventListener('mousedown', function (e) {
+      if (e.target.closest('.modal-close') || e.target.closest('button') || e.target.closest('a')) return;
+      e.preventDefault();
+      dragging = true;
+      var rect = panel.getBoundingClientRect();
+      startX = e.clientX; startY = e.clientY;
+      startLeft = rect.left; startTop = rect.top;
+      applyTransform();
+    });
+
+    // Resize via handle
+    var rh = panel.querySelector('.modal-resize-handle');
+    if (rh) rh.addEventListener('mousedown', function (e) {
+      e.preventDefault(); e.stopPropagation();
+      resizing = true;
+      startX = e.clientX; startY = e.clientY;
+      var rect = panel.getBoundingClientRect();
+      startW = rect.width; startH = rect.height;
+      startLeft = rect.left; startTop = rect.top;
+      applyTransform();
+    });
+
+    document.addEventListener('mousemove', function (e) {
+      if (dragging) {
+        var dx = e.clientX - startX, dy = e.clientY - startY;
+        panel.style.left = Math.max(0, startLeft + dx) + 'px';
+        panel.style.top  = Math.max(0, startTop + dy) + 'px';
+      } else if (resizing) {
+        var w = Math.max(360, startW + (e.clientX - startX));
+        var h = Math.max(280, startH + (e.clientY - startY));
+        panel.style.width    = w + 'px';
+        panel.style.maxWidth = w + 'px';
+        panel.style.height    = h + 'px';
+        panel.style.maxHeight = h + 'px';
+        panel.style.left = startLeft + 'px';
+        panel.style.top  = startTop + 'px';
+      }
+    });
+
+    document.addEventListener('mouseup', function () {
+      dragging = false; resizing = false;
+    });
+  }
+
+  function resetModalTransform_(panel) {
+    panel.style.position = '';
+    panel.style.left = ''; panel.style.top = '';
+    panel.style.width = ''; panel.style.maxWidth = '';
+    panel.style.height = ''; panel.style.maxHeight = '';
+    panel.style.margin = '';
+    var rh = panel.querySelector('.modal-resize-handle');
+    if (rh) rh.remove();
+  }
+
   // -- Modal focus trap -----------------------------------------------------
   var activeFocusTrap_ = null;
   function trapFocus_(modal) {
@@ -599,12 +676,14 @@
       modal.setAttribute('aria-hidden', 'false');
       document.body.style.overflow = 'hidden';
       trapFocus_(modal);
+      initModalDragResize_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
       document.addEventListener('keydown', onKeyDown);
     }
     function closeModal() {
       modal.style.display = 'none';
       modal.setAttribute('aria-hidden', 'true');
       releaseFocus_();
+      resetModalTransform_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
       document.body.style.overflow = '';
       document.removeEventListener('keydown', onKeyDown);
       btn.focus();
@@ -639,12 +718,14 @@
       modal.setAttribute('aria-hidden', 'false');
       document.body.style.overflow = 'hidden';
       trapFocus_(modal);
+      initModalDragResize_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
       document.addEventListener('keydown', onKeyDown);
     }
     function closeModal() {
       modal.style.display = 'none';
       modal.setAttribute('aria-hidden', 'true');
       releaseFocus_();
+      resetModalTransform_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
       document.body.style.overflow = '';
       document.removeEventListener('keydown', onKeyDown);
       btn.focus();
@@ -912,29 +993,48 @@
   // Tooltip on the abandoned chip carries the latest-date context.
   function ovBuildQcdCaption_(dept) {
     if (!dept || !dept.qcd) return '';
-    const q = dept.qcd;
-    const pct = Number(q.abandonedPct) || 0;
-    const abandoned = Number(q.abandoned) || 0;
-    const mtdViol = Number(q.violationsMtd) || 0;
+    var q = dept.qcd;
+    var queues = q.perQueue || [];
+    var multiQueue = queues.length > 1;
+    var html = '';
 
-    const abndCls = pct >= 5
-      ? 'ov-qcd-flag ov-qcd-violation'
-      : 'ov-qcd-flag ov-qcd-elevated';
-    const abndLabel = 'Aban ' + fmtNumber(abandoned)
-                    + ' (' + (q.abandonedPctStr || '0.00%') + ')';
-    const abndTip = 'QCD snapshot (' + (q.date || '') + '): '
-                  + (q.totalCalls || 0) + ' total calls · '
-                  + abandoned + ' abandoned ('
-                  + (q.abandonedPctStr || '0.00%') + ').';
-    let html = '<span class="' + abndCls + '" title="' + escapeHtml(abndTip) + '">'
-             + escapeHtml(abndLabel) + '</span>';
+    if (multiQueue) {
+      html += '<div class="ov-qcd-queue-list">';
+      queues.forEach(function (pq) {
+        var qPct = Number(pq.abandonedPct) || 0;
+        var qAbnd = Number(pq.abandoned) || 0;
+        var qViol = Number(pq.violations) || 0;
+        var chips = '';
+        chips += '<span class="ov-qcd-flag' + (qPct >= 5 ? ' ov-qcd-violation' : ' ov-qcd-elevated') + '">'
+              + escapeHtml(pq.abandonedPctStr || '0.00%') + '</span>';
+        if (qAbnd > 0) {
+          chips += '<span class="ov-qcd-flag' + (qPct >= 5 ? ' ov-qcd-violation' : '') + '">'
+                + fmtNumber(qAbnd) + ' aban</span>';
+        }
+        if (qViol > 0) {
+          chips += '<span class="ov-qcd-flag ov-qcd-violation">' + qViol + ' viol</span>';
+        }
+        html += '<div class="ov-qcd-queue-row"><span class="ov-qcd-queue-name">'
+             + escapeHtml(pq.queue) + '</span>' + chips + '</div>';
+      });
+      html += '</div>';
+    } else {
+      var pct = Number(q.abandonedPct) || 0;
+      var abandoned = Number(q.abandoned) || 0;
+      var abndCls = pct >= 5 ? 'ov-qcd-flag ov-qcd-violation' : 'ov-qcd-flag ov-qcd-elevated';
+      html += '<span class="' + abndCls + '">'
+           + escapeHtml(q.abandonedPctStr || '0.00%') + '</span>';
+      if (abandoned > 0) {
+        html += '<span class="' + abndCls + '">'
+             + fmtNumber(abandoned) + ' aban</span>';
+      }
+    }
 
+    var mtdViol = Number(q.violationsMtd) || 0;
     if (mtdViol > 0) {
-      const violTip = mtdViol + ' QCD violation' + (mtdViol === 1 ? '' : 's')
-                    + ' month-to-date (Abandoned % > 5% on a daily roll-up).';
       html += '<span class="ov-qcd-flag ov-qcd-violation" title="'
-            + escapeHtml(violTip) + '">'
-            + mtdViol + ' viol MTD</span>';
+            + mtdViol + ' QCD violation' + (mtdViol === 1 ? '' : 's')
+            + ' month-to-date">' + mtdViol + ' viol MTD</span>';
     }
     return html;
   }
@@ -1275,6 +1375,7 @@
       modal.setAttribute('aria-hidden', 'false');
       document.body.style.overflow = 'hidden';
       trapFocus_(modal);
+      initModalDragResize_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
       document.addEventListener('keydown', onKeyDown);
       fetchAndRender();
     }
@@ -1282,6 +1383,7 @@
       modal.style.display = 'none';
       modal.setAttribute('aria-hidden', 'true');
       releaseFocus_();
+      resetModalTransform_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
       document.body.style.overflow = '';
       document.removeEventListener('keydown', onKeyDown);
       btn.focus();
@@ -1797,6 +1899,17 @@
     state.meta = (data && data.meta) || null;
     state.diagnostics = (data && data.diagnostics) || null;
 
+    var dqeHeader = $('dqe-table-header');
+    if (dqeHeader) {
+      dqeHeader.style.display = state.rows.length ? '' : 'none';
+      var dqeDateEl = $('dqe-table-date');
+      if (dqeDateEl) {
+        var f = $('from') ? $('from').value : '';
+        var t = $('to') ? $('to').value : '';
+        dqeDateEl.textContent = (f && t) ? (f === t ? f : f + ' to ' + t) : '';
+      }
+    }
+
     // Mock banner (only shown if the server flagged a mocked response;
     // Step D returns real data so this should always hide).
     const banner = $('mock-banner');
@@ -1828,11 +1941,23 @@
    * Hidden when null.
    */
   function renderDeptQcdSnapshot_(qcd) {
-    const wrap = $('dept-qcd-snapshot');
+    var wrap = $('dept-qcd-snapshot');
     if (!wrap) return;
     if (!qcd) { wrap.style.display = 'none'; return; }
-    const dateEl = $('dept-qcd-date');
-    if (dateEl) dateEl.textContent = '(' + (qcd.date || '') + ')';
+    var titleEl = $('dept-qcd-title');
+    if (titleEl) {
+      var dateStr = qcd.date || '';
+      if (dateStr) {
+        var parts = dateStr.split('-');
+        var d = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+        var days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+        var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        dateStr = days[d.getDay()] + ' ' + months[d.getMonth()] + ' ' + d.getDate();
+      }
+      titleEl.textContent = 'Queue Call Data — ' + dateStr;
+    }
+    var dateEl = $('dept-qcd-date');
+    if (dateEl) dateEl.textContent = '';
     const tiles = $('dept-qcd-tiles');
     if (!tiles) return;
 
@@ -2184,6 +2309,7 @@
       modal.style.display = '';
       modal.setAttribute('aria-hidden', 'false');
       document.body.style.overflow = 'hidden';
+      initModalDragResize_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
       document.addEventListener('keydown', onKeyDown);
       showIrForm();
       ensureIrRoster();
@@ -2192,6 +2318,7 @@
       modal.style.display = 'none';
       modal.setAttribute('aria-hidden', 'true');
       releaseFocus_();
+      resetModalTransform_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
       document.body.style.overflow = '';
       document.removeEventListener('keydown', onKeyDown);
       btn.focus();
@@ -3787,6 +3914,7 @@
       modal.setAttribute('aria-hidden', 'false');
       document.body.style.overflow = 'hidden';
       trapFocus_(modal);
+      initModalDragResize_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
       document.addEventListener('keydown', onKeyDown);
       showPrForm();
       ensurePrRoster();
@@ -3796,6 +3924,7 @@
       modal.style.display = 'none';
       modal.setAttribute('aria-hidden', 'true');
       releaseFocus_();
+      resetModalTransform_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
       document.body.style.overflow = '';
       document.removeEventListener('keydown', onKeyDown);
       btn.focus();
@@ -4992,6 +5121,7 @@
       modal.setAttribute('aria-hidden', 'false');
       document.body.style.overflow = 'hidden';
       trapFocus_(modal);
+      initModalDragResize_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
       document.addEventListener('keydown', onKeyDown);
       showCrForm();
       ensureCrDefaultDates_();
@@ -5001,6 +5131,7 @@
       modal.style.display = 'none';
       modal.setAttribute('aria-hidden', 'true');
       releaseFocus_();
+      resetModalTransform_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
       document.body.style.overflow = '';
       document.removeEventListener('keydown', onKeyDown);
       btn.focus();
@@ -6379,6 +6510,7 @@
       modal.setAttribute('aria-hidden', 'false');
       document.body.style.overflow = 'hidden';
       trapFocus_(modal);
+      initModalDragResize_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
       document.addEventListener('keydown', onKeyDown);
       alLoadInit_();
     }
@@ -6386,6 +6518,7 @@
       modal.style.display = 'none';
       modal.setAttribute('aria-hidden', 'true');
       releaseFocus_();
+      resetModalTransform_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
       document.body.style.overflow = '';
       document.removeEventListener('keydown', onKeyDown);
       btn.focus();
@@ -6914,6 +7047,7 @@
       modal.setAttribute('aria-hidden', 'false');
       document.body.style.overflow = 'hidden';
       trapFocus_(modal);
+      initModalDragResize_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
       document.addEventListener('keydown', onKeyDown);
       ofLoadInit_();
     }
@@ -6921,6 +7055,7 @@
       modal.style.display = 'none';
       modal.setAttribute('aria-hidden', 'true');
       releaseFocus_();
+      resetModalTransform_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
       document.body.style.overflow = '';
       document.removeEventListener('keydown', onKeyDown);
       btn.focus();
@@ -7151,6 +7286,7 @@
       modal.setAttribute('aria-hidden', 'false');
       document.body.style.overflow = 'hidden';
       trapFocus_(modal);
+      initModalDragResize_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
       document.addEventListener('keydown', onKeyDown);
       showQcdForm();
       setQcdDefaultDates_();
@@ -7159,6 +7295,7 @@
       modal.style.display = 'none';
       modal.setAttribute('aria-hidden', 'true');
       releaseFocus_();
+      resetModalTransform_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
       document.body.style.overflow = '';
       document.removeEventListener('keydown', onKeyDown);
       btn.focus();
@@ -7248,9 +7385,11 @@
       const day = String(d.getDate()).padStart(2, '0');
       return d.getFullYear() + '-' + m + '-' + day;
     };
-    const first = new Date(now.getFullYear(), now.getMonth(), 1);
-    if ($('qcd-from') && !$('qcd-from').value) $('qcd-from').value = isoOf(first);
-    if ($('qcd-to')   && !$('qcd-to').value)   $('qcd-to').value   = isoOf(now);
+    const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+    $('qcd-from').value = isoOf(yesterday);
+    $('qcd-to').value   = isoOf(yesterday);
+    var p = $('qcd-preset');
+    if (p) p.value = 'yesterday';
   }
 
   function applyQcdPreset() {
@@ -7263,7 +7402,10 @@
       return d.getFullYear() + '-' + m + '-' + day;
     };
     let s, e;
-    if (v === 'thisMonth') {
+    if (v === 'yesterday') {
+      s = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+      e = new Date(s);
+    } else if (v === 'thisMonth') {
       s = new Date(now.getFullYear(), now.getMonth(), 1);
       e = now;
     } else if (v === 'lastMonth') {
@@ -7332,10 +7474,7 @@
     $('qcd-results-title').textContent = 'QCD Report';
     $('qcd-results-date').textContent  = '(' + (data.dateLabel || '') + ')';
     showQcdResults_();
-    // Show the "no queues mapped" hint when the dept isn't listed in
-    // Config.gs::DEPT_QCD_QUEUES. The breakdown table renders empty
-    // in that case but the hint surfaces the cause.
-    const hint = $('qcd-queue-hint');
+    var hint = $('qcd-queue-hint');
     if (hint) {
       if (data.meta && data.meta.unmapped) {
         hint.textContent = 'No queues mapped for this department. Add a '
@@ -7344,6 +7483,20 @@
       } else {
         hint.style.display = 'none';
       }
+    }
+    // Single-day range: hide the Daily view toggle since a single
+    // point isn't useful as a line chart; force monthly view.
+    var isSingleDay = data.meta && data.meta.from === data.meta.to;
+    var dailyBtn = document.querySelector('#qcd-view-toggle [data-view="daily"]');
+    if (dailyBtn) dailyBtn.style.display = isSingleDay ? 'none' : '';
+    if (isSingleDay && qcdActiveView === 'daily') {
+      qcdActiveView = 'monthly';
+      var vt = $('qcd-view-toggle');
+      if (vt) vt.querySelectorAll('.seg-btn').forEach(function (b) {
+        var active = b.getAttribute('data-view') === 'monthly';
+        b.classList.toggle('active', active);
+        b.setAttribute('aria-checked', active ? 'true' : 'false');
+      });
     }
     qcdRenderKpiTiles_(data.totals || {});
     qcdRenderQueueTable_(data.queueBreakdown || [], data.totals || {});
@@ -7392,22 +7545,24 @@
       return;
     }
     tbody.innerHTML = rows.map(function (r) {
-      const pct = Number(r.abandonedPct) || 0;
-      const pctCellCls = pct >= 5 ? 'num qcd-daily-warn' : 'num';
+      var pct = Number(r.abandonedPct) || 0;
+      var pctCls = pct >= 5 ? 'num qcd-warn-light' : 'num';
+      var viol = Number(r.violations) || 0;
+      var violCls = viol > 0 ? 'num qcd-warn-light' : 'num';
       return '<tr>'
            +   '<td>' + escapeHtml(r.date) + '</td>'
            +   '<td class="num">' + fmtNumber(r.totalCalls)    + '</td>'
            +   '<td class="num">' + fmtNumber(r.totalAnswered) + '</td>'
            +   '<td class="num">' + fmtNumber(r.abandoned)     + '</td>'
-           +   '<td class="' + pctCellCls + '">' + escapeHtml(r.abandonedPctStr) + '</td>'
-           +   '<td class="num">' + fmtNumber(r.violations)    + '</td>'
+           +   '<td class="' + pctCls + '">' + escapeHtml(r.abandonedPctStr) + '</td>'
+           +   '<td class="' + violCls + '">' + fmtNumber(r.violations)    + '</td>'
            + '</tr>';
     }).join('');
   }
 
   function qcdRenderQueueTable_(rows, totals) {
-    const tbody = $('qcd-queue-tbody');
-    const tfoot = $('qcd-queue-tfoot');
+    var tbody = $('qcd-queue-tbody');
+    var tfoot = $('qcd-queue-tfoot');
     if (!tbody) return;
     if (!rows.length) {
       tbody.innerHTML = '<tr><td colspan="8" class="al-empty">No QCD rows for this dept\'s mapped queues in the selected range.</td></tr>';
@@ -7415,110 +7570,158 @@
       return;
     }
     tbody.innerHTML = rows.map(function (r) {
-      return '<tr>'
-           +   '<td>' + escapeHtml(r.queue) + '</td>'
+      var viol = Number(r.violations) || 0;
+      var pct = Number(r.abandonedPct) || 0;
+      var violCls = viol > 3 ? 'qcd-warn-strong' : (viol > 0 ? 'qcd-warn-light' : '');
+      var pctCls  = pct >= 5 ? 'qcd-warn-light' : '';
+      var hasDetail = viol > 0 && r.violationDates && r.violationDates.length;
+      var chevron = hasDetail ? ' <span class="qcd-expand-icon">&#9654;</span>' : '';
+      var rowCls = hasDetail ? ' class="qcd-expandable"' : '';
+      var html = '<tr' + rowCls + ' data-queue="' + escapeHtml(r.queue) + '">'
+           +   '<td>' + escapeHtml(r.queue) + chevron + '</td>'
            +   '<td class="num">' + fmtNumber(r.totalCalls)    + '</td>'
            +   '<td class="num">' + fmtNumber(r.totalAnswered) + '</td>'
            +   '<td class="num">' + fmtNumber(r.abandoned)     + '</td>'
-           +   '<td class="num">' + escapeHtml(r.abandonedPctStr) + '</td>'
+           +   '<td class="num' + (pctCls ? ' ' + pctCls : '') + '">' + escapeHtml(r.abandonedPctStr) + '</td>'
            +   '<td class="num">' + escapeHtml(r.longestWait)  + '</td>'
            +   '<td class="num">' + escapeHtml(r.avgAnswer)    + '</td>'
-           +   '<td class="num">' + fmtNumber(r.violations)    + '</td>'
+           +   '<td class="num' + (violCls ? ' ' + violCls : '') + '">' + fmtNumber(r.violations) + '</td>'
            + '</tr>';
+      if (hasDetail) {
+        html += '<tr class="qcd-detail-row" style="display:none;"><td colspan="8">'
+             +  '<div class="qcd-detail-wrap"><strong>Violation dates:</strong> '
+             +  r.violationDates.map(function (d) { return escapeHtml(d); }).join(', ')
+             +  '</div></td></tr>';
+      }
+      return html;
     }).join('');
+    // Expandable rows: click to toggle detail
+    tbody.addEventListener('click', function (e) {
+      var row = e.target.closest('.qcd-expandable');
+      if (!row) return;
+      var detail = row.nextElementSibling;
+      if (!detail || !detail.classList.contains('qcd-detail-row')) return;
+      var open = detail.style.display !== 'none';
+      detail.style.display = open ? 'none' : '';
+      var icon = row.querySelector('.qcd-expand-icon');
+      if (icon) icon.textContent = open ? '▶' : '▼';
+    });
     if (tfoot && totals) {
-      // Dept aggregate row: sum-of-queues for volume cols, max for
-      // longest, mean for avg, sum for violations. Bolded via
-      // .qcd-row-total to match the Total Calls pattern users expect.
+      var tPct = Number(totals.abandonedPct) || 0;
+      var tPctCls = tPct >= 5 ? 'qcd-warn-light' : '';
+      var tViol = Number(totals.violations) || 0;
+      var tViolCls = tViol > 3 ? 'qcd-warn-strong' : (tViol > 0 ? 'qcd-warn-light' : '');
       tfoot.innerHTML = '<tr class="qcd-row-total">'
         +   '<td>Department total</td>'
         +   '<td class="num">' + fmtNumber(totals.totalCalls)    + '</td>'
         +   '<td class="num">' + fmtNumber(totals.totalAnswered) + '</td>'
         +   '<td class="num">' + fmtNumber(totals.abandoned)     + '</td>'
-        +   '<td class="num">' + escapeHtml(totals.abandonedPctStr || '0.00%') + '</td>'
+        +   '<td class="num' + (tPctCls ? ' ' + tPctCls : '') + '">' + escapeHtml(totals.abandonedPctStr || '0.00%') + '</td>'
         +   '<td class="num">' + escapeHtml(totals.longestWait || '0:00:00')   + '</td>'
         +   '<td class="num">' + escapeHtml(totals.avgAnswer || '0:00:00')     + '</td>'
-        +   '<td class="num">' + fmtNumber(totals.violations)    + '</td>'
+        +   '<td class="num' + (tViolCls ? ' ' + tViolCls : '') + '">' + fmtNumber(totals.violations) + '</td>'
         + '</tr>';
     }
   }
 
   function qcdRenderChart_(data) {
     if (typeof Chart === 'undefined') return;
-    const canvas = document.getElementById('qcd-chart');
+    var canvas = document.getElementById('qcd-chart');
     if (!canvas) return;
     destroyOrphanedChartOnCanvas_('qcd-chart');
     if (qcdChartInstance) { try { qcdChartInstance.destroy(); } catch (e) {} qcdChartInstance = null; }
 
-    // Pick the series shape based on the view toggle. Monthly is
-    // the 12-month trend window (labels are MMM, yy + series of
-    // {totalCalls, abandonedPct, violations} objects). Daily is
-    // one point per day within the selected From/To range (labels
-    // are MM-DD; series shape mirrors the dailySeries field).
-    const isDaily = (qcdActiveView === 'daily');
-    let labels, series;
+    var isDaily = (qcdActiveView === 'daily');
+    var labels, deptSeries;
     if (isDaily) {
-      const daily = data.dailySeries || [];
-      labels = daily.map(function (r) {
-        // Compact "MM-DD" labels keep the x-axis legible on dense
-        // daily charts. Tooltip still shows the full ISO via the
-        // default Chart.js callback.
-        return r.date ? r.date.slice(5) : '';
-      });
-      series = daily;
+      var daily = data.dailySeries || [];
+      labels = daily.map(function (r) { return r.date ? r.date.slice(5) : ''; });
+      deptSeries = daily;
     } else {
-      const td = data.trendData || { labels: [], series: [] };
+      var td = data.trendData || { labels: [], series: [] };
       labels = td.labels || [];
-      series = td.series || [];
+      deptSeries = td.series || [];
     }
-    const metric = qcdActiveMetric;
-    const viewLabel = isDaily ? 'daily' : 'monthly';
-    const headerLabels = {
+    var metric = qcdActiveMetric;
+    var viewLabel = isDaily ? 'daily' : 'monthly';
+    var headerLabels = {
       totalCalls:   'Total Calls (' + viewLabel + ')',
       abandonedPct: 'Abandoned % (' + viewLabel + ')',
       violations:   'Violations (' + viewLabel + ')',
     };
     $('qcd-chart-header').textContent = headerLabels[metric] || 'Trend';
 
-    let values, color, formatPct = false;
-    if (metric === 'totalCalls') {
-      values = series.map(function (x) { return x.totalCalls; });
-      color  = (typeof THEME !== 'undefined' && THEME.accent) || '#4E79A7';
-    } else if (metric === 'abandonedPct') {
-      values = series.map(function (x) { return Number((x.abandonedPct || 0).toFixed(2)); });
-      color  = (typeof THEME !== 'undefined' && THEME.warn) || '#c66b4b';
-      formatPct = true;
+    var formatPct = (metric === 'abandonedPct');
+    var extractVal = function (x) {
+      if (metric === 'totalCalls') return x.totalCalls;
+      if (metric === 'abandonedPct') return Number((x.abandonedPct || 0).toFixed(2));
+      return x.violations;
+    };
+
+    var queues = (data.meta && data.meta.queues) || [];
+    var perQueue = data.perQueue || {};
+    var multiQueue = queues.length > 1;
+    var queueColors = irChartColors_();
+    var datasets = [];
+
+    if (multiQueue) {
+      queues.forEach(function (q, i) {
+        var qData = perQueue[q];
+        if (!qData) return;
+        var src = isDaily ? (qData.daily || []) : (qData.monthly || []);
+        datasets.push({
+          label: q,
+          data: src.map(extractVal),
+          borderColor: queueColors[i % queueColors.length],
+          backgroundColor: queueColors[i % queueColors.length],
+          fill: false,
+          tension: 0.25,
+          pointRadius: 3,
+          borderWidth: 2,
+        });
+      });
+      var deptColor = (THEME && THEME.muted) || '#9ca3af';
+      datasets.push({
+        label: 'Dept total',
+        data: deptSeries.map(extractVal),
+        borderColor: deptColor,
+        backgroundColor: deptColor,
+        fill: false,
+        tension: 0.25,
+        pointRadius: 2,
+        borderWidth: 2,
+        borderDash: [6, 3],
+      });
     } else {
-      values = series.map(function (x) { return x.violations; });
-      color  = (typeof THEME !== 'undefined' && THEME.warn) || '#c66b4b';
+      var color = (metric === 'totalCalls')
+        ? ((THEME && THEME.accent) || '#4E79A7')
+        : ((THEME && THEME.warn)   || '#c66b4b');
+      datasets.push({
+        label: headerLabels[metric] || metric,
+        data: deptSeries.map(extractVal),
+        borderColor: color,
+        backgroundColor: color,
+        fill: false,
+        tension: 0.25,
+        pointRadius: 3,
+      });
     }
 
     refreshChartTheme();
     qcdChartInstance = new Chart(canvas, {
       type: 'line',
-      data: {
-        labels: labels,
-        datasets: [{
-          label: headerLabels[metric] || metric,
-          data: values,
-          borderColor: color,
-          backgroundColor: color,
-          fill: false,
-          tension: 0.25,
-          pointRadius: 3,
-        }],
-      },
+      data: { labels: labels, datasets: datasets },
       options: {
         responsive: true,
         maintainAspectRatio: false,
         plugins: {
           datalabels: { display: false },
-          legend:     { display: false },
+          legend:     { display: multiQueue },
           tooltip: {
             callbacks: {
               label: function (ctx) {
-                if (formatPct) return ctx.formattedValue + '%';
-                return ctx.formattedValue;
+                var prefix = multiQueue ? (ctx.dataset.label + ': ') : '';
+                return prefix + (formatPct ? ctx.formattedValue + '%' : ctx.formattedValue);
               },
             },
           },

@@ -858,6 +858,14 @@
     width: 100%;
     max-height: 92vh;
   }
+  .modal-panel-header { cursor: grab; }
+  .modal-panel-header:active { cursor: grabbing; }
+  .modal-resize-handle {
+    position: absolute; right: 0; bottom: 0; width: 18px; height: 18px;
+    cursor: nwse-resize; z-index: 2; opacity: 0.4;
+    background: linear-gradient(135deg, transparent 40%, var(--muted) 40%, var(--muted) 50%, transparent 50%, transparent 60%, var(--muted) 60%, var(--muted) 70%, transparent 70%);
+  }
+  .modal-resize-handle:hover { opacity: 0.7; }
   /* Wide modals get tighter header/body padding -- their content
      is denser and the wider canvas can absorb less chrome. */
   .modal-panel-wide .modal-panel-header { padding: 22px 28px 14px; }
@@ -2469,6 +2477,19 @@
     font-weight: 700;
     background: var(--accent-soft);
   }
+  .qcd-warn-light { color: var(--warn); font-weight: 600; }
+  .qcd-warn-strong { color: #c0392b; font-weight: 700; }
+  .qcd-expandable { cursor: pointer; }
+  .qcd-expandable:hover td { background: var(--accent-soft); }
+  .qcd-expand-icon { font-size: 10px; margin-left: 4px; color: var(--muted); }
+  .qcd-detail-row td { padding: 0 !important; }
+  .qcd-detail-wrap {
+    padding: 8px 16px 8px 28px;
+    font-size: 12px;
+    color: var(--muted);
+    background: var(--paper-2);
+    border-top: 1px dashed var(--line);
+  }
 
   .al-config-table, .al-log-table, .al-results-table {
     width: 100%;
@@ -2870,6 +2891,16 @@
   }
   .ov-wow-driver-up   { color: var(--good); }
   .ov-wow-driver-down { color: var(--warn); }
+  .ov-qcd-queue-list { margin-top: 4px; }
+  .ov-qcd-queue-row {
+    display: flex; align-items: center; gap: 4px;
+    font-size: 10px; margin-top: 2px;
+  }
+  .ov-qcd-queue-name {
+    font-family: var(--mono); color: var(--muted);
+    min-width: 60px; white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis; max-width: 120px;
+  }
 
   /* QCD flag caption next to the WoW driver. Renders only when the
      dept has QCD violations OR elevated abandoned %. Two tiers:

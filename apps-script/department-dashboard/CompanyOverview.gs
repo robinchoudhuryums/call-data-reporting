@@ -56,7 +56,8 @@
 // v11: parent depts auto-include sub-queue queues via queuesForDept_
 //      (Sales+PAP, Power+PAK, CSR+Spanish), matching the QCD modal's
 //      and My Department's rollup behavior.
-const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v11';
+// v12: QCD snapshot includes perQueue array for per-queue tile rendering.
+const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v12';
 
 // Window (in days) over which we consider an agent "recently
 // active". Used as the denominator for the "X of Y agents" caption
@@ -676,6 +677,7 @@ function computeQcdSnapshots_(allDepts, sinceIso, ssTZ) {
           latestAbandoned: 0,
           latestViolations: 0,
           mtdViolations:   0,
+          perQueue:        {},   // queue -> { totalCalls, abandoned, violations }
         };
         acc[dept] = a;
       }
@@ -690,10 +692,17 @@ function computeQcdSnapshots_(allDepts, sinceIso, ssTZ) {
         a.latestTotal = totalCalls;
         a.latestAbandoned = abandoned;
         a.latestViolations = violations;
+        a.perQueue = {};
+        a.perQueue[queue] = { totalCalls: totalCalls, abandoned: abandoned, violations: violations };
       } else if (dateIso === a.latestDate) {
         a.latestTotal     += totalCalls;
         a.latestAbandoned += abandoned;
         a.latestViolations += violations;
+        var pq = a.perQueue[queue];
+        if (!pq) { pq = { totalCalls: 0, abandoned: 0, violations: 0 }; a.perQueue[queue] = pq; }
+        pq.totalCalls += totalCalls;
+        pq.abandoned  += abandoned;
+        pq.violations += violations;
       }
     }
 
@@ -701,6 +710,19 @@ function computeQcdSnapshots_(allDepts, sinceIso, ssTZ) {
       const a = acc[dept];
       if (!a.latestDate) return;
       const pct = a.latestTotal > 0 ? (a.latestAbandoned / a.latestTotal) * 100 : 0;
+      var perQueueOut = [];
+      Object.keys(a.perQueue).forEach(function (qName) {
+        var pq = a.perQueue[qName];
+        var qPct = pq.totalCalls > 0 ? (pq.abandoned / pq.totalCalls) * 100 : 0;
+        perQueueOut.push({
+          queue: qName,
+          totalCalls: pq.totalCalls,
+          abandoned: pq.abandoned,
+          abandonedPct: round1_(qPct),
+          abandonedPctStr: qPct.toFixed(2) + '%',
+          violations: pq.violations,
+        });
+      });
       out[dept] = {
         date:             a.latestDate,
         totalCalls:       a.latestTotal,
@@ -709,6 +731,7 @@ function computeQcdSnapshots_(allDepts, sinceIso, ssTZ) {
         abandonedPctStr:  pct.toFixed(2) + '%',
         violations:       a.latestViolations,
         violationsMtd:    a.mtdViolations,
+        perQueue:         perQueueOut,
       };
     });
 
@@ -722,6 +745,7 @@ function computeQcdSnapshots_(allDepts, sinceIso, ssTZ) {
       expandedQueues.forEach(function (q) { expandedSet[q] = true; });
       let pLatestDate = '';
       let pTotal = 0, pAbnd = 0, pViol = 0, pMtdViol = 0;
+      var pPerQueue = {};
       for (let i = 0; i < values.length; i++) {
         const r = values[i];
         const src = String(r[QCD_HISTORICAL_COLS.CALL_SOURCE - 1] || '').trim();
@@ -736,12 +760,27 @@ function computeQcdSnapshots_(allDepts, sinceIso, ssTZ) {
         if (dateIso >= mtdStart) pMtdViol += vi;
         if (dateIso > pLatestDate) {
           pLatestDate = dateIso; pTotal = tc; pAbnd = ab; pViol = vi;
+          pPerQueue = {};
+          pPerQueue[q] = { totalCalls: tc, abandoned: ab, violations: vi };
         } else if (dateIso === pLatestDate) {
           pTotal += tc; pAbnd += ab; pViol += vi;
+          var ppq = pPerQueue[q];
+          if (!ppq) { ppq = { totalCalls: 0, abandoned: 0, violations: 0 }; pPerQueue[q] = ppq; }
+          ppq.totalCalls += tc; ppq.abandoned += ab; ppq.violations += vi;
         }
       }
       if (!pLatestDate) return;
       const pPct = pTotal > 0 ? (pAbnd / pTotal) * 100 : 0;
+      var pPerQueueOut = [];
+      Object.keys(pPerQueue).forEach(function (qn) {
+        var pq = pPerQueue[qn];
+        var qPct = pq.totalCalls > 0 ? (pq.abandoned / pq.totalCalls) * 100 : 0;
+        pPerQueueOut.push({
+          queue: qn, totalCalls: pq.totalCalls, abandoned: pq.abandoned,
+          abandonedPct: round1_(qPct), abandonedPctStr: qPct.toFixed(2) + '%',
+          violations: pq.violations,
+        });
+      });
       out[parentDept] = {
         date:             pLatestDate,
         totalCalls:       pTotal,
@@ -750,6 +789,7 @@ function computeQcdSnapshots_(allDepts, sinceIso, ssTZ) {
         abandonedPctStr:  pPct.toFixed(2) + '%',
         violations:       pViol,
         violationsMtd:    pMtdViol,
+        perQueue:         pPerQueueOut,
       };
     });
   } catch (e) {
