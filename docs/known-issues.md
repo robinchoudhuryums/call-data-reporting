@@ -192,7 +192,7 @@ For now, treat any change to either copy as a two-file edit.
 Historical data sometimes contains rows where `Agent Name` is a system
 entity ("Sales Voicemails", "A_Q_*" queue names, "Normal Call Menu",
 etc.) instead of a real person. These won't be in any dept roster and
-will appear in the dashboard's `whyNoMatches` diagnostic under
+will appear in the dashboard's `whyNoMatches_` diagnostic under
 "Agents in historical NOT in ANY roster".
 
 These are correct rejections — don't add them to any dept roster.
@@ -572,7 +572,7 @@ etc.) are left to TTL out within 5 minutes. The Orphan Fix modal
 warns the user "may take up to 5 minutes to appear in dashboard."
 
 **Error message footgun.** `assertAdmin_` is defined in
-`Alerts.gs` and throws "Alerts are admin-only." Non-admin calls to
+`Util.gs` and throws "Alerts are admin-only." Non-admin calls to
 OrphanFix surface that same message -- slightly misleading but
 correctly rejects the call. Worth noting if you ever see it in a
 log entry that has nothing to do with alerts.

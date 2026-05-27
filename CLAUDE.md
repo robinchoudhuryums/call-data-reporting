@@ -241,6 +241,20 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `windowLegs` (same 6:30 AM – 3:00 PM PST work window as
   Rung/Missed/Answered). Changed from all-day scope to maintain
   consistency across all agent-level counts.
+- **Shared utility functions live in `Util.gs`.** `assertAdmin_`,
+  `formatSecondsHms_`, `generateMonthList_`, `round1_`,
+  `escapeHtmlServer_`, `buildTeamInsights_`, and
+  `computeActiveAgentsInRange_` were consolidated from their
+  original host files (Alerts.gs, IndividualReport.gs,
+  PerformanceReport.gs). Put new shared helpers here; the implicit
+  cross-file dependencies via Apps Script's global scope are now
+  explicit in one file.
+- **CDN scripts carry SRI integrity hashes.** `dashboard.html`
+  loads Chart.js, chartjs-plugin-datalabels, and html2canvas with
+  `integrity="sha384-..."` + `crossorigin="anonymous"`. When
+  upgrading a library version, recompute the hash:
+  `curl -s <URL> | openssl dgst -sha384 -binary | openssl base64 -A`.
+  A mismatched hash blocks the script from loading entirely.
 
 ## Key Design Decisions
 
@@ -275,7 +289,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   landing** for every page load; "My Department" is the per-dept
   agent table view that used to be the landing. Modals (Help,
   Settings, Missed Calls, Individual / Performance / Compare
-  Ranges, Alerts) overlay either page. Admin clicks on Overview
+  Ranges, QCD Report, Alerts, Orphan Fix) overlay either page.
+  Admin clicks on Overview
   dept tiles route to the dept page via `setPage('dept')` + a
   dept-selector swap.
 - **Overview-only sub-queue nesting.** `OVERVIEW_PARENT_OF` and
@@ -403,7 +418,7 @@ Data Accuracy (DQE), Access Control Integrity, Source Pipeline Reliability, Migr
 
 ### Subsystems
 Department Dashboard:
-  apps-script/department-dashboard/Auth.gs, apps-script/department-dashboard/Code.gs, apps-script/department-dashboard/Config.gs, apps-script/department-dashboard/Data.gs, apps-script/department-dashboard/Diagnostics.gs, apps-script/department-dashboard/Setup.gs, apps-script/department-dashboard/MissedCallsReport.gs, apps-script/department-dashboard/IndividualReport.gs, apps-script/department-dashboard/PerformanceReport.gs, apps-script/department-dashboard/CompareRangesReport.gs, apps-script/department-dashboard/Alerts.gs, apps-script/department-dashboard/CompanyOverview.gs, apps-script/department-dashboard/Digest.gs, apps-script/department-dashboard/OrphanFix.gs, apps-script/department-dashboard/QCDReport.gs, apps-script/department-dashboard/access_denied.html, apps-script/department-dashboard/dashboard.html, apps-script/department-dashboard/script.html, apps-script/department-dashboard/styles.html, apps-script/department-dashboard/appsscript.json
+  apps-script/department-dashboard/Auth.gs, apps-script/department-dashboard/Code.gs, apps-script/department-dashboard/Config.gs, apps-script/department-dashboard/Data.gs, apps-script/department-dashboard/Diagnostics.gs, apps-script/department-dashboard/Setup.gs, apps-script/department-dashboard/Util.gs, apps-script/department-dashboard/MissedCallsReport.gs, apps-script/department-dashboard/IndividualReport.gs, apps-script/department-dashboard/PerformanceReport.gs, apps-script/department-dashboard/CompareRangesReport.gs, apps-script/department-dashboard/Alerts.gs, apps-script/department-dashboard/CompanyOverview.gs, apps-script/department-dashboard/Digest.gs, apps-script/department-dashboard/OrphanFix.gs, apps-script/department-dashboard/QCDReport.gs, apps-script/department-dashboard/access_denied.html, apps-script/department-dashboard/dashboard.html, apps-script/department-dashboard/script.html, apps-script/department-dashboard/styles.html, apps-script/department-dashboard/appsscript.json
 
 CDR DQE Pipeline:
   apps-script/cdr-report/buildDQEHistoricalData.js, apps-script/cdr-report/DQEdrilldown.js, apps-script/cdr-report/DQEDrilldownSidebar.html, apps-script/cdr-report/dataFilters.js, apps-script/cdr-report/CDR Tools menu.js, apps-script/cdr-report/appsscript.json
@@ -427,7 +442,7 @@ INV-06 | Work window for TTT/ATT/Missed/Answered is 6:30 AM – 3:00 PM PST (8:3
 INV-07 | TTT/ATT loop in buildDQEHistoricalData iterates `windowLegs` (in-window subset), not all-day `legs`, to match Answered's denominator. | Subsystem: CDR DQE Pipeline
 INV-08 | TTT attribution uses each agent's own leg.talkSec on the parent call via findAgentTalkOnParent, NOT parent.talkSec (max across all legs). | Subsystem: CDR DQE Pipeline
 INV-09 | Cache key in Data.gs is versioned (`summary:vN:...`); bump N on any aggregation rule change to invalidate stale caches. | Subsystem: Department Dashboard
-INV-10 | HISTORICAL_COLS in department-dashboard/Config.gs must match actual column positions in DQE Historical Data (Date=2, Agent=3, TTT=9, ATT=10, AVG_ABD_WAIT=33, CSR_AVG_ABD_WAIT=34). | Subsystem: Department Dashboard
+INV-10 | HISTORICAL_COLS in department-dashboard/Config.gs must match actual column positions in DQE Historical Data (MONTH_YEAR=1, DATE=2, AGENT=3, QUEUE_EXT=4, TOTAL_UNIQUE=5, TOTAL_RUNG=6, TOTAL_MISSED=7, TOTAL_ANSWERED=8, TTT=9, ATT=10, TIME_SLOTS_START=11, TIME_SLOTS_END=29, ABANDONED_PARENT_IDS=30, ABANDONED_MISSED_TIMES=32, AVG_ABD_WAIT=33, CSR_AVG_ABD_WAIT=34). | Subsystem: Department Dashboard
 INV-11 | ROSTER constants pin DO NOT EDIT! layout: HEADER_ROW=1, DATA_START_ROW=2, DEPT_FIRST_COL=6. | Subsystem: Department Dashboard
 INV-12 | setup() in Department Dashboard is idempotent and admin-gated (`assertAdmin_()`) — creates all seven dashboard-managed sheets if missing, never overwrites existing rows. | Subsystem: Department Dashboard
 INV-13 | Web app deployment is "Execute as: Me" + "Anyone within domain"; deployer's spreadsheet permissions back the script. | Subsystem: Department Dashboard
@@ -440,7 +455,7 @@ INV-19 | DQE_EXCLUDED_AGENTS allowlist in buildDQEHistoricalData.js is the canon
 INV-20 | Time-slot columns K-AC in DQE Historical Data store CST timestamps (already PST→CST converted); downstream code must NOT re-convert. | Subsystem: CDR DQE Pipeline / Department Dashboard
 INV-21 | parentMap in buildDQEHistoricalData builds from rows with parentId='N/A' or ''; each parent leg's calleeName must be captured for findAgentTalkOnParent. | Subsystem: CDR DQE Pipeline
 INV-22 | DQE Report Legacy is frozen — accepts only deletions and minimal menu cleanups during migration; no new features or improvements. | Subsystem: DQE Report Legacy
-INV-23 | Queue-sentinel rows in DQE Historical Data carry queue-only abandoned data (no agent rang). Agent Name (col C) holds a queue identifier (`A_Q_*` or `Backup CSR`); col D holds the queue's extensions; K-AC, AD, AF are populated normally; cols E-J and AG/AH are 0/"0:00:00". Consumers must filter these out by agent-name pattern: the main per-agent dashboard (Data.gs) and Diagnostics (whyNoMatches) skip them; MissedCallsReport.gs reads them specifically for the queue-only section. | Subsystem: CDR DQE Pipeline / Department Dashboard
+INV-23 | Queue-sentinel rows in DQE Historical Data carry queue-only abandoned data (no agent rang). Agent Name (col C) holds a queue identifier (`A_Q_*` or `Backup CSR`); col D holds the queue's extensions; K-AC, AD, AF are populated normally; cols E-J and AG/AH are 0/"0:00:00". Consumers must filter these out by agent-name pattern: the main per-agent dashboard (Data.gs) and Diagnostics (whyNoMatches_) skip them; MissedCallsReport.gs reads them specifically for the queue-only section. | Subsystem: CDR DQE Pipeline / Department Dashboard
 INV-24 | buildDQEHistoricalData canonicalizes raw CDR agent names against the DO NOT EDIT! roster on every build: if the paren-stripped form of an incoming name matches exactly one roster entry, the row is written under that roster name. Ambiguous (>1 match) or unknown (0 match) names are written as-is. Admin-curated alias overrides (INV-46) are loaded by the same `loadRosterCanonicalNames_` and take precedence over the paren-strip; the dashboard's Orphan Fix modal is the canonical writer. Soft coupling: pipeline depends on the dashboard's roster sheet schema. Edits to roster layout must keep `loadRosterCanonicalNames_` working. | Subsystem: CDR DQE Pipeline
 INV-25 | The Individual Report and Performance Report compute ATT as weighted by Answered (`sum(att * answered) / sum(answered)`), NOT the simple-mean used by the main dashboard table (INV-05). Days with answered=0 contribute 0 to both numerator and denominator, so unanswered/abandoned days don't drag the ATT down. Intentional — matches each legacy report's source semantics. | Subsystem: Department Dashboard
 INV-26 | TEAM_AVG_EXCLUDES in Config.gs lists per-dept agent names removed from BOTH numerator and denominator of the Individual Report's team-average. Used for managers on the roster who take only a token number of calls (current entry: 'CSR': ['Robin Choudhury']). Match is exact on the roster name. Does NOT apply to the Performance Report, which treats the user's selection AS the team. | Subsystem: Department Dashboard
