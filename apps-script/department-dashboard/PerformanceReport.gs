@@ -520,71 +520,7 @@ function emptyPerformanceReport_(dept, from, to, priorFrom, priorTo,
  * Activity gates (curr or prev rung >= 10, answered >= 10 for ATT
  * rule, missed >= 5 for missed rule) suppress noise on tiny teams.
  */
-function buildTeamInsights_(curr, prev) {
-  const out = [];
-  const nonTrivial = (curr.rung || 0) >= 10 || (prev.rung || 0) >= 10;
-  if (!nonTrivial) return out;
-
-  const pctDelta = (curr.pct || 0) - (prev.pct || 0);
-  if (Math.abs(pctDelta) >= 5) {
-    const up = pctDelta > 0;
-    out.push({
-      type: up ? 'positive' : 'negative',
-      text: 'Answer rate ' + (up ? 'rose' : 'fell') + ' '
-          + Math.abs(pctDelta).toFixed(1) + ' pts vs prior period ('
-          + (curr.pct || 0).toFixed(1) + '% vs '
-          + (prev.pct || 0).toFixed(1) + '%).',
-    });
-  }
-
-  if ((prev.answered || 0) > 0) {
-    const change = ((curr.answered - prev.answered) / prev.answered) * 100;
-    if (Math.abs(change) >= 15) {
-      const up = change > 0;
-      out.push({
-        type: up ? 'positive' : 'negative',
-        text: 'Answered call volume ' + (up ? 'rose' : 'fell') + ' '
-            + Math.abs(change).toFixed(0) + '% vs prior ('
-            + curr.answered + ' vs ' + prev.answered + ').',
-      });
-    }
-  } else if (curr.answered >= 10) {
-    out.push({
-      type: 'positive',
-      text: 'Team answered ' + curr.answered + ' calls this period (no comparable prior data).',
-    });
-  }
-
-  if ((prev.missed || 0) >= 5 || (curr.missed || 0) >= 5) {
-    if ((prev.missed || 0) > 0) {
-      const change = ((curr.missed - prev.missed) / prev.missed) * 100;
-      if (Math.abs(change) >= 20) {
-        const up = change > 0;
-        out.push({
-          type: up ? 'negative' : 'positive',
-          text: 'Missed-call count ' + (up ? 'rose' : 'fell') + ' '
-              + Math.abs(change).toFixed(0) + '% vs prior ('
-              + curr.missed + ' vs ' + prev.missed + ' missed).',
-        });
-      }
-    }
-  }
-
-  if ((prev.att || 0) > 0 && (curr.answered || 0) >= 10) {
-    const change = ((curr.att - prev.att) / prev.att) * 100;
-    if (Math.abs(change) >= 20) {
-      out.push({
-        type: 'neutral',
-        text: 'Avg talk time ' + (change > 0 ? 'lengthened' : 'shortened') + ' '
-            + Math.abs(change).toFixed(0) + '% vs prior ('
-            + formatSecondsHms_(curr.att) + ' vs '
-            + formatSecondsHms_(prev.att) + ').',
-      });
-    }
-  }
-
-  return out.slice(0, 3);
-}
+// buildTeamInsights_ moved to Util.gs.
 
 /**
  * Emails the captured Performance Report PNG to the active user.

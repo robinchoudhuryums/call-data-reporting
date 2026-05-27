@@ -121,7 +121,7 @@ function getAllDepartments_() {
  * Useful if you just added someone to Access Control and don't want to
  * wait the 60s TTL. Run from the Apps Script editor.
  */
-function invalidateAuthCache(email) {
+function invalidateAuthCache_(email) {
   const normalized = (email || '').toLowerCase().trim();
   if (!normalized) return;
   CacheService.getScriptCache().remove('access:' + normalized);

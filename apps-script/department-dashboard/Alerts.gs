@@ -557,25 +557,10 @@ function getAlertTriggerStatus_() {
 }
 
 // ── Tiny helpers ──────────────────────────────────────────────────
-function assertAdmin_() {
-  const email = Session.getActiveUser().getEmail();
-  const user = resolveUser_(email);
-  if (user.role !== 'admin') throw new Error('Alerts are admin-only.');
-}
+// assertAdmin_, round1_, escapeHtmlServer_ moved to Util.gs.
 
 function yesterdayIso_() {
   const now = new Date();
   const y = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 12, 0, 0);
   return Utilities.formatDate(y, TZ, 'yyyy-MM-dd');
-}
-
-function round1_(n) { return Math.round((Number(n) || 0) * 10) / 10; }
-
-function escapeHtmlServer_(s) {
-  return String(s == null ? '' : s)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
 }

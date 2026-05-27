@@ -96,58 +96,7 @@ function getIndividualReportInit(req) {
   };
 }
 
-/**
- * Returns the subset of `roster.names` that had at least one
- * rung/answered/missed event in [from, to]. Used by the picker's
- * Active / Inactive grouping. Skips queue-sentinel rows (same
- * filter as the main report) and per-dept TEAM_AVG_EXCLUDES are
- * NOT applied here -- the manager might want to pick themselves.
- *
- * Cached for 5 min per (dept, from, to) tuple. Separate cache key
- * prefix from the main report so the smaller payload doesn't share
- * the same TTL bucket.
- */
-function computeActiveAgentsInRange_(dept, from, to, roster) {
-  const cache = CacheService.getScriptCache();
-  const cacheKey = 'individual_active:v1:' + dept + ':' + from + ':' + to;
-  const cached = cache.get(cacheKey);
-  if (cached) {
-    try { return JSON.parse(cached); } catch (e) { /* recompute */ }
-  }
-
-  const rosterSet = {};
-  for (let i = 0; i < roster.names.length; i++) rosterSet[roster.names[i]] = true;
-
-  const ss = openSpreadsheet_();
-  const sheet = ss.getSheetByName(SHEETS.HISTORICAL);
-  if (!sheet) return [];
-  const lastRow = sheet.getLastRow();
-  if (lastRow < 2) return [];
-  const ssTZ = ss.getSpreadsheetTimeZone();
-
-  // Only the cols we actually filter on -- skip the duration display
-  // strings (parsing those is the slow part of the main read).
-  const range = sheet.getRange(2, 1, lastRow - 1, HISTORICAL_COLS.TOTAL_ANSWERED);
-  const values = range.getValues();
-
-  const active = {};
-  for (let i = 0; i < values.length; i++) {
-    const r = values[i];
-    const dateIso = rowDateIso_(r[HISTORICAL_COLS.DATE - 1], ssTZ);
-    if (!dateIso || dateIso < from || dateIso > to) continue;
-    const agent = String(r[HISTORICAL_COLS.AGENT - 1] || '').trim();
-    if (!agent || !rosterSet[agent]) continue;
-    if (/^A_Q_/.test(agent) || agent === 'Backup CSR') continue;
-    const rung     = Number(r[HISTORICAL_COLS.TOTAL_RUNG - 1])     || 0;
-    const missed   = Number(r[HISTORICAL_COLS.TOTAL_MISSED - 1])   || 0;
-    const answered = Number(r[HISTORICAL_COLS.TOTAL_ANSWERED - 1]) || 0;
-    if (rung > 0 || missed > 0 || answered > 0) active[agent] = true;
-  }
-  const out = Object.keys(active).sort();
-  try { cache.put(cacheKey, JSON.stringify(out), CACHE_TTL_SECONDS); }
-  catch (e) { /* harmless */ }
-  return out;
-}
+// computeActiveAgentsInRange_ moved to Util.gs.
 
 function getIndividualReport(req) {
   const email = Session.getActiveUser().getEmail();
@@ -722,8 +671,6 @@ function sendIndividualReportEmail(req) {
   const dataUrl = String((req && req.imageBase64) || '');
   const dateLabel = String((req && req.dateLabel) || 'Individual Report');
   if (!dataUrl) throw new Error('No image payload.');
-  // dataUrl is "data:image/png;base64,XXXXX". Strip the prefix before
-  // decoding so the resulting blob is a clean PNG.
   const commaIdx = dataUrl.indexOf(',');
   if (commaIdx === -1) throw new Error('Malformed image payload.');
   const decoded = Utilities.base64Decode(dataUrl.slice(commaIdx + 1));
@@ -744,31 +691,4 @@ function sendIndividualReportEmail(req) {
   return { to: email };
 }
 
-/**
- * Lists "YYYY-MM" month keys from start to end, inclusive on both
- * ends. Always month-anchored to the 1st.
- */
-function generateMonthList_(start, end) {
-  const out = [];
-  const cur = new Date(start.getFullYear(), start.getMonth(), 1);
-  const last = new Date(end.getFullYear(), end.getMonth(), 1);
-  const pad = function (n) { return n < 10 ? '0' + n : String(n); };
-  while (cur <= last) {
-    out.push(cur.getFullYear() + '-' + pad(cur.getMonth() + 1));
-    cur.setMonth(cur.getMonth() + 1);
-  }
-  return out;
-}
-
-/**
- * Seconds -> "H:MM:SS". Matches legacy formatSecondsToTime output.
- */
-function formatSecondsHms_(totalSeconds) {
-  if (!totalSeconds || totalSeconds === 0) return '0:00:00';
-  totalSeconds = Math.round(totalSeconds);
-  const h = Math.floor(totalSeconds / 3600);
-  const m = Math.floor((totalSeconds % 3600) / 60);
-  const s = totalSeconds % 60;
-  const pad = function (n) { return n < 10 ? '0' + n : String(n); };
-  return h + ':' + pad(m) + ':' + pad(s);
-}
+// generateMonthList_, formatSecondsHms_ moved to Util.gs.

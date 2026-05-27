@@ -37,10 +37,10 @@ const MISSED_CHART_START_HOUR = 8;    // 8:00 AM CST
 const MISSED_CHART_END_HOUR   = 17;   // 5:00 PM CST (exclusive)
 const MISSED_BUCKET_MINUTES   = 30;   // 30-min buckets -> 18 total
 
-const HISTORICAL_TIME_SLOTS_START = 11;  // K
-const HISTORICAL_TIME_SLOTS_END   = 29;  // AC
-const HISTORICAL_ABANDONED_PARENT_IDS    = 30;  // AD
-const HISTORICAL_ABANDONED_MISSED_TIMES  = 32;  // AF
+const HISTORICAL_TIME_SLOTS_START = HISTORICAL_COLS.TIME_SLOTS_START;
+const HISTORICAL_TIME_SLOTS_END   = HISTORICAL_COLS.TIME_SLOTS_END;
+const HISTORICAL_ABANDONED_PARENT_IDS    = HISTORICAL_COLS.ABANDONED_PARENT_IDS;
+const HISTORICAL_ABANDONED_MISSED_TIMES  = HISTORICAL_COLS.ABANDONED_MISSED_TIMES;
 
 function getMissedCallsReport(req) {
   const email = Session.getActiveUser().getEmail();
@@ -89,11 +89,12 @@ function getMissedCallsReport(req) {
   data.meta.computeMs = Date.now() - t0;
   data.meta.cacheHit = false;
 
-  try {
-    cache.put(cacheKey, JSON.stringify(data), CACHE_TTL_SECONDS);
-  } catch (e) {
-    // Large ranges may exceed cache value size; harmless.
-    Logger.log('MissedCallsReport cache put failed: %s', e);
+  const json = JSON.stringify(data);
+  if (json.length <= 100000) {
+    try { cache.put(cacheKey, json, CACHE_TTL_SECONDS); }
+    catch (e) { Logger.log('MissedCallsReport cache put failed: %s', e); }
+  } else {
+    Logger.log('MissedCallsReport: payload %s bytes exceeds 100KB, skipping cache', json.length);
   }
 
   return data;

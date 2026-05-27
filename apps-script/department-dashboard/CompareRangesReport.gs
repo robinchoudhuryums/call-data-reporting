@@ -510,8 +510,8 @@ function sendCompareRangesEmail(req) {
     htmlBody:
       '<div style="font-family: sans-serif; color: #444; margin-bottom: 20px;">'
       + 'Side-by-side comparison of two date ranges.'
-      + '<br><strong>Period 1 (baseline):</strong> ' + p1Label
-      + '<br><strong>Period 2 (comparison):</strong> ' + p2Label
+      + '<br><strong>Period 1 (baseline):</strong> ' + escapeHtmlServer_(p1Label)
+      + '<br><strong>Period 2 (comparison):</strong> ' + escapeHtmlServer_(p2Label)
       + '</div>'
       + '<div style="text-align: center; border: 1px solid #eee; padding: 10px;">'
       + '<img src="cid:reportImg" style="width:100%; max-width:1200px; height:auto;">'

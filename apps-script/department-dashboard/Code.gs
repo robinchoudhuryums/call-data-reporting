@@ -23,10 +23,10 @@ function doGet(e) {
 
 /**
  * HtmlService template include helper. Used in templates as:
- *   <?!= include('styles') ?>
+ *   <?!= include_('styles') ?>
  * Lets us split CSS / JS / HTML into separate files without a build.
  */
-function include(filename) {
+function include_(filename) {
   return HtmlService.createHtmlOutputFromFile(filename).getContent();
 }
 

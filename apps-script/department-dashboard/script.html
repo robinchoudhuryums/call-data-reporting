@@ -2309,6 +2309,7 @@
       modal.style.display = '';
       modal.setAttribute('aria-hidden', 'false');
       document.body.style.overflow = 'hidden';
+      trapFocus_(modal);
       initModalDragResize_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
       document.addEventListener('keydown', onKeyDown);
       showIrForm();

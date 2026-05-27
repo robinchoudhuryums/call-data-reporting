@@ -800,8 +800,10 @@ function avg_(arr, key) {
   if (!arr.length) return 0;
   let s = 0, n = 0;
   for (let i = 0; i < arr.length; i++) {
-    const v = Number(arr[i][key]) || 0;
-    if (v) { s += v; n++; }
+    const raw = arr[i][key];
+    if (raw == null) continue;
+    const v = Number(raw) || 0;
+    s += v; n++;
   }
   return n ? Math.round(s / n) : 0;
 }
