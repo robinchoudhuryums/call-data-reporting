@@ -79,7 +79,14 @@
          via body[data-page] from the Overview / My Department
          header buttons. -->
     <section id="overview-page" class="page page-overview">
-      <div id="ov-loading" class="ir-loader" style="text-align: center; padding: 32px;">Loading company-wide data&hellip;</div>
+      <div id="ov-loading" style="padding: 24px;">
+        <div class="skeleton-row"><div class="skeleton-line" style="width:200px;height:18px;"></div><div class="skeleton-line" style="width:140px;height:18px;"></div></div>
+        <div class="ov-skeleton-grid">
+          <div class="skeleton-tile"></div><div class="skeleton-tile"></div><div class="skeleton-tile"></div>
+          <div class="skeleton-tile"></div><div class="skeleton-tile"></div><div class="skeleton-tile"></div>
+        </div>
+        <div class="skeleton-row"><div class="skeleton-line" style="height:160px;flex:1;border-radius:8px;"></div></div>
+      </div>
       <div id="ov-body" style="display:none;">
         <div class="ov-summary-line" id="ov-summary-line"></div>
         <div id="ov-company-aggregate" class="ov-company-aggregate" style="display:none;"></div>
@@ -141,6 +148,10 @@
           <input type="date" id="to-date">
         </div>
         <div class="control">
+          <label>Quick select</label>
+          <div class="date-presets" id="date-presets"></div>
+        </div>
+        <div class="control">
           <label>Scope</label>
           <div class="segmented" id="scope-toggle" role="radiogroup" aria-label="Scope">
             <button type="button" class="seg-btn active" data-scope="roster" role="radio" aria-checked="true"
@@ -159,6 +170,19 @@
       </div>
 
       <div id="status" class="status" style="display:none;"></div>
+
+      <div id="dept-table-skeleton" style="display:none; padding: 16px 0;">
+        <div class="skeleton-row"><div class="skeleton-line" style="width:100px;"></div><div class="skeleton-line"></div><div class="skeleton-line"></div><div class="skeleton-line"></div><div class="skeleton-line"></div></div>
+        <div class="skeleton-row"><div class="skeleton-line" style="width:100px;"></div><div class="skeleton-line"></div><div class="skeleton-line"></div><div class="skeleton-line"></div><div class="skeleton-line"></div></div>
+        <div class="skeleton-row"><div class="skeleton-line" style="width:100px;"></div><div class="skeleton-line"></div><div class="skeleton-line"></div><div class="skeleton-line"></div><div class="skeleton-line"></div></div>
+        <div class="skeleton-row"><div class="skeleton-line" style="width:100px;"></div><div class="skeleton-line"></div><div class="skeleton-line"></div><div class="skeleton-line"></div><div class="skeleton-line"></div></div>
+      </div>
+
+      <div id="dept-empty-state" class="empty-state" style="display:none;">
+        <div class="empty-state-icon">&#128202;</div>
+        <div class="empty-state-title" id="dept-empty-title">No agent data found</div>
+        <div class="empty-state-hint" id="dept-empty-hint"></div>
+      </div>
 
       <div id="dept-qcd-snapshot" class="dept-qcd-snapshot" style="display:none;">
         <div class="dept-qcd-header">
@@ -1187,6 +1211,8 @@
       </div>
     </div>
   </div>
+
+  <div class="toast-container" id="toast-container"></div>
 
   <script>
     // Server-side JSON-encoded user envelope. Escape comes from

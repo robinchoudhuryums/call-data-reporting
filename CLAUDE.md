@@ -112,9 +112,10 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
 - **`neonWrite.js` is duplicated** between `apps-script/cdr-report/` and
   `apps-script/cdr-import/`. Currently byte-identical. Any change to one
   is a two-file edit; `diff` before editing. `neonWrite.js` self-contains
-  `parseDateForNeon` and `normalizeDuration` — previously these lived
-  only in `neonbackfill.js` (cdr-report-only) and were missing in
-  cdr-import, causing silent Neon write failures.
+  `parseDateForNeon`, `normalizeDuration`, and `writeCDRRowsToNeon` with
+  its CDR field-parsing helpers (`cdrTimeToSeconds_`, `cdrHashPhone_`,
+  `cdrLooksLikePhone_`, `cdrParseNameFieldJson_`, `cdrParsePhoneField_`)
+  so they travel with the duplication.
 - **`buildDQEHistoricalData.js` is also duplicated** between
   `apps-script/cdr-report/` and `apps-script/cdr-import/`. Same INV-16
   byte-identical discipline as `neonWrite.js`. cdr-import calls it
@@ -302,9 +303,10 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   agent table view that used to be the landing. Modals (Help,
   Settings, Missed Calls, Individual / Performance / Compare
   Ranges, QCD Report, Alerts, Orphan Fix) overlay either page.
-  Admin clicks on Overview
-  dept tiles route to the dept page via `setPage('dept')` + a
-  dept-selector swap.
+  Overview auto-refreshes silently every 5 minutes when the
+  page is active, re-fetching from the server cache. Admin
+  clicks on Overview dept tiles route to the dept page via
+  `setPage('dept')` + a dept-selector swap.
 - **Overview-only sub-queue nesting.** `OVERVIEW_PARENT_OF` and
   `OVERVIEW_HIDDEN_DEPTS` in CompanyOverview.gs shape the Overview
   page only — dept dropdowns, Reports modals, and Alerts treat
@@ -433,6 +435,13 @@ When something looks wrong, before assuming a code bug, check:
     Script Properties (same values as the CDR Report project).
     Without them, Neon mirror writes from the import pipeline are
     silently skipped (logged as "Neon unreachable").
+17. `HMAC_SECRET` Script Property: must be set in BOTH the CDR
+    Import AND CDR Report project's Script Properties (same value).
+    Used by `writeCDRRowsToNeon` and `archiveCallHistoryDept` to
+    HMAC-SHA256 hash phone numbers for PHI protection. Without it,
+    CDR Neon mirror rows still write (main metric columns) but
+    JSONB name-list fields and `call_history_phones` child rows
+    are skipped.
 
 ## Cycle Workflow Config
 
@@ -474,7 +483,7 @@ INV-12 | setup() in Department Dashboard is idempotent and admin-gated (`assertA
 INV-13 | Web app deployment is "Execute as: Me" + "Anyone within domain"; deployer's spreadsheet permissions back the script. | Subsystem: Department Dashboard
 INV-14 | SPREADSHEET_ID is read from Script Properties, not hardcoded; missing property = clear error at request time. | Subsystem: Department Dashboard
 INV-15 | Per-project .clasp.json files are gitignored at any depth; scriptIds stay out of the repo. | Subsystem: operational/cross-cutting
-INV-16 | `neonWrite.js` AND `buildDQEHistoricalData.js` are duplicated between cdr-report/ and cdr-import/; both must stay byte-identical. Any change requires a two-file edit. `neonWrite.js` self-contains `parseDateForNeon` and `normalizeDuration` so the helpers travel with the duplication. cdr-import calls `buildDQEHistoricalData` inline inside `processIntegratedHistory` (as the 5th historical sheet write) so DQE Historical Data refreshes alongside CDR / Q Path / QCD / CSR in a single autoImport run; cdr-report keeps its `runDailyDQEBuild_` trigger as a safety net. Pipeline Health writers: `logPipelineHealthWithFallback_` in autoImport.js (with `openById` fallback when `ss` is null); `logPipelineHealth_` in buildDQEHistoricalData.js (silently returns when `ss` is null). The distinct names avoid the prior shadowing conflict. | Subsystem: CDR Reporting Tools / CDR Import / CDR DQE Pipeline
+INV-16 | `neonWrite.js` AND `buildDQEHistoricalData.js` are duplicated between cdr-report/ and cdr-import/; both must stay byte-identical. Any change requires a two-file edit. `neonWrite.js` self-contains `parseDateForNeon`, `normalizeDuration`, and `writeCDRRowsToNeon` with its CDR field-parsing helpers (`cdrTimeToSeconds_`, `cdrHashPhone_`, `cdrLooksLikePhone_`, `cdrParseNameFieldJson_`, `cdrParsePhoneField_`) so they travel with the duplication. cdr-import calls `buildDQEHistoricalData` inline inside `processIntegratedHistory` (as the 5th historical sheet write) so DQE Historical Data refreshes alongside CDR / Q Path / QCD / CSR in a single autoImport run; cdr-report keeps its `runDailyDQEBuild_` trigger as a safety net. Pipeline Health writers: `logPipelineHealthWithFallback_` in autoImport.js (with `openById` fallback when `ss` is null); `logPipelineHealth_` in buildDQEHistoricalData.js (silently returns when `ss` is null). The distinct names avoid the prior shadowing conflict. | Subsystem: CDR Reporting Tools / CDR Import / CDR DQE Pipeline
 INV-17 | `clasp push -f` does NOT delete remote files absent locally; removing files from a project requires manual web-editor deletion. | Subsystem: operational/cross-cutting
 INV-18 | Missed Calls Report chart range is 8:00 AM – 5:00 PM CST in 30-minute buckets (18 total). | Subsystem: Department Dashboard
 INV-19 | DQE_EXCLUDED_AGENTS allowlist in buildDQEHistoricalData.js is the canonical source for pseudo-agent exclusions; additions go upstream, not downstream. | Subsystem: CDR DQE Pipeline
@@ -510,7 +519,7 @@ INV-48 | `dept.wow.driver` on the Overview payload ("what changed" insight) is a
 INV-49 | `getIndividualReport` accepts optional `priorFrom`/`priorTo` for same-agent vs-self comparison. When supplied, every `summaryData[i]` carries `priorStats` (formatted) + `priorRaw` (numeric); `priorDateLabel` is set at the top level. Absence = legacy shape (`priorStats: null`). The cache key (`individual:v6`) adds a `priorKey` segment (`priorFrom..priorTo` or `none`) so the prior window is part of the cache identity. Client form (`ir-compare-mode` select) supports None / Same window one year prior / Immediately-preceding period / Custom prior range; resolved via `irResolvePriorRange_`. The same prior dates are re-applied automatically when the user re-runs from the edit-popover. | Subsystem: Department Dashboard
 INV-50 | `QCD Historical Data` columns (1-indexed): `Month Year \| Week \| Date \| Call Queue \| Call Source \| Total Calls \| Total Answered \| Abandoned \| Longest Wait \| Avg Answer \| Abandoned % \| Violations`. Pinned in `Config.gs::QCD_HISTORICAL_COLS`. Writer: `apps-script/cdr-import/autoImport.js::processIntegratedHistory` QCD block. Reader: `apps-script/department-dashboard/QCDReport.gs` (dept-scoped report) + `CompanyOverview.gs::computeQcdSnapshots_` (per-dept latest-day snapshot on the Overview tile grid) + `Data.gs::computeDeptQcdSnapshot_` (per-dept latest-day snapshot for My Department's "Queue Call Data" tiles). **`Call Queue` carries raw queue names like `A_Q_CustomerSuccess` / `A_Q_Sales` / `Backup CSR` -- NOT dashboard dept names; canonical spellings vary per install.** To map a dept to its set of queue names, use `Config.gs::DEPT_QCD_QUEUES` (admin-curated). `Call Source` is one of `Total Calls` (daily roll-up; the only source the dashboard sums to avoid double-counting) plus sub-source breakdowns like `CSR` / `Ad-campaign` / `New Call Menu` / `Non-CSR (internal)` that the dashboard skips. `Violations` is the count of (source, day) tuples where Abandoned % > 5%. | Subsystem: Department Dashboard + CDR Import
 INV-51 | `QCD Report` is per-dept gated like Individual / Performance / Compare Ranges -- managers see their own dept, admins pick any. **Parent depts auto-include sub-queue queues** via `queuesForDept_` (Sales+PAP, Power+PAK, CSR+Spanish per `OVERVIEW_PARENT_OF`); all three QCD readers (modal, Overview snapshot, My Department snapshot) use the same helper so rollups stay consistent. `getQcdReport({ department, from, to })` returns `meta` (with `queues` + `unmapped` flags), `dateLabel`, `totals` (sum across expanded queue list; `totals.violations` is MONTH-TO-DATE across the dept's queues, not selected-range sum), `queueBreakdown` (per-queue rows with `violationDates` array for expandable detail), `trendData` (12-month monthly buckets with `perQueue` keyed by queue name), `dailySeries` (per-day rollup across dept queues), and `perQueue` (per-queue daily + monthly arrays for multi-line charts). Cache prefix `qcd:v5`. The QCD Report form defaults to "Yesterday" preset. For depts with 2+ queues, the chart renders one line per queue (color-coded) plus a dashed "Dept total" line. Single-day ranges hide the Daily chart view. Per-queue breakdown rows are clickable when violations > 0 to expand and show violation dates. Color-coding: violations cells use light-warn (1-3) / strong-warn (>3); abandoned % >= 5% is warn-tinted in both breakdown and daily tables. **The Overview page's per-dept tile shows per-queue QCD data for multi-queue depts** (each queue gets abandoned %, abandoned count if >0, violations if >0 with color-coding); single-queue depts show dept-level chips. "X viol MTD" chip renders when month-to-date violations > 0. My Department page's agent table is PRECEDED by a "Queue Call Data — [date]" tile row (showing the actual data date, not "yesterday") sourced from `Data.gs::computeDeptQcdSnapshot_`. All QCD UI surfaces are visible to everyone (no admin gate); per-dept gating is on the dropdown only. | Subsystem: Department Dashboard
-INV-52 | `CDR Historical Data` columns (1-indexed): `Month Year \| Week \| Date \| Dept \| Name \| C..W` (22 metric cols). `Q Path Historical Data` columns: `Month Year \| Week \| Date \| Dept \| Path \| Total \| VM \| NonVM \| Opt1 \| NonOpt1 \| Pct`. `CSR Transfer Historical Data` columns: `Month Year \| Week \| Date \| Agent \| Trans % \| Total Calls \| Transferred \| + 11 per-queue cols`. Writers: `apps-script/cdr-import/autoImport.js::processIntegratedHistory`; each block emits a separate `processIntegratedHistory:CDR` / `:QPath` / `:CSR` row to Pipeline Health (INV-44). NOT consumed by the dashboard today -- the read path lives in the legacy DQE Report Apps Script. | Subsystem: CDR Import (writer) / DQE Report Legacy (reader) |
+INV-52 | `CDR Historical Data` columns (1-indexed): `Month Year \| Week \| Date \| Dept \| Name \| C..W` (22 metric cols). `Q Path Historical Data` columns: `Month Year \| Week \| Date \| Dept \| Path \| Total \| VM \| NonVM \| Opt1 \| NonOpt1 \| Pct`. `CSR Transfer Historical Data` columns: `Month Year \| Week \| Date \| Agent \| Trans % \| Total Calls \| Transferred \| + 11 per-queue cols`. Writers: `apps-script/cdr-import/autoImport.js::processIntegratedHistory`; each block emits a separate `processIntegratedHistory:CDR` / `:QPath` / `:CSR` row to Pipeline Health (INV-44). NOT consumed by the dashboard today -- the read path lives in the legacy DQE Report Apps Script. CDR rows are now **mirrored to Neon** (`call_history_dept` + `call_history_phones`) inline during `processIntegratedHistory`, following the same best-effort pattern as DQE and QCD. Requires `HMAC_SECRET` for phone-hash JSONB fields; degrades gracefully without it (main metric columns still write). | Subsystem: CDR Import (writer) / DQE Report Legacy (reader) |
 
 ### Policy Configuration
 Policy threshold: 6/10

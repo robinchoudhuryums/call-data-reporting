@@ -247,6 +247,12 @@ Neon Postgres is the long-term archive and the future query backend.
 - `buildDQEHistoricalData.gs` writes to both the sheet AND `neonWrite.gs`.
   Sheet write is the primary; Neon write is best-effort with email
   notification on failure (`notifyNeonWriteFailure`).
+- `processIntegratedHistory` in cdr-import also mirrors CDR Historical
+  Data rows to `call_history_dept` + `call_history_phones` via
+  `writeCDRRowsToNeon`. Phone numbers are HMAC-SHA256 hashed
+  (`HMAC_SECRET` Script Property) for PHI protection; JSONB name-list
+  fields parse the complex caller-name columns. Same best-effort
+  pattern: Neon failure doesn't block the sheet write.
 - The dashboard does NOT read from Neon yet — it reads the sheet. Moving
   to Neon as the read path is a future phase (Phase 3 in the original
   product spec).
