@@ -46,7 +46,7 @@
  *      row to `Orphan Fix Log` BEFORE returning to the client.
  *      The log is append-only and idempotently created by setup().
  *
- * The downstream cache layers (companyOverview:v11, summary:v6,
+ * The downstream cache layers (companyOverview:v12, summary:v6,
  * individual:v6, etc.) will hold stale data for up to 5 minutes
  * after a rename. We invalidate the single fixed-key
  * `companyOverview:` entry on every successful write; the

@@ -47,15 +47,9 @@ function onOpen() {
     .addItem("Clear Pending Archive",          "clearPendingArchive")
     
     .addSeparator()
-    
-    .addItem("🛠️ Sort Historical Data",     "sortHistoricalData")
-    .addItem("Remove Duplicate CDR Rows",   "removeDuplicateCDRRows") // [IMPROVEMENT 7]
-    .addItem("📊 Check Coverage Gaps",       "checkCoverageGaps")       // [IMPROVEMENT 8]
-    
-    .addSeparator()
-    
+
     // Attach the submenu right here
-    .addSubMenu(filterSubMenu) 
+    .addSubMenu(filterSubMenu)
     
     // .addSeparator()
     // .addItem("Import Bulk CSVs from Drive", "importBulkCSVsFromDrive") // pending Drive permissions

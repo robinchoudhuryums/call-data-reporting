@@ -1904,8 +1904,8 @@
       dqeHeader.style.display = state.rows.length ? '' : 'none';
       var dqeDateEl = $('dqe-table-date');
       if (dqeDateEl) {
-        var f = $('from') ? $('from').value : '';
-        var t = $('to') ? $('to').value : '';
+        var f = $('from-date') ? $('from-date').value : '';
+        var t = $('to-date') ? $('to-date').value : '';
         dqeDateEl.textContent = (f && t) ? (f === t ? f : f + ' to ' + t) : '';
       }
     }
@@ -2169,7 +2169,7 @@
     var blob = new Blob([header + '\n' + rows.join('\n')], { type: 'text/csv' });
     var a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = (getRequestedDept() || 'department') + '_' + ($('from').value || 'data') + '_to_' + ($('to').value || 'data') + '.csv';
+    a.download = (getRequestedDept() || 'department') + '_' + (($('from-date') && $('from-date').value) || 'data') + '_to_' + (($('to-date') && $('to-date').value) || 'data') + '.csv';
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -2521,13 +2521,16 @@
   }
 
   function irPrintReport_() {
-    // A print stylesheet (styles.html @media print) hides the
-    // dashboard chrome and the modal backdrop / action buttons so
-    // only the report content lands on the page. Browser's
-    // built-in print preview can "save as PDF" for sharing.
-    document.body.classList.add('ir-printing');
-    window.print();
-    document.body.classList.remove('ir-printing');
+    var panels = document.querySelectorAll('#ir-charts-container [data-panel]');
+    var saved = [];
+    panels.forEach(function (p) { saved.push(p.style.display); p.style.display = ''; });
+    irChartInstances.forEach(function (c) { c.resize(); });
+    requestAnimationFrame(function () { requestAnimationFrame(function () {
+      panels.forEach(function (p, i) { p.style.display = saved[i]; });
+      document.body.classList.add('ir-printing');
+      window.print();
+      document.body.classList.remove('ir-printing');
+    }); });
   }
 
   function setIrDefaultDates() {
@@ -4977,9 +4980,16 @@
   }
 
   function prPrint_() {
-    document.body.classList.add('pr-printing');
-    window.print();
-    document.body.classList.remove('pr-printing');
+    var panels = document.querySelectorAll('#pr-charts-container [data-panel]');
+    var saved = [];
+    panels.forEach(function (p) { saved.push(p.style.display); p.style.display = ''; });
+    prChartInstances.forEach(function (c) { c.resize(); });
+    requestAnimationFrame(function () { requestAnimationFrame(function () {
+      panels.forEach(function (p, i) { p.style.display = saved[i]; });
+      document.body.classList.add('pr-printing');
+      window.print();
+      document.body.classList.remove('pr-printing');
+    }); });
   }
 
   function prBtnFeedback_(label, holdMs) {

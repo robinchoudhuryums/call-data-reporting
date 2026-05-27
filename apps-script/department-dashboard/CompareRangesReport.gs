@@ -1,7 +1,7 @@
 /**
  * Compare Ranges Report - server-side data.
  *
- * Admin-only side-by-side comparison of two arbitrary date ranges
+ * Per-dept-gated side-by-side comparison of two arbitrary date ranges
  * for the same set of agents. Migration of MultiComparisonTool.js
  * from the legacy DQE Report Apps Script project.
  *
