@@ -102,7 +102,7 @@ the exact match stays reliable across CDR feed spelling variations.
   `Roman Robin Paulose`. See `docs/known-issues.md` → "Roster-driven
   name canonicalization" for details + edge cases.
 - The Department Dashboard surfaces orphans in its Diagnostics panel
-  (and via the `whyNoMatches` editor diagnostic) — check there first
+  (and via the `whyNoMatches_` editor diagnostic) — check there first
   when an expected agent doesn't show up.
 
 When an agent's display name changes (marriage, alias, etc.), update

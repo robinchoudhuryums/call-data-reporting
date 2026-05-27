@@ -792,6 +792,11 @@ function loadRosterCanonicalNames_(anySheet) {
 }
 
 // ── Test function ─────────────────────────────────────────────────────────────
+// WARNING: testDQEBuild, installDQEBuildTrigger, and runDailyDQEBuild_ below
+// are designed for the cdr-report project only. In cdr-import they appear
+// because INV-16 requires this file to be byte-identical across both projects.
+// Do NOT create a trigger for runDailyDQEBuild_ in the cdr-import project --
+// it would target the wrong spreadsheet. Use processIntegratedHistory instead.
 
 function testDQEBuild() {
   const ss       = SpreadsheetApp.getActiveSpreadsheet();

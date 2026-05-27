@@ -25,7 +25,7 @@
  * only request their own dept; admins can pick any dept from the
  * dropdown.
  *
- * Cache: 5 min per (dept, from, to) tuple under `qcd:v4:` prefix.
+ * Cache: 5 min per (dept, from, to) tuple under `qcd:v5:` prefix.
  * No agent-list dimension since QCD is queue/dept-scoped, not
  * agent-scoped.
  *
@@ -188,8 +188,13 @@ function getQcdReport(req) {
   data.meta.computeMs = Date.now() - t0;
   data.meta.cacheHit  = false;
 
-  try { cache.put(cacheKey, JSON.stringify(data), CACHE_TTL_SECONDS); }
-  catch (e) { Logger.log('QCDReport cache put failed: %s', e); }
+  const json = JSON.stringify(data);
+  if (json.length <= 100000) {
+    try { cache.put(cacheKey, json, CACHE_TTL_SECONDS); }
+    catch (e) { Logger.log('QCDReport cache put failed: %s', e); }
+  } else {
+    Logger.log('QCDReport: payload %s bytes exceeds 100KB, skipping cache', json.length);
+  }
 
   return data;
 }

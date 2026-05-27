@@ -128,6 +128,10 @@ const HISTORICAL_COLS = Object.freeze({
   TOTAL_ANSWERED: 8,     // H
   TTT: 9,                // I - H:MM:SS
   ATT: 10,               // J - H:MM:SS
+  TIME_SLOTS_START: 11,  // K - first half-hour time-slot column
+  TIME_SLOTS_END: 29,    // AC - last half-hour time-slot column
+  ABANDONED_PARENT_IDS: 30,   // AD
+  ABANDONED_MISSED_TIMES: 32, // AF
   AVG_ABD_WAIT: 33,      // AG - H:MM:SS
   CSR_AVG_ABD_WAIT: 34,  // AH - H:MM:SS
 });

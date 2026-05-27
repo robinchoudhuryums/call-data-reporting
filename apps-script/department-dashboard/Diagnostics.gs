@@ -10,7 +10,7 @@
  * appears in any department roster. Use this to diagnose date-filter
  * or roster-match bugs.
  */
-function diagnoseDate() {
+function diagnoseDate_() {
   const ss = openSpreadsheet_();
   const sheet = ss.getSheetByName(SHEETS.HISTORICAL);
   if (!sheet) {
@@ -88,7 +88,7 @@ function diagnoseDate() {
  *
  * Edit TEST_DATE below before running.
  */
-function whyNoMatches() {
+function whyNoMatches_() {
   const TEST_DATE = '2026-03-09';  // YYYY-MM-DD
 
   const ss = openSpreadsheet_();
@@ -156,7 +156,7 @@ function whyNoMatches() {
  * reformat them as. Use to diagnose H:MM:SS mismatches between the
  * dashboard and the source sheet.
  */
-function diagnoseTimes() {
+function diagnoseTimes_() {
   const ss = openSpreadsheet_();
   const sheet = ss.getSheetByName(SHEETS.HISTORICAL);
   if (!sheet) { Logger.log('Historical sheet not found.'); return; }
@@ -183,31 +183,40 @@ function diagnoseTimes() {
   Logger.log('');
 
   const numToShow = Math.min(5, lastRow - 1);
-  const values = sheet.getRange(2, 1, numToShow, numCols).getValues();
+  const dataRange = sheet.getRange(2, 1, numToShow, numCols);
+  const values   = dataRange.getValues();
+  const displays = dataRange.getDisplayValues();
 
   Logger.log('=== Time-column sample (first 5 rows) ===');
+  Logger.log('(display = TZ-safe string the dashboard uses; raw = getValue which has the +36:36 TZ bug)');
+  Logger.log('');
   for (let i = 0; i < values.length; i++) {
-    const r = values[i];
+    const r  = values[i];
+    const rd = displays[i];
     const agent = r[HISTORICAL_COLS.AGENT - 1];
     const answered = Number(r[HISTORICAL_COLS.TOTAL_ANSWERED - 1]) || 0;
-    const ttt = r[HISTORICAL_COLS.TTT - 1];
-    const att = r[HISTORICAL_COLS.ATT - 1];
-    const aaw = r[HISTORICAL_COLS.AVG_ABD_WAIT - 1];
-    const caw = r[HISTORICAL_COLS.CSR_AVG_ABD_WAIT - 1];
+
+    const tttDisplay = rd[HISTORICAL_COLS.TTT - 1];
+    const attDisplay = rd[HISTORICAL_COLS.ATT - 1];
+    const aawDisplay = rd[HISTORICAL_COLS.AVG_ABD_WAIT - 1];
+    const cawDisplay = rd[HISTORICAL_COLS.CSR_AVG_ABD_WAIT - 1];
+
+    const tttRaw = r[HISTORICAL_COLS.TTT - 1];
+    const attRaw = r[HISTORICAL_COLS.ATT - 1];
 
     Logger.log('Row %s | agent="%s" | answered=%s', i + 2, agent, answered);
-    Logger.log('  TTT  -> type=%s raw=%s parsed=%s sec reformatted=%s',
-               typeOfCell_(ttt), JSON.stringify(ttt),
-               toSeconds_(ttt), formatHms_(toSeconds_(ttt)));
-    Logger.log('  ATT  -> type=%s raw=%s parsed=%s sec reformatted=%s',
-               typeOfCell_(att), JSON.stringify(att),
-               toSeconds_(att), formatHms_(toSeconds_(att)));
-    Logger.log('  AvgAbdWait    -> type=%s raw=%s parsed=%s sec',
-               typeOfCell_(aaw), JSON.stringify(aaw), toSeconds_(aaw));
-    Logger.log('  CSRAvgAbdWait -> type=%s raw=%s parsed=%s sec',
-               typeOfCell_(caw), JSON.stringify(caw), toSeconds_(caw));
+    Logger.log('  TTT  -> display="%s" (%s sec)  raw=%s (%s sec, may include +36:36 offset)',
+               tttDisplay, parseHmsDisplay_(tttDisplay),
+               JSON.stringify(tttRaw), toSeconds_(tttRaw));
+    Logger.log('  ATT  -> display="%s" (%s sec)  raw=%s (%s sec)',
+               attDisplay, parseHmsDisplay_(attDisplay),
+               JSON.stringify(attRaw), toSeconds_(attRaw));
+    Logger.log('  AvgAbdWait    -> display="%s" (%s sec)',
+               aawDisplay, parseHmsDisplay_(aawDisplay));
+    Logger.log('  CSRAvgAbdWait -> display="%s" (%s sec)',
+               cawDisplay, parseHmsDisplay_(cawDisplay));
 
-    const tttSec = toSeconds_(ttt);
+    const tttSec = parseHmsDisplay_(tttDisplay);
     const computedAtt = answered ? Math.round(tttSec / answered) : 0;
     Logger.log('  Dashboard ATT for this row alone = TTT/Answered = %s sec = %s',
                computedAtt, formatHms_(computedAtt));
@@ -251,7 +260,7 @@ function columnLetter_(col) {
  * Edit ADDRESS below before running. A1 notation, e.g. "I6", "J6",
  * "AG6", "AH6".
  */
-function dumpCell() {
+function dumpCell_() {
   const ADDRESS = 'I6';  // edit this to inspect a different cell
 
   const ss = openSpreadsheet_();
@@ -293,7 +302,7 @@ function dumpCell() {
  *
  * Edit DEPT, FROM, TO below before running.
  */
-function diagnoseAbandoned() {
+function diagnoseAbandoned_() {
   const DEPT = 'CSR';
   const FROM = '2026-05-15';
   const TO   = '2026-05-18';
