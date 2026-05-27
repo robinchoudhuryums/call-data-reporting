@@ -255,6 +255,18 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   upgrading a library version, recompute the hash:
   `curl -s <URL> | openssl dgst -sha384 -binary | openssl base64 -A`.
   A mismatched hash blocks the script from loading entirely.
+- **`TARGET_SS_ID` in CDR Import is read from Script Properties**,
+  not hardcoded. `getTargetSsId_()` reads it on every call and
+  falls back to a hardcoded ID if unset. Set `TARGET_SS_ID` in
+  the CDR Import project's Script Properties to point at the CDR
+  Report spreadsheet.
+- **Neon writes are guarded by `isNeonReachable_()`** which runs
+  `SELECT 1` with a 5-second timeout before each batch insert. If
+  Neon is down (free-tier suspend, exhausted compute) or
+  unconfigured, the write is skipped with a clean log — no failure
+  email, no exception. `NEON_HOST`, `NEON_DB`, `NEON_USER`,
+  `NEON_PASS` must be set in BOTH the CDR Report AND CDR Import
+  project's Script Properties for Neon mirroring to work.
 
 ## Key Design Decisions
 
@@ -314,6 +326,11 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   button (hidden until data loads) that exports the current view
   (respecting scope, date range, and sort order) as a client-side
   CSV download. No server round-trip.
+- **Draggable / resizable modals.** All 9 modals can be
+  repositioned via header drag and resized via a bottom-right
+  corner handle. Position and size reset on close so the next
+  open starts centered at default size. Disabled below 768px
+  viewport width (mobile).
 
 ## Operator State Checklist
 
@@ -400,13 +417,22 @@ When something looks wrong, before assuming a code bug, check:
     falls back to `ADMIN_EMAILS_FALLBACK` in Config.gs (which
     requires a redeploy to change).
 14. QCD modal empty for a dept, OR no Overview QCD chips, OR
-    "Yesterday's QCD" missing on My Department? Confirm
+    "Queue Call Data" tiles missing on My Department? Confirm
     `Config.gs::DEPT_QCD_QUEUES[dept]` exists and lists the right
     `A_Q_*` queue names. Open `QCD Historical Data` col D for
     recent rows to see the canonical values written by the import
     pipeline. Add or edit the row + redeploy if missing -- new
     depts producing QCD data don't surface in the dashboard until
     they're mapped here.
+15. `TARGET_SS_ID` Script Property in CDR Import: must point at
+    the CDR Report spreadsheet ID. Without it, `getTargetSsId_()`
+    falls back to a hardcoded ID that may not match your install.
+    Set in CDR Import project → Project Settings → Script Properties.
+16. Neon Script Properties in CDR Import: `NEON_HOST`, `NEON_DB`,
+    `NEON_USER`, `NEON_PASS` must be set in the CDR Import project's
+    Script Properties (same values as the CDR Report project).
+    Without them, Neon mirror writes from the import pipeline are
+    silently skipped (logged as "Neon unreachable").
 
 ## Cycle Workflow Config
 
@@ -482,8 +508,8 @@ INV-46 | `Agent Alias Overrides` sheet columns: `Old Name \| Canonical Name \| A
 INV-47 | `Orphan Fix Log` sheet columns: `Timestamp \| Admin \| Action \| From Name \| To Name \| Affected Rows \| Notes`. Schema pinned in `Config.gs::ORPHAN_FIX_LOG_HEADERS`; sheet is idempotently created by `setup()`. Append-only; never overwritten. `OrphanFix.gs::appendOrphanFixLog_` writes one row per action. Action values: `alias-add`, `alias-remove`, `rename`, `rename+alias`. Affected Rows is the count of DQE Historical Data rows modified by a `rename` (0 for alias-only actions). | Subsystem: Department Dashboard
 INV-48 | `dept.wow.driver` on the Overview payload ("what changed" insight) is attached only when `|dept.wow.deltaPct| >= WOW_DRIVER_THRESHOLD` (= 1.5 pts). The driver is the per-agent net answered/missed change that most explains the dept's WoW shift, picked by `computeWowDriver_` in CompanyOverview.gs. Requires at least 3 events in either week-window to avoid one-call outliers; positive WoW surfaces the biggest answered-delta, negative WoW surfaces the biggest missed-delta. `dept.wow.driver` may be null for low-activity / quiet-week depts; the client (`ovBuildWowDriver_`) renders nothing in that case. Per-dept (not admin-only) -- managers see drivers for their own dept; admins see them for all depts. | Subsystem: Department Dashboard
 INV-49 | `getIndividualReport` accepts optional `priorFrom`/`priorTo` for same-agent vs-self comparison. When supplied, every `summaryData[i]` carries `priorStats` (formatted) + `priorRaw` (numeric); `priorDateLabel` is set at the top level. Absence = legacy shape (`priorStats: null`). The cache key (`individual:v6`) adds a `priorKey` segment (`priorFrom..priorTo` or `none`) so the prior window is part of the cache identity. Client form (`ir-compare-mode` select) supports None / Same window one year prior / Immediately-preceding period / Custom prior range; resolved via `irResolvePriorRange_`. The same prior dates are re-applied automatically when the user re-runs from the edit-popover. | Subsystem: Department Dashboard
-INV-50 | `QCD Historical Data` columns (1-indexed): `Month Year \| Week \| Date \| Call Queue \| Call Source \| Total Calls \| Total Answered \| Abandoned \| Longest Wait \| Avg Answer \| Abandoned % \| Violations`. Pinned in `Config.gs::QCD_HISTORICAL_COLS`. Writer: `apps-script/cdr-import/autoImport.js::processIntegratedHistory` QCD block. Reader: `apps-script/department-dashboard/QCDReport.gs` (dept-scoped report) + `CompanyOverview.gs::computeQcdSnapshots_` (per-dept latest-day snapshot on the Overview tile grid) + `Data.gs::computeDeptQcdSnapshot_` (per-dept latest-day snapshot for My Department's "Yesterday's QCD" tiles). **`Call Queue` carries raw queue names like `A_Q_CustomerSuccess` / `A_Q_Sales` / `Backup CSR` -- NOT dashboard dept names; canonical spellings vary per install.** To map a dept to its set of queue names, use `Config.gs::DEPT_QCD_QUEUES` (admin-curated). `Call Source` is one of `Total Calls` (daily roll-up; the only source the dashboard sums to avoid double-counting) plus sub-source breakdowns like `CSR` / `Ad-campaign` / `New Call Menu` / `Non-CSR (internal)` that the dashboard skips. `Violations` is the count of (source, day) tuples where Abandoned % > 5%. | Subsystem: Department Dashboard + CDR Import
-INV-51 | `QCD Report` is per-dept gated like Individual / Performance / Compare Ranges -- managers see their own dept, admins pick any. **Parent depts auto-include sub-queue queues** via `queuesForDept_` (Sales+PAP, Power+PAK, CSR+Spanish per `OVERVIEW_PARENT_OF`); all three QCD readers (modal, Overview snapshot, My Department snapshot) use the same helper so rollups stay consistent. `getQcdReport({ department, from, to })` returns `meta` (with `queues` + `unmapped` flags), `dateLabel`, `totals` (sum across expanded queue list; `totals.violations` is MONTH-TO-DATE across the dept's queues, not selected-range sum), `queueBreakdown` (per-queue rows, one entry per queue in the expanded list), `trendData` (12-month monthly buckets), `dailySeries` (per-day rollup across dept queues for the selected range -- drives the chart's Daily view and the scrollable daily table). Cache prefix `qcd:v5`. **The Overview page's per-dept tile shows two QCD chips: an "Aban N (P%)" chip whenever QCD data exists (warn-tinted when P>=5%), and a "X viol MTD" chip when month-to-date violations > 0.** My Department page's agent table is PRECEDED by a "Yesterday's QCD" tile row (Total Calls / Answered / Abandoned / Abandoned % / Violations) sourced from `Data.gs::computeDeptQcdSnapshot_`. All QCD UI surfaces are visible to everyone (no admin gate); per-dept gating is on the dropdown only. | Subsystem: Department Dashboard
+INV-50 | `QCD Historical Data` columns (1-indexed): `Month Year \| Week \| Date \| Call Queue \| Call Source \| Total Calls \| Total Answered \| Abandoned \| Longest Wait \| Avg Answer \| Abandoned % \| Violations`. Pinned in `Config.gs::QCD_HISTORICAL_COLS`. Writer: `apps-script/cdr-import/autoImport.js::processIntegratedHistory` QCD block. Reader: `apps-script/department-dashboard/QCDReport.gs` (dept-scoped report) + `CompanyOverview.gs::computeQcdSnapshots_` (per-dept latest-day snapshot on the Overview tile grid) + `Data.gs::computeDeptQcdSnapshot_` (per-dept latest-day snapshot for My Department's "Queue Call Data" tiles). **`Call Queue` carries raw queue names like `A_Q_CustomerSuccess` / `A_Q_Sales` / `Backup CSR` -- NOT dashboard dept names; canonical spellings vary per install.** To map a dept to its set of queue names, use `Config.gs::DEPT_QCD_QUEUES` (admin-curated). `Call Source` is one of `Total Calls` (daily roll-up; the only source the dashboard sums to avoid double-counting) plus sub-source breakdowns like `CSR` / `Ad-campaign` / `New Call Menu` / `Non-CSR (internal)` that the dashboard skips. `Violations` is the count of (source, day) tuples where Abandoned % > 5%. | Subsystem: Department Dashboard + CDR Import
+INV-51 | `QCD Report` is per-dept gated like Individual / Performance / Compare Ranges -- managers see their own dept, admins pick any. **Parent depts auto-include sub-queue queues** via `queuesForDept_` (Sales+PAP, Power+PAK, CSR+Spanish per `OVERVIEW_PARENT_OF`); all three QCD readers (modal, Overview snapshot, My Department snapshot) use the same helper so rollups stay consistent. `getQcdReport({ department, from, to })` returns `meta` (with `queues` + `unmapped` flags), `dateLabel`, `totals` (sum across expanded queue list; `totals.violations` is MONTH-TO-DATE across the dept's queues, not selected-range sum), `queueBreakdown` (per-queue rows with `violationDates` array for expandable detail), `trendData` (12-month monthly buckets with `perQueue` keyed by queue name), `dailySeries` (per-day rollup across dept queues), and `perQueue` (per-queue daily + monthly arrays for multi-line charts). Cache prefix `qcd:v5`. The QCD Report form defaults to "Yesterday" preset. For depts with 2+ queues, the chart renders one line per queue (color-coded) plus a dashed "Dept total" line. Single-day ranges hide the Daily chart view. Per-queue breakdown rows are clickable when violations > 0 to expand and show violation dates. Color-coding: violations cells use light-warn (1-3) / strong-warn (>3); abandoned % >= 5% is warn-tinted in both breakdown and daily tables. **The Overview page's per-dept tile shows per-queue QCD data for multi-queue depts** (each queue gets abandoned %, abandoned count if >0, violations if >0 with color-coding); single-queue depts show dept-level chips. "X viol MTD" chip renders when month-to-date violations > 0. My Department page's agent table is PRECEDED by a "Queue Call Data — [date]" tile row (showing the actual data date, not "yesterday") sourced from `Data.gs::computeDeptQcdSnapshot_`. All QCD UI surfaces are visible to everyone (no admin gate); per-dept gating is on the dropdown only. | Subsystem: Department Dashboard
 INV-52 | `CDR Historical Data` columns (1-indexed): `Month Year \| Week \| Date \| Dept \| Name \| C..W` (22 metric cols). `Q Path Historical Data` columns: `Month Year \| Week \| Date \| Dept \| Path \| Total \| VM \| NonVM \| Opt1 \| NonOpt1 \| Pct`. `CSR Transfer Historical Data` columns: `Month Year \| Week \| Date \| Agent \| Trans % \| Total Calls \| Transferred \| + 11 per-queue cols`. Writers: `apps-script/cdr-import/autoImport.js::processIntegratedHistory`; each block emits a separate `processIntegratedHistory:CDR` / `:QPath` / `:CSR` row to Pipeline Health (INV-44). NOT consumed by the dashboard today -- the read path lives in the legacy DQE Report Apps Script. | Subsystem: CDR Import (writer) / DQE Report Legacy (reader) |
 
 ### Policy Configuration
@@ -701,13 +727,15 @@ S31 | Orphan Fix end-to-end (admin) | Subsystem: Department Dashboard + CDR DQE 
 S32 | QCD Report end-to-end | Subsystem: Department Dashboard + CDR Import
   Steps:
     - Open dashboard as a manager. Reports → QCD Report.
+    - Confirm the Quick Select defaults to "Yesterday" and both date inputs show yesterday's date.
     - Pick a date range with known QCD activity for the manager's dept; Generate.
     - Confirm KPI tiles render Total Calls / Answered / Abandoned / Abandoned % / Longest Wait / Avg Answer / Violations (Violations tile is warn-soft when >0).
-    - Confirm per-queue breakdown table shows one row per queue in `DEPT_QCD_QUEUES[dept]` with a "Department total" row in the tfoot.
-    - Switch the chart-tab metric (Total Calls / Abandoned % / Violations); chart re-renders with appropriate axis formatting.
-    - Re-open the dashboard fresh and check the Overview tile for a dept with violations or elevated abandoned %; a small QCD flag caption appears next to the WoW chip (red if violations > 0, muted if just elevated %). Visible to managers + admins.
+    - Confirm per-queue breakdown table shows one row per queue in `DEPT_QCD_QUEUES[dept]` with a "Department total" row in the tfoot. Violations cells are color-coded (light-warn 1-3, strong-warn >3). Abandoned % >= 5% is warn-tinted. Rows with violations > 0 show a clickable chevron; clicking expands to show the specific violation dates.
+    - Switch the chart-tab metric (Total Calls / Abandoned % / Violations); chart re-renders. For depts with 2+ queues, the chart shows one line per queue (color-coded) plus a dashed "Dept total" line with a legend.
+    - Select "Yesterday" from Quick Select (single-day range); confirm the Daily chart view toggle is hidden (single point not useful as a line).
+    - Re-open the dashboard fresh and check the Overview tile for a dept with multiple queues; per-queue QCD rows appear showing each queue's abandoned %, abandoned count (if >0), and violations (if >0) with color-coding. "X viol MTD" chip renders when month-to-date violations > 0.
     - As a manager, in the browser console: `google.script.run.withSuccessHandler(console.log).withFailureHandler(console.error).getQcdReport({ department: 'SomeOtherDept', from: '2026-05-01', to: '2026-05-19' })`.
-  Expected: own-dept Generate succeeds; cross-dept console call throws "Not authorized for this department.". Admin users can request any dept that exists in the dept list. Cache prefix `qcd:v5` keys are bounded (no agent-list dimension, so no MD5 hashing needed). The breakdown table shows one row per queue in `DEPT_QCD_QUEUES[dept]` plus a "Department total" row in the tfoot. The dept tile on Overview shows "Aban N (P%)" always (warn-tinted when P>=5%) plus "X viol MTD" when month-to-date violations > 0. My Department page renders a "Yesterday's QCD" tile row below the agent table.
+  Expected: own-dept Generate succeeds; cross-dept console call throws "Not authorized for this department.". Admin users can request any dept that exists in the dept list. Cache prefix `qcd:v5` keys are bounded (no agent-list dimension, so no MD5 hashing needed). My Department page renders a "Queue Call Data — [date]" tile row (showing the actual data date) below the agent table.
 
 S33 | Pipeline Health per-output rows | Subsystem: CDR Import + Department Dashboard
   Steps:
