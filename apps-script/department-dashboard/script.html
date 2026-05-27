@@ -352,6 +352,20 @@
       .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
 
+  function showToast(msg, kind, durationMs) {
+    var container = $('toast-container');
+    if (!container) return;
+    var el = document.createElement('div');
+    el.className = 'toast' + (kind ? ' toast-' + kind : '');
+    el.textContent = msg;
+    container.appendChild(el);
+    requestAnimationFrame(function () { el.classList.add('toast-visible'); });
+    setTimeout(function () {
+      el.classList.remove('toast-visible');
+      setTimeout(function () { if (el.parentNode) el.parentNode.removeChild(el); }, 300);
+    }, durationMs || 3000);
+  }
+
   /**
    * Renders the header data-freshness pill: "Data through Mon May 19
    * · 14h ago".  Source is getLatestDataDates -- which returns
@@ -564,8 +578,10 @@
     const range = defaultRange();
     $('from-date').value = range.from;
     $('to-date').value = range.to;
-    $('from-date').addEventListener('change', refresh);
-    $('to-date').addEventListener('change', refresh);
+    $('from-date').addEventListener('change', function () { clearActivePreset_(); refresh(); });
+    $('to-date').addEventListener('change', function () { clearActivePreset_(); refresh(); });
+
+    initDatePresets_();
 
     $('refresh-btn').addEventListener('click', refresh);
     var csvBtn = $('csv-export-btn');
@@ -631,6 +647,44 @@
     // attribute that controls page visibility AND triggers the
     // Overview's data fetch.
     setPage('overview');
+  }
+
+  // -- Date preset chips ---------------------------------------------------
+  function initDatePresets_() {
+    var wrap = $('date-presets');
+    if (!wrap) return;
+    var presets = [
+      { label: 'Yesterday', fn: function () { var d = daysAgo_(1); return { from: d, to: d }; } },
+      { label: 'Last 7 days', fn: function () { return { from: daysAgo_(7), to: daysAgo_(1) }; } },
+      { label: 'Last 30 days', fn: function () { return { from: daysAgo_(30), to: daysAgo_(1) }; } },
+      { label: 'This month', fn: function () { var t = new Date(); return { from: isoDate_(new Date(t.getFullYear(), t.getMonth(), 1)), to: isoDate_(t) }; } },
+      { label: 'Last month', fn: function () { var t = new Date(); var f = new Date(t.getFullYear(), t.getMonth() - 1, 1); var l = new Date(t.getFullYear(), t.getMonth(), 0); return { from: isoDate_(f), to: isoDate_(l) }; } },
+    ];
+    presets.forEach(function (p) {
+      var chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'date-preset-chip';
+      chip.textContent = p.label;
+      chip.addEventListener('click', function () {
+        var r = p.fn();
+        $('from-date').value = r.from;
+        $('to-date').value = r.to;
+        wrap.querySelectorAll('.date-preset-chip').forEach(function (c) { c.classList.remove('active'); });
+        chip.classList.add('active');
+        refresh();
+      });
+      wrap.appendChild(chip);
+    });
+  }
+  function clearActivePreset_() {
+    var wrap = $('date-presets');
+    if (wrap) wrap.querySelectorAll('.date-preset-chip').forEach(function (c) { c.classList.remove('active'); });
+  }
+  function daysAgo_(n) { var d = new Date(); d.setDate(d.getDate() - n); return isoDate_(d); }
+  function isoDate_(d) {
+    var m = String(d.getMonth() + 1); if (m.length < 2) m = '0' + m;
+    var day = String(d.getDate()); if (day.length < 2) day = '0' + day;
+    return d.getFullYear() + '-' + m + '-' + day;
   }
 
   // Page switcher between the Overview "home" page and the dept
@@ -769,21 +823,39 @@
     if (myDeptBtn)   myDeptBtn.addEventListener('click',   function () { setPage('dept');     });
   }
 
-  function ovLoad_() {
-    $('ov-loading').style.display = '';
-    $('ov-body').style.display = 'none';
+  var ovAutoRefreshTimer_ = null;
+  var OV_AUTO_REFRESH_MS  = 5 * 60 * 1000;
+
+  function ovLoad_(silent) {
+    if (!silent) {
+      $('ov-loading').style.display = '';
+      $('ov-body').style.display = 'none';
+    }
     google.script.run
       .withSuccessHandler(function (data) {
         ovLastData = data;
         $('ov-loading').style.display = 'none';
         $('ov-body').style.display = '';
         ovRender_(data);
+        ovScheduleAutoRefresh_();
       })
       .withFailureHandler(function (err) {
-        $('ov-loading').textContent = 'Error loading overview: '
-          + (err && err.message ? err.message : String(err));
+        if (!silent) {
+          $('ov-loading').textContent = 'Error loading overview: '
+            + (err && err.message ? err.message : String(err));
+        }
+        ovScheduleAutoRefresh_();
       })
       .getCompanyOverview();
+  }
+
+  function ovScheduleAutoRefresh_() {
+    if (ovAutoRefreshTimer_) clearTimeout(ovAutoRefreshTimer_);
+    ovAutoRefreshTimer_ = setTimeout(function () {
+      if (document.body.getAttribute('data-page') === 'overview') {
+        ovLoad_(true);
+      }
+    }, OV_AUTO_REFRESH_MS);
   }
 
   function ovRender_(data) {
@@ -1852,7 +1924,33 @@
 
   function setStatus(kind, msg) {
     const el = $('status');
-    if (!kind) { el.style.display = 'none'; el.textContent = ''; return; }
+    var skel = $('dept-table-skeleton');
+    var empt = $('dept-empty-state');
+    if (!kind) {
+      el.style.display = 'none'; el.textContent = '';
+      if (skel) skel.style.display = 'none';
+      if (empt) empt.style.display = 'none';
+      return;
+    }
+    if (kind === 'loading') {
+      el.style.display = 'none';
+      if (empt) empt.style.display = 'none';
+      if (skel) skel.style.display = '';
+      return;
+    }
+    if (skel) skel.style.display = 'none';
+    if (kind === 'empty') {
+      el.style.display = 'none';
+      if (empt) {
+        var title = $('dept-empty-title');
+        var hint  = $('dept-empty-hint');
+        if (title) title.textContent = 'No agent data found';
+        if (hint) hint.textContent = msg || '';
+        empt.style.display = '';
+      }
+      return;
+    }
+    if (empt) empt.style.display = 'none';
     el.className = 'status status-' + kind;
     el.textContent = msg;
     el.style.display = '';
@@ -1920,10 +2018,10 @@
     }
 
     if (!state.rows.length) {
-      setStatus('empty',
-        state.meta && state.meta.rosterSize === 0
-          ? 'No agents found for this department in the roster sheet.'
-          : 'No rows for this department in the selected range.');
+      var hint = state.meta && state.meta.rosterSize === 0
+        ? 'No agents are mapped to this department in the roster sheet. Check the DO NOT EDIT! tab or contact your admin.'
+        : 'No activity found for this date range. Try expanding the range, or check that the daily import has run (Pipeline Health in the Alerts modal).';
+      setStatus('empty', hint);
     } else {
       setStatus(null);
     }
@@ -3871,9 +3969,11 @@
         .withSuccessHandler(function (res) {
           restore();
           irExportBtnFeedback_('Sent to ' + (res && res.to ? res.to : 'you'), 2000);
+          showToast('Report emailed to ' + (res && res.to ? res.to : 'you'), 'success');
         })
         .withFailureHandler(function (err) {
           irSetResultsStatus('error', 'Email failed: ' + (err && err.message ? err.message : err));
+          showToast('Email failed', 'error');
           restore();
         })
         .sendIndividualReportEmail({
@@ -5089,9 +5189,11 @@
         .withSuccessHandler(function (res) {
           restore();
           prBtnFeedback_('Sent to ' + (res && res.to ? res.to : 'you'), 2000);
+          showToast('Report emailed to ' + (res && res.to ? res.to : 'you'), 'success');
         })
         .withFailureHandler(function (err) {
           prSetResultsStatus('error', 'Email failed: ' + (err && err.message ? err.message : err));
+          showToast('Email failed', 'error');
           restore();
         })
         .sendPerformanceReportEmail({
@@ -6438,9 +6540,11 @@
         .withSuccessHandler(function (res) {
           restore();
           crBtnFeedback_('Sent to ' + (res && res.to ? res.to : 'you'), 2000);
+          showToast('Report emailed to ' + (res && res.to ? res.to : 'you'), 'success');
         })
         .withFailureHandler(function (err) {
           crSetResultsStatus('error', 'Email failed: ' + (err && err.message ? err.message : err));
+          showToast('Email failed', 'error');
           restore();
         })
         .sendCompareRangesEmail({
@@ -6929,6 +7033,7 @@
         const sent = (results || []).filter(function (r) { return r.status === 'sent'; }).length;
         alSetRunStatus_('success', 'Done. ' + sent + ' alert' + (sent === 1 ? '' : 's')
           + ' sent. Refresh the page to see the updated log.');
+        showToast(sent + ' alert' + (sent === 1 ? '' : 's') + ' sent', 'success');
         // Re-fetch the log so the new entries appear inline.
         google.script.run
           .withSuccessHandler(function (data) { if (data) alRenderLog_(data.log || []); })
@@ -7179,6 +7284,7 @@
           'Renamed ' + n + ' row' + (n === 1 ? '' : 's')
           + '. Alias added so future imports map correctly. '
           + 'Dashboard caches may take up to 5 minutes to reflect the change.');
+        showToast('Renamed ' + n + ' row' + (n === 1 ? '' : 's'), 'success');
         ofLoadInit_();
       })
       .withFailureHandler(function (err) {
@@ -7833,10 +7939,12 @@
         .withSuccessHandler(function (res) {
           const to = (res && res.to) ? res.to : 'your inbox';
           qcdSetExportStatus_('success', 'Emailed report image to ' + to + '.');
+          showToast('Report emailed to ' + to, 'success');
         })
         .withFailureHandler(function (err) {
           qcdSetExportStatus_('error', 'Email failed: '
             + (err && err.message ? err.message : String(err)));
+          showToast('Email failed', 'error');
         })
         .sendQcdReportEmail({
           imageBase64: dataUrl,
