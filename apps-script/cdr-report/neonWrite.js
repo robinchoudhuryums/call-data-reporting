@@ -201,3 +201,239 @@ function writeQCDRowsToNeon(rows) {
     try { conn.close(); } catch (ce) {}
   }
 }
+
+
+// -- CDR writer (call_history_dept + call_history_phones) --------------------
+// Mirrors CDR Historical Data rows to Neon. Handles the JSONB name-list
+// fields and phone child-table inserts when HMAC_SECRET is available.
+// Without HMAC_SECRET, writes the main metric columns but skips
+// name-list JSONB and phone child rows (logs a warning).
+
+function writeCDRRowsToNeon(rows) {
+  if (!rows || !rows.length) return { inserted: 0, skipped: 0, phones: 0 };
+  if (!isNeonReachable_()) {
+    Logger.log('writeCDRRowsToNeon: Neon unreachable — skipping %s rows.', rows.length);
+    return { inserted: 0, skipped: rows.length, phones: 0 };
+  }
+
+  var hmacSecret = PropertiesService.getScriptProperties().getProperty('HMAC_SECRET');
+  var hasHmac = !!hmacSecret;
+  if (!hasHmac) {
+    Logger.log('writeCDRRowsToNeon: HMAC_SECRET not set — name-list JSONB and phone child rows will be skipped.');
+  }
+
+  var conn = getNeonConn_write();
+  if (!conn) return { inserted: 0, skipped: rows.length, phones: 0 };
+  conn.setAutoCommit(false);
+
+  try {
+    var placeholderRow = '(?,?,?,?,?,?,?::jsonb,?::jsonb,?::jsonb,?,?,?,?,?,?::jsonb,?::jsonb,?::jsonb,?,?,?,?)';
+    var allPlaceholders = rows.map(function() { return placeholderRow; }).join(',');
+
+    var sql = 'INSERT INTO call_history_dept (' +
+      'call_date, department, agent_name, ' +
+      'ob_total, ob_answered, ob_missed, ' +
+      'ob_list_total_entries, ob_list_answered_entries, ob_list_missed_entries, ' +
+      'ib_total, ib_answered, ib_missed, ' +
+      'ib_answered_internal, ib_answered_external, ' +
+      'ib_list_total_entries, ib_list_answered_entries, ib_list_missed_entries, ' +
+      'ob_ext_total, ob_ext_answered, ob_ext_ttt_sec, ob_ext_att_sec' +
+      ') VALUES ' + allPlaceholders +
+      ' ON CONFLICT ON CONSTRAINT uq_call_hist DO NOTHING';
+
+    var stmt = conn.prepareStatement(sql);
+    var p = 1;
+    for (var i = 0; i < rows.length; i++) {
+      var row = rows[i];
+      stmt.setString(p++, row.callDate);
+      stmt.setString(p++, row.dept);
+      stmt.setString(p++, row.agentName);
+      stmt.setInt(p++,    parseInt(row.obTotal)   || 0);
+      stmt.setInt(p++,    parseInt(row.obAns)     || 0);
+      stmt.setInt(p++,    parseInt(row.obMiss)    || 0);
+      stmt.setString(p++, hasHmac ? cdrParseNameFieldJson_(row.obListTot,  false, hmacSecret) : null);
+      stmt.setString(p++, hasHmac ? cdrParseNameFieldJson_(row.obListAns,  false, hmacSecret) : null);
+      stmt.setString(p++, hasHmac ? cdrParseNameFieldJson_(row.obListMiss, false, hmacSecret) : null);
+      stmt.setInt(p++,    parseInt(row.ibTotal)   || 0);
+      stmt.setInt(p++,    parseInt(row.ibAns)     || 0);
+      stmt.setInt(p++,    parseInt(row.ibMiss)    || 0);
+      stmt.setInt(p++,    parseInt(row.ibAnsInt)  || 0);
+      stmt.setInt(p++,    parseInt(row.ibAnsExt)  || 0);
+      stmt.setString(p++, hasHmac ? cdrParseNameFieldJson_(row.ibListTot,  false, hmacSecret) : null);
+      stmt.setString(p++, hasHmac ? cdrParseNameFieldJson_(row.ibListAns,  false, hmacSecret) : null);
+      stmt.setString(p++, hasHmac ? cdrParseNameFieldJson_(row.ibListMiss, false, hmacSecret) : null);
+      stmt.setInt(p++,    parseInt(row.obExtTotal) || 0);
+      stmt.setInt(p++,    parseInt(row.obExtAns)   || 0);
+      stmt.setInt(p++,    cdrTimeToSeconds_(row.obExtTTT));
+      stmt.setInt(p++,    cdrTimeToSeconds_(row.obExtATT));
+    }
+
+    stmt.execute();
+    stmt.close();
+    conn.commit();
+    Logger.log('writeCDRRowsToNeon: wrote ' + rows.length + ' main rows.');
+
+    // Phone child-table inserts (requires HMAC_SECRET + parent row IDs)
+    var phoneCount = 0;
+    if (hasHmac) {
+      var hasAnyPhones = rows.some(function(r) {
+        return (r.phonesX && String(r.phonesX).trim()) ||
+               (r.phonesY && String(r.phonesY).trim()) ||
+               (r.phonesZ && String(r.phonesZ).trim());
+      });
+
+      if (hasAnyPhones) {
+        var joinPlaceholders = rows.map(function() { return '(?::date, ?, ?)'; }).join(',');
+        var idSql = 'SELECT d.id, d.call_date::text, d.department, d.agent_name ' +
+          'FROM call_history_dept d ' +
+          'JOIN (VALUES ' + joinPlaceholders + ') AS v(cd, dept, agent) ' +
+          'ON d.call_date = v.cd AND d.department IS NOT DISTINCT FROM v.dept ' +
+          'AND d.agent_name IS NOT DISTINCT FROM v.agent';
+
+        var idStmt = conn.prepareStatement(idSql);
+        var q = 1;
+        for (var j = 0; j < rows.length; j++) {
+          idStmt.setString(q++, rows[j].callDate);
+          idStmt.setString(q++, rows[j].dept);
+          idStmt.setString(q++, rows[j].agentName);
+        }
+        var idRs = idStmt.executeQuery();
+        var idMap = {};
+        while (idRs.next()) {
+          idMap[idRs.getString(2) + '|' + idRs.getString(3) + '|' + idRs.getString(4)] = idRs.getInt(1);
+        }
+        idRs.close(); idStmt.close();
+
+        var phoneRows = [];
+        for (var k = 0; k < rows.length; k++) {
+          var key = rows[k].callDate + '|' + rows[k].dept + '|' + rows[k].agentName;
+          var parentId = idMap[key];
+          if (!parentId) continue;
+          var phoneSets = [
+            { raw: rows[k].phonesX, type: 'ob_ext_list_total' },
+            { raw: rows[k].phonesY, type: 'ob_ext_list_answered' },
+            { raw: rows[k].phonesZ, type: 'ob_ext_list_missed' }
+          ];
+          for (var ps = 0; ps < phoneSets.length; ps++) {
+            var parsed = cdrParsePhoneField_(phoneSets[ps].raw, hmacSecret);
+            for (var ph = 0; ph < parsed.length; ph++) {
+              phoneRows.push({
+                parentId: parentId,
+                type: phoneSets[ps].type,
+                phone_hash: parsed[ph].phone_hash,
+                duration_sec: parsed[ph].duration_sec,
+                occurrences: parsed[ph].occurrences
+              });
+            }
+          }
+        }
+
+        if (phoneRows.length > 0) {
+          var PHONE_CHUNK = 200;
+          var offset = 0;
+          while (offset < phoneRows.length) {
+            var chunk = phoneRows.slice(offset, offset + PHONE_CHUNK);
+            var phPlaceholders = chunk.map(function() { return '(?,?,?,?,?)'; }).join(',');
+            var phSql = 'INSERT INTO call_history_phones ' +
+              '(call_history_id, list_type, phone_hash, duration_sec, occurrences) ' +
+              'VALUES ' + phPlaceholders +
+              ' ON CONFLICT ON CONSTRAINT uq_phone_entry DO NOTHING';
+            var phStmt = conn.prepareStatement(phSql);
+            var s = 1;
+            for (var c = 0; c < chunk.length; c++) {
+              phStmt.setInt(s++,    chunk[c].parentId);
+              phStmt.setString(s++, chunk[c].type);
+              phStmt.setString(s++, chunk[c].phone_hash);
+              phStmt.setInt(s++,    chunk[c].duration_sec);
+              phStmt.setInt(s++,    chunk[c].occurrences);
+            }
+            phStmt.execute(); phStmt.close();
+            conn.commit();
+            offset += PHONE_CHUNK;
+          }
+          phoneCount = phoneRows.length;
+          Logger.log('writeCDRRowsToNeon: wrote ' + phoneCount + ' phone child rows.');
+        }
+      }
+    }
+
+    return { inserted: rows.length, skipped: 0, phones: phoneCount };
+
+  } catch (e) {
+    try { conn.rollback(); } catch (re) {}
+    throw e;
+  } finally {
+    try { conn.close(); } catch (ce) {}
+  }
+}
+
+// -- CDR field-parsing helpers (inlined for INV-16 portability) ---------------
+
+function cdrTimeToSeconds_(val) {
+  if (!val) return 0;
+  var s = String(val).trim();
+  var parts = s.split(':');
+  if (parts.length !== 3) return 0;
+  return (parseInt(parts[0]) || 0) * 3600 + (parseInt(parts[1]) || 0) * 60 + (parseInt(parts[2]) || 0);
+}
+
+function cdrHashPhone_(raw, secret) {
+  if (!raw || !secret) return null;
+  var cleaned = String(raw).trim();
+  if (!cleaned) return null;
+  var bytes = Utilities.computeHmacSha256Signature(cleaned, secret);
+  return bytes.map(function(b) { return ('0' + (b & 0xff).toString(16)).slice(-2); }).join('');
+}
+
+function cdrLooksLikePhone_(str) {
+  return /^\+?[\d\s\-().]{7,}$/.test(String(str).trim());
+}
+
+function cdrParseNameFieldJson_(val, isUnused, secret) {
+  if (!val) return null;
+  var raw = String(val).trim();
+  if (!raw) return null;
+
+  var pipeIndex = raw.indexOf('|');
+  var internalRaw = pipeIndex >= 0 ? raw.substring(0, pipeIndex).trim() : raw;
+  var externalRaw = pipeIndex >= 0 ? raw.substring(pipeIndex + 1).trim() : '';
+
+  function parseEntries(str, isExt) {
+    if (!str) return [];
+    var entries = str.split(/,\s*(?=[A-Z+'])/);
+    var out = [];
+    for (var i = 0; i < entries.length; i++) {
+      var entry = entries[i].trim();
+      if (!entry) continue;
+      var countMatch = entry.match(/\((\d+)\)\s*$/);
+      var count = countMatch ? parseInt(countMatch[1]) : 1;
+      var nameRaw = countMatch ? entry.replace(countMatch[0], '').trim() : entry;
+      if (isExt && cdrLooksLikePhone_(nameRaw)) {
+        out.push({ display: null, phone_hash: cdrHashPhone_(nameRaw, secret), count: count });
+      } else {
+        out.push({ display: nameRaw, phone_hash: null, count: count });
+      }
+    }
+    return out;
+  }
+
+  var result = { internal: parseEntries(internalRaw, false), external: parseEntries(externalRaw, true) };
+  return JSON.stringify(result);
+}
+
+function cdrParsePhoneField_(val, secret) {
+  if (!val) return [];
+  var raw = String(val).trim().replace(/^'/, '');
+  if (!raw) return [];
+  var results = [];
+  var entryRegex = /(\+[\d]+)\s+([\d:]+)(?:\s+\((\d+)\))?/g;
+  var match;
+  while ((match = entryRegex.exec(raw)) !== null) {
+    results.push({
+      phone_hash:   cdrHashPhone_(match[1], secret),
+      duration_sec: cdrTimeToSeconds_(match[2]),
+      occurrences:  match[3] ? parseInt(match[3]) : 1
+    });
+  }
+  return results;
+}

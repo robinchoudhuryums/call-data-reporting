@@ -1328,6 +1328,34 @@ if (!skipCDR && obcHD) {
         notes: dateObj.toDateString(),
       });
     } catch (logErr) { /* best-effort */ }
+
+    try {
+      var neonDateStr = Utilities.formatDate(dateObj, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+      var neonCdrRows = raw.map(function(r) {
+        return {
+          callDate:   neonDateStr,
+          dept:       results.NameToDept[r[0]] || 'Unassigned',
+          agentName:  r[0]  || null,
+          obTotal:    r[1],  obAns:     r[2],  obMiss:    r[3],
+          obListTot:  r[4],  obListAns: r[5],  obListMiss: r[6],
+          ibTotal:    r[7],  ibAns:     r[8],  ibMiss:     r[9],
+          ibAnsInt:   r[10], ibAnsExt:  r[11],
+          ibListTot:  r[12], ibListAns: r[13], ibListMiss: r[14],
+          obExtTotal: r[15], obExtAns:  r[16],
+          obExtTTT:   r[17], obExtATT:  r[18],
+          phonesX:    r[19], phonesY:   r[20], phonesZ:    r[21]
+        };
+      });
+      var neonCdrResult = writeCDRRowsToNeon(neonCdrRows);
+      if (neonCdrResult && neonCdrResult.skipped) {
+        console.log('processIntegratedHistory: Neon CDR write skipped (' + neonCdrResult.skipped + ' rows — Neon unreachable).');
+      } else {
+        console.log('processIntegratedHistory: mirrored ' + neonCdrRows.length + ' CDR rows to Neon'
+          + (neonCdrResult.phones ? ' + ' + neonCdrResult.phones + ' phone rows' : '') + '.');
+      }
+    } catch (neonErr) {
+      notifyNeonWriteFailure('processIntegratedHistory:CDR (' + dateObj.toDateString() + ')', neonErr.message);
+    }
   }
 }
 
