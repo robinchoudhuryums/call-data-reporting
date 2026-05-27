@@ -259,6 +259,21 @@ Neon Postgres is the long-term archive and the future query backend.
 - `apps-script/cdr-report/neonBackfill.gs` is for one-off historical
   backfills from the sheet into Neon.
 
+### Cross-project reader: team-tools
+
+The `team-tools` repo's Metrics module reads DQE Historical Data
+directly via `SpreadsheetApp.openById(CDR_SS_ID)` — a separate
+Google Apps Script project that opens this spreadsheet as a read-only
+consumer (Option A). It replicates the `HISTORICAL_COLS` mapping,
+uses `getDisplayValues()` for duration columns (matching this
+dashboard's `parseHmsDisplay_` pattern), and skips queue-sentinel
+rows. The deployer of team-tools must have Viewer access on the
+CDR Report spreadsheet. This is a soft coupling: column-position
+changes to DQE Historical Data must be reflected in team-tools'
+`CDR` constant in `Code.js`. A future Neon read-back (Phase 3)
+would replace both this dashboard's sheet reads AND team-tools'
+`getCdrAgentMetrics_()` / `getCdrDailyBreakdown_()` helpers.
+
 ## Auth model (Department Dashboard)
 
 - **Visitors** open the web app URL. Identity = `Session.getActiveUser().getEmail()`
