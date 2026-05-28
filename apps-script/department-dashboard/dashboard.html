@@ -118,6 +118,7 @@
             <thead>
               <tr>
                 <th>Agent</th>
+                <th>Source</th>
                 <th>Unique</th>
                 <th>Rung</th>
                 <th>Missed</th>
@@ -163,12 +164,12 @@
         <div class="control">
           <label>Scope</label>
           <div class="segmented" id="scope-toggle" role="radiogroup" aria-label="Scope">
-            <button type="button" class="seg-btn active" data-scope="roster" role="radio" aria-checked="true"
+            <button type="button" class="seg-btn" data-scope="roster" role="radio" aria-checked="false"
                     title="Only agents assigned to this department in the roster sheet">Roster</button>
             <button type="button" class="seg-btn" data-scope="queue" role="radio" aria-checked="false"
                     title="Any agent who handled this department's queue extensions">Queue</button>
-            <button type="button" class="seg-btn" data-scope="both" role="radio" aria-checked="false"
-                    title="Union of Roster and Queue">Both</button>
+            <button type="button" class="seg-btn active" data-scope="both" role="radio" aria-checked="true"
+                    title="Union of Roster and Queue. Queue-only floaters are tagged with a chip and excluded from dept totals.">Both</button>
           </div>
         </div>
         <div class="control">
@@ -210,6 +211,7 @@
         <thead>
           <tr>
             <th data-sort="agent">Agent <span class="arrow"></span></th>
+            <th>Source</th>
             <th data-sort="totalUnique">Unique <span class="arrow"></span></th>
             <th data-sort="totalRung">Rung <span class="arrow"></span></th>
             <th data-sort="totalMissed">Missed <span class="arrow"></span></th>

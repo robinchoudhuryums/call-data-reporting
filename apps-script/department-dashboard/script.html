@@ -225,7 +225,14 @@
     diagnostics: null,
     sortKey: 'totalMissed',
     sortDir: 'desc',     // 'asc' | 'desc'
-    scope: 'roster',     // 'roster' | 'queue' | 'both'
+    // Phase D: default flipped from 'roster' to 'both' so the agent
+    // table surfaces queue-only floaters by default. Queue-only rows
+    // are tagged via the Source column chip and excluded from the
+    // totals row on the server side. Scope toggle stays available
+    // (matching aria-checked="true" on the Both button in markup)
+    // for parallel-run validation; slated for removal once the new
+    // defaults prove out.
+    scope: 'both',       // 'roster' | 'queue' | 'both'
   };
 
   // -- Modal drag & resize --------------------------------------------------
@@ -464,6 +471,11 @@
   // Order matches the <thead>; sortKey maps to a row property.
   const COLUMNS = [
     { key: 'agent',                label: 'Agent',           type: 'text' },
+    // Phase D Source column. Renders a chip (ROSTER / BOTH / QUEUE)
+    // from each row's matchedViaRoster / matchedViaQueue flags --
+    // see fmtCell handling for `type: 'chip'`. Plain-text export
+    // (CSV) is handled in csvCellValue_.
+    { key: 'source',               label: 'Source',          type: 'chip' },
     { key: 'totalUnique',          label: 'Unique',          type: 'num' },
     { key: 'totalRung',            label: 'Rung',            type: 'num' },
     { key: 'totalMissed',          label: 'Missed',          type: 'num', highlight: 'missed' },
@@ -1461,7 +1473,7 @@
       .withSuccessHandler(function (resp) {
         status.style.display = 'none';
         if (!resp || !resp.rows || !resp.rows.length) {
-          tbody.innerHTML = '<tr><td colspan="9" class="ov-user-empty">No agent rows for this dept on '
+          tbody.innerHTML = '<tr><td colspan="' + COLUMNS.length + '" class="ov-user-empty">No agent rows for this dept on '
                           + escapeHtml(data.latestDate) + '.</td></tr>';
           return;
         }
@@ -1476,16 +1488,25 @@
           const rowClass = (row.matchedViaQueue && !row.matchedViaRoster) ? 'via-queue' : '';
           return '<tr' + (rowClass ? ' class="' + rowClass + '"' : '') + '>'
                + COLUMNS.map(function (col, i) {
-                   const cls = i === 0 ? 'agent-name' : 'num';
+                   const isAgent  = (i === 0);
+                   const isSource = (col.type === 'chip' && col.key === 'source');
+                   const cls = isAgent ? 'agent-name' : (isSource ? 'src-cell' : 'num');
                    const extra = (col.highlight === 'missed' && Number(row.totalMissed) > 0) ? ' missed-high' : '';
                    return '<td class="' + cls + extra + '">' + fmtCell(col, row) + '</td>';
                  }).join('')
                + '</tr>';
         }).join('');
         if (resp.totals) {
+          const queueCount = resp.totals.queueOnlyAgentCount || 0;
+          const totalLabel = queueCount > 0
+            ? 'Totals (roster only · ' + queueCount + ' floater' + (queueCount === 1 ? '' : 's') + ' excluded)'
+            : 'Totals';
           tfoot.innerHTML = '<tr>' + COLUMNS.map(function (col, i) {
-            const cls = i === 0 ? 'agent-name' : 'num';
-            if (i === 0) return '<td class="' + cls + '">Totals</td>';
+            const isAgent  = (i === 0);
+            const isSource = (col.type === 'chip' && col.key === 'source');
+            const cls = isAgent ? 'agent-name' : (isSource ? 'src-cell' : 'num');
+            if (isAgent) return '<td class="' + cls + '">' + totalLabel + '</td>';
+            if (isSource) return '<td class="' + cls + '"></td>';
             return '<td class="' + cls + '">' + fmtCell(col, resp.totals) + '</td>';
           }).join('') + '</tr>';
         }
@@ -2531,10 +2552,42 @@
   // -- Render -------------------------------------------------------------
 
   function fmtCell(col, row) {
+    if (col.type === 'chip' && col.key === 'source') {
+      return sourceChipHtml_(row);
+    }
     const v = row[col.key];
     if (col.type === 'text') return escapeHtml(v == null ? '' : v);
     if (col.type === 'duration') return fmtDuration(v);
     return fmtNumber(v);
+  }
+
+  // Source chip for the Phase D Source column. Three variants:
+  //   - matchedViaRoster && matchedViaQueue -> BOTH (good-soft)
+  //   - matchedViaRoster only               -> ROSTER (accent-soft)
+  //   - matchedViaQueue only                -> QUEUE [· sourceHome] (warn-soft)
+  // sourceHome is populated server-side for queue-only rows that
+  // appear on at least one other dept's roster.
+  function sourceChipHtml_(row) {
+    if (row.matchedViaRoster && row.matchedViaQueue) {
+      return '<span class="src-chip src-chip-both"><span class="src-dot"></span>BOTH</span>';
+    }
+    if (row.matchedViaRoster) {
+      return '<span class="src-chip src-chip-roster"><span class="src-dot"></span>ROSTER</span>';
+    }
+    if (row.matchedViaQueue) {
+      const home = row.sourceHome ? ' &middot; ' + escapeHtml(row.sourceHome) : '';
+      return '<span class="src-chip src-chip-queue"><span class="src-dot"></span>QUEUE' + home + '</span>';
+    }
+    return '';
+  }
+
+  // CSV-safe plain text for a source row. Mirrors the chip's
+  // variants without the chip markup; consumed by exportTableCsv_.
+  function sourceChipCsv_(row) {
+    if (row.matchedViaRoster && row.matchedViaQueue) return 'BOTH';
+    if (row.matchedViaRoster) return 'ROSTER';
+    if (row.matchedViaQueue) return row.sourceHome ? 'QUEUE - ' + row.sourceHome : 'QUEUE';
+    return '';
   }
 
   function render() {
@@ -2565,17 +2618,35 @@
     tbody.innerHTML = sorted.map(function (row) {
       // Agents matched only via queue (not in the roster) get a small
       // "(queue-only)" tag next to the name in CSS.
+      // Phase D: the .via-queue row class is no longer needed for
+      // visual distinction (the Source chip handles that), but we
+      // keep it so any consumer that styles whole-row queue-only
+      // emphasis (e.g. user CSS, future hover handling) still works.
       const rowClass = (row.matchedViaQueue && !row.matchedViaRoster) ? 'via-queue' : '';
       return '<tr' + (rowClass ? ' class="' + rowClass + '"' : '') + '>' + COLUMNS.map(function (col, i) {
-        const cls = i === 0 ? 'agent-name' : 'num';
+        const isAgent  = (i === 0);
+        const isSource = (col.type === 'chip' && col.key === 'source');
+        const cls = isAgent ? 'agent-name' : (isSource ? 'src-cell' : 'num');
         const extra = (col.highlight === 'missed' && Number(row.totalMissed) > 0) ? ' missed-high' : '';
         return '<td class="' + cls + extra + '">' + fmtCell(col, row) + '</td>';
       }).join('') + '</tr>';
     }).join('');
 
     if (state.totals) {
+      // Roster-vs-floater count caption surfaced as the tfoot's
+      // first cell when queue-only floaters are visible. Keeps the
+      // "totals exclude floaters" semantics legible without a second
+      // tfoot row. Falls back to the plain "Total" label when there
+      // are no floaters in the current view.
+      const queueCount = state.totals.queueOnlyAgentCount || 0;
+      const totalLabel = queueCount > 0
+        ? 'Total (roster only · ' + queueCount + ' floater' + (queueCount === 1 ? '' : 's') + ' excluded)'
+        : 'Total';
       tfoot.innerHTML = '<tr>' + COLUMNS.map(function (col, i) {
-        if (i === 0) return '<td>Total</td>';
+        if (i === 0) return '<td>' + totalLabel + '</td>';
+        // Source column has no aggregate value -- leave its tfoot
+        // cell empty so it doesn't try to render a chip from totals.
+        if (col.type === 'chip' && col.key === 'source') return '<td class="src-cell"></td>';
         // Some keys (like totalUnique, totalRung) live on totals; ATT
         // and abd-wait are weighted on the server.
         return '<td class="num">' + fmtCell(col, state.totals) + '</td>';
@@ -2597,13 +2668,16 @@
     var header = COLUMNS.map(function (c) { return csvEscape(c.label); }).join(',');
     var rows = sorted.map(function (row) {
       return COLUMNS.map(function (col) {
+        if (col.type === 'chip' && col.key === 'source') return csvEscape(sourceChipCsv_(row));
         if (col.type === 'duration') return csvEscape(fmtDuration(row[col.key]));
         return csvEscape(row[col.key]);
       }).join(',');
     });
     if (state.totals) {
       rows.push(COLUMNS.map(function (col, i) {
-        if (i === 0) return csvEscape('Total');
+        if (i === 0) return csvEscape('Total (roster only)');
+        // Source column has no aggregate meaning in the totals row.
+        if (col.type === 'chip' && col.key === 'source') return '';
         if (col.type === 'duration') return csvEscape(fmtDuration(state.totals[col.key]));
         return csvEscape(state.totals[col.key]);
       }).join(','));

@@ -164,10 +164,19 @@ function getDepartmentSummary(req) {
     throw new Error('from must be on or before to.');
   }
 
-  // Scope: 'roster' (default), 'queue', or 'both'.
-  let scope = String((req && req.scope) || 'roster').trim();
+  // Scope: 'roster', 'queue', or 'both' (default).
+  // Phase D (commit pending) changed the default from 'roster' to
+  // 'both' so the agent table surfaces queue-only floaters by
+  // default; the scope toggle stays available for parallel-run
+  // validation but is slated for removal once the new defaults
+  // prove out. Totals row computation also changed -- queue-only
+  // agents (matchedViaQueue && !matchedViaRoster) are EXCLUDED
+  // from the totals sum so dept averages don't get diluted by
+  // floaters. See INV-30 / INV-04 / the totals comment further
+  // down in computeSummary_.
+  let scope = String((req && req.scope) || 'both').trim();
   if (scope !== 'roster' && scope !== 'queue' && scope !== 'both') {
-    scope = 'roster';
+    scope = 'both';
   }
 
   const cache = CacheService.getScriptCache();
@@ -182,7 +191,10 @@ function getDepartmentSummary(req) {
   // snapshot (rendered as "Yesterday's QCD" on My Department).
   // v6: QCD snapshot uses queuesForDept_ rollup so parent depts
   // (Sales / Power / CSR) include their sub-queues' QCD activity.
-  const cacheKey = 'summary:v6:' + dept + ':' + scope + ':' + from + ':' + to;
+  // v7: default scope 'both'; per-row `sourceHome` added for
+  // queue-only floaters; totals filtered to matchedViaRoster=true so
+  // floaters don't dilute dept averages (Phase D).
+  const cacheKey = 'summary:v7:' + dept + ':' + scope + ':' + from + ':' + to;
   const cached = cache.get(cacheKey);
   if (cached) {
     try {
@@ -352,15 +364,31 @@ function computeSummary_(dept, from, to, scope) {
     a.days[dateIso] = true;
   }
 
+  // Build the agent -> first-dept lookup used to populate sourceHome
+  // on queue-only rows (so the My Department table's Source chip can
+  // tell the manager which OTHER dept the floater is actually rostered
+  // on). Computed lazily -- only if there's at least one queue-only
+  // agent in the result -- to avoid scanning every dept's roster on
+  // every cache miss.
+  let firstDeptByAgent = null;
+  const queueOnlyCount = Object.keys(queueOnlyAgents).length;
+  if (queueOnlyCount > 0) {
+    firstDeptByAgent = buildFirstDeptByAgent_();
+  }
+
   // Finalize per-agent rows.
   const rows = [];
   for (const k in acc) {
     if (!Object.prototype.hasOwnProperty.call(acc, k)) continue;
     const a = acc[k];
+    const queueOnly = a.matchedViaQueue && !a.matchedViaRoster;
+    const sourceHome = queueOnly && firstDeptByAgent
+      ? (firstDeptByAgent[a.agent] || null) : null;
     rows.push({
       agent: a.agent,
       matchedViaRoster: a.matchedViaRoster,
       matchedViaQueue: a.matchedViaQueue,
+      sourceHome: sourceHome,
       totalUnique: a.totalUnique,
       totalRung: a.totalRung,
       totalMissed: a.totalMissed,
@@ -394,17 +422,28 @@ function computeSummary_(dept, from, to, scope) {
   // Totals: sum the summables; simple-mean the per-row averages so
   // every "average" column in the totals row uses the same method
   // it uses in the agent rows.
+  //
+  // Phase D: the totals sum only over matchedViaRoster=true rows.
+  // Queue-only floaters (matchedViaQueue && !matchedViaRoster) are
+  // shown in the agent table for visibility but their numbers do
+  // NOT factor into the dept's headline averages. Rationale: a
+  // floater handling 3 calls/day for another dept shouldn't drag
+  // a 30-agent dept's % Answered average. Source chip on each row
+  // makes the inclusion/exclusion visible to managers.
+  const rosterRows = rows.filter(function (r) { return r.matchedViaRoster; });
   const totals = { totalUnique:0, totalRung:0, totalMissed:0, totalAnswered:0, tttSeconds:0 };
-  for (let i = 0; i < rows.length; i++) {
-    totals.totalUnique   += rows[i].totalUnique;
-    totals.totalRung     += rows[i].totalRung;
-    totals.totalMissed   += rows[i].totalMissed;
-    totals.totalAnswered += rows[i].totalAnswered;
-    totals.tttSeconds    += rows[i].tttSeconds;
+  for (let i = 0; i < rosterRows.length; i++) {
+    totals.totalUnique   += rosterRows[i].totalUnique;
+    totals.totalRung     += rosterRows[i].totalRung;
+    totals.totalMissed   += rosterRows[i].totalMissed;
+    totals.totalAnswered += rosterRows[i].totalAnswered;
+    totals.tttSeconds    += rosterRows[i].tttSeconds;
   }
-  totals.attSeconds = avg_(rows, 'attSeconds');
-  totals.avgAbdWaitSeconds = avg_(rows, 'avgAbdWaitSeconds');
-  totals.csrAvgAbdWaitSeconds = avg_(rows, 'csrAvgAbdWaitSeconds');
+  totals.attSeconds = avg_(rosterRows, 'attSeconds');
+  totals.avgAbdWaitSeconds = avg_(rosterRows, 'avgAbdWaitSeconds');
+  totals.csrAvgAbdWaitSeconds = avg_(rosterRows, 'csrAvgAbdWaitSeconds');
+  totals.rosterAgentCount = rosterRows.length;
+  totals.queueOnlyAgentCount = rows.length - rosterRows.length;
 
   // Diagnostics: roster agents with no data in this range; agents
   // matched only via queue extension overlap (not on roster).
@@ -612,6 +651,33 @@ function getRosterForDepartment_(dept) {
  */
 function getAgentsForDepartment_(dept) {
   return getRosterForDepartment_(dept).names;
+}
+
+/**
+ * Builds an { agentName -> firstDeptName } map by iterating every
+ * dept's roster in getAllDepartments_ order and taking the first
+ * dept each name appears on. Used to populate `sourceHome` on
+ * queue-only rows in computeSummary_ so the Source chip can show
+ * "QUEUE · Sales" rather than just "QUEUE" when a floater is
+ * actually rostered elsewhere. Hidden depts (OVERVIEW_HIDDEN_DEPTS)
+ * are still scanned -- they're hidden from the Overview only, not
+ * from the source-home lookup, so a CSR Backup floater appearing
+ * in CSR's table can still be tagged with "QUEUE · CSR Backup".
+ *
+ * Tie-breaker: alphabetical via getAllDepartments_ order (which is
+ * sorted alphabetically). Documented as the established rule for
+ * the source chip.
+ */
+function buildFirstDeptByAgent_() {
+  const out = {};
+  getAllDepartments_().forEach(function (dept) {
+    const roster = getRosterForDepartment_(dept);
+    for (let i = 0; i < roster.names.length; i++) {
+      const name = roster.names[i];
+      if (!out[name]) out[name] = dept;
+    }
+  });
+  return out;
 }
 
 /**

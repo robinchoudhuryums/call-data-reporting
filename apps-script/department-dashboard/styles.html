@@ -700,15 +700,53 @@
     font-size: 12px;
     color: var(--ink);
   }
-  .agents .via-queue td:first-child::after {
-    content: " (queue-only)";
+  /* Phase D: per-row Source chip (replaces the old "(queue-only)"
+     after-text on .via-queue rows). The chip renders inside a
+     dedicated Source column so it sits in its own cell rather than
+     dangling off the Agent name. Three variants -- ROSTER (accent),
+     BOTH (good), QUEUE (warn) -- match the three matched-via states
+     the server returns per row. The small dot prefix gives the chip
+     visual weight at small sizes. */
+  .src-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 8px;
+    border-radius: 999px;
     font-family: var(--mono);
     font-size: 10px;
     text-transform: uppercase;
     letter-spacing: 0.18em;
-    color: var(--warn);
     font-weight: 500;
-    margin-left: 6px;
+    white-space: nowrap;
+  }
+  .src-chip .src-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+    flex-shrink: 0;
+  }
+  .src-chip-roster {
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+  .src-chip-both {
+    background: var(--good-soft);
+    color: var(--good);
+  }
+  .src-chip-queue {
+    background: var(--warn-soft);
+    color: var(--warn);
+  }
+  /* Source column cell: tighter padding + left-align so the chip
+     hugs the agent name's column without being pushed to a
+     numeric-style right-align. */
+  .agents td.src-cell,
+  .agents th.src-cell {
+    text-align: left;
+    padding-left: 8px;
+    padding-right: 8px;
   }
 
   /* Access denied — warn-stripe document panel. */
