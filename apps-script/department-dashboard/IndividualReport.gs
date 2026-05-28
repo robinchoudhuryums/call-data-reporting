@@ -57,7 +57,15 @@
 // TEAM_AVG_EXCLUDES[dept]. Pure additive field; no aggregation
 // change. Bump to keep response shape consistent across cached
 // + fresh requests.
-const INDIVIDUAL_CACHE_KEY_PREFIX = 'individual:v7';
+// v8: INV-53 expansion -- input gate relaxed to accept floaters
+// (queue-only agents), per-agent matchedViaRoster / matchedViaQueue /
+// sourceHomes added, summaryData filtered to drop names that match
+// neither path (security against crafted off-dept names). Team-avg
+// accumulator unchanged (already gated by rosterSet[agent], so
+// floaters were already excluded from the team-avg numerator +
+// denominator -- the v7 -> v8 change only widens what can APPEAR in
+// summaryData).
+const INDIVIDUAL_CACHE_KEY_PREFIX = 'individual:v8';
 
 function getIndividualReportInit(req) {
   const email = Session.getActiveUser().getEmail();
@@ -82,14 +90,19 @@ function getIndividualReportInit(req) {
   const firstOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 
   // Optional: when from/to are passed, also return the subset of
-  // roster names with any rung/answered/missed activity in range.
-  // Lets the client show an Active / Inactive split in the picker
-  // so managers can pre-filter to people who actually had data.
+  // roster names with any rung/answered/missed activity in range,
+  // PLUS the active floaters (queue-only matched). The client picker
+  // shows three groups: Active in range / No activity / Floaters --
+  // managers can include floaters in their report and the server-side
+  // team-avg still excludes them per INV-53.
   let activeAgents = null;
+  let activeFloaters = null;
   const from = String((req && req.from) || '').trim();
   const to   = String((req && req.to)   || '').trim();
   if (isIsoDate_(from) && isIsoDate_(to) && from <= to) {
-    activeAgents = computeActiveAgentsInRange_(dept, from, to, roster);
+    const active = computeActiveAgentsInRange_(dept, from, to, roster);
+    activeAgents   = active.agents;
+    activeFloaters = active.floaters;
   }
 
   return {
@@ -97,7 +110,8 @@ function getIndividualReportInit(req) {
     agents: roster.names.slice().sort(),
     defaultStart: fmt(firstOfMonth),
     defaultEnd: fmt(now),
-    activeAgents: activeAgents,
+    activeAgents:   activeAgents,
+    activeFloaters: activeFloaters,
   };
 }
 
@@ -142,22 +156,24 @@ function getIndividualReport(req) {
   if (!Array.isArray(rawAgents) || rawAgents.length === 0) {
     throw new Error('Select at least one agent.');
   }
-  // Trim, dedupe, and constrain to the dept roster -- prevents a
-  // crafted client request from pulling another dept's agent's data.
+  // Trim + dedupe. Phase D+1 (INV-53 expansion): roster-membership is
+  // NO LONGER the security gate at this layer -- floaters can be
+  // selected for the report too. Off-dept names that match neither
+  // the roster nor the dept's queue extensions are silently dropped
+  // by computeIndividualReport_'s row scan (security preserved: a
+  // crafted name from a different dept that never touched this
+  // dept's queue produces no rows + falls out of summaryData).
   const roster = getRosterForDepartment_(dept);
-  const rosterSet = {};
-  for (let i = 0; i < roster.names.length; i++) rosterSet[roster.names[i]] = true;
   const seen = {};
   const selectedAgents = [];
   for (let i = 0; i < rawAgents.length; i++) {
     const n = String(rawAgents[i] || '').trim();
     if (!n || seen[n]) continue;
-    if (!rosterSet[n]) continue;  // silently drop off-roster names
     seen[n] = true;
     selectedAgents.push(n);
   }
   if (selectedAgents.length === 0) {
-    throw new Error('No selected agent is on this department\'s roster.');
+    throw new Error('No selected agent provided.');
   }
   // MD5 hash of the agent list keeps the cache key length-bounded
   // (CacheService rejects keys > 250 chars; raw join blows past
@@ -290,6 +306,27 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
   const excludeList = (TEAM_AVG_EXCLUDES && TEAM_AVG_EXCLUDES[dept]) || [];
   for (let i = 0; i < excludeList.length; i++) excludedAgents[excludeList[i]] = true;
 
+  // Floater detection (Phase D+1 / INV-53 expansion). Build the dept's
+  // queue extension set once; per-agent matchedViaRoster + matchedViaQueue
+  // flags drive the summaryData QUEUE chip rendering. Floaters
+  // (matchedViaQueue && !matchedViaRoster) appear in summaryData /
+  // trend charts but are EXCLUDED from the team-avg accumulator
+  // below by the existing `rosterSet[agent]` gate (same rule
+  // Data.gs::computeSummary_ enforces for My Department).
+  const deptQueueResult = getDeptQueueExts_(dept, rosterSet, values);
+  const deptQueueExts = deptQueueResult.exts;
+  // matchedViaRoster is true for any selected agent who's on the
+  // dept roster, regardless of whether they have rows in range --
+  // so a manager who picks a zero-activity roster member still
+  // sees their card. matchedViaQueue is populated lazily as we
+  // observe queue-overlap rows.
+  const agentMatchedViaRoster = {};
+  const agentMatchedViaQueue  = {};
+  for (let i = 0; i < selectedAgents.length; i++) {
+    const a = selectedAgents[i];
+    if (rosterSet[a]) agentMatchedViaRoster[a] = true;
+  }
+
   for (let i = 0; i < values.length; i++) {
     const r  = values[i];
     const rd = displays[i];
@@ -308,6 +345,17 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
 
     // Fast-path: row touches no window we care about.
     if (!inUserRange && !inTrendRange && !inPriorRange) continue;
+
+    // Tag floaters: a selected agent NOT on the roster gets
+    // matchedViaQueue=true if any of their rows' col-D extensions
+    // overlap the dept's queue set. Only relevant for non-roster
+    // selections (roster flag was pre-populated above).
+    if (selectedSet[agent] && !rosterSet[agent] && !agentMatchedViaQueue[agent]) {
+      const rowExts = parseExtensions_(r[HISTORICAL_COLS.QUEUE_EXT - 1]);
+      for (let j = 0; j < rowExts.length; j++) {
+        if (deptQueueExts[rowExts[j]]) { agentMatchedViaQueue[agent] = true; break; }
+      }
+    }
 
     const rung     = Number(r[HISTORICAL_COLS.TOTAL_RUNG - 1])     || 0;
     const missed   = Number(r[HISTORICAL_COLS.TOTAL_MISSED - 1])   || 0;
@@ -433,7 +481,27 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
   //   insights -- rules-based notable comparisons vs team avg
   //   priorStats / priorRaw -- same-agent prior-window stats when
   //     hasPrior; the client renders a vs-prior delta badge.
-  const summaryData = selectedAgents.map(function (agent) {
+  //   matchedViaRoster / matchedViaQueue / sourceHomes -- INV-53
+  //     floater-awareness fields. Floaters render with the QUEUE
+  //     chip and are EXCLUDED from teamTotal (gated above by the
+  //     existing rosterSet[agent] check).
+  // Phase D+1 / INV-53: filter out selected names that match
+  // neither path -- a crafted off-dept name with no rows would
+  // otherwise show as a zero-stats card. Roster members ALWAYS
+  // pass since agentMatchedViaRoster was pre-populated.
+  const visibleAgents = selectedAgents.filter(function (a) {
+    return agentMatchedViaRoster[a] || agentMatchedViaQueue[a];
+  });
+  // Build sourceHomes for any floaters so the QUEUE chip can show
+  // their other-dept home list. Lazy; only runs if floaters exist.
+  let irDeptsByAgent = null;
+  for (let i = 0; i < visibleAgents.length; i++) {
+    if (agentMatchedViaQueue[visibleAgents[i]] && !agentMatchedViaRoster[visibleAgents[i]]) {
+      irDeptsByAgent = buildDeptsByAgent_();
+      break;
+    }
+  }
+  const summaryData = visibleAgents.map(function (agent) {
     const s = summaryStats[agent];
     const agPct = s.rung > 0 ? (s.answered / s.rung) * 100 : 0;
     const agTtt = s.answered > 0 ? s.ttt      / s.answered : 0;
@@ -469,6 +537,11 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
       };
     }
 
+    const matchedViaRoster = !!agentMatchedViaRoster[agent];
+    const matchedViaQueue  = !!agentMatchedViaQueue[agent];
+    const sourceHomes = (matchedViaQueue && !matchedViaRoster && irDeptsByAgent)
+      ? (irDeptsByAgent[agent] || [])
+      : [];
     return {
       name: agent,
       // excludedFromTeamAvg (E4, Phase E): true when this agent
@@ -478,6 +551,13 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
       // agent's row so the exclusion is visible to managers reading
       // the report.
       excludedFromTeamAvg: !!excludedAgents[agent],
+      // INV-53 floater-awareness fields. matchedViaRoster=true for
+      // roster members; matchedViaQueue=true for agents whose rows
+      // had queue-overlap with this dept's queue extensions. Floaters
+      // (queue-only) render with the QUEUE chip + sourceHomes suffix.
+      matchedViaRoster: matchedViaRoster,
+      matchedViaQueue:  matchedViaQueue,
+      sourceHomes:      sourceHomes,
       stats: {
         rung:     s.rung,
         missed:   s.missed,
@@ -547,6 +627,14 @@ function emptyIndividualReport_(dept, from, to, selectedAgents, masterMonthKeys)
   const emptyExcludedSet = {};
   const emptyExcludeList = (TEAM_AVG_EXCLUDES && TEAM_AVG_EXCLUDES[dept]) || [];
   for (let i = 0; i < emptyExcludeList.length; i++) emptyExcludedSet[emptyExcludeList[i]] = true;
+  // Per INV-53: also surface matchedViaRoster on the empty shape so
+  // the UI can still render an unflagged card. matchedViaQueue is
+  // always false here because there's no Raw Data to detect overlap
+  // against -- a floater selection in an empty range falls out
+  // entirely (no card rendered).
+  const emptyRoster = getRosterForDepartment_(dept);
+  const emptyRosterSet = {};
+  for (let i = 0; i < emptyRoster.names.length; i++) emptyRosterSet[emptyRoster.names[i]] = true;
   const labels = (masterMonthKeys || []).map(function (m) {
     const p = m.split('-');
     const d = new Date(Number(p[0]), Number(p[1]) - 1, 1);
@@ -570,10 +658,17 @@ function emptyIndividualReport_(dept, from, to, selectedAgents, masterMonthKeys)
     dateLabel: from + ' - ' + to,
     priorDateLabel: null,
     trendData: { labels: labels, datasets: datasets },
-    summaryData: selectedAgents.map(function (a) {
+    summaryData: selectedAgents.filter(function (a) {
+      // Empty range: only roster members render (floaters need actual
+      // rows to be confirmed as matched via queue).
+      return !!emptyRosterSet[a];
+    }).map(function (a) {
       return {
         name: a,
         excludedFromTeamAvg: !!emptyExcludedSet[a],
+        matchedViaRoster: true,
+        matchedViaQueue:  false,
+        sourceHomes:      [],
         stats: { rung: 0, missed: 0, answered: 0, pct: '0.0%', ttt: '0:00:00', att: '0:00:00' },
         raw:   { rung: 0, missed: 0, answered: 0, pct: 0, ttt: 0, att: 0 },
         share: { rung: '0.0%', answered: '0.0%', missed: '0.0%',

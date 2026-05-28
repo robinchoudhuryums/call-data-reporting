@@ -1482,6 +1482,16 @@
     font-style: italic;
   }
   .ir-agent-group-muted .ir-agent-item input { accent-color: var(--muted); }
+  /* QUEUE chip embedded in each floater picker item (INV-53). Lives
+     to the right of the agent name; smaller-than-default font-size
+     to keep the picker row compact. Reuses .src-chip-queue colors
+     from My Department's Source column for visual consistency. */
+  .ir-agent-floater-chip {
+    margin-left: 6px;
+    font-size: 9px;
+    padding: 1px 6px;
+    font-style: normal;
+  }
 
   /* Collapsible inactive group. Hides the default disclosure marker
      and renders our own caret next to the label that rotates when

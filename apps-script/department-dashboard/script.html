@@ -587,9 +587,9 @@
         // Admin switched depts; all per-report cached agent
         // rosters are now stale -- wipe so the next modal open
         // refetches against the new dept.
-        irLastRoster = { dept: null, agents: [], activeAgents: null, rangeKey: '' };
-        prLastRoster = { dept: null, agents: [], activeAgents: null, rangeKey: '' };
-        crLastRoster = { dept: null, agents: [], activeAgents: null, rangeKey: '' };
+        irLastRoster = { dept: null, agents: [], activeAgents: null, activeFloaters: null, rangeKey: '' };
+        prLastRoster = { dept: null, agents: [], activeAgents: null, activeFloaters: null, rangeKey: '' };
+        crLastRoster = { dept: null, agents: [], activeAgents: null, activeFloaters: null, rangeKey: '' };
         refresh();
         // If the Overview page is currently visible, re-render its
         // viewer-personalized bits (hero + user-table) so they
@@ -2840,7 +2840,7 @@
   // group". `rangeKey` is the (from|to) the activeAgents were
   // computed for, so we can skip a re-fetch when neither input
   // has changed.
-  let irLastRoster = { dept: null, agents: [], activeAgents: null, rangeKey: '' };
+  let irLastRoster = { dept: null, agents: [], activeAgents: null, activeFloaters: null, rangeKey: '' };
   let irActiveFetchTimer = null;
   // Persisted user preferences (mirrors the Performance Report's
   // prefs model). Restored on modal init, saved on every state
@@ -3148,7 +3148,7 @@
 
     if (irLastRoster.dept === dept && irLastRoster.agents.length
         && irLastRoster.rangeKey === rangeKey) {
-      renderIrAgentList(irLastRoster.agents, irLastRoster.activeAgents);
+      renderIrAgentList(irLastRoster.agents, irLastRoster.activeAgents, irLastRoster.activeFloaters);
       return;
     }
     $('ir-agent-loader').style.display = '';
@@ -3160,10 +3160,11 @@
         irLastRoster = {
           dept: dept,
           agents: (data && data.agents) || [],
-          activeAgents: (data && data.activeAgents) || null,
+          activeAgents:   (data && data.activeAgents)   || null,
+          activeFloaters: (data && data.activeFloaters) || null,
           rangeKey: rangeKey,
         };
-        renderIrAgentList(irLastRoster.agents, irLastRoster.activeAgents);
+        renderIrAgentList(irLastRoster.agents, irLastRoster.activeAgents, irLastRoster.activeFloaters);
       })
       .withFailureHandler(function (err) {
         $('ir-agent-loader').textContent = 'Error loading roster: '
@@ -3191,11 +3192,12 @@
 
       google.script.run
         .withSuccessHandler(function (data) {
-          irLastRoster.activeAgents = (data && data.activeAgents) || null;
+          irLastRoster.activeAgents   = (data && data.activeAgents)   || null;
+          irLastRoster.activeFloaters = (data && data.activeFloaters) || null;
           irLastRoster.rangeKey = rangeKey;
           // Preserve current selection across the regroup.
           const checked = irGetCheckedAgents_($('ir-agent-list'));
-          renderIrAgentList(irLastRoster.agents, irLastRoster.activeAgents);
+          renderIrAgentList(irLastRoster.agents, irLastRoster.activeAgents, irLastRoster.activeFloaters);
           irApplyCheckedAgents_($('ir-agent-list'), checked);
           updateIrGenerateEnabled();
         })
@@ -3210,7 +3212,7 @@
    * single flat list. Used by both the main form picker and the
    * results-header edit popover.
    */
-  function renderIrAgentList(agents, activeAgents) {
+  function renderIrAgentList(agents, activeAgents, activeFloaters) {
     const list = $('ir-agent-list');
     $('ir-agent-loader').style.display = 'none';
     if (!agents.length) {
@@ -3219,7 +3221,7 @@
       $('ir-generate-btn').disabled = true;
       return;
     }
-    list.innerHTML = irBuildAgentListHtml_(agents, activeAgents);
+    list.innerHTML = irBuildAgentListHtml_(agents, activeAgents, activeFloaters);
     list.style.display = '';
 
     if (irListChangeHandler_) list.removeEventListener('change', irListChangeHandler_);
@@ -3236,7 +3238,7 @@
     updateIrGenerateEnabled();
   }
 
-  function irBuildAgentListHtml_(agents, activeAgents) {
+  function irBuildAgentListHtml_(agents, activeAgents, activeFloaters) {
     // No activity info or no inactive members -> flat list.
     if (!activeAgents) return irAgentItemsHtml_(agents);
     const activeSet = {};
@@ -3246,7 +3248,8 @@
     for (let i = 0; i < agents.length; i++) {
       (activeSet[agents[i]] ? active : inactive).push(agents[i]);
     }
-    if (!inactive.length) return irAgentItemsHtml_(active);
+    const floaters = Array.isArray(activeFloaters) ? activeFloaters : [];
+    if (!inactive.length && !floaters.length) return irAgentItemsHtml_(active);
 
     let html = '';
     if (active.length) {
@@ -3260,17 +3263,53 @@
     // collapsed state cleans up the picker. Search auto-expands it
     // (see irFilterAgentList_) when a query matches an inactive
     // name.
-    html += '<details class="ir-agent-details">'
-          +   '<summary class="ir-agent-group-label ir-agent-group-label-muted">'
-          +     'No activity in range <span class="ir-agent-group-count">(' + inactive.length + ')</span>'
-          +   '</summary>'
-          +   '<div class="ir-agent-group ir-agent-group-muted">' + irAgentItemsHtml_(inactive) + '</div>'
-          + '</details>';
+    if (inactive.length) {
+      html += '<details class="ir-agent-details">'
+            +   '<summary class="ir-agent-group-label ir-agent-group-label-muted">'
+            +     'No activity in range <span class="ir-agent-group-count">(' + inactive.length + ')</span>'
+            +   '</summary>'
+            +   '<div class="ir-agent-group ir-agent-group-muted">' + irAgentItemsHtml_(inactive) + '</div>'
+            + '</details>';
+    }
+    // Floaters group (INV-53 expansion). Queue-only agents matched
+    // into this dept via shared-queue extension overlap, not on the
+    // dept's roster. Collapsed by default like the inactive group.
+    // Items render with the QUEUE chip + sourceHomes suffix from
+    // the picker so managers see immediately which floater belongs
+    // to which other dept. Picking a floater sends their name in
+    // agents[] like any other; the server flags them and excludes
+    // their numbers from team-avg.
+    if (floaters.length) {
+      html += '<details class="ir-agent-details">'
+            +   '<summary class="ir-agent-group-label ir-agent-group-label-muted">'
+            +     'Floaters (queue-only) <span class="ir-agent-group-count">(' + floaters.length + ')</span>'
+            +   '</summary>'
+            +   '<div class="ir-agent-group ir-agent-group-muted">' + irAgentItemsHtml_(floaters) + '</div>'
+            + '</details>';
+    }
     return html;
   }
 
+  // Accepts either a plain string[] of agent names, OR an array of
+  // { name, sourceHomes } objects (the floaters shape). Object items
+  // render with a small QUEUE chip + sourceHomes suffix so the picker
+  // mirrors the My Department Source-column chip rendering.
   function irAgentItemsHtml_(agents) {
     return agents.map(function (a) {
+      if (a && typeof a === 'object' && a.name) {
+        const safe = escapeHtml(a.name);
+        const homes = Array.isArray(a.sourceHomes) ? a.sourceHomes : [];
+        const suffix = homes.length
+          ? ' &middot; ' + homes.map(escapeHtml).join(', ')
+          : '';
+        return '<label class="ir-agent-item">'
+             +   '<input type="checkbox" class="ir-agent-cb" value="' + safe + '"> '
+             +   safe
+             +   ' <span class="src-chip src-chip-queue ir-agent-floater-chip">'
+             +     '<span class="src-dot"></span>QUEUE' + suffix
+             +   '</span>'
+             + '</label>';
+      }
       const safe = escapeHtml(a);
       return '<label class="ir-agent-item">'
            +   '<input type="checkbox" class="ir-agent-cb" value="' + safe + '"> '
@@ -3575,7 +3614,7 @@
     if (!pop) return;
     const list = $('ir-edit-list');
     if (!list) return;
-    list.innerHTML = irBuildAgentListHtml_(irLastRoster.agents || [], irLastRoster.activeAgents);
+    list.innerHTML = irBuildAgentListHtml_(irLastRoster.agents || [], irLastRoster.activeAgents, irLastRoster.activeFloaters);
     // Pre-check the currently-reported agents.
     const current = (irLastData && irLastData.meta && irLastData.meta.agents) || [];
     irApplyCheckedAgents_(list, current);
@@ -3726,9 +3765,17 @@
       const excludedPill = agent.excludedFromTeamAvg
         ? ' <span class="ir-excluded-pill" title="Per TEAM_AVG_EXCLUDES, this agent\'s numbers are subtracted from BOTH numerator and denominator of the team average (INV-26).">EXCLUDED FROM TEAM AVG</span>'
         : '';
+      // Floater QUEUE chip (INV-53 expansion). Only floaters get a
+      // chip on the IR card -- roster agents are implicit (no chip
+      // would clutter the card). Bare QUEUE for floaters on no
+      // roster, QUEUE · <home depts> for multi-rostered floaters.
+      // Reuses sourceChipHtml_ from My Dept's Source column path.
+      const isFloater = agent.matchedViaQueue && !agent.matchedViaRoster;
+      const floaterPill = isFloater ? sourceChipHtml_(agent) : '';
       return '<div class="ir-summary-card">'
            +   '<div class="ir-summary-title">'
            +     safeName
+           +     (floaterPill ? ' ' + floaterPill : '')
            +     excludedPill
            +     ' <span class="ir-vs">vs Team Avg'
            +       (priorStatsAvailable ? ' &middot; vs Prior period' : '')
@@ -4455,7 +4502,7 @@
   // grouping); export menu wires to the same html2canvas-based
   // image capture pattern.
 
-  let prLastRoster = { dept: null, agents: [], activeAgents: null, rangeKey: '' };
+  let prLastRoster = { dept: null, agents: [], activeAgents: null, activeFloaters: null, rangeKey: '' };
   let prLastData = null;
   let prActiveFetchTimer = null;
   let prChartInstances = [];
@@ -4851,7 +4898,7 @@
 
     if (prLastRoster.dept === dept && prLastRoster.agents.length
         && prLastRoster.rangeKey === rangeKey) {
-      renderPrAgentList(prLastRoster.agents, prLastRoster.activeAgents);
+      renderPrAgentList(prLastRoster.agents, prLastRoster.activeAgents, prLastRoster.activeFloaters);
       return;
     }
     $('pr-agent-loader').style.display = '';
@@ -4863,10 +4910,11 @@
         prLastRoster = {
           dept: dept,
           agents: (data && data.agents) || [],
-          activeAgents: (data && data.activeAgents) || null,
+          activeAgents:   (data && data.activeAgents)   || null,
+          activeFloaters: (data && data.activeFloaters) || null,
           rangeKey: rangeKey,
         };
-        renderPrAgentList(prLastRoster.agents, prLastRoster.activeAgents);
+        renderPrAgentList(prLastRoster.agents, prLastRoster.activeAgents, prLastRoster.activeFloaters);
       })
       .withFailureHandler(function (err) {
         $('pr-agent-loader').textContent = 'Error loading roster: '
@@ -4888,10 +4936,11 @@
 
       google.script.run
         .withSuccessHandler(function (data) {
-          prLastRoster.activeAgents = (data && data.activeAgents) || null;
+          prLastRoster.activeAgents   = (data && data.activeAgents)   || null;
+          prLastRoster.activeFloaters = (data && data.activeFloaters) || null;
           prLastRoster.rangeKey = rangeKey;
           const checked = irGetCheckedAgents_($('pr-agent-list'));
-          renderPrAgentList(prLastRoster.agents, prLastRoster.activeAgents);
+          renderPrAgentList(prLastRoster.agents, prLastRoster.activeAgents, prLastRoster.activeFloaters);
           irApplyCheckedAgents_($('pr-agent-list'), checked);
           prUpdateGenerateEnabled_();
         })
@@ -4900,7 +4949,7 @@
     }, 350);
   }
 
-  function renderPrAgentList(agents, activeAgents) {
+  function renderPrAgentList(agents, activeAgents, activeFloaters) {
     const list = $('pr-agent-list');
     $('pr-agent-loader').style.display = 'none';
     if (!agents.length) {
@@ -4909,7 +4958,7 @@
       $('pr-generate-btn').disabled = true;
       return;
     }
-    list.innerHTML = irBuildAgentListHtml_(agents, activeAgents);
+    list.innerHTML = irBuildAgentListHtml_(agents, activeAgents, activeFloaters);
     list.style.display = '';
     if (prListChangeHandler_) list.removeEventListener('change', prListChangeHandler_);
     prListChangeHandler_ = function () {
@@ -5156,8 +5205,14 @@
       const share = teamAnswered > 0
         ? ((a.raw.answered / teamAnswered) * 100).toFixed(1) + '%'
         : '-';
+      // INV-53 floater chip: floaters appear in the table but are
+      // excluded from the team-avg numerator + denominator. Surface
+      // the QUEUE chip next to the name so the row's exclusion is
+      // visible to the manager reading the report.
+      const isFloater = a.matchedViaQueue && !a.matchedViaRoster;
+      const floaterPill = isFloater ? ' ' + sourceChipHtml_(a) : '';
       return '<tr>'
-           +   '<td>' + escapeHtml(a.name) + '</td>'
+           +   '<td>' + escapeHtml(a.name) + floaterPill + '</td>'
            +   '<td class="num">' + a.stats.rung + '</td>'
            +   '<td class="num">' + a.stats.missed + '</td>'
            +   '<td class="num">' + a.stats.answered + '</td>'
@@ -5674,7 +5729,7 @@
   // tab strip), and a per-agent card showing all six metrics in a
   // P1 vs P2 vs delta table.
 
-  let crLastRoster = { dept: null, agents: [], activeAgents: null, rangeKey: '' };
+  let crLastRoster = { dept: null, agents: [], activeAgents: null, activeFloaters: null, rangeKey: '' };
   let crLastData = null;
   let crActiveFetchTimer = null;
   let crChartInstance = null;
@@ -6016,7 +6071,7 @@
     if (!pop) return;
     const list = $('cr-edit-list');
     if (!list) return;
-    list.innerHTML = irBuildAgentListHtml_(crLastRoster.agents || [], crLastRoster.activeAgents);
+    list.innerHTML = irBuildAgentListHtml_(crLastRoster.agents || [], crLastRoster.activeAgents, crLastRoster.activeFloaters);
     const current = (crLastData && crLastData.meta && crLastData.meta.agents) || [];
     irApplyCheckedAgents_(list, current);
     crUpdateEditApplyEnabled_();
@@ -6227,7 +6282,7 @@
 
     if (crLastRoster.dept === dept && crLastRoster.agents.length
         && crLastRoster.rangeKey === rangeKey) {
-      renderCrAgentList(crLastRoster.agents, crLastRoster.activeAgents);
+      renderCrAgentList(crLastRoster.agents, crLastRoster.activeAgents, crLastRoster.activeFloaters);
       return;
     }
     $('cr-agent-loader').style.display = '';
@@ -6239,10 +6294,11 @@
         crLastRoster = {
           dept: dept,
           agents: (data && data.agents) || [],
-          activeAgents: (data && data.activeAgents) || null,
+          activeAgents:   (data && data.activeAgents)   || null,
+          activeFloaters: (data && data.activeFloaters) || null,
           rangeKey: rangeKey,
         };
-        renderCrAgentList(crLastRoster.agents, crLastRoster.activeAgents);
+        renderCrAgentList(crLastRoster.agents, crLastRoster.activeAgents, crLastRoster.activeFloaters);
       })
       .withFailureHandler(function (err) {
         $('cr-agent-loader').textContent = 'Error loading roster: '
@@ -6270,10 +6326,11 @@
 
       google.script.run
         .withSuccessHandler(function (data) {
-          crLastRoster.activeAgents = (data && data.activeAgents) || null;
+          crLastRoster.activeAgents   = (data && data.activeAgents)   || null;
+          crLastRoster.activeFloaters = (data && data.activeFloaters) || null;
           crLastRoster.rangeKey = rangeKey;
           const checked = irGetCheckedAgents_($('cr-agent-list'));
-          renderCrAgentList(crLastRoster.agents, crLastRoster.activeAgents);
+          renderCrAgentList(crLastRoster.agents, crLastRoster.activeAgents, crLastRoster.activeFloaters);
           irApplyCheckedAgents_($('cr-agent-list'), checked);
           crUpdateGenerateEnabled_();
         })
@@ -6285,7 +6342,7 @@
     }, 350);
   }
 
-  function renderCrAgentList(agents, activeAgents) {
+  function renderCrAgentList(agents, activeAgents, activeFloaters) {
     const list = $('cr-agent-list');
     $('cr-agent-loader').style.display = 'none';
     if (!agents.length) {
@@ -6294,7 +6351,7 @@
       $('cr-generate-btn').disabled = true;
       return;
     }
-    list.innerHTML = irBuildAgentListHtml_(agents, activeAgents);
+    list.innerHTML = irBuildAgentListHtml_(agents, activeAgents, activeFloaters);
     list.style.display = '';
     if (crListChangeHandler_) list.removeEventListener('change', crListChangeHandler_);
     crListChangeHandler_ = function () {
@@ -6642,9 +6699,16 @@
       crCardRow_('Avg ATT',     a.p1.formatted.att,      a.p2.formatted.att,      a.deltas.att,
                   'neu', null, null, meta, 'rate'),
     ].join('');
+    // INV-53 floater chip: floaters appear in CR but are excluded
+    // from teamP1 / teamP2 dept totals. The QUEUE chip next to the
+    // agent name surfaces this so the manager understands why their
+    // numbers don't move the dept aggregate.
+    const isFloater = a.matchedViaQueue && !a.matchedViaRoster;
+    const floaterPill = isFloater ? ' ' + sourceChipHtml_(a) : '';
     return '<div class="cr-agent-card ' + dirClass + '"' + debugAttrs + '>'
          +   '<div class="cr-agent-card-header">'
          +     '<span class="cr-agent-name">' + safe + '</span>'
+         +     floaterPill
          +     vsTeam
          +     '<button type="button" class="ir-copy-tsv" data-agent="' + safe + '">Copy data</button>'
          +   '</div>'

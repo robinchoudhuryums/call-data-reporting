@@ -40,7 +40,12 @@
 // Bump on response-shape or aggregation-rule changes so stale
 // entries don't bleed in. CLAUDE.md INV-30 is the canonical
 // current-version list -- keep this constant aligned with that.
-const COMPARE_RANGES_CACHE_KEY_PREFIX = 'compareRanges:v3';
+// v4: INV-53 expansion -- input gate relaxed to accept floaters;
+// per-agent matchedViaRoster / matchedViaQueue / sourceHomes added;
+// team accumulators (teamP1 / teamP2) gated on matchedViaRoster so
+// floaters appear in agentData but don't dilute dept totals.
+// agentData filtered to drop crafted off-dept names.
+const COMPARE_RANGES_CACHE_KEY_PREFIX = 'compareRanges:v4';
 
 function getCompareRangesInit(req) {
   const email = Session.getActiveUser().getEmail();
@@ -81,6 +86,7 @@ function getCompareRangesInit(req) {
   // tolerated too: `computeActiveAgentsInRange_` will simply find
   // no matching rows and return [].
   let activeAgents = null;
+  let activeFloaters = null;
   const p1From = String((req && req.p1From) || '').trim();
   const p1To   = String((req && req.p1To)   || '').trim();
   const p2From = String((req && req.p2From) || '').trim();
@@ -90,7 +96,9 @@ function getCompareRangesInit(req) {
       && p1From <= p1To && p2From <= p2To) {
     const unionFrom = (p1From < p2From) ? p1From : p2From;
     const unionTo   = (p1To   > p2To)   ? p1To   : p2To;
-    activeAgents = computeActiveAgentsInRange_(dept, unionFrom, unionTo, roster);
+    const active = computeActiveAgentsInRange_(dept, unionFrom, unionTo, roster);
+    activeAgents   = active.agents;
+    activeFloaters = active.floaters;
   }
 
   return {
@@ -102,7 +110,8 @@ function getCompareRangesInit(req) {
       p2From: fmt(firstOfMonth),
       p2To:   fmt(now),
     },
-    activeAgents: activeAgents,
+    activeAgents:   activeAgents,
+    activeFloaters: activeFloaters,
   };
 }
 
@@ -138,18 +147,21 @@ function getCompareRanges(req) {
     throw new Error('Select at least one agent.');
   }
   const roster = getRosterForDepartment_(dept);
-  const rosterSet = {};
-  for (let i = 0; i < roster.names.length; i++) rosterSet[roster.names[i]] = true;
+  // Phase D+1 (INV-53 expansion): drop the roster-only input gate so
+  // floaters can be included in the comparison. Off-dept crafted
+  // names with no queue overlap fall out in computeCompareRanges_
+  // (zero rows, dropped from agentData). Team accumulators below
+  // gate on matchedViaRoster so floaters never dilute dept totals.
   const seen = {};
   const selectedAgents = [];
   for (let i = 0; i < rawAgents.length; i++) {
     const n = String(rawAgents[i] || '').trim();
-    if (!n || seen[n] || !rosterSet[n]) continue;
+    if (!n || seen[n]) continue;
     seen[n] = true;
     selectedAgents.push(n);
   }
   if (selectedAgents.length === 0) {
-    throw new Error('No selected agent is on this department\'s roster.');
+    throw new Error('No selected agent provided.');
   }
   // MD5 hash keeps the cache key length-bounded (CacheService rejects
   // keys > 250 chars; raw join blows past that on big rosters like
@@ -186,6 +198,19 @@ function computeCompareRanges_(dept, selectedAgents,
                                p1From, p1To, p2From, p2To, roster) {
   const selectedSet = {};
   for (let i = 0; i < selectedAgents.length; i++) selectedSet[selectedAgents[i]] = true;
+  const rosterSet = {};
+  for (let i = 0; i < roster.names.length; i++) rosterSet[roster.names[i]] = true;
+
+  // Floater tracking (Phase D+1 / INV-53 expansion). matchedViaRoster
+  // is pre-populated for selected roster members so zero-call picks
+  // still render. matchedViaQueue is set lazily when we observe a
+  // queue-overlap row. Team accumulators below gate on matchedViaRoster
+  // so floaters appear in agentData but don't dilute dept totals.
+  const agentMatchedViaRoster = {};
+  const agentMatchedViaQueue  = {};
+  for (let i = 0; i < selectedAgents.length; i++) {
+    if (rosterSet[selectedAgents[i]]) agentMatchedViaRoster[selectedAgents[i]] = true;
+  }
 
   // Per-agent buckets, separated by period. att_sum = sum(att *
   // answered) so weighted ATT = att_sum / answered.
@@ -212,6 +237,10 @@ function computeCompareRanges_(dept, selectedAgents,
   const values   = range.getValues();
   const displays = range.getDisplayValues();
 
+  // Dept's queue ext set for floater detection.
+  const deptQueueResult = getDeptQueueExts_(dept, rosterSet, values);
+  const deptQueueExts = deptQueueResult.exts;
+
   for (let i = 0; i < values.length; i++) {
     const r  = values[i];
     const rd = displays[i];
@@ -221,6 +250,14 @@ function computeCompareRanges_(dept, selectedAgents,
     if (!agent || !selectedSet[agent]) continue;
     // Skip queue-sentinel rows.
     if (/^A_Q_/.test(agent) || agent === 'Backup CSR') continue;
+
+    // Floater detection: confirm queue-overlap for non-roster selections.
+    if (!rosterSet[agent] && !agentMatchedViaQueue[agent]) {
+      const rowExts = parseExtensions_(r[HISTORICAL_COLS.QUEUE_EXT - 1]);
+      for (let j = 0; j < rowExts.length; j++) {
+        if (deptQueueExts[rowExts[j]]) { agentMatchedViaQueue[agent] = true; break; }
+      }
+    }
 
     const inP1 = (dateIso >= p1From && dateIso <= p1To);
     const inP2 = (dateIso >= p2From && dateIso <= p2To);
@@ -246,15 +283,35 @@ function computeCompareRanges_(dept, selectedAgents,
   }
 
   // ── Per-agent display + deltas ─────────────────────────────────
-  const agentData = selectedAgents.map(function (agent) {
+  // INV-53: drop crafted off-dept names (no roster, no queue overlap).
+  const visibleAgents = selectedAgents.filter(function (a) {
+    return agentMatchedViaRoster[a] || agentMatchedViaQueue[a];
+  });
+  // Lazy sourceHomes lookup for floaters.
+  let crDeptsByAgent = null;
+  for (let i = 0; i < visibleAgents.length; i++) {
+    if (agentMatchedViaQueue[visibleAgents[i]] && !agentMatchedViaRoster[visibleAgents[i]]) {
+      crDeptsByAgent = buildDeptsByAgent_();
+      break;
+    }
+  }
+  const agentData = visibleAgents.map(function (agent) {
     const p1 = perAgent[agent].p1;
     const p2 = perAgent[agent].p2;
     const p1Pct = p1.rung > 0 ? (p1.answered / p1.rung) * 100 : 0;
     const p2Pct = p2.rung > 0 ? (p2.answered / p2.rung) * 100 : 0;
     const p1Att = p1.answered > 0 ? p1.att_sum / p1.answered : 0;
     const p2Att = p2.answered > 0 ? p2.att_sum / p2.answered : 0;
+    const matchedViaRoster = !!agentMatchedViaRoster[agent];
+    const matchedViaQueue  = !!agentMatchedViaQueue[agent];
+    const sourceHomes = (matchedViaQueue && !matchedViaRoster && crDeptsByAgent)
+      ? (crDeptsByAgent[agent] || [])
+      : [];
     return {
       name: agent,
+      matchedViaRoster: matchedViaRoster,
+      matchedViaQueue:  matchedViaQueue,
+      sourceHomes:      sourceHomes,
       p1: agentPeriodBlock_(p1, p1Pct, p1Att),
       p2: agentPeriodBlock_(p2, p2Pct, p2Att),
       deltas: {
@@ -268,10 +325,14 @@ function computeCompareRanges_(dept, selectedAgents,
     };
   });
 
-  // ── Team aggregate across all selected agents, per period ─────
+  // ── Team aggregate across selected ROSTER agents, per period ──
+  // INV-53: floaters (queue-only) are excluded from team totals so
+  // they don't dilute the dept averages. They still appear in
+  // agentData with the QUEUE chip.
   const teamP1 = { rung: 0, missed: 0, answered: 0, ttt: 0, att_sum: 0 };
   const teamP2 = { rung: 0, missed: 0, answered: 0, ttt: 0, att_sum: 0 };
   selectedAgents.forEach(function (agent) {
+    if (!agentMatchedViaRoster[agent]) return;
     const p1 = perAgent[agent].p1; const p2 = perAgent[agent].p2;
     teamP1.rung += p1.rung; teamP1.missed += p1.missed; teamP1.answered += p1.answered;
     teamP1.ttt += p1.ttt; teamP1.att_sum += p1.att_sum;
@@ -442,6 +503,12 @@ function crTeamPair_(p2Val, p1Val, type, p2Formatted, p1Formatted) {
 
 function emptyCompareRanges_(dept, selectedAgents, roster,
                              p1From, p1To, p2From, p2To) {
+  // INV-53: drop crafted off-dept names; only roster members render
+  // in the empty shape (floaters need actual rows to be confirmed).
+  const emptyRosterSet = {};
+  if (roster && roster.names) {
+    for (let i = 0; i < roster.names.length; i++) emptyRosterSet[roster.names[i]] = true;
+  }
   const emptyBlock = {
     formatted: { rung: '0', missed: '0', answered: '0',
                  pct: '0.0%', ttt: '0:00:00', att: '0:00:00' },
@@ -469,9 +536,14 @@ function emptyCompareRanges_(dept, selectedAgents, roster,
       ttt:      { val: 0, prev: 0, formatted: '0:00:00', prevFormatted: '0:00:00', delta: 0, deltaPct: 0, type: 'volume' },
       att:      { val: 0, prev: 0, formatted: '0:00:00', prevFormatted: '0:00:00', delta: 0, deltaPct: 0, type: 'volume' },
     },
-    agentData: selectedAgents.map(function (a) {
+    agentData: selectedAgents.filter(function (a) {
+      return !!emptyRosterSet[a];
+    }).map(function (a) {
       return {
         name: a,
+        matchedViaRoster: true,
+        matchedViaQueue:  false,
+        sourceHomes:      [],
         p1: emptyBlock, p2: emptyBlock,
         deltas: { rung: emptyDelta, missed: emptyDelta, answered: emptyDelta,
                   pct: Object.assign({}, emptyDelta, { type: 'pctPoints' }),
