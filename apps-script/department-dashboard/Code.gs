@@ -61,6 +61,11 @@ function renderDashboard_(user) {
   const dashboardUrl = PropertiesService.getScriptProperties()
     .getProperty('DASHBOARD_URL') || '';
   tmpl.dashboardUrlJson = JSON.stringify(dashboardUrl).replace(/</g, '\\u003c');
+  // Work-window pill content (E2, Phase E). Server-side so a future
+  // pipeline-side window change can be picked up by editing the
+  // shared dashboard Config.gs constant rather than hand-syncing a
+  // hardcoded HTML string.
+  tmpl.workWindowJson = JSON.stringify(DASHBOARD_WORK_WINDOW).replace(/</g, '\\u003c');
   return tmpl.evaluate()
     .setTitle('Department Dashboard')
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);

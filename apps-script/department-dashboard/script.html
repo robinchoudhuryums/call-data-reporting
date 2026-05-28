@@ -457,6 +457,26 @@
     pill.style.display = '';
   }
 
+  // Work-window pill (E2, Phase E). Reads window.__WORK_WINDOW__
+  // (injected server-side from DASHBOARD_WORK_WINDOW in Config.gs)
+  // and populates the static pill markup. One-shot at init -- the
+  // constants don't change during a session.
+  function initWorkWindowPill_() {
+    const pill = $('work-window-pill');
+    if (!pill) return;
+    const ww = window.__WORK_WINDOW__;
+    if (!ww || (!ww.pst && !ww.cst)) return;
+    const parts = [];
+    if (ww.pst) parts.push('<strong>' + escapeHtml(ww.pst) + '</strong>');
+    if (ww.cst) parts.push('<strong>' + escapeHtml(ww.cst) + '</strong>');
+    pill.innerHTML = 'Work window ' + parts.join('<span class="work-window-sep">&middot;</span>');
+    pill.setAttribute('title',
+      'Rung / Missed / Answered / TTT / ATT columns are scoped to this work window. '
+      + 'Calls before or after this window appear in the Missed Calls raw timestamps '
+      + 'but are not counted in the headline totals.');
+    pill.style.display = '';
+  }
+
   function toIsoDate(d) {
     return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
   }
@@ -636,6 +656,7 @@
     // per-modal init has wired up its own close-button handlers.
     initRouter();
     initOpenInNewTabButtons_();
+    initWorkWindowPill_();
 
     // Fetch the most recent date with data in DQE Historical Data
     // and snap From/To to that date. Defers the initial table
@@ -2468,6 +2489,7 @@
     const count = $('diag-count');
     if (!state.diagnostics) {
       wrap.style.display = 'none';
+      wrap.classList.remove('diag-severity-warn', 'diag-severity-bad');
       return;
     }
     const d = state.diagnostics;
@@ -2476,9 +2498,15 @@
     const total = rosterMissing.length + queueOnly.length;
     if (total === 0) {
       wrap.style.display = 'none';
+      wrap.classList.remove('diag-severity-warn', 'diag-severity-bad');
       return;
     }
     count.textContent = '(' + total + ')';
+    // Severity chip (E3, Phase E): warn-soft for 1-5 issues, bad-soft
+    // for >5. Drives a visual indicator at the section header without
+    // forcing the user to expand the panel.
+    wrap.classList.remove('diag-severity-warn', 'diag-severity-bad');
+    wrap.classList.add(total > 5 ? 'diag-severity-bad' : 'diag-severity-warn');
 
     const sections = [];
     if (rosterMissing.length) {
@@ -3692,9 +3720,16 @@
         if (!pStats || !pRaw) return '';
         return irPriorRow_(pStats, pRaw[key], agent.raw[key], valence, pStats[key]);
       };
+      // Excluded-from-team-avg pill (E4, Phase E). Surfaces when the
+      // agent appears in TEAM_AVG_EXCLUDES[dept] so the manager sees
+      // why their numbers don't move the team average. INV-26.
+      const excludedPill = agent.excludedFromTeamAvg
+        ? ' <span class="ir-excluded-pill" title="Per TEAM_AVG_EXCLUDES, this agent\'s numbers are subtracted from BOTH numerator and denominator of the team average (INV-26).">EXCLUDED FROM TEAM AVG</span>'
+        : '';
       return '<div class="ir-summary-card">'
            +   '<div class="ir-summary-title">'
            +     safeName
+           +     excludedPill
            +     ' <span class="ir-vs">vs Team Avg'
            +       (priorStatsAvailable ? ' &middot; vs Prior period' : '')
            +     '</span>'
@@ -8043,10 +8078,65 @@
         b.setAttribute('aria-checked', active ? 'true' : 'false');
       });
     }
+    qcdRenderForecast_(data);
     qcdRenderKpiTiles_(data.totals || {});
     qcdRenderQueueTable_(data.queueBreakdown || [], data.totals || {});
     qcdRenderDailyTable_(data.dailySeries || []);
     requestAnimationFrame(function () { qcdRenderChart_(data); });
+  }
+
+  // Days-to-violation forecast (E9, Phase E). Linear regression on
+  // the last 7 entries of dailySeries.abandonedPct; if slope > 0 and
+  // the regression projects a crossing of the 5% violation threshold
+  // within QCD_FORECAST_HORIZON_DAYS (=7), surface a warn-tinted
+  // banner above the KPI tiles. Hidden in healthy states (negative
+  // slope, projected crossing too far out, or already above 5%).
+  //
+  // Math (avoids any library dep):
+  //   slope = (n*Σxy - Σx*Σy) / (n*Σx² - (Σx)²)
+  //   daysToCross = (5 - currentY) / slope
+  // where currentY is the last observed abandonedPct and x is days
+  // since the first point in the window.
+  const QCD_FORECAST_HORIZON_DAYS = 7;
+  const QCD_FORECAST_WINDOW_DAYS  = 7;
+  function qcdRenderForecast_(data) {
+    const el = $('qcd-forecast');
+    if (!el) return;
+    el.style.display = 'none';
+    el.innerHTML = '';
+    const series = (data && data.dailySeries) || [];
+    if (series.length < QCD_FORECAST_WINDOW_DAYS) return;
+    const window = series.slice(-QCD_FORECAST_WINDOW_DAYS);
+    const ys = window.map(function (d) { return Number(d.abandonedPct) || 0; });
+    const currentY = ys[ys.length - 1];
+    // Already above threshold? No forecast -- the operator is past
+    // the projection horizon; existing chrome already flags it.
+    if (currentY >= 5) return;
+    const n = ys.length;
+    let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
+    for (let i = 0; i < n; i++) {
+      sumX  += i;
+      sumY  += ys[i];
+      sumXY += i * ys[i];
+      sumXX += i * i;
+    }
+    const denom = n * sumXX - sumX * sumX;
+    if (denom === 0) return;
+    const slope = (n * sumXY - sumX * sumY) / denom;
+    // Healthy: trend is flat or improving. Skip the banner.
+    if (slope <= 0.01) return;
+    const daysToCross = (5 - currentY) / slope;
+    if (daysToCross <= 0 || daysToCross > QCD_FORECAST_HORIZON_DAYS) return;
+    const wholeDays = Math.max(1, Math.round(daysToCross));
+    const slopeDay  = slope.toFixed(2);
+    el.innerHTML =
+        '<span class="qcd-forecast-kicker">Forecast</span>'
+      + 'Abandoned % is trending up '
+      + '<strong>+' + escapeHtml(slopeDay) + '%/day</strong>'
+      + ' over the last ' + QCD_FORECAST_WINDOW_DAYS + ' days. '
+      + 'At this rate, it crosses the 5% violation threshold in '
+      + '<strong>~' + wholeDays + ' day' + (wholeDays === 1 ? '' : 's') + '</strong>.';
+    el.style.display = '';
   }
 
   function qcdRenderKpiTiles_(t) {

@@ -241,6 +241,21 @@ const TEAM_AVG_EXCLUDES = Object.freeze({
 });
 
 /**
+ * Human-readable work-window strings surfaced as a pill on the My
+ * Department page so managers see at a glance what time-of-day the
+ * Rung / Missed / Answered / TTT / ATT columns are scoped to. The
+ * pipeline's source-of-truth lives in cdr-import's buildDQEHistoricalData.js
+ * (DQE_WINDOW_START / DQE_WINDOW_END, per INV-06). If those upstream
+ * constants ever change, sync these strings too -- the dashboard
+ * doesn't read the constants directly because they're in a sibling
+ * Apps Script project, but they need to agree.
+ */
+const DASHBOARD_WORK_WINDOW = Object.freeze({
+  pst: '6:30 AM – 3:00 PM PST',
+  cst: '8:30 AM – 5:00 PM CST',
+});
+
+/**
  * Returns the SPREADSHEET_ID Script Property. Throws a clear error if
  * unset so first-run misconfiguration is obvious in the execution log.
  */

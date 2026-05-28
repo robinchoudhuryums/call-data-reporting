@@ -52,7 +52,12 @@
 // supplied, each summary card carries a `priorStats` field so the
 // client can render a vs-prior delta badge alongside vs-team-avg
 // (Strategic 5 / same-agent YoY).
-const INDIVIDUAL_CACHE_KEY_PREFIX = 'individual:v6';
+// v7: per-agent `excludedFromTeamAvg` flag added (Phase E, E4) so
+// the client can render an "EXCLUDED" pill on agents listed in
+// TEAM_AVG_EXCLUDES[dept]. Pure additive field; no aggregation
+// change. Bump to keep response shape consistent across cached
+// + fresh requests.
+const INDIVIDUAL_CACHE_KEY_PREFIX = 'individual:v7';
 
 function getIndividualReportInit(req) {
   const email = Session.getActiveUser().getEmail();
@@ -466,6 +471,13 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
 
     return {
       name: agent,
+      // excludedFromTeamAvg (E4, Phase E): true when this agent
+      // appears in TEAM_AVG_EXCLUDES[dept] -- per INV-26, those
+      // agents are subtracted from BOTH numerator and denominator
+      // of the team-avg. Client renders an "EXCLUDED" pill on the
+      // agent's row so the exclusion is visible to managers reading
+      // the report.
+      excludedFromTeamAvg: !!excludedAgents[agent],
       stats: {
         rung:     s.rung,
         missed:   s.missed,
@@ -528,6 +540,13 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
 }
 
 function emptyIndividualReport_(dept, from, to, selectedAgents, masterMonthKeys) {
+  // Empty-shape excludedFromTeamAvg lookup (E4): even when there's no
+  // data, we surface the flag so the badge renders consistently --
+  // useful when a manager opens a range that has no calls yet but
+  // wants to confirm an excluded agent is still configured as such.
+  const emptyExcludedSet = {};
+  const emptyExcludeList = (TEAM_AVG_EXCLUDES && TEAM_AVG_EXCLUDES[dept]) || [];
+  for (let i = 0; i < emptyExcludeList.length; i++) emptyExcludedSet[emptyExcludeList[i]] = true;
   const labels = (masterMonthKeys || []).map(function (m) {
     const p = m.split('-');
     const d = new Date(Number(p[0]), Number(p[1]) - 1, 1);
@@ -554,6 +573,7 @@ function emptyIndividualReport_(dept, from, to, selectedAgents, masterMonthKeys)
     summaryData: selectedAgents.map(function (a) {
       return {
         name: a,
+        excludedFromTeamAvg: !!emptyExcludedSet[a],
         stats: { rung: 0, missed: 0, answered: 0, pct: '0.0%', ttt: '0:00:00', att: '0:00:00' },
         raw:   { rung: 0, missed: 0, answered: 0, pct: 0, ttt: 0, att: 0 },
         share: { rung: '0.0%', answered: '0.0%', missed: '0.0%',

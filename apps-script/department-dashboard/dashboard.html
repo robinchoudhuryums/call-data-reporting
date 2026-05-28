@@ -144,6 +144,13 @@
         <strong>Mock data.</strong> Step C uses placeholder rows so the UI is verifiable end-to-end before the data layer is wired. Step D replaces this with real reads from <code>DQE Historical Data</code>.
       </div>
 
+      <!-- Work-window pill (E2). Populated from window.__WORK_WINDOW__
+           at init time so the strings come from the dashboard's
+           Config.gs rather than a hardcoded HTML literal. Tells
+           managers what time-of-day Rung / Missed / Answered /
+           TTT / ATT are scoped to (INV-06). -->
+      <div id="work-window-pill" class="work-window-pill" aria-label="Work window"></div>
+
       <div class="controls">
         <div class="control" id="dept-selector-wrap" style="display:none;">
           <label for="dept-selector">Department</label>
@@ -950,6 +957,12 @@
 
         <div id="qcd-results-status" class="status" style="display:none;"></div>
 
+        <!-- Days-to-violation forecast (E9). Renders only when a
+             linear regression on the last 7 days of dailySeries
+             abandonedPct projects a 5% threshold crossing within
+             7 days. Hidden in healthy states. -->
+        <div id="qcd-forecast" class="qcd-forecast" style="display:none;"></div>
+
         <div id="qcd-kpi-row" class="pr-kpi-row"></div>
 
         <div class="al-section">
@@ -1254,6 +1267,9 @@
     // shareable target URL. Empty string when the property is unset
     // -- the client falls back to hiding the button.
     window.__DASHBOARD_URL__ = <?!= dashboardUrlJson ?>;
+    // Work-window strings for the My Department page's pill (E2).
+    // Shape: { pst: "6:30 AM - 3:00 PM PST", cst: "8:30 AM - 5:00 PM CST" }.
+    window.__WORK_WINDOW__ = <?!= workWindowJson ?>;
   </script>
   <?!= include_('script') ?>
 </body>

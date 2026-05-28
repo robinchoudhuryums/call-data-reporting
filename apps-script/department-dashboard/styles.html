@@ -232,6 +232,57 @@
   }
   .freshness-pill .freshness-date { color: var(--ink); }
 
+  /* Work-window pill (E2, Phase E). Inline mono kicker below the
+     dept-page controls explaining what time-of-day the Rung /
+     Missed / Answered / TTT / ATT columns are scoped to. Lighter
+     weight than the freshness pill -- this is reference info, not
+     a status indicator. Hidden until the client populates it from
+     window.__WORK_WINDOW__. */
+  .work-window-pill {
+    display: none;
+    margin: 0 0 12px;
+    padding: 4px 10px;
+    font-family: var(--mono);
+    font-size: 10px;
+    line-height: 1.4;
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    color: var(--muted);
+    background: var(--paper-2);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    width: max-content;
+  }
+  .work-window-pill strong { color: var(--ink); font-weight: 500; }
+  .work-window-pill .work-window-sep { color: var(--line-2, var(--line)); margin: 0 6px; }
+
+  /* Days-to-violation forecast banner (E9, Phase E). Compact
+     warn-soft block above the QCD KPI tiles when a linear regression
+     on the last 7 days of abandonedPct projects a 5% threshold
+     crossing within 7 days. Hidden in healthy states. */
+  .qcd-forecast {
+    margin: 0 0 12px;
+    padding: 8px 12px;
+    background: var(--warn-soft);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--warn);
+    border-radius: var(--r);
+    font-size: 13px;
+    color: var(--ink);
+    line-height: 1.5;
+  }
+  .qcd-forecast-kicker {
+    display: inline-block;
+    margin-right: 6px;
+    font-family: var(--mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    color: var(--warn);
+    font-weight: 500;
+  }
+  .qcd-forecast strong { font-weight: 500; color: var(--ink); }
+
   /* Header nav menus (Reports + Admin dropdowns).  Sit between the
      dept title block and the .header-meta utility cluster.  On
      narrow viewports the whole header wraps and the nav drops to a
@@ -667,11 +718,29 @@
     padding: 2px 0;
   }
   .diagnostics summary:hover { color: var(--ink); }
+  /* Severity-colored variants (E3, Phase E). Card-edge tinting drives
+     visual urgency: warn-soft for 1-5 issues, bad-soft for >5. The
+     summary text also picks up the matching --warn / --bad color so
+     the chip-like header reads as the same severity from a distance. */
+  .diagnostics.diag-severity-warn {
+    background: var(--warn-soft);
+    border-left: 3px solid var(--warn);
+  }
+  .diagnostics.diag-severity-bad {
+    background: var(--bad-soft);
+    border-left: 3px solid var(--bad);
+  }
+  .diagnostics.diag-severity-warn summary { color: var(--warn); }
+  .diagnostics.diag-severity-bad  summary { color: var(--bad);  }
+  .diagnostics.diag-severity-warn summary:hover,
+  .diagnostics.diag-severity-bad  summary:hover { color: var(--ink); }
   .diag-count {
     color: var(--muted);
     font-weight: 400;
     margin-left: 4px;
   }
+  .diagnostics.diag-severity-warn .diag-count { color: var(--warn); font-weight: 500; }
+  .diagnostics.diag-severity-bad  .diag-count { color: var(--bad);  font-weight: 500; }
   .diag-section {
     margin-top: 14px;
   }
@@ -1676,6 +1745,26 @@
     font-size: 10px;
     text-transform: uppercase;
     letter-spacing: 0.18em;
+  }
+  /* "EXCLUDED FROM TEAM AVG" pill (E4, Phase E). Surfaces on agents
+     listed in TEAM_AVG_EXCLUDES[dept] so the manager sees why their
+     numbers don't move the team average (INV-26). Subdued muted-soft
+     palette -- it's reference info, not a warning. */
+  .ir-excluded-pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    background: var(--paper-2);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    font-family: var(--mono);
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    font-weight: 500;
+    color: var(--muted);
+    white-space: nowrap;
+    cursor: help;
   }
   .ir-copy-tsv {
     margin-left: auto;
