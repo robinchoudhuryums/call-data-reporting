@@ -48,7 +48,10 @@
     const KEY = 'dash-theme.v1';
     let saved = null;
     try { saved = localStorage.getItem(KEY); } catch (e) {}
-    const initial = (saved === 'cool' || saved === 'clinical') ? saved : 'warm';
+    // First-time visitors land on cool; explicit saved preferences
+    // (including 'warm') are preserved untouched.
+    const initial = (saved === 'warm' || saved === 'cool' || saved === 'clinical')
+      ? saved : 'cool';
     if (initial !== 'warm') document.body.dataset.theme = initial;
     // Expose globally so the Settings modal init can read/write
     // without re-parsing storage.

@@ -34,10 +34,18 @@
     --good-soft:   #e0efe6;
     --warn:        #c66b4b;
     --warn-soft:   #f6e2d4;
+    /* --bad is a step deeper than --warn for hard error / critical states
+       (irrecoverable failures, validation errors). --warn stays the default
+       for negative-valence-but-not-fatal cases (low answer rate, abandoned %
+       crossing threshold). */
+    --bad:         #b23a2c;
+    --bad-soft:    #f1d7d2;
 
     --display: 'Inter Tight', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     --ui:      'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     --mono:    'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+    --r: 2px;
   }
   @supports (color: oklch(50% 0.1 240)) {
     :root {
@@ -47,13 +55,18 @@
       --good-soft:   oklch(93% 0.04 160);
       --warn:        oklch(60% 0.16 30);
       --warn-soft:   oklch(93% 0.04 30);
+      --bad:         oklch(50% 0.16 25);
+      --bad-soft:    oklch(91% 0.04 25);
     }
   }
   /* Light-mode theme variants -- swapped via body[data-theme="..."]
-     from the Settings modal. Default (no attribute) = warm paper
-     from :root above. Each theme override only redefines the
-     neutrals; accent / good / warn stay constant so chart palette
-     semantics don't drift across themes. body[data-mode="dark"]
+     from the Settings modal. The :root tokens above are the warm
+     palette; first-time visitors are bootstrapped to cool by
+     initThemePreference_ in script.html (so the absence of a
+     data-theme attribute on body means a returning visitor who
+     explicitly saved 'warm'). Each theme override only redefines
+     the neutrals; accent / good / warn stay constant so chart
+     palette semantics don't drift across themes. body[data-mode="dark"]
      below takes precedence over any light theme. */
   body[data-theme="cool"] {
     --paper:       #f0f6fa;
@@ -82,6 +95,7 @@
     --accent-soft: #1d2945;
     --good-soft:   #1a2f24;
     --warn-soft:   #3a1e15;
+    --bad-soft:    #3a1410;
   }
   /* Native calendar-picker icon: by default the WebKit/Chromium
      SVG is black, which disappears against the dark paper. Invert
@@ -95,6 +109,7 @@
       --accent-soft: oklch(28% 0.05 240);
       --good-soft:   oklch(26% 0.04 160);
       --warn-soft:   oklch(26% 0.05 30);
+      --bad-soft:    oklch(24% 0.05 25);
     }
   }
 
@@ -341,7 +356,7 @@
     margin-left: 6px;
     vertical-align: middle;
     text-transform: uppercase;
-    letter-spacing: 0.12em;
+    letter-spacing: 0.18em;
   }
   .tag-admin   { background: var(--good-soft); color: var(--good); }
   .tag-manager { background: var(--accent-soft); color: var(--accent); }
@@ -374,7 +389,7 @@
     font-weight: 500;
     color: var(--muted);
     text-transform: uppercase;
-    letter-spacing: 0.12em;
+    letter-spacing: 0.18em;
   }
   .control input[type="date"],
   .control select {
@@ -421,7 +436,7 @@
     border-left: 3px solid var(--line);
   }
   .status-loading { background: var(--accent-soft); color: var(--accent); border-left-color: var(--accent); }
-  .status-error   { background: var(--warn-soft);   color: var(--warn);   border-left-color: var(--warn); }
+  .status-error   { background: var(--bad-soft);    color: var(--bad);    border-left-color: var(--bad);    }
   .status-empty   { background: var(--paper-2);     color: var(--muted);  border-left-color: var(--muted); }
 
   /* Agents table — document-row aesthetic: hairline rows, no rounded
@@ -454,7 +469,7 @@
     font-weight: 500;
     font-size: 10px;
     text-transform: uppercase;
-    letter-spacing: 0.12em;
+    letter-spacing: 0.18em;
     color: var(--muted);
     cursor: pointer;
     user-select: none;
@@ -542,7 +557,7 @@
     font-size: 11px;
     font-weight: 500;
     text-transform: uppercase;
-    letter-spacing: 0.1em;
+    letter-spacing: 0.18em;
     min-width: 70px;
   }
   .seg-btn:last-child { border-right: 0; }
@@ -567,7 +582,7 @@
     padding: 14px 16px;
     background: var(--paper-card);
     border: 1px solid var(--line);
-    border-radius: 8px;
+    border-radius: var(--r);
   }
   .dept-qcd-header {
     display: flex;
@@ -604,7 +619,7 @@
     padding: 8px 12px;
     background: var(--paper-2);
     border: 1px solid var(--line);
-    border-radius: 6px;
+    border-radius: var(--r);
     text-align: center;
   }
   .dept-qcd-label {
@@ -612,7 +627,7 @@
     font-size: 10px;
     color: var(--muted);
     text-transform: uppercase;
-    letter-spacing: 0.08em;
+    letter-spacing: 0.18em;
     font-weight: 600;
   }
   .dept-qcd-value {
@@ -638,7 +653,7 @@
     font-size: 11px;
     font-weight: 500;
     text-transform: uppercase;
-    letter-spacing: 0.12em;
+    letter-spacing: 0.18em;
     color: var(--muted);
     user-select: none;
     padding: 2px 0;
@@ -659,7 +674,7 @@
     margin: 0 0 6px;
     font-weight: 500;
     text-transform: uppercase;
-    letter-spacing: 0.12em;
+    letter-spacing: 0.18em;
   }
   .diag-section p { margin: 0; color: var(--muted); }
   .diag-chips {
@@ -682,7 +697,7 @@
     font-family: var(--mono);
     font-size: 10px;
     text-transform: uppercase;
-    letter-spacing: 0.08em;
+    letter-spacing: 0.18em;
     color: var(--warn);
     font-weight: 500;
     margin-left: 6px;
@@ -715,7 +730,7 @@
     font-family: var(--mono);
     font-size: 10px;
     text-transform: uppercase;
-    letter-spacing: 0.12em;
+    letter-spacing: 0.18em;
     font-weight: 500;
     align-self: center;
   }
@@ -822,7 +837,7 @@
     color: var(--muted);
     margin: 24px 0 8px;
     text-transform: uppercase;
-    letter-spacing: 0.14em;
+    letter-spacing: 0.18em;
   }
   .modal-content h3:first-of-type { margin-top: 0; }
   .modal-content p {
@@ -890,7 +905,7 @@
     font-family: var(--mono);
     font-size: 10px;
     text-transform: uppercase;
-    letter-spacing: 0.12em;
+    letter-spacing: 0.18em;
     color: var(--muted);
   }
   .report-summary .val {
@@ -1030,7 +1045,7 @@
     cursor: pointer;
     font-size: 11px;
     line-height: 1;
-    border-radius: 3px;
+    border-radius: var(--r);
   }
   .parent-id .pid-copy:hover { background: var(--paper-2); }
   .parent-id .pid-copy.copied { color: var(--good); }
@@ -1082,7 +1097,7 @@
     font-family: var(--mono);
     font-size: 11px;
     text-transform: uppercase;
-    letter-spacing: 0.1em;
+    letter-spacing: 0.18em;
   }
   .queue-only-card {
     margin-top: 10px;
@@ -1094,7 +1109,7 @@
     font-weight: 500;
     font-size: 11px;
     text-transform: uppercase;
-    letter-spacing: 0.1em;
+    letter-spacing: 0.18em;
     margin-bottom: 4px;
   }
   .queue-only-list {
@@ -1141,7 +1156,7 @@
     font-family: var(--mono);
     font-size: 10px;
     text-transform: uppercase;
-    letter-spacing: 0.1em;
+    letter-spacing: 0.18em;
     margin-bottom: 10px;
   }
   .agent-card .missed-list {
@@ -1185,7 +1200,7 @@
     font-size: 10px;
     font-weight: 500;
     text-transform: uppercase;
-    letter-spacing: 0.14em;
+    letter-spacing: 0.18em;
     color: var(--muted);
     border-bottom: 1px solid var(--line);
     padding-bottom: 6px;
@@ -1206,7 +1221,7 @@
     color: var(--muted);
     margin-bottom: 6px;
     text-transform: uppercase;
-    letter-spacing: 0.12em;
+    letter-spacing: 0.18em;
   }
   .ir-col select,
   .ir-col input[type="date"] {
@@ -1301,7 +1316,7 @@
     font-size: 10px;
     font-weight: 500;
     text-transform: uppercase;
-    letter-spacing: 0.12em;
+    letter-spacing: 0.18em;
     color: var(--muted);
     margin: 8px 2px 4px;
   }
@@ -1397,7 +1412,7 @@
     font-family: var(--mono);
     font-size: 11px;
     text-transform: uppercase;
-    letter-spacing: 0.1em;
+    letter-spacing: 0.18em;
     color: var(--muted);
   }
   .ir-action-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -1540,7 +1555,7 @@
     font-family: var(--mono);
     font-size: 10px;
     text-transform: uppercase;
-    letter-spacing: 0.12em;
+    letter-spacing: 0.18em;
     font-weight: 500;
   }
   .ir-sort-control select {
@@ -1581,14 +1596,14 @@
     color: var(--muted);
     font-size: 10px;
     text-transform: uppercase;
-    letter-spacing: 0.12em;
+    letter-spacing: 0.18em;
   }
   .ir-copy-tsv {
     margin-left: auto;
     font-family: var(--mono);
     font-size: 10px;
     text-transform: uppercase;
-    letter-spacing: 0.1em;
+    letter-spacing: 0.18em;
     color: var(--accent);
     background: transparent;
     border: 1px solid var(--accent-soft);
@@ -1627,7 +1642,7 @@
     font-size: 10px;
     font-weight: 500;
     text-transform: uppercase;
-    letter-spacing: 0.12em;
+    letter-spacing: 0.18em;
     color: var(--muted);
   }
   .ir-kpi-spark { height: 22px; line-height: 0; }
@@ -1676,7 +1691,7 @@
     font-size: 10px;
     font-weight: 500;
     text-transform: uppercase;
-    letter-spacing: 0.14em;
+    letter-spacing: 0.18em;
     color: var(--accent);
     margin-bottom: 6px;
   }
@@ -1749,7 +1764,7 @@
     font-size: 10px;
     color: var(--muted);
     text-transform: uppercase;
-    letter-spacing: 0.08em;
+    letter-spacing: 0.18em;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1764,7 +1779,7 @@
     font-size: 10px;
     font-weight: 500;
     text-transform: uppercase;
-    letter-spacing: 0.1em;
+    letter-spacing: 0.18em;
     display: inline-block;
     min-width: 60px;
     text-align: center;
@@ -1786,7 +1801,7 @@
     font-family: var(--mono);
     font-size: 10px;
     text-transform: uppercase;
-    letter-spacing: 0.1em;
+    letter-spacing: 0.18em;
     color: var(--muted);
     background: var(--paper-card);
     padding: 6px 10px;
@@ -1813,7 +1828,7 @@
     font-size: 11px;
     font-weight: 500;
     text-transform: uppercase;
-    letter-spacing: 0.12em;
+    letter-spacing: 0.18em;
     color: var(--muted);
     cursor: pointer;
     border-bottom: 2px solid transparent;
@@ -1879,7 +1894,7 @@
     font-weight: 500;
     font-size: 11px;
     text-transform: uppercase;
-    letter-spacing: 0.14em;
+    letter-spacing: 0.18em;
     color: var(--muted);
     margin-bottom: 8px;
   }
@@ -1921,7 +1936,7 @@
     font-size: 10px;
     font-weight: 500;
     text-transform: uppercase;
-    letter-spacing: 0.12em;
+    letter-spacing: 0.18em;
     color: var(--muted);
   }
   .pr-date-value {
@@ -1985,7 +2000,7 @@
     font-size: 10px;
     font-weight: 500;
     text-transform: uppercase;
-    letter-spacing: 0.12em;
+    letter-spacing: 0.18em;
     color: var(--muted);
   }
   .pr-kpi-value {
@@ -2015,7 +2030,7 @@
     font-weight: 500;
     font-size: 10px;
     text-transform: uppercase;
-    letter-spacing: 0.08em;
+    letter-spacing: 0.18em;
   }
   .pr-delta-pos { background: var(--accent-soft); color: var(--accent); }
   .pr-delta-neg { background: var(--warn-soft); color: var(--warn); }
@@ -2036,7 +2051,7 @@
     color: var(--muted);
     font-weight: 400;
     text-transform: uppercase;
-    letter-spacing: 0.08em;
+    letter-spacing: 0.18em;
   }
   @media (max-width: 1100px) {
     .pr-kpi-row { grid-template-columns: repeat(3, minmax(0, 1fr)); }
@@ -2069,7 +2084,7 @@
     font-size: 10px;
     font-weight: 500;
     text-transform: uppercase;
-    letter-spacing: 0.12em;
+    letter-spacing: 0.18em;
   }
   .pr-agent-table .num {
     text-align: right;
@@ -2104,7 +2119,7 @@
     font-size: 10px;
     font-weight: 500;
     text-transform: uppercase;
-    letter-spacing: 0.1em;
+    letter-spacing: 0.18em;
     border-radius: 2px;
     cursor: pointer;
     transition: all 0.15s;
@@ -2134,7 +2149,7 @@
     font-size: 10px;
     font-weight: 500;
     text-transform: uppercase;
-    letter-spacing: 0.12em;
+    letter-spacing: 0.18em;
     color: var(--muted);
     margin-bottom: 8px;
   }
@@ -2157,7 +2172,7 @@
     font-size: 10px;
     font-weight: 500;
     text-transform: uppercase;
-    letter-spacing: 0.12em;
+    letter-spacing: 0.18em;
     cursor: pointer;
     transition: background 0.15s;
   }
@@ -2274,7 +2289,7 @@
     font-size: 10px;
     font-weight: 500;
     text-transform: uppercase;
-    letter-spacing: 0.1em;
+    letter-spacing: 0.18em;
     margin-left: auto;
   }
   .cr-vs-team-pos  { background: var(--accent-soft); color: var(--accent); }
@@ -2308,7 +2323,7 @@
     font-size: 10px;
     font-weight: 500;
     text-transform: uppercase;
-    letter-spacing: 0.12em;
+    letter-spacing: 0.18em;
     margin-bottom: 10px;
   }
   .cr-quiet-summary::-webkit-details-marker { display: none; }
@@ -2345,7 +2360,7 @@
     font-size: 10px;
     font-weight: 500;
     text-transform: uppercase;
-    letter-spacing: 0.12em;
+    letter-spacing: 0.18em;
   }
   .cr-agent-table td {
     padding: 8px 8px;
@@ -2701,7 +2716,7 @@
     font-family: var(--mono);
     font-size: 11px;
     color: var(--muted);
-    letter-spacing: 0.04em;
+    letter-spacing: 0.18em;
     text-transform: uppercase;
     margin-bottom: 14px;
   }
@@ -2767,7 +2782,7 @@
     font-size: 10px;
     color: var(--accent);
     text-transform: uppercase;
-    letter-spacing: 0.05em;
+    letter-spacing: 0.18em;
     font-weight: 500;
   }
   .ov-dept-tile {
@@ -2797,7 +2812,7 @@
     font-size: 10px;
     color: var(--muted);
     text-transform: uppercase;
-    letter-spacing: 0.04em;
+    letter-spacing: 0.18em;
     white-space: nowrap;
   }
   .ov-dept-tile-pct {
@@ -2942,7 +2957,7 @@
     font-size: 10px;
     font-weight: 500;
     text-transform: uppercase;
-    letter-spacing: 0.04em;
+    letter-spacing: 0.18em;
     padding: 2px 8px;
     border-radius: 999px;
     background: var(--warn-soft);
@@ -2979,7 +2994,7 @@
     font-size: 10px;
     color: var(--muted);
     text-transform: uppercase;
-    letter-spacing: 0.06em;
+    letter-spacing: 0.18em;
     margin-bottom: 2px;
   }
   .ov-hero-name {
@@ -3064,7 +3079,7 @@
     font-size: 10px;
     color: var(--muted);
     text-transform: uppercase;
-    letter-spacing: 0.06em;
+    letter-spacing: 0.18em;
   }
   .ov-agg-row {
     display: grid;
@@ -3089,7 +3104,7 @@
     font-size: 10px;
     color: var(--muted);
     text-transform: uppercase;
-    letter-spacing: 0.05em;
+    letter-spacing: 0.18em;
   }
   .ov-agg-stats {
     display: grid;
@@ -3172,7 +3187,7 @@
     font-size: 10px;
     color: var(--muted);
     text-transform: uppercase;
-    letter-spacing: 0.05em;
+    letter-spacing: 0.18em;
   }
   .ov-user-table {
     width: 100%;
