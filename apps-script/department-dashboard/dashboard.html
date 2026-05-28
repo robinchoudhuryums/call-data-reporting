@@ -88,6 +88,15 @@
         <div class="skeleton-row"><div class="skeleton-line" style="height:160px;flex:1;border-radius:8px;"></div></div>
       </div>
       <div id="ov-body" style="display:none;">
+        <!-- Admin-only Pipeline Health banner (E1). Warn-tinted when
+             the most-recent successful DQE-freshness write is more
+             than OVERVIEW_PIPELINE_STALE_HOURS (=36h) old. Hidden when
+             freshness is healthy or for non-admins. -->
+        <div id="ov-pipeline-banner" class="ov-status-banner" style="display:none;" data-admin-only></div>
+        <!-- Admin-only Orphan Fix nag (E12-reframed). Visible only when
+             active orphans (lastSeen within OVERVIEW_ORPHAN_NAG_DAYS)
+             exist. Clicking opens the Orphan Fix modal. -->
+        <div id="ov-orphan-nag" class="ov-status-banner" style="display:none;" data-admin-only></div>
         <div class="ov-summary-line" id="ov-summary-line"></div>
         <div id="ov-company-aggregate" class="ov-company-aggregate" style="display:none;"></div>
         <div id="ov-user-hero" class="ov-user-hero" style="display:none;"></div>

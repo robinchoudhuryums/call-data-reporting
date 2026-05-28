@@ -2719,9 +2719,64 @@
     letter-spacing: 0.18em;
     text-transform: uppercase;
     margin-bottom: 14px;
+    /* Allow the mono kicker line to wrap mid-separator on narrow
+       viewports rather than producing a horizontal scroll bar. */
+    line-height: 1.7;
   }
   .ov-summary-line strong { color: var(--ink); font-weight: 500; }
   .ov-summary-label { color: var(--muted); }
+  /* Inline separator dot between summary segments. Wider tracking so
+     the bullet visually breathes against the uppercase kicker spacing. */
+  .ov-summary-sep { color: var(--line-2, var(--line)); margin: 0 4px; }
+  /* Admin-only status banner used by both the Pipeline Health (E1)
+     and Orphan Fix (E12-reframed) surfaces. Default is the neutral
+     accent tone; .is-warn / .is-bad variants are picked per surface. */
+  .ov-status-banner {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    margin-bottom: 10px;
+    background: var(--accent-soft);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--accent);
+    border-radius: var(--r);
+    font-size: 13px;
+    color: var(--ink);
+  }
+  .ov-status-banner.is-warn {
+    background: var(--warn-soft);
+    border-left-color: var(--warn);
+  }
+  .ov-status-banner.is-bad {
+    background: var(--bad-soft);
+    border-left-color: var(--bad);
+  }
+  .ov-status-banner-kicker {
+    font-family: var(--mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    color: var(--muted);
+    margin-right: 6px;
+    flex-shrink: 0;
+  }
+  .ov-status-banner.is-warn .ov-status-banner-kicker { color: var(--warn); }
+  .ov-status-banner.is-bad  .ov-status-banner-kicker { color: var(--bad);  }
+  .ov-status-banner-body { flex: 1 1 auto; line-height: 1.5; }
+  .ov-status-banner-body strong { font-weight: 500; color: var(--ink); }
+  .ov-status-banner-action {
+    flex-shrink: 0;
+    padding: 4px 10px;
+    background: transparent;
+    border: 1px solid currentColor;
+    border-radius: var(--r);
+    color: inherit;
+    font-family: var(--ui);
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .ov-status-banner-action:hover { background: var(--paper-card); }
   .ov-dept-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));

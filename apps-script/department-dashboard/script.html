@@ -863,14 +863,9 @@
 
   function ovRender_(data) {
     if (!data || !data.depts) return;
-    const dateLabel = data.latestDate
-      ? ovFormatDateLabel_(data.latestDate)
-      : '(no data)';
-    $('ov-summary-line').innerHTML =
-      '<span class="ov-summary-label">Latest data:</span> '
-      + '<strong>' + escapeHtml(dateLabel) + '</strong>'
-      + ' &middot; <span class="ov-summary-label">' + (data.depts.length)
-      + ' department' + (data.depts.length === 1 ? '' : 's') + '</span>';
+    ovRenderPipelineBanner_(data);
+    ovRenderOrphanNag_(data);
+    ovRenderSummaryLine_(data);
     ovRenderCompanyAggregate_(data);
     ovRenderUserHero_(data);
     ovRenderTiles_(data);
@@ -878,6 +873,153 @@
     // modal body lays out before Chart.js measures the canvas.
     requestAnimationFrame(function () { ovRenderChart_(data); });
     ovRenderUserTable_(data);
+  }
+
+  // Single mono-uppercase summary line above the dept grid.
+  // Admin viewers see org-wide stats (rung total, % answered company-wide,
+  // QCD violations MTD across all depts). Manager viewers see the same
+  // shape scoped to their own dept so the line surfaces meaningful numbers
+  // for both audiences without leaking the admin-only company aggregate.
+  function ovRenderSummaryLine_(data) {
+    const el = $('ov-summary-line');
+    if (!el) return;
+    const dateLabel = data.latestDate
+      ? ovFormatDateLabel_(data.latestDate)
+      : '(no data)';
+    const sep = '<span class="ov-summary-sep">&middot;</span>';
+    const segs = [];
+    segs.push(
+      '<span class="ov-summary-label">Data through</span> '
+      + '<strong>' + escapeHtml(dateLabel) + '</strong>'
+    );
+    const isAdmin = data.viewerRole === 'admin';
+    if (isAdmin && data.companyAggregate) {
+      // Top-level dept count (sub-queues fold into their parent for
+      // the "DEPTS N" headline so the number matches what a viewer
+      // can see in the tile grid).
+      const topLevel = (data.depts || []).filter(function (d) { return !d.parent; }).length;
+      segs.push(
+        '<span class="ov-summary-label">Depts</span> '
+        + '<strong>' + fmtNumber(topLevel) + '</strong>'
+      );
+      segs.push(
+        '<span class="ov-summary-label">Rung</span> '
+        + '<strong>' + fmtNumber(data.companyAggregate.rung) + '</strong>'
+      );
+      segs.push(
+        '<span class="ov-summary-label">% Answered</span> '
+        + '<strong>' + escapeHtml(data.companyAggregate.pctFormatted) + '</strong>'
+      );
+      const violTotal = (data.depts || []).reduce(function (acc, d) {
+        return acc + ((d.qcd && d.qcd.violationsMtd) || 0);
+      }, 0);
+      segs.push(
+        '<span class="ov-summary-label">QCD viol MTD</span> '
+        + '<strong>' + fmtNumber(violTotal) + '</strong>'
+      );
+    } else {
+      // Manager view: scope to the viewer's own dept so the summary
+      // line shows actionable stats. Falls back to the data-through
+      // line alone if the viewer's dept can't be matched (defensive --
+      // the auth layer guarantees a manager has at least one dept).
+      const viewerDept = data.viewerDept;
+      const dept = viewerDept
+        ? (data.depts || []).find(function (d) { return d.name === viewerDept; })
+        : null;
+      if (dept) {
+        segs.push(
+          '<span class="ov-summary-label">Dept</span> '
+          + '<strong>' + escapeHtml(dept.name) + '</strong>'
+        );
+        segs.push(
+          '<span class="ov-summary-label">Rung</span> '
+          + '<strong>' + fmtNumber(dept.latest.rung) + '</strong>'
+        );
+        segs.push(
+          '<span class="ov-summary-label">% Answered</span> '
+          + '<strong>' + escapeHtml(dept.latest.pctFormatted) + '</strong>'
+        );
+        const violMtd = (dept.qcd && dept.qcd.violationsMtd) || 0;
+        segs.push(
+          '<span class="ov-summary-label">QCD viol MTD</span> '
+          + '<strong>' + fmtNumber(violMtd) + '</strong>'
+        );
+      }
+    }
+    el.innerHTML = segs.join(' ' + sep + ' ');
+  }
+
+  // Admin-only banner above the summary line surfacing Pipeline
+  // Health staleness. Healthy state stays hidden; >36h since the
+  // latest DQE-freshness success picks up the warn variant.
+  function ovRenderPipelineBanner_(data) {
+    const el = $('ov-pipeline-banner');
+    if (!el) return;
+    const pf = data && data.pipelineFreshness;
+    if (data.viewerRole !== 'admin' || !pf || !pf.isStale) {
+      el.style.display = 'none';
+      el.innerHTML = '';
+      el.classList.remove('is-warn');
+      return;
+    }
+    el.style.display = '';
+    el.className = 'ov-status-banner is-warn';
+    let bodyHtml;
+    if (pf.latestTimestamp && pf.hoursSinceFresh != null) {
+      const hours = pf.hoursSinceFresh >= 24
+        ? (pf.hoursSinceFresh / 24).toFixed(1) + 'd'
+        : pf.hoursSinceFresh.toFixed(1) + 'h';
+      bodyHtml =
+          'DQE freshness is stale -- last successful build was '
+        + '<strong>' + hours + ' ago</strong> ('
+        + escapeHtml(pf.latestTimestamp) + ').'
+        + ' Check the import pipeline (see <strong>Alerts &rarr; Pipeline Health</strong>).';
+    } else {
+      bodyHtml =
+          'No recent DQE-freshness success found in Pipeline Health.'
+        + ' Either the daily import hasn\'t run, or the success rows have aged out of the 40-row scan window.'
+        + ' Check <strong>Alerts &rarr; Pipeline Health</strong>.';
+    }
+    el.innerHTML =
+        '<span class="ov-status-banner-kicker">Pipeline</span>'
+      + '<span class="ov-status-banner-body">' + bodyHtml + '</span>';
+  }
+
+  // Admin-only banner for orphan agent names that have been written
+  // to DQE Historical Data in the last 7 days. Clicking opens the
+  // Orphan Fix modal so the admin can triage them.
+  function ovRenderOrphanNag_(data) {
+    const el = $('ov-orphan-nag');
+    if (!el) return;
+    const on = data && data.orphanNag;
+    if (data.viewerRole !== 'admin' || !on || !on.activeCount) {
+      el.style.display = 'none';
+      el.innerHTML = '';
+      el.classList.remove('is-warn');
+      return;
+    }
+    const names = (on.sampleNames || []).map(escapeHtml).join(', ');
+    const moreCount = on.activeCount - (on.sampleNames || []).length;
+    const moreClause = moreCount > 0 ? ' and ' + fmtNumber(moreCount) + ' more' : '';
+    el.style.display = '';
+    el.className = 'ov-status-banner is-warn';
+    el.innerHTML =
+        '<span class="ov-status-banner-kicker">Orphans</span>'
+      + '<span class="ov-status-banner-body">'
+      +   '<strong>' + fmtNumber(on.activeCount) + '</strong>'
+      +   ' agent name' + (on.activeCount === 1 ? '' : 's')
+      +   ' written in the last 7 days do not match any roster'
+      +   (names ? ' (' + names + moreClause + ')' : '')
+      +   '. Map them in the Orphan Fix modal so their calls roll up to the right dept.'
+      + '</span>'
+      + '<button type="button" class="ov-status-banner-action" id="ov-orphan-nag-open">Open</button>';
+    const btn = $('ov-orphan-nag-open');
+    if (btn) {
+      btn.addEventListener('click', function () {
+        const trigger = document.getElementById('orphan-fix-btn');
+        if (trigger) trigger.click();
+      });
+    }
   }
 
   function ovFormatDateLabel_(iso) {
@@ -1367,22 +1509,70 @@
 
     const labels = data.trendLabels || [];
     const colors = IR_CHART_COLORS;
-    const datasets = (data.depts || []).map(function (dept, i) {
-      const color = colors[i % colors.length];
+    // Color assignment: walk top-level depts in payload order and
+    // give each one a slot from IR_CHART_COLORS. Child depts inherit
+    // their parent's hue so the parent-vs-child relationship is
+    // legible at a glance. Built once up front instead of per-dept
+    // so children referencing parents that appear later in `depts`
+    // still resolve correctly (defensive -- depts are typically
+    // ordered parent-then-children today, but don't lean on it).
+    const colorByDept = {};
+    let nextColorSlot = 0;
+    (data.depts || []).forEach(function (dept) {
+      if (dept.parent) return;
+      colorByDept[dept.name] = colors[nextColorSlot % colors.length];
+      nextColorSlot++;
+    });
+    (data.depts || []).forEach(function (dept) {
+      if (!dept.parent) return;
+      colorByDept[dept.name] = colorByDept[dept.parent]
+        || colors[nextColorSlot++ % colors.length];
+    });
+
+    const datasets = (data.depts || []).map(function (dept) {
+      const color = colorByDept[dept.name];
+      const isChild = !!dept.parent;
       return {
-        label: dept.name,
+        label: dept.name + (isChild ? ' (sub-queue)' : ''),
         data: dept.trend || [],
         borderColor: color,
-        backgroundColor: color,
-        tension: 0.3,
+        // No fill on the overlaid multi-dept chart -- 10+ stacked
+        // gradients muddle the view. The soft-area treatment (25%
+        // gradient via irGradientFill_) is intentionally reserved
+        // for single-series charts like the Individual / Performance
+        // monthly trends. Per-dept parent/child differentiation
+        // happens via line weight + dash pattern instead.
+        backgroundColor: 'rgba(0,0,0,0)',
         fill: false,
-        pointRadius: 2,
+        tension: 0.4,
+        borderWidth: isChild ? 1.4 : 2.2,
+        borderDash: isChild ? [4, 3] : [],
+        pointRadius: 0,
         pointHoverRadius: 4,
         pointBackgroundColor: color,
         pointBorderColor: THEME.paperCard,
-        pointBorderWidth: 1,
+        pointBorderWidth: 1.5,
         spanGaps: false,    // honor nulls -> gaps for no-data days
       };
+    });
+
+    // 92% target dashed baseline -- visualizes the answer-rate goal
+    // alert thresholds typically cluster around. Drawn as a faint
+    // muted line behind the dept series so it reads as a reference
+    // rather than competing data.
+    datasets.push({
+      label: '92% target',
+      data: labels.map(function () { return 92; }),
+      borderColor: (THEME && THEME.muted) || '#606872',
+      backgroundColor: 'rgba(0,0,0,0)',
+      borderWidth: 1,
+      borderDash: [6, 4],
+      pointRadius: 0,
+      pointHoverRadius: 0,
+      fill: false,
+      tension: 0,
+      // Render behind everything else so dept lines stay on top.
+      order: 99,
     });
 
     const ovPlugins = (typeof ChartDataLabels !== 'undefined') ? [ChartDataLabels] : [];
@@ -1399,6 +1589,10 @@
             labels: { boxWidth: 12, font: { size: 11 } },
           },
           tooltip: {
+            filter: function (ctx) {
+              // Hide the 92% baseline from the per-line tooltip list.
+              return ctx.dataset.label !== '92% target';
+            },
             callbacks: {
               label: function (ctx) {
                 const v = ctx.parsed && ctx.parsed.y;
