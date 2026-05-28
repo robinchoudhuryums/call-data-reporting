@@ -364,16 +364,17 @@ function computeSummary_(dept, from, to, scope) {
     a.days[dateIso] = true;
   }
 
-  // Build the agent -> first-dept lookup used to populate sourceHome
-  // on queue-only rows (so the My Department table's Source chip can
-  // tell the manager which OTHER dept the floater is actually rostered
-  // on). Computed lazily -- only if there's at least one queue-only
-  // agent in the result -- to avoid scanning every dept's roster on
-  // every cache miss.
-  let firstDeptByAgent = null;
+  // Build the agent -> [other-depts] lookup used to populate
+  // sourceHomes on queue-only rows (so the My Department table's
+  // Source chip can tell the manager which OTHER depts the floater
+  // is actually rostered on -- multiple, comma-separated, if they're
+  // multi-rostered). Computed lazily -- only if there's at least one
+  // queue-only agent in the result -- to avoid scanning every dept's
+  // roster on every cache miss.
+  let deptsByAgent = null;
   const queueOnlyCount = Object.keys(queueOnlyAgents).length;
   if (queueOnlyCount > 0) {
-    firstDeptByAgent = buildFirstDeptByAgent_();
+    deptsByAgent = buildDeptsByAgent_();
   }
 
   // Finalize per-agent rows.
@@ -382,13 +383,18 @@ function computeSummary_(dept, from, to, scope) {
     if (!Object.prototype.hasOwnProperty.call(acc, k)) continue;
     const a = acc[k];
     const queueOnly = a.matchedViaQueue && !a.matchedViaRoster;
-    const sourceHome = queueOnly && firstDeptByAgent
-      ? (firstDeptByAgent[a.agent] || null) : null;
+    // sourceHomes is an array of every dept whose roster this agent
+    // appears on. Empty array (rendered as bare "QUEUE") means the
+    // floater is on no dept's roster -- they only handled calls via
+    // shared-queue extensions. Non-queue-only rows don't carry the
+    // field; the client only reads it for the QUEUE chip variant.
+    const sourceHomes = queueOnly && deptsByAgent
+      ? (deptsByAgent[a.agent] || []) : [];
     rows.push({
       agent: a.agent,
       matchedViaRoster: a.matchedViaRoster,
       matchedViaQueue: a.matchedViaQueue,
-      sourceHome: sourceHome,
+      sourceHomes: sourceHomes,
       totalUnique: a.totalUnique,
       totalRung: a.totalRung,
       totalMissed: a.totalMissed,
@@ -654,27 +660,34 @@ function getAgentsForDepartment_(dept) {
 }
 
 /**
- * Builds an { agentName -> firstDeptName } map by iterating every
- * dept's roster in getAllDepartments_ order and taking the first
- * dept each name appears on. Used to populate `sourceHome` on
- * queue-only rows in computeSummary_ so the Source chip can show
- * "QUEUE · Sales" rather than just "QUEUE" when a floater is
- * actually rostered elsewhere. Hidden depts (OVERVIEW_HIDDEN_DEPTS)
- * are still scanned -- they're hidden from the Overview only, not
- * from the source-home lookup, so a CSR Backup floater appearing
- * in CSR's table can still be tagged with "QUEUE · CSR Backup".
+ * Builds an { agentName -> [deptName, deptName, ...] } map by
+ * iterating every dept's roster in getAllDepartments_ order
+ * (alphabetical) and collecting every dept each name appears on.
+ * Used to populate `sourceHomes` on queue-only rows in
+ * computeSummary_ so the Source chip can show "QUEUE · Sales,
+ * Power" for a floater rostered on multiple depts -- rather than
+ * forcing a tie-breaker that hides the true picture.
  *
- * Tie-breaker: alphabetical via getAllDepartments_ order (which is
- * sorted alphabetically). Documented as the established rule for
- * the source chip.
+ * Agents not on any roster get no entry (the client renders just
+ * "QUEUE" with no suffix in that case).
+ *
+ * Hidden depts (OVERVIEW_HIDDEN_DEPTS) are still scanned -- they're
+ * hidden from the Overview only, not from the source-homes lookup,
+ * so a CSR Backup floater appearing in CSR's table can still be
+ * tagged with "QUEUE · CSR Backup".
+ *
+ * Dept order within each agent's list mirrors getAllDepartments_'s
+ * order (alphabetical), so the rendered chip reads in a stable,
+ * predictable sequence.
  */
-function buildFirstDeptByAgent_() {
+function buildDeptsByAgent_() {
   const out = {};
   getAllDepartments_().forEach(function (dept) {
     const roster = getRosterForDepartment_(dept);
     for (let i = 0; i < roster.names.length; i++) {
       const name = roster.names[i];
-      if (!out[name]) out[name] = dept;
+      if (!out[name]) out[name] = [];
+      out[name].push(dept);
     }
   });
   return out;

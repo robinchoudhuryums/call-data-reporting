@@ -2564,9 +2564,13 @@
   // Source chip for the Phase D Source column. Three variants:
   //   - matchedViaRoster && matchedViaQueue -> BOTH (good-soft)
   //   - matchedViaRoster only               -> ROSTER (accent-soft)
-  //   - matchedViaQueue only                -> QUEUE [· sourceHome] (warn-soft)
-  // sourceHome is populated server-side for queue-only rows that
-  // appear on at least one other dept's roster.
+  //   - matchedViaQueue only                -> QUEUE [· dept1, dept2] (warn-soft)
+  // sourceHomes is an array (server-populated) listing every dept
+  // whose roster a queue-only floater appears on. Empty array =
+  // bare "QUEUE" with no suffix (floater on no dept's roster --
+  // they only touched the current dept's queue extensions). One
+  // entry = "QUEUE · Sales". Multiple = "QUEUE · Sales, Power" so
+  // multi-rostered floaters surface their full home list.
   function sourceChipHtml_(row) {
     if (row.matchedViaRoster && row.matchedViaQueue) {
       return '<span class="src-chip src-chip-both"><span class="src-dot"></span>BOTH</span>';
@@ -2575,8 +2579,11 @@
       return '<span class="src-chip src-chip-roster"><span class="src-dot"></span>ROSTER</span>';
     }
     if (row.matchedViaQueue) {
-      const home = row.sourceHome ? ' &middot; ' + escapeHtml(row.sourceHome) : '';
-      return '<span class="src-chip src-chip-queue"><span class="src-dot"></span>QUEUE' + home + '</span>';
+      const homes = Array.isArray(row.sourceHomes) ? row.sourceHomes : [];
+      const suffix = homes.length
+        ? ' &middot; ' + homes.map(escapeHtml).join(', ')
+        : '';
+      return '<span class="src-chip src-chip-queue"><span class="src-dot"></span>QUEUE' + suffix + '</span>';
     }
     return '';
   }
@@ -2586,7 +2593,10 @@
   function sourceChipCsv_(row) {
     if (row.matchedViaRoster && row.matchedViaQueue) return 'BOTH';
     if (row.matchedViaRoster) return 'ROSTER';
-    if (row.matchedViaQueue) return row.sourceHome ? 'QUEUE - ' + row.sourceHome : 'QUEUE';
+    if (row.matchedViaQueue) {
+      const homes = Array.isArray(row.sourceHomes) ? row.sourceHomes : [];
+      return homes.length ? 'QUEUE - ' + homes.join(', ') : 'QUEUE';
+    }
     return '';
   }
 
