@@ -399,6 +399,37 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   (`computeOverviewPipelineFreshness_`,
   `computeOverviewOrphanNag_`) are best-effort -- failures return
   null and the Overview still renders without the banner.
+- **Top-tab router (Phase C).** The header nav was flattened from
+  Reports + Admin dropdowns into a single row of top-level tab
+  buttons (commit ce4220a). Each tab carries a `data-route`
+  attribute and a stable button `id`, so the existing per-modal
+  init functions still wire up modal-open behavior unchanged; the
+  new `initRouter` in `script.html` just tracks `currentRoute` and
+  paints the active-tab indicator via `updateTabActiveState_`. Two
+  click handlers fire per tab — the existing modal-open and the
+  router's data-route tracker — but they don't conflict because
+  each modal's `openModal` is idempotent. **No
+  `google.script.history.push` is used** (spotty browser behavior
+  inside Apps Script web apps); URL hashes are read at init via
+  `google.script.url.getLocation` and written only when a new tab
+  opens. The `↗ Open in new tab` button on report modals
+  (`.modal-open-tab-btn`, positioned at `right: 54px` to the left
+  of the close X) builds `window.__DASHBOARD_URL__ + '#' +
+  currentRoute` and `window.open`s it; `.is-disabled` hides the
+  button when `DASHBOARD_URL` is unset. Escape-key modal close
+  doesn't revert the active-tab state in this phase — cosmetic
+  only; clicking any tab refreshes it. **`window.__DASHBOARD_URL__`
+  is injected by `renderDashboard_` (Code.gs) from the
+  `DASHBOARD_URL` Script Property** with the same `<` escape
+  trick as `userJson`; empty string when unset. Don't try to read
+  the deployed URL from `window.location` inside the Apps Script
+  iframe — that resolves to the `n-<hash>-script.googleusercontent.com`
+  wrapper, not the user-facing `/exec` URL. Deep links work for
+  the 7 report routes (`#/report/missed`, `#/report/individual`,
+  `#/report/performance`, `#/report/compare`, `#/report/qcd`,
+  `#/admin/alerts`, `#/admin/orphan-fix`) plus the two pages
+  (`#/overview`, `#/dept`); unknown / malformed hashes quietly
+  no-op and land on Overview.
 - **My Department CSV export.** The agent table has a "Download CSV"
   button (hidden until data loads) that exports the current view
   (respecting scope, date range, and sort order) as a client-side
@@ -435,8 +466,15 @@ When something looks wrong, before assuming a code bug, check:
    config reads, Orphan Fix log appends) silently no-op against
    the missing sheet, and the Orphan Fix modal will throw "sheet
    missing -- run setup()" on first write.
-7. For alerts: is the `DASHBOARD_URL` Script Property set? Without it,
-   alert emails still send — they just omit the "Open Dashboard" link.
+7. For alerts AND report-modal new-tab buttons: is the
+   `DASHBOARD_URL` Script Property set? Two consumers since Phase C
+   (commit ce4220a): (a) the "Open Dashboard" link in alert emails
+   — without the property, emails still send but omit the link;
+   (b) the `↗ Open in new tab` buttons on every report modal —
+   without the property, the buttons silently hide via
+   `.is-disabled` and the side-by-side comparison flow doesn't
+   work. Strongly recommended; set in the dashboard project's
+   Script Properties to the deployed `/exec` URL.
 8. Are all three trigger types installed? Three independent triggers
    now feed the dashboard's freshness, and each one missing is a
    silent failure:
@@ -706,7 +744,7 @@ S16 | Export menu captures all chart tabs | Subsystem: Department Dashboard
 S17 | Compare Ranges is per-dept gated | Subsystem: Department Dashboard
   Steps:
     - Open the dashboard as a manager (non-admin).
-    - Confirm the "Compare Ranges" button is visible in the Reports menu.
+    - Confirm the "Compare" tab is visible in the top header nav (flattened from the prior Reports dropdown in Phase C).
     - Run a Compare Ranges report for the manager's own dept; confirm it loads.
     - Attempt to call `getCompareRanges` with a different dept name via the browser console.
   Expected: own-dept call succeeds; cross-dept call throws "Not authorized for this department." on the server. Admins can pick any dept that exists in the dept list.
@@ -771,7 +809,7 @@ S26 | Big-roster reports complete without cache-key error | Subsystem: Departmen
 S27 | Compare Ranges is per-dept gated for managers | Subsystem: Department Dashboard
   Steps:
     - Open the dashboard as a manager (non-admin).
-    - Confirm the "Compare Ranges" button is visible in the Reports menu (no longer admin-only after INV-32 update).
+    - Confirm the "Compare" tab is visible in the top header nav (no longer admin-only after INV-32 update; flattened from the prior Reports dropdown in Phase C).
     - Generate a Compare Ranges report for the manager's own dept; confirm it loads.
     - In the browser console, attempt `google.script.run.withSuccessHandler(console.log).withFailureHandler(console.error).getCompareRanges({ department: 'SomeOtherDept', ...})`.
   Expected: own-dept Generate succeeds; cross-dept console call throws "Not authorized for this department.". Admin users can request any dept that exists in the dept list (same gate as Individual / Performance).
@@ -803,7 +841,7 @@ S30 | Header freshness pill renders and goes stale | Subsystem: Department Dashb
 
 S31 | Orphan Fix end-to-end (admin) | Subsystem: Department Dashboard + CDR DQE Pipeline
   Steps:
-    - As admin, open the dashboard. Admin menu -> Orphan Fix.
+    - As admin, open the dashboard. Click the "Outlier Fix" tab in the header nav (admin-only tab; flattened from the prior Admin dropdown in Phase C).
     - Confirm the modal lists orphan agent names from DQE Historical Data (or "no orphans" if everyone canonicalizes cleanly).
     - For one orphan, pick a canonical roster name from the dropdown; click Apply; confirm the prompt.
     - Server returns the rename count; the orphan row disappears from the list on refresh; "Current aliases" gains a new row with Active=Yes; "Recent fix log" gains a `rename+alias` entry.
@@ -815,7 +853,7 @@ S31 | Orphan Fix end-to-end (admin) | Subsystem: Department Dashboard + CDR DQE 
 
 S32 | QCD Report end-to-end | Subsystem: Department Dashboard + CDR Import
   Steps:
-    - Open dashboard as a manager. Reports → QCD Report.
+    - Open dashboard as a manager. Click the "QCD" tab in the top header nav (flattened from the prior Reports dropdown in Phase C).
     - Confirm the Quick Select defaults to "Yesterday" and both date inputs show yesterday's date.
     - Pick a date range with known QCD activity for the manager's dept; Generate.
     - Confirm KPI tiles render Total Calls / Answered / Abandoned / Abandoned % / Longest Wait / Avg Answer / Violations (Violations tile is warn-soft when >0).
