@@ -136,7 +136,43 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   fails. The chrome layer also writes `dash-mode` (light/dark toggle)
   and `dash-theme.v1` (warm / cool / clinical paper theme) — the
   theme picker re-reads these on every render so no cache bump is
-  needed when palette tokens change.
+  needed when palette tokens change. Default for first-time visitors
+  (no `dash-theme.v1` value) is `cool` since the Phase A redesign
+  rollout (commit 99e7253); explicit saved values, including `'warm'`,
+  are preserved untouched. The `:root` tokens in `styles.html` remain
+  the warm palette as the fallback for returning explicit-warm users
+  (whose body carries no `data-theme` attribute).
+- **CSS design-token conventions (post-redesign Phase A).** The
+  dashboard's design system is centralized in `styles.html :root`;
+  three conventions established by commit 99e7253 are worth respecting:
+  (1) **`--bad` is for hard errors; `--warn` is for warnings.**
+  `--bad` / `--bad-soft` are the deeper red for irrecoverable failure
+  states (validation errors, fetch failures, access-denied UI). Only
+  `.status-error` currently uses them. `--warn` / `--warn-soft` stay
+  the default for negative-valence-but-not-fatal cases (low answer
+  rate threshold, abandoned % warning, missed-delta orange,
+  regression deltas). Reach for `--bad` deliberately when adding new
+  error-state UI; don't blanket-replace existing `--warn` usage.
+  (2) **`--r: 2px` is the canonical border-radius token.** New UI
+  should use `var(--r)` for squared-off corners. Exceptions are
+  intentional: `999px` pills/badges, `50%` avatars/dots, skeleton
+  blocks (`.skeleton-line` 4px / `.skeleton-tile` 8px), and
+  print-mode `border-radius: 0 !important` overrides. ~12 pre-Phase-A
+  callsites in alerts / toast / date input still hardcode 6px / 8px
+  and are slated for a follow-on cleanup; new code should still
+  pick `var(--r)`.
+  (3) **Uppercase mono kickers/eyebrows/labels use
+  `letter-spacing: 0.18em`.** Mono numerics (blocks with
+  `font-variant-numeric: tabular-nums`) use `letter-spacing: 0`.
+  Swept across 47 selectors in commit 99e7253; new mono+uppercase
+  selectors should match.
+  *INV-42 follow-on:* `--bad` / `--bad-soft` are CSS-only — not yet
+  mirrored into the JS `THEME` object or `refreshChartTheme()` in
+  `script.html`. If a future phase surfaces error states in chart
+  colors (Pipeline Health banner, etc.), extend `THEME` with
+  `.bad` / `.badSoft` and resolve them via `colorToCanvasRgb_('--bad')`
+  or chartjs-plugin-datalabels will silently render empty fills
+  on the OKLCH path.
 - **CacheService key length cap (250 chars).** Apps Script silently
   rejects cache keys longer than 250 characters, surfacing as an
   error on `cache.get`. The Individual / Performance / Compare
