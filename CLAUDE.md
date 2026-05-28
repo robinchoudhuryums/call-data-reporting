@@ -202,6 +202,20 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   so the plugin always receives a parseable color. Don't pass raw
   `getComputedStyle(...).getPropertyValue('--foo')` strings to chart
   options — always go through `THEME.*`.
+- **Overview trend chart conventions (Phase B).** Multi-dept overlay
+  on the Overview page (`ov-trend-chart`): parent depts get solid
+  2.2px lines with hue assigned from `IR_CHART_COLORS` in payload
+  order; sub-queue children get dashed 1.4px lines (`borderDash:
+  [4, 3]`) inheriting their parent's hue via the `colorByDept` map
+  built up front in `ovRenderChart_` (so the parent → child color
+  inheritance works even if children precede parents in the
+  `depts` array). A faint dashed 92% baseline (color
+  `THEME.muted`) is drawn at `order: 99` so dept lines stay on
+  top; the tooltip is filtered to hide the baseline from per-line
+  hover. Fills are intentionally suppressed on this overlaid
+  chart -- the soft-area gradient via `irGradientFill_` is
+  reserved for single-series IR / PR trend tabs where it reads
+  cleanly without 10+ overlapping fills competing.
 - **Recently-active denominator.** The Overview tile caption "X of Y
   agents" uses `recentlyActiveCount` (any rung / answered / missed
   activity in the last `OVERVIEW_RECENT_ACTIVE_DAYS` = 30 days), NOT
@@ -353,13 +367,38 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   byte-for-byte. The hero block shows parent + all its children
   together when the viewer is a parent, so the relationship stays
   visible even when the parent is spotlighted.
-- **Company aggregate is admin-only via `personalizeOverview_`.**
-  `getCompanyOverview()` always computes the company-wide
-  aggregate and caches it inside the shared blob, but
-  `personalizeOverview_` strips the `companyAggregate` field on
-  serve for non-admins. Viewer-personalized fields (`viewerRole`,
+- **Admin-only Overview surfaces.** `getCompanyOverview()` always
+  computes the company-wide aggregate plus admin-only operational
+  fields (`pipelineFreshness`, `orphanNag`) and caches them in the
+  shared blob, but `personalizeOverview_` strips all three
+  (`companyAggregate`, `pipelineFreshness`, `orphanNag`) on serve
+  for non-admins. Viewer-personalized fields (`viewerRole`,
   `viewerDept`) are injected per-request so a payload warmed by
-  user A still personalizes correctly for user B.
+  user A still personalizes correctly for user B. Adding a new
+  admin-only Overview field means adding it to the strip list
+  inside `personalizeOverview_`.
+- **Overview admin-only banners (Phase B).** Pipeline Health
+  banner (`#ov-pipeline-banner`) and Orphan Fix nag
+  (`#ov-orphan-nag`) sit above the summary line on the Overview
+  page and are admin-only. Two layers of gating: (1) the
+  `data-admin-only` attribute on the div is cleared at init for
+  admins (the existing convention -- see the
+  `document.querySelectorAll('[data-admin-only]')` loop in
+  `script.html`); (2) `ovRenderPipelineBanner_` /
+  `ovRenderOrphanNag_` further hide the banner when health is good
+  / no active orphans. Pipeline banner fires when no DQE-freshness
+  success row (`buildDQE` / `processIntegratedHistory:DQE` /
+  `bulkBackfill:DQE`, per INV-44) appears in the last 40 Pipeline
+  Health entries, OR the latest one is older than
+  `OVERVIEW_PIPELINE_STALE_HOURS` (=36h, matching the header
+  freshness pill threshold). Orphan nag counts orphans whose
+  `lastSeen` is within `OVERVIEW_ORPHAN_NAG_DAYS` (=7d) and
+  surfaces up to 3 sample names by row-count desc; its Open
+  button programmatically clicks `#orphan-fix-btn` to open the
+  Outlier Fix modal. Both server helpers
+  (`computeOverviewPipelineFreshness_`,
+  `computeOverviewOrphanNag_`) are best-effort -- failures return
+  null and the Overview still renders without the banner.
 - **My Department CSV export.** The agent table has a "Download CSV"
   button (hidden until data loads) that exports the current view
   (respecting scope, date range, and sort order) as a client-side
@@ -442,7 +481,12 @@ When something looks wrong, before assuming a code bug, check:
     nothing since means the daily ingest or DQE rebuild hasn't
     run. Cross-check with Operator State #1 + #8. An empty sheet
     right after deploy means setup() hasn't been re-run on this
-    project.
+    project. Phase B (commit 9b1f263) adds a Pipeline Health
+    banner above the Overview summary line that warns admins
+    when no DQE-freshness success has landed in the last 36h --
+    same staleness condition without opening the Alerts modal.
+    If the banner fires, fall through to this checklist item to
+    investigate.
 12. Manager digest delivery: if a subscriber says they didn't get
     their digest, check (a) Digest Config row Active=TRUE,
     (b) Cadence is `daily` or `weekly` (normalized -- other values
@@ -533,7 +577,7 @@ INV-26 | TEAM_AVG_EXCLUDES in Config.gs lists per-dept agent names removed from 
 INV-27 | Individual Report's team-avg denominator counts only roster members with ANY call activity (rung/answered/missed > 0) in the selected range, NOT the full roster size. Zero-call roster members don't dilute the average. | Subsystem: Department Dashboard
 INV-28 | Performance Report's prior period is the immediately-preceding window of the same duration (durationDays before currentStart, ending one day before currentStart) -- NOT "previous calendar month". Documented in the form's inline hint and the results-header "Comparing against..." line. Match legacy SingleRangeReport semantics. | Subsystem: Department Dashboard
 INV-29 | Individual Report's monthly trend window: range itself when selected range > 366 days OR equals a full calendar year (Jan 1 - Dec 31 of one year); else `first-of-month(end - 12 months)` to `end`. Performance Report uses identical logic so the 12-mo trends align across both reports for the same dept. | Subsystem: Department Dashboard
-INV-30 | Each report has its own versioned cache key prefix; bump on any aggregation rule change so stale entries don't bleed in. Current: `summary:v6` (Data.gs), `latestDate:v1` (Data.gs -- most-recent DQE ISO date; drives the My Department From/To default so the agent table lands on a non-empty day), `latestDates:v1` (Data.gs -- multi-source `{dqe, qcd, latest}` blob; drives the header freshness pill so it doesn't go stale when one source updates without the other), `individual:v6` (IndividualReport.gs), `individual_active:v1` (active-agents-in-range subset used by Individual + Performance + Compare Ranges pickers), `performance:v3` (PerformanceReport.gs), `compareRanges:v3` (CompareRangesReport.gs), `missed:v10` (MissedCallsReport.gs), `companyOverview:v12` (CompanyOverview.gs), `qcd:v5` (QCDReport.gs). Alerts.gs holds no cached compute. | Subsystem: Department Dashboard
+INV-30 | Each report has its own versioned cache key prefix; bump on any aggregation rule change so stale entries don't bleed in. Current: `summary:v6` (Data.gs), `latestDate:v1` (Data.gs -- most-recent DQE ISO date; drives the My Department From/To default so the agent table lands on a non-empty day), `latestDates:v1` (Data.gs -- multi-source `{dqe, qcd, latest}` blob; drives the header freshness pill so it doesn't go stale when one source updates without the other), `individual:v6` (IndividualReport.gs), `individual_active:v1` (active-agents-in-range subset used by Individual + Performance + Compare Ranges pickers), `performance:v3` (PerformanceReport.gs), `compareRanges:v3` (CompareRangesReport.gs), `missed:v10` (MissedCallsReport.gs), `companyOverview:v13` (CompanyOverview.gs), `qcd:v5` (QCDReport.gs). Alerts.gs holds no cached compute. | Subsystem: Department Dashboard
 INV-31 | `script.send_mail` OAuth scope in appsscript.json is required for: (1) Individual / Performance / Compare Ranges / QCD "Email image" exports, (2) the Low Answer Rate Alerts engine, (3) the Manager Digest engine (Digest.gs), (4) the failure-notification paths (notifyImportFailure_ in autoImport.js, runDailyDQEBuild_ in buildDQEHistoricalData.js [present in BOTH cdr-import and cdr-report copies after INV-16 expansion], notifyDigestFailure_ in Digest.gs, plus the indirect path from cdr-import's integrated DQE block hitting notifyNeonWriteFailure on a Neon write failure). All paths use `MailApp.sendEmail`. Removing the scope breaks every one of them; adding new send-mail features here doesn't need a re-scope. | Subsystem: Department Dashboard (+ CDR Import / CDR DQE Pipeline for the notify-failure paths)
 INV-32 | Low Answer Rate Alerts is admin-only at the server boundary. Every public callable in Alerts.gs starts with `assertAdmin_`. The launcher button is also hidden client-side via `data-admin-only`, but the server check is the source of truth. Compare Ranges was previously admin-only too but was opened to managers (with the same `dept !== user.department` check the other reports use) so they can run year-over-year comparisons within their own dept. Adding a new admin = setting/editing the `ADMIN_EMAILS` Script Property (comma-separated emails); falls back to `ADMIN_EMAILS_FALLBACK` in Config.gs if unset. | Subsystem: Department Dashboard
 INV-33 | `runDailyAlerts_` (time-triggered alerts) skips Saturdays and Sundays. Holiday handling is intentionally not built in -- if it becomes noise in practice, add a skip-dates column to the Alert Config sheet rather than hardcoding in Alerts.gs. Manual sends via the UI ignore this skip. | Subsystem: Department Dashboard
@@ -542,7 +586,7 @@ INV-35 | Compare Ranges flags `meta.lengthMismatch=true` when the longer of the 
 INV-36 | Cache keys that embed agent selections must hash via `Data.gs::hashAgents_` (MD5 hex, 32 chars, order-insensitive). Apps Script CacheService silently rejects keys > 250 chars; raw-joined agent lists overflow on big rosters like Sales and surface as report-generation errors. IR / PR / CR all use the hash; future report code that caches per agent-selection must follow suit. | Subsystem: Department Dashboard
 INV-37 | The dashboard is a two-page web app toggled via `body[data-page="overview"|"dept"]`. Default landing is `overview` (set inline on the body tag so the right page paints before JS runs). `setPage(name)` swaps the page, updates the header kicker+h1, and (for `overview`) triggers a fresh `getCompanyOverview()` fetch. `refresh()` only writes the dept name into `#page-title` when the dept page is active, so swapping dept on Overview doesn't clobber "Departments Snapshot". | Subsystem: Department Dashboard
 INV-38 | `OVERVIEW_PARENT_OF` (CompanyOverview.gs) defines sub-queue parent-child relationships for the Overview tile grid ONLY. The dept dropdown, all Reports modals, and Alerts treat each dept as independent. Keys must match the `DO NOT EDIT!` column header byte-for-byte; aliases (e.g. both `PAP` and `PAP Q` mapping to Sales) are tolerated. `OVERVIEW_HIDDEN_DEPTS` excludes depts from the Overview only (e.g. `CSR Backup`). | Subsystem: Department Dashboard
-INV-39 | `companyAggregate` in the Overview payload is admin-only via `personalizeOverview_`: the full blob (including aggregate) is cached for everyone, but the aggregate field is stripped on serve for non-admins. `personalizeOverview_` deep-clones via JSON round-trip so any future personalize step that mutates nested fields can't leak across viewers. Viewer-personalized fields `viewerRole` and `viewerDept` are injected per-request, never cached — so a payload warmed by user A still personalizes correctly for user B. Adding a new admin-only Overview field means stripping it inside `personalizeOverview_`. | Subsystem: Department Dashboard
+INV-39 | Admin-only fields in the Overview payload are stripped on serve via `personalizeOverview_`: the full blob (including all admin-only fields) is cached for everyone, but the admin-only fields (`companyAggregate`, `pipelineFreshness`, `orphanNag`) are removed before serving non-admins. `personalizeOverview_` deep-clones via JSON round-trip so any future personalize step that mutates nested fields can't leak across viewers. Viewer-personalized fields `viewerRole` and `viewerDept` are injected per-request, never cached — so a payload warmed by user A still personalizes correctly for user B. Adding a new admin-only Overview field means adding its key to the strip list inside `personalizeOverview_`. | Subsystem: Department Dashboard
 INV-40 | Overview "X of Y agents" caption denominator is `recentlyActiveCount` = any rung/answered/missed activity in the last `OVERVIEW_RECENT_ACTIVE_DAYS` (=30) days, NOT full roster size. Filters out ex-employees who are kept on the `DO NOT EDIT!` sheet for historical-data preservation. Hover tooltip exposes today-active / recent-active / full-roster numbers so the choice is transparent. Same logic powers the company aggregate's Active count. | Subsystem: Department Dashboard
 INV-41 | chartjs-plugin-datalabels requires `Chart.register(ChartDataLabels)` AND `Chart.defaults.plugins.datalabels.display = true` at module load (the `registerChartDataLabels_` IIFE in script.html does both). Chart.js v4 dropped script-tag auto-registration; the plugin defaults to display=false since v1.0.0. Per-chart `display: false` overrides still suppress labels (Missed Calls radar, Overview multi-line trend). Use the boolean form of `display` per chart — the function form returns false unpredictably on mixed bar+line charts in this plugin version. | Subsystem: Department Dashboard
 INV-42 | `refreshChartTheme()` (script.html) resolves every CSS custom property via `colorToCanvasRgb_()` — paints onto a 1×1 canvas and reads back canonical `rgba(...)`. Required because chartjs-plugin-datalabels' `fillStyle` path can't parse `oklch(...)` strings → silently renders empty fills (invisible labels). Never pass raw `getComputedStyle(...).getPropertyValue('--token')` to chart options; always go through `THEME.*`. Hook is re-run on dark-mode toggle so newly-rendered charts pick up the inverted palette. | Subsystem: Department Dashboard
