@@ -53,6 +53,14 @@ function renderDashboard_(user) {
   //      replace "<" with its JSON unicode-escape form so the
   //      browser's JS parser turns it back into "<" at runtime.
   tmpl.userJson = JSON.stringify(userObj).replace(/</g, '\\u003c');
+  // Pass the deployed web-app URL through to the client so the
+  // "Open in new tab" buttons on each report modal can build a
+  // shareable target URL. Reads the same DASHBOARD_URL Script
+  // Property the alert emails already consume; if unset, the client
+  // hides the Open-in-new-tab affordance gracefully.
+  const dashboardUrl = PropertiesService.getScriptProperties()
+    .getProperty('DASHBOARD_URL') || '';
+  tmpl.dashboardUrlJson = JSON.stringify(dashboardUrl).replace(/</g, '\\u003c');
   return tmpl.evaluate()
     .setTitle('Department Dashboard')
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);

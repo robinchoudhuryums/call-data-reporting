@@ -239,9 +239,17 @@
      trigger buttons. */
   .header-nav {
     display: flex;
-    gap: 8px;
+    flex-wrap: wrap;
+    gap: 6px;
     align-self: flex-end;
     margin-bottom: 6px;
+    /* Allow the row of tabs to wrap once it gets wider than the
+       header column; the Phase C flattened nav has 7 manager-visible
+       tabs and 9 admin-visible tabs. On the typical wide deploy this
+       fits a single row; on narrower viewports the second row drops
+       below cleanly without breaking the header-meta column to the
+       right. */
+    justify-content: flex-end;
   }
   .header-menu { position: relative; }
   .header-menu-btn {
@@ -803,6 +811,39 @@
   .modal-close:hover {
     background: var(--paper-2);
     color: var(--ink);
+  }
+  /* "Open in new tab" affordance on report modal headers (Phase C).
+     Sits to the left of the close button so the close X stays in
+     its expected top-right slot. Wired up by the central router in
+     script.html via data-open-tab-route -- opens DASHBOARD_URL with
+     the current modal's route as a hash fragment so the new tab
+     lands directly on this report, enabling side-by-side comparison
+     via OS-tiled browser windows. Hidden when DASHBOARD_URL is unset. */
+  .modal-open-tab-btn {
+    position: absolute;
+    top: 14px;
+    right: 54px;
+    width: 32px;
+    height: 32px;
+    background: transparent;
+    border: 0;
+    color: var(--muted);
+    font-size: 16px;
+    line-height: 1;
+    cursor: pointer;
+    border-radius: var(--r);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .modal-open-tab-btn:hover {
+    background: var(--paper-2);
+    color: var(--ink);
+  }
+  /* Hidden when there's no DASHBOARD_URL property to base the
+     shareable target on. The router toggles this class at init. */
+  .modal-open-tab-btn.is-disabled {
+    display: none;
   }
   /* Modal header: optional kicker over the display-font title.
      Together they reproduce the kicker+title pattern used on the

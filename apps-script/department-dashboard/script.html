@@ -620,6 +620,10 @@
     initAlerts();
     initOrphanFix();
     initQcdReport();
+    // Router last so its modal-close listeners attach after each
+    // per-modal init has wired up its own close-button handlers.
+    initRouter();
+    initOpenInNewTabButtons_();
 
     // Fetch the most recent date with data in DQE Historical Data
     // and snap From/To to that date. Defers the initial table
@@ -706,14 +710,14 @@
       if (kicker) kicker.textContent = 'Department Dashboard';
       if (title)  title.textContent  = getRequestedDept() || '(no department)';
     }
-    ['overview-btn', 'my-dept-btn'].forEach(function (id) {
-      const btn = $(id);
-      if (!btn) return;
-      const isCur = (id === 'overview-btn' && page === 'overview')
-                 || (id === 'my-dept-btn'  && page === 'dept');
-      btn.classList.toggle('header-nav-current', isCur);
-      btn.setAttribute('aria-pressed', isCur ? 'true' : 'false');
-    });
+    // Delegate the active-tab visual indicator to the router so all
+    // [data-route] tabs (page-toggles + report-openers) participate
+    // in the same active-state model. Phase C consolidated this from
+    // the per-button toggle that previously only handled overview /
+    // my-dept buttons.
+    if (typeof setRoute_ === 'function') {
+      setRoute_(page === 'dept' ? '/dept' : '/overview');
+    }
   }
 
   // -- Help & FAQ modal ---------------------------------------------------
@@ -1614,6 +1618,149 @@
         },
         interaction: { mode: 'index', intersect: false },
       },
+    });
+  }
+
+  // -- Router + URL hash routing (Phase C) -------------------------------
+  // Lightweight in-page router that lets the user deep-link into a
+  // specific report modal -- the primary use-case is the "Open in
+  // new tab" affordance, which lets users OS-tile two browser
+  // windows for side-by-side comparison.
+  //
+  // Design:
+  //   * The header nav already has the modal-trigger buttons we want
+  //     (Missed / Individual / Performance / Compare / QCD / Alerts /
+  //     Outlier Fix). Each tab carries a data-route="..." attribute.
+  //   * This router adds a click listener on every [data-route]
+  //     element that tracks the active route + paints the active-tab
+  //     visual indicator. It does NOT open the modal itself --
+  //     each per-modal initXxxReport already has its own click
+  //     handler that does the open. Two listeners fire on the same
+  //     button click; they don't conflict.
+  //   * On modal close (close button or backdrop), the router
+  //     reverts the active state to the underlying page tab
+  //     (Overview or My Department) so the highlight follows what's
+  //     actually visible. Escape-key closes are not intercepted in
+  //     this phase; the tab stays highlighted until the next click
+  //     -- a minor visual cosmetic miss that's reversible by any
+  //     subsequent tab interaction.
+  //   * On page load, google.script.url.getLocation reads the parent
+  //     URL's hash; if it matches a known route, the corresponding
+  //     tab is programmatically clicked so the deep-link lands on
+  //     the right view. Defensive against unknown / malformed hashes:
+  //     the tab lookup quietly no-ops if no match.
+  //
+  // The router does not push hash updates to the parent URL on
+  // modal open -- that would require google.script.history which
+  // has had spotty browser behavior. The currentRoute is tracked
+  // purely in-JS and consumed by the "Open in new tab" buttons,
+  // which build a fresh URL from window.__DASHBOARD_URL__ + the
+  // current route. The new tab loads the dashboard fresh and the
+  // init-time hash read opens the deep-linked modal.
+
+  const ROUTES_ = {
+    '/overview':           { kind: 'page',  page: 'overview' },
+    '/dept':               { kind: 'page',  page: 'dept' },
+    '/report/missed':      { kind: 'modal', modalId: 'missed-modal',      buttonId: 'missed-report-btn' },
+    '/report/individual':  { kind: 'modal', modalId: 'individual-modal',  buttonId: 'individual-report-btn' },
+    '/report/performance': { kind: 'modal', modalId: 'performance-modal', buttonId: 'performance-report-btn' },
+    '/report/compare':     { kind: 'modal', modalId: 'compare-modal',     buttonId: 'compare-ranges-btn' },
+    '/report/qcd':         { kind: 'modal', modalId: 'qcd-modal',         buttonId: 'qcd-report-btn' },
+    '/admin/alerts':       { kind: 'modal', modalId: 'alerts-modal',      buttonId: 'alerts-btn' },
+    '/admin/orphan-fix':   { kind: 'modal', modalId: 'orphan-fix-modal',  buttonId: 'orphan-fix-btn' },
+  };
+
+  // The route currently considered "active". Starts as '/overview'
+  // matching the default landing page. Reset to the underlying page
+  // ('/overview' or '/dept') whenever a modal closes.
+  var currentRoute = '/overview';
+
+  function updateTabActiveState_(route) {
+    document.querySelectorAll('[data-route]').forEach(function (btn) {
+      const isActive = btn.getAttribute('data-route') === route;
+      btn.classList.toggle('header-nav-current', isActive);
+      btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
+    });
+  }
+
+  function setRoute_(route) {
+    if (!ROUTES_[route]) return;
+    currentRoute = route;
+    updateTabActiveState_(route);
+  }
+
+  function basePageRoute_() {
+    return document.body.getAttribute('data-page') === 'dept' ? '/dept' : '/overview';
+  }
+
+  function initRouter() {
+    // Wire up click on every [data-route] element. The per-modal
+    // initXxxReport already adds its own click handler that opens
+    // the modal; this just tracks the route + active state.
+    document.querySelectorAll('[data-route]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        const route = btn.getAttribute('data-route');
+        if (!route || !ROUTES_[route]) return;
+        setRoute_(route);
+      });
+    });
+
+    // Wire up modal close paths to revert the active state. We hook
+    // the close button + the backdrop click; Escape-key closes are
+    // not intercepted in this phase (see header comment above).
+    Object.keys(ROUTES_).forEach(function (route) {
+      const def = ROUTES_[route];
+      if (def.kind !== 'modal') return;
+      const modal = document.getElementById(def.modalId);
+      if (!modal) return;
+      const onClose = function () {
+        // Async so the modal's own close handler runs first and
+        // body[data-page] is already correct.
+        setTimeout(function () { setRoute_(basePageRoute_()); }, 0);
+      };
+      modal.querySelectorAll('.modal-close, [data-close]').forEach(function (el) {
+        el.addEventListener('click', onClose);
+      });
+    });
+
+    // Initial route from parent URL hash. google.script.url.getLocation
+    // returns the parent URL's hash (without the leading '#') so deep
+    // links like ".../exec#/report/individual" hit ROUTES_ exactly.
+    if (typeof google !== 'undefined' && google.script && google.script.url) {
+      google.script.url.getLocation(function (loc) {
+        const hash = (loc && loc.hash) || '';
+        if (!hash) return;
+        // Allow either '#/report/individual' (leading slash) or
+        // '#report/individual' (no leading slash) for resilience to
+        // hand-typed URLs.
+        const normalized = hash.charAt(0) === '/' ? hash : '/' + hash;
+        const trigger = document.querySelector('[data-route="' + normalized + '"]');
+        if (trigger) trigger.click();
+      });
+    }
+  }
+
+  // Open-in-new-tab buttons on each report modal. Builds the target
+  // URL from window.__DASHBOARD_URL__ (DASHBOARD_URL Script Property)
+  // + the modal's data-open-tab-route. Hidden via .is-disabled when
+  // the property is unset -- the alert/email path already requires
+  // it so most installs have it set; CLAUDE.md README setup section
+  // documents how.
+  function initOpenInNewTabButtons_() {
+    const dashboardUrl = (window.__DASHBOARD_URL__ || '').trim();
+    document.querySelectorAll('.modal-open-tab-btn').forEach(function (btn) {
+      if (!dashboardUrl) {
+        btn.classList.add('is-disabled');
+        return;
+      }
+      btn.addEventListener('click', function () {
+        const route = btn.getAttribute('data-open-tab-route') || currentRoute;
+        // Strip any existing fragment from the configured URL before
+        // appending ours, so an admin-pasted URL ending in "#anything"
+        // doesn't produce a double-hash target.
+        const baseUrl = dashboardUrl.split('#')[0];
+        window.open(baseUrl + '#' + route, '_blank', 'noopener');
+      });
     });
   }
 
