@@ -21,45 +21,45 @@
         <div class="dash-kicker" id="page-kicker">Department Dashboard</div>
         <h1 id="page-title">Loading…</h1>
       </div>
-      <nav class="header-nav" aria-label="Reports and admin">
+      <!-- Top-tab nav (Phase C). Flattened from the prior Reports +
+           Admin dropdowns into a single row of explicit tab buttons.
+           Each tab carries a data-route attribute the router maps to
+           either a page swap (overview / dept) or a modal open
+           (report / admin items). Admin-only tabs use the existing
+           data-admin-only convention -- they start hidden inline and
+           are revealed for admins by the init in script.html. -->
+      <nav class="header-nav" aria-label="Dashboard sections" role="tablist">
         <button class="header-menu-btn header-nav-current" id="overview-btn" type="button"
+                data-route="/overview" role="tab" aria-selected="true"
                 title="Cross-department snapshot of the most recent day, with a 30-day answer-rate trend per dept.">
           Overview
         </button>
         <button class="header-menu-btn" id="my-dept-btn" type="button"
+                data-route="/dept" role="tab" aria-selected="false"
                 title="Your department's per-agent detail table with a configurable date range.">
           My Department
         </button>
-        <div class="header-menu">
-          <button class="header-menu-btn" id="reports-menu-btn" type="button"
-                  aria-haspopup="menu" aria-expanded="false" aria-controls="reports-menu-list">
-            Reports <span class="header-menu-caret" aria-hidden="true">&#9662;</span>
-          </button>
-          <div class="header-menu-list" id="reports-menu-list" role="menu" style="display:none;">
-            <button class="header-menu-item" id="missed-report-btn"     type="button" role="menuitem"
-                    title="Per-agent missed-call timeline + queue-only abandoned events for a chosen date range.">Missed Calls</button>
-            <button class="header-menu-item" id="individual-report-btn" type="button" role="menuitem"
-                    title="Per-agent KPIs vs team avg + 12-month trend. Pick 2+ agents to switch to peer-comparison mode.">Individual Report</button>
-            <button class="header-menu-item" id="performance-report-btn"type="button" role="menuitem"
-                    title="Department-level current-vs-prior-period deltas, share-of-answered pie, and 12-month team trend.">Performance Report</button>
-            <button class="header-menu-item" id="compare-ranges-btn"    type="button" role="menuitem"
-                    title="Side-by-side comparison of two arbitrary date ranges. Useful for year-over-year or pre/post-change analyses.">Compare Ranges</button>
-            <button class="header-menu-item" id="qcd-report-btn"        type="button" role="menuitem"
-                    title="Queue Call Detail report: dept-level totals, per-source breakdown, abandoned %, violations, and 12-month trend.">QCD Report</button>
-          </div>
-        </div>
-        <div class="header-menu" id="admin-menu-wrap" data-admin-only style="display:none;">
-          <button class="header-menu-btn" id="admin-menu-btn" type="button"
-                  aria-haspopup="menu" aria-expanded="false" aria-controls="admin-menu-list">
-            Admin <span class="header-menu-caret" aria-hidden="true">&#9662;</span>
-          </button>
-          <div class="header-menu-list" id="admin-menu-list" role="menu" style="display:none;">
-            <button class="header-menu-item" id="alerts-btn" type="button" role="menuitem"
-                    title="Configure low-answer-rate alerts: per-dept thresholds + recipients, manual send, or schedule a daily check.">Alerts</button>
-            <button class="header-menu-item" id="orphan-fix-btn" type="button" role="menuitem"
-                    title="Map outlier agent names in DQE Historical Data to existing roster entries. Admin-only.">Outlier Fix</button>
-          </div>
-        </div>
+        <button class="header-menu-btn" id="missed-report-btn" type="button"
+                data-route="/report/missed" role="tab" aria-selected="false"
+                title="Per-agent missed-call timeline + queue-only abandoned events for a chosen date range.">Missed Calls</button>
+        <button class="header-menu-btn" id="individual-report-btn" type="button"
+                data-route="/report/individual" role="tab" aria-selected="false"
+                title="Per-agent KPIs vs team avg + 12-month trend. Pick 2+ agents to switch to peer-comparison mode.">Individual</button>
+        <button class="header-menu-btn" id="performance-report-btn" type="button"
+                data-route="/report/performance" role="tab" aria-selected="false"
+                title="Department-level current-vs-prior-period deltas, share-of-answered pie, and 12-month team trend.">Performance</button>
+        <button class="header-menu-btn" id="compare-ranges-btn" type="button"
+                data-route="/report/compare" role="tab" aria-selected="false"
+                title="Side-by-side comparison of two arbitrary date ranges. Useful for year-over-year or pre/post-change analyses.">Compare</button>
+        <button class="header-menu-btn" id="qcd-report-btn" type="button"
+                data-route="/report/qcd" role="tab" aria-selected="false"
+                title="Queue Call Detail report: dept-level totals, per-source breakdown, abandoned %, violations, and 12-month trend.">QCD</button>
+        <button class="header-menu-btn" id="alerts-btn" type="button"
+                data-route="/admin/alerts" data-admin-only role="tab" aria-selected="false" style="display:none;"
+                title="Configure low-answer-rate alerts: per-dept thresholds + recipients, manual send, or schedule a daily check.">Alerts</button>
+        <button class="header-menu-btn" id="orphan-fix-btn" type="button"
+                data-route="/admin/orphan-fix" data-admin-only role="tab" aria-selected="false" style="display:none;"
+                title="Map outlier agent names in DQE Historical Data to existing roster entries. Admin-only.">Outlier Fix</button>
       </nav>
       <div class="header-meta">
         <!-- Data-freshness pill -- "Data through Mon May 19 · 14h ago".
@@ -88,6 +88,15 @@
         <div class="skeleton-row"><div class="skeleton-line" style="height:160px;flex:1;border-radius:8px;"></div></div>
       </div>
       <div id="ov-body" style="display:none;">
+        <!-- Admin-only Pipeline Health banner (E1). Warn-tinted when
+             the most-recent successful DQE-freshness write is more
+             than OVERVIEW_PIPELINE_STALE_HOURS (=36h) old. Hidden when
+             freshness is healthy or for non-admins. -->
+        <div id="ov-pipeline-banner" class="ov-status-banner" style="display:none;" data-admin-only></div>
+        <!-- Admin-only Orphan Fix nag (E12-reframed). Visible only when
+             active orphans (lastSeen within OVERVIEW_ORPHAN_NAG_DAYS)
+             exist. Clicking opens the Orphan Fix modal. -->
+        <div id="ov-orphan-nag" class="ov-status-banner" style="display:none;" data-admin-only></div>
         <div class="ov-summary-line" id="ov-summary-line"></div>
         <div id="ov-company-aggregate" class="ov-company-aggregate" style="display:none;"></div>
         <div id="ov-user-hero" class="ov-user-hero" style="display:none;"></div>
@@ -109,6 +118,7 @@
             <thead>
               <tr>
                 <th>Agent</th>
+                <th>Source</th>
                 <th>Unique</th>
                 <th>Rung</th>
                 <th>Missed</th>
@@ -134,6 +144,13 @@
         <strong>Mock data.</strong> Step C uses placeholder rows so the UI is verifiable end-to-end before the data layer is wired. Step D replaces this with real reads from <code>DQE Historical Data</code>.
       </div>
 
+      <!-- Work-window pill (E2). Populated from window.__WORK_WINDOW__
+           at init time so the strings come from the dashboard's
+           Config.gs rather than a hardcoded HTML literal. Tells
+           managers what time-of-day Rung / Missed / Answered /
+           TTT / ATT are scoped to (INV-06). -->
+      <div id="work-window-pill" class="work-window-pill" aria-label="Work window"></div>
+
       <div class="controls">
         <div class="control" id="dept-selector-wrap" style="display:none;">
           <label for="dept-selector">Department</label>
@@ -154,12 +171,12 @@
         <div class="control">
           <label>Scope</label>
           <div class="segmented" id="scope-toggle" role="radiogroup" aria-label="Scope">
-            <button type="button" class="seg-btn active" data-scope="roster" role="radio" aria-checked="true"
+            <button type="button" class="seg-btn" data-scope="roster" role="radio" aria-checked="false"
                     title="Only agents assigned to this department in the roster sheet">Roster</button>
             <button type="button" class="seg-btn" data-scope="queue" role="radio" aria-checked="false"
                     title="Any agent who handled this department's queue extensions">Queue</button>
-            <button type="button" class="seg-btn" data-scope="both" role="radio" aria-checked="false"
-                    title="Union of Roster and Queue">Both</button>
+            <button type="button" class="seg-btn active" data-scope="both" role="radio" aria-checked="true"
+                    title="Union of Roster and Queue. Queue-only floaters are tagged with a chip and excluded from dept totals.">Both</button>
           </div>
         </div>
         <div class="control">
@@ -201,6 +218,7 @@
         <thead>
           <tr>
             <th data-sort="agent">Agent <span class="arrow"></span></th>
+            <th>Source</th>
             <th data-sort="totalUnique">Unique <span class="arrow"></span></th>
             <th data-sort="totalRung">Rung <span class="arrow"></span></th>
             <th data-sort="totalMissed">Missed <span class="arrow"></span></th>
@@ -309,6 +327,8 @@
     <div class="modal-backdrop" data-close></div>
     <div class="modal-panel modal-panel-wide" role="document">
       <div class="modal-panel-header">
+        <button class="modal-open-tab-btn" type="button" data-open-tab-route="/report/missed"
+                aria-label="Open in new tab" title="Open this report in a new browser tab (for side-by-side viewing)">&#8599;</button>
         <button class="modal-close" id="missed-close" type="button" aria-label="Close">&times;</button>
         <div class="modal-kicker">Report</div>
         <h2 id="missed-modal-title">Missed Calls</h2>
@@ -344,6 +364,8 @@
     <div class="modal-backdrop" data-close></div>
     <div class="modal-panel modal-panel-wide" role="document">
       <div class="modal-panel-header">
+        <button class="modal-open-tab-btn" type="button" data-open-tab-route="/report/individual"
+                aria-label="Open in new tab" title="Open this report in a new browser tab (for side-by-side viewing)">&#8599;</button>
         <button class="modal-close" id="individual-close" type="button" aria-label="Close">&times;</button>
         <div class="modal-kicker">Report</div>
         <h2 id="individual-modal-title">Individual Report</h2>
@@ -520,6 +542,8 @@
     <div class="modal-backdrop" data-close></div>
     <div class="modal-panel modal-panel-wide" role="document">
       <div class="modal-panel-header">
+        <button class="modal-open-tab-btn" type="button" data-open-tab-route="/report/performance"
+                aria-label="Open in new tab" title="Open this report in a new browser tab (for side-by-side viewing)">&#8599;</button>
         <button class="modal-close" id="performance-close" type="button" aria-label="Close">&times;</button>
         <div class="modal-kicker">Report</div>
         <h2 id="performance-modal-title">Performance Report</h2>
@@ -675,6 +699,8 @@
     <div class="modal-backdrop" data-close></div>
     <div class="modal-panel modal-panel-wide" role="document">
       <div class="modal-panel-header">
+        <button class="modal-open-tab-btn" type="button" data-open-tab-route="/report/compare"
+                aria-label="Open in new tab" title="Open this report in a new browser tab (for side-by-side viewing)">&#8599;</button>
         <button class="modal-close" id="compare-close" type="button" aria-label="Close">&times;</button>
         <div class="modal-kicker">Report</div>
         <h2 id="compare-modal-title">Compare Ranges</h2>
@@ -864,6 +890,8 @@
     <div class="modal-backdrop" data-close></div>
     <div class="modal-panel modal-panel-wide" role="document">
       <div class="modal-panel-header">
+        <button class="modal-open-tab-btn" type="button" data-open-tab-route="/report/qcd"
+                aria-label="Open in new tab" title="Open this report in a new browser tab (for side-by-side viewing)">&#8599;</button>
         <button class="modal-close" id="qcd-close" type="button" aria-label="Close">&times;</button>
         <div class="modal-kicker">Report</div>
         <h2 id="qcd-modal-title">QCD Report</h2>
@@ -928,6 +956,12 @@
         </div>
 
         <div id="qcd-results-status" class="status" style="display:none;"></div>
+
+        <!-- Days-to-violation forecast (E9). Renders only when a
+             linear regression on the last 7 days of dailySeries
+             abandonedPct projects a 5% threshold crossing within
+             7 days. Hidden in healthy states. -->
+        <div id="qcd-forecast" class="qcd-forecast" style="display:none;"></div>
 
         <div id="qcd-kpi-row" class="pr-kpi-row"></div>
 
@@ -994,6 +1028,8 @@
     <div class="modal-backdrop" data-close></div>
     <div class="modal-panel modal-panel-wide" role="document">
       <div class="modal-panel-header">
+        <button class="modal-open-tab-btn" type="button" data-open-tab-route="/admin/alerts"
+                aria-label="Open in new tab" title="Open this report in a new browser tab (for side-by-side viewing)">&#8599;</button>
         <button class="modal-close" id="alerts-close" type="button" aria-label="Close">&times;</button>
         <div class="modal-kicker">Operations &middot; Admin</div>
         <h2 id="alerts-modal-title">Low Answer Rate Alerts</h2>
@@ -1134,6 +1170,8 @@
     <div class="modal-backdrop" data-close></div>
     <div class="modal-panel modal-panel-wide" role="document">
       <div class="modal-panel-header">
+        <button class="modal-open-tab-btn" type="button" data-open-tab-route="/admin/orphan-fix"
+                aria-label="Open in new tab" title="Open this report in a new browser tab (for side-by-side viewing)">&#8599;</button>
         <button class="modal-close" id="orphan-fix-close" type="button" aria-label="Close">&times;</button>
         <div class="modal-kicker">Operations &middot; Admin</div>
         <h2 id="orphan-fix-modal-title">Outlier Fix</h2>
@@ -1224,6 +1262,14 @@
     // literally contained the bad pattern, which the HTML parser
     // happily closed the script tag on).
     window.__USER__ = <?!= userJson ?>;
+    // Deployed web-app URL (DASHBOARD_URL Script Property). Used by
+    // the "Open in new tab" buttons on each report modal to build a
+    // shareable target URL. Empty string when the property is unset
+    // -- the client falls back to hiding the button.
+    window.__DASHBOARD_URL__ = <?!= dashboardUrlJson ?>;
+    // Work-window strings for the My Department page's pill (E2).
+    // Shape: { pst: "6:30 AM - 3:00 PM PST", cst: "8:30 AM - 5:00 PM CST" }.
+    window.__WORK_WINDOW__ = <?!= workWindowJson ?>;
   </script>
   <?!= include_('script') ?>
 </body>

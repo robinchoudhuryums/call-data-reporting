@@ -23,6 +23,17 @@
  *       activeAgents, recentlyActiveCount, rosterSize,
  *       trend: [pct | null, ...],     // 30-day company-wide trend
  *     } | undefined,
+ *     pipelineFreshness: {           // admin only; stripped for managers
+ *       latestTimestamp: 'yyyy-MM-dd HH:mm' | null,
+ *       hoursSinceFresh: number | null,
+ *       isStale: boolean,             // true if > OVERVIEW_PIPELINE_STALE_HOURS
+ *     } | null | undefined,
+ *     orphanNag: {                   // admin only; stripped for managers
+ *       activeCount: number,          // orphans whose lastSeen is within
+ *                                     // OVERVIEW_ORPHAN_NAG_DAYS
+ *       totalCount:  number,          // all orphans regardless of recency
+ *       sampleNames: [string, ...],   // up to 3, highest-row-count first
+ *     } | null | undefined,
  *     viewerRole: 'admin' | 'manager',
  *     viewerDept: string | null,
  *   }
@@ -32,10 +43,11 @@
  * (read-only), and reinstating that visibility is part of the
  * design intent for this view.
  *
- * Caching: 5 min under `companyOverview:v12`. Cached blob is shared
- * across all users; the admin-only `companyAggregate` field is
- * stripped on serve for non-admins, and viewer-personalized fields
- * (viewerRole/viewerDept) are injected per-request, never cached.
+ * Caching: 5 min under `companyOverview:v13`. Cached blob is shared
+ * across all users; admin-only fields (`companyAggregate`,
+ * `pipelineFreshness`, `orphanNag`) are stripped on serve for
+ * non-admins, and viewer-personalized fields (viewerRole/viewerDept)
+ * are injected per-request, never cached.
  *
  * Performance notes: one bulk read over the historical sheet (last
  * 30 days' worth of rows are scanned). Roster reads done once per
@@ -57,7 +69,24 @@
 //      (Sales+PAP, Power+PAK, CSR+Spanish), matching the QCD modal's
 //      and My Department's rollup behavior.
 // v12: QCD snapshot includes perQueue array for per-queue tile rendering.
-const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v12';
+// v13: admin-only `pipelineFreshness` + `orphanNag` fields added for
+//      the Overview Pipeline Health banner (E1) and Orphan Fix nag
+//      (E12-reframed) introduced in the Phase B redesign rollout.
+//      Both are stripped for non-admins by personalizeOverview_.
+const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v13';
+
+// Pipeline freshness threshold (hours). If the most recent successful
+// DQE-freshness Pipeline Health row is older than this many hours, the
+// Overview banner picks up the .is-stale variant and warns admins.
+// Matches the header freshness pill's 36h threshold so the two
+// surfaces agree on what "stale" means.
+const OVERVIEW_PIPELINE_STALE_HOURS = 36;
+
+// Orphan nag window (days). An orphan is "active" if its lastSeen in
+// DQE Historical Data is within this many days of today. Active
+// orphans are the ones likely produced by recent CDR imports, so
+// they're the most useful to surface to admins for triage.
+const OVERVIEW_ORPHAN_NAG_DAYS = 7;
 
 // Window (in days) over which we consider an agent "recently
 // active". Used as the denominator for the "X of Y agents" caption
@@ -423,6 +452,11 @@ function getCompanyOverview() {
     trendLabels:      trendLabels,
     depts:            depts,
     companyAggregate: companyAggregate,
+    // Admin-only surface fields (stripped by personalizeOverview_ for
+    // managers). Computed lazily inside try/catch so a Pipeline Health
+    // sheet outage or a slow orphan scan never blocks the Overview.
+    pipelineFreshness: computeOverviewPipelineFreshness_(),
+    orphanNag:         computeOverviewOrphanNag_(),
     // viewerRole and viewerDept are NOT cached; personalizeOverview_
     // injects them per-request so a payload warmed by user A still
     // serves user B's identity correctly.
@@ -432,6 +466,117 @@ function getCompanyOverview() {
   catch (e) { Logger.log('CompanyOverview cache put failed: %s', e); }
 
   return personalizeOverview_(result, user);
+}
+
+/**
+ * Scans the most recent Pipeline Health entries for the latest
+ * `success` row whose step participates in DQE freshness
+ * (`buildDQE`, `processIntegratedHistory:DQE`, `bulkBackfill:DQE` --
+ * per INV-44). Returns a small summary describing when that row
+ * landed and whether the gap to "now" exceeds OVERVIEW_PIPELINE_STALE_HOURS.
+ *
+ * Best-effort: any failure (missing sheet, parse error, etc.)
+ * returns null so the Overview still renders. Admin-only on serve
+ * via personalizeOverview_.
+ */
+function computeOverviewPipelineFreshness_() {
+  try {
+    const rows = readPipelineHealth_(40);
+    if (!rows || !rows.length) return null;
+    const dqeSteps = {
+      'buildDQE':                       true,
+      'processIntegratedHistory:DQE':   true,
+      'bulkBackfill:DQE':               true,
+    };
+    let latestTs = null;
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      if (r.status !== 'success') continue;
+      if (!dqeSteps[r.step]) continue;
+      // r.timestamp is 'yyyy-MM-dd HH:mm' in script TZ; parse via
+      // Utilities to honor that TZ instead of letting Date treat it
+      // as local-machine time.
+      const ts = parsePipelineHealthTimestamp_(r.timestamp);
+      if (!ts) continue;
+      if (!latestTs || ts.getTime() > latestTs.getTime()) latestTs = ts;
+    }
+    if (!latestTs) {
+      return {
+        latestTimestamp: null,
+        latestStep:      null,
+        hoursSinceFresh: null,
+        isStale:         true,
+      };
+    }
+    const hoursSinceFresh = (Date.now() - latestTs.getTime()) / 3600000;
+    return {
+      latestTimestamp: Utilities.formatDate(latestTs, TZ, 'yyyy-MM-dd HH:mm'),
+      hoursSinceFresh: Math.round(hoursSinceFresh * 10) / 10,
+      isStale:         hoursSinceFresh > OVERVIEW_PIPELINE_STALE_HOURS,
+    };
+  } catch (e) {
+    Logger.log('computeOverviewPipelineFreshness_ failed: %s', e);
+    return null;
+  }
+}
+
+function parsePipelineHealthTimestamp_(s) {
+  // 'yyyy-MM-dd HH:mm' -> Date in script TZ. Use a manual parse so
+  // we don't depend on the JS engine treating the string as local.
+  const m = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})$/.exec(s || '');
+  if (!m) return null;
+  const iso = m[1] + '-' + m[2] + '-' + m[3] + 'T' + m[4] + ':' + m[5] + ':00';
+  // Build a Date by interpreting the wall-clock values in TZ.
+  // Utilities.parseDate(iso, TZ, "yyyy-MM-dd'T'HH:mm:ss") would also
+  // work but the simpler new Date(iso + offset-ish) is unreliable
+  // across DST. We approximate by formatting "now" in TZ to find the
+  // current offset and re-applying it; for the cache window we care
+  // about (<48h), DST transitions inside the window are rare.
+  try {
+    return Utilities.parseDate(iso, TZ, "yyyy-MM-dd'T'HH:mm:ss");
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
+ * Counts orphan agent names whose lastSeen date in DQE Historical
+ * Data is within OVERVIEW_ORPHAN_NAG_DAYS of today. Reuses
+ * computeOrphans_ (OrphanFix.gs) for the underlying scan -- safe to
+ * call from here because computeOrphans_ has no admin assertion
+ * (it's gated by its public caller getOrphanFixInit, which does).
+ *
+ * Best-effort: returns null on failure so a slow scan or missing
+ * sheet doesn't block Overview rendering. Admin-only on serve via
+ * personalizeOverview_.
+ */
+function computeOverviewOrphanNag_() {
+  try {
+    const orphans = computeOrphans_();
+    if (!orphans || !orphans.length) {
+      return { activeCount: 0, totalCount: 0, sampleNames: [] };
+    }
+    const cutoff = new Date(Date.now() - OVERVIEW_ORPHAN_NAG_DAYS * 86400000);
+    const cutoffIso = Utilities.formatDate(cutoff, TZ, 'yyyy-MM-dd');
+    const active = orphans.filter(function (o) {
+      return o.lastSeen && o.lastSeen >= cutoffIso;
+    });
+    return {
+      activeCount: active.length,
+      totalCount:  orphans.length,
+      // Surface up to 3 names so the banner can be specific without
+      // wrapping. Sorted by row count desc so the highest-impact
+      // orphans show first.
+      sampleNames: active
+        .slice()
+        .sort(function (a, b) { return b.rows - a.rows; })
+        .slice(0, 3)
+        .map(function (o) { return o.name; }),
+    };
+  } catch (e) {
+    Logger.log('computeOverviewOrphanNag_ failed: %s', e);
+    return null;
+  }
 }
 
 /**
@@ -459,7 +604,11 @@ function personalizeOverview_(blob, user) {
       if (Object.prototype.hasOwnProperty.call(blob, k)) out[k] = blob[k];
     }
   }
-  if (user.role !== 'admin') delete out.companyAggregate;
+  if (user.role !== 'admin') {
+    delete out.companyAggregate;
+    delete out.pipelineFreshness;
+    delete out.orphanNag;
+  }
   out.viewerRole = user.role;
   out.viewerDept = user.department || null;
   return out;

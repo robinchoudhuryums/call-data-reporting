@@ -104,6 +104,10 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   Report's team-average. Used for managers who are on the roster but
   take only a token number of calls (currently
   `'CSR': ['Robin Choudhury']`). Match is exact on the roster name.
+  Since Phase E (commit 94bbca9), the Individual Report renders an
+  "EXCLUDED FROM TEAM AVG" pill (`.ir-excluded-pill`) next to the
+  agent's name on cards where the new `excludedFromTeamAvg` field is
+  true, so the exclusion is visible to managers reading the report.
 - **Performance Report prior period = same duration ending one day
   before current start**, NOT "previous calendar month". A 31-day
   current window compares against the immediately-preceding 31 days.
@@ -136,7 +140,43 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   fails. The chrome layer also writes `dash-mode` (light/dark toggle)
   and `dash-theme.v1` (warm / cool / clinical paper theme) — the
   theme picker re-reads these on every render so no cache bump is
-  needed when palette tokens change.
+  needed when palette tokens change. Default for first-time visitors
+  (no `dash-theme.v1` value) is `cool` since the Phase A redesign
+  rollout (commit 99e7253); explicit saved values, including `'warm'`,
+  are preserved untouched. The `:root` tokens in `styles.html` remain
+  the warm palette as the fallback for returning explicit-warm users
+  (whose body carries no `data-theme` attribute).
+- **CSS design-token conventions (post-redesign Phase A).** The
+  dashboard's design system is centralized in `styles.html :root`;
+  three conventions established by commit 99e7253 are worth respecting:
+  (1) **`--bad` is for hard errors; `--warn` is for warnings.**
+  `--bad` / `--bad-soft` are the deeper red for irrecoverable failure
+  states (validation errors, fetch failures, access-denied UI). Only
+  `.status-error` currently uses them. `--warn` / `--warn-soft` stay
+  the default for negative-valence-but-not-fatal cases (low answer
+  rate threshold, abandoned % warning, missed-delta orange,
+  regression deltas). Reach for `--bad` deliberately when adding new
+  error-state UI; don't blanket-replace existing `--warn` usage.
+  (2) **`--r: 2px` is the canonical border-radius token.** New UI
+  should use `var(--r)` for squared-off corners. Exceptions are
+  intentional: `999px` pills/badges, `50%` avatars/dots, skeleton
+  blocks (`.skeleton-line` 4px / `.skeleton-tile` 8px), and
+  print-mode `border-radius: 0 !important` overrides. ~12 pre-Phase-A
+  callsites in alerts / toast / date input still hardcode 6px / 8px
+  and are slated for a follow-on cleanup; new code should still
+  pick `var(--r)`.
+  (3) **Uppercase mono kickers/eyebrows/labels use
+  `letter-spacing: 0.18em`.** Mono numerics (blocks with
+  `font-variant-numeric: tabular-nums`) use `letter-spacing: 0`.
+  Swept across 47 selectors in commit 99e7253; new mono+uppercase
+  selectors should match.
+  *INV-42 follow-on:* `--bad` / `--bad-soft` are CSS-only — not yet
+  mirrored into the JS `THEME` object or `refreshChartTheme()` in
+  `script.html`. If a future phase surfaces error states in chart
+  colors (Pipeline Health banner, etc.), extend `THEME` with
+  `.bad` / `.badSoft` and resolve them via `colorToCanvasRgb_('--bad')`
+  or chartjs-plugin-datalabels will silently render empty fills
+  on the OKLCH path.
 - **CacheService key length cap (250 chars).** Apps Script silently
   rejects cache keys longer than 250 characters, surfacing as an
   error on `cache.get`. The Individual / Performance / Compare
@@ -166,6 +206,20 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   so the plugin always receives a parseable color. Don't pass raw
   `getComputedStyle(...).getPropertyValue('--foo')` strings to chart
   options — always go through `THEME.*`.
+- **Overview trend chart conventions (Phase B).** Multi-dept overlay
+  on the Overview page (`ov-trend-chart`): parent depts get solid
+  2.2px lines with hue assigned from `IR_CHART_COLORS` in payload
+  order; sub-queue children get dashed 1.4px lines (`borderDash:
+  [4, 3]`) inheriting their parent's hue via the `colorByDept` map
+  built up front in `ovRenderChart_` (so the parent → child color
+  inheritance works even if children precede parents in the
+  `depts` array). A faint dashed 92% baseline (color
+  `THEME.muted`) is drawn at `order: 99` so dept lines stay on
+  top; the tooltip is filtered to hide the baseline from per-line
+  hover. Fills are intentionally suppressed on this overlaid
+  chart -- the soft-area gradient via `irGradientFill_` is
+  reserved for single-series IR / PR trend tabs where it reads
+  cleanly without 10+ overlapping fills competing.
 - **Recently-active denominator.** The Overview tile caption "X of Y
   agents" uses `recentlyActiveCount` (any rung / answered / missed
   activity in the last `OVERVIEW_RECENT_ACTIVE_DAYS` = 30 days), NOT
@@ -290,7 +344,10 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   for current versions.
 - **Scope toggle (`roster | queue | both`)**: managers can see strictly
   their roster, anyone who handled their queue extensions, or the union.
-  Default is `roster` (matches the legacy DQE Report's behavior).
+  Default is `both` since Phase D (commit d631719); the toggle remains
+  in the UI for parallel-run validation and is slated for removal once
+  the new default + roster-only totals semantics prove out. Pre-Phase-D
+  default was `roster` (matched the legacy DQE Report's behavior).
 - **DQE Report Legacy is FROZEN and the migration is COMPLETE.** All four
   legacy reports (Individual / Performance / Compare Ranges / Missed
   Calls) plus the Low Answer Rate Alerts engine are in the dashboard.
@@ -317,13 +374,118 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   byte-for-byte. The hero block shows parent + all its children
   together when the viewer is a parent, so the relationship stays
   visible even when the parent is spotlighted.
-- **Company aggregate is admin-only via `personalizeOverview_`.**
-  `getCompanyOverview()` always computes the company-wide
-  aggregate and caches it inside the shared blob, but
-  `personalizeOverview_` strips the `companyAggregate` field on
-  serve for non-admins. Viewer-personalized fields (`viewerRole`,
+- **Admin-only Overview surfaces.** `getCompanyOverview()` always
+  computes the company-wide aggregate plus admin-only operational
+  fields (`pipelineFreshness`, `orphanNag`) and caches them in the
+  shared blob, but `personalizeOverview_` strips all three
+  (`companyAggregate`, `pipelineFreshness`, `orphanNag`) on serve
+  for non-admins. Viewer-personalized fields (`viewerRole`,
   `viewerDept`) are injected per-request so a payload warmed by
-  user A still personalizes correctly for user B.
+  user A still personalizes correctly for user B. Adding a new
+  admin-only Overview field means adding it to the strip list
+  inside `personalizeOverview_`.
+- **Overview admin-only banners (Phase B).** Pipeline Health
+  banner (`#ov-pipeline-banner`) and Orphan Fix nag
+  (`#ov-orphan-nag`) sit above the summary line on the Overview
+  page and are admin-only. Two layers of gating: (1) the
+  `data-admin-only` attribute on the div is cleared at init for
+  admins (the existing convention -- see the
+  `document.querySelectorAll('[data-admin-only]')` loop in
+  `script.html`); (2) `ovRenderPipelineBanner_` /
+  `ovRenderOrphanNag_` further hide the banner when health is good
+  / no active orphans. Pipeline banner fires when no DQE-freshness
+  success row (`buildDQE` / `processIntegratedHistory:DQE` /
+  `bulkBackfill:DQE`, per INV-44) appears in the last 40 Pipeline
+  Health entries, OR the latest one is older than
+  `OVERVIEW_PIPELINE_STALE_HOURS` (=36h, matching the header
+  freshness pill threshold). Orphan nag counts orphans whose
+  `lastSeen` is within `OVERVIEW_ORPHAN_NAG_DAYS` (=7d) and
+  surfaces up to 3 sample names by row-count desc; its Open
+  button programmatically clicks `#orphan-fix-btn` to open the
+  Outlier Fix modal. Both server helpers
+  (`computeOverviewPipelineFreshness_`,
+  `computeOverviewOrphanNag_`) are best-effort -- failures return
+  null and the Overview still renders without the banner.
+- **Top-tab router (Phase C).** The header nav was flattened from
+  Reports + Admin dropdowns into a single row of top-level tab
+  buttons (commit ce4220a). Each tab carries a `data-route`
+  attribute and a stable button `id`, so the existing per-modal
+  init functions still wire up modal-open behavior unchanged; the
+  new `initRouter` in `script.html` just tracks `currentRoute` and
+  paints the active-tab indicator via `updateTabActiveState_`. Two
+  click handlers fire per tab — the existing modal-open and the
+  router's data-route tracker — but they don't conflict because
+  each modal's `openModal` is idempotent. **No
+  `google.script.history.push` is used** (spotty browser behavior
+  inside Apps Script web apps); URL hashes are read at init via
+  `google.script.url.getLocation` and written only when a new tab
+  opens. The `↗ Open in new tab` button on report modals
+  (`.modal-open-tab-btn`, positioned at `right: 54px` to the left
+  of the close X) builds `window.__DASHBOARD_URL__ + '#' +
+  currentRoute` and `window.open`s it; `.is-disabled` hides the
+  button when `DASHBOARD_URL` is unset. Escape-key modal close
+  doesn't revert the active-tab state in this phase — cosmetic
+  only; clicking any tab refreshes it. **`window.__DASHBOARD_URL__`
+  is injected by `renderDashboard_` (Code.gs) from the
+  `DASHBOARD_URL` Script Property** with the same `<` escape
+  trick as `userJson`; empty string when unset. Don't try to read
+  the deployed URL from `window.location` inside the Apps Script
+  iframe — that resolves to the `n-<hash>-script.googleusercontent.com`
+  wrapper, not the user-facing `/exec` URL. Deep links work for
+  the 7 report routes (`#/report/missed`, `#/report/individual`,
+  `#/report/performance`, `#/report/compare`, `#/report/qcd`,
+  `#/admin/alerts`, `#/admin/orphan-fix`) plus the two pages
+  (`#/overview`, `#/dept`); unknown / malformed hashes quietly
+  no-op and land on Overview.
+- **Source column + roster-only totals (Phase D).** The agent table
+  gains a Source column (between Agent and Unique) rendering one of
+  three chips per row: **ROSTER** (accent-soft) for agents on this
+  dept's roster only, **BOTH** (good-soft) for agents rostered AND
+  matched via shared-queue extensions, **QUEUE** (warn-soft) for
+  queue-only floaters. The QUEUE chip suffixes the floater's
+  `sourceHomes` array as a comma-separated dept list -- e.g.
+  `QUEUE · Sales, Power` for a multi-rostered floater, or bare
+  `QUEUE` for a floater on no dept's roster. `sourceHomes` is
+  built lazily server-side by `Data.gs::buildDeptsByAgent_` (only
+  when at least one queue-only row exists) and iterates every dept
+  including `OVERVIEW_HIDDEN_DEPTS` in `getAllDepartments_`
+  alphabetical order, so the array is stable. Client
+  `sourceChipHtml_` / `sourceChipCsv_` (script.html) array-check
+  defensively and fall back to bare `QUEUE` if the field is missing.
+  **Totals row sums only `matchedViaRoster=true` rows** -- queue-only
+  floaters appear in the table but never factor into dept averages.
+  Totals object carries `rosterAgentCount` + `queueOnlyAgentCount`;
+  the tfoot first-cell renders 'Total (roster only · N floaters
+  excluded)' when `queueOnlyAgentCount > 0`. CSV export uses the
+  same semantics: 'Total (roster only)' for the totals row label.
+  INV-04 (exact agent-name match) and INV-23 (queue-sentinel `A_Q_*`
+  rows skipped) are both preserved. See INV-53 for the
+  floater-exclusion contract spanning all dept-level aggregations.
+- **Phase E UI surfaces.** Four small affordances landed in commit
+  94bbca9, each with a documented data dependency: (1) **work-window
+  pill** on My Department (`#work-window-pill`) reads
+  `window.__WORK_WINDOW__` injected by `renderDashboard_` from
+  `Config.gs::DASHBOARD_WORK_WINDOW` -- the dashboard's read-only
+  mirror of cdr-import's pipeline constants (INV-06; sync required
+  if those change). (2) **Diagnostics severity chip** -- the
+  existing `.diagnostics` block gains `.diag-severity-warn` (warn-soft
+  tint) for 1-5 issues and `.diag-severity-bad` (using the Phase A
+  `--bad` token) for >5 issues, driven by the same
+  `rosterWithNoData.length + queueOnlyMatched.length` total the
+  existing collapsible reads. (3) **EXCLUDED FROM TEAM AVG pill**
+  (`.ir-excluded-pill`) on Individual Report agent cards, surfaced
+  via the new `excludedFromTeamAvg` field on each `summaryData` row
+  (INV-26). (4) **QCD days-to-violation forecast** (`#qcd-forecast`)
+  runs a 7-day linear regression on `dailySeries.abandonedPct` (INV-51)
+  and projects when the 5% threshold will cross -- hidden in three
+  healthy states: currentY >= 5 (already over), slope <= 0.01
+  (flat / improving), or projected crossing > 7 days out. None of
+  these add server endpoints -- E2 is a one-time template inject,
+  E4 adds one flag to the existing IR response (bumping
+  `individual:v6` -> `v7`), and E3 / E9 are pure client. E5 (per-row
+  WoW chip), E8 (alert skip-dates), and E10 (threshold drift) were
+  explicitly deferred from Phase E -- each needs server / schema /
+  API work beyond what the original handoff scoped.
 - **My Department CSV export.** The agent table has a "Download CSV"
   button (hidden until data loads) that exports the current view
   (respecting scope, date range, and sort order) as a client-side
@@ -360,8 +522,15 @@ When something looks wrong, before assuming a code bug, check:
    config reads, Orphan Fix log appends) silently no-op against
    the missing sheet, and the Orphan Fix modal will throw "sheet
    missing -- run setup()" on first write.
-7. For alerts: is the `DASHBOARD_URL` Script Property set? Without it,
-   alert emails still send — they just omit the "Open Dashboard" link.
+7. For alerts AND report-modal new-tab buttons: is the
+   `DASHBOARD_URL` Script Property set? Two consumers since Phase C
+   (commit ce4220a): (a) the "Open Dashboard" link in alert emails
+   — without the property, emails still send but omit the link;
+   (b) the `↗ Open in new tab` buttons on every report modal —
+   without the property, the buttons silently hide via
+   `.is-disabled` and the side-by-side comparison flow doesn't
+   work. Strongly recommended; set in the dashboard project's
+   Script Properties to the deployed `/exec` URL.
 8. Are all three trigger types installed? Three independent triggers
    now feed the dashboard's freshness, and each one missing is a
    silent failure:
@@ -406,7 +575,12 @@ When something looks wrong, before assuming a code bug, check:
     nothing since means the daily ingest or DQE rebuild hasn't
     run. Cross-check with Operator State #1 + #8. An empty sheet
     right after deploy means setup() hasn't been re-run on this
-    project.
+    project. Phase B (commit 9b1f263) adds a Pipeline Health
+    banner above the Overview summary line that warns admins
+    when no DQE-freshness success has landed in the last 36h --
+    same staleness condition without opening the Alerts modal.
+    If the banner fires, fall through to this checklist item to
+    investigate.
 12. Manager digest delivery: if a subscriber says they didn't get
     their digest, check (a) Digest Config row Active=TRUE,
     (b) Cadence is `daily` or `weekly` (normalized -- other values
@@ -473,7 +647,7 @@ INV-02 | Duration columns (TTT, ATT, AvgAbdWait, CSRAvgAbdWait) are read via get
 INV-03 | DO NOT EDIT! roster cells follow the format "Name, ext1, ext2, …" — name is everything before the first comma; subsequent digit-only tokens are extensions. | Subsystem: Department Dashboard
 INV-04 | Agent-name match between DQE Historical Data Col C and DO NOT EDIT! roster cells is exact (case + whitespace sensitive); no alias normalization. | Subsystem: Department Dashboard
 INV-05 | Per-agent ATT in the dashboard is the simple mean of per-row stored ATT values, NOT TTT/Answered weighted. Source ATT denominator sometimes ≠ Answered. | Subsystem: Department Dashboard
-INV-06 | Work window for TTT/ATT/Missed/Answered is 6:30 AM – 3:00 PM PST (8:30 AM – 5:00 PM CST), hardcoded as DQE_WINDOW_START/DQE_WINDOW_END. | Subsystem: CDR DQE Pipeline
+INV-06 | Work window for TTT/ATT/Missed/Answered is 6:30 AM – 3:00 PM PST (8:30 AM – 5:00 PM CST), hardcoded as DQE_WINDOW_START/DQE_WINDOW_END. Phase E (commit 94bbca9) added a dashboard-side display mirror `DASHBOARD_WORK_WINDOW` in `apps-script/department-dashboard/Config.gs` so the My Department page can show a work-window pill without cross-project sheet reads. The two must stay in sync — comment in `Config.gs` documents the sync requirement; if the pipeline window ever changes, update both. | Subsystem: CDR DQE Pipeline + Department Dashboard
 INV-07 | TTT/ATT loop in buildDQEHistoricalData iterates `windowLegs` (in-window subset), not all-day `legs`, to match Answered's denominator. | Subsystem: CDR DQE Pipeline
 INV-08 | TTT attribution uses each agent's own leg.talkSec on the parent call via findAgentTalkOnParent, NOT parent.talkSec (max across all legs). | Subsystem: CDR DQE Pipeline
 INV-09 | Cache key in Data.gs is versioned (`summary:vN:...`); bump N on any aggregation rule change to invalidate stale caches. | Subsystem: Department Dashboard
@@ -497,7 +671,7 @@ INV-26 | TEAM_AVG_EXCLUDES in Config.gs lists per-dept agent names removed from 
 INV-27 | Individual Report's team-avg denominator counts only roster members with ANY call activity (rung/answered/missed > 0) in the selected range, NOT the full roster size. Zero-call roster members don't dilute the average. | Subsystem: Department Dashboard
 INV-28 | Performance Report's prior period is the immediately-preceding window of the same duration (durationDays before currentStart, ending one day before currentStart) -- NOT "previous calendar month". Documented in the form's inline hint and the results-header "Comparing against..." line. Match legacy SingleRangeReport semantics. | Subsystem: Department Dashboard
 INV-29 | Individual Report's monthly trend window: range itself when selected range > 366 days OR equals a full calendar year (Jan 1 - Dec 31 of one year); else `first-of-month(end - 12 months)` to `end`. Performance Report uses identical logic so the 12-mo trends align across both reports for the same dept. | Subsystem: Department Dashboard
-INV-30 | Each report has its own versioned cache key prefix; bump on any aggregation rule change so stale entries don't bleed in. Current: `summary:v6` (Data.gs), `latestDate:v1` (Data.gs -- most-recent DQE ISO date; drives the My Department From/To default so the agent table lands on a non-empty day), `latestDates:v1` (Data.gs -- multi-source `{dqe, qcd, latest}` blob; drives the header freshness pill so it doesn't go stale when one source updates without the other), `individual:v6` (IndividualReport.gs), `individual_active:v1` (active-agents-in-range subset used by Individual + Performance + Compare Ranges pickers), `performance:v3` (PerformanceReport.gs), `compareRanges:v3` (CompareRangesReport.gs), `missed:v10` (MissedCallsReport.gs), `companyOverview:v12` (CompanyOverview.gs), `qcd:v5` (QCDReport.gs). Alerts.gs holds no cached compute. | Subsystem: Department Dashboard
+INV-30 | Each report has its own versioned cache key prefix; bump on any aggregation rule change so stale entries don't bleed in. Current: `summary:v7` (Data.gs), `latestDate:v1` (Data.gs -- most-recent DQE ISO date; drives the My Department From/To default so the agent table lands on a non-empty day), `latestDates:v1` (Data.gs -- multi-source `{dqe, qcd, latest}` blob; drives the header freshness pill so it doesn't go stale when one source updates without the other), `individual:v7` (IndividualReport.gs), `individual_active:v1` (active-agents-in-range subset used by Individual + Performance + Compare Ranges pickers), `performance:v3` (PerformanceReport.gs), `compareRanges:v3` (CompareRangesReport.gs), `missed:v10` (MissedCallsReport.gs), `companyOverview:v13` (CompanyOverview.gs), `qcd:v5` (QCDReport.gs). Alerts.gs holds no cached compute. | Subsystem: Department Dashboard
 INV-31 | `script.send_mail` OAuth scope in appsscript.json is required for: (1) Individual / Performance / Compare Ranges / QCD "Email image" exports, (2) the Low Answer Rate Alerts engine, (3) the Manager Digest engine (Digest.gs), (4) the failure-notification paths (notifyImportFailure_ in autoImport.js, runDailyDQEBuild_ in buildDQEHistoricalData.js [present in BOTH cdr-import and cdr-report copies after INV-16 expansion], notifyDigestFailure_ in Digest.gs, plus the indirect path from cdr-import's integrated DQE block hitting notifyNeonWriteFailure on a Neon write failure). All paths use `MailApp.sendEmail`. Removing the scope breaks every one of them; adding new send-mail features here doesn't need a re-scope. | Subsystem: Department Dashboard (+ CDR Import / CDR DQE Pipeline for the notify-failure paths)
 INV-32 | Low Answer Rate Alerts is admin-only at the server boundary. Every public callable in Alerts.gs starts with `assertAdmin_`. The launcher button is also hidden client-side via `data-admin-only`, but the server check is the source of truth. Compare Ranges was previously admin-only too but was opened to managers (with the same `dept !== user.department` check the other reports use) so they can run year-over-year comparisons within their own dept. Adding a new admin = setting/editing the `ADMIN_EMAILS` Script Property (comma-separated emails); falls back to `ADMIN_EMAILS_FALLBACK` in Config.gs if unset. | Subsystem: Department Dashboard
 INV-33 | `runDailyAlerts_` (time-triggered alerts) skips Saturdays and Sundays. Holiday handling is intentionally not built in -- if it becomes noise in practice, add a skip-dates column to the Alert Config sheet rather than hardcoding in Alerts.gs. Manual sends via the UI ignore this skip. | Subsystem: Department Dashboard
@@ -506,7 +680,7 @@ INV-35 | Compare Ranges flags `meta.lengthMismatch=true` when the longer of the 
 INV-36 | Cache keys that embed agent selections must hash via `Data.gs::hashAgents_` (MD5 hex, 32 chars, order-insensitive). Apps Script CacheService silently rejects keys > 250 chars; raw-joined agent lists overflow on big rosters like Sales and surface as report-generation errors. IR / PR / CR all use the hash; future report code that caches per agent-selection must follow suit. | Subsystem: Department Dashboard
 INV-37 | The dashboard is a two-page web app toggled via `body[data-page="overview"|"dept"]`. Default landing is `overview` (set inline on the body tag so the right page paints before JS runs). `setPage(name)` swaps the page, updates the header kicker+h1, and (for `overview`) triggers a fresh `getCompanyOverview()` fetch. `refresh()` only writes the dept name into `#page-title` when the dept page is active, so swapping dept on Overview doesn't clobber "Departments Snapshot". | Subsystem: Department Dashboard
 INV-38 | `OVERVIEW_PARENT_OF` (CompanyOverview.gs) defines sub-queue parent-child relationships for the Overview tile grid ONLY. The dept dropdown, all Reports modals, and Alerts treat each dept as independent. Keys must match the `DO NOT EDIT!` column header byte-for-byte; aliases (e.g. both `PAP` and `PAP Q` mapping to Sales) are tolerated. `OVERVIEW_HIDDEN_DEPTS` excludes depts from the Overview only (e.g. `CSR Backup`). | Subsystem: Department Dashboard
-INV-39 | `companyAggregate` in the Overview payload is admin-only via `personalizeOverview_`: the full blob (including aggregate) is cached for everyone, but the aggregate field is stripped on serve for non-admins. `personalizeOverview_` deep-clones via JSON round-trip so any future personalize step that mutates nested fields can't leak across viewers. Viewer-personalized fields `viewerRole` and `viewerDept` are injected per-request, never cached — so a payload warmed by user A still personalizes correctly for user B. Adding a new admin-only Overview field means stripping it inside `personalizeOverview_`. | Subsystem: Department Dashboard
+INV-39 | Admin-only fields in the Overview payload are stripped on serve via `personalizeOverview_`: the full blob (including all admin-only fields) is cached for everyone, but the admin-only fields (`companyAggregate`, `pipelineFreshness`, `orphanNag`) are removed before serving non-admins. `personalizeOverview_` deep-clones via JSON round-trip so any future personalize step that mutates nested fields can't leak across viewers. Viewer-personalized fields `viewerRole` and `viewerDept` are injected per-request, never cached — so a payload warmed by user A still personalizes correctly for user B. Adding a new admin-only Overview field means adding its key to the strip list inside `personalizeOverview_`. | Subsystem: Department Dashboard
 INV-40 | Overview "X of Y agents" caption denominator is `recentlyActiveCount` = any rung/answered/missed activity in the last `OVERVIEW_RECENT_ACTIVE_DAYS` (=30) days, NOT full roster size. Filters out ex-employees who are kept on the `DO NOT EDIT!` sheet for historical-data preservation. Hover tooltip exposes today-active / recent-active / full-roster numbers so the choice is transparent. Same logic powers the company aggregate's Active count. | Subsystem: Department Dashboard
 INV-41 | chartjs-plugin-datalabels requires `Chart.register(ChartDataLabels)` AND `Chart.defaults.plugins.datalabels.display = true` at module load (the `registerChartDataLabels_` IIFE in script.html does both). Chart.js v4 dropped script-tag auto-registration; the plugin defaults to display=false since v1.0.0. Per-chart `display: false` overrides still suppress labels (Missed Calls radar, Overview multi-line trend). Use the boolean form of `display` per chart — the function form returns false unpredictably on mixed bar+line charts in this plugin version. | Subsystem: Department Dashboard
 INV-42 | `refreshChartTheme()` (script.html) resolves every CSS custom property via `colorToCanvasRgb_()` — paints onto a 1×1 canvas and reads back canonical `rgba(...)`. Required because chartjs-plugin-datalabels' `fillStyle` path can't parse `oklch(...)` strings → silently renders empty fills (invisible labels). Never pass raw `getComputedStyle(...).getPropertyValue('--token')` to chart options; always go through `THEME.*`. Hook is re-run on dark-mode toggle so newly-rendered charts pick up the inverted palette. | Subsystem: Department Dashboard
@@ -516,10 +690,11 @@ INV-45 | `Digest Config` sheet columns: `Email \| Department \| Cadence \| Activ
 INV-46 | `Agent Alias Overrides` sheet columns: `Old Name \| Canonical Name \| Active \| Added By \| Added At \| Notes`. Schema pinned in `Config.gs::AGENT_ALIAS_OVERRIDES_HEADERS`; sheet is idempotently created by `setup()`. Soft-coupling across two Apps Script projects: the dashboard's `OrphanFix.gs` writes rows here; the CDR Report project's `buildDQEHistoricalData.js::loadRosterCanonicalNames_` reads them on every build and folds them into the canonicalization map. The pipeline-side check is best-effort (missing/empty sheet leaves the build's behavior unchanged) so an unsynced cdr-report deploy doesn't break the dashboard's UI. Aliases with `Active=FALSE` are skipped by the pipeline. | Subsystem: Department Dashboard + CDR DQE Pipeline
 INV-47 | `Orphan Fix Log` sheet columns: `Timestamp \| Admin \| Action \| From Name \| To Name \| Affected Rows \| Notes`. Schema pinned in `Config.gs::ORPHAN_FIX_LOG_HEADERS`; sheet is idempotently created by `setup()`. Append-only; never overwritten. `OrphanFix.gs::appendOrphanFixLog_` writes one row per action. Action values: `alias-add`, `alias-remove`, `rename`, `rename+alias`. Affected Rows is the count of DQE Historical Data rows modified by a `rename` (0 for alias-only actions). | Subsystem: Department Dashboard
 INV-48 | `dept.wow.driver` on the Overview payload ("what changed" insight) is attached only when `|dept.wow.deltaPct| >= WOW_DRIVER_THRESHOLD` (= 1.5 pts). The driver is the per-agent net answered/missed change that most explains the dept's WoW shift, picked by `computeWowDriver_` in CompanyOverview.gs. Requires at least 3 events in either week-window to avoid one-call outliers; positive WoW surfaces the biggest answered-delta, negative WoW surfaces the biggest missed-delta. `dept.wow.driver` may be null for low-activity / quiet-week depts; the client (`ovBuildWowDriver_`) renders nothing in that case. Per-dept (not admin-only) -- managers see drivers for their own dept; admins see them for all depts. | Subsystem: Department Dashboard
-INV-49 | `getIndividualReport` accepts optional `priorFrom`/`priorTo` for same-agent vs-self comparison. When supplied, every `summaryData[i]` carries `priorStats` (formatted) + `priorRaw` (numeric); `priorDateLabel` is set at the top level. Absence = legacy shape (`priorStats: null`). The cache key (`individual:v6`) adds a `priorKey` segment (`priorFrom..priorTo` or `none`) so the prior window is part of the cache identity. Client form (`ir-compare-mode` select) supports None / Same window one year prior / Immediately-preceding period / Custom prior range; resolved via `irResolvePriorRange_`. The same prior dates are re-applied automatically when the user re-runs from the edit-popover. | Subsystem: Department Dashboard
+INV-49 | `getIndividualReport` accepts optional `priorFrom`/`priorTo` for same-agent vs-self comparison. When supplied, every `summaryData[i]` carries `priorStats` (formatted) + `priorRaw` (numeric); `priorDateLabel` is set at the top level. Absence = legacy shape (`priorStats: null`). The cache key (`individual:v7`) adds a `priorKey` segment (`priorFrom..priorTo` or `none`) so the prior window is part of the cache identity. Client form (`ir-compare-mode` select) supports None / Same window one year prior / Immediately-preceding period / Custom prior range; resolved via `irResolvePriorRange_`. The same prior dates are re-applied automatically when the user re-runs from the edit-popover. | Subsystem: Department Dashboard
 INV-50 | `QCD Historical Data` columns (1-indexed): `Month Year \| Week \| Date \| Call Queue \| Call Source \| Total Calls \| Total Answered \| Abandoned \| Longest Wait \| Avg Answer \| Abandoned % \| Violations`. Pinned in `Config.gs::QCD_HISTORICAL_COLS`. Writer: `apps-script/cdr-import/autoImport.js::processIntegratedHistory` QCD block. Reader: `apps-script/department-dashboard/QCDReport.gs` (dept-scoped report) + `CompanyOverview.gs::computeQcdSnapshots_` (per-dept latest-day snapshot on the Overview tile grid) + `Data.gs::computeDeptQcdSnapshot_` (per-dept latest-day snapshot for My Department's "Queue Call Data" tiles). **`Call Queue` carries raw queue names like `A_Q_CustomerSuccess` / `A_Q_Sales` / `Backup CSR` -- NOT dashboard dept names; canonical spellings vary per install.** To map a dept to its set of queue names, use `Config.gs::DEPT_QCD_QUEUES` (admin-curated). `Call Source` is one of `Total Calls` (daily roll-up; the only source the dashboard sums to avoid double-counting) plus sub-source breakdowns like `CSR` / `Ad-campaign` / `New Call Menu` / `Non-CSR (internal)` that the dashboard skips. `Violations` is the count of (source, day) tuples where Abandoned % > 5%. | Subsystem: Department Dashboard + CDR Import
 INV-51 | `QCD Report` is per-dept gated like Individual / Performance / Compare Ranges -- managers see their own dept, admins pick any. **Parent depts auto-include sub-queue queues** via `queuesForDept_` (Sales+PAP, Power+PAK, CSR+Spanish per `OVERVIEW_PARENT_OF`); all three QCD readers (modal, Overview snapshot, My Department snapshot) use the same helper so rollups stay consistent. `getQcdReport({ department, from, to })` returns `meta` (with `queues` + `unmapped` flags), `dateLabel`, `totals` (sum across expanded queue list; `totals.violations` is MONTH-TO-DATE across the dept's queues, not selected-range sum), `queueBreakdown` (per-queue rows with `violationDates` array for expandable detail), `trendData` (12-month monthly buckets with `perQueue` keyed by queue name), `dailySeries` (per-day rollup across dept queues), and `perQueue` (per-queue daily + monthly arrays for multi-line charts). Cache prefix `qcd:v5`. The QCD Report form defaults to "Yesterday" preset. For depts with 2+ queues, the chart renders one line per queue (color-coded) plus a dashed "Dept total" line. Single-day ranges hide the Daily chart view. Per-queue breakdown rows are clickable when violations > 0 to expand and show violation dates. Color-coding: violations cells use light-warn (1-3) / strong-warn (>3); abandoned % >= 5% is warn-tinted in both breakdown and daily tables. **The Overview page's per-dept tile shows per-queue QCD data for multi-queue depts** (each queue gets abandoned %, abandoned count if >0, violations if >0 with color-coding); single-queue depts show dept-level chips. "X viol MTD" chip renders when month-to-date violations > 0. My Department page's agent table is PRECEDED by a "Queue Call Data — [date]" tile row (showing the actual data date, not "yesterday") sourced from `Data.gs::computeDeptQcdSnapshot_`. All QCD UI surfaces are visible to everyone (no admin gate); per-dept gating is on the dropdown only. | Subsystem: Department Dashboard
 INV-52 | `CDR Historical Data` columns (1-indexed): `Month Year \| Week \| Date \| Dept \| Name \| C..W` (22 metric cols). `Q Path Historical Data` columns: `Month Year \| Week \| Date \| Dept \| Path \| Total \| VM \| NonVM \| Opt1 \| NonOpt1 \| Pct`. `CSR Transfer Historical Data` columns: `Month Year \| Week \| Date \| Agent \| Trans % \| Total Calls \| Transferred \| + 11 per-queue cols`. Writers: `apps-script/cdr-import/autoImport.js::processIntegratedHistory`; each block emits a separate `processIntegratedHistory:CDR` / `:QPath` / `:CSR` row to Pipeline Health (INV-44). NOT consumed by the dashboard today -- the read path lives in the legacy DQE Report Apps Script. CDR rows are now **mirrored to Neon** (`call_history_dept` + `call_history_phones`) inline during `processIntegratedHistory`, following the same best-effort pattern as DQE and QCD. Requires `HMAC_SECRET` for phone-hash JSONB fields; degrades gracefully without it (main metric columns still write). | Subsystem: CDR Import (writer) / DQE Report Legacy (reader) |
+INV-53 | **Queue-only floaters are excluded from dept-level totals and team-averages across all dashboard reports.** A "floater" is an agent matched into a dept's view via shared-queue extension overlap (`matchedViaQueue=true`) but NOT on the dept's roster (`matchedViaRoster=false`). Established by Phase D (commit d631719) for `Data.gs::computeSummary_` (My Department agent table) -- totals are computed by filtering `rows` to `matchedViaRoster=true` before summing/averaging; the response carries `rosterAgentCount` + `queueOnlyAgentCount` so the client can render a "Total (roster only · N floaters excluded)" tfoot caption when floaters are visible. Each row carries a `sourceHomes` array listing every other dept's roster the floater appears on (built lazily by `buildDeptsByAgent_`); the client Source column chip renders `QUEUE · <homes>` or bare `QUEUE` when the floater is on no roster. **Future floater-aware aggregation in other reports must follow the same contract:** floaters are still visible / queryable, but their per-row metrics never feed dept-level totals or team-averages. Targets for future adoption (not yet implemented): Individual Report's team-average (currently filtered by `TEAM_AVG_EXCLUDES` per INV-26, but doesn't yet distinguish queue-only floaters), Performance Report's team-trend denominator, Compare Ranges' dept totals. The scope toggle (`roster | queue | both`) remains available through parallel validation; the floater-exclusion rule applies regardless of scope so totals don't shift when the user flips between Roster and Both views. | Subsystem: Department Dashboard
 
 ### Policy Configuration
 Policy threshold: 6/10
@@ -558,11 +733,14 @@ S5 | Daily DQE aggregation completes for a typical day | Subsystem: CDR DQE Pipe
     - In CDR Report Apps Script, manually run buildDQEHistoricalData for a day's Raw Data.
   Expected: new rows in DQE Historical Data; Neon mirror succeeds; no failure email; per-agent TTT ≈ ATT × Answered (±1s rounding).
 
-S6 | Scope toggle captures queue-only floaters | Subsystem: Department Dashboard
+S6 | Source column + roster-only totals (post-Phase D) | Subsystem: Department Dashboard
   Steps:
-    - Open dashboard for a dept with known floaters.
-    - Switch scope to "Queue" or "Both".
-  Expected: floaters appear with "(queue-only)" suffix; Diagnostics panel lists them.
+    - Open dashboard for a dept with known floaters. Default scope is now Both since Phase D, so no toggle switching is required.
+    - Inspect the agent table: every row should carry a chip in the new Source column (between Agent and Unique). Roster agents render ROSTER (accent) or BOTH (good) chips; queue-only floaters render QUEUE (warn) chips suffixed with their other-dept home list (e.g. `QUEUE · Sales, Power`). Floaters on no dept's roster render bare `QUEUE`.
+    - Confirm the tfoot first-cell reads "Total (roster only · N floaters excluded)" with N matching the count of QUEUE-chipped rows, and the totals values themselves exclude those rows' contributions.
+    - Switch scope to Roster; floaters disappear from the table and the tfoot caption reverts to plain "Total". Totals values are unchanged from the Both view (since the totals filter to matchedViaRoster=true regardless of scope).
+    - Switch scope to Queue; only rows where matchedViaQueue=true remain. Totals reflect the roster-intersect-queue subset (transitional semantics; documented).
+  Expected: chip rendering matches matchedViaRoster/matchedViaQueue flags per row; sourceHomes array suffix lists every other dept's roster the floater appears on; totals stable across Roster↔Both switches; Diagnostics panel still lists queue-only matched agents.
 
 S7 | Source pipeline numbers match dashboard | Subsystem: CDR DQE Pipeline → Department Dashboard
   Steps:
@@ -626,7 +804,7 @@ S16 | Export menu captures all chart tabs | Subsystem: Department Dashboard
 S17 | Compare Ranges is per-dept gated | Subsystem: Department Dashboard
   Steps:
     - Open the dashboard as a manager (non-admin).
-    - Confirm the "Compare Ranges" button is visible in the Reports menu.
+    - Confirm the "Compare" tab is visible in the top header nav (flattened from the prior Reports dropdown in Phase C).
     - Run a Compare Ranges report for the manager's own dept; confirm it loads.
     - Attempt to call `getCompareRanges` with a different dept name via the browser console.
   Expected: own-dept call succeeds; cross-dept call throws "Not authorized for this department." on the server. Admins can pick any dept that exists in the dept list.
@@ -691,7 +869,7 @@ S26 | Big-roster reports complete without cache-key error | Subsystem: Departmen
 S27 | Compare Ranges is per-dept gated for managers | Subsystem: Department Dashboard
   Steps:
     - Open the dashboard as a manager (non-admin).
-    - Confirm the "Compare Ranges" button is visible in the Reports menu (no longer admin-only after INV-32 update).
+    - Confirm the "Compare" tab is visible in the top header nav (no longer admin-only after INV-32 update; flattened from the prior Reports dropdown in Phase C).
     - Generate a Compare Ranges report for the manager's own dept; confirm it loads.
     - In the browser console, attempt `google.script.run.withSuccessHandler(console.log).withFailureHandler(console.error).getCompareRanges({ department: 'SomeOtherDept', ...})`.
   Expected: own-dept Generate succeeds; cross-dept console call throws "Not authorized for this department.". Admin users can request any dept that exists in the dept list (same gate as Individual / Performance).
@@ -723,7 +901,7 @@ S30 | Header freshness pill renders and goes stale | Subsystem: Department Dashb
 
 S31 | Orphan Fix end-to-end (admin) | Subsystem: Department Dashboard + CDR DQE Pipeline
   Steps:
-    - As admin, open the dashboard. Admin menu -> Orphan Fix.
+    - As admin, open the dashboard. Click the "Outlier Fix" tab in the header nav (admin-only tab; flattened from the prior Admin dropdown in Phase C).
     - Confirm the modal lists orphan agent names from DQE Historical Data (or "no orphans" if everyone canonicalizes cleanly).
     - For one orphan, pick a canonical roster name from the dropdown; click Apply; confirm the prompt.
     - Server returns the rename count; the orphan row disappears from the list on refresh; "Current aliases" gains a new row with Active=Yes; "Recent fix log" gains a `rename+alias` entry.
@@ -735,7 +913,7 @@ S31 | Orphan Fix end-to-end (admin) | Subsystem: Department Dashboard + CDR DQE 
 
 S32 | QCD Report end-to-end | Subsystem: Department Dashboard + CDR Import
   Steps:
-    - Open dashboard as a manager. Reports → QCD Report.
+    - Open dashboard as a manager. Click the "QCD" tab in the top header nav (flattened from the prior Reports dropdown in Phase C).
     - Confirm the Quick Select defaults to "Yesterday" and both date inputs show yesterday's date.
     - Pick a date range with known QCD activity for the manager's dept; Generate.
     - Confirm KPI tiles render Total Calls / Answered / Abandoned / Abandoned % / Longest Wait / Avg Answer / Violations (Violations tile is warn-soft when >0).
@@ -762,6 +940,14 @@ S34 | Integrated DQE build runs inside autoImport | Subsystem: CDR Import + CDR 
     - Re-run `runManualExport` for the SAME date (without force-mode); the dedup guard should short-circuit and the toast says `ALREADY IN HISTORY`.
     - Force-re-run for the same date; DQE rows for that date are cleared (deleteHistoricalRowsForDate with col 2), rebuilt, and Pipeline Health gets a fresh `:DQE` row.
   Expected: integrated DQE writes succeed alongside the four legacy sheets; Pipeline Health `:DQE` row appears; dashboard freshness pill updates from the integrated path (no separate `runDailyDQEBuild_` trigger required). If the DQE block itself throws, the outer `autoImport` row still logs `success` for the 4-sheet write -- the DQE failure surfaces as a `:DQE` `failure` row. Bulk-archive path (`bulkHistoricalUpdate`) ALSO builds DQE per-date now -- in bulk mode the Raw Data sheet write is gated on `willBuildDQE` (=!existsInDQE) so the DQE build still has fresh source data on each iteration; the per-date outcome is logged to Pipeline Health as `bulkBackfill:DQE`. The 4 legacy sheets still flow through Pending Archive → `processBatchArchive` unchanged.
+
+S35 | Phase D totals parity (roster-only floater exclusion) | Subsystem: Department Dashboard
+  Steps:
+    - BEFORE deploying Phase D: open the dashboard for a known dept with floater activity. Set scope=Roster (the pre-Phase-D default). Pick a recent date range. Screenshot the tfoot totals row (totalUnique / totalRung / totalMissed / totalAnswered / TTT / ATT / Avg Abd Wait / CSR Avg Abd Wait).
+    - Deploy Phase D (commit d631719 or later); see Deploy Command.
+    - AFTER deploy: open the same dept + date range with default settings (scope=Both — the new default). The agent table will now include queue-only floaters with `QUEUE` chips; the tfoot caption will read "Total (roster only · N floaters excluded)".
+    - Compare the post-deploy totals values to the pre-deploy screenshot.
+  Expected: every totals cell matches the pre-deploy `scope=Roster` numbers to the digit. Rationale: the new totals filter to `matchedViaRoster=true` only, which is precisely the set the pre-Phase-D `scope=Roster` view summed. Floaters render as new rows but contribute zero to the totals. If the totals DON'T match, the rosterRows filter has regressed -- roll back the Phase D commit and investigate before re-shipping. This is a one-time validation but the scenario stays as a permanent reference for the floater-exclusion contract (see INV-53).
 
 ### Frozen Subsystems
 - DQE Report Legacy — manager-facing reports in `apps-script/dqe-report/`. Frozen because migration to Department Dashboard is complete: Individual Report, Performance Report, Compare Ranges, Missed Calls Report, and Low Answer Rate Alerts all live in the dashboard. Replacement: Department Dashboard. Awaiting decommission of the legacy spreadsheet. Unfreeze only if a bug is found in legacy that affects production decisions before the spreadsheet is retired.

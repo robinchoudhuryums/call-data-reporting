@@ -58,7 +58,12 @@
 // Bump when aggregation rules or response shape change so stale
 // entries don't bleed in. CLAUDE.md INV-30 is the canonical
 // current-version list -- keep this constant aligned with that.
-const PERFORMANCE_CACHE_KEY_PREFIX = 'performance:v3';
+// v4: INV-53 expansion -- input gate relaxed to accept floaters;
+// per-agent matchedViaRoster / matchedViaQueue / sourceHomes added;
+// team accumulators (teamCurr / teamPrev / monthlyTeam) gated on
+// matchedViaRoster so floaters appear in agentData but don't dilute
+// dept averages. agentData filtered to drop crafted off-dept names.
+const PERFORMANCE_CACHE_KEY_PREFIX = 'performance:v4';
 
 function getPerformanceReportInit(req) {
   // Same init shape as Individual Report -- roster + default
@@ -109,18 +114,22 @@ function getPerformanceReport(req) {
     throw new Error('Select at least one agent.');
   }
   const roster = getRosterForDepartment_(dept);
-  const rosterSet = {};
-  for (let i = 0; i < roster.names.length; i++) rosterSet[roster.names[i]] = true;
+  // Phase D+1 (INV-53 expansion): drop the roster-only input gate so
+  // floaters can be included in the report. Off-dept names with no
+  // queue overlap fall out at the row-scan layer in
+  // computePerformanceReport_ (they produce no rows and the per-agent
+  // accumulator is gated). Team-avg accumulator below filters to
+  // matchedViaRoster=true so floaters never dilute the dept averages.
   const seen = {};
   const selectedAgents = [];
   for (let i = 0; i < rawAgents.length; i++) {
     const n = String(rawAgents[i] || '').trim();
-    if (!n || seen[n] || !rosterSet[n]) continue;
+    if (!n || seen[n]) continue;
     seen[n] = true;
     selectedAgents.push(n);
   }
   if (selectedAgents.length === 0) {
-    throw new Error('No selected agent is on this department\'s roster.');
+    throw new Error('No selected agent provided.');
   }
   // MD5 hash keeps the cache key length-bounded (CacheService rejects
   // keys > 250 chars; raw join blows past that on big rosters like
@@ -160,6 +169,17 @@ function computePerformanceReport_(dept, from, to, selectedAgents, roster,
   for (let i = 0; i < selectedAgents.length; i++) selectedSet[selectedAgents[i]] = true;
   const rosterSet = {};
   for (let i = 0; i < roster.names.length; i++) rosterSet[roster.names[i]] = true;
+
+  // Floater tracking (Phase D+1 / INV-53 expansion). Per-agent
+  // matchedViaRoster is pre-populated for selected roster members so
+  // zero-call picks still render. matchedViaQueue is set lazily when
+  // we observe a queue-overlap row. Team accumulators below gate on
+  // matchedViaRoster to keep floaters out of dept averages.
+  const agentMatchedViaRoster = {};
+  const agentMatchedViaQueue  = {};
+  for (let i = 0; i < selectedAgents.length; i++) {
+    if (rosterSet[selectedAgents[i]]) agentMatchedViaRoster[selectedAgents[i]] = true;
+  }
 
   // ISO -> Date helpers. Use noon so DST boundary days don't shift.
   const parseIso_ = function (iso) {
@@ -225,6 +245,10 @@ function computePerformanceReport_(dept, from, to, selectedAgents, roster,
   const values   = range.getValues();
   const displays = range.getDisplayValues();
 
+  // Build the dept's queue extension set once for floater detection.
+  const deptQueueResult = getDeptQueueExts_(dept, rosterSet, values);
+  const deptQueueExts = deptQueueResult.exts;
+
   // Accumulators.
   //   teamCurr/teamPrev: dept totals for the selected agents across
   //     current and prior periods. att_sum = sum(per-day ATT *
@@ -265,6 +289,21 @@ function computePerformanceReport_(dept, from, to, selectedAgents, roster,
     if (!isSelected) continue;
     if (!inCurrent && !inPrior && !inTrend) continue;
 
+    // Floater detection (INV-53 expansion). If this selected agent
+    // isn't on the roster, check whether their row's col-D extensions
+    // overlap the dept's queue set -- that confirms they're matched
+    // into this dept's view via queue, not crafted off-dept noise.
+    if (!rosterSet[agent] && !agentMatchedViaQueue[agent]) {
+      const rowExts = parseExtensions_(r[HISTORICAL_COLS.QUEUE_EXT - 1]);
+      for (let j = 0; j < rowExts.length; j++) {
+        if (deptQueueExts[rowExts[j]]) { agentMatchedViaQueue[agent] = true; break; }
+      }
+    }
+    // Team accumulators are gated on matchedViaRoster so floaters
+    // (queue-only) appear in perAgent stats but don't dilute the
+    // dept averages -- per the INV-53 floater-exclusion contract.
+    const isRoster = !!agentMatchedViaRoster[agent];
+
     const rung     = Number(r[HISTORICAL_COLS.TOTAL_RUNG - 1])     || 0;
     const missed   = Number(r[HISTORICAL_COLS.TOTAL_MISSED - 1])   || 0;
     const answered = Number(r[HISTORICAL_COLS.TOTAL_ANSWERED - 1]) || 0;
@@ -273,11 +312,13 @@ function computePerformanceReport_(dept, from, to, selectedAgents, roster,
     const attTotal = answered > 0 ? attAvg * answered : 0;
 
     if (inCurrent) {
-      teamCurr.rung     += rung;
-      teamCurr.missed   += missed;
-      teamCurr.answered += answered;
-      teamCurr.ttt      += tttSec;
-      teamCurr.att_sum  += attTotal;
+      if (isRoster) {
+        teamCurr.rung     += rung;
+        teamCurr.missed   += missed;
+        teamCurr.answered += answered;
+        teamCurr.ttt      += tttSec;
+        teamCurr.att_sum  += attTotal;
+      }
 
       const ag = perAgent[agent];
       ag.rung     += rung;
@@ -286,13 +327,15 @@ function computePerformanceReport_(dept, from, to, selectedAgents, roster,
       ag.ttt      += tttSec;
       ag.att_sum  += attTotal;
     } else if (inPrior) {
-      teamPrev.rung     += rung;
-      teamPrev.missed   += missed;
-      teamPrev.answered += answered;
-      teamPrev.ttt      += tttSec;
-      teamPrev.att_sum  += attTotal;
+      if (isRoster) {
+        teamPrev.rung     += rung;
+        teamPrev.missed   += missed;
+        teamPrev.answered += answered;
+        teamPrev.ttt      += tttSec;
+        teamPrev.att_sum  += attTotal;
+      }
     }
-    if (inTrend) {
+    if (inTrend && isRoster) {
       const monthKey = dateIso.slice(0, 7);
       const bucket = monthlyTeam[monthKey];
       if (bucket) {
@@ -321,12 +364,34 @@ function computePerformanceReport_(dept, from, to, selectedAgents, roster,
   };
 
   // ── Per-agent data array (sorted by Answered desc) ────────────
-  const agentData = selectedAgents.map(function (agent) {
+  // INV-53: drop selected names that match neither path (off-dept
+  // crafted names with no queue overlap). Roster members always pass.
+  const visibleAgents = selectedAgents.filter(function (a) {
+    return agentMatchedViaRoster[a] || agentMatchedViaQueue[a];
+  });
+  // Lazy sourceHomes lookup for any floaters in the selection.
+  let prDeptsByAgent = null;
+  for (let i = 0; i < visibleAgents.length; i++) {
+    if (agentMatchedViaQueue[visibleAgents[i]] && !agentMatchedViaRoster[visibleAgents[i]]) {
+      prDeptsByAgent = buildDeptsByAgent_();
+      break;
+    }
+  }
+  const agentData = visibleAgents.map(function (agent) {
     const a = perAgent[agent];
     const agPct = a.rung     > 0 ? (a.answered / a.rung)   * 100 : 0;
     const agAtt = a.answered > 0 ? (a.att_sum  / a.answered)     : 0;
+    const matchedViaRoster = !!agentMatchedViaRoster[agent];
+    const matchedViaQueue  = !!agentMatchedViaQueue[agent];
+    const sourceHomes = (matchedViaQueue && !matchedViaRoster && prDeptsByAgent)
+      ? (prDeptsByAgent[agent] || [])
+      : [];
     return {
       name: agent,
+      // INV-53 floater-awareness fields (see IR for the matching set).
+      matchedViaRoster: matchedViaRoster,
+      matchedViaQueue:  matchedViaQueue,
+      sourceHomes:      sourceHomes,
       stats: {
         rung:     a.rung,
         missed:   a.missed,
@@ -458,6 +523,12 @@ function deltaBlock_(curr, prev, type, formatted) {
 
 function emptyPerformanceReport_(dept, from, to, priorFrom, priorTo,
                                  selectedAgents, monthKeys) {
+  // INV-53: roster-membership lookup so the empty shape still drops
+  // crafted off-dept names (matchedViaQueue can't be confirmed in an
+  // empty sheet, so floaters can't appear here at all).
+  const emptyRoster = getRosterForDepartment_(dept);
+  const emptyRosterSet = {};
+  for (let i = 0; i < emptyRoster.names.length; i++) emptyRosterSet[emptyRoster.names[i]] = true;
   const labels = (monthKeys || []).map(function (m) {
     const p = m.split('-');
     const d = new Date(Number(p[0]), Number(p[1]) - 1, 1);
@@ -486,9 +557,14 @@ function emptyPerformanceReport_(dept, from, to, priorFrom, priorTo,
       ttt:      { val: 0, formatted: '0:00:00', delta: 0, deltaPct: 0, type: 'volume' },
       att:      { val: 0, formatted: '0:00:00', delta: 0, deltaPct: 0, type: 'volume' },
     },
-    agentData: selectedAgents.map(function (a) {
+    agentData: selectedAgents.filter(function (a) {
+      return !!emptyRosterSet[a];
+    }).map(function (a) {
       return {
         name: a,
+        matchedViaRoster: true,
+        matchedViaQueue:  false,
+        sourceHomes:      [],
         stats: { rung: 0, missed: 0, answered: 0, pct: '0.0%', ttt: '0:00:00', att: '0:00:00' },
         raw:   { rung: 0, missed: 0, answered: 0, pct: 0, ttt: 0, att: 0 },
       };

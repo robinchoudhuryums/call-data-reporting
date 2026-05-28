@@ -132,7 +132,7 @@ clasp push -f
   roster entry (typos, marriages, hyphenations, exotic spellings),
   the row appears in `DQE Historical Data` but doesn't show up
   under any dept. Surface these via the dashboard's
-  **Admin → Orphan Fix** modal.
+  **Outlier Fix** tab in the top header nav (admin-only).
 - For each orphan, pick a canonical name from the roster dropdown
   and click Apply. The action: (1) bulk-renames every row in
   `DQE Historical Data` where Agent Name == orphan, (2) adds the
@@ -147,7 +147,7 @@ clasp push -f
 
 **Optional (QCD Report):**
 
-- The **QCD Report** modal (Reports → QCD Report) reads from
+- The **QCD Report** modal (click the **QCD** tab in the header nav) reads from
   `QCD Historical Data`, written daily by the import pipeline.
   Visible to all managers + admins; per-dept gated.
 - **`Config.gs::DEPT_QCD_QUEUES` is the dept ↔ queue mapping.**
@@ -180,13 +180,44 @@ clasp push -f
   Department | Threshold % | Extra Recipients (comma-separated) |
   Active (TRUE/FALSE) | Notes.
 - Project Settings -> Script Properties -> add `DASHBOARD_URL`
-  pointing at the deployed web app's URL. Used as the "Open
-  Dashboard" link target in alert emails; without it the emails
-  still send, they just omit the link.
+  pointing at the deployed web app's URL. **Strongly recommended
+  since Phase C** — two consumers depend on it: (a) the "Open
+  Dashboard" link in alert emails (without it, emails still send
+  but omit the link), and (b) the `↗ Open in new tab` buttons on
+  every report modal (without it, the buttons silently hide and
+  the side-by-side-comparison flow doesn't work). The deep-link
+  hash routes (see below) only work when this is set.
 - Install the daily trigger: open the dashboard as an admin, click
   Alerts → Install daily trigger (8 AM). The trigger calls
   `runDailyAlerts_` for the previous day, skipping Saturdays and
   Sundays automatically.
+
+## Deep links
+
+Phase C (commit ce4220a) added URL hash routing so any report
+modal can be linked to directly. Append one of these fragments to
+the deployed web-app URL to land on that view:
+
+- `#/overview` — Overview page (default landing)
+- `#/dept` — My Department page
+- `#/report/missed` — Missed Calls report
+- `#/report/individual` — Individual Report
+- `#/report/performance` — Performance Report
+- `#/report/compare` — Compare Ranges
+- `#/report/qcd` — QCD Report
+- `#/admin/alerts` — Low Answer Rate Alerts (admin-only)
+- `#/admin/orphan-fix` — Outlier Fix (admin-only)
+
+Each report modal also carries a small `↗` button next to its
+close X — clicking it opens the same view in a new browser tab so
+you can OS-tile two windows side-by-side for comparison. Requires
+the `DASHBOARD_URL` Script Property to be set (see Alerts setup
+above); the button silently hides when unset.
+
+Form state (date range, agent selection, etc.) is not yet
+serialized into the URL — each modal restores its own last-used
+state from localStorage when opened, which fills the gap for the
+common case. Richer state-in-URL is a future enhancement.
 
 ## DQE Historical Data freshness
 
