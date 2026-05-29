@@ -60,6 +60,9 @@
         <button class="header-menu-btn" id="orphan-fix-btn" type="button"
                 data-route="/admin/orphan-fix" data-admin-only role="tab" aria-selected="false" style="display:none;"
                 title="Map outlier agent names in DQE Historical Data to existing roster entries. Admin-only.">Outlier Fix</button>
+        <button class="header-menu-btn" id="dept-config-btn" type="button"
+                data-route="/admin/dept-config" data-admin-only role="tab" aria-selected="false" style="display:none;"
+                title="Map dept queues, sub-queue nesting, and team-avg exclusions without a redeploy. Validated + auto-discovers unmapped queues. Admin-only.">Dept Config</button>
       </nav>
       <div class="header-meta">
         <!-- Data-freshness pill -- "Data through Mon May 19 · 14h ago".
@@ -1255,6 +1258,108 @@
             </tr></thead>
             <tbody id="of-log-tbody"></tbody>
           </table>
+        </div>
+      </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Dept Config modal (admin-only). No-redeploy authoring for the
+       per-dept QCD queue map, Overview sub-queue nesting, and
+       team-avg exclusions, with save-time validation + auto-discovery
+       of unmapped queues. Mirrors the Outlier Fix modal structure. -->
+  <div id="dept-config-modal" class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="dept-config-modal-title" style="display:none;">
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-panel modal-panel-wide" role="document">
+      <div class="modal-panel-header">
+        <button class="modal-open-tab-btn" type="button" data-open-tab-route="/admin/dept-config"
+                aria-label="Open in new tab" title="Open this report in a new browser tab (for side-by-side viewing)">&#8599;</button>
+        <button class="modal-close" id="dept-config-close" type="button" aria-label="Close">&times;</button>
+        <div class="modal-kicker">Operations &middot; Admin</div>
+        <h2 id="dept-config-modal-title">Dept Config</h2>
+      </div>
+      <div class="modal-panel-body">
+      <div id="dc-loading" class="ir-loader" style="text-align: center; padding: 24px;">Loading dept config&hellip;</div>
+
+      <div id="dc-body" style="display:none;">
+        <div class="al-section">
+          <p class="al-hint" id="dc-intro-hint">
+            Override the per-dept maps that used to require a code edit + redeploy:
+            <strong>QCD queues</strong>, <strong>Overview sub-queue nesting</strong>, and
+            <strong>team-average exclusions</strong>. Saved rows live in the
+            <strong>Dept Config</strong> sheet and take effect on the next request
+            (caches refresh within ~5&nbsp;min). Blank fields fall back to the
+            built-in defaults. Inputs are validated &mdash; queue names must exist
+            in QCD data, parents/excludes must be real depts/roster names.
+            <a href="#" id="dc-open-sheet" target="_blank">Open the sheet &rarr;</a>
+          </p>
+          <div id="dc-run-status" class="status" style="display:none;"></div>
+        </div>
+
+        <!-- Auto-discovery: queue names present in QCD Historical Data,
+             unmapped ones surfaced first so the admin knows what still
+             needs a dept. -->
+        <div class="al-section">
+          <div class="al-section-title">Discovered queues <span id="dc-unmapped-badge" class="al-active al-active-no" style="display:none;"></span></div>
+          <p class="al-hint">
+            Distinct <code>Call Queue</code> values seen in QCD Historical Data
+            (last 180 days). <strong>Unmapped</strong> queues produce no QCD report
+            for any dept until you add them to a dept's QCD Queues below.
+          </p>
+          <table class="al-config-table">
+            <thead><tr>
+              <th>Queue name</th>
+              <th class="num">Rows</th>
+              <th>Last seen</th>
+              <th>Mapped to</th>
+            </tr></thead>
+            <tbody id="dc-discovered-tbody"></tbody>
+          </table>
+        </div>
+
+        <!-- Editor: one row per dept showing the effective config; an
+             inline edit form populates from the selected dept. -->
+        <div class="al-section">
+          <div class="al-section-title">Per-department config</div>
+          <table class="al-config-table">
+            <thead><tr>
+              <th>Department</th>
+              <th>QCD queues (effective)</th>
+              <th>Overview parent</th>
+              <th>Team-avg excludes</th>
+              <th>Source</th>
+              <th>Edit</th>
+            </tr></thead>
+            <tbody id="dc-effective-tbody"></tbody>
+          </table>
+        </div>
+
+        <div class="al-section" id="dc-edit-section" style="display:none;">
+          <div class="al-section-title">Edit <span id="dc-edit-dept-name"></span></div>
+          <div class="controls">
+            <div class="control" style="flex:1 1 240px;">
+              <label for="dc-edit-qcd">QCD queues (comma-separated)</label>
+              <input type="text" id="dc-edit-qcd" placeholder="A_Q_Sales, A_Q_PAP">
+            </div>
+            <div class="control" style="flex:1 1 180px;">
+              <label for="dc-edit-parent">Overview parent (blank = top-level)</label>
+              <input type="text" id="dc-edit-parent" placeholder="Sales" list="dc-dept-datalist">
+            </div>
+            <div class="control" style="flex:1 1 240px;">
+              <label for="dc-edit-excludes">Team-avg excludes (roster names)</label>
+              <input type="text" id="dc-edit-excludes" placeholder="Robin Choudhury">
+            </div>
+            <div class="control" style="flex:1 1 180px;">
+              <label for="dc-edit-notes">Notes</label>
+              <input type="text" id="dc-edit-notes" placeholder="optional">
+            </div>
+          </div>
+          <datalist id="dc-dept-datalist"></datalist>
+          <div class="control" style="margin-top:8px;">
+            <button type="button" class="btn" id="dc-save-btn">Save</button>
+            <button type="button" class="btn btn-secondary" id="dc-deactivate-btn" title="Soft-remove this dept's override row (reverts to built-in defaults)">Deactivate override</button>
+            <button type="button" class="btn btn-secondary" id="dc-cancel-btn">Cancel</button>
+          </div>
         </div>
       </div>
       </div>

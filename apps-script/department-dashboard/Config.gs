@@ -55,6 +55,7 @@ const SHEETS = Object.freeze({
   DIGEST_CONFIG: 'Digest Config',
   AGENT_ALIAS_OVERRIDES: 'Agent Alias Overrides',
   ORPHAN_FIX_LOG: 'Orphan Fix Log',
+  DEPT_CONFIG: 'Dept Config',
 });
 
 const ACCESS_CONTROL_HEADERS = Object.freeze(['Email', 'Department', 'Notes']);
@@ -101,6 +102,26 @@ const AGENT_ALIAS_OVERRIDES_HEADERS = Object.freeze([
 const ORPHAN_FIX_LOG_HEADERS = Object.freeze([
   'Timestamp', 'Admin', 'Action', 'From Name', 'To Name',
   'Affected Rows', 'Notes',
+]);
+// Dept Config: admin-authored, no-redeploy overrides for the per-dept
+// maps that used to be hardcoded constants below (DEPT_QCD_QUEUES,
+// OVERVIEW_PARENT_OF, TEAM_AVG_EXCLUDES). Written ONLY by the admin
+// Dept Config modal (DeptConfig.gs) -- a config write path, so it is
+// admin-gated (assertAdmin_) per INV-01 but does NOT mutate DQE
+// Historical Data. Read by the accessors getDeptQcdQueues_ /
+// getOverviewParentMap_ / getTeamAvgExcludes_ in DeptConfig.gs, which
+// layer the sheet OVER the frozen constants: a non-empty field in an
+// Active row overrides the constant for that dept; an empty field
+// falls back to the constant. Missing/absent sheet => pure constant
+// behavior (so pre-setup installs are unaffected). See INV-54.
+//   Department        = dept name; must match a DO NOT EDIT! header
+//   QCD Queues        = comma-separated A_Q_* queue names (overrides DEPT_QCD_QUEUES[dept])
+//   Overview Parent   = parent dept name (overrides OVERVIEW_PARENT_OF[dept]); blank = no nesting override
+//   Team Avg Excludes = comma-separated roster names (overrides TEAM_AVG_EXCLUDES[dept])
+//   Active            = TRUE/FALSE (pause without deleting)
+const DEPT_CONFIG_HEADERS = Object.freeze([
+  'Department', 'QCD Queues', 'Overview Parent', 'Team Avg Excludes',
+  'Active', 'Updated By', 'Updated At', 'Notes',
 ]);
 
 // Layout of the "DO NOT EDIT!" roster sheet. Centralized so a future

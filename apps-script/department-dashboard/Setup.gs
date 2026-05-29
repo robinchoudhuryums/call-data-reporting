@@ -15,6 +15,10 @@
  *                            script's canonicalization step)
  *   - Orphan Fix Log        (append-only audit trail of admin-driven
  *                            orphan fixes: alias adds + backfill renames)
+ *   - Dept Config           (admin-authored, no-redeploy overrides for
+ *                            DEPT_QCD_QUEUES / OVERVIEW_PARENT_OF /
+ *                            TEAM_AVG_EXCLUDES; edited via the Dept
+ *                            Config admin modal)
  *
  * Safe to re-run; existing sheets are left untouched (no data
  * overwritten).
@@ -36,6 +40,7 @@ function setup() {
   ensureSheet_(ss, SHEETS.DIGEST_CONFIG,         DIGEST_CONFIG_HEADERS);
   ensureSheet_(ss, SHEETS.AGENT_ALIAS_OVERRIDES, AGENT_ALIAS_OVERRIDES_HEADERS);
   ensureSheet_(ss, SHEETS.ORPHAN_FIX_LOG,        ORPHAN_FIX_LOG_HEADERS);
+  ensureSheet_(ss, SHEETS.DEPT_CONFIG,           DEPT_CONFIG_HEADERS);
   Logger.log('Setup complete.');
 }
 

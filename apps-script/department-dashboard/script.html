@@ -691,6 +691,7 @@
     initCompareRanges();
     initAlerts();
     initOrphanFix();
+    initDeptConfig();
     initQcdReport();
     // Router last so its modal-close listeners attach after each
     // per-modal init has wired up its own close-button handlers.
@@ -1750,6 +1751,7 @@
     '/report/qcd':         { kind: 'modal', modalId: 'qcd-modal',         buttonId: 'qcd-report-btn' },
     '/admin/alerts':       { kind: 'modal', modalId: 'alerts-modal',      buttonId: 'alerts-btn' },
     '/admin/orphan-fix':   { kind: 'modal', modalId: 'orphan-fix-modal',  buttonId: 'orphan-fix-btn' },
+    '/admin/dept-config':  { kind: 'modal', modalId: 'dept-config-modal', buttonId: 'dept-config-btn' },
   };
 
   // The route currently considered "active". Starts as '/overview'
@@ -8065,6 +8067,240 @@
 
   function ofSetStatus_(kind, msg) {
     const el = $('of-run-status');
+    if (!el) return;
+    if (!kind) { el.style.display = 'none'; el.textContent = ''; return; }
+    el.className = 'status status-' + kind;
+    el.textContent = msg;
+    el.style.display = '';
+  }
+
+  // -- Dept Config modal -----------------------------------------------
+  // Admin-only, no-redeploy authoring for the per-dept QCD queue map,
+  // Overview sub-queue nesting, and team-avg exclusions. Mirrors the
+  // Outlier Fix modal: load init -> render discovered queues +
+  // per-dept effective config -> inline edit form -> save/deactivate.
+  // Server (DeptConfig.gs) validates every save.
+
+  let dcLastInit = null;
+  let dcEditDept = null;
+
+  function initDeptConfig() {
+    const btn   = $('dept-config-btn');
+    const modal = $('dept-config-modal');
+    if (!btn || !modal) return;
+
+    const closeBtn = modal.querySelector('.modal-close');
+    const backdrop = modal.querySelector('[data-close]');
+
+    function openModal() {
+      modal.style.display = '';
+      modal.setAttribute('aria-hidden', 'false');
+      document.body.style.overflow = 'hidden';
+      trapFocus_(modal);
+      initModalDragResize_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
+      document.addEventListener('keydown', onKeyDown);
+      dcLoadInit_();
+    }
+    function closeModal() {
+      modal.style.display = 'none';
+      modal.setAttribute('aria-hidden', 'true');
+      releaseFocus_();
+      resetModalTransform_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
+      document.body.style.overflow = '';
+      document.removeEventListener('keydown', onKeyDown);
+      btn.focus();
+    }
+    function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
+
+    btn.addEventListener('click', openModal);
+    if (closeBtn) closeBtn.addEventListener('click', closeModal);
+    if (backdrop) backdrop.addEventListener('click', closeModal);
+
+    // Static edit-form buttons (wired once; the form is populated per
+    // dept by dcOpenEdit_).
+    const saveBtn = $('dc-save-btn');
+    if (saveBtn) saveBtn.addEventListener('click', dcSave_);
+    const deactivateBtn = $('dc-deactivate-btn');
+    if (deactivateBtn) deactivateBtn.addEventListener('click', dcDeactivate_);
+    const cancelBtn = $('dc-cancel-btn');
+    if (cancelBtn) cancelBtn.addEventListener('click', dcCloseEdit_);
+  }
+
+  function dcLoadInit_() {
+    $('dc-loading').style.display = '';
+    $('dc-body').style.display = 'none';
+    dcSetStatus_(null);
+    dcCloseEdit_();
+    google.script.run
+      .withSuccessHandler(function (data) {
+        $('dc-loading').style.display = 'none';
+        $('dc-body').style.display = '';
+        dcLastInit = data || { departments: [], rosterByDept: {}, effective: [], rows: [], discoveredQueues: [], unmappedCount: 0 };
+        dcRender_(dcLastInit);
+      })
+      .withFailureHandler(function (err) {
+        $('dc-loading').textContent = 'Error: '
+          + (err && err.message ? err.message : String(err));
+      })
+      .getDeptConfigInit();
+  }
+
+  function dcRender_(data) {
+    if (data.spreadsheetUrl) {
+      const link = $('dc-open-sheet');
+      if (link) link.href = data.spreadsheetUrl;
+    }
+    // Department datalist for the Overview-parent input.
+    const dl = $('dc-dept-datalist');
+    if (dl) {
+      dl.innerHTML = (data.departments || []).map(function (d) {
+        return '<option value="' + escapeHtml(d) + '"></option>';
+      }).join('');
+    }
+    dcRenderDiscovered_(data.discoveredQueues || [], data.unmappedCount || 0);
+    dcRenderEffective_(data.effective || []);
+  }
+
+  function dcRenderDiscovered_(queues, unmappedCount) {
+    const badge = $('dc-unmapped-badge');
+    if (badge) {
+      if (unmappedCount > 0) {
+        badge.textContent = unmappedCount + ' unmapped';
+        badge.style.display = '';
+      } else {
+        badge.style.display = 'none';
+      }
+    }
+    const tbody = $('dc-discovered-tbody');
+    if (!tbody) return;
+    if (!queues.length) {
+      tbody.innerHTML = '<tr><td colspan="4" class="al-empty">'
+        + 'No queue names found in QCD Historical Data (last 180 days).'
+        + '</td></tr>';
+      return;
+    }
+    tbody.innerHTML = queues.map(function (q) {
+      const mapped = q.mappedTo
+        ? '<span class="al-active al-active-yes">' + escapeHtml(q.mappedTo) + '</span>'
+        : '<span class="al-active al-active-no">unmapped</span>';
+      return '<tr>'
+           +   '<td>' + escapeHtml(q.queue) + '</td>'
+           +   '<td class="num">' + (q.rows || 0) + '</td>'
+           +   '<td>' + escapeHtml(q.lastSeen || '') + '</td>'
+           +   '<td>' + mapped + '</td>'
+           + '</tr>';
+    }).join('');
+  }
+
+  function dcRenderEffective_(effective) {
+    const tbody = $('dc-effective-tbody');
+    if (!tbody) return;
+    if (!effective.length) {
+      tbody.innerHTML = '<tr><td colspan="6" class="al-empty">No departments found.</td></tr>';
+      return;
+    }
+    const cell = function (str) {
+      return str ? escapeHtml(str) : '<span class="al-empty-inline">-</span>';
+    };
+    tbody.innerHTML = effective.map(function (e, idx) {
+      const source = e.hasRow
+        ? '<span class="al-active al-active-yes">sheet</span>'
+        : '<span class="al-active al-active-no">default</span>';
+      return '<tr data-dc-idx="' + idx + '">'
+           +   '<td>' + escapeHtml(e.dept) + '</td>'
+           +   '<td>' + cell((e.qcdQueues || []).join(', ')) + '</td>'
+           +   '<td>' + cell(e.overviewParent || '') + '</td>'
+           +   '<td>' + cell((e.teamAvgExcludes || []).join(', ')) + '</td>'
+           +   '<td>' + source + '</td>'
+           +   '<td><button type="button" class="link-btn dc-row-edit" data-idx="' + idx + '">Edit</button></td>'
+           + '</tr>';
+    }).join('');
+
+    tbody.querySelectorAll('.dc-row-edit').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        const idx = Number(btn.getAttribute('data-idx'));
+        const e = (dcLastInit.effective || [])[idx];
+        if (e) dcOpenEdit_(e);
+      });
+    });
+  }
+
+  function dcOpenEdit_(eff) {
+    dcEditDept = eff.dept;
+    const nameEl = $('dc-edit-dept-name');
+    if (nameEl) nameEl.textContent = eff.dept;
+    $('dc-edit-qcd').value      = (eff.qcdQueues || []).join(', ');
+    $('dc-edit-parent').value   = eff.overviewParent || '';
+    $('dc-edit-excludes').value = (eff.teamAvgExcludes || []).join(', ');
+    $('dc-edit-notes').value    = '';
+    // Deactivate only makes sense when a sheet row exists for the dept.
+    const deact = $('dc-deactivate-btn');
+    if (deact) deact.style.display = eff.hasRow ? '' : 'none';
+    $('dc-edit-section').style.display = '';
+    $('dc-edit-qcd').focus();
+  }
+
+  function dcCloseEdit_() {
+    dcEditDept = null;
+    const sec = $('dc-edit-section');
+    if (sec) sec.style.display = 'none';
+  }
+
+  function dcSave_() {
+    if (!dcEditDept) return;
+    const req = {
+      dept:            dcEditDept,
+      qcdQueues:       $('dc-edit-qcd').value,
+      overviewParent:  $('dc-edit-parent').value,
+      teamAvgExcludes: $('dc-edit-excludes').value,
+      active:          true,
+      notes:           $('dc-edit-notes').value,
+    };
+    const saveBtn = $('dc-save-btn');
+    if (saveBtn) saveBtn.disabled = true;
+    dcSetStatus_('loading', 'Saving config for ' + dcEditDept + '…');
+    google.script.run
+      .withSuccessHandler(function () {
+        if (saveBtn) saveBtn.disabled = false;
+        dcSetStatus_('success', 'Saved ' + dcEditDept
+          + '. Changes take effect on the next request (caches refresh within ~5 min).');
+        showToast('Saved config for ' + dcEditDept, 'success');
+        dcLoadInit_();
+      })
+      .withFailureHandler(function (err) {
+        if (saveBtn) saveBtn.disabled = false;
+        dcSetStatus_('error', 'Save failed: '
+          + (err && err.message ? err.message : String(err)));
+      })
+      .saveDeptConfig(req);
+  }
+
+  function dcDeactivate_() {
+    if (!dcEditDept) return;
+    if (!window.confirm('Deactivate the override row for "' + dcEditDept
+        + '"? This reverts the dept to the built-in defaults.')) return;
+    const deact = $('dc-deactivate-btn');
+    if (deact) deact.disabled = true;
+    dcSetStatus_('loading', 'Deactivating override for ' + dcEditDept + '…');
+    google.script.run
+      .withSuccessHandler(function (res) {
+        if (deact) deact.disabled = false;
+        const n = (res && res.removed) || 0;
+        dcSetStatus_('success', 'Deactivated ' + n + ' override row'
+          + (n === 1 ? '' : 's') + '. Reverted to defaults.');
+        showToast('Reverted ' + dcEditDept + ' to defaults', 'success');
+        dcLoadInit_();
+      })
+      .withFailureHandler(function (err) {
+        if (deact) deact.disabled = false;
+        dcSetStatus_('error', 'Deactivate failed: '
+          + (err && err.message ? err.message : String(err)));
+      })
+      .removeDeptConfig({ dept: dcEditDept });
+  }
+
+  function dcSetStatus_(kind, msg) {
+    const el = $('dc-run-status');
     if (!el) return;
     if (!kind) { el.style.display = 'none'; el.textContent = ''; return; }
     el.className = 'status status-' + kind;
