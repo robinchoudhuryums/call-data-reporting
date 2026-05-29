@@ -5,7 +5,16 @@ const fs = require('fs');
 const path = require('path');
 const { createShim } = require('./shim');
 
-const DASHBOARD_DIR = path.resolve(__dirname, '../../apps-script/department-dashboard');
+const APPS_SCRIPT_DIR = path.resolve(__dirname, '../../apps-script');
+const DASHBOARD_DIR = path.join(APPS_SCRIPT_DIR, 'department-dashboard');
+
+// Project -> source dir. Lets a suite load the sibling pipeline
+// projects (cdr-report / cdr-import) in addition to the dashboard.
+const PROJECT_DIRS = {
+  dashboard:    DASHBOARD_DIR,
+  'cdr-report': path.join(APPS_SCRIPT_DIR, 'cdr-report'),
+  'cdr-import': path.join(APPS_SCRIPT_DIR, 'cdr-import'),
+};
 
 /**
  * Loads one or more Department Dashboard `.gs` files into a single vm
@@ -22,18 +31,21 @@ const DASHBOARD_DIR = path.resolve(__dirname, '../../apps-script/department-dash
  * read it back from the returned `consts` object.
  *
  * @param {object} opts
- * @param {string[]} opts.files   .gs filenames relative to the dashboard dir,
+ * @param {string[]} opts.files   .gs/.js filenames relative to the project dir,
  *                                in load order (must satisfy each other's refs).
  * @param {string[]} [opts.capture] top-level const names to expose in `consts`.
+ * @param {string} [opts.project]  'dashboard' (default) | 'cdr-report' | 'cdr-import'.
  * @returns {{ shim, state, ctx, consts, fn(name), call(name, ...args) }}
  */
 function loadGas(opts) {
   const files = opts.files;
   const capture = opts.capture || [];
+  const baseDir = PROJECT_DIRS[opts.project || 'dashboard'];
+  if (!baseDir) throw new Error('loadGas: unknown project "' + opts.project + '"');
   const shim = createShim();
 
   const code = files
-    .map(function (f) { return fs.readFileSync(path.join(DASHBOARD_DIR, f), 'utf8'); })
+    .map(function (f) { return fs.readFileSync(path.join(baseDir, f), 'utf8'); })
     .join('\n;\n');
 
   const captureSnippet = capture.length

@@ -76,6 +76,10 @@ function createShim() {
         if (!state.spreadsheet) throw new Error('No fake spreadsheet set on shim.state.spreadsheet');
         return state.spreadsheet;
       },
+      // The cdr-report/cdr-import pipeline reads the active spreadsheet
+      // (loadRosterCanonicalNames_ falls back to getActive()).
+      getActive: function () { return state.spreadsheet; },
+      getActiveSpreadsheet: function () { return state.spreadsheet; },
     },
 
     LockService: {
