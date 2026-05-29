@@ -121,8 +121,12 @@ function uninstallAlertTrigger() {
  *
  * Skips Saturday + Sunday: weekend call activity is essentially
  * zero, so a fired alert would just be noise. Holiday handling
- * is intentionally not built in -- if it becomes a pain, add a
- * "skip dates" column to the Alert Config sheet later.
+ * is via the Alert Config `Skip Dates` column (E8): admins enter
+ * comma-separated ISO dates / ranges per dept; the trigger path
+ * checks `entry.skipDates` against today and logs `skipped` with
+ * a "Skip date match" note when it hits. Manual sends from the UI
+ * bypass this gate intentionally so admins can force-send after
+ * a holiday review.
  */
 function runDailyAlerts_() {
   const tz = TZ;
@@ -175,6 +179,12 @@ function runAlertsCore_(dateIso, dryRun, triggeredBy) {
     appendAlertLog_(rec, loggedBy, dateIso);
   };
 
+  // E8: Skip Dates honored ONLY on the time-triggered path. Manual
+  // sends from the UI explicitly bypass this so an admin can still
+  // force-send on a holiday if needed (e.g. catching up after a
+  // post-holiday review). Matches the INV-33 policy.
+  const honorSkipDates = (triggeredBy === 'daily-trigger');
+
   cfg.forEach(function (entry) {
     if (!entry.active) {
       pushAndLog({
@@ -184,6 +194,17 @@ function runAlertsCore_(dateIso, dryRun, triggeredBy) {
         threshold: entry.threshold,
         recipients: [],
         notes: 'Inactive in Alert Config',
+      });
+      return;
+    }
+    if (honorSkipDates && isDateInSkipRanges_(dateIso, entry.skipDates)) {
+      pushAndLog({
+        department: entry.department,
+        status: 'skipped',
+        answerRate: null,
+        threshold: entry.threshold,
+        recipients: [],
+        notes: 'Skip date match (' + dateIso + ') in Alert Config',
       });
       return;
     }
@@ -373,7 +394,13 @@ function readAlertConfig_() {
   if (!sheet) return [];
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return [];
-  const values = sheet.getRange(2, 1, lastRow - 1, 5).getValues();
+  // Width 6 covers the E8 Skip Dates column (added at col F, end of
+  // row). Sheets returns empty strings for col F on pre-E8 sheets
+  // where setup() ran before the schema bump -- safe to read without
+  // re-running setup, because the sheet's maxColumns default (26) is
+  // larger than 6. readAlertConfig_ stays backward-compatible:
+  // missing skip-dates parse to an empty array, never an error.
+  const values = sheet.getRange(2, 1, lastRow - 1, 6).getValues();
   const out = [];
   for (let i = 0; i < values.length; i++) {
     const dept = String(values[i][0] || '').trim();
@@ -388,15 +415,69 @@ function readAlertConfig_() {
     const active = !(rawActive === false || rawActive === 'FALSE' || rawActive === 'false'
                   || rawActive === 0 || rawActive === 'no' || rawActive === 'No');
     const notes = String(values[i][4] || '').trim();
+    const skipDatesRaw = String(values[i][5] || '').trim();
     out.push({
       department: dept,
       threshold: threshold,
       extraRecipients: extras,
       active: active,
       notes: notes,
+      // Normalized array of {from, to} ISO-date ranges; empty when
+      // the cell is empty OR contains only garbage. The raw string is
+      // kept for round-trip display in the modal config table so
+      // admins see what's in the sheet, not the parsed form.
+      skipDatesRaw: skipDatesRaw,
+      skipDates: parseSkipDateRanges_(skipDatesRaw),
     });
   }
   return out;
+}
+
+/**
+ * Parses the E8 "Skip Dates" cell into an array of
+ * {from, to} ISO-date ranges. Accepts:
+ *   - Single dates: `2026-12-25`
+ *   - Inclusive ranges via `..`: `2026-12-24..2026-12-26`
+ *   - Comma-separated lists of either: `2026-12-25, 2026-12-31..2026-01-01`
+ *   - Whitespace tolerance around commas, `..`, and tokens.
+ * Tokens that don't parse as ISO dates (or with from > to) are
+ * silently dropped -- never throw; admin-curated cell + no UI
+ * validator means the parser must be robust.
+ */
+function parseSkipDateRanges_(raw) {
+  if (!raw) return [];
+  const tokens = String(raw).split(',');
+  const out = [];
+  const iso = /^\d{4}-\d{2}-\d{2}$/;
+  for (let i = 0; i < tokens.length; i++) {
+    const tok = tokens[i].trim();
+    if (!tok) continue;
+    const parts = tok.split('..').map(function (s) { return s.trim(); });
+    let from = '', to = '';
+    if (parts.length === 1 && iso.test(parts[0])) {
+      from = to = parts[0];
+    } else if (parts.length === 2 && iso.test(parts[0]) && iso.test(parts[1])) {
+      from = parts[0]; to = parts[1];
+      if (from > to) { const tmp = from; from = to; to = tmp; }
+    } else {
+      continue;
+    }
+    out.push({ from: from, to: to });
+  }
+  return out;
+}
+
+/**
+ * True if `dateIso` (YYYY-MM-DD) falls within any of the
+ * configured skip ranges. ISO string comparison is safe because
+ * the format is zero-padded and lexicographically ordered.
+ */
+function isDateInSkipRanges_(dateIso, ranges) {
+  if (!ranges || !ranges.length || !dateIso) return false;
+  for (let i = 0; i < ranges.length; i++) {
+    if (dateIso >= ranges[i].from && dateIso <= ranges[i].to) return true;
+  }
+  return false;
 }
 
 /**

@@ -1045,6 +1045,10 @@
             <strong>Alert Config</strong> sheet in the dashboard spreadsheet.
             Dept managers from <strong>Access Control</strong> are added
             automatically. Admins are always cc'd.
+            <strong>Skip Dates</strong> (col F) accepts comma-separated
+            <code>YYYY-MM-DD</code> dates and inclusive ranges via
+            <code>..</code> (e.g. <code>2026-12-25, 2026-12-31..2026-01-01</code>)
+            -- honored by the daily trigger only; manual sends always fire.
             <a href="#" id="al-open-sheet" target="_blank">Open Alert Config sheet &rarr;</a>
           </p>
           <table class="al-config-table">
@@ -1053,6 +1057,7 @@
               <th class="num">Threshold</th>
               <th>Extra Recipients</th>
               <th>Active</th>
+              <th>Skip Dates</th>
               <th>Notes</th>
             </tr></thead>
             <tbody id="al-config-tbody"></tbody>

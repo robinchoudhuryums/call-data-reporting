@@ -7480,7 +7480,7 @@
     const tbody = $('al-config-tbody');
     if (!tbody) return;
     if (!config.length) {
-      tbody.innerHTML = '<tr><td colspan="5" class="al-empty">'
+      tbody.innerHTML = '<tr><td colspan="6" class="al-empty">'
         + 'No rows in the Alert Config sheet yet. Add one row per dept that '
         + 'should receive alerts.'
         + '</td></tr>';
@@ -7489,11 +7489,28 @@
     tbody.innerHTML = config.map(function (c) {
       const activeCls = c.active ? 'al-active-yes' : 'al-active-no';
       const activeLbl = c.active ? 'Yes' : 'No';
+      // E8 Skip Dates: prefer the parsed array (server-normalized,
+      // bad tokens dropped) for the display so a malformed cell
+      // doesn't show garbage. Fallback to the raw string when the
+      // parsed array is empty so admins can see what they typed
+      // before fixing it. Empty cell shows an em-dash.
+      const skipDates = Array.isArray(c.skipDates) ? c.skipDates : [];
+      let skipCell = '';
+      if (skipDates.length) {
+        skipCell = skipDates.map(function (r) {
+          return r.from === r.to ? r.from : (r.from + ' – ' + r.to);
+        }).join(', ');
+      } else if (c.skipDatesRaw) {
+        skipCell = '⚠︎ ' + c.skipDatesRaw;
+      } else {
+        skipCell = '—';
+      }
       return '<tr>'
            +   '<td>' + escapeHtml(c.department) + '</td>'
            +   '<td class="num">' + Number(c.threshold).toFixed(0) + '%</td>'
            +   '<td>' + escapeHtml((c.extraRecipients || []).join(', ') || '(none)') + '</td>'
            +   '<td><span class="al-active ' + activeCls + '">' + activeLbl + '</span></td>'
+           +   '<td class="al-skip-dates">' + escapeHtml(skipCell) + '</td>'
            +   '<td>' + escapeHtml(c.notes || '') + '</td>'
            + '</tr>';
     }).join('');
