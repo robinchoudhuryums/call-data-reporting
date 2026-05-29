@@ -534,7 +534,7 @@
     // Phase D Source column. Renders a chip (ROSTER / BOTH / QUEUE)
     // from each row's matchedViaRoster / matchedViaQueue flags --
     // see fmtCell handling for `type: 'chip'`. Plain-text export
-    // (CSV) is handled in csvCellValue_.
+    // (CSV) is handled in exportTableCsv_ via sourceChipCsv_.
     { key: 'source',               label: 'Source',          type: 'chip' },
     { key: 'totalUnique',          label: 'Unique',          type: 'num' },
     { key: 'totalRung',            label: 'Rung',            type: 'num' },
