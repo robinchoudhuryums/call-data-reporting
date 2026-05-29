@@ -213,10 +213,14 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   should use `var(--r)` for squared-off corners. Exceptions are
   intentional: `999px` pills/badges, `50%` avatars/dots, skeleton
   blocks (`.skeleton-line` 4px / `.skeleton-tile` 8px), and
-  print-mode `border-radius: 0 !important` overrides. ~12 pre-Phase-A
-  callsites in alerts / toast / date input still hardcode 6px / 8px
-  and are slated for a follow-on cleanup; new code should still
-  pick `var(--r)`.
+  print-mode `border-radius: 0 !important` overrides. Five
+  pre-Phase-A 6px / 8px callsites (alerts modal tables, QCD
+  modal tables + view toggle, toast) were swept to `var(--r)`
+  in the redesign cleanup commit (53d0560); bulk `2px`
+  hardcodes (56 callsites) are visually identical to the token
+  and intentionally left untouched. Email markup in `Alerts.gs`
+  + `Digest.gs` keeps hardcoded radii because mail clients
+  don't honor CSS custom properties.
   (3) **Uppercase mono kickers/eyebrows/labels use
   `letter-spacing: 0.18em`.** Mono numerics (blocks with
   `font-variant-numeric: tabular-nums`) use `letter-spacing: 0`.
@@ -394,12 +398,24 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `performance:`, `compareRanges:`, `missed:`, `companyOverview:`);
   bump the relevant version on any aggregation-rule change. See INV-30
   for current versions.
-- **Scope toggle (`roster | queue | both`)**: managers can see strictly
-  their roster, anyone who handled their queue extensions, or the union.
-  Default is `both` since Phase D (commit d631719); the toggle remains
-  in the UI for parallel-run validation and is slated for removal once
-  the new default + roster-only totals semantics prove out. Pre-Phase-D
-  default was `roster` (matched the legacy DQE Report's behavior).
+- **Scope is locked to `both` (Phase D + redesign cleanup,
+  commits d631719 + 53d0560).** Pre-Phase-D the dashboard
+  shipped a `roster | queue | both` segmented control with
+  `roster` default (matching the legacy DQE Report's behavior);
+  Phase D flipped the default to `both` and Source-chip-tagged
+  queue-only floaters so managers could see who handled their
+  queue without polluting totals (INV-53). The toggle was
+  retained for parallel-run validation through Phases D / D+1
+  / E, then retired in the redesign cleanup once the new
+  semantics proved out. `Data.gs::getDepartmentSummary` and
+  `MissedCallsReport.gs::getMissedCallsReport` hardcode scope
+  to `both` before passing to internal compute helpers. **The
+  internal `computeSummary_(dept, from, to, scope)` arg is
+  preserved** because `Digest.gs::renderDeptDigestEmail_` still
+  passes `'roster'` for the manager-digest path -- managers
+  read a roster-only view in their email. New callers should
+  pass `'both'` unless they have a specific reason to scope
+  narrower.
 - **DQE Report Legacy is FROZEN and the migration is COMPLETE.** All four
   legacy reports (Individual / Performance / Compare Ranges / Missed
   Calls) plus the Low Answer Rate Alerts engine are in the dashboard.
@@ -789,7 +805,7 @@ INV-49 | `getIndividualReport` accepts optional `priorFrom`/`priorTo` for same-a
 INV-50 | `QCD Historical Data` columns (1-indexed): `Month Year \| Week \| Date \| Call Queue \| Call Source \| Total Calls \| Total Answered \| Abandoned \| Longest Wait \| Avg Answer \| Abandoned % \| Violations`. Pinned in `Config.gs::QCD_HISTORICAL_COLS`. Writer: `apps-script/cdr-import/autoImport.js::processIntegratedHistory` QCD block. Reader: `apps-script/department-dashboard/QCDReport.gs` (dept-scoped report) + `CompanyOverview.gs::computeQcdSnapshots_` (per-dept latest-day snapshot on the Overview tile grid) + `Data.gs::computeDeptQcdSnapshot_` (per-dept latest-day snapshot for My Department's "Queue Call Data" tiles). **`Call Queue` carries raw queue names like `A_Q_CustomerSuccess` / `A_Q_Sales` / `Backup CSR` -- NOT dashboard dept names; canonical spellings vary per install.** To map a dept to its set of queue names, use `Config.gs::DEPT_QCD_QUEUES` (admin-curated). `Call Source` is one of `Total Calls` (daily roll-up; the only source the dashboard sums to avoid double-counting) plus sub-source breakdowns like `CSR` / `Ad-campaign` / `New Call Menu` / `Non-CSR (internal)` that the dashboard skips. `Violations` is the count of (source, day) tuples where Abandoned % > 5%. | Subsystem: Department Dashboard + CDR Import
 INV-51 | `QCD Report` is per-dept gated like Individual / Performance / Compare Ranges -- managers see their own dept, admins pick any. **Parent depts auto-include sub-queue queues** via `queuesForDept_` (Sales+PAP, Power+PAK, CSR+Spanish per `OVERVIEW_PARENT_OF`); all three QCD readers (modal, Overview snapshot, My Department snapshot) use the same helper so rollups stay consistent. `getQcdReport({ department, from, to })` returns `meta` (with `queues` + `unmapped` flags), `dateLabel`, `totals` (sum across expanded queue list; `totals.violations` is MONTH-TO-DATE across the dept's queues, not selected-range sum), `queueBreakdown` (per-queue rows with `violationDates` array for expandable detail), `trendData` (12-month monthly buckets with `perQueue` keyed by queue name), `dailySeries` (per-day rollup across dept queues), and `perQueue` (per-queue daily + monthly arrays for multi-line charts). Cache prefix `qcd:v5`. The QCD Report form defaults to "Yesterday" preset. For depts with 2+ queues, the chart renders one line per queue (color-coded) plus a dashed "Dept total" line. Single-day ranges hide the Daily chart view. Per-queue breakdown rows are clickable when violations > 0 to expand and show violation dates. Color-coding: violations cells use light-warn (1-3) / strong-warn (>3); abandoned % >= 5% is warn-tinted in both breakdown and daily tables. **The Overview page's per-dept tile shows per-queue QCD data for multi-queue depts** (each queue gets abandoned %, abandoned count if >0, violations if >0 with color-coding); single-queue depts show dept-level chips. "X viol MTD" chip renders when month-to-date violations > 0. My Department page's agent table is PRECEDED by a "Queue Call Data — [date]" tile row (showing the actual data date, not "yesterday") sourced from `Data.gs::computeDeptQcdSnapshot_`. All QCD UI surfaces are visible to everyone (no admin gate); per-dept gating is on the dropdown only. | Subsystem: Department Dashboard
 INV-52 | `CDR Historical Data` columns (1-indexed): `Month Year \| Week \| Date \| Dept \| Name \| C..W` (22 metric cols). `Q Path Historical Data` columns: `Month Year \| Week \| Date \| Dept \| Path \| Total \| VM \| NonVM \| Opt1 \| NonOpt1 \| Pct`. `CSR Transfer Historical Data` columns: `Month Year \| Week \| Date \| Agent \| Trans % \| Total Calls \| Transferred \| + 11 per-queue cols`. Writers: `apps-script/cdr-import/autoImport.js::processIntegratedHistory`; each block emits a separate `processIntegratedHistory:CDR` / `:QPath` / `:CSR` row to Pipeline Health (INV-44). NOT consumed by the dashboard today -- the read path lives in the legacy DQE Report Apps Script. CDR rows are now **mirrored to Neon** (`call_history_dept` + `call_history_phones`) inline during `processIntegratedHistory`, following the same best-effort pattern as DQE and QCD. Requires `HMAC_SECRET` for phone-hash JSONB fields; degrades gracefully without it (main metric columns still write). | Subsystem: CDR Import (writer) / DQE Report Legacy (reader) |
-INV-53 | **Queue-only floaters are excluded from dept-level totals and team-averages across all dashboard reports.** A "floater" is an agent matched into a dept's view via shared-queue extension overlap (`matchedViaQueue=true`) but NOT on the dept's roster (`matchedViaRoster=false`). Established by Phase D (commit d631719) for `Data.gs::computeSummary_` (My Department agent table) -- totals are computed by filtering `rows` to `matchedViaRoster=true` before summing/averaging; the response carries `rosterAgentCount` + `queueOnlyAgentCount` so the client can render a "Total (roster only · N floaters excluded)" tfoot caption when floaters are visible. Each row carries a `sourceHomes` array listing every other dept's roster the floater appears on (built lazily by `buildDeptsByAgent_`); the client Source column chip renders `QUEUE · <homes>` or bare `QUEUE` when the floater is on no roster. **Floater-aware aggregation extended to the three agent-level reports in commit ba26d48** (Phase D+1): Individual Report's team-avg accumulator is naturally floater-free via its existing `rosterSet[agent] && !excludedAgents[agent]` gate; Performance Report's `teamCurr`/`teamPrev`/`monthlyTeam` and Compare Ranges' `teamP1`/`teamP2` gained explicit `matchedViaRoster` gating. Per-row response on all three reports now carries `matchedViaRoster` / `matchedViaQueue` / `sourceHomes` (mirrors the Phase D My Department shape). Floaters render with the QUEUE chip on their summary cards but contribute zero to team-avg denominators. See the "INV-53 expansion to IR/PR/CR" Common Gotchas bullet for picker behavior + security model. The scope toggle (`roster | queue | both`) remains available on My Department through parallel validation; the floater-exclusion rule applies regardless of scope so totals don't shift when the user flips between Roster and Both views. | Subsystem: Department Dashboard
+INV-53 | **Queue-only floaters are excluded from dept-level totals and team-averages across all dashboard reports.** A "floater" is an agent matched into a dept's view via shared-queue extension overlap (`matchedViaQueue=true`) but NOT on the dept's roster (`matchedViaRoster=false`). Established by Phase D (commit d631719) for `Data.gs::computeSummary_` (My Department agent table) -- totals are computed by filtering `rows` to `matchedViaRoster=true` before summing/averaging; the response carries `rosterAgentCount` + `queueOnlyAgentCount` so the client can render a "Total (roster only · N floaters excluded)" tfoot caption when floaters are visible. Each row carries a `sourceHomes` array listing every other dept's roster the floater appears on (built lazily by `buildDeptsByAgent_`); the client Source column chip renders `QUEUE · <homes>` or bare `QUEUE` when the floater is on no roster. **Floater-aware aggregation extended to the three agent-level reports in commit ba26d48** (Phase D+1): Individual Report's team-avg accumulator is naturally floater-free via its existing `rosterSet[agent] && !excludedAgents[agent]` gate; Performance Report's `teamCurr`/`teamPrev`/`monthlyTeam` and Compare Ranges' `teamP1`/`teamP2` gained explicit `matchedViaRoster` gating. Per-row response on all three reports now carries `matchedViaRoster` / `matchedViaQueue` / `sourceHomes` (mirrors the Phase D My Department shape). Floaters render with the QUEUE chip on their summary cards but contribute zero to team-avg denominators. See the "INV-53 expansion to IR/PR/CR" Common Gotchas bullet for picker behavior + security model. The legacy scope toggle (`roster | queue | both`) was retired in the redesign cleanup (commit 53d0560); both public RPCs now lock scope to `both`, but the floater-exclusion contract is independent of scope so historical scope=`roster` behavior is reproducible by reading only `matchedViaRoster=true` rows from the response. | Subsystem: Department Dashboard
 
 ### Policy Configuration
 Policy threshold: 6/10
@@ -802,8 +818,8 @@ S1 | Manager loads own-dept dashboard | Subsystem: Department Dashboard
     - Confirm the page lands on Overview ("Departments Snapshot" kicker + h1); the email + blue "manager" tag appear in the header.
     - Click "My Department" in the header nav.
     - Confirm header h1 swaps to the manager's dept name; From/To both default to the latest ISO date in DQE Historical Data; agent table populates within 3 seconds.
-    - Confirm scope toggle defaults to "Roster".
-  Expected: only that manager's dept agents appear; info-line shows "fresh read" first load, "cache hit" on immediate refresh.
+    - Confirm the My Department controls row shows only the dept selector, date inputs, and the Refresh button -- no scope toggle (retired in the redesign cleanup, commit 53d0560).
+  Expected: that manager's dept roster agents appear, plus any queue-only floaters tagged with QUEUE chips in the Source column; info-line shows "fresh read" first load, "cache hit" on immediate refresh.
 
 S2 | Admin switches departments | Subsystem: Department Dashboard
   Steps:
@@ -830,12 +846,11 @@ S5 | Daily DQE aggregation completes for a typical day | Subsystem: CDR DQE Pipe
 
 S6 | Source column + roster-only totals (post-Phase D) | Subsystem: Department Dashboard
   Steps:
-    - Open dashboard for a dept with known floaters. Default scope is now Both since Phase D, so no toggle switching is required.
+    - Open dashboard for a dept with known floaters. Scope is locked to "both" server-side since the redesign cleanup (commit 53d0560); the legacy scope toggle is gone from the UI.
     - Inspect the agent table: every row should carry a chip in the new Source column (between Agent and Unique). Roster agents render ROSTER (accent) or BOTH (good) chips; queue-only floaters render QUEUE (warn) chips suffixed with their other-dept home list (e.g. `QUEUE · Sales, Power`). Floaters on no dept's roster render bare `QUEUE`.
     - Confirm the tfoot first-cell reads "Total (roster only · N floaters excluded)" with N matching the count of QUEUE-chipped rows, and the totals values themselves exclude those rows' contributions.
-    - Switch scope to Roster; floaters disappear from the table and the tfoot caption reverts to plain "Total". Totals values are unchanged from the Both view (since the totals filter to matchedViaRoster=true regardless of scope).
-    - Switch scope to Queue; only rows where matchedViaQueue=true remain. Totals reflect the roster-intersect-queue subset (transitional semantics; documented).
-  Expected: chip rendering matches matchedViaRoster/matchedViaQueue flags per row; sourceHomes array suffix lists every other dept's roster the floater appears on; totals stable across Roster↔Both switches; Diagnostics panel still lists queue-only matched agents.
+    - To verify the floater-exclusion contract still produces correct roster-only numbers (legacy `scope=roster` behavior), filter the response client-side to `matchedViaRoster=true` rows -- the totals shown in the tfoot match what summing those rows produces. The contract is independent of scope so the historical roster-only view is reproducible without the toggle.
+  Expected: chip rendering matches matchedViaRoster/matchedViaQueue flags per row; sourceHomes array suffix lists every other dept's roster the floater appears on; totals match the roster-only sum; Diagnostics panel still lists queue-only matched agents (now visible directly via the Source chip on each row).
 
 S7 | Source pipeline numbers match dashboard | Subsystem: CDR DQE Pipeline → Department Dashboard
   Steps:
