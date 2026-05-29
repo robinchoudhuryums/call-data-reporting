@@ -113,6 +113,58 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   current window compares against the immediately-preceding 31 days.
   Surfaced in the form's inline hint + the results header so the
   comparison basis is visible to users.
+- **Per-row prior-period chips (E5, commit bb77168).** The My
+  Department agent table renders an inline delta chip after the
+  Rung / Missed / Answered values comparing the selected window
+  to a same-length window immediately preceding it (mirrors PR's
+  INV-28 semantics). Three pieces of behavior worth knowing:
+  (1) **Valence map** lives in `script.html::WOW_PRIOR_KEYS`:
+  rung↑ / answered↑ render `wow-chip-good` (sage); missed↑
+  renders `wow-chip-warn` (orange); decreases flip the color so
+  a missed-call drop is green and an answered-call drop is
+  orange. (2) **Noise threshold** `WOW_NOISE_THRESHOLD = 3`
+  applies the muted variant to any |delta| under 3 calls (and to
+  zero deltas) regardless of valence -- day-to-day noise stays
+  visually quiet. Hover title carries the prior window dates +
+  raw prior value + numeric delta from `state.meta.priorFrom` /
+  `state.meta.priorTo` (server-populated). (3) **Server side**
+  `Data.gs::computeSummary_` widens its single Raw Data scan
+  range to `[priorFrom, to]` and uses a sibling `priorAcc`
+  dictionary keyed by agent so the existing user-window
+  accumulator stays untouched; each row carries `priorRung` /
+  `priorMissed` / `priorAnswered` / `priorHasData`. Agents with
+  prior-only activity (no rows in the user window) are silently
+  dropped -- no card exists to render a chip on. CSV export
+  bypasses `fmtCell` via `csvCellValue_` so the chip markup is
+  intentionally NOT in CSVs; raw current-window values only.
+  Floaters get chips too -- the chip is a per-agent comparison,
+  independent of the INV-53 team-avg floater-exclusion gate.
+- **Threshold-drift surface (E10, commit b3a5a51).** The Alerts
+  modal config table renders a "Last 30 days" chip per dept
+  summarizing the most-recent daily-trigger entries from the
+  Alert Log. Five tunable constants near the top of `Alerts.gs`:
+  `DRIFT_LOOKBACK_ENTRIES` (=30; per-dept window size),
+  `DRIFT_MIN_TOTAL_TO_ASSESS` (=10; below this the chip renders
+  the muted 'cold' / dash variant -- not enough signal),
+  `DRIFT_CHRONIC_FIRE_RATIO` (=0.80; `fired/total` at or above
+  flags 'chronic' = warn-tinted), `DRIFT_LENIENT_HEADROOM_PTS`
+  (=10; `fired === 0` AND `meanRate >= threshold + 10pts` flags
+  'lenient' = muted, informational), `DRIFT_LOG_SCAN_CAP` (=2000;
+  caps the Alert Log read so a runaway log can't blow the script
+  budget -- ~143 days of history at 14 depts × 1 trigger/day).
+  Server-side `computeThresholdDrift_` filters to `triggeredBy
+  === 'daily-trigger'` rows AND drops anything whose Triggered
+  By starts with `preview:`, so manual sends from the UI +
+  previews don't pollute the signal. **Self-warming:** a fresh
+  install renders every chip as `cold` until each dept has
+  >= `DRIFT_MIN_TOTAL_TO_ASSESS` daily-trigger entries logged
+  (~10 weekdays after the trigger goes live). **Best-effort:**
+  the helper is wrapped in a try/catch inside `getAlertsInit`
+  so a missing or corrupt Alert Log returns an empty drift map
+  and the modal table still renders the rest of the payload --
+  the column just shows dashes for every row. Admin-only via the
+  existing modal gating (`assertAdmin_` in `getAlertsInit`);
+  no separate gate needed.
 - **`neonWrite.js` is duplicated** between `apps-script/cdr-report/` and
   `apps-script/cdr-import/`. Currently byte-identical. Any change to one
   is a two-file edit; `diff` before editing. `neonWrite.js` self-contains
@@ -482,10 +534,22 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   (flat / improving), or projected crossing > 7 days out. None of
   these add server endpoints -- E2 is a one-time template inject,
   E4 adds one flag to the existing IR response (bumping
-  `individual:v6` -> `v7`), and E3 / E9 are pure client. E5 (per-row
-  WoW chip), E8 (alert skip-dates), and E10 (threshold drift) were
-  explicitly deferred from Phase E -- each needs server / schema /
-  API work beyond what the original handoff scoped.
+  `individual:v6` -> `v7`), and E3 / E9 are pure client. Of the
+  three items originally deferred from Phase E, **E5 (per-row WoW
+  chip) shipped in commit bb77168** -- agent table gains an inline
+  delta chip on Rung / Missed / Answered comparing to a
+  same-length window immediately preceding the selected range
+  (see the "Per-row prior-period chips" gotcha below). **E8 (alert
+  skip-dates) shipped in commit 319eca7** -- new Skip Dates column
+  on the Alert Config sheet honored by the daily trigger only
+  (see INV-33 / INV-34). **E10 (threshold drift) shipped in
+  commit b3a5a51** -- new "Last 30 days" column on the Alerts
+  modal config table summarizing the most-recent ~30
+  daily-trigger entries per dept; classifier flags chronic
+  (>=80% fire ratio = alert fatigue likely) and lenient (0
+  fires + dept averages >= threshold + 10pts = threshold too
+  loose to catch a real degradation) cases (see the E10
+  Common Gotchas bullet).
 - **INV-53 expansion to IR/PR/CR (Phase D+1).** The three
   agent-level reports gained floater-awareness in commit ba26d48,
   extending the Phase D My Department contract. Six pieces worth
@@ -702,11 +766,11 @@ INV-26 | TEAM_AVG_EXCLUDES in Config.gs lists per-dept agent names removed from 
 INV-27 | Individual Report's team-avg denominator counts only roster members with ANY call activity (rung/answered/missed > 0) in the selected range, NOT the full roster size. Zero-call roster members don't dilute the average. | Subsystem: Department Dashboard
 INV-28 | Performance Report's prior period is the immediately-preceding window of the same duration (durationDays before currentStart, ending one day before currentStart) -- NOT "previous calendar month". Documented in the form's inline hint and the results-header "Comparing against..." line. Match legacy SingleRangeReport semantics. | Subsystem: Department Dashboard
 INV-29 | Individual Report's monthly trend window: range itself when selected range > 366 days OR equals a full calendar year (Jan 1 - Dec 31 of one year); else `first-of-month(end - 12 months)` to `end`. Performance Report uses identical logic so the 12-mo trends align across both reports for the same dept. | Subsystem: Department Dashboard
-INV-30 | Each report has its own versioned cache key prefix; bump on any aggregation rule change so stale entries don't bleed in. Current: `summary:v7` (Data.gs), `latestDate:v1` (Data.gs -- most-recent DQE ISO date; drives the My Department From/To default so the agent table lands on a non-empty day), `latestDates:v1` (Data.gs -- multi-source `{dqe, qcd, latest}` blob; drives the header freshness pill so it doesn't go stale when one source updates without the other), `individual:v8` (IndividualReport.gs), `individual_active:v2` (active-agents-in-range subset used by Individual + Performance + Compare Ranges pickers; v2 return shape is `{agents, floaters}` after the INV-53 expansion), `performance:v4` (PerformanceReport.gs), `compareRanges:v4` (CompareRangesReport.gs), `missed:v10` (MissedCallsReport.gs), `companyOverview:v13` (CompanyOverview.gs), `qcd:v5` (QCDReport.gs). Alerts.gs holds no cached compute. | Subsystem: Department Dashboard
+INV-30 | Each report has its own versioned cache key prefix; bump on any aggregation rule change so stale entries don't bleed in. Current: `summary:v8` (Data.gs -- bumped from v7 in E5 commit bb77168 to add per-row prior-period fields `priorRung` / `priorMissed` / `priorAnswered` / `priorHasData` for the WoW chip), `latestDate:v1` (Data.gs -- most-recent DQE ISO date; drives the My Department From/To default so the agent table lands on a non-empty day), `latestDates:v1` (Data.gs -- multi-source `{dqe, qcd, latest}` blob; drives the header freshness pill so it doesn't go stale when one source updates without the other), `individual:v8` (IndividualReport.gs), `individual_active:v2` (active-agents-in-range subset used by Individual + Performance + Compare Ranges pickers; v2 return shape is `{agents, floaters}` after the INV-53 expansion), `performance:v4` (PerformanceReport.gs), `compareRanges:v4` (CompareRangesReport.gs), `missed:v10` (MissedCallsReport.gs), `companyOverview:v13` (CompanyOverview.gs), `qcd:v5` (QCDReport.gs). Alerts.gs holds no cached compute. | Subsystem: Department Dashboard
 INV-31 | `script.send_mail` OAuth scope in appsscript.json is required for: (1) Individual / Performance / Compare Ranges / QCD "Email image" exports, (2) the Low Answer Rate Alerts engine, (3) the Manager Digest engine (Digest.gs), (4) the failure-notification paths (notifyImportFailure_ in autoImport.js, runDailyDQEBuild_ in buildDQEHistoricalData.js [present in BOTH cdr-import and cdr-report copies after INV-16 expansion], notifyDigestFailure_ in Digest.gs, plus the indirect path from cdr-import's integrated DQE block hitting notifyNeonWriteFailure on a Neon write failure). All paths use `MailApp.sendEmail`. Removing the scope breaks every one of them; adding new send-mail features here doesn't need a re-scope. | Subsystem: Department Dashboard (+ CDR Import / CDR DQE Pipeline for the notify-failure paths)
 INV-32 | Low Answer Rate Alerts is admin-only at the server boundary. Every public callable in Alerts.gs starts with `assertAdmin_`. The launcher button is also hidden client-side via `data-admin-only`, but the server check is the source of truth. Compare Ranges was previously admin-only too but was opened to managers (with the same `dept !== user.department` check the other reports use) so they can run year-over-year comparisons within their own dept. Adding a new admin = setting/editing the `ADMIN_EMAILS` Script Property (comma-separated emails); falls back to `ADMIN_EMAILS_FALLBACK` in Config.gs if unset. | Subsystem: Department Dashboard
-INV-33 | `runDailyAlerts_` (time-triggered alerts) skips Saturdays and Sundays. Holiday handling is intentionally not built in -- if it becomes noise in practice, add a skip-dates column to the Alert Config sheet rather than hardcoding in Alerts.gs. Manual sends via the UI ignore this skip. | Subsystem: Department Dashboard
-INV-34 | `Alert Config` columns: Department \| Threshold % \| Extra Recipients \| Active \| Notes. `Alert Log` columns: Timestamp \| Department \| Date Checked \| Threshold % \| Answer Rate % \| Sent \| Recipients \| Triggered By \| Notes \| Status. Both sheets idempotently created by setup(); never overwritten. Alerts.gs's `readAlertConfig_` and `appendAlertLog_` depend on these schemas. | Subsystem: Department Dashboard
+INV-33 | `runDailyAlerts_` (time-triggered alerts) skips Saturdays and Sundays. Holiday handling is via the Alert Config `Skip Dates` column (E8, commit 319eca7): admins enter comma-separated ISO dates and/or inclusive ranges (`YYYY-MM-DD..YYYY-MM-DD`) per dept; `runAlertsCore_` checks each dept's parsed `skipDates` against today and logs status `skipped` with note `Skip date match (YYYY-MM-DD) in Alert Config` when it hits. **Trigger-only enforcement:** the gate is `triggeredBy === 'daily-trigger'` — manual sends from the UI, previews, and any other caller bypass the skip so admins can force-send after a holiday for post-hoc catch-up. `Alerts.gs::parseSkipDateRanges_` is intentionally tolerant (silently drops malformed tokens, swaps reversed ranges) because the cell is admin-curated free-text with no UI validator — never throws. ISO-string range checks are safe only because `YYYY-MM-DD` is zero-padded and lexicographically ordered. | Subsystem: Department Dashboard
+INV-34 | `Alert Config` columns: Department \| Threshold % \| Extra Recipients \| Active \| Notes \| Skip Dates. `Skip Dates` (col F) was added in E8 (commit 319eca7) at the end of the row -- non-destructive on existing prod sheets, which keep their 5-col header row. `readAlertConfig_` widens its read to 6 cols and indexes by position, so pre-E8 sheets work without re-running `setup()` (col F just returns empty until an admin populates it; the col F header label `Skip Dates` only lands on fresh `setup()` runs because `ensureSheet_` short-circuits on existing sheets per INV-22). Format + parser tolerance: see INV-33. `Alert Log` columns: Timestamp \| Department \| Date Checked \| Threshold % \| Answer Rate % \| Sent \| Recipients \| Triggered By \| Notes \| Status. Both sheets idempotently created by setup(); never overwritten. Alerts.gs's `readAlertConfig_`, `appendAlertLog_`, and -- since E10 (commit b3a5a51) -- `computeThresholdDrift_` (reads the Alert Log to surface per-dept fire-rate + mean answer rate on the modal config table) all depend on these schemas. | Subsystem: Department Dashboard
 INV-35 | Compare Ranges flags `meta.lengthMismatch=true` when the longer of the two periods is at least 1.2x the shorter (`Math.max(p1Days,p2Days) / Math.min(...) >= 1.2`). The flag drives the form's warning hint, the results-page banner, KPI per-day captions, and CSV per-day columns. Tunable threshold in `computeCompareRanges_`. | Subsystem: Department Dashboard
 INV-36 | Cache keys that embed agent selections must hash via `Data.gs::hashAgents_` (MD5 hex, 32 chars, order-insensitive). Apps Script CacheService silently rejects keys > 250 chars; raw-joined agent lists overflow on big rosters like Sales and surface as report-generation errors. IR / PR / CR all use the hash; future report code that caches per agent-selection must follow suit. | Subsystem: Department Dashboard
 INV-37 | The dashboard is a two-page web app toggled via `body[data-page="overview"|"dept"]`. Default landing is `overview` (set inline on the body tag so the right page paints before JS runs). `setPage(name)` swaps the page, updates the header kicker+h1, and (for `overview`) triggers a fresh `getCompanyOverview()` fetch. `refresh()` only writes the dept name into `#page-title` when the dept page is active, so swapping dept on Overview doesn't clobber "Departments Snapshot". | Subsystem: Department Dashboard

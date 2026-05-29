@@ -1045,14 +1045,25 @@
             <strong>Alert Config</strong> sheet in the dashboard spreadsheet.
             Dept managers from <strong>Access Control</strong> are added
             automatically. Admins are always cc'd.
+            <strong>Skip Dates</strong> (col F) accepts comma-separated
+            <code>YYYY-MM-DD</code> dates and inclusive ranges via
+            <code>..</code> (e.g. <code>2026-12-25, 2026-12-31..2026-01-01</code>)
+            -- honored by the daily trigger only; manual sends always fire.
+            The <strong>Last 30 days</strong> column summarizes recent
+            trigger outcomes per dept: a warn chip means the threshold
+            is firing chronically (alert fatigue likely);
+            a muted chip means the threshold sits well below actual
+            performance and may be too lenient to catch real degradations.
             <a href="#" id="al-open-sheet" target="_blank">Open Alert Config sheet &rarr;</a>
           </p>
           <table class="al-config-table">
             <thead><tr>
               <th>Department</th>
               <th class="num">Threshold</th>
+              <th>Last 30 days</th>
               <th>Extra Recipients</th>
               <th>Active</th>
+              <th>Skip Dates</th>
               <th>Notes</th>
             </tr></thead>
             <tbody id="al-config-tbody"></tbody>

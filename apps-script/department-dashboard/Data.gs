@@ -194,7 +194,14 @@ function getDepartmentSummary(req) {
   // v7: default scope 'both'; per-row `sourceHome` added for
   // queue-only floaters; totals filtered to matchedViaRoster=true so
   // floaters don't dilute dept averages (Phase D).
-  const cacheKey = 'summary:v7:' + dept + ':' + scope + ':' + from + ':' + to;
+  // v8: per-row prior-period deltas added (Phase E, E5). Each row
+  // carries `priorRung` / `priorMissed` / `priorAnswered` /
+  // `priorHasData` for the same-duration window immediately
+  // preceding the selected range (INV-28 parallel). Drives the
+  // per-row delta chip on the agent table; `meta.priorFrom` /
+  // `meta.priorTo` carry the computed window so the client can
+  // show it in chip hover tooltips.
+  const cacheKey = 'summary:v8:' + dept + ':' + scope + ':' + from + ':' + to;
   const cached = cache.get(cacheKey);
   if (cached) {
     try {
@@ -243,6 +250,15 @@ function computeSummary_(dept, from, to, scope) {
   const rosterSet = {};
   for (let i = 0; i < roster.names.length; i++) rosterSet[roster.names[i]] = true;
 
+  // Prior window for per-row delta chips (Phase E, E5). Same
+  // duration as the selected range, ending one day before `from`
+  // -- mirrors Performance Report's prior-period semantics
+  // (INV-28). Computed in JS Date space + formatted back to ISO so
+  // DST boundaries don't shift the window by an hour.
+  const priorWindow_ = computePriorWindow_(from, to);
+  const priorFrom = priorWindow_.from;
+  const priorTo   = priorWindow_.to;
+
   const ss = openSpreadsheet_();
   const sheet = ss.getSheetByName(SHEETS.HISTORICAL);
   if (!sheet) {
@@ -287,10 +303,25 @@ function computeSummary_(dept, from, to, scope) {
   // overlap (not on the dept roster). Empty when scope === 'roster'.
   const queueOnlyAgents = {};
 
+  // Prior-window per-agent totals (E5). Only the 3 metrics we chip
+  // on the table: rung / missed / answered. Sibling dictionary so
+  // the existing acc[] loop stays untouched. Attached to each row
+  // at finalize-time if the agent also has user-window data; agents
+  // with prior-only activity are silently dropped (no card to attach
+  // to). `priorRowsSeen` tracks whether the prior window had ANY
+  // included rows for this agent so the client can distinguish
+  // "no data" from "real zero".
+  const priorAcc = {};
+
   for (let i = 0; i < values.length; i++) {
     const r = values[i];
     const dateIso = rowDateIso_(r[HISTORICAL_COLS.DATE - 1], ssTZ);
-    if (!dateIso || dateIso < from || dateIso > to) continue;
+    if (!dateIso) continue;
+    // Accept rows in either the user-selected window OR the prior
+    // window (for E5 delta chips). Fast-path the rest.
+    const inUser  = (dateIso >= from && dateIso <= to);
+    const inPrior = (dateIso >= priorFrom && dateIso <= priorTo);
+    if (!inUser && !inPrior) continue;
 
     const agent = String(r[HISTORICAL_COLS.AGENT - 1] || '').trim();
     if (!agent) continue;
@@ -314,6 +345,22 @@ function computeSummary_(dept, from, to, scope) {
     else if (scope === 'queue')  include = inQueue;
     else /* both */              include = inRoster || inQueue;
     if (!include) continue;
+
+    // Prior-window rows: accumulate the 3 chipped metrics to
+    // priorAcc and skip the user-window code path. An agent with
+    // only prior-window data won't appear in `acc` and gets
+    // silently dropped at finalize time (correct behavior -- they
+    // had no calls in the user-selected range so they shouldn't
+    // render a row).
+    if (inPrior) {
+      let p = priorAcc[agent];
+      if (!p) p = priorAcc[agent] = { rung: 0, missed: 0, answered: 0, rows: 0 };
+      p.rung     += Number(r[HISTORICAL_COLS.TOTAL_RUNG - 1])     || 0;
+      p.missed   += Number(r[HISTORICAL_COLS.TOTAL_MISSED - 1])   || 0;
+      p.answered += Number(r[HISTORICAL_COLS.TOTAL_ANSWERED - 1]) || 0;
+      p.rows++;
+      continue;
+    }
 
     if (!inRoster && inQueue) queueOnlyAgents[agent] = true;
 
@@ -390,6 +437,15 @@ function computeSummary_(dept, from, to, scope) {
     // field; the client only reads it for the QUEUE chip variant.
     const sourceHomes = queueOnly && deptsByAgent
       ? (deptsByAgent[a.agent] || []) : [];
+    // Prior-period chip data (E5). priorHasData=true if the prior
+    // window had ANY included rows for this agent (even if all
+    // metrics were zero -- still a real "real zero" data point).
+    // false means the prior window had NO included rows, which the
+    // client renders as a dash instead of a delta. INV-28-parallel
+    // window: same length as the selected range, ending one day
+    // before `from`. priorFrom / priorTo are surfaced on meta below.
+    const priorBucket = priorAcc[a.agent];
+    const priorHasData = !!(priorBucket && priorBucket.rows > 0);
     rows.push({
       agent: a.agent,
       matchedViaRoster: a.matchedViaRoster,
@@ -399,6 +455,10 @@ function computeSummary_(dept, from, to, scope) {
       totalRung: a.totalRung,
       totalMissed: a.totalMissed,
       totalAnswered: a.totalAnswered,
+      priorRung:     priorHasData ? priorBucket.rung     : 0,
+      priorMissed:   priorHasData ? priorBucket.missed   : 0,
+      priorAnswered: priorHasData ? priorBucket.answered : 0,
+      priorHasData:  priorHasData,
       tttSeconds: a.tttSeconds,
       // ATT: simple mean of the source sheet's stored per-row ATT
       // values. For single-day ranges this matches the source row
@@ -482,6 +542,10 @@ function computeSummary_(dept, from, to, scope) {
       agentsWithData: rows.length,
       deptQueueExts: Object.keys(deptQueueExts).sort(),
       deptQueueExtsSource: deptQueueResult.source,
+      // E5: prior window the per-row delta chips compare against.
+      // Drives chip tooltip ("Prior period: X – Y") on the client.
+      priorFrom: priorFrom,
+      priorTo:   priorTo,
       generatedAt: new Date().toISOString(),
     },
     rows: rows,
@@ -506,6 +570,10 @@ function emptySummary_(dept, from, to, scope, rosterSize, rowsScanned, deptQueue
       agentsWithData: 0,
       deptQueueExts: deptQueueExts || [],
       deptQueueExtsSource: 'derived',
+      // E5 prior-window meta on the empty shape too -- keeps the
+      // client tooltip rendering consistent on no-data days.
+      priorFrom: (from && to) ? computePriorWindow_(from, to).from : null,
+      priorTo:   (from && to) ? computePriorWindow_(from, to).to   : null,
       generatedAt: new Date().toISOString(),
     },
     rows: [],
@@ -885,6 +953,32 @@ function avg_(arr, key) {
     s += v; n++;
   }
   return n ? Math.round(s / n) : 0;
+}
+
+/**
+ * Prior window for E5 per-row delta chips. Same duration as
+ * [from, to], ending one day before `from`. Matches Performance
+ * Report's prior-period semantics (INV-28). Parsed at noon UTC
+ * to dodge DST edges, then re-formatted as `YYYY-MM-DD` for the
+ * caller's date-string comparisons.
+ */
+function computePriorWindow_(from, to) {
+  const fParts = from.split('-');
+  const tParts = to.split('-');
+  const fMs = Date.UTC(Number(fParts[0]), Number(fParts[1]) - 1, Number(fParts[2]), 12);
+  const tMs = Date.UTC(Number(tParts[0]), Number(tParts[1]) - 1, Number(tParts[2]), 12);
+  const dayMs = 24 * 3600 * 1000;
+  const durationDays = Math.round((tMs - fMs) / dayMs) + 1;  // inclusive
+  const priorToMs   = fMs - dayMs;
+  const priorFromMs = priorToMs - (durationDays - 1) * dayMs;
+  const fmt = function (ms) {
+    const d = new Date(ms);
+    const yyyy = d.getUTCFullYear();
+    const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+    const dd = String(d.getUTCDate()).padStart(2, '0');
+    return yyyy + '-' + mm + '-' + dd;
+  };
+  return { from: fmt(priorFromMs), to: fmt(priorToMs) };
 }
 
 /**

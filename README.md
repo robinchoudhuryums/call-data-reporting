@@ -178,7 +178,18 @@ clasp push -f
 - Populate the `Alert Config` sheet with one row per dept that should
   receive low-answer-rate alerts:
   Department | Threshold % | Extra Recipients (comma-separated) |
-  Active (TRUE/FALSE) | Notes.
+  Active (TRUE/FALSE) | Notes | Skip Dates.
+- **Skip Dates (col F, optional)** accepts comma-separated
+  `YYYY-MM-DD` dates and inclusive ranges via `..` (e.g.
+  `2026-12-25, 2026-12-31..2026-01-01`). Honored by the daily
+  trigger only -- manual sends from the dashboard's Alerts modal
+  always fire, so an admin can still force-send after a holiday
+  review. Malformed tokens are silently dropped (parser is
+  intentionally tolerant). Pre-E8 sheets keep their 5-col header
+  row; data still flows because the reader indexes col F by
+  position. To add the header label `Skip Dates` to F1 on an
+  existing sheet, paste it in manually -- `setup()` won't add
+  columns to existing sheets (per CLAUDE.md INV-22).
 - Project Settings -> Script Properties -> add `DASHBOARD_URL`
   pointing at the deployed web app's URL. **Strongly recommended
   since Phase C** — two consumers depend on it: (a) the "Open
@@ -191,6 +202,13 @@ clasp push -f
   Alerts → Install daily trigger (8 AM). The trigger calls
   `runDailyAlerts_` for the previous day, skipping Saturdays and
   Sundays automatically.
+- Once the trigger has been running for ~10 weekdays, the Alerts
+  modal's config table gains a **Last 30 days** chip per dept
+  summarizing recent trigger outcomes (E10). Warn-tinted chip =
+  threshold firing chronically (alert fatigue likely); muted =
+  threshold sits well below actual performance and may be too
+  loose; sage = healthy mix. Hover for the specific fired-count +
+  mean answer rate. Tunable in `Alerts.gs` (`DRIFT_*` constants).
 
 ## Deep links
 

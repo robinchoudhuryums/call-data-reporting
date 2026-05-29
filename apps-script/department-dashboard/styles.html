@@ -808,6 +808,30 @@
     background: var(--warn-soft);
     color: var(--warn);
   }
+  /* E5 prior-period delta chip. Lives inline after the metric value
+     in totalRung / totalMissed / totalAnswered cells on the agent
+     table. Compact mono font + minimal padding so the cell stays
+     tight; valence variants reuse the design-token good/warn
+     palette already established in Phase A. The muted variant
+     applies to (a) zero deltas and (b) small deltas (< 3 calls)
+     so day-to-day noise doesn't paint the table orange/sage. */
+  .wow-chip {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 1px 5px;
+    border-radius: var(--r);
+    font-family: var(--mono);
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0;
+    line-height: 1.4;
+    vertical-align: 1px;
+    white-space: nowrap;
+  }
+  .wow-chip-good  { background: var(--good-soft); color: var(--good); }
+  .wow-chip-warn  { background: var(--warn-soft); color: var(--warn); }
+  .wow-chip-muted { background: var(--paper-2);   color: var(--muted); }
+
   /* Source column cell: tighter padding + left-align so the chip
      hugs the agent name's column without being pushed to a
      numeric-style right-align. */
@@ -2731,6 +2755,27 @@
   }
   .al-active-yes { background: var(--accent-soft); color: var(--accent); }
   .al-active-no  { background: var(--paper-2);     color: var(--muted); }
+
+  /* E10 threshold-drift chip. Per-dept summary of the last ~30
+     daily-trigger Alert Log entries (fire count + mean answer
+     rate). Severity-driven palette: chronic = warn (alert
+     fatigue likely), lenient = muted (informational), ok =
+     neutral, cold = muted (not enough data). Tooltip carries
+     the full explanation. */
+  .al-drift-chip {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: var(--r);
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0;
+    white-space: nowrap;
+  }
+  .al-drift-ok       { background: var(--good-soft); color: var(--good); }
+  .al-drift-chronic  { background: var(--warn-soft); color: var(--warn); }
+  .al-drift-lenient  { background: var(--paper-2);   color: var(--muted); }
+  .al-drift-cold     { background: transparent;      color: var(--muted); }
 
   /* Run section: date + Preview + Send sit on one row; results
      summary + table render below when populated. */

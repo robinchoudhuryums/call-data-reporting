@@ -2586,7 +2586,74 @@
     const v = row[col.key];
     if (col.type === 'text') return escapeHtml(v == null ? '' : v);
     if (col.type === 'duration') return fmtDuration(v);
-    return fmtNumber(v);
+    // E5: append a small prior-period delta chip after the number on
+    // the three chipped columns. No chip on totals row (no prior
+    // window for a sum row).
+    return fmtNumber(v) + wowChipHtml_(row, col);
+  }
+
+  // E5 prior-period delta chip. Maps each chipped column to its
+  // prior-window field on `row` (priorRung / priorMissed /
+  // priorAnswered), computes the delta, and returns a small inline
+  // chip with the direction arrow + magnitude. Returns '' when:
+  //   - the column isn't one we chip (only totalRung/Missed/Answered)
+  //   - the row is the tfoot totals row (no priorHasData field)
+  //   - the prior window had no included rows for this agent
+  //     (priorHasData=false; client renders the plain number alone)
+  //
+  // Valence:
+  //   totalRung     -> up = good (more inbound engagement)
+  //   totalAnswered -> up = good (more handled)
+  //   totalMissed   -> up = warn (worse)
+  // Small deltas (|delta| < WOW_NOISE_THRESHOLD) get the muted
+  // styling regardless of direction so the table isn't a sea of
+  // colors on routine day-to-day fluctuation.
+  const WOW_NOISE_THRESHOLD = 3;
+  const WOW_PRIOR_KEYS = {
+    totalRung:     { priorKey: 'priorRung',     valence: 'good' },
+    totalAnswered: { priorKey: 'priorAnswered', valence: 'good' },
+    totalMissed:   { priorKey: 'priorMissed',   valence: 'warn' },
+  };
+  function wowChipHtml_(row, col) {
+    const spec = WOW_PRIOR_KEYS[col.key];
+    if (!spec) return '';
+    if (!row || row.priorHasData !== true) return '';
+    const current = Number(row[col.key]) || 0;
+    const prior   = Number(row[spec.priorKey]) || 0;
+    const delta   = current - prior;
+    const abs     = Math.abs(delta);
+    let cls;
+    let arrow;
+    if (delta === 0) {
+      cls = 'wow-chip-muted';
+      arrow = '→';   // → flat
+    } else if (abs < WOW_NOISE_THRESHOLD) {
+      cls = 'wow-chip-muted';
+      arrow = delta > 0 ? '▲' : '▼';  // ▲ ▼ muted
+    } else {
+      // Above threshold: color by valence direction. For "good"
+      // metrics (rung/answered), up = good; for "warn" (missed),
+      // up = bad. Down inverts.
+      const isUp = delta > 0;
+      if (spec.valence === 'good') {
+        cls = isUp ? 'wow-chip-good' : 'wow-chip-warn';
+      } else {
+        cls = isUp ? 'wow-chip-warn' : 'wow-chip-good';
+      }
+      arrow = isUp ? '▲' : '▼';
+    }
+    const sign = delta > 0 ? '+' : (delta < 0 ? '−' : '');  // − minus
+    const label = delta === 0 ? '0' : (sign + abs);
+    // Tooltip carries the raw prior value + the explicit window so
+    // a manager can sanity-check the delta without doing math. Uses
+    // STATE.meta.priorFrom/priorTo (populated by the server).
+    const pf = (state.meta && state.meta.priorFrom) || '';
+    const pt = (state.meta && state.meta.priorTo)   || '';
+    const tip = 'Prior period ' + pf + ' – ' + pt
+              + ': ' + prior + '. Delta ' + (delta >= 0 ? '+' : '') + delta + '.';
+    return ' <span class="wow-chip ' + cls + '" title="' + escapeHtml(tip) + '">'
+         +   arrow + label
+         + '</span>';
   }
 
   // Source chip for the Phase D Source column. Three variants:
@@ -7370,7 +7437,7 @@
     if ($('al-open-sheet') && data.spreadsheetUrl) {
       $('al-open-sheet').href = data.spreadsheetUrl;
     }
-    alRenderConfigTable_(data.config || []);
+    alRenderConfigTable_(data.config || [], data.drift || {});
     alRenderTriggerStatus_(data.trigger || { installed: false });
     alRenderLog_(data.log || []);
     alRenderPipelineHealth_(data.pipelineHealth || []);
@@ -7409,27 +7476,86 @@
     }).join('');
   }
 
-  function alRenderConfigTable_(config) {
+  function alRenderConfigTable_(config, drift) {
     const tbody = $('al-config-tbody');
     if (!tbody) return;
     if (!config.length) {
-      tbody.innerHTML = '<tr><td colspan="5" class="al-empty">'
+      tbody.innerHTML = '<tr><td colspan="7" class="al-empty">'
         + 'No rows in the Alert Config sheet yet. Add one row per dept that '
         + 'should receive alerts.'
         + '</td></tr>';
       return;
     }
+    const driftMap = drift || {};
     tbody.innerHTML = config.map(function (c) {
       const activeCls = c.active ? 'al-active-yes' : 'al-active-no';
       const activeLbl = c.active ? 'Yes' : 'No';
+      // E8 Skip Dates: prefer the parsed array (server-normalized,
+      // bad tokens dropped) for the display so a malformed cell
+      // doesn't show garbage. Fallback to the raw string when the
+      // parsed array is empty so admins can see what they typed
+      // before fixing it. Empty cell shows an em-dash.
+      const skipDates = Array.isArray(c.skipDates) ? c.skipDates : [];
+      let skipCell = '';
+      if (skipDates.length) {
+        skipCell = skipDates.map(function (r) {
+          return r.from === r.to ? r.from : (r.from + ' – ' + r.to);
+        }).join(', ');
+      } else if (c.skipDatesRaw) {
+        skipCell = '⚠︎ ' + c.skipDatesRaw;
+      } else {
+        skipCell = '—';
+      }
       return '<tr>'
            +   '<td>' + escapeHtml(c.department) + '</td>'
            +   '<td class="num">' + Number(c.threshold).toFixed(0) + '%</td>'
+           +   '<td>' + alDriftCellHtml_(c, driftMap[c.department]) + '</td>'
            +   '<td>' + escapeHtml((c.extraRecipients || []).join(', ') || '(none)') + '</td>'
            +   '<td><span class="al-active ' + activeCls + '">' + activeLbl + '</span></td>'
+           +   '<td class="al-skip-dates">' + escapeHtml(skipCell) + '</td>'
            +   '<td>' + escapeHtml(c.notes || '') + '</td>'
            + '</tr>';
     }).join('');
+  }
+
+  // E10 threshold-drift chip. Renders per-dept summary of the most
+  // recent ~30 daily-trigger entries from the Alert Log: fire-rate
+  // and mean answer rate. Severity comes from the server
+  // (chronic / lenient / ok / cold); we just map it to the chip
+  // palette + tooltip. Falls back to a dash when no drift data is
+  // available (e.g. Alert Log unreadable, dept not yet on the
+  // sheet, or scaffold tests).
+  function alDriftCellHtml_(cfg, drift) {
+    if (!drift || !drift.total) {
+      return '<span class="al-drift-chip al-drift-cold" '
+           + 'title="No daily-trigger entries logged for this dept yet">—</span>';
+    }
+    if (drift.severity === 'cold') {
+      return '<span class="al-drift-chip al-drift-cold" '
+           + 'title="Only ' + drift.total + ' daily-trigger entries -- not enough to assess">'
+           + drift.fired + '/' + drift.total + '</span>';
+    }
+    let cls = 'al-drift-ok';
+    let tip = '';
+    if (drift.severity === 'chronic') {
+      cls = 'al-drift-chronic';
+      tip = 'Chronic: alerts firing nearly every day. Threshold of '
+          + Number(cfg.threshold).toFixed(0) + '% may be too strict, '
+          + 'or the dept is sustainedly under-performing.';
+    } else if (drift.severity === 'lenient') {
+      cls = 'al-drift-lenient';
+      tip = 'Lenient: 0 fires and the dept averages '
+          + (drift.meanRate != null ? drift.meanRate.toFixed(1) + '%' : 'high')
+          + ' -- threshold of ' + Number(cfg.threshold).toFixed(0)
+          + '% may be too low to catch a real degradation.';
+    } else {
+      tip = 'In range: ' + drift.fired + ' fires of ' + drift.total
+          + ' trigger runs.';
+    }
+    const mean = drift.meanRate != null ? (' · avg ' + drift.meanRate.toFixed(1) + '%') : '';
+    return '<span class="al-drift-chip ' + cls + '" title="' + escapeHtml(tip) + '">'
+         + drift.fired + '/' + drift.total + mean
+         + '</span>';
   }
 
   function alRenderTriggerStatus_(trigger) {

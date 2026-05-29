@@ -58,7 +58,7 @@ const SHEETS = Object.freeze({
 });
 
 const ACCESS_CONTROL_HEADERS = Object.freeze(['Email', 'Department', 'Notes']);
-const ALERT_CONFIG_HEADERS   = Object.freeze(['Department', 'Threshold %', 'Extra Recipients', 'Active', 'Notes']);
+const ALERT_CONFIG_HEADERS   = Object.freeze(['Department', 'Threshold %', 'Extra Recipients', 'Active', 'Notes', 'Skip Dates']);
 const ALERT_LOG_HEADERS      = Object.freeze([
   'Timestamp', 'Department', 'Date Checked', 'Threshold %', 'Answer Rate %',
   'Sent', 'Recipients', 'Triggered By', 'Notes', 'Status',
