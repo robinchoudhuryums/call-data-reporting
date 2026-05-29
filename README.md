@@ -202,6 +202,13 @@ clasp push -f
   Alerts → Install daily trigger (8 AM). The trigger calls
   `runDailyAlerts_` for the previous day, skipping Saturdays and
   Sundays automatically.
+- Once the trigger has been running for ~10 weekdays, the Alerts
+  modal's config table gains a **Last 30 days** chip per dept
+  summarizing recent trigger outcomes (E10). Warn-tinted chip =
+  threshold firing chronically (alert fatigue likely); muted =
+  threshold sits well below actual performance and may be too
+  loose; sage = healthy mix. Hover for the specific fired-count +
+  mean answer rate. Tunable in `Alerts.gs` (`DRIFT_*` constants).
 
 ## Deep links
 
