@@ -2756,6 +2756,27 @@
   .al-active-yes { background: var(--accent-soft); color: var(--accent); }
   .al-active-no  { background: var(--paper-2);     color: var(--muted); }
 
+  /* E10 threshold-drift chip. Per-dept summary of the last ~30
+     daily-trigger Alert Log entries (fire count + mean answer
+     rate). Severity-driven palette: chronic = warn (alert
+     fatigue likely), lenient = muted (informational), ok =
+     neutral, cold = muted (not enough data). Tooltip carries
+     the full explanation. */
+  .al-drift-chip {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: var(--r);
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0;
+    white-space: nowrap;
+  }
+  .al-drift-ok       { background: var(--good-soft); color: var(--good); }
+  .al-drift-chronic  { background: var(--warn-soft); color: var(--warn); }
+  .al-drift-lenient  { background: var(--paper-2);   color: var(--muted); }
+  .al-drift-cold     { background: transparent;      color: var(--muted); }
+
   /* Run section: date + Preview + Send sit on one row; results
      summary + table render below when populated. */
   .al-run-row {

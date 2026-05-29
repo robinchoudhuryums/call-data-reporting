@@ -7437,7 +7437,7 @@
     if ($('al-open-sheet') && data.spreadsheetUrl) {
       $('al-open-sheet').href = data.spreadsheetUrl;
     }
-    alRenderConfigTable_(data.config || []);
+    alRenderConfigTable_(data.config || [], data.drift || {});
     alRenderTriggerStatus_(data.trigger || { installed: false });
     alRenderLog_(data.log || []);
     alRenderPipelineHealth_(data.pipelineHealth || []);
@@ -7476,16 +7476,17 @@
     }).join('');
   }
 
-  function alRenderConfigTable_(config) {
+  function alRenderConfigTable_(config, drift) {
     const tbody = $('al-config-tbody');
     if (!tbody) return;
     if (!config.length) {
-      tbody.innerHTML = '<tr><td colspan="6" class="al-empty">'
+      tbody.innerHTML = '<tr><td colspan="7" class="al-empty">'
         + 'No rows in the Alert Config sheet yet. Add one row per dept that '
         + 'should receive alerts.'
         + '</td></tr>';
       return;
     }
+    const driftMap = drift || {};
     tbody.innerHTML = config.map(function (c) {
       const activeCls = c.active ? 'al-active-yes' : 'al-active-no';
       const activeLbl = c.active ? 'Yes' : 'No';
@@ -7508,12 +7509,53 @@
       return '<tr>'
            +   '<td>' + escapeHtml(c.department) + '</td>'
            +   '<td class="num">' + Number(c.threshold).toFixed(0) + '%</td>'
+           +   '<td>' + alDriftCellHtml_(c, driftMap[c.department]) + '</td>'
            +   '<td>' + escapeHtml((c.extraRecipients || []).join(', ') || '(none)') + '</td>'
            +   '<td><span class="al-active ' + activeCls + '">' + activeLbl + '</span></td>'
            +   '<td class="al-skip-dates">' + escapeHtml(skipCell) + '</td>'
            +   '<td>' + escapeHtml(c.notes || '') + '</td>'
            + '</tr>';
     }).join('');
+  }
+
+  // E10 threshold-drift chip. Renders per-dept summary of the most
+  // recent ~30 daily-trigger entries from the Alert Log: fire-rate
+  // and mean answer rate. Severity comes from the server
+  // (chronic / lenient / ok / cold); we just map it to the chip
+  // palette + tooltip. Falls back to a dash when no drift data is
+  // available (e.g. Alert Log unreadable, dept not yet on the
+  // sheet, or scaffold tests).
+  function alDriftCellHtml_(cfg, drift) {
+    if (!drift || !drift.total) {
+      return '<span class="al-drift-chip al-drift-cold" '
+           + 'title="No daily-trigger entries logged for this dept yet">—</span>';
+    }
+    if (drift.severity === 'cold') {
+      return '<span class="al-drift-chip al-drift-cold" '
+           + 'title="Only ' + drift.total + ' daily-trigger entries -- not enough to assess">'
+           + drift.fired + '/' + drift.total + '</span>';
+    }
+    let cls = 'al-drift-ok';
+    let tip = '';
+    if (drift.severity === 'chronic') {
+      cls = 'al-drift-chronic';
+      tip = 'Chronic: alerts firing nearly every day. Threshold of '
+          + Number(cfg.threshold).toFixed(0) + '% may be too strict, '
+          + 'or the dept is sustainedly under-performing.';
+    } else if (drift.severity === 'lenient') {
+      cls = 'al-drift-lenient';
+      tip = 'Lenient: 0 fires and the dept averages '
+          + (drift.meanRate != null ? drift.meanRate.toFixed(1) + '%' : 'high')
+          + ' -- threshold of ' + Number(cfg.threshold).toFixed(0)
+          + '% may be too low to catch a real degradation.';
+    } else {
+      tip = 'In range: ' + drift.fired + ' fires of ' + drift.total
+          + ' trigger runs.';
+    }
+    const mean = drift.meanRate != null ? (' · avg ' + drift.meanRate.toFixed(1) + '%') : '';
+    return '<span class="al-drift-chip ' + cls + '" title="' + escapeHtml(tip) + '">'
+         + drift.fired + '/' + drift.total + mean
+         + '</span>';
   }
 
   function alRenderTriggerStatus_(trigger) {

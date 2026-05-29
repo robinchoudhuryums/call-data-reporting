@@ -43,11 +43,39 @@
 
 const ALERT_LOW_AGENT_THRESHOLD = 50;   // pct under which an agent gets called out in the body
 const ALERT_DEFAULT_HOUR        = 8;    // 8 AM trigger hour
+// E10 threshold-drift surface. Reads the most-recent
+// daily-trigger entries per dept from the Alert Log to flag
+// thresholds that have drifted away from the dept's actual
+// performance. CHRONIC = the threshold is too strict (alerts fire
+// nearly every day -> noise / fatigue); LENIENT = the threshold is
+// too loose (alerts never fire and the dept averages far above
+// it -> useless config). Per-dept window: last
+// DRIFT_LOOKBACK_ENTRIES daily-trigger entries (skips weekends +
+// holidays naturally since those don't get trigger rows). Render
+// is admin-only (rides on the existing Alerts modal gating).
+const DRIFT_LOOKBACK_ENTRIES   = 30;
+const DRIFT_MIN_TOTAL_TO_ASSESS = 10;   // <10 entries = "—"; not enough signal
+const DRIFT_CHRONIC_FIRE_RATIO = 0.80;  // fired/total >= 80% -> chronic
+const DRIFT_LENIENT_HEADROOM_PTS = 10;  // mean rate > threshold + 10pts AND fired=0 -> lenient
+const DRIFT_LOG_SCAN_CAP       = 2000;  // max Alert Log rows we'll read to bucket the lookback
 
 function getAlertsInit() {
   assertAdmin_();
+  // Pull config first so the drift helper can be keyed by the same
+  // dept list + thresholds. Drift is best-effort -- a failure (e.g.
+  // Alert Log sheet missing) returns an empty map and the modal
+  // table simply renders no drift column data; the rest of the
+  // payload is unaffected.
+  const config = readAlertConfig_();
+  let drift = {};
+  try {
+    drift = computeThresholdDrift_(config, DRIFT_LOOKBACK_ENTRIES);
+  } catch (e) {
+    Logger.log('computeThresholdDrift_ failed: %s', e);
+  }
   return {
-    config: readAlertConfig_(),
+    config: config,
+    drift: drift,
     log: readAlertLog_(20),
     trigger: getAlertTriggerStatus_(),
     pipelineHealth: readPipelineHealth_(20),
@@ -501,6 +529,94 @@ function appendAlertLog_(rec, triggeredBy, dateChecked) {
     rec.notes || '',
     rec.status,
   ]);
+}
+
+/**
+ * E10 threshold-drift summary. For each dept in `config`, reads the
+ * most-recent DRIFT_LOOKBACK_ENTRIES daily-trigger Alert Log entries
+ * and computes the fired-count + mean answer rate. Preview rows
+ * (Triggered By starts with `preview:`) and non-trigger callers
+ * (manual sends from the UI) are excluded so the signal reflects
+ * the real automated cadence only.
+ *
+ * Severity classifier:
+ *   chronic - fired/total >= DRIFT_CHRONIC_FIRE_RATIO. The threshold
+ *             is firing nearly every day; either the dept is
+ *             sustainedly under-performing and the alert is just
+ *             noise, or the threshold is set too high. Either way
+ *             the admin should look.
+ *   lenient - fired === 0 AND meanRate (from above-threshold rows) >
+ *             threshold + DRIFT_LENIENT_HEADROOM_PTS. The threshold
+ *             is so far below actual performance that it will never
+ *             catch a real degradation. Informational, not urgent.
+ *   ok      - everything else; renders neutral.
+ *   cold    - total < DRIFT_MIN_TOTAL_TO_ASSESS. Not enough data to
+ *             draw any conclusion; renders as a dash.
+ *
+ * Returns: { deptName: { fired, total, meanRate (or null), severity } }
+ * Best-effort: a failure in the Alert Log read leaves the map empty
+ * and the caller renders no drift column. Bounded by
+ * DRIFT_LOG_SCAN_CAP so a runaway log doesn't blow the script budget.
+ */
+function computeThresholdDrift_(config, lookbackEntries) {
+  const ss = openSpreadsheet_();
+  const sheet = ss.getSheetByName(SHEETS.ALERT_LOG);
+  if (!sheet) return {};
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return {};
+  const startRow = Math.max(2, lastRow - DRIFT_LOG_SCAN_CAP + 1);
+  const rows = sheet.getRange(startRow, 1, lastRow - startRow + 1, 10).getValues();
+
+  // Bucket by dept, taking the last lookbackEntries daily-trigger
+  // rows per dept. Iterate newest-first (bottom up) so the per-dept
+  // cap stops at the most-recent N.
+  const buckets = {};
+  const thresholdsByDept = {};
+  for (let i = 0; i < config.length; i++) {
+    buckets[config[i].department] = { fired: 0, total: 0, rateSum: 0, rateCount: 0 };
+    thresholdsByDept[config[i].department] = config[i].threshold;
+  }
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const r = rows[i];
+    const dept = String(r[1] || '');
+    const b = buckets[dept];
+    if (!b) continue;            // dept not in current config; skip
+    if (b.total >= lookbackEntries) continue;
+    const triggeredBy = String(r[7] || '');
+    if (triggeredBy.indexOf('preview:') === 0) continue;
+    if (triggeredBy !== 'daily-trigger') continue;
+    const status = String(r[9] || '');
+    b.total++;
+    if (status === 'sent') b.fired++;
+    const rate = r[4];
+    if (rate !== '' && rate != null && isFinite(Number(rate))) {
+      b.rateSum += Number(rate);
+      b.rateCount++;
+    }
+  }
+
+  // Classify + shape the return.
+  const out = {};
+  Object.keys(buckets).forEach(function (dept) {
+    const b = buckets[dept];
+    const meanRate = b.rateCount ? round1_(b.rateSum / b.rateCount) : null;
+    let severity = 'ok';
+    if (b.total < DRIFT_MIN_TOTAL_TO_ASSESS) {
+      severity = 'cold';
+    } else if (b.fired / b.total >= DRIFT_CHRONIC_FIRE_RATIO) {
+      severity = 'chronic';
+    } else if (b.fired === 0 && meanRate != null
+            && meanRate >= (thresholdsByDept[dept] + DRIFT_LENIENT_HEADROOM_PTS)) {
+      severity = 'lenient';
+    }
+    out[dept] = {
+      fired: b.fired,
+      total: b.total,
+      meanRate: meanRate,
+      severity: severity,
+    };
+  });
+  return out;
 }
 
 function readAlertLog_(maxRows) {
