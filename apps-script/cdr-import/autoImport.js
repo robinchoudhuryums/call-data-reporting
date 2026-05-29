@@ -813,25 +813,36 @@ function processBatchArchive(silent = false) {
     }
   });
 
+  // Idempotent append: drop any batch rows whose date is already present
+  // in the target history sheet. Normally a no-op -- queueToPendingArchive
+  // gates on the per-sheet existence flags, so already-archived dates are
+  // never queued. It only fires as a recovery: if a prior run wrote some
+  // sheets and then threw (leaving Pending Archive un-cleared), a re-run
+  // skips the sheets that already have the date and appends only the ones
+  // that didn't, instead of blindly duplicating. Each sheet's setValues is
+  // atomic, so a date is all-or-nothing per sheet -- date-level dedup is
+  // sufficient.
+  const cdrRows   = dedupeAlreadyArchived_(targetSS, cdrBatch,      "CDR Historical Data");
+  const qPathRows = dedupeAlreadyArchived_(targetSS, qPathBatch,    "Q Path Historical Data");
+  const qcdRows   = dedupeAlreadyArchived_(targetSS, qcdBatch,      "QCD Historical Data");
+  const csrRows   = dedupeAlreadyArchived_(targetSS, csrTransBatch, "CSR Transfer Historical Data");
+
   // The four historical sheets live on separate tabs -- Apps Script has
   // no cross-sheet transaction, so we can't make all four appends atomic.
   // What we CAN do is fail loudly if a write throws partway: record the
   // partial-archive state to the audit log and re-throw BEFORE the
-  // Pending Archive clear below runs. That way the operator knows that
-  // (a) some sheets were already appended, and (b) Pending Archive was
-  // left intact, so a blind re-run would DUPLICATE the sheets that did
-  // write. (See FOLLOW-ON: idempotent append keyed on (date,type) would
-  // make a re-run safe.)
+  // Pending Archive clear below runs. Combined with the idempotent
+  // dedup above, a re-run after a partial failure is safe.
   try {
-    if (cdrBatch.length > 0      && obcHD)   obcHD.getRange(obcHD.getLastRow()     + 1, 1, cdrBatch.length,      26).setValues(cdrBatch);
-    if (qPathBatch.length > 0    && salesHD) salesHD.getRange(salesHD.getLastRow() + 1, 1, qPathBatch.length,    11).setValues(qPathBatch);
+    if (cdrRows.length > 0      && obcHD)   obcHD.getRange(obcHD.getLastRow()     + 1, 1, cdrRows.length,      26).setValues(cdrRows);
+    if (qPathRows.length > 0    && salesHD) salesHD.getRange(salesHD.getLastRow() + 1, 1, qPathRows.length,    11).setValues(qPathRows);
 
-    if (qcdBatch.length > 0 && qcdHD) {
-      qcdHD.getRange(qcdHD.getLastRow() + 1, 1, qcdBatch.length, 12).setValues(qcdBatch);
+    if (qcdRows.length > 0 && qcdHD) {
+      qcdHD.getRange(qcdHD.getLastRow() + 1, 1, qcdRows.length, 12).setValues(qcdRows);
 
       // Mirror to Neon (Phase 3)
       try {
-        var neonQcdRows = qcdBatch.map(function(r) {
+        var neonQcdRows = qcdRows.map(function(r) {
           return {
             monthYear:     r[0],
             week:          r[1],
@@ -853,12 +864,12 @@ function processBatchArchive(silent = false) {
       }
     }
 
-    if (csrTransBatch.length > 0 && csrHD)   csrHD.getRange(csrHD.getLastRow()     + 1, 1, csrTransBatch.length, 18).setValues(csrTransBatch);
+    if (csrRows.length > 0 && csrHD)   csrHD.getRange(csrHD.getLastRow()     + 1, 1, csrRows.length, 18).setValues(csrRows);
   } catch (writeErr) {
     try {
       appendToAuditLog(targetSS, "processBatchArchive",
         "PARTIAL FAILURE during sheet append: " + (writeErr && writeErr.message ? writeErr.message : writeErr) +
-        ". Pending Archive was NOT cleared -- a blind re-run may duplicate already-written rows. Verify history sheets before retrying.",
+        ". Pending Archive was NOT cleared -- the idempotent dedup makes a re-run safe; re-run processBatchArchive to finish.",
         "FAILURE");
     } catch (logErr) { /* best-effort audit */ }
     throw writeErr;
@@ -1608,6 +1619,36 @@ function buildHistoryDateSet(targetSS, sheetName, dateColIndex) {
   });
   return result;
 }
+
+/**
+ * Idempotency filter for processBatchArchive. Drops any batch rows
+ * whose date (column index 2 in every *Batch array, written to the
+ * sheet's col 3) is already present in the target history sheet.
+ *
+ * Normally returns the batch unchanged -- queueToPendingArchive gates
+ * on the per-sheet existence flags, so already-archived dates aren't
+ * queued. The filter only removes rows on a recovery re-run, where a
+ * prior partial failure left Pending Archive un-cleared after some
+ * sheets were already written. Each sheet's append is one atomic
+ * setValues, so a date is all-or-nothing per sheet and date-level
+ * dedup is sufficient.
+ */
+function dedupeAlreadyArchived_(targetSS, batch, sheetName) {
+  if (!batch || !batch.length) return batch || [];
+  const seen = buildHistoryDateSet(targetSS, sheetName, 3);
+  if (!seen.size) return batch;
+  const kept = batch.filter(function (r) {
+    const d = r[2];
+    const key = (d instanceof Date) ? d.toDateString() : new Date(d).toDateString();
+    return !seen.has(key);
+  });
+  if (kept.length !== batch.length) {
+    console.log('dedupeAlreadyArchived_ [' + sheetName + ']: skipped '
+      + (batch.length - kept.length) + ' already-archived row(s) on re-run.');
+  }
+  return kept;
+}
+
 
 function deleteHistoricalRowsForDate(sheet, dateObj, dateColIndex) {
   const lastRow = sheet.getLastRow();

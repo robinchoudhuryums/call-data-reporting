@@ -136,11 +136,17 @@ function backfillDQEHistory() {
         }
 
         stmt.execute();
+        // getUpdateCount() reports rows ACTUALLY inserted; ON CONFLICT
+        // DO NOTHING skips aren't counted. Fall back to batch.length only
+        // if the driver returns -1 (no update count available).
+        var dqeAffected = stmt.getUpdateCount();
         stmt.close();
         conn.commit();
 
-        totalInserted += batch.length;
-        Logger.log('Committed batch ending at index ' + i + '. Cumulative inserted: ' + totalInserted);
+        var dqeInserted = (dqeAffected >= 0 ? dqeAffected : batch.length);
+        totalInserted += dqeInserted;
+        Logger.log('Committed batch ending at index ' + i + ' (' + batch.length
+          + ' attempted, ' + dqeInserted + ' newly inserted). Cumulative inserted: ' + totalInserted);
 
       } catch (e) {
         conn.rollback();
@@ -286,11 +292,17 @@ function backfillQCDHistory() {
         }
 
         stmt.execute();
+        // getUpdateCount() reports rows ACTUALLY inserted; ON CONFLICT
+        // DO NOTHING skips aren't counted. Fall back to batch.length only
+        // if the driver returns -1 (no update count available).
+        var qcdAffected = stmt.getUpdateCount();
         stmt.close();
         conn.commit();
 
-        totalInserted += batch.length;
-        Logger.log('Committed batch ending at index ' + i + '. Cumulative inserted: ' + totalInserted);
+        var qcdInserted = (qcdAffected >= 0 ? qcdAffected : batch.length);
+        totalInserted += qcdInserted;
+        Logger.log('Committed batch ending at index ' + i + ' (' + batch.length
+          + ' attempted, ' + qcdInserted + ' newly inserted). Cumulative inserted: ' + totalInserted);
 
       } catch (e) {
         try { conn.rollback(); } catch (re) {}
