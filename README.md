@@ -42,6 +42,9 @@ call-data-reporting/
 │   │   └── (cd in, then `clasp push -f` to deploy that project)
 │   └── cdr-import/                 ← the CDR Import project (CSV ingester)
 │       └── (cd in, then `clasp push -f` to deploy that project)
+├── tests/                          ← zero-dep Node regression harness (`node --test`); see tests/README.md
+├── scripts/                        ← repo tooling (e.g. check-duplicated-files.sh, the INV-16 drift guard)
+├── package.json                    ← `npm test` → `node --test`; not a deployable package
 ├── .clasp.example.json             ← template; copy to .clasp.json on first checkout
 ├── .clasp.json                     ← per-developer, gitignored (scriptId varies per checkout)
 ├── .claspignore
@@ -51,6 +54,26 @@ call-data-reporting/
 Each subdirectory under `apps-script/` has its own gitignored
 `.clasp.json` so per-project deploys are independent. The legacy DQE
 Report spreadsheet is being retired and isn't pulled in.
+
+## Running tests
+
+A zero-dependency regression harness loads the real `.gs`/`.js` files
+into a Node `vm` with mocked Apps Script globals (no `npm install`,
+Node ≥ 18):
+
+```bash
+node --test          # from the repo root — runs every tests/unit/*.test.js
+npm test             # same thing
+```
+
+Non-zero exit on failure. Coverage spans the date/duration parsing,
+cache-key hashing, the Dept Config override accessors, the
+`computeSummary_` aggregator, the Individual / Performance / Compare
+Ranges report builders, and the pipeline's name canonicalization. See
+[`tests/README.md`](tests/README.md) for the design, how to add a test,
+and the current coverage map. (The end-to-end `buildDQEHistoricalData`
+build is not yet unit-covered; the manual Regression Scenarios in
+CLAUDE.md remain the verification of record there.)
 
 ## Deploying the Department Dashboard
 

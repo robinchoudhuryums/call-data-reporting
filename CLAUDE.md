@@ -50,13 +50,17 @@ cd apps-script/dqe-report  && clasp push -f   # frozen — cleanup deploys only
 # as a non-blocking SessionStart hook (.claude/settings.json).
 bash scripts/check-duplicated-files.sh
 
-# Unit tests (Phase 1 regression harness). Zero deps -- Node's
-# built-in test runner loads the real dashboard .gs files into a vm
-# with mocked Apps Script globals. Non-zero exit on failure. Covers
-# pure logic: date/duration parsing (INV-02/INV-03), hashAgents_
-# (INV-36), the INV-54 Dept Config override accessors + validators,
-# Util formatting. See tests/README.md for the design + how to add
-# tests + the aggregator/scenario coverage still to come.
+# Unit tests (regression harness, Phases 1-3). Zero deps -- Node's
+# built-in test runner loads the real .gs/.js files into a vm with
+# mocked Apps Script globals (dashboard + the sibling cdr-report /
+# cdr-import projects). Non-zero exit on failure. Covers: pure logic
+# (date/duration parsing INV-02/03, hashAgents_ INV-36, Util, the
+# INV-54 Dept Config accessors); the aggregator computeSummary_
+# (INV-02/04/05/23/53, S35, E5); the report builders (IR weighted ATT
+# INV-25, PR prior-period INV-28, CR length-mismatch INV-35, INV-53);
+# and pipeline canonicalization (loadRosterCanonicalNames_ INV-24/46,
+# INV-16 cross-project). See tests/README.md for design + how to add
+# tests + the Phase 4 (end-to-end buildDQEHistoricalData) gap.
 node --test          # from repo root (or: npm test)
 
 # Aggregators + report builders are NOT yet unit-covered; verification
@@ -104,9 +108,14 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
 - **Pipeline canonicalizes paren variants via the roster.**
   `buildDQEHistoricalData` reads `DO NOT EDIT!` at the start of every
   build; if an incoming CDR row's agent name's paren-stripped form
-  matches exactly one roster entry, the pipeline rewrites it to the
-  canonical roster form (so "Roman Robin Paulose" becomes
-  "Roman (Robin) Paulose"). Ambiguous (>1 match) and unknown (0
+  matches exactly one roster entry's paren-stripped form, the pipeline
+  rewrites it to the canonical roster form. The comparison strips the
+  PARENTHETICAL (parens + contents), so a name differing only in that
+  parenthetical canonicalizes -- incoming "Roman Paulose" OR
+  "Roman (Bob) Paulose" both strip to "Roman Paulose" and become
+  "Roman (Robin) Paulose" (the roster form). A name with an EXTRA word
+  like "Roman Robin Paulose" does NOT match -- it strips to itself, not
+  "Roman Paulose". Ambiguous (>1 match) and unknown (0
   matches) names are written as-is. Soft coupling: the pipeline now
   depends on the dashboard's roster sheet schema — see
   `loadRosterCanonicalNames_` in the pipeline. Admin-curated
@@ -777,13 +786,17 @@ When something looks wrong, before assuming a code bug, check:
 ### Test Command
 node --test
 
-(Phase 1 regression harness -- zero-dep Node `node:test` suites under
-`tests/unit/`, run from the repo root; see `tests/README.md`. Covers
-pure logic only so far: date/duration parsing, `hashAgents_`, the
-INV-54 Dept Config override accessors + validators, Util formatting.
-The big aggregators / report builders are NOT yet unit-covered, so the
-manual Regression Scenarios below remain the verification of record for
-those paths -- walk the scenarios that overlap a change in addition to
+(Regression harness, Phases 1-3 -- zero-dep Node `node:test` suites
+under `tests/unit/`, run from the repo root; see `tests/README.md`.
+Covers pure logic (parsing, `hashAgents_`, Util, the INV-54 Dept
+Config accessors), the `computeSummary_` aggregator
+(INV-02/04/05/23/53, S35, E5), the IR/PR/CR report builders (INV-25
+weighted ATT, INV-28 prior-period, INV-35 length-mismatch, INV-53),
+and pipeline canonicalization (INV-24/46 + INV-16 cross-project).
+NOT yet covered: the end-to-end `buildDQEHistoricalData` build
+(INV-07/08/20/21) and the INV-29 monthly-trend alignment -- the
+manual Regression Scenarios remain the verification of record for
+those, so walk the scenarios that overlap a change in addition to
 running `node --test`.)
 
 ### Health Dimensions
@@ -829,7 +842,7 @@ INV-20 | Time-slot columns K-AC in DQE Historical Data store CST timestamps (alr
 INV-21 | parentMap in buildDQEHistoricalData builds from rows with parentId='N/A' or ''; each parent leg's calleeName must be captured for findAgentTalkOnParent. | Subsystem: CDR DQE Pipeline
 INV-22 | DQE Report Legacy is frozen — accepts only deletions and minimal menu cleanups during migration; no new features or improvements. | Subsystem: DQE Report Legacy
 INV-23 | Queue-sentinel rows in DQE Historical Data carry queue-only abandoned data (no agent rang). Agent Name (col C) holds a queue identifier (`A_Q_*` or `Backup CSR`); col D holds the queue's extensions; K-AC, AD, AF are populated normally; cols E-J and AG/AH are 0/"0:00:00". Consumers must filter these out by agent-name pattern: the main per-agent dashboard (Data.gs) and Diagnostics (whyNoMatches_) skip them; MissedCallsReport.gs reads them specifically for the queue-only section. | Subsystem: CDR DQE Pipeline / Department Dashboard
-INV-24 | buildDQEHistoricalData canonicalizes raw CDR agent names against the DO NOT EDIT! roster on every build: if the paren-stripped form of an incoming name matches exactly one roster entry, the row is written under that roster name. Ambiguous (>1 match) or unknown (0 match) names are written as-is. Admin-curated alias overrides (INV-46) are loaded by the same `loadRosterCanonicalNames_` and take precedence over the paren-strip; the dashboard's Orphan Fix modal is the canonical writer. Soft coupling: pipeline depends on the dashboard's roster sheet schema. Edits to roster layout must keep `loadRosterCanonicalNames_` working. | Subsystem: CDR DQE Pipeline
+INV-24 | buildDQEHistoricalData canonicalizes raw CDR agent names against the DO NOT EDIT! roster on every build: it compares the incoming name's paren-stripped form against each roster entry's paren-stripped form (the strip removes the parenthetical -- parens AND contents -- via `stripParens_`), and if exactly one roster entry matches, the row is written under that roster name. So a name differing only in its parenthetical canonicalizes ("Roman Paulose" / "Roman (Bob) Paulose" -> "Roman (Robin) Paulose") but a name with an extra word ("Roman Robin Paulose") does NOT (it strips to itself). Ambiguous (>1 match) or unknown (0 match) names are written as-is. Admin-curated alias overrides (INV-46) are loaded by the same `loadRosterCanonicalNames_` and take precedence over the paren-strip; the dashboard's Orphan Fix modal is the canonical writer. Soft coupling: pipeline depends on the dashboard's roster sheet schema. Edits to roster layout must keep `loadRosterCanonicalNames_` working. | Subsystem: CDR DQE Pipeline
 INV-25 | The Individual Report and Performance Report compute ATT as weighted by Answered (`sum(att * answered) / sum(answered)`), NOT the simple-mean used by the main dashboard table (INV-05). Days with answered=0 contribute 0 to both numerator and denominator, so unanswered/abandoned days don't drag the ATT down. Intentional — matches each legacy report's source semantics. | Subsystem: Department Dashboard
 INV-26 | TEAM_AVG_EXCLUDES in Config.gs lists per-dept agent names removed from BOTH numerator and denominator of the Individual Report's team-average. Used for managers on the roster who take only a token number of calls (default seed: 'CSR': ['Robin Choudhury']; overridable per dept via the Dept Config sheet, read through `getTeamAvgExcludes_` -- INV-54). Match is exact on the roster name. Does NOT apply to the Performance Report, which treats the user's selection AS the team. Since the INV-53 expansion (commit ba26d48), the IR team-avg ALSO excludes queue-only floaters (matchedViaRoster=false) via the independent `rosterSet[agent]` gate — the two exclusion mechanisms compose, so an agent excluded by EITHER doesn't factor in. INV-53 documents the floater path. | Subsystem: Department Dashboard
 INV-27 | Individual Report's team-avg denominator counts only roster members with ANY call activity (rung/answered/missed > 0) in the selected range, NOT the full roster size. Zero-call roster members don't dilute the average. | Subsystem: Department Dashboard
@@ -956,9 +969,9 @@ S14 | Performance Report current vs prior deltas | Subsystem: Department Dashboa
 
 S15 | Pipeline canonicalizes paren-variant agent names | Subsystem: CDR DQE Pipeline
   Steps:
-    - In Raw Data, ensure a leg exists with calleeName "Roman Robin Paulose" (no parens) on a date where the roster has "Roman (Robin) Paulose".
+    - In Raw Data, ensure a leg exists with calleeName "Roman Paulose" (parenthetical dropped) on a date where the roster has "Roman (Robin) Paulose" (and no bare "Roman Paulose" roster entry, so the match is unambiguous).
     - Run buildDQEHistoricalData for that day.
-  Expected: the resulting DQE Historical Data row's Agent Name (col C) is "Roman (Robin) Paulose" -- consolidated under the canonical form. No duplicate rows for the same person on the same day.
+  Expected: the resulting DQE Historical Data row's Agent Name (col C) is "Roman (Robin) Paulose" -- consolidated under the canonical form (both names strip to "Roman Paulose", a single roster match). No duplicate rows for the same person on the same day. NOTE: an incoming "Roman Robin Paulose" (extra word) would NOT canonicalize -- it strips to itself, not "Roman Paulose" -- and is written as-is.
 
 S16 | Export menu captures all chart tabs | Subsystem: Department Dashboard
   Steps:
