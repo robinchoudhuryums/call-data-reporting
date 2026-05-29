@@ -793,10 +793,12 @@ function parseRosterCell_(cellValue) {
  * for queue-scope matching (Data.gs) and sentinel-row matching
  * (MissedCallsReport.gs). Two sources, in priority order:
  *
- *   1. Config.DEPT_QUEUE_EXT_OVERRIDES[dept] -- explicit list. Use
- *      when this dept's agents ring on queues that belong to OTHER
- *      depts (e.g. CSR agents covering A_Q_Spanish) and those queues
- *      should NOT count toward this dept.
+ *   1. Effective queue-ext override (Dept Config sheet over the
+ *      DEPT_QUEUE_EXT_OVERRIDES constant, via
+ *      getDeptQueueExtsOverride_) -- explicit list. Use when this
+ *      dept's agents ring on queues that belong to OTHER depts (e.g.
+ *      CSR agents covering A_Q_Spanish) and those queues should NOT
+ *      count toward this dept.
  *   2. Derived: scan `values` (the bulk DQE Historical Data read) and
  *      collect col D extensions from any row whose agent is on this
  *      dept's roster. Across ALL history loaded into `values`, not
@@ -813,8 +815,10 @@ function parseRosterCell_(cellValue) {
  */
 function getDeptQueueExts_(dept, rosterSet, values) {
   const set = {};
-  const overrideList = (typeof DEPT_QUEUE_EXT_OVERRIDES !== 'undefined')
-                       && DEPT_QUEUE_EXT_OVERRIDES[dept];
+  // Effective override list (Dept Config sheet over the
+  // DEPT_QUEUE_EXT_OVERRIDES constant; see DeptConfig.gs). Non-empty
+  // REPLACES the data-derived set below.
+  const overrideList = getDeptQueueExtsOverride_(dept);
   if (overrideList && overrideList.length) {
     for (let i = 0; i < overrideList.length; i++) {
       set[String(overrideList[i])] = true;

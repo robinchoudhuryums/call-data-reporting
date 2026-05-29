@@ -118,10 +118,11 @@ const ORPHAN_FIX_LOG_HEADERS = Object.freeze([
 //   QCD Queues        = comma-separated A_Q_* queue names (overrides DEPT_QCD_QUEUES[dept])
 //   Overview Parent   = parent dept name (overrides OVERVIEW_PARENT_OF[dept]); blank = no nesting override
 //   Team Avg Excludes = comma-separated roster names (overrides TEAM_AVG_EXCLUDES[dept])
+//   Queue Ext Overrides = comma-separated digit extensions (overrides DEPT_QUEUE_EXT_OVERRIDES[dept]); REPLACES the data-derived queue-ext set for scope/sentinel matching
 //   Active            = TRUE/FALSE (pause without deleting)
 const DEPT_CONFIG_HEADERS = Object.freeze([
   'Department', 'QCD Queues', 'Overview Parent', 'Team Avg Excludes',
-  'Active', 'Updated By', 'Updated At', 'Notes',
+  'Queue Ext Overrides', 'Active', 'Updated By', 'Updated At', 'Notes',
 ]);
 
 // Layout of the "DO NOT EDIT!" roster sheet. Centralized so a future

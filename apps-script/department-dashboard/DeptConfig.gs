@@ -12,6 +12,9 @@
  *                         a standalone tile).
  *   TEAM_AVG_EXCLUDES  -> agents dropped from a dept's Individual
  *                         Report team average.
+ *   DEPT_QUEUE_EXT_OVERRIDES -> queue extensions that count as this
+ *                         dept's for scope/sentinel matching (replaces
+ *                         the data-derived fallback when set).
  *
  * Before this engine, wiring a new dept/sub-queue meant editing a
  * constant + `clasp push -f` + a new deployment version, with no
@@ -55,7 +58,7 @@
  *     { departments, rosterByDept, effective, rows, discoveredQueues,
  *       unmappedCount, spreadsheetUrl }
  *   saveDeptConfig({ dept, qcdQueues, overviewParent, teamAvgExcludes,
- *                    active, notes }) -> { saved: true }
+ *                    queueExtOverrides, active, notes }) -> { saved: true }
  *   removeDeptConfig({ dept }) -> { removed: N }   // soft (Active=FALSE)
  */
 
@@ -98,16 +101,17 @@ function readDeptConfigRows_() {
           const dept = String(rows[i][0] || '').trim();
           if (!dept) continue;
           out.push({
-            dept:            dept,
-            qcdQueues:       dcParseList_(rows[i][1]),
-            overviewParent:  String(rows[i][2] || '').trim(),
-            teamAvgExcludes: dcParseList_(rows[i][3]),
-            active:          dcIsActive_(rows[i][4]),
-            updatedBy:       String(rows[i][5] || ''),
-            updatedAt:       rows[i][6] instanceof Date
-                               ? Utilities.formatDate(rows[i][6], TZ, 'yyyy-MM-dd HH:mm')
-                               : String(rows[i][6] || ''),
-            notes:           String(rows[i][7] || ''),
+            dept:              dept,
+            qcdQueues:         dcParseList_(rows[i][1]),
+            overviewParent:    String(rows[i][2] || '').trim(),
+            teamAvgExcludes:   dcParseList_(rows[i][3]),
+            queueExtOverrides: dcParseList_(rows[i][4]),
+            active:            dcIsActive_(rows[i][5]),
+            updatedBy:         String(rows[i][6] || ''),
+            updatedAt:         rows[i][7] instanceof Date
+                                 ? Utilities.formatDate(rows[i][7], TZ, 'yyyy-MM-dd HH:mm')
+                                 : String(rows[i][7] || ''),
+            notes:             String(rows[i][8] || ''),
           });
         }
       }
@@ -170,6 +174,21 @@ function getTeamAvgExcludes_(dept) {
   const cfg = getActiveDeptConfigMap_()[dept];
   if (cfg && cfg.teamAvgExcludes.length) return cfg.teamAvgExcludes.slice();
   const c = (typeof TEAM_AVG_EXCLUDES !== 'undefined') && TEAM_AVG_EXCLUDES[dept];
+  return Array.isArray(c) ? c.slice() : [];
+}
+
+/**
+ * Effective queue-extension override list for `dept`: the Active
+ * config row's Queue Ext Overrides if non-empty, else
+ * DEPT_QUEUE_EXT_OVERRIDES[dept], else [] (caller's data-derived
+ * fallback then applies). Consumed by Data.gs::getDeptQueueExts_,
+ * which REPLACES its derived ext set when this returns non-empty --
+ * so the override semantics match the constant it supersedes.
+ */
+function getDeptQueueExtsOverride_(dept) {
+  const cfg = getActiveDeptConfigMap_()[dept];
+  if (cfg && cfg.queueExtOverrides.length) return cfg.queueExtOverrides.slice();
+  const c = (typeof DEPT_QUEUE_EXT_OVERRIDES !== 'undefined') && DEPT_QUEUE_EXT_OVERRIDES[dept];
   return Array.isArray(c) ? c.slice() : [];
 }
 
@@ -267,11 +286,12 @@ function getDeptConfigInit() {
   const effective = allDepts.map(function (d) {
     const row = cfgMap[d];
     return {
-      dept:            d,
-      qcdQueues:       getDeptQcdQueues_(d),
-      overviewParent:  getOverviewParentMap_()[d] || '',
-      teamAvgExcludes: getTeamAvgExcludes_(d),
-      hasRow:          !!row,
+      dept:              d,
+      qcdQueues:         getDeptQcdQueues_(d),
+      overviewParent:    getOverviewParentMap_()[d] || '',
+      teamAvgExcludes:   getTeamAvgExcludes_(d),
+      queueExtOverrides: getDeptQueueExtsOverride_(d),
+      hasRow:            !!row,
     };
   });
 
@@ -313,11 +333,12 @@ function saveDeptConfig(req) {
       + 'column header in the DO NOT EDIT! roster sheet exactly.');
   }
 
-  const qcdQueues       = dcNormalizeList_(req && req.qcdQueues, 'QCD Queues');
-  const overviewParent  = String((req && req.overviewParent) || '').trim();
-  const teamAvgExcludes = dcNormalizeList_(req && req.teamAvgExcludes, 'Team Avg Excludes');
-  const active          = !(req && req.active === false);   // default TRUE
-  const notes           = String((req && req.notes) || '').trim().slice(0, 500);
+  const qcdQueues         = dcNormalizeList_(req && req.qcdQueues, 'QCD Queues');
+  const overviewParent    = String((req && req.overviewParent) || '').trim();
+  const teamAvgExcludes   = dcNormalizeList_(req && req.teamAvgExcludes, 'Team Avg Excludes');
+  const queueExtOverrides = dcNormalizeList_(req && req.queueExtOverrides, 'Queue Ext Overrides');
+  const active            = !(req && req.active === false);   // default TRUE
+  const notes             = String((req && req.notes) || '').trim().slice(0, 500);
 
   // --- QCD queue validation: every token must exist in the data
   // (or already be in this dept's constant, so a seeded queue with no
@@ -368,18 +389,30 @@ function saveDeptConfig(req) {
     }
   }
 
+  // --- Queue Ext Overrides validation: digit-only tokens (queue
+  // extensions are numeric, per parseExtensions_ in Data.gs). ---
+  if (queueExtOverrides.length) {
+    const nonNumeric = queueExtOverrides.filter(function (x) { return !/^\d+$/.test(x); });
+    if (nonNumeric.length) {
+      throw new Error('Queue ext override(s) must be digits only: '
+        + nonNumeric.join(', ') + '. These are numeric queue extensions '
+        + '(e.g. 103, 108), not queue names.');
+    }
+  }
+
   const admin = Session.getActiveUser().getEmail();
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(15000)) throw new Error('Could not acquire script lock; try again.');
   try {
     upsertDeptConfigRow_({
-      dept:            dept,
-      qcdQueues:       qcdQueues,
-      overviewParent:  overviewParent,
-      teamAvgExcludes: teamAvgExcludes,
-      active:          active,
-      notes:           notes,
-      admin:           admin,
+      dept:              dept,
+      qcdQueues:         qcdQueues,
+      overviewParent:    overviewParent,
+      teamAvgExcludes:   teamAvgExcludes,
+      queueExtOverrides: queueExtOverrides,
+      active:            active,
+      notes:             notes,
+      admin:             admin,
     });
     dcBustCaches_();
   } finally {
@@ -431,6 +464,7 @@ function upsertDeptConfigRow_(rec) {
     rec.qcdQueues.join(', '),
     rec.overviewParent || '',
     rec.teamAvgExcludes.join(', '),
+    rec.queueExtOverrides.join(', '),
     rec.active ? 'TRUE' : 'FALSE',
     rec.admin || '',
     now,
@@ -454,8 +488,8 @@ function deactivateDeptConfig_(dept) {
   const values = range.getValues();
   let count = 0;
   for (let i = 0; i < values.length; i++) {
-    if (String(values[i][0] || '').trim() === dept && dcIsActive_(values[i][4])) {
-      values[i][4] = 'FALSE';
+    if (String(values[i][0] || '').trim() === dept && dcIsActive_(values[i][5])) {
+      values[i][5] = 'FALSE';
       count++;
     }
   }

@@ -8196,7 +8196,7 @@
     const tbody = $('dc-effective-tbody');
     if (!tbody) return;
     if (!effective.length) {
-      tbody.innerHTML = '<tr><td colspan="6" class="al-empty">No departments found.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="7" class="al-empty">No departments found.</td></tr>';
       return;
     }
     const cell = function (str) {
@@ -8211,6 +8211,7 @@
            +   '<td>' + cell((e.qcdQueues || []).join(', ')) + '</td>'
            +   '<td>' + cell(e.overviewParent || '') + '</td>'
            +   '<td>' + cell((e.teamAvgExcludes || []).join(', ')) + '</td>'
+           +   '<td>' + cell((e.queueExtOverrides || []).join(', ')) + '</td>'
            +   '<td>' + source + '</td>'
            +   '<td><button type="button" class="link-btn dc-row-edit" data-idx="' + idx + '">Edit</button></td>'
            + '</tr>';
@@ -8232,6 +8233,7 @@
     $('dc-edit-qcd').value      = (eff.qcdQueues || []).join(', ');
     $('dc-edit-parent').value   = eff.overviewParent || '';
     $('dc-edit-excludes').value = (eff.teamAvgExcludes || []).join(', ');
+    $('dc-edit-qext').value     = (eff.queueExtOverrides || []).join(', ');
     $('dc-edit-notes').value    = '';
     // Deactivate only makes sense when a sheet row exists for the dept.
     const deact = $('dc-deactivate-btn');
@@ -8249,12 +8251,13 @@
   function dcSave_() {
     if (!dcEditDept) return;
     const req = {
-      dept:            dcEditDept,
-      qcdQueues:       $('dc-edit-qcd').value,
-      overviewParent:  $('dc-edit-parent').value,
-      teamAvgExcludes: $('dc-edit-excludes').value,
-      active:          true,
-      notes:           $('dc-edit-notes').value,
+      dept:              dcEditDept,
+      qcdQueues:         $('dc-edit-qcd').value,
+      overviewParent:    $('dc-edit-parent').value,
+      teamAvgExcludes:   $('dc-edit-excludes').value,
+      queueExtOverrides: $('dc-edit-qext').value,
+      active:            true,
+      notes:             $('dc-edit-notes').value,
     };
     const saveBtn = $('dc-save-btn');
     if (saveBtn) saveBtn.disabled = true;
