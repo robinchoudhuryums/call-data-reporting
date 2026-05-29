@@ -50,8 +50,18 @@ cd apps-script/dqe-report  && clasp push -f   # frozen — cleanup deploys only
 # as a non-blocking SessionStart hook (.claude/settings.json).
 bash scripts/check-duplicated-files.sh
 
-# No tests. Verification is manual deploy + smoke-test against
-# Regression Scenarios in the Cycle Workflow Config below.
+# Unit tests (Phase 1 regression harness). Zero deps -- Node's
+# built-in test runner loads the real dashboard .gs files into a vm
+# with mocked Apps Script globals. Non-zero exit on failure. Covers
+# pure logic: date/duration parsing (INV-02/INV-03), hashAgents_
+# (INV-36), the INV-54 Dept Config override accessors + validators,
+# Util formatting. See tests/README.md for the design + how to add
+# tests + the aggregator/scenario coverage still to come.
+node --test          # from repo root (or: npm test)
+
+# Aggregators + report builders are NOT yet unit-covered; verification
+# there is still manual deploy + smoke-test against the Regression
+# Scenarios in the Cycle Workflow Config below.
 ```
 
 ## Common Gotchas
@@ -765,7 +775,16 @@ When something looks wrong, before assuming a code bug, check:
 ## Cycle Workflow Config
 
 ### Test Command
-manual
+node --test
+
+(Phase 1 regression harness -- zero-dep Node `node:test` suites under
+`tests/unit/`, run from the repo root; see `tests/README.md`. Covers
+pure logic only so far: date/duration parsing, `hashAgents_`, the
+INV-54 Dept Config override accessors + validators, Util formatting.
+The big aggregators / report builders are NOT yet unit-covered, so the
+manual Regression Scenarios below remain the verification of record for
+those paths -- walk the scenarios that overlap a change in addition to
+running `node --test`.)
 
 ### Health Dimensions
 Data Accuracy (DQE), Access Control Integrity, Source Pipeline Reliability, Migration Progress, Cross-Project Consistency, Documentation Freshness, Performance & Cache Effectiveness, Error Surfacing & Observability, Manager-Facing UI Polish, Deployment Hygiene, Code Health
