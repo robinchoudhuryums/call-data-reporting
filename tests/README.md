@@ -50,6 +50,7 @@ tests/
     compare-ranges.test.js    CompareRangesReport.gs: INV-35 length-mismatch (incl. 1.2x boundary), P1/P2 split, INV-53
     canonicalization.test.js  cdr-report/cdr-import buildDQEHistoricalData.js: INV-24/INV-46 + INV-16 cross-project
     pipeline-build.test.js    buildDQEHistoricalData end-to-end: INV-07 window legs, INV-08 TTT attribution, INV-20 PST→CST slots, INV-21 parentMap, dup guard
+    digest-wow.test.js        Digest.gs: WoW "driver" narrative (#11) reusing INV-48 — gain/drop drivers, threshold, narrative HTML + escaping
 ```
 
 To load a sibling pipeline project instead of the dashboard, pass

@@ -166,6 +166,80 @@ function computeDigestStats_(dept, fromIso, toIso) {
   };
 }
 
+/**
+ * Week-over-week "driver" narrative for the digest (#11). Reuses the
+ * Overview's tested INV-48 logic (computeWowDelta_ + computeWowDriver_)
+ * by building the `stats` shape those expect -- dept-level
+ * `trendByDate` ({rung, answered}) + per-agent `agentTrendByDate`
+ * ({answered, missed}) -- over the 14-day window ending on `anchorIso`
+ * (the digest window's end). computeWowDelta_ then carves the 7-day
+ * current vs prior-7 windows internally and attaches `.driver` when
+ * |deltaPct| >= WOW_DRIVER_THRESHOLD.
+ *
+ * Roster-scoped (rosterSet gate) so floaters (INV-53) and queue
+ * sentinels (INV-23) never skew the dept's attribution -- matching
+ * computeDigestStats_'s 'roster' scope. Best-effort: any failure (or
+ * a quiet/low-activity dept) returns null and the digest renders
+ * without the narrative.
+ *
+ * Returns the computeWowDelta_ shape: { curPct, prevPct, deltaPct,
+ * driver? } or null.
+ */
+function computeDigestWowDriver_(dept, anchorIso) {
+  try {
+    const roster = getRosterForDepartment_(dept);
+    const rosterSet = {};
+    for (let i = 0; i < roster.names.length; i++) rosterSet[roster.names[i]] = true;
+
+    const ss = openSpreadsheet_();
+    const sheet = ss.getSheetByName(SHEETS.HISTORICAL);
+    if (!sheet) return null;
+    const lastRow = sheet.getLastRow();
+    if (lastRow < 2) return null;
+    const ssTZ = ss.getSpreadsheetTimeZone();
+
+    // 14-day window ending on the anchor (7 current + 7 prior), the
+    // same span computeWowDelta_ walks back from its anchor date.
+    const anchorObj = parseIsoNoon_(anchorIso);
+    const windowStartIso = Utilities.formatDate(
+      new Date(anchorObj.getTime() - 13 * 86400000), TZ, 'yyyy-MM-dd');
+
+    const numCols = HISTORICAL_COLS.TOTAL_ANSWERED;   // need rung/missed/answered
+    const values = sheet.getRange(2, 1, lastRow - 1, numCols).getValues();
+
+    const trendByDate = {};        // iso -> { rung, answered }
+    const agentTrendByDate = {};   // agent -> iso -> { answered, missed }
+    for (let i = 0; i < values.length; i++) {
+      const r = values[i];
+      const dateIso = rowDateIso_(r[HISTORICAL_COLS.DATE - 1], ssTZ);
+      if (!dateIso || dateIso < windowStartIso || dateIso > anchorIso) continue;
+      const agent = String(r[HISTORICAL_COLS.AGENT - 1] || '').trim();
+      if (!agent) continue;
+      if (/^A_Q_/.test(agent) || agent === 'Backup CSR') continue;   // INV-23 sentinels
+      if (!rosterSet[agent]) continue;                                // roster-only (INV-53)
+      const rung     = Number(r[HISTORICAL_COLS.TOTAL_RUNG - 1])     || 0;
+      const missed   = Number(r[HISTORICAL_COLS.TOTAL_MISSED - 1])   || 0;
+      const answered = Number(r[HISTORICAL_COLS.TOTAL_ANSWERED - 1]) || 0;
+
+      let t = trendByDate[dateIso];
+      if (!t) t = trendByDate[dateIso] = { rung: 0, answered: 0 };
+      t.rung += rung; t.answered += answered;
+
+      let a = agentTrendByDate[agent];
+      if (!a) a = agentTrendByDate[agent] = {};
+      let b = a[dateIso];
+      if (!b) b = a[dateIso] = { answered: 0, missed: 0 };
+      b.answered += answered; b.missed += missed;
+    }
+
+    return computeWowDelta_(
+      { trendByDate: trendByDate, agentTrendByDate: agentTrendByDate }, anchorIso);
+  } catch (e) {
+    Logger.log('computeDigestWowDriver_ failed: %s', e);
+    return null;
+  }
+}
+
 function sendDigestEmail_(opts) {
   const dept    = opts.dept;
   const to      = String(opts.to || '').trim();
@@ -184,6 +258,13 @@ function sendDigestEmail_(opts) {
   const rangeLabel = opts.fromIso === opts.toIso
     ? opts.fromIso
     : (opts.fromIso + ' – ' + opts.toIso);
+
+  // WoW "driver" narrative (#11): which agent's net answered/missed
+  // change most explains the dept's week-over-week answer-rate shift.
+  // Anchored on the digest window's end date; best-effort (null on a
+  // quiet dept or any error -> no callout rendered).
+  const wow = computeDigestWowDriver_(dept, opts.toIso);
+  const wowNarrative = digestWowNarrative_(wow);
 
   const dashboardUrl = PropertiesService.getScriptProperties()
     .getProperty('DASHBOARD_URL') || '';
@@ -223,6 +304,7 @@ function sendDigestEmail_(opts) {
     +       ' · ' + stats.rows + ' agent' + (stats.rows === 1 ? '' : 's') + ' with activity'
     +     '</div>'
     +   '</div>'
+    +   wowNarrative
     +   (dashboardUrl
         ? '<div style="margin-top: 16px;"><a href="' + escapeHtmlServer_(dashboardUrl) + '" style="display: inline-block; background: #1d4ed8; color: #fff; padding: 8px 16px; border-radius: 6px; text-decoration: none; font-size: 13px; font-weight: 600;">Open Dashboard</a></div>'
         : '')
@@ -236,6 +318,46 @@ function sendDigestEmail_(opts) {
     subject:  subject,
     htmlBody: htmlBody,
   });
+}
+
+/**
+ * Renders the WoW "driver" callout (#11) from a computeDigestWowDriver_
+ * result. Empty string when there's no notable shift / no attributable
+ * agent (wow null or wow.driver absent) -- the digest then shows just
+ * the KPI tiles, as before. Sage callout for an answer-rate gain,
+ * amber for a drop, mirroring the dashboard's good/warn valence.
+ */
+function digestWowNarrative_(wow) {
+  if (!wow || !wow.driver) return '';
+  const d = wow.driver;
+  const up = (Number(wow.deltaPct) || 0) > 0;
+  const arrow = up ? '▲' : '▼';                 // ▲ / ▼
+  const deltaTxt = (wow.deltaPct > 0 ? '+' : '') + Number(wow.deltaPct).toFixed(1) + ' pts';
+  const metricWord = d.metric === 'missed' ? 'missed' : 'answered';
+  const absDelta = Math.abs(Number(d.delta) || 0);
+  const moreFewer = (Number(d.delta) || 0) >= 0 ? 'more' : 'fewer';
+  const sentence =
+      escapeHtmlServer_(d.agent) + ' ' + metricWord + ' ' + absDelta + ' ' + moreFewer
+    + ' call' + (absDelta === 1 ? '' : 's')
+    + ' over the last 7 days (' + d.cur + ' vs ' + d.prev + ' the 7 days before)'
+    + ' — the biggest driver of the department’s '
+    + (up ? 'answer-rate gain' : 'answer-rate drop') + '.';
+
+  const c = up
+    ? { bg: '#ECFDF5', border: '#059669', head: '#065F46', body: '#064E3B' }
+    : { bg: '#FFFBEB', border: '#D97706', head: '#92400E', body: '#7C2D12' };
+
+  return '<div style="margin:16px 0;padding:12px 16px;background:' + c.bg
+       +   ';border-left:4px solid ' + c.border + ';border-radius:4px;">'
+       +   '<div style="font-size:11px;font-weight:700;text-transform:uppercase;'
+       +     'letter-spacing:0.05em;color:' + c.head + ';">'
+       +     'What changed · answer rate ' + arrow + ' '
+       +     escapeHtmlServer_(deltaTxt) + ' week-over-week'
+       +   '</div>'
+       +   '<div style="font-size:13px;color:' + c.body + ';margin-top:4px;line-height:1.4;">'
+       +     sentence
+       +   '</div>'
+       + '</div>';
 }
 
 function digestStatTile_(label, value) {
