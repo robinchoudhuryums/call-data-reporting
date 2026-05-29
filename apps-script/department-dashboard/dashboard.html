@@ -246,22 +246,23 @@
       <div class="modal-content">
         <h3>Quick guide to the table columns</h3>
         <ul>
-          <li><strong>Agent</strong> &mdash; agents appear here only if they had data for the selected date range and the chosen <strong>scope</strong> (see below). The <strong>Diagnostics</strong> panel below the table will list roster agents who had no data in range, and any agents matched via queue extensions but not on the roster.</li>
+          <li><strong>Agent &middot; Source</strong> &mdash; every agent with data in the selected range appears, tagged in the <strong>Source</strong> column: <strong>ROSTER</strong> (on your department roster), <strong>QUEUE</strong> (a floater from another dept who handled your queue extensions — their home dept follows the chip), or <strong>BOTH</strong>. Roster totals exclude queue-only floaters; the floater subtotal is shown separately in the table footer. The <strong>Diagnostics</strong> panel lists roster agents with no data in range.</li>
           <li><strong>Unique vs Rung</strong> &mdash; &ldquo;Unique&rdquo; is a single caller attempt; &ldquo;Rung&rdquo; is the number of times an agent was notified of an incoming call. A caller on hold for 2 minutes who disconnects counts as 1 Unique but several rings. <strong>Total Missed</strong> and any &ldquo;% Answered&rdquo; metric are based on Rung, not Unique.</li>
           <li><strong>TTT &middot; ATT</strong> &mdash; Total Talk Time and Average Talk Time. Only counts inbound calls from a call queue.</li>
           <li><strong>Avg Abd Wait &middot; CSR Avg Abd Wait</strong> &mdash; Average abandoned-caller wait time, dept-wide and CSR-specific.</li>
         </ul>
 
-        <h3>Scope toggle (Roster / Queue / Both)</h3>
+        <h3>Source column (Roster / Queue / Both)</h3>
         <ul>
-          <li><strong>Roster</strong> (default): only agents officially assigned to your department in the roster sheet.</li>
-          <li><strong>Queue</strong>: any agent who handled your department&rsquo;s queue extensions, even if they aren&rsquo;t on your roster &mdash; useful for spotting cross-coverage and floaters.</li>
-          <li><strong>Both</strong>: union of the two. Agents matched only via queue (not on the roster) get a small &ldquo;(queue-only)&rdquo; tag next to their name.</li>
+          <li><strong>ROSTER</strong>: an agent officially assigned to your department in the roster sheet.</li>
+          <li><strong>QUEUE</strong>: a floater not on your roster who handled your department&rsquo;s queue extensions — useful for spotting cross-coverage. The chip names their home department(s).</li>
+          <li><strong>BOTH</strong>: on your roster <em>and</em> matched via queue this period (the common case for active members).</li>
         </ul>
+        <p>There is no scope toggle anymore — the table always shows the full picture, and the <strong>Source</strong> column makes each agent&rsquo;s provenance explicit. Department totals are roster-only; queue-only floaters are summed on a separate footer line so headline numbers stay stable.</p>
 
         <h3>Common questions</h3>
         <ul>
-          <li><strong>Why is my table empty?</strong> Check the From/To dates and the scope toggle. If both look right, the &ldquo;Roster agents with no data in this range&rdquo; section of the Diagnostics panel will list anyone expected but absent.</li>
+          <li><strong>Why is my table empty?</strong> Check the From/To dates. If they look right, the &ldquo;Roster agents with no data in this range&rdquo; section of the Diagnostics panel will list anyone expected but absent.</li>
           <li><strong>Why do some numbers differ from the old DQE Report spreadsheet?</strong> The legacy report had a few bugs around the work-window (calls before 8:30 AM or after 5:00 PM CST were sometimes counted in TTT/ATT but not Answered). The dashboard reads the same source sheet and inherits whatever it currently produces. If a specific number still looks wrong after a source rebuild, email Robin with date + agent.</li>
           <li><strong>Why are there more missed-call timestamps for an agent than the official &ldquo;Missed&rdquo; count?</strong> Some rings happen before/after the 6:30 AM &ndash; 3:00 PM PST work window. Those appear as raw timestamps but don&rsquo;t count in &ldquo;Total Missed&rdquo;. See the <strong>Missed Calls</strong> report (Reports section above the table) for the full timestamp list per agent.</li>
           <li><strong>What if an agent appears in multiple departments?</strong> That&rsquo;s fine &mdash; agents can be on multiple rosters. The same daily numbers will show up on each department&rsquo;s view that they&rsquo;re rostered under.</li>
@@ -295,7 +296,7 @@
       <div class="modal-panel-body">
       <div class="modal-content">
         <h3>Background theme</h3>
-        <p>Affects your view only; other users see their own setting. The dark-mode toggle (<span aria-hidden="true">◐</span>) in the header is independent of this -- pick a light-mode theme here, and the dark palette still applies when you toggle dark mode.</p>
+        <p>Affects your view only; other users see their own setting. Background themes apply to light mode only — turn off dark mode (<span aria-hidden="true">◐</span>) in the header to change them.</p>
         <div class="theme-chip-grid" id="theme-chip-grid">
           <button class="theme-chip" type="button" data-theme="warm" title="Warm-paper cream background — default">
             <span class="theme-chip-swatch" style="background:#f7f2e6; border-color:#d6d1c2;"></span>
