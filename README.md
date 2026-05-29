@@ -42,6 +42,9 @@ call-data-reporting/
 │   │   └── (cd in, then `clasp push -f` to deploy that project)
 │   └── cdr-import/                 ← the CDR Import project (CSV ingester)
 │       └── (cd in, then `clasp push -f` to deploy that project)
+├── tests/                          ← zero-dep Node regression harness (`node --test`); see tests/README.md
+├── scripts/                        ← repo tooling (e.g. check-duplicated-files.sh, the INV-16 drift guard)
+├── package.json                    ← `npm test` → `node --test`; not a deployable package
 ├── .clasp.example.json             ← template; copy to .clasp.json on first checkout
 ├── .clasp.json                     ← per-developer, gitignored (scriptId varies per checkout)
 ├── .claspignore
@@ -51,6 +54,26 @@ call-data-reporting/
 Each subdirectory under `apps-script/` has its own gitignored
 `.clasp.json` so per-project deploys are independent. The legacy DQE
 Report spreadsheet is being retired and isn't pulled in.
+
+## Running tests
+
+A zero-dependency regression harness loads the real `.gs`/`.js` files
+into a Node `vm` with mocked Apps Script globals (no `npm install`,
+Node ≥ 18):
+
+```bash
+node --test          # from the repo root — runs every tests/unit/*.test.js
+npm test             # same thing
+```
+
+Non-zero exit on failure. Coverage spans the date/duration parsing,
+cache-key hashing, the Dept Config override accessors, the
+`computeSummary_` aggregator, the Individual / Performance / Compare
+Ranges report builders, and the pipeline's name canonicalization. See
+[`tests/README.md`](tests/README.md) for the design, how to add a test,
+and the current coverage map. (The end-to-end `buildDQEHistoricalData`
+build is not yet unit-covered; the manual Regression Scenarios in
+CLAUDE.md remain the verification of record there.)
 
 ## Deploying the Department Dashboard
 
@@ -87,7 +110,8 @@ clasp push -f
 - Run the `setup` function once to create the dashboard-managed
   sheets: `Access Control`, `Alert Config`, `Alert Log`,
   `Pipeline Health`, `Digest Config`, `Agent Alias Overrides`,
-  and `Orphan Fix Log` (seven total; created only if missing).
+  `Orphan Fix Log`, and `Dept Config` (eight total; created only
+  if missing).
   Requires admin auth — run from the Apps Script editor while
   logged in as an admin listed in `ADMIN_EMAILS` Script Property
   (or `ADMIN_EMAILS_FALLBACK`).
@@ -145,22 +169,50 @@ clasp push -f
 - Admin-only at the server boundary. See CLAUDE.md INV-01 for the
   full security model around the carve-out.
 
+**Optional (Dept Config):**
+
+- The **Dept Config** tab in the header nav (admin-only) edits the
+  per-dept maps that used to require a code change + redeploy:
+  QCD queues, Overview sub-queue nesting (parent), team-average
+  exclusions, and queue-extension overrides. Saved rows live in the
+  `Dept Config` sheet (created by `setup()`) and take effect on the
+  next request — caches refresh within ~5 min, no redeploy.
+- Blank fields fall back to the built-in `Config.gs` defaults
+  (`DEPT_QCD_QUEUES`, `OVERVIEW_PARENT_OF`, `TEAM_AVG_EXCLUDES`,
+  `DEPT_QUEUE_EXT_OVERRIDES`); a non-empty field overrides that
+  dept's default. See CLAUDE.md INV-54 for the full override
+  semantics + accessor contract.
+- The modal auto-discovers queue names from `QCD Historical Data`
+  col D (last 180 days) and surfaces **unmapped** queues first so
+  you can see what still needs a dept. Saves are validated: queue
+  names must exist in the data, Overview parents must be real depts
+  with no nesting cycle, team-avg excludes must be on the dept
+  roster, and queue-ext overrides must be digits.
+- Requires `setup()` to have created the `Dept Config` sheet; until
+  then the accessors fall through to the constants (so behavior is
+  unchanged) and the modal's Save throws "Dept Config sheet missing
+  — run setup()".
+
 **Optional (QCD Report):**
 
 - The **QCD Report** modal (click the **QCD** tab in the header nav) reads from
   `QCD Historical Data`, written daily by the import pipeline.
   Visible to all managers + admins; per-dept gated.
-- **`Config.gs::DEPT_QCD_QUEUES` is the dept ↔ queue mapping.**
+- **The dept ↔ queue mapping is admin-editable without a redeploy.**
   Each dashboard dept maps to one or more raw queue names
   (e.g. `A_Q_CustomerSuccess`, `A_Q_Sales`) — the values in
   `QCD Historical Data` col D. Canonical spellings vary per
-  install (this one's CSR queue is `A_Q_CustomerSuccess`); open
-  the sheet and look at col D for recent rows to find the names
-  for your install, then edit this map and redeploy.
-- A dept not listed in `DEPT_QCD_QUEUES` renders an empty modal
-  with a "No queues mapped" hint and no Overview QCD chips. New
-  depts producing QCD rows won't show up in the dashboard until
-  added to the map.
+  install (this one's CSR queue is `A_Q_CustomerSuccess`).
+  **Preferred:** open the **Dept Config** tab (admin-only), which
+  auto-discovers the queue names from col D and flags unmapped ones;
+  pick the dept and add its queues — takes effect on the next
+  request, no redeploy (see "Optional (Dept Config)" below and
+  CLAUDE.md INV-54). The `Config.gs::DEPT_QCD_QUEUES` constant
+  remains the seed default beneath the sheet.
+- A dept with no mapped queues (neither a `Dept Config` row nor a
+  `DEPT_QCD_QUEUES` entry) renders an empty modal with a "No queues
+  mapped" hint and no Overview QCD chips. New depts producing QCD
+  rows won't show up until mapped one of those two ways.
 - **Sub-queue rollup** is automatic via `OVERVIEW_PARENT_OF`
   (CompanyOverview.gs): viewing a parent dept's QCD report
   auto-includes its children's queues. Current parents are
@@ -225,6 +277,7 @@ the deployed web-app URL to land on that view:
 - `#/report/qcd` — QCD Report
 - `#/admin/alerts` — Low Answer Rate Alerts (admin-only)
 - `#/admin/orphan-fix` — Outlier Fix (admin-only)
+- `#/admin/dept-config` — Dept Config (admin-only)
 
 Each report modal also carries a small `↗` button next to its
 close X — clicking it opens the same view in a new browser tab so

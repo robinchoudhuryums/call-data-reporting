@@ -303,7 +303,9 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
   // request time so config edits take effect on next request (after
   // cache TTL).
   const excludedAgents = {};
-  const excludeList = (TEAM_AVG_EXCLUDES && TEAM_AVG_EXCLUDES[dept]) || [];
+  // Effective exclude list (Dept Config sheet overriding the
+  // TEAM_AVG_EXCLUDES constant; see DeptConfig.gs).
+  const excludeList = getTeamAvgExcludes_(dept);
   for (let i = 0; i < excludeList.length; i++) excludedAgents[excludeList[i]] = true;
 
   // Floater detection (Phase D+1 / INV-53 expansion). Build the dept's
@@ -625,7 +627,7 @@ function emptyIndividualReport_(dept, from, to, selectedAgents, masterMonthKeys)
   // useful when a manager opens a range that has no calls yet but
   // wants to confirm an excluded agent is still configured as such.
   const emptyExcludedSet = {};
-  const emptyExcludeList = (TEAM_AVG_EXCLUDES && TEAM_AVG_EXCLUDES[dept]) || [];
+  const emptyExcludeList = getTeamAvgExcludes_(dept);
   for (let i = 0; i < emptyExcludeList.length; i++) emptyExcludedSet[emptyExcludeList[i]] = true;
   // Per INV-53: also surface matchedViaRoster on the empty shape so
   // the UI can still render an unflagged card. matchedViaQueue is

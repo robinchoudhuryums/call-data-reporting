@@ -250,14 +250,15 @@ same time as the code change.
 
 | Source file | Cache prefix | Current version |
 |---|---|---|
-| `Data.gs` (main table) | `summary:vN:` | `v6` |
+| `Data.gs` (main table) | `summary:vN:` | `v8` |
 | `Data.gs` (latest-date snap for default From/To) | `latestDate:vN:` | `v1` |
-| `IndividualReport.gs` | `individual:vN:` | `v6` |
-| `IndividualReport.gs` (active-in-range subset shared by all three report pickers) | `individual_active:vN:` | `v1` |
-| `PerformanceReport.gs` | `performance:vN:` | `v3` |
-| `CompareRangesReport.gs` | `compareRanges:vN:` | `v3` |
+| `Data.gs` (multi-source latest dates for freshness pill) | `latestDates:vN:` | `v1` |
+| `IndividualReport.gs` | `individual:vN:` | `v8` |
+| `IndividualReport.gs` (active-in-range subset shared by all three report pickers) | `individual_active:vN:` | `v2` |
+| `PerformanceReport.gs` | `performance:vN:` | `v4` |
+| `CompareRangesReport.gs` | `compareRanges:vN:` | `v4` |
 | `MissedCallsReport.gs` | `missed:vN:` | `v10` |
-| `CompanyOverview.gs` | `companyOverview:vN` | `v12` |
+| `CompanyOverview.gs` | `companyOverview:vN` | `v13` |
 | `QCDReport.gs` | `qcd:vN:` | `v5` |
 
 `Alerts.gs` holds no cached compute. Preview/send always re-reads the

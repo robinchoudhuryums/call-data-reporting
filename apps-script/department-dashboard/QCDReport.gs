@@ -80,19 +80,18 @@ function queuesForDept_(dept) {
   const add = function (q) {
     if (q && !seen[q]) { seen[q] = true; out.push(q); }
   };
-  const direct = (typeof DEPT_QCD_QUEUES !== 'undefined') && DEPT_QCD_QUEUES[dept];
-  if (Array.isArray(direct)) direct.forEach(add);
+  // Effective queue lists + parent map route through DeptConfig.gs so
+  // the admin-authored Dept Config sheet (when present) overrides the
+  // DEPT_QCD_QUEUES / OVERVIEW_PARENT_OF constants without a redeploy.
+  // Falls straight through to the constants when no sheet row exists.
+  getDeptQcdQueues_(dept).forEach(add);
 
-  // Sub-queue rollup. OVERVIEW_PARENT_OF is owned by CompanyOverview.gs
-  // (shared Apps Script global scope). Walk its keys and append any
-  // child whose parent === this dept.
-  if (typeof OVERVIEW_PARENT_OF !== 'undefined') {
-    Object.keys(OVERVIEW_PARENT_OF).forEach(function (childDept) {
-      if (OVERVIEW_PARENT_OF[childDept] !== dept) return;
-      const childQueues = DEPT_QCD_QUEUES[childDept];
-      if (Array.isArray(childQueues)) childQueues.forEach(add);
-    });
-  }
+  // Sub-queue rollup: append any child whose parent === this dept.
+  const parentMap = getOverviewParentMap_();
+  Object.keys(parentMap).forEach(function (childDept) {
+    if (parentMap[childDept] !== dept) return;
+    getDeptQcdQueues_(childDept).forEach(add);
+  });
   return out;
 }
 

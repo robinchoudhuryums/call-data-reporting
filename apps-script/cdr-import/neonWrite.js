@@ -90,6 +90,7 @@ function writeDQERowsToNeon(rows) {
   }
 
   var conn = getNeonConn_write();
+  if (!conn) return { inserted: 0, skipped: rows.length };
   conn.setAutoCommit(false);
 
   try {
@@ -156,6 +157,7 @@ function writeQCDRowsToNeon(rows) {
   }
 
   var conn = getNeonConn_write();
+  if (!conn) return { inserted: 0, skipped: rows.length };
   conn.setAutoCommit(false);
 
   try {

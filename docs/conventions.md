@@ -210,8 +210,11 @@ Rows matched via Queue but not via Roster get a `(queue-only)` tag next
 to the agent name in the table. They also appear in the Diagnostics
 panel under "Agents matched only via queue".
 
-Default scope is **Roster** — strict match to the dept roster, mirroring
-how the legacy DQE Report worked.
+Default scope is **Both** (since Phase D, commit d631719) — the agent
+table surfaces queue-only floaters by default, though dept-level totals
+still exclude them (INV-53). The toggle remains for parallel-run
+validation. The pre-Phase-D default was **Roster** (strict match to the
+dept roster, mirroring the legacy DQE Report).
 
 ## Auth and access
 
@@ -398,8 +401,10 @@ From/To default (which must snap to DQE specifically).
   `would-send` (dry-run / preview) / `above-threshold` (healthy)
   / `no-data` / `no-recipients` / `skipped` (inactive) / `error`.
 - **Daily trigger** (`runDailyAlerts_`) skips Saturdays + Sundays
-  (INV-33). Holiday handling is intentional dropped from v1 — if
-  it becomes noisy, add a skip-dates column to Alert Config.
+  (INV-33). Holiday handling shipped in E8 (commit 319eca7): the
+  `Skip Dates` column on `Alert Config` (col F) takes comma-separated
+  ISO dates and `YYYY-MM-DD..YYYY-MM-DD` ranges, honored on the
+  daily-trigger path only (manual sends bypass it). See INV-33 / INV-34.
 - **DASHBOARD_URL Script Property** is consulted by
   `sendAlertEmail_` to build the "Open Dashboard" link. Unset =
   emails still send, just without the link button.
@@ -415,15 +420,16 @@ mirrors it; if the two ever diverge, INV-30 wins.
 
 | Source file | Cache prefix | Current version |
 |---|---|---|
-| `Data.gs` (main table) | `summary:vN:` | `v6` |
+| `Data.gs` (main table) | `summary:vN:` | `v8` |
 | `Data.gs` (latest-date snap for default From/To) | `latestDate:vN:` | `v1` |
-| `IndividualReport.gs` | `individual:vN:` | `v6` |
-| `IndividualReport.gs` (active-in-range subset, shared with all three pickers) | `individual_active:vN:` | `v1` |
-| `PerformanceReport.gs` | `performance:vN:` | `v3` |
-| `CompareRangesReport.gs` | `compareRanges:vN:` | `v3` |
+| `Data.gs` (multi-source latest dates for freshness pill) | `latestDates:vN:` | `v1` |
+| `IndividualReport.gs` | `individual:vN:` | `v8` |
+| `IndividualReport.gs` (active-in-range subset, shared with all three pickers) | `individual_active:vN:` | `v2` |
+| `PerformanceReport.gs` | `performance:vN:` | `v4` |
+| `CompareRangesReport.gs` | `compareRanges:vN:` | `v4` |
 | `MissedCallsReport.gs` | `missed:vN:` | `v10` |
-| `CompanyOverview.gs` | `companyOverview:vN` | `v11` |
-| `QCDReport.gs` | `qcd:vN:` | `v4` |
+| `CompanyOverview.gs` | `companyOverview:vN` | `v13` |
+| `QCDReport.gs` | `qcd:vN:` | `v5` |
 
 `Alerts.gs` holds no cached compute — preview / send always re-reads
 the source sheet for the chosen date.

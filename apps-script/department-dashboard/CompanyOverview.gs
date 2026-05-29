@@ -175,19 +175,25 @@ function getCompanyOverview() {
   // the bulk scan.  Agents on multiple rosters count in each.
   const allDepts = getAllDepartments_();
 
-  // Surface OVERVIEW_PARENT_OF misconfigurations early: if a key
-  // doesn't match any real dept header, the sub-queue silently
-  // renders as a standalone top-level tile with no warning. A
-  // Logger entry shows up in the project's execution log and is
-  // grep-able when something looks off.
-  Object.keys(OVERVIEW_PARENT_OF).forEach(function (childKey) {
+  // Merged child->parent map (OVERVIEW_PARENT_OF constant + any
+  // admin-authored Dept Config overrides, via DeptConfig.gs). Used
+  // both for the misconfig check here and the per-dept `parent` field
+  // in formatDept below.
+  const overviewParentMap = getOverviewParentMap_();
+
+  // Surface parent-map misconfigurations early: if a key doesn't
+  // match any real dept header, the sub-queue silently renders as a
+  // standalone top-level tile with no warning. A Logger entry shows
+  // up in the project's execution log and is grep-able when something
+  // looks off.
+  Object.keys(overviewParentMap).forEach(function (childKey) {
     if (allDepts.indexOf(childKey) === -1) {
       Logger.log(
-        'OVERVIEW_PARENT_OF: key "%s" -> parent "%s" does not match any '
+        'Overview parent map: key "%s" -> parent "%s" does not match any '
         + 'DO NOT EDIT! column header. The sub-queue nesting will not apply '
         + '(the dept either does not exist or is named differently in the '
         + 'roster sheet).',
-        childKey, OVERVIEW_PARENT_OF[childKey]
+        childKey, overviewParentMap[childKey]
       );
     }
   });
@@ -344,7 +350,7 @@ function getCompanyOverview() {
     });
     return {
       name: d,
-      parent: OVERVIEW_PARENT_OF[d] || null,
+      parent: overviewParentMap[d] || null,
       activeAgents: Object.keys(ld.activeAgents).length,
       // "Recently active" = anyone with any call activity in the
       // last OVERVIEW_RECENT_ACTIVE_DAYS days. Used as the
@@ -608,6 +614,18 @@ function personalizeOverview_(blob, user) {
     delete out.companyAggregate;
     delete out.pipelineFreshness;
     delete out.orphanNag;
+    // INV-48: managers see the WoW "driver" (a named individual agent +
+    // delta) only for their OWN dept; admins see drivers for all depts.
+    // The dept aggregate tiles stay cross-dept-visible by design, but the
+    // per-agent attribution is stripped from other depts' tiles so a
+    // manager can't see which named individual drove another team's shift.
+    if (Array.isArray(out.depts)) {
+      out.depts.forEach(function (d) {
+        if (d && d.wow && d.wow.driver && d.name !== user.department) {
+          delete d.wow.driver;
+        }
+      });
+    }
   }
   out.viewerRole = user.role;
   out.viewerDept = user.department || null;
@@ -770,9 +788,9 @@ function computeQcdSnapshots_(allDepts, sinceIso, ssTZ) {
     // in a separate per-dept aggregation pass.
     const queueToDept = {};
     allDepts.forEach(function (d) {
-      const queues = (typeof DEPT_QCD_QUEUES !== 'undefined') && DEPT_QCD_QUEUES[d];
-      if (!Array.isArray(queues)) return;
-      queues.forEach(function (q) {
+      // Effective queue list (Dept Config sheet overriding the
+      // DEPT_QCD_QUEUES constant; see DeptConfig.gs).
+      getDeptQcdQueues_(d).forEach(function (q) {
         if (!queueToDept[q]) queueToDept[q] = d;
       });
     });
@@ -785,8 +803,8 @@ function computeQcdSnapshots_(allDepts, sinceIso, ssTZ) {
                        ? queuesForDept_(d) : [];
       // Only track depts whose expansion adds queues beyond their
       // direct mapping (i.e. depts with children).
-      const direct = (typeof DEPT_QCD_QUEUES !== 'undefined') && DEPT_QCD_QUEUES[d];
-      if (Array.isArray(direct) && expanded.length > direct.length) {
+      const direct = getDeptQcdQueues_(d);
+      if (expanded.length > direct.length) {
         parentDeptQueues[d] = expanded;
       }
     });

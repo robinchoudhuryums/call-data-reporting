@@ -44,8 +44,31 @@ cd apps-script/cdr-report  && clasp push -f
 cd apps-script/cdr-import  && clasp push -f
 cd apps-script/dqe-report  && clasp push -f   # frozen — cleanup deploys only
 
-# No tests. Verification is manual deploy + smoke-test against
-# Regression Scenarios in the Cycle Workflow Config below.
+# INV-16 guard: verify the duplicated files (neonWrite.js,
+# buildDQEHistoricalData.js) are byte-identical across cdr-report/
+# and cdr-import/. Non-zero exit on drift. Also runs automatically
+# as a non-blocking SessionStart hook (.claude/settings.json).
+bash scripts/check-duplicated-files.sh
+
+# Unit tests (regression harness, Phases 1-4). Zero deps -- Node's
+# built-in test runner loads the real .gs/.js files into a vm with
+# mocked Apps Script globals (dashboard + the sibling cdr-report /
+# cdr-import projects). Non-zero exit on failure. Covers: pure logic
+# (date/duration parsing INV-02/03, hashAgents_ INV-36, Util, the
+# INV-54 Dept Config accessors); the aggregator computeSummary_
+# (INV-02/04/05/23/53, S35, E5); the report builders (IR weighted ATT
+# INV-25, PR prior-period INV-28, CR length-mismatch INV-35, INV-53);
+# pipeline canonicalization (loadRosterCanonicalNames_ INV-24/46,
+# INV-16 cross-project); and the end-to-end buildDQEHistoricalData
+# build (INV-07/08/20/21). See tests/README.md for design + how to add
+# tests + the remaining gaps (INV-29 trend, Pass-4 sentinel rows,
+# neonWrite JDBC).
+node --test          # from repo root (or: npm test)
+
+# Still manual (NOT unit-covered): the INV-29 monthly-trend alignment,
+# the Pass-4 queue-only sentinel rows, and the Neon mirror writers --
+# verify those via deploy + smoke-test against the Regression Scenarios
+# in the Cycle Workflow Config below.
 ```
 
 ## Common Gotchas
@@ -60,19 +83,24 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
 - **`clasp push -f` does NOT delete remote files** that are absent locally.
   Removing files from an Apps Script project requires manual deletion in
   the web editor.
-- **Public write paths are admin-only.** Two public functions write
-  to the spreadsheet: `OrphanFix.gs` (alias + rename writes) and
-  `setup()` in `Setup.gs` (sheet creation). Both are admin-gated
-  via `assertAdmin_()`. Every other public-callable function is
-  read-only; helpers that touch spreadsheet state end in `_` so
-  Apps Script blocks them from RPC. Belt-and-suspenders against the
-  "Execute as: Me" model letting any visitor reach through Robin's
-  permissions. The `OrphanFix.gs` carve-out additionally has
-  input-validation (no queue-sentinel names, length cap,
-  must-be-on-some-roster for the canonical destination),
-  `LockService` serialization, and `Orphan Fix Log` audit trail.
-  **Do not add new public write functions without `assertAdmin_()`
-  at minimum; data-mutation paths need all four mitigations.**
+- **Public write paths are admin-only.** Three public surfaces write
+  to the spreadsheet: `OrphanFix.gs` (alias + rename writes),
+  `setup()` in `Setup.gs` (sheet creation), and `DeptConfig.gs`
+  (`saveDeptConfig` / `removeDeptConfig` -- config-sheet writes,
+  INV-54). All are admin-gated via `assertAdmin_()`. Every other
+  public-callable function is read-only; helpers that touch
+  spreadsheet state end in `_` so Apps Script blocks them from RPC.
+  Belt-and-suspenders against the "Execute as: Me" model letting any
+  visitor reach through Robin's permissions. The `OrphanFix.gs`
+  carve-out (a data-mutation path) additionally has input-validation
+  (no queue-sentinel names, length cap, must-be-on-some-roster for
+  the canonical destination), `LockService` serialization, and
+  `Orphan Fix Log` audit trail. `DeptConfig.gs` is a config (not
+  data-mutation) path: `assertAdmin_()` + save-time validation +
+  `LockService` + an Updated By/At stamp on the row. **Do not add
+  new public write functions without `assertAdmin_()` at minimum;
+  data-mutation paths need all four mitigations; config/creation
+  paths need at least the admin gate.**
 - **Roster cells embed extensions**: `DO NOT EDIT!` cells follow
   `"Name, ext1, ext2"`. Take everything before the first comma as the name;
   digit-only tokens after are queue extensions.
@@ -83,9 +111,14 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
 - **Pipeline canonicalizes paren variants via the roster.**
   `buildDQEHistoricalData` reads `DO NOT EDIT!` at the start of every
   build; if an incoming CDR row's agent name's paren-stripped form
-  matches exactly one roster entry, the pipeline rewrites it to the
-  canonical roster form (so "Roman Robin Paulose" becomes
-  "Roman (Robin) Paulose"). Ambiguous (>1 match) and unknown (0
+  matches exactly one roster entry's paren-stripped form, the pipeline
+  rewrites it to the canonical roster form. The comparison strips the
+  PARENTHETICAL (parens + contents), so a name differing only in that
+  parenthetical canonicalizes -- incoming "Roman Paulose" OR
+  "Roman (Bob) Paulose" both strip to "Roman Paulose" and become
+  "Roman (Robin) Paulose" (the roster form). A name with an EXTRA word
+  like "Roman Robin Paulose" does NOT match -- it strips to itself, not
+  "Roman Paulose". Ambiguous (>1 match) and unknown (0
   matches) names are written as-is. Soft coupling: the pipeline now
   depends on the dashboard's roster sheet schema — see
   `loadRosterCanonicalNames_` in the pipeline. Admin-curated
@@ -102,12 +135,31 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
 - **`TEAM_AVG_EXCLUDES` in `Config.gs`** lists per-dept agent names to
   subtract from BOTH numerator and denominator of the Individual
   Report's team-average. Used for managers who are on the roster but
-  take only a token number of calls (currently
+  take only a token number of calls (default seed
   `'CSR': ['Robin Choudhury']`). Match is exact on the roster name.
-  Since Phase E (commit 94bbca9), the Individual Report renders an
+  Read the effective list via `getTeamAvgExcludes_(dept)`
+  (DeptConfig.gs) -- the constant is now the seed default beneath the
+  admin-authored `Dept Config` sheet (INV-54), which can override it
+  per dept without a redeploy. Since Phase E (commit 94bbca9), the Individual Report renders an
   "EXCLUDED FROM TEAM AVG" pill (`.ir-excluded-pill`) next to the
   agent's name on cards where the new `excludedFromTeamAvg` field is
   true, so the exclusion is visible to managers reading the report.
+- **Per-dept config maps are sheet-overridable — read them via
+  accessors, never the constants.** `DEPT_QCD_QUEUES`,
+  `OVERVIEW_PARENT_OF`, `TEAM_AVG_EXCLUDES`, and
+  `DEPT_QUEUE_EXT_OVERRIDES` are now SEED DEFAULTS layered under the
+  admin-authored `Dept Config` sheet (INV-54). Always read through
+  `getDeptQcdQueues_` / `getOverviewParentMap_` / `getTeamAvgExcludes_`
+  / `getDeptQueueExtsOverride_` (DeptConfig.gs) so a sheet override
+  takes effect; never index the frozen constant directly in new code.
+  The accessors fall through to the constant when no Active sheet row
+  exists, so behavior is unchanged on installs that haven't re-run
+  `setup()`. Override semantics: for a dept with an Active row, each
+  NON-EMPTY field overrides that dept's constant; an EMPTY field falls
+  back. Consumers already rewired: `queuesForDept_` (QCDReport.gs),
+  `computeQcdSnapshots_` + the Overview parent map (CompanyOverview.gs),
+  the IR team-avg reads (IndividualReport.gs), `getDeptQueueExts_`
+  (Data.gs).
 - **Performance Report prior period = same duration ending one day
   before current start**, NOT "previous calendar month". A 31-day
   current window compares against the immediately-preceding 31 days.
@@ -135,7 +187,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `priorMissed` / `priorAnswered` / `priorHasData`. Agents with
   prior-only activity (no rows in the user window) are silently
   dropped -- no card exists to render a chip on. CSV export
-  bypasses `fmtCell` via `csvCellValue_` so the chip markup is
+  bypasses `fmtCell` via `exportTableCsv_` (using `csvEscape` /
+  `sourceChipCsv_`) so the chip markup is
   intentionally NOT in CSVs; raw current-window values only.
   Floaters get chips too -- the chip is a per-agent comparison,
   independent of the INV-53 team-avg floater-exclusion gate.
@@ -242,6 +295,18 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   list to a 32-char hex digest so the compound key stays bounded
   regardless of selection size. Never concatenate raw agent names
   into a cache key — always go through `hashAgents_`.
+- **CSV exports must neutralize formula injection.** Agent names
+  originate from the external CDR feed and flow into client-side
+  CSV downloads, so they're untrusted input to a spreadsheet app
+  (Excel / Sheets treat a cell starting with `= + - @` / tab / CR
+  as a formula). `script.html::csvSafeCell_` prefixes a single
+  quote on such cells while preserving legitimate signed numbers,
+  percentages, `pts`, durations (`H:MM:SS`), and thousands
+  separators (so server-computed numerics aren't mangled). All
+  three CSV escapers route through it: My Department
+  (`exportTableCsv_`'s `csvEscape`), Compare Ranges (`crBuildCsv_`
+  and `crCsvRow_`). Any new CSV cell writer must call `csvSafeCell_`
+  before the RFC-4180 quote-escaping.
 - **Chart.js v4 + chartjs-plugin-datalabels needs explicit
   registration.** v4 dropped the auto-register-on-script-tag
   behavior the plugin relied on, and the plugin itself defaults
@@ -342,12 +407,15 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   The legacy `dqe-report/DQEdashboard.js::buildTable4`
   filters with `r.callQueue === ctx.deptName` and looks like a
   reference -- it's misleading; live values don't match dashboard
-  dept headers. To filter QCD rows for a dashboard dept, look up
-  `Config.gs::DEPT_QCD_QUEUES[dept]` (admin-curated map of dept
-  name -> list of queue names). A dept not in that map renders
-  an empty QCD modal with a "No queues mapped" hint and no
-  Overview QCD chips. New depts producing QCD data require a row
-  added to `DEPT_QCD_QUEUES` before the dashboard surfaces them.
+  dept headers. To filter QCD rows for a dashboard dept, read the
+  effective queue list via `getDeptQcdQueues_(dept)` (DeptConfig.gs)
+  -- NOT the raw `Config.gs::DEPT_QCD_QUEUES[dept]` constant, which
+  is now only the seed default beneath the admin-authored `Dept
+  Config` sheet (INV-54). A dept with no effective queues renders an
+  empty QCD modal with a "No queues mapped" hint and no Overview QCD
+  chips. New depts producing QCD data require either a `Dept Config`
+  row (no redeploy, via the admin Dept Config modal) or a
+  `DEPT_QCD_QUEUES` constant entry before the dashboard surfaces them.
 - **`uniqueParentCalls` (DQE col E) is window-scoped.** Computed from
   `windowLegs` (same 6:30 AM – 3:00 PM PST work window as
   Rung/Missed/Answered). Changed from all-day scope to maintain
@@ -626,8 +694,8 @@ When something looks wrong, before assuming a code bug, check:
    Apps Script editor while logged in as an admin listed in
    `ADMIN_EMAILS` Script Property (or `ADMIN_EMAILS_FALLBACK`). It
    creates `Access Control`, `Alert Config`, `Alert Log`,
-   `Pipeline Health`, `Digest Config`, `Agent Alias Overrides`, and
-   `Orphan Fix Log` -- whichever are missing. Idempotent on re-runs
+   `Pipeline Health`, `Digest Config`, `Agent Alias Overrides`,
+   `Orphan Fix Log`, and `Dept Config` -- whichever are missing. Idempotent on re-runs
    (existing data untouched). Without re-running setup() after a
    fresh pull, downstream writers (Pipeline Health appends, Digest
    config reads, Orphan Fix log appends) silently no-op against
@@ -704,13 +772,17 @@ When something looks wrong, before assuming a code bug, check:
     falls back to `ADMIN_EMAILS_FALLBACK` in Config.gs (which
     requires a redeploy to change).
 14. QCD modal empty for a dept, OR no Overview QCD chips, OR
-    "Queue Call Data" tiles missing on My Department? Confirm
-    `Config.gs::DEPT_QCD_QUEUES[dept]` exists and lists the right
-    `A_Q_*` queue names. Open `QCD Historical Data` col D for
+    "Queue Call Data" tiles missing on My Department? Confirm the
+    dept's effective queue list (`getDeptQcdQueues_(dept)`) lists the
+    right `A_Q_*` queue names. Open `QCD Historical Data` col D for
     recent rows to see the canonical values written by the import
-    pipeline. Add or edit the row + redeploy if missing -- new
-    depts producing QCD data don't surface in the dashboard until
-    they're mapped here.
+    pipeline (the admin **Dept Config** modal auto-discovers these
+    and flags unmapped queues). Fastest fix: open the Dept Config
+    modal (admin), pick the dept, and add the queue names -- takes
+    effect on the next request, no redeploy (INV-54). Alternatively
+    add/edit the `DEPT_QCD_QUEUES` constant + redeploy. New depts
+    producing QCD data don't surface until they're mapped one of
+    these two ways.
 15. `TARGET_SS_ID` Script Property in CDR Import: must point at
     the CDR Report spreadsheet ID. Without it, `getTargetSsId_()`
     falls back to a hardcoded ID that may not match your install.
@@ -731,14 +803,28 @@ When something looks wrong, before assuming a code bug, check:
 ## Cycle Workflow Config
 
 ### Test Command
-manual
+node --test
+
+(Regression harness, Phases 1-4 -- zero-dep Node `node:test` suites
+under `tests/unit/`, run from the repo root; see `tests/README.md`.
+Covers pure logic (parsing, `hashAgents_`, Util, the INV-54 Dept
+Config accessors), the `computeSummary_` aggregator
+(INV-02/04/05/23/53, S35, E5), the IR/PR/CR report builders (INV-25
+weighted ATT, INV-28 prior-period, INV-35 length-mismatch, INV-53),
+pipeline canonicalization (INV-24/46 + INV-16 cross-project), and the
+end-to-end `buildDQEHistoricalData` build (INV-07/08/20/21 + dup
+guard). NOT yet covered: the INV-29 monthly-trend alignment, the
+Pass-4 queue-only sentinel rows, and the Neon mirror writers -- the
+manual Regression Scenarios remain the verification of record for
+those, so walk the scenarios that overlap a change in addition to
+running `node --test`.)
 
 ### Health Dimensions
 Data Accuracy (DQE), Access Control Integrity, Source Pipeline Reliability, Migration Progress, Cross-Project Consistency, Documentation Freshness, Performance & Cache Effectiveness, Error Surfacing & Observability, Manager-Facing UI Polish, Deployment Hygiene, Code Health
 
 ### Subsystems
 Department Dashboard:
-  apps-script/department-dashboard/Auth.gs, apps-script/department-dashboard/Code.gs, apps-script/department-dashboard/Config.gs, apps-script/department-dashboard/Data.gs, apps-script/department-dashboard/Diagnostics.gs, apps-script/department-dashboard/Setup.gs, apps-script/department-dashboard/Util.gs, apps-script/department-dashboard/MissedCallsReport.gs, apps-script/department-dashboard/IndividualReport.gs, apps-script/department-dashboard/PerformanceReport.gs, apps-script/department-dashboard/CompareRangesReport.gs, apps-script/department-dashboard/Alerts.gs, apps-script/department-dashboard/CompanyOverview.gs, apps-script/department-dashboard/Digest.gs, apps-script/department-dashboard/OrphanFix.gs, apps-script/department-dashboard/QCDReport.gs, apps-script/department-dashboard/access_denied.html, apps-script/department-dashboard/dashboard.html, apps-script/department-dashboard/script.html, apps-script/department-dashboard/styles.html, apps-script/department-dashboard/appsscript.json
+  apps-script/department-dashboard/Auth.gs, apps-script/department-dashboard/Code.gs, apps-script/department-dashboard/Config.gs, apps-script/department-dashboard/Data.gs, apps-script/department-dashboard/Diagnostics.gs, apps-script/department-dashboard/Setup.gs, apps-script/department-dashboard/Util.gs, apps-script/department-dashboard/MissedCallsReport.gs, apps-script/department-dashboard/IndividualReport.gs, apps-script/department-dashboard/PerformanceReport.gs, apps-script/department-dashboard/CompareRangesReport.gs, apps-script/department-dashboard/Alerts.gs, apps-script/department-dashboard/CompanyOverview.gs, apps-script/department-dashboard/Digest.gs, apps-script/department-dashboard/OrphanFix.gs, apps-script/department-dashboard/QCDReport.gs, apps-script/department-dashboard/DeptConfig.gs, apps-script/department-dashboard/access_denied.html, apps-script/department-dashboard/dashboard.html, apps-script/department-dashboard/script.html, apps-script/department-dashboard/styles.html, apps-script/department-dashboard/appsscript.json
 
 CDR DQE Pipeline:
   apps-script/cdr-report/buildDQEHistoricalData.js, apps-script/cdr-report/DQEdrilldown.js, apps-script/cdr-report/DQEDrilldownSidebar.html, apps-script/cdr-report/dataFilters.js, apps-script/cdr-report/CDR Tools menu.js, apps-script/cdr-report/appsscript.json
@@ -753,7 +839,7 @@ DQE Report Legacy:
   apps-script/dqe-report/DQEdashboard.js, apps-script/dqe-report/FAQGuide.html, apps-script/dqe-report/IndividualReport.js, apps-script/dqe-report/IndividualReportModal.html, apps-script/dqe-report/MissedCallsReport.js, apps-script/dqe-report/MissedReportModal.html, apps-script/dqe-report/MultiCompModal.html, apps-script/dqe-report/MultiComparisonTool.js, apps-script/dqe-report/SingleRangeReport.js, apps-script/dqe-report/SingleReportModal.html, apps-script/dqe-report/menu DQE Tools.js, apps-script/dqe-report/sendManualAlert.js, apps-script/dqe-report/showFAQ.js, apps-script/dqe-report/appsscript.json
 
 ### Invariant Library
-INV-01 | No public function (callable via google.script.run) writes to any spreadsheet EXCEPT admin-gated paths: `OrphanFix.gs` (`addAgentAlias`, `removeAgentAlias`, `applyOrphanRename`) and `setup()` in `Setup.gs` (sheet creation). Every other write-capable helper ends in `_` so Apps Script blocks it from RPC. Both carve-outs start with `assertAdmin_()`. The OrphanFix path additionally has input-validation (queue-sentinel names rejected, length-capped, canonical destination must be on some roster), `LockService` serialization, and `Orphan Fix Log` audit trail. New data-mutation public functions need all four mitigations; new admin-only creation/config paths need at minimum `assertAdmin_()`. | Subsystem: Department Dashboard
+INV-01 | No public function (callable via google.script.run) writes to any spreadsheet EXCEPT admin-gated paths: `OrphanFix.gs` (`addAgentAlias`, `removeAgentAlias`, `applyOrphanRename`), `setup()` in `Setup.gs` (sheet creation), and `DeptConfig.gs` (`saveDeptConfig`, `removeDeptConfig` -- config-sheet writes, INV-54). Every other write-capable helper ends in `_` so Apps Script blocks it from RPC. All carve-outs start with `assertAdmin_()`. The OrphanFix path (data-mutation) additionally has input-validation (queue-sentinel names rejected, length-capped, canonical destination must be on some roster), `LockService` serialization, and `Orphan Fix Log` audit trail. The DeptConfig path (config, not data-mutation) has `assertAdmin_()` + save-time validation + `LockService` + an Updated By/At row stamp. New data-mutation public functions need all four mitigations; new admin-only creation/config paths need at minimum `assertAdmin_()`. | Subsystem: Department Dashboard
 INV-02 | Duration columns (TTT, ATT, AvgAbdWait, CSRAvgAbdWait) are read via getDisplayValues(), not getValue(), to bypass spreadsheet-vs-script TZ mismatch. | Subsystem: Department Dashboard
 INV-03 | DO NOT EDIT! roster cells follow the format "Name, ext1, ext2, …" — name is everything before the first comma; subsequent digit-only tokens are extensions. | Subsystem: Department Dashboard
 INV-04 | Agent-name match between DQE Historical Data Col C and DO NOT EDIT! roster cells is exact (case + whitespace sensitive); no alias normalization. | Subsystem: Department Dashboard
@@ -764,11 +850,11 @@ INV-08 | TTT attribution uses each agent's own leg.talkSec on the parent call vi
 INV-09 | Cache key in Data.gs is versioned (`summary:vN:...`); bump N on any aggregation rule change to invalidate stale caches. | Subsystem: Department Dashboard
 INV-10 | HISTORICAL_COLS in department-dashboard/Config.gs must match actual column positions in DQE Historical Data (MONTH_YEAR=1, DATE=2, AGENT=3, QUEUE_EXT=4, TOTAL_UNIQUE=5, TOTAL_RUNG=6, TOTAL_MISSED=7, TOTAL_ANSWERED=8, TTT=9, ATT=10, TIME_SLOTS_START=11, TIME_SLOTS_END=29, ABANDONED_PARENT_IDS=30, ABANDONED_MISSED_TIMES=32, AVG_ABD_WAIT=33, CSR_AVG_ABD_WAIT=34). | Subsystem: Department Dashboard
 INV-11 | ROSTER constants pin DO NOT EDIT! layout: HEADER_ROW=1, DATA_START_ROW=2, DEPT_FIRST_COL=6. | Subsystem: Department Dashboard
-INV-12 | setup() in Department Dashboard is idempotent and admin-gated (`assertAdmin_()`) — creates all seven dashboard-managed sheets if missing, never overwrites existing rows. | Subsystem: Department Dashboard
+INV-12 | setup() in Department Dashboard is idempotent and admin-gated (`assertAdmin_()`) — creates all eight dashboard-managed sheets if missing, never overwrites existing rows. | Subsystem: Department Dashboard
 INV-13 | Web app deployment is "Execute as: Me" + "Anyone within domain"; deployer's spreadsheet permissions back the script. | Subsystem: Department Dashboard
 INV-14 | SPREADSHEET_ID is read from Script Properties, not hardcoded; missing property = clear error at request time. | Subsystem: Department Dashboard
 INV-15 | Per-project .clasp.json files are gitignored at any depth; scriptIds stay out of the repo. | Subsystem: operational/cross-cutting
-INV-16 | `neonWrite.js` AND `buildDQEHistoricalData.js` are duplicated between cdr-report/ and cdr-import/; both must stay byte-identical. Any change requires a two-file edit. `neonWrite.js` self-contains `parseDateForNeon`, `normalizeDuration`, and `writeCDRRowsToNeon` with its CDR field-parsing helpers (`cdrTimeToSeconds_`, `cdrHashPhone_`, `cdrLooksLikePhone_`, `cdrParseNameFieldJson_`, `cdrParsePhoneField_`) so they travel with the duplication. cdr-import calls `buildDQEHistoricalData` inline inside `processIntegratedHistory` (as the 5th historical sheet write) so DQE Historical Data refreshes alongside CDR / Q Path / QCD / CSR in a single autoImport run; cdr-report keeps its `runDailyDQEBuild_` trigger as a safety net. Pipeline Health writers: `logPipelineHealthWithFallback_` in autoImport.js (with `openById` fallback when `ss` is null); `logPipelineHealth_` in buildDQEHistoricalData.js (silently returns when `ss` is null). The distinct names avoid the prior shadowing conflict. | Subsystem: CDR Reporting Tools / CDR Import / CDR DQE Pipeline
+INV-16 | `neonWrite.js` AND `buildDQEHistoricalData.js` are duplicated between cdr-report/ and cdr-import/; both must stay byte-identical. Any change requires a two-file edit. `neonWrite.js` self-contains `parseDateForNeon`, `normalizeDuration`, and `writeCDRRowsToNeon` with its CDR field-parsing helpers (`cdrTimeToSeconds_`, `cdrHashPhone_`, `cdrLooksLikePhone_`, `cdrParseNameFieldJson_`, `cdrParsePhoneField_`) so they travel with the duplication. cdr-import calls `buildDQEHistoricalData` inline inside `processIntegratedHistory` (as the 5th historical sheet write) so DQE Historical Data refreshes alongside CDR / Q Path / QCD / CSR in a single autoImport run; cdr-report keeps its `runDailyDQEBuild_` trigger as a safety net. Pipeline Health writers: `logPipelineHealthWithFallback_` in autoImport.js (with `openById` fallback when `ss` is null); `logPipelineHealth_` in buildDQEHistoricalData.js (silently returns when `ss` is null). The distinct names avoid the prior shadowing conflict. **Enforced by `scripts/check-duplicated-files.sh`** -- diffs both duplicated pairs and exits non-zero on drift; wired as a non-blocking SessionStart hook in `.claude/settings.json`, so a drifted pair surfaces at the start of every session. | Subsystem: CDR Reporting Tools / CDR Import / CDR DQE Pipeline
 INV-17 | `clasp push -f` does NOT delete remote files absent locally; removing files from a project requires manual web-editor deletion. | Subsystem: operational/cross-cutting
 INV-18 | Missed Calls Report chart range is 8:00 AM – 5:00 PM CST in 30-minute buckets (18 total). | Subsystem: Department Dashboard
 INV-19 | DQE_EXCLUDED_AGENTS allowlist in buildDQEHistoricalData.js is the canonical source for pseudo-agent exclusions; additions go upstream, not downstream. | Subsystem: CDR DQE Pipeline
@@ -776,9 +862,9 @@ INV-20 | Time-slot columns K-AC in DQE Historical Data store CST timestamps (alr
 INV-21 | parentMap in buildDQEHistoricalData builds from rows with parentId='N/A' or ''; each parent leg's calleeName must be captured for findAgentTalkOnParent. | Subsystem: CDR DQE Pipeline
 INV-22 | DQE Report Legacy is frozen — accepts only deletions and minimal menu cleanups during migration; no new features or improvements. | Subsystem: DQE Report Legacy
 INV-23 | Queue-sentinel rows in DQE Historical Data carry queue-only abandoned data (no agent rang). Agent Name (col C) holds a queue identifier (`A_Q_*` or `Backup CSR`); col D holds the queue's extensions; K-AC, AD, AF are populated normally; cols E-J and AG/AH are 0/"0:00:00". Consumers must filter these out by agent-name pattern: the main per-agent dashboard (Data.gs) and Diagnostics (whyNoMatches_) skip them; MissedCallsReport.gs reads them specifically for the queue-only section. | Subsystem: CDR DQE Pipeline / Department Dashboard
-INV-24 | buildDQEHistoricalData canonicalizes raw CDR agent names against the DO NOT EDIT! roster on every build: if the paren-stripped form of an incoming name matches exactly one roster entry, the row is written under that roster name. Ambiguous (>1 match) or unknown (0 match) names are written as-is. Admin-curated alias overrides (INV-46) are loaded by the same `loadRosterCanonicalNames_` and take precedence over the paren-strip; the dashboard's Orphan Fix modal is the canonical writer. Soft coupling: pipeline depends on the dashboard's roster sheet schema. Edits to roster layout must keep `loadRosterCanonicalNames_` working. | Subsystem: CDR DQE Pipeline
+INV-24 | buildDQEHistoricalData canonicalizes raw CDR agent names against the DO NOT EDIT! roster on every build: it compares the incoming name's paren-stripped form against each roster entry's paren-stripped form (the strip removes the parenthetical -- parens AND contents -- via `stripParens_`), and if exactly one roster entry matches, the row is written under that roster name. So a name differing only in its parenthetical canonicalizes ("Roman Paulose" / "Roman (Bob) Paulose" -> "Roman (Robin) Paulose") but a name with an extra word ("Roman Robin Paulose") does NOT (it strips to itself). Ambiguous (>1 match) or unknown (0 match) names are written as-is. Admin-curated alias overrides (INV-46) are loaded by the same `loadRosterCanonicalNames_` and take precedence over the paren-strip; the dashboard's Orphan Fix modal is the canonical writer. Soft coupling: pipeline depends on the dashboard's roster sheet schema. Edits to roster layout must keep `loadRosterCanonicalNames_` working. | Subsystem: CDR DQE Pipeline
 INV-25 | The Individual Report and Performance Report compute ATT as weighted by Answered (`sum(att * answered) / sum(answered)`), NOT the simple-mean used by the main dashboard table (INV-05). Days with answered=0 contribute 0 to both numerator and denominator, so unanswered/abandoned days don't drag the ATT down. Intentional — matches each legacy report's source semantics. | Subsystem: Department Dashboard
-INV-26 | TEAM_AVG_EXCLUDES in Config.gs lists per-dept agent names removed from BOTH numerator and denominator of the Individual Report's team-average. Used for managers on the roster who take only a token number of calls (current entry: 'CSR': ['Robin Choudhury']). Match is exact on the roster name. Does NOT apply to the Performance Report, which treats the user's selection AS the team. Since the INV-53 expansion (commit ba26d48), the IR team-avg ALSO excludes queue-only floaters (matchedViaRoster=false) via the independent `rosterSet[agent]` gate — the two exclusion mechanisms compose, so an agent excluded by EITHER doesn't factor in. INV-53 documents the floater path. | Subsystem: Department Dashboard
+INV-26 | TEAM_AVG_EXCLUDES in Config.gs lists per-dept agent names removed from BOTH numerator and denominator of the Individual Report's team-average. Used for managers on the roster who take only a token number of calls (default seed: 'CSR': ['Robin Choudhury']; overridable per dept via the Dept Config sheet, read through `getTeamAvgExcludes_` -- INV-54). Match is exact on the roster name. Does NOT apply to the Performance Report, which treats the user's selection AS the team. Since the INV-53 expansion (commit ba26d48), the IR team-avg ALSO excludes queue-only floaters (matchedViaRoster=false) via the independent `rosterSet[agent]` gate — the two exclusion mechanisms compose, so an agent excluded by EITHER doesn't factor in. INV-53 documents the floater path. | Subsystem: Department Dashboard
 INV-27 | Individual Report's team-avg denominator counts only roster members with ANY call activity (rung/answered/missed > 0) in the selected range, NOT the full roster size. Zero-call roster members don't dilute the average. | Subsystem: Department Dashboard
 INV-28 | Performance Report's prior period is the immediately-preceding window of the same duration (durationDays before currentStart, ending one day before currentStart) -- NOT "previous calendar month". Documented in the form's inline hint and the results-header "Comparing against..." line. Match legacy SingleRangeReport semantics. | Subsystem: Department Dashboard
 INV-29 | Individual Report's monthly trend window: range itself when selected range > 366 days OR equals a full calendar year (Jan 1 - Dec 31 of one year); else `first-of-month(end - 12 months)` to `end`. Performance Report uses identical logic so the 12-mo trends align across both reports for the same dept. | Subsystem: Department Dashboard
@@ -790,7 +876,7 @@ INV-34 | `Alert Config` columns: Department \| Threshold % \| Extra Recipients \
 INV-35 | Compare Ranges flags `meta.lengthMismatch=true` when the longer of the two periods is at least 1.2x the shorter (`Math.max(p1Days,p2Days) / Math.min(...) >= 1.2`). The flag drives the form's warning hint, the results-page banner, KPI per-day captions, and CSV per-day columns. Tunable threshold in `computeCompareRanges_`. | Subsystem: Department Dashboard
 INV-36 | Cache keys that embed agent selections must hash via `Data.gs::hashAgents_` (MD5 hex, 32 chars, order-insensitive). Apps Script CacheService silently rejects keys > 250 chars; raw-joined agent lists overflow on big rosters like Sales and surface as report-generation errors. IR / PR / CR all use the hash; future report code that caches per agent-selection must follow suit. | Subsystem: Department Dashboard
 INV-37 | The dashboard is a two-page web app toggled via `body[data-page="overview"|"dept"]`. Default landing is `overview` (set inline on the body tag so the right page paints before JS runs). `setPage(name)` swaps the page, updates the header kicker+h1, and (for `overview`) triggers a fresh `getCompanyOverview()` fetch. `refresh()` only writes the dept name into `#page-title` when the dept page is active, so swapping dept on Overview doesn't clobber "Departments Snapshot". | Subsystem: Department Dashboard
-INV-38 | `OVERVIEW_PARENT_OF` (CompanyOverview.gs) defines sub-queue parent-child relationships for the Overview tile grid ONLY. The dept dropdown, all Reports modals, and Alerts treat each dept as independent. Keys must match the `DO NOT EDIT!` column header byte-for-byte; aliases (e.g. both `PAP` and `PAP Q` mapping to Sales) are tolerated. `OVERVIEW_HIDDEN_DEPTS` excludes depts from the Overview only (e.g. `CSR Backup`). | Subsystem: Department Dashboard
+INV-38 | `OVERVIEW_PARENT_OF` (CompanyOverview.gs) defines sub-queue parent-child relationships for the Overview tile grid ONLY. The dept dropdown, all Reports modals, and Alerts treat each dept as independent. Keys must match the `DO NOT EDIT!` column header byte-for-byte; aliases (e.g. both `PAP` and `PAP Q` mapping to Sales) are tolerated. The constant is the seed default; the Dept Config sheet can override a dept's parent per dept (read through `getOverviewParentMap_`, save-time validated against real dept headers + cycle check -- INV-54). `OVERVIEW_HIDDEN_DEPTS` excludes depts from the Overview only (e.g. `CSR Backup`). | Subsystem: Department Dashboard
 INV-39 | Admin-only fields in the Overview payload are stripped on serve via `personalizeOverview_`: the full blob (including all admin-only fields) is cached for everyone, but the admin-only fields (`companyAggregate`, `pipelineFreshness`, `orphanNag`) are removed before serving non-admins. `personalizeOverview_` deep-clones via JSON round-trip so any future personalize step that mutates nested fields can't leak across viewers. Viewer-personalized fields `viewerRole` and `viewerDept` are injected per-request, never cached — so a payload warmed by user A still personalizes correctly for user B. Adding a new admin-only Overview field means adding its key to the strip list inside `personalizeOverview_`. | Subsystem: Department Dashboard
 INV-40 | Overview "X of Y agents" caption denominator is `recentlyActiveCount` = any rung/answered/missed activity in the last `OVERVIEW_RECENT_ACTIVE_DAYS` (=30) days, NOT full roster size. Filters out ex-employees who are kept on the `DO NOT EDIT!` sheet for historical-data preservation. Hover tooltip exposes today-active / recent-active / full-roster numbers so the choice is transparent. Same logic powers the company aggregate's Active count. | Subsystem: Department Dashboard
 INV-41 | chartjs-plugin-datalabels requires `Chart.register(ChartDataLabels)` AND `Chart.defaults.plugins.datalabels.display = true` at module load (the `registerChartDataLabels_` IIFE in script.html does both). Chart.js v4 dropped script-tag auto-registration; the plugin defaults to display=false since v1.0.0. Per-chart `display: false` overrides still suppress labels (Missed Calls radar, Overview multi-line trend). Use the boolean form of `display` per chart — the function form returns false unpredictably on mixed bar+line charts in this plugin version. | Subsystem: Department Dashboard
@@ -800,12 +886,13 @@ INV-44 | `Pipeline Health` sheet columns: `Timestamp \| Step \| Status \| Rows \
 INV-45 | `Digest Config` sheet columns: `Email \| Department \| Cadence \| Active \| Notes`. Schema pinned in `Config.gs::DIGEST_CONFIG_HEADERS`; sheet is idempotently created by `setup()`. Cadence is `daily` (sends each weekday morning for the previous day's data; weekends skipped) or `weekly` (sends Monday 8 AM for the prior Mon-Fri window). `Digest.gs` is the engine; every public callable (`getDigestsInit`, `sendPreviewDigest`, `installDigestTriggers`, `uninstallDigestTriggers`) starts with `assertAdmin_`. Trigger entry points (`runDailyDigests_`, `runWeeklyDigests_`) end in `_` so `google.script.run` can't reach them but ScriptApp dispatch still calls them by name. Trigger lifecycle is managed via the Alerts modal's "Manager Digest Subscribers" section. | Subsystem: Department Dashboard
 INV-46 | `Agent Alias Overrides` sheet columns: `Old Name \| Canonical Name \| Active \| Added By \| Added At \| Notes`. Schema pinned in `Config.gs::AGENT_ALIAS_OVERRIDES_HEADERS`; sheet is idempotently created by `setup()`. Soft-coupling across two Apps Script projects: the dashboard's `OrphanFix.gs` writes rows here; the CDR Report project's `buildDQEHistoricalData.js::loadRosterCanonicalNames_` reads them on every build and folds them into the canonicalization map. The pipeline-side check is best-effort (missing/empty sheet leaves the build's behavior unchanged) so an unsynced cdr-report deploy doesn't break the dashboard's UI. Aliases with `Active=FALSE` are skipped by the pipeline. | Subsystem: Department Dashboard + CDR DQE Pipeline
 INV-47 | `Orphan Fix Log` sheet columns: `Timestamp \| Admin \| Action \| From Name \| To Name \| Affected Rows \| Notes`. Schema pinned in `Config.gs::ORPHAN_FIX_LOG_HEADERS`; sheet is idempotently created by `setup()`. Append-only; never overwritten. `OrphanFix.gs::appendOrphanFixLog_` writes one row per action. Action values: `alias-add`, `alias-remove`, `rename`, `rename+alias`. Affected Rows is the count of DQE Historical Data rows modified by a `rename` (0 for alias-only actions). | Subsystem: Department Dashboard
-INV-48 | `dept.wow.driver` on the Overview payload ("what changed" insight) is attached only when `|dept.wow.deltaPct| >= WOW_DRIVER_THRESHOLD` (= 1.5 pts). The driver is the per-agent net answered/missed change that most explains the dept's WoW shift, picked by `computeWowDriver_` in CompanyOverview.gs. Requires at least 3 events in either week-window to avoid one-call outliers; positive WoW surfaces the biggest answered-delta, negative WoW surfaces the biggest missed-delta. `dept.wow.driver` may be null for low-activity / quiet-week depts; the client (`ovBuildWowDriver_`) renders nothing in that case. Per-dept (not admin-only) -- managers see drivers for their own dept; admins see them for all depts. | Subsystem: Department Dashboard
+INV-48 | `dept.wow.driver` on the Overview payload ("what changed" insight) is attached only when `|dept.wow.deltaPct| >= WOW_DRIVER_THRESHOLD` (= 1.5 pts). The driver is the per-agent net answered/missed change that most explains the dept's WoW shift, picked by `computeWowDriver_` in CompanyOverview.gs. Requires at least 3 events in either week-window to avoid one-call outliers; positive WoW surfaces the biggest answered-delta, negative WoW surfaces the biggest missed-delta. `dept.wow.driver` may be null for low-activity / quiet-week depts; the client (`ovBuildWowDriver_`) renders nothing in that case. Per-dept (not admin-only) -- managers see drivers for their own dept; admins see them for all depts. Enforced server-side in `personalizeOverview_` (since commit b89d061): for non-admins, `dept.wow.driver` is deleted on every tile where `dept.name !== user.department`. The strip runs post-cache on a JSON-cloned payload, so the shared cache blob isn't mutated and no `companyOverview:` version bump is needed. **Also surfaced in the manager digest (#11):** `Digest.gs::computeDigestWowDriver_(dept, anchorIso)` builds the same `{trendByDate, agentTrendByDate}` stats over a 14-day window ending on the digest window's end date and reuses `computeWowDelta_` / `computeWowDriver_` verbatim (same threshold + scoring), so the digest email renders a "What changed · WoW" callout (`digestWowNarrative_`) below the KPI tiles. The digest path is roster-scoped (INV-53) + sentinel-skipping (INV-23) and best-effort (null on a quiet dept / any error -> no callout). | Subsystem: Department Dashboard
 INV-49 | `getIndividualReport` accepts optional `priorFrom`/`priorTo` for same-agent vs-self comparison. When supplied, every `summaryData[i]` carries `priorStats` (formatted) + `priorRaw` (numeric); `priorDateLabel` is set at the top level. Absence = legacy shape (`priorStats: null`). The cache key (`individual:v8`) adds a `priorKey` segment (`priorFrom..priorTo` or `none`) so the prior window is part of the cache identity. Client form (`ir-compare-mode` select) supports None / Same window one year prior / Immediately-preceding period / Custom prior range; resolved via `irResolvePriorRange_`. The same prior dates are re-applied automatically when the user re-runs from the edit-popover. | Subsystem: Department Dashboard
 INV-50 | `QCD Historical Data` columns (1-indexed): `Month Year \| Week \| Date \| Call Queue \| Call Source \| Total Calls \| Total Answered \| Abandoned \| Longest Wait \| Avg Answer \| Abandoned % \| Violations`. Pinned in `Config.gs::QCD_HISTORICAL_COLS`. Writer: `apps-script/cdr-import/autoImport.js::processIntegratedHistory` QCD block. Reader: `apps-script/department-dashboard/QCDReport.gs` (dept-scoped report) + `CompanyOverview.gs::computeQcdSnapshots_` (per-dept latest-day snapshot on the Overview tile grid) + `Data.gs::computeDeptQcdSnapshot_` (per-dept latest-day snapshot for My Department's "Queue Call Data" tiles). **`Call Queue` carries raw queue names like `A_Q_CustomerSuccess` / `A_Q_Sales` / `Backup CSR` -- NOT dashboard dept names; canonical spellings vary per install.** To map a dept to its set of queue names, use `Config.gs::DEPT_QCD_QUEUES` (admin-curated). `Call Source` is one of `Total Calls` (daily roll-up; the only source the dashboard sums to avoid double-counting) plus sub-source breakdowns like `CSR` / `Ad-campaign` / `New Call Menu` / `Non-CSR (internal)` that the dashboard skips. `Violations` is the count of (source, day) tuples where Abandoned % > 5%. | Subsystem: Department Dashboard + CDR Import
 INV-51 | `QCD Report` is per-dept gated like Individual / Performance / Compare Ranges -- managers see their own dept, admins pick any. **Parent depts auto-include sub-queue queues** via `queuesForDept_` (Sales+PAP, Power+PAK, CSR+Spanish per `OVERVIEW_PARENT_OF`); all three QCD readers (modal, Overview snapshot, My Department snapshot) use the same helper so rollups stay consistent. `getQcdReport({ department, from, to })` returns `meta` (with `queues` + `unmapped` flags), `dateLabel`, `totals` (sum across expanded queue list; `totals.violations` is MONTH-TO-DATE across the dept's queues, not selected-range sum), `queueBreakdown` (per-queue rows with `violationDates` array for expandable detail), `trendData` (12-month monthly buckets with `perQueue` keyed by queue name), `dailySeries` (per-day rollup across dept queues), and `perQueue` (per-queue daily + monthly arrays for multi-line charts). Cache prefix `qcd:v5`. The QCD Report form defaults to "Yesterday" preset. For depts with 2+ queues, the chart renders one line per queue (color-coded) plus a dashed "Dept total" line. Single-day ranges hide the Daily chart view. Per-queue breakdown rows are clickable when violations > 0 to expand and show violation dates. Color-coding: violations cells use light-warn (1-3) / strong-warn (>3); abandoned % >= 5% is warn-tinted in both breakdown and daily tables. **The Overview page's per-dept tile shows per-queue QCD data for multi-queue depts** (each queue gets abandoned %, abandoned count if >0, violations if >0 with color-coding); single-queue depts show dept-level chips. "X viol MTD" chip renders when month-to-date violations > 0. My Department page's agent table is PRECEDED by a "Queue Call Data — [date]" tile row (showing the actual data date, not "yesterday") sourced from `Data.gs::computeDeptQcdSnapshot_`. All QCD UI surfaces are visible to everyone (no admin gate); per-dept gating is on the dropdown only. | Subsystem: Department Dashboard
 INV-52 | `CDR Historical Data` columns (1-indexed): `Month Year \| Week \| Date \| Dept \| Name \| C..W` (22 metric cols). `Q Path Historical Data` columns: `Month Year \| Week \| Date \| Dept \| Path \| Total \| VM \| NonVM \| Opt1 \| NonOpt1 \| Pct`. `CSR Transfer Historical Data` columns: `Month Year \| Week \| Date \| Agent \| Trans % \| Total Calls \| Transferred \| + 11 per-queue cols`. Writers: `apps-script/cdr-import/autoImport.js::processIntegratedHistory`; each block emits a separate `processIntegratedHistory:CDR` / `:QPath` / `:CSR` row to Pipeline Health (INV-44). NOT consumed by the dashboard today -- the read path lives in the legacy DQE Report Apps Script. CDR rows are now **mirrored to Neon** (`call_history_dept` + `call_history_phones`) inline during `processIntegratedHistory`, following the same best-effort pattern as DQE and QCD. Requires `HMAC_SECRET` for phone-hash JSONB fields; degrades gracefully without it (main metric columns still write). | Subsystem: CDR Import (writer) / DQE Report Legacy (reader) |
 INV-53 | **Queue-only floaters are excluded from dept-level totals and team-averages across all dashboard reports.** A "floater" is an agent matched into a dept's view via shared-queue extension overlap (`matchedViaQueue=true`) but NOT on the dept's roster (`matchedViaRoster=false`). Established by Phase D (commit d631719) for `Data.gs::computeSummary_` (My Department agent table) -- totals are computed by filtering `rows` to `matchedViaRoster=true` before summing/averaging; the response carries `rosterAgentCount` + `queueOnlyAgentCount` so the client can render a "Total (roster only · N floaters excluded)" tfoot caption when floaters are visible. Each row carries a `sourceHomes` array listing every other dept's roster the floater appears on (built lazily by `buildDeptsByAgent_`); the client Source column chip renders `QUEUE · <homes>` or bare `QUEUE` when the floater is on no roster. **Floater-aware aggregation extended to the three agent-level reports in commit ba26d48** (Phase D+1): Individual Report's team-avg accumulator is naturally floater-free via its existing `rosterSet[agent] && !excludedAgents[agent]` gate; Performance Report's `teamCurr`/`teamPrev`/`monthlyTeam` and Compare Ranges' `teamP1`/`teamP2` gained explicit `matchedViaRoster` gating. Per-row response on all three reports now carries `matchedViaRoster` / `matchedViaQueue` / `sourceHomes` (mirrors the Phase D My Department shape). Floaters render with the QUEUE chip on their summary cards but contribute zero to team-avg denominators. See the "INV-53 expansion to IR/PR/CR" Common Gotchas bullet for picker behavior + security model. The legacy scope toggle (`roster | queue | both`) was retired in the redesign cleanup (commit 53d0560); both public RPCs now lock scope to `both`, but the floater-exclusion contract is independent of scope so historical scope=`roster` behavior is reproducible by reading only `matchedViaRoster=true` rows from the response. | Subsystem: Department Dashboard
+INV-54 | `Dept Config` sheet columns: `Department | QCD Queues | Overview Parent | Team Avg Excludes | Queue Ext Overrides | Active | Updated By | Updated At | Notes`. Pinned in `Config.gs::DEPT_CONFIG_HEADERS`; idempotently created by `setup()`. Admin-authored, no-redeploy overrides for the per-dept maps `DEPT_QCD_QUEUES`, `OVERVIEW_PARENT_OF`, `TEAM_AVG_EXCLUDES`, and `DEPT_QUEUE_EXT_OVERRIDES`. Read via the accessors `getDeptQcdQueues_` / `getOverviewParentMap_` / `getTeamAvgExcludes_` / `getDeptQueueExtsOverride_` in `DeptConfig.gs`, which layer the sheet OVER the frozen constants: for a dept with an Active row, each NON-EMPTY field overrides that dept's constant; an EMPTY field falls back to the constant; an absent/missing sheet ⇒ pure constant behavior (so pre-`setup()` installs are byte-identical to pre-feature -- the regression-safety guarantee). A per-execution memo (`DEPT_CONFIG_ROWS_MEMO_`) keeps it to one sheet read per request. Written ONLY by `saveDeptConfig` / `removeDeptConfig` (both `assertAdmin_`-gated -- a config write path per INV-01, not a DQE data-mutation path; each adds `LockService` + save-time validation + an Updated By/At row stamp; `removeDeptConfig` soft-deactivates via Active=FALSE). Save validation rejects: unknown QCD queue names (must appear in QCD Historical Data col D within the 180-day scan OR in the dept's constant), non-dept / cyclic Overview parents, off-roster team-avg excludes, and non-digit queue-ext overrides. `getDeptConfigInit` also auto-discovers queue names from QCD col D and flags unmapped ones (unmapped-first, busiest-first). Consumers rewired to the accessors: `queuesForDept_` (QCDReport.gs), `computeQcdSnapshots_` + the Overview parent map (CompanyOverview.gs), the IR team-avg reads (IndividualReport.gs), `getDeptQueueExts_` (Data.gs). No INV-30 cache-version bump was needed -- the no-sheet output is byte-identical; a save busts `COMPANY_OVERVIEW_CACHE_KEY` and the per-(dept,range) report caches TTL out within 5 min. Admin-only client surface: the `Dept Config` header tab (`data-admin-only`) + modal, route `#/admin/dept-config`. | Subsystem: Department Dashboard
 
 ### Policy Configuration
 Policy threshold: 6/10
@@ -901,9 +988,9 @@ S14 | Performance Report current vs prior deltas | Subsystem: Department Dashboa
 
 S15 | Pipeline canonicalizes paren-variant agent names | Subsystem: CDR DQE Pipeline
   Steps:
-    - In Raw Data, ensure a leg exists with calleeName "Roman Robin Paulose" (no parens) on a date where the roster has "Roman (Robin) Paulose".
+    - In Raw Data, ensure a leg exists with calleeName "Roman Paulose" (parenthetical dropped) on a date where the roster has "Roman (Robin) Paulose" (and no bare "Roman Paulose" roster entry, so the match is unambiguous).
     - Run buildDQEHistoricalData for that day.
-  Expected: the resulting DQE Historical Data row's Agent Name (col C) is "Roman (Robin) Paulose" -- consolidated under the canonical form. No duplicate rows for the same person on the same day.
+  Expected: the resulting DQE Historical Data row's Agent Name (col C) is "Roman (Robin) Paulose" -- consolidated under the canonical form (both names strip to "Roman Paulose", a single roster match). No duplicate rows for the same person on the same day. NOTE: an incoming "Roman Robin Paulose" (extra word) would NOT canonicalize -- it strips to itself, not "Roman Paulose" -- and is written as-is.
 
 S16 | Export menu captures all chart tabs | Subsystem: Department Dashboard
   Steps:
@@ -948,7 +1035,7 @@ S22 | setup() creates all dashboard-managed sheets idempotently | Subsystem: Dep
   Steps:
     - In a fresh spreadsheet without any of those sheets, run setup() once.
     - Run setup() again.
-  Expected: first run creates Access Control + Alert Config + Alert Log + Pipeline Health + Digest Config + Agent Alias Overrides + Orphan Fix Log (each with their header row + frozen first row); second run logs "already exists, skipping" for all seven -- no data overwritten on either run. New columns added in a later code change to an existing sheet are NOT applied by setup() -- the sheet's existence short-circuits ensureSheet_.
+  Expected: first run creates Access Control + Alert Config + Alert Log + Pipeline Health + Digest Config + Agent Alias Overrides + Orphan Fix Log + Dept Config (each with their header row + frozen first row); second run logs "already exists, skipping" for all eight -- no data overwritten on either run. New columns added in a later code change to an existing sheet are NOT applied by setup() -- the sheet's existence short-circuits ensureSheet_.
 
 S23 | Overview is the default landing + tile click routes admins | Subsystem: Department Dashboard
   Steps:
@@ -999,7 +1086,7 @@ S29 | Manager Digest install + preview flow | Subsystem: Department Dashboard
     - In the Apps Script editor's Triggers panel, confirm both `runDailyDigests_` and `runWeeklyDigests_` are present.
     - From the browser console: `google.script.run.withSuccessHandler(console.log).sendPreviewDigest({ department: 'CSR', cadence: 'daily', email: 'someone@universalmedsupply.com' })`.
     - Click Uninstall digest triggers; confirm both triggers removed.
-  Expected: install/uninstall succeed; preview digest arrives in the admin's inbox (not the supplied `email`, which is shown only as "what would the subscriber see"); preview email body has a yellow "Preview only" banner.
+  Expected: install/uninstall succeed; preview digest arrives in the admin's inbox (not the supplied `email`, which is shown only as "what would the subscriber see"); preview email body has a yellow "Preview only" banner. Since #11, when the dept has a notable week-over-week answer-rate shift (`|deltaPct| >= 1.5` pts over the 7 days ending the digest window vs the prior 7), the email also renders a "What changed · WoW" callout below the KPI tiles naming the driving agent (sage for a gain, amber for a drop); a quiet dept renders no callout (best-effort, INV-48).
 
 S30 | Header freshness pill renders and goes stale | Subsystem: Department Dashboard
   Steps:
@@ -1058,6 +1145,22 @@ S35 | Phase D totals parity (roster-only floater exclusion) | Subsystem: Departm
     - AFTER deploy: open the same dept + date range with default settings (scope=Both — the new default). The agent table will now include queue-only floaters with `QUEUE` chips; the tfoot caption will read "Total (roster only · N floaters excluded)".
     - Compare the post-deploy totals values to the pre-deploy screenshot.
   Expected: every totals cell matches the pre-deploy `scope=Roster` numbers to the digit. Rationale: the new totals filter to `matchedViaRoster=true` only, which is precisely the set the pre-Phase-D `scope=Roster` view summed. Floaters render as new rows but contribute zero to the totals. If the totals DON'T match, the rosterRows filter has regressed -- roll back the Phase D commit and investigate before re-shipping. This is a one-time validation but the scenario stays as a permanent reference for the floater-exclusion contract (see INV-53).
+
+S36 | Dept Config modal: auto-discovery, validation, override round-trip | Subsystem: Department Dashboard
+  Steps:
+    - PREREQ: deploy the Dept Config commit (`clasp push -f` + new deployment version) AND re-run `setup()` as an admin so the `Dept Config` sheet exists (INV-54). Until both are done the feature is dormant and accessors fall through to the constants (so behavior is unchanged -- this is the regression-safety guarantee).
+    - As an admin, open the dashboard. Confirm the "Dept Config" tab appears in the header nav (admin-only; hidden for managers). As a non-admin manager, confirm the tab is NOT visible, and in the browser console `google.script.run.withFailureHandler(console.error).getDeptConfigInit()` throws "Alerts are admin-only." (the assertAdmin_ guard, shared message).
+    - Click the tab. The modal loads: a "Discovered queues" table lists distinct `Call Queue` values from QCD Historical Data (last 180 days), unmapped queues sorted first with an "unmapped" chip + an "N unmapped" badge on the section title; a "Per-department config" table shows every dept's EFFECTIVE qcdQueues / overviewParent / teamAvgExcludes / queueExtOverrides with a Source chip ("sheet" if an Active row exists, "default" if from the constant).
+    - Click Edit on a dept. The edit form pre-fills from the effective values. Negative tests (each should fail server-side with a clear message, status flips to error, no row written):
+        (a) QCD queue typo (a name not in QCD col D and not in the dept's constant) -> "Unknown QCD queue name(s): ... Queues seen in the last 180 days: ...".
+        (b) Overview parent = a non-dept string -> "... is not a department ...".
+        (c) Overview parent that forms a cycle (e.g. set A's parent to B when B's parent is already A) -> "... would create a nesting cycle.".
+        (d) Team-avg exclude not on the dept roster -> "... not on the <dept> roster ...".
+        (e) Queue ext override with a non-digit token -> "... must be digits only ...".
+    - Positive: set a valid QCD queue (one shown in the discovered list), Save. Status flips to success; toast appears; the modal reloads; the dept's Source chip flips to "sheet"; the discovered queue's "Mapped to" now shows the dept; the unmapped count drops by one.
+    - Re-open the QCD report for that dept -> the newly-mapped queue's rows now appear (after the qcd:v5 cache TTLs out, <= 5 min). Re-open Overview -> a sub-queue mapping change is reflected immediately (the COMPANY_OVERVIEW_CACHE_KEY is busted on save).
+    - Click Edit on the same dept, click "Deactivate override". Confirm prompt; the row's Active flips to FALSE; on reload the dept reverts to the "default" Source (constant behavior). The Deactivate button is hidden for depts with no existing sheet row.
+  Expected: all five negative tests reject with the documented messages and write nothing; the positive save + deactivate round-trips through the `Dept Config` sheet; effective table + discovery reflect changes on reload; no redeploy required for any edit; cross-dept/non-admin access is refused at the server boundary. The four accessors (getDeptQcdQueues_ / getOverviewParentMap_ / getTeamAvgExcludes_ / getDeptQueueExtsOverride_) layer the sheet over the constants with "non-empty overrides, empty falls back" semantics (INV-54).
 
 ### Frozen Subsystems
 - DQE Report Legacy — manager-facing reports in `apps-script/dqe-report/`. Frozen because migration to Department Dashboard is complete: Individual Report, Performance Report, Compare Ranges, Missed Calls Report, and Low Answer Rate Alerts all live in the dashboard. Replacement: Department Dashboard. Awaiting decommission of the legacy spreadsheet. Unfreeze only if a bug is found in legacy that affects production decisions before the spreadsheet is retired.
