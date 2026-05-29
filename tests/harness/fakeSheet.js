@@ -13,25 +13,34 @@
  * requested width so positional reads never see `undefined`.
  */
 
+function sliceGrid(grid, startRow, startCol, numRows, numCols) {
+  const out = [];
+  for (let r = 0; r < numRows; r++) {
+    const srcRow = grid[startRow - 1 + r] || [];
+    const row = [];
+    for (let c = 0; c < numCols; c++) {
+      const v = srcRow[startCol - 1 + c];
+      row.push(v === undefined ? '' : v);
+    }
+    out.push(row);
+  }
+  return out;
+}
+
 function makeFakeRange(sheet, startRow, startCol, numRows, numCols) {
   return {
     getValues: function () {
-      const out = [];
-      for (let r = 0; r < numRows; r++) {
-        const srcRow = sheet._data[startRow - 1 + r] || [];
-        const row = [];
-        for (let c = 0; c < numCols; c++) {
-          const v = srcRow[startCol - 1 + c];
-          row.push(v === undefined ? '' : v);
-        }
-        out.push(row);
-      }
-      return out;
+      return sliceGrid(sheet._data, startRow, startCol, numRows, numCols);
     },
     getDisplayValues: function () {
       // Honor an explicit display grid if the fixture supplied one
-      // (needed to model the TZ-offset duration columns, INV-02);
-      // otherwise stringify the underlying values.
+      // (needed to model the TZ-offset duration columns, INV-02 --
+      // where getValue() returns a TZ-shifted Date but getDisplayValue()
+      // returns the correct "H:MM:SS" string); otherwise stringify the
+      // underlying values.
+      if (sheet._displays) {
+        return sliceGrid(sheet._displays, startRow, startCol, numRows, numCols);
+      }
       return this.getValues().map(function (row) {
         return row.map(function (v) { return v === '' ? '' : String(v); });
       });
@@ -49,9 +58,20 @@ function makeFakeRange(sheet, startRow, startCol, numRows, numCols) {
   };
 }
 
+/**
+ * `data` is either a 2-D values grid (display = stringified values) or
+ * `{ values: [[...]], displays: [[...]] }` to model the duration
+ * columns whose getValue() ≠ getDisplayValue() (INV-02). Both grids
+ * include the header row at index 0.
+ */
 function makeFakeSheet(name, data) {
+  const hasDisplays = data && !Array.isArray(data) && data.values;
+  const values = hasDisplays ? data.values : (data || []);
   const sheet = {
-    _data: (data || []).map(function (row) { return row.slice(); }),
+    _data: values.map(function (row) { return row.slice(); }),
+    _displays: hasDisplays && data.displays
+      ? data.displays.map(function (row) { return row.slice(); })
+      : null,
     getName: function () { return name; },
     getLastRow: function () { return this._data.length; },
     getLastColumn: function () {

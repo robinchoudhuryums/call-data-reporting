@@ -33,14 +33,19 @@ deploy. It is **not** a full Apps Script emulator — see Limitations.
 tests/
   harness/
     formatDate.js   Intl-based shim for Utilities.formatDate (IANA-tz aware)
-    fakeSheet.js    in-memory SpreadsheetApp fakes (getRange/getValues/…)
+    fakeSheet.js    in-memory SpreadsheetApp fakes; supports a separate
+                    { values, displays } grid so duration columns can
+                    model getValue() ≠ getDisplayValue() (INV-02)
+    fixtures.js     DQE-row + DO NOT EDIT! roster grid builders
     shim.js         mock Apps Script globals + a `state` handle to drive them
     loadGas.js      loads .gs files into one vm context (shared global scope)
   unit/
-    util.test.js          Util.gs: formatting, month lists, insights, assertAdmin_
-    data-parsing.test.js  Data.gs: rowDateIso_, parseExtensions_, parseHmsDisplay_, getDeptQueueExts_
-    cache-key.test.js     Data.gs: hashAgents_ (INV-36)
-    dept-config.test.js   DeptConfig.gs: INV-54 override accessors + validators
+    util.test.js              Util.gs: formatting, month lists, insights, assertAdmin_
+    data-parsing.test.js      Data.gs: rowDateIso_, parseExtensions_, parseHmsDisplay_, getDeptQueueExts_
+    cache-key.test.js         Data.gs: hashAgents_ (INV-36)
+    dept-config.test.js       DeptConfig.gs: INV-54 override accessors + validators
+    compute-summary.test.js   Data.gs: computeSummary_ — INV-02/04/05/23/53, S35 parity, E5 prior-window
+    individual-report.test.js IndividualReport.gs: INV-25 weighted ATT, INV-53 floaters, INV-26 exclude, auth
 ```
 
 ## Writing a test
@@ -92,20 +97,28 @@ spreadsheet). See `dept-config.test.js` for the fake-spreadsheet pattern.
 
 ## Limitations (and the roadmap this Phase-1 harness leaves open)
 
-- **Pure logic only, so far.** Covered: Util formatting, date/duration
-  parsing (INV-02 root cause, the 2-digit-year pivot, serial dates),
-  `parseExtensions_` (INV-03), `hashAgents_` (INV-36), and the full
-  INV-54 Dept Config override + validation surface.
-- **Not yet covered (future phases):** the big aggregators
-  (`computeSummary_`, `buildDQEHistoricalData`, the report builders) need
-  richer sheet fixtures — including `getDisplayValues()` for the duration
-  columns (INV-02) and a roster (`DO NOT EDIT!`) fixture. The fake-sheet
-  layer already supports `getDisplayValues`/`setValues` to make that
-  possible.
-- **Regression Scenarios (CLAUDE.md) are still manual.** A later phase
-  could encode the data-shape scenarios (S5/S7 numeric spot-checks,
-  S6/S35 floater-exclusion) as fixture-backed tests; the Sonia
-  `0:15:03 / 0:03:01` values are already asserted in `util.test.js` via
-  `formatSecondsHms_`.
+- **Covered so far:**
+  - *Pure logic (Phase 1):* Util formatting, date/duration parsing
+    (INV-02 root cause, 2-digit-year pivot, serial dates),
+    `parseExtensions_` (INV-03), `hashAgents_` (INV-36), the full INV-54
+    Dept Config override + validation surface.
+  - *Aggregators (Phase 2):* `computeSummary_` (My Department table) —
+    INV-02 (display-vs-value durations), INV-04 (exact name match),
+    INV-05 (simple-mean ATT), INV-23 (sentinel skip), INV-53 (floater
+    exclusion from totals) + S35 roster/both parity, and the E5
+    prior-window deltas (summary:v8). The Individual Report —
+    INV-25 (answered-weighted ATT, the deliberate contrast to INV-05's
+    240-vs-288 case), INV-53 floater fields, INV-26 team-avg exclude via
+    a Dept Config override, and the cross-dept auth gate.
+- **Not yet covered (Phase 3):** the Performance Report (INV-28
+  prior-period deltas) and Compare Ranges (INV-35 length-mismatch);
+  the 12-month monthly-trend alignment (INV-29) shared by IR/PR; and the
+  `buildDQEHistoricalData` pipeline (INV-07/08/21/24) in the sibling
+  `cdr-report` / `cdr-import` projects (the loader currently hardcodes
+  the dashboard dir). Fixtures + the `{ values, displays }` fake-sheet
+  support are already in place to make these straightforward.
+- **Regression Scenarios (CLAUDE.md):** the floater-exclusion contract
+  (S35) and the Sonia `0:15:03 / 0:03:01` durations (S7) are now asserted
+  as unit tests; the rest remain manual deploy-time checks.
 - **No browser/DOM tests.** `script.html` client logic is out of scope
   for a Node harness.
