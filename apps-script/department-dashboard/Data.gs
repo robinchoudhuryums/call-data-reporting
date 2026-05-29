@@ -164,20 +164,14 @@ function getDepartmentSummary(req) {
     throw new Error('from must be on or before to.');
   }
 
-  // Scope: 'roster', 'queue', or 'both' (default).
-  // Phase D (commit pending) changed the default from 'roster' to
-  // 'both' so the agent table surfaces queue-only floaters by
-  // default; the scope toggle stays available for parallel-run
-  // validation but is slated for removal once the new defaults
-  // prove out. Totals row computation also changed -- queue-only
-  // agents (matchedViaQueue && !matchedViaRoster) are EXCLUDED
-  // from the totals sum so dept averages don't get diluted by
-  // floaters. See INV-30 / INV-04 / the totals comment further
-  // down in computeSummary_.
-  let scope = String((req && req.scope) || 'both').trim();
-  if (scope !== 'roster' && scope !== 'queue' && scope !== 'both') {
-    scope = 'both';
-  }
+  // Scope: locked to 'both' since the Phase D scope-toggle
+  // removal cleanup (the toggle was retained for parallel-run
+  // validation through Phases D / D+1 / E; once the 'both' default
+  // + roster-only totals semantics proved out, the user-facing
+  // toggle was retired). `computeSummary_` still accepts a scope
+  // arg because internal callers (Digest.gs) use 'roster' for the
+  // manager-digest path -- the public RPC just doesn't expose it.
+  const scope = 'both';
 
   const cache = CacheService.getScriptCache();
   // Bump the version suffix any time the aggregation rules change so
