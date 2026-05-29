@@ -55,6 +55,11 @@ function makeFakeRange(sheet, startRow, startCol, numRows, numCols) {
       }
       return this;
     },
+    // No-ops used by the cdr-report write path (formatting + sort are
+    // cosmetic; tests read values back and filter by key rather than
+    // relying on row order).
+    setNumberFormat: function () { return this; },
+    sort: function () { return this; },
   };
 }
 
@@ -72,11 +77,14 @@ function makeFakeSheet(name, data) {
     _displays: hasDisplays && data.displays
       ? data.displays.map(function (row) { return row.slice(); })
       : null,
+    _parent: null,   // set by makeFakeSpreadsheet
     getName: function () { return name; },
+    getParent: function () { return this._parent; },
     getLastRow: function () { return this._data.length; },
     getLastColumn: function () {
       return this._data.reduce(function (m, r) { return Math.max(m, r.length); }, 0);
     },
+    getMaxRows: function () { return Math.max(this._data.length, 1000); },
     getRange: function (startRow, startCol, numRows, numCols) {
       return makeFakeRange(this, startRow, startCol, numRows, numCols);
     },
@@ -93,18 +101,23 @@ function makeFakeSpreadsheet(opts) {
   opts = opts || {};
   const tz = opts.timeZone || 'America/Chicago';
   const sheetMap = {};
-  Object.keys(opts.sheets || {}).forEach(function (name) {
-    sheetMap[name] = makeFakeSheet(name, opts.sheets[name]);
-  });
-  return {
+  const ss = {
     getSpreadsheetTimeZone: function () { return tz; },
     getSheetByName: function (name) { return sheetMap[name] || null; },
     insertSheet: function (name) {
-      sheetMap[name] = makeFakeSheet(name, []);
-      return sheetMap[name];
+      const s = makeFakeSheet(name, []);
+      s._parent = this;
+      sheetMap[name] = s;
+      return s;
     },
     _sheet: function (name) { return sheetMap[name] || null; },
   };
+  Object.keys(opts.sheets || {}).forEach(function (name) {
+    const s = makeFakeSheet(name, opts.sheets[name]);
+    s._parent = ss;   // so sheet.getParent() resolves (logPipelineHealth_, buildQueueNameToExts_)
+    sheetMap[name] = s;
+  });
+  return ss;
 }
 
 module.exports = { makeFakeSpreadsheet, makeFakeSheet };

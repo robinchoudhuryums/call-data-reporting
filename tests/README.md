@@ -49,6 +49,7 @@ tests/
     performance-report.test.js PerformanceReport.gs: INV-28 prior-period window/deltas, custom prior, INV-53
     compare-ranges.test.js    CompareRangesReport.gs: INV-35 length-mismatch (incl. 1.2x boundary), P1/P2 split, INV-53
     canonicalization.test.js  cdr-report/cdr-import buildDQEHistoricalData.js: INV-24/INV-46 + INV-16 cross-project
+    pipeline-build.test.js    buildDQEHistoricalData end-to-end: INV-07 window legs, INV-08 TTT attribution, INV-20 PST→CST slots, INV-21 parentMap, dup guard
 ```
 
 To load a sibling pipeline project instead of the dashboard, pass
@@ -125,14 +126,17 @@ spreadsheet). See `dept-config.test.js` for the fake-spreadsheet pattern.
     (pipeline) — INV-24 paren-strip map + ambiguity, INV-46 alias
     overrides (active/inactive/first-wins), and an INV-16 cross-project
     behavioral equivalence check (cdr-report vs cdr-import).
-- **Not yet covered (Phase 4):** the END-TO-END `buildDQEHistoricalData`
-  build (INV-07 window legs, INV-08 TTT attribution, INV-20 PST→CST
-  slots, INV-21 parentMap) — a 628-line monolith that needs a full Raw
-  Data leg-schema fixture (the `DQE_C` column map + parent/child legs).
-  The loader's `project` option + the `{ values, displays }` fake-sheet
-  make this reachable; it's deferred purely on fixture-construction
-  effort. The 12-month monthly-trend alignment (INV-29) shared by IR/PR
-  is also still uncovered.
+  - *Pipeline end-to-end (Phase 4):* `buildDQEHistoricalData` driven
+    through a Raw Data leg fixture (`DQE_C` schema, parent + queue legs)
+    — INV-07 (only in-window legs count), INV-08/INV-21 (TTT sums the
+    agent's OWN parent-leg talk via `findAgentTalkOnParent`, not the max
+    across legs — a Bob decoy leg proves it), INV-20 (missed-slot
+    PST→CST +2h bucketing), and the same-date duplicate guard. Neon
+    mirror + failure-notify are stubbed (live in `neonWrite.js`).
+- **Not yet covered:** the 12-month monthly-trend alignment (INV-29)
+  shared by IR/PR; the Pass-4 queue-only abandoned **sentinel rows**
+  (INV-23 producer side) in `buildDQEHistoricalData`; and the Neon
+  mirror writers themselves (`neonWrite.js`, which need a JDBC shim).
 - **Regression Scenarios (CLAUDE.md):** the floater-exclusion contract
   (S35) and the Sonia `0:15:03 / 0:03:01` durations (S7) are now asserted
   as unit tests; the rest remain manual deploy-time checks.
