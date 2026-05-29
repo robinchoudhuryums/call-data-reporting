@@ -813,37 +813,56 @@ function processBatchArchive(silent = false) {
     }
   });
 
-  if (cdrBatch.length > 0      && obcHD)   obcHD.getRange(obcHD.getLastRow()     + 1, 1, cdrBatch.length,      26).setValues(cdrBatch);
-  if (qPathBatch.length > 0    && salesHD) salesHD.getRange(salesHD.getLastRow() + 1, 1, qPathBatch.length,    11).setValues(qPathBatch);
+  // The four historical sheets live on separate tabs -- Apps Script has
+  // no cross-sheet transaction, so we can't make all four appends atomic.
+  // What we CAN do is fail loudly if a write throws partway: record the
+  // partial-archive state to the audit log and re-throw BEFORE the
+  // Pending Archive clear below runs. That way the operator knows that
+  // (a) some sheets were already appended, and (b) Pending Archive was
+  // left intact, so a blind re-run would DUPLICATE the sheets that did
+  // write. (See FOLLOW-ON: idempotent append keyed on (date,type) would
+  // make a re-run safe.)
+  try {
+    if (cdrBatch.length > 0      && obcHD)   obcHD.getRange(obcHD.getLastRow()     + 1, 1, cdrBatch.length,      26).setValues(cdrBatch);
+    if (qPathBatch.length > 0    && salesHD) salesHD.getRange(salesHD.getLastRow() + 1, 1, qPathBatch.length,    11).setValues(qPathBatch);
 
-  if (qcdBatch.length > 0 && qcdHD) {
-    qcdHD.getRange(qcdHD.getLastRow() + 1, 1, qcdBatch.length, 12).setValues(qcdBatch);
+    if (qcdBatch.length > 0 && qcdHD) {
+      qcdHD.getRange(qcdHD.getLastRow() + 1, 1, qcdBatch.length, 12).setValues(qcdBatch);
 
-    // Mirror to Neon (Phase 3)
-    try {
-      var neonQcdRows = qcdBatch.map(function(r) {
-        return {
-          monthYear:     r[0],
-          week:          r[1],
-          callDate:      r[2],
-          callQueue:     r[3],
-          callSource:    r[4],
-          totalCalls:    r[5],
-          totalAnswered: r[6],
-          abandoned:     r[7],
-          longestWait:   r[8],
-          avgAnswer:     r[9],
-          abandonedPct:  r[10],
-          violations:    r[11]
-        };
-      });
-      writeQCDRowsToNeon(neonQcdRows);
-    } catch (neonErr) {
-      notifyNeonWriteFailure('processBatchArchive (bulk QCD)', neonErr.message);
+      // Mirror to Neon (Phase 3)
+      try {
+        var neonQcdRows = qcdBatch.map(function(r) {
+          return {
+            monthYear:     r[0],
+            week:          r[1],
+            callDate:      r[2],
+            callQueue:     r[3],
+            callSource:    r[4],
+            totalCalls:    r[5],
+            totalAnswered: r[6],
+            abandoned:     r[7],
+            longestWait:   r[8],
+            avgAnswer:     r[9],
+            abandonedPct:  r[10],
+            violations:    r[11]
+          };
+        });
+        writeQCDRowsToNeon(neonQcdRows);
+      } catch (neonErr) {
+        notifyNeonWriteFailure('processBatchArchive (bulk QCD)', neonErr.message);
+      }
     }
+
+    if (csrTransBatch.length > 0 && csrHD)   csrHD.getRange(csrHD.getLastRow()     + 1, 1, csrTransBatch.length, 18).setValues(csrTransBatch);
+  } catch (writeErr) {
+    try {
+      appendToAuditLog(targetSS, "processBatchArchive",
+        "PARTIAL FAILURE during sheet append: " + (writeErr && writeErr.message ? writeErr.message : writeErr) +
+        ". Pending Archive was NOT cleared -- a blind re-run may duplicate already-written rows. Verify history sheets before retrying.",
+        "FAILURE");
+    } catch (logErr) { /* best-effort audit */ }
+    throw writeErr;
   }
-  
-  if (csrTransBatch.length > 0 && csrHD)   csrHD.getRange(csrHD.getLastRow()     + 1, 1, csrTransBatch.length, 18).setValues(csrTransBatch);
 
   // Ensure all writes are committed before sorting and clearing
   SpreadsheetApp.flush();
@@ -1620,14 +1639,20 @@ function deleteHistoricalRowsForDate(sheet, dateObj, dateColIndex) {
   console.log(
     `deleteHistoricalRowsForDate [${sheet.getName()}]: ` +
     `removing ${removedCount} rows for ${targetStr}, ` +
-    `keeping ${kept.length} rows. Clearing and rewriting now.`
+    `keeping ${kept.length} rows. Rewriting now.`
   );
 
-  sheet.getRange(2, 1, lastRow - 1, lastCol).clearContent();
-
-  if (kept.length > 0) {
-    sheet.getRange(2, 1, kept.length, lastCol).setValues(kept);
-  }
+  // Crash-safe rewrite: instead of clearContent() THEN setValues(kept)
+  // (which loses data for this sheet if the rewrite throws after the
+  // clear -- quota, lock, etc.), build the kept rows padded with blank
+  // rows up to the original data height and write them in a SINGLE
+  // setValues call. One atomic op: it either fully succeeds or leaves
+  // the sheet untouched -- never a half-cleared state.
+  const originalCount = lastRow - 1;
+  const blankRow = new Array(lastCol).fill('');
+  const newValues = kept.slice();
+  while (newValues.length < originalCount) newValues.push(blankRow.slice());
+  sheet.getRange(2, 1, originalCount, lastCol).setValues(newValues);
 
   return removedCount;
 }

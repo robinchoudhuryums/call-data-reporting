@@ -362,6 +362,46 @@
       .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
 
+  // CSV formula-injection guard. Excel / Google Sheets treat a cell
+  // beginning with = + - @ (or a leading tab / CR) as a formula. Agent
+  // names flow in from the external CDR feed, so a crafted name like
+  // "=HYPERLINK(...)" would execute when a manager opens an exported
+  // CSV. Prefix such values with a single quote so the spreadsheet app
+  // forces them to plain text. Plain numbers (incl. negative / decimal)
+  // are left untouched so numeric columns aren't corrupted. Call this
+  // BEFORE the RFC-4180 quote-escaping (comma/quote/newline) in every
+  // CSV cell writer.
+  function csvSafeCell_(v) {
+    var s = String(v == null ? '' : v);
+    // Prefix only genuine formula text. The numeric-ish exclusion keeps
+    // server-computed cells intact -- signed deltas ("+5.0%", "-12.3 pts"),
+    // durations ("0:03:01"), and thousands-separated counts ("1,234") all
+    // legitimately start with + / - / a digit and must NOT be mangled.
+    if (/^[=+\-@\t\r]/.test(s) && !/^[-+]?[\d.,:]+\s*(%|pts)?$/.test(s)) {
+      return "'" + s;
+    }
+    return s;
+  }
+
+  // Shared failure handler for the html2canvas-based image exports
+  // (Individual / Performance / Compare Ranges). Without it a rejected
+  // capture promise leaves the user staring at a disabled "Capturing…"
+  // button with no feedback. Surface the error via a toast and re-enable
+  // any export button that a *Feedback_ helper left disabled (its
+  // original label is stashed in dataset.label). QCD has its own catch
+  // because it uses a status banner instead of a button-feedback helper.
+  function exportCaptureFailed_(err) {
+    try { console.error('Report image capture failed', err); } catch (e) {}
+    showToast("Couldn't capture the report image — please try again.", 'error');
+    ['ir-export-btn', 'pr-export-btn', 'cr-export-btn'].forEach(function (id) {
+      var btn = document.getElementById(id);
+      if (btn && btn.dataset && btn.dataset.label) {
+        btn.innerHTML = btn.dataset.label;
+        btn.disabled = false;
+      }
+    });
+  }
+
   function showToast(msg, kind, durationMs) {
     var container = $('toast-container');
     if (!container) return;
@@ -2766,7 +2806,7 @@
     var sorted = sortRows(state.rows);
     if (!sorted.length) return;
     var csvEscape = function (v) {
-      var s = String(v == null ? '' : v);
+      var s = csvSafeCell_(v);
       return (s.indexOf(',') !== -1 || s.indexOf('"') !== -1 || s.indexOf('\n') !== -1)
         ? '"' + s.replace(/"/g, '""') + '"' : s;
     };
@@ -4489,7 +4529,7 @@
             cvs.parentNode.replaceChild(img, cvs);
           });
         },
-      }).then(function (canvas) { onDone(canvas); });
+      }).then(function (canvas) { onDone(canvas); }).catch(exportCaptureFailed_);
     }); });
   }
 
@@ -5740,7 +5780,7 @@
             cvs.parentNode.replaceChild(img, cvs);
           });
         },
-      }).then(function (canvas) { onDone(canvas); });
+      }).then(function (canvas) { onDone(canvas); }).catch(exportCaptureFailed_);
     }); });
   }
 
@@ -6227,7 +6267,7 @@
     const p2Days = meta.p2Days || 0;
     const lines = [];
     const esc = function (v) {
-      const s = (v == null ? '' : String(v));
+      const s = csvSafeCell_(v);
       // Escape per RFC 4180: wrap in quotes if contains comma/quote/newline.
       if (/[",\n]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
       return s;
@@ -6304,7 +6344,7 @@
 
   function crCsvRow_(agentLabel, metric, stat, p1Days, p2Days, includePerDay, kind) {
     const esc = function (v) {
-      const s = (v == null ? '' : String(v));
+      const s = csvSafeCell_(v);
       if (/[",\n]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
       return s;
     };
@@ -7102,7 +7142,7 @@
             cvs.parentNode.replaceChild(img, cvs);
           });
         },
-      }).then(function (canvas) { onDone(canvas); });
+      }).then(function (canvas) { onDone(canvas); }).catch(exportCaptureFailed_);
     }); });
   }
 
@@ -8590,7 +8630,11 @@
           cClone.parentNode.replaceChild(img, cClone);
         }
       },
-    }).then(onDone);
+    }).then(onDone).catch(function (err) {
+      try { console.error('QCD report image capture failed', err); } catch (e) {}
+      showToast("Couldn't capture the report image — please try again.", 'error');
+      qcdSetExportStatus_('error', 'Could not capture the report image. Please try again.');
+    });
   }
 
   // -- Status banner helper for export feedback ---------------------

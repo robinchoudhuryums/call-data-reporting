@@ -608,6 +608,18 @@ function personalizeOverview_(blob, user) {
     delete out.companyAggregate;
     delete out.pipelineFreshness;
     delete out.orphanNag;
+    // INV-48: managers see the WoW "driver" (a named individual agent +
+    // delta) only for their OWN dept; admins see drivers for all depts.
+    // The dept aggregate tiles stay cross-dept-visible by design, but the
+    // per-agent attribution is stripped from other depts' tiles so a
+    // manager can't see which named individual drove another team's shift.
+    if (Array.isArray(out.depts)) {
+      out.depts.forEach(function (d) {
+        if (d && d.wow && d.wow.driver && d.name !== user.department) {
+          delete d.wow.driver;
+        }
+      });
+    }
   }
   out.viewerRole = user.role;
   out.viewerDept = user.department || null;
