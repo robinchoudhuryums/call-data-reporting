@@ -225,14 +225,10 @@
     diagnostics: null,
     sortKey: 'totalMissed',
     sortDir: 'desc',     // 'asc' | 'desc'
-    // Phase D: default flipped from 'roster' to 'both' so the agent
-    // table surfaces queue-only floaters by default. Queue-only rows
-    // are tagged via the Source column chip and excluded from the
-    // totals row on the server side. Scope toggle stays available
-    // (matching aria-checked="true" on the Both button in markup)
-    // for parallel-run validation; slated for removal once the new
-    // defaults prove out.
-    scope: 'both',       // 'roster' | 'queue' | 'both'
+    // Scope: server is locked to 'both' since the Phase D toggle
+    // removal cleanup. Internal `computeSummary_` still accepts
+    // a scope arg (Digest.gs uses 'roster') but the public RPC
+    // doesn't expose it -- the client just doesn't pass it.
   };
 
   // -- Modal drag & resize --------------------------------------------------
@@ -621,21 +617,6 @@
     $('refresh-btn').addEventListener('click', refresh);
     var csvBtn = $('csv-export-btn');
     if (csvBtn) csvBtn.addEventListener('click', exportTableCsv_);
-
-    // Scope segmented control
-    document.querySelectorAll('#scope-toggle .seg-btn').forEach(function (btn) {
-      btn.addEventListener('click', function () {
-        const next = btn.getAttribute('data-scope');
-        if (next === state.scope) return;
-        state.scope = next;
-        document.querySelectorAll('#scope-toggle .seg-btn').forEach(function (b) {
-          const active = b.getAttribute('data-scope') === next;
-          b.classList.toggle('active', active);
-          b.setAttribute('aria-checked', active ? 'true' : 'false');
-        });
-        refresh();
-      });
-    });
 
     // Sortable headers
     document.querySelectorAll('#agents-table thead th[data-sort]').forEach(function (th) {
@@ -1864,7 +1845,6 @@
         department: dept,
         from: $('from-date').value,
         to:   $('to-date').value,
-        scope: state.scope,
       };
 
       setMissedStatus('loading', 'Loading missed-call data...');
@@ -2352,7 +2332,6 @@
       department: dept,
       from: $('from-date').value,
       to: $('to-date').value,
-      scope: state.scope,
     };
     if (!req.from || !req.to) {
       setStatus('error', 'Pick a from and to date.');

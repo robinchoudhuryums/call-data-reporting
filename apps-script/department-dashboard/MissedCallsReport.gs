@@ -65,10 +65,15 @@ function getMissedCallsReport(req) {
   }
   if (from > to) throw new Error('from must be on or before to.');
 
-  let scope = String((req && req.scope) || 'roster').trim();
-  if (scope !== 'roster' && scope !== 'queue' && scope !== 'both') {
-    scope = 'roster';
-  }
+  // Scope: locked to 'both' alongside the My Department agent
+  // table (Phase D scope-toggle removal). Floaters (queue-only
+  // matches) now surface in the per-agent missed-calls section
+  // when they handled the dept's queue extensions -- matches the
+  // Phase D rationale that floater activity on the dept's queue
+  // is genuinely the dept's concern. Internal scope plumbing
+  // below is preserved as dead-but-harmless code in case a
+  // future caller wants the legacy 'roster'-only view.
+  const scope = 'both';
 
   const cache = CacheService.getScriptCache();
   // v10: per-entry parentId attached to each abandoned timestamp;
