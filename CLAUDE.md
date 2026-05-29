@@ -50,7 +50,7 @@ cd apps-script/dqe-report  && clasp push -f   # frozen — cleanup deploys only
 # as a non-blocking SessionStart hook (.claude/settings.json).
 bash scripts/check-duplicated-files.sh
 
-# Unit tests (regression harness, Phases 1-3). Zero deps -- Node's
+# Unit tests (regression harness, Phases 1-4). Zero deps -- Node's
 # built-in test runner loads the real .gs/.js files into a vm with
 # mocked Apps Script globals (dashboard + the sibling cdr-report /
 # cdr-import projects). Non-zero exit on failure. Covers: pure logic
@@ -58,14 +58,17 @@ bash scripts/check-duplicated-files.sh
 # INV-54 Dept Config accessors); the aggregator computeSummary_
 # (INV-02/04/05/23/53, S35, E5); the report builders (IR weighted ATT
 # INV-25, PR prior-period INV-28, CR length-mismatch INV-35, INV-53);
-# and pipeline canonicalization (loadRosterCanonicalNames_ INV-24/46,
-# INV-16 cross-project). See tests/README.md for design + how to add
-# tests + the Phase 4 (end-to-end buildDQEHistoricalData) gap.
+# pipeline canonicalization (loadRosterCanonicalNames_ INV-24/46,
+# INV-16 cross-project); and the end-to-end buildDQEHistoricalData
+# build (INV-07/08/20/21). See tests/README.md for design + how to add
+# tests + the remaining gaps (INV-29 trend, Pass-4 sentinel rows,
+# neonWrite JDBC).
 node --test          # from repo root (or: npm test)
 
-# Aggregators + report builders are NOT yet unit-covered; verification
-# there is still manual deploy + smoke-test against the Regression
-# Scenarios in the Cycle Workflow Config below.
+# Still manual (NOT unit-covered): the INV-29 monthly-trend alignment,
+# the Pass-4 queue-only sentinel rows, and the Neon mirror writers --
+# verify those via deploy + smoke-test against the Regression Scenarios
+# in the Cycle Workflow Config below.
 ```
 
 ## Common Gotchas
@@ -786,15 +789,16 @@ When something looks wrong, before assuming a code bug, check:
 ### Test Command
 node --test
 
-(Regression harness, Phases 1-3 -- zero-dep Node `node:test` suites
+(Regression harness, Phases 1-4 -- zero-dep Node `node:test` suites
 under `tests/unit/`, run from the repo root; see `tests/README.md`.
 Covers pure logic (parsing, `hashAgents_`, Util, the INV-54 Dept
 Config accessors), the `computeSummary_` aggregator
 (INV-02/04/05/23/53, S35, E5), the IR/PR/CR report builders (INV-25
 weighted ATT, INV-28 prior-period, INV-35 length-mismatch, INV-53),
-and pipeline canonicalization (INV-24/46 + INV-16 cross-project).
-NOT yet covered: the end-to-end `buildDQEHistoricalData` build
-(INV-07/08/20/21) and the INV-29 monthly-trend alignment -- the
+pipeline canonicalization (INV-24/46 + INV-16 cross-project), and the
+end-to-end `buildDQEHistoricalData` build (INV-07/08/20/21 + dup
+guard). NOT yet covered: the INV-29 monthly-trend alignment, the
+Pass-4 queue-only sentinel rows, and the Neon mirror writers -- the
 manual Regression Scenarios remain the verification of record for
 those, so walk the scenarios that overlap a change in addition to
 running `node --test`.)
