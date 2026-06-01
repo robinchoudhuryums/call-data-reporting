@@ -100,7 +100,15 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `LockService` + an Updated By/At stamp on the row. **Do not add
   new public write functions without `assertAdmin_()` at minimum;
   data-mutation paths need all four mitigations; config/creation
-  paths need at least the admin gate.**
+  paths need at least the admin gate.** Separately, `applyOrphanRename`
+  also best-effort mirrors the rename into Neon's `dqe_history`
+  (`renameAgentInNeon_`) -- the dashboard's ONLY non-spreadsheet write.
+  It's admin-gated (rides inside `applyOrphanRename`), conflict-safe
+  (skips `(call_date, toName)` collisions rather than violating
+  `uq_dqe_history`), and never throws (a Neon failure leaves the
+  authoritative sheet rename intact). Needs the dashboard-project
+  `NEON_*` Script Properties + `script.external_request` scope
+  (Operator State #18); no-ops cleanly when unset.
 - **Roster cells embed extensions**: `DO NOT EDIT!` cells follow
   `"Name, ext1, ext2"`. Take everything before the first comma as the name;
   digit-only tokens after are queue extensions.
@@ -823,6 +831,15 @@ When something looks wrong, before assuming a code bug, check:
     CDR Neon mirror rows still write (main metric columns) but
     JSONB name-list fields and `call_history_phones` child rows
     are skipped.
+18. Neon Script Properties + scope on the DASHBOARD project (for
+    orphan-rename-to-Neon): `NEON_HOST`, `NEON_DB`, `NEON_USER`,
+    `NEON_PASS` must also be set on the Department Dashboard project
+    (same values), and the `script.external_request` OAuth scope
+    (added to `appsscript.json`) must be consented -- after deploying,
+    Run any function once in the editor (per #9). Until both are done,
+    `applyOrphanRename`'s Neon mirror cleanly no-ops (logs "NEON_HOST
+    not set") and the sheet rename still succeeds. This is the only
+    place the dashboard talks to Neon.
 
 ## Cycle Workflow Config
 
