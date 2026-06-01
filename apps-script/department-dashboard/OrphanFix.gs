@@ -189,6 +189,7 @@ function applyOrphanRename(req) {
 
   let affected = 0;
   let aliasAdded = false;
+  let neonRename = null;
   try {
     affected = renameHistoricalAgent_(fromName, toName);
     if (affected === 0) {
@@ -199,13 +200,24 @@ function applyOrphanRename(req) {
       upsertAgentAlias_(fromName, toName, admin, notes);
       aliasAdded = true;
     }
+    // Best-effort: mirror the rename into Neon's dqe_history so it isn't
+    // lost once aged rows drop from the sheet. Never throws -- the sheet
+    // rename above is the authoritative action today. null = Neon not
+    // configured on this project, or the write failed (logged inside).
+    neonRename = renameAgentInNeon_(fromName, toName);
+    const neonNote = neonRename
+      ? (' | Neon: ' + neonRename.renamed + ' renamed'
+         + (neonRename.skipped ? ', ' + neonRename.skipped + ' conflict-skipped' : ''))
+      : (PropertiesService.getScriptProperties().getProperty('NEON_HOST')
+          ? ' | Neon: write failed (see log)'
+          : '');
     appendOrphanFixLog_({
       admin:    admin,
       action:   alsoAddAlias ? 'rename+alias' : 'rename',
       fromName: fromName,
       toName:   toName,
       affected: affected,
-      notes:    notes,
+      notes:    notes + neonNote,
     });
     // Bust the single fixed-key Overview cache so the change shows
     // up immediately on the landing page. Per-(dept, range) caches
@@ -215,7 +227,15 @@ function applyOrphanRename(req) {
   } finally {
     lock.releaseLock();
   }
-  return { renamed: affected, aliasAdded: aliasAdded };
+  return {
+    renamed: affected,
+    aliasAdded: aliasAdded,
+    // Forward-looking Neon mirror result (null when Neon isn't configured
+    // on this project). neonSkipped > 0 = conflict rows left for later
+    // reconciliation (see renameAgentInNeon_).
+    neonRenamed: neonRename ? neonRename.renamed : null,
+    neonSkipped: neonRename ? neonRename.skipped : null,
+  };
 }
 
 // -- Read helpers (read-only; trailing underscore) ----------------
@@ -375,6 +395,78 @@ function renameHistoricalAgent_(fromName, toName) {
   }
   if (affected > 0) range.setValues(values);
   return affected;
+}
+
+/**
+ * Best-effort mirror of a rename into Neon's `dqe_history` so the change
+ * isn't lost once aged rows are dropped from the sheet (forward-looking
+ * for the Neon read-back). This is the dashboard's ONLY Neon write path;
+ * it needs the `script.external_request` OAuth scope (appsscript.json) and
+ * the NEON_HOST/NEON_DB/NEON_USER/NEON_PASS Script Properties on THIS
+ * project (same values the import/report projects use).
+ *
+ * Conflict handling: `dqe_history` has a unique constraint that includes
+ * (call_date, agent_name), so renaming a row to a name that ALREADY has a
+ * row that same day would violate it (the sheet tolerates the dual rows by
+ * summing; Neon can't). We rename only rows whose (call_date, toName) slot
+ * is free and LEAVE the conflicting rows under `fromName`, returning the
+ * skipped count. Those few are reconciled later (Phase 3.3) or by a manual
+ * merge -- not silently destroyed.
+ *
+ * Never throws: a missing config, an unreachable Neon, or any SQL error
+ * returns null so the sheet rename (the authoritative action today) still
+ * succeeds. Returns { renamed, skipped } on success, or null when Neon
+ * isn't configured / the write failed.
+ */
+function renameAgentInNeon_(fromName, toName) {
+  var props = PropertiesService.getScriptProperties();
+  var host = props.getProperty('NEON_HOST');
+  if (!host) {
+    Logger.log('renameAgentInNeon_: NEON_HOST not set on the dashboard project — skipping Neon rename.');
+    return null;
+  }
+  var conn;
+  try {
+    var url = 'jdbc:postgresql://' + host + '/' + props.getProperty('NEON_DB');
+    conn = Jdbc.getConnection(url, props.getProperty('NEON_USER'), props.getProperty('NEON_PASS'));
+    if (!conn) return null;
+
+    // How many Neon rows currently carry the orphan name (so we can
+    // report conflict-skips as total - renamed).
+    var cntStmt = conn.prepareStatement(
+      'SELECT COUNT(*) FROM dqe_history WHERE agent_name = ?');
+    cntStmt.setString(1, fromName);
+    var crs = cntStmt.executeQuery();
+    var total = crs.next() ? crs.getInt(1) : 0;
+    crs.close(); cntStmt.close();
+    if (total === 0) return { renamed: 0, skipped: 0 };
+
+    // Conflict-skip rename (see docstring). NOT EXISTS keyed on
+    // (call_date, agent_name) -- the near-certain uq_dqe_history columns;
+    // if the real key is broader this just skips a little more, never
+    // errors.
+    var upStmt = conn.prepareStatement(
+      'UPDATE dqe_history t SET agent_name = ? ' +
+      'WHERE t.agent_name = ? ' +
+      'AND NOT EXISTS (SELECT 1 FROM dqe_history x ' +
+      'WHERE x.call_date = t.call_date AND x.agent_name = ?)');
+    upStmt.setString(1, toName);
+    upStmt.setString(2, fromName);
+    upStmt.setString(3, toName);
+    upStmt.execute();
+    var renamed = upStmt.getUpdateCount();
+    upStmt.close();
+    if (renamed < 0) renamed = 0;
+    var skipped = Math.max(0, total - renamed);
+    Logger.log('renameAgentInNeon_: %s -> %s | renamed %s, conflict-skipped %s',
+      fromName, toName, renamed, skipped);
+    return { renamed: renamed, skipped: skipped };
+  } catch (e) {
+    Logger.log('renameAgentInNeon_ failed (best-effort): ' + (e && e.message ? e.message : e));
+    return null;
+  } finally {
+    if (conn) { try { conn.close(); } catch (ce) {} }
+  }
 }
 
 /**
