@@ -118,7 +118,29 @@ function writeDQERowsToNeon(rows) {
       'abandoned_parent_ids, abandoned_missed_ids, abandoned_missed_times, ' +
       'avg_abd_wait, csr_avg_abd_wait' +
       ') VALUES ' + allPlaceholders +
-      ' ON CONFLICT ON CONSTRAINT uq_dqe_history DO NOTHING';
+      ' ON CONFLICT ON CONSTRAINT uq_dqe_history DO UPDATE SET ' +
+      'month_year = EXCLUDED.month_year, ' +
+      'queue_extensions = EXCLUDED.queue_extensions, ' +
+      'total_unique = EXCLUDED.total_unique, ' +
+      'total_rung = EXCLUDED.total_rung, ' +
+      'total_missed = EXCLUDED.total_missed, ' +
+      'total_answered = EXCLUDED.total_answered, ' +
+      'ttt = EXCLUDED.ttt, att = EXCLUDED.att, ' +
+      'slot_0800_0830 = EXCLUDED.slot_0800_0830, slot_0830_0900 = EXCLUDED.slot_0830_0900, ' +
+      'slot_0900_0930 = EXCLUDED.slot_0900_0930, slot_0930_1000 = EXCLUDED.slot_0930_1000, ' +
+      'slot_1000_1030 = EXCLUDED.slot_1000_1030, slot_1030_1100 = EXCLUDED.slot_1030_1100, ' +
+      'slot_1100_1130 = EXCLUDED.slot_1100_1130, slot_1130_1200 = EXCLUDED.slot_1130_1200, ' +
+      'slot_1200_1230 = EXCLUDED.slot_1200_1230, slot_1230_1300 = EXCLUDED.slot_1230_1300, ' +
+      'slot_1300_1330 = EXCLUDED.slot_1300_1330, slot_1330_1400 = EXCLUDED.slot_1330_1400, ' +
+      'slot_1400_1430 = EXCLUDED.slot_1400_1430, slot_1430_1500 = EXCLUDED.slot_1430_1500, ' +
+      'slot_1500_1530 = EXCLUDED.slot_1500_1530, slot_1530_1600 = EXCLUDED.slot_1530_1600, ' +
+      'slot_1600_1630 = EXCLUDED.slot_1600_1630, slot_1630_1700 = EXCLUDED.slot_1630_1700, ' +
+      'slot_1700_1730 = EXCLUDED.slot_1700_1730, ' +
+      'abandoned_parent_ids = EXCLUDED.abandoned_parent_ids, ' +
+      'abandoned_missed_ids = EXCLUDED.abandoned_missed_ids, ' +
+      'abandoned_missed_times = EXCLUDED.abandoned_missed_times, ' +
+      'avg_abd_wait = EXCLUDED.avg_abd_wait, ' +
+      'csr_avg_abd_wait = EXCLUDED.csr_avg_abd_wait';
 
     var stmt = conn.prepareStatement(sql);
     var p = 1;
@@ -178,7 +200,16 @@ function writeQCDRowsToNeon(rows) {
       'total_calls, total_answered, abandoned, longest_wait, avg_answer, ' +
       'abandoned_pct, violations' +
       ') VALUES ' + allPlaceholders +
-      ' ON CONFLICT ON CONSTRAINT uq_qcd_history DO NOTHING';
+      ' ON CONFLICT ON CONSTRAINT uq_qcd_history DO UPDATE SET ' +
+      'month_year = EXCLUDED.month_year, ' +
+      'week = EXCLUDED.week, ' +
+      'total_calls = EXCLUDED.total_calls, ' +
+      'total_answered = EXCLUDED.total_answered, ' +
+      'abandoned = EXCLUDED.abandoned, ' +
+      'longest_wait = EXCLUDED.longest_wait, ' +
+      'avg_answer = EXCLUDED.avg_answer, ' +
+      'abandoned_pct = EXCLUDED.abandoned_pct, ' +
+      'violations = EXCLUDED.violations';
 
     var stmt = conn.prepareStatement(sql);
     var p = 1;
@@ -253,7 +284,18 @@ function writeCDRRowsToNeon(rows) {
       'ib_list_total_entries, ib_list_answered_entries, ib_list_missed_entries, ' +
       'ob_ext_total, ob_ext_answered, ob_ext_ttt_sec, ob_ext_att_sec' +
       ') VALUES ' + allPlaceholders +
-      ' ON CONFLICT ON CONSTRAINT uq_call_hist DO NOTHING';
+      ' ON CONFLICT ON CONSTRAINT uq_call_hist DO UPDATE SET ' +
+      'ob_total = EXCLUDED.ob_total, ob_answered = EXCLUDED.ob_answered, ob_missed = EXCLUDED.ob_missed, ' +
+      'ob_list_total_entries = EXCLUDED.ob_list_total_entries, ' +
+      'ob_list_answered_entries = EXCLUDED.ob_list_answered_entries, ' +
+      'ob_list_missed_entries = EXCLUDED.ob_list_missed_entries, ' +
+      'ib_total = EXCLUDED.ib_total, ib_answered = EXCLUDED.ib_answered, ib_missed = EXCLUDED.ib_missed, ' +
+      'ib_answered_internal = EXCLUDED.ib_answered_internal, ib_answered_external = EXCLUDED.ib_answered_external, ' +
+      'ib_list_total_entries = EXCLUDED.ib_list_total_entries, ' +
+      'ib_list_answered_entries = EXCLUDED.ib_list_answered_entries, ' +
+      'ib_list_missed_entries = EXCLUDED.ib_list_missed_entries, ' +
+      'ob_ext_total = EXCLUDED.ob_ext_total, ob_ext_answered = EXCLUDED.ob_ext_answered, ' +
+      'ob_ext_ttt_sec = EXCLUDED.ob_ext_ttt_sec, ob_ext_att_sec = EXCLUDED.ob_ext_att_sec';
 
     var stmt = conn.prepareStatement(sql);
     var p = 1;
