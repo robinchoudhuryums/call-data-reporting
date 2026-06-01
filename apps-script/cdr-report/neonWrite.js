@@ -402,7 +402,14 @@ function cdrParseNameFieldJson_(val, isUnused, secret) {
 
   function parseEntries(str, isExt) {
     if (!str) return [];
-    var entries = str.split(/,\s*(?=[A-Z+'])/);
+    // Split on an entry-separator comma: one followed by the start of a
+    // new "Name (count)" entry. The lookahead character class must cover
+    // every plausible first character of a name so entries that begin
+    // with a lowercase letter ("de la Cruz"), an accented capital
+    // ("Ángel"), or a digit ("311 Service") aren't silently glued onto
+    // the previous entry's name/count. (Was [A-Z+'], which dropped those
+    // -- a quiet data-fidelity bug in the Neon JSONB name-list fields.)
+    var entries = str.split(/,\s*(?=[A-Za-zÀ-ÿ0-9+'])/);
     var out = [];
     for (var i = 0; i < entries.length; i++) {
       var entry = entries[i].trim();

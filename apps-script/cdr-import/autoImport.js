@@ -573,6 +573,45 @@ function notifyImportFailure_(ctx) {
 }
 
 /**
+ * Emails NEON_WRITE_CONFIG.alertEmail when the integrated DQE build
+ * block fails inside processIntegratedHistory on the DAILY path. That
+ * block is best-effort (a DQE failure must never abort the 4 legacy
+ * sheet writes), which means the outer `autoImport` row still logs
+ * `success` -- so without this email a failed daily DQE rebuild is only
+ * visible in the Pipeline Health `:DQE failure` row or the dashboard's
+ * 36h staleness banner. This closes that observability gap. Best-effort:
+ * any mail failure is swallowed so it can't mask the underlying DQE
+ * error. Intentionally NOT called from the bulk-backfill path, which
+ * would email once per failed date and spam an admin-initiated run.
+ */
+function notifyDqeBuildFailure_(dateStr, errMsg) {
+  const to = (typeof NEON_WRITE_CONFIG !== 'undefined' && NEON_WRITE_CONFIG.alertEmail)
+    ? NEON_WRITE_CONFIG.alertEmail
+    : null;
+  if (!to) return;
+  try {
+    MailApp.sendEmail(
+      to,
+      '[CDR Import] DQE rebuild failed for ' + dateStr,
+      'The integrated DQE Historical Data build failed during the daily '
+      + 'import for ' + dateStr + '.\n\n'
+      + 'The CDR / Q Path / QCD / CSR sheet writes for this date still '
+      + 'succeeded, so the outer import is logged as success -- but DQE '
+      + 'Historical Data was NOT refreshed for this date. The dashboard '
+      + 'will keep serving the previous DQE day until a successful '
+      + 'rebuild (the cdr-report runDailyDQEBuild_ safety-net trigger, '
+      + 'or a forced re-import of this date).\n\n'
+      + 'Error: ' + errMsg + '\n\nTime: ' + new Date()
+    );
+  } catch (mailErr) {
+    try {
+      console.error('notifyDqeBuildFailure_ mail failed: '
+        + (mailErr && mailErr.message ? mailErr.message : mailErr));
+    } catch (e2) {}
+  }
+}
+
+/**
  * Appends a row to the Pipeline Health sheet in the target
  * spreadsheet (created by the Department Dashboard's setup()). The
  * `ss` arg may be null on early failures before the target was
@@ -1542,8 +1581,11 @@ if (!skipCDR && obcHD) {
         } catch (logErr) { /* best-effort */ }
       }
     } catch (dqeErr) {
-      // Best-effort: failure surfaces in Pipeline Health and email
-      // alerts, but the other 4 sheets' writes still stand.
+      // Best-effort: failure surfaces in Pipeline Health AND an admin
+      // email (notifyDqeBuildFailure_), but the other 4 sheets' writes
+      // still stand. The outer autoImport row still logs success, so
+      // these two signals are the only way a failed daily DQE rebuild
+      // becomes visible without waiting on the 36h staleness banner.
       const msg = (dqeErr && dqeErr.message) ? dqeErr.message : String(dqeErr);
       console.error('processIntegratedHistory DQE block failed: ' + msg);
       summaryLog.push(`- DQE HD: FAILED (${msg})`);
@@ -1556,6 +1598,8 @@ if (!skipCDR && obcHD) {
           notes: dateObj.toDateString() + ' | ' + msg,
         });
       } catch (logErr) { /* best-effort */ }
+      try { notifyDqeBuildFailure_(dateObj.toDateString(), msg); }
+      catch (notifyErr) { /* best-effort */ }
     }
   }
 

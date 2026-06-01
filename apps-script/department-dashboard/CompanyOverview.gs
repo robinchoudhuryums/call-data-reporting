@@ -601,14 +601,33 @@ function personalizeOverview_(blob, user) {
   try {
     out = JSON.parse(JSON.stringify(blob || {}));
   } catch (e) {
-    // Cached blob unexpectedly contains a non-serializable value.
-    // Fall back to a shallow copy so the request still serves --
-    // the personalize layer's contract is "no leakage", and at
-    // least the top-level fields are independent here.
-    out = {};
-    for (const k in blob) {
-      if (Object.prototype.hasOwnProperty.call(blob, k)) out[k] = blob[k];
+    // Cached blob unexpectedly contains a non-serializable value
+    // (should be impossible for this plain-data blob). FAIL CLOSED:
+    // do NOT fall back to a shallow copy. The non-admin strip below
+    // mutates nested dept objects (`delete d.wow.driver`), and a
+    // shallow copy shares those nested references with the cached
+    // blob -- so the strip would leak across viewers and corrupt the
+    // shared cache. Admins see everything anyway, so a shallow copy is
+    // safe for them; non-admins get a minimal driver-free view rather
+    // than risk the leak.
+    Logger.log('personalizeOverview_ deep clone failed: %s', e);
+    if (user.role === 'admin') {
+      out = {};
+      for (const k in blob) {
+        if (Object.prototype.hasOwnProperty.call(blob, k)) out[k] = blob[k];
+      }
+      out.viewerRole = user.role;
+      out.viewerDept = user.department || null;
+      return out;
     }
+    return {
+      latestDate:     (blob && blob.latestDate) || null,
+      trendIsoLabels: (blob && blob.trendIsoLabels) || [],
+      trendLabels:    (blob && blob.trendLabels) || [],
+      depts:          [],
+      viewerRole:     user.role,
+      viewerDept:     user.department || null,
+    };
   }
   if (user.role !== 'admin') {
     delete out.companyAggregate;

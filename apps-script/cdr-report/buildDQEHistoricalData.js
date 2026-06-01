@@ -242,7 +242,6 @@ function buildDQEHistoricalData(rawSheet, dqeSheet) {
     // as before; no behavior change for that shape.
     const abandonedLeg = entry.legs.find(function (l) { return l.abandoned; });
     entry.waitSec = abandonedLeg ? abandonedLeg.callSec : entry.legs[0].callSec;
-    entry.talkSec = Math.max.apply(null, entry.legs.map(function(l) { return l.talkSec; }));
   }
 
   const abandonedParentIds = new Set(
