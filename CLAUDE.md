@@ -439,13 +439,37 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   falls back to a hardcoded ID if unset. Set `TARGET_SS_ID` in
   the CDR Import project's Script Properties to point at the CDR
   Report spreadsheet.
-- **Neon writes are guarded by `isNeonReachable_()`** which runs
-  `SELECT 1` with a 5-second timeout before each batch insert. If
-  Neon is down (free-tier suspend, exhausted compute) or
-  unconfigured, the write is skipped with a clean log — no failure
-  email, no exception. `NEON_HOST`, `NEON_DB`, `NEON_USER`,
-  `NEON_PASS` must be set in BOTH the CDR Report AND CDR Import
-  project's Script Properties for Neon mirroring to work.
+- **Neon writes are guarded by `getReachableNeonConn_()`** which opens
+  one write connection and probes it with `SELECT 1` (5-second timeout),
+  returning that SAME connection for the insert (or null). If Neon is
+  down (free-tier suspend, exhausted compute) or unconfigured, the write
+  is skipped with a clean log — no failure email, no exception. (Replaced
+  the old `isNeonReachable_()`, which opened a throwaway probe connection
+  AND a second write connection per writer — six handshakes per import
+  run; see "Neon write discipline" below.) `NEON_HOST`, `NEON_DB`,
+  `NEON_USER`, `NEON_PASS` must be set in BOTH the CDR Report AND CDR
+  Import project's Script Properties for Neon mirroring to work.
+- **Neon write discipline (don't regress this — it caused a daily-import
+  timeout).** The Neon mirror is the dominant cost of the daily import,
+  and three rules in `neonWrite.js` (duplicated, INV-16) keep it from
+  blowing the Apps Script execution ceiling AND from corrupting the
+  mirror on a timeout. (1) **Hash phone numbers through the per-run memo
+  `CDR_HMAC_CACHE_`, never raw per-occurrence** — `Utilities.computeHmacSha256Signature`
+  is slow and the same outbound numbers recur thousands of times per day;
+  the cache is reset at the top of `writeCDRRowsToNeon`. (2) **Batch
+  inserts and commit ONCE** — `call_history_phones` writes in 10000-row
+  chunks (5 params/row, under Postgres's 65535 bind-param cap) with a
+  single `conn.commit()` after the loop. A per-row or per-small-chunk
+  commit means dozens of round-trips AND leaves partially-committed rows
+  in Neon if the run times out mid-loop. The DQE/QCD writers already do
+  one multi-row insert + one commit. (3) **One probed connection per
+  writer** via `getReachableNeonConn_()` (above), not a separate probe +
+  write connection. History: these were original gaps (never present),
+  not a regression — the phone-child write shipped in commit 771f227 with
+  a 200-row per-chunk commit, double connection, and un-memoized HMAC, and
+  a ~4k-phone day took ~17 minutes. A future "move the mirror off the
+  synchronous import path" (its own trigger) is the next lever if the
+  budget is still tight after these.
 
 ## Key Design Decisions
 
