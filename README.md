@@ -134,7 +134,8 @@ clasp push -f
   [your domain]**.
 - After any push that adds a new OAuth scope to `appsscript.json` (e.g.
   `script.scriptapp` for the alerts trigger, `script.send_mail` for
-  email exports), open the Apps Script editor and Run → any function
+  email exports, `script.external_request` for the orphan-rename-to-Neon
+  mirror), open the Apps Script editor and Run → any function
   once to trigger the re-auth consent prompt. Scope-gated calls
   otherwise throw permission errors at runtime even though the
   dashboard page loads fine.
@@ -161,11 +162,22 @@ clasp push -f
   and click Apply. The action: (1) bulk-renames every row in
   `DQE Historical Data` where Agent Name == orphan, (2) adds the
   mapping to the `Agent Alias Overrides` sheet so the next CDR
-  build keeps the mapping, (3) appends a row to `Orphan Fix Log`.
+  build keeps the mapping, (3) appends a row to `Orphan Fix Log`,
+  and (4) best-effort mirrors the rename into Neon's `dqe_history`
+  so it isn't lost once aged rows drop from the sheet.
 - The modal requires the `Agent Alias Overrides` and `Orphan Fix
   Log` sheets to exist — created by `setup()`. Run `setup()` after
   pulling this code if those sheets are missing in your
   spreadsheet.
+- **For the Neon mirror (step 4) to do anything**, set
+  `NEON_HOST` / `NEON_DB` / `NEON_USER` / `NEON_PASS` Script
+  Properties on the **Department Dashboard** project (same values
+  as the import/report projects) and consent the
+  `script.external_request` scope (Run → any function once after
+  deploy). Without them, the rename still updates the sheet and
+  just logs "NEON_HOST not set" for the Neon step. Conflicts (a
+  row already under the canonical name on the same day) are skipped
+  and reported, not destroyed.
 - Admin-only at the server boundary. See CLAUDE.md INV-01 for the
   full security model around the carve-out.
 

@@ -206,6 +206,22 @@ INV-01's text was widened to spell out this carve-out; do not add
 more public writes outside `OrphanFix.gs` without the same four
 mitigations.
 
+**Dashboard → Neon write (orphan-rename-to-Neon).** `applyOrphanRename`
+also best-effort mirrors the rename into Neon's `dqe_history`
+(`renameAgentInNeon_` in `OrphanFix.gs`) so the change isn't lost once
+aged rows are dropped from the sheet (forward-looking for the Neon
+read-back). This is the dashboard's ONLY Neon write and the first
+non-sheet write path; it needs the `script.external_request` OAuth
+scope plus `NEON_HOST/NEON_DB/NEON_USER/NEON_PASS` Script Properties on
+the dashboard project. It is conflict-safe: `uq_dqe_history` is
+`UNIQUE (call_date, agent_name)`, so rows whose `(call_date, toName)`
+slot is already taken are LEFT under `fromName` (returned + logged as
+`neonSkipped`) rather than violating the constraint — those few are
+reconciled later. Never throws: a missing config / unreachable Neon /
+SQL error returns null and the authoritative sheet rename still
+succeeds. INV-01 is unaffected (it governs spreadsheet writes; this is
+a Postgres write).
+
 ## Report server entry points (Department Dashboard)
 
 The dashboard serves the reports below plus three admin-only
@@ -246,7 +262,12 @@ Neon Postgres is the long-term archive and the future query backend.
 
 - `buildDQEHistoricalData.gs` writes to both the sheet AND `neonWrite.gs`.
   Sheet write is the primary; Neon write is best-effort with email
-  notification on failure (`notifyNeonWriteFailure`).
+  notification on failure (`notifyNeonWriteFailure`). The three live
+  writers (`writeDQE/QCD/CDRRowsToNeon`) use `ON CONFLICT DO UPDATE`
+  (the phone child rows stay `DO NOTHING`), so a re-import / force-rebuild
+  propagates corrected values to Neon instead of skipping the existing
+  row — the mechanism that lets corrections (e.g. the F2 name-splitter
+  fix) actually reach Neon, and a prerequisite for the read-back.
 - `processIntegratedHistory` in cdr-import also mirrors CDR Historical
   Data rows to `call_history_dept` + `call_history_phones` via
   `writeCDRRowsToNeon`. Phone numbers are HMAC-SHA256 hashed
@@ -257,7 +278,12 @@ Neon Postgres is the long-term archive and the future query backend.
   to Neon as the read path is a future phase (Phase 3 in the original
   product spec).
 - `apps-script/cdr-report/neonBackfill.gs` is for one-off historical
-  backfills from the sheet into Neon.
+  backfills from the sheet into Neon: `backfillDQEHistory()` /
+  `backfillQCDHistory()` (idempotent `DO NOTHING`), plus
+  `backfillCDRHistory()` — a repair tool that re-mirrors `CDR Historical
+  Data` with `DO UPDATE` to fix the JSONB name columns corrupted before
+  the F2 splitter fix and fill partially-written phone children
+  (requires `HMAC_SECRET`; resumable via `CDR_BACKFILL_RESUME`).
 
 ### Cross-project reader: team-tools
 
