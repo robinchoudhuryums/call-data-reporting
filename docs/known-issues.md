@@ -68,14 +68,6 @@ on a *parent-level* leg with the agent's name in col L. Don't try to
 shortcut this by reading talk_time off the queue leg — you'll get TTT = 0
 for everyone.
 
-### Dead-code remnant: `entry.talkSec = Math.max(...)`
-
-**Status:** Not fixed (harmless).
-
-The Pass 1 finalization sets `entry.talkSec` per parent, but after the
-Bug 3 fix Pass 3 no longer reads it. Safe to delete in a future cleanup.
-Kept for now to minimize diff churn.
-
 ### Roster-driven name canonicalization (paren-variant fix)
 
 **Status:** Fixed in `buildDQEHistoricalData.js`.

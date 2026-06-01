@@ -12,6 +12,14 @@
 //      (same credentials as your existing CDR archive)
 //   2. Run backfillDQEHistory() — repeat until "complete"
 //   3. Run backfillQCDHistory() — repeat until "complete"
+//
+// CDR cleanup (separate, on demand):
+//   backfillCDRHistory() — re-mirrors "CDR Historical Data" to
+//   call_history_dept + call_history_phones. Unlike the DQE/QCD backfills
+//   it uses ON CONFLICT DO UPDATE on the main row so it REPAIRS the JSONB
+//   name columns corrupted before the F2 splitter fix, and fills any
+//   partially-written phone children. Requires HMAC_SECRET (aborts without
+//   it to avoid nulling the JSONB). Resumable via CDR_BACKFILL_RESUME.
 // ============================================================================
 
 
@@ -166,6 +174,272 @@ function backfillDQEHistory() {
 
   } catch (e) {
     Logger.log('DQE backfill stopped. Error: ' + e.message);
+    throw e;
+  }
+}
+
+
+// -- CDR backfill ------------------------------------------------------------
+//
+// Re-mirrors "CDR Historical Data" sheet rows to Neon
+// (call_history_dept + call_history_phones). Two cleanup jobs in one:
+//
+//   1. Overwrites the JSONB name-list columns via ON CONFLICT DO UPDATE.
+//      This is the ONLY way to repair rows mirrored before the F2 fix to
+//      cdrParseNameFieldJson_'s entry splitter (which silently merged
+//      name entries beginning with a lowercase letter / accented capital /
+//      digit). The live writeCDRRowsToNeon uses DO NOTHING, so a plain
+//      re-run does NOT repair them -- this DO UPDATE does.
+//   2. Fills any partially-written call_history_phones rows left by an
+//      old per-chunk-commit timeout. Phone children are NOT affected by
+//      F2 (cdrParsePhoneField_ uses a separate regex), so DO NOTHING on
+//      uq_phone_entry just adds the missing rows without duplicating.
+//
+// Requires HMAC_SECRET (same as the live CDR writer). We ABORT if it's
+// unset: a DO UPDATE without it would write null into the JSONB name
+// columns, destroying data -- the opposite of cleanup.
+//
+// Resumable via CDR_BACKFILL_RESUME (clear it to re-run from the top).
+// Idempotent + safe to re-run. Column mapping mirrors
+// autoImport.js::processIntegratedHistory's neonCdrRows builder; the
+// sheet layout is [Month, Week, Date, Dept, Name, ...21 metric cols]
+// (26 cols), so metric r[k] lives at sheet column index (4 + k).
+function backfillCDRHistory() {
+  var hmacSecret = PropertiesService.getScriptProperties().getProperty('HMAC_SECRET');
+  if (!hmacSecret) {
+    Logger.log('CDR backfill ABORTED: HMAC_SECRET is not set. Running DO UPDATE '
+      + 'without it would null out the JSONB name columns. Set HMAC_SECRET '
+      + '(same value as the import project) and re-run.');
+    return;
+  }
+
+  var ss    = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('CDR Historical Data');
+  if (!sheet) { Logger.log('CDR: Sheet not found.'); return; }
+
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) { Logger.log('CDR: Sheet is empty.'); return; }
+
+  // 26 cols: Month | Week | Date | Dept | Name | C..W (21 metric cols).
+  var data = sheet.getRange(2, 1, lastRow - 1, 26).getDisplayValues();
+
+  var props      = PropertiesService.getScriptProperties();
+  var startIndex = parseInt(props.getProperty('CDR_BACKFILL_RESUME') || '0');
+
+  Logger.log('CDR backfill: starting at index ' + startIndex + ' of ' + data.length);
+  if (startIndex >= data.length) {
+    Logger.log('CDR backfill complete. Clear CDR_BACKFILL_RESUME to re-run.');
+    return;
+  }
+
+  // Reset the shared per-run phone-hash memo (defined in neonWrite.js,
+  // same project scope) so recurring numbers hash once across this run.
+  CDR_HMAC_CACHE_ = {};
+
+  var BATCH_SIZE    = 50;
+  var TIME_LIMIT_MS = 240000;
+  var startTime     = Date.now();
+
+  var totalUpserted = 0;
+  var totalPhones   = 0;
+  var i = startIndex;
+
+  try {
+    while (i < data.length) {
+      if (Date.now() - startTime > TIME_LIMIT_MS) {
+        props.setProperty('CDR_BACKFILL_RESUME', String(i));
+        Logger.log('Time limit reached. Resume saved at index ' + i +
+          '. Upserted: ' + totalUpserted + ', phones: ' + totalPhones +
+          '. Run again to continue.');
+        return;
+      }
+
+      var batch = [];
+      var batchEnd = Math.min(i + BATCH_SIZE, data.length);
+      while (i < batchEnd) {
+        var r = data[i];
+        // Skip rows with no date (col 3 -> idx 2) or no agent (col 5 -> idx 4).
+        if (!r[2] || !r[4]) { i++; continue; }
+        batch.push({
+          callDate:   parseDateForNeon(r[2]),
+          dept:       r[3] || 'Unassigned',
+          agentName:  r[4],
+          obTotal:    r[5],  obAns:     r[6],  obMiss:     r[7],
+          obListTot:  r[8],  obListAns: r[9],  obListMiss: r[10],
+          ibTotal:    r[11], ibAns:     r[12], ibMiss:     r[13],
+          ibAnsInt:   r[14], ibAnsExt:  r[15],
+          ibListTot:  r[16], ibListAns: r[17], ibListMiss: r[18],
+          obExtTotal: r[19], obExtAns:  r[20],
+          obExtTTT:   r[21], obExtATT:  r[22],
+          phonesX:    r[23], phonesY:   r[24], phonesZ:    r[25]
+        });
+        i++;
+      }
+      if (batch.length === 0) continue;
+
+      var conn = getNeonConn_backfill();
+      conn.setAutoCommit(false);
+
+      try {
+        // --- 1. Main rows: INSERT ... ON CONFLICT DO UPDATE (repairs JSONB) ---
+        var placeholderRow = '(?,?,?,?,?,?,?::jsonb,?::jsonb,?::jsonb,?,?,?,?,?,?::jsonb,?::jsonb,?::jsonb,?,?,?,?)';
+        var allPlaceholders = batch.map(function() { return placeholderRow; }).join(',');
+        var sql = 'INSERT INTO call_history_dept (' +
+          'call_date, department, agent_name, ' +
+          'ob_total, ob_answered, ob_missed, ' +
+          'ob_list_total_entries, ob_list_answered_entries, ob_list_missed_entries, ' +
+          'ib_total, ib_answered, ib_missed, ' +
+          'ib_answered_internal, ib_answered_external, ' +
+          'ib_list_total_entries, ib_list_answered_entries, ib_list_missed_entries, ' +
+          'ob_ext_total, ob_ext_answered, ob_ext_ttt_sec, ob_ext_att_sec' +
+          ') VALUES ' + allPlaceholders +
+          ' ON CONFLICT ON CONSTRAINT uq_call_hist DO UPDATE SET ' +
+          'ob_total = EXCLUDED.ob_total, ' +
+          'ob_answered = EXCLUDED.ob_answered, ' +
+          'ob_missed = EXCLUDED.ob_missed, ' +
+          'ob_list_total_entries = EXCLUDED.ob_list_total_entries, ' +
+          'ob_list_answered_entries = EXCLUDED.ob_list_answered_entries, ' +
+          'ob_list_missed_entries = EXCLUDED.ob_list_missed_entries, ' +
+          'ib_total = EXCLUDED.ib_total, ' +
+          'ib_answered = EXCLUDED.ib_answered, ' +
+          'ib_missed = EXCLUDED.ib_missed, ' +
+          'ib_answered_internal = EXCLUDED.ib_answered_internal, ' +
+          'ib_answered_external = EXCLUDED.ib_answered_external, ' +
+          'ib_list_total_entries = EXCLUDED.ib_list_total_entries, ' +
+          'ib_list_answered_entries = EXCLUDED.ib_list_answered_entries, ' +
+          'ib_list_missed_entries = EXCLUDED.ib_list_missed_entries, ' +
+          'ob_ext_total = EXCLUDED.ob_ext_total, ' +
+          'ob_ext_answered = EXCLUDED.ob_ext_answered, ' +
+          'ob_ext_ttt_sec = EXCLUDED.ob_ext_ttt_sec, ' +
+          'ob_ext_att_sec = EXCLUDED.ob_ext_att_sec';
+
+        var stmt = conn.prepareStatement(sql);
+        var p = 1;
+        for (var b = 0; b < batch.length; b++) {
+          var row = batch[b];
+          stmt.setString(p++, row.callDate);
+          stmt.setString(p++, row.dept);
+          stmt.setString(p++, row.agentName);
+          stmt.setInt(p++,    parseInt(row.obTotal) || 0);
+          stmt.setInt(p++,    parseInt(row.obAns)   || 0);
+          stmt.setInt(p++,    parseInt(row.obMiss)  || 0);
+          stmt.setString(p++, cdrParseNameFieldJson_(row.obListTot,  false, hmacSecret));
+          stmt.setString(p++, cdrParseNameFieldJson_(row.obListAns,  false, hmacSecret));
+          stmt.setString(p++, cdrParseNameFieldJson_(row.obListMiss, false, hmacSecret));
+          stmt.setInt(p++,    parseInt(row.ibTotal)  || 0);
+          stmt.setInt(p++,    parseInt(row.ibAns)    || 0);
+          stmt.setInt(p++,    parseInt(row.ibMiss)   || 0);
+          stmt.setInt(p++,    parseInt(row.ibAnsInt) || 0);
+          stmt.setInt(p++,    parseInt(row.ibAnsExt) || 0);
+          stmt.setString(p++, cdrParseNameFieldJson_(row.ibListTot,  false, hmacSecret));
+          stmt.setString(p++, cdrParseNameFieldJson_(row.ibListAns,  false, hmacSecret));
+          stmt.setString(p++, cdrParseNameFieldJson_(row.ibListMiss, false, hmacSecret));
+          stmt.setInt(p++,    parseInt(row.obExtTotal) || 0);
+          stmt.setInt(p++,    parseInt(row.obExtAns)   || 0);
+          stmt.setInt(p++,    cdrTimeToSeconds_(row.obExtTTT));
+          stmt.setInt(p++,    cdrTimeToSeconds_(row.obExtATT));
+        }
+        stmt.execute();
+        var affected = stmt.getUpdateCount();
+        stmt.close();
+        conn.commit();   // commit main so the phone id-lookup SELECT sees the rows
+        totalUpserted += (affected >= 0 ? affected : batch.length);
+
+        // --- 2. Phone children: fill gaps (ON CONFLICT DO NOTHING) ---
+        // Look up parent ids for this batch's (date, dept, agent) keys.
+        var joinPlaceholders = batch.map(function() { return '(?::date, ?, ?)'; }).join(',');
+        var idSql = 'SELECT d.id, d.call_date::text, d.department, d.agent_name ' +
+          'FROM call_history_dept d ' +
+          'JOIN (VALUES ' + joinPlaceholders + ') AS v(cd, dept, agent) ' +
+          'ON d.call_date = v.cd AND d.department IS NOT DISTINCT FROM v.dept ' +
+          'AND d.agent_name IS NOT DISTINCT FROM v.agent';
+        var idStmt = conn.prepareStatement(idSql);
+        var q = 1;
+        for (var j = 0; j < batch.length; j++) {
+          idStmt.setString(q++, batch[j].callDate);
+          idStmt.setString(q++, batch[j].dept);
+          idStmt.setString(q++, batch[j].agentName);
+        }
+        var idRs = idStmt.executeQuery();
+        var idMap = {};
+        while (idRs.next()) {
+          idMap[idRs.getString(2) + '|' + idRs.getString(3) + '|' + idRs.getString(4)] = idRs.getInt(1);
+        }
+        idRs.close(); idStmt.close();
+
+        var phoneRows = [];
+        for (var k = 0; k < batch.length; k++) {
+          var key = batch[k].callDate + '|' + batch[k].dept + '|' + batch[k].agentName;
+          var parentId = idMap[key];
+          if (!parentId) continue;
+          var phoneSets = [
+            { raw: batch[k].phonesX, type: 'ob_ext_list_total' },
+            { raw: batch[k].phonesY, type: 'ob_ext_list_answered' },
+            { raw: batch[k].phonesZ, type: 'ob_ext_list_missed' }
+          ];
+          for (var ps = 0; ps < phoneSets.length; ps++) {
+            var parsed = cdrParsePhoneField_(phoneSets[ps].raw, hmacSecret);
+            for (var ph = 0; ph < parsed.length; ph++) {
+              phoneRows.push({
+                parentId: parentId, type: phoneSets[ps].type,
+                phone_hash: parsed[ph].phone_hash,
+                duration_sec: parsed[ph].duration_sec,
+                occurrences: parsed[ph].occurrences
+              });
+            }
+          }
+        }
+
+        if (phoneRows.length > 0) {
+          // BATCH_SIZE=50 keeps phoneRows well under the 65535/5 bind-param
+          // cap in practice; chunk at 10000 rows as a guard regardless.
+          var PHONE_CHUNK = 10000;
+          var poff = 0;
+          while (poff < phoneRows.length) {
+            var chunk = phoneRows.slice(poff, poff + PHONE_CHUNK);
+            var phPlaceholders = chunk.map(function() { return '(?,?,?,?,?)'; }).join(',');
+            var phSql = 'INSERT INTO call_history_phones ' +
+              '(call_history_id, list_type, phone_hash, duration_sec, occurrences) ' +
+              'VALUES ' + phPlaceholders +
+              ' ON CONFLICT ON CONSTRAINT uq_phone_entry DO NOTHING';
+            var phStmt = conn.prepareStatement(phSql);
+            var s = 1;
+            for (var c = 0; c < chunk.length; c++) {
+              phStmt.setInt(s++,    chunk[c].parentId);
+              phStmt.setString(s++, chunk[c].type);
+              phStmt.setString(s++, chunk[c].phone_hash);
+              phStmt.setInt(s++,    chunk[c].duration_sec);
+              phStmt.setInt(s++,    chunk[c].occurrences);
+            }
+            phStmt.execute(); phStmt.close();
+            poff += PHONE_CHUNK;
+          }
+          conn.commit();
+          totalPhones += phoneRows.length;
+        }
+
+        Logger.log('Committed CDR batch ending at index ' + i + ' (' + batch.length
+          + ' rows upserted, ' + phoneRows.length + ' phone rows). Cumulative upserted: '
+          + totalUpserted + ', phones: ' + totalPhones);
+
+      } catch (e) {
+        try { conn.rollback(); } catch (re) {}
+        i = i - batch.length;
+        var safeIndex = Math.max(0, i);
+        props.setProperty('CDR_BACKFILL_RESUME', String(safeIndex));
+        Logger.log('CDR batch failed, rolled back. Resume at ' + safeIndex + '. Error: ' + e.message);
+        throw e;
+      } finally {
+        try { conn.close(); } catch (ce) {}
+      }
+    }
+
+    props.deleteProperty('CDR_BACKFILL_RESUME');
+    Logger.log('CDR backfill complete. Total processed: ' + (i - startIndex) +
+      '. Upserted: ' + totalUpserted + ', phone rows: ' + totalPhones);
+
+  } catch (e) {
+    Logger.log('CDR backfill stopped. Error: ' + e.message);
     throw e;
   }
 }

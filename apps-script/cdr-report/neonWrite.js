@@ -10,6 +10,13 @@ var NEON_WRITE_CONFIG = {
   alertEmail: 'robin.choudhury@universalmedsupply.com'
 };
 
+// Per-run memo for phone-number HMAC hashes (A2). Reset at the top of
+// writeCDRRowsToNeon so it never accumulates across separate import runs
+// on a warm instance. Avoids re-hashing the same recurring number
+// thousands of times in one CDR mirror -- computeHmacSha256Signature is
+// slow in Apps Script and the same outbound numbers recur heavily.
+var CDR_HMAC_CACHE_ = {};
+
 function getNeonConn_write() {
   var p   = PropertiesService.getScriptProperties();
   var host = p.getProperty('NEON_HOST');
@@ -18,21 +25,27 @@ function getNeonConn_write() {
   return Jdbc.getConnection(url, p.getProperty('NEON_USER'), p.getProperty('NEON_PASS'));
 }
 
-function isNeonReachable_() {
+// Opens ONE write connection and probes it with a 5s SELECT 1, returning
+// the SAME connection for the caller to write on (or null if Neon is
+// unconfigured / unreachable). Replaces the old isNeonReachable_(), which
+// opened a throwaway probe connection and THEN a second write connection
+// -- two TLS+auth handshakes per writer (six per import run) against a
+// free-tier instance that may be cold. Reusing the probed connection
+// halves the handshake cost. Callers own closing the returned connection.
+function getReachableNeonConn_() {
   var conn;
   try {
     conn = getNeonConn_write();
-    if (!conn) return false;
+    if (!conn) return null;
     var stmt = conn.createStatement();
     stmt.setQueryTimeout(5);
     stmt.execute('SELECT 1');
     stmt.close();
-    return true;
+    return conn;
   } catch (e) {
     Logger.log('Neon unreachable: ' + (e.message || e));
-    return false;
-  } finally {
-    if (conn) try { conn.close(); } catch (ce) {}
+    if (conn) { try { conn.close(); } catch (ce) {} }
+    return null;
   }
 }
 
@@ -84,13 +97,11 @@ function normalizeDuration(val) {
 // -- DQE writer --------------------------------------------------------------
 function writeDQERowsToNeon(rows) {
   if (!rows || !rows.length) return { inserted: 0, skipped: 0 };
-  if (!isNeonReachable_()) {
+  var conn = getReachableNeonConn_();
+  if (!conn) {
     Logger.log('writeDQERowsToNeon: Neon unreachable — skipping %s rows.', rows.length);
     return { inserted: 0, skipped: rows.length };
   }
-
-  var conn = getNeonConn_write();
-  if (!conn) return { inserted: 0, skipped: rows.length };
   conn.setAutoCommit(false);
 
   try {
@@ -151,13 +162,11 @@ function writeDQERowsToNeon(rows) {
 // -- QCD writer --------------------------------------------------------------
 function writeQCDRowsToNeon(rows) {
   if (!rows || !rows.length) return { inserted: 0 };
-  if (!isNeonReachable_()) {
+  var conn = getReachableNeonConn_();
+  if (!conn) {
     Logger.log('writeQCDRowsToNeon: Neon unreachable — skipping %s rows.', rows.length);
     return { inserted: 0, skipped: rows.length };
   }
-
-  var conn = getNeonConn_write();
-  if (!conn) return { inserted: 0, skipped: rows.length };
   conn.setAutoCommit(false);
 
   try {
@@ -213,7 +222,12 @@ function writeQCDRowsToNeon(rows) {
 
 function writeCDRRowsToNeon(rows) {
   if (!rows || !rows.length) return { inserted: 0, skipped: 0, phones: 0 };
-  if (!isNeonReachable_()) {
+  // A2: reset the per-run phone-hash memo at the entry of the only
+  // call tree that hashes phones, so it's bounded to this mirror call.
+  CDR_HMAC_CACHE_ = {};
+
+  var conn = getReachableNeonConn_();
+  if (!conn) {
     Logger.log('writeCDRRowsToNeon: Neon unreachable — skipping %s rows.', rows.length);
     return { inserted: 0, skipped: rows.length, phones: 0 };
   }
@@ -224,8 +238,6 @@ function writeCDRRowsToNeon(rows) {
     Logger.log('writeCDRRowsToNeon: HMAC_SECRET not set — name-list JSONB and phone child rows will be skipped.');
   }
 
-  var conn = getNeonConn_write();
-  if (!conn) return { inserted: 0, skipped: rows.length, phones: 0 };
   conn.setAutoCommit(false);
 
   try {
@@ -331,7 +343,14 @@ function writeCDRRowsToNeon(rows) {
         }
 
         if (phoneRows.length > 0) {
-          var PHONE_CHUNK = 200;
+          // A3: chunk only to respect Postgres's 65535-bind-parameter cap
+          // (5 params/row -> 13107 rows max per statement; 10000 leaves
+          // headroom), and commit ONCE after all chunks. The old 200-row
+          // chunk with a per-chunk commit meant ~21 round-trips + 21
+          // commits for a typical day AND left partially-committed phone
+          // rows in Neon if the run timed out mid-loop. One commit makes
+          // the phone write all-or-nothing.
+          var PHONE_CHUNK = 10000;
           var offset = 0;
           while (offset < phoneRows.length) {
             var chunk = phoneRows.slice(offset, offset + PHONE_CHUNK);
@@ -350,9 +369,9 @@ function writeCDRRowsToNeon(rows) {
               phStmt.setInt(s++,    chunk[c].occurrences);
             }
             phStmt.execute(); phStmt.close();
-            conn.commit();
             offset += PHONE_CHUNK;
           }
+          conn.commit();
           phoneCount = phoneRows.length;
           Logger.log('writeCDRRowsToNeon: wrote ' + phoneCount + ' phone child rows.');
         }
@@ -383,8 +402,16 @@ function cdrHashPhone_(raw, secret) {
   if (!raw || !secret) return null;
   var cleaned = String(raw).trim();
   if (!cleaned) return null;
+  // A2: memoize within a run. secret is constant per run, so keying on
+  // the cleaned number is safe; the cache is reset at the top of
+  // writeCDRRowsToNeon. Hash is deterministic, so a stale-cache read can
+  // only ever return the correct value.
+  var cached = CDR_HMAC_CACHE_[cleaned];
+  if (cached !== undefined) return cached;
   var bytes = Utilities.computeHmacSha256Signature(cleaned, secret);
-  return bytes.map(function(b) { return ('0' + (b & 0xff).toString(16)).slice(-2); }).join('');
+  var hex = bytes.map(function(b) { return ('0' + (b & 0xff).toString(16)).slice(-2); }).join('');
+  CDR_HMAC_CACHE_[cleaned] = hex;
+  return hex;
 }
 
 function cdrLooksLikePhone_(str) {
@@ -402,7 +429,14 @@ function cdrParseNameFieldJson_(val, isUnused, secret) {
 
   function parseEntries(str, isExt) {
     if (!str) return [];
-    var entries = str.split(/,\s*(?=[A-Z+'])/);
+    // Split on an entry-separator comma: one followed by the start of a
+    // new "Name (count)" entry. The lookahead character class must cover
+    // every plausible first character of a name so entries that begin
+    // with a lowercase letter ("de la Cruz"), an accented capital
+    // ("Ángel"), or a digit ("311 Service") aren't silently glued onto
+    // the previous entry's name/count. (Was [A-Z+'], which dropped those
+    // -- a quiet data-fidelity bug in the Neon JSONB name-list fields.)
+    var entries = str.split(/,\s*(?=[A-Za-zÀ-ÿ0-9+'])/);
     var out = [];
     for (var i = 0; i < entries.length; i++) {
       var entry = entries[i].trim();
