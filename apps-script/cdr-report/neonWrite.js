@@ -385,14 +385,17 @@ function writeCDRRowsToNeon(rows) {
         }
 
         if (phoneRows.length > 0) {
-          // A3: chunk only to respect Postgres's 65535-bind-parameter cap
-          // (5 params/row -> 13107 rows max per statement; 10000 leaves
-          // headroom), and commit ONCE after all chunks. The old 200-row
-          // chunk with a per-chunk commit meant ~21 round-trips + 21
-          // commits for a typical day AND left partially-committed phone
-          // rows in Neon if the run timed out mid-loop. One commit makes
-          // the phone write all-or-nothing.
-          var PHONE_CHUNK = 10000;
+          // A3: chunk to keep each prepared-statement SQL string under
+          // Apps Script's Jdbc argument-size limit -- a single ~4000-row
+          // phone statement (~44KB of SQL text) throws "Argument too
+          // large: sql", while ~7.5KB statements (the 134-row CDR main
+          // insert, the 74-row DQE insert) succeed. 500 rows (~5.7KB) is
+          // safely under. We still commit ONCE after all chunks (not per
+          // chunk), so the phone write stays all-or-nothing and cheap on
+          // round-trips. (5 params/row is also far under Postgres's
+          // 65535 bind-param cap; the SQL-string size is the binding
+          // constraint here, not the param count.)
+          var PHONE_CHUNK = 500;
           var offset = 0;
           while (offset < phoneRows.length) {
             var chunk = phoneRows.slice(offset, offset + PHONE_CHUNK);

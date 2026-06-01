@@ -391,9 +391,13 @@ function backfillCDRHistory() {
         }
 
         if (phoneRows.length > 0) {
-          // BATCH_SIZE=50 keeps phoneRows well under the 65535/5 bind-param
-          // cap in practice; chunk at 10000 rows as a guard regardless.
-          var PHONE_CHUNK = 10000;
+          // Chunk to keep each prepared-statement SQL string under Apps
+          // Script's Jdbc argument-size limit ("Argument too large: sql"
+          // fires around ~44KB / ~4000 rows; ~7.5KB statements succeed).
+          // 500 rows (~5.7KB) is safely under. A 50-row CDR batch can hold
+          // ~1500 phones, so without this it would build a ~17KB statement
+          // and fail. One commit per batch (below) keeps it atomic.
+          var PHONE_CHUNK = 500;
           var poff = 0;
           while (poff < phoneRows.length) {
             var chunk = phoneRows.slice(poff, poff + PHONE_CHUNK);
