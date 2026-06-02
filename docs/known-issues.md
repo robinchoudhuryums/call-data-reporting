@@ -224,9 +224,10 @@ through a public function that explicitly checks `resolveUser_(email).role
 ### `setup()` is idempotent
 
 `setup()` creates `Access Control`, `Alert Config`, `Alert Log`,
-`Pipeline Health`, `Digest Config`, `Agent Alias Overrides`, and
-`Orphan Fix Log` sheets if they don't exist (each with a frozen header
-row). It never overwrites existing rows on any of the seven. Safe to re-run as many
+`Pipeline Health`, `Digest Config`, `Agent Alias Overrides`,
+`Orphan Fix Log`, and `Dept Config` sheets if they don't exist (each
+with a frozen header row). It never overwrites existing rows on any of
+the eight. Safe to re-run as many
 times as you want. Keep it that way; the alerts engine assumes
 `appendAlertLog_` can blindly append without coordinating reads.
 
@@ -559,8 +560,8 @@ best-effort -- a missing or empty sheet leaves the build's
 behavior byte-identical to pre-OrphanFix.
 
 **Cache invalidation.** `applyOrphanRename` removes the single
-fixed-key `companyOverview:v12` cache entry on success. Per-(dept,
-range) caches (`summary:v6`, `individual:v6`, `performance:v3`,
+fixed-key `companyOverview:v13` cache entry on success. Per-(dept,
+range) caches (`summary:v8`, `individual:v8`, `performance:v4`,
 etc.) are left to TTL out within 5 minutes. The Orphan Fix modal
 warns the user "may take up to 5 minutes to appear in dashboard."
 

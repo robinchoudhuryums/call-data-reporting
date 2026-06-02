@@ -925,6 +925,7 @@
         ovLastData = data;
         $('ov-loading').style.display = 'none';
         $('ov-body').style.display = '';
+        ovSetRefreshWarn_(false);   // a refresh succeeded: clear any prior warning
         ovRender_(data);
         ovScheduleAutoRefresh_();
       })
@@ -932,10 +933,37 @@
         if (!silent) {
           $('ov-loading').textContent = 'Error loading overview: '
             + (err && err.message ? err.message : String(err));
+        } else {
+          // Silent auto-refresh failed: surface a muted badge so a
+          // persistently-failing refresh doesn't leave silently-aging
+          // data with no signal (the header freshness pill only updates
+          // on page load). Self-clears on the next successful refresh.
+          ovSetRefreshWarn_(true);
         }
         ovScheduleAutoRefresh_();
       })
       .getCompanyOverview();
+  }
+
+  // Muted "auto-refresh failing" badge at the top of the Overview body.
+  // Created lazily; toggled by ovLoad_'s success/failure handlers.
+  function ovSetRefreshWarn_(on) {
+    var id = 'ov-refresh-warn';
+    var el = document.getElementById(id);
+    if (on) {
+      if (!el) {
+        el = document.createElement('div');
+        el.id = id;
+        el.style.cssText = 'margin:0 0 10px;padding:6px 10px;border-radius:2px;'
+          + 'font-size:12px;color:#6b7280;background:#f9fafb;border:1px solid #e5e7eb;';
+        el.textContent = 'Auto-refresh is failing — showing the last loaded data.';
+        var body = $('ov-body');
+        if (body) body.insertBefore(el, body.firstChild);
+      }
+      el.style.display = '';
+    } else if (el) {
+      el.style.display = 'none';
+    }
   }
 
   function ovScheduleAutoRefresh_() {
@@ -1827,7 +1855,13 @@
         // hand-typed URLs.
         const normalized = hash.charAt(0) === '/' ? hash : '/' + hash;
         const trigger = document.querySelector('[data-route="' + normalized + '"]');
-        if (trigger) trigger.click();
+        if (!trigger) return;
+        // A deep link to an admin-only view (data-admin-only tabs:
+        // alerts / orphan-fix / dept-config) by a non-admin would open
+        // the modal only to surface a server "admin-only" error. Skip it
+        // and stay on the base page instead.
+        if (trigger.hasAttribute('data-admin-only') && USER.role !== 'admin') return;
+        trigger.click();
       });
     }
   }
@@ -7933,7 +7967,7 @@
         }).join('');
 
     tbody.innerHTML = orphans.map(function (o, idx) {
-      const exts = (o.sampleExts || []).join(', ') || '<span class="al-empty-inline">-</span>';
+      const exts = (o.sampleExts || []).map(escapeHtml).join(', ') || '<span class="al-empty-inline">-</span>';
       return '<tr data-orphan-idx="' + idx + '">'
            +   '<td>' + escapeHtml(o.name) + '</td>'
            +   '<td class="num">' + o.rows + '</td>'

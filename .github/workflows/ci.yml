@@ -1,0 +1,25 @@
+name: CI
+
+# Runs the zero-dep regression harness (node --test) and the INV-16
+# duplicated-file guard on every push to main and every PR, so a failing
+# test or a drifted neonWrite.js / buildDQEHistoricalData.js copy is caught
+# before it can be deployed (previously these ran only locally / via the
+# non-blocking SessionStart hook).
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'   # tests need Node >= 18; dev on 22
+      - name: Unit tests (node --test)
+        run: node --test
+      - name: INV-16 duplicated-file guard
+        run: bash scripts/check-duplicated-files.sh

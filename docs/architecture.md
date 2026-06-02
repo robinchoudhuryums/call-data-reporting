@@ -238,20 +238,20 @@ canonical and reflects current code.
 
 | Report | File | Public entries | Cache prefix | Admin-only |
 |---|---|---|---|---|
-| Main per-agent table | `Data.gs` | `getDepartmentSummary` | `summary:v6:` | no |
+| Main per-agent table | `Data.gs` | `getDepartmentSummary` | `summary:v8:` | no |
 | Missed Calls Report | `MissedCallsReport.gs` | `getMissedCallsReport` | `missed:v10:` | no |
-| Individual / Peer Comparison | `IndividualReport.gs` | `getIndividualReportInit`, `getIndividualReport`, `sendIndividualReportEmail` | `individual:v6:`, `individual_active:v1:` | no |
-| Performance Report (current vs prior) | `PerformanceReport.gs` | `getPerformanceReportInit` (delegates to Individual's init), `getPerformanceReport`, `sendPerformanceReportEmail` | `performance:v3:` | no |
-| Compare Ranges (two arbitrary ranges) | `CompareRangesReport.gs` | `getCompareRangesInit`, `getCompareRanges`, `sendCompareRangesEmail` | `compareRanges:v3:` | no |
-| Company Overview | `CompanyOverview.gs` | `getCompanyOverview` | `companyOverview:v12` | partial (admin-only `companyAggregate` field) |
+| Individual / Peer Comparison | `IndividualReport.gs` | `getIndividualReportInit`, `getIndividualReport`, `sendIndividualReportEmail` | `individual:v8:`, `individual_active:v2:` | no |
+| Performance Report (current vs prior) | `PerformanceReport.gs` | `getPerformanceReportInit` (delegates to Individual's init), `getPerformanceReport`, `sendPerformanceReportEmail` | `performance:v4:` | no |
+| Compare Ranges (two arbitrary ranges) | `CompareRangesReport.gs` | `getCompareRangesInit`, `getCompareRanges`, `sendCompareRangesEmail` | `compareRanges:v4:` | no |
+| Company Overview | `CompanyOverview.gs` | `getCompanyOverview` | `companyOverview:v13` | partial (admin-only `companyAggregate` field) |
 | QCD Report | `QCDReport.gs` | `getQcdReportInit`, `getQcdReport`, `sendQcdReportEmail` | `qcd:v5:` | no (per-dept gate like IR/PR/CR) |
 | Low Answer Rate Alerts | `Alerts.gs` | `getAlertsInit`, `previewAlerts`, `sendAlerts`, `installAlertTrigger`, `uninstallAlertTrigger` (+ `runDailyAlerts_` time trigger) | (no cache) | yes |
 | Manager Digest engine | `Digest.gs` | `getDigestsInit`, `sendPreviewDigest`, `installDigestTriggers`, `uninstallDigestTriggers` (+ `runDailyDigests_`, `runWeeklyDigests_` time triggers) | (no cache) | yes |
-| Orphan Fix engine (admin write path) | `OrphanFix.gs` | `getOrphanFixInit`, `addAgentAlias`, `removeAgentAlias`, `applyOrphanRename` | (no cache; busts `companyOverview:v12` on write) | yes |
+| Orphan Fix engine (admin write path) | `OrphanFix.gs` | `getOrphanFixInit`, `addAgentAlias`, `removeAgentAlias`, `applyOrphanRename` | (no cache; busts `companyOverview:v13` on write) | yes |
 
 All reports use the same auth resolution (`resolveUser_(email)`), the
 same roster reader (`getRosterForDepartment_`), and — for the picker —
-the same active-in-range subset cache (`individual_active:v1:`). The
+the same active-in-range subset cache (`individual_active:v2:`). The
 Individual / Performance / Compare Ranges "Email image" exports AND
 the Alerts engine all require the `script.send_mail` OAuth scope
 declared in `appsscript.json`.

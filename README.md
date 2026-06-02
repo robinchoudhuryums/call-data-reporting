@@ -103,6 +103,18 @@ clasp push -f
 # -> pencil -> Version: New version -> Deploy
 ```
 
+To skip the manual "New version" step (a recurring stale-deploy footgun —
+`clasp push` alone does NOT update what the live `/exec` URL serves), use
+the helper, which pushes *and* rolls the deployment forward in one shot:
+
+```bash
+# deployment id comes from `clasp deployments` in that project dir (one-time lookup)
+scripts/deploy.sh .                      <dashboard-deployment-id>   # repo root = dashboard
+scripts/deploy.sh apps-script/cdr-report <cdr-report-deployment-id>
+scripts/deploy.sh apps-script/cdr-import <cdr-import-deployment-id>
+# omit the id to just `clasp push -f` and finish the version bump manually
+```
+
 **One-time, in the Apps Script project:**
 
 - Project Settings -> Script Properties -> add `SPREADSHEET_ID`
