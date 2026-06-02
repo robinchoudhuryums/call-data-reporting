@@ -283,7 +283,27 @@ Neon Postgres is the long-term archive and the future query backend.
   `backfillCDRHistory()` — a repair tool that re-mirrors `CDR Historical
   Data` with `DO UPDATE` to fix the JSONB name columns corrupted before
   the F2 splitter fix and fill partially-written phone children
-  (requires `HMAC_SECRET`; resumable via `CDR_BACKFILL_RESUME`).
+  (requires `HMAC_SECRET`; resumable via `CDR_BACKFILL_RESUME`); and
+  `backfillDQEHistoryUpsert()` — the `DO UPDATE` DQE mirror to run after a
+  bulk rebuild (which defers the per-date DQE→Neon mirror via `skipNeon`),
+  so re-calculated rows overwrite stale `dqe_history` rows (resumable via
+  `DQE_UPSERT_RESUME`; one connection per invocation).
+
+## Future improvements
+
+- **Client-orchestrated bulk-import sidebar.** The bulk rebuild
+  (`bulkHistoricalUpdate` → `processBulkQueue`) is a single long server
+  loop with toast + execution-log feedback and a 15-min pause/Resume
+  cycle. A live progress sidebar/dialog is *not* possible on top of that
+  design (Apps Script has no server→client push, and the running loop
+  blocks the sidebar's callbacks). The long-term superior UX is to invert
+  control: a **sidebar drives the loop**, calling a `processOneBulkDate()`
+  -style endpoint one date/batch at a time and updating its own HTML
+  between calls. That gives a live progress bar + a Stop button, and as a
+  bonus **eliminates the pause/Resume clicks and the blocking `ui.alert`
+  hangs** (each server call is short, well under the execution ceiling).
+  It's a real re-architecture of the bulk orchestration, deferred until
+  the bulk UX is worth that investment.
 
 ### Cross-project reader: team-tools
 
