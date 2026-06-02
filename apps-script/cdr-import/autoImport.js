@@ -168,7 +168,15 @@ function processBulkQueue() {
   }
 
   const batchStartTime = Date.now();
-  const TIME_LIMIT     = 240000; 
+  // Per-invocation budget before pausing for "Resume Bulk Processing".
+  // Raised from 4 min so each click processes several dates instead of ~1
+  // (a force-rebuild date costs ~4-5 min: full-sheet delete + DQE build +
+  // Neon mirror). 15 min leaves comfortable margin under the 30-min Apps
+  // Script ceiling for the in-flight date + the final processBatchArchive.
+  // KEEP BULK RANGES SMALL (~10-15 dates): the final archive writes + sorts
+  // the whole accumulated Pending Archive once at the end, so a huge range
+  // makes that last step heavy. Split big rebuilds into ~10-date chunks.
+  const TIME_LIMIT     = 900000;  // 15 min (was 240000 / 4 min)
 
   let targetSS = null;
   try {
@@ -243,6 +251,15 @@ function processBulkQueue() {
     report.push(`⚠️ Archive failed: ${e.message}`);
     ui.alert("⚠️ Archive Warning", `Bulk processing complete, but archive failed:\n${e.message}\n\nYou can retry with 'Process Batch Archive' from the menu.`, ui.ButtonSet.OK);
   }
+
+  // Reminder: the bulk path rebuilds DQE with the per-date Neon mirror
+  // SKIPPED (skipNeon). The sheets are current, but dqe_history is NOT --
+  // run the DO-UPDATE backfill in the CDR Report project to mirror these
+  // dates to Neon (needed for the F1 read-back parity check).
+  report.push("---");
+  report.push("ℹ️ DQE Neon mirror was deferred (skipNeon). Run "
+    + "backfillDQEHistoryUpsert() in the CDR Report project to mirror these "
+    + "dates to dqe_history (DO UPDATE).");
 
   ui.alert("Bulk Complete", report.join("\n"), ui.ButtonSet.OK);
 
@@ -427,7 +444,12 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
           try {
             SpreadsheetApp.flush();
             const dqeStartRow = dqeHD.getLastRow();
-            buildDQEHistoricalData(rawDataSheet, dqeHD);
+            // skipNeon: in the bulk REBUILD path we defer the per-date Neon
+            // mirror (its JDBC latency is ~1/3 of each date's cost) -- run
+            // backfillDQEHistoryUpsert() once after the rebuild to mirror all
+            // dates with DO UPDATE. The daily integrated path (and the
+            // cdr-report standalone trigger) keep the real-time mirror.
+            buildDQEHistoricalData(rawDataSheet, dqeHD, { skipNeon: true });
             const dqeEndRow = dqeHD.getLastRow();
             const dqeCount = Math.max(0, dqeEndRow - dqeStartRow);
             if (dqeCount > 0 && histDateCache) histDateCache.dqe.add(dateKey);

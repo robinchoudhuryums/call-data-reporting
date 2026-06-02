@@ -31,7 +31,12 @@
  */
 function getLatestDataDate() {
   const cache = CacheService.getScriptCache();
-  const KEY = 'latestDate:v1';
+  // F1 read-back (Phase 3.2 cutover #1): the cache key is suffixed with
+  // the active source so flipping DQE_READ_SOURCE doesn't serve a value
+  // computed from the other source (Neon can lag the sheet mid-backfill).
+  // Default 'sheet' => byte-identical to pre-cutover behavior.
+  const source = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
+  const KEY = 'latestDate:v1:' + source;
   // Sentinel for the negative case (sheet missing / empty) so we
   // don't reopen the spreadsheet on every page load when the data
   // pipeline is broken or before first ingest.
@@ -43,6 +48,16 @@ function getLatestDataDate() {
   const cachePut = function (v) {
     try { cache.put(KEY, v, CACHE_TTL_SECONDS); } catch (e) {}
   };
+
+  // When DQE_READ_SOURCE=neon, read MAX(call_date) from dqe_history (one
+  // indexed query vs a whole-column sheet scan). Best-effort: any
+  // null/empty/error falls through to the sheet scan below, so a Neon
+  // hiccup degrades to today's behavior rather than failing.
+  if (source === 'neon' && typeof neonGetMaxDqeDate_ === 'function') {
+    const neonMax = neonGetMaxDqeDate_();
+    if (neonMax) { cachePut(neonMax); return neonMax; }
+    Logger.log('getLatestDataDate: neon returned no date; falling back to sheet.');
+  }
 
   const ss = openSpreadsheet_();
   const sheet = ss.getSheetByName(SHEETS.HISTORICAL);
