@@ -47,7 +47,7 @@ const DQE_TIME_SLOTS = Array.from({ length: 19 }, (_, i) => ({
 
 // ── Main DQE build function ───────────────────────────────────────────────────
 
-function buildDQEHistoricalData(rawSheet, dqeSheet) {
+function buildDQEHistoricalData(rawSheet, dqeSheet, opts) {
   // Wall-clock start used by the Pipeline Health log entry below.
   const __pipelineStartMs = Date.now();
 
@@ -618,6 +618,15 @@ function buildDQEHistoricalData(rawSheet, dqeSheet) {
 
   // ── Phase 3 — Mirror to Neon ────────────────────────────────────────────────
   // Failure is logged + emailed via notifyNeonWriteFailure; sheet write stands.
+  // skipNeon (bulk rebuild path, opts.skipNeon=true): defer the per-date Neon
+  // mirror -- its JDBC latency is the dominant per-date cost in a force-rebuild.
+  // The bulk caller runs ONE batched DO-UPDATE pass (backfillDQEHistoryUpsert,
+  // cdr-report) after the whole rebuild instead. Daily / standalone callers
+  // omit opts so the real-time mirror is unchanged.
+  if (opts && opts.skipNeon) {
+    Logger.log('DQE: skipNeon=true — deferring Neon mirror (run '
+      + 'backfillDQEHistoryUpsert() after the rebuild).');
+  } else {
   try {
     const neonRows = outputRows.map(function(r) {
       return {
@@ -648,6 +657,7 @@ function buildDQEHistoricalData(rawSheet, dqeSheet) {
   } catch (neonErr) {
     notifyNeonWriteFailure('buildDQEHistoricalData (' + callDateStr + ')', neonErr.message);
   }
+  }  // end else (skipNeon)
 
   // Pipeline Health: append a success row so the admin can see at a
   // glance "the daily DQE rebuild ran for 2026-05-19 and wrote 240

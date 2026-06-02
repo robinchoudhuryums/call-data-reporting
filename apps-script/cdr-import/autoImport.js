@@ -252,6 +252,15 @@ function processBulkQueue() {
     ui.alert("⚠️ Archive Warning", `Bulk processing complete, but archive failed:\n${e.message}\n\nYou can retry with 'Process Batch Archive' from the menu.`, ui.ButtonSet.OK);
   }
 
+  // Reminder: the bulk path rebuilds DQE with the per-date Neon mirror
+  // SKIPPED (skipNeon). The sheets are current, but dqe_history is NOT --
+  // run the DO-UPDATE backfill in the CDR Report project to mirror these
+  // dates to Neon (needed for the F1 read-back parity check).
+  report.push("---");
+  report.push("ℹ️ DQE Neon mirror was deferred (skipNeon). Run "
+    + "backfillDQEHistoryUpsert() in the CDR Report project to mirror these "
+    + "dates to dqe_history (DO UPDATE).");
+
   ui.alert("Bulk Complete", report.join("\n"), ui.ButtonSet.OK);
 
   props.deleteProperty("bulkQueue");
@@ -435,7 +444,12 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
           try {
             SpreadsheetApp.flush();
             const dqeStartRow = dqeHD.getLastRow();
-            buildDQEHistoricalData(rawDataSheet, dqeHD);
+            // skipNeon: in the bulk REBUILD path we defer the per-date Neon
+            // mirror (its JDBC latency is ~1/3 of each date's cost) -- run
+            // backfillDQEHistoryUpsert() once after the rebuild to mirror all
+            // dates with DO UPDATE. The daily integrated path (and the
+            // cdr-report standalone trigger) keep the real-time mirror.
+            buildDQEHistoricalData(rawDataSheet, dqeHD, { skipNeon: true });
             const dqeEndRow = dqeHD.getLastRow();
             const dqeCount = Math.max(0, dqeEndRow - dqeStartRow);
             if (dqeCount > 0 && histDateCache) histDateCache.dqe.add(dateKey);

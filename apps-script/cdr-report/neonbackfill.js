@@ -179,6 +179,168 @@ function backfillDQEHistory() {
 }
 
 
+// -- DQE upsert backfill (for the skipNeon bulk-rebuild workflow) -------------
+//
+// After a force-rebuild (bulkHistoricalUpdate) leaves freshly RE-CALCULATED
+// rows in the DQE Historical Data sheet with the per-date Neon mirror skipped
+// (buildDQEHistoricalData opts.skipNeon=true), run THIS once to mirror them
+// all to dqe_history with ON CONFLICT DO UPDATE -- so the new values OVERWRITE
+// any stale rows. (backfillDQEHistory uses DO NOTHING and would SKIP dates
+// already in Neon, leaving the old methodology's values in place.)
+//
+// Resumable via DQE_UPSERT_RESUME (clear to re-run from the top). Opens ONE
+// connection per invocation (vs the per-batch connection in backfillDQEHistory)
+// so the slow JDBC handshake is paid once -- the main reason this single
+// end-pass beats the 60 per-date mirrors it replaces.
+function backfillDQEHistoryUpsert() {
+  var ss    = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('DQE Historical Data');
+  if (!sheet) { Logger.log('DQE upsert: Sheet not found.'); return; }
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) { Logger.log('DQE upsert: Sheet is empty.'); return; }
+
+  var data = sheet.getRange(2, 1, lastRow - 1, 36).getDisplayValues();
+
+  var props      = PropertiesService.getScriptProperties();
+  var startIndex = parseInt(props.getProperty('DQE_UPSERT_RESUME') || '0');
+  Logger.log('DQE upsert: starting at index ' + startIndex + ' of ' + data.length);
+  if (startIndex >= data.length) {
+    Logger.log('DQE upsert complete. Clear DQE_UPSERT_RESUME to re-run.');
+    return;
+  }
+
+  var BATCH_SIZE    = 50;   // 50 rows * 34 cols keeps the SQL string + the
+                            // DO UPDATE SET clause well under Apps Script's
+                            // Jdbc statement-size limit (see neonWrite A3).
+  var TIME_LIMIT_MS = 240000;
+  var startTime     = Date.now();
+  var totalUpserted = 0;
+  var i = startIndex;
+
+  var conn = getNeonConn_backfill();
+  if (!conn) { Logger.log('DQE upsert: no Neon connection (NEON_* Script Properties set?).'); return; }
+  conn.setAutoCommit(false);
+
+  try {
+    while (i < data.length) {
+      if (Date.now() - startTime > TIME_LIMIT_MS) {
+        props.setProperty('DQE_UPSERT_RESUME', String(i));
+        Logger.log('Time limit reached. Resume saved at index ' + i +
+          '. Upserted: ' + totalUpserted + '. Run again to continue.');
+        return;   // finally closes conn
+      }
+
+      var batchStartIdx = i;
+      var batch = [];
+      var batchEnd = Math.min(i + BATCH_SIZE, data.length);
+      while (i < batchEnd) {
+        var r = data[i];
+        if (!r[1] || !r[2]) { i++; continue; }
+        batch.push({
+          monthYear:        r[0]  || null,
+          callDate:         parseDateForNeon(r[1]),
+          agentName:        r[2],
+          queueExtensions:  r[3]  || null,
+          totalUnique:      parseInt(r[4]) || 0,
+          totalRung:        parseInt(r[5]) || 0,
+          totalMissed:      parseInt(r[6]) || 0,
+          totalAnswered:    parseInt(r[7]) || 0,
+          ttt:              r[8]  || null,
+          att:              r[9]  || null,
+          slots:            r.slice(10, 29),
+          abParentIds:      r[29] || null,
+          abMissedIds:      r[30] || null,
+          abMissedTimes:    r[31] || null,
+          avgAbdWait:       r[32] || null,
+          csrAvgAbdWait:    r[33] || null
+        });
+        i++;
+      }
+      if (batch.length === 0) continue;
+
+      try {
+        var placeholderRow  = '(' + new Array(34).fill('?').join(',') + ')';
+        var allPlaceholders = batch.map(function() { return placeholderRow; }).join(',');
+        var sql = 'INSERT INTO dqe_history (' +
+          'month_year, call_date, agent_name, queue_extensions, ' +
+          'total_unique, total_rung, total_missed, total_answered, ttt, att, ' +
+          'slot_0800_0830, slot_0830_0900, slot_0900_0930, slot_0930_1000, slot_1000_1030, ' +
+          'slot_1030_1100, slot_1100_1130, slot_1130_1200, slot_1200_1230, slot_1230_1300, ' +
+          'slot_1300_1330, slot_1330_1400, slot_1400_1430, slot_1430_1500, slot_1500_1530, ' +
+          'slot_1530_1600, slot_1600_1630, slot_1630_1700, slot_1700_1730, ' +
+          'abandoned_parent_ids, abandoned_missed_ids, abandoned_missed_times, ' +
+          'avg_abd_wait, csr_avg_abd_wait' +
+          ') VALUES ' + allPlaceholders +
+          ' ON CONFLICT ON CONSTRAINT uq_dqe_history DO UPDATE SET ' +
+          'month_year = EXCLUDED.month_year, ' +
+          'queue_extensions = EXCLUDED.queue_extensions, ' +
+          'total_unique = EXCLUDED.total_unique, ' +
+          'total_rung = EXCLUDED.total_rung, ' +
+          'total_missed = EXCLUDED.total_missed, ' +
+          'total_answered = EXCLUDED.total_answered, ' +
+          'ttt = EXCLUDED.ttt, att = EXCLUDED.att, ' +
+          'slot_0800_0830 = EXCLUDED.slot_0800_0830, slot_0830_0900 = EXCLUDED.slot_0830_0900, ' +
+          'slot_0900_0930 = EXCLUDED.slot_0900_0930, slot_0930_1000 = EXCLUDED.slot_0930_1000, ' +
+          'slot_1000_1030 = EXCLUDED.slot_1000_1030, slot_1030_1100 = EXCLUDED.slot_1030_1100, ' +
+          'slot_1100_1130 = EXCLUDED.slot_1100_1130, slot_1130_1200 = EXCLUDED.slot_1130_1200, ' +
+          'slot_1200_1230 = EXCLUDED.slot_1200_1230, slot_1230_1300 = EXCLUDED.slot_1230_1300, ' +
+          'slot_1300_1330 = EXCLUDED.slot_1300_1330, slot_1330_1400 = EXCLUDED.slot_1330_1400, ' +
+          'slot_1400_1430 = EXCLUDED.slot_1400_1430, slot_1430_1500 = EXCLUDED.slot_1430_1500, ' +
+          'slot_1500_1530 = EXCLUDED.slot_1500_1530, slot_1530_1600 = EXCLUDED.slot_1530_1600, ' +
+          'slot_1600_1630 = EXCLUDED.slot_1600_1630, slot_1630_1700 = EXCLUDED.slot_1630_1700, ' +
+          'slot_1700_1730 = EXCLUDED.slot_1700_1730, ' +
+          'abandoned_parent_ids = EXCLUDED.abandoned_parent_ids, ' +
+          'abandoned_missed_ids = EXCLUDED.abandoned_missed_ids, ' +
+          'abandoned_missed_times = EXCLUDED.abandoned_missed_times, ' +
+          'avg_abd_wait = EXCLUDED.avg_abd_wait, ' +
+          'csr_avg_abd_wait = EXCLUDED.csr_avg_abd_wait';
+
+        var stmt = conn.prepareStatement(sql);
+        var p = 1;
+        for (var b = 0; b < batch.length; b++) {
+          var row = batch[b];
+          stmt.setString(p++, row.monthYear);
+          stmt.setString(p++, row.callDate);
+          stmt.setString(p++, row.agentName);
+          stmt.setString(p++, row.queueExtensions);
+          stmt.setInt(p++,    row.totalUnique);
+          stmt.setInt(p++,    row.totalRung);
+          stmt.setInt(p++,    row.totalMissed);
+          stmt.setInt(p++,    row.totalAnswered);
+          stmt.setString(p++, row.ttt);
+          stmt.setString(p++, row.att);
+          for (var s = 0; s < 19; s++) {
+            stmt.setString(p++, row.slots[s] || null);
+          }
+          stmt.setString(p++, row.abParentIds);
+          stmt.setString(p++, row.abMissedIds);
+          stmt.setString(p++, row.abMissedTimes);
+          stmt.setString(p++, row.avgAbdWait);
+          stmt.setString(p++, row.csrAvgAbdWait);
+        }
+        stmt.execute();
+        stmt.close();
+        conn.commit();
+        totalUpserted += batch.length;
+        Logger.log('Upserted batch ending at index ' + i + ' (' + batch.length +
+          ' rows). Cumulative: ' + totalUpserted);
+      } catch (e) {
+        try { conn.rollback(); } catch (re) {}
+        props.setProperty('DQE_UPSERT_RESUME', String(batchStartIdx));
+        Logger.log('Batch failed, rolled back. Resume at ' + batchStartIdx + '. Error: ' + e.message);
+        throw e;
+      }
+    }
+
+    props.deleteProperty('DQE_UPSERT_RESUME');
+    Logger.log('DQE upsert complete. Total processed: ' + (i - startIndex) +
+      '. Total upserted into Neon: ' + totalUpserted);
+  } finally {
+    try { conn.close(); } catch (ce) {}
+  }
+}
+
+
 // -- CDR backfill ------------------------------------------------------------
 //
 // Re-mirrors "CDR Historical Data" sheet rows to Neon
