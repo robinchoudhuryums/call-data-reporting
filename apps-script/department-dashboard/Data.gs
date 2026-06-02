@@ -294,17 +294,67 @@ function computeSummary_(dept, from, to, scope) {
   // time extraction (getHours/Min/Sec) uses the SCRIPT'S timezone.
   // Any mismatch (e.g. Mexico City TZ vs Chicago TZ) silently shifts
   // every duration by the offset. Display values are TZ-free.
+  // F1 cutover #3: source the per-(date,agent) rows for [priorFrom, to]
+  // (user window + the E5 prior window) from Neon when DQE_READ_SOURCE=neon,
+  // else the sheet. Both produce the same normalized `srcRows` shape
+  // (durations already in seconds), so the aggregation loop below is
+  // source-agnostic. Default 'sheet' is byte-identical to pre-cutover --
+  // compute-summary.test.js guards that.
+  //
+  // deptQueueExts (queue-scope match set): its DERIVED path needs ALL
+  // history (every ext a roster agent ever used), NOT just the window. So
+  // on the Neon path we still read a cheap cols-A..D slice for
+  // getDeptQueueExts_ (no getDisplayValues), while the heavy windowed
+  // aggregation comes from Neon; an override dept skips the scan entirely.
+  // (A later step can move this derivation to a SELECT DISTINCT Neon query.)
+  const dqeSource = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
   const numCols = HISTORICAL_COLS.CSR_AVG_ABD_WAIT;
-  const range = sheet.getRange(2, 1, lastRow - 1, numCols);
-  const values = range.getValues();
-  const displays = range.getDisplayValues();
-
-  // Queue-scope/Both-scope matching uses this set, NOT
-  // roster.allExtensions (which holds personal exts and never overlaps
-  // col D's shared-queue exts -- a longstanding bug that made Queue
-  // scope return empty in practice). See getDeptQueueExts_ docstring.
-  const deptQueueResult = getDeptQueueExts_(dept, rosterSet, values);
-  const deptQueueExts = deptQueueResult.exts;
+  let srcRows = null;
+  let deptQueueExts, deptQueueExtsSource;
+  if (dqeSource === 'neon' && typeof neonFetchDqeRows_ === 'function') {
+    srcRows = neonFetchDqeRows_(priorFrom, to);
+    if (srcRows && srcRows.length) {
+      const extValues = sheet.getRange(2, 1, lastRow - 1, HISTORICAL_COLS.QUEUE_EXT).getValues();
+      const dqr = getDeptQueueExts_(dept, rosterSet, extValues);
+      deptQueueExts = dqr.exts; deptQueueExtsSource = dqr.source;
+    } else {
+      srcRows = null;   // empty/unreachable -> fall through to the sheet path
+      Logger.log('computeSummary_: neon returned no rows; falling back to sheet.');
+    }
+  }
+  if (srcRows === null) {
+    const range = sheet.getRange(2, 1, lastRow - 1, numCols);
+    const values = range.getValues();
+    const displays = range.getDisplayValues();
+    // Queue-scope/Both-scope matching uses this set, NOT roster.allExtensions
+    // (personal exts, which never overlap col D's shared-queue exts). See
+    // getDeptQueueExts_ docstring.
+    const dqr = getDeptQueueExts_(dept, rosterSet, values);
+    deptQueueExts = dqr.exts; deptQueueExtsSource = dqr.source;
+    // Build the same normalized [priorFrom, to] window the Neon path
+    // returns, so the aggregation loop below is identical for both sources.
+    srcRows = [];
+    for (let i = 0; i < values.length; i++) {
+      const r = values[i], rd = displays[i];
+      const dIso = rowDateIso_(r[HISTORICAL_COLS.DATE - 1], ssTZ);
+      if (!dIso || dIso < priorFrom || dIso > to) continue;
+      const ag = String(r[HISTORICAL_COLS.AGENT - 1] || '').trim();
+      if (!ag) continue;
+      srcRows.push({
+        dateIso:          dIso,
+        agent:            ag,
+        queueExt:         String(r[HISTORICAL_COLS.QUEUE_EXT - 1] || '').trim(),
+        totalUnique:      Number(r[HISTORICAL_COLS.TOTAL_UNIQUE - 1])   || 0,
+        totalRung:        Number(r[HISTORICAL_COLS.TOTAL_RUNG - 1])     || 0,
+        totalMissed:      Number(r[HISTORICAL_COLS.TOTAL_MISSED - 1])   || 0,
+        totalAnswered:    Number(r[HISTORICAL_COLS.TOTAL_ANSWERED - 1]) || 0,
+        tttSec:           parseHmsDisplay_(rd[HISTORICAL_COLS.TTT - 1]),
+        attSec:           parseHmsDisplay_(rd[HISTORICAL_COLS.ATT - 1]),
+        avgAbdWaitSec:    parseHmsDisplay_(rd[HISTORICAL_COLS.AVG_ABD_WAIT - 1]),
+        csrAvgAbdWaitSec: parseHmsDisplay_(rd[HISTORICAL_COLS.CSR_AVG_ABD_WAIT - 1]),
+      });
+    }
+  }
 
   const acc = {};
   let rowsMatched = 0;
@@ -322,17 +372,18 @@ function computeSummary_(dept, from, to, scope) {
   // "no data" from "real zero".
   const priorAcc = {};
 
-  for (let i = 0; i < values.length; i++) {
-    const r = values[i];
-    const dateIso = rowDateIso_(r[HISTORICAL_COLS.DATE - 1], ssTZ);
+  for (let i = 0; i < srcRows.length; i++) {
+    const row = srcRows[i];
+    const dateIso = row.dateIso;
     if (!dateIso) continue;
     // Accept rows in either the user-selected window OR the prior
-    // window (for E5 delta chips). Fast-path the rest.
+    // window (for E5 delta chips). srcRows is already windowed to
+    // [priorFrom, to]; these flags split it.
     const inUser  = (dateIso >= from && dateIso <= to);
     const inPrior = (dateIso >= priorFrom && dateIso <= priorTo);
     if (!inUser && !inPrior) continue;
 
-    const agent = String(r[HISTORICAL_COLS.AGENT - 1] || '').trim();
+    const agent = row.agent;
     if (!agent) continue;
     // Skip queue-sentinel rows (used by MissedCallsReport for queue-only
     // abandoned calls). These have agent name = a queue identifier and
@@ -343,7 +394,7 @@ function computeSummary_(dept, from, to, scope) {
     const inRoster = !!rosterSet[agent];
     let inQueue = false;
     if (scope !== 'roster') {
-      const rowExts = parseExtensions_(r[HISTORICAL_COLS.QUEUE_EXT - 1]);
+      const rowExts = parseExtensions_(row.queueExt);
       for (let j = 0; j < rowExts.length; j++) {
         if (deptQueueExts[rowExts[j]]) { inQueue = true; break; }
       }
@@ -364,9 +415,9 @@ function computeSummary_(dept, from, to, scope) {
     if (inPrior) {
       let p = priorAcc[agent];
       if (!p) p = priorAcc[agent] = { rung: 0, missed: 0, answered: 0, rows: 0 };
-      p.rung     += Number(r[HISTORICAL_COLS.TOTAL_RUNG - 1])     || 0;
-      p.missed   += Number(r[HISTORICAL_COLS.TOTAL_MISSED - 1])   || 0;
-      p.answered += Number(r[HISTORICAL_COLS.TOTAL_ANSWERED - 1]) || 0;
+      p.rung     += row.totalRung;
+      p.missed   += row.totalMissed;
+      p.answered += row.totalAnswered;
       p.rows++;
       continue;
     }
@@ -401,20 +452,19 @@ function computeSummary_(dept, from, to, scope) {
       if (inQueue)  a.matchedViaQueue  = true;
     }
 
-    const rd = displays[i];
-    a.totalUnique   += Number(r[HISTORICAL_COLS.TOTAL_UNIQUE - 1])   || 0;
-    a.totalRung     += Number(r[HISTORICAL_COLS.TOTAL_RUNG - 1])     || 0;
-    a.totalMissed   += Number(r[HISTORICAL_COLS.TOTAL_MISSED - 1])   || 0;
-    a.totalAnswered += Number(r[HISTORICAL_COLS.TOTAL_ANSWERED - 1]) || 0;
-    a.tttSeconds    += parseHmsDisplay_(rd[HISTORICAL_COLS.TTT - 1]);
+    a.totalUnique   += row.totalUnique;
+    a.totalRung     += row.totalRung;
+    a.totalMissed   += row.totalMissed;
+    a.totalAnswered += row.totalAnswered;
+    a.tttSeconds    += row.tttSec;
 
-    const att = parseHmsDisplay_(rd[HISTORICAL_COLS.ATT - 1]);
+    const att = row.attSec;
     if (att) { a.attSecondsSum += att; a.attSecondsCount++; }
 
-    const aaw = parseHmsDisplay_(rd[HISTORICAL_COLS.AVG_ABD_WAIT - 1]);
+    const aaw = row.avgAbdWaitSec;
     if (aaw) { a.avgAbdWaitSecondsSum += aaw; a.avgAbdWaitSecondsCount++; }
 
-    const caw = parseHmsDisplay_(rd[HISTORICAL_COLS.CSR_AVG_ABD_WAIT - 1]);
+    const caw = row.csrAvgAbdWaitSec;
     if (caw) { a.csrAvgAbdWaitSecondsSum += caw; a.csrAvgAbdWaitSecondsCount++; }
 
     a.days[dateIso] = true;
@@ -545,12 +595,12 @@ function computeSummary_(dept, from, to, scope) {
       from: from,
       to: to,
       scope: scope,
-      rowsScanned: values.length,
+      rowsScanned: lastRow - 1,
       rowsMatched: rowsMatched,
       rosterSize: roster.names.length,
       agentsWithData: rows.length,
       deptQueueExts: Object.keys(deptQueueExts).sort(),
-      deptQueueExtsSource: deptQueueResult.source,
+      deptQueueExtsSource: deptQueueExtsSource,
       // E5: prior window the per-row delta chips compare against.
       // Drives chip tooltip ("Prior period: X – Y") on the client.
       priorFrom: priorFrom,
