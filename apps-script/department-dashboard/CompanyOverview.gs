@@ -242,23 +242,43 @@ function getCompanyOverview() {
   const companyRecentlyActive = {};
   const companyTrendByDate = {};
 
-  // Bulk scan -- only the last `trendDays` worth of rows matter.
-  const range = sheet.getRange(2, 1, lastRow - 1, HISTORICAL_COLS.CSR_AVG_ABD_WAIT);
-  const values   = range.getValues();
-  const displays = range.getDisplayValues();
-  for (let i = 0; i < values.length; i++) {
-    const r  = values[i];
-    const rd = displays[i];
-    const dateIso = rowDateIso_(r[HISTORICAL_COLS.DATE - 1], ssTZ);
+  // F1 cutover #2: source the trend-window DQE rows from Neon when
+  // DQE_READ_SOURCE=neon, else the sheet. Both fetchers return the same
+  // normalized per-(date,agent) shape (durations already in seconds), so
+  // the aggregation loop below is source-agnostic. Neon falls back to the
+  // sheet on empty/error so a Neon hiccup can't blank the Overview.
+  // Default 'sheet' => behavior identical to pre-cutover: sheetFetchDqeRows_
+  // reads the same whole-sheet range and filters [trendStart, latest],
+  // which equals the old ">= trendStart" filter since latest is the max date.
+  // (Cache note: COMPANY_OVERVIEW_CACHE_KEY is NOT source-suffixed, so a
+  // DQE_READ_SOURCE flip can serve the prior source's blob for up to the
+  // 5-min TTL -- harmless, since the flag is only flipped once parity is
+  // clean and the two sources agree.)
+  const dqeSource = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
+  let dqeRows;
+  if (dqeSource === 'neon' && typeof neonFetchDqeRows_ === 'function') {
+    dqeRows = neonFetchDqeRows_(trendStartIso, latestDate);
+    if (!dqeRows || !dqeRows.length) {
+      Logger.log('getCompanyOverview: neon returned no rows; falling back to sheet.');
+      dqeRows = (typeof sheetFetchDqeRows_ === 'function')
+        ? sheetFetchDqeRows_(trendStartIso, latestDate) : [];
+    }
+  } else {
+    dqeRows = (typeof sheetFetchDqeRows_ === 'function')
+      ? sheetFetchDqeRows_(trendStartIso, latestDate) : [];
+  }
+  for (let i = 0; i < dqeRows.length; i++) {
+    const row = dqeRows[i];
+    const dateIso = row.dateIso;
     if (!dateIso || dateIso < trendStartIso) continue;
-    const agent = String(r[HISTORICAL_COLS.AGENT - 1] || '').trim();
+    const agent = row.agent;
     if (!agent) continue;
     if (/^A_Q_/.test(agent) || agent === 'Backup CSR') continue;
 
-    const rung     = Number(r[HISTORICAL_COLS.TOTAL_RUNG - 1])     || 0;
-    const missed   = Number(r[HISTORICAL_COLS.TOTAL_MISSED - 1])   || 0;
-    const answered = Number(r[HISTORICAL_COLS.TOTAL_ANSWERED - 1]) || 0;
-    const attAvg   = parseHmsDisplay_(rd[HISTORICAL_COLS.ATT - 1]);
+    const rung     = Number(row.totalRung)     || 0;
+    const missed   = Number(row.totalMissed)   || 0;
+    const answered = Number(row.totalAnswered) || 0;
+    const attAvg   = Number(row.attSec)        || 0;   // already parsed to seconds
     const attTotal = answered > 0 ? attAvg * answered : 0;
 
     // Company aggregate: count this row once on latestDate before
