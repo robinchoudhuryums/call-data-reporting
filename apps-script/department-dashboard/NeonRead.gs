@@ -58,6 +58,29 @@ function getDashboardNeonConn_() {
 }
 
 /**
+ * MAX(call_date) from dqe_history as a 'yyyy-MM-dd' string, or null on
+ * no data / unreachable / error. One indexed query vs a whole-column
+ * sheet scan -- the F1 read-back's cheapest win. Best-effort: callers
+ * treat null as "fall back to the sheet".
+ */
+function neonGetMaxDqeDate_() {
+  var conn = getDashboardNeonConn_();
+  if (!conn) return null;
+  try {
+    var stmt = conn.createStatement();
+    var rs = stmt.executeQuery('SELECT MAX(call_date)::text AS d FROM dqe_history');
+    var d = rs.next() ? rs.getString('d') : null;
+    rs.close(); stmt.close();
+    return d ? String(d).trim() : null;
+  } catch (e) {
+    Logger.log('neonGetMaxDqeDate_ failed: ' + (e && e.message ? e.message : e));
+    return null;
+  } finally {
+    try { conn.close(); } catch (ce) {}
+  }
+}
+
+/**
  * Normalized DQE row shape (both fetchers return this), keyed downstream
  * on (dateIso, agent):
  *   { dateIso, agent, monthYear, queueExt,
