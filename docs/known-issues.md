@@ -560,8 +560,8 @@ best-effort -- a missing or empty sheet leaves the build's
 behavior byte-identical to pre-OrphanFix.
 
 **Cache invalidation.** `applyOrphanRename` removes the single
-fixed-key `companyOverview:v12` cache entry on success. Per-(dept,
-range) caches (`summary:v6`, `individual:v6`, `performance:v3`,
+fixed-key `companyOverview:v13` cache entry on success. Per-(dept,
+range) caches (`summary:v8`, `individual:v8`, `performance:v4`,
 etc.) are left to TTL out within 5 minutes. The Orphan Fix modal
 warns the user "may take up to 5 minutes to appear in dashboard."
 
