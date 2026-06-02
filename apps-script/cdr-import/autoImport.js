@@ -168,7 +168,15 @@ function processBulkQueue() {
   }
 
   const batchStartTime = Date.now();
-  const TIME_LIMIT     = 240000; 
+  // Per-invocation budget before pausing for "Resume Bulk Processing".
+  // Raised from 4 min so each click processes several dates instead of ~1
+  // (a force-rebuild date costs ~4-5 min: full-sheet delete + DQE build +
+  // Neon mirror). 15 min leaves comfortable margin under the 30-min Apps
+  // Script ceiling for the in-flight date + the final processBatchArchive.
+  // KEEP BULK RANGES SMALL (~10-15 dates): the final archive writes + sorts
+  // the whole accumulated Pending Archive once at the end, so a huge range
+  // makes that last step heavy. Split big rebuilds into ~10-date chunks.
+  const TIME_LIMIT     = 900000;  // 15 min (was 240000 / 4 min)
 
   let targetSS = null;
   try {
