@@ -515,6 +515,13 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   with no redeploy. Reuses the dashboard `NEON_*` props + `script.external_request`
   scope (Operator State #18-19). Remaining heavy readers (Overview,
   `computeSummary_`, IR/PR/CR, Missed) are not cut over yet.
+  **Index prerequisite (F1):** before cutting over the date/agent-filtered
+  readers, make sure `dqe_history` is indexed for those queries --
+  `CREATE INDEX IF NOT EXISTS idx_dqe_history_call_date ON dqe_history (call_date);`
+  and `CREATE INDEX IF NOT EXISTS idx_dqe_history_date_agent ON dqe_history (call_date, agent_name);`.
+  Postgres has no stored row order (unlike the sheet), so there's nothing to
+  "re-sort" routinely -- you `ORDER BY call_date` at query time and the index
+  keeps it fast; the index is maintained automatically on insert/update.
 - **Bulk DQE rebuild skips the per-date Neon mirror (`skipNeon`).**
   `buildDQEHistoricalData(rawSheet, dqeSheet, opts)` takes an optional
   `opts.skipNeon`; the cdr-import BULK path (`bulkHistoricalUpdate`) passes
