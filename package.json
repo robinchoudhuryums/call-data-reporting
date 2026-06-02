@@ -4,6 +4,8 @@
   "private": true,
   "description": "Regression test harness for the Department Dashboard Apps Script code (see tests/README.md). Not a deployable package -- the dashboard ships via clasp.",
   "scripts": {
-    "test": "node --test"
+    "test": "node --test",
+    "check:dups": "bash scripts/check-duplicated-files.sh",
+    "ci": "node --test && bash scripts/check-duplicated-files.sh"
   }
 }

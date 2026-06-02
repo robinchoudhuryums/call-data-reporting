@@ -586,6 +586,12 @@ function computeThresholdDrift_(config, lookbackEntries) {
     if (triggeredBy.indexOf('preview:') === 0) continue;
     if (triggeredBy !== 'daily-trigger') continue;
     const status = String(r[9] || '');
+    // F5: only count days the alert actually ASSESSED (had data +
+    // recipients, so it genuinely decided fire-vs-not). 'no-data',
+    // 'skipped', 'no-recipients', and 'error' aren't assessments and
+    // would dilute both the chronic fire-ratio (fired/total) and the
+    // DRIFT_MIN_TOTAL_TO_ASSESS gate.
+    if (status !== 'sent' && status !== 'above-threshold') continue;
     b.total++;
     if (status === 'sent') b.fired++;
     const rate = r[4];
