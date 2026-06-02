@@ -224,9 +224,10 @@ through a public function that explicitly checks `resolveUser_(email).role
 ### `setup()` is idempotent
 
 `setup()` creates `Access Control`, `Alert Config`, `Alert Log`,
-`Pipeline Health`, `Digest Config`, `Agent Alias Overrides`, and
-`Orphan Fix Log` sheets if they don't exist (each with a frozen header
-row). It never overwrites existing rows on any of the seven. Safe to re-run as many
+`Pipeline Health`, `Digest Config`, `Agent Alias Overrides`,
+`Orphan Fix Log`, and `Dept Config` sheets if they don't exist (each
+with a frozen header row). It never overwrites existing rows on any of
+the eight. Safe to re-run as many
 times as you want. Keep it that way; the alerts engine assumes
 `appendAlertLog_` can blindly append without coordinating reads.
 

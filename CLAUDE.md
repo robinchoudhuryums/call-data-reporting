@@ -65,6 +65,18 @@ bash scripts/check-duplicated-files.sh
 # neonWrite JDBC).
 node --test          # from repo root (or: npm test)
 
+# CI: .github/workflows/ci.yml runs `node --test` + the INV-16 guard on
+# push-to-main and every PR (also: `npm run ci` locally).
+
+# Deploy helper: push AND roll a project's web-app deployment to a new
+# version in one step (avoids the manual "Manage deployments -> New
+# version" stale-deploy footgun, Operator State #2). The deployment id
+# comes from `clasp deployments` in that dir (one-time lookup).
+scripts/deploy.sh .                      <dashboard-deployment-id>
+scripts/deploy.sh apps-script/cdr-report <cdr-report-deployment-id>
+scripts/deploy.sh apps-script/cdr-import <cdr-import-deployment-id>
+# (omit the id to just `clasp push -f` and finish the version bump manually)
+
 # Still manual (NOT unit-covered): the INV-29 monthly-trend alignment,
 # the Pass-4 queue-only sentinel rows, and the Neon mirror writers --
 # verify those via deploy + smoke-test against the Regression Scenarios
@@ -216,7 +228,12 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   Server-side `computeThresholdDrift_` filters to `triggeredBy
   === 'daily-trigger'` rows AND drops anything whose Triggered
   By starts with `preview:`, so manual sends from the UI +
-  previews don't pollute the signal. **Self-warming:** a fresh
+  previews don't pollute the signal. It also counts only
+  ASSESSED days (status `sent` / `above-threshold`) toward
+  `total` -- `no-data` / `skipped` / `no-recipients` / `error`
+  days aren't fire-vs-not decisions, so they don't dilute the
+  `fired/total` chronic ratio or the `DRIFT_MIN_TOTAL_TO_ASSESS`
+  gate (F5). **Self-warming:** a fresh
   install renders every chip as `cold` until each dept has
   >= `DRIFT_MIN_TOTAL_TO_ASSESS` daily-trigger entries logged
   (~10 weekdays after the trigger goes live). **Best-effort:**
@@ -604,7 +621,11 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `#/report/performance`, `#/report/compare`, `#/report/qcd`,
   `#/admin/alerts`, `#/admin/orphan-fix`) plus the two pages
   (`#/overview`, `#/dept`); unknown / malformed hashes quietly
-  no-op and land on Overview.
+  no-op and land on Overview. A deep link to an admin-only route
+  (the `data-admin-only` tabs: alerts / orphan-fix / dept-config)
+  by a non-admin also quietly no-ops -- `initRouter` skips the
+  trigger rather than opening a modal that would only surface an
+  "admin-only" server error (F11).
 - **Source column + roster-only totals (Phase D).** The agent table
   gains a Source column (between Agent and Unique) rendering one of
   three chips per row: **ROSTER** (accent-soft) for agents on this
