@@ -192,6 +192,11 @@ function backfillDQEHistory() {
 // connection per invocation (vs the per-batch connection in backfillDQEHistory)
 // so the slow JDBC handshake is paid once -- the main reason this single
 // end-pass beats the 60 per-date mirrors it replaces.
+//
+// Optional date floor: set the DQE_UPSERT_SINCE Script Property to a
+// YYYY-MM-DD date to upsert ONLY rows on/after it (e.g. after a bulk rebuild
+// of just a few recent days, so you don't redo the whole sheet). Unset =
+// whole-sheet. Clear it to return to whole-sheet behavior.
 function backfillDQEHistoryUpsert() {
   var ss    = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName('DQE Historical Data');
@@ -203,7 +208,16 @@ function backfillDQEHistoryUpsert() {
 
   var props      = PropertiesService.getScriptProperties();
   var startIndex = parseInt(props.getProperty('DQE_UPSERT_RESUME') || '0');
-  Logger.log('DQE upsert: starting at index ' + startIndex + ' of ' + data.length);
+  // Optional date floor: when DQE_UPSERT_SINCE (YYYY-MM-DD) is set, only
+  // rows with call_date >= it are upserted -- so after a bulk rebuild of
+  // just a few recent days you can mirror only those instead of the whole
+  // sheet. Unset / malformed = whole-sheet (default). The run still
+  // iterates every row (cheap in-memory skip); only the Neon upserts are
+  // limited. Clear DQE_UPSERT_SINCE to return to whole-sheet behavior.
+  var sinceFloor = props.getProperty('DQE_UPSERT_SINCE');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(sinceFloor || ''))) sinceFloor = null;
+  Logger.log('DQE upsert: starting at index ' + startIndex + ' of ' + data.length
+    + (sinceFloor ? ' (date floor >= ' + sinceFloor + ')' : ''));
   if (startIndex >= data.length) {
     Logger.log('DQE upsert complete. Clear DQE_UPSERT_RESUME to re-run.');
     return;
@@ -236,9 +250,12 @@ function backfillDQEHistoryUpsert() {
       while (i < batchEnd) {
         var r = data[i];
         if (!r[1] || !r[2]) { i++; continue; }
+        var cd = parseDateForNeon(r[1]);
+        // Date floor (DQE_UPSERT_SINCE): skip rows older than the floor.
+        if (sinceFloor && cd && cd < sinceFloor) { i++; continue; }
         batch.push({
           monthYear:        r[0]  || null,
-          callDate:         parseDateForNeon(r[1]),
+          callDate:         cd,
           agentName:        r[2],
           queueExtensions:  r[3]  || null,
           totalUnique:      parseInt(r[4]) || 0,
