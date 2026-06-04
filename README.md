@@ -328,7 +328,15 @@ keep it fresh, in order of preference:
 2. **Bulk historical backfill path** — `bulkHistoricalUpdate`
    in cdr-import builds DQE per-date for the requested range,
    writing Raw Data per-date only when DQE actually needs
-   rebuilding. Telemetry row: `bulkBackfill:DQE`.
+   rebuilding. Telemetry row: `bulkBackfill:DQE`. The bulk path
+   **defers the per-date DQE→Neon mirror** (`skipNeon`) so the
+   sheet rebuild isn't slowed by Neon's JDBC latency — after a
+   bulk run, run **`backfillDQEHistoryUpsert()`** (CDR Report
+   project; resumable via `DQE_UPSERT_RESUME`) once to mirror the
+   rebuilt dates into `dqe_history` with `DO UPDATE` (so
+   re-calculated values overwrite stale rows). The bulk-complete
+   alert reminds you. Tip: rebuild in ~10-date ranges so the final
+   batch-archive step stays well under the 30-min ceiling.
 3. **Standalone safety-net trigger (transitional)** — the
    cdr-report project's `runDailyDQEBuild_` time trigger
    (originally the only DQE refresh mechanism) is preserved

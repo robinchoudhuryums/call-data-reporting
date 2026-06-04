@@ -498,7 +498,11 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
     let countTotal = null;
     if (!isHistoricalBackfill && historyReport.counts) {
       const c = historyReport.counts;
-      successCountLine = `CDR: +${c.cdr} | QPath: +${c.qpath} | QCD: +${c.qcd} | CSR: +${c.csr} | DQE: +${c.dqe}`;
+      const neonTag = c.neon === 'ok' ? 'Neon ✓'
+                    : c.neon === 'unreachable' ? 'Neon ⚠ unreachable'
+                    : c.neon === 'error' ? 'Neon ⚠ error'
+                    : 'Neon ?';
+      successCountLine = `CDR: +${c.cdr} | QPath: +${c.qpath} | QCD: +${c.qcd} | CSR: +${c.csr} | DQE: +${c.dqe} | ${neonTag}`;
       countTotal = (Number(c.cdr) || 0) + (Number(c.qpath) || 0)
                  + (Number(c.qcd) || 0) + (Number(c.csr) || 0)
                  + (Number(c.dqe) || 0);
@@ -1325,7 +1329,22 @@ function processIntegratedHistory(targetSS, outputSheet, results, dateObj, skipC
   const weekStr    = getWeekOfMonthStr(dateObj);
 
   let cdrCount = 0, qpathCount = 0, qcdCount = 0, csrCount = 0, dqeCount = 0;
-  
+
+  // Neon mirror status for the daily toast (derived from the CDR + QCD
+  // writer results — Neon reachability is per-run binary against one
+  // instance, so any writer's skip/error reflects the whole run). 'ok'
+  // until a writer reports .skipped (-> 'unreachable') or a Neon catch
+  // block fires (-> 'error', which is sticky and not downgraded).
+  // DQE-specific Neon failures surface separately via notifyDqeBuildFailure_
+  // + the Pipeline Health ':DQE failure' row, so they're not folded in here.
+  let neonStatus = 'ok';
+  const setNeonStatus_ = function (s) {
+    if (neonStatus === 'error') return;          // sticky
+    if (s === 'error') { neonStatus = 'error'; return; }
+    if (s === 'unreachable' && neonStatus === 'ok') neonStatus = 'unreachable';
+  };
+
+
   // 1. CDR History
 if (!skipCDR && obcHD) {
 
@@ -1439,12 +1458,14 @@ if (!skipCDR && obcHD) {
       });
       var neonCdrResult = writeCDRRowsToNeon(neonCdrRows);
       if (neonCdrResult && neonCdrResult.skipped) {
+        setNeonStatus_('unreachable');
         console.log('processIntegratedHistory: Neon CDR write skipped (' + neonCdrResult.skipped + ' rows — Neon unreachable).');
       } else {
         console.log('processIntegratedHistory: mirrored ' + neonCdrRows.length + ' CDR rows to Neon'
           + (neonCdrResult.phones ? ' + ' + neonCdrResult.phones + ' phone rows' : '') + '.');
       }
     } catch (neonErr) {
+      setNeonStatus_('error');
       notifyNeonWriteFailure('processIntegratedHistory:CDR (' + dateObj.toDateString() + ')', neonErr.message);
     }
   }
@@ -1536,11 +1557,13 @@ if (!skipCDR && obcHD) {
         });
         var neonResult = writeQCDRowsToNeon(neonQcdRows);
         if (neonResult && neonResult.skipped) {
+          setNeonStatus_('unreachable');
           console.log('processIntegratedHistory: Neon QCD write skipped (' + neonResult.skipped + ' rows — Neon unreachable).');
         } else {
           console.log('processIntegratedHistory: mirrored ' + neonQcdRows.length + ' QCD rows to Neon.');
         }
       } catch (neonErr) {
+        setNeonStatus_('error');
         notifyNeonWriteFailure('processIntegratedHistory (' + dateObj.toDateString() + ')', neonErr.message);
       }
     }
@@ -1627,7 +1650,7 @@ if (!skipCDR && obcHD) {
 
   return {
   summaryLog,
-  counts: { cdr: cdrCount, qpath: qpathCount, qcd: qcdCount, csr: csrCount, dqe: dqeCount }
+  counts: { cdr: cdrCount, qpath: qpathCount, qcd: qcdCount, csr: csrCount, dqe: dqeCount, neon: neonStatus }
   };
 }
 

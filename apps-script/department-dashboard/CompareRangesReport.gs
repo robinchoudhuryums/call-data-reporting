@@ -233,27 +233,66 @@ function computeCompareRanges_(dept, selectedAgents,
                                p1From, p1To, p2From, p2To);
   }
   const ssTZ = ss.getSpreadsheetTimeZone();
-  const range = sheet.getRange(2, 1, lastRow - 1, HISTORICAL_COLS.CSR_AVG_ABD_WAIT);
-  const values   = range.getValues();
-  const displays = range.getDisplayValues();
+  // F1 cutover #4c (Compare Ranges): source rows for the UNION of the two
+  // periods -- [min(p1From,p2From), max(p1To,p2To)] -- from Neon when
+  // DQE_READ_SOURCE=neon, else the sheet. Both produce the same normalized
+  // `srcRows`, so the loop is source-agnostic. Default 'sheet' is
+  // byte-identical (compare-ranges.test.js guards it). deptQueueExts derived
+  // path needs ALL history, so the Neon path reads a cheap cols-A..D slice
+  // for getDeptQueueExts_.
+  const numCols = HISTORICAL_COLS.CSR_AVG_ABD_WAIT;
+  const fetchFrom = p1From < p2From ? p1From : p2From;
+  const fetchTo   = p1To   > p2To   ? p1To   : p2To;
+  const dqeSource = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
+  let srcRows = null;
+  let deptQueueExts;
+  if (dqeSource === 'neon' && typeof neonFetchDqeRows_ === 'function') {
+    srcRows = neonFetchDqeRows_(fetchFrom, fetchTo);
+    if (srcRows && srcRows.length) {
+      const extValues = sheet.getRange(2, 1, lastRow - 1, HISTORICAL_COLS.QUEUE_EXT).getValues();
+      deptQueueExts = getDeptQueueExts_(dept, rosterSet, extValues).exts;
+    } else {
+      srcRows = null;
+      Logger.log('computeCompareRanges_: neon returned no rows; falling back to sheet.');
+    }
+  }
+  if (srcRows === null) {
+    const range = sheet.getRange(2, 1, lastRow - 1, numCols);
+    const values   = range.getValues();
+    const displays = range.getDisplayValues();
+    deptQueueExts = getDeptQueueExts_(dept, rosterSet, values).exts;
+    srcRows = [];
+    for (let i = 0; i < values.length; i++) {
+      const r = values[i], rd = displays[i];
+      const dIso = rowDateIso_(r[HISTORICAL_COLS.DATE - 1], ssTZ);
+      if (!dIso || dIso < fetchFrom || dIso > fetchTo) continue;
+      const ag = String(r[HISTORICAL_COLS.AGENT - 1] || '').trim();
+      if (!ag) continue;
+      srcRows.push({
+        dateIso:       dIso,
+        agent:         ag,
+        queueExt:      String(r[HISTORICAL_COLS.QUEUE_EXT - 1] || '').trim(),
+        totalRung:     Number(r[HISTORICAL_COLS.TOTAL_RUNG - 1])     || 0,
+        totalMissed:   Number(r[HISTORICAL_COLS.TOTAL_MISSED - 1])   || 0,
+        totalAnswered: Number(r[HISTORICAL_COLS.TOTAL_ANSWERED - 1]) || 0,
+        tttSec:        parseHmsDisplay_(rd[HISTORICAL_COLS.TTT - 1]),
+        attSec:        parseHmsDisplay_(rd[HISTORICAL_COLS.ATT - 1]),
+      });
+    }
+  }
 
-  // Dept's queue ext set for floater detection.
-  const deptQueueResult = getDeptQueueExts_(dept, rosterSet, values);
-  const deptQueueExts = deptQueueResult.exts;
-
-  for (let i = 0; i < values.length; i++) {
-    const r  = values[i];
-    const rd = displays[i];
-    const dateIso = rowDateIso_(r[HISTORICAL_COLS.DATE - 1], ssTZ);
+  for (let i = 0; i < srcRows.length; i++) {
+    const row = srcRows[i];
+    const dateIso = row.dateIso;
     if (!dateIso) continue;
-    const agent = String(r[HISTORICAL_COLS.AGENT - 1] || '').trim();
+    const agent = row.agent;
     if (!agent || !selectedSet[agent]) continue;
     // Skip queue-sentinel rows.
     if (/^A_Q_/.test(agent) || agent === 'Backup CSR') continue;
 
     // Floater detection: confirm queue-overlap for non-roster selections.
     if (!rosterSet[agent] && !agentMatchedViaQueue[agent]) {
-      const rowExts = parseExtensions_(r[HISTORICAL_COLS.QUEUE_EXT - 1]);
+      const rowExts = parseExtensions_(row.queueExt);
       for (let j = 0; j < rowExts.length; j++) {
         if (deptQueueExts[rowExts[j]]) { agentMatchedViaQueue[agent] = true; break; }
       }
@@ -263,11 +302,11 @@ function computeCompareRanges_(dept, selectedAgents,
     const inP2 = (dateIso >= p2From && dateIso <= p2To);
     if (!inP1 && !inP2) continue;
 
-    const rung     = Number(r[HISTORICAL_COLS.TOTAL_RUNG - 1])     || 0;
-    const missed   = Number(r[HISTORICAL_COLS.TOTAL_MISSED - 1])   || 0;
-    const answered = Number(r[HISTORICAL_COLS.TOTAL_ANSWERED - 1]) || 0;
-    const tttSec   = parseHmsDisplay_(rd[HISTORICAL_COLS.TTT - 1]);
-    const attAvg   = parseHmsDisplay_(rd[HISTORICAL_COLS.ATT - 1]);
+    const rung     = row.totalRung;
+    const missed   = row.totalMissed;
+    const answered = row.totalAnswered;
+    const tttSec   = row.tttSec;
+    const attAvg   = row.attSec;
     const attTotal = answered > 0 ? attAvg * answered : 0;
 
     if (inP1) {

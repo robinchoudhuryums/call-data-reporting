@@ -265,13 +265,57 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
   }
   const ssTZ = ss.getSpreadsheetTimeZone();
 
-  // Read cols 1..AH. We only need date (B), agent (C), rung (F),
-  // missed (G), answered (H), TTT (I), ATT (J). Reading the same
-  // range as Data.gs keeps cache locality on Apps Script's side.
+  // F1 cutover #4 (Individual Report): source the rows for the UNION of
+  // the windows this report scans -- user [from,to], 12-mo trend
+  // [trendStartIso, to], and (optional) prior [priorFrom, priorTo] -- from
+  // Neon when DQE_READ_SOURCE=neon, else the sheet. Both produce the same
+  // normalized `srcRows`, so the aggregation loop below is source-agnostic.
+  // Default 'sheet' is byte-identical to pre-cutover (individual-report.test.js
+  // guards it). deptQueueExts (floater match set) needs ALL history on its
+  // derived path, so the Neon path reads a cheap cols-A..D slice for the
+  // unchanged getDeptQueueExts_ while the windowed rows come from Neon.
   const numCols = HISTORICAL_COLS.CSR_AVG_ABD_WAIT;
-  const range = sheet.getRange(2, 1, lastRow - 1, numCols);
-  const values   = range.getValues();
-  const displays = range.getDisplayValues();
+  let fetchFrom = trendStartIso;                       // trend start <= from <= to
+  if (hasPrior && priorFrom < fetchFrom) fetchFrom = priorFrom;
+  let fetchTo = to;
+  if (hasPrior && priorTo > fetchTo) fetchTo = priorTo;
+  const dqeSource = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
+  let srcRows = null;
+  let deptQueueExts;
+  if (dqeSource === 'neon' && typeof neonFetchDqeRows_ === 'function') {
+    srcRows = neonFetchDqeRows_(fetchFrom, fetchTo);
+    if (srcRows && srcRows.length) {
+      const extValues = sheet.getRange(2, 1, lastRow - 1, HISTORICAL_COLS.QUEUE_EXT).getValues();
+      deptQueueExts = getDeptQueueExts_(dept, rosterSet, extValues).exts;
+    } else {
+      srcRows = null;
+      Logger.log('computeIndividualReport_: neon returned no rows; falling back to sheet.');
+    }
+  }
+  if (srcRows === null) {
+    const range = sheet.getRange(2, 1, lastRow - 1, numCols);
+    const values   = range.getValues();
+    const displays = range.getDisplayValues();
+    deptQueueExts = getDeptQueueExts_(dept, rosterSet, values).exts;
+    srcRows = [];
+    for (let i = 0; i < values.length; i++) {
+      const r = values[i], rd = displays[i];
+      const dIso = rowDateIso_(r[HISTORICAL_COLS.DATE - 1], ssTZ);
+      if (!dIso || dIso < fetchFrom || dIso > fetchTo) continue;
+      const ag = String(r[HISTORICAL_COLS.AGENT - 1] || '').trim();
+      if (!ag) continue;
+      srcRows.push({
+        dateIso:       dIso,
+        agent:         ag,
+        queueExt:      String(r[HISTORICAL_COLS.QUEUE_EXT - 1] || '').trim(),
+        totalRung:     Number(r[HISTORICAL_COLS.TOTAL_RUNG - 1])     || 0,
+        totalMissed:   Number(r[HISTORICAL_COLS.TOTAL_MISSED - 1])   || 0,
+        totalAnswered: Number(r[HISTORICAL_COLS.TOTAL_ANSWERED - 1]) || 0,
+        tttSec:        parseHmsDisplay_(rd[HISTORICAL_COLS.TTT - 1]),
+        attSec:        parseHmsDisplay_(rd[HISTORICAL_COLS.ATT - 1]),
+      });
+    }
+  }
 
   // Aggregators.
   // aggregatedStats[agent][monthKey] = { rung, missed, answered, ttt, attTotal }
@@ -315,8 +359,8 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
   // trend charts but are EXCLUDED from the team-avg accumulator
   // below by the existing `rosterSet[agent]` gate (same rule
   // Data.gs::computeSummary_ enforces for My Department).
-  const deptQueueResult = getDeptQueueExts_(dept, rosterSet, values);
-  const deptQueueExts = deptQueueResult.exts;
+  // deptQueueExts was computed source-aware above; used below for floater
+  // detection on selected non-roster agents.
   // matchedViaRoster is true for any selected agent who's on the
   // dept roster, regardless of whether they have rows in range --
   // so a manager who picks a zero-activity roster member still
@@ -329,13 +373,12 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
     if (rosterSet[a]) agentMatchedViaRoster[a] = true;
   }
 
-  for (let i = 0; i < values.length; i++) {
-    const r  = values[i];
-    const rd = displays[i];
+  for (let i = 0; i < srcRows.length; i++) {
+    const row = srcRows[i];
 
-    const dateIso = rowDateIso_(r[HISTORICAL_COLS.DATE - 1], ssTZ);
+    const dateIso = row.dateIso;
     if (!dateIso) continue;
-    const agent = String(r[HISTORICAL_COLS.AGENT - 1] || '').trim();
+    const agent = row.agent;
     if (!agent) continue;
     // Skip queue-sentinel rows (queue-only abandoned events; not an agent).
     if (/^A_Q_/.test(agent) || agent === 'Backup CSR') continue;
@@ -353,17 +396,17 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
     // overlap the dept's queue set. Only relevant for non-roster
     // selections (roster flag was pre-populated above).
     if (selectedSet[agent] && !rosterSet[agent] && !agentMatchedViaQueue[agent]) {
-      const rowExts = parseExtensions_(r[HISTORICAL_COLS.QUEUE_EXT - 1]);
+      const rowExts = parseExtensions_(row.queueExt);
       for (let j = 0; j < rowExts.length; j++) {
         if (deptQueueExts[rowExts[j]]) { agentMatchedViaQueue[agent] = true; break; }
       }
     }
 
-    const rung     = Number(r[HISTORICAL_COLS.TOTAL_RUNG - 1])     || 0;
-    const missed   = Number(r[HISTORICAL_COLS.TOTAL_MISSED - 1])   || 0;
-    const answered = Number(r[HISTORICAL_COLS.TOTAL_ANSWERED - 1]) || 0;
-    const tttSec   = parseHmsDisplay_(rd[HISTORICAL_COLS.TTT - 1]);
-    const attAvg   = parseHmsDisplay_(rd[HISTORICAL_COLS.ATT - 1]);
+    const rung     = row.totalRung;
+    const missed   = row.totalMissed;
+    const answered = row.totalAnswered;
+    const tttSec   = row.tttSec;
+    const attAvg   = row.attSec;
     // attTotal = ATT * Answered. Days with answered=0 contribute 0,
     // so unanswered/abandoned days don't drag down the weighted ATT.
     const attTotal = answered > 0 ? attAvg * answered : 0;
