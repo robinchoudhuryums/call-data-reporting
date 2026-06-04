@@ -188,7 +188,21 @@ const QCD_HISTORICAL_COLS = Object.freeze({
 const TZ = 'America/Chicago';
 
 // CacheService TTL for aggregated department results.
+// Kept at 5 min for freshness-sensitive lookups (latest-data date + the
+// header freshness pill) so today's morning ingest surfaces promptly.
 const CACHE_TTL_SECONDS = 5 * 60;
+
+// Longer TTL for the heavy per-(dept,range) report aggregations
+// (My Department summary, Overview, Individual / Performance / Compare /
+// QCD / Missed, active-agents picker). DQE data updates once daily, so a
+// 30-min cache is safe for historical windows and cuts how often a reader
+// does a fresh read -- which in turn reduces how often the Neon read-back
+// (when DQE_READ_SOURCE=neon) hits a cold free-tier instance. Tradeoff:
+// ad-hoc admin corrections (orphan renames, DQE rebuilds) can take up to
+// this long to appear in cached views that aren't explicitly busted on
+// write. Orphan Fix already busts the relevant caches; a Dept Config save
+// busts COMPANY_OVERVIEW_CACHE_KEY.
+const REPORT_CACHE_TTL_SECONDS = 30 * 60;
 
 // Shorter TTL for identity/access lookups so new managers don't have to
 // wait 5 minutes after being added to the Access Control sheet.

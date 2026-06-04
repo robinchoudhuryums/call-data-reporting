@@ -7341,6 +7341,12 @@
     const uninstallDigestBtn = $('al-uninstall-digest-btn');
     if (uninstallDigestBtn) uninstallDigestBtn.addEventListener('click', alUninstallDigestTriggers_);
 
+    // Neon keep-warm enable / disable.
+    const installKwBtn = $('al-install-keepwarm-btn');
+    if (installKwBtn) installKwBtn.addEventListener('click', alInstallKeepWarm_);
+    const uninstallKwBtn = $('al-uninstall-keepwarm-btn');
+    if (uninstallKwBtn) uninstallKwBtn.addEventListener('click', alUninstallKeepWarm_);
+
     const dateEl = $('al-date');
     if (dateEl) dateEl.addEventListener('change', function () {
       // Date change invalidates the previous preview -- Send must
@@ -7373,6 +7379,14 @@
               loadError: (err && err.message) ? err.message : String(err) });
           })
           .getDigestsInit();
+        // Neon keep-warm status, loaded separately so a missing
+        // NeonKeepWarm.gs (mid-deploy) doesn't break the modal.
+        google.script.run
+          .withSuccessHandler(function (kw) { alRenderKeepWarm_(kw || {}); })
+          .withFailureHandler(function (err) {
+            alRenderKeepWarm_({ loadError: (err && err.message) ? err.message : String(err) });
+          })
+          .getNeonKeepWarmStatus();
       })
       .withFailureHandler(function (err) {
         $('al-loading').textContent = 'Error: '
@@ -7662,6 +7676,49 @@
     }
   }
 
+  function alRenderKeepWarm_(kw) {
+    const el = $('al-keepwarm-status');
+    const installBtn = $('al-install-keepwarm-btn');
+    const uninstallBtn = $('al-uninstall-keepwarm-btn');
+    if (!el) return;
+    if (kw && kw.loadError) {
+      el.textContent = 'Keep-warm status unavailable: ' + kw.loadError;
+      if (installBtn) installBtn.style.display = '';
+      if (uninstallBtn) uninstallBtn.style.display = 'none';
+      return;
+    }
+    const fmtH = function (h) {
+      const hr = ((h % 24) + 24) % 24;
+      const ampm = hr < 12 ? 'AM' : 'PM';
+      const h12 = (hr % 12) === 0 ? 12 : (hr % 12);
+      return h12 + ' ' + ampm;
+    };
+    if (kw && kw.installed) {
+      let txt = 'Keep-warm is ON — pinging Neon every ' + (kw.everyMinutes || 5)
+              + ' min, weekdays ' + fmtH(kw.startHour) + '–' + fmtH(kw.endHour)
+              + ' ' + tzSuffix_() + ' (~' + (kw.estMonthlyHours != null ? kw.estMonthlyHours : '?')
+              + ' compute-hrs/mo).';
+      if (!kw.neonConfigured) txt += ' ⚠ NEON_* Script Properties not set — pings will no-op.';
+      if (kw.readSource && kw.readSource !== 'neon') {
+        txt += ' Note: DQE_READ_SOURCE=' + kw.readSource + ', so reads still use the sheet;'
+             + ' keep-warm only matters once you flip to neon.';
+      }
+      if (kw.lastPing) {
+        txt += ' Last ping: ' + kw.lastPing.replace('T', ' ').replace(/\..*$/, '')
+             + ' (' + (kw.lastResult || '?') + ').';
+      }
+      el.textContent = txt;
+      if (installBtn) installBtn.style.display = 'none';
+      if (uninstallBtn) uninstallBtn.style.display = '';
+    } else {
+      el.textContent = 'Keep-warm is OFF. Enable it to keep the Neon free-tier instance '
+                     + 'awake during business hours so the first DQE read of a lull '
+                     + 'doesn\'t pay a cold-start penalty (only relevant when DQE_READ_SOURCE=neon).';
+      if (installBtn) installBtn.style.display = '';
+      if (uninstallBtn) uninstallBtn.style.display = 'none';
+    }
+  }
+
   // Returns "CST" or "CDT" (or whatever the user's browser
   // observes for America/Chicago today). Apps Script triggers
   // fire in the script TZ (America/Chicago) which is DST-aware,
@@ -7870,6 +7927,40 @@
         alSetRunStatus_('error', 'Uninstall failed: ' + (err && err.message ? err.message : String(err)));
       })
       .uninstallAlertTrigger();
+  }
+
+  function alInstallKeepWarm_() {
+    const btn = $('al-install-keepwarm-btn');
+    btn.disabled = true;
+    const prev = btn.textContent; btn.textContent = 'Enabling…';
+    google.script.run
+      .withSuccessHandler(function (status) {
+        btn.disabled = false; btn.textContent = prev;
+        alRenderKeepWarm_(status || { installed: true });
+      })
+      .withFailureHandler(function (err) {
+        btn.disabled = false; btn.textContent = prev;
+        alSetRunStatus_('error', 'Enable keep-warm failed: ' + (err && err.message ? err.message : String(err)));
+      })
+      .installNeonKeepWarmTrigger();
+  }
+
+  function alUninstallKeepWarm_() {
+    const ok = window.confirm('Disable the Neon keep-warm trigger? The free-tier instance will be allowed to suspend after ~5 min idle again.');
+    if (!ok) return;
+    const btn = $('al-uninstall-keepwarm-btn');
+    btn.disabled = true;
+    const prev = btn.textContent; btn.textContent = 'Disabling…';
+    google.script.run
+      .withSuccessHandler(function (status) {
+        btn.disabled = false; btn.textContent = prev;
+        alRenderKeepWarm_(status || { installed: false });
+      })
+      .withFailureHandler(function (err) {
+        btn.disabled = false; btn.textContent = prev;
+        alSetRunStatus_('error', 'Disable keep-warm failed: ' + (err && err.message ? err.message : String(err)));
+      })
+      .uninstallNeonKeepWarmTrigger();
   }
 
   // -- Outlier Fix modal (admin-only) ---------------------------------

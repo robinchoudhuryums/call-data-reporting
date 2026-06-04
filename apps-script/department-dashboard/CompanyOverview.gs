@@ -493,7 +493,7 @@ function getCompanyOverview() {
     // serves user B's identity correctly.
   };
 
-  try { cache.put(COMPANY_OVERVIEW_CACHE_KEY, JSON.stringify(result), CACHE_TTL_SECONDS); }
+  try { cache.put(COMPANY_OVERVIEW_CACHE_KEY, JSON.stringify(result), REPORT_CACHE_TTL_SECONDS); }
   catch (e) { Logger.log('CompanyOverview cache put failed: %s', e); }
 
   return personalizeOverview_(result, user);

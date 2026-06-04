@@ -157,7 +157,7 @@ function getPerformanceReport(req) {
   data.meta.computeMs = Date.now() - t0;
   data.meta.cacheHit = false;
 
-  try { cache.put(cacheKey, JSON.stringify(data), CACHE_TTL_SECONDS); }
+  try { cache.put(cacheKey, JSON.stringify(data), REPORT_CACHE_TTL_SECONDS); }
   catch (e) { Logger.log('PerformanceReport cache put failed: %s', e); }
 
   return data;

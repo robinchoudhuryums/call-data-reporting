@@ -1102,6 +1102,22 @@
         </div>
 
         <div class="al-section">
+          <div class="al-section-title">Neon keep-warm</div>
+          <p class="al-hint" id="al-keepwarm-status"></p>
+          <div class="al-trigger-actions">
+            <button class="btn btn-secondary" id="al-install-keepwarm-btn"   type="button">Enable keep-warm</button>
+            <button class="btn btn-secondary" id="al-uninstall-keepwarm-btn" type="button" style="display:none;">Disable keep-warm</button>
+          </div>
+          <p class="al-hint" style="margin-top: 8px;">
+            Pings Neon every few minutes during a weekday business-hours window so the
+            free-tier instance stays warm and DQE reads (when <code>DQE_READ_SOURCE=neon</code>)
+            don't pay a cold-start penalty. Window defaults to 7 AM&ndash;1 PM Central; tune via the
+            <code>NEON_KEEPWARM_START_HOUR</code> / <code>NEON_KEEPWARM_END_HOUR</code> Script Properties
+            (watch the estimated monthly compute-hours below to stay under your Neon plan).
+          </p>
+        </div>
+
+        <div class="al-section">
           <div class="al-section-title">Recent log</div>
           <p class="al-hint">Last 20 entries from the Alert Log sheet (most recent first).</p>
           <table class="al-log-table">

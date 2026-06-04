@@ -200,7 +200,7 @@ function getIndividualReport(req) {
   data.meta.cacheHit = false;
 
   try {
-    cache.put(cacheKey, JSON.stringify(data), CACHE_TTL_SECONDS);
+    cache.put(cacheKey, JSON.stringify(data), REPORT_CACHE_TTL_SECONDS);
   } catch (e) {
     // Big ranges with many agents may exceed cache size; harmless.
     Logger.log('IndividualReport cache put failed: %s', e);

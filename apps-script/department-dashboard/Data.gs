@@ -235,7 +235,7 @@ function getDepartmentSummary(req) {
   data.meta.cacheHit = false;
 
   try {
-    cache.put(cacheKey, JSON.stringify(data), CACHE_TTL_SECONDS);
+    cache.put(cacheKey, JSON.stringify(data), REPORT_CACHE_TTL_SECONDS);
   } catch (e) {
     // CacheService values are capped at ~100KB. A single dept's
     // summary is well under that, but log if it ever fails.
