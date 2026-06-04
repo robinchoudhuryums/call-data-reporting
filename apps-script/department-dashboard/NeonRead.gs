@@ -261,3 +261,23 @@ function runDqeParityCheck() {
   return compareDqeSources_();
 }
 
+/**
+ * Lightweight read-timing log for the F1 cutover readers. Emits one line
+ * to the Execution log / Cloud Logging per DQE read so you can compare
+ * sheet-vs-neon cost in the editor's Executions panel without guessing:
+ *
+ *   [dqe-read] <label> source=<neon|sheet> rows=<n> ms=<elapsed>
+ *
+ * `source` is the EFFECTIVE source that served the rows (so a neon read
+ * that fell back to the sheet logs source=sheet). Best-effort; never throws.
+ */
+function logDqeReadTiming_(label, source, startMs, rowCount) {
+  try {
+    Logger.log('[dqe-read] %s source=%s rows=%s ms=%s',
+      label, source,
+      (rowCount === null || rowCount === undefined) ? '?' : rowCount,
+      (Date.now() - startMs));
+  } catch (e) { /* best-effort */ }
+}
+
+

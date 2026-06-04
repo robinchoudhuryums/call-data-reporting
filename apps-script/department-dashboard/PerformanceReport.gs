@@ -258,11 +258,14 @@ function computePerformanceReport_(dept, from, to, selectedAgents, roster,
   const dqeSource = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
   let srcRows = null;
   let deptQueueExts;
+  let effectiveSource = 'sheet';
+  const _tRead = Date.now();
   if (dqeSource === 'neon' && typeof neonFetchDqeRows_ === 'function') {
     srcRows = neonFetchDqeRows_(fetchFrom, fetchTo);
     if (srcRows && srcRows.length) {
       const extValues = sheet.getRange(2, 1, lastRow - 1, HISTORICAL_COLS.QUEUE_EXT).getValues();
       deptQueueExts = getDeptQueueExts_(dept, rosterSet, extValues).exts;
+      effectiveSource = 'neon';
     } else {
       srcRows = null;
       Logger.log('computePerformanceReport_: neon returned no rows; falling back to sheet.');
@@ -292,6 +295,7 @@ function computePerformanceReport_(dept, from, to, selectedAgents, roster,
       });
     }
   }
+  if (typeof logDqeReadTiming_ === 'function') logDqeReadTiming_('computePerformanceReport_:' + dept, effectiveSource, _tRead, srcRows.length);
 
   // Accumulators.
   //   teamCurr/teamPrev: dept totals for the selected agents across

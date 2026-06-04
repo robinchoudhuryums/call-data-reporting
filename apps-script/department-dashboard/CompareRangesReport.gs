@@ -246,11 +246,14 @@ function computeCompareRanges_(dept, selectedAgents,
   const dqeSource = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
   let srcRows = null;
   let deptQueueExts;
+  let effectiveSource = 'sheet';
+  const _tRead = Date.now();
   if (dqeSource === 'neon' && typeof neonFetchDqeRows_ === 'function') {
     srcRows = neonFetchDqeRows_(fetchFrom, fetchTo);
     if (srcRows && srcRows.length) {
       const extValues = sheet.getRange(2, 1, lastRow - 1, HISTORICAL_COLS.QUEUE_EXT).getValues();
       deptQueueExts = getDeptQueueExts_(dept, rosterSet, extValues).exts;
+      effectiveSource = 'neon';
     } else {
       srcRows = null;
       Logger.log('computeCompareRanges_: neon returned no rows; falling back to sheet.');
@@ -280,6 +283,7 @@ function computeCompareRanges_(dept, selectedAgents,
       });
     }
   }
+  if (typeof logDqeReadTiming_ === 'function') logDqeReadTiming_('computeCompareRanges_:' + dept, effectiveSource, _tRead, srcRows.length);
 
   for (let i = 0; i < srcRows.length; i++) {
     const row = srcRows[i];

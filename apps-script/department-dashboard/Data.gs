@@ -54,11 +54,16 @@ function getLatestDataDate() {
   // null/empty/error falls through to the sheet scan below, so a Neon
   // hiccup degrades to today's behavior rather than failing.
   if (source === 'neon' && typeof neonGetMaxDqeDate_ === 'function') {
+    const _t0 = Date.now();
     const neonMax = neonGetMaxDqeDate_();
-    if (neonMax) { cachePut(neonMax); return neonMax; }
+    if (neonMax) {
+      if (typeof logDqeReadTiming_ === 'function') logDqeReadTiming_('getLatestDataDate', 'neon', _t0, 1);
+      cachePut(neonMax); return neonMax;
+    }
     Logger.log('getLatestDataDate: neon returned no date; falling back to sheet.');
   }
 
+  const _tSheet = Date.now();
   const ss = openSpreadsheet_();
   const sheet = ss.getSheetByName(SHEETS.HISTORICAL);
   if (!sheet) { cachePut(NEGATIVE); return null; }
@@ -75,6 +80,7 @@ function getLatestDataDate() {
     if (iso && iso > latest) latest = iso;
   }
   if (!latest) { cachePut(NEGATIVE); return null; }
+  if (typeof logDqeReadTiming_ === 'function') logDqeReadTiming_('getLatestDataDate', 'sheet', _tSheet, lastRow - 1);
   cachePut(latest);
   return latest;
 }
@@ -311,12 +317,15 @@ function computeSummary_(dept, from, to, scope) {
   const numCols = HISTORICAL_COLS.CSR_AVG_ABD_WAIT;
   let srcRows = null;
   let deptQueueExts, deptQueueExtsSource;
+  let effectiveSource = 'sheet';
+  const _tRead = Date.now();
   if (dqeSource === 'neon' && typeof neonFetchDqeRows_ === 'function') {
     srcRows = neonFetchDqeRows_(priorFrom, to);
     if (srcRows && srcRows.length) {
       const extValues = sheet.getRange(2, 1, lastRow - 1, HISTORICAL_COLS.QUEUE_EXT).getValues();
       const dqr = getDeptQueueExts_(dept, rosterSet, extValues);
       deptQueueExts = dqr.exts; deptQueueExtsSource = dqr.source;
+      effectiveSource = 'neon';
     } else {
       srcRows = null;   // empty/unreachable -> fall through to the sheet path
       Logger.log('computeSummary_: neon returned no rows; falling back to sheet.');
@@ -355,6 +364,7 @@ function computeSummary_(dept, from, to, scope) {
       });
     }
   }
+  if (typeof logDqeReadTiming_ === 'function') logDqeReadTiming_('computeSummary_:' + dept, effectiveSource, _tRead, srcRows.length);
 
   const acc = {};
   let rowsMatched = 0;
