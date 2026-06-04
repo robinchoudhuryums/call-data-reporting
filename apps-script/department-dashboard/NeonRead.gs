@@ -243,3 +243,21 @@ function compareDqeSources_() {
     ? 'CLEAN -- dqe_history matches the sheet for this range; read-back gate PASSED'
     : 'MISMATCH -- resolve before cutover (run backfillDQEHistory() for gaps)');
 }
+
+/**
+ * Editor-run wrapper for compareDqeSources_.
+ *
+ * WHY THIS EXISTS: the Apps Script editor's "Run" function picker HIDES any
+ * function whose name ends in `_` (the same trailing-underscore convention
+ * that blocks google.script.run). So `compareDqeSources_` -- and every other
+ * `_`-suffixed helper -- is NOT selectable from the dropdown ("No functions"
+ * if it's the only thing you're looking at). This non-underscore wrapper is
+ * selectable; pick `runDqeParityCheck` from the picker and Run it, then read
+ * the Execution log. (Edit the COMPARE_FROM / COMPARE_TO range inside
+ * compareDqeSources_ above first.) Same trick applies to any other
+ * `_`-suffixed function you need to run by hand: add a one-line wrapper.
+ */
+function runDqeParityCheck() {
+  return compareDqeSources_();
+}
+
