@@ -98,33 +98,45 @@ function neonFetchDqeRows_(fromIso, toIso) {
   if (!conn) return [];
   var out = [];
   try {
-    var sql = 'SELECT month_year, call_date::text AS d, agent_name, queue_extensions, '
-            + 'total_unique, total_rung, total_missed, total_answered, '
-            + 'ttt, att, avg_abd_wait, csr_avg_abd_wait '
-            + 'FROM dqe_history WHERE call_date BETWEEN ?::date AND ?::date';
+    // PERF: Apps Script JDBC iterates a ResultSet one CELL at a time, which
+    // is catastrophically slow over the thousands of rows the IR/PR 12-month
+    // trend window (and CR's year-over-year window) pull -- ~0.5s/row, so a
+    // year of data is 20+ minutes. Aggregate the entire result set into ONE
+    // json string server-side (json_agg) and fetch it with a SINGLE
+    // rs.getString, instead of ~12 getXXX calls per row. Turns ~150k JDBC
+    // round-trips into 1. Order is irrelevant -- downstream maps by
+    // (date, agent). COALESCE so an empty range returns '[]' not null.
+    var sql = "SELECT COALESCE(json_agg(t), '[]')::text AS j FROM ("
+            + "SELECT month_year, call_date::text AS d, agent_name, queue_extensions, "
+            + "total_unique, total_rung, total_missed, total_answered, "
+            + "ttt, att, avg_abd_wait, csr_avg_abd_wait "
+            + "FROM dqe_history WHERE call_date BETWEEN ?::date AND ?::date) t";
     var stmt = conn.prepareStatement(sql);
     stmt.setString(1, fromIso);
     stmt.setString(2, toIso);
     var rs = stmt.executeQuery();
-    while (rs.next()) {
-      var agent = String(rs.getString('agent_name') || '').trim();
+    var json = rs.next() ? rs.getString('j') : '[]';
+    rs.close(); stmt.close();
+    var arr = JSON.parse(json || '[]');
+    for (var i = 0; i < arr.length; i++) {
+      var r = arr[i];
+      var agent = String(r.agent_name || '').trim();
       if (!agent) continue;
       out.push({
-        dateIso:          String(rs.getString('d') || '').trim(),
+        dateIso:          String(r.d || '').trim(),
         agent:            agent,
-        monthYear:        String(rs.getString('month_year') || '').trim(),
-        queueExt:         String(rs.getString('queue_extensions') || '').trim(),
-        totalUnique:      Number(rs.getInt('total_unique'))   || 0,
-        totalRung:        Number(rs.getInt('total_rung'))     || 0,
-        totalMissed:      Number(rs.getInt('total_missed'))   || 0,
-        totalAnswered:    Number(rs.getInt('total_answered')) || 0,
-        tttSec:           parseHmsDisplay_(rs.getString('ttt')),
-        attSec:           parseHmsDisplay_(rs.getString('att')),
-        avgAbdWaitSec:    parseHmsDisplay_(rs.getString('avg_abd_wait')),
-        csrAvgAbdWaitSec: parseHmsDisplay_(rs.getString('csr_avg_abd_wait')),
+        monthYear:        String(r.month_year || '').trim(),
+        queueExt:         String(r.queue_extensions || '').trim(),
+        totalUnique:      Number(r.total_unique)   || 0,
+        totalRung:        Number(r.total_rung)     || 0,
+        totalMissed:      Number(r.total_missed)   || 0,
+        totalAnswered:    Number(r.total_answered) || 0,
+        tttSec:           parseHmsDisplay_(r.ttt),
+        attSec:           parseHmsDisplay_(r.att),
+        avgAbdWaitSec:    parseHmsDisplay_(r.avg_abd_wait),
+        csrAvgAbdWaitSec: parseHmsDisplay_(r.csr_avg_abd_wait),
       });
     }
-    rs.close(); stmt.close();
   } catch (e) {
     Logger.log('neonFetchDqeRows_ failed: ' + (e && e.message ? e.message : e));
   } finally {
