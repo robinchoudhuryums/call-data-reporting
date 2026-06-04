@@ -224,7 +224,7 @@ function computeActiveAgentsInRange_(dept, from, to, roster) {
     agents:   Object.keys(activeRoster).sort(),
     floaters: floaters,
   };
-  try { cache.put(cacheKey, JSON.stringify(out), CACHE_TTL_SECONDS); }
+  try { cache.put(cacheKey, JSON.stringify(out), REPORT_CACHE_TTL_SECONDS); }
   catch (e) { /* harmless */ }
   return out;
 }

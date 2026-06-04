@@ -189,7 +189,7 @@ function getQcdReport(req) {
 
   const json = JSON.stringify(data);
   if (json.length <= 100000) {
-    try { cache.put(cacheKey, json, CACHE_TTL_SECONDS); }
+    try { cache.put(cacheKey, json, REPORT_CACHE_TTL_SECONDS); }
     catch (e) { Logger.log('QCDReport cache put failed: %s', e); }
   } else {
     Logger.log('QCDReport: payload %s bytes exceeds 100KB, skipping cache', json.length);

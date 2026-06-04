@@ -256,17 +256,22 @@ function getCompanyOverview() {
   // clean and the two sources agree.)
   const dqeSource = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
   let dqeRows;
+  let effectiveSource = 'sheet';
+  const _tRead = Date.now();
   if (dqeSource === 'neon' && typeof neonFetchDqeRows_ === 'function') {
     dqeRows = neonFetchDqeRows_(trendStartIso, latestDate);
     if (!dqeRows || !dqeRows.length) {
       Logger.log('getCompanyOverview: neon returned no rows; falling back to sheet.');
       dqeRows = (typeof sheetFetchDqeRows_ === 'function')
         ? sheetFetchDqeRows_(trendStartIso, latestDate) : [];
+    } else {
+      effectiveSource = 'neon';
     }
   } else {
     dqeRows = (typeof sheetFetchDqeRows_ === 'function')
       ? sheetFetchDqeRows_(trendStartIso, latestDate) : [];
   }
+  if (typeof logDqeReadTiming_ === 'function') logDqeReadTiming_('getCompanyOverview', effectiveSource, _tRead, dqeRows.length);
   for (let i = 0; i < dqeRows.length; i++) {
     const row = dqeRows[i];
     const dateIso = row.dateIso;
@@ -488,7 +493,7 @@ function getCompanyOverview() {
     // serves user B's identity correctly.
   };
 
-  try { cache.put(COMPANY_OVERVIEW_CACHE_KEY, JSON.stringify(result), CACHE_TTL_SECONDS); }
+  try { cache.put(COMPANY_OVERVIEW_CACHE_KEY, JSON.stringify(result), REPORT_CACHE_TTL_SECONDS); }
   catch (e) { Logger.log('CompanyOverview cache put failed: %s', e); }
 
   return personalizeOverview_(result, user);

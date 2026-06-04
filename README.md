@@ -286,6 +286,42 @@ scripts/deploy.sh apps-script/cdr-import <cdr-import-deployment-id>
   loose; sage = healthy mix. Hover for the specific fired-count +
   mean answer rate. Tunable in `Alerts.gs` (`DRIFT_*` constants).
 
+**Optional (Neon read-back + keep-warm):**
+
+- The dashboard reads DQE from the `DQE Historical Data` sheet by
+  default. To read from Neon's `dqe_history` instead, set the
+  `DQE_READ_SOURCE` Script Property to `neon` (anything else / unset =
+  `sheet`). Cut-over readers (`getLatestDataDate`, `getCompanyOverview`,
+  `computeSummary_`, and the Individual / Performance / Compare builders)
+  fall back to the sheet on any Neon null/error, so the flip is reversible
+  with no redeploy. Needs the `NEON_*` props + `script.external_request`
+  scope (same as the orphan-rename mirror).
+- **Before flipping**, run the parity gate from the Apps Script editor:
+  open `NeonRead.gs`, edit `COMPARE_FROM` / `COMPARE_TO` in
+  `compareDqeSources_` to a range fully inside the mirrored history, then
+  Run **`runDqeParityCheck`** (the editor's Run picker hides `_`-suffixed
+  functions, so use this non-underscore wrapper). A "PARITY CLEAN" log =
+  safe to cut over. Create the two indexes first so the Neon reads stay
+  fast:
+  ```sql
+  CREATE INDEX IF NOT EXISTS idx_dqe_history_call_date ON dqe_history (call_date);
+  CREATE INDEX IF NOT EXISTS idx_dqe_history_date_agent ON dqe_history (call_date, agent_name);
+  ```
+  Each cut-over reader logs `[dqe-read] <label> source=<neon|sheet>
+  rows=<n> ms=<elapsed>` so you can compare read cost in the Executions
+  panel.
+- **Keep-warm (optional):** Neon's free tier suspends the compute after
+  ~5 min idle, so the first DQE read of a lull pays a cold-start penalty.
+  In the dashboard, open Alerts (admin) → **Neon keep-warm** → **Enable**
+  to install a trigger that pings Neon every 5 min during a weekday
+  business-hours window (default 7 AM–1 PM Central, ~132 compute-hrs/mo —
+  under the ~190h free allowance). Tune via the `NEON_KEEPWARM_START_HOUR`
+  / `NEON_KEEPWARM_END_HOUR` Script Properties; the modal surfaces the
+  estimated monthly hours + last-ping outcome. Needs the
+  `script.scriptapp` + `script.external_request` scopes. Reversible —
+  Disable removes the trigger and clears the flag. Only matters once
+  `DQE_READ_SOURCE=neon`.
+
 ## Deep links
 
 Phase C (commit ce4220a) added URL hash routing so any report

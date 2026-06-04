@@ -508,13 +508,25 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   missing-in-Neon / value mismatches over a date range). **Cut over a
   reader only after `compareDqeSources_` is parity-clean over a
   representative range** (and `dqe_history` is fully backfilled). Cutover
-  so far: **#1 `getLatestDataDate`** (reads `MAX(call_date)` from Neon when
-  flagged, else falls through to the sheet scan; cache key is
-  source-suffixed). Each cutover is `getDqeReadSource_()`-gated and falls
-  back to the sheet on any null/error, so flipping the flag is reversible
-  with no redeploy. Reuses the dashboard `NEON_*` props + `script.external_request`
-  scope (Operator State #18-19). Remaining heavy readers (Overview,
-  `computeSummary_`, IR/PR/CR, Missed) are not cut over yet.
+  so far: **#1 `getLatestDataDate`** (`MAX(call_date)`), **#2
+  `getCompanyOverview`**, **#3 `computeSummary_`** (My Department table),
+  and **#4 the IR / PR / CR builders**. Each reads the windowed rows from
+  Neon when flagged and STILL reads a cheap cols-A..D slice for
+  `getDeptQueueExts_`'s all-history derivation. Each cutover is
+  `getDqeReadSource_()`-gated and falls back to the sheet on any
+  null/empty/error, so flipping the flag is reversible with no redeploy;
+  every cutover reader emits a `[dqe-read] <label> source=<neon|sheet>
+  rows=<n> ms=<elapsed>` line (`logDqeReadTiming_`, NeonRead.gs) so
+  sheet-vs-neon read cost is directly comparable in the Executions panel.
+  Reuses the dashboard `NEON_*` props + `script.external_request`
+  scope (Operator State #18-19). Remaining readers not cut over: **Missed
+  Calls** (needs the slot K-AC + abandoned columns added to
+  `neonFetchDqeRows_`) and the `getDeptQueueExts_` DERIVED all-history scan
+  (still a sheet read on both paths). The two `call_date` indexes below are
+  now created in prod. NOTE: `latestDate:`/`latestDates:` stay on the 5-min
+  `CACHE_TTL_SECONDS`; the heavy report aggregations cache 30 min
+  (`REPORT_CACHE_TTL_SECONDS`) -- both levers reduce how often a cutover
+  reader hits a cold free-tier Neon (see the Neon keep-warm bullet).
   **Index prerequisite (F1):** before cutting over the date/agent-filtered
   readers, make sure `dqe_history` is indexed for those queries --
   `CREATE INDEX IF NOT EXISTS idx_dqe_history_call_date ON dqe_history (call_date);`
@@ -522,6 +534,33 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   Postgres has no stored row order (unlike the sheet), so there's nothing to
   "re-sort" routinely -- you `ORDER BY call_date` at query time and the index
   keeps it fast; the index is maintained automatically on insert/update.
+- **Neon keep-warm is an optional, admin-toggled trigger (`NeonKeepWarm.gs`).**
+  Neon's free tier scale-to-zero suspends the compute after ~5 min idle, so
+  the FIRST DQE read of a lull (when `DQE_READ_SOURCE=neon`) pays a
+  cold-start penalty. `keepNeonWarm_` pings Neon (`SELECT 1`) every
+  `NEON_KEEPWARM_EVERY_MINUTES` (=5) but ONLY inside a weekday business-hours
+  window (`NEON_KEEPWARM_START_HOUR`=7 .. `NEON_KEEPWARM_END_HOUR`=13 Central,
+  Script-Property-tunable), no-opping cheaply (property + clock check, NO Neon
+  connection) outside the window / on weekends / when
+  `NEON_KEEPWARM_ENABLED!='true'`. Default window ≈ 6h × ~22 weekdays ≈
+  ~132 compute-hrs/mo, under the ~190h free allowance (the Alerts modal
+  surfaces the estimate + last-ping outcome). Enable/disable from the Alerts
+  modal's **Neon keep-warm** section (`installNeonKeepWarmTrigger` /
+  `uninstallNeonKeepWarmTrigger`, both `assertAdmin_`-gated); reversible
+  (disable removes the trigger + clears the flag). Reuses the dashboard
+  `NEON_*` props + `script.external_request` + `script.scriptapp` scopes;
+  independent of `DQE_READ_SOURCE` (it only MATTERS once reads are on neon).
+  To run the editor-only parity gate, use the non-underscore wrapper
+  `runDqeParityCheck` -- the Apps Script Run picker hides `_`-suffixed
+  functions like `compareDqeSources_`.
+- **Daily import toast carries a Neon-mirror status segment.**
+  `processIntegratedHistory` tracks `counts.neon` ('ok' | 'unreachable' |
+  'error', derived from the CDR + QCD writer results -- reachability is
+  per-run binary against one instance) and the success toast appends
+  `| Neon ✓` / `| Neon ⚠ unreachable` / `| Neon ⚠ error` after the
+  CDR/QPath/QCD/CSR/DQE counts. DQE-specific Neon failures still surface
+  separately via `notifyDqeBuildFailure_` + the Pipeline Health `:DQE failure`
+  row, so they're intentionally NOT folded into this single flag.
 - **Bulk DQE rebuild skips the per-date Neon mirror (`skipNeon`).**
   `buildDQEHistoricalData(rawSheet, dqeSheet, opts)` takes an optional
   `opts.skipNeon`; the cdr-import BULK path (`bulkHistoricalUpdate`) passes
@@ -547,12 +586,20 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
 - **Per-project gitignored `.clasp.json`**. Each developer keeps their own
   `scriptId` locally; pulls never conflict on it. Template at
   `.clasp.example.json`.
-- **CacheService tiers**: 5 min on aggregated dashboard responses, 60 sec
-  on auth lookups. Each report file owns its own versioned cache prefix
-  (`summary:`, `latestDate:`, `individual:`, `individual_active:`,
-  `performance:`, `compareRanges:`, `missed:`, `companyOverview:`);
-  bump the relevant version on any aggregation-rule change. See INV-30
-  for current versions.
+- **CacheService tiers**: 30 min (`REPORT_CACHE_TTL_SECONDS`) on the heavy
+  per-(dept,range) aggregations (My Department `summary`, `companyOverview`,
+  `individual`, `individual_active`, `performance`, `compareRanges`, `qcd`,
+  `missed`); 5 min (`CACHE_TTL_SECONDS`) on the freshness-sensitive
+  `latestDate` / `latestDates` lookups so the morning ingest surfaces
+  promptly; 60 sec on auth lookups (`AUTH_CACHE_TTL_SECONDS`). The 30-min
+  tier is safe because DQE data updates once daily; the tradeoff is that
+  ad-hoc admin corrections (orphan renames, DQE rebuilds) can lag up to
+  30 min in cached views not explicitly busted on write (Orphan Fix +
+  Dept Config save bust theirs). Each report file owns its own versioned
+  cache prefix (`summary:`, `latestDate:`, `individual:`,
+  `individual_active:`, `performance:`, `compareRanges:`, `missed:`,
+  `companyOverview:`); bump the relevant version on any aggregation-rule
+  change. See INV-30 for current versions.
 - **Scope is locked to `both` (Phase D + redesign cleanup,
   commits d631719 + 53d0560).** Pre-Phase-D the dashboard
   shipped a `roster | queue | both` segmented control with
@@ -776,7 +823,9 @@ When something looks wrong, before assuming a code bug, check:
 3. Did the user actually have access? `Access Control` sheet rows are
    case-sensitive on email.
 4. Is the cache stale? Bump the relevant per-report prefix (see INV-30)
-   or wait 5 min.
+   or wait out the TTL -- up to 30 min for the heavy report aggregations
+   (`REPORT_CACHE_TTL_SECONDS`), 5 min for the latest-date + freshness
+   pill lookups (`CACHE_TTL_SECONDS`).
 5. Did the source-pipeline bugs (window inclusion / ATT denominator / leg
    attribution — see `known-issues.md`) get re-introduced? Spot-check Sonia
    2026-03-09: TTT should be `0:15:03`, ATT should be `0:03:01`.
@@ -902,16 +951,29 @@ When something looks wrong, before assuming a code bug, check:
 19. `DQE_READ_SOURCE` Script Property (dashboard) -- the F1 Neon
     read-back switch read by `getDqeReadSource_()`. Unset / `sheet`
     (default) = dashboard reads the `DQE Historical Data` sheet as
-    always; `neon` flips the cut-over readers (so far just
-    `getLatestDataDate`) to read `dqe_history`. **Only flip to `neon`
-    after `compareDqeSources_` (NeonRead.gs, editor-run) shows
-    parity-clean over a representative range AND `dqe_history` is fully
-    backfilled** -- otherwise the read-back serves data that lags the
+    always; `neon` flips the cut-over readers (`getLatestDataDate`,
+    `getCompanyOverview`, `computeSummary_`, and the IR / PR / CR builders;
+    Missed Calls + the `getDeptQueueExts_` derived scan are not cut over)
+    to read `dqe_history`. **Only flip to `neon` after `compareDqeSources_`
+    (NeonRead.gs, editor-run via the `runDqeParityCheck` wrapper -- the Run
+    picker hides `_`-suffixed functions) shows parity-clean over a
+    representative range AND `dqe_history` is fully backfilled** -- otherwise the read-back serves data that lags the
     sheet. Reversible with no redeploy (set back to `sheet`); cut-over
     readers also fall back to the sheet on any Neon error. After a bulk
     rebuild (which defers the DQE->Neon mirror via `skipNeon`), run
     `backfillDQEHistoryUpsert()` (cdr-report) to populate/refresh
     `dqe_history` before relying on the read-back.
+20. Neon keep-warm (optional; only relevant once `DQE_READ_SOURCE=neon`).
+    Toggle from the Alerts modal → **Neon keep-warm** section
+    (`NeonKeepWarm.gs`). When enabled it sets `NEON_KEEPWARM_ENABLED=true`
+    and installs the `keepNeonWarm_` trigger (every 5 min, gated to a
+    weekday window). Tune the window via the `NEON_KEEPWARM_START_HOUR` /
+    `NEON_KEEPWARM_END_HOUR` Script Properties (defaults 7 / 13 Central);
+    the modal shows the estimated monthly compute-hours so you stay under
+    the Neon free allowance (~190h). Needs the dashboard `NEON_*` props +
+    `script.external_request` + `script.scriptapp` scopes (same as the
+    read-back + alerts trigger). If keep-warm shows "unreachable" pings,
+    check the `NEON_*` props; pings no-op cleanly when Neon is unconfigured.
 
 ## Cycle Workflow Config
 
@@ -937,7 +999,7 @@ Data Accuracy (DQE), Access Control Integrity, Source Pipeline Reliability, Migr
 
 ### Subsystems
 Department Dashboard:
-  apps-script/department-dashboard/Auth.gs, apps-script/department-dashboard/Code.gs, apps-script/department-dashboard/Config.gs, apps-script/department-dashboard/Data.gs, apps-script/department-dashboard/Diagnostics.gs, apps-script/department-dashboard/Setup.gs, apps-script/department-dashboard/Util.gs, apps-script/department-dashboard/NeonRead.gs, apps-script/department-dashboard/MissedCallsReport.gs, apps-script/department-dashboard/IndividualReport.gs, apps-script/department-dashboard/PerformanceReport.gs, apps-script/department-dashboard/CompareRangesReport.gs, apps-script/department-dashboard/Alerts.gs, apps-script/department-dashboard/CompanyOverview.gs, apps-script/department-dashboard/Digest.gs, apps-script/department-dashboard/OrphanFix.gs, apps-script/department-dashboard/QCDReport.gs, apps-script/department-dashboard/DeptConfig.gs, apps-script/department-dashboard/access_denied.html, apps-script/department-dashboard/dashboard.html, apps-script/department-dashboard/script.html, apps-script/department-dashboard/styles.html, apps-script/department-dashboard/appsscript.json
+  apps-script/department-dashboard/Auth.gs, apps-script/department-dashboard/Code.gs, apps-script/department-dashboard/Config.gs, apps-script/department-dashboard/Data.gs, apps-script/department-dashboard/Diagnostics.gs, apps-script/department-dashboard/Setup.gs, apps-script/department-dashboard/Util.gs, apps-script/department-dashboard/NeonRead.gs, apps-script/department-dashboard/NeonKeepWarm.gs, apps-script/department-dashboard/MissedCallsReport.gs, apps-script/department-dashboard/IndividualReport.gs, apps-script/department-dashboard/PerformanceReport.gs, apps-script/department-dashboard/CompareRangesReport.gs, apps-script/department-dashboard/Alerts.gs, apps-script/department-dashboard/CompanyOverview.gs, apps-script/department-dashboard/Digest.gs, apps-script/department-dashboard/OrphanFix.gs, apps-script/department-dashboard/QCDReport.gs, apps-script/department-dashboard/DeptConfig.gs, apps-script/department-dashboard/access_denied.html, apps-script/department-dashboard/dashboard.html, apps-script/department-dashboard/script.html, apps-script/department-dashboard/styles.html, apps-script/department-dashboard/appsscript.json
 
 CDR DQE Pipeline:
   apps-script/cdr-report/buildDQEHistoricalData.js, apps-script/cdr-report/DQEdrilldown.js, apps-script/cdr-report/DQEDrilldownSidebar.html, apps-script/cdr-report/dataFilters.js, apps-script/cdr-report/CDR Tools menu.js, apps-script/cdr-report/appsscript.json
@@ -1005,7 +1067,7 @@ INV-50 | `QCD Historical Data` columns (1-indexed): `Month Year \| Week \| Date 
 INV-51 | `QCD Report` is per-dept gated like Individual / Performance / Compare Ranges -- managers see their own dept, admins pick any. **Parent depts auto-include sub-queue queues** via `queuesForDept_` (Sales+PAP, Power+PAK, CSR+Spanish per `OVERVIEW_PARENT_OF`); all three QCD readers (modal, Overview snapshot, My Department snapshot) use the same helper so rollups stay consistent. `getQcdReport({ department, from, to })` returns `meta` (with `queues` + `unmapped` flags), `dateLabel`, `totals` (sum across expanded queue list; `totals.violations` is MONTH-TO-DATE across the dept's queues, not selected-range sum), `queueBreakdown` (per-queue rows with `violationDates` array for expandable detail), `trendData` (12-month monthly buckets with `perQueue` keyed by queue name), `dailySeries` (per-day rollup across dept queues), and `perQueue` (per-queue daily + monthly arrays for multi-line charts). Cache prefix `qcd:v5`. The QCD Report form defaults to "Yesterday" preset. For depts with 2+ queues, the chart renders one line per queue (color-coded) plus a dashed "Dept total" line. Single-day ranges hide the Daily chart view. Per-queue breakdown rows are clickable when violations > 0 to expand and show violation dates. Color-coding: violations cells use light-warn (1-3) / strong-warn (>3); abandoned % >= 5% is warn-tinted in both breakdown and daily tables. **The Overview page's per-dept tile shows per-queue QCD data for multi-queue depts** (each queue gets abandoned %, abandoned count if >0, violations if >0 with color-coding); single-queue depts show dept-level chips. "X viol MTD" chip renders when month-to-date violations > 0. My Department page's agent table is PRECEDED by a "Queue Call Data — [date]" tile row (showing the actual data date, not "yesterday") sourced from `Data.gs::computeDeptQcdSnapshot_`. All QCD UI surfaces are visible to everyone (no admin gate); per-dept gating is on the dropdown only. | Subsystem: Department Dashboard
 INV-52 | `CDR Historical Data` columns (1-indexed): `Month Year \| Week \| Date \| Dept \| Name \| C..W` (22 metric cols). `Q Path Historical Data` columns: `Month Year \| Week \| Date \| Dept \| Path \| Total \| VM \| NonVM \| Opt1 \| NonOpt1 \| Pct`. `CSR Transfer Historical Data` columns: `Month Year \| Week \| Date \| Agent \| Trans % \| Total Calls \| Transferred \| + 11 per-queue cols`. Writers: `apps-script/cdr-import/autoImport.js::processIntegratedHistory`; each block emits a separate `processIntegratedHistory:CDR` / `:QPath` / `:CSR` row to Pipeline Health (INV-44). NOT consumed by the dashboard today -- the read path lives in the legacy DQE Report Apps Script. CDR rows are now **mirrored to Neon** (`call_history_dept` + `call_history_phones`) inline during `processIntegratedHistory`, following the same best-effort pattern as DQE and QCD. Requires `HMAC_SECRET` for phone-hash JSONB fields; degrades gracefully without it (main metric columns still write). | Subsystem: CDR Import (writer) / DQE Report Legacy (reader) |
 INV-53 | **Queue-only floaters are excluded from dept-level totals and team-averages across all dashboard reports.** A "floater" is an agent matched into a dept's view via shared-queue extension overlap (`matchedViaQueue=true`) but NOT on the dept's roster (`matchedViaRoster=false`). Established by Phase D (commit d631719) for `Data.gs::computeSummary_` (My Department agent table) -- totals are computed by filtering `rows` to `matchedViaRoster=true` before summing/averaging; the response carries `rosterAgentCount` + `queueOnlyAgentCount` so the client can render a "Total (roster only · N floaters excluded)" tfoot caption when floaters are visible. Each row carries a `sourceHomes` array listing every other dept's roster the floater appears on (built lazily by `buildDeptsByAgent_`); the client Source column chip renders `QUEUE · <homes>` or bare `QUEUE` when the floater is on no roster. **Floater-aware aggregation extended to the three agent-level reports in commit ba26d48** (Phase D+1): Individual Report's team-avg accumulator is naturally floater-free via its existing `rosterSet[agent] && !excludedAgents[agent]` gate; Performance Report's `teamCurr`/`teamPrev`/`monthlyTeam` and Compare Ranges' `teamP1`/`teamP2` gained explicit `matchedViaRoster` gating. Per-row response on all three reports now carries `matchedViaRoster` / `matchedViaQueue` / `sourceHomes` (mirrors the Phase D My Department shape). Floaters render with the QUEUE chip on their summary cards but contribute zero to team-avg denominators. See the "INV-53 expansion to IR/PR/CR" Common Gotchas bullet for picker behavior + security model. The legacy scope toggle (`roster | queue | both`) was retired in the redesign cleanup (commit 53d0560); both public RPCs now lock scope to `both`, but the floater-exclusion contract is independent of scope so historical scope=`roster` behavior is reproducible by reading only `matchedViaRoster=true` rows from the response. | Subsystem: Department Dashboard
-INV-54 | `Dept Config` sheet columns: `Department | QCD Queues | Overview Parent | Team Avg Excludes | Queue Ext Overrides | Active | Updated By | Updated At | Notes`. Pinned in `Config.gs::DEPT_CONFIG_HEADERS`; idempotently created by `setup()`. Admin-authored, no-redeploy overrides for the per-dept maps `DEPT_QCD_QUEUES`, `OVERVIEW_PARENT_OF`, `TEAM_AVG_EXCLUDES`, and `DEPT_QUEUE_EXT_OVERRIDES`. Read via the accessors `getDeptQcdQueues_` / `getOverviewParentMap_` / `getTeamAvgExcludes_` / `getDeptQueueExtsOverride_` in `DeptConfig.gs`, which layer the sheet OVER the frozen constants: for a dept with an Active row, each NON-EMPTY field overrides that dept's constant; an EMPTY field falls back to the constant; an absent/missing sheet ⇒ pure constant behavior (so pre-`setup()` installs are byte-identical to pre-feature -- the regression-safety guarantee). A per-execution memo (`DEPT_CONFIG_ROWS_MEMO_`) keeps it to one sheet read per request. Written ONLY by `saveDeptConfig` / `removeDeptConfig` (both `assertAdmin_`-gated -- a config write path per INV-01, not a DQE data-mutation path; each adds `LockService` + save-time validation + an Updated By/At row stamp; `removeDeptConfig` soft-deactivates via Active=FALSE). Save validation rejects: unknown QCD queue names (must appear in QCD Historical Data col D within the 180-day scan OR in the dept's constant), non-dept / cyclic Overview parents, off-roster team-avg excludes, and non-digit queue-ext overrides. `getDeptConfigInit` also auto-discovers queue names from QCD col D and flags unmapped ones (unmapped-first, busiest-first). Consumers rewired to the accessors: `queuesForDept_` (QCDReport.gs), `computeQcdSnapshots_` + the Overview parent map (CompanyOverview.gs), the IR team-avg reads (IndividualReport.gs), `getDeptQueueExts_` (Data.gs). No INV-30 cache-version bump was needed -- the no-sheet output is byte-identical; a save busts `COMPANY_OVERVIEW_CACHE_KEY` and the per-(dept,range) report caches TTL out within 5 min. Admin-only client surface: the `Dept Config` header tab (`data-admin-only`) + modal, route `#/admin/dept-config`. | Subsystem: Department Dashboard
+INV-54 | `Dept Config` sheet columns: `Department | QCD Queues | Overview Parent | Team Avg Excludes | Queue Ext Overrides | Active | Updated By | Updated At | Notes`. Pinned in `Config.gs::DEPT_CONFIG_HEADERS`; idempotently created by `setup()`. Admin-authored, no-redeploy overrides for the per-dept maps `DEPT_QCD_QUEUES`, `OVERVIEW_PARENT_OF`, `TEAM_AVG_EXCLUDES`, and `DEPT_QUEUE_EXT_OVERRIDES`. Read via the accessors `getDeptQcdQueues_` / `getOverviewParentMap_` / `getTeamAvgExcludes_` / `getDeptQueueExtsOverride_` in `DeptConfig.gs`, which layer the sheet OVER the frozen constants: for a dept with an Active row, each NON-EMPTY field overrides that dept's constant; an EMPTY field falls back to the constant; an absent/missing sheet ⇒ pure constant behavior (so pre-`setup()` installs are byte-identical to pre-feature -- the regression-safety guarantee). A per-execution memo (`DEPT_CONFIG_ROWS_MEMO_`) keeps it to one sheet read per request. Written ONLY by `saveDeptConfig` / `removeDeptConfig` (both `assertAdmin_`-gated -- a config write path per INV-01, not a DQE data-mutation path; each adds `LockService` + save-time validation + an Updated By/At row stamp; `removeDeptConfig` soft-deactivates via Active=FALSE). Save validation rejects: unknown QCD queue names (must appear in QCD Historical Data col D within the 180-day scan OR in the dept's constant), non-dept / cyclic Overview parents, off-roster team-avg excludes, and non-digit queue-ext overrides. `getDeptConfigInit` also auto-discovers queue names from QCD col D and flags unmapped ones (unmapped-first, busiest-first). Consumers rewired to the accessors: `queuesForDept_` (QCDReport.gs), `computeQcdSnapshots_` + the Overview parent map (CompanyOverview.gs), the IR team-avg reads (IndividualReport.gs), `getDeptQueueExts_` (Data.gs). No INV-30 cache-version bump was needed -- the no-sheet output is byte-identical; a save busts `COMPANY_OVERVIEW_CACHE_KEY` and the per-(dept,range) report caches TTL out within 30 min (`REPORT_CACHE_TTL_SECONDS`). Admin-only client surface: the `Dept Config` header tab (`data-admin-only`) + modal, route `#/admin/dept-config`. | Subsystem: Department Dashboard
 
 ### Policy Configuration
 Policy threshold: 6/10
@@ -1243,7 +1305,7 @@ S33 | Pipeline Health per-output rows | Subsystem: CDR Import + Department Dashb
 S34 | Integrated DQE build runs inside autoImport | Subsystem: CDR Import + CDR DQE Pipeline + Department Dashboard
   Steps:
     - Trigger a daily import via `runManualExport` (or onChange) for a date NOT already present in DQE Historical Data.
-    - Wait for the run to complete; the success toast should report `CDR: +X | QPath: +Y | QCD: +Z | CSR: +W | DQE: +N`.
+    - Wait for the run to complete; the success toast should report `CDR: +X | QPath: +Y | QCD: +Z | CSR: +W | DQE: +N | Neon ✓` (the trailing Neon segment is `✓` / `⚠ unreachable` / `⚠ error` reflecting the CDR+QCD mirror reachability for the run).
     - Open the CDR Report spreadsheet → DQE Historical Data; confirm new rows for the imported date.
     - Open the dashboard; the header freshness pill should refresh to that date within 5 min (or after cache TTL).
     - Open the dashboard as admin → Alerts modal → Pipeline Health; confirm the most recent rows include `processIntegratedHistory:DQE` `success` for that date alongside CDR / QPath / QCD / CSR entries.

@@ -243,3 +243,41 @@ function compareDqeSources_() {
     ? 'CLEAN -- dqe_history matches the sheet for this range; read-back gate PASSED'
     : 'MISMATCH -- resolve before cutover (run backfillDQEHistory() for gaps)');
 }
+
+/**
+ * Editor-run wrapper for compareDqeSources_.
+ *
+ * WHY THIS EXISTS: the Apps Script editor's "Run" function picker HIDES any
+ * function whose name ends in `_` (the same trailing-underscore convention
+ * that blocks google.script.run). So `compareDqeSources_` -- and every other
+ * `_`-suffixed helper -- is NOT selectable from the dropdown ("No functions"
+ * if it's the only thing you're looking at). This non-underscore wrapper is
+ * selectable; pick `runDqeParityCheck` from the picker and Run it, then read
+ * the Execution log. (Edit the COMPARE_FROM / COMPARE_TO range inside
+ * compareDqeSources_ above first.) Same trick applies to any other
+ * `_`-suffixed function you need to run by hand: add a one-line wrapper.
+ */
+function runDqeParityCheck() {
+  return compareDqeSources_();
+}
+
+/**
+ * Lightweight read-timing log for the F1 cutover readers. Emits one line
+ * to the Execution log / Cloud Logging per DQE read so you can compare
+ * sheet-vs-neon cost in the editor's Executions panel without guessing:
+ *
+ *   [dqe-read] <label> source=<neon|sheet> rows=<n> ms=<elapsed>
+ *
+ * `source` is the EFFECTIVE source that served the rows (so a neon read
+ * that fell back to the sheet logs source=sheet). Best-effort; never throws.
+ */
+function logDqeReadTiming_(label, source, startMs, rowCount) {
+  try {
+    Logger.log('[dqe-read] %s source=%s rows=%s ms=%s',
+      label, source,
+      (rowCount === null || rowCount === undefined) ? '?' : rowCount,
+      (Date.now() - startMs));
+  } catch (e) { /* best-effort */ }
+}
+
+
