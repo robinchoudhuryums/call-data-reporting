@@ -730,6 +730,7 @@
     initIndividualReport();
     initPerformanceReport();
     initCompareRanges();
+    initInsightsReport();
     initAlerts();
     initOrphanFix();
     initDeptConfig();
@@ -1840,6 +1841,7 @@
     '/report/performance': { kind: 'modal', modalId: 'performance-modal', buttonId: 'performance-report-btn' },
     '/report/compare':     { kind: 'modal', modalId: 'compare-modal',     buttonId: 'compare-ranges-btn' },
     '/report/qcd':         { kind: 'modal', modalId: 'qcd-modal',         buttonId: 'qcd-report-btn' },
+    '/report/insights':    { kind: 'modal', modalId: 'insights-modal',    buttonId: 'insights-report-btn' },
     '/admin/alerts':       { kind: 'modal', modalId: 'alerts-modal',      buttonId: 'alerts-btn' },
     '/admin/orphan-fix':   { kind: 'modal', modalId: 'orphan-fix-modal',  buttonId: 'orphan-fix-btn' },
     '/admin/dept-config':  { kind: 'modal', modalId: 'dept-config-modal', buttonId: 'dept-config-btn' },
@@ -8566,6 +8568,308 @@
   // with tab strip (Total Calls / Abandoned % / Violations).
 
   let qcdLastData = null;
+  // ===================================================================
+  // Insights Report (combined: department rollup + per-agent prior cards)
+  // Reuses the shared picker HTML (irBuildAgentListHtml_), the PR KPI
+  // tile + delta logic (prKpiTile_), the IR insight callout
+  // (irInsightsBlock_), and the Source chip (sourceChipHtml_). Server:
+  // getInsightsReportInit / getInsightsReport (InsightsReport.gs).
+  // ===================================================================
+  let insLastRoster = { dept: null, agents: [], activeAgents: null, activeFloaters: null, rangeKey: '' };
+  let insActiveFetchTimer = null;
+  let insListChangeHandler_ = null;
+  let insPendingAgentSelection_ = null;
+  let insLastData = null;
+  const INS_PREFS_KEY = 'cdr.ins.prefs.v1';
+
+  function initInsightsReport() {
+    const btn = $('insights-report-btn');
+    const modal = $('insights-modal');
+    if (!btn || !modal) return;
+    const closeBtn = modal.querySelector('.modal-close');
+    const backdrop = modal.querySelector('[data-close]');
+
+    function openModal() {
+      modal.style.display = '';
+      modal.setAttribute('aria-hidden', 'false');
+      document.body.style.overflow = 'hidden';
+      trapFocus_(modal);
+      initModalDragResize_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
+      document.addEventListener('keydown', onKeyDown);
+      insShowForm();
+      insSetDefaultDates();
+      insRestorePrefs_();
+      insEnsureRoster();
+    }
+    function closeModal() {
+      modal.style.display = 'none';
+      modal.setAttribute('aria-hidden', 'true');
+      releaseFocus_();
+      resetModalTransform_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
+      document.body.style.overflow = '';
+      document.removeEventListener('keydown', onKeyDown);
+      btn.focus();
+    }
+    function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
+
+    btn.addEventListener('click', openModal);
+    if (closeBtn) closeBtn.addEventListener('click', closeModal);
+    if (backdrop) backdrop.addEventListener('click', closeModal);
+
+    const preset = $('ins-preset');
+    if (preset) preset.addEventListener('change', insApplyPreset);
+    const fromEl = $('ins-from'), toEl = $('ins-to');
+    if (fromEl) fromEl.addEventListener('change', function () {
+      if ($('ins-preset')) $('ins-preset').value = 'custom';
+      insScheduleActiveRefetch_(); insSavePrefs_();
+    });
+    if (toEl) toEl.addEventListener('change', function () {
+      if ($('ins-preset')) $('ins-preset').value = 'custom';
+      insScheduleActiveRefetch_(); insSavePrefs_();
+    });
+
+    const selAll = $('ins-select-all'), selNone = $('ins-select-none');
+    if (selAll)  selAll.addEventListener('click',  function (e) { e.preventDefault(); insToggleAgents(true);  });
+    if (selNone) selNone.addEventListener('click', function (e) { e.preventDefault(); insToggleAgents(false); });
+    const search = $('ins-agent-search');
+    if (search) search.addEventListener('input', function () { irFilterAgentList_($('ins-agent-list'), search.value); });
+
+    const genBtn = $('ins-generate-btn');
+    if (genBtn) genBtn.addEventListener('click', runInsReport);
+    const backBtn = $('ins-back-btn');
+    if (backBtn) backBtn.addEventListener('click', insShowForm);
+  }
+
+  function insShowForm()    { $('insights-form').style.display = ''; $('insights-results').style.display = 'none'; insSetFormError(''); }
+  function insShowResults() { $('insights-form').style.display = 'none'; $('insights-results').style.display = ''; }
+  function insSetFormError(msg) {
+    const el = $('ins-form-error'); if (!el) return;
+    if (!msg) { el.style.display = 'none'; el.textContent = ''; return; }
+    el.textContent = msg; el.style.display = '';
+  }
+
+  function insIsoOf_(d) {
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0')
+      + '-' + String(d.getDate()).padStart(2, '0');
+  }
+  function insSetDefaultDates() {
+    if ($('ins-from') && $('ins-from').value) return;   // keep restored/last value
+    const today = new Date();
+    const first = new Date(today.getFullYear(), today.getMonth(), 1);
+    if ($('ins-from')) $('ins-from').value = insIsoOf_(first);
+    if ($('ins-to'))   $('ins-to').value   = insIsoOf_(today);
+  }
+  function insApplyPreset() {
+    const v = $('ins-preset').value; insSavePrefs_();
+    if (v === 'custom') return;
+    const today = new Date(); let s, e = new Date(today);
+    if (v === 'thisMonth')        { s = new Date(today.getFullYear(), today.getMonth(), 1); }
+    else if (v === 'lastMonth')   { s = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+                                    e = new Date(today.getFullYear(), today.getMonth(), 0); }
+    else if (v === 'last30')      { s = new Date(today); s.setDate(today.getDate() - 30); }
+    else if (v === 'last3Months') { s = new Date(today); s.setMonth(today.getMonth() - 3); }
+    else if (v === 'last12Months'){ s = new Date(today); s.setFullYear(today.getFullYear() - 1); }
+    else if (v === 'lastYear')    { s = new Date(today.getFullYear() - 1, 0, 1);
+                                    e = new Date(today.getFullYear() - 1, 11, 31); }
+    if (!s) return;
+    $('ins-from').value = insIsoOf_(s);
+    $('ins-to').value   = insIsoOf_(e);
+    insScheduleActiveRefetch_(); insSavePrefs_();
+  }
+
+  // -- Picker (mirrors the IR picker; reuses the shared helpers) ----------
+  function insEnsureRoster() {
+    const dept = getRequestedDept();
+    if (!dept) { $('ins-agent-loader').textContent = 'No department selected.'; $('ins-agent-list').style.display = 'none'; return; }
+    const from = $('ins-from').value, to = $('ins-to').value;
+    const rangeKey = from + '|' + to;
+    if (insLastRoster.dept === dept && insLastRoster.agents.length && insLastRoster.rangeKey === rangeKey) {
+      insRenderAgentList(); return;
+    }
+    $('ins-agent-loader').style.display = ''; $('ins-agent-list').style.display = 'none'; $('ins-generate-btn').disabled = true;
+    google.script.run
+      .withSuccessHandler(function (data) {
+        insLastRoster = {
+          dept: dept,
+          agents: (data && data.agents) || [],
+          activeAgents:   (data && data.activeAgents)   || null,
+          activeFloaters: (data && data.activeFloaters) || null,
+          rangeKey: rangeKey,
+        };
+        insRenderAgentList();
+      })
+      .withFailureHandler(function (err) {
+        $('ins-agent-loader').textContent = 'Error loading roster: ' + (err && err.message ? err.message : String(err));
+      })
+      .getInsightsReportInit({ department: dept, from: from, to: to });
+  }
+  function insScheduleActiveRefetch_() {
+    if (insActiveFetchTimer) clearTimeout(insActiveFetchTimer);
+    insActiveFetchTimer = setTimeout(function () {
+      const dept = getRequestedDept(); if (!dept) return;
+      const from = $('ins-from').value, to = $('ins-to').value;
+      if (!from || !to || from > to) return;
+      const rangeKey = from + '|' + to;
+      if (insLastRoster.dept === dept && insLastRoster.rangeKey === rangeKey) return;
+      google.script.run
+        .withSuccessHandler(function (data) {
+          insLastRoster.activeAgents   = (data && data.activeAgents)   || null;
+          insLastRoster.activeFloaters = (data && data.activeFloaters) || null;
+          insLastRoster.rangeKey = rangeKey;
+          const checked = irGetCheckedAgents_($('ins-agent-list'));
+          insRenderAgentList();
+          irApplyCheckedAgents_($('ins-agent-list'), checked);
+          insUpdateGenerate();
+        })
+        .withFailureHandler(function () { /* keep existing grouping */ })
+        .getInsightsReportInit({ department: dept, from: from, to: to });
+    }, 350);
+  }
+  function insRenderAgentList() {
+    const list = $('ins-agent-list');
+    $('ins-agent-loader').style.display = 'none';
+    if (!insLastRoster.agents.length) {
+      list.innerHTML = '<div class="ir-agent-empty">No agents on this department\'s roster.</div>';
+      list.style.display = ''; $('ins-generate-btn').disabled = true; return;
+    }
+    list.innerHTML = irBuildAgentListHtml_(insLastRoster.agents, insLastRoster.activeAgents, insLastRoster.activeFloaters);
+    list.style.display = '';
+    if (insListChangeHandler_) list.removeEventListener('change', insListChangeHandler_);
+    insListChangeHandler_ = function () { insUpdateGenerate(); insSavePrefs_(); };
+    list.addEventListener('change', insListChangeHandler_);
+    if (insPendingAgentSelection_) { irApplyCheckedAgents_(list, insPendingAgentSelection_); insPendingAgentSelection_ = null; }
+    insUpdateGenerate();
+  }
+  function insToggleAgents(on) { selectAllActiveAgents_($('ins-agent-list'), on); insUpdateGenerate(); insSavePrefs_(); }
+  function insUpdateGenerate() {
+    const boxes = $('ins-agent-list').querySelectorAll('.ir-agent-cb:checked');
+    $('ins-generate-btn').disabled = boxes.length === 0;
+  }
+
+  function runInsReport() {
+    const dept = getRequestedDept(); if (!dept) { insSetFormError('No department selected.'); return; }
+    const from = $('ins-from').value, to = $('ins-to').value;
+    if (!from || !to) { insSetFormError('Pick a start and end date.'); return; }
+    if (from > to) { insSetFormError('Start date must be on or before end date.'); return; }
+    const agents = irGetCheckedAgents_($('ins-agent-list'));
+    if (!agents.length) { insSetFormError('Select at least one agent.'); return; }
+    insSetFormError('');
+    const gen = $('ins-generate-btn'); const prev = gen.textContent;
+    gen.disabled = true; gen.textContent = 'Generating…';
+    google.script.run
+      .withSuccessHandler(function (data) {
+        gen.disabled = false; gen.textContent = prev;
+        insSavePrefs_(); insRenderReport_(data); insShowResults();
+      })
+      .withFailureHandler(function (err) {
+        gen.disabled = false; gen.textContent = prev;
+        insSetFormError('Error: ' + (err && err.message ? err.message : String(err)));
+      })
+      .getInsightsReport({ department: dept, from: from, to: to, agents: agents });
+  }
+
+  function insRenderReport_(data) {
+    insLastData = data;
+    $('ins-results-date').textContent = '(' + (data.dateLabel || '') + ')';
+    const cmp = $('ins-compare-line');
+    if (cmp) cmp.textContent = 'Comparing against the prior period: ' + (data.priorDateLabel || '');
+
+    // Team insights callout (reuse the IR block; relabel to "Team insights").
+    const host = $('ins-team-insights');
+    if (host) {
+      const ins = data.teamInsights || [];
+      host.innerHTML = ins.length
+        ? irInsightsBlock_(ins).replace('<div class="ir-insights-label">Insights</div>',
+                                        '<div class="ir-insights-label">Team insights</div>')
+        : '';
+    }
+
+    // Roster-only caption on the rollup.
+    const cap = $('ins-rollup-cap');
+    if (cap) {
+      const fl = (data.meta && data.meta.queueOnlyAgentCount) || 0;
+      cap.textContent = fl > 0 ? '(roster only · ' + fl + ' floater' + (fl === 1 ? '' : 's') + ' excluded)' : '';
+    }
+
+    // Team KPI tiles -- reuse the Performance Report tile (no sparkline).
+    const t = data.teamStats || {};
+    $('ins-kpi-row').innerHTML = [
+      prKpiTile_('Total Rung',   t.rung,     'pos', [], IR_VOLUME_COLORS.rung),
+      prKpiTile_('Total Missed', t.missed,   'neg', [], IR_VOLUME_COLORS.missed),
+      prKpiTile_('Answered',     t.answered, 'pos', [], IR_VOLUME_COLORS.answered),
+      prKpiTile_('% Answered',   t.pct,      'pos', [], (THEME.accent || '#4E79A7')),
+      prKpiTile_('Total TTT',    t.ttt,      'neu', [], (THEME.muted  || '#9C755F')),
+      prKpiTile_('Avg ATT',      t.att,      'neu', [], (THEME.muted  || '#9C755F')),
+    ].join('');
+
+    insRenderAgentCards_(data.agentData || []);
+  }
+
+  // Delta badge mirroring prKpiTile_'s logic for the per-agent card grid.
+  function insDeltaBadge_(stat, valence) {
+    const s = stat || { deltaPct: 0, type: 'volume' };
+    const isPct = s.type === 'pctPoints';
+    const dp = Number(s.deltaPct || 0);
+    if (Math.abs(dp) < 0.05) return '<span class="pr-delta pr-delta-neu">–</span>';
+    let cls = 'pr-delta-neu';
+    if (valence === 'pos')      cls = dp > 0 ? 'pr-delta-pos' : 'pr-delta-neg';
+    else if (valence === 'neg') cls = dp > 0 ? 'pr-delta-neg' : 'pr-delta-pos';
+    const arrow = dp > 0 ? '▲' : '▼';
+    const suffix = isPct ? ' pts' : '%';
+    return '<span class="pr-delta ' + cls + '"><span class="pr-delta-arrow">' + arrow + '</span> '
+         + Math.abs(dp).toFixed(1) + suffix + '</span>';
+  }
+
+  function insRenderAgentCards_(cards) {
+    const wrap = $('ins-agent-cards'); if (!wrap) return;
+    if (!cards.length) {
+      wrap.innerHTML = emptyStateHtml_('&#128100;', 'No agents to compare',
+        'No selected agent had activity (or matched this department) in the range.');
+      return;
+    }
+    const metricDefs = [
+      ['Rung', 'rung', 'pos'], ['Missed', 'missed', 'neg'], ['Answered', 'answered', 'pos'],
+      ['% Ans', 'pct', 'pos'], ['TTT', 'ttt', 'neu'], ['ATT', 'att', 'neu'],
+    ];
+    wrap.innerHTML = cards.map(function (c) {
+      const isFloater = c.matchedViaQueue && !c.matchedViaRoster;
+      const chip = isFloater ? sourceChipHtml_(c) : '';
+      const metrics = metricDefs.map(function (m) {
+        const st = (c.metrics && c.metrics[m[1]]) || { formatted: '-' };
+        return '<div class="ins-metric">'
+             +   '<div class="ins-metric-label">' + m[0] + '</div>'
+             +   '<div class="ins-metric-val">' + escapeHtml(String(st.formatted)) + '</div>'
+             +   '<div class="ins-metric-delta">' + insDeltaBadge_(st, m[2]) + '</div>'
+             + '</div>';
+      }).join('');
+      return '<div class="ins-card' + (isFloater ? ' ins-card-floater' : '') + '">'
+           +   '<div class="ins-card-head"><span class="ins-card-name">' + escapeHtml(c.name) + '</span>' + chip + '</div>'
+           +   '<div class="ins-card-grid">' + metrics + '</div>'
+           + '</div>';
+    }).join('');
+  }
+
+  function insSavePrefs_() {
+    try {
+      localStorage.setItem(INS_PREFS_KEY, JSON.stringify({
+        preset: $('ins-preset') ? $('ins-preset').value : 'custom',
+        from:   $('ins-from')   ? $('ins-from').value   : '',
+        to:     $('ins-to')     ? $('ins-to').value     : '',
+        agents: irGetCheckedAgents_($('ins-agent-list')),
+      }));
+    } catch (e) { /* ignore */ }
+  }
+  function insRestorePrefs_() {
+    try {
+      const prefs = JSON.parse(localStorage.getItem(INS_PREFS_KEY) || 'null');
+      if (!prefs || typeof prefs !== 'object') return;
+      if (prefs.preset && $('ins-preset')) $('ins-preset').value = prefs.preset;
+      if (prefs.from   && $('ins-from'))   $('ins-from').value   = prefs.from;
+      if (prefs.to     && $('ins-to'))     $('ins-to').value     = prefs.to;
+      if (Array.isArray(prefs.agents) && prefs.agents.length) insPendingAgentSelection_ = prefs.agents;
+    } catch (e) { /* ignore */ }
+  }
+
   let qcdChartInstance = null;
   let qcdActiveMetric = 'totalCalls';
   let qcdActiveView   = 'monthly';   // 'monthly' (default) | 'daily'
