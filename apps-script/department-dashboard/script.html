@@ -4511,6 +4511,7 @@
       const color = IR_CHART_COLORS[i % IR_CHART_COLORS.length];
       const safe = escapeHtml(ag);
       return '<button type="button" class="ir-legend-chip" data-agent="' + safe + '" '
+           + 'title="Click to isolate · Shift+click to hide" '
            + 'style="--chip-color: ' + color + ';">'
            +   '<span class="ir-legend-swatch"></span>'
            +   '<span class="ir-legend-name">' + safe + '</span>'
@@ -4522,9 +4523,22 @@
 
     el.querySelectorAll('.ir-legend-chip').forEach(function (chip) {
       const agent = chip.getAttribute('data-agent');
-      // Click = pin/isolate (persistent spotlight), matching the Overview
-      // chart. Click the pinned chip again (or another) to release/switch.
-      chip.addEventListener('click', function () {
+      // Plain click = pin/isolate (persistent spotlight), matching the
+      // Overview chart. Shift+click = hide/show this agent's series (the
+      // legacy toggle). Click the pinned chip again (or another) to
+      // release/switch the isolate.
+      chip.addEventListener('click', function (ev) {
+        if (ev.shiftKey) {
+          const willHide = !chip.classList.contains('inactive');
+          chip.classList.toggle('inactive', willHide);
+          irChartInstances.forEach(function (chart) {
+            chart.data.datasets.forEach(function (ds, idx) {
+              if (ds._irAgent === agent) chart.getDatasetMeta(idx).hidden = willHide;
+            });
+            chart.update();
+          });
+          return;
+        }
         if (irPinnedAgent === agent) {
           irPinnedAgent = null;
           el.querySelectorAll('.ir-legend-chip').forEach(function (c) { c.classList.remove('pinned'); });
