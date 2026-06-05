@@ -385,6 +385,18 @@
       .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
 
+  // Shared empty-state block so every "no data here" surface reads the
+  // same way as the My Department page's empty state (icon + title +
+  // hint) instead of ad-hoc one-liners. `icon` is a short emoji/glyph;
+  // title + hint are escaped. Reuses the existing .empty-state CSS.
+  function emptyStateHtml_(icon, title, hint) {
+    return '<div class="empty-state">'
+      +   '<div class="empty-state-icon" aria-hidden="true">' + (icon || '&#128202;') + '</div>'
+      +   '<div class="empty-state-title">' + escapeHtml(title || 'No data') + '</div>'
+      +   (hint ? '<div class="empty-state-hint">' + escapeHtml(hint) + '</div>' : '')
+      + '</div>';
+  }
+
   // CSV formula-injection guard. Excel / Google Sheets treat a cell
   // beginning with = + - @ (or a leading tab / CR) as a formula. Agent
   // names flow in from the external CDR feed, so a crafted name like
@@ -1801,6 +1813,17 @@
       btn.classList.toggle('header-nav-current', isActive);
       btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
     });
+    // If the active route lives inside a collapsed header dropdown (the
+    // Reports group), its menu-item highlight is hidden, so also light
+    // up the dropdown's trigger. Generic over any .header-menu so it
+    // keeps working if more groups are collapsed later.
+    document.querySelectorAll('.header-menu').forEach(function (menu) {
+      const trigger = menu.querySelector('.header-menu-btn[aria-controls]');
+      if (!trigger) return;
+      const hasActive = !!menu.querySelector(
+        '.header-menu-list [data-route="' + route + '"]');
+      trigger.classList.toggle('header-nav-current', hasActive);
+    });
   }
 
   function setRoute_(route) {
@@ -2358,7 +2381,8 @@
     if (!wrap) return;
 
     if (!agents.length) {
-      wrap.innerHTML = '<div class="agent-card no-data">No missed calls in this range for any agent in scope.</div>';
+      wrap.innerHTML = emptyStateHtml_('&#128276;', 'No missed calls in this range',
+        'No agent in scope had a missed or abandoned call for the selected dates.');
       return;
     }
 
@@ -8658,6 +8682,32 @@
     $('qcd-results-title').textContent = 'QCD Report';
     $('qcd-results-date').textContent  = '(' + (data.dateLabel || '') + ')';
     showQcdResults_();
+
+    // Consistent empty-state: an unmapped dept OR no QCD activity in the
+    // selected range shows the shared .empty-state block and hides the
+    // data sections (KPIs / tables / chart) -- so it reads like the My
+    // Department empty state rather than a wall of zeros. Returns early to
+    // skip the data renders + the chart (which would otherwise draw into a
+    // now-hidden canvas).
+    var qcdUnmapped = !!(data.meta && data.meta.unmapped);
+    var qcdTotalCalls = (data.totals && Number(data.totals.totalCalls)) || 0;
+    var qcdEmptyEl = $('qcd-empty');
+    var qcdDataEl  = $('qcd-data-sections');
+    if (qcdUnmapped || qcdTotalCalls === 0) {
+      if (qcdEmptyEl) {
+        qcdEmptyEl.innerHTML = qcdUnmapped
+          ? emptyStateHtml_('&#128230;', 'No queues mapped for this department',
+              'Map this department’s A_Q_* queues via the Dept Config tab (admin) so its QCD data can be surfaced.')
+          : emptyStateHtml_('&#128202;', 'No QCD activity in this range',
+              'No calls were recorded for this department’s mapped queues on the selected dates. Try a wider range.');
+        qcdEmptyEl.style.display = '';
+      }
+      if (qcdDataEl) qcdDataEl.style.display = 'none';
+      return;
+    }
+    if (qcdEmptyEl) qcdEmptyEl.style.display = 'none';
+    if (qcdDataEl)  qcdDataEl.style.display  = '';
+
     var hint = $('qcd-queue-hint');
     if (hint) {
       if (data.meta && data.meta.unmapped) {

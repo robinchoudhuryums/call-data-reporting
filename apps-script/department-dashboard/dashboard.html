@@ -39,21 +39,37 @@
                 title="Your department's per-agent detail table with a configurable date range.">
           My Department
         </button>
-        <button class="header-menu-btn" id="missed-report-btn" type="button"
-                data-route="/report/missed" role="tab" aria-selected="false"
-                title="Per-agent missed-call timeline + queue-only abandoned events for a chosen date range.">Missed Calls</button>
-        <button class="header-menu-btn" id="individual-report-btn" type="button"
-                data-route="/report/individual" role="tab" aria-selected="false"
-                title="Per-agent KPIs vs team avg + 12-month trend. Pick 2+ agents to switch to peer-comparison mode.">Individual</button>
-        <button class="header-menu-btn" id="performance-report-btn" type="button"
-                data-route="/report/performance" role="tab" aria-selected="false"
-                title="Department-level current-vs-prior-period deltas, share-of-answered pie, and 12-month team trend.">Performance</button>
-        <button class="header-menu-btn" id="compare-ranges-btn" type="button"
-                data-route="/report/compare" role="tab" aria-selected="false"
-                title="Side-by-side comparison of two arbitrary date ranges. Useful for year-over-year or pre/post-change analyses.">Compare</button>
-        <button class="header-menu-btn" id="qcd-report-btn" type="button"
-                data-route="/report/qcd" role="tab" aria-selected="false"
-                title="Queue Call Detail report: dept-level totals, per-source breakdown, abandoned %, violations, and 12-month trend.">QCD</button>
+        <!-- Reports group: the five report launchers collapsed into a
+             single dropdown to de-clutter the header row. Each menu item
+             keeps its stable button id + data-route, so the Phase C
+             deep-link router and the per-modal open handlers are
+             unchanged; the dormant initHeaderMenus_ wires open/close via
+             aria-controls. The trigger lights up via updateTabActiveState_
+             when a report route is active. -->
+        <div class="header-menu">
+          <button class="header-menu-btn" id="reports-menu-btn" type="button"
+                  aria-haspopup="true" aria-expanded="false" aria-controls="reports-menu-list"
+                  title="Reports: Missed Calls, Individual, Performance, Compare, QCD.">
+            Reports <span class="header-menu-caret" aria-hidden="true">&#9662;</span>
+          </button>
+          <div class="header-menu-list" id="reports-menu-list" role="menu" style="display:none;">
+            <button class="header-menu-item" id="missed-report-btn" type="button"
+                    data-route="/report/missed" role="menuitem"
+                    title="Per-agent missed-call timeline + queue-only abandoned events for a chosen date range.">Missed Calls</button>
+            <button class="header-menu-item" id="individual-report-btn" type="button"
+                    data-route="/report/individual" role="menuitem"
+                    title="Per-agent KPIs vs team avg + 12-month trend. Pick 2+ agents to switch to peer-comparison mode.">Individual</button>
+            <button class="header-menu-item" id="performance-report-btn" type="button"
+                    data-route="/report/performance" role="menuitem"
+                    title="Department-level current-vs-prior-period deltas, share-of-answered pie, and 12-month team trend.">Performance</button>
+            <button class="header-menu-item" id="compare-ranges-btn" type="button"
+                    data-route="/report/compare" role="menuitem"
+                    title="Side-by-side comparison of two arbitrary date ranges. Useful for year-over-year or pre/post-change analyses.">Compare</button>
+            <button class="header-menu-item" id="qcd-report-btn" type="button"
+                    data-route="/report/qcd" role="menuitem"
+                    title="Queue Call Detail report: dept-level totals, per-source breakdown, abandoned %, violations, and 12-month trend.">QCD</button>
+          </div>
+        </div>
         <button class="header-menu-btn" id="alerts-btn" type="button"
                 data-route="/admin/alerts" data-admin-only role="tab" aria-selected="false" style="display:none;"
                 title="Configure low-answer-rate alerts: per-dept thresholds + recipients, manual send, or schedule a daily check.">Alerts</button>
@@ -950,6 +966,15 @@
 
         <div id="qcd-results-status" class="status" style="display:none;"></div>
 
+        <!-- Consistent empty-state (shared .empty-state block) shown when
+             the dept has no queues mapped, or no QCD activity in range, so
+             the report reads like an intentional "nothing here" rather than
+             a wall of zeros. Toggled against #qcd-data-sections by
+             qcdRenderReport_. -->
+        <div id="qcd-empty" class="empty-state" style="display:none;"></div>
+
+        <div id="qcd-data-sections">
+
         <!-- Days-to-violation forecast (E9). Renders only when a
              linear regression on the last 7 days of dailySeries
              abandonedPct projects a 5% threshold crossing within
@@ -1012,6 +1037,7 @@
             </table>
           </div>
         </div>
+        </div><!-- /#qcd-data-sections -->
       </div>
       </div>
     </div>
