@@ -1659,6 +1659,10 @@
         label: dept.name + (isChild ? ' (sub-queue)' : ''),
         data: dept.trend || [],
         borderColor: color,
+        // Stash the resting style so the legend hover-dim can restore it
+        // (see ovDimOthers_ / ovUndimAll_).
+        _origBorder: color,
+        _origWidth: isChild ? 1.4 : 2.2,
         // No fill on the overlaid multi-dept chart -- 10+ stacked
         // gradients muddle the view. The soft-area treatment (25%
         // gradient via irGradientFill_) is intentionally reserved
@@ -1710,6 +1714,18 @@
           legend: {
             position: 'bottom',
             labels: { boxWidth: 12, font: { size: 11 } },
+            // Hovering a dept in the legend dims every other line so the
+            // hovered one stands out (mirrors the IR peer-comparison chip
+            // legend). Clicking a legend item still toggles its visibility
+            // (Chart.js default onClick is preserved).
+            onHover: function (e, item, legend) {
+              if (item && item.datasetIndex != null) {
+                ovDimOthers_(legend.chart, item.datasetIndex);
+              }
+            },
+            onLeave: function (e, item, legend) {
+              ovUndimAll_(legend.chart);
+            },
           },
           tooltip: {
             filter: function (ctx) {
@@ -1738,6 +1754,36 @@
         interaction: { mode: 'index', intersect: false },
       },
     });
+  }
+
+  // Legend hover-dim for the multi-dept overview chart. Fades every line
+  // except the hovered one (and thickens the hovered one slightly) so a
+  // single dept is easy to follow in a crowded overlay. The 92% baseline
+  // is left untouched -- it's a faint reference, not a dept series.
+  // chart.update('none') skips the animation so the dim/restore is instant.
+  function ovDimOthers_(chart, activeIndex) {
+    if (!chart || !chart.data) return;
+    chart.data.datasets.forEach(function (ds, i) {
+      if (ds.label === '92% target') return;
+      if (i === activeIndex) {
+        ds.borderColor = ds._origBorder;
+        ds.borderWidth = (ds._origWidth || 2) + 0.8;
+      } else {
+        ds.borderColor = 'rgba(140,140,140,0.18)';
+        ds.borderWidth = ds._origWidth || 1.4;
+      }
+    });
+    chart.update('none');
+  }
+
+  function ovUndimAll_(chart) {
+    if (!chart || !chart.data) return;
+    chart.data.datasets.forEach(function (ds) {
+      if (ds.label === '92% target') return;
+      if (ds._origBorder != null) ds.borderColor = ds._origBorder;
+      if (ds._origWidth != null) ds.borderWidth = ds._origWidth;
+    });
+    chart.update('none');
   }
 
   // -- Router + URL hash routing (Phase C) -------------------------------

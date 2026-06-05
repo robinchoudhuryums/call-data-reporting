@@ -73,7 +73,7 @@
 //      the Overview Pipeline Health banner (E1) and Orphan Fix nag
 //      (E12-reframed) introduced in the Phase B redesign rollout.
 //      Both are stripped for non-admins by personalizeOverview_.
-const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v13';
+const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v14';
 
 // Pipeline freshness threshold (hours). If the most recent successful
 // DQE-freshness Pipeline Health row is older than this many hours, the
@@ -162,6 +162,14 @@ function getCompanyOverview() {
   const trendIsoLabels = [];
   for (let i = 0; i < trendDays; i++) {
     const d = new Date(trendStart.getTime() + i * 86400000);
+    // Skip Saturdays + Sundays. The work window is weekdays only, so a
+    // weekend point is always 0/no-data and renders as a sawtooth dip in
+    // every chart that consumes this axis (per-dept card sparklines, the
+    // company sparkline, and the multi-dept overview chart). 'u' = ISO day
+    // (1=Mon..7=Sun) in the script TZ. The Neon/sheet FETCH range below
+    // stays the full calendar window so all weekday rows are captured.
+    const dow = parseInt(Utilities.formatDate(d, TZ, 'u'), 10);
+    if (dow === 6 || dow === 7) continue;
     trendIsoLabels.push(Utilities.formatDate(d, TZ, 'yyyy-MM-dd'));
   }
   const trendLabels = trendIsoLabels.map(function (iso) {
