@@ -1,0 +1,414 @@
+/**
+ * Insights Report -- a unified period-comparison report that combines
+ * the Performance Report's DEPARTMENT ROLLUP (current vs an
+ * immediately-preceding prior period, INV-28) with PER-AGENT
+ * comparison CARDS (folding in the Individual Report's vs-self
+ * comparison). Added ALONGSIDE the originals (Performance / Compare
+ * Ranges / Individual) so the combined view can be validated against
+ * them before any of them is retired.
+ *
+ * MVP comparison mode: prior period (auto-adjacent) only -- the same
+ * immediately-preceding same-length window the Performance Report uses
+ * (INV-28). The compute is deliberately structured so additional modes
+ * (YoY, custom ranges) can drop in later by varying only the prior-
+ * window calculation block; the rest of the pipeline is mode-agnostic.
+ *
+ * Views (both rendered):
+ *   - Team rollup: KPI tiles (Rung / Missed / Answered / % Answered /
+ *     TTT / ATT) with the current value + delta vs prior. Roster-only
+ *     (INV-53 floater exclusion); ATT weighted by Answered (INV-25).
+ *   - Per-agent cards: each selected agent's current + prior + delta
+ *     across the same six metrics. Floaters render with the QUEUE chip
+ *     but do NOT factor into the team rollup (INV-53).
+ *
+ * Public entries (callable via google.script.run):
+ *   getInsightsReportInit({ department, from?, to? })
+ *     -> picker init (delegates to getIndividualReportInit, like
+ *        Performance, so it reuses the same roster + active-in-range
+ *        subset cache).
+ *   getInsightsReport({ department, from, to, agents })
+ *     -> { meta, dateLabel, priorDateLabel, teamStats, agentData,
+ *          teamInsights }
+ *   sendInsightsReportEmail({ imageBase64, dateLabel }) -> { to }
+ *
+ * Reuse (Apps Script flat global scope): deltaBlock_ (Performance),
+ * buildTeamInsights_ + formatSecondsHms_ (Util), getRosterForDepartment_
+ * / getDeptQueueExts_ / parseExtensions_ / rowDateIso_ / parseHmsDisplay_
+ * / buildDeptsByAgent_ / hashAgents_ (Data), and the F1 read helpers
+ * (NeonRead). No new aggregation primitives are introduced.
+ *
+ * Caching: 30 min (REPORT_CACHE_TTL_SECONDS) per
+ * (dept, from, to, sortedAgents) tuple under INSIGHTS_CACHE_KEY_PREFIX.
+ */
+
+// Bump when the aggregation rules or response shape change. Add to the
+// CLAUDE.md INV-30 canonical list when this ships.
+const INSIGHTS_CACHE_KEY_PREFIX = 'insights:v1';
+
+function getInsightsReportInit(req) {
+  // Same picker UX (roster + default dates + active-in-range subset) as
+  // the Individual / Performance reports, so delegate to their shared init.
+  return getIndividualReportInit(req);
+}
+
+function getInsightsReport(req) {
+  const email = Session.getActiveUser().getEmail();
+  const user = resolveUser_(email);
+  if (user.role === 'none') throw new Error('Not authorized.');
+
+  const dept = String((req && req.department) || '').trim();
+  if (!dept) throw new Error('Department is required.');
+  if (user.role === 'manager' && dept !== user.department) {
+    throw new Error('Not authorized for this department.');
+  }
+  if (user.role === 'admin' && getAllDepartments_().indexOf(dept) === -1) {
+    throw new Error('Unknown department: ' + dept);
+  }
+
+  const from = String((req && req.from) || '').trim();
+  const to   = String((req && req.to)   || '').trim();
+  if (!isIsoDate_(from) || !isIsoDate_(to)) throw new Error('from/to must be YYYY-MM-DD.');
+  if (from > to) throw new Error('from must be on or before to.');
+
+  const rawAgents = (req && req.agents) || [];
+  if (!Array.isArray(rawAgents) || rawAgents.length === 0) {
+    throw new Error('Select at least one agent.');
+  }
+  const roster = getRosterForDepartment_(dept);
+  // INV-53: keep the input gate open so floaters can be included; off-dept
+  // crafted names with no queue overlap fall out at the row-scan layer.
+  const seen = {};
+  const selectedAgents = [];
+  for (let i = 0; i < rawAgents.length; i++) {
+    const n = String(rawAgents[i] || '').trim();
+    if (!n || seen[n]) continue;
+    seen[n] = true;
+    selectedAgents.push(n);
+  }
+  if (selectedAgents.length === 0) throw new Error('No selected agent provided.');
+
+  // MD5 hash keeps the cache key bounded regardless of selection size
+  // (CacheService rejects keys > 250 chars; INV-36).
+  const agentsKey = hashAgents_(selectedAgents);
+  const cache = CacheService.getScriptCache();
+  const cacheKey = INSIGHTS_CACHE_KEY_PREFIX + ':' + dept + ':' + from + ':' + to + ':' + agentsKey;
+  const cached = cache.get(cacheKey);
+  if (cached) {
+    try {
+      const parsed = JSON.parse(cached);
+      parsed.meta.cacheHit = true;
+      return parsed;
+    } catch (e) { /* recompute */ }
+  }
+
+  const t0 = Date.now();
+  const data = computeInsights_(dept, from, to, selectedAgents, roster);
+  data.meta.computeMs = Date.now() - t0;
+  data.meta.cacheHit = false;
+
+  try { cache.put(cacheKey, JSON.stringify(data), REPORT_CACHE_TTL_SECONDS); }
+  catch (e) { Logger.log('InsightsReport cache put failed: %s', e); }
+
+  return data;
+}
+
+function computeInsights_(dept, from, to, selectedAgents, roster) {
+  const selectedSet = {};
+  for (let i = 0; i < selectedAgents.length; i++) selectedSet[selectedAgents[i]] = true;
+  const rosterSet = {};
+  for (let i = 0; i < roster.names.length; i++) rosterSet[roster.names[i]] = true;
+
+  // Floater tracking (INV-53). matchedViaRoster pre-populated for selected
+  // roster members so zero-call picks still render; matchedViaQueue set
+  // lazily on an observed queue-overlap row. Team rollup gates on
+  // matchedViaRoster so floaters stay out of dept averages.
+  const agentMatchedViaRoster = {};
+  const agentMatchedViaQueue  = {};
+  for (let i = 0; i < selectedAgents.length; i++) {
+    if (rosterSet[selectedAgents[i]]) agentMatchedViaRoster[selectedAgents[i]] = true;
+  }
+
+  const parseIso_ = function (iso) {
+    const p = iso.split('-');
+    return new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]), 12, 0, 0);
+  };
+  const startDate = parseIso_(from);
+  const endDate   = parseIso_(to);
+  const msPerDay  = 86400000;
+  const isoOf = function (d) { return Utilities.formatDate(d, TZ, 'yyyy-MM-dd'); };
+
+  // --- Prior window (the ONLY mode-specific block) -------------------
+  // Prior period = same-length window ending one day before the current
+  // start (INV-28). Future modes (YoY / custom) would set priorFrom /
+  // priorTo differently here; everything below is mode-agnostic.
+  const durationDays   = Math.floor((endDate - startDate) / msPerDay);
+  const priorEndDate   = new Date(startDate.getTime() - msPerDay);
+  const priorStartDate = new Date(priorEndDate.getTime() - durationDays * msPerDay);
+  const priorFrom = isoOf(priorStartDate);
+  const priorTo   = isoOf(priorEndDate);
+
+  const ss = openSpreadsheet_();
+  const sheet = ss.getSheetByName(SHEETS.HISTORICAL);
+  if (!sheet) throw new Error('Sheet "' + SHEETS.HISTORICAL + '" not found.');
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return emptyInsights_(dept, from, to, priorFrom, priorTo, selectedAgents);
+  const ssTZ = ss.getSpreadsheetTimeZone();
+
+  // F1-aware read over [priorFrom, to] (priorFrom is always < from).
+  // Mirrors the Performance Report read; default 'sheet' is unchanged.
+  const numCols  = HISTORICAL_COLS.CSR_AVG_ABD_WAIT;
+  const fetchFrom = priorFrom < from ? priorFrom : from;
+  const fetchTo   = to;
+  const dqeSource = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
+  let srcRows = null;
+  let deptQueueExts;
+  let effectiveSource = 'sheet';
+  const _tRead = Date.now();
+  if (dqeSource === 'neon' && typeof neonFetchDqeRows_ === 'function') {
+    srcRows = neonFetchDqeRows_(fetchFrom, fetchTo);
+    if (srcRows && srcRows.length) {
+      const extValues = sheet.getRange(2, 1, lastRow - 1, HISTORICAL_COLS.QUEUE_EXT).getValues();
+      deptQueueExts = getDeptQueueExts_(dept, rosterSet, extValues).exts;
+      effectiveSource = 'neon';
+    } else {
+      srcRows = null;
+      Logger.log('computeInsights_: neon returned no rows; falling back to sheet.');
+    }
+  }
+  if (srcRows === null) {
+    const range = sheet.getRange(2, 1, lastRow - 1, numCols);
+    const values   = range.getValues();
+    const displays = range.getDisplayValues();
+    deptQueueExts = getDeptQueueExts_(dept, rosterSet, values).exts;
+    srcRows = [];
+    for (let i = 0; i < values.length; i++) {
+      const r = values[i], rd = displays[i];
+      const dIso = rowDateIso_(r[HISTORICAL_COLS.DATE - 1], ssTZ);
+      if (!dIso || dIso < fetchFrom || dIso > fetchTo) continue;
+      const ag = String(r[HISTORICAL_COLS.AGENT - 1] || '').trim();
+      if (!ag) continue;
+      srcRows.push({
+        dateIso:       dIso,
+        agent:         ag,
+        queueExt:      String(r[HISTORICAL_COLS.QUEUE_EXT - 1] || '').trim(),
+        totalRung:     Number(r[HISTORICAL_COLS.TOTAL_RUNG - 1])     || 0,
+        totalMissed:   Number(r[HISTORICAL_COLS.TOTAL_MISSED - 1])   || 0,
+        totalAnswered: Number(r[HISTORICAL_COLS.TOTAL_ANSWERED - 1]) || 0,
+        tttSec:        parseHmsDisplay_(rd[HISTORICAL_COLS.TTT - 1]),
+        attSec:        parseHmsDisplay_(rd[HISTORICAL_COLS.ATT - 1]),
+      });
+    }
+  }
+  if (typeof logDqeReadTiming_ === 'function') {
+    logDqeReadTiming_('computeInsights_:' + dept, effectiveSource, _tRead, srcRows.length);
+  }
+
+  // Accumulators. att_sum = sum(per-day ATT * per-day Answered) so the
+  // weighted ATT = att_sum / answered (INV-25).
+  const blank = function () { return { rung: 0, missed: 0, answered: 0, ttt: 0, att_sum: 0 }; };
+  const teamCurr = blank();
+  const teamPrev = blank();
+  const perAgentCurr  = {};
+  const perAgentPrior = {};
+  selectedAgents.forEach(function (a) { perAgentCurr[a] = blank(); perAgentPrior[a] = blank(); });
+
+  for (let i = 0; i < srcRows.length; i++) {
+    const row = srcRows[i];
+    const dateIso = row.dateIso;
+    if (!dateIso) continue;
+    const agent = row.agent;
+    if (!agent) continue;
+    // Queue-sentinel rows (queue-only abandoned events) -- not real agents.
+    if (/^A_Q_/.test(agent) || agent === 'Backup CSR') continue;
+    if (!selectedSet[agent]) continue;
+
+    const inCurrent = (dateIso >= from && dateIso <= to);
+    const inPrior   = (dateIso >= priorFrom && dateIso <= priorTo);
+    if (!inCurrent && !inPrior) continue;
+
+    // Floater detection (INV-53): a selected non-roster agent only counts
+    // if their col-D extensions overlap the dept's queue set.
+    if (!rosterSet[agent] && !agentMatchedViaQueue[agent]) {
+      const rowExts = parseExtensions_(row.queueExt);
+      for (let j = 0; j < rowExts.length; j++) {
+        if (deptQueueExts[rowExts[j]]) { agentMatchedViaQueue[agent] = true; break; }
+      }
+    }
+    const isRoster = !!agentMatchedViaRoster[agent];
+
+    const rung     = row.totalRung;
+    const missed   = row.totalMissed;
+    const answered = row.totalAnswered;
+    const tttSec   = row.tttSec;
+    const attTotal = answered > 0 ? row.attSec * answered : 0;
+
+    const ag = inCurrent ? perAgentCurr[agent] : perAgentPrior[agent];
+    ag.rung += rung; ag.missed += missed; ag.answered += answered;
+    ag.ttt += tttSec; ag.att_sum += attTotal;
+
+    if (isRoster) {
+      const t = inCurrent ? teamCurr : teamPrev;
+      t.rung += rung; t.missed += missed; t.answered += answered;
+      t.ttt += tttSec; t.att_sum += attTotal;
+    }
+  }
+
+  // --- Team stats with deltas (reuse deltaBlock_) --------------------
+  const currPct = teamCurr.rung     > 0 ? (teamCurr.answered / teamCurr.rung)   * 100 : 0;
+  const prevPct = teamPrev.rung     > 0 ? (teamPrev.answered / teamPrev.rung)   * 100 : 0;
+  const currAtt = teamCurr.answered > 0 ? (teamCurr.att_sum  / teamCurr.answered)     : 0;
+  const prevAtt = teamPrev.answered > 0 ? (teamPrev.att_sum  / teamPrev.answered)     : 0;
+  const teamStats = {
+    rung:     deltaBlock_(teamCurr.rung,     teamPrev.rung,     'volume',    String(teamCurr.rung)),
+    missed:   deltaBlock_(teamCurr.missed,   teamPrev.missed,   'volume',    String(teamCurr.missed)),
+    answered: deltaBlock_(teamCurr.answered, teamPrev.answered, 'volume',    String(teamCurr.answered)),
+    pct:      deltaBlock_(currPct,           prevPct,           'pctPoints', currPct.toFixed(1) + '%'),
+    ttt:      deltaBlock_(teamCurr.ttt,      teamPrev.ttt,      'volume',    formatSecondsHms_(teamCurr.ttt)),
+    att:      deltaBlock_(currAtt,           prevAtt,           'volume',    formatSecondsHms_(currAtt)),
+  };
+
+  // --- Per-agent cards ----------------------------------------------
+  // Drop selected names that match neither path (off-dept crafted names
+  // with no queue overlap); roster members always pass (INV-53).
+  const visibleAgents = selectedAgents.filter(function (a) {
+    return agentMatchedViaRoster[a] || agentMatchedViaQueue[a];
+  });
+  let depsByAgent = null;
+  for (let i = 0; i < visibleAgents.length; i++) {
+    if (agentMatchedViaQueue[visibleAgents[i]] && !agentMatchedViaRoster[visibleAgents[i]]) {
+      depsByAgent = buildDeptsByAgent_();
+      break;
+    }
+  }
+  const agentData = visibleAgents.map(function (agent) {
+    const c = perAgentCurr[agent], p = perAgentPrior[agent];
+    const cPct = c.rung     > 0 ? (c.answered / c.rung)   * 100 : 0;
+    const pPct = p.rung     > 0 ? (p.answered / p.rung)   * 100 : 0;
+    const cAtt = c.answered > 0 ? (c.att_sum  / c.answered)     : 0;
+    const pAtt = p.answered > 0 ? (p.att_sum  / p.answered)     : 0;
+    const matchedViaRoster = !!agentMatchedViaRoster[agent];
+    const matchedViaQueue  = !!agentMatchedViaQueue[agent];
+    const sourceHomes = (matchedViaQueue && !matchedViaRoster && depsByAgent)
+      ? (depsByAgent[agent] || []) : [];
+    return {
+      name: agent,
+      matchedViaRoster: matchedViaRoster,
+      matchedViaQueue:  matchedViaQueue,
+      sourceHomes:      sourceHomes,
+      // Each metric is a deltaBlock_ (current vs prior), same shape the
+      // team tiles use -- so the client renders both with one helper.
+      metrics: {
+        rung:     deltaBlock_(c.rung,     p.rung,     'volume',    String(c.rung)),
+        missed:   deltaBlock_(c.missed,   p.missed,   'volume',    String(c.missed)),
+        answered: deltaBlock_(c.answered, p.answered, 'volume',    String(c.answered)),
+        pct:      deltaBlock_(cPct,       pPct,       'pctPoints', cPct.toFixed(1) + '%'),
+        ttt:      deltaBlock_(c.ttt,      p.ttt,      'volume',    formatSecondsHms_(c.ttt)),
+        att:      deltaBlock_(cAtt,       pAtt,       'volume',    formatSecondsHms_(cAtt)),
+      },
+      rawAnswered: c.answered,
+    };
+  }).sort(function (a, b) { return b.rawAnswered - a.rawAnswered; });
+
+  // --- Team insights vs prior (reuse buildTeamInsights_) -------------
+  const teamInsights = buildTeamInsights_(
+    { rung: teamCurr.rung, missed: teamCurr.missed, answered: teamCurr.answered, pct: currPct, att: currAtt },
+    { rung: teamPrev.rung, missed: teamPrev.missed, answered: teamPrev.answered, pct: prevPct, att: prevAtt }
+  );
+
+  const fmt = function (d) { return Utilities.formatDate(d, TZ, 'MMM d, yyyy'); };
+  const rosterCount = visibleAgents.filter(function (a) { return agentMatchedViaRoster[a]; }).length;
+  return {
+    meta: {
+      department: dept,
+      from: from, to: to,
+      priorFrom: priorFrom, priorTo: priorTo,
+      comparisonMode: 'prior',
+      agents: selectedAgents,
+      rosterSize: roster.names.length,
+      rosterAgentCount: rosterCount,
+      queueOnlyAgentCount: visibleAgents.length - rosterCount,
+      generatedAt: new Date().toISOString(),
+    },
+    dateLabel:      fmt(startDate)      + ' - ' + fmt(endDate),
+    priorDateLabel: fmt(priorStartDate) + ' - ' + fmt(priorEndDate),
+    teamStats:    teamStats,
+    agentData:    agentData,
+    teamInsights: teamInsights,
+  };
+}
+
+function emptyInsights_(dept, from, to, priorFrom, priorTo, selectedAgents) {
+  const roster = getRosterForDepartment_(dept);
+  const rosterSet = {};
+  for (let i = 0; i < roster.names.length; i++) rosterSet[roster.names[i]] = true;
+  const zeroMetric = function (formatted, type) {
+    return { val: 0, prev: 0, formatted: formatted, delta: 0, deltaPct: 0, type: type };
+  };
+  const zeroMetrics = function () {
+    return {
+      rung:     zeroMetric('0', 'volume'),
+      missed:   zeroMetric('0', 'volume'),
+      answered: zeroMetric('0', 'volume'),
+      pct:      zeroMetric('0.0%', 'pctPoints'),
+      ttt:      zeroMetric('0:00:00', 'volume'),
+      att:      zeroMetric('0:00:00', 'volume'),
+    };
+  };
+  return {
+    meta: {
+      department: dept, from: from, to: to,
+      priorFrom: priorFrom, priorTo: priorTo,
+      comparisonMode: 'prior',
+      agents: selectedAgents,
+      rosterSize: roster.names.length,
+      rosterAgentCount: 0, queueOnlyAgentCount: 0,
+      generatedAt: new Date().toISOString(),
+    },
+    dateLabel: from + ' - ' + to,
+    priorDateLabel: priorFrom + ' - ' + priorTo,
+    teamStats: zeroMetrics(),
+    // Only roster members can appear in an empty sheet (floaters need a
+    // confirmable queue-overlap row, which doesn't exist here).
+    agentData: selectedAgents.filter(function (a) { return !!rosterSet[a]; }).map(function (a) {
+      return {
+        name: a, matchedViaRoster: true, matchedViaQueue: false, sourceHomes: [],
+        metrics: zeroMetrics(), rawAnswered: 0,
+      };
+    }),
+    teamInsights: [],
+  };
+}
+
+/**
+ * Emails the captured Insights Report PNG to the active user. Same
+ * pattern as the Performance / Individual email-export paths.
+ */
+function sendInsightsReportEmail(req) {
+  const email = Session.getActiveUser().getEmail();
+  const user = resolveUser_(email);
+  if (user.role === 'none') throw new Error('Not authorized.');
+
+  const dataUrl = String((req && req.imageBase64) || '');
+  const dateLabel = String((req && req.dateLabel) || 'Insights Report');
+  if (!dataUrl) throw new Error('No image payload.');
+  const commaIdx = dataUrl.indexOf(',');
+  if (commaIdx === -1) throw new Error('Malformed image payload.');
+  const decoded = Utilities.base64Decode(dataUrl.slice(commaIdx + 1));
+  const blob = Utilities.newBlob(decoded, 'image/png', 'Insights_Report.png');
+
+  MailApp.sendEmail({
+    to: email,
+    subject: 'Insights Report: ' + dateLabel,
+    htmlBody:
+      '<div style="font-family: sans-serif; color: #444; margin-bottom: 20px;">'
+      + 'Here is the visual snapshot of the Insights report -- department '
+      + 'rollup plus per-agent cards, comparing the selected range against '
+      + 'the immediately-preceding period.'
+      + '</div>'
+      + '<div style="text-align: center; border: 1px solid #eee; padding: 10px;">'
+      + '<img src="cid:reportImg" style="width:100%; max-width:1200px; height:auto;">'
+      + '</div>',
+    inlineImages: { reportImg: blob },
+  });
+  return { to: email };
+}
