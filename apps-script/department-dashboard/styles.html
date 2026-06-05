@@ -570,6 +570,10 @@
     font-size: 12.5px;
   }
   .agents .missed-high { color: var(--warn); font-weight: 500; }
+  /* Recede zero-valued cells so dense tables read as "mostly quiet"
+     instead of a uniform wall of numbers. Applied by zeroCell_/fmtCell
+     to 0 and 0:00:00 cells. */
+  .cell-zero { color: var(--muted); opacity: 0.5; }
 
   .agents tfoot td {
     background: var(--paper-2);
@@ -2031,9 +2035,20 @@
      is visible at a time so each gets the full container width. */
   .ir-chart-tabs {
     display: flex;
+    flex-wrap: wrap;           /* inline chart controls wrap on narrow widths */
     gap: 4px;
+    margin-top: 16px;          /* vertical rhythm: breathing room before the chart zone */
     margin-bottom: 8px;
     border-bottom: 1px solid var(--line);
+  }
+  /* Chart controls (data-labels toggle / monthly-daily view toggle)
+     pinned to the right end of the tab strip so they share one band with
+     the tabs instead of stacking on their own row. align-self: center
+     stops them stretching the way the tab buttons do. */
+  .ir-chart-tabs > .ir-toggle-box,
+  .ir-chart-tabs > .qcd-view-toggle {
+    margin: 0 2px 0 auto;
+    align-self: center;
   }
   .ir-tab {
     background: transparent;
@@ -2601,6 +2616,13 @@
      the visual-redesign branch) so the modal participates in the
      light/dark mode toggle. */
   .al-section { margin-bottom: 22px; }
+  /* Vertical rhythm: a hairline divider before each subsequent titled
+     section so stacked report / admin sections read as distinct blocks.
+     :not(:first-of-type) keeps the line off the leading section. */
+  .al-section:not(:first-of-type) {
+    border-top: 1px solid var(--line);
+    padding-top: 20px;
+  }
   .al-section-title {
     font-weight: 600;
     color: var(--accent);
@@ -3206,6 +3228,12 @@
     font-family: var(--mono); color: var(--muted);
     min-width: 60px; white-space: nowrap; overflow: hidden;
     text-overflow: ellipsis; max-width: 120px;
+  }
+  /* "+N more queues" overflow line under the chip-budget cap. Muted so
+     it reads as a quiet "there's more, hover to see" affordance. */
+  .ov-qcd-queue-more {
+    font-family: var(--mono); font-size: 10px; color: var(--muted);
+    margin-top: 2px; cursor: default;
   }
 
   /* QCD flag caption next to the WoW driver. Renders only when the

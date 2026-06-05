@@ -379,6 +379,11 @@
     return n.toLocaleString('en-US');
   }
 
+  // Wraps a zero value so dense tables can mute it -- a column of 0 /
+  // 0:00:00 cells reads as "mostly quiet" rather than a wall of numbers.
+  // HTML-only (table cells); CSV + chart labels never pass through here.
+  function zeroCell_(s) { return '<span class="cell-zero">' + s + '</span>'; }
+
   function escapeHtml(s) {
     return String(s)
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -1334,6 +1339,10 @@
   //   - "X viol MTD" — month-to-date violations across this dept's
   //     mapped queues; only rendered when X > 0.
   // Tooltip on the abandoned chip carries the latest-date context.
+  // Chip budget: how many per-queue rows a multi-queue tile shows
+  // before collapsing the rest into a "+N more" summary, so a tile
+  // stays scannable instead of stacking a row+chips per queue.
+  var OV_QCD_QUEUE_BUDGET = 3;
   function ovBuildQcdCaption_(dept) {
     if (!dept || !dept.qcd) return '';
     var q = dept.qcd;
@@ -1342,24 +1351,42 @@
     var html = '';
 
     if (multiQueue) {
+      // Worst-first so the few chips that DO show are the ones that
+      // matter (most violations, then highest abandoned %).
+      var sorted = queues.slice().sort(function (a, b) {
+        return (Number(b.violations)   || 0) - (Number(a.violations)   || 0)
+            || (Number(b.abandonedPct) || 0) - (Number(a.abandonedPct) || 0)
+            || (Number(b.abandoned)    || 0) - (Number(a.abandoned)    || 0);
+      });
+      var shown  = sorted.slice(0, OV_QCD_QUEUE_BUDGET);
+      var hidden = sorted.slice(OV_QCD_QUEUE_BUDGET);
       html += '<div class="ov-qcd-queue-list">';
-      queues.forEach(function (pq) {
+      shown.forEach(function (pq) {
         var qPct = Number(pq.abandonedPct) || 0;
         var qAbnd = Number(pq.abandoned) || 0;
         var qViol = Number(pq.violations) || 0;
-        var chips = '';
-        chips += '<span class="ov-qcd-flag' + (qPct >= 5 ? ' ov-qcd-violation' : ' ov-qcd-elevated') + '">'
-              + escapeHtml(pq.abandonedPctStr || '0.00%') + '</span>';
-        if (qAbnd > 0) {
-          chips += '<span class="ov-qcd-flag' + (qPct >= 5 ? ' ov-qcd-violation' : '') + '">'
-                + fmtNumber(qAbnd) + ' aban</span>';
-        }
+        // One combined abandoned chip ("P% · N aban") instead of two
+        // separate chips, to cut the per-row chip count.
+        var abndText = escapeHtml(pq.abandonedPctStr || '0.00%')
+          + (qAbnd > 0 ? ' · ' + fmtNumber(qAbnd) + ' aban' : '');
+        var chips = '<span class="ov-qcd-flag'
+              + (qPct >= 5 ? ' ov-qcd-violation' : ' ov-qcd-elevated') + '">'
+              + abndText + '</span>';
         if (qViol > 0) {
           chips += '<span class="ov-qcd-flag ov-qcd-violation">' + qViol + ' viol</span>';
         }
         html += '<div class="ov-qcd-queue-row"><span class="ov-qcd-queue-name">'
              + escapeHtml(pq.queue) + '</span>' + chips + '</div>';
       });
+      if (hidden.length) {
+        var moreTitle = hidden.map(function (pq) {
+          return pq.queue + ': ' + (pq.abandonedPctStr || '0.00%')
+            + ((Number(pq.violations) || 0) > 0 ? ' (' + pq.violations + ' viol)' : '');
+        }).join(' • ');
+        html += '<div class="ov-qcd-queue-more" title="' + escapeHtml(moreTitle) + '">'
+             + '+' + hidden.length + ' more queue' + (hidden.length === 1 ? '' : 's')
+             + '</div>';
+      }
       html += '</div>';
     } else {
       var pct = Number(q.abandonedPct) || 0;
@@ -2689,11 +2716,17 @@
     }
     const v = row[col.key];
     if (col.type === 'text') return escapeHtml(v == null ? '' : v);
-    if (col.type === 'duration') return fmtDuration(v);
+    if (col.type === 'duration') {
+      const dur = fmtDuration(v);
+      return (Number(v) || 0) === 0 ? zeroCell_(dur) : dur;
+    }
     // E5: append a small prior-period delta chip after the number on
     // the three chipped columns. No chip on totals row (no prior
-    // window for a sum row).
-    return fmtNumber(v) + wowChipHtml_(row, col);
+    // window for a sum row). Zero values are muted (zeroCell_), but the
+    // WoW chip stays full-color since a delta against zero is signal.
+    const num = fmtNumber(v);
+    const numHtml = (Number(v) || 0) === 0 ? zeroCell_(num) : num;
+    return numHtml + wowChipHtml_(row, col);
   }
 
   // E5 prior-period delta chip. Maps each chipped column to its

@@ -514,16 +514,18 @@
 
         <div id="ir-summary-container"></div>
 
-        <div class="ir-toggle-box" id="ir-datalabels-box">
-          <label class="ir-toggle-label">
-            <input type="checkbox" id="ir-show-datalabels"> Show data labels
-          </label>
-        </div>
-
+        <!-- Chart controls consolidated onto one band: the data-labels
+             toggle sits at the right end of the tab strip instead of on
+             its own row above it (pinned via .ir-chart-tabs > .ir-toggle-box). -->
         <div class="ir-chart-tabs" id="ir-chart-tabs" role="tablist">
           <button type="button" class="ir-tab active" data-tab="vol" role="tab" aria-selected="true">Volume</button>
           <button type="button" class="ir-tab" data-tab="eff" role="tab" aria-selected="false">Efficiency</button>
           <button type="button" class="ir-tab" data-tab="dur" role="tab" aria-selected="false">Duration</button>
+          <div class="ir-toggle-box" id="ir-datalabels-box">
+            <label class="ir-toggle-label">
+              <input type="checkbox" id="ir-show-datalabels"> Show data labels
+            </label>
+          </div>
         </div>
 
         <div id="ir-shared-legend" class="ir-shared-legend" style="display:none;"></div>
@@ -668,16 +670,15 @@
         <div id="pr-kpi-row" class="pr-kpi-row"></div>
         <div id="pr-agent-table-wrap" class="pr-agent-table-wrap"></div>
 
-        <div class="ir-toggle-box" id="pr-datalabels-box">
-          <label class="ir-toggle-label">
-            <input type="checkbox" id="pr-show-datalabels" checked> Show data labels
-          </label>
-        </div>
-
         <div class="ir-chart-tabs" id="pr-chart-tabs" role="tablist">
           <button type="button" class="ir-tab active" data-tab="share" role="tab" aria-selected="true">Share of Answered</button>
           <button type="button" class="ir-tab" data-tab="volume" role="tab" aria-selected="false">Volume &amp; Efficiency</button>
           <button type="button" class="ir-tab" data-tab="trend" role="tab" aria-selected="false">12-Month Trend</button>
+          <div class="ir-toggle-box" id="pr-datalabels-box">
+            <label class="ir-toggle-label">
+              <input type="checkbox" id="pr-show-datalabels" checked> Show data labels
+            </label>
+          </div>
         </div>
 
         <div id="pr-charts-container" class="ir-chart-area">
@@ -854,16 +855,15 @@
         <div id="cr-team-insights"></div>
         <div id="cr-team-tiles" class="pr-kpi-row"></div>
 
-        <div class="ir-toggle-box" id="cr-datalabels-box">
-          <label class="ir-toggle-label">
-            <input type="checkbox" id="cr-show-datalabels" checked> Show data labels
-          </label>
-        </div>
-
         <div class="ir-chart-tabs" id="cr-chart-tabs" role="tablist">
           <button type="button" class="ir-tab active" data-metric="answered" role="tab" aria-selected="true">Answered</button>
           <button type="button" class="ir-tab" data-metric="rung" role="tab" aria-selected="false">Rung</button>
           <button type="button" class="ir-tab" data-metric="pct" role="tab" aria-selected="false">% Answered</button>
+          <div class="ir-toggle-box" id="cr-datalabels-box">
+            <label class="ir-toggle-label">
+              <input type="checkbox" id="cr-show-datalabels" checked> Show data labels
+            </label>
+          </div>
         </div>
 
         <div class="cr-chart-wrap" id="cr-chart-wrap">
@@ -1002,17 +1002,19 @@
           </table>
         </div>
 
+        <!-- Chart controls consolidated: the monthly/daily view toggle
+             sits at the right end of the tab strip instead of on its own
+             row (pinned via .ir-chart-tabs > .qcd-view-toggle). -->
         <div class="ir-chart-tabs" id="qcd-chart-tabs" role="tablist">
           <button type="button" class="ir-tab active" data-metric="totalCalls" role="tab" aria-selected="true">Total Calls</button>
           <button type="button" class="ir-tab" data-metric="abandonedPct" role="tab" aria-selected="false">Abandoned %</button>
           <button type="button" class="ir-tab" data-metric="violations" role="tab" aria-selected="false">Violations</button>
-        </div>
-
-        <div class="qcd-view-toggle" id="qcd-view-toggle" role="radiogroup" aria-label="Chart view">
-          <button type="button" class="seg-btn active" data-view="monthly" role="radio" aria-checked="true"
-                  title="12-month trend window (rolled up across the selected range's mapped queues).">Monthly (12 mo)</button>
-          <button type="button" class="seg-btn" data-view="daily" role="radio" aria-checked="false"
-                  title="One point per day within the selected From/To range.">Daily (range)</button>
+          <div class="qcd-view-toggle" id="qcd-view-toggle" role="radiogroup" aria-label="Chart view">
+            <button type="button" class="seg-btn active" data-view="monthly" role="radio" aria-checked="true"
+                    title="12-month trend window (rolled up across the selected range's mapped queues).">Monthly (12 mo)</button>
+            <button type="button" class="seg-btn" data-view="daily" role="radio" aria-checked="false"
+                    title="One point per day within the selected From/To range.">Daily (range)</button>
+          </div>
         </div>
 
         <div class="ir-chart-wrap" id="qcd-chart-wrap">
