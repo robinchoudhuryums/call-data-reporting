@@ -251,7 +251,7 @@ function writeQCDRowsToNeon(rows) {
 // Without HMAC_SECRET, writes the main metric columns but skips
 // name-list JSONB and phone child rows (logs a warning).
 
-function writeCDRRowsToNeon(rows) {
+function writeCDRRowsToNeon(rows, opts) {
   if (!rows || !rows.length) return { inserted: 0, skipped: 0, phones: 0 };
   // A2: reset the per-run phone-hash memo at the entry of the only
   // call tree that hashes phones, so it's bounded to this mirror call.
@@ -329,113 +329,171 @@ function writeCDRRowsToNeon(rows) {
     conn.commit();
     Logger.log('writeCDRRowsToNeon: wrote ' + rows.length + ' main rows.');
 
-    // Phone child-table inserts (requires HMAC_SECRET + parent row IDs)
+    // Phone child-table inserts (requires HMAC_SECRET + parent row IDs).
+    // Skipped when opts.skipPhones -- the deferred off-path mirror (#1)
+    // writes them via mirrorCdrPhonesToNeon on its own connection AFTER
+    // this main write has committed. Otherwise written inline here on the
+    // same connection (preserves the standalone / cdr-report behavior).
     var phoneCount = 0;
-    if (hasHmac) {
+    if (!(opts && opts.skipPhones) && hasHmac) {
       var hasAnyPhones = rows.some(function(r) {
         return (r.phonesX && String(r.phonesX).trim()) ||
                (r.phonesY && String(r.phonesY).trim()) ||
                (r.phonesZ && String(r.phonesZ).trim());
       });
-
-      if (hasAnyPhones) {
-        // F3: normalize null/undefined key parts to a fixed sentinel so the
-        // JS-side phone-parent lookup key matches the DB-readback key exactly.
-        // getString() returns JS null for a SQL NULL (rendered "null" by a
-        // raw template string), while a JS-side `undefined` renders
-        // "undefined" -- a mismatch that would silently drop a phone set
-        // whose parent has a null/undefined dept or agent. (Today's caller
-        // passes dept='Unassigned' + agentName=...||null, so both sides agree;
-        // this hardens the path against a future caller passing undefined.)
-        // The sentinel (not '') keeps a SQL NULL distinct from a stored
-        // empty string.
-        var cdrKeyPart_ = function (x) { return x == null ? '<null>' : String(x); };
-        var joinPlaceholders = rows.map(function() { return '(?::date, ?, ?)'; }).join(',');
-        var idSql = 'SELECT d.id, d.call_date::text, d.department, d.agent_name ' +
-          'FROM call_history_dept d ' +
-          'JOIN (VALUES ' + joinPlaceholders + ') AS v(cd, dept, agent) ' +
-          'ON d.call_date = v.cd AND d.department IS NOT DISTINCT FROM v.dept ' +
-          'AND d.agent_name IS NOT DISTINCT FROM v.agent';
-
-        var idStmt = conn.prepareStatement(idSql);
-        var q = 1;
-        for (var j = 0; j < rows.length; j++) {
-          idStmt.setString(q++, rows[j].callDate);
-          idStmt.setString(q++, rows[j].dept);
-          idStmt.setString(q++, rows[j].agentName);
-        }
-        var idRs = idStmt.executeQuery();
-        var idMap = {};
-        while (idRs.next()) {
-          idMap[cdrKeyPart_(idRs.getString(2)) + '|' + cdrKeyPart_(idRs.getString(3)) + '|' + cdrKeyPart_(idRs.getString(4))] = idRs.getInt(1);
-        }
-        idRs.close(); idStmt.close();
-
-        var phoneRows = [];
-        for (var k = 0; k < rows.length; k++) {
-          var key = cdrKeyPart_(rows[k].callDate) + '|' + cdrKeyPart_(rows[k].dept) + '|' + cdrKeyPart_(rows[k].agentName);
-          var parentId = idMap[key];
-          if (!parentId) continue;
-          var phoneSets = [
-            { raw: rows[k].phonesX, type: 'ob_ext_list_total' },
-            { raw: rows[k].phonesY, type: 'ob_ext_list_answered' },
-            { raw: rows[k].phonesZ, type: 'ob_ext_list_missed' }
-          ];
-          for (var ps = 0; ps < phoneSets.length; ps++) {
-            var parsed = cdrParsePhoneField_(phoneSets[ps].raw, hmacSecret);
-            for (var ph = 0; ph < parsed.length; ph++) {
-              phoneRows.push({
-                parentId: parentId,
-                type: phoneSets[ps].type,
-                phone_hash: parsed[ph].phone_hash,
-                duration_sec: parsed[ph].duration_sec,
-                occurrences: parsed[ph].occurrences
-              });
-            }
-          }
-        }
-
-        if (phoneRows.length > 0) {
-          // A3: chunk to keep each prepared-statement SQL string under
-          // Apps Script's Jdbc argument-size limit -- a single ~4000-row
-          // phone statement (~44KB of SQL text) throws "Argument too
-          // large: sql", while ~7.5KB statements (the 134-row CDR main
-          // insert, the 74-row DQE insert) succeed. 500 rows (~5.7KB) is
-          // safely under. We still commit ONCE after all chunks (not per
-          // chunk), so the phone write stays all-or-nothing and cheap on
-          // round-trips. (5 params/row is also far under Postgres's
-          // 65535 bind-param cap; the SQL-string size is the binding
-          // constraint here, not the param count.)
-          var PHONE_CHUNK = 500;
-          var offset = 0;
-          while (offset < phoneRows.length) {
-            var chunk = phoneRows.slice(offset, offset + PHONE_CHUNK);
-            var phPlaceholders = chunk.map(function() { return '(?,?,?,?,?)'; }).join(',');
-            var phSql = 'INSERT INTO call_history_phones ' +
-              '(call_history_id, list_type, phone_hash, duration_sec, occurrences) ' +
-              'VALUES ' + phPlaceholders +
-              ' ON CONFLICT ON CONSTRAINT uq_phone_entry DO NOTHING';
-            var phStmt = conn.prepareStatement(phSql);
-            var s = 1;
-            for (var c = 0; c < chunk.length; c++) {
-              phStmt.setInt(s++,    chunk[c].parentId);
-              phStmt.setString(s++, chunk[c].type);
-              phStmt.setString(s++, chunk[c].phone_hash);
-              phStmt.setInt(s++,    chunk[c].duration_sec);
-              phStmt.setInt(s++,    chunk[c].occurrences);
-            }
-            phStmt.execute(); phStmt.close();
-            offset += PHONE_CHUNK;
-          }
-          conn.commit();
-          phoneCount = phoneRows.length;
-          Logger.log('writeCDRRowsToNeon: wrote ' + phoneCount + ' phone child rows.');
-        }
-      }
+      if (hasAnyPhones) phoneCount = cdrInsertPhoneChildRows_(conn, rows, hmacSecret);
     }
 
-    return { inserted: rows.length, skipped: 0, phones: phoneCount };
+    return { inserted: rows.length, skipped: 0, phones: phoneCount,
+             phonesDeferred: !!(opts && opts.skipPhones) };
 
+  } catch (e) {
+    try { conn.rollback(); } catch (re) {}
+    throw e;
+  } finally {
+    try { conn.close(); } catch (ce) {}
+  }
+}
+
+/**
+ * Inserts call_history_phones child rows for `rows` on the given (already
+ * open, autoCommit=false) connection, and commits once. Shared by the
+ * inline path (writeCDRRowsToNeon) and the deferred off-path mirror
+ * (mirrorCdrPhonesToNeon). The parent call_history_dept rows must already
+ * be committed -- this looks up their IDs, then parses + HMAC-hashes the
+ * phone fields and bulk-inserts.
+ *
+ * #2 (INLINE literal VALUES, not bound params): the phone child row carries
+ * NO untrusted text -- parentId is a DB-generated int, list_type is one of
+ * 3 code constants, phone_hash is a 64-char hex HMAC digest, duration /
+ * occurrences are ints. All are coerced + validated below, so inlining is
+ * injection-safe AND removes the ~5 JDBC bind-bridge calls PER ROW (the
+ * dominant per-row Apps Script cost). The main call_history_dept + DQE
+ * inserts stay parameterized -- they carry agent names + JSONB.
+ *
+ * (a) Emits a timing line splitting build(+HMAC) vs insert + the unique-
+ * hash count, so the HMAC-vs-insert cost is measurable from the logs.
+ */
+function cdrInsertPhoneChildRows_(conn, rows, hmacSecret) {
+  if (!rows || !rows.length) return 0;
+  // F3: normalize null/undefined key parts so the JS-side lookup key
+  // matches the DB-readback key (getString returns JS null for a SQL NULL).
+  var cdrKeyPart_ = function (x) { return x == null ? '<null>' : String(x); };
+
+  var joinPlaceholders = rows.map(function() { return '(?::date, ?, ?)'; }).join(',');
+  var idSql = 'SELECT d.id, d.call_date::text, d.department, d.agent_name ' +
+    'FROM call_history_dept d ' +
+    'JOIN (VALUES ' + joinPlaceholders + ') AS v(cd, dept, agent) ' +
+    'ON d.call_date = v.cd AND d.department IS NOT DISTINCT FROM v.dept ' +
+    'AND d.agent_name IS NOT DISTINCT FROM v.agent';
+  var idStmt = conn.prepareStatement(idSql);
+  var q = 1;
+  for (var j = 0; j < rows.length; j++) {
+    idStmt.setString(q++, rows[j].callDate);
+    idStmt.setString(q++, rows[j].dept);
+    idStmt.setString(q++, rows[j].agentName);
+  }
+  var idRs = idStmt.executeQuery();
+  var idMap = {};
+  while (idRs.next()) {
+    idMap[cdrKeyPart_(idRs.getString(2)) + '|' + cdrKeyPart_(idRs.getString(3)) + '|' + cdrKeyPart_(idRs.getString(4))] = idRs.getInt(1);
+  }
+  idRs.close(); idStmt.close();
+
+  // ---- build + hash (timed) ----
+  var tBuild = Date.now();
+  var TYPE_LITERAL_ = {
+    ob_ext_list_total:    "'ob_ext_list_total'",
+    ob_ext_list_answered: "'ob_ext_list_answered'",
+    ob_ext_list_missed:   "'ob_ext_list_missed'"
+  };
+  var phoneValues = [];   // pre-rendered injection-safe inline "(...)" tuples
+  for (var k = 0; k < rows.length; k++) {
+    var key = cdrKeyPart_(rows[k].callDate) + '|' + cdrKeyPart_(rows[k].dept) + '|' + cdrKeyPart_(rows[k].agentName);
+    var pid = parseInt(idMap[key], 10);
+    if (!isFinite(pid)) continue;   // no parent row -> skip (idempotent)
+    var phoneSets = [
+      { raw: rows[k].phonesX, type: 'ob_ext_list_total' },
+      { raw: rows[k].phonesY, type: 'ob_ext_list_answered' },
+      { raw: rows[k].phonesZ, type: 'ob_ext_list_missed' }
+    ];
+    for (var ps = 0; ps < phoneSets.length; ps++) {
+      var typeLit = TYPE_LITERAL_[phoneSets[ps].type];
+      if (!typeLit) continue;       // only the 3 known list types
+      var parsed = cdrParsePhoneField_(phoneSets[ps].raw, hmacSecret);
+      for (var ph = 0; ph < parsed.length; ph++) {
+        // phone_hash is a 64-char hex digest (or null) -> inline-safe.
+        var h = parsed[ph].phone_hash;
+        var hashLit = (typeof h === 'string' && /^[0-9a-f]{64}$/.test(h)) ? "'" + h + "'" : 'NULL';
+        var dur = parseInt(parsed[ph].duration_sec, 10); if (!isFinite(dur)) dur = 0;
+        var occ = parseInt(parsed[ph].occurrences, 10);  if (!isFinite(occ)) occ = 0;
+        phoneValues.push('(' + pid + ',' + typeLit + ',' + hashLit + ',' + dur + ',' + occ + ')');
+      }
+    }
+  }
+  var buildMs = Date.now() - tBuild;
+  var uniqueHashes = Object.keys(CDR_HMAC_CACHE_).length;
+
+  if (!phoneValues.length) {
+    Logger.log('cdrInsertPhoneChildRows_: 0 phone rows | build+hash ' + buildMs + 'ms (' + uniqueHashes + ' unique hashes).');
+    return 0;
+  }
+
+  // ---- insert (timed) ----
+  // Inline VALUES means the only limit is the SQL-string size (Apps Script
+  // throws "Argument too large: sql" near ~44KB). Each tuple is ~100 chars,
+  // so 200 rows is ~20KB -- safely under, and far fewer round-trips than the
+  // old 500-row bound-param chunks. ONE commit after all chunks
+  // (all-or-nothing; idempotent via ON CONFLICT DO NOTHING).
+  var tInsert = Date.now();
+  var INSERT_CHUNK = 200;
+  var stmt = conn.createStatement();
+  var chunks = 0, off = 0;
+  while (off < phoneValues.length) {
+    var sql = 'INSERT INTO call_history_phones ' +
+      '(call_history_id, list_type, phone_hash, duration_sec, occurrences) VALUES ' +
+      phoneValues.slice(off, off + INSERT_CHUNK).join(',') +
+      ' ON CONFLICT ON CONSTRAINT uq_phone_entry DO NOTHING';
+    stmt.execute(sql);
+    off += INSERT_CHUNK;
+    chunks++;
+  }
+  stmt.close();
+  conn.commit();
+  var insertMs = Date.now() - tInsert;
+
+  Logger.log('cdrInsertPhoneChildRows_: wrote ' + phoneValues.length + ' phone child rows | '
+    + 'build+hash ' + buildMs + 'ms (' + uniqueHashes + ' unique hashes) | '
+    + 'insert ' + insertMs + 'ms (' + chunks + ' chunks).');
+  return phoneValues.length;
+}
+
+/**
+ * Deferred off-path CDR phone-child mirror (#1). Invoked from a one-shot
+ * trigger AFTER the synchronous import has written the parent
+ * call_history_dept rows (so the parent-ID lookup resolves). `rows` need
+ * carry only { callDate, dept, agentName, phonesX, phonesY, phonesZ } --
+ * the same keys the synchronous main write used. Opens its OWN connection
+ * (the import's is long closed). Idempotent (ON CONFLICT DO NOTHING), so
+ * re-running / overlap is harmless. Returns { phones, skipped }.
+ */
+function mirrorCdrPhonesToNeon(rows) {
+  if (!rows || !rows.length) return { phones: 0, skipped: 0 };
+  CDR_HMAC_CACHE_ = {};   // reset the per-run phone-hash memo
+  var hmacSecret = PropertiesService.getScriptProperties().getProperty('HMAC_SECRET');
+  if (!hmacSecret) {
+    Logger.log('mirrorCdrPhonesToNeon: HMAC_SECRET not set — skipping phone mirror.');
+    return { phones: 0, skipped: rows.length };
+  }
+  var conn = getReachableNeonConn_();
+  if (!conn) {
+    Logger.log('mirrorCdrPhonesToNeon: Neon unreachable — skipping ' + rows.length + ' rows.');
+    return { phones: 0, skipped: rows.length };
+  }
+  conn.setAutoCommit(false);
+  try {
+    var n = cdrInsertPhoneChildRows_(conn, rows, hmacSecret);
+    return { phones: n, skipped: 0 };
   } catch (e) {
     try { conn.rollback(); } catch (re) {}
     throw e;
