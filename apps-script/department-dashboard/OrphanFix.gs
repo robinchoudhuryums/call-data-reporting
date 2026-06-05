@@ -100,6 +100,7 @@ function addAgentAlias(req) {
     throw new Error('Old name and canonical name must differ.');
   }
   assertOnSomeRoster_(canonicalName);
+  assertOrphanFixLogExists_();   // F1/F2: refuse to write without an audit trail
 
   const admin = Session.getActiveUser().getEmail();
   const lock = LockService.getScriptLock();
@@ -130,6 +131,7 @@ function addAgentAlias(req) {
 function removeAgentAlias(req) {
   assertAdmin_();
   const oldName = sanitizeAgentName_((req && req.oldName) || '');
+  assertOrphanFixLogExists_();   // F1/F2: refuse to write without an audit trail
   const admin = Session.getActiveUser().getEmail();
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(15000)) throw new Error('Could not acquire script lock; try again.');
@@ -182,6 +184,10 @@ function applyOrphanRename(req) {
     throw new Error('fromName and toName must differ.');
   }
   assertOnSomeRoster_(toName);
+  // F1/F2: pre-flight the audit sheet BEFORE the irreversible
+  // renameHistoricalAgent_ below, so a missing Orphan Fix Log can never
+  // leave a bulk DQE Agent-column rewrite with no audit record.
+  assertOrphanFixLogExists_();
 
   const admin = Session.getActiveUser().getEmail();
   const lock = LockService.getScriptLock();
@@ -522,10 +528,31 @@ function deactivateAgentAlias_(oldName) {
   return count;
 }
 
+/**
+ * Pre-flight (F1/F2): every public write callable asserts the Orphan
+ * Fix Log sheet exists BEFORE it mutates anything, so a missing audit
+ * sheet (e.g. setup() not re-run after a fresh pull) can never produce
+ * an un-audited DQE Agent-column rewrite. Audit logging on a
+ * data-mutation path is a hard requirement (INV-01), not best-effort
+ * telemetry -- so this throws rather than silently no-opping.
+ */
+function assertOrphanFixLogExists_() {
+  const ss = openSpreadsheet_();
+  if (!ss.getSheetByName(SHEETS.ORPHAN_FIX_LOG)) {
+    throw new Error(
+      'Orphan Fix Log sheet missing -- run setup() before applying fixes. '
+      + 'The audit trail is required for every orphan-fix write.');
+  }
+}
+
 function appendOrphanFixLog_(rec) {
   const ss = openSpreadsheet_();
   const sheet = ss.getSheetByName(SHEETS.ORPHAN_FIX_LOG);
-  if (!sheet) return;
+  // Hard-fail (not silent) if the audit sheet vanished after the
+  // pre-flight: an audit row is mandatory on every write path (INV-01).
+  if (!sheet) {
+    throw new Error('Orphan Fix Log sheet missing -- run setup(). Audit row not written.');
+  }
   sheet.appendRow([
     new Date(),
     rec.admin    || '',

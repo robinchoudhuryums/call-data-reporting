@@ -339,6 +339,17 @@ function writeCDRRowsToNeon(rows) {
       });
 
       if (hasAnyPhones) {
+        // F3: normalize null/undefined key parts to a fixed sentinel so the
+        // JS-side phone-parent lookup key matches the DB-readback key exactly.
+        // getString() returns JS null for a SQL NULL (rendered "null" by a
+        // raw template string), while a JS-side `undefined` renders
+        // "undefined" -- a mismatch that would silently drop a phone set
+        // whose parent has a null/undefined dept or agent. (Today's caller
+        // passes dept='Unassigned' + agentName=...||null, so both sides agree;
+        // this hardens the path against a future caller passing undefined.)
+        // The sentinel (not '') keeps a SQL NULL distinct from a stored
+        // empty string.
+        var cdrKeyPart_ = function (x) { return x == null ? '<null>' : String(x); };
         var joinPlaceholders = rows.map(function() { return '(?::date, ?, ?)'; }).join(',');
         var idSql = 'SELECT d.id, d.call_date::text, d.department, d.agent_name ' +
           'FROM call_history_dept d ' +
@@ -356,13 +367,13 @@ function writeCDRRowsToNeon(rows) {
         var idRs = idStmt.executeQuery();
         var idMap = {};
         while (idRs.next()) {
-          idMap[idRs.getString(2) + '|' + idRs.getString(3) + '|' + idRs.getString(4)] = idRs.getInt(1);
+          idMap[cdrKeyPart_(idRs.getString(2)) + '|' + cdrKeyPart_(idRs.getString(3)) + '|' + cdrKeyPart_(idRs.getString(4))] = idRs.getInt(1);
         }
         idRs.close(); idStmt.close();
 
         var phoneRows = [];
         for (var k = 0; k < rows.length; k++) {
-          var key = rows[k].callDate + '|' + rows[k].dept + '|' + rows[k].agentName;
+          var key = cdrKeyPart_(rows[k].callDate) + '|' + cdrKeyPart_(rows[k].dept) + '|' + cdrKeyPart_(rows[k].agentName);
           var parentId = idMap[key];
           if (!parentId) continue;
           var phoneSets = [

@@ -263,8 +263,7 @@ function computePerformanceReport_(dept, from, to, selectedAgents, roster,
   if (dqeSource === 'neon' && typeof neonFetchDqeRows_ === 'function') {
     srcRows = neonFetchDqeRows_(fetchFrom, fetchTo);
     if (srcRows && srcRows.length) {
-      const extValues = sheet.getRange(2, 1, lastRow - 1, HISTORICAL_COLS.QUEUE_EXT).getValues();
-      deptQueueExts = getDeptQueueExts_(dept, rosterSet, extValues).exts;
+      deptQueueExts = deptQueueExtsForNeonReader_(dept, rosterSet, sheet, lastRow).exts;
       effectiveSource = 'neon';
     } else {
       srcRows = null;

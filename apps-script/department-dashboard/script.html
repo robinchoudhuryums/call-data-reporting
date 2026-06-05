@@ -379,10 +379,27 @@
     return n.toLocaleString('en-US');
   }
 
+  // Wraps a zero value so dense tables can mute it -- a column of 0 /
+  // 0:00:00 cells reads as "mostly quiet" rather than a wall of numbers.
+  // HTML-only (table cells); CSV + chart labels never pass through here.
+  function zeroCell_(s) { return '<span class="cell-zero">' + s + '</span>'; }
+
   function escapeHtml(s) {
     return String(s)
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  // Shared empty-state block so every "no data here" surface reads the
+  // same way as the My Department page's empty state (icon + title +
+  // hint) instead of ad-hoc one-liners. `icon` is a short emoji/glyph;
+  // title + hint are escaped. Reuses the existing .empty-state CSS.
+  function emptyStateHtml_(icon, title, hint) {
+    return '<div class="empty-state">'
+      +   '<div class="empty-state-icon" aria-hidden="true">' + (icon || '&#128202;') + '</div>'
+      +   '<div class="empty-state-title">' + escapeHtml(title || 'No data') + '</div>'
+      +   (hint ? '<div class="empty-state-hint">' + escapeHtml(hint) + '</div>' : '')
+      + '</div>';
   }
 
   // CSV formula-injection guard. Excel / Google Sheets treat a cell
@@ -685,6 +702,22 @@
     var csvBtn = $('csv-export-btn');
     if (csvBtn) csvBtn.addEventListener('click', exportTableCsv_);
 
+    // Drill-through: clicking an agent row opens the Individual Report
+    // pre-seeded with that agent + the current From/To range and auto-
+    // generates. Delegated on the persistent #agents-tbody element (its
+    // innerHTML is replaced per render, but the element itself stays), so
+    // this listener is wired exactly once.
+    var agentsTbody = $('agents-tbody');
+    if (agentsTbody) agentsTbody.addEventListener('click', function (e) {
+      var tr = e.target.closest('tr[data-agent]');
+      if (!tr) return;
+      var agent = tr.getAttribute('data-agent');   // browser-decoded
+      if (!agent) return;
+      var from = ($('from-date') && $('from-date').value) || '';
+      var to   = ($('to-date')   && $('to-date').value)   || '';
+      if (typeof irDrillToAgent_ === 'function') irDrillToAgent_(agent, from, to);
+    });
+
     // Sortable headers
     document.querySelectorAll('#agents-table thead th[data-sort]').forEach(function (th) {
       th.addEventListener('click', function () { onSort(th.getAttribute('data-sort')); });
@@ -697,6 +730,7 @@
     initIndividualReport();
     initPerformanceReport();
     initCompareRanges();
+    initInsightsReport();
     initAlerts();
     initOrphanFix();
     initDeptConfig();
@@ -1322,6 +1356,10 @@
   //   - "X viol MTD" — month-to-date violations across this dept's
   //     mapped queues; only rendered when X > 0.
   // Tooltip on the abandoned chip carries the latest-date context.
+  // Chip budget: how many per-queue rows a multi-queue tile shows
+  // before collapsing the rest into a "+N more" summary, so a tile
+  // stays scannable instead of stacking a row+chips per queue.
+  var OV_QCD_QUEUE_BUDGET = 3;
   function ovBuildQcdCaption_(dept) {
     if (!dept || !dept.qcd) return '';
     var q = dept.qcd;
@@ -1330,24 +1368,42 @@
     var html = '';
 
     if (multiQueue) {
+      // Worst-first so the few chips that DO show are the ones that
+      // matter (most violations, then highest abandoned %).
+      var sorted = queues.slice().sort(function (a, b) {
+        return (Number(b.violations)   || 0) - (Number(a.violations)   || 0)
+            || (Number(b.abandonedPct) || 0) - (Number(a.abandonedPct) || 0)
+            || (Number(b.abandoned)    || 0) - (Number(a.abandoned)    || 0);
+      });
+      var shown  = sorted.slice(0, OV_QCD_QUEUE_BUDGET);
+      var hidden = sorted.slice(OV_QCD_QUEUE_BUDGET);
       html += '<div class="ov-qcd-queue-list">';
-      queues.forEach(function (pq) {
+      shown.forEach(function (pq) {
         var qPct = Number(pq.abandonedPct) || 0;
         var qAbnd = Number(pq.abandoned) || 0;
         var qViol = Number(pq.violations) || 0;
-        var chips = '';
-        chips += '<span class="ov-qcd-flag' + (qPct >= 5 ? ' ov-qcd-violation' : ' ov-qcd-elevated') + '">'
-              + escapeHtml(pq.abandonedPctStr || '0.00%') + '</span>';
-        if (qAbnd > 0) {
-          chips += '<span class="ov-qcd-flag' + (qPct >= 5 ? ' ov-qcd-violation' : '') + '">'
-                + fmtNumber(qAbnd) + ' aban</span>';
-        }
+        // One combined abandoned chip ("P% · N aban") instead of two
+        // separate chips, to cut the per-row chip count.
+        var abndText = escapeHtml(pq.abandonedPctStr || '0.00%')
+          + (qAbnd > 0 ? ' · ' + fmtNumber(qAbnd) + ' aban' : '');
+        var chips = '<span class="ov-qcd-flag'
+              + (qPct >= 5 ? ' ov-qcd-violation' : ' ov-qcd-elevated') + '">'
+              + abndText + '</span>';
         if (qViol > 0) {
           chips += '<span class="ov-qcd-flag ov-qcd-violation">' + qViol + ' viol</span>';
         }
         html += '<div class="ov-qcd-queue-row"><span class="ov-qcd-queue-name">'
              + escapeHtml(pq.queue) + '</span>' + chips + '</div>';
       });
+      if (hidden.length) {
+        var moreTitle = hidden.map(function (pq) {
+          return pq.queue + ': ' + (pq.abandonedPctStr || '0.00%')
+            + ((Number(pq.violations) || 0) > 0 ? ' (' + pq.violations + ' viol)' : '');
+        }).join(' • ');
+        html += '<div class="ov-qcd-queue-more" title="' + escapeHtml(moreTitle) + '">'
+             + '+' + hidden.length + ' more queue' + (hidden.length === 1 ? '' : 's')
+             + '</div>';
+      }
       html += '</div>';
     } else {
       var pct = Number(q.abandonedPct) || 0;
@@ -1521,12 +1577,22 @@
           });
         });
     }
+
+    // Hovering any dept tile (all roles) spotlights that dept's line in
+    // the trend chart below, connecting the two halves of the page.
+    // No-ops when a legend pin is active.
+    $('ov-dept-grid').querySelectorAll('.ov-dept-tile').forEach(function (tile) {
+      const target = tile.getAttribute('data-dept');
+      if (!target) return;
+      tile.addEventListener('mouseenter', function () { ovSpotlightDept_(target); });
+      tile.addEventListener('mouseleave', function () { ovSpotlightDept_(null); });
+    });
   }
 
   // Admin-only: switch the main dashboard to a different dept and
   // navigate to the My Department page so the new dept's full
   // detail is visible.
-  function ovRouteToDept_(deptName) {
+  function ovRouteToDept_(deptName, isoDate) {
     const sel = $('dept-selector');
     if (sel && sel.value !== deptName) {
       sel.value = deptName;
@@ -1535,6 +1601,14 @@
       sel.dispatchEvent(new Event('change'));
     }
     setPage('dept');
+    // Point-click deep-link: snap the From/To range to the clicked day
+    // and re-fetch. Runs after the change handler (which resets to the
+    // latest date); this second refresh wins and is server-cached.
+    if (isoDate && $('from-date') && $('to-date')) {
+      $('from-date').value = isoDate;
+      $('to-date').value = isoDate;
+      refresh();
+    }
   }
 
   // Renders the user's own dept's agent table at the latest date
@@ -1659,6 +1733,12 @@
         label: dept.name + (isChild ? ' (sub-queue)' : ''),
         data: dept.trend || [],
         borderColor: color,
+        // Stash the resting style so the legend hover-dim can restore it
+        // (see chartSpotlight* helpers). _deptName lets the tile-hover and
+        // point-click handlers map a dept back to its dataset index.
+        _origBorder: color,
+        _origWidth: isChild ? 1.4 : 2.2,
+        _deptName: dept.name,
         // No fill on the overlaid multi-dept chart -- 10+ stacked
         // gradients muddle the view. The soft-area treatment (25%
         // gradient via irGradientFill_) is intentionally reserved
@@ -1707,10 +1787,10 @@
       options: {
         responsive: true, maintainAspectRatio: false, animation: false,
         plugins: {
-          legend: {
+          legend: Object.assign({
             position: 'bottom',
             labels: { boxWidth: 12, font: { size: 11 } },
-          },
+          }, chartSpotlightLegend_()),
           tooltip: {
             filter: function (ctx) {
               // Hide the 92% baseline from the per-line tooltip list.
@@ -1736,7 +1816,143 @@
           x: { ticks: { autoSkip: true, maxTicksLimit: 10 } },
         },
         interaction: { mode: 'index', intersect: false },
+        // Point click -> deep-link into that dept + date's My Department
+        // view (admins, or a manager clicking their own dept's line).
+        onClick: function (evt, elements, chart) {
+          ovHandlePointClick_(evt, chart, data);
+        },
       },
+    });
+
+    // Generic legend spotlight (hover-dim + click-to-pin/isolate). Skip
+    // the 92% baseline. Stash resting styles + the ISO date axis + the
+    // viewer's dept so the tile-hover and point-click handlers can use them.
+    chartSpotlightStash_(ovChartInstance, { skipLabel: '92% target' });
+    ovChartInstance._trendIso = data.trendIsoLabels || [];
+    ovChartInstance._viewerDept = ovViewerDept_(data);
+    ovWireAxisZoom_();
+  }
+
+  // ---- Generic Chart.js legend spotlight (shared) ----------------------
+  // Hover a legend item -> dim every other series (transient preview).
+  // Click a legend item -> PIN that series (persistent dim of others);
+  // click it again (or another) to release/switch. Used by the multi-dept
+  // Overview chart and the multi-queue QCD chart. Datasets must have been
+  // stashed via chartSpotlightStash_ first. A `skipLabel` dataset (e.g. a
+  // reference baseline / dept-total line) is never dimmed.
+  const CHART_DIM_COLOR = 'rgba(140,140,140,0.18)';
+
+  function chartSpotlightStash_(chart, opts) {
+    if (!chart || !chart.data) return;
+    chart._spotlightSkip = (opts && opts.skipLabel) || null;
+    chart._spotlightPinned = null;
+    chart.data.datasets.forEach(function (ds) {
+      if (ds._origBorder == null) ds._origBorder = ds.borderColor;
+      if (ds._origWidth == null) ds._origWidth = ds.borderWidth;
+    });
+  }
+
+  function chartSpotlightApply_(chart, activeIndex) {
+    if (!chart || !chart.data) return;
+    chart.data.datasets.forEach(function (ds, i) {
+      if (chart._spotlightSkip && ds.label === chart._spotlightSkip) return;
+      if (i === activeIndex) {
+        ds.borderColor = ds._origBorder;
+        ds.borderWidth = (ds._origWidth || 2) + 0.8;
+      } else {
+        ds.borderColor = CHART_DIM_COLOR;
+        ds.borderWidth = ds._origWidth || 1.4;
+      }
+    });
+    chart.update('none');
+  }
+
+  function chartSpotlightClear_(chart) {
+    if (!chart || !chart.data) return;
+    chart.data.datasets.forEach(function (ds) {
+      if (chart._spotlightSkip && ds.label === chart._spotlightSkip) return;
+      if (ds._origBorder != null) ds.borderColor = ds._origBorder;
+      if (ds._origWidth != null) ds.borderWidth = ds._origWidth;
+    });
+    chart.update('none');
+  }
+
+  // Returns legend onHover/onLeave/onClick callbacks implementing the
+  // spotlight model. Spread into a chart's plugins.legend config.
+  function chartSpotlightLegend_() {
+    return {
+      onHover: function (e, item, legend) {
+        const chart = legend.chart;
+        if (chart._spotlightPinned != null) return;   // pin wins over hover
+        if (item && item.datasetIndex != null) chartSpotlightApply_(chart, item.datasetIndex);
+      },
+      onLeave: function (e, item, legend) {
+        const chart = legend.chart;
+        if (chart._spotlightPinned != null) return;
+        chartSpotlightClear_(chart);
+      },
+      onClick: function (e, item, legend) {
+        const chart = legend.chart;
+        if (!item || item.datasetIndex == null) return;
+        if (chart._spotlightPinned === item.datasetIndex) {
+          chart._spotlightPinned = null;
+          chartSpotlightClear_(chart);
+        } else {
+          chart._spotlightPinned = item.datasetIndex;
+          chartSpotlightApply_(chart, item.datasetIndex);
+        }
+      },
+    };
+  }
+
+  // Spotlight a dept's line by name (used by dept-tile hover). No-op when
+  // a legend pin is active so a hover doesn't fight the pinned selection.
+  function ovSpotlightDept_(deptName) {
+    const chart = ovChartInstance;
+    if (!chart || !chart.data || chart._spotlightPinned != null) return;
+    if (deptName == null) { chartSpotlightClear_(chart); return; }
+    let idx = -1;
+    chart.data.datasets.forEach(function (ds, i) { if (ds._deptName === deptName) idx = i; });
+    if (idx >= 0) chartSpotlightApply_(chart, idx);
+  }
+
+  // Point click -> deep-link to that dept + date. Only routes for admins
+  // or a manager clicking their OWN dept's line (others can't view it).
+  function ovHandlePointClick_(evt, chart, data) {
+    if (!chart || typeof chart.getElementsAtEventForMode !== 'function') return;
+    const hits = chart.getElementsAtEventForMode(evt, 'nearest', { intersect: true }, false);
+    if (!hits || !hits.length) return;
+    const ds = chart.data.datasets[hits[0].datasetIndex];
+    if (!ds || !ds._deptName) return;                 // baseline / non-dept line
+    const deptName = ds._deptName;
+    const viewerDept = chart._viewerDept || ovViewerDept_(data);
+    if (USER.role !== 'admin' && deptName !== viewerDept) return;
+    const iso = (chart._trendIso || [])[hits[0].index] || null;
+    ovRouteToDept_(deptName, iso);
+  }
+
+  // Axis zoom toggle: Full (0-100%) <-> Fit (auto-scale to the data range,
+  // so depts clustered near the top spread out). Wired once; the button
+  // lives in the ov-chart-tabs row (dashboard.html).
+  let ovAxisZoom = 'full';
+  let ovAxisZoomWired = false;
+  function ovWireAxisZoom_() {
+    if (ovAxisZoomWired) return;
+    const btn = $('ov-axis-zoom-btn');
+    if (!btn) return;
+    ovAxisZoomWired = true;
+    btn.addEventListener('click', function () {
+      if (!ovChartInstance) return;
+      ovAxisZoom = (ovAxisZoom === 'full') ? 'fit' : 'full';
+      const y = ovChartInstance.options.scales.y;
+      if (ovAxisZoom === 'fit') {
+        y.beginAtZero = false; y.min = undefined; y.max = undefined;
+      } else {
+        y.beginAtZero = true;  y.min = undefined; y.max = 100;
+      }
+      ovChartInstance.update();
+      btn.textContent = ovAxisZoom === 'fit' ? 'Zoom: Fit' : 'Zoom: Full';
+      btn.setAttribute('aria-pressed', ovAxisZoom === 'fit' ? 'true' : 'false');
     });
   }
 
@@ -1785,6 +2001,7 @@
     '/report/performance': { kind: 'modal', modalId: 'performance-modal', buttonId: 'performance-report-btn' },
     '/report/compare':     { kind: 'modal', modalId: 'compare-modal',     buttonId: 'compare-ranges-btn' },
     '/report/qcd':         { kind: 'modal', modalId: 'qcd-modal',         buttonId: 'qcd-report-btn' },
+    '/report/insights':    { kind: 'modal', modalId: 'insights-modal',    buttonId: 'insights-report-btn' },
     '/admin/alerts':       { kind: 'modal', modalId: 'alerts-modal',      buttonId: 'alerts-btn' },
     '/admin/orphan-fix':   { kind: 'modal', modalId: 'orphan-fix-modal',  buttonId: 'orphan-fix-btn' },
     '/admin/dept-config':  { kind: 'modal', modalId: 'dept-config-modal', buttonId: 'dept-config-btn' },
@@ -1800,6 +2017,17 @@
       const isActive = btn.getAttribute('data-route') === route;
       btn.classList.toggle('header-nav-current', isActive);
       btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
+    });
+    // If the active route lives inside a collapsed header dropdown (the
+    // Reports group), its menu-item highlight is hidden, so also light
+    // up the dropdown's trigger. Generic over any .header-menu so it
+    // keeps working if more groups are collapsed later.
+    document.querySelectorAll('.header-menu').forEach(function (menu) {
+      const trigger = menu.querySelector('.header-menu-btn[aria-controls]');
+      if (!trigger) return;
+      const hasActive = !!menu.querySelector(
+        '.header-menu-list [data-route="' + route + '"]');
+      trigger.classList.toggle('header-nav-current', hasActive);
     });
   }
 
@@ -2358,7 +2586,8 @@
     if (!wrap) return;
 
     if (!agents.length) {
-      wrap.innerHTML = '<div class="agent-card no-data">No missed calls in this range for any agent in scope.</div>';
+      wrap.innerHTML = emptyStateHtml_('&#128276;', 'No missed calls in this range',
+        'No agent in scope had a missed or abandoned call for the selected dates.');
       return;
     }
 
@@ -2665,11 +2894,17 @@
     }
     const v = row[col.key];
     if (col.type === 'text') return escapeHtml(v == null ? '' : v);
-    if (col.type === 'duration') return fmtDuration(v);
+    if (col.type === 'duration') {
+      const dur = fmtDuration(v);
+      return (Number(v) || 0) === 0 ? zeroCell_(dur) : dur;
+    }
     // E5: append a small prior-period delta chip after the number on
     // the three chipped columns. No chip on totals row (no prior
-    // window for a sum row).
-    return fmtNumber(v) + wowChipHtml_(row, col);
+    // window for a sum row). Zero values are muted (zeroCell_), but the
+    // WoW chip stays full-color since a delta against zero is signal.
+    const num = fmtNumber(v);
+    const numHtml = (Number(v) || 0) === 0 ? zeroCell_(num) : num;
+    return numHtml + wowChipHtml_(row, col);
   }
 
   // E5 prior-period delta chip. Maps each chipped column to its
@@ -2808,7 +3043,11 @@
       // keep it so any consumer that styles whole-row queue-only
       // emphasis (e.g. user CSS, future hover handling) still works.
       const rowClass = (row.matchedViaQueue && !row.matchedViaRoster) ? 'via-queue' : '';
-      return '<tr' + (rowClass ? ' class="' + rowClass + '"' : '') + '>' + COLUMNS.map(function (col, i) {
+      // data-agent powers the row drill-through to the Individual Report.
+      return '<tr data-agent="' + escapeHtml(row.agent) + '"'
+           + (rowClass ? ' class="' + rowClass + '"' : '')
+           + ' title="Open ' + escapeHtml(row.agent) + '’s Individual Report">'
+           + COLUMNS.map(function (col, i) {
         const isAgent  = (i === 0);
         const isSource = (col.type === 'chip' && col.key === 'source');
         const cls = isAgent ? 'agent-name' : (isSource ? 'src-cell' : 'num');
@@ -2986,6 +3225,7 @@
   }
 
   let irChartInstances = [];
+  let irPinnedAgent = null;   // peer-comparison legend: pinned/isolated agent (null = none)
   let irLastData = null;
   // Cached roster + active subset for the current modal session.
   // `activeAgents` is null until the first init call with from/to
@@ -3001,8 +3241,37 @@
   let irSortOrder = 'selection';   // selection | name | answered-desc | answered-asc | pct-desc
   let irActiveChartTab = 'vol';    // vol | eff | dur
   let irPendingAgentSelection_ = null;
+  let irPendingAutoRun_ = false;   // drill-through: auto-generate once the picker renders
   let irListChangeHandler_ = null;
   const IR_PREFS_KEY = 'cdr.ir.prefs.v1';
+
+  /**
+   * Drill-through entry: open the Individual Report for ONE agent over a
+   * given date range and auto-generate. Reuses the existing one-shot
+   * pending-selection hook (irPendingAgentSelection_) + a run flag honored
+   * at the end of renderIrAgentList. Called from the My Department table's
+   * row click. No comparison (plain Individual Report); the user can add a
+   * vs-self comparison from the form afterward.
+   */
+  function irDrillToAgent_(agentName, from, to) {
+    if (!agentName) return;
+    if (from && $('ir-from')) $('ir-from').value = from;
+    if (to   && $('ir-to'))   $('ir-to').value   = to;
+    if ($('ir-preset')) $('ir-preset').value = 'custom';
+    if ($('ir-compare-mode')) {
+      $('ir-compare-mode').value = 'none';
+      // Fire change so the prior-range inputs + hint sync to "no comparison".
+      $('ir-compare-mode').dispatchEvent(new Event('change'));
+    }
+    irPendingAgentSelection_ = [agentName];
+    irPendingAutoRun_ = true;
+    // Force a roster re-fetch for this range so renderIrAgentList re-runs
+    // (and applies the pending selection + auto-run) even if the cached
+    // roster matched.
+    irLastRoster = { dept: null, agents: [], activeAgents: null, activeFloaters: null, rangeKey: '' };
+    const btn = $('individual-report-btn');
+    if (btn) btn.click();   // -> openModal -> ensureIrRoster -> renderIrAgentList
+  }
 
   function initIndividualReport() {
     const btn = $('individual-report-btn');
@@ -3383,12 +3652,19 @@
       irSavePrefs_();
     };
     list.addEventListener('change', irListChangeHandler_);
-    // Apply any pending selection from restored prefs once.
+    // Apply any pending selection from restored prefs OR a drill-through
+    // once. (irDrillToAgent_ sets this to a single-agent array.)
     if (irPendingAgentSelection_) {
       irApplyCheckedAgents_(list, irPendingAgentSelection_);
       irPendingAgentSelection_ = null;
     }
     updateIrGenerateEnabled();
+    // Drill-through: auto-generate once the picker (with the pre-selected
+    // agent) has rendered. Cleared so it fires exactly once.
+    if (irPendingAutoRun_) {
+      irPendingAutoRun_ = false;
+      runIrReport();
+    }
   }
 
   function irBuildAgentListHtml_(agents, activeAgents, activeFloaters) {
@@ -4350,6 +4626,7 @@
       const color = IR_CHART_COLORS[i % IR_CHART_COLORS.length];
       const safe = escapeHtml(ag);
       return '<button type="button" class="ir-legend-chip" data-agent="' + safe + '" '
+           + 'title="Click to isolate · Shift+click to hide" '
            + 'style="--chip-color: ' + color + ';">'
            +   '<span class="ir-legend-swatch"></span>'
            +   '<span class="ir-legend-name">' + safe + '</span>'
@@ -4357,25 +4634,42 @@
     }).join('');
     el.innerHTML = chips;
     el.style.display = '';
+    irPinnedAgent = null;   // fresh legend -> no pin
 
     el.querySelectorAll('.ir-legend-chip').forEach(function (chip) {
       const agent = chip.getAttribute('data-agent');
-      chip.addEventListener('click', function () {
-        const willHide = !chip.classList.contains('inactive');
-        chip.classList.toggle('inactive', willHide);
-        irChartInstances.forEach(function (chart) {
-          chart.data.datasets.forEach(function (ds, idx) {
-            if (ds._irAgent === agent) {
-              chart.getDatasetMeta(idx).hidden = willHide;
-            }
+      // Plain click = pin/isolate (persistent spotlight), matching the
+      // Overview chart. Shift+click = hide/show this agent's series (the
+      // legacy toggle). Click the pinned chip again (or another) to
+      // release/switch the isolate.
+      chip.addEventListener('click', function (ev) {
+        if (ev.shiftKey) {
+          const willHide = !chip.classList.contains('inactive');
+          chip.classList.toggle('inactive', willHide);
+          irChartInstances.forEach(function (chart) {
+            chart.data.datasets.forEach(function (ds, idx) {
+              if (ds._irAgent === agent) chart.getDatasetMeta(idx).hidden = willHide;
+            });
+            chart.update();
           });
-          chart.update();
-        });
+          return;
+        }
+        if (irPinnedAgent === agent) {
+          irPinnedAgent = null;
+          el.querySelectorAll('.ir-legend-chip').forEach(function (c) { c.classList.remove('pinned'); });
+          irHighlightAgent_(null);
+        } else {
+          irPinnedAgent = agent;
+          el.querySelectorAll('.ir-legend-chip').forEach(function (c) {
+            c.classList.toggle('pinned', c.getAttribute('data-agent') === agent);
+          });
+          irHighlightAgent_(agent);
+        }
       });
-      // Hover: dim the OTHER agents' series across all charts to
-      // emphasize the hovered one. Restore on mouseleave.
-      chip.addEventListener('mouseenter', function () { irHighlightAgent_(agent); });
-      chip.addEventListener('mouseleave', function () { irHighlightAgent_(null); });
+      // Hover previews the spotlight when nothing is pinned; with a pin
+      // active, leaving re-asserts the pinned selection rather than clearing.
+      chip.addEventListener('mouseenter', function () { if (!irPinnedAgent) irHighlightAgent_(agent); });
+      chip.addEventListener('mouseleave', function () { irHighlightAgent_(irPinnedAgent); });
     });
   }
 
@@ -7347,6 +7641,14 @@
     const uninstallKwBtn = $('al-uninstall-keepwarm-btn');
     if (uninstallKwBtn) uninstallKwBtn.addEventListener('click', alUninstallKeepWarm_);
 
+    // Report cache warming enable / disable / warm-now.
+    const installCwBtn = $('al-install-cachewarm-btn');
+    if (installCwBtn) installCwBtn.addEventListener('click', alInstallCacheWarm_);
+    const uninstallCwBtn = $('al-uninstall-cachewarm-btn');
+    if (uninstallCwBtn) uninstallCwBtn.addEventListener('click', alUninstallCacheWarm_);
+    const warmNowBtn = $('al-warm-now-btn');
+    if (warmNowBtn) warmNowBtn.addEventListener('click', alWarmNow_);
+
     const dateEl = $('al-date');
     if (dateEl) dateEl.addEventListener('change', function () {
       // Date change invalidates the previous preview -- Send must
@@ -7387,6 +7689,13 @@
             alRenderKeepWarm_({ loadError: (err && err.message) ? err.message : String(err) });
           })
           .getNeonKeepWarmStatus();
+        // Report cache-warming status (separate, same resilience).
+        google.script.run
+          .withSuccessHandler(function (cw) { alRenderCacheWarm_(cw || {}); })
+          .withFailureHandler(function (err) {
+            alRenderCacheWarm_({ loadError: (err && err.message) ? err.message : String(err) });
+          })
+          .getCacheWarmStatus();
       })
       .withFailureHandler(function (err) {
         $('al-loading').textContent = 'Error: '
@@ -7963,6 +8272,93 @@
       .uninstallNeonKeepWarmTrigger();
   }
 
+  function alRenderCacheWarm_(cw) {
+    const el = $('al-cachewarm-status');
+    const installBtn = $('al-install-cachewarm-btn');
+    const uninstallBtn = $('al-uninstall-cachewarm-btn');
+    if (!el) return;
+    if (cw && cw.loadError) {
+      el.textContent = 'Cache-warming status unavailable: ' + cw.loadError;
+      if (installBtn) installBtn.style.display = '';
+      if (uninstallBtn) uninstallBtn.style.display = 'none';
+      return;
+    }
+    const fmtH = function (h) {
+      const hr = ((h % 24) + 24) % 24;
+      const ampm = hr < 12 ? 'AM' : 'PM';
+      const h12 = (hr % 12) === 0 ? 12 : (hr % 12);
+      return h12 + ' ' + ampm;
+    };
+    let tail = '';
+    if (cw && cw.lastRun) {
+      tail = ' Last run: ' + cw.lastRun.replace('T', ' ').replace(/\..*$/, '')
+           + ' (' + (cw.lastResult || '?') + ').';
+    }
+    if (cw && cw.installed) {
+      el.textContent = 'Cache warming is ON — runs daily at ' + fmtH(cw.hour) + ' '
+                     + tzSuffix_() + ', pre-warming the Overview + each dept\'s default view.' + tail;
+      if (installBtn) installBtn.style.display = 'none';
+      if (uninstallBtn) uninstallBtn.style.display = '';
+    } else {
+      el.textContent = 'Cache warming is OFF. Enable it to pre-warm the report caches '
+                     + 'after the morning ingest so the first manager of the day gets a '
+                     + 'cache hit instead of a cold aggregation.' + tail;
+      if (installBtn) installBtn.style.display = '';
+      if (uninstallBtn) uninstallBtn.style.display = 'none';
+    }
+  }
+
+  function alInstallCacheWarm_() {
+    const btn = $('al-install-cachewarm-btn');
+    btn.disabled = true;
+    const prev = btn.textContent; btn.textContent = 'Enabling…';
+    google.script.run
+      .withSuccessHandler(function (status) {
+        btn.disabled = false; btn.textContent = prev;
+        alRenderCacheWarm_(status || { installed: true });
+      })
+      .withFailureHandler(function (err) {
+        btn.disabled = false; btn.textContent = prev;
+        alSetRunStatus_('error', 'Enable cache warming failed: ' + (err && err.message ? err.message : String(err)));
+      })
+      .installCacheWarmTrigger();
+  }
+
+  function alUninstallCacheWarm_() {
+    const ok = window.confirm('Disable the daily report cache-warming trigger?');
+    if (!ok) return;
+    const btn = $('al-uninstall-cachewarm-btn');
+    btn.disabled = true;
+    const prev = btn.textContent; btn.textContent = 'Disabling…';
+    google.script.run
+      .withSuccessHandler(function (status) {
+        btn.disabled = false; btn.textContent = prev;
+        alRenderCacheWarm_(status || { installed: false });
+      })
+      .withFailureHandler(function (err) {
+        btn.disabled = false; btn.textContent = prev;
+        alSetRunStatus_('error', 'Disable cache warming failed: ' + (err && err.message ? err.message : String(err)));
+      })
+      .uninstallCacheWarmTrigger();
+  }
+
+  function alWarmNow_() {
+    const btn = $('al-warm-now-btn');
+    btn.disabled = true;
+    const prev = btn.textContent; btn.textContent = 'Warming…';
+    google.script.run
+      .withSuccessHandler(function (status) {
+        btn.disabled = false; btn.textContent = prev;
+        alRenderCacheWarm_(status || {});
+        alSetRunStatus_('success', 'Caches warmed.');
+      })
+      .withFailureHandler(function (err) {
+        btn.disabled = false; btn.textContent = prev;
+        alSetRunStatus_('error', 'Warm now failed: ' + (err && err.message ? err.message : String(err)));
+      })
+      .warmReportCachesNow();
+  }
+
   // -- Outlier Fix modal (admin-only) ---------------------------------
   // The only admin UI that triggers WRITES from the dashboard. The
   // server-side OrphanFix.gs enforces the security model (assertAdmin
@@ -8453,6 +8849,308 @@
   // with tab strip (Total Calls / Abandoned % / Violations).
 
   let qcdLastData = null;
+  // ===================================================================
+  // Insights Report (combined: department rollup + per-agent prior cards)
+  // Reuses the shared picker HTML (irBuildAgentListHtml_), the PR KPI
+  // tile + delta logic (prKpiTile_), the IR insight callout
+  // (irInsightsBlock_), and the Source chip (sourceChipHtml_). Server:
+  // getInsightsReportInit / getInsightsReport (InsightsReport.gs).
+  // ===================================================================
+  let insLastRoster = { dept: null, agents: [], activeAgents: null, activeFloaters: null, rangeKey: '' };
+  let insActiveFetchTimer = null;
+  let insListChangeHandler_ = null;
+  let insPendingAgentSelection_ = null;
+  let insLastData = null;
+  const INS_PREFS_KEY = 'cdr.ins.prefs.v1';
+
+  function initInsightsReport() {
+    const btn = $('insights-report-btn');
+    const modal = $('insights-modal');
+    if (!btn || !modal) return;
+    const closeBtn = modal.querySelector('.modal-close');
+    const backdrop = modal.querySelector('[data-close]');
+
+    function openModal() {
+      modal.style.display = '';
+      modal.setAttribute('aria-hidden', 'false');
+      document.body.style.overflow = 'hidden';
+      trapFocus_(modal);
+      initModalDragResize_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
+      document.addEventListener('keydown', onKeyDown);
+      insShowForm();
+      insSetDefaultDates();
+      insRestorePrefs_();
+      insEnsureRoster();
+    }
+    function closeModal() {
+      modal.style.display = 'none';
+      modal.setAttribute('aria-hidden', 'true');
+      releaseFocus_();
+      resetModalTransform_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
+      document.body.style.overflow = '';
+      document.removeEventListener('keydown', onKeyDown);
+      btn.focus();
+    }
+    function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
+
+    btn.addEventListener('click', openModal);
+    if (closeBtn) closeBtn.addEventListener('click', closeModal);
+    if (backdrop) backdrop.addEventListener('click', closeModal);
+
+    const preset = $('ins-preset');
+    if (preset) preset.addEventListener('change', insApplyPreset);
+    const fromEl = $('ins-from'), toEl = $('ins-to');
+    if (fromEl) fromEl.addEventListener('change', function () {
+      if ($('ins-preset')) $('ins-preset').value = 'custom';
+      insScheduleActiveRefetch_(); insSavePrefs_();
+    });
+    if (toEl) toEl.addEventListener('change', function () {
+      if ($('ins-preset')) $('ins-preset').value = 'custom';
+      insScheduleActiveRefetch_(); insSavePrefs_();
+    });
+
+    const selAll = $('ins-select-all'), selNone = $('ins-select-none');
+    if (selAll)  selAll.addEventListener('click',  function (e) { e.preventDefault(); insToggleAgents(true);  });
+    if (selNone) selNone.addEventListener('click', function (e) { e.preventDefault(); insToggleAgents(false); });
+    const search = $('ins-agent-search');
+    if (search) search.addEventListener('input', function () { irFilterAgentList_($('ins-agent-list'), search.value); });
+
+    const genBtn = $('ins-generate-btn');
+    if (genBtn) genBtn.addEventListener('click', runInsReport);
+    const backBtn = $('ins-back-btn');
+    if (backBtn) backBtn.addEventListener('click', insShowForm);
+  }
+
+  function insShowForm()    { $('insights-form').style.display = ''; $('insights-results').style.display = 'none'; insSetFormError(''); }
+  function insShowResults() { $('insights-form').style.display = 'none'; $('insights-results').style.display = ''; }
+  function insSetFormError(msg) {
+    const el = $('ins-form-error'); if (!el) return;
+    if (!msg) { el.style.display = 'none'; el.textContent = ''; return; }
+    el.textContent = msg; el.style.display = '';
+  }
+
+  function insIsoOf_(d) {
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0')
+      + '-' + String(d.getDate()).padStart(2, '0');
+  }
+  function insSetDefaultDates() {
+    if ($('ins-from') && $('ins-from').value) return;   // keep restored/last value
+    const today = new Date();
+    const first = new Date(today.getFullYear(), today.getMonth(), 1);
+    if ($('ins-from')) $('ins-from').value = insIsoOf_(first);
+    if ($('ins-to'))   $('ins-to').value   = insIsoOf_(today);
+  }
+  function insApplyPreset() {
+    const v = $('ins-preset').value; insSavePrefs_();
+    if (v === 'custom') return;
+    const today = new Date(); let s, e = new Date(today);
+    if (v === 'thisMonth')        { s = new Date(today.getFullYear(), today.getMonth(), 1); }
+    else if (v === 'lastMonth')   { s = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+                                    e = new Date(today.getFullYear(), today.getMonth(), 0); }
+    else if (v === 'last30')      { s = new Date(today); s.setDate(today.getDate() - 30); }
+    else if (v === 'last3Months') { s = new Date(today); s.setMonth(today.getMonth() - 3); }
+    else if (v === 'last12Months'){ s = new Date(today); s.setFullYear(today.getFullYear() - 1); }
+    else if (v === 'lastYear')    { s = new Date(today.getFullYear() - 1, 0, 1);
+                                    e = new Date(today.getFullYear() - 1, 11, 31); }
+    if (!s) return;
+    $('ins-from').value = insIsoOf_(s);
+    $('ins-to').value   = insIsoOf_(e);
+    insScheduleActiveRefetch_(); insSavePrefs_();
+  }
+
+  // -- Picker (mirrors the IR picker; reuses the shared helpers) ----------
+  function insEnsureRoster() {
+    const dept = getRequestedDept();
+    if (!dept) { $('ins-agent-loader').textContent = 'No department selected.'; $('ins-agent-list').style.display = 'none'; return; }
+    const from = $('ins-from').value, to = $('ins-to').value;
+    const rangeKey = from + '|' + to;
+    if (insLastRoster.dept === dept && insLastRoster.agents.length && insLastRoster.rangeKey === rangeKey) {
+      insRenderAgentList(); return;
+    }
+    $('ins-agent-loader').style.display = ''; $('ins-agent-list').style.display = 'none'; $('ins-generate-btn').disabled = true;
+    google.script.run
+      .withSuccessHandler(function (data) {
+        insLastRoster = {
+          dept: dept,
+          agents: (data && data.agents) || [],
+          activeAgents:   (data && data.activeAgents)   || null,
+          activeFloaters: (data && data.activeFloaters) || null,
+          rangeKey: rangeKey,
+        };
+        insRenderAgentList();
+      })
+      .withFailureHandler(function (err) {
+        $('ins-agent-loader').textContent = 'Error loading roster: ' + (err && err.message ? err.message : String(err));
+      })
+      .getInsightsReportInit({ department: dept, from: from, to: to });
+  }
+  function insScheduleActiveRefetch_() {
+    if (insActiveFetchTimer) clearTimeout(insActiveFetchTimer);
+    insActiveFetchTimer = setTimeout(function () {
+      const dept = getRequestedDept(); if (!dept) return;
+      const from = $('ins-from').value, to = $('ins-to').value;
+      if (!from || !to || from > to) return;
+      const rangeKey = from + '|' + to;
+      if (insLastRoster.dept === dept && insLastRoster.rangeKey === rangeKey) return;
+      google.script.run
+        .withSuccessHandler(function (data) {
+          insLastRoster.activeAgents   = (data && data.activeAgents)   || null;
+          insLastRoster.activeFloaters = (data && data.activeFloaters) || null;
+          insLastRoster.rangeKey = rangeKey;
+          const checked = irGetCheckedAgents_($('ins-agent-list'));
+          insRenderAgentList();
+          irApplyCheckedAgents_($('ins-agent-list'), checked);
+          insUpdateGenerate();
+        })
+        .withFailureHandler(function () { /* keep existing grouping */ })
+        .getInsightsReportInit({ department: dept, from: from, to: to });
+    }, 350);
+  }
+  function insRenderAgentList() {
+    const list = $('ins-agent-list');
+    $('ins-agent-loader').style.display = 'none';
+    if (!insLastRoster.agents.length) {
+      list.innerHTML = '<div class="ir-agent-empty">No agents on this department\'s roster.</div>';
+      list.style.display = ''; $('ins-generate-btn').disabled = true; return;
+    }
+    list.innerHTML = irBuildAgentListHtml_(insLastRoster.agents, insLastRoster.activeAgents, insLastRoster.activeFloaters);
+    list.style.display = '';
+    if (insListChangeHandler_) list.removeEventListener('change', insListChangeHandler_);
+    insListChangeHandler_ = function () { insUpdateGenerate(); insSavePrefs_(); };
+    list.addEventListener('change', insListChangeHandler_);
+    if (insPendingAgentSelection_) { irApplyCheckedAgents_(list, insPendingAgentSelection_); insPendingAgentSelection_ = null; }
+    insUpdateGenerate();
+  }
+  function insToggleAgents(on) { selectAllActiveAgents_($('ins-agent-list'), on); insUpdateGenerate(); insSavePrefs_(); }
+  function insUpdateGenerate() {
+    const boxes = $('ins-agent-list').querySelectorAll('.ir-agent-cb:checked');
+    $('ins-generate-btn').disabled = boxes.length === 0;
+  }
+
+  function runInsReport() {
+    const dept = getRequestedDept(); if (!dept) { insSetFormError('No department selected.'); return; }
+    const from = $('ins-from').value, to = $('ins-to').value;
+    if (!from || !to) { insSetFormError('Pick a start and end date.'); return; }
+    if (from > to) { insSetFormError('Start date must be on or before end date.'); return; }
+    const agents = irGetCheckedAgents_($('ins-agent-list'));
+    if (!agents.length) { insSetFormError('Select at least one agent.'); return; }
+    insSetFormError('');
+    const gen = $('ins-generate-btn'); const prev = gen.textContent;
+    gen.disabled = true; gen.textContent = 'Generating…';
+    google.script.run
+      .withSuccessHandler(function (data) {
+        gen.disabled = false; gen.textContent = prev;
+        insSavePrefs_(); insRenderReport_(data); insShowResults();
+      })
+      .withFailureHandler(function (err) {
+        gen.disabled = false; gen.textContent = prev;
+        insSetFormError('Error: ' + (err && err.message ? err.message : String(err)));
+      })
+      .getInsightsReport({ department: dept, from: from, to: to, agents: agents });
+  }
+
+  function insRenderReport_(data) {
+    insLastData = data;
+    $('ins-results-date').textContent = '(' + (data.dateLabel || '') + ')';
+    const cmp = $('ins-compare-line');
+    if (cmp) cmp.textContent = 'Comparing against the prior period: ' + (data.priorDateLabel || '');
+
+    // Team insights callout (reuse the IR block; relabel to "Team insights").
+    const host = $('ins-team-insights');
+    if (host) {
+      const ins = data.teamInsights || [];
+      host.innerHTML = ins.length
+        ? irInsightsBlock_(ins).replace('<div class="ir-insights-label">Insights</div>',
+                                        '<div class="ir-insights-label">Team insights</div>')
+        : '';
+    }
+
+    // Roster-only caption on the rollup.
+    const cap = $('ins-rollup-cap');
+    if (cap) {
+      const fl = (data.meta && data.meta.queueOnlyAgentCount) || 0;
+      cap.textContent = fl > 0 ? '(roster only · ' + fl + ' floater' + (fl === 1 ? '' : 's') + ' excluded)' : '';
+    }
+
+    // Team KPI tiles -- reuse the Performance Report tile (no sparkline).
+    const t = data.teamStats || {};
+    $('ins-kpi-row').innerHTML = [
+      prKpiTile_('Total Rung',   t.rung,     'pos', [], IR_VOLUME_COLORS.rung),
+      prKpiTile_('Total Missed', t.missed,   'neg', [], IR_VOLUME_COLORS.missed),
+      prKpiTile_('Answered',     t.answered, 'pos', [], IR_VOLUME_COLORS.answered),
+      prKpiTile_('% Answered',   t.pct,      'pos', [], (THEME.accent || '#4E79A7')),
+      prKpiTile_('Total TTT',    t.ttt,      'neu', [], (THEME.muted  || '#9C755F')),
+      prKpiTile_('Avg ATT',      t.att,      'neu', [], (THEME.muted  || '#9C755F')),
+    ].join('');
+
+    insRenderAgentCards_(data.agentData || []);
+  }
+
+  // Delta badge mirroring prKpiTile_'s logic for the per-agent card grid.
+  function insDeltaBadge_(stat, valence) {
+    const s = stat || { deltaPct: 0, type: 'volume' };
+    const isPct = s.type === 'pctPoints';
+    const dp = Number(s.deltaPct || 0);
+    if (Math.abs(dp) < 0.05) return '<span class="pr-delta pr-delta-neu">–</span>';
+    let cls = 'pr-delta-neu';
+    if (valence === 'pos')      cls = dp > 0 ? 'pr-delta-pos' : 'pr-delta-neg';
+    else if (valence === 'neg') cls = dp > 0 ? 'pr-delta-neg' : 'pr-delta-pos';
+    const arrow = dp > 0 ? '▲' : '▼';
+    const suffix = isPct ? ' pts' : '%';
+    return '<span class="pr-delta ' + cls + '"><span class="pr-delta-arrow">' + arrow + '</span> '
+         + Math.abs(dp).toFixed(1) + suffix + '</span>';
+  }
+
+  function insRenderAgentCards_(cards) {
+    const wrap = $('ins-agent-cards'); if (!wrap) return;
+    if (!cards.length) {
+      wrap.innerHTML = emptyStateHtml_('&#128100;', 'No agents to compare',
+        'No selected agent had activity (or matched this department) in the range.');
+      return;
+    }
+    const metricDefs = [
+      ['Rung', 'rung', 'pos'], ['Missed', 'missed', 'neg'], ['Answered', 'answered', 'pos'],
+      ['% Ans', 'pct', 'pos'], ['TTT', 'ttt', 'neu'], ['ATT', 'att', 'neu'],
+    ];
+    wrap.innerHTML = cards.map(function (c) {
+      const isFloater = c.matchedViaQueue && !c.matchedViaRoster;
+      const chip = isFloater ? sourceChipHtml_(c) : '';
+      const metrics = metricDefs.map(function (m) {
+        const st = (c.metrics && c.metrics[m[1]]) || { formatted: '-' };
+        return '<div class="ins-metric">'
+             +   '<div class="ins-metric-label">' + m[0] + '</div>'
+             +   '<div class="ins-metric-val">' + escapeHtml(String(st.formatted)) + '</div>'
+             +   '<div class="ins-metric-delta">' + insDeltaBadge_(st, m[2]) + '</div>'
+             + '</div>';
+      }).join('');
+      return '<div class="ins-card' + (isFloater ? ' ins-card-floater' : '') + '">'
+           +   '<div class="ins-card-head"><span class="ins-card-name">' + escapeHtml(c.name) + '</span>' + chip + '</div>'
+           +   '<div class="ins-card-grid">' + metrics + '</div>'
+           + '</div>';
+    }).join('');
+  }
+
+  function insSavePrefs_() {
+    try {
+      localStorage.setItem(INS_PREFS_KEY, JSON.stringify({
+        preset: $('ins-preset') ? $('ins-preset').value : 'custom',
+        from:   $('ins-from')   ? $('ins-from').value   : '',
+        to:     $('ins-to')     ? $('ins-to').value     : '',
+        agents: irGetCheckedAgents_($('ins-agent-list')),
+      }));
+    } catch (e) { /* ignore */ }
+  }
+  function insRestorePrefs_() {
+    try {
+      const prefs = JSON.parse(localStorage.getItem(INS_PREFS_KEY) || 'null');
+      if (!prefs || typeof prefs !== 'object') return;
+      if (prefs.preset && $('ins-preset')) $('ins-preset').value = prefs.preset;
+      if (prefs.from   && $('ins-from'))   $('ins-from').value   = prefs.from;
+      if (prefs.to     && $('ins-to'))     $('ins-to').value     = prefs.to;
+      if (Array.isArray(prefs.agents) && prefs.agents.length) insPendingAgentSelection_ = prefs.agents;
+    } catch (e) { /* ignore */ }
+  }
+
   let qcdChartInstance = null;
   let qcdActiveMetric = 'totalCalls';
   let qcdActiveView   = 'monthly';   // 'monthly' (default) | 'daily'
@@ -8658,6 +9356,32 @@
     $('qcd-results-title').textContent = 'QCD Report';
     $('qcd-results-date').textContent  = '(' + (data.dateLabel || '') + ')';
     showQcdResults_();
+
+    // Consistent empty-state: an unmapped dept OR no QCD activity in the
+    // selected range shows the shared .empty-state block and hides the
+    // data sections (KPIs / tables / chart) -- so it reads like the My
+    // Department empty state rather than a wall of zeros. Returns early to
+    // skip the data renders + the chart (which would otherwise draw into a
+    // now-hidden canvas).
+    var qcdUnmapped = !!(data.meta && data.meta.unmapped);
+    var qcdTotalCalls = (data.totals && Number(data.totals.totalCalls)) || 0;
+    var qcdEmptyEl = $('qcd-empty');
+    var qcdDataEl  = $('qcd-data-sections');
+    if (qcdUnmapped || qcdTotalCalls === 0) {
+      if (qcdEmptyEl) {
+        qcdEmptyEl.innerHTML = qcdUnmapped
+          ? emptyStateHtml_('&#128230;', 'No queues mapped for this department',
+              'Map this department’s A_Q_* queues via the Dept Config tab (admin) so its QCD data can be surfaced.')
+          : emptyStateHtml_('&#128202;', 'No QCD activity in this range',
+              'No calls were recorded for this department’s mapped queues on the selected dates. Try a wider range.');
+        qcdEmptyEl.style.display = '';
+      }
+      if (qcdDataEl) qcdDataEl.style.display = 'none';
+      return;
+    }
+    if (qcdEmptyEl) qcdEmptyEl.style.display = 'none';
+    if (qcdDataEl)  qcdDataEl.style.display  = '';
+
     var hint = $('qcd-queue-hint');
     if (hint) {
       if (data.meta && data.meta.unmapped) {
@@ -8955,7 +9679,10 @@
         maintainAspectRatio: false,
         plugins: {
           datalabels: { display: false },
-          legend:     { display: multiQueue },
+          // Multi-queue charts get the shared legend spotlight (hover-dim
+          // + click-to-pin), matching the Overview chart.
+          legend: Object.assign({ display: multiQueue },
+                                 multiQueue ? chartSpotlightLegend_() : {}),
           tooltip: {
             callbacks: {
               label: function (ctx) {
@@ -8975,6 +9702,7 @@
         },
       },
     });
+    if (multiQueue) chartSpotlightStash_(qcdChartInstance);
   }
 
   // -- Export helpers (mirror IR/PR/CR pattern, simplified) ---------

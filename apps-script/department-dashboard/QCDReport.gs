@@ -25,7 +25,7 @@
  * only request their own dept; admins can pick any dept from the
  * dropdown.
  *
- * Cache: 5 min per (dept, from, to) tuple under `qcd:v5:` prefix.
+ * Cache: 30 min per (dept, from, to) tuple under `qcd:v6:` prefix.
  * No agent-list dimension since QCD is queue/dept-scoped, not
  * agent-scoped.
  *
@@ -49,7 +49,11 @@
 //     average (weighted by totalAnswered per day/queue).
 // v5: per-queue daily + monthly series for multi-line charts;
 //     violationDates per queue for expandable breakdown rows.
-const QCD_CACHE_KEY_PREFIX = 'qcd:v5';
+// v6: empty/no-data response shape now carries `perQueue` +
+//     `trendData.perQueue` to match the populated shape (F5), so a
+//     cached old-shape empty payload can't be served (and throw) on
+//     the client after deploy.
+const QCD_CACHE_KEY_PREFIX = 'qcd:v6';
 
 // Source filter: only the "Total Calls" callSource row carries the
 // daily aggregate we want; other callSource values are sub-counts
@@ -500,6 +504,14 @@ function computeQcdReport_(dept, from, to) {
 
 function emptyQcdReport_(dept, from, to) {
   const queues = queuesForDept_(dept);
+  // Match the populated-path response shape (F5): the populated report
+  // always carries a top-level `perQueue` map (queue -> { monthly, daily })
+  // and `trendData.perQueue`. The client's multi-queue chart init reads
+  // those, so the empty/no-data path must ship the same keys (with empty
+  // arrays) rather than omit them -- otherwise a multi-queue dept on a
+  // no-data day throws on `data.perQueue[...]` / `trendData.perQueue`.
+  const perQueueEmpty = {};
+  queues.forEach(function (q) { perQueueEmpty[q] = { monthly: [], daily: [] }; });
   return {
     meta: {
       department: dept,
@@ -524,8 +536,9 @@ function emptyQcdReport_(dept, from, to) {
         avgAnswer: '0:00:00', avgAnswerSec: 0, violations: 0,
       };
     }),
-    trendData: { labels: [], series: [] },
+    trendData: { labels: [], series: [], perQueue: perQueueEmpty },
     dailySeries: [],
+    perQueue: perQueueEmpty,
   };
 }
 
