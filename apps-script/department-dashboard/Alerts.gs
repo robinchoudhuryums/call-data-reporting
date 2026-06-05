@@ -191,6 +191,16 @@ function runDailyAlerts_() {
  * full history is queryable independently of UI sessions.
  */
 function runAlertsCore_(dateIso, dryRun, triggeredBy) {
+  // F2: pre-flight the Alert Log BEFORE any email is sent. appendAlertLog_
+  // silently no-ops when the sheet is missing (e.g. setup() not re-run),
+  // which would let real sends go out with no audit row. Fail fast here so
+  // either every per-dept outcome is logged or nothing is sent. The trigger
+  // path (runDailyAlerts_) catches this and emails admins; the UI surfaces it.
+  if (!openSpreadsheet_().getSheetByName(SHEETS.ALERT_LOG)) {
+    throw new Error('Alert Log sheet missing -- run setup() before running alerts. '
+      + 'Every alert outcome must be logged.');
+  }
+
   const cfg = readAlertConfig_();
   const results = [];
 

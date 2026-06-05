@@ -53,6 +53,7 @@ function getDashboardNeonConn_() {
     return Jdbc.getConnection(url, p.getProperty('NEON_USER'), p.getProperty('NEON_PASS'));
   } catch (e) {
     Logger.log('getDashboardNeonConn_ failed: ' + (e && e.message ? e.message : e));
+    recordNeonReadFailure_('getDashboardNeonConn_', e);   // F4: unreachable != unconfigured
     return null;
   }
 }
@@ -71,9 +72,11 @@ function neonGetMaxDqeDate_() {
     var rs = stmt.executeQuery('SELECT MAX(call_date)::text AS d FROM dqe_history');
     var d = rs.next() ? rs.getString('d') : null;
     rs.close(); stmt.close();
+    clearNeonReadFailure_();   // F4: reachable -> reset the failure streak
     return d ? String(d).trim() : null;
   } catch (e) {
     Logger.log('neonGetMaxDqeDate_ failed: ' + (e && e.message ? e.message : e));
+    recordNeonReadFailure_('neonGetMaxDqeDate_', e);
     return null;
   } finally {
     try { conn.close(); } catch (ce) {}
@@ -137,8 +140,13 @@ function neonFetchDqeRows_(fromIso, toIso) {
         csrAvgAbdWaitSec: parseHmsDisplay_(r.csr_avg_abd_wait),
       });
     }
+    clearNeonReadFailure_();   // F4: a successful read (even empty) means Neon is healthy
   } catch (e) {
+    // F4: a hard error here (SQL / JSON-parse failure) is recorded
+    // durably + distinctly so it isn't mistaken for a legitimately
+    // empty range when the cut-over reader falls back to the sheet.
     Logger.log('neonFetchDqeRows_ failed: ' + (e && e.message ? e.message : e));
+    recordNeonReadFailure_('neonFetchDqeRows_', e);
   } finally {
     try { conn.close(); } catch (ce) {}
   }
@@ -289,6 +297,58 @@ function logDqeReadTiming_(label, source, startMs, rowCount) {
       label, source,
       (rowCount === null || rowCount === undefined) ? '?' : rowCount,
       (Date.now() - startMs));
+  } catch (e) { /* best-effort */ }
+}
+
+/**
+ * F4: durable, operator-inspectable record of Neon READ failures.
+ *
+ * The cut-over readers (computeSummary_, getCompanyOverview,
+ * getLatestDataDate) fall back to the sheet on any Neon null/empty/error
+ * -- correct as a safety net, but it makes a genuine Neon failure
+ * (connection unreachable, SQL / JSON-parse error) indistinguishable
+ * from a legitimately empty range, so the degradation was previously
+ * only an ephemeral Logger.log. Once DQE_READ_SOURCE=neon and the sheet
+ * is allowed to age, that means the dashboard can serve stale data with
+ * no surfaced signal.
+ *
+ * This records the last error + a running streak count to the
+ * NEON_READ_LAST_ERROR Script Property (queryable now; surfaceable in
+ * the admin Overview pipeline banner as a follow-on) and emits a
+ * distinctly-tagged log line. Best-effort: never throws -- observability
+ * must not block a read. Only exercised when DQE_READ_SOURCE=neon, so
+ * there is zero overhead in the default sheet configuration.
+ */
+function recordNeonReadFailure_(label, err) {
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var msg = (err && err.message) ? err.message : String(err);
+    var prev = 0;
+    try {
+      prev = Number((JSON.parse(props.getProperty('NEON_READ_LAST_ERROR') || '{}') || {}).count) || 0;
+    } catch (e) { prev = 0; }
+    props.setProperty('NEON_READ_LAST_ERROR', JSON.stringify({
+      at:      Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd HH:mm'),
+      label:   String(label || ''),
+      message: String(msg).slice(0, 300),
+      count:   prev + 1,
+    }));
+    Logger.log('[dqe-read][error] %s neon read FAILED -- serving sheet fallback: %s', label, msg);
+  } catch (e) { /* best-effort */ }
+}
+
+/**
+ * Clears NEON_READ_LAST_ERROR on a successful read so the streak count
+ * reflects only the CURRENT outage (a "repeated failures" signal) and a
+ * transient blip self-heals once Neon recovers. Cheap on the healthy
+ * path: a single getProperty returning null, no write.
+ */
+function clearNeonReadFailure_() {
+  try {
+    var props = PropertiesService.getScriptProperties();
+    if (props.getProperty('NEON_READ_LAST_ERROR') !== null) {
+      props.deleteProperty('NEON_READ_LAST_ERROR');
+    }
   } catch (e) { /* best-effort */ }
 }
 
