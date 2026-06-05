@@ -1521,12 +1521,22 @@
           });
         });
     }
+
+    // Hovering any dept tile (all roles) spotlights that dept's line in
+    // the trend chart below, connecting the two halves of the page.
+    // No-ops when a legend pin is active.
+    $('ov-dept-grid').querySelectorAll('.ov-dept-tile').forEach(function (tile) {
+      const target = tile.getAttribute('data-dept');
+      if (!target) return;
+      tile.addEventListener('mouseenter', function () { ovSpotlightDept_(target); });
+      tile.addEventListener('mouseleave', function () { ovSpotlightDept_(null); });
+    });
   }
 
   // Admin-only: switch the main dashboard to a different dept and
   // navigate to the My Department page so the new dept's full
   // detail is visible.
-  function ovRouteToDept_(deptName) {
+  function ovRouteToDept_(deptName, isoDate) {
     const sel = $('dept-selector');
     if (sel && sel.value !== deptName) {
       sel.value = deptName;
@@ -1535,6 +1545,14 @@
       sel.dispatchEvent(new Event('change'));
     }
     setPage('dept');
+    // Point-click deep-link: snap the From/To range to the clicked day
+    // and re-fetch. Runs after the change handler (which resets to the
+    // latest date); this second refresh wins and is server-cached.
+    if (isoDate && $('from-date') && $('to-date')) {
+      $('from-date').value = isoDate;
+      $('to-date').value = isoDate;
+      refresh();
+    }
   }
 
   // Renders the user's own dept's agent table at the latest date
@@ -1660,9 +1678,11 @@
         data: dept.trend || [],
         borderColor: color,
         // Stash the resting style so the legend hover-dim can restore it
-        // (see ovDimOthers_ / ovUndimAll_).
+        // (see chartSpotlight* helpers). _deptName lets the tile-hover and
+        // point-click handlers map a dept back to its dataset index.
         _origBorder: color,
         _origWidth: isChild ? 1.4 : 2.2,
+        _deptName: dept.name,
         // No fill on the overlaid multi-dept chart -- 10+ stacked
         // gradients muddle the view. The soft-area treatment (25%
         // gradient via irGradientFill_) is intentionally reserved
@@ -1711,22 +1731,10 @@
       options: {
         responsive: true, maintainAspectRatio: false, animation: false,
         plugins: {
-          legend: {
+          legend: Object.assign({
             position: 'bottom',
             labels: { boxWidth: 12, font: { size: 11 } },
-            // Hovering a dept in the legend dims every other line so the
-            // hovered one stands out (mirrors the IR peer-comparison chip
-            // legend). Clicking a legend item still toggles its visibility
-            // (Chart.js default onClick is preserved).
-            onHover: function (e, item, legend) {
-              if (item && item.datasetIndex != null) {
-                ovDimOthers_(legend.chart, item.datasetIndex);
-              }
-            },
-            onLeave: function (e, item, legend) {
-              ovUndimAll_(legend.chart);
-            },
-          },
+          }, chartSpotlightLegend_()),
           tooltip: {
             filter: function (ctx) {
               // Hide the 92% baseline from the per-line tooltip list.
@@ -1752,38 +1760,144 @@
           x: { ticks: { autoSkip: true, maxTicksLimit: 10 } },
         },
         interaction: { mode: 'index', intersect: false },
+        // Point click -> deep-link into that dept + date's My Department
+        // view (admins, or a manager clicking their own dept's line).
+        onClick: function (evt, elements, chart) {
+          ovHandlePointClick_(evt, chart, data);
+        },
       },
+    });
+
+    // Generic legend spotlight (hover-dim + click-to-pin/isolate). Skip
+    // the 92% baseline. Stash resting styles + the ISO date axis + the
+    // viewer's dept so the tile-hover and point-click handlers can use them.
+    chartSpotlightStash_(ovChartInstance, { skipLabel: '92% target' });
+    ovChartInstance._trendIso = data.trendIsoLabels || [];
+    ovChartInstance._viewerDept = ovViewerDept_(data);
+    ovWireAxisZoom_();
+  }
+
+  // ---- Generic Chart.js legend spotlight (shared) ----------------------
+  // Hover a legend item -> dim every other series (transient preview).
+  // Click a legend item -> PIN that series (persistent dim of others);
+  // click it again (or another) to release/switch. Used by the multi-dept
+  // Overview chart and the multi-queue QCD chart. Datasets must have been
+  // stashed via chartSpotlightStash_ first. A `skipLabel` dataset (e.g. a
+  // reference baseline / dept-total line) is never dimmed.
+  const CHART_DIM_COLOR = 'rgba(140,140,140,0.18)';
+
+  function chartSpotlightStash_(chart, opts) {
+    if (!chart || !chart.data) return;
+    chart._spotlightSkip = (opts && opts.skipLabel) || null;
+    chart._spotlightPinned = null;
+    chart.data.datasets.forEach(function (ds) {
+      if (ds._origBorder == null) ds._origBorder = ds.borderColor;
+      if (ds._origWidth == null) ds._origWidth = ds.borderWidth;
     });
   }
 
-  // Legend hover-dim for the multi-dept overview chart. Fades every line
-  // except the hovered one (and thickens the hovered one slightly) so a
-  // single dept is easy to follow in a crowded overlay. The 92% baseline
-  // is left untouched -- it's a faint reference, not a dept series.
-  // chart.update('none') skips the animation so the dim/restore is instant.
-  function ovDimOthers_(chart, activeIndex) {
+  function chartSpotlightApply_(chart, activeIndex) {
     if (!chart || !chart.data) return;
     chart.data.datasets.forEach(function (ds, i) {
-      if (ds.label === '92% target') return;
+      if (chart._spotlightSkip && ds.label === chart._spotlightSkip) return;
       if (i === activeIndex) {
         ds.borderColor = ds._origBorder;
         ds.borderWidth = (ds._origWidth || 2) + 0.8;
       } else {
-        ds.borderColor = 'rgba(140,140,140,0.18)';
+        ds.borderColor = CHART_DIM_COLOR;
         ds.borderWidth = ds._origWidth || 1.4;
       }
     });
     chart.update('none');
   }
 
-  function ovUndimAll_(chart) {
+  function chartSpotlightClear_(chart) {
     if (!chart || !chart.data) return;
     chart.data.datasets.forEach(function (ds) {
-      if (ds.label === '92% target') return;
+      if (chart._spotlightSkip && ds.label === chart._spotlightSkip) return;
       if (ds._origBorder != null) ds.borderColor = ds._origBorder;
       if (ds._origWidth != null) ds.borderWidth = ds._origWidth;
     });
     chart.update('none');
+  }
+
+  // Returns legend onHover/onLeave/onClick callbacks implementing the
+  // spotlight model. Spread into a chart's plugins.legend config.
+  function chartSpotlightLegend_() {
+    return {
+      onHover: function (e, item, legend) {
+        const chart = legend.chart;
+        if (chart._spotlightPinned != null) return;   // pin wins over hover
+        if (item && item.datasetIndex != null) chartSpotlightApply_(chart, item.datasetIndex);
+      },
+      onLeave: function (e, item, legend) {
+        const chart = legend.chart;
+        if (chart._spotlightPinned != null) return;
+        chartSpotlightClear_(chart);
+      },
+      onClick: function (e, item, legend) {
+        const chart = legend.chart;
+        if (!item || item.datasetIndex == null) return;
+        if (chart._spotlightPinned === item.datasetIndex) {
+          chart._spotlightPinned = null;
+          chartSpotlightClear_(chart);
+        } else {
+          chart._spotlightPinned = item.datasetIndex;
+          chartSpotlightApply_(chart, item.datasetIndex);
+        }
+      },
+    };
+  }
+
+  // Spotlight a dept's line by name (used by dept-tile hover). No-op when
+  // a legend pin is active so a hover doesn't fight the pinned selection.
+  function ovSpotlightDept_(deptName) {
+    const chart = ovChartInstance;
+    if (!chart || !chart.data || chart._spotlightPinned != null) return;
+    if (deptName == null) { chartSpotlightClear_(chart); return; }
+    let idx = -1;
+    chart.data.datasets.forEach(function (ds, i) { if (ds._deptName === deptName) idx = i; });
+    if (idx >= 0) chartSpotlightApply_(chart, idx);
+  }
+
+  // Point click -> deep-link to that dept + date. Only routes for admins
+  // or a manager clicking their OWN dept's line (others can't view it).
+  function ovHandlePointClick_(evt, chart, data) {
+    if (!chart || typeof chart.getElementsAtEventForMode !== 'function') return;
+    const hits = chart.getElementsAtEventForMode(evt, 'nearest', { intersect: true }, false);
+    if (!hits || !hits.length) return;
+    const ds = chart.data.datasets[hits[0].datasetIndex];
+    if (!ds || !ds._deptName) return;                 // baseline / non-dept line
+    const deptName = ds._deptName;
+    const viewerDept = chart._viewerDept || ovViewerDept_(data);
+    if (USER.role !== 'admin' && deptName !== viewerDept) return;
+    const iso = (chart._trendIso || [])[hits[0].index] || null;
+    ovRouteToDept_(deptName, iso);
+  }
+
+  // Axis zoom toggle: Full (0-100%) <-> Fit (auto-scale to the data range,
+  // so depts clustered near the top spread out). Wired once; the button
+  // lives in the ov-chart-tabs row (dashboard.html).
+  let ovAxisZoom = 'full';
+  let ovAxisZoomWired = false;
+  function ovWireAxisZoom_() {
+    if (ovAxisZoomWired) return;
+    const btn = $('ov-axis-zoom-btn');
+    if (!btn) return;
+    ovAxisZoomWired = true;
+    btn.addEventListener('click', function () {
+      if (!ovChartInstance) return;
+      ovAxisZoom = (ovAxisZoom === 'full') ? 'fit' : 'full';
+      const y = ovChartInstance.options.scales.y;
+      if (ovAxisZoom === 'fit') {
+        y.beginAtZero = false; y.min = undefined; y.max = undefined;
+      } else {
+        y.beginAtZero = true;  y.min = undefined; y.max = 100;
+      }
+      ovChartInstance.update();
+      btn.textContent = ovAxisZoom === 'fit' ? 'Zoom: Fit' : 'Zoom: Full';
+      btn.setAttribute('aria-pressed', ovAxisZoom === 'fit' ? 'true' : 'false');
+    });
   }
 
   // -- Router + URL hash routing (Phase C) -------------------------------
@@ -3032,6 +3146,7 @@
   }
 
   let irChartInstances = [];
+  let irPinnedAgent = null;   // peer-comparison legend: pinned/isolated agent (null = none)
   let irLastData = null;
   // Cached roster + active subset for the current modal session.
   // `activeAgents` is null until the first init call with from/to
@@ -4403,25 +4518,29 @@
     }).join('');
     el.innerHTML = chips;
     el.style.display = '';
+    irPinnedAgent = null;   // fresh legend -> no pin
 
     el.querySelectorAll('.ir-legend-chip').forEach(function (chip) {
       const agent = chip.getAttribute('data-agent');
+      // Click = pin/isolate (persistent spotlight), matching the Overview
+      // chart. Click the pinned chip again (or another) to release/switch.
       chip.addEventListener('click', function () {
-        const willHide = !chip.classList.contains('inactive');
-        chip.classList.toggle('inactive', willHide);
-        irChartInstances.forEach(function (chart) {
-          chart.data.datasets.forEach(function (ds, idx) {
-            if (ds._irAgent === agent) {
-              chart.getDatasetMeta(idx).hidden = willHide;
-            }
+        if (irPinnedAgent === agent) {
+          irPinnedAgent = null;
+          el.querySelectorAll('.ir-legend-chip').forEach(function (c) { c.classList.remove('pinned'); });
+          irHighlightAgent_(null);
+        } else {
+          irPinnedAgent = agent;
+          el.querySelectorAll('.ir-legend-chip').forEach(function (c) {
+            c.classList.toggle('pinned', c.getAttribute('data-agent') === agent);
           });
-          chart.update();
-        });
+          irHighlightAgent_(agent);
+        }
       });
-      // Hover: dim the OTHER agents' series across all charts to
-      // emphasize the hovered one. Restore on mouseleave.
-      chip.addEventListener('mouseenter', function () { irHighlightAgent_(agent); });
-      chip.addEventListener('mouseleave', function () { irHighlightAgent_(null); });
+      // Hover previews the spotlight when nothing is pinned; with a pin
+      // active, leaving re-asserts the pinned selection rather than clearing.
+      chip.addEventListener('mouseenter', function () { if (!irPinnedAgent) irHighlightAgent_(agent); });
+      chip.addEventListener('mouseleave', function () { irHighlightAgent_(irPinnedAgent); });
     });
   }
 
@@ -9001,7 +9120,10 @@
         maintainAspectRatio: false,
         plugins: {
           datalabels: { display: false },
-          legend:     { display: multiQueue },
+          // Multi-queue charts get the shared legend spotlight (hover-dim
+          // + click-to-pin), matching the Overview chart.
+          legend: Object.assign({ display: multiQueue },
+                                 multiQueue ? chartSpotlightLegend_() : {}),
           tooltip: {
             callbacks: {
               label: function (ctx) {
@@ -9021,6 +9143,7 @@
         },
       },
     });
+    if (multiQueue) chartSpotlightStash_(qcdChartInstance);
   }
 
   // -- Export helpers (mirror IR/PR/CR pattern, simplified) ---------
