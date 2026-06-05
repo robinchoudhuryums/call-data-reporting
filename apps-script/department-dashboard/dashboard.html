@@ -1120,6 +1120,22 @@
         </div>
 
         <div class="al-section">
+          <div class="al-section-title">Report cache warming</div>
+          <p class="al-hint" id="al-cachewarm-status"></p>
+          <div class="al-trigger-actions">
+            <button class="btn btn-secondary" id="al-install-cachewarm-btn"   type="button">Enable cache warming</button>
+            <button class="btn btn-secondary" id="al-uninstall-cachewarm-btn" type="button" style="display:none;">Disable cache warming</button>
+            <button class="btn btn-secondary" id="al-warm-now-btn"            type="button">Warm now</button>
+          </div>
+          <p class="al-hint" style="margin-top: 8px;">
+            Pre-warms the Overview blob + each dept's My Department default-range summary
+            once a day (after the morning ingest) so the first manager to open the dashboard
+            gets a cache hit instead of a cold aggregation. Fires at <code>CACHE_WARM_HOUR</code>
+            Script Property (default 9 AM Central). "Warm now" runs it on demand.
+          </p>
+        </div>
+
+        <div class="al-section">
           <div class="al-section-title">Recent log</div>
           <p class="al-hint">Last 20 entries from the Alert Log sheet (most recent first).</p>
           <table class="al-log-table">

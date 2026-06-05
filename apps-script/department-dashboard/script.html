@@ -7526,6 +7526,14 @@
     const uninstallKwBtn = $('al-uninstall-keepwarm-btn');
     if (uninstallKwBtn) uninstallKwBtn.addEventListener('click', alUninstallKeepWarm_);
 
+    // Report cache warming enable / disable / warm-now.
+    const installCwBtn = $('al-install-cachewarm-btn');
+    if (installCwBtn) installCwBtn.addEventListener('click', alInstallCacheWarm_);
+    const uninstallCwBtn = $('al-uninstall-cachewarm-btn');
+    if (uninstallCwBtn) uninstallCwBtn.addEventListener('click', alUninstallCacheWarm_);
+    const warmNowBtn = $('al-warm-now-btn');
+    if (warmNowBtn) warmNowBtn.addEventListener('click', alWarmNow_);
+
     const dateEl = $('al-date');
     if (dateEl) dateEl.addEventListener('change', function () {
       // Date change invalidates the previous preview -- Send must
@@ -7566,6 +7574,13 @@
             alRenderKeepWarm_({ loadError: (err && err.message) ? err.message : String(err) });
           })
           .getNeonKeepWarmStatus();
+        // Report cache-warming status (separate, same resilience).
+        google.script.run
+          .withSuccessHandler(function (cw) { alRenderCacheWarm_(cw || {}); })
+          .withFailureHandler(function (err) {
+            alRenderCacheWarm_({ loadError: (err && err.message) ? err.message : String(err) });
+          })
+          .getCacheWarmStatus();
       })
       .withFailureHandler(function (err) {
         $('al-loading').textContent = 'Error: '
@@ -8140,6 +8155,93 @@
         alSetRunStatus_('error', 'Disable keep-warm failed: ' + (err && err.message ? err.message : String(err)));
       })
       .uninstallNeonKeepWarmTrigger();
+  }
+
+  function alRenderCacheWarm_(cw) {
+    const el = $('al-cachewarm-status');
+    const installBtn = $('al-install-cachewarm-btn');
+    const uninstallBtn = $('al-uninstall-cachewarm-btn');
+    if (!el) return;
+    if (cw && cw.loadError) {
+      el.textContent = 'Cache-warming status unavailable: ' + cw.loadError;
+      if (installBtn) installBtn.style.display = '';
+      if (uninstallBtn) uninstallBtn.style.display = 'none';
+      return;
+    }
+    const fmtH = function (h) {
+      const hr = ((h % 24) + 24) % 24;
+      const ampm = hr < 12 ? 'AM' : 'PM';
+      const h12 = (hr % 12) === 0 ? 12 : (hr % 12);
+      return h12 + ' ' + ampm;
+    };
+    let tail = '';
+    if (cw && cw.lastRun) {
+      tail = ' Last run: ' + cw.lastRun.replace('T', ' ').replace(/\..*$/, '')
+           + ' (' + (cw.lastResult || '?') + ').';
+    }
+    if (cw && cw.installed) {
+      el.textContent = 'Cache warming is ON — runs daily at ' + fmtH(cw.hour) + ' '
+                     + tzSuffix_() + ', pre-warming the Overview + each dept\'s default view.' + tail;
+      if (installBtn) installBtn.style.display = 'none';
+      if (uninstallBtn) uninstallBtn.style.display = '';
+    } else {
+      el.textContent = 'Cache warming is OFF. Enable it to pre-warm the report caches '
+                     + 'after the morning ingest so the first manager of the day gets a '
+                     + 'cache hit instead of a cold aggregation.' + tail;
+      if (installBtn) installBtn.style.display = '';
+      if (uninstallBtn) uninstallBtn.style.display = 'none';
+    }
+  }
+
+  function alInstallCacheWarm_() {
+    const btn = $('al-install-cachewarm-btn');
+    btn.disabled = true;
+    const prev = btn.textContent; btn.textContent = 'Enabling…';
+    google.script.run
+      .withSuccessHandler(function (status) {
+        btn.disabled = false; btn.textContent = prev;
+        alRenderCacheWarm_(status || { installed: true });
+      })
+      .withFailureHandler(function (err) {
+        btn.disabled = false; btn.textContent = prev;
+        alSetRunStatus_('error', 'Enable cache warming failed: ' + (err && err.message ? err.message : String(err)));
+      })
+      .installCacheWarmTrigger();
+  }
+
+  function alUninstallCacheWarm_() {
+    const ok = window.confirm('Disable the daily report cache-warming trigger?');
+    if (!ok) return;
+    const btn = $('al-uninstall-cachewarm-btn');
+    btn.disabled = true;
+    const prev = btn.textContent; btn.textContent = 'Disabling…';
+    google.script.run
+      .withSuccessHandler(function (status) {
+        btn.disabled = false; btn.textContent = prev;
+        alRenderCacheWarm_(status || { installed: false });
+      })
+      .withFailureHandler(function (err) {
+        btn.disabled = false; btn.textContent = prev;
+        alSetRunStatus_('error', 'Disable cache warming failed: ' + (err && err.message ? err.message : String(err)));
+      })
+      .uninstallCacheWarmTrigger();
+  }
+
+  function alWarmNow_() {
+    const btn = $('al-warm-now-btn');
+    btn.disabled = true;
+    const prev = btn.textContent; btn.textContent = 'Warming…';
+    google.script.run
+      .withSuccessHandler(function (status) {
+        btn.disabled = false; btn.textContent = prev;
+        alRenderCacheWarm_(status || {});
+        alSetRunStatus_('success', 'Caches warmed.');
+      })
+      .withFailureHandler(function (err) {
+        btn.disabled = false; btn.textContent = prev;
+        alSetRunStatus_('error', 'Warm now failed: ' + (err && err.message ? err.message : String(err)));
+      })
+      .warmReportCachesNow();
   }
 
   // -- Outlier Fix modal (admin-only) ---------------------------------

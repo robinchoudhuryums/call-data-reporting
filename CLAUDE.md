@@ -543,10 +543,14 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   rows=<n> ms=<elapsed>` line (`logDqeReadTiming_`, NeonRead.gs) so
   sheet-vs-neon read cost is directly comparable in the Executions panel.
   Reuses the dashboard `NEON_*` props + `script.external_request`
-  scope (Operator State #18-19). Remaining readers not cut over: **Missed
+  scope (Operator State #18-19). Remaining reader not cut over: **Missed
   Calls** (needs the slot K-AC + abandoned columns added to
-  `neonFetchDqeRows_`) and the `getDeptQueueExts_` DERIVED all-history scan
-  (still a sheet read on both paths). The two `call_date` indexes below are
+  `neonFetchDqeRows_`). The `getDeptQueueExts_` DERIVED all-history scan
+  is now ALSO off the sheet on the Neon path -- `deptQueueExtsForNeonReader_`
+  (Data.gs) builds the dept ext set from `neonGetAgentExtPairs_` (a cached
+  `SELECT DISTINCT agent_name, queue_extensions` json_agg fetch) instead of
+  a whole-sheet cols-A..D scan, falling back to the sheet read if Neon pairs
+  are unavailable. The two `call_date` indexes below are
   now created in prod. NOTE: `latestDate:`/`latestDates:` stay on the 5-min
   `CACHE_TTL_SECONDS`; the heavy report aggregations cache 30 min
   (`REPORT_CACHE_TTL_SECONDS`) -- both levers reduce how often a cutover
@@ -998,6 +1002,18 @@ When something looks wrong, before assuming a code bug, check:
     `script.external_request` + `script.scriptapp` scopes (same as the
     read-back + alerts trigger). If keep-warm shows "unreachable" pings,
     check the `NEON_*` props; pings no-op cleanly when Neon is unconfigured.
+21. Report cache warming (optional; `CacheWarm.gs`). Toggle from the Alerts
+    modal → **Report cache warming** section (`installCacheWarmTrigger` /
+    `uninstallCacheWarmTrigger`, both `assertAdmin_`-gated). When enabled it
+    installs the `warmReportCaches_` daily trigger (default `CACHE_WARM_HOUR`
+    = 9 Central, after the morning ingest), which pre-warms the Overview blob
+    + each dept's My Department default-range summary so the first manager of
+    the day gets a cache hit instead of a cold aggregation. **Must run in the
+    dashboard project** -- CacheService is per-project, so the cdr-import
+    ingest can't warm it. "Warm now" (`warmReportCachesNow`, admin) primes on
+    demand. Reuses `script.scriptapp`; independent of `DQE_READ_SOURCE`
+    (helps the sheet path too). Best-effort: per-dept failures are logged,
+    last outcome shown in the modal.
 
 ## Cycle Workflow Config
 
@@ -1023,7 +1039,7 @@ Data Accuracy (DQE), Access Control Integrity, Source Pipeline Reliability, Migr
 
 ### Subsystems
 Department Dashboard:
-  apps-script/department-dashboard/Auth.gs, apps-script/department-dashboard/Code.gs, apps-script/department-dashboard/Config.gs, apps-script/department-dashboard/Data.gs, apps-script/department-dashboard/Diagnostics.gs, apps-script/department-dashboard/Setup.gs, apps-script/department-dashboard/Util.gs, apps-script/department-dashboard/NeonRead.gs, apps-script/department-dashboard/NeonKeepWarm.gs, apps-script/department-dashboard/MissedCallsReport.gs, apps-script/department-dashboard/IndividualReport.gs, apps-script/department-dashboard/PerformanceReport.gs, apps-script/department-dashboard/CompareRangesReport.gs, apps-script/department-dashboard/Alerts.gs, apps-script/department-dashboard/CompanyOverview.gs, apps-script/department-dashboard/Digest.gs, apps-script/department-dashboard/OrphanFix.gs, apps-script/department-dashboard/QCDReport.gs, apps-script/department-dashboard/DeptConfig.gs, apps-script/department-dashboard/access_denied.html, apps-script/department-dashboard/dashboard.html, apps-script/department-dashboard/script.html, apps-script/department-dashboard/styles.html, apps-script/department-dashboard/appsscript.json
+  apps-script/department-dashboard/Auth.gs, apps-script/department-dashboard/Code.gs, apps-script/department-dashboard/Config.gs, apps-script/department-dashboard/Data.gs, apps-script/department-dashboard/Diagnostics.gs, apps-script/department-dashboard/Setup.gs, apps-script/department-dashboard/Util.gs, apps-script/department-dashboard/NeonRead.gs, apps-script/department-dashboard/NeonKeepWarm.gs, apps-script/department-dashboard/CacheWarm.gs, apps-script/department-dashboard/MissedCallsReport.gs, apps-script/department-dashboard/IndividualReport.gs, apps-script/department-dashboard/PerformanceReport.gs, apps-script/department-dashboard/CompareRangesReport.gs, apps-script/department-dashboard/Alerts.gs, apps-script/department-dashboard/CompanyOverview.gs, apps-script/department-dashboard/Digest.gs, apps-script/department-dashboard/OrphanFix.gs, apps-script/department-dashboard/QCDReport.gs, apps-script/department-dashboard/DeptConfig.gs, apps-script/department-dashboard/access_denied.html, apps-script/department-dashboard/dashboard.html, apps-script/department-dashboard/script.html, apps-script/department-dashboard/styles.html, apps-script/department-dashboard/appsscript.json
 
 CDR DQE Pipeline:
   apps-script/cdr-report/buildDQEHistoricalData.js, apps-script/cdr-report/DQEdrilldown.js, apps-script/cdr-report/DQEDrilldownSidebar.html, apps-script/cdr-report/dataFilters.js, apps-script/cdr-report/CDR Tools menu.js, apps-script/cdr-report/appsscript.json

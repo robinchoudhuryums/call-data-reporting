@@ -92,6 +92,44 @@ function neonGetMaxDqeDate_() {
  * -ID columns are a follow-on (Phase 3.2) and intentionally not fetched here.
  */
 
+/**
+ * Distinct (agent_name, queue_extensions) pairs across ALL of dqe_history,
+ * for the getDeptQueueExts_ DERIVED path. Replaces a whole-sheet cols-A..D
+ * scan when DQE_READ_SOURCE=neon: Postgres collapses the ~16k+ rows to the
+ * handful of distinct (agent, ext-string) pairs each agent has ever used,
+ * aggregated to ONE json string (json_agg) so it's a single rs.getString
+ * (same anti-per-row-JDBC discipline as neonFetchDqeRows_). Small result,
+ * so it's cached REPORT_CACHE_TTL_SECONDS (changes only when the daily
+ * ingest adds a new ext, or an orphan rename lands). Returns an array of
+ * { agent_name, queue_extensions } or null on no-conn/error (caller falls
+ * back to the cheap sheet read).
+ */
+function neonGetAgentExtPairs_() {
+  var cache = CacheService.getScriptCache();
+  var KEY = 'neonAgentExts:v1';
+  var hit = cache.get(KEY);
+  if (hit) { try { return JSON.parse(hit); } catch (e) { /* recompute */ } }
+  var conn = getDashboardNeonConn_();
+  if (!conn) return null;
+  try {
+    var sql = "SELECT COALESCE(json_agg(t), '[]')::text AS j FROM ("
+            + "SELECT DISTINCT agent_name, queue_extensions FROM dqe_history "
+            + "WHERE queue_extensions IS NOT NULL AND queue_extensions <> '') t";
+    var stmt = conn.createStatement();
+    var rs = stmt.executeQuery(sql);
+    var json = rs.next() ? rs.getString('j') : '[]';
+    rs.close(); stmt.close();
+    var arr = JSON.parse(json || '[]');
+    try { cache.put(KEY, json, REPORT_CACHE_TTL_SECONDS); } catch (ce) { /* harmless */ }
+    return arr;
+  } catch (e) {
+    Logger.log('neonGetAgentExtPairs_ failed: ' + (e && e.message ? e.message : e));
+    return null;
+  } finally {
+    try { conn.close(); } catch (ce) {}
+  }
+}
+
 /** Reads dqe_history for [fromIso, toIso] (inclusive). Returns [] on no conn. */
 function neonFetchDqeRows_(fromIso, toIso) {
   var conn = getDashboardNeonConn_();
