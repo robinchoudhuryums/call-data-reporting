@@ -365,7 +365,26 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   hover. Fills are intentionally suppressed on this overlaid
   chart -- the soft-area gradient via `irGradientFill_` is
   reserved for single-series IR / PR trend tabs where it reads
-  cleanly without 10+ overlapping fills competing.
+  cleanly without 10+ overlapping fills competing. **The trend axis
+  skips weekends** -- `trendIsoLabels` (built server-side in
+  `CompanyOverview.gs`) drops Sat/Sun because the weekday-only work
+  window makes them always-no-data, which otherwise rendered a
+  sawtooth dip in every chart consuming the axis (per-dept card
+  sparklines, the company sparkline, this chart). The Neon/sheet
+  FETCH range stays the full calendar window so no weekday row is
+  lost. **Interactivity (shared `chartSpotlight*` helpers in
+  `script.html`):** hovering a legend item dims the others
+  (transient preview); clicking one PINS/isolates it (persistent
+  dim of the rest -- click again or another to release/switch);
+  `skipLabel` keeps the 92% baseline out of the dimming. Hovering a
+  dept TILE spotlights that dept's line (`ovSpotlightDept_`, no-ops
+  while a pin is active); clicking a POINT deep-links into that
+  dept + date's My Department view (`ovHandlePointClick_` ->
+  `ovRouteToDept_(dept, iso)`; admins, or a manager clicking their
+  own dept's line). An axis-zoom toggle button (`ov-axis-zoom-btn`)
+  flips the y-axis between Full (0-100%) and Fit (auto-scale to the
+  data range). The same `chartSpotlight*` legend spotlight is reused
+  by the QCD multi-queue chart.
 - **Recently-active denominator.** The Overview tile caption "X of Y
   agents" uses `recentlyActiveCount` (any rung / answered / missed
   activity in the last `OVERVIEW_RECENT_ACTIVE_DAYS` = 30 days), NOT
@@ -503,7 +522,12 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   pre-read-back. Pieces: `neonFetchDqeRows_` / `sheetFetchDqeRows_`
   (symmetric DAL primitives returning the same normalized per-(date,agent)
   shape -- durations parsed to seconds, so the Neon path sidesteps the
-  INV-02 TZ gotcha); `neonGetMaxDqeDate_` (`SELECT MAX(call_date)`); and
+  INV-02 TZ gotcha). **`neonFetchDqeRows_` aggregates the whole result set
+  into a SINGLE json string server-side (`json_agg`) and fetches it with
+  one `rs.getString` (commit 0403b2c) -- do NOT regress to per-row
+  `rs.getXXX` iteration: Apps Script JDBC is ~0.5s/row, so the IR/PR
+  12-month trend window (and CR's year-over-year window) took 20+ minutes
+  the old way.** `neonGetMaxDqeDate_` (`SELECT MAX(call_date)`); and
   `compareDqeSources_` -- the **parity GATE** (editor-run; reports
   missing-in-Neon / value mismatches over a date range). **Cut over a
   reader only after `compareDqeSources_` is parity-clean over a
@@ -519,10 +543,14 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   rows=<n> ms=<elapsed>` line (`logDqeReadTiming_`, NeonRead.gs) so
   sheet-vs-neon read cost is directly comparable in the Executions panel.
   Reuses the dashboard `NEON_*` props + `script.external_request`
-  scope (Operator State #18-19). Remaining readers not cut over: **Missed
+  scope (Operator State #18-19). Remaining reader not cut over: **Missed
   Calls** (needs the slot K-AC + abandoned columns added to
-  `neonFetchDqeRows_`) and the `getDeptQueueExts_` DERIVED all-history scan
-  (still a sheet read on both paths). The two `call_date` indexes below are
+  `neonFetchDqeRows_`). The `getDeptQueueExts_` DERIVED all-history scan
+  is now ALSO off the sheet on the Neon path -- `deptQueueExtsForNeonReader_`
+  (Data.gs) builds the dept ext set from `neonGetAgentExtPairs_` (a cached
+  `SELECT DISTINCT agent_name, queue_extensions` json_agg fetch) instead of
+  a whole-sheet cols-A..D scan, falling back to the sheet read if Neon pairs
+  are unavailable. The two `call_date` indexes below are
   now created in prod. NOTE: `latestDate:`/`latestDates:` stay on the 5-min
   `CACHE_TTL_SECONDS`; the heavy report aggregations cache 30 min
   (`REPORT_CACHE_TTL_SECONDS`) -- both levers reduce how often a cutover
@@ -974,6 +1002,18 @@ When something looks wrong, before assuming a code bug, check:
     `script.external_request` + `script.scriptapp` scopes (same as the
     read-back + alerts trigger). If keep-warm shows "unreachable" pings,
     check the `NEON_*` props; pings no-op cleanly when Neon is unconfigured.
+21. Report cache warming (optional; `CacheWarm.gs`). Toggle from the Alerts
+    modal → **Report cache warming** section (`installCacheWarmTrigger` /
+    `uninstallCacheWarmTrigger`, both `assertAdmin_`-gated). When enabled it
+    installs the `warmReportCaches_` daily trigger (default `CACHE_WARM_HOUR`
+    = 9 Central, after the morning ingest), which pre-warms the Overview blob
+    + each dept's My Department default-range summary so the first manager of
+    the day gets a cache hit instead of a cold aggregation. **Must run in the
+    dashboard project** -- CacheService is per-project, so the cdr-import
+    ingest can't warm it. "Warm now" (`warmReportCachesNow`, admin) primes on
+    demand. Reuses `script.scriptapp`; independent of `DQE_READ_SOURCE`
+    (helps the sheet path too). Best-effort: per-dept failures are logged,
+    last outcome shown in the modal.
 
 ## Cycle Workflow Config
 
@@ -999,7 +1039,7 @@ Data Accuracy (DQE), Access Control Integrity, Source Pipeline Reliability, Migr
 
 ### Subsystems
 Department Dashboard:
-  apps-script/department-dashboard/Auth.gs, apps-script/department-dashboard/Code.gs, apps-script/department-dashboard/Config.gs, apps-script/department-dashboard/Data.gs, apps-script/department-dashboard/Diagnostics.gs, apps-script/department-dashboard/Setup.gs, apps-script/department-dashboard/Util.gs, apps-script/department-dashboard/NeonRead.gs, apps-script/department-dashboard/NeonKeepWarm.gs, apps-script/department-dashboard/MissedCallsReport.gs, apps-script/department-dashboard/IndividualReport.gs, apps-script/department-dashboard/PerformanceReport.gs, apps-script/department-dashboard/CompareRangesReport.gs, apps-script/department-dashboard/Alerts.gs, apps-script/department-dashboard/CompanyOverview.gs, apps-script/department-dashboard/Digest.gs, apps-script/department-dashboard/OrphanFix.gs, apps-script/department-dashboard/QCDReport.gs, apps-script/department-dashboard/DeptConfig.gs, apps-script/department-dashboard/access_denied.html, apps-script/department-dashboard/dashboard.html, apps-script/department-dashboard/script.html, apps-script/department-dashboard/styles.html, apps-script/department-dashboard/appsscript.json
+  apps-script/department-dashboard/Auth.gs, apps-script/department-dashboard/Code.gs, apps-script/department-dashboard/Config.gs, apps-script/department-dashboard/Data.gs, apps-script/department-dashboard/Diagnostics.gs, apps-script/department-dashboard/Setup.gs, apps-script/department-dashboard/Util.gs, apps-script/department-dashboard/NeonRead.gs, apps-script/department-dashboard/NeonKeepWarm.gs, apps-script/department-dashboard/CacheWarm.gs, apps-script/department-dashboard/MissedCallsReport.gs, apps-script/department-dashboard/IndividualReport.gs, apps-script/department-dashboard/PerformanceReport.gs, apps-script/department-dashboard/CompareRangesReport.gs, apps-script/department-dashboard/Alerts.gs, apps-script/department-dashboard/CompanyOverview.gs, apps-script/department-dashboard/Digest.gs, apps-script/department-dashboard/OrphanFix.gs, apps-script/department-dashboard/QCDReport.gs, apps-script/department-dashboard/DeptConfig.gs, apps-script/department-dashboard/access_denied.html, apps-script/department-dashboard/dashboard.html, apps-script/department-dashboard/script.html, apps-script/department-dashboard/styles.html, apps-script/department-dashboard/appsscript.json
 
 CDR DQE Pipeline:
   apps-script/cdr-report/buildDQEHistoricalData.js, apps-script/cdr-report/DQEdrilldown.js, apps-script/cdr-report/DQEDrilldownSidebar.html, apps-script/cdr-report/dataFilters.js, apps-script/cdr-report/CDR Tools menu.js, apps-script/cdr-report/appsscript.json
@@ -1043,7 +1083,7 @@ INV-26 | TEAM_AVG_EXCLUDES in Config.gs lists per-dept agent names removed from 
 INV-27 | Individual Report's team-avg denominator counts only roster members with ANY call activity (rung/answered/missed > 0) in the selected range, NOT the full roster size. Zero-call roster members don't dilute the average. | Subsystem: Department Dashboard
 INV-28 | Performance Report's prior period is the immediately-preceding window of the same duration (durationDays before currentStart, ending one day before currentStart) -- NOT "previous calendar month". Documented in the form's inline hint and the results-header "Comparing against..." line. Match legacy SingleRangeReport semantics. | Subsystem: Department Dashboard
 INV-29 | Individual Report's monthly trend window: range itself when selected range > 366 days OR equals a full calendar year (Jan 1 - Dec 31 of one year); else `first-of-month(end - 12 months)` to `end`. Performance Report uses identical logic so the 12-mo trends align across both reports for the same dept. | Subsystem: Department Dashboard
-INV-30 | Each report has its own versioned cache key prefix; bump on any aggregation rule change so stale entries don't bleed in. Current: `summary:v8` (Data.gs -- bumped from v7 in E5 commit bb77168 to add per-row prior-period fields `priorRung` / `priorMissed` / `priorAnswered` / `priorHasData` for the WoW chip), `latestDate:v1` (Data.gs -- most-recent DQE ISO date; drives the My Department From/To default so the agent table lands on a non-empty day; the F1 cutover suffixes this key with the active source -- `latestDate:v1:sheet` / `:neon` -- so a `DQE_READ_SOURCE` flip can't serve a value computed from the other source), `latestDates:v1` (Data.gs -- multi-source `{dqe, qcd, latest}` blob; drives the header freshness pill so it doesn't go stale when one source updates without the other), `individual:v8` (IndividualReport.gs), `individual_active:v2` (active-agents-in-range subset used by Individual + Performance + Compare Ranges pickers; v2 return shape is `{agents, floaters}` after the INV-53 expansion), `performance:v4` (PerformanceReport.gs), `compareRanges:v4` (CompareRangesReport.gs), `missed:v10` (MissedCallsReport.gs), `companyOverview:v13` (CompanyOverview.gs), `qcd:v5` (QCDReport.gs). Alerts.gs holds no cached compute. | Subsystem: Department Dashboard
+INV-30 | Each report has its own versioned cache key prefix; bump on any aggregation rule change so stale entries don't bleed in. Current: `summary:v8` (Data.gs -- bumped from v7 in E5 commit bb77168 to add per-row prior-period fields `priorRung` / `priorMissed` / `priorAnswered` / `priorHasData` for the WoW chip), `latestDate:v1` (Data.gs -- most-recent DQE ISO date; drives the My Department From/To default so the agent table lands on a non-empty day; the F1 cutover suffixes this key with the active source -- `latestDate:v1:sheet` / `:neon` -- so a `DQE_READ_SOURCE` flip can't serve a value computed from the other source), `latestDates:v1` (Data.gs -- multi-source `{dqe, qcd, latest}` blob; drives the header freshness pill so it doesn't go stale when one source updates without the other), `individual:v8` (IndividualReport.gs), `individual_active:v2` (active-agents-in-range subset used by Individual + Performance + Compare Ranges pickers; v2 return shape is `{agents, floaters}` after the INV-53 expansion), `performance:v4` (PerformanceReport.gs), `compareRanges:v4` (CompareRangesReport.gs), `missed:v10` (MissedCallsReport.gs), `companyOverview:v14` (CompanyOverview.gs -- bumped from v13 in commit 3b9a647 when the trend axis began skipping weekends, which changed the `trend` / `companyTrend` series length), `qcd:v5` (QCDReport.gs). Alerts.gs holds no cached compute. | Subsystem: Department Dashboard
 INV-31 | `script.send_mail` OAuth scope in appsscript.json is required for: (1) Individual / Performance / Compare Ranges / QCD "Email image" exports, (2) the Low Answer Rate Alerts engine, (3) the Manager Digest engine (Digest.gs), (4) the failure-notification paths (notifyImportFailure_ in autoImport.js, notifyDqeBuildFailure_ in autoImport.js [emails NEON_WRITE_CONFIG.alertEmail when the integrated daily DQE-block fails inside processIntegratedHistory; not fired on the bulk-backfill path], runDailyDQEBuild_ in buildDQEHistoricalData.js [present in BOTH cdr-import and cdr-report copies after INV-16 expansion], notifyDigestFailure_ in Digest.gs, plus the indirect path from cdr-import's integrated DQE block hitting notifyNeonWriteFailure on a Neon write failure). All paths use `MailApp.sendEmail`. Removing the scope breaks every one of them; adding new send-mail features here doesn't need a re-scope. | Subsystem: Department Dashboard (+ CDR Import / CDR DQE Pipeline for the notify-failure paths)
 INV-32 | Low Answer Rate Alerts is admin-only at the server boundary. Every public callable in Alerts.gs starts with `assertAdmin_`. The launcher button is also hidden client-side via `data-admin-only`, but the server check is the source of truth. Compare Ranges was previously admin-only too but was opened to managers (with the same `dept !== user.department` check the other reports use) so they can run year-over-year comparisons within their own dept. Adding a new admin = setting/editing the `ADMIN_EMAILS` Script Property (comma-separated emails); falls back to `ADMIN_EMAILS_FALLBACK` in Config.gs if unset. | Subsystem: Department Dashboard
 INV-33 | `runDailyAlerts_` (time-triggered alerts) skips Saturdays and Sundays. Holiday handling is via the Alert Config `Skip Dates` column (E8, commit 319eca7): admins enter comma-separated ISO dates and/or inclusive ranges (`YYYY-MM-DD..YYYY-MM-DD`) per dept; `runAlertsCore_` checks each dept's parsed `skipDates` against today and logs status `skipped` with note `Skip date match (YYYY-MM-DD) in Alert Config` when it hits. **Trigger-only enforcement:** the gate is `triggeredBy === 'daily-trigger'` — manual sends from the UI, previews, and any other caller bypass the skip so admins can force-send after a holiday for post-hoc catch-up. `Alerts.gs::parseSkipDateRanges_` is intentionally tolerant (silently drops malformed tokens, swaps reversed ranges) because the cell is admin-curated free-text with no UI validator — never throws. ISO-string range checks are safe only because `YYYY-MM-DD` is zero-padded and lexicographically ordered. | Subsystem: Department Dashboard
@@ -1147,7 +1187,7 @@ S12 | Individual Report peer comparison with shared legend | Subsystem: Departme
   Steps:
     - Open Individual Report. Pick 2+ agents in the picker.
     - Generate.
-  Expected: title flips to "Peer Comparison Report"; shared chip legend renders above the chart tabs; clicking a chip hides that agent's series across all three charts; hovering dims the others.
+  Expected: title flips to "Peer Comparison Report"; shared chip legend renders above the chart tabs; clicking a chip ISOLATES that agent (pins a spotlight, dimming the others across all three charts; click the pinned chip again or another to release/switch), Shift+click HIDES/shows that agent's series (the legacy toggle), and hovering previews the spotlight when nothing is pinned.
 
 S13 | Individual Report agent picker active/inactive grouping | Subsystem: Department Dashboard
   Steps:
@@ -1290,7 +1330,7 @@ S32 | QCD Report end-to-end | Subsystem: Department Dashboard + CDR Import
     - Pick a date range with known QCD activity for the manager's dept; Generate.
     - Confirm KPI tiles render Total Calls / Answered / Abandoned / Abandoned % / Longest Wait / Avg Answer / Violations (Violations tile is warn-soft when >0).
     - Confirm per-queue breakdown table shows one row per queue in `DEPT_QCD_QUEUES[dept]` with a "Department total" row in the tfoot. Violations cells are color-coded (light-warn 1-3, strong-warn >3). Abandoned % >= 5% is warn-tinted. Rows with violations > 0 show a clickable chevron; clicking expands to show the specific violation dates.
-    - Switch the chart-tab metric (Total Calls / Abandoned % / Violations); chart re-renders. For depts with 2+ queues, the chart shows one line per queue (color-coded) plus a dashed "Dept total" line with a legend.
+    - Switch the chart-tab metric (Total Calls / Abandoned % / Violations); chart re-renders. For depts with 2+ queues, the chart shows one line per queue (color-coded) plus a dashed "Dept total" line with a legend. The legend shares the Overview chart's spotlight (hover a queue to dim the others; click to pin/isolate, click again to release) via the `chartSpotlight*` helpers.
     - Select "Yesterday" from Quick Select (single-day range); confirm the Daily chart view toggle is hidden (single point not useful as a line).
     - Re-open the dashboard fresh and check the Overview tile for a dept with multiple queues; per-queue QCD rows appear showing each queue's abandoned %, abandoned count (if >0), and violations (if >0) with color-coding. "X viol MTD" chip renders when month-to-date violations > 0.
     - As a manager, in the browser console: `google.script.run.withSuccessHandler(console.log).withFailureHandler(console.error).getQcdReport({ department: 'SomeOtherDept', from: '2026-05-01', to: '2026-05-19' })`.

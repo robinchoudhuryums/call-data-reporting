@@ -1577,12 +1577,22 @@
           });
         });
     }
+
+    // Hovering any dept tile (all roles) spotlights that dept's line in
+    // the trend chart below, connecting the two halves of the page.
+    // No-ops when a legend pin is active.
+    $('ov-dept-grid').querySelectorAll('.ov-dept-tile').forEach(function (tile) {
+      const target = tile.getAttribute('data-dept');
+      if (!target) return;
+      tile.addEventListener('mouseenter', function () { ovSpotlightDept_(target); });
+      tile.addEventListener('mouseleave', function () { ovSpotlightDept_(null); });
+    });
   }
 
   // Admin-only: switch the main dashboard to a different dept and
   // navigate to the My Department page so the new dept's full
   // detail is visible.
-  function ovRouteToDept_(deptName) {
+  function ovRouteToDept_(deptName, isoDate) {
     const sel = $('dept-selector');
     if (sel && sel.value !== deptName) {
       sel.value = deptName;
@@ -1591,6 +1601,14 @@
       sel.dispatchEvent(new Event('change'));
     }
     setPage('dept');
+    // Point-click deep-link: snap the From/To range to the clicked day
+    // and re-fetch. Runs after the change handler (which resets to the
+    // latest date); this second refresh wins and is server-cached.
+    if (isoDate && $('from-date') && $('to-date')) {
+      $('from-date').value = isoDate;
+      $('to-date').value = isoDate;
+      refresh();
+    }
   }
 
   // Renders the user's own dept's agent table at the latest date
@@ -1715,6 +1733,12 @@
         label: dept.name + (isChild ? ' (sub-queue)' : ''),
         data: dept.trend || [],
         borderColor: color,
+        // Stash the resting style so the legend hover-dim can restore it
+        // (see chartSpotlight* helpers). _deptName lets the tile-hover and
+        // point-click handlers map a dept back to its dataset index.
+        _origBorder: color,
+        _origWidth: isChild ? 1.4 : 2.2,
+        _deptName: dept.name,
         // No fill on the overlaid multi-dept chart -- 10+ stacked
         // gradients muddle the view. The soft-area treatment (25%
         // gradient via irGradientFill_) is intentionally reserved
@@ -1763,10 +1787,10 @@
       options: {
         responsive: true, maintainAspectRatio: false, animation: false,
         plugins: {
-          legend: {
+          legend: Object.assign({
             position: 'bottom',
             labels: { boxWidth: 12, font: { size: 11 } },
-          },
+          }, chartSpotlightLegend_()),
           tooltip: {
             filter: function (ctx) {
               // Hide the 92% baseline from the per-line tooltip list.
@@ -1792,7 +1816,143 @@
           x: { ticks: { autoSkip: true, maxTicksLimit: 10 } },
         },
         interaction: { mode: 'index', intersect: false },
+        // Point click -> deep-link into that dept + date's My Department
+        // view (admins, or a manager clicking their own dept's line).
+        onClick: function (evt, elements, chart) {
+          ovHandlePointClick_(evt, chart, data);
+        },
       },
+    });
+
+    // Generic legend spotlight (hover-dim + click-to-pin/isolate). Skip
+    // the 92% baseline. Stash resting styles + the ISO date axis + the
+    // viewer's dept so the tile-hover and point-click handlers can use them.
+    chartSpotlightStash_(ovChartInstance, { skipLabel: '92% target' });
+    ovChartInstance._trendIso = data.trendIsoLabels || [];
+    ovChartInstance._viewerDept = ovViewerDept_(data);
+    ovWireAxisZoom_();
+  }
+
+  // ---- Generic Chart.js legend spotlight (shared) ----------------------
+  // Hover a legend item -> dim every other series (transient preview).
+  // Click a legend item -> PIN that series (persistent dim of others);
+  // click it again (or another) to release/switch. Used by the multi-dept
+  // Overview chart and the multi-queue QCD chart. Datasets must have been
+  // stashed via chartSpotlightStash_ first. A `skipLabel` dataset (e.g. a
+  // reference baseline / dept-total line) is never dimmed.
+  const CHART_DIM_COLOR = 'rgba(140,140,140,0.18)';
+
+  function chartSpotlightStash_(chart, opts) {
+    if (!chart || !chart.data) return;
+    chart._spotlightSkip = (opts && opts.skipLabel) || null;
+    chart._spotlightPinned = null;
+    chart.data.datasets.forEach(function (ds) {
+      if (ds._origBorder == null) ds._origBorder = ds.borderColor;
+      if (ds._origWidth == null) ds._origWidth = ds.borderWidth;
+    });
+  }
+
+  function chartSpotlightApply_(chart, activeIndex) {
+    if (!chart || !chart.data) return;
+    chart.data.datasets.forEach(function (ds, i) {
+      if (chart._spotlightSkip && ds.label === chart._spotlightSkip) return;
+      if (i === activeIndex) {
+        ds.borderColor = ds._origBorder;
+        ds.borderWidth = (ds._origWidth || 2) + 0.8;
+      } else {
+        ds.borderColor = CHART_DIM_COLOR;
+        ds.borderWidth = ds._origWidth || 1.4;
+      }
+    });
+    chart.update('none');
+  }
+
+  function chartSpotlightClear_(chart) {
+    if (!chart || !chart.data) return;
+    chart.data.datasets.forEach(function (ds) {
+      if (chart._spotlightSkip && ds.label === chart._spotlightSkip) return;
+      if (ds._origBorder != null) ds.borderColor = ds._origBorder;
+      if (ds._origWidth != null) ds.borderWidth = ds._origWidth;
+    });
+    chart.update('none');
+  }
+
+  // Returns legend onHover/onLeave/onClick callbacks implementing the
+  // spotlight model. Spread into a chart's plugins.legend config.
+  function chartSpotlightLegend_() {
+    return {
+      onHover: function (e, item, legend) {
+        const chart = legend.chart;
+        if (chart._spotlightPinned != null) return;   // pin wins over hover
+        if (item && item.datasetIndex != null) chartSpotlightApply_(chart, item.datasetIndex);
+      },
+      onLeave: function (e, item, legend) {
+        const chart = legend.chart;
+        if (chart._spotlightPinned != null) return;
+        chartSpotlightClear_(chart);
+      },
+      onClick: function (e, item, legend) {
+        const chart = legend.chart;
+        if (!item || item.datasetIndex == null) return;
+        if (chart._spotlightPinned === item.datasetIndex) {
+          chart._spotlightPinned = null;
+          chartSpotlightClear_(chart);
+        } else {
+          chart._spotlightPinned = item.datasetIndex;
+          chartSpotlightApply_(chart, item.datasetIndex);
+        }
+      },
+    };
+  }
+
+  // Spotlight a dept's line by name (used by dept-tile hover). No-op when
+  // a legend pin is active so a hover doesn't fight the pinned selection.
+  function ovSpotlightDept_(deptName) {
+    const chart = ovChartInstance;
+    if (!chart || !chart.data || chart._spotlightPinned != null) return;
+    if (deptName == null) { chartSpotlightClear_(chart); return; }
+    let idx = -1;
+    chart.data.datasets.forEach(function (ds, i) { if (ds._deptName === deptName) idx = i; });
+    if (idx >= 0) chartSpotlightApply_(chart, idx);
+  }
+
+  // Point click -> deep-link to that dept + date. Only routes for admins
+  // or a manager clicking their OWN dept's line (others can't view it).
+  function ovHandlePointClick_(evt, chart, data) {
+    if (!chart || typeof chart.getElementsAtEventForMode !== 'function') return;
+    const hits = chart.getElementsAtEventForMode(evt, 'nearest', { intersect: true }, false);
+    if (!hits || !hits.length) return;
+    const ds = chart.data.datasets[hits[0].datasetIndex];
+    if (!ds || !ds._deptName) return;                 // baseline / non-dept line
+    const deptName = ds._deptName;
+    const viewerDept = chart._viewerDept || ovViewerDept_(data);
+    if (USER.role !== 'admin' && deptName !== viewerDept) return;
+    const iso = (chart._trendIso || [])[hits[0].index] || null;
+    ovRouteToDept_(deptName, iso);
+  }
+
+  // Axis zoom toggle: Full (0-100%) <-> Fit (auto-scale to the data range,
+  // so depts clustered near the top spread out). Wired once; the button
+  // lives in the ov-chart-tabs row (dashboard.html).
+  let ovAxisZoom = 'full';
+  let ovAxisZoomWired = false;
+  function ovWireAxisZoom_() {
+    if (ovAxisZoomWired) return;
+    const btn = $('ov-axis-zoom-btn');
+    if (!btn) return;
+    ovAxisZoomWired = true;
+    btn.addEventListener('click', function () {
+      if (!ovChartInstance) return;
+      ovAxisZoom = (ovAxisZoom === 'full') ? 'fit' : 'full';
+      const y = ovChartInstance.options.scales.y;
+      if (ovAxisZoom === 'fit') {
+        y.beginAtZero = false; y.min = undefined; y.max = undefined;
+      } else {
+        y.beginAtZero = true;  y.min = undefined; y.max = 100;
+      }
+      ovChartInstance.update();
+      btn.textContent = ovAxisZoom === 'fit' ? 'Zoom: Fit' : 'Zoom: Full';
+      btn.setAttribute('aria-pressed', ovAxisZoom === 'fit' ? 'true' : 'false');
     });
   }
 
@@ -3065,6 +3225,7 @@
   }
 
   let irChartInstances = [];
+  let irPinnedAgent = null;   // peer-comparison legend: pinned/isolated agent (null = none)
   let irLastData = null;
   // Cached roster + active subset for the current modal session.
   // `activeAgents` is null until the first init call with from/to
@@ -4465,6 +4626,7 @@
       const color = IR_CHART_COLORS[i % IR_CHART_COLORS.length];
       const safe = escapeHtml(ag);
       return '<button type="button" class="ir-legend-chip" data-agent="' + safe + '" '
+           + 'title="Click to isolate · Shift+click to hide" '
            + 'style="--chip-color: ' + color + ';">'
            +   '<span class="ir-legend-swatch"></span>'
            +   '<span class="ir-legend-name">' + safe + '</span>'
@@ -4472,25 +4634,42 @@
     }).join('');
     el.innerHTML = chips;
     el.style.display = '';
+    irPinnedAgent = null;   // fresh legend -> no pin
 
     el.querySelectorAll('.ir-legend-chip').forEach(function (chip) {
       const agent = chip.getAttribute('data-agent');
-      chip.addEventListener('click', function () {
-        const willHide = !chip.classList.contains('inactive');
-        chip.classList.toggle('inactive', willHide);
-        irChartInstances.forEach(function (chart) {
-          chart.data.datasets.forEach(function (ds, idx) {
-            if (ds._irAgent === agent) {
-              chart.getDatasetMeta(idx).hidden = willHide;
-            }
+      // Plain click = pin/isolate (persistent spotlight), matching the
+      // Overview chart. Shift+click = hide/show this agent's series (the
+      // legacy toggle). Click the pinned chip again (or another) to
+      // release/switch the isolate.
+      chip.addEventListener('click', function (ev) {
+        if (ev.shiftKey) {
+          const willHide = !chip.classList.contains('inactive');
+          chip.classList.toggle('inactive', willHide);
+          irChartInstances.forEach(function (chart) {
+            chart.data.datasets.forEach(function (ds, idx) {
+              if (ds._irAgent === agent) chart.getDatasetMeta(idx).hidden = willHide;
+            });
+            chart.update();
           });
-          chart.update();
-        });
+          return;
+        }
+        if (irPinnedAgent === agent) {
+          irPinnedAgent = null;
+          el.querySelectorAll('.ir-legend-chip').forEach(function (c) { c.classList.remove('pinned'); });
+          irHighlightAgent_(null);
+        } else {
+          irPinnedAgent = agent;
+          el.querySelectorAll('.ir-legend-chip').forEach(function (c) {
+            c.classList.toggle('pinned', c.getAttribute('data-agent') === agent);
+          });
+          irHighlightAgent_(agent);
+        }
       });
-      // Hover: dim the OTHER agents' series across all charts to
-      // emphasize the hovered one. Restore on mouseleave.
-      chip.addEventListener('mouseenter', function () { irHighlightAgent_(agent); });
-      chip.addEventListener('mouseleave', function () { irHighlightAgent_(null); });
+      // Hover previews the spotlight when nothing is pinned; with a pin
+      // active, leaving re-asserts the pinned selection rather than clearing.
+      chip.addEventListener('mouseenter', function () { if (!irPinnedAgent) irHighlightAgent_(agent); });
+      chip.addEventListener('mouseleave', function () { irHighlightAgent_(irPinnedAgent); });
     });
   }
 
@@ -7462,6 +7641,14 @@
     const uninstallKwBtn = $('al-uninstall-keepwarm-btn');
     if (uninstallKwBtn) uninstallKwBtn.addEventListener('click', alUninstallKeepWarm_);
 
+    // Report cache warming enable / disable / warm-now.
+    const installCwBtn = $('al-install-cachewarm-btn');
+    if (installCwBtn) installCwBtn.addEventListener('click', alInstallCacheWarm_);
+    const uninstallCwBtn = $('al-uninstall-cachewarm-btn');
+    if (uninstallCwBtn) uninstallCwBtn.addEventListener('click', alUninstallCacheWarm_);
+    const warmNowBtn = $('al-warm-now-btn');
+    if (warmNowBtn) warmNowBtn.addEventListener('click', alWarmNow_);
+
     const dateEl = $('al-date');
     if (dateEl) dateEl.addEventListener('change', function () {
       // Date change invalidates the previous preview -- Send must
@@ -7502,6 +7689,13 @@
             alRenderKeepWarm_({ loadError: (err && err.message) ? err.message : String(err) });
           })
           .getNeonKeepWarmStatus();
+        // Report cache-warming status (separate, same resilience).
+        google.script.run
+          .withSuccessHandler(function (cw) { alRenderCacheWarm_(cw || {}); })
+          .withFailureHandler(function (err) {
+            alRenderCacheWarm_({ loadError: (err && err.message) ? err.message : String(err) });
+          })
+          .getCacheWarmStatus();
       })
       .withFailureHandler(function (err) {
         $('al-loading').textContent = 'Error: '
@@ -8076,6 +8270,93 @@
         alSetRunStatus_('error', 'Disable keep-warm failed: ' + (err && err.message ? err.message : String(err)));
       })
       .uninstallNeonKeepWarmTrigger();
+  }
+
+  function alRenderCacheWarm_(cw) {
+    const el = $('al-cachewarm-status');
+    const installBtn = $('al-install-cachewarm-btn');
+    const uninstallBtn = $('al-uninstall-cachewarm-btn');
+    if (!el) return;
+    if (cw && cw.loadError) {
+      el.textContent = 'Cache-warming status unavailable: ' + cw.loadError;
+      if (installBtn) installBtn.style.display = '';
+      if (uninstallBtn) uninstallBtn.style.display = 'none';
+      return;
+    }
+    const fmtH = function (h) {
+      const hr = ((h % 24) + 24) % 24;
+      const ampm = hr < 12 ? 'AM' : 'PM';
+      const h12 = (hr % 12) === 0 ? 12 : (hr % 12);
+      return h12 + ' ' + ampm;
+    };
+    let tail = '';
+    if (cw && cw.lastRun) {
+      tail = ' Last run: ' + cw.lastRun.replace('T', ' ').replace(/\..*$/, '')
+           + ' (' + (cw.lastResult || '?') + ').';
+    }
+    if (cw && cw.installed) {
+      el.textContent = 'Cache warming is ON — runs daily at ' + fmtH(cw.hour) + ' '
+                     + tzSuffix_() + ', pre-warming the Overview + each dept\'s default view.' + tail;
+      if (installBtn) installBtn.style.display = 'none';
+      if (uninstallBtn) uninstallBtn.style.display = '';
+    } else {
+      el.textContent = 'Cache warming is OFF. Enable it to pre-warm the report caches '
+                     + 'after the morning ingest so the first manager of the day gets a '
+                     + 'cache hit instead of a cold aggregation.' + tail;
+      if (installBtn) installBtn.style.display = '';
+      if (uninstallBtn) uninstallBtn.style.display = 'none';
+    }
+  }
+
+  function alInstallCacheWarm_() {
+    const btn = $('al-install-cachewarm-btn');
+    btn.disabled = true;
+    const prev = btn.textContent; btn.textContent = 'Enabling…';
+    google.script.run
+      .withSuccessHandler(function (status) {
+        btn.disabled = false; btn.textContent = prev;
+        alRenderCacheWarm_(status || { installed: true });
+      })
+      .withFailureHandler(function (err) {
+        btn.disabled = false; btn.textContent = prev;
+        alSetRunStatus_('error', 'Enable cache warming failed: ' + (err && err.message ? err.message : String(err)));
+      })
+      .installCacheWarmTrigger();
+  }
+
+  function alUninstallCacheWarm_() {
+    const ok = window.confirm('Disable the daily report cache-warming trigger?');
+    if (!ok) return;
+    const btn = $('al-uninstall-cachewarm-btn');
+    btn.disabled = true;
+    const prev = btn.textContent; btn.textContent = 'Disabling…';
+    google.script.run
+      .withSuccessHandler(function (status) {
+        btn.disabled = false; btn.textContent = prev;
+        alRenderCacheWarm_(status || { installed: false });
+      })
+      .withFailureHandler(function (err) {
+        btn.disabled = false; btn.textContent = prev;
+        alSetRunStatus_('error', 'Disable cache warming failed: ' + (err && err.message ? err.message : String(err)));
+      })
+      .uninstallCacheWarmTrigger();
+  }
+
+  function alWarmNow_() {
+    const btn = $('al-warm-now-btn');
+    btn.disabled = true;
+    const prev = btn.textContent; btn.textContent = 'Warming…';
+    google.script.run
+      .withSuccessHandler(function (status) {
+        btn.disabled = false; btn.textContent = prev;
+        alRenderCacheWarm_(status || {});
+        alSetRunStatus_('success', 'Caches warmed.');
+      })
+      .withFailureHandler(function (err) {
+        btn.disabled = false; btn.textContent = prev;
+        alSetRunStatus_('error', 'Warm now failed: ' + (err && err.message ? err.message : String(err)));
+      })
+      .warmReportCachesNow();
   }
 
   // -- Outlier Fix modal (admin-only) ---------------------------------
@@ -9398,7 +9679,10 @@
         maintainAspectRatio: false,
         plugins: {
           datalabels: { display: false },
-          legend:     { display: multiQueue },
+          // Multi-queue charts get the shared legend spotlight (hover-dim
+          // + click-to-pin), matching the Overview chart.
+          legend: Object.assign({ display: multiQueue },
+                                 multiQueue ? chartSpotlightLegend_() : {}),
           tooltip: {
             callbacks: {
               label: function (ctx) {
@@ -9418,6 +9702,7 @@
         },
       },
     });
+    if (multiQueue) chartSpotlightStash_(qcdChartInstance);
   }
 
   // -- Export helpers (mirror IR/PR/CR pattern, simplified) ---------

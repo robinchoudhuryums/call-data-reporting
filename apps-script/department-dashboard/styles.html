@@ -2103,6 +2103,13 @@
     opacity: 0.42;
     text-decoration: line-through;
   }
+  /* Pinned/isolated chip (click-to-isolate) -- accented outline so the
+     active spotlight selection is obvious. */
+  .ir-legend-chip.pinned {
+    border-color: var(--chip-color, var(--accent));
+    box-shadow: 0 0 0 1px var(--chip-color, var(--accent)) inset;
+    font-weight: 600;
+  }
   .ir-legend-swatch {
     width: 10px;
     height: 10px;

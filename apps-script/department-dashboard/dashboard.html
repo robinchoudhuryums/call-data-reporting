@@ -125,6 +125,8 @@
         <div id="ov-dept-grid" class="ov-dept-grid"></div>
         <div class="ir-chart-tabs" id="ov-chart-tabs" role="tablist">
           <button type="button" class="ir-tab active" data-metric="pct" role="tab" aria-selected="true">% Answered (30 days)</button>
+          <button type="button" class="ir-tab" id="ov-axis-zoom-btn" aria-pressed="false"
+            title="Toggle the y-axis between the full 0–100% scale and an auto-fit zoom to the data range">Zoom: Full</button>
         </div>
         <div class="ir-chart-wrap" id="ov-chart-wrap">
           <div class="ir-chart-header">Answer rate trend per department</div>
@@ -1240,6 +1242,22 @@
             don't pay a cold-start penalty. Window defaults to 7 AM&ndash;1 PM Central; tune via the
             <code>NEON_KEEPWARM_START_HOUR</code> / <code>NEON_KEEPWARM_END_HOUR</code> Script Properties
             (watch the estimated monthly compute-hours below to stay under your Neon plan).
+          </p>
+        </div>
+
+        <div class="al-section">
+          <div class="al-section-title">Report cache warming</div>
+          <p class="al-hint" id="al-cachewarm-status"></p>
+          <div class="al-trigger-actions">
+            <button class="btn btn-secondary" id="al-install-cachewarm-btn"   type="button">Enable cache warming</button>
+            <button class="btn btn-secondary" id="al-uninstall-cachewarm-btn" type="button" style="display:none;">Disable cache warming</button>
+            <button class="btn btn-secondary" id="al-warm-now-btn"            type="button">Warm now</button>
+          </div>
+          <p class="al-hint" style="margin-top: 8px;">
+            Pre-warms the Overview blob + each dept's My Department default-range summary
+            once a day (after the morning ingest) so the first manager to open the dashboard
+            gets a cache hit instead of a cold aggregation. Fires at <code>CACHE_WARM_HOUR</code>
+            Script Property (default 9 AM Central). "Warm now" runs it on demand.
           </p>
         </div>
 

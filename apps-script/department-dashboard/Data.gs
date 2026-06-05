@@ -322,8 +322,7 @@ function computeSummary_(dept, from, to, scope) {
   if (dqeSource === 'neon' && typeof neonFetchDqeRows_ === 'function') {
     srcRows = neonFetchDqeRows_(priorFrom, to);
     if (srcRows && srcRows.length) {
-      const extValues = sheet.getRange(2, 1, lastRow - 1, HISTORICAL_COLS.QUEUE_EXT).getValues();
-      const dqr = getDeptQueueExts_(dept, rosterSet, extValues);
+      const dqr = deptQueueExtsForNeonReader_(dept, rosterSet, sheet, lastRow);
       deptQueueExts = dqr.exts; deptQueueExtsSource = dqr.source;
       effectiveSource = 'neon';
     } else {
@@ -901,6 +900,48 @@ function getDeptQueueExts_(dept, rosterSet, values) {
     for (let j = 0; j < exts.length; j++) set[exts[j]] = true;
   }
   return { exts: set, source: 'derived' };
+}
+
+/**
+ * Neon equivalent of getDeptQueueExts_'s derived path: builds the dept's
+ * queue-ext set from the distinct (agent, queue_extensions) pairs in
+ * dqe_history (neonGetAgentExtPairs_) instead of scanning the whole sheet.
+ * The override path is identical to getDeptQueueExts_. Returns null when
+ * Neon pairs are unavailable (no conn / error) so the caller can fall back
+ * to the sheet read.
+ */
+function getDeptQueueExtsNeon_(dept, rosterSet) {
+  const overrideList = getDeptQueueExtsOverride_(dept);
+  if (overrideList && overrideList.length) {
+    const oset = {};
+    for (let i = 0; i < overrideList.length; i++) oset[String(overrideList[i])] = true;
+    return { exts: oset, source: 'override' };
+  }
+  if (typeof neonGetAgentExtPairs_ !== 'function') return null;
+  const pairs = neonGetAgentExtPairs_();
+  if (pairs === null) return null;   // no conn / error -> caller falls back
+  const set = {};
+  for (let k = 0; k < pairs.length; k++) {
+    const agent = String(pairs[k].agent_name || '').trim();
+    if (!agent || !rosterSet[agent]) continue;
+    const exts = parseExtensions_(pairs[k].queue_extensions);
+    for (let j = 0; j < exts.length; j++) set[exts[j]] = true;
+  }
+  return { exts: set, source: 'derived-neon' };
+}
+
+/**
+ * Dept queue-ext set for the Neon read path, with a sheet fallback.
+ * Prefers the Neon SELECT DISTINCT (getDeptQueueExtsNeon_); if Neon pairs
+ * are unavailable, reads the cheap cols-A..D slice off the sheet and uses
+ * the original derivation. Used by the cutover readers' Neon branch so
+ * the all-history ext derivation no longer requires a whole-sheet scan.
+ */
+function deptQueueExtsForNeonReader_(dept, rosterSet, sheet, lastRow) {
+  const ne = getDeptQueueExtsNeon_(dept, rosterSet);
+  if (ne) return ne;
+  const extValues = sheet.getRange(2, 1, lastRow - 1, HISTORICAL_COLS.QUEUE_EXT).getValues();
+  return getDeptQueueExts_(dept, rosterSet, extValues);
 }
 
 /**
