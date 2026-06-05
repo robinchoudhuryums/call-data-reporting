@@ -702,6 +702,22 @@
     var csvBtn = $('csv-export-btn');
     if (csvBtn) csvBtn.addEventListener('click', exportTableCsv_);
 
+    // Drill-through: clicking an agent row opens the Individual Report
+    // pre-seeded with that agent + the current From/To range and auto-
+    // generates. Delegated on the persistent #agents-tbody element (its
+    // innerHTML is replaced per render, but the element itself stays), so
+    // this listener is wired exactly once.
+    var agentsTbody = $('agents-tbody');
+    if (agentsTbody) agentsTbody.addEventListener('click', function (e) {
+      var tr = e.target.closest('tr[data-agent]');
+      if (!tr) return;
+      var agent = tr.getAttribute('data-agent');   // browser-decoded
+      if (!agent) return;
+      var from = ($('from-date') && $('from-date').value) || '';
+      var to   = ($('to-date')   && $('to-date').value)   || '';
+      if (typeof irDrillToAgent_ === 'function') irDrillToAgent_(agent, from, to);
+    });
+
     // Sortable headers
     document.querySelectorAll('#agents-table thead th[data-sort]').forEach(function (th) {
       th.addEventListener('click', function () { onSort(th.getAttribute('data-sort')); });
@@ -2865,7 +2881,11 @@
       // keep it so any consumer that styles whole-row queue-only
       // emphasis (e.g. user CSS, future hover handling) still works.
       const rowClass = (row.matchedViaQueue && !row.matchedViaRoster) ? 'via-queue' : '';
-      return '<tr' + (rowClass ? ' class="' + rowClass + '"' : '') + '>' + COLUMNS.map(function (col, i) {
+      // data-agent powers the row drill-through to the Individual Report.
+      return '<tr data-agent="' + escapeHtml(row.agent) + '"'
+           + (rowClass ? ' class="' + rowClass + '"' : '')
+           + ' title="Open ' + escapeHtml(row.agent) + '’s Individual Report">'
+           + COLUMNS.map(function (col, i) {
         const isAgent  = (i === 0);
         const isSource = (col.type === 'chip' && col.key === 'source');
         const cls = isAgent ? 'agent-name' : (isSource ? 'src-cell' : 'num');
@@ -3058,8 +3078,37 @@
   let irSortOrder = 'selection';   // selection | name | answered-desc | answered-asc | pct-desc
   let irActiveChartTab = 'vol';    // vol | eff | dur
   let irPendingAgentSelection_ = null;
+  let irPendingAutoRun_ = false;   // drill-through: auto-generate once the picker renders
   let irListChangeHandler_ = null;
   const IR_PREFS_KEY = 'cdr.ir.prefs.v1';
+
+  /**
+   * Drill-through entry: open the Individual Report for ONE agent over a
+   * given date range and auto-generate. Reuses the existing one-shot
+   * pending-selection hook (irPendingAgentSelection_) + a run flag honored
+   * at the end of renderIrAgentList. Called from the My Department table's
+   * row click. No comparison (plain Individual Report); the user can add a
+   * vs-self comparison from the form afterward.
+   */
+  function irDrillToAgent_(agentName, from, to) {
+    if (!agentName) return;
+    if (from && $('ir-from')) $('ir-from').value = from;
+    if (to   && $('ir-to'))   $('ir-to').value   = to;
+    if ($('ir-preset')) $('ir-preset').value = 'custom';
+    if ($('ir-compare-mode')) {
+      $('ir-compare-mode').value = 'none';
+      // Fire change so the prior-range inputs + hint sync to "no comparison".
+      $('ir-compare-mode').dispatchEvent(new Event('change'));
+    }
+    irPendingAgentSelection_ = [agentName];
+    irPendingAutoRun_ = true;
+    // Force a roster re-fetch for this range so renderIrAgentList re-runs
+    // (and applies the pending selection + auto-run) even if the cached
+    // roster matched.
+    irLastRoster = { dept: null, agents: [], activeAgents: null, activeFloaters: null, rangeKey: '' };
+    const btn = $('individual-report-btn');
+    if (btn) btn.click();   // -> openModal -> ensureIrRoster -> renderIrAgentList
+  }
 
   function initIndividualReport() {
     const btn = $('individual-report-btn');
@@ -3440,12 +3489,19 @@
       irSavePrefs_();
     };
     list.addEventListener('change', irListChangeHandler_);
-    // Apply any pending selection from restored prefs once.
+    // Apply any pending selection from restored prefs OR a drill-through
+    // once. (irDrillToAgent_ sets this to a single-agent array.)
     if (irPendingAgentSelection_) {
       irApplyCheckedAgents_(list, irPendingAgentSelection_);
       irPendingAgentSelection_ = null;
     }
     updateIrGenerateEnabled();
+    // Drill-through: auto-generate once the picker (with the pre-selected
+    // agent) has rendered. Cleared so it fires exactly once.
+    if (irPendingAutoRun_) {
+      irPendingAutoRun_ = false;
+      runIrReport();
+    }
   }
 
   function irBuildAgentListHtml_(agents, activeAgents, activeFloaters) {
