@@ -118,6 +118,21 @@ test('outbound call produces NO inbound record', function () {
   assert.equal(recs.length, 0);
 });
 
+test('inline SQL escapers neutralize quotes + coerce ints/hash', function () {
+  // Free-text fields (e.g. final_dept) are single-quote escaped; ints/hash
+  // are validated -- so the inline insert is injection-safe.
+  assert.equal(h.call('icSqlStr_', "Intake - O'Brien (Complex)"), "'Intake - O''Brien (Complex)'");
+  assert.equal(h.call('icSqlStr_', null), 'NULL');
+  assert.equal(h.call('icSqlStr_', ''), 'NULL');
+  assert.equal(h.call('icSqlStr_', "x'); DROP TABLE inbound_calls;--"), "'x''); DROP TABLE inbound_calls;--'");
+  assert.equal(h.call('icSqlInt_', 393), '393');
+  assert.equal(h.call('icSqlInt_', null), 'NULL');
+  assert.equal(h.call('icSqlInt_', 'notnum'), 'NULL');
+  assert.equal(h.call('icSqlHash_', 'a'.repeat(64)), "'" + 'a'.repeat(64) + "'");
+  assert.equal(h.call('icSqlHash_', "x'; --"), 'NULL');   // non-hex -> NULL, never inlined
+  assert.equal(h.call('icSqlHash_', null), 'NULL');
+});
+
 test('anonymous inbound caller -> recorded with null caller number', function () {
   const recs = build([
     leg({ callId: '700001', legId: 1, start: '06/04/2026 09:00:00', stop: '06/04/2026 09:00:30', direction: 'Incoming', caller: 'Anonymous', callee: '103', calleeName: 'A_Q_CSR', dialIn: '18668646332', missed: 'Missed', abandoned: 'Abandoned' }),

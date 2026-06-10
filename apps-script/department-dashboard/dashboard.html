@@ -71,6 +71,9 @@
             <button class="header-menu-item" id="insights-report-btn" type="button"
                     data-route="/report/insights" role="menuitem"
                     title="Combined view: a department rollup PLUS per-agent cards, each comparing the selected range to the immediately-preceding period.">Insights</button>
+            <button class="header-menu-item" id="inbound-report-btn" type="button"
+                    data-route="/report/inbound" role="menuitem" data-admin-only style="display:none;"
+                    title="Inbound call analytics (admin): volume + answered / abandoned / abandoned-on-hold by insurer, advertised dial-in line, and entry queue.">Inbound</button>
           </div>
         </div>
         <button class="header-menu-btn" id="alerts-btn" type="button"
@@ -1140,6 +1143,103 @@
 
         <div class="al-section-title">Per-agent comparison (vs prior period)</div>
         <div id="ins-agent-cards" class="ins-agent-cards"></div>
+      </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="inbound-modal" class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="inbound-modal-title" style="display:none;">
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-panel modal-panel-wide" role="document">
+      <div class="modal-panel-header">
+        <button class="modal-open-tab-btn" type="button" data-open-tab-route="/report/inbound"
+                aria-label="Open in new tab" title="Open this report in a new browser tab (for side-by-side viewing)">&#8599;</button>
+        <button class="modal-close" id="inbound-close" type="button" aria-label="Close">&times;</button>
+        <div class="modal-kicker">Report &middot; Admin</div>
+        <h2 id="inbound-modal-title">Inbound Calls</h2>
+      </div>
+      <div class="modal-panel-body">
+      <div id="inbound-form" class="ir-form">
+        <div class="ir-section-title">Date Range</div>
+        <div class="ir-row">
+          <div class="ir-col">
+            <label for="inbound-preset">Quick select</label>
+            <select id="inbound-preset">
+              <option value="custom">Custom range</option>
+              <option value="last7">Last 7 days</option>
+              <option value="last30" selected>Last 30 days</option>
+              <option value="thisMonth">This month</option>
+              <option value="lastMonth">Last month</option>
+              <option value="last3Months">Last 3 months</option>
+            </select>
+          </div>
+          <div class="ir-col">
+            <label for="inbound-from">Start date</label>
+            <input type="date" id="inbound-from">
+          </div>
+          <div class="ir-col">
+            <label for="inbound-to">End date</label>
+            <input type="date" id="inbound-to">
+          </div>
+        </div>
+        <div class="ir-hint">
+          Per-distinct-inbound-call analytics from <strong>Neon</strong>
+          (<code>inbound_calls</code>). Insurer labels come from the insurance
+          numbers you sync (<code>insurance_numbers</code>); anonymous callers
+          count in the totals but can&rsquo;t be labeled. Admin-only.
+        </div>
+        <div id="inbound-form-error" class="status status-error" style="display:none;"></div>
+        <button class="btn" id="inbound-generate-btn" type="button">Generate report</button>
+      </div>
+
+      <div id="inbound-results" class="ir-results" style="display:none;">
+        <div class="ir-results-header">
+          <div class="ir-results-header-left">
+            <div class="ir-results-title-line">
+              <span class="ir-results-title">Inbound Calls</span>
+              <span class="ir-results-date" id="inbound-results-date"></span>
+            </div>
+          </div>
+          <div class="ir-action-buttons">
+            <button class="btn btn-secondary" id="inbound-back-btn" type="button">&laquo; Back</button>
+          </div>
+        </div>
+
+        <div id="inbound-results-status" class="status" style="display:none;"></div>
+
+        <div id="inbound-unavailable" class="empty-state" style="display:none;">
+          <div class="empty-state-icon" aria-hidden="true">&#128246;</div>
+          <div class="empty-state-title">Inbound data unavailable</div>
+          <div class="empty-state-hint">Couldn&rsquo;t read <code>inbound_calls</code> from Neon. Confirm the import has run since the inbound capture deployed, the dashboard&rsquo;s <code>NEON_*</code> Script Properties are set, and the <code>script.external_request</code> scope is granted.</div>
+        </div>
+
+        <div id="inbound-body">
+          <div id="inbound-kpi-row" class="pr-kpi-row"></div>
+
+          <div class="al-section">
+            <div class="al-section-title">By insurer <span class="ins-rollup-cap">(labeled inbound numbers only)</span></div>
+            <table class="qcd-source-table">
+              <thead><tr><th>Insurer</th><th class="num">Calls</th><th class="num">Answered</th><th class="num">Abandoned</th><th class="num">On-hold abandon</th></tr></thead>
+              <tbody id="inbound-insurer-tbody"></tbody>
+            </table>
+          </div>
+
+          <div class="al-section">
+            <div class="al-section-title">By advertised line (dial-in)</div>
+            <table class="qcd-source-table">
+              <thead><tr><th>Dial-in number</th><th class="num">Calls</th><th class="num">Answered</th><th class="num">Abandoned</th></tr></thead>
+              <tbody id="inbound-dialin-tbody"></tbody>
+            </table>
+          </div>
+
+          <div class="al-section">
+            <div class="al-section-title">By entry queue</div>
+            <table class="qcd-source-table">
+              <thead><tr><th>Entry queue</th><th class="num">Calls</th><th class="num">Answered</th><th class="num">Abandoned</th></tr></thead>
+              <tbody id="inbound-queue-tbody"></tbody>
+            </table>
+          </div>
+        </div>
       </div>
       </div>
     </div>

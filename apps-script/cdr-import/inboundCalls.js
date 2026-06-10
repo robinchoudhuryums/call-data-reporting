@@ -78,6 +78,14 @@ function icIsoDate_(ms) {
   return d.getFullYear() + '-' + mm + '-' + dd;
 }
 
+// SQL literal builders for the INLINE inbound insert (mirrors the phone-child
+// inline approach: eliminates ~14 JDBC bind-bridge calls per row, the
+// dominant per-row Apps Script cost). Free-text fields are single-quote
+// escaped; ints/bools/hash are inherently safe.
+function icSqlStr_(s) { return (s == null || s === '') ? 'NULL' : "'" + String(s).replace(/'/g, "''") + "'"; }
+function icSqlInt_(n) { var v = parseInt(n, 10); return isFinite(v) ? String(v) : 'NULL'; }
+function icSqlHash_(h) { return (typeof h === 'string' && /^[0-9a-f]{64}$/.test(h)) ? "'" + h + "'" : 'NULL'; }
+
 /**
  * PURE. rawRows = array of Raw Data leg rows (each an array indexed per
  * IC_COL). Returns one record per distinct INBOUND call.
@@ -258,38 +266,35 @@ function writeInboundCallsToNeon(rawRows) {
         'final_queue=EXCLUDED.final_queue, final_dept=EXCLUDED.final_dept, ' +
         'num_queues=EXCLUDED.num_queues, num_transfers=EXCLUDED.num_transfers, updated_at=now()';
 
-      // Batched multi-row upsert so the synchronous import isn't slowed by
-      // one round-trip per call. 100 rows/chunk (14 params each, well under
-      // the bind-param cap), single commit after all chunks.
-      var CHUNK = 100;
-      for (var off = 0; off < records.length; off += CHUNK) {
-        var slice = records.slice(off, off + CHUNK);
-        var placeholders = slice.map(function () { return '(?::date,?,?,?,?,?,?,?,?,?,?,?,?,?)'; }).join(',');
-        var stmt = conn.prepareStatement('INSERT INTO inbound_calls (' + cols + ') VALUES ' + placeholders + onConflict);
-        var p = 1;
-        for (var i = 0; i < slice.length; i++) {
-          var r = slice[i];
-          var hash = (secret && r.callerNumber) ? cdrHashPhone_(r.callerNumber, secret) : null;
-          stmt.setString(p++, r.callDate);
-          stmt.setString(p++, r.callId);
-          stmt.setString(p++, hash);
-          stmt.setString(p++, r.dialIn);
-          stmt.setString(p++, r.disposition);
-          stmt.setString(p++, r.abandonStage);
-          stmt.setBoolean(p++, !!r.abandonedOnHold);
-          stmt.setInt(p++, r.holdSeconds || 0);
-          if (r.waitSeconds == null) stmt.setString(p++, null); else stmt.setInt(p++, r.waitSeconds);
-          stmt.setString(p++, r.entryQueue);
-          stmt.setString(p++, r.finalQueue);
-          stmt.setString(p++, r.finalDept);
-          stmt.setInt(p++, r.numQueues || 0);
-          stmt.setInt(p++, r.numTransfers || 0);
-        }
-        stmt.execute();
-        stmt.close();
+      // INLINE multi-row upsert (no bound params) -- removes ~14 JDBC
+      // bind-bridge calls PER ROW (the dominant cost; ~40ms each in Apps
+      // Script). caller_hash is hex, dates/ints/bools are safe, and the
+      // free-text fields are escaped via icSqlStr_, so inlining is
+      // injection-safe. ~150 rows/chunk (~24KB SQL, under the ~44KB limit).
+      var tBuild = Date.now();
+      var tuples = records.map(function (r) {
+        var hash = (secret && r.callerNumber) ? cdrHashPhone_(r.callerNumber, secret) : null;
+        return '(' + icSqlStr_(r.callDate) + '::date,' + icSqlStr_(r.callId) + ',' + icSqlHash_(hash)
+          + ',' + icSqlStr_(r.dialIn) + ',' + icSqlStr_(r.disposition) + ',' + icSqlStr_(r.abandonStage)
+          + ',' + (r.abandonedOnHold ? 'TRUE' : 'FALSE') + ',' + icSqlInt_(r.holdSeconds)
+          + ',' + icSqlInt_(r.waitSeconds) + ',' + icSqlStr_(r.entryQueue) + ',' + icSqlStr_(r.finalQueue)
+          + ',' + icSqlStr_(r.finalDept) + ',' + icSqlInt_(r.numQueues) + ',' + icSqlInt_(r.numTransfers) + ')';
+      });
+      var buildMs = Date.now() - tBuild;
+
+      var tInsert = Date.now();
+      var stmt = conn.createStatement();
+      var CHUNK = 150, chunks = 0;
+      for (var off = 0; off < tuples.length; off += CHUNK) {
+        stmt.execute('INSERT INTO inbound_calls (' + cols + ') VALUES '
+          + tuples.slice(off, off + CHUNK).join(',') + onConflict);
+        chunks++;
       }
+      stmt.close();
       conn.commit();
-      Logger.log('writeInboundCallsToNeon: wrote %s inbound-call records.', records.length);
+      var insertMs = Date.now() - tInsert;
+      Logger.log('writeInboundCallsToNeon: wrote ' + records.length + ' inbound-call records | '
+        + 'build ' + buildMs + 'ms | insert ' + insertMs + 'ms (' + chunks + ' chunks).');
       return { inserted: records.length, skipped: 0 };
     } catch (e) {
       try { conn.rollback(); } catch (re) {}
