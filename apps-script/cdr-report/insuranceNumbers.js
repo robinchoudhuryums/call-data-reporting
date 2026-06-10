@@ -19,11 +19,11 @@
 //
 // TWO directions:
 //   - OUTBOUND ("how often we called Aetna"): call_history_phones (the
-//     ob_ext_list_* phone lists) -> logInsuranceCallCounts_ below.
+//     ob_ext_list_* phone lists) -> logInsuranceCallCounts below.
 //   - INBOUND ("how often Aetna called us"): the per-call inbound_calls table
 //     written by cdr-import/inboundCalls.js (one row per distinct inbound
 //     call, with disposition + abandon-on-hold + dial-in + queue journey) ->
-//     logInboundInsuranceCounts_ below. Both join the SAME insurance_numbers
+//     logInboundInsuranceCounts below. Both join the SAME insurance_numbers
 //     reference table on the deterministic caller hash.
 //
 // Reuses (same cdr-report project): getNeonConn() + getHmacSecret() +
@@ -162,7 +162,7 @@ function syncInsuranceNumbersToNeon() {
  * Filter to insurance_name IS NOT NULL for just the labeled insurers; drop
  * the list_type filter + GROUP BY phone_hash for raw per-number counts.
  */
-function logInsuranceCallCounts_() {
+function logInsuranceCallCounts() {
   var conn = getNeonConn();
   try {
     var stmt = conn.createStatement();
@@ -207,7 +207,7 @@ function logInsuranceCallCounts_() {
  * by `c.dial_in_number` for marketing-line attribution; by `c.entry_queue`
  * for which department insurance hits.
  */
-function logInboundInsuranceCounts_() {
+function logInboundInsuranceCounts() {
   var conn = getNeonConn();
   try {
     var stmt = conn.createStatement();
