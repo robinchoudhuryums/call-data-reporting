@@ -3922,15 +3922,29 @@
    *   prevPeriod  -> immediately-preceding window of the same length
    *   custom      -> pull from the ir-prior-from / ir-prior-to inputs
    */
-  function irResolvePriorRange_(from, to) {
-    const mode = $('ir-compare-mode') ? $('ir-compare-mode').value : 'none';
+  /**
+   * THE shared client-side comparison-window resolver. One math
+   * implementation for every report's "compare against" control (IR
+   * and Insights today) so the mode semantics can't drift between
+   * reports -- mirrors the server's shared computePriorWindow_
+   * (Data.gs) for the prevPeriod case (INV-28).
+   *
+   *   none        -> null
+   *   prevPeriod  -> immediately-preceding window of the same length
+   *   yoy         -> the window shifted back 1 calendar year
+   *   custom      -> the supplied customFrom/customTo ({error} when
+   *                  missing or out of order; controlLabel names the
+   *                  form control in the message)
+   */
+  function resolveComparisonWindow_(mode, from, to, customFrom, customTo, controlLabel) {
     if (!mode || mode === 'none') return null;
     if (mode === 'custom') {
-      const pf = $('ir-prior-from') ? $('ir-prior-from').value : '';
-      const pt = $('ir-prior-to')   ? $('ir-prior-to').value   : '';
-      if (!pf || !pt) return { error: 'Pick prior start and end dates (or switch Compare with to a preset).' };
-      if (pf > pt)    return { error: 'Prior start must be on or before prior end.' };
-      return { from: pf, to: pt };
+      if (!customFrom || !customTo) {
+        return { error: 'Pick prior start and end dates (or switch '
+                      + (controlLabel || 'the compare control') + ' to a preset).' };
+      }
+      if (customFrom > customTo) return { error: 'Prior start must be on or before prior end.' };
+      return { from: customFrom, to: customTo };
     }
     // Parse using noon-local-time to avoid DST edges.
     const parts1 = from.split('-'), parts2 = to.split('-');
@@ -3954,6 +3968,14 @@
       return { from: isoOf(ps), to: isoOf(pe) };
     }
     return null;
+  }
+
+  function irResolvePriorRange_(from, to) {
+    const mode = $('ir-compare-mode') ? $('ir-compare-mode').value : 'none';
+    return resolveComparisonWindow_(mode, from, to,
+      $('ir-prior-from') ? $('ir-prior-from').value : '',
+      $('ir-prior-to')   ? $('ir-prior-to').value   : '',
+      'Compare with');
   }
 
   // Wire the Compare with dropdown: show/hide custom date inputs;
@@ -7226,26 +7248,27 @@
    *   + 5 * pct delta pts   (pp differences are tighter scale)
    *   0 for TTT / ATT       (direction-ambiguous)
    */
-  function crImprovementScore_(a) {
-    const d = (a && a.deltas) || {};
+  // ── Generic delta-map classifiers ────────────────────────────────
+  // Shared by Compare Ranges (a.deltas) and Insights (a.metrics) --
+  // both shapes are { rung, missed, answered, pct, ... } maps of
+  // deltaBlocks carrying `deltaPct` (relative % for volume metrics,
+  // pp for pct). One implementation so the two reports' improvement
+  // scoring / classification / quiet thresholds can't drift.
+
+  function deltaImprovementScore_(d) {
+    d = d || {};
     const v = function (k) { return Number((d[k] && d[k].deltaPct) || 0); };
     return v('rung') - v('missed') + v('answered') + 5 * v('pct');
   }
 
-  function crTeamImprovementScore_(teamStats) {
-    if (!teamStats) return 0;
-    const v = function (s) { return Number((s && s.deltaPct) || 0); };
-    return v(teamStats.rung) - v(teamStats.missed) + v(teamStats.answered) + 5 * v(teamStats.pct);
-  }
-
   /**
-   * Classify an agent's overall direction (left-border color).
+   * Classify a delta map's overall direction (left-border color).
    * Adds up signed-by-valence votes across the 4 valenced
    * metrics. Threshold of >=2 / <=-2 prevents 1-metric noise
    * from tipping the classification.
    */
-  function crClassifyAgent_(a) {
-    const d = (a && a.deltas) || {};
+  function deltaClassify_(d) {
+    d = d || {};
     const sign = function (v) { return v > 0.05 ? 1 : v < -0.05 ? -1 : 0; };
     let score = 0;
     score += sign(Number((d.rung     && d.rung.deltaPct)     || 0));      // up = good
@@ -7258,17 +7281,33 @@
   }
 
   /**
-   * Quiet agent test: every meaningful metric moved by less than
-   * a small noise threshold. Cuts visual noise so users can
-   * focus on agents that actually shifted.
+   * Quiet test: every meaningful metric moved by less than a small
+   * noise threshold. Cuts visual noise so users can focus on agents
+   * that actually shifted.
    */
-  function crIsQuietAgent_(a) {
-    const d = (a && a.deltas) || {};
+  function deltaIsQuiet_(d) {
+    d = d || {};
     const absV = function (k) { return Math.abs(Number((d[k] && d[k].deltaPct) || 0)); };
     return absV('rung')     < 10
         && absV('missed')   < 10
         && absV('answered') < 10
         && absV('pct')      < 3;   // pp difference
+  }
+
+  function crImprovementScore_(a) {
+    return deltaImprovementScore_((a && a.deltas) || {});
+  }
+
+  function crTeamImprovementScore_(teamStats) {
+    return deltaImprovementScore_(teamStats || {});
+  }
+
+  function crClassifyAgent_(a) {
+    return deltaClassify_((a && a.deltas) || {});
+  }
+
+  function crIsQuietAgent_(a) {
+    return deltaIsQuiet_((a && a.deltas) || {});
   }
 
   /**
@@ -8865,6 +8904,7 @@
   let insLastData = null;
   let insChartInstance = null;
   let insActiveTrendMetric = 'answered';
+  let insCardSort = 'default';      // default (answered desc) | name | improvers | regressors
   // v2: prefs gain compareMode / priorFrom / priorTo / trendMetric
   // (older v1 blobs are silently dropped per the prefs-versioning
   // convention).
@@ -8928,6 +8968,17 @@
     if (backBtn) backBtn.addEventListener('click', insShowForm);
 
     insInitCompareMode_();
+
+    // Card-sort control (CR pattern). Re-renders the card grid in
+    // place; quiet agents stay in their collapsible regardless.
+    const cardSortSel = $('ins-card-sort');
+    if (cardSortSel) cardSortSel.addEventListener('change', function () {
+      insCardSort = cardSortSel.value;
+      insSavePrefs_();
+      if (insLastData) {
+        insRenderAgentCards_(insLastData.agentData || [], insLastData.meta, insLastData.teamStats);
+      }
+    });
 
     // Trend-metric sub-tabs (same pattern as the PR trend chart).
     const subTabs = $('ins-trend-subtabs');
@@ -9020,7 +9071,24 @@
       const prior = insResolvePriorRange_(from, to);
       if (!prior) { hint.textContent = ''; return; }   // prevPeriod: server hint suffices
       if (prior.error) { hint.textContent = prior.error; return; }
-      hint.textContent = 'Comparing against ' + prior.from + ' to ' + prior.to + '.';
+      // INV-35-style form-side warning when a custom window's length
+      // differs >= 1.2x from the current range (CR's S18 pattern).
+      let lengthNote = '';
+      const dayCount = function (a, b) {
+        const pa = a.split('-'), pb = b.split('-');
+        const da = new Date(Number(pa[0]), Number(pa[1]) - 1, Number(pa[2]), 12);
+        const db = new Date(Number(pb[0]), Number(pb[1]) - 1, Number(pb[2]), 12);
+        return Math.floor((db - da) / 86400000) + 1;
+      };
+      const curDays = dayCount(from, to);
+      const priDays = dayCount(prior.from, prior.to);
+      if (curDays > 0 && priDays > 0
+          && Math.max(curDays, priDays) / Math.min(curDays, priDays) >= 1.2) {
+        const ratio = (Math.max(curDays, priDays) / Math.min(curDays, priDays)).toFixed(1);
+        lengthNote = ' (the ' + (priDays > curDays ? 'prior window' : 'selected range')
+                   + ' is ' + ratio + 'x longer — volume totals won\'t be directly comparable)';
+      }
+      hint.textContent = 'Comparing against ' + prior.from + ' to ' + prior.to + '.' + lengthNote;
     };
     sel.addEventListener('change', function () { refresh(); insSavePrefs_(); });
     ['ins-from', 'ins-to', 'ins-prior-from', 'ins-prior-to'].forEach(function (id) {
@@ -9215,8 +9283,26 @@
       prKpiTile_('Avg ATT',      t.att,      'neu', sparks.att,      (THEME.muted  || '#9C755F')),
     ].join('');
 
+    insRenderLengthWarning_(data.meta);
     insRenderTrendChart_(data);
-    insRenderAgentCards_(data.agentData || []);
+    insRenderAgentCards_(data.agentData || [], data.meta, data.teamStats);
+  }
+
+  /**
+   * Different-length warning banner (INV-35 semantics, CR pattern).
+   * Only reachable with a custom prior window -- the auto-adjacent
+   * and YoY windows are always the same length as the current range.
+   */
+  function insRenderLengthWarning_(meta) {
+    const el = $('ins-length-warning');
+    if (!el) return;
+    if (!meta || !meta.lengthMismatch) { el.style.display = 'none'; el.innerHTML = ''; return; }
+    el.innerHTML = '<strong>Different window lengths:</strong> '
+                 + 'the selected range is ' + (meta.currentDays || 0) + ' days, the comparison window is '
+                 + (meta.priorDays || 0) + ' days. '
+                 + 'Volume totals (Rung / Missed / Answered / TTT) aren\'t directly comparable; '
+                 + 'compare the per-day figures shown on the agent cards instead.';
+    el.style.display = '';
   }
 
   /**
@@ -9320,33 +9406,127 @@
          + Math.abs(dp).toFixed(1) + suffix + '</span>';
   }
 
-  function insRenderAgentCards_(cards) {
+  /**
+   * Per-agent cards, enriched with the analytics ported from Compare
+   * Ranges: improved/regressed/mixed classification (left-border
+   * color via the shared deltaClassify_), a "vs Team" badge comparing
+   * the agent's improvement score to the team's, sort control
+   * (default answered-desc / name / biggest improvers / regressors),
+   * and a collapsible quiet-agents section (deltaIsQuiet_) so the
+   * visible grid is the notable movers. Per-day sublines render on
+   * volume/time metrics when meta.lengthMismatch (custom prior of a
+   * different length).
+   */
+  function insRenderAgentCards_(cards, meta, teamStats) {
     const wrap = $('ins-agent-cards'); if (!wrap) return;
+    const toolbar = $('ins-cards-toolbar');
+    const det = $('ins-quiet-details');
     if (!cards.length) {
       wrap.innerHTML = emptyStateHtml_('&#128100;', 'No agents to compare',
         'No selected agent had activity (or matched this department) in the range.');
+      if (toolbar) toolbar.style.display = 'none';
+      if (det) { det.style.display = 'none'; $('ins-quiet-cards').innerHTML = ''; }
       return;
     }
+    if (toolbar) toolbar.style.display = cards.length > 1 ? '' : 'none';
+
+    const teamScore = deltaImprovementScore_(teamStats || {});
+    const enriched = cards.map(function (c) {
+      return {
+        card: c,
+        score: deltaImprovementScore_(c.metrics),
+        direction: deltaClassify_(c.metrics),
+        quiet: deltaIsQuiet_(c.metrics),
+      };
+    });
+    const main  = enriched.filter(function (x) { return !x.quiet; });
+    const quiet = enriched.filter(function (x) { return  x.quiet; });
+
+    let sortedMain = main;
+    if (main.length > 1 && insCardSort !== 'default') {
+      sortedMain = main.slice();
+      if (insCardSort === 'name') {
+        sortedMain.sort(function (a, b) {
+          const an = (a.card.name || '').toLowerCase();
+          const bn = (b.card.name || '').toLowerCase();
+          return an < bn ? -1 : an > bn ? 1 : 0;
+        });
+      } else if (insCardSort === 'improvers') {
+        sortedMain.sort(function (a, b) { return b.score - a.score; });
+      } else if (insCardSort === 'regressors') {
+        sortedMain.sort(function (a, b) { return a.score - b.score; });
+      }
+    }
+
+    const renderCard = function (x) { return insBuildCard_(x, teamScore, meta); };
+    wrap.innerHTML = sortedMain.map(renderCard).join('');
+
+    if (det) {
+      if (quiet.length > 0) {
+        det.style.display = '';
+        det.querySelector('.cr-quiet-summary').textContent =
+          'Show ' + quiet.length + ' quiet agent' + (quiet.length === 1 ? '' : 's')
+          + ' (no notable changes)';
+        $('ins-quiet-cards').innerHTML = quiet.map(renderCard).join('');
+      } else {
+        det.style.display = 'none';
+        $('ins-quiet-cards').innerHTML = '';
+      }
+    }
+  }
+
+  function insBuildCard_(x, teamScore, meta) {
+    const c = x.card;
+    const isFloater = c.matchedViaQueue && !c.matchedViaRoster;
+    const chip = isFloater ? sourceChipHtml_(c) : '';
+    // Floaters keep their warn-tinted border (the QUEUE signal wins
+    // over the classification tint); everyone else gets the
+    // improved/regressed/mixed left border (CR pattern).
+    const dirClass = isFloater ? ''
+                   : x.direction === 'improved'  ? ' ins-card-improved'
+                   : x.direction === 'regressed' ? ' ins-card-regressed'
+                   : ' ins-card-mixed';
+    const vsTeam = crVsTeamBadge_(x.score, teamScore);
+    const debugAttrs =
+      ' data-direction="' + x.direction + '"'
+      + ' data-score="' + (x.score == null ? '' : x.score.toFixed(1)) + '"';
     const metricDefs = [
-      ['Rung', 'rung', 'pos'], ['Missed', 'missed', 'neg'], ['Answered', 'answered', 'pos'],
-      ['% Ans', 'pct', 'pos'], ['TTT', 'ttt', 'neu'], ['ATT', 'att', 'neu'],
+      ['Rung', 'rung', 'pos', 'volume'], ['Missed', 'missed', 'neg', 'volume'],
+      ['Answered', 'answered', 'pos', 'volume'], ['% Ans', 'pct', 'pos', 'rate'],
+      ['TTT', 'ttt', 'neu', 'time'], ['ATT', 'att', 'neu', 'rate'],
     ];
-    wrap.innerHTML = cards.map(function (c) {
-      const isFloater = c.matchedViaQueue && !c.matchedViaRoster;
-      const chip = isFloater ? sourceChipHtml_(c) : '';
-      const metrics = metricDefs.map(function (m) {
-        const st = (c.metrics && c.metrics[m[1]]) || { formatted: '-' };
-        return '<div class="ins-metric">'
-             +   '<div class="ins-metric-label">' + m[0] + '</div>'
-             +   '<div class="ins-metric-val">' + escapeHtml(String(st.formatted)) + '</div>'
-             +   '<div class="ins-metric-delta">' + insDeltaBadge_(st, m[2]) + '</div>'
-             + '</div>';
-      }).join('');
-      return '<div class="ins-card' + (isFloater ? ' ins-card-floater' : '') + '">'
-           +   '<div class="ins-card-head"><span class="ins-card-name">' + escapeHtml(c.name) + '</span>' + chip + '</div>'
-           +   '<div class="ins-card-grid">' + metrics + '</div>'
+    const metrics = metricDefs.map(function (m) {
+      const st = (c.metrics && c.metrics[m[1]]) || { formatted: '-' };
+      return '<div class="ins-metric">'
+           +   '<div class="ins-metric-label">' + m[0] + '</div>'
+           +   '<div class="ins-metric-val">' + escapeHtml(String(st.formatted)) + '</div>'
+           +   '<div class="ins-metric-delta">' + insDeltaBadge_(st, m[2]) + '</div>'
+           +   insMetricPerDay_(st, m[3], meta)
            + '</div>';
     }).join('');
+    return '<div class="ins-card' + (isFloater ? ' ins-card-floater' : '') + dirClass + '"' + debugAttrs + '>'
+         +   '<div class="ins-card-head"><span class="ins-card-name">' + escapeHtml(c.name) + '</span>' + chip + vsTeam + '</div>'
+         +   '<div class="ins-card-grid">' + metrics + '</div>'
+         + '</div>';
+  }
+
+  /**
+   * Per-day subline on volume/time metrics when the comparison
+   * windows differ in length (meta.lengthMismatch): "cur/day vs
+   * prior/day". Rates (% Ans, ATT) are already length-independent.
+   */
+  function insMetricPerDay_(st, kind, meta) {
+    if (!meta || !meta.lengthMismatch) return '';
+    if (kind !== 'volume' && kind !== 'time') return '';
+    if (st == null || st.val == null || st.prev == null) return '';
+    if (!(meta.currentDays > 0) || !(meta.priorDays > 0)) return '';
+    const fmt = (kind === 'time')
+      ? function (v) { return crFormatSecondsShort_(v); }
+      : function (v) { return v.toFixed(1); };
+    return '<div class="ins-metric-perday">'
+         +   fmt(st.val / meta.currentDays) + '/day'
+         +   ' <span class="pr-delta-cap">vs ' + fmt(st.prev / meta.priorDays) + '</span>'
+         + '</div>';
   }
 
   function insSetResultsStatus_(kind, msg) {
@@ -9399,6 +9579,16 @@
           if (subTabs) subTabs.style.display = 'none';
           const status = clonedDoc.getElementById('ins-results-status');
           if (status) status.style.display = 'none';
+          const toolbar = clonedDoc.getElementById('ins-cards-toolbar');
+          if (toolbar) toolbar.style.display = 'none';
+          // Force the quiet-agents section open so the capture is the
+          // complete comparison (mirrors the CR print/export behavior).
+          const quiet = clonedDoc.getElementById('ins-quiet-details');
+          if (quiet && quiet.style.display !== 'none') {
+            quiet.setAttribute('open', '');
+            const summary = quiet.querySelector('.cr-quiet-summary');
+            if (summary) summary.style.display = 'none';
+          }
           Object.keys(canvasMap).forEach(function (id) {
             const cvs = clonedDoc.getElementById(id);
             if (!cvs) return;
@@ -9477,6 +9667,7 @@
         priorFrom:   $('ins-prior-from')   ? $('ins-prior-from').value   : '',
         priorTo:     $('ins-prior-to')     ? $('ins-prior-to').value     : '',
         trendMetric: insActiveTrendMetric,
+        cardSort:    insCardSort,
         agents: irGetCheckedAgents_($('ins-agent-list')),
       }));
     } catch (e) { /* ignore */ }
@@ -9494,6 +9685,10 @@
       }
       if (prefs.priorFrom && $('ins-prior-from')) $('ins-prior-from').value = prefs.priorFrom;
       if (prefs.priorTo   && $('ins-prior-to'))   $('ins-prior-to').value   = prefs.priorTo;
+      if (prefs.cardSort) {
+        insCardSort = prefs.cardSort;
+        if ($('ins-card-sort')) $('ins-card-sort').value = insCardSort;
+      }
       if (prefs.trendMetric) {
         insActiveTrendMetric = prefs.trendMetric;
         const subTabs = $('ins-trend-subtabs');

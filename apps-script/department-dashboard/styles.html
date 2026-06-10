@@ -2503,8 +2503,22 @@
     border-radius: var(--r);
     background: var(--paper-card);
     padding: 12px 14px;
+    border-left: 3px solid var(--line);
   }
+  /* Classification tints (CR pattern). Floater's warn border wins --
+     the JS only applies a classification class to non-floaters. */
+  .ins-card-improved  { border-left-color: var(--accent); }
+  .ins-card-regressed { border-left-color: var(--warn); }
+  .ins-card-mixed     { border-left-color: var(--muted); }
   .ins-card-floater { border-left: 3px solid var(--warn); }
+  .ins-metric-perday {
+    font-family: var(--mono);
+    font-size: 9px;
+    color: var(--muted);
+    margin-top: 2px;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0;
+  }
   .ins-card-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
   .ins-card-name { font-family: var(--display); font-weight: 600; font-size: 14px; color: var(--ink); }
   .ins-card-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 10px; }
@@ -3025,9 +3039,17 @@
     body.ins-printing #insights-modal .modal-close,
     body.ins-printing #insights-results .ir-action-buttons,
     body.ins-printing #ins-trend-subtabs,
+    body.ins-printing #ins-cards-toolbar,
     body.ins-printing #ins-results-status {
       display: none !important;
     }
+    /* Open the quiet-agents section for print so the full
+       comparison is on the page (CR pattern). */
+    body.ins-printing #ins-quiet-details > .cr-quiet-summary {
+      display: none !important;
+    }
+    body.ins-printing #ins-quiet-details { border-top: 0 !important; padding-top: 0 !important; }
+    body.ins-printing #ins-quiet-details > #ins-quiet-cards { display: grid !important; }
     body.ins-printing .ir-chart-wrap,
     body.ins-printing .pr-kpi-tile,
     body.ins-printing .ins-card { page-break-inside: avoid; }

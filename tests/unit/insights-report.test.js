@@ -152,6 +152,20 @@ test('Insights: explicit priorFrom/priorTo overrides the auto-adjacent window', 
   assert.equal(data.teamStats.rung.prev, 7);
   const anna = agent(data, 'Anna');
   assert.equal(anna.metrics.answered.prev, 5);
+  // Same-length windows (7d vs 7d) -> no INV-35 mismatch.
+  assert.equal(data.meta.currentDays, 7);
+  assert.equal(data.meta.priorDays, 7);
+  assert.equal(data.meta.lengthMismatch, false);
+
+  // A custom prior of a different length (>= 1.2x) flips the INV-35 flag.
+  h.state.cache.clear();
+  const mismatched = h.call('getInsightsReport', {
+    department: 'Alpha', from: '2026-03-09', to: '2026-03-15', agents: ['Anna'],
+    priorFrom: '2025-03-01', priorTo: '2025-03-28',   // 28 days vs 7
+  });
+  assert.equal(mismatched.meta.currentDays, 7);
+  assert.equal(mismatched.meta.priorDays, 28);
+  assert.equal(mismatched.meta.lengthMismatch, true);
 
   // Half-supplied prior windows are rejected.
   h.state.cache.clear();

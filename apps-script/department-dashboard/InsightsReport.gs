@@ -54,7 +54,11 @@
 // monthly team rollup powering tile sparklines + the trend chart;
 // same shape as the Performance Report's). Cache key gains a priorKey
 // segment so the prior window is part of the cache identity.
-const INSIGHTS_CACHE_KEY_PREFIX = 'insights:v2';
+// v3: meta gains currentDays / priorDays / lengthMismatch (INV-35
+// semantics ported from Compare Ranges -- drives the client's
+// different-length warning banner + per-day sublines when a custom
+// prior window's length differs >= 1.2x from the current range).
+const INSIGHTS_CACHE_KEY_PREFIX = 'insights:v3';
 
 function getInsightsReportInit(req) {
   // Same picker UX (roster + default dates + active-in-range subset) as
@@ -170,9 +174,12 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
 
   // --- Prior window (the ONLY mode-specific block) -------------------
   // Default: same-length window ending one day before the current start
-  // (INV-28). When the request supplies an explicit priorFrom/priorTo
-  // (YoY / custom, resolved client-side), it overrides the default --
-  // everything below is mode-agnostic.
+  // (INV-28), via the SHARED computePriorWindow_ (Data.gs) -- the same
+  // implementation computeSummary_'s E5 chips and the Performance
+  // Report use, so the three surfaces can't drift. When the request
+  // supplies an explicit priorFrom/priorTo (YoY / custom, resolved
+  // client-side), it overrides the default -- everything below is
+  // mode-agnostic.
   let priorStartDate, priorEndDate, priorFrom, priorTo, priorIsCustom;
   if (customPriorFrom && customPriorTo) {
     priorStartDate = parseIso_(customPriorFrom);
@@ -181,13 +188,23 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
     priorTo        = customPriorTo;
     priorIsCustom  = true;
   } else {
-    const durationDays = Math.floor((endDate - startDate) / msPerDay);
-    priorEndDate   = new Date(startDate.getTime() - msPerDay);
-    priorStartDate = new Date(priorEndDate.getTime() - durationDays * msPerDay);
-    priorFrom      = isoOf(priorStartDate);
-    priorTo        = isoOf(priorEndDate);
+    const priorWindow = computePriorWindow_(from, to);
+    priorFrom      = priorWindow.from;
+    priorTo        = priorWindow.to;
+    priorStartDate = parseIso_(priorFrom);
+    priorEndDate   = parseIso_(priorTo);
     priorIsCustom  = false;
   }
+
+  // --- Window-length metadata (INV-35 semantics, ported from Compare
+  //     Ranges). With the auto-adjacent prior the lengths are always
+  //     equal; a custom prior can differ, and when the longer window is
+  //     >= 1.2x the shorter, volume totals aren't directly comparable
+  //     -- the client renders a warning banner + per-day sublines.
+  const currentDays = Math.floor((endDate - startDate) / msPerDay) + 1;
+  const priorDays   = Math.floor((priorEndDate - priorStartDate) / msPerDay) + 1;
+  const lengthMismatch = (Math.min(currentDays, priorDays) > 0)
+    && (Math.max(currentDays, priorDays) / Math.min(currentDays, priorDays) >= 1.2);
 
   // --- Trend window (INV-29; mirrors the Performance Report) ---------
   // 12-month monthly buckets ending on `to`, unless the range itself is
@@ -437,6 +454,8 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
       from: from, to: to,
       priorFrom: priorFrom, priorTo: priorTo,
       comparisonMode: priorIsCustom ? 'custom' : 'prior',
+      currentDays: currentDays, priorDays: priorDays,
+      lengthMismatch: lengthMismatch,
       trendStart: trendFrom, trendEnd: trendTo,
       agents: selectedAgents,
       rosterSize: roster.names.length,
@@ -486,6 +505,8 @@ function emptyInsights_(dept, from, to, priorFrom, priorTo, selectedAgents,
       department: dept, from: from, to: to,
       priorFrom: priorFrom, priorTo: priorTo,
       comparisonMode: priorIsCustom ? 'custom' : 'prior',
+      currentDays: 0, priorDays: 0,
+      lengthMismatch: false,
       trendStart: from, trendEnd: to,
       agents: selectedAgents,
       rosterSize: roster.names.length,

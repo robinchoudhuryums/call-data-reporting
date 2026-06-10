@@ -1165,6 +1165,7 @@
         </div>
 
         <div id="ins-results-status" class="status" style="display:none;"></div>
+        <div id="ins-length-warning" class="cr-length-warning" style="display:none;"></div>
         <div id="ins-team-insights"></div>
 
         <div class="al-section-title">Department rollup <span class="ins-rollup-cap" id="ins-rollup-cap"></span></div>
@@ -1181,7 +1182,23 @@
         </div>
 
         <div class="al-section-title">Per-agent comparison (vs prior period)</div>
+        <div class="ir-cards-toolbar" id="ins-cards-toolbar">
+          <label class="ir-sort-control">
+            <span class="ir-sort-label">Sort agents:</span>
+            <select id="ins-card-sort">
+              <option value="default">Most answered (default)</option>
+              <option value="name">Name (A-Z)</option>
+              <option value="improvers">Biggest improvers</option>
+              <option value="regressors">Biggest regressors</option>
+            </select>
+          </label>
+        </div>
         <div id="ins-agent-cards" class="ins-agent-cards"></div>
+
+        <details id="ins-quiet-details" class="cr-quiet-details" style="display:none;">
+          <summary class="cr-quiet-summary"></summary>
+          <div id="ins-quiet-cards" class="ins-agent-cards"></div>
+        </details>
       </div>
       </div>
     </div>
