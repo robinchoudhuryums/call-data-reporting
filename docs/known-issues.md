@@ -74,8 +74,9 @@ for everyone.
 
 **Symptom:** ~100+ employees have parenthesized nicknames in their
 roster name (e.g. `Roman (Robin) Paulose`). The upstream CDR feed
-occasionally writes the same person's leg without the parens
-(`Roman Robin Paulose`). Pre-fix, the two variants produced split
+occasionally writes the same person's leg without the parenthetical
+(`Roman Paulose`) or with a different one (`Roman (Bob) Paulose`).
+Pre-fix, the variants produced split
 daily rows for the same agent in `DQE Historical Data` and one of
 them silently dropped out of the dashboard's roster join (INV-04
 requires exact match).

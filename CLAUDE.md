@@ -263,9 +263,41 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `logPipelineHealth_` in `cdr-import/buildDQEHistoricalData.js`
   silently returns when `ss` is null. The rename avoids the prior
   shadowing conflict so each function's behavior is preserved.
+- **Inbound-call capture is Neon-only and rides the daily import.**
+  `cdr-import/inboundCalls.js::writeInboundCallsToNeon` runs at the end
+  of `processIntegratedHistory`, building ONE record per distinct
+  inbound call from Raw Data (caller HMAC hash via `cdrHashPhone_` --
+  null for Anonymous; dial-in line; disposition + abandon stage;
+  abandoned-on-hold + hold/wait seconds; queue journey) and upserting
+  to Neon `inbound_calls` (`ON CONFLICT (call_date, call_id) DO
+  UPDATE` -- re-imports refresh). There is NO sheet primary for this
+  data: the "Inbound Calls" tab (`cdr-report/inboundCallsExport.js::
+  exportInboundCalls`, refresh-in-window semantics) is a fallback COPY
+  of Neon, not a source. History: editor-run `backfillInboundCalls`
+  (cdr-import) fills from surviving `Call_Legs_*` sheets only -- days
+  pruned by DeleteOldSheets are unrecoverable. Insurer labels come
+  from `insurance_numbers`, synced by the editor-run
+  `syncInsuranceNumbersToNeon` (`cdr-report/insuranceNumbers.js`) from
+  the insurance block in `DO NOT EDIT!` cols X-AG -- re-run it after
+  editing that block, or new numbers stay "(unlabeled)" in the
+  admin-only Inbound report (`InboundReport.gs`, route
+  `#/report/inbound`), which reads Neon directly (one json_build_object
+  round-trip) and renders an "unavailable" state -- intentionally NOT
+  cached -- when Neon is unreachable.
+- **The Insights report is the consolidation candidate for PR (and
+  eventually CR).** `InsightsReport.gs` = PR's team rollup + CR-style
+  per-agent delta cards + the 12-mo trend, with comparison modes
+  (auto-adjacent INV-28 / YoY / custom) resolved client-side to
+  explicit priorFrom/priorTo. A unit parity test
+  (insights-report.test.js) pins Insights' teamStats / prior window /
+  trendData identical to PR's on the same inputs -- if it breaks, the
+  two have diverged and PR can't be retired. Per-agent classification
+  / improvement score / quiet thresholds are the SHARED
+  `deltaClassify_` / `deltaImprovementScore_` / `deltaIsQuiet_`
+  helpers in script.html (CR delegates to the same ones).
 - **Per-report client prefs in localStorage.** Each report persists its
-  own form state under `cdr.ir.prefs.v1`, `cdr.pr.prefs.v1`, and
-  `cdr.cr.prefs.v1`. Bump the trailing version when the prefs schema
+  own form state under `cdr.ir.prefs.v1`, `cdr.pr.prefs.v1`,
+  `cdr.cr.prefs.v1`, and `cdr.ins.prefs.v2`. Bump the trailing version when the prefs schema
   changes; older saved blobs are silently dropped if JSON parsing
   fails. The chrome layer also writes `dash-mode` (light/dark toggle)
   and `dash-theme.v1` (warm / cool / clinical paper theme) — the
@@ -1039,16 +1071,16 @@ Data Accuracy (DQE), Access Control Integrity, Source Pipeline Reliability, Migr
 
 ### Subsystems
 Department Dashboard:
-  apps-script/department-dashboard/Auth.gs, apps-script/department-dashboard/Code.gs, apps-script/department-dashboard/Config.gs, apps-script/department-dashboard/Data.gs, apps-script/department-dashboard/Diagnostics.gs, apps-script/department-dashboard/Setup.gs, apps-script/department-dashboard/Util.gs, apps-script/department-dashboard/NeonRead.gs, apps-script/department-dashboard/NeonKeepWarm.gs, apps-script/department-dashboard/CacheWarm.gs, apps-script/department-dashboard/MissedCallsReport.gs, apps-script/department-dashboard/IndividualReport.gs, apps-script/department-dashboard/PerformanceReport.gs, apps-script/department-dashboard/CompareRangesReport.gs, apps-script/department-dashboard/Alerts.gs, apps-script/department-dashboard/CompanyOverview.gs, apps-script/department-dashboard/Digest.gs, apps-script/department-dashboard/OrphanFix.gs, apps-script/department-dashboard/QCDReport.gs, apps-script/department-dashboard/DeptConfig.gs, apps-script/department-dashboard/access_denied.html, apps-script/department-dashboard/dashboard.html, apps-script/department-dashboard/script.html, apps-script/department-dashboard/styles.html, apps-script/department-dashboard/appsscript.json
+  apps-script/department-dashboard/Auth.gs, apps-script/department-dashboard/Code.gs, apps-script/department-dashboard/Config.gs, apps-script/department-dashboard/Data.gs, apps-script/department-dashboard/Diagnostics.gs, apps-script/department-dashboard/Setup.gs, apps-script/department-dashboard/Util.gs, apps-script/department-dashboard/NeonRead.gs, apps-script/department-dashboard/NeonKeepWarm.gs, apps-script/department-dashboard/CacheWarm.gs, apps-script/department-dashboard/MissedCallsReport.gs, apps-script/department-dashboard/IndividualReport.gs, apps-script/department-dashboard/PerformanceReport.gs, apps-script/department-dashboard/CompareRangesReport.gs, apps-script/department-dashboard/InsightsReport.gs, apps-script/department-dashboard/InboundReport.gs, apps-script/department-dashboard/Alerts.gs, apps-script/department-dashboard/CompanyOverview.gs, apps-script/department-dashboard/Digest.gs, apps-script/department-dashboard/OrphanFix.gs, apps-script/department-dashboard/QCDReport.gs, apps-script/department-dashboard/DeptConfig.gs, apps-script/department-dashboard/access_denied.html, apps-script/department-dashboard/dashboard.html, apps-script/department-dashboard/script.html, apps-script/department-dashboard/styles.html, apps-script/department-dashboard/appsscript.json
 
 CDR DQE Pipeline:
   apps-script/cdr-report/buildDQEHistoricalData.js, apps-script/cdr-report/DQEdrilldown.js, apps-script/cdr-report/DQEDrilldownSidebar.html, apps-script/cdr-report/dataFilters.js, apps-script/cdr-report/CDR Tools menu.js, apps-script/cdr-report/appsscript.json
 
 CDR Reporting Tools:
-  apps-script/cdr-report/dashboardCDR.js, apps-script/cdr-report/dbHistorical.js, apps-script/cdr-report/dbReporting.js, apps-script/cdr-report/emailDailyReport.js, apps-script/cdr-report/neonbackfill.js, apps-script/cdr-report/neonWrite.js
+  apps-script/cdr-report/dashboardCDR.js, apps-script/cdr-report/dbHistorical.js, apps-script/cdr-report/dbReporting.js, apps-script/cdr-report/emailDailyReport.js, apps-script/cdr-report/neonbackfill.js, apps-script/cdr-report/neonWrite.js, apps-script/cdr-report/inboundCallsExport.js, apps-script/cdr-report/insuranceNumbers.js
 
 CDR Import:
-  apps-script/cdr-import/AbandonedFilter.js, apps-script/cdr-import/CDR Tools.js, apps-script/cdr-import/DeleteOldSheets.js, apps-script/cdr-import/autoImport.js, apps-script/cdr-import/buildDQEHistoricalData.js, apps-script/cdr-import/importBulkCSVsFromDrive.js, apps-script/cdr-import/neonWrite.js, apps-script/cdr-import/appsscript.json
+  apps-script/cdr-import/AbandonedFilter.js, apps-script/cdr-import/CDR Tools.js, apps-script/cdr-import/DeleteOldSheets.js, apps-script/cdr-import/autoImport.js, apps-script/cdr-import/buildDQEHistoricalData.js, apps-script/cdr-import/importBulkCSVsFromDrive.js, apps-script/cdr-import/inboundCalls.js, apps-script/cdr-import/neonWrite.js, apps-script/cdr-import/appsscript.json
 
 DQE Report Legacy:
   apps-script/dqe-report/DQEdashboard.js, apps-script/dqe-report/FAQGuide.html, apps-script/dqe-report/IndividualReport.js, apps-script/dqe-report/IndividualReportModal.html, apps-script/dqe-report/MissedCallsReport.js, apps-script/dqe-report/MissedReportModal.html, apps-script/dqe-report/MultiCompModal.html, apps-script/dqe-report/MultiComparisonTool.js, apps-script/dqe-report/SingleRangeReport.js, apps-script/dqe-report/SingleReportModal.html, apps-script/dqe-report/menu DQE Tools.js, apps-script/dqe-report/sendManualAlert.js, apps-script/dqe-report/showFAQ.js, apps-script/dqe-report/appsscript.json
@@ -1376,6 +1408,27 @@ S36 | Dept Config modal: auto-discovery, validation, override round-trip | Subsy
     - Re-open the QCD report for that dept -> the newly-mapped queue's rows now appear (after the qcd:v6 cache TTLs out). Re-open Overview -> a sub-queue mapping change is reflected immediately (the COMPANY_OVERVIEW_CACHE_KEY is busted on save).
     - Click Edit on the same dept, click "Deactivate override". Confirm prompt; the row's Active flips to FALSE; on reload the dept reverts to the "default" Source (constant behavior). The Deactivate button is hidden for depts with no existing sheet row.
   Expected: all five negative tests reject with the documented messages and write nothing; the positive save + deactivate round-trips through the `Dept Config` sheet; effective table + discovery reflect changes on reload; no redeploy required for any edit; cross-dept/non-admin access is refused at the server boundary. The four accessors (getDeptQcdQueues_ / getOverviewParentMap_ / getTeamAvgExcludes_ / getDeptQueueExtsOverride_) layer the sheet over the constants with "non-empty overrides, empty falls back" semantics (INV-54).
+
+S37 | Insights report end-to-end (comparison modes + CR-ported analytics) | Subsystem: Department Dashboard
+  Steps:
+    - Open the dashboard as a manager; click the "Insights" tab (visible to all; per-dept gated server-side like IR/PR/CR).
+    - Default compare mode is "Immediately-preceding period". Pick a range with activity + 2+ agents; Generate. Confirm: 6 KPI tiles with delta badges AND 12-month sparklines; the metric-tabbed 12-Month Team Trend chart; per-agent cards each carrying 6 metrics with their OWN delta badges; floaters get the QUEUE chip + warn border and are excluded from the rollup caption's roster-only totals (INV-53).
+    - Cards carry a left-border classification tint (improved=accent / regressed=warn / mixed=muted) + a "vs Team" badge; the Sort control re-orders (Most answered default / Name / Biggest improvers / Biggest regressors); agents with no notable movement collapse into "Show N quiet agents".
+    - Switch Compare against to "Same window one year prior" -> hint previews the resolved YoY window; Generate -> "Comparing against the selected prior window" line + per-agent prevs from the YoY window.
+    - Switch to "Custom prior range" with a window >= 1.2x longer -> form hint warns about the length difference; after Generate, the results show the different-window-lengths banner and per-day sublines on volume/time metrics (INV-35 contract).
+    - Export -> Email image arrives via sendInsightsReportEmail with the chart + all cards (quiet section forced open); Print does the same.
+    - Console negative test: getInsightsReport for another dept throws "Not authorized for this department."
+  Expected: all of the above; teamStats matches a Performance Report run with identical inputs to the digit (the unit parity test in insights-report.test.js pins this -- if S37 and S14 ever disagree, the parity test should already be red).
+
+S38 | Inbound capture -> Inbound report -> insurer labeling end-to-end | Subsystem: Department Dashboard + CDR Import + CDR Reporting Tools
+  Steps:
+    - PREREQ: HMAC_SECRET + NEON_* props set in cdr-import (capture) and cdr-report (sync/export); NEON_* + script.external_request on the dashboard (report).
+    - Run a daily import; the execution log shows `writeInboundCallsToNeon: wrote N inbound-call records`. In Neon, `SELECT count(*) FROM inbound_calls WHERE call_date = '<date>'` matches.
+    - Populate an insurer column in DO NOT EDIT! cols X-AG (header = insurer name, rows = +1XXXXXXXXXX numbers); run `syncInsuranceNumbersToNeon` (cdr-report editor); log reports the distinct-number count.
+    - As ADMIN, open the "Inbound" tab (hidden for managers; deep link #/report/inbound no-ops for non-admins). Pick a range; confirm KPI tiles (total / answered / abandoned / on-hold / anonymous / avg wait+hold) and the By-insurer / By-dial-in / By-entry-queue tables; the labeled insurer appears in By insurer.
+    - Kill Neon reachability (or unset NEON_HOST on a dev copy): the modal renders the "unavailable" state; restore and re-run within the same 30 min -> data returns immediately (unavailable payloads are not cached).
+    - For history: run `backfillInboundCalls` (cdr-import editor) and re-run until "complete"; run `exportInboundCalls` (cdr-report editor) and confirm the "Inbound Calls" tab matches Neon for the window (re-running refreshes rather than duplicates).
+  Expected: capture is idempotent (force re-import refreshes rows, no dupes); anonymous callers carry null hashes and only count in the headline KPIs; no raw phone number appears anywhere in Neon or the export tab (hashes only); manager console call to getInboundReport throws the admin-only error.
 
 ### Frozen Subsystems
 - DQE Report Legacy — manager-facing reports in `apps-script/dqe-report/`. Frozen because migration to Department Dashboard is complete: Individual Report, Performance Report, Compare Ranges, Missed Calls Report, and Low Answer Rate Alerts all live in the dashboard. Replacement: Department Dashboard. Awaiting decommission of the legacy spreadsheet. Unfreeze only if a bug is found in legacy that affects production decisions before the spreadsheet is retired.

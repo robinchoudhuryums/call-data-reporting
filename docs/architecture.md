@@ -65,7 +65,7 @@ External CDR system (telephony provider)
 │ - Per-dept tabs with │         │ - Reads DQE Historical  │
 │   formulas filtering │         │   Data + DO NOT EDIT!   │
 │   DQE Historical     │         │ - Caches in CacheService│
-│   Data per dept      │         │   for 5 min             │
+│   Data per dept      │         │   for 5–30 min          │
 └──────────────────────┘         └────────────┬────────────┘
                                               │
                                               ▼
@@ -77,9 +77,9 @@ External CDR system (telephony provider)
 
 | Layer | Apps Script project | Files (representative) | This repo path |
 |---|---|---|---|
-| CSV ingest | CDR Import | `autoImport.js`, `importBulkCSVsFromDrive.js` (pending Drive auth), `AbandonedFilter.js`, `CDR Tools.js`, `DeleteOldSheets.js`, `neonWrite.js`, `appsscript.json` | `apps-script/cdr-import/` |
-| Per-agent aggregation + downstream tooling | CDR Report | `buildDQEHistoricalData.js`, `DQEdrilldown.js`, `DQEDrilldownSidebar.html`, `dashboardCDR.js`, `dataFilters.js` (extraction sidebar), `dbHistorical.js`, `dbReporting.js`, `emailDailyReport.js`, `neonWrite.js`, `neonbackfill.js`, `CDR Tools menu.js`, `appsscript.json` | `apps-script/cdr-report/` |
-| Manager dashboard | Department Dashboard (standalone) | `Code.gs`, `Auth.gs`, `Data.gs`, `Config.gs`, `Setup.gs`, `Diagnostics.gs`, `MissedCallsReport.gs`, `IndividualReport.gs`, `PerformanceReport.gs`, `CompareRangesReport.gs`, `CompanyOverview.gs`, `QCDReport.gs`, `Alerts.gs`, `Digest.gs`, `OrphanFix.gs`, `dashboard.html`, `styles.html`, `script.html`, `access_denied.html`, `appsscript.json` | `apps-script/department-dashboard/` |
+| CSV ingest | CDR Import | `autoImport.js`, `importBulkCSVsFromDrive.js` (pending Drive auth), `AbandonedFilter.js`, `CDR Tools.js`, `DeleteOldSheets.js`, `neonWrite.js`, `inboundCalls.js` (per-call inbound capture -> Neon `inbound_calls` + `backfillInboundCalls`), `appsscript.json` | `apps-script/cdr-import/` |
+| Per-agent aggregation + downstream tooling | CDR Report | `buildDQEHistoricalData.js`, `DQEdrilldown.js`, `DQEDrilldownSidebar.html`, `dashboardCDR.js`, `dataFilters.js` (extraction sidebar), `dbHistorical.js`, `dbReporting.js`, `emailDailyReport.js`, `neonWrite.js`, `neonbackfill.js`, `inboundCallsExport.js` (Neon `inbound_calls` -> "Inbound Calls" fallback tab), `insuranceNumbers.js` (insurer-number hashing -> Neon `insurance_numbers`), `CDR Tools menu.js`, `appsscript.json` | `apps-script/cdr-report/` |
+| Manager dashboard | Department Dashboard (standalone) | `Code.gs`, `Auth.gs`, `Data.gs`, `Config.gs`, `Setup.gs`, `Util.gs`, `Diagnostics.gs`, `MissedCallsReport.gs`, `IndividualReport.gs`, `PerformanceReport.gs`, `CompareRangesReport.gs`, `InsightsReport.gs`, `InboundReport.gs`, `CompanyOverview.gs`, `QCDReport.gs`, `Alerts.gs`, `Digest.gs`, `OrphanFix.gs`, `DeptConfig.gs`, `NeonRead.gs`, `NeonKeepWarm.gs`, `CacheWarm.gs`, `dashboard.html`, `styles.html`, `script.html`, `access_denied.html`, `appsscript.json` | `apps-script/department-dashboard/` |
 | Postgres mirror | shared lib used by both CDR Import and CDR Report | `neonWrite.js` (duplicated across both projects, currently identical) | see [known-issues.md](known-issues.md) |
 | Per-agent DQE build (duplicated) | both CDR Import and CDR Report | `buildDQEHistoricalData.js` (duplicated across both projects, currently identical -- INV-16). cdr-import invokes inline inside `processIntegratedHistory`; cdr-report keeps a daily trigger copy as a safety net. | `apps-script/cdr-import/` + `apps-script/cdr-report/` |
 | Legacy reports (being migrated into the dashboard) | DQE Report (spreadsheet) | `DQEdashboard.js`, `syncHistoricalData.js`, 4 report pairs (`SingleRangeReport`, `IndividualReport`, `MissedCallsReport`, `MultiComparisonTool` + their `.html` modals), `sendManualAlert.js`, `checkLowAnswerRate.js`, `showFAQ.js` + `FAQGuide.html`, `setDateRange.js`, `autoDropdown.js`, `menu DQE Tools.js`, `appsscript.json` | `apps-script/dqe-report/` |
@@ -276,9 +276,37 @@ Neon Postgres is the long-term archive and the future query backend.
   (`HMAC_SECRET` Script Property) for PHI protection; JSONB name-list
   fields parse the complex caller-name columns. Same best-effort
   pattern: Neon failure doesn't block the sheet write.
-- The dashboard does NOT read from Neon yet — it reads the sheet. Moving
-  to Neon as the read path is a future phase (Phase 3 in the original
-  product spec).
+- The dashboard's DQE reads are sheet-first with a **flag-gated Neon
+  read-back** (`NeonRead.gs`, the F1 phase): when the `DQE_READ_SOURCE`
+  Script Property is `neon`, the cut-over readers (`getLatestDataDate`,
+  `getCompanyOverview`, `computeSummary_`, the IR / PR / CR / Insights
+  builders) read `dqe_history` and fall back to the sheet on any
+  null/empty/error. Default (unset) is byte-identical to sheet-only.
+  Gate the flip on `runDqeParityCheck` (see README). The admin-only
+  **Inbound report** (`InboundReport.gs`) is the one Neon-ONLY reader —
+  it has no sheet equivalent and renders an "unavailable" state when
+  Neon is unreachable.
+- **Per-call inbound capture** (`cdr-import/inboundCalls.js`):
+  `processIntegratedHistory` builds one record per distinct inbound
+  call from Raw Data (caller HMAC hash, dial-in line, disposition +
+  abandon stage, abandoned-on-hold + hold/wait seconds, queue journey)
+  and upserts them to Neon's `inbound_calls` (PK `(call_date,
+  call_id)`, `ON CONFLICT DO UPDATE`). Historical gaps are filled by
+  the editor-run `backfillInboundCalls` (same file; iterates surviving
+  `Call_Legs_*` sheets, skips already-mirrored dates, time-budgeted).
+  `cdr-report/inboundCallsExport.js::exportInboundCalls` mirrors
+  `inbound_calls` into the "Inbound Calls" tab as a durable,
+  pivot-friendly fallback copy (refresh-in-window semantics).
+- **Insurer labeling** (`cdr-report/insuranceNumbers.js`): the
+  insurance block in `DO NOT EDIT!` (cols X–AG: header = insurer name,
+  rows = that insurer's published numbers) is hashed with the same
+  `HMAC_SECRET` the import uses and synced to Neon's
+  `insurance_numbers` `{phone_hash -> insurance_name}` reference table
+  via the editor-run `syncInsuranceNumbersToNeon` (full replace per
+  run). Joining it against `call_history_phones` (outbound) or
+  `inbound_calls.caller_hash` (inbound) yields labeled per-insurer
+  call counts with zero raw customer PHI stored anywhere. Re-run the
+  sync after editing the insurance block.
 - `apps-script/cdr-report/neonBackfill.gs` is for one-off historical
   backfills from the sheet into Neon: `backfillDQEHistory()` /
   `backfillQCDHistory()` (idempotent `DO NOTHING`), plus

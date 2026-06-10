@@ -249,6 +249,33 @@ scripts/deploy.sh apps-script/cdr-import <cdr-import-deployment-id>
   My Department page shows a "Yesterday's QCD" tile row below
   the agent table.
 
+**Optional (Inbound report + insurer labeling):**
+
+- The daily import captures ONE record per distinct inbound call
+  (disposition, abandon stage, abandoned-on-hold, wait/hold seconds,
+  dial-in line, queue journey) into Neon's `inbound_calls` table
+  (`cdr-import/inboundCalls.js`; phone numbers HMAC-hashed, Anonymous
+  callers carry a null hash). Requires `HMAC_SECRET` + `NEON_*` Script
+  Properties in the **CDR Import** project; skipped cleanly when
+  unset.
+- The admin-only **Inbound** tab (`#/report/inbound`) reads that table
+  directly from the dashboard project (needs the dashboard's `NEON_*`
+  props + `script.external_request` scope, same as the F1 read-back).
+  It renders an "unavailable" state when Neon is unreachable — there
+  is no sheet fallback for this report.
+- **Insurer labels:** maintain the insurance block in `DO NOT EDIT!`
+  cols X–AG (header row = insurer name, rows below = that insurer's
+  published numbers incl. country code), then run
+  `syncInsuranceNumbersToNeon` from the **CDR Report** editor. Re-run
+  it after every edit to the block — unsynced numbers show as
+  "(unlabeled)" in the report. Only the HMAC hash + label reach Neon.
+- **History:** run `backfillInboundCalls` from the **CDR Import**
+  editor (repeat until the log says "complete") to fill
+  `inbound_calls` from the per-day `Call_Legs_*` sheets that still
+  exist. Optionally run `exportInboundCalls` from the **CDR Report**
+  editor (schedulable) to keep the "Inbound Calls" tab as a durable,
+  pivot-friendly copy of the Neon table.
+
 **Optional (alerts):**
 
 - Populate the `Alert Config` sheet with one row per dept that should
@@ -335,6 +362,8 @@ the deployed web-app URL to land on that view:
 - `#/report/performance` — Performance Report
 - `#/report/compare` — Compare Ranges
 - `#/report/qcd` — QCD Report
+- `#/report/insights` — Insights (period comparison: team rollup + per-agent delta cards)
+- `#/report/inbound` — Inbound Report (admin-only; Neon-backed)
 - `#/admin/alerts` — Low Answer Rate Alerts (admin-only)
 - `#/admin/orphan-fix` — Outlier Fix (admin-only)
 - `#/admin/dept-config` — Dept Config (admin-only)
