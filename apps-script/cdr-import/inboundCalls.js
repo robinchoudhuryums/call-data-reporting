@@ -307,3 +307,148 @@ function writeInboundCallsToNeon(rawRows) {
     return { inserted: 0, skipped: 0, error: true };
   }
 }
+
+// ---- Historical backfill (editor-run) ----------------------------------------
+
+// Per-invocation wall-clock budget before pausing. Dates already mirrored
+// are skipped on the next run (date-level skip is safe: each date's write
+// is one transaction -- single commit in writeInboundCallsToNeon -- so a
+// timeout can't leave a half-written date behind). 15 min mirrors the
+// bulk-rebuild budget, leaving margin under the 30-min execution ceiling.
+var IC_BACKFILL_TIME_LIMIT_MS = 15 * 60 * 1000;
+
+/**
+ * EDITOR-RUN. Backfills Neon's `inbound_calls` from the per-day
+ * `Call_Legs_YYYY-MM-DD` sheets still present in THIS (source)
+ * spreadsheet. The daily integrated path only captures inbound calls
+ * going forward; this fills in history for dates imported before the
+ * inbound capture shipped (or after an outage).
+ *
+ * Behavior:
+ *   - No args: processes EVERY Call_Legs_* sheet, oldest first.
+ *   - Optional fromIso / toIso ('YYYY-MM-DD') bound the date range.
+ *   - Dates already present in `inbound_calls` are SKIPPED (one
+ *     json_agg'd SELECT DISTINCT up front -- per-row JDBC iteration is
+ *     ~0.5s/row, so the result is fetched as a single string). Pass
+ *     force=true to re-process them (idempotent via ON CONFLICT
+ *     DO UPDATE, so a force re-run refreshes rather than duplicates).
+ *   - Time-budgeted (IC_BACKFILL_TIME_LIMIT_MS): on hitting the budget
+ *     it logs progress and returns; just run it again -- completed
+ *     dates are skipped, so each run resumes where the last stopped.
+ *   - Stops early if Neon reports unreachable for a date (no point
+ *     hammering a suspended instance; re-run later).
+ *   - Best-effort Pipeline Health summary row (step 'inboundBackfill')
+ *     per run via logPipelineHealthWithFallback_ (autoImport.js, same
+ *     project), so the run is visible in the dashboard's Alerts modal.
+ *
+ * Coverage note: this can only backfill dates whose Call_Legs_* sheet
+ * still exists -- days pruned by DeleteOldSheets are gone from the
+ * sheet side and cannot be reconstructed.
+ */
+function backfillInboundCalls(fromIso, toIso, force) {
+  var startMs = Date.now();
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+
+  // Enumerate Call_Legs_* sheets in range, oldest first.
+  var candidates = [];
+  ss.getSheets().forEach(function (s) {
+    var m = s.getName().match(/^Call_Legs_(\d{4}-\d{2}-\d{2})$/i);
+    if (!m) return;
+    var iso = m[1];
+    if (fromIso && iso < fromIso) return;
+    if (toIso && iso > toIso) return;
+    candidates.push({ iso: iso, sheet: s });
+  });
+  candidates.sort(function (a, b) { return a.iso < b.iso ? -1 : 1; });
+  if (!candidates.length) {
+    Logger.log('backfillInboundCalls: no Call_Legs_* sheets found'
+      + (fromIso || toIso ? ' in range ' + (fromIso || '...') + '..' + (toIso || '...') : '') + '.');
+    return;
+  }
+
+  // Dates already mirrored (skipped unless force). Missing table /
+  // unreachable Neon -> empty set; the per-date writer creates the
+  // table and handles unreachability itself.
+  var doneDates = force ? {} : icFetchMirroredDates_();
+
+  var processed = 0, skippedDone = 0, skippedEmpty = 0, totalRecords = 0;
+  var failures = [];
+  var stoppedEarly = null;
+
+  for (var i = 0; i < candidates.length; i++) {
+    if (Date.now() - startMs > IC_BACKFILL_TIME_LIMIT_MS) {
+      stoppedEarly = 'time budget reached at ' + candidates[i].iso
+        + ' (' + (candidates.length - i) + ' sheets left) — run again to continue';
+      break;
+    }
+    var c = candidates[i];
+    if (doneDates[c.iso]) { skippedDone++; continue; }
+
+    try {
+      var legs = c.sheet.getDataRange().getDisplayValues();
+      legs.shift();   // header row
+      if (!legs.length) { skippedEmpty++; continue; }
+      var res = writeInboundCallsToNeon(legs);
+      if (res && res.error) {
+        failures.push(c.iso);
+      } else if (res && res.skipped && !res.inserted) {
+        // Neon unreachable for this date -- abort the run; re-run later.
+        stoppedEarly = 'Neon unreachable at ' + c.iso + ' — re-run once Neon is up';
+        break;
+      } else {
+        processed++;
+        totalRecords += (res && res.inserted) || 0;
+      }
+    } catch (e) {
+      failures.push(c.iso + ' (' + ((e && e.message) ? e.message : e) + ')');
+    }
+  }
+
+  var summary = 'backfillInboundCalls: ' + processed + ' date(s) written ('
+    + totalRecords + ' records), ' + skippedDone + ' already mirrored, '
+    + skippedEmpty + ' empty'
+    + (failures.length ? ', FAILED: ' + failures.join(', ') : '')
+    + (stoppedEarly ? ' | STOPPED: ' + stoppedEarly : ' | complete')
+    + ' | ' + Math.round((Date.now() - startMs) / 1000) + 's';
+  Logger.log(summary);
+
+  // Best-effort run telemetry (Pipeline Health lives in the target SS).
+  try {
+    if (typeof logPipelineHealthWithFallback_ === 'function') {
+      logPipelineHealthWithFallback_(null, {
+        step:       'inboundBackfill',
+        status:     failures.length ? 'failure' : 'success',
+        rows:       totalRecords,
+        durationMs: Date.now() - startMs,
+        notes:      summary.slice('backfillInboundCalls: '.length, 500),
+      });
+    }
+  } catch (logErr) { /* best-effort */ }
+}
+
+/**
+ * Distinct call_date values already in `inbound_calls`, as { iso: true }.
+ * One json_agg'd query + one getString (per-row JDBC is ~0.5s/row).
+ * Best-effort: missing table / unreachable Neon / any error -> {} so the
+ * backfill simply attempts every date (idempotent either way).
+ */
+function icFetchMirroredDates_() {
+  var out = {};
+  var conn = null;
+  try {
+    conn = getReachableNeonConn_();
+    if (!conn) return out;
+    var stmt = conn.createStatement();
+    var rs = stmt.executeQuery(
+      "SELECT COALESCE(json_agg(DISTINCT call_date::text), '[]')::text AS j FROM inbound_calls");
+    var json = rs.next() ? rs.getString('j') : '[]';
+    rs.close(); stmt.close();
+    JSON.parse(json || '[]').forEach(function (d) { out[String(d)] = true; });
+  } catch (e) {
+    Logger.log('icFetchMirroredDates_: ' + (e && e.message ? e.message : e)
+      + ' — treating no dates as mirrored.');
+  } finally {
+    if (conn) { try { conn.close(); } catch (ce) {} }
+  }
+  return out;
+}

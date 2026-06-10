@@ -251,8 +251,10 @@ same time as the code change.
 | `PerformanceReport.gs` | `performance:vN:` | `v4` |
 | `CompareRangesReport.gs` | `compareRanges:vN:` | `v4` |
 | `MissedCallsReport.gs` | `missed:vN:` | `v10` |
-| `CompanyOverview.gs` | `companyOverview:vN` | `v13` |
-| `QCDReport.gs` | `qcd:vN:` | `v5` |
+| `CompanyOverview.gs` | `companyOverview:vN` | `v14` |
+| `QCDReport.gs` | `qcd:vN:` | `v6` |
+| `InboundReport.gs` | `inbound:vN:` | `v1` |
+| `InsightsReport.gs` | `insights:vN:` | `v1` |
 
 `Alerts.gs` holds no cached compute. Preview/send always re-reads the
 DQE Historical Data for the chosen date.
@@ -454,7 +456,7 @@ Performance / Compare Ranges:
   Returns `meta` (with `queues` + `unmapped` flags), `dateLabel`,
   `totals` (sum across the dept's queues), `queueBreakdown`
   (one row per queue), `trendData` (12-month buckets matching the
-  IR/PR trend-window logic). Cache prefix `qcd:v5`.
+  IR/PR trend-window logic). Cache prefix `qcd:v6`.
 - `sendQcdReportEmail({ imageBase64, dateLabel })` — image
   export like the IR/PR/CR send-email paths.
 
@@ -560,7 +562,8 @@ best-effort -- a missing or empty sheet leaves the build's
 behavior byte-identical to pre-OrphanFix.
 
 **Cache invalidation.** `applyOrphanRename` removes the single
-fixed-key `companyOverview:v13` cache entry on success. Per-(dept,
+fixed-key Overview cache entry (via the `COMPANY_OVERVIEW_CACHE_KEY`
+constant -- currently `companyOverview:v14`) on success. Per-(dept,
 range) caches (`summary:v8`, `individual:v8`, `performance:v4`,
 etc.) are left to TTL out within 5 minutes. The Orphan Fix modal
 warns the user "may take up to 5 minutes to appear in dashboard."

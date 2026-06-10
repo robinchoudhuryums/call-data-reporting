@@ -46,8 +46,15 @@ function getInboundReport(req) {
   const data = computeInboundReport_(from, to);
   data.meta.computeMs = Date.now() - t0;
   data.meta.cacheHit = false;
-  try { cache.put(cacheKey, JSON.stringify(data), REPORT_CACHE_TTL_SECONDS); }
-  catch (e) { Logger.log('InboundReport cache put failed: %s', e); }
+  // Only cache USABLE payloads. An unavailable result (Neon unreachable /
+  // table missing / query error) must NOT be pinned for the 30-min report
+  // TTL -- a transient Neon blip would otherwise render the modal
+  // "unavailable" for every admin until the entry expires. Skipping the
+  // put means the next request simply retries Neon.
+  if (data.meta.available) {
+    try { cache.put(cacheKey, JSON.stringify(data), REPORT_CACHE_TTL_SECONDS); }
+    catch (e) { Logger.log('InboundReport cache put failed: %s', e); }
+  }
   return data;
 }
 

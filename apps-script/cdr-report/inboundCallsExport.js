@@ -7,10 +7,17 @@
 // navigable/malleable store that survives a Neon outage.
 //
 // exportInboundCalls(fromIso?, toIso?) -- EDITOR-RUN (also schedulable):
-//   - With no args: APPENDS the days AFTER the last date already in the
-//     "Inbound Calls" tab, through today (first run seeds the last 30 days).
-//     Run it daily (or on a trigger) and it accumulates without duplicates.
-//   - With an explicit range: appends exactly that [from, to] window.
+//   - With no args: REFRESHES from the last date already in the
+//     "Inbound Calls" tab through today (first run seeds the last 30 days).
+//     Starting AT the last exported date (not the day after) + the
+//     delete-then-append below means rows that landed in Neon AFTER the
+//     previous export run (late import, re-import) are picked up instead
+//     of being skipped forever.
+//   - With an explicit range: refreshes exactly that [from, to] window.
+//   Both paths DELETE the sheet's existing rows inside the window before
+//   appending the fresh Neon rows, so re-runs are idempotent (no
+//   duplicates) and corrections that were DO-UPDATE'd into Neon (e.g. a
+//   force re-import) propagate into this fallback copy.
 //
 // Joins insurance_numbers so each call carries its insurer label (blank when
 // unlabeled / anonymous). Fetches via json_agg (one rs.getString) so it stays
@@ -33,10 +40,36 @@ function ic_isoDaysAgo_(n) {
   return Utilities.formatDate(new Date(Date.now() - n * 86400000),
                               Session.getScriptTimeZone(), 'yyyy-MM-dd');
 }
-function ic_isoNextDay_(iso) {
-  var p = String(iso).split('-');
-  var d = new Date(+p[0], +p[1] - 1, +p[2] + 1);
-  return Utilities.formatDate(d, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+/**
+ * Removes existing data rows whose Call Date (col A) falls inside
+ * [startIso, endIso] so the caller can re-append fresh Neon rows for the
+ * window without duplicating. Crash-safe: kept rows + blank padding are
+ * written back in ONE setValues over the original data height (same
+ * pattern as autoImport's deleteHistoricalRowsForDate), so a mid-write
+ * failure can't leave the sheet half-cleared. Returns the removed count.
+ */
+function ic_removeRowsInRange_(sheet, startIso, endIso) {
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return 0;
+  var width = INBOUND_EXPORT_HEADERS.length;
+  var range = sheet.getRange(2, 1, lastRow - 1, width);
+  var values = range.getValues();
+  var kept = [];
+  var removed = 0;
+  for (var i = 0; i < values.length; i++) {
+    var d = String(values[i][0] || '').trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(d) && d >= startIso && d <= endIso) {
+      removed++;
+    } else {
+      kept.push(values[i]);
+    }
+  }
+  if (removed === 0) return 0;
+  var blankRow = new Array(width).fill('');
+  var newValues = kept.slice();
+  while (newValues.length < values.length) newValues.push(blankRow.slice());
+  range.setValues(newValues);
+  return removed;
 }
 
 function exportInboundCalls(fromIso, toIso) {
@@ -51,7 +84,11 @@ function exportInboundCalls(fromIso, toIso) {
   var lastRow = sheet.getLastRow();
   var hasData = lastRow >= 2;
 
-  // Resolve the window.
+  // Resolve the window. The incremental (no-arg) path starts AT the last
+  // exported date -- not the day after -- so that day is re-fetched and
+  // refreshed: rows that landed in Neon after the previous export run
+  // (a later import, or a force re-import that DO-UPDATE'd the date)
+  // would otherwise be skipped forever.
   var endIso = toIso || ic_isoToday_();
   var startIso;
   if (fromIso) {
@@ -61,12 +98,12 @@ function exportInboundCalls(fromIso, toIso) {
                         .map(function (r) { return String(r[0]); })
                         .filter(function (s) { return /^\d{4}-\d{2}-\d{2}$/.test(s); });
     var maxIso = existing.sort().pop();
-    startIso = maxIso ? ic_isoNextDay_(maxIso) : ic_isoDaysAgo_(INBOUND_EXPORT_SEED_DAYS);
+    startIso = maxIso || ic_isoDaysAgo_(INBOUND_EXPORT_SEED_DAYS);
   } else {
     startIso = ic_isoDaysAgo_(INBOUND_EXPORT_SEED_DAYS);
   }
   if (startIso > endIso) {
-    Logger.log('exportInboundCalls: already current (start %s > end %s) — nothing to append.', startIso, endIso);
+    Logger.log('exportInboundCalls: nothing to refresh (start %s > end %s).', startIso, endIso);
     return;
   }
 
@@ -93,17 +130,32 @@ function exportInboundCalls(fromIso, toIso) {
 
     var rows = JSON.parse(json || '[]');
     if (!rows.length) {
-      Logger.log('exportInboundCalls: no inbound_calls rows for %s..%s.', startIso, endIso);
+      // Don't touch existing sheet rows when Neon returns nothing for the
+      // window -- an unexpectedly empty Neon result must not blank the
+      // fallback copy.
+      Logger.log('exportInboundCalls: no inbound_calls rows for %s..%s — sheet left untouched.', startIso, endIso);
       return;
     }
+    // Refresh-in-window: drop any existing sheet rows inside [start, end]
+    // so the append below can't duplicate them, then append the fresh
+    // Neon rows. Only done AFTER a non-empty fetch (above guard).
+    var replaced = ic_removeRowsInRange_(sheet, startIso, endIso);
     // Normalize booleans/nulls for the sheet.
     var values = rows.map(function (r) {
       r[7] = r[7] === true ? 'TRUE' : (r[7] === false ? 'FALSE' : '');
       return r.map(function (v) { return v == null ? '' : v; });
     });
     sheet.getRange(sheet.getLastRow() + 1, 1, values.length, INBOUND_EXPORT_HEADERS.length).setValues(values);
-    Logger.log('exportInboundCalls: appended %s rows for %s..%s (sheet now %s rows).',
-               values.length, startIso, endIso, sheet.getLastRow() - 1);
+    // Keep the tab chronological -- an explicit mid-history range would
+    // otherwise leave its refreshed rows appended at the bottom. Same
+    // post-write sort pattern the historical sheets use.
+    var finalLastRow = sheet.getLastRow();
+    if (finalLastRow > 2) {
+      sheet.getRange(2, 1, finalLastRow - 1, INBOUND_EXPORT_HEADERS.length)
+           .sort({ column: 1, ascending: true });
+    }
+    Logger.log('exportInboundCalls: wrote %s rows for %s..%s (%s replaced; sheet now %s rows).',
+               values.length, startIso, endIso, replaced, finalLastRow - 1);
   } finally {
     try { conn.close(); } catch (ce) {}
   }

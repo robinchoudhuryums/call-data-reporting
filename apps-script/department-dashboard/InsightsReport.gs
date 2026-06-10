@@ -41,8 +41,8 @@
  * (dept, from, to, sortedAgents) tuple under INSIGHTS_CACHE_KEY_PREFIX.
  */
 
-// Bump when the aggregation rules or response shape change. Add to the
-// CLAUDE.md INV-30 canonical list when this ships.
+// Bump when the aggregation rules or response shape change. Listed in
+// the CLAUDE.md INV-30 canonical cache-prefix registry.
 const INSIGHTS_CACHE_KEY_PREFIX = 'insights:v1';
 
 function getInsightsReportInit(req) {

@@ -67,8 +67,8 @@ const ALERT_LOG_HEADERS      = Object.freeze([
 // Pipeline Health: append-only telemetry of daily-pipeline steps.
 // Step is free-form; current writers emit 'autoImport', 'buildDQE',
 // 'processIntegratedHistory:CDR' / ':QPath' / ':QCD' / ':CSR' / ':DQE',
-// and 'bulkBackfill:DQE' (see INV-44). New steps don't require a
-// schema bump. Status is 'success' or
+// 'bulkBackfill:DQE', and 'inboundBackfill' (see INV-44). New steps
+// don't require a schema bump. Status is 'success' or
 // 'failure'. Rows is the count of rows the step touched (e.g. CSV
 // rows imported, DQE rows written); empty when not meaningful.
 // Duration is in milliseconds; Notes is free-form (typically an
