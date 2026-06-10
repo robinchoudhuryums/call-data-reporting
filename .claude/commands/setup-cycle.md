@@ -118,6 +118,17 @@ Also recommend:
 - Policy threshold: [score ≤ N triggers policy response]
 - Consecutive cycles before trigger: [typically 2]
 
+Also propose the project's HORIZONTAL (Axis B) bug-shape categories —
+cross-cutting failure patterns that no single subsystem owns, scored in
+Health Synthesis alongside the vertical dimensions. The default set fits
+most server/SaaS projects: Silent Degradation Posture, Startup Ordering
+Guarantees, Operator-Only State Gaps, Parallel Source-of-Truth Drift,
+Test Coverage Quality. Keep these unless the domain calls for different
+shapes (e.g. a data pipeline might add "Numerical / Precision Drift," a
+mobile app "Offline / Sync Integrity," a library "Public API
+Compatibility"). Aim for 4–6 categories, each with a name + one-sentence
+"what it measures."
+
 ═══════════════════════════════════════════
 PHASE 5 — INVARIANT EXTRACTION
 ═══════════════════════════════════════════
@@ -160,18 +171,26 @@ OUTPUT 1 — CYCLE WORKFLOW CONFIG (paste into the project's CLAUDE.md):
 ### Health Dimensions
 [dim1], [dim2], [dim3], ...
 
+### Horizontal (Axis B) Categories   ← optional; defaults to the standard 5 if omitted
+[Category name] | [what it measures]
+(repeat for each, 4–6 total)
+
 ### Subsystems
 [Subsystem Name]:
   [comma-separated file list]
 (repeat for each subsystem)
 
 ### Invariant Library
-INV-XX | [rule text] | Subsystem: [name]
-(repeat for each invariant)
+INV-XX | [rule text] | Subsystem: [name] | Verify: [test name or code ref — optional]
+(repeat for each invariant; carry the Phase 5 "How to verify" detail into
+ the optional Verify field when it names a concrete test or assertion)
 
 ### Policy Configuration
 Policy threshold: [N]/10
 Consecutive cycles: [N]
+
+### Seams Audit Cadence   ← optional; default: every 4 subsystem cycles
+every [N] subsystem cycles
 
 ### Regression Scenarios   ← required iff Test Command is `manual`; otherwise optional
 S1 | [short scenario name] | Subsystem: [name]

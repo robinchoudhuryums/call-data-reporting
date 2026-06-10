@@ -75,6 +75,10 @@ CROSS-MODULE RISKS:
 - [what could break outside this scope and where to verify]
 (or "None identified")
 
+OPERATOR ACTIONS SURFACED (manual / out-of-PR steps — env vars, IaC, console/dashboard, migrations):
+- [action] | BLOCKS DEPLOY: Y/N
+(or "None")
+
 DO NOT TOUCH:
 - [high-risk files/functions — explain why]
 ---END TIER 2 HANDOFF BLOCK---
