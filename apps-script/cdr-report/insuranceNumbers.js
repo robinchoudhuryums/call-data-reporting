@@ -17,13 +17,14 @@
 // insurer (header row = insurer name, rows below = that insurer's known
 // numbers in +1XXXXXXXXXX form). Adjust the column range below if it moves.
 //
-// SCOPE / ACCURACY CAVEAT: call_history_phones holds the OUTBOUND-external
-// lists (ob_ext_list_total / _answered / _missed = phonesX/Y/Z). So labeling
-// works for OUTBOUND calls to these numbers (e.g. "how often we called
-// Aetna"). Inbound external numbers are stored as caller-ID display text in
-// the call_history_dept JSONB fields, not as hashes in the child table, so
-// they are NOT labeled here. Surfacing inbound-by-number would be a separate
-// pipeline change (hash inbound external numbers into a child table too).
+// TWO directions:
+//   - OUTBOUND ("how often we called Aetna"): call_history_phones (the
+//     ob_ext_list_* phone lists) -> logInsuranceCallCounts_ below.
+//   - INBOUND ("how often Aetna called us"): the per-call inbound_calls table
+//     written by cdr-import/inboundCalls.js (one row per distinct inbound
+//     call, with disposition + abandon-on-hold + dial-in + queue journey) ->
+//     logInboundInsuranceCounts_ below. Both join the SAME insurance_numbers
+//     reference table on the deterministic caller hash.
 //
 // Reuses (same cdr-report project): getNeonConn() + getHmacSecret() +
 // hashPhone() from dbHistorical.js. hashPhone() is byte-identical to the
@@ -177,6 +178,55 @@ function logInsuranceCallCounts_() {
     while (rs.next() && n < 100) {
       Logger.log('  %s: %s calls (%s distinct numbers)',
                  rs.getString('source'), rs.getString('calls'), rs.getString('nums'));
+      n++;
+    }
+    rs.close(); stmt.close();
+  } finally {
+    try { conn.close(); } catch (ce) {}
+  }
+}
+
+/**
+ * EDITOR-RUN convenience: logs labeled INBOUND call counts (one row per
+ * distinct inbound call, from cdr-import's inbound_calls table). Canonical
+ * aggregation query -- distinct calls, with disposition + on-hold-abandon
+ * breakdown per insurer:
+ *
+ *   SELECT COALESCE(i.insurance_name, '(unlabeled)')                AS source,
+ *          COUNT(*)                                                 AS inbound_calls,
+ *          SUM((c.disposition = 'answered')::int)                   AS answered,
+ *          SUM((c.disposition = 'abandoned')::int)                  AS abandoned,
+ *          SUM(c.abandoned_on_hold::int)                            AS abandoned_on_hold
+ *   FROM   inbound_calls c
+ *   LEFT JOIN insurance_numbers i ON i.phone_hash = c.caller_hash
+ *   WHERE  c.caller_hash IS NOT NULL          -- drop Anonymous callers
+ *   GROUP BY 1
+ *   ORDER BY inbound_calls DESC;
+ *
+ * Add `WHERE i.insurance_name IS NOT NULL` for just labeled insurers; group
+ * by `c.dial_in_number` for marketing-line attribution; by `c.entry_queue`
+ * for which department insurance hits.
+ */
+function logInboundInsuranceCounts_() {
+  var conn = getNeonConn();
+  try {
+    var stmt = conn.createStatement();
+    var rs = stmt.executeQuery(
+      "SELECT COALESCE(i.insurance_name, '(unlabeled)') AS source, " +
+      "COUNT(*) AS inbound_calls, " +
+      "SUM((c.disposition = 'answered')::int) AS answered, " +
+      "SUM((c.disposition = 'abandoned')::int) AS abandoned, " +
+      "SUM(c.abandoned_on_hold::int) AS aboh " +
+      "FROM inbound_calls c " +
+      "LEFT JOIN insurance_numbers i ON i.phone_hash = c.caller_hash " +
+      "WHERE c.caller_hash IS NOT NULL " +
+      "GROUP BY 1 ORDER BY inbound_calls DESC");
+    Logger.log('=== Inbound call counts by source (answered / abandoned / abandoned-on-hold) ===');
+    var n = 0;
+    while (rs.next() && n < 100) {
+      Logger.log('  %s: %s calls (%s answered, %s abandoned, %s abandoned-on-hold)',
+                 rs.getString('source'), rs.getString('inbound_calls'),
+                 rs.getString('answered'), rs.getString('abandoned'), rs.getString('aboh'));
       n++;
     }
     rs.close(); stmt.close();

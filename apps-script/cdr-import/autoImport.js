@@ -1648,6 +1648,25 @@ if (!skipCDR && obcHD) {
     }
   }
 
+  // Inbound-call capture (per-call view: insurance call counts, dial-in /
+  // marketing attribution, disposition + abandon stage, abandoned-on-hold +
+  // hold time, and the queue journey). Best-effort + fully isolated -- a
+  // failure here can never affect the import or the other Neon mirrors.
+  // Uses getDisplayValues so the timestamp/duration columns come back as the
+  // "MM/DD/YYYY HH:MM:SS" / "H:MM:SS" strings the parser expects (getValues
+  // would return Date objects). Idempotent via ON CONFLICT.
+  try {
+    if (rawDataSheet && rawDataSheet.getLastRow() > 1) {
+      var inboundLegs = rawDataSheet.getDataRange().getDisplayValues();
+      inboundLegs.shift();   // drop header row
+      var inboundRes = writeInboundCallsToNeon(inboundLegs);
+      console.log('processIntegratedHistory: inbound_calls -> ' + JSON.stringify(inboundRes));
+    }
+  } catch (inboundErr) {
+    console.log('processIntegratedHistory: inbound_calls capture failed (best-effort): '
+      + (inboundErr && inboundErr.message ? inboundErr.message : inboundErr));
+  }
+
   return {
   summaryLog,
   counts: { cdr: cdrCount, qpath: qpathCount, qcd: qcdCount, csr: csrCount, dqe: dqeCount, neon: neonStatus }
