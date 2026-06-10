@@ -16,6 +16,9 @@ Rules:
 - Stop on unexpected complexity and describe before continuing
 - Stop if touching DO NOT TOUCH files or out-of-scope files
 - Check Common Gotchas before each action
+- Before editing a module, scan for its test doubles — mocks/stubs/fixtures
+  of that module, especially ones encoding the OLD behavior; update them as
+  part of the action, not reactively in the test step
 
 After all actions complete:
 
@@ -46,15 +49,14 @@ INVARIANTS AT RISK: [any or "None"]
 NET SCORE: [production fixes] − [new failure modes] = [net]
 INVARIANT CANDIDATES: [new rules or "None"]
 
-DEPLOY STEP:
-[If Deploy Command is configured in CLAUDE.md for the touched
-subsystem, list the deploy command:]
-- [subsystem]: [command]
-[Otherwise:]
-N/A — no Deploy Command configured
+OPERATOR ACTIONS / DEPLOY:
+- [human-only step outside the PR — env var, IaC, console/dashboard, one-time migration] | BLOCKS DEPLOY: Y/N
+(repeat per action, or "None")
+Deploy: [Deploy Command for the touched subsystem if configured, else
+"N/A — no Deploy Command configured"]
 
-(Implementation is not considered complete in production until the
-operator confirms the deploy step.)
+(Not complete in production until blocking operator actions are done AND
+the deploy step is confirmed.)
 
 FOLLOW-ON ITEMS:
 - [File: area] — [what to check and why]
@@ -63,5 +65,12 @@ FOLLOW-ON ITEMS:
 DOCUMENTATION UPDATES NEEDED:
 - [updates or "None"]
 ---END TARGETED IMPLEMENTATION SUMMARY---
+
+7. CHECKPOINT (optional — only if the project uses .cycle/ state)
+If a .cycle/ directory exists at the project root, create or update
+.cycle/STATE.md to reflect this session: completed actions, any actions
+not finished, open follow-on items, decisions made, and a "Where I left
+off" line. This lets /cycle-resume continue cleanly in a fresh session
+if context runs out. If .cycle/ does not exist, skip this step.
 
 Suggest /test-sync and /sync-docs if applicable.

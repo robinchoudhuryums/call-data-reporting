@@ -41,7 +41,7 @@ Cycle Workflow Config. One bullet per dimension.
 For each rating include:
 - Your confidence level (did you deeply read this area or infer from partial context?)
 - The single finding most dragging the score down
-- The single highest-leverage improvement and its estimated effort (S/M/L)
+- The single highest-leverage improvement and its estimated effort: S / M / L plus a rough wall-clock estimate (e.g. S ≈ <2h, M ≈ ½–2 days, L ≈ 3+ days; for one developer working with Claude Code)
 
 End Stage 1 with:
 - Top 5 findings by production impact (most likely to cause real breakage)
@@ -105,7 +105,7 @@ FEATURE EFFECTIVENESS (for each major feature area):
   [1-2 sentences on how effectively it serves users, not code quality]
 
 COMPLETENESS GAPS (what's not built yet that should be):
-- [Gap] — [impact on users] — [effort: S/M/L]
+- [Gap] — [impact on users] — [effort: S/M/L + rough time estimate]
 (list the top 5 most impactful gaps)
 
 STRATEGIC SUGGESTIONS (what would make this significantly more valuable):
