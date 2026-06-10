@@ -3005,6 +3005,32 @@
     body.cr-printing .cr-chart-wrap,
     body.cr-printing .pr-kpi-tile,
     body.cr-printing .cr-agent-card { page-break-inside: avoid; }
+
+    body.ins-printing > .container { display: none !important; }
+    body.ins-printing .modal-backdrop { display: none !important; }
+    body.ins-printing #insights-modal {
+      position: static !important;
+      background: transparent !important;
+    }
+    body.ins-printing #insights-modal .modal-panel {
+      box-shadow: none !important;
+      border-radius: 0 !important;
+      max-width: 100% !important;
+      width: 100% !important;
+      max-height: none !important;
+      padding: 0 !important;
+      overflow: visible !important;
+    }
+    body.ins-printing #insights-form,
+    body.ins-printing #insights-modal .modal-close,
+    body.ins-printing #insights-results .ir-action-buttons,
+    body.ins-printing #ins-trend-subtabs,
+    body.ins-printing #ins-results-status {
+      display: none !important;
+    }
+    body.ins-printing .ir-chart-wrap,
+    body.ins-printing .pr-kpi-tile,
+    body.ins-printing .ins-card { page-break-inside: avoid; }
   }
 
   /* -------- Company Overview modal ------------------------------ */

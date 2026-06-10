@@ -1089,9 +1089,28 @@
             <input type="date" id="ins-to">
           </div>
         </div>
+        <div class="ir-row">
+          <div class="ir-col">
+            <label for="ins-compare-mode">Compare against</label>
+            <select id="ins-compare-mode">
+              <option value="prevPeriod">Immediately-preceding period</option>
+              <option value="yoy">Same window one year prior</option>
+              <option value="custom">Custom prior range&hellip;</option>
+            </select>
+          </div>
+          <div class="ir-col" id="ins-prior-from-wrap" style="display:none;">
+            <label for="ins-prior-from">Prior start</label>
+            <input type="date" id="ins-prior-from">
+          </div>
+          <div class="ir-col" id="ins-prior-to-wrap" style="display:none;">
+            <label for="ins-prior-to">Prior end</label>
+            <input type="date" id="ins-prior-to">
+          </div>
+        </div>
+        <div class="ir-hint" id="ins-prior-hint"></div>
         <div class="ir-hint">
           Combines a <strong>department rollup</strong> (current vs the
-          immediately-preceding same-length period) with <strong>per-agent
+          comparison window picked above) with <strong>per-agent
           cards</strong>, each comparing that agent to their own prior
           period. Floaters appear as cards but don’t factor into the
           department rollup.
@@ -1131,6 +1150,16 @@
             <div class="ins-compare-line" id="ins-compare-line"></div>
           </div>
           <div class="ir-action-buttons">
+            <div class="ir-export-wrap">
+              <button class="btn btn-secondary" id="ins-export-btn" type="button" aria-haspopup="menu" aria-expanded="false">
+                Export <span class="ir-export-caret">&#9662;</span>
+              </button>
+              <div class="ir-export-menu" id="ins-export-menu" role="menu" style="display:none;">
+                <button type="button" role="menuitem" data-action="copy">Copy image</button>
+                <button type="button" role="menuitem" data-action="email">Email image</button>
+                <button type="button" role="menuitem" data-action="print">Print</button>
+              </div>
+            </div>
             <button class="btn btn-secondary" id="ins-back-btn" type="button">&laquo; Back</button>
           </div>
         </div>
@@ -1140,6 +1169,16 @@
 
         <div class="al-section-title">Department rollup <span class="ins-rollup-cap" id="ins-rollup-cap"></span></div>
         <div id="ins-kpi-row" class="pr-kpi-row"></div>
+
+        <div class="ir-chart-wrap" id="ins-trend-wrap">
+          <div class="ir-chart-header">12-Month Team Trend</div>
+          <div class="pr-trend-subtabs" id="ins-trend-subtabs" role="tablist">
+            <button type="button" class="pr-trend-subtab active" data-metric="answered" role="tab" aria-selected="true">Answered</button>
+            <button type="button" class="pr-trend-subtab" data-metric="pct" role="tab" aria-selected="false">% Answered</button>
+            <button type="button" class="pr-trend-subtab" data-metric="att" role="tab" aria-selected="false">Avg Talk Time</button>
+          </div>
+          <div class="ir-chart-canvas-wrap"><canvas id="ins-trend-chart"></canvas></div>
+        </div>
 
         <div class="al-section-title">Per-agent comparison (vs prior period)</div>
         <div id="ins-agent-cards" class="ins-agent-cards"></div>

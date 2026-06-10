@@ -431,7 +431,7 @@ mirrors it; if the two ever diverge, INV-30 wins.
 | `CompanyOverview.gs` | `companyOverview:vN` | `v14` |
 | `QCDReport.gs` | `qcd:vN:` | `v6` |
 | `InboundReport.gs` | `inbound:vN:` | `v1` |
-| `InsightsReport.gs` | `insights:vN:` | `v1` |
+| `InsightsReport.gs` | `insights:vN:` | `v2` |
 
 `Alerts.gs` holds no cached compute — preview / send always re-reads
 the source sheet for the chosen date.
