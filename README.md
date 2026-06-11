@@ -384,10 +384,15 @@ you can OS-tile two windows side-by-side for comparison. Requires
 the `DASHBOARD_URL` Script Property to be set (see Alerts setup
 above); the button silently hides when unset.
 
-Form state (date range, agent selection, etc.) is not yet
-serialized into the URL — each modal restores its own last-used
-state from localStorage when opened, which fills the gap for the
-common case. Richer state-in-URL is a future enhancement.
+For the four agent-comparison reports (Individual / Performance /
+Compare Ranges / Insights), the `↗` button also serializes the
+modal's **current form state** — dates, compare mode, custom prior
+window, and agent selection — into the link as `#/route?from=...&
+agents=a|b`, so the new tab (or a pasted link) restores the exact
+form primed for a one-click Generate. Generation is intentionally
+not auto-triggered (the agent roster loads asynchronously). The
+simpler forms (QCD / Missed / Inbound) still deep-link to the modal
+with their localStorage-restored state.
 
 ## DQE Historical Data freshness
 

@@ -200,6 +200,42 @@ test('Insights trendData: monthly team rollup excludes floaters (INV-53)', funct
   assert.equal(data.trendData.series[12].rung, 10);
 });
 
+test('Insights: 1-day range (from == to) compares against the previous day', function () {
+  install([
+    dqeRow({ date: '2026-03-10', agent: 'Anna', ext: '501', rung: 10, missed: 1, answered: 8, att: '0:03:00' }),
+    dqeRow({ date: '2026-03-09', agent: 'Anna', ext: '501', rung: 4,  missed: 2, answered: 3, att: '0:04:00' }),
+  ]);
+  const data = h.call('getInsightsReport', { department: 'Alpha', from: '2026-03-10', to: '2026-03-10', agents: ['Anna'] });
+  // INV-28 degenerate case: a 1-day window's auto-adjacent prior is the
+  // single previous day (shared computePriorWindow_ math).
+  assert.equal(data.meta.priorFrom, '2026-03-09');
+  assert.equal(data.meta.priorTo,   '2026-03-09');
+  assert.equal(data.meta.currentDays, 1);
+  assert.equal(data.meta.priorDays, 1);
+  assert.equal(data.teamStats.rung.val, 10);
+  assert.equal(data.teamStats.rung.prev, 4);
+});
+
+test('Insights: email export decodes the payload and sends to the active user', function () {
+  install([dqeRow({ date: '2026-03-10', agent: 'Anna', ext: '501', rung: 5, answered: 4, att: '0:02:00' })]);
+  h.state.sentEmails.length = 0;
+  const res = h.call('sendInsightsReportEmail', {
+    imageBase64: 'data:image/png;base64,aGVsbG8=',   // "hello"
+    dateLabel: 'Mar 9, 2026 - Mar 15, 2026',
+  });
+  assert.equal(res.to, 'admin@x.com');
+  assert.equal(h.state.sentEmails.length, 1);
+  const mail = h.state.sentEmails[0];
+  assert.equal(mail.to, 'admin@x.com');
+  assert.ok(mail.subject.indexOf('Mar 9, 2026') !== -1);
+  assert.ok(mail.inlineImages && mail.inlineImages.reportImg, 'inline image attached');
+  // Malformed payload (no comma separator) is rejected before any send.
+  assert.throws(function () {
+    h.call('sendInsightsReportEmail', { imageBase64: 'nocomma' });
+  }, /Malformed image payload/);
+  assert.equal(h.state.sentEmails.length, 1);
+});
+
 test('Insights: cross-dept request is rejected for a manager', function () {
   install([dqeRow({ date: '2026-03-10', agent: 'Anna', ext: '501', rung: 5, answered: 4 })]);
   // A non-admin with no Access Control row resolves to role 'none'.

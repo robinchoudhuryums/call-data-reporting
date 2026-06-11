@@ -589,9 +589,11 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   rows=<n> ms=<elapsed>` line (`logDqeReadTiming_`, NeonRead.gs) so
   sheet-vs-neon read cost is directly comparable in the Executions panel.
   Reuses the dashboard `NEON_*` props + `script.external_request`
-  scope (Operator State #18-19). Remaining reader not cut over: **Missed
+  scope (Operator State #18-19). Remaining readers not cut over: **Missed
   Calls** (needs the slot K-AC + abandoned columns added to
-  `neonFetchDqeRows_`). The `getDeptQueueExts_` DERIVED all-history scan
+  `neonFetchDqeRows_`) and **`computeActiveAgentsInRange_`** (the
+  IR/PR/CR/Insights agent-picker subset in Util.gs, which still
+  whole-sheet-scans regardless of the flag). The `getDeptQueueExts_` DERIVED all-history scan
   is now ALSO off the sheet on the Neon path -- `deptQueueExtsForNeonReader_`
   (Data.gs) builds the dept ext set from `neonGetAgentExtPairs_` (a cached
   `SELECT DISTINCT agent_name, queue_extensions` json_agg fetch) instead of
@@ -767,7 +769,16 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   (`.modal-open-tab-btn`, positioned at `right: 54px` to the left
   of the close X) builds `window.__DASHBOARD_URL__ + '#' +
   currentRoute` and `window.open`s it; `.is-disabled` hides the
-  button when `DASHBOARD_URL` is unset. Escape-key modal close
+  button when `DASHBOARD_URL` is unset. **State-in-URL:** for the
+  four agent reports (IR / PR / CR / Insights) the button also
+  appends the current form state as a `?from=...&agents=a|b` query
+  on the hash (the `SHARE_STATE_` provider registry in script.html
+  collects/applies it); the deep-link reader splits the query off
+  before the `ROUTES_` lookup and applies it AFTER the modal's
+  open-time defaults + prefs restore, with agents landing via each
+  report's pending-selection hook. Generation is deliberately not
+  auto-triggered (async roster load) -- the restored form is one
+  Generate click away. Escape-key modal close
   doesn't revert the active-tab state in this phase — cosmetic
   only; clicking any tab refreshes it. **`window.__DASHBOARD_URL__`
   is injected by `renderDashboard_` (Code.gs) from the
@@ -1026,8 +1037,10 @@ When something looks wrong, before assuming a code bug, check:
     read-back switch read by `getDqeReadSource_()`. Unset / `sheet`
     (default) = dashboard reads the `DQE Historical Data` sheet as
     always; `neon` flips the cut-over readers (`getLatestDataDate`,
-    `getCompanyOverview`, `computeSummary_`, and the IR / PR / CR builders;
-    Missed Calls + the `getDeptQueueExts_` derived scan are not cut over)
+    `getCompanyOverview`, `computeSummary_`, and the IR / PR / CR /
+    Insights builders; the `getDeptQueueExts_` derived scan also reads
+    Neon via `neonGetAgentExtPairs_`; Missed Calls + the
+    `computeActiveAgentsInRange_` picker subset are NOT cut over)
     to read `dqe_history`. **Only flip to `neon` after `compareDqeSources_`
     (NeonRead.gs, editor-run via the `runDqeParityCheck` wrapper -- the Run
     picker hides `_`-suffixed functions) shows parity-clean over a

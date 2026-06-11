@@ -24,6 +24,25 @@ function leg(o) {
 function build(rows) { return h.call('buildInboundCallRecords_', rows); }
 function rec(records, callId) { return records.filter(r => r.callId === String(callId))[0]; }
 
+test('abandoned IN QUEUE while held: abandonedOnHold is independent of answered', function () {
+  // Caller was parked (hold duration on the queue leg) and hung up
+  // while held WITHOUT ever being answered -- disposition stays
+  // 'abandoned' but the on-hold flag + hold seconds must still be
+  // captured (the icIsTrue_ check at the abandoned-on-hold site is
+  // deliberately independent of `answered`).
+  const recs = build([
+    leg({ callId: '770001', legId: 1, start: '06/04/2026 11:00:00', stop: '06/04/2026 11:00:20', direction: 'Incoming', caller: '12145550000', callee: '999', calleeName: 'Introduction - New', dialIn: '19722281820' }),
+    leg({ callId: '770001', legId: 2, start: '06/04/2026 11:00:20', stop: '06/04/2026 11:03:45', direction: 'Incoming', caller: '12145550000', callee: '103', calleeName: 'A_Q_CSR', dialIn: '19722281820', missed: 'Missed', abandoned: 'Abandoned', holdDur: '0:02:10', callerDisc: 'TRUE' }),
+  ]);
+  assert.equal(recs.length, 1);
+  const r = rec(recs, '770001');
+  assert.equal(r.disposition, 'abandoned');
+  assert.equal(r.abandonStage, 'queue');
+  assert.equal(r.abandonedOnHold, true);
+  assert.equal(r.holdSeconds, 130);
+  assert.equal(r.entryQueue, 'A_Q_CSR');
+});
+
 test('abandoned in queue (THOMAS -> A_Q_Intake)', function () {
   const recs = build([
     leg({ callId: '668970', legId: 1, start: '06/04/2026 10:36:07', stop: '06/04/2026 10:36:25', direction: 'Incoming', caller: '12159998888', callerName: 'THOMAS', callee: '999', calleeName: 'Introduction - New', dialIn: '19722281820' }),

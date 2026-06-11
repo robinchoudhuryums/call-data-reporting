@@ -581,8 +581,10 @@ behavior byte-identical to pre-OrphanFix.
 fixed-key Overview cache entry (via the `COMPANY_OVERVIEW_CACHE_KEY`
 constant -- currently `companyOverview:v14`) on success. Per-(dept,
 range) caches (`summary:v8`, `individual:v8`, `performance:v4`,
-etc.) are left to TTL out within 5 minutes. The Orphan Fix modal
-warns the user "may take up to 5 minutes to appear in dashboard."
+etc.) are left to TTL out within 30 minutes
+(`REPORT_CACHE_TTL_SECONDS`). The Orphan Fix modal tells the user
+the Overview updates immediately and other views may lag up to the
+cache TTL.
 
 **Error message footgun.** `assertAdmin_` is defined in
 `Util.gs` and throws "Alerts are admin-only." Non-admin calls to

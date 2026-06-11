@@ -824,39 +824,14 @@ function verifyNeonBackfillCounts() {
 
 // -- Helpers -----------------------------------------------------------------
 
-function parseDateForNeon(str) {
-  if (!str) return null;
-  var s = String(str).trim();
-  var m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-  if (!m) {
-    var d = new Date(s);
-    if (isNaN(d.getTime())) return null;
-    return Utilities.formatDate(d, Session.getScriptTimeZone(), 'yyyy-MM-dd');
-  }
-  var month = String(parseInt(m[1])).padStart(2, '0');
-  var day   = String(parseInt(m[2])).padStart(2, '0');
-  return m[3] + '-' + month + '-' + day;
-}
-
-// Convert either an "H:MM:SS" string or a decimal day-fraction to "H:MM:SS"
-function normalizeDuration(val) {
-  if (val === null || val === undefined || val === '') return null;
-  var s = String(val).trim();
-  if (!s) return null;
-
-  // Already in time format
-  if (s.indexOf(':') !== -1) return s;
-
-  // Decimal day-fraction → seconds → H:MM:SS
-  var num = parseFloat(s);
-  if (isNaN(num)) return null;
-
-  var totalSec = Math.round(num * 86400);
-  var h = Math.floor(totalSec / 3600);
-  var m = Math.floor((totalSec % 3600) / 60);
-  var sec = totalSec % 60;
-  return h + ':' + String(m).padStart(2, '0') + ':' + String(sec).padStart(2, '0');
-}
+// parseDateForNeon + normalizeDuration are intentionally NOT defined
+// here: this file used to carry byte-identical copies of both, but Apps
+// Script's flat per-project global scope means a last-loaded duplicate
+// silently shadows the original if they ever diverge -- the exact
+// failure class that let dbHistorical.js's parseNameField drift from
+// the F2-fixed splitter. The single definitions live in neonWrite.js
+// (same project; INV-16-duplicated with cdr-import) and are reachable
+// from here through the shared scope.
 
 function diagnoseQCDLongValues() {
   var ss    = SpreadsheetApp.getActiveSpreadsheet();

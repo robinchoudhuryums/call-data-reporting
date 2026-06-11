@@ -48,7 +48,7 @@
  *
  * The downstream cache layers (companyOverview:v14, summary:v8,
  * individual:v8, etc.; see INV-30 for the canonical list) will
- * hold stale data for up to 5 minutes
+ * hold stale data for up to 30 minutes (REPORT_CACHE_TTL_SECONDS)
  * after a rename. We invalidate the single fixed-key
  * `companyOverview:` entry on every successful write; the
  * per-(dept, range) caches are left to TTL out naturally.
@@ -227,7 +227,7 @@ function applyOrphanRename(req) {
     });
     // Bust the single fixed-key Overview cache so the change shows
     // up immediately on the landing page. Per-(dept, range) caches
-    // are TTL'd out naturally within 5 minutes.
+    // are TTL'd out naturally within 30 min (REPORT_CACHE_TTL_SECONDS).
     try { CacheService.getScriptCache().remove(COMPANY_OVERVIEW_CACHE_KEY); }
     catch (e) { /* best-effort */ }
   } finally {

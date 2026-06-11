@@ -38,6 +38,7 @@ function createShim() {
     DigestAlgorithm: { MD5: 'MD5', SHA_256: 'SHA_256' },
     newBlob: function (data) { return { getBytes: function () { return data; }, getDataAsString: function () { return String(data); } }; },
     base64Encode: function (bytes) { return Buffer.from(bytes).toString('base64'); },
+    base64Decode: function (str) { return Array.from(Buffer.from(String(str), 'base64')); },
     parseDate: function () { throw new Error('Utilities.parseDate is not shimmed; add it if a test needs it.'); },
     sleep: function () {},
   };

@@ -2076,6 +2076,9 @@
     // Initial route from parent URL hash. google.script.url.getLocation
     // returns the parent URL's hash (without the leading '#') so deep
     // links like ".../exec#/report/individual" hit ROUTES_ exactly.
+    // A '?' query suffix carries optional FORM STATE (dates, compare
+    // mode, agents) serialized by the Open-in-new-tab buttons -- split
+    // it off before the route lookup and apply it after the modal opens.
     if (typeof google !== 'undefined' && google.script && google.script.url) {
       google.script.url.getLocation(function (loc) {
         const hash = (loc && loc.hash) || '';
@@ -2084,7 +2087,10 @@
         // '#report/individual' (no leading slash) for resilience to
         // hand-typed URLs.
         const normalized = hash.charAt(0) === '/' ? hash : '/' + hash;
-        const trigger = document.querySelector('[data-route="' + normalized + '"]');
+        const qIdx = normalized.indexOf('?');
+        const route = qIdx === -1 ? normalized : normalized.slice(0, qIdx);
+        const params = qIdx === -1 ? null : decodeShareParams_(normalized.slice(qIdx + 1));
+        const trigger = document.querySelector('[data-route="' + route + '"]');
         if (!trigger) return;
         // A deep link to an admin-only view (data-admin-only tabs:
         // alerts / orphan-fix / dept-config) by a non-admin would open
@@ -2092,9 +2098,112 @@
         // and stay on the base page instead.
         if (trigger.hasAttribute('data-admin-only') && USER.role !== 'admin') return;
         trigger.click();
+        // Apply AFTER the click: the modal's openModal has now run its
+        // defaults + prefs restore synchronously, so the shared state
+        // wins; the agent selection lands via the report's pending-
+        // selection hook once the roster fetch renders.
+        if (params) {
+          const provider = SHARE_STATE_[route];
+          if (provider) {
+            try { provider.apply(params); } catch (e) { /* best-effort */ }
+          }
+        }
       });
     }
   }
+
+  // -- Share-state (state-in-URL) for the report forms ------------------
+  // Serializes a report form's state into the deep-link hash so an
+  // "Open in new tab" target (or a pasted link) restores the exact
+  // form -- dates, compare mode, custom prior window, and agent
+  // selection -- with one click left (Generate). Generation is NOT
+  // auto-triggered: the roster/agent picker loads async and the
+  // primed form keeps the flow race-free and predictable.
+
+  function encodeShareParams_(obj) {
+    const parts = [];
+    Object.keys(obj).forEach(function (k) {
+      const v = obj[k];
+      if (v == null || v === '') return;
+      parts.push(encodeURIComponent(k) + '=' + encodeURIComponent(String(v)));
+    });
+    return parts.join('&');
+  }
+
+  function decodeShareParams_(str) {
+    const out = {};
+    String(str || '').split('&').forEach(function (pair) {
+      if (!pair) return;
+      const i = pair.indexOf('=');
+      if (i === -1) return;
+      try {
+        out[decodeURIComponent(pair.slice(0, i))] = decodeURIComponent(pair.slice(i + 1));
+      } catch (e) { /* skip malformed token */ }
+    });
+    return out;
+  }
+
+  /** Sets an input/select value and fires its change handlers. */
+  function shareSetField_(id, value) {
+    const el = $(id);
+    if (!el || value == null || value === '') return;
+    el.value = value;
+    el.dispatchEvent(new Event('change'));
+  }
+
+  /**
+   * Per-route share-state providers. `collect()` reads the CURRENT form
+   * (returns null when there's nothing meaningful to share); `apply()`
+   * writes params back into the form + the report's pending-agent hook.
+   * Agent lists are '|'-joined inside one encoded param. Only the four
+   * agent-comparison reports participate -- they're where "look at this
+   * exact view" matters; the simpler forms (QCD / Missed / Inbound) are
+   * candidates for a follow-on.
+   */
+  function shareDatesProvider_(ids, getPending) {
+    return {
+      collect: function () {
+        const out = {};
+        Object.keys(ids.fields).forEach(function (k) {
+          const el = $(ids.fields[k]);
+          if (el && el.value) out[k] = el.value;
+        });
+        const list = $(ids.agentList);
+        if (list) {
+          const agents = irGetCheckedAgents_(list);
+          if (agents.length) out.agents = agents.join('|');
+        }
+        return (out.from || out.p1from) ? out : null;
+      },
+      apply: function (params) {
+        Object.keys(ids.fields).forEach(function (k) {
+          shareSetField_(ids.fields[k], params[k]);
+        });
+        if (params.agents && getPending) {
+          getPending(String(params.agents).split('|').filter(function (a) { return !!a; }));
+        }
+      },
+    };
+  }
+
+  const SHARE_STATE_ = {
+    '/report/individual': shareDatesProvider_(
+      { fields: { from: 'ir-from', to: 'ir-to', mode: 'ir-compare-mode', pfrom: 'ir-prior-from', pto: 'ir-prior-to' },
+        agentList: 'ir-agent-list' },
+      function (list) { irPendingAgentSelection_ = list; }),
+    '/report/performance': shareDatesProvider_(
+      { fields: { from: 'pr-from', to: 'pr-to', mode: 'pr-compare-mode', pfrom: 'pr-prior-from', pto: 'pr-prior-to' },
+        agentList: 'pr-agent-list' },
+      function (list) { prPendingAgentSelection_ = list; }),
+    '/report/compare': shareDatesProvider_(
+      { fields: { p1from: 'cr-p1-from', p1to: 'cr-p1-to', p2from: 'cr-p2-from', p2to: 'cr-p2-to' },
+        agentList: 'cr-agent-list' },
+      function (list) { crPendingAgentSelection_ = list; }),
+    '/report/insights': shareDatesProvider_(
+      { fields: { from: 'ins-from', to: 'ins-to', mode: 'ins-compare-mode', pfrom: 'ins-prior-from', pto: 'ins-prior-to' },
+        agentList: 'ins-agent-list' },
+      function (list) { insPendingAgentSelection_ = list; }),
+  };
 
   // Open-in-new-tab buttons on each report modal. Builds the target
   // URL from window.__DASHBOARD_URL__ (DASHBOARD_URL Script Property)
@@ -2115,7 +2224,18 @@
         // appending ours, so an admin-pasted URL ending in "#anything"
         // doesn't produce a double-hash target.
         const baseUrl = dashboardUrl.split('#')[0];
-        window.open(baseUrl + '#' + route, '_blank', 'noopener');
+        // Carry the modal's CURRENT form state (dates / compare mode /
+        // agents) so the new tab restores the exact view primed for one
+        // Generate click. Best-effort: any provider failure falls back
+        // to the bare route.
+        let suffix = '';
+        try {
+          const provider = SHARE_STATE_[route];
+          const state = provider ? provider.collect() : null;
+          const encoded = state ? encodeShareParams_(state) : '';
+          if (encoded) suffix = '?' + encoded;
+        } catch (e) { /* bare route */ }
+        window.open(baseUrl + '#' + route + suffix, '_blank', 'noopener');
       });
     });
   }
@@ -8553,7 +8673,7 @@
         ofSetStatus_('success',
           'Renamed ' + n + ' row' + (n === 1 ? '' : 's')
           + '. Alias added so future imports map correctly. '
-          + 'Dashboard caches may take up to 5 minutes to reflect the change.');
+          + 'Overview updates immediately; other dashboard views may take up to 30 minutes (cache TTL) to reflect the change.');
         showToast('Renamed ' + n + ' row' + (n === 1 ? '' : 's'), 'success');
         ofLoadInit_();
       })
@@ -8841,7 +8961,7 @@
       .withSuccessHandler(function () {
         if (saveBtn) saveBtn.disabled = false;
         dcSetStatus_('success', 'Saved ' + dcEditDept
-          + '. Changes take effect on the next request (caches refresh within ~5 min).');
+          + '. Changes take effect on the next request (Overview refreshes immediately; report caches within ~30 min).');
         showToast('Saved config for ' + dcEditDept, 'success');
         dcLoadInit_();
       })
@@ -9011,7 +9131,8 @@
         if (!item) return;
         const action = item.getAttribute('data-action');
         insSetExportMenuOpen_(false);
-        if (action === 'copy')       insCopyImage_();
+        if (action === 'csv')        insDownloadCsv_();
+        else if (action === 'copy')  insCopyImage_();
         else if (action === 'email') insEmailImage_();
         else if (action === 'print') insPrint_();
       });
@@ -9649,6 +9770,92 @@
           dateLabel: insLastData && insLastData.dateLabel ? insLastData.dateLabel : '',
         });
     });
+  }
+
+  /**
+   * Client-side CSV of the Insights payload: scope lines, the team
+   * rollup (current / prior / delta per metric), and one row per agent
+   * with each metric's current + prior + delta, plus the
+   * classification / improvement-score / quiet / floater columns and
+   * per-day normalization columns when meta.lengthMismatch (the CR CSV
+   * contract -- this export is the prerequisite for retiring CR's).
+   * Every cell routes through csvSafeCell_ (agent names are untrusted
+   * CDR-feed input) before the RFC-4180 quoting.
+   */
+  function insDownloadCsv_() {
+    if (!insLastData) return;
+    const d = insLastData;
+    const meta = d.meta || {};
+    const esc = function (v) {
+      const s = csvSafeCell_(v == null ? '' : v);
+      if (/[",\n]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+      return s;
+    };
+    const row = function (cells) { return cells.map(esc).join(','); };
+    const deltaStr = function (st) {
+      if (!st) return '';
+      const dp = Number(st.deltaPct || 0);
+      return dp.toFixed(1) + (st.type === 'pctPoints' ? ' pts' : '%');
+    };
+    const mismatch = !!meta.lengthMismatch;
+    const lines = [];
+    lines.push(row(['Insights report', meta.department || '', (meta.from || '') + ' to ' + (meta.to || '')]));
+    lines.push(row(['Comparison window', (meta.priorFrom || '') + ' to ' + (meta.priorTo || ''),
+                    meta.comparisonMode === 'custom' ? 'custom/YoY' : 'immediately-preceding']));
+    if (mismatch) {
+      lines.push(row(['Note', 'Different window lengths (' + meta.currentDays + 'd vs '
+        + meta.priorDays + 'd) — volume totals not directly comparable; see the /day columns']));
+    }
+    lines.push('');
+    lines.push(row(['Team rollup (roster only)', 'Current', 'Prior', 'Delta']));
+    const t = d.teamStats || {};
+    [['Rung', 'rung'], ['Missed', 'missed'], ['Answered', 'answered'],
+     ['% Answered', 'pct'], ['TTT', 'ttt'], ['Avg ATT', 'att']].forEach(function (m) {
+      const st = t[m[1]] || {};
+      lines.push(row([m[0], st.formatted != null ? st.formatted : '',
+                      st.prev != null ? st.prev : '', deltaStr(st)]));
+    });
+    lines.push('');
+    const head = ['Agent', 'Source', 'Classification', 'Improvement score', 'Quiet'];
+    const metricCols = [['Rung', 'rung', true], ['Missed', 'missed', true],
+                        ['Answered', 'answered', true], ['% Ans', 'pct', false],
+                        ['TTT', 'ttt', true], ['ATT', 'att', false]];
+    metricCols.forEach(function (m) {
+      head.push(m[0], m[0] + ' prior', m[0] + ' Δ');
+      if (mismatch && m[2] && m[1] !== 'pct' && m[1] !== 'att') {
+        head.push(m[0] + '/day', m[0] + '/day prior');
+      }
+    });
+    lines.push(row(head));
+    (d.agentData || []).forEach(function (a) {
+      const isFloater = a.matchedViaQueue && !a.matchedViaRoster;
+      const cells = [
+        a.name,
+        isFloater ? 'QUEUE' + ((a.sourceHomes || []).length ? ' · ' + a.sourceHomes.join('/') : '') : 'ROSTER',
+        deltaClassify_(a.metrics),
+        deltaImprovementScore_(a.metrics).toFixed(1),
+        deltaIsQuiet_(a.metrics) ? 'yes' : 'no',
+      ];
+      metricCols.forEach(function (m) {
+        const st = (a.metrics && a.metrics[m[1]]) || {};
+        cells.push(st.formatted != null ? st.formatted : '',
+                   st.prev != null ? st.prev : '', deltaStr(st));
+        if (mismatch && m[2] && m[1] !== 'pct' && m[1] !== 'att') {
+          const cur = (st.val != null && meta.currentDays > 0) ? (st.val / meta.currentDays).toFixed(1) : '';
+          const pri = (st.prev != null && meta.priorDays > 0) ? (st.prev / meta.priorDays).toFixed(1) : '';
+          cells.push(cur, pri);
+        }
+      });
+      lines.push(row(cells));
+    });
+    const blob = new Blob([lines.join('\n') + '\n'], { type: 'text/csv;charset=utf-8;' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'insights_' + (meta.department || 'report') + '_' + (meta.from || '') + '_' + (meta.to || '') + '.csv';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 0);
   }
 
   function insPrint_() {
