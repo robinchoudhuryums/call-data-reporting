@@ -741,6 +741,8 @@
     initRouter();
     initOpenInNewTabButtons_();
     initWorkWindowPill_();
+    initOverviewLauncher_();
+    initMetricGlossary_();
 
     // Fetch the most recent date with data in DQE Historical Data
     // and snap From/To to that date. Defers the initial table
@@ -757,6 +759,7 @@
         // (e.g. mid-migration) doesn't make the pill look stuck.
         const dqe = dates && dates.dqe ? dates.dqe : null;
         if (dqe) {
+          latestDqeIso_ = dqe;   // the Overview question-launcher reuses this
           $('from-date').value = dqe;
           $('to-date').value = dqe;
         }
@@ -2238,6 +2241,200 @@
         window.open(baseUrl + '#' + route + suffix, '_blank', 'noopener');
       });
     });
+  }
+
+  // -- Overview question launcher (anti-intimidation layer) --------------
+  // Four plain-English questions on the Overview page, each mapped to an
+  // existing report primed with a sensible window. Where the report needs
+  // no agent selection (Missed / QCD) or can default to the whole active
+  // roster (Insights) the launcher runs it immediately; the Individual
+  // Report stops at the primed form because "which agent?" is the user's
+  // question to answer. No new server endpoints -- this is routing sugar
+  // over the modals' existing open + form machinery.
+
+  let latestDqeIso_ = null;          // set by the getLatestDataDates init fetch
+  let insLauncherAutoRun_ = false;   // consumed by insRenderAgentList
+
+  function launcherIsoDaysAgo_(n) {
+    const d = new Date();
+    d.setDate(d.getDate() - n);
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0')
+      + '-' + String(d.getDate()).padStart(2, '0');
+  }
+
+  function initOverviewLauncher_() {
+    const wrap = $('ov-launcher');
+    if (!wrap) return;
+    wrap.addEventListener('click', function (e) {
+      const btn = e.target.closest('[data-launch]');
+      if (!btn) return;
+      const kind = btn.getAttribute('data-launch');
+      try {
+        if (kind === 'team-lately')           launcherOpenInsights_();
+        else if (kind === 'missed-yesterday') launcherOpenMissed_();
+        else if (kind === 'agent-trend')      launcherOpenIndividual_();
+        else if (kind === 'abandons')         launcherOpenQcd_();
+      } catch (err) { /* best-effort: the modal is still open/openable by hand */ }
+    });
+  }
+
+  // "How is my team doing lately?" -> Insights, last 30 days, all active
+  // agents, auto-generated. The button click runs the modal's normal
+  // open (defaults + prefs + roster fetch); we then override the dates
+  // and re-ensure the roster for the new range -- insRenderAgentList
+  // consumes insLauncherAutoRun_ once the picker is rendered, so the
+  // select-all + generate happen at a race-free synchronization point.
+  function launcherOpenInsights_() {
+    const btn = $('insights-report-btn');
+    if (!btn) return;
+    btn.click();
+    if ($('ins-from')) $('ins-from').value = launcherIsoDaysAgo_(30);
+    if ($('ins-to'))   $('ins-to').value   = launcherIsoDaysAgo_(1);
+    const p = $('ins-preset');
+    if (p) p.value = 'custom';
+    insLauncherAutoRun_ = true;
+    insEnsureRoster();
+  }
+
+  // "Why did we miss calls recently?" -> Missed Calls on the most recent
+  // date with data (the report reads the My Department From/To fields,
+  // so we set those first, then keep the dept table consistent with a
+  // background refresh).
+  function launcherOpenMissed_() {
+    const btn = $('missed-report-btn');
+    if (!btn) return;
+    const iso = latestDqeIso_ || launcherIsoDaysAgo_(1);
+    if ($('from-date')) $('from-date').value = iso;
+    if ($('to-date'))   $('to-date').value   = iso;
+    clearActivePreset_();
+    btn.click();        // openModal fetches with the dates just set
+    refresh();          // keep the dept page's table in sync with its inputs
+  }
+
+  // "Is one of my agents struggling or improving?" -> Individual Report
+  // primed with a 30-day window; agent choice is deliberately left to
+  // the user (that IS the question), so no auto-run.
+  function launcherOpenIndividual_() {
+    const btn = $('individual-report-btn');
+    if (!btn) return;
+    btn.click();
+    const provider = SHARE_STATE_['/report/individual'];
+    if (provider) provider.apply({ from: launcherIsoDaysAgo_(30), to: launcherIsoDaysAgo_(1) });
+    const search = $('ir-agent-search');
+    if (search) search.focus();
+  }
+
+  // "Are callers giving up before we answer?" -> QCD report over the
+  // last 30 days, auto-generated (no agent selection needed).
+  function launcherOpenQcd_() {
+    const btn = $('qcd-report-btn');
+    if (!btn) return;
+    btn.click();
+    const p = $('qcd-preset');
+    if (p) { p.value = 'last30'; applyQcdPreset(); }
+    runQcdReport();
+  }
+
+  // -- Metric glossary (anti-intimidation layer) --------------------------
+  // One central dictionary of plain-English metric definitions, applied as
+  // hover tooltips (title=) on table headers and KPI labels everywhere --
+  // static markup at init, dynamically-rendered report content via a
+  // debounced MutationObserver. Matched elements pick up the .gloss class
+  // (dotted underline + help cursor) so the affordance is discoverable.
+  // Keys are normalized label text: lowercased, trimmed, sort-arrows and
+  // trailing colons stripped.
+
+  const METRIC_GLOSSARY_ = {
+    'source': 'Where this agent matched into the department: ROSTER (on this dept’s roster), BOTH (roster + shared-queue activity), or QUEUE (a floater who handled this dept’s queue but is rostered elsewhere — shown for visibility, excluded from the totals row).',
+    'unique': 'Distinct parent calls this agent was rung on inside the 8:30 AM–5:00 PM CST work window.',
+    'rung': 'Times this agent’s phone rang inside the work window. A call that overflows across agents counts once per agent it rang.',
+    'missed': 'Rings this agent didn’t pick up. A missed ring isn’t necessarily a lost call — another agent may have answered the same call.',
+    'answered': 'Calls this agent answered inside the work window.',
+    'ttt': 'Total Talk Time: the sum of this agent’s own conversation time on answered calls in the window.',
+    'att': 'Average Talk Time per answered call. Longer isn’t automatically worse — it can mean thorough service; read it alongside % answered.',
+    'avg abd wait': 'Average time abandoning callers waited before hanging up (across all of that day’s queues).',
+    'csr avg abd wait': 'Average abandon wait for the CSR queues specifically.',
+    '% answered': 'Answered calls as a share of calls that rang. The company-wide target is 92%.',
+    'answer rate': 'Answered calls as a share of calls offered. The company-wide target is 92%.',
+    'answer rate %': 'Answered calls as a share of calls offered. The company-wide target is 92%.',
+    'abandoned': 'Callers who hung up while waiting in the queue, before any agent answered.',
+    'abandoned %': 'Share of queue calls where the caller hung up before being answered. 5% or more on a day counts as a violation.',
+    'aband. %': 'Share of calls where the caller hung up before being answered. 5% or more is over the abandon threshold.',
+    'abandon rate %': 'Share of calls where the caller hung up before being answered. 5% or more is over the abandon threshold.',
+    'violations': 'Days where a queue’s abandoned % exceeded the 5% threshold. Month-to-date in the totals row.',
+    'longest wait': 'The single longest time any caller waited in the queue that day.',
+    'avg answer': 'Average time callers waited before an agent answered.',
+    'avg wait': 'Average time callers waited in the queue before being answered or giving up.',
+    'total calls': 'All calls offered to the queue, answered or not.',
+    'on-hold abandon': 'Calls an agent answered but the caller later hung up while parked on hold.',
+    'entry queue': 'The first queue the call entered. A call that overflows to another department still attributes to its entry queue’s department.',
+    'dial-in number': 'The phone number the caller dialed to reach us.',
+    'insurer': 'The insurance company a caller’s number is registered to in the DO NOT EDIT! insurance block. Unregistered numbers show as (unlabeled).',
+    'inbound calls': 'Every distinct call that dialed in during the range, answered or not.',
+    'abandoned on hold': 'Calls an agent answered but the caller later hung up while parked on hold.',
+    'abandoned in ivr': 'Callers who hung up in the phone menu before reaching any queue — unattributable to a department, so shown on the company view only.',
+    'avg hold': 'Average time answered callers spent parked on hold.',
+  };
+  // KPI tile labels are variants of the same metrics -- alias them to
+  // one definition each so the glossary never drifts per surface.
+  (function () {
+    const g = METRIC_GLOSSARY_;
+    g['total rung']   = g['rung'];
+    g['total missed'] = g['missed'];
+    g['total ttt']    = g['ttt'];
+    g['avg att']      = g['att'];
+    g['avg talk']     = g['att'];
+  })();
+
+  function glossaryKeyFor_(el) {
+    let text = (el.textContent || '');
+    return text.replace(/[▲▼↑↓]/g, '')   // sort arrows
+               .replace(/\s+/g, ' ').trim().toLowerCase()
+               .replace(/:$/, '');
+  }
+
+  function applyGlossaryTooltips_(root) {
+    if (!root || !root.querySelectorAll) return;
+    const sel = 'th, .ir-kpi-label, .pr-kpi-label, .dept-qcd-label, .ov-dept-stat-label';
+    root.querySelectorAll(sel).forEach(function (el) {
+      if (el.title) return;                       // never clobber an existing tooltip
+      const def = METRIC_GLOSSARY_[glossaryKeyFor_(el)];
+      if (!def) return;
+      el.title = def;
+      el.classList.add('gloss');
+    });
+  }
+
+  function initMetricGlossary_() {
+    applyGlossaryTooltips_(document);
+    // Report tables/tiles render after async fetches; a debounced
+    // childList observer re-applies over the whole document (cheap:
+    // a few hundred elements, and already-titled ones short-circuit).
+    let timer = null;
+    const obs = new MutationObserver(function () {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(function () { applyGlossaryTooltips_(document); }, 250);
+    });
+    obs.observe(document.body, { childList: true, subtree: true });
+  }
+
+  // -- Universal benchmark tints (anti-intimidation layer) ----------------
+  // The install has exactly two company-wide standards: the 92% answer-
+  // rate target (the Overview chart baseline) and the 5% abandoned-%
+  // violation threshold (the QCD pipeline rule). This helper applies them
+  // consistently to KPI tile values so a manager reading ANY report sees
+  // the same green-at-target / orange-over-threshold language the QCD and
+  // Overview surfaces already speak. Dept-specific ALERT thresholds stay
+  // with the Alerts engine -- no invented thresholds here.
+  function benchValueCls_(label, formatted) {
+    const text = String(label).replace(/<[^>]*>/g, '').toLowerCase();
+    const str = String(formatted);
+    if (str.indexOf('%') === -1) return '';
+    const num = parseFloat(str);
+    if (!isFinite(num)) return '';
+    if (/answer/.test(text)) return num >= 92 ? ' bm-target' : '';
+    if (/aband/.test(text))  return num >= 5  ? ' bm-over'   : '';
+    return '';
   }
 
   // -- Answer-first headlines (anti-intimidation layer) ------------------
@@ -4669,7 +4866,7 @@
          +     '<div class="ir-kpi-spark">' + spark + '</div>'
          +   '</div>'
          +   '<div class="ir-kpi-value-row">'
-         +     '<div class="ir-kpi-value">' + escapeHtml(String(value)) + '</div>'
+         +     '<div class="ir-kpi-value' + benchValueCls_(label, value) + '">' + escapeHtml(String(value)) + '</div>'
          +     shareHtml
          +   '</div>'
          +   '<div class="ir-kpi-row-bot">'
@@ -5961,7 +6158,7 @@
          +     '<div class="pr-kpi-label">' + label + '</div>'
          +     '<div class="pr-kpi-spark">' + spark + '</div>'
          +   '</div>'
-         +   '<div class="pr-kpi-value">' + escapeHtml(String(s.formatted)) + '</div>'
+         +   '<div class="pr-kpi-value' + benchValueCls_(label, s.formatted) + '">' + escapeHtml(String(s.formatted)) + '</div>'
          +   '<div class="pr-kpi-delta">' + badge + ' <span class="pr-delta-cap">vs prior</span></div>'
          + '</div>';
   }
@@ -7375,7 +7572,7 @@
          +   '<div class="pr-kpi-row-top">'
          +     '<div class="pr-kpi-label">' + label + '</div>'
          +   '</div>'
-         +   '<div class="pr-kpi-value">' + escapeHtml(String(s.formatted)) + '</div>'
+         +   '<div class="pr-kpi-value' + benchValueCls_(label, s.formatted) + '">' + escapeHtml(String(s.formatted)) + '</div>'
          +   '<div class="pr-kpi-delta">'
          +     badge + ' <span class="pr-delta-cap">vs ' + escapeHtml(String(s.prevFormatted)) + ' (P1)</span>'
          +   '</div>'
@@ -9529,6 +9726,13 @@
     list.addEventListener('change', insListChangeHandler_);
     if (insPendingAgentSelection_) { irApplyCheckedAgents_(list, insPendingAgentSelection_); insPendingAgentSelection_ = null; }
     insUpdateGenerate();
+    // Overview question-launcher flow: the picker render is the race-free
+    // point to select the whole active roster and run. One-shot.
+    if (insLauncherAutoRun_) {
+      insLauncherAutoRun_ = false;
+      insToggleAgents(true);
+      if (!$('ins-generate-btn').disabled) runInsReport();
+    }
   }
   function insToggleAgents(on) { selectAllActiveAgents_($('ins-agent-list'), on); insUpdateGenerate(); insSavePrefs_(); }
   function insUpdateGenerate() {
@@ -10253,7 +10457,7 @@
       + '<div class="pr-kpi-label">' + escapeHtml(label) + '</div>'
       + '<div class="pr-kpi-value">' + escapeHtml(String(value)) + '</div>'
       + (deltaHtml ? '<div class="pr-kpi-delta">' + deltaHtml + ' <span class="pr-delta-cap">vs prior</span></div>' : '')
-      + (cap ? '<div class="pr-delta-cap">' + escapeHtml(cap) + '</div>' : '')
+      + (cap ? '<div class="pr-delta-cap' + benchValueCls_(label, cap) + '">' + escapeHtml(cap) + '</div>' : '')
       + '</div>';
   }
 
@@ -10280,6 +10484,12 @@
     return (((Number(r.abandoned) || 0) / calls) * 100).toFixed(1) + '%';
   }
 
+  // Abandon-% table cell with the shared 5%-threshold benchmark tint.
+  function inboundAbandonPctCell_(r) {
+    const txt = inboundAbandonPct_(r);
+    return '<td class="num' + benchValueCls_('abandoned %', txt) + '">' + txt + '</td>';
+  }
+
   function inboundRenderTable_(tbodyId, rows, extraOnHold) {
     const tbody = $(tbodyId); if (!tbody) return;
     const cols = extraOnHold ? 7 : 6;
@@ -10292,7 +10502,7 @@
         + '<td class="num">' + fmtNumber(r.calls) + '</td>'
         + '<td class="num">' + fmtNumber(r.answered) + '</td>'
         + '<td class="num">' + fmtNumber(r.abandoned) + '</td>'
-        + '<td class="num">' + inboundAbandonPct_(r) + '</td>';
+        + inboundAbandonPctCell_(r);
       if (extraOnHold) html += '<td class="num">' + fmtNumber(r.on_hold) + '</td>';
       html += '<td class="num">' + fmtDuration(r.avg_wait || 0) + '</td>';
       return html + '</tr>';
@@ -10334,7 +10544,7 @@
         + '<td class="num">' + fmtNumber(r.calls) + '</td>'
         + '<td class="num">' + fmtNumber(r.answered) + '</td>'
         + '<td class="num">' + fmtNumber(r.abandoned) + '</td>'
-        + '<td class="num">' + inboundAbandonPct_(r) + '</td>'
+        + inboundAbandonPctCell_(r)
         + '<td class="num">' + fmtNumber(r.on_hold) + '</td>'
         + '<td class="num">' + fmtDuration(r.avg_wait || 0) + '</td>'
         + '</tr>';

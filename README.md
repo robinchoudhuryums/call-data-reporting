@@ -399,6 +399,34 @@ not auto-triggered (the agent roster loads asynchronously). The
 simpler forms (QCD / Missed / Inbound) still deep-link to the modal
 with their localStorage-restored state.
 
+## Plain-English layer (anti-intimidation)
+
+Three client-only affordances lower the barrier for managers who find
+the reports intimidating; none add server endpoints or cache bumps:
+
+- **Question launcher** — the Overview page opens with four
+  plain-English question chips ("How is my team doing lately?",
+  "Why did we miss calls recently?", "Is one of my agents struggling
+  or improving?", "Are callers giving up before we answer?") that
+  route into Insights / Missed Calls / Individual / QCD pre-primed
+  with a sensible window. Insights, Missed, and QCD auto-generate;
+  the Individual Report stops at the primed form because "which
+  agent?" is the user's question to answer.
+- **Metric glossary** — one central dictionary in `script.html`
+  (`METRIC_GLOSSARY_`) applies hover/tap definitions to table headers
+  and KPI labels everywhere (dotted underline = definition available).
+  Add new metric terms to the dictionary, not as inline `title=`
+  attributes, so definitions stay consistent across reports.
+- **Benchmark tints** — the two real company-wide standards (the 92%
+  answer-rate target from the Overview baseline, and the 5%
+  abandoned-% violation threshold from the QCD rule) tint KPI values
+  and abandon-% cells consistently across reports
+  (`script.html::benchValueCls_`). Dept-specific alert thresholds
+  intentionally stay with the Alerts engine.
+
+Every report's results also open with an "At a glance" block of 2–3
+plain sentences (`reportHeadline_` + per-report composers).
+
 ## DQE Historical Data freshness
 
 The dashboard reads from `DQE Historical Data`; three paths

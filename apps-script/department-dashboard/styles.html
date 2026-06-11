@@ -2544,6 +2544,52 @@
   }
   .report-headline-line + .report-headline-line { margin-top: 2px; }
 
+  /* Overview question launcher (anti-intimidation layer): four
+     plain-English questions, each routing to a pre-primed report. */
+  .ov-launcher { margin: 12px 0 16px; }
+  .ov-launcher-kicker {
+    font-family: var(--mono);
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    color: var(--muted);
+    margin-bottom: 6px;
+  }
+  .ov-launcher-row { display: flex; flex-wrap: wrap; gap: 8px; }
+  .ov-launcher-q {
+    font-family: inherit;
+    font-size: 12.5px;
+    color: var(--ink);
+    background: var(--paper-2);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 7px 14px;
+    cursor: pointer;
+    transition: border-color .12s ease, background .12s ease;
+  }
+  .ov-launcher-q:hover {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+  }
+
+  /* Metric glossary: matched labels get a hover/tap definition via
+     title=; the dotted underline + help cursor advertise it. */
+  .gloss {
+    text-decoration: underline dotted;
+    text-decoration-color: var(--muted);
+    text-underline-offset: 3px;
+    cursor: help;
+  }
+  /* Sortable headers keep their click affordance; the dotted
+     underline alone advertises the definition. */
+  th[data-sort].gloss { cursor: pointer; }
+
+  /* Universal benchmark tints: the 92% answer-rate target and the 5%
+     abandoned-% violation threshold, applied to KPI values / cells by
+     script.html::benchValueCls_. */
+  .bm-target { color: var(--good); }
+  .bm-over   { color: var(--warn); }
+
   /* Inbound report: per-insurer daily drill-down (click-to-expand row). */
   .inbound-insurer-row { cursor: pointer; }
   .inbound-insurer-row:hover td { background: var(--paper-2); }

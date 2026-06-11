@@ -309,6 +309,28 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   / improvement score / quiet thresholds are the SHARED
   `deltaClassify_` / `deltaImprovementScore_` / `deltaIsQuiet_`
   helpers in script.html (CR delegates to the same ones).
+- **Anti-intimidation layer is client-only; keep it that way.** Four
+  pieces, all in script.html/styles.html with no server endpoints or
+  cache bumps: (1) **answer-first headlines** -- every report's results
+  open with 2-3 plain sentences via `reportHeadline_` + per-report
+  `*Headline_` composers (each guards its no-data case). (2) **Overview
+  question launcher** (`initOverviewLauncher_`) -- four question chips
+  on the Overview route into Insights / Missed / Individual / QCD
+  pre-primed; Insights auto-runs via the one-shot `insLauncherAutoRun_`
+  flag consumed in `insRenderAgentList` (the race-free post-roster
+  point), Missed/QCD auto-run synchronously, Individual stops at the
+  primed form. (3) **Metric glossary** -- `METRIC_GLOSSARY_` is the ONE
+  place metric definitions live; `initMetricGlossary_`'s debounced
+  MutationObserver applies them as `title=` to `th` + KPI-label
+  elements (`.gloss` dotted underline). Add new terms to the dict, NOT
+  as inline `title=` in render code (the applier never clobbers an
+  existing title, so per-callsite titles would shadow the dict). (4)
+  **Benchmark tints** -- `benchValueCls_(label, formatted)` applies the
+  ONLY two company-wide standards (92% answer-rate target -> `.bm-target`
+  sage; 5% abandon threshold -> `.bm-over` warn) to KPI tile values
+  (IR/PR/CR/Insights/Inbound) + inbound abandon-% cells. Don't add
+  invented thresholds here; dept-specific alert thresholds stay with
+  the Alerts engine.
 - **Per-report client prefs in localStorage.** Each report persists its
   own form state under `cdr.ir.prefs.v1`, `cdr.pr.prefs.v1`,
   `cdr.cr.prefs.v1`, and `cdr.ins.prefs.v2`. Bump the trailing version when the prefs schema
