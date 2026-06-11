@@ -61,7 +61,9 @@
 // v4: response gains `queueHealth` (QCD-into-Insights consolidation:
 //     queue-level totals + prior-window totals + per-queue rows with
 //     violation dates, via computeQcdReport_; null when unmapped).
-const INSIGHTS_CACHE_KEY_PREFIX = 'insights:v4';
+// v5: queueHealth gains `trend` (monthly abandoned-% series per queue +
+//     dept total -- the compact Queue health chart).
+const INSIGHTS_CACHE_KEY_PREFIX = 'insights:v5';
 
 function getInsightsReportInit(req) {
   // Same picker UX (roster + default dates + active-in-range subset) as
@@ -512,11 +514,31 @@ function insightsQueueHealth_(dept, from, to, priorFrom, priorTo) {
         avgAnswer:       t.avgAnswer || '0:00:00',
       };
     };
+    // Compact trend: the monthly abandoned-% series per queue + the
+    // dept total, sliced out of the same trendData the QCD chart uses
+    // (abandoned % is the queue metric with a company standard -- the
+    // 5% line -- so it's the one the compact chart shows; the QCD
+    // Report keeps the full metric tabs + daily view).
+    let trend = null;
+    const td = cur.trendData;
+    if (td && Array.isArray(td.labels) && td.labels.length) {
+      const perQueuePct = {};
+      (cur.meta.queues || []).forEach(function (q) {
+        const m = td.perQueue && td.perQueue[q] && td.perQueue[q].monthly;
+        if (m) perQueuePct[q] = m.map(function (b) { return round1_(b.abandonedPct); });
+      });
+      trend = {
+        labels: td.labels,
+        total: (td.series || []).map(function (b) { return round1_(b.abandonedPct); }),
+        perQueue: perQueuePct,
+      };
+    }
     return {
       queues:        cur.meta.queues || [],
       totals:        pick(cur.totals),
       priorTotals:   prior && prior.meta && !prior.meta.unmapped ? pick(prior.totals) : null,
       violationsMtd: Number(cur.totals && cur.totals.violations) || 0,
+      trend:         trend,
       perQueue: (cur.queueBreakdown || []).map(function (q) {
         return {
           queue:           q.queue,

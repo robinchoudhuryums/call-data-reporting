@@ -695,6 +695,33 @@
     grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
     gap: 10px;
   }
+  /* Per-queue separation: each queue renders its own full-width row of
+     tiles (sub-queues can behave very differently from the parent, so
+     they're never summed away); the all-queues total renders last,
+     visually secondary. Single-queue depts keep flat tiles. */
+  .dept-qcd-queue-row { grid-column: 1 / -1; }
+  .dept-qcd-tiles-inner {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 10px;
+  }
+  .dept-qcd-queue-name {
+    font-family: var(--mono);
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    color: var(--muted);
+    margin: 6px 0 4px;
+  }
+  .dept-qcd-subtag {
+    text-transform: none;
+    letter-spacing: 0;
+    background: var(--accent-soft);
+    color: var(--accent);
+    border-radius: 999px;
+    padding: 1px 8px;
+  }
+  .dept-qcd-total-row { border-top: 1px solid var(--line); padding-top: 6px; opacity: 0.85; }
   .dept-qcd-tile {
     padding: 8px 12px;
     background: var(--paper-2);
@@ -2585,6 +2612,8 @@
   th[data-sort].gloss { cursor: pointer; }
 
   /* Insights: Queue health section (QCD consolidation). */
+  .ins-qh-chart-wrap { margin: 10px 0 12px; }
+  .ins-qh-canvas-wrap { height: 190px; position: relative; }
   .ins-qh-footnote {
     font-size: 11px;
     color: var(--muted);

@@ -329,3 +329,63 @@ test('Insights: queueHealth is null for an unmapped dept / missing QCD sheet (be
   assert.equal(noSheet.queueHealth, null);
   assert.ok(noSheet.teamStats, 'rest of the report unaffected');
 });
+
+test('Insights: queueHealth.trend carries monthly abandoned-% per queue + dept total', function () {
+  installWithQcd(
+    [dqeRow({ date: '2026-03-10', agent: 'Anna', ext: '501', rung: 10, missed: 1, answered: 8, att: '0:03:00' })],
+    [
+      ['Alpha', 'A_Q_Alpha', '',      '', '', 'TRUE', 'a@x.com', '', ''],
+      ['Beta',  'A_Q_Beta',  'Alpha', '', '', 'TRUE', 'a@x.com', '', ''],
+    ],
+    [
+      qcdRow('2026-03-10', 'A_Q_Alpha', 100, 10, 1),
+      qcdRow('2026-03-10', 'A_Q_Beta',  50,  1,  0),
+      qcdRow('2026-02-10', 'A_Q_Alpha', 200, 4,  0),   // prior month bucket
+    ]);
+  const data = h.call('getInsightsReport', {
+    department: 'Alpha', from: '2026-03-09', to: '2026-03-15', agents: ['Anna'],
+  });
+  const trend = data.queueHealth && data.queueHealth.trend;
+  assert.ok(trend, 'trend present');
+  assert.ok(trend.labels.length >= 2, '12-mo monthly axis');
+  assert.equal(Object.keys(trend.perQueue).length, 2, 'one series per queue (rollup incl. sub-queue)');
+  assert.equal(trend.perQueue['A_Q_Alpha'].length, trend.labels.length, 'series aligned to axis');
+  assert.equal(trend.total.length, trend.labels.length);
+  // March bucket (last label): Alpha 10/100 = 10%, Beta 1/50 = 2%, total 11/150 = 7.3%.
+  const last = trend.labels.length - 1;
+  assert.equal(trend.perQueue['A_Q_Alpha'][last], 10);
+  assert.equal(trend.perQueue['A_Q_Beta'][last], 2);
+  assert.equal(trend.total[last], 7.3);
+});
+
+// -- My Department QCD snapshot: per-queue separation -------------------------
+
+test('dept QCD snapshot separates queues (and tags sub-queue owners)', function () {
+  installWithQcd([], [
+    ['Alpha', 'A_Q_Alpha', '',      '', '', 'TRUE', 'a@x.com', '', ''],
+    ['Beta',  'A_Q_Beta',  'Alpha', '', '', 'TRUE', 'a@x.com', '', ''],
+  ], [
+    qcdRow('2026-03-10', 'A_Q_Alpha', 100, 10, 1),
+    qcdRow('2026-03-10', 'A_Q_Beta',  50,  5,  0),
+    qcdRow('2026-03-09', 'A_Q_Alpha', 999, 99, 9),   // older date -- ignored
+  ]);
+  const snap = h.call('computeDeptQcdSnapshot_', 'Alpha', 'America/Chicago');
+  assert.equal(snap.date, '2026-03-10');
+  assert.equal(snap.perQueue.length, 2, 'one entry per queue, never summed away');
+  const alpha = snap.perQueue.filter(q => q.queue === 'A_Q_Alpha')[0];
+  const beta  = snap.perQueue.filter(q => q.queue === 'A_Q_Beta')[0];
+  assert.equal(alpha.subDept, null, 'own queue carries no sub-queue tag');
+  assert.equal(beta.subDept, 'Beta', 'child dept queue is tagged with its owner');
+  assert.equal(alpha.totalCalls, 100);
+  assert.equal(alpha.abandonedPctStr, '10.00%');
+  assert.equal(beta.totalCalls, 50);
+  // All-queues total still available for the labeled total row.
+  assert.equal(snap.totalCalls, 150);
+  assert.equal(snap.violations, 1);
+
+  // Single-queue dept: perQueue has exactly one entry matching the totals.
+  const single = h.call('computeDeptQcdSnapshot_', 'Beta', 'America/Chicago');
+  assert.equal(single.perQueue.length, 1);
+  assert.equal(single.perQueue[0].queue, 'A_Q_Beta');
+  assert.equal(single.totalCalls, 50);
+});

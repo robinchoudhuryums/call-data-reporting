@@ -1212,6 +1212,14 @@
         <div id="ins-queue-health" style="display:none;">
           <div class="al-section-title">Queue health <span class="ins-rollup-cap" id="ins-qh-cap"></span></div>
           <div id="ins-qh-tiles" class="pr-kpi-row"></div>
+          <!-- Compact per-queue trend: monthly abandoned-% line per queue
+               + dashed dept total + the 5% threshold line. The QCD Report
+               keeps the full metric tabs / daily view / single-queue
+               drill-downs. -->
+          <div class="ir-chart-wrap ins-qh-chart-wrap" id="ins-qh-chart-wrap" style="display:none;">
+            <div class="ir-chart-header">Abandoned % by queue (monthly)</div>
+            <div class="ir-chart-canvas-wrap ins-qh-canvas-wrap"><canvas id="ins-qh-chart"></canvas></div>
+          </div>
           <table class="qcd-source-table">
             <thead><tr>
               <th>Queue</th>

@@ -3343,14 +3343,38 @@
            +   '</div>'
            + '</div>';
     };
-    const violCls = (Number(qcd.violations) || 0) > 0 ? 'dept-qcd-warn' : '';
-    const pctCls  = (Number(qcd.abandonedPct) || 0) >= 5 ? 'dept-qcd-warn' : '';
-    tiles.innerHTML =
-        tile('Total Calls', fmtNumber(qcd.totalCalls    || 0))
-      + tile('Answered',    fmtNumber(qcd.totalAnswered || 0))
-      + tile('Abandoned',   fmtNumber(qcd.abandoned     || 0))
-      + tile('Abandoned %', String(qcd.abandonedPctStr  || '0.00%'), pctCls)
-      + tile('Violations',  fmtNumber(qcd.violations    || 0),       violCls);
+    const tileRow = function (q) {
+      const violCls = (Number(q.violations) || 0) > 0 ? 'dept-qcd-warn' : '';
+      const pctCls  = (Number(q.abandonedPct) || 0) >= 5 ? 'dept-qcd-warn' : '';
+      return tile('Total Calls', fmtNumber(q.totalCalls    || 0))
+           + tile('Answered',    fmtNumber(q.totalAnswered || 0))
+           + tile('Abandoned',   fmtNumber(q.abandoned     || 0))
+           + tile('Abandoned %', String(q.abandonedPctStr  || '0.00%'), pctCls)
+           + tile('Violations',  fmtNumber(q.violations    || 0),       violCls);
+    };
+
+    // Per-queue separation: each queue (incl. sub-queue children, which
+    // can behave very differently from the parent) renders its OWN tile
+    // row; the all-queues sum renders last as a clearly-labeled muted
+    // row. Single-queue depts keep the flat row (no redundant total).
+    const perQueue = qcd.perQueue || [];
+    if (perQueue.length > 1) {
+      tiles.innerHTML = perQueue.map(function (q) {
+        const tag = q.subDept
+          ? ' <span class="dept-qcd-subtag">sub-queue · ' + escapeHtml(q.subDept) + '</span>'
+          : '';
+        return '<div class="dept-qcd-queue-row">'
+             +   '<div class="dept-qcd-queue-name">' + escapeHtml(q.queue) + tag + '</div>'
+             +   '<div class="dept-qcd-tiles-inner">' + tileRow(q) + '</div>'
+             + '</div>';
+      }).join('')
+      + '<div class="dept-qcd-queue-row dept-qcd-total-row">'
+      +   '<div class="dept-qcd-queue-name">All queues</div>'
+      +   '<div class="dept-qcd-tiles-inner">' + tileRow(qcd) + '</div>'
+      + '</div>';
+    } else {
+      tiles.innerHTML = tileRow(perQueue.length === 1 ? perQueue[0] : qcd);
+    }
     wrap.style.display = '';
   }
 
@@ -9594,6 +9618,7 @@
   let insPendingAgentSelection_ = null;
   let insLastData = null;
   let insChartInstance = null;
+  let insQhChartInstance = null;   // Queue health compact trend chart
   let insActiveTrendMetric = 'answered';
   let insCardSort = 'default';      // default (answered desc) | name | improvers | regressors
   // v2: prefs gain compareMode / priorFrom / priorTo / trendMetric
@@ -10023,6 +10048,8 @@
     ];
     $('ins-qh-tiles').innerHTML = tiles.join('');
 
+    insRenderQueueHealthChart_(qh);
+
     const tbody = $('ins-qh-tbody');
     if (!tbody) return;
     tbody.innerHTML = (qh.perQueue || []).map(function (q) {
@@ -10040,6 +10067,93 @@
         + '<td class="num' + violCls + '">' + violCell + '</td>'
         + '</tr>';
     }).join('');
+  }
+
+  /**
+   * Compact Queue health trend: one monthly abandoned-% line per queue
+   * + a dashed dept total (multi-queue only) + the faint 5% threshold
+   * baseline (the QCD violation rule -- same convention as the Overview
+   * chart's 92% line). Colors via THEME / IR_CHART_COLORS (INV-42);
+   * datalabels off in boolean form (INV-41). Hidden for pre-v5 cached
+   * payloads (no trend key) or when there's nothing to plot.
+   */
+  function insRenderQueueHealthChart_(qh) {
+    const wrap = $('ins-qh-chart-wrap');
+    if (!wrap) return;
+    const trend = qh && qh.trend;
+    const queueNames = trend ? Object.keys(trend.perQueue || {}) : [];
+    if (!trend || !trend.labels || !trend.labels.length
+        || (!queueNames.length && !(trend.total || []).length)) {
+      wrap.style.display = 'none';
+      if (insQhChartInstance) { try { insQhChartInstance.destroy(); } catch (e) {} insQhChartInstance = null; }
+      return;
+    }
+    wrap.style.display = '';
+    refreshChartTheme();
+    destroyOrphanedChartOnCanvas_('ins-qh-chart');
+    if (insQhChartInstance) { try { insQhChartInstance.destroy(); } catch (e) {} insQhChartInstance = null; }
+
+    const datasets = queueNames.map(function (q, i) {
+      const color = IR_CHART_COLORS[i % IR_CHART_COLORS.length];
+      return {
+        label: q,
+        data: trend.perQueue[q],
+        borderColor: color,
+        backgroundColor: color,
+        borderWidth: 1.8,
+        pointRadius: 1.5,
+        tension: 0.25,
+        fill: false,
+      };
+    });
+    if (queueNames.length > 1 && (trend.total || []).length) {
+      datasets.push({
+        label: 'Dept total',
+        data: trend.total,
+        borderColor: THEME.ink,
+        backgroundColor: THEME.ink,
+        borderDash: [5, 4],
+        borderWidth: 1.4,
+        pointRadius: 0,
+        tension: 0.25,
+        fill: false,
+      });
+    }
+    datasets.push({
+      label: '5% threshold',
+      data: trend.labels.map(function () { return 5; }),
+      borderColor: THEME.muted,
+      borderDash: [3, 4],
+      borderWidth: 1,
+      pointRadius: 0,
+      fill: false,
+      order: 99,
+    });
+
+    insQhChartInstance = new Chart($('ins-qh-chart').getContext('2d'), {
+      type: 'line',
+      data: { labels: trend.labels, datasets: datasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          datalabels: { display: false },
+          legend: { position: 'bottom', labels: { boxWidth: 18,
+            filter: function (item) { return item.text !== '5% threshold'; } } },
+          tooltip: {
+            filter: function (ctx) { return ctx.dataset.label !== '5% threshold'; },
+            callbacks: { label: function (ctx) {
+              return ctx.dataset.label + ': ' + (ctx.parsed.y == null ? '-' : ctx.parsed.y.toFixed(1) + '%');
+            } },
+          },
+        },
+        scales: {
+          x: { ticks: { maxRotation: 0, autoSkip: true } },
+          y: { beginAtZero: true, ticks: { callback: function (v) { return v + '%'; } } },
+        },
+      },
+    });
   }
 
   /**
