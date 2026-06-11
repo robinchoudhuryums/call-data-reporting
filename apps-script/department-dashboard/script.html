@@ -9749,6 +9749,8 @@
     if (gen) gen.addEventListener('click', runInboundReport);
     const back = $('inbound-back-btn');
     if (back) back.addEventListener('click', inboundShowForm);
+    const csv = $('inbound-csv-btn');
+    if (csv) csv.addEventListener('click', inboundDownloadCsv_);
   }
 
   function inboundShowForm()    { $('inbound-form').style.display = ''; $('inbound-results').style.display = 'none'; inboundSetError(''); }
@@ -9800,16 +9802,41 @@
       .getInboundReport({ from: from, to: to });
   }
 
-  function inboundKpiTile_(label, value, cap) {
+  function inboundKpiTile_(label, value, cap, deltaHtml) {
     return '<div class="pr-kpi-tile">'
       + '<div class="pr-kpi-label">' + escapeHtml(label) + '</div>'
       + '<div class="pr-kpi-value">' + escapeHtml(String(value)) + '</div>'
+      + (deltaHtml ? '<div class="pr-kpi-delta">' + deltaHtml + ' <span class="pr-delta-cap">vs prior</span></div>' : '')
       + (cap ? '<div class="pr-delta-cap">' + escapeHtml(cap) + '</div>' : '')
       + '</div>';
   }
+
+  /**
+   * Delta badge for an inbound KPI vs the prior window. `isPp` =
+   * already-percent metrics (answer/abandon rate) compare as point
+   * differences; everything else as relative % (deltaBlock_ semantics:
+   * 0 -> 0 is 0, 0 -> nonzero is +100). Renders via the shared
+   * insDeltaBadge_ ({deltaPct, type} + valence).
+   */
+  function inboundDelta_(cur, prev, valence, isPp) {
+    cur = Number(cur) || 0; prev = Number(prev) || 0;
+    let dp;
+    if (isPp) dp = cur - prev;
+    else if (prev === 0 && cur === 0) dp = 0;
+    else if (prev === 0) dp = 100;
+    else dp = ((cur - prev) / prev) * 100;
+    return insDeltaBadge_({ deltaPct: dp, type: isPp ? 'pctPoints' : 'volume' }, valence);
+  }
+
+  function inboundAbandonPct_(r) {
+    const calls = Number(r.calls) || 0;
+    if (!calls) return '–';
+    return (((Number(r.abandoned) || 0) / calls) * 100).toFixed(1) + '%';
+  }
+
   function inboundRenderTable_(tbodyId, rows, extraOnHold) {
     const tbody = $(tbodyId); if (!tbody) return;
-    const cols = extraOnHold ? 5 : 4;
+    const cols = extraOnHold ? 7 : 6;
     if (!rows || !rows.length) {
       tbody.innerHTML = '<tr><td colspan="' + cols + '" class="al-empty">No data in range.</td></tr>';
       return;
@@ -9818,9 +9845,26 @@
       var html = '<tr><td>' + escapeHtml(r.label) + '</td>'
         + '<td class="num">' + fmtNumber(r.calls) + '</td>'
         + '<td class="num">' + fmtNumber(r.answered) + '</td>'
-        + '<td class="num">' + fmtNumber(r.abandoned) + '</td>';
+        + '<td class="num">' + fmtNumber(r.abandoned) + '</td>'
+        + '<td class="num">' + inboundAbandonPct_(r) + '</td>';
       if (extraOnHold) html += '<td class="num">' + fmtNumber(r.on_hold) + '</td>';
+      html += '<td class="num">' + fmtDuration(r.avg_wait || 0) + '</td>';
       return html + '</tr>';
+    }).join('');
+  }
+
+  function inboundRenderCrossTable_(rows) {
+    const tbody = $('inbound-dialin-insurer-tbody'); if (!tbody) return;
+    if (!rows || !rows.length) {
+      tbody.innerHTML = '<tr><td colspan="5" class="al-empty">No labeled callers in range.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = rows.map(function (r) {
+      return '<tr><td>' + escapeHtml(r.dial_in) + '</td>'
+        + '<td>' + escapeHtml(r.insurer) + '</td>'
+        + '<td class="num">' + fmtNumber(r.calls) + '</td>'
+        + '<td class="num">' + fmtNumber(r.answered) + '</td>'
+        + '<td class="num">' + fmtNumber(r.abandoned) + '</td></tr>';
     }).join('');
   }
 
@@ -9828,31 +9872,117 @@
     inboundLastData = data;
     const meta = data.meta || {};
     $('inbound-results-date').textContent = '(' + (meta.from || '') + ' – ' + (meta.to || '') + ')';
+    const cmp = $('inbound-compare-line');
+    if (cmp) {
+      cmp.textContent = (meta.priorFrom && meta.priorTo)
+        ? 'Deltas compare against the immediately-preceding period: ' + meta.priorFrom + ' – ' + meta.priorTo
+        : '';
+    }
 
     // Unavailable (Neon down / table missing) -> show the empty-state, hide body.
     const unavail = $('inbound-unavailable'), body = $('inbound-body');
+    const csvBtn = $('inbound-csv-btn');
     if (meta.available === false) {
       if (unavail) unavail.style.display = '';
       if (body) body.style.display = 'none';
+      if (csvBtn) csvBtn.style.display = 'none';
       return;
     }
     if (unavail) unavail.style.display = 'none';
     if (body) body.style.display = '';
+    if (csvBtn) csvBtn.style.display = '';
 
     const k = data.kpis || {};
+    const p = data.kpisPrior || {};
     $('inbound-kpi-row').innerHTML = [
       inboundKpiTile_('Inbound calls', fmtNumber(k.total),
-        (k.anonymous ? fmtNumber(k.anonymous) + ' anonymous' : '')),
-      inboundKpiTile_('Answered', fmtNumber(k.answered), (k.answerRate || 0) + '%'),
-      inboundKpiTile_('Abandoned', fmtNumber(k.abandoned), (k.abandonRate || 0) + '%'),
-      inboundKpiTile_('Abandoned on hold', fmtNumber(k.abandonedOnHold), 'caller hung up held'),
-      inboundKpiTile_('Avg wait', fmtDuration(k.avgWaitSec), 'to answer / abandon'),
-      inboundKpiTile_('Avg hold', fmtDuration(k.avgHoldSec), 'when held'),
+        (k.anonymous ? fmtNumber(k.anonymous) + ' anonymous' : ''),
+        inboundDelta_(k.total, p.total, 'neu', false)),
+      inboundKpiTile_('Answered', fmtNumber(k.answered), (k.answerRate || 0) + '%',
+        inboundDelta_(k.answered, p.answered, 'pos', false)),
+      inboundKpiTile_('Abandoned', fmtNumber(k.abandoned), (k.abandonRate || 0) + '%',
+        inboundDelta_(k.abandoned, p.abandoned, 'neg', false)),
+      inboundKpiTile_('Abandoned on hold', fmtNumber(k.abandonedOnHold), 'caller hung up held',
+        inboundDelta_(k.abandonedOnHold, p.abandonedOnHold, 'neg', false)),
+      inboundKpiTile_('Avg wait', fmtDuration(k.avgWaitSec), 'to answer / abandon',
+        inboundDelta_(k.avgWaitSec, p.avgWaitSec, 'neg', false)),
+      inboundKpiTile_('Avg hold', fmtDuration(k.avgHoldSec), 'when held',
+        inboundDelta_(k.avgHoldSec, p.avgHoldSec, 'neu', false)),
     ].join('');
 
     inboundRenderTable_('inbound-insurer-tbody', data.byInsurer, true);
     inboundRenderTable_('inbound-dialin-tbody', data.byDialIn, false);
     inboundRenderTable_('inbound-queue-tbody', data.byQueue, false);
+    inboundRenderCrossTable_(data.byDialInInsurer);
+  }
+
+  /**
+   * Client-side CSV of the full inbound payload (KPIs vs prior, the
+   * three breakdowns, the dial-in x insurer cross-cut, and the daily
+   * series -- which has no on-screen table, so the CSV is the only way
+   * to get it). Every cell routes through csvSafeCell_ before the
+   * RFC-4180 quoting (insurer labels are admin text; queue/dial-in
+   * values originate upstream -- treat all as untrusted).
+   */
+  function inboundDownloadCsv_() {
+    if (!inboundLastData || (inboundLastData.meta || {}).available === false) return;
+    const d = inboundLastData;
+    const meta = d.meta || {};
+    const esc = function (v) {
+      const s = csvSafeCell_(v == null ? '' : v);
+      if (/[",\n]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+      return s;
+    };
+    const row = function (cells) { return cells.map(esc).join(','); };
+    const lines = [];
+    lines.push(row(['Inbound Calls report', meta.from + ' to ' + meta.to]));
+    lines.push(row(['Prior window', meta.priorFrom + ' to ' + meta.priorTo]));
+    lines.push('');
+    lines.push(row(['KPI', 'Current', 'Prior']));
+    const k = d.kpis || {}, p = d.kpisPrior || {};
+    [['Inbound calls', 'total'], ['Answered', 'answered'], ['Abandoned', 'abandoned'],
+     ['Missed', 'missed'], ['Abandoned on hold', 'abandonedOnHold'], ['Anonymous', 'anonymous'],
+     ['Answer rate %', 'answerRate'], ['Abandon rate %', 'abandonRate'],
+     ['Avg wait sec', 'avgWaitSec'], ['Avg hold sec', 'avgHoldSec']].forEach(function (m) {
+      lines.push(row([m[0], k[m[1]] != null ? k[m[1]] : '', p[m[1]] != null ? p[m[1]] : '']));
+    });
+    const breakdown = function (title, firstCol, rows, withOnHold) {
+      lines.push('');
+      lines.push(row([title]));
+      const head = [firstCol, 'Calls', 'Answered', 'Abandoned'];
+      if (withOnHold) head.push('On-hold abandon');
+      head.push('Avg wait sec');
+      lines.push(row(head));
+      (rows || []).forEach(function (r) {
+        const cells = [r.label, r.calls, r.answered, r.abandoned];
+        if (withOnHold) cells.push(r.on_hold);
+        cells.push(r.avg_wait != null ? r.avg_wait : '');
+        lines.push(row(cells));
+      });
+    };
+    breakdown('By insurer (labeled callers only)', 'Insurer', d.byInsurer, true);
+    breakdown('By dial-in', 'Dial-in', d.byDialIn, false);
+    breakdown('By entry queue', 'Entry queue', d.byQueue, false);
+    lines.push('');
+    lines.push(row(['By dial-in x insurer (labeled callers only)']));
+    lines.push(row(['Dial-in', 'Insurer', 'Calls', 'Answered', 'Abandoned']));
+    (d.byDialInInsurer || []).forEach(function (r) {
+      lines.push(row([r.dial_in, r.insurer, r.calls, r.answered, r.abandoned]));
+    });
+    lines.push('');
+    lines.push(row(['Daily']));
+    lines.push(row(['Date', 'Calls', 'Abandoned']));
+    (d.daily || []).forEach(function (r) {
+      lines.push(row([r.d, r.calls, r.abandoned]));
+    });
+    const blob = new Blob([lines.join('\n') + '\n'], { type: 'text/csv;charset=utf-8;' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'inbound-calls_' + (meta.from || '') + '_' + (meta.to || '') + '.csv';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 0);
   }
 
   let qcdChartInstance = null;

@@ -1255,8 +1255,10 @@
               <span class="ir-results-title">Inbound Calls</span>
               <span class="ir-results-date" id="inbound-results-date"></span>
             </div>
+            <div class="ins-compare-line" id="inbound-compare-line"></div>
           </div>
           <div class="ir-action-buttons">
+            <button class="btn btn-secondary" id="inbound-csv-btn" type="button">Download CSV</button>
             <button class="btn btn-secondary" id="inbound-back-btn" type="button">&laquo; Back</button>
           </div>
         </div>
@@ -1275,7 +1277,7 @@
           <div class="al-section">
             <div class="al-section-title">By insurer <span class="ins-rollup-cap">(labeled inbound numbers only)</span></div>
             <table class="qcd-source-table">
-              <thead><tr><th>Insurer</th><th class="num">Calls</th><th class="num">Answered</th><th class="num">Abandoned</th><th class="num">On-hold abandon</th></tr></thead>
+              <thead><tr><th>Insurer</th><th class="num">Calls</th><th class="num">Answered</th><th class="num">Abandoned</th><th class="num">Aband. %</th><th class="num">On-hold abandon</th><th class="num">Avg wait</th></tr></thead>
               <tbody id="inbound-insurer-tbody"></tbody>
             </table>
           </div>
@@ -1283,7 +1285,7 @@
           <div class="al-section">
             <div class="al-section-title">By advertised line (dial-in)</div>
             <table class="qcd-source-table">
-              <thead><tr><th>Dial-in number</th><th class="num">Calls</th><th class="num">Answered</th><th class="num">Abandoned</th></tr></thead>
+              <thead><tr><th>Dial-in number</th><th class="num">Calls</th><th class="num">Answered</th><th class="num">Abandoned</th><th class="num">Aband. %</th><th class="num">Avg wait</th></tr></thead>
               <tbody id="inbound-dialin-tbody"></tbody>
             </table>
           </div>
@@ -1291,8 +1293,16 @@
           <div class="al-section">
             <div class="al-section-title">By entry queue</div>
             <table class="qcd-source-table">
-              <thead><tr><th>Entry queue</th><th class="num">Calls</th><th class="num">Answered</th><th class="num">Abandoned</th></tr></thead>
+              <thead><tr><th>Entry queue</th><th class="num">Calls</th><th class="num">Answered</th><th class="num">Abandoned</th><th class="num">Aband. %</th><th class="num">Avg wait</th></tr></thead>
               <tbody id="inbound-queue-tbody"></tbody>
+            </table>
+          </div>
+
+          <div class="al-section">
+            <div class="al-section-title">By dial-in &times; insurer <span class="ins-rollup-cap">(marketing-line attribution; labeled callers only)</span></div>
+            <table class="qcd-source-table">
+              <thead><tr><th>Dial-in number</th><th>Insurer</th><th class="num">Calls</th><th class="num">Answered</th><th class="num">Abandoned</th></tr></thead>
+              <tbody id="inbound-dialin-insurer-tbody"></tbody>
             </table>
           </div>
         </div>

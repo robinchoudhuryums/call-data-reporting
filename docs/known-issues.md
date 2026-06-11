@@ -254,7 +254,7 @@ same time as the code change.
 | `MissedCallsReport.gs` | `missed:vN:` | `v10` |
 | `CompanyOverview.gs` | `companyOverview:vN` | `v14` |
 | `QCDReport.gs` | `qcd:vN:` | `v6` |
-| `InboundReport.gs` | `inbound:vN:` | `v1` |
+| `InboundReport.gs` | `inbound:vN:` | `v2` |
 | `InsightsReport.gs` | `insights:vN:` | `v3` |
 
 `Alerts.gs` holds no cached compute. Preview/send always re-reads the
@@ -361,7 +361,10 @@ free-form; current writers emit:
   `apps-script/cdr-import/autoImport.js::processNewImport`
   (success at the end, failure in the outer catch block).
 - `processIntegratedHistory:CDR` / `:QPath` / `:QCD` / `:CSR` /
-  `:DQE` — one row per output type that produced > 0 rows. Added
+  `:DQE` / `:Inbound` — one row per output type that produced > 0
+  rows (`:Inbound` also logs a `failure` row when the inbound_calls
+  Neon mirror is unreachable or errors, since that table has no
+  sheet primary to fall back on — F9). Added
   so a partial failure (e.g. CDR + QPath succeed but QCD throws)
   surfaces immediately instead of being hidden inside the outer
   `autoImport` row's Notes count line. If a block fails

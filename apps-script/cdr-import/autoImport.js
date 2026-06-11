@@ -1330,9 +1330,9 @@ function processIntegratedHistory(targetSS, outputSheet, results, dateObj, skipC
 
   let cdrCount = 0, qpathCount = 0, qcdCount = 0, csrCount = 0, dqeCount = 0;
 
-  // Neon mirror status for the daily toast (derived from the CDR + QCD
-  // writer results — Neon reachability is per-run binary against one
-  // instance, so any writer's skip/error reflects the whole run). 'ok'
+  // Neon mirror status for the daily toast (derived from the CDR + QCD +
+  // Inbound writer results — Neon reachability is per-run binary against
+  // one instance, so any writer's skip/error reflects the whole run). 'ok'
   // until a writer reports .skipped (-> 'unreachable') or a Neon catch
   // block fires (-> 'error', which is sticky and not downgraded).
   // DQE-specific Neon failures surface separately via notifyDqeBuildFailure_
@@ -1655,16 +1655,78 @@ if (!skipCDR && obcHD) {
   // Uses getDisplayValues so the timestamp/duration columns come back as the
   // "MM/DD/YYYY HH:MM:SS" / "H:MM:SS" strings the parser expects (getValues
   // would return Date objects). Idempotent via ON CONFLICT.
+  //
+  // Observability (F9): a `processIntegratedHistory:Inbound` Pipeline
+  // Health row per outcome, the run's Neon toast status folds in this
+  // writer's result, and a hard failure emails the alert address --
+  // inbound_calls has NO sheet primary to fall back on, so a silently
+  // dead feed would otherwise only surface when an admin opens the
+  // Inbound report.
+  var inboundStart = Date.now();
   try {
     if (rawDataSheet && rawDataSheet.getLastRow() > 1) {
       var inboundLegs = rawDataSheet.getDataRange().getDisplayValues();
       inboundLegs.shift();   // drop header row
       var inboundRes = writeInboundCallsToNeon(inboundLegs);
       console.log('processIntegratedHistory: inbound_calls -> ' + JSON.stringify(inboundRes));
+      if (inboundRes && inboundRes.error) {
+        setNeonStatus_('error');
+        try {
+          logPipelineHealthWithFallback_(targetSS, {
+            step: 'processIntegratedHistory:Inbound',
+            status: 'failure',
+            rows: null,
+            durationMs: Date.now() - inboundStart,
+            notes: dateObj.toDateString() + ' | writer reported error (see cdr-import execution log)',
+          });
+        } catch (logErr) { /* best-effort */ }
+        try {
+          notifyNeonWriteFailure('processIntegratedHistory:Inbound (' + dateObj.toDateString() + ')',
+            'writeInboundCallsToNeon reported an error; inbound_calls was NOT refreshed for this date. '
+            + 'See the cdr-import execution log for the underlying exception. '
+            + 'Re-import the date (or run backfillInboundCalls) once fixed.');
+        } catch (notifyErr) { /* best-effort */ }
+      } else if (inboundRes && inboundRes.skipped && !inboundRes.inserted) {
+        setNeonStatus_('unreachable');
+        try {
+          logPipelineHealthWithFallback_(targetSS, {
+            step: 'processIntegratedHistory:Inbound',
+            status: 'failure',
+            rows: null,
+            durationMs: Date.now() - inboundStart,
+            notes: dateObj.toDateString() + ' | Neon unreachable (' + inboundRes.skipped + ' records skipped)',
+          });
+        } catch (logErr) { /* best-effort */ }
+      } else if (inboundRes && inboundRes.inserted) {
+        try {
+          logPipelineHealthWithFallback_(targetSS, {
+            step: 'processIntegratedHistory:Inbound',
+            status: 'success',
+            rows: inboundRes.inserted,
+            durationMs: Date.now() - inboundStart,
+            notes: dateObj.toDateString(),
+          });
+        } catch (logErr) { /* best-effort */ }
+      }
+      // inserted=0 + skipped=0 (no inbound legs in the day's data) logs no
+      // row -- matches the other blocks' "only rows>0 get a row" rule.
     }
   } catch (inboundErr) {
-    console.log('processIntegratedHistory: inbound_calls capture failed (best-effort): '
-      + (inboundErr && inboundErr.message ? inboundErr.message : inboundErr));
+    var inboundMsg = (inboundErr && inboundErr.message) ? inboundErr.message : String(inboundErr);
+    console.log('processIntegratedHistory: inbound_calls capture failed (best-effort): ' + inboundMsg);
+    setNeonStatus_('error');
+    try {
+      logPipelineHealthWithFallback_(targetSS, {
+        step: 'processIntegratedHistory:Inbound',
+        status: 'failure',
+        rows: null,
+        durationMs: Date.now() - inboundStart,
+        notes: dateObj.toDateString() + ' | ' + inboundMsg,
+      });
+    } catch (logErr) { /* best-effort */ }
+    try {
+      notifyNeonWriteFailure('processIntegratedHistory:Inbound (' + dateObj.toDateString() + ')', inboundMsg);
+    } catch (notifyErr) { /* best-effort */ }
   }
 
   return {

@@ -85,9 +85,15 @@ function parseNameField(val) {
   // Parse a comma-separated list of entries, each optionally ending in "(N)"
   function parseEntries(str, isExternal) {
     if (!str) return [];
-    // Split by comma, but NOT commas inside parentheses
-    // Strategy: split on ", " where next char is uppercase or + (start of new entry)
-    const entries = str.split(/,\s*(?=[A-Z+'])/);
+    // Split on an entry-separator comma: one followed by the start of a
+    // new "Name (count)" entry. The lookahead character class must cover
+    // every plausible first character of a name -- lowercase ("de la
+    // Cruz"), accented ("Ángel"), digits ("311 Service") -- or those
+    // entries silently glue onto the previous one. Kept in lockstep with
+    // cdrParseNameFieldJson_ in neonWrite.js (the F2 splitter fix; this
+    // copy carried the pre-F2 regex [A-Z+'] until the same fix landed
+    // here).
+    const entries = str.split(/,\s*(?=[A-Za-zÀ-ÿ0-9+'])/);
     return entries.map(entry => {
       entry = entry.trim();
       if (!entry) return null;

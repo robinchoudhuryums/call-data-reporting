@@ -4,12 +4,15 @@
  * with insurer labels via the `insurance_numbers` reference table.
  *
  * Answers: how many inbound calls (per insurer / per advertised dial-in line
- * / per entry queue), answered vs abandoned vs abandoned-on-hold, average
- * wait, and the daily trend.
+ * / per entry queue / per dial-in x insurer cross-cut), answered vs abandoned
+ * vs abandoned-on-hold, average wait, the daily trend, and how all of it
+ * compares to the immediately-preceding same-length window (INV-28, via the
+ * shared computePriorWindow_).
  *
  * Public entry (callable via google.script.run):
- *   getInboundReport({ from, to }) -> { meta, kpis, byInsurer, byDialIn,
- *                                       byQueue, daily }
+ *   getInboundReport({ from, to }) -> { meta, kpis, kpisPrior, byInsurer,
+ *                                       byDialIn, byQueue, byDialInInsurer,
+ *                                       daily }
  *
  * Admin-only at the server boundary (assertAdmin_) -- it's a company-wide
  * cross-dept/queue view. Reads Neon via getDashboardNeonConn_ (same
@@ -23,7 +26,10 @@
  * INBOUND_CACHE_KEY_PREFIX.
  */
 
-const INBOUND_CACHE_KEY_PREFIX = 'inbound:v1';
+// v2: kpisPrior (auto-adjacent INV-28 window) + meta.priorFrom/priorTo;
+// avg_wait on the byInsurer / byDialIn / byQueue rows; new
+// byDialInInsurer cross-cut (marketing-line x insurer attribution).
+const INBOUND_CACHE_KEY_PREFIX = 'inbound:v2';
 const INBOUND_TOP_N = 50;
 
 function getInboundReport(req) {
@@ -65,14 +71,20 @@ function computeInboundReport_(from, to) {
     conn = (typeof getDashboardNeonConn_ === 'function') ? getDashboardNeonConn_() : null;
     if (!conn) { empty.meta.available = false; return empty; }
 
+    // Comparison window: immediately-preceding same-length window via the
+    // shared INV-28 implementation (Data.gs). Derived from the validated
+    // from/to, so inlining its ISO strings below is as safe as inlining
+    // from/to themselves.
+    const prior = computePriorWindow_(from, to);
+
     // from/to are validated ISO (isIsoDate_) -> safe to inline. ONE query,
     // ONE getString. caller_hash IS NOT NULL drops anonymous callers from the
     // per-insurer/per-number cuts (they can't be labeled) but they still count
     // in the headline KPIs + per-queue.
     const dr = "c.call_date BETWEEN '" + from + "'::date AND '" + to + "'::date";
-    const sql =
-      "SELECT json_build_object(" +
-        "'kpis', (SELECT json_build_object(" +
+    const priorDr = "c.call_date BETWEEN '" + prior.from + "'::date AND '" + prior.to + "'::date";
+    const kpiSelect = function (range) {
+      return "(SELECT json_build_object(" +
             "'total', count(*), " +
             "'answered', count(*) FILTER (WHERE disposition='answered'), " +
             "'abandoned', count(*) FILTER (WHERE disposition='abandoned'), " +
@@ -81,27 +93,43 @@ function computeInboundReport_(from, to) {
             "'anonymous', count(*) FILTER (WHERE caller_hash IS NULL), " +
             "'avgWaitSec', COALESCE(round(avg(wait_seconds))::int, 0), " +
             "'avgHoldSec', COALESCE(round(avg(NULLIF(hold_seconds,0)))::int, 0)" +
-          ") FROM inbound_calls c WHERE " + dr + "), " +
+          ") FROM inbound_calls c WHERE " + range + ")";
+    };
+    const sql =
+      "SELECT json_build_object(" +
+        "'kpis', " + kpiSelect(dr) + ", " +
+        "'kpisPrior', " + kpiSelect(priorDr) + ", " +
         "'byInsurer', (SELECT COALESCE(json_agg(t), '[]') FROM (" +
             "SELECT COALESCE(i.insurance_name,'(unlabeled)') AS label, count(*) AS calls, " +
               "count(*) FILTER (WHERE c.disposition='answered') AS answered, " +
               "count(*) FILTER (WHERE c.disposition='abandoned') AS abandoned, " +
-              "count(*) FILTER (WHERE c.abandoned_on_hold) AS on_hold " +
+              "count(*) FILTER (WHERE c.abandoned_on_hold) AS on_hold, " +
+              "COALESCE(round(avg(c.wait_seconds))::int, 0) AS avg_wait " +
             "FROM inbound_calls c LEFT JOIN insurance_numbers i ON i.phone_hash=c.caller_hash " +
             "WHERE " + dr + " AND c.caller_hash IS NOT NULL " +
             "GROUP BY 1 ORDER BY calls DESC LIMIT " + INBOUND_TOP_N + ") t), " +
         "'byDialIn', (SELECT COALESCE(json_agg(t), '[]') FROM (" +
             "SELECT COALESCE(dial_in_number,'(none)') AS label, count(*) AS calls, " +
               "count(*) FILTER (WHERE disposition='answered') AS answered, " +
-              "count(*) FILTER (WHERE disposition='abandoned') AS abandoned " +
+              "count(*) FILTER (WHERE disposition='abandoned') AS abandoned, " +
+              "COALESCE(round(avg(wait_seconds))::int, 0) AS avg_wait " +
             "FROM inbound_calls c WHERE " + dr + " " +
             "GROUP BY 1 ORDER BY calls DESC LIMIT " + INBOUND_TOP_N + ") t), " +
         "'byQueue', (SELECT COALESCE(json_agg(t), '[]') FROM (" +
             "SELECT COALESCE(entry_queue,'(none)') AS label, count(*) AS calls, " +
               "count(*) FILTER (WHERE disposition='answered') AS answered, " +
-              "count(*) FILTER (WHERE disposition='abandoned') AS abandoned " +
+              "count(*) FILTER (WHERE disposition='abandoned') AS abandoned, " +
+              "COALESCE(round(avg(wait_seconds))::int, 0) AS avg_wait " +
             "FROM inbound_calls c WHERE " + dr + " " +
             "GROUP BY 1 ORDER BY calls DESC LIMIT " + INBOUND_TOP_N + ") t), " +
+        "'byDialInInsurer', (SELECT COALESCE(json_agg(t), '[]') FROM (" +
+            "SELECT COALESCE(c.dial_in_number,'(none)') AS dial_in, " +
+              "COALESCE(i.insurance_name,'(unlabeled)') AS insurer, count(*) AS calls, " +
+              "count(*) FILTER (WHERE c.disposition='answered') AS answered, " +
+              "count(*) FILTER (WHERE c.disposition='abandoned') AS abandoned " +
+            "FROM inbound_calls c LEFT JOIN insurance_numbers i ON i.phone_hash=c.caller_hash " +
+            "WHERE " + dr + " AND c.caller_hash IS NOT NULL " +
+            "GROUP BY 1, 2 ORDER BY calls DESC LIMIT " + INBOUND_TOP_N + ") t), " +
         "'daily', (SELECT COALESCE(json_agg(t ORDER BY t.d), '[]') FROM (" +
             "SELECT call_date::text AS d, count(*) AS calls, " +
               "count(*) FILTER (WHERE disposition='abandoned') AS abandoned " +
@@ -115,14 +143,10 @@ function computeInboundReport_(from, to) {
     if (!json) { empty.meta.available = false; return empty; }
 
     const obj = JSON.parse(json);
-    const k = obj.kpis || {};
-    const total = Number(k.total) || 0;
-    return {
-      meta: {
-        from: from, to: to, available: true,
-        rows: total, generatedAt: new Date().toISOString(),
-      },
-      kpis: {
+    const shapeKpis = function (k) {
+      k = k || {};
+      const total = Number(k.total) || 0;
+      return {
         total:           total,
         answered:        Number(k.answered) || 0,
         abandoned:       Number(k.abandoned) || 0,
@@ -133,11 +157,22 @@ function computeInboundReport_(from, to) {
         avgHoldSec:      Number(k.avgHoldSec) || 0,
         abandonRate:     total > 0 ? Math.round((Number(k.abandoned) || 0) / total * 1000) / 10 : 0,
         answerRate:      total > 0 ? Math.round((Number(k.answered) || 0) / total * 1000) / 10 : 0,
+      };
+    };
+    const kpis = shapeKpis(obj.kpis);
+    return {
+      meta: {
+        from: from, to: to, available: true,
+        priorFrom: prior.from, priorTo: prior.to,
+        rows: kpis.total, generatedAt: new Date().toISOString(),
       },
-      byInsurer: Array.isArray(obj.byInsurer) ? obj.byInsurer : [],
-      byDialIn:  Array.isArray(obj.byDialIn)  ? obj.byDialIn  : [],
-      byQueue:   Array.isArray(obj.byQueue)   ? obj.byQueue   : [],
-      daily:     Array.isArray(obj.daily)     ? obj.daily     : [],
+      kpis: kpis,
+      kpisPrior: shapeKpis(obj.kpisPrior),
+      byInsurer:       Array.isArray(obj.byInsurer)       ? obj.byInsurer       : [],
+      byDialIn:        Array.isArray(obj.byDialIn)        ? obj.byDialIn        : [],
+      byQueue:         Array.isArray(obj.byQueue)         ? obj.byQueue         : [],
+      byDialInInsurer: Array.isArray(obj.byDialInInsurer) ? obj.byDialInInsurer : [],
+      daily:           Array.isArray(obj.daily)           ? obj.daily           : [],
     };
   } catch (e) {
     // Table missing / Neon error -> graceful empty (modal shows "unavailable").
@@ -151,12 +186,21 @@ function computeInboundReport_(from, to) {
 }
 
 function emptyInboundReport_(from, to) {
-  return {
-    meta: { from: from, to: to, available: true, rows: 0, generatedAt: new Date().toISOString() },
-    kpis: {
+  const zeroKpis = function () {
+    return {
       total: 0, answered: 0, abandoned: 0, missed: 0, abandonedOnHold: 0,
       anonymous: 0, avgWaitSec: 0, avgHoldSec: 0, abandonRate: 0, answerRate: 0,
+    };
+  };
+  const prior = computePriorWindow_(from, to);
+  return {
+    meta: {
+      from: from, to: to, available: true,
+      priorFrom: prior.from, priorTo: prior.to,
+      rows: 0, generatedAt: new Date().toISOString(),
     },
-    byInsurer: [], byDialIn: [], byQueue: [], daily: [],
+    kpis: zeroKpis(),
+    kpisPrior: zeroKpis(),
+    byInsurer: [], byDialIn: [], byQueue: [], byDialInInsurer: [], daily: [],
   };
 }
