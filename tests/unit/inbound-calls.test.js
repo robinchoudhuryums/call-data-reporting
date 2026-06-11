@@ -209,3 +209,32 @@ test('journey: event count is capped', function () {
   const r = rec(build(legs), '810003');
   assert.equal(r.journey.length, 40);   // IC_JOURNEY_MAX_EVENTS
 });
+
+test('size-aware SQL chunking: batches respect the char budget; oversize tuple stands alone', function () {
+  const chunk = (tuples, budget) => h.call('icChunkTuplesByChars_', tuples, budget);
+
+  // Mixed sizes: budget forces a flush before the big tuple.
+  const small = '(' + 'a'.repeat(8) + ')';     // 10 chars
+  const big   = '(' + 'b'.repeat(58) + ')';    // 60 chars
+  const batches = chunk([small, small, big, small], 30);
+  assert.equal(batches.length, 3);
+  assert.equal(batches[0].length, 2, 'two smalls fit in one 30-char batch');
+  assert.equal(batches[1].length, 1, 'oversize tuple gets its own batch');
+  assert.equal(batches[1][0], big);
+  assert.equal(batches[2].length, 1, 'trailing small flushes as the final batch');
+
+  // Every batch's joined length stays within budget (except a lone
+  // oversize tuple, which cannot be split).
+  const uniform = Array.from({ length: 25 }, () => small);
+  chunk(uniform, 35).forEach(function (b) {
+    assert.ok(b.join(',').length <= 35);
+  });
+
+  // Order is preserved across batches.
+  const tagged = Array.from({ length: 9 }, (_, i) => '(' + i + ')');
+  const flat = [];
+  chunk(tagged, 12).forEach(function (b) { b.forEach(function (t) { flat.push(t); }); });
+  assert.equal(flat.join(''), tagged.join(''));
+
+  assert.equal(chunk([], 100).length, 0, 'no tuples -> no batches');
+});

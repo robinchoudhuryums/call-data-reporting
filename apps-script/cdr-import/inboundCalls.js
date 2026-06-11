@@ -151,6 +151,37 @@ function icSqlStr_(s) { return (s == null || s === '') ? 'NULL' : "'" + String(s
 function icSqlInt_(n) { var v = parseInt(n, 10); return isFinite(v) ? String(v) : 'NULL'; }
 function icSqlHash_(h) { return (typeof h === 'string' && /^[0-9a-f]{64}$/.test(h)) ? "'" + h + "'" : 'NULL'; }
 
+// Per-statement budget for the VALUES payload. Apps Script's JDBC bridge
+// rejects oversized SQL strings with "Argument too large: sql" (observed
+// on the 2026-06-08 import); 30K chars leaves generous headroom under
+// the cap while keeping round-trips low (~10-150 rows per statement
+// depending on journey weight).
+var IC_SQL_CHUNK_BUDGET_CHARS = 30000;
+
+/**
+ * PURE. Splits SQL VALUES tuples into batches whose joined length stays
+ * within `budgetChars`. Size-aware because journey rows vary ~30x in
+ * size -- a fixed row count can't be both safe and efficient. A single
+ * tuple larger than the budget still gets its own batch (journeys are
+ * capped at IC_JOURNEY_MAX_EVENTS, so a lone tuple can't approach the
+ * actual JDBC cap).
+ */
+function icChunkTuplesByChars_(tuples, budgetChars) {
+  var batches = [];
+  var cur = [], len = 0;
+  for (var i = 0; i < tuples.length; i++) {
+    var t = String(tuples[i]);
+    if (cur.length && len + t.length + 1 > budgetChars) {
+      batches.push(cur);
+      cur = []; len = 0;
+    }
+    cur.push(t);
+    len += t.length + 1;   // +1 for the joining comma
+  }
+  if (cur.length) batches.push(cur);
+  return batches;
+}
+
 /**
  * PURE. rawRows = array of Raw Data leg rows (each an array indexed per
  * IC_COL). Returns one record per distinct INBOUND call.
@@ -343,9 +374,11 @@ function writeInboundCallsToNeon(rawRows) {
       // bind-bridge calls PER ROW (the dominant cost; ~40ms each in Apps
       // Script). caller_hash is hex, dates/ints/bools are safe, and the
       // free-text fields (incl. the journey JSON string) are escaped via
-      // icSqlStr_, so inlining is injection-safe. 40 rows/chunk: the
-      // journey column adds ~0.5-1KB per row, so the old 150-row chunk
-      // would overrun the ~44KB practical statement-size limit.
+      // icSqlStr_, so inlining is injection-safe. Chunking is SIZE-AWARE
+      // (icChunkTuplesByChars_): journey rows vary ~0.2-6KB each, so a
+      // fixed row count either wastes round-trips or -- as the 2026-06-08
+      // import proved when a heavy-journey chunk threw "Argument too
+      // large: sql" -- overruns Apps Script's JDBC statement-size cap.
       var tBuild = Date.now();
       var tuples = records.map(function (r) {
         var hash = (secret && r.callerNumber) ? cdrHashPhone_(r.callerNumber, secret) : null;
@@ -361,12 +394,12 @@ function writeInboundCallsToNeon(rawRows) {
 
       var tInsert = Date.now();
       var stmt = conn.createStatement();
-      var CHUNK = 40, chunks = 0;
-      for (var off = 0; off < tuples.length; off += CHUNK) {
+      var batches = icChunkTuplesByChars_(tuples, IC_SQL_CHUNK_BUDGET_CHARS);
+      for (var bi = 0; bi < batches.length; bi++) {
         stmt.execute('INSERT INTO inbound_calls (' + cols + ') VALUES '
-          + tuples.slice(off, off + CHUNK).join(',') + onConflict);
-        chunks++;
+          + batches[bi].join(',') + onConflict);
       }
+      var chunks = batches.length;
       stmt.close();
       conn.commit();
       var insertMs = Date.now() - tInsert;
