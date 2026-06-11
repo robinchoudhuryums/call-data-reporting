@@ -2590,6 +2590,73 @@
   .bm-target { color: var(--good); }
   .bm-over   { color: var(--warn); }
 
+  /* Caller Lookup: one timeline card per inbound call. */
+  .cl-call-card {
+    border: 1px solid var(--line);
+    border-radius: var(--r);
+    padding: 12px 14px;
+    margin-bottom: 10px;
+    background: var(--paper-card);
+  }
+  .cl-call-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .cl-call-when {
+    font-family: var(--mono);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0;
+    color: var(--ink);
+    font-weight: 600;
+  }
+  .cl-chip {
+    font-family: var(--mono);
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    padding: 2px 8px;
+    border-radius: 999px;
+  }
+  .cl-chip-good  { background: var(--good-soft); color: var(--good); }
+  .cl-chip-warn  { background: var(--warn-soft); color: var(--warn); }
+  .cl-chip-muted { background: var(--paper-2);   color: var(--muted); }
+  .cl-call-facts {
+    font-size: 12px;
+    color: var(--muted);
+    margin: 5px 0 2px;
+  }
+  .cl-journey { margin-top: 8px; }
+  .cl-ev {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    font-size: 12px;
+    padding: 2px 0 2px 4px;
+    border-left: 2px solid var(--line);
+  }
+  .cl-ev-queue  { border-left-color: var(--accent); }
+  .cl-ev-answer { border-left-color: var(--good); }
+  .cl-ev-time {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0;
+    color: var(--muted);
+    min-width: 58px;
+  }
+  .cl-ev-icon { color: var(--muted); }
+  .cl-ev-answer .cl-ev-icon { color: var(--good); }
+  .cl-ev-name { color: var(--ink); }
+  .cl-ev-bits { color: var(--muted); }
+  .cl-journey-summary {
+    margin-top: 8px;
+    font-size: 12.5px;
+  }
+  .cl-journey-note { color: var(--muted); font-size: 11.5px; }
+
   /* Inbound report: per-insurer daily drill-down (click-to-expand row). */
   .inbound-insurer-row { cursor: pointer; }
   .inbound-insurer-row:hover td { background: var(--paper-2); }

@@ -735,6 +735,7 @@
     initAlerts();
     initOrphanFix();
     initDeptConfig();
+    initCallerLookup();
     initQcdReport();
     // Router last so its modal-close listeners attach after each
     // per-modal init has wired up its own close-button handlers.
@@ -2010,6 +2011,7 @@
     '/admin/alerts':       { kind: 'modal', modalId: 'alerts-modal',      buttonId: 'alerts-btn' },
     '/admin/orphan-fix':   { kind: 'modal', modalId: 'orphan-fix-modal',  buttonId: 'orphan-fix-btn' },
     '/admin/dept-config':  { kind: 'modal', modalId: 'dept-config-modal', buttonId: 'dept-config-btn' },
+    '/admin/caller-lookup': { kind: 'modal', modalId: 'caller-lookup-modal', buttonId: 'caller-lookup-btn' },
   };
 
   // The route currently considered "active". Starts as '/overview'
@@ -10826,6 +10828,190 @@
     a.click();
     document.body.removeChild(a);
     setTimeout(function () { URL.revokeObjectURL(a.href); }, 0);
+  }
+
+  // -- Caller Lookup (admin) ----------------------------------------------
+  // "Explain the full call path for this caller on this day." Phone +
+  // date range -> getCallerLookup (CallerLookup.gs) -> one timeline card
+  // per inbound call. Calls captured since the journey extension render
+  // the leg-by-leg path; older rows fall back to the entry->final queue
+  // summary. The raw number never leaves the request payload -- the
+  // server hashes it in memory and queries by hash.
+
+  function initCallerLookup() {
+    const btn = $('caller-lookup-btn');
+    const modal = $('caller-lookup-modal');
+    if (!btn || !modal) return;
+    const closeBtn = modal.querySelector('.modal-close');
+    const backdrop = modal.querySelector('[data-close]');
+
+    function openModal() {
+      modal.style.display = '';
+      modal.setAttribute('aria-hidden', 'false');
+      document.body.style.overflow = 'hidden';
+      trapFocus_(modal);
+      initModalDragResize_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
+      document.addEventListener('keydown', onKeyDown);
+      clSetDefaultDates_();
+      const phone = $('cl-phone');
+      if (phone) phone.focus();
+    }
+    function closeModal() {
+      modal.style.display = 'none';
+      modal.setAttribute('aria-hidden', 'true');
+      releaseFocus_();
+      resetModalTransform_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
+      document.body.style.overflow = '';
+      document.removeEventListener('keydown', onKeyDown);
+      btn.focus();
+    }
+    function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
+
+    btn.addEventListener('click', openModal);
+    if (closeBtn) closeBtn.addEventListener('click', closeModal);
+    if (backdrop) backdrop.addEventListener('click', closeModal);
+
+    const lookupBtn = $('cl-lookup-btn');
+    if (lookupBtn) lookupBtn.addEventListener('click', runCallerLookup_);
+    const phoneInput = $('cl-phone');
+    if (phoneInput) phoneInput.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') runCallerLookup_();
+    });
+  }
+
+  function clSetDefaultDates_() {
+    if ($('cl-from') && $('cl-from').value) return;   // keep last-used range
+    if ($('cl-from')) $('cl-from').value = launcherIsoDaysAgo_(30);
+    if ($('cl-to'))   $('cl-to').value   = launcherIsoDaysAgo_(0);
+  }
+
+  function clSetError_(msg) {
+    const el = $('cl-error');
+    if (!el) return;
+    if (!msg) { el.style.display = 'none'; el.textContent = ''; return; }
+    el.textContent = msg; el.style.display = '';
+  }
+
+  function clShowOnly_(id) {
+    ['cl-unconfigured', 'cl-unavailable', 'cl-empty', 'cl-results'].forEach(function (x) {
+      const el = $(x);
+      if (el) el.style.display = (x === id) ? '' : 'none';
+    });
+  }
+
+  function runCallerLookup_() {
+    clSetError_('');
+    const phone = ($('cl-phone') && $('cl-phone').value) || '';
+    const digits = phone.replace(/\D/g, '');
+    if (digits.length < 10) { clSetError_('Enter a phone number with at least 10 digits.'); return; }
+    const from = $('cl-from').value, to = $('cl-to').value;
+    if (!from || !to) { clSetError_('Pick a start and end date.'); return; }
+    if (from > to)    { clSetError_('Start date must be on or before end date.'); return; }
+
+    const btn = $('cl-lookup-btn');
+    btn.disabled = true;
+    const prev = btn.textContent; btn.textContent = 'Looking up…';
+    clShowOnly_('');
+    const status = $('cl-status');
+    if (status) { status.className = 'status status-loading'; status.textContent = 'Searching inbound calls…'; status.style.display = ''; }
+
+    google.script.run
+      .withSuccessHandler(function (data) {
+        btn.disabled = false; btn.textContent = prev;
+        if (status) status.style.display = 'none';
+        clRenderResults_(data);
+      })
+      .withFailureHandler(function (err) {
+        btn.disabled = false; btn.textContent = prev;
+        if (status) status.style.display = 'none';
+        clSetError_('Error: ' + (err && err.message ? err.message : String(err)));
+      })
+      .getCallerLookup({ phone: phone, from: from, to: to });
+  }
+
+  function clRenderResults_(data) {
+    const meta = (data && data.meta) || {};
+    if (meta.configured === false) { clShowOnly_('cl-unconfigured'); return; }
+    if (meta.available === false)  { clShowOnly_('cl-unavailable');  return; }
+    const calls = (data && data.calls) || [];
+    if (!calls.length) {
+      const hint = $('cl-empty-hint');
+      if (hint) hint.textContent = 'No inbound calls from this number between '
+        + (meta.from || '?') + ' and ' + (meta.to || '?')
+        + '. Capture starts the day the inbound mirror first ran — older calls were never recorded.';
+      clShowOnly_('cl-empty');
+      return;
+    }
+    const title = $('cl-results-title');
+    if (title) title.textContent = calls.length + ' call' + (calls.length === 1 ? '' : 's')
+      + (calls[0].insurer ? ' · ' + calls[0].insurer : '')
+      + (meta.truncated ? ' (truncated)' : '');
+    const dateEl = $('cl-results-date');
+    if (dateEl) dateEl.textContent = (meta.from || '') + ' → ' + (meta.to || '');
+    $('cl-call-list').innerHTML = calls.map(clCallCardHtml_).join('');
+    clShowOnly_('cl-results');
+  }
+
+  function clOutcomeChip_(c) {
+    let cls = 'cl-chip-muted', label = c.disposition || 'unknown';
+    if (c.disposition === 'answered')  { cls = 'cl-chip-good'; label = 'Answered'; }
+    if (c.disposition === 'missed')    { label = 'Missed'; }
+    if (c.disposition === 'abandoned') {
+      cls = 'cl-chip-warn';
+      label = c.abandonStage === 'ivr' ? 'Abandoned in IVR' : 'Abandoned in queue';
+    }
+    let html = '<span class="cl-chip ' + cls + '">' + escapeHtml(label) + '</span>';
+    if (c.abandonedOnHold) {
+      html += ' <span class="cl-chip cl-chip-warn">Hung up on hold</span>';
+    }
+    return html;
+  }
+
+  function clCallCardHtml_(c) {
+    const when = escapeHtml((c.callDate || '?') + (c.callStart ? ' · ' + c.callStart : ''));
+    const facts = [];
+    if (c.waitSeconds != null) facts.push('Waited ' + fmtDuration(c.waitSeconds));
+    if (c.holdSeconds > 0)     facts.push('Held ' + fmtDuration(c.holdSeconds));
+    if (c.finalDept)           facts.push('Answered by ' + escapeHtml(c.finalDept));
+    if (c.dialIn)              facts.push('Dialed ' + escapeHtml(c.dialIn));
+    let body;
+    if (c.journey && c.journey.length) {
+      body = '<div class="cl-journey">' + c.journey.map(clJourneyRowHtml_).join('') + '</div>';
+    } else {
+      // Pre-journey-extension row: queue-level summary only.
+      const path = c.entryQueue
+        ? escapeHtml(c.entryQueue) + (c.finalQueue && c.finalQueue !== c.entryQueue
+            ? ' → ' + escapeHtml(c.finalQueue) + ' (' + c.numTransfers + ' transfer' + (c.numTransfers === 1 ? '' : 's') + ')'
+            : '')
+        : 'Never reached a queue (IVR only)';
+      body = '<div class="cl-journey-summary">' + path
+           + ' <span class="cl-journey-note">— leg-by-leg detail not captured for this call (recorded before the journey extension)</span></div>';
+    }
+    return '<div class="cl-call-card">'
+         +   '<div class="cl-call-head">'
+         +     '<span class="cl-call-when">' + when + '</span>'
+         +     clOutcomeChip_(c)
+         +   '</div>'
+         +   (facts.length ? '<div class="cl-call-facts">' + facts.join(' · ') + '</div>' : '')
+         +   body
+         + '</div>';
+  }
+
+  function clJourneyRowHtml_(ev) {
+    const kindIcon = ev.kind === 'queue' ? '⧖' : (ev.kind === 'answer' ? '✓' : '·');
+    const kindCls  = ev.kind === 'answer' ? ' cl-ev-answer' : (ev.kind === 'queue' ? ' cl-ev-queue' : '');
+    const bits = [];
+    if (ev.talk)  bits.push('talked ' + fmtDuration(ev.talk));
+    else if (ev.secs != null) bits.push(fmtDuration(ev.secs));
+    if (ev.hold)  bits.push('held ' + fmtDuration(ev.hold));
+    if (ev.abandoned) bits.push('caller hung up');
+    else if (ev.missed && ev.kind !== 'queue') bits.push('no answer');
+    return '<div class="cl-ev' + kindCls + '">'
+         +   '<span class="cl-ev-time">' + escapeHtml(ev.t || '') + '</span>'
+         +   '<span class="cl-ev-icon" aria-hidden="true">' + kindIcon + '</span>'
+         +   '<span class="cl-ev-name">' + escapeHtml(ev.name || '(unknown)') + '</span>'
+         +   (bits.length ? '<span class="cl-ev-bits">' + escapeHtml(bits.join(' · ')) + '</span>' : '')
+         + '</div>';
   }
 
   let qcdChartInstance = null;

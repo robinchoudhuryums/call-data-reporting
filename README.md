@@ -382,6 +382,11 @@ the deployed web-app URL to land on that view:
 - `#/admin/alerts` — Low Answer Rate Alerts (admin-only)
 - `#/admin/orphan-fix` — Outlier Fix (admin-only)
 - `#/admin/dept-config` — Dept Config (admin-only)
+- `#/admin/caller-lookup` — Caller Lookup (admin-only): trace every
+  inbound call from one phone number — outcome, wait/hold, and the
+  leg-by-leg journey for calls captured since the journey extension.
+  Requires `HMAC_SECRET` on the dashboard project (same value as CDR
+  Import / CDR Report) plus the `NEON_*` properties.
 
 Each report modal also carries a small `↗` button next to its
 close X — clicking it opens the same view in a new browser tab so

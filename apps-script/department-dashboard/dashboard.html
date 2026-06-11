@@ -85,6 +85,9 @@
         <button class="header-menu-btn" id="dept-config-btn" type="button"
                 data-route="/admin/dept-config" data-admin-only role="tab" aria-selected="false" style="display:none;"
                 title="Map dept queues, sub-queue nesting, and team-avg exclusions without a redeploy. Validated + auto-discovers unmapped queues. Admin-only.">Dept Config</button>
+        <button class="header-menu-btn" id="caller-lookup-btn" type="button"
+                data-route="/admin/caller-lookup" data-admin-only role="tab" aria-selected="false" style="display:none;"
+                title="Trace every inbound call from one phone number: when they called, the path through IVR / queues / agents, and how each call ended. The number is hashed before querying and never stored. Admin-only.">Caller Lookup</button>
       </nav>
       <div class="header-meta">
         <!-- Data-freshness pill -- "Data through Mon May 19 · 14h ago".
@@ -1325,6 +1328,77 @@
           </div>
         </div>
       </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="caller-lookup-modal" class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="caller-lookup-modal-title" style="display:none;">
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-panel modal-panel-wide" role="document">
+      <div class="modal-panel-header">
+        <button class="modal-open-tab-btn" type="button" data-open-tab-route="/admin/caller-lookup"
+                aria-label="Open in new tab" title="Open this report in a new browser tab (for side-by-side viewing)">&#8599;</button>
+        <button class="modal-close" id="caller-lookup-close" type="button" aria-label="Close">&times;</button>
+        <div class="modal-kicker">Operations &middot; Admin</div>
+        <h2 id="caller-lookup-modal-title">Caller Lookup</h2>
+      </div>
+      <div class="modal-panel-body">
+        <div class="ir-form-grid">
+          <div class="ir-col">
+            <label for="cl-phone">Caller phone number</label>
+            <input type="tel" id="cl-phone" placeholder="e.g. (214) 555-0123" autocomplete="off">
+          </div>
+          <div class="ir-col">
+            <label for="cl-from">Start date</label>
+            <input type="date" id="cl-from">
+          </div>
+          <div class="ir-col">
+            <label for="cl-to">End date</label>
+            <input type="date" id="cl-to">
+          </div>
+          <div class="ir-col">
+            <label>&nbsp;</label>
+            <button class="btn" id="cl-lookup-btn" type="button">Look up</button>
+          </div>
+        </div>
+        <div class="ir-hint">
+          Traces every inbound call from this number in <code>inbound_calls</code>
+          (Neon). The number is normalized and HMAC-hashed before querying
+          &mdash; it is never stored, logged, or sent anywhere raw. Calls
+          captured since the journey extension show the full leg-by-leg path
+          (IVR &rarr; queues &rarr; agent rings &rarr; answer / hold); older
+          rows show the entry &rarr; final queue summary.
+        </div>
+        <div id="cl-error" class="status status-error" style="display:none;"></div>
+        <div id="cl-status" class="status" style="display:none;"></div>
+
+        <div id="cl-unconfigured" class="empty-state" style="display:none;">
+          <div class="empty-state-icon" aria-hidden="true">&#128273;</div>
+          <div class="empty-state-title">HMAC_SECRET not set</div>
+          <div class="empty-state-hint">The dashboard project needs the <code>HMAC_SECRET</code> Script Property (same value as the CDR Import / CDR Report projects) to hash the number for matching. Set it in Project Settings &rarr; Script Properties.</div>
+        </div>
+        <div id="cl-unavailable" class="empty-state" style="display:none;">
+          <div class="empty-state-icon" aria-hidden="true">&#128246;</div>
+          <div class="empty-state-title">Inbound data unavailable</div>
+          <div class="empty-state-hint">Couldn&rsquo;t read <code>inbound_calls</code> from Neon. Confirm the dashboard&rsquo;s <code>NEON_*</code> Script Properties are set and Neon is reachable.</div>
+        </div>
+        <div id="cl-empty" class="empty-state" style="display:none;">
+          <div class="empty-state-icon" aria-hidden="true">&#128269;</div>
+          <div class="empty-state-title">No calls found</div>
+          <div class="empty-state-hint" id="cl-empty-hint"></div>
+        </div>
+
+        <div id="cl-results" style="display:none;">
+          <div class="ir-results-header">
+            <div class="ir-results-header-left">
+              <div class="ir-results-title-line">
+                <span class="ir-results-title" id="cl-results-title"></span>
+                <span class="ir-results-date" id="cl-results-date"></span>
+              </div>
+            </div>
+          </div>
+          <div id="cl-call-list"></div>
+        </div>
       </div>
     </div>
   </div>

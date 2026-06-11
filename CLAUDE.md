@@ -270,12 +270,32 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   null for Anonymous; dial-in line; disposition + abandon stage;
   abandoned-on-hold + hold/wait seconds; queue journey) and upserting
   to Neon `inbound_calls` (`ON CONFLICT (call_date, call_id) DO
-  UPDATE` -- re-imports refresh). There is NO sheet primary for this
-  data: the "Inbound Calls" tab (`cdr-report/inboundCallsExport.js::
-  exportInboundCalls`, refresh-in-window semantics) is a fallback COPY
-  of Neon, not a source. History: editor-run `backfillInboundCalls`
-  (cdr-import) fills from surviving `Call_Legs_*` sheets only -- days
-  pruned by DeleteOldSheets are unrecoverable. Insurer labels come
+  UPDATE` -- re-imports refresh). Since the JOURNEY EXTENSION, each
+  record also carries `call_start` ('HH:MM:SS', CDR-native TZ) and
+  `journey` (a JSON text column: the ordered leg-by-leg path --
+  IVR/queue/agent legs with timestamps, durations, talk/hold seconds,
+  missed/abandoned flags; capped at `IC_JOURNEY_MAX_EVENTS`=40; callee
+  names that look like phone numbers are MASKED so no raw number lands
+  in Neon). The writer's idempotent `ALTER TABLE ... ADD COLUMN IF NOT
+  EXISTS` upgrades pre-extension tables in place; the inline-insert
+  chunk size dropped 150 -> 40 because journey adds ~0.5-1KB/row
+  (don't raise it back -- ~44KB practical statement cap). Consumed by
+  the dashboard's admin-only **Caller Lookup** (`CallerLookup.gs`,
+  route `#/admin/caller-lookup`): phone + date range -> the number is
+  normalized to `+<digits>`, HMAC-hashed with the dashboard's
+  `HMAC_SECRET` (must match cdr-import's -- the cross-project hash
+  parity is pinned by `tests/unit/caller-lookup.test.js`), bound as a
+  prepared-statement param, NEVER stored/logged/cached -- and the
+  response renders one timeline card per call (journey when present,
+  entry->final summary for pre-extension rows). There is NO sheet
+  primary for this data: the "Inbound Calls" tab
+  (`cdr-report/inboundCallsExport.js::exportInboundCalls`,
+  refresh-in-window semantics) is a fallback COPY of Neon, not a
+  source. History: editor-run `backfillInboundCalls` (cdr-import)
+  fills from surviving `Call_Legs_*` sheets only -- days pruned by
+  DeleteOldSheets are unrecoverable, and journey backfill reaches at
+  most the ~14-day Call_Legs retention window (run it right after
+  deploying the extension to capture what's still there). Insurer labels come
   from `insurance_numbers`, synced by the editor-run
   `syncInsuranceNumbersToNeon` (`cdr-report/insuranceNumbers.js`) from
   the insurance block in `DO NOT EDIT!` cols X-AG -- re-run it after
@@ -1039,13 +1059,17 @@ When something looks wrong, before assuming a code bug, check:
     Script Properties (same values as the CDR Report project).
     Without them, Neon mirror writes from the import pipeline are
     silently skipped (logged as "Neon unreachable").
-17. `HMAC_SECRET` Script Property: must be set in BOTH the CDR
-    Import AND CDR Report project's Script Properties (same value).
+17. `HMAC_SECRET` Script Property: must be set in the CDR Import,
+    CDR Report, AND (since Caller Lookup) the Department Dashboard
+    project's Script Properties (same value in all three).
     Used by `writeCDRRowsToNeon` and `archiveCallHistoryDept` to
-    HMAC-SHA256 hash phone numbers for PHI protection. Without it,
-    CDR Neon mirror rows still write (main metric columns) but
-    JSONB name-list fields and `call_history_phones` child rows
-    are skipped.
+    HMAC-SHA256 hash phone numbers for PHI protection, and by the
+    dashboard's `getCallerLookup` to hash the queried number so it
+    matches `inbound_calls.caller_hash`. Without it, CDR Neon mirror
+    rows still write (main metric columns) but JSONB name-list fields
+    and `call_history_phones` child rows are skipped; the Caller
+    Lookup modal renders an "HMAC_SECRET not set" hint
+    (meta.configured=false) instead of failing.
 18. Neon Script Properties + scope on the DASHBOARD project (for
     orphan-rename-to-Neon): `NEON_HOST`, `NEON_DB`, `NEON_USER`,
     `NEON_PASS` must also be set on the Department Dashboard project
@@ -1164,7 +1188,7 @@ INV-26 | TEAM_AVG_EXCLUDES in Config.gs lists per-dept agent names removed from 
 INV-27 | Individual Report's team-avg denominator counts only roster members with ANY call activity (rung/answered/missed > 0) in the selected range, NOT the full roster size. Zero-call roster members don't dilute the average. | Subsystem: Department Dashboard
 INV-28 | Performance Report's prior period is the immediately-preceding window of the same duration (durationDays before currentStart, ending one day before currentStart) -- NOT "previous calendar month". Documented in the form's inline hint and the results-header "Comparing against..." line. Match legacy SingleRangeReport semantics. **One shared implementation**: `Data.gs::computePriorWindow_` is the canonical auto-adjacent-window math, consumed by `computeSummary_` (E5 per-row chips), `computePerformanceReport_`, and `computeInsights_`; client-side, `script.html::resolveComparisonWindow_` is the single resolver behind the IR + Insights "compare against" controls. New window-vs-window features should call these rather than re-deriving the math. | Subsystem: Department Dashboard
 INV-29 | Individual Report's monthly trend window: range itself when selected range > 366 days OR equals a full calendar year (Jan 1 - Dec 31 of one year); else `first-of-month(end - 12 months)` to `end`. Performance Report uses identical logic so the 12-mo trends align across both reports for the same dept. | Subsystem: Department Dashboard
-INV-30 | Each report has its own versioned cache key prefix; bump on any aggregation rule change so stale entries don't bleed in. Current: `summary:v8` (Data.gs -- bumped from v7 in E5 commit bb77168 to add per-row prior-period fields `priorRung` / `priorMissed` / `priorAnswered` / `priorHasData` for the WoW chip), `latestDate:v1` (Data.gs -- most-recent DQE ISO date; drives the My Department From/To default so the agent table lands on a non-empty day; the F1 cutover suffixes this key with the active source -- `latestDate:v1:sheet` / `:neon` -- so a `DQE_READ_SOURCE` flip can't serve a value computed from the other source), `latestDates:v1` (Data.gs -- multi-source `{dqe, qcd, latest}` blob; drives the header freshness pill so it doesn't go stale when one source updates without the other), `individual:v8` (IndividualReport.gs), `individual_active:v2` (active-agents-in-range subset used by Individual + Performance + Compare Ranges pickers; v2 return shape is `{agents, floaters}` after the INV-53 expansion), `performance:v4` (PerformanceReport.gs), `compareRanges:v4` (CompareRangesReport.gs), `missed:v10` (MissedCallsReport.gs), `companyOverview:v14` (CompanyOverview.gs -- bumped from v13 in commit 3b9a647 when the trend axis began skipping weekends, which changed the `trend` / `companyTrend` series length), `qcd:v6` (QCDReport.gs -- bumped from v5 when the empty/no-data response gained `perQueue` + `trendData.perQueue` to match the populated shape, F5), `inbound:v3` (InboundReport.gs -- per (dept,from,to); v2 added kpisPrior + meta.priorFrom/priorTo via the shared computePriorWindow_, per-row avg_wait on the three breakdowns, and the byDialInInsurer cross-cut; v3 opened the report to managers with per-dept scoping (entry-queue attribution + the answered-on-hold final_dept carve-out) and added kpis.abandonedIvr + the getInboundInsurerDaily drill-down endpoint; unavailable payloads -- `meta.available=false` -- are intentionally NOT cached so a transient Neon failure isn't pinned for the TTL), `insights:v3` (InsightsReport.gs -- per (dept,from,to,hashAgents,priorKey); v2 added optional explicit priorFrom/priorTo comparison windows + the 12-mo `trendData` team rollup; v3 added meta.currentDays/priorDays/lengthMismatch -- the INV-35 different-length contract ported from Compare Ranges). Alerts.gs holds no cached compute. | Subsystem: Department Dashboard
+INV-30 | Each report has its own versioned cache key prefix; bump on any aggregation rule change so stale entries don't bleed in. Current: `summary:v8` (Data.gs -- bumped from v7 in E5 commit bb77168 to add per-row prior-period fields `priorRung` / `priorMissed` / `priorAnswered` / `priorHasData` for the WoW chip), `latestDate:v1` (Data.gs -- most-recent DQE ISO date; drives the My Department From/To default so the agent table lands on a non-empty day; the F1 cutover suffixes this key with the active source -- `latestDate:v1:sheet` / `:neon` -- so a `DQE_READ_SOURCE` flip can't serve a value computed from the other source), `latestDates:v1` (Data.gs -- multi-source `{dqe, qcd, latest}` blob; drives the header freshness pill so it doesn't go stale when one source updates without the other), `individual:v8` (IndividualReport.gs), `individual_active:v2` (active-agents-in-range subset used by Individual + Performance + Compare Ranges pickers; v2 return shape is `{agents, floaters}` after the INV-53 expansion), `performance:v4` (PerformanceReport.gs), `compareRanges:v4` (CompareRangesReport.gs), `missed:v10` (MissedCallsReport.gs), `companyOverview:v14` (CompanyOverview.gs -- bumped from v13 in commit 3b9a647 when the trend axis began skipping weekends, which changed the `trend` / `companyTrend` series length), `qcd:v6` (QCDReport.gs -- bumped from v5 when the empty/no-data response gained `perQueue` + `trendData.perQueue` to match the populated shape, F5), `inbound:v3` (InboundReport.gs -- per (dept,from,to); v2 added kpisPrior + meta.priorFrom/priorTo via the shared computePriorWindow_, per-row avg_wait on the three breakdowns, and the byDialInInsurer cross-cut; v3 opened the report to managers with per-dept scoping (entry-queue attribution + the answered-on-hold final_dept carve-out) and added kpis.abandonedIvr + the getInboundInsurerDaily drill-down endpoint; unavailable payloads -- `meta.available=false` -- are intentionally NOT cached so a transient Neon failure isn't pinned for the TTL), `insights:v3` (InsightsReport.gs -- per (dept,from,to,hashAgents,priorKey); v2 added optional explicit priorFrom/priorTo comparison windows + the 12-mo `trendData` team rollup; v3 added meta.currentDays/priorDays/lengthMismatch -- the INV-35 different-length contract ported from Compare Ranges). Alerts.gs holds no cached compute. CallerLookup.gs is intentionally UNCACHED (caller-keyed responses must not sit in the shared script cache, and the hash-PK query is cheap). | Subsystem: Department Dashboard
 INV-31 | `script.send_mail` OAuth scope in appsscript.json is required for: (1) Individual / Performance / Compare Ranges / QCD "Email image" exports, (2) the Low Answer Rate Alerts engine, (3) the Manager Digest engine (Digest.gs), (4) the failure-notification paths (notifyImportFailure_ in autoImport.js, notifyDqeBuildFailure_ in autoImport.js [emails NEON_WRITE_CONFIG.alertEmail when the integrated daily DQE-block fails inside processIntegratedHistory; not fired on the bulk-backfill path], runDailyDQEBuild_ in buildDQEHistoricalData.js [present in BOTH cdr-import and cdr-report copies after INV-16 expansion], notifyDigestFailure_ in Digest.gs, plus the indirect path from cdr-import's integrated DQE block hitting notifyNeonWriteFailure on a Neon write failure). All paths use `MailApp.sendEmail`. Removing the scope breaks every one of them; adding new send-mail features here doesn't need a re-scope. | Subsystem: Department Dashboard (+ CDR Import / CDR DQE Pipeline for the notify-failure paths)
 INV-32 | Low Answer Rate Alerts is admin-only at the server boundary. Every public callable in Alerts.gs starts with `assertAdmin_`. The launcher button is also hidden client-side via `data-admin-only`, but the server check is the source of truth. Compare Ranges was previously admin-only too but was opened to managers (with the same `dept !== user.department` check the other reports use) so they can run year-over-year comparisons within their own dept. Adding a new admin = setting/editing the `ADMIN_EMAILS` Script Property (comma-separated emails); falls back to `ADMIN_EMAILS_FALLBACK` in Config.gs if unset. | Subsystem: Department Dashboard
 INV-33 | `runDailyAlerts_` (time-triggered alerts) skips Saturdays and Sundays. Holiday handling is via the Alert Config `Skip Dates` column (E8, commit 319eca7): admins enter comma-separated ISO dates and/or inclusive ranges (`YYYY-MM-DD..YYYY-MM-DD`) per dept; `runAlertsCore_` checks each dept's parsed `skipDates` against today and logs status `skipped` with note `Skip date match (YYYY-MM-DD) in Alert Config` when it hits. **Trigger-only enforcement:** the gate is `triggeredBy === 'daily-trigger'` — manual sends from the UI, previews, and any other caller bypass the skip so admins can force-send after a holiday for post-hoc catch-up. `Alerts.gs::parseSkipDateRanges_` is intentionally tolerant (silently drops malformed tokens, swaps reversed ranges) because the cell is admin-curated free-text with no UI validator — never throws. ISO-string range checks are safe only because `YYYY-MM-DD` is zero-padded and lexicographically ordered. | Subsystem: Department Dashboard

@@ -17,7 +17,13 @@
 // call_history_phones; null for Anonymous), dial_in_number (DID / marketing
 // line), disposition (answered|abandoned|missed) + abandon_stage (ivr|queue),
 // abandoned_on_hold + hold_seconds, wait_seconds (time-to-answer / -abandon),
-// and the queue journey (entry/final queue, num_queues, num_transfers).
+// the queue journey (entry/final queue, num_queues, num_transfers), the call
+// start time (call_start, 'HH:MM:SS' in the CDR's native timezone), and the
+// full leg-by-leg JOURNEY (ordered events: IVR/queue/agent legs with
+// timestamps, durations, talk/hold seconds, and missed/abandoned flags) --
+// the raw legs are pruned at 14 days (DeleteOldSheets), so the journey
+// column is the only durable record of the per-call path. Consumed by the
+// dashboard's Caller Lookup (CallerLookup.gs).
 //
 // buildInboundCallRecords_(rawRows) is PURE (no Apps Script globals) so it's
 // unit-tested directly. The Neon write reuses getReachableNeonConn_ +
@@ -76,6 +82,65 @@ function icIsoDate_(ms) {
   var mm = String(d.getMonth() + 1).padStart(2, '0');
   var dd = String(d.getDate()).padStart(2, '0');
   return d.getFullYear() + '-' + mm + '-' + dd;
+}
+
+// 'HH:MM:SS' (zero-padded -> lexicographically sortable within a day).
+function icIsoTime_(ms) {
+  if (isNaN(ms)) return null;
+  var d = new Date(ms);
+  var p = function (n) { return String(n).padStart(2, '0'); };
+  return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+}
+
+// Journey size caps. 40 events covers every real call shape we've seen
+// (a pathological re-ring loop gets truncated, not dropped); 80 chars
+// bounds a runaway callee-name cell.
+var IC_JOURNEY_MAX_EVENTS = 40;
+var IC_JOURNEY_NAME_MAX = 80;
+
+/**
+ * PURE. Ordered leg-by-leg journey for one call (legs pre-sorted by
+ * start). Each event: { t: 'HH:MM:SS', name, kind: queue|answer|leg,
+ * secs?, talk?, hold?, missed?, abandoned? }. 'leg' covers both IVR
+ * legs and missed agent rings -- the CDR doesn't distinguish them
+ * reliably, and the name makes it obvious to a human reader.
+ *
+ * PHI guard: a callee NAME that looks like a phone number (external
+ * forward) is masked -- `inbound_calls` carries hashes only, never raw
+ * numbers. Caller-side fields (number, CNAM name) are never included.
+ */
+function icBuildJourney_(legs) {
+  var events = [];
+  for (var i = 0; i < legs.length && events.length < IC_JOURNEY_MAX_EVENTS; i++) {
+    var l = legs[i];
+    var rawName = String(l[IC_COL.CALLEE_NAME] == null ? '' : l[IC_COL.CALLEE_NAME]).trim();
+    var isQueue = icIsQueueName_(rawName);
+    var name = rawName;
+    if (/^\+?[\d\s\-().]{7,}$/.test(name)) name = '(external number)';
+    if (!name || name.toUpperCase() === 'N/A') name = '(unknown)';
+    var talk = icTimeToSec_(l[IC_COL.TALK]);
+    var hold = icTimeToSec_(l[IC_COL.CALLEE_HOLD_DURATION]);
+    var answered = talk > 0
+      && String(l[IC_COL.ANSWERED] == null ? '' : l[IC_COL.ANSWERED]).trim() === 'Answered';
+    var startMs = icParseTs_(l[IC_COL.START]);
+    var stopMs  = icParseTs_(l[IC_COL.STOP]);
+    var ev = {
+      t: icIsoTime_(startMs),
+      name: name.slice(0, IC_JOURNEY_NAME_MAX),
+      kind: isQueue ? 'queue' : (answered ? 'answer' : 'leg'),
+    };
+    if (!isNaN(startMs) && !isNaN(stopMs)) ev.secs = Math.max(0, Math.round((stopMs - startMs) / 1000));
+    if (talk > 0) ev.talk = talk;
+    if (hold > 0) ev.hold = hold;
+    if (String(l[IC_COL.ABANDONED] == null ? '' : l[IC_COL.ABANDONED]).trim() === 'Abandoned') {
+      ev.abandoned = true;
+    } else if (!answered
+        && String(l[IC_COL.MISSED] == null ? '' : l[IC_COL.MISSED]).trim() === 'Missed') {
+      ev.missed = true;
+    }
+    events.push(ev);
+  }
+  return events;
 }
 
 // SQL literal builders for the INLINE inbound insert (mirrors the phone-child
@@ -203,6 +268,7 @@ function buildInboundCallRecords_(rawRows) {
     records.push({
       callId:          root,
       callDate:        callDate,
+      callStart:       icIsoTime_(firstStart),
       callerNumber:    callerNumber,           // null = anonymous (hashed later)
       dialIn:          dialIn,
       disposition:     disposition,
@@ -214,7 +280,8 @@ function buildInboundCallRecords_(rawRows) {
       finalQueue:      queues.length ? queues[queues.length - 1] : null,
       finalDept:       finalDept,
       numQueues:       queues.length,
-      numTransfers:    Math.max(0, queues.length - 1)
+      numTransfers:    Math.max(0, queues.length - 1),
+      journey:         icBuildJourney_(legs)
     });
   });
 
@@ -251,26 +318,34 @@ function writeInboundCallsToNeon(rawRows) {
         'abandoned_on_hold boolean, hold_seconds integer, wait_seconds integer, ' +
         'entry_queue text, final_queue text, final_dept text, ' +
         'num_queues integer, num_transfers integer, ' +
+        'call_start text, journey text, ' +
         'updated_at timestamptz NOT NULL DEFAULT now(), ' +
         'PRIMARY KEY (call_date, call_id))');
+      // Idempotent column adds for tables created before the journey
+      // capture (the CREATE above only fires on a fresh database).
+      ddl.execute('ALTER TABLE inbound_calls ADD COLUMN IF NOT EXISTS call_start text');
+      ddl.execute('ALTER TABLE inbound_calls ADD COLUMN IF NOT EXISTS journey text');
       ddl.close();
 
       var cols = 'call_date, call_id, caller_hash, dial_in_number, disposition, ' +
         'abandon_stage, abandoned_on_hold, hold_seconds, wait_seconds, entry_queue, ' +
-        'final_queue, final_dept, num_queues, num_transfers';
+        'final_queue, final_dept, num_queues, num_transfers, call_start, journey';
       var onConflict = ' ON CONFLICT (call_date, call_id) DO UPDATE SET ' +
         'caller_hash=EXCLUDED.caller_hash, dial_in_number=EXCLUDED.dial_in_number, ' +
         'disposition=EXCLUDED.disposition, abandon_stage=EXCLUDED.abandon_stage, ' +
         'abandoned_on_hold=EXCLUDED.abandoned_on_hold, hold_seconds=EXCLUDED.hold_seconds, ' +
         'wait_seconds=EXCLUDED.wait_seconds, entry_queue=EXCLUDED.entry_queue, ' +
         'final_queue=EXCLUDED.final_queue, final_dept=EXCLUDED.final_dept, ' +
-        'num_queues=EXCLUDED.num_queues, num_transfers=EXCLUDED.num_transfers, updated_at=now()';
+        'num_queues=EXCLUDED.num_queues, num_transfers=EXCLUDED.num_transfers, ' +
+        'call_start=EXCLUDED.call_start, journey=EXCLUDED.journey, updated_at=now()';
 
-      // INLINE multi-row upsert (no bound params) -- removes ~14 JDBC
+      // INLINE multi-row upsert (no bound params) -- removes ~16 JDBC
       // bind-bridge calls PER ROW (the dominant cost; ~40ms each in Apps
       // Script). caller_hash is hex, dates/ints/bools are safe, and the
-      // free-text fields are escaped via icSqlStr_, so inlining is
-      // injection-safe. ~150 rows/chunk (~24KB SQL, under the ~44KB limit).
+      // free-text fields (incl. the journey JSON string) are escaped via
+      // icSqlStr_, so inlining is injection-safe. 40 rows/chunk: the
+      // journey column adds ~0.5-1KB per row, so the old 150-row chunk
+      // would overrun the ~44KB practical statement-size limit.
       var tBuild = Date.now();
       var tuples = records.map(function (r) {
         var hash = (secret && r.callerNumber) ? cdrHashPhone_(r.callerNumber, secret) : null;
@@ -278,13 +353,15 @@ function writeInboundCallsToNeon(rawRows) {
           + ',' + icSqlStr_(r.dialIn) + ',' + icSqlStr_(r.disposition) + ',' + icSqlStr_(r.abandonStage)
           + ',' + (r.abandonedOnHold ? 'TRUE' : 'FALSE') + ',' + icSqlInt_(r.holdSeconds)
           + ',' + icSqlInt_(r.waitSeconds) + ',' + icSqlStr_(r.entryQueue) + ',' + icSqlStr_(r.finalQueue)
-          + ',' + icSqlStr_(r.finalDept) + ',' + icSqlInt_(r.numQueues) + ',' + icSqlInt_(r.numTransfers) + ')';
+          + ',' + icSqlStr_(r.finalDept) + ',' + icSqlInt_(r.numQueues) + ',' + icSqlInt_(r.numTransfers)
+          + ',' + icSqlStr_(r.callStart)
+          + ',' + icSqlStr_(r.journey && r.journey.length ? JSON.stringify(r.journey) : null) + ')';
       });
       var buildMs = Date.now() - tBuild;
 
       var tInsert = Date.now();
       var stmt = conn.createStatement();
-      var CHUNK = 150, chunks = 0;
+      var CHUNK = 40, chunks = 0;
       for (var off = 0; off < tuples.length; off += CHUNK) {
         stmt.execute('INSERT INTO inbound_calls (' + cols + ') VALUES '
           + tuples.slice(off, off + CHUNK).join(',') + onConflict);

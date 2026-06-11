@@ -161,3 +161,51 @@ test('anonymous inbound caller -> recorded with null caller number', function ()
   assert.equal(r.callerNumber, null);
   assert.equal(r.disposition, 'abandoned');
 });
+
+// -- Journey extension (call_start + leg-by-leg path) -------------------------
+
+test('journey: callStart + ordered events with kinds, durations, and flags', function () {
+  const recs = build([
+    leg({ callId: '810001', legId: 1, start: '06/04/2026 10:36:07', stop: '06/04/2026 10:36:25', direction: 'Incoming', caller: '12159998888', callee: '999', calleeName: 'Introduction - New', dialIn: '19722281820' }),
+    leg({ callId: '810001', legId: 2, start: '06/04/2026 10:36:25', stop: '06/04/2026 10:38:20', direction: 'Incoming', caller: '12159998888', callee: '108', calleeName: 'A_Q_Intake', dialIn: '19722281820' }),
+    leg({ callId: '810001', legId: 3, start: '06/04/2026 10:37:02', stop: '06/04/2026 10:37:14', direction: 'Incoming', caller: '12159998888', callee: '201', calleeName: 'Anna Smith', dialIn: '19722281820', missed: 'Missed', parent: '810001' }),
+    leg({ callId: '810001', legId: 4, start: '06/04/2026 10:38:20', connected: '06/04/2026 10:38:24', stop: '06/04/2026 10:42:36', direction: 'Incoming', caller: '12159998888', callee: '202', calleeName: 'Ben Lee', dialIn: '19722281820', talk: '0:04:12', answered: 'Answered', holdDur: '0:02:10', dept: 'Intake' }),
+  ]);
+  assert.equal(recs.length, 1);
+  const r = rec(recs, '810001');
+  assert.equal(r.callStart, '10:36:07');
+  assert.equal(r.journey.length, 4);
+  // Ordered by leg start; kinds classify queue vs answered vs other legs.
+  // (joined-string compare: vm-realm arrays fail deepStrictEqual on prototype)
+  assert.equal(r.journey.map(e => e.kind).join(','), 'leg,queue,leg,answer');
+  assert.equal(r.journey[1].name, 'A_Q_Intake');
+  assert.equal(r.journey[1].secs, 115);
+  assert.equal(r.journey[2].name, 'Anna Smith');
+  assert.equal(r.journey[2].missed, true);
+  assert.equal(r.journey[3].name, 'Ben Lee');
+  assert.equal(r.journey[3].talk, 252);
+  assert.equal(r.journey[3].hold, 130);
+  assert.equal(r.journey[3].t, '10:38:20');
+});
+
+test('journey: phone-looking callee names are masked (no raw numbers in Neon)', function () {
+  const recs = build([
+    leg({ callId: '810002', legId: 1, start: '06/04/2026 11:00:00', stop: '06/04/2026 11:00:20', direction: 'Incoming', caller: '12145550000', callee: '103', calleeName: 'A_Q_CSR', dialIn: '19722281820' }),
+    leg({ callId: '810002', legId: 2, start: '06/04/2026 11:00:20', stop: '06/04/2026 11:01:00', direction: 'Outgoing', caller: '103', callee: '+18005551234', calleeName: '+1 (800) 555-1234', missed: 'Missed', abandoned: 'Abandoned' }),
+  ]);
+  const r = rec(recs, '810002');
+  assert.equal(r.journey[1].name, '(external number)');
+  assert.equal(r.journey[1].abandoned, true);
+});
+
+test('journey: event count is capped', function () {
+  const legs = [];
+  for (let i = 0; i < 60; i++) {
+    legs.push(leg({ callId: '810003', legId: i + 1,
+      start: '06/04/2026 09:00:' + String(i).padStart(2, '0'),
+      stop: '06/04/2026 09:01:00', direction: 'Incoming',
+      caller: '12145550000', callee: '103', calleeName: 'A_Q_CSR', dialIn: '19722281820' }));
+  }
+  const r = rec(build(legs), '810003');
+  assert.equal(r.journey.length, 40);   // IC_JOURNEY_MAX_EVENTS
+});
