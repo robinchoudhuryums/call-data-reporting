@@ -12,7 +12,13 @@
   <?!= include_('styles') ?>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.js" integrity="sha384-G436+Z2nlA8+PNoeRvWdxKbvOf8E/y+lYxqht2iBwNHTQDV5CJr3+AGVj8fGZi5t" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0" integrity="sha384-H7mijd3g+6+ErEI7+6rhqxGY03fYwsEaekVnHMC7HHB7u2rIkEf6AQgIXZqQYzDS" crossorigin="anonymous"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js" integrity="sha384-ZZ1pncU3bQe8y31yfZdMFdSpttDoPmOZg2wguVK9almUodir1PghgT0eY7Mrty8H" crossorigin="anonymous"></script>
+  <!-- html2canvas-pro (maintained fork; same `html2canvas` global) replaces
+       html2canvas 1.4.1, which cannot parse the oklch() color tokens the
+       Phase A redesign serves to modern browsers -- captures (and therefore
+       ALL export paths: copy / email / print) threw on every report. The
+       SRI hash is computed from the npm tarball's dist file, which jsdelivr
+       serves byte-identical. -->
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas-pro@1.5.11/dist/html2canvas-pro.min.js" integrity="sha384-Wm+alMbg1fxSJBbLMXKBb1ZfoWBd0FwJml5aEbKolDB41cMjTfek0cLKgCku6MAF" crossorigin="anonymous"></script>
 </head>
 <body data-page="overview">
   <div class="container">
@@ -364,8 +370,11 @@
         <h2 id="missed-modal-title">Missed Calls</h2>
       </div>
       <div class="modal-panel-body">
-      <div class="report-summary" id="missed-summary"></div>
+      <!-- Status above the summary strip so the loading/error banner
+           renders above the "At a glance" headline (which anchors
+           itself just before #missed-summary). -->
       <div id="missed-status" class="status" style="display:none;"></div>
+      <div class="report-summary" id="missed-summary"></div>
       <div id="chart-row" class="chart-row no-detail">
         <div class="chart-section" id="missed-chart-wrap">
           <canvas id="missed-chart" aria-label="Hour-of-day distribution of missed calls"></canvas>

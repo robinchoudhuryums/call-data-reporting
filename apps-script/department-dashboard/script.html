@@ -2280,12 +2280,43 @@
     });
   }
 
+  // Launcher-initiated runs skip the form: a loading pane (with the
+  // question being answered) replaces it until the report renders. The
+  // pane is created on demand before the form element; each modal's
+  // showForm/showResults helpers hide it, so any failure path that falls
+  // back to the form dismisses it automatically.
+  function launcherShowLoading_(loadingId, formId, resultsId, question) {
+    const form = $(formId), results = $(resultsId);
+    if (!form) return;
+    form.style.display = 'none';
+    if (results) results.style.display = 'none';
+    let el = $(loadingId);
+    if (!el) {
+      el = document.createElement('div');
+      el.id = loadingId;
+      el.className = 'launcher-loading';
+      form.parentNode.insertBefore(el, form);
+    }
+    el.innerHTML = '<div class="launcher-loading-q">' + escapeHtml(question) + '</div>'
+      + '<div class="skeleton-row"><div class="skeleton-line" style="width:60%;"></div></div>'
+      + '<div class="skeleton-row"><div class="skeleton-line"></div><div class="skeleton-line"></div><div class="skeleton-line"></div></div>'
+      + '<div class="skeleton-row"><div class="skeleton-line" style="height:120px;flex:1;"></div></div>'
+      + '<div class="launcher-loading-cap">Generating the report…</div>';
+    el.style.display = '';
+  }
+  function launcherHideLoading_(loadingId) {
+    const el = $(loadingId);
+    if (el) el.style.display = 'none';
+  }
+
   // "How is my team doing lately?" -> Insights, last 30 days, all active
   // agents, auto-generated. The button click runs the modal's normal
   // open (defaults + prefs + roster fetch); we then override the dates
   // and re-ensure the roster for the new range -- insRenderAgentList
   // consumes insLauncherAutoRun_ once the picker is rendered, so the
   // select-all + generate happen at a race-free synchronization point.
+  // The form never flashes: a loading pane covers the roster fetch +
+  // generate; failures fall back to the primed form (insShowForm).
   function launcherOpenInsights_() {
     const btn = $('insights-report-btn');
     if (!btn) return;
@@ -2295,6 +2326,8 @@
     const p = $('ins-preset');
     if (p) p.value = 'custom';
     insLauncherAutoRun_ = true;
+    launcherShowLoading_('ins-launcher-loading', 'insights-form', 'insights-results',
+      'How is my team doing lately?');
     insEnsureRoster();
   }
 
@@ -2327,13 +2360,16 @@
   }
 
   // "Are callers giving up before we answer?" -> QCD report over the
-  // last 30 days, auto-generated (no agent selection needed).
+  // last 30 days, auto-generated (no agent selection needed). Loading
+  // pane instead of a form flash; failures fall back to the form.
   function launcherOpenQcd_() {
     const btn = $('qcd-report-btn');
     if (!btn) return;
     btn.click();
     const p = $('qcd-preset');
     if (p) { p.value = 'last30'; applyQcdPreset(); }
+    launcherShowLoading_('qcd-launcher-loading', 'qcd-form', 'qcd-results',
+      'Are callers giving up before we answer?');
     runQcdReport();
   }
 
@@ -2462,7 +2498,18 @@
       el.id = id;
       el.className = 'report-headline';
       const header = container.querySelector('.ir-results-header');
-      if (header) container.insertBefore(el, header.nextSibling);
+      if (header) {
+        // Insert after the header AND after any status / loading / error
+        // elements that immediately follow it, so transient "Loading…" and
+        // error banners always render ABOVE the headline, not under it.
+        let anchor = header.nextElementSibling;
+        while (anchor && (anchor.classList.contains('status')
+                          || anchor.classList.contains('ir-loader')
+                          || anchor.classList.contains('empty-state'))) {
+          anchor = anchor.nextElementSibling;
+        }
+        container.insertBefore(el, anchor);
+      }
       // Anchor without a results header (e.g. the Missed modal's
       // summary strip): place the headline just above the anchor.
       else container.parentNode.insertBefore(el, container);
@@ -4763,22 +4810,22 @@
            +   irInsightsBlock_(agent.insights || [])
            +   '<div class="ir-kpi-grid">'
            +     irKpiTile('Total Rung',  agent.stats.rung,     teamAvg.rung,
-                            irDiffBadge(agent.raw.rung,     teamAvg.raw.rung,        'pos'),
+                            irDiffBadge(agent.raw.rung,     teamAvg.raw.rung,        'pos', 'rung calls'),
                             trendForAgent.map(function (x) { return x.rung; }),     IR_VOLUME_COLORS.rung,
                             share.rung,
                             priorRow('rung', 'pos'))
            +     irKpiTile('Answered',    agent.stats.answered, teamAvg.answered,
-                            irDiffBadge(agent.raw.answered, teamAvg.raw.answered,    'pos'),
+                            irDiffBadge(agent.raw.answered, teamAvg.raw.answered,    'pos', 'answered calls'),
                             trendForAgent.map(function (x) { return x.answered; }), IR_VOLUME_COLORS.answered,
                             share.answered,
                             priorRow('answered', 'pos'))
            +     irKpiTile('Missed',      agent.stats.missed,   teamAvg.missed,
-                            irDiffBadge(agent.raw.missed,   teamAvg.raw.missed,      'neg'),
+                            irDiffBadge(agent.raw.missed,   teamAvg.raw.missed,      'neg', 'missed calls'),
                             trendForAgent.map(function (x) { return x.missed; }),   IR_VOLUME_COLORS.missed,
                             share.missed,
                             priorRow('missed', 'neg'))
            +     irKpiTile('% Answered',  agent.stats.pct,      teamAvg.pct,
-                            irDiffBadge(agent.raw.pct,      teamAvg.raw.pctAnswered, 'pos'),
+                            irDiffBadge(agent.raw.pct,      teamAvg.raw.pctAnswered, 'pos', '% answered'),
                             trendForAgent.map(function (x) { return x.pct; }),      (THEME.accent || '#4E79A7'),
                             null,
                             priorRow('pct', 'pos'))
@@ -5002,7 +5049,7 @@
     setTimeout(function () { btn.textContent = prev; }, 1000);
   }
 
-  function irDiffBadge(agentVal, teamVal, type) {
+  function irDiffBadge(agentVal, teamVal, type, metricLabel) {
     // type: 'pos' = higher is better (Rung, Answered, % Answered).
     //       'neg' = lower is better (Missed).
     if (!teamVal) return '<span class="ir-badge ir-badge-neu">-</span>';
@@ -5014,7 +5061,16 @@
     } else if (type === 'neg') {
       if (pct < 0) cls = 'ir-badge-pos'; else if (pct > 0) cls = 'ir-badge-neg';
     }
-    return '<span class="ir-badge ' + cls + '">' + label + '</span>';
+    // Plain-English explainer for screen readers + hover -- the colored
+    // badge alone doesn't say which direction is good for this metric.
+    const metric = metricLabel ? ' for ' + metricLabel : '';
+    const where = pct === 0 ? 'matches the team average'
+      : Math.abs(pct).toFixed(1) + '% ' + (pct > 0 ? 'above' : 'below') + ' the team average';
+    const valence = type === 'pos' ? 'Higher is better.'
+                  : type === 'neg' ? 'Lower is better.' : '';
+    const explain = escapeHtml((where + metric + '. ' + valence).trim());
+    return '<span class="ir-badge ' + cls + '" title="' + explain
+         + '" aria-label="' + explain + '">' + label + '</span>';
   }
 
   function irAttCompare(agentAtt, teamAtt) {
@@ -5025,7 +5081,10 @@
     if (!teamAtt) return '<span class="ir-badge ir-badge-neu">-</span>';
     const pct = ((agentAtt - teamAtt) / teamAtt) * 100;
     const sign = agentAtt > teamAtt ? '> Avg' : '< Avg';
-    return '<span class="ir-badge ir-badge-neu">'
+    const explain = escapeHtml('Average talk time is ' + Math.abs(pct).toFixed(1) + '% '
+      + (agentAtt > teamAtt ? 'longer' : 'shorter')
+      + ' than the team average. Neither direction is automatically better — longer can mean more thorough service.');
+    return '<span class="ir-badge ir-badge-neu" title="' + explain + '" aria-label="' + explain + '">'
          + sign + ' (' + (pct > 0 ? '+' : '') + pct.toFixed(1) + '%)'
          + '</span>';
   }
@@ -9629,8 +9688,8 @@
     refresh();
   }
 
-  function insShowForm()    { $('insights-form').style.display = ''; $('insights-results').style.display = 'none'; insSetFormError(''); }
-  function insShowResults() { $('insights-form').style.display = 'none'; $('insights-results').style.display = ''; }
+  function insShowForm()    { launcherHideLoading_('ins-launcher-loading'); $('insights-form').style.display = ''; $('insights-results').style.display = 'none'; insSetFormError(''); }
+  function insShowResults() { launcherHideLoading_('ins-launcher-loading'); $('insights-form').style.display = 'none'; $('insights-results').style.display = ''; }
   function insSetFormError(msg) {
     const el = $('ins-form-error'); if (!el) return;
     if (!msg) { el.style.display = 'none'; el.textContent = ''; return; }
@@ -9765,6 +9824,7 @@
       })
       .withFailureHandler(function (err) {
         gen.disabled = false; gen.textContent = prev;
+        insShowForm();   // dismisses the launcher loading pane if active
         insSetFormError('Error: ' + (err && err.message ? err.message : String(err)));
       })
       .getInsightsReport(req);
@@ -9813,9 +9873,13 @@
       att:      series.map(function (s) { return s.att; }),
     };
     $('ins-kpi-row').innerHTML = [
-      prKpiTile_('Total Rung',   t.rung,     'pos', sparks.rung,     IR_VOLUME_COLORS.rung),
+      // Rung / Answered deltas render NEUTRAL here (volume moves with call
+      // traffic, not performance); Missed keeps its warn valence. PR keeps
+      // the legacy coloring until it's retired -- the parity test pins
+      // numbers, not badge colors.
+      prKpiTile_('Total Rung',   t.rung,     'neu', sparks.rung,     IR_VOLUME_COLORS.rung),
       prKpiTile_('Total Missed', t.missed,   'neg', sparks.missed,   IR_VOLUME_COLORS.missed),
-      prKpiTile_('Answered',     t.answered, 'pos', sparks.answered, IR_VOLUME_COLORS.answered),
+      prKpiTile_('Answered',     t.answered, 'neu', sparks.answered, IR_VOLUME_COLORS.answered),
       prKpiTile_('% Answered',   t.pct,      'pos', sparks.pct,      (THEME.accent || '#4E79A7')),
       prKpiTile_('Total TTT',    t.ttt,      'neu', sparks.ttt,      (THEME.muted  || '#9C755F')),
       prKpiTile_('Avg ATT',      t.att,      'neu', sparks.att,      (THEME.muted  || '#9C755F')),
@@ -10976,7 +11040,8 @@
     if (c.dialIn)              facts.push('Dialed ' + escapeHtml(c.dialIn));
     let body;
     if (c.journey && c.journey.length) {
-      body = '<div class="cl-journey">' + c.journey.map(clJourneyRowHtml_).join('') + '</div>';
+      body = clChainHtml_(c.journey)
+           + '<div class="cl-journey">' + c.journey.map(clJourneyRowHtml_).join('') + '</div>';
     } else {
       // Pre-journey-extension row: queue-level summary only.
       const path = c.entryQueue
@@ -10995,6 +11060,35 @@
          +   (facts.length ? '<div class="cl-call-facts">' + facts.join(' · ') + '</div>' : '')
          +   body
          + '</div>';
+  }
+
+  /**
+   * Compact visual path above the detailed timeline: queue + agent legs
+   * as arrow-chained tokens (IVR legs collapse into one leading token).
+   * "IVR → Sales → Anna ✗ → Ben ✓ 4:12" reads the whole call at a glance;
+   * the timeline below keeps the exact timestamps / hold detail.
+   */
+  function clChainHtml_(journey) {
+    const toks = [];
+    let leadingIvr = false;
+    journey.forEach(function (ev) {
+      if (ev.kind === 'queue') {
+        toks.push({ txt: String(ev.name || '').replace(/^A_Q_/i, ''), cls: 'cl-tok-queue' });
+      } else if (ev.kind === 'answer') {
+        toks.push({ txt: (ev.name || '?') + ' ✓' + (ev.talk ? ' ' + fmtDuration(ev.talk) : ''), cls: 'cl-tok-answer' });
+      } else if (ev.missed) {
+        toks.push({ txt: (ev.name || '?') + ' ✗', cls: 'cl-tok-missed' });
+      } else if (!toks.length) {
+        leadingIvr = true;   // pre-queue IVR/menu legs collapse to one token
+      }
+    });
+    if (!toks.length) return '';
+    const parts = (leadingIvr ? [{ txt: 'IVR', cls: 'cl-tok-ivr' }] : []).concat(toks);
+    return '<div class="cl-chain">'
+      + parts.map(function (p) {
+          return '<span class="cl-tok ' + p.cls + '">' + escapeHtml(p.txt) + '</span>';
+        }).join('<span class="cl-arrow" aria-hidden="true">→</span>')
+      + '</div>';
   }
 
   function clJourneyRowHtml_(ev) {
@@ -11175,11 +11269,13 @@
   }
 
   function showQcdForm() {
+    launcherHideLoading_('qcd-launcher-loading');
     $('qcd-form').style.display    = '';
     $('qcd-results').style.display = 'none';
     qcdSetFormError_('');
   }
   function showQcdResults_() {
+    launcherHideLoading_('qcd-launcher-loading');
     $('qcd-form').style.display    = 'none';
     $('qcd-results').style.display = '';
   }
@@ -11209,6 +11305,7 @@
       })
       .withFailureHandler(function (err) {
         btn.disabled = false; btn.textContent = prev;
+        showQcdForm();   // dismisses the launcher loading pane if active
         qcdSetFormError_('Error: ' + (err && err.message ? err.message : String(err)));
       })
       .getQcdReport({ department: dept, from: from, to: to });

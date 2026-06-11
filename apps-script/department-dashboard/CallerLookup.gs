@@ -71,8 +71,12 @@ function getCallerLookup(req) {
   }
   // Canonical normalization: "+<digits>" -- must stay byte-identical to
   // cdr-import's icExternalNumber_ + cdrHashPhone_ (parity-pinned by
-  // tests/unit/caller-lookup.test.js).
-  const hash = callerLookupHashPhone_('+' + digits, secret);
+  // tests/unit/caller-lookup.test.js). The CDR delivers US numbers with
+  // the country code ("+1XXXXXXXXXX"), so a 10-digit entry ALSO tries the
+  // "+1"-prefixed form -- both candidate hashes go into one IN (...) query
+  // (a user typing the local number shouldn't get silent zero matches).
+  const candidates = callerLookupHashCandidates_(digits);
+  const hashes = candidates.map(function (c) { return callerLookupHashPhone_(c, secret); });
 
   let conn = null;
   try {
@@ -83,16 +87,18 @@ function getCallerLookup(req) {
     // compatible with rows written BEFORE the journey extension (they
     // simply lack call_start/journey keys) AND with a not-yet-redeployed
     // cdr-import (no column at all). ONE query, ONE getString.
+    const inList = hashes.map(function () { return '?'; }).join(', ');
     const sql =
       "SELECT COALESCE(json_agg(t.j ORDER BY t.j->>'call_date', COALESCE(t.j->>'call_start','')), '[]')::text AS j " +
       "FROM (SELECT to_jsonb(c) || jsonb_build_object('insurer', i.insurance_name) AS j " +
         "FROM inbound_calls c LEFT JOIN insurance_numbers i ON i.phone_hash = c.caller_hash " +
-        "WHERE c.caller_hash = ? AND c.call_date BETWEEN ?::date AND ?::date " +
+        "WHERE c.caller_hash IN (" + inList + ") AND c.call_date BETWEEN ?::date AND ?::date " +
         "LIMIT " + (CALLER_LOOKUP_MAX_CALLS + 1) + ") t";
     const stmt = conn.prepareStatement(sql);
-    stmt.setString(1, hash);
-    stmt.setString(2, from);
-    stmt.setString(3, to);
+    let p = 0;
+    hashes.forEach(function (h) { stmt.setString(++p, h); });
+    stmt.setString(++p, from);
+    stmt.setString(++p, to);
     const rs = stmt.executeQuery();
     const json = rs.next() ? rs.getString('j') : '[]';
     rs.close(); stmt.close();
@@ -149,6 +155,17 @@ function callerLookupShapeCall_(r) {
     insurer:         r.insurer || null,
     journey:         journey,
   };
+}
+
+/**
+ * PURE. Candidate normalized forms for an entered number. The pipeline
+ * stores numbers as delivered by the CDR -- US numbers carry the leading
+ * country code -- so a 10-digit local entry also tries "+1"-prefixed.
+ */
+function callerLookupHashCandidates_(digits) {
+  const out = ['+' + digits];
+  if (digits.length === 10) out.push('+1' + digits);
+  return out;
 }
 
 /**

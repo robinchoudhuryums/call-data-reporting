@@ -2584,6 +2584,24 @@
      underline alone advertises the definition. */
   th[data-sort].gloss { cursor: pointer; }
 
+  /* Launcher loading pane: replaces the form while a question-chip run
+     generates, so the user never sees a form flash. */
+  .launcher-loading { padding: 8px 0 16px; }
+  .launcher-loading-q {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--ink);
+    margin-bottom: 14px;
+  }
+  .launcher-loading-cap {
+    font-family: var(--mono);
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    color: var(--muted);
+    margin-top: 10px;
+  }
+
   /* Universal benchmark tints: the 92% answer-rate target and the 5%
      abandoned-% violation threshold, applied to KPI values / cells by
      script.html::benchValueCls_. */
@@ -2628,6 +2646,29 @@
     color: var(--muted);
     margin: 5px 0 2px;
   }
+  /* Compact arrow-chain path summary above the detailed timeline. */
+  .cl-chain {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 8px;
+  }
+  .cl-tok {
+    font-size: 11.5px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    background: var(--paper-2);
+    color: var(--ink);
+    white-space: nowrap;
+  }
+  .cl-tok-queue  { border-color: var(--accent); background: var(--accent-soft); }
+  .cl-tok-answer { border-color: var(--good);   background: var(--good-soft); }
+  .cl-tok-missed { color: var(--muted); }
+  .cl-tok-ivr    { color: var(--muted); }
+  .cl-arrow { color: var(--muted); font-size: 11px; }
+
   .cl-journey { margin-top: 8px; }
   .cl-ev {
     display: flex;
