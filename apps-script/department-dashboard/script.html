@@ -2566,6 +2566,13 @@
           + ' regressed overall — their cards carry the orange edge below.');
       }
     }
+    // Queue health: one sentence when the abandon rate crosses the 5%
+    // threshold (the only company-wide queue standard).
+    const qh = data.queueHealth;
+    if (qh && qh.totals && Number(qh.totals.totalCalls) > 0 && Number(qh.totals.abandonedPct) >= 5) {
+      s.push('Heads up: callers abandoned <strong>'
+        + escapeHtml(String(qh.totals.abandonedPctStr)) + '</strong> of queue calls — over the 5% threshold (see Queue health below).');
+    }
     return s.slice(0, 3);
   }
 
@@ -9981,9 +9988,58 @@
     ].join('');
 
     insRenderLengthWarning_(data.meta);
+    insRenderQueueHealth_(data.queueHealth);
     reportHeadline_('ins-headline', 'insights-results', insHeadline_(data));
     insRenderTrendChart_(data);
     insRenderAgentCards_(data.agentData || [], data.meta, data.teamStats);
+  }
+
+  /**
+   * Queue health section (QCD-into-Insights consolidation). Renders
+   * queue-level KPI tiles (with deltas vs the same prior window the
+   * rest of the report compares against) + a per-queue table with the
+   * 5%-threshold benchmark tint and expandable violation dates.
+   * Hidden when the server sent null (unmapped dept / missing sheet,
+   * or a pre-v4 cached payload).
+   */
+  function insRenderQueueHealth_(qh) {
+    const wrap = $('ins-queue-health');
+    if (!wrap) return;
+    if (!qh || !qh.totals) { wrap.style.display = 'none'; return; }
+    wrap.style.display = '';
+
+    const cap = $('ins-qh-cap');
+    if (cap) cap.textContent = '(' + (qh.queues || []).length + ' queue'
+      + ((qh.queues || []).length === 1 ? '' : 's') + ' · same window as the rollup above)';
+
+    const t = qh.totals, p = qh.priorTotals;
+    const tiles = [
+      inboundKpiTile_('Queue calls', fmtNumber(t.totalCalls), '',
+        p ? inboundDelta_(t.totalCalls, p.totalCalls, 'neu', false) : ''),
+      inboundKpiTile_('Abandoned %', t.abandonedPctStr, fmtNumber(t.abandoned) + ' abandoned',
+        p ? inboundDelta_(t.abandonedPct, p.abandonedPct, 'neg', true) : ''),
+      inboundKpiTile_('Violations (MTD)', fmtNumber(qh.violationsMtd), 'days over the 5% threshold this month', ''),
+      inboundKpiTile_('Longest wait', t.longestWait, '', ''),
+    ];
+    $('ins-qh-tiles').innerHTML = tiles.join('');
+
+    const tbody = $('ins-qh-tbody');
+    if (!tbody) return;
+    tbody.innerHTML = (qh.perQueue || []).map(function (q) {
+      const pctCls = benchValueCls_('abandoned %', q.abandonedPctStr);
+      const violCls = q.violations > 3 ? ' qcd-warn-strong' : (q.violations > 0 ? ' qcd-warn-light' : '');
+      const violCell = q.violations > 0 && (q.violationDates || []).length
+        ? '<details class="ins-qh-viol"><summary>' + q.violations + '</summary>'
+          + '<div class="ins-qh-viol-dates">' + q.violationDates.map(escapeHtml).join(', ') + '</div></details>'
+        : String(q.violations || 0);
+      return '<tr>'
+        + '<td>' + escapeHtml(q.queue) + '</td>'
+        + '<td class="num">' + fmtNumber(q.totalCalls) + '</td>'
+        + '<td class="num">' + fmtNumber(q.abandoned) + '</td>'
+        + '<td class="num' + pctCls + '">' + escapeHtml(q.abandonedPctStr) + '</td>'
+        + '<td class="num' + violCls + '">' + violCell + '</td>'
+        + '</tr>';
+    }).join('');
   }
 
   /**
@@ -11403,7 +11459,14 @@
         showQcdForm();   // dismisses the launcher loading pane if active
         qcdSetFormError_('Error: ' + (err && err.message ? err.message : String(err)));
       })
-      .getQcdReport({ department: dept, from: from, to: to });
+      .getQcdReport({ department: dept, from: from, to: to,
+                      includeSubQueues: qcdIncludeSubQueues_() });
+  }
+
+  /** Sub-queue rollup toggle state (defaults to true = INV-51 rollup). */
+  function qcdIncludeSubQueues_() {
+    const cb = $('qcd-include-sub');
+    return cb ? !!cb.checked : true;
   }
 
   function qcdRenderReport_(data) {

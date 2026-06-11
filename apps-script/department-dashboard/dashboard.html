@@ -960,12 +960,23 @@
             <label for="qcd-to">End date</label>
             <input type="date" id="qcd-to">
           </div>
+          <div class="ir-col qcd-sub-toggle-col">
+            <label for="qcd-include-sub">Sub-queues</label>
+            <label class="qcd-sub-toggle">
+              <input type="checkbox" id="qcd-include-sub" checked>
+              Include sub-queue data
+            </label>
+          </div>
         </div>
         <div class="ir-hint">
           Reads from the <strong>QCD Historical Data</strong> sheet
           (written daily by the import pipeline; one row per call
           source per dept per day). KPIs are the per-day Total Calls
           source roll-up; per-source breakdown is nested below.
+          For parent departments (e.g. Sales), &ldquo;Include sub-queue
+          data&rdquo; folds child queues (e.g. PAP) into the totals and
+          charts; uncheck it to see the parent&rsquo;s own queues alone.
+          Sub-queue departments are unaffected by the toggle.
         </div>
         <div id="qcd-form-error" class="status status-error" style="display:none;"></div>
         <button class="btn" id="qcd-generate-btn" type="button">Generate report</button>
@@ -1192,6 +1203,27 @@
 
         <div class="al-section-title">Department rollup <span class="ins-rollup-cap" id="ins-rollup-cap"></span></div>
         <div id="ins-kpi-row" class="pr-kpi-row"></div>
+
+        <!-- Queue health (QCD-into-Insights consolidation): the dept's
+             queue-level abandoned % / violations for the same window +
+             prior window. Hidden when the dept has no mapped queues or
+             the QCD sheet is unavailable. The full QCD Report remains
+             the deep dive (per-queue charts, daily series). -->
+        <div id="ins-queue-health" style="display:none;">
+          <div class="al-section-title">Queue health <span class="ins-rollup-cap" id="ins-qh-cap"></span></div>
+          <div id="ins-qh-tiles" class="pr-kpi-row"></div>
+          <table class="qcd-source-table">
+            <thead><tr>
+              <th>Queue</th>
+              <th class="num">Total Calls</th>
+              <th class="num">Abandoned</th>
+              <th class="num">Abandoned %</th>
+              <th class="num">Violations</th>
+            </tr></thead>
+            <tbody id="ins-qh-tbody"></tbody>
+          </table>
+          <div class="ins-qh-footnote">Same data the QCD Report reads &mdash; open it for per-queue trend charts and the daily series.</div>
+        </div>
 
         <div class="ir-chart-wrap" id="ins-trend-wrap">
           <div class="ir-chart-header">12-Month Team Trend</div>

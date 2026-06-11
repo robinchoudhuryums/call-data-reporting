@@ -74,7 +74,10 @@
 //      the Overview Pipeline Health banner (E1) and Orphan Fix nag
 //      (E12-reframed) introduced in the Phase B redesign rollout.
 //      Both are stripped for non-admins by personalizeOverview_.
-const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v14';
+// v15: per-dept QCD snapshots use DIRECT queues only (sub-queue
+// separation -- children carry their own tiles; the parent-expansion
+// overwrite pass was removed).
+const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v15';
 
 // Pipeline freshness threshold (hours). If the most recent successful
 // DQE-freshness Pipeline Health row is older than this many hours, the
@@ -847,20 +850,13 @@ function computeQcdSnapshots_(allDepts, sinceIso, ssTZ) {
         if (!queueToDept[q]) queueToDept[q] = d;
       });
     });
-    // Parent dept -> expanded queue set (including children). Used
-    // in a second pass below so parent tiles also reflect their
-    // sub-queues' QCD activity.
-    const parentDeptQueues = {};
-    allDepts.forEach(function (d) {
-      const expanded = (typeof queuesForDept_ === 'function')
-                       ? queuesForDept_(d) : [];
-      // Only track depts whose expansion adds queues beyond their
-      // direct mapping (i.e. depts with children).
-      const direct = getDeptQcdQueues_(d);
-      if (expanded.length > direct.length) {
-        parentDeptQueues[d] = expanded;
-      }
-    });
+    // NOTE (sub-queue separation, v15): each dept's snapshot uses its
+    // DIRECT queue list only. The former second pass that overwrote a
+    // parent's snapshot with the child-expanded rollup was removed --
+    // children render their own nested tiles with their own QCD chips,
+    // so the rollup double-displayed the child's numbers on the parent
+    // tile. The QCD Report's "Include sub-queues" toggle is now the
+    // place to see the combined view.
 
     const tz = ssTZ || TZ;
     const values = sheet.getRange(2, 1, lastRow - 1, 12).getValues();
@@ -955,63 +951,6 @@ function computeQcdSnapshots_(allDepts, sinceIso, ssTZ) {
       };
     });
 
-    // Second pass: for parent depts (Sales / Power / CSR), recompute
-    // the snapshot using the EXPANDED queue list so the parent tile
-    // reflects its sub-queues' QCD activity too. Overwrites the
-    // direct-only entry from the first pass.
-    Object.keys(parentDeptQueues).forEach(function (parentDept) {
-      const expandedQueues = parentDeptQueues[parentDept];
-      const expandedSet = {};
-      expandedQueues.forEach(function (q) { expandedSet[q] = true; });
-      let pLatestDate = '';
-      let pTotal = 0, pAbnd = 0, pViol = 0, pMtdViol = 0;
-      var pPerQueue = {};
-      for (let i = 0; i < values.length; i++) {
-        const r = values[i];
-        const src = String(r[QCD_HISTORICAL_COLS.CALL_SOURCE - 1] || '').trim();
-        if (src !== 'Total Calls') continue;
-        const q = String(r[QCD_HISTORICAL_COLS.CALL_QUEUE - 1] || '').trim();
-        if (!expandedSet[q]) continue;
-        const dateIso = rowDateIso_(r[QCD_HISTORICAL_COLS.DATE - 1], tz);
-        if (!dateIso || dateIso < sinceIso) continue;
-        const tc = Number(r[QCD_HISTORICAL_COLS.TOTAL_CALLS - 1]) || 0;
-        const ab = Number(r[QCD_HISTORICAL_COLS.ABANDONED   - 1]) || 0;
-        const vi = Number(r[QCD_HISTORICAL_COLS.VIOLATIONS  - 1]) || 0;
-        if (dateIso >= mtdStart) pMtdViol += vi;
-        if (dateIso > pLatestDate) {
-          pLatestDate = dateIso; pTotal = tc; pAbnd = ab; pViol = vi;
-          pPerQueue = {};
-          pPerQueue[q] = { totalCalls: tc, abandoned: ab, violations: vi };
-        } else if (dateIso === pLatestDate) {
-          pTotal += tc; pAbnd += ab; pViol += vi;
-          var ppq = pPerQueue[q];
-          if (!ppq) { ppq = { totalCalls: 0, abandoned: 0, violations: 0 }; pPerQueue[q] = ppq; }
-          ppq.totalCalls += tc; ppq.abandoned += ab; ppq.violations += vi;
-        }
-      }
-      if (!pLatestDate) return;
-      const pPct = pTotal > 0 ? (pAbnd / pTotal) * 100 : 0;
-      var pPerQueueOut = [];
-      Object.keys(pPerQueue).forEach(function (qn) {
-        var pq = pPerQueue[qn];
-        var qPct = pq.totalCalls > 0 ? (pq.abandoned / pq.totalCalls) * 100 : 0;
-        pPerQueueOut.push({
-          queue: qn, totalCalls: pq.totalCalls, abandoned: pq.abandoned,
-          abandonedPct: round1_(qPct), abandonedPctStr: qPct.toFixed(2) + '%',
-          violations: pq.violations,
-        });
-      });
-      out[parentDept] = {
-        date:             pLatestDate,
-        totalCalls:       pTotal,
-        abandoned:        pAbnd,
-        abandonedPct:     round1_(pPct),
-        abandonedPctStr:  pPct.toFixed(2) + '%',
-        violations:       pViol,
-        violationsMtd:    pMtdViol,
-        perQueue:         pPerQueueOut,
-      };
-    });
   } catch (e) {
     Logger.log('computeQcdSnapshots_ failed: %s', e);
   }

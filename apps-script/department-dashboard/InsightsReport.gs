@@ -58,7 +58,10 @@
 // semantics ported from Compare Ranges -- drives the client's
 // different-length warning banner + per-day sublines when a custom
 // prior window's length differs >= 1.2x from the current range).
-const INSIGHTS_CACHE_KEY_PREFIX = 'insights:v3';
+// v4: response gains `queueHealth` (QCD-into-Insights consolidation:
+//     queue-level totals + prior-window totals + per-queue rows with
+//     violation dates, via computeQcdReport_; null when unmapped).
+const INSIGHTS_CACHE_KEY_PREFIX = 'insights:v4';
 
 function getInsightsReportInit(req) {
   // Same picker UX (roster + default dates + active-in-range subset) as
@@ -473,7 +476,63 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
     agentData:    agentData,
     teamInsights: teamInsights,
     trendData:    { labels: trendLabels, series: trendSeries },
+    // Queue health (the QCD-into-Insights consolidation): the dept's
+    // queue-level abandoned % / violations for the SAME window + prior
+    // window, sourced from the same computeQcdReport_ the QCD modal
+    // uses so the two surfaces can't disagree. null when the dept has
+    // no mapped queues or the QCD sheet is missing (best-effort).
+    queueHealth: insightsQueueHealth_(dept, from, to, priorFrom, priorTo),
   };
+}
+
+/**
+ * Best-effort queue-level rollup for the Insights "Queue health"
+ * section. Reuses computeQcdReport_ (QCDReport.gs, flat global scope)
+ * for the current AND prior windows -- never throws; null hides the
+ * section client-side. INV-51 rollup semantics (sub-queues included).
+ * NOTE: totals.violations from computeQcdReport_ is MONTH-TO-DATE
+ * (INV-51), so it's surfaced as violationsMtd; the per-queue rows'
+ * `violations` are selected-range counts with their violationDates.
+ */
+function insightsQueueHealth_(dept, from, to, priorFrom, priorTo) {
+  try {
+    if (typeof computeQcdReport_ !== 'function') return null;
+    const cur = computeQcdReport_(dept, from, to);
+    if (!cur || !cur.meta || cur.meta.unmapped) return null;
+    let prior = null;
+    try { prior = computeQcdReport_(dept, priorFrom, priorTo); } catch (e) { prior = null; }
+    const pick = function (t) {
+      t = t || {};
+      return {
+        totalCalls:      Number(t.totalCalls) || 0,
+        abandoned:       Number(t.abandoned) || 0,
+        abandonedPct:    Number(t.abandonedPct) || 0,
+        abandonedPctStr: t.abandonedPctStr || '0.00%',
+        longestWait:     t.longestWait || '0:00:00',
+        avgAnswer:       t.avgAnswer || '0:00:00',
+      };
+    };
+    return {
+      queues:        cur.meta.queues || [],
+      totals:        pick(cur.totals),
+      priorTotals:   prior && prior.meta && !prior.meta.unmapped ? pick(prior.totals) : null,
+      violationsMtd: Number(cur.totals && cur.totals.violations) || 0,
+      perQueue: (cur.queueBreakdown || []).map(function (q) {
+        return {
+          queue:           q.queue,
+          totalCalls:      q.totalCalls,
+          abandoned:       q.abandoned,
+          abandonedPct:    q.abandonedPct,
+          abandonedPctStr: q.abandonedPctStr,
+          violations:      q.violations,
+          violationDates:  q.violationDates || [],
+        };
+      }),
+    };
+  } catch (e) {
+    Logger.log('insightsQueueHealth_ (best-effort): ' + (e && e.message ? e.message : e));
+    return null;
+  }
 }
 
 function emptyInsights_(dept, from, to, priorFrom, priorTo, selectedAgents,
