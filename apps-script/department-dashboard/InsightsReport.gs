@@ -203,15 +203,17 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
   //     equal; a custom prior can differ, and when the longer window is
   //     >= 1.2x the shorter, volume totals aren't directly comparable
   //     -- the client renders a warning banner + per-day sublines.
-  const currentDays = Math.floor((endDate - startDate) / msPerDay) + 1;
-  const priorDays   = Math.floor((priorEndDate - priorStartDate) / msPerDay) + 1;
+  // Math.round, not floor/ceil: noon-anchored dates wobble +-1h across
+  // DST transitions; round absorbs it (floor truncated spring-forward).
+  const currentDays = Math.round((endDate - startDate) / msPerDay) + 1;
+  const priorDays   = Math.round((priorEndDate - priorStartDate) / msPerDay) + 1;
   const lengthMismatch = (Math.min(currentDays, priorDays) > 0)
     && (Math.max(currentDays, priorDays) / Math.min(currentDays, priorDays) >= 1.2);
 
   // --- Trend window (INV-29; mirrors the Performance Report) ---------
   // 12-month monthly buckets ending on `to`, unless the range itself is
   // > 366 days or a full calendar year (then the range IS the window).
-  const diffDays = Math.ceil(Math.abs(endDate - startDate) / msPerDay) + 1;
+  const diffDays = Math.round(Math.abs(endDate - startDate) / msPerDay) + 1;
   const isFullYear =
        startDate.getMonth() === 0 && startDate.getDate() === 1
     && endDate.getMonth()   === 11 && endDate.getDate()   === 31

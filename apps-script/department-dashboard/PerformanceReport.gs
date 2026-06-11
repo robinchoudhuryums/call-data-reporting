@@ -217,7 +217,8 @@ function computePerformanceReport_(dept, from, to, selectedAgents, roster,
   }
 
   // Trend window resolution -- mirror Individual Report's logic.
-  const diffDays = Math.ceil(Math.abs(endDate - startDate) / msPerDay) + 1;
+  // Math.round, not ceil: noon-anchored dates wobble +-1h across DST.
+  const diffDays = Math.round(Math.abs(endDate - startDate) / msPerDay) + 1;
   const isFullYear =
        startDate.getMonth() === 0 && startDate.getDate() === 1
     && endDate.getMonth()   === 11 && endDate.getDate()   === 31
