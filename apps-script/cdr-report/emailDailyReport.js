@@ -414,6 +414,15 @@ function getDayName(dayNum) {
 
 function compensateForSpreadsheetTimezone(centralTimeDate) {
   // Based on debug logs: Central Time date shows 1 day earlier in Mexico City timezone
-  // So we add 1 day to compensate
+  // So we add 1 day to compensate.
+  //
+  // FRAGILE COUPLING (audit F16): this hardcoded +1-day offset exists
+  // only because the CDR Report spreadsheet's timezone is
+  // "Central Time - Mexico City" while the script runs America/Chicago
+  // (the INV-02 mismatch documented in docs/known-issues.md). If the
+  // spreadsheet TZ is ever changed to match the script, the report
+  // date cell would land one day LATE -- remove this offset in the
+  // same change. Validated against the live install as-is; do not
+  // "fix" it independently of the spreadsheet TZ setting.
   return new Date(centralTimeDate.getTime() + (24 * 60 * 60 * 1000));
 }

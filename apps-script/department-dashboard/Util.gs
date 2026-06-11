@@ -15,6 +15,42 @@ function assertAdmin_() {
   if (user.role !== 'admin') throw new Error('Alerts are admin-only.');
 }
 
+// -- Report-usage telemetry --------------------------------------------------
+
+/**
+ * Appends one row to the Report Usage sheet recording a report open.
+ * Called from the public report endpoints on BOTH the cache-hit and
+ * fresh-compute paths, so the sheet reflects actual usage (the
+ * evidence base for the PR/CR retirement decisions).
+ *
+ * INV-01 TELEMETRY CARVE-OUT -- the one sanctioned spreadsheet write
+ * reachable from non-admin RPCs. Kept safe by construction:
+ *   - append-only, fixed 6-column schema (REPORT_USAGE_HEADERS);
+ *   - no user-controlled free text: `report` is a code constant at
+ *     each call site, `dept` has already passed the caller's
+ *     dept-validation, role/email come from resolveUser_;
+ *   - best-effort: any failure (missing sheet pre-setup(), quota,
+ *     transient error) is swallowed -- telemetry must never block,
+ *     slow-fail, or error a report.
+ * Do NOT add parameters that carry caller-supplied strings, and do
+ * not reuse this helper for anything that isn't pure telemetry.
+ */
+function logReportUsage_(report, dept, user, cacheHit) {
+  try {
+    const ss = openSpreadsheet_();
+    const sheet = ss.getSheetByName(SHEETS.REPORT_USAGE);
+    if (!sheet) return;   // setup() not re-run yet -- silently skip
+    sheet.appendRow([
+      new Date(),
+      String(report || ''),
+      String(dept || ''),
+      (user && user.role)  ? String(user.role)  : '',
+      (user && user.email) ? String(user.email) : '',
+      cacheHit ? 'TRUE' : 'FALSE',
+    ]);
+  } catch (e) { /* best-effort -- never block a report */ }
+}
+
 // -- Formatting (was IndividualReport.gs) ----------------------------------
 
 function formatSecondsHms_(totalSeconds) {

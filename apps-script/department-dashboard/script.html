@@ -433,7 +433,7 @@
   function exportCaptureFailed_(err) {
     try { console.error('Report image capture failed', err); } catch (e) {}
     showToast("Couldn't capture the report image — please try again.", 'error');
-    ['ir-export-btn', 'pr-export-btn', 'cr-export-btn'].forEach(function (id) {
+    ['ir-export-btn', 'pr-export-btn', 'cr-export-btn', 'ins-export-btn'].forEach(function (id) {
       var btn = document.getElementById(id);
       if (btn && btn.dataset && btn.dataset.label) {
         btn.innerHTML = btn.dataset.label;
@@ -735,12 +735,15 @@
     initAlerts();
     initOrphanFix();
     initDeptConfig();
+    initCallerLookup();
     initQcdReport();
     // Router last so its modal-close listeners attach after each
     // per-modal init has wired up its own close-button handlers.
     initRouter();
     initOpenInNewTabButtons_();
     initWorkWindowPill_();
+    initOverviewLauncher_();
+    initMetricGlossary_();
 
     // Fetch the most recent date with data in DQE Historical Data
     // and snap From/To to that date. Defers the initial table
@@ -757,6 +760,7 @@
         // (e.g. mid-migration) doesn't make the pill look stuck.
         const dqe = dates && dates.dqe ? dates.dqe : null;
         if (dqe) {
+          latestDqeIso_ = dqe;   // the Overview question-launcher reuses this
           $('from-date').value = dqe;
           $('to-date').value = dqe;
         }
@@ -2007,6 +2011,7 @@
     '/admin/alerts':       { kind: 'modal', modalId: 'alerts-modal',      buttonId: 'alerts-btn' },
     '/admin/orphan-fix':   { kind: 'modal', modalId: 'orphan-fix-modal',  buttonId: 'orphan-fix-btn' },
     '/admin/dept-config':  { kind: 'modal', modalId: 'dept-config-modal', buttonId: 'dept-config-btn' },
+    '/admin/caller-lookup': { kind: 'modal', modalId: 'caller-lookup-modal', buttonId: 'caller-lookup-btn' },
   };
 
   // The route currently considered "active". Starts as '/overview'
@@ -2076,6 +2081,9 @@
     // Initial route from parent URL hash. google.script.url.getLocation
     // returns the parent URL's hash (without the leading '#') so deep
     // links like ".../exec#/report/individual" hit ROUTES_ exactly.
+    // A '?' query suffix carries optional FORM STATE (dates, compare
+    // mode, agents) serialized by the Open-in-new-tab buttons -- split
+    // it off before the route lookup and apply it after the modal opens.
     if (typeof google !== 'undefined' && google.script && google.script.url) {
       google.script.url.getLocation(function (loc) {
         const hash = (loc && loc.hash) || '';
@@ -2084,7 +2092,10 @@
         // '#report/individual' (no leading slash) for resilience to
         // hand-typed URLs.
         const normalized = hash.charAt(0) === '/' ? hash : '/' + hash;
-        const trigger = document.querySelector('[data-route="' + normalized + '"]');
+        const qIdx = normalized.indexOf('?');
+        const route = qIdx === -1 ? normalized : normalized.slice(0, qIdx);
+        const params = qIdx === -1 ? null : decodeShareParams_(normalized.slice(qIdx + 1));
+        const trigger = document.querySelector('[data-route="' + route + '"]');
         if (!trigger) return;
         // A deep link to an admin-only view (data-admin-only tabs:
         // alerts / orphan-fix / dept-config) by a non-admin would open
@@ -2092,9 +2103,112 @@
         // and stay on the base page instead.
         if (trigger.hasAttribute('data-admin-only') && USER.role !== 'admin') return;
         trigger.click();
+        // Apply AFTER the click: the modal's openModal has now run its
+        // defaults + prefs restore synchronously, so the shared state
+        // wins; the agent selection lands via the report's pending-
+        // selection hook once the roster fetch renders.
+        if (params) {
+          const provider = SHARE_STATE_[route];
+          if (provider) {
+            try { provider.apply(params); } catch (e) { /* best-effort */ }
+          }
+        }
       });
     }
   }
+
+  // -- Share-state (state-in-URL) for the report forms ------------------
+  // Serializes a report form's state into the deep-link hash so an
+  // "Open in new tab" target (or a pasted link) restores the exact
+  // form -- dates, compare mode, custom prior window, and agent
+  // selection -- with one click left (Generate). Generation is NOT
+  // auto-triggered: the roster/agent picker loads async and the
+  // primed form keeps the flow race-free and predictable.
+
+  function encodeShareParams_(obj) {
+    const parts = [];
+    Object.keys(obj).forEach(function (k) {
+      const v = obj[k];
+      if (v == null || v === '') return;
+      parts.push(encodeURIComponent(k) + '=' + encodeURIComponent(String(v)));
+    });
+    return parts.join('&');
+  }
+
+  function decodeShareParams_(str) {
+    const out = {};
+    String(str || '').split('&').forEach(function (pair) {
+      if (!pair) return;
+      const i = pair.indexOf('=');
+      if (i === -1) return;
+      try {
+        out[decodeURIComponent(pair.slice(0, i))] = decodeURIComponent(pair.slice(i + 1));
+      } catch (e) { /* skip malformed token */ }
+    });
+    return out;
+  }
+
+  /** Sets an input/select value and fires its change handlers. */
+  function shareSetField_(id, value) {
+    const el = $(id);
+    if (!el || value == null || value === '') return;
+    el.value = value;
+    el.dispatchEvent(new Event('change'));
+  }
+
+  /**
+   * Per-route share-state providers. `collect()` reads the CURRENT form
+   * (returns null when there's nothing meaningful to share); `apply()`
+   * writes params back into the form + the report's pending-agent hook.
+   * Agent lists are '|'-joined inside one encoded param. Only the four
+   * agent-comparison reports participate -- they're where "look at this
+   * exact view" matters; the simpler forms (QCD / Missed / Inbound) are
+   * candidates for a follow-on.
+   */
+  function shareDatesProvider_(ids, getPending) {
+    return {
+      collect: function () {
+        const out = {};
+        Object.keys(ids.fields).forEach(function (k) {
+          const el = $(ids.fields[k]);
+          if (el && el.value) out[k] = el.value;
+        });
+        const list = $(ids.agentList);
+        if (list) {
+          const agents = irGetCheckedAgents_(list);
+          if (agents.length) out.agents = agents.join('|');
+        }
+        return (out.from || out.p1from) ? out : null;
+      },
+      apply: function (params) {
+        Object.keys(ids.fields).forEach(function (k) {
+          shareSetField_(ids.fields[k], params[k]);
+        });
+        if (params.agents && getPending) {
+          getPending(String(params.agents).split('|').filter(function (a) { return !!a; }));
+        }
+      },
+    };
+  }
+
+  const SHARE_STATE_ = {
+    '/report/individual': shareDatesProvider_(
+      { fields: { from: 'ir-from', to: 'ir-to', mode: 'ir-compare-mode', pfrom: 'ir-prior-from', pto: 'ir-prior-to' },
+        agentList: 'ir-agent-list' },
+      function (list) { irPendingAgentSelection_ = list; }),
+    '/report/performance': shareDatesProvider_(
+      { fields: { from: 'pr-from', to: 'pr-to', mode: 'pr-compare-mode', pfrom: 'pr-prior-from', pto: 'pr-prior-to' },
+        agentList: 'pr-agent-list' },
+      function (list) { prPendingAgentSelection_ = list; }),
+    '/report/compare': shareDatesProvider_(
+      { fields: { p1from: 'cr-p1-from', p1to: 'cr-p1-to', p2from: 'cr-p2-from', p2to: 'cr-p2-to' },
+        agentList: 'cr-agent-list' },
+      function (list) { crPendingAgentSelection_ = list; }),
+    '/report/insights': shareDatesProvider_(
+      { fields: { from: 'ins-from', to: 'ins-to', mode: 'ins-compare-mode', pfrom: 'ins-prior-from', pto: 'ins-prior-to' },
+        agentList: 'ins-agent-list' },
+      function (list) { insPendingAgentSelection_ = list; }),
+  };
 
   // Open-in-new-tab buttons on each report modal. Builds the target
   // URL from window.__DASHBOARD_URL__ (DASHBOARD_URL Script Property)
@@ -2115,9 +2229,418 @@
         // appending ours, so an admin-pasted URL ending in "#anything"
         // doesn't produce a double-hash target.
         const baseUrl = dashboardUrl.split('#')[0];
-        window.open(baseUrl + '#' + route, '_blank', 'noopener');
+        // Carry the modal's CURRENT form state (dates / compare mode /
+        // agents) so the new tab restores the exact view primed for one
+        // Generate click. Best-effort: any provider failure falls back
+        // to the bare route.
+        let suffix = '';
+        try {
+          const provider = SHARE_STATE_[route];
+          const state = provider ? provider.collect() : null;
+          const encoded = state ? encodeShareParams_(state) : '';
+          if (encoded) suffix = '?' + encoded;
+        } catch (e) { /* bare route */ }
+        window.open(baseUrl + '#' + route + suffix, '_blank', 'noopener');
       });
     });
+  }
+
+  // -- Overview question launcher (anti-intimidation layer) --------------
+  // Four plain-English questions on the Overview page, each mapped to an
+  // existing report primed with a sensible window. Where the report needs
+  // no agent selection (Missed / QCD) or can default to the whole active
+  // roster (Insights) the launcher runs it immediately; the Individual
+  // Report stops at the primed form because "which agent?" is the user's
+  // question to answer. No new server endpoints -- this is routing sugar
+  // over the modals' existing open + form machinery.
+
+  let latestDqeIso_ = null;          // set by the getLatestDataDates init fetch
+  let insLauncherAutoRun_ = false;   // consumed by insRenderAgentList
+
+  function launcherIsoDaysAgo_(n) {
+    const d = new Date();
+    d.setDate(d.getDate() - n);
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0')
+      + '-' + String(d.getDate()).padStart(2, '0');
+  }
+
+  function initOverviewLauncher_() {
+    const wrap = $('ov-launcher');
+    if (!wrap) return;
+    wrap.addEventListener('click', function (e) {
+      const btn = e.target.closest('[data-launch]');
+      if (!btn) return;
+      const kind = btn.getAttribute('data-launch');
+      try {
+        if (kind === 'team-lately')           launcherOpenInsights_();
+        else if (kind === 'missed-yesterday') launcherOpenMissed_();
+        else if (kind === 'agent-trend')      launcherOpenIndividual_();
+        else if (kind === 'abandons')         launcherOpenQcd_();
+      } catch (err) { /* best-effort: the modal is still open/openable by hand */ }
+    });
+  }
+
+  // "How is my team doing lately?" -> Insights, last 30 days, all active
+  // agents, auto-generated. The button click runs the modal's normal
+  // open (defaults + prefs + roster fetch); we then override the dates
+  // and re-ensure the roster for the new range -- insRenderAgentList
+  // consumes insLauncherAutoRun_ once the picker is rendered, so the
+  // select-all + generate happen at a race-free synchronization point.
+  function launcherOpenInsights_() {
+    const btn = $('insights-report-btn');
+    if (!btn) return;
+    btn.click();
+    if ($('ins-from')) $('ins-from').value = launcherIsoDaysAgo_(30);
+    if ($('ins-to'))   $('ins-to').value   = launcherIsoDaysAgo_(1);
+    const p = $('ins-preset');
+    if (p) p.value = 'custom';
+    insLauncherAutoRun_ = true;
+    insEnsureRoster();
+  }
+
+  // "Why did we miss calls recently?" -> Missed Calls on the most recent
+  // date with data (the report reads the My Department From/To fields,
+  // so we set those first, then keep the dept table consistent with a
+  // background refresh).
+  function launcherOpenMissed_() {
+    const btn = $('missed-report-btn');
+    if (!btn) return;
+    const iso = latestDqeIso_ || launcherIsoDaysAgo_(1);
+    if ($('from-date')) $('from-date').value = iso;
+    if ($('to-date'))   $('to-date').value   = iso;
+    clearActivePreset_();
+    btn.click();        // openModal fetches with the dates just set
+    refresh();          // keep the dept page's table in sync with its inputs
+  }
+
+  // "Is one of my agents struggling or improving?" -> Individual Report
+  // primed with a 30-day window; agent choice is deliberately left to
+  // the user (that IS the question), so no auto-run.
+  function launcherOpenIndividual_() {
+    const btn = $('individual-report-btn');
+    if (!btn) return;
+    btn.click();
+    const provider = SHARE_STATE_['/report/individual'];
+    if (provider) provider.apply({ from: launcherIsoDaysAgo_(30), to: launcherIsoDaysAgo_(1) });
+    const search = $('ir-agent-search');
+    if (search) search.focus();
+  }
+
+  // "Are callers giving up before we answer?" -> QCD report over the
+  // last 30 days, auto-generated (no agent selection needed).
+  function launcherOpenQcd_() {
+    const btn = $('qcd-report-btn');
+    if (!btn) return;
+    btn.click();
+    const p = $('qcd-preset');
+    if (p) { p.value = 'last30'; applyQcdPreset(); }
+    runQcdReport();
+  }
+
+  // -- Metric glossary (anti-intimidation layer) --------------------------
+  // One central dictionary of plain-English metric definitions, applied as
+  // hover tooltips (title=) on table headers and KPI labels everywhere --
+  // static markup at init, dynamically-rendered report content via a
+  // debounced MutationObserver. Matched elements pick up the .gloss class
+  // (dotted underline + help cursor) so the affordance is discoverable.
+  // Keys are normalized label text: lowercased, trimmed, sort-arrows and
+  // trailing colons stripped.
+
+  const METRIC_GLOSSARY_ = {
+    'source': 'Where this agent matched into the department: ROSTER (on this dept’s roster), BOTH (roster + shared-queue activity), or QUEUE (a floater who handled this dept’s queue but is rostered elsewhere — shown for visibility, excluded from the totals row).',
+    'unique': 'Distinct parent calls this agent was rung on inside the 8:30 AM–5:00 PM CST work window.',
+    'rung': 'Times this agent’s phone rang inside the work window. A call that overflows across agents counts once per agent it rang.',
+    'missed': 'Rings this agent didn’t pick up. A missed ring isn’t necessarily a lost call — another agent may have answered the same call.',
+    'answered': 'Calls this agent answered inside the work window.',
+    'ttt': 'Total Talk Time: the sum of this agent’s own conversation time on answered calls in the window.',
+    'att': 'Average Talk Time per answered call. Longer isn’t automatically worse — it can mean thorough service; read it alongside % answered.',
+    'avg abd wait': 'Average time abandoning callers waited before hanging up (across all of that day’s queues).',
+    'csr avg abd wait': 'Average abandon wait for the CSR queues specifically.',
+    '% answered': 'Answered calls as a share of calls that rang. The company-wide target is 92%.',
+    'answer rate': 'Answered calls as a share of calls offered. The company-wide target is 92%.',
+    'answer rate %': 'Answered calls as a share of calls offered. The company-wide target is 92%.',
+    'abandoned': 'Callers who hung up while waiting in the queue, before any agent answered.',
+    'abandoned %': 'Share of queue calls where the caller hung up before being answered. 5% or more on a day counts as a violation.',
+    'aband. %': 'Share of calls where the caller hung up before being answered. 5% or more is over the abandon threshold.',
+    'abandon rate %': 'Share of calls where the caller hung up before being answered. 5% or more is over the abandon threshold.',
+    'violations': 'Days where a queue’s abandoned % exceeded the 5% threshold. Month-to-date in the totals row.',
+    'longest wait': 'The single longest time any caller waited in the queue that day.',
+    'avg answer': 'Average time callers waited before an agent answered.',
+    'avg wait': 'Average time callers waited in the queue before being answered or giving up.',
+    'total calls': 'All calls offered to the queue, answered or not.',
+    'on-hold abandon': 'Calls an agent answered but the caller later hung up while parked on hold.',
+    'entry queue': 'The first queue the call entered. A call that overflows to another department still attributes to its entry queue’s department.',
+    'dial-in number': 'The phone number the caller dialed to reach us.',
+    'insurer': 'The insurance company a caller’s number is registered to in the DO NOT EDIT! insurance block. Unregistered numbers show as (unlabeled).',
+    'inbound calls': 'Every distinct call that dialed in during the range, answered or not.',
+    'abandoned on hold': 'Calls an agent answered but the caller later hung up while parked on hold.',
+    'abandoned in ivr': 'Callers who hung up in the phone menu before reaching any queue — unattributable to a department, so shown on the company view only.',
+    'avg hold': 'Average time answered callers spent parked on hold.',
+  };
+  // KPI tile labels are variants of the same metrics -- alias them to
+  // one definition each so the glossary never drifts per surface.
+  (function () {
+    const g = METRIC_GLOSSARY_;
+    g['total rung']   = g['rung'];
+    g['total missed'] = g['missed'];
+    g['total ttt']    = g['ttt'];
+    g['avg att']      = g['att'];
+    g['avg talk']     = g['att'];
+  })();
+
+  function glossaryKeyFor_(el) {
+    let text = (el.textContent || '');
+    return text.replace(/[▲▼↑↓]/g, '')   // sort arrows
+               .replace(/\s+/g, ' ').trim().toLowerCase()
+               .replace(/:$/, '');
+  }
+
+  function applyGlossaryTooltips_(root) {
+    if (!root || !root.querySelectorAll) return;
+    const sel = 'th, .ir-kpi-label, .pr-kpi-label, .dept-qcd-label, .ov-dept-stat-label';
+    root.querySelectorAll(sel).forEach(function (el) {
+      if (el.title) return;                       // never clobber an existing tooltip
+      const def = METRIC_GLOSSARY_[glossaryKeyFor_(el)];
+      if (!def) return;
+      el.title = def;
+      el.classList.add('gloss');
+    });
+  }
+
+  function initMetricGlossary_() {
+    applyGlossaryTooltips_(document);
+    // Report tables/tiles render after async fetches; a debounced
+    // childList observer re-applies over the whole document (cheap:
+    // a few hundred elements, and already-titled ones short-circuit).
+    let timer = null;
+    const obs = new MutationObserver(function () {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(function () { applyGlossaryTooltips_(document); }, 250);
+    });
+    obs.observe(document.body, { childList: true, subtree: true });
+  }
+
+  // -- Universal benchmark tints (anti-intimidation layer) ----------------
+  // The install has exactly two company-wide standards: the 92% answer-
+  // rate target (the Overview chart baseline) and the 5% abandoned-%
+  // violation threshold (the QCD pipeline rule). This helper applies them
+  // consistently to KPI tile values so a manager reading ANY report sees
+  // the same green-at-target / orange-over-threshold language the QCD and
+  // Overview surfaces already speak. Dept-specific ALERT thresholds stay
+  // with the Alerts engine -- no invented thresholds here.
+  function benchValueCls_(label, formatted) {
+    const text = String(label).replace(/<[^>]*>/g, '').toLowerCase();
+    const str = String(formatted);
+    if (str.indexOf('%') === -1) return '';
+    const num = parseFloat(str);
+    if (!isFinite(num)) return '';
+    if (/answer/.test(text)) return num >= 92 ? ' bm-target' : '';
+    if (/aband/.test(text))  return num >= 5  ? ' bm-over'   : '';
+    return '';
+  }
+
+  // -- Answer-first headlines (anti-intimidation layer) ------------------
+  // Every report's results open with 2-3 PLAIN-ENGLISH sentences composed
+  // client-side from the payload it already received (no server change,
+  // no cache bump). The charts/tables stay; the headline just answers
+  // "what does this say?" before the manager has to read a number. Each
+  // composer guards its no-data case; an empty sentence list hides the
+  // block entirely.
+
+  /**
+   * Renders `sentences` (pre-escaped HTML strings) into a headline block
+   * at the top of `containerId`'s results -- inserted right after the
+   * `.ir-results-header` (or as the first child when there isn't one,
+   * e.g. the Missed Calls modal body). Creates the element on first use.
+   */
+  function reportHeadline_(id, containerId, sentences) {
+    const container = $(containerId);
+    if (!container) return;
+    let el = $(id);
+    if (!el) {
+      el = document.createElement('div');
+      el.id = id;
+      el.className = 'report-headline';
+      const header = container.querySelector('.ir-results-header');
+      if (header) container.insertBefore(el, header.nextSibling);
+      // Anchor without a results header (e.g. the Missed modal's
+      // summary strip): place the headline just above the anchor.
+      else container.parentNode.insertBefore(el, container);
+    }
+    const lines = (sentences || []).filter(function (s) { return !!s; });
+    if (!lines.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
+    el.style.display = '';
+    el.innerHTML = '<div class="report-headline-kicker">At a glance</div>'
+      + lines.map(function (s) { return '<div class="report-headline-line">' + s + '</div>'; }).join('');
+  }
+
+  /**
+   * "…, up 8.2% vs the prior period" phrase from a deltaBlock. Empty
+   * string when there's no meaningful prior; "about the same" inside
+   * the noise band. pctPoints deltas read as "points".
+   */
+  function headlineDeltaPhrase_(stat) {
+    if (!stat || (Number(stat.prev || 0) === 0 && Number(stat.val || 0) === 0)) return '';
+    const dp = Number(stat.deltaPct || 0);
+    if (Math.abs(dp) < 0.05) return ', about the same as the prior period';
+    return ', ' + (dp > 0 ? 'up ' : 'down ') + Math.abs(dp).toFixed(1)
+         + (stat.type === 'pctPoints' ? ' points' : '%') + ' vs the prior period';
+  }
+
+  function headlineName_(n) { return '<strong>' + escapeHtml(n) + '</strong>'; }
+
+  function insHeadline_(data) {
+    const t = data.teamStats || {};
+    if (!Number((t.rung || {}).val) && !Number((t.rung || {}).prev)) {
+      return ['No call activity for the selected agents in this range.'];
+    }
+    const s = [];
+    s.push('Your team answered <strong>' + escapeHtml(String((t.answered || {}).formatted || 0))
+      + '</strong> of ' + escapeHtml(String((t.rung || {}).formatted || 0))
+      + ' rung calls (<strong>' + escapeHtml(String((t.pct || {}).formatted || '0%')) + '</strong>'
+      + headlineDeltaPhrase_(t.pct) + ').');
+    const cards = data.agentData || [];
+    if (cards.length > 1) {
+      let top = null, bottom = null;
+      cards.forEach(function (c) {
+        const score = deltaImprovementScore_(c.metrics);
+        if (!top || score > top.score) top = { name: c.name, score: score };
+        if (!bottom || score < bottom.score) bottom = { name: c.name, score: score };
+      });
+      const bits = [];
+      if (top && top.score > 5) bits.push(headlineName_(top.name) + ' improved the most');
+      if (bottom && bottom.score < -5 && (!top || bottom.name !== top.name)) {
+        bits.push(headlineName_(bottom.name) + ' slipped the most');
+      }
+      if (bits.length) s.push(bits.join('; ') + ' vs the prior window.');
+      const regressed = cards.filter(function (c) { return deltaClassify_(c.metrics) === 'regressed'; }).length;
+      if (regressed > 0) {
+        s.push(regressed + ' agent' + (regressed === 1 ? '' : 's')
+          + ' regressed overall — their cards carry the orange edge below.');
+      }
+    }
+    return s.slice(0, 3);
+  }
+
+  function prHeadline_(data) {
+    const t = data.teamStats || {};
+    if (!Number((t.rung || {}).val) && !Number((t.rung || {}).prev)) {
+      return ['No call activity for the selected agents in this range.'];
+    }
+    const s = [];
+    s.push('Your team answered <strong>' + escapeHtml(String((t.answered || {}).formatted || 0))
+      + '</strong> of ' + escapeHtml(String((t.rung || {}).formatted || 0))
+      + ' rung calls (<strong>' + escapeHtml(String((t.pct || {}).formatted || '0%')) + '</strong>'
+      + headlineDeltaPhrase_(t.pct) + ').');
+    const ins = data.teamInsights || [];
+    if (ins.length && ins[0].text) s.push(escapeHtml(ins[0].text));
+    return s;
+  }
+
+  function crHeadline_(data) {
+    const t = data.teamStats || {};
+    const p2 = (t.answered || {}).formatted, p1 = (t.answered || {}).prevFormatted;
+    if (p2 == null) return [];
+    const s = [];
+    s.push('Period 2: <strong>' + escapeHtml(String(p2)) + '</strong> answered ('
+      + escapeHtml(String((t.pct || {}).formatted || '0%')) + ') vs Period 1: '
+      + escapeHtml(String(p1 == null ? '0' : p1)) + ' ('
+      + escapeHtml(String((t.pct || {}).prevFormatted || '0%')) + ').');
+    const cards = data.agentData || [];
+    if (cards.length > 1) {
+      let up = 0, down = 0, flat = 0;
+      cards.forEach(function (a) {
+        const cls = crClassifyAgent_(a);
+        if (cls === 'improved') up++; else if (cls === 'regressed') down++; else flat++;
+      });
+      s.push(up + ' agent' + (up === 1 ? '' : 's') + ' improved, ' + down + ' regressed, and '
+        + flat + ' showed little change between the two periods.');
+    }
+    return s;
+  }
+
+  function irHeadline_(data) {
+    const cards = data.summaryData || [];
+    if (!cards.length) return [];
+    if (data.mode !== 'comparison') {
+      const a = cards[0];
+      const raw = a.raw || {};
+      if (!raw.rung) return [headlineName_(a.name) + ' had no rung calls in this range.'];
+      const teamPct = (data.teamAvg && data.teamAvg.raw && data.teamAvg.raw.pctAnswered) || 0;
+      const diff = (raw.pct || 0) - teamPct;
+      let vsTeam = '';
+      if (teamPct > 0) {
+        vsTeam = Math.abs(diff) < 1
+          ? ', right around the team average'
+          : ', about ' + Math.abs(diff).toFixed(1) + ' points '
+            + (diff > 0 ? 'above' : 'below') + ' the team average ('
+            + teamPct.toFixed(1) + '%)';
+      }
+      const s = [headlineName_(a.name) + ' answered <strong>' + escapeHtml(String(a.stats.answered))
+        + '</strong> of ' + escapeHtml(String(a.stats.rung)) + ' rung calls (<strong>'
+        + escapeHtml(String(a.stats.pct)) + '</strong>' + vsTeam + ').'];
+      const ins = a.insights || [];
+      if (ins.length && ins[0].text) s.push(escapeHtml(ins[0].text));
+      return s;
+    }
+    let top = cards[0];
+    cards.forEach(function (c) { if ((c.raw || {}).answered > (top.raw || {}).answered) top = c; });
+    return ['Comparing ' + cards.length + ' agents. ' + headlineName_(top.name)
+      + ' answered the most calls (<strong>' + escapeHtml(String(top.stats.answered))
+      + '</strong>, ' + escapeHtml(String(top.share.answered)) + ' of the group\'s total).'];
+  }
+
+  function missedHeadline_(meta) {
+    if (!meta) return [];
+    const missed = Number(meta.totalMissed || 0);
+    const abandoned = Number(meta.abandonedCallCount || 0);
+    const noRing = Number(meta.noRingAbandonCount || 0);
+    if (!missed && !abandoned) {
+      return ['No missed calls in this range — every rung call was picked up.'];
+    }
+    const s = ['Your team missed <strong>' + fmtNumber(missed) + '</strong> ring'
+      + (missed === 1 ? '' : 's') + ' in this range.'];
+    if (abandoned > 0) {
+      s.push('<strong>' + fmtNumber(abandoned) + '</strong> call' + (abandoned === 1 ? '' : 's')
+        + ' were abandoned — the caller hung up before anyone answered'
+        + (noRing > 0 ? ', including ' + fmtNumber(noRing) + ' that never rang any agent' : '') + '.');
+    }
+    return s;
+  }
+
+  function qcdHeadline_(data) {
+    const t = data.totals || {};
+    if (!Number(t.totalCalls)) return ['No queue activity in this range.'];
+    const pct = Number(t.abandonedPct || 0);
+    const s = ['<strong>' + escapeHtml(String(t.abandonedPctStr || '0%')) + '</strong> of callers abandoned before being answered ('
+      + fmtNumber(t.abandoned || 0) + ' of ' + fmtNumber(t.totalCalls || 0) + ' calls) — '
+      + (pct >= 5 ? 'above' : 'within') + ' the 5% violation threshold.'];
+    if (Number(t.violations) > 0) {
+      s.push('<strong>' + fmtNumber(t.violations) + '</strong> violation day'
+        + (Number(t.violations) === 1 ? '' : 's') + ' so far this month.');
+    }
+    return s;
+  }
+
+  function inboundHeadline_(data) {
+    const k = data.kpis || {}, p = data.kpisPrior || {};
+    const meta = data.meta || {};
+    if (!Number(k.total)) return ['No inbound calls in this range.'];
+    const ratePhrase = headlineDeltaPhrase_({
+      val: k.answerRate, prev: p.answerRate,
+      deltaPct: (Number(k.answerRate) || 0) - (Number(p.answerRate) || 0),
+      type: 'pctPoints',
+    });
+    const s = ['You received <strong>' + fmtNumber(k.total) + '</strong> inbound calls; <strong>'
+      + escapeHtml(String(k.answerRate || 0)) + '%</strong> were answered' + ratePhrase + '.'];
+    if (Number(k.abandonedOnHold) > 0) {
+      s.push(fmtNumber(k.abandonedOnHold) + ' caller' + (Number(k.abandonedOnHold) === 1 ? '' : 's')
+        + ' hung up while on hold.');
+    }
+    if (meta.companyView && Number(k.abandonedIvr) > 0) {
+      s.push(fmtNumber(k.abandonedIvr) + ' abandoned in the IVR before reaching any queue.');
+    }
+    return s.slice(0, 3);
   }
 
   // -- Missed Calls Report modal -----------------------------------------
@@ -2228,6 +2751,7 @@
     lastMissedData = data;
 
     const m = data.meta || {};
+    reportHeadline_('missed-headline', 'missed-summary', missedHeadline_(m));
     const summaryParts = [
       '<span class="label">Department:</span><span class="val">' + escapeHtml(m.department || '') + '</span>',
       '<span class="label">Range:</span><span class="val">' + escapeHtml(m.from || '') + ' to ' + escapeHtml(m.to || '') + '</span>',
@@ -3922,15 +4446,29 @@
    *   prevPeriod  -> immediately-preceding window of the same length
    *   custom      -> pull from the ir-prior-from / ir-prior-to inputs
    */
-  function irResolvePriorRange_(from, to) {
-    const mode = $('ir-compare-mode') ? $('ir-compare-mode').value : 'none';
+  /**
+   * THE shared client-side comparison-window resolver. One math
+   * implementation for every report's "compare against" control (IR
+   * and Insights today) so the mode semantics can't drift between
+   * reports -- mirrors the server's shared computePriorWindow_
+   * (Data.gs) for the prevPeriod case (INV-28).
+   *
+   *   none        -> null
+   *   prevPeriod  -> immediately-preceding window of the same length
+   *   yoy         -> the window shifted back 1 calendar year
+   *   custom      -> the supplied customFrom/customTo ({error} when
+   *                  missing or out of order; controlLabel names the
+   *                  form control in the message)
+   */
+  function resolveComparisonWindow_(mode, from, to, customFrom, customTo, controlLabel) {
     if (!mode || mode === 'none') return null;
     if (mode === 'custom') {
-      const pf = $('ir-prior-from') ? $('ir-prior-from').value : '';
-      const pt = $('ir-prior-to')   ? $('ir-prior-to').value   : '';
-      if (!pf || !pt) return { error: 'Pick prior start and end dates (or switch Compare with to a preset).' };
-      if (pf > pt)    return { error: 'Prior start must be on or before prior end.' };
-      return { from: pf, to: pt };
+      if (!customFrom || !customTo) {
+        return { error: 'Pick prior start and end dates (or switch '
+                      + (controlLabel || 'the compare control') + ' to a preset).' };
+      }
+      if (customFrom > customTo) return { error: 'Prior start must be on or before prior end.' };
+      return { from: customFrom, to: customTo };
     }
     // Parse using noon-local-time to avoid DST edges.
     const parts1 = from.split('-'), parts2 = to.split('-');
@@ -3954,6 +4492,14 @@
       return { from: isoOf(ps), to: isoOf(pe) };
     }
     return null;
+  }
+
+  function irResolvePriorRange_(from, to) {
+    const mode = $('ir-compare-mode') ? $('ir-compare-mode').value : 'none';
+    return resolveComparisonWindow_(mode, from, to,
+      $('ir-prior-from') ? $('ir-prior-from').value : '',
+      $('ir-prior-to')   ? $('ir-prior-to').value   : '',
+      'Compare with');
   }
 
   // Wire the Compare with dropdown: show/hide custom date inputs;
@@ -4008,6 +4554,7 @@
     // Restore the user's last-viewed chart tab (defaults to
     // Volume on first visit). Persisted in prefs.
     irActivateChartTab_();
+    reportHeadline_('ir-headline', 'individual-results', irHeadline_(data));
     irRenderSummary(data.summaryData, data.teamAvg);
     irRenderCharts(data);
   }
@@ -4321,7 +4868,7 @@
          +     '<div class="ir-kpi-spark">' + spark + '</div>'
          +   '</div>'
          +   '<div class="ir-kpi-value-row">'
-         +     '<div class="ir-kpi-value">' + escapeHtml(String(value)) + '</div>'
+         +     '<div class="ir-kpi-value' + benchValueCls_(label, value) + '">' + escapeHtml(String(value)) + '</div>'
          +     shareHtml
          +   '</div>'
          +   '<div class="ir-kpi-row-bot">'
@@ -5496,6 +6043,7 @@
     showPrResults();
     prSetResultsStatus('');
     prResetTabs_();
+    reportHeadline_('pr-headline', 'performance-results', prHeadline_(data));
     prRenderSubsetHint_(data.meta);
     prRenderTeamInsights_(data.teamInsights);
     prRenderKpis_(data.teamStats, data.trendData);
@@ -5612,7 +6160,7 @@
          +     '<div class="pr-kpi-label">' + label + '</div>'
          +     '<div class="pr-kpi-spark">' + spark + '</div>'
          +   '</div>'
-         +   '<div class="pr-kpi-value">' + escapeHtml(String(s.formatted)) + '</div>'
+         +   '<div class="pr-kpi-value' + benchValueCls_(label, s.formatted) + '">' + escapeHtml(String(s.formatted)) + '</div>'
          +   '<div class="pr-kpi-delta">' + badge + ' <span class="pr-delta-cap">vs prior</span></div>'
          + '</div>';
   }
@@ -6871,6 +7419,7 @@
     showCrResults();
     crCloseEditPopover_();
     crSetResultsStatus('');
+    reportHeadline_('cr-headline', 'compare-results', crHeadline_(data));
     crRenderLengthWarning_(data.meta);
     crRenderTeamInsights_(data.teamInsights);
     crRenderTeamTiles_(data.teamStats, data.meta);
@@ -7025,7 +7574,7 @@
          +   '<div class="pr-kpi-row-top">'
          +     '<div class="pr-kpi-label">' + label + '</div>'
          +   '</div>'
-         +   '<div class="pr-kpi-value">' + escapeHtml(String(s.formatted)) + '</div>'
+         +   '<div class="pr-kpi-value' + benchValueCls_(label, s.formatted) + '">' + escapeHtml(String(s.formatted)) + '</div>'
          +   '<div class="pr-kpi-delta">'
          +     badge + ' <span class="pr-delta-cap">vs ' + escapeHtml(String(s.prevFormatted)) + ' (P1)</span>'
          +   '</div>'
@@ -7226,26 +7775,27 @@
    *   + 5 * pct delta pts   (pp differences are tighter scale)
    *   0 for TTT / ATT       (direction-ambiguous)
    */
-  function crImprovementScore_(a) {
-    const d = (a && a.deltas) || {};
+  // ── Generic delta-map classifiers ────────────────────────────────
+  // Shared by Compare Ranges (a.deltas) and Insights (a.metrics) --
+  // both shapes are { rung, missed, answered, pct, ... } maps of
+  // deltaBlocks carrying `deltaPct` (relative % for volume metrics,
+  // pp for pct). One implementation so the two reports' improvement
+  // scoring / classification / quiet thresholds can't drift.
+
+  function deltaImprovementScore_(d) {
+    d = d || {};
     const v = function (k) { return Number((d[k] && d[k].deltaPct) || 0); };
     return v('rung') - v('missed') + v('answered') + 5 * v('pct');
   }
 
-  function crTeamImprovementScore_(teamStats) {
-    if (!teamStats) return 0;
-    const v = function (s) { return Number((s && s.deltaPct) || 0); };
-    return v(teamStats.rung) - v(teamStats.missed) + v(teamStats.answered) + 5 * v(teamStats.pct);
-  }
-
   /**
-   * Classify an agent's overall direction (left-border color).
+   * Classify a delta map's overall direction (left-border color).
    * Adds up signed-by-valence votes across the 4 valenced
    * metrics. Threshold of >=2 / <=-2 prevents 1-metric noise
    * from tipping the classification.
    */
-  function crClassifyAgent_(a) {
-    const d = (a && a.deltas) || {};
+  function deltaClassify_(d) {
+    d = d || {};
     const sign = function (v) { return v > 0.05 ? 1 : v < -0.05 ? -1 : 0; };
     let score = 0;
     score += sign(Number((d.rung     && d.rung.deltaPct)     || 0));      // up = good
@@ -7258,17 +7808,33 @@
   }
 
   /**
-   * Quiet agent test: every meaningful metric moved by less than
-   * a small noise threshold. Cuts visual noise so users can
-   * focus on agents that actually shifted.
+   * Quiet test: every meaningful metric moved by less than a small
+   * noise threshold. Cuts visual noise so users can focus on agents
+   * that actually shifted.
    */
-  function crIsQuietAgent_(a) {
-    const d = (a && a.deltas) || {};
+  function deltaIsQuiet_(d) {
+    d = d || {};
     const absV = function (k) { return Math.abs(Number((d[k] && d[k].deltaPct) || 0)); };
     return absV('rung')     < 10
         && absV('missed')   < 10
         && absV('answered') < 10
         && absV('pct')      < 3;   // pp difference
+  }
+
+  function crImprovementScore_(a) {
+    return deltaImprovementScore_((a && a.deltas) || {});
+  }
+
+  function crTeamImprovementScore_(teamStats) {
+    return deltaImprovementScore_(teamStats || {});
+  }
+
+  function crClassifyAgent_(a) {
+    return deltaClassify_((a && a.deltas) || {});
+  }
+
+  function crIsQuietAgent_(a) {
+    return deltaIsQuiet_((a && a.deltas) || {});
   }
 
   /**
@@ -7712,9 +8278,9 @@
     if (tbody) {
       const config = data.config || [];
       if (!config.length) {
-        tbody.innerHTML = '<tr><td colspan="5" class="al-empty">'
+        tbody.innerHTML = '<tr><td colspan="7" class="al-empty">'
           + 'No digest subscribers yet. Add one row per recipient to the '
-          + 'Digest Config sheet (Email | Department | Cadence | Active | Notes).'
+          + 'Digest Config sheet (Email | Department | Cadence | Active | Notes | Format).'
           + '</td></tr>';
       } else {
         tbody.innerHTML = config.map(function (c, idx) {
@@ -7724,6 +8290,7 @@
                +   '<td>' + escapeHtml(c.email)      + '</td>'
                +   '<td>' + escapeHtml(c.department) + '</td>'
                +   '<td>' + escapeHtml(c.cadence)    + '</td>'
+               +   '<td>' + escapeHtml(c.format || 'summary') + '</td>'
                +   '<td><span class="al-active ' + activeCls + '">' + activeLbl + '</span></td>'
                +   '<td>' + escapeHtml(c.notes || '') + '</td>'
                +   '<td><button type="button" class="link-btn al-digest-preview-btn" '
@@ -7747,18 +8314,19 @@
     }
 
     // Trigger status caption + install/uninstall buttons.
-    const trig = data.trigger || { daily: false, weekly: false };
-    const installed = !!(trig.daily && trig.weekly);
-    const partial   = !installed && (trig.daily || trig.weekly);
+    const trig = data.trigger || { daily: false, weekly: false, monthly: false };
+    const installed = !!(trig.daily && trig.weekly && trig.monthly);
+    const partial   = !installed && (trig.daily || trig.weekly || trig.monthly);
     const statusEl  = $('al-digest-trigger-status');
     if (statusEl) {
       if (data.loadError) {
         statusEl.textContent = 'Could not load digest config: ' + data.loadError;
       } else if (installed) {
-        statusEl.textContent = 'Daily + weekly digest triggers are installed.';
+        statusEl.textContent = 'Daily + weekly + monthly digest triggers are installed.';
       } else if (partial) {
         statusEl.textContent = 'Partial install (daily=' + trig.daily + ', weekly=' + trig.weekly
-                            + '). Click "Install" to re-install both.';
+                            + ', monthly=' + trig.monthly
+                            + '). Click "Install" to re-install all three.';
       } else {
         statusEl.textContent = 'No digest triggers installed. Subscribers won\'t receive scheduled digests until you click Install.';
       }
@@ -7793,6 +8361,7 @@
         email:      row.email,
         department: row.department,
         cadence:    row.cadence,
+        format:     row.format || 'summary',
       });
   }
 
@@ -7804,7 +8373,7 @@
     google.script.run
       .withSuccessHandler(function (status) {
         btn.disabled = false; btn.textContent = prev;
-        alRenderDigestInit_({ config: [], trigger: status || { daily: true, weekly: true } });
+        alRenderDigestInit_({ config: [], trigger: status || { daily: true, weekly: true, monthly: true } });
         // Re-fetch the config too so the subscriber table re-renders.
         google.script.run
           .withSuccessHandler(function (data) { alRenderDigestInit_(data || { config: [], trigger: status }); })
@@ -7819,7 +8388,7 @@
   }
 
   function alUninstallDigestTriggers_() {
-    const ok = window.confirm('Stop both digest triggers? Subscribers will stop receiving scheduled digests until you re-install.');
+    const ok = window.confirm('Stop all digest triggers (daily, weekly, monthly)? Subscribers will stop receiving scheduled digests until you re-install.');
     if (!ok) return;
     const btn = $('al-uninstall-digest-btn');
     if (!btn) return;
@@ -8511,7 +9080,7 @@
         ofSetStatus_('success',
           'Renamed ' + n + ' row' + (n === 1 ? '' : 's')
           + '. Alias added so future imports map correctly. '
-          + 'Dashboard caches may take up to 5 minutes to reflect the change.');
+          + 'Overview updates immediately; other dashboard views may take up to 30 minutes (cache TTL) to reflect the change.');
         showToast('Renamed ' + n + ' row' + (n === 1 ? '' : 's'), 'success');
         ofLoadInit_();
       })
@@ -8799,7 +9368,7 @@
       .withSuccessHandler(function () {
         if (saveBtn) saveBtn.disabled = false;
         dcSetStatus_('success', 'Saved ' + dcEditDept
-          + '. Changes take effect on the next request (caches refresh within ~5 min).');
+          + '. Changes take effect on the next request (Overview refreshes immediately; report caches within ~30 min).');
         showToast('Saved config for ' + dcEditDept, 'success');
         dcLoadInit_();
       })
@@ -8863,7 +9432,13 @@
   let insListChangeHandler_ = null;
   let insPendingAgentSelection_ = null;
   let insLastData = null;
-  const INS_PREFS_KEY = 'cdr.ins.prefs.v1';
+  let insChartInstance = null;
+  let insActiveTrendMetric = 'answered';
+  let insCardSort = 'default';      // default (answered desc) | name | improvers | regressors
+  // v2: prefs gain compareMode / priorFrom / priorTo / trendMetric
+  // (older v1 blobs are silently dropped per the prefs-versioning
+  // convention).
+  const INS_PREFS_KEY = 'cdr.ins.prefs.v2';
 
   function initInsightsReport() {
     const btn = $('insights-report-btn');
@@ -8921,6 +9496,137 @@
     if (genBtn) genBtn.addEventListener('click', runInsReport);
     const backBtn = $('ins-back-btn');
     if (backBtn) backBtn.addEventListener('click', insShowForm);
+
+    insInitCompareMode_();
+
+    // Card-sort control (CR pattern). Re-renders the card grid in
+    // place; quiet agents stay in their collapsible regardless.
+    const cardSortSel = $('ins-card-sort');
+    if (cardSortSel) cardSortSel.addEventListener('change', function () {
+      insCardSort = cardSortSel.value;
+      insSavePrefs_();
+      if (insLastData) {
+        insRenderAgentCards_(insLastData.agentData || [], insLastData.meta, insLastData.teamStats);
+      }
+    });
+
+    // Trend-metric sub-tabs (same pattern as the PR trend chart).
+    const subTabs = $('ins-trend-subtabs');
+    if (subTabs) subTabs.addEventListener('click', function (e) {
+      const tab = e.target.closest('.pr-trend-subtab');
+      if (!tab) return;
+      insActiveTrendMetric = tab.getAttribute('data-metric') || 'answered';
+      subTabs.querySelectorAll('.pr-trend-subtab').forEach(function (b) {
+        const active = b === tab;
+        b.classList.toggle('active', active);
+        b.setAttribute('aria-selected', active ? 'true' : 'false');
+      });
+      insSavePrefs_();
+      if (insLastData) insRenderTrendChart_(insLastData);
+    });
+
+    // Export dropdown -- same pattern as Individual / Performance.
+    const exportBtn  = $('ins-export-btn');
+    const exportMenu = $('ins-export-menu');
+    if (exportBtn && exportMenu) {
+      exportBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        insSetExportMenuOpen_(exportMenu.style.display === 'none');
+      });
+      exportMenu.addEventListener('click', function (e) {
+        const item = e.target.closest('[data-action]');
+        if (!item) return;
+        const action = item.getAttribute('data-action');
+        insSetExportMenuOpen_(false);
+        if (action === 'csv')        insDownloadCsv_();
+        else if (action === 'copy')  insCopyImage_();
+        else if (action === 'email') insEmailImage_();
+        else if (action === 'print') insPrint_();
+      });
+      document.addEventListener('click', function (e) {
+        if (exportMenu.style.display === 'none') return;
+        if (exportMenu.contains(e.target) || e.target === exportBtn) return;
+        insSetExportMenuOpen_(false);
+      });
+      document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && exportMenu.style.display !== 'none') {
+          insSetExportMenuOpen_(false);
+        }
+      });
+    }
+  }
+
+  /**
+   * Resolves the "Compare against" selection to an explicit prior
+   * window (mirrors IR's irResolvePriorRange_, with ins-* element
+   * ids). Returns:
+   *   null              -> prevPeriod: omit priorFrom/priorTo and let
+   *                        the server compute the INV-28 auto-adjacent
+   *                        window (keeps the cache key 'auto').
+   *   { from, to }      -> explicit window to send (yoy / custom).
+   *   { error }         -> custom mode with missing/invalid dates.
+   */
+  function insResolvePriorRange_(from, to) {
+    const mode = $('ins-compare-mode') ? $('ins-compare-mode').value : 'prevPeriod';
+    if (!mode || mode === 'prevPeriod') return null;
+    if (mode === 'custom') {
+      const pf = $('ins-prior-from') ? $('ins-prior-from').value : '';
+      const pt = $('ins-prior-to')   ? $('ins-prior-to').value   : '';
+      if (!pf || !pt) return { error: 'Pick prior start and end dates (or switch Compare against to a preset).' };
+      if (pf > pt)    return { error: 'Prior start must be on or before prior end.' };
+      return { from: pf, to: pt };
+    }
+    if (mode === 'yoy') {
+      const p1 = from.split('-'), p2 = to.split('-');
+      const ps = new Date(Number(p1[0]) - 1, Number(p1[1]) - 1, Number(p1[2]), 12);
+      const pe = new Date(Number(p2[0]) - 1, Number(p2[1]) - 1, Number(p2[2]), 12);
+      return { from: insIsoOf_(ps), to: insIsoOf_(pe) };
+    }
+    return null;
+  }
+
+  // Wire the Compare against dropdown: show/hide custom inputs and
+  // preview the resolved window in the hint (mirrors irInitCompareMode_).
+  function insInitCompareMode_() {
+    const sel = $('ins-compare-mode');
+    if (!sel) return;
+    const refresh = function () {
+      const mode = sel.value;
+      const showCustom = (mode === 'custom');
+      if ($('ins-prior-from-wrap')) $('ins-prior-from-wrap').style.display = showCustom ? '' : 'none';
+      if ($('ins-prior-to-wrap'))   $('ins-prior-to-wrap').style.display   = showCustom ? '' : 'none';
+      const hint = $('ins-prior-hint');
+      if (!hint) return;
+      const from = $('ins-from').value, to = $('ins-to').value;
+      if (!from || !to) { hint.textContent = ''; return; }
+      const prior = insResolvePriorRange_(from, to);
+      if (!prior) { hint.textContent = ''; return; }   // prevPeriod: server hint suffices
+      if (prior.error) { hint.textContent = prior.error; return; }
+      // INV-35-style form-side warning when a custom window's length
+      // differs >= 1.2x from the current range (CR's S18 pattern).
+      let lengthNote = '';
+      const dayCount = function (a, b) {
+        const pa = a.split('-'), pb = b.split('-');
+        const da = new Date(Number(pa[0]), Number(pa[1]) - 1, Number(pa[2]), 12);
+        const db = new Date(Number(pb[0]), Number(pb[1]) - 1, Number(pb[2]), 12);
+        return Math.floor((db - da) / 86400000) + 1;
+      };
+      const curDays = dayCount(from, to);
+      const priDays = dayCount(prior.from, prior.to);
+      if (curDays > 0 && priDays > 0
+          && Math.max(curDays, priDays) / Math.min(curDays, priDays) >= 1.2) {
+        const ratio = (Math.max(curDays, priDays) / Math.min(curDays, priDays)).toFixed(1);
+        lengthNote = ' (the ' + (priDays > curDays ? 'prior window' : 'selected range')
+                   + ' is ' + ratio + 'x longer — volume totals won\'t be directly comparable)';
+      }
+      hint.textContent = 'Comparing against ' + prior.from + ' to ' + prior.to + '.' + lengthNote;
+    };
+    sel.addEventListener('change', function () { refresh(); insSavePrefs_(); });
+    ['ins-from', 'ins-to', 'ins-prior-from', 'ins-prior-to'].forEach(function (id) {
+      const el = $(id);
+      if (el) el.addEventListener('change', refresh);
+    });
+    refresh();
   }
 
   function insShowForm()    { $('insights-form').style.display = ''; $('insights-results').style.display = 'none'; insSetFormError(''); }
@@ -9022,6 +9728,13 @@
     list.addEventListener('change', insListChangeHandler_);
     if (insPendingAgentSelection_) { irApplyCheckedAgents_(list, insPendingAgentSelection_); insPendingAgentSelection_ = null; }
     insUpdateGenerate();
+    // Overview question-launcher flow: the picker render is the race-free
+    // point to select the whole active roster and run. One-shot.
+    if (insLauncherAutoRun_) {
+      insLauncherAutoRun_ = false;
+      insToggleAgents(true);
+      if (!$('ins-generate-btn').disabled) runInsReport();
+    }
   }
   function insToggleAgents(on) { selectAllActiveAgents_($('ins-agent-list'), on); insUpdateGenerate(); insSavePrefs_(); }
   function insUpdateGenerate() {
@@ -9036,7 +9749,13 @@
     if (from > to) { insSetFormError('Start date must be on or before end date.'); return; }
     const agents = irGetCheckedAgents_($('ins-agent-list'));
     if (!agents.length) { insSetFormError('Select at least one agent.'); return; }
+    // Resolve the comparison window. prevPeriod -> null (server's
+    // INV-28 auto-adjacent default); yoy/custom -> explicit dates.
+    const prior = insResolvePriorRange_(from, to);
+    if (prior && prior.error) { insSetFormError(prior.error); return; }
     insSetFormError('');
+    const req = { department: dept, from: from, to: to, agents: agents };
+    if (prior) { req.priorFrom = prior.from; req.priorTo = prior.to; }
     const gen = $('ins-generate-btn'); const prev = gen.textContent;
     gen.disabled = true; gen.textContent = 'Generating…';
     google.script.run
@@ -9048,14 +9767,20 @@
         gen.disabled = false; gen.textContent = prev;
         insSetFormError('Error: ' + (err && err.message ? err.message : String(err)));
       })
-      .getInsightsReport({ department: dept, from: from, to: to, agents: agents });
+      .getInsightsReport(req);
   }
 
   function insRenderReport_(data) {
     insLastData = data;
     $('ins-results-date').textContent = '(' + (data.dateLabel || '') + ')';
     const cmp = $('ins-compare-line');
-    if (cmp) cmp.textContent = 'Comparing against the prior period: ' + (data.priorDateLabel || '');
+    if (cmp) {
+      const mode = data.meta && data.meta.comparisonMode;
+      const basis = mode === 'custom'
+        ? 'Comparing against the selected prior window: '
+        : 'Comparing against the immediately-preceding period: ';
+      cmp.textContent = basis + (data.priorDateLabel || '');
+    }
 
     // Team insights callout (reuse the IR block; relabel to "Team insights").
     const host = $('ins-team-insights');
@@ -9074,18 +9799,135 @@
       cap.textContent = fl > 0 ? '(roster only · ' + fl + ' floater' + (fl === 1 ? '' : 's') + ' excluded)' : '';
     }
 
-    // Team KPI tiles -- reuse the Performance Report tile (no sparkline).
+    // Team KPI tiles -- reuse the Performance Report tile, now with
+    // 12-month sparklines from the server's trendData (same series
+    // shape PR's prRenderKpis_ consumes).
     const t = data.teamStats || {};
+    const series = (data.trendData && data.trendData.series) || [];
+    const sparks = {
+      rung:     series.map(function (s) { return s.rung; }),
+      missed:   series.map(function (s) { return s.missed; }),
+      answered: series.map(function (s) { return s.answered; }),
+      pct:      series.map(function (s) { return s.pct; }),
+      ttt:      series.map(function (s) { return s.ttt; }),
+      att:      series.map(function (s) { return s.att; }),
+    };
     $('ins-kpi-row').innerHTML = [
-      prKpiTile_('Total Rung',   t.rung,     'pos', [], IR_VOLUME_COLORS.rung),
-      prKpiTile_('Total Missed', t.missed,   'neg', [], IR_VOLUME_COLORS.missed),
-      prKpiTile_('Answered',     t.answered, 'pos', [], IR_VOLUME_COLORS.answered),
-      prKpiTile_('% Answered',   t.pct,      'pos', [], (THEME.accent || '#4E79A7')),
-      prKpiTile_('Total TTT',    t.ttt,      'neu', [], (THEME.muted  || '#9C755F')),
-      prKpiTile_('Avg ATT',      t.att,      'neu', [], (THEME.muted  || '#9C755F')),
+      prKpiTile_('Total Rung',   t.rung,     'pos', sparks.rung,     IR_VOLUME_COLORS.rung),
+      prKpiTile_('Total Missed', t.missed,   'neg', sparks.missed,   IR_VOLUME_COLORS.missed),
+      prKpiTile_('Answered',     t.answered, 'pos', sparks.answered, IR_VOLUME_COLORS.answered),
+      prKpiTile_('% Answered',   t.pct,      'pos', sparks.pct,      (THEME.accent || '#4E79A7')),
+      prKpiTile_('Total TTT',    t.ttt,      'neu', sparks.ttt,      (THEME.muted  || '#9C755F')),
+      prKpiTile_('Avg ATT',      t.att,      'neu', sparks.att,      (THEME.muted  || '#9C755F')),
     ].join('');
 
-    insRenderAgentCards_(data.agentData || []);
+    insRenderLengthWarning_(data.meta);
+    reportHeadline_('ins-headline', 'insights-results', insHeadline_(data));
+    insRenderTrendChart_(data);
+    insRenderAgentCards_(data.agentData || [], data.meta, data.teamStats);
+  }
+
+  /**
+   * Different-length warning banner (INV-35 semantics, CR pattern).
+   * Only reachable with a custom prior window -- the auto-adjacent
+   * and YoY windows are always the same length as the current range.
+   */
+  function insRenderLengthWarning_(meta) {
+    const el = $('ins-length-warning');
+    if (!el) return;
+    if (!meta || !meta.lengthMismatch) { el.style.display = 'none'; el.innerHTML = ''; return; }
+    el.innerHTML = '<strong>Different window lengths:</strong> '
+                 + 'the selected range is ' + (meta.currentDays || 0) + ' days, the comparison window is '
+                 + (meta.priorDays || 0) + ' days. '
+                 + 'Volume totals (Rung / Missed / Answered / TTT) aren\'t directly comparable; '
+                 + 'compare the per-day figures shown on the agent cards instead.';
+    el.style.display = '';
+  }
+
+  /**
+   * 12-month team trend line for the Insights modal. Single tracked
+   * Chart.js instance; metric picked by insActiveTrendMetric (same
+   * sub-tab strip the PR trend uses). Colors route through THEME /
+   * IR_VOLUME_COLORS per INV-42; datalabels stay off (boolean form,
+   * INV-41) -- the sparklines + tooltip carry the values.
+   */
+  function insRenderTrendChart_(data) {
+    const canvas = $('ins-trend-chart');
+    if (!canvas) return;
+    refreshChartTheme();
+    destroyOrphanedChartOnCanvas_('ins-trend-chart');
+    if (insChartInstance) { try { insChartInstance.destroy(); } catch (e) {} insChartInstance = null; }
+
+    const labels = (data.trendData && data.trendData.labels) || [];
+    const series = (data.trendData && data.trendData.series) || [];
+    let dataPoints, color, label, isPercent, isMinutes;
+    if (insActiveTrendMetric === 'pct') {
+      dataPoints = series.map(function (s) { return Number((s.pct || 0).toFixed(1)); });
+      color = THEME.accent || '#4E79A7';
+      label = '% Answered';
+      isPercent = true;
+    } else if (insActiveTrendMetric === 'att') {
+      dataPoints = series.map(function (s) { return Number(((s.att || 0) / 60).toFixed(2)); });
+      color = THEME.muted || '#9C755F';
+      label = 'Avg Talk Time';
+      isMinutes = true;
+    } else {
+      dataPoints = series.map(function (s) { return s.answered; });
+      color = IR_VOLUME_COLORS.answered;
+      label = 'Answered';
+    }
+    const fmtMin = function (val) {
+      const n = parseFloat(val); if (isNaN(n)) return '';
+      const m = Math.floor(n);
+      const s = Math.round((n - m) * 60);
+      return m + ':' + (s < 10 ? '0' + s : s);
+    };
+
+    insChartInstance = new Chart(canvas.getContext('2d'), {
+      type: 'line',
+      data: {
+        labels: labels,
+        datasets: [{
+          label: label,
+          data: dataPoints,
+          borderColor: color,
+          backgroundColor: function (ctx) { return irGradientFill_(ctx.chart, color); },
+          tension: 0.4, fill: true,
+          pointBackgroundColor: color,
+          pointBorderColor: THEME.paperCard, pointBorderWidth: 1.5,
+          pointRadius: 3, pointHoverRadius: 5,
+        }],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false, animation: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label: function (ctx) {
+                if (isPercent) return label + ': ' + ctx.parsed.y + '%';
+                if (isMinutes) return label + ': ' + fmtMin(ctx.parsed.y);
+                return label + ': ' + ctx.parsed.y;
+              },
+            },
+          },
+          datalabels: { display: false },
+        },
+        scales: {
+          y: {
+            beginAtZero: true,
+            suggestedMax: isPercent ? 100 : undefined,
+            ticks: {
+              callback: function (val) {
+                if (isPercent) return val + '%';
+                if (isMinutes) return fmtMin(val);
+                return val;
+              },
+            },
+          },
+        },
+      },
+    });
   }
 
   // Delta badge mirroring prKpiTile_'s logic for the per-agent card grid.
@@ -9103,33 +9945,341 @@
          + Math.abs(dp).toFixed(1) + suffix + '</span>';
   }
 
-  function insRenderAgentCards_(cards) {
+  /**
+   * Per-agent cards, enriched with the analytics ported from Compare
+   * Ranges: improved/regressed/mixed classification (left-border
+   * color via the shared deltaClassify_), a "vs Team" badge comparing
+   * the agent's improvement score to the team's, sort control
+   * (default answered-desc / name / biggest improvers / regressors),
+   * and a collapsible quiet-agents section (deltaIsQuiet_) so the
+   * visible grid is the notable movers. Per-day sublines render on
+   * volume/time metrics when meta.lengthMismatch (custom prior of a
+   * different length).
+   */
+  function insRenderAgentCards_(cards, meta, teamStats) {
     const wrap = $('ins-agent-cards'); if (!wrap) return;
+    const toolbar = $('ins-cards-toolbar');
+    const det = $('ins-quiet-details');
     if (!cards.length) {
       wrap.innerHTML = emptyStateHtml_('&#128100;', 'No agents to compare',
         'No selected agent had activity (or matched this department) in the range.');
+      if (toolbar) toolbar.style.display = 'none';
+      if (det) { det.style.display = 'none'; $('ins-quiet-cards').innerHTML = ''; }
       return;
     }
+    if (toolbar) toolbar.style.display = cards.length > 1 ? '' : 'none';
+
+    const teamScore = deltaImprovementScore_(teamStats || {});
+    const enriched = cards.map(function (c) {
+      return {
+        card: c,
+        score: deltaImprovementScore_(c.metrics),
+        direction: deltaClassify_(c.metrics),
+        quiet: deltaIsQuiet_(c.metrics),
+      };
+    });
+    const main  = enriched.filter(function (x) { return !x.quiet; });
+    const quiet = enriched.filter(function (x) { return  x.quiet; });
+
+    let sortedMain = main;
+    if (main.length > 1 && insCardSort !== 'default') {
+      sortedMain = main.slice();
+      if (insCardSort === 'name') {
+        sortedMain.sort(function (a, b) {
+          const an = (a.card.name || '').toLowerCase();
+          const bn = (b.card.name || '').toLowerCase();
+          return an < bn ? -1 : an > bn ? 1 : 0;
+        });
+      } else if (insCardSort === 'improvers') {
+        sortedMain.sort(function (a, b) { return b.score - a.score; });
+      } else if (insCardSort === 'regressors') {
+        sortedMain.sort(function (a, b) { return a.score - b.score; });
+      }
+    }
+
+    const renderCard = function (x) { return insBuildCard_(x, teamScore, meta); };
+    wrap.innerHTML = sortedMain.map(renderCard).join('');
+
+    if (det) {
+      if (quiet.length > 0) {
+        det.style.display = '';
+        det.querySelector('.cr-quiet-summary').textContent =
+          'Show ' + quiet.length + ' quiet agent' + (quiet.length === 1 ? '' : 's')
+          + ' (no notable changes)';
+        $('ins-quiet-cards').innerHTML = quiet.map(renderCard).join('');
+      } else {
+        det.style.display = 'none';
+        $('ins-quiet-cards').innerHTML = '';
+      }
+    }
+  }
+
+  function insBuildCard_(x, teamScore, meta) {
+    const c = x.card;
+    const isFloater = c.matchedViaQueue && !c.matchedViaRoster;
+    const chip = isFloater ? sourceChipHtml_(c) : '';
+    // Floaters keep their warn-tinted border (the QUEUE signal wins
+    // over the classification tint); everyone else gets the
+    // improved/regressed/mixed left border (CR pattern).
+    const dirClass = isFloater ? ''
+                   : x.direction === 'improved'  ? ' ins-card-improved'
+                   : x.direction === 'regressed' ? ' ins-card-regressed'
+                   : ' ins-card-mixed';
+    const vsTeam = crVsTeamBadge_(x.score, teamScore);
+    const debugAttrs =
+      ' data-direction="' + x.direction + '"'
+      + ' data-score="' + (x.score == null ? '' : x.score.toFixed(1)) + '"';
     const metricDefs = [
-      ['Rung', 'rung', 'pos'], ['Missed', 'missed', 'neg'], ['Answered', 'answered', 'pos'],
-      ['% Ans', 'pct', 'pos'], ['TTT', 'ttt', 'neu'], ['ATT', 'att', 'neu'],
+      ['Rung', 'rung', 'pos', 'volume'], ['Missed', 'missed', 'neg', 'volume'],
+      ['Answered', 'answered', 'pos', 'volume'], ['% Ans', 'pct', 'pos', 'rate'],
+      ['TTT', 'ttt', 'neu', 'time'], ['ATT', 'att', 'neu', 'rate'],
     ];
-    wrap.innerHTML = cards.map(function (c) {
-      const isFloater = c.matchedViaQueue && !c.matchedViaRoster;
-      const chip = isFloater ? sourceChipHtml_(c) : '';
-      const metrics = metricDefs.map(function (m) {
-        const st = (c.metrics && c.metrics[m[1]]) || { formatted: '-' };
-        return '<div class="ins-metric">'
-             +   '<div class="ins-metric-label">' + m[0] + '</div>'
-             +   '<div class="ins-metric-val">' + escapeHtml(String(st.formatted)) + '</div>'
-             +   '<div class="ins-metric-delta">' + insDeltaBadge_(st, m[2]) + '</div>'
-             + '</div>';
-      }).join('');
-      return '<div class="ins-card' + (isFloater ? ' ins-card-floater' : '') + '">'
-           +   '<div class="ins-card-head"><span class="ins-card-name">' + escapeHtml(c.name) + '</span>' + chip + '</div>'
-           +   '<div class="ins-card-grid">' + metrics + '</div>'
+    const metrics = metricDefs.map(function (m) {
+      const st = (c.metrics && c.metrics[m[1]]) || { formatted: '-' };
+      return '<div class="ins-metric">'
+           +   '<div class="ins-metric-label">' + m[0] + '</div>'
+           +   '<div class="ins-metric-val">' + escapeHtml(String(st.formatted)) + '</div>'
+           +   '<div class="ins-metric-delta">' + insDeltaBadge_(st, m[2]) + '</div>'
+           +   insMetricPerDay_(st, m[3], meta)
            + '</div>';
     }).join('');
+    return '<div class="ins-card' + (isFloater ? ' ins-card-floater' : '') + dirClass + '"' + debugAttrs + '>'
+         +   '<div class="ins-card-head"><span class="ins-card-name">' + escapeHtml(c.name) + '</span>' + chip + vsTeam + '</div>'
+         +   '<div class="ins-card-grid">' + metrics + '</div>'
+         + '</div>';
+  }
+
+  /**
+   * Per-day subline on volume/time metrics when the comparison
+   * windows differ in length (meta.lengthMismatch): "cur/day vs
+   * prior/day". Rates (% Ans, ATT) are already length-independent.
+   */
+  function insMetricPerDay_(st, kind, meta) {
+    if (!meta || !meta.lengthMismatch) return '';
+    if (kind !== 'volume' && kind !== 'time') return '';
+    if (st == null || st.val == null || st.prev == null) return '';
+    if (!(meta.currentDays > 0) || !(meta.priorDays > 0)) return '';
+    const fmt = (kind === 'time')
+      ? function (v) { return crFormatSecondsShort_(v); }
+      : function (v) { return v.toFixed(1); };
+    return '<div class="ins-metric-perday">'
+         +   fmt(st.val / meta.currentDays) + '/day'
+         +   ' <span class="pr-delta-cap">vs ' + fmt(st.prev / meta.priorDays) + '</span>'
+         + '</div>';
+  }
+
+  function insSetResultsStatus_(kind, msg) {
+    const el = $('ins-results-status'); if (!el) return;
+    if (!msg) { el.style.display = 'none'; el.textContent = ''; el.className = 'status'; return; }
+    el.className = 'status status-' + (kind || 'info');
+    el.textContent = msg;
+    el.style.display = '';
+  }
+
+  function insSetExportMenuOpen_(open) {
+    const btn  = $('ins-export-btn');
+    const menu = $('ins-export-menu');
+    if (!btn || !menu) return;
+    menu.style.display = open ? '' : 'none';
+    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    btn.classList.toggle('open', open);
+  }
+
+  function insBtnFeedback_(label, holdMs) {
+    const btn = $('ins-export-btn');
+    if (!btn) return function () {};
+    if (!btn.dataset.label) btn.dataset.label = btn.innerHTML;
+    btn.disabled = true;
+    btn.textContent = label;
+    if (holdMs) setTimeout(function () { btn.innerHTML = btn.dataset.label; btn.disabled = false; }, holdMs);
+    return function restore() { btn.innerHTML = btn.dataset.label; btn.disabled = false; };
+  }
+
+  /**
+   * html2canvas capture for the Insights results (same approach as the
+   * PR capture: snapshot the live chart canvas, swap it for an <img>
+   * in the clone so the chart pixels survive the render).
+   */
+  function insBuildCanvas_(onDone) {
+    const root = $('insights-results');
+    if (!root) return;
+    if (insChartInstance) insChartInstance.resize();
+    requestAnimationFrame(function () { requestAnimationFrame(function () {
+      const canvasMap = {};
+      root.querySelectorAll('canvas').forEach(function (cvs) {
+        canvasMap[cvs.id] = cvs.toDataURL('image/png');
+      });
+      html2canvas(root, {
+        scale: 2, useCORS: true, backgroundColor: (THEME.paper || '#f6f7f9'),
+        onclone: function (clonedDoc) {
+          const btns = clonedDoc.querySelector('#insights-results .ir-action-buttons');
+          if (btns) btns.style.display = 'none';
+          const subTabs = clonedDoc.getElementById('ins-trend-subtabs');
+          if (subTabs) subTabs.style.display = 'none';
+          const status = clonedDoc.getElementById('ins-results-status');
+          if (status) status.style.display = 'none';
+          const toolbar = clonedDoc.getElementById('ins-cards-toolbar');
+          if (toolbar) toolbar.style.display = 'none';
+          // Force the quiet-agents section open so the capture is the
+          // complete comparison (mirrors the CR print/export behavior).
+          const quiet = clonedDoc.getElementById('ins-quiet-details');
+          if (quiet && quiet.style.display !== 'none') {
+            quiet.setAttribute('open', '');
+            const summary = quiet.querySelector('.cr-quiet-summary');
+            if (summary) summary.style.display = 'none';
+          }
+          Object.keys(canvasMap).forEach(function (id) {
+            const cvs = clonedDoc.getElementById(id);
+            if (!cvs) return;
+            const img = clonedDoc.createElement('img');
+            img.src = canvasMap[id];
+            img.style.width = '100%';
+            img.style.height = 'auto';
+            img.style.display = 'block';
+            cvs.parentNode.replaceChild(img, cvs);
+          });
+        },
+      }).then(function (canvas) { onDone(canvas); }).catch(exportCaptureFailed_);
+    }); });
+  }
+
+  function insCopyImage_() {
+    const restore = insBtnFeedback_('Capturing…', 0);
+    insBuildCanvas_(function (canvas) {
+      canvas.toBlob(function (blob) {
+        if (navigator.clipboard && window.ClipboardItem) {
+          navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
+            .then(function () {
+              restore();
+              insBtnFeedback_('Copied!', 1200);
+            }, function (err) {
+              insSetResultsStatus_('error', 'Clipboard copy failed: ' + (err && err.message ? err.message : err));
+              restore();
+            });
+        } else {
+          insSetResultsStatus_('error', 'Clipboard API not available in this browser.');
+          restore();
+        }
+      }, 'image/png');
+    });
+  }
+
+  function insEmailImage_() {
+    const restore = insBtnFeedback_('Capturing…', 0);
+    insBuildCanvas_(function (canvas) {
+      const dataUrl = canvas.toDataURL('image/png');
+      insBtnFeedback_('Sending…', 0);
+      google.script.run
+        .withSuccessHandler(function (res) {
+          restore();
+          insBtnFeedback_('Sent to ' + (res && res.to ? res.to : 'you'), 2000);
+          showToast('Report emailed to ' + (res && res.to ? res.to : 'you'), 'success');
+        })
+        .withFailureHandler(function (err) {
+          insSetResultsStatus_('error', 'Email failed: ' + (err && err.message ? err.message : err));
+          showToast('Email failed', 'error');
+          restore();
+        })
+        .sendInsightsReportEmail({
+          imageBase64: dataUrl,
+          dateLabel: insLastData && insLastData.dateLabel ? insLastData.dateLabel : '',
+        });
+    });
+  }
+
+  /**
+   * Client-side CSV of the Insights payload: scope lines, the team
+   * rollup (current / prior / delta per metric), and one row per agent
+   * with each metric's current + prior + delta, plus the
+   * classification / improvement-score / quiet / floater columns and
+   * per-day normalization columns when meta.lengthMismatch (the CR CSV
+   * contract -- this export is the prerequisite for retiring CR's).
+   * Every cell routes through csvSafeCell_ (agent names are untrusted
+   * CDR-feed input) before the RFC-4180 quoting.
+   */
+  function insDownloadCsv_() {
+    if (!insLastData) return;
+    const d = insLastData;
+    const meta = d.meta || {};
+    const esc = function (v) {
+      const s = csvSafeCell_(v == null ? '' : v);
+      if (/[",\n]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+      return s;
+    };
+    const row = function (cells) { return cells.map(esc).join(','); };
+    const deltaStr = function (st) {
+      if (!st) return '';
+      const dp = Number(st.deltaPct || 0);
+      return dp.toFixed(1) + (st.type === 'pctPoints' ? ' pts' : '%');
+    };
+    const mismatch = !!meta.lengthMismatch;
+    const lines = [];
+    lines.push(row(['Insights report', meta.department || '', (meta.from || '') + ' to ' + (meta.to || '')]));
+    lines.push(row(['Comparison window', (meta.priorFrom || '') + ' to ' + (meta.priorTo || ''),
+                    meta.comparisonMode === 'custom' ? 'custom/YoY' : 'immediately-preceding']));
+    if (mismatch) {
+      lines.push(row(['Note', 'Different window lengths (' + meta.currentDays + 'd vs '
+        + meta.priorDays + 'd) — volume totals not directly comparable; see the /day columns']));
+    }
+    lines.push('');
+    lines.push(row(['Team rollup (roster only)', 'Current', 'Prior', 'Delta']));
+    const t = d.teamStats || {};
+    [['Rung', 'rung'], ['Missed', 'missed'], ['Answered', 'answered'],
+     ['% Answered', 'pct'], ['TTT', 'ttt'], ['Avg ATT', 'att']].forEach(function (m) {
+      const st = t[m[1]] || {};
+      lines.push(row([m[0], st.formatted != null ? st.formatted : '',
+                      st.prev != null ? st.prev : '', deltaStr(st)]));
+    });
+    lines.push('');
+    const head = ['Agent', 'Source', 'Classification', 'Improvement score', 'Quiet'];
+    const metricCols = [['Rung', 'rung', true], ['Missed', 'missed', true],
+                        ['Answered', 'answered', true], ['% Ans', 'pct', false],
+                        ['TTT', 'ttt', true], ['ATT', 'att', false]];
+    metricCols.forEach(function (m) {
+      head.push(m[0], m[0] + ' prior', m[0] + ' Δ');
+      if (mismatch && m[2] && m[1] !== 'pct' && m[1] !== 'att') {
+        head.push(m[0] + '/day', m[0] + '/day prior');
+      }
+    });
+    lines.push(row(head));
+    (d.agentData || []).forEach(function (a) {
+      const isFloater = a.matchedViaQueue && !a.matchedViaRoster;
+      const cells = [
+        a.name,
+        isFloater ? 'QUEUE' + ((a.sourceHomes || []).length ? ' · ' + a.sourceHomes.join('/') : '') : 'ROSTER',
+        deltaClassify_(a.metrics),
+        deltaImprovementScore_(a.metrics).toFixed(1),
+        deltaIsQuiet_(a.metrics) ? 'yes' : 'no',
+      ];
+      metricCols.forEach(function (m) {
+        const st = (a.metrics && a.metrics[m[1]]) || {};
+        cells.push(st.formatted != null ? st.formatted : '',
+                   st.prev != null ? st.prev : '', deltaStr(st));
+        if (mismatch && m[2] && m[1] !== 'pct' && m[1] !== 'att') {
+          const cur = (st.val != null && meta.currentDays > 0) ? (st.val / meta.currentDays).toFixed(1) : '';
+          const pri = (st.prev != null && meta.priorDays > 0) ? (st.prev / meta.priorDays).toFixed(1) : '';
+          cells.push(cur, pri);
+        }
+      });
+      lines.push(row(cells));
+    });
+    const blob = new Blob([lines.join('\n') + '\n'], { type: 'text/csv;charset=utf-8;' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'insights_' + (meta.department || 'report') + '_' + (meta.from || '') + '_' + (meta.to || '') + '.csv';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 0);
+  }
+
+  function insPrint_() {
+    if (insChartInstance) insChartInstance.resize();
+    requestAnimationFrame(function () { requestAnimationFrame(function () {
+      document.body.classList.add('ins-printing');
+      window.print();
+      document.body.classList.remove('ins-printing');
+    }); });
   }
 
   function insSavePrefs_() {
@@ -9138,6 +10288,11 @@
         preset: $('ins-preset') ? $('ins-preset').value : 'custom',
         from:   $('ins-from')   ? $('ins-from').value   : '',
         to:     $('ins-to')     ? $('ins-to').value     : '',
+        compareMode: $('ins-compare-mode') ? $('ins-compare-mode').value : 'prevPeriod',
+        priorFrom:   $('ins-prior-from')   ? $('ins-prior-from').value   : '',
+        priorTo:     $('ins-prior-to')     ? $('ins-prior-to').value     : '',
+        trendMetric: insActiveTrendMetric,
+        cardSort:    insCardSort,
         agents: irGetCheckedAgents_($('ins-agent-list')),
       }));
     } catch (e) { /* ignore */ }
@@ -9149,6 +10304,25 @@
       if (prefs.preset && $('ins-preset')) $('ins-preset').value = prefs.preset;
       if (prefs.from   && $('ins-from'))   $('ins-from').value   = prefs.from;
       if (prefs.to     && $('ins-to'))     $('ins-to').value     = prefs.to;
+      if (prefs.compareMode && $('ins-compare-mode')) {
+        $('ins-compare-mode').value = prefs.compareMode;
+        $('ins-compare-mode').dispatchEvent(new Event('change'));
+      }
+      if (prefs.priorFrom && $('ins-prior-from')) $('ins-prior-from').value = prefs.priorFrom;
+      if (prefs.priorTo   && $('ins-prior-to'))   $('ins-prior-to').value   = prefs.priorTo;
+      if (prefs.cardSort) {
+        insCardSort = prefs.cardSort;
+        if ($('ins-card-sort')) $('ins-card-sort').value = insCardSort;
+      }
+      if (prefs.trendMetric) {
+        insActiveTrendMetric = prefs.trendMetric;
+        const subTabs = $('ins-trend-subtabs');
+        if (subTabs) subTabs.querySelectorAll('.pr-trend-subtab').forEach(function (b) {
+          const active = b.getAttribute('data-metric') === insActiveTrendMetric;
+          b.classList.toggle('active', active);
+          b.setAttribute('aria-selected', active ? 'true' : 'false');
+        });
+      }
       if (Array.isArray(prefs.agents) && prefs.agents.length) insPendingAgentSelection_ = prefs.agents;
     } catch (e) { /* ignore */ }
   }
@@ -9158,6 +10332,10 @@
   // volume + answered/abandoned/on-hold by insurer / dial-in / entry queue.
   // ===================================================================
   let inboundLastData = null;
+  let inboundExpandedInsurer = null;   // accordion: at most one open row
+  let inboundDrillChart = null;
+  let inboundDrillMetric = 'calls';    // 'calls' | 'rate'
+  let inboundDrillCache = {};          // insurer -> daily[] (cleared per render)
 
   function initInboundReport() {
     const btn = $('inbound-report-btn');
@@ -9175,6 +10353,7 @@
       document.addEventListener('keydown', onKeyDown);
       inboundShowForm();
       inboundSetDefaultDates();
+      inboundEnsureDeptOptions_();
     }
     function closeModal() {
       modal.style.display = 'none';
@@ -9200,6 +10379,8 @@
     if (gen) gen.addEventListener('click', runInboundReport);
     const back = $('inbound-back-btn');
     if (back) back.addEventListener('click', inboundShowForm);
+    const csv = $('inbound-csv-btn');
+    if (csv) csv.addEventListener('click', inboundDownloadCsv_);
   }
 
   function inboundShowForm()    { $('inbound-form').style.display = ''; $('inbound-results').style.display = 'none'; inboundSetError(''); }
@@ -9232,11 +10413,33 @@
     $('inbound-to').value   = inboundIsoOf_(e);
   }
 
+  /**
+   * Dept scope options. Managers are pinned to their own dept (the
+   * server enforces this regardless); admins get "All departments"
+   * (the company-wide view incl. the IVR bucket) plus every dept.
+   */
+  function inboundEnsureDeptOptions_() {
+    const sel = $('inbound-dept');
+    if (!sel || sel.options.length) return;
+    if (USER.role === 'admin') {
+      const opts = ['<option value="">All departments</option>'];
+      (USER.departments || []).forEach(function (d) {
+        opts.push('<option value="' + escapeHtml(d) + '">' + escapeHtml(d) + '</option>');
+      });
+      sel.innerHTML = opts.join('');
+    } else {
+      const d = USER.department || '';
+      sel.innerHTML = '<option value="' + escapeHtml(d) + '">' + escapeHtml(d) + '</option>';
+      sel.disabled = true;
+    }
+  }
+
   function runInboundReport() {
     const from = $('inbound-from').value, to = $('inbound-to').value;
     if (!from || !to) { inboundSetError('Pick a start and end date.'); return; }
     if (from > to) { inboundSetError('Start date must be on or before end date.'); return; }
     inboundSetError('');
+    const dept = $('inbound-dept') ? $('inbound-dept').value : '';
     const gen = $('inbound-generate-btn'); const prev = gen.textContent;
     gen.disabled = true; gen.textContent = 'Generating…';
     google.script.run
@@ -9248,19 +10451,50 @@
         gen.disabled = false; gen.textContent = prev;
         inboundSetError('Error: ' + (err && err.message ? err.message : String(err)));
       })
-      .getInboundReport({ from: from, to: to });
+      .getInboundReport({ from: from, to: to, department: dept });
   }
 
-  function inboundKpiTile_(label, value, cap) {
+  function inboundKpiTile_(label, value, cap, deltaHtml) {
     return '<div class="pr-kpi-tile">'
       + '<div class="pr-kpi-label">' + escapeHtml(label) + '</div>'
       + '<div class="pr-kpi-value">' + escapeHtml(String(value)) + '</div>'
-      + (cap ? '<div class="pr-delta-cap">' + escapeHtml(cap) + '</div>' : '')
+      + (deltaHtml ? '<div class="pr-kpi-delta">' + deltaHtml + ' <span class="pr-delta-cap">vs prior</span></div>' : '')
+      + (cap ? '<div class="pr-delta-cap' + benchValueCls_(label, cap) + '">' + escapeHtml(cap) + '</div>' : '')
       + '</div>';
   }
+
+  /**
+   * Delta badge for an inbound KPI vs the prior window. `isPp` =
+   * already-percent metrics (answer/abandon rate) compare as point
+   * differences; everything else as relative % (deltaBlock_ semantics:
+   * 0 -> 0 is 0, 0 -> nonzero is +100). Renders via the shared
+   * insDeltaBadge_ ({deltaPct, type} + valence).
+   */
+  function inboundDelta_(cur, prev, valence, isPp) {
+    cur = Number(cur) || 0; prev = Number(prev) || 0;
+    let dp;
+    if (isPp) dp = cur - prev;
+    else if (prev === 0 && cur === 0) dp = 0;
+    else if (prev === 0) dp = 100;
+    else dp = ((cur - prev) / prev) * 100;
+    return insDeltaBadge_({ deltaPct: dp, type: isPp ? 'pctPoints' : 'volume' }, valence);
+  }
+
+  function inboundAbandonPct_(r) {
+    const calls = Number(r.calls) || 0;
+    if (!calls) return '–';
+    return (((Number(r.abandoned) || 0) / calls) * 100).toFixed(1) + '%';
+  }
+
+  // Abandon-% table cell with the shared 5%-threshold benchmark tint.
+  function inboundAbandonPctCell_(r) {
+    const txt = inboundAbandonPct_(r);
+    return '<td class="num' + benchValueCls_('abandoned %', txt) + '">' + txt + '</td>';
+  }
+
   function inboundRenderTable_(tbodyId, rows, extraOnHold) {
     const tbody = $(tbodyId); if (!tbody) return;
-    const cols = extraOnHold ? 5 : 4;
+    const cols = extraOnHold ? 7 : 6;
     if (!rows || !rows.length) {
       tbody.innerHTML = '<tr><td colspan="' + cols + '" class="al-empty">No data in range.</td></tr>';
       return;
@@ -9269,41 +10503,515 @@
       var html = '<tr><td>' + escapeHtml(r.label) + '</td>'
         + '<td class="num">' + fmtNumber(r.calls) + '</td>'
         + '<td class="num">' + fmtNumber(r.answered) + '</td>'
-        + '<td class="num">' + fmtNumber(r.abandoned) + '</td>';
+        + '<td class="num">' + fmtNumber(r.abandoned) + '</td>'
+        + inboundAbandonPctCell_(r);
       if (extraOnHold) html += '<td class="num">' + fmtNumber(r.on_hold) + '</td>';
+      html += '<td class="num">' + fmtDuration(r.avg_wait || 0) + '</td>';
       return html + '</tr>';
     }).join('');
   }
 
+  function inboundRenderCrossTable_(rows) {
+    const tbody = $('inbound-dialin-insurer-tbody'); if (!tbody) return;
+    if (!rows || !rows.length) {
+      tbody.innerHTML = '<tr><td colspan="5" class="al-empty">No labeled callers in range.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = rows.map(function (r) {
+      return '<tr><td>' + escapeHtml(r.dial_in) + '</td>'
+        + '<td>' + escapeHtml(r.insurer) + '</td>'
+        + '<td class="num">' + fmtNumber(r.calls) + '</td>'
+        + '<td class="num">' + fmtNumber(r.answered) + '</td>'
+        + '<td class="num">' + fmtNumber(r.abandoned) + '</td></tr>';
+    }).join('');
+  }
+
+  /**
+   * The insurer table: same columns as inboundRenderTable_ plus a
+   * click-to-expand daily drill-down per row (decision A: fetched on
+   * demand via getInboundInsurerDaily; at most one row open). The
+   * expansion carries a Volume / Abandon % tab strip + a line chart.
+   */
+  function inboundRenderInsurerTable_(rows) {
+    const tbody = $('inbound-insurer-tbody'); if (!tbody) return;
+    inboundCollapseDrill_();
+    if (!rows || !rows.length) {
+      tbody.innerHTML = '<tr><td colspan="7" class="al-empty">No data in range.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = rows.map(function (r) {
+      return '<tr class="inbound-insurer-row" data-insurer="' + escapeHtml(r.label) + '" tabindex="0" role="button"'
+        + ' title="Show this insurer’s daily trend">'
+        + '<td><span class="inbound-drill-chevron" aria-hidden="true">&#9656;</span> ' + escapeHtml(r.label) + '</td>'
+        + '<td class="num">' + fmtNumber(r.calls) + '</td>'
+        + '<td class="num">' + fmtNumber(r.answered) + '</td>'
+        + '<td class="num">' + fmtNumber(r.abandoned) + '</td>'
+        + inboundAbandonPctCell_(r)
+        + '<td class="num">' + fmtNumber(r.on_hold) + '</td>'
+        + '<td class="num">' + fmtDuration(r.avg_wait || 0) + '</td>'
+        + '</tr>';
+    }).join('');
+    tbody.querySelectorAll('.inbound-insurer-row').forEach(function (tr) {
+      tr.addEventListener('click', function () { inboundToggleDrill_(tr); });
+      tr.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); inboundToggleDrill_(tr); }
+      });
+    });
+  }
+
+  function inboundCollapseDrill_() {
+    if (inboundDrillChart) { try { inboundDrillChart.destroy(); } catch (e) {} inboundDrillChart = null; }
+    document.querySelectorAll('.inbound-drill-row').forEach(function (row) { row.remove(); });
+    document.querySelectorAll('.inbound-insurer-row.drill-open').forEach(function (tr) {
+      tr.classList.remove('drill-open');
+    });
+    inboundExpandedInsurer = null;
+  }
+
+  function inboundToggleDrill_(tr) {
+    const insurer = tr.getAttribute('data-insurer');
+    const wasOpen = (inboundExpandedInsurer === insurer);
+    inboundCollapseDrill_();
+    if (wasOpen) return;   // second click closes
+    inboundExpandedInsurer = insurer;
+    tr.classList.add('drill-open');
+
+    const drill = document.createElement('tr');
+    drill.className = 'inbound-drill-row';
+    drill.innerHTML = '<td colspan="7">'
+      + '<div class="pr-trend-subtabs inbound-drill-tabs" role="tablist">'
+      +   '<button type="button" class="pr-trend-subtab' + (inboundDrillMetric === 'calls' ? ' active' : '') + '" data-metric="calls" role="tab">Volume</button>'
+      +   '<button type="button" class="pr-trend-subtab' + (inboundDrillMetric === 'rate' ? ' active' : '') + '" data-metric="rate" role="tab">Abandon %</button>'
+      + '</div>'
+      + '<div class="inbound-drill-canvas-wrap"><canvas id="inbound-drill-chart"></canvas></div>'
+      + '<div class="inbound-drill-status pr-delta-cap">Loading daily trend…</div>'
+      + '</td>';
+    tr.parentNode.insertBefore(drill, tr.nextSibling);
+
+    drill.querySelector('.inbound-drill-tabs').addEventListener('click', function (e) {
+      const tab = e.target.closest('.pr-trend-subtab');
+      if (!tab) return;
+      inboundDrillMetric = tab.getAttribute('data-metric') || 'calls';
+      drill.querySelectorAll('.pr-trend-subtab').forEach(function (b) {
+        b.classList.toggle('active', b === tab);
+      });
+      const cached = inboundDrillCache[insurer];
+      if (cached) inboundRenderDrillChart_(drill, cached);
+    });
+
+    const cached = inboundDrillCache[insurer];
+    if (cached) { inboundRenderDrillChart_(drill, cached); return; }
+    const dept = (inboundLastData && inboundLastData.meta && inboundLastData.meta.department) || '';
+    const meta = (inboundLastData && inboundLastData.meta) || {};
+    google.script.run
+      .withSuccessHandler(function (res) {
+        if (inboundExpandedInsurer !== insurer) return;   // collapsed meanwhile
+        if (!res || res.meta.available === false) {
+          const st = drill.querySelector('.inbound-drill-status');
+          if (st) st.textContent = 'Daily trend unavailable (Neon unreachable) — try again.';
+          return;
+        }
+        inboundDrillCache[insurer] = res.daily || [];
+        inboundRenderDrillChart_(drill, inboundDrillCache[insurer]);
+      })
+      .withFailureHandler(function (err) {
+        const st = drill.querySelector('.inbound-drill-status');
+        if (st) st.textContent = 'Error: ' + (err && err.message ? err.message : String(err));
+      })
+      .getInboundInsurerDaily({ from: meta.from, to: meta.to, insurer: insurer, department: dept });
+  }
+
+  function inboundRenderDrillChart_(drillRow, daily) {
+    const status = drillRow.querySelector('.inbound-drill-status');
+    if (!daily.length) {
+      if (status) status.textContent = 'No calls from this insurer in range.';
+      return;
+    }
+    if (status) status.textContent = '';
+    refreshChartTheme();
+    if (inboundDrillChart) { try { inboundDrillChart.destroy(); } catch (e) {} inboundDrillChart = null; }
+    const canvas = drillRow.querySelector('canvas');
+    if (!canvas) return;
+    const isRate = inboundDrillMetric === 'rate';
+    const labels = daily.map(function (d) { return d.d; });
+    const points = daily.map(function (d) {
+      if (!isRate) return Number(d.calls) || 0;
+      const calls = Number(d.calls) || 0;
+      return calls > 0 ? Number((((Number(d.abandoned) || 0) / calls) * 100).toFixed(1)) : 0;
+    });
+    const color = isRate ? (THEME.warn || '#E15759') : (THEME.accent || '#4E79A7');
+    inboundDrillChart = new Chart(canvas.getContext('2d'), {
+      type: 'line',
+      data: {
+        labels: labels,
+        datasets: [{
+          label: isRate ? 'Abandon %' : 'Calls',
+          data: points,
+          borderColor: color,
+          backgroundColor: function (ctx) { return irGradientFill_(ctx.chart, color); },
+          tension: 0.3, fill: true,
+          pointBackgroundColor: color,
+          pointBorderColor: THEME.paperCard, pointBorderWidth: 1.5,
+          pointRadius: 2.5, pointHoverRadius: 4,
+        }],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false, animation: false,
+        plugins: {
+          legend: { display: false },
+          datalabels: { display: false },
+          tooltip: {
+            callbacks: {
+              label: function (ctx) {
+                return (isRate ? 'Abandon %: ' + ctx.parsed.y + '%' : 'Calls: ' + ctx.parsed.y);
+              },
+            },
+          },
+        },
+        scales: {
+          y: {
+            beginAtZero: true,
+            suggestedMax: isRate ? 100 : undefined,
+            ticks: { callback: function (v) { return isRate ? v + '%' : v; } },
+          },
+        },
+      },
+    });
+  }
+
+  function inboundSetResultsStatus_(kind, msg) {
+    const el = $('inbound-results-status'); if (!el) return;
+    if (!msg) { el.style.display = 'none'; el.textContent = ''; el.className = 'status'; return; }
+    el.className = 'status status-' + (kind || 'info');
+    el.textContent = msg;
+    el.style.display = '';
+  }
+
   function inboundRenderReport_(data) {
     inboundLastData = data;
+    inboundDrillCache = {};   // drill-down series are per (range, dept)
+    inboundCollapseDrill_();
     const meta = data.meta || {};
-    $('inbound-results-date').textContent = '(' + (meta.from || '') + ' – ' + (meta.to || '') + ')';
+    const scopeLabel = meta.companyView ? 'All departments' : (meta.department || '');
+    $('inbound-results-date').textContent =
+      '(' + scopeLabel + ' · ' + (meta.from || '') + ' – ' + (meta.to || '') + ')';
+    const cmp = $('inbound-compare-line');
+    if (cmp) {
+      cmp.textContent = (meta.priorFrom && meta.priorTo)
+        ? 'Deltas compare against the immediately-preceding period: ' + meta.priorFrom + ' – ' + meta.priorTo
+        : '';
+    }
 
     // Unavailable (Neon down / table missing) -> show the empty-state, hide body.
     const unavail = $('inbound-unavailable'), body = $('inbound-body');
+    const csvBtn = $('inbound-csv-btn');
     if (meta.available === false) {
       if (unavail) unavail.style.display = '';
       if (body) body.style.display = 'none';
+      if (csvBtn) csvBtn.style.display = 'none';
+      inboundSetResultsStatus_('', '');
       return;
     }
     if (unavail) unavail.style.display = 'none';
     if (body) body.style.display = '';
+    if (csvBtn) csvBtn.style.display = '';
+
+    // Dept with no mapped queues: same operator hint QCD uses (the dept
+    // needs a Dept Config row / DEPT_QCD_QUEUES entry before its inbound
+    // slice can attribute anything).
+    inboundSetResultsStatus_('', '');
+    if (meta.unmapped) {
+      inboundSetResultsStatus_('warn', 'No queues are mapped for '
+        + (meta.department || 'this department')
+        + ' — map its A_Q_* queue names in Dept Config (admin) to populate this view.');
+    }
+
+    reportHeadline_('inbound-headline', 'inbound-results', inboundHeadline_(data));
 
     const k = data.kpis || {};
-    $('inbound-kpi-row').innerHTML = [
+    const p = data.kpisPrior || {};
+    const tiles = [
       inboundKpiTile_('Inbound calls', fmtNumber(k.total),
-        (k.anonymous ? fmtNumber(k.anonymous) + ' anonymous' : '')),
-      inboundKpiTile_('Answered', fmtNumber(k.answered), (k.answerRate || 0) + '%'),
-      inboundKpiTile_('Abandoned', fmtNumber(k.abandoned), (k.abandonRate || 0) + '%'),
-      inboundKpiTile_('Abandoned on hold', fmtNumber(k.abandonedOnHold), 'caller hung up held'),
-      inboundKpiTile_('Avg wait', fmtDuration(k.avgWaitSec), 'to answer / abandon'),
-      inboundKpiTile_('Avg hold', fmtDuration(k.avgHoldSec), 'when held'),
-    ].join('');
+        (k.anonymous ? fmtNumber(k.anonymous) + ' anonymous' : ''),
+        inboundDelta_(k.total, p.total, 'neu', false)),
+      inboundKpiTile_('Answered', fmtNumber(k.answered), (k.answerRate || 0) + '%',
+        inboundDelta_(k.answered, p.answered, 'pos', false)),
+      inboundKpiTile_('Abandoned', fmtNumber(k.abandoned), (k.abandonRate || 0) + '%',
+        inboundDelta_(k.abandoned, p.abandoned, 'neg', false)),
+      inboundKpiTile_('Abandoned on hold', fmtNumber(k.abandonedOnHold), 'caller hung up held',
+        inboundDelta_(k.abandonedOnHold, p.abandonedOnHold, 'neg', false)),
+      inboundKpiTile_('Avg wait', fmtDuration(k.avgWaitSec), 'to answer / abandon',
+        inboundDelta_(k.avgWaitSec, p.avgWaitSec, 'neg', false)),
+      inboundKpiTile_('Avg hold', fmtDuration(k.avgHoldSec), 'when held',
+        inboundDelta_(k.avgHoldSec, p.avgHoldSec, 'neu', false)),
+    ];
+    // IVR abandons never reached a queue, so they're unattributable to any
+    // dept -- the bucket only renders on the company-wide view (decision C).
+    if (meta.companyView) {
+      tiles.push(inboundKpiTile_('Abandoned in IVR', fmtNumber(k.abandonedIvr),
+        'unattributable — no queue reached',
+        inboundDelta_(k.abandonedIvr, p.abandonedIvr, 'neg', false)));
+    }
+    $('inbound-kpi-row').innerHTML = tiles.join('');
 
-    inboundRenderTable_('inbound-insurer-tbody', data.byInsurer, true);
+    inboundRenderInsurerTable_(data.byInsurer);
     inboundRenderTable_('inbound-dialin-tbody', data.byDialIn, false);
     inboundRenderTable_('inbound-queue-tbody', data.byQueue, false);
+    inboundRenderCrossTable_(data.byDialInInsurer);
+  }
+
+  /**
+   * Client-side CSV of the full inbound payload (KPIs vs prior, the
+   * three breakdowns, the dial-in x insurer cross-cut, and the daily
+   * series -- which has no on-screen table, so the CSV is the only way
+   * to get it). Every cell routes through csvSafeCell_ before the
+   * RFC-4180 quoting (insurer labels are admin text; queue/dial-in
+   * values originate upstream -- treat all as untrusted).
+   */
+  function inboundDownloadCsv_() {
+    if (!inboundLastData || (inboundLastData.meta || {}).available === false) return;
+    const d = inboundLastData;
+    const meta = d.meta || {};
+    const esc = function (v) {
+      const s = csvSafeCell_(v == null ? '' : v);
+      if (/[",\n]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+      return s;
+    };
+    const row = function (cells) { return cells.map(esc).join(','); };
+    const lines = [];
+    lines.push(row(['Inbound Calls report', meta.from + ' to ' + meta.to]));
+    lines.push(row(['Scope', meta.companyView ? 'All departments' : (meta.department || '')]));
+    lines.push(row(['Prior window', meta.priorFrom + ' to ' + meta.priorTo]));
+    lines.push('');
+    lines.push(row(['KPI', 'Current', 'Prior']));
+    const k = d.kpis || {}, p = d.kpisPrior || {};
+    [['Inbound calls', 'total'], ['Answered', 'answered'], ['Abandoned', 'abandoned'],
+     ['Missed', 'missed'], ['Abandoned on hold', 'abandonedOnHold'], ['Anonymous', 'anonymous'],
+     ['Answer rate %', 'answerRate'], ['Abandon rate %', 'abandonRate'],
+     ['Avg wait sec', 'avgWaitSec'], ['Avg hold sec', 'avgHoldSec']].forEach(function (m) {
+      lines.push(row([m[0], k[m[1]] != null ? k[m[1]] : '', p[m[1]] != null ? p[m[1]] : '']));
+    });
+    const breakdown = function (title, firstCol, rows, withOnHold) {
+      lines.push('');
+      lines.push(row([title]));
+      const head = [firstCol, 'Calls', 'Answered', 'Abandoned'];
+      if (withOnHold) head.push('On-hold abandon');
+      head.push('Avg wait sec');
+      lines.push(row(head));
+      (rows || []).forEach(function (r) {
+        const cells = [r.label, r.calls, r.answered, r.abandoned];
+        if (withOnHold) cells.push(r.on_hold);
+        cells.push(r.avg_wait != null ? r.avg_wait : '');
+        lines.push(row(cells));
+      });
+    };
+    breakdown('By insurer (labeled callers only)', 'Insurer', d.byInsurer, true);
+    breakdown('By dial-in', 'Dial-in', d.byDialIn, false);
+    breakdown('By entry queue', 'Entry queue', d.byQueue, false);
+    lines.push('');
+    lines.push(row(['By dial-in x insurer (labeled callers only)']));
+    lines.push(row(['Dial-in', 'Insurer', 'Calls', 'Answered', 'Abandoned']));
+    (d.byDialInInsurer || []).forEach(function (r) {
+      lines.push(row([r.dial_in, r.insurer, r.calls, r.answered, r.abandoned]));
+    });
+    lines.push('');
+    lines.push(row(['Daily']));
+    lines.push(row(['Date', 'Calls', 'Abandoned']));
+    (d.daily || []).forEach(function (r) {
+      lines.push(row([r.d, r.calls, r.abandoned]));
+    });
+    const blob = new Blob([lines.join('\n') + '\n'], { type: 'text/csv;charset=utf-8;' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'inbound-calls_' + (meta.from || '') + '_' + (meta.to || '') + '.csv';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 0);
+  }
+
+  // -- Caller Lookup (admin) ----------------------------------------------
+  // "Explain the full call path for this caller on this day." Phone +
+  // date range -> getCallerLookup (CallerLookup.gs) -> one timeline card
+  // per inbound call. Calls captured since the journey extension render
+  // the leg-by-leg path; older rows fall back to the entry->final queue
+  // summary. The raw number never leaves the request payload -- the
+  // server hashes it in memory and queries by hash.
+
+  function initCallerLookup() {
+    const btn = $('caller-lookup-btn');
+    const modal = $('caller-lookup-modal');
+    if (!btn || !modal) return;
+    const closeBtn = modal.querySelector('.modal-close');
+    const backdrop = modal.querySelector('[data-close]');
+
+    function openModal() {
+      modal.style.display = '';
+      modal.setAttribute('aria-hidden', 'false');
+      document.body.style.overflow = 'hidden';
+      trapFocus_(modal);
+      initModalDragResize_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
+      document.addEventListener('keydown', onKeyDown);
+      clSetDefaultDates_();
+      const phone = $('cl-phone');
+      if (phone) phone.focus();
+    }
+    function closeModal() {
+      modal.style.display = 'none';
+      modal.setAttribute('aria-hidden', 'true');
+      releaseFocus_();
+      resetModalTransform_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
+      document.body.style.overflow = '';
+      document.removeEventListener('keydown', onKeyDown);
+      btn.focus();
+    }
+    function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
+
+    btn.addEventListener('click', openModal);
+    if (closeBtn) closeBtn.addEventListener('click', closeModal);
+    if (backdrop) backdrop.addEventListener('click', closeModal);
+
+    const lookupBtn = $('cl-lookup-btn');
+    if (lookupBtn) lookupBtn.addEventListener('click', runCallerLookup_);
+    const phoneInput = $('cl-phone');
+    if (phoneInput) phoneInput.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') runCallerLookup_();
+    });
+  }
+
+  function clSetDefaultDates_() {
+    if ($('cl-from') && $('cl-from').value) return;   // keep last-used range
+    if ($('cl-from')) $('cl-from').value = launcherIsoDaysAgo_(30);
+    if ($('cl-to'))   $('cl-to').value   = launcherIsoDaysAgo_(0);
+  }
+
+  function clSetError_(msg) {
+    const el = $('cl-error');
+    if (!el) return;
+    if (!msg) { el.style.display = 'none'; el.textContent = ''; return; }
+    el.textContent = msg; el.style.display = '';
+  }
+
+  function clShowOnly_(id) {
+    ['cl-unconfigured', 'cl-unavailable', 'cl-empty', 'cl-results'].forEach(function (x) {
+      const el = $(x);
+      if (el) el.style.display = (x === id) ? '' : 'none';
+    });
+  }
+
+  function runCallerLookup_() {
+    clSetError_('');
+    const phone = ($('cl-phone') && $('cl-phone').value) || '';
+    const digits = phone.replace(/\D/g, '');
+    if (digits.length < 10) { clSetError_('Enter a phone number with at least 10 digits.'); return; }
+    const from = $('cl-from').value, to = $('cl-to').value;
+    if (!from || !to) { clSetError_('Pick a start and end date.'); return; }
+    if (from > to)    { clSetError_('Start date must be on or before end date.'); return; }
+
+    const btn = $('cl-lookup-btn');
+    btn.disabled = true;
+    const prev = btn.textContent; btn.textContent = 'Looking up…';
+    clShowOnly_('');
+    const status = $('cl-status');
+    if (status) { status.className = 'status status-loading'; status.textContent = 'Searching inbound calls…'; status.style.display = ''; }
+
+    google.script.run
+      .withSuccessHandler(function (data) {
+        btn.disabled = false; btn.textContent = prev;
+        if (status) status.style.display = 'none';
+        clRenderResults_(data);
+      })
+      .withFailureHandler(function (err) {
+        btn.disabled = false; btn.textContent = prev;
+        if (status) status.style.display = 'none';
+        clSetError_('Error: ' + (err && err.message ? err.message : String(err)));
+      })
+      .getCallerLookup({ phone: phone, from: from, to: to });
+  }
+
+  function clRenderResults_(data) {
+    const meta = (data && data.meta) || {};
+    if (meta.configured === false) { clShowOnly_('cl-unconfigured'); return; }
+    if (meta.available === false)  { clShowOnly_('cl-unavailable');  return; }
+    const calls = (data && data.calls) || [];
+    if (!calls.length) {
+      const hint = $('cl-empty-hint');
+      if (hint) hint.textContent = 'No inbound calls from this number between '
+        + (meta.from || '?') + ' and ' + (meta.to || '?')
+        + '. Capture starts the day the inbound mirror first ran — older calls were never recorded.';
+      clShowOnly_('cl-empty');
+      return;
+    }
+    const title = $('cl-results-title');
+    if (title) title.textContent = calls.length + ' call' + (calls.length === 1 ? '' : 's')
+      + (calls[0].insurer ? ' · ' + calls[0].insurer : '')
+      + (meta.truncated ? ' (truncated)' : '');
+    const dateEl = $('cl-results-date');
+    if (dateEl) dateEl.textContent = (meta.from || '') + ' → ' + (meta.to || '');
+    $('cl-call-list').innerHTML = calls.map(clCallCardHtml_).join('');
+    clShowOnly_('cl-results');
+  }
+
+  function clOutcomeChip_(c) {
+    let cls = 'cl-chip-muted', label = c.disposition || 'unknown';
+    if (c.disposition === 'answered')  { cls = 'cl-chip-good'; label = 'Answered'; }
+    if (c.disposition === 'missed')    { label = 'Missed'; }
+    if (c.disposition === 'abandoned') {
+      cls = 'cl-chip-warn';
+      label = c.abandonStage === 'ivr' ? 'Abandoned in IVR' : 'Abandoned in queue';
+    }
+    let html = '<span class="cl-chip ' + cls + '">' + escapeHtml(label) + '</span>';
+    if (c.abandonedOnHold) {
+      html += ' <span class="cl-chip cl-chip-warn">Hung up on hold</span>';
+    }
+    return html;
+  }
+
+  function clCallCardHtml_(c) {
+    const when = escapeHtml((c.callDate || '?') + (c.callStart ? ' · ' + c.callStart : ''));
+    const facts = [];
+    if (c.waitSeconds != null) facts.push('Waited ' + fmtDuration(c.waitSeconds));
+    if (c.holdSeconds > 0)     facts.push('Held ' + fmtDuration(c.holdSeconds));
+    if (c.finalDept)           facts.push('Answered by ' + escapeHtml(c.finalDept));
+    if (c.dialIn)              facts.push('Dialed ' + escapeHtml(c.dialIn));
+    let body;
+    if (c.journey && c.journey.length) {
+      body = '<div class="cl-journey">' + c.journey.map(clJourneyRowHtml_).join('') + '</div>';
+    } else {
+      // Pre-journey-extension row: queue-level summary only.
+      const path = c.entryQueue
+        ? escapeHtml(c.entryQueue) + (c.finalQueue && c.finalQueue !== c.entryQueue
+            ? ' → ' + escapeHtml(c.finalQueue) + ' (' + c.numTransfers + ' transfer' + (c.numTransfers === 1 ? '' : 's') + ')'
+            : '')
+        : 'Never reached a queue (IVR only)';
+      body = '<div class="cl-journey-summary">' + path
+           + ' <span class="cl-journey-note">— leg-by-leg detail not captured for this call (recorded before the journey extension)</span></div>';
+    }
+    return '<div class="cl-call-card">'
+         +   '<div class="cl-call-head">'
+         +     '<span class="cl-call-when">' + when + '</span>'
+         +     clOutcomeChip_(c)
+         +   '</div>'
+         +   (facts.length ? '<div class="cl-call-facts">' + facts.join(' · ') + '</div>' : '')
+         +   body
+         + '</div>';
+  }
+
+  function clJourneyRowHtml_(ev) {
+    const kindIcon = ev.kind === 'queue' ? '⧖' : (ev.kind === 'answer' ? '✓' : '·');
+    const kindCls  = ev.kind === 'answer' ? ' cl-ev-answer' : (ev.kind === 'queue' ? ' cl-ev-queue' : '');
+    const bits = [];
+    if (ev.talk)  bits.push('talked ' + fmtDuration(ev.talk));
+    else if (ev.secs != null) bits.push(fmtDuration(ev.secs));
+    if (ev.hold)  bits.push('held ' + fmtDuration(ev.hold));
+    if (ev.abandoned) bits.push('caller hung up');
+    else if (ev.missed && ev.kind !== 'queue') bits.push('no answer');
+    return '<div class="cl-ev' + kindCls + '">'
+         +   '<span class="cl-ev-time">' + escapeHtml(ev.t || '') + '</span>'
+         +   '<span class="cl-ev-icon" aria-hidden="true">' + kindIcon + '</span>'
+         +   '<span class="cl-ev-name">' + escapeHtml(ev.name || '(unknown)') + '</span>'
+         +   (bits.length ? '<span class="cl-ev-bits">' + escapeHtml(bits.join(' · ')) + '</span>' : '')
+         + '</div>';
   }
 
   let qcdChartInstance = null;
@@ -9507,6 +11215,7 @@
   }
 
   function qcdRenderReport_(data) {
+    reportHeadline_('qcd-headline', 'qcd-results', qcdHeadline_(data));
     qcdLastData = data;
     $('qcd-results-title').textContent = 'QCD Report';
     $('qcd-results-date').textContent  = '(' + (data.dateLabel || '') + ')';

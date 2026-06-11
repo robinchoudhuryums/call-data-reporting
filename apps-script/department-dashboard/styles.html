@@ -2503,8 +2503,179 @@
     border-radius: var(--r);
     background: var(--paper-card);
     padding: 12px 14px;
+    border-left: 3px solid var(--line);
   }
+  /* Classification tints (CR pattern). Floater's warn border wins --
+     the JS only applies a classification class to non-floaters. */
+  .ins-card-improved  { border-left-color: var(--accent); }
+  .ins-card-regressed { border-left-color: var(--warn); }
+  .ins-card-mixed     { border-left-color: var(--muted); }
   .ins-card-floater { border-left: 3px solid var(--warn); }
+  .ins-metric-perday {
+    font-family: var(--mono);
+    font-size: 9px;
+    color: var(--muted);
+    margin-top: 2px;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0;
+  }
+
+  /* Answer-first headline block at the top of every report's results
+     (the anti-intimidation layer): plain sentences before any chart. */
+  .report-headline {
+    margin: 10px 0 14px;
+    padding: 12px 16px;
+    background: var(--accent-soft);
+    border-left: 3px solid var(--accent);
+    border-radius: var(--r);
+  }
+  .report-headline-kicker {
+    font-family: var(--mono);
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    color: var(--accent);
+    margin-bottom: 4px;
+  }
+  .report-headline-line {
+    font-size: 13.5px;
+    line-height: 1.55;
+    color: var(--ink);
+  }
+  .report-headline-line + .report-headline-line { margin-top: 2px; }
+
+  /* Overview question launcher (anti-intimidation layer): four
+     plain-English questions, each routing to a pre-primed report. */
+  .ov-launcher { margin: 12px 0 16px; }
+  .ov-launcher-kicker {
+    font-family: var(--mono);
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    color: var(--muted);
+    margin-bottom: 6px;
+  }
+  .ov-launcher-row { display: flex; flex-wrap: wrap; gap: 8px; }
+  .ov-launcher-q {
+    font-family: inherit;
+    font-size: 12.5px;
+    color: var(--ink);
+    background: var(--paper-2);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 7px 14px;
+    cursor: pointer;
+    transition: border-color .12s ease, background .12s ease;
+  }
+  .ov-launcher-q:hover {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+  }
+
+  /* Metric glossary: matched labels get a hover/tap definition via
+     title=; the dotted underline + help cursor advertise it. */
+  .gloss {
+    text-decoration: underline dotted;
+    text-decoration-color: var(--muted);
+    text-underline-offset: 3px;
+    cursor: help;
+  }
+  /* Sortable headers keep their click affordance; the dotted
+     underline alone advertises the definition. */
+  th[data-sort].gloss { cursor: pointer; }
+
+  /* Universal benchmark tints: the 92% answer-rate target and the 5%
+     abandoned-% violation threshold, applied to KPI values / cells by
+     script.html::benchValueCls_. */
+  .bm-target { color: var(--good); }
+  .bm-over   { color: var(--warn); }
+
+  /* Caller Lookup: one timeline card per inbound call. */
+  .cl-call-card {
+    border: 1px solid var(--line);
+    border-radius: var(--r);
+    padding: 12px 14px;
+    margin-bottom: 10px;
+    background: var(--paper-card);
+  }
+  .cl-call-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .cl-call-when {
+    font-family: var(--mono);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0;
+    color: var(--ink);
+    font-weight: 600;
+  }
+  .cl-chip {
+    font-family: var(--mono);
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    padding: 2px 8px;
+    border-radius: 999px;
+  }
+  .cl-chip-good  { background: var(--good-soft); color: var(--good); }
+  .cl-chip-warn  { background: var(--warn-soft); color: var(--warn); }
+  .cl-chip-muted { background: var(--paper-2);   color: var(--muted); }
+  .cl-call-facts {
+    font-size: 12px;
+    color: var(--muted);
+    margin: 5px 0 2px;
+  }
+  .cl-journey { margin-top: 8px; }
+  .cl-ev {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    font-size: 12px;
+    padding: 2px 0 2px 4px;
+    border-left: 2px solid var(--line);
+  }
+  .cl-ev-queue  { border-left-color: var(--accent); }
+  .cl-ev-answer { border-left-color: var(--good); }
+  .cl-ev-time {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0;
+    color: var(--muted);
+    min-width: 58px;
+  }
+  .cl-ev-icon { color: var(--muted); }
+  .cl-ev-answer .cl-ev-icon { color: var(--good); }
+  .cl-ev-name { color: var(--ink); }
+  .cl-ev-bits { color: var(--muted); }
+  .cl-journey-summary {
+    margin-top: 8px;
+    font-size: 12.5px;
+  }
+  .cl-journey-note { color: var(--muted); font-size: 11.5px; }
+
+  /* Inbound report: per-insurer daily drill-down (click-to-expand row). */
+  .inbound-insurer-row { cursor: pointer; }
+  .inbound-insurer-row:hover td { background: var(--paper-2); }
+  .inbound-drill-chevron {
+    display: inline-block;
+    font-size: 10px;
+    color: var(--muted);
+    transition: transform 0.12s ease;
+  }
+  .inbound-insurer-row.drill-open .inbound-drill-chevron { transform: rotate(90deg); }
+  .inbound-drill-row > td {
+    background: var(--paper-2);
+    padding: 10px 14px 14px;
+  }
+  .inbound-drill-canvas-wrap {
+    position: relative;
+    height: 180px;
+    margin-top: 6px;
+  }
   .ins-card-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
   .ins-card-name { font-family: var(--display); font-weight: 600; font-size: 14px; color: var(--ink); }
   .ins-card-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 10px; }
@@ -3005,6 +3176,40 @@
     body.cr-printing .cr-chart-wrap,
     body.cr-printing .pr-kpi-tile,
     body.cr-printing .cr-agent-card { page-break-inside: avoid; }
+
+    body.ins-printing > .container { display: none !important; }
+    body.ins-printing .modal-backdrop { display: none !important; }
+    body.ins-printing #insights-modal {
+      position: static !important;
+      background: transparent !important;
+    }
+    body.ins-printing #insights-modal .modal-panel {
+      box-shadow: none !important;
+      border-radius: 0 !important;
+      max-width: 100% !important;
+      width: 100% !important;
+      max-height: none !important;
+      padding: 0 !important;
+      overflow: visible !important;
+    }
+    body.ins-printing #insights-form,
+    body.ins-printing #insights-modal .modal-close,
+    body.ins-printing #insights-results .ir-action-buttons,
+    body.ins-printing #ins-trend-subtabs,
+    body.ins-printing #ins-cards-toolbar,
+    body.ins-printing #ins-results-status {
+      display: none !important;
+    }
+    /* Open the quiet-agents section for print so the full
+       comparison is on the page (CR pattern). */
+    body.ins-printing #ins-quiet-details > .cr-quiet-summary {
+      display: none !important;
+    }
+    body.ins-printing #ins-quiet-details { border-top: 0 !important; padding-top: 0 !important; }
+    body.ins-printing #ins-quiet-details > #ins-quiet-cards { display: grid !important; }
+    body.ins-printing .ir-chart-wrap,
+    body.ins-printing .pr-kpi-tile,
+    body.ins-printing .ins-card { page-break-inside: avoid; }
   }
 
   /* -------- Company Overview modal ------------------------------ */

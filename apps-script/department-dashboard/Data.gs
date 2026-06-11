@@ -222,6 +222,7 @@ function getDepartmentSummary(req) {
     try {
       const parsed = JSON.parse(cached);
       parsed.meta.cacheHit = true;
+      logReportUsage_('summary', dept, user, true);
       return parsed;
     } catch (e) {
       // Corrupted cache entry -- fall through to recompute.
@@ -242,6 +243,7 @@ function getDepartmentSummary(req) {
     Logger.log('Cache put failed: %s', e);
   }
 
+  logReportUsage_('summary', dept, user, false);
   return data;
 }
 
@@ -1070,11 +1072,16 @@ function avg_(arr, key) {
 }
 
 /**
- * Prior window for E5 per-row delta chips. Same duration as
- * [from, to], ending one day before `from`. Matches Performance
- * Report's prior-period semantics (INV-28). Parsed at noon UTC
- * to dodge DST edges, then re-formatted as `YYYY-MM-DD` for the
+ * THE shared INV-28 prior-window implementation: same duration as
+ * [from, to], ending one day before `from`. Parsed at noon UTC to
+ * dodge DST edges, then re-formatted as `YYYY-MM-DD` for the
  * caller's date-string comparisons.
+ *
+ * Consumers: computeSummary_ (E5 per-row delta chips),
+ * computePerformanceReport_ (auto prior), and computeInsights_
+ * (auto prior). Any future "compare against the preceding window"
+ * feature should call this rather than re-deriving the math --
+ * the three call sites used to carry three near-identical copies.
  */
 function computePriorWindow_(from, to) {
   const fParts = from.split('-');

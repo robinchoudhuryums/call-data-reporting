@@ -189,6 +189,7 @@ function getIndividualReport(req) {
     try {
       const parsed = JSON.parse(cached);
       parsed.meta.cacheHit = true;
+      logReportUsage_('individual', dept, user, true);
       return parsed;
     } catch (e) { /* recompute */ }
   }
@@ -206,6 +207,7 @@ function getIndividualReport(req) {
     Logger.log('IndividualReport cache put failed: %s', e);
   }
 
+  logReportUsage_('individual', dept, user, false);
   return data;
 }
 
@@ -236,7 +238,9 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
 
   // Trend window resolution.
   const msPerDay = 86400000;
-  const diffDays = Math.ceil(Math.abs(endDate - startDate) / msPerDay) + 1;
+  // Math.round, not ceil: noon-anchored dates wobble +-1h across DST
+  // (ceil inflated fall-back ranges by a day at the 366-day boundary).
+  const diffDays = Math.round(Math.abs(endDate - startDate) / msPerDay) + 1;
   const isFullYear =
        startDate.getMonth() === 0 && startDate.getDate() === 1
     && endDate.getMonth()   === 11 && endDate.getDate()   === 31

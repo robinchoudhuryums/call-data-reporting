@@ -72,7 +72,7 @@
                     data-route="/report/insights" role="menuitem"
                     title="Combined view: a department rollup PLUS per-agent cards, each comparing the selected range to the immediately-preceding period.">Insights</button>
             <button class="header-menu-item" id="inbound-report-btn" type="button"
-                    data-route="/report/inbound" role="menuitem" data-admin-only style="display:none;"
+                    data-route="/report/inbound" role="menuitem"
                     title="Inbound call analytics (admin): volume + answered / abandoned / abandoned-on-hold by insurer, advertised dial-in line, and entry queue.">Inbound</button>
           </div>
         </div>
@@ -85,6 +85,9 @@
         <button class="header-menu-btn" id="dept-config-btn" type="button"
                 data-route="/admin/dept-config" data-admin-only role="tab" aria-selected="false" style="display:none;"
                 title="Map dept queues, sub-queue nesting, and team-avg exclusions without a redeploy. Validated + auto-discovers unmapped queues. Admin-only.">Dept Config</button>
+        <button class="header-menu-btn" id="caller-lookup-btn" type="button"
+                data-route="/admin/caller-lookup" data-admin-only role="tab" aria-selected="false" style="display:none;"
+                title="Trace every inbound call from one phone number: when they called, the path through IVR / queues / agents, and how each call ended. The number is hashed before querying and never stored. Admin-only.">Caller Lookup</button>
       </nav>
       <div class="header-meta">
         <!-- Data-freshness pill -- "Data through Mon May 19 · 14h ago".
@@ -123,6 +126,15 @@
              exist. Clicking opens the Orphan Fix modal. -->
         <div id="ov-orphan-nag" class="ov-status-banner" style="display:none;" data-admin-only></div>
         <div class="ov-summary-line" id="ov-summary-line"></div>
+        <div class="ov-launcher" id="ov-launcher">
+          <div class="ov-launcher-kicker">What do you want to know?</div>
+          <div class="ov-launcher-row">
+            <button type="button" class="ov-launcher-q" data-launch="team-lately">How is my team doing lately?</button>
+            <button type="button" class="ov-launcher-q" data-launch="missed-yesterday">Why did we miss calls recently?</button>
+            <button type="button" class="ov-launcher-q" data-launch="agent-trend">Is one of my agents struggling or improving?</button>
+            <button type="button" class="ov-launcher-q" data-launch="abandons">Are callers giving up before we answer?</button>
+          </div>
+        </div>
         <div id="ov-company-aggregate" class="ov-company-aggregate" style="display:none;"></div>
         <div id="ov-user-hero" class="ov-user-hero" style="display:none;"></div>
         <div id="ov-dept-grid" class="ov-dept-grid"></div>
@@ -1089,9 +1101,28 @@
             <input type="date" id="ins-to">
           </div>
         </div>
+        <div class="ir-row">
+          <div class="ir-col">
+            <label for="ins-compare-mode">Compare against</label>
+            <select id="ins-compare-mode">
+              <option value="prevPeriod">Immediately-preceding period</option>
+              <option value="yoy">Same window one year prior</option>
+              <option value="custom">Custom prior range&hellip;</option>
+            </select>
+          </div>
+          <div class="ir-col" id="ins-prior-from-wrap" style="display:none;">
+            <label for="ins-prior-from">Prior start</label>
+            <input type="date" id="ins-prior-from">
+          </div>
+          <div class="ir-col" id="ins-prior-to-wrap" style="display:none;">
+            <label for="ins-prior-to">Prior end</label>
+            <input type="date" id="ins-prior-to">
+          </div>
+        </div>
+        <div class="ir-hint" id="ins-prior-hint"></div>
         <div class="ir-hint">
           Combines a <strong>department rollup</strong> (current vs the
-          immediately-preceding same-length period) with <strong>per-agent
+          comparison window picked above) with <strong>per-agent
           cards</strong>, each comparing that agent to their own prior
           period. Floaters appear as cards but don’t factor into the
           department rollup.
@@ -1131,18 +1162,56 @@
             <div class="ins-compare-line" id="ins-compare-line"></div>
           </div>
           <div class="ir-action-buttons">
+            <div class="ir-export-wrap">
+              <button class="btn btn-secondary" id="ins-export-btn" type="button" aria-haspopup="menu" aria-expanded="false">
+                Export <span class="ir-export-caret">&#9662;</span>
+              </button>
+              <div class="ir-export-menu" id="ins-export-menu" role="menu" style="display:none;">
+                <button type="button" role="menuitem" data-action="csv">Download CSV</button>
+                <button type="button" role="menuitem" data-action="copy">Copy image</button>
+                <button type="button" role="menuitem" data-action="email">Email image</button>
+                <button type="button" role="menuitem" data-action="print">Print</button>
+              </div>
+            </div>
             <button class="btn btn-secondary" id="ins-back-btn" type="button">&laquo; Back</button>
           </div>
         </div>
 
         <div id="ins-results-status" class="status" style="display:none;"></div>
+        <div id="ins-length-warning" class="cr-length-warning" style="display:none;"></div>
         <div id="ins-team-insights"></div>
 
         <div class="al-section-title">Department rollup <span class="ins-rollup-cap" id="ins-rollup-cap"></span></div>
         <div id="ins-kpi-row" class="pr-kpi-row"></div>
 
+        <div class="ir-chart-wrap" id="ins-trend-wrap">
+          <div class="ir-chart-header">12-Month Team Trend</div>
+          <div class="pr-trend-subtabs" id="ins-trend-subtabs" role="tablist">
+            <button type="button" class="pr-trend-subtab active" data-metric="answered" role="tab" aria-selected="true">Answered</button>
+            <button type="button" class="pr-trend-subtab" data-metric="pct" role="tab" aria-selected="false">% Answered</button>
+            <button type="button" class="pr-trend-subtab" data-metric="att" role="tab" aria-selected="false">Avg Talk Time</button>
+          </div>
+          <div class="ir-chart-canvas-wrap"><canvas id="ins-trend-chart"></canvas></div>
+        </div>
+
         <div class="al-section-title">Per-agent comparison (vs prior period)</div>
+        <div class="ir-cards-toolbar" id="ins-cards-toolbar">
+          <label class="ir-sort-control">
+            <span class="ir-sort-label">Sort agents:</span>
+            <select id="ins-card-sort">
+              <option value="default">Most answered (default)</option>
+              <option value="name">Name (A-Z)</option>
+              <option value="improvers">Biggest improvers</option>
+              <option value="regressors">Biggest regressors</option>
+            </select>
+          </label>
+        </div>
         <div id="ins-agent-cards" class="ins-agent-cards"></div>
+
+        <details id="ins-quiet-details" class="cr-quiet-details" style="display:none;">
+          <summary class="cr-quiet-summary"></summary>
+          <div id="ins-quiet-cards" class="ins-agent-cards"></div>
+        </details>
       </div>
       </div>
     </div>
@@ -1181,12 +1250,20 @@
             <label for="inbound-to">End date</label>
             <input type="date" id="inbound-to">
           </div>
+          <div class="ir-col">
+            <label for="inbound-dept">Department</label>
+            <select id="inbound-dept"></select>
+          </div>
         </div>
         <div class="ir-hint">
           Per-distinct-inbound-call analytics from <strong>Neon</strong>
           (<code>inbound_calls</code>). Insurer labels come from the insurance
           numbers you sync (<code>insurance_numbers</code>); anonymous callers
-          count in the totals but can&rsquo;t be labeled. Admin-only.
+          count in the totals but can&rsquo;t be labeled. Managers see their
+          own department&rsquo;s calls (attributed by entry queue; an answered
+          call abandoned on hold belongs to the answering department); admins
+          can also pick &ldquo;All departments&rdquo; for the company-wide
+          view including IVR abandons.
         </div>
         <div id="inbound-form-error" class="status status-error" style="display:none;"></div>
         <button class="btn" id="inbound-generate-btn" type="button">Generate report</button>
@@ -1199,8 +1276,10 @@
               <span class="ir-results-title">Inbound Calls</span>
               <span class="ir-results-date" id="inbound-results-date"></span>
             </div>
+            <div class="ins-compare-line" id="inbound-compare-line"></div>
           </div>
           <div class="ir-action-buttons">
+            <button class="btn btn-secondary" id="inbound-csv-btn" type="button">Download CSV</button>
             <button class="btn btn-secondary" id="inbound-back-btn" type="button">&laquo; Back</button>
           </div>
         </div>
@@ -1217,9 +1296,9 @@
           <div id="inbound-kpi-row" class="pr-kpi-row"></div>
 
           <div class="al-section">
-            <div class="al-section-title">By insurer <span class="ins-rollup-cap">(labeled inbound numbers only)</span></div>
+            <div class="al-section-title">By insurer <span class="ins-rollup-cap">(labeled inbound numbers only &middot; click a row for its daily trend)</span></div>
             <table class="qcd-source-table">
-              <thead><tr><th>Insurer</th><th class="num">Calls</th><th class="num">Answered</th><th class="num">Abandoned</th><th class="num">On-hold abandon</th></tr></thead>
+              <thead><tr><th>Insurer</th><th class="num">Calls</th><th class="num">Answered</th><th class="num">Abandoned</th><th class="num">Aband. %</th><th class="num">On-hold abandon</th><th class="num">Avg wait</th></tr></thead>
               <tbody id="inbound-insurer-tbody"></tbody>
             </table>
           </div>
@@ -1227,7 +1306,7 @@
           <div class="al-section">
             <div class="al-section-title">By advertised line (dial-in)</div>
             <table class="qcd-source-table">
-              <thead><tr><th>Dial-in number</th><th class="num">Calls</th><th class="num">Answered</th><th class="num">Abandoned</th></tr></thead>
+              <thead><tr><th>Dial-in number</th><th class="num">Calls</th><th class="num">Answered</th><th class="num">Abandoned</th><th class="num">Aband. %</th><th class="num">Avg wait</th></tr></thead>
               <tbody id="inbound-dialin-tbody"></tbody>
             </table>
           </div>
@@ -1235,12 +1314,91 @@
           <div class="al-section">
             <div class="al-section-title">By entry queue</div>
             <table class="qcd-source-table">
-              <thead><tr><th>Entry queue</th><th class="num">Calls</th><th class="num">Answered</th><th class="num">Abandoned</th></tr></thead>
+              <thead><tr><th>Entry queue</th><th class="num">Calls</th><th class="num">Answered</th><th class="num">Abandoned</th><th class="num">Aband. %</th><th class="num">Avg wait</th></tr></thead>
               <tbody id="inbound-queue-tbody"></tbody>
+            </table>
+          </div>
+
+          <div class="al-section">
+            <div class="al-section-title">By dial-in &times; insurer <span class="ins-rollup-cap">(marketing-line attribution; labeled callers only)</span></div>
+            <table class="qcd-source-table">
+              <thead><tr><th>Dial-in number</th><th>Insurer</th><th class="num">Calls</th><th class="num">Answered</th><th class="num">Abandoned</th></tr></thead>
+              <tbody id="inbound-dialin-insurer-tbody"></tbody>
             </table>
           </div>
         </div>
       </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="caller-lookup-modal" class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="caller-lookup-modal-title" style="display:none;">
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-panel modal-panel-wide" role="document">
+      <div class="modal-panel-header">
+        <button class="modal-open-tab-btn" type="button" data-open-tab-route="/admin/caller-lookup"
+                aria-label="Open in new tab" title="Open this report in a new browser tab (for side-by-side viewing)">&#8599;</button>
+        <button class="modal-close" id="caller-lookup-close" type="button" aria-label="Close">&times;</button>
+        <div class="modal-kicker">Operations &middot; Admin</div>
+        <h2 id="caller-lookup-modal-title">Caller Lookup</h2>
+      </div>
+      <div class="modal-panel-body">
+        <div class="ir-form-grid">
+          <div class="ir-col">
+            <label for="cl-phone">Caller phone number</label>
+            <input type="tel" id="cl-phone" placeholder="e.g. (214) 555-0123" autocomplete="off">
+          </div>
+          <div class="ir-col">
+            <label for="cl-from">Start date</label>
+            <input type="date" id="cl-from">
+          </div>
+          <div class="ir-col">
+            <label for="cl-to">End date</label>
+            <input type="date" id="cl-to">
+          </div>
+          <div class="ir-col">
+            <label>&nbsp;</label>
+            <button class="btn" id="cl-lookup-btn" type="button">Look up</button>
+          </div>
+        </div>
+        <div class="ir-hint">
+          Traces every inbound call from this number in <code>inbound_calls</code>
+          (Neon). The number is normalized and HMAC-hashed before querying
+          &mdash; it is never stored, logged, or sent anywhere raw. Calls
+          captured since the journey extension show the full leg-by-leg path
+          (IVR &rarr; queues &rarr; agent rings &rarr; answer / hold); older
+          rows show the entry &rarr; final queue summary.
+        </div>
+        <div id="cl-error" class="status status-error" style="display:none;"></div>
+        <div id="cl-status" class="status" style="display:none;"></div>
+
+        <div id="cl-unconfigured" class="empty-state" style="display:none;">
+          <div class="empty-state-icon" aria-hidden="true">&#128273;</div>
+          <div class="empty-state-title">HMAC_SECRET not set</div>
+          <div class="empty-state-hint">The dashboard project needs the <code>HMAC_SECRET</code> Script Property (same value as the CDR Import / CDR Report projects) to hash the number for matching. Set it in Project Settings &rarr; Script Properties.</div>
+        </div>
+        <div id="cl-unavailable" class="empty-state" style="display:none;">
+          <div class="empty-state-icon" aria-hidden="true">&#128246;</div>
+          <div class="empty-state-title">Inbound data unavailable</div>
+          <div class="empty-state-hint">Couldn&rsquo;t read <code>inbound_calls</code> from Neon. Confirm the dashboard&rsquo;s <code>NEON_*</code> Script Properties are set and Neon is reachable.</div>
+        </div>
+        <div id="cl-empty" class="empty-state" style="display:none;">
+          <div class="empty-state-icon" aria-hidden="true">&#128269;</div>
+          <div class="empty-state-title">No calls found</div>
+          <div class="empty-state-hint" id="cl-empty-hint"></div>
+        </div>
+
+        <div id="cl-results" style="display:none;">
+          <div class="ir-results-header">
+            <div class="ir-results-header-left">
+              <div class="ir-results-title-line">
+                <span class="ir-results-title" id="cl-results-title"></span>
+                <span class="ir-results-date" id="cl-results-date"></span>
+              </div>
+            </div>
+          </div>
+          <div id="cl-call-list"></div>
+        </div>
       </div>
     </div>
   </div>
@@ -1383,9 +1541,12 @@
           <div class="al-section-title">Manager Digest Subscribers</div>
           <p class="al-hint">
             Per-recipient subscriptions configured in the <strong>Digest Config</strong>
-            sheet (Email | Department | Cadence | Active | Notes). Cadence is
-            <code>daily</code> (sends each weekday morning for the previous day) or
-            <code>weekly</code> (sends Monday morning for the prior Mon-Fri).
+            sheet (Email | Department | Cadence | Active | Notes | Format). Cadence is
+            <code>daily</code> (each weekday morning for the previous day),
+            <code>weekly</code> (Monday morning for the prior Mon-Fri), or
+            <code>monthly</code> (the 1st for the prior calendar month). Format is
+            <code>summary</code> (KPI tiles, default) or <code>insights</code>
+            (team rollup + per-agent deltas vs the prior window).
             <a href="#" id="al-open-digest-sheet" target="_blank">Open Digest Config sheet &rarr;</a>
           </p>
           <table class="al-config-table">
@@ -1393,6 +1554,7 @@
               <th>Email</th>
               <th>Department</th>
               <th>Cadence</th>
+              <th>Format</th>
               <th>Active</th>
               <th>Notes</th>
               <th></th>

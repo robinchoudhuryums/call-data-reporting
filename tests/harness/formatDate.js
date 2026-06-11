@@ -38,8 +38,8 @@ function shortMonthInTz(ts, tz) {
     .filter(function (p) { return p.type === 'month'; })[0].value;
 }
 
-// Longest-first so 'MMM' wins over 'MM'/'M', 'dd' over 'd', etc.
-const TOKENS = /yyyy|MMM|MM|dd|HH|mm|M|d/g;
+// Longest-first so 'yyyy' wins over 'yy', 'MMM' over 'MM'/'M', etc.
+const TOKENS = /yyyy|yy|MMM|MM|dd|HH|mm|M|d/g;
 
 function formatDate(date, tz, pattern) {
   // Realm-safe Date check: vm-created Dates fail `instanceof Date`
@@ -52,6 +52,7 @@ function formatDate(date, tz, pattern) {
   const p = partsInTz(ts, tz);
   const map = {
     yyyy: p.year,
+    yy: p.year.slice(-2),
     MMM: shortMonthInTz(ts, tz),
     MM: p.month,
     dd: p.day,

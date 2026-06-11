@@ -182,6 +182,7 @@ function getQcdReport(req) {
     try {
       const parsed = JSON.parse(cached);
       parsed.meta.cacheHit = true;
+      logReportUsage_('qcd', dept, user, true);
       return parsed;
     } catch (e) { /* recompute */ }
   }
@@ -199,6 +200,7 @@ function getQcdReport(req) {
     Logger.log('QCDReport: payload %s bytes exceeds 100KB, skipping cache', json.length);
   }
 
+  logReportUsage_('qcd', dept, user, false);
   return data;
 }
 
@@ -242,7 +244,8 @@ function computeQcdReport_(dept, from, to) {
   const startDate = parseIso_(from);
   const endDate   = parseIso_(to);
   const msPerDay = 86400000;
-  const diffDays = Math.ceil(Math.abs(endDate - startDate) / msPerDay) + 1;
+  // Math.round, not ceil: noon-anchored dates wobble +-1h across DST.
+  const diffDays = Math.round(Math.abs(endDate - startDate) / msPerDay) + 1;
   const isFullYear =
        startDate.getMonth() === 0 && startDate.getDate() === 1
     && endDate.getMonth()   === 11 && endDate.getDate()   === 31

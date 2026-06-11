@@ -178,6 +178,7 @@ function getCompareRanges(req) {
     try {
       const parsed = JSON.parse(cached);
       parsed.meta.cacheHit = true;
+      logReportUsage_('compareRanges', dept, user, true);
       return parsed;
     } catch (e) { /* recompute */ }
   }
@@ -191,6 +192,7 @@ function getCompareRanges(req) {
   try { cache.put(cacheKey, JSON.stringify(data), REPORT_CACHE_TTL_SECONDS); }
   catch (e) { Logger.log('CompareRanges cache put failed: %s', e); }
 
+  logReportUsage_('compareRanges', dept, user, false);
   return data;
 }
 
@@ -451,8 +453,12 @@ function computeCompareRanges_(dept, selectedAgents,
     const p = iso.split('-');
     return new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]), 12);
   };
-  const p1Days = Math.floor((parseIso_(p1To) - parseIso_(p1From)) / msPerDay) + 1;
-  const p2Days = Math.floor((parseIso_(p2To) - parseIso_(p2From)) / msPerDay) + 1;
+  // Math.round, not floor: dates anchor at noon, so a range spanning a
+  // DST transition differs from a whole-day multiple by ±1h -- floor
+  // truncated the spring-forward hour into an off-by-one (29 for Mar
+  // 1-30). Round absorbs the ±1/24 wobble in both directions.
+  const p1Days = Math.round((parseIso_(p1To) - parseIso_(p1From)) / msPerDay) + 1;
+  const p2Days = Math.round((parseIso_(p2To) - parseIso_(p2From)) / msPerDay) + 1;
   // `Math.min(...) > 0` guards the divide; inputs are already
   // validated above to ensure from <= to, so p1Days/p2Days are
   // always >= 1 in practice -- this is belt-and-suspenders for the

@@ -85,6 +85,7 @@ function getMissedCallsReport(req) {
     try {
       const parsed = JSON.parse(cached);
       parsed.meta.cacheHit = true;
+      logReportUsage_('missed', dept, user, true);
       return parsed;
     } catch (e) { /* recompute */ }
   }
@@ -102,6 +103,7 @@ function getMissedCallsReport(req) {
     Logger.log('MissedCallsReport: payload %s bytes exceeds 100KB, skipping cache', json.length);
   }
 
+  logReportUsage_('missed', dept, user, false);
   return data;
 }
 

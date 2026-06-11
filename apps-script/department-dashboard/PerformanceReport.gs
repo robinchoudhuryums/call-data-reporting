@@ -147,6 +147,7 @@ function getPerformanceReport(req) {
     try {
       const parsed = JSON.parse(cached);
       parsed.meta.cacheHit = true;
+      logReportUsage_('performance', dept, user, true);
       return parsed;
     } catch (e) { /* recompute */ }
   }
@@ -160,6 +161,7 @@ function getPerformanceReport(req) {
   try { cache.put(cacheKey, JSON.stringify(data), REPORT_CACHE_TTL_SECONDS); }
   catch (e) { Logger.log('PerformanceReport cache put failed: %s', e); }
 
+  logReportUsage_('performance', dept, user, false);
   return data;
 }
 
@@ -189,10 +191,13 @@ function computePerformanceReport_(dept, from, to, selectedAgents, roster,
   const startDate = parseIso_(from);
   const endDate   = parseIso_(to);
 
-  // Prior period. Default = same duration ending one day before
-  // the current start (legacy semantics). When the request supplies
-  // a custom prior range, use it instead -- lets managers compare
-  // against same-month-last-year or any other arbitrary baseline.
+  // Prior period. Default = same duration ending one day before the
+  // current start (INV-28), via the SHARED computePriorWindow_
+  // (Data.gs) -- the same implementation computeSummary_'s E5 chips
+  // and the Insights report use, so the three surfaces can't drift.
+  // When the request supplies a custom prior range, use it instead --
+  // lets managers compare against same-month-last-year or any other
+  // arbitrary baseline.
   const msPerDay = 86400000;
   const isoOf = function (d) { return Utilities.formatDate(d, TZ, 'yyyy-MM-dd'); };
   let priorStartDate, priorEndDate, priorFrom, priorTo, priorIsCustom;
@@ -203,16 +208,17 @@ function computePerformanceReport_(dept, from, to, selectedAgents, roster,
     priorTo        = customPriorTo;
     priorIsCustom  = true;
   } else {
-    const durationDays = Math.floor((endDate - startDate) / msPerDay);
-    priorEndDate   = new Date(startDate.getTime() - msPerDay);
-    priorStartDate = new Date(priorEndDate.getTime() - durationDays * msPerDay);
-    priorFrom      = isoOf(priorStartDate);
-    priorTo        = isoOf(priorEndDate);
+    const priorWindow = computePriorWindow_(from, to);
+    priorFrom      = priorWindow.from;
+    priorTo        = priorWindow.to;
+    priorStartDate = parseIso_(priorFrom);
+    priorEndDate   = parseIso_(priorTo);
     priorIsCustom  = false;
   }
 
   // Trend window resolution -- mirror Individual Report's logic.
-  const diffDays = Math.ceil(Math.abs(endDate - startDate) / msPerDay) + 1;
+  // Math.round, not ceil: noon-anchored dates wobble +-1h across DST.
+  const diffDays = Math.round(Math.abs(endDate - startDate) / msPerDay) + 1;
   const isFullYear =
        startDate.getMonth() === 0 && startDate.getDate() === 1
     && endDate.getMonth()   === 11 && endDate.getDate()   === 31

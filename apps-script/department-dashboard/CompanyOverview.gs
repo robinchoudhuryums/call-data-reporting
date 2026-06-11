@@ -43,7 +43,8 @@
  * (read-only), and reinstating that visibility is part of the
  * design intent for this view.
  *
- * Caching: 5 min under `companyOverview:v13`. Cached blob is shared
+ * Caching: REPORT_CACHE_TTL_SECONDS under `companyOverview:v14` (the
+ * COMPANY_OVERVIEW_CACHE_KEY constant below). Cached blob is shared
  * across all users; admin-only fields (`companyAggregate`,
  * `pipelineFreshness`, `orphanNag`) are stripped on serve for
  * non-admins, and viewer-personalized fields (viewerRole/viewerDept)

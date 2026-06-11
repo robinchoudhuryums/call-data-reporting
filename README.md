@@ -122,8 +122,8 @@ scripts/deploy.sh apps-script/cdr-import <cdr-import-deployment-id>
 - Run the `setup` function once to create the dashboard-managed
   sheets: `Access Control`, `Alert Config`, `Alert Log`,
   `Pipeline Health`, `Digest Config`, `Agent Alias Overrides`,
-  `Orphan Fix Log`, and `Dept Config` (eight total; created only
-  if missing).
+  `Orphan Fix Log`, `Dept Config`, and `Report Usage` (nine total;
+  created only if missing).
   Requires admin auth — run from the Apps Script editor while
   logged in as an admin listed in `ADMIN_EMAILS` Script Property
   (or `ADMIN_EMAILS_FALLBACK`).
@@ -156,12 +156,20 @@ scripts/deploy.sh apps-script/cdr-import <cdr-import-deployment-id>
 
 - Populate the `Digest Config` sheet (created by `setup()`) with one
   row per subscriber:
-  Email | Department | Cadence (`daily` or `weekly`) | Active
-  (TRUE/FALSE) | Notes.
+  Email | Department | Cadence (`daily`, `weekly`, or `monthly`) |
+  Active (TRUE/FALSE) | Notes | Format (`summary` default, or
+  `insights` for the Insights-report digest: team rollup deltas + a
+  per-agent delta table vs the cadence-appropriate prior window).
 - In the deployed dashboard, open Alerts (admin-only) → **Manager
   Digest Subscribers** → **Install digest triggers**. Daily fires
   weekday mornings for the previous day; weekly fires Monday morning
-  for the prior Mon&ndash;Fri window.
+  for the prior Mon&ndash;Fri window; monthly fires on the 1st for
+  the prior calendar month.
+- When `DASHBOARD_URL` is set, every digest's button deep-links into
+  the **Insights report pre-primed to that digest's exact view**
+  (window, full roster, and — for weekly/monthly — the matching
+  custom prior window, via the state-in-URL share format), so the
+  recipient lands one Generate click from the full breakdown.
 
 **Optional (orphan fix):**
 
@@ -249,6 +257,40 @@ scripts/deploy.sh apps-script/cdr-import <cdr-import-deployment-id>
   My Department page shows a "Yesterday's QCD" tile row below
   the agent table.
 
+**Optional (Inbound report + insurer labeling):**
+
+- The daily import captures ONE record per distinct inbound call
+  (disposition, abandon stage, abandoned-on-hold, wait/hold seconds,
+  dial-in line, queue journey) into Neon's `inbound_calls` table
+  (`cdr-import/inboundCalls.js`; phone numbers HMAC-hashed, Anonymous
+  callers carry a null hash). Requires `HMAC_SECRET` + `NEON_*` Script
+  Properties in the **CDR Import** project; skipped cleanly when
+  unset.
+- The **Inbound** tab (`#/report/inbound`) reads that table directly
+  from the dashboard project (needs the dashboard's `NEON_*` props +
+  `script.external_request` scope, same as the F1 read-back). It is
+  per-dept gated like the other reports: managers see their own
+  department's slice (calls attributed by entry queue through the same
+  dept → queue map QCD uses; an answered call abandoned on hold
+  belongs to the answering department), while admins can also pick
+  "All departments" — the only view that includes the unattributable
+  "Abandoned in IVR" bucket. Clicking an insurer row expands its
+  daily volume / abandon-rate trend. It renders an "unavailable"
+  state when Neon is unreachable — there is no sheet fallback for
+  this report.
+- **Insurer labels:** maintain the insurance block in `DO NOT EDIT!`
+  cols X–AG (header row = insurer name, rows below = that insurer's
+  published numbers incl. country code), then run
+  `syncInsuranceNumbersToNeon` from the **CDR Report** editor. Re-run
+  it after every edit to the block — unsynced numbers show as
+  "(unlabeled)" in the report. Only the HMAC hash + label reach Neon.
+- **History:** run `backfillInboundCalls` from the **CDR Import**
+  editor (repeat until the log says "complete") to fill
+  `inbound_calls` from the per-day `Call_Legs_*` sheets that still
+  exist. Optionally run `exportInboundCalls` from the **CDR Report**
+  editor (schedulable) to keep the "Inbound Calls" tab as a durable,
+  pivot-friendly copy of the Neon table.
+
 **Optional (alerts):**
 
 - Populate the `Alert Config` sheet with one row per dept that should
@@ -335,9 +377,16 @@ the deployed web-app URL to land on that view:
 - `#/report/performance` — Performance Report
 - `#/report/compare` — Compare Ranges
 - `#/report/qcd` — QCD Report
+- `#/report/insights` — Insights (period comparison: team rollup + per-agent delta cards)
+- `#/report/inbound` — Inbound Report (per-dept gated; Neon-backed)
 - `#/admin/alerts` — Low Answer Rate Alerts (admin-only)
 - `#/admin/orphan-fix` — Outlier Fix (admin-only)
 - `#/admin/dept-config` — Dept Config (admin-only)
+- `#/admin/caller-lookup` — Caller Lookup (admin-only): trace every
+  inbound call from one phone number — outcome, wait/hold, and the
+  leg-by-leg journey for calls captured since the journey extension.
+  Requires `HMAC_SECRET` on the dashboard project (same value as CDR
+  Import / CDR Report) plus the `NEON_*` properties.
 
 Each report modal also carries a small `↗` button next to its
 close X — clicking it opens the same view in a new browser tab so
@@ -345,10 +394,43 @@ you can OS-tile two windows side-by-side for comparison. Requires
 the `DASHBOARD_URL` Script Property to be set (see Alerts setup
 above); the button silently hides when unset.
 
-Form state (date range, agent selection, etc.) is not yet
-serialized into the URL — each modal restores its own last-used
-state from localStorage when opened, which fills the gap for the
-common case. Richer state-in-URL is a future enhancement.
+For the four agent-comparison reports (Individual / Performance /
+Compare Ranges / Insights), the `↗` button also serializes the
+modal's **current form state** — dates, compare mode, custom prior
+window, and agent selection — into the link as `#/route?from=...&
+agents=a|b`, so the new tab (or a pasted link) restores the exact
+form primed for a one-click Generate. Generation is intentionally
+not auto-triggered (the agent roster loads asynchronously). The
+simpler forms (QCD / Missed / Inbound) still deep-link to the modal
+with their localStorage-restored state.
+
+## Plain-English layer (anti-intimidation)
+
+Three client-only affordances lower the barrier for managers who find
+the reports intimidating; none add server endpoints or cache bumps:
+
+- **Question launcher** — the Overview page opens with four
+  plain-English question chips ("How is my team doing lately?",
+  "Why did we miss calls recently?", "Is one of my agents struggling
+  or improving?", "Are callers giving up before we answer?") that
+  route into Insights / Missed Calls / Individual / QCD pre-primed
+  with a sensible window. Insights, Missed, and QCD auto-generate;
+  the Individual Report stops at the primed form because "which
+  agent?" is the user's question to answer.
+- **Metric glossary** — one central dictionary in `script.html`
+  (`METRIC_GLOSSARY_`) applies hover/tap definitions to table headers
+  and KPI labels everywhere (dotted underline = definition available).
+  Add new metric terms to the dictionary, not as inline `title=`
+  attributes, so definitions stay consistent across reports.
+- **Benchmark tints** — the two real company-wide standards (the 92%
+  answer-rate target from the Overview baseline, and the 5%
+  abandoned-% violation threshold from the QCD rule) tint KPI values
+  and abandon-% cells consistently across reports
+  (`script.html::benchValueCls_`). Dept-specific alert thresholds
+  intentionally stay with the Alerts engine.
+
+Every report's results also open with an "At a glance" block of 2–3
+plain sentences (`reportHeadline_` + per-report composers).
 
 ## DQE Historical Data freshness
 

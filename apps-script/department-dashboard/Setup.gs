@@ -19,6 +19,9 @@
  *                            DEPT_QCD_QUEUES / OVERVIEW_PARENT_OF /
  *                            TEAM_AVG_EXCLUDES; edited via the Dept
  *                            Config admin modal)
+ *   - Report Usage          (append-only telemetry of report opens --
+ *                            the INV-01 telemetry carve-out; feeds the
+ *                            report-consolidation decisions)
  *
  * Safe to re-run; existing sheets are left untouched (no data
  * overwritten).
@@ -41,6 +44,7 @@ function setup() {
   ensureSheet_(ss, SHEETS.AGENT_ALIAS_OVERRIDES, AGENT_ALIAS_OVERRIDES_HEADERS);
   ensureSheet_(ss, SHEETS.ORPHAN_FIX_LOG,        ORPHAN_FIX_LOG_HEADERS);
   ensureSheet_(ss, SHEETS.DEPT_CONFIG,           DEPT_CONFIG_HEADERS);
+  ensureSheet_(ss, SHEETS.REPORT_USAGE,          REPORT_USAGE_HEADERS);
   Logger.log('Setup complete.');
 }
 

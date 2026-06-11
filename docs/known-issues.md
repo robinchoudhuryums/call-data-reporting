@@ -74,8 +74,9 @@ for everyone.
 
 **Symptom:** ~100+ employees have parenthesized nicknames in their
 roster name (e.g. `Roman (Robin) Paulose`). The upstream CDR feed
-occasionally writes the same person's leg without the parens
-(`Roman Robin Paulose`). Pre-fix, the two variants produced split
+occasionally writes the same person's leg without the parenthetical
+(`Roman Paulose`) or with a different one (`Roman (Bob) Paulose`).
+Pre-fix, the variants produced split
 daily rows for the same agent in `DQE Historical Data` and one of
 them silently dropped out of the dashboard's roster join (INV-04
 requires exact match).
@@ -225,9 +226,9 @@ through a public function that explicitly checks `resolveUser_(email).role
 
 `setup()` creates `Access Control`, `Alert Config`, `Alert Log`,
 `Pipeline Health`, `Digest Config`, `Agent Alias Overrides`,
-`Orphan Fix Log`, and `Dept Config` sheets if they don't exist (each
-with a frozen header row). It never overwrites existing rows on any of
-the eight. Safe to re-run as many
+`Orphan Fix Log`, `Dept Config`, and `Report Usage` sheets if they
+don't exist (each with a frozen header row). It never overwrites
+existing rows on any of the nine. Safe to re-run as many
 times as you want. Keep it that way; the alerts engine assumes
 `appendAlertLog_` can blindly append without coordinating reads.
 
@@ -251,8 +252,10 @@ same time as the code change.
 | `PerformanceReport.gs` | `performance:vN:` | `v4` |
 | `CompareRangesReport.gs` | `compareRanges:vN:` | `v4` |
 | `MissedCallsReport.gs` | `missed:vN:` | `v10` |
-| `CompanyOverview.gs` | `companyOverview:vN` | `v13` |
-| `QCDReport.gs` | `qcd:vN:` | `v5` |
+| `CompanyOverview.gs` | `companyOverview:vN` | `v14` |
+| `QCDReport.gs` | `qcd:vN:` | `v6` |
+| `InboundReport.gs` | `inbound:vN:` | `v3` |
+| `InsightsReport.gs` | `insights:vN:` | `v3` |
 
 `Alerts.gs` holds no cached compute. Preview/send always re-reads the
 DQE Historical Data for the chosen date.
@@ -358,7 +361,10 @@ free-form; current writers emit:
   `apps-script/cdr-import/autoImport.js::processNewImport`
   (success at the end, failure in the outer catch block).
 - `processIntegratedHistory:CDR` / `:QPath` / `:QCD` / `:CSR` /
-  `:DQE` — one row per output type that produced > 0 rows. Added
+  `:DQE` / `:Inbound` — one row per output type that produced > 0
+  rows (`:Inbound` also logs a `failure` row when the inbound_calls
+  Neon mirror is unreachable or errors, since that table has no
+  sheet primary to fall back on — F9). Added
   so a partial failure (e.g. CDR + QPath succeed but QCD throws)
   surfaces immediately instead of being hidden inside the outer
   `autoImport` row's Notes count line. If a block fails
@@ -400,18 +406,30 @@ data bug.
 
 ## Manager Digest engine
 
-**Sheet:** `Digest Config` (`Email | Department | Cadence | Active | Notes`).
+**Sheet:** `Digest Config` (`Email | Department | Cadence | Active | Notes | Format`).
 Created by `setup()`. Schema pinned in
-`Config.gs::DIGEST_CONFIG_HEADERS`.
+`Config.gs::DIGEST_CONFIG_HEADERS`. The `Format` column (col F) was
+appended at the end of the row -- the Alert Config Skip Dates
+precedent -- so pre-existing sheets keep their 5-col header and read
+back `format='summary'` until an admin populates F.
 
 **Cadence** is `daily` (sends each weekday morning for the previous
-day's data; weekends skipped) or `weekly` (sends Monday 8 AM for
-the prior Mon-Fri window). Anything else is treated as inactive.
+day's data; weekends skipped), `weekly` (sends Monday 8 AM for
+the prior Mon-Fri window), or `monthly` (sends on the 1st, 8 AM,
+for the prior calendar month). Anything else is treated as inactive.
+
+**Format** is `summary` (the KPI-tile digest + WoW driver callout;
+default) or `insights` (the digest-Insights bridge: the SAME
+`computeInsights_` the Insights modal serves, run over the dept's
+full roster -- floaters excluded -- vs a cadence-appropriate prior
+window: daily compares to the INV-28 auto-adjacent day, weekly to
+the previous Mon-Fri, monthly to the previous calendar month).
 
 **Engine** is `Digest.gs`. Every public callable
 (`getDigestsInit`, `sendPreviewDigest`, `installDigestTriggers`,
 `uninstallDigestTriggers`) starts with `assertAdmin_`. Trigger
-entry points (`runDailyDigests_`, `runWeeklyDigests_`) end in `_`
+entry points (`runDailyDigests_`, `runWeeklyDigests_`,
+`runMonthlyDigests_`) end in `_`
 so `google.script.run` can't reach them, but `ScriptApp` dispatch
 still calls them by name.
 
@@ -454,7 +472,7 @@ Performance / Compare Ranges:
   Returns `meta` (with `queues` + `unmapped` flags), `dateLabel`,
   `totals` (sum across the dept's queues), `queueBreakdown`
   (one row per queue), `trendData` (12-month buckets matching the
-  IR/PR trend-window logic). Cache prefix `qcd:v5`.
+  IR/PR trend-window logic). Cache prefix `qcd:v6`.
 - `sendQcdReportEmail({ imageBase64, dateLabel })` — image
   export like the IR/PR/CR send-email paths.
 
@@ -560,10 +578,13 @@ best-effort -- a missing or empty sheet leaves the build's
 behavior byte-identical to pre-OrphanFix.
 
 **Cache invalidation.** `applyOrphanRename` removes the single
-fixed-key `companyOverview:v13` cache entry on success. Per-(dept,
+fixed-key Overview cache entry (via the `COMPANY_OVERVIEW_CACHE_KEY`
+constant -- currently `companyOverview:v14`) on success. Per-(dept,
 range) caches (`summary:v8`, `individual:v8`, `performance:v4`,
-etc.) are left to TTL out within 5 minutes. The Orphan Fix modal
-warns the user "may take up to 5 minutes to appear in dashboard."
+etc.) are left to TTL out within 30 minutes
+(`REPORT_CACHE_TTL_SECONDS`). The Orphan Fix modal tells the user
+the Overview updates immediately and other views may lag up to the
+cache TTL.
 
 **Error message footgun.** `assertAdmin_` is defined in
 `Util.gs` and throws "Alerts are admin-only." Non-admin calls to

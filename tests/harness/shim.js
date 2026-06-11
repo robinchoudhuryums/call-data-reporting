@@ -32,12 +32,21 @@ function createShim() {
     return Array.from(buf).map(function (b) { return b > 127 ? b - 256 : b; });
   }
 
+  function computeHmacSha256Signature(value, key) {
+    // Same signed byte[] convention as computeDigest (the production
+    // hex-rebuild masks with & 0xff, so signed-vs-unsigned round-trips).
+    const buf = crypto.createHmac('sha256', String(key)).update(String(value), 'utf8').digest();
+    return Array.from(buf).map(function (b) { return b > 127 ? b - 256 : b; });
+  }
+
   const Utilities = {
     formatDate: formatDate,
     computeDigest: computeDigest,
+    computeHmacSha256Signature: computeHmacSha256Signature,
     DigestAlgorithm: { MD5: 'MD5', SHA_256: 'SHA_256' },
     newBlob: function (data) { return { getBytes: function () { return data; }, getDataAsString: function () { return String(data); } }; },
     base64Encode: function (bytes) { return Buffer.from(bytes).toString('base64'); },
+    base64Decode: function (str) { return Array.from(Buffer.from(String(str), 'base64')); },
     parseDate: function () { throw new Error('Utilities.parseDate is not shimmed; add it if a test needs it.'); },
     sleep: function () {},
   };

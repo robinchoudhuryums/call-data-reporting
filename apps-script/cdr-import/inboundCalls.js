@@ -17,7 +17,13 @@
 // call_history_phones; null for Anonymous), dial_in_number (DID / marketing
 // line), disposition (answered|abandoned|missed) + abandon_stage (ivr|queue),
 // abandoned_on_hold + hold_seconds, wait_seconds (time-to-answer / -abandon),
-// and the queue journey (entry/final queue, num_queues, num_transfers).
+// the queue journey (entry/final queue, num_queues, num_transfers), the call
+// start time (call_start, 'HH:MM:SS' in the CDR's native timezone), and the
+// full leg-by-leg JOURNEY (ordered events: IVR/queue/agent legs with
+// timestamps, durations, talk/hold seconds, and missed/abandoned flags) --
+// the raw legs are pruned at 14 days (DeleteOldSheets), so the journey
+// column is the only durable record of the per-call path. Consumed by the
+// dashboard's Caller Lookup (CallerLookup.gs).
 //
 // buildInboundCallRecords_(rawRows) is PURE (no Apps Script globals) so it's
 // unit-tested directly. The Neon write reuses getReachableNeonConn_ +
@@ -76,6 +82,65 @@ function icIsoDate_(ms) {
   var mm = String(d.getMonth() + 1).padStart(2, '0');
   var dd = String(d.getDate()).padStart(2, '0');
   return d.getFullYear() + '-' + mm + '-' + dd;
+}
+
+// 'HH:MM:SS' (zero-padded -> lexicographically sortable within a day).
+function icIsoTime_(ms) {
+  if (isNaN(ms)) return null;
+  var d = new Date(ms);
+  var p = function (n) { return String(n).padStart(2, '0'); };
+  return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+}
+
+// Journey size caps. 40 events covers every real call shape we've seen
+// (a pathological re-ring loop gets truncated, not dropped); 80 chars
+// bounds a runaway callee-name cell.
+var IC_JOURNEY_MAX_EVENTS = 40;
+var IC_JOURNEY_NAME_MAX = 80;
+
+/**
+ * PURE. Ordered leg-by-leg journey for one call (legs pre-sorted by
+ * start). Each event: { t: 'HH:MM:SS', name, kind: queue|answer|leg,
+ * secs?, talk?, hold?, missed?, abandoned? }. 'leg' covers both IVR
+ * legs and missed agent rings -- the CDR doesn't distinguish them
+ * reliably, and the name makes it obvious to a human reader.
+ *
+ * PHI guard: a callee NAME that looks like a phone number (external
+ * forward) is masked -- `inbound_calls` carries hashes only, never raw
+ * numbers. Caller-side fields (number, CNAM name) are never included.
+ */
+function icBuildJourney_(legs) {
+  var events = [];
+  for (var i = 0; i < legs.length && events.length < IC_JOURNEY_MAX_EVENTS; i++) {
+    var l = legs[i];
+    var rawName = String(l[IC_COL.CALLEE_NAME] == null ? '' : l[IC_COL.CALLEE_NAME]).trim();
+    var isQueue = icIsQueueName_(rawName);
+    var name = rawName;
+    if (/^\+?[\d\s\-().]{7,}$/.test(name)) name = '(external number)';
+    if (!name || name.toUpperCase() === 'N/A') name = '(unknown)';
+    var talk = icTimeToSec_(l[IC_COL.TALK]);
+    var hold = icTimeToSec_(l[IC_COL.CALLEE_HOLD_DURATION]);
+    var answered = talk > 0
+      && String(l[IC_COL.ANSWERED] == null ? '' : l[IC_COL.ANSWERED]).trim() === 'Answered';
+    var startMs = icParseTs_(l[IC_COL.START]);
+    var stopMs  = icParseTs_(l[IC_COL.STOP]);
+    var ev = {
+      t: icIsoTime_(startMs),
+      name: name.slice(0, IC_JOURNEY_NAME_MAX),
+      kind: isQueue ? 'queue' : (answered ? 'answer' : 'leg'),
+    };
+    if (!isNaN(startMs) && !isNaN(stopMs)) ev.secs = Math.max(0, Math.round((stopMs - startMs) / 1000));
+    if (talk > 0) ev.talk = talk;
+    if (hold > 0) ev.hold = hold;
+    if (String(l[IC_COL.ABANDONED] == null ? '' : l[IC_COL.ABANDONED]).trim() === 'Abandoned') {
+      ev.abandoned = true;
+    } else if (!answered
+        && String(l[IC_COL.MISSED] == null ? '' : l[IC_COL.MISSED]).trim() === 'Missed') {
+      ev.missed = true;
+    }
+    events.push(ev);
+  }
+  return events;
 }
 
 // SQL literal builders for the INLINE inbound insert (mirrors the phone-child
@@ -203,6 +268,7 @@ function buildInboundCallRecords_(rawRows) {
     records.push({
       callId:          root,
       callDate:        callDate,
+      callStart:       icIsoTime_(firstStart),
       callerNumber:    callerNumber,           // null = anonymous (hashed later)
       dialIn:          dialIn,
       disposition:     disposition,
@@ -214,7 +280,8 @@ function buildInboundCallRecords_(rawRows) {
       finalQueue:      queues.length ? queues[queues.length - 1] : null,
       finalDept:       finalDept,
       numQueues:       queues.length,
-      numTransfers:    Math.max(0, queues.length - 1)
+      numTransfers:    Math.max(0, queues.length - 1),
+      journey:         icBuildJourney_(legs)
     });
   });
 
@@ -251,26 +318,34 @@ function writeInboundCallsToNeon(rawRows) {
         'abandoned_on_hold boolean, hold_seconds integer, wait_seconds integer, ' +
         'entry_queue text, final_queue text, final_dept text, ' +
         'num_queues integer, num_transfers integer, ' +
+        'call_start text, journey text, ' +
         'updated_at timestamptz NOT NULL DEFAULT now(), ' +
         'PRIMARY KEY (call_date, call_id))');
+      // Idempotent column adds for tables created before the journey
+      // capture (the CREATE above only fires on a fresh database).
+      ddl.execute('ALTER TABLE inbound_calls ADD COLUMN IF NOT EXISTS call_start text');
+      ddl.execute('ALTER TABLE inbound_calls ADD COLUMN IF NOT EXISTS journey text');
       ddl.close();
 
       var cols = 'call_date, call_id, caller_hash, dial_in_number, disposition, ' +
         'abandon_stage, abandoned_on_hold, hold_seconds, wait_seconds, entry_queue, ' +
-        'final_queue, final_dept, num_queues, num_transfers';
+        'final_queue, final_dept, num_queues, num_transfers, call_start, journey';
       var onConflict = ' ON CONFLICT (call_date, call_id) DO UPDATE SET ' +
         'caller_hash=EXCLUDED.caller_hash, dial_in_number=EXCLUDED.dial_in_number, ' +
         'disposition=EXCLUDED.disposition, abandon_stage=EXCLUDED.abandon_stage, ' +
         'abandoned_on_hold=EXCLUDED.abandoned_on_hold, hold_seconds=EXCLUDED.hold_seconds, ' +
         'wait_seconds=EXCLUDED.wait_seconds, entry_queue=EXCLUDED.entry_queue, ' +
         'final_queue=EXCLUDED.final_queue, final_dept=EXCLUDED.final_dept, ' +
-        'num_queues=EXCLUDED.num_queues, num_transfers=EXCLUDED.num_transfers, updated_at=now()';
+        'num_queues=EXCLUDED.num_queues, num_transfers=EXCLUDED.num_transfers, ' +
+        'call_start=EXCLUDED.call_start, journey=EXCLUDED.journey, updated_at=now()';
 
-      // INLINE multi-row upsert (no bound params) -- removes ~14 JDBC
+      // INLINE multi-row upsert (no bound params) -- removes ~16 JDBC
       // bind-bridge calls PER ROW (the dominant cost; ~40ms each in Apps
       // Script). caller_hash is hex, dates/ints/bools are safe, and the
-      // free-text fields are escaped via icSqlStr_, so inlining is
-      // injection-safe. ~150 rows/chunk (~24KB SQL, under the ~44KB limit).
+      // free-text fields (incl. the journey JSON string) are escaped via
+      // icSqlStr_, so inlining is injection-safe. 40 rows/chunk: the
+      // journey column adds ~0.5-1KB per row, so the old 150-row chunk
+      // would overrun the ~44KB practical statement-size limit.
       var tBuild = Date.now();
       var tuples = records.map(function (r) {
         var hash = (secret && r.callerNumber) ? cdrHashPhone_(r.callerNumber, secret) : null;
@@ -278,13 +353,15 @@ function writeInboundCallsToNeon(rawRows) {
           + ',' + icSqlStr_(r.dialIn) + ',' + icSqlStr_(r.disposition) + ',' + icSqlStr_(r.abandonStage)
           + ',' + (r.abandonedOnHold ? 'TRUE' : 'FALSE') + ',' + icSqlInt_(r.holdSeconds)
           + ',' + icSqlInt_(r.waitSeconds) + ',' + icSqlStr_(r.entryQueue) + ',' + icSqlStr_(r.finalQueue)
-          + ',' + icSqlStr_(r.finalDept) + ',' + icSqlInt_(r.numQueues) + ',' + icSqlInt_(r.numTransfers) + ')';
+          + ',' + icSqlStr_(r.finalDept) + ',' + icSqlInt_(r.numQueues) + ',' + icSqlInt_(r.numTransfers)
+          + ',' + icSqlStr_(r.callStart)
+          + ',' + icSqlStr_(r.journey && r.journey.length ? JSON.stringify(r.journey) : null) + ')';
       });
       var buildMs = Date.now() - tBuild;
 
       var tInsert = Date.now();
       var stmt = conn.createStatement();
-      var CHUNK = 150, chunks = 0;
+      var CHUNK = 40, chunks = 0;
       for (var off = 0; off < tuples.length; off += CHUNK) {
         stmt.execute('INSERT INTO inbound_calls (' + cols + ') VALUES '
           + tuples.slice(off, off + CHUNK).join(',') + onConflict);
@@ -306,4 +383,149 @@ function writeInboundCallsToNeon(rawRows) {
     Logger.log('writeInboundCallsToNeon failed (best-effort): ' + (e && e.message ? e.message : e));
     return { inserted: 0, skipped: 0, error: true };
   }
+}
+
+// ---- Historical backfill (editor-run) ----------------------------------------
+
+// Per-invocation wall-clock budget before pausing. Dates already mirrored
+// are skipped on the next run (date-level skip is safe: each date's write
+// is one transaction -- single commit in writeInboundCallsToNeon -- so a
+// timeout can't leave a half-written date behind). 15 min mirrors the
+// bulk-rebuild budget, leaving margin under the 30-min execution ceiling.
+var IC_BACKFILL_TIME_LIMIT_MS = 15 * 60 * 1000;
+
+/**
+ * EDITOR-RUN. Backfills Neon's `inbound_calls` from the per-day
+ * `Call_Legs_YYYY-MM-DD` sheets still present in THIS (source)
+ * spreadsheet. The daily integrated path only captures inbound calls
+ * going forward; this fills in history for dates imported before the
+ * inbound capture shipped (or after an outage).
+ *
+ * Behavior:
+ *   - No args: processes EVERY Call_Legs_* sheet, oldest first.
+ *   - Optional fromIso / toIso ('YYYY-MM-DD') bound the date range.
+ *   - Dates already present in `inbound_calls` are SKIPPED (one
+ *     json_agg'd SELECT DISTINCT up front -- per-row JDBC iteration is
+ *     ~0.5s/row, so the result is fetched as a single string). Pass
+ *     force=true to re-process them (idempotent via ON CONFLICT
+ *     DO UPDATE, so a force re-run refreshes rather than duplicates).
+ *   - Time-budgeted (IC_BACKFILL_TIME_LIMIT_MS): on hitting the budget
+ *     it logs progress and returns; just run it again -- completed
+ *     dates are skipped, so each run resumes where the last stopped.
+ *   - Stops early if Neon reports unreachable for a date (no point
+ *     hammering a suspended instance; re-run later).
+ *   - Best-effort Pipeline Health summary row (step 'inboundBackfill')
+ *     per run via logPipelineHealthWithFallback_ (autoImport.js, same
+ *     project), so the run is visible in the dashboard's Alerts modal.
+ *
+ * Coverage note: this can only backfill dates whose Call_Legs_* sheet
+ * still exists -- days pruned by DeleteOldSheets are gone from the
+ * sheet side and cannot be reconstructed.
+ */
+function backfillInboundCalls(fromIso, toIso, force) {
+  var startMs = Date.now();
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+
+  // Enumerate Call_Legs_* sheets in range, oldest first.
+  var candidates = [];
+  ss.getSheets().forEach(function (s) {
+    var m = s.getName().match(/^Call_Legs_(\d{4}-\d{2}-\d{2})$/i);
+    if (!m) return;
+    var iso = m[1];
+    if (fromIso && iso < fromIso) return;
+    if (toIso && iso > toIso) return;
+    candidates.push({ iso: iso, sheet: s });
+  });
+  candidates.sort(function (a, b) { return a.iso < b.iso ? -1 : 1; });
+  if (!candidates.length) {
+    Logger.log('backfillInboundCalls: no Call_Legs_* sheets found'
+      + (fromIso || toIso ? ' in range ' + (fromIso || '...') + '..' + (toIso || '...') : '') + '.');
+    return;
+  }
+
+  // Dates already mirrored (skipped unless force). Missing table /
+  // unreachable Neon -> empty set; the per-date writer creates the
+  // table and handles unreachability itself.
+  var doneDates = force ? {} : icFetchMirroredDates_();
+
+  var processed = 0, skippedDone = 0, skippedEmpty = 0, totalRecords = 0;
+  var failures = [];
+  var stoppedEarly = null;
+
+  for (var i = 0; i < candidates.length; i++) {
+    if (Date.now() - startMs > IC_BACKFILL_TIME_LIMIT_MS) {
+      stoppedEarly = 'time budget reached at ' + candidates[i].iso
+        + ' (' + (candidates.length - i) + ' sheets left) — run again to continue';
+      break;
+    }
+    var c = candidates[i];
+    if (doneDates[c.iso]) { skippedDone++; continue; }
+
+    try {
+      var legs = c.sheet.getDataRange().getDisplayValues();
+      legs.shift();   // header row
+      if (!legs.length) { skippedEmpty++; continue; }
+      var res = writeInboundCallsToNeon(legs);
+      if (res && res.error) {
+        failures.push(c.iso);
+      } else if (res && res.skipped && !res.inserted) {
+        // Neon unreachable for this date -- abort the run; re-run later.
+        stoppedEarly = 'Neon unreachable at ' + c.iso + ' — re-run once Neon is up';
+        break;
+      } else {
+        processed++;
+        totalRecords += (res && res.inserted) || 0;
+      }
+    } catch (e) {
+      failures.push(c.iso + ' (' + ((e && e.message) ? e.message : e) + ')');
+    }
+  }
+
+  var summary = 'backfillInboundCalls: ' + processed + ' date(s) written ('
+    + totalRecords + ' records), ' + skippedDone + ' already mirrored, '
+    + skippedEmpty + ' empty'
+    + (failures.length ? ', FAILED: ' + failures.join(', ') : '')
+    + (stoppedEarly ? ' | STOPPED: ' + stoppedEarly : ' | complete')
+    + ' | ' + Math.round((Date.now() - startMs) / 1000) + 's';
+  Logger.log(summary);
+
+  // Best-effort run telemetry (Pipeline Health lives in the target SS).
+  try {
+    if (typeof logPipelineHealthWithFallback_ === 'function') {
+      logPipelineHealthWithFallback_(null, {
+        step:       'inboundBackfill',
+        status:     failures.length ? 'failure' : 'success',
+        rows:       totalRecords,
+        durationMs: Date.now() - startMs,
+        notes:      summary.slice('backfillInboundCalls: '.length, 500),
+      });
+    }
+  } catch (logErr) { /* best-effort */ }
+}
+
+/**
+ * Distinct call_date values already in `inbound_calls`, as { iso: true }.
+ * One json_agg'd query + one getString (per-row JDBC is ~0.5s/row).
+ * Best-effort: missing table / unreachable Neon / any error -> {} so the
+ * backfill simply attempts every date (idempotent either way).
+ */
+function icFetchMirroredDates_() {
+  var out = {};
+  var conn = null;
+  try {
+    conn = getReachableNeonConn_();
+    if (!conn) return out;
+    var stmt = conn.createStatement();
+    var rs = stmt.executeQuery(
+      "SELECT COALESCE(json_agg(DISTINCT call_date::text), '[]')::text AS j FROM inbound_calls");
+    var json = rs.next() ? rs.getString('j') : '[]';
+    rs.close(); stmt.close();
+    JSON.parse(json || '[]').forEach(function (d) { out[String(d)] = true; });
+  } catch (e) {
+    Logger.log('icFetchMirroredDates_: ' + (e && e.message ? e.message : e)
+      + ' — treating no dates as mirrored.');
+  } finally {
+    if (conn) { try { conn.close(); } catch (ce) {} }
+  }
+  return out;
 }

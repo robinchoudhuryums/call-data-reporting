@@ -98,8 +98,14 @@ the exact match stays reliable across CDR feed spelling variations.
 - Paren-variant case: `buildDQEHistoricalData` reads the roster once
   per build; any incoming CDR row whose paren-stripped name matches
   exactly one roster entry is rewritten to the roster's canonical
-  form. So roster `Roman (Robin) Paulose` consolidates an incoming
-  `Roman Robin Paulose`. See `docs/known-issues.md` → "Roster-driven
+  form. The strip removes the PARENTHETICAL (parens + contents), so
+  roster `Roman (Robin) Paulose` consolidates an incoming
+  `Roman Paulose` or `Roman (Bob) Paulose` — both strip to
+  `Roman Paulose`, the roster entry's stripped form. A name with an
+  EXTRA word, like `Roman Robin Paulose`, does NOT consolidate — it
+  strips to itself, which matches no roster entry, and is written
+  as-is (it surfaces as an orphan for the Orphan Fix modal). See
+  `docs/known-issues.md` → "Roster-driven
   name canonicalization" for details + edge cases.
 - The Department Dashboard surfaces orphans in its Diagnostics panel
   (and via the `whyNoMatches_` editor diagnostic) — check there first
@@ -194,27 +200,31 @@ Per-row aggregates above; the totals row uses the same methods:
 
 ## Dashboard scope semantics
 
-The scope toggle in the dashboard controls how rows are matched to a
-department:
+Scope controls how rows are matched to a department. Three scopes
+exist internally:
 
 | Scope | Rule |
 |---|---|
-| **Roster** (default) | Include rows where `Agent Name ∈ dept_roster_names` |
+| **Roster** | Include rows where `Agent Name ∈ dept_roster_names` |
 | **Queue** | Include rows where `row.queueExtensions ∩ dept_queue_extensions ≠ ∅` |
-| **Both** | Union of the two |
+| **Both** (production) | Union of the two |
 
-`dept_queue_extensions` is the union of all queue extensions appearing
-in the dept's roster cells (parsed via the format above).
+`dept_queue_extensions` is the effective queue-ext set for the dept
+(`getDeptQueueExts_` in Data.gs: the Dept Config / constant override
+when set, else derived from the dept's roster agents' col-D values
+across all history).
 
-Rows matched via Queue but not via Roster get a `(queue-only)` tag next
-to the agent name in the table. They also appear in the Diagnostics
-panel under "Agents matched only via queue".
-
-Default scope is **Both** (since Phase D, commit d631719) — the agent
-table surfaces queue-only floaters by default, though dept-level totals
-still exclude them (INV-53). The toggle remains for parallel-run
-validation. The pre-Phase-D default was **Roster** (strict match to the
-dept roster, mirroring the legacy DQE Report).
+**The user-facing scope toggle was retired in the redesign cleanup
+(commit 53d0560)** after the Phase D parallel-run validation: the
+public RPCs (`getDepartmentSummary`, `getMissedCallsReport`) lock
+scope to `both`. Rows matched via Queue but not via Roster render a
+`QUEUE` Source chip (with their other-dept roster homes) and are
+excluded from dept totals and team averages (INV-53); they also
+appear in the Diagnostics panel under "Agents matched only via
+queue". The internal `scope` parameter on `computeSummary_` is
+preserved because `Digest.gs` still passes `'roster'` for the
+manager-digest path; historical roster-only numbers are reproducible
+from a `both` response by summing only `matchedViaRoster=true` rows.
 
 ## Auth and access
 
@@ -428,8 +438,10 @@ mirrors it; if the two ever diverge, INV-30 wins.
 | `PerformanceReport.gs` | `performance:vN:` | `v4` |
 | `CompareRangesReport.gs` | `compareRanges:vN:` | `v4` |
 | `MissedCallsReport.gs` | `missed:vN:` | `v10` |
-| `CompanyOverview.gs` | `companyOverview:vN` | `v13` |
-| `QCDReport.gs` | `qcd:vN:` | `v5` |
+| `CompanyOverview.gs` | `companyOverview:vN` | `v14` |
+| `QCDReport.gs` | `qcd:vN:` | `v6` |
+| `InboundReport.gs` | `inbound:vN:` | `v3` |
+| `InsightsReport.gs` | `insights:vN:` | `v3` |
 
 `Alerts.gs` holds no cached compute — preview / send always re-reads
 the source sheet for the chosen date.
