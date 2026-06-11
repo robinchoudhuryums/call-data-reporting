@@ -165,6 +165,11 @@ scripts/deploy.sh apps-script/cdr-import <cdr-import-deployment-id>
   weekday mornings for the previous day; weekly fires Monday morning
   for the prior Mon&ndash;Fri window; monthly fires on the 1st for
   the prior calendar month.
+- When `DASHBOARD_URL` is set, every digest's button deep-links into
+  the **Insights report pre-primed to that digest's exact view**
+  (window, full roster, and — for weekly/monthly — the matching
+  custom prior window, via the state-in-URL share format), so the
+  recipient lands one Generate click from the full breakdown.
 
 **Optional (orphan fix):**
 

@@ -80,6 +80,27 @@ test('digest: readDigestConfig_ parses Format (col F) with the legacy 5-col fall
   assert.equal(cfg[1].format,  'summary');                    // empty F -> default
 });
 
+test('digest: deep link primes the Insights report in the share-state format', function () {
+  install([]);
+  // Unset DASHBOARD_URL -> '' (caller falls back to the generic link path).
+  delete h.state.props.DASHBOARD_URL;
+  assert.equal(h.call('digestDeepLink_', 'Alpha', '2026-05-01', '2026-05-31', 'monthly'), '');
+
+  h.state.props.DASHBOARD_URL = 'https://script.google.com/a/macros/x/exec#old';
+  const link = h.call('digestDeepLink_', 'Alpha', '2026-05-01', '2026-05-31', 'monthly');
+  // Existing fragment stripped; share-state route + params appended.
+  assert.ok(link.indexOf('/exec#/report/insights?') !== -1, 'route present, old fragment stripped');
+  assert.ok(link.indexOf('from=2026-05-01') !== -1 && link.indexOf('to=2026-05-31') !== -1);
+  assert.ok(link.indexOf('agents=' + encodeURIComponent('Anna|Ben')) !== -1, 'full roster selection');
+  // Monthly cadence -> custom prior window = previous calendar month.
+  assert.ok(link.indexOf('mode=custom') !== -1);
+  assert.ok(link.indexOf('pfrom=2026-04-01') !== -1 && link.indexOf('pto=2026-04-30') !== -1);
+
+  // Daily cadence: INV-28 auto-adjacent -> no custom prior params.
+  const daily = h.call('digestDeepLink_', 'Alpha', '2026-05-12', '2026-05-12', 'daily');
+  assert.ok(daily.indexOf('mode=custom') === -1);
+});
+
 test('digest: insights-format body carries the rollup + per-agent deltas vs the prior month', function () {
   install([
     // Current window: May 2026.

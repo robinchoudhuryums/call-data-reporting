@@ -2240,6 +2240,210 @@
     });
   }
 
+  // -- Answer-first headlines (anti-intimidation layer) ------------------
+  // Every report's results open with 2-3 PLAIN-ENGLISH sentences composed
+  // client-side from the payload it already received (no server change,
+  // no cache bump). The charts/tables stay; the headline just answers
+  // "what does this say?" before the manager has to read a number. Each
+  // composer guards its no-data case; an empty sentence list hides the
+  // block entirely.
+
+  /**
+   * Renders `sentences` (pre-escaped HTML strings) into a headline block
+   * at the top of `containerId`'s results -- inserted right after the
+   * `.ir-results-header` (or as the first child when there isn't one,
+   * e.g. the Missed Calls modal body). Creates the element on first use.
+   */
+  function reportHeadline_(id, containerId, sentences) {
+    const container = $(containerId);
+    if (!container) return;
+    let el = $(id);
+    if (!el) {
+      el = document.createElement('div');
+      el.id = id;
+      el.className = 'report-headline';
+      const header = container.querySelector('.ir-results-header');
+      if (header) container.insertBefore(el, header.nextSibling);
+      // Anchor without a results header (e.g. the Missed modal's
+      // summary strip): place the headline just above the anchor.
+      else container.parentNode.insertBefore(el, container);
+    }
+    const lines = (sentences || []).filter(function (s) { return !!s; });
+    if (!lines.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
+    el.style.display = '';
+    el.innerHTML = '<div class="report-headline-kicker">At a glance</div>'
+      + lines.map(function (s) { return '<div class="report-headline-line">' + s + '</div>'; }).join('');
+  }
+
+  /**
+   * "…, up 8.2% vs the prior period" phrase from a deltaBlock. Empty
+   * string when there's no meaningful prior; "about the same" inside
+   * the noise band. pctPoints deltas read as "points".
+   */
+  function headlineDeltaPhrase_(stat) {
+    if (!stat || (Number(stat.prev || 0) === 0 && Number(stat.val || 0) === 0)) return '';
+    const dp = Number(stat.deltaPct || 0);
+    if (Math.abs(dp) < 0.05) return ', about the same as the prior period';
+    return ', ' + (dp > 0 ? 'up ' : 'down ') + Math.abs(dp).toFixed(1)
+         + (stat.type === 'pctPoints' ? ' points' : '%') + ' vs the prior period';
+  }
+
+  function headlineName_(n) { return '<strong>' + escapeHtml(n) + '</strong>'; }
+
+  function insHeadline_(data) {
+    const t = data.teamStats || {};
+    if (!Number((t.rung || {}).val) && !Number((t.rung || {}).prev)) {
+      return ['No call activity for the selected agents in this range.'];
+    }
+    const s = [];
+    s.push('Your team answered <strong>' + escapeHtml(String((t.answered || {}).formatted || 0))
+      + '</strong> of ' + escapeHtml(String((t.rung || {}).formatted || 0))
+      + ' rung calls (<strong>' + escapeHtml(String((t.pct || {}).formatted || '0%')) + '</strong>'
+      + headlineDeltaPhrase_(t.pct) + ').');
+    const cards = data.agentData || [];
+    if (cards.length > 1) {
+      let top = null, bottom = null;
+      cards.forEach(function (c) {
+        const score = deltaImprovementScore_(c.metrics);
+        if (!top || score > top.score) top = { name: c.name, score: score };
+        if (!bottom || score < bottom.score) bottom = { name: c.name, score: score };
+      });
+      const bits = [];
+      if (top && top.score > 5) bits.push(headlineName_(top.name) + ' improved the most');
+      if (bottom && bottom.score < -5 && (!top || bottom.name !== top.name)) {
+        bits.push(headlineName_(bottom.name) + ' slipped the most');
+      }
+      if (bits.length) s.push(bits.join('; ') + ' vs the prior window.');
+      const regressed = cards.filter(function (c) { return deltaClassify_(c.metrics) === 'regressed'; }).length;
+      if (regressed > 0) {
+        s.push(regressed + ' agent' + (regressed === 1 ? '' : 's')
+          + ' regressed overall — their cards carry the orange edge below.');
+      }
+    }
+    return s.slice(0, 3);
+  }
+
+  function prHeadline_(data) {
+    const t = data.teamStats || {};
+    if (!Number((t.rung || {}).val) && !Number((t.rung || {}).prev)) {
+      return ['No call activity for the selected agents in this range.'];
+    }
+    const s = [];
+    s.push('Your team answered <strong>' + escapeHtml(String((t.answered || {}).formatted || 0))
+      + '</strong> of ' + escapeHtml(String((t.rung || {}).formatted || 0))
+      + ' rung calls (<strong>' + escapeHtml(String((t.pct || {}).formatted || '0%')) + '</strong>'
+      + headlineDeltaPhrase_(t.pct) + ').');
+    const ins = data.teamInsights || [];
+    if (ins.length && ins[0].text) s.push(escapeHtml(ins[0].text));
+    return s;
+  }
+
+  function crHeadline_(data) {
+    const t = data.teamStats || {};
+    const p2 = (t.answered || {}).formatted, p1 = (t.answered || {}).prevFormatted;
+    if (p2 == null) return [];
+    const s = [];
+    s.push('Period 2: <strong>' + escapeHtml(String(p2)) + '</strong> answered ('
+      + escapeHtml(String((t.pct || {}).formatted || '0%')) + ') vs Period 1: '
+      + escapeHtml(String(p1 == null ? '0' : p1)) + ' ('
+      + escapeHtml(String((t.pct || {}).prevFormatted || '0%')) + ').');
+    const cards = data.agentData || [];
+    if (cards.length > 1) {
+      let up = 0, down = 0, flat = 0;
+      cards.forEach(function (a) {
+        const cls = crClassifyAgent_(a);
+        if (cls === 'improved') up++; else if (cls === 'regressed') down++; else flat++;
+      });
+      s.push(up + ' agent' + (up === 1 ? '' : 's') + ' improved, ' + down + ' regressed, and '
+        + flat + ' showed little change between the two periods.');
+    }
+    return s;
+  }
+
+  function irHeadline_(data) {
+    const cards = data.summaryData || [];
+    if (!cards.length) return [];
+    if (data.mode !== 'comparison') {
+      const a = cards[0];
+      const raw = a.raw || {};
+      if (!raw.rung) return [headlineName_(a.name) + ' had no rung calls in this range.'];
+      const teamPct = (data.teamAvg && data.teamAvg.raw && data.teamAvg.raw.pctAnswered) || 0;
+      const diff = (raw.pct || 0) - teamPct;
+      let vsTeam = '';
+      if (teamPct > 0) {
+        vsTeam = Math.abs(diff) < 1
+          ? ', right around the team average'
+          : ', about ' + Math.abs(diff).toFixed(1) + ' points '
+            + (diff > 0 ? 'above' : 'below') + ' the team average ('
+            + teamPct.toFixed(1) + '%)';
+      }
+      const s = [headlineName_(a.name) + ' answered <strong>' + escapeHtml(String(a.stats.answered))
+        + '</strong> of ' + escapeHtml(String(a.stats.rung)) + ' rung calls (<strong>'
+        + escapeHtml(String(a.stats.pct)) + '</strong>' + vsTeam + ').'];
+      const ins = a.insights || [];
+      if (ins.length && ins[0].text) s.push(escapeHtml(ins[0].text));
+      return s;
+    }
+    let top = cards[0];
+    cards.forEach(function (c) { if ((c.raw || {}).answered > (top.raw || {}).answered) top = c; });
+    return ['Comparing ' + cards.length + ' agents. ' + headlineName_(top.name)
+      + ' answered the most calls (<strong>' + escapeHtml(String(top.stats.answered))
+      + '</strong>, ' + escapeHtml(String(top.share.answered)) + ' of the group\'s total).'];
+  }
+
+  function missedHeadline_(meta) {
+    if (!meta) return [];
+    const missed = Number(meta.totalMissed || 0);
+    const abandoned = Number(meta.abandonedCallCount || 0);
+    const noRing = Number(meta.noRingAbandonCount || 0);
+    if (!missed && !abandoned) {
+      return ['No missed calls in this range — every rung call was picked up.'];
+    }
+    const s = ['Your team missed <strong>' + fmtNumber(missed) + '</strong> ring'
+      + (missed === 1 ? '' : 's') + ' in this range.'];
+    if (abandoned > 0) {
+      s.push('<strong>' + fmtNumber(abandoned) + '</strong> call' + (abandoned === 1 ? '' : 's')
+        + ' were abandoned — the caller hung up before anyone answered'
+        + (noRing > 0 ? ', including ' + fmtNumber(noRing) + ' that never rang any agent' : '') + '.');
+    }
+    return s;
+  }
+
+  function qcdHeadline_(data) {
+    const t = data.totals || {};
+    if (!Number(t.totalCalls)) return ['No queue activity in this range.'];
+    const pct = Number(t.abandonedPct || 0);
+    const s = ['<strong>' + escapeHtml(String(t.abandonedPctStr || '0%')) + '</strong> of callers abandoned before being answered ('
+      + fmtNumber(t.abandoned || 0) + ' of ' + fmtNumber(t.totalCalls || 0) + ' calls) — '
+      + (pct >= 5 ? 'above' : 'within') + ' the 5% violation threshold.'];
+    if (Number(t.violations) > 0) {
+      s.push('<strong>' + fmtNumber(t.violations) + '</strong> violation day'
+        + (Number(t.violations) === 1 ? '' : 's') + ' so far this month.');
+    }
+    return s;
+  }
+
+  function inboundHeadline_(data) {
+    const k = data.kpis || {}, p = data.kpisPrior || {};
+    const meta = data.meta || {};
+    if (!Number(k.total)) return ['No inbound calls in this range.'];
+    const ratePhrase = headlineDeltaPhrase_({
+      val: k.answerRate, prev: p.answerRate,
+      deltaPct: (Number(k.answerRate) || 0) - (Number(p.answerRate) || 0),
+      type: 'pctPoints',
+    });
+    const s = ['You received <strong>' + fmtNumber(k.total) + '</strong> inbound calls; <strong>'
+      + escapeHtml(String(k.answerRate || 0)) + '%</strong> were answered' + ratePhrase + '.'];
+    if (Number(k.abandonedOnHold) > 0) {
+      s.push(fmtNumber(k.abandonedOnHold) + ' caller' + (Number(k.abandonedOnHold) === 1 ? '' : 's')
+        + ' hung up while on hold.');
+    }
+    if (meta.companyView && Number(k.abandonedIvr) > 0) {
+      s.push(fmtNumber(k.abandonedIvr) + ' abandoned in the IVR before reaching any queue.');
+    }
+    return s.slice(0, 3);
+  }
+
   // -- Missed Calls Report modal -----------------------------------------
   // Opens with the dashboard's current dept/from/to/scope. Fetches via
   // google.script.run.getMissedCallsReport, renders a Chart.js bar chart
@@ -2348,6 +2552,7 @@
     lastMissedData = data;
 
     const m = data.meta || {};
+    reportHeadline_('missed-headline', 'missed-summary', missedHeadline_(m));
     const summaryParts = [
       '<span class="label">Department:</span><span class="val">' + escapeHtml(m.department || '') + '</span>',
       '<span class="label">Range:</span><span class="val">' + escapeHtml(m.from || '') + ' to ' + escapeHtml(m.to || '') + '</span>',
@@ -4150,6 +4355,7 @@
     // Restore the user's last-viewed chart tab (defaults to
     // Volume on first visit). Persisted in prefs.
     irActivateChartTab_();
+    reportHeadline_('ir-headline', 'individual-results', irHeadline_(data));
     irRenderSummary(data.summaryData, data.teamAvg);
     irRenderCharts(data);
   }
@@ -5638,6 +5844,7 @@
     showPrResults();
     prSetResultsStatus('');
     prResetTabs_();
+    reportHeadline_('pr-headline', 'performance-results', prHeadline_(data));
     prRenderSubsetHint_(data.meta);
     prRenderTeamInsights_(data.teamInsights);
     prRenderKpis_(data.teamStats, data.trendData);
@@ -7013,6 +7220,7 @@
     showCrResults();
     crCloseEditPopover_();
     crSetResultsStatus('');
+    reportHeadline_('cr-headline', 'compare-results', crHeadline_(data));
     crRenderLengthWarning_(data.meta);
     crRenderTeamInsights_(data.teamInsights);
     crRenderTeamTiles_(data.teamStats, data.meta);
@@ -9408,6 +9616,7 @@
     ].join('');
 
     insRenderLengthWarning_(data.meta);
+    reportHeadline_('ins-headline', 'insights-results', insHeadline_(data));
     insRenderTrendChart_(data);
     insRenderAgentCards_(data.agentData || [], data.meta, data.teamStats);
   }
@@ -10305,6 +10514,8 @@
         + ' — map its A_Q_* queue names in Dept Config (admin) to populate this view.');
     }
 
+    reportHeadline_('inbound-headline', 'inbound-results', inboundHeadline_(data));
+
     const k = data.kpis || {};
     const p = data.kpisPrior || {};
     const tiles = [
@@ -10608,6 +10819,7 @@
   }
 
   function qcdRenderReport_(data) {
+    reportHeadline_('qcd-headline', 'qcd-results', qcdHeadline_(data));
     qcdLastData = data;
     $('qcd-results-title').textContent = 'QCD Report';
     $('qcd-results-date').textContent  = '(' + (data.dateLabel || '') + ')';

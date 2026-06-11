@@ -286,8 +286,17 @@ function sendDigestEmail_(opts) {
     coreHtml = digestSummaryHtml_(dept, opts.fromIso, opts.toIso);
   }
 
-  const dashboardUrl = PropertiesService.getScriptProperties()
-    .getProperty('DASHBOARD_URL') || '';
+  // Deep link into the dashboard pre-primed to this digest's exact view
+  // (the state-in-URL share format): the Insights report with this
+  // window, the full roster selected, and -- for weekly/monthly -- the
+  // cadence-appropriate custom prior window. The intimidation hurdle is
+  // highest at an empty report form; this link skips it entirely. Falls
+  // back to the bare dashboard URL ('' when DASHBOARD_URL is unset, in
+  // which case no button renders -- same degradation as before).
+  const deepLink = digestDeepLink_(dept, opts.fromIso, opts.toIso, opts.cadence);
+  const dashboardUrl = deepLink
+    || PropertiesService.getScriptProperties().getProperty('DASHBOARD_URL') || '';
+  const linkLabel = deepLink ? 'See the full breakdown in the dashboard' : 'Open Dashboard';
 
   const previewBanner = opts.isPreview
     ? ('<div style="background:#FEF3C7;border-left:4px solid #D97706;padding:10px 14px;border-radius:4px;margin-bottom:12px;">'
@@ -314,7 +323,7 @@ function sendDigestEmail_(opts) {
     +   '</div>'
     +   coreHtml
     +   (dashboardUrl
-        ? '<div style="margin-top: 16px;"><a href="' + escapeHtmlServer_(dashboardUrl) + '" style="display: inline-block; background: #1d4ed8; color: #fff; padding: 8px 16px; border-radius: 6px; text-decoration: none; font-size: 13px; font-weight: 600;">Open Dashboard</a></div>'
+        ? '<div style="margin-top: 16px;"><a href="' + escapeHtmlServer_(dashboardUrl) + '" style="display: inline-block; background: #1d4ed8; color: #fff; padding: 8px 16px; border-radius: 6px; text-decoration: none; font-size: 13px; font-weight: 600;">' + escapeHtmlServer_(linkLabel) + '</a></div>'
         : '')
     +   '<div style="margin-top: 24px; font-size: 11px; color: #9ca3af;">'
     +     'Sent by the Department Dashboard digest engine. To stop receiving these, ask an admin to remove your row from the "Digest Config" sheet (or set Active=FALSE).'
@@ -350,7 +359,18 @@ function digestSummaryHtml_(dept, fromIso, toIso) {
   // Anchored on the digest window's end date; best-effort (null on a
   // quiet dept or any error -> no callout rendered).
   const wow = computeDigestWowDriver_(dept, toIso);
-  const wowNarrative = digestWowNarrative_(wow);
+  let wowNarrative = digestWowNarrative_(wow);
+  // Answer-first fallback: on a quiet week (no notable WoW driver) the
+  // digest still ends with one plain-language takeaway, never bare tiles.
+  if (!wowNarrative && Number(totals.totalRung) > 0) {
+    wowNarrative =
+        '<div style="margin:16px 0;padding:12px 16px;background:#EFF6FF;border-left:3px solid #1d4ed8;'
+      +   'border-radius:4px;font-size:14px;color:#1f2937;line-height:1.5;">'
+      +   'The team answered ' + escapeHtmlServer_(ansStr) + ' of ' + escapeHtmlServer_(rungStr)
+      +   ' rung calls (' + escapeHtmlServer_(pctStr) + ') across ' + stats.rows + ' agent'
+      +   (stats.rows === 1 ? '' : 's') + ' — no notable week-over-week shift.'
+      + '</div>';
+  }
 
   return '<div style="margin: 20px 0; padding: 20px; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px;">'
     +     '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;">'
@@ -397,6 +417,52 @@ function digestInsightsPrior_(cadence, fromIso, toIso) {
   return null;   // daily: INV-28 auto-adjacent = the previous day
 }
 
+/**
+ * Builds the state-in-URL deep link this digest's button targets: the
+ * Insights report primed with the digest window, the dept's full
+ * roster selected, and (weekly/monthly) the cadence-appropriate custom
+ * prior window -- the same `#/route?from=...&agents=a|b` format the
+ * dashboard's SHARE_STATE_ registry reads. Returns '' when
+ * DASHBOARD_URL is unset (caller falls back to the old generic link).
+ */
+function digestDeepLink_(dept, fromIso, toIso, cadence) {
+  const base = String(PropertiesService.getScriptProperties()
+    .getProperty('DASHBOARD_URL') || '').trim();
+  if (!base) return '';
+  const roster = getRosterForDepartment_(dept);
+  const parts = ['from=' + fromIso, 'to=' + toIso];
+  if (roster.names.length) {
+    parts.push('agents=' + encodeURIComponent(roster.names.join('|')));
+  }
+  const prior = digestInsightsPrior_(cadence, fromIso, toIso);
+  if (prior) {
+    parts.push('mode=custom', 'pfrom=' + prior.from, 'pto=' + prior.to);
+  }
+  return base.split('#')[0] + '#/report/insights?' + parts.join('&');
+}
+
+/**
+ * One narrated takeaway sentence from an Insights teamStats block --
+ * the digest's answer-first line. Empty string on a no-activity window.
+ */
+function digestTakeaway_(teamStats) {
+  const t = teamStats || {};
+  const rung = (t.rung && t.rung.val) || 0;
+  const prevRung = (t.rung && t.rung.prev) || 0;
+  if (!rung && !prevRung) return '';
+  const pct = t.pct || {};
+  const dp = Number(pct.deltaPct || 0);
+  let phrase = '';
+  if (prevRung > 0) {
+    phrase = Math.abs(dp) < 0.05
+      ? ', about the same as the prior period'
+      : ', ' + (dp > 0 ? 'up ' : 'down ') + Math.abs(dp).toFixed(1) + ' points vs the prior period';
+  }
+  return 'The team answered ' + ((t.answered && t.answered.formatted) || 0)
+       + ' of ' + ((t.rung && t.rung.formatted) || 0) + ' rung calls ('
+       + ((pct.formatted) || '0%') + phrase + ').';
+}
+
 /** Inline-styled delta span for the insights digest (sage up / amber down by valence). */
 function digestDeltaHtml_(stat, valence) {
   const s = stat || { deltaPct: 0, type: 'volume' };
@@ -434,6 +500,14 @@ function digestInsightsHtml_(dept, fromIso, toIso, cadence) {
                                 prior ? prior.from : '', prior ? prior.to : '');
   const t = data.teamStats || {};
 
+  // Answer-first takeaway line before any tile (anti-intimidation).
+  const takeaway = digestTakeaway_(t);
+  const takeawayHtml = takeaway
+    ? '<div style="margin:16px 0 0;padding:12px 16px;background:#EFF6FF;border-left:3px solid #1d4ed8;'
+      + 'border-radius:4px;font-size:14px;color:#1f2937;line-height:1.5;">'
+      + escapeHtmlServer_(takeaway) + '</div>'
+    : '';
+
   const tile = function (label, stat, valence) {
     return '<td style="padding:10px 12px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;text-align:center;">'
       + '<div style="font-size:10px;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;font-weight:700;">'
@@ -459,7 +533,8 @@ function digestInsightsHtml_(dept, fromIso, toIso, cadence) {
       + '</tr>';
   }).join('');
 
-  return '<div style="margin: 20px 0; padding: 20px; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px;">'
+  return takeawayHtml
+    + '<div style="margin: 20px 0; padding: 20px; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px;">'
     +   '<div style="font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;font-weight:700;margin-bottom:8px;">'
     +     'Department rollup &middot; vs ' + escapeHtmlServer_(data.priorDateLabel || 'prior period')
     +   '</div>'
