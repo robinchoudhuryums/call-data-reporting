@@ -440,7 +440,7 @@ mirrors it; if the two ever diverge, INV-30 wins.
 | `MissedCallsReport.gs` | `missed:vN:` | `v10` |
 | `CompanyOverview.gs` | `companyOverview:vN` | `v14` |
 | `QCDReport.gs` | `qcd:vN:` | `v6` |
-| `InboundReport.gs` | `inbound:vN:` | `v2` |
+| `InboundReport.gs` | `inbound:vN:` | `v3` |
 | `InsightsReport.gs` | `insights:vN:` | `v3` |
 
 `Alerts.gs` holds no cached compute — preview / send always re-reads

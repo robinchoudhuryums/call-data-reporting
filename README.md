@@ -258,11 +258,18 @@ scripts/deploy.sh apps-script/cdr-import <cdr-import-deployment-id>
   callers carry a null hash). Requires `HMAC_SECRET` + `NEON_*` Script
   Properties in the **CDR Import** project; skipped cleanly when
   unset.
-- The admin-only **Inbound** tab (`#/report/inbound`) reads that table
-  directly from the dashboard project (needs the dashboard's `NEON_*`
-  props + `script.external_request` scope, same as the F1 read-back).
-  It renders an "unavailable" state when Neon is unreachable — there
-  is no sheet fallback for this report.
+- The **Inbound** tab (`#/report/inbound`) reads that table directly
+  from the dashboard project (needs the dashboard's `NEON_*` props +
+  `script.external_request` scope, same as the F1 read-back). It is
+  per-dept gated like the other reports: managers see their own
+  department's slice (calls attributed by entry queue through the same
+  dept → queue map QCD uses; an answered call abandoned on hold
+  belongs to the answering department), while admins can also pick
+  "All departments" — the only view that includes the unattributable
+  "Abandoned in IVR" bucket. Clicking an insurer row expands its
+  daily volume / abandon-rate trend. It renders an "unavailable"
+  state when Neon is unreachable — there is no sheet fallback for
+  this report.
 - **Insurer labels:** maintain the insurance block in `DO NOT EDIT!`
   cols X–AG (header row = insurer name, rows below = that insurer's
   published numbers incl. country code), then run
@@ -363,7 +370,7 @@ the deployed web-app URL to land on that view:
 - `#/report/compare` — Compare Ranges
 - `#/report/qcd` — QCD Report
 - `#/report/insights` — Insights (period comparison: team rollup + per-agent delta cards)
-- `#/report/inbound` — Inbound Report (admin-only; Neon-backed)
+- `#/report/inbound` — Inbound Report (per-dept gated; Neon-backed)
 - `#/admin/alerts` — Low Answer Rate Alerts (admin-only)
 - `#/admin/orphan-fix` — Outlier Fix (admin-only)
 - `#/admin/dept-config` — Dept Config (admin-only)

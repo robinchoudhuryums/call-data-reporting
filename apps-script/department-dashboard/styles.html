@@ -2519,6 +2519,26 @@
     font-variant-numeric: tabular-nums;
     letter-spacing: 0;
   }
+
+  /* Inbound report: per-insurer daily drill-down (click-to-expand row). */
+  .inbound-insurer-row { cursor: pointer; }
+  .inbound-insurer-row:hover td { background: var(--paper-2); }
+  .inbound-drill-chevron {
+    display: inline-block;
+    font-size: 10px;
+    color: var(--muted);
+    transition: transform 0.12s ease;
+  }
+  .inbound-insurer-row.drill-open .inbound-drill-chevron { transform: rotate(90deg); }
+  .inbound-drill-row > td {
+    background: var(--paper-2);
+    padding: 10px 14px 14px;
+  }
+  .inbound-drill-canvas-wrap {
+    position: relative;
+    height: 180px;
+    margin-top: 6px;
+  }
   .ins-card-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
   .ins-card-name { font-family: var(--display); font-weight: 600; font-size: 14px; color: var(--ink); }
   .ins-card-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 10px; }

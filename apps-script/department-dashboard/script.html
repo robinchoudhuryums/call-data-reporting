@@ -9707,6 +9707,10 @@
   // volume + answered/abandoned/on-hold by insurer / dial-in / entry queue.
   // ===================================================================
   let inboundLastData = null;
+  let inboundExpandedInsurer = null;   // accordion: at most one open row
+  let inboundDrillChart = null;
+  let inboundDrillMetric = 'calls';    // 'calls' | 'rate'
+  let inboundDrillCache = {};          // insurer -> daily[] (cleared per render)
 
   function initInboundReport() {
     const btn = $('inbound-report-btn');
@@ -9724,6 +9728,7 @@
       document.addEventListener('keydown', onKeyDown);
       inboundShowForm();
       inboundSetDefaultDates();
+      inboundEnsureDeptOptions_();
     }
     function closeModal() {
       modal.style.display = 'none';
@@ -9783,11 +9788,33 @@
     $('inbound-to').value   = inboundIsoOf_(e);
   }
 
+  /**
+   * Dept scope options. Managers are pinned to their own dept (the
+   * server enforces this regardless); admins get "All departments"
+   * (the company-wide view incl. the IVR bucket) plus every dept.
+   */
+  function inboundEnsureDeptOptions_() {
+    const sel = $('inbound-dept');
+    if (!sel || sel.options.length) return;
+    if (USER.role === 'admin') {
+      const opts = ['<option value="">All departments</option>'];
+      (USER.departments || []).forEach(function (d) {
+        opts.push('<option value="' + escapeHtml(d) + '">' + escapeHtml(d) + '</option>');
+      });
+      sel.innerHTML = opts.join('');
+    } else {
+      const d = USER.department || '';
+      sel.innerHTML = '<option value="' + escapeHtml(d) + '">' + escapeHtml(d) + '</option>';
+      sel.disabled = true;
+    }
+  }
+
   function runInboundReport() {
     const from = $('inbound-from').value, to = $('inbound-to').value;
     if (!from || !to) { inboundSetError('Pick a start and end date.'); return; }
     if (from > to) { inboundSetError('Start date must be on or before end date.'); return; }
     inboundSetError('');
+    const dept = $('inbound-dept') ? $('inbound-dept').value : '';
     const gen = $('inbound-generate-btn'); const prev = gen.textContent;
     gen.disabled = true; gen.textContent = 'Generating…';
     google.script.run
@@ -9799,7 +9826,7 @@
         gen.disabled = false; gen.textContent = prev;
         inboundSetError('Error: ' + (err && err.message ? err.message : String(err)));
       })
-      .getInboundReport({ from: from, to: to });
+      .getInboundReport({ from: from, to: to, department: dept });
   }
 
   function inboundKpiTile_(label, value, cap, deltaHtml) {
@@ -9868,10 +9895,175 @@
     }).join('');
   }
 
+  /**
+   * The insurer table: same columns as inboundRenderTable_ plus a
+   * click-to-expand daily drill-down per row (decision A: fetched on
+   * demand via getInboundInsurerDaily; at most one row open). The
+   * expansion carries a Volume / Abandon % tab strip + a line chart.
+   */
+  function inboundRenderInsurerTable_(rows) {
+    const tbody = $('inbound-insurer-tbody'); if (!tbody) return;
+    inboundCollapseDrill_();
+    if (!rows || !rows.length) {
+      tbody.innerHTML = '<tr><td colspan="7" class="al-empty">No data in range.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = rows.map(function (r) {
+      return '<tr class="inbound-insurer-row" data-insurer="' + escapeHtml(r.label) + '" tabindex="0" role="button"'
+        + ' title="Show this insurer’s daily trend">'
+        + '<td><span class="inbound-drill-chevron" aria-hidden="true">&#9656;</span> ' + escapeHtml(r.label) + '</td>'
+        + '<td class="num">' + fmtNumber(r.calls) + '</td>'
+        + '<td class="num">' + fmtNumber(r.answered) + '</td>'
+        + '<td class="num">' + fmtNumber(r.abandoned) + '</td>'
+        + '<td class="num">' + inboundAbandonPct_(r) + '</td>'
+        + '<td class="num">' + fmtNumber(r.on_hold) + '</td>'
+        + '<td class="num">' + fmtDuration(r.avg_wait || 0) + '</td>'
+        + '</tr>';
+    }).join('');
+    tbody.querySelectorAll('.inbound-insurer-row').forEach(function (tr) {
+      tr.addEventListener('click', function () { inboundToggleDrill_(tr); });
+      tr.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); inboundToggleDrill_(tr); }
+      });
+    });
+  }
+
+  function inboundCollapseDrill_() {
+    if (inboundDrillChart) { try { inboundDrillChart.destroy(); } catch (e) {} inboundDrillChart = null; }
+    document.querySelectorAll('.inbound-drill-row').forEach(function (row) { row.remove(); });
+    document.querySelectorAll('.inbound-insurer-row.drill-open').forEach(function (tr) {
+      tr.classList.remove('drill-open');
+    });
+    inboundExpandedInsurer = null;
+  }
+
+  function inboundToggleDrill_(tr) {
+    const insurer = tr.getAttribute('data-insurer');
+    const wasOpen = (inboundExpandedInsurer === insurer);
+    inboundCollapseDrill_();
+    if (wasOpen) return;   // second click closes
+    inboundExpandedInsurer = insurer;
+    tr.classList.add('drill-open');
+
+    const drill = document.createElement('tr');
+    drill.className = 'inbound-drill-row';
+    drill.innerHTML = '<td colspan="7">'
+      + '<div class="pr-trend-subtabs inbound-drill-tabs" role="tablist">'
+      +   '<button type="button" class="pr-trend-subtab' + (inboundDrillMetric === 'calls' ? ' active' : '') + '" data-metric="calls" role="tab">Volume</button>'
+      +   '<button type="button" class="pr-trend-subtab' + (inboundDrillMetric === 'rate' ? ' active' : '') + '" data-metric="rate" role="tab">Abandon %</button>'
+      + '</div>'
+      + '<div class="inbound-drill-canvas-wrap"><canvas id="inbound-drill-chart"></canvas></div>'
+      + '<div class="inbound-drill-status pr-delta-cap">Loading daily trend…</div>'
+      + '</td>';
+    tr.parentNode.insertBefore(drill, tr.nextSibling);
+
+    drill.querySelector('.inbound-drill-tabs').addEventListener('click', function (e) {
+      const tab = e.target.closest('.pr-trend-subtab');
+      if (!tab) return;
+      inboundDrillMetric = tab.getAttribute('data-metric') || 'calls';
+      drill.querySelectorAll('.pr-trend-subtab').forEach(function (b) {
+        b.classList.toggle('active', b === tab);
+      });
+      const cached = inboundDrillCache[insurer];
+      if (cached) inboundRenderDrillChart_(drill, cached);
+    });
+
+    const cached = inboundDrillCache[insurer];
+    if (cached) { inboundRenderDrillChart_(drill, cached); return; }
+    const dept = (inboundLastData && inboundLastData.meta && inboundLastData.meta.department) || '';
+    const meta = (inboundLastData && inboundLastData.meta) || {};
+    google.script.run
+      .withSuccessHandler(function (res) {
+        if (inboundExpandedInsurer !== insurer) return;   // collapsed meanwhile
+        if (!res || res.meta.available === false) {
+          const st = drill.querySelector('.inbound-drill-status');
+          if (st) st.textContent = 'Daily trend unavailable (Neon unreachable) — try again.';
+          return;
+        }
+        inboundDrillCache[insurer] = res.daily || [];
+        inboundRenderDrillChart_(drill, inboundDrillCache[insurer]);
+      })
+      .withFailureHandler(function (err) {
+        const st = drill.querySelector('.inbound-drill-status');
+        if (st) st.textContent = 'Error: ' + (err && err.message ? err.message : String(err));
+      })
+      .getInboundInsurerDaily({ from: meta.from, to: meta.to, insurer: insurer, department: dept });
+  }
+
+  function inboundRenderDrillChart_(drillRow, daily) {
+    const status = drillRow.querySelector('.inbound-drill-status');
+    if (!daily.length) {
+      if (status) status.textContent = 'No calls from this insurer in range.';
+      return;
+    }
+    if (status) status.textContent = '';
+    refreshChartTheme();
+    if (inboundDrillChart) { try { inboundDrillChart.destroy(); } catch (e) {} inboundDrillChart = null; }
+    const canvas = drillRow.querySelector('canvas');
+    if (!canvas) return;
+    const isRate = inboundDrillMetric === 'rate';
+    const labels = daily.map(function (d) { return d.d; });
+    const points = daily.map(function (d) {
+      if (!isRate) return Number(d.calls) || 0;
+      const calls = Number(d.calls) || 0;
+      return calls > 0 ? Number((((Number(d.abandoned) || 0) / calls) * 100).toFixed(1)) : 0;
+    });
+    const color = isRate ? (THEME.warn || '#E15759') : (THEME.accent || '#4E79A7');
+    inboundDrillChart = new Chart(canvas.getContext('2d'), {
+      type: 'line',
+      data: {
+        labels: labels,
+        datasets: [{
+          label: isRate ? 'Abandon %' : 'Calls',
+          data: points,
+          borderColor: color,
+          backgroundColor: function (ctx) { return irGradientFill_(ctx.chart, color); },
+          tension: 0.3, fill: true,
+          pointBackgroundColor: color,
+          pointBorderColor: THEME.paperCard, pointBorderWidth: 1.5,
+          pointRadius: 2.5, pointHoverRadius: 4,
+        }],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false, animation: false,
+        plugins: {
+          legend: { display: false },
+          datalabels: { display: false },
+          tooltip: {
+            callbacks: {
+              label: function (ctx) {
+                return (isRate ? 'Abandon %: ' + ctx.parsed.y + '%' : 'Calls: ' + ctx.parsed.y);
+              },
+            },
+          },
+        },
+        scales: {
+          y: {
+            beginAtZero: true,
+            suggestedMax: isRate ? 100 : undefined,
+            ticks: { callback: function (v) { return isRate ? v + '%' : v; } },
+          },
+        },
+      },
+    });
+  }
+
+  function inboundSetResultsStatus_(kind, msg) {
+    const el = $('inbound-results-status'); if (!el) return;
+    if (!msg) { el.style.display = 'none'; el.textContent = ''; el.className = 'status'; return; }
+    el.className = 'status status-' + (kind || 'info');
+    el.textContent = msg;
+    el.style.display = '';
+  }
+
   function inboundRenderReport_(data) {
     inboundLastData = data;
+    inboundDrillCache = {};   // drill-down series are per (range, dept)
+    inboundCollapseDrill_();
     const meta = data.meta || {};
-    $('inbound-results-date').textContent = '(' + (meta.from || '') + ' – ' + (meta.to || '') + ')';
+    const scopeLabel = meta.companyView ? 'All departments' : (meta.department || '');
+    $('inbound-results-date').textContent =
+      '(' + scopeLabel + ' · ' + (meta.from || '') + ' – ' + (meta.to || '') + ')';
     const cmp = $('inbound-compare-line');
     if (cmp) {
       cmp.textContent = (meta.priorFrom && meta.priorTo)
@@ -9886,15 +10078,26 @@
       if (unavail) unavail.style.display = '';
       if (body) body.style.display = 'none';
       if (csvBtn) csvBtn.style.display = 'none';
+      inboundSetResultsStatus_('', '');
       return;
     }
     if (unavail) unavail.style.display = 'none';
     if (body) body.style.display = '';
     if (csvBtn) csvBtn.style.display = '';
 
+    // Dept with no mapped queues: same operator hint QCD uses (the dept
+    // needs a Dept Config row / DEPT_QCD_QUEUES entry before its inbound
+    // slice can attribute anything).
+    inboundSetResultsStatus_('', '');
+    if (meta.unmapped) {
+      inboundSetResultsStatus_('warn', 'No queues are mapped for '
+        + (meta.department || 'this department')
+        + ' — map its A_Q_* queue names in Dept Config (admin) to populate this view.');
+    }
+
     const k = data.kpis || {};
     const p = data.kpisPrior || {};
-    $('inbound-kpi-row').innerHTML = [
+    const tiles = [
       inboundKpiTile_('Inbound calls', fmtNumber(k.total),
         (k.anonymous ? fmtNumber(k.anonymous) + ' anonymous' : ''),
         inboundDelta_(k.total, p.total, 'neu', false)),
@@ -9908,9 +10111,17 @@
         inboundDelta_(k.avgWaitSec, p.avgWaitSec, 'neg', false)),
       inboundKpiTile_('Avg hold', fmtDuration(k.avgHoldSec), 'when held',
         inboundDelta_(k.avgHoldSec, p.avgHoldSec, 'neu', false)),
-    ].join('');
+    ];
+    // IVR abandons never reached a queue, so they're unattributable to any
+    // dept -- the bucket only renders on the company-wide view (decision C).
+    if (meta.companyView) {
+      tiles.push(inboundKpiTile_('Abandoned in IVR', fmtNumber(k.abandonedIvr),
+        'unattributable — no queue reached',
+        inboundDelta_(k.abandonedIvr, p.abandonedIvr, 'neg', false)));
+    }
+    $('inbound-kpi-row').innerHTML = tiles.join('');
 
-    inboundRenderTable_('inbound-insurer-tbody', data.byInsurer, true);
+    inboundRenderInsurerTable_(data.byInsurer);
     inboundRenderTable_('inbound-dialin-tbody', data.byDialIn, false);
     inboundRenderTable_('inbound-queue-tbody', data.byQueue, false);
     inboundRenderCrossTable_(data.byDialInInsurer);
@@ -9936,6 +10147,7 @@
     const row = function (cells) { return cells.map(esc).join(','); };
     const lines = [];
     lines.push(row(['Inbound Calls report', meta.from + ' to ' + meta.to]));
+    lines.push(row(['Scope', meta.companyView ? 'All departments' : (meta.department || '')]));
     lines.push(row(['Prior window', meta.priorFrom + ' to ' + meta.priorTo]));
     lines.push('');
     lines.push(row(['KPI', 'Current', 'Prior']));

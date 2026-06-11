@@ -72,7 +72,7 @@
                     data-route="/report/insights" role="menuitem"
                     title="Combined view: a department rollup PLUS per-agent cards, each comparing the selected range to the immediately-preceding period.">Insights</button>
             <button class="header-menu-item" id="inbound-report-btn" type="button"
-                    data-route="/report/inbound" role="menuitem" data-admin-only style="display:none;"
+                    data-route="/report/inbound" role="menuitem"
                     title="Inbound call analytics (admin): volume + answered / abandoned / abandoned-on-hold by insurer, advertised dial-in line, and entry queue.">Inbound</button>
           </div>
         </div>
@@ -1237,12 +1237,20 @@
             <label for="inbound-to">End date</label>
             <input type="date" id="inbound-to">
           </div>
+          <div class="ir-col">
+            <label for="inbound-dept">Department</label>
+            <select id="inbound-dept"></select>
+          </div>
         </div>
         <div class="ir-hint">
           Per-distinct-inbound-call analytics from <strong>Neon</strong>
           (<code>inbound_calls</code>). Insurer labels come from the insurance
           numbers you sync (<code>insurance_numbers</code>); anonymous callers
-          count in the totals but can&rsquo;t be labeled. Admin-only.
+          count in the totals but can&rsquo;t be labeled. Managers see their
+          own department&rsquo;s calls (attributed by entry queue; an answered
+          call abandoned on hold belongs to the answering department); admins
+          can also pick &ldquo;All departments&rdquo; for the company-wide
+          view including IVR abandons.
         </div>
         <div id="inbound-form-error" class="status status-error" style="display:none;"></div>
         <button class="btn" id="inbound-generate-btn" type="button">Generate report</button>
@@ -1275,7 +1283,7 @@
           <div id="inbound-kpi-row" class="pr-kpi-row"></div>
 
           <div class="al-section">
-            <div class="al-section-title">By insurer <span class="ins-rollup-cap">(labeled inbound numbers only)</span></div>
+            <div class="al-section-title">By insurer <span class="ins-rollup-cap">(labeled inbound numbers only &middot; click a row for its daily trend)</span></div>
             <table class="qcd-source-table">
               <thead><tr><th>Insurer</th><th class="num">Calls</th><th class="num">Answered</th><th class="num">Abandoned</th><th class="num">Aband. %</th><th class="num">On-hold abandon</th><th class="num">Avg wait</th></tr></thead>
               <tbody id="inbound-insurer-tbody"></tbody>

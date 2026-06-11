@@ -254,7 +254,7 @@ same time as the code change.
 | `MissedCallsReport.gs` | `missed:vN:` | `v10` |
 | `CompanyOverview.gs` | `companyOverview:vN` | `v14` |
 | `QCDReport.gs` | `qcd:vN:` | `v6` |
-| `InboundReport.gs` | `inbound:vN:` | `v2` |
+| `InboundReport.gs` | `inbound:vN:` | `v3` |
 | `InsightsReport.gs` | `insights:vN:` | `v3` |
 
 `Alerts.gs` holds no cached compute. Preview/send always re-reads the
