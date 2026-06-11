@@ -178,6 +178,7 @@ function getCompareRanges(req) {
     try {
       const parsed = JSON.parse(cached);
       parsed.meta.cacheHit = true;
+      logReportUsage_('compareRanges', dept, user, true);
       return parsed;
     } catch (e) { /* recompute */ }
   }
@@ -191,6 +192,7 @@ function getCompareRanges(req) {
   try { cache.put(cacheKey, JSON.stringify(data), REPORT_CACHE_TTL_SECONDS); }
   catch (e) { Logger.log('CompareRanges cache put failed: %s', e); }
 
+  logReportUsage_('compareRanges', dept, user, false);
   return data;
 }
 

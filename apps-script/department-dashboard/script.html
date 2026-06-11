@@ -7751,9 +7751,9 @@
     if (tbody) {
       const config = data.config || [];
       if (!config.length) {
-        tbody.innerHTML = '<tr><td colspan="5" class="al-empty">'
+        tbody.innerHTML = '<tr><td colspan="7" class="al-empty">'
           + 'No digest subscribers yet. Add one row per recipient to the '
-          + 'Digest Config sheet (Email | Department | Cadence | Active | Notes).'
+          + 'Digest Config sheet (Email | Department | Cadence | Active | Notes | Format).'
           + '</td></tr>';
       } else {
         tbody.innerHTML = config.map(function (c, idx) {
@@ -7763,6 +7763,7 @@
                +   '<td>' + escapeHtml(c.email)      + '</td>'
                +   '<td>' + escapeHtml(c.department) + '</td>'
                +   '<td>' + escapeHtml(c.cadence)    + '</td>'
+               +   '<td>' + escapeHtml(c.format || 'summary') + '</td>'
                +   '<td><span class="al-active ' + activeCls + '">' + activeLbl + '</span></td>'
                +   '<td>' + escapeHtml(c.notes || '') + '</td>'
                +   '<td><button type="button" class="link-btn al-digest-preview-btn" '
@@ -7786,18 +7787,19 @@
     }
 
     // Trigger status caption + install/uninstall buttons.
-    const trig = data.trigger || { daily: false, weekly: false };
-    const installed = !!(trig.daily && trig.weekly);
-    const partial   = !installed && (trig.daily || trig.weekly);
+    const trig = data.trigger || { daily: false, weekly: false, monthly: false };
+    const installed = !!(trig.daily && trig.weekly && trig.monthly);
+    const partial   = !installed && (trig.daily || trig.weekly || trig.monthly);
     const statusEl  = $('al-digest-trigger-status');
     if (statusEl) {
       if (data.loadError) {
         statusEl.textContent = 'Could not load digest config: ' + data.loadError;
       } else if (installed) {
-        statusEl.textContent = 'Daily + weekly digest triggers are installed.';
+        statusEl.textContent = 'Daily + weekly + monthly digest triggers are installed.';
       } else if (partial) {
         statusEl.textContent = 'Partial install (daily=' + trig.daily + ', weekly=' + trig.weekly
-                            + '). Click "Install" to re-install both.';
+                            + ', monthly=' + trig.monthly
+                            + '). Click "Install" to re-install all three.';
       } else {
         statusEl.textContent = 'No digest triggers installed. Subscribers won\'t receive scheduled digests until you click Install.';
       }
@@ -7832,6 +7834,7 @@
         email:      row.email,
         department: row.department,
         cadence:    row.cadence,
+        format:     row.format || 'summary',
       });
   }
 
@@ -7843,7 +7846,7 @@
     google.script.run
       .withSuccessHandler(function (status) {
         btn.disabled = false; btn.textContent = prev;
-        alRenderDigestInit_({ config: [], trigger: status || { daily: true, weekly: true } });
+        alRenderDigestInit_({ config: [], trigger: status || { daily: true, weekly: true, monthly: true } });
         // Re-fetch the config too so the subscriber table re-renders.
         google.script.run
           .withSuccessHandler(function (data) { alRenderDigestInit_(data || { config: [], trigger: status }); })
@@ -7858,7 +7861,7 @@
   }
 
   function alUninstallDigestTriggers_() {
-    const ok = window.confirm('Stop both digest triggers? Subscribers will stop receiving scheduled digests until you re-install.');
+    const ok = window.confirm('Stop all digest triggers (daily, weekly, monthly)? Subscribers will stop receiving scheduled digests until you re-install.');
     if (!ok) return;
     const btn = $('al-uninstall-digest-btn');
     if (!btn) return;

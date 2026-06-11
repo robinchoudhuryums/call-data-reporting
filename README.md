@@ -122,8 +122,8 @@ scripts/deploy.sh apps-script/cdr-import <cdr-import-deployment-id>
 - Run the `setup` function once to create the dashboard-managed
   sheets: `Access Control`, `Alert Config`, `Alert Log`,
   `Pipeline Health`, `Digest Config`, `Agent Alias Overrides`,
-  `Orphan Fix Log`, and `Dept Config` (eight total; created only
-  if missing).
+  `Orphan Fix Log`, `Dept Config`, and `Report Usage` (nine total;
+  created only if missing).
   Requires admin auth — run from the Apps Script editor while
   logged in as an admin listed in `ADMIN_EMAILS` Script Property
   (or `ADMIN_EMAILS_FALLBACK`).
@@ -156,12 +156,15 @@ scripts/deploy.sh apps-script/cdr-import <cdr-import-deployment-id>
 
 - Populate the `Digest Config` sheet (created by `setup()`) with one
   row per subscriber:
-  Email | Department | Cadence (`daily` or `weekly`) | Active
-  (TRUE/FALSE) | Notes.
+  Email | Department | Cadence (`daily`, `weekly`, or `monthly`) |
+  Active (TRUE/FALSE) | Notes | Format (`summary` default, or
+  `insights` for the Insights-report digest: team rollup deltas + a
+  per-agent delta table vs the cadence-appropriate prior window).
 - In the deployed dashboard, open Alerts (admin-only) → **Manager
   Digest Subscribers** → **Install digest triggers**. Daily fires
   weekday mornings for the previous day; weekly fires Monday morning
-  for the prior Mon&ndash;Fri window.
+  for the prior Mon&ndash;Fri window; monthly fires on the 1st for
+  the prior calendar month.
 
 **Optional (orphan fix):**
 

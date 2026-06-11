@@ -56,6 +56,7 @@ const SHEETS = Object.freeze({
   AGENT_ALIAS_OVERRIDES: 'Agent Alias Overrides',
   ORPHAN_FIX_LOG: 'Orphan Fix Log',
   DEPT_CONFIG: 'Dept Config',
+  REPORT_USAGE: 'Report Usage',
 });
 
 const ACCESS_CONTROL_HEADERS = Object.freeze(['Email', 'Department', 'Notes']);
@@ -77,12 +78,18 @@ const PIPELINE_HEALTH_HEADERS = Object.freeze([
   'Timestamp', 'Step', 'Status', 'Rows', 'Duration (ms)', 'Notes',
 ]);
 // Digest Config: per-recipient subscription rows. Cadence is one of
-// 'daily' (sends each weekday morning for the previous day's data)
-// or 'weekly' (sends Monday morning for the prior Mon-Fri window).
+// 'daily' (sends each weekday morning for the previous day's data),
+// 'weekly' (sends Monday morning for the prior Mon-Fri window), or
+// 'monthly' (sends on the 1st for the prior calendar month).
+// Format (col F, appended non-destructively like Alert Config's Skip
+// Dates -- pre-existing sheets keep their 5-col header and read as
+// 'summary'): 'summary' = the KPI-tile digest (default); 'insights' =
+// the Insights-report digest (team rollup deltas + a per-agent delta
+// table vs the cadence-appropriate prior window).
 // Active=FALSE pauses without deleting. Edited by admins by hand;
 // no in-app form.
 const DIGEST_CONFIG_HEADERS = Object.freeze([
-  'Email', 'Department', 'Cadence', 'Active', 'Notes',
+  'Email', 'Department', 'Cadence', 'Active', 'Notes', 'Format',
 ]);
 // Agent Alias Overrides: persistent rename map used by the CDR
 // pipeline's loadRosterCanonicalNames_ on every build. Each row
@@ -123,6 +130,19 @@ const ORPHAN_FIX_LOG_HEADERS = Object.freeze([
 const DEPT_CONFIG_HEADERS = Object.freeze([
   'Department', 'QCD Queues', 'Overview Parent', 'Team Avg Excludes',
   'Queue Ext Overrides', 'Active', 'Updated By', 'Updated At', 'Notes',
+]);
+// Report Usage: append-only telemetry of report opens, written by
+// Util.gs::logReportUsage_ from the public report endpoints. This is
+// the documented INV-01 TELEMETRY CARVE-OUT: append-only, fixed
+// schema, no user-controlled free text (Report is a code constant;
+// Department is validated against real depts before logging), and
+// best-effort (a missing sheet or a write failure silently no-ops --
+// telemetry must never block or fail a report). Exists to give the
+// report-consolidation decisions (PR/CR retirement) real usage
+// evidence. Reader: the operator, directly in the sheet (pivot by
+// Report / Email).
+const REPORT_USAGE_HEADERS = Object.freeze([
+  'Timestamp', 'Report', 'Department', 'Role', 'Email', 'Cache Hit',
 ]);
 
 // Layout of the "DO NOT EDIT!" roster sheet. Centralized so a future

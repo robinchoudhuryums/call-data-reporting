@@ -1457,9 +1457,12 @@
           <div class="al-section-title">Manager Digest Subscribers</div>
           <p class="al-hint">
             Per-recipient subscriptions configured in the <strong>Digest Config</strong>
-            sheet (Email | Department | Cadence | Active | Notes). Cadence is
-            <code>daily</code> (sends each weekday morning for the previous day) or
-            <code>weekly</code> (sends Monday morning for the prior Mon-Fri).
+            sheet (Email | Department | Cadence | Active | Notes | Format). Cadence is
+            <code>daily</code> (each weekday morning for the previous day),
+            <code>weekly</code> (Monday morning for the prior Mon-Fri), or
+            <code>monthly</code> (the 1st for the prior calendar month). Format is
+            <code>summary</code> (KPI tiles, default) or <code>insights</code>
+            (team rollup + per-agent deltas vs the prior window).
             <a href="#" id="al-open-digest-sheet" target="_blank">Open Digest Config sheet &rarr;</a>
           </p>
           <table class="al-config-table">
@@ -1467,6 +1470,7 @@
               <th>Email</th>
               <th>Department</th>
               <th>Cadence</th>
+              <th>Format</th>
               <th>Active</th>
               <th>Notes</th>
               <th></th>

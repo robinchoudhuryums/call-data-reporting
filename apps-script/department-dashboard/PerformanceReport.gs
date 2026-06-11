@@ -147,6 +147,7 @@ function getPerformanceReport(req) {
     try {
       const parsed = JSON.parse(cached);
       parsed.meta.cacheHit = true;
+      logReportUsage_('performance', dept, user, true);
       return parsed;
     } catch (e) { /* recompute */ }
   }
@@ -160,6 +161,7 @@ function getPerformanceReport(req) {
   try { cache.put(cacheKey, JSON.stringify(data), REPORT_CACHE_TTL_SECONDS); }
   catch (e) { Logger.log('PerformanceReport cache put failed: %s', e); }
 
+  logReportUsage_('performance', dept, user, false);
   return data;
 }
 

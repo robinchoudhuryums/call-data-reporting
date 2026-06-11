@@ -222,6 +222,7 @@ function getDepartmentSummary(req) {
     try {
       const parsed = JSON.parse(cached);
       parsed.meta.cacheHit = true;
+      logReportUsage_('summary', dept, user, true);
       return parsed;
     } catch (e) {
       // Corrupted cache entry -- fall through to recompute.
@@ -242,6 +243,7 @@ function getDepartmentSummary(req) {
     Logger.log('Cache put failed: %s', e);
   }
 
+  logReportUsage_('summary', dept, user, false);
   return data;
 }
 

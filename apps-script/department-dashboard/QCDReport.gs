@@ -182,6 +182,7 @@ function getQcdReport(req) {
     try {
       const parsed = JSON.parse(cached);
       parsed.meta.cacheHit = true;
+      logReportUsage_('qcd', dept, user, true);
       return parsed;
     } catch (e) { /* recompute */ }
   }
@@ -199,6 +200,7 @@ function getQcdReport(req) {
     Logger.log('QCDReport: payload %s bytes exceeds 100KB, skipping cache', json.length);
   }
 
+  logReportUsage_('qcd', dept, user, false);
   return data;
 }
 

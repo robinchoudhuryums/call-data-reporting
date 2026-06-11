@@ -9,19 +9,20 @@
  *
  * Public entries (callable via google.script.run; all admin-only):
  *   getDigestsInit()
- *     -> { config: [{ email, department, cadence, active, notes }],
- *          trigger: { daily, weekly },
+ *     -> { config: [{ email, department, cadence, format, active, notes }],
+ *          trigger: { daily, weekly, monthly },
  *          spreadsheetUrl }
- *   sendPreviewDigest({ email, department, cadence })
+ *   sendPreviewDigest({ email, department, cadence, format? })
  *     -> { to } (sends one digest to the active admin so they can
  *                 verify what subscribers will receive)
- *   installDigestTriggers()   -> { daily: true, weekly: true }
- *   uninstallDigestTriggers() -> { daily: false, weekly: false }
+ *   installDigestTriggers()   -> { daily: true, weekly: true, monthly: true }
+ *   uninstallDigestTriggers() -> { daily: false, weekly: false, monthly: false }
  *
  * Trigger entry points (called by time-based triggers, never via
  * google.script.run thanks to the trailing underscore):
  *   runDailyDigests_()
  *   runWeeklyDigests_()
+ *   runMonthlyDigests_()
  *
  * Date windows:
  *   - Daily digest covers the immediately-preceding calendar day,
@@ -29,13 +30,25 @@
  *     digest covers Friday).
  *   - Weekly digest covers Mon-Fri of the prior week, sent Monday
  *     morning.
+ *   - Monthly digest covers the prior calendar month, sent on the
+ *     1st (ScriptApp onMonthDay trigger).
  *
- * Cadence values in the sheet: 'daily' or 'weekly' (case-insensitive,
- * trimmed). Anything else is treated as inactive.
+ * Cadence values in the sheet: 'daily', 'weekly', or 'monthly'
+ * (case-insensitive, trimmed). Anything else is treated as inactive.
+ *
+ * Format values (col F; appended non-destructively like Alert
+ * Config's Skip Dates -- pre-E8-style precedent): 'summary' (default;
+ * the KPI-tile digest + WoW callout) or 'insights' (the
+ * Insights-report digest: team rollup deltas + a per-agent delta
+ * table, computed by the SAME computeInsights_ the Insights modal
+ * uses, vs a cadence-appropriate prior window -- daily compares to
+ * the INV-28 auto-adjacent day, weekly to the previous Mon-Fri,
+ * monthly to the previous calendar month).
  */
 
-const DIGEST_DAILY_TRIGGER_HOUR  = 8;   // 8 AM script-TZ
-const DIGEST_WEEKLY_TRIGGER_HOUR = 8;
+const DIGEST_DAILY_TRIGGER_HOUR   = 8;   // 8 AM script-TZ
+const DIGEST_WEEKLY_TRIGGER_HOUR  = 8;
+const DIGEST_MONTHLY_TRIGGER_HOUR = 8;   // 1st of the month, 8 AM
 
 function getDigestsInit() {
   assertAdmin_();
@@ -60,7 +73,8 @@ function sendPreviewDigest(req) {
     throw new Error('Unknown department: ' + dept);
   }
   const cadence = normalizeCadence_(String((req && req.cadence) || 'daily'));
-  if (!cadence) throw new Error('Cadence must be "daily" or "weekly".');
+  if (!cadence) throw new Error('Cadence must be "daily", "weekly", or "monthly".');
+  const format = normalizeFormat_(String((req && req.format) || 'summary'));
 
   const window = digestWindowFor_(cadence, new Date());
   if (!window) throw new Error('No window available for cadence ' + cadence);
@@ -70,6 +84,7 @@ function sendPreviewDigest(req) {
     to:         adminEmail,
     dept:       dept,
     cadence:    cadence,
+    format:     format,
     fromIso:    window.fromIso,
     toIso:      window.toIso,
     isPreview:  true,
@@ -85,6 +100,8 @@ function installDigestTriggers() {
     .timeBased().everyDays(1).atHour(DIGEST_DAILY_TRIGGER_HOUR).create();
   ScriptApp.newTrigger('runWeeklyDigests_')
     .timeBased().onWeekDay(ScriptApp.WeekDay.MONDAY).atHour(DIGEST_WEEKLY_TRIGGER_HOUR).create();
+  ScriptApp.newTrigger('runMonthlyDigests_')
+    .timeBased().onMonthDay(1).atHour(DIGEST_MONTHLY_TRIGGER_HOUR).create();
   return getDigestTriggerStatus_();
 }
 
@@ -124,6 +141,15 @@ function runWeeklyDigests_() {
   }
 }
 
+function runMonthlyDigests_() {
+  try {
+    sendDigestsForCadence_('monthly');
+  } catch (e) {
+    Logger.log('runMonthlyDigests_ failed: %s', e);
+    notifyDigestFailure_('monthly', e);
+  }
+}
+
 // -- Engine --------------------------------------------------------
 
 function sendDigestsForCadence_(cadence) {
@@ -138,6 +164,7 @@ function sendDigestsForCadence_(cadence) {
         to:        entry.email,
         dept:      entry.department,
         cadence:   cadence,
+        format:    entry.format,
         fromIso:   window.fromIso,
         toIso:     window.toIso,
         isPreview: false,
@@ -244,27 +271,20 @@ function sendDigestEmail_(opts) {
   const dept    = opts.dept;
   const to      = String(opts.to || '').trim();
   if (!to) throw new Error('Digest recipient is empty.');
-  const stats   = computeDigestStats_(dept, opts.fromIso, opts.toIso);
-  const totals  = stats.totals || {};
-  const pct = (Number(totals.totalRung) || 0) > 0
-    ? ((Number(totals.totalAnswered) || 0) / Number(totals.totalRung)) * 100
-    : 0;
-  const pctStr     = pct.toFixed(1) + '%';
-  const rungStr    = String(Number(totals.totalRung)     || 0);
-  const ansStr     = String(Number(totals.totalAnswered) || 0);
-  const missedStr  = String(Number(totals.totalMissed)   || 0);
-  const attSeconds = Number(totals.attSeconds) || 0;
-  const attStr     = digestFormatHms_(attSeconds);
+  const format  = normalizeFormat_(opts.format);
   const rangeLabel = opts.fromIso === opts.toIso
     ? opts.fromIso
     : (opts.fromIso + ' – ' + opts.toIso);
 
-  // WoW "driver" narrative (#11): which agent's net answered/missed
-  // change most explains the dept's week-over-week answer-rate shift.
-  // Anchored on the digest window's end date; best-effort (null on a
-  // quiet dept or any error -> no callout rendered).
-  const wow = computeDigestWowDriver_(dept, opts.toIso);
-  const wowNarrative = digestWowNarrative_(wow);
+  // Core content per Format: 'summary' = KPI tiles + the WoW driver
+  // callout (the original digest); 'insights' = the Insights-report
+  // rollup + per-agent delta table.
+  let coreHtml;
+  if (format === 'insights') {
+    coreHtml = digestInsightsHtml_(dept, opts.fromIso, opts.toIso, opts.cadence);
+  } else {
+    coreHtml = digestSummaryHtml_(dept, opts.fromIso, opts.toIso);
+  }
 
   const dashboardUrl = PropertiesService.getScriptProperties()
     .getProperty('DASHBOARD_URL') || '';
@@ -275,7 +295,7 @@ function sendDigestEmail_(opts) {
       +   '<span style="color:#7C2D12;">This is what '
       +   escapeHtmlServer_(opts.previewFor || '(the subscriber)')
       +   ' would receive for the '
-      +   escapeHtmlServer_(opts.cadence) + ' digest on '
+      +   escapeHtmlServer_(opts.cadence) + ' ' + escapeHtmlServer_(format) + ' digest on '
       +   escapeHtmlServer_(rangeLabel) + '.</span>'
       + '</div>')
     : '';
@@ -292,19 +312,7 @@ function sendDigestEmail_(opts) {
     +     '</h2>'
     +     '<div style="color: #1e3a8a; font-size: 13px;">' + escapeHtmlServer_(rangeLabel) + '</div>'
     +   '</div>'
-    +   '<div style="margin: 20px 0; padding: 20px; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px;">'
-    +     '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;">'
-    +       digestStatTile_('Answer rate', pctStr)
-    +       digestStatTile_('Rung',         rungStr)
-    +       digestStatTile_('Answered',     ansStr)
-    +       digestStatTile_('Missed',       missedStr)
-    +     '</div>'
-    +     '<div style="margin-top:12px;font-size:13px;color:#6b7280;">'
-    +       'Avg talk time: <strong>' + escapeHtmlServer_(attStr) + '</strong>'
-    +       ' · ' + stats.rows + ' agent' + (stats.rows === 1 ? '' : 's') + ' with activity'
-    +     '</div>'
-    +   '</div>'
-    +   wowNarrative
+    +   coreHtml
     +   (dashboardUrl
         ? '<div style="margin-top: 16px;"><a href="' + escapeHtmlServer_(dashboardUrl) + '" style="display: inline-block; background: #1d4ed8; color: #fff; padding: 8px 16px; border-radius: 6px; text-decoration: none; font-size: 13px; font-weight: 600;">Open Dashboard</a></div>'
         : '')
@@ -318,6 +326,167 @@ function sendDigestEmail_(opts) {
     subject:  subject,
     htmlBody: htmlBody,
   });
+}
+
+/**
+ * The original 'summary' digest body: 4 KPI tiles + the WoW driver
+ * callout (#11). Extracted unchanged from sendDigestEmail_ when the
+ * Format column landed, so the summary path stays byte-identical.
+ */
+function digestSummaryHtml_(dept, fromIso, toIso) {
+  const stats   = computeDigestStats_(dept, fromIso, toIso);
+  const totals  = stats.totals || {};
+  const pct = (Number(totals.totalRung) || 0) > 0
+    ? ((Number(totals.totalAnswered) || 0) / Number(totals.totalRung)) * 100
+    : 0;
+  const pctStr     = pct.toFixed(1) + '%';
+  const rungStr    = String(Number(totals.totalRung)     || 0);
+  const ansStr     = String(Number(totals.totalAnswered) || 0);
+  const missedStr  = String(Number(totals.totalMissed)   || 0);
+  const attStr     = digestFormatHms_(Number(totals.attSeconds) || 0);
+
+  // WoW "driver" narrative (#11): which agent's net answered/missed
+  // change most explains the dept's week-over-week answer-rate shift.
+  // Anchored on the digest window's end date; best-effort (null on a
+  // quiet dept or any error -> no callout rendered).
+  const wow = computeDigestWowDriver_(dept, toIso);
+  const wowNarrative = digestWowNarrative_(wow);
+
+  return '<div style="margin: 20px 0; padding: 20px; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px;">'
+    +     '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;">'
+    +       digestStatTile_('Answer rate', pctStr)
+    +       digestStatTile_('Rung',         rungStr)
+    +       digestStatTile_('Answered',     ansStr)
+    +       digestStatTile_('Missed',       missedStr)
+    +     '</div>'
+    +     '<div style="margin-top:12px;font-size:13px;color:#6b7280;">'
+    +       'Avg talk time: <strong>' + escapeHtmlServer_(attStr) + '</strong>'
+    +       ' · ' + stats.rows + ' agent' + (stats.rows === 1 ? '' : 's') + ' with activity'
+    +     '</div>'
+    +   '</div>'
+    +   wowNarrative;
+}
+
+/**
+ * Cadence-appropriate prior window for the 'insights' digest format.
+ * Daily -> null (computeInsights_'s INV-28 auto-adjacent default is
+ * exactly "the previous day"). Weekly -> the window shifted back 7
+ * days (previous Mon-Fri; the raw INV-28 window for a Mon-Fri range
+ * would be the preceding Wed-Sun, comparing a workweek against mostly
+ * weekend). Monthly -> the previous calendar month (lengths may
+ * differ by up to 3 days -- below the INV-35 1.2x mismatch bar).
+ */
+function digestInsightsPrior_(cadence, fromIso, toIso) {
+  if (cadence === 'weekly') {
+    const shift = function (iso) {
+      const p = iso.split('-');
+      const d = new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]) - 7, 12);
+      return Utilities.formatDate(d, TZ, 'yyyy-MM-dd');
+    };
+    return { from: shift(fromIso), to: shift(toIso) };
+  }
+  if (cadence === 'monthly') {
+    const p = fromIso.split('-');
+    const first = new Date(Number(p[0]), Number(p[1]) - 2, 1, 12);
+    const last  = new Date(Number(p[0]), Number(p[1]) - 1, 0, 12);
+    return {
+      from: Utilities.formatDate(first, TZ, 'yyyy-MM-dd'),
+      to:   Utilities.formatDate(last,  TZ, 'yyyy-MM-dd'),
+    };
+  }
+  return null;   // daily: INV-28 auto-adjacent = the previous day
+}
+
+/** Inline-styled delta span for the insights digest (sage up / amber down by valence). */
+function digestDeltaHtml_(stat, valence) {
+  const s = stat || { deltaPct: 0, type: 'volume' };
+  const dp = Number(s.deltaPct || 0);
+  if (Math.abs(dp) < 0.05) {
+    return '<span style="color:#9ca3af;font-size:11px;">&ndash;</span>';
+  }
+  let color = '#6b7280';                                   // neutral grey
+  if (valence === 'pos') color = dp > 0 ? '#059669' : '#D97706';
+  else if (valence === 'neg') color = dp > 0 ? '#D97706' : '#059669';
+  const arrow = dp > 0 ? '&#9650;' : '&#9660;';
+  const suffix = s.type === 'pctPoints' ? ' pts' : '%';
+  return '<span style="color:' + color + ';font-size:11px;font-weight:700;white-space:nowrap;">'
+       + arrow + ' ' + Math.abs(dp).toFixed(1) + suffix + '</span>';
+}
+
+/**
+ * The 'insights' digest body: the dept's full-roster Insights run
+ * (team rollup deltas + a per-agent delta table) vs the
+ * cadence-appropriate prior window. Reuses computeInsights_ verbatim
+ * -- the SAME aggregation the Insights modal serves -- with the full
+ * roster as the selection, so floaters are naturally excluded
+ * (roster-only, matching computeDigestStats_'s 'roster' scope).
+ * Returns an HTML fragment (no MailApp), so it's unit-testable.
+ */
+function digestInsightsHtml_(dept, fromIso, toIso, cadence) {
+  const roster = getRosterForDepartment_(dept);
+  if (!roster.names.length) {
+    return '<div style="margin:20px 0;padding:16px;background:#fff;border:1px solid #e5e7eb;border-radius:8px;color:#6b7280;font-size:13px;">'
+         + 'No roster found for ' + escapeHtmlServer_(dept) + ' — nothing to report.'
+         + '</div>';
+  }
+  const prior = digestInsightsPrior_(cadence, fromIso, toIso);
+  const data = computeInsights_(dept, fromIso, toIso, roster.names.slice(), roster,
+                                prior ? prior.from : '', prior ? prior.to : '');
+  const t = data.teamStats || {};
+
+  const tile = function (label, stat, valence) {
+    return '<td style="padding:10px 12px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;text-align:center;">'
+      + '<div style="font-size:10px;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;font-weight:700;">'
+      +   escapeHtmlServer_(label) + '</div>'
+      + '<div style="font-size:18px;color:#111827;font-weight:700;margin-top:2px;">'
+      +   escapeHtmlServer_(String((stat && stat.formatted) || '-')) + '</div>'
+      + '<div style="margin-top:2px;">' + digestDeltaHtml_(stat, valence) + '</div>'
+      + '</td>';
+  };
+
+  const agentRows = (data.agentData || []).map(function (a) {
+    const m = a.metrics || {};
+    const cell = function (stat, valence) {
+      return '<td style="padding:6px 10px;text-align:right;border-bottom:1px solid #f3f4f6;white-space:nowrap;">'
+        + escapeHtmlServer_(String((stat && stat.formatted) || '-'))
+        + ' ' + digestDeltaHtml_(stat, valence)
+        + '</td>';
+    };
+    return '<tr>'
+      + '<td style="padding:6px 10px;border-bottom:1px solid #f3f4f6;">' + escapeHtmlServer_(a.name) + '</td>'
+      + cell(m.rung, 'pos') + cell(m.missed, 'neg') + cell(m.answered, 'pos')
+      + cell(m.pct, 'pos') + cell(m.att, 'neu')
+      + '</tr>';
+  }).join('');
+
+  return '<div style="margin: 20px 0; padding: 20px; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px;">'
+    +   '<div style="font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;font-weight:700;margin-bottom:8px;">'
+    +     'Department rollup &middot; vs ' + escapeHtmlServer_(data.priorDateLabel || 'prior period')
+    +   '</div>'
+    +   '<table style="border-collapse:separate;border-spacing:6px;width:100%;"><tr>'
+    +     tile('Rung', t.rung, 'pos') + tile('Missed', t.missed, 'neg')
+    +     tile('Answered', t.answered, 'pos') + tile('% Answered', t.pct, 'pos')
+    +     tile('Avg ATT', t.att, 'neu')
+    +   '</tr></table>'
+    + '</div>'
+    + '<div style="margin: 16px 0; padding: 20px; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px;">'
+    +   '<div style="font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;font-weight:700;margin-bottom:8px;">'
+    +     'Per-agent &middot; current value with change vs the prior window'
+    +   '</div>'
+    +   '<table style="border-collapse:collapse;width:100%;font-size:13px;">'
+    +     '<thead><tr style="background:#f9fafb;">'
+    +       '<th style="text-align:left;padding:8px 10px;border-bottom:1px solid #e5e7eb;">Agent</th>'
+    +       '<th style="text-align:right;padding:8px 10px;border-bottom:1px solid #e5e7eb;">Rung</th>'
+    +       '<th style="text-align:right;padding:8px 10px;border-bottom:1px solid #e5e7eb;">Missed</th>'
+    +       '<th style="text-align:right;padding:8px 10px;border-bottom:1px solid #e5e7eb;">Answered</th>'
+    +       '<th style="text-align:right;padding:8px 10px;border-bottom:1px solid #e5e7eb;">% Ans</th>'
+    +       '<th style="text-align:right;padding:8px 10px;border-bottom:1px solid #e5e7eb;">ATT</th>'
+    +     '</tr></thead>'
+    +     '<tbody>' + (agentRows
+            || '<tr><td colspan="6" style="padding:8px 10px;color:#6b7280;">No agent activity in this window.</td></tr>')
+    +     '</tbody>'
+    +   '</table>'
+    + '</div>';
 }
 
 /**
@@ -388,6 +557,10 @@ function readDigestConfig_() {
   if (!sheet) return [];
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return [];
+  // Width covers the Format column (col F, appended at the end of the
+  // row -- the Alert Config Skip Dates precedent). Pre-existing sheets
+  // keep their 5-col header; col F reads back as '' and normalizes to
+  // 'summary', so behavior is unchanged until an admin sets a value.
   const values = sheet.getRange(2, 1, lastRow - 1, DIGEST_CONFIG_HEADERS.length).getValues();
   const out = [];
   for (let i = 0; i < values.length; i++) {
@@ -405,6 +578,7 @@ function readDigestConfig_() {
       cadence:    cadence,
       active:     active,
       notes:      String(values[i][4] || '').trim(),
+      format:     normalizeFormat_(String(values[i][5] || '')),
     });
   }
   return out;
@@ -414,14 +588,28 @@ function normalizeCadence_(raw) {
   const s = String(raw || '').toLowerCase().trim();
   if (s === 'daily' || s === 'd' || s === 'day') return 'daily';
   if (s === 'weekly' || s === 'w' || s === 'week') return 'weekly';
+  if (s === 'monthly' || s === 'm' || s === 'month') return 'monthly';
   return '';
+}
+
+/**
+ * Format column normalization: 'insights' (and the tolerated synonyms
+ * 'detail' / 'agents') selects the Insights-report digest; anything
+ * else -- including the empty col F on pre-Format sheets -- is the
+ * original 'summary'.
+ */
+function normalizeFormat_(raw) {
+  const s = String(raw || '').toLowerCase().trim();
+  if (s === 'insights' || s === 'insight' || s === 'detail' || s === 'agents') return 'insights';
+  return 'summary';
 }
 
 /**
  * Returns { fromIso, toIso } for the digest window given a cadence
  * and a reference "now" date.
- *   daily  -> previous calendar day (single-day range)
- *   weekly -> previous Mon-Fri (5-day range)
+ *   daily   -> previous calendar day (single-day range)
+ *   weekly  -> previous Mon-Fri (5-day range)
+ *   monthly -> previous calendar month (1st..last day)
  * Returns null on bad cadence.
  */
 function digestWindowFor_(cadence, now) {
@@ -443,6 +631,14 @@ function digestWindowFor_(cadence, now) {
     const lastFri = new Date(lastMon.getFullYear(), lastMon.getMonth(), lastMon.getDate() + 4, 12);
     return { fromIso: fmt(lastMon), toIso: fmt(lastFri) };
   }
+  if (cadence === 'monthly') {
+    // Previous calendar month, robust to being fired on any day of the
+    // current month (the trigger targets the 1st, but a manual run /
+    // preview can happen anytime).
+    const first = new Date(now.getFullYear(), now.getMonth() - 1, 1, 12);
+    const last  = new Date(now.getFullYear(), now.getMonth(), 0, 12);
+    return { fromIso: fmt(first), toIso: fmt(last) };
+  }
   return null;
 }
 
@@ -450,21 +646,22 @@ function uninstallDigestTriggers_() {
   const triggers = ScriptApp.getProjectTriggers();
   for (let i = 0; i < triggers.length; i++) {
     const fn = triggers[i].getHandlerFunction();
-    if (fn === 'runDailyDigests_' || fn === 'runWeeklyDigests_') {
+    if (fn === 'runDailyDigests_' || fn === 'runWeeklyDigests_' || fn === 'runMonthlyDigests_') {
       ScriptApp.deleteTrigger(triggers[i]);
     }
   }
 }
 
 function getDigestTriggerStatus_() {
-  let daily = false, weekly = false;
+  let daily = false, weekly = false, monthly = false;
   const triggers = ScriptApp.getProjectTriggers();
   for (let i = 0; i < triggers.length; i++) {
     const fn = triggers[i].getHandlerFunction();
-    if (fn === 'runDailyDigests_')  daily  = true;
-    if (fn === 'runWeeklyDigests_') weekly = true;
+    if (fn === 'runDailyDigests_')   daily   = true;
+    if (fn === 'runWeeklyDigests_')  weekly  = true;
+    if (fn === 'runMonthlyDigests_') monthly = true;
   }
-  return { daily: daily, weekly: weekly };
+  return { daily: daily, weekly: weekly, monthly: monthly };
 }
 
 function notifyDigestFailure_(cadence, err) {

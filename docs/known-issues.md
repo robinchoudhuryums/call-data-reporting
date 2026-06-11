@@ -226,9 +226,9 @@ through a public function that explicitly checks `resolveUser_(email).role
 
 `setup()` creates `Access Control`, `Alert Config`, `Alert Log`,
 `Pipeline Health`, `Digest Config`, `Agent Alias Overrides`,
-`Orphan Fix Log`, and `Dept Config` sheets if they don't exist (each
-with a frozen header row). It never overwrites existing rows on any of
-the eight. Safe to re-run as many
+`Orphan Fix Log`, `Dept Config`, and `Report Usage` sheets if they
+don't exist (each with a frozen header row). It never overwrites
+existing rows on any of the nine. Safe to re-run as many
 times as you want. Keep it that way; the alerts engine assumes
 `appendAlertLog_` can blindly append without coordinating reads.
 
@@ -406,18 +406,30 @@ data bug.
 
 ## Manager Digest engine
 
-**Sheet:** `Digest Config` (`Email | Department | Cadence | Active | Notes`).
+**Sheet:** `Digest Config` (`Email | Department | Cadence | Active | Notes | Format`).
 Created by `setup()`. Schema pinned in
-`Config.gs::DIGEST_CONFIG_HEADERS`.
+`Config.gs::DIGEST_CONFIG_HEADERS`. The `Format` column (col F) was
+appended at the end of the row -- the Alert Config Skip Dates
+precedent -- so pre-existing sheets keep their 5-col header and read
+back `format='summary'` until an admin populates F.
 
 **Cadence** is `daily` (sends each weekday morning for the previous
-day's data; weekends skipped) or `weekly` (sends Monday 8 AM for
-the prior Mon-Fri window). Anything else is treated as inactive.
+day's data; weekends skipped), `weekly` (sends Monday 8 AM for
+the prior Mon-Fri window), or `monthly` (sends on the 1st, 8 AM,
+for the prior calendar month). Anything else is treated as inactive.
+
+**Format** is `summary` (the KPI-tile digest + WoW driver callout;
+default) or `insights` (the digest-Insights bridge: the SAME
+`computeInsights_` the Insights modal serves, run over the dept's
+full roster -- floaters excluded -- vs a cadence-appropriate prior
+window: daily compares to the INV-28 auto-adjacent day, weekly to
+the previous Mon-Fri, monthly to the previous calendar month).
 
 **Engine** is `Digest.gs`. Every public callable
 (`getDigestsInit`, `sendPreviewDigest`, `installDigestTriggers`,
 `uninstallDigestTriggers`) starts with `assertAdmin_`. Trigger
-entry points (`runDailyDigests_`, `runWeeklyDigests_`) end in `_`
+entry points (`runDailyDigests_`, `runWeeklyDigests_`,
+`runMonthlyDigests_`) end in `_`
 so `google.script.run` can't reach them, but `ScriptApp` dispatch
 still calls them by name.
 

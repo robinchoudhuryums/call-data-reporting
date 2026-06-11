@@ -94,7 +94,8 @@ function inboundResolveRequest_(req) {
   // the same map every QCD surface uses, so inbound dept slices and QCD
   // dept slices can't disagree about queue ownership.
   const deptQueues = companyView ? [] : queuesForDept_(dept);
-  return { from: from, to: to, dept: dept, deptQueues: deptQueues, companyView: companyView };
+  return { from: from, to: to, dept: dept, deptQueues: deptQueues,
+           companyView: companyView, user: user };
 }
 
 /** Single-quote-escape a value for inline SQL literals. */
@@ -127,7 +128,12 @@ function getInboundReport(req) {
                  + ':' + scope.from + ':' + scope.to;
   const cached = cache.get(cacheKey);
   if (cached) {
-    try { const p = JSON.parse(cached); p.meta.cacheHit = true; return p; }
+    try {
+      const p = JSON.parse(cached);
+      p.meta.cacheHit = true;
+      logReportUsage_('inbound', scope.dept || '(all)', scope.user, true);
+      return p;
+    }
     catch (e) { /* recompute */ }
   }
 
@@ -144,6 +150,7 @@ function getInboundReport(req) {
     try { cache.put(cacheKey, JSON.stringify(data), REPORT_CACHE_TTL_SECONDS); }
     catch (e) { Logger.log('InboundReport cache put failed: %s', e); }
   }
+  logReportUsage_('inbound', scope.dept || '(all)', scope.user, false);
   return data;
 }
 

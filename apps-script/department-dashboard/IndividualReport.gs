@@ -189,6 +189,7 @@ function getIndividualReport(req) {
     try {
       const parsed = JSON.parse(cached);
       parsed.meta.cacheHit = true;
+      logReportUsage_('individual', dept, user, true);
       return parsed;
     } catch (e) { /* recompute */ }
   }
@@ -206,6 +207,7 @@ function getIndividualReport(req) {
     Logger.log('IndividualReport cache put failed: %s', e);
   }
 
+  logReportUsage_('individual', dept, user, false);
   return data;
 }
 

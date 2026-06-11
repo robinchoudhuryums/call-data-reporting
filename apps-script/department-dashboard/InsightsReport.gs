@@ -130,6 +130,7 @@ function getInsightsReport(req) {
     try {
       const parsed = JSON.parse(cached);
       parsed.meta.cacheHit = true;
+      logReportUsage_('insights', dept, user, true);
       return parsed;
     } catch (e) { /* recompute */ }
   }
@@ -143,6 +144,7 @@ function getInsightsReport(req) {
   try { cache.put(cacheKey, JSON.stringify(data), REPORT_CACHE_TTL_SECONDS); }
   catch (e) { Logger.log('InsightsReport cache put failed: %s', e); }
 
+  logReportUsage_('insights', dept, user, false);
   return data;
 }
 
