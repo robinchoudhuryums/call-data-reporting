@@ -486,7 +486,27 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
 
     if (!lastKnown.includes(latestName)) {
       lastKnown.push(latestName);
-      props.setProperty("lastSheets", JSON.stringify(lastKnown));
+      // F2: cap the session-dedup list to the most recent entries. This
+      // property only feeds the fast "ALREADY PROCESSED" short-circuit
+      // above -- the real idempotence is the existsIn* history checks
+      // (which return "ALREADY IN HISTORY") -- so trimming costs nothing
+      // beyond a slightly slower re-run path for sheets older than the
+      // window. Without the cap the array grows one entry per processed
+      // sheet forever (dailies AND every bulk-backfill date) and breaches
+      // Script Properties' 9KB-per-value limit at ~400 entries, at which
+      // point setProperty throws AFTER all writes succeeded -- every
+      // subsequent import would be reported as a failure (email + Pipeline
+      // Health) despite the data landing. slice(-N) also self-heals an
+      // already-oversized property on the first successful run. The
+      // try/catch is belt-and-suspenders: a property failure must never
+      // convert a successful import into a reported failure.
+      const LAST_SHEETS_MAX = 60;   // ~3 months of weekday imports
+      try {
+        props.setProperty("lastSheets", JSON.stringify(lastKnown.slice(-LAST_SHEETS_MAX)));
+      } catch (propErr) {
+        console.warn('lastSheets property write failed (non-fatal): '
+          + (propErr && propErr.message ? propErr.message : propErr));
+      }
     }
 
     const endTime         = new Date().getTime();
