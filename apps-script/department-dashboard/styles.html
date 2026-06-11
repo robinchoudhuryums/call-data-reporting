@@ -2584,6 +2584,24 @@
      underline alone advertises the definition. */
   th[data-sort].gloss { cursor: pointer; }
 
+  /* Orphan Fix: inline "new hire" add-to-roster form row. */
+  .of-action-cell { white-space: nowrap; }
+  .of-add-row td { background: var(--paper-2); }
+  .of-add-form {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    padding: 6px 2px;
+    font-size: 12.5px;
+  }
+  .of-add-exts { width: 200px; }
+  .of-add-hint {
+    flex-basis: 100%;
+    font-size: 11px;
+    color: var(--muted);
+  }
+
   /* Launcher loading pane: replaces the form while a question-chip run
      generates, so the user never sees a form flash. */
   .launcher-loading { padding: 8px 0 16px; }

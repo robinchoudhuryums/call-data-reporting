@@ -9083,8 +9083,17 @@
           return '<option value="' + escapeHtml(n) + '">' + escapeHtml(n) + '</option>';
         }).join('');
 
+    // Dept options for the "new hire" add-to-roster flow.
+    const deptOptionsHtml = '<option value="">(pick department)</option>'
+      + ((ofLastInit && ofLastInit.departments) || []).map(function (d) {
+          return '<option value="' + escapeHtml(d) + '">' + escapeHtml(d) + '</option>';
+        }).join('');
+
     tbody.innerHTML = orphans.map(function (o, idx) {
       const exts = (o.sampleExts || []).map(escapeHtml).join(', ') || '<span class="al-empty-inline">-</span>';
+      // Two rows per orphan: the main row, plus a hidden inline form for
+      // the "this is actually a NEW EMPLOYEE" flow -- adds them to a
+      // dept's DO NOT EDIT! column instead of renaming to someone else.
       return '<tr data-orphan-idx="' + idx + '">'
            +   '<td>' + escapeHtml(o.name) + '</td>'
            +   '<td class="num">' + o.rows + '</td>'
@@ -9093,8 +9102,25 @@
            +   '<td><select class="of-row-select" data-idx="' + idx + '">'
            +     optionsHtml
            +     '</select></td>'
-           +   '<td><button type="button" class="btn btn-secondary of-row-apply" '
-           +     'data-idx="' + idx + '" disabled>Apply</button></td>'
+           +   '<td class="of-action-cell">'
+           +     '<button type="button" class="btn btn-secondary of-row-apply" '
+           +       'data-idx="' + idx + '" disabled>Apply</button> '
+           +     '<button type="button" class="btn btn-secondary of-row-addnew" data-idx="' + idx + '" '
+           +       'title="This isn’t a misspelling of an existing agent — it’s a new employee. Add them to a department’s roster.">New hire…</button>'
+           +   '</td>'
+           + '</tr>'
+           + '<tr class="of-add-row" data-add-idx="' + idx + '" style="display:none;">'
+           +   '<td colspan="6">'
+           +     '<div class="of-add-form">'
+           +       '<span class="of-add-label">Add <strong>' + escapeHtml(o.name) + '</strong> to roster:</span>'
+           +       '<select class="of-add-dept" data-idx="' + idx + '">' + deptOptionsHtml + '</select>'
+           +       '<input type="text" class="of-add-exts" data-idx="' + idx + '" '
+           +         'placeholder="extensions (comma-separated)" '
+           +         'value="' + (o.sampleExts || []).map(escapeHtml).join(', ') + '">'
+           +       '<button type="button" class="btn of-add-confirm" data-idx="' + idx + '" disabled>Add to roster</button>'
+           +       '<span class="of-add-hint">Writes one &ldquo;Name, ext1, ext2&rdquo; cell to the bottom of that dept’s DO NOT EDIT! column. Extensions are required. Audited to Orphan Fix Log.</span>'
+           +     '</div>'
+           +   '</td>'
            + '</tr>';
     }).join('');
 
@@ -9117,6 +9143,75 @@
         ofConfirmAndApply_(btn, orphan, canonical);
       });
     });
+
+    // "New hire…" toggles the inline add-to-roster form; the confirm
+    // button enables once a dept is picked AND the ext field is non-empty.
+    tbody.querySelectorAll('.of-row-addnew').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        const idx = btn.getAttribute('data-idx');
+        const row = tbody.querySelector('.of-add-row[data-add-idx="' + idx + '"]');
+        if (row) row.style.display = row.style.display === 'none' ? '' : 'none';
+      });
+    });
+    const refreshAddConfirm = function (idx) {
+      const dept = tbody.querySelector('.of-add-dept[data-idx="' + idx + '"]');
+      const exts = tbody.querySelector('.of-add-exts[data-idx="' + idx + '"]');
+      const confirm = tbody.querySelector('.of-add-confirm[data-idx="' + idx + '"]');
+      if (confirm) confirm.disabled = !(dept && dept.value && exts && exts.value.trim());
+    };
+    tbody.querySelectorAll('.of-add-dept').forEach(function (sel) {
+      sel.addEventListener('change', function () { refreshAddConfirm(sel.getAttribute('data-idx')); });
+    });
+    tbody.querySelectorAll('.of-add-exts').forEach(function (inp) {
+      inp.addEventListener('input', function () { refreshAddConfirm(inp.getAttribute('data-idx')); });
+      // Sample exts may have prefilled the field -- refresh once now.
+      refreshAddConfirm(inp.getAttribute('data-idx'));
+    });
+    tbody.querySelectorAll('.of-add-confirm').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        const idx = Number(btn.getAttribute('data-idx'));
+        const orphan = (ofLastInit.orphans || [])[idx];
+        const dept = tbody.querySelector('.of-add-dept[data-idx="' + idx + '"]');
+        const exts = tbody.querySelector('.of-add-exts[data-idx="' + idx + '"]');
+        if (!orphan || !dept || !dept.value || !exts || !exts.value.trim()) return;
+        ofConfirmAndAddToRoster_(btn, orphan, dept.value, exts.value);
+      });
+    });
+  }
+
+  function ofConfirmAndAddToRoster_(btn, orphan, dept, exts) {
+    const msg = 'Add "' + orphan.name + '" to the ' + dept + ' roster with extension(s) '
+              + exts + '?\n\nThis writes one cell to the DO NOT EDIT! sheet. Their '
+              + orphan.rows + ' existing data row' + (orphan.rows === 1 ? '' : 's')
+              + ' will match immediately (the orphan name becomes the roster name), and '
+              + 'future imports canonicalize against it. The action is audited to Orphan Fix Log.';
+    if (!window.confirm(msg)) return;
+
+    btn.disabled = true;
+    const prev = btn.textContent; btn.textContent = 'Adding…';
+    ofSetStatus_('loading', 'Adding ' + orphan.name + ' to the ' + dept + ' roster…');
+
+    google.script.run
+      .withSuccessHandler(function (res) {
+        btn.disabled = false; btn.textContent = prev;
+        ofSetStatus_('success',
+          'Added "' + orphan.name + '" to ' + dept
+          + (res && res.cell ? ' (cell ' + res.cell + ')' : '')
+          + '. Overview updates immediately; other views may take up to 30 minutes (cache TTL).');
+        showToast('Added to ' + dept + ' roster', 'success');
+        ofLoadInit_();
+      })
+      .withFailureHandler(function (err) {
+        btn.disabled = false; btn.textContent = prev;
+        ofSetStatus_('error', 'Add failed: '
+          + (err && err.message ? err.message : String(err)));
+      })
+      .addOrphanToRoster({
+        name:       orphan.name,
+        department: dept,
+        extensions: exts,
+        notes:      '',
+      });
   }
 
   function ofConfirmAndApply_(btn, orphan, canonical) {

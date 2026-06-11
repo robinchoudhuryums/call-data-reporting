@@ -28,9 +28,19 @@ function sliceGrid(grid, startRow, startCol, numRows, numCols) {
 }
 
 function makeFakeRange(sheet, startRow, startCol, numRows, numCols) {
+  numRows = numRows || 1;   // 2-arg getRange(row, col) = single cell
+  numCols = numCols || 1;
   return {
     getValues: function () {
       return sliceGrid(sheet._data, startRow, startCol, numRows, numCols);
+    },
+    getValue: function () { return this.getValues()[0][0]; },
+    setValue: function (v) { return this.setValues([[v]]); },
+    getA1Notation: function () {
+      // Single-cell form is all the tests need (appendRosterEntry_).
+      let n = startCol, letters = '';
+      while (n > 0) { letters = String.fromCharCode(65 + ((n - 1) % 26)) + letters; n = Math.floor((n - 1) / 26); }
+      return letters + startRow;
     },
     getDisplayValues: function () {
       // Honor an explicit display grid if the fixture supplied one
