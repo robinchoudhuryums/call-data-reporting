@@ -277,9 +277,11 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   missed/abandoned flags; capped at `IC_JOURNEY_MAX_EVENTS`=40; callee
   names that look like phone numbers are MASKED so no raw number lands
   in Neon). The writer's idempotent `ALTER TABLE ... ADD COLUMN IF NOT
-  EXISTS` upgrades pre-extension tables in place; the inline-insert
-  chunk size dropped 150 -> 40 because journey adds ~0.5-1KB/row
-  (don't raise it back -- ~44KB practical statement cap). Consumed by
+  EXISTS` upgrades pre-extension tables in place; the inline insert
+  chunks SIZE-AWARE via `icChunkTuplesByChars_` (30K-char budget per
+  statement, `IC_SQL_CHUNK_BUDGET_CHARS`) because journey rows vary
+  ~0.2-6KB -- a fixed row count overran Apps Script's JDBC cap
+  ("Argument too large: sql") on a heavy-journey day. Consumed by
   the dashboard's admin-only **Caller Lookup** (`CallerLookup.gs`,
   route `#/admin/caller-lookup`): phone + date range -> the number is
   normalized to `+<digits>`, HMAC-hashed with the dashboard's
