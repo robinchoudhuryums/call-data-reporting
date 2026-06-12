@@ -650,11 +650,20 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   rows=<n> ms=<elapsed>` line (`logDqeReadTiming_`, NeonRead.gs) so
   sheet-vs-neon read cost is directly comparable in the Executions panel.
   Reuses the dashboard `NEON_*` props + `script.external_request`
-  scope (Operator State #18-19). Remaining readers not cut over: **Missed
-  Calls** (needs the slot K-AC + abandoned columns added to
-  `neonFetchDqeRows_`) and **`computeActiveAgentsInRange_`** (the
-  IR/PR/CR/Insights agent-picker subset in Util.gs, which still
-  whole-sheet-scans regardless of the flag). The `getDeptQueueExts_` DERIVED all-history scan
+  scope (Operator State #18-19). ALL DQE readers are now cut over: the final
+  two -- **Missed Calls** (via `neonFetchDqeRows_(from, to,
+  { includeMissedDetail: true })`, which adds the 19 slot_* columns +
+  abandoned_parent_ids/_missed_times; a grid adapter
+  (`missedGridsFromDal_`) feeds the UNCHANGED compute loop) and
+  **`computeActiveAgentsInRange_`** (the IR/PR/CR/Insights agent-picker
+  subset in Util.gs) -- landed in the DAL-cutover phase. Both fall back
+  to the legacy sheet scan on any Neon error/empty result, and their
+  sheet-vs-neon payload parity is pinned byte-identical by
+  `tests/unit/dal-cutover.test.js` (fake JDBC conn serving the same
+  fixture rows, date-param filtering honored). NOTE: the editor-run
+  `compareDqeSources_` gate does NOT compare the slot/abandoned detail
+  columns -- spot-check one Missed Calls report sheet-vs-neon after
+  flipping the flag. The `getDeptQueueExts_` DERIVED all-history scan
   is now ALSO off the sheet on the Neon path -- `deptQueueExtsForNeonReader_`
   (Data.gs) builds the dept ext set from `neonGetAgentExtPairs_` (a cached
   `SELECT DISTINCT agent_name, queue_extensions` json_agg fetch) instead of
@@ -1105,7 +1114,8 @@ When something looks wrong, before assuming a code bug, check:
     `getCompanyOverview`, `computeSummary_`, and the IR / PR / CR /
     Insights builders; the `getDeptQueueExts_` derived scan also reads
     Neon via `neonGetAgentExtPairs_`; Missed Calls + the
-    `computeActiveAgentsInRange_` picker subset are NOT cut over)
+    `computeActiveAgentsInRange_` picker subset are cut over too as of
+    the DAL-cutover phase -- parity pinned by tests/unit/dal-cutover.test.js)
     to read `dqe_history`. **Only flip to `neon` after `compareDqeSources_`
     (NeonRead.gs, editor-run via the `runDqeParityCheck` wrapper -- the Run
     picker hides `_`-suffixed functions) shows parity-clean over a
