@@ -61,19 +61,19 @@
           <div class="header-menu-list" id="reports-menu-list" role="menu" style="display:none;">
             <button class="header-menu-item" id="missed-report-btn" type="button"
                     data-route="/report/missed" role="menuitem"
-                    title="Per-agent missed-call timeline + queue-only abandoned events for a chosen date range.">Missed Calls</button>
+                    title="Per-agent missed-call timeline + queue-only abandoned events for a chosen date range.">Missed Calls <span class="tab-review-star" title="Pending consolidation review — kept until parity with the consolidated views is confirmed.">*</span></button>
             <button class="header-menu-item" id="individual-report-btn" type="button"
                     data-route="/report/individual" role="menuitem"
-                    title="Per-agent KPIs vs team avg + 12-month trend. Pick 2+ agents to switch to peer-comparison mode.">Individual</button>
+                    title="Per-agent KPIs vs team avg + 12-month trend. Pick 2+ agents to switch to peer-comparison mode.">Individual <span class="tab-review-star" title="Pending consolidation review — kept until parity with the consolidated views is confirmed.">*</span></button>
             <button class="header-menu-item" id="performance-report-btn" type="button"
                     data-route="/report/performance" role="menuitem"
-                    title="Department-level current-vs-prior-period deltas, share-of-answered pie, and 12-month team trend.">Performance</button>
+                    title="Department-level current-vs-prior-period deltas, share-of-answered pie, and 12-month team trend.">Performance <span class="tab-review-star" title="Pending consolidation review — kept until parity with the consolidated views is confirmed.">*</span></button>
             <button class="header-menu-item" id="compare-ranges-btn" type="button"
                     data-route="/report/compare" role="menuitem"
-                    title="Side-by-side comparison of two arbitrary date ranges. Useful for year-over-year or pre/post-change analyses.">Compare</button>
+                    title="Side-by-side comparison of two arbitrary date ranges. Useful for year-over-year or pre/post-change analyses.">Compare <span class="tab-review-star" title="Pending consolidation review — kept until parity with the consolidated views is confirmed.">*</span></button>
             <button class="header-menu-item" id="qcd-report-btn" type="button"
                     data-route="/report/qcd" role="menuitem"
-                    title="Queue Call Detail report: dept-level totals, per-source breakdown, abandoned %, violations, and 12-month trend.">QCD</button>
+                    title="Queue Call Detail report: dept-level totals, per-source breakdown, abandoned %, violations, and 12-month trend.">QCD <span class="tab-review-star" title="Pending consolidation review — kept until parity with the consolidated views is confirmed.">*</span></button>
             <button class="header-menu-item" id="insights-report-btn" type="button"
                     data-route="/report/insights" role="menuitem"
                     title="Combined view: a department rollup PLUS per-agent cards, each comparing the selected range to the immediately-preceding period.">Insights</button>
@@ -166,10 +166,10 @@
                 <th>Source</th>
                 <th>Unique</th>
                 <th>Rung</th>
-                <th>Missed</th>
+                <th>Missed (rings)</th>
                 <th>Answered</th>
                 <th>TTT</th>
-                <th>ATT</th>
+                <th>ATT (daily avg)</th>
                 <th>Avg Abd Wait</th>
                 <th>CSR Avg Abd Wait</th>
               </tr>
@@ -256,10 +256,10 @@
             <th>Source</th>
             <th data-sort="totalUnique">Unique <span class="arrow"></span></th>
             <th data-sort="totalRung">Rung <span class="arrow"></span></th>
-            <th data-sort="totalMissed">Missed <span class="arrow"></span></th>
+            <th data-sort="totalMissed">Missed (rings) <span class="arrow"></span></th>
             <th data-sort="totalAnswered">Answered <span class="arrow"></span></th>
             <th data-sort="tttSeconds">TTT <span class="arrow"></span></th>
-            <th data-sort="attSeconds">ATT <span class="arrow"></span></th>
+            <th data-sort="attSeconds">ATT (daily avg) <span class="arrow"></span></th>
             <th data-sort="avgAbdWaitSeconds">Avg Abd Wait <span class="arrow"></span></th>
             <th data-sort="csrAvgAbdWaitSeconds">CSR Avg Abd Wait <span class="arrow"></span></th>
           </tr>
@@ -1241,6 +1241,14 @@
             <button type="button" class="pr-trend-subtab" data-metric="att" role="tab" aria-selected="false">Avg Talk Time</button>
           </div>
           <div class="ir-chart-canvas-wrap"><canvas id="ins-trend-chart"></canvas></div>
+        </div>
+
+        <!-- Share-of-answered pie (ported from the Performance Report so
+             PR can retire without losing the view): each selected
+             agent's slice of the team's answered calls in the range. -->
+        <div class="ir-chart-wrap ins-share-wrap" id="ins-share-wrap" style="display:none;">
+          <div class="ir-chart-header">Share of answered calls</div>
+          <div class="ir-chart-canvas-wrap ins-share-canvas-wrap"><canvas id="ins-share-chart"></canvas></div>
         </div>
 
         <div class="al-section-title">Per-agent comparison (vs prior period)</div>

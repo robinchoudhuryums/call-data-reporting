@@ -2611,6 +2611,26 @@
      underline alone advertises the definition. */
   th[data-sort].gloss { cursor: pointer; }
 
+  /* Insights: share-of-answered pie (PR port) + card IR drill link. */
+  .ins-share-canvas-wrap { height: 220px; position: relative; }
+  .ins-card-ir-link {
+    margin-left: auto;
+    font-family: var(--mono);
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    color: var(--accent);
+    background: none;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 2px 8px;
+    cursor: pointer;
+  }
+  .ins-card-ir-link:hover { border-color: var(--accent); background: var(--accent-soft); }
+
+  /* Tab asterisk: reports pending consolidation review. */
+  .tab-review-star { color: var(--warn); cursor: help; }
+
   /* Insights: Queue health section (QCD consolidation). */
   .ins-qh-chart-wrap { margin: 10px 0 12px; }
   .ins-qh-canvas-wrap { height: 190px; position: relative; }
