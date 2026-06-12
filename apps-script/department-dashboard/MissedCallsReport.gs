@@ -107,6 +107,41 @@ function getMissedCallsReport(req) {
   return data;
 }
 
+/**
+ * Adapts normalized DAL rows (neonFetchDqeRows_ with includeMissedDetail)
+ * into the { values, displays } grid shape the sheet read produces, so
+ * computeMissedCallsReport_'s row loop is source-agnostic. Only the
+ * columns the loop actually reads are populated: DATE / AGENT /
+ * QUEUE_EXT (values) and the K..AC slots + AD parent-ids + AF
+ * missed-times (displays). DAL rows are already date-windowed; the
+ * loop's own range filter then passes everything through (rowDateIso_
+ * passes ISO strings unchanged).
+ */
+function missedGridsFromDal_(dalRows) {
+  const width = HISTORICAL_COLS.CSR_AVG_ABD_WAIT;
+  const values = [], displays = [];
+  for (let i = 0; i < dalRows.length; i++) {
+    const row = dalRows[i];
+    const v = new Array(width).fill('');
+    const d = new Array(width).fill('');
+    v[HISTORICAL_COLS.DATE - 1]      = row.dateIso;
+    v[HISTORICAL_COLS.AGENT - 1]     = row.agent;
+    v[HISTORICAL_COLS.QUEUE_EXT - 1] = row.queueExt;
+    d[HISTORICAL_COLS.DATE - 1]      = row.dateIso;
+    d[HISTORICAL_COLS.AGENT - 1]     = row.agent;
+    d[HISTORICAL_COLS.QUEUE_EXT - 1] = row.queueExt;
+    const slots = row.slots || [];
+    for (let c = 0; c < slots.length; c++) {
+      d[HISTORICAL_COLS.TIME_SLOTS_START - 1 + c] = slots[c] || '';
+    }
+    d[HISTORICAL_COLS.ABANDONED_PARENT_IDS - 1]   = row.abandonedParentIds || '';
+    d[HISTORICAL_COLS.ABANDONED_MISSED_TIMES - 1] = row.abandonedMissedTimes || '';
+    values.push(v);
+    displays.push(d);
+  }
+  return { values: values, displays: displays };
+}
+
 function computeMissedCallsReport_(dept, from, to, scope) {
   const roster = getRosterForDepartment_(dept);
   const rosterSet = {};
@@ -124,16 +159,46 @@ function computeMissedCallsReport_(dept, from, to, scope) {
 
   const ssTZ = ss.getSpreadsheetTimeZone();
 
-  // Read cols 1..AH. Need date (col 2) and agent (col 3) for filtering,
-  // K-AC for missed times, AF for abandoned cross-reference.
-  const numCols = HISTORICAL_COLS.CSR_AVG_ABD_WAIT;
-  const range = sheet.getRange(2, 1, lastRow - 1, numCols);
-  const values = range.getValues();
-  const displays = range.getDisplayValues();
+  // F1 DAL cutover: when DQE_READ_SOURCE=neon, fetch the windowed rows
+  // (incl. the slot/abandoned detail columns) from dqe_history and adapt
+  // them into the SAME values/displays grid shape the sheet read
+  // produces, so the compute loop below runs UNCHANGED on either source.
+  // The dept queue-ext set keeps its all-history derivation via
+  // deptQueueExtsForNeonReader_ (the same helper computeSummary_'s
+  // cutover uses). Fallback: any error or an empty result falls through
+  // to the sheet read -- the default path is byte-identical to
+  // pre-cutover behavior. Parity is pinned by tests/unit/dal-cutover.test.js.
+  let values = null, displays = null, deptQueueExts = null;
+  const dqeSource = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
+  if (dqeSource === 'neon' && typeof neonFetchDqeRows_ === 'function') {
+    try {
+      const _t0 = Date.now();
+      const dalRows = neonFetchDqeRows_(from, to, { includeMissedDetail: true });
+      if (dalRows && dalRows.length) {
+        const grids = missedGridsFromDal_(dalRows);
+        values = grids.values;
+        displays = grids.displays;
+        deptQueueExts = deptQueueExtsForNeonReader_(dept, rosterSet, sheet, lastRow).exts;
+        if (typeof logDqeReadTiming_ === 'function') logDqeReadTiming_('missedCalls', 'neon', _t0, dalRows.length);
+      }
+    } catch (e) {
+      Logger.log('computeMissedCallsReport_: neon read failed, falling back to sheet: '
+        + (e && e.message ? e.message : e));
+      values = null; displays = null; deptQueueExts = null;
+    }
+  }
+  if (!values) {
+    // Read cols 1..AH. Need date (col 2) and agent (col 3) for filtering,
+    // K-AC for missed times, AF for abandoned cross-reference.
+    const numCols = HISTORICAL_COLS.CSR_AVG_ABD_WAIT;
+    const range = sheet.getRange(2, 1, lastRow - 1, numCols);
+    values = range.getValues();
+    displays = range.getDisplayValues();
 
-  // Shared with Data.gs queue-scope matching: override if set, else
-  // derived from this dept's roster agents' col D values.
-  const deptQueueExts = getDeptQueueExts_(dept, rosterSet, values).exts;
+    // Shared with Data.gs queue-scope matching: override if set, else
+    // derived from this dept's roster agents' col D values.
+    deptQueueExts = getDeptQueueExts_(dept, rosterSet, values).exts;
+  }
 
   // Chart buckets: 8 AM-5 PM CST in 30-min slots = 18 buckets
   const totalBuckets = (MISSED_CHART_END_HOUR - MISSED_CHART_START_HOUR)

@@ -216,7 +216,8 @@ function getDepartmentSummary(req) {
   // per-row delta chip on the agent table; `meta.priorFrom` /
   // `meta.priorTo` carry the computed window so the client can
   // show it in chip hover tooltips.
-  const cacheKey = 'summary:v8:' + dept + ':' + scope + ':' + from + ':' + to;
+  // v9: qcdSnapshot shape gains perQueue (sub-queues separated).
+  const cacheKey = 'summary:v9:' + dept + ':' + scope + ':' + from + ':' + to;
   const cached = cache.get(cacheKey);
   if (cached) {
     try {
@@ -661,25 +662,44 @@ function emptySummary_(dept, from, to, scope, rosterSize, rowsScanned, deptQueue
 }
 
 /**
- * Returns the most-recent QCD snapshot for the dept, aggregated
- * across the dept's mapped queues (DEPT_QCD_QUEUES). Same
- * computation as CompanyOverview.gs::computeQcdSnapshots_ but
- * scoped to a single dept and called from the My Department
- * summary path.
+ * Returns the most-recent QCD snapshot for the dept. The queue list
+ * still includes sub-queue children (Sales sees PAP's queues), but the
+ * data is kept SEPARATED per queue -- sub-queues can behave very
+ * differently from their parent, so summing them hides the real state.
+ * Shape:
+ *   { date, perQueue: [{ queue, subDept|null, totalCalls, totalAnswered,
+ *     abandoned, abandonedPct, abandonedPctStr, violations }, ...],
+ *     totalCalls, totalAnswered, abandoned, abandonedPct,
+ *     abandonedPctStr, violations }            // all-queues sum (the
+ *                                              // client renders it as a
+ *                                              // clearly-labeled total
+ *                                              // row, never alone)
+ * `subDept` names the child dept owning the queue (e.g. 'PAP') so the
+ * client can tag sub-queue rows.
  *
- * Returns null when the dept isn't mapped in DEPT_QCD_QUEUES OR
- * when no recent QCD rows exist; client renders nothing.
+ * Returns null when the dept isn't mapped OR no recent QCD rows exist;
+ * client renders nothing.
  */
 function computeDeptQcdSnapshot_(dept, ssTZ) {
   try {
-    // Use the shared rollup helper (in QCDReport.gs): parent depts
-    // pick up sub-queue queues so Sales's snapshot includes PAP,
-    // Power includes PAK, CSR includes Spanish.
     const queues = (typeof queuesForDept_ === 'function')
                    ? queuesForDept_(dept) : [];
     if (!queues.length) return null;
     const queueSet = {};
     queues.forEach(function (q) { queueSet[q] = true; });
+
+    // queue -> owning child dept (for the sub-queue tag). A queue in
+    // the rollup that isn't in the dept's OWN list belongs to a child.
+    const ownSet = {};
+    queuesForDept_(dept, { includeChildren: false }).forEach(function (q) { ownSet[q] = true; });
+    const queueOwner = {};
+    const parentMap = (typeof getOverviewParentMap_ === 'function') ? getOverviewParentMap_() : {};
+    Object.keys(parentMap).forEach(function (child) {
+      if (parentMap[child] !== dept) return;
+      getDeptQcdQueues_(child).forEach(function (q) {
+        if (!ownSet[q]) queueOwner[q] = child;
+      });
+    });
 
     const ss = openSpreadsheet_();
     const sheet = ss.getSheetByName('QCD Historical Data');
@@ -690,7 +710,7 @@ function computeDeptQcdSnapshot_(dept, ssTZ) {
     const values = sheet.getRange(2, 1, lastRow - 1, 12).getValues();
 
     let latestDate = '';
-    let total = 0, abandoned = 0, answered = 0, violations = 0;
+    let byQueue = {};   // queue -> { total, answered, abandoned, violations } on latestDate
     for (let i = 0; i < values.length; i++) {
       const r = values[i];
       const source = String(r[QCD_HISTORICAL_COLS.CALL_SOURCE - 1] || '').trim();
@@ -702,21 +722,42 @@ function computeDeptQcdSnapshot_(dept, ssTZ) {
 
       if (dateIso > latestDate) {
         latestDate = dateIso;
-        total = Number(r[QCD_HISTORICAL_COLS.TOTAL_CALLS - 1])    || 0;
-        answered = Number(r[QCD_HISTORICAL_COLS.TOTAL_ANSWERED - 1]) || 0;
-        abandoned = Number(r[QCD_HISTORICAL_COLS.ABANDONED   - 1]) || 0;
-        violations = Number(r[QCD_HISTORICAL_COLS.VIOLATIONS  - 1]) || 0;
-      } else if (dateIso === latestDate) {
-        total     += Number(r[QCD_HISTORICAL_COLS.TOTAL_CALLS - 1])    || 0;
-        answered  += Number(r[QCD_HISTORICAL_COLS.TOTAL_ANSWERED - 1]) || 0;
-        abandoned += Number(r[QCD_HISTORICAL_COLS.ABANDONED   - 1]) || 0;
-        violations += Number(r[QCD_HISTORICAL_COLS.VIOLATIONS  - 1]) || 0;
+        byQueue = {};
+      }
+      if (dateIso === latestDate) {
+        const b = byQueue[queue] || (byQueue[queue] = { total: 0, answered: 0, abandoned: 0, violations: 0 });
+        b.total      += Number(r[QCD_HISTORICAL_COLS.TOTAL_CALLS - 1])    || 0;
+        b.answered   += Number(r[QCD_HISTORICAL_COLS.TOTAL_ANSWERED - 1]) || 0;
+        b.abandoned  += Number(r[QCD_HISTORICAL_COLS.ABANDONED   - 1])    || 0;
+        b.violations += Number(r[QCD_HISTORICAL_COLS.VIOLATIONS  - 1])    || 0;
       }
     }
     if (!latestDate) return null;
+
+    let total = 0, answered = 0, abandoned = 0, violations = 0;
+    // Only queues with rows on the latest date render -- a mapped queue
+    // with no traffic that day would just add a zero row of noise.
+    const perQueue = queues.filter(function (q) { return !!byQueue[q]; })
+      .map(function (q) {
+        const b = byQueue[q];
+        total += b.total; answered += b.answered;
+        abandoned += b.abandoned; violations += b.violations;
+        const pct = b.total > 0 ? (b.abandoned / b.total) * 100 : 0;
+        return {
+          queue:           q,
+          subDept:         queueOwner[q] || null,
+          totalCalls:      b.total,
+          totalAnswered:   b.answered,
+          abandoned:       b.abandoned,
+          abandonedPct:    pct,
+          abandonedPctStr: pct.toFixed(2) + '%',
+          violations:      b.violations,
+        };
+      });
     const pct = total > 0 ? (abandoned / total) * 100 : 0;
     return {
       date:             latestDate,
+      perQueue:         perQueue,
       totalCalls:       total,
       totalAnswered:    answered,
       abandoned:        abandoned,

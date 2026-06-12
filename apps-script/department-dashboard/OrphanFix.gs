@@ -65,6 +65,20 @@
  *   removeAgentAlias({ oldName }) -> { removed: N }
  *   applyOrphanRename({ fromName, toName, alsoAddAlias?, notes? })
  *     -> { renamed: N, aliasAdded: boolean }
+ *   addOrphanToRoster({ name, department, extensions, notes? })
+ *     -> { added: 1, cell: 'A1-notation' }
+ *     The "orphan is actually a NEW EMPLOYEE" flow: appends one
+ *     "Name, ext1, ext2" cell to the bottom of the chosen dept's
+ *     DO NOT EDIT! column. Extensions are REQUIRED (operator
+ *     decision) -- the roster cell format embeds them (INV-03) and
+ *     queue matching depends on them. The column is located by the
+ *     same first-blank-terminated header scan getAllDepartments_
+ *     uses, so the write is structurally confined to the dept block
+ *     (the insurance block in cols X-AG sits past the blank column
+ *     and is unreachable). The new entry takes effect everywhere on
+ *     the next cache TTL, and the pipeline canonicalizes incoming
+ *     CDR names against it from the next build (INV-24) -- which is
+ *     why the name pre-fills byte-exact from the orphan.
  */
 
 const ORPHAN_FIX_MAX_NAME_LENGTH = 200;
@@ -74,6 +88,7 @@ function getOrphanFixInit() {
   return {
     orphans:        computeOrphans_(),
     rosterNames:    collectAllRosterNames_(),
+    departments:    getAllDepartments_(),   // for the add-to-roster dept picker
     aliases:        readAgentAliases_(),
     log:            readOrphanFixLog_(20),
     spreadsheetUrl: 'https://docs.google.com/spreadsheets/d/' + getSpreadsheetId_() + '/edit',
@@ -244,6 +259,73 @@ function applyOrphanRename(req) {
   };
 }
 
+/**
+ * Adds an orphan to a dept's DO NOT EDIT! roster column as a NEW
+ * employee ("Name, ext1, ext2" cell appended below the column's last
+ * entry). Full INV-01 data-mutation treatment: admin gate, validation,
+ * LockService, audit row (action 'roster-add').
+ *
+ * Validation:
+ *   - name: sanitizeAgentName_ (non-empty, length cap, no queue
+ *     sentinels) + no comma (the cell format is comma-delimited,
+ *     INV-03) + must NOT already be on any roster (that case is a
+ *     rename/alias, not an add).
+ *   - department: must match a real roster column header byte-exact.
+ *   - extensions: REQUIRED, one or more digit-only tokens.
+ */
+function addOrphanToRoster(req) {
+  assertAdmin_();
+  const name = sanitizeAgentName_((req && req.name) || '');
+  if (name.indexOf(',') !== -1) {
+    throw new Error('Agent name cannot contain a comma — the roster cell format is "Name, ext1, ext2".');
+  }
+  const department = String((req && req.department) || '').trim();
+  if (!department) throw new Error('Pick a department.');
+  if (getAllDepartments_().indexOf(department) === -1) {
+    throw new Error('Unknown department: "' + department + '".');
+  }
+  const rawExts = (req && req.extensions) || '';
+  const exts = (Array.isArray(rawExts) ? rawExts : String(rawExts).split(','))
+    .map(function (s) { return String(s).trim(); })
+    .filter(function (s) { return !!s; });
+  if (!exts.length) {
+    throw new Error('At least one extension is required — queue matching depends on it.');
+  }
+  exts.forEach(function (e) {
+    if (!/^\d+$/.test(e)) {
+      throw new Error('Extensions must be digits only ("' + e + '" is not).');
+    }
+  });
+  if (collectAllRosterNames_().indexOf(name) !== -1) {
+    throw new Error('"' + name + '" is already on a roster. Use the rename/alias flow instead.');
+  }
+  const notes = String((req && req.notes) || '').trim().slice(0, 500);
+  assertOrphanFixLogExists_();   // audit trail is mandatory on every write path
+
+  const admin = Session.getActiveUser().getEmail();
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw new Error('Could not acquire script lock; try again.');
+  let cell = '';
+  try {
+    cell = appendRosterEntry_(department, name, exts);
+    appendOrphanFixLog_({
+      admin:    admin,
+      action:   'roster-add',
+      fromName: name,
+      toName:   department,
+      affected: 0,
+      notes:    ('exts: ' + exts.join(', ') + (notes ? ' | ' + notes : '')).slice(0, 500),
+    });
+    // New roster member changes dept rosters / active counts on the
+    // Overview immediately; per-(dept, range) caches TTL out.
+    try { CacheService.getScriptCache().remove(COMPANY_OVERVIEW_CACHE_KEY); }
+    catch (e) { /* best-effort */ }
+  } finally {
+    lock.releaseLock();
+  }
+  return { added: 1, cell: cell };
+}
+
 // -- Read helpers (read-only; trailing underscore) ----------------
 
 /**
@@ -401,6 +483,50 @@ function renameHistoricalAgent_(fromName, toName) {
   }
   if (affected > 0) range.setValues(values);
   return affected;
+}
+
+/**
+ * Appends "Name, ext1, ext2" to the bottom of `department`'s roster
+ * column. Column located by the SAME first-blank-terminated header scan
+ * the readers use (getAllDepartments_ / getRosterForDepartment_), so a
+ * write can never land outside the dept block. The target row is the
+ * first row after the column's LAST non-empty cell (other columns may
+ * be longer or shorter; row position is per-column). Returns the A1
+ * notation of the written cell for the audit trail / client toast.
+ */
+function appendRosterEntry_(department, name, exts) {
+  const ss = openSpreadsheet_();
+  const sheet = ss.getSheetByName(SHEETS.ROSTER);
+  if (!sheet) throw new Error('Roster sheet (DO NOT EDIT!) not found.');
+  const lastCol = sheet.getLastColumn();
+  if (lastCol < ROSTER.DEPT_FIRST_COL) throw new Error('Roster sheet has no dept columns.');
+
+  const headerRow = sheet
+    .getRange(ROSTER.HEADER_ROW, ROSTER.DEPT_FIRST_COL,
+              1, lastCol - ROSTER.DEPT_FIRST_COL + 1)
+    .getValues()[0];
+  let col = -1;
+  for (let i = 0; i < headerRow.length; i++) {
+    const v = String(headerRow[i] || '').trim();
+    if (!v) break;   // first blank ends the dept block (insurance block is past it)
+    if (v === department) { col = ROSTER.DEPT_FIRST_COL + i; break; }
+  }
+  if (col === -1) throw new Error('Department column "' + department + '" not found on the roster sheet.');
+
+  // First row below the column's last non-empty cell.
+  const lastRow = Math.max(sheet.getLastRow(), ROSTER.DATA_START_ROW);
+  const colValues = sheet.getRange(ROSTER.DATA_START_ROW, col,
+                                   lastRow - ROSTER.DATA_START_ROW + 1, 1).getValues();
+  let writeRow = ROSTER.DATA_START_ROW;
+  for (let r = colValues.length - 1; r >= 0; r--) {
+    if (String(colValues[r][0] || '').trim() !== '') {
+      writeRow = ROSTER.DATA_START_ROW + r + 1;
+      break;
+    }
+  }
+  const target = sheet.getRange(writeRow, col);
+  target.setValue(name + ', ' + exts.join(', '));
+  return target.getA1Notation();
 }
 
 /**

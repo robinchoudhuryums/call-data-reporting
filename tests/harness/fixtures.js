@@ -45,6 +45,18 @@ function dqeRow(o) {
   disp[I.att] = o.att || '';
   disp[I.aaw] = o.aaw || '';
   disp[I.caw] = o.caw || '';
+  // Missed-call detail columns (read from the DISPLAY grid by
+  // MissedCallsReport.gs): the 19 time-slot cells K..AC (0-based
+  // 10..28), abandoned parent IDs (col 30 -> 29), abandoned missed
+  // times (col 32 -> 31). `slots` is a positional array of up to 19
+  // comma-joined time strings.
+  if (o.slots) {
+    for (let sIdx = 0; sIdx < o.slots.length && sIdx < 19; sIdx++) {
+      disp[10 + sIdx] = o.slots[sIdx] || '';
+    }
+  }
+  if (o.abdIds)   disp[29] = o.abdIds;
+  if (o.abdTimes) disp[31] = o.abdTimes;
   return { vals: vals, disp: disp };
 }
 

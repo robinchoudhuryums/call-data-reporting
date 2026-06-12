@@ -578,10 +578,10 @@
     { key: 'source',               label: 'Source',          type: 'chip' },
     { key: 'totalUnique',          label: 'Unique',          type: 'num' },
     { key: 'totalRung',            label: 'Rung',            type: 'num' },
-    { key: 'totalMissed',          label: 'Missed',          type: 'num', highlight: 'missed' },
+    { key: 'totalMissed',          label: 'Missed (rings)',  type: 'num', highlight: 'missed' },
     { key: 'totalAnswered',        label: 'Answered',        type: 'num' },
     { key: 'tttSeconds',           label: 'TTT',             type: 'duration' },
-    { key: 'attSeconds',           label: 'ATT',             type: 'duration' },
+    { key: 'attSeconds',           label: 'ATT (daily avg)', type: 'duration' },
     { key: 'avgAbdWaitSeconds',    label: 'Avg Abd Wait',    type: 'duration' },
     { key: 'csrAvgAbdWaitSeconds', label: 'CSR Avg Abd Wait', type: 'duration' },
   ];
@@ -721,6 +721,12 @@
     // Sortable headers
     document.querySelectorAll('#agents-table thead th[data-sort]').forEach(function (th) {
       th.addEventListener('click', function () { onSort(th.getAttribute('data-sort')); });
+    });
+
+    var deptMissedOpen = $('dept-missed-open');
+    if (deptMissedOpen) deptMissedOpen.addEventListener('click', function () {
+      var b = $('missed-report-btn');
+      if (b) b.click();
     });
 
     initHelpModal();
@@ -2280,12 +2286,43 @@
     });
   }
 
+  // Launcher-initiated runs skip the form: a loading pane (with the
+  // question being answered) replaces it until the report renders. The
+  // pane is created on demand before the form element; each modal's
+  // showForm/showResults helpers hide it, so any failure path that falls
+  // back to the form dismisses it automatically.
+  function launcherShowLoading_(loadingId, formId, resultsId, question) {
+    const form = $(formId), results = $(resultsId);
+    if (!form) return;
+    form.style.display = 'none';
+    if (results) results.style.display = 'none';
+    let el = $(loadingId);
+    if (!el) {
+      el = document.createElement('div');
+      el.id = loadingId;
+      el.className = 'launcher-loading';
+      form.parentNode.insertBefore(el, form);
+    }
+    el.innerHTML = '<div class="launcher-loading-q">' + escapeHtml(question) + '</div>'
+      + '<div class="skeleton-row"><div class="skeleton-line" style="width:60%;"></div></div>'
+      + '<div class="skeleton-row"><div class="skeleton-line"></div><div class="skeleton-line"></div><div class="skeleton-line"></div></div>'
+      + '<div class="skeleton-row"><div class="skeleton-line" style="height:120px;flex:1;"></div></div>'
+      + '<div class="launcher-loading-cap">Generating the report…</div>';
+    el.style.display = '';
+  }
+  function launcherHideLoading_(loadingId) {
+    const el = $(loadingId);
+    if (el) el.style.display = 'none';
+  }
+
   // "How is my team doing lately?" -> Insights, last 30 days, all active
   // agents, auto-generated. The button click runs the modal's normal
   // open (defaults + prefs + roster fetch); we then override the dates
   // and re-ensure the roster for the new range -- insRenderAgentList
   // consumes insLauncherAutoRun_ once the picker is rendered, so the
   // select-all + generate happen at a race-free synchronization point.
+  // The form never flashes: a loading pane covers the roster fetch +
+  // generate; failures fall back to the primed form (insShowForm).
   function launcherOpenInsights_() {
     const btn = $('insights-report-btn');
     if (!btn) return;
@@ -2295,6 +2332,8 @@
     const p = $('ins-preset');
     if (p) p.value = 'custom';
     insLauncherAutoRun_ = true;
+    launcherShowLoading_('ins-launcher-loading', 'insights-form', 'insights-results',
+      'How is my team doing lately?');
     insEnsureRoster();
   }
 
@@ -2327,13 +2366,16 @@
   }
 
   // "Are callers giving up before we answer?" -> QCD report over the
-  // last 30 days, auto-generated (no agent selection needed).
+  // last 30 days, auto-generated (no agent selection needed). Loading
+  // pane instead of a form flash; failures fall back to the form.
   function launcherOpenQcd_() {
     const btn = $('qcd-report-btn');
     if (!btn) return;
     btn.click();
     const p = $('qcd-preset');
     if (p) { p.value = 'last30'; applyQcdPreset(); }
+    launcherShowLoading_('qcd-launcher-loading', 'qcd-form', 'qcd-results',
+      'Are callers giving up before we answer?');
     runQcdReport();
   }
 
@@ -2351,6 +2393,10 @@
     'unique': 'Distinct parent calls this agent was rung on inside the 8:30 AM–5:00 PM CST work window.',
     'rung': 'Times this agent’s phone rang inside the work window. A call that overflows across agents counts once per agent it rang.',
     'missed': 'Rings this agent didn’t pick up. A missed ring isn’t necessarily a lost call — another agent may have answered the same call.',
+    'missed (rings)': 'Rings agents didn’t pick up. One call can ring several agents, so this counts RINGS, not lost calls — a missed ring is often answered by someone else. For calls callers actually gave up on, see Abandoned (queue data).',
+    'att (daily avg)': 'Average Talk Time as the simple mean of each day’s stored ATT value. This is the My Department lens; the reports use the per-call weighted version, so the two can differ for the same range — neither is wrong, they answer different questions.',
+    'att (per call)': 'Average Talk Time weighted by answered calls (total talk ÷ calls answered). Days with no answered calls don’t drag it down. The My Department table shows the daily-mean version instead, so the two can differ for the same range.',
+    'avg talk (per call)': 'Average Talk Time weighted by answered calls (total talk ÷ calls answered). Longer isn’t automatically worse — it can mean thorough service.',
     'answered': 'Calls this agent answered inside the work window.',
     'ttt': 'Total Talk Time: the sum of this agent’s own conversation time on answered calls in the window.',
     'att': 'Average Talk Time per answered call. Longer isn’t automatically worse — it can mean thorough service; read it alongside % answered.',
@@ -2462,7 +2508,18 @@
       el.id = id;
       el.className = 'report-headline';
       const header = container.querySelector('.ir-results-header');
-      if (header) container.insertBefore(el, header.nextSibling);
+      if (header) {
+        // Insert after the header AND after any status / loading / error
+        // elements that immediately follow it, so transient "Loading…" and
+        // error banners always render ABOVE the headline, not under it.
+        let anchor = header.nextElementSibling;
+        while (anchor && (anchor.classList.contains('status')
+                          || anchor.classList.contains('ir-loader')
+                          || anchor.classList.contains('empty-state'))) {
+          anchor = anchor.nextElementSibling;
+        }
+        container.insertBefore(el, anchor);
+      }
       // Anchor without a results header (e.g. the Missed modal's
       // summary strip): place the headline just above the anchor.
       else container.parentNode.insertBefore(el, container);
@@ -2518,6 +2575,13 @@
         s.push(regressed + ' agent' + (regressed === 1 ? '' : 's')
           + ' regressed overall — their cards carry the orange edge below.');
       }
+    }
+    // Queue health: one sentence when the abandon rate crosses the 5%
+    // threshold (the only company-wide queue standard).
+    const qh = data.queueHealth;
+    if (qh && qh.totals && Number(qh.totals.totalCalls) > 0 && Number(qh.totals.abandonedPct) >= 5) {
+      s.push('Heads up: callers abandoned <strong>'
+        + escapeHtml(String(qh.totals.abandonedPctStr)) + '</strong> of queue calls — over the 5% threshold (see Queue health below).');
     }
     return s.slice(0, 3);
   }
@@ -2672,6 +2736,10 @@
       trapFocus_(modal);
       initModalDragResize_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
       document.addEventListener('keydown', onKeyDown);
+      // The modal carries its OWN range (drill-down), defaulted from the
+      // My Department fields on every open so it starts in sync.
+      if ($('missed-from')) $('missed-from').value = $('from-date').value;
+      if ($('missed-to'))   $('missed-to').value   = $('to-date').value;
       fetchAndRender();
     }
     function closeModal() {
@@ -2691,6 +2759,14 @@
     if (closeBtn) closeBtn.addEventListener('click', closeModal);
     if (backdrop) backdrop.addEventListener('click', closeModal);
 
+    // Drill-down range controls (modal-local).
+    const missedRefresh = $('missed-refresh-btn');
+    if (missedRefresh) missedRefresh.addEventListener('click', fetchAndRender);
+    ['missed-from', 'missed-to'].forEach(function (id) {
+      const el = $(id);
+      if (el) el.addEventListener('change', fetchAndRender);
+    });
+
     // Close button on the bucket-detail panel (chart drill-in).
     const detailClose = $('bucket-detail-close');
     if (detailClose) detailClose.addEventListener('click', hideBucketDetail);
@@ -2699,8 +2775,10 @@
       const dept = getRequestedDept();
       const req = {
         department: dept,
-        from: $('from-date').value,
-        to:   $('to-date').value,
+        // Modal-local range when present (drill-down); falls back to the
+        // page fields for safety.
+        from: ($('missed-from') && $('missed-from').value) || $('from-date').value,
+        to:   ($('missed-to')   && $('missed-to').value)   || $('to-date').value,
       };
 
       setMissedStatus('loading', 'Loading missed-call data...');
@@ -2778,25 +2856,15 @@
     renderMissedAgents(data.agents || []);
   }
 
-  function renderMissedChart(chart) {
-    const wrap = $('missed-chart-wrap');
-    if (!wrap) return;
-
-    // Recreate the canvas (clearMissedChart() replaced the container
-    // contents with a loading placeholder).
-    wrap.innerHTML = '<canvas id="missed-chart" aria-label="Hour-of-day distribution of missed calls"></canvas>';
-    const canvas = $('missed-chart');
-
-    if (typeof Chart === 'undefined') {
-      // Chart.js failed to load (CDN blocked?). Surface a fallback.
-      wrap.innerHTML = '<p class="chart-loading">Chart library failed to load. The agent grid below still shows the data.</p>';
-      return;
-    }
-
-    const ctx = canvas.getContext('2d');
-    // Radar chart, matching the legacy DQE Report's missed-calls
-    // visualization (clock-like, with each axis = a 30-min bucket).
-    const cfg = {
+  /**
+   * SHARED radar config for the missed-calls 30-min bucket chart --
+   * consumed by the Missed Calls modal AND the My Department drill-down
+   * section, so the two visualizations can't drift. `onBucketClick`
+   * receives the clicked bucket index (or pass null for non-interactive).
+   * datalabels stay off in boolean form (INV-41).
+   */
+  function missedRadarCfg_(chart, onBucketClick) {
+    return {
       type: 'radar',
       data: {
         labels: chart.labels || [],
@@ -2843,17 +2911,40 @@
         // Click a data point (or the axis label nearest a point) to
         // see the contributing rings for that 30-min bucket.
         onClick: function (evt, items, chartObj) {
+          if (!onBucketClick) return;
           if (items && items.length) {
-            toggleBucketDetail(items[0].index);
+            onBucketClick(items[0].index);
             return;
           }
           // Allow clicking near an axis label even if not exactly on a
           // data point: snap to the nearest point.
           const near = chartObj.getElementsAtEventForMode(evt, 'nearest', { intersect: false }, true);
-          if (near && near.length) toggleBucketDetail(near[0].index);
+          if (near && near.length) onBucketClick(near[0].index);
         }
       }
     };
+  }
+
+  function renderMissedChart(chart) {
+    const wrap = $('missed-chart-wrap');
+    if (!wrap) return;
+
+    // Recreate the canvas (clearMissedChart() replaced the container
+    // contents with a loading placeholder).
+    wrap.innerHTML = '<canvas id="missed-chart" aria-label="Hour-of-day distribution of missed calls"></canvas>';
+    const canvas = $('missed-chart');
+
+    if (typeof Chart === 'undefined') {
+      // Chart.js failed to load (CDN blocked?). Surface a fallback.
+      wrap.innerHTML = '<p class="chart-loading">Chart library failed to load. The agent grid below still shows the data.</p>';
+      return;
+    }
+
+    const ctx = canvas.getContext('2d');
+    // Radar chart, matching the legacy DQE Report's missed-calls
+    // visualization (clock-like, with each axis = a 30-min bucket).
+    // Modal version drills into the per-bucket detail panel on click.
+    const cfg = missedRadarCfg_(chart, function (idx) { toggleBucketDetail(idx); });
 
     // Refresh THEME tokens right before chart creation so values
     // resolved late reach Chart.defaults pre-instantiation.
@@ -3250,7 +3341,75 @@
     render();
     renderInfoLine();
     renderDeptQcdSnapshot_(data && data.qcd);
+    deptMissedFetch_();
     renderDiagnostics();
+  }
+
+  // -- Missed Calls drill-down on My Department (consolidation phase B) --
+  // Auto-generates the missed-calls summary (headline + radar) for the
+  // SAME range as the agent table, after every summary load. Independent
+  // async: a failure hides the section and never blocks the table. The
+  // "Full report" button (and a radar click) opens the Missed Calls
+  // modal, which carries its own range for deeper digging.
+  let deptMissedChart = null;
+  let deptMissedReqKey = '';   // ignore out-of-order responses
+
+  function deptMissedFetch_() {
+    const wrap = $('dept-missed-section');
+    if (!wrap) return;
+    const dept = getRequestedDept();
+    const from = $('from-date').value, to = $('to-date').value;
+    if (!dept || !from || !to) { wrap.style.display = 'none'; return; }
+    const key = dept + '|' + from + '|' + to;
+    deptMissedReqKey = key;
+    google.script.run
+      .withSuccessHandler(function (data) {
+        if (deptMissedReqKey !== key) return;   // stale response
+        deptMissedRender_(data, from, to);
+      })
+      .withFailureHandler(function () {
+        if (deptMissedReqKey !== key) return;
+        wrap.style.display = 'none';
+      })
+      .getMissedCallsReport({ department: dept, from: from, to: to });
+  }
+
+  function deptMissedRender_(data, from, to) {
+    const wrap = $('dept-missed-section');
+    if (!wrap) return;
+    const m = (data && data.meta) || {};
+
+    const dateEl = $('dept-missed-date');
+    if (dateEl) dateEl.textContent = from === to ? from : from + ' to ' + to;
+
+    // Headline (same composer the modal uses).
+    const head = $('dept-missed-headline');
+    if (head) {
+      const lines = missedHeadline_(m);
+      head.innerHTML = lines.length
+        ? '<div class="report-headline-kicker">At a glance</div>'
+          + lines.map(function (l) { return '<div class="report-headline-line">' + l + '</div>'; }).join('')
+        : '';
+      head.style.display = lines.length ? '' : 'none';
+    }
+
+    // Radar: same shared config as the modal (clicks open the full
+    // report rather than the in-modal bucket panel).
+    const chartWrap = $('dept-missed-chart-wrap');
+    if (deptMissedChart) { try { deptMissedChart.destroy(); } catch (e) {} deptMissedChart = null; }
+    const hasMissed = Number(m.totalMissed || 0) > 0 || Number(m.abandonedCallCount || 0) > 0;
+    if (chartWrap) {
+      chartWrap.style.display = hasMissed ? '' : 'none';
+      if (hasMissed && typeof Chart !== 'undefined') {
+        chartWrap.innerHTML = '<canvas id="dept-missed-chart" aria-label="Hour-of-day distribution of missed calls"></canvas>';
+        refreshChartTheme();
+        const openFull = function () { const b = $('missed-report-btn'); if (b) b.click(); };
+        deptMissedChart = new Chart($('dept-missed-chart').getContext('2d'),
+          missedRadarCfg_((data && data.chart) || { labels: [], counts: [] },
+                          function () { openFull(); }));
+      }
+    }
+    wrap.style.display = '';
   }
 
   /**
@@ -3289,14 +3448,38 @@
            +   '</div>'
            + '</div>';
     };
-    const violCls = (Number(qcd.violations) || 0) > 0 ? 'dept-qcd-warn' : '';
-    const pctCls  = (Number(qcd.abandonedPct) || 0) >= 5 ? 'dept-qcd-warn' : '';
-    tiles.innerHTML =
-        tile('Total Calls', fmtNumber(qcd.totalCalls    || 0))
-      + tile('Answered',    fmtNumber(qcd.totalAnswered || 0))
-      + tile('Abandoned',   fmtNumber(qcd.abandoned     || 0))
-      + tile('Abandoned %', String(qcd.abandonedPctStr  || '0.00%'), pctCls)
-      + tile('Violations',  fmtNumber(qcd.violations    || 0),       violCls);
+    const tileRow = function (q) {
+      const violCls = (Number(q.violations) || 0) > 0 ? 'dept-qcd-warn' : '';
+      const pctCls  = (Number(q.abandonedPct) || 0) >= 5 ? 'dept-qcd-warn' : '';
+      return tile('Total Calls', fmtNumber(q.totalCalls    || 0))
+           + tile('Answered',    fmtNumber(q.totalAnswered || 0))
+           + tile('Abandoned',   fmtNumber(q.abandoned     || 0))
+           + tile('Abandoned %', String(q.abandonedPctStr  || '0.00%'), pctCls)
+           + tile('Violations',  fmtNumber(q.violations    || 0),       violCls);
+    };
+
+    // Per-queue separation: each queue (incl. sub-queue children, which
+    // can behave very differently from the parent) renders its OWN tile
+    // row; the all-queues sum renders last as a clearly-labeled muted
+    // row. Single-queue depts keep the flat row (no redundant total).
+    const perQueue = qcd.perQueue || [];
+    if (perQueue.length > 1) {
+      tiles.innerHTML = perQueue.map(function (q) {
+        const tag = q.subDept
+          ? ' <span class="dept-qcd-subtag">sub-queue · ' + escapeHtml(q.subDept) + '</span>'
+          : '';
+        return '<div class="dept-qcd-queue-row">'
+             +   '<div class="dept-qcd-queue-name">' + escapeHtml(q.queue) + tag + '</div>'
+             +   '<div class="dept-qcd-tiles-inner">' + tileRow(q) + '</div>'
+             + '</div>';
+      }).join('')
+      + '<div class="dept-qcd-queue-row dept-qcd-total-row">'
+      +   '<div class="dept-qcd-queue-name">All queues</div>'
+      +   '<div class="dept-qcd-tiles-inner">' + tileRow(qcd) + '</div>'
+      + '</div>';
+    } else {
+      tiles.innerHTML = tileRow(perQueue.length === 1 ? perQueue[0] : qcd);
+    }
     wrap.style.display = '';
   }
 
@@ -4763,26 +4946,26 @@
            +   irInsightsBlock_(agent.insights || [])
            +   '<div class="ir-kpi-grid">'
            +     irKpiTile('Total Rung',  agent.stats.rung,     teamAvg.rung,
-                            irDiffBadge(agent.raw.rung,     teamAvg.raw.rung,        'pos'),
+                            irDiffBadge(agent.raw.rung,     teamAvg.raw.rung,        'pos', 'rung calls'),
                             trendForAgent.map(function (x) { return x.rung; }),     IR_VOLUME_COLORS.rung,
                             share.rung,
                             priorRow('rung', 'pos'))
            +     irKpiTile('Answered',    agent.stats.answered, teamAvg.answered,
-                            irDiffBadge(agent.raw.answered, teamAvg.raw.answered,    'pos'),
+                            irDiffBadge(agent.raw.answered, teamAvg.raw.answered,    'pos', 'answered calls'),
                             trendForAgent.map(function (x) { return x.answered; }), IR_VOLUME_COLORS.answered,
                             share.answered,
                             priorRow('answered', 'pos'))
-           +     irKpiTile('Missed',      agent.stats.missed,   teamAvg.missed,
-                            irDiffBadge(agent.raw.missed,   teamAvg.raw.missed,      'neg'),
+           +     irKpiTile('Missed (rings)', agent.stats.missed, teamAvg.missed,
+                            irDiffBadge(agent.raw.missed,   teamAvg.raw.missed,      'neg', 'missed calls'),
                             trendForAgent.map(function (x) { return x.missed; }),   IR_VOLUME_COLORS.missed,
                             share.missed,
                             priorRow('missed', 'neg'))
            +     irKpiTile('% Answered',  agent.stats.pct,      teamAvg.pct,
-                            irDiffBadge(agent.raw.pct,      teamAvg.raw.pctAnswered, 'pos'),
+                            irDiffBadge(agent.raw.pct,      teamAvg.raw.pctAnswered, 'pos', '% answered'),
                             trendForAgent.map(function (x) { return x.pct; }),      (THEME.accent || '#4E79A7'),
                             null,
                             priorRow('pct', 'pos'))
-           +     irKpiTile('Avg Talk',    agent.stats.att,      teamAvg.att,
+           +     irKpiTile('Avg talk (per call)', agent.stats.att, teamAvg.att,
                             irAttCompare(agent.raw.att, teamAvg.raw.att),
                             trendForAgent.map(function (x) { return x.att; }),      (THEME.muted || '#9C755F'),
                             null,
@@ -5002,7 +5185,7 @@
     setTimeout(function () { btn.textContent = prev; }, 1000);
   }
 
-  function irDiffBadge(agentVal, teamVal, type) {
+  function irDiffBadge(agentVal, teamVal, type, metricLabel) {
     // type: 'pos' = higher is better (Rung, Answered, % Answered).
     //       'neg' = lower is better (Missed).
     if (!teamVal) return '<span class="ir-badge ir-badge-neu">-</span>';
@@ -5014,7 +5197,16 @@
     } else if (type === 'neg') {
       if (pct < 0) cls = 'ir-badge-pos'; else if (pct > 0) cls = 'ir-badge-neg';
     }
-    return '<span class="ir-badge ' + cls + '">' + label + '</span>';
+    // Plain-English explainer for screen readers + hover -- the colored
+    // badge alone doesn't say which direction is good for this metric.
+    const metric = metricLabel ? ' for ' + metricLabel : '';
+    const where = pct === 0 ? 'matches the team average'
+      : Math.abs(pct).toFixed(1) + '% ' + (pct > 0 ? 'above' : 'below') + ' the team average';
+    const valence = type === 'pos' ? 'Higher is better.'
+                  : type === 'neg' ? 'Lower is better.' : '';
+    const explain = escapeHtml((where + metric + '. ' + valence).trim());
+    return '<span class="ir-badge ' + cls + '" title="' + explain
+         + '" aria-label="' + explain + '">' + label + '</span>';
   }
 
   function irAttCompare(agentAtt, teamAtt) {
@@ -5025,7 +5217,10 @@
     if (!teamAtt) return '<span class="ir-badge ir-badge-neu">-</span>';
     const pct = ((agentAtt - teamAtt) / teamAtt) * 100;
     const sign = agentAtt > teamAtt ? '> Avg' : '< Avg';
-    return '<span class="ir-badge ir-badge-neu">'
+    const explain = escapeHtml('Average talk time is ' + Math.abs(pct).toFixed(1) + '% '
+      + (agentAtt > teamAtt ? 'longer' : 'shorter')
+      + ' than the team average. Neither direction is automatically better — longer can mean more thorough service.');
+    return '<span class="ir-badge ir-badge-neu" title="' + explain + '" aria-label="' + explain + '">'
          + sign + ' (' + (pct > 0 ? '+' : '') + pct.toFixed(1) + '%)'
          + '</span>';
   }
@@ -6128,11 +6323,11 @@
     };
     const tiles = [
       prKpiTile_('Total Rung',  t.rung,     'pos', sparks.rung,     IR_VOLUME_COLORS.rung),
-      prKpiTile_('Total Missed',t.missed,   'neg', sparks.missed,   IR_VOLUME_COLORS.missed),
+      prKpiTile_('Missed (rings)', t.missed, 'neg', sparks.missed,  IR_VOLUME_COLORS.missed),
       prKpiTile_('Answered',    t.answered, 'pos', sparks.answered, IR_VOLUME_COLORS.answered),
       prKpiTile_('% Answered',  t.pct,      'pos', sparks.pct,      (THEME.accent || '#4E79A7')),
       prKpiTile_('Total TTT',   t.ttt,      'neu', sparks.ttt,      (THEME.muted  || '#9C755F')),
-      prKpiTile_('Avg ATT',     t.att,      'neu', sparks.att,      (THEME.muted  || '#9C755F')),
+      prKpiTile_('ATT (per call)', t.att,   'neu', sparks.att,      (THEME.muted  || '#9C755F')),
     ].join('');
     $('pr-kpi-row').innerHTML = tiles;
   }
@@ -7530,7 +7725,7 @@
       crTeamTile_('Answered',    t.answered, 'pos', m, 'volume'),
       crTeamTile_('% Answered',  t.pct,      'pos', m, 'rate'),
       crTeamTile_('Total TTT',   t.ttt,      'neu', m, 'time'),
-      crTeamTile_('Avg ATT',     t.att,      'neu', m, 'rate'),
+      crTeamTile_('ATT (per call)', t.att,   'neu', m, 'rate'),
     ].join('');
     $('cr-team-tiles').innerHTML = tiles;
   }
@@ -9024,8 +9219,17 @@
           return '<option value="' + escapeHtml(n) + '">' + escapeHtml(n) + '</option>';
         }).join('');
 
+    // Dept options for the "new hire" add-to-roster flow.
+    const deptOptionsHtml = '<option value="">(pick department)</option>'
+      + ((ofLastInit && ofLastInit.departments) || []).map(function (d) {
+          return '<option value="' + escapeHtml(d) + '">' + escapeHtml(d) + '</option>';
+        }).join('');
+
     tbody.innerHTML = orphans.map(function (o, idx) {
       const exts = (o.sampleExts || []).map(escapeHtml).join(', ') || '<span class="al-empty-inline">-</span>';
+      // Two rows per orphan: the main row, plus a hidden inline form for
+      // the "this is actually a NEW EMPLOYEE" flow -- adds them to a
+      // dept's DO NOT EDIT! column instead of renaming to someone else.
       return '<tr data-orphan-idx="' + idx + '">'
            +   '<td>' + escapeHtml(o.name) + '</td>'
            +   '<td class="num">' + o.rows + '</td>'
@@ -9034,8 +9238,25 @@
            +   '<td><select class="of-row-select" data-idx="' + idx + '">'
            +     optionsHtml
            +     '</select></td>'
-           +   '<td><button type="button" class="btn btn-secondary of-row-apply" '
-           +     'data-idx="' + idx + '" disabled>Apply</button></td>'
+           +   '<td class="of-action-cell">'
+           +     '<button type="button" class="btn btn-secondary of-row-apply" '
+           +       'data-idx="' + idx + '" disabled>Apply</button> '
+           +     '<button type="button" class="btn btn-secondary of-row-addnew" data-idx="' + idx + '" '
+           +       'title="This isn’t a misspelling of an existing agent — it’s a new employee. Add them to a department’s roster.">New hire…</button>'
+           +   '</td>'
+           + '</tr>'
+           + '<tr class="of-add-row" data-add-idx="' + idx + '" style="display:none;">'
+           +   '<td colspan="6">'
+           +     '<div class="of-add-form">'
+           +       '<span class="of-add-label">Add <strong>' + escapeHtml(o.name) + '</strong> to roster:</span>'
+           +       '<select class="of-add-dept" data-idx="' + idx + '">' + deptOptionsHtml + '</select>'
+           +       '<input type="text" class="of-add-exts" data-idx="' + idx + '" '
+           +         'placeholder="extensions (comma-separated)" '
+           +         'value="' + (o.sampleExts || []).map(escapeHtml).join(', ') + '">'
+           +       '<button type="button" class="btn of-add-confirm" data-idx="' + idx + '" disabled>Add to roster</button>'
+           +       '<span class="of-add-hint">Writes one &ldquo;Name, ext1, ext2&rdquo; cell to the bottom of that dept’s DO NOT EDIT! column. Extensions are required. Audited to Orphan Fix Log.</span>'
+           +     '</div>'
+           +   '</td>'
            + '</tr>';
     }).join('');
 
@@ -9058,6 +9279,75 @@
         ofConfirmAndApply_(btn, orphan, canonical);
       });
     });
+
+    // "New hire…" toggles the inline add-to-roster form; the confirm
+    // button enables once a dept is picked AND the ext field is non-empty.
+    tbody.querySelectorAll('.of-row-addnew').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        const idx = btn.getAttribute('data-idx');
+        const row = tbody.querySelector('.of-add-row[data-add-idx="' + idx + '"]');
+        if (row) row.style.display = row.style.display === 'none' ? '' : 'none';
+      });
+    });
+    const refreshAddConfirm = function (idx) {
+      const dept = tbody.querySelector('.of-add-dept[data-idx="' + idx + '"]');
+      const exts = tbody.querySelector('.of-add-exts[data-idx="' + idx + '"]');
+      const confirm = tbody.querySelector('.of-add-confirm[data-idx="' + idx + '"]');
+      if (confirm) confirm.disabled = !(dept && dept.value && exts && exts.value.trim());
+    };
+    tbody.querySelectorAll('.of-add-dept').forEach(function (sel) {
+      sel.addEventListener('change', function () { refreshAddConfirm(sel.getAttribute('data-idx')); });
+    });
+    tbody.querySelectorAll('.of-add-exts').forEach(function (inp) {
+      inp.addEventListener('input', function () { refreshAddConfirm(inp.getAttribute('data-idx')); });
+      // Sample exts may have prefilled the field -- refresh once now.
+      refreshAddConfirm(inp.getAttribute('data-idx'));
+    });
+    tbody.querySelectorAll('.of-add-confirm').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        const idx = Number(btn.getAttribute('data-idx'));
+        const orphan = (ofLastInit.orphans || [])[idx];
+        const dept = tbody.querySelector('.of-add-dept[data-idx="' + idx + '"]');
+        const exts = tbody.querySelector('.of-add-exts[data-idx="' + idx + '"]');
+        if (!orphan || !dept || !dept.value || !exts || !exts.value.trim()) return;
+        ofConfirmAndAddToRoster_(btn, orphan, dept.value, exts.value);
+      });
+    });
+  }
+
+  function ofConfirmAndAddToRoster_(btn, orphan, dept, exts) {
+    const msg = 'Add "' + orphan.name + '" to the ' + dept + ' roster with extension(s) '
+              + exts + '?\n\nThis writes one cell to the DO NOT EDIT! sheet. Their '
+              + orphan.rows + ' existing data row' + (orphan.rows === 1 ? '' : 's')
+              + ' will match immediately (the orphan name becomes the roster name), and '
+              + 'future imports canonicalize against it. The action is audited to Orphan Fix Log.';
+    if (!window.confirm(msg)) return;
+
+    btn.disabled = true;
+    const prev = btn.textContent; btn.textContent = 'Adding…';
+    ofSetStatus_('loading', 'Adding ' + orphan.name + ' to the ' + dept + ' roster…');
+
+    google.script.run
+      .withSuccessHandler(function (res) {
+        btn.disabled = false; btn.textContent = prev;
+        ofSetStatus_('success',
+          'Added "' + orphan.name + '" to ' + dept
+          + (res && res.cell ? ' (cell ' + res.cell + ')' : '')
+          + '. Overview updates immediately; other views may take up to 30 minutes (cache TTL).');
+        showToast('Added to ' + dept + ' roster', 'success');
+        ofLoadInit_();
+      })
+      .withFailureHandler(function (err) {
+        btn.disabled = false; btn.textContent = prev;
+        ofSetStatus_('error', 'Add failed: '
+          + (err && err.message ? err.message : String(err)));
+      })
+      .addOrphanToRoster({
+        name:       orphan.name,
+        department: dept,
+        extensions: exts,
+        notes:      '',
+      });
   }
 
   function ofConfirmAndApply_(btn, orphan, canonical) {
@@ -9433,6 +9723,9 @@
   let insPendingAgentSelection_ = null;
   let insLastData = null;
   let insChartInstance = null;
+  let insQhChartInstance = null;   // Queue health compact trend chart
+  let insQhView = 'monthly';       // 'monthly' | 'daily' (chart toggle)
+  let insShareChartInstance = null;   // share-of-answered pie (PR port)
   let insActiveTrendMetric = 'answered';
   let insCardSort = 'default';      // default (answered desc) | name | improvers | regressors
   // v2: prefs gain compareMode / priorFrom / priorTo / trendMetric
@@ -9494,6 +9787,38 @@
 
     const genBtn = $('ins-generate-btn');
     if (genBtn) genBtn.addEventListener('click', runInsReport);
+
+    // Queue health: Monthly/Daily chart view toggle (client-only
+    // re-render from the cached payload).
+    const qhToggle = $('ins-qh-view-toggle');
+    if (qhToggle) qhToggle.addEventListener('click', function (e) {
+      const b = e.target.closest('.seg-btn');
+      if (!b) return;
+      const next = b.getAttribute('data-view') || 'monthly';
+      if (next === insQhView) return;
+      insQhView = next;
+      qhToggle.querySelectorAll('.seg-btn').forEach(function (x) {
+        const active = x === b;
+        x.classList.toggle('active', active);
+        x.setAttribute('aria-checked', active ? 'true' : 'false');
+      });
+      if (insLastData) insRenderQueueHealthChart_(insLastData.queueHealth);
+    });
+    // Queue health: sub-queue scope toggle -- server-recomputed, so a
+    // change re-runs the report (cached per scope, so flipping back is
+    // instant).
+    const qhSub = $('ins-qh-include-sub');
+    if (qhSub) qhSub.addEventListener('change', function () { runInsReport(); });
+
+    // Per-card IR drill-through (delegated on the modal so it covers
+    // both the main card grid and the quiet-agents collapsible).
+    modal.addEventListener('click', function (e) {
+      const link = e.target.closest('.ins-card-ir-link');
+      if (!link) return;
+      const agent = link.getAttribute('data-agent');
+      if (!agent || typeof irDrillToAgent_ !== 'function') return;
+      irDrillToAgent_(agent, $('ins-from').value, $('ins-to').value);
+    });
     const backBtn = $('ins-back-btn');
     if (backBtn) backBtn.addEventListener('click', insShowForm);
 
@@ -9629,8 +9954,8 @@
     refresh();
   }
 
-  function insShowForm()    { $('insights-form').style.display = ''; $('insights-results').style.display = 'none'; insSetFormError(''); }
-  function insShowResults() { $('insights-form').style.display = 'none'; $('insights-results').style.display = ''; }
+  function insShowForm()    { launcherHideLoading_('ins-launcher-loading'); $('insights-form').style.display = ''; $('insights-results').style.display = 'none'; insSetFormError(''); }
+  function insShowResults() { launcherHideLoading_('ins-launcher-loading'); $('insights-form').style.display = 'none'; $('insights-results').style.display = ''; }
   function insSetFormError(msg) {
     const el = $('ins-form-error'); if (!el) return;
     if (!msg) { el.style.display = 'none'; el.textContent = ''; return; }
@@ -9756,6 +10081,10 @@
     insSetFormError('');
     const req = { department: dept, from: from, to: to, agents: agents };
     if (prior) { req.priorFrom = prior.from; req.priorTo = prior.to; }
+    // Queue health sub-queue scope (checkbox lives in the results pane;
+    // default checked = INV-51 rollup when not yet rendered).
+    const qhCb = $('ins-qh-include-sub');
+    if (qhCb && !qhCb.checked) req.queueHealthOwnOnly = true;
     const gen = $('ins-generate-btn'); const prev = gen.textContent;
     gen.disabled = true; gen.textContent = 'Generating…';
     google.script.run
@@ -9765,6 +10094,7 @@
       })
       .withFailureHandler(function (err) {
         gen.disabled = false; gen.textContent = prev;
+        insShowForm();   // dismisses the launcher loading pane if active
         insSetFormError('Error: ' + (err && err.message ? err.message : String(err)));
       })
       .getInsightsReport(req);
@@ -9813,18 +10143,265 @@
       att:      series.map(function (s) { return s.att; }),
     };
     $('ins-kpi-row').innerHTML = [
-      prKpiTile_('Total Rung',   t.rung,     'pos', sparks.rung,     IR_VOLUME_COLORS.rung),
-      prKpiTile_('Total Missed', t.missed,   'neg', sparks.missed,   IR_VOLUME_COLORS.missed),
-      prKpiTile_('Answered',     t.answered, 'pos', sparks.answered, IR_VOLUME_COLORS.answered),
+      // Rung / Answered deltas render NEUTRAL here (volume moves with call
+      // traffic, not performance); Missed keeps its warn valence. PR keeps
+      // the legacy coloring until it's retired -- the parity test pins
+      // numbers, not badge colors.
+      prKpiTile_('Total Rung',   t.rung,     'neu', sparks.rung,     IR_VOLUME_COLORS.rung),
+      prKpiTile_('Missed (rings)', t.missed, 'neg', sparks.missed,   IR_VOLUME_COLORS.missed),
+      prKpiTile_('Answered',     t.answered, 'neu', sparks.answered, IR_VOLUME_COLORS.answered),
       prKpiTile_('% Answered',   t.pct,      'pos', sparks.pct,      (THEME.accent || '#4E79A7')),
       prKpiTile_('Total TTT',    t.ttt,      'neu', sparks.ttt,      (THEME.muted  || '#9C755F')),
-      prKpiTile_('Avg ATT',      t.att,      'neu', sparks.att,      (THEME.muted  || '#9C755F')),
+      prKpiTile_('ATT (per call)', t.att,    'neu', sparks.att,      (THEME.muted  || '#9C755F')),
     ].join('');
 
     insRenderLengthWarning_(data.meta);
+    insRenderQueueHealth_(data.queueHealth);
     reportHeadline_('ins-headline', 'insights-results', insHeadline_(data));
     insRenderTrendChart_(data);
+    insRenderShareChart_(data.agentData || []);
     insRenderAgentCards_(data.agentData || [], data.meta, data.teamStats);
+  }
+
+  /**
+   * Share-of-answered doughnut (ported from the Performance Report so
+   * PR can retire without losing the view). Built client-side from
+   * agentData (each card already carries answered.val for the range);
+   * slices sorted largest-first, datalabels suppressed under 4% of
+   * total (PR's threshold). Hidden when fewer than 2 agents answered.
+   */
+  function insRenderShareChart_(cards) {
+    const wrap = $('ins-share-wrap');
+    if (!wrap) return;
+    const slices = (cards || [])
+      .map(function (c) {
+        return { label: c.name, value: Number((c.metrics && c.metrics.answered && c.metrics.answered.val) || 0) };
+      })
+      .filter(function (d) { return d.value > 0; })
+      .sort(function (a, b) { return b.value - a.value; });
+    if (insShareChartInstance) { try { insShareChartInstance.destroy(); } catch (e) {} insShareChartInstance = null; }
+    if (slices.length < 2) { wrap.style.display = 'none'; return; }
+    wrap.style.display = '';
+    refreshChartTheme();
+    destroyOrphanedChartOnCanvas_('ins-share-chart');
+
+    const colors = slices.map(function (_, i) { return IR_CHART_COLORS[i % IR_CHART_COLORS.length]; });
+    const plugins = (typeof ChartDataLabels !== 'undefined') ? [ChartDataLabels] : [];
+    insShareChartInstance = new Chart($('ins-share-chart').getContext('2d'), {
+      type: 'doughnut',
+      data: {
+        labels: slices.map(function (d) { return d.label; }),
+        datasets: [{
+          data: slices.map(function (d) { return d.value; }),
+          backgroundColor: colors,
+          borderColor: THEME.paperCard,
+          borderWidth: 2,
+        }],
+      },
+      plugins: plugins,
+      options: {
+        responsive: true, maintainAspectRatio: false, animation: false,
+        plugins: {
+          legend: { position: 'right', labels: { boxWidth: 12, font: { size: 12 } } },
+          tooltip: {
+            callbacks: {
+              label: function (ctx) {
+                const total = ctx.dataset.data.reduce(function (a, b) { return a + b; }, 0);
+                const pct = total > 0 ? (ctx.parsed / total) * 100 : 0;
+                return ctx.label + ': ' + ctx.parsed + ' (' + pct.toFixed(1) + '%)';
+              },
+            },
+          },
+          datalabels: {
+            display: function (ctx) {
+              const total = ctx.dataset.data.reduce(function (a, b) { return a + b; }, 0);
+              return total > 0 && (ctx.dataset.data[ctx.dataIndex] / total) >= 0.04;
+            },
+            color: THEME.paper,
+            font: { family: "'IBM Plex Mono', monospace", size: 11, weight: '500' },
+            textAlign: 'center',
+            formatter: function (value, ctx) {
+              const total = ctx.dataset.data.reduce(function (a, b) { return a + b; }, 0);
+              const pct = total > 0 ? (value / total * 100).toFixed(1) : '0';
+              return value + '\n(' + pct + '%)';
+            },
+          },
+        },
+      },
+    });
+  }
+
+  /**
+   * Queue health section (QCD-into-Insights consolidation). Renders
+   * queue-level KPI tiles (with deltas vs the same prior window the
+   * rest of the report compares against) + a per-queue table with the
+   * 5%-threshold benchmark tint and expandable violation dates.
+   * Hidden when the server sent null (unmapped dept / missing sheet,
+   * or a pre-v4 cached payload).
+   */
+  function insRenderQueueHealth_(qh) {
+    const wrap = $('ins-queue-health');
+    if (!wrap) return;
+    if (!qh || !qh.totals) { wrap.style.display = 'none'; return; }
+    wrap.style.display = '';
+
+    const cap = $('ins-qh-cap');
+    if (cap) cap.textContent = '(' + (qh.queues || []).length + ' queue'
+      + ((qh.queues || []).length === 1 ? '' : 's') + ' · same window as the rollup above)';
+
+    // Sub-queue toggle: only meaningful for parent depts. State mirrors
+    // the server's effective scope (checkbox change re-runs the report).
+    const subWrap = $('ins-qh-sub-wrap');
+    if (subWrap) {
+      subWrap.style.display = qh.hasSubQueues ? '' : 'none';
+      const cb = $('ins-qh-include-sub');
+      if (cb) cb.checked = qh.includeSubQueues !== false;
+    }
+
+    // Days-to-violation forecast on the daily series (shared helper --
+    // same regression the QCD Report renders).
+    const fc = $('ins-qh-forecast');
+    if (fc) {
+      const html = (qh.trend && qh.trend.dailyTotal)
+        ? abandonForecastHtml_(qh.trend.dailyTotal) : '';
+      fc.innerHTML = html;
+      fc.style.display = html ? '' : 'none';
+    }
+
+    const t = qh.totals, p = qh.priorTotals;
+    const tiles = [
+      inboundKpiTile_('Queue calls', fmtNumber(t.totalCalls), '',
+        p ? inboundDelta_(t.totalCalls, p.totalCalls, 'neu', false) : ''),
+      inboundKpiTile_('Abandoned %', t.abandonedPctStr, fmtNumber(t.abandoned) + ' abandoned',
+        p ? inboundDelta_(t.abandonedPct, p.abandonedPct, 'neg', true) : ''),
+      inboundKpiTile_('Violations (MTD)', fmtNumber(qh.violationsMtd), 'days over the 5% threshold this month', ''),
+      inboundKpiTile_('Longest wait', t.longestWait, '', ''),
+    ];
+    $('ins-qh-tiles').innerHTML = tiles.join('');
+
+    insRenderQueueHealthChart_(qh);
+
+    const tbody = $('ins-qh-tbody');
+    if (!tbody) return;
+    tbody.innerHTML = (qh.perQueue || []).map(function (q) {
+      const pctCls = benchValueCls_('abandoned %', q.abandonedPctStr);
+      const violCls = q.violations > 3 ? ' qcd-warn-strong' : (q.violations > 0 ? ' qcd-warn-light' : '');
+      const violCell = q.violations > 0 && (q.violationDates || []).length
+        ? '<details class="ins-qh-viol"><summary>' + q.violations + '</summary>'
+          + '<div class="ins-qh-viol-dates">' + q.violationDates.map(escapeHtml).join(', ') + '</div></details>'
+        : String(q.violations || 0);
+      return '<tr>'
+        + '<td>' + escapeHtml(q.queue) + '</td>'
+        + '<td class="num">' + fmtNumber(q.totalCalls) + '</td>'
+        + '<td class="num">' + fmtNumber(q.abandoned) + '</td>'
+        + '<td class="num' + pctCls + '">' + escapeHtml(q.abandonedPctStr) + '</td>'
+        + '<td class="num' + violCls + '">' + violCell + '</td>'
+        + '</tr>';
+    }).join('');
+  }
+
+  /**
+   * Compact Queue health trend: one monthly abandoned-% line per queue
+   * + a dashed dept total (multi-queue only) + the faint 5% threshold
+   * baseline (the QCD violation rule -- same convention as the Overview
+   * chart's 92% line). Colors via THEME / IR_CHART_COLORS (INV-42);
+   * datalabels off in boolean form (INV-41). Hidden for pre-v5 cached
+   * payloads (no trend key) or when there's nothing to plot.
+   */
+  function insRenderQueueHealthChart_(qh) {
+    const wrap = $('ins-qh-chart-wrap');
+    if (!wrap) return;
+    const trend = qh && qh.trend;
+    if (!trend || !trend.labels || !trend.labels.length) {
+      wrap.style.display = 'none';
+      const tgl = $('ins-qh-view-toggle');
+      if (tgl) tgl.style.display = 'none';
+      if (insQhChartInstance) { try { insQhChartInstance.destroy(); } catch (e) {} insQhChartInstance = null; }
+      return;
+    }
+    // Daily view only offered when the range has 2+ days of data
+    // (single point isn't useful as a line -- QCD's convention).
+    const hasDaily = (trend.dailyLabels || []).length > 1;
+    const toggle = $('ins-qh-view-toggle');
+    if (toggle) toggle.style.display = hasDaily ? '' : 'none';
+    if (!hasDaily && insQhView === 'daily') insQhView = 'monthly';
+    const daily = insQhView === 'daily' && hasDaily;
+
+    const labels   = daily ? trend.dailyLabels : trend.labels;
+    const totalSer = daily ? (trend.dailyTotal || []) : (trend.total || []);
+    const perQueue = daily ? (trend.dailyPerQueue || {}) : (trend.perQueue || {});
+    const queueNames = Object.keys(perQueue);
+    if (!queueNames.length && !totalSer.length) {
+      wrap.style.display = 'none';
+      if (insQhChartInstance) { try { insQhChartInstance.destroy(); } catch (e) {} insQhChartInstance = null; }
+      return;
+    }
+    wrap.style.display = '';
+    refreshChartTheme();
+    destroyOrphanedChartOnCanvas_('ins-qh-chart');
+    if (insQhChartInstance) { try { insQhChartInstance.destroy(); } catch (e) {} insQhChartInstance = null; }
+
+    const datasets = queueNames.map(function (q, i) {
+      const color = IR_CHART_COLORS[i % IR_CHART_COLORS.length];
+      return {
+        label: q,
+        data: perQueue[q],
+        borderColor: color,
+        backgroundColor: color,
+        borderWidth: 1.8,
+        pointRadius: 1.5,
+        tension: 0.25,
+        fill: false,
+      };
+    });
+    if (queueNames.length > 1 && totalSer.length) {
+      datasets.push({
+        label: 'Dept total',
+        data: totalSer,
+        borderColor: THEME.ink,
+        backgroundColor: THEME.ink,
+        borderDash: [5, 4],
+        borderWidth: 1.4,
+        pointRadius: 0,
+        tension: 0.25,
+        fill: false,
+      });
+    }
+    datasets.push({
+      label: '5% threshold',
+      data: labels.map(function () { return 5; }),
+      borderColor: THEME.muted,
+      borderDash: [3, 4],
+      borderWidth: 1,
+      pointRadius: 0,
+      fill: false,
+      order: 99,
+    });
+
+    insQhChartInstance = new Chart($('ins-qh-chart').getContext('2d'), {
+      type: 'line',
+      data: { labels: labels, datasets: datasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          datalabels: { display: false },
+          legend: { position: 'bottom', labels: { boxWidth: 18,
+            filter: function (item) { return item.text !== '5% threshold'; } } },
+          tooltip: {
+            filter: function (ctx) { return ctx.dataset.label !== '5% threshold'; },
+            callbacks: { label: function (ctx) {
+              return ctx.dataset.label + ': ' + (ctx.parsed.y == null ? '-' : ctx.parsed.y.toFixed(1) + '%');
+            } },
+          },
+        },
+        scales: {
+          x: { ticks: { maxRotation: 0, autoSkip: true } },
+          y: { beginAtZero: true, ticks: { callback: function (v) { return v + '%'; } } },
+        },
+      },
+    });
   }
 
   /**
@@ -10043,8 +10620,13 @@
            +   insMetricPerDay_(st, m[3], meta)
            + '</div>';
     }).join('');
+    // Drill-through to the Individual Report (same agent + same window,
+    // auto-generated via irDrillToAgent_) -- IR is the per-person deep
+    // dive; the card is the summary.
+    const irLink = '<button type="button" class="ins-card-ir-link" data-agent="' + escapeHtml(c.name) + '"'
+      + ' title="Open this agent&#39;s Individual Report for the same date range">IR &#8599;</button>';
     return '<div class="ins-card' + (isFloater ? ' ins-card-floater' : '') + dirClass + '"' + debugAttrs + '>'
-         +   '<div class="ins-card-head"><span class="ins-card-name">' + escapeHtml(c.name) + '</span>' + chip + vsTeam + '</div>'
+         +   '<div class="ins-card-head"><span class="ins-card-name">' + escapeHtml(c.name) + '</span>' + chip + vsTeam + irLink + '</div>'
          +   '<div class="ins-card-grid">' + metrics + '</div>'
          + '</div>';
   }
@@ -10976,7 +11558,8 @@
     if (c.dialIn)              facts.push('Dialed ' + escapeHtml(c.dialIn));
     let body;
     if (c.journey && c.journey.length) {
-      body = '<div class="cl-journey">' + c.journey.map(clJourneyRowHtml_).join('') + '</div>';
+      body = clChainHtml_(c.journey)
+           + '<div class="cl-journey">' + c.journey.map(clJourneyRowHtml_).join('') + '</div>';
     } else {
       // Pre-journey-extension row: queue-level summary only.
       const path = c.entryQueue
@@ -10995,6 +11578,35 @@
          +   (facts.length ? '<div class="cl-call-facts">' + facts.join(' · ') + '</div>' : '')
          +   body
          + '</div>';
+  }
+
+  /**
+   * Compact visual path above the detailed timeline: queue + agent legs
+   * as arrow-chained tokens (IVR legs collapse into one leading token).
+   * "IVR → Sales → Anna ✗ → Ben ✓ 4:12" reads the whole call at a glance;
+   * the timeline below keeps the exact timestamps / hold detail.
+   */
+  function clChainHtml_(journey) {
+    const toks = [];
+    let leadingIvr = false;
+    journey.forEach(function (ev) {
+      if (ev.kind === 'queue') {
+        toks.push({ txt: String(ev.name || '').replace(/^A_Q_/i, ''), cls: 'cl-tok-queue' });
+      } else if (ev.kind === 'answer') {
+        toks.push({ txt: (ev.name || '?') + ' ✓' + (ev.talk ? ' ' + fmtDuration(ev.talk) : ''), cls: 'cl-tok-answer' });
+      } else if (ev.missed) {
+        toks.push({ txt: (ev.name || '?') + ' ✗', cls: 'cl-tok-missed' });
+      } else if (!toks.length) {
+        leadingIvr = true;   // pre-queue IVR/menu legs collapse to one token
+      }
+    });
+    if (!toks.length) return '';
+    const parts = (leadingIvr ? [{ txt: 'IVR', cls: 'cl-tok-ivr' }] : []).concat(toks);
+    return '<div class="cl-chain">'
+      + parts.map(function (p) {
+          return '<span class="cl-tok ' + p.cls + '">' + escapeHtml(p.txt) + '</span>';
+        }).join('<span class="cl-arrow" aria-hidden="true">→</span>')
+      + '</div>';
   }
 
   function clJourneyRowHtml_(ev) {
@@ -11175,11 +11787,13 @@
   }
 
   function showQcdForm() {
+    launcherHideLoading_('qcd-launcher-loading');
     $('qcd-form').style.display    = '';
     $('qcd-results').style.display = 'none';
     qcdSetFormError_('');
   }
   function showQcdResults_() {
+    launcherHideLoading_('qcd-launcher-loading');
     $('qcd-form').style.display    = 'none';
     $('qcd-results').style.display = '';
   }
@@ -11209,9 +11823,17 @@
       })
       .withFailureHandler(function (err) {
         btn.disabled = false; btn.textContent = prev;
+        showQcdForm();   // dismisses the launcher loading pane if active
         qcdSetFormError_('Error: ' + (err && err.message ? err.message : String(err)));
       })
-      .getQcdReport({ department: dept, from: from, to: to });
+      .getQcdReport({ department: dept, from: from, to: to,
+                      includeSubQueues: qcdIncludeSubQueues_() });
+  }
+
+  /** Sub-queue rollup toggle state (defaults to true = INV-51 rollup). */
+  function qcdIncludeSubQueues_() {
+    const cb = $('qcd-include-sub');
+    return cb ? !!cb.checked : true;
   }
 
   function qcdRenderReport_(data) {
@@ -11291,19 +11913,22 @@
   // since the first point in the window.
   const QCD_FORECAST_HORIZON_DAYS = 7;
   const QCD_FORECAST_WINDOW_DAYS  = 7;
-  function qcdRenderForecast_(data) {
-    const el = $('qcd-forecast');
-    if (!el) return;
-    el.style.display = 'none';
-    el.innerHTML = '';
-    const series = (data && data.dailySeries) || [];
-    if (series.length < QCD_FORECAST_WINDOW_DAYS) return;
-    const window = series.slice(-QCD_FORECAST_WINDOW_DAYS);
-    const ys = window.map(function (d) { return Number(d.abandonedPct) || 0; });
+  /**
+   * SHARED days-to-violation forecast (INV-51 / E9 semantics): 7-day
+   * linear regression on a daily abandoned-% series, projecting when
+   * the 5% threshold will cross. Returns inner HTML, or '' in the
+   * three healthy states (already over / flat-or-improving / crossing
+   * beyond the horizon). Consumed by the QCD Report AND the Insights
+   * Queue health section, so the two can't disagree.
+   */
+  function abandonForecastHtml_(pcts) {
+    const series = pcts || [];
+    if (series.length < QCD_FORECAST_WINDOW_DAYS) return '';
+    const ys = series.slice(-QCD_FORECAST_WINDOW_DAYS).map(function (v) { return Number(v) || 0; });
     const currentY = ys[ys.length - 1];
     // Already above threshold? No forecast -- the operator is past
     // the projection horizon; existing chrome already flags it.
-    if (currentY >= 5) return;
+    if (currentY >= 5) return '';
     const n = ys.length;
     let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
     for (let i = 0; i < n; i++) {
@@ -11313,22 +11938,29 @@
       sumXX += i * i;
     }
     const denom = n * sumXX - sumX * sumX;
-    if (denom === 0) return;
+    if (denom === 0) return '';
     const slope = (n * sumXY - sumX * sumY) / denom;
     // Healthy: trend is flat or improving. Skip the banner.
-    if (slope <= 0.01) return;
+    if (slope <= 0.01) return '';
     const daysToCross = (5 - currentY) / slope;
-    if (daysToCross <= 0 || daysToCross > QCD_FORECAST_HORIZON_DAYS) return;
+    if (daysToCross <= 0 || daysToCross > QCD_FORECAST_HORIZON_DAYS) return '';
     const wholeDays = Math.max(1, Math.round(daysToCross));
     const slopeDay  = slope.toFixed(2);
-    el.innerHTML =
-        '<span class="qcd-forecast-kicker">Forecast</span>'
+    return '<span class="qcd-forecast-kicker">Forecast</span>'
       + 'Abandoned % is trending up '
       + '<strong>+' + escapeHtml(slopeDay) + '%/day</strong>'
       + ' over the last ' + QCD_FORECAST_WINDOW_DAYS + ' days. '
       + 'At this rate, it crosses the 5% violation threshold in '
       + '<strong>~' + wholeDays + ' day' + (wholeDays === 1 ? '' : 's') + '</strong>.';
-    el.style.display = '';
+  }
+
+  function qcdRenderForecast_(data) {
+    const el = $('qcd-forecast');
+    if (!el) return;
+    const series = ((data && data.dailySeries) || []).map(function (d) { return d.abandonedPct; });
+    const html = abandonForecastHtml_(series);
+    el.innerHTML = html;
+    el.style.display = html ? '' : 'none';
   }
 
   function qcdRenderKpiTiles_(t) {

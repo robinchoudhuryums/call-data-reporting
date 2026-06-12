@@ -109,3 +109,13 @@ test('caller lookup: row shaping parses journey + strips nothing it needs', func
   assert.equal(legacy.entryQueue, 'A_Q_Sales');
   assert.equal(legacy.numTransfers, 1);
 });
+
+test('caller lookup: 10-digit entry also tries the +1-prefixed form', function () {
+  const c10 = dash.call('callerLookupHashCandidates_', '2145550123');
+  assert.equal(c10.length, 2);
+  assert.equal(c10[0], '+2145550123');
+  assert.equal(c10[1], '+12145550123');   // matches the CDR's stored form
+  const c11 = dash.call('callerLookupHashCandidates_', '12145550123');
+  assert.equal(c11.length, 1);
+  assert.equal(c11[0], '+12145550123');
+});

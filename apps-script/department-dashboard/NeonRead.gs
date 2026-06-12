@@ -133,8 +133,29 @@ function neonGetAgentExtPairs_() {
   }
 }
 
-/** Reads dqe_history for [fromIso, toIso] (inclusive). Returns [] on no conn. */
-function neonFetchDqeRows_(fromIso, toIso) {
+// The 19 slot columns (sheet cols K..AC) in order, as written by
+// cdr-import's writeDQERowsToNeon. Used by the includeMissedDetail
+// fetch below; the order MUST mirror HISTORICAL_COLS.TIME_SLOTS_START..
+// TIME_SLOTS_END so the Missed Calls grid adapter can map positionally.
+var NEON_DQE_SLOT_COLS = [
+  'slot_0800_0830', 'slot_0830_0900', 'slot_0900_0930', 'slot_0930_1000',
+  'slot_1000_1030', 'slot_1030_1100', 'slot_1100_1130', 'slot_1130_1200',
+  'slot_1200_1230', 'slot_1230_1300', 'slot_1300_1330', 'slot_1330_1400',
+  'slot_1400_1430', 'slot_1430_1500', 'slot_1500_1530', 'slot_1530_1600',
+  'slot_1600_1630', 'slot_1630_1700', 'slot_1700_1730',
+];
+
+/**
+ * Reads dqe_history for [fromIso, toIso] (inclusive). Returns [] on no conn.
+ * `opts.includeMissedDetail` additionally selects the 19 slot columns +
+ * abandoned_parent_ids + abandoned_missed_times (the Missed Calls reader's
+ * inputs); each row then carries `slots` (string[19], positional K..AC),
+ * `abandonedParentIds`, and `abandonedMissedTimes`. With opts absent the
+ * SQL and row shape are byte-identical to the pre-DAL-cutover behavior,
+ * so the existing cut-over readers are untouched.
+ */
+function neonFetchDqeRows_(fromIso, toIso, opts) {
+  var includeMissedDetail = !!(opts && opts.includeMissedDetail);
   var conn = getDashboardNeonConn_();
   if (!conn) return [];
   var out = [];
@@ -147,10 +168,13 @@ function neonFetchDqeRows_(fromIso, toIso) {
     // rs.getString, instead of ~12 getXXX calls per row. Turns ~150k JDBC
     // round-trips into 1. Order is irrelevant -- downstream maps by
     // (date, agent). COALESCE so an empty range returns '[]' not null.
+    var detailCols = includeMissedDetail
+      ? ', ' + NEON_DQE_SLOT_COLS.join(', ') + ', abandoned_parent_ids, abandoned_missed_times'
+      : '';
     var sql = "SELECT COALESCE(json_agg(t), '[]')::text AS j FROM ("
             + "SELECT month_year, call_date::text AS d, agent_name, queue_extensions, "
             + "total_unique, total_rung, total_missed, total_answered, "
-            + "ttt, att, avg_abd_wait, csr_avg_abd_wait "
+            + "ttt, att, avg_abd_wait, csr_avg_abd_wait" + detailCols + " "
             + "FROM dqe_history WHERE call_date BETWEEN ?::date AND ?::date) t";
     var stmt = conn.prepareStatement(sql);
     stmt.setString(1, fromIso);
@@ -163,7 +187,7 @@ function neonFetchDqeRows_(fromIso, toIso) {
       var r = arr[i];
       var agent = String(r.agent_name || '').trim();
       if (!agent) continue;
-      out.push({
+      var row = {
         dateIso:          String(r.d || '').trim(),
         agent:            agent,
         monthYear:        String(r.month_year || '').trim(),
@@ -176,7 +200,15 @@ function neonFetchDqeRows_(fromIso, toIso) {
         attSec:           parseHmsDisplay_(r.att),
         avgAbdWaitSec:    parseHmsDisplay_(r.avg_abd_wait),
         csrAvgAbdWaitSec: parseHmsDisplay_(r.csr_avg_abd_wait),
-      });
+      };
+      if (includeMissedDetail) {
+        row.slots = NEON_DQE_SLOT_COLS.map(function (c) {
+          return String(r[c] == null ? '' : r[c]).trim();
+        });
+        row.abandonedParentIds   = String(r.abandoned_parent_ids   == null ? '' : r.abandoned_parent_ids).trim();
+        row.abandonedMissedTimes = String(r.abandoned_missed_times == null ? '' : r.abandoned_missed_times).trim();
+      }
+      out.push(row);
     }
     clearNeonReadFailure_();   // F4: a successful read (even empty) means Neon is healthy
   } catch (e) {

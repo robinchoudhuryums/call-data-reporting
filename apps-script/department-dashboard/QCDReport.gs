@@ -53,7 +53,9 @@
 //     `trendData.perQueue` to match the populated shape (F5), so a
 //     cached old-shape empty payload can't be served (and throw) on
 //     the client after deploy.
-const QCD_CACHE_KEY_PREFIX = 'qcd:v6';
+// v7: cache key + compute gain the includeSubQueues dimension (the
+// "Include sub-queues" toggle; default true = legacy INV-51 rollup).
+const QCD_CACHE_KEY_PREFIX = 'qcd:v7';
 
 // Source filter: only the "Total Calls" callSource row carries the
 // daily aggregate we want; other callSource values are sub-counts
@@ -78,7 +80,8 @@ const QCD_TOTAL_CALLS_SOURCE = 'Total Calls';
  * snapshot, AND Data.gs's My Department snapshot -- so all three
  * QCD surfaces share the same rollup behavior.
  */
-function queuesForDept_(dept) {
+function queuesForDept_(dept, opts) {
+  const includeChildren = !(opts && opts.includeChildren === false);
   const seen = {};
   const out = [];
   const add = function (q) {
@@ -91,12 +94,24 @@ function queuesForDept_(dept) {
   getDeptQcdQueues_(dept).forEach(add);
 
   // Sub-queue rollup: append any child whose parent === this dept.
-  const parentMap = getOverviewParentMap_();
-  Object.keys(parentMap).forEach(function (childDept) {
-    if (parentMap[childDept] !== dept) return;
-    getDeptQcdQueues_(childDept).forEach(add);
-  });
+  // opts.includeChildren=false returns the dept's OWN queues only --
+  // the QCD report's "Include sub-queues" toggle and the Overview's
+  // parent tiles (children render their own tiles) use it; default
+  // unchanged so every existing caller keeps INV-51 rollup semantics.
+  if (includeChildren) {
+    const parentMap = getOverviewParentMap_();
+    Object.keys(parentMap).forEach(function (childDept) {
+      if (parentMap[childDept] !== dept) return;
+      getDeptQcdQueues_(childDept).forEach(add);
+    });
+  }
   return out;
+}
+
+/** True when at least one dept's Overview parent === dept. */
+function deptHasSubQueues_(dept) {
+  const parentMap = getOverviewParentMap_();
+  return Object.keys(parentMap).some(function (child) { return parentMap[child] === dept; });
 }
 
 /**
@@ -104,8 +119,8 @@ function queuesForDept_(dept) {
  * mapped queues, including sub-queue rollup). Used for the
  * "Violations (current month)" KPI tile.
  */
-function computeMtdViolations_(dept, values, ssTZ) {
-  const queues = queuesForDept_(dept);
+function computeMtdViolations_(dept, values, ssTZ, qOpts) {
+  const queues = queuesForDept_(dept, qOpts);
   if (queues.length === 0) return 0;
   const queueSet = {};
   queues.forEach(function (q) { queueSet[q] = true; });
@@ -174,9 +189,13 @@ function getQcdReport(req) {
     throw new Error('from/to must be YYYY-MM-DD.');
   }
   if (from > to) throw new Error('from must be on or before to.');
+  // Sub-queue rollup toggle: absent/true = legacy INV-51 rollup;
+  // false = the dept's own queues only.
+  const includeSubQueues = !(req && req.includeSubQueues === false);
 
   const cache = CacheService.getScriptCache();
-  const cacheKey = QCD_CACHE_KEY_PREFIX + ':' + dept + ':' + from + ':' + to;
+  const cacheKey = QCD_CACHE_KEY_PREFIX + ':' + dept + ':' + from + ':' + to
+                 + ':' + (includeSubQueues ? 'roll' : 'own');
   const cached = cache.get(cacheKey);
   if (cached) {
     try {
@@ -188,7 +207,7 @@ function getQcdReport(req) {
   }
 
   const t0 = Date.now();
-  const data = computeQcdReport_(dept, from, to);
+  const data = computeQcdReport_(dept, from, to, includeSubQueues);
   data.meta.computeMs = Date.now() - t0;
   data.meta.cacheHit  = false;
 
@@ -204,7 +223,8 @@ function getQcdReport(req) {
   return data;
 }
 
-function computeQcdReport_(dept, from, to) {
+function computeQcdReport_(dept, from, to, includeSubQueues) {
+  const qOpts = { includeChildren: includeSubQueues !== false };
   const ss = openSpreadsheet_();
   const sheet = ss.getSheetByName('QCD Historical Data');
   if (!sheet) {
@@ -212,16 +232,16 @@ function computeQcdReport_(dept, from, to) {
   }
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) {
-    return emptyQcdReport_(dept, from, to);
+    return emptyQcdReport_(dept, from, to, includeSubQueues);
   }
   const ssTZ = ss.getSpreadsheetTimeZone();
 
   // Dept -> queue names. Empty = this dept isn't mapped in
   // DEPT_QCD_QUEUES; return the empty shape so the modal shows
   // "No queues mapped" instead of throwing.
-  const queues = queuesForDept_(dept);
+  const queues = queuesForDept_(dept, qOpts);
   if (queues.length === 0) {
-    const empty = emptyQcdReport_(dept, from, to);
+    const empty = emptyQcdReport_(dept, from, to, includeSubQueues);
     empty.meta.unmapped = true;
     return empty;
   }
@@ -405,7 +425,7 @@ function computeQcdReport_(dept, from, to) {
   // had this month?") and matches the "Violations (current month)"
   // label on the KPI tile. Range-scoped violations are still
   // available per-queue in queueBreakdown[].violations.
-  const violationsMtd = computeMtdViolations_(dept, values, ssTZ);
+  const violationsMtd = computeMtdViolations_(dept, values, ssTZ, qOpts);
   const totals = {
     totalCalls:       tTotal,
     totalAnswered:    tAns,
@@ -494,6 +514,8 @@ function computeQcdReport_(dept, from, to) {
       trendEnd:   trendEndIso,
       queues:     queues,
       unmapped:   false,
+      includeSubQueues: includeSubQueues !== false,
+      hasSubQueues:     deptHasSubQueues_(dept),
       generatedAt: new Date().toISOString(),
     },
     dateLabel:       dateLabel,
@@ -505,8 +527,8 @@ function computeQcdReport_(dept, from, to) {
   };
 }
 
-function emptyQcdReport_(dept, from, to) {
-  const queues = queuesForDept_(dept);
+function emptyQcdReport_(dept, from, to, includeSubQueues) {
+  const queues = queuesForDept_(dept, { includeChildren: includeSubQueues !== false });
   // Match the populated-path response shape (F5): the populated report
   // always carries a top-level `perQueue` map (queue -> { monthly, daily })
   // and `trendData.perQueue`. The client's multi-queue chart init reads
@@ -522,6 +544,8 @@ function emptyQcdReport_(dept, from, to) {
       trendStart: from, trendEnd: to,
       queues:     queues,
       unmapped:   queues.length === 0,
+      includeSubQueues: includeSubQueues !== false,
+      hasSubQueues:     deptHasSubQueues_(dept),
       generatedAt: new Date().toISOString(),
     },
     dateLabel: from + ' - ' + to,

@@ -198,47 +198,81 @@ function computeActiveAgentsInRange_(dept, from, to, roster) {
   if (lastRow < 2) return { agents: [], floaters: [] };
   const ssTZ = ss.getSpreadsheetTimeZone();
 
-  // Pull col D too -- needed for queue-extension matching against
-  // the dept's queue ext set (mirrors Data.gs::computeSummary_).
-  const numCols = Math.max(HISTORICAL_COLS.TOTAL_ANSWERED, HISTORICAL_COLS.QUEUE_EXT);
-  const range = sheet.getRange(2, 1, lastRow - 1, numCols);
-  const values = range.getValues();
-
-  // Dept's queue extension set -- the same getDeptQueueExts_ helper
-  // Data.gs uses, so the floater list here exactly matches what My
-  // Department would surface for the same range.
-  const deptQueueResult = getDeptQueueExts_(dept, rosterSet, values);
-  const deptQueueExts = deptQueueResult.exts;
-
   const activeRoster = {};
   const activeFloater = {};
-  for (let i = 0; i < values.length; i++) {
-    const r = values[i];
-    const dateIso = rowDateIso_(r[HISTORICAL_COLS.DATE - 1], ssTZ);
-    if (!dateIso || dateIso < from || dateIso > to) continue;
-    const agent = String(r[HISTORICAL_COLS.AGENT - 1] || '').trim();
-    if (!agent) continue;
-    // Skip queue-sentinel rows (INV-23). Same filter Data.gs applies.
-    if (/^A_Q_/.test(agent) || agent === 'Backup CSR') continue;
-    const rung     = Number(r[HISTORICAL_COLS.TOTAL_RUNG - 1])     || 0;
-    const missed   = Number(r[HISTORICAL_COLS.TOTAL_MISSED - 1])   || 0;
-    const answered = Number(r[HISTORICAL_COLS.TOTAL_ANSWERED - 1]) || 0;
-    const hadActivity = rung > 0 || missed > 0 || answered > 0;
-    if (!hadActivity) continue;
-    if (rosterSet[agent]) {
-      activeRoster[agent] = true;
-      continue;
-    }
+  // Classifier shared by both sources: same sentinel skip (INV-23),
+  // activity test, and queue-ext floater gate the legacy loop applies.
+  const classify = function (agent, rung, missed, answered, extCell, deptQueueExts) {
+    if (!agent) return;
+    if (/^A_Q_/.test(agent) || agent === 'Backup CSR') return;
+    if (!(rung > 0 || missed > 0 || answered > 0)) return;
+    if (rosterSet[agent]) { activeRoster[agent] = true; return; }
     // Off-roster: only count as a floater if their col-D extensions
     // actually overlap this dept's queue ext set -- otherwise the
     // row is for some other dept's agent who happens to be in
     // Historical Data but isn't matched into THIS dept's view.
-    const rowExts = parseExtensions_(r[HISTORICAL_COLS.QUEUE_EXT - 1]);
+    const rowExts = parseExtensions_(extCell);
     for (let j = 0; j < rowExts.length; j++) {
       if (deptQueueExts[rowExts[j]]) {
         activeFloater[agent] = true;
         break;
       }
+    }
+  };
+
+  // F1 DAL cutover: when DQE_READ_SOURCE=neon, the windowed rows come
+  // from dqe_history (the rows are pre-filtered to [from, to]) and the
+  // dept ext set keeps its all-history derivation via
+  // deptQueueExtsForNeonReader_. Fallback: any error or empty result
+  // falls through to the legacy whole-sheet scan below, which is
+  // byte-identical to pre-cutover behavior. Parity pinned by
+  // tests/unit/dal-cutover.test.js.
+  let usedNeon = false;
+  const dqeSource = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
+  if (dqeSource === 'neon' && typeof neonFetchDqeRows_ === 'function') {
+    try {
+      const _t0 = Date.now();
+      const dalRows = neonFetchDqeRows_(from, to);
+      if (dalRows && dalRows.length) {
+        const neonExts = deptQueueExtsForNeonReader_(dept, rosterSet, sheet, lastRow).exts;
+        for (let i = 0; i < dalRows.length; i++) {
+          const row = dalRows[i];
+          classify(row.agent, row.totalRung, row.totalMissed, row.totalAnswered,
+                   row.queueExt, neonExts);
+        }
+        usedNeon = true;
+        if (typeof logDqeReadTiming_ === 'function') logDqeReadTiming_('activeAgents', 'neon', _t0, dalRows.length);
+      }
+    } catch (e) {
+      Logger.log('computeActiveAgentsInRange_: neon read failed, falling back to sheet: '
+        + (e && e.message ? e.message : e));
+      usedNeon = false;
+    }
+  }
+
+  if (!usedNeon) {
+    // Pull col D too -- needed for queue-extension matching against
+    // the dept's queue ext set (mirrors Data.gs::computeSummary_).
+    const numCols = Math.max(HISTORICAL_COLS.TOTAL_ANSWERED, HISTORICAL_COLS.QUEUE_EXT);
+    const range = sheet.getRange(2, 1, lastRow - 1, numCols);
+    const values = range.getValues();
+
+    // Dept's queue extension set -- the same getDeptQueueExts_ helper
+    // Data.gs uses, so the floater list here exactly matches what My
+    // Department would surface for the same range.
+    const deptQueueResult = getDeptQueueExts_(dept, rosterSet, values);
+    const deptQueueExts = deptQueueResult.exts;
+
+    for (let i = 0; i < values.length; i++) {
+      const r = values[i];
+      const dateIso = rowDateIso_(r[HISTORICAL_COLS.DATE - 1], ssTZ);
+      if (!dateIso || dateIso < from || dateIso > to) continue;
+      classify(String(r[HISTORICAL_COLS.AGENT - 1] || '').trim(),
+               Number(r[HISTORICAL_COLS.TOTAL_RUNG - 1])     || 0,
+               Number(r[HISTORICAL_COLS.TOTAL_MISSED - 1])   || 0,
+               Number(r[HISTORICAL_COLS.TOTAL_ANSWERED - 1]) || 0,
+               r[HISTORICAL_COLS.QUEUE_EXT - 1],
+               deptQueueExts);
     }
   }
 

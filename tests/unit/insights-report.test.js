@@ -244,3 +244,185 @@ test('Insights: cross-dept request is rejected for a manager', function () {
     h.call('getInsightsReport', { department: 'Alpha', from: '2026-03-09', to: '2026-03-15', agents: ['Anna'] });
   }, /Not authorized/);
 });
+
+// -- Queue health (QCD-into-Insights consolidation) + sub-queue toggle --------
+
+const DC_HEADERS = ['Department', 'QCD Queues', 'Overview Parent', 'Team Avg Excludes',
+                    'Queue Ext Overrides', 'Active', 'Updated By', 'Updated At', 'Notes'];
+// QCD row: MonthYear | Week | Date | Queue | Source | Total | Answered |
+//          Abandoned | LongestWait | AvgAnswer | Abandoned % | Violations
+function qcdRow(date, queue, total, abandoned, violations) {
+  return ['Mar 2026', 'W2', date, queue, 'Total Calls', total, total - abandoned,
+          abandoned, '0:05:00', '0:00:30', '', violations];
+}
+
+function installWithQcd(dqeRows, deptConfigRows, qcdRows) {
+  h.state.userEmail = 'admin@x.com';
+  h.state.props.SPREADSHEET_ID = 'fake';
+  h.state.props.ADMIN_EMAILS = 'admin@x.com';
+  const sheets = {
+    'DO NOT EDIT!': ROSTER,
+    'DQE Historical Data': dqeSheet(dqeRows),
+    'Dept Config': [DC_HEADERS].concat(deptConfigRows),
+  };
+  if (qcdRows) {
+    sheets['QCD Historical Data'] = [['Month Year', 'Week', 'Date', 'Call Queue',
+      'Call Source', 'Total Calls', 'Total Answered', 'Abandoned', 'Longest Wait',
+      'Avg Answer', 'Abandoned %', 'Violations']].concat(qcdRows);
+  }
+  h.state.spreadsheet = makeFakeSpreadsheet({ timeZone: 'America/Chicago', sheets: sheets });
+  h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
+  h.state.cache.clear();
+}
+
+test('queuesForDept_: includeChildren=false returns the dept\'s own queues only', function () {
+  installWithQcd([], [
+    ['Alpha', 'A_Q_Alpha', '',      '', '', 'TRUE', 'a@x.com', '', ''],
+    ['Beta',  'A_Q_Beta',  'Alpha', '', '', 'TRUE', 'a@x.com', '', ''],   // Beta nests under Alpha
+  ], null);
+  deepEqual(h.call('queuesForDept_', 'Alpha'), ['A_Q_Alpha', 'A_Q_Beta'], 'default = INV-51 rollup');
+  deepEqual(h.call('queuesForDept_', 'Alpha', { includeChildren: false }), ['A_Q_Alpha']);
+  assert.equal(h.call('deptHasSubQueues_', 'Alpha'), true);
+  assert.equal(h.call('deptHasSubQueues_', 'Beta'), false);
+});
+
+test('Insights: queueHealth carries window totals, prior deltas base, and violation dates', function () {
+  installWithQcd(
+    [dqeRow({ date: '2026-03-10', agent: 'Anna', ext: '501', rung: 10, missed: 1, answered: 8, att: '0:03:00' })],
+    [['Alpha', 'A_Q_Alpha', '', '', '', 'TRUE', 'a@x.com', '', '']],
+    [
+      qcdRow('2026-03-10', 'A_Q_Alpha', 100, 10, 1),   // current window (abd 10%)
+      qcdRow('2026-03-05', 'A_Q_Alpha', 80,  2,  0),   // prior window  (abd 2.5%)
+    ]);
+  const data = h.call('getInsightsReport', {
+    department: 'Alpha', from: '2026-03-09', to: '2026-03-15', agents: ['Anna'],
+  });
+  const qh = data.queueHealth;
+  assert.ok(qh, 'queueHealth present when the dept has mapped queues + QCD data');
+  assert.equal(qh.totals.totalCalls, 100);
+  assert.equal(qh.totals.abandoned, 10);
+  assert.equal(qh.totals.abandonedPctStr, '10.00%');
+  assert.equal(qh.priorTotals.totalCalls, 80);
+  assert.equal(qh.perQueue.length, 1);
+  assert.equal(qh.perQueue[0].queue, 'A_Q_Alpha');
+  assert.equal(qh.perQueue[0].violations, 1);
+  assert.equal(qh.perQueue[0].violationDates.join(','), '2026-03-10');
+});
+
+test('Insights: queueHealth is null for an unmapped dept / missing QCD sheet (best-effort)', function () {
+  // No Dept Config row for Alpha and no constant mapping -> unmapped.
+  installWithQcd(
+    [dqeRow({ date: '2026-03-10', agent: 'Anna', ext: '501', rung: 5, missed: 1, answered: 4, att: '0:02:00' })],
+    [], [qcdRow('2026-03-10', 'A_Q_Alpha', 100, 10, 1)]);
+  const unmapped = h.call('getInsightsReport', {
+    department: 'Alpha', from: '2026-03-09', to: '2026-03-15', agents: ['Anna'],
+  });
+  assert.equal(unmapped.queueHealth, null);
+
+  // Mapped dept but no QCD sheet at all -> still null, report intact.
+  installWithQcd(
+    [dqeRow({ date: '2026-03-10', agent: 'Anna', ext: '501', rung: 5, missed: 1, answered: 4, att: '0:02:00' })],
+    [['Alpha', 'A_Q_Alpha', '', '', '', 'TRUE', 'a@x.com', '', '']], null);
+  const noSheet = h.call('getInsightsReport', {
+    department: 'Alpha', from: '2026-03-09', to: '2026-03-15', agents: ['Anna'],
+  });
+  assert.equal(noSheet.queueHealth, null);
+  assert.ok(noSheet.teamStats, 'rest of the report unaffected');
+});
+
+test('Insights: queueHealth.trend carries monthly abandoned-% per queue + dept total', function () {
+  installWithQcd(
+    [dqeRow({ date: '2026-03-10', agent: 'Anna', ext: '501', rung: 10, missed: 1, answered: 8, att: '0:03:00' })],
+    [
+      ['Alpha', 'A_Q_Alpha', '',      '', '', 'TRUE', 'a@x.com', '', ''],
+      ['Beta',  'A_Q_Beta',  'Alpha', '', '', 'TRUE', 'a@x.com', '', ''],
+    ],
+    [
+      qcdRow('2026-03-10', 'A_Q_Alpha', 100, 10, 1),
+      qcdRow('2026-03-10', 'A_Q_Beta',  50,  1,  0),
+      qcdRow('2026-02-10', 'A_Q_Alpha', 200, 4,  0),   // prior month bucket
+    ]);
+  const data = h.call('getInsightsReport', {
+    department: 'Alpha', from: '2026-03-09', to: '2026-03-15', agents: ['Anna'],
+  });
+  const trend = data.queueHealth && data.queueHealth.trend;
+  assert.ok(trend, 'trend present');
+  assert.ok(trend.labels.length >= 2, '12-mo monthly axis');
+  assert.equal(Object.keys(trend.perQueue).length, 2, 'one series per queue (rollup incl. sub-queue)');
+  assert.equal(trend.perQueue['A_Q_Alpha'].length, trend.labels.length, 'series aligned to axis');
+  assert.equal(trend.total.length, trend.labels.length);
+  // March bucket (last label): Alpha 10/100 = 10%, Beta 1/50 = 2%, total 11/150 = 7.3%.
+  const last = trend.labels.length - 1;
+  assert.equal(trend.perQueue['A_Q_Alpha'][last], 10);
+  assert.equal(trend.perQueue['A_Q_Beta'][last], 2);
+  assert.equal(trend.total[last], 7.3);
+});
+
+// -- My Department QCD snapshot: per-queue separation -------------------------
+
+test('dept QCD snapshot separates queues (and tags sub-queue owners)', function () {
+  installWithQcd([], [
+    ['Alpha', 'A_Q_Alpha', '',      '', '', 'TRUE', 'a@x.com', '', ''],
+    ['Beta',  'A_Q_Beta',  'Alpha', '', '', 'TRUE', 'a@x.com', '', ''],
+  ], [
+    qcdRow('2026-03-10', 'A_Q_Alpha', 100, 10, 1),
+    qcdRow('2026-03-10', 'A_Q_Beta',  50,  5,  0),
+    qcdRow('2026-03-09', 'A_Q_Alpha', 999, 99, 9),   // older date -- ignored
+  ]);
+  const snap = h.call('computeDeptQcdSnapshot_', 'Alpha', 'America/Chicago');
+  assert.equal(snap.date, '2026-03-10');
+  assert.equal(snap.perQueue.length, 2, 'one entry per queue, never summed away');
+  const alpha = snap.perQueue.filter(q => q.queue === 'A_Q_Alpha')[0];
+  const beta  = snap.perQueue.filter(q => q.queue === 'A_Q_Beta')[0];
+  assert.equal(alpha.subDept, null, 'own queue carries no sub-queue tag');
+  assert.equal(beta.subDept, 'Beta', 'child dept queue is tagged with its owner');
+  assert.equal(alpha.totalCalls, 100);
+  assert.equal(alpha.abandonedPctStr, '10.00%');
+  assert.equal(beta.totalCalls, 50);
+  // All-queues total still available for the labeled total row.
+  assert.equal(snap.totalCalls, 150);
+  assert.equal(snap.violations, 1);
+
+  // Single-queue dept: perQueue has exactly one entry matching the totals.
+  const single = h.call('computeDeptQcdSnapshot_', 'Beta', 'America/Chicago');
+  assert.equal(single.perQueue.length, 1);
+  assert.equal(single.perQueue[0].queue, 'A_Q_Beta');
+  assert.equal(single.totalCalls, 50);
+});
+
+test('Insights: queueHealth daily series + queueHealthOwnOnly scope', function () {
+  installWithQcd(
+    [dqeRow({ date: '2026-03-10', agent: 'Anna', ext: '501', rung: 10, missed: 1, answered: 8, att: '0:03:00' })],
+    [
+      ['Alpha', 'A_Q_Alpha', '',      '', '', 'TRUE', 'a@x.com', '', ''],
+      ['Beta',  'A_Q_Beta',  'Alpha', '', '', 'TRUE', 'a@x.com', '', ''],
+    ],
+    [
+      qcdRow('2026-03-10', 'A_Q_Alpha', 100, 10, 1),
+      qcdRow('2026-03-11', 'A_Q_Alpha', 80,  2,  0),
+      qcdRow('2026-03-10', 'A_Q_Beta',  50,  5,  0),
+    ]);
+  const roll = h.call('getInsightsReport', {
+    department: 'Alpha', from: '2026-03-09', to: '2026-03-15', agents: ['Anna'],
+  });
+  const t = roll.queueHealth.trend;
+  assert.equal(t.dailyLabels.join(','), '2026-03-10,2026-03-11');
+  assert.equal(t.dailyTotal[0], 10);   // (10+5)/(100+50) = 10%
+  assert.equal(t.dailyTotal[1], 2.5);  // 2/80
+  assert.equal(Object.keys(t.dailyPerQueue).length, 2);
+  assert.equal(t.dailyPerQueue['A_Q_Beta'][0], 10);  // 5/50
+  assert.equal(roll.queueHealth.hasSubQueues, true);
+  assert.equal(roll.queueHealth.includeSubQueues, true);
+
+  // Own-only scope: Beta's queue drops out of totals, rows, and trend.
+  const own = h.call('getInsightsReport', {
+    department: 'Alpha', from: '2026-03-09', to: '2026-03-15', agents: ['Anna'],
+    queueHealthOwnOnly: true,
+  });
+  assert.equal(own.queueHealth.includeSubQueues, false);
+  assert.equal(own.queueHealth.queues.join(','), 'A_Q_Alpha');
+  assert.equal(own.queueHealth.totals.totalCalls, 180);   // 100+80, no Beta
+  assert.equal(Object.keys(own.queueHealth.trend.perQueue).join(','), 'A_Q_Alpha');
+  // Distinct cache identities: both shapes were served fresh, not cross-bled.
+  assert.equal(roll.queueHealth.totals.totalCalls, 230);
+});

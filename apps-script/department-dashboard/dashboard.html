@@ -12,7 +12,13 @@
   <?!= include_('styles') ?>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.js" integrity="sha384-G436+Z2nlA8+PNoeRvWdxKbvOf8E/y+lYxqht2iBwNHTQDV5CJr3+AGVj8fGZi5t" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0" integrity="sha384-H7mijd3g+6+ErEI7+6rhqxGY03fYwsEaekVnHMC7HHB7u2rIkEf6AQgIXZqQYzDS" crossorigin="anonymous"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js" integrity="sha384-ZZ1pncU3bQe8y31yfZdMFdSpttDoPmOZg2wguVK9almUodir1PghgT0eY7Mrty8H" crossorigin="anonymous"></script>
+  <!-- html2canvas-pro (maintained fork; same `html2canvas` global) replaces
+       html2canvas 1.4.1, which cannot parse the oklch() color tokens the
+       Phase A redesign serves to modern browsers -- captures (and therefore
+       ALL export paths: copy / email / print) threw on every report. The
+       SRI hash is computed from the npm tarball's dist file, which jsdelivr
+       serves byte-identical. -->
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas-pro@1.5.11/dist/html2canvas-pro.min.js" integrity="sha384-Wm+alMbg1fxSJBbLMXKBb1ZfoWBd0FwJml5aEbKolDB41cMjTfek0cLKgCku6MAF" crossorigin="anonymous"></script>
 </head>
 <body data-page="overview">
   <div class="container">
@@ -55,25 +61,25 @@
           <div class="header-menu-list" id="reports-menu-list" role="menu" style="display:none;">
             <button class="header-menu-item" id="missed-report-btn" type="button"
                     data-route="/report/missed" role="menuitem"
-                    title="Per-agent missed-call timeline + queue-only abandoned events for a chosen date range.">Missed Calls</button>
+                    title="Per-agent missed-call timeline + queue-only abandoned events for a chosen date range.">Missed Calls <span class="tab-review-star" title="Pending consolidation review — kept until parity with the consolidated views is confirmed.">*</span></button>
             <button class="header-menu-item" id="individual-report-btn" type="button"
                     data-route="/report/individual" role="menuitem"
-                    title="Per-agent KPIs vs team avg + 12-month trend. Pick 2+ agents to switch to peer-comparison mode.">Individual</button>
+                    title="Per-agent KPIs vs team avg + 12-month trend. Pick 2+ agents to switch to peer-comparison mode.">Individual <span class="tab-review-star" title="Pending consolidation review — kept until parity with the consolidated views is confirmed.">*</span></button>
             <button class="header-menu-item" id="performance-report-btn" type="button"
                     data-route="/report/performance" role="menuitem"
-                    title="Department-level current-vs-prior-period deltas, share-of-answered pie, and 12-month team trend.">Performance</button>
+                    title="Department-level current-vs-prior-period deltas, share-of-answered pie, and 12-month team trend.">Performance <span class="tab-review-star" title="Pending consolidation review — kept until parity with the consolidated views is confirmed.">*</span></button>
             <button class="header-menu-item" id="compare-ranges-btn" type="button"
                     data-route="/report/compare" role="menuitem"
-                    title="Side-by-side comparison of two arbitrary date ranges. Useful for year-over-year or pre/post-change analyses.">Compare</button>
+                    title="Side-by-side comparison of two arbitrary date ranges. Useful for year-over-year or pre/post-change analyses.">Compare <span class="tab-review-star" title="Pending consolidation review — kept until parity with the consolidated views is confirmed.">*</span></button>
             <button class="header-menu-item" id="qcd-report-btn" type="button"
                     data-route="/report/qcd" role="menuitem"
-                    title="Queue Call Detail report: dept-level totals, per-source breakdown, abandoned %, violations, and 12-month trend.">QCD</button>
+                    title="Queue Call Detail report: dept-level totals, per-source breakdown, abandoned %, violations, and 12-month trend.">QCD <span class="tab-review-star" title="Pending consolidation review — kept until parity with the consolidated views is confirmed.">*</span></button>
             <button class="header-menu-item" id="insights-report-btn" type="button"
                     data-route="/report/insights" role="menuitem"
                     title="Combined view: a department rollup PLUS per-agent cards, each comparing the selected range to the immediately-preceding period.">Insights</button>
             <button class="header-menu-item" id="inbound-report-btn" type="button"
-                    data-route="/report/inbound" role="menuitem"
-                    title="Inbound call analytics (admin): volume + answered / abandoned / abandoned-on-hold by insurer, advertised dial-in line, and entry queue.">Inbound</button>
+                    data-route="/report/inbound" data-admin-only role="menuitem" style="display:none;"
+                    title="Inbound call analytics (admin-only while being vetted): volume + answered / abandoned / abandoned-on-hold by insurer, advertised dial-in line, and entry queue.">Inbound</button>
           </div>
         </div>
         <button class="header-menu-btn" id="alerts-btn" type="button"
@@ -160,10 +166,10 @@
                 <th>Source</th>
                 <th>Unique</th>
                 <th>Rung</th>
-                <th>Missed</th>
+                <th>Missed (rings)</th>
                 <th>Answered</th>
                 <th>TTT</th>
-                <th>ATT</th>
+                <th>ATT (daily avg)</th>
                 <th>Avg Abd Wait</th>
                 <th>CSR Avg Abd Wait</th>
               </tr>
@@ -250,10 +256,10 @@
             <th>Source</th>
             <th data-sort="totalUnique">Unique <span class="arrow"></span></th>
             <th data-sort="totalRung">Rung <span class="arrow"></span></th>
-            <th data-sort="totalMissed">Missed <span class="arrow"></span></th>
+            <th data-sort="totalMissed">Missed (rings) <span class="arrow"></span></th>
             <th data-sort="totalAnswered">Answered <span class="arrow"></span></th>
             <th data-sort="tttSeconds">TTT <span class="arrow"></span></th>
-            <th data-sort="attSeconds">ATT <span class="arrow"></span></th>
+            <th data-sort="attSeconds">ATT (daily avg) <span class="arrow"></span></th>
             <th data-sort="avgAbdWaitSeconds">Avg Abd Wait <span class="arrow"></span></th>
             <th data-sort="csrAvgAbdWaitSeconds">CSR Avg Abd Wait <span class="arrow"></span></th>
           </tr>
@@ -263,6 +269,23 @@
       </table>
 
       <div id="info-line" class="info-line" style="display:none;"></div>
+
+      <!-- Missed Calls drill-down (consolidation phase B): auto-generated
+           for the same range as the agent table above. The radar +
+           headline summarize; "Full report" opens the Missed Calls modal
+           (which carries its own date range for deeper digging). -->
+      <div id="dept-missed-section" class="dept-qcd-snapshot" style="display:none;">
+        <div class="dept-qcd-header">
+          <strong id="dept-missed-title">Missed Calls</strong>
+          <span class="dept-qcd-date" id="dept-missed-date"></span>
+          <button class="btn btn-secondary dept-missed-open" id="dept-missed-open" type="button"
+                  title="Open the full Missed Calls report (per-agent timeline, queue-only abandons, custom range)">Full report</button>
+        </div>
+        <div id="dept-missed-headline" class="report-headline" style="display:none;"></div>
+        <div class="dept-missed-chart-wrap" id="dept-missed-chart-wrap">
+          <canvas id="dept-missed-chart" aria-label="Hour-of-day distribution of missed calls"></canvas>
+        </div>
+      </div>
 
       <details id="diagnostics" class="diagnostics" style="display:none;">
         <summary>Diagnostics <span id="diag-count" class="diag-count"></span></summary>
@@ -364,8 +387,28 @@
         <h2 id="missed-modal-title">Missed Calls</h2>
       </div>
       <div class="modal-panel-body">
-      <div class="report-summary" id="missed-summary"></div>
+      <!-- Drill-down range: the modal carries its OWN From/To (defaulted
+           from the My Department fields on open) so a manager can widen
+           or shift the window without touching the page behind it. -->
+      <div class="ir-form-grid missed-range-row">
+        <div class="ir-col">
+          <label for="missed-from">From</label>
+          <input type="date" id="missed-from">
+        </div>
+        <div class="ir-col">
+          <label for="missed-to">To</label>
+          <input type="date" id="missed-to">
+        </div>
+        <div class="ir-col">
+          <label>&nbsp;</label>
+          <button class="btn btn-secondary" id="missed-refresh-btn" type="button">Update</button>
+        </div>
+      </div>
+      <!-- Status above the summary strip so the loading/error banner
+           renders above the "At a glance" headline (which anchors
+           itself just before #missed-summary). -->
       <div id="missed-status" class="status" style="display:none;"></div>
+      <div class="report-summary" id="missed-summary"></div>
       <div id="chart-row" class="chart-row no-detail">
         <div class="chart-section" id="missed-chart-wrap">
           <canvas id="missed-chart" aria-label="Hour-of-day distribution of missed calls"></canvas>
@@ -951,12 +994,23 @@
             <label for="qcd-to">End date</label>
             <input type="date" id="qcd-to">
           </div>
+          <div class="ir-col qcd-sub-toggle-col">
+            <label for="qcd-include-sub">Sub-queues</label>
+            <label class="qcd-sub-toggle">
+              <input type="checkbox" id="qcd-include-sub" checked>
+              Include sub-queue data
+            </label>
+          </div>
         </div>
         <div class="ir-hint">
           Reads from the <strong>QCD Historical Data</strong> sheet
           (written daily by the import pipeline; one row per call
           source per dept per day). KPIs are the per-day Total Calls
           source roll-up; per-source breakdown is nested below.
+          For parent departments (e.g. Sales), &ldquo;Include sub-queue
+          data&rdquo; folds child queues (e.g. PAP) into the totals and
+          charts; uncheck it to see the parent&rsquo;s own queues alone.
+          Sub-queue departments are unaffected by the toggle.
         </div>
         <div id="qcd-form-error" class="status status-error" style="display:none;"></div>
         <button class="btn" id="qcd-generate-btn" type="button">Generate report</button>
@@ -1184,6 +1238,46 @@
         <div class="al-section-title">Department rollup <span class="ins-rollup-cap" id="ins-rollup-cap"></span></div>
         <div id="ins-kpi-row" class="pr-kpi-row"></div>
 
+        <!-- Queue health (QCD-into-Insights consolidation): the dept's
+             queue-level abandoned % / violations for the same window +
+             prior window. Hidden when the dept has no mapped queues or
+             the QCD sheet is unavailable. The full QCD Report remains
+             the deep dive (per-queue charts, daily series). -->
+        <div id="ins-queue-health" style="display:none;">
+          <div class="al-section-title">Queue health <span class="ins-rollup-cap" id="ins-qh-cap"></span></div>
+          <div class="ins-qh-controls">
+            <label class="qcd-sub-toggle" id="ins-qh-sub-wrap" style="display:none;">
+              <input type="checkbox" id="ins-qh-include-sub" checked>
+              Include sub-queue data
+            </label>
+            <div class="segmented" id="ins-qh-view-toggle" role="radiogroup" aria-label="Queue health chart view" style="display:none;">
+              <button type="button" class="seg-btn active" data-view="monthly" role="radio" aria-checked="true">Monthly</button>
+              <button type="button" class="seg-btn" data-view="daily" role="radio" aria-checked="false">Daily</button>
+            </div>
+          </div>
+          <div id="ins-qh-forecast" class="qcd-forecast" style="display:none;"></div>
+          <div id="ins-qh-tiles" class="pr-kpi-row"></div>
+          <!-- Compact per-queue trend: monthly abandoned-% line per queue
+               + dashed dept total + the 5% threshold line. The QCD Report
+               keeps the full metric tabs / daily view / single-queue
+               drill-downs. -->
+          <div class="ir-chart-wrap ins-qh-chart-wrap" id="ins-qh-chart-wrap" style="display:none;">
+            <div class="ir-chart-header">Abandoned % by queue</div>
+            <div class="ir-chart-canvas-wrap ins-qh-canvas-wrap"><canvas id="ins-qh-chart"></canvas></div>
+          </div>
+          <table class="qcd-source-table">
+            <thead><tr>
+              <th>Queue</th>
+              <th class="num">Total Calls</th>
+              <th class="num">Abandoned</th>
+              <th class="num">Abandoned %</th>
+              <th class="num">Violations</th>
+            </tr></thead>
+            <tbody id="ins-qh-tbody"></tbody>
+          </table>
+          <div class="ins-qh-footnote">Same data the QCD Report reads &mdash; open it for per-queue trend charts and the daily series.</div>
+        </div>
+
         <div class="ir-chart-wrap" id="ins-trend-wrap">
           <div class="ir-chart-header">12-Month Team Trend</div>
           <div class="pr-trend-subtabs" id="ins-trend-subtabs" role="tablist">
@@ -1192,6 +1286,14 @@
             <button type="button" class="pr-trend-subtab" data-metric="att" role="tab" aria-selected="false">Avg Talk Time</button>
           </div>
           <div class="ir-chart-canvas-wrap"><canvas id="ins-trend-chart"></canvas></div>
+        </div>
+
+        <!-- Share-of-answered pie (ported from the Performance Report so
+             PR can retire without losing the view): each selected
+             agent's slice of the team's answered calls in the range. -->
+        <div class="ir-chart-wrap ins-share-wrap" id="ins-share-wrap" style="display:none;">
+          <div class="ir-chart-header">Share of answered calls</div>
+          <div class="ir-chart-canvas-wrap ins-share-canvas-wrap"><canvas id="ins-share-chart"></canvas></div>
         </div>
 
         <div class="al-section-title">Per-agent comparison (vs prior period)</div>
