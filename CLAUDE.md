@@ -307,8 +307,12 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   Inbound report (`InboundReport.gs`, route `#/report/inbound`), which
   reads Neon directly (one json_build_object round-trip) and renders an
   "unavailable" state -- intentionally NOT cached -- when Neon is
-  unreachable. **Per-dept gated like IR/PR/CR** (was admin-only):
-  managers see their own dept's slice; admins can also pick "All
+  unreachable. **TEMPORARILY re-scoped to admin-only** while the report is vetted
+  (the QCD-vs-inbound abandonment discrepancies -- different source +
+  definitions -- are parked until then); the per-dept manager path is
+  kept intact in `inboundResolveRequest_`, so restoring manager access
+  is a one-line gate removal + un-hiding the `data-admin-only` tab.
+  Once released: managers see their own dept's slice; admins can also pick "All
   departments" (the only view that includes the "Abandoned in IVR"
   bucket -- IVR abandons never reached a queue so they're
   unattributable). **Dept attribution contract:** a call belongs to the

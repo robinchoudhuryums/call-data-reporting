@@ -78,8 +78,8 @@
                     data-route="/report/insights" role="menuitem"
                     title="Combined view: a department rollup PLUS per-agent cards, each comparing the selected range to the immediately-preceding period.">Insights</button>
             <button class="header-menu-item" id="inbound-report-btn" type="button"
-                    data-route="/report/inbound" role="menuitem"
-                    title="Inbound call analytics (admin): volume + answered / abandoned / abandoned-on-hold by insurer, advertised dial-in line, and entry queue.">Inbound</button>
+                    data-route="/report/inbound" data-admin-only role="menuitem" style="display:none;"
+                    title="Inbound call analytics (admin-only while being vetted): volume + answered / abandoned / abandoned-on-hold by insurer, advertised dial-in line, and entry queue.">Inbound</button>
           </div>
         </div>
         <button class="header-menu-btn" id="alerts-btn" type="button"

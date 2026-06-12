@@ -72,6 +72,14 @@ function inboundResolveRequest_(req) {
   const email = Session.getActiveUser().getEmail();
   const user = resolveUser_(email);
   if (user.role === 'none') throw new Error('Not authorized.');
+  // TEMPORARY admin-only re-scope: the report is being vetted (data
+  // discrepancies vs QCD's abandonment numbers -- different source +
+  // definitions -- are noted and parked) before release to managers.
+  // The per-dept manager path below is KEPT intact so restoring manager
+  // access is a one-line removal of this gate.
+  if (user.role !== 'admin') {
+    throw new Error('The Inbound report is admin-only while it is being vetted.');
+  }
 
   const from = String((req && req.from) || '').trim();
   const to   = String((req && req.to)   || '').trim();
