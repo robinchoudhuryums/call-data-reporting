@@ -723,6 +723,12 @@
       th.addEventListener('click', function () { onSort(th.getAttribute('data-sort')); });
     });
 
+    var deptMissedOpen = $('dept-missed-open');
+    if (deptMissedOpen) deptMissedOpen.addEventListener('click', function () {
+      var b = $('missed-report-btn');
+      if (b) b.click();
+    });
+
     initHelpModal();
     initSettingsModal();
     initCompanyOverview();
@@ -2730,6 +2736,10 @@
       trapFocus_(modal);
       initModalDragResize_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
       document.addEventListener('keydown', onKeyDown);
+      // The modal carries its OWN range (drill-down), defaulted from the
+      // My Department fields on every open so it starts in sync.
+      if ($('missed-from')) $('missed-from').value = $('from-date').value;
+      if ($('missed-to'))   $('missed-to').value   = $('to-date').value;
       fetchAndRender();
     }
     function closeModal() {
@@ -2749,6 +2759,14 @@
     if (closeBtn) closeBtn.addEventListener('click', closeModal);
     if (backdrop) backdrop.addEventListener('click', closeModal);
 
+    // Drill-down range controls (modal-local).
+    const missedRefresh = $('missed-refresh-btn');
+    if (missedRefresh) missedRefresh.addEventListener('click', fetchAndRender);
+    ['missed-from', 'missed-to'].forEach(function (id) {
+      const el = $(id);
+      if (el) el.addEventListener('change', fetchAndRender);
+    });
+
     // Close button on the bucket-detail panel (chart drill-in).
     const detailClose = $('bucket-detail-close');
     if (detailClose) detailClose.addEventListener('click', hideBucketDetail);
@@ -2757,8 +2775,10 @@
       const dept = getRequestedDept();
       const req = {
         department: dept,
-        from: $('from-date').value,
-        to:   $('to-date').value,
+        // Modal-local range when present (drill-down); falls back to the
+        // page fields for safety.
+        from: ($('missed-from') && $('missed-from').value) || $('from-date').value,
+        to:   ($('missed-to')   && $('missed-to').value)   || $('to-date').value,
       };
 
       setMissedStatus('loading', 'Loading missed-call data...');
@@ -2836,25 +2856,15 @@
     renderMissedAgents(data.agents || []);
   }
 
-  function renderMissedChart(chart) {
-    const wrap = $('missed-chart-wrap');
-    if (!wrap) return;
-
-    // Recreate the canvas (clearMissedChart() replaced the container
-    // contents with a loading placeholder).
-    wrap.innerHTML = '<canvas id="missed-chart" aria-label="Hour-of-day distribution of missed calls"></canvas>';
-    const canvas = $('missed-chart');
-
-    if (typeof Chart === 'undefined') {
-      // Chart.js failed to load (CDN blocked?). Surface a fallback.
-      wrap.innerHTML = '<p class="chart-loading">Chart library failed to load. The agent grid below still shows the data.</p>';
-      return;
-    }
-
-    const ctx = canvas.getContext('2d');
-    // Radar chart, matching the legacy DQE Report's missed-calls
-    // visualization (clock-like, with each axis = a 30-min bucket).
-    const cfg = {
+  /**
+   * SHARED radar config for the missed-calls 30-min bucket chart --
+   * consumed by the Missed Calls modal AND the My Department drill-down
+   * section, so the two visualizations can't drift. `onBucketClick`
+   * receives the clicked bucket index (or pass null for non-interactive).
+   * datalabels stay off in boolean form (INV-41).
+   */
+  function missedRadarCfg_(chart, onBucketClick) {
+    return {
       type: 'radar',
       data: {
         labels: chart.labels || [],
@@ -2901,17 +2911,40 @@
         // Click a data point (or the axis label nearest a point) to
         // see the contributing rings for that 30-min bucket.
         onClick: function (evt, items, chartObj) {
+          if (!onBucketClick) return;
           if (items && items.length) {
-            toggleBucketDetail(items[0].index);
+            onBucketClick(items[0].index);
             return;
           }
           // Allow clicking near an axis label even if not exactly on a
           // data point: snap to the nearest point.
           const near = chartObj.getElementsAtEventForMode(evt, 'nearest', { intersect: false }, true);
-          if (near && near.length) toggleBucketDetail(near[0].index);
+          if (near && near.length) onBucketClick(near[0].index);
         }
       }
     };
+  }
+
+  function renderMissedChart(chart) {
+    const wrap = $('missed-chart-wrap');
+    if (!wrap) return;
+
+    // Recreate the canvas (clearMissedChart() replaced the container
+    // contents with a loading placeholder).
+    wrap.innerHTML = '<canvas id="missed-chart" aria-label="Hour-of-day distribution of missed calls"></canvas>';
+    const canvas = $('missed-chart');
+
+    if (typeof Chart === 'undefined') {
+      // Chart.js failed to load (CDN blocked?). Surface a fallback.
+      wrap.innerHTML = '<p class="chart-loading">Chart library failed to load. The agent grid below still shows the data.</p>';
+      return;
+    }
+
+    const ctx = canvas.getContext('2d');
+    // Radar chart, matching the legacy DQE Report's missed-calls
+    // visualization (clock-like, with each axis = a 30-min bucket).
+    // Modal version drills into the per-bucket detail panel on click.
+    const cfg = missedRadarCfg_(chart, function (idx) { toggleBucketDetail(idx); });
 
     // Refresh THEME tokens right before chart creation so values
     // resolved late reach Chart.defaults pre-instantiation.
@@ -3308,7 +3341,75 @@
     render();
     renderInfoLine();
     renderDeptQcdSnapshot_(data && data.qcd);
+    deptMissedFetch_();
     renderDiagnostics();
+  }
+
+  // -- Missed Calls drill-down on My Department (consolidation phase B) --
+  // Auto-generates the missed-calls summary (headline + radar) for the
+  // SAME range as the agent table, after every summary load. Independent
+  // async: a failure hides the section and never blocks the table. The
+  // "Full report" button (and a radar click) opens the Missed Calls
+  // modal, which carries its own range for deeper digging.
+  let deptMissedChart = null;
+  let deptMissedReqKey = '';   // ignore out-of-order responses
+
+  function deptMissedFetch_() {
+    const wrap = $('dept-missed-section');
+    if (!wrap) return;
+    const dept = getRequestedDept();
+    const from = $('from-date').value, to = $('to-date').value;
+    if (!dept || !from || !to) { wrap.style.display = 'none'; return; }
+    const key = dept + '|' + from + '|' + to;
+    deptMissedReqKey = key;
+    google.script.run
+      .withSuccessHandler(function (data) {
+        if (deptMissedReqKey !== key) return;   // stale response
+        deptMissedRender_(data, from, to);
+      })
+      .withFailureHandler(function () {
+        if (deptMissedReqKey !== key) return;
+        wrap.style.display = 'none';
+      })
+      .getMissedCallsReport({ department: dept, from: from, to: to });
+  }
+
+  function deptMissedRender_(data, from, to) {
+    const wrap = $('dept-missed-section');
+    if (!wrap) return;
+    const m = (data && data.meta) || {};
+
+    const dateEl = $('dept-missed-date');
+    if (dateEl) dateEl.textContent = from === to ? from : from + ' to ' + to;
+
+    // Headline (same composer the modal uses).
+    const head = $('dept-missed-headline');
+    if (head) {
+      const lines = missedHeadline_(m);
+      head.innerHTML = lines.length
+        ? '<div class="report-headline-kicker">At a glance</div>'
+          + lines.map(function (l) { return '<div class="report-headline-line">' + l + '</div>'; }).join('')
+        : '';
+      head.style.display = lines.length ? '' : 'none';
+    }
+
+    // Radar: same shared config as the modal (clicks open the full
+    // report rather than the in-modal bucket panel).
+    const chartWrap = $('dept-missed-chart-wrap');
+    if (deptMissedChart) { try { deptMissedChart.destroy(); } catch (e) {} deptMissedChart = null; }
+    const hasMissed = Number(m.totalMissed || 0) > 0 || Number(m.abandonedCallCount || 0) > 0;
+    if (chartWrap) {
+      chartWrap.style.display = hasMissed ? '' : 'none';
+      if (hasMissed && typeof Chart !== 'undefined') {
+        chartWrap.innerHTML = '<canvas id="dept-missed-chart" aria-label="Hour-of-day distribution of missed calls"></canvas>';
+        refreshChartTheme();
+        const openFull = function () { const b = $('missed-report-btn'); if (b) b.click(); };
+        deptMissedChart = new Chart($('dept-missed-chart').getContext('2d'),
+          missedRadarCfg_((data && data.chart) || { labels: [], counts: [] },
+                          function () { openFull(); }));
+      }
+    }
+    wrap.style.display = '';
   }
 
   /**
@@ -9623,6 +9724,7 @@
   let insLastData = null;
   let insChartInstance = null;
   let insQhChartInstance = null;   // Queue health compact trend chart
+  let insQhView = 'monthly';       // 'monthly' | 'daily' (chart toggle)
   let insShareChartInstance = null;   // share-of-answered pie (PR port)
   let insActiveTrendMetric = 'answered';
   let insCardSort = 'default';      // default (answered desc) | name | improvers | regressors
@@ -9685,6 +9787,28 @@
 
     const genBtn = $('ins-generate-btn');
     if (genBtn) genBtn.addEventListener('click', runInsReport);
+
+    // Queue health: Monthly/Daily chart view toggle (client-only
+    // re-render from the cached payload).
+    const qhToggle = $('ins-qh-view-toggle');
+    if (qhToggle) qhToggle.addEventListener('click', function (e) {
+      const b = e.target.closest('.seg-btn');
+      if (!b) return;
+      const next = b.getAttribute('data-view') || 'monthly';
+      if (next === insQhView) return;
+      insQhView = next;
+      qhToggle.querySelectorAll('.seg-btn').forEach(function (x) {
+        const active = x === b;
+        x.classList.toggle('active', active);
+        x.setAttribute('aria-checked', active ? 'true' : 'false');
+      });
+      if (insLastData) insRenderQueueHealthChart_(insLastData.queueHealth);
+    });
+    // Queue health: sub-queue scope toggle -- server-recomputed, so a
+    // change re-runs the report (cached per scope, so flipping back is
+    // instant).
+    const qhSub = $('ins-qh-include-sub');
+    if (qhSub) qhSub.addEventListener('change', function () { runInsReport(); });
 
     // Per-card IR drill-through (delegated on the modal so it covers
     // both the main card grid and the quiet-agents collapsible).
@@ -9957,6 +10081,10 @@
     insSetFormError('');
     const req = { department: dept, from: from, to: to, agents: agents };
     if (prior) { req.priorFrom = prior.from; req.priorTo = prior.to; }
+    // Queue health sub-queue scope (checkbox lives in the results pane;
+    // default checked = INV-51 rollup when not yet rendered).
+    const qhCb = $('ins-qh-include-sub');
+    if (qhCb && !qhCb.checked) req.queueHealthOwnOnly = true;
     const gen = $('ins-generate-btn'); const prev = gen.textContent;
     gen.disabled = true; gen.textContent = 'Generating…';
     google.script.run
@@ -10121,6 +10249,25 @@
     if (cap) cap.textContent = '(' + (qh.queues || []).length + ' queue'
       + ((qh.queues || []).length === 1 ? '' : 's') + ' · same window as the rollup above)';
 
+    // Sub-queue toggle: only meaningful for parent depts. State mirrors
+    // the server's effective scope (checkbox change re-runs the report).
+    const subWrap = $('ins-qh-sub-wrap');
+    if (subWrap) {
+      subWrap.style.display = qh.hasSubQueues ? '' : 'none';
+      const cb = $('ins-qh-include-sub');
+      if (cb) cb.checked = qh.includeSubQueues !== false;
+    }
+
+    // Days-to-violation forecast on the daily series (shared helper --
+    // same regression the QCD Report renders).
+    const fc = $('ins-qh-forecast');
+    if (fc) {
+      const html = (qh.trend && qh.trend.dailyTotal)
+        ? abandonForecastHtml_(qh.trend.dailyTotal) : '';
+      fc.innerHTML = html;
+      fc.style.display = html ? '' : 'none';
+    }
+
     const t = qh.totals, p = qh.priorTotals;
     const tiles = [
       inboundKpiTile_('Queue calls', fmtNumber(t.totalCalls), '',
@@ -10165,9 +10312,26 @@
     const wrap = $('ins-qh-chart-wrap');
     if (!wrap) return;
     const trend = qh && qh.trend;
-    const queueNames = trend ? Object.keys(trend.perQueue || {}) : [];
-    if (!trend || !trend.labels || !trend.labels.length
-        || (!queueNames.length && !(trend.total || []).length)) {
+    if (!trend || !trend.labels || !trend.labels.length) {
+      wrap.style.display = 'none';
+      const tgl = $('ins-qh-view-toggle');
+      if (tgl) tgl.style.display = 'none';
+      if (insQhChartInstance) { try { insQhChartInstance.destroy(); } catch (e) {} insQhChartInstance = null; }
+      return;
+    }
+    // Daily view only offered when the range has 2+ days of data
+    // (single point isn't useful as a line -- QCD's convention).
+    const hasDaily = (trend.dailyLabels || []).length > 1;
+    const toggle = $('ins-qh-view-toggle');
+    if (toggle) toggle.style.display = hasDaily ? '' : 'none';
+    if (!hasDaily && insQhView === 'daily') insQhView = 'monthly';
+    const daily = insQhView === 'daily' && hasDaily;
+
+    const labels   = daily ? trend.dailyLabels : trend.labels;
+    const totalSer = daily ? (trend.dailyTotal || []) : (trend.total || []);
+    const perQueue = daily ? (trend.dailyPerQueue || {}) : (trend.perQueue || {});
+    const queueNames = Object.keys(perQueue);
+    if (!queueNames.length && !totalSer.length) {
       wrap.style.display = 'none';
       if (insQhChartInstance) { try { insQhChartInstance.destroy(); } catch (e) {} insQhChartInstance = null; }
       return;
@@ -10181,7 +10345,7 @@
       const color = IR_CHART_COLORS[i % IR_CHART_COLORS.length];
       return {
         label: q,
-        data: trend.perQueue[q],
+        data: perQueue[q],
         borderColor: color,
         backgroundColor: color,
         borderWidth: 1.8,
@@ -10190,10 +10354,10 @@
         fill: false,
       };
     });
-    if (queueNames.length > 1 && (trend.total || []).length) {
+    if (queueNames.length > 1 && totalSer.length) {
       datasets.push({
         label: 'Dept total',
-        data: trend.total,
+        data: totalSer,
         borderColor: THEME.ink,
         backgroundColor: THEME.ink,
         borderDash: [5, 4],
@@ -10205,7 +10369,7 @@
     }
     datasets.push({
       label: '5% threshold',
-      data: trend.labels.map(function () { return 5; }),
+      data: labels.map(function () { return 5; }),
       borderColor: THEME.muted,
       borderDash: [3, 4],
       borderWidth: 1,
@@ -10216,7 +10380,7 @@
 
     insQhChartInstance = new Chart($('ins-qh-chart').getContext('2d'), {
       type: 'line',
-      data: { labels: trend.labels, datasets: datasets },
+      data: { labels: labels, datasets: datasets },
       options: {
         responsive: true,
         maintainAspectRatio: false,
@@ -11749,19 +11913,22 @@
   // since the first point in the window.
   const QCD_FORECAST_HORIZON_DAYS = 7;
   const QCD_FORECAST_WINDOW_DAYS  = 7;
-  function qcdRenderForecast_(data) {
-    const el = $('qcd-forecast');
-    if (!el) return;
-    el.style.display = 'none';
-    el.innerHTML = '';
-    const series = (data && data.dailySeries) || [];
-    if (series.length < QCD_FORECAST_WINDOW_DAYS) return;
-    const window = series.slice(-QCD_FORECAST_WINDOW_DAYS);
-    const ys = window.map(function (d) { return Number(d.abandonedPct) || 0; });
+  /**
+   * SHARED days-to-violation forecast (INV-51 / E9 semantics): 7-day
+   * linear regression on a daily abandoned-% series, projecting when
+   * the 5% threshold will cross. Returns inner HTML, or '' in the
+   * three healthy states (already over / flat-or-improving / crossing
+   * beyond the horizon). Consumed by the QCD Report AND the Insights
+   * Queue health section, so the two can't disagree.
+   */
+  function abandonForecastHtml_(pcts) {
+    const series = pcts || [];
+    if (series.length < QCD_FORECAST_WINDOW_DAYS) return '';
+    const ys = series.slice(-QCD_FORECAST_WINDOW_DAYS).map(function (v) { return Number(v) || 0; });
     const currentY = ys[ys.length - 1];
     // Already above threshold? No forecast -- the operator is past
     // the projection horizon; existing chrome already flags it.
-    if (currentY >= 5) return;
+    if (currentY >= 5) return '';
     const n = ys.length;
     let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
     for (let i = 0; i < n; i++) {
@@ -11771,22 +11938,29 @@
       sumXX += i * i;
     }
     const denom = n * sumXX - sumX * sumX;
-    if (denom === 0) return;
+    if (denom === 0) return '';
     const slope = (n * sumXY - sumX * sumY) / denom;
     // Healthy: trend is flat or improving. Skip the banner.
-    if (slope <= 0.01) return;
+    if (slope <= 0.01) return '';
     const daysToCross = (5 - currentY) / slope;
-    if (daysToCross <= 0 || daysToCross > QCD_FORECAST_HORIZON_DAYS) return;
+    if (daysToCross <= 0 || daysToCross > QCD_FORECAST_HORIZON_DAYS) return '';
     const wholeDays = Math.max(1, Math.round(daysToCross));
     const slopeDay  = slope.toFixed(2);
-    el.innerHTML =
-        '<span class="qcd-forecast-kicker">Forecast</span>'
+    return '<span class="qcd-forecast-kicker">Forecast</span>'
       + 'Abandoned % is trending up '
       + '<strong>+' + escapeHtml(slopeDay) + '%/day</strong>'
       + ' over the last ' + QCD_FORECAST_WINDOW_DAYS + ' days. '
       + 'At this rate, it crosses the 5% violation threshold in '
       + '<strong>~' + wholeDays + ' day' + (wholeDays === 1 ? '' : 's') + '</strong>.';
-    el.style.display = '';
+  }
+
+  function qcdRenderForecast_(data) {
+    const el = $('qcd-forecast');
+    if (!el) return;
+    const series = ((data && data.dailySeries) || []).map(function (d) { return d.abandonedPct; });
+    const html = abandonForecastHtml_(series);
+    el.innerHTML = html;
+    el.style.display = html ? '' : 'none';
   }
 
   function qcdRenderKpiTiles_(t) {

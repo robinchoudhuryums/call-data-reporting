@@ -63,7 +63,11 @@
 //     violation dates, via computeQcdReport_; null when unmapped).
 // v5: queueHealth gains `trend` (monthly abandoned-% series per queue +
 //     dept total -- the compact Queue health chart).
-const INSIGHTS_CACHE_KEY_PREFIX = 'insights:v5';
+// v6: queueHealth.trend gains the DAILY series (Monthly/Daily toggle);
+//     queueHealthOwnOnly request flag (sub-queue toggle, mirrors QCD's)
+//     joins the cache key; queueHealth carries hasSubQueues +
+//     includeSubQueues so the client can show/hide the toggle.
+const INSIGHTS_CACHE_KEY_PREFIX = 'insights:v6';
 
 function getInsightsReportInit(req) {
   // Same picker UX (roster + default dates + active-in-range subset) as
@@ -127,9 +131,12 @@ function getInsightsReport(req) {
   const priorKey = (customPriorFrom && customPriorTo)
     ? customPriorFrom + '..' + customPriorTo
     : 'auto';
+  // Queue health sub-queue toggle (mirrors QCD's includeSubQueues;
+  // default false = INV-51 rollup).
+  const qhOwnOnly = !!(req && req.queueHealthOwnOnly);
   const cache = CacheService.getScriptCache();
   const cacheKey = INSIGHTS_CACHE_KEY_PREFIX + ':' + dept + ':' + from + ':' + to
-                 + ':' + agentsKey + ':' + priorKey;
+                 + ':' + agentsKey + ':' + priorKey + ':' + (qhOwnOnly ? 'qhown' : 'qhroll');
   const cached = cache.get(cacheKey);
   if (cached) {
     try {
@@ -142,7 +149,7 @@ function getInsightsReport(req) {
 
   const t0 = Date.now();
   const data = computeInsights_(dept, from, to, selectedAgents, roster,
-                                customPriorFrom, customPriorTo);
+                                customPriorFrom, customPriorTo, qhOwnOnly);
   data.meta.computeMs = Date.now() - t0;
   data.meta.cacheHit = false;
 
@@ -154,7 +161,7 @@ function getInsightsReport(req) {
 }
 
 function computeInsights_(dept, from, to, selectedAgents, roster,
-                          customPriorFrom, customPriorTo) {
+                          customPriorFrom, customPriorTo, qhOwnOnly) {
   const selectedSet = {};
   for (let i = 0; i < selectedAgents.length; i++) selectedSet[selectedAgents[i]] = true;
   const rosterSet = {};
@@ -483,7 +490,7 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
     // window, sourced from the same computeQcdReport_ the QCD modal
     // uses so the two surfaces can't disagree. null when the dept has
     // no mapped queues or the QCD sheet is missing (best-effort).
-    queueHealth: insightsQueueHealth_(dept, from, to, priorFrom, priorTo),
+    queueHealth: insightsQueueHealth_(dept, from, to, priorFrom, priorTo, qhOwnOnly),
   };
 }
 
@@ -496,13 +503,14 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
  * (INV-51), so it's surfaced as violationsMtd; the per-queue rows'
  * `violations` are selected-range counts with their violationDates.
  */
-function insightsQueueHealth_(dept, from, to, priorFrom, priorTo) {
+function insightsQueueHealth_(dept, from, to, priorFrom, priorTo, qhOwnOnly) {
   try {
     if (typeof computeQcdReport_ !== 'function') return null;
-    const cur = computeQcdReport_(dept, from, to);
+    const includeSub = !qhOwnOnly;
+    const cur = computeQcdReport_(dept, from, to, includeSub);
     if (!cur || !cur.meta || cur.meta.unmapped) return null;
     let prior = null;
-    try { prior = computeQcdReport_(dept, priorFrom, priorTo); } catch (e) { prior = null; }
+    try { prior = computeQcdReport_(dept, priorFrom, priorTo, includeSub); } catch (e) { prior = null; }
     const pick = function (t) {
       t = t || {};
       return {
@@ -532,8 +540,23 @@ function insightsQueueHealth_(dept, from, to, priorFrom, priorTo) {
         total: (td.series || []).map(function (b) { return round1_(b.abandonedPct); }),
         perQueue: perQueuePct,
       };
+      // Daily view (the QCD daily series, abandoned-% only) -- selected
+      // range scoped. Also feeds the days-to-violation forecast.
+      const daily = cur.dailySeries || [];
+      if (daily.length) {
+        trend.dailyLabels = daily.map(function (d) { return d.date; });
+        trend.dailyTotal  = daily.map(function (d) { return round1_(d.abandonedPct); });
+        const dailyPerQueue = {};
+        (cur.meta.queues || []).forEach(function (q) {
+          const dq = cur.perQueue && cur.perQueue[q] && cur.perQueue[q].daily;
+          if (dq) dailyPerQueue[q] = dq.map(function (d) { return round1_(d.abandonedPct); });
+        });
+        trend.dailyPerQueue = dailyPerQueue;
+      }
     }
     return {
+      hasSubQueues:     !!cur.meta.hasSubQueues,
+      includeSubQueues: cur.meta.includeSubQueues !== false,
       queues:        cur.meta.queues || [],
       totals:        pick(cur.totals),
       priorTotals:   prior && prior.meta && !prior.meta.unmapped ? pick(prior.totals) : null,

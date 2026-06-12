@@ -389,3 +389,40 @@ test('dept QCD snapshot separates queues (and tags sub-queue owners)', function 
   assert.equal(single.perQueue[0].queue, 'A_Q_Beta');
   assert.equal(single.totalCalls, 50);
 });
+
+test('Insights: queueHealth daily series + queueHealthOwnOnly scope', function () {
+  installWithQcd(
+    [dqeRow({ date: '2026-03-10', agent: 'Anna', ext: '501', rung: 10, missed: 1, answered: 8, att: '0:03:00' })],
+    [
+      ['Alpha', 'A_Q_Alpha', '',      '', '', 'TRUE', 'a@x.com', '', ''],
+      ['Beta',  'A_Q_Beta',  'Alpha', '', '', 'TRUE', 'a@x.com', '', ''],
+    ],
+    [
+      qcdRow('2026-03-10', 'A_Q_Alpha', 100, 10, 1),
+      qcdRow('2026-03-11', 'A_Q_Alpha', 80,  2,  0),
+      qcdRow('2026-03-10', 'A_Q_Beta',  50,  5,  0),
+    ]);
+  const roll = h.call('getInsightsReport', {
+    department: 'Alpha', from: '2026-03-09', to: '2026-03-15', agents: ['Anna'],
+  });
+  const t = roll.queueHealth.trend;
+  assert.equal(t.dailyLabels.join(','), '2026-03-10,2026-03-11');
+  assert.equal(t.dailyTotal[0], 10);   // (10+5)/(100+50) = 10%
+  assert.equal(t.dailyTotal[1], 2.5);  // 2/80
+  assert.equal(Object.keys(t.dailyPerQueue).length, 2);
+  assert.equal(t.dailyPerQueue['A_Q_Beta'][0], 10);  // 5/50
+  assert.equal(roll.queueHealth.hasSubQueues, true);
+  assert.equal(roll.queueHealth.includeSubQueues, true);
+
+  // Own-only scope: Beta's queue drops out of totals, rows, and trend.
+  const own = h.call('getInsightsReport', {
+    department: 'Alpha', from: '2026-03-09', to: '2026-03-15', agents: ['Anna'],
+    queueHealthOwnOnly: true,
+  });
+  assert.equal(own.queueHealth.includeSubQueues, false);
+  assert.equal(own.queueHealth.queues.join(','), 'A_Q_Alpha');
+  assert.equal(own.queueHealth.totals.totalCalls, 180);   // 100+80, no Beta
+  assert.equal(Object.keys(own.queueHealth.trend.perQueue).join(','), 'A_Q_Alpha');
+  // Distinct cache identities: both shapes were served fresh, not cross-bled.
+  assert.equal(roll.queueHealth.totals.totalCalls, 230);
+});

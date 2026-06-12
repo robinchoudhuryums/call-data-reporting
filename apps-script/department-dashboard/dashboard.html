@@ -270,6 +270,23 @@
 
       <div id="info-line" class="info-line" style="display:none;"></div>
 
+      <!-- Missed Calls drill-down (consolidation phase B): auto-generated
+           for the same range as the agent table above. The radar +
+           headline summarize; "Full report" opens the Missed Calls modal
+           (which carries its own date range for deeper digging). -->
+      <div id="dept-missed-section" class="dept-qcd-snapshot" style="display:none;">
+        <div class="dept-qcd-header">
+          <strong id="dept-missed-title">Missed Calls</strong>
+          <span class="dept-qcd-date" id="dept-missed-date"></span>
+          <button class="btn btn-secondary dept-missed-open" id="dept-missed-open" type="button"
+                  title="Open the full Missed Calls report (per-agent timeline, queue-only abandons, custom range)">Full report</button>
+        </div>
+        <div id="dept-missed-headline" class="report-headline" style="display:none;"></div>
+        <div class="dept-missed-chart-wrap" id="dept-missed-chart-wrap">
+          <canvas id="dept-missed-chart" aria-label="Hour-of-day distribution of missed calls"></canvas>
+        </div>
+      </div>
+
       <details id="diagnostics" class="diagnostics" style="display:none;">
         <summary>Diagnostics <span id="diag-count" class="diag-count"></span></summary>
         <div id="diag-content"></div>
@@ -370,6 +387,23 @@
         <h2 id="missed-modal-title">Missed Calls</h2>
       </div>
       <div class="modal-panel-body">
+      <!-- Drill-down range: the modal carries its OWN From/To (defaulted
+           from the My Department fields on open) so a manager can widen
+           or shift the window without touching the page behind it. -->
+      <div class="ir-form-grid missed-range-row">
+        <div class="ir-col">
+          <label for="missed-from">From</label>
+          <input type="date" id="missed-from">
+        </div>
+        <div class="ir-col">
+          <label for="missed-to">To</label>
+          <input type="date" id="missed-to">
+        </div>
+        <div class="ir-col">
+          <label>&nbsp;</label>
+          <button class="btn btn-secondary" id="missed-refresh-btn" type="button">Update</button>
+        </div>
+      </div>
       <!-- Status above the summary strip so the loading/error banner
            renders above the "At a glance" headline (which anchors
            itself just before #missed-summary). -->
@@ -1211,13 +1245,24 @@
              the deep dive (per-queue charts, daily series). -->
         <div id="ins-queue-health" style="display:none;">
           <div class="al-section-title">Queue health <span class="ins-rollup-cap" id="ins-qh-cap"></span></div>
+          <div class="ins-qh-controls">
+            <label class="qcd-sub-toggle" id="ins-qh-sub-wrap" style="display:none;">
+              <input type="checkbox" id="ins-qh-include-sub" checked>
+              Include sub-queue data
+            </label>
+            <div class="segmented" id="ins-qh-view-toggle" role="radiogroup" aria-label="Queue health chart view" style="display:none;">
+              <button type="button" class="seg-btn active" data-view="monthly" role="radio" aria-checked="true">Monthly</button>
+              <button type="button" class="seg-btn" data-view="daily" role="radio" aria-checked="false">Daily</button>
+            </div>
+          </div>
+          <div id="ins-qh-forecast" class="qcd-forecast" style="display:none;"></div>
           <div id="ins-qh-tiles" class="pr-kpi-row"></div>
           <!-- Compact per-queue trend: monthly abandoned-% line per queue
                + dashed dept total + the 5% threshold line. The QCD Report
                keeps the full metric tabs / daily view / single-queue
                drill-downs. -->
           <div class="ir-chart-wrap ins-qh-chart-wrap" id="ins-qh-chart-wrap" style="display:none;">
-            <div class="ir-chart-header">Abandoned % by queue (monthly)</div>
+            <div class="ir-chart-header">Abandoned % by queue</div>
             <div class="ir-chart-canvas-wrap ins-qh-canvas-wrap"><canvas id="ins-qh-chart"></canvas></div>
           </div>
           <table class="qcd-source-table">
