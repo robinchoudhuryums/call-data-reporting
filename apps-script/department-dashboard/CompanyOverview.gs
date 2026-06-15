@@ -43,7 +43,7 @@
  * (read-only), and reinstating that visibility is part of the
  * design intent for this view.
  *
- * Caching: REPORT_CACHE_TTL_SECONDS under `companyOverview:v14` (the
+ * Caching: REPORT_CACHE_TTL_SECONDS under `companyOverview:v16` (the
  * COMPANY_OVERVIEW_CACHE_KEY constant below). Cached blob is shared
  * across all users; admin-only fields (`companyAggregate`,
  * `pipelineFreshness`, `orphanNag`) are stripped on serve for
@@ -77,7 +77,7 @@
 // v15: per-dept QCD snapshots use DIRECT queues only (sub-queue
 // separation -- children carry their own tiles; the parent-expansion
 // overwrite pass was removed).
-const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v15';
+const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v16';
 
 // Pipeline freshness threshold (hours). If the most recent successful
 // DQE-freshness Pipeline Health row is older than this many hours, the
@@ -241,6 +241,18 @@ function getCompanyOverview() {
     };
   });
 
+  // On-roster, non-hidden-dept population. The company aggregate's
+  // volume AND its active/recently-active counts are both scoped to
+  // this set so the admin hero's numerator and denominator are drawn
+  // from the same population (and the hero reconciles with the sum of
+  // the visible dept tiles). Built before the scan so the loop can gate
+  // accumulation directly. (Also reused below for rosterSize.)
+  const companyRosterUnion = {};
+  allDepts.forEach(function (d) {
+    if (OVERVIEW_HIDDEN_DEPTS.indexOf(d) !== -1) return;
+    rosterByDept[d].names.forEach(function (n) { companyRosterUnion[n] = true; });
+  });
+
   // Company-wide aggregator for latestDate. Computed unconditionally
   // (cost is identical whether we use it or not); admin-only on serve
   // via personalizeOverview_. Unlike the per-dept aggregator, this
@@ -299,26 +311,31 @@ function getCompanyOverview() {
     const attTotal = answered > 0 ? attAvg * answered : 0;
 
     // Company aggregate: count this row once on latestDate before
-    // any per-dept attribution. Agents not on any roster still count
-    // here (real volume), but they won't be attributed to any dept
-    // tile below. companyTrendByDate accumulates the per-day series
-    // for the aggregate tile's sparkline.
+    // any per-dept attribution. Scoped to companyRosterUnion (on-roster,
+    // non-hidden depts) so the hero's volume, % Answered, sparkline, and
+    // active-count caption all share one population -- an off-roster or
+    // hidden-dept-only agent's volume would otherwise inflate the hero
+    // without appearing on any visible dept tile or in the active count.
+    // companyTrendByDate accumulates the per-day series for the
+    // aggregate tile's sparkline.
     const hadActivity = rung > 0 || answered > 0 || missed > 0;
-    let cTrend = companyTrendByDate[dateIso];
-    if (!cTrend) {
-      cTrend = { rung: 0, answered: 0 };
-      companyTrendByDate[dateIso] = cTrend;
+    if (companyRosterUnion[agent]) {
+      let cTrend = companyTrendByDate[dateIso];
+      if (!cTrend) {
+        cTrend = { rung: 0, answered: 0 };
+        companyTrendByDate[dateIso] = cTrend;
+      }
+      cTrend.rung     += rung;
+      cTrend.answered += answered;
+      if (dateIso === latestDate) {
+        companyLatest.rung     += rung;
+        companyLatest.missed   += missed;
+        companyLatest.answered += answered;
+        companyLatest.att_sum  += attTotal;
+        if (hadActivity) companyLatest.activeAgents[agent] = true;
+      }
+      if (hadActivity) companyRecentlyActive[agent] = true;
     }
-    cTrend.rung     += rung;
-    cTrend.answered += answered;
-    if (dateIso === latestDate) {
-      companyLatest.rung     += rung;
-      companyLatest.missed   += missed;
-      companyLatest.answered += answered;
-      companyLatest.att_sum  += attTotal;
-      if (hadActivity) companyLatest.activeAgents[agent] = true;
-    }
-    if (hadActivity) companyRecentlyActive[agent] = true;
 
     const ownerDepts = deptsForAgent[agent];
     if (!ownerDepts || !ownerDepts.length) continue;
@@ -438,20 +455,14 @@ function getCompanyOverview() {
   });
 
   // Company-wide aggregate for latestDate. Total roster size is the
-  // union of agent names across all non-hidden depts (dedupes
-  // floaters who appear on multiple rosters).
-  const companyRosterUnion = {};
-  allDepts.forEach(function (d) {
-    if (OVERVIEW_HIDDEN_DEPTS.indexOf(d) !== -1) return;
-    rosterByDept[d].names.forEach(function (n) { companyRosterUnion[n] = true; });
-  });
-  // Filter the active / recently-active sets to the same on-roster,
-  // non-hidden-dept population that feeds rosterSize, so the tile's
-  // "X of Y agents active" caption can't go above 100% just because
-  // a hidden-dept-only agent (e.g. CSR Backup floater) had activity
-  // today. Without this filter the numerator and denominator are
-  // drawn from different populations and produce visibly wrong
-  // arithmetic on the admin Overview hero.
+  // union of agent names across all non-hidden depts (companyRosterUnion,
+  // built before the scan loop above; dedupes floaters who appear on
+  // multiple rosters). The scan already gated company accumulation on
+  // that same union, so the active / recently-active sets are inherently
+  // scoped to the on-roster, non-hidden population that feeds rosterSize
+  // -- the "X of Y agents active" caption can't exceed 100%, and the
+  // numerator/denominator share one population. The filter below is a
+  // belt-and-suspenders no-op kept for defensiveness.
   const activeAgentsFiltered = {};
   Object.keys(companyLatest.activeAgents).forEach(function (a) {
     if (companyRosterUnion[a]) activeAgentsFiltered[a] = true;
@@ -569,12 +580,10 @@ function parsePipelineHealthTimestamp_(s) {
   const m = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})$/.exec(s || '');
   if (!m) return null;
   const iso = m[1] + '-' + m[2] + '-' + m[3] + 'T' + m[4] + ':' + m[5] + ':00';
-  // Build a Date by interpreting the wall-clock values in TZ.
-  // Utilities.parseDate(iso, TZ, "yyyy-MM-dd'T'HH:mm:ss") would also
-  // work but the simpler new Date(iso + offset-ish) is unreliable
-  // across DST. We approximate by formatting "now" in TZ to find the
-  // current offset and re-applying it; for the cache window we care
-  // about (<48h), DST transitions inside the window are rare.
+  // Interpret the wall-clock values in the script TZ via
+  // Utilities.parseDate, which resolves the correct offset (incl. DST)
+  // for the given date -- we don't roll our own offset math or rely on
+  // the JS engine treating the bare string as local.
   try {
     return Utilities.parseDate(iso, TZ, "yyyy-MM-dd'T'HH:mm:ss");
   } catch (e) {
@@ -833,21 +842,19 @@ function computeQcdSnapshots_(allDepts, sinceIso, ssTZ) {
     const lastRow = sheet.getLastRow();
     if (lastRow < 2) return out;
 
-    // Build queue -> dept lookup using the same rollup helper the
-    // modal uses (queuesForDept_ in QCDReport.gs). Parent depts
-    // claim their children's queues too -- so a row for A_Q_PAP
-    // counts toward both PAP (its direct dept) and Sales (its
-    // parent). First-write wins keeps each row attributed to the
-    // single most-specific dept that lists it; the parent's
-    // snapshot in Overview rolls in the child's contribution
-    // through the parent's expanded queue list, computed below
-    // in a separate per-dept aggregation pass.
-    const queueToDept = {};
+    // Build queue -> [depts] lookup from each dept's effective DIRECT
+    // queue list (Dept Config sheet overriding the DEPT_QCD_QUEUES
+    // constant; see DeptConfig.gs). A queue normally belongs to exactly
+    // one dept, but if a queue is (mis)configured into two depts' lists
+    // we attribute its rows to BOTH -- matching the per-dept QCD report,
+    // which counts a queue for every dept that lists it -- rather than
+    // first-write-wins silently dropping the queue from the second
+    // dept's Overview tile.
+    const queueToDepts = {};
     allDepts.forEach(function (d) {
-      // Effective queue list (Dept Config sheet overriding the
-      // DEPT_QCD_QUEUES constant; see DeptConfig.gs).
       getDeptQcdQueues_(d).forEach(function (q) {
-        if (!queueToDept[q]) queueToDept[q] = d;
+        if (!queueToDepts[q]) queueToDepts[q] = [];
+        queueToDepts[q].push(d);
       });
     });
     // NOTE (sub-queue separation, v15): each dept's snapshot uses its
@@ -876,8 +883,8 @@ function computeQcdSnapshots_(allDepts, sinceIso, ssTZ) {
       const source = String(r[QCD_HISTORICAL_COLS.CALL_SOURCE - 1] || '').trim();
       if (source !== 'Total Calls') continue;
       const queue = String(r[QCD_HISTORICAL_COLS.CALL_QUEUE - 1] || '').trim();
-      const dept = queueToDept[queue];
-      if (!dept) continue;
+      const depts = queueToDepts[queue];
+      if (!depts || !depts.length) continue;
       const dateIso = rowDateIso_(r[QCD_HISTORICAL_COLS.DATE - 1], tz);
       if (!dateIso || dateIso < sinceIso) continue;
 
@@ -885,41 +892,43 @@ function computeQcdSnapshots_(allDepts, sinceIso, ssTZ) {
       const abandoned  = Number(r[QCD_HISTORICAL_COLS.ABANDONED   - 1]) || 0;
       const violations = Number(r[QCD_HISTORICAL_COLS.VIOLATIONS  - 1]) || 0;
 
-      let a = acc[dept];
-      if (!a) {
-        a = {
-          latestDate:      '',
-          latestTotal:     0,
-          latestAbandoned: 0,
-          latestViolations: 0,
-          mtdViolations:   0,
-          perQueue:        {},   // queue -> { totalCalls, abandoned, violations }
-        };
-        acc[dept] = a;
-      }
+      depts.forEach(function (dept) {
+        let a = acc[dept];
+        if (!a) {
+          a = {
+            latestDate:      '',
+            latestTotal:     0,
+            latestAbandoned: 0,
+            latestViolations: 0,
+            mtdViolations:   0,
+            perQueue:        {},   // queue -> { totalCalls, abandoned, violations }
+          };
+          acc[dept] = a;
+        }
 
-      // MTD violations: any row dated >= mtdStart contributes.
-      if (dateIso >= mtdStart) a.mtdViolations += violations;
+        // MTD violations: any row dated >= mtdStart contributes.
+        if (dateIso >= mtdStart) a.mtdViolations += violations;
 
-      // Latest-day totals: accumulate across queues for the latest
-      // date we've seen. If we see a newer date, reset.
-      if (dateIso > a.latestDate) {
-        a.latestDate = dateIso;
-        a.latestTotal = totalCalls;
-        a.latestAbandoned = abandoned;
-        a.latestViolations = violations;
-        a.perQueue = {};
-        a.perQueue[queue] = { totalCalls: totalCalls, abandoned: abandoned, violations: violations };
-      } else if (dateIso === a.latestDate) {
-        a.latestTotal     += totalCalls;
-        a.latestAbandoned += abandoned;
-        a.latestViolations += violations;
-        var pq = a.perQueue[queue];
-        if (!pq) { pq = { totalCalls: 0, abandoned: 0, violations: 0 }; a.perQueue[queue] = pq; }
-        pq.totalCalls += totalCalls;
-        pq.abandoned  += abandoned;
-        pq.violations += violations;
-      }
+        // Latest-day totals: accumulate across queues for the latest
+        // date we've seen. If we see a newer date, reset.
+        if (dateIso > a.latestDate) {
+          a.latestDate = dateIso;
+          a.latestTotal = totalCalls;
+          a.latestAbandoned = abandoned;
+          a.latestViolations = violations;
+          a.perQueue = {};
+          a.perQueue[queue] = { totalCalls: totalCalls, abandoned: abandoned, violations: violations };
+        } else if (dateIso === a.latestDate) {
+          a.latestTotal     += totalCalls;
+          a.latestAbandoned += abandoned;
+          a.latestViolations += violations;
+          var pq = a.perQueue[queue];
+          if (!pq) { pq = { totalCalls: 0, abandoned: 0, violations: 0 }; a.perQueue[queue] = pq; }
+          pq.totalCalls += totalCalls;
+          pq.abandoned  += abandoned;
+          pq.violations += violations;
+        }
+      });
     }
 
     Object.keys(acc).forEach(function (dept) {
