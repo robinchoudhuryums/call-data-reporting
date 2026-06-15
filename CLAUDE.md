@@ -59,10 +59,11 @@ bash scripts/check-duplicated-files.sh
 # (INV-02/04/05/23/53, S35, E5); the report builders (IR weighted ATT
 # INV-25, PR prior-period INV-28, CR length-mismatch INV-35, INV-53);
 # pipeline canonicalization (loadRosterCanonicalNames_ INV-24/46,
-# INV-16 cross-project); and the end-to-end buildDQEHistoricalData
-# build (INV-07/08/20/21). See tests/README.md for design + how to add
-# tests + the remaining gaps (INV-29 trend, Pass-4 sentinel rows,
-# neonWrite JDBC).
+# INV-16 cross-project); the INV-29 trend window
+# (computeTrendStartDate_, trend-window.test.js); and the end-to-end
+# buildDQEHistoricalData build (INV-07/08/20/21). See tests/README.md
+# for design + how to add tests + the remaining gaps (Pass-4 sentinel
+# rows, neonWrite JDBC).
 node --test          # from repo root (or: npm test)
 
 # CI: .github/workflows/ci.yml runs `node --test` + the INV-16 guard on
@@ -77,10 +78,9 @@ scripts/deploy.sh apps-script/cdr-report <cdr-report-deployment-id>
 scripts/deploy.sh apps-script/cdr-import <cdr-import-deployment-id>
 # (omit the id to just `clasp push -f` and finish the version bump manually)
 
-# Still manual (NOT unit-covered): the INV-29 monthly-trend alignment,
-# the Pass-4 queue-only sentinel rows, and the Neon mirror writers --
-# verify those via deploy + smoke-test against the Regression Scenarios
-# in the Cycle Workflow Config below.
+# Still manual (NOT unit-covered): the Pass-4 queue-only sentinel rows
+# and the Neon mirror writers -- verify those via deploy + smoke-test
+# against the Regression Scenarios in the Cycle Workflow Config below.
 ```
 
 ## Common Gotchas
@@ -569,8 +569,10 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   consistency across all agent-level counts.
 - **Shared utility functions live in `Util.gs`.** `assertAdmin_`,
   `formatSecondsHms_`, `generateMonthList_`, `round1_`,
-  `escapeHtmlServer_`, `buildTeamInsights_`, and
-  `computeActiveAgentsInRange_` were consolidated from their
+  `escapeHtmlServer_`, `buildTeamInsights_`,
+  `computeActiveAgentsInRange_`, `computeTrendStartDate_` (the INV-29
+  shared trend-window helper), and `logReportUsage_` (the INV-01
+  telemetry carve-out) were consolidated from their
   original host files (Alerts.gs, IndividualReport.gs,
   PerformanceReport.gs). Put new shared helpers here; the implicit
   cross-file dependencies via Apps Script's global scope are now
@@ -1205,13 +1207,13 @@ Covers pure logic (parsing, `hashAgents_`, Util, the INV-54 Dept
 Config accessors), the `computeSummary_` aggregator
 (INV-02/04/05/23/53, S35, E5), the IR/PR/CR report builders (INV-25
 weighted ATT, INV-28 prior-period, INV-35 length-mismatch, INV-53),
-pipeline canonicalization (INV-24/46 + INV-16 cross-project), and the
-end-to-end `buildDQEHistoricalData` build (INV-07/08/20/21 + dup
-guard). NOT yet covered: the INV-29 monthly-trend alignment, the
-Pass-4 queue-only sentinel rows, and the Neon mirror writers -- the
-manual Regression Scenarios remain the verification of record for
-those, so walk the scenarios that overlap a change in addition to
-running `node --test`.)
+pipeline canonicalization (INV-24/46 + INV-16 cross-project), the
+INV-29 trend window (`computeTrendStartDate_`, trend-window.test.js),
+and the end-to-end `buildDQEHistoricalData` build (INV-07/08/20/21 +
+dup guard). NOT yet covered: the Pass-4 queue-only sentinel rows and
+the Neon mirror writers -- the manual Regression Scenarios remain the
+verification of record for those, so walk the scenarios that overlap a
+change in addition to running `node --test`.)
 
 ### Health Dimensions
 Data Accuracy (DQE), Access Control Integrity, Source Pipeline Reliability, Migration Progress, Cross-Project Consistency, Documentation Freshness, Performance & Cache Effectiveness, Error Surfacing & Observability, Manager-Facing UI Polish, Deployment Hygiene, Code Health
@@ -1261,7 +1263,7 @@ INV-25 | The Individual Report and Performance Report compute ATT as weighted by
 INV-26 | TEAM_AVG_EXCLUDES in Config.gs lists per-dept agent names removed from BOTH numerator and denominator of the Individual Report's team-average. Used for managers on the roster who take only a token number of calls (default seed: 'CSR': ['Robin Choudhury']; overridable per dept via the Dept Config sheet, read through `getTeamAvgExcludes_` -- INV-54). Match is exact on the roster name. Does NOT apply to the Performance Report, which treats the user's selection AS the team. Since the INV-53 expansion (commit ba26d48), the IR team-avg ALSO excludes queue-only floaters (matchedViaRoster=false) via the independent `rosterSet[agent]` gate — the two exclusion mechanisms compose, so an agent excluded by EITHER doesn't factor in. INV-53 documents the floater path. | Subsystem: Department Dashboard
 INV-27 | Individual Report's team-avg denominator counts only roster members with ANY call activity (rung/answered/missed > 0) in the selected range, NOT the full roster size. Zero-call roster members don't dilute the average. | Subsystem: Department Dashboard
 INV-28 | Performance Report's prior period is the immediately-preceding window of the same duration (durationDays before currentStart, ending one day before currentStart) -- NOT "previous calendar month". Documented in the form's inline hint and the results-header "Comparing against..." line. Match legacy SingleRangeReport semantics. **One shared implementation**: `Data.gs::computePriorWindow_` is the canonical auto-adjacent-window math, consumed by `computeSummary_` (E5 per-row chips), `computePerformanceReport_`, and `computeInsights_`; client-side, `script.html::resolveComparisonWindow_` is the single resolver behind the IR + Insights "compare against" controls. New window-vs-window features should call these rather than re-deriving the math. | Subsystem: Department Dashboard
-INV-29 | Individual Report's monthly trend window: range itself when selected range > 366 days OR equals a full calendar year (Jan 1 - Dec 31 of one year); else `first-of-month(end - 12 months)` to `end`. Performance Report uses identical logic so the 12-mo trends align across both reports for the same dept. | Subsystem: Department Dashboard
+INV-29 | Individual Report's monthly trend window: range itself when selected range > 366 days OR equals a full calendar year (Jan 1 - Dec 31 of one year); else `first-of-month(end - 12 months)` to `end`. Performance Report uses identical logic so the 12-mo trends align across both reports for the same dept. **One shared implementation**: `Util.gs::computeTrendStartDate_(startDate, endDate)` is the single source of truth, consumed by the Individual / Performance / Insights / QCD reports (previously hand-copied into all four -- a silent-drift trap, since INV-29 *requires* IR and PR to align). Pinned by `tests/unit/trend-window.test.js`. New 12-mo-trend features should call it rather than re-deriving the math. | Subsystem: Department Dashboard
 INV-30 | Each report has its own versioned cache key prefix; bump on any aggregation rule change so stale entries don't bleed in. Current: `summary:v9` (Data.gs -- v8 added the E5 per-row prior-period fields; v9 changed `qcdSnapshot` to per-queue separation: `perQueue` array with `subDept` tags, sub-queues never summed away), `latestDate:v1` (Data.gs -- most-recent DQE ISO date; drives the My Department From/To default so the agent table lands on a non-empty day; the F1 cutover suffixes this key with the active source -- `latestDate:v1:sheet` / `:neon` -- so a `DQE_READ_SOURCE` flip can't serve a value computed from the other source), `latestDates:v1` (Data.gs -- multi-source `{dqe, qcd, latest}` blob; drives the header freshness pill so it doesn't go stale when one source updates without the other), `individual:v8` (IndividualReport.gs), `individual_active:v2` (active-agents-in-range subset used by Individual + Performance + Compare Ranges pickers; v2 return shape is `{agents, floaters}` after the INV-53 expansion), `performance:v4` (PerformanceReport.gs), `compareRanges:v4` (CompareRangesReport.gs), `missed:v10` (MissedCallsReport.gs), `companyOverview:v16` (CompanyOverview.gs -- v14 made the trend axis skip weekends; v15 switched per-dept QCD snapshots to DIRECT queues only -- sub-queue separation, children carry their own tiles; v16 scoped the company-aggregate hero volume/%/sparkline to the on-roster non-hidden population so it shares one population with the active-count caption (M1), and attributes a double-mapped QCD queue to EVERY dept that lists it instead of first-write-wins dropping it from later depts' Overview tiles (M2)), `qcd:v7` (QCDReport.gs -- v6 gave the empty shape `perQueue` parity (F5); v7 added the `includeSubQueues` request flag + cache dimension -- default true preserves INV-51 rollup, false = the dept's own queues only), `inbound:v3` (InboundReport.gs -- per (dept,from,to); v2 added kpisPrior + meta.priorFrom/priorTo via the shared computePriorWindow_, per-row avg_wait on the three breakdowns, and the byDialInInsurer cross-cut; v3 opened the report to managers with per-dept scoping (entry-queue attribution + the answered-on-hold final_dept carve-out) and added kpis.abandonedIvr + the getInboundInsurerDaily drill-down endpoint; unavailable payloads -- `meta.available=false` -- are intentionally NOT cached so a transient Neon failure isn't pinned for the TTL), `insights:v6` (InsightsReport.gs -- per (dept,from,to,hashAgents,priorKey); v2 added explicit prior windows + `trendData`; v3 added the INV-35 length-mismatch contract; v4 added `queueHealth` (QCD-into-Insights: window totals + prior totals + per-queue rows with violation dates via the same computeQcdReport_ the QCD modal uses, null when unmapped/unavailable); v5 added `queueHealth.trend` -- monthly abandoned-% per queue + dept total for the compact Queue health chart; v6 added the DAILY series to queueHealth.trend (Monthly/Daily toggle), the `queueHealthOwnOnly` request flag (sub-queue scope, joins the cache key), hasSubQueues/includeSubQueues on queueHealth, and the shared days-to-violation forecast -- `abandonForecastHtml_` is consumed by BOTH the QCD Report and Queue health). Alerts.gs holds no cached compute. CallerLookup.gs is intentionally UNCACHED (caller-keyed responses must not sit in the shared script cache, and the hash-PK query is cheap). | Subsystem: Department Dashboard
 INV-31 | `script.send_mail` OAuth scope in appsscript.json is required for: (1) Individual / Performance / Compare Ranges / QCD "Email image" exports, (2) the Low Answer Rate Alerts engine, (3) the Manager Digest engine (Digest.gs), (4) the failure-notification paths (notifyImportFailure_ in autoImport.js, notifyDqeBuildFailure_ in autoImport.js [emails NEON_WRITE_CONFIG.alertEmail when the integrated daily DQE-block fails inside processIntegratedHistory; not fired on the bulk-backfill path], runDailyDQEBuild_ in buildDQEHistoricalData.js [present in BOTH cdr-import and cdr-report copies after INV-16 expansion], notifyDigestFailure_ in Digest.gs, plus the indirect path from cdr-import's integrated DQE block hitting notifyNeonWriteFailure on a Neon write failure). All paths use `MailApp.sendEmail`. Removing the scope breaks every one of them; adding new send-mail features here doesn't need a re-scope. | Subsystem: Department Dashboard (+ CDR Import / CDR DQE Pipeline for the notify-failure paths)
 INV-32 | Low Answer Rate Alerts is admin-only at the server boundary. Every public callable in Alerts.gs starts with `assertAdmin_`. The launcher button is also hidden client-side via `data-admin-only`, but the server check is the source of truth. Compare Ranges was previously admin-only too but was opened to managers (with the same `dept !== user.department` check the other reports use) so they can run year-over-year comparisons within their own dept. Adding a new admin = setting/editing the `ADMIN_EMAILS` Script Property (comma-separated emails); falls back to `ADMIN_EMAILS_FALLBACK` in Config.gs if unset. | Subsystem: Department Dashboard
