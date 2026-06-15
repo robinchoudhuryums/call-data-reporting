@@ -1,0 +1,295 @@
+// NeonMirror.js — deferred (off-the-synchronous-import-path) Neon mirror.
+// =============================================================================
+// Phase 1, FLAG-GATED. Default behavior is UNCHANGED: when the
+// `NEON_MIRROR_MODE` Script Property is unset or 'inline' (the default),
+// processIntegratedHistory mirrors to Neon inline exactly as before and this
+// module is dormant. Set NEON_MIRROR_MODE='deferred' to move the mirror off
+// the synchronous import path:
+//
+//   - The daily import writes ONLY the sheets, then enqueues the processed
+//     date to a `Neon Mirror Queue` tab in the CDR Report spreadsheet
+//     (the cross-project shared channel -- cdr-import and the dashboard /
+//     cdr-report have separate Script Properties, but share this workbook).
+//   - A time-driven `runNeonMirror_` trigger (installed here in cdr-import via
+//     installNeonMirrorTrigger / the CDR Tools menu) drains the queue a few
+//     minutes later, RE-DERIVING each payload from the Historical Data sheets
+//     and upserting to Neon via the SAME local writers the inline path uses
+//     (writeCDRRowsToNeon / writeQCDRowsToNeon / writeDQERowsToNeon /
+//     backfillInboundCalls). All writers are idempotent (ON CONFLICT), so a
+//     partially-failed or Neon-unreachable date is simply left in the queue
+//     and retried on the next run.
+//
+// Why re-derive from sheets (not replay an in-memory payload): the Historical
+// Data sheets are the source of truth and we read durations via
+// getDisplayValues() so the INV-02 spreadsheet-vs-script TZ +36:36 offset is
+// avoided -- the field mappings below are faithful to the proven whole-sheet
+// backfills in cdr-report/neonbackfill.js (CDR cols, DQE 36-col incl. slots,
+// QCD 12-col) and to the inline payload shapes in autoImport.js.
+//
+// Operator notes (deferred mode only):
+//   - Install the trigger once: run installNeonMirrorTrigger() (editor) or use
+//     the CDR Tools menu. Set NEON_MIRROR_MODE='deferred' to activate the
+//     enqueue. Revert any time by setting it back to 'inline' (or clearing it)
+//     -- the inline path returns immediately with zero code change.
+//   - The cdr-report standalone runDailyDQEBuild_ safety-net trigger still
+//     mirrors DQE inline; in deferred mode that just makes the queued DQE
+//     mirror redundant (harmless -- ON CONFLICT). Uninstall it once the
+//     integrated path is trusted, per Operator State #8.
+//   - INV-16: this module calls buildDQEHistoricalData with { skipNeon: true }
+//     from autoImport in deferred mode; the duplicated buildDQEHistoricalData.js
+//     copies are untouched.
+// =============================================================================
+
+var NEON_MIRROR_QUEUE_SHEET   = 'Neon Mirror Queue';
+var NEON_MIRROR_QUEUE_HEADERS = ['Enqueued At', 'Call Date', 'Source'];
+
+/**
+ * Returns 'deferred' only when the NEON_MIRROR_MODE Script Property is
+ * explicitly set to 'deferred' (case-insensitive); otherwise 'inline'.
+ * Unset => 'inline' => byte-identical to the pre-feature daily import.
+ */
+function getNeonMirrorMode_() {
+  var v = PropertiesService.getScriptProperties().getProperty('NEON_MIRROR_MODE');
+  return (String(v || '').trim().toLowerCase() === 'deferred') ? 'deferred' : 'inline';
+}
+
+/**
+ * Append one date to the shared Neon Mirror Queue tab. Best-effort: a logging
+ * failure must never break the import (the sheets are already written).
+ */
+function enqueueNeonMirror_(targetSS, dateObj) {
+  try {
+    var iso = Utilities.formatDate(dateObj, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+    var sh = targetSS.getSheetByName(NEON_MIRROR_QUEUE_SHEET);
+    if (!sh) {
+      sh = targetSS.insertSheet(NEON_MIRROR_QUEUE_SHEET);
+      sh.appendRow(NEON_MIRROR_QUEUE_HEADERS);
+      sh.setFrozenRows(1);
+    }
+    sh.appendRow([new Date(), iso, 'processIntegratedHistory']);
+    Logger.log('enqueueNeonMirror_: queued %s for deferred Neon mirror.', iso);
+  } catch (e) {
+    Logger.log('enqueueNeonMirror_ failed (best-effort): ' + e);
+  }
+}
+
+/**
+ * Trigger entry point. Drains the Neon Mirror Queue: for each distinct pending
+ * date, re-derives CDR/QCD/DQE/Inbound from the sheets and upserts to Neon.
+ * Dates that fully succeed are removed from the queue; dates that hit a
+ * Neon-unreachable/error (or throw) are LEFT for the next run (writers are
+ * idempotent). Serialized via LockService so it never overlaps an import or
+ * another mirror run.
+ */
+function runNeonMirror_() {
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) { Logger.log('runNeonMirror_: lock busy, skipping this run.'); return; }
+  try {
+    var ss = SpreadsheetApp.openById(getTargetSsId_());
+    var sh = ss.getSheetByName(NEON_MIRROR_QUEUE_SHEET);
+    if (!sh || sh.getLastRow() < 2) { Logger.log('runNeonMirror_: queue empty.'); return; }
+
+    var tz   = Session.getScriptTimeZone();
+    var rows = sh.getRange(2, 1, sh.getLastRow() - 1, 3).getValues();
+    var isoOfRow = function (r) {
+      return (r[1] instanceof Date)
+        ? Utilities.formatDate(r[1], tz, 'yyyy-MM-dd')
+        : String(r[1] || '').trim();
+    };
+
+    // Distinct pending dates, in first-seen order.
+    var dates = [];
+    var seen = {};
+    rows.forEach(function (r) {
+      var iso = isoOfRow(r);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(iso) && !seen[iso]) { seen[iso] = true; dates.push(iso); }
+    });
+
+    var done = {};
+    dates.forEach(function (iso) {
+      try {
+        if (neonMirrorDate_(ss, iso)) done[iso] = true;
+        else Logger.log('runNeonMirror_: %s incomplete (Neon unreachable?), leaving queued.', iso);
+      } catch (e) {
+        Logger.log('runNeonMirror_: %s failed, leaving queued: %s', iso, e);
+        try { notifyNeonWriteFailure('runNeonMirror_ (' + iso + ')', (e && e.message) ? e.message : String(e)); }
+        catch (ne) { /* best-effort */ }
+      }
+    });
+
+    // Rewrite the queue with only the rows whose date didn't fully process.
+    var remaining = rows.filter(function (r) { return !done[isoOfRow(r)]; });
+    sh.getRange(2, 1, sh.getMaxRows() - 1, 3).clearContent();
+    if (remaining.length) sh.getRange(2, 1, remaining.length, 3).setValues(remaining);
+    Logger.log('runNeonMirror_: processed %s date(s); %s row(s) left queued.',
+      Object.keys(done).length, remaining.length);
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/** Manual on-demand drain (editor / menu). Same as the trigger body. */
+function runNeonMirrorNow() { runNeonMirror_(); }
+
+/**
+ * Mirror all four outputs for ONE date from the sheets to Neon. Returns true
+ * only if every applicable mirror succeeded (or had nothing to mirror); false
+ * if any reported Neon-unreachable, so the caller keeps the date queued.
+ * Each type logs its own Pipeline Health row (INV-44).
+ */
+function neonMirrorDate_(ss, iso) {
+  var allOk = true;
+  var step = function (label, fn) {
+    var t0 = Date.now();
+    var res;
+    try {
+      res = fn();
+    } catch (e) {
+      allOk = false;
+      neonMirrorLog_(ss, 'neonMirror:' + label, 'failure', null, t0, iso + ' | ' + ((e && e.message) ? e.message : String(e)));
+      throw e;   // a hard error keeps the date queued AND surfaces upstream
+    }
+    if (res && res.unreachable) {
+      allOk = false;
+      neonMirrorLog_(ss, 'neonMirror:' + label, 'failure', null, t0, iso + ' | Neon unreachable');
+    } else {
+      neonMirrorLog_(ss, 'neonMirror:' + label, 'success', (res && res.rows) || 0, t0, iso);
+    }
+    return res;
+  };
+
+  step('CDR', function () { return mirrorCdrForDate_(ss, iso); });
+  step('QCD', function () { return mirrorQcdForDate_(ss, iso); });
+  step('DQE', function () { return mirrorDqeForDate_(ss, iso); });
+  step('Inbound', function () { return mirrorInboundForDate_(iso); });
+
+  return allOk;
+}
+
+function neonMirrorLog_(ss, stepName, status, rows, t0, notes) {
+  try {
+    logPipelineHealthWithFallback_(ss, {
+      step: stepName, status: status, rows: rows,
+      durationMs: Date.now() - t0, notes: notes,
+    });
+  } catch (e) { /* best-effort */ }
+}
+
+// --- Per-date re-derivations (faithful to neonbackfill.js + the inline shapes) ---
+
+/** CDR Historical Data (26 cols) -> writeCDRRowsToNeon, filtered to `iso`. */
+function mirrorCdrForDate_(ss, iso) {
+  var sheet = ss.getSheetByName('CDR Historical Data');
+  if (!sheet || sheet.getLastRow() < 2) return { rows: 0 };
+  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, 26).getDisplayValues();
+  // (writeCDRRowsToNeon resets the per-run CDR_HMAC_CACHE_ memo itself.)
+  var batch = [];
+  data.forEach(function (r) {
+    if (!r[2] || !r[4]) return;                 // need a date (col 3) + agent (col 5)
+    if (parseDateForNeon(r[2]) !== iso) return; // this date only
+    batch.push({
+      callDate:   parseDateForNeon(r[2]),       // writeCDRRowsToNeon binds callDate raw
+      dept:       r[3] || 'Unassigned',
+      agentName:  r[4],
+      obTotal:    r[5],  obAns:     r[6],  obMiss:     r[7],
+      obListTot:  r[8],  obListAns: r[9],  obListMiss: r[10],
+      ibTotal:    r[11], ibAns:     r[12], ibMiss:     r[13],
+      ibAnsInt:   r[14], ibAnsExt:  r[15],
+      ibListTot:  r[16], ibListAns: r[17], ibListMiss: r[18],
+      obExtTotal: r[19], obExtAns:  r[20],
+      obExtTTT:   r[21], obExtATT:  r[22],
+      phonesX:    r[23], phonesY:   r[24], phonesZ:    r[25],
+    });
+  });
+  if (!batch.length) return { rows: 0 };
+  var res = writeCDRRowsToNeon(batch);
+  if (res && res.skipped) return { unreachable: true, rows: 0 };
+  return { rows: batch.length };
+}
+
+/** QCD Historical Data (12 cols) -> writeQCDRowsToNeon, filtered to `iso`. */
+function mirrorQcdForDate_(ss, iso) {
+  var sheet = ss.getSheetByName('QCD Historical Data');
+  if (!sheet || sheet.getLastRow() < 2) return { rows: 0 };
+  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, 12).getDisplayValues();
+  var batch = [];
+  data.forEach(function (r) {
+    if (!r[2] || !r[3] || !r[4]) return;        // date (col 3), queue (col 4), source (col 5)
+    if (parseDateForNeon(r[2]) !== iso) return;
+    batch.push({
+      monthYear:     r[0],  week:          r[1],  callDate:      r[2],  // writer normalizes callDate
+      callQueue:     r[3],  callSource:    r[4],
+      totalCalls:    r[5],  totalAnswered: r[6],  abandoned:     r[7],
+      longestWait:   r[8],  avgAnswer:     r[9],
+      abandonedPct:  r[10], violations:    r[11],
+    });
+  });
+  if (!batch.length) return { rows: 0 };
+  var res = writeQCDRowsToNeon(batch);
+  if (res && res.skipped) return { unreachable: true, rows: 0 };
+  return { rows: batch.length };
+}
+
+/** DQE Historical Data (36 cols, incl. 19 time-slot cols) -> writeDQERowsToNeon. */
+function mirrorDqeForDate_(ss, iso) {
+  var sheet = ss.getSheetByName('DQE Historical Data');
+  if (!sheet || sheet.getLastRow() < 2) return { rows: 0 };
+  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, 36).getDisplayValues();
+  var batch = [];
+  data.forEach(function (r) {
+    if (!r[1] || !r[2]) return;                 // date (col 2), agent (col 3)
+    if (parseDateForNeon(r[1]) !== iso) return;
+    batch.push({
+      monthYear:        r[0]  || null,
+      callDate:         r[1],                    // writer normalizes callDate
+      agentName:        r[2],
+      queueExtensions:  r[3]  || null,
+      totalUnique:      parseInt(r[4]) || 0,
+      totalRung:        parseInt(r[5]) || 0,
+      totalMissed:      parseInt(r[6]) || 0,
+      totalAnswered:    parseInt(r[7]) || 0,
+      ttt:              r[8]  || null,
+      att:              r[9]  || null,
+      slots:            r.slice(10, 29),
+      abParentIds:      r[29] || null,
+      abMissedIds:      r[30] || null,
+      abMissedTimes:    r[31] || null,
+      avgAbdWait:       r[32] || null,
+      csrAvgAbdWait:    r[33] || null,
+    });
+  });
+  if (!batch.length) return { rows: 0 };
+  var res = writeDQERowsToNeon(batch);
+  if (res && res.skipped) return { unreachable: true, rows: 0 };
+  return { rows: batch.length };
+}
+
+/**
+ * Inbound mirror for one date. Reuses the proven backfillInboundCalls
+ * (reads Call_Legs_* sheets; force=true refreshes via ON CONFLICT). Note the
+ * ~14-day Call_Legs retention -- the trigger runs minutes after import, well
+ * inside it. backfillInboundCalls logs its own outcome; we surface a coarse
+ * row count and treat a throw as a hard failure (date stays queued).
+ */
+function mirrorInboundForDate_(iso) {
+  var res = backfillInboundCalls(iso, iso, true);
+  var rows = (res && (res.inserted || res.wrote || res.records)) || 0;
+  if (res && res.skipped && !rows) return { unreachable: true, rows: 0 };
+  return { rows: rows };
+}
+
+// --- Trigger lifecycle (editor / CDR Tools menu) -----------------------------
+
+function installNeonMirrorTrigger() {
+  uninstallNeonMirrorTrigger();
+  ScriptApp.newTrigger('runNeonMirror_').timeBased().everyMinutes(15).create();
+  Logger.log('Neon mirror trigger installed (runNeonMirror_, every 15 min). '
+    + 'Set Script Property NEON_MIRROR_MODE=deferred to start enqueuing.');
+}
+
+function uninstallNeonMirrorTrigger() {
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === 'runNeonMirror_') ScriptApp.deleteTrigger(t);
+  });
+  Logger.log('Neon mirror trigger removed (if it existed).');
+}

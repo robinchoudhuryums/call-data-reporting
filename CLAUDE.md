@@ -706,7 +706,38 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `| Neon ✓` / `| Neon ⚠ unreachable` / `| Neon ⚠ error` after the
   CDR/QPath/QCD/CSR/DQE counts. DQE-specific Neon failures still surface
   separately via `notifyDqeBuildFailure_` + the Pipeline Health `:DQE failure`
-  row, so they're intentionally NOT folded into this single flag.
+  row, so they're intentionally NOT folded into this single flag. When the
+  deferred mirror is enabled (`NEON_MIRROR_MODE=deferred`, see next bullet)
+  the inline writers don't run, so `counts.neon` is `'queued'` and the toast
+  shows `| Neon ⏳ queued` -- the real mirror outcome lands later as
+  `neonMirror:*` Pipeline Health rows from `runNeonMirror_`.
+- **Deferred Neon mirror is flag-gated and defaults OFF (`NeonMirror.js`,
+  cdr-import).** By default (`NEON_MIRROR_MODE` unset or `inline`) the daily
+  import mirrors CDR/QCD/DQE/Inbound to Neon inline inside
+  `processIntegratedHistory`, byte-identical to before. Set the cdr-import
+  Script Property `NEON_MIRROR_MODE=deferred` to move the mirror OFF the
+  synchronous import path: the import writes only the sheets and appends the
+  processed date to a `Neon Mirror Queue` tab in the CDR Report spreadsheet
+  (the cross-project shared channel -- cdr-import / cdr-report have separate
+  Script Properties but share the workbook), and the `runNeonMirror_`
+  time-driven trigger (install via the cdr-import **CDR Tools** menu ->
+  "Install Neon Mirror Trigger", every 15 min) drains the queue, re-deriving
+  each payload from the Historical Data sheets (durations via
+  `getDisplayValues`, INV-02-safe; field mappings faithful to
+  neonbackfill.js + the inline shapes) and upserting via the SAME local
+  writers (`writeCDRRowsToNeon` / `writeQCDRowsToNeon` / `writeDQERowsToNeon`
+  / `backfillInboundCalls`). All writers are idempotent (`ON CONFLICT`), so a
+  Neon-unreachable or partially-failed date is LEFT in the queue and retried
+  next run (reachability is per-instance binary, so the CDR/QCD/DQE
+  unreachable detection keeps the whole date queued even though
+  `backfillInboundCalls` returns no status). Only affects the daily/manual
+  path (`!isHistoricalBackfill`); the bulk backfill already defers DQE via
+  `skipNeon` + `backfillDQEHistoryUpsert`. In deferred mode the cdr-report
+  `runDailyDQEBuild_` safety-net trigger (if still installed) re-mirrors DQE
+  inline -- harmless (idempotent), but uninstall it once the integrated path
+  is trusted. Reversible with no redeploy: set `NEON_MIRROR_MODE=inline`
+  (or clear it). PHASE 1 -- shipped flag-gated/default-off; validate
+  `deferred` against live Neon on one import before flipping it on.
 - **Bulk DQE rebuild skips the per-date Neon mirror (`skipNeon`).**
   `buildDQEHistoricalData(rawSheet, dqeSheet, opts)` takes an optional
   `opts.skipNeon`; the cdr-import BULK path (`bulkHistoricalUpdate`) passes
@@ -1148,6 +1179,20 @@ When something looks wrong, before assuming a code bug, check:
     demand. Reuses `script.scriptapp`; independent of `DQE_READ_SOURCE`
     (helps the sheet path too). Best-effort: per-dept failures are logged,
     last outcome shown in the modal.
+22. Deferred Neon mirror (optional; `NeonMirror.js`, CDR Import). Defaults OFF
+    -- the daily import mirrors to Neon inline as before until you opt in.
+    To move the mirror off the synchronous import path: (a) run **CDR Tools →
+    Install Neon Mirror Trigger** in the cdr-import project (installs
+    `runNeonMirror_`, every 15 min; needs `script.scriptapp`), then (b) set the
+    cdr-import Script Property `NEON_MIRROR_MODE=deferred`. The import then
+    enqueues each date to the `Neon Mirror Queue` tab and the trigger mirrors
+    it shortly after; the daily toast shows `Neon ⏳ queued` and per-type
+    outcomes appear as `neonMirror:*` Pipeline Health rows. Verify on one
+    import (queue drains, `neonMirror:*` success rows, dashboard data current)
+    before relying on it. Reversible: set `NEON_MIRROR_MODE=inline` (or clear).
+    Once trusted, uninstall the cdr-report `runDailyDQEBuild_` safety-net
+    trigger so DQE isn't mirrored both inline and via the queue (harmless but
+    redundant). Needs the same `NEON_*` props the inline mirror uses (#16).
 
 ## Cycle Workflow Config
 
@@ -1182,7 +1227,7 @@ CDR Reporting Tools:
   apps-script/cdr-report/dashboardCDR.js, apps-script/cdr-report/dbHistorical.js, apps-script/cdr-report/dbReporting.js, apps-script/cdr-report/emailDailyReport.js, apps-script/cdr-report/neonbackfill.js, apps-script/cdr-report/neonWrite.js, apps-script/cdr-report/inboundCallsExport.js, apps-script/cdr-report/insuranceNumbers.js
 
 CDR Import:
-  apps-script/cdr-import/AbandonedFilter.js, apps-script/cdr-import/CDR Tools.js, apps-script/cdr-import/DeleteOldSheets.js, apps-script/cdr-import/autoImport.js, apps-script/cdr-import/buildDQEHistoricalData.js, apps-script/cdr-import/importBulkCSVsFromDrive.js, apps-script/cdr-import/inboundCalls.js, apps-script/cdr-import/neonWrite.js, apps-script/cdr-import/appsscript.json
+  apps-script/cdr-import/AbandonedFilter.js, apps-script/cdr-import/CDR Tools.js, apps-script/cdr-import/DeleteOldSheets.js, apps-script/cdr-import/autoImport.js, apps-script/cdr-import/buildDQEHistoricalData.js, apps-script/cdr-import/importBulkCSVsFromDrive.js, apps-script/cdr-import/inboundCalls.js, apps-script/cdr-import/NeonMirror.js, apps-script/cdr-import/neonWrite.js, apps-script/cdr-import/appsscript.json
 
 DQE Report Legacy:
   apps-script/dqe-report/DQEdashboard.js, apps-script/dqe-report/FAQGuide.html, apps-script/dqe-report/IndividualReport.js, apps-script/dqe-report/IndividualReportModal.html, apps-script/dqe-report/MissedCallsReport.js, apps-script/dqe-report/MissedReportModal.html, apps-script/dqe-report/MultiCompModal.html, apps-script/dqe-report/MultiComparisonTool.js, apps-script/dqe-report/SingleRangeReport.js, apps-script/dqe-report/SingleReportModal.html, apps-script/dqe-report/menu DQE Tools.js, apps-script/dqe-report/sendManualAlert.js, apps-script/dqe-report/showFAQ.js, apps-script/dqe-report/appsscript.json
@@ -1231,7 +1276,7 @@ INV-40 | Overview "X of Y agents" caption denominator is `recentlyActiveCount` =
 INV-41 | chartjs-plugin-datalabels requires `Chart.register(ChartDataLabels)` AND `Chart.defaults.plugins.datalabels.display = true` at module load (the `registerChartDataLabels_` IIFE in script.html does both). Chart.js v4 dropped script-tag auto-registration; the plugin defaults to display=false since v1.0.0. Per-chart `display: false` overrides still suppress labels (Missed Calls radar, Overview multi-line trend). Use the boolean form of `display` per chart — the function form returns false unpredictably on mixed bar+line charts in this plugin version. | Subsystem: Department Dashboard
 INV-42 | `refreshChartTheme()` (script.html) resolves every CSS custom property via `colorToCanvasRgb_()` — paints onto a 1×1 canvas and reads back canonical `rgba(...)`. Required because chartjs-plugin-datalabels' `fillStyle` path can't parse `oklch(...)` strings → silently renders empty fills (invisible labels). Never pass raw `getComputedStyle(...).getPropertyValue('--token')` to chart options; always go through `THEME.*`. Hook is re-run on dark-mode toggle so newly-rendered charts pick up the inverted palette. | Subsystem: Department Dashboard
 INV-43 | Default From/To on the My Department page snaps to the most-recent ISO date present in DQE Historical Data, via `Data.gs::getLatestDataDate()` (cached under `latestDate:v1`). Falls back to today on failure. Replaces the legacy "current-month-to-date" default so the table isn't empty when a manager opens the dashboard before today's ingest has run. | Subsystem: Department Dashboard
-INV-44 | `Pipeline Health` sheet columns: `Timestamp \| Step \| Status \| Rows \| Duration (ms) \| Notes`. Schema pinned in `Config.gs::PIPELINE_HEALTH_HEADERS`; sheet is idempotently created by `setup()`. Append-only; never overwritten. Writers are `logPipelineHealthWithFallback_` in `apps-script/cdr-import/autoImport.js`, `logPipelineHealth_` in `apps-script/cdr-import/buildDQEHistoricalData.js`, and `logPipelineHealth_` in `apps-script/cdr-report/buildDQEHistoricalData.js` (cross-project; the two buildDQE copies are byte-identical per INV-16). All writes are best-effort -- a logging failure must never block or fail the pipeline. Reader is `Alerts.gs::readPipelineHealth_(maxRows)`; UI surfaces the last 20 entries in the Alerts modal. Step values are free-form (currently `autoImport`, `buildDQE`, `processIntegratedHistory:CDR`, `:QPath`, `:QCD`, `:CSR`, `:DQE`, `:Inbound` -- the inbound_calls Neon mirror's per-run outcome incl. unreachable/error failures, F9 -- `bulkBackfill:DQE`, `inboundBackfill` -- one summary row per editor-run `backfillInboundCalls` invocation in cdr-import/inboundCalls.js); Status is `success` or `failure`. Looking up a recent fresh-DQE-write involves either `buildDQE` (cdr-report standalone trigger), `processIntegratedHistory:DQE` (cdr-import integrated daily path), OR `bulkBackfill:DQE` (cdr-import historical backfill path) -- all three share the freshness role. | Subsystem: Department Dashboard (+ CDR Import / CDR DQE Pipeline for the writers)
+INV-44 | `Pipeline Health` sheet columns: `Timestamp \| Step \| Status \| Rows \| Duration (ms) \| Notes`. Schema pinned in `Config.gs::PIPELINE_HEALTH_HEADERS`; sheet is idempotently created by `setup()`. Append-only; never overwritten. Writers are `logPipelineHealthWithFallback_` in `apps-script/cdr-import/autoImport.js`, `logPipelineHealth_` in `apps-script/cdr-import/buildDQEHistoricalData.js`, and `logPipelineHealth_` in `apps-script/cdr-report/buildDQEHistoricalData.js` (cross-project; the two buildDQE copies are byte-identical per INV-16). All writes are best-effort -- a logging failure must never block or fail the pipeline. Reader is `Alerts.gs::readPipelineHealth_(maxRows)`; UI surfaces the last 20 entries in the Alerts modal. Step values are free-form (currently `autoImport`, `buildDQE`, `processIntegratedHistory:CDR`, `:QPath`, `:QCD`, `:CSR`, `:DQE`, `:Inbound` -- the inbound_calls Neon mirror's per-run outcome incl. unreachable/error failures, F9 -- `bulkBackfill:DQE`, `inboundBackfill` -- one summary row per editor-run `backfillInboundCalls` invocation in cdr-import/inboundCalls.js -- and, when the deferred Neon mirror is enabled (`NEON_MIRROR_MODE=deferred`, NeonMirror.js), `neonMirror:CDR`/`:QCD`/`:DQE`/`:Inbound` -- one per type per date drained by the `runNeonMirror_` trigger, status `failure` on Neon-unreachable so the date stays queued for retry); Status is `success` or `failure`. Looking up a recent fresh-DQE-write involves either `buildDQE` (cdr-report standalone trigger), `processIntegratedHistory:DQE` (cdr-import integrated daily path), OR `bulkBackfill:DQE` (cdr-import historical backfill path) -- all three share the freshness role. | Subsystem: Department Dashboard (+ CDR Import / CDR DQE Pipeline for the writers)
 INV-45 | `Digest Config` sheet columns: `Email \| Department \| Cadence \| Active \| Notes \| Format`. Schema pinned in `Config.gs::DIGEST_CONFIG_HEADERS`; sheet is idempotently created by `setup()`. `Format` (col F) was appended at the end of the row, the Alert Config Skip Dates precedent -- pre-existing prod sheets keep their 5-col header, `readDigestConfig_` reads 6 cols positionally, and an empty col F normalizes to `summary`, so behavior is unchanged until an admin sets a value. Cadence is `daily` (sends each weekday morning for the previous day's data; weekends skipped), `weekly` (sends Monday 8 AM for the prior Mon-Fri window), or `monthly` (sends on the 1st, 8 AM, for the prior calendar month -- ScriptApp `onMonthDay(1)` trigger). Format is `summary` (KPI tiles + WoW driver callout; default) or `insights` (the digest-Insights bridge: `digestInsightsHtml_` runs the SAME `computeInsights_` the Insights modal uses, full roster as the selection so floaters stay excluded, vs a cadence-appropriate prior window -- daily = INV-28 auto-adjacent day, weekly = previous Mon-Fri via shift-7, monthly = previous calendar month -- via `digestInsightsPrior_`). `Digest.gs` is the engine; every public callable (`getDigestsInit`, `sendPreviewDigest`, `installDigestTriggers`, `uninstallDigestTriggers`) starts with `assertAdmin_`. Trigger entry points (`runDailyDigests_`, `runWeeklyDigests_`, `runMonthlyDigests_`) end in `_` so `google.script.run` can't reach them but ScriptApp dispatch still calls them by name. Trigger lifecycle is managed via the Alerts modal's "Manager Digest Subscribers" section. | Subsystem: Department Dashboard
 INV-46 | `Agent Alias Overrides` sheet columns: `Old Name \| Canonical Name \| Active \| Added By \| Added At \| Notes`. Schema pinned in `Config.gs::AGENT_ALIAS_OVERRIDES_HEADERS`; sheet is idempotently created by `setup()`. Soft-coupling across two Apps Script projects: the dashboard's `OrphanFix.gs` writes rows here; the CDR Report project's `buildDQEHistoricalData.js::loadRosterCanonicalNames_` reads them on every build and folds them into the canonicalization map. The pipeline-side check is best-effort (missing/empty sheet leaves the build's behavior unchanged) so an unsynced cdr-report deploy doesn't break the dashboard's UI. Aliases with `Active=FALSE` are skipped by the pipeline. | Subsystem: Department Dashboard + CDR DQE Pipeline
 INV-47 | `Orphan Fix Log` sheet columns: `Timestamp \| Admin \| Action \| From Name \| To Name \| Affected Rows \| Notes`. Schema pinned in `Config.gs::ORPHAN_FIX_LOG_HEADERS`; sheet is idempotently created by `setup()`. Append-only; never overwritten. `OrphanFix.gs::appendOrphanFixLog_` writes one row per action. Action values: `alias-add`, `alias-remove`, `rename`, `rename+alias`, `roster-add` (the New-hire flow: From Name = the agent, To Name = the dept column written, extensions recorded in Notes). Affected Rows is the count of DQE Historical Data rows modified by a `rename` (0 for alias-only and roster-add actions). | Subsystem: Department Dashboard
