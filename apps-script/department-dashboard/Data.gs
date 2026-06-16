@@ -174,12 +174,7 @@ function getDepartmentSummary(req) {
   if (!dept) {
     throw new Error('Department is required.');
   }
-  if (user.role === 'manager' && dept !== user.department) {
-    throw new Error('Not authorized for this department.');
-  }
-  if (user.role === 'admin' && getAllDepartments_().indexOf(dept) === -1) {
-    throw new Error('Unknown department: ' + dept);
-  }
+  assertDeptAccess_(user, dept);
 
   const from = String((req && req.from) || '').trim();
   const to = String((req && req.to) || '').trim();
@@ -254,7 +249,17 @@ function getDepartmentSummary(req) {
 }
 
 function isIsoDate_(s) {
-  return /^\d{4}-\d{2}-\d{2}$/.test(String(s || ''));
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s || ''));
+  if (!m) return false;
+  // Reject format-valid but impossible dates (e.g. 2026-13-99, 2026-02-30)
+  // so a typo'd date surfaces a clear "must be YYYY-MM-DD" error instead of
+  // silently producing an empty/rolled-over window and a wrong-but-rendered
+  // report. Round-trip through a UTC Date and confirm the parts survive.
+  const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
+  const dt = new Date(Date.UTC(y, mo - 1, d));
+  return dt.getUTCFullYear() === y
+      && dt.getUTCMonth() === mo - 1
+      && dt.getUTCDate() === d;
 }
 
 /**

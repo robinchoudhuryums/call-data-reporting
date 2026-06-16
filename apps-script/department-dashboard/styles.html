@@ -2638,6 +2638,14 @@
     gap: 14px;
     margin: 2px 0 8px;
   }
+  /* Consolidated trend chart: header + Monthly/Daily toggle on one row. */
+  .ins-trend-headrow {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
 
   /* Insights: Queue health section (QCD consolidation). */
   .ins-qh-chart-wrap { margin: 10px 0 12px; }
@@ -2661,7 +2669,8 @@
   .dept-missed-open { margin-left: auto; }
   .missed-range-row { margin-bottom: 10px; }
 
-  /* QCD sub-queue rollup toggle. */
+  /* Sub-queue scope toggle (still used by the Insights Queue-health
+     section; the QCD report's copy was retired). */
   .qcd-sub-toggle {
     display: flex;
     align-items: center;
@@ -2670,6 +2679,27 @@
     padding-top: 7px;
     cursor: pointer;
     white-space: nowrap;
+  }
+
+  /* QCD breakdown: sub-queues shown separately, below a divider, and
+     never folded into the department total (the toggle was retired). */
+  .qcd-subqueue-divider td {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+    background: var(--paper);
+    padding: 7px 8px 4px !important;
+    border-top: 1px solid var(--line);
+  }
+  .qcd-subqueue-row td:first-child { padding-left: 16px; }
+  .qcd-table-note td {
+    font-size: 11px;
+    font-weight: 400;
+    color: var(--muted);
+    background: transparent;
+    padding: 5px 8px 2px !important;
+    text-align: left;
   }
 
   /* Orphan Fix: inline "new hire" add-to-roster form row. */
@@ -2827,6 +2857,17 @@
   .ins-card-name { font-family: var(--display); font-weight: 600; font-size: 14px; color: var(--ink); }
   .ins-card-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 10px; }
   .ins-metric { min-width: 0; }
+  /* Inline current-vs-prior mini-bars on each Insights card (#3). */
+  .ins-card-bars { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }
+  .ins-bar-row { display: flex; align-items: center; gap: 6px; }
+  .ins-bar-lbl { font-size: 10px; color: var(--muted); flex: 0 0 52px; text-align: right;
+                 font-family: 'IBM Plex Mono', monospace; }
+  .ins-bar-track { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+  .ins-bar { height: 5px; border-radius: var(--r); min-width: 1px; }
+  .ins-bar-prev { background: var(--line); }
+  .ins-bar-cur.ins-bar-rung { background: var(--accent); }
+  .ins-bar-cur.ins-bar-ans  { background: var(--good); }
+  .ins-bar-cur.ins-bar-miss { background: var(--warn); }
   .ins-metric-label {
     font-family: var(--mono); font-size: 9px; text-transform: uppercase;
     letter-spacing: 0.18em; color: var(--muted);
@@ -2992,6 +3033,11 @@
   }
   .al-hint { font-size: 12px; color: var(--muted); margin: 0 0 10px; }
   .al-hint a { color: var(--accent); text-decoration: none; }
+  /* F2 Neon mirror-health line (sheet-vs-Neon DQE max-date check). */
+  .al-neon-mirror { font-size: 12px; line-height: 1.4; margin: 0 0 10px;
+                    padding: 8px 10px; border-radius: var(--r); }
+  .al-neon-mirror-ok   { background: var(--good-soft); color: var(--good); }
+  .al-neon-mirror-warn { background: var(--warn-soft); color: var(--warn); }
   .al-hint a:hover { text-decoration: underline; }
 
   /* Config table + log table + results table share base

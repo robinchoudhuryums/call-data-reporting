@@ -156,6 +156,7 @@ function sendDigestsForCadence_(cadence) {
   const cfg = readDigestConfig_();
   const window = digestWindowFor_(cadence, new Date());
   if (!window) return;
+  const failures = [];
   cfg.forEach(function (entry) {
     if (!entry.active) return;
     if (entry.cadence !== cadence) return;
@@ -171,10 +172,42 @@ function sendDigestsForCadence_(cadence) {
       });
     } catch (e) {
       // Per-subscriber failure shouldn't stop the rest. The outer
-      // catch in runDaily/WeeklyDigests_ only fires on cfg-read /
-      // window-compute style failures.
-      Logger.log('sendDigestEmail_ failed for %s: %s', entry.email, e);
+      // catch in runDaily/Weekly/MonthlyDigests_ only fires on
+      // cfg-read / window-compute style failures.
+      const msg = (e && e.message) ? e.message : String(e);
+      Logger.log('sendDigestEmail_ failed for %s: %s', entry.email, msg);
+      failures.push({ email: entry.email, dept: entry.department, error: msg });
     }
+  });
+  // A swallowed per-subscriber failure was previously only in the log, so a
+  // chronically failing recipient (bad address, per-recipient quota) stayed
+  // invisible. Surface a single best-effort summary to admins; the run still
+  // succeeds for the recipients that did go out.
+  if (failures.length) {
+    try { notifyDigestRecipientFailures_(cadence, failures); }
+    catch (notifyErr) { Logger.log('notifyDigestRecipientFailures_ failed: %s', notifyErr); }
+  }
+}
+
+/**
+ * Best-effort admin notification listing the recipients whose digest send
+ * threw during a cadence run (see sendDigestsForCadence_). Separate from
+ * notifyDigestFailure_, which fires when the whole run aborts (cfg read /
+ * window compute). Never throws.
+ */
+function notifyDigestRecipientFailures_(cadence, failures) {
+  const to = getAdminEmails_().join(',');
+  if (!to) return;
+  const lines = failures.map(function (f) {
+    return '- ' + f.email + ' (' + (f.dept || '?') + '): ' + f.error;
+  }).join('\n');
+  MailApp.sendEmail({
+    to:      to,
+    subject: '[Dashboard] ' + cadence + ' digest: ' + failures.length
+             + ' recipient' + (failures.length === 1 ? '' : 's') + ' failed to send',
+    body:    'These ' + cadence + ' digest sends failed (other recipients were '
+             + 'unaffected, and the run otherwise completed):\n\n' + lines
+             + '\n\nTime: ' + new Date(),
   });
 }
 

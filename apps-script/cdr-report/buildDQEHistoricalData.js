@@ -45,6 +45,62 @@ const DQE_TIME_SLOTS = Array.from({ length: 19 }, (_, i) => ({
 }));
 
 
+// ── F2 dup-guard re-mirror helper ─────────────────────────────────────────────
+// Re-mirrors the already-present DQE Historical Data rows for one date into
+// Neon's dqe_history. Called from the duplicate guard so a date whose first
+// import couldn't reach Neon (transient outage) isn't left permanently stale.
+// The sheet is authoritative; this just re-pushes what's already there, using
+// the SAME positional column->field map the main build's Neon mirror uses.
+//
+// INV-02: read via getDisplayValues so the duration columns (I/J/AG/AH) come
+// back as H:MM:SS strings -- getValues would apply the spreadsheet-vs-script
+// TZ shift to those cells. The numeric count columns (E-H) are Number()-coerced
+// because display values are strings. Idempotent via writeDQERowsToNeon's
+// ON CONFLICT DO UPDATE.
+function remirrorExistingDqeDate_(dqeSheet, offsets, callDateStr) {
+  if (!offsets || !offsets.length) return;
+  const firstRow = 2 + offsets[0];                       // sheet row of first match
+  const lastRow  = 2 + offsets[offsets.length - 1];      // sheet row of last match
+  const block = dqeSheet.getRange(firstRow, 1, lastRow - firstRow + 1, 34).getDisplayValues();
+  const matched = {};
+  offsets.forEach(function (o) { matched[o] = true; });   // absolute data-region offsets
+  const neonRows = [];
+  for (let i = 0; i < block.length; i++) {
+    // The [first..last] window can include other-date stragglers if the
+    // sheet wasn't sorted; only re-push rows that actually matched the date.
+    if (!matched[offsets[0] + i]) continue;
+    const r = block[i];
+    neonRows.push({
+      monthYear:       r[0],
+      callDate:        r[1],
+      agentName:       r[2],
+      queueExtensions: r[3],
+      totalUnique:     Number(r[4]) || 0,
+      totalRung:       Number(r[5]) || 0,
+      totalMissed:     Number(r[6]) || 0,
+      totalAnswered:   Number(r[7]) || 0,
+      ttt:             r[8],
+      att:             r[9],
+      slots:           r.slice(10, 29),
+      abParentIds:     r[29],
+      abMissedIds:     r[30],
+      abMissedTimes:   r[31],
+      avgAbdWait:      r[32],
+      csrAvgAbdWait:   r[33]
+    });
+  }
+  if (!neonRows.length) return;
+  const res = writeDQERowsToNeon(neonRows);
+  if (res && res.skipped) {
+    Logger.log('DQE: dup-guard re-mirror skipped (' + res.skipped
+      + ' rows — Neon unreachable) for ' + callDateStr + '.');
+  } else {
+    Logger.log('DQE: dup-guard re-mirrored ' + neonRows.length
+      + ' existing rows to Neon for ' + callDateStr + '.');
+  }
+}
+
+
 // ── Main DQE build function ───────────────────────────────────────────────────
 
 function buildDQEHistoricalData(rawSheet, dqeSheet, opts) {
@@ -186,13 +242,31 @@ function buildDQEHistoricalData(rawSheet, dqeSheet, opts) {
     const existing = dqeSheet
       .getRange(2, 2, dqeLastRow - 1, 1)
       .getDisplayValues().flat();
-    for (const val of existing) {
+    const matchedOffsets = [];   // 0-based offsets into the data region (sheet row 2 + offset)
+    for (let i = 0; i < existing.length; i++) {
+      const val = existing[i];
       if (!val || !val.trim()) continue;
       const d = displayToDate(val);
-      if (d && d.getTime() === callDateObj.getTime()) {
-        Logger.log('DQE: Data for ' + callDateStr + ' already exists. Skipping.');
-        return;
+      if (d && d.getTime() === callDateObj.getTime()) matchedOffsets.push(i);
+    }
+    if (matchedOffsets.length) {
+      Logger.log('DQE: Data for ' + callDateStr + ' already exists. Skipping rebuild.');
+      // F2: the date is already in the SHEET, but a prior run's Neon mirror
+      // may have failed (Neon unreachable that day) -- in which case the
+      // dup-guard would otherwise leave dqe_history permanently stale, since
+      // a non-force re-import bails here before the mirror runs. Re-mirror the
+      // existing sheet rows so a transient outage self-heals on the next
+      // import of the same date. Best-effort + idempotent (writeDQERowsToNeon
+      // upserts ON CONFLICT); skipped on the bulk path (opts.skipNeon defers
+      // the mirror to backfillDQEHistoryUpsert()).
+      if (!(opts && opts.skipNeon)) {
+        try { remirrorExistingDqeDate_(dqeSheet, matchedOffsets, callDateStr); }
+        catch (e) {
+          Logger.log('DQE: dup-guard re-mirror failed (best-effort): '
+            + (e && e.message ? e.message : e));
+        }
       }
+      return;
     }
   }
 
@@ -651,11 +725,38 @@ function buildDQEHistoricalData(rawSheet, dqeSheet, opts) {
     var neonResult = writeDQERowsToNeon(neonRows);
     if (neonResult && neonResult.skipped) {
       Logger.log('DQE: Neon write skipped (%s rows — Neon unreachable).', neonResult.skipped);
+      // F4: a mirror-only skip (Neon unreachable, sheet write OK) does NOT
+      // throw, so the daily toast's unified Neon flag can read "Neon ✓" while
+      // dqe_history wasn't refreshed. Per CLAUDE.md the DQE mirror status is
+      // intentionally NOT folded into that toast -- instead it's meant to
+      // surface in Pipeline Health. Log that row here so the divergence is
+      // actually visible to admins (and the F2 re-mirror heals it next run).
+      try {
+        logPipelineHealth_(dqeSheet.getParent(), {
+          step:       'buildDQE:neon',
+          status:     'failure',
+          rows:       neonResult.skipped,
+          durationMs: null,
+          notes:      'callDate=' + callDateStr + ' | Neon unreachable; dqe_history NOT refreshed',
+        });
+      } catch (pipelineLogErr) { /* best-effort */ }
     } else {
       Logger.log('DQE: Mirrored ' + neonRows.length + ' rows to Neon.');
     }
   } catch (neonErr) {
     notifyNeonWriteFailure('buildDQEHistoricalData (' + callDateStr + ')', neonErr.message);
+    // F4: also leave a Pipeline Health row (see the skip branch above) so a
+    // DQE->Neon write error is visible in the admin panel, not only in the
+    // notify email -- the toast's Neon flag stays green for this case.
+    try {
+      logPipelineHealth_(dqeSheet.getParent(), {
+        step:       'buildDQE:neon',
+        status:     'failure',
+        rows:       null,
+        durationMs: null,
+        notes:      'callDate=' + callDateStr + ' | Neon write error: ' + neonErr.message,
+      });
+    } catch (pipelineLogErr) { /* best-effort */ }
   }
   }  // end else (skipNeon)
 

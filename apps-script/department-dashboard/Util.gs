@@ -15,6 +15,33 @@ function assertAdmin_() {
   if (user.role !== 'admin') throw new Error('Alerts are admin-only.');
 }
 
+/**
+ * Shared per-department access gate for the report endpoints
+ * (Data.gs, IndividualReport, PerformanceReport, CompareRangesReport,
+ * InsightsReport, MissedCallsReport, QCDReport). Centralizes the
+ * dept-authorization triad that was previously copy-pasted verbatim at
+ * ~10 call sites, so the security-relevant check can't drift between
+ * them. Throws on rejection; returns nothing on success.
+ *
+ *   - role 'none'    -> 'Not authorized.' (defense-in-depth; callers
+ *                       generally check this earlier too)
+ *   - manager        -> may only request their own department
+ *   - admin          -> may request any department that exists
+ *
+ * Reports with a non-standard scope (InboundReport's company-view /
+ * manager-pin, CompanyOverview's company-wide aggregate) keep their
+ * own gates and intentionally do NOT route through this helper.
+ */
+function assertDeptAccess_(user, dept) {
+  if (!user || user.role === 'none') throw new Error('Not authorized.');
+  if (user.role === 'manager' && dept !== user.department) {
+    throw new Error('Not authorized for this department.');
+  }
+  if (user.role === 'admin' && getAllDepartments_().indexOf(dept) === -1) {
+    throw new Error('Unknown department: ' + dept);
+  }
+}
+
 // -- Report-usage telemetry --------------------------------------------------
 
 /**

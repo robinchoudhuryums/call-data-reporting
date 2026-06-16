@@ -994,13 +994,6 @@
             <label for="qcd-to">End date</label>
             <input type="date" id="qcd-to">
           </div>
-          <div class="ir-col qcd-sub-toggle-col">
-            <label for="qcd-include-sub">Sub-queues</label>
-            <label class="qcd-sub-toggle">
-              <input type="checkbox" id="qcd-include-sub" checked>
-              Include sub-queue data
-            </label>
-          </div>
         </div>
         <div class="ir-hint">
           Reads from the <strong>QCD Historical Data</strong> sheet
@@ -1089,6 +1082,11 @@
                     title="12-month trend window (rolled up across the selected range's mapped queues).">Monthly (12 mo)</button>
             <button type="button" class="seg-btn" data-view="daily" role="radio" aria-checked="false"
                     title="One point per day within the selected From/To range.">Daily (range)</button>
+          </div>
+          <div class="ir-toggle-box" id="qcd-datalabels-box">
+            <label class="ir-toggle-label">
+              <input type="checkbox" id="qcd-show-datalabels"> Show data labels
+            </label>
           </div>
         </div>
 
@@ -1245,26 +1243,11 @@
              the deep dive (per-queue charts, daily series). -->
         <div id="ins-queue-health" style="display:none;">
           <div class="al-section-title">Queue health <span class="ins-rollup-cap" id="ins-qh-cap"></span></div>
-          <div class="ins-qh-controls">
-            <label class="qcd-sub-toggle" id="ins-qh-sub-wrap" style="display:none;">
-              <input type="checkbox" id="ins-qh-include-sub" checked>
-              Include sub-queue data
-            </label>
-            <div class="segmented" id="ins-qh-view-toggle" role="radiogroup" aria-label="Queue health chart view" style="display:none;">
-              <button type="button" class="seg-btn active" data-view="monthly" role="radio" aria-checked="true">Monthly</button>
-              <button type="button" class="seg-btn" data-view="daily" role="radio" aria-checked="false">Daily</button>
-            </div>
-          </div>
           <div id="ins-qh-forecast" class="qcd-forecast" style="display:none;"></div>
           <div id="ins-qh-tiles" class="pr-kpi-row"></div>
-          <!-- Compact per-queue trend: monthly abandoned-% line per queue
-               + dashed dept total + the 5% threshold line. The QCD Report
-               keeps the full metric tabs / daily view / single-queue
-               drill-downs. -->
-          <div class="ir-chart-wrap ins-qh-chart-wrap" id="ins-qh-chart-wrap" style="display:none;">
-            <div class="ir-chart-header">Abandoned % by queue</div>
-            <div class="ir-chart-canvas-wrap ins-qh-canvas-wrap"><canvas id="ins-qh-chart"></canvas></div>
-          </div>
+          <!-- The per-queue abandoned-% trend chart now lives in the
+               consolidated trend chart below (its "Abandoned % by Queue"
+               tab); this section keeps the tiles + per-queue detail table. -->
           <table class="qcd-source-table">
             <thead><tr>
               <th>Queue</th>
@@ -1279,11 +1262,25 @@
         </div>
 
         <div class="ir-chart-wrap" id="ins-trend-wrap">
-          <div class="ir-chart-header">12-Month Team Trend</div>
+          <div class="ins-trend-headrow">
+            <div class="ir-chart-header" id="ins-trend-header">12-month team trend</div>
+            <div class="ins-trend-headctl">
+              <div class="segmented" id="ins-trend-view-toggle" role="radiogroup" aria-label="Trend chart view" style="display:none;">
+                <button type="button" class="seg-btn active" data-view="monthly" role="radio" aria-checked="true">Monthly</button>
+                <button type="button" class="seg-btn" data-view="daily" role="radio" aria-checked="false">Daily</button>
+              </div>
+              <div class="ir-toggle-box" id="ins-datalabels-box">
+                <label class="ir-toggle-label">
+                  <input type="checkbox" id="ins-show-datalabels"> Show data labels
+                </label>
+              </div>
+            </div>
+          </div>
           <div class="pr-trend-subtabs" id="ins-trend-subtabs" role="tablist">
             <button type="button" class="pr-trend-subtab active" data-metric="answered" role="tab" aria-selected="true">Answered</button>
             <button type="button" class="pr-trend-subtab" data-metric="pct" role="tab" aria-selected="false">% Answered</button>
             <button type="button" class="pr-trend-subtab" data-metric="att" role="tab" aria-selected="false">Avg Talk Time</button>
+            <button type="button" class="pr-trend-subtab" data-metric="queues" role="tab" aria-selected="false">Abandoned % by Queue</button>
           </div>
           <div class="ir-chart-canvas-wrap"><canvas id="ins-trend-chart"></canvas></div>
         </div>
@@ -1307,8 +1304,26 @@
               <option value="regressors">Biggest regressors</option>
             </select>
           </label>
+          <div class="segmented" id="ins-cards-view-toggle" role="radiogroup" aria-label="Agent comparison view">
+            <button type="button" class="seg-btn active" data-view="cards" role="radio" aria-checked="true">Cards</button>
+            <button type="button" class="seg-btn" data-view="chart" role="radio" aria-checked="false">Chart</button>
+          </div>
+          <label class="ir-sort-control" id="ins-cards-chart-metric-wrap" style="display:none;">
+            <span class="ir-sort-label">Metric:</span>
+            <select id="ins-cards-chart-metric">
+              <option value="answered">Answered</option>
+              <option value="rung">Rung</option>
+              <option value="missed">Missed</option>
+              <option value="pct">% Answered</option>
+            </select>
+          </label>
         </div>
         <div id="ins-agent-cards" class="ins-agent-cards"></div>
+        <!-- Cross-agent grouped-bar view (current vs prior) -- toggled from
+             the toolbar; complements the per-card cards + mini-bars (#3). -->
+        <div class="ir-chart-wrap" id="ins-cards-chart-wrap" style="display:none;">
+          <div class="ir-chart-canvas-wrap"><canvas id="ins-cards-chart"></canvas></div>
+        </div>
 
         <details id="ins-quiet-details" class="cr-quiet-details" style="display:none;">
           <summary class="cr-quiet-summary"></summary>
@@ -1677,6 +1692,9 @@
         <div class="al-section">
           <div class="al-section-title">Pipeline Health</div>
           <p class="al-hint">Last 20 entries from the Pipeline Health sheet (most recent first). Failures are highlighted; a long quiet stretch on `autoImport` or `buildDQE` is a sign the daily ingest or rebuild hasn't run.</p>
+          <!-- F2 divergence detector: sheet-vs-Neon DQE max-date comparison.
+               Hidden unless Neon is configured on this project. -->
+          <div id="al-neon-mirror" class="al-neon-mirror" style="display:none;"></div>
           <table class="al-log-table">
             <thead><tr>
               <th>When</th>

@@ -348,14 +348,16 @@ test('Insights: queueHealth.trend carries monthly abandoned-% per queue + dept t
   const trend = data.queueHealth && data.queueHealth.trend;
   assert.ok(trend, 'trend present');
   assert.ok(trend.labels.length >= 2, '12-mo monthly axis');
-  assert.equal(Object.keys(trend.perQueue).length, 2, 'one series per queue (rollup incl. sub-queue)');
+  assert.equal(Object.keys(trend.perQueue).length, 2, 'one series per queue (children shown, separated)');
   assert.equal(trend.perQueue['A_Q_Alpha'].length, trend.labels.length, 'series aligned to axis');
   assert.equal(trend.total.length, trend.labels.length);
-  // March bucket (last label): Alpha 10/100 = 10%, Beta 1/50 = 2%, total 11/150 = 7.3%.
+  // March bucket (last label): Alpha 10/100 = 10%, Beta 1/50 = 2% (shown as its
+  // own line). Sub-queues are now SEPARATED, so the dept total is OWN-only --
+  // Alpha 10/100 = 10% (Beta excluded), not the old 11/150 = 7.3% rollup.
   const last = trend.labels.length - 1;
   assert.equal(trend.perQueue['A_Q_Alpha'][last], 10);
   assert.equal(trend.perQueue['A_Q_Beta'][last], 2);
-  assert.equal(trend.total[last], 7.3);
+  assert.equal(trend.total[last], 10);
 });
 
 // -- My Department QCD snapshot: per-queue separation -------------------------
@@ -390,7 +392,7 @@ test('dept QCD snapshot separates queues (and tags sub-queue owners)', function 
   assert.equal(single.totalCalls, 50);
 });
 
-test('Insights: queueHealth daily series + queueHealthOwnOnly scope', function () {
+test('Insights: queueHealth daily series + always-separated sub-queues', function () {
   installWithQcd(
     [dqeRow({ date: '2026-03-10', agent: 'Anna', ext: '501', rung: 10, missed: 1, answered: 8, att: '0:03:00' })],
     [
@@ -402,27 +404,27 @@ test('Insights: queueHealth daily series + queueHealthOwnOnly scope', function (
       qcdRow('2026-03-11', 'A_Q_Alpha', 80,  2,  0),
       qcdRow('2026-03-10', 'A_Q_Beta',  50,  5,  0),
     ]);
-  const roll = h.call('getInsightsReport', {
+  const data = h.call('getInsightsReport', {
     department: 'Alpha', from: '2026-03-09', to: '2026-03-15', agents: ['Anna'],
   });
-  const t = roll.queueHealth.trend;
+  const qh = data.queueHealth;
+  const t = qh.trend;
+  // Sub-queues are ALWAYS separated now (the queueHealthOwnOnly toggle was
+  // retired in seq #1). Children are SHOWN as their own lines/rows, but the
+  // dept total/trend is OWN-only (Alpha).
   assert.equal(t.dailyLabels.join(','), '2026-03-10,2026-03-11');
-  assert.equal(t.dailyTotal[0], 10);   // (10+5)/(100+50) = 10%
+  assert.equal(t.dailyTotal[0], 10);   // own-only Alpha: 10/100 = 10%
   assert.equal(t.dailyTotal[1], 2.5);  // 2/80
-  assert.equal(Object.keys(t.dailyPerQueue).length, 2);
-  assert.equal(t.dailyPerQueue['A_Q_Beta'][0], 10);  // 5/50
-  assert.equal(roll.queueHealth.hasSubQueues, true);
-  assert.equal(roll.queueHealth.includeSubQueues, true);
-
-  // Own-only scope: Beta's queue drops out of totals, rows, and trend.
-  const own = h.call('getInsightsReport', {
-    department: 'Alpha', from: '2026-03-09', to: '2026-03-15', agents: ['Anna'],
-    queueHealthOwnOnly: true,
-  });
-  assert.equal(own.queueHealth.includeSubQueues, false);
-  assert.equal(own.queueHealth.queues.join(','), 'A_Q_Alpha');
-  assert.equal(own.queueHealth.totals.totalCalls, 180);   // 100+80, no Beta
-  assert.equal(Object.keys(own.queueHealth.trend.perQueue).join(','), 'A_Q_Alpha');
-  // Distinct cache identities: both shapes were served fresh, not cross-bled.
-  assert.equal(roll.queueHealth.totals.totalCalls, 230);
+  assert.equal(Object.keys(t.dailyPerQueue).length, 2, 'both queues shown as lines');
+  assert.equal(t.dailyPerQueue['A_Q_Beta'][0], 10);  // 5/50 (Beta shown separately)
+  assert.equal(qh.hasSubQueues, true);
+  assert.equal(qh.subQueuesSeparated, true);
+  // Children are shown (both queues listed) but EXCLUDED from the dept total.
+  assert.equal(qh.queues.join(','), 'A_Q_Alpha,A_Q_Beta');
+  assert.equal(qh.totals.totalCalls, 180, 'dept total is own-only (Alpha 100+80), Beta excluded');
+  // perQueue rows carry the sub-queue owner tag for the separated group.
+  const betaRow = qh.perQueue.filter(function (q) { return q.queue === 'A_Q_Beta'; })[0];
+  assert.equal(betaRow.subDept, 'Beta');
+  const alphaRow = qh.perQueue.filter(function (q) { return q.queue === 'A_Q_Alpha'; })[0];
+  assert.equal(alphaRow.subDept, null);
 });

@@ -4651,7 +4651,18 @@
                       + (controlLabel || 'the compare control') + ' to a preset).' };
       }
       if (customFrom > customTo) return { error: 'Prior start must be on or before prior end.' };
-      return { from: customFrom, to: customTo };
+      const custom = { from: customFrom, to: customTo };
+      // F3: warn (don't block) when the custom prior window overlaps the
+      // current range. Server-side attribution is "current wins" -- rows in
+      // the overlap count toward the current period only, so the prior
+      // totals (and the deltas computed from them) understate. The report
+      // still renders; this just makes the caveat visible.
+      if (from && to && customFrom <= to && customTo >= from) {
+        custom.warn = 'Note: this prior window overlaps the current range ('
+          + from + ' – ' + to + '). Overlapping days count toward the current '
+          + 'period only, so the prior period may read low.';
+      }
+      return custom;
     }
     // Parse using noon-local-time to avoid DST edges.
     const parts1 = from.split('-'), parts2 = to.split('-');
@@ -4705,7 +4716,8 @@
       const prior = irResolvePriorRange_(from, to);
       if (!prior) { hint.textContent = ''; return; }
       if (prior.error) { hint.textContent = prior.error; return; }
-      hint.textContent = 'Comparing against ' + prior.from + ' to ' + prior.to + '.';
+      hint.textContent = 'Comparing against ' + prior.from + ' to ' + prior.to + '.'
+        + (prior.warn ? ' ' + prior.warn : '');
     };
     sel.addEventListener('change', function () { refresh(); irSavePrefs_(); });
     ['ir-from', 'ir-to', 'ir-prior-from', 'ir-prior-to'].forEach(function (id) {
@@ -5952,9 +5964,16 @@
         el.textContent = 'Prior start must be on or before prior end.';
         return;
       }
+      // F3: warn (don't block) when the custom prior overlaps the current
+      // range -- server attribution is "current wins", so overlapping days
+      // count toward the current period only and the prior reads low.
+      const overlapNote = (pf <= to && pt >= from)
+        ? ' Note: this overlaps the current range, so overlapping days count'
+          + ' toward the current period only and the prior may read low.'
+        : '';
       el.textContent = 'Will compare against your custom prior range ('
                      + fmt(new Date(pf + 'T12:00:00')) + ' – '
-                     + fmt(new Date(pt + 'T12:00:00')) + ').';
+                     + fmt(new Date(pt + 'T12:00:00')) + ').' + overlapNote;
       return;
     }
     const start = new Date(from + 'T12:00:00');
@@ -8615,10 +8634,49 @@
     alRenderConfigTable_(data.config || [], data.drift || {});
     alRenderTriggerStatus_(data.trigger || { installed: false });
     alRenderLog_(data.log || []);
+    alRenderNeonMirror_(data.neonMirror || null);
     alRenderPipelineHealth_(data.pipelineHealth || []);
     alClearResults_();
     alLastPreview = null;
     $('al-send-btn').disabled = true;
+  }
+
+  // F2 divergence detector: render the sheet-vs-Neon DQE max-date status.
+  // Hidden entirely when Neon isn't configured on this project (status
+  // 'unconfigured') so non-Neon installs see nothing. 'behind' is the
+  // actionable case -- the mirror is stale by gapDays.
+  function alRenderNeonMirror_(m) {
+    const el = $('al-neon-mirror');
+    if (!el) return;
+    if (!m || !m.configured || m.status === 'unconfigured') {
+      el.style.display = 'none';
+      el.textContent = '';
+      return;
+    }
+    el.style.display = '';
+    let cls, msg;
+    if (m.status === 'behind') {
+      const days = (m.gapDays == null) ? '?' : m.gapDays;
+      cls = 'al-neon-mirror-warn';
+      msg = '⚠ Neon mirror is behind the sheet by ' + days + ' day'
+          + (days === 1 ? '' : 's') + ' (sheet through '
+          + escapeHtml(m.sheetMax || '?') + ', Neon through '
+          + escapeHtml(m.neonMax || '?') + '). Re-import the missing date(s) '
+          + '— the dup-guard re-mirror heals it — or run '
+          + 'backfillDQEHistoryUpsert(). Only affects reads when '
+          + 'DQE_READ_SOURCE=neon.';
+    } else if (m.status === 'error') {
+      cls = 'al-neon-mirror-warn';
+      msg = '⚠ Neon mirror health: configured, but dqe_history MAX(call_date) '
+          + 'could not be read (Neon unreachable or empty). Check the NEON_* '
+          + 'Script Properties.';
+    } else {
+      cls = 'al-neon-mirror-ok';
+      msg = '✓ Neon mirror current with the sheet (both through '
+          + escapeHtml(m.neonMax || m.sheetMax || '?') + ').';
+    }
+    el.className = 'al-neon-mirror ' + cls;
+    el.textContent = msg;
   }
 
   function alRenderPipelineHealth_(events) {
@@ -9731,8 +9789,11 @@
   let insPendingAgentSelection_ = null;
   let insLastData = null;
   let insChartInstance = null;
-  let insQhChartInstance = null;   // Queue health compact trend chart
-  let insQhView = 'monthly';       // 'monthly' | 'daily' (chart toggle)
+  let insTrendView = 'monthly';    // 'monthly' | 'daily' (consolidated trend chart toggle)
+  let insCardsView = 'cards';      // 'cards' | 'chart' (per-agent comparison view, #3)
+  let insCardsChartMetric = 'answered';   // metric for the grouped Chart view
+  let insCardsChartInstance = null;
+  let insHasQuiet_ = false;        // whether the current render has quiet agents
   let insShareChartInstance = null;   // share-of-answered pie (PR port)
   let insActiveTrendMetric = 'answered';
   let insCardSort = 'default';      // default (answered desc) | name | improvers | regressors
@@ -9796,27 +9857,30 @@
     const genBtn = $('ins-generate-btn');
     if (genBtn) genBtn.addEventListener('click', runInsReport);
 
-    // Queue health: Monthly/Daily chart view toggle (client-only
-    // re-render from the cached payload).
-    const qhToggle = $('ins-qh-view-toggle');
-    if (qhToggle) qhToggle.addEventListener('click', function (e) {
+    // Consolidated trend chart: Monthly/Daily view toggle (client-only
+    // re-render from the cached payload; applies to all metric tabs).
+    const trendViewToggle = $('ins-trend-view-toggle');
+    if (trendViewToggle) trendViewToggle.addEventListener('click', function (e) {
       const b = e.target.closest('.seg-btn');
       if (!b) return;
       const next = b.getAttribute('data-view') || 'monthly';
-      if (next === insQhView) return;
-      insQhView = next;
-      qhToggle.querySelectorAll('.seg-btn').forEach(function (x) {
+      if (next === insTrendView) return;
+      insTrendView = next;
+      trendViewToggle.querySelectorAll('.seg-btn').forEach(function (x) {
         const active = x === b;
         x.classList.toggle('active', active);
         x.setAttribute('aria-checked', active ? 'true' : 'false');
       });
-      if (insLastData) insRenderQueueHealthChart_(insLastData.queueHealth);
+      insSavePrefs_();
+      if (insLastData) insRenderTrendChart_(insLastData);
     });
-    // Queue health: sub-queue scope toggle -- server-recomputed, so a
-    // change re-runs the report (cached per scope, so flipping back is
-    // instant).
-    const qhSub = $('ins-qh-include-sub');
-    if (qhSub) qhSub.addEventListener('change', function () { runInsReport(); });
+
+    // Data-labels toggle (opt-in; off by default like IR/PR/CR).
+    const insLabels = $('ins-show-datalabels');
+    if (insLabels) insLabels.addEventListener('change', function () {
+      insSavePrefs_();
+      if (insLastData) insRenderTrendChart_(insLastData);
+    });
 
     // Per-card IR drill-through (delegated on the modal so it covers
     // both the main card grid and the quiet-agents collapsible).
@@ -9841,6 +9905,29 @@
       if (insLastData) {
         insRenderAgentCards_(insLastData.agentData || [], insLastData.meta, insLastData.teamStats);
       }
+    });
+
+    // Cards/Chart view toggle (#3) + the Chart-view metric selector.
+    const cardsViewToggle = $('ins-cards-view-toggle');
+    if (cardsViewToggle) cardsViewToggle.addEventListener('click', function (e) {
+      const b = e.target.closest('.seg-btn');
+      if (!b) return;
+      const next = b.getAttribute('data-view') || 'cards';
+      if (next === insCardsView) return;
+      insCardsView = next;
+      cardsViewToggle.querySelectorAll('.seg-btn').forEach(function (x) {
+        const active = x === b;
+        x.classList.toggle('active', active);
+        x.setAttribute('aria-checked', active ? 'true' : 'false');
+      });
+      insSavePrefs_();
+      insApplyCardsView_();
+    });
+    const cardsChartMetricSel = $('ins-cards-chart-metric');
+    if (cardsChartMetricSel) cardsChartMetricSel.addEventListener('change', function () {
+      insCardsChartMetric = cardsChartMetricSel.value;
+      insSavePrefs_();
+      if (insCardsView === 'chart') insRenderCardsChart_();
     });
 
     // Trend-metric sub-tabs (same pattern as the PR trend chart).
@@ -9907,7 +9994,16 @@
       const pt = $('ins-prior-to')   ? $('ins-prior-to').value   : '';
       if (!pf || !pt) return { error: 'Pick prior start and end dates (or switch Compare against to a preset).' };
       if (pf > pt)    return { error: 'Prior start must be on or before prior end.' };
-      return { from: pf, to: pt };
+      const out = { from: pf, to: pt };
+      // F3: warn (don't block) when the custom prior overlaps the current
+      // range -- server attribution is "current wins", so overlapping days
+      // count toward the current period only and the prior reads low.
+      if (from && to && pf <= to && pt >= from) {
+        out.warn = 'Note: this prior window overlaps the current range ('
+          + from + ' – ' + to + '). Overlapping days count toward the current '
+          + 'period only, so the prior period may read low.';
+      }
+      return out;
     }
     if (mode === 'yoy') {
       const p1 = from.split('-'), p2 = to.split('-');
@@ -9952,7 +10048,8 @@
         lengthNote = ' (the ' + (priDays > curDays ? 'prior window' : 'selected range')
                    + ' is ' + ratio + 'x longer — volume totals won\'t be directly comparable)';
       }
-      hint.textContent = 'Comparing against ' + prior.from + ' to ' + prior.to + '.' + lengthNote;
+      hint.textContent = 'Comparing against ' + prior.from + ' to ' + prior.to + '.' + lengthNote
+        + (prior.warn ? ' ' + prior.warn : '');
     };
     sel.addEventListener('change', function () { refresh(); insSavePrefs_(); });
     ['ins-from', 'ins-to', 'ins-prior-from', 'ins-prior-to'].forEach(function (id) {
@@ -10089,10 +10186,6 @@
     insSetFormError('');
     const req = { department: dept, from: from, to: to, agents: agents };
     if (prior) { req.priorFrom = prior.from; req.priorTo = prior.to; }
-    // Queue health sub-queue scope (checkbox lives in the results pane;
-    // default checked = INV-51 rollup when not yet rendered).
-    const qhCb = $('ins-qh-include-sub');
-    if (qhCb && !qhCb.checked) req.queueHealthOwnOnly = true;
     const gen = $('ins-generate-btn'); const prev = gen.textContent;
     gen.disabled = true; gen.textContent = 'Generating…';
     google.script.run
@@ -10257,15 +10350,6 @@
     if (cap) cap.textContent = '(' + (qh.queues || []).length + ' queue'
       + ((qh.queues || []).length === 1 ? '' : 's') + ' · same window as the rollup above)';
 
-    // Sub-queue toggle: only meaningful for parent depts. State mirrors
-    // the server's effective scope (checkbox change re-runs the report).
-    const subWrap = $('ins-qh-sub-wrap');
-    if (subWrap) {
-      subWrap.style.display = qh.hasSubQueues ? '' : 'none';
-      const cb = $('ins-qh-include-sub');
-      if (cb) cb.checked = qh.includeSubQueues !== false;
-    }
-
     // Days-to-violation forecast on the daily series (shared helper --
     // same regression the QCD Report renders).
     const fc = $('ins-qh-forecast');
@@ -10287,8 +10371,9 @@
     ];
     $('ins-qh-tiles').innerHTML = tiles.join('');
 
-    insRenderQueueHealthChart_(qh);
-
+    // The per-queue abandoned-% chart now lives in the consolidated trend
+    // chart above (the "Abandoned % by Queue" tab); this section keeps the
+    // tiles + the per-queue detail table.
     const tbody = $('ins-qh-tbody');
     if (!tbody) return;
     tbody.innerHTML = (qh.perQueue || []).map(function (q) {
@@ -10298,118 +10383,17 @@
         ? '<details class="ins-qh-viol"><summary>' + q.violations + '</summary>'
           + '<div class="ins-qh-viol-dates">' + q.violationDates.map(escapeHtml).join(', ') + '</div></details>'
         : String(q.violations || 0);
+      // Tag child sub-queue rows so the separation is visible (seq #5/#1).
+      const subTag = q.subDept
+        ? ' <span class="dept-qcd-subtag">sub-queue · ' + escapeHtml(q.subDept) + '</span>' : '';
       return '<tr>'
-        + '<td>' + escapeHtml(q.queue) + '</td>'
+        + '<td>' + escapeHtml(q.queue) + subTag + '</td>'
         + '<td class="num">' + fmtNumber(q.totalCalls) + '</td>'
         + '<td class="num">' + fmtNumber(q.abandoned) + '</td>'
         + '<td class="num' + pctCls + '">' + escapeHtml(q.abandonedPctStr) + '</td>'
         + '<td class="num' + violCls + '">' + violCell + '</td>'
         + '</tr>';
     }).join('');
-  }
-
-  /**
-   * Compact Queue health trend: one monthly abandoned-% line per queue
-   * + a dashed dept total (multi-queue only) + the faint 5% threshold
-   * baseline (the QCD violation rule -- same convention as the Overview
-   * chart's 92% line). Colors via THEME / IR_CHART_COLORS (INV-42);
-   * datalabels off in boolean form (INV-41). Hidden for pre-v5 cached
-   * payloads (no trend key) or when there's nothing to plot.
-   */
-  function insRenderQueueHealthChart_(qh) {
-    const wrap = $('ins-qh-chart-wrap');
-    if (!wrap) return;
-    const trend = qh && qh.trend;
-    if (!trend || !trend.labels || !trend.labels.length) {
-      wrap.style.display = 'none';
-      const tgl = $('ins-qh-view-toggle');
-      if (tgl) tgl.style.display = 'none';
-      if (insQhChartInstance) { try { insQhChartInstance.destroy(); } catch (e) {} insQhChartInstance = null; }
-      return;
-    }
-    // Daily view only offered when the range has 2+ days of data
-    // (single point isn't useful as a line -- QCD's convention).
-    const hasDaily = (trend.dailyLabels || []).length > 1;
-    const toggle = $('ins-qh-view-toggle');
-    if (toggle) toggle.style.display = hasDaily ? '' : 'none';
-    if (!hasDaily && insQhView === 'daily') insQhView = 'monthly';
-    const daily = insQhView === 'daily' && hasDaily;
-
-    const labels   = daily ? trend.dailyLabels : trend.labels;
-    const totalSer = daily ? (trend.dailyTotal || []) : (trend.total || []);
-    const perQueue = daily ? (trend.dailyPerQueue || {}) : (trend.perQueue || {});
-    const queueNames = Object.keys(perQueue);
-    if (!queueNames.length && !totalSer.length) {
-      wrap.style.display = 'none';
-      if (insQhChartInstance) { try { insQhChartInstance.destroy(); } catch (e) {} insQhChartInstance = null; }
-      return;
-    }
-    wrap.style.display = '';
-    refreshChartTheme();
-    destroyOrphanedChartOnCanvas_('ins-qh-chart');
-    if (insQhChartInstance) { try { insQhChartInstance.destroy(); } catch (e) {} insQhChartInstance = null; }
-
-    const datasets = queueNames.map(function (q, i) {
-      const color = IR_CHART_COLORS[i % IR_CHART_COLORS.length];
-      return {
-        label: q,
-        data: perQueue[q],
-        borderColor: color,
-        backgroundColor: color,
-        borderWidth: 1.8,
-        pointRadius: 1.5,
-        tension: 0.25,
-        fill: false,
-      };
-    });
-    if (queueNames.length > 1 && totalSer.length) {
-      datasets.push({
-        label: 'Dept total',
-        data: totalSer,
-        borderColor: THEME.ink,
-        backgroundColor: THEME.ink,
-        borderDash: [5, 4],
-        borderWidth: 1.4,
-        pointRadius: 0,
-        tension: 0.25,
-        fill: false,
-      });
-    }
-    datasets.push({
-      label: '5% threshold',
-      data: labels.map(function () { return 5; }),
-      borderColor: THEME.muted,
-      borderDash: [3, 4],
-      borderWidth: 1,
-      pointRadius: 0,
-      fill: false,
-      order: 99,
-    });
-
-    insQhChartInstance = new Chart($('ins-qh-chart').getContext('2d'), {
-      type: 'line',
-      data: { labels: labels, datasets: datasets },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        interaction: { mode: 'index', intersect: false },
-        plugins: {
-          datalabels: { display: false },
-          legend: { position: 'bottom', labels: { boxWidth: 18,
-            filter: function (item) { return item.text !== '5% threshold'; } } },
-          tooltip: {
-            filter: function (ctx) { return ctx.dataset.label !== '5% threshold'; },
-            callbacks: { label: function (ctx) {
-              return ctx.dataset.label + ': ' + (ctx.parsed.y == null ? '-' : ctx.parsed.y.toFixed(1) + '%');
-            } },
-          },
-        },
-        scales: {
-          x: { ticks: { maxRotation: 0, autoSkip: true } },
-          y: { beginAtZero: true, ticks: { callback: function (v) { return v + '%'; } } },
-        },
-      },
-    });
   }
 
   /**
@@ -10430,11 +10414,14 @@
   }
 
   /**
-   * 12-month team trend line for the Insights modal. Single tracked
-   * Chart.js instance; metric picked by insActiveTrendMetric (same
-   * sub-tab strip the PR trend uses). Colors route through THEME /
-   * IR_VOLUME_COLORS per INV-42; datalabels stay off (boolean form,
-   * INV-41) -- the sparklines + tooltip carry the values.
+   * Consolidated Insights trend chart (seq #1). One tracked Chart.js
+   * instance on `ins-trend-chart`, driven by the sub-tab strip
+   * (insActiveTrendMetric: answered / pct / att / queues) and a
+   * Monthly/Daily toggle (insTrendView). The "Abandoned % by Queue" tab
+   * renders the per-queue abandoned-% lines + own-only dept total + 5%
+   * line from data.queueHealth.trend (replacing the old standalone
+   * ins-qh-chart). Colors route through THEME / IR_* per INV-42;
+   * datalabels off (boolean form, INV-41).
    */
   function insRenderTrendChart_(data) {
     const canvas = $('ins-trend-chart');
@@ -10443,76 +10430,166 @@
     destroyOrphanedChartOnCanvas_('ins-trend-chart');
     if (insChartInstance) { try { insChartInstance.destroy(); } catch (e) {} insChartInstance = null; }
 
-    const labels = (data.trendData && data.trendData.labels) || [];
-    const series = (data.trendData && data.trendData.series) || [];
-    let dataPoints, color, label, isPercent, isMinutes;
-    if (insActiveTrendMetric === 'pct') {
-      dataPoints = series.map(function (s) { return Number((s.pct || 0).toFixed(1)); });
-      color = THEME.accent || '#4E79A7';
-      label = '% Answered';
-      isPercent = true;
-    } else if (insActiveTrendMetric === 'att') {
-      dataPoints = series.map(function (s) { return Number(((s.att || 0) / 60).toFixed(2)); });
-      color = THEME.muted || '#9C755F';
-      label = 'Avg Talk Time';
-      isMinutes = true;
-    } else {
-      dataPoints = series.map(function (s) { return s.answered; });
-      color = IR_VOLUME_COLORS.answered;
-      label = 'Answered';
+    const metric = insActiveTrendMetric;
+    const isQueues = (metric === 'queues');
+    const qhTrend = (data.queueHealth && data.queueHealth.trend) || null;
+
+    // Daily availability + Monthly/Daily toggle visibility. Queues view
+    // uses the QCD daily series; the team metrics use trendDaily.
+    const hasDaily = isQueues
+      ? !!(qhTrend && (qhTrend.dailyLabels || []).length > 1)
+      : !!(data.trendDaily && (data.trendDaily.labels || []).length > 1);
+    const toggle = $('ins-trend-view-toggle');
+    if (toggle) toggle.style.display = hasDaily ? '' : 'none';
+    if (!hasDaily && insTrendView === 'daily') insTrendView = 'monthly';
+    const daily = (insTrendView === 'daily') && hasDaily;
+
+    const headerEl = $('ins-trend-header');
+    if (headerEl) {
+      headerEl.textContent = (daily ? 'Daily team trend' : '12-month team trend')
+        + (isQueues ? ' — abandoned % by queue' : '');
     }
+
     const fmtMin = function (val) {
       const n = parseFloat(val); if (isNaN(n)) return '';
       const m = Math.floor(n);
       const s = Math.round((n - m) * 60);
       return m + ':' + (s < 10 ? '0' + s : s);
     };
+    const insShowLabels = !!($('ins-show-datalabels') && $('ins-show-datalabels').checked);
 
-    insChartInstance = new Chart(canvas.getContext('2d'), {
-      type: 'line',
-      data: {
-        labels: labels,
-        datasets: [{
-          label: label,
-          data: dataPoints,
-          borderColor: color,
-          backgroundColor: function (ctx) { return irGradientFill_(ctx.chart, color); },
-          tension: 0.4, fill: true,
-          pointBackgroundColor: color,
-          pointBorderColor: THEME.paperCard, pointBorderWidth: 1.5,
-          pointRadius: 3, pointHoverRadius: 5,
-        }],
-      },
-      options: {
-        responsive: true, maintainAspectRatio: false, animation: false,
-        plugins: {
-          legend: { display: false },
-          tooltip: {
-            callbacks: {
-              label: function (ctx) {
-                if (isPercent) return label + ': ' + ctx.parsed.y + '%';
-                if (isMinutes) return label + ': ' + fmtMin(ctx.parsed.y);
-                return label + ': ' + ctx.parsed.y;
+    let chartConfig;
+
+    if (isQueues) {
+      // Abandoned % by Queue: one line per queue + own-only dept total +
+      // the 5% threshold (the QCD violation rule). Hidden gracefully if
+      // there's no queue trend (unmapped dept / QCD unavailable).
+      if (!qhTrend || !(qhTrend.labels || []).length) {
+        canvas.style.display = 'none';
+        return;
+      }
+      canvas.style.display = '';
+      const labels   = daily ? qhTrend.dailyLabels : qhTrend.labels;
+      const totalSer = daily ? (qhTrend.dailyTotal || []) : (qhTrend.total || []);
+      const perQueue = daily ? (qhTrend.dailyPerQueue || {}) : (qhTrend.perQueue || {});
+      const qNames = Object.keys(perQueue);
+      const datasets = qNames.map(function (q, i) {
+        const c = IR_CHART_COLORS[i % IR_CHART_COLORS.length];
+        return { label: q, data: perQueue[q], borderColor: c, backgroundColor: c,
+                 borderWidth: 1.8, pointRadius: 1.5, tension: 0.25, fill: false };
+      });
+      if (qNames.length > 1 && totalSer.length) {
+        datasets.push({ label: 'Dept total', data: totalSer,
+          borderColor: THEME.ink, backgroundColor: THEME.ink,
+          borderDash: [5, 4], borderWidth: 1.4, pointRadius: 0, tension: 0.25, fill: false });
+      }
+      datasets.push({ label: '5% threshold', data: labels.map(function () { return 5; }),
+        borderColor: THEME.muted, borderDash: [3, 4], borderWidth: 1,
+        pointRadius: 0, fill: false, order: 99 });
+      chartConfig = {
+        type: 'line',
+        data: { labels: labels, datasets: datasets },
+        options: {
+          responsive: true, maintainAspectRatio: false, animation: false,
+          interaction: { mode: 'index', intersect: false },
+          plugins: {
+            datalabels: {
+              display: insShowLabels,
+              align: 'top', anchor: 'center',
+              backgroundColor: THEME.paperCard,
+              color: function (c) { return c.dataset.borderColor; },
+              borderColor: function (c) { return c.dataset.borderColor; },
+              borderWidth: 1, borderRadius: 2,
+              font: { family: "'IBM Plex Mono', monospace", size: 10, weight: '500' },
+              formatter: function (value, c) {
+                if (c.dataset.label === '5% threshold' || value == null) return '';
+                return Number(value).toFixed(1) + '%';
+              },
+            },
+            legend: { position: 'bottom', labels: { boxWidth: 18,
+              filter: function (item) { return item.text !== '5% threshold'; } } },
+            tooltip: {
+              filter: function (ctx) { return ctx.dataset.label !== '5% threshold'; },
+              callbacks: { label: function (ctx) {
+                return ctx.dataset.label + ': ' + (ctx.parsed.y == null ? '-' : ctx.parsed.y.toFixed(1) + '%');
+              } },
+            },
+          },
+          scales: {
+            x: { ticks: { maxRotation: 0, autoSkip: true } },
+            y: { beginAtZero: true, ticks: { callback: function (v) { return v + '%'; } } },
+          },
+        },
+      };
+    } else {
+      // Team metrics: answered / % answered / avg talk time.
+      const src = daily ? data.trendDaily : data.trendData;
+      const labels = (src && src.labels) || [];
+      const series = (src && src.series) || [];
+      let dataPoints, color, label, isPercent, isMinutes;
+      if (metric === 'pct') {
+        dataPoints = series.map(function (s) { return Number((s.pct || 0).toFixed(1)); });
+        color = THEME.accent || '#4E79A7'; label = '% Answered'; isPercent = true;
+      } else if (metric === 'att') {
+        dataPoints = series.map(function (s) { return Number(((s.att || 0) / 60).toFixed(2)); });
+        color = THEME.muted || '#9C755F'; label = 'Avg Talk Time'; isMinutes = true;
+      } else {
+        dataPoints = series.map(function (s) { return s.answered; });
+        color = IR_VOLUME_COLORS.answered; label = 'Answered';
+      }
+      canvas.style.display = '';
+      chartConfig = {
+        type: 'line',
+        data: {
+          labels: labels,
+          datasets: [{
+            label: label, data: dataPoints, borderColor: color,
+            backgroundColor: function (ctx) { return irGradientFill_(ctx.chart, color); },
+            tension: 0.4, fill: true,
+            pointBackgroundColor: color, pointBorderColor: THEME.paperCard,
+            pointBorderWidth: 1.5, pointRadius: 3, pointHoverRadius: 5,
+          }],
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false, animation: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: { callbacks: { label: function (ctx) {
+              if (isPercent) return label + ': ' + ctx.parsed.y + '%';
+              if (isMinutes) return label + ': ' + fmtMin(ctx.parsed.y);
+              return label + ': ' + ctx.parsed.y;
+            } } },
+            datalabels: {
+              display: insShowLabels,
+              align: 'top', anchor: 'center',
+              backgroundColor: THEME.paperCard,
+              color: color, borderColor: color,
+              borderWidth: 1, borderRadius: 2,
+              font: { family: "'IBM Plex Mono', monospace", size: 10, weight: '500' },
+              formatter: function (value) {
+                if (value == null) return '';
+                if (isPercent) return Number(value).toFixed(1) + '%';
+                if (isMinutes) return fmtMin(value);
+                return value;
               },
             },
           },
-          datalabels: { display: false },
-        },
-        scales: {
-          y: {
-            beginAtZero: true,
-            suggestedMax: isPercent ? 100 : undefined,
-            ticks: {
-              callback: function (val) {
+          scales: {
+            y: {
+              beginAtZero: true,
+              suggestedMax: isPercent ? 100 : undefined,
+              ticks: { callback: function (val) {
                 if (isPercent) return val + '%';
                 if (isMinutes) return fmtMin(val);
                 return val;
-              },
+              } },
             },
           },
         },
-      },
-    });
+      };
+    }
+
+    insChartInstance = new Chart(canvas.getContext('2d'), chartConfig);
   }
 
   // Delta badge mirroring prKpiTile_'s logic for the per-agent card grid.
@@ -10553,6 +10630,10 @@
       return;
     }
     if (toolbar) toolbar.style.display = cards.length > 1 ? '' : 'none';
+    // The Cards/Chart toggle lives in the toolbar, which is hidden for a
+    // single agent -- force Cards view so a restored 'chart' pref can't
+    // strand a 1-agent report with no way to switch back.
+    if (cards.length <= 1) insCardsView = 'cards';
 
     const teamScore = deltaImprovementScore_(teamStats || {});
     const enriched = cards.map(function (c) {
@@ -10585,18 +10666,84 @@
     const renderCard = function (x) { return insBuildCard_(x, teamScore, meta); };
     wrap.innerHTML = sortedMain.map(renderCard).join('');
 
+    insHasQuiet_ = quiet.length > 0;
     if (det) {
-      if (quiet.length > 0) {
-        det.style.display = '';
+      if (insHasQuiet_) {
         det.querySelector('.cr-quiet-summary').textContent =
           'Show ' + quiet.length + ' quiet agent' + (quiet.length === 1 ? '' : 's')
           + ' (no notable changes)';
         $('ins-quiet-cards').innerHTML = quiet.map(renderCard).join('');
       } else {
-        det.style.display = 'none';
         $('ins-quiet-cards').innerHTML = '';
       }
     }
+    // Apply the Cards/Chart view (sets visibility + renders the chart).
+    insApplyCardsView_();
+  }
+
+  /**
+   * Cards/Chart view switch for the per-agent comparison (#3). Cards view
+   * shows the card grid (+ quiet collapsible if any); Chart view shows a
+   * grouped current-vs-prior bar across all selected agents.
+   */
+  function insApplyCardsView_() {
+    const chartView = (insCardsView === 'chart');
+    const cardsWrap = $('ins-agent-cards');
+    const chartWrap = $('ins-cards-chart-wrap');
+    const det = $('ins-quiet-details');
+    const metricWrap = $('ins-cards-chart-metric-wrap');
+    if (cardsWrap)  cardsWrap.style.display = chartView ? 'none' : '';
+    if (det)        det.style.display = chartView ? 'none' : (insHasQuiet_ ? '' : 'none');
+    if (chartWrap)  chartWrap.style.display = chartView ? '' : 'none';
+    if (metricWrap) metricWrap.style.display = chartView ? '' : 'none';
+    if (chartView) insRenderCardsChart_();
+  }
+
+  /**
+   * Grouped current-vs-prior bar chart across the selected agents for one
+   * metric (insCardsChartMetric). Reuses the PR volume-bar pattern; colors
+   * via THEME (INV-42), datalabels off (INV-41).
+   */
+  function insRenderCardsChart_() {
+    const canvas = $('ins-cards-chart');
+    if (!canvas) return;
+    refreshChartTheme();
+    destroyOrphanedChartOnCanvas_('ins-cards-chart');
+    if (insCardsChartInstance) { try { insCardsChartInstance.destroy(); } catch (e) {} insCardsChartInstance = null; }
+    const cards = (insLastData && insLastData.agentData) || [];
+    const metric = insCardsChartMetric;
+    const isPct = (metric === 'pct');
+    const valOf = function (c, key) {
+      const s = c.metrics && c.metrics[metric];
+      return s ? (Number(s[key]) || 0) : 0;
+    };
+    const labels = cards.map(function (c) { return c.name; });
+    insCardsChartInstance = new Chart(canvas.getContext('2d'), {
+      type: 'bar',
+      data: {
+        labels: labels,
+        datasets: [
+          { label: 'Current', data: cards.map(function (c) { return valOf(c, 'val'); }),
+            backgroundColor: THEME.accent },
+          { label: 'Prior',   data: cards.map(function (c) { return valOf(c, 'prev'); }),
+            backgroundColor: THEME.muted },
+        ],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false, animation: false,
+        plugins: {
+          datalabels: { display: false },
+          legend: { position: 'bottom', labels: { boxWidth: 14 } },
+          tooltip: { callbacks: { label: function (ctx) {
+            return ctx.dataset.label + ': ' + (isPct ? ctx.parsed.y + '%' : ctx.parsed.y);
+          } } },
+        },
+        scales: {
+          x: { ticks: { maxRotation: 45, minRotation: 0, autoSkip: false } },
+          y: { beginAtZero: true, ticks: { callback: function (v) { return isPct ? v + '%' : v; } } },
+        },
+      },
+    });
   }
 
   function insBuildCard_(x, teamScore, meta) {
@@ -10633,9 +10780,32 @@
     // dive; the card is the summary.
     const irLink = '<button type="button" class="ins-card-ir-link" data-agent="' + escapeHtml(c.name) + '"'
       + ' title="Open this agent&#39;s Individual Report for the same date range">IR &#8599;</button>';
+    // Inline current-vs-prior mini-bars (Rung / Answered / Missed): a CSS
+    // bar-pair per metric, scaled to that metric's max(cur,prior). Cheap
+    // (no per-card Chart.js); the grouped "Chart" view (insRenderCardsChart_)
+    // is the cross-agent comparison.
+    const barRow = function (lbl, st, cls) {
+      const cur = Number(st && st.val) || 0;
+      const prev = Number(st && st.prev) || 0;
+      const mx = Math.max(cur, prev, 1);
+      return '<div class="ins-bar-row" title="' + lbl + ': ' + cur + ' (prior ' + prev + ')">'
+        +   '<span class="ins-bar-lbl">' + lbl + '</span>'
+        +   '<span class="ins-bar-track">'
+        +     '<span class="ins-bar ins-bar-cur ' + cls + '" style="width:' + Math.round(cur / mx * 100) + '%"></span>'
+        +     '<span class="ins-bar ins-bar-prev" style="width:' + Math.round(prev / mx * 100) + '%"></span>'
+        +   '</span>'
+        + '</div>';
+    };
+    const m = c.metrics || {};
+    const bars = '<div class="ins-card-bars">'
+      +   barRow('Rung', m.rung, 'ins-bar-rung')
+      +   barRow('Answered', m.answered, 'ins-bar-ans')
+      +   barRow('Missed', m.missed, 'ins-bar-miss')
+      + '</div>';
     return '<div class="ins-card' + (isFloater ? ' ins-card-floater' : '') + dirClass + '"' + debugAttrs + '>'
          +   '<div class="ins-card-head"><span class="ins-card-name">' + escapeHtml(c.name) + '</span>' + chip + vsTeam + irLink + '</div>'
          +   '<div class="ins-card-grid">' + metrics + '</div>'
+         +   bars
          + '</div>';
   }
 
@@ -10882,7 +11052,11 @@
         priorFrom:   $('ins-prior-from')   ? $('ins-prior-from').value   : '',
         priorTo:     $('ins-prior-to')     ? $('ins-prior-to').value     : '',
         trendMetric: insActiveTrendMetric,
+        trendView:   insTrendView,
+        showLabels:  $('ins-show-datalabels') ? $('ins-show-datalabels').checked : false,
         cardSort:    insCardSort,
+        cardsView:   insCardsView,
+        cardsChartMetric: insCardsChartMetric,
         agents: irGetCheckedAgents_($('ins-agent-list')),
       }));
     } catch (e) { /* ignore */ }
@@ -10912,6 +11086,31 @@
           b.classList.toggle('active', active);
           b.setAttribute('aria-selected', active ? 'true' : 'false');
         });
+      }
+      if (prefs.trendView === 'daily' || prefs.trendView === 'monthly') {
+        insTrendView = prefs.trendView;
+        const vt = $('ins-trend-view-toggle');
+        if (vt) vt.querySelectorAll('.seg-btn').forEach(function (b) {
+          const active = b.getAttribute('data-view') === insTrendView;
+          b.classList.toggle('active', active);
+          b.setAttribute('aria-checked', active ? 'true' : 'false');
+        });
+      }
+      if (typeof prefs.showLabels === 'boolean' && $('ins-show-datalabels')) {
+        $('ins-show-datalabels').checked = prefs.showLabels;
+      }
+      if (prefs.cardsView === 'cards' || prefs.cardsView === 'chart') {
+        insCardsView = prefs.cardsView;
+        const vt = $('ins-cards-view-toggle');
+        if (vt) vt.querySelectorAll('.seg-btn').forEach(function (b) {
+          const active = b.getAttribute('data-view') === insCardsView;
+          b.classList.toggle('active', active);
+          b.setAttribute('aria-checked', active ? 'true' : 'false');
+        });
+      }
+      if (prefs.cardsChartMetric) {
+        insCardsChartMetric = prefs.cardsChartMetric;
+        if ($('ins-cards-chart-metric')) $('ins-cards-chart-metric').value = insCardsChartMetric;
       }
       if (Array.isArray(prefs.agents) && prefs.agents.length) insPendingAgentSelection_ = prefs.agents;
     } catch (e) { /* ignore */ }
@@ -11718,6 +11917,17 @@
       if (qcdLastData) qcdRenderChart_(qcdLastData);
     });
 
+    // Data-labels toggle (opt-in; off by default like IR/PR/CR). Persisted
+    // in a standalone key since the QCD report has no prefs blob.
+    const qcdLabels = $('qcd-show-datalabels');
+    if (qcdLabels) {
+      try { qcdLabels.checked = localStorage.getItem('cdr.qcd.datalabels') === '1'; } catch (e) {}
+      qcdLabels.addEventListener('change', function () {
+        try { localStorage.setItem('cdr.qcd.datalabels', qcdLabels.checked ? '1' : '0'); } catch (e) {}
+        if (qcdLastData) qcdRenderChart_(qcdLastData);
+      });
+    }
+
     // Export menu
     const exportBtn  = $('qcd-export-btn');
     const exportMenu = $('qcd-export-menu');
@@ -11834,14 +12044,7 @@
         showQcdForm();   // dismisses the launcher loading pane if active
         qcdSetFormError_('Error: ' + (err && err.message ? err.message : String(err)));
       })
-      .getQcdReport({ department: dept, from: from, to: to,
-                      includeSubQueues: qcdIncludeSubQueues_() });
-  }
-
-  /** Sub-queue rollup toggle state (defaults to true = INV-51 rollup). */
-  function qcdIncludeSubQueues_() {
-    const cb = $('qcd-include-sub');
-    return cb ? !!cb.checked : true;
+      .getQcdReport({ department: dept, from: from, to: to });
   }
 
   function qcdRenderReport_(data) {
@@ -12001,7 +12204,7 @@
       + tile('Abandoned %',  String(t.abandonedPctStr  || '0.00%'), pctCls)
       + tile('Longest Wait', String(t.longestWait      || '0:00:00'))
       + tile('Avg Answer',   String(t.avgAnswer        || '0:00:00'))
-      + tile('Violations (current month)', fmtNumber(t.violations || 0), violCls);
+      + tile('Violations (MTD)', fmtNumber(t.violations || 0), violCls);
   }
 
   function qcdRenderDailyTable_(rows) {
@@ -12036,16 +12239,19 @@
       if (tfoot) tfoot.innerHTML = '';
       return;
     }
-    tbody.innerHTML = rows.map(function (r) {
+    // One row's HTML (+ its expandable violation-dates detail row).
+    var rowHtml = function (r, isChild) {
       var viol = Number(r.violations) || 0;
       var pct = Number(r.abandonedPct) || 0;
       var violCls = viol > 3 ? 'qcd-warn-strong' : (viol > 0 ? 'qcd-warn-light' : '');
       var pctCls  = pct >= 5 ? 'qcd-warn-light' : '';
       var hasDetail = viol > 0 && r.violationDates && r.violationDates.length;
       var chevron = hasDetail ? ' <span class="qcd-expand-icon">&#9654;</span>' : '';
-      var rowCls = hasDetail ? ' class="qcd-expandable"' : '';
-      var html = '<tr' + rowCls + ' data-queue="' + escapeHtml(r.queue) + '">'
-           +   '<td>' + escapeHtml(r.queue) + chevron + '</td>'
+      var rowCls = 'qcd-queue-row' + (hasDetail ? ' qcd-expandable' : '') + (isChild ? ' qcd-subqueue-row' : '');
+      var subTag = isChild && r.subDept
+        ? ' <span class="dept-qcd-subtag">sub-queue · ' + escapeHtml(r.subDept) + '</span>' : '';
+      var html = '<tr class="' + rowCls + '" data-queue="' + escapeHtml(r.queue) + '">'
+           +   '<td>' + escapeHtml(r.queue) + subTag + chevron + '</td>'
            +   '<td class="num">' + fmtNumber(r.totalCalls)    + '</td>'
            +   '<td class="num">' + fmtNumber(r.totalAnswered) + '</td>'
            +   '<td class="num">' + fmtNumber(r.abandoned)     + '</td>'
@@ -12061,7 +12267,19 @@
              +  '</div></td></tr>';
       }
       return html;
-    }).join('');
+    };
+    // Sub-queue separation: own-dept queues first, then any child sub-queues
+    // grouped under a divider so it's clear they are NOT in the dept total.
+    var ownRows = rows.filter(function (r) { return !r.subDept; });
+    var subRows = rows.filter(function (r) { return !!r.subDept; });
+    var html = ownRows.map(function (r) { return rowHtml(r, false); }).join('');
+    if (subRows.length) {
+      html += '<tr class="qcd-subqueue-divider"><td colspan="8">'
+           +  'Sub-queues — shown separately, not included in the department total'
+           +  '</td></tr>';
+      html += subRows.map(function (r) { return rowHtml(r, true); }).join('');
+    }
+    tbody.innerHTML = html;
     // Expandable rows: click to toggle detail
     tbody.addEventListener('click', function (e) {
       var row = e.target.closest('.qcd-expandable');
@@ -12079,7 +12297,7 @@
       var tViol = Number(totals.violations) || 0;
       var tViolCls = tViol > 3 ? 'qcd-warn-strong' : (tViol > 0 ? 'qcd-warn-light' : '');
       tfoot.innerHTML = '<tr class="qcd-row-total">'
-        +   '<td>Department total</td>'
+        +   '<td>Department total' + (subRows.length ? ' (own queues)' : '') + '</td>'
         +   '<td class="num">' + fmtNumber(totals.totalCalls)    + '</td>'
         +   '<td class="num">' + fmtNumber(totals.totalAnswered) + '</td>'
         +   '<td class="num">' + fmtNumber(totals.abandoned)     + '</td>'
@@ -12087,7 +12305,11 @@
         +   '<td class="num">' + escapeHtml(totals.longestWait || '0:00:00')   + '</td>'
         +   '<td class="num">' + escapeHtml(totals.avgAnswer || '0:00:00')     + '</td>'
         +   '<td class="num' + (tViolCls ? ' ' + tViolCls : '') + '">' + fmtNumber(totals.violations) + '</td>'
-        + '</tr>';
+        + '</tr>'
+        + '<tr class="qcd-table-note"><td colspan="8">'
+        +   'Violations: per-queue counts are for the selected range; the '
+        +   'department total is <strong>month-to-date (MTD)</strong>.'
+        + '</td></tr>';
     }
   }
 
@@ -12174,6 +12396,29 @@
       });
     }
 
+    // #6: on the Abandoned % view, mark violation days (points >= 5%) in
+    // warn color with a larger radius, and draw a dashed 5% reference line,
+    // so "which days breached" reads at a glance. Applies to every % series
+    // (single, per-queue, and the dept-total line).
+    if (formatPct) {
+      var warnC = (THEME && THEME.warn) || '#c66b4b';
+      datasets.forEach(function (ds) {
+        var base = ds.borderColor;
+        var baseR = ds.pointRadius || 3;
+        ds.pointBackgroundColor = ds.data.map(function (v) { return Number(v) >= 5 ? warnC : base; });
+        ds.pointBorderColor     = ds.pointBackgroundColor;
+        ds.pointRadius          = ds.data.map(function (v) { return Number(v) >= 5 ? 5 : baseR; });
+      });
+      datasets.push({
+        label: '5% threshold',
+        data: labels.map(function () { return 5; }),
+        borderColor: warnC, backgroundColor: 'transparent',
+        borderDash: [4, 4], borderWidth: 1,
+        pointRadius: 0, pointHoverRadius: 0,
+        fill: false, tension: 0, order: 99,
+      });
+    }
+
     refreshChartTheme();
     qcdChartInstance = new Chart(canvas, {
       type: 'line',
@@ -12182,12 +12427,28 @@
         responsive: true,
         maintainAspectRatio: false,
         plugins: {
-          datalabels: { display: false },
+          datalabels: {
+            display: (typeof $ === 'function' && $('qcd-show-datalabels') && $('qcd-show-datalabels').checked),
+            align: 'top', anchor: 'center',
+            backgroundColor: THEME.paperCard,
+            color: function (ctx) { return ctx.dataset.borderColor; },
+            borderColor: function (ctx) { return ctx.dataset.borderColor; },
+            borderWidth: 1, borderRadius: 2,
+            font: { family: "'IBM Plex Mono', monospace", size: 10, weight: '500' },
+            formatter: function (value, ctx) {
+              if (ctx.dataset.label === '5% threshold') return '';
+              if (value == null) return '';
+              return formatPct ? Number(value).toFixed(1) + '%' : value;
+            },
+          },
           // Multi-queue charts get the shared legend spotlight (hover-dim
-          // + click-to-pin), matching the Overview chart.
-          legend: Object.assign({ display: multiQueue },
-                                 multiQueue ? chartSpotlightLegend_() : {}),
+          // + click-to-pin), matching the Overview chart. The 5% threshold
+          // line shows in the legend but is skipped by the spotlight dimming.
+          legend: Object.assign({ display: multiQueue || formatPct },
+                                 (multiQueue ? chartSpotlightLegend_() : {})),
           tooltip: {
+            // Hide the flat 5% reference line from hover.
+            filter: function (item) { return item.dataset.label !== '5% threshold'; },
             callbacks: {
               label: function (ctx) {
                 var prefix = multiQueue ? (ctx.dataset.label + ': ') : '';
@@ -12206,7 +12467,8 @@
         },
       },
     });
-    if (multiQueue) chartSpotlightStash_(qcdChartInstance);
+    if (multiQueue) chartSpotlightStash_(qcdChartInstance,
+      formatPct ? { skipLabel: '5% threshold' } : undefined);
   }
 
   // -- Export helpers (mirror IR/PR/CR pattern, simplified) ---------

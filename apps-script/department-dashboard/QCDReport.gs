@@ -25,7 +25,7 @@
  * only request their own dept; admins can pick any dept from the
  * dropdown.
  *
- * Cache: 30 min per (dept, from, to) tuple under `qcd:v7:` prefix.
+ * Cache: 30 min per (dept, from, to) tuple under `qcd:v8:` prefix.
  * No agent-list dimension since QCD is queue/dept-scoped, not
  * agent-scoped.
  *
@@ -55,7 +55,11 @@
 //     the client after deploy.
 // v7: cache key + compute gain the includeSubQueues dimension (the
 // "Include sub-queues" toggle; default true = legacy INV-51 rollup).
-const QCD_CACHE_KEY_PREFIX = 'qcd:v7';
+// v8: the QCD-report toggle is RETIRED -- sub-queues are ALWAYS shown but
+// clearly separated and EXCLUDED from the parent dept total (no merged
+// rollup). The shared computeQcdReport_ gains a `separateSubQueues` opt that
+// only the QCD report passes; Insights' Queue-health calls are unchanged.
+const QCD_CACHE_KEY_PREFIX = 'qcd:v8';
 
 // Source filter: only the "Total Calls" callSource row carries the
 // daily aggregate we want; other callSource values are sub-counts
@@ -149,12 +153,7 @@ function getQcdReportInit(req) {
 
   const dept = String((req && req.department) || '').trim();
   if (!dept) throw new Error('Department is required.');
-  if (user.role === 'manager' && dept !== user.department) {
-    throw new Error('Not authorized for this department.');
-  }
-  if (user.role === 'admin' && getAllDepartments_().indexOf(dept) === -1) {
-    throw new Error('Unknown department: ' + dept);
-  }
+  assertDeptAccess_(user, dept);
 
   const tz = TZ;
   const now = new Date();
@@ -176,12 +175,7 @@ function getQcdReport(req) {
 
   const dept = String((req && req.department) || '').trim();
   if (!dept) throw new Error('Department is required.');
-  if (user.role === 'manager' && dept !== user.department) {
-    throw new Error('Not authorized for this department.');
-  }
-  if (user.role === 'admin' && getAllDepartments_().indexOf(dept) === -1) {
-    throw new Error('Unknown department: ' + dept);
-  }
+  assertDeptAccess_(user, dept);
 
   const from = String((req && req.from) || '').trim();
   const to   = String((req && req.to)   || '').trim();
@@ -189,13 +183,9 @@ function getQcdReport(req) {
     throw new Error('from/to must be YYYY-MM-DD.');
   }
   if (from > to) throw new Error('from must be on or before to.');
-  // Sub-queue rollup toggle: absent/true = legacy INV-51 rollup;
-  // false = the dept's own queues only.
-  const includeSubQueues = !(req && req.includeSubQueues === false);
 
   const cache = CacheService.getScriptCache();
-  const cacheKey = QCD_CACHE_KEY_PREFIX + ':' + dept + ':' + from + ':' + to
-                 + ':' + (includeSubQueues ? 'roll' : 'own');
+  const cacheKey = QCD_CACHE_KEY_PREFIX + ':' + dept + ':' + from + ':' + to;
   const cached = cache.get(cacheKey);
   if (cached) {
     try {
@@ -207,7 +197,11 @@ function getQcdReport(req) {
   }
 
   const t0 = Date.now();
-  const data = computeQcdReport_(dept, from, to, includeSubQueues);
+  // QCD report: always include children in the breakdown/chart but keep them
+  // SEPARATE from the dept total (separateSubQueues=true). The retired toggle
+  // used to flip includeSubQueues; now children are shown-but-not-summed.
+  const data = computeQcdReport_(dept, from, to, /*includeSubQueues=*/ true,
+                                 /*separateSubQueues=*/ true);
   data.meta.computeMs = Date.now() - t0;
   data.meta.cacheHit  = false;
 
@@ -223,8 +217,33 @@ function getQcdReport(req) {
   return data;
 }
 
-function computeQcdReport_(dept, from, to, includeSubQueues) {
+/**
+ * Tags for sub-queue separation: which queues are the dept's OWN
+ * (vs. inherited from child sub-queues per OVERVIEW_PARENT_OF) and the
+ * child dept that owns each inherited queue. Mirrors the logic in
+ * Data.gs::computeDeptQcdSnapshot_ so all QCD surfaces tag consistently.
+ */
+function qcdSubQueueTags_(dept) {
+  const ownSet = {};
+  queuesForDept_(dept, { includeChildren: false }).forEach(function (q) { ownSet[q] = true; });
+  const queueOwner = {};
+  const parentMap = (typeof getOverviewParentMap_ === 'function') ? getOverviewParentMap_() : {};
+  Object.keys(parentMap).forEach(function (child) {
+    if (parentMap[child] !== dept) return;
+    getDeptQcdQueues_(child).forEach(function (q) { if (!ownSet[q]) queueOwner[q] = child; });
+  });
+  return { ownSet: ownSet, queueOwner: queueOwner };
+}
+
+function computeQcdReport_(dept, from, to, includeSubQueues, separateSubQueues) {
   const qOpts = { includeChildren: includeSubQueues !== false };
+  // separateSubQueues (QCD report only): children stay visible in the
+  // breakdown/chart but are tagged + EXCLUDED from the dept total, the
+  // dept-total daily/trend series, and the MTD violation count. Insights'
+  // Queue-health calls omit this, so their behavior is byte-identical.
+  const separate = !!separateSubQueues;
+  const tags = separate ? qcdSubQueueTags_(dept) : { ownSet: {}, queueOwner: {} };
+  const isOwn = function (q) { return !separate || !!tags.ownSet[q]; };
   const ss = openSpreadsheet_();
   const sheet = ss.getSheetByName('QCD Historical Data');
   if (!sheet) {
@@ -345,16 +364,20 @@ function computeQcdReport_(dept, from, to, includeSubQueues) {
       qDay.totalAnswered += totalAnswered;
       qDay.abandoned     += abandoned;
       qDay.violations    += violations;
-      // Dept-level daily series (rollup across all queues).
-      let dayBucket = dailyAcc[dateIso];
-      if (!dayBucket) {
-        dayBucket = { totalCalls: 0, totalAnswered: 0, abandoned: 0, violations: 0 };
-        dailyAcc[dateIso] = dayBucket;
+      // Dept-level daily series. With separateSubQueues, the "Dept total"
+      // is the parent's OWN queues only -- children render as their own
+      // per-queue lines (perQueue) and are never folded into this rollup.
+      if (isOwn(callQueue)) {
+        let dayBucket = dailyAcc[dateIso];
+        if (!dayBucket) {
+          dayBucket = { totalCalls: 0, totalAnswered: 0, abandoned: 0, violations: 0 };
+          dailyAcc[dateIso] = dayBucket;
+        }
+        dayBucket.totalCalls    += totalCalls;
+        dayBucket.totalAnswered += totalAnswered;
+        dayBucket.abandoned     += abandoned;
+        dayBucket.violations    += violations;
       }
-      dayBucket.totalCalls    += totalCalls;
-      dayBucket.totalAnswered += totalAnswered;
-      dayBucket.abandoned     += abandoned;
-      dayBucket.violations    += violations;
     }
     if (inTrendRange) {
       const monthKey = dateIso.slice(0, 7);
@@ -374,7 +397,7 @@ function computeQcdReport_(dept, from, to, includeSubQueues) {
   const queueBreakdown = queues.map(function (q) {
     const b = queueAcc[q];
     const pct = b.totalCalls > 0 ? (b.abandoned / b.totalCalls) * 100 : 0;
-    return {
+    const row = {
       queue:            q,
       totalCalls:       b.totalCalls,
       totalAnswered:    b.totalAnswered,
@@ -389,15 +412,22 @@ function computeQcdReport_(dept, from, to, includeSubQueues) {
       violations:       b.violations,
       violationDates:   b.violationDates.sort(),
     };
+    // separateSubQueues: tag child-owned queues so the client renders them
+    // in a separate group and excludes them from the dept total. Own queues
+    // (and the Insights path) carry subDept=null.
+    if (separate) row.subDept = tags.queueOwner[q] || null;
+    return row;
   });
 
-  // Dept totals: sum across all queues for the dept.
-  // Avg answer uses volume-weighted averaging (weight by totalAnswered
-  // per queue) so high-volume queues dominate the dept average.
+  // Dept totals: sum across the dept's OWN queues (with separateSubQueues,
+  // child sub-queues are excluded -- they have their own rows/lines and are
+  // never merged into the parent aggregate). Avg answer uses volume-weighted
+  // averaging (weight by totalAnswered per queue).
   let tTotal = 0, tAns = 0, tAbnd = 0;
   let tLongest = 0;
   let tAvgWSum = 0, tAvgWN = 0;
   queueBreakdown.forEach(function (r) {
+    if (separate && r.subDept) return;   // child sub-queue: excluded from the dept total
     tTotal += r.totalCalls;
     tAns   += r.totalAnswered;
     tAbnd  += r.abandoned;
@@ -413,7 +443,8 @@ function computeQcdReport_(dept, from, to, includeSubQueues) {
   // had this month?") and matches the "Violations (current month)"
   // label on the KPI tile. Range-scoped violations are still
   // available per-queue in queueBreakdown[].violations.
-  const violationsMtd = computeMtdViolations_(dept, values, ssTZ, qOpts);
+  const violationsMtd = computeMtdViolations_(dept, values, ssTZ,
+    separate ? { includeChildren: false } : qOpts);
   const totals = {
     totalCalls:       tTotal,
     totalAnswered:    tAns,
@@ -431,9 +462,12 @@ function computeQcdReport_(dept, from, to, includeSubQueues) {
     const d = new Date(Number(parts[0]), Number(parts[1]) - 1, 1);
     return Utilities.formatDate(d, TZ, 'MMM, yy');
   });
+  // Dept-total trend line: own queues only when separating (children are
+  // separate per-queue lines via trendData.perQueue).
+  const trendQueues = separate ? queues.filter(isOwn) : queues;
   const trendSeries = monthKeys.map(function (m) {
     let total = 0, ans = 0, abnd = 0, viol = 0;
-    queues.forEach(function (q) {
+    trendQueues.forEach(function (q) {
       const b = queueAcc[q].monthly[m];
       if (!b) return;
       total += b.totalCalls;
@@ -503,6 +537,7 @@ function computeQcdReport_(dept, from, to, includeSubQueues) {
       queues:     queues,
       unmapped:   false,
       includeSubQueues: includeSubQueues !== false,
+      subQueuesSeparated: separate,
       hasSubQueues:     deptHasSubQueues_(dept),
       generatedAt: new Date().toISOString(),
     },

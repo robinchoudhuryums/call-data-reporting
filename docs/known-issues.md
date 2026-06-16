@@ -253,9 +253,9 @@ same time as the code change.
 | `CompareRangesReport.gs` | `compareRanges:vN:` | `v4` |
 | `MissedCallsReport.gs` | `missed:vN:` | `v10` |
 | `CompanyOverview.gs` | `companyOverview:vN` | `v16` |
-| `QCDReport.gs` | `qcd:vN:` | `v7` |
+| `QCDReport.gs` | `qcd:vN:` | `v8` |
 | `InboundReport.gs` | `inbound:vN:` | `v3` |
-| `InsightsReport.gs` | `insights:vN:` | `v6` |
+| `InsightsReport.gs` | `insights:vN:` | `v7` |
 
 `Alerts.gs` holds no cached compute. Preview/send always re-reads the
 DQE Historical Data for the chosen date.
@@ -472,7 +472,7 @@ Performance / Compare Ranges:
   Returns `meta` (with `queues` + `unmapped` flags), `dateLabel`,
   `totals` (sum across the dept's queues), `queueBreakdown`
   (one row per queue), `trendData` (12-month buckets matching the
-  IR/PR trend-window logic). Cache prefix `qcd:v7`.
+  IR/PR trend-window logic). Cache prefix `qcd:v8`.
 - `sendQcdReportEmail({ imageBase64, dateLabel })` — image
   export like the IR/PR/CR send-email paths.
 
@@ -497,8 +497,9 @@ existing per-dept dropdown):
 - **My Department "Yesterday's QCD"**: tile row below the agent
   table showing the dept's most-recent QCD day. Powered by
   `Data.gs::computeDeptQcdSnapshot_` and returned as the new
-  `qcd` field on `getDepartmentSummary` (cache prefix bumped to
-  `summary:v6` when this shipped).
+  `qcd` field on `getDepartmentSummary` (the `summary:` cache prefix
+  was bumped when this shipped; see CLAUDE.md INV-30 for the current
+  version).
 
 **Onboarding a new dept.** When a new dept starts producing rows
 in `QCD Historical Data`, the dashboard ignores them until a

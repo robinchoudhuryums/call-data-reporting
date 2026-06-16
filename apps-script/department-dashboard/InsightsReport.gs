@@ -67,7 +67,13 @@
 //     queueHealthOwnOnly request flag (sub-queue toggle, mirrors QCD's)
 //     joins the cache key; queueHealth carries hasSubQueues +
 //     includeSubQueues so the client can show/hide the toggle.
-const INSIGHTS_CACHE_KEY_PREFIX = 'insights:v6';
+// v7: trend + queue-health charts CONSOLIDATED into one tabbed chart.
+//     Response gains `trendDaily` (daily team series for the selected
+//     window -> the chart's Monthly/Daily toggle for Answered/%/ATT);
+//     queueHealth now always-separates sub-queues (seq #5) -- the
+//     `queueHealthOwnOnly` request flag + the cache `qhown/qhroll`
+//     dimension are retired, and queueHealth.perQueue rows carry `subDept`.
+const INSIGHTS_CACHE_KEY_PREFIX = 'insights:v7';
 
 function getInsightsReportInit(req) {
   // Same picker UX (roster + default dates + active-in-range subset) as
@@ -82,12 +88,7 @@ function getInsightsReport(req) {
 
   const dept = String((req && req.department) || '').trim();
   if (!dept) throw new Error('Department is required.');
-  if (user.role === 'manager' && dept !== user.department) {
-    throw new Error('Not authorized for this department.');
-  }
-  if (user.role === 'admin' && getAllDepartments_().indexOf(dept) === -1) {
-    throw new Error('Unknown department: ' + dept);
-  }
+  assertDeptAccess_(user, dept);
 
   const from = String((req && req.from) || '').trim();
   const to   = String((req && req.to)   || '').trim();
@@ -131,12 +132,9 @@ function getInsightsReport(req) {
   const priorKey = (customPriorFrom && customPriorTo)
     ? customPriorFrom + '..' + customPriorTo
     : 'auto';
-  // Queue health sub-queue toggle (mirrors QCD's includeSubQueues;
-  // default false = INV-51 rollup).
-  const qhOwnOnly = !!(req && req.queueHealthOwnOnly);
   const cache = CacheService.getScriptCache();
   const cacheKey = INSIGHTS_CACHE_KEY_PREFIX + ':' + dept + ':' + from + ':' + to
-                 + ':' + agentsKey + ':' + priorKey + ':' + (qhOwnOnly ? 'qhown' : 'qhroll');
+                 + ':' + agentsKey + ':' + priorKey;
   const cached = cache.get(cacheKey);
   if (cached) {
     try {
@@ -149,7 +147,7 @@ function getInsightsReport(req) {
 
   const t0 = Date.now();
   const data = computeInsights_(dept, from, to, selectedAgents, roster,
-                                customPriorFrom, customPriorTo, qhOwnOnly);
+                                customPriorFrom, customPriorTo);
   data.meta.computeMs = Date.now() - t0;
   data.meta.cacheHit = false;
 
@@ -161,7 +159,7 @@ function getInsightsReport(req) {
 }
 
 function computeInsights_(dept, from, to, selectedAgents, roster,
-                          customPriorFrom, customPriorTo, qhOwnOnly) {
+                          customPriorFrom, customPriorTo) {
   const selectedSet = {};
   for (let i = 0; i < selectedAgents.length; i++) selectedSet[selectedAgents[i]] = true;
   const rosterSet = {};
@@ -308,6 +306,10 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
   selectedAgents.forEach(function (a) { perAgentCurr[a] = blank(); perAgentPrior[a] = blank(); });
   const monthlyTeam = {};
   monthKeys.forEach(function (k) { monthlyTeam[k] = blank(); });
+  // Daily team series over the SELECTED window (powers the consolidated
+  // trend chart's Daily view; the Monthly view uses monthlyTeam). Roster-
+  // gated like teamCurr so floaters don't dilute it (INV-53).
+  const dailyTeam = {};   // iso -> blank()
 
   for (let i = 0; i < srcRows.length; i++) {
     const row = srcRows[i];
@@ -349,6 +351,9 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
       if (isRoster) {
         teamCurr.rung += rung; teamCurr.missed += missed; teamCurr.answered += answered;
         teamCurr.ttt += tttSec; teamCurr.att_sum += attTotal;
+        var db = dailyTeam[dateIso] || (dailyTeam[dateIso] = blank());
+        db.rung += rung; db.missed += missed; db.answered += answered;
+        db.ttt += tttSec; db.att_sum += attTotal;
       }
     } else if (inPrior) {
       const ap = perAgentPrior[agent];
@@ -451,6 +456,17 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
     };
   });
 
+  // Daily team series for the selected window (Daily view of the trend
+  // chart). Same per-bucket shape as trendSeries; sorted oldest-first.
+  const dailyKeys = Object.keys(dailyTeam).sort();
+  const trendDailyLabels = dailyKeys.map(function (iso) { return iso.slice(5); });
+  const trendDailySeries = dailyKeys.map(function (iso) {
+    const b = dailyTeam[iso];
+    const pct = b.rung     > 0 ? (b.answered / b.rung)   * 100 : 0;
+    const att = b.answered > 0 ? (b.att_sum  / b.answered)     : 0;
+    return { rung: b.rung, missed: b.missed, answered: b.answered, pct: pct, ttt: b.ttt, att: att };
+  });
+
   const fmt = function (d) { return Utilities.formatDate(d, TZ, 'MMM d, yyyy'); };
   const rosterCount = visibleAgents.filter(function (a) { return agentMatchedViaRoster[a]; }).length;
   return {
@@ -474,12 +490,16 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
     agentData:    agentData,
     teamInsights: teamInsights,
     trendData:    { labels: trendLabels, series: trendSeries },
+    // Daily team series (selected window) for the consolidated trend
+    // chart's Monthly/Daily toggle. trendData stays the 12-mo monthly
+    // series (parity-pinned); this is additive.
+    trendDaily:   { labels: trendDailyLabels, series: trendDailySeries },
     // Queue health (the QCD-into-Insights consolidation): the dept's
     // queue-level abandoned % / violations for the SAME window + prior
     // window, sourced from the same computeQcdReport_ the QCD modal
     // uses so the two surfaces can't disagree. null when the dept has
     // no mapped queues or the QCD sheet is missing (best-effort).
-    queueHealth: insightsQueueHealth_(dept, from, to, priorFrom, priorTo, qhOwnOnly),
+    queueHealth: insightsQueueHealth_(dept, from, to, priorFrom, priorTo),
   };
 }
 
@@ -492,14 +512,16 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
  * (INV-51), so it's surfaced as violationsMtd; the per-queue rows'
  * `violations` are selected-range counts with their violationDates.
  */
-function insightsQueueHealth_(dept, from, to, priorFrom, priorTo, qhOwnOnly) {
+function insightsQueueHealth_(dept, from, to, priorFrom, priorTo) {
   try {
     if (typeof computeQcdReport_ !== 'function') return null;
-    const includeSub = !qhOwnOnly;
-    const cur = computeQcdReport_(dept, from, to, includeSub);
+    // Always separate sub-queues (seq #5 semantics): children are shown as
+    // their own lines/rows + EXCLUDED from the dept total. The user-facing
+    // "Include sub-queues" toggle was retired here too.
+    const cur = computeQcdReport_(dept, from, to, /*includeSub=*/ true, /*separate=*/ true);
     if (!cur || !cur.meta || cur.meta.unmapped) return null;
     let prior = null;
-    try { prior = computeQcdReport_(dept, priorFrom, priorTo, includeSub); } catch (e) { prior = null; }
+    try { prior = computeQcdReport_(dept, priorFrom, priorTo, true, true); } catch (e) { prior = null; }
     const pick = function (t) {
       t = t || {};
       return {
@@ -544,8 +566,8 @@ function insightsQueueHealth_(dept, from, to, priorFrom, priorTo, qhOwnOnly) {
       }
     }
     return {
-      hasSubQueues:     !!cur.meta.hasSubQueues,
-      includeSubQueues: cur.meta.includeSubQueues !== false,
+      hasSubQueues:       !!cur.meta.hasSubQueues,
+      subQueuesSeparated: true,
       queues:        cur.meta.queues || [],
       totals:        pick(cur.totals),
       priorTotals:   prior && prior.meta && !prior.meta.unmapped ? pick(prior.totals) : null,
@@ -554,6 +576,7 @@ function insightsQueueHealth_(dept, from, to, priorFrom, priorTo, qhOwnOnly) {
       perQueue: (cur.queueBreakdown || []).map(function (q) {
         return {
           queue:           q.queue,
+          subDept:         q.subDept || null,
           totalCalls:      q.totalCalls,
           abandoned:       q.abandoned,
           abandonedPct:    q.abandonedPct,
