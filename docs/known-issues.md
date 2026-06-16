@@ -497,8 +497,9 @@ existing per-dept dropdown):
 - **My Department "Yesterday's QCD"**: tile row below the agent
   table showing the dept's most-recent QCD day. Powered by
   `Data.gs::computeDeptQcdSnapshot_` and returned as the new
-  `qcd` field on `getDepartmentSummary` (cache prefix bumped to
-  `summary:v6` when this shipped).
+  `qcd` field on `getDepartmentSummary` (the `summary:` cache prefix
+  was bumped when this shipped; see CLAUDE.md INV-30 for the current
+  version).
 
 **Onboarding a new dept.** When a new dept starts producing rows
 in `QCD Historical Data`, the dashboard ignores them until a
