@@ -4651,7 +4651,18 @@
                       + (controlLabel || 'the compare control') + ' to a preset).' };
       }
       if (customFrom > customTo) return { error: 'Prior start must be on or before prior end.' };
-      return { from: customFrom, to: customTo };
+      const custom = { from: customFrom, to: customTo };
+      // F3: warn (don't block) when the custom prior window overlaps the
+      // current range. Server-side attribution is "current wins" -- rows in
+      // the overlap count toward the current period only, so the prior
+      // totals (and the deltas computed from them) understate. The report
+      // still renders; this just makes the caveat visible.
+      if (from && to && customFrom <= to && customTo >= from) {
+        custom.warn = 'Note: this prior window overlaps the current range ('
+          + from + ' – ' + to + '). Overlapping days count toward the current '
+          + 'period only, so the prior period may read low.';
+      }
+      return custom;
     }
     // Parse using noon-local-time to avoid DST edges.
     const parts1 = from.split('-'), parts2 = to.split('-');
@@ -4705,7 +4716,8 @@
       const prior = irResolvePriorRange_(from, to);
       if (!prior) { hint.textContent = ''; return; }
       if (prior.error) { hint.textContent = prior.error; return; }
-      hint.textContent = 'Comparing against ' + prior.from + ' to ' + prior.to + '.';
+      hint.textContent = 'Comparing against ' + prior.from + ' to ' + prior.to + '.'
+        + (prior.warn ? ' ' + prior.warn : '');
     };
     sel.addEventListener('change', function () { refresh(); irSavePrefs_(); });
     ['ir-from', 'ir-to', 'ir-prior-from', 'ir-prior-to'].forEach(function (id) {
@@ -5952,9 +5964,16 @@
         el.textContent = 'Prior start must be on or before prior end.';
         return;
       }
+      // F3: warn (don't block) when the custom prior overlaps the current
+      // range -- server attribution is "current wins", so overlapping days
+      // count toward the current period only and the prior reads low.
+      const overlapNote = (pf <= to && pt >= from)
+        ? ' Note: this overlaps the current range, so overlapping days count'
+          + ' toward the current period only and the prior may read low.'
+        : '';
       el.textContent = 'Will compare against your custom prior range ('
                      + fmt(new Date(pf + 'T12:00:00')) + ' – '
-                     + fmt(new Date(pt + 'T12:00:00')) + ').';
+                     + fmt(new Date(pt + 'T12:00:00')) + ').' + overlapNote;
       return;
     }
     const start = new Date(from + 'T12:00:00');
@@ -9899,7 +9918,16 @@
       const pt = $('ins-prior-to')   ? $('ins-prior-to').value   : '';
       if (!pf || !pt) return { error: 'Pick prior start and end dates (or switch Compare against to a preset).' };
       if (pf > pt)    return { error: 'Prior start must be on or before prior end.' };
-      return { from: pf, to: pt };
+      const out = { from: pf, to: pt };
+      // F3: warn (don't block) when the custom prior overlaps the current
+      // range -- server attribution is "current wins", so overlapping days
+      // count toward the current period only and the prior reads low.
+      if (from && to && pf <= to && pt >= from) {
+        out.warn = 'Note: this prior window overlaps the current range ('
+          + from + ' – ' + to + '). Overlapping days count toward the current '
+          + 'period only, so the prior period may read low.';
+      }
+      return out;
     }
     if (mode === 'yoy') {
       const p1 = from.split('-'), p2 = to.split('-');
@@ -9944,7 +9972,8 @@
         lengthNote = ' (the ' + (priDays > curDays ? 'prior window' : 'selected range')
                    + ' is ' + ratio + 'x longer — volume totals won\'t be directly comparable)';
       }
-      hint.textContent = 'Comparing against ' + prior.from + ' to ' + prior.to + '.' + lengthNote;
+      hint.textContent = 'Comparing against ' + prior.from + ' to ' + prior.to + '.' + lengthNote
+        + (prior.warn ? ' ' + prior.warn : '');
     };
     sel.addEventListener('change', function () { refresh(); insSavePrefs_(); });
     ['ins-from', 'ins-to', 'ins-prior-from', 'ins-prior-to'].forEach(function (id) {

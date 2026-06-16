@@ -746,7 +746,9 @@ function notifyDigestFailure_(cadence, err) {
     MailApp.sendEmail({
       to:      to,
       subject: '[Dashboard] ' + cadence + ' digest run failed',
-      body:    (cadence === 'daily' ? 'runDailyDigests_' : 'runWeeklyDigests_')
+      body:    (cadence === 'daily'   ? 'runDailyDigests_'
+                : cadence === 'monthly' ? 'runMonthlyDigests_'
+                : 'runWeeklyDigests_')
                + ' threw: ' + ((err && err.message) ? err.message : String(err))
                + '\n\nTime: ' + new Date()
                + '\n\nStack:\n' + ((err && err.stack) ? err.stack : '(no stack)'),

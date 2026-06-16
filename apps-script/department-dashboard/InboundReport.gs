@@ -62,6 +62,10 @@
 // kpis.abandonedIvr; meta gains department / unmapped / companyView.
 const INBOUND_CACHE_KEY_PREFIX = 'inbound:v3';
 const INBOUND_TOP_N = 50;
+// Cap the requested window so an over-wide range can't trigger an
+// unbounded Neon aggregation (mirrors CallerLookup's range guard). A
+// year is generous for any operational inbound review.
+const INBOUND_MAX_RANGE_DAYS = 366;
 
 /**
  * Shared request gate: resolves the caller, validates from/to, and
@@ -85,6 +89,11 @@ function inboundResolveRequest_(req) {
   const to   = String((req && req.to)   || '').trim();
   if (!isIsoDate_(from) || !isIsoDate_(to)) throw new Error('from/to must be YYYY-MM-DD.');
   if (from > to) throw new Error('from must be on or before to.');
+  const rangeDays = Math.round(
+    (new Date(to + 'T00:00:00') - new Date(from + 'T00:00:00')) / 86400000) + 1;
+  if (rangeDays > INBOUND_MAX_RANGE_DAYS) {
+    throw new Error('Range is capped at ' + INBOUND_MAX_RANGE_DAYS + ' days.');
+  }
 
   let dept = String((req && req.department) || '').trim();
   if (user.role === 'manager') {

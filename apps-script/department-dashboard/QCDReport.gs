@@ -25,7 +25,7 @@
  * only request their own dept; admins can pick any dept from the
  * dropdown.
  *
- * Cache: 30 min per (dept, from, to) tuple under `qcd:v6:` prefix.
+ * Cache: 30 min per (dept, from, to) tuple under `qcd:v7:` prefix.
  * No agent-list dimension since QCD is queue/dept-scoped, not
  * agent-scoped.
  *

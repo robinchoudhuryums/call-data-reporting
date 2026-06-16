@@ -430,7 +430,7 @@ mirrors it; if the two ever diverge, INV-30 wins.
 
 | Source file | Cache prefix | Current version |
 |---|---|---|
-| `Data.gs` (main table) | `summary:vN:` | `v8` |
+| `Data.gs` (main table) | `summary:vN:` | `v9` |
 | `Data.gs` (latest-date snap for default From/To) | `latestDate:vN:` | `v1` |
 | `Data.gs` (multi-source latest dates for freshness pill) | `latestDates:vN:` | `v1` |
 | `IndividualReport.gs` | `individual:vN:` | `v8` |
@@ -438,10 +438,10 @@ mirrors it; if the two ever diverge, INV-30 wins.
 | `PerformanceReport.gs` | `performance:vN:` | `v4` |
 | `CompareRangesReport.gs` | `compareRanges:vN:` | `v4` |
 | `MissedCallsReport.gs` | `missed:vN:` | `v10` |
-| `CompanyOverview.gs` | `companyOverview:vN` | `v14` |
-| `QCDReport.gs` | `qcd:vN:` | `v6` |
+| `CompanyOverview.gs` | `companyOverview:vN` | `v15` |
+| `QCDReport.gs` | `qcd:vN:` | `v7` |
 | `InboundReport.gs` | `inbound:vN:` | `v3` |
-| `InsightsReport.gs` | `insights:vN:` | `v3` |
+| `InsightsReport.gs` | `insights:vN:` | `v6` |
 
 `Alerts.gs` holds no cached compute — preview / send always re-reads
 the source sheet for the chosen date.
