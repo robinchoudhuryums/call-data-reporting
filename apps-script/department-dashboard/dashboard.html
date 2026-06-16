@@ -1677,6 +1677,9 @@
         <div class="al-section">
           <div class="al-section-title">Pipeline Health</div>
           <p class="al-hint">Last 20 entries from the Pipeline Health sheet (most recent first). Failures are highlighted; a long quiet stretch on `autoImport` or `buildDQE` is a sign the daily ingest or rebuild hasn't run.</p>
+          <!-- F2 divergence detector: sheet-vs-Neon DQE max-date comparison.
+               Hidden unless Neon is configured on this project. -->
+          <div id="al-neon-mirror" class="al-neon-mirror" style="display:none;"></div>
           <table class="al-log-table">
             <thead><tr>
               <th>When</th>

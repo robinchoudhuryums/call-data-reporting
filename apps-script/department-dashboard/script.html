@@ -8634,10 +8634,49 @@
     alRenderConfigTable_(data.config || [], data.drift || {});
     alRenderTriggerStatus_(data.trigger || { installed: false });
     alRenderLog_(data.log || []);
+    alRenderNeonMirror_(data.neonMirror || null);
     alRenderPipelineHealth_(data.pipelineHealth || []);
     alClearResults_();
     alLastPreview = null;
     $('al-send-btn').disabled = true;
+  }
+
+  // F2 divergence detector: render the sheet-vs-Neon DQE max-date status.
+  // Hidden entirely when Neon isn't configured on this project (status
+  // 'unconfigured') so non-Neon installs see nothing. 'behind' is the
+  // actionable case -- the mirror is stale by gapDays.
+  function alRenderNeonMirror_(m) {
+    const el = $('al-neon-mirror');
+    if (!el) return;
+    if (!m || !m.configured || m.status === 'unconfigured') {
+      el.style.display = 'none';
+      el.textContent = '';
+      return;
+    }
+    el.style.display = '';
+    let cls, msg;
+    if (m.status === 'behind') {
+      const days = (m.gapDays == null) ? '?' : m.gapDays;
+      cls = 'al-neon-mirror-warn';
+      msg = '⚠ Neon mirror is behind the sheet by ' + days + ' day'
+          + (days === 1 ? '' : 's') + ' (sheet through '
+          + escapeHtml(m.sheetMax || '?') + ', Neon through '
+          + escapeHtml(m.neonMax || '?') + '). Re-import the missing date(s) '
+          + '— the dup-guard re-mirror heals it — or run '
+          + 'backfillDQEHistoryUpsert(). Only affects reads when '
+          + 'DQE_READ_SOURCE=neon.';
+    } else if (m.status === 'error') {
+      cls = 'al-neon-mirror-warn';
+      msg = '⚠ Neon mirror health: configured, but dqe_history MAX(call_date) '
+          + 'could not be read (Neon unreachable or empty). Check the NEON_* '
+          + 'Script Properties.';
+    } else {
+      cls = 'al-neon-mirror-ok';
+      msg = '✓ Neon mirror current with the sheet (both through '
+          + escapeHtml(m.neonMax || m.sheetMax || '?') + ').';
+    }
+    el.className = 'al-neon-mirror ' + cls;
+    el.textContent = msg;
   }
 
   function alRenderPipelineHealth_(events) {

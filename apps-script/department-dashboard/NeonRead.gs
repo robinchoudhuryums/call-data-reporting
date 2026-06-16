@@ -422,4 +422,87 @@ function clearNeonReadFailure_() {
   } catch (e) { /* best-effort */ }
 }
 
+/**
+ * F2 divergence detector. The DQE pipeline writes the sheet first and mirrors
+ * to dqe_history best-effort; a transient Neon outage during a build can leave
+ * a date in the sheet but not in Neon. The dup-guard re-mirror (cdr-import
+ * buildDQEHistoricalData) self-heals it on the next import of that date, but
+ * until then a `DQE_READ_SOURCE=neon` deployment would serve data missing that
+ * date with no surfaced signal. This compares the SHEET's MAX(call_date)
+ * against dqe_history's MAX(call_date) so an admin can spot the divergence in
+ * the Alerts modal.
+ *
+ * Returns { configured, status, sheetMax, neonMax, gapDays }:
+ *   'unconfigured' - NEON_HOST not set (Neon mirror not used here) -> hidden
+ *   'error'        - Neon configured but the MAX query failed/returned nothing
+ *   'ok'           - neonMax >= sheetMax (mirror current, or ahead of a pruned
+ *                    sheet) -> gapDays 0
+ *   'behind'       - neonMax < sheetMax: the mirror is stale by gapDays.
+ *                    Re-import the missing date(s) (the dup-guard re-mirror
+ *                    heals it) or run backfillDQEHistoryUpsert().
+ *
+ * NOTE: this is a MAX-date proxy (the audit's lightweight check) -- it reliably
+ * catches the common "most-recent date(s) un-mirrored" outage but not an
+ * interior gap where both ends mirrored. Best-effort: never throws.
+ */
+function computeNeonMirrorHealth_() {
+  var out = { configured: false, status: 'unconfigured',
+              sheetMax: null, neonMax: null, gapDays: null };
+  try {
+    if (!PropertiesService.getScriptProperties().getProperty('NEON_HOST')) return out;
+    out.configured = true;
+    // Source-INDEPENDENT sheet max (NOT getLatestDataDate, which reads Neon
+    // when DQE_READ_SOURCE=neon -- that would compare Neon against itself).
+    out.sheetMax = dqeSheetMaxDate_();
+    out.neonMax  = neonGetMaxDqeDate_();
+    if (!out.neonMax) { out.status = 'error'; return out; }
+    if (!out.sheetMax) { out.status = 'ok'; return out; }   // nothing to compare
+    if (out.neonMax >= out.sheetMax) { out.status = 'ok'; out.gapDays = 0; return out; }
+    out.status = 'behind';
+    out.gapDays = neonMirrorGapDays_(out.neonMax, out.sheetMax);
+    return out;
+  } catch (e) {
+    Logger.log('computeNeonMirrorHealth_ failed: ' + (e && e.message ? e.message : e));
+    out.status = 'error';
+    return out;
+  }
+}
+
+/**
+ * Source-independent MAX(call_date) from the DQE Historical Data SHEET, as a
+ * 'yyyy-MM-dd' string (or null). Scans only the date column. Used by the F2
+ * divergence detector so it always reflects the sheet regardless of
+ * DQE_READ_SOURCE. Best-effort: null on any error.
+ */
+function dqeSheetMaxDate_() {
+  try {
+    var ss = openSpreadsheet_();
+    var sheet = ss.getSheetByName(SHEETS.HISTORICAL);
+    if (!sheet) return null;
+    var lastRow = sheet.getLastRow();
+    if (lastRow < 2) return null;
+    var ssTZ = ss.getSpreadsheetTimeZone();
+    var values = sheet.getRange(2, HISTORICAL_COLS.DATE, lastRow - 1, 1).getValues();
+    var max = '';
+    for (var i = 0; i < values.length; i++) {
+      var iso = rowDateIso_(values[i][0], ssTZ);
+      if (iso && iso > max) max = iso;
+    }
+    return max || null;
+  } catch (e) {
+    Logger.log('dqeSheetMaxDate_ failed: ' + (e && e.message ? e.message : e));
+    return null;
+  }
+}
+
+/** Calendar-day gap between two 'yyyy-MM-dd' strings (sheetMax - neonMax). */
+function neonMirrorGapDays_(neonMax, sheetMax) {
+  try {
+    var a = new Date(neonMax  + 'T00:00:00Z').getTime();
+    var b = new Date(sheetMax + 'T00:00:00Z').getTime();
+    if (isNaN(a) || isNaN(b)) return null;
+    return Math.round((b - a) / 86400000);
+  } catch (e) { return null; }
+}
+
 

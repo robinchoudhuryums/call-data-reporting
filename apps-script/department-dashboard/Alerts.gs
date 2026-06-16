@@ -73,12 +73,24 @@ function getAlertsInit() {
   } catch (e) {
     Logger.log('computeThresholdDrift_ failed: %s', e);
   }
+  // F2 divergence detector: sheet-vs-Neon DQE max-date comparison. Best-effort
+  // -- null on any failure (computeNeonMirrorHealth_ already swallows its own
+  // errors and returns a status object; the try/catch here is belt-and-
+  // suspenders so a Neon hiccup never breaks the Alerts modal). The client
+  // hides the line when Neon isn't configured on this project.
+  let neonMirror = null;
+  try {
+    neonMirror = computeNeonMirrorHealth_();
+  } catch (e) {
+    Logger.log('computeNeonMirrorHealth_ failed: %s', e);
+  }
   return {
     config: config,
     drift: drift,
     log: readAlertLog_(20),
     trigger: getAlertTriggerStatus_(),
     pipelineHealth: readPipelineHealth_(20),
+    neonMirror: neonMirror,
     spreadsheetUrl: 'https://docs.google.com/spreadsheets/d/' + getSpreadsheetId_() + '/edit',
     defaultDate: yesterdayIso_(),
   };
