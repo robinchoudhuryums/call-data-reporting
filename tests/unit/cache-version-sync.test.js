@@ -33,7 +33,7 @@ function read(rel, base) { return fs.readFileSync(path.join(base || ROOT, rel), 
 const SPECS = [
   ['summary',           'Data.gs',                /'summary:v(\d+):'/],
   ['latestDate',        'Data.gs',                /'latestDate:v(\d+):'/],
-  ['latestDates',       'Data.gs',                /'latestDates:v(\d+)'/],
+  ['latestDates',       'Data.gs',                /'latestDates:v(\d+):'/],
   ['individual',        'IndividualReport.gs',    /'individual:v(\d+)'/],
   ['individual_active', 'Util.gs',                /'individual_active:v(\d+):'/],
   ['performance',       'PerformanceReport.gs',   /'performance:v(\d+)'/],

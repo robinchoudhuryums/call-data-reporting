@@ -9713,11 +9713,19 @@
     if (saveBtn) saveBtn.disabled = true;
     dcSetStatus_('loading', 'Saving config for ' + dcEditDept + '…');
     google.script.run
-      .withSuccessHandler(function () {
+      .withSuccessHandler(function (res) {
         if (saveBtn) saveBtn.disabled = false;
-        dcSetStatus_('success', 'Saved ' + dcEditDept
-          + '. Changes take effect on the next request (Overview refreshes immediately; report caches within ~30 min).');
-        showToast('Saved config for ' + dcEditDept, 'success');
+        const warns = (res && res.warnings) || [];
+        if (warns.length) {
+          dcSetStatus_('success', 'Saved ' + dcEditDept + '. ⚠ ' + warns.join(' ')
+            + ' Double-mapped queues are tolerated but usually a config mistake — '
+            + 'remove the queue from one dept if unintended.');
+          showToast('Saved ' + dcEditDept + ' — queue mapped to 2+ depts', 'success');
+        } else {
+          dcSetStatus_('success', 'Saved ' + dcEditDept
+            + '. Changes take effect on the next request (Overview refreshes immediately; report caches within ~30 min).');
+          showToast('Saved config for ' + dcEditDept, 'success');
+        }
         dcLoadInit_();
       })
       .withFailureHandler(function (err) {

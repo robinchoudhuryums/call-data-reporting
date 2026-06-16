@@ -102,6 +102,42 @@ function generateMonthList_(start, end) {
   return out;
 }
 
+/**
+ * INV-29 monthly-trend window start. The single source of truth for the
+ * 12-month trend axis, shared by the Individual, Performance, Insights,
+ * and QCD reports so their trends stay aligned (previously this exact
+ * block was hand-copied into all four -- a silent-drift trap, since
+ * INV-29 *requires* IR and PR to align). Given the selected range's
+ * start/end Dates, returns the trend-window START as a Date:
+ *   - the range's own start when the range is > 366 days OR a full
+ *     calendar year (Jan 1 - Dec 31 of one year) -- the range IS the
+ *     window;
+ *   - otherwise first-of-month(end - 12 months).
+ * Callers derive their own ISO strings and call
+ * generateMonthList_(start, end) for the bucket keys.
+ *
+ * Caller dates are noon-anchored; Math.round (not ceil) keeps the
+ * +-1h DST wobble from inflating fall-back ranges by a day at the
+ * 366-day boundary.
+ */
+function computeTrendStartDate_(startDate, endDate) {
+  const msPerDay = 86400000;
+  const diffDays = Math.round(Math.abs(endDate - startDate) / msPerDay) + 1;
+  const isFullYear =
+       startDate.getMonth() === 0 && startDate.getDate() === 1
+    && endDate.getMonth()   === 11 && endDate.getDate()   === 31
+    && startDate.getFullYear() === endDate.getFullYear();
+  let trendStartDate;
+  if (diffDays > 366 || isFullYear) {
+    trendStartDate = new Date(startDate);
+  } else {
+    trendStartDate = new Date(endDate);
+    trendStartDate.setMonth(trendStartDate.getMonth() - 12);
+    trendStartDate.setDate(1);
+  }
+  return trendStartDate;
+}
+
 // -- Numeric (was Alerts.gs) -----------------------------------------------
 
 function round1_(n) { return Math.round((Number(n) || 0) * 10) / 10; }

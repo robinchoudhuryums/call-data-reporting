@@ -519,6 +519,7 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
     if (!isHistoricalBackfill && historyReport.counts) {
       const c = historyReport.counts;
       const neonTag = c.neon === 'ok' ? 'Neon ✓'
+                    : c.neon === 'queued' ? 'Neon ⏳ queued'
                     : c.neon === 'unreachable' ? 'Neon ⚠ unreachable'
                     : c.neon === 'error' ? 'Neon ⚠ error'
                     : 'Neon ?';
@@ -1350,15 +1351,26 @@ function processIntegratedHistory(targetSS, outputSheet, results, dateObj, skipC
 
   let cdrCount = 0, qpathCount = 0, qcdCount = 0, csrCount = 0, dqeCount = 0;
 
+  // Neon mirror mode (NeonMirror.js). 'inline' (default) => mirror to Neon
+  // inside this function exactly as before. 'deferred' => skip the inline
+  // mirrors, write only the sheets, and enqueue this date for the
+  // off-synchronous-path runNeonMirror_ trigger to mirror shortly after.
+  const neonMirrorMode = (typeof getNeonMirrorMode_ === 'function') ? getNeonMirrorMode_() : 'inline';
+  const neonDeferred   = (neonMirrorMode === 'deferred');
+
   // Neon mirror status for the daily toast (derived from the CDR + QCD +
   // Inbound writer results — Neon reachability is per-run binary against
   // one instance, so any writer's skip/error reflects the whole run). 'ok'
   // until a writer reports .skipped (-> 'unreachable') or a Neon catch
-  // block fires (-> 'error', which is sticky and not downgraded).
+  // block fires (-> 'error', which is sticky and not downgraded). In
+  // deferred mode the inline writers don't run, so the status stays
+  // 'queued' (the actual mirror outcome surfaces later via the
+  // neonMirror:* Pipeline Health rows from runNeonMirror_).
   // DQE-specific Neon failures surface separately via notifyDqeBuildFailure_
   // + the Pipeline Health ':DQE failure' row, so they're not folded in here.
-  let neonStatus = 'ok';
+  let neonStatus = neonDeferred ? 'queued' : 'ok';
   const setNeonStatus_ = function (s) {
+    if (neonDeferred) return;                    // inline writers don't run
     if (neonStatus === 'error') return;          // sticky
     if (s === 'error') { neonStatus = 'error'; return; }
     if (s === 'unreachable' && neonStatus === 'ok') neonStatus = 'unreachable';
@@ -1459,6 +1471,9 @@ if (!skipCDR && obcHD) {
       });
     } catch (logErr) { /* best-effort */ }
 
+    if (neonDeferred) {
+      console.log('processIntegratedHistory: CDR Neon mirror deferred (NEON_MIRROR_MODE=deferred).');
+    } else {
     try {
       var neonDateStr = Utilities.formatDate(dateObj, Session.getScriptTimeZone(), 'yyyy-MM-dd');
       var neonCdrRows = raw.map(function(r) {
@@ -1487,6 +1502,7 @@ if (!skipCDR && obcHD) {
     } catch (neonErr) {
       setNeonStatus_('error');
       notifyNeonWriteFailure('processIntegratedHistory:CDR (' + dateObj.toDateString() + ')', neonErr.message);
+    }
     }
   }
 }
@@ -1558,6 +1574,9 @@ if (!skipCDR && obcHD) {
       } catch (logErr) { /* best-effort */ }
 
             // Phase 3: mirror to Neon. Failure is logged + emailed; sheet write stands.
+      if (neonDeferred) {
+        console.log('processIntegratedHistory: QCD Neon mirror deferred (NEON_MIRROR_MODE=deferred).');
+      } else {
       try {
         const neonQcdRows = qcdBatch.map(function(r) {
           return {
@@ -1585,6 +1604,7 @@ if (!skipCDR && obcHD) {
       } catch (neonErr) {
         setNeonStatus_('error');
         notifyNeonWriteFailure('processIntegratedHistory (' + dateObj.toDateString() + ')', neonErr.message);
+      }
       }
     }
   }
@@ -1630,7 +1650,9 @@ if (!skipCDR && obcHD) {
     try {
       SpreadsheetApp.flush();
       const dqeStartRow = dqeHD.getLastRow();
-      buildDQEHistoricalData(rawDataSheet, dqeHD);
+      // In deferred mode skip the inline per-date DQE->Neon mirror; the
+      // queued runNeonMirror_ re-mirrors from DQE Historical Data instead.
+      buildDQEHistoricalData(rawDataSheet, dqeHD, neonDeferred ? { skipNeon: true } : undefined);
       const dqeEndRow = dqeHD.getLastRow();
       dqeCount = Math.max(0, dqeEndRow - dqeStartRow);
       if (dqeCount > 0) {
@@ -1682,6 +1704,9 @@ if (!skipCDR && obcHD) {
   // inbound_calls has NO sheet primary to fall back on, so a silently
   // dead feed would otherwise only surface when an admin opens the
   // Inbound report.
+  if (neonDeferred) {
+    console.log('processIntegratedHistory: inbound Neon mirror deferred (NEON_MIRROR_MODE=deferred).');
+  } else {
   var inboundStart = Date.now();
   try {
     if (rawDataSheet && rawDataSheet.getLastRow() > 1) {
@@ -1747,6 +1772,13 @@ if (!skipCDR && obcHD) {
     try {
       notifyNeonWriteFailure('processIntegratedHistory:Inbound (' + dateObj.toDateString() + ')', inboundMsg);
     } catch (notifyErr) { /* best-effort */ }
+  }
+  }
+
+  // Deferred mode: enqueue this date for the off-path runNeonMirror_ trigger
+  // (best-effort). Only when at least one sheet block produced rows.
+  if (neonDeferred && (cdrCount || qpathCount || qcdCount || csrCount || dqeCount)) {
+    if (typeof enqueueNeonMirror_ === 'function') enqueueNeonMirror_(targetSS, dateObj);
   }
 
   return {

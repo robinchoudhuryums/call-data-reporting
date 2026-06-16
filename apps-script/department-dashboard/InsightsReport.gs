@@ -220,22 +220,11 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
   const lengthMismatch = (Math.min(currentDays, priorDays) > 0)
     && (Math.max(currentDays, priorDays) / Math.min(currentDays, priorDays) >= 1.2);
 
-  // --- Trend window (INV-29; mirrors the Performance Report) ---------
+  // --- Trend window (INV-29; shared helper in Util.gs keeps IR/PR/
+  // Insights/QCD aligned) -------------------------------------------
   // 12-month monthly buckets ending on `to`, unless the range itself is
   // > 366 days or a full calendar year (then the range IS the window).
-  const diffDays = Math.round(Math.abs(endDate - startDate) / msPerDay) + 1;
-  const isFullYear =
-       startDate.getMonth() === 0 && startDate.getDate() === 1
-    && endDate.getMonth()   === 11 && endDate.getDate()   === 31
-    && startDate.getFullYear() === endDate.getFullYear();
-  let trendStartDate;
-  if (diffDays > 366 || isFullYear) {
-    trendStartDate = new Date(startDate);
-  } else {
-    trendStartDate = new Date(endDate);
-    trendStartDate.setMonth(trendStartDate.getMonth() - 12);
-    trendStartDate.setDate(1);
-  }
+  const trendStartDate = computeTrendStartDate_(startDate, endDate);
   const trendFrom = isoOf(trendStartDate);
   const trendTo   = to;
   const monthKeys = generateMonthList_(trendStartDate, endDate);

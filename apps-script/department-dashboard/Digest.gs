@@ -776,12 +776,14 @@ function notifyDigestFailure_(cadence, err) {
   try {
     const to = getAdminEmails_().join(',');
     if (!to) return;
+    const fnName = cadence === 'daily'   ? 'runDailyDigests_'
+                 : cadence === 'weekly'  ? 'runWeeklyDigests_'
+                 : cadence === 'monthly' ? 'runMonthlyDigests_'
+                 : '(' + cadence + ' digest run)';
     MailApp.sendEmail({
       to:      to,
       subject: '[Dashboard] ' + cadence + ' digest run failed',
-      body:    (cadence === 'daily'   ? 'runDailyDigests_'
-                : cadence === 'monthly' ? 'runMonthlyDigests_'
-                : 'runWeeklyDigests_')
+      body:    fnName
                + ' threw: ' + ((err && err.message) ? err.message : String(err))
                + '\n\nTime: ' + new Date()
                + '\n\nStack:\n' + ((err && err.stack) ? err.stack : '(no stack)'),

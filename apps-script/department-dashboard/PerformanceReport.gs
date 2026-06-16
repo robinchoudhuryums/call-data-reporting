@@ -193,7 +193,6 @@ function computePerformanceReport_(dept, from, to, selectedAgents, roster,
   // When the request supplies a custom prior range, use it instead --
   // lets managers compare against same-month-last-year or any other
   // arbitrary baseline.
-  const msPerDay = 86400000;
   const isoOf = function (d) { return Utilities.formatDate(d, TZ, 'yyyy-MM-dd'); };
   let priorStartDate, priorEndDate, priorFrom, priorTo, priorIsCustom;
   if (customPriorFrom && customPriorTo) {
@@ -211,21 +210,9 @@ function computePerformanceReport_(dept, from, to, selectedAgents, roster,
     priorIsCustom  = false;
   }
 
-  // Trend window resolution -- mirror Individual Report's logic.
-  // Math.round, not ceil: noon-anchored dates wobble +-1h across DST.
-  const diffDays = Math.round(Math.abs(endDate - startDate) / msPerDay) + 1;
-  const isFullYear =
-       startDate.getMonth() === 0 && startDate.getDate() === 1
-    && endDate.getMonth()   === 11 && endDate.getDate()   === 31
-    && startDate.getFullYear() === endDate.getFullYear();
-  let trendStartDate;
-  if (diffDays > 366 || isFullYear) {
-    trendStartDate = new Date(startDate);
-  } else {
-    trendStartDate = new Date(endDate);
-    trendStartDate.setMonth(trendStartDate.getMonth() - 12);
-    trendStartDate.setDate(1);
-  }
+  // Trend window resolution (INV-29; shared helper in Util.gs keeps the
+  // IR/PR/Insights/QCD 12-month trend axes aligned).
+  const trendStartDate = computeTrendStartDate_(startDate, endDate);
   const trendFrom = isoOf(trendStartDate);
   const trendTo   = to;
   const monthKeys = generateMonthList_(trendStartDate, endDate);

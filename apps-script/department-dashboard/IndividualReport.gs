@@ -226,24 +226,9 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
   const startDate = parseIso_(from);
   const endDate   = parseIso_(to);
 
-  // Trend window resolution.
-  const msPerDay = 86400000;
-  // Math.round, not ceil: noon-anchored dates wobble +-1h across DST
-  // (ceil inflated fall-back ranges by a day at the 366-day boundary).
-  const diffDays = Math.round(Math.abs(endDate - startDate) / msPerDay) + 1;
-  const isFullYear =
-       startDate.getMonth() === 0 && startDate.getDate() === 1
-    && endDate.getMonth()   === 11 && endDate.getDate()   === 31
-    && startDate.getFullYear() === endDate.getFullYear();
-
-  let trendStartDate;
-  if (diffDays > 366 || isFullYear) {
-    trendStartDate = new Date(startDate);
-  } else {
-    trendStartDate = new Date(endDate);
-    trendStartDate.setMonth(trendStartDate.getMonth() - 12);
-    trendStartDate.setDate(1);
-  }
+  // Trend window resolution (INV-29; shared helper in Util.gs keeps the
+  // IR/PR/Insights/QCD 12-month trend axes aligned).
+  const trendStartDate = computeTrendStartDate_(startDate, endDate);
   const trendStartIso = Utilities.formatDate(trendStartDate, TZ, 'yyyy-MM-dd');
   const trendEndIso   = to;
   const masterMonthKeys = generateMonthList_(trendStartDate, endDate);

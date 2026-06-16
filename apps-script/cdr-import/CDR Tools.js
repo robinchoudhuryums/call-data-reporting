@@ -50,9 +50,18 @@ function onOpen() {
 
     // Attach the submenu right here
     .addSubMenu(filterSubMenu)
-    
+
+    .addSeparator()
+
+    // Deferred Neon mirror (NeonMirror.js). Install the trigger once, then set
+    // Script Property NEON_MIRROR_MODE=deferred to move the mirror off the
+    // synchronous import path. "Run Neon Mirror Now" drains the queue on demand.
+    .addItem("Install Neon Mirror Trigger",   "installNeonMirrorTrigger")
+    .addItem("Uninstall Neon Mirror Trigger", "uninstallNeonMirrorTrigger")
+    .addItem("Run Neon Mirror Now",           "runNeonMirrorNow")
+
     // .addSeparator()
     // .addItem("Import Bulk CSVs from Drive", "importBulkCSVsFromDrive") // pending Drive permissions
-    
+
     .addToUi();
 }
