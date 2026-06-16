@@ -514,18 +514,22 @@ function dcBustCaches_() {
 /**
  * Walks the merged parent map (with the proposed dept->parent edge
  * added) from `parent` upward and returns true if it reaches `dept`
- * -- i.e. the edit would create a cycle. Capped at 50 hops as a
- * runaway guard.
+ * -- i.e. the edit would create a cycle. Uses a visited-set so it
+ * terminates even if the map already contains a cycle that does NOT
+ * close back on `dept` (the old fixed 50-hop cap would spin to the cap
+ * and wrongly return false in that case); any loop encountered is
+ * treated as cyclic and rejected.
  */
 function dcWouldCreateParentCycle_(dept, parent) {
   const map = getOverviewParentMap_();
   map[dept] = parent;
   let cur = parent;
-  let hops = 0;
-  while (cur && hops < 50) {
-    if (cur === dept) return true;
+  const seen = {};
+  while (cur) {
+    if (cur === dept) return true;   // proposed edge closes a cycle on dept
+    if (seen[cur]) return true;      // hit a pre-existing loop -> reject as cyclic
+    seen[cur] = true;
     cur = map[cur];
-    hops++;
   }
   return false;
 }

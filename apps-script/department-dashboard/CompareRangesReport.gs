@@ -54,12 +54,7 @@ function getCompareRangesInit(req) {
 
   const dept = String((req && req.department) || '').trim();
   if (!dept) throw new Error('Department is required.');
-  if (user.role === 'manager' && dept !== user.department) {
-    throw new Error('Not authorized for this department.');
-  }
-  if (user.role === 'admin' && getAllDepartments_().indexOf(dept) === -1) {
-    throw new Error('Unknown department: ' + dept);
-  }
+  assertDeptAccess_(user, dept);
 
   const roster = getRosterForDepartment_(dept);
   const tz = TZ;
@@ -122,12 +117,7 @@ function getCompareRanges(req) {
 
   const dept = String((req && req.department) || '').trim();
   if (!dept) throw new Error('Department is required.');
-  if (user.role === 'manager' && dept !== user.department) {
-    throw new Error('Not authorized for this department.');
-  }
-  if (user.role === 'admin' && getAllDepartments_().indexOf(dept) === -1) {
-    throw new Error('Unknown department: ' + dept);
-  }
+  assertDeptAccess_(user, dept);
 
   const p1From = String((req && req.p1From) || '').trim();
   const p1To   = String((req && req.p1To)   || '').trim();
@@ -563,6 +553,12 @@ function emptyCompareRanges_(dept, selectedAgents, roster,
     raw: { rung: 0, missed: 0, answered: 0, pct: 0, ttt: 0, att: 0 },
   };
   const emptyDelta = { delta: 0, deltaPct: 0, type: 'volume' };
+  // F12: the populated shape builds chart labels from the FILTERED agentData
+  // (roster-matched only); the empty shape must use the same filtered list so
+  // crafted off-dept names can't leak into chart labels in the no-data case.
+  const visibleAgents = selectedAgents.filter(function (a) {
+    return !!emptyRosterSet[a];
+  });
   return {
     meta: {
       department: dept,
@@ -584,9 +580,7 @@ function emptyCompareRanges_(dept, selectedAgents, roster,
       ttt:      { val: 0, prev: 0, formatted: '0:00:00', prevFormatted: '0:00:00', delta: 0, deltaPct: 0, type: 'volume' },
       att:      { val: 0, prev: 0, formatted: '0:00:00', prevFormatted: '0:00:00', delta: 0, deltaPct: 0, type: 'volume' },
     },
-    agentData: selectedAgents.filter(function (a) {
-      return !!emptyRosterSet[a];
-    }).map(function (a) {
+    agentData: visibleAgents.map(function (a) {
       return {
         name: a,
         matchedViaRoster: true,
@@ -599,9 +593,9 @@ function emptyCompareRanges_(dept, selectedAgents, roster,
       };
     }),
     chartData: {
-      answered: { labels: selectedAgents.slice(), p1: selectedAgents.map(function(){return 0;}), p2: selectedAgents.map(function(){return 0;}) },
-      rung:     { labels: selectedAgents.slice(), p1: selectedAgents.map(function(){return 0;}), p2: selectedAgents.map(function(){return 0;}) },
-      pct:      { labels: selectedAgents.slice(), p1: selectedAgents.map(function(){return 0;}), p2: selectedAgents.map(function(){return 0;}) },
+      answered: { labels: visibleAgents.slice(), p1: visibleAgents.map(function(){return 0;}), p2: visibleAgents.map(function(){return 0;}) },
+      rung:     { labels: visibleAgents.slice(), p1: visibleAgents.map(function(){return 0;}), p2: visibleAgents.map(function(){return 0;}) },
+      pct:      { labels: visibleAgents.slice(), p1: visibleAgents.map(function(){return 0;}), p2: visibleAgents.map(function(){return 0;}) },
     },
     teamInsights: [],
   };

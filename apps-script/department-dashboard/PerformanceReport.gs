@@ -80,12 +80,7 @@ function getPerformanceReport(req) {
 
   const dept = String((req && req.department) || '').trim();
   if (!dept) throw new Error('Department is required.');
-  if (user.role === 'manager' && dept !== user.department) {
-    throw new Error('Not authorized for this department.');
-  }
-  if (user.role === 'admin' && getAllDepartments_().indexOf(dept) === -1) {
-    throw new Error('Unknown department: ' + dept);
-  }
+  assertDeptAccess_(user, dept);
 
   const from = String((req && req.from) || '').trim();
   const to   = String((req && req.to)   || '').trim();

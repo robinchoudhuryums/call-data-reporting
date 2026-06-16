@@ -576,11 +576,19 @@ function cdrParsePhoneField_(val, secret) {
   var raw = String(val).trim().replace(/^'/, '');
   if (!raw) return [];
   var results = [];
-  var entryRegex = /(\+[\d]+)\s+([\d:]+)(?:\s+\((\d+)\))?/g;
+  // The leading "+" is OPTIONAL: the CDR feed usually emits "+<digits>"
+  // but occasionally a bare "<digits>" -- requiring "+" silently dropped
+  // those entries from the phone child mirror (data loss). cdrLooksLikePhone_
+  // already treats "+" as optional, so match it here too. Normalize the
+  // captured number to the canonical "+<digits>" form BEFORE hashing so a
+  // bare number hashes identically to its "+"-prefixed twin (otherwise the
+  // same physical number would split into two hashes in call_history_phones).
+  var entryRegex = /(\+?[\d]+)\s+([\d:]+)(?:\s+\((\d+)\))?/g;
   var match;
   while ((match = entryRegex.exec(raw)) !== null) {
+    var phone = match[1].charAt(0) === '+' ? match[1] : '+' + match[1];
     results.push({
-      phone_hash:   cdrHashPhone_(match[1], secret),
+      phone_hash:   cdrHashPhone_(phone, secret),
       duration_sec: cdrTimeToSeconds_(match[2]),
       occurrences:  match[3] ? parseInt(match[3]) : 1
     });
