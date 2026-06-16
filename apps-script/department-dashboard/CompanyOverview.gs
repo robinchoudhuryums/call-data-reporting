@@ -700,6 +700,11 @@ function personalizeOverview_(blob, user) {
  * narrative-only: see computeWowDriver_ for the selection rule.
  */
 const WOW_DRIVER_THRESHOLD = 1.5;   // percentage points
+// Minimum net-calls a candidate agent must explain (the driver `score`:
+// answered-delta minus missed-delta, or the inverse on a drop) before the
+// "what changed" driver surfaces. Stops trivial one-/two-call wiggles
+// ("Agent X +1 call") from cluttering the Overview queue cards / digest.
+const WOW_DRIVER_MIN_DELTA = 5;     // net calls
 
 function computeWowDelta_(stats, latestDate) {
   const latestObj = parseIsoNoon_(latestDate);
@@ -749,7 +754,9 @@ function computeWowDelta_(stats, latestDate) {
  * agent with the largest score is the driver.
  *
  * Returns null if no agent meets a minimum activity bar (need at
- * least 3 events in EITHER window to avoid one-call outliers).
+ * least 3 events in EITHER window to avoid one-call outliers) AND a
+ * minimum net contribution (score >= WOW_DRIVER_MIN_DELTA) so a
+ * trivial "+1 call" change never surfaces as the driver.
  */
 function computeWowDriver_(stats, curIsoSet, prevIsoSet, deltaPct) {
   const isPositive = deltaPct > 0;
@@ -787,7 +794,9 @@ function computeWowDriver_(stats, curIsoSet, prevIsoSet, deltaPct) {
       };
     }
   });
-  if (!bestAgent || bestScore <= 0) return null;
+  // Require a meaningful net contribution (WOW_DRIVER_MIN_DELTA), not just
+  // any positive score, so a +1/+2-call agent never surfaces as the driver.
+  if (!bestAgent || bestScore < WOW_DRIVER_MIN_DELTA) return null;
   // Pick the narrative based on which delta dominates. Avoid
   // attributing a "+50% answered" driver to a dept that's actually
   // regressing -- the score guard above already filters those, but
