@@ -357,14 +357,25 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   / improvement score / quiet thresholds are the SHARED
   `deltaClassify_` / `deltaImprovementScore_` / `deltaIsQuiet_`
   helpers in script.html (CR delegates to the same ones).
-  **Per-agent cards (seq #3):** each card carries inline current-vs-prior
-  **mini-bars** (CSS, Rung/Answered/Missed, scaled per-metric -- no
-  per-card Chart.js), and the toolbar has a **Cards⇄Chart** toggle
-  (`insCardsView`) -- Chart view renders ONE grouped current-vs-prior bar
-  across the selected agents for a metric dropdown (`insCardsChartMetric`,
-  `insRenderCardsChart_` on `ins-cards-chart`). Both persist in the
-  `cdr.ins.prefs` blob; single-agent reports force Cards view (toolbar is
-  hidden, so the toggle isn't reachable).
+  **Per-agent cards (seq #3, redesigned in the post-deploy pass):** each
+  card leads with **% Ans / Answered / Missed** as CSS bars **vs the TEAM
+  AVERAGE** (a marker on each track) + the agent's value as a data label
+  (`insBuildCard_` builds them; the team average per metric is computed in
+  `insRenderAgentCards_` as team-total / `meta.rosterAgentCount`, except
+  `pct` which is the team rate). Rung / ATT / TTT moved into a collapsible
+  `<details>`. The toolbar has a **Cards⇄Chart** toggle (`insCardsView`):
+  Chart view (`insRenderCardsChart_` on `ins-cards-chart`) renders each
+  agent's **gap vs the team average** as diverging bars (colored by
+  favourability -- Missed is inverse), value as a datalabel, **click a bar
+  to drill into IR**. Both views persist in `cdr.ins.prefs`; single-agent
+  reports force Cards view. **IR drill-through (`irDrillToAgent_`):** hides
+  the Insights modal (its rendered report stays in the DOM), opens IR, and
+  reveals a **"Back to Insights"** button (`ir-back-to-insights-btn`); IR's
+  `closeModal` re-shows the intact Insights modal on any close when
+  `irCameFromInsights_` is set -- instant, no re-generate (the server cache
+  `insights:v7` already makes a fresh re-generate fast too). The team
+  rollup tiles dropped Total Rung / Total TTT; Queue health dropped Longest
+  wait (decluttered to two labeled groups: Department rollup + Queue health).
 - **Anti-intimidation layer is client-only; keep it that way.** Four
   pieces, all in script.html/styles.html with no server endpoints or
   cache bumps: (1) **answer-first headlines** -- every report's results
@@ -617,6 +628,13 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   upgrading a library version, recompute the hash:
   `curl -s <URL> | openssl dgst -sha384 -binary | openssl base64 -A`.
   A mismatched hash blocks the script from loading entirely.
+  **EXCEPTION (intentional):** the `chartjs-plugin-datalabels` tag
+  currently has **NO** `integrity` -- its prior bare-package-URL +
+  hash combo was failing the SRI check, so the browser silently
+  blocked the plugin and data labels didn't work on ANY chart. It's
+  now pinned to the explicit `/dist/chartjs-plugin-datalabels.min.js`
+  with SRI omitted (Option A). To restore SRI, recompute the hash for
+  that exact file and add `integrity` + `crossorigin` back.
 - **`TARGET_SS_ID` in CDR Import is read from Script Properties**,
   not hardcoded. `getTargetSsId_()` reads it on every call and
   falls back to a hardcoded ID if unset. Set `TARGET_SS_ID` in

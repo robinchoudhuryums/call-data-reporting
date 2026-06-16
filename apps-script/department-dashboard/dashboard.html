@@ -11,7 +11,14 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
   <?!= include_('styles') ?>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.js" integrity="sha384-G436+Z2nlA8+PNoeRvWdxKbvOf8E/y+lYxqht2iBwNHTQDV5CJr3+AGVj8fGZi5t" crossorigin="anonymous"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0" integrity="sha384-H7mijd3g+6+ErEI7+6rhqxGY03fYwsEaekVnHMC7HHB7u2rIkEf6AQgIXZqQYzDS" crossorigin="anonymous"></script>
+  <!-- chartjs-plugin-datalabels: pinned to the explicit /dist file. SRI is
+       intentionally OMITTED here (Option A): the prior bare-package-URL +
+       integrity hash combination was failing the SRI check and the browser
+       silently blocked the script, so ChartDataLabels was never defined and
+       data labels didn't work on ANY chart. To restore SRI, compute:
+       curl -s <this URL> | openssl dgst -sha384 -binary | openssl base64 -A
+       and add integrity="sha384-..." crossorigin="anonymous" back. -->
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
   <!-- html2canvas-pro (maintained fork; same `html2canvas` global) replaces
        html2canvas 1.4.1, which cannot parse the oklch() color tokens the
        Phase A redesign serves to modern browsers -- captures (and therefore
@@ -530,6 +537,10 @@
             </div>
           </div>
           <div class="ir-action-buttons" id="ir-action-buttons">
+            <!-- Shown only when IR was opened by drilling through from the
+                 Insights report; returns to the already-rendered Insights
+                 view with no reload (#2/#7). -->
+            <button class="btn btn-secondary" id="ir-back-to-insights-btn" type="button" style="display:none;">&laquo; Back to Insights</button>
             <button class="btn btn-secondary" id="ir-back-btn" type="button">&laquo; Back</button>
             <div class="ir-export-wrap">
               <button class="btn btn-secondary" id="ir-export-btn" type="button" aria-haspopup="menu" aria-expanded="false">

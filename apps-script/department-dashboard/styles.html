@@ -2868,6 +2868,27 @@
   .ins-bar-cur.ins-bar-rung { background: var(--accent); }
   .ins-bar-cur.ins-bar-ans  { background: var(--good); }
   .ins-bar-cur.ins-bar-miss { background: var(--warn); }
+  /* #5 redesign: featured primary metric bars vs the TEAM AVERAGE marker. */
+  .ins-card-bars2 { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+  .ins-cbar-row { display: flex; align-items: center; gap: 6px; }
+  .ins-cbar-lbl { font-size: 10px; color: var(--muted); flex: 0 0 50px; text-align: right;
+                  font-family: 'IBM Plex Mono', monospace; }
+  .ins-cbar-track { position: relative; flex: 1 1 auto; min-width: 0; height: 15px;
+                    background: var(--paper); border-radius: var(--r); }
+  .ins-cbar-fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: var(--r); }
+  .ins-cbar-fill.ins-cbar-pct  { background: var(--accent-soft); }
+  .ins-cbar-fill.ins-cbar-ans  { background: var(--good-soft); }
+  .ins-cbar-fill.ins-cbar-miss { background: var(--warn-soft); }
+  .ins-cbar-team { position: absolute; top: -1px; bottom: -1px; width: 2px;
+                   background: var(--ink); opacity: 0.5; }
+  .ins-cbar-val { position: absolute; right: 5px; top: 0; line-height: 15px;
+                  font-size: 10px; font-weight: 600; color: var(--ink);
+                  font-variant-numeric: tabular-nums; pointer-events: none; }
+  .ins-cbar-delta { flex: 0 0 auto; }
+  .ins-card-more { margin-top: 8px; }
+  .ins-card-more > summary { font-size: 10.5px; color: var(--muted); cursor: pointer;
+                             letter-spacing: 0.04em; list-style-position: inside; }
+  .ins-card-grid-sec { margin-top: 6px; }
   .ins-metric-label {
     font-family: var(--mono); font-size: 9px; text-transform: uppercase;
     letter-spacing: 0.18em; color: var(--muted);
