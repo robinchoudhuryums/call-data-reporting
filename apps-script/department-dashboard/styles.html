@@ -2661,7 +2661,8 @@
   .dept-missed-open { margin-left: auto; }
   .missed-range-row { margin-bottom: 10px; }
 
-  /* QCD sub-queue rollup toggle. */
+  /* Sub-queue scope toggle (still used by the Insights Queue-health
+     section; the QCD report's copy was retired). */
   .qcd-sub-toggle {
     display: flex;
     align-items: center;
@@ -2671,6 +2672,19 @@
     cursor: pointer;
     white-space: nowrap;
   }
+
+  /* QCD breakdown: sub-queues shown separately, below a divider, and
+     never folded into the department total (the toggle was retired). */
+  .qcd-subqueue-divider td {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+    background: var(--paper);
+    padding: 7px 8px 4px !important;
+    border-top: 1px solid var(--line);
+  }
+  .qcd-subqueue-row td:first-child { padding-left: 16px; }
 
   /* Orphan Fix: inline "new hire" add-to-roster form row. */
   .of-action-cell { white-space: nowrap; }

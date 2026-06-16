@@ -253,7 +253,7 @@ same time as the code change.
 | `CompareRangesReport.gs` | `compareRanges:vN:` | `v4` |
 | `MissedCallsReport.gs` | `missed:vN:` | `v10` |
 | `CompanyOverview.gs` | `companyOverview:vN` | `v15` |
-| `QCDReport.gs` | `qcd:vN:` | `v7` |
+| `QCDReport.gs` | `qcd:vN:` | `v8` |
 | `InboundReport.gs` | `inbound:vN:` | `v3` |
 | `InsightsReport.gs` | `insights:vN:` | `v6` |
 
@@ -472,7 +472,7 @@ Performance / Compare Ranges:
   Returns `meta` (with `queues` + `unmapped` flags), `dateLabel`,
   `totals` (sum across the dept's queues), `queueBreakdown`
   (one row per queue), `trendData` (12-month buckets matching the
-  IR/PR trend-window logic). Cache prefix `qcd:v7`.
+  IR/PR trend-window logic). Cache prefix `qcd:v8`.
 - `sendQcdReportEmail({ imageBase64, dateLabel })` — image
   export like the IR/PR/CR send-email paths.
 

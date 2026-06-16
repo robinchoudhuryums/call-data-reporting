@@ -244,7 +244,7 @@ canonical and reflects current code.
 | Performance Report (current vs prior) | `PerformanceReport.gs` | `getPerformanceReportInit` (delegates to Individual's init), `getPerformanceReport`, `sendPerformanceReportEmail` | `performance:v4:` | no |
 | Compare Ranges (two arbitrary ranges) | `CompareRangesReport.gs` | `getCompareRangesInit`, `getCompareRanges`, `sendCompareRangesEmail` | `compareRanges:v4:` | no |
 | Company Overview | `CompanyOverview.gs` | `getCompanyOverview` | `companyOverview:v15` | partial (admin-only `companyAggregate` field) |
-| QCD Report | `QCDReport.gs` | `getQcdReportInit`, `getQcdReport`, `sendQcdReportEmail` | `qcd:v7:` | no (per-dept gate like IR/PR/CR) |
+| QCD Report | `QCDReport.gs` | `getQcdReportInit`, `getQcdReport`, `sendQcdReportEmail` | `qcd:v8:` | no (per-dept gate like IR/PR/CR) |
 | Insights Report (period comparison: team rollup + per-agent cards) | `InsightsReport.gs` | `getInsightsReportInit`, `getInsightsReport`, `sendInsightsReportEmail` | `insights:v6:` | no (per-dept gate like IR/PR/CR) |
 | Inbound Report (per-call inbound view from Neon `inbound_calls`) | `InboundReport.gs` | `getInboundReport`, `getInboundInsurerDaily` | `inbound:v3:` | no (per-dept gate; admins also get the company-wide view incl. the IVR bucket) |
 | Low Answer Rate Alerts | `Alerts.gs` | `getAlertsInit`, `previewAlerts`, `sendAlerts`, `installAlertTrigger`, `uninstallAlertTrigger` (+ `runDailyAlerts_` time trigger) | (no cache) | yes |

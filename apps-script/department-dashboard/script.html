@@ -11894,14 +11894,7 @@
         showQcdForm();   // dismisses the launcher loading pane if active
         qcdSetFormError_('Error: ' + (err && err.message ? err.message : String(err)));
       })
-      .getQcdReport({ department: dept, from: from, to: to,
-                      includeSubQueues: qcdIncludeSubQueues_() });
-  }
-
-  /** Sub-queue rollup toggle state (defaults to true = INV-51 rollup). */
-  function qcdIncludeSubQueues_() {
-    const cb = $('qcd-include-sub');
-    return cb ? !!cb.checked : true;
+      .getQcdReport({ department: dept, from: from, to: to });
   }
 
   function qcdRenderReport_(data) {
@@ -12096,16 +12089,19 @@
       if (tfoot) tfoot.innerHTML = '';
       return;
     }
-    tbody.innerHTML = rows.map(function (r) {
+    // One row's HTML (+ its expandable violation-dates detail row).
+    var rowHtml = function (r, isChild) {
       var viol = Number(r.violations) || 0;
       var pct = Number(r.abandonedPct) || 0;
       var violCls = viol > 3 ? 'qcd-warn-strong' : (viol > 0 ? 'qcd-warn-light' : '');
       var pctCls  = pct >= 5 ? 'qcd-warn-light' : '';
       var hasDetail = viol > 0 && r.violationDates && r.violationDates.length;
       var chevron = hasDetail ? ' <span class="qcd-expand-icon">&#9654;</span>' : '';
-      var rowCls = hasDetail ? ' class="qcd-expandable"' : '';
-      var html = '<tr' + rowCls + ' data-queue="' + escapeHtml(r.queue) + '">'
-           +   '<td>' + escapeHtml(r.queue) + chevron + '</td>'
+      var rowCls = 'qcd-queue-row' + (hasDetail ? ' qcd-expandable' : '') + (isChild ? ' qcd-subqueue-row' : '');
+      var subTag = isChild && r.subDept
+        ? ' <span class="dept-qcd-subtag">sub-queue · ' + escapeHtml(r.subDept) + '</span>' : '';
+      var html = '<tr class="' + rowCls + '" data-queue="' + escapeHtml(r.queue) + '">'
+           +   '<td>' + escapeHtml(r.queue) + subTag + chevron + '</td>'
            +   '<td class="num">' + fmtNumber(r.totalCalls)    + '</td>'
            +   '<td class="num">' + fmtNumber(r.totalAnswered) + '</td>'
            +   '<td class="num">' + fmtNumber(r.abandoned)     + '</td>'
@@ -12121,7 +12117,19 @@
              +  '</div></td></tr>';
       }
       return html;
-    }).join('');
+    };
+    // Sub-queue separation: own-dept queues first, then any child sub-queues
+    // grouped under a divider so it's clear they are NOT in the dept total.
+    var ownRows = rows.filter(function (r) { return !r.subDept; });
+    var subRows = rows.filter(function (r) { return !!r.subDept; });
+    var html = ownRows.map(function (r) { return rowHtml(r, false); }).join('');
+    if (subRows.length) {
+      html += '<tr class="qcd-subqueue-divider"><td colspan="8">'
+           +  'Sub-queues — shown separately, not included in the department total'
+           +  '</td></tr>';
+      html += subRows.map(function (r) { return rowHtml(r, true); }).join('');
+    }
+    tbody.innerHTML = html;
     // Expandable rows: click to toggle detail
     tbody.addEventListener('click', function (e) {
       var row = e.target.closest('.qcd-expandable');
@@ -12139,7 +12147,7 @@
       var tViol = Number(totals.violations) || 0;
       var tViolCls = tViol > 3 ? 'qcd-warn-strong' : (tViol > 0 ? 'qcd-warn-light' : '');
       tfoot.innerHTML = '<tr class="qcd-row-total">'
-        +   '<td>Department total</td>'
+        +   '<td>Department total' + (subRows.length ? ' (own queues)' : '') + '</td>'
         +   '<td class="num">' + fmtNumber(totals.totalCalls)    + '</td>'
         +   '<td class="num">' + fmtNumber(totals.totalAnswered) + '</td>'
         +   '<td class="num">' + fmtNumber(totals.abandoned)     + '</td>'
