@@ -12054,7 +12054,7 @@
       + tile('Abandoned %',  String(t.abandonedPctStr  || '0.00%'), pctCls)
       + tile('Longest Wait', String(t.longestWait      || '0:00:00'))
       + tile('Avg Answer',   String(t.avgAnswer        || '0:00:00'))
-      + tile('Violations (current month)', fmtNumber(t.violations || 0), violCls);
+      + tile('Violations (MTD)', fmtNumber(t.violations || 0), violCls);
   }
 
   function qcdRenderDailyTable_(rows) {
@@ -12155,7 +12155,11 @@
         +   '<td class="num">' + escapeHtml(totals.longestWait || '0:00:00')   + '</td>'
         +   '<td class="num">' + escapeHtml(totals.avgAnswer || '0:00:00')     + '</td>'
         +   '<td class="num' + (tViolCls ? ' ' + tViolCls : '') + '">' + fmtNumber(totals.violations) + '</td>'
-        + '</tr>';
+        + '</tr>'
+        + '<tr class="qcd-table-note"><td colspan="8">'
+        +   'Violations: per-queue counts are for the selected range; the '
+        +   'department total is <strong>month-to-date (MTD)</strong>.'
+        + '</td></tr>';
     }
   }
 
@@ -12242,6 +12246,29 @@
       });
     }
 
+    // #6: on the Abandoned % view, mark violation days (points >= 5%) in
+    // warn color with a larger radius, and draw a dashed 5% reference line,
+    // so "which days breached" reads at a glance. Applies to every % series
+    // (single, per-queue, and the dept-total line).
+    if (formatPct) {
+      var warnC = (THEME && THEME.warn) || '#c66b4b';
+      datasets.forEach(function (ds) {
+        var base = ds.borderColor;
+        var baseR = ds.pointRadius || 3;
+        ds.pointBackgroundColor = ds.data.map(function (v) { return Number(v) >= 5 ? warnC : base; });
+        ds.pointBorderColor     = ds.pointBackgroundColor;
+        ds.pointRadius          = ds.data.map(function (v) { return Number(v) >= 5 ? 5 : baseR; });
+      });
+      datasets.push({
+        label: '5% threshold',
+        data: labels.map(function () { return 5; }),
+        borderColor: warnC, backgroundColor: 'transparent',
+        borderDash: [4, 4], borderWidth: 1,
+        pointRadius: 0, pointHoverRadius: 0,
+        fill: false, tension: 0, order: 99,
+      });
+    }
+
     refreshChartTheme();
     qcdChartInstance = new Chart(canvas, {
       type: 'line',
@@ -12252,10 +12279,13 @@
         plugins: {
           datalabels: { display: false },
           // Multi-queue charts get the shared legend spotlight (hover-dim
-          // + click-to-pin), matching the Overview chart.
-          legend: Object.assign({ display: multiQueue },
-                                 multiQueue ? chartSpotlightLegend_() : {}),
+          // + click-to-pin), matching the Overview chart. The 5% threshold
+          // line shows in the legend but is skipped by the spotlight dimming.
+          legend: Object.assign({ display: multiQueue || formatPct },
+                                 (multiQueue ? chartSpotlightLegend_() : {})),
           tooltip: {
+            // Hide the flat 5% reference line from hover.
+            filter: function (item) { return item.dataset.label !== '5% threshold'; },
             callbacks: {
               label: function (ctx) {
                 var prefix = multiQueue ? (ctx.dataset.label + ': ') : '';
@@ -12274,7 +12304,8 @@
         },
       },
     });
-    if (multiQueue) chartSpotlightStash_(qcdChartInstance);
+    if (multiQueue) chartSpotlightStash_(qcdChartInstance,
+      formatPct ? { skipLabel: '5% threshold' } : undefined);
   }
 
   // -- Export helpers (mirror IR/PR/CR pattern, simplified) ---------
