@@ -9863,6 +9863,13 @@
       if (insLastData) insRenderTrendChart_(insLastData);
     });
 
+    // Data-labels toggle (opt-in; off by default like IR/PR/CR).
+    const insLabels = $('ins-show-datalabels');
+    if (insLabels) insLabels.addEventListener('change', function () {
+      insSavePrefs_();
+      if (insLastData) insRenderTrendChart_(insLastData);
+    });
+
     // Per-card IR drill-through (delegated on the modal so it covers
     // both the main card grid and the quiet-agents collapsible).
     modal.addEventListener('click', function (e) {
@@ -10414,6 +10421,7 @@
       const s = Math.round((n - m) * 60);
       return m + ':' + (s < 10 ? '0' + s : s);
     };
+    const insShowLabels = !!($('ins-show-datalabels') && $('ins-show-datalabels').checked);
 
     let chartConfig;
 
@@ -10450,7 +10458,19 @@
           responsive: true, maintainAspectRatio: false, animation: false,
           interaction: { mode: 'index', intersect: false },
           plugins: {
-            datalabels: { display: false },
+            datalabels: {
+              display: insShowLabels,
+              align: 'top', anchor: 'center',
+              backgroundColor: THEME.paperCard,
+              color: function (c) { return c.dataset.borderColor; },
+              borderColor: function (c) { return c.dataset.borderColor; },
+              borderWidth: 1, borderRadius: 2,
+              font: { family: "'IBM Plex Mono', monospace", size: 10, weight: '500' },
+              formatter: function (value, c) {
+                if (c.dataset.label === '5% threshold' || value == null) return '';
+                return Number(value).toFixed(1) + '%';
+              },
+            },
             legend: { position: 'bottom', labels: { boxWidth: 18,
               filter: function (item) { return item.text !== '5% threshold'; } } },
             tooltip: {
@@ -10504,7 +10524,20 @@
               if (isMinutes) return label + ': ' + fmtMin(ctx.parsed.y);
               return label + ': ' + ctx.parsed.y;
             } } },
-            datalabels: { display: false },
+            datalabels: {
+              display: insShowLabels,
+              align: 'top', anchor: 'center',
+              backgroundColor: THEME.paperCard,
+              color: color, borderColor: color,
+              borderWidth: 1, borderRadius: 2,
+              font: { family: "'IBM Plex Mono', monospace", size: 10, weight: '500' },
+              formatter: function (value) {
+                if (value == null) return '';
+                if (isPercent) return Number(value).toFixed(1) + '%';
+                if (isMinutes) return fmtMin(value);
+                return value;
+              },
+            },
           },
           scales: {
             y: {
@@ -10892,6 +10925,7 @@
         priorTo:     $('ins-prior-to')     ? $('ins-prior-to').value     : '',
         trendMetric: insActiveTrendMetric,
         trendView:   insTrendView,
+        showLabels:  $('ins-show-datalabels') ? $('ins-show-datalabels').checked : false,
         cardSort:    insCardSort,
         agents: irGetCheckedAgents_($('ins-agent-list')),
       }));
@@ -10931,6 +10965,9 @@
           b.classList.toggle('active', active);
           b.setAttribute('aria-checked', active ? 'true' : 'false');
         });
+      }
+      if (typeof prefs.showLabels === 'boolean' && $('ins-show-datalabels')) {
+        $('ins-show-datalabels').checked = prefs.showLabels;
       }
       if (Array.isArray(prefs.agents) && prefs.agents.length) insPendingAgentSelection_ = prefs.agents;
     } catch (e) { /* ignore */ }
@@ -11737,6 +11774,17 @@
       if (qcdLastData) qcdRenderChart_(qcdLastData);
     });
 
+    // Data-labels toggle (opt-in; off by default like IR/PR/CR). Persisted
+    // in a standalone key since the QCD report has no prefs blob.
+    const qcdLabels = $('qcd-show-datalabels');
+    if (qcdLabels) {
+      try { qcdLabels.checked = localStorage.getItem('cdr.qcd.datalabels') === '1'; } catch (e) {}
+      qcdLabels.addEventListener('change', function () {
+        try { localStorage.setItem('cdr.qcd.datalabels', qcdLabels.checked ? '1' : '0'); } catch (e) {}
+        if (qcdLastData) qcdRenderChart_(qcdLastData);
+      });
+    }
+
     // Export menu
     const exportBtn  = $('qcd-export-btn');
     const exportMenu = $('qcd-export-menu');
@@ -12236,7 +12284,20 @@
         responsive: true,
         maintainAspectRatio: false,
         plugins: {
-          datalabels: { display: false },
+          datalabels: {
+            display: (typeof $ === 'function' && $('qcd-show-datalabels') && $('qcd-show-datalabels').checked),
+            align: 'top', anchor: 'center',
+            backgroundColor: THEME.paperCard,
+            color: function (ctx) { return ctx.dataset.borderColor; },
+            borderColor: function (ctx) { return ctx.dataset.borderColor; },
+            borderWidth: 1, borderRadius: 2,
+            font: { family: "'IBM Plex Mono', monospace", size: 10, weight: '500' },
+            formatter: function (value, ctx) {
+              if (ctx.dataset.label === '5% threshold') return '';
+              if (value == null) return '';
+              return formatPct ? Number(value).toFixed(1) + '%' : value;
+            },
+          },
           // Multi-queue charts get the shared legend spotlight (hover-dim
           // + click-to-pin), matching the Overview chart. The 5% threshold
           // line shows in the legend but is skipped by the spotlight dimming.

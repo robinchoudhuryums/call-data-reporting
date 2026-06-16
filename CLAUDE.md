@@ -458,7 +458,14 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   Overview multi-line trend) still wins via the normal options
   override. Use the boolean form for `display`; the function form
   (`display: function (ctx) {...}`) returned false unpredictably on
-  mixed bar+line charts in this plugin version.
+  mixed bar+line charts in this plugin version. **A per-report "Show
+  data labels" toggle** (checkbox `<report>-show-datalabels`, off by
+  default, the `datalabels.display` read straight from `.checked`) is
+  wired on IR / PR / CR / QCD / Insights; IR/PR/CR/Insights persist it
+  in their prefs blob, QCD in the standalone `cdr.qcd.datalabels` key.
+  The Overview multi-dept overlay + the Missed Calls radar intentionally
+  have NO toggle (10+ overlaid lines / dense buckets make labels
+  unreadable) and keep `display: false`.
 - **OKLCH colors break datalabels silently.** Modern browsers
   resolve `var(--paper)` etc. to `oklch(...)` strings, which
   chartjs-plugin-datalabels can't parse for `fillStyle` — labels

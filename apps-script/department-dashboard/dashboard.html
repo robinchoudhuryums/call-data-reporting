@@ -1083,6 +1083,11 @@
             <button type="button" class="seg-btn" data-view="daily" role="radio" aria-checked="false"
                     title="One point per day within the selected From/To range.">Daily (range)</button>
           </div>
+          <div class="ir-toggle-box" id="qcd-datalabels-box">
+            <label class="ir-toggle-label">
+              <input type="checkbox" id="qcd-show-datalabels"> Show data labels
+            </label>
+          </div>
         </div>
 
         <div class="ir-chart-wrap" id="qcd-chart-wrap">
@@ -1259,9 +1264,16 @@
         <div class="ir-chart-wrap" id="ins-trend-wrap">
           <div class="ins-trend-headrow">
             <div class="ir-chart-header" id="ins-trend-header">12-month team trend</div>
-            <div class="segmented" id="ins-trend-view-toggle" role="radiogroup" aria-label="Trend chart view" style="display:none;">
-              <button type="button" class="seg-btn active" data-view="monthly" role="radio" aria-checked="true">Monthly</button>
-              <button type="button" class="seg-btn" data-view="daily" role="radio" aria-checked="false">Daily</button>
+            <div class="ins-trend-headctl">
+              <div class="segmented" id="ins-trend-view-toggle" role="radiogroup" aria-label="Trend chart view" style="display:none;">
+                <button type="button" class="seg-btn active" data-view="monthly" role="radio" aria-checked="true">Monthly</button>
+                <button type="button" class="seg-btn" data-view="daily" role="radio" aria-checked="false">Daily</button>
+              </div>
+              <div class="ir-toggle-box" id="ins-datalabels-box">
+                <label class="ir-toggle-label">
+                  <input type="checkbox" id="ins-show-datalabels"> Show data labels
+                </label>
+              </div>
             </div>
           </div>
           <div class="pr-trend-subtabs" id="ins-trend-subtabs" role="tablist">
