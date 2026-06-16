@@ -77,9 +77,10 @@ function getCompareRangesInit(req) {
   // date is missing or invalid -- the client legitimately calls
   // this with partial state while a user is typing in the date
   // inputs, so throwing would surface noisy errors mid-edit.
-  // Malformed dates that pass `isIsoDate_` (e.g. 2026-13-99) are
-  // tolerated too: `computeActiveAgentsInRange_` will simply find
-  // no matching rows and return [].
+  // Impossible dates (e.g. 2026-13-99) no longer pass `isIsoDate_`
+  // -- it round-trips through a real Date (Data.gs) -- so they fail
+  // the guard above and the fetch is simply skipped: same no-crash
+  // outcome as a genuinely partial/missing date mid-edit.
   let activeAgents = null;
   let activeFloaters = null;
   const p1From = String((req && req.p1From) || '').trim();

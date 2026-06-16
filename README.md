@@ -73,7 +73,9 @@ Ranges report builders, and the pipeline's name canonicalization. See
 [`tests/README.md`](tests/README.md) for the design, how to add a test,
 and the current coverage map. (The end-to-end `buildDQEHistoricalData`
 build is not yet unit-covered; the manual Regression Scenarios in
-CLAUDE.md remain the verification of record there.)
+CLAUDE.md remain the verification of record there.) A
+`cache-version-sync` test also fails the suite if the docs / inline
+comments drift from the code's cache-key versions (INV-30).
 
 ## Deploying the Department Dashboard
 
@@ -338,6 +340,12 @@ scripts/deploy.sh apps-script/cdr-import <cdr-import-deployment-id>
   fall back to the sheet on any Neon null/error, so the flip is reversible
   with no redeploy. Needs the `NEON_*` props + `script.external_request`
   scope (same as the orphan-rename mirror).
+- The Alerts modal (admin) shows a **Neon mirror health** line comparing the
+  DQE sheet's latest date against `dqe_history`'s `MAX(call_date)`, so a stale
+  mirror (e.g. a transient Neon outage that left a date un-mirrored) is
+  visible at a glance. Such a gap self-heals on the next import of that date
+  — the dup-guard re-mirrors the existing sheet rows. (Hidden when `NEON_*`
+  isn't configured.)
 - **Before flipping**, run the parity gate from the Apps Script editor:
   open `NeonRead.gs`, edit `COMPARE_FROM` / `COMPARE_TO` in
   `compareDqeSources_` to a range fully inside the mirrored history, then
@@ -442,7 +450,10 @@ keep it fresh, in order of preference:
    historical sheet write, alongside CDR / Q Path / QCD / CSR.
    Every successful daily import (whether triggered by onChange
    or `runManualExport`) refreshes DQE in one run. Telemetry
-   row: `processIntegratedHistory:DQE` in Pipeline Health.
+   row: `processIntegratedHistory:DQE` in Pipeline Health. If a
+   date is already in the sheet but its Neon mirror previously
+   failed (transient outage), a later non-force re-import
+   re-mirrors the existing rows so `dqe_history` self-heals.
 2. **Bulk historical backfill path** — `bulkHistoricalUpdate`
    in cdr-import builds DQE per-date for the requested range,
    writing Raw Data per-date only when DQE actually needs

@@ -4,7 +4,9 @@ name: CI
 # duplicated-file guard on every push to main and every PR, so a failing
 # test or a drifted neonWrite.js / buildDQEHistoricalData.js copy is caught
 # before it can be deployed (previously these ran only locally / via the
-# non-blocking SessionStart hook).
+# non-blocking SessionStart hook). node --test also includes a
+# cache-version-sync guard that fails on docs<->code cache-version drift
+# (INV-30).
 
 on:
   push:
