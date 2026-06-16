@@ -9781,8 +9781,7 @@
   let insPendingAgentSelection_ = null;
   let insLastData = null;
   let insChartInstance = null;
-  let insQhChartInstance = null;   // Queue health compact trend chart
-  let insQhView = 'monthly';       // 'monthly' | 'daily' (chart toggle)
+  let insTrendView = 'monthly';    // 'monthly' | 'daily' (consolidated trend chart toggle)
   let insShareChartInstance = null;   // share-of-answered pie (PR port)
   let insActiveTrendMetric = 'answered';
   let insCardSort = 'default';      // default (answered desc) | name | improvers | regressors
@@ -9846,27 +9845,23 @@
     const genBtn = $('ins-generate-btn');
     if (genBtn) genBtn.addEventListener('click', runInsReport);
 
-    // Queue health: Monthly/Daily chart view toggle (client-only
-    // re-render from the cached payload).
-    const qhToggle = $('ins-qh-view-toggle');
-    if (qhToggle) qhToggle.addEventListener('click', function (e) {
+    // Consolidated trend chart: Monthly/Daily view toggle (client-only
+    // re-render from the cached payload; applies to all metric tabs).
+    const trendViewToggle = $('ins-trend-view-toggle');
+    if (trendViewToggle) trendViewToggle.addEventListener('click', function (e) {
       const b = e.target.closest('.seg-btn');
       if (!b) return;
       const next = b.getAttribute('data-view') || 'monthly';
-      if (next === insQhView) return;
-      insQhView = next;
-      qhToggle.querySelectorAll('.seg-btn').forEach(function (x) {
+      if (next === insTrendView) return;
+      insTrendView = next;
+      trendViewToggle.querySelectorAll('.seg-btn').forEach(function (x) {
         const active = x === b;
         x.classList.toggle('active', active);
         x.setAttribute('aria-checked', active ? 'true' : 'false');
       });
-      if (insLastData) insRenderQueueHealthChart_(insLastData.queueHealth);
+      insSavePrefs_();
+      if (insLastData) insRenderTrendChart_(insLastData);
     });
-    // Queue health: sub-queue scope toggle -- server-recomputed, so a
-    // change re-runs the report (cached per scope, so flipping back is
-    // instant).
-    const qhSub = $('ins-qh-include-sub');
-    if (qhSub) qhSub.addEventListener('change', function () { runInsReport(); });
 
     // Per-card IR drill-through (delegated on the modal so it covers
     // both the main card grid and the quiet-agents collapsible).
@@ -10149,10 +10144,6 @@
     insSetFormError('');
     const req = { department: dept, from: from, to: to, agents: agents };
     if (prior) { req.priorFrom = prior.from; req.priorTo = prior.to; }
-    // Queue health sub-queue scope (checkbox lives in the results pane;
-    // default checked = INV-51 rollup when not yet rendered).
-    const qhCb = $('ins-qh-include-sub');
-    if (qhCb && !qhCb.checked) req.queueHealthOwnOnly = true;
     const gen = $('ins-generate-btn'); const prev = gen.textContent;
     gen.disabled = true; gen.textContent = 'Generating…';
     google.script.run
@@ -10317,15 +10308,6 @@
     if (cap) cap.textContent = '(' + (qh.queues || []).length + ' queue'
       + ((qh.queues || []).length === 1 ? '' : 's') + ' · same window as the rollup above)';
 
-    // Sub-queue toggle: only meaningful for parent depts. State mirrors
-    // the server's effective scope (checkbox change re-runs the report).
-    const subWrap = $('ins-qh-sub-wrap');
-    if (subWrap) {
-      subWrap.style.display = qh.hasSubQueues ? '' : 'none';
-      const cb = $('ins-qh-include-sub');
-      if (cb) cb.checked = qh.includeSubQueues !== false;
-    }
-
     // Days-to-violation forecast on the daily series (shared helper --
     // same regression the QCD Report renders).
     const fc = $('ins-qh-forecast');
@@ -10347,8 +10329,9 @@
     ];
     $('ins-qh-tiles').innerHTML = tiles.join('');
 
-    insRenderQueueHealthChart_(qh);
-
+    // The per-queue abandoned-% chart now lives in the consolidated trend
+    // chart above (the "Abandoned % by Queue" tab); this section keeps the
+    // tiles + the per-queue detail table.
     const tbody = $('ins-qh-tbody');
     if (!tbody) return;
     tbody.innerHTML = (qh.perQueue || []).map(function (q) {
@@ -10358,118 +10341,17 @@
         ? '<details class="ins-qh-viol"><summary>' + q.violations + '</summary>'
           + '<div class="ins-qh-viol-dates">' + q.violationDates.map(escapeHtml).join(', ') + '</div></details>'
         : String(q.violations || 0);
+      // Tag child sub-queue rows so the separation is visible (seq #5/#1).
+      const subTag = q.subDept
+        ? ' <span class="dept-qcd-subtag">sub-queue · ' + escapeHtml(q.subDept) + '</span>' : '';
       return '<tr>'
-        + '<td>' + escapeHtml(q.queue) + '</td>'
+        + '<td>' + escapeHtml(q.queue) + subTag + '</td>'
         + '<td class="num">' + fmtNumber(q.totalCalls) + '</td>'
         + '<td class="num">' + fmtNumber(q.abandoned) + '</td>'
         + '<td class="num' + pctCls + '">' + escapeHtml(q.abandonedPctStr) + '</td>'
         + '<td class="num' + violCls + '">' + violCell + '</td>'
         + '</tr>';
     }).join('');
-  }
-
-  /**
-   * Compact Queue health trend: one monthly abandoned-% line per queue
-   * + a dashed dept total (multi-queue only) + the faint 5% threshold
-   * baseline (the QCD violation rule -- same convention as the Overview
-   * chart's 92% line). Colors via THEME / IR_CHART_COLORS (INV-42);
-   * datalabels off in boolean form (INV-41). Hidden for pre-v5 cached
-   * payloads (no trend key) or when there's nothing to plot.
-   */
-  function insRenderQueueHealthChart_(qh) {
-    const wrap = $('ins-qh-chart-wrap');
-    if (!wrap) return;
-    const trend = qh && qh.trend;
-    if (!trend || !trend.labels || !trend.labels.length) {
-      wrap.style.display = 'none';
-      const tgl = $('ins-qh-view-toggle');
-      if (tgl) tgl.style.display = 'none';
-      if (insQhChartInstance) { try { insQhChartInstance.destroy(); } catch (e) {} insQhChartInstance = null; }
-      return;
-    }
-    // Daily view only offered when the range has 2+ days of data
-    // (single point isn't useful as a line -- QCD's convention).
-    const hasDaily = (trend.dailyLabels || []).length > 1;
-    const toggle = $('ins-qh-view-toggle');
-    if (toggle) toggle.style.display = hasDaily ? '' : 'none';
-    if (!hasDaily && insQhView === 'daily') insQhView = 'monthly';
-    const daily = insQhView === 'daily' && hasDaily;
-
-    const labels   = daily ? trend.dailyLabels : trend.labels;
-    const totalSer = daily ? (trend.dailyTotal || []) : (trend.total || []);
-    const perQueue = daily ? (trend.dailyPerQueue || {}) : (trend.perQueue || {});
-    const queueNames = Object.keys(perQueue);
-    if (!queueNames.length && !totalSer.length) {
-      wrap.style.display = 'none';
-      if (insQhChartInstance) { try { insQhChartInstance.destroy(); } catch (e) {} insQhChartInstance = null; }
-      return;
-    }
-    wrap.style.display = '';
-    refreshChartTheme();
-    destroyOrphanedChartOnCanvas_('ins-qh-chart');
-    if (insQhChartInstance) { try { insQhChartInstance.destroy(); } catch (e) {} insQhChartInstance = null; }
-
-    const datasets = queueNames.map(function (q, i) {
-      const color = IR_CHART_COLORS[i % IR_CHART_COLORS.length];
-      return {
-        label: q,
-        data: perQueue[q],
-        borderColor: color,
-        backgroundColor: color,
-        borderWidth: 1.8,
-        pointRadius: 1.5,
-        tension: 0.25,
-        fill: false,
-      };
-    });
-    if (queueNames.length > 1 && totalSer.length) {
-      datasets.push({
-        label: 'Dept total',
-        data: totalSer,
-        borderColor: THEME.ink,
-        backgroundColor: THEME.ink,
-        borderDash: [5, 4],
-        borderWidth: 1.4,
-        pointRadius: 0,
-        tension: 0.25,
-        fill: false,
-      });
-    }
-    datasets.push({
-      label: '5% threshold',
-      data: labels.map(function () { return 5; }),
-      borderColor: THEME.muted,
-      borderDash: [3, 4],
-      borderWidth: 1,
-      pointRadius: 0,
-      fill: false,
-      order: 99,
-    });
-
-    insQhChartInstance = new Chart($('ins-qh-chart').getContext('2d'), {
-      type: 'line',
-      data: { labels: labels, datasets: datasets },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        interaction: { mode: 'index', intersect: false },
-        plugins: {
-          datalabels: { display: false },
-          legend: { position: 'bottom', labels: { boxWidth: 18,
-            filter: function (item) { return item.text !== '5% threshold'; } } },
-          tooltip: {
-            filter: function (ctx) { return ctx.dataset.label !== '5% threshold'; },
-            callbacks: { label: function (ctx) {
-              return ctx.dataset.label + ': ' + (ctx.parsed.y == null ? '-' : ctx.parsed.y.toFixed(1) + '%');
-            } },
-          },
-        },
-        scales: {
-          x: { ticks: { maxRotation: 0, autoSkip: true } },
-          y: { beginAtZero: true, ticks: { callback: function (v) { return v + '%'; } } },
-        },
-      },
-    });
   }
 
   /**
@@ -10490,11 +10372,14 @@
   }
 
   /**
-   * 12-month team trend line for the Insights modal. Single tracked
-   * Chart.js instance; metric picked by insActiveTrendMetric (same
-   * sub-tab strip the PR trend uses). Colors route through THEME /
-   * IR_VOLUME_COLORS per INV-42; datalabels stay off (boolean form,
-   * INV-41) -- the sparklines + tooltip carry the values.
+   * Consolidated Insights trend chart (seq #1). One tracked Chart.js
+   * instance on `ins-trend-chart`, driven by the sub-tab strip
+   * (insActiveTrendMetric: answered / pct / att / queues) and a
+   * Monthly/Daily toggle (insTrendView). The "Abandoned % by Queue" tab
+   * renders the per-queue abandoned-% lines + own-only dept total + 5%
+   * line from data.queueHealth.trend (replacing the old standalone
+   * ins-qh-chart). Colors route through THEME / IR_* per INV-42;
+   * datalabels off (boolean form, INV-41).
    */
   function insRenderTrendChart_(data) {
     const canvas = $('ins-trend-chart');
@@ -10503,24 +10388,26 @@
     destroyOrphanedChartOnCanvas_('ins-trend-chart');
     if (insChartInstance) { try { insChartInstance.destroy(); } catch (e) {} insChartInstance = null; }
 
-    const labels = (data.trendData && data.trendData.labels) || [];
-    const series = (data.trendData && data.trendData.series) || [];
-    let dataPoints, color, label, isPercent, isMinutes;
-    if (insActiveTrendMetric === 'pct') {
-      dataPoints = series.map(function (s) { return Number((s.pct || 0).toFixed(1)); });
-      color = THEME.accent || '#4E79A7';
-      label = '% Answered';
-      isPercent = true;
-    } else if (insActiveTrendMetric === 'att') {
-      dataPoints = series.map(function (s) { return Number(((s.att || 0) / 60).toFixed(2)); });
-      color = THEME.muted || '#9C755F';
-      label = 'Avg Talk Time';
-      isMinutes = true;
-    } else {
-      dataPoints = series.map(function (s) { return s.answered; });
-      color = IR_VOLUME_COLORS.answered;
-      label = 'Answered';
+    const metric = insActiveTrendMetric;
+    const isQueues = (metric === 'queues');
+    const qhTrend = (data.queueHealth && data.queueHealth.trend) || null;
+
+    // Daily availability + Monthly/Daily toggle visibility. Queues view
+    // uses the QCD daily series; the team metrics use trendDaily.
+    const hasDaily = isQueues
+      ? !!(qhTrend && (qhTrend.dailyLabels || []).length > 1)
+      : !!(data.trendDaily && (data.trendDaily.labels || []).length > 1);
+    const toggle = $('ins-trend-view-toggle');
+    if (toggle) toggle.style.display = hasDaily ? '' : 'none';
+    if (!hasDaily && insTrendView === 'daily') insTrendView = 'monthly';
+    const daily = (insTrendView === 'daily') && hasDaily;
+
+    const headerEl = $('ins-trend-header');
+    if (headerEl) {
+      headerEl.textContent = (daily ? 'Daily team trend' : '12-month team trend')
+        + (isQueues ? ' — abandoned % by queue' : '');
     }
+
     const fmtMin = function (val) {
       const n = parseFloat(val); if (isNaN(n)) return '';
       const m = Math.floor(n);
@@ -10528,51 +10415,113 @@
       return m + ':' + (s < 10 ? '0' + s : s);
     };
 
-    insChartInstance = new Chart(canvas.getContext('2d'), {
-      type: 'line',
-      data: {
-        labels: labels,
-        datasets: [{
-          label: label,
-          data: dataPoints,
-          borderColor: color,
-          backgroundColor: function (ctx) { return irGradientFill_(ctx.chart, color); },
-          tension: 0.4, fill: true,
-          pointBackgroundColor: color,
-          pointBorderColor: THEME.paperCard, pointBorderWidth: 1.5,
-          pointRadius: 3, pointHoverRadius: 5,
-        }],
-      },
-      options: {
-        responsive: true, maintainAspectRatio: false, animation: false,
-        plugins: {
-          legend: { display: false },
-          tooltip: {
-            callbacks: {
-              label: function (ctx) {
-                if (isPercent) return label + ': ' + ctx.parsed.y + '%';
-                if (isMinutes) return label + ': ' + fmtMin(ctx.parsed.y);
-                return label + ': ' + ctx.parsed.y;
-              },
+    let chartConfig;
+
+    if (isQueues) {
+      // Abandoned % by Queue: one line per queue + own-only dept total +
+      // the 5% threshold (the QCD violation rule). Hidden gracefully if
+      // there's no queue trend (unmapped dept / QCD unavailable).
+      if (!qhTrend || !(qhTrend.labels || []).length) {
+        canvas.style.display = 'none';
+        return;
+      }
+      canvas.style.display = '';
+      const labels   = daily ? qhTrend.dailyLabels : qhTrend.labels;
+      const totalSer = daily ? (qhTrend.dailyTotal || []) : (qhTrend.total || []);
+      const perQueue = daily ? (qhTrend.dailyPerQueue || {}) : (qhTrend.perQueue || {});
+      const qNames = Object.keys(perQueue);
+      const datasets = qNames.map(function (q, i) {
+        const c = IR_CHART_COLORS[i % IR_CHART_COLORS.length];
+        return { label: q, data: perQueue[q], borderColor: c, backgroundColor: c,
+                 borderWidth: 1.8, pointRadius: 1.5, tension: 0.25, fill: false };
+      });
+      if (qNames.length > 1 && totalSer.length) {
+        datasets.push({ label: 'Dept total', data: totalSer,
+          borderColor: THEME.ink, backgroundColor: THEME.ink,
+          borderDash: [5, 4], borderWidth: 1.4, pointRadius: 0, tension: 0.25, fill: false });
+      }
+      datasets.push({ label: '5% threshold', data: labels.map(function () { return 5; }),
+        borderColor: THEME.muted, borderDash: [3, 4], borderWidth: 1,
+        pointRadius: 0, fill: false, order: 99 });
+      chartConfig = {
+        type: 'line',
+        data: { labels: labels, datasets: datasets },
+        options: {
+          responsive: true, maintainAspectRatio: false, animation: false,
+          interaction: { mode: 'index', intersect: false },
+          plugins: {
+            datalabels: { display: false },
+            legend: { position: 'bottom', labels: { boxWidth: 18,
+              filter: function (item) { return item.text !== '5% threshold'; } } },
+            tooltip: {
+              filter: function (ctx) { return ctx.dataset.label !== '5% threshold'; },
+              callbacks: { label: function (ctx) {
+                return ctx.dataset.label + ': ' + (ctx.parsed.y == null ? '-' : ctx.parsed.y.toFixed(1) + '%');
+              } },
             },
           },
-          datalabels: { display: false },
+          scales: {
+            x: { ticks: { maxRotation: 0, autoSkip: true } },
+            y: { beginAtZero: true, ticks: { callback: function (v) { return v + '%'; } } },
+          },
         },
-        scales: {
-          y: {
-            beginAtZero: true,
-            suggestedMax: isPercent ? 100 : undefined,
-            ticks: {
-              callback: function (val) {
+      };
+    } else {
+      // Team metrics: answered / % answered / avg talk time.
+      const src = daily ? data.trendDaily : data.trendData;
+      const labels = (src && src.labels) || [];
+      const series = (src && src.series) || [];
+      let dataPoints, color, label, isPercent, isMinutes;
+      if (metric === 'pct') {
+        dataPoints = series.map(function (s) { return Number((s.pct || 0).toFixed(1)); });
+        color = THEME.accent || '#4E79A7'; label = '% Answered'; isPercent = true;
+      } else if (metric === 'att') {
+        dataPoints = series.map(function (s) { return Number(((s.att || 0) / 60).toFixed(2)); });
+        color = THEME.muted || '#9C755F'; label = 'Avg Talk Time'; isMinutes = true;
+      } else {
+        dataPoints = series.map(function (s) { return s.answered; });
+        color = IR_VOLUME_COLORS.answered; label = 'Answered';
+      }
+      canvas.style.display = '';
+      chartConfig = {
+        type: 'line',
+        data: {
+          labels: labels,
+          datasets: [{
+            label: label, data: dataPoints, borderColor: color,
+            backgroundColor: function (ctx) { return irGradientFill_(ctx.chart, color); },
+            tension: 0.4, fill: true,
+            pointBackgroundColor: color, pointBorderColor: THEME.paperCard,
+            pointBorderWidth: 1.5, pointRadius: 3, pointHoverRadius: 5,
+          }],
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false, animation: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: { callbacks: { label: function (ctx) {
+              if (isPercent) return label + ': ' + ctx.parsed.y + '%';
+              if (isMinutes) return label + ': ' + fmtMin(ctx.parsed.y);
+              return label + ': ' + ctx.parsed.y;
+            } } },
+            datalabels: { display: false },
+          },
+          scales: {
+            y: {
+              beginAtZero: true,
+              suggestedMax: isPercent ? 100 : undefined,
+              ticks: { callback: function (val) {
                 if (isPercent) return val + '%';
                 if (isMinutes) return fmtMin(val);
                 return val;
-              },
+              } },
             },
           },
         },
-      },
-    });
+      };
+    }
+
+    insChartInstance = new Chart(canvas.getContext('2d'), chartConfig);
   }
 
   // Delta badge mirroring prKpiTile_'s logic for the per-agent card grid.
@@ -10942,6 +10891,7 @@
         priorFrom:   $('ins-prior-from')   ? $('ins-prior-from').value   : '',
         priorTo:     $('ins-prior-to')     ? $('ins-prior-to').value     : '',
         trendMetric: insActiveTrendMetric,
+        trendView:   insTrendView,
         cardSort:    insCardSort,
         agents: irGetCheckedAgents_($('ins-agent-list')),
       }));
@@ -10971,6 +10921,15 @@
           const active = b.getAttribute('data-metric') === insActiveTrendMetric;
           b.classList.toggle('active', active);
           b.setAttribute('aria-selected', active ? 'true' : 'false');
+        });
+      }
+      if (prefs.trendView === 'daily' || prefs.trendView === 'monthly') {
+        insTrendView = prefs.trendView;
+        const vt = $('ins-trend-view-toggle');
+        if (vt) vt.querySelectorAll('.seg-btn').forEach(function (b) {
+          const active = b.getAttribute('data-view') === insTrendView;
+          b.classList.toggle('active', active);
+          b.setAttribute('aria-checked', active ? 'true' : 'false');
         });
       }
       if (Array.isArray(prefs.agents) && prefs.agents.length) insPendingAgentSelection_ = prefs.agents;

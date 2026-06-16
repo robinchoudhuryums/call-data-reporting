@@ -1238,26 +1238,11 @@
              the deep dive (per-queue charts, daily series). -->
         <div id="ins-queue-health" style="display:none;">
           <div class="al-section-title">Queue health <span class="ins-rollup-cap" id="ins-qh-cap"></span></div>
-          <div class="ins-qh-controls">
-            <label class="qcd-sub-toggle" id="ins-qh-sub-wrap" style="display:none;">
-              <input type="checkbox" id="ins-qh-include-sub" checked>
-              Include sub-queue data
-            </label>
-            <div class="segmented" id="ins-qh-view-toggle" role="radiogroup" aria-label="Queue health chart view" style="display:none;">
-              <button type="button" class="seg-btn active" data-view="monthly" role="radio" aria-checked="true">Monthly</button>
-              <button type="button" class="seg-btn" data-view="daily" role="radio" aria-checked="false">Daily</button>
-            </div>
-          </div>
           <div id="ins-qh-forecast" class="qcd-forecast" style="display:none;"></div>
           <div id="ins-qh-tiles" class="pr-kpi-row"></div>
-          <!-- Compact per-queue trend: monthly abandoned-% line per queue
-               + dashed dept total + the 5% threshold line. The QCD Report
-               keeps the full metric tabs / daily view / single-queue
-               drill-downs. -->
-          <div class="ir-chart-wrap ins-qh-chart-wrap" id="ins-qh-chart-wrap" style="display:none;">
-            <div class="ir-chart-header">Abandoned % by queue</div>
-            <div class="ir-chart-canvas-wrap ins-qh-canvas-wrap"><canvas id="ins-qh-chart"></canvas></div>
-          </div>
+          <!-- The per-queue abandoned-% trend chart now lives in the
+               consolidated trend chart below (its "Abandoned % by Queue"
+               tab); this section keeps the tiles + per-queue detail table. -->
           <table class="qcd-source-table">
             <thead><tr>
               <th>Queue</th>
@@ -1272,11 +1257,18 @@
         </div>
 
         <div class="ir-chart-wrap" id="ins-trend-wrap">
-          <div class="ir-chart-header">12-Month Team Trend</div>
+          <div class="ins-trend-headrow">
+            <div class="ir-chart-header" id="ins-trend-header">12-month team trend</div>
+            <div class="segmented" id="ins-trend-view-toggle" role="radiogroup" aria-label="Trend chart view" style="display:none;">
+              <button type="button" class="seg-btn active" data-view="monthly" role="radio" aria-checked="true">Monthly</button>
+              <button type="button" class="seg-btn" data-view="daily" role="radio" aria-checked="false">Daily</button>
+            </div>
+          </div>
           <div class="pr-trend-subtabs" id="ins-trend-subtabs" role="tablist">
             <button type="button" class="pr-trend-subtab active" data-metric="answered" role="tab" aria-selected="true">Answered</button>
             <button type="button" class="pr-trend-subtab" data-metric="pct" role="tab" aria-selected="false">% Answered</button>
             <button type="button" class="pr-trend-subtab" data-metric="att" role="tab" aria-selected="false">Avg Talk Time</button>
+            <button type="button" class="pr-trend-subtab" data-metric="queues" role="tab" aria-selected="false">Abandoned % by Queue</button>
           </div>
           <div class="ir-chart-canvas-wrap"><canvas id="ins-trend-chart"></canvas></div>
         </div>
