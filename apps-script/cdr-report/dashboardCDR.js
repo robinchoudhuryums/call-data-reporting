@@ -305,7 +305,11 @@ function generateCustomReport() {
     const dStr = String(row[IDX.DEPT] || '');
     const name = row[IDX.NAME];
 
-    if (!dStr.includes(dept)) continue;
+    // Exact dept match (was substring .includes(), which over-matched
+    // when one dept name is a substring of another -- e.g. "Sales" vs
+    // "Sales X" -- inflating the report's totals). Trim guards stray
+    // whitespace; matching stays case-sensitive like the rest of the stack.
+    if (dStr.trim() !== String(dept).trim()) continue;
     if (specificAgent && name !== specificAgent) continue;
 
     if (!agents[name]) agents[name] = { cur: initStats(), prev: initStats(), contacts: initContacts() };

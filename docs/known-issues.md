@@ -244,7 +244,7 @@ same time as the code change.
 
 | Source file | Cache prefix | Current version |
 |---|---|---|
-| `Data.gs` (main table) | `summary:vN:` | `v8` |
+| `Data.gs` (main table) | `summary:vN:` | `v9` |
 | `Data.gs` (latest-date snap for default From/To) | `latestDate:vN:` | `v1` |
 | `Data.gs` (multi-source latest dates for freshness pill) | `latestDates:vN:` | `v1` |
 | `IndividualReport.gs` | `individual:vN:` | `v8` |
@@ -252,10 +252,10 @@ same time as the code change.
 | `PerformanceReport.gs` | `performance:vN:` | `v4` |
 | `CompareRangesReport.gs` | `compareRanges:vN:` | `v4` |
 | `MissedCallsReport.gs` | `missed:vN:` | `v10` |
-| `CompanyOverview.gs` | `companyOverview:vN` | `v14` |
-| `QCDReport.gs` | `qcd:vN:` | `v6` |
+| `CompanyOverview.gs` | `companyOverview:vN` | `v16` |
+| `QCDReport.gs` | `qcd:vN:` | `v7` |
 | `InboundReport.gs` | `inbound:vN:` | `v3` |
-| `InsightsReport.gs` | `insights:vN:` | `v3` |
+| `InsightsReport.gs` | `insights:vN:` | `v6` |
 
 `Alerts.gs` holds no cached compute. Preview/send always re-reads the
 DQE Historical Data for the chosen date.
@@ -472,7 +472,7 @@ Performance / Compare Ranges:
   Returns `meta` (with `queues` + `unmapped` flags), `dateLabel`,
   `totals` (sum across the dept's queues), `queueBreakdown`
   (one row per queue), `trendData` (12-month buckets matching the
-  IR/PR trend-window logic). Cache prefix `qcd:v6`.
+  IR/PR trend-window logic). Cache prefix `qcd:v7`.
 - `sendQcdReportEmail({ imageBase64, dateLabel })` — image
   export like the IR/PR/CR send-email paths.
 
@@ -579,8 +579,8 @@ behavior byte-identical to pre-OrphanFix.
 
 **Cache invalidation.** `applyOrphanRename` removes the single
 fixed-key Overview cache entry (via the `COMPANY_OVERVIEW_CACHE_KEY`
-constant -- currently `companyOverview:v14`) on success. Per-(dept,
-range) caches (`summary:v8`, `individual:v8`, `performance:v4`,
+constant -- currently `companyOverview:v16`) on success. Per-(dept,
+range) caches (`summary:v9`, `individual:v8`, `performance:v4`,
 etc.) are left to TTL out within 30 minutes
 (`REPORT_CACHE_TTL_SECONDS`). The Orphan Fix modal tells the user
 the Overview updates immediately and other views may lag up to the

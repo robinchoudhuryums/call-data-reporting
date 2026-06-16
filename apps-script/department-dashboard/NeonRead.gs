@@ -124,9 +124,13 @@ function neonGetAgentExtPairs_() {
     rs.close(); stmt.close();
     var arr = JSON.parse(json || '[]');
     try { cache.put(KEY, json, REPORT_CACHE_TTL_SECONDS); } catch (ce) { /* harmless */ }
+    clearNeonReadFailure_();   // F4: a successful read (even empty) means Neon is healthy
     return arr;
   } catch (e) {
+    // F4: record a hard error durably + distinctly so it isn't mistaken
+    // for an unconfigured/empty result when the caller falls back to the sheet.
     Logger.log('neonGetAgentExtPairs_ failed: ' + (e && e.message ? e.message : e));
+    recordNeonReadFailure_('neonGetAgentExtPairs_', e);
     return null;
   } finally {
     try { conn.close(); } catch (ce) {}

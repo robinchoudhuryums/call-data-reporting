@@ -364,6 +364,34 @@ scripts/deploy.sh apps-script/cdr-import <cdr-import-deployment-id>
   Disable removes the trigger and clears the flag. Only matters once
   `DQE_READ_SOURCE=neon`.
 
+**Optional (deferred Neon mirror):**
+
+- By default the daily import mirrors CDR / QCD / DQE / Inbound to Neon
+  **inline** inside `processIntegratedHistory` — the Neon write is the
+  dominant cost of the run. To move it off the synchronous import path
+  (so a slow or cold Neon can't push the import toward the Apps Script
+  execution ceiling), set the **CDR Import** project's
+  `NEON_MIRROR_MODE` Script Property to `deferred` (unset / `inline` =
+  the original behavior, unchanged).
+- First install the trigger: in the CDR Import project, **CDR Tools →
+  Install Neon Mirror Trigger** (installs `runNeonMirror_`, every 15
+  min; needs the `script.scriptapp` scope — grant on first run). In
+  `deferred` mode the import writes only the sheets and enqueues each
+  date to a `Neon Mirror Queue` tab in the CDR Report spreadsheet; the
+  trigger drains the queue minutes later by re-deriving each payload
+  from the Historical Data sheets and upserting via the same writers
+  (`ON CONFLICT`, so retries are safe). The daily toast shows
+  `Neon ⏳ queued`; per-type outcomes land as `neonMirror:*` Pipeline
+  Health rows.
+- Validate on one import before relying on it: confirm the queue drains,
+  `neonMirror:*` rows show `success`, and the dashboard data is current.
+  Reversible with no redeploy — set `NEON_MIRROR_MODE=inline` (or clear
+  it). Once trusted, uninstall the CDR Report `runDailyDQEBuild_`
+  safety-net trigger so DQE isn't mirrored both inline and via the
+  queue (harmless but redundant). Needs the same `NEON_*` props the
+  inline mirror uses. See CLAUDE.md Operator State #22 + the
+  "Deferred Neon mirror" gotcha for the full contract.
+
 ## Deep links
 
 Phase C (commit ce4220a) added URL hash routing so any report

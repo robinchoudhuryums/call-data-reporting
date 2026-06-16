@@ -96,7 +96,11 @@ function getLatestDataDate() {
  *     qcd: 'yyyy-MM-dd' | null,
  *     latest: 'yyyy-MM-dd' | null }   // MAX of the above
  *
- * Cached 5 min under `latestDates:v1`. The single-source
+ * Cached 5 min under `latestDates:v1:<source>`. The DQE component comes
+ * from the source-aware `getLatestDataDate()`, so the combined blob is
+ * source-suffixed too (mirroring `latestDate:v1:<source>`) -- otherwise a
+ * `DQE_READ_SOURCE` flip could serve a stale combined value computed from
+ * the other source for up to the TTL. The single-source
  * `getLatestDataDate()` above is kept for the My Department From/To
  * default (which should still snap to DQE specifically -- the
  * agent table draws from DQE; defaulting to a QCD-only date would
@@ -104,7 +108,8 @@ function getLatestDataDate() {
  */
 function getLatestDataDates() {
   const cache = CacheService.getScriptCache();
-  const KEY = 'latestDates:v1';
+  const source = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
+  const KEY = 'latestDates:v1:' + source;
   const cached = cache.get(KEY);
   if (cached) {
     try { return JSON.parse(cached); } catch (e) { /* recompute */ }
