@@ -362,6 +362,27 @@ function saveDeptConfig(req) {
     }
   }
 
+  // --- M2 hardening: NON-BLOCKING warning when a saved queue is also
+  // mapped to another dept. Double-mapping is tolerated downstream (the
+  // Overview attributes a shared queue to EVERY dept that lists it --
+  // companyOverview:v16 M2), so this is a heads-up, not a rejection: it's
+  // almost always a config slip that would silently inflate two depts'
+  // QCD numbers from the same queue. Computed against the OTHER depts'
+  // current effective lists (this dept's new row isn't written yet). ---
+  const queueWarnings = [];
+  if (qcdQueues.length) {
+    const otherDepts = allDepts.filter(function (d) { return d !== dept; });
+    qcdQueues.forEach(function (q) {
+      const owners = otherDepts.filter(function (d) {
+        return getDeptQcdQueues_(d).indexOf(q) !== -1;
+      });
+      if (owners.length) {
+        queueWarnings.push('Queue "' + q + '" is also mapped to: '
+          + owners.join(', ') + '.');
+      }
+    });
+  }
+
   // --- Overview Parent validation. ---
   if (overviewParent) {
     if (overviewParent === dept) {
@@ -418,7 +439,7 @@ function saveDeptConfig(req) {
   } finally {
     lock.releaseLock();
   }
-  return { saved: true };
+  return { saved: true, warnings: queueWarnings };
 }
 
 /**
