@@ -2857,6 +2857,17 @@
   .ins-card-name { font-family: var(--display); font-weight: 600; font-size: 14px; color: var(--ink); }
   .ins-card-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 10px; }
   .ins-metric { min-width: 0; }
+  /* Inline current-vs-prior mini-bars on each Insights card (#3). */
+  .ins-card-bars { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }
+  .ins-bar-row { display: flex; align-items: center; gap: 6px; }
+  .ins-bar-lbl { font-size: 10px; color: var(--muted); flex: 0 0 52px; text-align: right;
+                 font-family: 'IBM Plex Mono', monospace; }
+  .ins-bar-track { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+  .ins-bar { height: 5px; border-radius: var(--r); min-width: 1px; }
+  .ins-bar-prev { background: var(--line); }
+  .ins-bar-cur.ins-bar-rung { background: var(--accent); }
+  .ins-bar-cur.ins-bar-ans  { background: var(--good); }
+  .ins-bar-cur.ins-bar-miss { background: var(--warn); }
   .ins-metric-label {
     font-family: var(--mono); font-size: 9px; text-transform: uppercase;
     letter-spacing: 0.18em; color: var(--muted);

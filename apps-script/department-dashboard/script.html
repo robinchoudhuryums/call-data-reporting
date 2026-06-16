@@ -9782,6 +9782,10 @@
   let insLastData = null;
   let insChartInstance = null;
   let insTrendView = 'monthly';    // 'monthly' | 'daily' (consolidated trend chart toggle)
+  let insCardsView = 'cards';      // 'cards' | 'chart' (per-agent comparison view, #3)
+  let insCardsChartMetric = 'answered';   // metric for the grouped Chart view
+  let insCardsChartInstance = null;
+  let insHasQuiet_ = false;        // whether the current render has quiet agents
   let insShareChartInstance = null;   // share-of-answered pie (PR port)
   let insActiveTrendMetric = 'answered';
   let insCardSort = 'default';      // default (answered desc) | name | improvers | regressors
@@ -9893,6 +9897,29 @@
       if (insLastData) {
         insRenderAgentCards_(insLastData.agentData || [], insLastData.meta, insLastData.teamStats);
       }
+    });
+
+    // Cards/Chart view toggle (#3) + the Chart-view metric selector.
+    const cardsViewToggle = $('ins-cards-view-toggle');
+    if (cardsViewToggle) cardsViewToggle.addEventListener('click', function (e) {
+      const b = e.target.closest('.seg-btn');
+      if (!b) return;
+      const next = b.getAttribute('data-view') || 'cards';
+      if (next === insCardsView) return;
+      insCardsView = next;
+      cardsViewToggle.querySelectorAll('.seg-btn').forEach(function (x) {
+        const active = x === b;
+        x.classList.toggle('active', active);
+        x.setAttribute('aria-checked', active ? 'true' : 'false');
+      });
+      insSavePrefs_();
+      insApplyCardsView_();
+    });
+    const cardsChartMetricSel = $('ins-cards-chart-metric');
+    if (cardsChartMetricSel) cardsChartMetricSel.addEventListener('change', function () {
+      insCardsChartMetric = cardsChartMetricSel.value;
+      insSavePrefs_();
+      if (insCardsView === 'chart') insRenderCardsChart_();
     });
 
     // Trend-metric sub-tabs (same pattern as the PR trend chart).
@@ -10595,6 +10622,10 @@
       return;
     }
     if (toolbar) toolbar.style.display = cards.length > 1 ? '' : 'none';
+    // The Cards/Chart toggle lives in the toolbar, which is hidden for a
+    // single agent -- force Cards view so a restored 'chart' pref can't
+    // strand a 1-agent report with no way to switch back.
+    if (cards.length <= 1) insCardsView = 'cards';
 
     const teamScore = deltaImprovementScore_(teamStats || {});
     const enriched = cards.map(function (c) {
@@ -10627,18 +10658,84 @@
     const renderCard = function (x) { return insBuildCard_(x, teamScore, meta); };
     wrap.innerHTML = sortedMain.map(renderCard).join('');
 
+    insHasQuiet_ = quiet.length > 0;
     if (det) {
-      if (quiet.length > 0) {
-        det.style.display = '';
+      if (insHasQuiet_) {
         det.querySelector('.cr-quiet-summary').textContent =
           'Show ' + quiet.length + ' quiet agent' + (quiet.length === 1 ? '' : 's')
           + ' (no notable changes)';
         $('ins-quiet-cards').innerHTML = quiet.map(renderCard).join('');
       } else {
-        det.style.display = 'none';
         $('ins-quiet-cards').innerHTML = '';
       }
     }
+    // Apply the Cards/Chart view (sets visibility + renders the chart).
+    insApplyCardsView_();
+  }
+
+  /**
+   * Cards/Chart view switch for the per-agent comparison (#3). Cards view
+   * shows the card grid (+ quiet collapsible if any); Chart view shows a
+   * grouped current-vs-prior bar across all selected agents.
+   */
+  function insApplyCardsView_() {
+    const chartView = (insCardsView === 'chart');
+    const cardsWrap = $('ins-agent-cards');
+    const chartWrap = $('ins-cards-chart-wrap');
+    const det = $('ins-quiet-details');
+    const metricWrap = $('ins-cards-chart-metric-wrap');
+    if (cardsWrap)  cardsWrap.style.display = chartView ? 'none' : '';
+    if (det)        det.style.display = chartView ? 'none' : (insHasQuiet_ ? '' : 'none');
+    if (chartWrap)  chartWrap.style.display = chartView ? '' : 'none';
+    if (metricWrap) metricWrap.style.display = chartView ? '' : 'none';
+    if (chartView) insRenderCardsChart_();
+  }
+
+  /**
+   * Grouped current-vs-prior bar chart across the selected agents for one
+   * metric (insCardsChartMetric). Reuses the PR volume-bar pattern; colors
+   * via THEME (INV-42), datalabels off (INV-41).
+   */
+  function insRenderCardsChart_() {
+    const canvas = $('ins-cards-chart');
+    if (!canvas) return;
+    refreshChartTheme();
+    destroyOrphanedChartOnCanvas_('ins-cards-chart');
+    if (insCardsChartInstance) { try { insCardsChartInstance.destroy(); } catch (e) {} insCardsChartInstance = null; }
+    const cards = (insLastData && insLastData.agentData) || [];
+    const metric = insCardsChartMetric;
+    const isPct = (metric === 'pct');
+    const valOf = function (c, key) {
+      const s = c.metrics && c.metrics[metric];
+      return s ? (Number(s[key]) || 0) : 0;
+    };
+    const labels = cards.map(function (c) { return c.name; });
+    insCardsChartInstance = new Chart(canvas.getContext('2d'), {
+      type: 'bar',
+      data: {
+        labels: labels,
+        datasets: [
+          { label: 'Current', data: cards.map(function (c) { return valOf(c, 'val'); }),
+            backgroundColor: THEME.accent },
+          { label: 'Prior',   data: cards.map(function (c) { return valOf(c, 'prev'); }),
+            backgroundColor: THEME.muted },
+        ],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false, animation: false,
+        plugins: {
+          datalabels: { display: false },
+          legend: { position: 'bottom', labels: { boxWidth: 14 } },
+          tooltip: { callbacks: { label: function (ctx) {
+            return ctx.dataset.label + ': ' + (isPct ? ctx.parsed.y + '%' : ctx.parsed.y);
+          } } },
+        },
+        scales: {
+          x: { ticks: { maxRotation: 45, minRotation: 0, autoSkip: false } },
+          y: { beginAtZero: true, ticks: { callback: function (v) { return isPct ? v + '%' : v; } } },
+        },
+      },
+    });
   }
 
   function insBuildCard_(x, teamScore, meta) {
@@ -10675,9 +10772,32 @@
     // dive; the card is the summary.
     const irLink = '<button type="button" class="ins-card-ir-link" data-agent="' + escapeHtml(c.name) + '"'
       + ' title="Open this agent&#39;s Individual Report for the same date range">IR &#8599;</button>';
+    // Inline current-vs-prior mini-bars (Rung / Answered / Missed): a CSS
+    // bar-pair per metric, scaled to that metric's max(cur,prior). Cheap
+    // (no per-card Chart.js); the grouped "Chart" view (insRenderCardsChart_)
+    // is the cross-agent comparison.
+    const barRow = function (lbl, st, cls) {
+      const cur = Number(st && st.val) || 0;
+      const prev = Number(st && st.prev) || 0;
+      const mx = Math.max(cur, prev, 1);
+      return '<div class="ins-bar-row" title="' + lbl + ': ' + cur + ' (prior ' + prev + ')">'
+        +   '<span class="ins-bar-lbl">' + lbl + '</span>'
+        +   '<span class="ins-bar-track">'
+        +     '<span class="ins-bar ins-bar-cur ' + cls + '" style="width:' + Math.round(cur / mx * 100) + '%"></span>'
+        +     '<span class="ins-bar ins-bar-prev" style="width:' + Math.round(prev / mx * 100) + '%"></span>'
+        +   '</span>'
+        + '</div>';
+    };
+    const m = c.metrics || {};
+    const bars = '<div class="ins-card-bars">'
+      +   barRow('Rung', m.rung, 'ins-bar-rung')
+      +   barRow('Answered', m.answered, 'ins-bar-ans')
+      +   barRow('Missed', m.missed, 'ins-bar-miss')
+      + '</div>';
     return '<div class="ins-card' + (isFloater ? ' ins-card-floater' : '') + dirClass + '"' + debugAttrs + '>'
          +   '<div class="ins-card-head"><span class="ins-card-name">' + escapeHtml(c.name) + '</span>' + chip + vsTeam + irLink + '</div>'
          +   '<div class="ins-card-grid">' + metrics + '</div>'
+         +   bars
          + '</div>';
   }
 
@@ -10927,6 +11047,8 @@
         trendView:   insTrendView,
         showLabels:  $('ins-show-datalabels') ? $('ins-show-datalabels').checked : false,
         cardSort:    insCardSort,
+        cardsView:   insCardsView,
+        cardsChartMetric: insCardsChartMetric,
         agents: irGetCheckedAgents_($('ins-agent-list')),
       }));
     } catch (e) { /* ignore */ }
@@ -10968,6 +11090,19 @@
       }
       if (typeof prefs.showLabels === 'boolean' && $('ins-show-datalabels')) {
         $('ins-show-datalabels').checked = prefs.showLabels;
+      }
+      if (prefs.cardsView === 'cards' || prefs.cardsView === 'chart') {
+        insCardsView = prefs.cardsView;
+        const vt = $('ins-cards-view-toggle');
+        if (vt) vt.querySelectorAll('.seg-btn').forEach(function (b) {
+          const active = b.getAttribute('data-view') === insCardsView;
+          b.classList.toggle('active', active);
+          b.setAttribute('aria-checked', active ? 'true' : 'false');
+        });
+      }
+      if (prefs.cardsChartMetric) {
+        insCardsChartMetric = prefs.cardsChartMetric;
+        if ($('ins-cards-chart-metric')) $('ins-cards-chart-metric').value = insCardsChartMetric;
       }
       if (Array.isArray(prefs.agents) && prefs.agents.length) insPendingAgentSelection_ = prefs.agents;
     } catch (e) { /* ignore */ }

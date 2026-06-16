@@ -357,6 +357,14 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   / improvement score / quiet thresholds are the SHARED
   `deltaClassify_` / `deltaImprovementScore_` / `deltaIsQuiet_`
   helpers in script.html (CR delegates to the same ones).
+  **Per-agent cards (seq #3):** each card carries inline current-vs-prior
+  **mini-bars** (CSS, Rung/Answered/Missed, scaled per-metric -- no
+  per-card Chart.js), and the toolbar has a **Cards⇄Chart** toggle
+  (`insCardsView`) -- Chart view renders ONE grouped current-vs-prior bar
+  across the selected agents for a metric dropdown (`insCardsChartMetric`,
+  `insRenderCardsChart_` on `ins-cards-chart`). Both persist in the
+  `cdr.ins.prefs` blob; single-agent reports force Cards view (toolbar is
+  hidden, so the toggle isn't reachable).
 - **Anti-intimidation layer is client-only; keep it that way.** Four
   pieces, all in script.html/styles.html with no server endpoints or
   cache bumps: (1) **answer-first headlines** -- every report's results

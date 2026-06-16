@@ -1304,8 +1304,26 @@
               <option value="regressors">Biggest regressors</option>
             </select>
           </label>
+          <div class="segmented" id="ins-cards-view-toggle" role="radiogroup" aria-label="Agent comparison view">
+            <button type="button" class="seg-btn active" data-view="cards" role="radio" aria-checked="true">Cards</button>
+            <button type="button" class="seg-btn" data-view="chart" role="radio" aria-checked="false">Chart</button>
+          </div>
+          <label class="ir-sort-control" id="ins-cards-chart-metric-wrap" style="display:none;">
+            <span class="ir-sort-label">Metric:</span>
+            <select id="ins-cards-chart-metric">
+              <option value="answered">Answered</option>
+              <option value="rung">Rung</option>
+              <option value="missed">Missed</option>
+              <option value="pct">% Answered</option>
+            </select>
+          </label>
         </div>
         <div id="ins-agent-cards" class="ins-agent-cards"></div>
+        <!-- Cross-agent grouped-bar view (current vs prior) -- toggled from
+             the toolbar; complements the per-card cards + mini-bars (#3). -->
+        <div class="ir-chart-wrap" id="ins-cards-chart-wrap" style="display:none;">
+          <div class="ir-chart-canvas-wrap"><canvas id="ins-cards-chart"></canvas></div>
+        </div>
 
         <details id="ins-quiet-details" class="cr-quiet-details" style="display:none;">
           <summary class="cr-quiet-summary"></summary>
