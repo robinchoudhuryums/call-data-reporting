@@ -509,4 +509,98 @@ function neonMirrorGapDays_(neonMax, sheetMax) {
   } catch (e) { return null; }
 }
 
+/**
+ * Editor-run drift check for the DQE history backfill (the "before you paste
+ * older rows" gate). Reads the OLD spreadsheet's DQE sheet + the CURRENT
+ * `DQE Historical Data`, finds the (date, agent) keys present in BOTH (the
+ * overlap window), and reports how many match exactly vs differ on the core
+ * metric columns -- so you can quantify any calculation drift before relying
+ * on the older data for the trend charts.
+ *
+ * Durations are compared via getDisplayValues (TZ-agnostic strings, INV-02),
+ * so a different spreadsheet timezone on the old workbook doesn't create false
+ * mismatches. Read-only; never writes.
+ *
+ * Use the `runHistoricalBackfillCheck` wrapper (the Run picker hides
+ * `_`-suffixed functions); edit OLD_SS_ID / OLD_SHEET there first.
+ */
+function validateHistoricalDqeBackfill_(oldSsId, oldSheetName) {
+  var readDqe = function (ss, sheetName) {
+    var sheet = ss.getSheetByName(sheetName);
+    if (!sheet) throw new Error('Sheet "' + sheetName + '" not found in ' + ss.getId());
+    var lastRow = sheet.getLastRow();
+    if (lastRow < 2) return {};
+    var tz = ss.getSpreadsheetTimeZone();
+    var numCols = HISTORICAL_COLS.CSR_AVG_ABD_WAIT;
+    var range = sheet.getRange(2, 1, lastRow - 1, numCols);
+    var vals = range.getValues();
+    var disp = range.getDisplayValues();
+    var out = {};
+    for (var i = 0; i < vals.length; i++) {
+      var r = vals[i], rd = disp[i];
+      var iso = rowDateIso_(r[HISTORICAL_COLS.DATE - 1], tz);
+      var agent = String(r[HISTORICAL_COLS.AGENT - 1] || '').trim();
+      if (!iso || !agent) continue;
+      out[iso + '|' + agent] = {
+        unique:   Number(r[HISTORICAL_COLS.TOTAL_UNIQUE - 1])   || 0,
+        rung:     Number(r[HISTORICAL_COLS.TOTAL_RUNG - 1])     || 0,
+        missed:   Number(r[HISTORICAL_COLS.TOTAL_MISSED - 1])   || 0,
+        answered: Number(r[HISTORICAL_COLS.TOTAL_ANSWERED - 1]) || 0,
+        tttSec:   parseHmsDisplay_(rd[HISTORICAL_COLS.TTT - 1]),
+        attSec:   parseHmsDisplay_(rd[HISTORICAL_COLS.ATT - 1]),
+      };
+    }
+    return out;
+  };
+
+  var oldRows = readDqe(SpreadsheetApp.openById(oldSsId), oldSheetName);
+  var curRows = readDqe(openSpreadsheet_(), SHEETS.HISTORICAL);
+
+  var FIELDS = ['unique', 'rung', 'missed', 'answered', 'tttSec', 'attSec'];
+  var overlap = 0, matches = 0, mismatches = [];
+  Object.keys(oldRows).forEach(function (k) {
+    if (!curRows[k]) return;   // not in the overlap window
+    overlap++;
+    var o = oldRows[k], c = curRows[k], diffs = [];
+    FIELDS.forEach(function (f) {
+      if (String(o[f]) !== String(c[f])) diffs.push(f + ' old=' + o[f] + ' cur=' + c[f]);
+    });
+    if (diffs.length) mismatches.push(k + ' :: ' + diffs.join(', '));
+    else matches++;
+  });
+
+  Logger.log('=== DQE backfill drift check ===');
+  Logger.log('old rows: %s | current rows: %s', Object.keys(oldRows).length, Object.keys(curRows).length);
+  Logger.log('overlapping (date|agent) keys: %s', overlap);
+  Logger.log('exact matches: %s | mismatches: %s', matches, mismatches.length);
+  mismatches.slice(0, 15).forEach(function (m) { Logger.log('   %s', m); });
+  if (overlap === 0) {
+    Logger.log('NOTE: no overlap -- the old sheet and current DQE Historical Data share no '
+             + '(date, agent) keys, so drift can\'t be measured. Check the date ranges/sheet name.');
+  } else {
+    var pct = Math.round((matches / overlap) * 1000) / 10;
+    Logger.log('=== %s%% of overlapping rows match exactly ===', pct);
+    Logger.log(mismatches.length === 0
+      ? 'CLEAN -- the older data was computed the same way; safe to paste the pre-overlap rows.'
+      : 'DRIFT -- review the mismatches above to decide if the older data is close enough for trend context.');
+  }
+  return { overlap: overlap, matches: matches, mismatches: mismatches.length };
+}
+
+/**
+ * Editor wrapper for validateHistoricalDqeBackfill_ (the Run picker hides
+ * `_`-suffixed functions). Edit OLD_SS_ID + OLD_SHEET to point at the
+ * spreadsheet holding your Nov-2024+ DQE history, then Run this and read the
+ * Execution log.
+ */
+function runHistoricalBackfillCheck() {
+  var OLD_SS_ID = 'PASTE_OLD_SPREADSHEET_ID_HERE';   // <-- edit
+  var OLD_SHEET = 'DQE Historical Data';             // <-- edit if the old tab is named differently
+  if (OLD_SS_ID === 'PASTE_OLD_SPREADSHEET_ID_HERE') {
+    Logger.log('Edit OLD_SS_ID (and OLD_SHEET if needed) in runHistoricalBackfillCheck first.');
+    return;
+  }
+  return validateHistoricalDqeBackfill_(OLD_SS_ID, OLD_SHEET);
+}
+
 

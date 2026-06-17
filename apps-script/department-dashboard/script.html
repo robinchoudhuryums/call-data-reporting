@@ -743,6 +743,7 @@
     initDeptConfig();
     initCallerLookup();
     initQcdReport();
+    initQcdAllDept_();
     // Router last so its modal-close listeners attach after each
     // per-modal init has wired up its own close-button handlers.
     initRouter();
@@ -3951,6 +3952,7 @@
   let irActiveChartTab = 'vol';    // vol | eff | dur
   let irPendingAgentSelection_ = null;
   let irPendingAutoRun_ = false;   // drill-through: auto-generate once the picker renders
+  let irCameFromInsights_ = false; // drill-through from Insights -> show "Back to Insights"
   let irListChangeHandler_ = null;
   const IR_PREFS_KEY = 'cdr.ir.prefs.v1';
 
@@ -3978,6 +3980,16 @@
     // (and applies the pending selection + auto-run) even if the cached
     // roster matched.
     irLastRoster = { dept: null, agents: [], activeAgents: null, activeFloaters: null, rangeKey: '' };
+    // Drill-through from Insights: hide the Insights modal (its rendered
+    // report stays in the DOM for an instant Back), flag the origin, and
+    // reveal the "Back to Insights" button on the IR modal (#2).
+    const insModal = $('insights-modal');
+    const fromInsights = !!(insModal && insModal.style.display !== 'none');
+    if (fromInsights) {
+      irCameFromInsights_ = true;
+      insModal.style.display = 'none';
+      const bk = $('ir-back-to-insights-btn'); if (bk) bk.style.display = '';
+    }
     const btn = $('individual-report-btn');
     if (btn) btn.click();   // -> openModal -> ensureIrRoster -> renderIrAgentList
   }
@@ -4005,15 +4017,32 @@
       modal.setAttribute('aria-hidden', 'true');
       releaseFocus_();
       resetModalTransform_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
-      document.body.style.overflow = '';
       document.removeEventListener('keydown', onKeyDown);
-      btn.focus();
+      // If we drilled in from Insights, ANY close (Back / X / Escape) returns
+      // to the already-rendered Insights modal -- no reload (#2/#7).
+      if (irCameFromInsights_) {
+        irCameFromInsights_ = false;
+        const bk = $('ir-back-to-insights-btn'); if (bk) bk.style.display = 'none';
+        const insModal = $('insights-modal');
+        if (insModal) {
+          insModal.style.display = '';
+          insModal.setAttribute('aria-hidden', 'false');
+          document.body.style.overflow = 'hidden';   // keep the scroll lock for Insights
+        } else {
+          document.body.style.overflow = '';
+        }
+      } else {
+        document.body.style.overflow = '';
+        btn.focus();
+      }
     }
     function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
 
     btn.addEventListener('click', openModal);
     if (closeBtn) closeBtn.addEventListener('click', closeModal);
     if (backdrop) backdrop.addEventListener('click', closeModal);
+    const backToIns = $('ir-back-to-insights-btn');
+    if (backToIns) backToIns.addEventListener('click', closeModal);
 
     // Wire form controls.
     const preset = $('ir-preset');
@@ -10244,15 +10273,12 @@
       att:      series.map(function (s) { return s.att; }),
     };
     $('ins-kpi-row').innerHTML = [
-      // Rung / Answered deltas render NEUTRAL here (volume moves with call
-      // traffic, not performance); Missed keeps its warn valence. PR keeps
-      // the legacy coloring until it's retired -- the parity test pins
-      // numbers, not badge colors.
-      prKpiTile_('Total Rung',   t.rung,     'neu', sparks.rung,     IR_VOLUME_COLORS.rung),
-      prKpiTile_('Missed (rings)', t.missed, 'neg', sparks.missed,   IR_VOLUME_COLORS.missed),
-      prKpiTile_('Answered',     t.answered, 'neu', sparks.answered, IR_VOLUME_COLORS.answered),
+      // Team (roster) rollup -- the priority metrics first. Total Rung +
+      // Total TTT were dropped (low signal); Longest Wait lives in Queue
+      // health. Missed keeps its warn valence; volume/rate are neutral/pos.
       prKpiTile_('% Answered',   t.pct,      'pos', sparks.pct,      (THEME.accent || '#4E79A7')),
-      prKpiTile_('Total TTT',    t.ttt,      'neu', sparks.ttt,      (THEME.muted  || '#9C755F')),
+      prKpiTile_('Answered',     t.answered, 'neu', sparks.answered, IR_VOLUME_COLORS.answered),
+      prKpiTile_('Missed (rings)', t.missed, 'neg', sparks.missed,   IR_VOLUME_COLORS.missed),
       prKpiTile_('ATT (per call)', t.att,    'neu', sparks.att,      (THEME.muted  || '#9C755F')),
     ].join('');
 
@@ -10367,7 +10393,6 @@
       inboundKpiTile_('Abandoned %', t.abandonedPctStr, fmtNumber(t.abandoned) + ' abandoned',
         p ? inboundDelta_(t.abandonedPct, p.abandonedPct, 'neg', true) : ''),
       inboundKpiTile_('Violations (MTD)', fmtNumber(qh.violationsMtd), 'days over the 5% threshold this month', ''),
-      inboundKpiTile_('Longest wait', t.longestWait, '', ''),
     ];
     $('ins-qh-tiles').innerHTML = tiles.join('');
 
@@ -10386,8 +10411,17 @@
       // Tag child sub-queue rows so the separation is visible (seq #5/#1).
       const subTag = q.subDept
         ? ' <span class="dept-qcd-subtag">sub-queue · ' + escapeHtml(q.subDept) + '</span>' : '';
+      // 4c: annotate WHERE this queue's abandons come from -- the call
+      // source with the most abandoned calls (from the 4a bySource
+      // breakdown). Rendered only when a sub-source actually has abandons.
+      const tas = q.topAbandonSource;
+      const srcLine = tas
+        ? '<div class="ins-qh-topsrc" title="Call source contributing the most abandoned calls in this queue for the selected range">'
+          + '&#8627; most abandons: <strong>' + escapeHtml(tas.source) + '</strong> ('
+          + fmtNumber(tas.abandoned) + ')</div>'
+        : '';
       return '<tr>'
-        + '<td>' + escapeHtml(q.queue) + subTag + '</td>'
+        + '<td>' + escapeHtml(q.queue) + subTag + srcLine + '</td>'
         + '<td class="num">' + fmtNumber(q.totalCalls) + '</td>'
         + '<td class="num">' + fmtNumber(q.abandoned) + '</td>'
         + '<td class="num' + pctCls + '">' + escapeHtml(q.abandonedPctStr) + '</td>'
@@ -10663,7 +10697,20 @@
       }
     }
 
-    const renderCard = function (x) { return insBuildCard_(x, teamScore, meta); };
+    // Team average per metric -- the baseline the per-card bars compare
+    // against (#5). Volume metrics are per-agent averages (team total /
+    // roster-agent count); % Answered is the team rate itself.
+    const ts = teamStats || {};
+    const nRoster = (meta && meta.rosterAgentCount)
+      || cards.filter(function (c) { return c.matchedViaRoster; }).length
+      || cards.length || 1;
+    const teamAvg = {
+      answered: ((ts.answered && Number(ts.answered.val)) || 0) / nRoster,
+      missed:   ((ts.missed   && Number(ts.missed.val))   || 0) / nRoster,
+      pct:      (ts.pct && Number(ts.pct.val)) || 0,
+    };
+
+    const renderCard = function (x) { return insBuildCard_(x, teamScore, meta, teamAvg); };
     wrap.innerHTML = sortedMain.map(renderCard).join('');
 
     insHasQuiet_ = quiet.length > 0;
@@ -10700,9 +10747,11 @@
   }
 
   /**
-   * Grouped current-vs-prior bar chart across the selected agents for one
-   * metric (insCardsChartMetric). Reuses the PR volume-bar pattern; colors
-   * via THEME (INV-42), datalabels off (INV-41).
+   * Cross-agent comparison chart (#6): each selected agent's GAP vs the team
+   * average for one metric (insCardsChartMetric). Diverging bars from a zero
+   * baseline (= team average); colored by favorability (Missed is inverse).
+   * Value labels show the absolute number; click a bar to drill into IR.
+   * Colors via THEME (INV-42); datalabels on (INV-41) to carry the values.
    */
   function insRenderCardsChart_() {
     const canvas = $('ins-cards-chart');
@@ -10711,42 +10760,78 @@
     destroyOrphanedChartOnCanvas_('ins-cards-chart');
     if (insCardsChartInstance) { try { insCardsChartInstance.destroy(); } catch (e) {} insCardsChartInstance = null; }
     const cards = (insLastData && insLastData.agentData) || [];
+    const meta  = (insLastData && insLastData.meta) || {};
+    const ts    = (insLastData && insLastData.teamStats) || {};
     const metric = insCardsChartMetric;
     const isPct = (metric === 'pct');
-    const valOf = function (c, key) {
-      const s = c.metrics && c.metrics[metric];
-      return s ? (Number(s[key]) || 0) : 0;
-    };
+    const nRoster = meta.rosterAgentCount
+      || cards.filter(function (c) { return c.matchedViaRoster; }).length
+      || cards.length || 1;
+    const teamAvg = isPct
+      ? ((ts.pct && Number(ts.pct.val)) || 0)
+      : (((ts[metric] && Number(ts[metric].val)) || 0) / nRoster);
     const labels = cards.map(function (c) { return c.name; });
+    const vals = cards.map(function (c) {
+      const s = c.metrics && c.metrics[metric]; return s ? (Number(s.val) || 0) : 0;
+    });
+    const gaps = vals.map(function (v) { return Number((v - teamAvg).toFixed(isPct ? 1 : 2)); });
+    // Favorability: for Missed, BELOW team is good; everything else ABOVE.
+    const favUp = (metric !== 'missed');
+    const good = THEME.good || '#4e9a6b';
+    const warn = THEME.warn || '#c66b4b';
+    const colors = gaps.map(function (g) {
+      if (g === 0) return THEME.muted;
+      const above = g > 0;
+      return (above === favUp) ? good : warn;
+    });
+    const fmtV = function (n) { return isPct ? (Number(n).toFixed(1) + '%') : String(Math.round(n)); };
+
     insCardsChartInstance = new Chart(canvas.getContext('2d'), {
       type: 'bar',
-      data: {
-        labels: labels,
-        datasets: [
-          { label: 'Current', data: cards.map(function (c) { return valOf(c, 'val'); }),
-            backgroundColor: THEME.accent },
-          { label: 'Prior',   data: cards.map(function (c) { return valOf(c, 'prev'); }),
-            backgroundColor: THEME.muted },
-        ],
-      },
+      data: { labels: labels, datasets: [{ label: 'Gap vs team avg', data: gaps,
+        backgroundColor: colors, borderColor: colors }] },
       options: {
         responsive: true, maintainAspectRatio: false, animation: false,
+        onClick: function (evt, els) {
+          if (els && els.length) {
+            const name = labels[els[0].index];
+            if (name && typeof irDrillToAgent_ === 'function') {
+              irDrillToAgent_(name, $('ins-from').value, $('ins-to').value);
+            }
+          }
+        },
         plugins: {
-          datalabels: { display: false },
-          legend: { position: 'bottom', labels: { boxWidth: 14 } },
+          legend: { display: false },
+          datalabels: {
+            display: true,
+            anchor: function (ctx) { return ctx.dataset.data[ctx.dataIndex] >= 0 ? 'end' : 'start'; },
+            align: function (ctx) { return ctx.dataset.data[ctx.dataIndex] >= 0 ? 'end' : 'start'; },
+            color: THEME.ink,
+            font: { family: "'IBM Plex Mono', monospace", size: 10, weight: '500' },
+            formatter: function (g, ctx) { return fmtV(vals[ctx.dataIndex]); },
+          },
           tooltip: { callbacks: { label: function (ctx) {
-            return ctx.dataset.label + ': ' + (isPct ? ctx.parsed.y + '%' : ctx.parsed.y);
+            const g = gaps[ctx.dataIndex];
+            return fmtV(vals[ctx.dataIndex]) + '  (team avg ' + fmtV(teamAvg) + ', '
+              + (g >= 0 ? '+' : '') + fmtV(g) + ' vs team)';
           } } },
         },
         scales: {
           x: { ticks: { maxRotation: 45, minRotation: 0, autoSkip: false } },
-          y: { beginAtZero: true, ticks: { callback: function (v) { return isPct ? v + '%' : v; } } },
+          y: { title: { display: true, text: 'gap vs team avg' + (isPct ? ' (pts)' : '') },
+               grid: { color: function (c) { return c.tick.value === 0 ? THEME.ink : THEME.line; } },
+               ticks: { callback: function (v) { return isPct ? v + '%' : v; } } },
+        },
+        onHover: function (evt, els) {
+          if (evt && evt.native && evt.native.target) {
+            evt.native.target.style.cursor = (els && els.length) ? 'pointer' : 'default';
+          }
         },
       },
     });
   }
 
-  function insBuildCard_(x, teamScore, meta) {
+  function insBuildCard_(x, teamScore, meta, teamAvg) {
     const c = x.card;
     const isFloater = c.matchedViaQueue && !c.matchedViaRoster;
     const chip = isFloater ? sourceChipHtml_(c) : '';
@@ -10761,51 +10846,59 @@
     const debugAttrs =
       ' data-direction="' + x.direction + '"'
       + ' data-score="' + (x.score == null ? '' : x.score.toFixed(1)) + '"';
-    const metricDefs = [
-      ['Rung', 'rung', 'pos', 'volume'], ['Missed', 'missed', 'neg', 'volume'],
-      ['Answered', 'answered', 'pos', 'volume'], ['% Ans', 'pct', 'pos', 'rate'],
-      ['TTT', 'ttt', 'neu', 'time'], ['ATT', 'att', 'neu', 'rate'],
-    ];
-    const metrics = metricDefs.map(function (m) {
-      const st = (c.metrics && c.metrics[m[1]]) || { formatted: '-' };
+    const mm = c.metrics || {};
+    const ta = teamAvg || {};
+
+    // Primary (featured): % Answered / Answered / Missed as bars vs the
+    // TEAM AVERAGE (a marker on each track), with the agent's value as a
+    // data label. The team baseline makes cross-agent reads honest (#5) --
+    // a low bar that's still above the team marker is good. A small prior-
+    // period delta chip keeps the trend visible too.
+    const cbar = function (lbl, key, cls, isPct, deltaValence) {
+      const st = mm[key] || {};
+      const val  = Number(st.val)  || 0;
+      const tAvg = Number(ta[key]) || 0;
+      const max  = isPct ? 100 : Math.max(val, tAvg, 1);
+      const valLbl  = isPct ? val.toFixed(1) + '%' : (st.formatted != null ? String(st.formatted) : String(val));
+      const tAvgLbl = isPct ? tAvg.toFixed(1) + '%' : String(Math.round(tAvg));
+      return '<div class="ins-cbar-row" title="' + escapeHtml(lbl) + ': ' + escapeHtml(valLbl)
+           +   ' (team avg ' + escapeHtml(tAvgLbl) + ')">'
+           +   '<span class="ins-cbar-lbl">' + lbl + '</span>'
+           +   '<span class="ins-cbar-track">'
+           +     '<span class="ins-cbar-fill ' + cls + '" style="width:' + Math.max(2, Math.min(100, Math.round(val / max * 100))) + '%"></span>'
+           +     '<span class="ins-cbar-team" style="left:' + Math.min(100, Math.round(tAvg / max * 100)) + '%" title="team avg ' + escapeHtml(tAvgLbl) + '"></span>'
+           +     '<span class="ins-cbar-val">' + escapeHtml(valLbl) + '</span>'
+           +   '</span>'
+           +   '<span class="ins-cbar-delta">' + insDeltaBadge_(st, deltaValence) + '</span>'
+           + '</div>';
+    };
+    const primary = '<div class="ins-card-bars2">'
+      +   cbar('% Ans',    'pct',      'ins-cbar-pct', true,  'pos')
+      +   cbar('Answered', 'answered', 'ins-cbar-ans', false, 'pos')
+      +   cbar('Missed',   'missed',   'ins-cbar-miss', false, 'neg')
+      + '</div>';
+
+    // Secondary (collapsible): Rung / ATT / TTT numbers + deltas.
+    const secDefs = [['Rung', 'rung', 'pos'], ['ATT', 'att', 'neu'], ['TTT', 'ttt', 'neu']];
+    const secondary = secDefs.map(function (m) {
+      const st = mm[m[1]] || { formatted: '-' };
       return '<div class="ins-metric">'
            +   '<div class="ins-metric-label">' + m[0] + '</div>'
            +   '<div class="ins-metric-val">' + escapeHtml(String(st.formatted)) + '</div>'
            +   '<div class="ins-metric-delta">' + insDeltaBadge_(st, m[2]) + '</div>'
-           +   insMetricPerDay_(st, m[3], meta)
            + '</div>';
     }).join('');
-    // Drill-through to the Individual Report (same agent + same window,
-    // auto-generated via irDrillToAgent_) -- IR is the per-person deep
-    // dive; the card is the summary.
+
+    // Drill-through to the Individual Report (same agent + same window).
     const irLink = '<button type="button" class="ins-card-ir-link" data-agent="' + escapeHtml(c.name) + '"'
       + ' title="Open this agent&#39;s Individual Report for the same date range">IR &#8599;</button>';
-    // Inline current-vs-prior mini-bars (Rung / Answered / Missed): a CSS
-    // bar-pair per metric, scaled to that metric's max(cur,prior). Cheap
-    // (no per-card Chart.js); the grouped "Chart" view (insRenderCardsChart_)
-    // is the cross-agent comparison.
-    const barRow = function (lbl, st, cls) {
-      const cur = Number(st && st.val) || 0;
-      const prev = Number(st && st.prev) || 0;
-      const mx = Math.max(cur, prev, 1);
-      return '<div class="ins-bar-row" title="' + lbl + ': ' + cur + ' (prior ' + prev + ')">'
-        +   '<span class="ins-bar-lbl">' + lbl + '</span>'
-        +   '<span class="ins-bar-track">'
-        +     '<span class="ins-bar ins-bar-cur ' + cls + '" style="width:' + Math.round(cur / mx * 100) + '%"></span>'
-        +     '<span class="ins-bar ins-bar-prev" style="width:' + Math.round(prev / mx * 100) + '%"></span>'
-        +   '</span>'
-        + '</div>';
-    };
-    const m = c.metrics || {};
-    const bars = '<div class="ins-card-bars">'
-      +   barRow('Rung', m.rung, 'ins-bar-rung')
-      +   barRow('Answered', m.answered, 'ins-bar-ans')
-      +   barRow('Missed', m.missed, 'ins-bar-miss')
-      + '</div>';
+
     return '<div class="ins-card' + (isFloater ? ' ins-card-floater' : '') + dirClass + '"' + debugAttrs + '>'
          +   '<div class="ins-card-head"><span class="ins-card-name">' + escapeHtml(c.name) + '</span>' + chip + vsTeam + irLink + '</div>'
-         +   '<div class="ins-card-grid">' + metrics + '</div>'
-         +   bars
+         +   primary
+         +   '<details class="ins-card-more"><summary>Rung &middot; ATT &middot; TTT</summary>'
+         +     '<div class="ins-card-grid ins-card-grid-sec">' + secondary + '</div>'
+         +   '</details>'
          + '</div>';
   }
 
@@ -12245,7 +12338,12 @@
       var pct = Number(r.abandonedPct) || 0;
       var violCls = viol > 3 ? 'qcd-warn-strong' : (viol > 0 ? 'qcd-warn-light' : '');
       var pctCls  = pct >= 5 ? 'qcd-warn-light' : '';
-      var hasDetail = viol > 0 && r.violationDates && r.violationDates.length;
+      // 4a: a queue row expands to its call-source breakdown (always when
+      // sources exist) and the violation dates (when any).
+      var sources = r.bySource || [];
+      var hasSources = sources.length > 0;
+      var hasViolDates = viol > 0 && r.violationDates && r.violationDates.length;
+      var hasDetail = hasSources || hasViolDates;
       var chevron = hasDetail ? ' <span class="qcd-expand-icon">&#9654;</span>' : '';
       var rowCls = 'qcd-queue-row' + (hasDetail ? ' qcd-expandable' : '') + (isChild ? ' qcd-subqueue-row' : '');
       var subTag = isChild && r.subDept
@@ -12261,10 +12359,35 @@
            +   '<td class="num' + (violCls ? ' ' + violCls : '') + '">' + fmtNumber(r.violations) + '</td>'
            + '</tr>';
       if (hasDetail) {
+        var detail = '';
+        if (hasSources) {
+          detail += '<table class="qcd-source-subtable"><thead><tr>'
+                 +    '<th>Call source</th><th class="num">Total</th><th class="num">Answered</th>'
+                 +    '<th class="num">Abandoned</th><th class="num">Aban %</th>'
+                 +    '<th class="num">Longest</th><th class="num">Avg ans</th><th class="num">Viol</th>'
+                 +  '</tr></thead><tbody>'
+                 +  sources.map(function (s) {
+                      var sPct = Number(s.abandonedPct) || 0;
+                      var sViol = Number(s.violations) || 0;
+                      return '<tr class="' + (s.isOverall ? 'qcd-source-overall' : '') + '">'
+                        +  '<td>' + escapeHtml(s.source) + '</td>'
+                        +  '<td class="num">' + fmtNumber(s.totalCalls)    + '</td>'
+                        +  '<td class="num">' + fmtNumber(s.totalAnswered) + '</td>'
+                        +  '<td class="num">' + fmtNumber(s.abandoned)     + '</td>'
+                        +  '<td class="num' + (sPct >= 5 ? ' qcd-warn-light' : '') + '">' + escapeHtml(s.abandonedPctStr) + '</td>'
+                        +  '<td class="num">' + escapeHtml(s.longestWait)  + '</td>'
+                        +  '<td class="num">' + escapeHtml(s.avgAnswer)    + '</td>'
+                        +  '<td class="num' + (sViol > 0 ? ' qcd-warn-light' : '') + '">' + fmtNumber(s.violations) + '</td>'
+                        +  '</tr>';
+                    }).join('')
+                 +  '</tbody></table>';
+        }
+        if (hasViolDates) {
+          detail += '<div class="qcd-detail-viol"><strong>Violation dates:</strong> '
+                 +  r.violationDates.map(function (d) { return escapeHtml(d); }).join(', ') + '</div>';
+        }
         html += '<tr class="qcd-detail-row" style="display:none;"><td colspan="8">'
-             +  '<div class="qcd-detail-wrap"><strong>Violation dates:</strong> '
-             +  r.violationDates.map(function (d) { return escapeHtml(d); }).join(', ')
-             +  '</div></td></tr>';
+             +  '<div class="qcd-detail-wrap">' + detail + '</div></td></tr>';
       }
       return html;
     };
@@ -12604,6 +12727,282 @@
           + (e && e.message ? e.message : String(e)));
       }
     });
+  }
+
+  // ===================================================================
+  // All-departments daily call queue report (4b). Admin-only; launched
+  // from the Overview "Daily Call Queue Report" button. Flat company-wide
+  // queue table reproducing the legacy emailed PDF, with CSV + print.
+  // ===================================================================
+  var qcdAllDeptLast = null;
+
+  function initQcdAllDept_() {
+    const btn   = $('ov-qcd-alldept-btn');
+    const modal = $('qcd-alldept-modal');
+    if (!btn || !modal) return;
+
+    const closeBtn = modal.querySelector('.modal-close');
+    const backdrop = modal.querySelector('[data-close]');
+
+    function showForm() {
+      $('qcd-alldept-results').style.display = 'none';
+      modal.querySelector('.ir-form').style.display = '';
+    }
+    function showResults() {
+      modal.querySelector('.ir-form').style.display = 'none';
+      $('qcd-alldept-results').style.display = '';
+    }
+    function openModal() {
+      modal.style.display = '';
+      modal.setAttribute('aria-hidden', 'false');
+      document.body.style.overflow = 'hidden';
+      trapFocus_(modal);
+      initModalDragResize_(modal.querySelector('.modal-panel-wide') || modal.querySelector('.modal-panel'));
+      document.addEventListener('keydown', onKeyDown);
+      showForm();
+      qcdAllDeptDefaultDates_();
+    }
+    function closeModal() {
+      modal.style.display = 'none';
+      modal.setAttribute('aria-hidden', 'true');
+      releaseFocus_();
+      resetModalTransform_(modal.querySelector('.modal-panel-wide') || modal.querySelector('.modal-panel'));
+      document.body.style.overflow = '';
+      document.removeEventListener('keydown', onKeyDown);
+      btn.focus();
+    }
+    function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
+
+    btn.addEventListener('click', openModal);
+    if (closeBtn) closeBtn.addEventListener('click', closeModal);
+    if (backdrop) backdrop.addEventListener('click', closeModal);
+
+    const preset = $('qcd-alldept-preset');
+    if (preset) preset.addEventListener('change', qcdAllDeptApplyPreset_);
+    ['qcd-alldept-from', 'qcd-alldept-to'].forEach(function (id) {
+      const el = $(id);
+      if (el) el.addEventListener('change', function () {
+        const p = $('qcd-alldept-preset');
+        if (p) p.value = 'custom';
+      });
+    });
+
+    const gen = $('qcd-alldept-generate-btn');
+    if (gen) gen.addEventListener('click', function () { runQcdAllDept_(showResults); });
+    const back = $('qcd-alldept-back-btn');
+    if (back) back.addEventListener('click', showForm);
+    const csv = $('qcd-alldept-csv-btn');
+    if (csv) csv.addEventListener('click', function () { qcdAllDeptCsv_(qcdAllDeptLast); });
+    const prn = $('qcd-alldept-print-btn');
+    if (prn) prn.addEventListener('click', function () { qcdAllDeptPrint_(qcdAllDeptLast); });
+  }
+
+  function qcdAllDeptIsoOf_(d) {
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return d.getFullYear() + '-' + m + '-' + day;
+  }
+
+  function qcdAllDeptDefaultDates_() {
+    const now = new Date();
+    const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+    $('qcd-alldept-from').value = qcdAllDeptIsoOf_(yesterday);
+    $('qcd-alldept-to').value   = qcdAllDeptIsoOf_(yesterday);
+    const p = $('qcd-alldept-preset');
+    if (p) p.value = 'yesterday';
+  }
+
+  function qcdAllDeptApplyPreset_() {
+    const v = $('qcd-alldept-preset').value;
+    if (v === 'custom') return;
+    const now = new Date();
+    let s, e;
+    if (v === 'today') {
+      s = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      e = new Date(s);
+    } else if (v === 'yesterday') {
+      s = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+      e = new Date(s);
+    } else if (v === 'thisMonth') {
+      s = new Date(now.getFullYear(), now.getMonth(), 1);
+      e = now;
+    } else if (v === 'lastMonth') {
+      s = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      e = new Date(now.getFullYear(), now.getMonth(), 0);
+    } else if (v === 'last30') {
+      s = new Date(now.getTime() - 29 * 86400000);
+      e = now;
+    } else {
+      return;
+    }
+    $('qcd-alldept-from').value = qcdAllDeptIsoOf_(s);
+    $('qcd-alldept-to').value   = qcdAllDeptIsoOf_(e);
+  }
+
+  function runQcdAllDept_(showResults) {
+    const from = $('qcd-alldept-from').value;
+    const to   = $('qcd-alldept-to').value;
+    const err  = $('qcd-alldept-form-error');
+    err.style.display = 'none';
+    if (!from || !to) {
+      err.textContent = 'Pick a start and end date.';
+      err.style.display = '';
+      return;
+    }
+    if (from > to) {
+      err.textContent = 'Start date must be on or before end date.';
+      err.style.display = '';
+      return;
+    }
+    const gen = $('qcd-alldept-generate-btn');
+    const orig = gen.textContent;
+    gen.disabled = true;
+    gen.textContent = 'Generating…';
+    google.script.run
+      .withSuccessHandler(function (data) {
+        gen.disabled = false;
+        gen.textContent = orig;
+        qcdAllDeptLast = data;
+        qcdAllDeptRender_(data);
+        showResults();
+      })
+      .withFailureHandler(function (e) {
+        gen.disabled = false;
+        gen.textContent = orig;
+        err.textContent = (e && e.message) ? e.message : String(e);
+        err.style.display = '';
+      })
+      .getQcdAllDepartments({ from: from, to: to });
+  }
+
+  // Renders the flat company-wide table: a section per department (its
+  // subtotal as a heading row), one row per queue, and a grand-total
+  // footer. Abandoned % >= 5% and any violation count are warn-tinted
+  // (same thresholds as the per-dept QCD report).
+  function qcdAllDeptRender_(data) {
+    $('qcd-alldept-results-date').textContent = data.dateLabel || '';
+    const empty = $('qcd-alldept-empty');
+    const body  = $('qcd-alldept-body');
+    const depts = (data && data.depts) || [];
+    if (!depts.length) {
+      body.innerHTML = '';
+      empty.innerHTML = emptyStateHtml_('&#128202;', 'No queue activity in range',
+        'No department had Total Calls in the selected window. Try a wider range.');
+      empty.style.display = '';
+      return;
+    }
+    empty.style.display = 'none';
+
+    const cell = function (pct, viol) {
+      return { pctCls: (Number(pct) >= 5 ? ' qcd-warn-light' : ''),
+               violCls: (Number(viol) > 3 ? ' qcd-warn-strong' : (Number(viol) > 0 ? ' qcd-warn-light' : '')) };
+    };
+    let html = '<table class="qcd-alldept-table agents"><thead><tr>'
+      + '<th>Queue</th><th class="num">Total</th><th class="num">Answered</th>'
+      + '<th class="num">Abandoned</th><th class="num">Aban %</th>'
+      + '<th class="num">Longest</th><th class="num">Avg ans</th><th class="num">Viol</th>'
+      + '</tr></thead>';
+    depts.forEach(function (d) {
+      const t = d.totals || {};
+      const tc = cell(t.abandonedPct, t.violations);
+      html += '<tbody class="qcd-alldept-dept">'
+        + '<tr class="qcd-alldept-deptrow"><td colspan="8">' + escapeHtml(d.dept) + '</td></tr>';
+      (d.queues || []).forEach(function (q) {
+        const c = cell(q.abandonedPct, q.violations);
+        html += '<tr>'
+          + '<td>' + escapeHtml(q.queue) + '</td>'
+          + '<td class="num">' + fmtNumber(q.totalCalls) + '</td>'
+          + '<td class="num">' + fmtNumber(q.totalAnswered) + '</td>'
+          + '<td class="num">' + fmtNumber(q.abandoned) + '</td>'
+          + '<td class="num' + c.pctCls + '">' + escapeHtml(q.abandonedPctStr) + '</td>'
+          + '<td class="num">' + escapeHtml(q.longestWait) + '</td>'
+          + '<td class="num">' + escapeHtml(q.avgAnswer) + '</td>'
+          + '<td class="num' + c.violCls + '">' + fmtNumber(q.violations) + '</td>'
+          + '</tr>';
+      });
+      html += '<tr class="qcd-alldept-subtotal">'
+        + '<td>' + escapeHtml(d.dept) + ' total</td>'
+        + '<td class="num">' + fmtNumber(t.totalCalls) + '</td>'
+        + '<td class="num">' + fmtNumber(t.totalAnswered) + '</td>'
+        + '<td class="num">' + fmtNumber(t.abandoned) + '</td>'
+        + '<td class="num' + tc.pctCls + '">' + escapeHtml(t.abandonedPctStr) + '</td>'
+        + '<td class="num">' + escapeHtml(t.longestWait) + '</td>'
+        + '<td class="num">' + escapeHtml(t.avgAnswer) + '</td>'
+        + '<td class="num' + tc.violCls + '">' + fmtNumber(t.violations) + '</td>'
+        + '</tr></tbody>';
+    });
+    const g = data.grandTotals || {};
+    const gc = cell(g.abandonedPct, g.violations);
+    html += '<tfoot><tr class="qcd-alldept-grand">'
+      + '<td>Company total</td>'
+      + '<td class="num">' + fmtNumber(g.totalCalls) + '</td>'
+      + '<td class="num">' + fmtNumber(g.totalAnswered) + '</td>'
+      + '<td class="num">' + fmtNumber(g.abandoned) + '</td>'
+      + '<td class="num' + gc.pctCls + '">' + escapeHtml(g.abandonedPctStr) + '</td>'
+      + '<td class="num">' + escapeHtml(g.longestWait) + '</td>'
+      + '<td class="num">' + escapeHtml(g.avgAnswer) + '</td>'
+      + '<td class="num' + gc.violCls + '">' + fmtNumber(g.violations) + '</td>'
+      + '</tr></tfoot></table>';
+    body.innerHTML = html;
+  }
+
+  function qcdAllDeptCsv_(data) {
+    if (!data || !(data.depts || []).length) return;
+    const esc = function (v) {
+      const s = csvSafeCell_(v);
+      return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    };
+    const row = function (cells) { return cells.map(esc).join(','); };
+    const lines = [];
+    lines.push('Daily Call Queue Report,' + (data.dateLabel || ''));
+    lines.push('');
+    lines.push(row(['Department', 'Queue', 'Total Calls', 'Answered', 'Abandoned',
+                    'Abandoned %', 'Longest Wait', 'Avg Answer', 'Violations']));
+    (data.depts || []).forEach(function (d) {
+      (d.queues || []).forEach(function (q) {
+        lines.push(row([d.dept, q.queue, q.totalCalls, q.totalAnswered, q.abandoned,
+                        q.abandonedPctStr, q.longestWait, q.avgAnswer, q.violations]));
+      });
+      const t = d.totals || {};
+      lines.push(row([d.dept, d.dept + ' total', t.totalCalls, t.totalAnswered, t.abandoned,
+                      t.abandonedPctStr, t.longestWait, t.avgAnswer, t.violations]));
+    });
+    const g = data.grandTotals || {};
+    lines.push(row(['', 'Company total', g.totalCalls, g.totalAnswered, g.abandoned,
+                    g.abandonedPctStr, g.longestWait, g.avgAnswer, g.violations]));
+    const blob = new Blob([lines.join('\n') + '\n'], { type: 'text/csv;charset=utf-8;' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'daily_call_queue_report_' + (data.meta && data.meta.from || '')
+               + '_' + (data.meta && data.meta.to || '') + '.csv';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 0);
+  }
+
+  // Print the rendered table directly (no html2canvas needed -- this is a
+  // plain table). Opens a window with a minimal print stylesheet.
+  function qcdAllDeptPrint_(data) {
+    if (!data) return;
+    const tableEl = $('qcd-alldept-body');
+    const w = window.open('about:blank');
+    if (!w) return;
+    const css = 'body{font-family:Arial,Helvetica,sans-serif;color:#222;padding:18px;}'
+      + 'h1{font-size:16px;margin:0 0 2px;}.sub{color:#666;font-size:12px;margin:0 0 14px;}'
+      + 'table{width:100%;border-collapse:collapse;}'
+      + 'th,td{padding:3px 8px;border-bottom:1px solid #ddd;text-align:left;font-size:11.5px;}'
+      + 'td.num,th.num{text-align:right;}'
+      + '.qcd-alldept-deptrow td{font-weight:700;background:#f2f2f2;padding-top:8px;}'
+      + '.qcd-alldept-subtotal td{font-weight:600;border-top:1px solid #999;}'
+      + '.qcd-alldept-grand td{font-weight:700;border-top:2px solid #333;}'
+      + '.qcd-warn-light{background:#fff3e0;}.qcd-warn-strong{background:#ffd9b3;}';
+    w.document.write('<title>Daily Call Queue Report</title><style>' + css + '</style>'
+      + '<h1>Daily Call Queue Report</h1><p class="sub">' + escapeHtml(data.dateLabel || '') + '</p>'
+      + (tableEl ? tableEl.innerHTML : ''));
+    w.document.close();
+    w.focus();
+    setTimeout(function () { try { w.print(); } catch (e) {} }, 250);
   }
 
   // Wait for DOM, then go.

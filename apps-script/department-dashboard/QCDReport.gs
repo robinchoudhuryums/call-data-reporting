@@ -25,7 +25,7 @@
  * only request their own dept; admins can pick any dept from the
  * dropdown.
  *
- * Cache: 30 min per (dept, from, to) tuple under `qcd:v8:` prefix.
+ * Cache: 30 min per (dept, from, to) tuple under `qcd:v9:` prefix.
  * No agent-list dimension since QCD is queue/dept-scoped, not
  * agent-scoped.
  *
@@ -59,7 +59,17 @@
 // clearly separated and EXCLUDED from the parent dept total (no merged
 // rollup). The shared computeQcdReport_ gains a `separateSubQueues` opt that
 // only the QCD report passes; Insights' Queue-health calls are unchanged.
-const QCD_CACHE_KEY_PREFIX = 'qcd:v8';
+// v9: queueBreakdown rows gain `bySource` -- the per-call-source sub-rows
+// (CSR / Ad-campaign / New Call Menu / Non-CSR (internal) / ... + the
+// 'Total Calls' roll-up shown as "Overall") so a queue row expands into its
+// source breakdown like the legacy emailed report (4a).
+const QCD_CACHE_KEY_PREFIX = 'qcd:v9';
+
+// All-departments daily report (4b): admin-only, company-wide flat
+// queue table reproducing the legacy emailed "Daily Call Queue Report"
+// PDF. Cached per (from, to) under its own prefix so it doesn't collide
+// with the per-dept qcd: keys. Bump on any aggregation-shape change.
+const QCD_ALLDEPT_CACHE_PREFIX = 'qcdAll:v1';
 
 // Source filter: only the "Total Calls" callSource row carries the
 // daily aggregate we want; other callSource values are sub-counts
@@ -218,6 +228,146 @@ function getQcdReport(req) {
 }
 
 /**
+ * All-departments daily queue report (4b) -- admin-only, company-wide.
+ *
+ * Reproduces the legacy emailed "Daily Call Queue Report" PDF: one flat
+ * table across EVERY mapped department, each dept's own queues listed
+ * with Total / Answered / Abandoned / Abandoned % / Longest / Avg ans /
+ * Violations, plus a per-dept subtotal and a company grand-total row.
+ * Surfaced on the Overview page (admin-only) with CSV + print.
+ *
+ * Scope: each dept's OWN queues only (queuesForDept_ includeChildren=false)
+ * so a child sub-queue appears under its own dept exactly once and there's
+ * no parent+child double count. A queue double-mapped across two depts'
+ * DEPT_QCD_QUEUES (the M2 case) intentionally appears under both -- this is
+ * a flat per-queue listing, not a de-duped rollup.
+ *
+ * Everything here is RANGE-scoped (unlike the per-dept report's MTD
+ * violations tile) so the flat table is internally consistent: dept
+ * subtotals and the grand total are summed from the range-scoped
+ * queueBreakdown rows. Depts with zero activity in the range are omitted.
+ *
+ * getQcdAllDepartments({ from, to }) -> { meta, dateLabel, depts:[{dept,
+ *   totals, queues:[...]}], grandTotals }
+ */
+function getQcdAllDepartments(req) {
+  assertAdmin_();   // company-wide view: admin only
+
+  const from = String((req && req.from) || '').trim();
+  const to   = String((req && req.to)   || '').trim();
+  if (!isIsoDate_(from) || !isIsoDate_(to)) {
+    throw new Error('from/to must be YYYY-MM-DD.');
+  }
+  if (from > to) throw new Error('from must be on or before to.');
+
+  const cache = CacheService.getScriptCache();
+  const cacheKey = QCD_ALLDEPT_CACHE_PREFIX + ':' + from + ':' + to;
+  const cached = cache.get(cacheKey);
+  if (cached) {
+    try {
+      const parsed = JSON.parse(cached);
+      parsed.meta.cacheHit = true;
+      return parsed;
+    } catch (e) { /* recompute */ }
+  }
+
+  const t0 = Date.now();
+  const allDepts = getAllDepartments_();
+  const depts = [];
+
+  // Company grand totals (range-scoped; longest = MAX, avg = volume-weighted).
+  let gTotal = 0, gAns = 0, gAbnd = 0, gLongest = 0, gAvgWSum = 0, gAvgWN = 0, gViol = 0;
+
+  allDepts.forEach(function (dept) {
+    // Own queues only -- children listed under their own dept.
+    if (queuesForDept_(dept, { includeChildren: false }).length === 0) return;
+    const rep = computeQcdReport_(dept, from, to,
+                                  /*includeSubQueues=*/ false,
+                                  /*separateSubQueues=*/ false);
+    const rows = rep.queueBreakdown || [];
+
+    let dTotal = 0, dAns = 0, dAbnd = 0, dLongest = 0, dAvgWSum = 0, dAvgWN = 0, dViol = 0;
+    rows.forEach(function (r) {
+      dTotal += r.totalCalls; dAns += r.totalAnswered; dAbnd += r.abandoned;
+      if (r.longestWaitSec > dLongest) dLongest = r.longestWaitSec;
+      if (r.avgAnswerSec > 0 && r.totalAnswered > 0) {
+        dAvgWSum += r.avgAnswerSec * r.totalAnswered;
+        dAvgWN   += r.totalAnswered;
+      }
+      dViol += (Number(r.violations) || 0);
+    });
+    if (dTotal === 0) return;   // no activity in range: omit (legacy lists active queues)
+
+    const dPct = dTotal > 0 ? (dAbnd / dTotal) * 100 : 0;
+    depts.push({
+      dept: dept,
+      totals: {
+        totalCalls:      dTotal,
+        totalAnswered:   dAns,
+        abandoned:       dAbnd,
+        abandonedPct:    dPct,
+        abandonedPctStr: dPct.toFixed(2) + '%',
+        longestWait:     formatSecondsHms_(dLongest),
+        avgAnswer:       formatSecondsHms_(dAvgWN > 0 ? Math.round(dAvgWSum / dAvgWN) : 0),
+        violations:      dViol,
+      },
+      queues: rows.map(function (r) {
+        return {
+          queue:           r.queue,
+          totalCalls:      r.totalCalls,
+          totalAnswered:   r.totalAnswered,
+          abandoned:       r.abandoned,
+          abandonedPct:    r.abandonedPct,
+          abandonedPctStr: r.abandonedPctStr,
+          longestWait:     r.longestWait,
+          avgAnswer:       r.avgAnswer,
+          violations:      r.violations,
+        };
+      }),
+    });
+
+    gTotal += dTotal; gAns += dAns; gAbnd += dAbnd;
+    if (dLongest > gLongest) gLongest = dLongest;
+    gAvgWSum += dAvgWSum; gAvgWN += dAvgWN; gViol += dViol;
+  });
+
+  depts.sort(function (a, b) { return a.dept < b.dept ? -1 : (a.dept > b.dept ? 1 : 0); });
+
+  const gPct = gTotal > 0 ? (gAbnd / gTotal) * 100 : 0;
+  const grandTotals = {
+    totalCalls:      gTotal,
+    totalAnswered:   gAns,
+    abandoned:       gAbnd,
+    abandonedPct:    gPct,
+    abandonedPctStr: gPct.toFixed(2) + '%',
+    longestWait:     formatSecondsHms_(gLongest),
+    avgAnswer:       formatSecondsHms_(gAvgWN > 0 ? Math.round(gAvgWSum / gAvgWN) : 0),
+    violations:      gViol,
+  };
+
+  const parseIso_ = function (iso) {
+    const p = iso.split('-');
+    return new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]), 12);
+  };
+  const fmt = function (d) { return Utilities.formatDate(d, TZ, 'MMM d, yyyy'); };
+  const dateLabel = fmt(parseIso_(from)) + ' - ' + fmt(parseIso_(to));
+
+  const data = {
+    meta:        { from: from, to: to, cacheHit: false, computeMs: Date.now() - t0, deptCount: depts.length },
+    dateLabel:   dateLabel,
+    depts:       depts,
+    grandTotals: grandTotals,
+  };
+
+  const json = JSON.stringify(data);
+  if (json.length <= 100000) {
+    try { cache.put(cacheKey, json, REPORT_CACHE_TTL_SECONDS); }
+    catch (e) { Logger.log('QCD all-dept cache put failed: %s', e); }
+  }
+  return data;
+}
+
+/**
  * Tags for sub-queue separation: which queues are the dept's OWN
  * (vs. inherited from child sub-queues per OVERVIEW_PARENT_OF) and the
  * child dept that owns each inherited queue. Mirrors the logic in
@@ -308,6 +458,7 @@ function computeQcdReport_(dept, from, to, includeSubQueues, separateSubQueues) 
       violationDates:      [],   // iso dates where violations > 0
       monthly:             {},   // monthKey -> { totalCalls, totalAnswered, abandoned, violations }
       daily:               {},   // iso -> { totalCalls, totalAnswered, abandoned, abandonedPct, violations }
+      bySource:            {},   // 4a: source name -> { totalCalls, totalAnswered, abandoned, longestWaitSec, avgAnswerWeightedSum/N, violations } (selected range)
     };
   });
   // Daily series: keyed iso date. Summed across all dept queues
@@ -324,7 +475,6 @@ function computeQcdReport_(dept, from, to, includeSubQueues, separateSubQueues) 
     const callQueue = String(r[QCD_HISTORICAL_COLS.CALL_QUEUE - 1] || '').trim();
     if (!queueSet[callQueue]) continue;
     const source = String(r[QCD_HISTORICAL_COLS.CALL_SOURCE - 1] || '').trim();
-    if (source !== QCD_TOTAL_CALLS_SOURCE) continue;   // skip sub-counts
 
     const inUserRange  = (dateIso >= from && dateIso <= to);
     const inTrendRange = (dateIso >= trendStartIso && dateIso <= trendEndIso);
@@ -341,6 +491,31 @@ function computeQcdReport_(dept, from, to, includeSubQueues, separateSubQueues) 
     const violations     = Number(r[QCD_HISTORICAL_COLS.VIOLATIONS - 1]) || 0;
 
     const bucket = queueAcc[callQueue];
+
+    // 4a: per-call-source breakdown -- accumulate EVERY source (CSR,
+    // Ad-campaign, New Call Menu, Non-CSR (internal), ... plus the
+    // 'Total Calls' roll-up shown as "Overall") within the user range,
+    // so a queue row can expand into its source sub-rows like the legacy
+    // emailed Department Call Queue Report. Same per-field math as the
+    // queue totals (longestWait MAX, avgAnswer volume-weighted).
+    if (inUserRange && source) {
+      const sb = bucket.bySource[source] || (bucket.bySource[source] = {
+        totalCalls: 0, totalAnswered: 0, abandoned: 0,
+        longestWaitSec: 0, avgAnswerWeightedSum: 0, avgAnswerWeightedN: 0, violations: 0,
+      });
+      sb.totalCalls    += totalCalls;
+      sb.totalAnswered += totalAnswered;
+      sb.abandoned     += abandoned;
+      if (longestWaitSec > sb.longestWaitSec) sb.longestWaitSec = longestWaitSec;
+      if (avgAnswerSec > 0 && totalAnswered > 0) {
+        sb.avgAnswerWeightedSum += avgAnswerSec * totalAnswered;
+        sb.avgAnswerWeightedN   += totalAnswered;
+      }
+      sb.violations += violations;
+    }
+
+    if (source !== QCD_TOTAL_CALLS_SOURCE) continue;   // dept totals/trend/daily are Total-Calls only
+
     if (inUserRange) {
       bucket.totalCalls    += totalCalls;
       bucket.totalAnswered += totalAnswered;
@@ -412,6 +587,29 @@ function computeQcdReport_(dept, from, to, includeSubQueues, separateSubQueues) 
       violations:       b.violations,
       violationDates:   b.violationDates.sort(),
     };
+    // 4a: per-call-source rows for the expandable breakdown. The 'Total
+    // Calls' roll-up renders first as "Overall"; sub-sources follow by
+    // volume desc (matches the legacy emailed report's row order).
+    row.bySource = Object.keys(b.bySource).map(function (src) {
+      const s = b.bySource[src];
+      const sp = s.totalCalls > 0 ? (s.abandoned / s.totalCalls) * 100 : 0;
+      return {
+        source:          (src === QCD_TOTAL_CALLS_SOURCE) ? 'Overall' : src,
+        isOverall:       (src === QCD_TOTAL_CALLS_SOURCE),
+        totalCalls:      s.totalCalls,
+        totalAnswered:   s.totalAnswered,
+        abandoned:       s.abandoned,
+        abandonedPct:    sp,
+        abandonedPctStr: sp.toFixed(2) + '%',
+        longestWait:     formatSecondsHms_(s.longestWaitSec),
+        avgAnswer:       formatSecondsHms_(s.avgAnswerWeightedN > 0
+                           ? Math.round(s.avgAnswerWeightedSum / s.avgAnswerWeightedN) : 0),
+        violations:      s.violations,
+      };
+    }).sort(function (a, bb) {
+      if (a.isOverall !== bb.isOverall) return a.isOverall ? -1 : 1;
+      return bb.totalCalls - a.totalCalls;
+    });
     // separateSubQueues: tag child-owned queues so the client renders them
     // in a separate group and excludes them from the dept total. Own queues
     // (and the Insights path) carry subDept=null.
@@ -584,6 +782,7 @@ function emptyQcdReport_(dept, from, to, includeSubQueues) {
         abandonedPct: 0, abandonedPctStr: '0.00%',
         longestWait: '0:00:00', longestWaitSec: 0,
         avgAnswer: '0:00:00', avgAnswerSec: 0, violations: 0,
+        bySource: [],
       };
     }),
     trendData: { labels: [], series: [], perQueue: perQueueEmpty },

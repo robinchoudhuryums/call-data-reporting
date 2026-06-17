@@ -11,7 +11,14 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
   <?!= include_('styles') ?>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.js" integrity="sha384-G436+Z2nlA8+PNoeRvWdxKbvOf8E/y+lYxqht2iBwNHTQDV5CJr3+AGVj8fGZi5t" crossorigin="anonymous"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0" integrity="sha384-H7mijd3g+6+ErEI7+6rhqxGY03fYwsEaekVnHMC7HHB7u2rIkEf6AQgIXZqQYzDS" crossorigin="anonymous"></script>
+  <!-- chartjs-plugin-datalabels: pinned to the explicit /dist file. SRI is
+       intentionally OMITTED here (Option A): the prior bare-package-URL +
+       integrity hash combination was failing the SRI check and the browser
+       silently blocked the script, so ChartDataLabels was never defined and
+       data labels didn't work on ANY chart. To restore SRI, compute:
+       curl -s <this URL> | openssl dgst -sha384 -binary | openssl base64 -A
+       and add integrity="sha384-..." crossorigin="anonymous" back. -->
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
   <!-- html2canvas-pro (maintained fork; same `html2canvas` global) replaces
        html2canvas 1.4.1, which cannot parse the oklch() color tokens the
        Phase A redesign serves to modern browsers -- captures (and therefore
@@ -140,6 +147,14 @@
             <button type="button" class="ov-launcher-q" data-launch="agent-trend">Is one of my agents struggling or improving?</button>
             <button type="button" class="ov-launcher-q" data-launch="abandons">Are callers giving up before we answer?</button>
           </div>
+        </div>
+        <!-- Admin-only: company-wide daily call queue report (4b).
+             Reproduces the legacy emailed "Daily Call Queue Report"
+             PDF as a flat table across every mapped department.
+             Revealed for admins by the [data-admin-only] reveal loop. -->
+        <div id="ov-admin-actions" class="ov-admin-actions" style="display:none;" data-admin-only>
+          <button type="button" class="btn btn-secondary" id="ov-qcd-alldept-btn"
+            title="Company-wide daily call queue report across every department (admin only)">&#128203; Daily Call Queue Report</button>
         </div>
         <div id="ov-company-aggregate" class="ov-company-aggregate" style="display:none;"></div>
         <div id="ov-user-hero" class="ov-user-hero" style="display:none;"></div>
@@ -530,6 +545,10 @@
             </div>
           </div>
           <div class="ir-action-buttons" id="ir-action-buttons">
+            <!-- Shown only when IR was opened by drilling through from the
+                 Insights report; returns to the already-rendered Insights
+                 view with no reload (#2/#7). -->
+            <button class="btn btn-secondary" id="ir-back-to-insights-btn" type="button" style="display:none;">&laquo; Back to Insights</button>
             <button class="btn btn-secondary" id="ir-back-btn" type="button">&laquo; Back</button>
             <div class="ir-export-wrap">
               <button class="btn btn-secondary" id="ir-export-btn" type="button" aria-haspopup="menu" aria-expanded="false">
@@ -1114,6 +1133,76 @@
         </div>
         </div><!-- /#qcd-data-sections -->
       </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- All-departments daily call queue report (4b). Admin-only;
+       launched from the Overview "Daily Call Queue Report" button.
+       Flat company-wide queue table (legacy emailed-PDF parity) with
+       CSV download + print. No charts -- this is the at-a-glance
+       operational table, the per-dept QCD modal is the deep dive. -->
+  <div id="qcd-alldept-modal" class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="qcd-alldept-modal-title" style="display:none;">
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-panel modal-panel-wide" role="document">
+      <div class="modal-panel-header">
+        <button class="modal-close" id="qcd-alldept-close" type="button" aria-label="Close">&times;</button>
+        <div class="modal-kicker">Report &middot; admin</div>
+        <h2 id="qcd-alldept-modal-title">Daily Call Queue Report</h2>
+      </div>
+      <div class="modal-panel-body">
+        <div class="ir-form">
+          <div class="ir-row">
+            <div class="ir-col">
+              <label for="qcd-alldept-preset">Quick select</label>
+              <select id="qcd-alldept-preset">
+                <option value="custom">Custom range</option>
+                <option value="yesterday" selected>Yesterday</option>
+                <option value="today">Today</option>
+                <option value="thisMonth">This month</option>
+                <option value="lastMonth">Last month</option>
+                <option value="last30">Last 30 days</option>
+              </select>
+            </div>
+            <div class="ir-col">
+              <label for="qcd-alldept-from">Start date</label>
+              <input type="date" id="qcd-alldept-from">
+            </div>
+            <div class="ir-col">
+              <label for="qcd-alldept-to">End date</label>
+              <input type="date" id="qcd-alldept-to">
+            </div>
+          </div>
+          <div class="ir-hint">
+            Company-wide flat table across every mapped department, each
+            dept&rsquo;s own queues listed (sub-queues appear under their
+            own department, never double-counted). Everything is scoped to
+            the selected range. Reads <strong>QCD Historical Data</strong>.
+          </div>
+          <div id="qcd-alldept-form-error" class="status status-error" style="display:none;"></div>
+          <button class="btn" id="qcd-alldept-generate-btn" type="button">Generate report</button>
+        </div>
+
+        <div id="qcd-alldept-results" class="ir-results" style="display:none;">
+          <div class="ir-results-header">
+            <div class="ir-results-header-left">
+              <div class="ir-results-title-line">
+                <span class="ir-results-title">Daily Call Queue Report</span>
+                <span class="ir-results-date" id="qcd-alldept-results-date"></span>
+              </div>
+            </div>
+            <div class="ir-action-buttons">
+              <button class="btn btn-secondary" id="qcd-alldept-back-btn" type="button">&laquo; Back</button>
+              <button class="btn btn-secondary" id="qcd-alldept-csv-btn" type="button"
+                      title="Download the report as CSV">Download CSV</button>
+              <button class="btn btn-secondary" id="qcd-alldept-print-btn" type="button"
+                      title="Print this report">Print</button>
+            </div>
+          </div>
+          <div id="qcd-alldept-status" class="status" style="display:none;"></div>
+          <div id="qcd-alldept-empty" class="empty-state" style="display:none;"></div>
+          <div id="qcd-alldept-body"></div>
+        </div>
       </div>
     </div>
   </div>

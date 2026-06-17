@@ -513,6 +513,20 @@ INV-16 keeps the two `buildDQEHistoricalData.js` copies
 (cdr-import + cdr-report) byte-identical -- any edit to one is
 a two-file edit.
 
+**Extending history backwards (older pre-pipeline data).** The trend
+charts only reach as far back as `DQE Historical Data` does. To extend
+them with older rows you already have in another spreadsheet (same
+columns), **copy-paste those rows directly into `DQE Historical Data`** —
+do NOT run a build for those dates (`buildDQEHistoricalData` recomputes
+from `Raw Data`, which no longer exists that far back). Before relying on
+the older numbers, run **`runHistoricalBackfillCheck`** from the
+Department Dashboard editor (edit `OLD_SS_ID` / `OLD_SHEET` inside it) —
+it diffs the old sheet against the current one over the overlapping
+`(date, agent)` rows and logs what % match exactly, so you can quantify
+any calculation drift first. Pasting is sufficient on the default
+sheet read source; only if `DQE_READ_SOURCE=neon` do you also run
+`backfillDQEHistoryUpsert()` once to mirror the pasted rows into Neon.
+
 ## Working on sibling Apps Script projects
 
 `apps-script/cdr-report/` and `apps-script/cdr-import/` are full clasp
