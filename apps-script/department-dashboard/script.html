@@ -3094,9 +3094,10 @@
   function initClipboardOnce() {
     if (initClipboardOnce.done) return;
     initClipboardOnce.done = true;
-    const modal = $('missed-modal');
-    if (!modal) return;
-    modal.addEventListener('click', function (e) {
+    // Delegated on document so the parentId copy badges work in BOTH the Missed
+    // Calls modal AND the My Department inline missed section (#9b). Strict
+    // no-op unless the click lands on a .pid-copy badge.
+    document.addEventListener('click', function (e) {
       const btn = e.target.closest && e.target.closest('.pid-copy');
       if (!btn) return;
       e.preventDefault();
@@ -3137,23 +3138,18 @@
   // Renders a banner + per-queue lists for abandoned calls that never
   // rang an agent (queue had no available agent). Hidden when empty.
 
-  function renderQueueOnly(queueOnly) {
-    const wrap = $('missed-queue-only');
-    const body = $('queue-only-body');
-    const sub  = $('queue-only-subhead');
-    if (!wrap || !body) return;
-
-    if (!queueOnly.length) {
-      hideQueueOnlySection();
-      return;
-    }
-
-    // Headline uses unique-by-parent-ID count alongside the per-queue
-    // event sum, so overflow (one call ringing two queues) is visible:
-    //   "8 unique calls across 3 queues (10 ring events)"
-    // Fall back to the raw sum if the server didn't send the unique
-    // count (older cached payload).
-    const meta = (lastMissedData && lastMissedData.meta) || {};
+  /**
+   * SHARED builder for the queue-only abandoned section -- returns the
+   * subhead string + per-queue body HTML so BOTH the Missed Calls modal
+   * (renderQueueOnly) AND the My Department inline section (deptMissedRender_)
+   * render identically. Takes the report meta explicitly (for the
+   * unique/event counts) rather than reading a module global.
+   */
+  function missedQueueOnlyParts_(queueOnly, meta) {
+    meta = meta || {};
+    // Headline uses unique-by-parent-ID count alongside the per-queue event
+    // sum, so overflow (one call ringing two queues) is visible. Fall back to
+    // the raw sum if the server didn't send the unique count (older payload).
     const eventSum = (typeof meta.queueOnlyEventCount === 'number')
                    ? meta.queueOnlyEventCount
                    : queueOnly.reduce(function (s, q) { return s + q.total; }, 0);
@@ -3164,12 +3160,8 @@
       uniqueCalls + ' unique call' + (uniqueCalls === 1 ? '' : 's'),
       'across ' + queueOnly.length + ' queue' + (queueOnly.length === 1 ? '' : 's'),
     ];
-    if (eventSum !== uniqueCalls) {
-      headParts.push('(' + eventSum + ' ring events)');
-    }
-    sub.textContent = '(no agent rang) — ' + headParts.join(' ');
-
-    body.innerHTML = queueOnly.map(function (q) {
+    if (eventSum !== uniqueCalls) headParts.push('(' + eventSum + ' ring events)');
+    const bodyHtml = queueOnly.map(function (q) {
       const itemsHtml = q.entries.map(function (m) {
         const dateLabel = m.date ? m.date.slice(5) : '';   // MM-DD
         return '<li>'
@@ -3186,6 +3178,23 @@
            +   '<ul class="queue-only-list">' + itemsHtml + '</ul>'
            + '</div>';
     }).join('');
+    return { subhead: '(no agent rang) — ' + headParts.join(' '), bodyHtml: bodyHtml };
+  }
+
+  function renderQueueOnly(queueOnly) {
+    const wrap = $('missed-queue-only');
+    const body = $('queue-only-body');
+    const sub  = $('queue-only-subhead');
+    if (!wrap || !body) return;
+
+    if (!queueOnly.length) {
+      hideQueueOnlySection();
+      return;
+    }
+
+    const parts = missedQueueOnlyParts_(queueOnly, (lastMissedData && lastMissedData.meta) || {});
+    if (sub) sub.textContent = parts.subhead;
+    body.innerHTML = parts.bodyHtml;
 
     wrap.style.display = '';
     initClipboardOnce();
@@ -3199,17 +3208,13 @@
     if (body) body.innerHTML = '';
   }
 
-  function renderMissedAgents(agents) {
-    const wrap = $('missed-agents');
-    if (!wrap) return;
-
-    if (!agents.length) {
-      wrap.innerHTML = emptyStateHtml_('&#128276;', 'No missed calls in this range',
-        'No agent in scope had a missed or abandoned call for the selected dates.');
-      return;
-    }
-
-    wrap.innerHTML = agents.map(function (a) {
+  /**
+   * SHARED builder for the per-agent missed-time cards -- returns just the
+   * cards HTML so BOTH the modal (renderMissedAgents) AND the My Department
+   * inline section (deptMissedRender_) render identical card markup.
+   */
+  function missedAgentsHtml_(agents) {
+    return agents.map(function (a) {
       const itemsHtml = a.missedTimes.map(function (m) {
         const dateLabel = m.date ? '<span class="date">' + escapeHtml(m.date.slice(5)) + '</span>' : '';
         const cls = m.abandoned ? 'abandoned' : '';
@@ -3226,6 +3231,19 @@
            +   '<ul class="missed-list">' + itemsHtml + '</ul>'
            + '</div>';
     }).join('');
+  }
+
+  function renderMissedAgents(agents) {
+    const wrap = $('missed-agents');
+    if (!wrap) return;
+
+    if (!agents.length) {
+      wrap.innerHTML = emptyStateHtml_('&#128276;', 'No missed calls in this range',
+        'No agent in scope had a missed or abandoned call for the selected dates.');
+      return;
+    }
+
+    wrap.innerHTML = missedAgentsHtml_(agents);
     initClipboardOnce();
   }
 
@@ -3410,6 +3428,41 @@
                           function () { openFull(); }));
       }
     }
+
+    // #9b: inline parity with the full modal -- queue-only abandoned section
+    // + per-agent missed-time timelines via the SAME shared builders.
+    const queueOnly = (data && data.queueOnly) || [];
+    const qoWrap = $('dept-missed-queue-only');
+    const qoBody = $('dept-queue-only-body');
+    const qoSub  = $('dept-queue-only-subhead');
+    if (qoWrap && qoBody) {
+      if (queueOnly.length) {
+        const parts = missedQueueOnlyParts_(queueOnly, m);
+        if (qoSub) qoSub.textContent = parts.subhead;
+        qoBody.innerHTML = parts.bodyHtml;
+        qoWrap.style.display = '';
+      } else {
+        qoWrap.style.display = 'none';
+        qoBody.innerHTML = '';
+      }
+    }
+
+    const agents = (data && data.agents) || [];
+    const agWrap = $('dept-missed-agents');
+    if (agWrap) {
+      if (agents.length) {
+        agWrap.innerHTML = missedAgentsHtml_(agents);
+        agWrap.style.display = '';
+      } else {
+        // Zero-missed day: keep the inline section tidy (the headline already
+        // conveys "no missed"); hide the empty grid rather than show a card.
+        agWrap.innerHTML = '';
+        agWrap.style.display = 'none';
+      }
+    }
+    // parentId badges (queue-only + agent cards) use a delegated copy handler.
+    initClipboardOnce();
+
     wrap.style.display = '';
   }
 
