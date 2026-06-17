@@ -679,6 +679,15 @@ function buildDQEHistoricalData(rawSheet, dqeSheet, opts) {
   // to escape the bug.
   dqeSheet.getRange(1, 30, dqeSheet.getMaxRows(), 3).setNumberFormat('@');
 
+  // Same category as AD-AF: cols K-AC (the 19 half-hour slot columns) carry
+  // comma-joined CST missed-time strings. A SINGLE-timestamp cell (e.g.
+  // "10:23:33") gets coerced by Sheets into a time VALUE unless the column is
+  // plain text -- it then renders as the epoch date "12/30/1899" (or a raw
+  // serial decimal), and getDisplayValues returns that garbage instead of the
+  // time. Multi-value cells escape (not a parseable single time). Plain-text
+  // the whole slot block so single- and multi-value rows are both stored as text.
+  dqeSheet.getRange(1, 11, dqeSheet.getMaxRows(), 19).setNumberFormat('@');
+
   const firstBlank = dqeSheet.getLastRow() + 1;
   dqeSheet.getRange(firstBlank, 1, outputRows.length, outputRows[0].length).setValues(outputRows);
 
