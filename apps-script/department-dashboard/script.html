@@ -10027,7 +10027,7 @@
         insSetExportMenuOpen_(false);
         if (action === 'csv')        insDownloadCsv_();
         else if (action === 'copy')  insCopyImage_();
-        else if (action === 'email') insEmailImage_();
+        else if (action === 'email') insEmailReport_();
         else if (action === 'print') insPrint_();
       });
       document.addEventListener('click', function (e) {
@@ -11055,29 +11055,36 @@
     });
   }
 
-  function insEmailImage_() {
-    const restore = insBtnFeedback_('Capturing…', 0);
-    insBuildCanvas_(function (canvas) {
-      const dataUrl = canvas.toDataURL('image/png');
-      insBtnFeedback_('Sending…', 0);
-      google.script.run
-        .withSuccessHandler(function (res) {
-          restore();
-          insBtnFeedback_('Sent to ' + (res && res.to ? res.to : 'you'), 2000);
-          showToast('Report emailed to ' + (res && res.to ? res.to : 'you'), 'success');
-        })
-        .withFailureHandler(function (err) {
-          insSetResultsStatus_('error', 'Email failed: ' + (err && err.message ? err.message : err));
-          showToast('Email failed', 'error');
-          restore();
-        })
-        .sendInsightsReportEmail({
-          imageBase64: dataUrl,
-          dateLabel: insLastData && insLastData.dateLabel ? insLastData.dateLabel : '',
-          from: insLastData && insLastData.meta ? (insLastData.meta.from || '') : '',
-          to:   insLastData && insLastData.meta ? (insLastData.meta.to   || '') : '',
-        });
-    });
+  // Emails a SERVER-RENDERED HTML insights report (not an html2canvas
+  // screenshot, which mis-rendered the per-agent card bars in mail clients).
+  // Sends the same params the modal used so the server recomputes the identical
+  // report. Charts stay in the web app (Copy image / Print).
+  function insEmailReport_() {
+    if (!insLastData || !insLastData.meta) {
+      showToast('Generate a report first.', 'error');
+      return;
+    }
+    const m = insLastData.meta;
+    const restore = insBtnFeedback_('Sending…', 0);
+    google.script.run
+      .withSuccessHandler(function (res) {
+        restore();
+        insBtnFeedback_('Sent to ' + (res && res.to ? res.to : 'you'), 2000);
+        showToast('Report emailed to ' + (res && res.to ? res.to : 'you'), 'success');
+      })
+      .withFailureHandler(function (err) {
+        insSetResultsStatus_('error', 'Email failed: ' + (err && err.message ? err.message : err));
+        showToast('Email failed', 'error');
+        restore();
+      })
+      .sendInsightsReportEmail({
+        department: m.department,
+        from:       m.from,
+        to:         m.to,
+        agents:     m.agents || [],
+        priorFrom:  m.priorFrom || '',
+        priorTo:    m.priorTo || '',
+      });
   }
 
   /**

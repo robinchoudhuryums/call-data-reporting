@@ -694,42 +694,76 @@ function emptyInsights_(dept, from, to, priorFrom, priorTo, selectedAgents,
  * Emails the captured Insights Report PNG to the active user. Same
  * pattern as the Performance / Individual email-export paths.
  */
+/**
+ * Emails the Insights report to the requester as a SERVER-RENDERED HTML report
+ * (department rollup KPI tiles + per-agent delta table), NOT an html2canvas
+ * screenshot. The screenshot path mis-rendered the per-agent card bars in mail
+ * clients; rendering the report HTML server-side (reusing the digest's
+ * renderInsightsEmailBody_) is robust and email-native. Recomputes the report
+ * from the same params the modal used (department / from / to / agents / prior
+ * window), so it always matches what the user is looking at. Charts stay in the
+ * web app (Copy image / Print). Mirrors getInsightsReport's request validation.
+ */
 function sendInsightsReportEmail(req) {
   const email = Session.getActiveUser().getEmail();
   const user = resolveUser_(email);
   if (user.role === 'none') throw new Error('Not authorized.');
 
-  const dataUrl = String((req && req.imageBase64) || '');
-  const dateLabel = String((req && req.dateLabel) || 'Insights Report');
-  if (!dataUrl) throw new Error('No image payload.');
-  const commaIdx = dataUrl.indexOf(',');
-  if (commaIdx === -1) throw new Error('Malformed image payload.');
-  const decoded = Utilities.base64Decode(dataUrl.slice(commaIdx + 1));
-  // Filename carries the date range so a saved attachment is self-describing
-  // (was a static 'Insights_Report.png'). Prefer the ISO from/to; fall back to
-  // a slug of the human dateLabel.
-  const fromIso = String((req && req.from) || '');
-  const toIso   = String((req && req.to)   || '');
-  const slug_ = function (s) {
-    return String(s || '').replace(/[^0-9A-Za-z]+/g, '_').replace(/^_+|_+$/g, '');
-  };
-  const namePart = (fromIso && toIso) ? (fromIso + '_to_' + toIso)
-                                      : (slug_(dateLabel) || 'report');
-  const blob = Utilities.newBlob(decoded, 'image/png', 'Insights_Report_' + namePart + '.png');
+  const dept = String((req && req.department) || '').trim();
+  if (!dept) throw new Error('Department is required.');
+  assertDeptAccess_(user, dept);
 
-  MailApp.sendEmail({
-    to: email,
-    subject: 'Insights Report: ' + dateLabel,
-    htmlBody:
-      '<div style="font-family: sans-serif; color: #444; margin-bottom: 20px;">'
-      + 'Here is the visual snapshot of the Insights report -- department '
-      + 'rollup plus per-agent cards, comparing the selected range against '
-      + 'the immediately-preceding period.'
-      + '</div>'
-      + '<div style="text-align: center; border: 1px solid #eee; padding: 10px;">'
-      + '<img src="cid:reportImg" style="width:100%; max-width:1200px; height:auto;">'
-      + '</div>',
-    inlineImages: { reportImg: blob },
-  });
+  const from = String((req && req.from) || '').trim();
+  const to   = String((req && req.to)   || '').trim();
+  if (!isIsoDate_(from) || !isIsoDate_(to)) throw new Error('from/to must be YYYY-MM-DD.');
+  if (from > to) throw new Error('from must be on or before to.');
+
+  const customPriorFrom = String((req && req.priorFrom) || '').trim();
+  const customPriorTo   = String((req && req.priorTo)   || '').trim();
+  if (customPriorFrom || customPriorTo) {
+    if (!isIsoDate_(customPriorFrom) || !isIsoDate_(customPriorTo)) {
+      throw new Error('priorFrom/priorTo must be YYYY-MM-DD.');
+    }
+  }
+
+  const rawAgents = (req && req.agents) || [];
+  if (!Array.isArray(rawAgents) || rawAgents.length === 0) throw new Error('Select at least one agent.');
+  const roster = getRosterForDepartment_(dept);
+  const seen = {};
+  const selectedAgents = [];
+  for (let i = 0; i < rawAgents.length; i++) {
+    const n = String(rawAgents[i] || '').trim();
+    if (!n || seen[n]) continue;
+    seen[n] = true;
+    selectedAgents.push(n);
+  }
+  if (!selectedAgents.length) throw new Error('No selected agent provided.');
+
+  const data = computeInsights_(dept, from, to, selectedAgents, roster,
+                                customPriorFrom, customPriorTo);
+  const dateLabel  = (data && data.dateLabel) || (from + ' - ' + to);
+  const priorLabel = (data && data.priorDateLabel) || 'the prior period';
+
+  const dashboardUrl = PropertiesService.getScriptProperties().getProperty('DASHBOARD_URL') || '';
+  const htmlBody =
+    '<div style="font-family: sans-serif; color: #1f2937; max-width: 760px;">'
+    + '<div style="background:#EFF6FF;border-left:4px solid #1d4ed8;padding:16px 20px;border-radius:4px;">'
+    +   '<h2 style="margin:0 0 4px;color:#1e3a8a;font-size:18px;">Insights &mdash; ' + escapeHtmlServer_(dept) + '</h2>'
+    +   '<div style="color:#3730a3;font-size:13px;">' + escapeHtmlServer_(dateLabel)
+    +     ' &middot; vs ' + escapeHtmlServer_(priorLabel) + '</div>'
+    + '</div>'
+    + renderInsightsEmailBody_(data)
+    + (dashboardUrl
+        ? '<div style="margin-top:20px;"><a href="' + escapeHtmlServer_(dashboardUrl)
+          + '" style="display:inline-block;background:#1d4ed8;color:#fff;padding:8px 16px;border-radius:6px;'
+          + 'text-decoration:none;font-size:13px;font-weight:600;">Open Department Dashboard</a></div>'
+        : '')
+    + '<div style="margin-top:24px;font-size:11px;color:#9ca3af;">'
+    +   'Sent from the Department Dashboard Insights report. Charts (trend, share, per-agent) '
+    +   'are available in the web app via Copy image / Print.'
+    + '</div>'
+    + '</div>';
+
+  MailApp.sendEmail({ to: email, subject: 'Insights Report: ' + dateLabel, htmlBody: htmlBody });
   return { to: email };
 }

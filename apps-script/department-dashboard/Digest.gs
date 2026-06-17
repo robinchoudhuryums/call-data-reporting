@@ -549,7 +549,20 @@ function digestInsightsHtml_(dept, fromIso, toIso, cadence) {
   const prior = digestInsightsPrior_(cadence, fromIso, toIso);
   const data = computeInsights_(dept, fromIso, toIso, roster.names.slice(), roster,
                                 prior ? prior.from : '', prior ? prior.to : '');
-  const t = data.teamStats || {};
+  return renderInsightsEmailBody_(data);
+}
+
+/**
+ * Shared server-rendered HTML body for an Insights report email: the
+ * answer-first takeaway + department rollup KPI tiles + per-agent table
+ * (current value with delta vs the prior window). Email-safe inline styles
+ * (mail clients strip <style>/CSS custom properties). Consumed by the manager
+ * digest (digestInsightsHtml_) AND the Insights modal's "Email report" action
+ * (InsightsReport.gs::sendInsightsReportEmail) so the two render identically.
+ * Takes an already-computed computeInsights_ `data` object.
+ */
+function renderInsightsEmailBody_(data) {
+  const t = (data && data.teamStats) || {};
 
   // Answer-first takeaway line before any tile (anti-intimidation).
   const takeaway = digestTakeaway_(t);
