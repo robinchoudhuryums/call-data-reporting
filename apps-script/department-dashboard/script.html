@@ -743,6 +743,7 @@
     initDeptConfig();
     initCallerLookup();
     initQcdReport();
+    initQcdAllDept_();
     // Router last so its modal-close listeners attach after each
     // per-modal init has wired up its own close-button handlers.
     initRouter();
@@ -12717,6 +12718,282 @@
           + (e && e.message ? e.message : String(e)));
       }
     });
+  }
+
+  // ===================================================================
+  // All-departments daily call queue report (4b). Admin-only; launched
+  // from the Overview "Daily Call Queue Report" button. Flat company-wide
+  // queue table reproducing the legacy emailed PDF, with CSV + print.
+  // ===================================================================
+  var qcdAllDeptLast = null;
+
+  function initQcdAllDept_() {
+    const btn   = $('ov-qcd-alldept-btn');
+    const modal = $('qcd-alldept-modal');
+    if (!btn || !modal) return;
+
+    const closeBtn = modal.querySelector('.modal-close');
+    const backdrop = modal.querySelector('[data-close]');
+
+    function showForm() {
+      $('qcd-alldept-results').style.display = 'none';
+      modal.querySelector('.ir-form').style.display = '';
+    }
+    function showResults() {
+      modal.querySelector('.ir-form').style.display = 'none';
+      $('qcd-alldept-results').style.display = '';
+    }
+    function openModal() {
+      modal.style.display = '';
+      modal.setAttribute('aria-hidden', 'false');
+      document.body.style.overflow = 'hidden';
+      trapFocus_(modal);
+      initModalDragResize_(modal.querySelector('.modal-panel-wide') || modal.querySelector('.modal-panel'));
+      document.addEventListener('keydown', onKeyDown);
+      showForm();
+      qcdAllDeptDefaultDates_();
+    }
+    function closeModal() {
+      modal.style.display = 'none';
+      modal.setAttribute('aria-hidden', 'true');
+      releaseFocus_();
+      resetModalTransform_(modal.querySelector('.modal-panel-wide') || modal.querySelector('.modal-panel'));
+      document.body.style.overflow = '';
+      document.removeEventListener('keydown', onKeyDown);
+      btn.focus();
+    }
+    function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
+
+    btn.addEventListener('click', openModal);
+    if (closeBtn) closeBtn.addEventListener('click', closeModal);
+    if (backdrop) backdrop.addEventListener('click', closeModal);
+
+    const preset = $('qcd-alldept-preset');
+    if (preset) preset.addEventListener('change', qcdAllDeptApplyPreset_);
+    ['qcd-alldept-from', 'qcd-alldept-to'].forEach(function (id) {
+      const el = $(id);
+      if (el) el.addEventListener('change', function () {
+        const p = $('qcd-alldept-preset');
+        if (p) p.value = 'custom';
+      });
+    });
+
+    const gen = $('qcd-alldept-generate-btn');
+    if (gen) gen.addEventListener('click', function () { runQcdAllDept_(showResults); });
+    const back = $('qcd-alldept-back-btn');
+    if (back) back.addEventListener('click', showForm);
+    const csv = $('qcd-alldept-csv-btn');
+    if (csv) csv.addEventListener('click', function () { qcdAllDeptCsv_(qcdAllDeptLast); });
+    const prn = $('qcd-alldept-print-btn');
+    if (prn) prn.addEventListener('click', function () { qcdAllDeptPrint_(qcdAllDeptLast); });
+  }
+
+  function qcdAllDeptIsoOf_(d) {
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return d.getFullYear() + '-' + m + '-' + day;
+  }
+
+  function qcdAllDeptDefaultDates_() {
+    const now = new Date();
+    const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+    $('qcd-alldept-from').value = qcdAllDeptIsoOf_(yesterday);
+    $('qcd-alldept-to').value   = qcdAllDeptIsoOf_(yesterday);
+    const p = $('qcd-alldept-preset');
+    if (p) p.value = 'yesterday';
+  }
+
+  function qcdAllDeptApplyPreset_() {
+    const v = $('qcd-alldept-preset').value;
+    if (v === 'custom') return;
+    const now = new Date();
+    let s, e;
+    if (v === 'today') {
+      s = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      e = new Date(s);
+    } else if (v === 'yesterday') {
+      s = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+      e = new Date(s);
+    } else if (v === 'thisMonth') {
+      s = new Date(now.getFullYear(), now.getMonth(), 1);
+      e = now;
+    } else if (v === 'lastMonth') {
+      s = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      e = new Date(now.getFullYear(), now.getMonth(), 0);
+    } else if (v === 'last30') {
+      s = new Date(now.getTime() - 29 * 86400000);
+      e = now;
+    } else {
+      return;
+    }
+    $('qcd-alldept-from').value = qcdAllDeptIsoOf_(s);
+    $('qcd-alldept-to').value   = qcdAllDeptIsoOf_(e);
+  }
+
+  function runQcdAllDept_(showResults) {
+    const from = $('qcd-alldept-from').value;
+    const to   = $('qcd-alldept-to').value;
+    const err  = $('qcd-alldept-form-error');
+    err.style.display = 'none';
+    if (!from || !to) {
+      err.textContent = 'Pick a start and end date.';
+      err.style.display = '';
+      return;
+    }
+    if (from > to) {
+      err.textContent = 'Start date must be on or before end date.';
+      err.style.display = '';
+      return;
+    }
+    const gen = $('qcd-alldept-generate-btn');
+    const orig = gen.textContent;
+    gen.disabled = true;
+    gen.textContent = 'Generating…';
+    google.script.run
+      .withSuccessHandler(function (data) {
+        gen.disabled = false;
+        gen.textContent = orig;
+        qcdAllDeptLast = data;
+        qcdAllDeptRender_(data);
+        showResults();
+      })
+      .withFailureHandler(function (e) {
+        gen.disabled = false;
+        gen.textContent = orig;
+        err.textContent = (e && e.message) ? e.message : String(e);
+        err.style.display = '';
+      })
+      .getQcdAllDepartments({ from: from, to: to });
+  }
+
+  // Renders the flat company-wide table: a section per department (its
+  // subtotal as a heading row), one row per queue, and a grand-total
+  // footer. Abandoned % >= 5% and any violation count are warn-tinted
+  // (same thresholds as the per-dept QCD report).
+  function qcdAllDeptRender_(data) {
+    $('qcd-alldept-results-date').textContent = data.dateLabel || '';
+    const empty = $('qcd-alldept-empty');
+    const body  = $('qcd-alldept-body');
+    const depts = (data && data.depts) || [];
+    if (!depts.length) {
+      body.innerHTML = '';
+      empty.innerHTML = emptyStateHtml_('&#128202;', 'No queue activity in range',
+        'No department had Total Calls in the selected window. Try a wider range.');
+      empty.style.display = '';
+      return;
+    }
+    empty.style.display = 'none';
+
+    const cell = function (pct, viol) {
+      return { pctCls: (Number(pct) >= 5 ? ' qcd-warn-light' : ''),
+               violCls: (Number(viol) > 3 ? ' qcd-warn-strong' : (Number(viol) > 0 ? ' qcd-warn-light' : '')) };
+    };
+    let html = '<table class="qcd-alldept-table agents"><thead><tr>'
+      + '<th>Queue</th><th class="num">Total</th><th class="num">Answered</th>'
+      + '<th class="num">Abandoned</th><th class="num">Aban %</th>'
+      + '<th class="num">Longest</th><th class="num">Avg ans</th><th class="num">Viol</th>'
+      + '</tr></thead>';
+    depts.forEach(function (d) {
+      const t = d.totals || {};
+      const tc = cell(t.abandonedPct, t.violations);
+      html += '<tbody class="qcd-alldept-dept">'
+        + '<tr class="qcd-alldept-deptrow"><td colspan="8">' + escapeHtml(d.dept) + '</td></tr>';
+      (d.queues || []).forEach(function (q) {
+        const c = cell(q.abandonedPct, q.violations);
+        html += '<tr>'
+          + '<td>' + escapeHtml(q.queue) + '</td>'
+          + '<td class="num">' + fmtNumber(q.totalCalls) + '</td>'
+          + '<td class="num">' + fmtNumber(q.totalAnswered) + '</td>'
+          + '<td class="num">' + fmtNumber(q.abandoned) + '</td>'
+          + '<td class="num' + c.pctCls + '">' + escapeHtml(q.abandonedPctStr) + '</td>'
+          + '<td class="num">' + escapeHtml(q.longestWait) + '</td>'
+          + '<td class="num">' + escapeHtml(q.avgAnswer) + '</td>'
+          + '<td class="num' + c.violCls + '">' + fmtNumber(q.violations) + '</td>'
+          + '</tr>';
+      });
+      html += '<tr class="qcd-alldept-subtotal">'
+        + '<td>' + escapeHtml(d.dept) + ' total</td>'
+        + '<td class="num">' + fmtNumber(t.totalCalls) + '</td>'
+        + '<td class="num">' + fmtNumber(t.totalAnswered) + '</td>'
+        + '<td class="num">' + fmtNumber(t.abandoned) + '</td>'
+        + '<td class="num' + tc.pctCls + '">' + escapeHtml(t.abandonedPctStr) + '</td>'
+        + '<td class="num">' + escapeHtml(t.longestWait) + '</td>'
+        + '<td class="num">' + escapeHtml(t.avgAnswer) + '</td>'
+        + '<td class="num' + tc.violCls + '">' + fmtNumber(t.violations) + '</td>'
+        + '</tr></tbody>';
+    });
+    const g = data.grandTotals || {};
+    const gc = cell(g.abandonedPct, g.violations);
+    html += '<tfoot><tr class="qcd-alldept-grand">'
+      + '<td>Company total</td>'
+      + '<td class="num">' + fmtNumber(g.totalCalls) + '</td>'
+      + '<td class="num">' + fmtNumber(g.totalAnswered) + '</td>'
+      + '<td class="num">' + fmtNumber(g.abandoned) + '</td>'
+      + '<td class="num' + gc.pctCls + '">' + escapeHtml(g.abandonedPctStr) + '</td>'
+      + '<td class="num">' + escapeHtml(g.longestWait) + '</td>'
+      + '<td class="num">' + escapeHtml(g.avgAnswer) + '</td>'
+      + '<td class="num' + gc.violCls + '">' + fmtNumber(g.violations) + '</td>'
+      + '</tr></tfoot></table>';
+    body.innerHTML = html;
+  }
+
+  function qcdAllDeptCsv_(data) {
+    if (!data || !(data.depts || []).length) return;
+    const esc = function (v) {
+      const s = csvSafeCell_(v);
+      return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    };
+    const row = function (cells) { return cells.map(esc).join(','); };
+    const lines = [];
+    lines.push('Daily Call Queue Report,' + (data.dateLabel || ''));
+    lines.push('');
+    lines.push(row(['Department', 'Queue', 'Total Calls', 'Answered', 'Abandoned',
+                    'Abandoned %', 'Longest Wait', 'Avg Answer', 'Violations']));
+    (data.depts || []).forEach(function (d) {
+      (d.queues || []).forEach(function (q) {
+        lines.push(row([d.dept, q.queue, q.totalCalls, q.totalAnswered, q.abandoned,
+                        q.abandonedPctStr, q.longestWait, q.avgAnswer, q.violations]));
+      });
+      const t = d.totals || {};
+      lines.push(row([d.dept, d.dept + ' total', t.totalCalls, t.totalAnswered, t.abandoned,
+                      t.abandonedPctStr, t.longestWait, t.avgAnswer, t.violations]));
+    });
+    const g = data.grandTotals || {};
+    lines.push(row(['', 'Company total', g.totalCalls, g.totalAnswered, g.abandoned,
+                    g.abandonedPctStr, g.longestWait, g.avgAnswer, g.violations]));
+    const blob = new Blob([lines.join('\n') + '\n'], { type: 'text/csv;charset=utf-8;' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'daily_call_queue_report_' + (data.meta && data.meta.from || '')
+               + '_' + (data.meta && data.meta.to || '') + '.csv';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 0);
+  }
+
+  // Print the rendered table directly (no html2canvas needed -- this is a
+  // plain table). Opens a window with a minimal print stylesheet.
+  function qcdAllDeptPrint_(data) {
+    if (!data) return;
+    const tableEl = $('qcd-alldept-body');
+    const w = window.open('about:blank');
+    if (!w) return;
+    const css = 'body{font-family:Arial,Helvetica,sans-serif;color:#222;padding:18px;}'
+      + 'h1{font-size:16px;margin:0 0 2px;}.sub{color:#666;font-size:12px;margin:0 0 14px;}'
+      + 'table{width:100%;border-collapse:collapse;}'
+      + 'th,td{padding:3px 8px;border-bottom:1px solid #ddd;text-align:left;font-size:11.5px;}'
+      + 'td.num,th.num{text-align:right;}'
+      + '.qcd-alldept-deptrow td{font-weight:700;background:#f2f2f2;padding-top:8px;}'
+      + '.qcd-alldept-subtotal td{font-weight:600;border-top:1px solid #999;}'
+      + '.qcd-alldept-grand td{font-weight:700;border-top:2px solid #333;}'
+      + '.qcd-warn-light{background:#fff3e0;}.qcd-warn-strong{background:#ffd9b3;}';
+    w.document.write('<title>Daily Call Queue Report</title><style>' + css + '</style>'
+      + '<h1>Daily Call Queue Report</h1><p class="sub">' + escapeHtml(data.dateLabel || '') + '</p>'
+      + (tableEl ? tableEl.innerHTML : ''));
+    w.document.close();
+    w.focus();
+    setTimeout(function () { try { w.print(); } catch (e) {} }, 250);
   }
 
   // Wait for DOM, then go.

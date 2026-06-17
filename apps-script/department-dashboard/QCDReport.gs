@@ -65,6 +65,12 @@
 // source breakdown like the legacy emailed report (4a).
 const QCD_CACHE_KEY_PREFIX = 'qcd:v9';
 
+// All-departments daily report (4b): admin-only, company-wide flat
+// queue table reproducing the legacy emailed "Daily Call Queue Report"
+// PDF. Cached per (from, to) under its own prefix so it doesn't collide
+// with the per-dept qcd: keys. Bump on any aggregation-shape change.
+const QCD_ALLDEPT_CACHE_PREFIX = 'qcdAll:v1';
+
 // Source filter: only the "Total Calls" callSource row carries the
 // daily aggregate we want; other callSource values are sub-counts
 // (CSR / Ad-campaign / etc. -- routing origin breakdowns) that
@@ -218,6 +224,146 @@ function getQcdReport(req) {
   }
 
   logReportUsage_('qcd', dept, user, false);
+  return data;
+}
+
+/**
+ * All-departments daily queue report (4b) -- admin-only, company-wide.
+ *
+ * Reproduces the legacy emailed "Daily Call Queue Report" PDF: one flat
+ * table across EVERY mapped department, each dept's own queues listed
+ * with Total / Answered / Abandoned / Abandoned % / Longest / Avg ans /
+ * Violations, plus a per-dept subtotal and a company grand-total row.
+ * Surfaced on the Overview page (admin-only) with CSV + print.
+ *
+ * Scope: each dept's OWN queues only (queuesForDept_ includeChildren=false)
+ * so a child sub-queue appears under its own dept exactly once and there's
+ * no parent+child double count. A queue double-mapped across two depts'
+ * DEPT_QCD_QUEUES (the M2 case) intentionally appears under both -- this is
+ * a flat per-queue listing, not a de-duped rollup.
+ *
+ * Everything here is RANGE-scoped (unlike the per-dept report's MTD
+ * violations tile) so the flat table is internally consistent: dept
+ * subtotals and the grand total are summed from the range-scoped
+ * queueBreakdown rows. Depts with zero activity in the range are omitted.
+ *
+ * getQcdAllDepartments({ from, to }) -> { meta, dateLabel, depts:[{dept,
+ *   totals, queues:[...]}], grandTotals }
+ */
+function getQcdAllDepartments(req) {
+  assertAdmin_();   // company-wide view: admin only
+
+  const from = String((req && req.from) || '').trim();
+  const to   = String((req && req.to)   || '').trim();
+  if (!isIsoDate_(from) || !isIsoDate_(to)) {
+    throw new Error('from/to must be YYYY-MM-DD.');
+  }
+  if (from > to) throw new Error('from must be on or before to.');
+
+  const cache = CacheService.getScriptCache();
+  const cacheKey = QCD_ALLDEPT_CACHE_PREFIX + ':' + from + ':' + to;
+  const cached = cache.get(cacheKey);
+  if (cached) {
+    try {
+      const parsed = JSON.parse(cached);
+      parsed.meta.cacheHit = true;
+      return parsed;
+    } catch (e) { /* recompute */ }
+  }
+
+  const t0 = Date.now();
+  const allDepts = getAllDepartments_();
+  const depts = [];
+
+  // Company grand totals (range-scoped; longest = MAX, avg = volume-weighted).
+  let gTotal = 0, gAns = 0, gAbnd = 0, gLongest = 0, gAvgWSum = 0, gAvgWN = 0, gViol = 0;
+
+  allDepts.forEach(function (dept) {
+    // Own queues only -- children listed under their own dept.
+    if (queuesForDept_(dept, { includeChildren: false }).length === 0) return;
+    const rep = computeQcdReport_(dept, from, to,
+                                  /*includeSubQueues=*/ false,
+                                  /*separateSubQueues=*/ false);
+    const rows = rep.queueBreakdown || [];
+
+    let dTotal = 0, dAns = 0, dAbnd = 0, dLongest = 0, dAvgWSum = 0, dAvgWN = 0, dViol = 0;
+    rows.forEach(function (r) {
+      dTotal += r.totalCalls; dAns += r.totalAnswered; dAbnd += r.abandoned;
+      if (r.longestWaitSec > dLongest) dLongest = r.longestWaitSec;
+      if (r.avgAnswerSec > 0 && r.totalAnswered > 0) {
+        dAvgWSum += r.avgAnswerSec * r.totalAnswered;
+        dAvgWN   += r.totalAnswered;
+      }
+      dViol += (Number(r.violations) || 0);
+    });
+    if (dTotal === 0) return;   // no activity in range: omit (legacy lists active queues)
+
+    const dPct = dTotal > 0 ? (dAbnd / dTotal) * 100 : 0;
+    depts.push({
+      dept: dept,
+      totals: {
+        totalCalls:      dTotal,
+        totalAnswered:   dAns,
+        abandoned:       dAbnd,
+        abandonedPct:    dPct,
+        abandonedPctStr: dPct.toFixed(2) + '%',
+        longestWait:     formatSecondsHms_(dLongest),
+        avgAnswer:       formatSecondsHms_(dAvgWN > 0 ? Math.round(dAvgWSum / dAvgWN) : 0),
+        violations:      dViol,
+      },
+      queues: rows.map(function (r) {
+        return {
+          queue:           r.queue,
+          totalCalls:      r.totalCalls,
+          totalAnswered:   r.totalAnswered,
+          abandoned:       r.abandoned,
+          abandonedPct:    r.abandonedPct,
+          abandonedPctStr: r.abandonedPctStr,
+          longestWait:     r.longestWait,
+          avgAnswer:       r.avgAnswer,
+          violations:      r.violations,
+        };
+      }),
+    });
+
+    gTotal += dTotal; gAns += dAns; gAbnd += dAbnd;
+    if (dLongest > gLongest) gLongest = dLongest;
+    gAvgWSum += dAvgWSum; gAvgWN += dAvgWN; gViol += dViol;
+  });
+
+  depts.sort(function (a, b) { return a.dept < b.dept ? -1 : (a.dept > b.dept ? 1 : 0); });
+
+  const gPct = gTotal > 0 ? (gAbnd / gTotal) * 100 : 0;
+  const grandTotals = {
+    totalCalls:      gTotal,
+    totalAnswered:   gAns,
+    abandoned:       gAbnd,
+    abandonedPct:    gPct,
+    abandonedPctStr: gPct.toFixed(2) + '%',
+    longestWait:     formatSecondsHms_(gLongest),
+    avgAnswer:       formatSecondsHms_(gAvgWN > 0 ? Math.round(gAvgWSum / gAvgWN) : 0),
+    violations:      gViol,
+  };
+
+  const parseIso_ = function (iso) {
+    const p = iso.split('-');
+    return new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]), 12);
+  };
+  const fmt = function (d) { return Utilities.formatDate(d, TZ, 'MMM d, yyyy'); };
+  const dateLabel = fmt(parseIso_(from)) + ' - ' + fmt(parseIso_(to));
+
+  const data = {
+    meta:        { from: from, to: to, cacheHit: false, computeMs: Date.now() - t0, deptCount: depts.length },
+    dateLabel:   dateLabel,
+    depts:       depts,
+    grandTotals: grandTotals,
+  };
+
+  const json = JSON.stringify(data);
+  if (json.length <= 100000) {
+    try { cache.put(cacheKey, json, REPORT_CACHE_TTL_SECONDS); }
+    catch (e) { Logger.log('QCD all-dept cache put failed: %s', e); }
+  }
   return data;
 }
 
