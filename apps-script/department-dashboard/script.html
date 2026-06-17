@@ -3378,7 +3378,11 @@
     if (!wrap) return;
     const dept = getRequestedDept();
     const from = $('from-date').value, to = $('to-date').value;
-    if (!dept || !from || !to) { wrap.style.display = 'none'; return; }
+    if (!dept || !from || !to) {
+      wrap.style.display = 'none';
+      const detail = $('dept-missed-detail'); if (detail) detail.style.display = 'none';
+      return;
+    }
     const key = dept + '|' + from + '|' + to;
     deptMissedReqKey = key;
     google.script.run
@@ -3389,6 +3393,7 @@
       .withFailureHandler(function () {
         if (deptMissedReqKey !== key) return;
         wrap.style.display = 'none';
+        const detail = $('dept-missed-detail'); if (detail) detail.style.display = 'none';
       })
       .getMissedCallsReport({ department: dept, from: from, to: to });
   }
@@ -3462,6 +3467,10 @@
     }
     // parentId badges (queue-only + agent cards) use a delegated copy handler.
     initClipboardOnce();
+
+    // #9a: full-width detail wrapper shows only when there's detail content.
+    const detail = $('dept-missed-detail');
+    if (detail) detail.style.display = (queueOnly.length || agents.length) ? '' : 'none';
 
     wrap.style.display = '';
   }
