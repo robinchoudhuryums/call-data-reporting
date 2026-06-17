@@ -153,6 +153,20 @@ function runMonthlyDigests_() {
 // -- Engine --------------------------------------------------------
 
 function sendDigestsForCadence_(cadence) {
+  // F4: serialize so a duplicate/overlapping trigger for the SAME cadence can't
+  // double-send digests. Different cadences target disjoint subscriber rows
+  // (filtered by entry.cadence), so cross-cadence runs never duplicate; a
+  // same-cadence double-fire would duplicate every email. On contention, skip
+  // quietly -- the other run is doing the work -- since a missed run is
+  // recoverable but a duplicate manager blast is not. Same project-wide script
+  // lock as the alert send path / OrphanFix / DeptConfig.
+  var digestLock = LockService.getScriptLock();
+  if (!digestLock.tryLock(15000)) {
+    Logger.log('sendDigestsForCadence_(%s): another run holds the script lock — skipping.', cadence);
+    return;
+  }
+  try {
+
   const cfg = readDigestConfig_();
   const window = digestWindowFor_(cadence, new Date());
   if (!window) return;
@@ -186,6 +200,10 @@ function sendDigestsForCadence_(cadence) {
   if (failures.length) {
     try { notifyDigestRecipientFailures_(cadence, failures); }
     catch (notifyErr) { Logger.log('notifyDigestRecipientFailures_ failed: %s', notifyErr); }
+  }
+
+  } finally {
+    digestLock.releaseLock();   // F4 (runs even on the early `return` above)
   }
 }
 

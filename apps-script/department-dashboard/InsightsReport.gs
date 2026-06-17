@@ -678,6 +678,15 @@ function emptyInsights_(dept, from, to, priorFrom, priorTo, selectedAgents,
     }),
     teamInsights: [],
     trendData: { labels: trendLabels, series: trendSeries },
+    // F5: mirror the populated computeInsights_ shape so a no-data day returns
+    // every top-level field. The client already guards both (insRenderQueueHealth_
+    // early-returns on a null `queueHealth`; the trend view checks
+    // `data.trendDaily && ...`), so this is shape-consistency, not a crash fix --
+    // but other empty-shapes (emptyCompareRanges_) mirror their populated shape
+    // and this one should too. trendDaily empty mirrors trendData's empty form;
+    // queueHealth null is what insightsQueueHealth_ returns when unmapped.
+    trendDaily: { labels: [], series: [] },
+    queueHealth: null,
   };
 }
 

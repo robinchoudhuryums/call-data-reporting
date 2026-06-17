@@ -473,7 +473,11 @@ function backfillInboundCalls(fromIso, toIso, force) {
   if (!candidates.length) {
     Logger.log('backfillInboundCalls: no Call_Legs_* sheets found'
       + (fromIso || toIso ? ' in range ' + (fromIso || '...') + '..' + (toIso || '...') : '') + '.');
-    return;
+    // F1: return a status object (was a bare `return;` -> undefined) so callers
+    // -- notably NeonMirror.js::mirrorInboundForDate_ -- can distinguish
+    // "nothing to mirror" from "Neon unreachable" and report a real row count.
+    return { inserted: 0, processed: 0, skippedDone: 0, skippedEmpty: 0,
+             failures: 0, unreachable: false, stoppedEarly: null };
   }
 
   // Dates already mirrored (skipped unless force). Missing table /
@@ -484,6 +488,7 @@ function backfillInboundCalls(fromIso, toIso, force) {
   var processed = 0, skippedDone = 0, skippedEmpty = 0, totalRecords = 0;
   var failures = [];
   var stoppedEarly = null;
+  var unreachable = false;   // F1: set when a per-date write reports Neon unreachable
 
   for (var i = 0; i < candidates.length; i++) {
     if (Date.now() - startMs > IC_BACKFILL_TIME_LIMIT_MS) {
@@ -503,6 +508,7 @@ function backfillInboundCalls(fromIso, toIso, force) {
         failures.push(c.iso);
       } else if (res && res.skipped && !res.inserted) {
         // Neon unreachable for this date -- abort the run; re-run later.
+        unreachable = true;   // F1: signal the caller so the date stays queued
         stoppedEarly = 'Neon unreachable at ' + c.iso + ' — re-run once Neon is up';
         break;
       } else {
@@ -534,6 +540,20 @@ function backfillInboundCalls(fromIso, toIso, force) {
       });
     }
   } catch (logErr) { /* best-effort */ }
+
+  // F1: structured outcome for programmatic callers (mirrorInboundForDate_).
+  // `inserted` = records written this run; `unreachable` = Neon was down for a
+  // date (caller should keep it queued); `failures` = count of hard per-date
+  // write errors. Editor-run callers ignore the return and read the log.
+  return {
+    inserted:    totalRecords,
+    processed:   processed,
+    skippedDone: skippedDone,
+    skippedEmpty: skippedEmpty,
+    failures:    failures.length,
+    unreachable: unreachable,
+    stoppedEarly: stoppedEarly,
+  };
 }
 
 /**

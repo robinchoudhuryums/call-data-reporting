@@ -232,8 +232,16 @@ function neonFetchDqeRows_(fromIso, toIso, opts) {
  * normalized shape as neonFetchDqeRows_. Uses getDisplayValues() for the
  * duration columns (INV-02). Includes queue-sentinel rows (Neon mirrors
  * them too), so the parity comparison is faithful.
+ *
+ * F2: `opts.includeMissedDetail` additionally returns the 19 slot columns
+ * (K..AC) + abandoned_parent_ids (AD) + abandoned_missed_times (AF) as DISPLAY
+ * strings, mirroring neonFetchDqeRows_'s includeMissedDetail shape -- so the
+ * parity gate can certify the Missed-Calls Neon reader's inputs (previously
+ * uncovered). With opts absent the shape is byte-identical to before, so the
+ * existing parity comparison + any other caller is unaffected.
  */
-function sheetFetchDqeRows_(fromIso, toIso) {
+function sheetFetchDqeRows_(fromIso, toIso, opts) {
+  var includeMissedDetail = !!(opts && opts.includeMissedDetail);
   var ss = openSpreadsheet_();
   var sheet = ss.getSheetByName(SHEETS.HISTORICAL);
   if (!sheet) return [];
@@ -251,7 +259,7 @@ function sheetFetchDqeRows_(fromIso, toIso) {
     if (!dateIso || dateIso < fromIso || dateIso > toIso) continue;
     var agent = String(r[HISTORICAL_COLS.AGENT - 1] || '').trim();
     if (!agent) continue;
-    out.push({
+    var row = {
       dateIso:          dateIso,
       agent:            agent,
       monthYear:        String(r[HISTORICAL_COLS.MONTH_YEAR - 1] || '').trim(),
@@ -264,7 +272,19 @@ function sheetFetchDqeRows_(fromIso, toIso) {
       attSec:           parseHmsDisplay_(rd[HISTORICAL_COLS.ATT - 1]),
       avgAbdWaitSec:    parseHmsDisplay_(rd[HISTORICAL_COLS.AVG_ABD_WAIT - 1]),
       csrAvgAbdWaitSec: parseHmsDisplay_(rd[HISTORICAL_COLS.CSR_AVG_ABD_WAIT - 1]),
-    });
+    };
+    if (includeMissedDetail) {
+      // Slots K..AC + abandoned IDs/times as DISPLAY strings (TZ-safe per INV-02;
+      // Neon stores the same display strings, so a string diff is faithful).
+      var slots = [];
+      for (var s = HISTORICAL_COLS.TIME_SLOTS_START; s <= HISTORICAL_COLS.TIME_SLOTS_END; s++) {
+        slots.push(String(rd[s - 1] == null ? '' : rd[s - 1]).trim());
+      }
+      row.slots = slots;
+      row.abandonedParentIds   = String(rd[HISTORICAL_COLS.ABANDONED_PARENT_IDS - 1]   == null ? '' : rd[HISTORICAL_COLS.ABANDONED_PARENT_IDS - 1]).trim();
+      row.abandonedMissedTimes = String(rd[HISTORICAL_COLS.ABANDONED_MISSED_TIMES - 1] == null ? '' : rd[HISTORICAL_COLS.ABANDONED_MISSED_TIMES - 1]).trim();
+    }
+    out.push(row);
   }
   return out;
 }
@@ -287,15 +307,23 @@ function sheetFetchDqeRows_(fromIso, toIso) {
  * per-report cutover can begin.
  */
 function compareDqeSources_() {
-  var COMPARE_FROM = '2026-05-23';   // <-- edit
-  var COMPARE_TO   = '2026-05-29';   // <-- edit
+  // F2: the range is read from Script Properties DQE_PARITY_FROM / DQE_PARITY_TO
+  // (falling back to the edit-in-source defaults) so the gate can run unattended
+  // -- e.g. from a scheduled wrapper -- without editing source each time.
+  var _props = PropertiesService.getScriptProperties();
+  var COMPARE_FROM = _props.getProperty('DQE_PARITY_FROM') || '2026-05-23';   // <-- edit or set Script Property
+  var COMPARE_TO   = _props.getProperty('DQE_PARITY_TO')   || '2026-05-29';   // <-- edit or set Script Property
 
   Logger.log('=== compareDqeSources_  %s .. %s ===', COMPARE_FROM, COMPARE_TO);
   Logger.log('DQE_READ_SOURCE = %s (production readers still use the sheet)',
              getDqeReadSource_());
 
-  var sheetRows = sheetFetchDqeRows_(COMPARE_FROM, COMPARE_TO);
-  var neonRows  = neonFetchDqeRows_(COMPARE_FROM, COMPARE_TO);
+  // F2: include the Missed-Calls detail columns (19 slots + abandoned IDs/times)
+  // in the parity diff so a CLEAN result also certifies the Missed-Calls Neon
+  // reader -- previously these were uncovered and required a manual spot-check.
+  var detailOpts = { includeMissedDetail: true };
+  var sheetRows = sheetFetchDqeRows_(COMPARE_FROM, COMPARE_TO, detailOpts);
+  var neonRows  = neonFetchDqeRows_(COMPARE_FROM, COMPARE_TO, detailOpts);
   Logger.log('sheet rows: %s | neon rows: %s', sheetRows.length, neonRows.length);
   if (!neonRows.length) {
     Logger.log('No Neon rows -- check NEON_* Script Properties + the '
@@ -305,8 +333,12 @@ function compareDqeSources_() {
   }
 
   var keyOf = function (r) { return r.dateIso + '|' + r.agent; };
+  // F2: 'slots' compares the 19-element array via String() (comma-join) -- both
+  // sources return string[19], so equality holds iff every slot matches;
+  // abandonedParentIds / abandonedMissedTimes are display strings.
   var FIELDS = ['totalUnique', 'totalRung', 'totalMissed', 'totalAnswered',
-                'tttSec', 'attSec', 'avgAbdWaitSec', 'csrAvgAbdWaitSec', 'queueExt'];
+                'tttSec', 'attSec', 'avgAbdWaitSec', 'csrAvgAbdWaitSec', 'queueExt',
+                'slots', 'abandonedParentIds', 'abandonedMissedTimes'];
 
   var sMap = {}, nMap = {};
   sheetRows.forEach(function (r) { sMap[keyOf(r)] = r; });
@@ -424,6 +456,45 @@ function clearNeonReadFailure_() {
       props.deleteProperty('NEON_READ_LAST_ERROR');
     }
   } catch (e) { /* best-effort */ }
+}
+
+/**
+ * F3: surfaces the durable Neon READ-failure signal (NEON_READ_LAST_ERROR,
+ * written by recordNeonReadFailure_) so an admin can SEE that the read-back is
+ * failing instead of having to inspect a Script Property by hand. Consumed by
+ * getAlertsInit -> the Alerts modal, alongside the F2 mirror-health line.
+ *
+ * Why this matters: once DQE_READ_SOURCE=neon and the sheet is allowed to age,
+ * a sustained Neon read outage degrades SILENTLY to the (possibly stale) sheet
+ * -- the cut-over readers fall back correctly but emit only an ephemeral log.
+ * This makes the streak visible.
+ *
+ * Returns { configured, source, status, at, label, message, count }:
+ *   status 'ok'      - no recorded read failure (healthy, or never failed)
+ *   status 'failing' - a failure is on record; `count` is the consecutive
+ *                      streak, `at`/`label`/`message` describe the last one.
+ * Best-effort: never throws; on any error returns a benign 'ok' shape.
+ */
+function computeNeonReadHealth_() {
+  var out = { configured: false, source: 'sheet', status: 'ok',
+              at: null, label: null, message: null, count: 0 };
+  try {
+    var props = PropertiesService.getScriptProperties();
+    out.configured = !!props.getProperty('NEON_HOST');
+    out.source = getDqeReadSource_();
+    var raw = props.getProperty('NEON_READ_LAST_ERROR');
+    if (!raw) return out;   // no failure on record
+    var rec = JSON.parse(raw) || {};
+    out.status  = 'failing';
+    out.at      = rec.at || null;
+    out.label   = rec.label || null;
+    out.message = rec.message || null;
+    out.count   = Number(rec.count) || 0;
+    return out;
+  } catch (e) {
+    Logger.log('computeNeonReadHealth_ failed: ' + (e && e.message ? e.message : e));
+    return out;
+  }
 }
 
 /**

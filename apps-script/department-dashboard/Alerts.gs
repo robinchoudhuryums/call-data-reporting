@@ -84,6 +84,14 @@ function getAlertsInit() {
   } catch (e) {
     Logger.log('computeNeonMirrorHealth_ failed: %s', e);
   }
+  // F3: Neon READ-back failure signal (NEON_READ_LAST_ERROR). Best-effort --
+  // null on any failure; the client hides the line in the healthy/sheet case.
+  let neonRead = null;
+  try {
+    neonRead = computeNeonReadHealth_();
+  } catch (e) {
+    Logger.log('computeNeonReadHealth_ failed: %s', e);
+  }
   return {
     config: config,
     drift: drift,
@@ -91,6 +99,7 @@ function getAlertsInit() {
     trigger: getAlertTriggerStatus_(),
     pipelineHealth: readPipelineHealth_(20),
     neonMirror: neonMirror,
+    neonRead: neonRead,
     spreadsheetUrl: 'https://docs.google.com/spreadsheets/d/' + getSpreadsheetId_() + '/edit',
     defaultDate: yesterdayIso_(),
   };
@@ -212,6 +221,22 @@ function runAlertsCore_(dateIso, dryRun, triggeredBy) {
     throw new Error('Alert Log sheet missing -- run setup() before running alerts. '
       + 'Every alert outcome must be logged.');
   }
+
+  // F4: serialize REAL sends so a double-click on "Send alerts" -- or an admin
+  // send racing the 8 AM runDailyAlerts_ trigger -- can't double-fire manager
+  // emails + duplicate Alert Log rows. Preview (dryRun) is self-marked
+  // (preview: / would-send) and read-mostly, so it isn't locked. Uses the same
+  // project-wide script lock as OrphanFix / DeptConfig (tryLock + throw on
+  // contention). A deliberate SEQUENTIAL re-send is still allowed -- the lock is
+  // free by then -- which is intended (admins can force-send after a holiday).
+  let alertLock = null;
+  if (!dryRun) {
+    alertLock = LockService.getScriptLock();
+    if (!alertLock.tryLock(15000)) {
+      throw new Error('Another alert run is already in progress — please retry in a moment.');
+    }
+  }
+  try {
 
   const cfg = readAlertConfig_();
   const results = [];
@@ -336,6 +361,9 @@ function runAlertsCore_(dateIso, dryRun, triggeredBy) {
   });
 
   return results;
+  } finally {
+    if (alertLock) alertLock.releaseLock();   // F4
+  }
 }
 
 /**

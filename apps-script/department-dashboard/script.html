@@ -8664,6 +8664,7 @@
     alRenderTriggerStatus_(data.trigger || { installed: false });
     alRenderLog_(data.log || []);
     alRenderNeonMirror_(data.neonMirror || null);
+    alRenderNeonRead_(data.neonRead || null);
     alRenderPipelineHealth_(data.pipelineHealth || []);
     alClearResults_();
     alLastPreview = null;
@@ -8703,6 +8704,43 @@
       cls = 'al-neon-mirror-ok';
       msg = '✓ Neon mirror current with the sheet (both through '
           + escapeHtml(m.neonMax || m.sheetMax || '?') + ').';
+    }
+    el.className = 'al-neon-mirror ' + cls;
+    el.textContent = msg;
+  }
+
+  // F3: render the Neon READ-back health line. The cut-over readers
+  // (computeSummary_/getCompanyOverview/IR/PR/CR/Insights/Missed) fall back to
+  // the sheet on any Neon error, which is correct but silent -- once
+  // DQE_READ_SOURCE=neon and the sheet ages, a sustained outage serves stale
+  // data with no signal. This surfaces the recorded streak. Hidden when:
+  //   - Neon isn't configured on this project, OR
+  //   - the read source is still 'sheet' AND there's no recorded failure
+  //     (nothing relevant to show on a default sheet install).
+  function alRenderNeonRead_(m) {
+    const el = $('al-neon-read');
+    if (!el) return;
+    const failing = m && m.status === 'failing';
+    if (!m || !m.configured || (m.source !== 'neon' && !failing)) {
+      el.style.display = 'none';
+      el.textContent = '';
+      return;
+    }
+    el.style.display = '';
+    let cls, msg;
+    if (failing) {
+      const n = Number(m.count) || 0;
+      cls = 'al-neon-mirror-warn';
+      msg = '⚠ Neon read-back is FAILING — serving the sheet as a fallback'
+          + (m.source === 'neon' ? ' (reads may be stale if the sheet has aged)' : '')
+          + '. Last error ' + escapeHtml(m.at || '?')
+          + (m.label ? ' [' + escapeHtml(m.label) + ']' : '')
+          + ': ' + escapeHtml(m.message || '(no message)')
+          + '. ' + n + ' consecutive failure' + (n === 1 ? '' : 's')
+          + '. Check the NEON_* Script Properties / Neon instance.';
+    } else {
+      cls = 'al-neon-mirror-ok';
+      msg = '✓ Neon read-back healthy (DQE_READ_SOURCE=neon; no recent read failures).';
     }
     el.className = 'al-neon-mirror ' + cls;
     el.textContent = msg;
