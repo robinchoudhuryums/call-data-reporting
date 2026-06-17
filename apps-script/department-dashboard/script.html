@@ -12328,7 +12328,12 @@
       var pct = Number(r.abandonedPct) || 0;
       var violCls = viol > 3 ? 'qcd-warn-strong' : (viol > 0 ? 'qcd-warn-light' : '');
       var pctCls  = pct >= 5 ? 'qcd-warn-light' : '';
-      var hasDetail = viol > 0 && r.violationDates && r.violationDates.length;
+      // 4a: a queue row expands to its call-source breakdown (always when
+      // sources exist) and the violation dates (when any).
+      var sources = r.bySource || [];
+      var hasSources = sources.length > 0;
+      var hasViolDates = viol > 0 && r.violationDates && r.violationDates.length;
+      var hasDetail = hasSources || hasViolDates;
       var chevron = hasDetail ? ' <span class="qcd-expand-icon">&#9654;</span>' : '';
       var rowCls = 'qcd-queue-row' + (hasDetail ? ' qcd-expandable' : '') + (isChild ? ' qcd-subqueue-row' : '');
       var subTag = isChild && r.subDept
@@ -12344,10 +12349,35 @@
            +   '<td class="num' + (violCls ? ' ' + violCls : '') + '">' + fmtNumber(r.violations) + '</td>'
            + '</tr>';
       if (hasDetail) {
+        var detail = '';
+        if (hasSources) {
+          detail += '<table class="qcd-source-subtable"><thead><tr>'
+                 +    '<th>Call source</th><th class="num">Total</th><th class="num">Answered</th>'
+                 +    '<th class="num">Abandoned</th><th class="num">Aban %</th>'
+                 +    '<th class="num">Longest</th><th class="num">Avg ans</th><th class="num">Viol</th>'
+                 +  '</tr></thead><tbody>'
+                 +  sources.map(function (s) {
+                      var sPct = Number(s.abandonedPct) || 0;
+                      var sViol = Number(s.violations) || 0;
+                      return '<tr class="' + (s.isOverall ? 'qcd-source-overall' : '') + '">'
+                        +  '<td>' + escapeHtml(s.source) + '</td>'
+                        +  '<td class="num">' + fmtNumber(s.totalCalls)    + '</td>'
+                        +  '<td class="num">' + fmtNumber(s.totalAnswered) + '</td>'
+                        +  '<td class="num">' + fmtNumber(s.abandoned)     + '</td>'
+                        +  '<td class="num' + (sPct >= 5 ? ' qcd-warn-light' : '') + '">' + escapeHtml(s.abandonedPctStr) + '</td>'
+                        +  '<td class="num">' + escapeHtml(s.longestWait)  + '</td>'
+                        +  '<td class="num">' + escapeHtml(s.avgAnswer)    + '</td>'
+                        +  '<td class="num' + (sViol > 0 ? ' qcd-warn-light' : '') + '">' + fmtNumber(s.violations) + '</td>'
+                        +  '</tr>';
+                    }).join('')
+                 +  '</tbody></table>';
+        }
+        if (hasViolDates) {
+          detail += '<div class="qcd-detail-viol"><strong>Violation dates:</strong> '
+                 +  r.violationDates.map(function (d) { return escapeHtml(d); }).join(', ') + '</div>';
+        }
         html += '<tr class="qcd-detail-row" style="display:none;"><td colspan="8">'
-             +  '<div class="qcd-detail-wrap"><strong>Violation dates:</strong> '
-             +  r.violationDates.map(function (d) { return escapeHtml(d); }).join(', ')
-             +  '</div></td></tr>';
+             +  '<div class="qcd-detail-wrap">' + detail + '</div></td></tr>';
       }
       return html;
     };

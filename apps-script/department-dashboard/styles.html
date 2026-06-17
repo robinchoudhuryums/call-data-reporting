@@ -3168,6 +3168,18 @@
     background: var(--paper-2);
     border-top: 1px dashed var(--line);
   }
+  /* 4a: per-call-source breakdown nested under an expanded queue row. */
+  .qcd-source-subtable { width: 100%; border-collapse: collapse; margin: 2px 0; }
+  .qcd-source-subtable th, .qcd-source-subtable td {
+    padding: 3px 8px; text-align: left; font-size: 11.5px;
+    border-bottom: 1px solid var(--line);
+  }
+  .qcd-source-subtable th { color: var(--muted); font-weight: 600; }
+  .qcd-source-subtable td.num, .qcd-source-subtable th.num {
+    text-align: right; font-variant-numeric: tabular-nums;
+  }
+  .qcd-source-subtable .qcd-source-overall td { font-weight: 600; color: var(--ink); }
+  .qcd-detail-viol { margin-top: 6px; }
 
   .al-config-table, .al-log-table, .al-results-table {
     width: 100%;
