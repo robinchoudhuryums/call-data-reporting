@@ -74,7 +74,7 @@ function getMissedCallsReport(req) {
   // v10: per-entry parentId attached to each abandoned timestamp;
   // queue-only entries gain alsoIn[] for cross-queue overflow; new
   // queueOnlyUniqueCount/EventCount in meta.
-  const cacheKey = 'missed:v10:' + dept + ':' + scope + ':' + from + ':' + to;
+  const cacheKey = 'missed:v11:' + dept + ':' + scope + ':' + from + ':' + to;
   const cached = cache.get(cacheKey);
   if (cached) {
     try {
@@ -211,6 +211,7 @@ function computeMissedCallsReport_(dept, from, to, scope) {
   let abandonedRings = 0;            // per-ring count (one per red timestamp)
   const uniqueAbandonedParents = {}; // ALL abandoned parents (col AD across all rows)
   const uniqueNoRingParents = {};    // subset: those that came from sentinel rows
+  const abandonedDetailLostDates = {}; // dates whose AD/AF abandoned cells were corrupted/lost
 
   for (let i = 0; i < values.length; i++) {
     const r  = values[i];
@@ -279,7 +280,14 @@ function computeMissedCallsReport_(dept, from, to, scope) {
     // this row, AD[i] is its parent call ID. Pairing them gives us a
     // {timeKey -> parentId} map so each red 🚨 timestamp can carry
     // its own parent ID through to the client.
-    const abandonedStr = String(rd[HISTORICAL_ABANDONED_MISSED_TIMES - 1] || '').trim();
+    // Read-side guard (classifyAbandonedCell_): never split a coerced/lost
+    // AD/AF cell into fake IDs/times. Recover lossless single-value coercions;
+    // flag the date when the abandoned data was genuinely lost (then treat the
+    // row as having no abandoned detail -- the missed timestamps still render).
+    const afClass = classifyAbandonedCell_(rd[HISTORICAL_ABANDONED_MISSED_TIMES - 1]);
+    const adClass = classifyAbandonedCell_(rd[HISTORICAL_ABANDONED_PARENT_IDS - 1]);
+    if (afClass.lost || adClass.lost) abandonedDetailLostDates[dateIso] = true;
+    const abandonedStr = afClass.lost ? '' : afClass.value;
     const abandonedKeys = {};
     const abandonedTimeToParent = {};  // timeKey -> parentId
     let abandonedTimeList = [];
@@ -290,7 +298,7 @@ function computeMissedCallsReport_(dept, from, to, scope) {
         abandonedTimeList.push(k);
       });
     }
-    const abandonedIdsCell = String(rd[HISTORICAL_ABANDONED_PARENT_IDS - 1] || '').trim();
+    const abandonedIdsCell = adClass.lost ? '' : adClass.value;
     const abandonedIdList = abandonedIdsCell
       ? abandonedIdsCell.split(',').map(function (s) { return s.trim(); })
                         .filter(function (s) { return !!s; })
@@ -479,6 +487,11 @@ function computeMissedCallsReport_(dept, from, to, scope) {
       // the overflow signal in the headline).
       queueOnlyUniqueCount: queueOnlyUniqueCount,
       queueOnlyEventCount: queueOnlyEventCount,
+      // Dates whose AD/AF abandoned cells were corrupted by the number-coercion
+      // bug and excluded from the counts above (rebuild from Raw Data). The
+      // client surfaces a note so a lost row isn't mistaken for "0 abandoned".
+      abandonedDetailLost: Object.keys(abandonedDetailLostDates).length > 0,
+      abandonedDetailLostDates: Object.keys(abandonedDetailLostDates).sort(),
       generatedAt: new Date().toISOString(),
     },
     agents: agents,
@@ -505,6 +518,8 @@ function emptyMissedReport_(dept, from, to, scope, rosterSize) {
       abandonedRings: 0,
       queueOnlyUniqueCount: 0,
       queueOnlyEventCount: 0,
+      abandonedDetailLost: false,
+      abandonedDetailLostDates: [],
       generatedAt: new Date().toISOString(),
     },
     agents: [],

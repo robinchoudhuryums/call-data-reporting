@@ -126,9 +126,9 @@ function repairDqeSlotTimestamps_(dryRun) {
 //     lower digits are gone for good. The original IDs CANNOT be reconstructed
 //     from the cell -- the only true fix is rebuilding that date from Raw Data
 //     (buildDQEHistoricalData), where the source still exists. This helper
-//     REPORTS those rows + their distinct dates and, with
-//     { blankUnrecoverable: true }, blanks them so downstream reads "no
-//     abandoned detail" instead of garbage.
+//     REPORTS those rows + their distinct dates and marks the cells with the
+//     DQE_ABANDONED_LOST_SENTINEL ("#REBUILD") so downstream reads "abandoned
+//     detail unavailable -- rebuild" instead of mistaking it for "0 abandoned".
 //
 // Accuracy scope: AD/AE/AF feed ONLY the Missed Calls report's abandoned-call
 // detail (queue-only unique counts via INV-23 parent-ID dedup, per-call parentId
@@ -143,10 +143,9 @@ function repairDqeSlotTimestamps_(dryRun) {
 // Usage:
 //   1. previewDqeAbandonedIdRepair()  -- dry run; logs recoverable +
 //      unrecoverable counts, samples, and the distinct dates needing a rebuild.
-//   2. repairDqeAbandonedIds()        -- recover the lossless single-value cells
-//      and lock AD-AF to plain text. Unrecoverable cells are reported and left
-//      as plain-text (no longer comma-splittable). Pass
-//      repairDqeAbandonedIds({ blankUnrecoverable: true }) to instead blank them.
+//   2. repairDqeAbandonedIds()        -- recover the lossless single-value cells,
+//      mark unrecoverable cells "#REBUILD" (so they read as unavailable, not 0),
+//      and lock AD-AF to plain text.
 //   3. If you've started the Neon backfill (or DQE_READ_SOURCE=neon): re-mirror
 //      the affected dates with backfillDQEHistoryUpsert() -- its ON CONFLICT DO
 //      UPDATE OVERWRITES the rows already backfilled from the bad cells. No new
@@ -155,21 +154,26 @@ function repairDqeSlotTimestamps_(dryRun) {
 //      Data first (if it still exists), THEN upsert -- otherwise the upsert just
 //      re-mirrors the blank/garbage.
 
+// Unrecoverable cells are marked with DQE_ABANDONED_LOST_SENTINEL (defined once
+// in neonbackfill.js, shared across the cdr-report project's global scope) so
+// "corrupted -- rebuild" is distinguishable from a genuinely-empty "0 abandoned"
+// cell; the dashboard's classifyAbandonedCell_ (Util.gs) recognizes it.
+
 /** Preview only: report what WOULD change; no writes. */
 function previewDqeAbandonedIdRepair() {
-  return repairDqeAbandonedIds_(/*dryRun=*/true, /*blankUnrecoverable=*/false);
+  return repairDqeAbandonedIds_(/*dryRun=*/true);
 }
 
 /**
- * Apply the repair: recover lossless single-value coerced cells as text, lock
- * AD-AF to plain text, and report unrecoverable multi-value cells.
- * @param {{blankUnrecoverable?: boolean}=} opts  blank the unrecoverable cells too.
+ * Apply the repair: recover lossless single-value coerced cells as text, mark
+ * unrecoverable multi-value cells with the lost sentinel, and lock AD-AF to
+ * plain text.
  */
-function repairDqeAbandonedIds(opts) {
-  return repairDqeAbandonedIds_(/*dryRun=*/false, !!(opts && opts.blankUnrecoverable));
+function repairDqeAbandonedIds() {
+  return repairDqeAbandonedIds_(/*dryRun=*/false);
 }
 
-function repairDqeAbandonedIds_(dryRun, blankUnrecoverable) {
+function repairDqeAbandonedIds_(dryRun) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName('DQE Historical Data');
   if (!sheet) { Logger.log('repairDqeAbandonedIds: sheet "DQE Historical Data" not found.'); return; }
@@ -181,10 +185,9 @@ function repairDqeAbandonedIds_(dryRun, blankUnrecoverable) {
   var vals  = range.getValues();               // coerced cells come back as Numbers; text/'' stay as-is
   var dates = sheet.getRange(2, 2, lastRow - 1, 1).getDisplayValues();   // col B = Date (for reporting)
 
-  var recovered = 0, unrecoverable = 0, blanked = 0;
-  var recSamples = [], unrecSamples = [];
-  var unrecDates = {};
-  var changed = false;
+  var recovered = 0, markedLost = 0;
+  var recSamples = [], lostSamples = [];
+  var lostDates = {};
   for (var i = 0; i < vals.length; i++) {
     for (var j = 0; j < vals[i].length; j++) {
       var v = vals[i][j];
@@ -193,41 +196,38 @@ function repairDqeAbandonedIds_(dryRun, blankUnrecoverable) {
         var str = String(v);
         if (recSamples.length < 12) recSamples.push('R' + (i + 2) + 'C' + (START_COL + j) + ': ' + v + ' -> ' + str);
         vals[i][j] = str;
-        recovered++; changed = true;
+        recovered++;
       } else {                                 // multi-value -> precision lost, unrecoverable
-        unrecoverable++;
         var d = (dates[i] && dates[i][0]) || '?';
-        unrecDates[d] = (unrecDates[d] || 0) + 1;
-        if (unrecSamples.length < 12) unrecSamples.push('R' + (i + 2) + 'C' + (START_COL + j) + ': ' + v);
-        if (blankUnrecoverable) { vals[i][j] = ''; blanked++; changed = true; }
-        // else: leave the value; the format flip below stores it as plain text
-        // (no thousand-separator commas), so it no longer mis-splits downstream.
+        lostDates[d] = (lostDates[d] || 0) + 1;
+        if (lostSamples.length < 12) lostSamples.push('R' + (i + 2) + 'C' + (START_COL + j) + ': ' + v);
+        vals[i][j] = DQE_ABANDONED_LOST_SENTINEL;   // mark lost so it's never mistaken for 0
+        markedLost++;
       }
     }
   }
 
-  var dateList = Object.keys(unrecDates).sort();
+  var dateList = Object.keys(lostDates).sort();
   if (dryRun) {
     Logger.log('previewDqeAbandonedIdRepair: %s recoverable (single-value) cell(s) WOULD be rewritten as text; '
-      + '%s UNRECOVERABLE (multi-value, precision lost) across %s date(s): %s. '
-      + 'Recoverable samples: %s | Unrecoverable samples: %s',
-      recovered, unrecoverable, dateList.length, JSON.stringify(dateList),
-      JSON.stringify(recSamples), JSON.stringify(unrecSamples));
-    return { recovered: recovered, unrecoverable: unrecoverable, unrecoverableDates: dateList,
-             applied: false, recSamples: recSamples, unrecSamples: unrecSamples };
+      + '%s UNRECOVERABLE (multi-value, precision lost) WOULD be marked "%s" across %s date(s): %s. '
+      + 'Recoverable samples: %s | Lost samples: %s',
+      recovered, markedLost, DQE_ABANDONED_LOST_SENTINEL, dateList.length, JSON.stringify(dateList),
+      JSON.stringify(recSamples), JSON.stringify(lostSamples));
+    return { recovered: recovered, markedLost: markedLost, lostDates: dateList,
+             applied: false, recSamples: recSamples, lostSamples: lostSamples };
   }
 
-  // Lock AD-AF to plain text (so recovered values STAY text + the column can't
-  // re-coerce), then write back. Setting '@' on the whole range also strips the
-  // misleading thousand separators from any leftover unrecoverable numbers.
+  // Lock AD-AF to plain text (so recovered values + the sentinel STAY text and
+  // the column can't re-coerce), then write back.
   range.setNumberFormat('@');
   range.setValues(vals);
   SpreadsheetApp.flush();
-  Logger.log('repairDqeAbandonedIds: recovered %s single-value cell(s); %s unrecoverable%s across %s date(s): %s. '
-    + 'Rebuild those dates from Raw Data (buildDQEHistoricalData) to restore them, then re-mirror with '
-    + 'backfillDQEHistoryUpsert(). Recoverable samples: %s',
-    recovered, unrecoverable, (blankUnrecoverable ? (' (blanked ' + blanked + ')') : ''),
-    dateList.length, JSON.stringify(dateList), JSON.stringify(recSamples));
-  return { recovered: recovered, unrecoverable: unrecoverable, unrecoverableDates: dateList,
-           blanked: blanked, applied: true, recSamples: recSamples, unrecSamples: unrecSamples };
+  Logger.log('repairDqeAbandonedIds: recovered %s single-value cell(s); marked %s unrecoverable cell(s) "%s" '
+    + 'across %s date(s): %s. Rebuild those dates from Raw Data (buildDQEHistoricalData) to restore them, then '
+    + 're-mirror with backfillDQEHistoryUpsert(). Recoverable samples: %s',
+    recovered, markedLost, DQE_ABANDONED_LOST_SENTINEL, dateList.length, JSON.stringify(dateList),
+    JSON.stringify(recSamples));
+  return { recovered: recovered, markedLost: markedLost, lostDates: dateList,
+           applied: true, recSamples: recSamples, lostSamples: lostSamples };
 }

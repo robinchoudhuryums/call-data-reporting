@@ -2660,8 +2660,20 @@
     const missed = Number(meta.totalMissed || 0);
     const abandoned = Number(meta.abandonedCallCount || 0);
     const noRing = Number(meta.noRingAbandonCount || 0);
+    // Note when some rows' abandoned detail was lost to the number-coercion bug
+    // (excluded from the counts above) so a lost row isn't read as "0 abandoned".
+    let lostNote = null;
+    if (meta.abandonedDetailLost) {
+      const n = (meta.abandonedDetailLostDates || []).length;
+      lostNote = '<span class="missed-lost-note">&#9888; Abandoned-call detail is '
+        + 'unavailable for <strong>' + fmtNumber(n) + '</strong> day' + (n === 1 ? '' : 's')
+        + ' in this range (a formatting bug corrupted those rows — rebuild them from Raw '
+        + 'Data). Counts above exclude those days.</span>';
+    }
     if (!missed && !abandoned) {
-      return ['No missed calls in this range — every rung call was picked up.'];
+      return lostNote
+        ? [lostNote]
+        : ['No missed calls in this range — every rung call was picked up.'];
     }
     const s = ['Your team missed <strong>' + fmtNumber(missed) + '</strong> ring'
       + (missed === 1 ? '' : 's') + ' in this range.'];
@@ -2670,6 +2682,7 @@
         + ' were abandoned — the caller hung up before anyone answered'
         + (noRing > 0 ? ', including ' + fmtNumber(noRing) + ' that never rang any agent' : '') + '.');
     }
+    if (lostNote) s.push(lostNote);
     return s;
   }
 

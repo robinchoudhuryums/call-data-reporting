@@ -49,18 +49,26 @@ function getNeonConn_backfill() {
 // 9.0e15); a real abandoned ID / epoch-ms timestamp is 13 digits, so a correct
 // single value always survives and a correct multi-value (whose long-ID tokens
 // never look like 3-digit thousands groups) is never touched.
+// Sentinel written when a multi-value cell's original IDs are genuinely lost, so
+// "corrupted -- rebuild" is distinguishable from a genuinely-empty "0 abandoned"
+// (NULL). The dashboard's classifyAbandonedCell_ (Util.gs) recognizes it and
+// excludes it from counts; both literals must match.
+var DQE_ABANDONED_LOST_SENTINEL = '#REBUILD';
+
 function sanitizeAbandonedCellForNeon_(raw) {
   var s = (raw == null ? '' : String(raw)).trim();
-  if (!s) return null;
+  if (!s) return null;                                   // genuinely empty (0 abandoned)
+  if (s === DQE_ABANDONED_LOST_SENTINEL) return DQE_ABANDONED_LOST_SENTINEL;  // already marked
   // Coerced + re-rendered as a float: scientific notation or a decimal point.
-  if (/[eE][+\-]?\d/.test(s) || s.indexOf('.') !== -1) return null;
+  if (/[eE][+\-]?\d/.test(s) || s.indexOf('.') !== -1) return DQE_ABANDONED_LOST_SENTINEL;
   // Thousands-separated number: 1-3 leading digits then only 3-digit groups.
   if (/^\d{1,3}(,\d{3})+$/.test(s)) {
     var digits = s.replace(/,/g, '');
-    return digits.length <= 15 ? digits : null;   // single value recoverable; multi-value lost
+    // single value (<=15 digits) is recoverable; multi-value lost past 2^53.
+    return digits.length <= 15 ? digits : DQE_ABANDONED_LOST_SENTINEL;
   }
   // Bare digit run, no separators, too long to be one real ID -> coerced + lost.
-  if (/^\d+$/.test(s) && s.length > 15) return null;
+  if (/^\d+$/.test(s) && s.length > 15) return DQE_ABANDONED_LOST_SENTINEL;
   // Otherwise: a correct single long ID, or a comma-list of long IDs. Keep.
   return s;
 }

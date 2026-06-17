@@ -358,10 +358,12 @@ function diagnoseAbandoned_() {
         matchedExt.push(rowExts[j]);
       }
     }
-    const adRaw = String(rd[HISTORICAL_ABANDONED_PARENT_IDS - 1] || '').trim();
-    const adIds = adRaw ? adRaw.split(',').map(function (s) { return s.trim(); })
-                          .filter(function (s) { return !!s; })
-                        : [];
+    // Guard against coerced/lost abandoned cells so a corrupted value isn't
+    // counted as fake parent IDs (mirrors the Missed report's read-side guard).
+    const adClass = classifyAbandonedCell_(rd[HISTORICAL_ABANDONED_PARENT_IDS - 1]);
+    const adIds = (adClass.lost || !adClass.value) ? []
+                : adClass.value.split(',').map(function (s) { return s.trim(); })
+                               .filter(function (s) { return !!s; });
 
     if (isSentinel) {
       const rec = {

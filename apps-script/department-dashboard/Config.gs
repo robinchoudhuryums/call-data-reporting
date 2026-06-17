@@ -180,6 +180,15 @@ const HISTORICAL_COLS = Object.freeze({
   CSR_AVG_ABD_WAIT: 34,  // AH - H:MM:SS
 });
 
+// Sentinel written into abandoned-ID/time cells (AD/AE/AF) whose original
+// comma-joined values were LOST to the Sheets number-coercion bug (multi-value
+// strings coerced past 2^53; see sheetRepairs.js / neonbackfill.js in cdr-report
+// + the read-side classifyAbandonedCell_ in Util.gs). Distinguishes "data was
+// corrupted, rebuild from Raw Data" from a genuinely-empty "0 abandoned" cell,
+// and is NEVER split-and-counted as a real call ID. Must match the literal used
+// by the cdr-report sanitizer/repair.
+const DQE_ABANDONED_LOST_SENTINEL = '#REBUILD';
+
 // Column positions in the "QCD Historical Data" sheet (1-indexed).
 // Sheet is written by apps-script/cdr-import/autoImport.js
 // (processIntegratedHistory's QCD block); schema is one row per
