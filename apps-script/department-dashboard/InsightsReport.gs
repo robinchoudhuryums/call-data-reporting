@@ -73,7 +73,12 @@
 //     queueHealth now always-separates sub-queues (seq #5) -- the
 //     `queueHealthOwnOnly` request flag + the cache `qhown/qhroll`
 //     dimension are retired, and queueHealth.perQueue rows carry `subDept`.
-const INSIGHTS_CACHE_KEY_PREFIX = 'insights:v7';
+// v8: queueHealth.perQueue rows gain `topAbandonSource` (4c) -- the
+//     non-Overall call source driving the most abandons in that queue
+//     (from the bySource breakdown 4a added to computeQcdReport_), so
+//     the Queue health table can annotate WHERE a queue's abandons come
+//     from. Null when no sub-source has abandons.
+const INSIGHTS_CACHE_KEY_PREFIX = 'insights:v8';
 
 function getInsightsReportInit(req) {
   // Same picker UX (roster + default dates + active-in-range subset) as
@@ -575,14 +580,18 @@ function insightsQueueHealth_(dept, from, to, priorFrom, priorTo) {
       trend:         trend,
       perQueue: (cur.queueBreakdown || []).map(function (q) {
         return {
-          queue:           q.queue,
-          subDept:         q.subDept || null,
-          totalCalls:      q.totalCalls,
-          abandoned:       q.abandoned,
-          abandonedPct:    q.abandonedPct,
-          abandonedPctStr: q.abandonedPctStr,
-          violations:      q.violations,
-          violationDates:  q.violationDates || [],
+          queue:            q.queue,
+          subDept:          q.subDept || null,
+          totalCalls:       q.totalCalls,
+          abandoned:        q.abandoned,
+          abandonedPct:     q.abandonedPct,
+          abandonedPctStr:  q.abandonedPctStr,
+          violations:       q.violations,
+          violationDates:   q.violationDates || [],
+          // 4c: the call source driving the most abandons in this queue
+          // (from the 4a bySource breakdown). Null when no sub-source has
+          // any abandons -- the client renders nothing in that case.
+          topAbandonSource: insTopAbandonSource_(q.bySource),
         };
       }),
     };
@@ -590,6 +599,29 @@ function insightsQueueHealth_(dept, from, to, priorFrom, priorTo) {
     Logger.log('insightsQueueHealth_ (best-effort): ' + (e && e.message ? e.message : e));
     return null;
   }
+}
+
+/**
+ * 4c: from a queue's per-call-source breakdown (bySource, added by 4a),
+ * pick the source contributing the most ABANDONED calls -- excluding the
+ * 'Overall' (Total Calls) roll-up row. Returns a compact descriptor for
+ * the Queue health annotation, or null when no sub-source has any
+ * abandons (so the client renders nothing). Directional, not a precise
+ * decomposition: sub-source abandon counts needn't sum to Overall.
+ */
+function insTopAbandonSource_(bySource) {
+  if (!Array.isArray(bySource)) return null;
+  let best = null;
+  bySource.forEach(function (s) {
+    if (!s || s.isOverall) return;            // skip the Total-Calls roll-up
+    const ab = Number(s.abandoned) || 0;
+    if (ab <= 0) return;
+    if (!best || ab > best.abandoned) {
+      best = { source: s.source, abandoned: ab, totalCalls: Number(s.totalCalls) || 0,
+               abandonedPctStr: s.abandonedPctStr || '0.00%' };
+    }
+  });
+  return best;
 }
 
 function emptyInsights_(dept, from, to, priorFrom, priorTo, selectedAgents,

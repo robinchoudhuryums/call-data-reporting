@@ -10411,8 +10411,17 @@
       // Tag child sub-queue rows so the separation is visible (seq #5/#1).
       const subTag = q.subDept
         ? ' <span class="dept-qcd-subtag">sub-queue · ' + escapeHtml(q.subDept) + '</span>' : '';
+      // 4c: annotate WHERE this queue's abandons come from -- the call
+      // source with the most abandoned calls (from the 4a bySource
+      // breakdown). Rendered only when a sub-source actually has abandons.
+      const tas = q.topAbandonSource;
+      const srcLine = tas
+        ? '<div class="ins-qh-topsrc" title="Call source contributing the most abandoned calls in this queue for the selected range">'
+          + '&#8627; most abandons: <strong>' + escapeHtml(tas.source) + '</strong> ('
+          + fmtNumber(tas.abandoned) + ')</div>'
+        : '';
       return '<tr>'
-        + '<td>' + escapeHtml(q.queue) + subTag + '</td>'
+        + '<td>' + escapeHtml(q.queue) + subTag + srcLine + '</td>'
         + '<td class="num">' + fmtNumber(q.totalCalls) + '</td>'
         + '<td class="num">' + fmtNumber(q.abandoned) + '</td>'
         + '<td class="num' + pctCls + '">' + escapeHtml(q.abandonedPctStr) + '</td>'
