@@ -2660,8 +2660,20 @@
     const missed = Number(meta.totalMissed || 0);
     const abandoned = Number(meta.abandonedCallCount || 0);
     const noRing = Number(meta.noRingAbandonCount || 0);
+    // Note when some rows' abandoned detail was lost to the number-coercion bug
+    // (excluded from the counts above) so a lost row isn't read as "0 abandoned".
+    let lostNote = null;
+    if (meta.abandonedDetailLost) {
+      const n = (meta.abandonedDetailLostDates || []).length;
+      lostNote = '<span class="missed-lost-note">&#9888; Abandoned-call detail is '
+        + 'unavailable for <strong>' + fmtNumber(n) + '</strong> day' + (n === 1 ? '' : 's')
+        + ' in this range (a formatting bug corrupted those rows — rebuild them from Raw '
+        + 'Data). Counts above exclude those days.</span>';
+    }
     if (!missed && !abandoned) {
-      return ['No missed calls in this range — every rung call was picked up.'];
+      return lostNote
+        ? [lostNote]
+        : ['No missed calls in this range — every rung call was picked up.'];
     }
     const s = ['Your team missed <strong>' + fmtNumber(missed) + '</strong> ring'
       + (missed === 1 ? '' : 's') + ' in this range.'];
@@ -2670,6 +2682,7 @@
         + ' were abandoned — the caller hung up before anyone answered'
         + (noRing > 0 ? ', including ' + fmtNumber(noRing) + ' that never rang any agent' : '') + '.');
     }
+    if (lostNote) s.push(lostNote);
     return s;
   }
 
@@ -3094,9 +3107,10 @@
   function initClipboardOnce() {
     if (initClipboardOnce.done) return;
     initClipboardOnce.done = true;
-    const modal = $('missed-modal');
-    if (!modal) return;
-    modal.addEventListener('click', function (e) {
+    // Delegated on document so the parentId copy badges work in BOTH the Missed
+    // Calls modal AND the My Department inline missed section (#9b). Strict
+    // no-op unless the click lands on a .pid-copy badge.
+    document.addEventListener('click', function (e) {
       const btn = e.target.closest && e.target.closest('.pid-copy');
       if (!btn) return;
       e.preventDefault();
@@ -3137,23 +3151,18 @@
   // Renders a banner + per-queue lists for abandoned calls that never
   // rang an agent (queue had no available agent). Hidden when empty.
 
-  function renderQueueOnly(queueOnly) {
-    const wrap = $('missed-queue-only');
-    const body = $('queue-only-body');
-    const sub  = $('queue-only-subhead');
-    if (!wrap || !body) return;
-
-    if (!queueOnly.length) {
-      hideQueueOnlySection();
-      return;
-    }
-
-    // Headline uses unique-by-parent-ID count alongside the per-queue
-    // event sum, so overflow (one call ringing two queues) is visible:
-    //   "8 unique calls across 3 queues (10 ring events)"
-    // Fall back to the raw sum if the server didn't send the unique
-    // count (older cached payload).
-    const meta = (lastMissedData && lastMissedData.meta) || {};
+  /**
+   * SHARED builder for the queue-only abandoned section -- returns the
+   * subhead string + per-queue body HTML so BOTH the Missed Calls modal
+   * (renderQueueOnly) AND the My Department inline section (deptMissedRender_)
+   * render identically. Takes the report meta explicitly (for the
+   * unique/event counts) rather than reading a module global.
+   */
+  function missedQueueOnlyParts_(queueOnly, meta) {
+    meta = meta || {};
+    // Headline uses unique-by-parent-ID count alongside the per-queue event
+    // sum, so overflow (one call ringing two queues) is visible. Fall back to
+    // the raw sum if the server didn't send the unique count (older payload).
     const eventSum = (typeof meta.queueOnlyEventCount === 'number')
                    ? meta.queueOnlyEventCount
                    : queueOnly.reduce(function (s, q) { return s + q.total; }, 0);
@@ -3164,12 +3173,8 @@
       uniqueCalls + ' unique call' + (uniqueCalls === 1 ? '' : 's'),
       'across ' + queueOnly.length + ' queue' + (queueOnly.length === 1 ? '' : 's'),
     ];
-    if (eventSum !== uniqueCalls) {
-      headParts.push('(' + eventSum + ' ring events)');
-    }
-    sub.textContent = '(no agent rang) — ' + headParts.join(' ');
-
-    body.innerHTML = queueOnly.map(function (q) {
+    if (eventSum !== uniqueCalls) headParts.push('(' + eventSum + ' ring events)');
+    const bodyHtml = queueOnly.map(function (q) {
       const itemsHtml = q.entries.map(function (m) {
         const dateLabel = m.date ? m.date.slice(5) : '';   // MM-DD
         return '<li>'
@@ -3186,6 +3191,23 @@
            +   '<ul class="queue-only-list">' + itemsHtml + '</ul>'
            + '</div>';
     }).join('');
+    return { subhead: '(no agent rang) — ' + headParts.join(' '), bodyHtml: bodyHtml };
+  }
+
+  function renderQueueOnly(queueOnly) {
+    const wrap = $('missed-queue-only');
+    const body = $('queue-only-body');
+    const sub  = $('queue-only-subhead');
+    if (!wrap || !body) return;
+
+    if (!queueOnly.length) {
+      hideQueueOnlySection();
+      return;
+    }
+
+    const parts = missedQueueOnlyParts_(queueOnly, (lastMissedData && lastMissedData.meta) || {});
+    if (sub) sub.textContent = parts.subhead;
+    body.innerHTML = parts.bodyHtml;
 
     wrap.style.display = '';
     initClipboardOnce();
@@ -3199,17 +3221,13 @@
     if (body) body.innerHTML = '';
   }
 
-  function renderMissedAgents(agents) {
-    const wrap = $('missed-agents');
-    if (!wrap) return;
-
-    if (!agents.length) {
-      wrap.innerHTML = emptyStateHtml_('&#128276;', 'No missed calls in this range',
-        'No agent in scope had a missed or abandoned call for the selected dates.');
-      return;
-    }
-
-    wrap.innerHTML = agents.map(function (a) {
+  /**
+   * SHARED builder for the per-agent missed-time cards -- returns just the
+   * cards HTML so BOTH the modal (renderMissedAgents) AND the My Department
+   * inline section (deptMissedRender_) render identical card markup.
+   */
+  function missedAgentsHtml_(agents) {
+    return agents.map(function (a) {
       const itemsHtml = a.missedTimes.map(function (m) {
         const dateLabel = m.date ? '<span class="date">' + escapeHtml(m.date.slice(5)) + '</span>' : '';
         const cls = m.abandoned ? 'abandoned' : '';
@@ -3226,6 +3244,19 @@
            +   '<ul class="missed-list">' + itemsHtml + '</ul>'
            + '</div>';
     }).join('');
+  }
+
+  function renderMissedAgents(agents) {
+    const wrap = $('missed-agents');
+    if (!wrap) return;
+
+    if (!agents.length) {
+      wrap.innerHTML = emptyStateHtml_('&#128276;', 'No missed calls in this range',
+        'No agent in scope had a missed or abandoned call for the selected dates.');
+      return;
+    }
+
+    wrap.innerHTML = missedAgentsHtml_(agents);
     initClipboardOnce();
   }
 
@@ -3360,7 +3391,11 @@
     if (!wrap) return;
     const dept = getRequestedDept();
     const from = $('from-date').value, to = $('to-date').value;
-    if (!dept || !from || !to) { wrap.style.display = 'none'; return; }
+    if (!dept || !from || !to) {
+      wrap.style.display = 'none';
+      const detail = $('dept-missed-detail'); if (detail) detail.style.display = 'none';
+      return;
+    }
     const key = dept + '|' + from + '|' + to;
     deptMissedReqKey = key;
     google.script.run
@@ -3371,6 +3406,7 @@
       .withFailureHandler(function () {
         if (deptMissedReqKey !== key) return;
         wrap.style.display = 'none';
+        const detail = $('dept-missed-detail'); if (detail) detail.style.display = 'none';
       })
       .getMissedCallsReport({ department: dept, from: from, to: to });
   }
@@ -3410,6 +3446,45 @@
                           function () { openFull(); }));
       }
     }
+
+    // #9b: inline parity with the full modal -- queue-only abandoned section
+    // + per-agent missed-time timelines via the SAME shared builders.
+    const queueOnly = (data && data.queueOnly) || [];
+    const qoWrap = $('dept-missed-queue-only');
+    const qoBody = $('dept-queue-only-body');
+    const qoSub  = $('dept-queue-only-subhead');
+    if (qoWrap && qoBody) {
+      if (queueOnly.length) {
+        const parts = missedQueueOnlyParts_(queueOnly, m);
+        if (qoSub) qoSub.textContent = parts.subhead;
+        qoBody.innerHTML = parts.bodyHtml;
+        qoWrap.style.display = '';
+      } else {
+        qoWrap.style.display = 'none';
+        qoBody.innerHTML = '';
+      }
+    }
+
+    const agents = (data && data.agents) || [];
+    const agWrap = $('dept-missed-agents');
+    if (agWrap) {
+      if (agents.length) {
+        agWrap.innerHTML = missedAgentsHtml_(agents);
+        agWrap.style.display = '';
+      } else {
+        // Zero-missed day: keep the inline section tidy (the headline already
+        // conveys "no missed"); hide the empty grid rather than show a card.
+        agWrap.innerHTML = '';
+        agWrap.style.display = 'none';
+      }
+    }
+    // parentId badges (queue-only + agent cards) use a delegated copy handler.
+    initClipboardOnce();
+
+    // #9a: full-width detail wrapper shows only when there's detail content.
+    const detail = $('dept-missed-detail');
+    if (detail) detail.style.display = (queueOnly.length || agents.length) ? '' : 'none';
+
     wrap.style.display = '';
   }
 
@@ -3950,9 +4025,11 @@
   // change so the next visit picks up where the user left off.
   let irSortOrder = 'selection';   // selection | name | answered-desc | answered-asc | pct-desc
   let irActiveChartTab = 'vol';    // vol | eff | dur
+  let irShowAllCharts = false;     // #4: stack all 3 trend charts vs one tab at a time
   let irPendingAgentSelection_ = null;
   let irPendingAutoRun_ = false;   // drill-through: auto-generate once the picker renders
   let irCameFromInsights_ = false; // drill-through from Insights -> show "Back to Insights"
+  let irEditPopoverSeededCustom_ = false; // #1: edit popover opened over a custom-prior report
   let irListChangeHandler_ = null;
   const IR_PREFS_KEY = 'cdr.ir.prefs.v1';
 
@@ -4009,7 +4086,11 @@
       trapFocus_(modal);
       initModalDragResize_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
       document.addEventListener('keydown', onKeyDown);
-      showIrForm();
+      // Drill-through (irPendingAutoRun_) shows a loader instead of the form,
+      // which auto-generates once the roster loads (#1 Part B). Direct opens
+      // show the setup form as before.
+      if (irPendingAutoRun_) showIrDrillLoading_();
+      else showIrForm();
       ensureIrRoster();
     }
     function closeModal() {
@@ -4139,22 +4220,18 @@
     // a time so each gets the full container width. Default: Volume.
     const tabContainer = $('ir-chart-tabs');
     if (tabContainer) tabContainer.addEventListener('click', function (e) {
+      // #4: the "All at once" toggle shares this strip -- flip the mode and
+      // re-apply the layout (irActivateChartTab_ handles show/hide + resize).
+      if (e.target.closest('#ir-allcharts-toggle')) {
+        irShowAllCharts = !irShowAllCharts;
+        irActivateChartTab_();
+        irSavePrefs_();
+        return;
+      }
       const tab = e.target.closest('.ir-tab');
-      if (!tab) return;
-      const which = tab.getAttribute('data-tab');
-      tabContainer.querySelectorAll('.ir-tab').forEach(function (b) {
-        const active = b.getAttribute('data-tab') === which;
-        b.classList.toggle('active', active);
-        b.setAttribute('aria-selected', active ? 'true' : 'false');
-      });
-      document.querySelectorAll('#ir-charts-container [data-panel]').forEach(function (p) {
-        p.style.display = p.getAttribute('data-panel') === which ? '' : 'none';
-      });
-      // Force the now-visible chart to resize against its newly-
-      // measurable container -- Chart.js can't compute layout while
-      // a panel is display:none, so we ask it explicitly.
-      irChartInstances.forEach(function (c) { c.resize(); });
-      irActiveChartTab = which;
+      if (!tab || irShowAllCharts) return;   // tabs are inert in all-at-once mode
+      irActiveChartTab = tab.getAttribute('data-tab');
+      irActivateChartTab_();
       irSavePrefs_();
     });
 
@@ -4192,6 +4269,7 @@
         showLabels:  $('ir-show-datalabels') ? $('ir-show-datalabels').checked : false,
         sortOrder:   irSortOrder,
         chartTab:    irActiveChartTab,
+        showAllCharts: irShowAllCharts,
       };
       localStorage.setItem(IR_PREFS_KEY, JSON.stringify(prefs));
     } catch (e) { /* ignore */ }
@@ -4217,6 +4295,7 @@
     }
     if (prefs.sortOrder) irSortOrder = prefs.sortOrder;
     if (prefs.chartTab)  irActiveChartTab = prefs.chartTab;
+    if (typeof prefs.showAllCharts === 'boolean') irShowAllCharts = prefs.showAllCharts;
     if ($('ir-card-sort')) $('ir-card-sort').value = irSortOrder;
 
     // Stash agents so we can pre-check the boxes once the roster
@@ -4264,13 +4343,27 @@
   }
 
   function showIrForm() {
+    hideIrDrillLoading_();
     $('individual-form').style.display = '';
     $('individual-results').style.display = 'none';
     irSetFormError('');
   }
   function showIrResults() {
+    hideIrDrillLoading_();
     $('individual-form').style.display = 'none';
     $('individual-results').style.display = '';
+  }
+  // #1 Part B: drill-through loader shown IN PLACE of the setup form while a
+  // drill (Insights / My Department "IR" buttons) auto-generates, so the form
+  // doesn't flash. showIrForm/showIrResults clear it on ANY transition, so a
+  // drill can never get stuck on the loader (failure paths fall back to the form).
+  function showIrDrillLoading_() {
+    const l = $('ir-drill-loader'); if (l) l.style.display = '';
+    $('individual-form').style.display = 'none';
+    $('individual-results').style.display = 'none';
+  }
+  function hideIrDrillLoading_() {
+    const l = $('ir-drill-loader'); if (l) l.style.display = 'none';
   }
 
   function irSetFormError(msg) {
@@ -4327,6 +4420,11 @@
         renderIrAgentList(irLastRoster.agents, irLastRoster.activeAgents, irLastRoster.activeFloaters);
       })
       .withFailureHandler(function (err) {
+        // #1 Part B: a drill hides the form behind the loader; if the roster
+        // fetch fails, fall back to the form so the error (in the loader text)
+        // is visible and cancel the pending auto-run.
+        if (irPendingAutoRun_) { irPendingAutoRun_ = false; showIrForm(); }
+        $('ir-agent-loader').style.display = '';
         $('ir-agent-loader').textContent = 'Error loading roster: '
           + (err && err.message ? err.message : String(err));
       })
@@ -4641,6 +4739,9 @@
       .withFailureHandler(function (err) {
         btn.disabled = false;
         btn.textContent = originalLabel;
+        // #1 Part B: on a drill the form is hidden behind the loader; surface it
+        // so the error is visible (showIrForm clears the loader + any prior error).
+        showIrForm();
         irSetFormError('Error: ' + (err && err.message ? err.message : String(err)));
       })
       .getIndividualReport(req);
@@ -4816,6 +4917,22 @@
     if (!pop) return;
     const list = $('ir-edit-list');
     if (!list) return;
+    // #1: seed the date + compare controls from the current report so the
+    // popover can change dates as well as agents.
+    const curFrom = (irLastData && irLastData.meta && irLastData.meta.from) || ($('ir-from') ? $('ir-from').value : '');
+    const curTo   = (irLastData && irLastData.meta && irLastData.meta.to)   || ($('ir-to')   ? $('ir-to').value   : '');
+    if ($('ir-edit-from')) $('ir-edit-from').value = curFrom;
+    if ($('ir-edit-to'))   $('ir-edit-to').value   = curTo;
+    // The popover offers none/prevPeriod/yoy; a 'custom' prior can't be edited
+    // here. Track when we seeded over a custom prior so Apply can preserve it
+    // (rather than silently downgrading to "no comparison") if the user doesn't
+    // touch the compare control.
+    const curMode = $('ir-compare-mode') ? $('ir-compare-mode').value : 'none';
+    irEditPopoverSeededCustom_ = (curMode === 'custom');
+    if ($('ir-edit-compare-mode')) {
+      $('ir-edit-compare-mode').value =
+        (curMode === 'prevPeriod' || curMode === 'yoy') ? curMode : 'none';
+    }
     list.innerHTML = irBuildAgentListHtml_(irLastRoster.agents || [], irLastRoster.activeAgents, irLastRoster.activeFloaters);
     // Pre-check the currently-reported agents.
     const current = (irLastData && irLastData.meta && irLastData.meta.agents) || [];
@@ -4855,17 +4972,39 @@
   function irApplyEditPopover_() {
     const newAgents = irGetCheckedAgents_($('ir-edit-list'));
     if (!newAgents.length) return;
+
+    // #1: dates + compare mode now come from the popover too.
+    const from = $('ir-edit-from') ? $('ir-edit-from').value : $('ir-from').value;
+    const to   = $('ir-edit-to')   ? $('ir-edit-to').value   : $('ir-to').value;
+    if (!from || !to) { irSetResultsStatus('error', 'Pick a start and end date.'); return; }
+    if (from > to)    { irSetResultsStatus('error', 'Start date must be on or before end date.'); return; }
+    const popMode = $('ir-edit-compare-mode') ? $('ir-edit-compare-mode').value : 'none';
+
+    // Preserve a custom prior the popover can't represent: if we seeded over a
+    // custom-prior report and the user left the compare control at 'none', keep
+    // the custom prior (resolved from the setup form's inputs) instead of
+    // silently dropping the comparison.
+    const keepCustom = irEditPopoverSeededCustom_ && popMode === 'none';
+    let prior;
+    if (keepCustom) {
+      prior = irResolvePriorRange_(from, to);   // reads ir-compare-mode='custom' + ir-prior-from/to
+    } else {
+      prior = resolveComparisonWindow_(popMode, from, to, '', '', 'the compare control');
+    }
+
+    // Sync the popover state back into the setup form so going Back (or
+    // re-opening the popover) shows the same dates / agents / compare mode.
+    if ($('ir-from')) $('ir-from').value = from;
+    if ($('ir-to'))   $('ir-to').value   = to;
+    if ($('ir-preset')) $('ir-preset').value = 'custom';
+    if ($('ir-compare-mode') && !keepCustom) {
+      $('ir-compare-mode').value = popMode;
+      $('ir-compare-mode').dispatchEvent(new Event('change'));
+    }
     irApplyCheckedAgents_($('ir-agent-list'), newAgents);
     irCloseEditPopover_();
 
     const dept = getRequestedDept();
-    const from = $('ir-from').value;
-    const to   = $('ir-to').value;
-    // Re-resolve the prior range so re-running from the edit
-    // popover keeps the same Compare-with mode as the original
-    // Generate. Silent on validation issues -- the original
-    // form's Generate path is the place where errors surface.
-    const prior = irResolvePriorRange_(from, to);
 
     const btn = $('ir-edit-apply-btn');
     if (btn) { btn.disabled = true; btn.textContent = 'Loading…'; }
@@ -4886,17 +5025,35 @@
       .getIndividualReport(req);
   }
 
+  // Single authority for IR chart-panel visibility. Respects the #4
+  // "All at once" toggle: in all-mode every panel is shown (stacked via
+  // the .ir-charts-all container class) and the tab buttons go inert;
+  // otherwise only the active tab's panel shows. Resizes the now-visible
+  // charts (Chart.js can't lay out while display:none).
   function irActivateChartTab_() {
-    const container = $('ir-chart-tabs');
-    if (!container) return;
-    container.querySelectorAll('.ir-tab').forEach(function (b) {
-      const active = b.getAttribute('data-tab') === irActiveChartTab;
-      b.classList.toggle('active', active);
-      b.setAttribute('aria-selected', active ? 'true' : 'false');
-    });
+    const tabsEl = $('ir-chart-tabs');
+    if (tabsEl) {
+      tabsEl.classList.toggle('ir-tabs-allmode', irShowAllCharts);
+      tabsEl.querySelectorAll('.ir-tab').forEach(function (b) {
+        const active = !irShowAllCharts && b.getAttribute('data-tab') === irActiveChartTab;
+        b.classList.toggle('active', active);
+        b.setAttribute('aria-selected', active ? 'true' : 'false');
+      });
+    }
+    const cont = $('ir-charts-container');
+    if (cont) cont.classList.toggle('ir-charts-all', irShowAllCharts);
     document.querySelectorAll('#ir-charts-container [data-panel]').forEach(function (p) {
-      p.style.display = p.getAttribute('data-panel') === irActiveChartTab ? '' : 'none';
+      const show = irShowAllCharts || p.getAttribute('data-panel') === irActiveChartTab;
+      p.style.display = show ? '' : 'none';
     });
+    const tg = $('ir-allcharts-toggle');
+    if (tg) {
+      tg.classList.toggle('active', irShowAllCharts);
+      tg.setAttribute('aria-pressed', irShowAllCharts ? 'true' : 'false');
+    }
+    if (irChartInstances && irChartInstances.length) {
+      irChartInstances.forEach(function (c) { try { c.resize(); } catch (e) {} });
+    }
   }
 
   function irRenderSummary(summaryData, teamAvg) {
@@ -6584,10 +6741,14 @@
             color: THEME.paper,
             font: { family: "'IBM Plex Mono', monospace", size: 11, weight: '500' },
             textAlign: 'center',
+            // #2: name the slice on the donut itself (truncated to fit), not
+            // just in the right-side legend, so each slice is self-identifying.
             formatter: function (value, ctx) {
               const total = ctx.dataset.data.reduce(function (a, b) { return a + b; }, 0);
               const pct = total > 0 ? (value / total * 100).toFixed(1) : '0';
-              return value + '\n(' + pct + '%)';
+              const name = String((ctx.chart.data.labels || [])[ctx.dataIndex] || '');
+              const shown = name.length > 13 ? name.slice(0, 12) + '…' : name;
+              return shown + '\n' + value + ' (' + pct + '%)';
             },
           },
         },
@@ -8560,6 +8721,7 @@
     const trig = data.trigger || { daily: false, weekly: false, monthly: false };
     const installed = !!(trig.daily && trig.weekly && trig.monthly);
     const partial   = !installed && (trig.daily || trig.weekly || trig.monthly);
+    alSetStatePill_('al-digest-pill', installed);
     const statusEl  = $('al-digest-trigger-status');
     if (statusEl) {
       if (data.loadError) {
@@ -8858,10 +9020,21 @@
          + '</span>';
   }
 
+  // #6: small ON/OFF state pill next to each Alerts-modal toggle section title,
+  // so the enabled state is obvious at a glance (not just inferable from the
+  // hint text + which button is showing).
+  function alSetStatePill_(pillId, on) {
+    const p = $(pillId);
+    if (!p) return;
+    p.textContent = on ? 'ON' : 'OFF';
+    p.className = 'al-state-pill ' + (on ? 'is-on' : 'is-off');
+  }
+
   function alRenderTriggerStatus_(trigger) {
     const el = $('al-trigger-status');
     const installBtn = $('al-install-trigger-btn');
     const uninstallBtn = $('al-uninstall-trigger-btn');
+    alSetStatePill_('al-trigger-pill', !!(trigger && trigger.installed));
     if (!el) return;
     if (trigger && trigger.installed) {
       el.textContent = 'Daily trigger is installed (runs at '
@@ -8881,6 +9054,7 @@
     const installBtn = $('al-install-keepwarm-btn');
     const uninstallBtn = $('al-uninstall-keepwarm-btn');
     if (!el) return;
+    alSetStatePill_('al-keepwarm-pill', !!(kw && kw.installed && !kw.loadError));
     if (kw && kw.loadError) {
       el.textContent = 'Keep-warm status unavailable: ' + kw.loadError;
       if (installBtn) installBtn.style.display = '';
@@ -9168,6 +9342,7 @@
     const installBtn = $('al-install-cachewarm-btn');
     const uninstallBtn = $('al-uninstall-cachewarm-btn');
     if (!el) return;
+    alSetStatePill_('al-cachewarm-pill', !!(cw && cw.installed && !cw.loadError));
     if (cw && cw.loadError) {
       el.textContent = 'Cache-warming status unavailable: ' + cw.loadError;
       if (installBtn) installBtn.style.display = '';
@@ -10027,7 +10202,7 @@
         insSetExportMenuOpen_(false);
         if (action === 'csv')        insDownloadCsv_();
         else if (action === 'copy')  insCopyImage_();
-        else if (action === 'email') insEmailImage_();
+        else if (action === 'email') insEmailReport_();
         else if (action === 'print') insPrint_();
       });
       document.addEventListener('click', function (e) {
@@ -10385,10 +10560,14 @@
             color: THEME.paper,
             font: { family: "'IBM Plex Mono', monospace", size: 11, weight: '500' },
             textAlign: 'center',
+            // #2: name the slice on the donut itself (truncated to fit), not
+            // just in the right-side legend, so each slice is self-identifying.
             formatter: function (value, ctx) {
               const total = ctx.dataset.data.reduce(function (a, b) { return a + b; }, 0);
               const pct = total > 0 ? (value / total * 100).toFixed(1) : '0';
-              return value + '\n(' + pct + '%)';
+              const name = String((ctx.chart.data.labels || [])[ctx.dataIndex] || '');
+              const shown = name.length > 13 ? name.slice(0, 12) + '…' : name;
+              return shown + '\n' + value + ' (' + pct + '%)';
             },
           },
         },
@@ -10899,14 +11078,18 @@
       const max  = isPct ? 100 : Math.max(val, tAvg, 1);
       const valLbl  = isPct ? val.toFixed(1) + '%' : (st.formatted != null ? String(st.formatted) : String(val));
       const tAvgLbl = isPct ? tAvg.toFixed(1) + '%' : String(Math.round(tAvg));
+      // #3: the value sits OUTSIDE the track (its own column), not absolutely
+      // positioned inside it -- when pinned to the right edge it painted over
+      // the team-average marker whenever the team avg was near the agent's
+      // value, hiding the key reference. Track now shows only fill + marker.
       return '<div class="ins-cbar-row" title="' + escapeHtml(lbl) + ': ' + escapeHtml(valLbl)
            +   ' (team avg ' + escapeHtml(tAvgLbl) + ')">'
            +   '<span class="ins-cbar-lbl">' + lbl + '</span>'
            +   '<span class="ins-cbar-track">'
            +     '<span class="ins-cbar-fill ' + cls + '" style="width:' + Math.max(2, Math.min(100, Math.round(val / max * 100))) + '%"></span>'
            +     '<span class="ins-cbar-team" style="left:' + Math.min(100, Math.round(tAvg / max * 100)) + '%" title="team avg ' + escapeHtml(tAvgLbl) + '"></span>'
-           +     '<span class="ins-cbar-val">' + escapeHtml(valLbl) + '</span>'
            +   '</span>'
+           +   '<span class="ins-cbar-val">' + escapeHtml(valLbl) + '</span>'
            +   '<span class="ins-cbar-delta">' + insDeltaBadge_(st, deltaValence) + '</span>'
            + '</div>';
     };
@@ -11055,27 +11238,36 @@
     });
   }
 
-  function insEmailImage_() {
-    const restore = insBtnFeedback_('Capturing…', 0);
-    insBuildCanvas_(function (canvas) {
-      const dataUrl = canvas.toDataURL('image/png');
-      insBtnFeedback_('Sending…', 0);
-      google.script.run
-        .withSuccessHandler(function (res) {
-          restore();
-          insBtnFeedback_('Sent to ' + (res && res.to ? res.to : 'you'), 2000);
-          showToast('Report emailed to ' + (res && res.to ? res.to : 'you'), 'success');
-        })
-        .withFailureHandler(function (err) {
-          insSetResultsStatus_('error', 'Email failed: ' + (err && err.message ? err.message : err));
-          showToast('Email failed', 'error');
-          restore();
-        })
-        .sendInsightsReportEmail({
-          imageBase64: dataUrl,
-          dateLabel: insLastData && insLastData.dateLabel ? insLastData.dateLabel : '',
-        });
-    });
+  // Emails a SERVER-RENDERED HTML insights report (not an html2canvas
+  // screenshot, which mis-rendered the per-agent card bars in mail clients).
+  // Sends the same params the modal used so the server recomputes the identical
+  // report. Charts stay in the web app (Copy image / Print).
+  function insEmailReport_() {
+    if (!insLastData || !insLastData.meta) {
+      showToast('Generate a report first.', 'error');
+      return;
+    }
+    const m = insLastData.meta;
+    const restore = insBtnFeedback_('Sending…', 0);
+    google.script.run
+      .withSuccessHandler(function (res) {
+        restore();
+        insBtnFeedback_('Sent to ' + (res && res.to ? res.to : 'you'), 2000);
+        showToast('Report emailed to ' + (res && res.to ? res.to : 'you'), 'success');
+      })
+      .withFailureHandler(function (err) {
+        insSetResultsStatus_('error', 'Email failed: ' + (err && err.message ? err.message : err));
+        showToast('Email failed', 'error');
+        restore();
+      })
+      .sendInsightsReportEmail({
+        department: m.department,
+        from:       m.from,
+        to:         m.to,
+        agents:     m.agents || [],
+        priorFrom:  m.priorFrom || '',
+        priorTo:    m.priorTo || '',
+      });
   }
 
   /**

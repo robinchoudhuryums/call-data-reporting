@@ -664,6 +664,23 @@
     border: 1px solid var(--line);
     border-radius: var(--r);
   }
+  /* #9a: two-column context row (QCD snapshot + Missed glance) below the agent
+     table. Flex so a hidden column lets the other fill the row; wraps to one
+     column on narrow widths. Per-agent missed detail sits full-width below. */
+  .dept-context-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    align-items: flex-start;
+    margin-top: 20px;
+  }
+  .dept-context-row > .dept-qcd-snapshot {
+    flex: 1 1 320px;
+    min-width: 0;
+    margin-top: 0;
+    margin-bottom: 0;
+  }
+  #dept-missed-detail { margin-top: 16px; }
   .dept-qcd-header {
     display: flex;
     flex-wrap: wrap;
@@ -1762,6 +1779,65 @@
     font-size: 12px;
   }
 
+  /* #1: date + compare controls inside the in-results "Change" popover, so a
+     manager can change agents AND the date range without returning to the
+     setup form. */
+  .ir-edit-dates-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  .ir-edit-date-field {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    font-size: 11px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-weight: 700;
+  }
+  .ir-edit-date-field input[type="date"],
+  .ir-edit-date-field select {
+    font-size: 12px;
+    padding: 5px 7px;
+    border: 1px solid var(--line);
+    border-radius: var(--r);
+    background: var(--paper);
+    color: var(--ink);
+    text-transform: none;
+    letter-spacing: 0;
+    font-weight: 400;
+  }
+  .ir-edit-date-field select { min-width: 180px; }
+
+  /* #1 Part B: drill-through loader (Insights / My Department -> IR auto-run).
+     Shown in place of the setup form so the form doesn't flash before the
+     report renders. */
+  .ir-drill-loader {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    min-height: 280px;
+    color: var(--muted);
+  }
+  .ir-drill-spinner {
+    width: 34px;
+    height: 34px;
+    border: 3px solid var(--line);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: irDrillSpin 0.7s linear infinite;
+  }
+  .ir-drill-loader-text {
+    font-size: 13px;
+    letter-spacing: 0.04em;
+  }
+  @keyframes irDrillSpin { to { transform: rotate(360deg); } }
+
   /* Sort dropdown above the per-agent summary cards. Only shown
      in peer-comparison mode (2+ agents); hidden for single-agent
      reports where sort is meaningless. */
@@ -2168,6 +2244,32 @@
   }
   .ir-chart-canvas-wrap { flex: 1; position: relative; }
 
+  /* #4: "All at once" toggle + stacked layout. The button sits just after the
+     Duration tab (the data-labels box stays right-pinned). In all-mode the tab
+     buttons go inert and the three chart panels stack as small multiples. */
+  .ir-allcharts-toggle {
+    align-self: center;
+    margin-left: 8px;
+    font-size: 11px;
+    padding: 4px 10px;
+    border: 1px solid var(--line);
+    border-radius: var(--r);
+    background: var(--paper);
+    color: var(--muted);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .ir-allcharts-toggle:hover { border-color: var(--accent); color: var(--accent); }
+  .ir-allcharts-toggle.active {
+    background: var(--accent-soft);
+    color: var(--accent);
+    border-color: var(--accent);
+    font-weight: 600;
+  }
+  .ir-tabs-allmode .ir-tab { opacity: 0.4; pointer-events: none; }
+  .ir-charts-all { display: flex; flex-direction: column; gap: 14px; }
+  .ir-charts-all .ir-chart-wrap { height: 300px; }
+
   /* Reset .btn defaults that look out of place inside the modal. */
   #individual-modal .btn { width: auto; }
 
@@ -2570,6 +2672,9 @@
     color: var(--ink);
   }
   .report-headline-line + .report-headline-line { margin-top: 2px; }
+  /* Lost-abandoned-detail note in the Missed Calls headline (corrupted rows). */
+  .missed-lost-note { color: var(--warn); }
+  .missed-lost-note strong { color: var(--warn); }
 
   /* Overview question launcher (anti-intimidation layer): four
      plain-English questions, each routing to a pre-primed report. */
@@ -2888,9 +2993,11 @@
   .ins-cbar-fill.ins-cbar-miss { background: var(--warn-soft); }
   .ins-cbar-team { position: absolute; top: -1px; bottom: -1px; width: 2px;
                    background: var(--ink); opacity: 0.5; }
-  .ins-cbar-val { position: absolute; right: 5px; top: 0; line-height: 15px;
-                  font-size: 10px; font-weight: 600; color: var(--ink);
-                  font-variant-numeric: tabular-nums; pointer-events: none; }
+  /* #3: value beside the track (own column), so it never paints over the
+     team-average marker. Fixed min-width keeps the numbers right-aligned. */
+  .ins-cbar-val { flex: 0 0 auto; min-width: 42px; text-align: right;
+                  line-height: 15px; font-size: 10px; font-weight: 600;
+                  color: var(--ink); font-variant-numeric: tabular-nums; }
   .ins-cbar-delta { flex: 0 0 auto; }
   .ins-card-more { margin-top: 8px; }
   .ins-card-more > summary { font-size: 10.5px; color: var(--muted); cursor: pointer;
@@ -3059,6 +3166,20 @@
     margin-bottom: 10px;
     font-size: 14px;
   }
+  /* #6: ON/OFF state pill next to a toggle section's title. */
+  .al-state-pill {
+    display: inline-block;
+    margin-left: 8px;
+    padding: 1px 9px;
+    border-radius: 999px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    vertical-align: middle;
+  }
+  .al-state-pill:empty { display: none; }
+  .al-state-pill.is-on  { background: var(--good-soft); color: var(--good); }
+  .al-state-pill.is-off { background: var(--line); color: var(--muted); }
   .al-hint { font-size: 12px; color: var(--muted); margin: 0 0 10px; }
   .al-hint a { color: var(--accent); text-decoration: none; }
   /* F2 Neon mirror-health line (sheet-vs-Neon DQE max-date check). */
@@ -3541,6 +3662,23 @@
     gap: 12px;
     margin-bottom: 18px;
     align-items: start;
+  }
+  /* #8: grid (main) + trend chart (sticky right rail) side-by-side. The grid's
+     auto-fill columns reflow to fit the narrower column; the chart stays in
+     view while scrolling the grid. Collapses to one column under 1024px. */
+  .ov-grid-trend {
+    display: grid;
+    grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr);
+    gap: 18px;
+    align-items: start;
+    margin-top: 4px;
+  }
+  .ov-grid-col { min-width: 0; }
+  .ov-trend-col { min-width: 0; position: sticky; top: 12px; }
+  .ov-grid-trend .ov-dept-grid { margin-bottom: 0; }
+  @media (max-width: 1024px) {
+    .ov-grid-trend { grid-template-columns: 1fr; }
+    .ov-trend-col { position: static; }
   }
   /* Each parent dept + its sub-queues stack vertically in a
      single grid cell. Children inherit the parent's tile color

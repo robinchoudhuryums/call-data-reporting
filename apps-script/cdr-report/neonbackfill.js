@@ -32,6 +32,48 @@ function getNeonConn_backfill() {
 }
 
 
+// Sanitizes an abandoned-ID/time cell (cols AD/AE/AF) read via getDisplayValues
+// BEFORE it's mirrored to Neon, so a backfill run can't push garbage even before
+// the sheet itself is repaired (sheetRepairs.js::repairDqeAbandonedIds).
+//
+// These cells hold comma-joined big integers (abandoned parent IDs / missed-leg
+// IDs / epoch-ms times). Rows that predate the build's plain-text protection were
+// coerced by Sheets into a Number (the comma read as a thousands group);
+// getDisplayValues then returns the coerced display -- thousand-separated
+// ("17,622,...,000,000"), scientific ("1.76E+24"), or a long bare-digit run --
+// which, written as-is, mis-splits on the separator commas downstream.
+//
+// Recovers LOSSLESS single-value coercions and NULLs genuinely-lossy multi-value
+// ones (precision past 2^53 is gone; those dates can only be restored by
+// rebuilding from Raw Data). 15 digits is the safe-integer ceiling (2^53 ~
+// 9.0e15); a real abandoned ID / epoch-ms timestamp is 13 digits, so a correct
+// single value always survives and a correct multi-value (whose long-ID tokens
+// never look like 3-digit thousands groups) is never touched.
+// Sentinel written when a multi-value cell's original IDs are genuinely lost, so
+// "corrupted -- rebuild" is distinguishable from a genuinely-empty "0 abandoned"
+// (NULL). The dashboard's classifyAbandonedCell_ (Util.gs) recognizes it and
+// excludes it from counts; both literals must match.
+var DQE_ABANDONED_LOST_SENTINEL = '#REBUILD';
+
+function sanitizeAbandonedCellForNeon_(raw) {
+  var s = (raw == null ? '' : String(raw)).trim();
+  if (!s) return null;                                   // genuinely empty (0 abandoned)
+  if (s === DQE_ABANDONED_LOST_SENTINEL) return DQE_ABANDONED_LOST_SENTINEL;  // already marked
+  // Coerced + re-rendered as a float: scientific notation or a decimal point.
+  if (/[eE][+\-]?\d/.test(s) || s.indexOf('.') !== -1) return DQE_ABANDONED_LOST_SENTINEL;
+  // Thousands-separated number: 1-3 leading digits then only 3-digit groups.
+  if (/^\d{1,3}(,\d{3})+$/.test(s)) {
+    var digits = s.replace(/,/g, '');
+    // single value (<=15 digits) is recoverable; multi-value lost past 2^53.
+    return digits.length <= 15 ? digits : DQE_ABANDONED_LOST_SENTINEL;
+  }
+  // Bare digit run, no separators, too long to be one real ID -> coerced + lost.
+  if (/^\d+$/.test(s) && s.length > 15) return DQE_ABANDONED_LOST_SENTINEL;
+  // Otherwise: a correct single long ID, or a comma-list of long IDs. Keep.
+  return s;
+}
+
+
 // -- DQE backfill ------------------------------------------------------------
 
 function backfillDQEHistory() {
@@ -93,9 +135,9 @@ function backfillDQEHistory() {
           ttt:              r[8]  || null,
           att:              r[9]  || null,
           slots:            r.slice(10, 29),
-          abParentIds:      r[29] || null,
-          abMissedIds:      r[30] || null,
-          abMissedTimes:    r[31] || null,
+          abParentIds:      sanitizeAbandonedCellForNeon_(r[29]),
+          abMissedIds:      sanitizeAbandonedCellForNeon_(r[30]),
+          abMissedTimes:    sanitizeAbandonedCellForNeon_(r[31]),
           avgAbdWait:       r[32] || null,
           csrAvgAbdWait:    r[33] || null
         });
@@ -267,9 +309,9 @@ function backfillDQEHistoryUpsert() {
           ttt:              r[8]  || null,
           att:              r[9]  || null,
           slots:            r.slice(10, 29),
-          abParentIds:      r[29] || null,
-          abMissedIds:      r[30] || null,
-          abMissedTimes:    r[31] || null,
+          abParentIds:      sanitizeAbandonedCellForNeon_(r[29]),
+          abMissedIds:      sanitizeAbandonedCellForNeon_(r[30]),
+          abMissedTimes:    sanitizeAbandonedCellForNeon_(r[31]),
           avgAbdWait:       r[32] || null,
           csrAvgAbdWait:    r[33] || null
         });

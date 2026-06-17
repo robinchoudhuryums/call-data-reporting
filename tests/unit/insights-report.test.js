@@ -13,7 +13,12 @@ const { dqeRow, dqeSheet, rosterGrid } = require('../harness/fixtures');
 const h = loadGas({
   files: ['Config.gs', 'Util.gs', 'Auth.gs', 'CompanyOverview.gs',
           'QCDReport.gs', 'DeptConfig.gs', 'Data.gs', 'PerformanceReport.gs',
-          'InsightsReport.gs'],
+          'InsightsReport.gs',
+          // Digest.gs provides renderInsightsEmailBody_ (+ digestTakeaway_/
+          // digestDeltaHtml_) that sendInsightsReportEmail reuses for the
+          // server-rendered HTML email. In Apps Script these share global
+          // scope; the harness must load the file that defines them.
+          'Digest.gs'],
 });
 
 const ROSTER = rosterGrid({
@@ -216,23 +221,26 @@ test('Insights: 1-day range (from == to) compares against the previous day', fun
   assert.equal(data.teamStats.rung.prev, 4);
 });
 
-test('Insights: email export decodes the payload and sends to the active user', function () {
+test('Insights: email export sends a server-rendered HTML report to the active user', function () {
   install([dqeRow({ date: '2026-03-10', agent: 'Anna', ext: '501', rung: 5, answered: 4, att: '0:02:00' })]);
   h.state.sentEmails.length = 0;
+  // New behavior: recomputes the report from the modal's params and emails an
+  // HTML body (renderInsightsEmailBody_), NOT an html2canvas screenshot.
   const res = h.call('sendInsightsReportEmail', {
-    imageBase64: 'data:image/png;base64,aGVsbG8=',   // "hello"
-    dateLabel: 'Mar 9, 2026 - Mar 15, 2026',
+    department: 'Alpha', from: '2026-03-09', to: '2026-03-15', agents: ['Anna'],
   });
   assert.equal(res.to, 'admin@x.com');
   assert.equal(h.state.sentEmails.length, 1);
   const mail = h.state.sentEmails[0];
   assert.equal(mail.to, 'admin@x.com');
-  assert.ok(mail.subject.indexOf('Mar 9, 2026') !== -1);
-  assert.ok(mail.inlineImages && mail.inlineImages.reportImg, 'inline image attached');
-  // Malformed payload (no comma separator) is rejected before any send.
+  assert.ok(mail.subject.indexOf('Insights Report:') === 0, 'subject is an Insights Report');
+  assert.ok(mail.htmlBody && mail.htmlBody.indexOf('Anna') !== -1, 'HTML body includes the agent');
+  assert.ok(mail.htmlBody.indexOf('Alpha') !== -1, 'HTML body names the department');
+  assert.ok(!mail.inlineImages, 'no inline image — server-rendered HTML, not a screenshot');
+  // Empty agent selection is rejected before any send (mirrors getInsightsReport).
   assert.throws(function () {
-    h.call('sendInsightsReportEmail', { imageBase64: 'nocomma' });
-  }, /Malformed image payload/);
+    h.call('sendInsightsReportEmail', { department: 'Alpha', from: '2026-03-09', to: '2026-03-15', agents: [] });
+  }, /Select at least one agent/);
   assert.equal(h.state.sentEmails.length, 1);
 });
 

@@ -361,3 +361,36 @@ function computeActiveAgentsInRange_(dept, from, to, roster) {
   catch (e) { /* harmless */ }
   return out;
 }
+
+/**
+ * Read-side guard for an abandoned-ID/time cell (cols AD/AE/AF) before it's
+ * split-and-counted by the Missed Calls report / Diagnostics. These cells were
+ * sometimes coerced by Sheets into a thousands-separated Number (precision lost
+ * past 2^53); cdr-report's sanitizer/repair marks the unrecoverable ones with
+ * DQE_ABANDONED_LOST_SENTINEL. Classifying here means a coerced/lost cell is
+ * NEVER parsed into fake call IDs (which would over-count abandons + render
+ * garbage badges) -- the report excludes it and flags the date instead.
+ *
+ *   - lost  (sentinel, scientific/decimal, thousands-sep>15 digits, bare run>15)
+ *       -> { lost: true,  value: '' }   (excluded; the report flags the date)
+ *   - recoverable single-value coercion ("1,762,242,202,191")
+ *       -> { lost: false, value: '1762242202191' }   (separators stripped)
+ *   - empty / normal (single long ID, or a comma-list of long IDs)
+ *       -> { lost: false, value: <unchanged> }
+ *
+ * Mirrors cdr-report's sanitizeAbandonedCellForNeon_; 15 digits is the
+ * safe-integer ceiling (2^53 ~ 9.0e15) and a real abandoned ID / epoch-ms
+ * timestamp is 13 digits, so correct values are never touched.
+ */
+function classifyAbandonedCell_(raw) {
+  var s = (raw == null ? '' : String(raw)).trim();
+  if (!s) return { lost: false, value: '' };
+  if (s === DQE_ABANDONED_LOST_SENTINEL) return { lost: true, value: '' };
+  if (/[eE][+\-]?\d/.test(s) || s.indexOf('.') !== -1) return { lost: true, value: '' };
+  if (/^\d{1,3}(,\d{3})+$/.test(s)) {
+    var digits = s.replace(/,/g, '');
+    return digits.length <= 15 ? { lost: false, value: digits } : { lost: true, value: '' };
+  }
+  if (/^\d+$/.test(s) && s.length > 15) return { lost: true, value: '' };
+  return { lost: false, value: s };
+}

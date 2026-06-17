@@ -158,15 +158,24 @@
         </div>
         <div id="ov-company-aggregate" class="ov-company-aggregate" style="display:none;"></div>
         <div id="ov-user-hero" class="ov-user-hero" style="display:none;"></div>
-        <div id="ov-dept-grid" class="ov-dept-grid"></div>
-        <div class="ir-chart-tabs" id="ov-chart-tabs" role="tablist">
-          <button type="button" class="ir-tab active" data-metric="pct" role="tab" aria-selected="true">% Answered (30 days)</button>
-          <button type="button" class="ir-tab" id="ov-axis-zoom-btn" aria-pressed="false"
-            title="Toggle the y-axis between the full 0–100% scale and an auto-fit zoom to the data range">Zoom: Full</button>
-        </div>
-        <div class="ir-chart-wrap" id="ov-chart-wrap">
-          <div class="ir-chart-header">Answer rate trend per department</div>
-          <div class="ir-chart-canvas-wrap"><canvas id="ov-trend-chart"></canvas></div>
+        <!-- #8: dept tile grid (main column) + 30-day trend chart (sticky right
+             rail) side-by-side, so the tile-hover → line-spotlight relationship
+             reads as one unit. Stacks to one column on narrow screens. -->
+        <div class="ov-grid-trend">
+          <div class="ov-grid-col">
+            <div id="ov-dept-grid" class="ov-dept-grid"></div>
+          </div>
+          <div class="ov-trend-col">
+            <div class="ir-chart-tabs" id="ov-chart-tabs" role="tablist">
+              <button type="button" class="ir-tab active" data-metric="pct" role="tab" aria-selected="true">% Answered (30 days)</button>
+              <button type="button" class="ir-tab" id="ov-axis-zoom-btn" aria-pressed="false"
+                title="Toggle the y-axis between the full 0–100% scale and an auto-fit zoom to the data range">Zoom: Full</button>
+            </div>
+            <div class="ir-chart-wrap" id="ov-chart-wrap">
+              <div class="ir-chart-header">Answer rate trend per department</div>
+              <div class="ir-chart-canvas-wrap"><canvas id="ov-trend-chart"></canvas></div>
+            </div>
+          </div>
         </div>
         <div id="ov-user-table-wrap" class="ov-user-table-wrap" style="display:none;">
           <div class="ir-chart-header">
@@ -250,15 +259,6 @@
         <div class="empty-state-hint" id="dept-empty-hint"></div>
       </div>
 
-      <div id="dept-qcd-snapshot" class="dept-qcd-snapshot" style="display:none;">
-        <div class="dept-qcd-header">
-          <strong id="dept-qcd-title">Queue Call Data</strong>
-          <span class="dept-qcd-date" id="dept-qcd-date"></span>
-          <span class="dept-qcd-hint">Daily roll-up across this dept's mapped queues from <code>QCD Historical Data</code>. For a date range, use Reports → QCD Report.</span>
-        </div>
-        <div class="dept-qcd-tiles" id="dept-qcd-tiles"></div>
-      </div>
-
       <div id="dqe-table-header" class="dept-qcd-header" style="display:none; margin-top:20px; margin-bottom:8px;">
         <strong id="dqe-table-title">Agent Call Metrics</strong>
         <span id="dqe-table-date" class="dept-qcd-date"></span>
@@ -285,21 +285,49 @@
 
       <div id="info-line" class="info-line" style="display:none;"></div>
 
-      <!-- Missed Calls drill-down (consolidation phase B): auto-generated
-           for the same range as the agent table above. The radar +
-           headline summarize; "Full report" opens the Missed Calls modal
-           (which carries its own date range for deeper digging). -->
-      <div id="dept-missed-section" class="dept-qcd-snapshot" style="display:none;">
-        <div class="dept-qcd-header">
-          <strong id="dept-missed-title">Missed Calls</strong>
-          <span class="dept-qcd-date" id="dept-missed-date"></span>
-          <button class="btn btn-secondary dept-missed-open" id="dept-missed-open" type="button"
-                  title="Open the full Missed Calls report (per-agent timeline, queue-only abandons, custom range)">Full report</button>
+      <!-- #9a: two-column context row below the table — QCD snapshot (left)
+           and the Missed Calls "glance" (headline + hour-of-day radar, right),
+           both auto-generated for the same range as the agent table. The
+           per-agent timelines + queue-only abandons render full-width below in
+           #dept-missed-detail; "Full report" opens the Missed Calls modal for
+           a custom range + per-bucket drill. -->
+      <div class="dept-context-row">
+        <div id="dept-qcd-snapshot" class="dept-qcd-snapshot" style="display:none;">
+          <div class="dept-qcd-header">
+            <strong id="dept-qcd-title">Queue Call Data</strong>
+            <span class="dept-qcd-date" id="dept-qcd-date"></span>
+            <span class="dept-qcd-hint">Daily roll-up across this dept's mapped queues from <code>QCD Historical Data</code>. For a date range, use Reports → QCD Report.</span>
+          </div>
+          <div class="dept-qcd-tiles" id="dept-qcd-tiles"></div>
         </div>
-        <div id="dept-missed-headline" class="report-headline" style="display:none;"></div>
-        <div class="dept-missed-chart-wrap" id="dept-missed-chart-wrap">
-          <canvas id="dept-missed-chart" aria-label="Hour-of-day distribution of missed calls"></canvas>
+
+        <div id="dept-missed-section" class="dept-qcd-snapshot" style="display:none;">
+          <div class="dept-qcd-header">
+            <strong id="dept-missed-title">Missed Calls</strong>
+            <span class="dept-qcd-date" id="dept-missed-date"></span>
+            <button class="btn btn-secondary dept-missed-open" id="dept-missed-open" type="button"
+                    title="Open the full Missed Calls report (per-agent timeline, queue-only abandons, custom range)">Full report</button>
+          </div>
+          <div id="dept-missed-headline" class="report-headline" style="display:none;"></div>
+          <div class="dept-missed-chart-wrap" id="dept-missed-chart-wrap">
+            <canvas id="dept-missed-chart" aria-label="Hour-of-day distribution of missed calls"></canvas>
+          </div>
         </div>
+      </div>
+
+      <!-- #9b detail (full-width): queue-only abandons + per-agent missed-time
+           timelines, rendered by the same builders the full modal uses
+           (missedQueueOnlyParts_ / missedAgentsHtml_). Shown only when there's
+           detail to show. -->
+      <div id="dept-missed-detail" style="display:none;">
+        <div id="dept-missed-queue-only" class="queue-only-section" style="display:none;">
+          <div class="queue-only-header">
+            <strong>🚨 Queue-only abandoned</strong>
+            <span class="muted" id="dept-queue-only-subhead"></span>
+          </div>
+          <div id="dept-queue-only-body"></div>
+        </div>
+        <div id="dept-missed-agents" class="agent-grid" style="display:none;"></div>
       </div>
 
       <details id="diagnostics" class="diagnostics" style="display:none;">
@@ -459,6 +487,13 @@
         <h2 id="individual-modal-title">Individual Report</h2>
       </div>
       <div class="modal-panel-body">
+      <!-- Drill-through loader: shown instead of the setup form when IR is
+           opened by drilling from Insights / My Department (auto-generates for
+           the same date), so the form doesn't flash before the report. -->
+      <div id="ir-drill-loader" class="ir-drill-loader" style="display:none;">
+        <div class="ir-drill-spinner" aria-hidden="true"></div>
+        <div class="ir-drill-loader-text">Generating report&hellip;</div>
+      </div>
       <div id="individual-form" class="ir-form">
         <div class="ir-section-title">1. Date Range</div>
         <div class="ir-row">
@@ -563,10 +598,21 @@
           </div>
         </div>
 
-        <div id="ir-edit-popover" class="ir-edit-popover" style="display:none;" role="dialog" aria-label="Edit selection">
+        <div id="ir-edit-popover" class="ir-edit-popover" style="display:none;" role="dialog" aria-label="Edit selection and dates">
           <div class="ir-edit-popover-header">
-            <strong>Edit selection</strong>
+            <strong>Edit selection &amp; dates</strong>
             <button class="ir-edit-popover-close" id="ir-edit-popover-close" type="button" aria-label="Close">&times;</button>
+          </div>
+          <div class="ir-edit-dates-row">
+            <label class="ir-edit-date-field">From<input type="date" id="ir-edit-from"></label>
+            <label class="ir-edit-date-field">To<input type="date" id="ir-edit-to"></label>
+            <label class="ir-edit-date-field">Compare
+              <select id="ir-edit-compare-mode">
+                <option value="none">No comparison</option>
+                <option value="prevPeriod">Immediately-preceding period</option>
+                <option value="yoy">Same window one year prior</option>
+              </select>
+            </label>
           </div>
           <div class="ir-search-row">
             <input type="search" id="ir-edit-search" placeholder="Search agents..." autocomplete="off">
@@ -604,6 +650,10 @@
           <button type="button" class="ir-tab active" data-tab="vol" role="tab" aria-selected="true">Volume</button>
           <button type="button" class="ir-tab" data-tab="eff" role="tab" aria-selected="false">Efficiency</button>
           <button type="button" class="ir-tab" data-tab="dur" role="tab" aria-selected="false">Duration</button>
+          <!-- #4: stack all three trend charts (Volume/Efficiency/Duration)
+               instead of one tab at a time. -->
+          <button type="button" class="ir-allcharts-toggle" id="ir-allcharts-toggle" aria-pressed="false"
+                  title="Show Volume, Efficiency and Duration together instead of one tab at a time">All at once</button>
           <div class="ir-toggle-box" id="ir-datalabels-box">
             <label class="ir-toggle-label">
               <input type="checkbox" id="ir-show-datalabels"> Show data labels
@@ -1310,7 +1360,7 @@
               <div class="ir-export-menu" id="ins-export-menu" role="menu" style="display:none;">
                 <button type="button" role="menuitem" data-action="csv">Download CSV</button>
                 <button type="button" role="menuitem" data-action="copy">Copy image</button>
-                <button type="button" role="menuitem" data-action="email">Email image</button>
+                <button type="button" role="menuitem" data-action="email">Email report</button>
                 <button type="button" role="menuitem" data-action="print">Print</button>
               </div>
             </div>
@@ -1681,7 +1731,7 @@
         </div>
 
         <div class="al-section">
-          <div class="al-section-title">Daily trigger</div>
+          <div class="al-section-title">Daily trigger <span class="al-state-pill" id="al-trigger-pill"></span></div>
           <p class="al-hint" id="al-trigger-status"></p>
           <div class="al-trigger-actions">
             <button class="btn btn-secondary" id="al-install-trigger-btn" type="button">Install daily trigger (8 AM)</button>
@@ -1694,7 +1744,7 @@
         </div>
 
         <div class="al-section">
-          <div class="al-section-title">Neon keep-warm</div>
+          <div class="al-section-title">Neon keep-warm <span class="al-state-pill" id="al-keepwarm-pill"></span></div>
           <p class="al-hint" id="al-keepwarm-status"></p>
           <div class="al-trigger-actions">
             <button class="btn btn-secondary" id="al-install-keepwarm-btn"   type="button">Enable keep-warm</button>
@@ -1710,7 +1760,7 @@
         </div>
 
         <div class="al-section">
-          <div class="al-section-title">Report cache warming</div>
+          <div class="al-section-title">Report cache warming <span class="al-state-pill" id="al-cachewarm-pill"></span></div>
           <p class="al-hint" id="al-cachewarm-status"></p>
           <div class="al-trigger-actions">
             <button class="btn btn-secondary" id="al-install-cachewarm-btn"   type="button">Enable cache warming</button>
@@ -1744,7 +1794,7 @@
         </div>
 
         <div class="al-section">
-          <div class="al-section-title">Manager Digest Subscribers</div>
+          <div class="al-section-title">Manager Digest Subscribers <span class="al-state-pill" id="al-digest-pill"></span></div>
           <p class="al-hint">
             Per-recipient subscriptions configured in the <strong>Digest Config</strong>
             sheet (Email | Department | Cadence | Active | Notes | Format). Cadence is
