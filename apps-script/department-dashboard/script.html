@@ -8678,6 +8678,7 @@
     const trig = data.trigger || { daily: false, weekly: false, monthly: false };
     const installed = !!(trig.daily && trig.weekly && trig.monthly);
     const partial   = !installed && (trig.daily || trig.weekly || trig.monthly);
+    alSetStatePill_('al-digest-pill', installed);
     const statusEl  = $('al-digest-trigger-status');
     if (statusEl) {
       if (data.loadError) {
@@ -8976,10 +8977,21 @@
          + '</span>';
   }
 
+  // #6: small ON/OFF state pill next to each Alerts-modal toggle section title,
+  // so the enabled state is obvious at a glance (not just inferable from the
+  // hint text + which button is showing).
+  function alSetStatePill_(pillId, on) {
+    const p = $(pillId);
+    if (!p) return;
+    p.textContent = on ? 'ON' : 'OFF';
+    p.className = 'al-state-pill ' + (on ? 'is-on' : 'is-off');
+  }
+
   function alRenderTriggerStatus_(trigger) {
     const el = $('al-trigger-status');
     const installBtn = $('al-install-trigger-btn');
     const uninstallBtn = $('al-uninstall-trigger-btn');
+    alSetStatePill_('al-trigger-pill', !!(trigger && trigger.installed));
     if (!el) return;
     if (trigger && trigger.installed) {
       el.textContent = 'Daily trigger is installed (runs at '
@@ -8999,6 +9011,7 @@
     const installBtn = $('al-install-keepwarm-btn');
     const uninstallBtn = $('al-uninstall-keepwarm-btn');
     if (!el) return;
+    alSetStatePill_('al-keepwarm-pill', !!(kw && kw.installed && !kw.loadError));
     if (kw && kw.loadError) {
       el.textContent = 'Keep-warm status unavailable: ' + kw.loadError;
       if (installBtn) installBtn.style.display = '';
@@ -9286,6 +9299,7 @@
     const installBtn = $('al-install-cachewarm-btn');
     const uninstallBtn = $('al-uninstall-cachewarm-btn');
     if (!el) return;
+    alSetStatePill_('al-cachewarm-pill', !!(cw && cw.installed && !cw.loadError));
     if (cw && cw.loadError) {
       el.textContent = 'Cache-warming status unavailable: ' + cw.loadError;
       if (installBtn) installBtn.style.display = '';

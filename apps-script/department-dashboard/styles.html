@@ -3118,6 +3118,20 @@
     margin-bottom: 10px;
     font-size: 14px;
   }
+  /* #6: ON/OFF state pill next to a toggle section's title. */
+  .al-state-pill {
+    display: inline-block;
+    margin-left: 8px;
+    padding: 1px 9px;
+    border-radius: 999px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    vertical-align: middle;
+  }
+  .al-state-pill:empty { display: none; }
+  .al-state-pill.is-on  { background: var(--good-soft); color: var(--good); }
+  .al-state-pill.is-off { background: var(--line); color: var(--muted); }
   .al-hint { font-size: 12px; color: var(--muted); margin: 0 0 10px; }
   .al-hint a { color: var(--accent); text-decoration: none; }
   /* F2 Neon mirror-health line (sheet-vs-Neon DQE max-date check). */
