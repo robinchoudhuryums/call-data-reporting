@@ -11074,6 +11074,8 @@
         .sendInsightsReportEmail({
           imageBase64: dataUrl,
           dateLabel: insLastData && insLastData.dateLabel ? insLastData.dateLabel : '',
+          from: insLastData && insLastData.meta ? (insLastData.meta.from || '') : '',
+          to:   insLastData && insLastData.meta ? (insLastData.meta.to   || '') : '',
         });
     });
   }

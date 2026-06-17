@@ -705,7 +705,17 @@ function sendInsightsReportEmail(req) {
   const commaIdx = dataUrl.indexOf(',');
   if (commaIdx === -1) throw new Error('Malformed image payload.');
   const decoded = Utilities.base64Decode(dataUrl.slice(commaIdx + 1));
-  const blob = Utilities.newBlob(decoded, 'image/png', 'Insights_Report.png');
+  // Filename carries the date range so a saved attachment is self-describing
+  // (was a static 'Insights_Report.png'). Prefer the ISO from/to; fall back to
+  // a slug of the human dateLabel.
+  const fromIso = String((req && req.from) || '');
+  const toIso   = String((req && req.to)   || '');
+  const slug_ = function (s) {
+    return String(s || '').replace(/[^0-9A-Za-z]+/g, '_').replace(/^_+|_+$/g, '');
+  };
+  const namePart = (fromIso && toIso) ? (fromIso + '_to_' + toIso)
+                                      : (slug_(dateLabel) || 'report');
+  const blob = Utilities.newBlob(decoded, 'image/png', 'Insights_Report_' + namePart + '.png');
 
   MailApp.sendEmail({
     to: email,
