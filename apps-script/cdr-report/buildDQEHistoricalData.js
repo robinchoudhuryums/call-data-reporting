@@ -689,6 +689,15 @@ function buildDQEHistoricalData(rawSheet, dqeSheet, opts) {
   dqeSheet.getRange(1, 11, dqeSheet.getMaxRows(), 19).setNumberFormat('@');
 
   const firstBlank = dqeSheet.getLastRow() + 1;
+  // The whole-column setNumberFormat('@') calls above only reach the prior
+  // getMaxRows(); an append that SPILLS PAST it (the sheet auto-expands during
+  // setValues) would land multi-value AD/AE/AF + K-AC cells in default-formatted
+  // rows and re-coerce them (the abParentIds / slot-timestamp coercion bug).
+  // Plain-text the EXACT rows we're about to write first, so spilled rows are
+  // protected too (getRange auto-expands the sheet, then formats).
+  dqeSheet.getRange(firstBlank, 4,  outputRows.length, 1).setNumberFormat('@');
+  dqeSheet.getRange(firstBlank, 11, outputRows.length, 19).setNumberFormat('@');
+  dqeSheet.getRange(firstBlank, 30, outputRows.length, 3).setNumberFormat('@');
   dqeSheet.getRange(firstBlank, 1, outputRows.length, outputRows[0].length).setValues(outputRows);
 
   const newLastRow = dqeSheet.getLastRow();
