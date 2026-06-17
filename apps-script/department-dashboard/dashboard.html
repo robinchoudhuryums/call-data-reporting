@@ -634,6 +634,10 @@
           <button type="button" class="ir-tab active" data-tab="vol" role="tab" aria-selected="true">Volume</button>
           <button type="button" class="ir-tab" data-tab="eff" role="tab" aria-selected="false">Efficiency</button>
           <button type="button" class="ir-tab" data-tab="dur" role="tab" aria-selected="false">Duration</button>
+          <!-- #4: stack all three trend charts (Volume/Efficiency/Duration)
+               instead of one tab at a time. -->
+          <button type="button" class="ir-allcharts-toggle" id="ir-allcharts-toggle" aria-pressed="false"
+                  title="Show Volume, Efficiency and Duration together instead of one tab at a time">All at once</button>
           <div class="ir-toggle-box" id="ir-datalabels-box">
             <label class="ir-toggle-label">
               <input type="checkbox" id="ir-show-datalabels"> Show data labels

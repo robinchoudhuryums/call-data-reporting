@@ -4003,6 +4003,7 @@
   // change so the next visit picks up where the user left off.
   let irSortOrder = 'selection';   // selection | name | answered-desc | answered-asc | pct-desc
   let irActiveChartTab = 'vol';    // vol | eff | dur
+  let irShowAllCharts = false;     // #4: stack all 3 trend charts vs one tab at a time
   let irPendingAgentSelection_ = null;
   let irPendingAutoRun_ = false;   // drill-through: auto-generate once the picker renders
   let irCameFromInsights_ = false; // drill-through from Insights -> show "Back to Insights"
@@ -4197,22 +4198,18 @@
     // a time so each gets the full container width. Default: Volume.
     const tabContainer = $('ir-chart-tabs');
     if (tabContainer) tabContainer.addEventListener('click', function (e) {
+      // #4: the "All at once" toggle shares this strip -- flip the mode and
+      // re-apply the layout (irActivateChartTab_ handles show/hide + resize).
+      if (e.target.closest('#ir-allcharts-toggle')) {
+        irShowAllCharts = !irShowAllCharts;
+        irActivateChartTab_();
+        irSavePrefs_();
+        return;
+      }
       const tab = e.target.closest('.ir-tab');
-      if (!tab) return;
-      const which = tab.getAttribute('data-tab');
-      tabContainer.querySelectorAll('.ir-tab').forEach(function (b) {
-        const active = b.getAttribute('data-tab') === which;
-        b.classList.toggle('active', active);
-        b.setAttribute('aria-selected', active ? 'true' : 'false');
-      });
-      document.querySelectorAll('#ir-charts-container [data-panel]').forEach(function (p) {
-        p.style.display = p.getAttribute('data-panel') === which ? '' : 'none';
-      });
-      // Force the now-visible chart to resize against its newly-
-      // measurable container -- Chart.js can't compute layout while
-      // a panel is display:none, so we ask it explicitly.
-      irChartInstances.forEach(function (c) { c.resize(); });
-      irActiveChartTab = which;
+      if (!tab || irShowAllCharts) return;   // tabs are inert in all-at-once mode
+      irActiveChartTab = tab.getAttribute('data-tab');
+      irActivateChartTab_();
       irSavePrefs_();
     });
 
@@ -4250,6 +4247,7 @@
         showLabels:  $('ir-show-datalabels') ? $('ir-show-datalabels').checked : false,
         sortOrder:   irSortOrder,
         chartTab:    irActiveChartTab,
+        showAllCharts: irShowAllCharts,
       };
       localStorage.setItem(IR_PREFS_KEY, JSON.stringify(prefs));
     } catch (e) { /* ignore */ }
@@ -4275,6 +4273,7 @@
     }
     if (prefs.sortOrder) irSortOrder = prefs.sortOrder;
     if (prefs.chartTab)  irActiveChartTab = prefs.chartTab;
+    if (typeof prefs.showAllCharts === 'boolean') irShowAllCharts = prefs.showAllCharts;
     if ($('ir-card-sort')) $('ir-card-sort').value = irSortOrder;
 
     // Stash agents so we can pre-check the boxes once the roster
@@ -5004,17 +5003,35 @@
       .getIndividualReport(req);
   }
 
+  // Single authority for IR chart-panel visibility. Respects the #4
+  // "All at once" toggle: in all-mode every panel is shown (stacked via
+  // the .ir-charts-all container class) and the tab buttons go inert;
+  // otherwise only the active tab's panel shows. Resizes the now-visible
+  // charts (Chart.js can't lay out while display:none).
   function irActivateChartTab_() {
-    const container = $('ir-chart-tabs');
-    if (!container) return;
-    container.querySelectorAll('.ir-tab').forEach(function (b) {
-      const active = b.getAttribute('data-tab') === irActiveChartTab;
-      b.classList.toggle('active', active);
-      b.setAttribute('aria-selected', active ? 'true' : 'false');
-    });
+    const tabsEl = $('ir-chart-tabs');
+    if (tabsEl) {
+      tabsEl.classList.toggle('ir-tabs-allmode', irShowAllCharts);
+      tabsEl.querySelectorAll('.ir-tab').forEach(function (b) {
+        const active = !irShowAllCharts && b.getAttribute('data-tab') === irActiveChartTab;
+        b.classList.toggle('active', active);
+        b.setAttribute('aria-selected', active ? 'true' : 'false');
+      });
+    }
+    const cont = $('ir-charts-container');
+    if (cont) cont.classList.toggle('ir-charts-all', irShowAllCharts);
     document.querySelectorAll('#ir-charts-container [data-panel]').forEach(function (p) {
-      p.style.display = p.getAttribute('data-panel') === irActiveChartTab ? '' : 'none';
+      const show = irShowAllCharts || p.getAttribute('data-panel') === irActiveChartTab;
+      p.style.display = show ? '' : 'none';
     });
+    const tg = $('ir-allcharts-toggle');
+    if (tg) {
+      tg.classList.toggle('active', irShowAllCharts);
+      tg.setAttribute('aria-pressed', irShowAllCharts ? 'true' : 'false');
+    }
+    if (irChartInstances && irChartInstances.length) {
+      irChartInstances.forEach(function (c) { try { c.resize(); } catch (e) {} });
+    }
   }
 
   function irRenderSummary(summaryData, teamAvg) {

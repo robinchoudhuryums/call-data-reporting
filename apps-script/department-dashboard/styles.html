@@ -2227,6 +2227,32 @@
   }
   .ir-chart-canvas-wrap { flex: 1; position: relative; }
 
+  /* #4: "All at once" toggle + stacked layout. The button sits just after the
+     Duration tab (the data-labels box stays right-pinned). In all-mode the tab
+     buttons go inert and the three chart panels stack as small multiples. */
+  .ir-allcharts-toggle {
+    align-self: center;
+    margin-left: 8px;
+    font-size: 11px;
+    padding: 4px 10px;
+    border: 1px solid var(--line);
+    border-radius: var(--r);
+    background: var(--paper);
+    color: var(--muted);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .ir-allcharts-toggle:hover { border-color: var(--accent); color: var(--accent); }
+  .ir-allcharts-toggle.active {
+    background: var(--accent-soft);
+    color: var(--accent);
+    border-color: var(--accent);
+    font-weight: 600;
+  }
+  .ir-tabs-allmode .ir-tab { opacity: 0.4; pointer-events: none; }
+  .ir-charts-all { display: flex; flex-direction: column; gap: 14px; }
+  .ir-charts-all .ir-chart-wrap { height: 300px; }
+
   /* Reset .btn defaults that look out of place inside the modal. */
   #individual-modal .btn { width: auto; }
 
