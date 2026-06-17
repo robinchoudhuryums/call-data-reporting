@@ -158,15 +158,24 @@
         </div>
         <div id="ov-company-aggregate" class="ov-company-aggregate" style="display:none;"></div>
         <div id="ov-user-hero" class="ov-user-hero" style="display:none;"></div>
-        <div id="ov-dept-grid" class="ov-dept-grid"></div>
-        <div class="ir-chart-tabs" id="ov-chart-tabs" role="tablist">
-          <button type="button" class="ir-tab active" data-metric="pct" role="tab" aria-selected="true">% Answered (30 days)</button>
-          <button type="button" class="ir-tab" id="ov-axis-zoom-btn" aria-pressed="false"
-            title="Toggle the y-axis between the full 0–100% scale and an auto-fit zoom to the data range">Zoom: Full</button>
-        </div>
-        <div class="ir-chart-wrap" id="ov-chart-wrap">
-          <div class="ir-chart-header">Answer rate trend per department</div>
-          <div class="ir-chart-canvas-wrap"><canvas id="ov-trend-chart"></canvas></div>
+        <!-- #8: dept tile grid (main column) + 30-day trend chart (sticky right
+             rail) side-by-side, so the tile-hover → line-spotlight relationship
+             reads as one unit. Stacks to one column on narrow screens. -->
+        <div class="ov-grid-trend">
+          <div class="ov-grid-col">
+            <div id="ov-dept-grid" class="ov-dept-grid"></div>
+          </div>
+          <div class="ov-trend-col">
+            <div class="ir-chart-tabs" id="ov-chart-tabs" role="tablist">
+              <button type="button" class="ir-tab active" data-metric="pct" role="tab" aria-selected="true">% Answered (30 days)</button>
+              <button type="button" class="ir-tab" id="ov-axis-zoom-btn" aria-pressed="false"
+                title="Toggle the y-axis between the full 0–100% scale and an auto-fit zoom to the data range">Zoom: Full</button>
+            </div>
+            <div class="ir-chart-wrap" id="ov-chart-wrap">
+              <div class="ir-chart-header">Answer rate trend per department</div>
+              <div class="ir-chart-canvas-wrap"><canvas id="ov-trend-chart"></canvas></div>
+            </div>
+          </div>
         </div>
         <div id="ov-user-table-wrap" class="ov-user-table-wrap" style="display:none;">
           <div class="ir-chart-header">

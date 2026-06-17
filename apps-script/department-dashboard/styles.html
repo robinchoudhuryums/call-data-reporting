@@ -3660,6 +3660,23 @@
     margin-bottom: 18px;
     align-items: start;
   }
+  /* #8: grid (main) + trend chart (sticky right rail) side-by-side. The grid's
+     auto-fill columns reflow to fit the narrower column; the chart stays in
+     view while scrolling the grid. Collapses to one column under 1024px. */
+  .ov-grid-trend {
+    display: grid;
+    grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr);
+    gap: 18px;
+    align-items: start;
+    margin-top: 4px;
+  }
+  .ov-grid-col { min-width: 0; }
+  .ov-trend-col { min-width: 0; position: sticky; top: 12px; }
+  .ov-grid-trend .ov-dept-grid { margin-bottom: 0; }
+  @media (max-width: 1024px) {
+    .ov-grid-trend { grid-template-columns: 1fr; }
+    .ov-trend-col { position: static; }
+  }
   /* Each parent dept + its sub-queues stack vertically in a
      single grid cell. Children inherit the parent's tile color
      (slot in IR_CHART_COLORS) via inline-set color but get an
