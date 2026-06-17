@@ -3953,6 +3953,7 @@
   let irPendingAgentSelection_ = null;
   let irPendingAutoRun_ = false;   // drill-through: auto-generate once the picker renders
   let irCameFromInsights_ = false; // drill-through from Insights -> show "Back to Insights"
+  let irEditPopoverSeededCustom_ = false; // #1: edit popover opened over a custom-prior report
   let irListChangeHandler_ = null;
   const IR_PREFS_KEY = 'cdr.ir.prefs.v1';
 
@@ -4009,7 +4010,11 @@
       trapFocus_(modal);
       initModalDragResize_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
       document.addEventListener('keydown', onKeyDown);
-      showIrForm();
+      // Drill-through (irPendingAutoRun_) shows a loader instead of the form,
+      // which auto-generates once the roster loads (#1 Part B). Direct opens
+      // show the setup form as before.
+      if (irPendingAutoRun_) showIrDrillLoading_();
+      else showIrForm();
       ensureIrRoster();
     }
     function closeModal() {
@@ -4264,13 +4269,27 @@
   }
 
   function showIrForm() {
+    hideIrDrillLoading_();
     $('individual-form').style.display = '';
     $('individual-results').style.display = 'none';
     irSetFormError('');
   }
   function showIrResults() {
+    hideIrDrillLoading_();
     $('individual-form').style.display = 'none';
     $('individual-results').style.display = '';
+  }
+  // #1 Part B: drill-through loader shown IN PLACE of the setup form while a
+  // drill (Insights / My Department "IR" buttons) auto-generates, so the form
+  // doesn't flash. showIrForm/showIrResults clear it on ANY transition, so a
+  // drill can never get stuck on the loader (failure paths fall back to the form).
+  function showIrDrillLoading_() {
+    const l = $('ir-drill-loader'); if (l) l.style.display = '';
+    $('individual-form').style.display = 'none';
+    $('individual-results').style.display = 'none';
+  }
+  function hideIrDrillLoading_() {
+    const l = $('ir-drill-loader'); if (l) l.style.display = 'none';
   }
 
   function irSetFormError(msg) {
@@ -4327,6 +4346,11 @@
         renderIrAgentList(irLastRoster.agents, irLastRoster.activeAgents, irLastRoster.activeFloaters);
       })
       .withFailureHandler(function (err) {
+        // #1 Part B: a drill hides the form behind the loader; if the roster
+        // fetch fails, fall back to the form so the error (in the loader text)
+        // is visible and cancel the pending auto-run.
+        if (irPendingAutoRun_) { irPendingAutoRun_ = false; showIrForm(); }
+        $('ir-agent-loader').style.display = '';
         $('ir-agent-loader').textContent = 'Error loading roster: '
           + (err && err.message ? err.message : String(err));
       })
@@ -4641,6 +4665,9 @@
       .withFailureHandler(function (err) {
         btn.disabled = false;
         btn.textContent = originalLabel;
+        // #1 Part B: on a drill the form is hidden behind the loader; surface it
+        // so the error is visible (showIrForm clears the loader + any prior error).
+        showIrForm();
         irSetFormError('Error: ' + (err && err.message ? err.message : String(err)));
       })
       .getIndividualReport(req);
@@ -4816,6 +4843,22 @@
     if (!pop) return;
     const list = $('ir-edit-list');
     if (!list) return;
+    // #1: seed the date + compare controls from the current report so the
+    // popover can change dates as well as agents.
+    const curFrom = (irLastData && irLastData.meta && irLastData.meta.from) || ($('ir-from') ? $('ir-from').value : '');
+    const curTo   = (irLastData && irLastData.meta && irLastData.meta.to)   || ($('ir-to')   ? $('ir-to').value   : '');
+    if ($('ir-edit-from')) $('ir-edit-from').value = curFrom;
+    if ($('ir-edit-to'))   $('ir-edit-to').value   = curTo;
+    // The popover offers none/prevPeriod/yoy; a 'custom' prior can't be edited
+    // here. Track when we seeded over a custom prior so Apply can preserve it
+    // (rather than silently downgrading to "no comparison") if the user doesn't
+    // touch the compare control.
+    const curMode = $('ir-compare-mode') ? $('ir-compare-mode').value : 'none';
+    irEditPopoverSeededCustom_ = (curMode === 'custom');
+    if ($('ir-edit-compare-mode')) {
+      $('ir-edit-compare-mode').value =
+        (curMode === 'prevPeriod' || curMode === 'yoy') ? curMode : 'none';
+    }
     list.innerHTML = irBuildAgentListHtml_(irLastRoster.agents || [], irLastRoster.activeAgents, irLastRoster.activeFloaters);
     // Pre-check the currently-reported agents.
     const current = (irLastData && irLastData.meta && irLastData.meta.agents) || [];
@@ -4855,17 +4898,39 @@
   function irApplyEditPopover_() {
     const newAgents = irGetCheckedAgents_($('ir-edit-list'));
     if (!newAgents.length) return;
+
+    // #1: dates + compare mode now come from the popover too.
+    const from = $('ir-edit-from') ? $('ir-edit-from').value : $('ir-from').value;
+    const to   = $('ir-edit-to')   ? $('ir-edit-to').value   : $('ir-to').value;
+    if (!from || !to) { irSetResultsStatus('error', 'Pick a start and end date.'); return; }
+    if (from > to)    { irSetResultsStatus('error', 'Start date must be on or before end date.'); return; }
+    const popMode = $('ir-edit-compare-mode') ? $('ir-edit-compare-mode').value : 'none';
+
+    // Preserve a custom prior the popover can't represent: if we seeded over a
+    // custom-prior report and the user left the compare control at 'none', keep
+    // the custom prior (resolved from the setup form's inputs) instead of
+    // silently dropping the comparison.
+    const keepCustom = irEditPopoverSeededCustom_ && popMode === 'none';
+    let prior;
+    if (keepCustom) {
+      prior = irResolvePriorRange_(from, to);   // reads ir-compare-mode='custom' + ir-prior-from/to
+    } else {
+      prior = resolveComparisonWindow_(popMode, from, to, '', '', 'the compare control');
+    }
+
+    // Sync the popover state back into the setup form so going Back (or
+    // re-opening the popover) shows the same dates / agents / compare mode.
+    if ($('ir-from')) $('ir-from').value = from;
+    if ($('ir-to'))   $('ir-to').value   = to;
+    if ($('ir-preset')) $('ir-preset').value = 'custom';
+    if ($('ir-compare-mode') && !keepCustom) {
+      $('ir-compare-mode').value = popMode;
+      $('ir-compare-mode').dispatchEvent(new Event('change'));
+    }
     irApplyCheckedAgents_($('ir-agent-list'), newAgents);
     irCloseEditPopover_();
 
     const dept = getRequestedDept();
-    const from = $('ir-from').value;
-    const to   = $('ir-to').value;
-    // Re-resolve the prior range so re-running from the edit
-    // popover keeps the same Compare-with mode as the original
-    // Generate. Silent on validation issues -- the original
-    // form's Generate path is the place where errors surface.
-    const prior = irResolvePriorRange_(from, to);
 
     const btn = $('ir-edit-apply-btn');
     if (btn) { btn.disabled = true; btn.textContent = 'Loading…'; }

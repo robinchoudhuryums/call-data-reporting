@@ -459,6 +459,13 @@
         <h2 id="individual-modal-title">Individual Report</h2>
       </div>
       <div class="modal-panel-body">
+      <!-- Drill-through loader: shown instead of the setup form when IR is
+           opened by drilling from Insights / My Department (auto-generates for
+           the same date), so the form doesn't flash before the report. -->
+      <div id="ir-drill-loader" class="ir-drill-loader" style="display:none;">
+        <div class="ir-drill-spinner" aria-hidden="true"></div>
+        <div class="ir-drill-loader-text">Generating report&hellip;</div>
+      </div>
       <div id="individual-form" class="ir-form">
         <div class="ir-section-title">1. Date Range</div>
         <div class="ir-row">
@@ -563,10 +570,21 @@
           </div>
         </div>
 
-        <div id="ir-edit-popover" class="ir-edit-popover" style="display:none;" role="dialog" aria-label="Edit selection">
+        <div id="ir-edit-popover" class="ir-edit-popover" style="display:none;" role="dialog" aria-label="Edit selection and dates">
           <div class="ir-edit-popover-header">
-            <strong>Edit selection</strong>
+            <strong>Edit selection &amp; dates</strong>
             <button class="ir-edit-popover-close" id="ir-edit-popover-close" type="button" aria-label="Close">&times;</button>
+          </div>
+          <div class="ir-edit-dates-row">
+            <label class="ir-edit-date-field">From<input type="date" id="ir-edit-from"></label>
+            <label class="ir-edit-date-field">To<input type="date" id="ir-edit-to"></label>
+            <label class="ir-edit-date-field">Compare
+              <select id="ir-edit-compare-mode">
+                <option value="none">No comparison</option>
+                <option value="prevPeriod">Immediately-preceding period</option>
+                <option value="yoy">Same window one year prior</option>
+              </select>
+            </label>
           </div>
           <div class="ir-search-row">
             <input type="search" id="ir-edit-search" placeholder="Search agents..." autocomplete="off">
