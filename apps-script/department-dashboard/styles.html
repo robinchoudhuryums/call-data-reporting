@@ -2947,9 +2947,11 @@
   .ins-cbar-fill.ins-cbar-miss { background: var(--warn-soft); }
   .ins-cbar-team { position: absolute; top: -1px; bottom: -1px; width: 2px;
                    background: var(--ink); opacity: 0.5; }
-  .ins-cbar-val { position: absolute; right: 5px; top: 0; line-height: 15px;
-                  font-size: 10px; font-weight: 600; color: var(--ink);
-                  font-variant-numeric: tabular-nums; pointer-events: none; }
+  /* #3: value beside the track (own column), so it never paints over the
+     team-average marker. Fixed min-width keeps the numbers right-aligned. */
+  .ins-cbar-val { flex: 0 0 auto; min-width: 42px; text-align: right;
+                  line-height: 15px; font-size: 10px; font-weight: 600;
+                  color: var(--ink); font-variant-numeric: tabular-nums; }
   .ins-cbar-delta { flex: 0 0 auto; }
   .ins-card-more { margin-top: 8px; }
   .ins-card-more > summary { font-size: 10.5px; color: var(--muted); cursor: pointer;

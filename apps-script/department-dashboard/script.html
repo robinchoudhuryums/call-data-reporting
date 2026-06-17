@@ -6702,10 +6702,14 @@
             color: THEME.paper,
             font: { family: "'IBM Plex Mono', monospace", size: 11, weight: '500' },
             textAlign: 'center',
+            // #2: name the slice on the donut itself (truncated to fit), not
+            // just in the right-side legend, so each slice is self-identifying.
             formatter: function (value, ctx) {
               const total = ctx.dataset.data.reduce(function (a, b) { return a + b; }, 0);
               const pct = total > 0 ? (value / total * 100).toFixed(1) : '0';
-              return value + '\n(' + pct + '%)';
+              const name = String((ctx.chart.data.labels || [])[ctx.dataIndex] || '');
+              const shown = name.length > 13 ? name.slice(0, 12) + '…' : name;
+              return shown + '\n' + value + ' (' + pct + '%)';
             },
           },
         },
@@ -10517,10 +10521,14 @@
             color: THEME.paper,
             font: { family: "'IBM Plex Mono', monospace", size: 11, weight: '500' },
             textAlign: 'center',
+            // #2: name the slice on the donut itself (truncated to fit), not
+            // just in the right-side legend, so each slice is self-identifying.
             formatter: function (value, ctx) {
               const total = ctx.dataset.data.reduce(function (a, b) { return a + b; }, 0);
               const pct = total > 0 ? (value / total * 100).toFixed(1) : '0';
-              return value + '\n(' + pct + '%)';
+              const name = String((ctx.chart.data.labels || [])[ctx.dataIndex] || '');
+              const shown = name.length > 13 ? name.slice(0, 12) + '…' : name;
+              return shown + '\n' + value + ' (' + pct + '%)';
             },
           },
         },
@@ -11031,14 +11039,18 @@
       const max  = isPct ? 100 : Math.max(val, tAvg, 1);
       const valLbl  = isPct ? val.toFixed(1) + '%' : (st.formatted != null ? String(st.formatted) : String(val));
       const tAvgLbl = isPct ? tAvg.toFixed(1) + '%' : String(Math.round(tAvg));
+      // #3: the value sits OUTSIDE the track (its own column), not absolutely
+      // positioned inside it -- when pinned to the right edge it painted over
+      // the team-average marker whenever the team avg was near the agent's
+      // value, hiding the key reference. Track now shows only fill + marker.
       return '<div class="ins-cbar-row" title="' + escapeHtml(lbl) + ': ' + escapeHtml(valLbl)
            +   ' (team avg ' + escapeHtml(tAvgLbl) + ')">'
            +   '<span class="ins-cbar-lbl">' + lbl + '</span>'
            +   '<span class="ins-cbar-track">'
            +     '<span class="ins-cbar-fill ' + cls + '" style="width:' + Math.max(2, Math.min(100, Math.round(val / max * 100))) + '%"></span>'
            +     '<span class="ins-cbar-team" style="left:' + Math.min(100, Math.round(tAvg / max * 100)) + '%" title="team avg ' + escapeHtml(tAvgLbl) + '"></span>'
-           +     '<span class="ins-cbar-val">' + escapeHtml(valLbl) + '</span>'
            +   '</span>'
+           +   '<span class="ins-cbar-val">' + escapeHtml(valLbl) + '</span>'
            +   '<span class="ins-cbar-delta">' + insDeltaBadge_(st, deltaValence) + '</span>'
            + '</div>';
     };
