@@ -1784,6 +1784,10 @@
           <!-- F2 divergence detector: sheet-vs-Neon DQE max-date comparison.
                Hidden unless Neon is configured on this project. -->
           <div id="al-neon-mirror" class="al-neon-mirror" style="display:none;"></div>
+          <!-- F3 read-back health: surfaces NEON_READ_LAST_ERROR so a failing
+               Neon read-back (silent sheet-fallback) is visible to admins.
+               Hidden in the healthy / sheet-source case. -->
+          <div id="al-neon-read" class="al-neon-mirror" style="display:none;"></div>
           <table class="al-log-table">
             <thead><tr>
               <th>When</th>

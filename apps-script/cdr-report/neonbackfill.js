@@ -71,6 +71,10 @@ function backfillDQEHistory() {
         return;
       }
 
+      // Resume at the batch START on failure (see catch): the inner loop skips
+      // blank rows (i++ without pushing), so i - batch.length under-counts the
+      // start and would re-scan already-skipped rows. Mirrors the upsert path.
+      var batchStartIdx = i;
       var batch = [];
       var batchEnd = Math.min(i + BATCH_SIZE, data.length);
       while (i < batchEnd) {
@@ -158,10 +162,8 @@ function backfillDQEHistory() {
 
       } catch (e) {
         conn.rollback();
-        i = i - batch.length;
-        var safeIndex = Math.max(0, i);
-        props.setProperty('DQE_BACKFILL_RESUME', String(safeIndex));
-        Logger.log('Batch failed, rolled back. Resume at ' + safeIndex + '. Error: ' + e.message);
+        props.setProperty('DQE_BACKFILL_RESUME', String(batchStartIdx));
+        Logger.log('Batch failed, rolled back. Resume at ' + batchStartIdx + '. Error: ' + e.message);
         throw e;
       } finally {
         conn.close();
@@ -433,6 +435,9 @@ function backfillCDRHistory() {
         return;
       }
 
+      // Resume at the batch START on failure (see catch): the inner loop skips
+      // blank rows (i++ without pushing), so i - batch.length under-counts.
+      var batchStartIdx = i;
       var batch = [];
       var batchEnd = Math.min(i + BATCH_SIZE, data.length);
       while (i < batchEnd) {
@@ -607,10 +612,8 @@ function backfillCDRHistory() {
 
       } catch (e) {
         try { conn.rollback(); } catch (re) {}
-        i = i - batch.length;
-        var safeIndex = Math.max(0, i);
-        props.setProperty('CDR_BACKFILL_RESUME', String(safeIndex));
-        Logger.log('CDR batch failed, rolled back. Resume at ' + safeIndex + '. Error: ' + e.message);
+        props.setProperty('CDR_BACKFILL_RESUME', String(batchStartIdx));
+        Logger.log('CDR batch failed, rolled back. Resume at ' + batchStartIdx + '. Error: ' + e.message);
         throw e;
       } finally {
         try { conn.close(); } catch (ce) {}
@@ -688,6 +691,9 @@ function backfillQCDHistory() {
       }
 
       // Build one batch of rows
+      // Resume at the batch START on failure (see catch): the inner loop skips
+      // blank rows (i++ without pushing), so i - batch.length under-counts.
+      var batchStartIdx = i;
       var batch = [];
       var batchEnd = Math.min(i + BATCH_SIZE, data.length);
       while (i < batchEnd) {
@@ -763,10 +769,8 @@ function backfillQCDHistory() {
 
       } catch (e) {
         try { conn.rollback(); } catch (re) {}
-        i = i - batch.length;
-        var safeIndex = Math.max(0, i);
-        props.setProperty('QCD_BACKFILL_RESUME', String(safeIndex));
-        Logger.log('Batch failed, rolled back. Resume at ' + safeIndex + '. Error: ' + e.message);
+        props.setProperty('QCD_BACKFILL_RESUME', String(batchStartIdx));
+        Logger.log('Batch failed, rolled back. Resume at ' + batchStartIdx + '. Error: ' + e.message);
         try { conn.close(); } catch (ce) {}
         throw e;
       }

@@ -711,9 +711,12 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   sheet-vs-neon payload parity is pinned byte-identical by
   `tests/unit/dal-cutover.test.js` (fake JDBC conn serving the same
   fixture rows, date-param filtering honored). NOTE: the editor-run
-  `compareDqeSources_` gate does NOT compare the slot/abandoned detail
-  columns -- spot-check one Missed Calls report sheet-vs-neon after
-  flipping the flag. The `getDeptQueueExts_` DERIVED all-history scan
+  `compareDqeSources_` gate now ALSO compares the slot/abandoned detail
+  columns (via the `includeMissedDetail` opt on `sheetFetchDqeRows_` /
+  `neonFetchDqeRows_`), so a parity-CLEAN result certifies the Missed Calls
+  reader's inputs too; its range reads the `DQE_PARITY_FROM` / `DQE_PARITY_TO`
+  Script Properties (falling back to in-source defaults) so it can run
+  unattended. The `getDeptQueueExts_` DERIVED all-history scan
   is now ALSO off the sheet on the Neon path -- `deptQueueExtsForNeonReader_`
   (Data.gs) builds the dept ext set from `neonGetAgentExtPairs_` (a cached
   `SELECT DISTINCT agent_name, queue_extensions` json_agg fetch) instead of
@@ -782,8 +785,13 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   / `backfillInboundCalls`). All writers are idempotent (`ON CONFLICT`), so a
   Neon-unreachable or partially-failed date is LEFT in the queue and retried
   next run (reachability is per-instance binary, so the CDR/QCD/DQE
-  unreachable detection keeps the whole date queued even though
-  `backfillInboundCalls` returns no status). Only affects the daily/manual
+  unreachable detection keeps the whole date queued). `backfillInboundCalls`
+  now returns a status object (`{inserted, unreachable, failures}`) that
+  `mirrorInboundForDate_` honors: an inbound Neon outage keeps the date
+  queued, and a hard inbound write error throws (logged as a
+  `neonMirror:Inbound` failure, date stays queued) -- so the deferred mirror
+  no longer silently dequeues a date whose `inbound_calls` rows never landed
+  (`inbound_calls` has no sheet primary, so that loss was unrecoverable). Only affects the daily/manual
   path (`!isHistoricalBackfill`); the bulk backfill already defers DQE via
   `skipNeon` + `backfillDQEHistoryUpsert`. In deferred mode the cdr-report
   `runDailyDQEBuild_` safety-net trigger (if still installed) re-mirrors DQE
@@ -1214,7 +1222,18 @@ When something looks wrong, before assuming a code bug, check:
     sheet vs `dqe_history` `MAX(call_date)`) so a stale mirror is
     visible at a glance; a transient outage that left a date
     un-mirrored self-heals on the next import of that date -- the
-    dup-guard re-mirrors the existing sheet rows to Neon (F2).
+    dup-guard re-mirrors the existing sheet rows to Neon (F2). The
+    Alerts modal ALSO shows a **Neon read-back health** line
+    (`computeNeonReadHealth_`, surfacing the durable `NEON_READ_LAST_ERROR`
+    streak `recordNeonReadFailure_` writes): a failing Neon read-back
+    -- which silently falls back to the sheet, so a sustained outage
+    would serve stale data once the sheet ages -- is now visible to
+    admins. The line renders only when Neon is configured AND (reads
+    are on `neon` OR a failure is on record), warn-tinted with the
+    last error + consecutive-failure count, cleared on the next
+    successful read. The parity gate `compareDqeSources_` reads the
+    optional `DQE_PARITY_FROM` / `DQE_PARITY_TO` Script Properties for
+    its range (in-source defaults if unset).
 20. Neon keep-warm (optional; only relevant once `DQE_READ_SOURCE=neon`).
     Toggle from the Alerts modal → **Neon keep-warm** section
     (`NeonKeepWarm.gs`). When enabled it sets `NEON_KEEPWARM_ENABLED=true`
@@ -1300,7 +1319,7 @@ CDR DQE Pipeline:
   apps-script/cdr-report/buildDQEHistoricalData.js, apps-script/cdr-report/DQEdrilldown.js, apps-script/cdr-report/DQEDrilldownSidebar.html, apps-script/cdr-report/dataFilters.js, apps-script/cdr-report/CDR Tools menu.js, apps-script/cdr-report/appsscript.json
 
 CDR Reporting Tools:
-  apps-script/cdr-report/dashboardCDR.js, apps-script/cdr-report/dbHistorical.js, apps-script/cdr-report/dbReporting.js, apps-script/cdr-report/emailDailyReport.js, apps-script/cdr-report/neonbackfill.js, apps-script/cdr-report/neonWrite.js, apps-script/cdr-report/inboundCallsExport.js, apps-script/cdr-report/insuranceNumbers.js
+  apps-script/cdr-report/dashboardCDR.js, apps-script/cdr-report/dbHistorical.js, apps-script/cdr-report/dbReporting.js, apps-script/cdr-report/emailDailyReport.js, apps-script/cdr-report/neonbackfill.js, apps-script/cdr-report/neonWrite.js, apps-script/cdr-report/inboundCallsExport.js, apps-script/cdr-report/insuranceNumbers.js, apps-script/cdr-report/sheetRepairs.js
 
 CDR Import:
   apps-script/cdr-import/AbandonedFilter.js, apps-script/cdr-import/CDR Tools.js, apps-script/cdr-import/DeleteOldSheets.js, apps-script/cdr-import/autoImport.js, apps-script/cdr-import/buildDQEHistoricalData.js, apps-script/cdr-import/importBulkCSVsFromDrive.js, apps-script/cdr-import/inboundCalls.js, apps-script/cdr-import/NeonMirror.js, apps-script/cdr-import/neonWrite.js, apps-script/cdr-import/appsscript.json

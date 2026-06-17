@@ -153,7 +153,10 @@ function neonMirrorDate_(ss, iso) {
       allOk = false;
       neonMirrorLog_(ss, 'neonMirror:' + label, 'failure', null, t0, iso + ' | Neon unreachable');
     } else {
-      neonMirrorLog_(ss, 'neonMirror:' + label, 'success', (res && res.rows) || 0, t0, iso);
+      // F6: writers may attach a `note` (e.g. CDR's phone-child count) so a
+      // secondary-mirror outcome is visible in the Pipeline Health row.
+      neonMirrorLog_(ss, 'neonMirror:' + label, 'success', (res && res.rows) || 0, t0,
+        iso + ((res && res.note) ? ' | ' + res.note : ''));
     }
     return res;
   };
@@ -204,7 +207,12 @@ function mirrorCdrForDate_(ss, iso) {
   if (!batch.length) return { rows: 0 };
   var res = writeCDRRowsToNeon(batch);
   if (res && res.skipped) return { unreachable: true, rows: 0 };
-  return { rows: batch.length };
+  // F6: surface the phone-child row count in the Pipeline Health note so the
+  // secondary mirror (call_history_phones) is observable. (A phone-insert
+  // failure already throws out of writeCDRRowsToNeon and is caught by
+  // neonMirrorDate_'s step, which keeps the date queued -- so this is the
+  // observability gap, not a silent-loss path.)
+  return { rows: batch.length, note: 'phones=' + ((res && res.phones) || 0) };
 }
 
 /** QCD Historical Data (12 cols) -> writeQCDRowsToNeon, filtered to `iso`. */
@@ -272,10 +280,21 @@ function mirrorDqeForDate_(ss, iso) {
  * row count and treat a throw as a hard failure (date stays queued).
  */
 function mirrorInboundForDate_(iso) {
+  // F1: backfillInboundCalls now returns a structured outcome
+  // { inserted, unreachable, failures, ... }. Honor it so a Neon-unreachable
+  // or hard-failed date stays queued. Previously the function returned
+  // undefined, so `res` was always falsy: this helper reported { rows: 0 }
+  // success unconditionally and the date got dequeued -- silently dropping
+  // unrecoverable inbound_calls data (no sheet primary) on any inbound outage.
   var res = backfillInboundCalls(iso, iso, true);
-  var rows = (res && (res.inserted || res.wrote || res.records)) || 0;
-  if (res && res.skipped && !rows) return { unreachable: true, rows: 0 };
-  return { rows: rows };
+  if (res && res.unreachable) return { unreachable: true, rows: 0 };
+  if (res && res.failures) {
+    // A hard write error (not reachability) -- throw so neonMirrorDate_'s step
+    // logs a real failure and keeps the date queued (mirrors how the CDR/QCD/
+    // DQE writers surface a non-skip error).
+    throw new Error('inbound mirror failed for ' + iso + ' (' + res.failures + ' write failure(s))');
+  }
+  return { rows: (res && res.inserted) || 0 };
 }
 
 // --- Trigger lifecycle (editor / CDR Tools menu) -----------------------------
