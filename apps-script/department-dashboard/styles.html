@@ -995,6 +995,25 @@
     display: flex;
     flex-direction: column;
   }
+  /* Modal entrance motion (Phase 2): backdrop fades, panel rises + scales in.
+     Keyed off the shared aria-hidden="false" the per-modal openModal() sets, so
+     it applies to every modal with no JS. Ends at transform:none so it never
+     fights the drag/resize inline transform. Reduced-motion disables it. */
+  .modal[aria-hidden="false"] .modal-backdrop {
+    animation: ds-modal-fade var(--dur-2, 200ms) var(--ease, ease-out);
+  }
+  .modal[aria-hidden="false"] .modal-panel {
+    animation: ds-modal-rise var(--dur-2, 200ms) var(--ease, ease-out);
+  }
+  @keyframes ds-modal-fade { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes ds-modal-rise {
+    from { opacity: 0; transform: translateY(10px) scale(0.98); }
+    to   { opacity: 1; transform: none; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .modal[aria-hidden="false"] .modal-backdrop,
+    .modal[aria-hidden="false"] .modal-panel { animation: none; }
+  }
   /* Sticky modal header: keeps the report title + close X
      visible while the body scrolls. The close button stays at
      the top-right of the modal panel via absolute positioning
