@@ -116,6 +116,16 @@ Tests: 132/132 pass; whole-file CSS brace balance 860/860; INV-16 untouched. No 
   tests 132/132; CSS braces 860/860; JS clean. Live verify: S38 (Inbound) + S37 (Insights qh) +
   re-check 92%/5% tint shows on IR/PR/Insights KPI values, post-deploy.
 
+- **Increment 7 (DONE):** QCD KPI tiles (`qcdRenderKpiTiles_`) → `.ds-kpi`. label + value only
+  (no delta/spark/caption); the two warn-coded tiles (Abandoned % ≥5, Violations MTD >0) now tint
+  the VALUE via the ds-* status mechanism (`ds-kpi--status is-warn` → `.ds-kpi__value` reads
+  `var(--status)`; specificity-safe). Minor visual refinement: legacy `pr-delta-neg` gave the value
+  a warn-soft BACKGROUND block; ds tints the text only — which matches how abandon-%/bench tints
+  render on every other report (consistency, not regression). tests 132/132; JS clean; INV-16 in
+  sync. Remaining `.pr-kpi-tile` renderer: CR team tiles (script.html:7956) — bigger (per-day
+  caption + "(P1)" badge), left for a focused next increment. IR tiles (`irKpiTile`) are the most
+  complex (team-comparison + share + prior). Live verify: S32 (QCD) post-deploy.
+
 ## Where I left off
 Phase 1 confirmed in prod by the operator. Continued report-by-report migration with
 `/broad-implement` rigor: Increment 4 promoted the KPI tile to a shared `dsKpiTile_` and moved the

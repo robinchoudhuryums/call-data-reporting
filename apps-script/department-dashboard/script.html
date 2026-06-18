@@ -12529,34 +12529,33 @@
   function qcdRenderKpiTiles_(t) {
     const wrap = $('qcd-kpi-row');
     if (!wrap) return;
-    // Reuse the Performance Report KPI tile DOM shape so existing
-    // styling carries over. No prev/delta on QCD's KPIs -- absolute
-    // values only. Two tiles are color-coded:
-    //   - Abandoned %: warn-red when >= 5% (pipeline's violation
-    //     threshold). Mirrors the Overview tile chip color rule.
-    //   - Violations (current month): warn-red when > 0. Server
-    //     sources this as MTD across the dept's mapped queues, NOT
-    //     the selected-range sum -- operationally more useful as
-    //     "how many bad days this month?"
-    const tile = function (label, value, valueClass) {
-      return '<div class="pr-kpi-tile">'
-           +   '<div class="pr-kpi-label">' + escapeHtml(label) + '</div>'
-           +   '<div class="pr-kpi-value' + (valueClass ? ' ' + valueClass : '') + '">'
-           +     escapeHtml(String(value))
-           +   '</div>'
+    // ds-kpi tiles (Phase 1 ds-* migration). No prev/delta on QCD's KPIs --
+    // absolute values only. Two tiles are warn-tinted via the ds-* STATUS
+    // mechanism (ds-kpi--status + is-warn -> .ds-kpi__value reads var(--status);
+    // specificity-safe, unlike a bare color class), preserving the prior
+    // pr-delta-neg coloring:
+    //   - Abandoned %: warn when >= 5% (pipeline's violation threshold).
+    //     Mirrors the Overview tile chip color rule.
+    //   - Violations (current month): warn when > 0. Server sources this as MTD
+    //     across the dept's mapped queues, NOT the selected-range sum --
+    //     operationally more useful as "how many bad days this month?"
+    const tile = function (label, value, warn) {
+      return '<div class="ds-kpi' + (warn ? ' ds-kpi--status is-warn' : '') + '">'
+           +   '<div class="ds-kpi__top"><span class="ds-kpi__label">' + escapeHtml(label) + '</span></div>'
+           +   '<div class="ds-kpi__value">' + escapeHtml(String(value)) + '</div>'
            + '</div>';
     };
     const pct = Number(t.abandonedPct) || 0;
-    const pctCls  = pct >= 5 ? 'pr-delta-neg' : '';
-    const violCls = (Number(t.violations) || 0) > 0 ? 'pr-delta-neg' : '';
+    const pctWarn  = pct >= 5;
+    const violWarn = (Number(t.violations) || 0) > 0;
     wrap.innerHTML =
         tile('Total Calls',  fmtNumber(t.totalCalls    || 0))
       + tile('Answered',     fmtNumber(t.totalAnswered || 0))
       + tile('Abandoned',    fmtNumber(t.abandoned     || 0))
-      + tile('Abandoned %',  String(t.abandonedPctStr  || '0.00%'), pctCls)
+      + tile('Abandoned %',  String(t.abandonedPctStr  || '0.00%'), pctWarn)
       + tile('Longest Wait', String(t.longestWait      || '0:00:00'))
       + tile('Avg Answer',   String(t.avgAnswer        || '0:00:00'))
-      + tile('Violations (MTD)', fmtNumber(t.violations || 0), violCls);
+      + tile('Violations (MTD)', fmtNumber(t.violations || 0), violWarn);
   }
 
   function qcdRenderDailyTable_(rows) {
