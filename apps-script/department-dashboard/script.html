@@ -7844,10 +7844,13 @@
     if (!meta || !meta.lengthMismatch) { el.style.display = 'none'; el.innerHTML = ''; return; }
     const p1d = meta.p1Days || 0;
     const p2d = meta.p2Days || 0;
-    el.innerHTML = '<strong>Different period lengths:</strong> '
+    // ds-banner structure (Phase 1 ds-* migration): status badge + text child.
+    // is-warn (on the element) tints the soft background + badge; copy unchanged.
+    el.innerHTML = '<span class="ds-banner__badge">Heads up</span>'
+                 + '<div><strong>Different period lengths:</strong> '
                  + 'Period 1 is ' + p1d + ' days, Period 2 is ' + p2d + ' days. '
                  + 'Volume totals (Rung / Missed / Answered) aren\'t directly comparable; '
-                 + 'compare the per-day averages shown on the KPI tiles + agent cards instead.';
+                 + 'compare the per-day averages shown on the KPI tiles + agent cards instead.</div>';
     el.style.display = '';
   }
 

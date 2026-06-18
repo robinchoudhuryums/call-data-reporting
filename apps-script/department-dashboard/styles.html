@@ -2593,16 +2593,8 @@
   /* Length-mismatch banner — warn-stripe panel with soft-bg fill,
      same shape as the queue-only section so the visual grammar of
      "this needs attention" is consistent across the app. */
-  .cr-length-warning {
-    background: var(--warn-soft);
-    color: var(--warn);
-    border-left: 3px solid var(--warn);
-    border-radius: 2px;
-    padding: 10px 14px;
-    font-size: 12.5px;
-    margin-bottom: 14px;
-  }
-  .cr-length-warning strong { color: var(--warn); font-weight: 500; }
+  /* .cr-length-warning retired -- Compare Ranges' length-mismatch banner now
+     uses the shared .ds-banner is-warn (Phase 1 ds-* migration), like Insights. */
 
   /* Per-day caption inside KPI tiles (volume + time metrics
      when length-mismatch). Small mono line under the delta. */

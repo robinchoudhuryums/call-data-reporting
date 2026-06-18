@@ -92,6 +92,14 @@ Tests: 132/132 pass; whole-file CSS brace balance 860/860; INV-16 untouched. No 
   (still used by `inboundKpiTile_` + a CR tile site). Live visual verify = scenario S14 (PR) +
   S37 (Insights) post-deploy. tests 132/132; INV-16 in sync; JS `node --check` clean.
 
+- **Increment 5 (DONE):** Compare Ranges length-mismatch banner → `.ds-banner is-warn`
+  (mirrors Insights Increment 3). dashboard.html class swap on `#cr-length-warning`
+  (`cr-length-warning`→`ds-banner is-warn`, id kept); `crRenderLengthWarning_` restructured to
+  `ds-banner__badge` ("Heads up") + text `<div>`, copy verbatim; the now-dead `.cr-length-warning`
+  CSS removed (CR was its last user after Insights migrated). INV-35 logic (form hint / KPI
+  captions / CSV) untouched. tests 132/132; CSS braces 858/858; JS clean. Live verify: S18 (CR
+  length-mismatch) post-deploy.
+
 ## Where I left off
 Phase 1 confirmed in prod by the operator. Continued report-by-report migration with
 `/broad-implement` rigor: Increment 4 promoted the KPI tile to a shared `dsKpiTile_` and moved the
