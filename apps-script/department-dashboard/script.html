@@ -2444,7 +2444,7 @@
 
   function applyGlossaryTooltips_(root) {
     if (!root || !root.querySelectorAll) return;
-    const sel = 'th, .ir-kpi-label, .pr-kpi-label, .dept-qcd-label, .ov-dept-stat-label';
+    const sel = 'th, .ir-kpi-label, .ds-kpi__label, .dept-qcd-label, .ov-dept-stat-label';
     root.querySelectorAll(sel).forEach(function (el) {
       if (el.title) return;                       // never clobber an existing tooltip
       const def = METRIC_GLOSSARY_[glossaryKeyFor_(el)];

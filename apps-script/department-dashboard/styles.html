@@ -2369,51 +2369,10 @@
     gap: 10px;
     margin-bottom: 16px;
   }
-  .pr-kpi-tile {
-    background: var(--paper-card);
-    border: 1px solid var(--line);
-    border-radius: 2px;
-    padding: 12px 14px;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    font-variant-numeric: tabular-nums;
-    min-width: 0;
-  }
-  /* Label + inline sparkline on the top row. Mirrors the IR
-     summary-card tile layout for visual consistency. */
-  .pr-kpi-row-top {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 6px;
-  }
-  .pr-kpi-spark { height: 22px; line-height: 0; }
-  .pr-kpi-label {
-    font-family: var(--mono);
-    font-size: 10px;
-    font-weight: 500;
-    text-transform: uppercase;
-    letter-spacing: 0.18em;
-    color: var(--muted);
-  }
-  .pr-kpi-value {
-    font-family: var(--display);
-    font-size: 26px;
-    font-weight: 500;
-    letter-spacing: -0.4px;
-    color: var(--ink);
-    line-height: 1.05;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .pr-kpi-delta {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 11px;
-  }
+  /* .pr-kpi-tile / -row-top / -spark / -label / -value / -delta retired:
+     every KPI-tile renderer now uses the shared .ds-kpi component (Phase 1
+     ds-* migration). .pr-kpi-row (the grid container above) and the .pr-delta*
+     badge classes below are still in use, so they stay. */
   .pr-delta {
     display: inline-flex;
     align-items: center;
@@ -3527,7 +3486,7 @@
       margin-bottom: 14px !important;
     }
     body.pr-printing .ir-chart-wrap,
-    body.pr-printing .pr-kpi-tile,
+    body.pr-printing .ds-kpi,
     body.pr-printing .pr-agent-table { page-break-inside: avoid; }
 
     body.cr-printing > .container { display: none !important; }
@@ -3565,7 +3524,7 @@
     body.cr-printing .cr-quiet-details { border-top: 0 !important; padding-top: 0 !important; }
     body.cr-printing .cr-quiet-details > #cr-quiet-cards { display: grid !important; }
     body.cr-printing .cr-chart-wrap,
-    body.cr-printing .pr-kpi-tile,
+    body.cr-printing .ds-kpi,
     body.cr-printing .cr-agent-card { page-break-inside: avoid; }
 
     body.ins-printing > .container { display: none !important; }
@@ -3599,7 +3558,7 @@
     body.ins-printing #ins-quiet-details { border-top: 0 !important; padding-top: 0 !important; }
     body.ins-printing #ins-quiet-details > #ins-quiet-cards { display: grid !important; }
     body.ins-printing .ir-chart-wrap,
-    body.ins-printing .pr-kpi-tile,
+    body.ins-printing .ds-kpi,
     body.ins-printing .ins-card { page-break-inside: avoid; }
   }
 
