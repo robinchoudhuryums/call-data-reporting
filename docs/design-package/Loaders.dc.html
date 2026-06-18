@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    body { margin:0; }
+    @keyframes dsRing   { 0%{transform:scale(.25);opacity:.85} 80%{opacity:0} 100%{transform:scale(1);opacity:0} }
+    @keyframes dsEq     { 0%,100%{transform:scaleY(.28)} 50%{transform:scaleY(1)} }
+    @keyframes dsShim   { 0%{transform:translateX(-120%)} 100%{transform:translateX(120%)} }
+    @keyframes dsDraw   { 0%{stroke-dashoffset:240} 70%{stroke-dashoffset:0} 100%{stroke-dashoffset:0} }
+    @keyframes dsDot    { 0%{opacity:0} 72%{opacity:0} 80%{opacity:1} 100%{opacity:1} }
+    @keyframes dsSpin   { to{transform:rotate(360deg)} }
+    @keyframes dsPulse  { 0%,100%{opacity:.4} 50%{opacity:1} }
+    @media (prefers-reduced-motion: reduce){
+      .dsAnim,[style*="animation"]{ animation:none !important; }
+    }
+  </style>
+</helmet>
+
+<div style="width:max-content; min-width:100%; min-height:100vh; box-sizing:border-box; padding:48px; background:#dbe4eb; font-family:'Inter',-apple-system,sans-serif; color:#101418;">
+
+  <!-- INTRO -->
+  <div style="max-width:1080px; margin:0 auto 36px;">
+    <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; font-weight:500; text-transform:uppercase; letter-spacing:.2em; color:#606872;">Design follow-up · loaders</div>
+    <h1 style="margin:10px 0 0; font-family:'Inter Tight',sans-serif; font-size:38px; font-weight:700; letter-spacing:-1px; line-height:1.05;">Loaders — coverage &amp; a themed set</h1>
+    <p style="margin:16px 0 0; max-width:740px; font-size:15px; line-height:1.65; color:#3a4048;">You already have a solid skeleton system. The work is filling the <strong>gaps</strong> and giving the busy-states a little character that fits a <em>telephony</em> product. Five loaders below, each mapped to where it belongs, all animated live. They share the cool palette and respect <code style="font-family:'IBM Plex Mono',monospace;">prefers-reduced-motion</code>.</p>
+  </div>
+
+  <!-- COVERAGE MAP -->
+  <div style="max-width:1080px; margin:0 auto 14px;">
+    <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.18em; text-transform:uppercase; color:#4e7bc4; font-weight:500;">Coverage map</div>
+    <h2 style="margin:6px 0 0; font-family:'Inter Tight',sans-serif; font-size:24px; font-weight:600; letter-spacing:-.4px;">What's covered, weak, and missing</h2>
+  </div>
+  <div style="max-width:1080px; margin:14px auto 0; display:grid; grid-template-columns:1fr 1fr 1fr; gap:14px;">
+    <div style="background:#fff; border:1px solid #c8d8e6; border-radius:12px; border-top:4px solid #3d9476; padding:16px 18px;">
+      <div style="display:flex; align-items:center; gap:8px;"><span style="width:8px;height:8px;border-radius:999px;background:#3d9476;"></span><span style="font-family:'Inter Tight',sans-serif; font-size:15px; font-weight:600;">Already good</span></div>
+      <ul style="margin:10px 0 0; padding-left:16px; font-size:12.5px; line-height:1.7; color:#3a4048;"><li>Overview (skeleton)</li><li>My Department table (skeleton)</li><li>Agent pickers — Individual / Performance / Compare / Insights</li><li>Individual drill-in spinner</li></ul>
+    </div>
+    <div style="background:#fff; border:1px solid #c8d8e6; border-radius:12px; border-top:4px solid #c66b4b; padding:16px 18px;">
+      <div style="display:flex; align-items:center; gap:8px;"><span style="width:8px;height:8px;border-radius:999px;background:#c66b4b;"></span><span style="font-family:'Inter Tight',sans-serif; font-size:15px; font-weight:600;">Weak — upgrade</span></div>
+      <p style="font-size:12px; color:#606872; margin:8px 0 6px;">Plain "Loading…" text, no shape:</p>
+      <ul style="margin:0; padding-left:16px; font-size:12.5px; line-height:1.7; color:#3a4048;"><li>Alerts (<code style="font-family:'IBM Plex Mono',monospace;">al-loading</code>)</li><li>Outlier Fix (<code style="font-family:'IBM Plex Mono',monospace;">of-loading</code>)</li><li>Dept Config (<code style="font-family:'IBM Plex Mono',monospace;">dc-loading</code>)</li></ul>
+    </div>
+    <div style="background:#fff; border:1px solid #c8d8e6; border-radius:12px; border-top:4px solid #b23a2c; padding:16px 18px;">
+      <div style="display:flex; align-items:center; gap:8px;"><span style="width:8px;height:8px;border-radius:999px;background:#b23a2c;"></span><span style="font-family:'Inter Tight',sans-serif; font-size:15px; font-weight:600;">Missing — add</span></div>
+      <ul style="margin:10px 0 0; padding-left:16px; font-size:12.5px; line-height:1.7; color:#3a4048;"><li>QCD results</li><li>Inbound results (4 tables)</li><li>Caller Lookup query</li><li>Chart render / Chart.js lazy-load</li><li>App boot / Neon cold-start</li></ul>
+    </div>
+  </div>
+
+  <!-- GALLERY HEADER -->
+  <div style="max-width:1080px; margin:48px auto 14px;">
+    <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.18em; text-transform:uppercase; color:#4e7bc4; font-weight:500;">The set</div>
+    <h2 style="margin:6px 0 0; font-family:'Inter Tight',sans-serif; font-size:24px; font-weight:600; letter-spacing:-.4px;">Five loaders, each for a job</h2>
+    <p style="margin:8px 0 0; max-width:740px; font-size:14px; line-height:1.6; color:#3a4048;">Live animations. The first three are the "interesting" ones (telephony-flavored); the last two are the workhorses. Use the right one for the wait — shape-matched skeletons for content, motion loaders for indeterminate queries.</p>
+  </div>
+
+  <div style="max-width:1080px; margin:14px auto 0; display:grid; grid-template-columns:1fr 1fr; gap:18px;">
+
+    <!-- 1 · SIGNAL RINGS -->
+    <div style="background:#fff; border:1px solid #c8d8e6; border-radius:14px; overflow:hidden;">
+      <div style="height:170px; background:#f0f6fa; display:flex; align-items:center; justify-content:center; position:relative;">
+        <div style="position:relative; width:90px; height:90px; display:flex; align-items:center; justify-content:center;">
+          <span class="dsAnim" style="position:absolute; inset:0; border:2px solid #4e7bc4; border-radius:999px; animation:dsRing 1.8s ease-out infinite;"></span>
+          <span class="dsAnim" style="position:absolute; inset:0; border:2px solid #4e7bc4; border-radius:999px; animation:dsRing 1.8s ease-out infinite; animation-delay:.6s;"></span>
+          <span class="dsAnim" style="position:absolute; inset:0; border:2px solid #4e7bc4; border-radius:999px; animation:dsRing 1.8s ease-out infinite; animation-delay:1.2s;"></span>
+          <span style="width:30px; height:30px; border-radius:999px; background:#4e7bc4; display:flex; align-items:center; justify-content:center; color:#fff; font-size:14px;">✆</span>
+        </div>
+      </div>
+      <div style="padding:16px 18px;">
+        <div style="font-family:'Inter Tight',sans-serif; font-size:16px; font-weight:600;">1 · Signal rings</div>
+        <div style="font-size:12.5px; line-height:1.55; color:#606872; margin-top:5px;">Concentric rings radiate from a handset dot — reads as "ringing / querying the line." Best for <strong>Caller Lookup</strong> and <strong>QCD run</strong>, where you're querying and there's no shape to mimic yet.</div>
+        <div style="font-family:'IBM Plex Mono',monospace; font-size:10px; color:#9bb4cf; margin-top:10px;">.ds-loader--rings · indeterminate query</div>
+      </div>
+    </div>
+
+    <!-- 2 · EQUALIZER -->
+    <div style="background:#fff; border:1px solid #c8d8e6; border-radius:14px; overflow:hidden;">
+      <div style="height:170px; background:#f0f6fa; display:flex; align-items:center; justify-content:center;">
+        <div style="display:flex; align-items:center; gap:5px; height:48px;">
+          <span class="dsAnim" style="width:6px; height:100%; background:#4e7bc4; border-radius:3px; transform-origin:center; animation:dsEq 1s ease-in-out infinite; animation-delay:0s;"></span>
+          <span class="dsAnim" style="width:6px; height:100%; background:#4e7bc4; border-radius:3px; transform-origin:center; animation:dsEq 1s ease-in-out infinite; animation-delay:.15s;"></span>
+          <span class="dsAnim" style="width:6px; height:100%; background:#3d9476; border-radius:3px; transform-origin:center; animation:dsEq 1s ease-in-out infinite; animation-delay:.3s;"></span>
+          <span class="dsAnim" style="width:6px; height:100%; background:#4e7bc4; border-radius:3px; transform-origin:center; animation:dsEq 1s ease-in-out infinite; animation-delay:.45s;"></span>
+          <span class="dsAnim" style="width:6px; height:100%; background:#4e7bc4; border-radius:3px; transform-origin:center; animation:dsEq 1s ease-in-out infinite; animation-delay:.6s;"></span>
+        </div>
+      </div>
+      <div style="padding:16px 18px;">
+        <div style="font-family:'Inter Tight',sans-serif; font-size:16px; font-weight:600;">2 · Equalizer bars</div>
+        <div style="font-size:12.5px; line-height:1.55; color:#606872; margin-top:5px;">A bouncing audio waveform — small and inline. Best for <strong>button busy states</strong> ("Refresh", "Send alerts", "Look up") and compact inline spots where a skeleton would be overkill.</div>
+        <div style="font-family:'IBM Plex Mono',monospace; font-size:10px; color:#9bb4cf; margin-top:10px;">.ds-loader--eq · inline / button</div>
+      </div>
+    </div>
+
+    <!-- 3 · DRAWING SPARKLINE -->
+    <div style="background:#fff; border:1px solid #c8d8e6; border-radius:14px; overflow:hidden;">
+      <div style="height:170px; background:#f0f6fa; display:flex; align-items:center; justify-content:center;">
+        <svg viewBox="0 0 240 90" style="width:220px; height:90px;">
+          <rect x="0" y="14" width="240" height="20" fill="#e0efe6"/>
+          <line x1="0" y1="34" x2="240" y2="34" stroke="#3d9476" stroke-width="1" stroke-dasharray="3 3" opacity=".5"/>
+          <polyline class="dsAnim" points="0,64 34,58 68,62 102,48 136,54 170,40 204,46 240,30" fill="none" stroke="#4e7bc4" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="240" style="animation:dsDraw 2.2s ease-in-out infinite;"></polyline>
+          <circle class="dsAnim" cx="240" cy="30" r="4" fill="#4e7bc4" style="animation:dsDot 2.2s ease-in-out infinite;"></circle>
+        </svg>
+      </div>
+      <div style="padding:16px 18px;">
+        <div style="font-family:'Inter Tight',sans-serif; font-size:16px; font-weight:600;">3 · Drawing sparkline</div>
+        <div style="font-size:12.5px; line-height:1.55; color:#606872; margin-top:5px;">A trend line draws itself over a faint target band — "plotting your data." Best as the <strong>chart-area placeholder</strong> while Chart.js lazy-loads or the series computes, so the chart box never sits blank.</div>
+        <div style="font-family:'IBM Plex Mono',monospace; font-size:10px; color:#9bb4cf; margin-top:10px;">.ds-loader--spark · chart slot</div>
+      </div>
+    </div>
+
+    <!-- 4 · SKELETON SHIMMER -->
+    <div style="background:#fff; border:1px solid #c8d8e6; border-radius:14px; overflow:hidden;">
+      <div style="height:170px; background:#f0f6fa; display:flex; align-items:center; justify-content:center; padding:0 22px;">
+        <div style="width:100%; display:flex; flex-direction:column; gap:9px;">
+          <div style="display:flex; gap:9px;">
+            <div style="position:relative; overflow:hidden; flex:none; width:90px; height:14px; background:#dde9f3; border-radius:5px;"><span class="dsAnim" style="position:absolute; inset:0; background:linear-gradient(90deg,transparent,rgba(255,255,255,.75),transparent); animation:dsShim 1.4s linear infinite;"></span></div>
+            <div style="position:relative; overflow:hidden; flex:1; height:14px; background:#dde9f3; border-radius:5px;"><span class="dsAnim" style="position:absolute; inset:0; background:linear-gradient(90deg,transparent,rgba(255,255,255,.75),transparent); animation:dsShim 1.4s linear infinite; animation-delay:.2s;"></span></div>
+          </div>
+          <div style="position:relative; overflow:hidden; height:14px; background:#dde9f3; border-radius:5px; width:80%;"><span class="dsAnim" style="position:absolute; inset:0; background:linear-gradient(90deg,transparent,rgba(255,255,255,.75),transparent); animation:dsShim 1.4s linear infinite; animation-delay:.35s;"></span></div>
+          <div style="position:relative; overflow:hidden; height:14px; background:#dde9f3; border-radius:5px; width:92%;"><span class="dsAnim" style="position:absolute; inset:0; background:linear-gradient(90deg,transparent,rgba(255,255,255,.75),transparent); animation:dsShim 1.4s linear infinite; animation-delay:.5s;"></span></div>
+        </div>
+      </div>
+      <div style="padding:16px 18px;">
+        <div style="font-family:'Inter Tight',sans-serif; font-size:16px; font-weight:600;">4 · Skeleton shimmer</div>
+        <div style="font-size:12.5px; line-height:1.55; color:#606872; margin-top:5px;">Your existing approach, formalized with a moving sheen and shapes that <strong>match the final layout</strong>. Use for the 3 text-only spots — <strong>Alerts, Outlier Fix, Dept Config</strong> — and the <strong>Inbound</strong> tables, so there's zero layout shift on arrival.</div>
+        <div style="font-family:'IBM Plex Mono',monospace; font-size:10px; color:#9bb4cf; margin-top:10px;">.ds-skeleton · content-shaped</div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- 5 · STAGED PROGRESS (full width) -->
+  <div style="max-width:1080px; margin:18px auto 0;">
+    <div style="background:#fff; border:1px solid #c8d8e6; border-radius:14px; overflow:hidden; display:flex;">
+      <div style="flex:none; width:380px; background:#f0f6fa; display:flex; align-items:center; justify-content:center; padding:26px;">
+        <div style="width:100%;">
+          <div style="display:flex; align-items:center; gap:10px;"><span class="dsAnim" style="width:16px; height:16px; border:2px solid #4e7bc4; border-top-color:transparent; border-radius:999px; display:inline-block; animation:dsSpin .8s linear infinite;"></span><span style="font-family:'Inter Tight',sans-serif; font-size:14px; font-weight:600;">Warming up the database…</span></div>
+          <div style="position:relative; overflow:hidden; height:6px; background:#dde9f3; border-radius:999px; margin-top:14px;"><span class="dsAnim" style="position:absolute; top:0; bottom:0; width:45%; background:#4e7bc4; border-radius:999px; animation:dsShim 1.6s ease-in-out infinite;"></span></div>
+          <div class="dsAnim" style="font-family:'IBM Plex Mono',monospace; font-size:10px; color:#606872; margin-top:9px; animation:dsPulse 1.6s ease-in-out infinite;">first request in a while · usually a few seconds</div>
+        </div>
+      </div>
+      <div style="flex:1; padding:18px 22px;">
+        <div style="font-family:'Inter Tight',sans-serif; font-size:16px; font-weight:600;">5 · Staged progress</div>
+        <div style="font-size:12.5px; line-height:1.55; color:#606872; margin-top:5px; max-width:440px;">An indeterminate shimmer bar with a <strong>named stage</strong> and a calm sub-line. Use for <strong>app boot</strong> and <strong>Neon cold-starts</strong> — the wait reads as expected, not broken. Swap the label as stages complete ("Warming up…" → "Fetching calls…" → "Crunching numbers…").</div>
+        <div style="font-family:'IBM Plex Mono',monospace; font-size:10px; color:#9bb4cf; margin-top:10px;">.ds-loader--staged · cold-start / boot · honest, not a dead spinner</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- RECOMMENDATION -->
+  <div style="max-width:1080px; margin:36px auto 0; background:#eef3f8; border:1px dashed #c8d8e6; border-radius:14px; padding:22px 24px;">
+    <div style="font-family:'Inter Tight',sans-serif; font-size:17px; font-weight:600;">If you only do three things</div>
+    <ol style="margin:10px 0 0; padding-left:18px; font-size:13.5px; line-height:1.75; color:#3a4048;">
+      <li><strong>Add the signal-rings loader to Caller Lookup &amp; QCD</strong> — those are the spots that currently freeze on a query, and the rings are both on-theme and reassuring.</li>
+      <li><strong>Upgrade Alerts / Outlier Fix / Dept Config / Inbound from text to shape-matched skeletons</strong> — they already have a loading container; it's a swap, not new plumbing.</li>
+      <li><strong>Drop the drawing-sparkline into every chart slot</strong> while Chart.js lazy-loads (pairs with the perceived-speed playbook) so charts never pop in over blank space.</li>
+    </ol>
+    <p style="margin:12px 0 0; font-size:12.5px; line-height:1.55; color:#606872;">Rule of thumb: <strong>known shape → skeleton</strong> (no spinner); <strong>indeterminate query → motion loader</strong> (rings / equalizer); <strong>long/cold → staged progress with a label.</strong> Keep one spinner duration and the reduced-motion fallback for all of them.</p>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

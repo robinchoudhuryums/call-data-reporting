@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style> body { margin:0; } </style>
+</helmet>
+
+<div style="width:max-content; min-width:100%; min-height:100vh; box-sizing:border-box; padding:48px; background:#dbe4eb; font-family:'Inter',-apple-system,sans-serif; color:#101418;">
+
+  <!-- INTRO -->
+  <div style="max-width:1080px; margin:0 auto 40px;">
+    <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; font-weight:500; text-transform:uppercase; letter-spacing:.2em; color:#606872;">Design follow-up · surfaces 10–14</div>
+    <h1 style="margin:10px 0 0; font-family:'Inter Tight',sans-serif; font-size:38px; font-weight:700; letter-spacing:-1px; line-height:1.05;">The surfaces we hadn't covered</h1>
+    <p style="margin:16px 0 0; max-width:720px; font-size:15px; line-height:1.65; color:#3a4048;">Five pieces that sit around the reports: the <strong>daily digest email</strong> (your highest-frequency touchpoint), a real <strong>navigation model</strong>, a <strong>state kit</strong> for empty/error/no-data, a <strong>dark-mode</strong> render to validate the tokens, and the <strong>first-run / unmapped-queue</strong> experience. All built on the same cool palette and <code style="font-family:'IBM Plex Mono',monospace;">ds-</code> components from the handoff.</p>
+  </div>
+
+  <!-- ===== 10 · DIGEST EMAIL ===== -->
+  <div style="max-width:1080px; margin:0 auto 14px;">
+    <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.18em; text-transform:uppercase; color:#4e7bc4; font-weight:500;">10 · Daily digest email</div>
+    <h2 style="margin:6px 0 0; font-family:'Inter Tight',sans-serif; font-size:26px; font-weight:600; letter-spacing:-.4px;">The email most managers actually read</h2>
+    <p style="margin:8px 0 0; max-width:760px; font-size:14px; line-height:1.6; color:#3a4048;">If managers glance at the email and only click in when something's off, this template drives perceived quality more than any screen. It must answer "<em>are we OK?</em>" in the preview pane, deep-link the one dept that needs attention, and survive email clients — so: <strong>table-based layout, all styles inline, web-safe + system fonts, no JS, ~600px</strong>. Below is the rendered result (left) and the build rules (right).</p>
+  </div>
+
+  <div style="display:flex; gap:48px; align-items:flex-start; padding:14px 0 8px;">
+    <!-- rendered email -->
+    <div style="flex:none; width:620px;">
+      <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:#3d9476; margin-bottom:10px;">✦ Rendered · ~600px column</div>
+      <div style="background:#eef3f8; border-radius:12px; box-shadow:0 1px 3px rgba(0,0,0,.08); padding:22px;">
+        <!-- inbox preview line -->
+        <div style="background:#fff; border:1px solid #c8d8e6; border-radius:8px; padding:11px 14px; margin-bottom:16px;">
+          <div style="display:flex; justify-content:space-between; align-items:baseline;"><span style="font-weight:600; font-size:13px;">Call Reporting</span><span style="font-family:'IBM Plex Mono',monospace; font-size:10px; color:#606872;">8:02 AM</span></div>
+          <div style="font-size:13px; margin-top:2px;">CSR daily — 94.1% answered ▲</div>
+          <div style="font-size:12px; color:#606872; margin-top:1px;">Company 90.4%. Intake needs attention (82%, abandon 11.3%)…</div>
+        </div>
+        <!-- the email -->
+        <div style="background:#fff; border-radius:10px; overflow:hidden; border:1px solid #dde9f3;">
+          <!-- header bar -->
+          <div style="background:#101418; padding:16px 22px;"><div style="font-family:'IBM Plex Mono',monospace; font-size:10px; letter-spacing:.18em; text-transform:uppercase; color:#8ba0b3;">Daily Call Report · Mon Jun 16</div><div style="font-family:'Inter Tight',sans-serif; font-size:19px; font-weight:600; color:#fff; margin-top:2px;">CSR Department</div></div>
+          <div style="padding:22px;">
+            <!-- hero answer -->
+            <div style="display:flex; align-items:baseline; gap:12px;"><span style="font-family:'Inter Tight',sans-serif; font-size:42px; font-weight:700; letter-spacing:-1.5px; line-height:1;">94.1%</span><span style="font-size:12px; font-weight:600; color:#2f7a5f; background:#e0efe6; border-radius:999px; padding:4px 10px;">▲ 0.9 pts vs yesterday</span></div>
+            <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; color:#606872; margin-top:5px;">answered · 388 of 412 · target 92%</div>
+            <!-- target bar -->
+            <div style="position:relative; height:8px; background:#dde9f3; border-radius:999px; margin-top:12px;"><div style="position:absolute; left:0; top:0; bottom:0; width:94.1%; background:#3d9476; border-radius:999px;"></div><div style="position:absolute; left:92%; top:-3px; bottom:-3px; width:2px; background:#101418;"></div></div>
+            <!-- at a glance -->
+            <div style="background:#e0efe6; border-radius:8px; padding:13px 15px; margin-top:18px; font-size:13.5px; line-height:1.55; color:#234;"><strong style="color:#2f7a5f;">On track.</strong> CSR beat target again. Company-wide, <strong>Intake is the outlier</strong> — 82% answered with an 11.3% abandon rate, over the 5% rule for a third day.</div>
+            <!-- needs attention deep link -->
+            <div style="border:1px solid #f1d7d2; border-left:4px solid #b23a2c; border-radius:8px; padding:13px 15px; margin-top:12px; background:#fbf3f2;">
+              <div style="display:flex; align-items:center; gap:8px;"><span style="font-family:'Inter Tight',sans-serif; font-size:14px; font-weight:600; color:#b23a2c;">Intake needs attention</span></div>
+              <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; color:#606872; margin-top:5px;">82.0% answered · 30 missed · 11.3% abandon</div>
+              <div style="display:inline-block; background:#101418; color:#fff; font-size:12px; font-weight:600; border-radius:7px; padding:8px 14px; margin-top:11px;">Open Intake →</div>
+            </div>
+            <!-- dept rollup rows -->
+            <div style="font-family:'IBM Plex Mono',monospace; font-size:10px; text-transform:uppercase; letter-spacing:.12em; color:#606872; margin-top:20px;">All departments</div>
+            <table style="width:100%; border-collapse:collapse; margin-top:8px;">
+              <tbody>
+                <tr style="border-bottom:1px solid #eef3f8;"><td style="padding:9px 0; font-weight:600; font-size:13px;">CSR</td><td style="padding:9px 0; width:130px;"><div style="height:5px; background:#dde9f3; border-radius:999px; overflow:hidden;"><div style="width:94%; height:100%; background:#3d9476;"></div></div></td><td style="padding:9px 0 9px 12px; text-align:right; font-family:'IBM Plex Mono',monospace; font-size:12px; color:#3d9476; font-weight:500; width:54px;">94.1%</td></tr>
+                <tr style="border-bottom:1px solid #eef3f8;"><td style="padding:9px 0; font-weight:600; font-size:13px;">Power</td><td style="padding:9px 0;"><div style="height:5px; background:#dde9f3; border-radius:999px; overflow:hidden;"><div style="width:91%; height:100%; background:#3d9476;"></div></div></td><td style="padding:9px 0 9px 12px; text-align:right; font-family:'IBM Plex Mono',monospace; font-size:12px; color:#3d9476; font-weight:500;">91.3%</td></tr>
+                <tr style="border-bottom:1px solid #eef3f8;"><td style="padding:9px 0; font-weight:600; font-size:13px;">Sales</td><td style="padding:9px 0;"><div style="height:5px; background:#dde9f3; border-radius:999px; overflow:hidden;"><div style="width:89%; height:100%; background:#c66b4b;"></div></div></td><td style="padding:9px 0 9px 12px; text-align:right; font-family:'IBM Plex Mono',monospace; font-size:12px; color:#c66b4b; font-weight:500;">88.6%</td></tr>
+                <tr><td style="padding:9px 0; font-weight:600; font-size:13px;">Intake</td><td style="padding:9px 0;"><div style="height:5px; background:#dde9f3; border-radius:999px; overflow:hidden;"><div style="width:82%; height:100%; background:#b23a2c;"></div></div></td><td style="padding:9px 0 9px 12px; text-align:right; font-family:'IBM Plex Mono',monospace; font-size:12px; color:#b23a2c; font-weight:500;">82.0%</td></tr>
+              </tbody>
+            </table>
+            <!-- footer -->
+            <div style="border-top:1px solid #dde9f3; margin-top:18px; padding-top:14px; font-family:'IBM Plex Mono',monospace; font-size:10px; color:#9bb4cf; line-height:1.7;">Open full dashboard → · Manage which reports you receive<br>Data through Mon Jun 16, 5:00 PM CST.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- build rules -->
+    <div style="flex:none; width:412px;">
+      <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:#606872; margin-bottom:10px;">Build rules</div>
+      <div style="background:#fff; border:1px solid #c8d8e6; border-radius:12px; padding:18px;">
+        <ul style="margin:0; padding-left:18px; font-size:13px; line-height:1.75; color:#3a4048;">
+          <li><strong>Tables, not flex/grid.</strong> Outlook renders on Word's engine — lay out with nested <code style="font-family:'IBM Plex Mono',monospace;">&lt;table&gt;</code>, fixed widths, <code style="font-family:'IBM Plex Mono',monospace;">role="presentation"</code>.</li>
+          <li><strong>Every style inline.</strong> No <code style="font-family:'IBM Plex Mono',monospace;">&lt;style&gt;</code> reliance; Gmail strips much of it. Mirror the tokens as literal hex.</li>
+          <li><strong>System font stack</strong> — Inter Tight won't load in most clients. Use <code style="font-family:'IBM Plex Mono',monospace;">-apple-system, "Segoe UI", Arial</code>; keep the display weight via <code style="font-family:'IBM Plex Mono',monospace;">font-weight:700</code>.</li>
+          <li><strong>Bars = filled table cells</strong>, not SVG/CSS gradients. The target bar is a 2px black <code style="font-family:'IBM Plex Mono',monospace;">&lt;td&gt;</code>.</li>
+          <li><strong>One job: "are we OK?"</strong> The hero %, the verdict line, and the deep-link must all be above the fold / in preview text.</li>
+          <li><strong>Real preheader</strong> — the hidden snippet that becomes the inbox sub-line; set it deliberately.</li>
+          <li><strong>Bulletproof button</strong> — padded anchor with bg color, not a styled <code style="font-family:'IBM Plex Mono',monospace;">&lt;button&gt;</code>.</li>
+          <li><strong>Dark-mode email</strong> — set <code style="font-family:'IBM Plex Mono',monospace;">color-scheme</code> + a dark media block; many clients invert, so avoid pure-white-only logic.</li>
+          <li><strong>Per-recipient relevance</strong> — lead with <em>their</em> dept; the company table is supporting context.</li>
+        </ul>
+      </div>
+      <div style="background:#fff; border:1px solid #c8d8e6; border-radius:12px; padding:16px 18px; margin-top:14px; font-size:12.5px; line-height:1.55; color:#3a4048;"><strong style="font-family:'Inter Tight',sans-serif;">Why this matters →</strong> It's the same visual language as the dashboard (hero %, target marker, at-a-glance banner, status bars) so the email and app feel like one product — and it does the manager's triage for them before they ever click.</div>
+    </div>
+  </div>
+
+  <!-- ===== 11 · NAVIGATION ===== -->
+  <div style="max-width:1080px; margin:56px auto 14px;">
+    <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.18em; text-transform:uppercase; color:#4e7bc4; font-weight:500;">11 · Navigation model</div>
+    <h2 style="margin:6px 0 0; font-family:'Inter Tight',sans-serif; font-size:26px; font-weight:600; letter-spacing:-.4px;">From a Reports ▾ dropdown to a persistent rail</h2>
+    <p style="margin:8px 0 0; max-width:760px; font-size:14px; line-height:1.6; color:#3a4048;">Today everything past Overview / My Department hides inside a <strong>Reports ▾</strong> menu and admin tools are scattered. Once the reports consolidate to two surfaces, a persistent left rail makes the whole product legible: managers see <strong>Overview · Team &amp; Agents · Calls &amp; Queues</strong>, admins get a clearly separated <strong>Admin</strong> group, and the dept switcher + freshness + theme toggle live in fixed, predictable spots.</p>
+  </div>
+
+  <div style="display:flex; gap:48px; align-items:flex-start; padding:14px 0 8px;">
+    <!-- before -->
+    <div style="flex:none; width:516px;">
+      <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:#8a93a0; margin-bottom:10px;">● Before — dropdown</div>
+      <div style="background:#fff; border-radius:8px; box-shadow:0 1px 3px rgba(0,0,0,.08); overflow:hidden; border:1px solid #dde9f3;">
+        <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #c8d8e6; padding:13px 18px;">
+          <div style="font-family:'Inter Tight',sans-serif; font-size:18px; font-weight:600;">Dashboard</div>
+          <div style="display:flex; gap:6px; align-items:center;"><span style="background:#101418; color:#fff; border-radius:2px; font-size:11px; padding:5px 9px;">Overview</span><span style="border:1px solid #c8d8e6; border-radius:2px; font-size:11px; padding:5px 9px;">My Department</span><span style="border:1px solid #c8d8e6; border-radius:2px; font-size:11px; padding:5px 9px; position:relative;">Reports ▾</span></div>
+        </div>
+        <div style="padding:16px 18px; position:relative; min-height:230px;">
+          <div style="position:absolute; right:18px; top:6px; width:200px; background:#fff; border:1px solid #c8d8e6; border-radius:6px; box-shadow:0 8px 24px rgba(0,0,0,.14); padding:6px; z-index:2;">
+            <div style="font-size:12px; padding:7px 10px; border-radius:4px;">Individual</div>
+            <div style="font-size:12px; padding:7px 10px; border-radius:4px; background:#f0f6fa;">Performance</div>
+            <div style="font-size:12px; padding:7px 10px; border-radius:4px;">Compare Ranges</div>
+            <div style="font-size:12px; padding:7px 10px; border-radius:4px;">Missed Calls</div>
+            <div style="font-size:12px; padding:7px 10px; border-radius:4px;">QCD</div>
+            <div style="font-size:12px; padding:7px 10px; border-radius:4px;">Insights</div>
+            <div style="font-size:12px; padding:7px 10px; border-radius:4px;">Inbound</div>
+            <div style="border-top:1px solid #eef3f8; margin:4px 0;"></div>
+            <div style="font-size:12px; padding:7px 10px; border-radius:4px; color:#606872;">Alerts · Outlier Fix · Config…</div>
+          </div>
+          <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; color:#9bb4cf;">8 reports + 4 admin tools, all behind one ▾</div>
+        </div>
+      </div>
+    </div>
+    <!-- after -->
+    <div style="flex:none; width:516px;">
+      <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:#3d9476; margin-bottom:10px;">✦ After — persistent rail</div>
+      <div style="background:#fff; border-radius:12px; box-shadow:0 1px 2px rgba(0,0,0,.05), 0 8px 26px rgba(0,0,0,.10); overflow:hidden; display:flex; min-height:300px; border:1px solid #dde9f3;">
+        <!-- rail -->
+        <div style="flex:none; width:188px; background:#101418; padding:16px 12px; display:flex; flex-direction:column;">
+          <div style="font-family:'Inter Tight',sans-serif; font-size:14px; font-weight:600; color:#fff; padding:0 8px;">Call Reporting</div>
+          <!-- dept switcher -->
+          <div style="background:#1c2632; border-radius:8px; padding:8px 10px; margin-top:14px; display:flex; justify-content:space-between; align-items:center;"><div><div style="font-family:'IBM Plex Mono',monospace; font-size:8px; text-transform:uppercase; letter-spacing:.14em; color:#6b7d8f;">Department</div><div style="font-size:13px; font-weight:600; color:#fff;">CSR</div></div><span style="color:#6b7d8f; font-size:11px;">▾</span></div>
+          <!-- nav -->
+          <div style="margin-top:16px; display:flex; flex-direction:column; gap:2px;">
+            <div style="display:flex; align-items:center; gap:9px; font-size:12.5px; color:#cdd9e5; padding:8px 10px; border-radius:7px;"><span style="width:6px; height:6px; border-radius:999px; background:#4e7bc4;"></span>Overview</div>
+            <div style="display:flex; align-items:center; gap:9px; font-size:12.5px; color:#fff; font-weight:600; padding:8px 10px; border-radius:7px; background:#26323f;"><span style="width:6px; height:6px; border-radius:999px; background:#3d9476;"></span>Team &amp; Agents</div>
+            <div style="display:flex; align-items:center; gap:9px; font-size:12.5px; color:#cdd9e5; padding:8px 10px; border-radius:7px;"><span style="width:6px; height:6px; border-radius:999px; background:#c66b4b;"></span>Calls &amp; Queues</div>
+          </div>
+          <div style="font-family:'IBM Plex Mono',monospace; font-size:8px; text-transform:uppercase; letter-spacing:.14em; color:#5a6b7d; padding:14px 10px 4px;">Admin</div>
+          <div style="display:flex; flex-direction:column; gap:2px;">
+            <div style="font-size:12.5px; color:#9fb0c2; padding:7px 10px; border-radius:7px;">Alerts</div>
+            <div style="font-size:12.5px; color:#9fb0c2; padding:7px 10px; border-radius:7px;">Caller Lookup</div>
+            <div style="font-size:12.5px; color:#9fb0c2; padding:7px 10px; border-radius:7px;">Outlier Fix</div>
+            <div style="font-size:12.5px; color:#9fb0c2; padding:7px 10px; border-radius:7px;">Dept Config</div>
+          </div>
+          <!-- footer of rail -->
+          <div style="margin-top:auto; border-top:1px solid #26323f; padding-top:12px; display:flex; align-items:center; justify-content:space-between;"><span style="font-family:'IBM Plex Mono',monospace; font-size:9px; color:#6b7d8f;">live · 8:02a</span><span style="display:inline-flex; background:#1c2632; border-radius:999px; padding:2px;"><span style="width:18px; height:16px; background:#26323f; border-radius:999px;"></span><span style="width:18px; height:16px; border-radius:999px;"></span></span></div>
+        </div>
+        <!-- content stub -->
+        <div style="flex:1; padding:18px; background:#f0f6fa;">
+          <div style="font-family:'IBM Plex Mono',monospace; font-size:9px; text-transform:uppercase; letter-spacing:.18em; color:#606872;">Team &amp; Agents</div>
+          <div style="font-family:'Inter Tight',sans-serif; font-size:22px; font-weight:600; letter-spacing:-.5px;">CSR</div>
+          <div style="height:40px; background:#e0efe6; border-radius:8px; margin-top:12px;"></div>
+          <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-top:10px;"><div style="height:56px; background:#fff; border:1px solid #c8d8e6; border-radius:8px;"></div><div style="height:56px; background:#fff; border:1px solid #c8d8e6; border-radius:8px;"></div><div style="height:56px; background:#fff; border:1px solid #c8d8e6; border-radius:8px;"></div></div>
+          <div style="height:90px; background:#fff; border:1px solid #c8d8e6; border-radius:8px; margin-top:8px;"></div>
+        </div>
+      </div>
+      <div style="margin-top:12px; font-family:'IBM Plex Mono',monospace; font-size:10px; color:#606872;">On mobile the rail collapses to a bottom tab bar (Overview · Team · Calls · more).</div>
+    </div>
+  </div>
+
+  <!-- ===== 12 · STATE KIT ===== -->
+  <div style="max-width:1080px; margin:56px auto 14px;">
+    <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.18em; text-transform:uppercase; color:#4e7bc4; font-weight:500;">12 · State kit</div>
+    <h2 style="margin:6px 0 0; font-family:'Inter Tight',sans-serif; font-size:26px; font-weight:600; letter-spacing:-.4px;">Empty, error, no-data &amp; loading — as first-class components</h2>
+    <p style="margin:8px 0 0; max-width:760px; font-size:14px; line-height:1.6; color:#3a4048;">Dense dashboards feel most broken in these moments, and they're cheap to standardize now. Each is one component (<code style="font-family:'IBM Plex Mono',monospace;">.ds-state</code>) with a tone, a plain-language line, and — crucially — <strong>a next action</strong>, never a dead end.</p>
+  </div>
+
+  <div style="display:flex; gap:24px; align-items:flex-start; flex-wrap:wrap; padding:14px 0 8px; max-width:1080px; margin:0 auto;">
+    <!-- no data for range -->
+    <div style="flex:none; width:340px; background:#fff; border:1px solid #c8d8e6; border-radius:12px; padding:26px 22px; text-align:center;">
+      <div style="width:40px; height:40px; border-radius:10px; background:#dde9f3; margin:0 auto; display:flex; align-items:center; justify-content:center; font-family:'Inter Tight',sans-serif; font-size:20px; color:#4e7bc4;">∅</div>
+      <div style="font-family:'Inter Tight',sans-serif; font-size:16px; font-weight:600; margin-top:14px;">No calls in this range</div>
+      <div style="font-size:12.5px; line-height:1.55; color:#606872; margin-top:5px;">CSR had no logged calls between Jun 1–3. Try widening the dates or pick a preset.</div>
+      <div style="display:flex; gap:6px; justify-content:center; margin-top:14px;"><span style="font-size:11px; background:#101418; color:#fff; border-radius:7px; padding:7px 13px; font-weight:500;">Last 30 days</span><span style="font-size:11px; border:1px solid #c8d8e6; border-radius:7px; padding:7px 13px;">MTD</span></div>
+      <div style="font-family:'IBM Plex Mono',monospace; font-size:9px; color:#9bb4cf; margin-top:14px;">.ds-state · neutral</div>
+    </div>
+    <!-- error -->
+    <div style="flex:none; width:340px; background:#fff; border:1px solid #f1d7d2; border-radius:12px; padding:26px 22px; text-align:center;">
+      <div style="width:40px; height:40px; border-radius:10px; background:#f1d7d2; margin:0 auto; display:flex; align-items:center; justify-content:center; font-family:'Inter Tight',sans-serif; font-size:20px; color:#b23a2c;">!</div>
+      <div style="font-family:'Inter Tight',sans-serif; font-size:16px; font-weight:600; margin-top:14px;">Couldn't load this report</div>
+      <div style="font-size:12.5px; line-height:1.55; color:#606872; margin-top:5px;">The data source didn't respond. Your cached numbers from 7:14 AM are shown below.</div>
+      <div style="display:flex; gap:6px; justify-content:center; margin-top:14px;"><span style="font-size:11px; background:#101418; color:#fff; border-radius:7px; padding:7px 13px; font-weight:500;">Retry</span><span style="font-size:11px; border:1px solid #c8d8e6; border-radius:7px; padding:7px 13px;">Use cached</span></div>
+      <div style="font-family:'IBM Plex Mono',monospace; font-size:9px; color:#9bb4cf; margin-top:14px;">.ds-state · bad · keeps last-good data</div>
+    </div>
+    <!-- cold start -->
+    <div style="flex:none; width:340px; background:#fff; border:1px solid #c8d8e6; border-radius:12px; padding:26px 22px; text-align:center;">
+      <div style="width:40px; height:40px; border-radius:10px; background:#e3edf8; margin:0 auto; display:flex; align-items:center; justify-content:center;"><span style="width:16px; height:16px; border:2px solid #4e7bc4; border-top-color:transparent; border-radius:999px; display:inline-block;"></span></div>
+      <div style="font-family:'Inter Tight',sans-serif; font-size:16px; font-weight:600; margin-top:14px;">Warming up the database…</div>
+      <div style="font-size:12.5px; line-height:1.55; color:#606872; margin-top:5px;">First request in a while — this usually takes a few seconds. We'll show data the moment it's ready.</div>
+      <div style="height:5px; background:#dde9f3; border-radius:999px; margin-top:16px; overflow:hidden;"><div style="width:60%; height:100%; background:#4e7bc4;"></div></div>
+      <div style="font-family:'IBM Plex Mono',monospace; font-size:9px; color:#9bb4cf; margin-top:14px;">.ds-state · loading · named, not a dead spinner</div>
+    </div>
+    <!-- success empty -->
+    <div style="flex:none; width:340px; background:#fff; border:1px solid #c8d8e6; border-radius:12px; padding:26px 22px; text-align:center;">
+      <div style="width:40px; height:40px; border-radius:10px; background:#e0efe6; margin:0 auto; display:flex; align-items:center; justify-content:center; font-family:'Inter Tight',sans-serif; font-size:20px; color:#3d9476;">✓</div>
+      <div style="font-family:'Inter Tight',sans-serif; font-size:16px; font-weight:600; margin-top:14px;">Nothing to resolve</div>
+      <div style="font-size:12.5px; line-height:1.55; color:#606872; margin-top:5px;">Every queue is mapped and there are no unmatched agent names. Outlier Fix is all clear.</div>
+      <div style="font-family:'IBM Plex Mono',monospace; font-size:9px; color:#9bb4cf; margin-top:18px;">.ds-state · good · "empty" is a success here</div>
+    </div>
+    <!-- permission -->
+    <div style="flex:none; width:340px; background:#fff; border:1px solid #c8d8e6; border-radius:12px; padding:26px 22px; text-align:center;">
+      <div style="width:40px; height:40px; border-radius:10px; background:#dde9f3; margin:0 auto; display:flex; align-items:center; justify-content:center; font-family:'Inter Tight',sans-serif; font-size:18px; color:#606872;">⊘</div>
+      <div style="font-family:'Inter Tight',sans-serif; font-size:16px; font-weight:600; margin-top:14px;">Admin-only area</div>
+      <div style="font-size:12.5px; line-height:1.55; color:#606872; margin-top:5px;">Dept Config is restricted to admins. Ask your workspace owner for access, or head back to your reports.</div>
+      <div style="display:flex; gap:6px; justify-content:center; margin-top:14px;"><span style="font-size:11px; border:1px solid #c8d8e6; border-radius:7px; padding:7px 13px;">Back to Overview</span></div>
+      <div style="font-family:'IBM Plex Mono',monospace; font-size:9px; color:#9bb4cf; margin-top:14px;">.ds-state · neutral · no dead end</div>
+    </div>
+    <!-- guidance -->
+    <div style="flex:none; width:340px; background:#eef3f8; border:1px dashed #c8d8e6; border-radius:12px; padding:22px;">
+      <div style="font-family:'Inter Tight',sans-serif; font-size:15px; font-weight:600;">One component, five tones</div>
+      <ul style="margin:10px 0 0; padding-left:18px; font-size:12.5px; line-height:1.7; color:#3a4048;">
+        <li>icon tile · headline · one plain sentence · ≤2 actions</li>
+        <li>tone via <code style="font-family:'IBM Plex Mono',monospace;">is-good/-warn/-neutral</code> + loading variant</li>
+        <li><strong>always offer the next step</strong> — preset, retry, or a way back</li>
+        <li><strong>never discard last-good data</strong> on error — show it, flagged</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- ===== 13 · DARK MODE ===== -->
+  <div style="max-width:1080px; margin:56px auto 14px;">
+    <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.18em; text-transform:uppercase; color:#4e7bc4; font-weight:500;">13 · Dark mode</div>
+    <h2 style="margin:6px 0 0; font-family:'Inter Tight',sans-serif; font-size:26px; font-weight:600; letter-spacing:-.4px;">Validating the tokens in the dark</h2>
+    <p style="margin:8px 0 0; max-width:760px; font-size:14px; line-height:1.6; color:#3a4048;">The redesign claims dark mode is "free" because components read tokens. Here's the Overview rendered with a dark cool-neutral set — the <strong>semantic colors stay put</strong>, only surfaces/ink/line swap, and the status rails + softs are nudged brighter so they hold up on dark. This is the proof, plus the override block.</p>
+  </div>
+
+  <div style="display:flex; gap:48px; align-items:flex-start; padding:14px 0 8px;">
+    <div style="flex:none; width:620px;">
+      <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:#3d9476; margin-bottom:10px;">✦ Overview · dark</div>
+      <div style="background:#0e151c; border-radius:12px; box-shadow:0 1px 3px rgba(0,0,0,.3); overflow:hidden; padding:24px;">
+        <div style="display:flex; justify-content:space-between; align-items:flex-end;">
+          <div><div style="font-family:'IBM Plex Mono',monospace; font-size:9px; text-transform:uppercase; letter-spacing:.18em; color:#6b7d8f;">Department Dashboard</div><div style="font-family:'Inter Tight',sans-serif; font-size:28px; font-weight:600; letter-spacing:-.7px; color:#e7eef5;">Overview</div></div>
+          <div style="display:flex; gap:4px; background:#15202b; border:1px solid #243441; border-radius:999px; padding:4px;"><span style="background:#e7eef5; color:#0e151c; border-radius:999px; font-size:12px; font-weight:500; padding:6px 13px;">Overview</span><span style="font-size:12px; color:#8ba0b3; padding:6px 13px;">Team</span></div>
+        </div>
+        <!-- hero -->
+        <div style="background:#15202b; border:1px solid #243441; border-radius:12px; padding:16px 18px; margin-top:16px; display:flex; align-items:center; gap:18px;">
+          <div><div style="font-family:'IBM Plex Mono',monospace; font-size:10px; text-transform:uppercase; letter-spacing:.12em; color:#6b7d8f;">Company answer rate</div><div style="display:flex; align-items:baseline; gap:10px; margin-top:4px;"><span style="font-family:'Inter Tight',sans-serif; font-size:38px; font-weight:700; letter-spacing:-1.4px; line-height:1; color:#e7eef5;">90.4%</span><span style="font-size:12px; font-weight:600; color:#5cc09a; background:#10322a; border-radius:999px; padding:3px 9px;">▲ 1.8 pts</span></div></div>
+          <div style="flex:1;"><div style="position:relative; height:8px; background:#243441; border-radius:999px;"><div style="position:absolute; left:0; top:0; bottom:0; width:90.4%; background:#46a888; border-radius:999px;"></div><div style="position:absolute; left:92%; top:-3px; bottom:-3px; width:2px; background:#e7eef5;"></div></div></div>
+        </div>
+        <!-- tiles -->
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:12px;">
+          <div style="position:relative; background:#15202b; border:1px solid #243441; border-radius:12px; padding:14px 14px 12px 16px; overflow:hidden;"><div style="position:absolute; left:0; top:0; bottom:0; width:4px; background:#46a888;"></div><div style="display:flex; justify-content:space-between; align-items:center;"><span style="font-family:'Inter Tight',sans-serif; font-size:15px; font-weight:600; color:#e7eef5;">CSR</span><span style="font-size:10px; font-weight:600; color:#5cc09a; background:#10322a; border-radius:999px; padding:2px 7px;">▲ 0.9</span></div><div style="font-family:'Inter Tight',sans-serif; font-size:30px; font-weight:700; letter-spacing:-1px; margin-top:4px; line-height:1; color:#e7eef5;">94.1<span style="font-size:14px; color:#6b7d8f; font-weight:500;">%</span></div><svg viewBox="0 0 130 22" style="width:100%; height:22px; margin-top:6px;"><polyline points="0,16 36,17 72,13 108,10 130,6" fill="none" stroke="#46a888" stroke-width="2" stroke-linecap="round"/></svg><div style="display:flex; gap:12px; font-family:'IBM Plex Mono',monospace; font-size:10px; color:#6b7d8f; border-top:1px solid #243441; padding-top:7px; margin-top:6px;"><span>388/412 ans</span><span>4.1% aban</span></div></div>
+          <div style="position:relative; background:#15202b; border:1px solid #243441; border-radius:12px; padding:14px 14px 12px 16px; overflow:hidden;"><div style="position:absolute; left:0; top:0; bottom:0; width:4px; background:#cf7e5e;"></div><div style="display:flex; justify-content:space-between; align-items:center;"><span style="font-family:'Inter Tight',sans-serif; font-size:15px; font-weight:600; color:#e7eef5;">Intake</span><span style="font-size:10px; font-weight:600; color:#e08a6f; background:#3a201a; border-radius:999px; padding:2px 7px;">▼ 3.1</span></div><div style="font-family:'Inter Tight',sans-serif; font-size:30px; font-weight:700; letter-spacing:-1px; margin-top:4px; line-height:1; color:#e89178;">82.0<span style="font-size:14px; color:#6b7d8f; font-weight:500;">%</span></div><svg viewBox="0 0 130 22" style="width:100%; height:22px; margin-top:6px;"><polyline points="0,8 36,11 72,13 108,16 130,18" fill="none" stroke="#cf7e5e" stroke-width="2" stroke-linecap="round"/></svg><div style="display:flex; gap:12px; font-family:'IBM Plex Mono',monospace; font-size:10px; color:#6b7d8f; border-top:1px solid #243441; padding-top:7px; margin-top:6px;"><span>138/168 ans</span><span style="color:#e89178;">11.3% aban</span></div></div>
+        </div>
+        <!-- banner -->
+        <div style="background:#10322a; border-radius:12px; padding:13px 15px; margin-top:12px; font-size:13px; line-height:1.5; color:#cfe7dd;"><strong style="color:#7fd3b3;">On track.</strong> Company up 1.8 pts. Intake is the one to watch.</div>
+      </div>
+    </div>
+
+    <div style="flex:none; width:412px;">
+      <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:#606872; margin-bottom:10px;">The override block</div>
+      <pre style="background:#11161f; color:#cdd6e3; border-radius:10px; padding:18px 20px; overflow:auto; font-size:12px; line-height:1.65; margin:0;">/* only neutrals + soft semantics swap.
+   --accent/--good/--warn/--bad hues stay. */
+[data-theme="dark"] {
+  --paper:#0e151c; --paper-2:#243441;
+  --paper-card:#15202b;
+  --ink:#e7eef5; --muted:#6b7d8f;
+  --line:#243441; --line-2:#1c2935;
+
+  /* brighten softs so chips/rails read on dark */
+  --good:#46a888; --good-soft:#10322a;
+  --warn:#cf7e5e; --warn-soft:#3a201a;
+  --bad:#d9684f;  --bad-soft:#3a1a16;
+  --accent:#5b8fd6; --accent-soft:#16273b;
+}</pre>
+      <div style="background:#fff; border:1px solid #c8d8e6; border-radius:12px; padding:16px 18px; margin-top:14px; font-size:12.5px; line-height:1.55; color:#3a4048;">
+        <strong style="font-family:'Inter Tight',sans-serif;">Findings →</strong>
+        <ul style="margin:8px 0 0; padding-left:18px; line-height:1.7;">
+          <li>Components needed <strong>zero markup changes</strong> — proof the token approach holds.</li>
+          <li>The only real work is <strong>brightening the semantic softs</strong> (a dark <code style="font-family:'IBM Plex Mono',monospace;">--good-soft</code> chip on a dark card needs more contrast).</li>
+          <li>Sparkline strokes use <code style="font-family:'IBM Plex Mono',monospace;">--good/--warn</code>, so they re-color for free.</li>
+          <li>Pure-black is avoided; <code style="font-family:'IBM Plex Mono',monospace;">#0e151c</code> keeps the cool cast.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 14 · ONBOARDING ===== -->
+  <div style="max-width:1080px; margin:56px auto 14px;">
+    <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.18em; text-transform:uppercase; color:#4e7bc4; font-weight:500;">14 · First-run &amp; unmapped queues</div>
+    <h2 style="margin:6px 0 0; font-family:'Inter Tight',sans-serif; font-size:26px; font-weight:600; letter-spacing:-.4px;">The roughest first impression, designed deliberately</h2>
+    <p style="margin:8px 0 0; max-width:760px; font-size:14px; line-height:1.6; color:#3a4048;">A brand-new workspace — or a newly discovered queue — produces empty reports with no explanation, which reads as "the product is broken." The fix is a guided <strong>setup checklist</strong> that turns the blank state into a clear, finishable task, and a persistent (dismissible) banner whenever queues go unmapped.</p>
+  </div>
+
+  <div style="display:flex; gap:48px; align-items:flex-start; padding:14px 0 40px;">
+    <!-- first run -->
+    <div style="flex:none; width:560px;">
+      <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:#3d9476; margin-bottom:10px;">✦ First run · guided setup</div>
+      <div style="background:#fff; border:1px solid #c8d8e6; border-radius:12px; box-shadow:0 1px 2px rgba(0,0,0,.05), 0 8px 26px rgba(0,0,0,.10); overflow:hidden;">
+        <div style="padding:22px 24px; border-bottom:1px solid #d6e3ef;"><div style="font-family:'IBM Plex Mono',monospace; font-size:9px; text-transform:uppercase; letter-spacing:.18em; color:#606872;">Welcome</div><div style="font-family:'Inter Tight',sans-serif; font-size:24px; font-weight:600; letter-spacing:-.5px;">Let's get your data flowing</div><div style="font-size:13px; color:#606872; margin-top:4px;">3 quick steps — about 5 minutes. Reports populate as you go.</div></div>
+        <div style="padding:20px 24px; display:flex; flex-direction:column; gap:10px;">
+          <!-- step done -->
+          <div style="display:flex; gap:13px; align-items:flex-start; padding:14px 16px; border:1px solid #c8d8e6; border-radius:10px; background:#f0f6fa;">
+            <span style="flex:none; width:24px; height:24px; border-radius:999px; background:#3d9476; color:#fff; display:flex; align-items:center; justify-content:center; font-size:13px;">✓</span>
+            <div style="flex:1;"><div style="font-family:'Inter Tight',sans-serif; font-size:14px; font-weight:600;">Connect your Google Sheet</div><div style="font-size:12.5px; color:#606872; margin-top:2px;">Linked · 3,182 rows detected.</div></div>
+          </div>
+          <!-- step active -->
+          <div style="display:flex; gap:13px; align-items:flex-start; padding:14px 16px; border:1px solid #4e7bc4; border-radius:10px; box-shadow:0 0 0 3px #e3edf8;">
+            <span style="flex:none; width:24px; height:24px; border-radius:999px; background:#4e7bc4; color:#fff; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:600;">2</span>
+            <div style="flex:1;"><div style="font-family:'Inter Tight',sans-serif; font-size:14px; font-weight:600;">Map queues to departments</div><div style="font-size:12.5px; color:#606872; margin-top:2px;">We found 5 queues. Assign each to a department so its report appears.</div>
+              <div style="display:flex; flex-direction:column; gap:6px; margin-top:10px;">
+                <div style="display:flex; gap:8px; align-items:center;"><span style="font-family:'IBM Plex Mono',monospace; font-size:11px; background:#f0f6fa; border:1px solid #c8d8e6; border-radius:6px; padding:5px 9px; flex:1;">A_Q_CustomerSuccess</span><span style="font-size:11px; color:#3d9476; font-weight:600;">→ CSR ✓</span></div>
+                <div style="display:flex; gap:8px; align-items:center;"><span style="font-family:'IBM Plex Mono',monospace; font-size:11px; background:#f0f6fa; border:1px solid #c8d8e6; border-radius:6px; padding:5px 9px; flex:1;">A_Q_Returns</span><span style="font-size:11px; background:#fff; border:1px solid #c8d8e6; border-radius:6px; padding:5px 9px; color:#606872;">Assign ▾</span></div>
+              </div>
+              <div style="font-family:'IBM Plex Mono',monospace; font-size:10px; color:#606872; margin-top:9px;">3 of 5 mapped</div>
+            </div>
+          </div>
+          <!-- step pending -->
+          <div style="display:flex; gap:13px; align-items:flex-start; padding:14px 16px; border:1px solid #c8d8e6; border-radius:10px;">
+            <span style="flex:none; width:24px; height:24px; border-radius:999px; background:#dde9f3; color:#606872; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:600;">3</span>
+            <div style="flex:1;"><div style="font-family:'Inter Tight',sans-serif; font-size:14px; font-weight:600; color:#606872;">Set alert thresholds &amp; recipients</div><div style="font-size:12.5px; color:#9bb4cf; margin-top:2px;">Optional — defaults to 90% answer rate.</div></div>
+          </div>
+        </div>
+        <div style="padding:0 24px 22px; display:flex; align-items:center; gap:10px;"><div style="flex:1; height:5px; background:#dde9f3; border-radius:999px; overflow:hidden;"><div style="width:50%; height:100%; background:#4e7bc4;"></div></div><span style="font-family:'IBM Plex Mono',monospace; font-size:10px; color:#606872;">step 2 of 3</span><span style="font-size:12px; background:#101418; color:#fff; border-radius:8px; padding:8px 16px; font-weight:500;">Continue</span></div>
+      </div>
+    </div>
+
+    <!-- unmapped banner + empty report -->
+    <div style="flex:none; width:472px;">
+      <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:#3d9476; margin-bottom:10px;">✦ Ongoing · unmapped-queue banner</div>
+      <!-- persistent banner -->
+      <div style="background:#fbf3f2; border:1px solid #f1d7d2; border-left:4px solid #c66b4b; border-radius:10px; padding:14px 16px;">
+        <div style="display:flex; align-items:center; gap:8px;"><span style="font-family:'Inter Tight',sans-serif; font-size:14px; font-weight:600; color:#c66b4b;">2 new queues aren't mapped</span><span style="margin-left:auto; color:#9bb4cf; font-size:14px;">✕</span></div>
+        <div style="font-size:12.5px; color:#606872; line-height:1.5; margin-top:4px;">They're collecting calls but won't appear in any department report until assigned.</div>
+        <div style="display:flex; gap:6px; margin-top:11px;"><span style="font-size:11px; background:#101418; color:#fff; border-radius:7px; padding:7px 13px; font-weight:500;">Map them now</span><span style="font-size:11px; border:1px solid #c8d8e6; background:#fff; border-radius:7px; padding:7px 13px;">Remind me later</span></div>
+      </div>
+      <!-- empty report state -->
+      <div style="margin-top:16px; background:#fff; border:1px solid #c8d8e6; border-radius:12px; padding:30px 24px; text-align:center;">
+        <div style="width:44px; height:44px; border-radius:11px; background:#dde9f3; margin:0 auto; display:flex; align-items:center; justify-content:center; font-family:'Inter Tight',sans-serif; font-size:22px; color:#4e7bc4;">∅</div>
+        <div style="font-family:'Inter Tight',sans-serif; font-size:17px; font-weight:600; margin-top:14px;">No data for Returns yet</div>
+        <div style="font-size:13px; line-height:1.55; color:#606872; margin-top:6px; max-width:300px; margin-left:auto; margin-right:auto;">This queue exists but isn't mapped to a department, so there's nothing to report. Assign it and data appears on the next sync.</div>
+        <div style="display:flex; gap:6px; justify-content:center; margin-top:16px;"><span style="font-size:12px; background:#101418; color:#fff; border-radius:8px; padding:8px 16px; font-weight:500;">Assign to a department</span></div>
+      </div>
+      <div style="margin-top:14px; background:#eef3f8; border:1px dashed #c8d8e6; border-radius:10px; padding:14px 16px; font-size:12.5px; line-height:1.55; color:#3a4048;"><strong style="font-family:'Inter Tight',sans-serif;">Principle →</strong> An empty report should explain <em>why</em> it's empty and <em>how</em> to fix it — never just render zero rows. The same unmapped-queue logic powers the setup step, the banner, and this empty state.</div>
+    </div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

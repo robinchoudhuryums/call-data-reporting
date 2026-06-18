@@ -1,0 +1,739 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    body { margin:0; } code, pre { font-family:'IBM Plex Mono',monospace; }
+    @keyframes mGrowX  { 0%{transform:scaleX(0)} 32%{transform:scaleX(1)} 90%{transform:scaleX(1)} 100%{transform:scaleX(0)} }
+    @keyframes mWipeY  { 0%{transform:scaleY(0)} 32%{transform:scaleY(1)} 90%{transform:scaleY(1)} 100%{transform:scaleY(0)} }
+    @keyframes mDrawL  { 0%{stroke-dashoffset:240} 40%{stroke-dashoffset:0} 90%{stroke-dashoffset:0} 100%{stroke-dashoffset:240} }
+    @keyframes mFlash  { 0%{background:#fff} 12%{background:#fdf2cf} 60%{background:#fff} 100%{background:#fff} }
+    @keyframes mRise   { 0%{opacity:0;transform:translateY(10px) scale(.97)} 14%{opacity:1;transform:none} 88%{opacity:1;transform:none} 100%{opacity:0;transform:translateY(10px) scale(.97)} }
+    @keyframes mSlide  { 0%,40%{transform:translateX(0)} 55%,90%{transform:translateX(100%)} 100%{transform:translateX(0)} }
+    @keyframes mPulse  { 0%,72%,100%{box-shadow:0 0 0 0 rgba(178,58,44,0)} 80%{box-shadow:0 0 0 5px rgba(178,58,44,.22)} 88%{box-shadow:0 0 0 8px rgba(178,58,44,0)} }
+    @keyframes mToast  { 0%{opacity:0;transform:translateY(8px)} 12%,80%{opacity:1;transform:none} 96%,100%{opacity:0;transform:translateY(8px)} }
+    @keyframes mFade   { 0%{opacity:0} 30%{opacity:1} 100%{opacity:1} }
+    @media (prefers-reduced-motion:reduce){ [class^="mDemo"] *,[class*=" mDemo"] *{ animation:none !important; } }
+  </style>
+  <script>
+  (function(){
+    function run(el){ var dur=1400,total=4000,t0=null;
+      function f(ts){ if(t0===null)t0=ts; var e=(ts-t0)%total,k=Math.min(1,e/dur);
+        el.textContent=(94.1*(1-Math.pow(1-k,3))).toFixed(1); requestAnimationFrame(f); }
+      requestAnimationFrame(f); }
+    var iv=setInterval(function(){ var el=document.getElementById('mCountupNum');
+      if(el){ clearInterval(iv);
+        if(matchMedia('(prefers-reduced-motion: reduce)').matches){ el.textContent='94.1'; } else { run(el); } } },120);
+  })();
+  </script>
+</helmet>
+
+<div style="background:#eef3f8; min-height:100vh; font-family:'Inter',-apple-system,sans-serif; color:#101418; padding:48px 24px 96px;">
+<div style="max-width:1000px; margin:0 auto;">
+
+  <!-- ===== HEADER ===== -->
+  <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; font-weight:500; text-transform:uppercase; letter-spacing:.2em; color:#606872;">Developer handoff · v1</div>
+  <h1 style="margin:10px 0 0; font-family:'Inter Tight',sans-serif; font-size:40px; font-weight:700; letter-spacing:-1.2px; line-height:1.05;">Department Dashboard — shared component layer</h1>
+  <p style="margin:16px 0 0; max-width:720px; font-size:15px; line-height:1.65; color:#3a4048;">A canonical set of tokens and components to replace the per-report CSS dialects (<code>ir-</code>, <code>pr-</code>, <code>al-</code>, <code>ins-</code>, <code>cl-</code>, <code>of-</code>, <code>dc-</code>). Everything here is built on your existing <code>:root</code> variables and the cool theme. New shared classes use a <code>ds-</code> prefix so they can land alongside the old CSS and be migrated report-by-report. Each component shows a <strong>live render</strong>, the <strong>paste-ready CSS</strong>, and a short <strong>HTML usage</strong> snippet.</p>
+
+  <!-- TOC -->
+  <div style="display:flex; flex-wrap:wrap; gap:8px; margin-top:22px;">
+    <span style="font-size:12.5px; background:#fff; border:1px solid #c8d8e6; border-radius:999px; padding:7px 13px; color:#101418;">1 · Tokens</span>
+    <span style="font-size:12.5px; background:#fff; border:1px solid #c8d8e6; border-radius:999px; padding:7px 13px; color:#101418;">2 · Components</span>
+    <span style="font-size:12.5px; background:#fff; border:1px solid #c8d8e6; border-radius:999px; padding:7px 13px; color:#101418;">3 · Consolidated reports</span>
+    <span style="font-size:12.5px; background:#fff; border:1px solid #c8d8e6; border-radius:999px; padding:7px 13px; color:#101418;">4 · Charts</span>
+    <span style="font-size:12.5px; background:#fff; border:1px solid #c8d8e6; border-radius:999px; padding:7px 13px; color:#101418;">5 · Perceived speed</span>
+    <span style="font-size:12.5px; background:#fff; border:1px solid #c8d8e6; border-radius:999px; padding:7px 13px; color:#101418;">6 · Navigation</span>
+    <span style="font-size:12.5px; background:#fff; border:1px solid #c8d8e6; border-radius:999px; padding:7px 13px; color:#101418;">7 · Loaders</span>
+    <span style="font-size:12.5px; background:#fff; border:1px solid #c8d8e6; border-radius:999px; padding:7px 13px; color:#101418;">8 · Surrounding surfaces</span>
+    <span style="font-size:12.5px; background:#fff; border:1px solid #c8d8e6; border-radius:999px; padding:7px 13px; color:#101418;">9 · Motion</span>
+  </div>
+
+  <!-- ===== PART 1 · TOKENS ===== -->
+  <div style="margin-top:48px; padding-top:8px; border-top:2px solid #101418;">
+    <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.18em; text-transform:uppercase; color:#4e7bc4; font-weight:500;">Part 1</div>
+    <h2 style="margin:6px 0 0; font-family:'Inter Tight',sans-serif; font-size:28px; font-weight:600; letter-spacing:-.5px;">Design tokens</h2>
+    <p style="margin:8px 0 0; max-width:720px; font-size:14px; line-height:1.6; color:#3a4048;">These are your current cool-theme values, plus three additions the redesign relies on: a <strong>radius scale</strong> (you only had <code>--r:2px</code>), an <strong>elevation scale</strong> (you had none), and a <strong>status helper</strong> mapping answer rate / abandon-% to good / warn / bad. Keep your dark-mode and theme overrides exactly as they are — they already only swap neutrals.</p>
+
+    <!-- swatches -->
+    <div style="display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:10px; margin-top:20px;">
+      <div style="background:#fff; border:1px solid #c8d8e6; border-radius:10px; overflow:hidden;"><div style="height:54px; background:#4e7bc4;"></div><div style="padding:8px 10px;"><div style="font-family:'IBM Plex Mono',monospace; font-size:11px;">--accent</div><div style="font-family:'IBM Plex Mono',monospace; font-size:10px; color:#606872;">#4e7bc4</div></div></div>
+      <div style="background:#fff; border:1px solid #c8d8e6; border-radius:10px; overflow:hidden;"><div style="height:54px; background:#3d9476;"></div><div style="padding:8px 10px;"><div style="font-family:'IBM Plex Mono',monospace; font-size:11px;">--good</div><div style="font-family:'IBM Plex Mono',monospace; font-size:10px; color:#606872;">#3d9476</div></div></div>
+      <div style="background:#fff; border:1px solid #c8d8e6; border-radius:10px; overflow:hidden;"><div style="height:54px; background:#c66b4b;"></div><div style="padding:8px 10px;"><div style="font-family:'IBM Plex Mono',monospace; font-size:11px;">--warn</div><div style="font-family:'IBM Plex Mono',monospace; font-size:10px; color:#606872;">#c66b4b</div></div></div>
+      <div style="background:#fff; border:1px solid #c8d8e6; border-radius:10px; overflow:hidden;"><div style="height:54px; background:#b23a2c;"></div><div style="padding:8px 10px;"><div style="font-family:'IBM Plex Mono',monospace; font-size:11px;">--bad</div><div style="font-family:'IBM Plex Mono',monospace; font-size:10px; color:#606872;">#b23a2c</div></div></div>
+      <div style="background:#fff; border:1px solid #c8d8e6; border-radius:10px; overflow:hidden;"><div style="height:54px; background:#f0f6fa; border-bottom:1px solid #c8d8e6;"></div><div style="padding:8px 10px;"><div style="font-family:'IBM Plex Mono',monospace; font-size:11px;">--paper</div><div style="font-family:'IBM Plex Mono',monospace; font-size:10px; color:#606872;">#f0f6fa</div></div></div>
+      <div style="background:#fff; border:1px solid #c8d8e6; border-radius:10px; overflow:hidden;"><div style="height:54px; background:#dde9f3;"></div><div style="padding:8px 10px;"><div style="font-family:'IBM Plex Mono',monospace; font-size:11px;">--paper-2</div><div style="font-family:'IBM Plex Mono',monospace; font-size:10px; color:#606872;">#dde9f3</div></div></div>
+      <div style="background:#fff; border:1px solid #c8d8e6; border-radius:10px; overflow:hidden;"><div style="height:54px; background:#101418;"></div><div style="padding:8px 10px;"><div style="font-family:'IBM Plex Mono',monospace; font-size:11px;">--ink</div><div style="font-family:'IBM Plex Mono',monospace; font-size:10px; color:#606872;">#101418</div></div></div>
+      <div style="background:#fff; border:1px solid #c8d8e6; border-radius:10px; overflow:hidden;"><div style="height:54px; background:#606872;"></div><div style="padding:8px 10px;"><div style="font-family:'IBM Plex Mono',monospace; font-size:11px;">--muted</div><div style="font-family:'IBM Plex Mono',monospace; font-size:10px; color:#606872;">#606872</div></div></div>
+    </div>
+
+    <pre style="background:#11161f; color:#cdd6e3; border-radius:10px; padding:18px 20px; overflow:auto; font-size:12px; line-height:1.65; margin-top:16px;">:root {
+  /* surfaces + ink (cool theme — your current defaults) */
+  --paper:#f0f6fa; --paper-2:#dde9f3; --paper-card:#fff;
+  --ink:#101418;   --muted:#606872;   --line:#c8d8e6; --line-2:#d6e3ef;
+
+  /* brand + semantics (unchanged — keep the @supports oklch upgrade) */
+  --accent:#4e7bc4; --accent-soft:#e3edf8;
+  --good:#3d9476;   --good-soft:#e0efe6;
+  --warn:#c66b4b;   --warn-soft:#f6e2d4;
+  --bad:#b23a2c;    --bad-soft:#f1d7d2;
+
+  /* NEW — radius scale (replaces the single --r:2px) */
+  --r-sm:6px; --r:10px; --r-lg:12px; --r-pill:999px;
+
+  /* NEW — elevation (you had none; hairlines did all the work) */
+  --shadow-1:0 1px 2px rgba(0,0,0,.05);
+  --shadow-2:0 1px 2px rgba(0,0,0,.05), 0 5px 18px rgba(0,0,0,.06);
+  --shadow-modal:0 1px 2px rgba(0,0,0,.05), 0 8px 26px rgba(0,0,0,.10);
+
+  /* type (unchanged) */
+  --display:'Inter Tight',sans-serif; --ui:'Inter',sans-serif; --mono:'IBM Plex Mono',monospace;
+}
+
+/* NEW — single source of truth for status color.
+   answerRate: &gt;=92 good · 85–92 warn · &lt;85 bad  (your 92% target)
+   abandonPct: &lt;5 good · 5–8 warn · &gt;8 bad        (your 5% QCD rule) */
+.is-good { --status:var(--good); --status-soft:var(--good-soft); }
+.is-warn { --status:var(--warn); --status-soft:var(--warn-soft); }
+.is-bad  { --status:var(--bad);  --status-soft:var(--bad-soft);  }</pre>
+    <p style="margin:10px 0 0; font-size:13px; line-height:1.6; color:#606872;">Status becomes a single decision in JS (<code>statusFor(metric,value)</code> returns <code>is-good|is-warn|is-bad</code>), set once on a card; every child reads <code>var(--status)</code>. No more per-report tint logic.</p>
+  </div>
+
+  <!-- ===== PART 2 · COMPONENTS ===== -->
+  <div style="margin-top:48px; padding-top:8px; border-top:2px solid #101418;">
+    <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.18em; text-transform:uppercase; color:#4e7bc4; font-weight:500;">Part 2</div>
+    <h2 style="margin:6px 0 0; font-family:'Inter Tight',sans-serif; font-size:28px; font-weight:600; letter-spacing:-.5px;">Component layer</h2>
+    <p style="margin:8px 0 0; max-width:720px; font-size:14px; line-height:1.6; color:#3a4048;">Eight components cover every report. Each is small, token-driven, and replaces multiple existing one-offs.</p>
+  </div>
+
+  <!-- 2.1 SECTION HEADER -->
+  <div style="background:#fff; border:1px solid #c8d8e6; border-radius:12px; box-shadow:0 1px 2px rgba(0,0,0,.04); padding:24px; margin-top:22px;">
+    <div style="display:flex; align-items:baseline; gap:10px;"><span style="font-family:'Inter Tight',sans-serif; font-size:18px; font-weight:600;">2.1 · Kicker &amp; section header</span><span style="font-family:'IBM Plex Mono',monospace; font-size:11px; color:#606872;">.ds-kicker · .ds-section</span></div>
+    <p style="margin:6px 0 14px; font-size:13px; color:#606872; max-width:640px;">Replaces <code>.modal-kicker</code>, <code>.al-section-title</code>, <code>.ir-section-title</code>, <code>.dash-kicker</code>. One mono kicker + one display heading.</p>
+    <!-- live -->
+    <div style="background:#f0f6fa; border:1px dashed #c8d8e6; border-radius:10px; padding:18px;">
+      <div style="font-family:'IBM Plex Mono',monospace; font-size:10px; text-transform:uppercase; letter-spacing:.18em; color:#606872;">Report · Admin</div>
+      <div style="font-family:'Inter Tight',sans-serif; font-size:24px; font-weight:600; letter-spacing:-.5px; margin-top:3px;">Section heading</div>
+    </div>
+    <pre style="background:#11161f; color:#cdd6e3; border-radius:10px; padding:16px 18px; overflow:auto; font-size:12px; line-height:1.6; margin-top:14px;">.ds-kicker {
+  font:500 10px/1.4 var(--mono);
+  text-transform:uppercase; letter-spacing:.18em; color:var(--muted);
+}
+.ds-section { font:600 24px/1.1 var(--display); letter-spacing:-.5px; color:var(--ink); margin-top:3px; }</pre>
+  </div>
+
+  <!-- 2.2 CHIP + DELTA -->
+  <div style="background:#fff; border:1px solid #c8d8e6; border-radius:12px; box-shadow:0 1px 2px rgba(0,0,0,.04); padding:24px; margin-top:18px;">
+    <div style="display:flex; align-items:baseline; gap:10px;"><span style="font-family:'Inter Tight',sans-serif; font-size:18px; font-weight:600;">2.2 · Status chip &amp; delta pill</span><span style="font-family:'IBM Plex Mono',monospace; font-size:11px; color:#606872;">.ds-chip · .ds-delta</span></div>
+    <p style="margin:6px 0 14px; font-size:13px; color:#606872; max-width:640px;">Replaces the Insights left-border classification, the alert drift chips, the source tags, and the inline ▲/▼ spans. Color comes from <code>--status</code> or an explicit modifier.</p>
+    <div style="background:#f0f6fa; border:1px dashed #c8d8e6; border-radius:10px; padding:18px; display:flex; flex-wrap:wrap; gap:10px; align-items:center;">
+      <span style="font-size:11px; font-weight:600; color:#3d9476; background:#e0efe6; border-radius:999px; padding:3px 10px;">On track</span>
+      <span style="font-size:11px; font-weight:600; color:#c66b4b; background:#f6e2d4; border-radius:999px; padding:3px 10px;">Slipping</span>
+      <span style="font-size:11px; font-weight:600; color:#606872; background:#dde9f3; border-radius:999px; padding:3px 10px;">Mixed</span>
+      <span style="font-size:11px; font-weight:600; color:#3d9476; background:#e0efe6; border-radius:999px; padding:3px 9px;">▲ 1.8 pts</span>
+      <span style="font-size:11px; font-weight:600; color:#c66b4b; background:#f6e2d4; border-radius:999px; padding:3px 9px;">▼ 4.2 pts</span>
+      <span style="font-size:11px; font-weight:600; color:#606872; background:#dde9f3; border-radius:999px; padding:3px 9px;">— no change</span>
+    </div>
+    <pre style="background:#11161f; color:#cdd6e3; border-radius:10px; padding:16px 18px; overflow:auto; font-size:12px; line-height:1.6; margin-top:14px;">.ds-chip, .ds-delta {
+  display:inline-flex; align-items:center; gap:4px;
+  font:600 11px/1 var(--ui); border-radius:var(--r-pill);
+  padding:3px 10px; white-space:nowrap;
+  color:var(--status,var(--muted));
+  background:var(--status-soft,var(--paper-2));
+}
+/* explicit overrides when not inheriting a card's --status */
+.ds-chip--good,.ds-delta--good { color:var(--good); background:var(--good-soft); }
+.ds-chip--warn,.ds-delta--warn { color:var(--warn); background:var(--warn-soft); }
+.ds-chip--bad ,.ds-delta--bad  { color:var(--bad);  background:var(--bad-soft);  }
+.ds-chip--neutral,.ds-delta--neutral { color:var(--muted); background:var(--paper-2); }</pre>
+    <pre style="background:#0c1019; color:#8fa6c4; border-radius:10px; padding:14px 18px; overflow:auto; font-size:12px; line-height:1.6; margin-top:8px;">&lt;span class="ds-delta ds-delta--good"&gt;&amp;#9650; 1.8 pts&lt;/span&gt;</pre>
+  </div>
+
+  <!-- 2.3 KPI TILE -->
+  <div style="background:#fff; border:1px solid #c8d8e6; border-radius:12px; box-shadow:0 1px 2px rgba(0,0,0,.04); padding:24px; margin-top:18px;">
+    <div style="display:flex; align-items:baseline; gap:10px;"><span style="font-family:'Inter Tight',sans-serif; font-size:18px; font-weight:600;">2.3 · KPI tile</span><span style="font-family:'IBM Plex Mono',monospace; font-size:11px; color:#606872;">.ds-kpi</span></div>
+    <p style="margin:6px 0 14px; font-size:13px; color:#606872; max-width:640px;">The single biggest consolidation: replaces <code>.ir-kpi-tile</code>, <code>.pr-kpi-tile</code>, <code>.ins-card</code> metrics, the Overview hero, and the QCD tiles. Label + delta on top, display-font value, optional sparkline, quiet comparison footer.</p>
+    <div style="background:#f0f6fa; border:1px dashed #c8d8e6; border-radius:10px; padding:18px; display:grid; grid-template-columns:repeat(3,1fr); gap:12px;">
+      <div style="background:#fff; border:1px solid #c8d8e6; border-radius:12px; padding:14px;"><div style="display:flex; justify-content:space-between; align-items:center;"><span style="font-family:'IBM Plex Mono',monospace; font-size:10px; text-transform:uppercase; letter-spacing:.1em; color:#606872;">Answer rate</span><span style="font-size:10px; font-weight:600; color:#3d9476; background:#e0efe6; border-radius:999px; padding:2px 7px;">▲ 3.7</span></div><div style="font-family:'Inter Tight',sans-serif; font-size:32px; font-weight:700; letter-spacing:-1px; margin-top:4px; color:#3d9476; line-height:1;">95.8%</div><svg viewBox="0 0 120 20" style="width:100%;height:20px;margin-top:6px;"><polyline points="0,15 30,13 60,12 90,8 120,5" fill="none" stroke="#3d9476" stroke-width="2" stroke-linecap="round"/></svg><div style="font-family:'IBM Plex Mono',monospace; font-size:10px; color:#606872; margin-top:4px;">team avg 92.1%</div></div>
+      <div style="background:#fff; border:1px solid #c8d8e6; border-radius:12px; padding:14px;"><div style="display:flex; justify-content:space-between; align-items:center;"><span style="font-family:'IBM Plex Mono',monospace; font-size:10px; text-transform:uppercase; letter-spacing:.1em; color:#606872;">Answered</span><span style="font-size:10px; font-weight:600; color:#3d9476; background:#e0efe6; border-radius:999px; padding:2px 7px;">▲ 24</span></div><div style="font-family:'Inter Tight',sans-serif; font-size:32px; font-weight:700; letter-spacing:-1px; margin-top:4px; line-height:1;">113</div><svg viewBox="0 0 120 20" style="width:100%;height:20px;margin-top:6px;"><polyline points="0,15 30,12 60,13 90,7 120,5" fill="none" stroke="#4e7bc4" stroke-width="2" stroke-linecap="round"/></svg><div style="font-family:'IBM Plex Mono',monospace; font-size:10px; color:#606872; margin-top:4px;">team avg 89</div></div>
+      <div style="background:#fff; border:1px solid #c8d8e6; border-radius:12px; padding:14px;"><div style="display:flex; justify-content:space-between; align-items:center;"><span style="font-family:'IBM Plex Mono',monospace; font-size:10px; text-transform:uppercase; letter-spacing:.1em; color:#606872;">Abd wait</span><span style="font-size:10px; font-weight:600; color:#3d9476; background:#e0efe6; border-radius:999px; padding:2px 7px;">▼ 21s</span></div><div style="font-family:'Inter Tight',sans-serif; font-size:32px; font-weight:700; letter-spacing:-1px; margin-top:4px; line-height:1;">0:41</div><svg viewBox="0 0 120 20" style="width:100%;height:20px;margin-top:6px;"><polyline points="0,8 30,10 60,9 90,6 120,5" fill="none" stroke="#3d9476" stroke-width="2" stroke-linecap="round"/></svg><div style="font-family:'IBM Plex Mono',monospace; font-size:10px; color:#606872; margin-top:4px;">team avg 1:02</div></div>
+    </div>
+    <pre style="background:#11161f; color:#cdd6e3; border-radius:10px; padding:16px 18px; overflow:auto; font-size:12px; line-height:1.6; margin-top:14px;">.ds-kpi {
+  background:var(--paper-card); border:1px solid var(--line);
+  border-radius:var(--r-lg); padding:14px; min-width:0;
+}
+.ds-kpi__top { display:flex; justify-content:space-between; align-items:center; }
+.ds-kpi__label { font:500 10px/1 var(--mono); text-transform:uppercase; letter-spacing:.1em; color:var(--muted); }
+.ds-kpi__value {
+  font:700 32px/1 var(--display); letter-spacing:-1px; margin-top:4px;
+  font-variant-numeric:tabular-nums;
+  color:var(--ink);                 /* or var(--status) on the lead metric */
+}
+.ds-kpi__spark { display:block; width:100%; height:20px; margin-top:6px; }
+.ds-kpi__foot  { font:400 10px/1.4 var(--mono); color:var(--muted); margin-top:4px; }
+.ds-kpi-grid   { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; }
+@media (max-width:760px){ .ds-kpi-grid{ grid-template-columns:repeat(2,1fr); } }</pre>
+  </div>
+
+  <!-- 2.4 STATUS-RAIL CARD -->
+  <div style="background:#fff; border:1px solid #c8d8e6; border-radius:12px; box-shadow:0 1px 2px rgba(0,0,0,.04); padding:24px; margin-top:18px;">
+    <div style="display:flex; align-items:baseline; gap:10px;"><span style="font-family:'Inter Tight',sans-serif; font-size:18px; font-weight:600;">2.4 · Status-rail card</span><span style="font-family:'IBM Plex Mono',monospace; font-size:11px; color:#606872;">.ds-card · .ds-card--rail</span></div>
+    <p style="margin:6px 0 14px; font-size:13px; color:#606872; max-width:640px;">The dept tile (Overview) and the agent card (Insights) are the same object. The left rail reads <code>var(--status)</code> set on the card, so health is one class, not bespoke border rules.</p>
+    <div style="background:#f0f6fa; border:1px dashed #c8d8e6; border-radius:10px; padding:18px; display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+      <div style="position:relative; background:#fff; border:1px solid #c8d8e6; border-radius:12px; padding:14px 14px 12px 16px; box-shadow:0 1px 2px rgba(0,0,0,.03); overflow:hidden;"><div style="position:absolute; left:0; top:0; bottom:0; width:4px; background:#3d9476;"></div><div style="display:flex; justify-content:space-between; align-items:center;"><span style="font-family:'Inter Tight',sans-serif; font-size:15px; font-weight:600;">CSR</span><span style="font-size:10px; font-weight:600; color:#3d9476; background:#e0efe6; border-radius:999px; padding:2px 7px;">▲ 0.9</span></div><div style="font-family:'Inter Tight',sans-serif; font-size:30px; font-weight:700; letter-spacing:-1px; margin-top:4px; line-height:1;">94.1<span style="font-size:14px; color:#606872; font-weight:500;">%</span></div><div style="display:flex; gap:12px; font-family:'IBM Plex Mono',monospace; font-size:10px; color:#606872; border-top:1px solid #d6e3ef; padding-top:7px; margin-top:8px;"><span>388/412 ans</span><span>4.1% aban</span></div></div>
+      <div style="position:relative; background:#fff; border:1px solid #c8d8e6; border-radius:12px; padding:14px 14px 12px 16px; box-shadow:0 1px 2px rgba(0,0,0,.03); overflow:hidden;"><div style="position:absolute; left:0; top:0; bottom:0; width:4px; background:#b23a2c;"></div><div style="display:flex; justify-content:space-between; align-items:center;"><span style="font-family:'Inter Tight',sans-serif; font-size:15px; font-weight:600;">Intake</span><span style="font-size:10px; font-weight:600; color:#b23a2c; background:#f1d7d2; border-radius:999px; padding:2px 7px;">▼ 3.1</span></div><div style="font-family:'Inter Tight',sans-serif; font-size:30px; font-weight:700; letter-spacing:-1px; margin-top:4px; line-height:1; color:#b23a2c;">82.0<span style="font-size:14px; color:#606872; font-weight:500;">%</span></div><div style="display:flex; gap:12px; font-family:'IBM Plex Mono',monospace; font-size:10px; color:#606872; border-top:1px solid #d6e3ef; padding-top:7px; margin-top:8px;"><span>138/168 ans</span><span style="color:#b23a2c;">11.3% aban</span></div></div>
+    </div>
+    <pre style="background:#11161f; color:#cdd6e3; border-radius:10px; padding:16px 18px; overflow:auto; font-size:12px; line-height:1.6; margin-top:14px;">.ds-card {
+  background:var(--paper-card); border:1px solid var(--line);
+  border-radius:var(--r-lg); box-shadow:var(--shadow-1); min-width:0;
+}
+.ds-card--rail { position:relative; overflow:hidden; padding-left:16px; }
+.ds-card--rail::before {
+  content:""; position:absolute; left:0; top:0; bottom:0; width:4px;
+  background:var(--status,var(--accent));     /* set is-good/is-warn/is-bad on the card */
+}</pre>
+    <pre style="background:#0c1019; color:#8fa6c4; border-radius:10px; padding:14px 18px; overflow:auto; font-size:12px; line-height:1.6; margin-top:8px;">&lt;div class="ds-card ds-card--rail is-warn"&gt; … &lt;/div&gt;</pre>
+  </div>
+
+  <!-- 2.5 DATA TABLE -->
+  <div style="background:#fff; border:1px solid #c8d8e6; border-radius:12px; box-shadow:0 1px 2px rgba(0,0,0,.04); padding:24px; margin-top:18px;">
+    <div style="display:flex; align-items:baseline; gap:10px;"><span style="font-family:'Inter Tight',sans-serif; font-size:18px; font-weight:600;">2.5 · Data table + bar cell</span><span style="font-family:'IBM Plex Mono',monospace; font-size:11px; color:#606872;">.ds-table · .ds-bar</span></div>
+    <p style="margin:6px 0 14px; font-size:13px; color:#606872; max-width:640px;">Replaces <code>.agents</code>, <code>.al-config-table</code>, <code>.qcd-source-table</code>, <code>.al-results-table</code>. Mono uppercase head, tabular numerics, zebra, and an inline answer-rate bar cell that tints from <code>--status</code>.</p>
+    <div style="background:#f0f6fa; border:1px dashed #c8d8e6; border-radius:10px; padding:14px;">
+      <div style="background:#fff; border:1px solid #c8d8e6; border-radius:12px; overflow:hidden;">
+        <table style="width:100%; border-collapse:collapse; font-size:13px;">
+          <thead><tr><th style="text-align:left; font:500 10px/1 'IBM Plex Mono',monospace; text-transform:uppercase; letter-spacing:.1em; color:#606872; padding:12px 14px;">Agent</th><th style="text-align:left; font:500 10px/1 'IBM Plex Mono',monospace; text-transform:uppercase; letter-spacing:.1em; color:#606872; padding:12px 8px; width:180px;">Answer rate</th><th style="text-align:right; font:500 10px/1 'IBM Plex Mono',monospace; text-transform:uppercase; letter-spacing:.1em; color:#606872; padding:12px 14px;">Missed</th></tr></thead>
+          <tbody>
+            <tr style="border-top:1px solid #d6e3ef;"><td style="padding:11px 14px; font-weight:600;">Aisha Khan</td><td style="padding:11px 8px;"><div style="display:flex; align-items:center; gap:8px;"><div style="flex:1; height:6px; background:#dde9f3; border-radius:999px; overflow:hidden;"><div style="width:96%; height:100%; background:#3d9476;"></div></div><span style="font:500 12px 'IBM Plex Mono',monospace; color:#3d9476; width:40px; text-align:right;">95.8%</span></div></td><td style="text-align:right; padding:11px 14px; font-family:'IBM Plex Mono',monospace; color:#606872;">5</td></tr>
+            <tr style="border-top:1px solid #d6e3ef; background:#f5f9fc;"><td style="padding:11px 14px; font-weight:600;">James Carter</td><td style="padding:11px 8px;"><div style="display:flex; align-items:center; gap:8px;"><div style="flex:1; height:6px; background:#dde9f3; border-radius:999px; overflow:hidden;"><div style="width:86%; height:100%; background:#c66b4b;"></div></div><span style="font:500 12px 'IBM Plex Mono',monospace; color:#c66b4b; width:40px; text-align:right;">86.5%</span></div></td><td style="text-align:right; padding:11px 14px; font-family:'IBM Plex Mono',monospace; color:#c66b4b;">14</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <pre style="background:#11161f; color:#cdd6e3; border-radius:10px; padding:16px 18px; overflow:auto; font-size:12px; line-height:1.6; margin-top:14px;">.ds-table { width:100%; border-collapse:collapse; font-size:13px; }
+.ds-table th {
+  font:500 10px/1 var(--mono); text-transform:uppercase; letter-spacing:.1em;
+  color:var(--muted); text-align:right; padding:12px 14px;
+}
+.ds-table th:first-child, .ds-table td:first-child { text-align:left; }
+.ds-table td { padding:11px 14px; border-top:1px solid var(--line-2);
+  font-variant-numeric:tabular-nums; text-align:right; }
+.ds-table tbody tr:nth-child(even) { background:var(--paper); }   /* zebra */
+.ds-table tbody tr:hover { background:var(--accent-soft); }
+.ds-table thead th { position:sticky; top:0; background:var(--paper-card); z-index:1; }
+/* inline metric bar */
+.ds-bar { display:flex; align-items:center; gap:8px; }
+.ds-bar__track { flex:1; height:6px; background:var(--paper-2); border-radius:var(--r-pill); overflow:hidden; }
+.ds-bar__fill  { height:100%; background:var(--status,var(--good)); }
+.ds-bar__val   { font:500 12px var(--mono); color:var(--status,var(--ink)); width:40px; text-align:right; }</pre>
+  </div>
+
+  <!-- 2.6 BANNER -->
+  <div style="background:#fff; border:1px solid #c8d8e6; border-radius:12px; box-shadow:0 1px 2px rgba(0,0,0,.04); padding:24px; margin-top:18px;">
+    <div style="display:flex; align-items:baseline; gap:10px;"><span style="font-family:'Inter Tight',sans-serif; font-size:18px; font-weight:600;">2.6 · "At a glance" banner</span><span style="font-family:'IBM Plex Mono',monospace; font-size:11px; color:#606872;">.ds-banner</span></div>
+    <p style="margin:6px 0 14px; font-size:13px; color:#606872; max-width:640px;">Your answer-first layer, made prominent. Replaces <code>.report-headline</code> + the various <code>*-team-insights</code> blocks. Tone via <code>is-good/is-warn</code>; an optional one-word badge.</p>
+    <div style="background:#f0f6fa; border:1px dashed #c8d8e6; border-radius:10px; padding:18px; display:flex; flex-direction:column; gap:10px;">
+      <div style="background:#e0efe6; border-radius:12px; padding:14px 16px; display:flex; gap:12px; align-items:flex-start;"><span style="font:700 13px 'Inter Tight'; color:#2f7a5f; background:#fff; border-radius:8px; padding:5px 10px; white-space:nowrap;">On track</span><div style="font-size:13.5px; line-height:1.55; color:#234;">Team answered <strong>92.1%</strong> — <strong style="color:#2f7a5f;">up 1.2 pts</strong> vs the prior 16 days. <strong>James</strong> needs a check-in.</div></div>
+      <div style="background:#f6e2d4; border-radius:12px; padding:14px 16px; display:flex; gap:12px; align-items:flex-start;"><span style="font:700 13px 'Inter Tight'; color:#a8442d; background:#fff; border-radius:8px; padding:5px 10px; white-space:nowrap;">Watch</span><div style="font-size:13.5px; line-height:1.55; color:#234;">Intake abandon rate hit <strong>11.3%</strong> — over the 5% rule for 3 days running.</div></div>
+    </div>
+    <pre style="background:#11161f; color:#cdd6e3; border-radius:10px; padding:16px 18px; overflow:auto; font-size:12px; line-height:1.6; margin-top:14px;">.ds-banner {
+  display:flex; gap:12px; align-items:flex-start;
+  background:var(--status-soft,var(--accent-soft));
+  border-radius:var(--r-lg); padding:14px 16px;
+  font-size:13.5px; line-height:1.55; color:var(--ink);
+}
+.ds-banner__badge {
+  flex:none; font:700 13px var(--display); white-space:nowrap;
+  background:var(--paper-card); color:var(--status,var(--accent));
+  border-radius:var(--r-sm); padding:5px 10px;
+}</pre>
+  </div>
+
+  <!-- 2.7 TOOLBAR + SEGMENT -->
+  <div style="background:#fff; border:1px solid #c8d8e6; border-radius:12px; box-shadow:0 1px 2px rgba(0,0,0,.04); padding:24px; margin-top:18px;">
+    <div style="display:flex; align-items:baseline; gap:10px;"><span style="font-family:'Inter Tight',sans-serif; font-size:18px; font-weight:600;">2.7 · Toolbar &amp; segmented control</span><span style="font-family:'IBM Plex Mono',monospace; font-size:11px; color:#606872;">.ds-toolbar · .ds-seg · .ds-tabs</span></div>
+    <p style="margin:6px 0 14px; font-size:13px; color:#606872; max-width:640px;">Collapses the scattered <code>.controls</code> / <code>.date-presets</code> / <code>.ir-form-grid</code> rows into one calm bar; the segmented control standardizes quick-select, chart-metric tabs, and report sub-tabs.</p>
+    <div style="background:#f0f6fa; border:1px dashed #c8d8e6; border-radius:10px; padding:18px;">
+      <div style="display:flex; gap:8px; align-items:center; background:#fff; border:1px solid #c8d8e6; border-radius:10px; padding:8px 10px;">
+        <span style="font:500 10px 'IBM Plex Mono'; color:#606872; text-transform:uppercase; letter-spacing:.1em; padding-left:4px;">Range</span>
+        <span style="font-size:12px; color:#606872;">Jun 1</span><span style="color:#9bb4cf;">→</span><span style="font-size:12px; color:#606872;">Jun 16</span>
+        <span style="width:1px; height:18px; background:#c8d8e6; margin:0 4px;"></span>
+        <span style="display:inline-flex; background:#eef3f8; border-radius:999px; padding:3px;"><span style="font-size:11px; background:#101418; color:#fff; border-radius:999px; padding:4px 11px;">30d</span><span style="font-size:11px; color:#606872; padding:4px 11px;">7d</span><span style="font-size:11px; color:#606872; padding:4px 11px;">MTD</span></span>
+        <span style="margin-left:auto; font-size:11px; color:#4e7bc4; font-weight:600; padding-right:4px;">More metrics ▾</span>
+      </div>
+    </div>
+    <pre style="background:#11161f; color:#cdd6e3; border-radius:10px; padding:16px 18px; overflow:auto; font-size:12px; line-height:1.6; margin-top:14px;">.ds-toolbar {
+  display:flex; gap:8px; align-items:center; flex-wrap:wrap;
+  background:var(--paper-card); border:1px solid var(--line);
+  border-radius:var(--r); padding:8px 10px;
+}
+.ds-seg { display:inline-flex; background:var(--paper); border-radius:var(--r-pill); padding:3px; }
+.ds-seg button {
+  border:0; background:transparent; cursor:pointer;
+  font:500 11px var(--ui); color:var(--muted);
+  border-radius:var(--r-pill); padding:4px 11px;
+}
+.ds-seg button[aria-pressed="true"] { background:var(--ink); color:var(--paper-card); }</pre>
+  </div>
+
+  <!-- 2.8 MODAL -->
+  <div style="background:#fff; border:1px solid #c8d8e6; border-radius:12px; box-shadow:0 1px 2px rgba(0,0,0,.04); padding:24px; margin-top:18px;">
+    <div style="display:flex; align-items:baseline; gap:10px;"><span style="font-family:'Inter Tight',sans-serif; font-size:18px; font-weight:600;">2.8 · Modal shell</span><span style="font-family:'IBM Plex Mono',monospace; font-size:11px; color:#606872;">.ds-modal</span></div>
+    <p style="margin:6px 0 14px; font-size:13px; color:#606872; max-width:640px;">One shell for every report/admin modal — header (kicker + title + open-in-tab + close), scrollable body, the modernized radius/elevation. Replaces the repeated <code>.modal-panel</code> + per-report header markup.</p>
+    <div style="background:#dbe4eb; border:1px dashed #c8d8e6; border-radius:10px; padding:24px; display:flex; justify-content:center;">
+      <div style="width:380px; background:#fff; border-radius:12px; box-shadow:0 1px 2px rgba(0,0,0,.05),0 8px 26px rgba(0,0,0,.12); overflow:hidden;">
+        <div style="padding:16px 20px; border-bottom:1px solid #d6e3ef; display:flex; justify-content:space-between; align-items:flex-start;"><div><div style="font:500 9px 'IBM Plex Mono'; text-transform:uppercase; letter-spacing:.18em; color:#606872;">Report</div><div style="font:600 20px 'Inter Tight'; letter-spacing:-.4px; margin-top:2px;">Insights</div></div><div style="display:flex; gap:8px; color:#9bb4cf; font-size:15px;"><span>↗</span><span>✕</span></div></div>
+        <div style="padding:18px 20px; font-size:13px; color:#606872;">Scrollable body — drop any combination of the components above in here.</div>
+      </div>
+    </div>
+    <pre style="background:#11161f; color:#cdd6e3; border-radius:10px; padding:16px 18px; overflow:auto; font-size:12px; line-height:1.6; margin-top:14px;">.ds-modal__backdrop { position:fixed; inset:0; background:rgba(16,20,24,.45); }
+.ds-modal__panel {
+  position:relative; background:var(--paper-card);
+  border-radius:var(--r-lg); box-shadow:var(--shadow-modal);
+  max-width:920px; max-height:92vh; display:flex; flex-direction:column;
+}
+.ds-modal__head { display:flex; justify-content:space-between; align-items:flex-start;
+  padding:16px 24px; border-bottom:1px solid var(--line-2); }
+.ds-modal__body { padding:22px 24px; overflow:auto; }
+@media (max-width:680px){ .ds-modal__panel{ max-width:100%; max-height:100vh; border-radius:0; } } /* full-screen on phones */</pre>
+  </div>
+
+  <!-- ===== PART 3 · CONSOLIDATED REPORTS ===== -->
+  <div style="margin-top:48px; padding-top:8px; border-top:2px solid #101418;">
+    <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.18em; text-transform:uppercase; color:#4e7bc4; font-weight:500;">Part 3</div>
+    <h2 style="margin:6px 0 0; font-family:'Inter Tight',sans-serif; font-size:28px; font-weight:600; letter-spacing:-.5px;">Consolidated report structure</h2>
+    <p style="margin:8px 0 0; max-width:720px; font-size:14px; line-height:1.6; color:#3a4048;">Seven reports answer two questions. Collapsing them removes the overlap (the <code>*</code> review stars), shrinks the nav, and lets every report reuse the components above. <strong>Compare</strong> stops being a destination and becomes a <em>baseline mode</em> available on both surfaces.</p>
+
+    <!-- mapping -->
+    <div style="display:grid; grid-template-columns:1fr auto 1fr; gap:18px; align-items:center; margin-top:22px;">
+      <!-- current -->
+      <div style="background:#fff; border:1px solid #c8d8e6; border-radius:12px; padding:16px;">
+        <div style="font:500 10px 'IBM Plex Mono'; text-transform:uppercase; letter-spacing:.14em; color:#606872;">Today · 7 reports</div>
+        <div style="display:flex; flex-direction:column; gap:6px; margin-top:10px;">
+          <span style="font-size:13px; background:#f0f6fa; border:1px solid #c8d8e6; border-radius:8px; padding:7px 11px;">Individual <span style="color:#c66b4b;">*</span></span>
+          <span style="font-size:13px; background:#f0f6fa; border:1px solid #c8d8e6; border-radius:8px; padding:7px 11px;">Performance <span style="color:#c66b4b;">*</span></span>
+          <span style="font-size:13px; background:#f0f6fa; border:1px solid #c8d8e6; border-radius:8px; padding:7px 11px;">Insights</span>
+          <span style="font-size:13px; background:#f0f6fa; border:1px solid #c8d8e6; border-radius:8px; padding:7px 11px;">Compare Ranges <span style="color:#c66b4b;">*</span></span>
+          <span style="font-size:13px; background:#f0f6fa; border:1px solid #c8d8e6; border-radius:8px; padding:7px 11px;">Missed Calls <span style="color:#c66b4b;">*</span></span>
+          <span style="font-size:13px; background:#f0f6fa; border:1px solid #c8d8e6; border-radius:8px; padding:7px 11px;">QCD <span style="color:#c66b4b;">*</span></span>
+          <span style="font-size:13px; background:#f0f6fa; border:1px solid #c8d8e6; border-radius:8px; padding:7px 11px;">Inbound</span>
+        </div>
+      </div>
+      <div style="font-family:'Inter Tight',sans-serif; font-size:28px; color:#9bb4cf;">→</div>
+      <!-- consolidated -->
+      <div style="display:flex; flex-direction:column; gap:12px;">
+        <div style="background:#fff; border:1px solid #c8d8e6; border-radius:12px; border-left:4px solid #4e7bc4; padding:14px 16px;">
+          <div style="font:600 16px 'Inter Tight';">Team &amp; Agents</div>
+          <div style="font-size:12.5px; color:#606872; line-height:1.5; margin-top:4px;">Scope = whole dept <em>or</em> one agent. Absorbs <strong>Insights + Individual + Performance</strong>. Per-agent cards collapse to one when you pick a single agent.</div>
+        </div>
+        <div style="background:#fff; border:1px solid #c8d8e6; border-radius:12px; border-left:4px solid #3d9476; padding:14px 16px;">
+          <div style="font:600 16px 'Inter Tight';">Calls &amp; Queues</div>
+          <div style="font-size:12.5px; color:#606872; line-height:1.5; margin-top:4px;">What happened to calls in a range. Absorbs <strong>Missed + QCD + Inbound</strong> as tabs (Agents · Queues · Inbound), sharing one range + one hour-of-day radar.</div>
+        </div>
+        <div style="background:#eef3f8; border:1px dashed #c8d8e6; border-radius:12px; padding:12px 16px;">
+          <div style="font:600 13px 'Inter Tight'; color:#4e7bc4;">Compare = a mode, not a report</div>
+          <div style="font-size:12px; color:#606872; line-height:1.5; margin-top:3px;">A baseline switch on both: <em>vs prior period</em> (default) · <em>vs custom range</em> · <em>vs same period last year</em>.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- wireframe of Team & Agents -->
+    <div style="margin-top:22px; background:#fff; border:1px solid #c8d8e6; border-radius:12px; box-shadow:0 1px 2px rgba(0,0,0,.04); overflow:hidden;">
+      <div style="padding:14px 18px; border-bottom:1px solid #d6e3ef; display:flex; align-items:center; gap:10px;"><div style="font:500 9px 'IBM Plex Mono'; text-transform:uppercase; letter-spacing:.18em; color:#606872;">Wireframe · Team &amp; Agents</div><span style="margin-left:auto; display:inline-flex; background:#eef3f8; border-radius:999px; padding:3px;"><span style="font-size:11px; background:#101418; color:#fff; border-radius:999px; padding:4px 12px;">Whole dept</span><span style="font-size:11px; color:#606872; padding:4px 12px;">Single agent</span></span><span style="display:inline-flex; background:#eef3f8; border-radius:999px; padding:3px;"><span style="font-size:11px; background:#fff; border:1px solid #c8d8e6; color:#101418; border-radius:999px; padding:3px 11px;">vs prior ▾</span></span></div>
+      <div style="padding:18px; display:flex; flex-direction:column; gap:12px;">
+        <div style="height:46px; background:#e0efe6; border-radius:10px; display:flex; align-items:center; padding:0 16px; font-size:12.5px; color:#234;"><span style="font:700 12px 'Inter Tight'; color:#2f7a5f; background:#fff; border-radius:6px; padding:4px 9px; margin-right:10px;">On track</span>At-a-glance banner (§2.6)</div>
+        <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:10px;"><div style="height:70px; background:#f0f6fa; border:1px solid #c8d8e6; border-radius:10px;"></div><div style="height:70px; background:#f0f6fa; border:1px solid #c8d8e6; border-radius:10px;"></div><div style="height:70px; background:#f0f6fa; border:1px solid #c8d8e6; border-radius:10px;"></div><div style="height:70px; background:#f0f6fa; border:1px solid #c8d8e6; border-radius:10px;"></div></div>
+        <div style="font:500 9px 'IBM Plex Mono'; text-transform:uppercase; letter-spacing:.14em; color:#606872;">KPI tiles (§2.3) · rollup</div>
+        <div style="height:120px; background:#f0f6fa; border:1px solid #c8d8e6; border-radius:10px; display:flex; align-items:center; justify-content:center; font:500 9px 'IBM Plex Mono'; text-transform:uppercase; letter-spacing:.14em; color:#9bb4cf;">Trend chart (§4) · target band</div>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;"><div style="height:60px; background:#f0f6fa; border:1px solid #c8d8e6; border-left:4px solid #c66b4b; border-radius:10px;"></div><div style="height:60px; background:#f0f6fa; border:1px solid #c8d8e6; border-left:4px solid #3d9476; border-radius:10px;"></div></div>
+        <div style="font:500 9px 'IBM Plex Mono'; text-transform:uppercase; letter-spacing:.14em; color:#606872;">Status-grouped agent cards (§2.4) — hidden when scope = single agent</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== PART 4 · CHARTS ===== -->
+  <div style="margin-top:48px; padding-top:8px; border-top:2px solid #101418;">
+    <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.18em; text-transform:uppercase; color:#4e7bc4; font-weight:500;">Part 4</div>
+    <h2 style="margin:6px 0 0; font-family:'Inter Tight',sans-serif; font-size:28px; font-weight:600; letter-spacing:-.5px;">Charts — unify &amp; de-risk</h2>
+    <p style="margin:8px 0 0; max-width:720px; font-size:14px; line-height:1.6; color:#3a4048;">Every chart should come from <strong>one factory</strong> so the target band, focus line, palette, and labels are identical everywhere — and so a CDN hiccup degrades gracefully instead of throwing.</p>
+
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-top:20px;">
+      <div style="background:#fff; border:1px solid #c8d8e6; border-radius:12px; padding:18px;">
+        <div style="font:600 15px 'Inter Tight';">De-risk checklist</div>
+        <ul style="margin:10px 0 0; padding-left:18px; font-size:13px; line-height:1.7; color:#3a4048;">
+          <li><strong>Pin exact versions</strong> and restore SRI hashes, or self-host the three libs in the project (no CDN at runtime). The dropped <code>datalabels</code> SRI is a silent-failure vector.</li>
+          <li>Keep <strong>html2canvas-<em>pro</em></strong> — the original can't parse <code>oklch()</code> and breaks every export path.</li>
+          <li>Load <code>Chart.js</code> <strong>lazily</strong>, only when a chart route opens (see §5).</li>
+          <li>Register plugins <strong>once</strong>, globally; never per-chart.</li>
+          <li>Wrap every <code>new Chart()</code> in the unavailable-state guard.</li>
+        </ul>
+      </div>
+      <div style="background:#fff; border:1px solid #c8d8e6; border-radius:12px; padding:18px;">
+        <div style="font:600 15px 'Inter Tight';">Shared conventions</div>
+        <ul style="margin:10px 0 0; padding-left:18px; font-size:13px; line-height:1.7; color:#3a4048;">
+          <li><strong>Palette = tokens.</strong> Series colors read from CSS vars, so charts re-theme with dark mode for free.</li>
+          <li><strong>Target band</strong> (92% / 5%) drawn by one plugin on every applicable chart.</li>
+          <li><strong>Focus line</strong> thicker + full-opacity; context series at .5 opacity.</li>
+          <li><strong>End-point label</strong> on the focus series instead of a busy legend.</li>
+          <li><code>prefers-reduced-motion</code> → animation off; <code>maintainAspectRatio:false</code>.</li>
+        </ul>
+      </div>
+    </div>
+
+    <pre style="background:#11161f; color:#cdd6e3; border-radius:10px; padding:18px 20px; overflow:auto; font-size:12px; line-height:1.65; margin-top:16px;">// charts.js — one factory, one source of truth
+const css = n =&gt; getComputedStyle(document.body).getPropertyValue(n).trim();
+const reduce_motion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+// register plugins ONCE
+Chart.register(ChartDataLabels);
+Chart.defaults.set('plugins.datalabels', { display:false });   // opt-in per chart
+
+// target-band plugin (92% answer-rate / 5% abandon)
+const target_band = {
+  id:'target_band',
+  beforeDraw(c,_,o){ if(!o.from&amp;&amp;!o.to) return;
+    const {ctx,chartArea:a,scales:{y}}=c;
+    ctx.save(); ctx.fillStyle=css('--good-soft');
+    ctx.fillRect(a.left, y.getPixelForValue(o.to), a.right-a.left,
+                 y.getPixelForValue(o.from)-y.getPixelForValue(o.to)); ctx.restore(); }
+};
+
+function lineChart(canvas, { labels, series, focus, band }) {
+  return new Chart(canvas, {
+    type:'line',
+    data:{ labels, datasets: series.map(s =&gt; ({
+      label:s.name, data:s.data,
+      borderColor: css(s.token),
+      borderWidth: s.name===focus ? 2.6 : 1.5,
+      borderCapStyle:'round', tension:.35, pointRadius:0,
+      opacity: s.name===focus ? 1 : .55,
+    })) },
+    options:{
+      maintainAspectRatio:false,
+      animation: reduce_motion ? false : { duration:400 },
+      plugins:{ legend:{ display:false }, target_band: band ?? false },
+      scales:{ y:{ grid:{ color:css('--line-2') }, ticks:{ color:css('--muted') } },
+               x:{ grid:{ display:false }, ticks:{ color:css('--muted') } } },
+    },
+    plugins:[target_band],
+  });
+}
+
+// graceful fallback — never let a missing lib blank the panel
+function renderChart(el, cfg){
+  if (typeof Chart === 'undefined') { el.outerHTML =
+    '&lt;div class="ds-banner ds-banner--neutral"&gt;Chart unavailable — data shown in the table below.&lt;/div&gt;';
+    return; }
+  try { lineChart(el, cfg); } catch(e){ console.warn('[chart]', e); /* same fallback */ }
+}</pre>
+  </div>
+
+  <!-- ===== PART 5 · PERCEIVED SPEED ===== -->
+  <div style="margin-top:48px; padding-top:8px; border-top:2px solid #101418;">
+    <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.18em; text-transform:uppercase; color:#4e7bc4; font-weight:500;">Part 5</div>
+    <h2 style="margin:6px 0 0; font-family:'Inter Tight',sans-serif; font-size:28px; font-weight:600; letter-spacing:-.5px;">Perceived-speed playbook</h2>
+    <p style="margin:8px 0 0; max-width:720px; font-size:14px; line-height:1.6; color:#3a4048;">Apps Script + Neon means real latency (cold starts, <code>google.script.run</code> round-trips). The goal isn't to make it faster everywhere — it's to make the dashboard <strong>never look frozen</strong> and <strong>land on content instantly</strong> for returning users.</p>
+
+    <div style="display:flex; flex-direction:column; gap:10px; margin-top:20px;">
+      <div style="background:#fff; border:1px solid #c8d8e6; border-radius:12px; border-left:4px solid #3d9476; padding:16px 18px;"><div style="display:flex; align-items:center; gap:8px;"><span style="font:600 15px 'Inter Tight';">1 · Stale-while-revalidate the Overview</span><span style="font-size:10px; font-weight:600; color:#3d9476; background:#e0efe6; border-radius:999px; padding:2px 8px;">biggest win</span></div><p style="margin:6px 0 0; font-size:13px; line-height:1.55; color:#3a4048;">Cache the last successful Overview payload in <code>localStorage</code>. On load, paint it <em>immediately</em> with a "showing cached · refreshing…" pill, fire the live fetch, then swap and stamp "updated just now". A returning manager sees real numbers in &lt;100ms.</p></div>
+      <div style="background:#fff; border:1px solid #c8d8e6; border-radius:12px; border-left:4px solid #4e7bc4; padding:16px 18px;"><div style="font:600 15px 'Inter Tight';">2 · Progressive render</div><p style="margin:6px 0 0; font-size:13px; line-height:1.55; color:#3a4048;">Return + paint KPIs and the at-a-glance banner first (cheap), then charts. Lazy-inject <code>Chart.js</code> only when the first chart is about to render — most Overview glances never need it.</p></div>
+      <div style="background:#fff; border:1px solid #c8d8e6; border-radius:12px; border-left:4px solid #4e7bc4; padding:16px 18px;"><div style="font:600 15px 'Inter Tight';">3 · Debounce + cancel stale responses</div><p style="margin:6px 0 0; font-size:13px; line-height:1.55; color:#3a4048;">Rapid date-range changes fire overlapping <code>google.script.run</code> calls that can resolve out of order. Debounce ~250ms and tag each request; ignore any response that isn't the latest token.</p></div>
+      <div style="background:#fff; border:1px solid #c8d8e6; border-radius:12px; border-left:4px solid #4e7bc4; padding:16px 18px;"><div style="font:600 15px 'Inter Tight';">4 · Prefetch on intent</div><p style="margin:6px 0 0; font-size:13px; line-height:1.55; color:#3a4048;">On hover/focus of a report tab, warm its data in the background so the modal opens populated. Pairs with the existing Neon keep-warm trigger.</p></div>
+      <div style="background:#fff; border:1px solid #c8d8e6; border-radius:12px; border-left:4px solid #4e7bc4; padding:16px 18px;"><div style="font:600 15px 'Inter Tight';">5 · Honest freshness + cold-start affordance</div><p style="margin:6px 0 0; font-size:13px; line-height:1.55; color:#3a4048;">Your freshness pill already exists — extend it with cache/refresh states. On a known Neon cold start, show "warming up…" rather than a dead spinner, so the wait reads as expected, not broken.</p></div>
+      <div style="background:#fff; border:1px solid #c8d8e6; border-radius:12px; border-left:4px solid #4e7bc4; padding:16px 18px;"><div style="font:600 15px 'Inter Tight';">6 · Keep skeletons matched to final layout</div><p style="margin:6px 0 0; font-size:13px; line-height:1.55; color:#3a4048;">You already do this well — just make the skeleton shapes match the new KPI/card grid so there's zero layout shift when data arrives.</p></div>
+    </div>
+
+    <pre style="background:#11161f; color:#cdd6e3; border-radius:10px; padding:18px 20px; overflow:auto; font-size:12px; line-height:1.65; margin-top:16px;">// stale-while-revalidate (item 1)
+const KEY='ov-cache-v1';
+function loadOverview(){
+  const cached = JSON.parse(localStorage.getItem(KEY) || 'null');
+  if (cached) { renderOverview(cached.data); setFreshness('cached', cached.at); }   // instant paint
+  google.script.run
+    .withSuccessHandler(data =&gt; {
+      localStorage.setItem(KEY, JSON.stringify({ data, at: Date.now() }));
+      renderOverview(data); setFreshness('live', Date.now());                        // swap + stamp
+    })
+    .withFailureHandler(() =&gt; { if(!cached) showError(); })                          // keep cached on failure
+    .getCompanyOverview();
+}
+
+// debounce + token (item 3)
+let token = 0;
+const refresh = debounce(() =&gt; {
+  const mine = ++token;
+  google.script.run.withSuccessHandler(d =&gt; { if (mine === token) renderTable(d); })
+    .computeSummary_(from, to);
+}, 250);</pre>
+
+  </div>
+
+  <!-- ===== PART 6 · NAVIGATION ===== -->
+  <div style="margin-top:48px; padding-top:8px; border-top:2px solid #101418;">
+    <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.18em; text-transform:uppercase; color:#4e7bc4; font-weight:500;">Part 6</div>
+    <h2 style="margin:6px 0 0; font-family:'Inter Tight',sans-serif; font-size:28px; font-weight:600; letter-spacing:-.5px;">Navigation — top bar, not a rail</h2>
+    <p style="margin:8px 0 0; max-width:720px; font-size:14px; line-height:1.6; color:#3a4048;"><strong>Decision:</strong> keep a top bar (a persistent rail would tax every manager's width to serve nav a top bar handles fine, and Admin is effectively single-user). Managers see the consolidated views; <strong>Admin moves out of the primary nav into a role-gated menu</strong> top-right that only renders for admins — so it never costs managers a pixel.</p>
+    <div style="background:#fff; border:1px solid #c8d8e6; border-radius:12px; box-shadow:0 1px 2px rgba(0,0,0,.04); padding:18px; margin-top:18px;">
+      <!-- live top bar -->
+      <div style="display:flex; align-items:center; gap:14px; background:#fff; border:1px solid #c8d8e6; border-radius:10px; padding:10px 14px;">
+        <span style="font:600 15px 'Inter Tight';">Call Reporting</span>
+        <span style="display:inline-flex; align-items:center; gap:6px; background:#f0f6fa; border:1px solid #c8d8e6; border-radius:999px; padding:5px 11px; font-size:12px;"><span style="font:500 8px 'IBM Plex Mono'; text-transform:uppercase; letter-spacing:.12em; color:#606872;">Dept</span> CSR <span style="color:#606872;">▾</span></span>
+        <span style="width:1px; height:20px; background:#c8d8e6;"></span>
+        <span style="display:inline-flex; gap:2px;"><span style="font-size:12.5px; font-weight:600; color:#101418; background:#eef3f8; border-radius:7px; padding:6px 12px;">Overview</span><span style="font-size:12.5px; color:#606872; padding:6px 12px;">Team &amp; Agents</span><span style="font-size:12.5px; color:#606872; padding:6px 12px;">Calls &amp; Queues</span></span>
+        <span style="margin-left:auto; display:flex; align-items:center; gap:10px;"><span style="font:400 10px 'IBM Plex Mono'; color:#3d9476;">● live · 8:02a</span><span style="width:30px; height:30px; border-radius:999px; background:#101418; color:#fff; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:600;">RC</span></span>
+      </div>
+      <!-- admin menu (role-gated) -->
+      <div style="display:flex; justify-content:flex-end; margin-top:10px;">
+        <div style="width:210px; background:#fff; border:1px solid #c8d8e6; border-radius:10px; box-shadow:0 8px 24px rgba(0,0,0,.12); padding:6px;">
+          <div style="font:500 9px 'IBM Plex Mono'; text-transform:uppercase; letter-spacing:.14em; color:#606872; padding:7px 10px 4px;">Admin · you only</div>
+          <div style="font-size:12.5px; padding:7px 10px; border-radius:6px; background:#f0f6fa;">Alerts</div>
+          <div style="font-size:12.5px; padding:7px 10px; border-radius:6px;">Caller Lookup</div>
+          <div style="font-size:12.5px; padding:7px 10px; border-radius:6px;">Outlier Fix</div>
+          <div style="font-size:12.5px; padding:7px 10px; border-radius:6px;">Dept Config</div>
+          <div style="border-top:1px solid #eef3f8; margin:4px 0;"></div>
+          <div style="font-size:12.5px; padding:7px 10px; border-radius:6px; color:#606872;">Theme · Sign out</div>
+        </div>
+      </div>
+    </div>
+    <pre style="background:#11161f; color:#cdd6e3; border-radius:10px; padding:16px 18px; overflow:auto; font-size:12px; line-height:1.6; margin-top:14px;">.ds-topnav { display:flex; align-items:center; gap:14px;
+  background:var(--paper-card); border-bottom:1px solid var(--line); padding:10px 16px; }
+.ds-topnav__brand { font:600 15px var(--display); }
+.ds-topnav__nav a { font:600 12.5px var(--ui); color:var(--muted);
+  padding:6px 12px; border-radius:var(--r-sm); text-decoration:none; }
+.ds-topnav__nav a[aria-current="page"] { color:var(--ink); background:var(--paper); }
+.ds-topnav__right { margin-left:auto; display:flex; align-items:center; gap:10px; }
+/* role-gated — render only when user.isAdmin */
+.ds-admin-menu { /* anchored popover from the avatar button */ }
+@media (max-width:680px){ /* nav collapses to a bottom tab bar: Overview · Team · Calls · More */ }</pre>
+  </div>
+
+  <!-- ===== PART 7 · LOADERS ===== -->
+  <div style="margin-top:48px; padding-top:8px; border-top:2px solid #101418;">
+    <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.18em; text-transform:uppercase; color:#4e7bc4; font-weight:500;">Part 7</div>
+    <h2 style="margin:6px 0 0; font-family:'Inter Tight',sans-serif; font-size:28px; font-weight:600; letter-spacing:-.5px;">Loaders</h2>
+    <p style="margin:8px 0 0; max-width:720px; font-size:14px; line-height:1.6; color:#3a4048;">Five busy-states for the gaps in the current skeleton coverage. Rule: <strong>known shape → skeleton</strong> (no spinner) · <strong>indeterminate query → motion loader</strong> · <strong>long/cold → staged progress with a label</strong>. All respect <code>prefers-reduced-motion</code>. (Animated previews in the <em>Loaders</em> file.)</p>
+    <div style="display:grid; grid-template-columns:repeat(2,1fr); gap:10px; margin-top:18px;">
+      <div style="background:#fff; border:1px solid #c8d8e6; border-radius:10px; padding:13px 15px;"><div style="font:600 13.5px 'Inter Tight';">Signal rings <span style="font:400 11px 'IBM Plex Mono'; color:#606872;">.ds-loader--rings</span></div><div style="font-size:12px; color:#606872; margin-top:3px;">Indeterminate query → <strong>Caller Lookup, QCD run</strong></div></div>
+      <div style="background:#fff; border:1px solid #c8d8e6; border-radius:10px; padding:13px 15px;"><div style="font:600 13.5px 'Inter Tight';">Equalizer <span style="font:400 11px 'IBM Plex Mono'; color:#606872;">.ds-loader--eq</span></div><div style="font-size:12px; color:#606872; margin-top:3px;">Button / inline busy → <strong>Refresh, Send alerts, Look up</strong></div></div>
+      <div style="background:#fff; border:1px solid #c8d8e6; border-radius:10px; padding:13px 15px;"><div style="font:600 13.5px 'Inter Tight';">Drawing sparkline <span style="font:400 11px 'IBM Plex Mono'; color:#606872;">.ds-loader--spark</span></div><div style="font-size:12px; color:#606872; margin-top:3px;">Chart slot → <strong>while Chart.js lazy-loads</strong></div></div>
+      <div style="background:#fff; border:1px solid #c8d8e6; border-radius:10px; padding:13px 15px;"><div style="font:600 13.5px 'Inter Tight';">Skeleton shimmer <span style="font:400 11px 'IBM Plex Mono'; color:#606872;">.ds-skeleton</span></div><div style="font-size:12px; color:#606872; margin-top:3px;">Known shape → <strong>Alerts, Outlier Fix, Dept Config, Inbound</strong></div></div>
+      <div style="grid-column:1 / -1; background:#fff; border:1px solid #c8d8e6; border-radius:10px; padding:13px 15px;"><div style="font:600 13.5px 'Inter Tight';">Staged progress <span style="font:400 11px 'IBM Plex Mono'; color:#606872;">.ds-loader--staged</span></div><div style="font-size:12px; color:#606872; margin-top:3px;">Long / cold → <strong>app boot, Neon cold-start</strong> · swap the label as stages complete</div></div>
+    </div>
+    <pre style="background:#11161f; color:#cdd6e3; border-radius:10px; padding:16px 18px; overflow:auto; font-size:12px; line-height:1.6; margin-top:14px;">@keyframes ds-ring { 0%{transform:scale(.25);opacity:.85} 80%{opacity:0} 100%{transform:scale(1);opacity:0} }
+@keyframes ds-eq   { 0%,100%{transform:scaleY(.28)} 50%{transform:scaleY(1)} }
+@keyframes ds-shim { 0%{transform:translateX(-120%)} 100%{transform:translateX(120%)} }
+@keyframes ds-draw { 0%{stroke-dashoffset:240} 70%,100%{stroke-dashoffset:0} }
+@keyframes ds-spin { to{transform:rotate(360deg)} }
+
+.ds-loader--rings { position:relative; width:90px; height:90px; }
+.ds-loader--rings span { position:absolute; inset:0; border:2px solid var(--accent);
+  border-radius:var(--r-pill); animation:ds-ring 1.8s ease-out infinite; }
+.ds-loader--rings span:nth-child(2){ animation-delay:.6s } .ds-loader--rings span:nth-child(3){ animation-delay:1.2s }
+
+.ds-loader--eq { display:inline-flex; gap:5px; height:1em; }
+.ds-loader--eq i { width:.28em; background:currentColor; border-radius:2px;
+  transform-origin:center; animation:ds-eq 1s ease-in-out infinite; }
+.ds-loader--eq i:nth-child(2){animation-delay:.15s} /* …stagger 3–5 */
+
+.ds-skeleton { position:relative; overflow:hidden; background:var(--paper-2); border-radius:5px; }
+.ds-skeleton::after { content:""; position:absolute; inset:0;
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.75),transparent);
+  animation:ds-shim 1.4s linear infinite; }
+
+@media (prefers-reduced-motion:reduce){ [class*="ds-loader"] *,.ds-skeleton::after{ animation:none !important } }</pre>
+  </div>
+
+  <!-- ===== PART 8 · SURROUNDING SURFACES ===== -->
+  <div style="margin-top:48px; padding-top:8px; border-top:2px solid #101418;">
+    <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.18em; text-transform:uppercase; color:#4e7bc4; font-weight:500;">Part 8</div>
+    <h2 style="margin:6px 0 0; font-family:'Inter Tight',sans-serif; font-size:28px; font-weight:600; letter-spacing:-.5px;">Surrounding surfaces</h2>
+    <p style="margin:8px 0 0; max-width:720px; font-size:14px; line-height:1.6; color:#3a4048;">Four surfaces around the reports, fully mocked in <em>System Additions</em>. Specs + paste-ready bits below; open that file for the rendered designs.</p>
+
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-top:18px;">
+      <div style="background:#fff; border:1px solid #c8d8e6; border-radius:12px; padding:16px 18px;">
+        <div style="font:600 15px 'Inter Tight';">Daily digest email</div>
+        <ul style="margin:8px 0 0; padding-left:16px; font-size:12.5px; line-height:1.7; color:#3a4048;"><li>Table layout, all styles inline, system-font stack</li><li>Bars = filled <code>&lt;td&gt;</code> cells; bulletproof anchor button</li><li>Hero %, verdict line &amp; deep-link above the fold</li><li>Real preheader; <code>color-scheme</code> + dark block; lead with recipient's dept</li></ul>
+      </div>
+      <div style="background:#fff; border:1px solid #c8d8e6; border-radius:12px; padding:16px 18px;">
+        <div style="font:600 15px 'Inter Tight';">State kit · <code style="font:400 11px 'IBM Plex Mono'; color:#606872;">.ds-state</code></div>
+        <ul style="margin:8px 0 0; padding-left:16px; font-size:12.5px; line-height:1.7; color:#3a4048;"><li>One component, 5 tones: no-data / error / loading / success-empty / permission</li><li>icon tile · headline · one sentence · ≤2 actions</li><li><strong>always a next step; never discard last-good data on error</strong></li></ul>
+      </div>
+      <div style="background:#fff; border:1px solid #c8d8e6; border-radius:12px; padding:16px 18px;">
+        <div style="font:600 15px 'Inter Tight';">Onboarding / unmapped queues</div>
+        <ul style="margin:8px 0 0; padding-left:16px; font-size:12.5px; line-height:1.7; color:#3a4048;"><li>3-step setup checklist (connect → map queues → thresholds)</li><li>Persistent dismissible banner when queues go unmapped</li><li>Empty reports explain <em>why</em> + <em>how to fix</em> — same logic powers all three</li></ul>
+      </div>
+      <div style="background:#fff; border:1px solid #c8d8e6; border-radius:12px; padding:16px 18px;">
+        <div style="font:600 15px 'Inter Tight';">Dark mode</div>
+        <div style="font-size:12.5px; color:#3a4048; line-height:1.6; margin-top:6px;">Zero markup changes — components read tokens. Only neutrals + softs swap; semantic hues stay. The override block:</div>
+      </div>
+    </div>
+    <pre style="background:#11161f; color:#cdd6e3; border-radius:10px; padding:16px 18px; overflow:auto; font-size:12px; line-height:1.6; margin-top:14px;">[data-theme="dark"] {
+  --paper:#0e151c; --paper-2:#243441; --paper-card:#15202b;
+  --ink:#e7eef5; --muted:#6b7d8f; --line:#243441; --line-2:#1c2935;
+  /* brighten semantic softs so chips/rails read on dark */
+  --good:#46a888; --good-soft:#10322a;
+  --warn:#cf7e5e; --warn-soft:#3a201a;
+  --bad:#d9684f;  --bad-soft:#3a1a16;
+  --accent:#5b8fd6; --accent-soft:#16273b;
+}</pre>
+  </div>
+
+  <!-- ===== PART 9 · MOTION ===== -->
+  <div style="margin-top:48px; padding-top:8px; border-top:2px solid #101418;">
+    <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.18em; text-transform:uppercase; color:#4e7bc4; font-weight:500;">Part 9</div>
+    <h2 style="margin:6px 0 0; font-family:'Inter Tight',sans-serif; font-size:28px; font-weight:600; letter-spacing:-.5px;">Motion</h2>
+    <p style="margin:8px 0 0; max-width:720px; font-size:14px; line-height:1.6; color:#3a4048;">Restrained, purposeful motion. The rule: <strong>120–400ms, ease-out, transform/opacity only, play once</strong> (never loop), and every animation must <em>mean</em> something — data arrived, a value changed, or you navigated. All gated on <code>prefers-reduced-motion</code>. The previews below <strong>loop so you can see them</strong>; in production each fires once.</p>
+
+    <!-- timing tokens -->
+    <pre style="background:#11161f; color:#cdd6e3; border-radius:10px; padding:16px 18px; overflow:auto; font-size:12px; line-height:1.6; margin-top:18px;">:root {
+  --ease:cubic-bezier(.22,.61,.36,1);     /* ease-out, the default */
+  --dur-1:120ms;   /* hovers, taps, pill slide */
+  --dur-2:200ms;   /* modal open, crossfade */
+  --dur-3:360ms;   /* bar/rail grow-in, count-up */
+  --stagger:30ms;  /* per row/tile */
+}
+@media (prefers-reduced-motion:reduce){ *{ animation:none !important; transition:none !important; } }</pre>
+
+    <!-- HIGH VALUE -->
+    <div style="font:500 10px 'IBM Plex Mono'; text-transform:uppercase; letter-spacing:.14em; color:#3d9476; margin-top:24px;">High value</div>
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-top:10px;">
+      <!-- 1 grow-in -->
+      <div class="mDemo1" style="background:#fff; border:1px solid #c8d8e6; border-radius:12px; padding:16px 18px;">
+        <div style="font:600 14px 'Inter Tight';">1 · Bars &amp; rails grow in</div>
+        <div style="font-size:12px; color:#606872; margin-top:3px; margin-bottom:12px;">On render, bars sweep <code>0→value</code>, rails wipe down, rows stagger.</div>
+        <div style="display:flex; flex-direction:column; gap:8px;">
+          <div style="display:flex; align-items:center; gap:8px;"><span style="width:52px; font-size:11px;">Aisha</span><div style="flex:1; height:7px; background:#dde9f3; border-radius:999px; overflow:hidden;"><div style="width:96%; height:100%; background:#3d9476; transform-origin:left; animation:mGrowX 4s var(--ease,ease-out) infinite;"></div></div></div>
+          <div style="display:flex; align-items:center; gap:8px;"><span style="width:52px; font-size:11px;">James</span><div style="flex:1; height:7px; background:#dde9f3; border-radius:999px; overflow:hidden;"><div style="width:86%; height:100%; background:#c66b4b; transform-origin:left; animation:mGrowX 4s var(--ease,ease-out) infinite; animation-delay:.12s;"></div></div></div>
+          <div style="display:flex; align-items:center; gap:8px;"><span style="width:52px; font-size:11px;">Devon</span><div style="flex:1; height:7px; background:#dde9f3; border-radius:999px; overflow:hidden;"><div style="width:78%; height:100%; background:#b23a2c; transform-origin:left; animation:mGrowX 4s var(--ease,ease-out) infinite; animation-delay:.24s;"></div></div></div>
+        </div>
+      </div>
+      <!-- 2 change-flash -->
+      <div class="mDemo2" style="background:#fff; border:1px solid #c8d8e6; border-radius:12px; padding:16px 18px;">
+        <div style="font:600 14px 'Inter Tight';">2 · Change-flash on refresh</div>
+        <div style="font-size:12px; color:#606872; margin-top:3px; margin-bottom:12px;">Cells whose value changed get a soft highlight fade — the eye catches what moved.</div>
+        <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:6px; font-family:'IBM Plex Mono',monospace; font-size:13px;">
+          <div style="border:1px solid #d6e3ef; border-radius:7px; padding:9px 10px;">94.1%</div>
+          <div style="border:1px solid #d6e3ef; border-radius:7px; padding:9px 10px; animation:mFlash 4s var(--ease,ease-out) infinite;">88.6%</div>
+          <div style="border:1px solid #d6e3ef; border-radius:7px; padding:9px 10px;">91.3%</div>
+        </div>
+      </div>
+      <!-- 3 skeleton crossfade -->
+      <div class="mDemo3" style="background:#fff; border:1px solid #c8d8e6; border-radius:12px; padding:16px 18px;">
+        <div style="font:600 14px 'Inter Tight';">3 · Skeleton → content crossfade</div>
+        <div style="font-size:12px; color:#606872; margin-top:3px; margin-bottom:12px;">A 150ms opacity fade replaces the <code>display</code>-swap flash.</div>
+        <div style="position:relative; height:48px;">
+          <div style="position:absolute; inset:0; background:#dde9f3; border-radius:8px;"></div>
+          <div style="position:absolute; inset:0; background:#e0efe6; border-radius:8px; display:flex; align-items:center; padding:0 12px; font:600 13px 'Inter Tight'; color:#2f7a5f; animation:mFade 4s var(--ease,ease-out) infinite;">Loaded · 92.1% answered</div>
+        </div>
+      </div>
+      <!-- chart draw (6, grouped up for layout) -->
+      <div class="mDemo6" style="background:#fff; border:1px solid #c8d8e6; border-radius:12px; padding:16px 18px;">
+        <div style="font:600 14px 'Inter Tight';">6 · Chart draws on first paint</div>
+        <div style="font-size:12px; color:#606872; margin-top:3px; margin-bottom:8px;">Line draws left→right once — continuous with the loader sparkline.</div>
+        <svg viewBox="0 0 240 70" style="width:100%; height:64px;"><rect x="0" y="10" width="240" height="16" fill="#e0efe6"/><polyline points="0,50 34,44 68,48 102,36 136,42 170,28 204,34 240,20" fill="none" stroke="#3d9476" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="240" style="animation:mDrawL 4s var(--ease,ease-out) infinite;"></polyline></svg>
+      </div>
+    </div>
+
+    <!-- MEDIUM VALUE -->
+    <div style="font:500 10px 'IBM Plex Mono'; text-transform:uppercase; letter-spacing:.14em; color:#4e7bc4; margin-top:24px;">Medium value</div>
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-top:10px;">
+      <!-- 4 modal open -->
+      <div class="mDemo4" style="background:#dbe4eb; border:1px solid #c8d8e6; border-radius:12px; padding:18px; overflow:hidden;">
+        <div style="font:600 14px 'Inter Tight'; margin-bottom:10px;">4 · Modal open</div>
+        <div style="background:#fff; border-radius:10px; box-shadow:0 8px 26px rgba(0,0,0,.14); padding:14px 16px; animation:mRise 4s var(--ease,ease-out) infinite;"><div style="font:600 9px 'IBM Plex Mono'; text-transform:uppercase; letter-spacing:.16em; color:#606872;">Report</div><div style="font:600 17px 'Inter Tight';">Insights</div></div>
+        <div style="font-size:11px; color:#606872; margin-top:9px;">backdrop fades · panel scale(.97)→1 + rise, 200ms</div>
+      </div>
+      <!-- 5 tab slide -->
+      <div class="mDemo5" style="background:#fff; border:1px solid #c8d8e6; border-radius:12px; padding:16px 18px;">
+        <div style="font:600 14px 'Inter Tight';">5 · Segmented control slides</div>
+        <div style="font-size:12px; color:#606872; margin-top:3px; margin-bottom:12px;">Active pill glides to its new spot; panel cross-fades.</div>
+        <div style="position:relative; display:flex; background:#eef3f8; border-radius:999px; padding:3px; width:max-content;">
+          <span style="position:absolute; top:3px; bottom:3px; left:3px; width:64px; background:#101418; border-radius:999px; animation:mSlide 4s var(--ease,ease-out) infinite;"></span>
+          <span style="position:relative; z-index:1; font-size:11px; color:#fff; padding:5px 0; width:64px; text-align:center;">7d</span>
+          <span style="position:relative; z-index:1; font-size:11px; color:#606872; padding:5px 0; width:64px; text-align:center;">30d</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- LOW VALUE -->
+    <div style="font:500 10px 'IBM Plex Mono'; text-transform:uppercase; letter-spacing:.14em; color:#606872; margin-top:24px;">Accents</div>
+    <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:14px; margin-top:10px;">
+      <!-- 7 attention pulse -->
+      <div class="mDemo7" style="background:#fff; border:1px solid #c8d8e6; border-radius:12px; padding:16px 18px;">
+        <div style="font:600 14px 'Inter Tight';">7 · Attention pulse</div>
+        <div style="font-size:12px; color:#606872; margin-top:3px; margin-bottom:12px;">One gentle pulse, then stop — never looping.</div>
+        <div style="display:inline-flex; align-items:center; gap:7px; border:1px solid #f1d7d2; background:#fbf3f2; border-radius:8px; padding:8px 12px; animation:mPulse 4s var(--ease,ease-out) infinite;"><span style="width:7px; height:7px; border-radius:999px; background:#b23a2c;"></span><span style="font:600 12px 'Inter Tight'; color:#b23a2c;">Intake needs attention</span></div>
+      </div>
+      <!-- 8 confirmation toast -->
+      <div class="mDemo8" style="background:#fff; border:1px solid #c8d8e6; border-radius:12px; padding:16px 18px;">
+        <div style="font:600 14px 'Inter Tight';">8 · Confirmation</div>
+        <div style="font-size:12px; color:#606872; margin-top:3px; margin-bottom:12px;">A check slides in on Apply / Send.</div>
+        <div style="display:inline-flex; align-items:center; gap:8px; background:#e0efe6; border-radius:8px; padding:8px 13px; animation:mToast 4s var(--ease,ease-out) infinite;"><span style="width:18px; height:18px; border-radius:999px; background:#3d9476; color:#fff; display:flex; align-items:center; justify-content:center; font-size:11px;">✓</span><span style="font:600 12px 'Inter Tight'; color:#2f7a5f;">Mapped to CSR</span></div>
+      </div>
+      <!-- 9 count up -->
+      <div class="mDemo9" style="background:#fff; border:1px solid #c8d8e6; border-radius:12px; padding:16px 18px;">
+        <div style="font:600 14px 'Inter Tight';">9 · Hero count-up</div>
+        <div style="font-size:12px; color:#606872; margin-top:3px; margin-bottom:8px;">First load only — hero + report KPIs, used sparingly.</div>
+        <div style="font:700 34px 'Inter Tight'; letter-spacing:-1.2px; color:#101418;"><span id="mCountupNum">94.1</span><span style="font-size:16px; color:#606872;">%</span></div>
+      </div>
+    </div>
+
+    <!-- paste-ready -->
+    <pre style="background:#11161f; color:#cdd6e3; border-radius:10px; padding:16px 18px; overflow:auto; font-size:12px; line-height:1.6; margin-top:18px;">/* 1 · grow-in (scaleX, no layout thrash) — add .is-in on render, stagger rows */
+.ds-bar__fill { transform:scaleX(0); transform-origin:left; transition:transform var(--dur-3) var(--ease); }
+.is-in .ds-bar__fill { transform:scaleX(1); }
+.ds-card--rail::before { transform:scaleY(0); transform-origin:top; transition:transform var(--dur-3) var(--ease); }
+.is-in .ds-card--rail::before { transform:scaleY(1); }
+tr:nth-child(n) .ds-bar__fill { transition-delay:calc(var(--row,0) * var(--stagger)); }
+
+/* 2 · change-flash — toggle .just-changed when newVal !== oldVal, remove after 600ms */
+@keyframes ds-flash { from{ background:var(--accent-soft) } to{ background:transparent } }
+.just-changed { animation:ds-flash 600ms var(--ease); }
+
+/* 3 · skeleton crossfade — fade instead of display-swap */
+.ds-skeleton, .ds-loaded { transition:opacity var(--dur-2) var(--ease); }
+.ds-skeleton[hidden]{ opacity:0 } .ds-loaded[data-in]{ opacity:1 }
+
+/* 4 · modal open */
+@keyframes ds-rise { from{ opacity:0; transform:translateY(10px) scale(.97) } to{ opacity:1; transform:none } }
+.ds-modal__panel[data-open]{ animation:ds-rise var(--dur-2) var(--ease); }
+.ds-modal__backdrop[data-open]{ animation:ds-fade var(--dur-2) var(--ease); }
+
+/* 5 · segmented pill — move a single absolutely-positioned indicator */
+.ds-seg__ind { transition:transform var(--dur-1) var(--ease), width var(--dur-1) var(--ease); }
+
+/* 6 · chart — Chart.js native, first paint only */
+options.animation = reduce_motion ? false : { duration:600, easing:'easeOutQuart' };
+chart.options.animation = false;   // disable after initial render so refreshes are instant
+
+/* 7 · attention pulse — ONE shot via .animate-once then remove the class */
+@keyframes ds-pulse { 50%{ box-shadow:0 0 0 6px var(--bad-soft) } to{ box-shadow:0 0 0 10px transparent } }
+.pulse-once { animation:ds-pulse 700ms var(--ease) 1; }
+
+/* 9 · count-up — rAF, integer steps, ~400ms, first load only */
+function countUp(el, to, ms=400){ if(reduce_motion){ el.textContent=to; return; }
+  const t0=performance.now(), from=0;
+  (function f(t){ const k=Math.min(1,(t-t0)/ms);
+    el.textContent=(from+(to-from)*(1-Math.pow(1-k,3))).toFixed(1);
+    if(k&lt;1) requestAnimationFrame(f); })(t0); }</pre>
+    <div style="background:#eef3f8; border:1px dashed #c8d8e6; border-radius:12px; padding:16px 18px; margin-top:16px; font-size:12.5px; line-height:1.6; color:#3a4048;"><strong style="font-family:'Inter Tight',sans-serif;">Guardrails →</strong> animate only <code>transform</code> &amp; <code>opacity</code> (never <code>width</code>/<code>top</code> — they thrash layout); cap chart animation to first paint so data refreshes stay instant; one-shot accents add a class then remove it on <code>animationend</code>; and the global reduced-motion block makes every one of these a no-op for users who ask.</div>
+  </div>
+
+  <div style="background:#eef3f8; border:1px dashed #c8d8e6; border-radius:12px; padding:18px 20px; margin-top:32px;">
+    <div style="font:600 14px 'Inter Tight';">Suggested sequencing</div>
+    <p style="margin:6px 0 0; font-size:13px; line-height:1.6; color:#3a4048;">Land <strong>Part 1 (tokens) + Part 2 (components)</strong> first — non-breaking, additive <code>ds-</code> classes everything builds on. The <strong>Part 7 loaders</strong>, <strong>Part 9 motion</strong>, and <strong>Part 5 item 1 (SWR)</strong> are independent quick wins. <strong>Part 6 navigation</strong> is a light top-bar refactor. <strong>Part 3 consolidation</strong> is the one product decision worth discussing first. Full visual mockups live in <em>Design Deep-Dive</em>, <em>System Additions</em>, and <em>Loaders</em>.</p>
+  </div>
+
+</div>
+</div>
+</x-dc>
+</body>
+</html>

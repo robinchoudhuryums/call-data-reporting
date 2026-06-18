@@ -1,0 +1,1028 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    body { margin:0; }
+    ::selection { background:#cfe0f2; }
+  </style>
+</helmet>
+
+<div style="width:max-content; min-width:100%; min-height:100vh; box-sizing:border-box; padding:48px; background:#dbe4eb; font-family:'Inter',-apple-system,sans-serif; color:#101418;">
+
+  <!-- ===== INTRO / AUDIT PANEL ===== -->
+  <div style="max-width:1080px; margin:0 auto 44px; background:#fff; border-radius:14px; box-shadow:0 1px 2px rgba(0,0,0,.05), 0 5px 18px rgba(0,0,0,.06); padding:40px 44px;">
+    <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; font-weight:500; text-transform:uppercase; letter-spacing:.2em; color:#606872;">Design deep-dive · for Robin</div>
+    <h1 style="margin:10px 0 0; font-family:'Inter Tight',sans-serif; font-size:38px; font-weight:600; letter-spacing:-1px; line-height:1.05;">Department Dashboard — visual modernization</h1>
+    <p style="margin:16px 0 0; max-width:680px; font-size:15px; line-height:1.65; color:#3a4048;">The dashboard already has good bones: a coherent cool-blue palette, a real type system (Inter Tight / Inter / IBM Plex Mono), dark mode, and genuinely thoughtful data plumbing. The opportunity is purely <strong>visual &amp; hierarchical</strong> — it currently reads as a dense wall of mono numbers where everything competes for attention. Below, each screen is shown <strong>as it is today</strong> (faithfully recreated from your CSS) next to a <strong>proposed redesign</strong> that keeps the bones and elevates the surface.</p>
+
+    <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-top:30px;">
+      <div style="background:#f0f6fa; border:1px solid #c8d8e6; border-radius:10px; padding:16px 16px 18px;">
+        <div style="font-family:'IBM Plex Mono',monospace; font-size:10px; letter-spacing:.16em; text-transform:uppercase; color:#c66b4b; font-weight:500;">Problem 01</div>
+        <div style="font-family:'Inter Tight',sans-serif; font-size:17px; font-weight:600; margin-top:7px;">Clutter</div>
+        <div style="font-size:12.5px; line-height:1.55; color:#606872; margin-top:5px;">Every tile shows 5+ stats at once. Nothing is the headline.</div>
+      </div>
+      <div style="background:#f0f6fa; border:1px solid #c8d8e6; border-radius:10px; padding:16px 16px 18px;">
+        <div style="font-family:'IBM Plex Mono',monospace; font-size:10px; letter-spacing:.16em; text-transform:uppercase; color:#c66b4b; font-weight:500;">Problem 02</div>
+        <div style="font-family:'Inter Tight',sans-serif; font-size:17px; font-weight:600; margin-top:7px;">Readability</div>
+        <div style="font-size:12.5px; line-height:1.55; color:#606872; margin-top:5px;">10 right-aligned mono columns, no emphasis, hard to scan.</div>
+      </div>
+      <div style="background:#f0f6fa; border:1px solid #c8d8e6; border-radius:10px; padding:16px 16px 18px;">
+        <div style="font-family:'IBM Plex Mono',monospace; font-size:10px; letter-spacing:.16em; text-transform:uppercase; color:#c66b4b; font-weight:500;">Problem 03</div>
+        <div style="font-family:'Inter Tight',sans-serif; font-size:17px; font-weight:600; margin-top:7px;">Flat &amp; a bit boring</div>
+        <div style="font-size:12.5px; line-height:1.55; color:#606872; margin-top:5px;">Hairlines only, no depth, no status color, no focal point.</div>
+      </div>
+      <div style="background:#f0f6fa; border:1px solid #c8d8e6; border-radius:10px; padding:16px 16px 18px;">
+        <div style="font-family:'IBM Plex Mono',monospace; font-size:10px; letter-spacing:.16em; text-transform:uppercase; color:#3d9476; font-weight:500;">Approach</div>
+        <div style="font-family:'Inter Tight',sans-serif; font-size:17px; font-weight:600; margin-top:7px;">Same palette, more air</div>
+        <div style="font-size:12.5px; line-height:1.55; color:#606872; margin-top:5px;">Hierarchy, status color, soft depth, progressive disclosure.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== SECTION 1: OVERVIEW ===== -->
+  <div style="max-width:1080px; margin:0 auto 14px;">
+    <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.18em; text-transform:uppercase; color:#606872; font-weight:500;">Screen 01</div>
+    <h2 style="margin:6px 0 0; font-family:'Inter Tight',sans-serif; font-size:26px; font-weight:600; letter-spacing:-.4px;">Overview page</h2>
+    <p style="margin:8px 0 0; max-width:760px; font-size:14px; line-height:1.6; color:#3a4048;">The default landing. Today the dept tiles cram a big percentage, three mono stat-rows and a sparkline into a small box. The redesign makes <strong>answer rate the hero</strong>, encodes health with a status color &amp; bar, demotes secondary stats to a clean footer, and gives the trend chart a target band so "are we OK?" is answerable at a glance.</p>
+  </div>
+
+  <div style="display:flex; gap:48px; align-items:flex-start; padding:14px 0 8px;">
+
+    <!-- BEFORE -->
+    <div style="flex:none; width:700px;">
+      <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:#8a8276; margin-bottom:10px;">● Before — current build</div>
+      <div style="background:#f0f6fa; border-radius:4px; box-shadow:0 1px 3px rgba(0,0,0,.08); overflow:hidden;">
+        <div style="padding:20px 22px 26px;">
+          <!-- header -->
+          <div style="display:flex; justify-content:space-between; align-items:flex-end; border-bottom:1px solid #c8d8e6; padding-bottom:14px;">
+            <div>
+              <div style="font-family:'IBM Plex Mono',monospace; font-size:9px; text-transform:uppercase; letter-spacing:.18em; color:#606872;">Department Dashboard</div>
+              <div style="font-family:'Inter Tight',sans-serif; font-size:26px; font-weight:500; letter-spacing:-.6px; margin-top:3px;">Overview</div>
+            </div>
+            <div style="display:flex; gap:5px; align-items:center; flex-wrap:wrap; justify-content:flex-end; max-width:330px;">
+              <span style="background:#101418; color:#f0f6fa; border:1px solid #101418; border-radius:2px; font-size:11px; font-weight:500; padding:5px 9px;">Overview</span>
+              <span style="background:transparent; border:1px solid #c8d8e6; border-radius:2px; font-size:11px; font-weight:500; padding:5px 9px;">My Department</span>
+              <span style="background:transparent; border:1px solid #c8d8e6; border-radius:2px; font-size:11px; font-weight:500; padding:5px 9px;">Reports ▾</span>
+            </div>
+          </div>
+          <!-- summary line -->
+          <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; color:#606872; line-height:1.7; margin-top:14px; background:#fff; border:1px solid #c8d8e6; border-radius:2px; padding:8px 12px;">
+            <span style="color:#606872;">DATE</span> <strong style="color:#101418;">Mon Jun 16</strong> &nbsp;·&nbsp; <span style="color:#606872;">DEPTS</span> <strong style="color:#101418;">6</strong> &nbsp;·&nbsp; <span style="color:#606872;">CO ANSWER</span> <strong style="color:#101418;">90.4%</strong> &nbsp;·&nbsp; <span style="color:#606872;">CALLS</span> <strong style="color:#101418;">1,284</strong>
+          </div>
+          <!-- launcher -->
+          <div style="margin-top:14px;">
+            <div style="font-family:'IBM Plex Mono',monospace; font-size:9px; text-transform:uppercase; letter-spacing:.16em; color:#606872; margin-bottom:6px;">What do you want to know?</div>
+            <div style="display:flex; flex-wrap:wrap; gap:8px;">
+              <span style="font-size:12px; border:1px solid #c8d8e6; background:#fff; border-radius:2px; padding:6px 10px; color:#101418;">How is my team doing lately?</span>
+              <span style="font-size:12px; border:1px solid #c8d8e6; background:#fff; border-radius:2px; padding:6px 10px; color:#101418;">Why did we miss calls recently?</span>
+              <span style="font-size:12px; border:1px solid #c8d8e6; background:#fff; border-radius:2px; padding:6px 10px; color:#101418;">Are callers giving up?</span>
+            </div>
+          </div>
+          <!-- grid + trend -->
+          <div style="display:grid; grid-template-columns:1.7fr 1fr; gap:14px; margin-top:18px;">
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+              <!-- before tile (x4) -->
+              <div style="background:#fff; border:1px solid #c8d8e6; border-radius:2px; padding:10px 12px;">
+                <div style="display:flex; justify-content:space-between; align-items:baseline;"><span style="font-family:'Inter Tight',sans-serif; font-size:14px; font-weight:500;">CSR</span></div>
+                <div style="font-family:'IBM Plex Mono',monospace; font-size:22px; font-weight:500; margin-top:2px;">94.1<span style="font-size:12px; color:#606872;">%</span></div>
+                <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; color:#606872; line-height:1.6; margin-top:4px;">Rung 412 · Ans 388 · Miss 24</div>
+                <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; color:#c66b4b; line-height:1.5;">Aban 9 (4.1%) · 2 viol MTD</div>
+                <div style="border-top:1px dashed #c8d8e6; margin-top:5px; padding-top:5px;"><svg viewBox="0 0 120 24" style="width:100%; height:24px;"><polyline points="0,16 17,14 34,17 51,11 68,13 85,8 102,10 120,6" fill="none" stroke="#4e7bc4" stroke-width="1.5"/></svg></div>
+              </div>
+              <div style="background:#fff; border:1px solid #c8d8e6; border-radius:2px; padding:10px 12px;">
+                <div style="display:flex; justify-content:space-between; align-items:baseline;"><span style="font-family:'Inter Tight',sans-serif; font-size:14px; font-weight:500;">Sales</span></div>
+                <div style="font-family:'IBM Plex Mono',monospace; font-size:22px; font-weight:500; margin-top:2px;">88.6<span style="font-size:12px; color:#606872;">%</span></div>
+                <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; color:#606872; line-height:1.6; margin-top:4px;">Rung 356 · Ans 315 · Miss 41</div>
+                <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; color:#c66b4b; line-height:1.5;">Aban 22 (6.2%) · 5 viol MTD</div>
+                <div style="border-top:1px dashed #c8d8e6; margin-top:5px; padding-top:5px;"><svg viewBox="0 0 120 24" style="width:100%; height:24px;"><polyline points="0,10 17,12 34,9 51,14 68,12 85,16 102,13 120,17" fill="none" stroke="#4e7bc4" stroke-width="1.5"/></svg></div>
+              </div>
+              <div style="background:#fff; border:1px solid #c8d8e6; border-radius:2px; padding:10px 12px;">
+                <div style="display:flex; justify-content:space-between; align-items:baseline;"><span style="font-family:'Inter Tight',sans-serif; font-size:14px; font-weight:500;">Power</span></div>
+                <div style="font-family:'IBM Plex Mono',monospace; font-size:22px; font-weight:500; margin-top:2px;">91.3<span style="font-size:12px; color:#606872;">%</span></div>
+                <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; color:#606872; line-height:1.6; margin-top:4px;">Rung 248 · Ans 226 · Miss 22</div>
+                <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; color:#606872; line-height:1.5;">Aban 11 (4.4%) · 1 viol MTD</div>
+                <div style="border-top:1px dashed #c8d8e6; margin-top:5px; padding-top:5px;"><svg viewBox="0 0 120 24" style="width:100%; height:24px;"><polyline points="0,14 17,11 34,13 51,10 68,12 85,9 102,11 120,8" fill="none" stroke="#4e7bc4" stroke-width="1.5"/></svg></div>
+              </div>
+              <div style="background:#fff; border:1px solid #c8d8e6; border-radius:2px; padding:10px 12px;">
+                <div style="display:flex; justify-content:space-between; align-items:baseline;"><span style="font-family:'Inter Tight',sans-serif; font-size:14px; font-weight:500;">Intake</span></div>
+                <div style="font-family:'IBM Plex Mono',monospace; font-size:22px; font-weight:500; margin-top:2px;">82.0<span style="font-size:12px; color:#606872;">%</span></div>
+                <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; color:#606872; line-height:1.6; margin-top:4px;">Rung 168 · Ans 138 · Miss 30</div>
+                <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; color:#c66b4b; line-height:1.5;">Aban 19 (11.3%) · 8 viol MTD</div>
+                <div style="border-top:1px dashed #c8d8e6; margin-top:5px; padding-top:5px;"><svg viewBox="0 0 120 24" style="width:100%; height:24px;"><polyline points="0,8 17,11 34,9 51,13 68,11 85,15 102,14 120,18" fill="none" stroke="#4e7bc4" stroke-width="1.5"/></svg></div>
+              </div>
+            </div>
+            <div style="background:#fff; border:1px solid #c8d8e6; border-radius:2px; padding:10px;">
+              <div style="font-family:'IBM Plex Mono',monospace; font-size:10px; text-transform:uppercase; letter-spacing:.12em; color:#606872;">Answer rate trend / dept</div>
+              <svg viewBox="0 0 220 150" style="width:100%; height:150px; margin-top:8px;">
+                <line x1="0" y1="20" x2="220" y2="20" stroke="#dde9f3"/>
+                <line x1="0" y1="60" x2="220" y2="60" stroke="#dde9f3"/>
+                <line x1="0" y1="100" x2="220" y2="100" stroke="#dde9f3"/>
+                <polyline points="0,40 30,36 60,44 90,30 120,38 150,26 180,34 220,24" fill="none" stroke="#4e7bc4" stroke-width="1.5"/>
+                <polyline points="0,70 30,66 60,74 90,60 120,72 150,64 180,70 220,58" fill="none" stroke="#3d9476" stroke-width="1.5"/>
+                <polyline points="0,90 30,98 60,86 90,100 120,92 150,104 180,96 220,108" fill="none" stroke="#c66b4b" stroke-width="1.5"/>
+              </svg>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- AFTER -->
+    <div style="flex:none; width:700px;">
+      <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:#3d9476; margin-bottom:10px;">✦ After — proposed</div>
+      <div style="background:#f0f6fa; border-radius:14px; box-shadow:0 1px 2px rgba(0,0,0,.05), 0 5px 18px rgba(0,0,0,.06); overflow:hidden;">
+        <div style="padding:24px 26px 28px;">
+          <!-- header -->
+          <div style="display:flex; justify-content:space-between; align-items:flex-end;">
+            <div>
+              <div style="font-family:'IBM Plex Mono',monospace; font-size:9px; text-transform:uppercase; letter-spacing:.18em; color:#606872;">Department Dashboard</div>
+              <div style="font-family:'Inter Tight',sans-serif; font-size:30px; font-weight:600; letter-spacing:-.8px; margin-top:3px;">Overview</div>
+            </div>
+            <div style="display:flex; gap:4px; align-items:center; background:#fff; border:1px solid #c8d8e6; border-radius:999px; padding:4px;">
+              <span style="background:#101418; color:#fff; border-radius:999px; font-size:12px; font-weight:500; padding:6px 14px;">Overview</span>
+              <span style="font-size:12px; font-weight:500; padding:6px 14px; color:#606872;">My Department</span>
+              <span style="font-size:12px; font-weight:500; padding:6px 14px; color:#606872;">Reports ▾</span>
+            </div>
+          </div>
+
+          <!-- company hero strip -->
+          <div style="display:flex; gap:14px; margin-top:18px;">
+            <div style="flex:1; background:#fff; border:1px solid #c8d8e6; border-radius:12px; padding:16px 18px; display:flex; align-items:center; gap:18px;">
+              <div>
+                <div style="font-family:'IBM Plex Mono',monospace; font-size:10px; text-transform:uppercase; letter-spacing:.14em; color:#606872;">Company answer rate · Mon Jun 16</div>
+                <div style="display:flex; align-items:baseline; gap:10px; margin-top:4px;">
+                  <span style="font-family:'Inter Tight',sans-serif; font-size:40px; font-weight:700; letter-spacing:-1.5px; line-height:1;">90.4%</span>
+                  <span style="font-size:12px; font-weight:600; color:#3d9476; background:#e0efe6; border-radius:999px; padding:3px 9px;">▲ 1.8 pts</span>
+                </div>
+              </div>
+              <div style="flex:1; min-width:0;">
+                <div style="display:flex; justify-content:space-between; font-family:'IBM Plex Mono',monospace; font-size:9px; color:#606872; text-transform:uppercase; letter-spacing:.1em;"><span>vs 92% target</span><span>1,284 calls</span></div>
+                <div style="position:relative; height:8px; background:#dde9f3; border-radius:999px; margin-top:6px;">
+                  <div style="position:absolute; left:0; top:0; bottom:0; width:90.4%; background:#3d9476; border-radius:999px;"></div>
+                  <div style="position:absolute; left:92%; top:-3px; bottom:-3px; width:2px; background:#101418;"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- plain-language question chips (kept — they open pre-primed reports) -->
+          <div style="margin-top:16px;">
+            <div style="font-family:'IBM Plex Mono',monospace; font-size:9px; text-transform:uppercase; letter-spacing:.16em; color:#606872; margin-bottom:8px;">Ask a question →</div>
+            <div style="display:flex; flex-wrap:wrap; gap:8px;">
+              <span style="font-size:12.5px; border:1px solid #c8d8e6; background:#fff; border-radius:999px; padding:8px 14px; color:#101418; display:inline-flex; align-items:center; gap:8px; box-shadow:0 1px 2px rgba(0,0,0,.03);"><span style="color:#3d9476; font-size:9px;">●</span>How is my team doing lately?</span>
+              <span style="font-size:12.5px; border:1px solid #c8d8e6; background:#fff; border-radius:999px; padding:8px 14px; color:#101418; display:inline-flex; align-items:center; gap:8px; box-shadow:0 1px 2px rgba(0,0,0,.03);"><span style="color:#c66b4b; font-size:9px;">●</span>Why did we miss calls recently?</span>
+              <span style="font-size:12.5px; border:1px solid #c8d8e6; background:#fff; border-radius:999px; padding:8px 14px; color:#101418; display:inline-flex; align-items:center; gap:8px; box-shadow:0 1px 2px rgba(0,0,0,.03);"><span style="color:#4e7bc4; font-size:9px;">●</span>Is an agent struggling or improving?</span>
+              <span style="font-size:12.5px; border:1px solid #c8d8e6; background:#fff; border-radius:999px; padding:8px 14px; color:#101418; display:inline-flex; align-items:center; gap:8px; box-shadow:0 1px 2px rgba(0,0,0,.03);"><span style="color:#c66b4b; font-size:9px;">●</span>Are callers giving up?</span>
+            </div>
+          </div>
+          <!-- dept grid (full width) -->
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:14px;">
+              <!-- after tile: status rail + hero + footer -->
+              <div style="position:relative; background:#fff; border:1px solid #c8d8e6; border-radius:12px; padding:14px 14px 12px 16px; box-shadow:0 1px 2px rgba(0,0,0,.03); overflow:hidden;">
+                <div style="position:absolute; left:0; top:0; bottom:0; width:4px; background:#3d9476;"></div>
+                <div style="display:flex; justify-content:space-between; align-items:center;"><span style="font-family:'Inter Tight',sans-serif; font-size:15px; font-weight:600;">CSR</span><span style="font-size:10px; font-weight:600; color:#3d9476; background:#e0efe6; border-radius:999px; padding:2px 7px;">▲ 0.9</span></div>
+                <div style="font-family:'Inter Tight',sans-serif; font-size:30px; font-weight:700; letter-spacing:-1px; margin-top:4px; line-height:1;">94.1<span style="font-size:14px; color:#606872; font-weight:500;">%</span></div>
+                <svg viewBox="0 0 130 22" style="width:100%; height:22px; margin-top:6px;"><polyline points="0,16 18,14 36,17 54,11 72,13 90,8 108,10 130,6" fill="none" stroke="#3d9476" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                <div style="display:flex; gap:12px; font-family:'IBM Plex Mono',monospace; font-size:10px; color:#606872; border-top:1px solid #d6e3ef; padding-top:7px; margin-top:6px;"><span>388/412 ans</span><span>4.1% aban</span></div>
+              </div>
+              <div style="position:relative; background:#fff; border:1px solid #c8d8e6; border-radius:12px; padding:14px 14px 12px 16px; box-shadow:0 1px 2px rgba(0,0,0,.03); overflow:hidden;">
+                <div style="position:absolute; left:0; top:0; bottom:0; width:4px; background:#c66b4b;"></div>
+                <div style="display:flex; justify-content:space-between; align-items:center;"><span style="font-family:'Inter Tight',sans-serif; font-size:15px; font-weight:600;">Sales</span><span style="font-size:10px; font-weight:600; color:#c66b4b; background:#f6e2d4; border-radius:999px; padding:2px 7px;">▼ 1.4</span></div>
+                <div style="font-family:'Inter Tight',sans-serif; font-size:30px; font-weight:700; letter-spacing:-1px; margin-top:4px; line-height:1;">88.6<span style="font-size:14px; color:#606872; font-weight:500;">%</span></div>
+                <svg viewBox="0 0 130 22" style="width:100%; height:22px; margin-top:6px;"><polyline points="0,10 18,12 36,9 54,14 72,12 90,16 108,13 130,17" fill="none" stroke="#c66b4b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                <div style="display:flex; gap:12px; font-family:'IBM Plex Mono',monospace; font-size:10px; color:#606872; border-top:1px solid #d6e3ef; padding-top:7px; margin-top:6px;"><span>315/356 ans</span><span style="color:#c66b4b;">6.2% aban</span></div>
+              </div>
+              <div style="position:relative; background:#fff; border:1px solid #c8d8e6; border-radius:12px; padding:14px 14px 12px 16px; box-shadow:0 1px 2px rgba(0,0,0,.03); overflow:hidden;">
+                <div style="position:absolute; left:0; top:0; bottom:0; width:4px; background:#3d9476;"></div>
+                <div style="display:flex; justify-content:space-between; align-items:center;"><span style="font-family:'Inter Tight',sans-serif; font-size:15px; font-weight:600;">Power</span><span style="font-size:10px; font-weight:600; color:#3d9476; background:#e0efe6; border-radius:999px; padding:2px 7px;">▲ 0.5</span></div>
+                <div style="font-family:'Inter Tight',sans-serif; font-size:30px; font-weight:700; letter-spacing:-1px; margin-top:4px; line-height:1;">91.3<span style="font-size:14px; color:#606872; font-weight:500;">%</span></div>
+                <svg viewBox="0 0 130 22" style="width:100%; height:22px; margin-top:6px;"><polyline points="0,14 18,11 36,13 54,10 72,12 90,9 108,11 130,8" fill="none" stroke="#3d9476" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                <div style="display:flex; gap:12px; font-family:'IBM Plex Mono',monospace; font-size:10px; color:#606872; border-top:1px solid #d6e3ef; padding-top:7px; margin-top:6px;"><span>226/248 ans</span><span>4.4% aban</span></div>
+              </div>
+              <div style="position:relative; background:#fff; border:1px solid #c8d8e6; border-radius:12px; padding:14px 14px 12px 16px; box-shadow:0 1px 2px rgba(0,0,0,.03); overflow:hidden;">
+                <div style="position:absolute; left:0; top:0; bottom:0; width:4px; background:#b23a2c;"></div>
+                <div style="display:flex; justify-content:space-between; align-items:center;"><span style="font-family:'Inter Tight',sans-serif; font-size:15px; font-weight:600;">Intake</span><span style="font-size:10px; font-weight:600; color:#b23a2c; background:#f1d7d2; border-radius:999px; padding:2px 7px;">▼ 3.1</span></div>
+                <div style="font-family:'Inter Tight',sans-serif; font-size:30px; font-weight:700; letter-spacing:-1px; margin-top:4px; line-height:1; color:#b23a2c;">82.0<span style="font-size:14px; color:#cf9a90; font-weight:500;">%</span></div>
+                <svg viewBox="0 0 130 22" style="width:100%; height:22px; margin-top:6px;"><polyline points="0,8 18,11 36,9 54,13 72,11 90,15 108,14 130,18" fill="none" stroke="#b23a2c" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                <div style="display:flex; gap:12px; font-family:'IBM Plex Mono',monospace; font-size:10px; color:#606872; border-top:1px solid #d6e3ef; padding-top:7px; margin-top:6px;"><span>138/168 ans</span><span style="color:#b23a2c;">11.3% aban</span></div>
+              </div>
+            </div>
+          <!-- full-width trend chart (moved back below the cards — room for dense 30-day data) -->
+          <div style="background:#fff; border:1px solid #c8d8e6; border-radius:12px; padding:16px 18px 14px; box-shadow:0 1px 2px rgba(0,0,0,.03); margin-top:12px;">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <div><span style="font-family:'Inter Tight',sans-serif; font-size:15px; font-weight:600;">Answer rate trend</span> <span style="font-family:'IBM Plex Mono',monospace; font-size:10px; color:#606872; margin-left:4px;">last 30 days · % answered</span></div>
+              <div style="display:flex; flex-wrap:wrap; gap:10px 14px;">
+                <span style="display:flex; align-items:center; gap:6px; font-size:11px; color:#101418;"><span style="width:16px; height:3px; background:#3d9476; border-radius:2px;"></span>CSR</span>
+                <span style="display:flex; align-items:center; gap:6px; font-size:11px; color:#606872;"><span style="width:16px; height:3px; background:#4e7bc4; border-radius:2px;"></span>Power</span>
+                <span style="display:flex; align-items:center; gap:6px; font-size:11px; color:#606872;"><span style="width:16px; height:3px; background:#8a8f98; border-radius:2px;"></span>Sales</span>
+                <span style="display:flex; align-items:center; gap:6px; font-size:11px; color:#606872;"><span style="width:16px; height:3px; background:#c66b4b; border-radius:2px;"></span>Intake</span>
+              </div>
+            </div>
+            <svg viewBox="0 0 660 232" style="width:100%; height:232px; margin-top:12px;">
+              <!-- target band 92-100% -->
+              <rect x="40" y="24" width="612" height="70" fill="#e0efe6"/>
+              <line x1="40" y1="94" x2="652" y2="94" stroke="#3d9476" stroke-width="1" stroke-dasharray="4 3"/>
+              <text x="600" y="89" font-family="IBM Plex Mono" font-size="9" fill="#3d9476">92% target</text>
+              <!-- gridlines + y labels -->
+              <line x1="40" y1="24" x2="652" y2="24" stroke="#d6e3ef"/>
+              <line x1="40" y1="112" x2="652" y2="112" stroke="#d6e3ef"/>
+              <line x1="40" y1="200" x2="652" y2="200" stroke="#c8d8e6"/>
+              <text x="8" y="28" font-family="IBM Plex Mono" font-size="9" fill="#606872">100</text>
+              <text x="14" y="116" font-family="IBM Plex Mono" font-size="9" fill="#606872">90</text>
+              <text x="14" y="204" font-family="IBM Plex Mono" font-size="9" fill="#606872">80</text>
+              <!-- x labels -->
+              <text x="40" y="224" font-family="IBM Plex Mono" font-size="9" fill="#606872">May 18</text>
+              <text x="300" y="224" font-family="IBM Plex Mono" font-size="9" fill="#606872">Jun 1</text>
+              <text x="560" y="224" font-family="IBM Plex Mono" font-size="9" fill="#606872">Jun 16</text>
+              <!-- Sales (muted) -->
+              <polyline points="40,132 81,128 122,138 163,126 204,134 245,124 286,140 327,130 368,138 409,128 450,134 491,126 532,138 573,130 614,134 652,128" fill="none" stroke="#8a8f98" stroke-width="1.5" opacity=".7"/>
+              <!-- Intake (red, declining) -->
+              <polyline points="40,150 81,156 122,148 163,160 204,154 245,166 286,158 327,170 368,162 409,174 450,168 491,178 532,172 573,182 614,176 652,184" fill="none" stroke="#c66b4b" stroke-width="1.5" opacity=".8"/>
+              <!-- Power (blue) -->
+              <polyline points="40,100 81,96 122,104 163,94 204,100 245,92 286,98 327,90 368,96 409,88 450,94 491,86 532,92 573,88 614,90 652,84" fill="none" stroke="#4e7bc4" stroke-width="1.7" opacity=".75"/>
+              <!-- CSR (green, focus line) -->
+              <polyline points="40,82 81,80 122,86 163,76 204,82 245,72 286,78 327,68 368,74 409,64 450,70 491,62 532,68 573,60 614,64 652,56" fill="none" stroke="#3d9476" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+              <circle cx="652" cy="56" r="3.5" fill="#3d9476"/>
+              <text x="610" y="50" font-family="Inter Tight" font-size="10" font-weight="600" fill="#2f7a5f">CSR 94.1%</text>
+            </svg>
+          </div>
+        </div>
+      </div>
+      <div style="margin-top:14px; background:#fff; border:1px solid #c8d8e6; border-radius:10px; padding:14px 16px; font-size:12.5px; line-height:1.55; color:#3a4048;">
+        <strong style="font-family:'Inter Tight',sans-serif;">What changed →</strong> Company answer rate is now a single hero with a target marker. The plain-language question chips stay (they're the friendly way in). Each dept tile leads with the one number that matters and color-codes health on a left rail. The 30-day trend moves back to <strong>full width below the cards</strong> — it was too cramped in a side column — now with a target band, a highlighted CSR focus line, axis labels, and a legend.
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== SECTION 2: MY DEPARTMENT ===== -->
+  <div style="max-width:1080px; margin:56px auto 14px;">
+    <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.18em; text-transform:uppercase; color:#606872; font-weight:500;">Screen 02</div>
+    <h2 style="margin:6px 0 0; font-family:'Inter Tight',sans-serif; font-size:26px; font-weight:600; letter-spacing:-.4px;">My Department — agent table</h2>
+    <p style="margin:8px 0 0; max-width:760px; font-size:14px; line-height:1.6; color:#3a4048;">The hardest screen to read today: ten right-aligned mono columns with no visual weight, so the eye has nowhere to land. The redesign keeps every column available but <strong>leads with answer rate</strong> (the number managers actually act on) as a colored bar, groups the controls into one calm toolbar, adds a quick summary strip, and tucks the four talk/abandon columns behind a <strong>"More metrics"</strong> toggle — progressive disclosure for managers, full density one click away for power users.</p>
+  </div>
+
+  <div style="display:flex; gap:48px; align-items:flex-start; padding:14px 0 8px;">
+
+    <!-- BEFORE -->
+    <div style="flex:none; width:700px;">
+      <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:#8a8276; margin-bottom:10px;">● Before — current build</div>
+      <div style="background:#f0f6fa; border-radius:4px; box-shadow:0 1px 3px rgba(0,0,0,.08); overflow:hidden; padding:20px 22px 24px;">
+        <div style="font-family:'Inter Tight',sans-serif; font-size:24px; font-weight:500; letter-spacing:-.5px;">CSR</div>
+        <!-- controls -->
+        <div style="display:flex; gap:14px; align-items:flex-end; flex-wrap:wrap; margin-top:14px;">
+          <div><div style="font-size:11px; color:#606872; margin-bottom:3px;">From</div><div style="background:#fff; border:1px solid #c8d8e6; border-radius:2px; padding:6px 10px; font-size:12px; width:120px;">2025-06-01</div></div>
+          <div><div style="font-size:11px; color:#606872; margin-bottom:3px;">To</div><div style="background:#fff; border:1px solid #c8d8e6; border-radius:2px; padding:6px 10px; font-size:12px; width:120px;">2025-06-16</div></div>
+          <div><div style="font-size:11px; color:#606872; margin-bottom:3px;">Quick select</div><div style="display:flex; gap:4px;"><span style="font-size:11px; border:1px solid #c8d8e6; background:#fff; border-radius:2px; padding:6px 8px;">7d</span><span style="font-size:11px; border:1px solid #c8d8e6; background:#fff; border-radius:2px; padding:6px 8px;">30d</span><span style="font-size:11px; border:1px solid #c8d8e6; background:#fff; border-radius:2px; padding:6px 8px;">MTD</span></div></div>
+          <span style="background:#101418; color:#f0f6fa; border-radius:2px; font-size:12px; padding:7px 14px;">Refresh</span>
+        </div>
+        <div style="font-family:'IBM Plex Mono',monospace; font-size:9px; text-transform:uppercase; letter-spacing:.16em; color:#606872; background:#dde9f3; border:1px solid #c8d8e6; border-radius:999px; padding:4px 10px; width:max-content; margin-top:14px;">Work window · 8:30 AM – 5:00 PM CST</div>
+        <!-- table -->
+        <div style="margin-top:14px; background:#fff; border:1px solid #c8d8e6; border-radius:2px; overflow:hidden;">
+          <table style="width:100%; border-collapse:collapse; font-size:11px;">
+            <thead>
+              <tr style="background:#dde9f3;">
+                <th style="text-align:left; font-family:'IBM Plex Mono',monospace; font-size:9px; text-transform:uppercase; letter-spacing:.08em; color:#606872; font-weight:500; padding:8px 7px;">Agent</th>
+                <th style="text-align:left; font-family:'IBM Plex Mono',monospace; font-size:9px; text-transform:uppercase; color:#606872; font-weight:500; padding:8px 6px;">Src</th>
+                <th style="text-align:right; font-family:'IBM Plex Mono',monospace; font-size:9px; text-transform:uppercase; color:#606872; font-weight:500; padding:8px 6px;">Uniq</th>
+                <th style="text-align:right; font-family:'IBM Plex Mono',monospace; font-size:9px; text-transform:uppercase; color:#606872; font-weight:500; padding:8px 6px;">Rung</th>
+                <th style="text-align:right; font-family:'IBM Plex Mono',monospace; font-size:9px; text-transform:uppercase; color:#606872; font-weight:500; padding:8px 6px;">Miss</th>
+                <th style="text-align:right; font-family:'IBM Plex Mono',monospace; font-size:9px; text-transform:uppercase; color:#606872; font-weight:500; padding:8px 6px;">Ans</th>
+                <th style="text-align:right; font-family:'IBM Plex Mono',monospace; font-size:9px; text-transform:uppercase; color:#606872; font-weight:500; padding:8px 6px;">TTT</th>
+                <th style="text-align:right; font-family:'IBM Plex Mono',monospace; font-size:9px; text-transform:uppercase; color:#606872; font-weight:500; padding:8px 6px;">ATT</th>
+                <th style="text-align:right; font-family:'IBM Plex Mono',monospace; font-size:9px; text-transform:uppercase; color:#606872; font-weight:500; padding:8px 6px;">Abd</th>
+                <th style="text-align:right; font-family:'IBM Plex Mono',monospace; font-size:9px; text-transform:uppercase; color:#606872; font-weight:500; padding:8px 7px;">CSR Abd</th>
+              </tr>
+            </thead>
+            <tbody style="font-family:'IBM Plex Mono',monospace; color:#101418;">
+              <tr style="border-top:1px solid #dde9f3;"><td style="text-align:left; padding:9px 7px; font-family:'Inter',sans-serif;">Maria Lopez</td><td style="padding:9px 6px; font-size:9px; color:#606872;">BOTH</td><td style="text-align:right; padding:9px 6px;">96</td><td style="text-align:right; padding:9px 6px;">112</td><td style="text-align:right; padding:9px 6px;">6</td><td style="text-align:right; padding:9px 6px;">106</td><td style="text-align:right; padding:9px 6px;">4:21:09</td><td style="text-align:right; padding:9px 6px;">2:28</td><td style="text-align:right; padding:9px 6px;">0:48</td><td style="text-align:right; padding:9px 7px;">0:52</td></tr>
+              <tr style="border-top:1px solid #dde9f3;"><td style="text-align:left; padding:9px 7px; font-family:'Inter',sans-serif;">James Carter</td><td style="padding:9px 6px; font-size:9px; color:#606872;">ROSTER</td><td style="text-align:right; padding:9px 6px;">88</td><td style="text-align:right; padding:9px 6px;">104</td><td style="text-align:right; padding:9px 6px;">14</td><td style="text-align:right; padding:9px 6px;">90</td><td style="text-align:right; padding:9px 6px;">3:48:55</td><td style="text-align:right; padding:9px 6px;">2:32</td><td style="text-align:right; padding:9px 6px;">1:12</td><td style="text-align:right; padding:9px 7px;">1:18</td></tr>
+              <tr style="border-top:1px solid #dde9f3;"><td style="text-align:left; padding:9px 7px; font-family:'Inter',sans-serif;">Aisha Khan</td><td style="padding:9px 6px; font-size:9px; color:#606872;">BOTH</td><td style="text-align:right; padding:9px 6px;">102</td><td style="text-align:right; padding:9px 6px;">118</td><td style="text-align:right; padding:9px 6px;">5</td><td style="text-align:right; padding:9px 6px;">113</td><td style="text-align:right; padding:9px 6px;">4:55:30</td><td style="text-align:right; padding:9px 6px;">2:36</td><td style="text-align:right; padding:9px 6px;">0:41</td><td style="text-align:right; padding:9px 7px;">0:44</td></tr>
+              <tr style="border-top:1px solid #dde9f3;"><td style="text-align:left; padding:9px 7px; font-family:'Inter',sans-serif;">Devon Reed</td><td style="padding:9px 6px; font-size:9px; color:#606872;">QUEUE</td><td style="text-align:right; padding:9px 6px;">41</td><td style="text-align:right; padding:9px 6px;">49</td><td style="text-align:right; padding:9px 6px;">11</td><td style="text-align:right; padding:9px 6px;">38</td><td style="text-align:right; padding:9px 6px;">1:42:18</td><td style="text-align:right; padding:9px 6px;">2:42</td><td style="text-align:right; padding:9px 6px;">1:31</td><td style="text-align:right; padding:9px 7px;">1:36</td></tr>
+              <tr style="border-top:1px solid #dde9f3;"><td style="text-align:left; padding:9px 7px; font-family:'Inter',sans-serif;">Priya Nair</td><td style="padding:9px 6px; font-size:9px; color:#606872;">ROSTER</td><td style="text-align:right; padding:9px 6px;">79</td><td style="text-align:right; padding:9px 6px;">93</td><td style="text-align:right; padding:9px 6px;">8</td><td style="text-align:right; padding:9px 6px;">85</td><td style="text-align:right; padding:9px 6px;">3:31:02</td><td style="text-align:right; padding:9px 6px;">2:29</td><td style="text-align:right; padding:9px 6px;">0:57</td><td style="text-align:right; padding:9px 7px;">1:02</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- AFTER -->
+    <div style="flex:none; width:700px;">
+      <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:#3d9476; margin-bottom:10px;">✦ After — proposed</div>
+      <div style="background:#f0f6fa; border-radius:14px; box-shadow:0 1px 2px rgba(0,0,0,.05), 0 5px 18px rgba(0,0,0,.06); overflow:hidden; padding:24px 26px 26px;">
+        <div style="display:flex; justify-content:space-between; align-items:flex-end;">
+          <div>
+            <div style="font-family:'IBM Plex Mono',monospace; font-size:9px; text-transform:uppercase; letter-spacing:.18em; color:#606872;">My Department</div>
+            <div style="font-family:'Inter Tight',sans-serif; font-size:28px; font-weight:600; letter-spacing:-.7px; margin-top:2px;">CSR</div>
+          </div>
+          <span style="font-family:'IBM Plex Mono',monospace; font-size:10px; color:#606872; background:#fff; border:1px solid #c8d8e6; border-radius:999px; padding:5px 11px;">Jun 1 – Jun 16 · work window 8:30–5:00 CST</span>
+        </div>
+        <!-- toolbar -->
+        <div style="display:flex; gap:8px; align-items:center; margin-top:14px; background:#fff; border:1px solid #c8d8e6; border-radius:10px; padding:8px 10px;">
+          <span style="font-family:'IBM Plex Mono',monospace; font-size:10px; color:#606872; text-transform:uppercase; letter-spacing:.1em; padding-left:4px;">Range</span>
+          <span style="font-size:12px; color:#606872;">Jun 1</span><span style="color:#cfc8b6;">→</span><span style="font-size:12px; color:#606872;">Jun 16</span>
+          <span style="width:1px; height:18px; background:#c8d8e6; margin:0 4px;"></span>
+          <span style="font-size:11px; background:#101418; color:#fff; border-radius:999px; padding:4px 11px;">30d</span>
+          <span style="font-size:11px; color:#606872; padding:4px 11px;">7d</span>
+          <span style="font-size:11px; color:#606872; padding:4px 11px;">MTD</span>
+          <span style="margin-left:auto; font-size:11px; color:#4e7bc4; font-weight:600; padding-right:4px;">More metrics ▾</span>
+        </div>
+        <!-- summary strip -->
+        <div style="display:flex; gap:10px; margin-top:12px;">
+          <div style="flex:1; background:#fff; border:1px solid #c8d8e6; border-radius:10px; padding:11px 14px;"><div style="font-family:'IBM Plex Mono',monospace; font-size:9px; text-transform:uppercase; letter-spacing:.12em; color:#606872;">Team answer rate</div><div style="font-family:'Inter Tight',sans-serif; font-size:24px; font-weight:700; letter-spacing:-.6px; color:#3d9476;">94.1%</div></div>
+          <div style="flex:1; background:#fff; border:1px solid #c8d8e6; border-radius:10px; padding:11px 14px;"><div style="font-family:'IBM Plex Mono',monospace; font-size:9px; text-transform:uppercase; letter-spacing:.12em; color:#606872;">Answered</div><div style="font-family:'Inter Tight',sans-serif; font-size:24px; font-weight:700; letter-spacing:-.6px;">432</div></div>
+          <div style="flex:1; background:#fff; border:1px solid #c8d8e6; border-radius:10px; padding:11px 14px;"><div style="font-family:'IBM Plex Mono',monospace; font-size:9px; text-transform:uppercase; letter-spacing:.12em; color:#606872;">Missed</div><div style="font-family:'Inter Tight',sans-serif; font-size:24px; font-weight:700; letter-spacing:-.6px;">44</div></div>
+          <div style="flex:1; background:#fff; border:1px solid #c8d8e6; border-radius:10px; padding:11px 14px;"><div style="font-family:'IBM Plex Mono',monospace; font-size:9px; text-transform:uppercase; letter-spacing:.12em; color:#606872;">Avg talk</div><div style="font-family:'Inter Tight',sans-serif; font-size:24px; font-weight:700; letter-spacing:-.6px;">2:31</div></div>
+        </div>
+        <!-- table -->
+        <div style="margin-top:12px; background:#fff; border:1px solid #c8d8e6; border-radius:12px; overflow:hidden; box-shadow:0 1px 2px rgba(0,0,0,.03);">
+          <table style="width:100%; border-collapse:collapse; font-size:13px;">
+            <thead>
+              <tr>
+                <th style="text-align:left; font-family:'IBM Plex Mono',monospace; font-size:10px; text-transform:uppercase; letter-spacing:.1em; color:#606872; font-weight:500; padding:12px 14px;">Agent</th>
+                <th style="text-align:left; font-family:'IBM Plex Mono',monospace; font-size:10px; text-transform:uppercase; letter-spacing:.1em; color:#606872; font-weight:500; padding:12px 8px; width:180px;">Answer rate</th>
+                <th style="text-align:right; font-family:'IBM Plex Mono',monospace; font-size:10px; text-transform:uppercase; letter-spacing:.1em; color:#606872; font-weight:500; padding:12px 8px;">Ans</th>
+                <th style="text-align:right; font-family:'IBM Plex Mono',monospace; font-size:10px; text-transform:uppercase; letter-spacing:.1em; color:#606872; font-weight:500; padding:12px 8px;">Miss</th>
+                <th style="text-align:right; font-family:'IBM Plex Mono',monospace; font-size:10px; text-transform:uppercase; letter-spacing:.1em; color:#606872; font-weight:500; padding:12px 14px;">Avg talk</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr style="border-top:1px solid #d6e3ef;">
+                <td style="padding:12px 14px;"><div style="font-weight:600;">Aisha Khan</div><div style="font-family:'IBM Plex Mono',monospace; font-size:9px; color:#606872; text-transform:uppercase; letter-spacing:.08em; margin-top:1px;">Both</div></td>
+                <td style="padding:12px 8px;"><div style="display:flex; align-items:center; gap:8px;"><div style="flex:1; height:6px; background:#dde9f3; border-radius:999px; overflow:hidden;"><div style="width:96%; height:100%; background:#3d9476;"></div></div><span style="font-family:'IBM Plex Mono',monospace; font-size:12px; font-weight:500; color:#3d9476; width:40px; text-align:right;">95.8%</span></div></td>
+                <td style="text-align:right; padding:12px 8px; font-family:'IBM Plex Mono',monospace;">113</td>
+                <td style="text-align:right; padding:12px 8px; font-family:'IBM Plex Mono',monospace; color:#606872;">5</td>
+                <td style="text-align:right; padding:12px 14px; font-family:'IBM Plex Mono',monospace; color:#606872;">2:36</td>
+              </tr>
+              <tr style="border-top:1px solid #d6e3ef; background:#f5f9fc;">
+                <td style="padding:12px 14px;"><div style="font-weight:600;">Maria Lopez</div><div style="font-family:'IBM Plex Mono',monospace; font-size:9px; color:#606872; text-transform:uppercase; letter-spacing:.08em; margin-top:1px;">Both</div></td>
+                <td style="padding:12px 8px;"><div style="display:flex; align-items:center; gap:8px;"><div style="flex:1; height:6px; background:#dde9f3; border-radius:999px; overflow:hidden;"><div style="width:94.6%; height:100%; background:#3d9476;"></div></div><span style="font-family:'IBM Plex Mono',monospace; font-size:12px; font-weight:500; color:#3d9476; width:40px; text-align:right;">94.6%</span></div></td>
+                <td style="text-align:right; padding:12px 8px; font-family:'IBM Plex Mono',monospace;">106</td>
+                <td style="text-align:right; padding:12px 8px; font-family:'IBM Plex Mono',monospace; color:#606872;">6</td>
+                <td style="text-align:right; padding:12px 14px; font-family:'IBM Plex Mono',monospace; color:#606872;">2:28</td>
+              </tr>
+              <tr style="border-top:1px solid #d6e3ef;">
+                <td style="padding:12px 14px;"><div style="font-weight:600;">Priya Nair</div><div style="font-family:'IBM Plex Mono',monospace; font-size:9px; color:#606872; text-transform:uppercase; letter-spacing:.08em; margin-top:1px;">Roster</div></td>
+                <td style="padding:12px 8px;"><div style="display:flex; align-items:center; gap:8px;"><div style="flex:1; height:6px; background:#dde9f3; border-radius:999px; overflow:hidden;"><div style="width:91.4%; height:100%; background:#3d9476;"></div></div><span style="font-family:'IBM Plex Mono',monospace; font-size:12px; font-weight:500; color:#3d9476; width:40px; text-align:right;">91.4%</span></div></td>
+                <td style="text-align:right; padding:12px 8px; font-family:'IBM Plex Mono',monospace;">85</td>
+                <td style="text-align:right; padding:12px 8px; font-family:'IBM Plex Mono',monospace; color:#606872;">8</td>
+                <td style="text-align:right; padding:12px 14px; font-family:'IBM Plex Mono',monospace; color:#606872;">2:29</td>
+              </tr>
+              <tr style="border-top:1px solid #d6e3ef; background:#f5f9fc;">
+                <td style="padding:12px 14px;"><div style="font-weight:600;">James Carter</div><div style="font-family:'IBM Plex Mono',monospace; font-size:9px; color:#606872; text-transform:uppercase; letter-spacing:.08em; margin-top:1px;">Roster</div></td>
+                <td style="padding:12px 8px;"><div style="display:flex; align-items:center; gap:8px;"><div style="flex:1; height:6px; background:#dde9f3; border-radius:999px; overflow:hidden;"><div style="width:86.5%; height:100%; background:#c66b4b;"></div></div><span style="font-family:'IBM Plex Mono',monospace; font-size:12px; font-weight:500; color:#c66b4b; width:40px; text-align:right;">86.5%</span></div></td>
+                <td style="text-align:right; padding:12px 8px; font-family:'IBM Plex Mono',monospace;">90</td>
+                <td style="text-align:right; padding:12px 8px; font-family:'IBM Plex Mono',monospace; color:#c66b4b;">14</td>
+                <td style="text-align:right; padding:12px 14px; font-family:'IBM Plex Mono',monospace; color:#606872;">2:32</td>
+              </tr>
+              <tr style="border-top:1px solid #d6e3ef;">
+                <td style="padding:12px 14px;"><div style="font-weight:600;">Devon Reed</div><div style="font-family:'IBM Plex Mono',monospace; font-size:9px; color:#4e7bc4; text-transform:uppercase; letter-spacing:.08em; margin-top:1px;">Queue · Sales</div></td>
+                <td style="padding:12px 8px;"><div style="display:flex; align-items:center; gap:8px;"><div style="flex:1; height:6px; background:#dde9f3; border-radius:999px; overflow:hidden;"><div style="width:77.6%; height:100%; background:#b23a2c;"></div></div><span style="font-family:'IBM Plex Mono',monospace; font-size:12px; font-weight:500; color:#b23a2c; width:40px; text-align:right;">77.6%</span></div></td>
+                <td style="text-align:right; padding:12px 8px; font-family:'IBM Plex Mono',monospace;">38</td>
+                <td style="text-align:right; padding:12px 8px; font-family:'IBM Plex Mono',monospace; color:#b23a2c;">11</td>
+                <td style="text-align:right; padding:12px 14px; font-family:'IBM Plex Mono',monospace; color:#606872;">2:42</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div style="margin-top:14px; background:#fff; border:1px solid #c8d8e6; border-radius:10px; padding:14px 16px; font-size:12.5px; line-height:1.55; color:#3a4048;">
+        <strong style="font-family:'Inter Tight',sans-serif;">What changed →</strong> Answer rate becomes a sortable bar column so the eye lands on it first; rows that fall below target turn amber/red. Controls collapse into one toolbar, a 4-up summary strip answers "how's the team?" before you read a single row, and TTT / ATT / Abd / CSR-Abd hide behind "More metrics" for managers who don't need them.
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== SECTION 2b: MY DEPARTMENT — rest of page ===== -->
+  <div style="max-width:1080px; margin:56px auto 14px;">
+    <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.18em; text-transform:uppercase; color:#606872; font-weight:500;">Screen 02 · continued</div>
+    <h2 style="margin:6px 0 0; font-family:'Inter Tight',sans-serif; font-size:26px; font-weight:600; letter-spacing:-.4px;">My Department — below the table</h2>
+    <p style="margin:8px 0 0; max-width:760px; font-size:14px; line-height:1.6; color:#3a4048;">Under the agent table sit the <strong>Queue Call Data snapshot</strong> and the <strong>Missed Calls</strong> section. Today the Missed radar is squeezed into a narrow centered column, the queue-only abandons are a dense warn-tinted box of raw timestamps, and the QCD tiles are an undifferentiated mono grid. The redesign makes Missed Calls answer one question — <em>when &amp; where are we losing calls?</em> — keeping the <strong>radar chart</strong> but giving it room beside a plain-language headline, a ranked peak-hours list, and a tidy "lost calls" list.</p>
+  </div>
+
+  <div style="display:flex; gap:48px; align-items:flex-start; padding:14px 0 8px;">
+
+    <!-- BEFORE -->
+    <div style="flex:none; width:700px;">
+      <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:#8a8276; margin-bottom:10px;">● Before — current build</div>
+      <div style="background:#f0f6fa; border-radius:4px; box-shadow:0 1px 3px rgba(0,0,0,.08); overflow:hidden; padding:20px 22px 24px;">
+        <!-- QCD snapshot -->
+        <div style="font-family:'Inter Tight',sans-serif; font-size:15px; font-weight:500;">Queue Call Data <span style="font-family:'IBM Plex Mono',monospace; font-size:10px; color:#606872; text-transform:uppercase; letter-spacing:.12em;">Mon Jun 16</span></div>
+        <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin-top:10px;">
+          <div style="background:#fff; border:1px solid #c8d8e6; border-radius:2px; padding:8px 10px;"><div style="font-family:'IBM Plex Mono',monospace; font-size:9px; color:#606872; text-transform:uppercase;">Offered</div><div style="font-family:'IBM Plex Mono',monospace; font-size:18px;">412</div></div>
+          <div style="background:#fff; border:1px solid #c8d8e6; border-radius:2px; padding:8px 10px;"><div style="font-family:'IBM Plex Mono',monospace; font-size:9px; color:#606872; text-transform:uppercase;">Answered</div><div style="font-family:'IBM Plex Mono',monospace; font-size:18px;">388</div></div>
+          <div style="background:#fff; border:1px solid #c8d8e6; border-radius:2px; padding:8px 10px;"><div style="font-family:'IBM Plex Mono',monospace; font-size:9px; color:#606872; text-transform:uppercase;">Abandoned</div><div style="font-family:'IBM Plex Mono',monospace; font-size:18px;">9</div></div>
+          <div style="background:#fff; border:1px solid #c8d8e6; border-radius:2px; padding:8px 10px;"><div style="font-family:'IBM Plex Mono',monospace; font-size:9px; color:#606872; text-transform:uppercase;">Aband %</div><div style="font-family:'IBM Plex Mono',monospace; font-size:18px; color:#c66b4b;">4.1%</div></div>
+        </div>
+        <!-- Missed -->
+        <div style="display:flex; align-items:baseline; gap:8px; margin-top:18px;"><span style="font-family:'Inter Tight',sans-serif; font-size:15px; font-weight:500;">Missed Calls</span><span style="font-family:'IBM Plex Mono',monospace; font-size:10px; color:#606872;">Jun 1–16</span><span style="margin-left:auto; font-size:11px; border:1px solid #c8d8e6; background:#fff; border-radius:2px; padding:5px 9px;">Full report</span></div>
+        <div style="max-width:420px; margin:8px auto 0;"><svg viewBox="0 0 420 120" style="width:100%; height:120px;"><polygon points="210,12 360,60 300,108 120,108 60,60" fill="none" stroke="#c8d8e6"/><polygon points="210,40 300,64 270,92 150,92 120,64" fill="#f6e2d4" stroke="#c66b4b" stroke-width="1.2"/></svg></div>
+        <!-- queue-only warn box -->
+        <div style="background:#f6e2d4; border:1px solid #c8d8e6; border-left:3px solid #c66b4b; border-radius:2px; padding:12px 14px; margin-top:14px;">
+          <div style="font-family:'Inter Tight',sans-serif; font-size:13px; color:#c66b4b; font-weight:500;">🚨 Queue-only abandoned <span style="font-family:'IBM Plex Mono',monospace; font-size:9px; letter-spacing:.16em; text-transform:uppercase; color:#606872; margin-left:6px;">12 events</span></div>
+          <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; color:#c66b4b; margin-top:8px; line-height:1.9;">
+            <div style="border-bottom:1px solid #e8cdbb; display:flex; gap:12px;"><span style="color:#606872;">Jun 14</span><span style="margin-left:auto;">11:42:08</span></div>
+            <div style="border-bottom:1px solid #e8cdbb; display:flex; gap:12px;"><span style="color:#606872;">Jun 14</span><span style="margin-left:auto;">14:03:51</span></div>
+            <div style="border-bottom:1px solid #e8cdbb; display:flex; gap:12px;"><span style="color:#606872;">Jun 13</span><span style="margin-left:auto;">09:18:22</span></div>
+            <div style="display:flex; gap:12px;"><span style="color:#606872;">Jun 12</span><span style="margin-left:auto;">16:55:40</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- AFTER -->
+    <div style="flex:none; width:700px;">
+      <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:#3d9476; margin-bottom:10px;">✦ After — proposed</div>
+      <div style="background:#f0f6fa; border-radius:12px; box-shadow:0 1px 2px rgba(0,0,0,.05), 0 5px 18px rgba(0,0,0,.06); overflow:hidden; padding:22px 24px 24px;">
+        <!-- QCD snapshot -->
+        <div style="display:flex; align-items:baseline; gap:8px;"><span style="font-family:'Inter Tight',sans-serif; font-size:16px; font-weight:600;">Queue Call Data</span><span style="font-family:'IBM Plex Mono',monospace; font-size:10px; color:#606872; text-transform:uppercase; letter-spacing:.12em;">Mon Jun 16</span></div>
+        <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-top:10px;">
+          <div style="background:#fff; border:1px solid #c8d8e6; border-radius:10px; padding:11px 13px;"><div style="font-family:'IBM Plex Mono',monospace; font-size:9px; color:#606872; text-transform:uppercase; letter-spacing:.1em;">Offered</div><div style="font-family:'Inter Tight',sans-serif; font-size:23px; font-weight:700; letter-spacing:-.6px;">412</div></div>
+          <div style="background:#fff; border:1px solid #c8d8e6; border-radius:10px; padding:11px 13px;"><div style="font-family:'IBM Plex Mono',monospace; font-size:9px; color:#606872; text-transform:uppercase; letter-spacing:.1em;">Answered</div><div style="font-family:'Inter Tight',sans-serif; font-size:23px; font-weight:700; letter-spacing:-.6px;">388</div></div>
+          <div style="background:#fff; border:1px solid #c8d8e6; border-radius:10px; padding:11px 13px;"><div style="font-family:'IBM Plex Mono',monospace; font-size:9px; color:#606872; text-transform:uppercase; letter-spacing:.1em;">Abandoned</div><div style="font-family:'Inter Tight',sans-serif; font-size:23px; font-weight:700; letter-spacing:-.6px;">9</div></div>
+          <div style="position:relative; background:#fff; border:1px solid #c8d8e6; border-radius:10px; padding:11px 13px; overflow:hidden;"><div style="position:absolute; left:0; top:0; bottom:0; width:3px; background:#3d9476;"></div><div style="font-family:'IBM Plex Mono',monospace; font-size:9px; color:#606872; text-transform:uppercase; letter-spacing:.1em;">Aband %</div><div style="font-family:'Inter Tight',sans-serif; font-size:23px; font-weight:700; letter-spacing:-.6px; color:#3d9476;">4.1%</div><div style="font-family:'IBM Plex Mono',monospace; font-size:8px; color:#606872;">under 5% rule</div></div>
+        </div>
+        <!-- Missed -->
+        <div style="display:flex; align-items:center; gap:8px; margin-top:18px;"><span style="font-family:'Inter Tight',sans-serif; font-size:16px; font-weight:600;">Missed Calls</span><span style="font-family:'IBM Plex Mono',monospace; font-size:10px; color:#606872;">Jun 1–16</span><span style="margin-left:auto; font-size:11px; color:#4e7bc4; font-weight:600;">Full report →</span></div>
+        <div style="background:#fff; border:1px solid #c8d8e6; border-radius:12px; padding:14px 16px; margin-top:8px;">
+          <div style="font-size:13.5px; line-height:1.55; color:#234;">You missed <strong>44 calls</strong> this range. They cluster around <strong style="color:#c66b4b;">11 AM</strong> and <strong style="color:#c66b4b;">2 PM</strong> — the lunch dip and the afternoon peak. <strong>James Carter</strong> accounts for a third.</div>
+          <!-- hour-of-day radar -->
+          <div style="display:flex; align-items:center; gap:6px; margin-top:8px;">
+            <svg viewBox="0 0 240 212" style="width:62%; height:188px;">
+              <!-- rings -->
+              <circle cx="120" cy="106" r="28" fill="none" stroke="#d6e3ef"/>
+              <circle cx="120" cy="106" r="56" fill="none" stroke="#d6e3ef"/>
+              <circle cx="120" cy="106" r="84" fill="none" stroke="#c8d8e6"/>
+              <!-- spokes -->
+              <line x1="120" y1="106" x2="120" y2="22"  stroke="#e4eef6"/>
+              <line x1="120" y1="106" x2="184" y2="148" stroke="#e4eef6"/>
+              <line x1="120" y1="106" x2="37"  y2="92"  stroke="#e4eef6"/>
+              <!-- missed-by-hour polygon -->
+              <polygon points="120,94 134,93 153,104 185,148 135,151 110,137 75,136 37,95 94,79" fill="rgba(198,107,75,0.18)" stroke="#c66b4b" stroke-width="2" stroke-linejoin="round"/>
+              <!-- peak markers -->
+              <circle cx="185" cy="148" r="3.5" fill="#c66b4b"/>
+              <circle cx="37" cy="95" r="3.5" fill="#c66b4b"/>
+              <!-- hour labels -->
+              <text x="113" y="16" font-family="IBM Plex Mono" font-size="9" fill="#606872">8a</text>
+              <text x="190" y="162" font-family="IBM Plex Mono" font-size="9" fill="#c66b4b" font-weight="600">11a</text>
+              <text x="6" y="92" font-family="IBM Plex Mono" font-size="9" fill="#c66b4b" font-weight="600">2p</text>
+              <text x="124" y="200" font-family="IBM Plex Mono" font-size="9" fill="#606872">4p</text>
+            </svg>
+            <div style="flex:1; font-family:'IBM Plex Mono',monospace; font-size:11px; color:#606872; line-height:2;">
+              <div style="display:flex; justify-content:space-between;"><span>11 AM</span><span style="color:#c66b4b; font-weight:500;">13 missed</span></div>
+              <div style="display:flex; justify-content:space-between;"><span>2 PM</span><span style="color:#c66b4b; font-weight:500;">14 missed</span></div>
+              <div style="display:flex; justify-content:space-between;"><span>3 PM</span><span>9 missed</span></div>
+              <div style="display:flex; justify-content:space-between;"><span>10 AM</span><span>5 missed</span></div>
+            </div>
+          </div>
+        </div>
+        <!-- lost calls list -->
+        <div style="background:#fff; border:1px solid #c8d8e6; border-radius:12px; overflow:hidden; margin-top:10px;">
+          <div style="display:flex; align-items:center; gap:8px; padding:11px 16px; border-bottom:1px solid #d6e3ef;"><span style="width:7px; height:7px; border-radius:999px; background:#c66b4b;"></span><span style="font-family:'Inter Tight',sans-serif; font-size:13px; font-weight:600;">Queue-only abandoned</span><span style="font-family:'IBM Plex Mono',monospace; font-size:10px; color:#606872; margin-left:auto;">12 events · no agent rang</span></div>
+          <div style="font-family:'IBM Plex Mono',monospace; font-size:11px;">
+            <div style="display:flex; gap:12px; padding:8px 16px; border-bottom:1px solid #e4eef6;"><span style="color:#606872; width:54px;">Jun 14</span><span>11:42:08</span><span style="margin-left:auto; color:#c66b4b;">waited 2:18</span></div>
+            <div style="display:flex; gap:12px; padding:8px 16px; border-bottom:1px solid #e4eef6;"><span style="color:#606872; width:54px;">Jun 14</span><span>14:03:51</span><span style="margin-left:auto; color:#c66b4b;">waited 1:47</span></div>
+            <div style="display:flex; gap:12px; padding:8px 16px;"><span style="color:#606872; width:54px;">Jun 13</span><span>09:18:22</span><span style="margin-left:auto; color:#c66b4b;">waited 3:02</span></div>
+          </div>
+        </div>
+      </div>
+      <div style="margin-top:14px; background:#fff; border:1px solid #c8d8e6; border-radius:10px; padding:14px 16px; font-size:12.5px; line-height:1.55; color:#3a4048;">
+        <strong style="font-family:'Inter Tight',sans-serif;">What changed →</strong> Missed Calls opens with a plain-English headline answering "when &amp; who". The radar chart stays — just larger, with the two peak hours marked and a ranked list beside it so the spikes are named, not just shaped. The lost-calls list adds wait time so each abandon has weight, and QCD's abandon-% tile gets the same status rail as the dept tiles.
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== SECTION 3: REPORT MODAL ===== -->
+  <div style="max-width:1080px; margin:56px auto 14px;">
+    <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.18em; text-transform:uppercase; color:#606872; font-weight:500;">Screen 03</div>
+    <h2 style="margin:6px 0 0; font-family:'Inter Tight',sans-serif; font-size:26px; font-weight:600; letter-spacing:-.4px;">Report modal — Individual</h2>
+    <p style="margin:8px 0 0; max-width:760px; font-size:14px; line-height:1.6; color:#3a4048;">Representative of all five report modals. Today the "At a glance" sentences are quiet, the five KPI tiles pack big-number + sparkline + vs-team + vs-prior into a tight box, and the chart is a thin strip. The redesign promotes the plain-English headline to a real banner, gives KPI tiles room with a clear delta system, and lets the trend chart breathe with a target band and labeled focus.</p>
+  </div>
+
+  <div style="display:flex; gap:48px; align-items:flex-start; padding:14px 0 8px;">
+
+    <!-- BEFORE -->
+    <div style="flex:none; width:700px;">
+      <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:#8a8276; margin-bottom:10px;">● Before — current build</div>
+      <div style="background:#fff; border-radius:4px; box-shadow:0 1px 3px rgba(0,0,0,.08); overflow:hidden;">
+        <div style="background:#dde9f3; border-bottom:1px solid #c8d8e6; padding:14px 20px; position:relative;">
+          <div style="font-family:'IBM Plex Mono',monospace; font-size:9px; text-transform:uppercase; letter-spacing:.18em; color:#606872;">Report</div>
+          <div style="font-family:'Inter Tight',sans-serif; font-size:22px; font-weight:500; letter-spacing:-.4px;">Individual Report · Aisha Khan</div>
+          <span style="position:absolute; right:16px; top:14px; color:#606872; font-size:18px;">×</span>
+        </div>
+        <div style="padding:18px 20px 22px;">
+          <div style="font-size:12.5px; color:#606872; line-height:1.55; border-left:2px solid #c8d8e6; padding-left:10px;">At a glance: Aisha answered 113 of 118 calls (95.8%) over the range, 3.7 pts above the team average. Talk time is steady; abandoned wait is the team's lowest.</div>
+          <!-- kpi grid 5 -->
+          <div style="display:grid; grid-template-columns:repeat(5,1fr); gap:8px; margin-top:14px;">
+            <div style="background:#dde9f3; border:1px solid #c8d8e6; border-radius:2px; padding:9px;"><div style="font-family:'IBM Plex Mono',monospace; font-size:9px; text-transform:uppercase; color:#606872;">Answered</div><svg viewBox="0 0 60 16" style="width:100%;height:16px;margin-top:3px;"><polyline points="0,11 15,9 30,10 45,6 60,4" fill="none" stroke="#4e7bc4" stroke-width="1.3"/></svg><div style="font-family:'Inter Tight',sans-serif; font-size:22px; font-weight:500;">113</div><div style="font-size:9px; color:#606872; font-family:'IBM Plex Mono',monospace;">team 89</div><div style="font-size:9px; color:#3d9476; font-family:'IBM Plex Mono',monospace;">▲ +24</div></div>
+            <div style="background:#dde9f3; border:1px solid #c8d8e6; border-radius:2px; padding:9px;"><div style="font-family:'IBM Plex Mono',monospace; font-size:9px; text-transform:uppercase; color:#606872;">% Ans</div><svg viewBox="0 0 60 16" style="width:100%;height:16px;margin-top:3px;"><polyline points="0,8 15,7 30,6 45,5 60,4" fill="none" stroke="#4e7bc4" stroke-width="1.3"/></svg><div style="font-family:'Inter Tight',sans-serif; font-size:22px; font-weight:500;">95.8</div><div style="font-size:9px; color:#606872; font-family:'IBM Plex Mono',monospace;">team 92.1</div><div style="font-size:9px; color:#3d9476; font-family:'IBM Plex Mono',monospace;">▲ +3.7</div></div>
+            <div style="background:#dde9f3; border:1px solid #c8d8e6; border-radius:2px; padding:9px;"><div style="font-family:'IBM Plex Mono',monospace; font-size:9px; text-transform:uppercase; color:#606872;">Missed</div><svg viewBox="0 0 60 16" style="width:100%;height:16px;margin-top:3px;"><polyline points="0,6 15,8 30,7 45,9 60,11" fill="none" stroke="#c66b4b" stroke-width="1.3"/></svg><div style="font-family:'Inter Tight',sans-serif; font-size:22px; font-weight:500;">5</div><div style="font-size:9px; color:#606872; font-family:'IBM Plex Mono',monospace;">team 11</div><div style="font-size:9px; color:#3d9476; font-family:'IBM Plex Mono',monospace;">▼ -6</div></div>
+            <div style="background:#dde9f3; border:1px solid #c8d8e6; border-radius:2px; padding:9px;"><div style="font-family:'IBM Plex Mono',monospace; font-size:9px; text-transform:uppercase; color:#606872;">ATT</div><svg viewBox="0 0 60 16" style="width:100%;height:16px;margin-top:3px;"><polyline points="0,8 15,8 30,7 45,8 60,8" fill="none" stroke="#4e7bc4" stroke-width="1.3"/></svg><div style="font-family:'Inter Tight',sans-serif; font-size:22px; font-weight:500;">2:36</div><div style="font-size:9px; color:#606872; font-family:'IBM Plex Mono',monospace;">team 2:31</div><div style="font-size:9px; color:#606872; font-family:'IBM Plex Mono',monospace;">— +5s</div></div>
+            <div style="background:#dde9f3; border:1px solid #c8d8e6; border-radius:2px; padding:9px;"><div style="font-family:'IBM Plex Mono',monospace; font-size:9px; text-transform:uppercase; color:#606872;">Abd Wait</div><svg viewBox="0 0 60 16" style="width:100%;height:16px;margin-top:3px;"><polyline points="0,9 15,8 30,7 45,6 60,5" fill="none" stroke="#3d9476" stroke-width="1.3"/></svg><div style="font-family:'Inter Tight',sans-serif; font-size:22px; font-weight:500;">0:41</div><div style="font-size:9px; color:#606872; font-family:'IBM Plex Mono',monospace;">team 1:02</div><div style="font-size:9px; color:#3d9476; font-family:'IBM Plex Mono',monospace;">▼ -21s</div></div>
+          </div>
+          <!-- chart -->
+          <div style="margin-top:14px; border:1px solid #c8d8e6; border-radius:2px; padding:10px;">
+            <div style="display:flex; gap:6px;"><span style="font-size:10px; border-bottom:2px solid #101418; padding-bottom:2px;">% Answered</span><span style="font-size:10px; color:#606872;">Answered</span><span style="font-size:10px; color:#606872;">Missed</span></div>
+            <svg viewBox="0 0 360 110" style="width:100%; height:110px; margin-top:6px;"><line x1="0" y1="30" x2="360" y2="30" stroke="#dde9f3"/><line x1="0" y1="70" x2="360" y2="70" stroke="#dde9f3"/><polyline points="0,60 40,54 80,58 120,46 160,50 200,40 240,44 280,34 320,38 360,30" fill="none" stroke="#4e7bc4" stroke-width="1.5"/></svg>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- AFTER -->
+    <div style="flex:none; width:700px;">
+      <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:#3d9476; margin-bottom:10px;">✦ After — proposed</div>
+      <div style="background:#fff; border-radius:12px; box-shadow:0 1px 2px rgba(0,0,0,.05), 0 8px 26px rgba(0,0,0,.10); overflow:hidden;">
+        <div style="padding:20px 26px; border-bottom:1px solid #d6e3ef; display:flex; justify-content:space-between; align-items:flex-start;">
+          <div>
+            <div style="font-family:'IBM Plex Mono',monospace; font-size:9px; text-transform:uppercase; letter-spacing:.18em; color:#606872;">Individual Report</div>
+            <div style="font-family:'Inter Tight',sans-serif; font-size:26px; font-weight:600; letter-spacing:-.6px; margin-top:2px;">Aisha Khan</div>
+            <div style="font-size:12px; color:#606872; margin-top:2px;">CSR · Jun 1 – Jun 16</div>
+          </div>
+          <div style="display:flex; gap:6px; align-items:center;"><span style="color:#c4bdab; font-size:16px;">↗</span><span style="color:#606872; font-size:20px;">×</span></div>
+        </div>
+        <div style="padding:22px 26px 26px;">
+          <!-- headline banner -->
+          <div style="background:#e0efe6; border-radius:12px; padding:16px 18px; display:flex; gap:14px; align-items:flex-start;">
+            <span style="font-family:'Inter Tight',sans-serif; font-size:14px; font-weight:700; color:#2f7a5f; background:#fff; border-radius:8px; padding:6px 10px; white-space:nowrap;">Top of team</span>
+            <div style="font-size:14px; line-height:1.55; color:#234;">Aisha answered <strong>113 of 118</strong> calls (<strong>95.8%</strong>) — <strong style="color:#2f7a5f;">3.7 pts above</strong> the team average — and holds the team's <strong>lowest abandoned wait</strong>. Talk time is steady.</div>
+          </div>
+          <!-- kpi grid -->
+          <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-top:16px;">
+            <div style="background:#f0f6fa; border:1px solid #c8d8e6; border-radius:12px; padding:14px;">
+              <div style="display:flex; justify-content:space-between; align-items:center;"><span style="font-family:'IBM Plex Mono',monospace; font-size:10px; text-transform:uppercase; letter-spacing:.1em; color:#606872;">Answer rate</span><span style="font-size:10px; font-weight:600; color:#3d9476; background:#e0efe6; border-radius:999px; padding:2px 7px;">▲ 3.7</span></div>
+              <div style="font-family:'Inter Tight',sans-serif; font-size:32px; font-weight:700; letter-spacing:-1px; margin-top:4px; color:#3d9476; line-height:1;">95.8%</div>
+              <svg viewBox="0 0 120 20" style="width:100%;height:20px;margin-top:6px;"><polyline points="0,15 30,13 60,12 90,8 120,5" fill="none" stroke="#3d9476" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <div style="font-family:'IBM Plex Mono',monospace; font-size:10px; color:#606872; margin-top:4px;">team avg 92.1%</div>
+            </div>
+            <div style="background:#f0f6fa; border:1px solid #c8d8e6; border-radius:12px; padding:14px;">
+              <div style="display:flex; justify-content:space-between; align-items:center;"><span style="font-family:'IBM Plex Mono',monospace; font-size:10px; text-transform:uppercase; letter-spacing:.1em; color:#606872;">Answered</span><span style="font-size:10px; font-weight:600; color:#3d9476; background:#e0efe6; border-radius:999px; padding:2px 7px;">▲ 24</span></div>
+              <div style="font-family:'Inter Tight',sans-serif; font-size:32px; font-weight:700; letter-spacing:-1px; margin-top:4px; line-height:1;">113</div>
+              <svg viewBox="0 0 120 20" style="width:100%;height:20px;margin-top:6px;"><polyline points="0,15 30,12 60,13 90,7 120,5" fill="none" stroke="#4e7bc4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <div style="font-family:'IBM Plex Mono',monospace; font-size:10px; color:#606872; margin-top:4px;">team avg 89</div>
+            </div>
+            <div style="background:#f0f6fa; border:1px solid #c8d8e6; border-radius:12px; padding:14px;">
+              <div style="display:flex; justify-content:space-between; align-items:center;"><span style="font-family:'IBM Plex Mono',monospace; font-size:10px; text-transform:uppercase; letter-spacing:.1em; color:#606872;">Abd wait</span><span style="font-size:10px; font-weight:600; color:#3d9476; background:#e0efe6; border-radius:999px; padding:2px 7px;">▼ 21s</span></div>
+              <div style="font-family:'Inter Tight',sans-serif; font-size:32px; font-weight:700; letter-spacing:-1px; margin-top:4px; line-height:1;">0:41</div>
+              <svg viewBox="0 0 120 20" style="width:100%;height:20px;margin-top:6px;"><polyline points="0,8 30,10 60,9 90,6 120,5" fill="none" stroke="#3d9476" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <div style="font-family:'IBM Plex Mono',monospace; font-size:10px; color:#606872; margin-top:4px;">team avg 1:02</div>
+            </div>
+          </div>
+          <!-- chart -->
+          <div style="margin-top:14px; border:1px solid #c8d8e6; border-radius:12px; padding:16px;">
+            <div style="display:flex; justify-content:space-between; align-items:center;"><span style="font-family:'Inter Tight',sans-serif; font-size:14px; font-weight:600;">12-month answer rate</span><div style="display:flex; gap:8px;"><span style="font-size:11px; background:#101418; color:#fff; border-radius:999px; padding:3px 10px;">% Answered</span><span style="font-size:11px; color:#606872; padding:3px 10px;">Volume</span></div></div>
+            <svg viewBox="0 0 380 130" style="width:100%; height:130px; margin-top:12px;">
+              <rect x="0" y="10" width="380" height="22" fill="#e0efe6"/>
+              <line x1="0" y1="32" x2="380" y2="32" stroke="#3d9476" stroke-width="1" stroke-dasharray="3 3"/>
+              <text x="344" y="28" font-family="IBM Plex Mono" font-size="8" fill="#3d9476">target</text>
+              <line x1="0" y1="66" x2="380" y2="66" stroke="#d6e3ef"/>
+              <line x1="0" y1="100" x2="380" y2="100" stroke="#d6e3ef"/>
+              <polyline points="0,72 42,64 84,68 126,54 168,58 210,46 252,50 294,38 336,42 380,30" fill="none" stroke="#3d9476" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+              <circle cx="380" cy="30" r="3.5" fill="#3d9476"/>
+              <text x="338" y="22" font-family="Inter Tight" font-size="9" font-weight="600" fill="#2f7a5f">95.8%</text>
+            </svg>
+          </div>
+        </div>
+      </div>
+      <div style="margin-top:14px; background:#fff; border:1px solid #c8d8e6; border-radius:10px; padding:14px 16px; font-size:12.5px; line-height:1.55; color:#3a4048;">
+        <strong style="font-family:'Inter Tight',sans-serif;">What changed →</strong> The plain-English verdict is now a colored banner with a one-word badge so a manager gets the answer before reading numbers. Five cramped tiles become three roomy ones with a consistent delta-pill system; the trend chart gains the same target band and an end-point label. The pattern applies 1:1 to Performance, Compare, Insights &amp; QCD.
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== SECTION 4: INSIGHTS REPORT ===== -->
+  <div style="max-width:1080px; margin:56px auto 14px;">
+    <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.18em; text-transform:uppercase; color:#606872; font-weight:500;">Screen 04 · most important</div>
+    <h2 style="margin:6px 0 0; font-family:'Inter Tight',sans-serif; font-size:26px; font-weight:600; letter-spacing:-.4px;">Insights report</h2>
+    <p style="margin:8px 0 0; max-width:780px; font-size:14px; line-height:1.6; color:#3a4048;">Insights is the report that answers "<em>what changed and who needs my attention?</em>" — a department rollup plus a per-agent card for every agent, each comparing the selected window to the period right before it. It's the right concept, but three things blunt it today:</p>
+    <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:12px; max-width:1080px; margin-top:14px;">
+      <div style="background:#fff; border:1px solid #c8d8e6; border-radius:10px; padding:14px 15px;"><div style="font-family:'IBM Plex Mono',monospace; font-size:10px; letter-spacing:.14em; text-transform:uppercase; color:#c66b4b; font-weight:500;">Finding 01</div><div style="font-family:'Inter Tight',sans-serif; font-size:15px; font-weight:600; margin-top:6px;">Status is hidden in a border</div><div style="font-size:12.5px; line-height:1.55; color:#606872; margin-top:4px;">Improved / regressed / mixed is encoded only as a thin colored left edge — and "improved" is <strong>blue</strong>, which clashes with the green you use for "good" everywhere else.</div></div>
+      <div style="background:#fff; border:1px solid #c8d8e6; border-radius:10px; padding:14px 15px;"><div style="font-family:'IBM Plex Mono',monospace; font-size:10px; letter-spacing:.14em; text-transform:uppercase; color:#c66b4b; font-weight:500;">Finding 02</div><div style="font-family:'Inter Tight',sans-serif; font-size:15px; font-weight:600; margin-top:6px;">No triage order</div><div style="font-size:12.5px; line-height:1.55; color:#606872; margin-top:4px;">Cards render in roster order, so a manager has to scan every one to find the agent who slipped. The whole point is to surface that fast.</div></div>
+      <div style="background:#fff; border:1px solid #c8d8e6; border-radius:10px; padding:14px 15px;"><div style="font-family:'IBM Plex Mono',monospace; font-size:10px; letter-spacing:.14em; text-transform:uppercase; color:#c66b4b; font-weight:500;">Finding 03</div><div style="font-family:'Inter Tight',sans-serif; font-size:15px; font-weight:600; margin-top:6px;">"Vs prior" is implicit</div><div style="font-size:12.5px; line-height:1.55; color:#606872; margin-top:4px;">The comparison baseline drives the whole report but is easy to miss. Deltas need a clear ▲▼ system and a visible "vs prior 14 days" label.</div></div>
+    </div>
+  </div>
+
+  <div style="display:flex; gap:48px; align-items:flex-start; padding:18px 0 8px;">
+
+    <!-- BEFORE -->
+    <div style="flex:none; width:700px;">
+      <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:#8a8276; margin-bottom:10px;">● Before — current build</div>
+      <div style="background:#fff; border-radius:4px; box-shadow:0 1px 3px rgba(0,0,0,.08); overflow:hidden;">
+        <div style="background:#dde9f3; border-bottom:1px solid #c8d8e6; padding:14px 20px;"><div style="font-family:'IBM Plex Mono',monospace; font-size:9px; text-transform:uppercase; letter-spacing:.18em; color:#606872;">Report</div><div style="font-family:'Inter Tight',sans-serif; font-size:22px; font-weight:500; letter-spacing:-.4px;">Insights · CSR</div></div>
+        <div style="padding:18px 20px 22px;">
+          <div style="font-size:12px; color:#606872; line-height:1.5; border-left:2px solid #c8d8e6; padding-left:10px;">At a glance: team answered 92.1% (▲ vs prior). 2 agents improved, 1 regressed, 1 mixed.</div>
+          <!-- rollup -->
+          <div style="font-family:'IBM Plex Mono',monospace; font-size:10px; text-transform:uppercase; letter-spacing:.14em; color:#606872; margin-top:16px;">Department rollup</div>
+          <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin-top:8px;">
+            <div style="background:#dde9f3; border:1px solid #c8d8e6; border-radius:2px; padding:9px;"><div style="font-family:'IBM Plex Mono',monospace; font-size:9px; color:#606872; text-transform:uppercase;">% Ans</div><div style="font-family:'Inter Tight',sans-serif; font-size:20px;">92.1</div><div style="font-size:9px; color:#3d9476; font-family:'IBM Plex Mono',monospace;">▲ +1.2</div></div>
+            <div style="background:#dde9f3; border:1px solid #c8d8e6; border-radius:2px; padding:9px;"><div style="font-family:'IBM Plex Mono',monospace; font-size:9px; color:#606872; text-transform:uppercase;">Answered</div><div style="font-family:'Inter Tight',sans-serif; font-size:20px;">432</div><div style="font-size:9px; color:#3d9476; font-family:'IBM Plex Mono',monospace;">▲ +18</div></div>
+            <div style="background:#dde9f3; border:1px solid #c8d8e6; border-radius:2px; padding:9px;"><div style="font-family:'IBM Plex Mono',monospace; font-size:9px; color:#606872; text-transform:uppercase;">Missed</div><div style="font-family:'Inter Tight',sans-serif; font-size:20px;">44</div><div style="font-size:9px; color:#3d9476; font-family:'IBM Plex Mono',monospace;">▼ -6</div></div>
+            <div style="background:#dde9f3; border:1px solid #c8d8e6; border-radius:2px; padding:9px;"><div style="font-family:'IBM Plex Mono',monospace; font-size:9px; color:#606872; text-transform:uppercase;">ATT</div><div style="font-family:'Inter Tight',sans-serif; font-size:20px;">2:31</div><div style="font-size:9px; color:#606872; font-family:'IBM Plex Mono',monospace;">— +3s</div></div>
+          </div>
+          <!-- agent cards: subtle left-border classification -->
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:14px;">
+            <div style="border:1px solid #c8d8e6; border-left:3px solid #4e7bc4; border-radius:2px; padding:10px 11px;"><div style="font-family:'Inter Tight',sans-serif; font-size:14px; font-weight:600;">Aisha Khan</div><div style="display:grid; grid-template-columns:repeat(3,1fr); gap:6px; margin-top:8px; font-family:'IBM Plex Mono',monospace;"><div><div style="font-size:8px; color:#606872; text-transform:uppercase;">% Ans</div><div style="font-size:14px;">95.8</div></div><div><div style="font-size:8px; color:#606872; text-transform:uppercase;">Ans</div><div style="font-size:14px;">113</div></div><div><div style="font-size:8px; color:#606872; text-transform:uppercase;">Miss</div><div style="font-size:14px;">5</div></div></div><div style="font-size:9px; color:#606872; margin-top:6px;">▲ +2.1 vs prior · ▲ +9 ans</div></div>
+            <div style="border:1px solid #c8d8e6; border-left:3px solid #c66b4b; border-radius:2px; padding:10px 11px;"><div style="font-family:'Inter Tight',sans-serif; font-size:14px; font-weight:600;">James Carter</div><div style="display:grid; grid-template-columns:repeat(3,1fr); gap:6px; margin-top:8px; font-family:'IBM Plex Mono',monospace;"><div><div style="font-size:8px; color:#606872; text-transform:uppercase;">% Ans</div><div style="font-size:14px;">86.5</div></div><div><div style="font-size:8px; color:#606872; text-transform:uppercase;">Ans</div><div style="font-size:14px;">90</div></div><div><div style="font-size:8px; color:#606872; text-transform:uppercase;">Miss</div><div style="font-size:14px;">14</div></div></div><div style="font-size:9px; color:#606872; margin-top:6px;">▼ -4.2 vs prior · ▲ +5 miss</div></div>
+            <div style="border:1px solid #c8d8e6; border-left:3px solid #4e7bc4; border-radius:2px; padding:10px 11px;"><div style="font-family:'Inter Tight',sans-serif; font-size:14px; font-weight:600;">Maria Lopez</div><div style="display:grid; grid-template-columns:repeat(3,1fr); gap:6px; margin-top:8px; font-family:'IBM Plex Mono',monospace;"><div><div style="font-size:8px; color:#606872; text-transform:uppercase;">% Ans</div><div style="font-size:14px;">94.6</div></div><div><div style="font-size:8px; color:#606872; text-transform:uppercase;">Ans</div><div style="font-size:14px;">106</div></div><div><div style="font-size:8px; color:#606872; text-transform:uppercase;">Miss</div><div style="font-size:14px;">6</div></div></div><div style="font-size:9px; color:#606872; margin-top:6px;">▲ +0.8 vs prior</div></div>
+            <div style="border:1px solid #c8d8e6; border-left:3px solid #606872; border-radius:2px; padding:10px 11px;"><div style="font-family:'Inter Tight',sans-serif; font-size:14px; font-weight:600;">Priya Nair</div><div style="display:grid; grid-template-columns:repeat(3,1fr); gap:6px; margin-top:8px; font-family:'IBM Plex Mono',monospace;"><div><div style="font-size:8px; color:#606872; text-transform:uppercase;">% Ans</div><div style="font-size:14px;">91.4</div></div><div><div style="font-size:8px; color:#606872; text-transform:uppercase;">Ans</div><div style="font-size:14px;">85</div></div><div><div style="font-size:8px; color:#606872; text-transform:uppercase;">Miss</div><div style="font-size:14px;">8</div></div></div><div style="font-size:9px; color:#606872; margin-top:6px;">▲ ans / ▼ talk · mixed</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- AFTER -->
+    <div style="flex:none; width:700px;">
+      <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:#3d9476; margin-bottom:10px;">✦ After — proposed</div>
+      <div style="background:#fff; border-radius:12px; box-shadow:0 1px 2px rgba(0,0,0,.05), 0 8px 26px rgba(0,0,0,.10); overflow:hidden;">
+        <div style="padding:20px 26px; border-bottom:1px solid #d6e3ef; display:flex; justify-content:space-between; align-items:flex-start;">
+          <div><div style="font-family:'IBM Plex Mono',monospace; font-size:9px; text-transform:uppercase; letter-spacing:.18em; color:#606872;">Insights · CSR</div><div style="font-family:'Inter Tight',sans-serif; font-size:26px; font-weight:600; letter-spacing:-.6px; margin-top:2px;">What changed</div></div>
+          <span style="font-family:'IBM Plex Mono',monospace; font-size:10px; color:#606872; background:#f0f6fa; border:1px solid #c8d8e6; border-radius:999px; padding:6px 11px;">Jun 1–16 vs prior 16 days</span>
+        </div>
+        <div style="padding:22px 26px 26px;">
+          <!-- rollup hero -->
+          <div style="display:flex; gap:12px;">
+            <div style="flex:1.3; background:#f0f6fa; border:1px solid #c8d8e6; border-radius:12px; padding:15px 18px;"><div style="font-family:'IBM Plex Mono',monospace; font-size:10px; text-transform:uppercase; letter-spacing:.12em; color:#606872;">Team answer rate</div><div style="display:flex; align-items:baseline; gap:10px; margin-top:3px;"><span style="font-family:'Inter Tight',sans-serif; font-size:36px; font-weight:700; letter-spacing:-1.2px; line-height:1;">92.1%</span><span style="font-size:11px; font-weight:600; color:#3d9476; background:#e0efe6; border-radius:999px; padding:3px 9px;">▲ 1.2 pts</span></div><div style="font-family:'IBM Plex Mono',monospace; font-size:10px; color:#606872; margin-top:5px;">prior window 90.9%</div></div>
+            <div style="flex:1; background:#f0f6fa; border:1px solid #c8d8e6; border-radius:12px; padding:15px 18px;"><div style="font-family:'IBM Plex Mono',monospace; font-size:10px; text-transform:uppercase; letter-spacing:.12em; color:#606872;">Answered</div><div style="font-family:'Inter Tight',sans-serif; font-size:28px; font-weight:700; letter-spacing:-.8px;">432</div><div style="font-size:10px; font-weight:600; color:#3d9476;">▲ 18 vs prior</div></div>
+            <div style="flex:1; background:#f0f6fa; border:1px solid #c8d8e6; border-radius:12px; padding:15px 18px;"><div style="font-family:'IBM Plex Mono',monospace; font-size:10px; text-transform:uppercase; letter-spacing:.12em; color:#606872;">Missed</div><div style="font-family:'Inter Tight',sans-serif; font-size:28px; font-weight:700; letter-spacing:-.8px;">44</div><div style="font-size:10px; font-weight:600; color:#3d9476;">▼ 6 vs prior</div></div>
+          </div>
+          <!-- at a glance banner -->
+          <div style="background:#e0efe6; border-radius:12px; padding:14px 16px; margin-top:14px; font-size:13.5px; line-height:1.55; color:#234;">The team is <strong style="color:#2f7a5f;">up 1.2 points</strong>. <strong>Aisha</strong> and <strong>Maria</strong> improved; <strong style="color:#a8442d;">James slipped 4.2 points</strong> with 5 more missed calls — worth a check-in. Priya is mixed (more answered, shorter talk).</div>
+
+          <!-- needs attention group -->
+          <div style="display:flex; align-items:center; gap:8px; margin-top:18px;"><span style="width:8px; height:8px; border-radius:999px; background:#c66b4b;"></span><span style="font-family:'IBM Plex Mono',monospace; font-size:10px; text-transform:uppercase; letter-spacing:.14em; color:#c66b4b; font-weight:500;">Needs attention · 1</span></div>
+          <div style="margin-top:8px;">
+            <div style="position:relative; border:1px solid #c8d8e6; border-radius:12px; padding:14px 16px; overflow:hidden; background:#fff;">
+              <div style="position:absolute; left:0; top:0; bottom:0; width:4px; background:#c66b4b;"></div>
+              <div style="display:flex; align-items:center; gap:10px;"><span style="font-family:'Inter Tight',sans-serif; font-size:15px; font-weight:600;">James Carter</span><span style="font-size:10px; font-weight:600; color:#c66b4b; background:#f6e2d4; border-radius:999px; padding:2px 9px;">Slipping</span><span style="margin-left:auto; font-family:'Inter Tight',sans-serif; font-size:24px; font-weight:700; letter-spacing:-.8px; color:#c66b4b;">86.5%</span><span style="font-size:11px; font-weight:600; color:#c66b4b; background:#f6e2d4; border-radius:999px; padding:3px 9px;">▼ 4.2</span></div>
+              <div style="display:flex; flex-direction:column; gap:7px; margin-top:12px;">
+                <div style="display:flex; align-items:center; gap:8px;"><span style="font-family:'IBM Plex Mono',monospace; font-size:9px; color:#606872; width:64px; text-align:right;">ANSWERED</span><div style="flex:1; height:7px; background:#d6e3ef; border-radius:999px; overflow:hidden;"><div style="width:62%; height:100%; background:#c66b4b;"></div></div><span style="font-family:'IBM Plex Mono',monospace; font-size:11px; width:60px;">90 <span style="color:#c66b4b;">▼7</span></span></div>
+                <div style="display:flex; align-items:center; gap:8px;"><span style="font-family:'IBM Plex Mono',monospace; font-size:9px; color:#606872; width:64px; text-align:right;">MISSED</span><div style="flex:1; height:7px; background:#d6e3ef; border-radius:999px; overflow:hidden;"><div style="width:48%; height:100%; background:#c66b4b;"></div></div><span style="font-family:'IBM Plex Mono',monospace; font-size:11px; width:60px;">14 <span style="color:#c66b4b;">▲5</span></span></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- on track group -->
+          <div style="display:flex; align-items:center; gap:8px; margin-top:16px;"><span style="width:8px; height:8px; border-radius:999px; background:#3d9476;"></span><span style="font-family:'IBM Plex Mono',monospace; font-size:10px; text-transform:uppercase; letter-spacing:.14em; color:#3d9476; font-weight:500;">On track · 3</span></div>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px;">
+            <div style="position:relative; border:1px solid #c8d8e6; border-radius:12px; padding:13px 14px; overflow:hidden; background:#fff;"><div style="position:absolute; left:0; top:0; bottom:0; width:4px; background:#3d9476;"></div><div style="display:flex; align-items:center; gap:8px;"><span style="font-family:'Inter Tight',sans-serif; font-size:14px; font-weight:600;">Aisha Khan</span><span style="margin-left:auto; font-family:'Inter Tight',sans-serif; font-size:18px; font-weight:700; color:#3d9476;">95.8%</span><span style="font-size:9px; font-weight:600; color:#3d9476; background:#e0efe6; border-radius:999px; padding:2px 6px;">▲2.1</span></div><svg viewBox="0 0 200 18" style="width:100%;height:18px;margin-top:8px;"><polyline points="0,13 50,11 100,9 150,6 200,4" fill="none" stroke="#3d9476" stroke-width="2" stroke-linecap="round"/></svg></div>
+            <div style="position:relative; border:1px solid #c8d8e6; border-radius:12px; padding:13px 14px; overflow:hidden; background:#fff;"><div style="position:absolute; left:0; top:0; bottom:0; width:4px; background:#3d9476;"></div><div style="display:flex; align-items:center; gap:8px;"><span style="font-family:'Inter Tight',sans-serif; font-size:14px; font-weight:600;">Maria Lopez</span><span style="margin-left:auto; font-family:'Inter Tight',sans-serif; font-size:18px; font-weight:700; color:#3d9476;">94.6%</span><span style="font-size:9px; font-weight:600; color:#3d9476; background:#e0efe6; border-radius:999px; padding:2px 6px;">▲0.8</span></div><svg viewBox="0 0 200 18" style="width:100%;height:18px;margin-top:8px;"><polyline points="0,10 50,11 100,8 150,9 200,6" fill="none" stroke="#3d9476" stroke-width="2" stroke-linecap="round"/></svg></div>
+            <div style="position:relative; border:1px solid #c8d8e6; border-radius:12px; padding:13px 14px; overflow:hidden; background:#fff;"><div style="position:absolute; left:0; top:0; bottom:0; width:4px; background:#8a8f98;"></div><div style="display:flex; align-items:center; gap:8px;"><span style="font-family:'Inter Tight',sans-serif; font-size:14px; font-weight:600;">Priya Nair</span><span style="font-size:9px; font-weight:600; color:#606872; background:#d6e3ef; border-radius:999px; padding:2px 6px;">Mixed</span><span style="margin-left:auto; font-family:'Inter Tight',sans-serif; font-size:18px; font-weight:700;">91.4%</span></div><svg viewBox="0 0 200 18" style="width:100%;height:18px;margin-top:8px;"><polyline points="0,9 50,8 100,10 150,8 200,9" fill="none" stroke="#8a8f98" stroke-width="2" stroke-linecap="round"/></svg></div>
+            <div style="border:1px dashed #c8d8e6; border-radius:12px; padding:13px 14px; display:flex; align-items:center; justify-content:center; color:#606872; font-size:12px;">+ 1 steady agent</div>
+          </div>
+        </div>
+      </div>
+      <div style="margin-top:14px; background:#fff; border:1px solid #c8d8e6; border-radius:10px; padding:14px 16px; font-size:12.5px; line-height:1.55; color:#3a4048;">
+        <strong style="font-family:'Inter Tight',sans-serif;">What changed →</strong> The rollup becomes a hero with an explicit "vs prior 16 days" label. The "at a glance" sentence names who improved and who slipped. Cards are <strong>grouped by status</strong> — "Needs attention" first with a red <em>Slipping</em> chip and full current-vs-prior bars; "On track" agents collapse to compact green cards with deltas. Classification now uses your green/amber/grey semantics, not blue.
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== SECTION 5: ADMIN & OPERATIONS PAGES ===== -->
+  <div style="max-width:1080px; margin:64px auto 14px;">
+    <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.18em; text-transform:uppercase; color:#606872; font-weight:500;">Screens 05–09 · admin &amp; operations</div>
+    <h2 style="margin:6px 0 0; font-family:'Inter Tight',sans-serif; font-size:26px; font-weight:600; letter-spacing:-.4px;">Inbound · Alerts · Outlier Fix · Caller Lookup · Dept Config</h2>
+    <p style="margin:8px 0 0; max-width:780px; font-size:14px; line-height:1.6; color:#3a4048;">The admin tools share one trait: they're <strong>stacks of dense tables</strong> where the actionable thing (assign a queue, map an outlier, see who's abandoning) is buried in columns. These users want density — so the fix isn't to strip it, it's to <strong>lead with the action or the answer</strong>, add status color, and demote pure-reference rows. Same cool palette throughout.</p>
+  </div>
+
+  <!-- 05 INBOUND -->
+  <div style="max-width:1080px; margin:30px auto 0;"><div style="font-family:'IBM Plex Mono',monospace; font-size:10px; letter-spacing:.16em; text-transform:uppercase; color:#4e7bc4; font-weight:500;">05 · Inbound report</div><p style="margin:5px 0 0; max-width:760px; font-size:13.5px; line-height:1.55; color:#3a4048;">Four numeric tables stacked (by insurer / dial-in / queue / dial-in×insurer). The redesign keeps every table but adds a KPI + outcome-split hero, makes "By insurer" the primary view with volume bars and colored abandon-%, and moves the other three breakdowns into tabs so the page isn't a mile long.</p></div>
+  <div style="display:flex; gap:48px; align-items:flex-start; padding:14px 0 8px;">
+    <div style="flex:none; width:700px;">
+      <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:#8a93a0; margin-bottom:10px;">● Before</div>
+      <div style="background:#fff; border-radius:4px; box-shadow:0 1px 3px rgba(0,0,0,.08); overflow:hidden;">
+        <div style="background:#dde9f3; border-bottom:1px solid #c8d8e6; padding:13px 20px;"><div style="font-family:'IBM Plex Mono',monospace; font-size:9px; text-transform:uppercase; letter-spacing:.18em; color:#606872;">Report · Admin</div><div style="font-family:'Inter Tight',sans-serif; font-size:21px; font-weight:500;">Inbound Calls</div></div>
+        <div style="padding:16px 20px 20px;">
+          <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:8px;">
+            <div style="background:#dde9f3; border:1px solid #c8d8e6; border-radius:2px; padding:8px;"><div style="font-family:'IBM Plex Mono',monospace; font-size:9px; color:#606872; text-transform:uppercase;">Calls</div><div style="font-family:'IBM Plex Mono',monospace; font-size:17px;">3,182</div></div>
+            <div style="background:#dde9f3; border:1px solid #c8d8e6; border-radius:2px; padding:8px;"><div style="font-family:'IBM Plex Mono',monospace; font-size:9px; color:#606872; text-transform:uppercase;">Answered</div><div style="font-family:'IBM Plex Mono',monospace; font-size:17px;">2,901</div></div>
+            <div style="background:#dde9f3; border:1px solid #c8d8e6; border-radius:2px; padding:8px;"><div style="font-family:'IBM Plex Mono',monospace; font-size:9px; color:#606872; text-transform:uppercase;">Aband</div><div style="font-family:'IBM Plex Mono',monospace; font-size:17px;">281</div></div>
+            <div style="background:#dde9f3; border:1px solid #c8d8e6; border-radius:2px; padding:8px;"><div style="font-family:'IBM Plex Mono',monospace; font-size:9px; color:#606872; text-transform:uppercase;">On-hold</div><div style="font-family:'IBM Plex Mono',monospace; font-size:17px;">63</div></div>
+          </div>
+          <div style="font-family:'IBM Plex Mono',monospace; font-size:10px; text-transform:uppercase; letter-spacing:.12em; color:#606872; margin-top:14px;">By insurer</div>
+          <table style="width:100%; border-collapse:collapse; font-family:'IBM Plex Mono',monospace; font-size:11px; margin-top:6px;">
+            <thead><tr style="border-bottom:1px solid #c8d8e6;"><th style="text-align:left; padding:6px 4px; font-size:9px; color:#606872; font-weight:500;">Insurer</th><th style="text-align:right; padding:6px 4px; font-size:9px; color:#606872; font-weight:500;">Calls</th><th style="text-align:right; padding:6px 4px; font-size:9px; color:#606872; font-weight:500;">Ans</th><th style="text-align:right; padding:6px 4px; font-size:9px; color:#606872; font-weight:500;">Aband</th><th style="text-align:right; padding:6px 4px; font-size:9px; color:#606872; font-weight:500;">Ab%</th><th style="text-align:right; padding:6px 4px; font-size:9px; color:#606872; font-weight:500;">Wait</th></tr></thead>
+            <tbody>
+              <tr style="border-bottom:1px solid #eaf1f8;"><td style="padding:7px 4px;">Aetna</td><td style="text-align:right;">1,041</td><td style="text-align:right;">982</td><td style="text-align:right;">59</td><td style="text-align:right;">5.7%</td><td style="text-align:right;">0:38</td></tr>
+              <tr style="border-bottom:1px solid #eaf1f8;"><td style="padding:7px 4px;">UHC</td><td style="text-align:right;">884</td><td style="text-align:right;">812</td><td style="text-align:right;">72</td><td style="text-align:right;">8.1%</td><td style="text-align:right;">0:51</td></tr>
+              <tr><td style="padding:7px 4px;">Humana</td><td style="text-align:right;">612</td><td style="text-align:right;">571</td><td style="text-align:right;">41</td><td style="text-align:right;">6.7%</td><td style="text-align:right;">0:44</td></tr>
+            </tbody>
+          </table>
+          <div style="font-size:11px; color:#606872; font-style:italic; margin-top:10px;">+ 3 more tables stacked below (by dial-in, by queue, by dial-in × insurer)…</div>
+        </div>
+      </div>
+    </div>
+    <div style="flex:none; width:700px;">
+      <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:#3d9476; margin-bottom:10px;">✦ After</div>
+      <div style="background:#fff; border-radius:12px; box-shadow:0 1px 2px rgba(0,0,0,.05), 0 8px 26px rgba(0,0,0,.10); overflow:hidden;">
+        <div style="padding:18px 24px; border-bottom:1px solid #d6e3ef;"><div style="font-family:'IBM Plex Mono',monospace; font-size:9px; text-transform:uppercase; letter-spacing:.18em; color:#606872;">Report · Admin</div><div style="font-family:'Inter Tight',sans-serif; font-size:24px; font-weight:600; letter-spacing:-.5px;">Inbound Calls</div></div>
+        <div style="padding:20px 24px 24px;">
+          <!-- hero: KPIs + donut -->
+          <div style="display:flex; gap:14px; align-items:stretch;">
+            <div style="flex:1; display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+              <div style="background:#f0f6fa; border:1px solid #c8d8e6; border-radius:10px; padding:11px 13px;"><div style="font-family:'IBM Plex Mono',monospace; font-size:9px; color:#606872; text-transform:uppercase; letter-spacing:.1em;">Total calls</div><div style="font-family:'Inter Tight',sans-serif; font-size:24px; font-weight:700; letter-spacing:-.6px;">3,182</div></div>
+              <div style="background:#f0f6fa; border:1px solid #c8d8e6; border-radius:10px; padding:11px 13px;"><div style="font-family:'IBM Plex Mono',monospace; font-size:9px; color:#606872; text-transform:uppercase; letter-spacing:.1em;">Answered</div><div style="font-family:'Inter Tight',sans-serif; font-size:24px; font-weight:700; letter-spacing:-.6px; color:#3d9476;">91.2%</div></div>
+              <div style="background:#f0f6fa; border:1px solid #c8d8e6; border-radius:10px; padding:11px 13px;"><div style="font-family:'IBM Plex Mono',monospace; font-size:9px; color:#606872; text-transform:uppercase; letter-spacing:.1em;">Abandoned</div><div style="font-family:'Inter Tight',sans-serif; font-size:24px; font-weight:700; letter-spacing:-.6px; color:#c66b4b;">8.8%</div></div>
+              <div style="background:#f0f6fa; border:1px solid #c8d8e6; border-radius:10px; padding:11px 13px;"><div style="font-family:'IBM Plex Mono',monospace; font-size:9px; color:#606872; text-transform:uppercase; letter-spacing:.1em;">On-hold abandon</div><div style="font-family:'Inter Tight',sans-serif; font-size:24px; font-weight:700; letter-spacing:-.6px;">63</div></div>
+            </div>
+            <div style="flex:none; width:150px; background:#f0f6fa; border:1px solid #c8d8e6; border-radius:10px; padding:12px; display:flex; flex-direction:column; align-items:center; justify-content:center;">
+              <svg viewBox="0 0 80 80" style="width:74px; height:74px;"><circle cx="40" cy="40" r="30" fill="none" stroke="#3d9476" stroke-width="12"/><circle cx="40" cy="40" r="30" fill="none" stroke="#c66b4b" stroke-width="12" stroke-dasharray="16.6 188.5" stroke-dashoffset="0" transform="rotate(-90 40 40)"/><circle cx="40" cy="40" r="30" fill="none" stroke="#b23a2c" stroke-width="12" stroke-dasharray="3.7 201.4" stroke-dashoffset="-16.6" transform="rotate(-90 40 40)"/></svg>
+              <div style="font-family:'IBM Plex Mono',monospace; font-size:9px; color:#606872; margin-top:8px; text-align:center; line-height:1.6;"><span style="color:#3d9476;">●</span> answered <span style="color:#c66b4b;">●</span> aband</div>
+            </div>
+          </div>
+          <!-- tabs -->
+          <div style="display:flex; gap:4px; margin-top:18px; border-bottom:1px solid #d6e3ef;">
+            <span style="font-size:12px; font-weight:600; color:#101418; padding:8px 12px; border-bottom:2px solid #101418;">By insurer</span>
+            <span style="font-size:12px; color:#606872; padding:8px 12px;">By dial-in</span>
+            <span style="font-size:12px; color:#606872; padding:8px 12px;">By queue</span>
+            <span style="font-size:12px; color:#606872; padding:8px 12px;">Dial-in × insurer</span>
+          </div>
+          <!-- insurer rows with volume bar -->
+          <div style="margin-top:12px; display:flex; flex-direction:column; gap:10px;">
+            <div style="display:flex; align-items:center; gap:12px;"><span style="width:70px; font-weight:600; font-size:13px;">Aetna</span><div style="flex:1; height:22px; background:#eaf1f8; border-radius:5px; overflow:hidden; position:relative;"><div style="width:100%; height:100%; background:#dce8f4;"></div><div style="position:absolute; left:0; top:0; bottom:0; width:94.3%; background:#bcd3ec; border-radius:5px 0 0 5px;"></div></div><span style="font-family:'IBM Plex Mono',monospace; font-size:12px; width:48px; text-align:right;">1,041</span><span style="font-family:'IBM Plex Mono',monospace; font-size:11px; width:46px; text-align:right; color:#c66b4b;">5.7%</span></div>
+            <div style="display:flex; align-items:center; gap:12px;"><span style="width:70px; font-weight:600; font-size:13px;">UHC</span><div style="flex:1; height:22px; background:#eaf1f8; border-radius:5px; overflow:hidden; position:relative;"><div style="width:85%; height:100%; background:#dce8f4;"></div><div style="position:absolute; left:0; top:0; bottom:0; width:77.5%; background:#bcd3ec; border-radius:5px 0 0 5px;"></div></div><span style="font-family:'IBM Plex Mono',monospace; font-size:12px; width:48px; text-align:right;">884</span><span style="font-family:'IBM Plex Mono',monospace; font-size:11px; width:46px; text-align:right; color:#b23a2c; font-weight:500;">8.1%</span></div>
+            <div style="display:flex; align-items:center; gap:12px;"><span style="width:70px; font-weight:600; font-size:13px;">Humana</span><div style="flex:1; height:22px; background:#eaf1f8; border-radius:5px; overflow:hidden; position:relative;"><div style="width:59%; height:100%; background:#dce8f4;"></div><div style="position:absolute; left:0; top:0; bottom:0; width:55%; background:#bcd3ec; border-radius:5px 0 0 5px;"></div></div><span style="font-family:'IBM Plex Mono',monospace; font-size:12px; width:48px; text-align:right;">612</span><span style="font-family:'IBM Plex Mono',monospace; font-size:11px; width:46px; text-align:right; color:#c66b4b;">6.7%</span></div>
+          </div>
+          <div style="font-family:'IBM Plex Mono',monospace; font-size:9px; color:#606872; margin-top:10px;">bar = call volume · fill = answered share · click a row for its daily trend</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 06 ALERTS -->
+  <div style="max-width:1080px; margin:44px auto 0;"><div style="font-family:'IBM Plex Mono',monospace; font-size:10px; letter-spacing:.16em; text-transform:uppercase; color:#4e7bc4; font-weight:500;">06 · Low answer rate alerts</div><p style="margin:5px 0 0; max-width:760px; font-size:13.5px; line-height:1.55; color:#3a4048;">A 7-column config table + a run row + a results table. The redesign turns each dept into a config <strong>card</strong> — threshold, an active toggle, and the 30-day "fired" history as dots so over/under-tuned thresholds jump out — and gives "Run a check" its own calm panel with the trigger status.</p></div>
+  <div style="display:flex; gap:48px; align-items:flex-start; padding:14px 0 8px;">
+    <div style="flex:none; width:700px;">
+      <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:#8a93a0; margin-bottom:10px;">● Before</div>
+      <div style="background:#fff; border-radius:4px; box-shadow:0 1px 3px rgba(0,0,0,.08); overflow:hidden;">
+        <div style="background:#dde9f3; border-bottom:1px solid #c8d8e6; padding:13px 20px;"><div style="font-family:'IBM Plex Mono',monospace; font-size:9px; text-transform:uppercase; letter-spacing:.18em; color:#606872;">Operations · Admin</div><div style="font-family:'Inter Tight',sans-serif; font-size:21px; font-weight:500;">Low Answer Rate Alerts</div></div>
+        <div style="padding:16px 20px 20px;">
+          <table style="width:100%; border-collapse:collapse; font-size:11px;">
+            <thead><tr style="border-bottom:1px solid #c8d8e6;"><th style="text-align:left; padding:7px 4px; font-family:'IBM Plex Mono',monospace; font-size:9px; color:#606872; font-weight:500;">Dept</th><th style="text-align:right; padding:7px 4px; font-family:'IBM Plex Mono',monospace; font-size:9px; color:#606872; font-weight:500;">Thresh</th><th style="text-align:left; padding:7px 4px; font-family:'IBM Plex Mono',monospace; font-size:9px; color:#606872; font-weight:500;">Last 30d</th><th style="text-align:left; padding:7px 4px; font-family:'IBM Plex Mono',monospace; font-size:9px; color:#606872; font-weight:500;">Recipients</th><th style="text-align:left; padding:7px 4px; font-family:'IBM Plex Mono',monospace; font-size:9px; color:#606872; font-weight:500;">Active</th><th style="text-align:left; padding:7px 4px; font-family:'IBM Plex Mono',monospace; font-size:9px; color:#606872; font-weight:500;">Notes</th></tr></thead>
+            <tbody style="font-family:'IBM Plex Mono',monospace;">
+              <tr style="border-bottom:1px solid #eaf1f8;"><td style="padding:8px 4px; font-family:'Inter',sans-serif;">CSR</td><td style="text-align:right;">90%</td><td><span style="background:#e0efe6; color:#3d9476; border-radius:999px; padding:1px 6px; font-size:9px;">healthy</span></td><td style="color:#606872;">+2</td><td>✓</td><td style="color:#606872;">—</td></tr>
+              <tr style="border-bottom:1px solid #eaf1f8;"><td style="padding:8px 4px; font-family:'Inter',sans-serif;">Sales</td><td style="text-align:right;">88%</td><td><span style="background:#f6e2d4; color:#c66b4b; border-radius:999px; padding:1px 6px; font-size:9px;">fires often</span></td><td style="color:#606872;">+1</td><td>✓</td><td style="color:#606872;">—</td></tr>
+              <tr><td style="padding:8px 4px; font-family:'Inter',sans-serif;">Intake</td><td style="text-align:right;">85%</td><td><span style="background:#dde9f3; color:#606872; border-radius:999px; padding:1px 6px; font-size:9px;">too loose</span></td><td style="color:#606872;">+0</td><td>✓</td><td style="color:#606872;">—</td></tr>
+            </tbody>
+          </table>
+          <div style="display:flex; gap:8px; align-items:flex-end; margin-top:16px; border-top:1px solid #c8d8e6; padding-top:14px;"><div><div style="font-size:11px; color:#606872; margin-bottom:3px;">Date to check</div><div style="background:#fff; border:1px solid #c8d8e6; border-radius:2px; padding:6px 10px; font-size:12px; width:130px;">2025-06-16</div></div><span style="font-size:12px; border:1px solid #c8d8e6; border-radius:2px; padding:7px 12px;">Preview</span><span style="font-size:12px; background:#101418; color:#fff; border-radius:2px; padding:7px 12px;">Send alerts</span></div>
+        </div>
+      </div>
+    </div>
+    <div style="flex:none; width:700px;">
+      <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:#3d9476; margin-bottom:10px;">✦ After</div>
+      <div style="background:#fff; border-radius:12px; box-shadow:0 1px 2px rgba(0,0,0,.05), 0 8px 26px rgba(0,0,0,.10); overflow:hidden;">
+        <div style="padding:18px 24px; border-bottom:1px solid #d6e3ef; display:flex; justify-content:space-between; align-items:center;"><div><div style="font-family:'IBM Plex Mono',monospace; font-size:9px; text-transform:uppercase; letter-spacing:.18em; color:#606872;">Operations · Admin</div><div style="font-family:'Inter Tight',sans-serif; font-size:24px; font-weight:600; letter-spacing:-.5px;">Answer-Rate Alerts</div></div><span style="font-size:11px; color:#3d9476; background:#e0efe6; border-radius:999px; padding:5px 11px; font-weight:600;">● Daily trigger on · 8 AM</span></div>
+        <div style="padding:20px 24px 24px;">
+          <div style="font-family:'IBM Plex Mono',monospace; font-size:10px; text-transform:uppercase; letter-spacing:.12em; color:#606872;">Per-dept thresholds</div>
+          <div style="display:flex; flex-direction:column; gap:10px; margin-top:10px;">
+            <!-- card -->
+            <div style="border:1px solid #c8d8e6; border-radius:10px; padding:13px 15px; display:flex; align-items:center; gap:14px;">
+              <div style="flex:none; width:120px;"><div style="font-family:'Inter Tight',sans-serif; font-size:15px; font-weight:600;">CSR</div><div style="font-family:'IBM Plex Mono',monospace; font-size:10px; color:#606872;">alert below 90%</div></div>
+              <div style="flex:1;"><div style="font-family:'IBM Plex Mono',monospace; font-size:9px; color:#606872; margin-bottom:4px;">FIRED · LAST 30 DAYS</div><div style="display:flex; gap:3px;"><span style="width:7px; height:14px; border-radius:2px; background:#e0efe6;"></span><span style="width:7px; height:14px; border-radius:2px; background:#e0efe6;"></span><span style="width:7px; height:14px; border-radius:2px; background:#c66b4b;"></span><span style="width:7px; height:14px; border-radius:2px; background:#e0efe6;"></span><span style="width:7px; height:14px; border-radius:2px; background:#e0efe6;"></span><span style="width:7px; height:14px; border-radius:2px; background:#e0efe6;"></span><span style="width:7px; height:14px; border-radius:2px; background:#e0efe6;"></span><span style="width:7px; height:14px; border-radius:2px; background:#e0efe6;"></span></div></div>
+              <span style="font-size:10px; font-weight:600; color:#3d9476; background:#e0efe6; border-radius:999px; padding:3px 9px;">well tuned</span>
+              <div style="width:34px; height:20px; background:#3d9476; border-radius:999px; position:relative;"><div style="position:absolute; right:2px; top:2px; width:16px; height:16px; background:#fff; border-radius:999px;"></div></div>
+            </div>
+            <div style="border:1px solid #c8d8e6; border-radius:10px; padding:13px 15px; display:flex; align-items:center; gap:14px;">
+              <div style="flex:none; width:120px;"><div style="font-family:'Inter Tight',sans-serif; font-size:15px; font-weight:600;">Sales</div><div style="font-family:'IBM Plex Mono',monospace; font-size:10px; color:#606872;">alert below 88%</div></div>
+              <div style="flex:1;"><div style="font-family:'IBM Plex Mono',monospace; font-size:9px; color:#606872; margin-bottom:4px;">FIRED · LAST 30 DAYS</div><div style="display:flex; gap:3px;"><span style="width:7px; height:14px; border-radius:2px; background:#c66b4b;"></span><span style="width:7px; height:14px; border-radius:2px; background:#e0efe6;"></span><span style="width:7px; height:14px; border-radius:2px; background:#c66b4b;"></span><span style="width:7px; height:14px; border-radius:2px; background:#c66b4b;"></span><span style="width:7px; height:14px; border-radius:2px; background:#e0efe6;"></span><span style="width:7px; height:14px; border-radius:2px; background:#c66b4b;"></span><span style="width:7px; height:14px; border-radius:2px; background:#c66b4b;"></span><span style="width:7px; height:14px; border-radius:2px; background:#c66b4b;"></span></div></div>
+              <span style="font-size:10px; font-weight:600; color:#c66b4b; background:#f6e2d4; border-radius:999px; padding:3px 9px;">fires often</span>
+              <div style="width:34px; height:20px; background:#3d9476; border-radius:999px; position:relative;"><div style="position:absolute; right:2px; top:2px; width:16px; height:16px; background:#fff; border-radius:999px;"></div></div>
+            </div>
+          </div>
+          <!-- run panel -->
+          <div style="background:#f0f6fa; border:1px solid #c8d8e6; border-radius:10px; padding:14px 16px; margin-top:14px; display:flex; align-items:center; gap:12px;">
+            <div style="font-family:'Inter Tight',sans-serif; font-size:13px; font-weight:600;">Run a check</div>
+            <span style="background:#fff; border:1px solid #c8d8e6; border-radius:8px; padding:7px 11px; font-size:12px; color:#606872;">Jun 16, 2025</span>
+            <span style="margin-left:auto; font-size:12px; border:1px solid #c8d8e6; background:#fff; border-radius:8px; padding:7px 14px; font-weight:500;">Preview</span>
+            <span style="font-size:12px; background:#101418; color:#fff; border-radius:8px; padding:7px 14px; font-weight:500;">Send alerts</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 07 OUTLIER FIX -->
+  <div style="max-width:1080px; margin:44px auto 0;"><div style="font-family:'IBM Plex Mono',monospace; font-size:10px; letter-spacing:.16em; text-transform:uppercase; color:#4e7bc4; font-weight:500;">07 · Outlier Fix</div><p style="margin:5px 0 0; max-width:760px; font-size:13.5px; line-height:1.55; color:#3a4048;">Three stacked tables (outliers / current aliases / fix log). The actual job — map an unmatched name to a roster entry — is one cell in a wide row. The redesign turns each outlier into a focused <strong>resolve card</strong> with the evidence (rows, last seen, sample queue exts) and the map-to + Apply right there; aliases &amp; log move into reference tabs.</p></div>
+  <div style="display:flex; gap:48px; align-items:flex-start; padding:14px 0 8px;">
+    <div style="flex:none; width:700px;">
+      <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:#8a93a0; margin-bottom:10px;">● Before</div>
+      <div style="background:#fff; border-radius:4px; box-shadow:0 1px 3px rgba(0,0,0,.08); overflow:hidden;">
+        <div style="background:#dde9f3; border-bottom:1px solid #c8d8e6; padding:13px 20px;"><div style="font-family:'IBM Plex Mono',monospace; font-size:9px; text-transform:uppercase; letter-spacing:.18em; color:#606872;">Operations · Admin</div><div style="font-family:'Inter Tight',sans-serif; font-size:21px; font-weight:500;">Outlier Fix</div></div>
+        <div style="padding:16px 20px 20px;">
+          <div style="font-family:'IBM Plex Mono',monospace; font-size:10px; text-transform:uppercase; letter-spacing:.12em; color:#606872;">Outliers (last 180 days)</div>
+          <table style="width:100%; border-collapse:collapse; font-size:11px; margin-top:6px;">
+            <thead><tr style="border-bottom:1px solid #c8d8e6;"><th style="text-align:left; padding:7px 4px; font-family:'IBM Plex Mono',monospace; font-size:9px; color:#606872; font-weight:500;">Outlier name</th><th style="text-align:right; padding:7px 4px; font-family:'IBM Plex Mono',monospace; font-size:9px; color:#606872; font-weight:500;">Rows</th><th style="text-align:left; padding:7px 4px; font-family:'IBM Plex Mono',monospace; font-size:9px; color:#606872; font-weight:500;">Last seen</th><th style="text-align:left; padding:7px 4px; font-family:'IBM Plex Mono',monospace; font-size:9px; color:#606872; font-weight:500;">Map to roster</th><th style="text-align:left; padding:7px 4px; font-family:'IBM Plex Mono',monospace; font-size:9px; color:#606872; font-weight:500;">Apply</th></tr></thead>
+            <tbody style="font-family:'IBM Plex Mono',monospace;">
+              <tr style="border-bottom:1px solid #eaf1f8;"><td style="padding:8px 4px; font-family:'Inter',sans-serif;">Maria Lopezz</td><td style="text-align:right;">38</td><td style="color:#606872;">Jun 15</td><td><span style="border:1px solid #c8d8e6; border-radius:2px; padding:3px 8px; font-size:10px; color:#606872;">select… ▾</span></td><td><span style="font-size:10px; color:#c8d8e6;">Apply</span></td></tr>
+              <tr style="border-bottom:1px solid #eaf1f8;"><td style="padding:8px 4px; font-family:'Inter',sans-serif;">J. Carter</td><td style="text-align:right;">14</td><td style="color:#606872;">Jun 14</td><td><span style="border:1px solid #c8d8e6; border-radius:2px; padding:3px 8px; font-size:10px; color:#606872;">select… ▾</span></td><td><span style="font-size:10px; color:#c8d8e6;">Apply</span></td></tr>
+            </tbody>
+          </table>
+          <div style="font-size:11px; color:#606872; font-style:italic; margin-top:10px;">+ Current aliases table + Recent fix log table stacked below…</div>
+        </div>
+      </div>
+    </div>
+    <div style="flex:none; width:700px;">
+      <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:#3d9476; margin-bottom:10px;">✦ After</div>
+      <div style="background:#fff; border-radius:12px; box-shadow:0 1px 2px rgba(0,0,0,.05), 0 8px 26px rgba(0,0,0,.10); overflow:hidden;">
+        <div style="padding:18px 24px; border-bottom:1px solid #d6e3ef; display:flex; justify-content:space-between; align-items:center;"><div><div style="font-family:'IBM Plex Mono',monospace; font-size:9px; text-transform:uppercase; letter-spacing:.18em; color:#606872;">Operations · Admin</div><div style="font-family:'Inter Tight',sans-serif; font-size:24px; font-weight:600; letter-spacing:-.5px;">Outlier Fix</div></div><span style="font-size:11px; color:#c66b4b; background:#f6e2d4; border-radius:999px; padding:5px 11px; font-weight:600;">2 unresolved</span></div>
+        <div style="padding:20px 24px 24px;">
+          <div style="display:flex; gap:4px; border-bottom:1px solid #d6e3ef;"><span style="font-size:12px; font-weight:600; padding:8px 12px; border-bottom:2px solid #101418;">To resolve · 2</span><span style="font-size:12px; color:#606872; padding:8px 12px;">Aliases · 7</span><span style="font-size:12px; color:#606872; padding:8px 12px;">Fix log</span></div>
+          <div style="display:flex; flex-direction:column; gap:10px; margin-top:14px;">
+            <div style="border:1px solid #c8d8e6; border-radius:10px; padding:14px 16px;">
+              <div style="display:flex; align-items:center; gap:10px;"><span style="font-family:'Inter Tight',sans-serif; font-size:16px; font-weight:600;">Maria Lopezz</span><span style="font-family:'IBM Plex Mono',monospace; font-size:10px; color:#606872;">38 rows · last seen Jun 15</span><span style="margin-left:auto; font-family:'IBM Plex Mono',monospace; font-size:10px; color:#3d9476;">likely match: Maria Lopez</span></div>
+              <div style="display:flex; gap:6px; margin-top:8px;"><span style="font-family:'IBM Plex Mono',monospace; font-size:10px; color:#606872; background:#f0f6fa; border:1px solid #c8d8e6; border-radius:999px; padding:2px 8px;">ext 4021</span><span style="font-family:'IBM Plex Mono',monospace; font-size:10px; color:#606872; background:#f0f6fa; border:1px solid #c8d8e6; border-radius:999px; padding:2px 8px;">ext 4188</span></div>
+              <div style="display:flex; gap:8px; align-items:center; margin-top:12px;"><span style="flex:1; background:#f0f6fa; border:1px solid #c8d8e6; border-radius:8px; padding:8px 11px; font-size:12px; display:flex; justify-content:space-between;">Maria Lopez (CSR) <span style="color:#606872;">▾</span></span><span style="font-size:12px; background:#3d9476; color:#fff; border-radius:8px; padding:8px 16px; font-weight:600;">Apply</span></div>
+            </div>
+            <div style="border:1px solid #c8d8e6; border-radius:10px; padding:14px 16px;">
+              <div style="display:flex; align-items:center; gap:10px;"><span style="font-family:'Inter Tight',sans-serif; font-size:16px; font-weight:600;">J. Carter</span><span style="font-family:'IBM Plex Mono',monospace; font-size:10px; color:#606872;">14 rows · last seen Jun 14</span><span style="margin-left:auto; font-family:'IBM Plex Mono',monospace; font-size:10px; color:#3d9476;">likely match: James Carter</span></div>
+              <div style="display:flex; gap:6px; margin-top:8px;"><span style="font-family:'IBM Plex Mono',monospace; font-size:10px; color:#606872; background:#f0f6fa; border:1px solid #c8d8e6; border-radius:999px; padding:2px 8px;">ext 4055</span></div>
+              <div style="display:flex; gap:8px; align-items:center; margin-top:12px;"><span style="flex:1; background:#f0f6fa; border:1px solid #c8d8e6; border-radius:8px; padding:8px 11px; font-size:12px; display:flex; justify-content:space-between;">James Carter (CSR) <span style="color:#606872;">▾</span></span><span style="font-size:12px; background:#3d9476; color:#fff; border-radius:8px; padding:8px 16px; font-weight:600;">Apply</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 08 CALLER LOOKUP -->
+  <div style="max-width:1080px; margin:44px auto 0;"><div style="font-family:'IBM Plex Mono',monospace; font-size:10px; letter-spacing:.16em; text-transform:uppercase; color:#4e7bc4; font-weight:500;">08 · Caller Lookup</div><p style="margin:5px 0 0; max-width:760px; font-size:13.5px; line-height:1.55; color:#3a4048;">The payload here is a <strong>journey</strong> — IVR → queues → agent rings → answer/hold/abandon — but today it reads as a run-on text string. The redesign renders each call as a horizontal <strong>timeline</strong> with an outcome badge and wait/hold pills, so the path and where it ended are legible at a glance.</p></div>
+  <div style="display:flex; gap:48px; align-items:flex-start; padding:14px 0 8px;">
+    <div style="flex:none; width:700px;">
+      <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:#8a93a0; margin-bottom:10px;">● Before</div>
+      <div style="background:#fff; border-radius:4px; box-shadow:0 1px 3px rgba(0,0,0,.08); overflow:hidden;">
+        <div style="background:#dde9f3; border-bottom:1px solid #c8d8e6; padding:13px 20px;"><div style="font-family:'IBM Plex Mono',monospace; font-size:9px; text-transform:uppercase; letter-spacing:.18em; color:#606872;">Operations · Admin</div><div style="font-family:'Inter Tight',sans-serif; font-size:21px; font-weight:500;">Caller Lookup</div></div>
+        <div style="padding:16px 20px 20px;">
+          <div style="display:flex; gap:8px; align-items:flex-end;"><div><div style="font-size:11px; color:#606872; margin-bottom:3px;">Caller phone</div><div style="background:#fff; border:1px solid #c8d8e6; border-radius:2px; padding:6px 10px; font-size:12px; width:150px; color:#606872;">(214) 555-0123</div></div><span style="font-size:12px; background:#101418; color:#fff; border-radius:2px; padding:7px 14px;">Look up</span></div>
+          <div style="background:#fff; border:1px solid #c8d8e6; border-radius:2px; padding:12px; margin-top:14px;">
+            <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; color:#101418; line-height:1.7;">Jun 14 11:42 — IVR(main) → Q_CustomerSuccess → ring ext4021(8s) → ring ext4188(11s) → ABANDONED on hold after 2:18</div>
+            <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; color:#101418; line-height:1.7; margin-top:8px;">Jun 10 09:15 — IVR(main) → Q_Sales → ring ext4055(6s) → ANSWERED by James Carter, talk 4:02</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div style="flex:none; width:700px;">
+      <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:#3d9476; margin-bottom:10px;">✦ After</div>
+      <div style="background:#fff; border-radius:12px; box-shadow:0 1px 2px rgba(0,0,0,.05), 0 8px 26px rgba(0,0,0,.10); overflow:hidden;">
+        <div style="padding:18px 24px; border-bottom:1px solid #d6e3ef;"><div style="font-family:'IBM Plex Mono',monospace; font-size:9px; text-transform:uppercase; letter-spacing:.18em; color:#606872;">Operations · Admin</div><div style="font-family:'Inter Tight',sans-serif; font-size:24px; font-weight:600; letter-spacing:-.5px;">Caller Lookup</div></div>
+        <div style="padding:20px 24px 24px;">
+          <div style="display:flex; gap:8px; align-items:center;"><span style="background:#f0f6fa; border:1px solid #c8d8e6; border-radius:8px; padding:8px 12px; font-size:13px; font-family:'IBM Plex Mono',monospace;">(214) 555-0123</span><span style="font-size:12px; background:#101418; color:#fff; border-radius:8px; padding:8px 16px; font-weight:500;">Look up</span><span style="margin-left:auto; font-family:'IBM Plex Mono',monospace; font-size:10px; color:#606872;">3 calls · hashed, never stored</span></div>
+          <!-- call 1: abandoned -->
+          <div style="border:1px solid #c8d8e6; border-radius:10px; padding:14px 16px; margin-top:14px;">
+            <div style="display:flex; align-items:center; gap:10px;"><span style="font-family:'IBM Plex Mono',monospace; font-size:12px; color:#606872;">Jun 14 · 11:42 AM</span><span style="margin-left:auto; font-size:10px; font-weight:600; color:#b23a2c; background:#f1d7d2; border-radius:999px; padding:3px 10px;">Abandoned on hold · 2:18</span></div>
+            <div style="display:flex; align-items:center; gap:0; margin-top:14px;">
+              <div style="display:flex; flex-direction:column; align-items:center; gap:5px;"><span style="width:11px; height:11px; border-radius:999px; background:#4e7bc4;"></span><span style="font-family:'IBM Plex Mono',monospace; font-size:9px; color:#606872; white-space:nowrap;">IVR</span></div>
+              <div style="flex:1; height:2px; background:#c8d8e6; margin-top:-14px;"></div>
+              <div style="display:flex; flex-direction:column; align-items:center; gap:5px;"><span style="width:11px; height:11px; border-radius:999px; background:#4e7bc4;"></span><span style="font-family:'IBM Plex Mono',monospace; font-size:9px; color:#606872; white-space:nowrap;">CustomerSuccess</span></div>
+              <div style="flex:1; height:2px; background:#c8d8e6; margin-top:-14px;"></div>
+              <div style="display:flex; flex-direction:column; align-items:center; gap:5px;"><span style="width:11px; height:11px; border-radius:999px; background:#c66b4b;"></span><span style="font-family:'IBM Plex Mono',monospace; font-size:9px; color:#606872; white-space:nowrap;">ring 4021 · 8s</span></div>
+              <div style="flex:1; height:2px; background:#c8d8e6; margin-top:-14px;"></div>
+              <div style="display:flex; flex-direction:column; align-items:center; gap:5px;"><span style="width:11px; height:11px; border-radius:999px; background:#c66b4b;"></span><span style="font-family:'IBM Plex Mono',monospace; font-size:9px; color:#606872; white-space:nowrap;">ring 4188 · 11s</span></div>
+              <div style="flex:1; height:2px; background:#b23a2c; margin-top:-14px;"></div>
+              <div style="display:flex; flex-direction:column; align-items:center; gap:5px;"><span style="width:13px; height:13px; border-radius:999px; background:#b23a2c;"></span><span style="font-family:'IBM Plex Mono',monospace; font-size:9px; color:#b23a2c; white-space:nowrap; font-weight:600;">lost</span></div>
+            </div>
+          </div>
+          <!-- call 2: answered -->
+          <div style="border:1px solid #c8d8e6; border-radius:10px; padding:14px 16px; margin-top:10px;">
+            <div style="display:flex; align-items:center; gap:10px;"><span style="font-family:'IBM Plex Mono',monospace; font-size:12px; color:#606872;">Jun 10 · 09:15 AM</span><span style="margin-left:auto; font-size:10px; font-weight:600; color:#3d9476; background:#e0efe6; border-radius:999px; padding:3px 10px;">Answered · James Carter · talk 4:02</span></div>
+            <div style="display:flex; align-items:center; gap:0; margin-top:14px;">
+              <div style="display:flex; flex-direction:column; align-items:center; gap:5px;"><span style="width:11px; height:11px; border-radius:999px; background:#4e7bc4;"></span><span style="font-family:'IBM Plex Mono',monospace; font-size:9px; color:#606872;">IVR</span></div>
+              <div style="flex:1; height:2px; background:#c8d8e6; margin-top:-14px;"></div>
+              <div style="display:flex; flex-direction:column; align-items:center; gap:5px;"><span style="width:11px; height:11px; border-radius:999px; background:#4e7bc4;"></span><span style="font-family:'IBM Plex Mono',monospace; font-size:9px; color:#606872;">Sales</span></div>
+              <div style="flex:1; height:2px; background:#c8d8e6; margin-top:-14px;"></div>
+              <div style="display:flex; flex-direction:column; align-items:center; gap:5px;"><span style="width:11px; height:11px; border-radius:999px; background:#4e7bc4;"></span><span style="font-family:'IBM Plex Mono',monospace; font-size:9px; color:#606872;">ring 4055 · 6s</span></div>
+              <div style="flex:1; height:2px; background:#3d9476; margin-top:-14px;"></div>
+              <div style="display:flex; flex-direction:column; align-items:center; gap:5px;"><span style="width:13px; height:13px; border-radius:999px; background:#3d9476;"></span><span style="font-family:'IBM Plex Mono',monospace; font-size:9px; color:#3d9476; font-weight:600;">answered</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 09 DEPT CONFIG -->
+  <div style="max-width:1080px; margin:44px auto 0;"><div style="font-family:'IBM Plex Mono',monospace; font-size:10px; letter-spacing:.16em; text-transform:uppercase; color:#4e7bc4; font-weight:500;">09 · Dept Config</div><p style="margin:5px 0 0; max-width:760px; font-size:13.5px; line-height:1.55; color:#3a4048;">Discovered-queues table + per-dept config table + an inline edit form. The redesign pulls the <strong>unmapped queues</strong> into an alert strip (they silently break QCD until assigned), and shows each dept's effective queues as chips with a default/override source badge so it's obvious what's been customized.</p></div>
+  <div style="display:flex; gap:48px; align-items:flex-start; padding:14px 0 40px;">
+    <div style="flex:none; width:700px;">
+      <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:#8a93a0; margin-bottom:10px;">● Before</div>
+      <div style="background:#fff; border-radius:4px; box-shadow:0 1px 3px rgba(0,0,0,.08); overflow:hidden;">
+        <div style="background:#dde9f3; border-bottom:1px solid #c8d8e6; padding:13px 20px;"><div style="font-family:'IBM Plex Mono',monospace; font-size:9px; text-transform:uppercase; letter-spacing:.18em; color:#606872;">Operations · Admin</div><div style="font-family:'Inter Tight',sans-serif; font-size:21px; font-weight:500;">Dept Config</div></div>
+        <div style="padding:16px 20px 20px;">
+          <div style="font-family:'IBM Plex Mono',monospace; font-size:10px; text-transform:uppercase; letter-spacing:.12em; color:#606872;">Discovered queues</div>
+          <table style="width:100%; border-collapse:collapse; font-size:11px; margin-top:6px;">
+            <thead><tr style="border-bottom:1px solid #c8d8e6;"><th style="text-align:left; padding:7px 4px; font-family:'IBM Plex Mono',monospace; font-size:9px; color:#606872; font-weight:500;">Queue name</th><th style="text-align:right; padding:7px 4px; font-family:'IBM Plex Mono',monospace; font-size:9px; color:#606872; font-weight:500;">Rows</th><th style="text-align:left; padding:7px 4px; font-family:'IBM Plex Mono',monospace; font-size:9px; color:#606872; font-weight:500;">Mapped to</th></tr></thead>
+            <tbody style="font-family:'IBM Plex Mono',monospace;">
+              <tr style="border-bottom:1px solid #eaf1f8;"><td style="padding:8px 4px;">A_Q_CustomerSuccess</td><td style="text-align:right;">412</td><td style="color:#3d9476;">CSR</td></tr>
+              <tr style="border-bottom:1px solid #eaf1f8;"><td style="padding:8px 4px;">A_Q_Sales</td><td style="text-align:right;">356</td><td style="color:#3d9476;">Sales</td></tr>
+              <tr><td style="padding:8px 4px;">A_Q_Returns</td><td style="text-align:right;">88</td><td style="color:#c66b4b;">— unmapped</td></tr>
+            </tbody>
+          </table>
+          <div style="font-size:11px; color:#606872; font-style:italic; margin-top:10px;">+ Per-department config table + inline edit form below…</div>
+        </div>
+      </div>
+    </div>
+    <div style="flex:none; width:700px;">
+      <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:#3d9476; margin-bottom:10px;">✦ After</div>
+      <div style="background:#fff; border-radius:12px; box-shadow:0 1px 2px rgba(0,0,0,.05), 0 8px 26px rgba(0,0,0,.10); overflow:hidden;">
+        <div style="padding:18px 24px; border-bottom:1px solid #d6e3ef;"><div style="font-family:'IBM Plex Mono',monospace; font-size:9px; text-transform:uppercase; letter-spacing:.18em; color:#606872;">Operations · Admin</div><div style="font-family:'Inter Tight',sans-serif; font-size:24px; font-weight:600; letter-spacing:-.5px;">Dept Config</div></div>
+        <div style="padding:20px 24px 24px;">
+          <!-- unmapped alert -->
+          <div style="background:#f6e2d4; border:1px solid #c8d8e6; border-left:3px solid #c66b4b; border-radius:10px; padding:13px 15px;">
+            <div style="display:flex; align-items:center; gap:8px;"><span style="font-family:'Inter Tight',sans-serif; font-size:13px; font-weight:600; color:#c66b4b;">1 unmapped queue</span><span style="font-family:'IBM Plex Mono',monospace; font-size:10px; color:#606872;">produces no QCD report until assigned</span></div>
+            <div style="display:flex; gap:8px; align-items:center; margin-top:10px;"><span style="font-family:'IBM Plex Mono',monospace; font-size:11px; background:#fff; border:1px solid #c8d8e6; border-radius:6px; padding:5px 10px;">A_Q_Returns</span><span style="font-family:'IBM Plex Mono',monospace; font-size:10px; color:#606872;">88 rows</span><span style="margin-left:auto; font-size:11px; background:#fff; border:1px solid #c8d8e6; border-radius:6px; padding:5px 10px;">Assign to dept ▾</span></div>
+          </div>
+          <!-- per-dept config -->
+          <div style="font-family:'IBM Plex Mono',monospace; font-size:10px; text-transform:uppercase; letter-spacing:.12em; color:#606872; margin-top:16px;">Per-department config</div>
+          <div style="display:flex; flex-direction:column; gap:8px; margin-top:8px;">
+            <div style="border:1px solid #c8d8e6; border-radius:10px; padding:13px 15px;">
+              <div style="display:flex; align-items:center; gap:8px;"><span style="font-family:'Inter Tight',sans-serif; font-size:15px; font-weight:600;">CSR</span><span style="font-size:9px; font-weight:600; color:#606872; background:#dde9f3; border-radius:999px; padding:2px 8px;">DEFAULT</span><span style="margin-left:auto; font-size:11px; color:#4e7bc4; font-weight:600;">Edit</span></div>
+              <div style="display:flex; flex-wrap:wrap; gap:6px; margin-top:9px;"><span style="font-family:'IBM Plex Mono',monospace; font-size:10px; background:#f0f6fa; border:1px solid #c8d8e6; border-radius:999px; padding:3px 9px;">A_Q_CustomerSuccess</span><span style="font-family:'IBM Plex Mono',monospace; font-size:10px; background:#f0f6fa; border:1px solid #c8d8e6; border-radius:999px; padding:3px 9px;">A_Q_Spanish</span><span style="font-family:'IBM Plex Mono',monospace; font-size:10px; color:#606872; padding:3px 4px;">↳ rolls up Spanish</span></div>
+            </div>
+            <div style="border:1px solid #c8d8e6; border-radius:10px; padding:13px 15px;">
+              <div style="display:flex; align-items:center; gap:8px;"><span style="font-family:'Inter Tight',sans-serif; font-size:15px; font-weight:600;">Sales</span><span style="font-size:9px; font-weight:600; color:#3d9476; background:#e0efe6; border-radius:999px; padding:2px 8px;">OVERRIDE</span><span style="margin-left:auto; font-size:11px; color:#4e7bc4; font-weight:600;">Edit</span></div>
+              <div style="display:flex; flex-wrap:wrap; gap:6px; margin-top:9px;"><span style="font-family:'IBM Plex Mono',monospace; font-size:10px; background:#f0f6fa; border:1px solid #c8d8e6; border-radius:999px; padding:3px 9px;">A_Q_Sales</span><span style="font-family:'IBM Plex Mono',monospace; font-size:10px; background:#f0f6fa; border:1px solid #c8d8e6; border-radius:999px; padding:3px 9px;">A_Q_PAP</span><span style="font-family:'IBM Plex Mono',monospace; font-size:10px; color:#606872; padding:3px 4px;">excludes: D. Reed</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== SECTION 6: EXPLORE ===== -->
+  <div style="max-width:1080px; margin:56px auto 14px;">
+    <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.18em; text-transform:uppercase; color:#606872; font-weight:500;">Explore</div>
+    <h2 style="margin:6px 0 0; font-family:'Inter Tight',sans-serif; font-size:26px; font-weight:600; letter-spacing:-.4px;">Three directions for the dept tile</h2>
+    <p style="margin:8px 0 0; max-width:760px; font-size:14px; line-height:1.6; color:#3a4048;">The dept tile is the most-repeated object in the product, so it's worth picking a direction deliberately. Mix &amp; match — these are atomic options, not finished screens.</p>
+  </div>
+
+  <div style="display:flex; gap:48px; align-items:flex-start; padding:14px 0 40px;">
+
+    <!-- Option A: status rail (the one used above) -->
+    <div style="flex:none; width:320px;">
+      <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:#606872; margin-bottom:10px;">A · Status rail <span style="color:#3d9476;">(recommended)</span></div>
+      <div style="background:#f0f6fa; border-radius:12px; padding:20px; box-shadow:0 1px 3px rgba(0,0,0,.08);">
+        <div style="position:relative; background:#fff; border:1px solid #c8d8e6; border-radius:12px; padding:16px 16px 14px 18px; box-shadow:0 1px 2px rgba(0,0,0,.03); overflow:hidden;">
+          <div style="position:absolute; left:0; top:0; bottom:0; width:4px; background:#3d9476;"></div>
+          <div style="display:flex; justify-content:space-between; align-items:center;"><span style="font-family:'Inter Tight',sans-serif; font-size:16px; font-weight:600;">CSR</span><span style="font-size:10px; font-weight:600; color:#3d9476; background:#e0efe6; border-radius:999px; padding:2px 7px;">▲ 0.9</span></div>
+          <div style="font-family:'Inter Tight',sans-serif; font-size:34px; font-weight:700; letter-spacing:-1.2px; margin-top:4px; line-height:1;">94.1<span style="font-size:16px; color:#606872; font-weight:500;">%</span></div>
+          <svg viewBox="0 0 200 24" style="width:100%; height:24px; margin-top:8px;"><polyline points="0,18 28,16 56,19 84,12 112,14 140,9 168,11 200,6" fill="none" stroke="#3d9476" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <div style="display:flex; gap:14px; font-family:'IBM Plex Mono',monospace; font-size:11px; color:#606872; border-top:1px solid #d6e3ef; padding-top:9px; margin-top:9px;"><span>388/412 ans</span><span>4.1% aban</span></div>
+        </div>
+        <p style="font-size:12px; line-height:1.55; color:#606872; margin:14px 2px 0;">Calmest. Health reads instantly from the rail color; one hero number; detail demoted to a quiet footer. Scales cleanly to 6+ depts.</p>
+      </div>
+    </div>
+
+    <!-- Option B: gauge -->
+    <div style="flex:none; width:320px;">
+      <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:#606872; margin-bottom:10px;">B · Gauge</div>
+      <div style="background:#f0f6fa; border-radius:12px; padding:20px; box-shadow:0 1px 3px rgba(0,0,0,.08);">
+        <div style="background:#fff; border:1px solid #c8d8e6; border-radius:12px; padding:16px; box-shadow:0 1px 2px rgba(0,0,0,.03);">
+          <div style="display:flex; align-items:center; gap:14px;">
+            <svg viewBox="0 0 80 80" style="width:80px; height:80px; flex:none;">
+              <circle cx="40" cy="40" r="32" fill="none" stroke="#dde9f3" stroke-width="8"/>
+              <circle cx="40" cy="40" r="32" fill="none" stroke="#3d9476" stroke-width="8" stroke-linecap="round" stroke-dasharray="189" stroke-dashoffset="11" transform="rotate(-90 40 40)"/>
+              <text x="40" y="38" text-anchor="middle" font-family="Inter Tight" font-size="18" font-weight="700" fill="#101418">94</text>
+              <text x="40" y="51" text-anchor="middle" font-family="IBM Plex Mono" font-size="7" fill="#606872">% ANS</text>
+            </svg>
+            <div>
+              <div style="font-family:'Inter Tight',sans-serif; font-size:18px; font-weight:600;">CSR</div>
+              <div style="font-size:11px; color:#3d9476; font-weight:600; margin-top:2px;">▲ 0.9 vs prior</div>
+              <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; color:#606872; margin-top:4px;">388/412 · 4.1% aban</div>
+            </div>
+          </div>
+        </div>
+        <p style="font-size:12px; line-height:1.55; color:#606872; margin:14px 2px 0;">Most expressive — the ring fills toward 100% so distance-to-target is felt, not read. Heavier per tile; best for ≤4 depts or a hero.</p>
+      </div>
+    </div>
+
+    <!-- Option C: minimal ledger -->
+    <div style="flex:none; width:320px;">
+      <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:#606872; margin-bottom:10px;">C · Minimal ledger</div>
+      <div style="background:#f0f6fa; border-radius:12px; padding:20px; box-shadow:0 1px 3px rgba(0,0,0,.08);">
+        <div style="background:#fff; border:1px solid #c8d8e6; border-radius:12px; overflow:hidden; box-shadow:0 1px 2px rgba(0,0,0,.03);">
+          <div style="display:flex; justify-content:space-between; align-items:baseline; padding:13px 16px;"><span style="font-family:'Inter Tight',sans-serif; font-size:15px; font-weight:600;">CSR</span><span style="font-family:'Inter Tight',sans-serif; font-size:20px; font-weight:700; color:#3d9476; letter-spacing:-.5px;">94.1%</span></div>
+          <div style="height:4px; background:#dde9f3;"><div style="width:94%; height:100%; background:#3d9476;"></div></div>
+          <div style="display:flex; justify-content:space-between; padding:9px 16px; font-family:'IBM Plex Mono',monospace; font-size:10px; color:#606872;"><span>388 ans</span><span>24 miss</span><span>4.1% aban</span></div>
+        </div>
+        <div style="background:#fff; border:1px solid #c8d8e6; border-radius:12px; overflow:hidden; box-shadow:0 1px 2px rgba(0,0,0,.03); margin-top:8px;">
+          <div style="display:flex; justify-content:space-between; align-items:baseline; padding:13px 16px;"><span style="font-family:'Inter Tight',sans-serif; font-size:15px; font-weight:600;">Intake</span><span style="font-family:'Inter Tight',sans-serif; font-size:20px; font-weight:700; color:#b23a2c; letter-spacing:-.5px;">82.0%</span></div>
+          <div style="height:4px; background:#dde9f3;"><div style="width:82%; height:100%; background:#b23a2c;"></div></div>
+          <div style="display:flex; justify-content:space-between; padding:9px 16px; font-family:'IBM Plex Mono',monospace; font-size:10px; color:#606872;"><span>138 ans</span><span>30 miss</span><span style="color:#b23a2c;">11.3% aban</span></div>
+        </div>
+        <p style="font-size:12px; line-height:1.55; color:#606872; margin:14px 2px 0;">Densest — a full-width bar under each row reads like a leaderboard. Best when there are many depts and vertical space is cheap.</p>
+      </div>
+    </div>
+
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>
