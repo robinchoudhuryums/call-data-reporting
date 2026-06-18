@@ -80,14 +80,27 @@ Tests: 132/132 pass; whole-file CSS brace balance 860/860; INV-16 untouched. No 
    SWR Overview, per-viewer keyed), Phase 3 (chart factory + graceful fallback +
    debounce/token on date edits). Held for sign-off: C7 consolidation, C8 nav restructure.
 
+## Post-merge increments (Phase 1 + sheetRepairs merged to main via PR #84 + sync-docs PR)
+- **Phase 1 eyeball-verified by the operator** (deployed; Insights ds-kpi tiles + ds-table +
+  ds-banner confirmed). Phase 1 is DONE.
+- **Increment 4 (DONE — first cross-report shared component):** promoted the Insights-only
+  `insKpiTileDs_` to a SHARED `dsKpiTile_` and migrated the **Performance Report** rollup tiles
+  onto it (6 `prKpiTile_` calls → `dsKpiTile_`); the dead `prKpiTile_` function was removed
+  (two history breadcrumbs + two stale comments updated to `dsKpiTile_`). Now used by Insights (4)
+  + PR (6) = 10 callsites, one definition. Behavior identical (same valence map, binary
+  benchValueCls_ 92%/5% tint, shared irSparkline_). `.pr-kpi-tile`/`.pr-delta` CSS untouched
+  (still used by `inboundKpiTile_` + a CR tile site). Live visual verify = scenario S14 (PR) +
+  S37 (Insights) post-deploy. tests 132/132; INV-16 in sync; JS `node --check` clean.
+
 ## Where I left off
-Implemented Phase 1 Parts 1+2 (additive tokens + 8 `ds-` components) AND a contained Part 3 proof
-(Insights KPI tiles → `ds-kpi`, queue-health table → `ds-table`/`ds-card`, length-warning →
-`ds-banner`; PR + QCD + CR untouched) per `/broad-implement Phase 1`; tests 132/132 green, INV-16
-in sync, script.html JS `node --check` clean, dashboard.html divs balanced 608/608. Live visual
-check is the only open verify (manual S37, post-deploy). Agent-card rail migration deliberately
-deferred (near-zero visual gain vs high unverifiable risk — see Increment notes). Recommend a
-deploy + eyeball before further Insights surgery.
+Phase 1 confirmed in prod by the operator. Continued report-by-report migration with
+`/broad-implement` rigor: Increment 4 promoted the KPI tile to a shared `dsKpiTile_` and moved the
+Performance Report onto it (first ds-* component shared across two reports — the consolidation
+thesis realized). Tests green, syntax clean. Next candidates: migrate another report surface (CR
+length-warning → ds-banner is low-risk; remaining Insights/PR surfaces), or start Phase 2/3 quick
+wins. Still deferred/decision-gated: per-agent cards → ds-card--rail (high risk), at-a-glance
+headline → ds-banner (shared reportHeadline_ decision), C7 consolidation, C8 nav.
+PRIOR CONTEXT (still valid):
 Also confirmed access control: non-manager/non-admin domain users land on access-denied with zero
 data (Code.gs doGet + per-RPC re-auth); out-of-domain users can't reach the app. Awaiting
 commit/push/deploy direction.
