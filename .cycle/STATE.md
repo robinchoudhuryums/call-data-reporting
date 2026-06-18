@@ -28,12 +28,15 @@ Tests: 132/132 pass; whole-file CSS brace balance 860/860; INV-16 untouched. No 
 1. **Commit + push** the Phase 1 CSS + `docs/design-update-plan.md` to this branch (not yet done).
 2. **Deploy (only when ready):** Department Dashboard `clasp push -f` + new deployment version.
    Inert until markup uses the classes, so deploy is non-urgent / non-blocking.
-3. **Phase 1 / Part 3 — STOPPED, by design:** migrate ONE report (Insights) onto `ds-*`
-   as the proof. NOT done this session — it rewrites ~800 lines of `insRenderReport_`/
-   `insBuildCard_`/… render code covered ONLY by manual scenario S37 (Node suite can't
-   verify client DOM; Apps Script app can't run here). Needs to be done as a focused,
-   separately-reviewed change with a live before/after check. Wire status color via the
-   existing binary `benchValueCls_` (NOT 85%/8% bands).
+3. **Phase 1 / Part 3 — DONE (contained proof):** Insights team-rollup KPI tiles
+   migrated onto `ds-*`. New Insights-only `insKpiTileDs_` (script.html) emits `.ds-kpi`
+   markup; the four `prKpiTile_` calls in `insRenderReport_` swapped to it. Behavior
+   identical (same valence→color map, same binary `benchValueCls_` 92%/5% tint, shared
+   `irSparkline_`). Performance Report's `prKpiTile_` untouched; shared `reportHeadline_`
+   (used by all reports) intentionally NOT migrated. `.ds-kpi__spark` height nudged
+   20→22px so the 70×22 sparkline isn't clipped. **Live visual verify still pending**
+   (manual S37 post-deploy — can't run Apps Script here). Remaining Insights surfaces
+   (banner, agent cards, queue-health table) are the next report-by-report increments.
 4. **/sync-docs:** add a CLAUDE.md note for the new `ds-*` component layer + radius scale
    under CSS conventions (currently only `docs/design-update-plan.md` documents it).
 5. **Later phases (planned, not started):** Phase 2 (loaders + motion + `.ds-state` kit +
@@ -41,9 +44,10 @@ Tests: 132/132 pass; whole-file CSS brace balance 860/860; INV-16 untouched. No 
    debounce/token on date edits). Held for sign-off: C7 consolidation, C8 nav restructure.
 
 ## Where I left off
-Implemented Phase 1 Parts 1+2 (additive tokens + 8 `ds-` components) per `/broad-implement Phase 1`;
-tests green; CSS well-formed. Deliberately STOPPED before Part 3 (Insights migration) because it's
-an unverifiable-here, manual-test-only render rewrite — handed back a recommended approach instead.
+Implemented Phase 1 Parts 1+2 (additive tokens + 8 `ds-` components) AND a contained Part 3 proof
+(Insights KPI tiles → `ds-kpi`, PR untouched) per `/broad-implement Phase 1`; tests 132/132 green,
+INV-16 in sync, script.html JS `node --check` clean. Live visual check is the only open verify
+(manual S37, post-deploy).
 Also confirmed access control: non-manager/non-admin domain users land on access-denied with zero
 data (Code.gs doGet + per-RPC re-auth); out-of-domain users can't reach the app. Awaiting
 commit/push/deploy direction.
