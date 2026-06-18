@@ -751,6 +751,7 @@
     initWorkWindowPill_();
     initOverviewLauncher_();
     initMetricGlossary_();
+    initDateRangeLinks_();
 
     // Fetch the most recent date with data in DQE Historical Data
     // and snap From/To to that date. Defers the initial table
@@ -2531,14 +2532,48 @@
   // the same green-at-target / orange-over-threshold language the QCD and
   // Overview surfaces already speak. Dept-specific ALERT thresholds stay
   // with the Alerts engine -- no invented thresholds here.
-  function benchValueCls_(label, formatted) {
+  // Keep a From/To (Start/End) date pair valid: picking a Start past the End
+  // (or an End before the Start) nudges the OTHER input so From <= To. ISO
+  // 'YYYY-MM-DD' strings compare correctly as plain strings.
+  function linkDateRange_(fromId, toId) {
+    const from = $(fromId), to = $(toId);
+    if (!from || !to) return;
+    from.addEventListener('change', function () {
+      if (from.value && to.value && from.value > to.value) to.value = from.value;
+    });
+    to.addEventListener('change', function () {
+      if (from.value && to.value && to.value < from.value) from.value = to.value;
+    });
+  }
+
+  // Wire every report setup modal's From/To pair (incl. custom-prior windows and
+  // the Compare-Ranges P1/P2 pairs). Inputs are static, so one init pass suffices.
+  function initDateRangeLinks_() {
+    [
+      ['from-date', 'to-date'],
+      ['missed-from', 'missed-to'],
+      ['ir-from', 'ir-to'], ['ir-prior-from', 'ir-prior-to'], ['ir-edit-from', 'ir-edit-to'],
+      ['pr-from', 'pr-to'], ['pr-prior-from', 'pr-prior-to'],
+      ['cr-p1-from', 'cr-p1-to'], ['cr-p2-from', 'cr-p2-to'],
+      ['qcd-from', 'qcd-to'], ['qcd-alldept-from', 'qcd-alldept-to'],
+      ['ins-from', 'ins-to'], ['ins-prior-from', 'ins-prior-to'],
+      ['inbound-from', 'inbound-to'], ['cl-from', 'cl-to'],
+    ].forEach(function (p) { linkDateRange_(p[0], p[1]); });
+  }
+
+  function benchValueCls_(label, formatted, symmetric) {
     const text = String(label).replace(/<[^>]*>/g, '').toLowerCase();
     const str = String(formatted);
     if (str.indexOf('%') === -1) return '';
     const num = parseFloat(str);
     if (!isFinite(num)) return '';
-    if (/answer/.test(text)) return num >= 92 ? ' bm-target' : '';
-    if (/aband/.test(text))  return num >= 5  ? ' bm-over'   : '';
+    // Binary by default (highlight only the notable direction -- the documented
+    // table behavior). `symmetric` (KPI tiles) tints BOTH sides of the SAME
+    // 92% / 5% standard, so a below-target answer rate reads "watch" (orange)
+    // and a healthy abandon rate reads "good" (green) instead of plain black.
+    // Still no invented thresholds (decision C2).
+    if (/answer/.test(text)) return num >= 92 ? ' bm-target' : (symmetric ? ' bm-over'   : '');
+    if (/aband/.test(text))  return num >= 5  ? ' bm-over'   : (symmetric ? ' bm-target' : '');
     return '';
   }
 
@@ -8039,7 +8074,7 @@
          +     '<span class="ds-kpi__label">' + label + '</span>'
          +     badge
          +   '</div>'
-         +   '<div class="ds-kpi__value' + benchValueCls_(label, s.formatted) + '">' + escapeHtml(String(s.formatted)) + '</div>'
+         +   '<div class="ds-kpi__value' + benchValueCls_(label, s.formatted, true) + '">' + escapeHtml(String(s.formatted)) + '</div>'
          +   '<div class="ds-kpi__foot">vs ' + escapeHtml(String(s.prevFormatted)) + ' (P1)</div>'
          +   perDayCaption
          + '</div>';
@@ -10534,7 +10569,7 @@
          +     '<span class="ds-kpi__label">' + label + '</span>'
          +     badge
          +   '</div>'
-         +   '<div class="ds-kpi__value' + benchValueCls_(label, s.formatted) + '">' + escapeHtml(String(s.formatted)) + '</div>'
+         +   '<div class="ds-kpi__value' + benchValueCls_(label, s.formatted, true) + '">' + escapeHtml(String(s.formatted)) + '</div>'
          +   '<div class="ds-kpi__spark">' + spark + '</div>'
          +   '<div class="ds-kpi__foot">vs prior</div>'
          + '</div>';
@@ -11679,7 +11714,7 @@
       +   (deltaHtml || '')
       + '</div>'
       + '<div class="ds-kpi__value">' + escapeHtml(String(value)) + '</div>'
-      + (cap ? '<div class="ds-kpi__foot' + benchValueCls_(label, cap) + '">' + escapeHtml(cap) + '</div>' : '')
+      + (cap ? '<div class="ds-kpi__foot' + benchValueCls_(label, cap, true) + '">' + escapeHtml(cap) + '</div>' : '')
       + '</div>';
   }
 
