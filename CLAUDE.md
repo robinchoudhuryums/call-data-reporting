@@ -519,9 +519,12 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `benchValueCls_` (92% / 5%), NOT the design's invented 85%/8% bands;
   (3) dark mode is inherited via tokens — keep `body[data-mode="dark"]`,
   do NOT add the design's `[data-theme="dark"]` selector. Migrated so
-  far (Insights only): team-rollup KPI tiles (`insKpiTileDs_` →
-  `.ds-kpi`), the queue-health per-queue table (`.ds-table` inside a
-  `.ds-card`), and the length-mismatch warning (`.ds-banner`). The
+  far: the KPI tile is the shared `dsKpiTile_` → `.ds-kpi`, used by BOTH
+  the Insights rollup AND the Performance Report rollup (first cross-report
+  `ds-*` component — the consolidation thesis; the old `prKpiTile_` was
+  retired). Plus, in Insights, the queue-health per-queue table
+  (`.ds-table` inside a `.ds-card`) and the length-mismatch warning
+  (`.ds-banner`). The
   shared `reportHeadline_` is intentionally NOT migrated (every report
   uses it). Report consolidation (Part 3) and the nav restructure
   (Part 6) are parked product decisions, not built.
