@@ -6527,43 +6527,19 @@
       att:      series.map(function (s) { return s.att; }),
     };
     const tiles = [
-      prKpiTile_('Total Rung',  t.rung,     'pos', sparks.rung,     IR_VOLUME_COLORS.rung),
-      prKpiTile_('Missed (rings)', t.missed, 'neg', sparks.missed,  IR_VOLUME_COLORS.missed),
-      prKpiTile_('Answered',    t.answered, 'pos', sparks.answered, IR_VOLUME_COLORS.answered),
-      prKpiTile_('% Answered',  t.pct,      'pos', sparks.pct,      (THEME.accent || '#4E79A7')),
-      prKpiTile_('Total TTT',   t.ttt,      'neu', sparks.ttt,      (THEME.muted  || '#9C755F')),
-      prKpiTile_('ATT (per call)', t.att,   'neu', sparks.att,      (THEME.muted  || '#9C755F')),
+      dsKpiTile_('Total Rung',  t.rung,     'pos', sparks.rung,     IR_VOLUME_COLORS.rung),
+      dsKpiTile_('Missed (rings)', t.missed, 'neg', sparks.missed,  IR_VOLUME_COLORS.missed),
+      dsKpiTile_('Answered',    t.answered, 'pos', sparks.answered, IR_VOLUME_COLORS.answered),
+      dsKpiTile_('% Answered',  t.pct,      'pos', sparks.pct,      (THEME.accent || '#4E79A7')),
+      dsKpiTile_('Total TTT',   t.ttt,      'neu', sparks.ttt,      (THEME.muted  || '#9C755F')),
+      dsKpiTile_('ATT (per call)', t.att,   'neu', sparks.att,      (THEME.muted  || '#9C755F')),
     ].join('');
     $('pr-kpi-row').innerHTML = tiles;
   }
 
-  function prKpiTile_(label, stat, valenceDirection, sparklineData, sparklineColor) {
-    const s = stat || { formatted: '-', deltaPct: 0, type: 'volume' };
-    const isPctType = s.type === 'pctPoints';
-    const dp = Number(s.deltaPct || 0);
-    let badge;
-    if (Math.abs(dp) < 0.05) {
-      badge = '<span class="pr-delta pr-delta-neu">no change</span>';
-    } else {
-      let cls = 'pr-delta-neu';
-      if (valenceDirection === 'pos')      cls = dp > 0 ? 'pr-delta-pos' : 'pr-delta-neg';
-      else if (valenceDirection === 'neg') cls = dp > 0 ? 'pr-delta-neg' : 'pr-delta-pos';
-      const arrow = dp > 0 ? '▲' : '▼';
-      const suffix = isPctType ? ' pts' : '%';
-      badge = '<span class="pr-delta ' + cls + '">'
-            +   '<span class="pr-delta-arrow">' + arrow + '</span> ' + Math.abs(dp).toFixed(1) + suffix
-            + '</span>';
-    }
-    const spark = irSparkline_(sparklineData || [], sparklineColor || '#4E79A7');
-    return '<div class="pr-kpi-tile">'
-         +   '<div class="pr-kpi-row-top">'
-         +     '<div class="pr-kpi-label">' + label + '</div>'
-         +     '<div class="pr-kpi-spark">' + spark + '</div>'
-         +   '</div>'
-         +   '<div class="pr-kpi-value' + benchValueCls_(label, s.formatted) + '">' + escapeHtml(String(s.formatted)) + '</div>'
-         +   '<div class="pr-kpi-delta">' + badge + ' <span class="pr-delta-cap">vs prior</span></div>'
-         + '</div>';
-  }
+  // prKpiTile_ was consolidated into the shared dsKpiTile_ (Phase 1 ds-*
+  // migration) -- the Performance Report's KPI tiles now render via it, the
+  // same ds-kpi component the Insights rollup uses.
 
   /**
    * Per-agent table with sortable column headers + a per-agent
@@ -7868,10 +7844,13 @@
     if (!meta || !meta.lengthMismatch) { el.style.display = 'none'; el.innerHTML = ''; return; }
     const p1d = meta.p1Days || 0;
     const p2d = meta.p2Days || 0;
-    el.innerHTML = '<strong>Different period lengths:</strong> '
+    // ds-banner structure (Phase 1 ds-* migration): status badge + text child.
+    // is-warn (on the element) tints the soft background + badge; copy unchanged.
+    el.innerHTML = '<span class="ds-banner__badge">Heads up</span>'
+                 + '<div><strong>Different period lengths:</strong> '
                  + 'Period 1 is ' + p1d + ' days, Period 2 is ' + p2d + ' days. '
                  + 'Volume totals (Rung / Missed / Answered) aren\'t directly comparable; '
-                 + 'compare the per-day averages shown on the KPI tiles + agent cards instead.';
+                 + 'compare the per-day averages shown on the KPI tiles + agent cards instead.</div>';
     el.style.display = '';
   }
 
@@ -10020,8 +9999,8 @@
   let qcdLastData = null;
   // ===================================================================
   // Insights Report (combined: department rollup + per-agent prior cards)
-  // Reuses the shared picker HTML (irBuildAgentListHtml_), the PR KPI
-  // tile + delta logic (prKpiTile_), the IR insight callout
+  // Reuses the shared picker HTML (irBuildAgentListHtml_), the shared KPI
+  // tile + delta logic (dsKpiTile_), the IR insight callout
   // (irInsightsBlock_), and the Source chip (sourceChipHtml_). Server:
   // getInsightsReportInit / getInsightsReport (InsightsReport.gs).
   // ===================================================================
@@ -10444,16 +10423,17 @@
   }
 
   /**
-   * Insights team-rollup KPI tile, rendered with the shared ds-* design
-   * system (Phase 1 proof migration; see docs/design-update-plan.md).
-   * Behaviorally identical to prKpiTile_ -- same valence-to-color mapping,
-   * the same binary benchValueCls_ tint on the value (92% / 5% only; NO
-   * invented 85%/8% bands, decision C2), and the same shared irSparkline_.
-   * Emits the ds-kpi structure (mono label + delta pill on top, display
-   * value, full-width sparkline, quiet "vs prior" footer). Scoped to
-   * Insights only -- the Performance Report keeps prKpiTile_ untouched.
+   * Shared ds-* KPI tile (Phase 1 redesign; see docs/design-update-plan.md).
+   * Used by the Insights team rollup AND the Performance Report rollup -- the
+   * first ds-* component shared across two reports. Same (label, stat,
+   * valenceDirection, sparklineData, sparklineColor) shape both reports already
+   * passed. Behavior is identical to the retired prKpiTile_ -- same
+   * valence-to-color mapping, the same binary benchValueCls_ tint on the value
+   * (92% / 5% only; NO invented 85%/8% bands, decision C2), and the same shared
+   * irSparkline_. Emits the ds-kpi structure (mono label + delta pill on top,
+   * display value, full-width sparkline, quiet "vs prior" footer).
    */
-  function insKpiTileDs_(label, stat, valenceDirection, sparklineData, sparklineColor) {
+  function dsKpiTile_(label, stat, valenceDirection, sparklineData, sparklineColor) {
     const s = stat || { formatted: '-', deltaPct: 0, type: 'volume' };
     const isPctType = s.type === 'pctPoints';
     const dp = Number(s.deltaPct || 0);
@@ -10526,10 +10506,10 @@
       // Team (roster) rollup -- the priority metrics first. Total Rung +
       // Total TTT were dropped (low signal); Longest Wait lives in Queue
       // health. Missed keeps its warn valence; volume/rate are neutral/pos.
-      insKpiTileDs_('% Answered',   t.pct,      'pos', sparks.pct,      (THEME.accent || '#4E79A7')),
-      insKpiTileDs_('Answered',     t.answered, 'neu', sparks.answered, IR_VOLUME_COLORS.answered),
-      insKpiTileDs_('Missed (rings)', t.missed, 'neg', sparks.missed,   IR_VOLUME_COLORS.missed),
-      insKpiTileDs_('ATT (per call)', t.att,    'neu', sparks.att,      (THEME.muted  || '#9C755F')),
+      dsKpiTile_('% Answered',   t.pct,      'pos', sparks.pct,      (THEME.accent || '#4E79A7')),
+      dsKpiTile_('Answered',     t.answered, 'neu', sparks.answered, IR_VOLUME_COLORS.answered),
+      dsKpiTile_('Missed (rings)', t.missed, 'neg', sparks.missed,   IR_VOLUME_COLORS.missed),
+      dsKpiTile_('ATT (per call)', t.att,    'neu', sparks.att,      (THEME.muted  || '#9C755F')),
     ].join('');
 
     insRenderLengthWarning_(data.meta);
@@ -10884,7 +10864,7 @@
     insChartInstance = new Chart(canvas.getContext('2d'), chartConfig);
   }
 
-  // Delta badge mirroring prKpiTile_'s logic for the per-agent card grid.
+  // Delta badge mirroring dsKpiTile_'s logic for the per-agent card grid.
   function insDeltaBadge_(stat, valence) {
     const s = stat || { deltaPct: 0, type: 'volume' };
     const isPct = s.type === 'pctPoints';
@@ -11607,12 +11587,20 @@
       .getInboundReport({ from: from, to: to, department: dept });
   }
 
+  // ds-kpi tile for the simpler (label, value, cap, deltaHtml) shape used by
+  // the Inbound report KPI row + the Insights queue-health tiles. Distinct from
+  // dsKpiTile_ (which takes a stat object + sparkline); this one keeps its
+  // pre-formatted value + pre-built delta badge + a bench-tinted caption.
+  // (Phase 1 ds-* migration; cap tint preserved by the .ds-kpi__foot.bm-*
+  // overrides in styles.html.)
   function inboundKpiTile_(label, value, cap, deltaHtml) {
-    return '<div class="pr-kpi-tile">'
-      + '<div class="pr-kpi-label">' + escapeHtml(label) + '</div>'
-      + '<div class="pr-kpi-value">' + escapeHtml(String(value)) + '</div>'
-      + (deltaHtml ? '<div class="pr-kpi-delta">' + deltaHtml + ' <span class="pr-delta-cap">vs prior</span></div>' : '')
-      + (cap ? '<div class="pr-delta-cap' + benchValueCls_(label, cap) + '">' + escapeHtml(cap) + '</div>' : '')
+    return '<div class="ds-kpi">'
+      + '<div class="ds-kpi__top">'
+      +   '<span class="ds-kpi__label">' + escapeHtml(label) + '</span>'
+      +   (deltaHtml || '')
+      + '</div>'
+      + '<div class="ds-kpi__value">' + escapeHtml(String(value)) + '</div>'
+      + (cap ? '<div class="ds-kpi__foot' + benchValueCls_(label, cap) + '">' + escapeHtml(cap) + '</div>' : '')
       + '</div>';
   }
 
@@ -12541,34 +12529,33 @@
   function qcdRenderKpiTiles_(t) {
     const wrap = $('qcd-kpi-row');
     if (!wrap) return;
-    // Reuse the Performance Report KPI tile DOM shape so existing
-    // styling carries over. No prev/delta on QCD's KPIs -- absolute
-    // values only. Two tiles are color-coded:
-    //   - Abandoned %: warn-red when >= 5% (pipeline's violation
-    //     threshold). Mirrors the Overview tile chip color rule.
-    //   - Violations (current month): warn-red when > 0. Server
-    //     sources this as MTD across the dept's mapped queues, NOT
-    //     the selected-range sum -- operationally more useful as
-    //     "how many bad days this month?"
-    const tile = function (label, value, valueClass) {
-      return '<div class="pr-kpi-tile">'
-           +   '<div class="pr-kpi-label">' + escapeHtml(label) + '</div>'
-           +   '<div class="pr-kpi-value' + (valueClass ? ' ' + valueClass : '') + '">'
-           +     escapeHtml(String(value))
-           +   '</div>'
+    // ds-kpi tiles (Phase 1 ds-* migration). No prev/delta on QCD's KPIs --
+    // absolute values only. Two tiles are warn-tinted via the ds-* STATUS
+    // mechanism (ds-kpi--status + is-warn -> .ds-kpi__value reads var(--status);
+    // specificity-safe, unlike a bare color class), preserving the prior
+    // pr-delta-neg coloring:
+    //   - Abandoned %: warn when >= 5% (pipeline's violation threshold).
+    //     Mirrors the Overview tile chip color rule.
+    //   - Violations (current month): warn when > 0. Server sources this as MTD
+    //     across the dept's mapped queues, NOT the selected-range sum --
+    //     operationally more useful as "how many bad days this month?"
+    const tile = function (label, value, warn) {
+      return '<div class="ds-kpi' + (warn ? ' ds-kpi--status is-warn' : '') + '">'
+           +   '<div class="ds-kpi__top"><span class="ds-kpi__label">' + escapeHtml(label) + '</span></div>'
+           +   '<div class="ds-kpi__value">' + escapeHtml(String(value)) + '</div>'
            + '</div>';
     };
     const pct = Number(t.abandonedPct) || 0;
-    const pctCls  = pct >= 5 ? 'pr-delta-neg' : '';
-    const violCls = (Number(t.violations) || 0) > 0 ? 'pr-delta-neg' : '';
+    const pctWarn  = pct >= 5;
+    const violWarn = (Number(t.violations) || 0) > 0;
     wrap.innerHTML =
         tile('Total Calls',  fmtNumber(t.totalCalls    || 0))
       + tile('Answered',     fmtNumber(t.totalAnswered || 0))
       + tile('Abandoned',    fmtNumber(t.abandoned     || 0))
-      + tile('Abandoned %',  String(t.abandonedPctStr  || '0.00%'), pctCls)
+      + tile('Abandoned %',  String(t.abandonedPctStr  || '0.00%'), pctWarn)
       + tile('Longest Wait', String(t.longestWait      || '0:00:00'))
       + tile('Avg Answer',   String(t.avgAnswer        || '0:00:00'))
-      + tile('Violations (MTD)', fmtNumber(t.violations || 0), violCls);
+      + tile('Violations (MTD)', fmtNumber(t.violations || 0), violWarn);
   }
 
   function qcdRenderDailyTable_(rows) {

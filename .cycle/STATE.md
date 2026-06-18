@@ -80,14 +80,61 @@ Tests: 132/132 pass; whole-file CSS brace balance 860/860; INV-16 untouched. No 
    SWR Overview, per-viewer keyed), Phase 3 (chart factory + graceful fallback +
    debounce/token on date edits). Held for sign-off: C7 consolidation, C8 nav restructure.
 
+## Post-merge increments (Phase 1 + sheetRepairs merged to main via PR #84 + sync-docs PR)
+- **Phase 1 eyeball-verified by the operator** (deployed; Insights ds-kpi tiles + ds-table +
+  ds-banner confirmed). Phase 1 is DONE.
+- **Increment 4 (DONE — first cross-report shared component):** promoted the Insights-only
+  `insKpiTileDs_` to a SHARED `dsKpiTile_` and migrated the **Performance Report** rollup tiles
+  onto it (6 `prKpiTile_` calls → `dsKpiTile_`); the dead `prKpiTile_` function was removed
+  (two history breadcrumbs + two stale comments updated to `dsKpiTile_`). Now used by Insights (4)
+  + PR (6) = 10 callsites, one definition. Behavior identical (same valence map, binary
+  benchValueCls_ 92%/5% tint, shared irSparkline_). `.pr-kpi-tile`/`.pr-delta` CSS untouched
+  (still used by `inboundKpiTile_` + a CR tile site). Live visual verify = scenario S14 (PR) +
+  S37 (Insights) post-deploy. tests 132/132; INV-16 in sync; JS `node --check` clean.
+
+- **Increment 5 (DONE):** Compare Ranges length-mismatch banner → `.ds-banner is-warn`
+  (mirrors Insights Increment 3). dashboard.html class swap on `#cr-length-warning`
+  (`cr-length-warning`→`ds-banner is-warn`, id kept); `crRenderLengthWarning_` restructured to
+  `ds-banner__badge` ("Heads up") + text `<div>`, copy verbatim; the now-dead `.cr-length-warning`
+  CSS removed (CR was its last user after Insights migrated). INV-35 logic (form hint / KPI
+  captions / CSV) untouched. tests 132/132; CSS braces 858/858; JS clean. Live verify: S18 (CR
+  length-mismatch) post-deploy.
+
+- **Increment 6 (DONE — includes a prod-regression FIX):**
+  (a) **FIX:** the `ds-kpi` migration silently dropped the binary benchmark tint (benchValueCls_
+  → `bm-target`/`bm-over`, the 92%/5% company standard) on KPI VALUES. Cause: the ds-* layer
+  sits at the END of styles.html, AFTER `.bm-target`/`.bm-over`, so `.ds-kpi__value`'s explicit
+  `color:var(--ink)` won the cascade (legacy `.pr-kpi-value` sat BEFORE `.bm-target`, so it never
+  needed this). Added two-class overrides `.ds-kpi__value.bm-target/.bm-over` (+ `__foot`) so the
+  tint wins regardless of order. **This was already in prod** on the merged Insights KPI tiles
+  (PR #84) — subtle (value not green/orange) so the eyeball pass missed it. Restores it there +
+  on the PR tiles (this branch).
+  (b) **Migrate:** `inboundKpiTile_` (label, value, cap, deltaHtml) → `.ds-kpi` markup — converts
+  BOTH the Inbound report KPI row AND the Insights queue-health tiles. Value/cap/delta preserved;
+  cap bench tint preserved via the (a) fix; dropped the literal "vs prior" (the delta pill conveys
+  it). `.pr-kpi-tile`/`.pr-delta` CSS still used by the CR-team + QCD tile renderers (not migrated).
+  tests 132/132; CSS braces 860/860; JS clean. Live verify: S38 (Inbound) + S37 (Insights qh) +
+  re-check 92%/5% tint shows on IR/PR/Insights KPI values, post-deploy.
+
+- **Increment 7 (DONE):** QCD KPI tiles (`qcdRenderKpiTiles_`) → `.ds-kpi`. label + value only
+  (no delta/spark/caption); the two warn-coded tiles (Abandoned % ≥5, Violations MTD >0) now tint
+  the VALUE via the ds-* status mechanism (`ds-kpi--status is-warn` → `.ds-kpi__value` reads
+  `var(--status)`; specificity-safe). Minor visual refinement: legacy `pr-delta-neg` gave the value
+  a warn-soft BACKGROUND block; ds tints the text only — which matches how abandon-%/bench tints
+  render on every other report (consistency, not regression). tests 132/132; JS clean; INV-16 in
+  sync. Remaining `.pr-kpi-tile` renderer: CR team tiles (script.html:7956) — bigger (per-day
+  caption + "(P1)" badge), left for a focused next increment. IR tiles (`irKpiTile`) are the most
+  complex (team-comparison + share + prior). Live verify: S32 (QCD) post-deploy.
+
 ## Where I left off
-Implemented Phase 1 Parts 1+2 (additive tokens + 8 `ds-` components) AND a contained Part 3 proof
-(Insights KPI tiles → `ds-kpi`, queue-health table → `ds-table`/`ds-card`, length-warning →
-`ds-banner`; PR + QCD + CR untouched) per `/broad-implement Phase 1`; tests 132/132 green, INV-16
-in sync, script.html JS `node --check` clean, dashboard.html divs balanced 608/608. Live visual
-check is the only open verify (manual S37, post-deploy). Agent-card rail migration deliberately
-deferred (near-zero visual gain vs high unverifiable risk — see Increment notes). Recommend a
-deploy + eyeball before further Insights surgery.
+Phase 1 confirmed in prod by the operator. Continued report-by-report migration with
+`/broad-implement` rigor: Increment 4 promoted the KPI tile to a shared `dsKpiTile_` and moved the
+Performance Report onto it (first ds-* component shared across two reports — the consolidation
+thesis realized). Tests green, syntax clean. Next candidates: migrate another report surface (CR
+length-warning → ds-banner is low-risk; remaining Insights/PR surfaces), or start Phase 2/3 quick
+wins. Still deferred/decision-gated: per-agent cards → ds-card--rail (high risk), at-a-glance
+headline → ds-banner (shared reportHeadline_ decision), C7 consolidation, C8 nav.
+PRIOR CONTEXT (still valid):
 Also confirmed access control: non-manager/non-admin domain users land on access-denied with zero
 data (Code.gs doGet + per-RPC re-auth); out-of-domain users can't reach the app. Awaiting
 commit/push/deploy direction.

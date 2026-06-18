@@ -108,8 +108,10 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   every write AND re-formats the EXACT write range, so rows that spill past the
   prior `getMaxRows()` when the sheet auto-expands are protected too (the lone
   remaining recurrence vector before commit a350042; INV-16, both copies).
-  (2) Old corrupted rows: `repairDqeSlotTimestamps()` (K-AC, TZ-safe serial
-  recovery) and `repairDqeAbandonedIds()` (AD-AF) in
+  (2) Old corrupted rows: `repairDqeSlotTimestamps()` (K-AC **+ AF**, TZ-safe
+  serial recovery -- AF holds the same comma-joined H:MM:SS time strings as the
+  slots and coerces identically, so it's recovered HERE, not by the ID repair)
+  and `repairDqeAbandonedIds()` (**AD-AE only** -- abandoned parent/leg IDs) in
   `cdr-report/sheetRepairs.js` -- each has a `preview*` dry-run; both recover
   the lossless single-value cells. `repairDqeAbandonedIds` marks UNRECOVERABLE
   multi-value cells with the **`#REBUILD` sentinel**
@@ -130,6 +132,23 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `backfillDQEHistoryUpsert()` (`ON CONFLICT DO UPDATE`) to re-mirror.
   **Copy-paste of old rows re-introduces this** -- see README "Extending
   history backwards".
+- **PST→CST stored-timestamp era split (separate from coercion).** Rows BEFORE
+  2026-03-09 came from the old pipeline, which stored the slot (K-AC) and
+  abandoned-time (AF) H:MM:SS strings in **PST** -- 2h behind the CST column
+  headers and the current pipeline (which adds `DQE_PST_TO_CST`=7200s via
+  `pstToCSTStr`). The bucket COLUMN was already correct in old rows; only the
+  stored time-of-day value is 2h behind. `repairDqeOldPstTimestampShift()`
+  (+ `previewDqeOldPstTimestampShift()`, `cdr-report/sheetRepairs.js`) shifts
+  those cells +2h -- **date-gated (Date < 2026-03-09) AND per-row
+  PST-window-validated** (only shifts cells whose times sit in the PST window
+  for their column; skips rows already in CST), so it's re-run safe and won't
+  double-shift a pre-cutoff row that was already rebuilt in CST. Run it AFTER
+  the coercion repairs above (so cells are clean text first), then
+  `backfillDQEHistoryUpsert()` if the Neon mirror is consumed. Until run, the
+  Missed Calls report mis-buckets / drops old-date missed calls -- it buckets
+  by PARSING the stored time against the 8 AM-5 PM CST range
+  (`MissedCallsReport.gs`), so a PST value reads ~2h early. Durations
+  (TTT/ATT/AvgAbdWait), counts, and the Date are TZ-independent and untouched.
 - **`clasp push -f` does NOT delete remote files** that are absent locally.
   Removing files from an Apps Script project requires manual deletion in
   the web editor.
@@ -484,6 +503,31 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `.bad` / `.badSoft` and resolve them via `colorToCanvasRgb_('--bad')`
   or chartjs-plugin-datalabels will silently render empty fills
   on the OKLCH path.
+- **`ds-*` shared component layer (Phase 1 redesign — additive).** A
+  canonical, token-driven component set lives at the END of
+  `styles.html` (`.ds-kicker`, `.ds-section`, `.ds-chip`/`.ds-delta`,
+  `.ds-kpi`, `.ds-card`/`.ds-card--rail`, `.ds-table`/`.ds-bar`,
+  `.ds-banner`, `.ds-toolbar`/`.ds-seg`, `.ds-modal`) plus
+  `.is-good`/`.is-warn`/`.is-bad` status helpers and additive tokens
+  (`--r-sm`/`--r-lg`/`--r-pill`, `--shadow-1/2/modal`, `--ease`/`--dur-*`).
+  It lands ALONGSIDE the legacy per-report dialects (`ir-`/`pr-`/`al-`/
+  `ins-`/`cl-`/`of-`); reports migrate onto it one at a time. **Hard
+  rules from the plan's conflict register (`docs/design-update-plan.md`):**
+  (1) **`--r` STAYS 2px** — `ds-*` rounded corners use `--r-lg`/`--r-sm`/
+  `--r-pill`, NEVER `var(--r)` (which is still the canonical 2px squared
+  token); (2) status color is driven by the existing BINARY
+  `benchValueCls_` (92% / 5%), NOT the design's invented 85%/8% bands;
+  (3) dark mode is inherited via tokens — keep `body[data-mode="dark"]`,
+  do NOT add the design's `[data-theme="dark"]` selector. Migrated so
+  far: the KPI tile is the shared `dsKpiTile_` → `.ds-kpi`, used by BOTH
+  the Insights rollup AND the Performance Report rollup (first cross-report
+  `ds-*` component — the consolidation thesis; the old `prKpiTile_` was
+  retired). Plus, in Insights, the queue-health per-queue table
+  (`.ds-table` inside a `.ds-card`) and the length-mismatch warning
+  (`.ds-banner`). The
+  shared `reportHeadline_` is intentionally NOT migrated (every report
+  uses it). Report consolidation (Part 3) and the nav restructure
+  (Part 6) are parked product decisions, not built.
 - **CacheService key length cap (250 chars).** Apps Script silently
   rejects cache keys longer than 250 characters, surfacing as an
   error on `cache.get`. The Individual / Performance / Compare

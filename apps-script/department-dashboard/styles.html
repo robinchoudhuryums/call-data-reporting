@@ -2593,16 +2593,8 @@
   /* Length-mismatch banner — warn-stripe panel with soft-bg fill,
      same shape as the queue-only section so the visual grammar of
      "this needs attention" is consistent across the app. */
-  .cr-length-warning {
-    background: var(--warn-soft);
-    color: var(--warn);
-    border-left: 3px solid var(--warn);
-    border-radius: 2px;
-    padding: 10px 14px;
-    font-size: 12.5px;
-    margin-bottom: 14px;
-  }
-  .cr-length-warning strong { color: var(--warn); font-weight: 500; }
+  /* .cr-length-warning retired -- Compare Ranges' length-mismatch banner now
+     uses the shared .ds-banner is-warn (Phase 1 ds-* migration), like Insights. */
 
   /* Per-day caption inside KPI tiles (volume + time metrics
      when length-mismatch). Small mono line under the delta. */
@@ -4412,6 +4404,15 @@
   .ds-kpi--status .ds-kpi__value { color: var(--status, var(--ink)); }
   .ds-kpi__spark { display: block; width: 100%; height: 22px; margin-top: 6px; line-height: 0; }
   .ds-kpi__foot  { font: 400 10px/1.4 var(--mono); color: var(--muted); margin-top: 4px; }
+  /* Preserve the binary benchmark tint (benchValueCls_ -> bm-target/bm-over,
+     the 92% / 5% company standards). The ds-* layer lands at the END of this
+     file, AFTER .bm-target/.bm-over, so the bench classes (single-class, equal
+     specificity) would otherwise lose the cascade to the explicit color on
+     .ds-kpi__value / .ds-kpi__foot. These two-class overrides keep the tint
+     winning regardless of source order (the legacy .pr-kpi-value sat BEFORE
+     .bm-target, so it never needed this). */
+  .ds-kpi__value.bm-target, .ds-kpi__foot.bm-target { color: var(--good); }
+  .ds-kpi__value.bm-over,   .ds-kpi__foot.bm-over   { color: var(--warn); }
   .ds-kpi-grid   { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
   @media (max-width: 760px) { .ds-kpi-grid { grid-template-columns: repeat(2, 1fr); } }
 

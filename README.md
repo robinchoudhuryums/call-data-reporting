@@ -528,15 +528,17 @@ sheet read source; only if `DQE_READ_SOURCE=neon` do you also run
 `backfillDQEHistoryUpsert()` once to mirror the pasted rows into Neon.
 
 **Watch for cell coercion when pasting.** The comma-joined columns —
-the half-hour slot missed-times (K–AC) and the abandoned IDs/times
-(AD/AE/AF) — get mangled into Numbers if the destination cells aren't
-plain text (a multi-value cell like `1762242202191,1762242165529`
-collapses to one rounded number and loses the second value). Paste as
-**values**, keep those columns formatted as plain text, then run
-`previewDqeSlotTimestampRepair()` and `previewDqeAbandonedIdRepair()`
-(CDR Report editor) to spot any coercion; apply the matching `repair…()`
-and re-run `backfillDQEHistoryUpsert()` if you're on the Neon read
-source. See CLAUDE.md's number-coercion gotcha for the full mechanism.
+the half-hour slot missed-times (K–AC), the abandoned missed-leg times
+(AF), and the abandoned IDs (AD/AE) — get mangled into Numbers if the
+destination cells aren't plain text (a multi-value cell like
+`1762242202191,1762242165529` collapses to one rounded number and loses
+the second value). Paste as **values**, keep those columns formatted as
+plain text, then run `previewDqeSlotTimestampRepair()` (recovers the
+time-of-day columns K–AC **and** AF) and `previewDqeAbandonedIdRepair()`
+(recovers the ID columns AD/AE) from the CDR Report editor to spot any
+coercion; apply the matching `repair…()` and re-run
+`backfillDQEHistoryUpsert()` if you're on the Neon read source. See
+CLAUDE.md's number-coercion gotcha for the full mechanism.
 
 ## Working on sibling Apps Script projects
 
