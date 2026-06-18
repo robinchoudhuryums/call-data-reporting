@@ -14,6 +14,18 @@ Design-package planning + **Phase 1 foundation** (additive, zero behavioral chan
   thresholds only (C2-A), keep `data-mode` dark (C3-A), chart factory yes / SRI-restore
   no (C4-A), wire to `getDepartmentSummary` not `computeSummary_` (C5), adopt SWR with
   per-viewer guardrails (C6-A), consolidation parked (C7), nav deferred (C8-A).
+
+**Separate work-stream this session (NOT redesign):** added a DQE Historical Data TZ repair to
+`cdr-report/sheetRepairs.js` — `previewDqeOldPstTimestampShift()` / `repairDqeOldPstTimestampShift()`.
+Old rows (Date < 2026-03-09) stored slot/AF missed-times in PST; current pipeline stores CST (+2h).
+Repair shifts K-AC (11-29) + AF (32) time-of-day strings +7200s, date-gated AND per-row PST-window
+validated (re-run safe; skips already-CST/mixed/anomaly rows), AF follows the row's slot decision
+(skips #REBUILD sentinel + non-time tokens), surgical per-row writes + plain-text lock. Fixes the
+Missed Calls report (it buckets by parsing the stored time; old PST values mis-bucket / drop off the
+8AM-5PM CST chart). Does NOT touch durations (TTT/ATT/AvgAbdWait) or counts. node --check clean;
+core shift/window math sanity-checked. NEEDS: deploy cdr-report (`clasp push -f`), run preview ->
+apply from the editor, then backfillDQEHistoryUpsert() if Neon mirror is consumed. NOT in the Node
+suite (SpreadsheetApp-bound, like the existing two repairs).
 - **Phase 1 / Part 1 — tokens** (`styles.html` `:root`): added `--r-sm/--r-lg/--r-pill`,
   `--shadow-1/2/modal`, `--ease/--dur-1..3/--stagger`. **`--r` LEFT at 2px** (decision C1).
 - **Phase 1 / Part 2 — component layer** (`styles.html`, new block before `</style>`):

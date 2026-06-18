@@ -231,3 +231,247 @@ function repairDqeAbandonedIds_(dryRun) {
   return { recovered: recovered, markedLost: markedLost, lostDates: dateList,
            applied: true, recSamples: recSamples, lostSamples: lostSamples };
 }
+
+
+// -- Old-dataset PST -> CST timestamp shift (cols K-AC + AF) ------------------
+//
+// Background: the "DQE Historical Data" sheet spans two pipeline eras divided at
+// 2026-03-09. Rows on/after that date were written by the CURRENT pipeline,
+// which buckets missed-call times by PST slot windows (DQE_TIME_SLOTS, slot 0 =
+// 6:00-6:30 PST = the "8-8:30 AM" CST column) and stores the CST string
+// (pstToCSTStr = +2h). Rows BEFORE 2026-03-09 came from the OLD pipeline, which
+// bucketed into the SAME slot columns but stored the RAW PST string (the +2h
+// CST conversion was missing). So in old rows the COLUMN is already correct;
+// only the stored time-of-day VALUE is 2 hours behind (e.g. a call shown as
+// "6:13:19" in the "8-8:30 AM" column should read "8:13:19").
+//
+// Pacific<->Central is a constant 2h offset year-round (both observe DST in
+// lockstep), so a flat +7200s on the time-of-day string is correct on any date
+// and never crosses midnight (the work window is mid-day: 6:30-15:00 PST =
+// 8:30-17:00 CST).
+//
+// What this shifts (time-of-day strings only):
+//   * K-AC (cols 11-29) -- the 19 half-hour slot missed-times.
+//   * AF   (col 32)     -- "Abandoned Missed Leg Times" (also pstToCSTStr CST
+//                          time-of-day strings in the current pipeline; AD/AE
+//                          are epoch-style IDs and are NOT touched).
+// NOT shifted: TTT/ATT (I/J), AvgAbdWait/CSRAvgAbdWait (AG/AH) -- all DURATIONS,
+// TZ-independent -- the counts (E-H), the Date (B), AD/AE (IDs). The per-agent
+// Rung/Missed/Answered/TTT/ATT metrics do NOT depend on these strings, so this
+// repair is display/detail-only and cannot move the headline numbers.
+//
+// Why it matters downstream: the dashboard's Missed Calls report buckets by
+// PARSING the stored time against the 8 AM-5 PM CST chart range
+// (MissedCallsReport.gs). Old PST values read 2h early -> calls physically at
+// 8:00-10:00 CST fall BEFORE 8:00 and drop off the chart (bucket -1); later
+// calls land in the wrong (2h-early) bucket; per-agent timelines show the time
+// 2h early. This repair fixes all of that for old dates.
+//
+// Safety (idempotent / re-run-safe by construction):
+//   * Date gate: only rows with Date < 2026-03-09 are candidates.
+//   * Per-row PST-window validation: a candidate row is shifted ONLY if its
+//     non-empty K-AC times sit in the PST window for their column AND none sit
+//     in the already-CST window. Rows that look already-CST, mixed, or have
+//     out-of-window/garbage times are SKIPPED and reported -- so a second run,
+//     or a pre-2026-03-09 row that was already rebuilt in CST, is never
+//     double-shifted.
+//   * AF follows the row's slot decision (abandoned times are a subset of the
+//     missed times, so they share the row's TZ state). AF is left untouched if
+//     it is the #REBUILD sentinel or contains any non-time token.
+//   * Writes are SURGICAL -- only changed rows' K-AC ranges + AF cells are
+//     rewritten (as plain text); untouched and post-cutoff cells are never
+//     rewritten.
+//
+// Run ORDER (so all cells are clean text before the shift):
+//   1. repairDqeSlotTimestamps()  -- recover any coerced K-AC cells (above).
+//   2. repairDqeAbandonedIds()    -- recover/mark AD-AF coercion (above).
+//   3. previewDqeOldPstTimestampShift()  -- dry run; logs counts + samples.
+//   4. repairDqeOldPstTimestampShift()   -- apply the +2h shift.
+//   5. If DQE_READ_SOURCE=neon or the Neon mirror is consumed: re-mirror the
+//      affected dates with backfillDQEHistoryUpsert() (ON CONFLICT DO UPDATE).
+
+var DQE_TZ_SHIFT_CUTOFF_YYYYMMDD = 20260309;   // rows strictly BEFORE this are candidates
+var DQE_TZ_SHIFT_SECONDS         = 7200;       // PST -> CST (+2h)
+
+/** Preview only: report what WOULD shift; no writes. */
+function previewDqeOldPstTimestampShift() {
+  return repairDqeOldPstTimestampShift_(/*dryRun=*/true);
+}
+
+/** Apply the +2h PST->CST shift to old-dataset K-AC slot + AF timestamps. */
+function repairDqeOldPstTimestampShift() {
+  return repairDqeOldPstTimestampShift_(/*dryRun=*/false);
+}
+
+function repairDqeOldPstTimestampShift_(dryRun) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('DQE Historical Data');
+  if (!sheet) { Logger.log('repairDqeOldPstTimestampShift: sheet "DQE Historical Data" not found.'); return; }
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) { Logger.log('repairDqeOldPstTimestampShift: no data rows.'); return; }
+
+  var SLOT_START = 11, SLOT_N = 19, AF_COL = 32, SHIFT = DQE_TZ_SHIFT_SECONDS;
+  var n = lastRow - 1;
+  // TZ-safe reads: getDisplayValues returns the H:MM:SS strings (getValues would
+  // drag the spreadsheet-vs-script TZ shift onto time-typed cells -- INV-02).
+  var dates    = sheet.getRange(2, 2, n, 1).getDisplayValues();
+  var slotVals = sheet.getRange(2, SLOT_START, n, SLOT_N).getDisplayValues();
+  var afVals   = sheet.getRange(2, AF_COL, n, 1).getDisplayValues();
+
+  function parseHms(str) {
+    if (str === null || str === undefined) return null;
+    var t = String(str).trim();
+    if (!t) return null;
+    var p = t.split(':');
+    if (p.length < 3) return null;
+    var h = Number(p[0]), m = Number(p[1]), s = Number(p[2]);
+    if (!isFinite(h) || !isFinite(m) || !isFinite(s)) return null;
+    if (h < 0 || h > 23 || m < 0 || m > 59 || s < 0 || s > 59) return null;
+    return h * 3600 + m * 60 + s;
+  }
+  function fmtHms(sec) {
+    var h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+    return h + ':' + (m < 10 ? '0' : '') + m + ':' + (s < 10 ? '0' : '') + s;
+  }
+  function parseYmd(str) {
+    if (!str) return null;
+    var datePart = String(str).trim().split(' ')[0];
+    var p = datePart.split('/');                 // col B is M/D/YYYY
+    if (p.length < 3) return null;
+    var mo = parseInt(p[0], 10), da = parseInt(p[1], 10), yr = parseInt(p[2], 10);
+    if (!yr || !mo || !da) return null;
+    return yr * 10000 + mo * 100 + da;
+  }
+
+  var SENTINEL = (typeof DQE_ABANDONED_LOST_SENTINEL !== 'undefined') ? DQE_ABANDONED_LOST_SENTINEL : '#REBUILD';
+
+  var stats = {
+    candidates: 0, shiftedRows: 0, shiftedSlotCells: 0, afShiftedCells: 0,
+    alreadyCstRows: 0, mixedRows: 0, anomalyRows: 0, afOrphanRows: 0,
+    afSentinelSkipped: 0, afUnparseable: 0, unparsedDateRows: 0
+  };
+  var samples = { shifted: [], alreadyCst: [], anomaly: [], af: [] };
+  var changes = [];   // { rowNum, slots:[19], af:string|null }
+
+  for (var i = 0; i < n; i++) {
+    var rowNum = i + 2;
+    var ymd = parseYmd(dates[i][0]);
+    if (ymd === null) { stats.unparsedDateRows++; continue; }
+    if (ymd >= DQE_TZ_SHIFT_CUTOFF_YYYYMMDD) continue;   // current/CST era -- never touched
+    stats.candidates++;
+
+    var rowPst = 0, rowCst = 0, rowAnom = 0;
+    for (var c = 0; c < SLOT_N; c++) {
+      var cell = slotVals[i][c];
+      if (!cell) continue;
+      var pstLo = 6 * 3600 + c * 1800, pstHi = pstLo + 1800;
+      var cstLo = pstLo + SHIFT,        cstHi = pstHi + SHIFT;
+      var times = String(cell).split(',');
+      for (var k = 0; k < times.length; k++) {
+        var sec = parseHms(times[k]);
+        if (sec === null)                       rowAnom++;
+        else if (sec >= pstLo && sec < pstHi)   rowPst++;
+        else if (sec >= cstLo && sec < cstHi)   rowCst++;
+        else                                    rowAnom++;
+      }
+    }
+
+    // Row decision.
+    if (rowAnom > 0) {
+      stats.anomalyRows++;
+      if (samples.anomaly.length < 12) samples.anomaly.push('R' + rowNum + ' (' + dates[i][0] + ')');
+      continue;
+    }
+    if (rowPst > 0 && rowCst > 0) {
+      stats.mixedRows++;
+      if (samples.anomaly.length < 12) samples.anomaly.push('R' + rowNum + ' MIXED (' + dates[i][0] + ')');
+      continue;
+    }
+    if (rowPst === 0 && rowCst > 0) {
+      stats.alreadyCstRows++;
+      if (samples.alreadyCst.length < 12) samples.alreadyCst.push('R' + rowNum + ' (' + dates[i][0] + ')');
+      continue;
+    }
+    if (rowPst === 0 && rowCst === 0) {
+      // No slot times at all. AF without any slot evidence is contradictory
+      // (abandoned missed legs are a subset of missed legs) -- skip + flag.
+      if (afVals[i][0] && String(afVals[i][0]).trim() && String(afVals[i][0]).trim() !== SENTINEL) {
+        stats.afOrphanRows++;
+        if (samples.af.length < 12) samples.af.push('R' + rowNum + ' AF-without-slots (' + dates[i][0] + ')');
+      }
+      continue;
+    }
+
+    // rowPst > 0 && rowCst === 0 && rowAnom === 0  -> PST row, SHIFT it.
+    var newSlots = [];
+    var cells = 0;
+    for (var c2 = 0; c2 < SLOT_N; c2++) {
+      var cell2 = slotVals[i][c2];
+      if (!cell2) { newSlots.push(''); continue; }
+      var parts = String(cell2).split(',');
+      var shifted = [];
+      for (var k2 = 0; k2 < parts.length; k2++) shifted.push(fmtHms(parseHms(parts[k2]) + SHIFT));
+      newSlots.push(shifted.join(','));
+      cells += parts.length;
+    }
+
+    // AF: follow the row's PST decision; guard sentinel + non-time tokens.
+    var afCell = afVals[i][0];
+    var afNew = afCell;                 // default: unchanged
+    var afTrim = afCell ? String(afCell).trim() : '';
+    if (afTrim && afTrim !== SENTINEL) {
+      var afTokens = afTrim.split(',');
+      var afShift = [], afOk = true;
+      for (var a = 0; a < afTokens.length; a++) {
+        var asec = parseHms(afTokens[a]);
+        if (asec === null || asec + SHIFT >= 86400) { afOk = false; break; }
+        afShift.push(fmtHms(asec + SHIFT));
+      }
+      if (afOk) { afNew = afShift.join(','); stats.afShiftedCells++; }
+      else {
+        stats.afUnparseable++;
+        if (samples.af.length < 12) samples.af.push('R' + rowNum + ' AF non-time, left as-is (' + dates[i][0] + ')');
+      }
+    } else if (afTrim === SENTINEL) {
+      stats.afSentinelSkipped++;
+    }
+
+    stats.shiftedRows++;
+    stats.shiftedSlotCells += cells;
+    if (samples.shifted.length < 12) {
+      samples.shifted.push('R' + rowNum + ' (' + dates[i][0] + '): slot[0..]="' + slotVals[i].join('|').slice(0, 60) + '" -> shifted +2h');
+    }
+    changes.push({ rowNum: rowNum, slots: newSlots, af: afNew });
+  }
+
+  var summary = 'candidates(pre-' + DQE_TZ_SHIFT_CUTOFF_YYYYMMDD + ')=' + stats.candidates
+    + ' shiftRows=' + stats.shiftedRows + ' slotCells=' + stats.shiftedSlotCells
+    + ' afCells=' + stats.afShiftedCells + ' | skipped: alreadyCST=' + stats.alreadyCstRows
+    + ' mixed=' + stats.mixedRows + ' anomaly=' + stats.anomalyRows
+    + ' afOrphan=' + stats.afOrphanRows + ' afSentinel=' + stats.afSentinelSkipped
+    + ' afNonTime=' + stats.afUnparseable + ' unparsedDate=' + stats.unparsedDateRows;
+
+  if (dryRun) {
+    Logger.log('previewDqeOldPstTimestampShift: WOULD shift %s. \nShift samples: %s\nAlready-CST: %s\nAnomalies/mixed: %s\nAF notes: %s',
+      summary, JSON.stringify(samples.shifted), JSON.stringify(samples.alreadyCst),
+      JSON.stringify(samples.anomaly), JSON.stringify(samples.af));
+    return { applied: false, stats: stats, samples: samples };
+  }
+
+  // Apply: rewrite ONLY changed rows (K-AC range + AF cell), as plain text.
+  for (var x = 0; x < changes.length; x++) {
+    var ch = changes[x];
+    var sr = sheet.getRange(ch.rowNum, SLOT_START, 1, SLOT_N);
+    sr.setNumberFormat('@');
+    sr.setValues([ch.slots]);
+    var ar = sheet.getRange(ch.rowNum, AF_COL, 1, 1);
+    ar.setNumberFormat('@');
+    ar.setValue(ch.af === null || ch.af === undefined ? '' : ch.af);
+  }
+  SpreadsheetApp.flush();
+  Logger.log('repairDqeOldPstTimestampShift: shifted %s. \nShift samples: %s\nAlready-CST (untouched): %s\nAnomalies/mixed (untouched, review): %s\nAF notes: %s\n'
+    + 'If DQE_READ_SOURCE=neon or the Neon mirror is consumed, re-mirror the shifted dates with backfillDQEHistoryUpsert().',
+    summary, JSON.stringify(samples.shifted), JSON.stringify(samples.alreadyCst),
+    JSON.stringify(samples.anomaly), JSON.stringify(samples.af));
+  return { applied: true, stats: stats, samples: samples };
+}
