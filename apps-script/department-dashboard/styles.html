@@ -4462,6 +4462,21 @@
     background: var(--paper-card); color: var(--status, var(--accent));
     border-radius: var(--r-sm); padding: 5px 10px;
   }
+  /* Compact caveat note -- deliberately LIGHTER than .ds-banner so a secondary
+     warning (e.g. the length-mismatch caveat) doesn't read as a second headline
+     when it sits under the now-toned at-a-glance banner. Muted box + a warn
+     left-accent + warn icon, not a full warn-soft fill. */
+  .ds-note {
+    display: flex; gap: 8px; align-items: flex-start;
+    margin: 10px 0 14px; padding: 8px 12px;
+    background: var(--paper-2);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--warn);
+    border-radius: var(--r-sm);
+    font-size: 12px; line-height: 1.5; color: var(--muted);
+  }
+  .ds-note__icon { flex: none; color: var(--warn); font-size: 13px; line-height: 1.45; }
+  .ds-note strong { color: var(--ink); font-weight: 600; }
 
   /* 2.7 · Toolbar & segmented control */
   .ds-toolbar {
