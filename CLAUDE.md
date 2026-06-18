@@ -454,9 +454,17 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   primed form. (3) **Metric glossary** -- `METRIC_GLOSSARY_` is the ONE
   place metric definitions live; `initMetricGlossary_`'s debounced
   MutationObserver applies them as `title=` to `th` + KPI-label
-  elements (`.gloss` dotted underline). Add new terms to the dict, NOT
-  as inline `title=` in render code (the applier never clobbers an
-  existing title, so per-callsite titles would shadow the dict). (4)
+  elements + adds `.gloss` (which renders a circled-i `::after`
+  indicator). A styled popover (`initGlossTooltip_` -> `.ds-tooltip`)
+  replaces the unstyleable native `title=` tooltip on hover: one shared
+  element, positioned via event delegation, reads the def from `title`
+  and stashes it in `data-gloss` while shown to suppress the native
+  popover (restored on leave -- the applier skips `data-gloss` elements
+  so it can't re-add the title mid-hover). Non-`.gloss` native `title=`
+  tooltips (header buttons etc.) stay native. Add new terms to the
+  dict, NOT as inline `title=` in render code (the applier never
+  clobbers an existing title, so per-callsite titles would shadow the
+  dict). (4)
   **Benchmark tints** -- `benchValueCls_(label, formatted, symmetric)`
   applies the ONLY two company-wide standards (92% answer-rate target ->
   `.bm-target` sage; 5% abandon threshold -> `.bm-over` warn) to KPI tile

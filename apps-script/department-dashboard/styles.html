@@ -2713,6 +2713,25 @@
   }
   /* Sortable headers keep their click affordance. */
   th[data-sort].gloss { cursor: pointer; }
+  /* Styled glossary tooltip (replaces the native title= popover). Positioned
+     in JS (initGlossTooltip_); pointer-events:none keeps it out of the hover
+     hit-test. z-index sits above modals so in-modal terms tooltip correctly. */
+  .ds-tooltip {
+    position: fixed;
+    z-index: 100000;
+    max-width: 280px;
+    padding: 8px 11px;
+    background: var(--paper-card);
+    border: 1px solid var(--line);
+    border-radius: var(--r-sm);
+    box-shadow: var(--shadow-2);
+    font: 400 12px/1.5 var(--ui);
+    color: var(--ink);
+    pointer-events: none;
+    animation: ds-tip-in var(--dur-1, 120ms) var(--ease, ease-out);
+  }
+  @keyframes ds-tip-in { from { opacity: 0; } to { opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) { .ds-tooltip { animation: none; } }
 
   /* Insights: share-of-answered pie (PR port) + card IR drill link. */
   .ins-share-canvas-wrap { height: 220px; position: relative; }

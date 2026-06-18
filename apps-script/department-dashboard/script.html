@@ -751,6 +751,7 @@
     initWorkWindowPill_();
     initOverviewLauncher_();
     initMetricGlossary_();
+    initGlossTooltip_();
     initDateRangeLinks_();
 
     // Fetch the most recent date with data in DQE Historical Data
@@ -2503,12 +2504,79 @@
     if (!root || !root.querySelectorAll) return;
     const sel = 'th, .ir-kpi-label, .ds-kpi__label, .dept-qcd-label, .ov-dept-stat-label';
     root.querySelectorAll(sel).forEach(function (el) {
-      if (el.title) return;                       // never clobber an existing tooltip
+      // Skip already-titled elements AND ones whose title is temporarily
+      // stashed in data-gloss while the styled tooltip is showing, so the
+      // observer can't re-add a native title mid-hover (double tooltip).
+      if (el.title || el.hasAttribute('data-gloss')) return;
       const def = METRIC_GLOSSARY_[glossaryKeyFor_(el)];
       if (!def) return;
       el.title = def;
       el.classList.add('gloss');
     });
+  }
+
+  // Styled tooltip for glossary terms (.gloss) -- replaces the unstyleable
+  // native `title=` popover with a token-styled one. Reads the definition from
+  // the element's `title`, suppresses the native popover by stashing the title
+  // in `data-gloss` while shown (restored on leave -- preserves it for SR /
+  // non-hover), and one shared element is positioned by event delegation so it
+  // covers dynamically-rendered terms too. pointer-events:none keeps the
+  // tooltip out of the hover hit-test.
+  function initGlossTooltip_() {
+    const tip = document.createElement('div');
+    tip.className = 'ds-tooltip';
+    tip.setAttribute('role', 'tooltip');
+    tip.style.display = 'none';
+    document.body.appendChild(tip);
+    let current = null;
+
+    function position(el) {
+      const r = el.getBoundingClientRect();
+      const tw = tip.offsetWidth, th = tip.offsetHeight, gap = 8;
+      let left = r.left + r.width / 2 - tw / 2;
+      left = Math.max(8, Math.min(left, window.innerWidth - tw - 8));
+      let top = r.top - th - gap;                 // prefer above
+      if (top < 8) top = r.bottom + gap;          // flip below if no room
+      tip.style.left = Math.round(left) + 'px';
+      tip.style.top = Math.round(top) + 'px';
+    }
+    function show(el) {
+      const text = el.getAttribute('title') || el.getAttribute('data-gloss');
+      if (!text) return;
+      if (el.hasAttribute('title')) {             // suppress native popover
+        el.setAttribute('data-gloss', el.getAttribute('title'));
+        el.removeAttribute('title');
+      }
+      current = el;
+      tip.textContent = text;
+      tip.style.display = 'block';
+      position(el);
+    }
+    function hide() {
+      if (current && current.hasAttribute('data-gloss')) {
+        current.setAttribute('title', current.getAttribute('data-gloss'));
+        current.removeAttribute('data-gloss');
+      }
+      current = null;
+      tip.style.display = 'none';
+    }
+    function glossOf(node) { return node && node.closest ? node.closest('.gloss') : null; }
+
+    document.addEventListener('mouseover', function (e) {
+      const el = glossOf(e.target);
+      if (el && el !== current) { hide(); show(el); }
+    });
+    document.addEventListener('mouseout', function (e) {
+      const el = glossOf(e.target);
+      if (el && el === current && (!e.relatedTarget || !el.contains(e.relatedTarget))) hide();
+    });
+    document.addEventListener('focusin', function (e) {
+      const el = glossOf(e.target);
+      if (el) { hide(); show(el); }
+    });
+    document.addEventListener('focusout', hide);
+    window.addEventListener('scroll', hide, true);
+    window.addEventListener('resize', hide);
   }
 
   function initMetricGlossary_() {
