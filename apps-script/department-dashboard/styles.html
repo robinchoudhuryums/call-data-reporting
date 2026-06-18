@@ -4404,6 +4404,15 @@
   .ds-kpi--status .ds-kpi__value { color: var(--status, var(--ink)); }
   .ds-kpi__spark { display: block; width: 100%; height: 22px; margin-top: 6px; line-height: 0; }
   .ds-kpi__foot  { font: 400 10px/1.4 var(--mono); color: var(--muted); margin-top: 4px; }
+  /* Preserve the binary benchmark tint (benchValueCls_ -> bm-target/bm-over,
+     the 92% / 5% company standards). The ds-* layer lands at the END of this
+     file, AFTER .bm-target/.bm-over, so the bench classes (single-class, equal
+     specificity) would otherwise lose the cascade to the explicit color on
+     .ds-kpi__value / .ds-kpi__foot. These two-class overrides keep the tint
+     winning regardless of source order (the legacy .pr-kpi-value sat BEFORE
+     .bm-target, so it never needed this). */
+  .ds-kpi__value.bm-target, .ds-kpi__foot.bm-target { color: var(--good); }
+  .ds-kpi__value.bm-over,   .ds-kpi__foot.bm-over   { color: var(--warn); }
   .ds-kpi-grid   { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
   @media (max-width: 760px) { .ds-kpi-grid { grid-template-columns: repeat(2, 1fr); } }
 

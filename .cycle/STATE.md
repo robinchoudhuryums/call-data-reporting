@@ -100,6 +100,22 @@ Tests: 132/132 pass; whole-file CSS brace balance 860/860; INV-16 untouched. No 
   captions / CSV) untouched. tests 132/132; CSS braces 858/858; JS clean. Live verify: S18 (CR
   length-mismatch) post-deploy.
 
+- **Increment 6 (DONE — includes a prod-regression FIX):**
+  (a) **FIX:** the `ds-kpi` migration silently dropped the binary benchmark tint (benchValueCls_
+  → `bm-target`/`bm-over`, the 92%/5% company standard) on KPI VALUES. Cause: the ds-* layer
+  sits at the END of styles.html, AFTER `.bm-target`/`.bm-over`, so `.ds-kpi__value`'s explicit
+  `color:var(--ink)` won the cascade (legacy `.pr-kpi-value` sat BEFORE `.bm-target`, so it never
+  needed this). Added two-class overrides `.ds-kpi__value.bm-target/.bm-over` (+ `__foot`) so the
+  tint wins regardless of order. **This was already in prod** on the merged Insights KPI tiles
+  (PR #84) — subtle (value not green/orange) so the eyeball pass missed it. Restores it there +
+  on the PR tiles (this branch).
+  (b) **Migrate:** `inboundKpiTile_` (label, value, cap, deltaHtml) → `.ds-kpi` markup — converts
+  BOTH the Inbound report KPI row AND the Insights queue-health tiles. Value/cap/delta preserved;
+  cap bench tint preserved via the (a) fix; dropped the literal "vs prior" (the delta pill conveys
+  it). `.pr-kpi-tile`/`.pr-delta` CSS still used by the CR-team + QCD tile renderers (not migrated).
+  tests 132/132; CSS braces 860/860; JS clean. Live verify: S38 (Inbound) + S37 (Insights qh) +
+  re-check 92%/5% tint shows on IR/PR/Insights KPI values, post-deploy.
+
 ## Where I left off
 Phase 1 confirmed in prod by the operator. Continued report-by-report migration with
 `/broad-implement` rigor: Increment 4 promoted the KPI tile to a shared `dsKpiTile_` and moved the

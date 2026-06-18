@@ -11587,12 +11587,20 @@
       .getInboundReport({ from: from, to: to, department: dept });
   }
 
+  // ds-kpi tile for the simpler (label, value, cap, deltaHtml) shape used by
+  // the Inbound report KPI row + the Insights queue-health tiles. Distinct from
+  // dsKpiTile_ (which takes a stat object + sparkline); this one keeps its
+  // pre-formatted value + pre-built delta badge + a bench-tinted caption.
+  // (Phase 1 ds-* migration; cap tint preserved by the .ds-kpi__foot.bm-*
+  // overrides in styles.html.)
   function inboundKpiTile_(label, value, cap, deltaHtml) {
-    return '<div class="pr-kpi-tile">'
-      + '<div class="pr-kpi-label">' + escapeHtml(label) + '</div>'
-      + '<div class="pr-kpi-value">' + escapeHtml(String(value)) + '</div>'
-      + (deltaHtml ? '<div class="pr-kpi-delta">' + deltaHtml + ' <span class="pr-delta-cap">vs prior</span></div>' : '')
-      + (cap ? '<div class="pr-delta-cap' + benchValueCls_(label, cap) + '">' + escapeHtml(cap) + '</div>' : '')
+    return '<div class="ds-kpi">'
+      + '<div class="ds-kpi__top">'
+      +   '<span class="ds-kpi__label">' + escapeHtml(label) + '</span>'
+      +   (deltaHtml || '')
+      + '</div>'
+      + '<div class="ds-kpi__value">' + escapeHtml(String(value)) + '</div>'
+      + (cap ? '<div class="ds-kpi__foot' + benchValueCls_(label, cap) + '">' + escapeHtml(cap) + '</div>' : '')
       + '</div>';
   }
 
