@@ -7896,10 +7896,10 @@
   }
 
   /**
-   * Six KPI tiles showing P2's value (the comparison period) with
-   * a delta vs P1 and the P1 value shown below as context. Same
-   * tile structure as the Performance Report's KPI row so the
-   * shared .pr-kpi-tile / .pr-delta CSS applies.
+   * Six KPI tiles showing P2's value (the comparison period) with a delta
+   * vs P1 and the P1 value in the foot as context. Renders via the shared
+   * ds-kpi component (same as the Performance Report's KPI row), plus a
+   * conditional per-day caption when the two periods differ in length.
    */
   function crRenderTeamTiles_(teamStats, meta) {
     const t = teamStats || {};
@@ -7953,14 +7953,13 @@
         +   ' <span class="pr-delta-cap">vs ' + formatPerDay(p1PerDay) + ' (P1)</span>'
         + '</div>';
     }
-    return '<div class="pr-kpi-tile">'
-         +   '<div class="pr-kpi-row-top">'
-         +     '<div class="pr-kpi-label">' + label + '</div>'
+    return '<div class="ds-kpi">'
+         +   '<div class="ds-kpi__top">'
+         +     '<span class="ds-kpi__label">' + label + '</span>'
+         +     badge
          +   '</div>'
-         +   '<div class="pr-kpi-value' + benchValueCls_(label, s.formatted) + '">' + escapeHtml(String(s.formatted)) + '</div>'
-         +   '<div class="pr-kpi-delta">'
-         +     badge + ' <span class="pr-delta-cap">vs ' + escapeHtml(String(s.prevFormatted)) + ' (P1)</span>'
-         +   '</div>'
+         +   '<div class="ds-kpi__value' + benchValueCls_(label, s.formatted) + '">' + escapeHtml(String(s.formatted)) + '</div>'
+         +   '<div class="ds-kpi__foot">vs ' + escapeHtml(String(s.prevFormatted)) + ' (P1)</div>'
          +   perDayCaption
          + '</div>';
   }

@@ -125,6 +125,16 @@ Tests: 132/132 pass; whole-file CSS brace balance 860/860; INV-16 untouched. No 
   sync. Remaining `.pr-kpi-tile` renderer: CR team tiles (script.html:7956) — bigger (per-day
   caption + "(P1)" badge), left for a focused next increment. IR tiles (`irKpiTile`) are the most
   complex (team-comparison + share + prior). Live verify: S32 (QCD) post-deploy.
+- **Increment 8 (DONE — milestone: all simple KPI tiles on ds-kpi):** Compare Ranges team tiles
+  (`crTeamTile_`) → `.ds-kpi`. Badge → `ds-kpi__top`; value keeps `benchValueCls_` (tint preserved
+  by #85's override); the "vs <prev> (P1)" comparison → `ds-kpi__foot`; the conditional per-day
+  caption stays as its nested `.pr-kpi-perday` line. NO more `pr-kpi-tile` emitters remain — every
+  simple KPI-tile renderer (PR/Insights/Inbound/QCD/CR + Insights queue-health) is on ds-kpi. IR's
+  richer `ir-kpi-tile` (team-avg marker + share + prior) is intentionally NOT migrated. The
+  `.pr-kpi-tile`/`.pr-kpi-value`/etc. CSS is now likely dead but LEFT in place (separate cleanup
+  sweep; `.pr-delta*` + `.pr-kpi-perday` are still used). tests 132/132; JS clean; INV-16 in sync.
+  Live verify: S17/S18 (Compare Ranges) post-deploy. On branch `claude/ds-cr-team-tiles` off main
+  (#85 merged).
 
 ## Where I left off
 Phase 1 confirmed in prod by the operator. Continued report-by-report migration with
