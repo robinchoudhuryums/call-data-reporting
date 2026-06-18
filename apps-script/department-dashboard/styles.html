@@ -3631,6 +3631,21 @@
     cursor: pointer;
   }
   .ov-status-banner-action:hover { background: var(--paper-card); }
+  /* SWR "showing saved snapshot · refreshing…" pill (Phase 5 / decision C6),
+     shown at the top of the Overview body while a cached paint awaits the live
+     fetch; cleared on the next successful load. */
+  .ov-cached-pill {
+    display: inline-flex;
+    align-items: center;
+    margin: 0 0 12px;
+    padding: 5px 12px;
+    border-radius: var(--r-pill);
+    font: 500 10px/1.2 var(--mono);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--muted);
+    background: var(--paper-2);
+  }
   .ov-dept-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));

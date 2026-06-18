@@ -961,29 +961,85 @@
   var ovAutoRefreshTimer_ = null;
   var OV_AUTO_REFRESH_MS  = 5 * 60 * 1000;
 
+  // Stale-while-revalidate cache for the Overview (Phase 5 / decision C6).
+  // Paints the last successful payload instantly on load, then revalidates.
+  // Keyed by VIEWER (email + role) so a cached blob never paints for a
+  // different user on a shared machine, and only the already-personalized
+  // payload the client received is stored (the server strips admin-only fields
+  // per-viewer before serving). Best-effort: any storage/parse error falls back
+  // to the normal fetch path, and the live fetch ALWAYS runs regardless.
+  var OV_CACHE_KEY_ = 'cdr.ov.cache.v1:' + (USER.email || '') + ':' + (USER.role || '');
+  function ovReadCache_() {
+    try {
+      var raw = localStorage.getItem(OV_CACHE_KEY_);
+      if (!raw) return null;
+      var obj = JSON.parse(raw);
+      return (obj && obj.data && obj.data.depts) ? obj.data : null;
+    } catch (e) { return null; }
+  }
+  function ovWriteCache_(data) {
+    try {
+      if (data && data.depts) {
+        localStorage.setItem(OV_CACHE_KEY_, JSON.stringify({ data: data, at: Date.now() }));
+      }
+    } catch (e) { /* quota / disabled -- SWR is best-effort */ }
+  }
+  // "Showing saved snapshot · refreshing…" pill while a cached paint awaits the
+  // live fetch. Cleared on the next successful load.
+  function ovSetCachedIndicator_(on) {
+    var el = document.getElementById('ov-cached-pill');
+    if (on) {
+      if (!el) {
+        el = document.createElement('div');
+        el.id = 'ov-cached-pill';
+        el.className = 'ov-cached-pill';
+        el.textContent = 'Showing saved snapshot · refreshing…';
+        var body = $('ov-body');
+        if (body) body.insertBefore(el, body.firstChild);
+      }
+      el.style.display = '';
+    } else if (el) {
+      el.style.display = 'none';
+    }
+  }
+
   function ovLoad_(silent) {
+    var paintedFromCache = false;
     if (!silent) {
-      $('ov-loading').style.display = '';
-      $('ov-body').style.display = 'none';
+      var cached = ovReadCache_();
+      if (cached) {
+        // Instant paint from the last snapshot; the live fetch below swaps it.
+        $('ov-loading').style.display = 'none';
+        $('ov-body').style.display = '';
+        ovLastData = cached;
+        ovRender_(cached);
+        ovSetCachedIndicator_(true);
+        paintedFromCache = true;
+      } else {
+        $('ov-loading').style.display = '';
+        $('ov-body').style.display = 'none';
+      }
     }
     google.script.run
       .withSuccessHandler(function (data) {
         ovLastData = data;
+        ovWriteCache_(data);
         $('ov-loading').style.display = 'none';
         $('ov-body').style.display = '';
         ovSetRefreshWarn_(false);   // a refresh succeeded: clear any prior warning
+        ovSetCachedIndicator_(false);
         ovRender_(data);
         ovScheduleAutoRefresh_();
       })
       .withFailureHandler(function (err) {
-        if (!silent) {
+        if (!silent && !paintedFromCache) {
+          // No cached content to fall back on -- show the hard error.
           $('ov-loading').textContent = 'Error loading overview: '
             + (err && err.message ? err.message : String(err));
         } else {
-          // Silent auto-refresh failed: surface a muted badge so a
-          // persistently-failing refresh doesn't leave silently-aging
-          // data with no signal (the header freshness pill only updates
-          // on page load). Self-clears on the next successful refresh.
+          // Keep the cached / last-loaded data on screen; surface a muted
+          // "refresh failing" badge instead of discarding good data.
+          ovSetCachedIndicator_(false);
           ovSetRefreshWarn_(true);
         }
         ovScheduleAutoRefresh_();
