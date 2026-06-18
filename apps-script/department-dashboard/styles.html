@@ -2696,13 +2696,22 @@
   /* Metric glossary: matched labels get a hover/tap definition via
      title=; the dotted underline + help cursor advertise it. */
   .gloss {
-    text-decoration: underline dotted;
-    text-decoration-color: var(--muted);
-    text-underline-offset: 3px;
     cursor: pointer;
   }
-  /* Sortable headers keep their click affordance; the dotted
-     underline alone advertises the definition. */
+  /* Circled "i" appended to any term that has a glossary definition -- the
+     "hover for the definition" indicator. Only lands where initMetricGlossary_
+     matched a defined term (th / KPI labels / dept labels), so it never appears
+     on undefined text. */
+  .gloss::after {
+    content: '\00a0\24D8';
+    color: var(--muted);
+    font-size: 0.85em;
+    font-style: normal;
+    font-weight: 400;
+    text-decoration: none;
+    vertical-align: baseline;
+  }
+  /* Sortable headers keep their click affordance. */
   th[data-sort].gloss { cursor: pointer; }
 
   /* Insights: share-of-answered pie (PR port) + card IR drill link. */
