@@ -1369,7 +1369,7 @@
         </div>
 
         <div id="ins-results-status" class="status" style="display:none;"></div>
-        <div id="ins-length-warning" class="cr-length-warning" style="display:none;"></div>
+        <div id="ins-length-warning" class="ds-banner is-warn" style="display:none;"></div>
         <div id="ins-team-insights"></div>
 
         <div class="al-section-title">Department rollup <span class="ins-rollup-cap" id="ins-rollup-cap"></span></div>
@@ -1387,16 +1387,26 @@
           <!-- The per-queue abandoned-% trend chart now lives in the
                consolidated trend chart below (its "Abandoned % by Queue"
                tab); this section keeps the tiles + per-queue detail table. -->
-          <table class="qcd-source-table">
-            <thead><tr>
-              <th>Queue</th>
-              <th class="num">Total Calls</th>
-              <th class="num">Abandoned</th>
-              <th class="num">Abandoned %</th>
-              <th class="num">Violations</th>
-            </tr></thead>
-            <tbody id="ins-qh-tbody"></tbody>
-          </table>
+          <!-- Phase 1 ds-* migration (see docs/design-update-plan.md):
+               the per-queue detail table moved from .qcd-source-table to the
+               shared .ds-table inside a .ds-card (the card supplies the
+               border/radius/elevation chrome ds-table intentionally omits).
+               Contained to this one Insights table; QCD's own .qcd-source-table
+               instances are untouched. The .num / .qcd-warn-* classes the JS
+               row builder emits stay harmless: ds-table right-aligns every
+               cell except the first, and the warn classes are color-only. -->
+          <div class="ds-card" style="overflow:hidden; margin:8px 0 16px;">
+            <table class="ds-table">
+              <thead><tr>
+                <th>Queue</th>
+                <th class="num">Total Calls</th>
+                <th class="num">Abandoned</th>
+                <th class="num">Abandoned %</th>
+                <th class="num">Violations</th>
+              </tr></thead>
+              <tbody id="ins-qh-tbody"></tbody>
+            </table>
+          </div>
           <div class="ins-qh-footnote">Same data the QCD Report reads &mdash; open it for per-queue trend charts and the daily series.</div>
         </div>
 

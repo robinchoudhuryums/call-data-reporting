@@ -10443,6 +10443,43 @@
       .getInsightsReport(req);
   }
 
+  /**
+   * Insights team-rollup KPI tile, rendered with the shared ds-* design
+   * system (Phase 1 proof migration; see docs/design-update-plan.md).
+   * Behaviorally identical to prKpiTile_ -- same valence-to-color mapping,
+   * the same binary benchValueCls_ tint on the value (92% / 5% only; NO
+   * invented 85%/8% bands, decision C2), and the same shared irSparkline_.
+   * Emits the ds-kpi structure (mono label + delta pill on top, display
+   * value, full-width sparkline, quiet "vs prior" footer). Scoped to
+   * Insights only -- the Performance Report keeps prKpiTile_ untouched.
+   */
+  function insKpiTileDs_(label, stat, valenceDirection, sparklineData, sparklineColor) {
+    const s = stat || { formatted: '-', deltaPct: 0, type: 'volume' };
+    const isPctType = s.type === 'pctPoints';
+    const dp = Number(s.deltaPct || 0);
+    let badge;
+    if (Math.abs(dp) < 0.05) {
+      badge = '<span class="ds-delta ds-delta--neutral">— no change</span>';
+    } else {
+      let mod = 'ds-delta--neutral';
+      if (valenceDirection === 'pos')      mod = dp > 0 ? 'ds-delta--good' : 'ds-delta--warn';
+      else if (valenceDirection === 'neg') mod = dp > 0 ? 'ds-delta--warn' : 'ds-delta--good';
+      const arrow = dp > 0 ? '▲' : '▼';
+      const suffix = isPctType ? ' pts' : '%';
+      badge = '<span class="ds-delta ' + mod + '">' + arrow + ' ' + Math.abs(dp).toFixed(1) + suffix + '</span>';
+    }
+    const spark = irSparkline_(sparklineData || [], sparklineColor || '#4E79A7');
+    return '<div class="ds-kpi">'
+         +   '<div class="ds-kpi__top">'
+         +     '<span class="ds-kpi__label">' + label + '</span>'
+         +     badge
+         +   '</div>'
+         +   '<div class="ds-kpi__value' + benchValueCls_(label, s.formatted) + '">' + escapeHtml(String(s.formatted)) + '</div>'
+         +   '<div class="ds-kpi__spark">' + spark + '</div>'
+         +   '<div class="ds-kpi__foot">vs prior</div>'
+         + '</div>';
+  }
+
   function insRenderReport_(data) {
     insLastData = data;
     $('ins-results-date').textContent = '(' + (data.dateLabel || '') + ')';
@@ -10489,10 +10526,10 @@
       // Team (roster) rollup -- the priority metrics first. Total Rung +
       // Total TTT were dropped (low signal); Longest Wait lives in Queue
       // health. Missed keeps its warn valence; volume/rate are neutral/pos.
-      prKpiTile_('% Answered',   t.pct,      'pos', sparks.pct,      (THEME.accent || '#4E79A7')),
-      prKpiTile_('Answered',     t.answered, 'neu', sparks.answered, IR_VOLUME_COLORS.answered),
-      prKpiTile_('Missed (rings)', t.missed, 'neg', sparks.missed,   IR_VOLUME_COLORS.missed),
-      prKpiTile_('ATT (per call)', t.att,    'neu', sparks.att,      (THEME.muted  || '#9C755F')),
+      insKpiTileDs_('% Answered',   t.pct,      'pos', sparks.pct,      (THEME.accent || '#4E79A7')),
+      insKpiTileDs_('Answered',     t.answered, 'neu', sparks.answered, IR_VOLUME_COLORS.answered),
+      insKpiTileDs_('Missed (rings)', t.missed, 'neg', sparks.missed,   IR_VOLUME_COLORS.missed),
+      insKpiTileDs_('ATT (per call)', t.att,    'neu', sparks.att,      (THEME.muted  || '#9C755F')),
     ].join('');
 
     insRenderLengthWarning_(data.meta);
@@ -10656,11 +10693,15 @@
     const el = $('ins-length-warning');
     if (!el) return;
     if (!meta || !meta.lengthMismatch) { el.style.display = 'none'; el.innerHTML = ''; return; }
-    el.innerHTML = '<strong>Different window lengths:</strong> '
+    // ds-banner structure (Phase 1 ds-* migration): a status badge + the
+    // text child. is-warn (set on the element) tints the soft background +
+    // badge; warning copy is unchanged.
+    el.innerHTML = '<span class="ds-banner__badge">Heads up</span>'
+                 + '<div><strong>Different window lengths:</strong> '
                  + 'the selected range is ' + (meta.currentDays || 0) + ' days, the comparison window is '
                  + (meta.priorDays || 0) + ' days. '
                  + 'Volume totals (Rung / Missed / Answered / TTT) aren\'t directly comparable; '
-                 + 'compare the per-day figures shown on the agent cards instead.';
+                 + 'compare the per-day figures shown on the agent cards instead.</div>';
     el.style.display = '';
   }
 
