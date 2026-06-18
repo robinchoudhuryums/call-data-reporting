@@ -1,39 +1,49 @@
 # Cycle State — resume note
 
-**Branch:** `claude/practical-franklin-toyvnp` · working tree has uncommitted broad-implement changes (F1–F6)
-**Verify on resume:** `node --test` (128 pass) + `bash scripts/check-duplicated-files.sh` (INV-16 in sync)
+**Branch:** `claude/dazzling-heisenberg-2png1z` · working tree has uncommitted design Phase 1 changes
+**Verify on resume:** `node --test` (132 pass) + `bash scripts/check-duplicated-files.sh` (INV-16 in sync)
+
+> Prior session's F1–F6 bug-fix work was **merged via PR #83** (commit `06639f5`),
+> so the earlier "not yet committed" note is superseded. This is a new work-stream:
+> the Claude Design package redesign (`docs/design-package/`), planning + Phase 1.
 
 ## What shipped this session (NOT yet committed/pushed)
-Broad-scan audit (3 stages) + broad-implement of findings **F1–F6**:
-- **F1 (High):** `backfillInboundCalls` now returns a status object (was `undefined`);
-  `mirrorInboundForDate_` honors unreachable/failures so deferred-mode inbound mirror
-  can't silently drop unrecoverable `inbound_calls` data. (cdr-import: inboundCalls.js, NeonMirror.js)
-- **F2 (Med):** parity gate (`compareDqeSources_`) now diffs the 19 slot + abandoned
-  cols (certifies the Missed-Calls Neon reader); range from DQE_PARITY_FROM/TO props.
-  `sheetFetchDqeRows_` gained an `includeMissedDetail` opt. (NeonRead.gs)
-- **F3 (Med):** `computeNeonReadHealth_()` surfaces NEON_READ_LAST_ERROR in the Alerts
-  modal (#al-neon-read line). (NeonRead.gs, Alerts.gs, dashboard.html, script.html)
-- **F4 (Med):** LockService on `runAlertsCore_` (real sends) + `sendDigestsForCadence_`
-  to prevent duplicate sends. (Alerts.gs, Digest.gs)
-- **F5 (Low):** `emptyInsights_` now returns trendDaily + queueHealth (shape parity). (InsightsReport.gs)
-- **F6 (obs):** CDR deferred mirror surfaces phone-child count in Pipeline Health note.
-  NOTE: the "silent data loss" framing did NOT reproduce — phone failures already
-  throw+requeue; this was an observability gap only. (NeonMirror.js)
+Design-package planning + **Phase 1 foundation** (additive, zero behavioral change):
+- **Plan of record:** `docs/design-update-plan.md` — full conflict register (C1–C8),
+  decisions, and the phased sequence. Decisions: keep `--r:2px` (C1-A), binary
+  thresholds only (C2-A), keep `data-mode` dark (C3-A), chart factory yes / SRI-restore
+  no (C4-A), wire to `getDepartmentSummary` not `computeSummary_` (C5), adopt SWR with
+  per-viewer guardrails (C6-A), consolidation parked (C7), nav deferred (C8-A).
+- **Phase 1 / Part 1 — tokens** (`styles.html` `:root`): added `--r-sm/--r-lg/--r-pill`,
+  `--shadow-1/2/modal`, `--ease/--dur-1..3/--stagger`. **`--r` LEFT at 2px** (decision C1).
+- **Phase 1 / Part 2 — component layer** (`styles.html`, new block before `</style>`):
+  `.is-good/.is-warn/.is-bad` status helpers + 8 `ds-*` components (kicker/section,
+  chip/delta, KPI tile, status-rail card, table+bar, banner, toolbar/seg, modal shell).
+  Net-new `ds-` namespace (verified collision-free); NOTHING references them yet, so
+  the live app renders byte-identically. Static (no animation — that's Phase 2).
 
-Tests: 128/128 pass; INV-16 clean; all edited files node --check clean. No invariants at risk.
+Tests: 132/132 pass; whole-file CSS brace balance 860/860; INV-16 untouched. No invariants at risk.
 
 ## OPEN / next steps
-1. **Commit + push** the F1–F6 changes (not yet done).
-2. **Deploy:** Department Dashboard (`clasp push -f` + new version) AND CDR Import
-   (`cd apps-script/cdr-import && clasp push -f`). CDR Report NOT needed.
-3. **/sync-docs:** CLAUDE.md NeonMirror gotcha (mirrorInboundForDate_ return contract)
-   + Operator State (new Alerts read-back line F3, DQE_PARITY_FROM/TO props F2).
-4. **Remaining audit findings (not implemented):** F7 (Insights Neon-ext divergence),
-   F8 cluster (predicate inlining, removeDeptConfig stamp, testConnection close, cache-key
-   suffix, backfill resume index), F9/F10/F11, dead code (insMetricPerDay_).
+1. **Commit + push** the Phase 1 CSS + `docs/design-update-plan.md` to this branch (not yet done).
+2. **Deploy (only when ready):** Department Dashboard `clasp push -f` + new deployment version.
+   Inert until markup uses the classes, so deploy is non-urgent / non-blocking.
+3. **Phase 1 / Part 3 — STOPPED, by design:** migrate ONE report (Insights) onto `ds-*`
+   as the proof. NOT done this session — it rewrites ~800 lines of `insRenderReport_`/
+   `insBuildCard_`/… render code covered ONLY by manual scenario S37 (Node suite can't
+   verify client DOM; Apps Script app can't run here). Needs to be done as a focused,
+   separately-reviewed change with a live before/after check. Wire status color via the
+   existing binary `benchValueCls_` (NOT 85%/8% bands).
+4. **/sync-docs:** add a CLAUDE.md note for the new `ds-*` component layer + radius scale
+   under CSS conventions (currently only `docs/design-update-plan.md` documents it).
+5. **Later phases (planned, not started):** Phase 2 (loaders + motion + `.ds-state` kit +
+   SWR Overview, per-viewer keyed), Phase 3 (chart factory + graceful fallback +
+   debounce/token on date edits). Held for sign-off: C7 consolidation, C8 nav restructure.
 
 ## Where I left off
-Implemented F1–F6 per /broad-implement; tests green; answered the user's spreadsheet-
-topology question (web app depends on ONE spreadsheet — the CDR Report workbook — plus
-optional Neon; DQE Report legacy spreadsheet is separate and slated for decommission).
-Awaiting commit/push/deploy direction.
+Implemented Phase 1 Parts 1+2 (additive tokens + 8 `ds-` components) per `/broad-implement Phase 1`;
+tests green; CSS well-formed. Deliberately STOPPED before Part 3 (Insights migration) because it's
+an unverifiable-here, manual-test-only render rewrite — handed back a recommended approach instead.
+Also confirmed access control: non-manager/non-admin domain users land on access-denied with zero
+data (Code.gs doGet + per-RPC re-auth); out-of-domain users can't reach the app. Awaiting
+commit/push/deploy direction.

@@ -46,6 +46,30 @@
     --mono:    'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
     --r: 2px;
+
+    /* === Design-system additions (additive; see docs/design-update-plan.md,
+       Phase 1 / decision C1). --r STAYS 2px -- it is the canonical
+       squared-corner token (CLAUDE.md CSS conventions §2) and the ~56 existing
+       var(--r)/2px callsites are intentionally untouched. The larger radii
+       below are OPT-IN via the ds-* component layer at the end of this file;
+       no legacy selector references them. */
+    --r-sm:   6px;    /* small inner elements, badges, skeleton blocks */
+    --r-lg:   12px;   /* cards, KPI tiles, banners, modal panels, toolbars */
+    --r-pill: 999px;  /* chips, delta pills, segmented controls, bar tracks */
+
+    /* Elevation scale (the pre-redesign UI used hairlines only). Constant
+       across themes -- rgba(black) reads on both light and dark surfaces. */
+    --shadow-1:     0 1px 2px rgba(0,0,0,.05);
+    --shadow-2:     0 1px 2px rgba(0,0,0,.05), 0 5px 18px rgba(0,0,0,.06);
+    --shadow-modal: 0 1px 2px rgba(0,0,0,.05), 0 8px 26px rgba(0,0,0,.10);
+
+    /* Motion tokens (Part 9). Consumed by the Phase 2 motion layer; the
+       Phase 1 ds-* components themselves are static (no animation yet). */
+    --ease:    cubic-bezier(.22,.61,.36,1);
+    --dur-1:   120ms;
+    --dur-2:   200ms;
+    --dur-3:   360ms;
+    --stagger: 30ms;
   }
   @supports (color: oklch(50% 0.1 240)) {
     :root {
@@ -4316,5 +4340,154 @@
     background: var(--accent);
     color: #fff;
     border-color: var(--accent);
+  }
+
+  /* ==============================================================
+     DESIGN-SYSTEM COMPONENT LAYER (ds-*)  —  Phase 1, additive
+     --------------------------------------------------------------
+     Canonical token-driven components from the design package
+     (Component Handoff, Part 2). Net-new `ds-` namespace; NOTHING
+     in the live app references these yet, so adding them changes
+     no existing pixel. Reports migrate onto them one at a time
+     (the legacy ir-/pr-/al-/ins-/cl-/of- dialects stay until then).
+
+     Conventions honored here:
+       - Radius: --r-lg (cards/tiles/modals), --r-sm (small inner),
+         --r-pill (chips/segments/bars). --r (2px) is NOT used here
+         so the rounded look is opt-in (decision C1).
+       - Status color: a card sets .is-good/.is-warn/.is-bad and
+         children read var(--status)/var(--status-soft). The JS that
+         ASSIGNS those classes must use the existing binary
+         benchValueCls_ semantics (92% / 5%) -- do NOT introduce the
+         design's invented 85%/8% bands (decision C2).
+       - Components are static here; the Phase 2 motion layer adds
+         transitions keyed off --ease/--dur-* + a reduced-motion guard.
+     ============================================================== */
+
+  /* Status helper: one class on a container, children inherit the hue.
+     Reads the theme/dark-mode-aware semantic tokens, so dark mode and
+     theme variants work with no extra rules (decision C3). */
+  .is-good { --status: var(--good); --status-soft: var(--good-soft); }
+  .is-warn { --status: var(--warn); --status-soft: var(--warn-soft); }
+  .is-bad  { --status: var(--bad);  --status-soft: var(--bad-soft);  }
+
+  /* 2.1 · Kicker & section header */
+  .ds-kicker {
+    font: 500 10px/1.4 var(--mono);
+    text-transform: uppercase; letter-spacing: .18em; color: var(--muted);
+  }
+  .ds-section {
+    font: 600 24px/1.1 var(--display); letter-spacing: -.5px;
+    color: var(--ink); margin-top: 3px;
+  }
+
+  /* 2.2 · Status chip & delta pill */
+  .ds-chip, .ds-delta {
+    display: inline-flex; align-items: center; gap: 4px;
+    font: 600 11px/1 var(--ui); border-radius: var(--r-pill);
+    padding: 3px 10px; white-space: nowrap;
+    color: var(--status, var(--muted));
+    background: var(--status-soft, var(--paper-2));
+  }
+  .ds-chip--good, .ds-delta--good { color: var(--good); background: var(--good-soft); }
+  .ds-chip--warn, .ds-delta--warn { color: var(--warn); background: var(--warn-soft); }
+  .ds-chip--bad,  .ds-delta--bad  { color: var(--bad);  background: var(--bad-soft);  }
+  .ds-chip--neutral, .ds-delta--neutral { color: var(--muted); background: var(--paper-2); }
+
+  /* 2.3 · KPI tile */
+  .ds-kpi {
+    background: var(--paper-card); border: 1px solid var(--line);
+    border-radius: var(--r-lg); padding: 14px; min-width: 0;
+  }
+  .ds-kpi__top { display: flex; justify-content: space-between; align-items: center; }
+  .ds-kpi__label {
+    font: 500 10px/1 var(--mono); text-transform: uppercase;
+    letter-spacing: .1em; color: var(--muted);
+  }
+  .ds-kpi__value {
+    font: 700 32px/1 var(--display); letter-spacing: -1px; margin-top: 4px;
+    font-variant-numeric: tabular-nums; color: var(--ink);
+  }
+  /* lead-metric variant: value takes the card's status hue */
+  .ds-kpi--status .ds-kpi__value { color: var(--status, var(--ink)); }
+  .ds-kpi__spark { display: block; width: 100%; height: 20px; margin-top: 6px; }
+  .ds-kpi__foot  { font: 400 10px/1.4 var(--mono); color: var(--muted); margin-top: 4px; }
+  .ds-kpi-grid   { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+  @media (max-width: 760px) { .ds-kpi-grid { grid-template-columns: repeat(2, 1fr); } }
+
+  /* 2.4 · Card + status rail (dept tile / agent card share this object) */
+  .ds-card {
+    background: var(--paper-card); border: 1px solid var(--line);
+    border-radius: var(--r-lg); box-shadow: var(--shadow-1); min-width: 0;
+  }
+  .ds-card--rail { position: relative; overflow: hidden; padding-left: 16px; }
+  .ds-card--rail::before {
+    content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px;
+    background: var(--status, var(--accent));
+  }
+
+  /* 2.5 · Data table + inline metric bar */
+  .ds-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .ds-table th {
+    font: 500 10px/1 var(--mono); text-transform: uppercase; letter-spacing: .1em;
+    color: var(--muted); text-align: right; padding: 12px 14px;
+  }
+  .ds-table th:first-child, .ds-table td:first-child { text-align: left; }
+  .ds-table td {
+    padding: 11px 14px; border-top: 1px solid var(--line-2, var(--line));
+    font-variant-numeric: tabular-nums; text-align: right;
+  }
+  .ds-table tbody tr:nth-child(even) { background: var(--paper); }
+  .ds-table tbody tr:hover { background: var(--accent-soft); }
+  .ds-table thead th { position: sticky; top: 0; background: var(--paper-card); z-index: 1; }
+  .ds-bar { display: flex; align-items: center; gap: 8px; }
+  .ds-bar__track {
+    flex: 1; height: 6px; background: var(--paper-2);
+    border-radius: var(--r-pill); overflow: hidden;
+  }
+  .ds-bar__fill { height: 100%; background: var(--status, var(--good)); }
+  .ds-bar__val  { font: 500 12px var(--mono); color: var(--status, var(--ink)); width: 40px; text-align: right; }
+
+  /* 2.6 · "At a glance" banner */
+  .ds-banner {
+    display: flex; gap: 12px; align-items: flex-start;
+    background: var(--status-soft, var(--accent-soft));
+    border-radius: var(--r-lg); padding: 14px 16px;
+    font-size: 13.5px; line-height: 1.55; color: var(--ink);
+  }
+  .ds-banner__badge {
+    flex: none; font: 700 13px var(--display); white-space: nowrap;
+    background: var(--paper-card); color: var(--status, var(--accent));
+    border-radius: var(--r-sm); padding: 5px 10px;
+  }
+
+  /* 2.7 · Toolbar & segmented control */
+  .ds-toolbar {
+    display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+    background: var(--paper-card); border: 1px solid var(--line);
+    border-radius: var(--r-lg); padding: 8px 10px;
+  }
+  .ds-seg { display: inline-flex; background: var(--paper); border-radius: var(--r-pill); padding: 3px; }
+  .ds-seg button {
+    border: 0; background: transparent; cursor: pointer;
+    font: 500 11px var(--ui); color: var(--muted);
+    border-radius: var(--r-pill); padding: 4px 11px;
+  }
+  .ds-seg button[aria-pressed="true"] { background: var(--ink); color: var(--paper-card); }
+
+  /* 2.8 · Modal shell */
+  .ds-modal__backdrop { position: fixed; inset: 0; background: rgba(16,20,24,.45); }
+  .ds-modal__panel {
+    position: relative; background: var(--paper-card);
+    border-radius: var(--r-lg); box-shadow: var(--shadow-modal);
+    max-width: 920px; max-height: 92vh; display: flex; flex-direction: column;
+  }
+  .ds-modal__head {
+    display: flex; justify-content: space-between; align-items: flex-start;
+    padding: 16px 24px; border-bottom: 1px solid var(--line-2, var(--line));
+  }
+  .ds-modal__body { padding: 22px 24px; overflow: auto; }
+  @media (max-width: 680px) {
+    .ds-modal__panel { max-width: 100%; max-height: 100vh; border-radius: 0; }
   }
 </style>
