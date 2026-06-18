@@ -2626,21 +2626,35 @@
 
   /* Answer-first headline block at the top of every report's results
      (the anti-intimidation layer): plain sentences before any chart. */
+  /* Answer-first headline — restyled to the toned ds-banner aesthetic
+     (decision: status-toned banner). Neutral = accent; is-good / is-warn tint
+     the background, rail, and badge from the 92% / 5% company standards ONLY.
+     Shared by reportHeadline_ (7 reports) + the My-Department missed glance, so
+     the tone class is opt-in: no class = neutral (untoned surfaces unchanged). */
   .report-headline {
     margin: 10px 0 14px;
     padding: 12px 16px;
     background: var(--accent-soft);
     border-left: 3px solid var(--accent);
-    border-radius: var(--r);
+    border-radius: var(--r-lg);
   }
+  .report-headline.is-good { background: var(--good-soft); border-left-color: var(--good); }
+  .report-headline.is-warn { background: var(--warn-soft); border-left-color: var(--warn); }
   .report-headline-kicker {
+    display: inline-block;
     font-family: var(--mono);
     font-size: 9px;
+    font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.18em;
     color: var(--accent);
-    margin-bottom: 4px;
+    background: var(--paper-card);
+    border-radius: var(--r-pill);
+    padding: 3px 9px;
+    margin-bottom: 6px;
   }
+  .report-headline.is-good .report-headline-kicker { color: var(--good); }
+  .report-headline.is-warn .report-headline-kicker { color: var(--warn); }
   .report-headline-line {
     font-size: 13.5px;
     line-height: 1.55;

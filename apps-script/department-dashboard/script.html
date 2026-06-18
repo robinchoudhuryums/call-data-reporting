@@ -2556,7 +2556,7 @@
    * `.ir-results-header` (or as the first child when there isn't one,
    * e.g. the Missed Calls modal body). Creates the element on first use.
    */
-  function reportHeadline_(id, containerId, sentences) {
+  function reportHeadline_(id, containerId, headline) {
     const container = $(containerId);
     if (!container) return;
     let el = $(id);
@@ -2581,10 +2581,17 @@
       // summary strip): place the headline just above the anchor.
       else container.parentNode.insertBefore(el, container);
     }
+    // Composers return either a bare sentences array (neutral) OR
+    // { sentences, tone } where tone = { cls:'is-good'|'is-warn', badge } from
+    // headlineTone_ (the 92% / 5% standards only). Arrays stay neutral.
+    const sentences = Array.isArray(headline) ? headline : ((headline && headline.sentences) || []);
+    const tone = (!Array.isArray(headline) && headline && headline.tone) || null;
     const lines = (sentences || []).filter(function (s) { return !!s; });
     if (!lines.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
     el.style.display = '';
-    el.innerHTML = '<div class="report-headline-kicker">At a glance</div>'
+    el.className = 'report-headline' + (tone && tone.cls ? ' ' + tone.cls : '');
+    const badge = (tone && tone.badge) ? tone.badge : 'At a glance';
+    el.innerHTML = '<div class="report-headline-kicker">' + escapeHtml(badge) + '</div>'
       + lines.map(function (s) { return '<div class="report-headline-line">' + s + '</div>'; }).join('');
   }
 
@@ -2602,6 +2609,20 @@
   }
 
   function headlineName_(n) { return '<strong>' + escapeHtml(n) + '</strong>'; }
+
+  // Status tone for the answer-first headline, from the ONLY two company-wide
+  // standards (answer rate >= 92% = "On track"; answer < 92% OR abandon >= 5%
+  // = "Watch"). Returns null when neither metric is available -> neutral
+  // "At a glance". No invented thresholds (decision C2 + the headline decision).
+  function headlineTone_(opts) {
+    opts = opts || {};
+    const a = opts.answerPct, b = opts.abandonPct;
+    const hasA = a != null && isFinite(Number(a));
+    const hasB = b != null && isFinite(Number(b));
+    if (!hasA && !hasB) return null;
+    const warn = (hasA && Number(a) < 92) || (hasB && Number(b) >= 5);
+    return warn ? { cls: 'is-warn', badge: 'Watch' } : { cls: 'is-good', badge: 'On track' };
+  }
 
   function insHeadline_(data) {
     const t = data.teamStats || {};
@@ -2640,7 +2661,10 @@
       s.push('Heads up: callers abandoned <strong>'
         + escapeHtml(String(qh.totals.abandonedPctStr)) + '</strong> of queue calls — over the 5% threshold (see Queue health below).');
     }
-    return s.slice(0, 3);
+    return { sentences: s.slice(0, 3), tone: headlineTone_({
+      answerPct: (t.pct || {}).val,
+      abandonPct: (qh && qh.totals) ? qh.totals.abandonedPct : null,
+    }) };
   }
 
   function prHeadline_(data) {
@@ -2655,7 +2679,7 @@
       + headlineDeltaPhrase_(t.pct) + ').');
     const ins = data.teamInsights || [];
     if (ins.length && ins[0].text) s.push(escapeHtml(ins[0].text));
-    return s;
+    return { sentences: s, tone: headlineTone_({ answerPct: (t.pct || {}).val }) };
   }
 
   function crHeadline_(data) {
@@ -2677,7 +2701,8 @@
       s.push(up + ' agent' + (up === 1 ? '' : 's') + ' improved, ' + down + ' regressed, and '
         + flat + ' showed little change between the two periods.');
     }
-    return s;
+    // Tone on Period 2 (the current period) answer rate vs the 92% standard.
+    return { sentences: s, tone: headlineTone_({ answerPct: (t.pct || {}).val }) };
   }
 
   function irHeadline_(data) {
@@ -2702,7 +2727,7 @@
         + escapeHtml(String(a.stats.pct)) + '</strong>' + vsTeam + ').'];
       const ins = a.insights || [];
       if (ins.length && ins[0].text) s.push(escapeHtml(ins[0].text));
-      return s;
+      return { sentences: s, tone: headlineTone_({ answerPct: (a.raw || {}).pct }) };
     }
     let top = cards[0];
     cards.forEach(function (c) { if ((c.raw || {}).answered > (top.raw || {}).answered) top = c; });
@@ -2753,7 +2778,7 @@
       s.push('<strong>' + fmtNumber(t.violations) + '</strong> violation day'
         + (Number(t.violations) === 1 ? '' : 's') + ' so far this month.');
     }
-    return s;
+    return { sentences: s, tone: headlineTone_({ abandonPct: Number(t.abandonedPct) }) };
   }
 
   function inboundHeadline_(data) {
@@ -2774,7 +2799,7 @@
     if (meta.companyView && Number(k.abandonedIvr) > 0) {
       s.push(fmtNumber(k.abandonedIvr) + ' abandoned in the IVR before reaching any queue.');
     }
-    return s.slice(0, 3);
+    return { sentences: s.slice(0, 3), tone: headlineTone_({ answerPct: Number(k.answerRate) }) };
   }
 
   // -- Missed Calls Report modal -----------------------------------------
