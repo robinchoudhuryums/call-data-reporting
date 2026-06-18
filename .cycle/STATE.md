@@ -147,6 +147,17 @@ Tests: 132/132 pass; whole-file CSS brace balance 860/860; INV-16 untouched. No 
   report with tiles. Branch claude/ds-prkpi-cleanup off main (#86 merged).
 
 
+- **Increment 10 (DONE — Phase 2 kickoff):** restyled the no-data empty-state to the ds-state
+  "no-data" tone (soft rounded icon TILE + display headline + muted sentence), CSS-only. Class
+  names kept (`.empty-state`/`-icon`/`-title`/`-hint`), so the shared `emptyStateHtml_` helper AND
+  the 7 static empty/unavailable surfaces (dept / QCD x2 / Inbound-unavailable / Caller-Lookup x3)
+  pick it up with ZERO markup/JS change. Chose this over renaming to `.ds-state` because the class
+  is deeply embedded (helper + 7 static elements + the reportHeadline_ anchor check) and several
+  states (Neon-down, Caller Lookup) are hard to trigger/verify. The `.status-*` inline banners +
+  error/loading/permission tones stay as-is (a fuller ds-state unification is a larger future
+  effort). tests 132/132; CSS braces 854/854; INV-16 in sync. Live verify: any empty-date-range
+  report (Missed/Individual/QCD) shows the new icon-tile empty state. Branch claude/ds-empty-state.
+
 ## Where I left off
 Phase 1 confirmed in prod by the operator. Continued report-by-report migration with
 `/broad-implement` rigor: Increment 4 promoted the KPI tile to a shared `dsKpiTile_` and moved the
