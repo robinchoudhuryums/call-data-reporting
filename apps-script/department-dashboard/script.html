@@ -7925,9 +7925,9 @@
     if (!meta || !meta.lengthMismatch) { el.style.display = 'none'; el.innerHTML = ''; return; }
     const p1d = meta.p1Days || 0;
     const p2d = meta.p2Days || 0;
-    // ds-banner structure (Phase 1 ds-* migration): status badge + text child.
-    // is-warn (on the element) tints the soft background + badge; copy unchanged.
-    el.innerHTML = '<span class="ds-banner__badge">Heads up</span>'
+    // ds-note: a compact caveat (icon + text), deliberately lighter than the
+    // toned at-a-glance banner above it so the two don't read alike. Copy unchanged.
+    el.innerHTML = '<span class="ds-note__icon" aria-hidden="true">&#9888;</span>'
                  + '<div><strong>Different period lengths:</strong> '
                  + 'Period 1 is ' + p1d + ' days, Period 2 is ' + p2d + ' days. '
                  + 'Volume totals (Rung / Missed / Answered) aren\'t directly comparable; '
@@ -10753,10 +10753,9 @@
     const el = $('ins-length-warning');
     if (!el) return;
     if (!meta || !meta.lengthMismatch) { el.style.display = 'none'; el.innerHTML = ''; return; }
-    // ds-banner structure (Phase 1 ds-* migration): a status badge + the
-    // text child. is-warn (set on the element) tints the soft background +
-    // badge; warning copy is unchanged.
-    el.innerHTML = '<span class="ds-banner__badge">Heads up</span>'
+    // ds-note: a compact caveat (icon + text), deliberately lighter than the
+    // toned at-a-glance banner above it so the two don't read alike. Copy unchanged.
+    el.innerHTML = '<span class="ds-note__icon" aria-hidden="true">&#9888;</span>'
                  + '<div><strong>Different window lengths:</strong> '
                  + 'the selected range is ' + (meta.currentDays || 0) + ' days, the comparison window is '
                  + (meta.priorDays || 0) + ' days. '
