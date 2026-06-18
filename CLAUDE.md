@@ -467,7 +467,16 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   rollout (commit 99e7253); explicit saved values, including `'warm'`,
   are preserved untouched. The `:root` tokens in `styles.html` remain
   the warm palette as the fallback for returning explicit-warm users
-  (whose body carries no `data-theme` attribute).
+  (whose body carries no `data-theme` attribute). The Overview also
+  stale-while-revalidate-caches its last successful payload under
+  `cdr.ov.cache.v1:<email>:<role>` (Phase 5 / decision C6) — keyed per
+  VIEWER so a cached blob never paints for a different user on a shared
+  machine, and only the already-personalized payload the client received
+  is stored (the server strips admin-only fields per-viewer first, INV-39).
+  `ovLoad_` paints it instantly then revalidates; best-effort (any
+  storage/parse error falls back to the normal fetch, and the live fetch
+  always runs). Bump the `v1` if the Overview payload shape changes
+  meaningfully.
 - **CSS design-token conventions (post-redesign Phase A).** The
   dashboard's design system is centralized in `styles.html :root`;
   three conventions established by commit 99e7253 are worth respecting:
