@@ -10693,11 +10693,15 @@
     const el = $('ins-length-warning');
     if (!el) return;
     if (!meta || !meta.lengthMismatch) { el.style.display = 'none'; el.innerHTML = ''; return; }
-    el.innerHTML = '<strong>Different window lengths:</strong> '
+    // ds-banner structure (Phase 1 ds-* migration): a status badge + the
+    // text child. is-warn (set on the element) tints the soft background +
+    // badge; warning copy is unchanged.
+    el.innerHTML = '<span class="ds-banner__badge">Heads up</span>'
+                 + '<div><strong>Different window lengths:</strong> '
                  + 'the selected range is ' + (meta.currentDays || 0) + ' days, the comparison window is '
                  + (meta.priorDays || 0) + ' days. '
                  + 'Volume totals (Rung / Missed / Answered / TTT) aren\'t directly comparable; '
-                 + 'compare the per-day figures shown on the agent cards instead.';
+                 + 'compare the per-day figures shown on the agent cards instead.</div>';
     el.style.display = '';
   }
 

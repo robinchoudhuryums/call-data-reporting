@@ -41,11 +41,19 @@ Tests: 132/132 pass; whole-file CSS brace balance 860/860; INV-16 untouched. No 
      Contained to that one table; QCD's own `.qcd-source-table` instances untouched; no
      JS references it (`.num`/`.qcd-warn-*` classes stay harmless). Tbody row builder
      unchanged. Whole-file divs balanced 608/608.
-   - **Next increments:** at-a-glance banner is BLOCKED as a clean per-report move (it uses
-     the SHARED `reportHeadline_` across all reports — needs a decision before diverging).
-     Remaining: per-agent cards → `ds-card--rail` + `ds-chip` + `ds-bar` (marquee component,
-     higher complexity — touches insBuildCard_ classification/drill-through), and the
-     queue-health KPI tiles (inboundKpiTile_ → ds-kpi variant, low risk).
+   - **Increment 3 (DONE):** Insights length-mismatch warning → `.ds-banner is-warn`
+     (badge + text). dashboard.html class swap (`cr-length-warning`→`ds-banner is-warn`,
+     contained — CR's own `.cr-length-warning` untouched) + `insRenderLengthWarning_`
+     restructured to emit `ds-banner__badge` ("Heads up") + a text `<div>`; warning copy
+     verbatim. Demonstrates the banner component (a new one). NOTE: the at-a-glance
+     headline still can't use ds-banner cleanly — it's the SHARED `reportHeadline_`.
+   - **Agent cards → `ds-card--rail`: DEFERRED on purpose.** They ALREADY use a left-border
+     classification rail (`.ins-card-improved/regressed/mixed` = accent/warn/muted), so a
+     ds-card--rail migration is ~zero visual gain but high unverifiable risk (padding/layout
+     preservation, drill-through, cards⇄chart toggle, collapsible details). Recommend doing
+     it only alongside a live before/after, or skipping (the existing rail already matches
+     the target look). Queue-health KPI tiles (inboundKpiTile_) remain a safe-but-quirky
+     option (bench-tint-on-cap + pr-delta badges to preserve).
 4. **/sync-docs:** add a CLAUDE.md note for the new `ds-*` component layer + radius scale
    under CSS conventions (currently only `docs/design-update-plan.md` documents it).
 5. **Later phases (planned, not started):** Phase 2 (loaders + motion + `.ds-state` kit +
@@ -54,10 +62,12 @@ Tests: 132/132 pass; whole-file CSS brace balance 860/860; INV-16 untouched. No 
 
 ## Where I left off
 Implemented Phase 1 Parts 1+2 (additive tokens + 8 `ds-` components) AND a contained Part 3 proof
-(Insights KPI tiles → `ds-kpi`, then Insights queue-health table → `ds-table`/`ds-card`, PR + QCD
-untouched) per `/broad-implement Phase 1`; tests 132/132 green, INV-16 in sync, script.html JS
-`node --check` clean, dashboard.html divs balanced 608/608. Live visual check is the only open
-verify (manual S37, post-deploy). Next: per-agent cards → `ds-card--rail` (or pause for deploy).
+(Insights KPI tiles → `ds-kpi`, queue-health table → `ds-table`/`ds-card`, length-warning →
+`ds-banner`; PR + QCD + CR untouched) per `/broad-implement Phase 1`; tests 132/132 green, INV-16
+in sync, script.html JS `node --check` clean, dashboard.html divs balanced 608/608. Live visual
+check is the only open verify (manual S37, post-deploy). Agent-card rail migration deliberately
+deferred (near-zero visual gain vs high unverifiable risk — see Increment notes). Recommend a
+deploy + eyeball before further Insights surgery.
 Also confirmed access control: non-manager/non-admin domain users land on access-denied with zero
 data (Code.gs doGet + per-RPC re-auth); out-of-domain users can't reach the app. Awaiting
 commit/push/deploy direction.
