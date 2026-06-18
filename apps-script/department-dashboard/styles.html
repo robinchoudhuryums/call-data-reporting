@@ -4208,15 +4208,28 @@
   }
 
   /* -------- Empty state ------------------------------------------ */
+  /* No-data / empty-state block — restyled to the ds-state "no-data" tone
+     (Phase 2 redesign): a soft rounded icon TILE + display-font headline + one
+     muted sentence. Class names kept, so the shared emptyStateHtml_ helper AND
+     the static dept / QCD / Inbound / Caller-Lookup empty+unavailable surfaces
+     all pick this up with no markup change. (The .status-* inline banners and
+     the error/loading/permission tones stay on their own styling for now.) */
   .empty-state {
     text-align: center;
     padding: 40px 24px;
     color: var(--muted);
   }
   .empty-state-icon {
-    font-size: 32px;
-    margin-bottom: 8px;
-    opacity: 0.5;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 48px;
+    height: 48px;
+    margin-bottom: 12px;
+    font-size: 24px;
+    line-height: 1;
+    background: var(--paper-2);
+    border-radius: var(--r-lg);
   }
   .empty-state-title {
     font-family: var(--display);
