@@ -35,8 +35,17 @@ Tests: 132/132 pass; whole-file CSS brace balance 860/860; INV-16 untouched. No 
    `irSparkline_`). Performance Report's `prKpiTile_` untouched; shared `reportHeadline_`
    (used by all reports) intentionally NOT migrated. `.ds-kpi__spark` height nudged
    20→22px so the 70×22 sparkline isn't clipped. **Live visual verify still pending**
-   (manual S37 post-deploy — can't run Apps Script here). Remaining Insights surfaces
-   (banner, agent cards, queue-health table) are the next report-by-report increments.
+   (manual S37 post-deploy — can't run Apps Script here).
+   - **Increment 2 (DONE):** Insights queue-health per-queue table migrated to `.ds-table`
+     inside a `.ds-card` (dashboard.html) — the card supplies the chrome ds-table omits.
+     Contained to that one table; QCD's own `.qcd-source-table` instances untouched; no
+     JS references it (`.num`/`.qcd-warn-*` classes stay harmless). Tbody row builder
+     unchanged. Whole-file divs balanced 608/608.
+   - **Next increments:** at-a-glance banner is BLOCKED as a clean per-report move (it uses
+     the SHARED `reportHeadline_` across all reports — needs a decision before diverging).
+     Remaining: per-agent cards → `ds-card--rail` + `ds-chip` + `ds-bar` (marquee component,
+     higher complexity — touches insBuildCard_ classification/drill-through), and the
+     queue-health KPI tiles (inboundKpiTile_ → ds-kpi variant, low risk).
 4. **/sync-docs:** add a CLAUDE.md note for the new `ds-*` component layer + radius scale
    under CSS conventions (currently only `docs/design-update-plan.md` documents it).
 5. **Later phases (planned, not started):** Phase 2 (loaders + motion + `.ds-state` kit +
@@ -45,9 +54,10 @@ Tests: 132/132 pass; whole-file CSS brace balance 860/860; INV-16 untouched. No 
 
 ## Where I left off
 Implemented Phase 1 Parts 1+2 (additive tokens + 8 `ds-` components) AND a contained Part 3 proof
-(Insights KPI tiles → `ds-kpi`, PR untouched) per `/broad-implement Phase 1`; tests 132/132 green,
-INV-16 in sync, script.html JS `node --check` clean. Live visual check is the only open verify
-(manual S37, post-deploy).
+(Insights KPI tiles → `ds-kpi`, then Insights queue-health table → `ds-table`/`ds-card`, PR + QCD
+untouched) per `/broad-implement Phase 1`; tests 132/132 green, INV-16 in sync, script.html JS
+`node --check` clean, dashboard.html divs balanced 608/608. Live visual check is the only open
+verify (manual S37, post-deploy). Next: per-agent cards → `ds-card--rail` (or pause for deploy).
 Also confirmed access control: non-manager/non-admin domain users land on access-denied with zero
 data (Code.gs doGet + per-RPC re-auth); out-of-domain users can't reach the app. Awaiting
 commit/push/deploy direction.
