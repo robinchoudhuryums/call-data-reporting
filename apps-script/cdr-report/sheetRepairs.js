@@ -8,7 +8,7 @@
 // ============================================================================
 
 
-// -- Slot-timestamp coercion repair (cols K-AC) ------------------------------
+// -- Slot/abandoned-time coercion repair (cols K-AC + AF) --------------------
 //
 // Background: cols K-AC of "DQE Historical Data" hold comma-joined CST
 // missed-time strings (e.g. "10:23:33,10:08:41"). A cell with a SINGLE
@@ -18,6 +18,14 @@
 // serial decimal), so getDisplayValues() returns garbage instead of the time --
 // breaking the Neon slot_* mirror and the Missed Calls report for that cell.
 // Multi-value cells escape (not a parseable single time).
+//
+// AF (col 32, "Abandoned Missed Leg Times") holds the SAME kind of comma-joined
+// H:MM:SS strings (built via pstToCSTStr, like K-AC) and coerces identically,
+// so it is recovered here too. AD/AE (cols 30-31) are big-integer call IDs --
+// NOT time columns -- and are handled separately by repairDqeAbandonedIds; the
+// fractional-day recovery here would wrongly turn an ID into "0:00:00" (and,
+// conversely, the abandoned-ID repair would wrongly mark a coerced AF time
+// serial as "#REBUILD"), which is why AF belongs in THIS repair, not that one.
 //
 // The daily build now plain-text-protects K-AC going forward
 // (buildDQEHistoricalData.js setNumberFormat('@')). This repairs rows that were
@@ -32,8 +40,8 @@
 // Usage:
 //   1. (Recommended) Run previewDqeSlotTimestampRepair() first -- logs the
 //      count + up to 12 "serial -> H:mm:ss" samples, writes NOTHING.
-//   2. Run repairDqeSlotTimestamps() to apply: it locks K-AC to plain text and
-//      rewrites the recovered timestamps as text.
+//   2. Run repairDqeSlotTimestamps() to apply: it locks K-AC + AF to plain text
+//      and rewrites the recovered timestamps as text.
 //   3. If DQE_READ_SOURCE=neon, re-mirror the affected dates afterward
 //      (backfillDQEHistoryUpsert()) so dqe_history picks up the corrected rows.
 
@@ -53,65 +61,91 @@ function repairDqeSlotTimestamps_(dryRun) {
   if (!sheet) { Logger.log('repairDqeSlotTimestamps: sheet "DQE Historical Data" not found.'); return; }
   var lastRow = sheet.getLastRow();
   if (lastRow < 2) { Logger.log('repairDqeSlotTimestamps: no data rows.'); return; }
+  var n = lastRow - 1;
 
-  var START_COL = 11, NUM_COLS = 19;          // K..AC (HISTORICAL_COLS TIME_SLOTS_START..END)
-  var range = sheet.getRange(2, START_COL, lastRow - 1, NUM_COLS);
-
-  // 1) Numeric lens: a coerced time-VALUE cell now returns its serial NUMBER
-  //    (not a 1899-epoch Date). Already-text cells stay strings. (Even on a
-  //    dry run we apply this lens so the scan sees the serials; the dry run
-  //    just doesn't rewrite values -- the format is restored to '@' either way.)
-  range.setNumberFormat('0.############');
-  SpreadsheetApp.flush();
-  var vals = range.getValues();
+  // Two time-of-day column groups that coerce IDENTICALLY: the 19 slot columns
+  // K-AC (missed times) and AF (abandoned missed-leg times). Both hold
+  // comma-joined H:MM:SS strings, and a SINGLE-value cell auto-coerces to a time
+  // serial the same way. AD/AE (cols 30-31) are big-integer call IDs -- NOT time
+  // columns -- and are DELIBERATELY excluded: the fractional-day recovery below
+  // would turn an integer ID into "0:00:00" (those are handled by
+  // repairDqeAbandonedIds).
+  var groups = [
+    { label: 'K-AC', start: 11, count: 19 },          // HISTORICAL_COLS TIME_SLOTS_START..END
+    { label: 'AF',   start: 32, count: 1  }            // Abandoned Missed Leg Times
+  ];
 
   var fixed = 0, samples = [];
-  for (var i = 0; i < vals.length; i++) {
-    for (var j = 0; j < vals[i].length; j++) {
-      var v = vals[i][j];
-      if (typeof v === 'number') {                       // coerced cell
-        var secs = Math.round((v - Math.floor(v)) * 86400);
-        if (secs >= 86400) secs -= 86400;                // guard rounding at midnight
-        var h = Math.floor(secs / 3600),
-            m = Math.floor((secs % 3600) / 60),
-            s = secs % 60;
-        var str = h + ':' + (m < 10 ? '0' : '') + m + ':' + (s < 10 ? '0' : '') + s;
-        if (samples.length < 12) {
-          samples.push('R' + (i + 2) + 'C' + (START_COL + j) + ': ' + v + ' -> ' + str);
+  var pending = [];                                    // [{ range, vals }] to write back on apply
+  for (var g = 0; g < groups.length; g++) {
+    var start = groups[g].start, label = groups[g].label;
+    var range = sheet.getRange(2, start, n, groups[g].count);
+
+    // Numeric lens: a coerced time-VALUE cell now returns its serial NUMBER
+    // (not a 1899-epoch Date). Already-text cells stay strings. Applied even on
+    // a dry run so the scan sees the serials; the format is restored to '@'
+    // either way.
+    range.setNumberFormat('0.############');
+    SpreadsheetApp.flush();
+    var vals = range.getValues();
+
+    for (var i = 0; i < vals.length; i++) {
+      for (var j = 0; j < vals[i].length; j++) {
+        var v = vals[i][j];
+        if (typeof v === 'number') {                   // coerced cell
+          var secs = Math.round((v - Math.floor(v)) * 86400);
+          if (secs >= 86400) secs -= 86400;            // guard rounding at midnight
+          var h = Math.floor(secs / 3600),
+              m = Math.floor((secs % 3600) / 60),
+              s = secs % 60;
+          var str = h + ':' + (m < 10 ? '0' : '') + m + ':' + (s < 10 ? '0' : '') + s;
+          if (samples.length < 12) {
+            samples.push('R' + (i + 2) + 'C' + (start + j) + ' (' + label + '): ' + v + ' -> ' + str);
+          }
+          vals[i][j] = str;
+          fixed++;
         }
-        vals[i][j] = str;
-        fixed++;
+        // strings (incl. comma-joined + already-correct singles) and '' left as-is
       }
-      // strings (incl. comma-joined + already-correct singles) and '' left as-is
     }
+    pending.push({ range: range, vals: vals });
   }
 
   if (dryRun) {
     // Restore plain-text format (harmless, and what the apply path would set)
     // but do NOT rewrite values.
-    range.setNumberFormat('@');
+    for (var p = 0; p < pending.length; p++) pending[p].range.setNumberFormat('@');
     SpreadsheetApp.flush();
-    Logger.log('previewDqeSlotTimestampRepair: %s coerced slot cell(s) WOULD be recovered. '
+    Logger.log('previewDqeSlotTimestampRepair: %s coerced slot/AF cell(s) WOULD be recovered. '
       + 'Samples: %s', fixed, JSON.stringify(samples));
     return { fixed: fixed, applied: false, samples: samples };
   }
 
-  // 2) Lock K-AC to plain text, then write the recovered strings so they STAY
-  //    text (and the pipeline's matching setNumberFormat('@') keeps it that way).
-  range.setNumberFormat('@');
-  range.setValues(vals);
+  // Lock K-AC + AF to plain text, then write the recovered strings so they STAY
+  // text (and the pipeline's matching setNumberFormat('@') keeps it that way).
+  for (var q = 0; q < pending.length; q++) {
+    pending[q].range.setNumberFormat('@');
+    pending[q].range.setValues(pending[q].vals);
+  }
   SpreadsheetApp.flush();
-  Logger.log('repairDqeSlotTimestamps: recovered %s coerced slot cell(s). Samples: %s',
+  Logger.log('repairDqeSlotTimestamps: recovered %s coerced slot/AF cell(s). Samples: %s',
     fixed, JSON.stringify(samples));
   return { fixed: fixed, applied: true, samples: samples };
 }
 
 
-// -- Abandoned ID/time coercion repair (cols AD/AE/AF = 30-32) ---------------
+// -- Abandoned ID coercion repair (cols AD/AE = 30-31) -----------------------
 //
-// Background: cols AD/AE/AF of "DQE Historical Data" hold comma-joined big
-// integers -- abandoned parent IDs (AD), abandoned missed-leg IDs (AE), and
-// abandoned missed-leg times in epoch-ms (AF). A MULTI-value cell like
+// Scope note: AF (col 32, "Abandoned Missed Leg Times") was previously lumped
+// in here, but it is a TIME-of-day column (comma-joined H:MM:SS, like K-AC),
+// NOT an ID column. A coerced single AF time is a fractional serial, so this
+// helper's Number.isSafeInteger() test would wrongly mark it "#REBUILD" and
+// destroy a recoverable value. AF is now recovered by repairDqeSlotTimestamps
+// (the slot/abandoned-time coercion repair). This repair handles AD/AE only.
+//
+// Background: cols AD/AE of "DQE Historical Data" hold comma-joined big
+// integers -- abandoned parent IDs (AD) and abandoned missed-leg IDs (AE). A
+// MULTI-value cell like
 // "1762242202191,1762242165529" gets auto-coerced by Sheets into a single
 // Number (the comma read as a thousands group), concatenating the digits into a
 // ~26-digit value that exceeds 2^53 -- so precision past ~15 digits is LOST and
@@ -180,7 +214,7 @@ function repairDqeAbandonedIds_(dryRun) {
   var lastRow = sheet.getLastRow();
   if (lastRow < 2) { Logger.log('repairDqeAbandonedIds: no data rows.'); return; }
 
-  var START_COL = 30, NUM_COLS = 3;            // AD..AF (abandoned parent IDs / missed IDs / times)
+  var START_COL = 30, NUM_COLS = 2;            // AD..AE (abandoned parent IDs / missed-leg IDs). AF (32) is a TIME column -- recovered by repairDqeSlotTimestamps, NOT here.
   var range = sheet.getRange(2, START_COL, lastRow - 1, NUM_COLS);
   var vals  = range.getValues();               // coerced cells come back as Numbers; text/'' stay as-is
   var dates = sheet.getRange(2, 2, lastRow - 1, 1).getDisplayValues();   // col B = Date (for reporting)
@@ -283,8 +317,8 @@ function repairDqeAbandonedIds_(dryRun) {
 //     rewritten.
 //
 // Run ORDER (so all cells are clean text before the shift):
-//   1. repairDqeSlotTimestamps()  -- recover any coerced K-AC cells (above).
-//   2. repairDqeAbandonedIds()    -- recover/mark AD-AF coercion (above).
+//   1. repairDqeSlotTimestamps()  -- recover any coerced K-AC + AF time cells (above).
+//   2. repairDqeAbandonedIds()    -- recover/mark AD-AE ID coercion (above).
 //   3. previewDqeOldPstTimestampShift()  -- dry run; logs counts + samples.
 //   4. repairDqeOldPstTimestampShift()   -- apply the +2h shift.
 //   5. If DQE_READ_SOURCE=neon or the Neon mirror is consumed: re-mirror the
