@@ -457,12 +457,20 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   elements (`.gloss` dotted underline). Add new terms to the dict, NOT
   as inline `title=` in render code (the applier never clobbers an
   existing title, so per-callsite titles would shadow the dict). (4)
-  **Benchmark tints** -- `benchValueCls_(label, formatted)` applies the
-  ONLY two company-wide standards (92% answer-rate target -> `.bm-target`
-  sage; 5% abandon threshold -> `.bm-over` warn) to KPI tile values
-  (IR/PR/CR/Insights/Inbound) + inbound abandon-% cells. Don't add
-  invented thresholds here; dept-specific alert thresholds stay with
-  the Alerts engine.
+  **Benchmark tints** -- `benchValueCls_(label, formatted, symmetric)`
+  applies the ONLY two company-wide standards (92% answer-rate target ->
+  `.bm-target` sage; 5% abandon threshold -> `.bm-over` warn) to KPI tile
+  values (IR/PR/CR/Insights/Inbound) + inbound abandon-% cells. Default
+  is BINARY (highlight only the notable direction -- tables, IR tiles).
+  The `symmetric` flag (passed `true` by the ds-kpi tiles -- `dsKpiTile_`,
+  `crTeamTile_`, `inboundKpiTile_`) tints BOTH sides of the SAME 92%/5%
+  standard, so a below-target answer rate reads orange "watch" and a
+  healthy abandon rate reads green instead of plain black. Still no
+  invented thresholds (only %-formatted answer/abandon values tint;
+  counts/durations stay neutral); dept-specific alert thresholds stay
+  with the Alerts engine. The bm-* tint wins on `.ds-kpi__value`/`__foot`
+  via the two-class overrides in `styles.html` (the ds-* layer lands
+  after `.bm-target`/`.bm-over`).
 - **Per-report client prefs in localStorage.** Each report persists its
   own form state under `cdr.ir.prefs.v1`, `cdr.pr.prefs.v1`,
   `cdr.cr.prefs.v1`, and `cdr.ins.prefs.v2`. Bump the trailing version when the prefs schema
