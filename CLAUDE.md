@@ -437,7 +437,15 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   pieces, all in script.html/styles.html with no server endpoints or
   cache bumps: (1) **answer-first headlines** -- every report's results
   open with 2-3 plain sentences via `reportHeadline_` + per-report
-  `*Headline_` composers (each guards its no-data case). (2) **Overview
+  `*Headline_` composers (each guards its no-data case). The headline is
+  a STATUS-TONED banner (redesign): a composer may return
+  `{sentences, tone}` instead of a bare array, where `tone` comes from
+  `headlineTone_` using ONLY the 92%/5% company standards (answer >=92%
+  -> green "On track"; answer <92% OR abandon >=5% -> orange "Watch");
+  absent metric / bare-array return -> neutral "At a glance". Wired for
+  IR(single)/PR/CR/Insights (answer rate) + QCD/Inbound (abandon/answer);
+  Missed + comparison-mode stay neutral. `.report-headline.is-good`/
+  `.is-warn` tint the box + badge. (2) **Overview
   question launcher** (`initOverviewLauncher_`) -- four question chips
   on the Overview route into Insights / Missed / Individual / QCD
   pre-primed; Insights auto-runs via the one-shot `insLauncherAutoRun_`
