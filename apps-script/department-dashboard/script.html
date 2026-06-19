@@ -5379,7 +5379,17 @@
       tg.setAttribute('aria-pressed', irShowAllCharts ? 'true' : 'false');
     }
     if (irChartInstances && irChartInstances.length) {
-      irChartInstances.forEach(function (c) { try { c.resize(); } catch (e) {} });
+      // Defer past layout. Toggling panel visibility AND the wrap height
+      // (420px single -> 300px all) changes the chart containers; a
+      // synchronous resize reads stale dimensions, so a chart canvas sized
+      // to the old (taller) box overflows and overlaps the next panel when
+      // switching modes back and forth. A double rAF lets the browser lay
+      // out the now-visible panels at their new height first.
+      requestAnimationFrame(function () {
+        requestAnimationFrame(function () {
+          irChartInstances.forEach(function (c) { try { c.resize(); } catch (e) {} });
+        });
+      });
     }
   }
 
