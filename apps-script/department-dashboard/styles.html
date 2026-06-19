@@ -441,6 +441,58 @@
     outline-offset: 2px;
   }
 
+  /* Universal floating Help button (FAB). Fixed bottom-right, above modals
+     (z-index > the 100 modals but below the 100000 glossary tooltip) so Help
+     is reachable even with a report modal open. Hidden via .is-hidden (the
+     Settings toggle). Circled "?" -- a larger sibling of .help-btn. */
+  .help-fab {
+    position: fixed;
+    right: 20px;
+    bottom: 20px;
+    z-index: 150;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    border: 1px solid var(--line);
+    background: var(--paper-card);
+    color: var(--muted);
+    font-size: 20px;
+    font-weight: 700;
+    line-height: 1;
+    padding: 0;
+    cursor: pointer;
+    box-shadow: var(--shadow-2, 0 6px 20px rgba(0,0,0,0.16));
+    transition: background var(--dur-1, 120ms) var(--ease), color var(--dur-1, 120ms) var(--ease),
+                border-color var(--dur-1, 120ms) var(--ease), transform var(--dur-1, 120ms) var(--ease);
+  }
+  .help-fab:hover {
+    background: var(--ink);
+    color: var(--paper);
+    border-color: var(--ink);
+    transform: translateY(-1px);
+  }
+  .help-fab:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  .help-fab.is-hidden { display: none; }
+  @media (max-width: 768px) { .help-fab { right: 12px; bottom: 12px; } }
+  /* Help can be opened from the FAB while another report modal is already
+     open. All modals share z-index:100 and stack by DOM order, and #help-modal
+     sits earlier in the DOM than the report modals -- so without this it would
+     render BEHIND them. Lift it above the other modals (and above the FAB). */
+  #help-modal { z-index: 200; }
+  .settings-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    font-size: 14px;
+  }
+
   /* Tags — warm-paper soft-bg pills with mono uppercase labels. */
   .tag {
     display: inline-block;
@@ -1000,14 +1052,14 @@
      it applies to every modal with no JS. Ends at transform:none so it never
      fights the drag/resize inline transform. Reduced-motion disables it. */
   .modal[aria-hidden="false"] .modal-backdrop {
-    animation: ds-modal-fade var(--dur-2, 200ms) var(--ease, ease-out);
+    animation: ds-modal-fade var(--dur-3, 360ms) var(--ease, ease-out);
   }
   .modal[aria-hidden="false"] .modal-panel {
-    animation: ds-modal-rise var(--dur-2, 200ms) var(--ease, ease-out);
+    animation: ds-modal-rise var(--dur-3, 360ms) var(--ease, ease-out);
   }
   @keyframes ds-modal-fade { from { opacity: 0; } to { opacity: 1; } }
   @keyframes ds-modal-rise {
-    from { opacity: 0; transform: translateY(10px) scale(0.98); }
+    from { opacity: 0; transform: translateY(14px) scale(0.985); }
     to   { opacity: 1; transform: none; }
   }
   @media (prefers-reduced-motion: reduce) {

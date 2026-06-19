@@ -414,6 +414,9 @@
             <span class="theme-chip-label">Clinical White</span>
           </button>
         </div>
+        <h3>Help button</h3>
+        <p>The floating <span aria-hidden="true">?</span> button stays available in the corner even over report modals. Uncheck to hide it (the <span aria-hidden="true">?</span> in the header still opens Help).</p>
+        <label class="settings-toggle"><input type="checkbox" id="help-fab-toggle" checked> Show floating Help button</label>
       </div>
       </div>
     </div>
@@ -2057,6 +2060,11 @@
   </div>
 
   <div class="toast-container" id="toast-container"></div>
+
+  <!-- Universal floating Help button: stays above modals so Help is always
+       one click away. Toggle off in Settings. Opens the same #help-modal as
+       the header "?". -->
+  <button class="help-fab" id="help-fab" type="button" aria-label="Help & FAQ" title="Help & FAQ">?</button>
 
   <script>
     // Server-side JSON-encoded user envelope. Escape comes from
