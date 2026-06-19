@@ -245,6 +245,34 @@
     } catch (e) { /* ignore -- fall back to per-chart `plugins` option */ }
   })();
 
+  // Graceful fallback when the Chart.js CDN fails to load (Part 4).
+  // Common path is provably unchanged: when Chart is defined this is a
+  // transparent pass-through to `new Chart(target, config)`. ONLY when
+  // the global is missing (blocked/failed CDN, SRI mismatch) do we hide
+  // the canvas and drop an inline "chart unavailable" note in its place.
+  // Scoped to the CDN-absent case only -- it does NOT try/catch per-chart
+  // render errors (that would change control flow on the happy path).
+  function safeChart_(target, config) {
+    if (typeof Chart !== 'undefined') return new Chart(target, config);
+    try { chartUnavailable_(target); } catch (e) { /* best-effort */ }
+    return null;
+  }
+
+  // `target` is either a 2d context (has .canvas) or a canvas element.
+  function chartUnavailable_(target) {
+    var canvas = target && target.canvas ? target.canvas
+               : (target && target.tagName === 'CANVAS' ? target : null);
+    if (!canvas || !canvas.parentNode) return;
+    canvas.style.display = 'none';
+    var sib = canvas.nextElementSibling;
+    if (sib && sib.classList && sib.classList.contains('ds-chart-unavailable')) return; // idempotent
+    var note = document.createElement('div');
+    note.className = 'ds-note ds-chart-unavailable';
+    note.textContent = 'Chart unavailable — the charting library could not load. '
+      + 'The numbers above are unaffected; try reloading the page.';
+    canvas.parentNode.insertBefore(note, canvas.nextSibling);
+  }
+
   const state = {
     rows: [],
     totals: null,
@@ -1850,7 +1878,7 @@
 
     const ovPlugins = (typeof ChartDataLabels !== 'undefined') ? [ChartDataLabels] : [];
 
-    ovChartInstance = new Chart($('ov-trend-chart').getContext('2d'), {
+    ovChartInstance = safeChart_($('ov-trend-chart').getContext('2d'), {
       type: 'line',
       data: { labels: labels, datasets: datasets },
       plugins: ovPlugins,
@@ -3149,7 +3177,7 @@
     refreshChartTheme();
     // Canvas is always freshly recreated above, so we always
     // instantiate a new Chart rather than update an existing one.
-    missedChart = new Chart(ctx, cfg);
+    missedChart = safeChart_(ctx, cfg);
   }
 
   // -- Bucket detail (chart drill-in) ------------------------------------
@@ -3625,7 +3653,7 @@
         chartWrap.innerHTML = '<canvas id="dept-missed-chart" aria-label="Hour-of-day distribution of missed calls"></canvas>';
         refreshChartTheme();
         const openFull = function () { const b = $('missed-report-btn'); if (b) b.click(); };
-        deptMissedChart = new Chart($('dept-missed-chart').getContext('2d'),
+        deptMissedChart = safeChart_($('dept-missed-chart').getContext('2d'),
           missedRadarCfg_((data && data.chart) || { labels: [], counts: [] },
                           function () { openFull(); }));
       }
@@ -5844,7 +5872,7 @@
       };
     });
 
-    const chart = new Chart(canvas.getContext('2d'), {
+    const chart = safeChart_(canvas.getContext('2d'), {
       type: 'line',
       data: { labels: labels, datasets: datasets },
       plugins: irPlugins,
@@ -6865,7 +6893,7 @@
     const pieColors = pieData.map(function (_, i) {
       return IR_CHART_COLORS[i % IR_CHART_COLORS.length];
     });
-    const pie = new Chart($('pr-share-chart').getContext('2d'), {
+    const pie = safeChart_($('pr-share-chart').getContext('2d'), {
       type: 'doughnut',
       data: {
         labels: pieData.map(function (d) { return d.label; }),
@@ -6921,7 +6949,7 @@
     // shows efficiency in one shared view. Mixed chart so the line
     // datasets carry `type: 'line'` explicitly.
     const volData = (data.chartData && data.chartData.volumeBar) || [];
-    const bar = new Chart($('pr-volume-chart').getContext('2d'), {
+    const bar = safeChart_($('pr-volume-chart').getContext('2d'), {
       type: 'bar',
       data: {
         labels: volData.map(function (d) { return d.label; }),
@@ -7084,7 +7112,7 @@
       return m + ':' + (s < 10 ? '0' + s : s);
     };
 
-    const trend = new Chart($('pr-trend-chart').getContext('2d'), {
+    const trend = safeChart_($('pr-trend-chart').getContext('2d'), {
       type: 'line',
       data: {
         labels: labels,
@@ -8477,7 +8505,7 @@
       return isPercent ? Number((v || 0).toFixed(1)) : v;
     });
 
-    crChartInstance = new Chart($('cr-chart').getContext('2d'), {
+    crChartInstance = safeChart_($('cr-chart').getContext('2d'), {
       type: 'bar',
       data: {
         labels: series.labels,
@@ -10727,7 +10755,7 @@
 
     const colors = slices.map(function (_, i) { return IR_CHART_COLORS[i % IR_CHART_COLORS.length]; });
     const plugins = (typeof ChartDataLabels !== 'undefined') ? [ChartDataLabels] : [];
-    insShareChartInstance = new Chart($('ins-share-chart').getContext('2d'), {
+    insShareChartInstance = safeChart_($('ins-share-chart').getContext('2d'), {
       type: 'doughnut',
       data: {
         labels: slices.map(function (d) { return d.label; }),
@@ -11043,7 +11071,7 @@
       };
     }
 
-    insChartInstance = new Chart(canvas.getContext('2d'), chartConfig);
+    insChartInstance = safeChart_(canvas.getContext('2d'), chartConfig);
   }
 
   // Delta badge mirroring dsKpiTile_'s logic for the per-agent card grid.
@@ -11206,7 +11234,7 @@
     });
     const fmtV = function (n) { return isPct ? (Number(n).toFixed(1) + '%') : String(Math.round(n)); };
 
-    insCardsChartInstance = new Chart(canvas.getContext('2d'), {
+    insCardsChartInstance = safeChart_(canvas.getContext('2d'), {
       type: 'bar',
       data: { labels: labels, datasets: [{ label: 'Gap vs team avg', data: gaps,
         backgroundColor: colors, borderColor: colors }] },
@@ -11963,7 +11991,7 @@
       return calls > 0 ? Number((((Number(d.abandoned) || 0) / calls) * 100).toFixed(1)) : 0;
     });
     const color = isRate ? (THEME.warn || '#E15759') : (THEME.accent || '#4E79A7');
-    inboundDrillChart = new Chart(canvas.getContext('2d'), {
+    inboundDrillChart = safeChart_(canvas.getContext('2d'), {
       type: 'line',
       data: {
         labels: labels,
@@ -12983,7 +13011,7 @@
     }
 
     refreshChartTheme();
-    qcdChartInstance = new Chart(canvas, {
+    qcdChartInstance = safeChart_(canvas, {
       type: 'line',
       data: { labels: labels, datasets: datasets },
       options: {

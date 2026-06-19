@@ -158,6 +158,32 @@ Tests: 132/132 pass; whole-file CSS brace balance 860/860; INV-16 untouched. No 
   effort). tests 132/132; CSS braces 854/854; INV-16 in sync. Live verify: any empty-date-range
   report (Missed/Individual/QCD) shows the new icon-tile empty state. Branch claude/ds-empty-state.
 
+- **Increments 11–17 (DONE — merged via PRs #87–#96, not individually logged here):**
+  the operator-feedback + Phase 2 polish wave: at-a-glance headline TONED banner
+  (`headlineTone_` + per-report `*Headline_` composers, 92%/5% good/warn/neutral);
+  Insights length-mismatch demoted from a banner to a compact `.ds-note`; glossary
+  circled-ⓘ indicator (`.gloss::after`) + styled `.ds-tooltip` replacing the
+  unstyleable native `title=` on hover; symmetric `benchValueCls_` so KPI VALUES (not
+  just chips) tint on both sides of the 92%/5% standard; date-range autocorrect
+  (`linkDateRange_` — End snaps to Start when Start passes End); modal entrance motion
+  (`ds-modal-rise`, keyed off `aria-hidden`); inline equalizer busy-indicator
+  (`.ds-loader--eq`); Overview stale-while-revalidate cache (`OV_CACHE_KEY_`, per-viewer
+  keyed). All behind the additive ds-* layer / CSS-only where possible; CLAUDE.md +
+  README synced.
+
+- **Increment 18 (DONE — Part 4 chart graceful fallback):** wrapped all 13 `new Chart(`
+  callsites in `safeChart_(target, config)` (script.html). Common path is provably
+  unchanged — when `Chart` is defined it's a transparent pass-through to
+  `new Chart(target, config)`; ONLY when the global is missing (blocked/failed Chart.js
+  CDN, SRI mismatch) does `chartUnavailable_` hide the canvas and insert an idempotent
+  `.ds-note.ds-chart-unavailable` message ("Chart unavailable — … numbers above are
+  unaffected"). Scoped strictly to the CDN-absent case; does NOT try/catch per-chart
+  render errors (that would alter happy-path control flow). `chartUnavailable_` resolves
+  the canvas from either a 2d-context target (`.canvas`) or a canvas element. tests
+  132/132; JS `node --check` clean; INV-16 in sync. Live verify: block the Chart.js CDN
+  in devtools → any report's chart slot shows the inline note, KPIs/tables still render.
+  Branch `claude/ds-chart-fallback` off main (#96 merged).
+
 ## Where I left off
 Phase 1 confirmed in prod by the operator. Continued report-by-report migration with
 `/broad-implement` rigor: Increment 4 promoted the KPI tile to a shared `dsKpiTile_` and moved the
