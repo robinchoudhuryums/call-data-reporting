@@ -2547,6 +2547,42 @@
     g['avg talk']     = g['att'];
   })();
 
+  // Rich tooltip variants for high-value terms: a titled definition + an
+  // optional benchmark chip surfacing the 92% / 5% company standards. Keys
+  // match glossaryKeyFor_ output. Rendered via innerHTML (developer-authored
+  // constants only -- never user data); terms without a rich entry fall back
+  // to the plain-text METRIC_GLOSSARY_ definition. The plain title is still
+  // set on the element for screen readers + the no-JS fallback.
+  const METRIC_GLOSSARY_RICH_ = (function () {
+    function tip(title, body, bench) {
+      return '<span class="ds-tip-title">' + title + '</span>'
+           + '<span>' + body + '</span>'
+           + (bench ? '<span class="ds-tip-bench ' + bench.cls + '">' + bench.text + '</span>' : '');
+    }
+    const target92 = { cls: 'is-good', text: 'Company target ≥ 92%' };
+    const thresh5  = { cls: 'is-warn', text: '5% or more in a day = violation' };
+    const attNote  = { cls: '', text: 'Longer isn’t automatically worse — read with % answered' };
+    const m = {};
+    ['% answered', 'answer rate', 'answer rate %'].forEach(function (k) {
+      m[k] = tip('% Answered', 'Answered calls as a share of calls offered.', target92);
+    });
+    ['abandoned %', 'aband. %', 'abandon rate %'].forEach(function (k) {
+      m[k] = tip('Abandoned %', 'Share of queue calls where the caller hung up before being answered.', thresh5);
+    });
+    m['violations'] = tip('Violations',
+      'Days a queue’s abandoned % went over the threshold. Month-to-date in the totals row.', thresh5);
+    ['att', 'avg att', 'avg talk', 'att (per call)', 'avg talk (per call)'].forEach(function (k) {
+      m[k] = tip('Average Talk Time',
+        'Per answered call (total talk ÷ calls answered). Days with no answered calls don’t drag it down.', attNote);
+    });
+    m['att (daily avg)'] = tip('Average Talk Time — daily mean',
+      'The simple mean of each day’s stored ATT (the My Department lens). The reports use the per-call '
+      + 'weighted version, so the two can differ for the same range.', null);
+    m['ttt'] = tip('Total Talk Time',
+      'The sum of this agent’s own conversation time on answered calls inside the work window.', null);
+    return m;
+  })();
+
   function glossaryKeyFor_(el) {
     let text = (el.textContent || '');
     return text.replace(/[▲▼↑↓]/g, '')   // sort arrows
@@ -2562,10 +2598,13 @@
       // stashed in data-gloss while the styled tooltip is showing, so the
       // observer can't re-add a native title mid-hover (double tooltip).
       if (el.title || el.hasAttribute('data-gloss')) return;
-      const def = METRIC_GLOSSARY_[glossaryKeyFor_(el)];
+      const key = glossaryKeyFor_(el);
+      const def = METRIC_GLOSSARY_[key];
       if (!def) return;
       el.title = def;
       el.classList.add('gloss');
+      const rich = METRIC_GLOSSARY_RICH_[key];
+      if (rich) el.setAttribute('data-gloss-rich', rich);
     });
   }
 
@@ -2595,14 +2634,18 @@
       tip.style.top = Math.round(top) + 'px';
     }
     function show(el) {
+      const rich = el.getAttribute('data-gloss-rich');
       const text = el.getAttribute('title') || el.getAttribute('data-gloss');
-      if (!text) return;
+      if (!rich && !text) return;
       if (el.hasAttribute('title')) {             // suppress native popover
         el.setAttribute('data-gloss', el.getAttribute('title'));
         el.removeAttribute('title');
       }
       current = el;
-      tip.textContent = text;
+      // Rich entries render developer-authored HTML (titled def + benchmark
+      // chip); everything else stays plain text.
+      if (rich) { tip.innerHTML = rich; tip.classList.add('ds-tooltip--rich'); }
+      else { tip.textContent = text; tip.classList.remove('ds-tooltip--rich'); }
       tip.style.display = 'block';
       position(el);
     }
