@@ -153,10 +153,16 @@ function escapeHtmlServer_(s) {
 
 // -- Report helpers (was PerformanceReport.gs) -----------------------------
 
-function buildTeamInsights_(curr, prev) {
+function buildTeamInsights_(curr, prev, opts) {
   const out = [];
   const nonTrivial = (curr.rung || 0) >= 10 || (prev.rung || 0) >= 10;
   if (!nonTrivial) return out;
+
+  // When the two windows differ in length (INV-35), raw cumulative-volume
+  // comparisons (answered count, missed count) are apples-to-oranges and
+  // mislead. excludeVolume drops those, keeping the length-independent
+  // metrics -- answer rate (a %) and avg talk time (a per-call average).
+  const excludeVolume = !!(opts && opts.excludeVolume);
 
   const pctDelta = (curr.pct || 0) - (prev.pct || 0);
   if (Math.abs(pctDelta) >= 5) {
@@ -170,35 +176,37 @@ function buildTeamInsights_(curr, prev) {
     });
   }
 
-  if ((prev.answered || 0) > 0) {
-    const change = ((curr.answered - prev.answered) / prev.answered) * 100;
-    if (Math.abs(change) >= 15) {
-      const up = change > 0;
-      out.push({
-        type: up ? 'positive' : 'negative',
-        text: 'Answered call volume ' + (up ? 'rose' : 'fell') + ' '
-            + Math.abs(change).toFixed(0) + '% vs prior ('
-            + curr.answered + ' vs ' + prev.answered + ').',
-      });
-    }
-  } else if (curr.answered >= 10) {
-    out.push({
-      type: 'positive',
-      text: 'Team answered ' + curr.answered + ' calls this period (no comparable prior data).',
-    });
-  }
-
-  if ((prev.missed || 0) >= 5 || (curr.missed || 0) >= 5) {
-    if ((prev.missed || 0) > 0) {
-      const change = ((curr.missed - prev.missed) / prev.missed) * 100;
-      if (Math.abs(change) >= 20) {
+  if (!excludeVolume) {
+    if ((prev.answered || 0) > 0) {
+      const change = ((curr.answered - prev.answered) / prev.answered) * 100;
+      if (Math.abs(change) >= 15) {
         const up = change > 0;
         out.push({
-          type: up ? 'negative' : 'positive',
-          text: 'Missed-call count ' + (up ? 'rose' : 'fell') + ' '
+          type: up ? 'positive' : 'negative',
+          text: 'Answered call volume ' + (up ? 'rose' : 'fell') + ' '
               + Math.abs(change).toFixed(0) + '% vs prior ('
-              + curr.missed + ' vs ' + prev.missed + ' missed).',
+              + curr.answered + ' vs ' + prev.answered + ').',
         });
+      }
+    } else if (curr.answered >= 10) {
+      out.push({
+        type: 'positive',
+        text: 'Team answered ' + curr.answered + ' calls this period (no comparable prior data).',
+      });
+    }
+
+    if ((prev.missed || 0) >= 5 || (curr.missed || 0) >= 5) {
+      if ((prev.missed || 0) > 0) {
+        const change = ((curr.missed - prev.missed) / prev.missed) * 100;
+        if (Math.abs(change) >= 20) {
+          const up = change > 0;
+          out.push({
+            type: up ? 'negative' : 'positive',
+            text: 'Missed-call count ' + (up ? 'rose' : 'fell') + ' '
+                + Math.abs(change).toFixed(0) + '% vs prior ('
+                + curr.missed + ' vs ' + prev.missed + ' missed).',
+          });
+        }
       }
     }
   }

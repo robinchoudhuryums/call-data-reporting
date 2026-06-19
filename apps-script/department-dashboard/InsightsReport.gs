@@ -435,9 +435,13 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
   }).sort(function (a, b) { return b.rawAnswered - a.rawAnswered; });
 
   // --- Team insights vs prior (reuse buildTeamInsights_) -------------
+  // On a length mismatch, drop the raw-volume insights (answered/missed
+  // counts) -- they're not comparable across windows of different lengths.
+  // Answer rate (%) and avg talk time (per-call average) stay.
   const teamInsights = buildTeamInsights_(
     { rung: teamCurr.rung, missed: teamCurr.missed, answered: teamCurr.answered, pct: currPct, att: currAtt },
-    { rung: teamPrev.rung, missed: teamPrev.missed, answered: teamPrev.answered, pct: prevPct, att: prevAtt }
+    { rung: teamPrev.rung, missed: teamPrev.missed, answered: teamPrev.answered, pct: prevPct, att: prevAtt },
+    { excludeVolume: lengthMismatch }
   );
 
   // --- 12-month team trend (powers tile sparklines + the trend chart;
