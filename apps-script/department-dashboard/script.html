@@ -2792,7 +2792,14 @@
       s.push('Heads up: callers abandoned <strong>'
         + escapeHtml(String(qh.totals.abandonedPctStr)) + '</strong> of queue calls — over the 5% threshold (see Queue health below).');
     }
-    return { sentences: s.slice(0, 3), tone: headlineTone_({
+    // When the comparison windows differ a lot (> 7 days), the deltas in the
+    // headline are apples-to-oranges, so neutralize the status tone (drop the
+    // green/orange "On track"/"Watch" banner) to avoid a false alarm. The
+    // sentences -- including any real >=5% abandon heads-up -- still render.
+    const meta = data.meta || {};
+    const bigMismatch = !!meta.lengthMismatch
+      && Math.abs((meta.currentDays || 0) - (meta.priorDays || 0)) > 7;
+    return { sentences: s.slice(0, 3), tone: bigMismatch ? null : headlineTone_({
       answerPct: (t.pct || {}).val,
       abandonPct: (qh && qh.totals) ? qh.totals.abandonedPct : null,
     }) };
@@ -10710,7 +10717,11 @@
       const basis = mode === 'custom'
         ? 'Comparing against the selected prior window: '
         : 'Comparing against the immediately-preceding period: ';
-      cmp.textContent = basis + (data.priorDateLabel || '');
+      // Inline the different-window-lengths caveat right here (next to the
+      // basis line) as a warn glyph + bold label whose explanation lives in
+      // a hover tooltip -- lighter than the old standalone banner.
+      cmp.innerHTML = escapeHtml(basis) + escapeHtml(data.priorDateLabel || '')
+        + insLengthFlagHtml_(data.meta);
     }
 
     // Team insights callout (reuse the IR block; relabel to "Team insights").
@@ -10910,19 +10921,26 @@
    * Only reachable with a custom prior window -- the auto-adjacent
    * and YoY windows are always the same length as the current range.
    */
+  // Inline different-window-lengths flag for the Insights compare line: a warn
+  // glyph + bold label, with the full explanation in a hover tooltip (.gloss ->
+  // the styled ds-tooltip). Returns '' when the windows match. Replaces the old
+  // standalone ds-note banner so the caveat sits next to "Comparing against...".
+  function insLengthFlagHtml_(meta) {
+    if (!meta || !meta.lengthMismatch) return '';
+    const cur = meta.currentDays || 0, pri = meta.priorDays || 0;
+    const tip = 'The selected range is ' + cur + ' days; the comparison window is ' + pri
+      + ' days. Volume totals (Rung / Missed / Answered / TTT) aren’t directly comparable — '
+      + 'compare the per-day figures on the agent cards instead.';
+    return '<span class="ins-length-flag gloss" tabindex="0" title="' + escapeHtml(tip) + '">'
+         + '<span class="ins-length-flag__icon" aria-hidden="true">&#9888;</span> Different window lengths</span>';
+  }
+
+  // The standalone #ins-length-warning banner is retired -- the caveat now
+  // renders inline in the compare line (insLengthFlagHtml_). Keep this hidden
+  // so any stale markup never shows.
   function insRenderLengthWarning_(meta) {
     const el = $('ins-length-warning');
-    if (!el) return;
-    if (!meta || !meta.lengthMismatch) { el.style.display = 'none'; el.innerHTML = ''; return; }
-    // ds-note: a compact caveat (icon + text), deliberately lighter than the
-    // toned at-a-glance banner above it so the two don't read alike. Copy unchanged.
-    el.innerHTML = '<span class="ds-note__icon" aria-hidden="true">&#9888;</span>'
-                 + '<div><strong>Different window lengths:</strong> '
-                 + 'the selected range is ' + (meta.currentDays || 0) + ' days, the comparison window is '
-                 + (meta.priorDays || 0) + ' days. '
-                 + 'Volume totals (Rung / Missed / Answered / TTT) aren\'t directly comparable; '
-                 + 'compare the per-day figures shown on the agent cards instead.</div>';
-    el.style.display = '';
+    if (el) { el.style.display = 'none'; el.innerHTML = ''; }
   }
 
   /**
