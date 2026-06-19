@@ -721,8 +721,8 @@
     const range = defaultRange();
     $('from-date').value = range.from;
     $('to-date').value = range.to;
-    $('from-date').addEventListener('change', function () { clearActivePreset_(); refresh(); });
-    $('to-date').addEventListener('change', function () { clearActivePreset_(); refresh(); });
+    $('from-date').addEventListener('change', function () { clearActivePreset_(); refreshOnDateEdit_(); });
+    $('to-date').addEventListener('change', function () { clearActivePreset_(); refreshOnDateEdit_(); });
 
     initDatePresets_();
 
@@ -3514,6 +3514,23 @@
     el.style.display = '';
   }
 
+  // Generic trailing-edge debounce. Returns a wrapped fn that defers
+  // invocation until `ms` have elapsed since the last call.
+  function debounce_(fn, ms) {
+    var t = null;
+    return function () {
+      var args = arguments, self = this;
+      if (t) clearTimeout(t);
+      t = setTimeout(function () { t = null; fn.apply(self, args); }, ms);
+    };
+  }
+
+  // Monotonic request token for getDepartmentSummary. A rapid sequence
+  // of date edits can have several requests in flight; only the latest
+  // may paint. Stale responses (token !== summaryReqSeq) are dropped so
+  // an earlier, slower response can't clobber a newer one.
+  var summaryReqSeq = 0;
+
   function refresh() {
     const dept = getRequestedDept();
     if (!dept) {
@@ -3539,11 +3556,24 @@
       $('page-title').textContent = dept;
     }
 
+    var myToken = ++summaryReqSeq;
     google.script.run
-      .withSuccessHandler(onData)
-      .withFailureHandler(onError)
+      .withSuccessHandler(function (data) {
+        if (myToken !== summaryReqSeq) return;   // a newer request superseded this one
+        onData(data);
+      })
+      .withFailureHandler(function (err) {
+        if (myToken !== summaryReqSeq) return;
+        onError(err);
+      })
       .getDepartmentSummary(req);
   }
+
+  // Date-edit-only entry point: debounced so free typing / rapid arrow
+  // presses coalesce into one request, and so the trailing call reads
+  // the values AFTER the linkDateRange_ autocorrect (registered later)
+  // has run on the same change event.
+  var refreshOnDateEdit_ = debounce_(refresh, 350);
 
   function onData(data) {
     $('refresh-btn').disabled = false;
