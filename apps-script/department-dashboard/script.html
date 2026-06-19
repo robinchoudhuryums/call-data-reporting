@@ -882,9 +882,19 @@
   // Opens on "?" button in header. Closes on backdrop click, X button, or
   // Escape key. Returns focus to the help button on close. Reuses the same
   // modal infrastructure that upcoming report views will use.
+  // Floating Help FAB visibility pref (Settings toggle). 'off' hides it.
+  function helpFabHidden_() {
+    try { return localStorage.getItem('cdr.help.fab') === 'off'; } catch (e) { return false; }
+  }
+  function applyHelpFabPref_() {
+    const fab = $('help-fab');
+    if (fab) fab.classList.toggle('is-hidden', helpFabHidden_());
+  }
+
   function initHelpModal() {
     const btn = $('help-btn');
     const modal = $('help-modal');
+    const fab = $('help-fab');
     if (!btn || !modal) return;
 
     const closeBtn = modal.querySelector('.modal-close');
@@ -894,6 +904,9 @@
       modal.style.display = '';
       modal.setAttribute('aria-hidden', 'false');
       document.body.style.overflow = 'hidden';
+      // Tuck the FAB away while Help itself is open (it floats above modals,
+      // so it would otherwise sit on top of its own panel). Restored on close.
+      if (fab) fab.classList.add('is-hidden');
       trapFocus_(modal);
       initModalDragResize_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
       document.addEventListener('keydown', onKeyDown);
@@ -905,6 +918,7 @@
       resetModalTransform_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
       document.body.style.overflow = '';
       document.removeEventListener('keydown', onKeyDown);
+      applyHelpFabPref_();   // restore FAB per the Settings pref
       btn.focus();
     }
     function onKeyDown(e) {
@@ -912,8 +926,10 @@
     }
 
     btn.addEventListener('click', openModal);
+    if (fab) fab.addEventListener('click', openModal);
     if (closeBtn) closeBtn.addEventListener('click', closeModal);
     if (backdrop) backdrop.addEventListener('click', closeModal);
+    applyHelpFabPref_();   // honor the saved Settings pref on load
   }
 
   // -- Settings modal (theme picker etc.) -----------------------------
@@ -933,6 +949,8 @@
 
     function openModal() {
       syncChips();
+      const fabToggle = $('help-fab-toggle');
+      if (fabToggle) fabToggle.checked = !helpFabHidden_();
       modal.style.display = '';
       modal.setAttribute('aria-hidden', 'false');
       document.body.style.overflow = 'hidden';
@@ -954,6 +972,14 @@
     btn.addEventListener('click', openModal);
     if (closeBtn) closeBtn.addEventListener('click', closeModal);
     if (backdrop) backdrop.addEventListener('click', closeModal);
+
+    // Floating Help button toggle: persist + apply immediately so the user
+    // sees it appear/disappear behind the open Settings panel.
+    const fabToggle = $('help-fab-toggle');
+    if (fabToggle) fabToggle.addEventListener('change', function () {
+      try { localStorage.setItem('cdr.help.fab', fabToggle.checked ? 'on' : 'off'); } catch (e) {}
+      applyHelpFabPref_();
+    });
 
     // Chip click: apply + persist theme. Modal stays open so the
     // user can visually verify the change (the background updates
@@ -3521,6 +3547,11 @@
     el.style.display = '';
   }
 
+  // Inline equalizer busy-indicator markup (Part 7) for report-fetch
+  // buttons. Set via innerHTML on the busy label; the restore path sets
+  // textContent back to the idle label, which clears the span.
+  var DS_EQ_HTML_ = '<span class="ds-loader--eq" aria-hidden="true"><i></i><i></i><i></i><i></i></span> ';
+
   // Generic trailing-edge debounce. Returns a wrapped fn that defers
   // invocation until `ms` have elapsed since the last call.
   function debounce_(fn, ms) {
@@ -4974,7 +5005,7 @@
     const btn = $('ir-generate-btn');
     btn.disabled = true;
     const originalLabel = btn.textContent;
-    btn.textContent = 'Loading…';
+    btn.innerHTML = DS_EQ_HTML_ + 'Loading…';
 
     const req = { department: dept, from: from, to: to, agents: agents };
     if (prior) { req.priorFrom = prior.from; req.priorTo = prior.to; }
@@ -6663,7 +6694,7 @@
     const btn = $('pr-generate-btn');
     btn.disabled = true;
     const originalLabel = btn.textContent;
-    btn.textContent = 'Loading…';
+    btn.innerHTML = DS_EQ_HTML_ + 'Loading…';
 
     google.script.run
       .withSuccessHandler(function (data) {
@@ -8020,7 +8051,7 @@
     const btn = $('cr-generate-btn');
     btn.disabled = true;
     const originalLabel = btn.textContent;
-    btn.textContent = 'Loading…';
+    btn.innerHTML = DS_EQ_HTML_ + 'Loading…';
     crSavePrefs_();
 
     google.script.run
@@ -10656,7 +10687,7 @@
     const req = { department: dept, from: from, to: to, agents: agents };
     if (prior) { req.priorFrom = prior.from; req.priorTo = prior.to; }
     const gen = $('ins-generate-btn'); const prev = gen.textContent;
-    gen.disabled = true; gen.textContent = 'Generating…';
+    gen.disabled = true; gen.innerHTML = DS_EQ_HTML_ + 'Generating…';
     google.script.run
       .withSuccessHandler(function (data) {
         gen.disabled = false; gen.textContent = prev;
@@ -11832,7 +11863,7 @@
     inboundSetError('');
     const dept = $('inbound-dept') ? $('inbound-dept').value : '';
     const gen = $('inbound-generate-btn'); const prev = gen.textContent;
-    gen.disabled = true; gen.textContent = 'Generating…';
+    gen.disabled = true; gen.innerHTML = DS_EQ_HTML_ + 'Generating…';
     google.script.run
       .withSuccessHandler(function (data) {
         gen.disabled = false; gen.textContent = prev;
@@ -13373,7 +13404,7 @@
     const gen = $('qcd-alldept-generate-btn');
     const orig = gen.textContent;
     gen.disabled = true;
-    gen.textContent = 'Generating…';
+    gen.innerHTML = DS_EQ_HTML_ + 'Generating…';
     google.script.run
       .withSuccessHandler(function (data) {
         gen.disabled = false;

@@ -200,6 +200,26 @@ Tests: 132/132 pass; whole-file CSS brace balance 860/860; INV-16 untouched. No 
   in sync. Live verify: type a from-date past the to-date → no flash of empty data, ends on the
   corrected range; spam date edits → only the final range paints. Branch `claude/ds-summary-debounce`.
 
+- **Increment 20 (DONE — verification-pass refinements A, #101):** (1) Insights
+  "Different window lengths" caveat moved out of its standalone ds-note banner INLINE
+  into the "Comparing against …" line as a warn glyph + bold label, explanation now in a
+  hover tooltip (`insLengthFlagHtml_`, `.gloss` → styled ds-tooltip). (2) Insights headline
+  status tone neutralized when the two comparison windows differ by > 7 days (apples-to-oranges
+  → no false green/orange banner; sentences still render). (3) Glossary circled-ⓘ
+  (`.gloss::after`) now hidden by default, fades in on hover/focus (opacity, space reserved so
+  no layout shift). tests 132/132; CSS 895/895.
+
+- **Increment 21 (DONE — verification-pass refinements B):** (4) Universal floating Help
+  FAB (`#help-fab`, circled "?", fixed bottom-right, z-index 150 so it sits over report modals;
+  `#help-modal` lifted to z-index 200 so Help opened from the FAB renders above an already-open
+  report modal). Opens the same `#help-modal` as the header "?"; tucked away while Help itself is
+  open; hide-able via a new Settings toggle (`#help-fab-toggle`, localStorage `cdr.help.fab`).
+  (5) Modal entrance motion smoothed (rise/fade `--dur-2` 200ms → `--dur-3` 360ms, translateY
+  10→14px). (6) Inline equalizer (`DS_EQ_HTML_`) now shows on report-fetch buttons — the
+  IR/PR/CR "Loading…" and Ins/QCD "Generating…" busy states swap textContent for innerHTML with
+  the `.ds-loader--eq` span; restore paths set textContent back (clears it). tests 132/132; CSS
+  903/903; divs 608/608. Branch `claude/help-fab-motion`.
+
 ## Where I left off
 Phase 1 confirmed in prod by the operator. Continued report-by-report migration with
 `/broad-implement` rigor: Increment 4 promoted the KPI tile to a shared `dsKpiTile_` and moved the
