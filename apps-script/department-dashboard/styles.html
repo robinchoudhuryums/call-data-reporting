@@ -2720,7 +2720,9 @@
   /* Circled "i" appended to any term that has a glossary definition -- the
      "hover for the definition" indicator. Only lands where initMetricGlossary_
      matched a defined term (th / KPI labels / dept labels), so it never appears
-     on undefined text. */
+     on undefined text. Hidden by default; fades in on hover/focus so it's an
+     on-demand hint, not persistent chrome. Opacity (not display) keeps the
+     glyph's space reserved so revealing it never shifts the label. */
   .gloss::after {
     content: '\00a0\24D8';
     color: var(--muted);
@@ -2729,9 +2731,26 @@
     font-weight: 400;
     text-decoration: none;
     vertical-align: baseline;
+    opacity: 0;
+    transition: opacity var(--dur-1, 120ms) var(--ease, ease-out);
   }
+  .gloss:hover::after,
+  .gloss:focus::after,
+  .gloss:focus-visible::after { opacity: 1; }
+  @media (prefers-reduced-motion: reduce) { .gloss::after { transition: none; } }
   /* Sortable headers keep their click affordance. */
   th[data-sort].gloss { cursor: pointer; }
+  /* Inline "Different window lengths" flag (Insights compare line). Carries
+     its own warning glyph + the explanation in a hover tooltip (.gloss), so
+     it must NOT also get the circled-i ::after. */
+  .ins-length-flag {
+    margin-left: 8px;
+    font-weight: 600;
+    color: var(--warn);
+    white-space: nowrap;
+  }
+  .ins-length-flag::after { content: none !important; }
+  .ins-length-flag__icon { font-style: normal; }
   /* Styled glossary tooltip (replaces the native title= popover). Positioned
      in JS (initGlossTooltip_); pointer-events:none keeps it out of the hover
      hit-test. z-index sits above modals so in-modal terms tooltip correctly. */
