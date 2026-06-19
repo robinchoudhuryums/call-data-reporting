@@ -184,6 +184,22 @@ Tests: 132/132 pass; whole-file CSS brace balance 860/860; INV-16 untouched. No 
   in devtools → any report's chart slot shows the inline note, KPIs/tables still render.
   Branch `claude/ds-chart-fallback` off main (#96 merged).
 
+- **Increment 19 (DONE — Part 5 #3 / C5: debounce + stale-token on My Dept date edits):**
+  the two `from-date`/`to-date` `change` handlers fired `refresh()` synchronously, and the
+  `linkDateRange_` autocorrect (registered LATER via `initDateRangeLinks_`) ran after that
+  refresh on the same event — so a `from > to` edit fired one wasted `getDepartmentSummary`
+  before the swap. Added a generic trailing-edge `debounce_(fn, ms)` and a monotonic
+  `summaryReqSeq` token. Date edits now go through `refreshOnDateEdit_ = debounce_(refresh,
+  350)` (rapid typing/arrow presses coalesce to one request; the 350ms trailing call reads
+  the values AFTER autocorrect ran). `refresh()` captures `myToken = ++summaryReqSeq` and its
+  success/failure handlers drop stale responses (`token !== summaryReqSeq`) so a slower earlier
+  request can't clobber a newer one. Scoped to the date-edit path; refresh-btn / dept-switch /
+  preset callers still fire `refresh()` directly (single deliberate fires), but they ALSO benefit
+  from the stale-token guard. Wired to the PUBLIC `getDepartmentSummary` (C5 — not the private
+  `computeSummary_` the design sample referenced). tests 132/132; JS `node --check` clean; INV-16
+  in sync. Live verify: type a from-date past the to-date → no flash of empty data, ends on the
+  corrected range; spam date edits → only the final range paints. Branch `claude/ds-summary-debounce`.
+
 ## Where I left off
 Phase 1 confirmed in prod by the operator. Continued report-by-report migration with
 `/broad-implement` rigor: Increment 4 promoted the KPI tile to a shared `dsKpiTile_` and moved the
