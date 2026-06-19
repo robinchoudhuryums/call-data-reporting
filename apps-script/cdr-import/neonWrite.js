@@ -162,8 +162,8 @@ function writeDQERowsToNeon(rows) {
       stmt.setString(p++, row.abParentIds);
       stmt.setString(p++, row.abMissedIds);
       stmt.setString(p++, row.abMissedTimes);
-      stmt.setString(p++, row.avgAbdWait);
-      stmt.setString(p++, row.csrAvgAbdWait);
+      stmt.setString(p++, normalizeDuration(row.avgAbdWait));
+      stmt.setString(p++, normalizeDuration(row.csrAvgAbdWait));
     }
 
     stmt.execute();

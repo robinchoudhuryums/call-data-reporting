@@ -138,8 +138,14 @@ function backfillDQEHistory() {
           abParentIds:      sanitizeAbandonedCellForNeon_(r[29]),
           abMissedIds:      sanitizeAbandonedCellForNeon_(r[30]),
           abMissedTimes:    sanitizeAbandonedCellForNeon_(r[31]),
-          avgAbdWait:       r[32] || null,
-          csrAvgAbdWait:    r[33] || null
+          // Durations via normalizeDuration so the "No abd calls" sentinel
+          // (12 chars, written when a row has 0 abandoned calls) and any
+          // other non-H:MM:SS value normalize to null instead of
+          // overflowing the varchar(10) avg_abd_wait / csr_avg_abd_wait
+          // columns. parseHmsDisplay_(null) reads back as 0 on the
+          // dashboard side -- same semantics as before.
+          avgAbdWait:       normalizeDuration(r[32]),
+          csrAvgAbdWait:    normalizeDuration(r[33])
         });
         i++;
       }
@@ -312,8 +318,11 @@ function backfillDQEHistoryUpsert() {
           abParentIds:      sanitizeAbandonedCellForNeon_(r[29]),
           abMissedIds:      sanitizeAbandonedCellForNeon_(r[30]),
           abMissedTimes:    sanitizeAbandonedCellForNeon_(r[31]),
-          avgAbdWait:       r[32] || null,
-          csrAvgAbdWait:    r[33] || null
+          // See backfillDQEHistory: normalizeDuration nulls the "No abd
+          // calls" sentinel + any non-H:MM:SS so it can't overflow the
+          // varchar(10) abd-wait columns.
+          avgAbdWait:       normalizeDuration(r[32]),
+          csrAvgAbdWait:    normalizeDuration(r[33])
         });
         i++;
       }
