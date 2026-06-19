@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body { font-family: 'Inter Tight', system-ui, sans-serif; -webkit-font-smoothing: antialiased; color: #0f1623; }
+  .mono { font-family: 'JetBrains Mono', monospace; }
+  .seclabel { font-family: 'JetBrains Mono', monospace; font-size: 10px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: #737c8c; }
+</style>
+</helmet>
+
+<div style="width:max-content;min-width:100%;min-height:100vh;box-sizing:border-box;padding:48px;background:#e3e6ec;">
+
+  <div style="max-width:1000px;margin-bottom:8px;">
+    <div class="mono" style="font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:#737c8c;margin-bottom:10px;">UMS Team Tools · Team Training — redesign</div>
+    <h1 style="font-size:30px;font-weight:600;letter-spacing:-.02em;line-height:1.1;margin:0 0 12px;">Team Training, on the card system</h1>
+    <p style="font-size:14px;line-height:1.6;color:#3e4756;max-width:760px;margin:0;">The top strip + assign form already sit on cards. This pass puts the <strong>bottom half</strong> — Completion matrix, Active assignments, Quizzes — into proper panels, and fixes the matrix so a 1-item grid no longer sprawls the lone cell + coverage to the far right. Each section becomes a titled <span class="mono" style="font-size:13px;">.panel</span> with a count badge.</p>
+  </div>
+
+  <div style="display:flex;gap:48px;align-items:flex-start;margin-top:30px;">
+    <div style="flex:none;width:1000px;">
+      <div class="seclabel" style="margin-bottom:10px;">Redesigned manager view</div>
+      <div style="background:#f6f7f9;border:1px solid #dce0e7;border-radius:4px;box-shadow:0 1px 3px rgba(0,0,0,.08);padding:24px 26px;">
+
+        <h2 style="font-size:23px;font-weight:600;letter-spacing:-.01em;margin:0 0 18px;">Team Training</h2>
+
+        <!-- telemetry strip (kept) -->
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);background:#fff;border:1px solid #dce0e7;border-radius:10px;overflow:hidden;margin-bottom:16px;">
+          <div style="padding:14px 18px;border-right:1px solid #eef0f4;">
+            <div class="seclabel">Assigned</div>
+            <div class="mono" style="font-size:28px;font-weight:500;line-height:1;margin-top:8px;">1</div>
+            <div class="mono" style="font-size:11px;color:#a5acb8;margin-top:4px;">items</div>
+          </div>
+          <div style="padding:14px 18px;border-right:1px solid #eef0f4;">
+            <div class="seclabel">Reps</div>
+            <div class="mono" style="font-size:28px;font-weight:500;line-height:1;margin-top:8px;">1</div>
+            <div class="mono" style="font-size:11px;color:#a5acb8;margin-top:4px;">tracked</div>
+          </div>
+          <div style="padding:14px 18px;border-right:1px solid #eef0f4;">
+            <div class="seclabel">Complete</div>
+            <div class="mono" style="font-size:28px;font-weight:500;line-height:1;margin-top:8px;color:#0f8a52;">100%</div>
+            <div class="mono" style="font-size:11px;color:#a5acb8;margin-top:4px;">1 / 1</div>
+          </div>
+          <div style="padding:14px 18px;">
+            <div class="seclabel">Overdue</div>
+            <div class="mono" style="font-size:28px;font-weight:500;line-height:1;margin-top:8px;">0</div>
+            <div class="mono" style="font-size:11px;color:#a5acb8;margin-top:4px;">cells</div>
+          </div>
+        </div>
+
+        <!-- assign card (kept, controls restyled) -->
+        <div style="background:#fff;border:1px solid #dce0e7;border-radius:10px;padding:16px 18px;margin-bottom:16px;">
+          <h3 style="font-size:15px;font-weight:600;margin:0 0 12px;">Assign training</h3>
+          <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start;">
+            <div>
+              <label class="seclabel" style="display:block;margin-bottom:5px;letter-spacing:.06em;">Reference item</label>
+              <div style="width:230px;padding:8px 11px;border:1px solid #dce0e7;border-radius:8px;background:#fff;font-size:13px;color:#737c8c;display:flex;align-items:center;justify-content:space-between;">Pick an item… <span style="color:#a5acb8;">▾</span></div>
+            </div>
+            <div>
+              <label class="seclabel" style="display:block;margin-bottom:5px;letter-spacing:.06em;">Employees</label>
+              <div style="width:330px;border:1px solid #dce0e7;border-radius:8px;background:#fff;padding:9px 11px;">
+                <div style="display:flex;align-items:center;gap:8px;padding-bottom:7px;margin-bottom:5px;border-bottom:1px solid #eef0f4;font-size:13px;font-weight:600;"><span style="width:15px;height:15px;border:1px solid #c3c9d3;border-radius:4px;display:inline-block;"></span> All employees</div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:3px 14px;font-size:13px;color:#3e4756;">
+                  <div style="display:flex;align-items:center;gap:8px;"><span style="width:15px;height:15px;border:1px solid #c3c9d3;border-radius:4px;display:inline-block;"></span> Robin Choudhury</div>
+                  <div style="display:flex;align-items:center;gap:8px;"><span style="width:15px;height:15px;border:1px solid #c3c9d3;border-radius:4px;display:inline-block;"></span> Test India User</div>
+                  <div style="display:flex;align-items:center;gap:8px;"><span style="width:15px;height:15px;border:1px solid #c3c9d3;border-radius:4px;display:inline-block;"></span> Test PH User</div>
+                  <div style="display:flex;align-items:center;gap:8px;"><span style="width:15px;height:15px;border:1px solid #c3c9d3;border-radius:4px;display:inline-block;"></span> Test US Manager</div>
+                </div>
+              </div>
+            </div>
+            <div>
+              <label class="seclabel" style="display:block;margin-bottom:5px;letter-spacing:.06em;">Due date (optional)</label>
+              <div style="width:150px;padding:8px 11px;border:1px solid #dce0e7;border-radius:8px;background:#fff;font-size:13px;color:#a5acb8;display:flex;align-items:center;justify-content:space-between;">mm/dd/yyyy <span>📅</span></div>
+            </div>
+            <div style="align-self:flex-end;">
+              <button style="padding:9px 15px;border:none;border-radius:8px;background:#0f8a52;color:#fff;font-family:inherit;font-size:13px;font-weight:600;display:inline-flex;align-items:center;gap:7px;cursor:pointer;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Assign</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- ░ NEW: Completion matrix in a card, left-contained ░ -->
+        <div style="background:#fff;border:1px solid #dce0e7;border-radius:10px;padding:16px 18px;margin-bottom:16px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+            <div style="display:flex;align-items:center;gap:9px;"><span class="seclabel">Completion matrix</span><span class="mono" style="font-size:10px;font-weight:600;color:#0b6e40;background:#e4f5ec;border-radius:5px;padding:2px 7px;">1 rep · 1 item</span></div>
+            <div style="display:flex;gap:14px;align-items:center;font-size:11px;color:#737c8c;">
+              <span style="display:inline-flex;align-items:center;gap:5px;"><span style="width:11px;height:11px;border-radius:3px;background:#0f8a52;display:inline-block;"></span>Done</span>
+              <span style="display:inline-flex;align-items:center;gap:5px;"><span style="width:11px;height:11px;border-radius:3px;background:#c13030;display:inline-block;"></span>Overdue</span>
+              <span style="display:inline-flex;align-items:center;gap:5px;"><span style="width:11px;height:11px;border-radius:3px;background:#f0f2f6;border:1px solid #dce0e7;display:inline-block;"></span>Pending</span>
+            </div>
+          </div>
+          <!-- the grid is width:max-content so a 1-item matrix stays compact and left-aligned -->
+          <div style="display:inline-grid;grid-template-columns:minmax(160px,auto) 34px 64px;border:1px solid #eef0f4;border-radius:8px;overflow:hidden;font-size:13px;">
+            <div class="seclabel" style="padding:8px 12px;background:#f6f7f9;border-bottom:1px solid #eef0f4;">Employee</div>
+            <div class="mono" style="padding:8px 0;background:#f6f7f9;border-bottom:1px solid #eef0f4;text-align:center;font-size:11px;color:#737c8c;" title="Manual Mobility Guide">1</div>
+            <div class="seclabel" style="padding:8px 10px;background:#f6f7f9;border-bottom:1px solid #eef0f4;text-align:right;">Cov</div>
+            <div style="padding:9px 12px;font-weight:500;">Robin Choudhury</div>
+            <div style="padding:9px 0;display:flex;align-items:center;justify-content:center;"><span style="width:22px;height:22px;border-radius:5px;background:#0f8a52;color:#fff;display:inline-flex;align-items:center;justify-content:center;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span></div>
+            <div class="mono" style="padding:9px 10px;text-align:right;font-weight:600;color:#0b6e40;">100%</div>
+          </div>
+          <div style="margin-top:10px;font-size:12px;color:#737c8c;"><span class="mono" style="font-weight:700;color:#0f1623;">1</span> Manual Mobility Guide <span style="color:#a5acb8;">(1/1)</span></div>
+        </div>
+
+        <!-- ░ NEW: Active assignments in a card ░ -->
+        <div style="background:#fff;border:1px solid #dce0e7;border-radius:10px;padding:16px 18px;margin-bottom:16px;">
+          <div style="display:flex;align-items:center;gap:9px;margin-bottom:12px;"><span class="seclabel">Active assignments</span><span class="mono" style="font-size:10px;font-weight:600;color:#737c8c;background:#f0f2f6;border-radius:5px;padding:2px 7px;">1</span></div>
+          <table style="width:100%;border-collapse:collapse;font-size:13px;">
+            <thead><tr>
+              <th class="seclabel" style="text-align:left;padding:0 12px 8px 0;border-bottom:1px solid #eef0f4;">Item</th>
+              <th class="seclabel" style="text-align:left;padding:0 12px 8px;border-bottom:1px solid #eef0f4;">Assigned to</th>
+              <th class="seclabel" style="text-align:left;padding:0 12px 8px;border-bottom:1px solid #eef0f4;">Due</th>
+              <th class="seclabel" style="text-align:left;padding:0 12px 8px;border-bottom:1px solid #eef0f4;">Assigned</th>
+              <th style="border-bottom:1px solid #eef0f4;"></th>
+            </tr></thead>
+            <tbody><tr>
+              <td style="padding:11px 12px 11px 0;font-weight:500;">Manual Mobility Guide</td>
+              <td style="padding:11px 12px;color:#3e4756;">Robin Choudhury</td>
+              <td class="mono" style="padding:11px 12px;color:#3e4756;font-size:12px;">2026-06-18</td>
+              <td class="mono" style="padding:11px 12px;color:#737c8c;font-size:12px;">2026-06-15</td>
+              <td style="padding:11px 0;text-align:right;"><button style="padding:5px 12px;border:1px solid #dce0e7;border-radius:7px;background:#fff;color:#8a1f1f;font-family:inherit;font-size:12px;cursor:pointer;">Revoke</button></td>
+            </tr></tbody>
+          </table>
+        </div>
+
+        <!-- ░ NEW: Quizzes in a card ░ -->
+        <div style="background:#fff;border:1px solid #dce0e7;border-radius:10px;padding:16px 18px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+            <div style="display:flex;align-items:center;gap:9px;"><span class="seclabel">Quizzes</span><span class="mono" style="font-size:10px;font-weight:600;color:#737c8c;background:#f0f2f6;border-radius:5px;padding:2px 7px;">0</span></div>
+            <button style="padding:7px 13px;border:1px solid #dce0e7;border-radius:8px;background:#fff;color:#0f1623;font-family:inherit;font-size:12px;font-weight:500;display:inline-flex;align-items:center;gap:6px;cursor:pointer;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>New quiz</button>
+          </div>
+          <div style="border:1px dashed #dce0e7;border-radius:8px;padding:22px;text-align:center;color:#a5acb8;font-size:13px;">No quizzes yet — create one to attach a knowledge check to a Reference item.</div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- what changed -->
+    <div style="flex:none;width:300px;">
+      <div class="seclabel" style="margin-bottom:10px;">What changed</div>
+      <div style="background:#fff;border:1px solid #dce0e7;border-radius:4px;box-shadow:0 1px 3px rgba(0,0,0,.08);padding:18px 20px;">
+        <ul style="margin:0;padding-left:18px;font-size:13px;color:#3e4756;line-height:1.7;">
+          <li><strong>Bottom sections are now cards</strong> — Completion matrix, Active assignments, Quizzes each get a white panel with a titled <span class="mono" style="font-size:12px;">seclabel</span> + count badge, matching the assign card above.</li>
+          <li><strong>Matrix no longer sprawls</strong> — the grid is <span class="mono" style="font-size:12px;">width:max-content</span> and left-aligned, so a single item's cell + Cov sit right next to the name instead of flying to the right edge.</li>
+          <li><strong>Done cell</strong> is a filled rounded chip (not a bare check far away).</li>
+          <li><strong>Quizzes empty-state</strong> gets a real placeholder instead of just a lone button.</li>
+          <li>Assign controls use the shared field style (custom chevron, token border) — fixes the native date/select look.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

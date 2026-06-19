@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body { font-family: 'Inter Tight', system-ui, sans-serif; -webkit-font-smoothing: antialiased; color: #0f1623; }
+</style>
+</helmet>
+
+<div style="width:max-content;min-width:100%;min-height:100vh;box-sizing:border-box;padding:48px;background:#e3e6ec;">
+
+  <div style="max-width:900px;margin-bottom:8px;">
+    <div style="font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:#737c8c;margin-bottom:10px;">UMS Team Tools · Email templates (proposed)</div>
+    <h1 style="font-size:32px;font-weight:600;letter-spacing:-.02em;line-height:1.1;margin:0 0 14px;">Email styling — proposed target</h1>
+    <p style="font-size:15px;line-height:1.6;color:#3e4756;max-width:760px;margin:0;">Email-safe HTML (table layout, all-inline styles, literal hex, system font stack — no web fonts, no fl/grid, no <span style="font-family:monospace;font-size:13px;">var()</span>). Uses the company brand palette (navy) — distinct from the in-app green. Two templates: the <strong>Call Note</strong> email (internal) and the <strong>Intake PPD recommendation</strong> email. Markup is liftable straight into <span style="font-family:monospace;font-size:13px;">buildCallNoteEmailHtml_</span> / the Intake builder.</p>
+  </div>
+
+  <div style="display:flex;gap:40px;align-items:flex-start;margin-top:36px;">
+
+    <!-- ════ CALL NOTE EMAIL ════ -->
+    <div style="flex:none;width:620px;">
+      <div style="font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:#737c8c;margin-bottom:10px;">Call Note email · internal</div>
+      <!-- inbox frame -->
+      <div style="background:#fff;border-radius:2px;box-shadow:0 1px 3px rgba(0,0,0,.08);border:1px solid #dce0e7;overflow:hidden;">
+        <div style="padding:12px 16px;border-bottom:1px solid #eef0f4;background:#fbfcfd;">
+          <div style="font-size:14px;font-weight:600;color:#0f1623;">Call Note · Eleanor Briggs · TRX 20431</div>
+          <div style="font-size:12px;color:#737c8c;margin-top:2px;">UMS Team Tools &lt;notes@ums.co&gt; · to All Agents</div>
+        </div>
+        <!-- ░ EMAIL BODY (email-safe HTML starts here) ░ -->
+        <div style="background:#e9ecf1;padding:22px;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:540px;margin:0 auto;background:#ffffff;border:1px solid #dce0e7;border-radius:8px;overflow:hidden;">
+            <tr><td style="padding:20px 24px 14px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td style="border-bottom:2px solid #223b5d;padding-bottom:12px;">
+                <span style="font-family:Arial,Helvetica,sans-serif;font-size:15px;font-weight:700;letter-spacing:.5px;color:#223b5d;">UMS</span><span style="font-family:Arial,Helvetica,sans-serif;font-size:15px;font-weight:400;letter-spacing:.5px;color:#5a708f;">&nbsp;Team Tools</span>
+              </td></tr></table>
+            </td></tr>
+            <tr><td style="padding:16px 24px 0;">
+              <div style="font-family:Arial,Helvetica,sans-serif;font-size:19px;font-weight:700;color:#223b5d;letter-spacing:-.01em;line-height:1.2;">Update for Eleanor Briggs &middot; TRX 20431</div>
+              <div style="font-family:Arial,Helvetica,sans-serif;font-size:13px;color:#737c8c;margin-top:5px;">Hello team &mdash; please see the following update for this order.</div>
+              <div style="margin-top:12px;">
+                <span style="display:inline-block;font-family:Arial,Helvetica,sans-serif;font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:#8a4500;background:#fbf1d9;border-radius:4px;padding:4px 9px;margin:0 4px 4px 0;">Action</span>
+                <span style="display:inline-block;font-family:Arial,Helvetica,sans-serif;font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:#154980;background:#e1ecfa;border-radius:4px;padding:4px 9px;margin:0 4px 4px 0;">Training</span>
+              </div>
+            </td></tr>
+            <tr><td style="padding:16px 24px 0;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#fbf1d9;border-left:3px solid #b7791f;border-radius:4px;"><tr><td style="padding:9px 14px;font-family:Arial,Helvetica,sans-serif;font-size:13px;font-weight:700;color:#8a4500;">&#9742;&nbsp; Callback Requested</td></tr></table>
+            </td></tr>
+            <tr><td style="padding:12px 24px 0;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#e4f5ec;border-left:4px solid #0f8a52;border-radius:4px;"><tr><td style="padding:11px 14px;">
+                <div style="font-family:Arial,Helvetica,sans-serif;font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#0b6e40;">Update</div>
+                <div style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;color:#0b6e40;margin-top:2px;">Verified Shipping</div>
+              </td></tr></table>
+            </td></tr>
+            <tr><td style="padding:16px 24px 22px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #dce0e7;border-radius:6px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;font-size:13px;">
+                <tr><td colspan="2" style="background:#223b5d;padding:9px 14px;text-align:center;font-weight:700;color:#ffffff;font-size:11px;letter-spacing:1px;text-transform:uppercase;">Call Details</td></tr>
+                <tr style="background:#ffffff;"><td style="padding:9px 14px;width:36%;font-weight:700;color:#223b5d;">Callback Number</td><td style="padding:9px 14px;color:#0f1623;">(555) 123-4567</td></tr>
+                <tr style="background:#f5f7fa;"><td style="padding:9px 14px;font-weight:700;color:#223b5d;">Caller Name</td><td style="padding:9px 14px;color:#0f1623;">Eleanor Briggs</td></tr>
+                <tr style="background:#ffffff;"><td style="padding:9px 14px;font-weight:700;color:#223b5d;">Relationship</td><td style="padding:9px 14px;color:#0f1623;">Self</td></tr>
+                <tr style="background:#f5f7fa;"><td style="padding:9px 14px;font-weight:700;color:#223b5d;">Patient &amp; TRX</td><td style="padding:9px 14px;color:#0f1623;font-weight:700;">Eleanor Briggs &middot; TRX 20431</td></tr>
+                <tr style="background:#ffffff;"><td style="padding:9px 14px;font-weight:700;color:#223b5d;vertical-align:top;">Issue</td><td style="padding:9px 14px;color:#0f1623;line-height:1.45;">Confirm Medicare Part B covers the new power chair before scheduling the eval.</td></tr>
+                <tr style="background:#f5f7fa;"><td style="padding:9px 14px;font-weight:700;color:#223b5d;">Transferred To</td><td style="padding:9px 14px;color:#737c8c;">&mdash;</td></tr>
+                <tr style="background:#eef2f7;"><td style="padding:11px 14px;font-weight:700;color:#223b5d;vertical-align:top;border-left:3px solid #223b5d;border-top:1px solid #d3dce8;">Resolution</td><td style="padding:11px 14px;color:#0f1623;line-height:1.5;border-top:1px solid #d3dce8;">Verified Part B eligibility, confirmed coverage. Booked the ME for Thursday 10 AM and flagged billing follow-up.</td></tr>
+              </table>
+            </td></tr>
+            <tr><td style="padding:0 24px 20px;">
+              <div style="font-family:'Courier New',monospace;font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:#a5acb8;text-align:center;">UMS Team Tools &middot; Call Notes</div>
+            </td></tr>
+          </table>
+        </div>
+        <!-- ░ EMAIL BODY ends ░ -->
+      </div>
+    </div>
+
+    <!-- ════ INTAKE RECOMMENDATION EMAIL ════ -->
+    <div style="flex:none;width:620px;">
+      <div style="font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:#737c8c;margin-bottom:10px;">Intake PPD recommendation email</div>
+      <div style="background:#fff;border-radius:2px;box-shadow:0 1px 3px rgba(0,0,0,.08);border:1px solid #dce0e7;overflow:hidden;">
+        <div style="padding:12px 16px;border-bottom:1px solid #eef0f4;background:#fbfcfd;">
+          <div style="font-size:14px;font-weight:600;color:#0f1623;">PPD Recommendation · Eleanor Briggs · TRX 20431</div>
+          <div style="font-size:12px;color:#737c8c;margin-top:2px;">UMS Team Tools &lt;intake@ums.co&gt; · to Mobility Sales</div>
+        </div>
+        <div style="background:#e9ecf1;padding:22px;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:540px;margin:0 auto;background:#ffffff;border:1px solid #dce0e7;border-top:3px solid #223b5d;border-radius:4px;">
+            <tr><td style="padding:18px 22px 0;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+                <td style="font-family:Arial,Helvetica,sans-serif;font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#223b5d;">UMS Team Tools</td>
+                <td align="right" style="font-family:Arial,Helvetica,sans-serif;font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#a5acb8;">PPD · Recommendation</td>
+              </tr></table>
+            </td></tr>
+            <tr><td style="padding:14px 22px 0;">
+              <div style="font-family:Arial,Helvetica,sans-serif;font-size:20px;font-weight:700;color:#0f1623;line-height:1.2;">Eleanor Briggs</div>
+              <div style="font-family:Arial,Helvetica,sans-serif;font-size:13px;color:#737c8c;margin-top:3px;">TRX 20431 · profile completed Jun 16, 2026 · J. Rivera</div>
+            </td></tr>
+            <!-- COMPLETED PPD QUESTIONNAIRE — full answers, sectioned + color-coded (matches intakeBuildPpdBodyHtml_) -->
+            <tr><td style="padding:18px 22px 0;">
+              <div style="font-family:Arial,Helvetica,sans-serif;font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#737c8c;margin-bottom:8px;">Completed PPD questionnaire</div>
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #dce0e7;border-radius:6px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;font-size:13px;">
+                <tr style="background:#223b5d;"><td colspan="2" style="padding:8px 12px;text-align:center;font-weight:700;color:#ffffff;font-size:12px;letter-spacing:.04em;text-transform:uppercase;">MRADL</td></tr>
+                <tr style="background:#ffffff;"><td style="padding:8px 12px;width:62%;font-weight:700;color:#333333;border-top:1px solid #eef0f4;">1. Currently use a mobility device?</td><td align="center" style="padding:8px 12px;border-top:1px solid #eef0f4;"><span style="font-weight:700;color:#0b6e40;background:#e4f5ec;border-radius:4px;padding:2px 8px;">Yes</span></td></tr>
+                <tr style="background:#f5f7fa;"><td style="padding:8px 12px;font-weight:700;color:#333333;border-top:1px solid #eef0f4;">2. Restroom &amp; toileting</td><td align="center" style="padding:8px 12px;color:#0f1623;border-top:1px solid #eef0f4;">Needs assistance</td></tr>
+                <tr style="background:#ffffff;"><td style="padding:8px 12px;font-weight:700;color:#333333;border-top:1px solid #eef0f4;">3. Preparing meals</td><td align="center" style="padding:8px 12px;border-top:1px solid #eef0f4;"><span style="font-style:italic;color:#a5acb8;">N/A</span></td></tr>
+                <tr style="background:#223b5d;"><td colspan="2" style="padding:8px 12px;text-align:center;font-weight:700;color:#ffffff;font-size:12px;letter-spacing:.04em;text-transform:uppercase;">Extremity Strength</td></tr>
+                <tr style="background:#ffffff;"><td style="padding:8px 12px;font-weight:700;color:#333333;border-top:1px solid #eef0f4;">7. Move both arms?</td><td align="center" style="padding:8px 12px;border-top:1px solid #eef0f4;"><span style="font-weight:700;color:#0b6e40;background:#e4f5ec;border-radius:4px;padding:2px 8px;">Yes</span></td></tr>
+                <tr style="background:#f5f7fa;"><td style="padding:8px 12px;font-weight:700;color:#333333;border-top:1px solid #eef0f4;">9. Raise both hands overhead?</td><td align="center" style="padding:8px 12px;border-top:1px solid #eef0f4;"><span style="font-weight:700;color:#8a1f1f;background:#fce5e5;border-radius:4px;padding:2px 8px;">No</span></td></tr>
+                <tr style="background:#ffffff;"><td style="padding:8px 12px;font-weight:700;color:#333333;border-top:1px solid #eef0f4;">10. Move your legs?</td><td align="center" style="padding:8px 12px;border-top:1px solid #eef0f4;"><span style="font-weight:700;color:#0b6e40;background:#e4f5ec;border-radius:4px;padding:2px 8px;">Yes</span></td></tr>
+                <tr style="background:#223b5d;"><td colspan="2" style="padding:8px 12px;text-align:center;font-weight:700;color:#ffffff;font-size:12px;letter-spacing:.04em;text-transform:uppercase;">Consistent Pain</td></tr>
+                <tr style="background:#ffffff;"><td style="padding:8px 12px;font-weight:700;color:#333333;border-top:1px solid #eef0f4;">14. Neck</td><td align="center" style="padding:8px 12px;color:#737c8c;border-top:1px solid #eef0f4;">None</td></tr>
+                <tr style="background:#f5f7fa;"><td style="padding:8px 12px;font-weight:700;color:#333333;border-top:1px solid #eef0f4;">19. Back</td><td align="center" style="padding:8px 12px;border-top:1px solid #eef0f4;"><span style="font-weight:700;color:#8a1f1f;background:#fce5e5;border-radius:4px;padding:2px 8px;">Severe</span></td></tr>
+                <tr style="background:#ffffff;"><td style="padding:8px 12px;font-weight:700;color:#333333;border-top:1px solid #eef0f4;">21. Knees</td><td align="center" style="padding:8px 12px;border-top:1px solid #eef0f4;"><span style="font-weight:700;color:#8a4500;background:#fbf1d9;border-radius:4px;padding:2px 8px;">Moderate</span></td></tr>
+              </table>
+              <div style="font-family:Arial,Helvetica,sans-serif;font-size:11px;color:#a5acb8;margin-top:6px;">Showing representative rows — the email carries all answered questions.</div>
+            </td></tr>
+            <!-- Recommended HCPCS — Complex Rehab -->
+            <tr><td style="padding:20px 22px 0;">
+              <div style="font-family:Arial,Helvetica,sans-serif;font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#737c8c;margin-bottom:4px;border-top:2px solid #dce0e7;padding-top:16px;">Recommended HCPCS</div>
+            </td></tr>
+            <tr><td style="padding:8px 22px 0;">
+              <div style="font-family:Arial,Helvetica,sans-serif;font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#223b5d;margin-bottom:8px;">Complex Rehab</div>
+            </td></tr>
+            <!-- product row 1 — ACCEPTED + preferred (table layout, no flex) -->
+            <tr><td style="padding:0 22px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e8ee;border-radius:8px;">
+                <tr>
+                  <td width="26" valign="top" style="padding:14px 0 14px 12px;font-size:18px;line-height:1;color:#b7791f;">&#9733;</td>
+                  <td width="92" valign="top" style="padding:14px 0 14px 8px;">
+                    <div style="width:78px;height:56px;background:#f0f2f6;border:1px solid #dce0e7;border-radius:4px;text-align:center;font-family:Arial,Helvetica,sans-serif;font-size:10px;color:#a5acb8;line-height:56px;">image</div>
+                  </td>
+                  <td valign="top" style="padding:14px 14px 14px 10px;">
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+                      <td style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;"><a href="#" style="color:#1e63b8;text-decoration:none;">K0856</a></td>
+                      <td align="right"><span style="font-family:Arial,Helvetica,sans-serif;font-size:11px;font-weight:700;color:#0b6e40;background:#e4f5ec;border:1px solid #abdfc4;border-radius:4px;padding:2px 7px;">&#10004; Accepted</span></td>
+                    </tr></table>
+                    <div style="font-family:Arial,Helvetica,sans-serif;font-size:13px;color:#555555;line-height:1.45;margin-top:6px;">Group 3 PWC, captain's seat — meets MRADL + upper-extremity strength criteria.</div>
+                  </td>
+                </tr>
+              </table>
+            </td></tr>
+            <!-- product row 2 — REJECTED (muted, no filter/grayscale) -->
+            <tr><td style="padding:8px 22px 0;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e8ee;border-radius:8px;background:#f6f7f9;">
+                <tr>
+                  <td width="26" valign="top" style="padding:14px 0 14px 12px;font-size:18px;line-height:1;color:#dce0e7;">&#9733;</td>
+                  <td width="92" valign="top" style="padding:14px 0 14px 8px;">
+                    <div style="width:78px;height:56px;background:#eef0f4;border:1px solid #dce0e7;border-radius:4px;text-align:center;font-family:Arial,Helvetica,sans-serif;font-size:10px;color:#c3c9d3;line-height:56px;">image</div>
+                  </td>
+                  <td valign="top" style="padding:14px 14px 14px 10px;">
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+                      <td style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;color:#a5acb8;">K0861</td>
+                      <td align="right"><span style="font-family:Arial,Helvetica,sans-serif;font-size:11px;font-weight:700;color:#8a1f1f;background:#fce5e5;border:1px solid #f3d4d4;border-radius:4px;padding:2px 7px;">&#10008; Rejected</span></td>
+                    </tr></table>
+                    <div style="font-family:Arial,Helvetica,sans-serif;font-size:13px;color:#a5acb8;line-height:1.45;margin-top:6px;">Group 3 PWC, power seat elevation — exceeds documented need.</div>
+                  </td>
+                </tr>
+              </table>
+            </td></tr>
+            <!-- Standard Powerchair -->
+            <tr><td style="padding:16px 22px 0;">
+              <div style="font-family:Arial,Helvetica,sans-serif;font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#223b5d;margin-bottom:8px;">Standard Powerchair</div>
+            </td></tr>
+            <!-- product row 3 — UNDECIDED -->
+            <tr><td style="padding:0 22px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e8ee;border-radius:8px;">
+                <tr>
+                  <td width="26" valign="top" style="padding:14px 0 14px 12px;font-size:18px;line-height:1;color:#dce0e7;">&#9733;</td>
+                  <td width="92" valign="top" style="padding:14px 0 14px 8px;">
+                    <div style="width:78px;height:56px;background:#f0f2f6;border:1px solid #dce0e7;border-radius:4px;text-align:center;font-family:Arial,Helvetica,sans-serif;font-size:10px;color:#a5acb8;line-height:56px;">image</div>
+                  </td>
+                  <td valign="top" style="padding:14px 14px 14px 10px;">
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+                      <td style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;"><a href="#" style="color:#1e63b8;text-decoration:none;">K0823</a></td>
+                      <td align="right"><span style="font-family:Arial,Helvetica,sans-serif;font-size:11px;font-weight:700;color:#8a4500;background:#fbf1d9;border:1px solid #f0e0b8;border-radius:4px;padding:2px 7px;">Undecided</span></td>
+                    </tr></table>
+                    <div style="font-family:Arial,Helvetica,sans-serif;font-size:13px;color:#555555;line-height:1.45;margin-top:6px;">Group 2 standard PWC, captain's seat — eligible fallback if complex criteria aren't met.</div>
+                  </td>
+                </tr>
+              </table>
+            </td></tr>
+            <tr><td style="padding:20px 22px 18px;">
+              <div style="border-top:1px solid #eef0f4;padding-top:12px;font-family:Arial,Helvetica,sans-serif;font-size:11px;color:#a5acb8;line-height:1.5;">Generated by the UMS Intake recommendation engine · verify against current payer policy before submission.</div>
+            </td></tr>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ════ CONSTRAINTS / NOTES ════ -->
+    <div style="flex:none;width:300px;">
+      <div style="font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:#737c8c;margin-bottom:10px;">Email-safe rules used</div>
+      <div style="background:#fff;border-radius:2px;box-shadow:0 1px 3px rgba(0,0,0,.08);border:1px solid #dce0e7;padding:18px 20px;">
+        <ul style="margin:0;padding-left:18px;font-size:13px;color:#3e4756;line-height:1.7;">
+          <li><strong>Tables for layout</strong> — no flex/grid (Outlook drops them).</li>
+          <li><strong>All styles inline</strong> — no <span style="font-family:monospace;font-size:12px;">&lt;style&gt;</span> reliance, no <span style="font-family:monospace;font-size:12px;">var()</span>; literal hex.</li>
+          <li><strong>System font stack</strong> (Arial/Helvetica) — web fonts don't load in most clients.</li>
+          <li><strong>≤600px</strong> content width; single column.</li>
+          <li><strong>Accent rail</strong> = 3px top border + left border on resolution; matches the app's <span style="font-family:monospace;font-size:12px;">inset 3px</span> motif.</li>
+          <li><strong>Badges/pills</strong> as <span style="font-family:monospace;font-size:12px;">inline-block</span> spans (bg + radius) — render everywhere.</li>
+          <li><strong>Buttons</strong> as padded <span style="font-family:monospace;font-size:12px;">&lt;a&gt;</span> (bulletproof-ish); no CSS-only buttons.</li>
+        </ul>
+      </div>
+      <div style="background:#fff;border-radius:2px;box-shadow:0 1px 3px rgba(0,0,0,.08);border:1px solid #dce0e7;padding:18px 20px;margin-top:14px;">
+        <div style="font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:#737c8c;margin-bottom:10px;">Palette (hex literals)</div>
+        <div style="display:flex;flex-direction:column;gap:7px;font-family:'JetBrains Mono',monospace;font-size:11px;color:#3e4756;">
+          <div style="display:flex;align-items:center;gap:8px;"><span style="width:14px;height:14px;border-radius:3px;background:#223b5d;display:inline-block;"></span>#223b5d brand navy</div>
+          <div style="display:flex;align-items:center;gap:8px;"><span style="width:14px;height:14px;border-radius:3px;background:#0f1623;display:inline-block;"></span>#0f1623 ink</div>
+          <div style="display:flex;align-items:center;gap:8px;"><span style="width:14px;height:14px;border-radius:3px;background:#737c8c;display:inline-block;"></span>#737c8c muted</div>
+          <div style="display:flex;align-items:center;gap:8px;"><span style="width:14px;height:14px;border-radius:3px;background:#f6f7f9;border:1px solid #dce0e7;display:inline-block;"></span>#f6f7f9 panel</div>
+          <div style="display:flex;align-items:center;gap:8px;"><span style="width:14px;height:14px;border-radius:3px;background:#fbf1d9;display:inline-block;"></span>#fbf1d9 / #8a4500 action</div>
+          <div style="display:flex;align-items:center;gap:8px;"><span style="width:14px;height:14px;border-radius:3px;background:#e1ecfa;display:inline-block;"></span>#e1ecfa / #154980 training</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

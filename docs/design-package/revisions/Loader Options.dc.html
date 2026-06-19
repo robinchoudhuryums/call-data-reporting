@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body { font-family: 'Inter Tight', system-ui, sans-serif; -webkit-font-smoothing: antialiased; color: #0f1623; }
+
+  /* ════ shared loader keyframes (CSS-only, GPU-cheap: transform/opacity) ════ */
+  @keyframes lo-spin { to { transform: rotate(360deg); } }
+  @keyframes lo-dot { 0%,80%,100% { transform: scale(.5); opacity:.4; } 40% { transform: scale(1); opacity:1; } }
+  @keyframes lo-bar { 0% { left:-40%; } 100% { left:100%; } }
+  @keyframes lo-shimmer { 100% { background-position: 200% 0; } }
+  @keyframes lo-pulse { 0%,100% { transform: scale(.82); opacity:.45; } 50% { transform: scale(1); opacity:1; } }
+  @keyframes lo-bars { 0%,100% { transform: scaleY(.35); } 50% { transform: scaleY(1); } }
+
+  /* 1 · ring */
+  .lo-ring { width:30px; height:30px; border-radius:50%; border:2.5px solid var(--lo-track); border-top-color: var(--lo-accent); animation: lo-spin .8s linear infinite; }
+  /* 2 · dots */
+  .lo-dots { display:flex; gap:6px; }
+  .lo-dots span { width:9px; height:9px; border-radius:50%; background: var(--lo-accent); animation: lo-dot 1.4s ease-in-out infinite; }
+  .lo-dots span:nth-child(2){ animation-delay:.18s; } .lo-dots span:nth-child(3){ animation-delay:.36s; }
+  /* 3 · sweep bar */
+  .lo-sweep { position:relative; width:180px; height:5px; border-radius:999px; background: var(--lo-track); overflow:hidden; }
+  .lo-sweep::after { content:''; position:absolute; top:0; bottom:0; width:40%; border-radius:999px; background: var(--lo-accent); animation: lo-bar 1.15s cubic-bezier(.4,0,.2,1) infinite; }
+  /* 4 · glyph pulse */
+  .lo-glyph { color: var(--lo-accent); animation: lo-pulse 1.25s ease-in-out infinite; display:inline-flex; }
+  /* 5 · equalizer bars */
+  .lo-eq { display:flex; align-items:flex-end; gap:4px; height:26px; }
+  .lo-eq i { width:5px; height:100%; border-radius:2px; background: var(--lo-accent); transform-origin:bottom; animation: lo-bars 1s ease-in-out infinite; }
+  .lo-eq i:nth-child(2){ animation-delay:.15s; } .lo-eq i:nth-child(3){ animation-delay:.3s; } .lo-eq i:nth-child(4){ animation-delay:.45s; } .lo-eq i:nth-child(5){ animation-delay:.6s; }
+  /* 6 · skeleton shimmer */
+  .lo-skel { border-radius:6px; background: linear-gradient(90deg, var(--lo-skel0) 25%, var(--lo-skel1) 37%, var(--lo-skel0) 63%); background-size:200% 100%; animation: lo-shimmer 1.3s linear infinite; }
+</style>
+</helmet>
+
+<div style="width:max-content;min-width:100%;min-height:100vh;box-sizing:border-box;padding:48px;background:#e3e6ec;">
+
+  <div style="max-width:900px;margin-bottom:8px;">
+    <div style="font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:#737c8c;margin-bottom:10px;">UMS Team Tools · Loader options</div>
+    <h1 style="font-size:32px;font-weight:600;letter-spacing:-.02em;line-height:1.1;margin:0 0 14px;">Loaders — pick a system</h1>
+    <p style="font-size:15px;line-height:1.6;color:#3e4756;max-width:780px;margin:0;">Six candidates, all pure-CSS (transform/opacity only — no JS, no layout thrash, cheap on Apps Script's webview). Each is tagged with where it fits. The idea is one shared set: a <strong>full-view</strong> loader, an <strong>inline/button</strong> loader, and a <strong>skeleton</strong> for known-shape content — replacing today's four parallel idioms. All shown light + dark; the live boards below animate.</p>
+  </div>
+
+  <!-- LIGHT + DARK boards -->
+  <div style="display:flex;gap:40px;align-items:flex-start;margin-top:36px;">
+
+    <!-- ░░ LIGHT ░░ -->
+    <div style="flex:none;width:640px;--lo-accent:#0f8a52;--lo-track:#dce0e7;--lo-skel0:#e9ecf1;--lo-skel1:#f4f6f9;">
+      <div style="font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:#737c8c;margin-bottom:10px;">Light</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+
+        <!-- 1 ring -->
+        <div style="background:#fff;border:1px solid #dce0e7;border-radius:12px;padding:18px;box-shadow:0 1px 2px rgba(0,0,0,.04);">
+          <div style="height:64px;display:flex;align-items:center;justify-content:center;"><div class="lo-ring"></div></div>
+          <div style="font-size:14px;font-weight:600;margin-top:10px;">1 · Refined ring</div>
+          <div style="font-size:12px;color:#737c8c;margin-top:3px;line-height:1.45;">The current spinner, polished. Universal fallback — small slots, modals, buttons.</div>
+        </div>
+
+        <!-- 2 dots -->
+        <div style="background:#fff;border:1px solid #dce0e7;border-radius:12px;padding:18px;box-shadow:0 1px 2px rgba(0,0,0,.04);">
+          <div style="height:64px;display:flex;align-items:center;justify-content:center;"><div class="lo-dots"><span></span><span></span><span></span></div></div>
+          <div style="font-size:14px;font-weight:600;margin-top:10px;">2 · Dot pulse</div>
+          <div style="font-size:12px;color:#737c8c;margin-top:3px;line-height:1.45;">Compact, calm. Great inside buttons (Sending…) and tiny inline slots.</div>
+        </div>
+
+        <!-- 3 sweep -->
+        <div style="background:#fff;border:1px solid #dce0e7;border-radius:12px;padding:18px;box-shadow:0 1px 2px rgba(0,0,0,.04);">
+          <div style="height:64px;display:flex;align-items:center;justify-content:center;"><div class="lo-sweep"></div></div>
+          <div style="font-size:14px;font-weight:600;margin-top:10px;">3 · Sweep bar</div>
+          <div style="font-size:12px;color:#737c8c;margin-top:3px;line-height:1.45;">Indeterminate progress. Sits at the top of a panel that's refreshing in place.</div>
+        </div>
+
+        <!-- 4 glyph -->
+        <div style="background:#fff;border:1px solid #dce0e7;border-radius:12px;padding:18px;box-shadow:0 1px 2px rgba(0,0,0,.04);">
+          <div style="height:64px;display:flex;align-items:center;justify-content:center;"><span class="lo-glyph"><svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span></div>
+          <div style="font-size:14px;font-weight:600;margin-top:10px;">4 · Glyph pulse</div>
+          <div style="font-size:12px;color:#737c8c;margin-top:3px;line-height:1.45;">Per-module identity — clock for Time Clock, clipboard for Intake, etc. Full-view enters.</div>
+        </div>
+
+        <!-- 5 eq -->
+        <div style="background:#fff;border:1px solid #dce0e7;border-radius:12px;padding:18px;box-shadow:0 1px 2px rgba(0,0,0,.04);">
+          <div style="height:64px;display:flex;align-items:center;justify-content:center;"><div class="lo-eq"><i></i><i></i><i></i><i></i><i></i></div></div>
+          <div style="font-size:14px;font-weight:600;margin-top:10px;">5 · Equalizer</div>
+          <div style="font-size:12px;color:#737c8c;margin-top:3px;line-height:1.45;">Playful echo of the metrics bars / shift histogram. For Metrics + Clock loads.</div>
+        </div>
+
+        <!-- 6 skeleton -->
+        <div style="background:#fff;border:1px solid #dce0e7;border-radius:12px;padding:18px;box-shadow:0 1px 2px rgba(0,0,0,.04);">
+          <div style="height:64px;display:flex;flex-direction:column;justify-content:center;gap:7px;">
+            <div class="lo-skel" style="height:11px;width:62%;"></div>
+            <div class="lo-skel" style="height:11px;width:90%;"></div>
+            <div class="lo-skel" style="height:11px;width:74%;"></div>
+          </div>
+          <div style="font-size:14px;font-weight:600;margin-top:10px;">6 · Skeleton shimmer</div>
+          <div style="font-size:12px;color:#737c8c;margin-top:3px;line-height:1.45;">Best for known shapes — note stacks, tables, teammate cards. Feels fastest.</div>
+        </div>
+      </div>
+
+      <!-- skeleton-in-context: note stack -->
+      <div style="font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:#737c8c;margin:22px 0 8px;">Skeleton in context · note stack</div>
+      <div style="background:#fff;border:1px solid #dce0e7;border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:10px;">
+        <div style="display:flex;gap:12px;align-items:center;"><div class="lo-skel" style="height:30px;width:30px;border-radius:50%;flex:none;"></div><div style="flex:1;display:flex;flex-direction:column;gap:6px;"><div class="lo-skel" style="height:10px;width:40%;"></div><div class="lo-skel" style="height:10px;width:85%;"></div></div></div>
+        <div style="display:flex;gap:12px;align-items:center;"><div class="lo-skel" style="height:30px;width:30px;border-radius:50%;flex:none;"></div><div style="flex:1;display:flex;flex-direction:column;gap:6px;"><div class="lo-skel" style="height:10px;width:52%;"></div><div class="lo-skel" style="height:10px;width:72%;"></div></div></div>
+      </div>
+    </div>
+
+    <!-- ░░ DARK ░░ -->
+    <div style="flex:none;width:640px;">
+      <div style="font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:#737c8c;margin-bottom:10px;">Dark</div>
+      <div style="padding:18px;background:#0a0d14;border-radius:8px;--lo-accent:#7af2a1;--lo-track:#262d3b;--lo-skel0:#161b26;--lo-skel1:#222a39;">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+
+          <div style="background:#10141d;border:1px solid #262d3b;border-radius:12px;padding:18px;">
+            <div style="height:64px;display:flex;align-items:center;justify-content:center;"><div class="lo-ring"></div></div>
+            <div style="font-size:14px;font-weight:600;margin-top:10px;color:#e8e6e0;">1 · Refined ring</div>
+            <div style="font-size:12px;color:#6c7587;margin-top:3px;line-height:1.45;">Universal fallback — small slots, modals, buttons.</div>
+          </div>
+
+          <div style="background:#10141d;border:1px solid #262d3b;border-radius:12px;padding:18px;">
+            <div style="height:64px;display:flex;align-items:center;justify-content:center;"><div class="lo-dots"><span></span><span></span><span></span></div></div>
+            <div style="font-size:14px;font-weight:600;margin-top:10px;color:#e8e6e0;">2 · Dot pulse</div>
+            <div style="font-size:12px;color:#6c7587;margin-top:3px;line-height:1.45;">Compact. Inside buttons and tiny inline slots.</div>
+          </div>
+
+          <div style="background:#10141d;border:1px solid #262d3b;border-radius:12px;padding:18px;">
+            <div style="height:64px;display:flex;align-items:center;justify-content:center;"><div class="lo-sweep"></div></div>
+            <div style="font-size:14px;font-weight:600;margin-top:10px;color:#e8e6e0;">3 · Sweep bar</div>
+            <div style="font-size:12px;color:#6c7587;margin-top:3px;line-height:1.45;">Top of a panel refreshing in place.</div>
+          </div>
+
+          <div style="background:#10141d;border:1px solid #262d3b;border-radius:12px;padding:18px;">
+            <div style="height:64px;display:flex;align-items:center;justify-content:center;"><span class="lo-glyph"><svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span></div>
+            <div style="font-size:14px;font-weight:600;margin-top:10px;color:#e8e6e0;">4 · Glyph pulse</div>
+            <div style="font-size:12px;color:#6c7587;margin-top:3px;line-height:1.45;">Per-module identity. Full-view enters.</div>
+          </div>
+
+          <div style="background:#10141d;border:1px solid #262d3b;border-radius:12px;padding:18px;">
+            <div style="height:64px;display:flex;align-items:center;justify-content:center;"><div class="lo-eq"><i></i><i></i><i></i><i></i><i></i></div></div>
+            <div style="font-size:14px;font-weight:600;margin-top:10px;color:#e8e6e0;">5 · Equalizer</div>
+            <div style="font-size:12px;color:#6c7587;margin-top:3px;line-height:1.45;">For Metrics + Clock loads.</div>
+          </div>
+
+          <div style="background:#10141d;border:1px solid #262d3b;border-radius:12px;padding:18px;">
+            <div style="height:64px;display:flex;flex-direction:column;justify-content:center;gap:7px;">
+              <div class="lo-skel" style="height:11px;width:62%;"></div>
+              <div class="lo-skel" style="height:11px;width:90%;"></div>
+              <div class="lo-skel" style="height:11px;width:74%;"></div>
+            </div>
+            <div style="font-size:14px;font-weight:600;margin-top:10px;color:#e8e6e0;">6 · Skeleton shimmer</div>
+            <div style="font-size:12px;color:#6c7587;margin-top:3px;line-height:1.45;">Note stacks, tables, teammate cards.</div>
+          </div>
+        </div>
+
+        <div style="font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:#6c7587;margin:22px 0 8px;">Skeleton in context · note stack</div>
+        <div style="background:#10141d;border:1px solid #262d3b;border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:10px;">
+          <div style="display:flex;gap:12px;align-items:center;"><div class="lo-skel" style="height:30px;width:30px;border-radius:50%;flex:none;"></div><div style="flex:1;display:flex;flex-direction:column;gap:6px;"><div class="lo-skel" style="height:10px;width:40%;"></div><div class="lo-skel" style="height:10px;width:85%;"></div></div></div>
+          <div style="display:flex;gap:12px;align-items:center;"><div class="lo-skel" style="height:30px;width:30px;border-radius:50%;flex:none;"></div><div style="flex:1;display:flex;flex-direction:column;gap:6px;"><div class="lo-skel" style="height:10px;width:52%;"></div><div class="lo-skel" style="height:10px;width:72%;"></div></div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- recommendation -->
+  <div style="margin-top:40px;max-width:900px;background:#fff;border:1px solid #dce0e7;border-radius:12px;padding:22px 24px;box-shadow:0 1px 2px rgba(0,0,0,.04);">
+    <div style="font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:#737c8c;margin-bottom:12px;">A suggested system (mix &amp; match)</div>
+    <div style="display:flex;flex-direction:column;gap:11px;font-size:14px;color:#3e4756;line-height:1.5;">
+      <div style="display:flex;gap:12px;"><span style="font-weight:600;color:#0f1623;min-width:130px;">Full-view enter</span><span><strong>4 · Glyph pulse</strong> with the module's own icon + a mono label — gives each tool a moment of identity, replaces the two competing full-view idioms.</span></div>
+      <div style="display:flex;gap:12px;"><span style="font-weight:600;color:#0f1623;min-width:130px;">Lists / tables / cards</span><span><strong>6 · Skeleton shimmer</strong> — kills the text-only "Loading…" jank in Call Notes stacks and the pop-in on the Clock teammate card &amp; histogram.</span></div>
+      <div style="display:flex;gap:12px;"><span style="font-weight:600;color:#0f1623;min-width:130px;">In-place refresh</span><span><strong>3 · Sweep bar</strong> at the panel top (admin panels, coverage body) — content stays visible while it updates.</span></div>
+      <div style="display:flex;gap:12px;"><span style="font-weight:600;color:#0f1623;min-width:130px;">Buttons / tiny slots</span><span><strong>2 · Dot pulse</strong> or <strong>1 · Ring</strong> — replaces ad-hoc "Sending…" text swaps with a consistent inline mark.</span></div>
+    </div>
+    <div style="font-size:12px;color:#737c8c;margin-top:14px;line-height:1.5;">All six share two CSS custom props (<span style="font-family:'JetBrains Mono',monospace;">--lo-accent</span>, <span style="font-family:'JetBrains Mono',monospace;">--lo-track</span>) so they theme automatically in dark mode — same mechanism as the existing <span style="font-family:'JetBrains Mono',monospace;">.spinner</span>. Keep the bobbing-envelope Save &amp; Compose moment as-is; it's a deliberate flourish.</div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

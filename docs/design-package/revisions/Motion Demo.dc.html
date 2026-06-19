@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root { --e: cubic-bezier(.4,0,.2,1); --acc:#0f8a52; --accSoft:#e4f5ec; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body { font-family: 'Inter Tight', system-ui, sans-serif; -webkit-font-smoothing: antialiased; color: #0f1623; }
+
+  /* ── reveal animations (play on mount; Replay restarts via style.animation toggle) ── */
+  @keyframes revFade  { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:none; } }
+  @keyframes revSlide { from { opacity:0; transform:translateX(18px); } to { opacity:1; transform:none; } }
+  @keyframes revScale { from { opacity:0; transform:scale(.96); }      to { opacity:1; transform:none; } }
+  .vt-fade  { animation: revFade  .22s var(--e) both; }
+  .vt-slide { animation: revSlide .26s var(--e) both; }
+  .vt-scale { animation: revScale .22s var(--e) both; }
+
+  /* ── skeleton → content handoff ── */
+  @keyframes lo-shimmer { 100% { background-position: 200% 0; } }
+  .skel { border-radius:6px; background:linear-gradient(90deg,#e9ecf1 25%,#f4f6f9 37%,#e9ecf1 63%); background-size:200% 100%; animation: lo-shimmer 1.3s linear infinite; }
+  @keyframes skelOut { 0%,68% { opacity:1; } 100% { opacity:0; } }
+  @keyframes realIn  { 0%,68% { opacity:0; } 100% { opacity:1; } }
+  .sk-skel { animation: skelOut 1.25s var(--e) both; }
+  .sk-real { animation: realIn  1.25s var(--e) both; }
+
+  /* ── ring fill ── */
+  @keyframes ringFill { from { stroke-dashoffset: var(--circ); } to { stroke-dashoffset: var(--target); } }
+  .ring-arc { stroke-dashoffset: var(--target); animation: ringFill .9s var(--e) both; }
+
+  /* ── sparkline draw ── */
+  @keyframes sparkDraw { from { stroke-dashoffset: 340; } to { stroke-dashoffset: 0; } }
+  .spark { stroke-dasharray: 340; stroke-dashoffset: 0; animation: sparkDraw 1s var(--e) both; }
+
+  /* ── heatmap stagger ── */
+  @keyframes hmIn { from { opacity:0; transform:scale(.5); } to { opacity:1; transform:none; } }
+  .hm { animation: hmIn .25s var(--e) both; animation-delay: var(--d, 0ms); }
+
+  /* ── mutation: mark-complete (settle) + collapse ── */
+  .mc { transition: opacity .3s var(--e), background .3s var(--e); }
+  .mc.done { opacity:.72; background:#fbfdfc; }
+  .mc.done .mc-label, .mc-collapse.gone .mc-label { text-decoration: line-through; color:#a5acb8; transition: color .3s var(--e); }
+  .mc-collapse { overflow:hidden; max-height:60px; transition: max-height .35s var(--e), opacity .3s var(--e), margin .35s var(--e), padding .35s var(--e); }
+  .mc-collapse.gone { max-height:0; opacity:0; margin-top:0!important; margin-bottom:0!important; padding-top:0!important; padding-bottom:0!important; border-width:0!important; }
+  @keyframes drawCheck { to { stroke-dashoffset:0; } }
+  .ck { stroke-dasharray:24; stroke-dashoffset:24; }
+  .mc.done .ck, .mc-collapse.gone .ck { animation: drawCheck .35s var(--e) forwards; }
+
+  /* ── chip pop / star ── */
+  @keyframes pop { 0%{transform:scale(1);} 42%{transform:scale(1.15);} 100%{transform:scale(1);} }
+  .chip { cursor:pointer; transition: background .15s, color .15s; }
+  .chip.popping { animation: pop .28s var(--e); }
+  @keyframes starpop { 0%{transform:scale(1);} 45%{transform:scale(1.32);} 100%{transform:scale(1);} }
+  .star { cursor:pointer; transition: color .2s var(--e); }
+  .star.on { animation: starpop .3s var(--e); }
+
+  /* ── copy flash ── */
+  @keyframes flashBg { 0%{ background:var(--accSoft);} 100%{ background:transparent;} }
+  .copybtn { cursor:pointer; }
+  .copybtn .l-done { display:none; }
+  .copybtn.copied .l-copy { display:none; }
+  .copybtn.copied .l-done { display:inline-flex; }
+  .copybtn.copied { animation: flashBg .7s var(--e); }
+
+  /* ── accordion collapse ── */
+  .acc-body { max-height:0; opacity:0; overflow:hidden; transition: max-height .26s var(--e), opacity .26s var(--e); }
+  .acc.open .acc-body { max-height:240px; opacity:1; }
+  .acc-chev { transition: transform .2s var(--e); }
+  .acc.open .acc-chev { transform: rotate(90deg); }
+
+  /* ── overlay/modal entrance ── */
+  .ov { position:absolute; inset:0; background:rgba(15,22,35,.42); opacity:0; pointer-events:none; transition: opacity .2s ease; display:flex; align-items:center; justify-content:center; border-radius:12px; }
+  .ov.open { opacity:1; pointer-events:auto; }
+  .ov-rise .sheet { transform: translateY(14px); opacity:0; transition: transform .22s var(--e), opacity .22s var(--e); }
+  .ov-scale .sheet { transform: scale(.94); opacity:0; transition: transform .22s var(--e), opacity .22s var(--e); }
+  .ov.open .sheet { transform:none; opacity:1; }
+
+  /* ── timezone sky cross-fade ── */
+  .sky-layer { position:absolute; inset:0; opacity:0; transition: opacity .6s ease; }
+  .sky-layer.on { opacity:1; }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration:.001s!important; transition-duration:.001s!important; }
+  }
+</style>
+</helmet>
+
+<div style="width:max-content;min-width:100%;min-height:100vh;box-sizing:border-box;padding:48px;background:#e3e6ec;">
+
+  <div style="max-width:1140px;margin-bottom:20px;">
+    <div style="font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:#737c8c;margin-bottom:10px;">UMS Team Tools · Motion demo</div>
+    <h1 style="font-size:32px;font-weight:600;letter-spacing:-.02em;line-height:1.1;margin:0 0 14px;">Motion — feel the timing</h1>
+    <p style="font-size:15px;line-height:1.6;color:#3e4756;max-width:760px;margin:0 0 16px;">Every effect here is purposeful, ≤220ms for UI transitions, one-shot for content reveals, and CSS-only (transform/opacity). Reveals auto-play on load — hit <strong>Replay</strong> or <strong>Play all</strong> to see them again; the micro-interactions are clickable. A <span style="font-family:'JetBrains Mono',monospace;font-size:13px;">prefers-reduced-motion</span> kill-switch is built in.</p>
+    <button onclick="{{ onPlayAll }}" style="padding:9px 18px;border:none;border-radius:9px;background:#0f1623;color:#fff;font-family:inherit;font-size:13px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:7px;">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg> Play all reveals
+    </button>
+  </div>
+
+  <!-- ════ 1 · VIEW TRANSITIONS (triptych) ════ -->
+  <div id="card-vt" style="max-width:1140px;background:#fff;border:1px solid #dce0e7;border-radius:14px;padding:20px 22px;margin-bottom:18px;box-shadow:0 1px 2px rgba(0,0,0,.04);">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+      <span style="font-size:15px;font-weight:600;">1 · View transition <span style="color:#737c8c;font-weight:400;">— on every tab switch</span></span>
+      <button data-t="card-vt" onclick="{{ onReplay }}" style="padding:6px 13px;border:1px solid #dce0e7;border-radius:8px;background:#f6f7f9;font-family:inherit;font-size:12px;cursor:pointer;">Replay</button>
+    </div>
+    <div style="font-size:12px;color:#737c8c;margin-bottom:14px;">Three equivalent options — pick one for the global view-area swap. Fade+rise is the recommended default.</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;">
+      <div>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#0b6e40;margin-bottom:7px;">A · Fade + rise ✓</div>
+        <div class="vt vt-fade js-anim" style="border:1px solid #e5e8ee;border-radius:10px;padding:14px;background:#fbfcfd;">
+          <div style="font-size:13px;font-weight:600;margin-bottom:8px;">Today's shift</div>
+          <div style="height:8px;border-radius:999px;background:#e5e8ee;margin-bottom:6px;"></div>
+          <div style="height:8px;width:70%;border-radius:999px;background:#e5e8ee;"></div>
+        </div>
+      </div>
+      <div>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#737c8c;margin-bottom:7px;">B · Slide in</div>
+        <div class="vt vt-slide js-anim" style="border:1px solid #e5e8ee;border-radius:10px;padding:14px;background:#fbfcfd;">
+          <div style="font-size:13px;font-weight:600;margin-bottom:8px;">Team queues</div>
+          <div style="height:8px;border-radius:999px;background:#e5e8ee;margin-bottom:6px;"></div>
+          <div style="height:8px;width:70%;border-radius:999px;background:#e5e8ee;"></div>
+        </div>
+      </div>
+      <div>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#737c8c;margin-bottom:7px;">C · Scale in</div>
+        <div class="vt vt-scale js-anim" style="border:1px solid #e5e8ee;border-radius:10px;padding:14px;background:#fbfcfd;">
+          <div style="font-size:13px;font-weight:600;margin-bottom:8px;">Metrics</div>
+          <div style="height:8px;border-radius:999px;background:#e5e8ee;margin-bottom:6px;"></div>
+          <div style="height:8px;width:70%;border-radius:999px;background:#e5e8ee;"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- row: skeleton + ring -->
+  <div style="display:flex;gap:18px;max-width:1140px;margin-bottom:18px;">
+    <!-- 2 · skeleton handoff -->
+    <div id="card-skel" style="flex:1;background:#fff;border:1px solid #dce0e7;border-radius:14px;padding:20px 22px;box-shadow:0 1px 2px rgba(0,0,0,.04);">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+        <span style="font-size:15px;font-weight:600;">2 · Skeleton → content</span>
+        <button data-t="card-skel" onclick="{{ onReplay }}" style="padding:6px 13px;border:1px solid #dce0e7;border-radius:8px;background:#f6f7f9;font-family:inherit;font-size:12px;cursor:pointer;">Replay</button>
+      </div>
+      <div style="font-size:12px;color:#737c8c;margin-bottom:14px;">Skeleton cross-fades into the real rows — kills the "Loading…" jank in Call Notes stacks &amp; the Clock pop-in.</div>
+      <div style="position:relative;">
+        <!-- real -->
+        <div class="sk-real js-anim" style="display:flex;flex-direction:column;gap:10px;">
+          <div style="display:flex;gap:11px;align-items:center;"><span style="width:30px;height:30px;border-radius:50%;background:#0f8a52;color:#fff;font-size:11px;font-weight:600;display:flex;align-items:center;justify-content:center;flex:none;">JR</span><div style="flex:1;"><div style="font-size:13px;font-weight:600;">Eleanor Briggs · TRX 20431</div><div style="font-size:12px;color:#737c8c;">Medicare Part B coverage check</div></div></div>
+          <div style="display:flex;gap:11px;align-items:center;"><span style="width:30px;height:30px;border-radius:50%;background:#b7791f;color:#fff;font-size:11px;font-weight:600;display:flex;align-items:center;justify-content:center;flex:none;">AC</span><div style="flex:1;"><div style="font-size:13px;font-weight:600;">Marcus Webb · TRX 19887</div><div style="font-size:12px;color:#737c8c;">Advantage auth question</div></div></div>
+        </div>
+        <!-- skeleton overlay -->
+        <div class="sk-skel js-anim" style="position:absolute;inset:0;display:flex;flex-direction:column;gap:10px;background:#fff;">
+          <div style="display:flex;gap:11px;align-items:center;"><div class="skel" style="width:30px;height:30px;border-radius:50%;flex:none;"></div><div style="flex:1;display:flex;flex-direction:column;gap:6px;"><div class="skel" style="height:10px;width:45%;"></div><div class="skel" style="height:10px;width:80%;"></div></div></div>
+          <div style="display:flex;gap:11px;align-items:center;"><div class="skel" style="width:30px;height:30px;border-radius:50%;flex:none;"></div><div style="flex:1;display:flex;flex-direction:column;gap:6px;"><div class="skel" style="height:10px;width:55%;"></div><div class="skel" style="height:10px;width:68%;"></div></div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 3 · ring fill -->
+    <div id="card-ring" style="flex:none;width:360px;background:#fff;border:1px solid #dce0e7;border-radius:14px;padding:20px 22px;box-shadow:0 1px 2px rgba(0,0,0,.04);">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+        <span style="font-size:15px;font-weight:600;">3 · Ring fill</span>
+        <button data-t="card-ring" onclick="{{ onReplay }}" style="padding:6px 13px;border:1px solid #dce0e7;border-radius:8px;background:#f6f7f9;font-family:inherit;font-size:12px;cursor:pointer;">Replay</button>
+      </div>
+      <div style="font-size:12px;color:#737c8c;margin-bottom:14px;">Training completion &amp; Clock PTO rings sweep to value on enter.</div>
+      <div style="display:flex;gap:24px;justify-content:center;">
+        <div style="text-align:center;">
+          <div style="position:relative;width:78px;height:78px;">
+            <svg width="78" height="78" viewBox="0 0 78 78"><circle cx="39" cy="39" r="30" fill="none" stroke="#e5e8ee" stroke-width="7"/><circle class="ring-arc js-anim" cx="39" cy="39" r="30" fill="none" stroke="#0f8a52" stroke-width="7" stroke-linecap="round" stroke-dasharray="188" style="--circ:188;--target:107;" transform="rotate(-90 39 39)"/></svg>
+            <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-family:'JetBrains Mono',monospace;font-size:15px;font-weight:600;">43%</div>
+          </div>
+          <div style="font-size:11px;color:#737c8c;margin-top:6px;">Training</div>
+        </div>
+        <div style="text-align:center;">
+          <div style="position:relative;width:78px;height:78px;">
+            <svg width="78" height="78" viewBox="0 0 78 78"><circle cx="39" cy="39" r="30" fill="none" stroke="#e5e8ee" stroke-width="7"/><circle class="ring-arc js-anim" cx="39" cy="39" r="30" fill="none" stroke="#1e63b8" stroke-width="7" stroke-linecap="round" stroke-dasharray="188" style="--circ:188;--target:81;" transform="rotate(-90 39 39)"/></svg>
+            <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;"><span style="font-family:'JetBrains Mono',monospace;font-size:15px;font-weight:600;">8.5</span></div>
+          </div>
+          <div style="font-size:11px;color:#737c8c;margin-top:6px;">PTO days</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- row: sparkline + heatmap -->
+  <div style="display:flex;gap:18px;max-width:1140px;margin-bottom:18px;">
+    <!-- 4 · sparkline draw + count-up -->
+    <div id="card-spark" style="flex:1;background:#fff;border:1px solid #dce0e7;border-radius:14px;padding:20px 22px;box-shadow:0 1px 2px rgba(0,0,0,.04);">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+        <span style="font-size:15px;font-weight:600;">4 · Sparkline draw + count-up</span>
+        <button data-t="card-spark" onclick="{{ onReplay }}" style="padding:6px 13px;border:1px solid #dce0e7;border-radius:8px;background:#f6f7f9;font-family:inherit;font-size:12px;cursor:pointer;">Replay</button>
+      </div>
+      <div style="font-size:12px;color:#737c8c;margin-bottom:14px;">Metrics hero counts up; the trend line draws left-to-right. Once, on enter.</div>
+      <div style="display:flex;align-items:flex-end;gap:18px;">
+        <div>
+          <div style="font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:#737c8c;margin-bottom:4px;">% Answered</div>
+          <div style="font-family:'JetBrains Mono',monospace;font-size:46px;font-weight:500;line-height:1;letter-spacing:-.02em;"><span class="js-count" data-count="87" data-suffix="">0</span><span style="font-size:20px;color:#737c8c;">%</span></div>
+        </div>
+        <svg viewBox="0 0 300 70" preserveAspectRatio="none" style="flex:1;height:64px;">
+          <line x1="2" y1="40" x2="298" y2="40" stroke="#c3c9d3" stroke-width="1" stroke-dasharray="4 4"/>
+          <polyline class="spark js-anim" points="2,52 28,48 54,54 80,44 106,48 132,40 158,42 184,34 210,37 236,28 262,31 288,20" fill="none" stroke="#0f8a52" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+        </svg>
+      </div>
+    </div>
+
+    <!-- 5 · heatmap stagger -->
+    <div id="card-heat" style="flex:none;width:430px;background:#fff;border:1px solid #dce0e7;border-radius:14px;padding:20px 22px;box-shadow:0 1px 2px rgba(0,0,0,.04);">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+        <span style="font-size:15px;font-weight:600;">5 · Grid stagger-in</span>
+        <button data-t="card-heat" onclick="{{ onReplay }}" style="padding:6px 13px;border:1px solid #dce0e7;border-radius:8px;background:#f6f7f9;font-family:inherit;font-size:12px;cursor:pointer;">Replay</button>
+      </div>
+      <div style="font-size:12px;color:#737c8c;margin-bottom:14px;">Coverage heatmap &amp; Training matrix cells populate with a tiny stagger.</div>
+      <div style="display:grid;grid-template-columns:repeat(12,1fr);gap:4px;">{{ heatCells }}</div>
+    </div>
+  </div>
+
+  <!-- row: mutations + chips/star -->
+  <div style="display:flex;gap:18px;max-width:1140px;margin-bottom:18px;">
+    <!-- 6 · mutation feedback -->
+    <div style="flex:1;background:#fff;border:1px solid #dce0e7;border-radius:14px;padding:20px 22px;box-shadow:0 1px 2px rgba(0,0,0,.04);">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+        <span style="font-size:15px;font-weight:600;">6 · Mutation feedback</span>
+        <button onclick="{{ onResetMut }}" style="padding:6px 13px;border:1px solid #dce0e7;border-radius:8px;background:#f6f7f9;font-family:inherit;font-size:12px;cursor:pointer;">Reset</button>
+      </div>
+      <div style="font-size:12px;color:#737c8c;margin-bottom:14px;">Two equivalents — click each button. <strong>Settle</strong> dims + checks in place; <strong>Collapse</strong> removes the row.</div>
+      <div id="mc1" class="mc" style="display:flex;align-items:center;gap:11px;border:1px solid #dce0e7;border-radius:10px;padding:11px 13px;margin-bottom:9px;">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#0f8a52" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="flex:none;"><circle cx="12" cy="12" r="10" stroke="#dce0e7"/><path class="ck" d="M7.5 12.5l3 3 6-6.5"/></svg>
+        <span class="mc-label" style="flex:1;font-size:13px;font-weight:500;">Intake Call Script</span>
+        <button data-t="mc1" onclick="{{ onDone }}" style="padding:6px 12px;border:1px solid #dce0e7;border-radius:8px;background:#e4f5ec;color:#0b6e40;font-family:inherit;font-size:12px;cursor:pointer;">Settle ✓</button>
+      </div>
+      <div id="mc2" class="mc-collapse" style="display:flex;align-items:center;gap:11px;border:1px solid #dce0e7;border-radius:10px;padding:11px 13px;">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#0f8a52" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="flex:none;"><circle cx="12" cy="12" r="10" stroke="#dce0e7"/><path class="ck" d="M7.5 12.5l3 3 6-6.5"/></svg>
+        <span class="mc-label" style="flex:1;font-size:13px;font-weight:500;">CPAP Documentation Basics</span>
+        <button data-t="mc2" onclick="{{ onCollapse }}" style="padding:6px 12px;border:1px solid #dce0e7;border-radius:8px;background:#e4f5ec;color:#0b6e40;font-family:inherit;font-size:12px;cursor:pointer;">Collapse</button>
+      </div>
+    </div>
+
+    <!-- 7 · chip pop + star + copy -->
+    <div style="flex:none;width:430px;background:#fff;border:1px solid #dce0e7;border-radius:14px;padding:20px 22px;box-shadow:0 1px 2px rgba(0,0,0,.04);">
+      <span style="font-size:15px;font-weight:600;">7 · Selection &amp; copy</span>
+      <div style="font-size:12px;color:#737c8c;margin:4px 0 14px;">Click a severity chip, the star, or the copy button.</div>
+      <div style="font-size:12px;font-weight:500;margin-bottom:7px;">Pain · Back</div>
+      <div style="display:flex;gap:6px;margin-bottom:16px;">
+        <span class="chip" onclick="{{ onChip }}" style="flex:1;text-align:center;padding:8px 0;font-size:12px;font-weight:600;border-radius:8px;background:#f0f2f6;color:#737c8c;">None</span>
+        <span class="chip" onclick="{{ onChip }}" style="flex:1;text-align:center;padding:8px 0;font-size:12px;font-weight:600;border-radius:8px;background:#f0f2f6;color:#737c8c;">Mild</span>
+        <span class="chip" onclick="{{ onChip }}" style="flex:1;text-align:center;padding:8px 0;font-size:12px;font-weight:600;border-radius:8px;background:#f0f2f6;color:#737c8c;">Mod</span>
+        <span class="chip" onclick="{{ onChip }}" style="flex:1;text-align:center;padding:8px 0;font-size:12px;font-weight:600;border-radius:8px;background:#f0f2f6;color:#737c8c;">Severe</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:18px;">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span id="star1" class="star" onclick="{{ onAccept }}" style="color:#cfd5de;"><svg width="30" height="30" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01z"/></svg></span>
+          <span style="font-size:12px;color:#737c8c;">Star recommendation</span>
+        </div>
+        <span class="copybtn" onclick="{{ onCopy }}" style="margin-left:auto;display:inline-flex;align-items:center;gap:6px;padding:7px 12px;border:1px solid #dce0e7;border-radius:8px;font-size:12px;font-family:inherit;">
+          <span class="l-copy" style="display:inline-flex;align-items:center;gap:6px;color:#0f1623;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>Copy K0856</span>
+          <span class="l-done" style="align-items:center;gap:6px;color:#0b6e40;font-weight:600;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>Copied</span>
+        </span>
+      </div>
+    </div>
+  </div>
+
+  <!-- row: accordion + modal + sky -->
+  <div style="display:flex;gap:18px;max-width:1140px;">
+    <!-- 8 · accordion -->
+    <div style="flex:1;background:#fff;border:1px solid #dce0e7;border-radius:14px;padding:20px 22px;box-shadow:0 1px 2px rgba(0,0,0,.04);">
+      <span style="font-size:15px;font-weight:600;">8 · Collapse</span>
+      <div style="font-size:12px;color:#737c8c;margin:4px 0 14px;">KB department / pinned trays. Click the header.</div>
+      <div id="acc1" class="acc" style="border:1px solid #e5e8ee;border-radius:10px;overflow:hidden;">
+        <div onclick="{{ onDept }}" data-t="acc1" style="display:flex;align-items:center;gap:8px;padding:11px 14px;cursor:pointer;background:#f6f7f9;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#3e4756;">
+          <svg class="acc-chev" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>Power <span style="margin-left:auto;color:#a5acb8;font-weight:500;">3</span>
+        </div>
+        <div class="acc-body">
+          <div style="padding:6px 14px 12px;display:flex;flex-direction:column;gap:8px;">
+            <div style="font-size:13px;">PWC Qualification Guide</div>
+            <div style="font-size:13px;">HCPCS Code Matrix</div>
+            <div style="font-size:13px;">MDO Fax Cover</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 9 · modal -->
+    <div style="flex:none;width:340px;background:#fff;border:1px solid #dce0e7;border-radius:14px;padding:20px 22px;box-shadow:0 1px 2px rgba(0,0,0,.04);position:relative;">
+      <span style="font-size:15px;font-weight:600;">9 · Overlay entrance</span>
+      <div style="font-size:12px;color:#737c8c;margin:4px 0 14px;">Drawers, quiz/reader/day-edit modals — two equivalents.</div>
+      <div style="display:flex;gap:8px;">
+        <button data-t="ov-rise" onclick="{{ onOpen }}" style="flex:1;padding:9px;border:1px solid #dce0e7;border-radius:9px;background:#f6f7f9;font-family:inherit;font-size:13px;cursor:pointer;">Rise + fade ✓</button>
+        <button data-t="ov-scale" onclick="{{ onOpen }}" style="flex:1;padding:9px;border:1px solid #dce0e7;border-radius:9px;background:#f6f7f9;font-family:inherit;font-size:13px;cursor:pointer;">Scale in</button>
+      </div>
+      <div id="ov-rise" class="ov ov-rise" onclick="{{ onCloseOv }}">
+        <div class="sheet" style="background:#fff;border:1px solid #dce0e7;border-radius:12px;padding:20px;width:78%;box-shadow:0 12px 32px rgba(0,0,0,.2);text-align:center;">
+          <div style="font-size:14px;font-weight:600;margin-bottom:6px;">Quiz</div>
+          <div style="font-size:12px;color:#737c8c;">Rises 14px + fades. Click anywhere to close.</div>
+        </div>
+      </div>
+      <div id="ov-scale" class="ov ov-scale" onclick="{{ onCloseOv }}">
+        <div class="sheet" style="background:#fff;border:1px solid #dce0e7;border-radius:12px;padding:20px;width:78%;box-shadow:0 12px 32px rgba(0,0,0,.2);text-align:center;">
+          <div style="font-size:14px;font-weight:600;margin-bottom:6px;">Reader</div>
+          <div style="font-size:12px;color:#737c8c;">Scales from .94. Click anywhere to close.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 10 · sky cross-fade -->
+    <div style="flex:none;width:340px;background:#fff;border:1px solid #dce0e7;border-radius:14px;padding:20px 22px;box-shadow:0 1px 2px rgba(0,0,0,.04);">
+      <span style="font-size:15px;font-weight:600;">10 · Timezone sky cross-fade</span>
+      <div style="font-size:12px;color:#737c8c;margin:4px 0 14px;">Click the clock to change tz — the sky cross-fades between phases.</div>
+      <div onclick="{{ onTz }}" style="position:relative;height:120px;border-radius:12px;overflow:hidden;cursor:pointer;">
+        <div id="sky-0" class="sky-layer on" style="background:linear-gradient(165deg,#4a93d4,#82bbe6 45%,#f4c878 80%,#ef9a5a);"></div>
+        <div id="sky-1" class="sky-layer" style="background:linear-gradient(165deg,#16203a,#2c2a52 45%,#5a3a5e 78%,#7c4a52);"></div>
+        <div id="sky-2" class="sky-layer" style="background:linear-gradient(165deg,#0c1430,#14204a 55%,#24306a);"></div>
+        <div id="sky-3" class="sky-layer" style="background:linear-gradient(165deg,#8fb8e0,#cfe0f0 50%,#ffe6b8);"></div>
+        <div style="position:relative;padding:16px 18px;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.3);">
+          <div style="display:flex;justify-content:space-between;align-items:center;"><span id="sky-phase" style="font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.1em;text-transform:uppercase;">Mid-afternoon</span><span id="sky-tz" style="font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;background:rgba(255,255,255,.22);border-radius:999px;padding:3px 9px;">CT</span></div>
+          <div id="sky-time" style="font-family:'JetBrains Mono',monospace;font-size:34px;font-weight:500;margin-top:14px;">3:10<span style="font-size:15px;"> PM</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  componentDidMount() {
+    this._tz = 0;
+    // Replay each reveal as it scrolls into view — a one-shot at load fires (and
+    // finishes) before you reach the lower cards, so you'd never see the motion.
+    // The observer re-triggers ring/sparkline/count/heatmap right as they appear.
+    const ids = ['card-vt','card-skel','card-ring','card-spark','card-heat'];
+    this._io = new IntersectionObserver((entries) => {
+      entries.forEach(en => { if (en.isIntersecting) this.replay(en.target.id); });
+    }, { threshold: 0.35 });
+    setTimeout(() => {
+      ids.forEach(id => { const el = document.getElementById(id); if (el) this._io.observe(el); });
+    }, 120);
+  }
+  componentWillUnmount() {
+    if (this._io) this._io.disconnect();
+  }
+  runAll() {
+    ['card-vt','card-skel','card-ring','card-spark','card-heat'].forEach((id, i) => {
+      setTimeout(() => this.replay(id), i * 160);
+    });
+  }
+  replay(id) {
+    const root = document.getElementById(id);
+    if (!root) return;
+    root.querySelectorAll('.js-anim').forEach(el => { el.style.animation = 'none'; void el.offsetWidth; el.style.animation = ''; });
+    root.querySelectorAll('.js-count').forEach(el => this.countUp(el));
+  }
+  countUp(el) {
+    const target = +el.dataset.count || 0;
+    const suffix = el.dataset.suffix || '';
+    const dur = 900, start = performance.now();
+    const step = (now) => {
+      const t = Math.min(1, (now - start) / dur);
+      const v = Math.round(target * (1 - Math.pow(1 - t, 3)));
+      el.textContent = v + suffix;
+      if (t < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }
+  renderVals() {
+    const SEV = { None:['#0f1623','#fff'], Mild:['#b7791f','#fff'], Mod:['#b7791f','#fff'], Severe:['#c13030','#fff'] };
+    // staggered heatmap cells (4 rows × 12)
+    const tones = ['#0f8a52','#0f8a52','#f4c878','#e8a09a','#eef0f4'];
+    let heat = [];
+    for (let i = 0; i < 48; i++) {
+      const pick = [0,0,0,1,2,0,0,3,0,0,2,4][i % 12];
+      const bg = tones[pick];
+      const border = bg === '#eef0f4' ? ';border:1px solid #dce0e7' : '';
+      heat.push(React.createElement('div', {
+        key: i, className: 'hm js-anim',
+        style: { height: '20px', borderRadius: '4px', background: bg, '--d': (i * 14) + 'ms', ...(border ? { border: '1px solid #dce0e7' } : {}) }
+      }));
+    }
+    return {
+      heatCells: heat,
+      onPlayAll: () => this.runAll(),
+      onReplay: (e) => this.replay(e.currentTarget.dataset.t),
+      onDone: (e) => { const r = document.getElementById(e.currentTarget.dataset.t); if (r) r.classList.add('done'); },
+      onCollapse: (e) => { const r = document.getElementById(e.currentTarget.dataset.t); if (r) r.classList.add('gone'); },
+      onResetMut: () => { const a = document.getElementById('mc1'); const b = document.getElementById('mc2'); if (a) a.classList.remove('done'); if (b) b.classList.remove('gone'); },
+      onChip: (e) => {
+        const b = e.currentTarget, grp = b.parentElement;
+        grp.querySelectorAll('.chip').forEach(c => { c.classList.remove('sel'); c.style.background = '#f0f2f6'; c.style.color = '#737c8c'; });
+        const pair = SEV[b.textContent.trim()] || ['#0f8a52','#fff'];
+        b.style.background = pair[0]; b.style.color = pair[1];
+        b.classList.add('sel'); b.classList.remove('popping'); void b.offsetWidth; b.classList.add('popping');
+      },
+      onAccept: () => { const s = document.getElementById('star1'); if (!s) return; const on = s.classList.toggle('on'); s.style.color = on ? '#0f8a52' : '#cfd5de'; if (on) { s.classList.remove('on'); void s.offsetWidth; s.classList.add('on'); } },
+      onCopy: (e) => { const b = e.currentTarget; b.classList.add('copied'); setTimeout(() => b.classList.remove('copied'), 1300); },
+      onDept: (e) => { const r = document.getElementById(e.currentTarget.dataset.t); if (r) r.classList.toggle('open'); },
+      onOpen: (e) => { const r = document.getElementById(e.currentTarget.dataset.t); if (r) r.classList.add('open'); },
+      onCloseOv: (e) => { if (e.target === e.currentTarget) e.currentTarget.classList.remove('open'); },
+      onTz: () => {
+        const phases = [
+          { phase: 'Mid-afternoon', tz: 'CT', time: '3:10<span style="font-size:15px;"> PM</span>' },
+          { phase: 'Dusk', tz: 'ET', time: '7:10<span style="font-size:15px;"> PM</span>' },
+          { phase: 'Night', tz: 'PT', time: '1:10<span style="font-size:15px;"> AM</span>' },
+          { phase: 'Sunrise', tz: 'HST', time: '6:10<span style="font-size:15px;"> AM</span>' }
+        ];
+        this._tz = (this._tz + 1) % 4;
+        for (let i = 0; i < 4; i++) { const l = document.getElementById('sky-' + i); if (l) l.classList.toggle('on', i === this._tz); }
+        const p = phases[this._tz];
+        const ph = document.getElementById('sky-phase'); if (ph) ph.textContent = p.phase;
+        const tz = document.getElementById('sky-tz'); if (tz) tz.textContent = p.tz;
+        const tm = document.getElementById('sky-time'); if (tm) tm.innerHTML = p.time;
+      }
+    };
+  }
+}
+</script>
+</body>
+</html>
