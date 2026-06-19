@@ -911,3 +911,58 @@ function diagnoseQCDLongValues() {
     });
   });
 }
+
+
+// Pinpoints the row/column behind a DQE backfill
+// "value too long for type character varying(N)" failure. The four
+// duration columns (ttt / att / avg_abd_wait / csr_avg_abd_wait) are the
+// varchar(10) columns in dqe_history; a normal "H:MM:SS" is <= 8 chars,
+// so anything over 10 is the offender (typically a coerced/corrupt cell).
+// month_year / queue_extensions are reported too for completeness.
+// Read-only -- no Neon write. Run from the cdr-report editor; check the
+// execution log. `DQE_BACKFILL_RESUME` (the failing index) gives a hint
+// where to look, but this scans the whole sheet so it finds every offender.
+function diagnoseDQELongValues() {
+  var ss    = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('DQE Historical Data');
+  if (!sheet) { Logger.log('DQE: Sheet not found.'); return; }
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) { Logger.log('DQE: Sheet is empty.'); return; }
+
+  var data = sheet.getRange(2, 1, lastRow - 1, 36).getDisplayValues();
+
+  // field label -> { idx, limit } for the size-constrained dqe_history columns.
+  var COLS = [
+    { name: 'ttt',            idx: 8,  limit: 10 },
+    { name: 'att',            idx: 9,  limit: 10 },
+    { name: 'avg_abd_wait',   idx: 32, limit: 10 },
+    { name: 'csr_avg_abd_wait', idx: 33, limit: 10 },
+    { name: 'month_year',     idx: 0,  limit: 20 },
+    { name: 'queue_extensions', idx: 3, limit: 60 }
+  ];
+
+  var offenders = {};
+  COLS.forEach(function(c) { offenders[c.name] = []; });
+
+  for (var i = 0; i < data.length; i++) {
+    var r = data[i];
+    COLS.forEach(function(c) {
+      var v = String(r[c.idx] == null ? '' : r[c.idx]);
+      if (v.length > c.limit) {
+        offenders[c.name].push({ row: i + 2, idx: i, len: v.length, val: v });
+      }
+    });
+  }
+
+  Logger.log('=== DQE long-value scan (' + data.length + ' rows) ===');
+  var resume = PropertiesService.getScriptProperties().getProperty('DQE_BACKFILL_RESUME');
+  if (resume) Logger.log('DQE_BACKFILL_RESUME = ' + resume + ' (failing batch starts here)');
+  COLS.forEach(function(c) {
+    var o = offenders[c.name];
+    Logger.log(c.name + ' (varchar/limit ' + c.limit + '): ' + o.length + ' offender(s)');
+    o.slice(0, 10).forEach(function(x) {
+      Logger.log('  Sheet row ' + x.row + ' / data idx ' + x.idx +
+        ' (len ' + x.len + '): "' + x.val + '"');
+    });
+  });
+}
