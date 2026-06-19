@@ -220,6 +220,28 @@ Tests: 132/132 pass; whole-file CSS brace balance 860/860; INV-16 untouched. No 
   the `.ds-loader--eq` span; restore paths set textContent back (clears it). tests 132/132; CSS
   903/903; divs 608/608. Branch `claude/help-fab-motion`.
 
+- **Increment 22 (DONE — rich tooltips, #103):** styled glossary tooltip gained a
+  theme-matching accent border (`var(--accent)`), and high-value terms render a rich variant
+  (`METRIC_GLOSSARY_RICH_`): bold title + def + benchmark chip surfacing the 92%/5% standards
+  (% answered → green "≥92%"; Abandoned %/Violations → warn "≥5%"; ATT → per-call note).
+  innerHTML from dev constants only; plain title kept for SR; `show()` prefers `data-gloss-rich`
+  + toggles `.ds-tooltip--rich`. CSS 908/908; tests 132/132.
+
+- **Increment 23 (DONE — Phase 4: IR KPI tile → ds-kpi, user chose "extend then migrate"):**
+  extended the shared `ds-kpi` component with the three sub-features that had kept the Individual
+  Report tile on its own `ir-kpi-*` dialect: `.ds-kpi__value-row` + `.ds-kpi__share` (inline
+  share-of-dept tag), `.ds-kpi__compare` + `.ds-kpi__team` (the "Team X" average-comparison
+  marker row), `.ds-kpi__prior` (the INV-49 vs-prior row), `.ds-kpi__spark--inline` (top-row
+  spark), and a `.ds-kpi--ir` density modifier that preserves IR's 26px value sizing (5-up grid).
+  `irKpiTile` + both `irPriorRow_` returns rewritten onto ds-kpi; the copy-TSV handler repointed
+  to `.ds-kpi`/`__label`/`__value`/`.ds-kpi__compare .ds-kpi__team`/`__share`; glossary selector
+  dropped the now-unused `.ir-kpi-label` (`.ds-kpi__label` already covered). Bonus: IR KPI labels
+  now pick up the rich tooltips. `.ir-kpi-grid` (layout container) kept; the dead `.ir-kpi-*` tile
+  CSS left for a cleanup follow-up (increment-9 pattern). Pure client UI — no cache/aggregation/
+  invariant impact. tests 132/132; CSS 917/917; JS clean. Branch `claude/ir-tile-dskpi`. Per-agent
+  rail-card migration is the remaining Phase 4 item. Live verify: S11/S12 (Individual Report) +
+  the per-tile "Copy" TSV.
+
 ## Where I left off
 Phase 1 confirmed in prod by the operator. Continued report-by-report migration with
 `/broad-implement` rigor: Increment 4 promoted the KPI tile to a shared `dsKpiTile_` and moved the

@@ -4556,6 +4556,35 @@
   .ds-kpi-grid   { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
   @media (max-width: 760px) { .ds-kpi-grid { grid-template-columns: repeat(2, 1fr); } }
 
+  /* Individual Report rich-tile extension (Phase 4 migration). The base
+     ds-kpi lacked the three things that kept the IR tile on its own dialect:
+     an inline share-of-dept tag, the "Team X" average-comparison marker row,
+     and the optional vs-prior row. Additive -- the PR / Insights / Inbound /
+     QCD / CR ds-kpi tiles are unaffected. `.ds-kpi--ir` keeps the denser IR
+     value sizing (the IR tile grid is 5-up vs the others' 3-up) and puts the
+     sparkline inline in the top row. */
+  .ds-kpi--ir { font-variant-numeric: tabular-nums; }
+  .ds-kpi--ir .ds-kpi__value { font-size: 26px; font-weight: 500; letter-spacing: -0.4px; }
+  .ds-kpi__spark--inline { width: auto; margin-top: 0; height: 22px; }
+  .ds-kpi__value-row { display: flex; align-items: baseline; gap: 8px; min-width: 0; margin-top: 4px; }
+  .ds-kpi__value-row .ds-kpi__value { margin-top: 0; }
+  .ds-kpi__share {
+    font: 500 11px/1 var(--mono); color: var(--muted);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .ds-kpi__compare {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 6px; margin-top: 6px;
+  }
+  .ds-kpi__team {
+    font: 500 10px/1 var(--mono); text-transform: uppercase; letter-spacing: .18em;
+    color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .ds-kpi__prior {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 6px; margin-top: 4px; padding-top: 4px; border-top: 1px dashed var(--line);
+  }
+
   /* 2.4 · Card + status rail (dept tile / agent card share this object) */
   .ds-card {
     background: var(--paper-card); border: 1px solid var(--line);

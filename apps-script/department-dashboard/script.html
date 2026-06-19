@@ -2592,7 +2592,7 @@
 
   function applyGlossaryTooltips_(root) {
     if (!root || !root.querySelectorAll) return;
-    const sel = 'th, .ir-kpi-label, .ds-kpi__label, .dept-qcd-label, .ov-dept-stat-label';
+    const sel = 'th, .ds-kpi__label, .dept-qcd-label, .ov-dept-stat-label';
     root.querySelectorAll(sel).forEach(function (el) {
       // Skip already-titled elements AND ones whose title is temporarily
       // stashed in data-gloss while the styled tooltip is showing, so the
@@ -5504,11 +5504,14 @@
         if (!card) return;
         const rows = [];
         rows.push(['Metric', 'Agent', 'Team Avg', '% of Dept'].join('\t'));
-        card.querySelectorAll('.ir-kpi-tile').forEach(function (tile) {
-          const label = (tile.querySelector('.ir-kpi-label') || {}).textContent || '';
-          const value = (tile.querySelector('.ir-kpi-value') || {}).textContent || '';
-          const team  = (tile.querySelector('.ir-kpi-team')  || {}).textContent || '';
-          const shareEl = tile.querySelector('.ir-kpi-share');
+        card.querySelectorAll('.ds-kpi').forEach(function (tile) {
+          const label = (tile.querySelector('.ds-kpi__label') || {}).textContent || '';
+          const value = (tile.querySelector('.ds-kpi__value') || {}).textContent || '';
+          // First .ds-kpi__team is the "Team X" marker (the vs-prior row, when
+          // present, is a second .ds-kpi__team -- query scoped to __compare).
+          const teamEl = tile.querySelector('.ds-kpi__compare .ds-kpi__team');
+          const team  = (teamEl || {}).textContent || '';
+          const shareEl = tile.querySelector('.ds-kpi__share');
           const share = shareEl
             ? shareEl.textContent.replace(/\s*of\s+dept\s*$/i, '').trim()
             : '';
@@ -5563,20 +5566,23 @@
   function irKpiTile(label, value, teamVal, diffBadgeHtml, sparklineData, sparklineColor, share, priorHtml) {
     const spark = irSparkline_(sparklineData || [], sparklineColor || '#4E79A7');
     const shareHtml = share
-      ? '<span class="ir-kpi-share" title="Share of dept volume in range">'
+      ? '<span class="ds-kpi__share" title="Share of dept volume in range">'
         + escapeHtml(String(share)) + ' of dept</span>'
       : '';
-    return '<div class="ir-kpi-tile">'
-         +   '<div class="ir-kpi-row-top">'
-         +     '<div class="ir-kpi-label">' + label + '</div>'
-         +     '<div class="ir-kpi-spark">' + spark + '</div>'
+    // Migrated onto the shared ds-kpi component (Phase 4). The IR-specific
+    // share tag / team-average marker / vs-prior row ride the ds-kpi__* sub-
+    // elements added for this; `.ds-kpi--ir` keeps the denser 5-up sizing.
+    return '<div class="ds-kpi ds-kpi--ir">'
+         +   '<div class="ds-kpi__top">'
+         +     '<span class="ds-kpi__label">' + label + '</span>'
+         +     '<span class="ds-kpi__spark ds-kpi__spark--inline">' + spark + '</span>'
          +   '</div>'
-         +   '<div class="ir-kpi-value-row">'
-         +     '<div class="ir-kpi-value' + benchValueCls_(label, value) + '">' + escapeHtml(String(value)) + '</div>'
+         +   '<div class="ds-kpi__value-row">'
+         +     '<div class="ds-kpi__value' + benchValueCls_(label, value) + '">' + escapeHtml(String(value)) + '</div>'
          +     shareHtml
          +   '</div>'
-         +   '<div class="ir-kpi-row-bot">'
-         +     '<span class="ir-kpi-team">Team ' + escapeHtml(String(teamVal)) + '</span>'
+         +   '<div class="ds-kpi__compare">'
+         +     '<span class="ds-kpi__team">Team ' + escapeHtml(String(teamVal)) + '</span>'
          +     diffBadgeHtml
          +   '</div>'
          +   (priorHtml || '')
@@ -5595,8 +5601,8 @@
     const prev = Number(priorVal) || 0;
     const cur  = Number(currVal)  || 0;
     if (prev === 0 && cur === 0) {
-      return '<div class="ir-kpi-row-prior">'
-           +   '<span class="ir-kpi-team">Prior ' + escapeHtml(String(displayPrior)) + '</span>'
+      return '<div class="ds-kpi__prior">'
+           +   '<span class="ds-kpi__team">Prior ' + escapeHtml(String(displayPrior)) + '</span>'
            +   '<span class="ir-badge ir-badge-neu">-</span>'
            + '</div>';
     }
@@ -5616,8 +5622,8 @@
         if (pct < 0) cls = 'ir-badge-pos'; else if (pct > 0) cls = 'ir-badge-neg';
       }
     }
-    return '<div class="ir-kpi-row-prior">'
-         +   '<span class="ir-kpi-team">Prior ' + escapeHtml(String(displayPrior)) + '</span>'
+    return '<div class="ds-kpi__prior">'
+         +   '<span class="ds-kpi__team">Prior ' + escapeHtml(String(displayPrior)) + '</span>'
          +   '<span class="ir-badge ' + cls + '">' + label + '</span>'
          + '</div>';
   }
