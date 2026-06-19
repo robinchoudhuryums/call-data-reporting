@@ -8389,9 +8389,11 @@
   function crBuildCard_(x, teamScore, meta) {
     const a = x.agent;
     const safe = escapeHtml(a.name);
-    const dirClass = x.direction === 'improved' ? 'cr-card-improved'
-                   : x.direction === 'regressed' ? 'cr-card-regressed'
-                   : 'cr-card-mixed';
+    // Migrated onto the shared ds-card--rail (Phase 4): the left stripe color
+    // comes from --status (improved=accent / regressed=warn / mixed=muted).
+    const statusColor = x.direction === 'improved'  ? 'var(--accent)'
+                      : x.direction === 'regressed' ? 'var(--warn)'
+                      : 'var(--muted)';
     const vsTeam = crVsTeamBadge_(x.score, teamScore);
     // Surface the classifier inputs on the DOM so it's debuggable
     // in DevTools without re-instrumenting the JS.
@@ -8418,7 +8420,7 @@
     // numbers don't move the dept aggregate.
     const isFloater = a.matchedViaQueue && !a.matchedViaRoster;
     const floaterPill = isFloater ? ' ' + sourceChipHtml_(a) : '';
-    return '<div class="cr-agent-card ' + dirClass + '"' + debugAttrs + '>'
+    return '<div class="ds-card ds-card--rail cr-agent-card" style="--status:' + statusColor + '"' + debugAttrs + '>'
          +   '<div class="cr-agent-card-header">'
          +     '<span class="cr-agent-name">' + safe + '</span>'
          +     floaterPill
@@ -11415,13 +11417,14 @@
     const c = x.card;
     const isFloater = c.matchedViaQueue && !c.matchedViaRoster;
     const chip = isFloater ? sourceChipHtml_(c) : '';
-    // Floaters keep their warn-tinted border (the QUEUE signal wins
-    // over the classification tint); everyone else gets the
-    // improved/regressed/mixed left border (CR pattern).
-    const dirClass = isFloater ? ''
-                   : x.direction === 'improved'  ? ' ins-card-improved'
-                   : x.direction === 'regressed' ? ' ins-card-regressed'
-                   : ' ins-card-mixed';
+    // Migrated onto the shared ds-card--rail (Phase 4): the left rail color
+    // comes from --status. Floaters keep the warn rail (the QUEUE signal wins
+    // over the classification tint); everyone else gets improved=accent /
+    // regressed=warn / mixed=muted (the CR classification pattern).
+    const statusColor = isFloater ? 'var(--warn)'
+                      : x.direction === 'improved'  ? 'var(--accent)'
+                      : x.direction === 'regressed' ? 'var(--warn)'
+                      : 'var(--muted)';
     const vsTeam = crVsTeamBadge_(x.score, teamScore);
     const debugAttrs =
       ' data-direction="' + x.direction + '"'
@@ -11477,7 +11480,7 @@
     const irLink = '<button type="button" class="ins-card-ir-link" data-agent="' + escapeHtml(c.name) + '"'
       + ' title="Open this agent&#39;s Individual Report for the same date range">IR &#8599;</button>';
 
-    return '<div class="ins-card' + (isFloater ? ' ins-card-floater' : '') + dirClass + '"' + debugAttrs + '>'
+    return '<div class="ds-card ds-card--rail ins-card" style="--status:' + statusColor + '"' + debugAttrs + '>'
          +   '<div class="ins-card-head"><span class="ins-card-name">' + escapeHtml(c.name) + '</span>' + chip + vsTeam + irLink + '</div>'
          +   primary
          +   '<details class="ins-card-more"><summary>Rung &middot; ATT &middot; TTT</summary>'
