@@ -4554,4 +4554,28 @@
   @media (max-width: 680px) {
     .ds-modal__panel { max-width: 100%; max-height: 100vh; border-radius: 0; }
   }
+
+  /* Inline equalizer busy-loader (Part 7). Four bars that pulse; colored via
+     currentColor so it inherits the surrounding text color. Reduced-motion
+     freezes the bars. */
+  .ds-loader--eq {
+    display: inline-flex;
+    align-items: flex-end;
+    gap: 3px;
+    height: 0.9em;
+    vertical-align: middle;
+  }
+  .ds-loader--eq i {
+    width: 3px;
+    height: 100%;
+    background: currentColor;
+    border-radius: 1px;
+    transform-origin: center bottom;
+    animation: ds-eq 1s ease-in-out infinite;
+  }
+  .ds-loader--eq i:nth-child(2) { animation-delay: .15s; }
+  .ds-loader--eq i:nth-child(3) { animation-delay: .30s; }
+  .ds-loader--eq i:nth-child(4) { animation-delay: .45s; }
+  @keyframes ds-eq { 0%, 100% { transform: scaleY(.3); } 50% { transform: scaleY(1); } }
+  @media (prefers-reduced-motion: reduce) { .ds-loader--eq i { animation: none; transform: scaleY(.6); } }
 </style>
