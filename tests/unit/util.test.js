@@ -70,6 +70,25 @@ test('buildTeamInsights_ gates on non-trivial volume and caps at 3', function ()
   assert.match(out[0].text, /Answer rate fell/);
 });
 
+test('buildTeamInsights_ excludeVolume drops raw-volume insights, keeps rate + ATT', function () {
+  // Big answer-rate swing + big answered-volume swing + big missed swing +
+  // big ATT swing -> without the flag, volume insights appear.
+  const curr = { rung: 200, pct: 70, answered: 140, missed: 40, att: 240 };
+  const prev = { rung: 100, pct: 90, answered: 90,  missed: 5,  att: 180 };
+
+  const full = h.call('buildTeamInsights_', curr, prev);
+  assert.ok(full.some(function (i) { return /call volume/.test(i.text); }),
+    'volume insight present without the flag');
+
+  const trimmed = h.call('buildTeamInsights_', curr, prev, { excludeVolume: true });
+  assert.ok(!trimmed.some(function (i) { return /call volume|Missed-call count/.test(i.text); }),
+    'no raw-volume insights with excludeVolume');
+  assert.ok(trimmed.some(function (i) { return /Answer rate/.test(i.text); }),
+    'answer-rate insight retained');
+  assert.ok(trimmed.some(function (i) { return /Avg talk time/.test(i.text); }),
+    'avg-talk-time insight retained');
+});
+
 test('assertAdmin_ throws for non-admins, passes for admins', function () {
   // resolveUser_ lives in Auth.gs; inject a stub into the shared scope
   // so we exercise assertAdmin_'s role check in isolation.

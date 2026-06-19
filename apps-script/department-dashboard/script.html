@@ -4552,7 +4552,11 @@
         return;
       }
       const tab = e.target.closest('.ir-tab');
-      if (!tab || irShowAllCharts) return;   // tabs are inert in all-at-once mode
+      if (!tab) return;
+      // Clicking a specific chart-type tab exits all-at-once mode and shows
+      // just that tab (previously tabs were inert in all-mode, leaving the
+      // only way out a second click on the toggle).
+      if (irShowAllCharts) irShowAllCharts = false;
       irActiveChartTab = tab.getAttribute('data-tab');
       irActivateChartTab_();
       irSavePrefs_();

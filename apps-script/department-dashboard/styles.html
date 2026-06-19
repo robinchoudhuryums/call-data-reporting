@@ -2361,7 +2361,9 @@
     border-color: var(--accent);
     font-weight: 600;
   }
-  .ir-tabs-allmode .ir-tab { opacity: 0.4; pointer-events: none; }
+  /* In all-at-once mode the tabs are dimmed (none is "selected") but stay
+     clickable -- clicking one exits all-mode and jumps to that chart. */
+  .ir-tabs-allmode .ir-tab { opacity: 0.5; }
   .ir-charts-all { display: flex; flex-direction: column; gap: 14px; }
   .ir-charts-all .ir-chart-wrap { height: 300px; }
 

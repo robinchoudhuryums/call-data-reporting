@@ -242,6 +242,20 @@ Tests: 132/132 pass; whole-file CSS brace balance 860/860; INV-16 untouched. No 
   rail-card migration is the remaining Phase 4 item. Live verify: S11/S12 (Individual Report) +
   the per-tile "Copy" TSV.
 
+- **Increment 24 (DONE — verification-pass fixes):** (1) IR "All at once" chart toggle: the
+  `.ir-tabs-allmode .ir-tab { pointer-events: none }` CSS (plus the JS `return` on tab clicks in
+  all-mode) trapped the user in all-mode — the only exit was a second toggle click. Removed the
+  pointer-events block (tabs stay dimmed 0.5 but clickable) and changed the click handler so a
+  specific-tab click exits all-mode and jumps to that chart. Relabeled the button "All at once" →
+  "ALL". (2) Insights "Team Insights": `buildTeamInsights_` gains an optional
+  `opts.excludeVolume` that drops the raw cumulative-volume insights (answered/missed counts) —
+  not comparable across windows of different lengths — while keeping the length-independent ones
+  (answer rate %, avg talk time per-call). The Insights caller passes `{excludeVolume:
+  lengthMismatch}` (INV-35). PR (never mismatches, INV-28) and CR callers pass nothing →
+  unchanged; new unit test pins both modes. tests 133/133; CSS 917/917; JS clean. Branch
+  `claude/ir-charttabs-insights-volume`. NOTE: CR also calls buildTeamInsights_ and CAN mismatch —
+  a candidate same-fix follow-up (left out to stay scoped to the operator's Insights request).
+
 ## Where I left off
 Phase 1 confirmed in prod by the operator. Continued report-by-report migration with
 `/broad-implement` rigor: Increment 4 promoted the KPI tile to a shared `dsKpiTile_` and moved the
