@@ -256,6 +256,20 @@ Tests: 132/132 pass; whole-file CSS brace balance 860/860; INV-16 untouched. No 
   `claude/ir-charttabs-insights-volume`. NOTE: CR also calls buildTeamInsights_ and CAN mismatch —
   a candidate same-fix follow-up (left out to stay scoped to the operator's Insights request).
 
+- **Increment 25 (DONE — Phase 4: per-agent cards → ds-card--rail):** migrated BOTH per-agent card
+  surfaces onto the shared `ds-card--rail` (4px left status rail colored via inline `--status`).
+  Insights cards (`insBuildCard_`): improved=accent / regressed=warn / mixed=muted / floater=warn;
+  retired `.ins-card-improved/regressed/mixed/floater` + the `.ins-card` border-left (`.ins-card`
+  keeps padding as the print/layout hook). CR cards (`crBuildCard_`): improved/regressed/mixed →
+  `--status`; retired `.cr-card-*` + the `.cr-agent-card` border chrome (kept padding). `.ds-card`
+  now supplies border/radius(r-lg)/shadow-1/bg for both; print rules (`.ins-card`/`.cr-agent-card`
+  page-break-inside) + `.cr-quiet-details .cr-agent-card` opacity hook unaffected (classes kept).
+  Pure client UI — no cache/aggregation/invariant impact. tests 133/133; CSS 910/910; JS clean.
+  Branch `claude/ds-rail-cards`. This was the last headline Phase 4 item. Remaining: `.ir-kpi-*` +
+  the just-retired card dialect dead-CSS cleanup sweep; optional CR volume-insight gating;
+  `/sync-docs` pass. Live verify: S12 (Insights peer cards) + S19 (CR agent cards) — rail colors
+  match direction; floaters warn; print/quiet-collapse intact.
+
 ## Where I left off
 Phase 1 confirmed in prod by the operator. Continued report-by-report migration with
 `/broad-implement` rigor: Increment 4 promoted the KPI tile to a shared `dsKpiTile_` and moved the

@@ -2675,19 +2675,12 @@
     gap: 12px;
     margin-top: 8px;
   }
-  .ins-card {
-    border: 1px solid var(--line);
-    border-radius: var(--r);
-    background: var(--paper-card);
-    padding: 12px 14px;
-    border-left: 3px solid var(--line);
-  }
-  /* Classification tints (CR pattern). Floater's warn border wins --
-     the JS only applies a classification class to non-floaters. */
-  .ins-card-improved  { border-left-color: var(--accent); }
-  .ins-card-regressed { border-left-color: var(--warn); }
-  .ins-card-mixed     { border-left-color: var(--muted); }
-  .ins-card-floater { border-left: 3px solid var(--warn); }
+  /* Per-agent cards ride the shared ds-card--rail (Phase 4): .ds-card supplies
+     the border / radius / shadow / bg, ds-card--rail draws the left status rail
+     (color via inline --status -- improved=accent / regressed=warn / mixed=muted
+     / floater=warn, set in insBuildCard_). .ins-card only contributes padding
+     now (kept as the print + layout hook). */
+  .ins-card { padding: 12px 14px; }
   .ins-metric-perday {
     font-family: var(--mono);
     font-size: 9px;
@@ -3151,19 +3144,12 @@
   @media (min-width: 1200px) {
     .cr-agent-cards { grid-template-columns: 1fr 1fr; }
   }
-  .cr-agent-card {
-    background: var(--paper-card);
-    border: 1px solid var(--line);
-    border-left-width: 3px;
-    border-radius: 2px;
-    padding: 14px 16px;
-  }
-  /* Left-stripe color encodes the agent's aggregate direction
-     across the 4 valenced metrics so scanning the grid surfaces
-     the movers without reading every cell. */
-  .cr-card-improved  { border-left-color: var(--accent); }
-  .cr-card-regressed { border-left-color: var(--warn); }
-  .cr-card-mixed     { border-left-color: var(--muted); }
+  /* Per-agent cards ride the shared ds-card--rail (Phase 4): .ds-card supplies
+     border / radius / shadow / bg; ds-card--rail draws the left status rail
+     whose color (improved=accent / regressed=warn / mixed=muted) encodes the
+     agent's aggregate direction, set via inline --status in crBuildCard_.
+     .cr-agent-card keeps padding (and stays the print + quiet-details hook). */
+  .cr-agent-card { padding: 14px 16px; }
 
   .cr-agent-card-header {
     display: flex;
