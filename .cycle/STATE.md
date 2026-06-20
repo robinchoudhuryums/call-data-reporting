@@ -282,3 +282,13 @@ PRIOR CONTEXT (still valid):
 Also confirmed access control: non-manager/non-admin domain users land on access-denied with zero
 data (Code.gs doGet + per-RPC re-auth); out-of-domain users can't reach the app. Awaiting
 commit/push/deploy direction.
+
+- **Increment 26 (DONE — redesign closeout, part 1):** (a) CR volume-insight gating: applied the
+  #105 `excludeVolume` fix to Compare Ranges — relocated its `buildTeamInsights_` call to AFTER
+  `lengthMismatch` is computed and passed `{excludeVolume: lengthMismatch}`, so a different-length
+  P1/P2 comparison drops the raw answered/missed-count insights (keeps answer rate % + ATT). (b)
+  Dead-CSS sweep: removed the now-unused `.ir-kpi-tile/row-top/label/spark/value-row/value/share/
+  row-bot/row-prior/team` rules left behind by the #104 ds-kpi migration (kept `.ir-kpi-grid`
+  container + `.ir-spark-svg`). The `.ins-card-*` / `.cr-card-*` classification rules were already
+  removed in #106. tests 133/133; CSS 900/900; JS clean. Branch `claude/cr-gating-irkpi-cleanup`.
+  Remaining closeout: `/sync-docs` pass.

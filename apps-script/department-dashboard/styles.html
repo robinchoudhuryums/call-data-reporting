@@ -2041,61 +2041,9 @@
     grid-template-columns: repeat(5, minmax(0, 1fr));
     gap: 10px;
   }
-  .ir-kpi-tile {
-    background: var(--paper-2);
-    border: 1px solid var(--line);
-    border-radius: 2px;
-    padding: 12px 14px;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    font-variant-numeric: tabular-nums;
-    min-width: 0;
-  }
-  .ir-kpi-row-top {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 6px;
-  }
-  .ir-kpi-label {
-    font-family: var(--mono);
-    font-size: 10px;
-    font-weight: 500;
-    text-transform: uppercase;
-    letter-spacing: 0.18em;
-    color: var(--muted);
-  }
-  .ir-kpi-spark { height: 22px; line-height: 0; }
+  /* IR sparkline SVG (the per-tile trend; the tile chrome itself migrated to
+     ds-kpi -- the dead .ir-kpi-* tile rules were removed). */
   .ir-spark-svg { display: block; }
-  .ir-kpi-value-row {
-    display: flex;
-    align-items: baseline;
-    gap: 8px;
-    min-width: 0;
-  }
-  .ir-kpi-value {
-    font-family: var(--display);
-    font-size: 26px;
-    font-weight: 500;
-    letter-spacing: -0.4px;
-    color: var(--ink);
-    line-height: 1.05;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  /* Subtle "X.X% of dept" tag inline with the big value. Mono so it
-     reads as metadata; the display-font absolute number stays primary. */
-  .ir-kpi-share {
-    font-family: var(--mono);
-    font-size: 11px;
-    color: var(--muted);
-    font-weight: 500;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
 
   /* Insights callout — rendered above the KPI grid per agent.
      3px accent stripe + soft-bg fill, mono kicker, lists up to
@@ -2151,27 +2099,6 @@
   .ir-insight-mark-positive { background: var(--accent-soft); color: var(--accent); }
   .ir-insight-mark-negative { background: var(--warn-soft); color: var(--warn); }
   .ir-insight-mark-neutral  { background: var(--paper-2); color: var(--muted); }
-  .ir-kpi-row-bot {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 6px;
-  }
-  /* Same-agent YoY vs Prior period row. Sits below ir-kpi-row-bot
-     when summaryData.priorStats is present (Individual Report
-     "Compare with" mode). Same layout / typography as the team-vs
-     row above but with a small top border to visually distinguish
-     "vs Team" from "vs Prior". */
-  .ir-kpi-row-prior {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 6px;
-    margin-top: 4px;
-    padding-top: 4px;
-    border-top: 1px dashed var(--line);
-  }
-
   /* Compact form hint for the resolved prior-range preview under
      the Compare-with row. */
   .ir-prior-hint {
@@ -2179,16 +2106,6 @@
     margin-bottom: 12px;
     color: var(--muted);
     font-size: 12px;
-  }
-  .ir-kpi-team {
-    font-family: var(--mono);
-    font-size: 10px;
-    color: var(--muted);
-    text-transform: uppercase;
-    letter-spacing: 0.18em;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
   @media (max-width: 900px) {
     .ir-kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
