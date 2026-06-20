@@ -12260,6 +12260,134 @@
     inboundRenderTable_('inbound-dialin-tbody', data.byDialIn, false);
     inboundRenderTable_('inbound-queue-tbody', data.byQueue, false);
     inboundRenderCrossTable_(data.byDialInInsurer);
+    // Temporal abandon heatmap (companion). Separate round-trip via
+    // getInboundHeatmap so it can be reused by the QCD report too.
+    loadAbandonHeatmap_('inbound-heatmap', meta.companyView ? '' : meta.department, meta.from, meta.to);
+  }
+
+  // ---- Temporal abandon heatmap (weekday x hour), shared by Inbound + QCD ----
+  // Sourced from inbound_calls via getInboundHeatmap. Admin-only at the server
+  // boundary (inherits the inbound report's vetting gate), so the loader hides
+  // the panel quietly on an auth/error/empty result -- it's a companion, never
+  // core. Color pivots on the 5% company abandon standard (C2): <=5% reads as
+  // calm sage, >5% ramps warm so the problem hours pop.
+  var HEAT_MIN_VOLUME_ = 3;   // cells below this are "low signal" -> muted, not colored by rate
+
+  function loadAbandonHeatmap_(containerId, dept, from, to) {
+    var el = $(containerId);
+    if (!el) return;
+    el.style.display = '';
+    el.innerHTML = '<div class="ds-heatmap-loading"><span class="ds-loader--eq" aria-hidden="true">'
+      + '<i></i><i></i><i></i><i></i></span> Loading abandon heatmap…</div>';
+    google.script.run
+      .withSuccessHandler(function (data) { renderAbandonHeatmap_(containerId, data); })
+      .withFailureHandler(function () { el.style.display = 'none'; el.innerHTML = ''; })
+      .getInboundHeatmap({ department: dept || '', from: from, to: to });
+  }
+
+  function heatRgb_(varName) {
+    // colorToCanvasRgb_ resolves a CSS custom prop to canonical 'rgba(r,g,b,a)'
+    // (OKLCH-safe, INV-42), so this works across the light/dark/paper themes.
+    var s = (typeof colorToCanvasRgb_ === 'function' ? colorToCanvasRgb_(varName) : '') || 'rgb(0,0,0)';
+    var m = /(\d+)\D+(\d+)\D+(\d+)/.exec(s);
+    return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : [0, 0, 0];
+  }
+  function heatMix_(a, b, t) {
+    t = Math.max(0, Math.min(1, t));
+    return 'rgb(' + Math.round(a[0] + (b[0] - a[0]) * t) + ','
+                  + Math.round(a[1] + (b[1] - a[1]) * t) + ','
+                  + Math.round(a[2] + (b[2] - a[2]) * t) + ')';
+  }
+  function heatCellBg_(rate, calls, pal) {
+    if (calls < HEAT_MIN_VOLUME_) return pal.muted;           // not enough signal
+    if (rate <= 5) return heatMix_(pal.paper, pal.good, 0.18 + 0.42 * (1 - rate / 5)); // calm sage
+    return heatMix_(pal.warnSoft, pal.warn, Math.min(1, (rate - 5) / 15));             // warm, saturates ~20%
+  }
+  function heatHourLabel_(h) {
+    var ampm = h < 12 ? 'a' : 'p';
+    var hr = h % 12; if (hr === 0) hr = 12;
+    return hr + ampm;
+  }
+
+  function renderAbandonHeatmap_(containerId, data) {
+    var el = $(containerId);
+    if (!el) return;
+    var meta = (data && data.meta) || {};
+    var cells = (data && data.cells) || [];
+    // Companion panel: stay quiet (hidden) when there's nothing useful to show
+    // -- unavailable Neon, unmapped dept, or no time-of-day rows at all (e.g.
+    // a range with only pre-extension inbound rows that lack call_start).
+    if (meta.available === false || meta.unmapped || !cells.length) {
+      el.style.display = 'none'; el.innerHTML = '';
+      return;
+    }
+    el.style.display = '';
+
+    var startH = meta.windowStartHour != null ? meta.windowStartHour : 8;
+    var endH   = meta.windowEndHour   != null ? meta.windowEndHour   : 17;
+    var slotMin = meta.slotMinutes || 60;
+    var perHour = 60 / slotMin;
+    var slotCount = Math.max(1, Math.round((endH - startH) * perHour));
+    var tz = meta.tzLabel || 'CST';
+
+    // cellMap[dow][slot] = {calls, abandoned}
+    var cellMap = {};
+    cells.forEach(function (c) {
+      if (!cellMap[c.dow]) cellMap[c.dow] = {};
+      cellMap[c.dow][c.slot] = c;
+    });
+
+    var pal = {
+      paper:    heatRgb_('--paper-card'),
+      good:     heatRgb_('--good'),
+      warn:     heatRgb_('--warn'),
+      warnSoft: heatRgb_('--warn-soft'),
+      muted:    'var(--paper-2)',
+    };
+    var DOWS = [[1, 'Mon'], [2, 'Tue'], [3, 'Wed'], [4, 'Thu'], [5, 'Fri']];
+
+    var html = '<div class="ds-heatmap-head"><span class="ds-heatmap-title">When are callers abandoning?</span>'
+      + '<span class="ds-heatmap-sub">abandon rate · weekday × hour (' + escapeHtml(tz) + ')</span></div>';
+    html += '<div class="ds-heatmap-wrap"><div class="ds-heatmap" style="grid-template-columns: auto repeat('
+      + slotCount + ', minmax(26px, 1fr));">';
+    html += '<span class="ds-heatmap__corner"></span>';
+    for (var s = 0; s < slotCount; s++) {
+      html += '<span class="ds-heatmap__col-h">' + escapeHtml(heatHourLabel_(startH + Math.round(s / perHour))) + '</span>';
+    }
+    DOWS.forEach(function (d) {
+      html += '<span class="ds-heatmap__row-h">' + d[1] + '</span>';
+      for (var sl = 0; sl < slotCount; sl++) {
+        var c = cellMap[d[0]] && cellMap[d[0]][sl];
+        var hr = startH + Math.round(sl / perHour);
+        var label = d[1] + ' ' + heatHourLabel_(hr) + '–' + heatHourLabel_(hr + Math.round(1 / perHour)) + ' ' + tz;
+        if (!c || !c.calls) {
+          html += '<span class="ds-heatmap__cell ds-heatmap__cell--empty" title="'
+            + escapeHtml(label + ' · no calls') + '"></span>';
+          continue;
+        }
+        var rate = Math.round(c.abandoned / c.calls * 1000) / 10;
+        var bg = heatCellBg_(rate, c.calls, pal);
+        var note = c.calls < HEAT_MIN_VOLUME_ ? ' (low volume)' : '';
+        var title = label + ' · ' + rate + '% abandoned (' + c.abandoned + ' of ' + c.calls + ' calls)' + note;
+        html += '<span class="ds-heatmap__cell" style="background:' + bg + ';" title="'
+          + escapeHtml(title) + '"></span>';
+      }
+    });
+    html += '</div></div>';
+
+    // Legend: discrete swatches anchored on the 5% standard (clearer than a
+    // continuous ramp for a non-technical audience).
+    var sw = function (bg, lbl) {
+      return '<span class="ds-heatmap-legend__item"><span class="ds-heatmap-legend__sw" style="background:'
+        + bg + ';"></span>' + escapeHtml(lbl) + '</span>';
+    };
+    html += '<div class="ds-heatmap-legend">'
+      + sw(heatMix_(pal.paper, pal.good, 0.5), '0–5% (on target)')
+      + sw(heatMix_(pal.warnSoft, pal.warn, 0.25), '5–10%')
+      + sw(heatMix_(pal.warnSoft, pal.warn, 1), '15%+')
+      + sw('var(--paper-2)', 'low volume (<' + HEAT_MIN_VOLUME_ + ' calls)')
+      + '</div>';
+    el.innerHTML = html;
   }
 
   /**
@@ -12791,6 +12919,15 @@
     }
     if (qcdEmptyEl) qcdEmptyEl.style.display = 'none';
     if (qcdDataEl)  qcdDataEl.style.display  = '';
+
+    // Temporal abandon heatmap companion (sourced from inbound_calls). Admin
+    // only -- getInboundHeatmap inherits the inbound report's vetting gate, so
+    // managers never call it and the panel stays hidden for them.
+    if (USER.role === 'admin' && data.meta) {
+      loadAbandonHeatmap_('qcd-heatmap', data.meta.department || '', data.meta.from, data.meta.to);
+    } else {
+      var qh = $('qcd-heatmap'); if (qh) { qh.style.display = 'none'; qh.innerHTML = ''; }
+    }
 
     var hint = $('qcd-queue-hint');
     if (hint) {
