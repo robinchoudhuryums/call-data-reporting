@@ -78,7 +78,7 @@
 //     (from the bySource breakdown 4a added to computeQcdReport_), so
 //     the Queue health table can annotate WHERE a queue's abandons come
 //     from. Null when no sub-source has abandons.
-const INSIGHTS_CACHE_KEY_PREFIX = 'insights:v8';
+const INSIGHTS_CACHE_KEY_PREFIX = 'insights:v9';
 
 function getInsightsReportInit(req) {
   // Same picker UX (roster + default dates + active-in-range subset) as
