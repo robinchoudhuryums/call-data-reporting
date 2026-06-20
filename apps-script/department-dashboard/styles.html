@@ -4604,4 +4604,31 @@
   .ds-loader--eq i:nth-child(4) { animation-delay: .45s; }
   @keyframes ds-eq { 0%, 100% { transform: scaleY(.3); } 50% { transform: scaleY(1); } }
   @media (prefers-reduced-motion: reduce) { .ds-loader--eq i { animation: none; transform: scaleY(.6); } }
+
+  /* Temporal abandon heatmap (weekday x hour), shared by Inbound + QCD. Cells
+     are colored in JS (heatCellBg_) anchored on the 5% standard; this is just
+     layout + chrome. */
+  .ds-heatmap-panel { margin-top: 18px; }
+  .ds-heatmap-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
+  .ds-heatmap-title { font: 600 13px/1.2 var(--display); color: var(--ink); }
+  .ds-heatmap-sub { font: 400 11px/1 var(--mono); color: var(--muted); letter-spacing: 0.03em; }
+  .ds-heatmap-wrap { overflow-x: auto; }
+  .ds-heatmap { display: grid; gap: 3px; align-items: stretch; min-width: 360px; }
+  .ds-heatmap__col-h, .ds-heatmap__row-h {
+    font: 500 10px/1 var(--mono); color: var(--muted); text-transform: uppercase;
+    letter-spacing: 0.06em; display: flex; align-items: center;
+  }
+  .ds-heatmap__col-h { justify-content: center; padding-bottom: 2px; }
+  .ds-heatmap__row-h { justify-content: flex-end; padding-right: 8px; }
+  .ds-heatmap__cell {
+    min-height: 26px; border-radius: var(--r-sm); border: 1px solid rgba(0, 0, 0, 0.04);
+  }
+  .ds-heatmap__cell--empty { background: var(--paper-2); border-style: dashed; }
+  .ds-heatmap-legend {
+    display: flex; align-items: center; gap: 14px; margin-top: 10px; flex-wrap: wrap;
+    font: 400 11px/1 var(--mono); color: var(--muted);
+  }
+  .ds-heatmap-legend__item { display: inline-flex; align-items: center; gap: 5px; }
+  .ds-heatmap-legend__sw { width: 14px; height: 12px; border-radius: var(--r-sm); display: inline-block; }
+  .ds-heatmap-loading { padding: 16px 0; color: var(--muted); font-size: 12px; }
 </style>

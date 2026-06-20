@@ -1184,6 +1184,11 @@
             </table>
           </div>
         </div>
+
+        <!-- Temporal abandon heatmap (companion, sourced from inbound_calls).
+             Admin-only: the load call is gated by role in qcdRenderReport_
+             (getInboundHeatmap inherits the inbound report's admin gate). -->
+        <div id="qcd-heatmap" class="ds-heatmap-panel" style="display:none;"></div>
         </div><!-- /#qcd-data-sections -->
       </div>
       </div>
@@ -1596,6 +1601,8 @@
             </table>
           </div>
         </div>
+
+        <div id="inbound-heatmap" class="ds-heatmap-panel" style="display:none;"></div>
       </div>
       </div>
     </div>

@@ -399,3 +399,118 @@ function getInboundInsurerDaily(req) {
     if (conn) { try { conn.close(); } catch (ce) {} }
   }
 }
+
+
+// ---------------------------------------------------------------------------
+// Temporal abandon heatmap (day-of-week x half-hour-slot), sourced from
+// inbound_calls. Powers the heatmap panel in BOTH the Inbound report and the
+// QCD report (a "when are callers abandoning / when are we short-staffed"
+// companion view). Same auth + dept-scoping as getInboundReport
+// (inboundResolveRequest_ + inboundDeptPredicate_), so a manager only ever
+// sees their own dept's slice.
+//
+// TZ: inbound_calls.call_start is stored as raw 'HH:MM:SS' in the CDR's native
+// PST (the inbound capture does NOT apply the +2h PST->CST shift the DQE slot
+// pipeline does -- icIsoTime_ in cdr-import preserves the raw wall-clock). We
+// shift +INBOUND_HEATMAP_CST_SHIFT_HOURS here so the slot axis matches the
+// dashboard's 8 AM-5 PM CST work-window convention (INV-18). If a live
+// spot-check shows the columns are off, this single constant is the knob.
+// Pre-extension rows (null/empty call_start) carry no time-of-day and are
+// excluded (documented gap -- they predate the journey extension).
+const INBOUND_HEATMAP_CACHE_KEY_PREFIX = 'inboundHeatmap:v1';
+const INBOUND_HEATMAP_CST_SHIFT_HOURS = 2;    // PST(stored) -> CST(dashboard)
+const INBOUND_HEATMAP_WINDOW_START_HOUR = 8;  // 8 AM CST (matches INV-18)
+const INBOUND_HEATMAP_WINDOW_END_HOUR   = 17; // 5 PM CST (exclusive)
+const INBOUND_HEATMAP_SLOT_MINUTES      = 60; // hourly buckets (9 slots, 8a-4p) -- readable as a grid
+
+function getInboundHeatmap(req) {
+  const scope = inboundResolveRequest_(req);   // auth + dept scoping (throws on bad access)
+
+  const cache = CacheService.getScriptCache();
+  const cacheKey = INBOUND_HEATMAP_CACHE_KEY_PREFIX + ':' + (scope.dept || '__all__')
+                 + ':' + scope.from + ':' + scope.to;
+  const cached = cache.get(cacheKey);
+  if (cached) {
+    try { const p = JSON.parse(cached); p.meta.cacheHit = true; return p; }
+    catch (e) { /* recompute */ }
+  }
+
+  const out = emptyInboundHeatmap_(scope);
+  // Dept view with no mapped queues: nothing attributes -> "unmapped" hint,
+  // mirroring getInboundReport / QCD.
+  if (!scope.companyView && scope.deptQueues.length === 0) {
+    out.meta.unmapped = true;
+    return out;
+  }
+
+  let conn = null;
+  try {
+    conn = (typeof getDashboardNeonConn_ === 'function') ? getDashboardNeonConn_() : null;
+    if (!conn) { out.meta.available = false; return out; }
+
+    const deptPred = inboundDeptPredicate_(scope.dept, scope.deptQueues);
+    const dr = "c.call_date BETWEEN '" + scope.from + "'::date AND '" + scope.to + "'::date" + deptPred;
+    // CST seconds-since-midnight for the shifted start time; bucket into
+    // half-hour slots indexed from the 8 AM CST window start.
+    const cstSecs = "(EXTRACT(EPOCH FROM ((c.call_start)::time + interval '"
+      + INBOUND_HEATMAP_CST_SHIFT_HOURS + " hours')))";
+    const winStartSecs = INBOUND_HEATMAP_WINDOW_START_HOUR * 3600;
+    const winEndSecs   = INBOUND_HEATMAP_WINDOW_END_HOUR * 3600;
+    const slotSecs     = INBOUND_HEATMAP_SLOT_MINUTES * 60;
+    const sql =
+      "SELECT COALESCE(json_agg(t), '[]')::text AS j FROM (" +
+        "SELECT EXTRACT(ISODOW FROM c.call_date)::int AS dow, " +
+          "floor((" + cstSecs + " - " + winStartSecs + ") / " + slotSecs + ")::int AS slot, " +
+          "count(*) AS calls, " +
+          "count(*) FILTER (WHERE c.disposition='abandoned') AS abandoned " +
+        "FROM inbound_calls c " +
+        "WHERE " + dr + " " +
+          // Guard malformed/empty call_start (pre-extension rows are null).
+          "AND c.call_start ~ '^[0-9]{1,2}:[0-9]{2}:[0-9]{2}$' " +
+          "AND " + cstSecs + " >= " + winStartSecs + " AND " + cstSecs + " < " + winEndSecs + " " +
+          "AND EXTRACT(ISODOW FROM c.call_date) BETWEEN 1 AND 5 " +
+        "GROUP BY 1, 2" +
+      ") t";
+
+    const stmt = conn.createStatement();
+    const rs = stmt.executeQuery(sql);
+    const json = rs.next() ? rs.getString('j') : null;
+    rs.close(); stmt.close();
+    if (json == null) { out.meta.available = false; return out; }
+
+    const arr = JSON.parse(json);
+    out.cells = Array.isArray(arr) ? arr.map(function (c) {
+      return { dow: Number(c.dow) || 0, slot: Number(c.slot) || 0,
+               calls: Number(c.calls) || 0, abandoned: Number(c.abandoned) || 0 };
+    }) : [];
+    out.meta.rows = out.cells.reduce(function (s, c) { return s + c.calls; }, 0);
+    try { cache.put(cacheKey, JSON.stringify(out), REPORT_CACHE_TTL_SECONDS); }
+    catch (ce) { /* harmless */ }
+    return out;
+  } catch (e) {
+    Logger.log('getInboundHeatmap failed (best-effort): ' + (e && e.message ? e.message : e));
+    if (typeof recordNeonReadFailure_ === 'function') recordNeonReadFailure_('getInboundHeatmap', e);
+    out.meta.available = false;
+    return out;
+  } finally {
+    if (conn) { try { conn.close(); } catch (ce) {} }
+  }
+}
+
+function emptyInboundHeatmap_(scope) {
+  return {
+    meta: {
+      from: scope.from, to: scope.to, available: true,
+      department: scope.dept || null,
+      companyView: scope.companyView,
+      unmapped: false,
+      // Axis metadata so the client never hardcodes the window/granularity.
+      windowStartHour: INBOUND_HEATMAP_WINDOW_START_HOUR,
+      windowEndHour: INBOUND_HEATMAP_WINDOW_END_HOUR,
+      slotMinutes: INBOUND_HEATMAP_SLOT_MINUTES,
+      tzLabel: 'CST',
+      rows: 0, generatedAt: new Date().toISOString(),
+    },
+    cells: [],
+  };
+}

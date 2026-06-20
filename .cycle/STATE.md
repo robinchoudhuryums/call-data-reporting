@@ -292,3 +292,18 @@ commit/push/deploy direction.
   container + `.ir-spark-svg`). The `.ins-card-*` / `.cr-card-*` classification rules were already
   removed in #106. tests 133/133; CSS 900/900; JS clean. Branch `claude/cr-gating-irkpi-cleanup`.
   Remaining closeout: `/sync-docs` pass.
+
+- **Increment 27 (NEW FEATURE — temporal abandon heatmap):** weekday × hour abandon-rate
+  heatmap sourced from `inbound_calls`, in BOTH the Inbound report and the QCD report (companion).
+  Server: `InboundReport.gs::getInboundHeatmap({department,from,to})` -- one json_agg round-trip
+  aggregating abandon rate by `ISODOW × hour-slot`, reusing `inboundResolveRequest_` (admin-only
+  vetting gate + per-dept scoping) + `inboundDeptPredicate_`; cache `inboundHeatmap:v1`. Client:
+  shared `renderAbandonHeatmap_`/`loadAbandonHeatmap_` CSS-grid render (NO Chart.js dep), color
+  pivots on the 5% standard (≤5% sage / >5% warm, `colorToCanvasRgb_` OKLCH-safe), low-volume
+  (<3 calls) muted. Inbound: `#inbound-heatmap` always loads (report is admin-only). QCD:
+  `#qcd-heatmap` companion, load gated by `USER.role==='admin'` (managers never hit the admin
+  endpoint; opens to them when the inbound gate is later removed). **TZ:** `call_start` is raw PST;
+  SQL shifts +2h (`INBOUND_HEATMAP_CST_SHIFT_HOURS`) to the dashboard CST frame -- single-constant
+  knob, NEEDS LIVE SPOT-CHECK. tests 133/133; CSS 915/915; divs 610/610; JS clean; cache-version
+  guard green. Branch `claude/abandon-heatmap`. No unit coverage (Neon SQL + client render, like
+  the inbound report itself) -- verify via S38-style live check.
