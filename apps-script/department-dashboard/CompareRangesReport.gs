@@ -418,11 +418,8 @@ function computeCompareRanges_(dept, selectedAgents,
   };
 
   // ── Team-level insights vs prior period (P1) ──────────────────
-  const teamInsights = buildTeamInsights_(
-    { rung: teamP2.rung,     missed: teamP2.missed, answered: teamP2.answered,
-      pct: teamP2Pct,        att: teamP2Att },
-    { rung: teamP1.rung,     missed: teamP1.missed, answered: teamP1.answered,
-      pct: teamP1Pct,        att: teamP1Att });
+  // (computed below, after lengthMismatch, so volume insights can be
+  // gated when the two periods differ in length.)
 
   // Pretty labels for the side-by-side date header.
   const fmt = function (iso) {
@@ -457,6 +454,16 @@ function computeCompareRanges_(dept, selectedAgents,
   // p2Days:0) which sets lengthMismatch:false correctly.
   const lengthMismatch = (Math.min(p1Days, p2Days) > 0)
     && (Math.max(p1Days, p2Days) / Math.min(p1Days, p2Days) >= 1.2);
+
+  // On a length mismatch, drop the raw cumulative-volume insights
+  // (answered/missed counts) -- not comparable across periods of different
+  // lengths -- keeping answer rate (%) and avg talk time (per-call average).
+  const teamInsights = buildTeamInsights_(
+    { rung: teamP2.rung,     missed: teamP2.missed, answered: teamP2.answered,
+      pct: teamP2Pct,        att: teamP2Att },
+    { rung: teamP1.rung,     missed: teamP1.missed, answered: teamP1.answered,
+      pct: teamP1Pct,        att: teamP1Att },
+    { excludeVolume: lengthMismatch });
 
   return {
     meta: {
