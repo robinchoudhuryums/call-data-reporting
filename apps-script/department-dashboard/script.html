@@ -1951,9 +1951,15 @@
     // Generic legend spotlight (hover-dim + click-to-pin/isolate). Skip
     // the 92% baseline. Stash resting styles + the ISO date axis + the
     // viewer's dept so the tile-hover and point-click handlers can use them.
-    chartSpotlightStash_(ovChartInstance, { skipLabel: '92% target' });
-    ovChartInstance._trendIso = data.trendIsoLabels || [];
-    ovChartInstance._viewerDept = ovViewerDept_(data);
+    // ovChartInstance is null when Chart.js failed to load (safeChart_
+    // fallback) -- guard the post-render wiring so the rest of the Overview
+    // still paints with the inline "chart unavailable" note. ovWireAxisZoom_
+    // self-guards (it early-returns on a null instance).
+    if (ovChartInstance) {
+      chartSpotlightStash_(ovChartInstance, { skipLabel: '92% target' });
+      ovChartInstance._trendIso = data.trendIsoLabels || [];
+      ovChartInstance._viewerDept = ovViewerDept_(data);
+    }
     ovWireAxisZoom_();
   }
 
@@ -6064,7 +6070,7 @@
         },
       },
     });
-    irChartInstances.push(chart);
+    if (chart) irChartInstances.push(chart);   // null when Chart.js CDN failed (safeChart_)
   }
 
   function irFormatMinutes(val) {
@@ -7073,7 +7079,7 @@
         },
       },
     });
-    prChartInstances.push(pie);
+    if (pie) prChartInstances.push(pie);   // null when Chart.js CDN failed (safeChart_)
 
     // Stacked bar (Answered/Missed) + line overlay (% Answered) on
     // a second y-axis. The bars show volume per agent; the line
@@ -7176,7 +7182,7 @@
         },
       },
     });
-    prChartInstances.push(bar);
+    if (bar) prChartInstances.push(bar);   // null when Chart.js CDN failed (safeChart_)
 
     // Trend chart -- factored out so the metric sub-tabs can
     // re-render it without rebuilding the pie + bar.
@@ -7306,7 +7312,7 @@
         },
       },
     });
-    prChartInstances.push(trend);
+    if (trend) prChartInstances.push(trend);   // null when Chart.js CDN failed (safeChart_)
   }
 
   function prSetExportMenuOpen_(open) {
