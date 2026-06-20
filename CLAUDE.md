@@ -454,17 +454,25 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   primed form. (3) **Metric glossary** -- `METRIC_GLOSSARY_` is the ONE
   place metric definitions live; `initMetricGlossary_`'s debounced
   MutationObserver applies them as `title=` to `th` + KPI-label
-  elements + adds `.gloss` (which renders a circled-i `::after`
-  indicator). A styled popover (`initGlossTooltip_` -> `.ds-tooltip`)
-  replaces the unstyleable native `title=` tooltip on hover: one shared
-  element, positioned via event delegation, reads the def from `title`
-  and stashes it in `data-gloss` while shown to suppress the native
-  popover (restored on leave -- the applier skips `data-gloss` elements
-  so it can't re-add the title mid-hover). Non-`.gloss` native `title=`
-  tooltips (header buttons etc.) stay native. Add new terms to the
-  dict, NOT as inline `title=` in render code (the applier never
-  clobbers an existing title, so per-callsite titles would shadow the
-  dict). (4)
+  elements + adds `.gloss` (which renders a circled-`i` `::after`
+  indicator that FADES IN on hover/focus only -- not always-on -- via
+  opacity so revealing it never shifts the label). A styled,
+  ACCENT-BORDERED popover (`initGlossTooltip_` -> `.ds-tooltip`, border
+  `var(--accent)`) replaces the unstyleable native `title=` tooltip on
+  hover: one shared element, positioned via event delegation, reads the
+  def from `title` and stashes it in `data-gloss` while shown to suppress
+  the native popover (restored on leave -- the applier skips `data-gloss`
+  elements so it can't re-add the title mid-hover). High-value terms
+  (% answered / abandoned % / ATT / violations / TTT) get a RICH variant
+  from `METRIC_GLOSSARY_RICH_` -- a bold title + def + an optional
+  92%/5% benchmark chip -- stored on `data-gloss-rich` and rendered via
+  innerHTML (dev constants only); `show()` prefers it + toggles
+  `.ds-tooltip--rich`, else falls back to the plain-text `title`.
+  Non-`.gloss` native `title=` tooltips (header buttons etc.) stay native.
+  Add new terms to `METRIC_GLOSSARY_` (and a rich entry to
+  `METRIC_GLOSSARY_RICH_` if it's a standards metric), NOT as inline
+  `title=` in render code (the applier never clobbers an existing title,
+  so per-callsite titles would shadow the dict). (4)
   **Benchmark tints** -- `benchValueCls_(label, formatted, symmetric)`
   applies the ONLY two company-wide standards (92% answer-rate target ->
   `.bm-target` sage; 5% abandon threshold -> `.bm-over` warn) to KPI tile
@@ -552,15 +560,51 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `benchValueCls_` (92% / 5%), NOT the design's invented 85%/8% bands;
   (3) dark mode is inherited via tokens — keep `body[data-mode="dark"]`,
   do NOT add the design's `[data-theme="dark"]` selector. Migrated so
-  far: the KPI tile is the shared `dsKpiTile_` → `.ds-kpi`, used by BOTH
-  the Insights rollup AND the Performance Report rollup (first cross-report
-  `ds-*` component — the consolidation thesis; the old `prKpiTile_` was
-  retired). Plus, in Insights, the queue-health per-queue table
-  (`.ds-table` inside a `.ds-card`) and the length-mismatch warning
-  (`.ds-banner`). The
-  shared `reportHeadline_` is intentionally NOT migrated (every report
-  uses it). Report consolidation (Part 3) and the nav restructure
-  (Part 6) are parked product decisions, not built.
+  far: (a) the rollup KPI tile is the shared `dsKpiTile_` → `.ds-kpi`
+  (Insights + Performance Report rollups — first cross-report `ds-*`
+  component, the consolidation thesis; old `prKpiTile_` retired); (b) the
+  **Individual Report** KPI tile (`irKpiTile`) → `.ds-kpi` via the
+  `.ds-kpi--ir` density modifier + the extension sub-elements
+  `.ds-kpi__value-row`/`__share`/`__compare`/`__team`/`__prior`/`__spark--inline`
+  (the inline share tag + "Team X" average marker + vs-prior row the base
+  tile lacked); (c) the **per-agent cards** in Insights (`insBuildCard_`)
+  AND Compare Ranges (`crBuildCard_`) → `.ds-card--rail`, the classification
+  stripe driven by an inline `--status` (improved=accent / regressed=warn /
+  mixed=muted, floater=warn); (d) in Insights, the queue-health per-queue
+  table (`.ds-table` inside a `.ds-card`). The Insights length-mismatch
+  caveat is now an INLINE `.ins-length-flag` next to the compare line (warn
+  glyph + hover tooltip, `insLengthFlagHtml_`), NOT a standalone banner;
+  Compare Ranges still uses `.ds-banner is-warn`. The now-dead `.ir-kpi-*`
+  tile / `.ins-card-*` / `.cr-card-*` dialect CSS was swept (kept
+  `.ir-kpi-grid` container + `.ir-spark-svg`). The shared `reportHeadline_`
+  is intentionally NOT migrated (every report uses it). Report consolidation
+  (Part 3) and the nav restructure (Part 6) are parked product decisions,
+  not built.
+- **Team-Insights volume gating on a length mismatch.**
+  `Util.gs::buildTeamInsights_` takes an optional `opts.excludeVolume`;
+  Insights (`computeInsights_`) and Compare Ranges (`computeCompareRanges_`)
+  pass `{ excludeVolume: lengthMismatch }` so a different-length comparison
+  DROPS the raw cumulative-volume insights (answered / missed COUNTS --
+  apples-to-oranges across unequal windows) while keeping the
+  length-independent ones (answer rate %, avg talk time per-call). The
+  Performance Report never mismatches (INV-28 same-length prior) so it
+  passes nothing -- unchanged. Separately, the Insights at-a-glance HEADLINE
+  tone is neutralized (no green/orange "On track"/"Watch" banner -- falls
+  back to neutral) when the two windows differ by more than 7 days, so a
+  shaky comparison doesn't read as a false alarm (the sentences still
+  render). NOTE: these change `teamInsights` output without an INV-30 cache
+  bump -- the cache key already encodes the prior window (so the result is
+  deterministic per key); the only effect is a ≤30-min stale callout on
+  mismatched windows right after deploy.
+- **Chart.js CDN-failure fallback (`safeChart_`).** Every chart is created
+  through `safeChart_(target, config)` (script.html), NOT `new Chart(...)`
+  directly. It's a transparent pass-through when `Chart` is defined (common
+  path provably unchanged); only when the global is missing (blocked/failed
+  CDN, SRI mismatch) does `chartUnavailable_` hide the canvas and insert an
+  idempotent inline `.ds-note.ds-chart-unavailable` note -- so KPIs/tables
+  still render and the failure is explained, not a silent throw. Scoped to
+  the CDN-absent case only (it does NOT try/catch per-chart render errors).
+  Any new chart callsite must route through `safeChart_`.
 - **CacheService key length cap (250 chars).** Apps Script silently
   rejects cache keys longer than 250 characters, surfacing as an
   error on `cache.get`. The Individual / Performance / Compare
@@ -1177,6 +1221,16 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   corner handle. Position and size reset on close so the next
   open starts centered at default size. Disabled below 768px
   viewport width (mobile).
+- **Universal Help FAB.** A floating circled-`?` button (`#help-fab`,
+  `z-index:150`) stays above report modals so Help is always one click
+  away; it opens the SAME `#help-modal` as the header `?`. Because all
+  modals share `z-index:100` and stack by DOM order, `#help-modal` is
+  lifted to `z-index:200` so Help opened from the FAB while a report
+  modal is already open renders ABOVE it (and the FAB tucks itself away
+  while Help is open). Hide-able via the Settings toggle
+  `#help-fab-toggle` (localStorage `cdr.help.fab` = `off`); the header
+  `?` stays as the always-present fallback. Per-report client prefs +
+  this key live in localStorage (see the per-report prefs note above).
 
 ## Operator State Checklist
 
