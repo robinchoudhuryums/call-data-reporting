@@ -45,7 +45,7 @@
 // team accumulators (teamP1 / teamP2) gated on matchedViaRoster so
 // floaters appear in agentData but don't dilute dept totals.
 // agentData filtered to drop crafted off-dept names.
-const COMPARE_RANGES_CACHE_KEY_PREFIX = 'compareRanges:v4';
+const COMPARE_RANGES_CACHE_KEY_PREFIX = 'compareRanges:v5';
 
 function getCompareRangesInit(req) {
   const email = Session.getActiveUser().getEmail();
