@@ -444,6 +444,14 @@
               <li><strong>QUEUE</strong> &mdash; a &ldquo;floater&rdquo; from another dept who handled your queue extensions (their home dept follows the chip). Useful for spotting cross-coverage.</li>
               <li><strong>BOTH</strong> &mdash; rostered here <em>and</em> matched via queue this period.</li>
             </ul>
+            <div class="help-figure">
+              <div class="help-figure-row">
+                <span class="src-chip src-chip-roster"><span class="src-dot"></span>ROSTER</span>
+                <span class="src-chip src-chip-both"><span class="src-dot"></span>BOTH</span>
+                <span class="src-chip src-chip-queue"><span class="src-dot"></span>QUEUE &middot; Sales</span>
+              </div>
+              <div class="help-figure-cap">The chips as they appear in the Source column.</div>
+            </div>
             <p>Department <strong>totals are roster-only</strong>; queue-only floaters are summed on a separate footer line so headline numbers stay stable. The <strong>Diagnostics</strong> panel lists roster agents with no data in range.</p>
           </section>
           <section class="help-topic" id="help-topic-wow" hidden>
@@ -473,6 +481,14 @@
               <li>The colored <strong>left rail</strong> and the <strong>&#9650; Improving / &#9660; Slipping / &#8776; Mixed</strong> pill show that agent&rsquo;s <em>trend</em> vs the prior period (across rung, missed, answered, % answered). Hover the card and the rail glows.</li>
               <li>The <strong>above team / below team</strong> chip shows their <em>standing</em> &mdash; answered calls vs the team average <em>this</em> period (the marker on the Answered bar). So a card can be &ldquo;Improving&rdquo; yet &ldquo;below team&rdquo;: better than last period, still under the average.</li>
             </ul>
+            <div class="ds-card ds-card--rail help-mini-card" style="--status: var(--good);">
+              <div class="help-mini-card-head">
+                <span class="help-mini-name">Jordan A.</span>
+                <span class="ins-trend-pill ins-trend-up">&#9650; Improving</span>
+                <span class="cr-vs-team cr-vs-team-pos">&#9650; above team &middot; 142 vs 98 ans</span>
+              </div>
+            </div>
+            <div class="help-figure-cap">Sage rail + &ldquo;Improving&rdquo; pill = trend vs last period; the chip = standing vs the team average (here, 142 answered vs the ~98 a teammate averaged).</div>
             <p>The bars compare % Answered / Answered / Missed against the team average. A <strong>Queue health</strong> section adds the dept&rsquo;s abandonment picture. If the two compared windows differ a lot in length, raw-count insights are dropped and a note appears.</p>
           </section>
           <section class="help-topic" id="help-topic-compare" hidden>
@@ -494,6 +510,15 @@
           <section class="help-topic" id="help-topic-heatmap" hidden>
             <h3>Abandon heatmap</h3>
             <p>A <strong>weekday &times; hour</strong> grid showing where callers abandon &mdash; the &ldquo;when are we short-staffed?&rdquo; view. Calm sage &le; 5% abandoned, warming as it rises past the 5% standard; cells with very few calls are muted (&ldquo;low signal&rdquo;). Hover any cell for the exact rate and counts. It appears on the Inbound report and as a companion on the QCD report (admin-only for now, sharing the Inbound vetting gate). Times are shown in CST.</p>
+            <div class="help-figure">
+              <div class="ds-heatmap-legend">
+                <span class="ds-heatmap-legend__item"><span class="ds-heatmap-legend__sw" style="background: color-mix(in srgb, var(--good) 50%, var(--paper-card));"></span>0&ndash;5% (on target)</span>
+                <span class="ds-heatmap-legend__item"><span class="ds-heatmap-legend__sw" style="background: color-mix(in srgb, var(--warn) 17%, var(--warn-soft));"></span>5&ndash;10%</span>
+                <span class="ds-heatmap-legend__item"><span class="ds-heatmap-legend__sw" style="background: color-mix(in srgb, var(--warn) 67%, var(--warn-soft));"></span>15%+</span>
+                <span class="ds-heatmap-legend__item"><span class="ds-heatmap-legend__sw" style="background: var(--paper-2);"></span>low volume</span>
+              </div>
+              <div class="help-figure-cap">The cell color scale &mdash; the same legend shown under the heatmap.</div>
+            </div>
           </section>
           <section class="help-topic" id="help-topic-standards" hidden>
             <h3>The 92% / 5% standards</h3>
@@ -502,6 +527,14 @@
               <li><strong>92% answer rate</strong> &mdash; the target. Values at/above read green &ldquo;on track&rdquo;; below read orange &ldquo;watch&rdquo;.</li>
               <li><strong>5% abandonment</strong> &mdash; the ceiling. A queue over 5% on a day is a <strong>violation</strong>.</li>
             </ul>
+            <div class="help-figure">
+              <div class="help-figure-row">
+                <span class="bm-target" style="font-weight:600;">94% answered</span>
+                <span style="color: var(--muted);">vs</span>
+                <span class="bm-over" style="font-weight:600;">6.2% abandoned</span>
+              </div>
+              <div class="help-figure-cap">Green = at/above the 92% answer target; orange = at/over the 5% abandon ceiling. These are the tints you&rsquo;ll see on KPI tiles and cells across the app.</div>
+            </div>
             <p>These are the <em>only</em> two thresholds used for tinting &mdash; counts and durations stay neutral. Department-specific alert thresholds are separate (see Alerts).</p>
           </section>
           <section class="help-topic" id="help-topic-glossary" hidden>

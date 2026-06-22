@@ -521,6 +521,16 @@
     border-radius: var(--r-pill, 999px); vertical-align: middle; margin-left: 6px;
   }
   .help-empty { color: var(--muted); }
+  /* Inline visual aids -- live, theme-aware component examples. */
+  .help-figure {
+    margin: 10px 0 14px; padding: 12px 14px;
+    background: var(--paper); border: 1px solid var(--line); border-radius: var(--r-sm);
+  }
+  .help-figure-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .help-figure-cap { font: 400 11px/1.5 var(--mono); color: var(--muted); margin-top: 8px; }
+  .help-mini-card { padding: 12px 14px; margin: 10px 0 6px; }
+  .help-mini-card-head { display: flex; flex-wrap: wrap; gap: 6px 8px; align-items: center; }
+  .help-mini-name { font-family: var(--display); font-weight: 600; font-size: 14px; color: var(--ink); }
   @media (max-width: 768px) {
     .help-layout { flex-direction: column; }
     .help-nav { flex-basis: auto; border-right: 0; border-bottom: 1px solid var(--line); max-height: 38vh; }
