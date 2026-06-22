@@ -3732,6 +3732,15 @@
   // textContent back to the idle label, which clears the span.
   var DS_EQ_HTML_ = '<span class="ds-loader--eq" aria-hidden="true"><i></i><i></i><i></i><i></i></span> ';
 
+  // C1 signal-rings block loader -- for an indeterminate query whose results
+  // area has no shape to skeleton (Caller Lookup). Optional caption.
+  function dsRingsHtml_(label) {
+    return '<div class="ds-loader-block">'
+         +   '<div class="ds-loader--rings" aria-hidden="true"><span></span><span></span><span></span></div>'
+         +   (label ? '<div class="ds-loader-block-label">' + escapeHtml(label) + '</div>' : '')
+         + '</div>';
+  }
+
   // Generic trailing-edge debounce. Returns a wrapped fn that defers
   // invocation until `ms` have elapsed since the last call.
   function debounce_(fn, ms) {
@@ -12769,7 +12778,7 @@
   }
 
   function clShowOnly_(id) {
-    ['cl-unconfigured', 'cl-unavailable', 'cl-empty', 'cl-results'].forEach(function (x) {
+    ['cl-unconfigured', 'cl-unavailable', 'cl-empty', 'cl-results', 'cl-loading'].forEach(function (x) {
       const el = $(x);
       if (el) el.style.display = (x === id) ? '' : 'none';
     });
@@ -12787,19 +12796,19 @@
     const btn = $('cl-lookup-btn');
     btn.disabled = true;
     const prev = btn.textContent; btn.textContent = 'Looking up…';
-    clShowOnly_('');
-    const status = $('cl-status');
-    if (status) { status.className = 'status status-loading'; status.textContent = 'Searching inbound calls…'; status.style.display = ''; }
+    // C1: signal-rings loader in the results area while the query is in flight.
+    const loadEl = $('cl-loading');
+    if (loadEl) loadEl.innerHTML = dsRingsHtml_('Looking up inbound calls…');
+    clShowOnly_('cl-loading');
 
     google.script.run
       .withSuccessHandler(function (data) {
         btn.disabled = false; btn.textContent = prev;
-        if (status) status.style.display = 'none';
         clRenderResults_(data);
       })
       .withFailureHandler(function (err) {
         btn.disabled = false; btn.textContent = prev;
-        if (status) status.style.display = 'none';
+        clShowOnly_('');
         clSetError_('Error: ' + (err && err.message ? err.message : String(err)));
       })
       .getCallerLookup({ phone: phone, from: from, to: to });

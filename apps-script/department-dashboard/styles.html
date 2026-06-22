@@ -4797,6 +4797,45 @@
   .ds-flash { animation: ds-flash 600ms var(--ease, ease-out); border-radius: var(--r); }
   @media (prefers-reduced-motion: reduce) { .ds-flash { animation: none; } }
 
+  /* C1 signal-rings: indeterminate query loader for a results area with no
+     shape to skeleton (Caller Lookup). Reduced-motion -> a single static ring. */
+  .ds-loader-block { text-align: center; color: var(--muted); font: 500 12px var(--ui); padding: 18px 0; }
+  .ds-loader-block-label { margin-top: 4px; }
+  .ds-loader--rings { position: relative; width: 60px; height: 60px; margin: 0 auto; }
+  .ds-loader--rings span {
+    position: absolute; inset: 0; border: 2px solid var(--accent);
+    border-radius: 50%; animation: ds-ring 1.8s ease-out infinite;
+  }
+  .ds-loader--rings span:nth-child(2) { animation-delay: .6s; }
+  .ds-loader--rings span:nth-child(3) { animation-delay: 1.2s; }
+  @keyframes ds-ring {
+    0%   { transform: scale(.25); opacity: .85; }
+    80%  { opacity: 0; }
+    100% { transform: scale(1); opacity: 0; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .ds-loader--rings span { animation: none; opacity: .35; }
+    .ds-loader--rings span:nth-child(2), .ds-loader--rings span:nth-child(3) { display: none; }
+  }
+
+  /* C3 honest single cold-start loader: ONE indeterminate bar + ONE label
+     (no faked staged labels -- the client has no real stage signal). */
+  .ds-loader--staged { margin: 0 0 16px; }
+  .ds-loader--staged .ds-staged-bar {
+    position: relative; overflow: hidden; height: 6px;
+    background: var(--paper-2); border-radius: var(--r-pill);
+  }
+  .ds-loader--staged .ds-staged-bar::after {
+    content: ""; position: absolute; top: 0; bottom: 0; width: 40%;
+    background: var(--accent); border-radius: var(--r-pill);
+    animation: ds-staged 1.4s ease-in-out infinite;
+  }
+  .ds-loader--staged .ds-staged-label { margin-top: 7px; font: 500 12px var(--ui); color: var(--muted); }
+  @keyframes ds-staged { 0% { left: -40%; } 100% { left: 100%; } }
+  @media (prefers-reduced-motion: reduce) {
+    .ds-loader--staged .ds-staged-bar::after { animation: none; width: 100%; left: 0; }
+  }
+
   /* Temporal abandon heatmap (weekday x hour), shared by Inbound + QCD. Cells
      are colored in JS (heatCellBg_) anchored on the 5% standard; this is just
      layout + chrome. */
