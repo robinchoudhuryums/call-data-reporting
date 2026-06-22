@@ -4757,6 +4757,17 @@
   @keyframes ds-eq { 0%, 100% { transform: scaleY(.3); } 50% { transform: scaleY(1); } }
   @media (prefers-reduced-motion: reduce) { .ds-loader--eq i { animation: none; transform: scaleY(.6); } }
 
+  /* B1 change-flash: one-shot highlight on a value node whose text changed
+     between two renders (SWR cache->live swap, or a date-range refresh). The
+     dsFlashChanged_ helper adds .ds-flash; it self-clears on animationend.
+     Background-only -> cheap, no layout thrash. Reduced-motion no-op. */
+  @keyframes ds-flash {
+    from { background: var(--accent-soft); }
+    to   { background: transparent; }
+  }
+  .ds-flash { animation: ds-flash 600ms var(--ease, ease-out); border-radius: var(--r); }
+  @media (prefers-reduced-motion: reduce) { .ds-flash { animation: none; } }
+
   /* Temporal abandon heatmap (weekday x hour), shared by Inbound + QCD. Cells
      are colored in JS (heatCellBg_) anchored on the 5% standard; this is just
      layout + chrome. */
