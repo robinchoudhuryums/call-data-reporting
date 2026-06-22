@@ -337,53 +337,229 @@
     </section>
   </div>
 
-  <div id="help-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="help-modal-title" style="display:none;">
+  <div id="help-modal" class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="help-modal-title" style="display:none;">
     <div class="modal-backdrop" data-close></div>
-    <div class="modal-panel" role="document">
+    <div class="modal-panel modal-panel-wide" role="document">
       <div class="modal-panel-header">
         <button class="modal-close" id="help-close" type="button" aria-label="Close">&times;</button>
         <div class="modal-kicker">Reference</div>
-        <h2 id="help-modal-title">Help &amp; FAQ</h2>
+        <h2 id="help-modal-title">Help &amp; Reference</h2>
       </div>
-      <div class="modal-panel-body">
-      <div class="modal-content">
-        <h3>Quick guide to the table columns</h3>
-        <ul>
-          <li><strong>Agent &middot; Source</strong> &mdash; every agent with data in the selected range appears, tagged in the <strong>Source</strong> column: <strong>ROSTER</strong> (on your department roster), <strong>QUEUE</strong> (a floater from another dept who handled your queue extensions — their home dept follows the chip), or <strong>BOTH</strong>. Roster totals exclude queue-only floaters; the floater subtotal is shown separately in the table footer. The <strong>Diagnostics</strong> panel lists roster agents with no data in range.</li>
-          <li><strong>Unique vs Rung</strong> &mdash; &ldquo;Unique&rdquo; is a single caller attempt; &ldquo;Rung&rdquo; is the number of times an agent was notified of an incoming call. A caller on hold for 2 minutes who disconnects counts as 1 Unique but several rings. <strong>Total Missed</strong> and any &ldquo;% Answered&rdquo; metric are based on Rung, not Unique.</li>
-          <li><strong>TTT &middot; ATT</strong> &mdash; Total Talk Time and Average Talk Time. Only counts inbound calls from a call queue.</li>
-          <li><strong>Avg Abd Wait &middot; CSR Avg Abd Wait</strong> &mdash; Average abandoned-caller wait time, dept-wide and CSR-specific.</li>
-        </ul>
-
-        <h3>Source column (Roster / Queue / Both)</h3>
-        <ul>
-          <li><strong>ROSTER</strong>: an agent officially assigned to your department in the roster sheet.</li>
-          <li><strong>QUEUE</strong>: a floater not on your roster who handled your department&rsquo;s queue extensions — useful for spotting cross-coverage. The chip names their home department(s).</li>
-          <li><strong>BOTH</strong>: on your roster <em>and</em> matched via queue this period (the common case for active members).</li>
-        </ul>
-        <p>There is no scope toggle anymore — the table always shows the full picture, and the <strong>Source</strong> column makes each agent&rsquo;s provenance explicit. Department totals are roster-only; queue-only floaters are summed on a separate footer line so headline numbers stay stable.</p>
-
-        <h3>Common questions</h3>
-        <ul>
-          <li><strong>Why is my table empty?</strong> Check the From/To dates. If they look right, the &ldquo;Roster agents with no data in this range&rdquo; section of the Diagnostics panel will list anyone expected but absent.</li>
-          <li><strong>Why do some numbers differ from the old DQE Report spreadsheet?</strong> The legacy report had a few bugs around the work-window (calls before 8:30 AM or after 5:00 PM CST were sometimes counted in TTT/ATT but not Answered). The dashboard reads the same source sheet and inherits whatever it currently produces. If a specific number still looks wrong after a source rebuild, email Robin with date + agent.</li>
-          <li><strong>Why are there more missed-call timestamps for an agent than the official &ldquo;Missed&rdquo; count?</strong> Some rings happen before/after the 6:30 AM &ndash; 3:00 PM PST work window. Those appear as raw timestamps but don&rsquo;t count in &ldquo;Total Missed&rdquo;. See the <strong>Missed Calls</strong> report (Reports section above the table) for the full timestamp list per agent.</li>
-          <li><strong>What if an agent appears in multiple departments?</strong> That&rsquo;s fine &mdash; agents can be on multiple rosters. The same daily numbers will show up on each department&rsquo;s view that they&rsquo;re rostered under.</li>
-          <li><strong>Why does the manager see only their department?</strong> Access is controlled by an Email &rarr; Department mapping. Managers see only their own department; admins can switch via the dropdown.</li>
-        </ul>
-
-        <h3>Reports overview</h3>
-        <p>All legacy DQE Report features are now migrated to this dashboard:</p>
-        <ul>
-          <li><strong>Individual Report</strong> &mdash; per-agent KPIs + 12-month trend, with peer-comparison mode for multiple agents.</li>
-          <li><strong>Performance Report</strong> &mdash; dept-level current-vs-prior-period deltas, share-of-answered pie, and 12-month team trend.</li>
-          <li><strong>Compare Ranges</strong> &mdash; side-by-side comparison of two arbitrary date ranges.</li>
-          <li><strong>Alerts</strong> (admin-only) &mdash; per-dept low answer rate alert emails, manually or via a daily trigger.</li>
-        </ul>
-
-        <h3>Contact</h3>
-        <p>Questions, access requests, or threshold changes: <a href="mailto:robin.choudhury@universalmedsupply.com">robin.choudhury@universalmedsupply.com</a></p>
-      </div>
+      <div class="modal-panel-body help-layout">
+        <nav class="help-nav" aria-label="Help topics">
+          <input type="search" id="help-search" class="help-search" placeholder="Search help&hellip;" aria-label="Search help topics">
+          <details class="help-cat" open>
+            <summary>Getting started</summary>
+            <button type="button" class="help-link" data-topic="pages">The two pages</button>
+            <button type="button" class="help-link" data-topic="nav">Navigating &amp; reports</button>
+            <button type="button" class="help-link" data-topic="dates">Dates, presets &amp; freshness</button>
+            <button type="button" class="help-link" data-topic="display">Themes, dark mode &amp; Help</button>
+          </details>
+          <details class="help-cat">
+            <summary>My Department table</summary>
+            <button type="button" class="help-link" data-topic="columns">Column meanings</button>
+            <button type="button" class="help-link" data-topic="source">Source &amp; floaters</button>
+            <button type="button" class="help-link" data-topic="wow">Prior-period chips</button>
+            <button type="button" class="help-link" data-topic="queuecall">Queue Call Data &amp; missed timelines</button>
+            <button type="button" class="help-link" data-topic="export">Download CSV</button>
+          </details>
+          <details class="help-cat">
+            <summary>Reports</summary>
+            <button type="button" class="help-link" data-topic="individual">Individual</button>
+            <button type="button" class="help-link" data-topic="performance">Performance</button>
+            <button type="button" class="help-link" data-topic="insights">Insights</button>
+            <button type="button" class="help-link" data-topic="compare">Compare Ranges</button>
+            <button type="button" class="help-link" data-topic="missed">Missed Calls</button>
+            <button type="button" class="help-link" data-topic="qcd">QCD (Queue Call Data)</button>
+            <button type="button" class="help-link" data-topic="inbound">Inbound Calls</button>
+            <button type="button" class="help-link" data-topic="heatmap">Abandon heatmap</button>
+          </details>
+          <details class="help-cat">
+            <summary>Metrics &amp; standards</summary>
+            <button type="button" class="help-link" data-topic="standards">The 92% / 5% standards</button>
+            <button type="button" class="help-link" data-topic="glossary">Metric glossary</button>
+            <button type="button" class="help-link" data-topic="attlens">Why ATT can differ</button>
+          </details>
+          <details class="help-cat">
+            <summary>Admin &amp; alerts</summary>
+            <button type="button" class="help-link" data-topic="alerts">Low answer-rate alerts</button>
+            <button type="button" class="help-link" data-topic="digests">Manager digests</button>
+            <button type="button" class="help-link" data-topic="deptconfig">Dept Config (queue mapping)</button>
+            <button type="button" class="help-link" data-topic="orphan">Outlier Fix (name cleanup)</button>
+            <button type="button" class="help-link" data-topic="caller">Caller Lookup</button>
+            <button type="button" class="help-link" data-topic="access">Access &amp; who sees what</button>
+          </details>
+          <details class="help-cat">
+            <summary>Troubleshooting</summary>
+            <button type="button" class="help-link" data-topic="faq">Common questions</button>
+            <button type="button" class="help-link" data-topic="contact">Contact</button>
+          </details>
+        </nav>
+        <div class="help-content" id="help-content">
+          <section class="help-topic" id="help-topic-pages">
+            <h3>The two pages</h3>
+            <p>The dashboard has two pages, switched from the header:</p>
+            <ul>
+              <li><strong>Overview</strong> (the landing page) &mdash; a company-wide snapshot: a tile per department with answer rate, abandonment and a 30-day trend chart. Admins also see a company aggregate hero. Click a department tile to jump into it.</li>
+              <li><strong>My Department</strong> &mdash; the per-agent table for one department, plus its Queue Call Data tiles and per-agent missed-call timelines.</li>
+            </ul>
+            <p>Reports (Individual, Insights, QCD, etc.) open as modals over either page.</p>
+          </section>
+          <section class="help-topic" id="help-topic-nav" hidden>
+            <h3>Navigating &amp; reports</h3>
+            <p>The header row of tabs opens each report. Every report modal has an <strong>&#8599; Open in new tab</strong> button (top-right) for side-by-side viewing, and most carry an Export menu (Download CSV / Copy image / Email / Print).</p>
+            <p>The floating <strong>?</strong> button (bottom-right) opens this Help from anywhere, even over a report. Admin-only tabs (Alerts, Outlier Fix, Dept Config) are hidden for managers.</p>
+          </section>
+          <section class="help-topic" id="help-topic-dates" hidden>
+            <h3>Dates, presets &amp; freshness</h3>
+            <ul>
+              <li><strong>From / To</strong> default to the most recent day with data, so the table isn&rsquo;t empty before today&rsquo;s import runs. If you set a From date past the To date, the To date snaps to match.</li>
+              <li>Reports offer <strong>quick presets</strong> (Yesterday, Last month, etc.); picking custom dates clears the preset.</li>
+              <li>The <strong>freshness pill</strong> in the header (&ldquo;Data through &hellip; &middot; Nh ago&rdquo;) turns orange if the most recent data is more than ~36h old &mdash; usually a sign the daily import hasn&rsquo;t run.</li>
+            </ul>
+          </section>
+          <section class="help-topic" id="help-topic-display" hidden>
+            <h3>Themes, dark mode &amp; Help</h3>
+            <ul>
+              <li><strong>&#9680; Dark mode</strong> toggles light/dark; your choice is remembered on this device.</li>
+              <li><strong>&#9881; Settings</strong> picks a light-mode background theme (Warm Paper / Cool Blue / Clinical White) and toggles the floating Help button.</li>
+              <li>Hovering a <strong>metric label</strong> (with a small &#9432;) shows its definition; key metrics show a richer tooltip with the 92% / 5% benchmark.</li>
+            </ul>
+          </section>
+          <section class="help-topic" id="help-topic-columns" hidden>
+            <h3>Column meanings</h3>
+            <ul>
+              <li><strong>Unique vs Rung</strong> &mdash; &ldquo;Unique&rdquo; is one distinct caller attempt; &ldquo;Rung&rdquo; is how many times an agent&rsquo;s phone was rung. One overflow call can ring several agents. <strong>Missed</strong> and <strong>% Answered</strong> are based on Rung.</li>
+              <li><strong>Missed vs Answered</strong> &mdash; rings not picked up vs answered, inside the work window. A missed ring isn&rsquo;t a lost call &mdash; another agent may have answered it.</li>
+              <li><strong>TTT &middot; ATT</strong> &mdash; Total and Average Talk Time on answered queue calls.</li>
+              <li><strong>Avg Abd Wait &middot; CSR Avg Abd Wait</strong> &mdash; average time abandoning callers waited, dept-wide and CSR-specific.</li>
+            </ul>
+            <p>The work window is <strong>8:30 AM&ndash;5:00 PM CST</strong> (shown as a pill on the page). Rings outside it appear in the Missed timeline but don&rsquo;t count toward Missed/Answered.</p>
+          </section>
+          <section class="help-topic" id="help-topic-source" hidden>
+            <h3>Source &amp; floaters</h3>
+            <p>The <strong>Source</strong> column tags each agent&rsquo;s provenance:</p>
+            <ul>
+              <li><strong>ROSTER</strong> &mdash; on this department&rsquo;s roster.</li>
+              <li><strong>QUEUE</strong> &mdash; a &ldquo;floater&rdquo; from another dept who handled your queue extensions (their home dept follows the chip). Useful for spotting cross-coverage.</li>
+              <li><strong>BOTH</strong> &mdash; rostered here <em>and</em> matched via queue this period.</li>
+            </ul>
+            <p>Department <strong>totals are roster-only</strong>; queue-only floaters are summed on a separate footer line so headline numbers stay stable. The <strong>Diagnostics</strong> panel lists roster agents with no data in range.</p>
+          </section>
+          <section class="help-topic" id="help-topic-wow" hidden>
+            <h3>Prior-period chips</h3>
+            <p>Rung / Missed / Answered each show a small delta chip comparing the selected window to the <strong>same-length window just before it</strong>. Green = a good move (more answered, fewer missed), orange = a watch (more missed, fewer answered); tiny changes (under 3 calls) stay muted. Hover a chip for the prior dates and exact numbers. Chips aren&rsquo;t included in the CSV export.</p>
+          </section>
+          <section class="help-topic" id="help-topic-queuecall" hidden>
+            <h3>Queue Call Data &amp; missed timelines</h3>
+            <p>Below the agent table, a <strong>Queue Call Data</strong> tile row shows each mapped queue&rsquo;s abandoned % and violations for the latest data date, paired with a Missed-Calls glance. Below that, each agent&rsquo;s <strong>missed-call timeline</strong> lists the timestamps of unanswered rings (abandoned ones flagged in red). For the full report, open <strong>Missed Calls</strong>.</p>
+          </section>
+          <section class="help-topic" id="help-topic-export" hidden>
+            <h3>Download CSV</h3>
+            <p>The <strong>Download CSV</strong> button (appears once data loads) exports the current table view &mdash; respecting your date range and sort order &mdash; with no server round-trip. Agent names are sanitized so spreadsheet apps can&rsquo;t treat them as formulas.</p>
+          </section>
+          <section class="help-topic" id="help-topic-individual" hidden>
+            <h3>Individual Report</h3>
+            <p>Per-agent KPI tiles (with a &ldquo;Team&rdquo; average marker, share-of-dept, and a sparkline) plus three trend chart tabs (Volume / Efficiency / Duration) and a 12-month window. Pick <strong>2+ agents</strong> for a peer-comparison view with a shared legend &mdash; click a legend chip to isolate one agent across all charts. The <strong>ALL</strong> button stacks all three charts; click a tab to return to one. Optionally compare each agent against their own prior window (None / year-ago / preceding period / custom).</p>
+          </section>
+          <section class="help-topic" id="help-topic-performance" hidden>
+            <h3>Performance Report</h3>
+            <p>Department-level KPIs with deltas vs the <strong>immediately-preceding period of the same length</strong> (a 31-day window compares against the prior 31 days, not &ldquo;last calendar month&rdquo;), a share-of-answered pie, and a 12-month team trend. The comparison dates are shown in the form hint and the results header.</p>
+          </section>
+          <section class="help-topic" id="help-topic-insights" hidden>
+            <h3>Insights</h3>
+            <p>A team rollup + per-agent cards + 12-month trend, with comparison modes (preceding period / same window a year ago / custom). On each <strong>agent card</strong>:</p>
+            <ul>
+              <li>The colored <strong>left rail</strong> and the <strong>&#9650; Improving / &#9660; Slipping / &#8776; Mixed</strong> pill show that agent&rsquo;s <em>trend</em> vs the prior period (across rung, missed, answered, % answered). Hover the card and the rail glows.</li>
+              <li>The <strong>above team / below team</strong> chip shows their <em>standing</em> &mdash; answered calls vs the team average <em>this</em> period (the marker on the Answered bar). So a card can be &ldquo;Improving&rdquo; yet &ldquo;below team&rdquo;: better than last period, still under the average.</li>
+            </ul>
+            <p>The bars compare % Answered / Answered / Missed against the team average. A <strong>Queue health</strong> section adds the dept&rsquo;s abandonment picture. If the two compared windows differ a lot in length, raw-count insights are dropped and a note appears.</p>
+          </section>
+          <section class="help-topic" id="help-topic-compare" hidden>
+            <h3>Compare Ranges</h3>
+            <p>Side-by-side comparison of two arbitrary date ranges (e.g. this month vs the same month last year). When the ranges differ in length by 20%+, a banner appears and per-day figures are shown so volume isn&rsquo;t compared apples-to-oranges.</p>
+          </section>
+          <section class="help-topic" id="help-topic-missed" hidden>
+            <h3>Missed Calls</h3>
+            <p>An 18-bucket bar chart (8 AM&ndash;5 PM CST, 30-minute buckets) plus per-agent cards listing each missed ring&rsquo;s timestamp. Calls the caller actually abandoned are flagged in red with a &#128680;. For callers who gave up in the queue (vs a ring another agent answered), see the abandonment metrics in QCD / Inbound.</p>
+          </section>
+          <section class="help-topic" id="help-topic-qcd" hidden>
+            <h3>QCD (Queue Call Data)</h3>
+            <p>Per-queue call volume, answered, abandoned, abandoned %, longest/avg wait, and <strong>violations</strong> (days a queue&rsquo;s abandoned % went over 5%). Parent departments roll up their sub-queues; the chart shows one line per queue plus a dept total. The breakdown rows expand into per-call-source detail and violation dates. A short <strong>days-to-violation forecast</strong> appears when a queue is trending toward the 5% line. Admins also get an all-departments daily report.</p>
+          </section>
+          <section class="help-topic" id="help-topic-inbound" hidden>
+            <h3>Inbound Calls <span class="help-admin-tag">admin</span></h3>
+            <p>Every distinct inbound call in the range: KPI tiles (total / answered / abandoned / on-hold / avg wait), breakdowns by insurer, dial-in number and entry queue, and a daily trend. Insurer labels come from the insurance-number block in the roster sheet. <em>Currently admin-only while its abandonment numbers are vetted against QCD</em> (the two use different sources and definitions).</p>
+          </section>
+          <section class="help-topic" id="help-topic-heatmap" hidden>
+            <h3>Abandon heatmap</h3>
+            <p>A <strong>weekday &times; hour</strong> grid showing where callers abandon &mdash; the &ldquo;when are we short-staffed?&rdquo; view. Calm sage &le; 5% abandoned, warming as it rises past the 5% standard; cells with very few calls are muted (&ldquo;low signal&rdquo;). Hover any cell for the exact rate and counts. It appears on the Inbound report and as a companion on the QCD report (admin-only for now, sharing the Inbound vetting gate). Times are shown in CST.</p>
+          </section>
+          <section class="help-topic" id="help-topic-standards" hidden>
+            <h3>The 92% / 5% standards</h3>
+            <p>Two company-wide benchmarks drive the color-coding everywhere:</p>
+            <ul>
+              <li><strong>92% answer rate</strong> &mdash; the target. Values at/above read green &ldquo;on track&rdquo;; below read orange &ldquo;watch&rdquo;.</li>
+              <li><strong>5% abandonment</strong> &mdash; the ceiling. A queue over 5% on a day is a <strong>violation</strong>.</li>
+            </ul>
+            <p>These are the <em>only</em> two thresholds used for tinting &mdash; counts and durations stay neutral. Department-specific alert thresholds are separate (see Alerts).</p>
+          </section>
+          <section class="help-topic" id="help-topic-glossary" hidden>
+            <h3>Metric glossary</h3>
+            <ul>
+              <li><strong>% Answered</strong> &mdash; answered &divide; calls that rang. Target 92%.</li>
+              <li><strong>Abandoned %</strong> &mdash; queue calls where the caller hung up before being answered. 5%+ in a day = violation.</li>
+              <li><strong>ATT</strong> &mdash; Average Talk Time per answered call. Longer isn&rsquo;t automatically worse.</li>
+              <li><strong>TTT</strong> &mdash; Total Talk Time (sum of an agent&rsquo;s own talk on answered calls).</li>
+              <li><strong>Violations</strong> &mdash; days a queue went over the 5% abandon line (month-to-date in totals).</li>
+              <li><strong>Avg / longest wait</strong> &mdash; time callers waited before being answered or giving up.</li>
+            </ul>
+            <p>Hovering most labels in the app shows these definitions inline.</p>
+          </section>
+          <section class="help-topic" id="help-topic-attlens" hidden>
+            <h3>Why ATT can differ</h3>
+            <p>The <strong>My Department</strong> table shows ATT as the simple mean of each day&rsquo;s stored value. The <strong>reports</strong> (Individual / Performance / Compare / Insights) use a per-call <em>weighted</em> average (total talk &divide; calls answered), so days with no answered calls don&rsquo;t drag it down. Same range can therefore show slightly different ATT in the two places &mdash; neither is wrong; they answer different questions.</p>
+          </section>
+          <section class="help-topic" id="help-topic-alerts" hidden>
+            <h3>Low answer-rate alerts <span class="help-admin-tag">admin</span></h3>
+            <p>Per-department email alerts when a day&rsquo;s answer rate falls below that dept&rsquo;s threshold. Preview a date, then send manually, or install a daily 8 AM trigger (weekends and configured skip-dates are skipped). The Alert Log records every outcome, and a &ldquo;last 30 days&rdquo; chip flags depts where the threshold may be too strict or too loose.</p>
+          </section>
+          <section class="help-topic" id="help-topic-digests" hidden>
+            <h3>Manager digests <span class="help-admin-tag">admin</span></h3>
+            <p>Scheduled email summaries per manager &mdash; daily, weekly, or monthly &mdash; in a KPI &ldquo;summary&rdquo; format or the richer &ldquo;insights&rdquo; format. Managed from the Alerts modal&rsquo;s Manager Digest Subscribers section; install the triggers there.</p>
+          </section>
+          <section class="help-topic" id="help-topic-deptconfig" hidden>
+            <h3>Dept Config <span class="help-admin-tag">admin</span></h3>
+            <p>Maps each department to its <strong>queue names</strong> (the <code>A_Q_*</code> identifiers from the phone system) and a few per-dept options, without a redeploy. If a dept&rsquo;s QCD/Inbound view is empty or missing queues, map them here &mdash; the modal auto-discovers queue names seen in recent data and flags unmapped ones.</p>
+          </section>
+          <section class="help-topic" id="help-topic-orphan" hidden>
+            <h3>Outlier Fix <span class="help-admin-tag">admin</span></h3>
+            <p>Cleans up agent-name variants. If the phone system spells an agent slightly differently (e.g. a different parenthetical), this maps the variant to the canonical roster name so their numbers consolidate. Also handles new-hire roster additions. Every change is logged.</p>
+          </section>
+          <section class="help-topic" id="help-topic-caller" hidden>
+            <h3>Caller Lookup <span class="help-admin-tag">admin</span></h3>
+            <p>Look up one phone number&rsquo;s inbound call history over a date range, rendered as a timeline per call (the journey through IVR / queues / agents). The number is hashed for the query and never stored or logged.</p>
+          </section>
+          <section class="help-topic" id="help-topic-access" hidden>
+            <h3>Access &amp; who sees what</h3>
+            <p>Access is by an <strong>Email &rarr; Department</strong> mapping. <strong>Managers</strong> see only their own department; <strong>admins</strong> can switch departments and see admin-only surfaces (company aggregate, Alerts, Dept Config, Outlier Fix, Caller Lookup, Inbound). Anyone not mapped gets an access-denied page with no data.</p>
+          </section>
+          <section class="help-topic" id="help-topic-faq" hidden>
+            <h3>Common questions</h3>
+            <ul>
+              <li><strong>My table is empty.</strong> Check the From/To dates first. If they look right, the Diagnostics panel&rsquo;s &ldquo;Roster agents with no data in this range&rdquo; lists who was expected but absent.</li>
+              <li><strong>Numbers look stale.</strong> Check the header freshness pill &mdash; if it&rsquo;s orange (36h+), the daily import likely hasn&rsquo;t run. Reports also cache for up to 30 minutes.</li>
+              <li><strong>More missed timestamps than the Missed count.</strong> Rings outside the 8:30 AM&ndash;5 PM CST work window show in the timeline but don&rsquo;t count toward Missed.</li>
+              <li><strong>An agent shows in two departments.</strong> That&rsquo;s expected &mdash; agents can be on multiple rosters and appear under each.</li>
+              <li><strong>Inbound vs QCD abandonment differ.</strong> They use different sources and definitions; Inbound is being vetted, which is why it&rsquo;s admin-only for now.</li>
+            </ul>
+          </section>
+          <section class="help-topic" id="help-topic-contact" hidden>
+            <h3>Contact</h3>
+            <p>Questions, access requests, or threshold changes: <a href="mailto:robin.choudhury@universalmedsupply.com">robin.choudhury@universalmedsupply.com</a></p>
+          </section>
+          <p class="help-empty" id="help-search-empty" hidden>No topics match your search.</p>
+        </div>
       </div>
     </div>
   </div>

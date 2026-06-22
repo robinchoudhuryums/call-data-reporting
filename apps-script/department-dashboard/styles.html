@@ -485,6 +485,46 @@
      sits earlier in the DOM than the report modals -- so without this it would
      render BEHIND them. Lift it above the other modals (and above the FAB). */
   #help-modal { z-index: 200; }
+  /* Help modal: two-pane folder-tree nav + content panel. Two-class selector
+     so it beats the later `.modal-panel-body` padding/overflow rule. */
+  .modal-panel-body.help-layout { display: flex; gap: 0; padding: 0; overflow: hidden; }
+  .help-nav {
+    flex: 0 0 224px; border-right: 1px solid var(--line);
+    overflow-y: auto; padding: 12px 10px; background: var(--paper);
+  }
+  .help-search {
+    width: 100%; padding: 7px 9px; margin-bottom: 10px; box-sizing: border-box;
+    border: 1px solid var(--line); border-radius: var(--r-sm);
+    background: var(--paper-card); color: var(--ink); font: 400 12px var(--ui);
+  }
+  .help-cat { margin-bottom: 2px; }
+  .help-cat > summary {
+    cursor: pointer; list-style: none; padding: 6px 8px;
+    font: 600 10px/1 var(--mono); text-transform: uppercase; letter-spacing: 0.12em;
+    color: var(--muted); border-radius: var(--r-sm);
+  }
+  .help-cat > summary::-webkit-details-marker { display: none; }
+  .help-cat > summary::before { content: '\25B8\00a0'; }
+  .help-cat[open] > summary::before { content: '\25BE\00a0'; }
+  .help-link {
+    display: block; width: 100%; text-align: left;
+    padding: 6px 10px 6px 22px; border: 0; background: transparent;
+    color: var(--ink); font: 400 13px var(--ui); cursor: pointer; border-radius: var(--r-sm);
+  }
+  .help-link:hover { background: var(--paper-2); }
+  .help-link.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+  .help-content { flex: 1 1 auto; overflow-y: auto; padding: 18px 22px; min-width: 0; }
+  .help-topic h3 { margin-top: 0; }
+  .help-admin-tag {
+    font: 500 9px/1 var(--mono); text-transform: uppercase; letter-spacing: 0.1em;
+    background: var(--good-soft); color: var(--good); padding: 2px 6px;
+    border-radius: var(--r-pill, 999px); vertical-align: middle; margin-left: 6px;
+  }
+  .help-empty { color: var(--muted); }
+  @media (max-width: 768px) {
+    .help-layout { flex-direction: column; }
+    .help-nav { flex-basis: auto; border-right: 0; border-bottom: 1px solid var(--line); max-height: 38vh; }
+  }
   .settings-toggle {
     display: inline-flex;
     align-items: center;

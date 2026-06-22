@@ -1256,6 +1256,12 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `#help-fab-toggle` (localStorage `cdr.help.fab` = `off`); the header
   `?` stays as the always-present fallback. Per-report client prefs +
   this key live in localStorage (see the per-report prefs note above).
+  The modal content is a **two-pane reference** (`.help-layout`): a
+  folder-tree nav (`<details>` categories of `.help-link` topics) + a
+  single-topic content panel (`.help-topic` sections), wired by
+  `initHelpNav_` with a title+body search box. Add a topic = a nav
+  `.help-link[data-topic=KEY]` + a `<section id="help-topic-KEY">`; all
+  static markup in `dashboard.html`, no server endpoint.
 
 ## Operator State Checklist
 

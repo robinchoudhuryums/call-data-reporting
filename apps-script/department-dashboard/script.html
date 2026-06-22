@@ -930,6 +930,59 @@
     if (closeBtn) closeBtn.addEventListener('click', closeModal);
     if (backdrop) backdrop.addEventListener('click', closeModal);
     applyHelpFabPref_();   // honor the saved Settings pref on load
+    initHelpNav_();        // wire the two-pane topic tree + search
+  }
+
+  // Help modal: folder-tree nav -> single-topic content view, plus a search
+  // that filters topics by title AND body text.
+  function initHelpNav_() {
+    const modal = $('help-modal');
+    if (!modal) return;
+    const links = Array.prototype.slice.call(modal.querySelectorAll('.help-link'));
+    const topics = Array.prototype.slice.call(modal.querySelectorAll('.help-topic'));
+    const empty = $('help-search-empty');
+    if (!links.length) return;
+
+    function show(topic) {
+      topics.forEach(function (t) { t.hidden = (t.id !== 'help-topic-' + topic); });
+      links.forEach(function (l) { l.classList.toggle('active', l.getAttribute('data-topic') === topic); });
+      const content = $('help-content');
+      if (content) content.scrollTop = 0;
+      if (empty) empty.hidden = true;
+    }
+    links.forEach(function (l) {
+      l.addEventListener('click', function () {
+        const cat = l.closest('.help-cat');
+        if (cat && !cat.open) cat.open = true;
+        show(l.getAttribute('data-topic'));
+      });
+    });
+    links[0].classList.add('active');   // first topic is shown by default (others are [hidden])
+
+    const search = $('help-search');
+    if (search) {
+      search.addEventListener('input', function () {
+        const q = search.value.trim().toLowerCase();
+        let anyVisible = false;
+        modal.querySelectorAll('.help-cat').forEach(function (cat) {
+          let catMatch = false;
+          cat.querySelectorAll('.help-link').forEach(function (l) {
+            let hit = !q;
+            if (q) {
+              const sec = document.getElementById('help-topic-' + l.getAttribute('data-topic'));
+              const body = sec ? sec.textContent.toLowerCase() : '';
+              hit = l.textContent.toLowerCase().indexOf(q) !== -1 || body.indexOf(q) !== -1;
+            }
+            l.style.display = hit ? '' : 'none';
+            if (hit) catMatch = true;
+          });
+          cat.style.display = catMatch ? '' : 'none';
+          if (catMatch && q) cat.open = true;
+          if (catMatch) anyVisible = true;
+        });
+        if (empty) empty.hidden = anyVisible || !q;
+      });
+    }
   }
 
   // -- Settings modal (theme picker etc.) -----------------------------
