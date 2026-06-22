@@ -11429,6 +11429,35 @@
     });
   }
 
+  // Trend pill -- names the card's left-rail color (improved/regressed/mixed
+  // vs the prior period) so the rail's meaning is explicit, not a mystery
+  // color. Carries a gloss tooltip; hover the card and the rail glows (CSS).
+  function insTrendPill_(direction) {
+    var map = {
+      improved:  ['ins-trend-up',   '▲ Improving'],
+      regressed: ['ins-trend-down', '▼ Slipping'],
+      mixed:     ['ins-trend-flat', '≈ Mixed'],
+    };
+    var m = map[direction] || map.mixed;
+    var title = 'Trend vs the prior period across rung, missed, answered and % answered — '
+      + 'this is the colored left edge of the card (sage = improving, orange = slipping, grey = mixed).';
+    return '<span class="ins-trend-pill ' + m[0] + ' gloss" title="' + escapeHtml(title) + '">' + m[1] + '</span>';
+  }
+
+  // vs-team chip -- the agent's STANDING this period: answered calls vs the
+  // team average (the same marker shown on the Answered bar). A LEVEL compare
+  // (not the old improvement-vs-improvement, which was the confusing part).
+  function insVsTeamBadge_(agentVal, teamAvgVal) {
+    var a = Number(agentVal) || 0, t = Number(teamAvgVal) || 0;
+    var tol = Math.max(1, t * 0.1);   // within 10% of the average reads "in line"
+    var title = 'Answered calls vs the team average this period (the marker on the Answered bar): '
+      + 'above = handled more than the average teammate, below = fewer.';
+    var g = ' gloss" title="' + escapeHtml(title) + '">';
+    if (Math.abs(a - t) <= tol) return '<span class="cr-vs-team cr-vs-team-flat' + g + 'in line with team</span>';
+    if (a > t) return '<span class="cr-vs-team cr-vs-team-pos' + g + '▲ above team</span>';
+    return '<span class="cr-vs-team cr-vs-team-neg' + g + '▼ below team</span>';
+  }
+
   function insBuildCard_(x, teamScore, meta, teamAvg) {
     const c = x.card;
     const isFloater = c.matchedViaQueue && !c.matchedViaRoster;
@@ -11441,12 +11470,21 @@
                       : x.direction === 'improved'  ? 'var(--accent)'
                       : x.direction === 'regressed' ? 'var(--warn)'
                       : 'var(--muted)';
-    const vsTeam = crVsTeamBadge_(x.score, teamScore);
     const debugAttrs =
       ' data-direction="' + x.direction + '"'
       + ' data-score="' + (x.score == null ? '' : x.score.toFixed(1)) + '"';
     const mm = c.metrics || {};
     const ta = teamAvg || {};
+    // Two DISTINCT, now-labeled signals (they used to both be change-based,
+    // which read as contradictory): the left RAIL + the trend pill show this
+    // agent's TREND vs the prior period (deltaClassify_); the vs-team chip
+    // shows their STANDING -- answered calls vs the team average THIS period
+    // (the marker on the Answered bar below). A card can legitimately be
+    // "Improving" (rail) yet "below team" (chip): better than last period but
+    // still under the average. Floaters keep only the QUEUE chip.
+    const trendPill = isFloater ? '' : insTrendPill_(x.direction);
+    const vsTeam = isFloater ? '' : insVsTeamBadge_(
+      Number((mm.answered || {}).val) || 0, Number(ta.answered) || 0);
 
     // Primary (featured): % Answered / Answered / Missed as bars vs the
     // TEAM AVERAGE (a marker on each track), with the agent's value as a
@@ -11497,7 +11535,7 @@
       + ' title="Open this agent&#39;s Individual Report for the same date range">IR &#8599;</button>';
 
     return '<div class="ds-card ds-card--rail ins-card" style="--status:' + statusColor + '"' + debugAttrs + '>'
-         +   '<div class="ins-card-head"><span class="ins-card-name">' + escapeHtml(c.name) + '</span>' + chip + vsTeam + irLink + '</div>'
+         +   '<div class="ins-card-head"><span class="ins-card-name">' + escapeHtml(c.name) + '</span>' + trendPill + chip + vsTeam + irLink + '</div>'
          +   primary
          +   '<details class="ins-card-more"><summary>Rung &middot; ATT &middot; TTT</summary>'
          +     '<div class="ins-card-grid ins-card-grid-sec">' + secondary + '</div>'
