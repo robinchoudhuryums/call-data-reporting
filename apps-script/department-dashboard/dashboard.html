@@ -121,6 +121,13 @@
          header buttons. -->
     <section id="overview-page" class="page page-overview">
       <div id="ov-loading" style="padding: 24px;">
+        <!-- C3 honest single cold-start loader: one indeterminate bar + one
+             label above the skeletons. No faked staged labels (the client
+             can't know the real stage). -->
+        <div class="ds-loader--staged">
+          <div class="ds-staged-bar"></div>
+          <div class="ds-staged-label">Loading the latest call data…</div>
+        </div>
         <div class="skeleton-row"><div class="skeleton-line" style="width:200px;height:18px;"></div><div class="skeleton-line" style="width:140px;height:18px;"></div></div>
         <div class="ov-skeleton-grid">
           <div class="skeleton-tile"></div><div class="skeleton-tile"></div><div class="skeleton-tile"></div>
@@ -1872,6 +1879,7 @@
         </div>
         <div id="cl-error" class="status status-error" style="display:none;"></div>
         <div id="cl-status" class="status" style="display:none;"></div>
+        <div id="cl-loading" style="display:none;"></div>
 
         <div id="cl-unconfigured" class="empty-state" style="display:none;">
           <div class="empty-state-icon" aria-hidden="true">&#128273;</div>
