@@ -2723,6 +2723,35 @@
     gap: 12px;
     margin-top: 8px;
   }
+  /* A1 triage group headers + A2 rail legend. Both span the full card grid
+     (grid-column: 1 / -1) so the cards keep flowing in the same grid. */
+  .ins-group-head, .ins-group-legend { grid-column: 1 / -1; }
+  .ins-group-head {
+    display: flex; align-items: center; gap: 8px;
+    margin: 8px 0 0;
+    padding-bottom: 5px;
+    border-bottom: 1px solid var(--line);
+    font: 600 11px/1.2 var(--ui);
+    text-transform: uppercase; letter-spacing: 0.1em;
+    color: var(--ink);
+  }
+  .ins-group-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+  .ins-group-head--warn .ins-group-dot { background: var(--warn); }
+  .ins-group-head--good .ins-group-dot { background: var(--good); }
+  .ins-group-count {
+    font: 500 11px var(--mono); color: var(--muted);
+    background: var(--paper-2); border-radius: var(--r-pill); padding: 1px 8px;
+  }
+  .ins-group-legend {
+    display: flex; align-items: center; gap: 4px;
+    font: 500 10px/1.4 var(--mono);
+    text-transform: uppercase; letter-spacing: 0.12em; color: var(--muted);
+    margin: 2px 0 -2px;
+  }
+  .ins-leg-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin: 0 3px 0 8px; }
+  .ins-leg-good  { background: var(--good); }
+  .ins-leg-warn  { background: var(--warn); }
+  .ins-leg-muted { background: var(--muted); }
   /* Per-agent cards ride the shared ds-card--rail (Phase 4): .ds-card supplies
      the border / radius / shadow / bg, ds-card--rail draws the left status rail
      (color via inline --status -- improved=accent / regressed=warn / mixed=muted
