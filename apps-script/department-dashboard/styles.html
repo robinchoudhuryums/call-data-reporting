@@ -4680,7 +4680,22 @@
   /* Hovering the card widens the status rail so it's obvious what the trend
      pill / classification refers to. */
   .ds-card--rail:hover::before { width: 7px; }
-  @media (prefers-reduced-motion: reduce) { .ds-card--rail::before { transition: none; } }
+  /* E motion: card entrance (fade + slight rise) on render, and the status
+     rail grows in from the top. The rail cards (Insights / Compare Ranges
+     per-agent cards) only render on report generate / sort, so a fire-once
+     entrance reads as polish, not churn. Transform/opacity only; reduced-
+     motion no-op. */
+  @keyframes ds-card-in {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes ds-rail-grow { from { transform: scaleY(0); } to { transform: scaleY(1); } }
+  .ds-card--rail { animation: ds-card-in var(--dur-2, 200ms) var(--ease) both; }
+  .ds-card--rail::before { transform-origin: top; animation: ds-rail-grow var(--dur-2, 200ms) var(--ease) both; }
+  @media (prefers-reduced-motion: reduce) {
+    .ds-card--rail::before { transition: none; }
+    .ds-card--rail, .ds-card--rail::before { animation: none; }
+  }
 
   /* 2.5 · Data table + inline metric bar */
   .ds-table { width: 100%; border-collapse: collapse; font-size: 13px; }
