@@ -1307,10 +1307,20 @@
     grid-template-columns: 480px minmax(0, 1fr);
     margin-bottom: 16px;
     align-items: start;
+    /* Smoothly slide the radar aside / re-center as the detail track
+       grows from 0fr -> 1fr (and back). Modern browsers interpolate the
+       fr unit; older ones just snap. */
+    transition: grid-template-columns 320ms var(--ease, cubic-bezier(.4, 0, .2, 1));
   }
   .chart-row.no-detail {
-    grid-template-columns: 480px;
+    grid-template-columns: 480px minmax(0, 0fr);
     justify-content: center;
+  }
+  /* Clip the drill-in while its track is collapsing so it slides in/out
+     cleanly rather than overflowing the 0fr cell mid-animation. */
+  .chart-row > .bucket-detail { overflow: hidden; }
+  @media (prefers-reduced-motion: reduce) {
+    .chart-row { transition: none; }
   }
   .chart-section {
     background: var(--paper-card);
@@ -1572,6 +1582,36 @@
     text-align: center;
     padding: 20px;
   }
+
+  /* Collapsible Missed cards: the queue-only card and each per-agent
+     timeline card are <details>, so managers can fold the timestamp
+     lists away. A custom caret replaces the native disclosure triangle. */
+  .queue-only-card > summary.qname,
+  .agent-card > summary.agent-card-head {
+    cursor: pointer;
+    list-style: none;
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .queue-only-card > summary.qname::-webkit-details-marker,
+  .agent-card > summary.agent-card-head::-webkit-details-marker { display: none; }
+  .queue-only-card > summary.qname::after,
+  .agent-card > summary.agent-card-head::after {
+    content: '▸';
+    color: var(--muted);
+    font-size: 10px;
+    transition: transform var(--dur-1, 0.18s) var(--ease, ease);
+  }
+  .queue-only-card[open] > summary.qname::after,
+  .agent-card[open] > summary.agent-card-head::after { transform: rotate(90deg); }
+  /* Inside the flex summary the name + total sit on one row -- drop the
+     stacked-layout bottom margins carried over from the old <div> markup. */
+  .agent-card > summary.agent-card-head { margin: 0; }
+  .agent-card[open] > summary.agent-card-head { margin-bottom: 10px; }
+  .agent-card > summary .agent-name,
+  .agent-card > summary .agent-total { margin-bottom: 0; }
 
   /* -------- Individual Report modal -------------------------------- */
   /* Form: date picker + agent multi-select. Section titles use the
@@ -2868,8 +2908,9 @@
   .ins-qh-topsrc strong { color: var(--ink); font-weight: 600; }
 
   /* My Department: Missed Calls drill-down section + modal range row. */
-  .dept-missed-chart-wrap { max-width: 420px; margin: 6px auto 0; }
-  #dept-missed-bucket-detail { margin-top: 12px; }
+  /* The dept Missed radar reuses the modal's .chart-section card; keep it
+     from stretching too wide when no drill-in is open. */
+  #dept-missed-chart-row .chart-section { max-width: 480px; }
   .dept-missed-open { margin-left: auto; }
   .missed-range-row { margin-bottom: 10px; }
 

@@ -3159,7 +3159,8 @@
     { wrap: 'missed-bucket-detail', title: 'bucket-detail-title', body: 'bucket-detail-body', row: 'chart-row' });
   const deptMissedBucketDetail_ = makeMissedBucketDetail_(
     function () { return deptMissedLastData; },
-    { wrap: 'dept-missed-bucket-detail', title: 'dept-bucket-detail-title', body: 'dept-bucket-detail-body' });
+    { wrap: 'dept-missed-bucket-detail', title: 'dept-bucket-detail-title', body: 'dept-bucket-detail-body',
+      row: 'dept-missed-chart-row' });
 
   function initMissedReport() {
     const btn = $('missed-report-btn');
@@ -3511,11 +3512,11 @@
              +   '</span>'
              + '</li>';
       }).join('');
-      return '<div class="queue-only-card">'
-           +   '<div class="qname">' + escapeHtml(q.queue) + ' &middot; '
-           +     q.total + ' abandoned</div>'
+      return '<details class="queue-only-card" open>'
+           +   '<summary class="qname">' + escapeHtml(q.queue) + ' &middot; '
+           +     q.total + ' abandoned</summary>'
            +   '<ul class="queue-only-list">' + itemsHtml + '</ul>'
-           + '</div>';
+           + '</details>';
     }).join('');
     return { subhead: '(no agent rang) — ' + headParts.join(' '), bodyHtml: bodyHtml };
   }
@@ -3564,11 +3565,13 @@
              + '</li>';
       }).join('');
 
-      return '<div class="agent-card">'
-           +   '<div class="agent-name">' + escapeHtml(a.name) + '</div>'
-           +   '<div class="agent-total">' + a.total + ' missed</div>'
+      return '<details class="agent-card" open>'
+           +   '<summary class="agent-card-head">'
+           +     '<span class="agent-name">' + escapeHtml(a.name) + '</span>'
+           +     '<span class="agent-total">' + a.total + ' missed</span>'
+           +   '</summary>'
            +   '<ul class="missed-list">' + itemsHtml + '</ul>'
-           + '</div>';
+           + '</details>';
     }).join('');
   }
 
