@@ -11427,6 +11427,26 @@
    * volume/time metrics when meta.lengthMismatch (custom prior of a
    * different length).
    */
+  // A1 triage: labeled group header rendered as a FULL-WIDTH grid item so it
+  // spans the card grid without nesting a second grid (cards flow after it).
+  function insTriageHeader_(label, count, tone) {
+    return '<div class="ins-group-head ins-group-head--' + tone + '">'
+         +   '<span class="ins-group-dot"></span>'
+         +   '<span class="ins-group-label">' + escapeHtml(label) + '</span>'
+         +   '<span class="ins-group-count">' + count + '</span>'
+         + '</div>';
+  }
+  // A2 legend: the rail encodes DIRECTION of change (green=improving), distinct
+  // from the benchmark health tint. Rendered once above the triage groups.
+  function insTriageLegend_() {
+    return '<div class="ins-group-legend" title="The left rail on each card shows the direction of change vs the prior period — not the health level (that\'s the benchmark tint on the % values).">'
+         +   'Rail'
+         +   '<span class="ins-leg-dot ins-leg-good"></span>improving'
+         +   '<span class="ins-leg-dot ins-leg-warn"></span>slipping'
+         +   '<span class="ins-leg-dot ins-leg-muted"></span>mixed'
+         + '</div>';
+  }
+
   function insRenderAgentCards_(cards, meta, teamStats) {
     const wrap = $('ins-agent-cards'); if (!wrap) return;
     const toolbar = $('ins-cards-toolbar');
@@ -11486,7 +11506,26 @@
     };
 
     const renderCard = function (x) { return insBuildCard_(x, teamScore, meta, teamAvg); };
-    wrap.innerHTML = sortedMain.map(renderCard).join('');
+    // A1 "needs attention first" triage. Stable-partition the already-sorted
+    // COPY (never insLastData.agentData -- the Cards/Chart toggle reads that
+    // independently) into regressed vs the rest, and render labeled group
+    // headers ONLY when something is actually regressed. With nothing slipping,
+    // keep the flat grid (byte-identical to the prior behavior). The within-
+    // group order is still whatever the sort control produced.
+    const attention = sortedMain.filter(function (x) { return x.direction === 'regressed'; });
+    const ontrack   = sortedMain.filter(function (x) { return x.direction !== 'regressed'; });
+    if (attention.length && sortedMain.length > 1) {
+      let html = insTriageLegend_()
+               + insTriageHeader_('Needs attention', attention.length, 'warn')
+               + attention.map(renderCard).join('');
+      if (ontrack.length) {
+        html += insTriageHeader_('On track', ontrack.length, 'good')
+              + ontrack.map(renderCard).join('');
+      }
+      wrap.innerHTML = html;
+    } else {
+      wrap.innerHTML = sortedMain.map(renderCard).join('');
+    }
 
     insHasQuiet_ = quiet.length > 0;
     if (det) {
