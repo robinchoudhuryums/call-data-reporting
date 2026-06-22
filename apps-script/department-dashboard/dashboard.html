@@ -183,19 +183,17 @@
             <span class="ov-user-table-date" id="ov-user-table-date"></span>
           </div>
           <div id="ov-user-table-status" class="status" style="display:none;"></div>
-          <table class="agents ov-user-table">
+          <table class="agents ov-user-table hide-extra">
             <thead>
               <tr>
                 <th>Agent</th>
                 <th>Source</th>
-                <th>Unique</th>
-                <th>Rung</th>
-                <th>Missed (rings)</th>
-                <th>Answered</th>
-                <th>TTT</th>
+                <th>Answered / Missed</th>
+                <th class="col-extra">Unique</th>
+                <th class="col-extra">TTT</th>
                 <th>ATT (daily avg)</th>
-                <th>Avg Abd Wait</th>
-                <th>CSR Avg Abd Wait</th>
+                <th class="col-extra">Avg Abd Wait</th>
+                <th class="col-extra">CSR Avg Abd Wait</th>
               </tr>
             </thead>
             <tbody id="ov-user-tbody"></tbody>
@@ -263,20 +261,21 @@
         <strong id="dqe-table-title">Agent Call Metrics</strong>
         <span id="dqe-table-date" class="dept-qcd-date"></span>
         <span class="dept-qcd-hint">Click a row to open that agent’s Individual Report for the selected range.</span>
+        <button class="link-btn dept-cols-toggle" id="dept-cols-toggle" type="button"
+                aria-expanded="false"
+                title="Show or hide the Unique / TTT / Avg Abd Wait detail columns">Show all columns</button>
       </div>
       <table id="agents-table" class="agents">
         <thead>
           <tr>
             <th data-sort="agent">Agent <span class="arrow"></span></th>
             <th>Source</th>
-            <th data-sort="totalUnique">Unique <span class="arrow"></span></th>
-            <th data-sort="totalRung">Rung <span class="arrow"></span></th>
-            <th data-sort="totalMissed">Missed (rings) <span class="arrow"></span></th>
-            <th data-sort="totalAnswered">Answered <span class="arrow"></span></th>
-            <th data-sort="tttSeconds">TTT <span class="arrow"></span></th>
+            <th data-sort="answerRate">Answered / Missed <span class="arrow"></span></th>
+            <th data-sort="totalUnique" class="col-extra">Unique <span class="arrow"></span></th>
+            <th data-sort="tttSeconds" class="col-extra">TTT <span class="arrow"></span></th>
             <th data-sort="attSeconds">ATT (daily avg) <span class="arrow"></span></th>
-            <th data-sort="avgAbdWaitSeconds">Avg Abd Wait <span class="arrow"></span></th>
-            <th data-sort="csrAvgAbdWaitSeconds">CSR Avg Abd Wait <span class="arrow"></span></th>
+            <th data-sort="avgAbdWaitSeconds" class="col-extra">Avg Abd Wait <span class="arrow"></span></th>
+            <th data-sort="csrAvgAbdWaitSeconds" class="col-extra">CSR Avg Abd Wait <span class="arrow"></span></th>
           </tr>
         </thead>
         <tbody id="agents-tbody"></tbody>

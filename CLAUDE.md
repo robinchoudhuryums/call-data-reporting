@@ -1145,8 +1145,27 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   by a non-admin also quietly no-ops -- `initRouter` skips the
   trigger rather than opening a modal that would only surface an
   "admin-only" server error (F11).
-- **Source column + roster-only totals (Phase D).** The agent table
-  gains a Source column (between Agent and Unique) rendering one of
+- **Agent table column model (My Department).** The table is rendered
+  from the client `COLUMNS` array (script.html) against a matching static
+  `<thead>` in `dashboard.html` (1:1 by position; the Overview mini-table
+  `ov-user-table` shares `COLUMNS` and must keep its own thead in sync).
+  Columns: Agent · Source · **Answered / Missed** (a `type:'bar'` stacked
+  bar — green answered + red missed, total = rung — that FOLDED the former
+  Rung/Missed/Answered numeric columns; built by `answeredBarHtml_`, carries
+  the E5 WoW chips inline on the answered/missed counts, answer-rate gets
+  the 92% benchmark tint, sorts by computed `answerRate` via a special case
+  in `sortRows`) · Unique · TTT · ATT · Avg Abd Wait · CSR Avg Abd Wait. The
+  four `hideable:true` columns (Unique / TTT / Avg Abd Wait / CSR Avg Abd
+  Wait) FOLD AWAY by default behind the **"Show all columns"** toggle
+  (`#dept-cols-toggle`, persisted in `cdr.dept.cols`, applied via the
+  `hide-extra` class + `.col-extra` cells through the shared `cellClass_`
+  helper); the Overview mini-table carries `hide-extra` permanently
+  (glance view). Default sort is `answerRate` ascending (worst answer rate
+  first; idle/no-activity agents always sink to the bottom regardless of
+  direction). CSV export (`exportTableCsv_`) emits ALL columns regardless
+  of the toggle and renders the bar as `answered / missed (rate%)` text.
+- **Source column + roster-only totals (Phase D).** The agent table's
+  Source column (between Agent and the Answered/Missed bar) renders one of
   three chips per row: **ROSTER** (accent-soft) for agents on this
   dept's roster only, **BOTH** (good-soft) for agents rostered AND
   matched via shared-queue extensions, **QUEUE** (warn-soft) for
@@ -1626,7 +1645,7 @@ S5 | Daily DQE aggregation completes for a typical day | Subsystem: CDR DQE Pipe
 S6 | Source column + roster-only totals (post-Phase D) | Subsystem: Department Dashboard
   Steps:
     - Open dashboard for a dept with known floaters. Scope is locked to "both" server-side since the redesign cleanup (commit 53d0560); the legacy scope toggle is gone from the UI.
-    - Inspect the agent table: every row should carry a chip in the new Source column (between Agent and Unique). Roster agents render ROSTER (accent) or BOTH (good) chips; queue-only floaters render QUEUE (warn) chips suffixed with their other-dept home list (e.g. `QUEUE · Sales, Power`). Floaters on no dept's roster render bare `QUEUE`.
+    - Inspect the agent table: every row should carry a chip in the Source column (between Agent and the Answered/Missed bar). Roster agents render ROSTER (accent) or BOTH (good) chips; queue-only floaters render QUEUE (warn) chips suffixed with their other-dept home list (e.g. `QUEUE · Sales, Power`). Floaters on no dept's roster render bare `QUEUE`.
     - Confirm the tfoot first-cell reads "Total (roster only · N floaters excluded)" with N matching the count of QUEUE-chipped rows, and the totals values themselves exclude those rows' contributions.
     - To verify the floater-exclusion contract still produces correct roster-only numbers (legacy `scope=roster` behavior), filter the response client-side to `matchedViaRoster=true` rows -- the totals shown in the tfoot match what summing those rows produces. The contract is independent of scope so the historical roster-only view is reproducible without the toggle.
   Expected: chip rendering matches matchedViaRoster/matchedViaQueue flags per row; sourceHomes array suffix lists every other dept's roster the floater appears on; totals match the roster-only sum; Diagnostics panel still lists queue-only matched agents (now visible directly via the Source chip on each row).
