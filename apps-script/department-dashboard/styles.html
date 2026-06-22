@@ -3093,6 +3093,20 @@
   .cr-vs-team-pos  { background: var(--accent-soft); color: var(--accent); }
   .cr-vs-team-neg  { background: var(--warn-soft); color: var(--warn); }
   .cr-vs-team-flat { background: var(--paper-2); color: var(--muted); }
+  /* Insights trend pill -- names the card's left-rail color (trend vs prior).
+     Sits next to the agent name (no margin-left:auto, unlike the vs-team chip
+     which pushes right). */
+  .ins-trend-pill {
+    padding: 2px 8px;
+    border-radius: var(--r-pill, 999px);
+    font: 500 10px/1 var(--mono);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    white-space: nowrap;
+  }
+  .ins-trend-up   { background: var(--accent-soft); color: var(--accent); }
+  .ins-trend-down { background: var(--warn-soft);   color: var(--warn); }
+  .ins-trend-flat { background: var(--paper-2);     color: var(--muted); }
 
   /* Per-cell "X/day" annotation inside the cards' P1/P2 cells
      when periods differ. Mono so it reads as metadata. */
@@ -4499,7 +4513,15 @@
   .ds-card--rail::before {
     content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px;
     background: var(--status, var(--accent));
+    transition: width var(--dur-1, 120ms) var(--ease), box-shadow var(--dur-1, 120ms) var(--ease);
   }
+  /* Hovering the card widens + glows the status rail in its own color, so it's
+     obvious what the trend pill / classification refers to. */
+  .ds-card--rail:hover::before {
+    width: 7px;
+    box-shadow: 0 0 9px var(--status, var(--accent));
+  }
+  @media (prefers-reduced-motion: reduce) { .ds-card--rail::before { transition: none; } }
 
   /* 2.5 · Data table + inline metric bar */
   .ds-table { width: 100%; border-collapse: collapse; font-size: 13px; }
