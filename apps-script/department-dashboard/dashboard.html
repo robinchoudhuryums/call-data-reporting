@@ -242,6 +242,19 @@
         </div>
       </div>
 
+      <!-- Queue Call Data: per-queue daily roll-up for the dept, sitting
+           directly above the agent table (below the date controls). Same
+           data, ID, and render path as before -- only its DOM position
+           moved. -->
+      <div id="dept-qcd-snapshot" class="dept-qcd-snapshot" style="display:none; margin-top:16px;">
+        <div class="dept-qcd-header">
+          <strong id="dept-qcd-title">Queue Call Data</strong>
+          <span class="dept-qcd-date" id="dept-qcd-date"></span>
+          <span class="dept-qcd-hint">Daily roll-up across this dept's mapped queues from <code>QCD Historical Data</code>. For a date range, use Reports → QCD Report.</span>
+        </div>
+        <div class="dept-qcd-tiles" id="dept-qcd-tiles"></div>
+      </div>
+
       <div id="status" class="status" style="display:none;"></div>
 
       <div id="dept-table-skeleton" style="display:none; padding: 16px 0;">
@@ -284,22 +297,13 @@
 
       <div id="info-line" class="info-line" style="display:none;"></div>
 
-      <!-- #9a: two-column context row below the table — QCD snapshot (left)
-           and the Missed Calls "glance" (headline + hour-of-day radar, right),
-           both auto-generated for the same range as the agent table. The
-           per-agent timelines + queue-only abandons render full-width below in
-           #dept-missed-detail; "Full report" opens the Missed Calls modal for
-           a custom range + per-bucket drill. -->
+      <!-- Missed Calls section (full parity with the modal): headline +
+           summary strip + hour-of-day radar with side-by-side per-bucket
+           drill-in, plus the full-width queue-only abandons + per-agent
+           missed-time timelines below in #dept-missed-detail. The Queue
+           Call Data card now sits above the agent table (below the date
+           controls), not here. -->
       <div class="dept-context-row">
-        <div id="dept-qcd-snapshot" class="dept-qcd-snapshot" style="display:none;">
-          <div class="dept-qcd-header">
-            <strong id="dept-qcd-title">Queue Call Data</strong>
-            <span class="dept-qcd-date" id="dept-qcd-date"></span>
-            <span class="dept-qcd-hint">Daily roll-up across this dept's mapped queues from <code>QCD Historical Data</code>. For a date range, use Reports → QCD Report.</span>
-          </div>
-          <div class="dept-qcd-tiles" id="dept-qcd-tiles"></div>
-        </div>
-
         <div id="dept-missed-section" class="dept-qcd-snapshot" style="display:none;">
           <div class="dept-qcd-header">
             <strong id="dept-missed-title">Missed Calls</strong>
@@ -472,7 +476,7 @@
           </section>
           <section class="help-topic" id="help-topic-queuecall" hidden>
             <h3>Queue Call Data &amp; missed timelines</h3>
-            <p>Below the agent table, a <strong>Queue Call Data</strong> tile row shows each mapped queue&rsquo;s abandoned % and violations for the latest data date, paired with a Missed-Calls glance. Below that, each agent&rsquo;s <strong>missed-call timeline</strong> lists the timestamps of unanswered rings (abandoned ones flagged in red). For the full report, open <strong>Missed Calls</strong>.</p>
+            <p>Above the agent table, a <strong>Queue Call Data</strong> tile row shows each mapped queue&rsquo;s abandoned % and violations for the latest data date. Below the table, the <strong>Missed Calls</strong> section gives an hour-of-day radar (click a bar to drill into that bucket) plus each agent&rsquo;s <strong>missed-call timeline</strong> listing the timestamps of unanswered rings (abandoned ones flagged in red). For a custom range, open the full <strong>Missed Calls</strong> report.</p>
           </section>
           <section class="help-topic" id="help-topic-export" hidden>
             <h3>Download CSV</h3>
