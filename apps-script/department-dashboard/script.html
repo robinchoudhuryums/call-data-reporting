@@ -12286,11 +12286,18 @@
   }
 
   function heatRgb_(varName) {
-    // colorToCanvasRgb_ resolves a CSS custom prop to canonical 'rgba(r,g,b,a)'
-    // (OKLCH-safe, INV-42), so this works across the light/dark/paper themes.
-    var s = (typeof colorToCanvasRgb_ === 'function' ? colorToCanvasRgb_(varName) : '') || 'rgb(0,0,0)';
-    var m = /(\d+)\D+(\d+)\D+(\d+)/.exec(s);
-    return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : [0, 0, 0];
+    // Resolve the CSS custom property to its computed value FIRST (themes set
+    // tokens on body via data-theme/data-mode), THEN canonicalize via
+    // colorToCanvasRgb_ -- which takes a color VALUE, not a var name, and
+    // returns '#rrggbb' (opaque) or 'rgba(r,g,b,a)' (OKLCH-safe, INV-42).
+    var raw = '';
+    try { raw = (getComputedStyle(document.body).getPropertyValue(varName) || '').trim(); } catch (e) {}
+    var s = raw ? (typeof colorToCanvasRgb_ === 'function' ? colorToCanvasRgb_(raw) : raw) : '';
+    var m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(s);
+    if (m) return [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)];
+    m = /rgba?\(\s*(\d+)\D+(\d+)\D+(\d+)/i.exec(s);
+    if (m) return [Number(m[1]), Number(m[2]), Number(m[3])];
+    return [0, 0, 0];
   }
   function heatMix_(a, b, t) {
     t = Math.max(0, Math.min(1, t));
@@ -12873,7 +12880,7 @@
 
     const btn = $('qcd-generate-btn');
     btn.disabled = true;
-    const prev = btn.textContent; btn.textContent = 'Loading…';
+    const prev = btn.textContent; btn.innerHTML = DS_EQ_HTML_ + 'Loading…';
 
     google.script.run
       .withSuccessHandler(function (data) {
