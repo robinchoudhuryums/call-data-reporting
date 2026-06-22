@@ -1182,6 +1182,36 @@
     }
   }
 
+  // B1 change-flash. One-shot highlight on value nodes whose text changed
+  // since the last render in the SAME scope (SWR cache->live swap on Overview,
+  // or a date-range refresh on My Department). Callers tag each value node with
+  // a stable data-flash-key (dept / agent name, never row index). Best-effort,
+  // reduced-motion aware, and flashes ONLY on a real change -- never on first
+  // paint (the hasOwnProperty guard), so opening a screen never flashes.
+  var DS_PREV_VALUES_ = {};
+  function dsFlashChanged_(root, scopeId) {
+    if (!root || !root.querySelectorAll) return;
+    var nodes = root.querySelectorAll('[data-flash-key]');
+    var reduce = false;
+    try { reduce = matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) {}
+    var prev = DS_PREV_VALUES_[scopeId] || {};
+    var next = {};
+    nodes.forEach(function (el) {
+      var k = el.getAttribute('data-flash-key');
+      var v = el.textContent.trim();
+      next[k] = v;
+      if (!reduce && Object.prototype.hasOwnProperty.call(prev, k) && prev[k] !== v) {
+        el.classList.remove('ds-flash');
+        void el.offsetWidth;            // force reflow so the animation replays
+        el.classList.add('ds-flash');
+        el.addEventListener('animationend', function h() {
+          el.classList.remove('ds-flash'); el.removeEventListener('animationend', h);
+        });
+      }
+    });
+    DS_PREV_VALUES_[scopeId] = next;   // snapshot for the next render (even on first paint)
+  }
+
   function ovLoad_(silent) {
     var paintedFromCache = false;
     if (!silent) {
@@ -1268,6 +1298,10 @@
     // modal body lays out before Chart.js measures the canvas.
     requestAnimationFrame(function () { ovRenderChart_(data); });
     ovRenderUserTable_(data);
+    // B1: flash dept/hero answer-rate values that changed vs the prior paint.
+    // On the SWR path the cache paint snapshots first (no flash), then the live
+    // paint flashes only what actually moved -- a returning manager sees the diff.
+    dsFlashChanged_($('ov-body'), 'overview');
   }
 
   // Single mono-uppercase summary line above the dept grid.
@@ -1566,7 +1600,7 @@
          +   '</div>'
          +   '<div class="ov-hero-body">'
          +     '<div class="ov-hero-pct-block">'
-         +       '<div class="ov-hero-pct">' + escapeHtml(dept.latest.pctFormatted) + '</div>'
+         +       '<div class="ov-hero-pct" data-flash-key="ov:' + escapeHtml(dept.name) + '">' + escapeHtml(dept.latest.pctFormatted) + '</div>'
          +       '<div class="ov-dept-pct-cap">answered (latest day)</div>'
          +       ovBuildWowChip_(dept)
          +     '</div>'
@@ -1744,7 +1778,7 @@
          +   parentTag
          +   ovBuildAlertPill_(dept)
          +   '<div class="ov-dept-tile-pct">'
-         +     escapeHtml(dept.latest.pctFormatted)
+         +     '<span data-flash-key="ov:' + escapeHtml(dept.name) + '">' + escapeHtml(dept.latest.pctFormatted) + '</span>'
          +     ' <span class="ov-dept-pct-cap">answered</span>'
          +     ovBuildWowChip_(dept)
          +   '</div>'
@@ -4293,7 +4327,10 @@
            + (rowClass ? ' class="' + rowClass + '"' : '')
            + ' title="Open ' + escapeHtml(row.agent) + '’s Individual Report">'
            + COLUMNS.map(function (col, i) {
-        return '<td class="' + cellClass_(col, i) + '">' + fmtCell(col, row) + '</td>';
+        // B1: tag the Answered/Missed bar cell so a date-range refresh flashes
+        // the agents whose volume actually changed (key by agent name, stable).
+        var fk = (col.type === 'bar') ? ' data-flash-key="ag:' + escapeHtml(row.agent) + '"' : '';
+        return '<td class="' + cellClass_(col, i) + '"' + fk + '>' + fmtCell(col, row) + '</td>';
       }).join('') + '</tr>';
     }).join('');
 
@@ -4319,6 +4356,10 @@
     } else {
       tfoot.innerHTML = '';
     }
+    // B1: flash agents whose Answered/Missed changed since the last paint for
+    // this dept. Scoped per dept so switching depts doesn't cross-flash; a sort
+    // re-render leaves values unchanged per key, so it never flashes.
+    dsFlashChanged_($('agents-tbody'), 'dept:' + getRequestedDept());
   }
 
   // -- CSV export for the main agent table --------------------------------
