@@ -307,3 +307,32 @@ commit/push/deploy direction.
   knob, NEEDS LIVE SPOT-CHECK. tests 133/133; CSS 915/915; divs 610/610; JS clean; cache-version
   guard green. Branch `claude/abandon-heatmap`. No unit coverage (Neon SQL + client render, like
   the inbound report itself) -- verify via S38-style live check.
+
+- **Increments 28–34 (DONE — My-Department polish + Pass-2 design update):** seven CI-green PRs,
+  all client-only (no server compute / cache / metric / permission change).
+  - #118 Missed Calls section on My Dept brought to full modal parity (shared
+    `makeMissedBucketDetail_` factory; summary strip; radar drill-in; full-width stacked).
+  - #119 Missed drill-in side-by-side (`.chart-row` grid + slide animation) + collapsible
+    queue-only / per-agent `<details>` cards (shared builders → modal gets it too).
+  - #120 Agent table: Answered/Missed stacked bar (folds Rung/Missed/Answered; E5 WoW chips
+    inline; sorts by `answerRate`, idle agents sink) + foldable detail columns (`#dept-cols-toggle`,
+    `cdr.dept.cols`). Default sort now answerRate asc.
+  - #121 Queue Call Data card moved above the agent table (below date controls).
+  - #122 `docs/design-update-pass2-review.md` — codebase validation of the Pass-2 proposal +
+    owner decisions (A2 = ratify shipped green; C3 = honest single loader).
+  - #123 **B1 change-flash**: `dsFlashChanged_` + `.ds-flash`; Overview SWR cache→live + My-Dept
+    refresh flash only changed values (never first paint; reduced-motion aware).
+  - #124 **A1 Insights triage**: "Needs attention" (regressed) → "On track" groups, regressed
+    first; partitions a COPY (never `insLastData.agentData`), parity test green; A2 rail legend.
+  - #125 **C1/C3 loaders**: signal-rings in Caller Lookup results; honest single cold-start bar on
+    Overview boot (no faked stages). QCD kept its existing equalizer button.
+  - #126 **D1a**: "Retry now" button on the Overview refresh-failing banner (Overview already kept
+    cached data on error). **C2 dropped** (charts render synchronously — no real wait to fill).
+  - #127 **E motion**: rail-card entrance fade+rise + status-rail grow-in (Insights/CR cards).
+    Count-up / segment-slide / skeleton-crossfade deferred (touch value rendering / component
+    re-arch / broad reveal rework).
+  DEFERRED Pass-2 work-streams: D1b (reports keep-last-good on error), D2 (permission tone),
+  F (digest redesign + onboarding/unmapped-queue), C2 (chart-slot spark). A3 heatmap +2h TZ is a
+  LIVE SPOT-CHECK (not a code change). A1's optional "auto-collapse On-track past 4" trimmed.
+  Where I left off: Pass-2 dashboard CSS/JS pass complete; awaiting user redeploy + the standing
+  live verifications (heatmap colors/CST, Insights chip/rail, B1 flash, A1 triage).
