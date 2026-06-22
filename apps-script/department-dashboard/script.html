@@ -278,8 +278,8 @@
     totals: null,
     meta: null,
     diagnostics: null,
-    sortKey: 'totalMissed',
-    sortDir: 'desc',     // 'asc' | 'desc'
+    sortKey: 'answerRate',   // default sort: the stacked Answered/Missed bar
+    sortDir: 'asc',          // 'asc' | 'desc' -- asc => worst answer rate first
     // Scope: server is locked to 'both' since the Phase D toggle
     // removal cleanup. Internal `computeSummary_` still accepts
     // a scope arg (Digest.gs uses 'roster') but the public RPC
@@ -597,6 +597,12 @@
 
   // -- Column model --------------------------------------------------------
   // Order matches the <thead>; sortKey maps to a row property.
+  // `hideable: true` marks a detail column that folds away behind the
+  // "Show all columns" toggle (default hidden) -- toggled via the
+  // `hide-extra` class on #agents-table (see applyDeptColsPref_). The
+  // `bar` column folds Rung / Missed / Answered into one stacked
+  // horizontal bar (answered green + missed red, total = rung); it
+  // sorts by answer rate (`sortKey: 'answerRate'`, handled in sortRows).
   const COLUMNS = [
     { key: 'agent',                label: 'Agent',           type: 'text' },
     // Phase D Source column. Renders a chip (ROSTER / BOTH / QUEUE)
@@ -604,15 +610,69 @@
     // see fmtCell handling for `type: 'chip'`. Plain-text export
     // (CSV) is handled in exportTableCsv_ via sourceChipCsv_.
     { key: 'source',               label: 'Source',          type: 'chip' },
-    { key: 'totalUnique',          label: 'Unique',          type: 'num' },
-    { key: 'totalRung',            label: 'Rung',            type: 'num' },
-    { key: 'totalMissed',          label: 'Missed (rings)',  type: 'num', highlight: 'missed' },
-    { key: 'totalAnswered',        label: 'Answered',        type: 'num' },
-    { key: 'tttSeconds',           label: 'TTT',             type: 'duration' },
+    { key: 'answeredBar',          label: 'Answered / Missed', type: 'bar', sortKey: 'answerRate' },
+    { key: 'totalUnique',          label: 'Unique',          type: 'num',      hideable: true },
+    { key: 'tttSeconds',           label: 'TTT',             type: 'duration', hideable: true },
     { key: 'attSeconds',           label: 'ATT (daily avg)', type: 'duration' },
-    { key: 'avgAbdWaitSeconds',    label: 'Avg Abd Wait',    type: 'duration' },
-    { key: 'csrAvgAbdWaitSeconds', label: 'CSR Avg Abd Wait', type: 'duration' },
+    { key: 'avgAbdWaitSeconds',    label: 'Avg Abd Wait',    type: 'duration', hideable: true },
+    { key: 'csrAvgAbdWaitSeconds', label: 'CSR Avg Abd Wait', type: 'duration', hideable: true },
   ];
+
+  // Foldable detail-columns toggle for the My Department agent table.
+  // Default 'compact' (extra columns hidden); persisted per-browser.
+  const DEPT_COLS_KEY = 'cdr.dept.cols';
+  function applyDeptColsPref_() {
+    var compact = (localStorage.getItem(DEPT_COLS_KEY) !== 'all');   // default compact
+    var table = $('agents-table');
+    if (table) table.classList.toggle('hide-extra', compact);
+    var btn = $('dept-cols-toggle');
+    if (btn) {
+      btn.textContent = compact ? 'Show all columns' : 'Fewer columns';
+      btn.setAttribute('aria-expanded', compact ? 'false' : 'true');
+    }
+  }
+
+  // Shared td-class builder for the agent tables (main + Overview mini).
+  // Centralizes the agent/source/bar/num base class + the foldable
+  // `col-extra` marker so all four render sites stay consistent.
+  function cellClass_(col, i) {
+    var base;
+    if (i === 0) base = 'agent-name';
+    else if (col.type === 'chip' && col.key === 'source') base = 'src-cell';
+    else if (col.type === 'bar') base = 'ans-bar-cell';
+    else base = 'num';
+    return base + (col.hideable ? ' col-extra' : '');
+  }
+
+  // Stacked Answered/Missed bar (green answered + red missed; total =
+  // rung). Carries the E5 prior-period WoW chips inline on the answered
+  // and missed counts so that signal survives the column consolidation.
+  // The answer-rate gets the 92% benchmark tint (symmetric).
+  function answeredBarHtml_(row) {
+    var a = Number(row.totalAnswered) || 0;
+    var m = Number(row.totalMissed)   || 0;
+    var total = a + m;
+    var pctA = total ? (a / total * 100) : 0;
+    var rate = total ? Math.round(a / total * 100) : 0;
+    var aChip = wowChipHtml_(row, { key: 'totalAnswered' });
+    var mChip = wowChipHtml_(row, { key: 'totalMissed' });
+    var title = a + ' answered · ' + m + ' missed · ' + total + ' rung'
+              + (total ? ' · ' + rate + '% answered' : '');
+    var segs = total
+      ? '<span class="ans-seg ans" style="width:' + pctA + '%"></span>'
+        + '<span class="ans-seg miss" style="width:' + (100 - pctA) + '%"></span>'
+      : '<span class="ans-seg none" style="width:100%"></span>';
+    var rateCls = total ? benchValueCls_('% answered', rate + '%', true) : '';
+    return '<div class="ans-bar" title="' + escapeHtml(title) + '">'
+         +   '<div class="ans-track">' + segs + '</div>'
+         +   '<div class="ans-nums">'
+         +     '<span class="ans-n">' + a + aChip + '</span>'
+         +     '<span class="ans-slash">/</span>'
+         +     '<span class="miss-n">' + m + mChip + '</span>'
+         +     '<span class="ans-rate' + rateCls + '">' + (total ? rate + '%' : '–') + '</span>'
+         +   '</div>'
+         + '</div>';
+  }
 
   // -- DOM ----------------------------------------------------------------
 
@@ -729,6 +789,14 @@
     $('refresh-btn').addEventListener('click', refresh);
     var csvBtn = $('csv-export-btn');
     if (csvBtn) csvBtn.addEventListener('click', exportTableCsv_);
+
+    var colsToggle = $('dept-cols-toggle');
+    if (colsToggle) colsToggle.addEventListener('click', function () {
+      var next = (localStorage.getItem(DEPT_COLS_KEY) === 'all') ? 'compact' : 'all';
+      try { localStorage.setItem(DEPT_COLS_KEY, next); } catch (e) {}
+      applyDeptColsPref_();
+    });
+    applyDeptColsPref_();
 
     // Drill-through: clicking an agent row opens the Individual Report
     // pre-seeded with that agent + the current From/To range and auto-
@@ -1839,11 +1907,7 @@
           const rowClass = (row.matchedViaQueue && !row.matchedViaRoster) ? 'via-queue' : '';
           return '<tr' + (rowClass ? ' class="' + rowClass + '"' : '') + '>'
                + COLUMNS.map(function (col, i) {
-                   const isAgent  = (i === 0);
-                   const isSource = (col.type === 'chip' && col.key === 'source');
-                   const cls = isAgent ? 'agent-name' : (isSource ? 'src-cell' : 'num');
-                   const extra = (col.highlight === 'missed' && Number(row.totalMissed) > 0) ? ' missed-high' : '';
-                   return '<td class="' + cls + extra + '">' + fmtCell(col, row) + '</td>';
+                   return '<td class="' + cellClass_(col, i) + '">' + fmtCell(col, row) + '</td>';
                  }).join('')
                + '</tr>';
         }).join('');
@@ -1853,11 +1917,9 @@
             ? 'Totals (roster only · ' + queueCount + ' floater' + (queueCount === 1 ? '' : 's') + ' excluded)'
             : 'Totals';
           tfoot.innerHTML = '<tr>' + COLUMNS.map(function (col, i) {
-            const isAgent  = (i === 0);
-            const isSource = (col.type === 'chip' && col.key === 'source');
-            const cls = isAgent ? 'agent-name' : (isSource ? 'src-cell' : 'num');
-            if (isAgent) return '<td class="' + cls + '">' + totalLabel + '</td>';
-            if (isSource) return '<td class="' + cls + '"></td>';
+            const cls = cellClass_(col, i);
+            if (i === 0) return '<td class="' + cls + '">' + totalLabel + '</td>';
+            if (col.type === 'chip' && col.key === 'source') return '<td class="' + cls + '"></td>';
             return '<td class="' + cls + '">' + fmtCell(col, resp.totals) + '</td>';
           }).join('') + '</tr>';
         }
@@ -4044,6 +4106,20 @@
     const col = COLUMNS.find(function (c) { return c.key === key; });
     const isText = col && col.type === 'text';
     return rows.slice().sort(function (a, b) {
+      // Answer-rate sort (the stacked bar column). Idle agents -- no
+      // rung activity at all -- always sink to the bottom regardless of
+      // direction so they don't crowd the top of an ascending sort.
+      if (key === 'answerRate') {
+        const at = (Number(a.totalAnswered) || 0) + (Number(a.totalMissed) || 0);
+        const bt = (Number(b.totalAnswered) || 0) + (Number(b.totalMissed) || 0);
+        if (!at && !bt) return String(a.agent).localeCompare(String(b.agent));
+        if (!at) return 1;
+        if (!bt) return -1;
+        const ar = (Number(a.totalAnswered) || 0) / at;
+        const br = (Number(b.totalAnswered) || 0) / bt;
+        if (ar !== br) return (ar - br) * dir;
+        return String(a.agent).localeCompare(String(b.agent));
+      }
       const av = a[key], bv = b[key];
       if (isText) {
         return String(av).localeCompare(String(bv)) * dir;
@@ -4057,6 +4133,9 @@
   function fmtCell(col, row) {
     if (col.type === 'chip' && col.key === 'source') {
       return sourceChipHtml_(row);
+    }
+    if (col.type === 'bar') {
+      return answeredBarHtml_(row);
     }
     const v = row[col.key];
     if (col.type === 'text') return escapeHtml(v == null ? '' : v);
@@ -4214,11 +4293,7 @@
            + (rowClass ? ' class="' + rowClass + '"' : '')
            + ' title="Open ' + escapeHtml(row.agent) + '’s Individual Report">'
            + COLUMNS.map(function (col, i) {
-        const isAgent  = (i === 0);
-        const isSource = (col.type === 'chip' && col.key === 'source');
-        const cls = isAgent ? 'agent-name' : (isSource ? 'src-cell' : 'num');
-        const extra = (col.highlight === 'missed' && Number(row.totalMissed) > 0) ? ' missed-high' : '';
-        return '<td class="' + cls + extra + '">' + fmtCell(col, row) + '</td>';
+        return '<td class="' + cellClass_(col, i) + '">' + fmtCell(col, row) + '</td>';
       }).join('') + '</tr>';
     }).join('');
 
@@ -4236,10 +4311,10 @@
         if (i === 0) return '<td>' + totalLabel + '</td>';
         // Source column has no aggregate value -- leave its tfoot
         // cell empty so it doesn't try to render a chip from totals.
-        if (col.type === 'chip' && col.key === 'source') return '<td class="src-cell"></td>';
-        // Some keys (like totalUnique, totalRung) live on totals; ATT
-        // and abd-wait are weighted on the server.
-        return '<td class="num">' + fmtCell(col, state.totals) + '</td>';
+        if (col.type === 'chip' && col.key === 'source') return '<td class="src-cell' + (col.hideable ? ' col-extra' : '') + '"></td>';
+        // The bar / num / duration cells render from the totals object
+        // (ATT and abd-wait are weighted on the server).
+        return '<td class="' + cellClass_(col, i) + '">' + fmtCell(col, state.totals) + '</td>';
       }).join('') + '</tr>';
     } else {
       tfoot.innerHTML = '';
@@ -4255,10 +4330,18 @@
       return (s.indexOf(',') !== -1 || s.indexOf('"') !== -1 || s.indexOf('\n') !== -1)
         ? '"' + s.replace(/"/g, '""') + '"' : s;
     };
+    // CSV exports ALL columns (incl. the foldable detail ones) regardless
+    // of the on-screen toggle -- a data dump should be complete. The bar
+    // column emits "answered / missed (rate%)" text.
+    var barCsv = function (row) {
+      var a = Number(row.totalAnswered) || 0, m = Number(row.totalMissed) || 0, t = a + m;
+      return a + ' / ' + m + (t ? ' (' + Math.round(a / t * 100) + '%)' : '');
+    };
     var header = COLUMNS.map(function (c) { return csvEscape(c.label); }).join(',');
     var rows = sorted.map(function (row) {
       return COLUMNS.map(function (col) {
         if (col.type === 'chip' && col.key === 'source') return csvEscape(sourceChipCsv_(row));
+        if (col.type === 'bar') return csvEscape(barCsv(row));
         if (col.type === 'duration') return csvEscape(fmtDuration(row[col.key]));
         return csvEscape(row[col.key]);
       }).join(',');
@@ -4268,6 +4351,7 @@
         if (i === 0) return csvEscape('Total (roster only)');
         // Source column has no aggregate meaning in the totals row.
         if (col.type === 'chip' && col.key === 'source') return '';
+        if (col.type === 'bar') return csvEscape(barCsv(state.totals));
         if (col.type === 'duration') return csvEscape(fmtDuration(state.totals[col.key]));
         return csvEscape(state.totals[col.key]);
       }).join(','));

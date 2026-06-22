@@ -700,6 +700,46 @@
     font-size: 12.5px;
   }
   .agents .missed-high { color: var(--warn); font-weight: 500; }
+
+  /* Foldable detail columns (Unique / TTT / Avg Abd Wait / CSR Avg Abd
+     Wait). Hidden by default behind the "Show all columns" toggle; the
+     Overview mini-table carries .hide-extra permanently (glance view). */
+  .agents.hide-extra th.col-extra,
+  .agents.hide-extra td.col-extra { display: none; }
+  .dept-cols-toggle { margin-left: auto; white-space: nowrap; }
+
+  /* Stacked Answered/Missed bar -- folds Rung/Missed/Answered into one
+     proportional bar (answered green + missed red, total = rung) with
+     the counts + answer rate beneath. */
+  .agents td.ans-bar-cell { padding-top: 8px; padding-bottom: 8px; }
+  .ans-bar { display: flex; flex-direction: column; gap: 4px; min-width: 140px; }
+  .ans-track {
+    display: flex;
+    height: 8px;
+    border-radius: var(--r-pill, 999px);
+    overflow: hidden;
+    background: var(--paper-2);
+  }
+  .ans-seg { display: block; height: 100%; }
+  .ans-seg.ans  { background: var(--good); }
+  .ans-seg.miss { background: var(--warn); }
+  .ans-seg.none { background: var(--paper-2); }
+  .ans-nums {
+    display: flex;
+    align-items: baseline;
+    gap: 5px;
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 12px;
+  }
+  .ans-nums .ans-n  { color: var(--good); font-weight: 600; }
+  .ans-nums .miss-n { color: var(--warn); font-weight: 600; }
+  .ans-nums .ans-slash { color: var(--muted); }
+  .ans-nums .ans-rate { margin-left: auto; color: var(--muted); font-weight: 500; }
+  /* WoW chips that ride inside the bar counts shouldn't inherit the
+     bold green/red of the count they annotate. */
+  .ans-nums .ans-n .wow-chip,
+  .ans-nums .miss-n .wow-chip { font-weight: 400; margin-left: 3px; }
   /* Recede zero-valued cells so dense tables read as "mostly quiet"
      instead of a uniform wall of numbers. Applied by zeroCell_/fmtCell
      to 0 and 0:00:00 cells. */
