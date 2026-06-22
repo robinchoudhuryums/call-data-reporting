@@ -3045,7 +3045,7 @@
     height: 180px;
     margin-top: 6px;
   }
-  .ins-card-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .ins-card-head { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; margin-bottom: 10px; }
   .ins-card-name { font-family: var(--display); font-weight: 600; font-size: 14px; color: var(--ink); }
   .ins-card-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 10px; }
   .ins-metric { min-width: 0; }
@@ -3144,7 +3144,7 @@
     letter-spacing: 0.1em;
     white-space: nowrap;
   }
-  .ins-trend-up   { background: var(--accent-soft); color: var(--accent); }
+  .ins-trend-up   { background: var(--good-soft);   color: var(--good); }
   .ins-trend-down { background: var(--warn-soft);   color: var(--warn); }
   .ins-trend-flat { background: var(--paper-2);     color: var(--muted); }
 
@@ -4555,12 +4555,9 @@
     background: var(--status, var(--accent));
     transition: width var(--dur-1, 120ms) var(--ease), box-shadow var(--dur-1, 120ms) var(--ease);
   }
-  /* Hovering the card widens + glows the status rail in its own color, so it's
-     obvious what the trend pill / classification refers to. */
-  .ds-card--rail:hover::before {
-    width: 7px;
-    box-shadow: 0 0 9px var(--status, var(--accent));
-  }
+  /* Hovering the card widens the status rail so it's obvious what the trend
+     pill / classification refers to. */
+  .ds-card--rail:hover::before { width: 7px; }
   @media (prefers-reduced-motion: reduce) { .ds-card--rail::before { transition: none; } }
 
   /* 2.5 · Data table + inline metric bar */

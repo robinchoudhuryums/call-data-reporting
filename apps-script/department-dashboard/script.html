@@ -11502,13 +11502,16 @@
   // (not the old improvement-vs-improvement, which was the confusing part).
   function insVsTeamBadge_(agentVal, teamAvgVal) {
     var a = Number(agentVal) || 0, t = Number(teamAvgVal) || 0;
-    var tol = Math.max(1, t * 0.1);   // within 10% of the average reads "in line"
-    var title = 'Answered calls vs the team average this period (the marker on the Answered bar): '
-      + 'above = handled more than the average teammate, below = fewer.';
+    var tr = Math.round(t);
+    var tol = Math.max(1, t * 0.1);   // within 10% of the average reads "on par"
+    // Name the metric + show the comparison inline so it reads at a glance.
+    var detail = ' · ' + a + ' vs ' + tr + ' ans';
+    var title = 'Answered calls vs the team average this period: ' + a + ' vs ~' + tr
+      + ' (the average teammate). Above = handled more, below = fewer.';
     var g = ' gloss" title="' + escapeHtml(title) + '">';
-    if (Math.abs(a - t) <= tol) return '<span class="cr-vs-team cr-vs-team-flat' + g + 'in line with team</span>';
-    if (a > t) return '<span class="cr-vs-team cr-vs-team-pos' + g + '▲ above team</span>';
-    return '<span class="cr-vs-team cr-vs-team-neg' + g + '▼ below team</span>';
+    if (Math.abs(a - t) <= tol) return '<span class="cr-vs-team cr-vs-team-flat' + g + '≈ on par' + detail + '</span>';
+    if (a > t) return '<span class="cr-vs-team cr-vs-team-pos' + g + '▲ above team' + detail + '</span>';
+    return '<span class="cr-vs-team cr-vs-team-neg' + g + '▼ below team' + detail + '</span>';
   }
 
   function insBuildCard_(x, teamScore, meta, teamAvg) {
@@ -11520,7 +11523,7 @@
     // over the classification tint); everyone else gets improved=accent /
     // regressed=warn / mixed=muted (the CR classification pattern).
     const statusColor = isFloater ? 'var(--warn)'
-                      : x.direction === 'improved'  ? 'var(--accent)'
+                      : x.direction === 'improved'  ? 'var(--good)'
                       : x.direction === 'regressed' ? 'var(--warn)'
                       : 'var(--muted)';
     const debugAttrs =
@@ -12376,30 +12379,19 @@
       .getInboundHeatmap({ department: dept || '', from: from, to: to });
   }
 
-  function heatRgb_(varName) {
-    // Resolve the CSS custom property to its computed value FIRST (themes set
-    // tokens on body via data-theme/data-mode), THEN canonicalize via
-    // colorToCanvasRgb_ -- which takes a color VALUE, not a var name, and
-    // returns '#rrggbb' (opaque) or 'rgba(r,g,b,a)' (OKLCH-safe, INV-42).
-    var raw = '';
-    try { raw = (getComputedStyle(document.body).getPropertyValue(varName) || '').trim(); } catch (e) {}
-    var s = raw ? (typeof colorToCanvasRgb_ === 'function' ? colorToCanvasRgb_(raw) : raw) : '';
-    var m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(s);
-    if (m) return [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)];
-    m = /rgba?\(\s*(\d+)\D+(\d+)\D+(\d+)/i.exec(s);
-    if (m) return [Number(m[1]), Number(m[2]), Number(m[3])];
-    return [0, 0, 0];
-  }
-  function heatMix_(a, b, t) {
-    t = Math.max(0, Math.min(1, t));
-    return 'rgb(' + Math.round(a[0] + (b[0] - a[0]) * t) + ','
-                  + Math.round(a[1] + (b[1] - a[1]) * t) + ','
-                  + Math.round(a[2] + (b[2] - a[2]) * t) + ')';
-  }
-  function heatCellBg_(rate, calls, pal) {
-    if (calls < HEAT_MIN_VOLUME_) return pal.muted;           // not enough signal
-    if (rate <= 5) return heatMix_(pal.paper, pal.good, 0.18 + 0.42 * (1 - rate / 5)); // calm sage
-    return heatMix_(pal.warnSoft, pal.warn, Math.min(1, (rate - 5) / 15));             // warm, saturates ~20%
+  // Cell background via CSS color-mix() -- the browser resolves + mixes the
+  // theme tokens (incl. OKLCH ones) itself, so there's no JS color parsing to
+  // get wrong (the earlier canvas-resolve path returned black on some themes).
+  // Pivots on the 5% standard: <=5% sage (deeper = lower abandon), >5% warm
+  // (deeper = higher), saturating ~20%.
+  function heatCellBg_(rate, calls) {
+    if (calls < HEAT_MIN_VOLUME_) return 'var(--paper-2)';       // not enough signal
+    if (rate <= 5) {
+      var p = Math.round((0.20 + 0.45 * (1 - rate / 5)) * 100);  // 20%..65% good over paper
+      return 'color-mix(in srgb, var(--good) ' + p + '%, var(--paper-card))';
+    }
+    var p2 = Math.round(Math.min(1, (rate - 5) / 15) * 100);     // 0%..100% warn over warn-soft
+    return 'color-mix(in srgb, var(--warn) ' + p2 + '%, var(--warn-soft))';
   }
   function heatHourLabel_(h) {
     var ampm = h < 12 ? 'a' : 'p';
@@ -12435,13 +12427,6 @@
       cellMap[c.dow][c.slot] = c;
     });
 
-    var pal = {
-      paper:    heatRgb_('--paper-card'),
-      good:     heatRgb_('--good'),
-      warn:     heatRgb_('--warn'),
-      warnSoft: heatRgb_('--warn-soft'),
-      muted:    'var(--paper-2)',
-    };
     var DOWS = [[1, 'Mon'], [2, 'Tue'], [3, 'Wed'], [4, 'Thu'], [5, 'Fri']];
 
     var html = '<div class="ds-heatmap-head"><span class="ds-heatmap-title">When are callers abandoning?</span>'
@@ -12464,7 +12449,7 @@
           continue;
         }
         var rate = Math.round(c.abandoned / c.calls * 1000) / 10;
-        var bg = heatCellBg_(rate, c.calls, pal);
+        var bg = heatCellBg_(rate, c.calls);
         var note = c.calls < HEAT_MIN_VOLUME_ ? ' (low volume)' : '';
         var title = label + ' · ' + rate + '% abandoned (' + c.abandoned + ' of ' + c.calls + ' calls)' + note;
         html += '<span class="ds-heatmap__cell" style="background:' + bg + ';" title="'
@@ -12480,9 +12465,9 @@
         + bg + ';"></span>' + escapeHtml(lbl) + '</span>';
     };
     html += '<div class="ds-heatmap-legend">'
-      + sw(heatMix_(pal.paper, pal.good, 0.5), '0–5% (on target)')
-      + sw(heatMix_(pal.warnSoft, pal.warn, 0.25), '5–10%')
-      + sw(heatMix_(pal.warnSoft, pal.warn, 1), '15%+')
+      + sw(heatCellBg_(2.5, 99), '0–5% (on target)')
+      + sw(heatCellBg_(7.5, 99), '5–10%')
+      + sw(heatCellBg_(15, 99), '15%+')
       + sw('var(--paper-2)', 'low volume (<' + HEAT_MIN_VOLUME_ + ' calls)')
       + '</div>';
     el.innerHTML = html;
