@@ -1,5 +1,16 @@
 # Cycle State — resume note
 
+## Latest session (broad-implement: Tier 1 observability — F5, F6, F8, F29; F7 deferred)
+Branch `claude/brave-dijkstra-wuonrv`. 134/134 tests pass, INV-16 in sync.
+- **F29** NeonRead.gs + NeonKeepWarm.gs: `getDashboardNeonConn_(opts)` gains `skipReadHealth`; keep-warm passes it so a warm-ping failure no longer writes the DQE read-back failure streak (was a sticky false "read-back FAILING" on the sheet path).
+- **F5** autoImport.js + CompanyOverview.gs: the integrated `:DQE` block now logs a rows:0 `success` row on a no-op build (already-in-history / no new data / F2 refusal), so "ran-empty" is distinct from "didn't run"/"failed". `computeOverviewPipelineFreshness_` now requires `rows>0` so a no-op can't falsely reset the 36h staleness clock.
+- **F6** Data.gs `getLatestDataDates`: only caches a result computed WITHOUT a thrown error (was pinning a null/partial freshness blob for the full TTL on a transient read error).
+- **F8** InsightsReport.gs + script.html: `insightsQueueHealth_` returns `{error:true}` on a genuine compute error (vs `null` for unmapped / missing-QCD-sheet, both benign); client renders a "Queue health unavailable" note instead of silently hiding. Missing-sheet pre-check keeps fresh installs benign (pinned by the existing test).
+- **F7 DEFERRED**: on close reading the admin-facing detection already exists (`recordNeonReadFailure_` fires on every Neon read-error path; surfaced by the read-back health line) and gross staleness is caught by the 36h pill. The only residual is a MANAGER-facing "served from sheet fallback" banner = M-scope product UX across all report headers; deferred, not forced.
+Deploy: Department Dashboard (F5/F6/F8/F29) + cdr-import (F5). No blocking operator actions.
+
+---
+
 ## Latest session (broad-implement: F1–F4, F10, F24)
 Branch `claude/brave-dijkstra-wuonrv`. Implemented six broad-scan findings; 134/134 tests pass, INV-16 in sync.
 - **F1** InsightsReport.gs: `meta.rosterAgentCount` now = roster members ACTIVE in the current window (INV-27), not all selected roster. `queueOnlyAgentCount` derived independently. Cache bumped `insights:v9`→`v10` (+ doc sync in CLAUDE.md/known-issues/conventions/architecture). New regression test added.

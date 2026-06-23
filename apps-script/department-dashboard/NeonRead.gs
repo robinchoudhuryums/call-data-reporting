@@ -44,7 +44,7 @@ function getDqeReadSource_() {
  * Returns null (logged) when unconfigured or unreachable -- callers treat
  * null as "fall back to the sheet". Caller owns closing it.
  */
-function getDashboardNeonConn_() {
+function getDashboardNeonConn_(opts) {
   var p = PropertiesService.getScriptProperties();
   var host = p.getProperty('NEON_HOST');
   if (!host) { Logger.log('getDashboardNeonConn_: NEON_HOST not set.'); return null; }
@@ -53,7 +53,13 @@ function getDashboardNeonConn_() {
     return Jdbc.getConnection(url, p.getProperty('NEON_USER'), p.getProperty('NEON_PASS'));
   } catch (e) {
     Logger.log('getDashboardNeonConn_ failed: ' + (e && e.message ? e.message : e));
-    recordNeonReadFailure_('getDashboardNeonConn_', e);   // F4: unreachable != unconfigured
+    // F4: a hard connection failure (unreachable != unconfigured) is recorded
+    // durably so the admin read-back health line can show it. F29: callers that
+    // are NOT DQE reads -- the keep-warm ping -- pass {skipReadHealth:true} so
+    // their failures don't pollute the DQE read-back streak (which is surfaced
+    // independent of DQE_READ_SOURCE and would otherwise show a sticky false
+    // "read-back FAILING" even while reads are on the sheet).
+    if (!(opts && opts.skipReadHealth)) recordNeonReadFailure_('getDashboardNeonConn_', e);
     return null;
   }
 }

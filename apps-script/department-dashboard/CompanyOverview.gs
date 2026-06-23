@@ -548,6 +548,10 @@ function computeOverviewPipelineFreshness_() {
       const r = rows[i];
       if (r.status !== 'success') continue;
       if (!dqeSteps[r.step]) continue;
+      // F5: a rows:0 "success" (a no-op build -- date already in history, or
+      // no new data) is NOT evidence that fresh DQE data landed. Require a
+      // positive row count so a no-op re-import can't reset the staleness clock.
+      if (!(Number(r.rows) > 0)) continue;
       // r.timestamp is 'yyyy-MM-dd HH:mm' in script TZ; parse via
       // Utilities to honor that TZ instead of letting Date treat it
       // as local-machine time.

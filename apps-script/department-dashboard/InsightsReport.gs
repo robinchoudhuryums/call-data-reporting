@@ -536,6 +536,13 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
 function insightsQueueHealth_(dept, from, to, priorFrom, priorTo) {
   try {
     if (typeof computeQcdReport_ !== 'function') return null;
+    // F8: a MISSING `QCD Historical Data` sheet is a benign "this install has
+    // no QCD data yet" state (fresh install / mid-setup), not a compute error
+    // -- treat it like unmapped (null, hide). Only an UNEXPECTED throw with the
+    // sheet present is surfaced as {error:true} below, so a real data problem
+    // isn't masked as a normal empty.
+    const _ss = (typeof openSpreadsheet_ === 'function') ? openSpreadsheet_() : null;
+    if (_ss && !_ss.getSheetByName('QCD Historical Data')) return null;
     // Always separate sub-queues (seq #5 semantics): children are shown as
     // their own lines/rows + EXCLUDED from the dept total. The user-facing
     // "Include sub-queues" toggle was retired here too.
@@ -612,8 +619,13 @@ function insightsQueueHealth_(dept, from, to, priorFrom, priorTo) {
       }),
     };
   } catch (e) {
+    // F8: distinguish a genuine COMPUTE FAILURE from the legitimate "no mapped
+    // queues" empty (which returns null above and hides the section). A real
+    // QCD read/compute error returns a distinct {error:true} so the client can
+    // render an "unavailable" note instead of silently hiding it as if the
+    // dept simply had no queues -- which would mask a real data problem.
     Logger.log('insightsQueueHealth_ (best-effort): ' + (e && e.message ? e.message : e));
-    return null;
+    return { error: true };
   }
 }
 

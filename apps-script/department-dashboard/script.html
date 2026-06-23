@@ -11235,6 +11235,19 @@
   function insRenderQueueHealth_(qh) {
     const wrap = $('ins-queue-health');
     if (!wrap) return;
+    // F8: a compute failure (qh.error) is shown as an explicit "unavailable"
+    // note rather than hidden -- hiding would be indistinguishable from the
+    // legitimate "no mapped queues" case and could mask a real data problem.
+    if (qh && qh.error) {
+      wrap.style.display = '';
+      const tEl = $('ins-qh-tiles');
+      if (tEl) tEl.innerHTML = '<div class="ds-note">Queue health is temporarily unavailable — '
+        + 'the queue data could not be loaded. The rest of this report is unaffected.</div>';
+      const tbEl = $('ins-qh-tbody'); if (tbEl) tbEl.innerHTML = '';
+      const capEl = $('ins-qh-cap'); if (capEl) capEl.textContent = '';
+      const fcEl = $('ins-qh-forecast'); if (fcEl) fcEl.style.display = 'none';
+      return;
+    }
     if (!qh || !qh.totals) { wrap.style.display = 'none'; return; }
     wrap.style.display = '';
 

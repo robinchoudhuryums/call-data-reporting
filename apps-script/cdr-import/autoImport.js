@@ -1669,6 +1669,24 @@ if (!skipCDR && obcHD) {
             notes: dateObj.toDateString(),
           });
         } catch (logErr) { /* best-effort */ }
+      } else {
+        // F5: the build wrote no rows -- already in DQE history (dup-guard),
+        // empty/unparseable Raw Data, or the F2 expected-date refusal. Log a
+        // rows:0 success row so "ran but wrote nothing" is DISTINCT from "the
+        // DQE block never ran" (no row at all) and "the build threw" (failure
+        // row). rows:0 is deliberately NOT a freshness signal -- computeOverview-
+        // PipelineFreshness_ requires rows>0 -- so a no-op re-import of an
+        // already-built (or old) date can't falsely reset the 36h staleness clock.
+        summaryLog.push('- DQE HD: 0 rows (already in history or no new data)');
+        try {
+          logPipelineHealthWithFallback_(targetSS, {
+            step: 'processIntegratedHistory:DQE',
+            status: 'success',
+            rows: 0,
+            durationMs: null,
+            notes: dateObj.toDateString() + ' | 0 rows written (already in history or no new data)',
+          });
+        } catch (logErr) { /* best-effort */ }
       }
     } catch (dqeErr) {
       // Best-effort: failure surfaces in Pipeline Health AND an admin
