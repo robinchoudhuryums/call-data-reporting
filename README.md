@@ -227,6 +227,30 @@ scripts/deploy.sh apps-script/cdr-import <cdr-import-deployment-id>
   unchanged) and the modal's Save throws "Dept Config sheet missing
   — run setup()".
 
+**Optional (Escalations):**
+
+- The **Escalations** tab in the header nav lets dept managers view and
+  **resolve** escalation calls for their own department; an **admin**
+  logs new escalations (via `+ New escalation`) and can view any
+  department or "All departments". Fields: Date & Time, Caller/Relation,
+  Patient Name, Trx #, Area (optional), and Reason. To mark one resolved
+  a manager must enter a resolution note (what action was taken —
+  enforced); Comments are optional.
+- **Neon-backed**, not a sheet — the `escalations` table is created
+  automatically on first write. Requires the dashboard project's
+  `NEON_*` Script Properties + the `script.external_request` scope (the
+  same ones the F1 read-back / Inbound report use). With Neon unset the
+  tab renders an "unavailable" state and writes are refused; there is no
+  sheet fallback.
+- **Security:** this is the first per-dept (non-admin) write path —
+  managers can only touch their own department's escalations (the
+  department is read from the stored row, never trusted from the
+  request); `createEscalation` is admin-only. See CLAUDE.md INV-55.
+- **Phase 2 (planned):** the external *team-tools* app will INSERT
+  `pending_review` rows into the same `escalations` table for an
+  admin review queue — Neon is the shared substrate, so no new
+  cross-app plumbing is needed.
+
 **Optional (QCD Report):**
 
 - The **QCD Report** modal (click the **QCD** tab in the header nav) reads from

@@ -840,6 +840,7 @@
     initOrphanFix();
     initDeptConfig();
     initCallerLookup();
+    initEscalations();
     initQcdReport();
     initQcdAllDept_();
     // Router last so its modal-close listeners attach after each
@@ -2344,6 +2345,7 @@
     '/admin/orphan-fix':   { kind: 'modal', modalId: 'orphan-fix-modal',  buttonId: 'orphan-fix-btn' },
     '/admin/dept-config':  { kind: 'modal', modalId: 'dept-config-modal', buttonId: 'dept-config-btn' },
     '/admin/caller-lookup': { kind: 'modal', modalId: 'caller-lookup-modal', buttonId: 'caller-lookup-btn' },
+    '/escalations':        { kind: 'modal', modalId: 'escalations-modal',   buttonId: 'escalations-btn' },
   };
 
   // The route currently considered "active". Starts as '/overview'
@@ -12880,6 +12882,283 @@
     if (phoneInput) phoneInput.addEventListener('keydown', function (e) {
       if (e.key === 'Enter') runCallerLookup_();
     });
+  }
+
+  // ── Escalations ────────────────────────────────────────────────
+  var escInit_ = null;   // cached getEscalationsInit payload (role + depts)
+
+  function initEscalations() {
+    const btn = $('escalations-btn');
+    const modal = $('escalations-modal');
+    if (!btn || !modal) return;
+    const closeBtn = modal.querySelector('.modal-close');
+    const backdrop = modal.querySelector('[data-close]');
+
+    function openModal() {
+      modal.style.display = '';
+      modal.setAttribute('aria-hidden', 'false');
+      document.body.style.overflow = 'hidden';
+      trapFocus_(modal);
+      initModalDragResize_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
+      document.addEventListener('keydown', onKeyDown);
+      escEnsureInit_(function () { escLoad_(); });
+    }
+    function closeModal() {
+      modal.style.display = 'none';
+      modal.setAttribute('aria-hidden', 'true');
+      releaseFocus_();
+      resetModalTransform_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
+      document.body.style.overflow = '';
+      document.removeEventListener('keydown', onKeyDown);
+      btn.focus();
+    }
+    function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
+
+    btn.addEventListener('click', openModal);
+    if (closeBtn) closeBtn.addEventListener('click', closeModal);
+    if (backdrop) backdrop.addEventListener('click', closeModal);
+
+    if ($('esc-refresh-btn')) $('esc-refresh-btn').addEventListener('click', escLoad_);
+    if ($('esc-status'))      $('esc-status').addEventListener('change', escLoad_);
+    if ($('esc-dept'))        $('esc-dept').addEventListener('change', escLoad_);
+    if ($('esc-new-btn'))     $('esc-new-btn').addEventListener('click', function () {
+      const f = $('esc-create'); if (f) f.style.display = (f.style.display === 'none' ? '' : 'none');
+    });
+    if ($('esc-c-cancel'))    $('esc-c-cancel').addEventListener('click', function () {
+      const f = $('esc-create'); if (f) f.style.display = 'none';
+      escSetCreateError_('');
+    });
+    if ($('esc-c-save'))      $('esc-c-save').addEventListener('click', escCreate_);
+
+    // Event delegation for per-row resolve/comment actions.
+    if ($('esc-list')) $('esc-list').addEventListener('click', escOnListClick_);
+    if ($('esc-list')) $('esc-list').addEventListener('input', escOnListInput_);
+  }
+
+  // Fetch role + dept list once; populate the dept selectors; reveal the
+  // admin-only create controls. cb() runs after (or immediately if cached).
+  function escEnsureInit_(cb) {
+    if (escInit_) { cb && cb(); return; }
+    google.script.run
+      .withSuccessHandler(function (init) {
+        escInit_ = init || {};
+        const depts = escInit_.departments || [];
+        // Filter selector: admins get an "All departments" option.
+        const sel = $('esc-dept');
+        if (sel) {
+          let opts = '';
+          if (escInit_.isAdmin) opts += '<option value="ALL">All departments</option>';
+          opts += depts.map(function (d) { return '<option value="' + escapeHtml(d) + '">' + escapeHtml(d) + '</option>'; }).join('');
+          sel.innerHTML = opts;
+          // Managers have one dept -> hide the selector entirely.
+          const col = $('esc-dept-col');
+          if (col) col.style.display = (escInit_.isAdmin || depts.length > 1) ? '' : 'none';
+        }
+        // Create-form dept selector (admins choose any dept).
+        const cdept = $('esc-c-dept');
+        if (cdept) cdept.innerHTML = depts.map(function (d) {
+          return '<option value="' + escapeHtml(d) + '">' + escapeHtml(d) + '</option>';
+        }).join('');
+        cb && cb();
+      })
+      .withFailureHandler(function (err) {
+        escSetError_('Error: ' + (err && err.message ? err.message : String(err)));
+      })
+      .getEscalationsInit();
+  }
+
+  function escLoad_() {
+    escSetError_('');
+    const listEl = $('esc-list');
+    const status = $('esc-status') ? $('esc-status').value : 'pending';
+    const dept = $('esc-dept') ? $('esc-dept').value : '';
+    if ($('esc-empty')) $('esc-empty').style.display = 'none';
+    if ($('esc-loading')) { $('esc-loading').style.display = ''; $('esc-loading').innerHTML = dsRingsHtml_ ? dsRingsHtml_('Loading escalations…') : 'Loading…'; }
+    if (listEl) listEl.innerHTML = '';
+    google.script.run
+      .withSuccessHandler(function (resp) {
+        if ($('esc-loading')) $('esc-loading').style.display = 'none';
+        escRenderList_(resp || {});
+      })
+      .withFailureHandler(function (err) {
+        if ($('esc-loading')) $('esc-loading').style.display = 'none';
+        escSetError_('Error: ' + (err && err.message ? err.message : String(err)));
+      })
+      .getEscalations({ department: dept, status: status });
+  }
+
+  function escRenderList_(resp) {
+    const listEl = $('esc-list');
+    if (!listEl) return;
+    if (resp.available === false) {
+      escShowEmpty_('Escalations are temporarily unavailable — the storage (Neon) could not be reached. Try Refresh in a moment.');
+      return;
+    }
+    const rows = resp.rows || [];
+    if (!rows.length) {
+      const st = (resp.meta && resp.meta.status) || 'pending';
+      escShowEmpty_(st === 'pending' ? 'No pending escalations. 🎉' : 'No escalations to show for this filter.');
+      return;
+    }
+    if ($('esc-empty')) $('esc-empty').style.display = 'none';
+    listEl.innerHTML = rows.map(escCardHtml_).join('');
+  }
+
+  function escShowEmpty_(msg) {
+    const e = $('esc-empty');
+    if (e) {
+      e.style.display = '';
+      e.innerHTML = '<div class="empty-state-icon">📋</div><div class="empty-state-title">Nothing here</div>'
+        + '<div class="empty-state-hint">' + escapeHtml(msg) + '</div>';
+    }
+  }
+
+  function escCardHtml_(r) {
+    const resolved = r.status === 'resolved';
+    const meta = [];
+    if (r.occurred_at) meta.push('🕑 ' + escapeHtml(escFmtWhen_(r.occurred_at)));
+    if (r.caller)      meta.push('☎ '  + escapeHtml(r.caller));
+    if (r.patient_name)meta.push('🧑 ' + escapeHtml(r.patient_name));
+    if (r.trx)         meta.push('# '  + escapeHtml(r.trx));
+    if (r.area)        meta.push('▸ '  + escapeHtml(r.area));
+    const deptTag = (escInit_ && (escInit_.isAdmin || ($('esc-dept') && $('esc-dept').value === 'ALL')))
+      ? '<span class="esc-dept-tag">' + escapeHtml(r.department || '') + '</span>' : '';
+    const statusPill = resolved
+      ? '<span class="esc-pill esc-pill-resolved">Resolved</span>'
+      : '<span class="esc-pill esc-pill-pending">Pending</span>';
+
+    let body = '<div class="esc-reason">' + escapeHtml(r.reason || '') + '</div>';
+    body += '<div class="esc-meta">' + meta.join(' &nbsp;·&nbsp; ') + '</div>';
+
+    if (resolved) {
+      body += '<div class="esc-resolution"><strong>Resolution:</strong> ' + escapeHtml(r.resolution || '') + '</div>';
+      if (r.comments) body += '<div class="esc-comments"><strong>Comments:</strong> ' + escapeHtml(r.comments) + '</div>';
+      const by = r.resolved_by ? (' by ' + escapeHtml(r.resolved_by)) : '';
+      const at = r.resolved_at ? (' · ' + escapeHtml(escFmtWhen_(r.resolved_at))) : '';
+      body += '<div class="esc-resolved-by">Resolved' + by + at + '</div>';
+    } else {
+      // Inline resolve form. The "Resolved" checkbox + Save stay DISABLED
+      // until a resolution note is entered (mirrors the server requirement).
+      const idAttr = escapeHtml(r.id);
+      body += '<div class="esc-resolve" data-id="' + idAttr + '">'
+        + '<label class="esc-resolve-label">Resolution (what action was taken — required)'
+        + '<textarea class="esc-resolve-text" rows="2" data-id="' + idAttr + '"></textarea></label>'
+        + '<label class="esc-resolve-label">Comments <span class="esc-optional">(optional)</span>'
+        + '<textarea class="esc-comments-text" rows="1" data-id="' + idAttr + '"></textarea></label>'
+        + '<label class="esc-resolved-check"><input type="checkbox" class="esc-resolved-box" data-id="' + idAttr + '" disabled> Mark resolved</label>'
+        + '<div class="esc-resolve-actions">'
+        + '<button class="btn esc-resolve-save" type="button" data-id="' + idAttr + '" disabled>Save resolution</button>'
+        + '<button class="btn btn-ghost esc-comment-save" type="button" data-id="' + idAttr + '">Save comment only</button>'
+        + '<span class="status status-error esc-row-error" data-id="' + idAttr + '" style="display:none;"></span>'
+        + '</div></div>';
+    }
+
+    return '<div class="ds-card esc-card' + (resolved ? ' esc-card-resolved' : '') + '" data-id="' + escapeHtml(r.id) + '">'
+      + '<div class="esc-card-top">' + statusPill + deptTag + '</div>'
+      + body + '</div>';
+  }
+
+  // Enable the checkbox + Save only once a resolution note is present.
+  function escOnListInput_(e) {
+    if (!e.target.classList.contains('esc-resolve-text')) return;
+    const id = e.target.getAttribute('data-id');
+    const has = !!e.target.value.trim();
+    const box  = document.querySelector('.esc-resolved-box[data-id="' + escCssId_(id) + '"]');
+    const save = document.querySelector('.esc-resolve-save[data-id="' + escCssId_(id) + '"]');
+    if (box)  box.disabled = !has;
+    if (save) save.disabled = !has;
+    if (!has && box) box.checked = false;
+  }
+
+  function escOnListClick_(e) {
+    const t = e.target;
+    if (t.classList.contains('esc-resolve-save'))  { escResolve_(t.getAttribute('data-id')); return; }
+    if (t.classList.contains('esc-comment-save'))  { escSaveComment_(t.getAttribute('data-id')); return; }
+  }
+
+  function escResolve_(id) {
+    const text = document.querySelector('.esc-resolve-text[data-id="' + escCssId_(id) + '"]');
+    const comm = document.querySelector('.esc-comments-text[data-id="' + escCssId_(id) + '"]');
+    const resolution = text ? text.value.trim() : '';
+    if (!resolution) { escRowError_(id, 'Enter a resolution note before marking resolved.'); return; }
+    escRowError_(id, '');
+    const save = document.querySelector('.esc-resolve-save[data-id="' + escCssId_(id) + '"]');
+    if (save) { save.disabled = true; save.textContent = 'Saving…'; }
+    google.script.run
+      .withSuccessHandler(function () { escLoad_(); })
+      .withFailureHandler(function (err) {
+        if (save) { save.disabled = false; save.textContent = 'Save resolution'; }
+        escRowError_(id, (err && err.message ? err.message : String(err)));
+      })
+      .resolveEscalation({ id: id, resolution: resolution, comments: comm ? comm.value.trim() : '' });
+  }
+
+  function escSaveComment_(id) {
+    const comm = document.querySelector('.esc-comments-text[data-id="' + escCssId_(id) + '"]');
+    escRowError_(id, '');
+    google.script.run
+      .withSuccessHandler(function () { escLoad_(); })
+      .withFailureHandler(function (err) { escRowError_(id, (err && err.message ? err.message : String(err))); })
+      .updateEscalationComment({ id: id, comments: comm ? comm.value.trim() : '' });
+  }
+
+  function escCreate_() {
+    escSetCreateError_('');
+    const dept = $('esc-c-dept') ? $('esc-c-dept').value : '';
+    const reason = $('esc-c-reason') ? $('esc-c-reason').value.trim() : '';
+    if (!reason) { escSetCreateError_('Reason for escalation is required.'); return; }
+    const btn = $('esc-c-save');
+    if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+    google.script.run
+      .withSuccessHandler(function () {
+        if (btn) { btn.disabled = false; btn.textContent = 'Save escalation'; }
+        ['esc-c-caller','esc-c-patient','esc-c-trx','esc-c-area','esc-c-reason','esc-c-when'].forEach(function (i) {
+          if ($(i)) $(i).value = '';
+        });
+        const f = $('esc-create'); if (f) f.style.display = 'none';
+        if ($('esc-status')) $('esc-status').value = 'pending';
+        escLoad_();
+      })
+      .withFailureHandler(function (err) {
+        if (btn) { btn.disabled = false; btn.textContent = 'Save escalation'; }
+        escSetCreateError_(err && err.message ? err.message : String(err));
+      })
+      .createEscalation({
+        department: dept,
+        occurredAt: $('esc-c-when') ? $('esc-c-when').value : '',
+        caller:      $('esc-c-caller') ? $('esc-c-caller').value : '',
+        patientName: $('esc-c-patient') ? $('esc-c-patient').value : '',
+        trx:         $('esc-c-trx') ? $('esc-c-trx').value : '',
+        area:        $('esc-c-area') ? $('esc-c-area').value : '',
+        reason:      reason,
+      });
+  }
+
+  function escFmtWhen_(s) {
+    // Server returns ISO-ish timestamptz text; show a compact local-ish label.
+    if (!s) return '';
+    const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/.exec(String(s));
+    if (m) return m[2] + '/' + m[3] + '/' + m[1] + ' ' + m[4] + ':' + m[5];
+    const d = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(s));
+    return d ? (d[2] + '/' + d[3] + '/' + d[1]) : String(s);
+  }
+  // CSS-attr-safe id (UUIDs are hex+hyphen, but guard anyway).
+  function escCssId_(id) { return String(id).replace(/["\\]/g, ''); }
+  function escSetError_(msg) {
+    const el = $('esc-error'); if (!el) return;
+    if (!msg) { el.style.display = 'none'; el.textContent = ''; return; }
+    el.textContent = msg; el.style.display = '';
+  }
+  function escSetCreateError_(msg) {
+    const el = $('esc-c-error'); if (!el) return;
+    if (!msg) { el.style.display = 'none'; el.textContent = ''; return; }
+    el.textContent = msg; el.style.display = '';
+  }
+  function escRowError_(id, msg) {
+    const el = document.querySelector('.esc-row-error[data-id="' + escCssId_(id) + '"]');
+    if (!el) return;
+    if (!msg) { el.style.display = 'none'; el.textContent = ''; return; }
+    el.textContent = msg; el.style.display = '';
   }
 
   function clSetDefaultDates_() {
