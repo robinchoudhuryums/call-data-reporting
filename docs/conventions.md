@@ -235,7 +235,12 @@ from a `both` response by summing only `matchedViaRoster=true` rows.
   manager dept check; can pick any department from the admin dropdown.
   Adding an admin is a Script-Property edit, no redeploy.
 - **Managers**: rows in the `Access Control` sheet (`Email | Department |
-  Notes`). One row per manager. Pinned to a single department.
+  Notes`). One row per manager. Pinned to a single department. If a
+  manager email appears in MULTIPLE rows with different departments, only
+  the first is honored (the dashboard pins a manager to one dept), and
+  `getManagerDepartment_` logs a warning so the ignored row(s) are
+  detectable rather than silently dropped — grant admin for cross-dept
+  access (F13).
 - **Everyone else**: gets the access-denied page.
 
 Access-control lookups are cached for 60 seconds (`AUTH_CACHE_TTL_SECONDS`).
@@ -338,7 +343,10 @@ From/To default (which must snap to DQE specifically).
   Periods may overlap, may be different lengths, do not have to be
   adjacent. Deltas computed as P2 vs P1.
 - **Length-mismatch handling** (INV-35): if
-  `max(p1Days,p2Days) / min(p1Days,p2Days) >= 1.2`, the server
+  `max(wd1,wd2) / min(wd1,wd2) >= 1.2` where `wdN` is the count of
+  **working days (Mon-Fri)** in each period (shared `countWorkingDays_`,
+  so equal-workday windows with a different weekend count aren't falsely
+  flagged; holidays not yet excluded), the server
   emits `meta.lengthMismatch=true`. The client renders a
   length-mismatch banner, per-tile "per day" captions on volume +
   time KPIs, and a `P1/day` + `P2/day` pair in the CSV export.
@@ -436,12 +444,12 @@ mirrors it; if the two ever diverge, INV-30 wins.
 | `IndividualReport.gs` | `individual:vN:` | `v8` |
 | `IndividualReport.gs` (active-in-range subset, shared with all three pickers) | `individual_active:vN:` | `v2` |
 | `PerformanceReport.gs` | `performance:vN:` | `v4` |
-| `CompareRangesReport.gs` | `compareRanges:vN:` | `v5` |
+| `CompareRangesReport.gs` | `compareRanges:vN:` | `v6` |
 | `MissedCallsReport.gs` | `missed:vN:` | `v11` |
 | `CompanyOverview.gs` | `companyOverview:vN` | `v17` |
 | `QCDReport.gs` | `qcd:vN:` | `v9` |
 | `InboundReport.gs` | `inbound:vN:` | `v3` |
-| `InsightsReport.gs` | `insights:vN:` | `v9` |
+| `InsightsReport.gs` | `insights:vN:` | `v12` |
 
 `Alerts.gs` holds no cached compute — preview / send always re-reads
 the source sheet for the chosen date.

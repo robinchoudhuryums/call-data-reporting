@@ -116,6 +116,12 @@ function getLatestDataDates() {
   }
 
   const result = { dqe: null, qcd: null, latest: null };
+  // F6: only cache a result computed WITHOUT a thrown error. A transient read
+  // failure (e.g. the QCD scan throwing after DQE was read) would otherwise
+  // pin a null/partial blob for the full TTL, blanking the freshness pill even
+  // after the underlying read recovers. On error we return the partial result
+  // UNCACHED so the next call retries.
+  let computedOk = true;
   try {
     const ss = openSpreadsheet_();
     const ssTZ = ss.getSpreadsheetTimeZone();
@@ -157,8 +163,11 @@ function getLatestDataDates() {
     }
   } catch (e) {
     Logger.log('getLatestDataDates failed: %s', e);
+    computedOk = false;
   }
-  try { cache.put(KEY, JSON.stringify(result), CACHE_TTL_SECONDS); } catch (e) {}
+  if (computedOk) {
+    try { cache.put(KEY, JSON.stringify(result), CACHE_TTL_SECONDS); } catch (e) {}
+  }
   return result;
 }
 

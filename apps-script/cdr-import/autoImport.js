@@ -449,7 +449,7 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
             // backfillDQEHistoryUpsert() once after the rebuild to mirror all
             // dates with DO UPDATE. The daily integrated path (and the
             // cdr-report standalone trigger) keep the real-time mirror.
-            buildDQEHistoricalData(rawDataSheet, dqeHD, { skipNeon: true });
+            buildDQEHistoricalData(rawDataSheet, dqeHD, { skipNeon: true, expectedDate: dateObj });
             const dqeEndRow = dqeHD.getLastRow();
             const dqeCount = Math.max(0, dqeEndRow - dqeStartRow);
             if (dqeCount > 0 && histDateCache) histDateCache.dqe.add(dateKey);
@@ -1652,7 +1652,10 @@ if (!skipCDR && obcHD) {
       const dqeStartRow = dqeHD.getLastRow();
       // In deferred mode skip the inline per-date DQE->Neon mirror; the
       // queued runNeonMirror_ re-mirrors from DQE Historical Data instead.
-      buildDQEHistoricalData(rawDataSheet, dqeHD, neonDeferred ? { skipNeon: true } : undefined);
+      // F2: always pass the importer's date so the build refuses to write
+      // under a different day than the force-path just cleared.
+      buildDQEHistoricalData(rawDataSheet, dqeHD,
+        neonDeferred ? { skipNeon: true, expectedDate: dateObj } : { expectedDate: dateObj });
       const dqeEndRow = dqeHD.getLastRow();
       dqeCount = Math.max(0, dqeEndRow - dqeStartRow);
       if (dqeCount > 0) {
@@ -1664,6 +1667,24 @@ if (!skipCDR && obcHD) {
             rows: dqeCount,
             durationMs: null,
             notes: dateObj.toDateString(),
+          });
+        } catch (logErr) { /* best-effort */ }
+      } else {
+        // F5: the build wrote no rows -- already in DQE history (dup-guard),
+        // empty/unparseable Raw Data, or the F2 expected-date refusal. Log a
+        // rows:0 success row so "ran but wrote nothing" is DISTINCT from "the
+        // DQE block never ran" (no row at all) and "the build threw" (failure
+        // row). rows:0 is deliberately NOT a freshness signal -- computeOverview-
+        // PipelineFreshness_ requires rows>0 -- so a no-op re-import of an
+        // already-built (or old) date can't falsely reset the 36h staleness clock.
+        summaryLog.push('- DQE HD: 0 rows (already in history or no new data)');
+        try {
+          logPipelineHealthWithFallback_(targetSS, {
+            step: 'processIntegratedHistory:DQE',
+            status: 'success',
+            rows: 0,
+            durationMs: null,
+            notes: dateObj.toDateString() + ' | 0 rows written (already in history or no new data)',
           });
         } catch (logErr) { /* best-effort */ }
       }

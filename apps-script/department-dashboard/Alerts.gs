@@ -261,6 +261,22 @@ function runAlertsCore_(dateIso, dryRun, triggeredBy) {
   const honorSkipDates = (triggeredBy === 'daily-trigger');
 
   cfg.forEach(function (entry) {
+    // F4: a dept configured with an invalid threshold (blank / <=0 /
+    // non-numeric) would otherwise be silently un-monitored. Surface it as an
+    // `error` outcome (visible in the Alert Log + modal results) so the
+    // misconfiguration is caught instead of the dept quietly going dark.
+    if (entry.invalidThreshold) {
+      pushAndLog({
+        department: entry.department,
+        status: 'error',
+        answerRate: null,
+        threshold: entry.threshold,
+        recipients: [],
+        notes: 'Invalid threshold in Alert Config ("' + (entry.thresholdRaw || '') + '") -- '
+             + 'department NOT monitored. Set a positive number (e.g. 80).',
+      });
+      return;
+    }
     if (!entry.active) {
       pushAndLog({
         department: entry.department,
@@ -460,11 +476,15 @@ function lookupDeptManagers_(dept) {
 
 /**
  * Reads the "Alert Config" sheet. Returns one entry per data
- * row; blank-department rows and rows with invalid threshold
- * are silently dropped (the column header in row 1 is preserved
- * by setup_).
+ * row. Blank-department rows are dropped (no dept to alert on).
+ * A row WITH a department but an invalid threshold (blank, <=0,
+ * or non-numeric) is NOT dropped -- it's returned flagged
+ * `invalidThreshold:true` so the dept doesn't silently fall out
+ * of monitoring (F4): runAlertsCore_ logs an `error` Alert Log
+ * row for it and the modal config table flags it, instead of the
+ * dept just vanishing with no signal.
  *
- * Schema (row 1 headers): Department | Threshold % | Extra Recipients | Active | Notes
+ * Schema (row 1 headers): Department | Threshold % | Extra Recipients | Active | Notes | Skip Dates
  */
 function readAlertConfig_() {
   const ss = openSpreadsheet_();
@@ -483,8 +503,11 @@ function readAlertConfig_() {
   for (let i = 0; i < values.length; i++) {
     const dept = String(values[i][0] || '').trim();
     if (!dept) continue;
+    // F4: a dept row with a bad threshold is flagged, not dropped, so it
+    // can't silently fall out of monitoring with no log row / no UI signal.
+    const thresholdRaw = String(values[i][1] == null ? '' : values[i][1]).trim();
     const threshold = Number(values[i][1]);
-    if (!isFinite(threshold) || threshold <= 0) continue;
+    const invalidThreshold = !isFinite(threshold) || threshold <= 0;
     const extras = String(values[i][2] || '').split(',')
                      .map(function (s) { return s.trim(); })
                      .filter(function (s) { return !!s; });
@@ -496,7 +519,9 @@ function readAlertConfig_() {
     const skipDatesRaw = String(values[i][5] || '').trim();
     out.push({
       department: dept,
-      threshold: threshold,
+      threshold: invalidThreshold ? 0 : threshold,
+      thresholdRaw: thresholdRaw,
+      invalidThreshold: invalidThreshold,
       extraRecipients: extras,
       active: active,
       notes: notes,
@@ -623,6 +648,10 @@ function computeThresholdDrift_(config, lookbackEntries) {
   const buckets = {};
   const thresholdsByDept = {};
   for (let i = 0; i < config.length; i++) {
+    // F4: skip invalid-threshold depts -- their threshold is a placeholder
+    // 0, so the lenient/chronic ratios would be meaningless. They surface
+    // via the `error` Alert Log row + the modal config-table flag instead.
+    if (config[i].invalidThreshold) continue;
     buckets[config[i].department] = { fired: 0, total: 0, rateSum: 0, rateCount: 0 };
     thresholdsByDept[config[i].department] = config[i].threshold;
   }

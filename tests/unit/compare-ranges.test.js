@@ -61,24 +61,32 @@ test('INV-35: equal-length periods are not flagged', function () {
   assert.equal(data.meta.lengthMismatch, false);
 });
 
-test('INV-35: the 1.2x boundary is inclusive (1.2 flags, 1.1 does not)', function () {
+test('INV-35: mismatch flag counts WORKING days (Mon-Fri), not calendar days', function () {
   install([ANNA('2026-03-03', { rung: 5, answered: 4 })]);
 
+  // 6 working days vs 5 working days = 1.2x exactly -> flagged.
+  // p1 Apr 6-13 (Mon..next Mon) = 6 workdays; p2 Mar 2-6 (Mon-Fri) = 5.
   const at12 = h.call('getCompareRanges', {
     department: 'Alpha',
-    p1From: '2026-03-01', p1To: '2026-03-10',     // 10 days
-    p2From: '2026-04-01', p2To: '2026-04-12',     // 12 days -> 1.2x exactly
+    p1From: '2026-04-06', p1To: '2026-04-13',
+    p2From: '2026-03-02', p2To: '2026-03-06',
     agents: ['Anna'],
   });
   assert.equal(at12.meta.lengthMismatch, true);
 
-  const at11 = h.call('getCompareRanges', {
+  // The crux of the fix: 10 CALENDAR days (2 weekends) vs 8 CALENDAR days
+  // (1 weekend) -- a 1.25x CALENDAR ratio that WOULD have flagged before --
+  // but both are 6 WORKING days, so NOT flagged now. Calendar p1Days/p2Days
+  // are still surfaced for the per-day captions.
+  const equalWorkdays = h.call('getCompareRanges', {
     department: 'Alpha',
-    p1From: '2026-03-01', p1To: '2026-03-10',     // 10 days
-    p2From: '2026-04-01', p2To: '2026-04-11',     // 11 days -> 1.1x
+    p1From: '2026-03-06', p1To: '2026-03-15',     // 10 cal days, 6 workdays
+    p2From: '2026-03-09', p2To: '2026-03-16',     // 8 cal days, 6 workdays
     agents: ['Anna'],
   });
-  assert.equal(at11.meta.lengthMismatch, false);
+  assert.equal(equalWorkdays.meta.p1Days, 10);
+  assert.equal(equalWorkdays.meta.p2Days, 8);
+  assert.equal(equalWorkdays.meta.lengthMismatch, false);
 });
 
 test('per-agent P1/P2 split + INV-53 floater excluded from team totals', function () {

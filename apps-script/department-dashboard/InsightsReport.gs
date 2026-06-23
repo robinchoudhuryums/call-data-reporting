@@ -78,7 +78,7 @@
 //     (from the bySource breakdown 4a added to computeQcdReport_), so
 //     the Queue health table can annotate WHERE a queue's abandons come
 //     from. Null when no sub-source has abandons.
-const INSIGHTS_CACHE_KEY_PREFIX = 'insights:v9';
+const INSIGHTS_CACHE_KEY_PREFIX = 'insights:v12';
 
 function getInsightsReportInit(req) {
   // Same picker UX (roster + default dates + active-in-range subset) as
@@ -222,8 +222,13 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
   // DST transitions; round absorbs it (floor truncated spring-forward).
   const currentDays = Math.round((endDate - startDate) / msPerDay) + 1;
   const priorDays   = Math.round((priorEndDate - priorStartDate) / msPerDay) + 1;
-  const lengthMismatch = (Math.min(currentDays, priorDays) > 0)
-    && (Math.max(currentDays, priorDays) / Math.min(currentDays, priorDays) >= 1.2);
+  // INV-35: flag on WORKING days (Mon-Fri), not calendar days, so equal-
+  // workday windows with a different weekend count aren't falsely flagged.
+  // currentDays/priorDays (calendar) are kept for display/per-day sublines.
+  const currentWorkDays = countWorkingDays_(from, to);
+  const priorWorkDays   = countWorkingDays_(priorFrom, priorTo);
+  const lengthMismatch = (Math.min(currentWorkDays, priorWorkDays) > 0)
+    && (Math.max(currentWorkDays, priorWorkDays) / Math.min(currentWorkDays, priorWorkDays) >= 1.2);
 
   // --- Trend window (INV-29; shared helper in Util.gs keeps IR/PR/
   // Insights/QCD aligned) -------------------------------------------
@@ -315,6 +320,13 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
   // trend chart's Daily view; the Monthly view uses monthlyTeam). Roster-
   // gated like teamCurr so floaters don't dilute it (INV-53).
   const dailyTeam = {};   // iso -> blank()
+  // Roster members with ANY activity in the CURRENT window. This is the
+  // team-average divisor the client uses (team-total / rosterAgentCount).
+  // Matches the Individual Report's active-agent denominator (INV-27) so
+  // the two reports compute the same per-agent baseline for identical
+  // inputs -- counting all SELECTED roster members (incl. zero-activity
+  // ones) understated the baseline (F1).
+  const activeRosterCurr = {};   // agent -> true
 
   for (let i = 0; i < srcRows.length; i++) {
     const row = srcRows[i];
@@ -356,6 +368,7 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
       if (isRoster) {
         teamCurr.rung += rung; teamCurr.missed += missed; teamCurr.answered += answered;
         teamCurr.ttt += tttSec; teamCurr.att_sum += attTotal;
+        if (rung || missed || answered) activeRosterCurr[agent] = true;
         var db = dailyTeam[dateIso] || (dailyTeam[dateIso] = blank());
         db.rung += rung; db.missed += missed; db.answered += answered;
         db.ttt += tttSec; db.att_sum += attTotal;
@@ -477,20 +490,29 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
   });
 
   const fmt = function (d) { return Utilities.formatDate(d, TZ, 'MMM d, yyyy'); };
-  const rosterCount = visibleAgents.filter(function (a) { return agentMatchedViaRoster[a]; }).length;
+  // Selected roster survivors -- used ONLY to derive the floater count.
+  const selectedRosterCount = visibleAgents.filter(function (a) { return agentMatchedViaRoster[a]; }).length;
+  // Team-average divisor: roster members with activity in the current
+  // window (INV-27 / F1), not all selected roster members.
+  const activeRosterCount = Object.keys(activeRosterCurr).length;
   return {
     meta: {
       department: dept,
       from: from, to: to,
       priorFrom: priorFrom, priorTo: priorTo,
       comparisonMode: priorIsCustom ? 'custom' : 'prior',
+      // F12: a custom prior window that OVERLAPS the current range silently
+      // attributes the overlapping days to the current period only (the
+      // inCurrent/else-if-inPrior branch). Flag it so the client can warn --
+      // auto-adjacent priors are disjoint by construction, so this is custom-only.
+      priorOverlap: priorIsCustom && (priorFrom <= to && from <= priorTo),
       currentDays: currentDays, priorDays: priorDays,
       lengthMismatch: lengthMismatch,
       trendStart: trendFrom, trendEnd: trendTo,
       agents: selectedAgents,
       rosterSize: roster.names.length,
-      rosterAgentCount: rosterCount,
-      queueOnlyAgentCount: visibleAgents.length - rosterCount,
+      rosterAgentCount: activeRosterCount,
+      queueOnlyAgentCount: visibleAgents.length - selectedRosterCount,
       generatedAt: new Date().toISOString(),
     },
     dateLabel:      fmt(startDate)      + ' - ' + fmt(endDate),
@@ -524,6 +546,13 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
 function insightsQueueHealth_(dept, from, to, priorFrom, priorTo) {
   try {
     if (typeof computeQcdReport_ !== 'function') return null;
+    // F8: a MISSING `QCD Historical Data` sheet is a benign "this install has
+    // no QCD data yet" state (fresh install / mid-setup), not a compute error
+    // -- treat it like unmapped (null, hide). Only an UNEXPECTED throw with the
+    // sheet present is surfaced as {error:true} below, so a real data problem
+    // isn't masked as a normal empty.
+    const _ss = (typeof openSpreadsheet_ === 'function') ? openSpreadsheet_() : null;
+    if (_ss && !_ss.getSheetByName('QCD Historical Data')) return null;
     // Always separate sub-queues (seq #5 semantics): children are shown as
     // their own lines/rows + EXCLUDED from the dept total. The user-facing
     // "Include sub-queues" toggle was retired here too.
@@ -600,8 +629,13 @@ function insightsQueueHealth_(dept, from, to, priorFrom, priorTo) {
       }),
     };
   } catch (e) {
+    // F8: distinguish a genuine COMPUTE FAILURE from the legitimate "no mapped
+    // queues" empty (which returns null above and hides the section). A real
+    // QCD read/compute error returns a distinct {error:true} so the client can
+    // render an "unavailable" note instead of silently hiding it as if the
+    // dept simply had no queues -- which would mask a real data problem.
     Logger.log('insightsQueueHealth_ (best-effort): ' + (e && e.message ? e.message : e));
-    return null;
+    return { error: true };
   }
 }
 

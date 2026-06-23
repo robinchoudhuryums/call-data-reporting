@@ -52,6 +52,11 @@
                 title="Your department's per-agent detail table with a configurable date range.">
           My Department
         </button>
+        <button class="header-menu-btn" id="escalations-btn" type="button"
+                data-route="/escalations" role="tab" aria-selected="false"
+                title="View and resolve escalation calls for your department. Admins can log new escalations.">
+          Escalations
+        </button>
         <!-- Reports group: the five report launchers collapsed into a
              single dropdown to de-clutter the header row. Each menu item
              keeps its stable button id + data-route, so the Phase C
@@ -653,6 +658,9 @@
         <h3>Help button</h3>
         <p>The floating <span aria-hidden="true">?</span> button stays available in the corner even over report modals. Uncheck to hide it (the <span aria-hidden="true">?</span> in the header still opens Help).</p>
         <label class="settings-toggle"><input type="checkbox" id="help-fab-toggle" checked> Show floating Help button</label>
+        <h3>Guided tour</h3>
+        <p>A short walkthrough of the dashboard&rsquo;s main areas. It runs automatically the first time you visit; replay it any time here.</p>
+        <button class="btn" type="button" id="tour-replay-btn">Take the tour</button>
       </div>
       </div>
     </div>
@@ -2192,6 +2200,92 @@
           </table>
         </div>
       </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Escalations modal. Managers view + resolve their dept's escalation
+       calls; admins log new ones and can view any dept. Neon-backed
+       (escalations table); per-dept write path (resolve/comment) +
+       admin-only create. See Escalations.gs. -->
+  <div id="escalations-modal" class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="escalations-modal-title" style="display:none;">
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-panel modal-panel-wide" role="document">
+      <div class="modal-panel-header">
+        <button class="modal-open-tab-btn" type="button" data-open-tab-route="/escalations"
+                aria-label="Open in new tab" title="Open in a new browser tab (for side-by-side viewing)">&#8599;</button>
+        <button class="modal-close" id="escalations-close" type="button" aria-label="Close">&times;</button>
+        <div class="modal-kicker">Operations</div>
+        <h2 id="escalations-modal-title">Escalations</h2>
+      </div>
+      <div class="modal-panel-body">
+        <div class="ds-toolbar esc-toolbar">
+          <div class="ir-col" id="esc-dept-col" style="display:none;">
+            <label for="esc-dept">Department</label>
+            <select id="esc-dept"></select>
+          </div>
+          <div class="ir-col">
+            <label for="esc-status">Show</label>
+            <select id="esc-status">
+              <option value="pending">Pending</option>
+              <option value="resolved">Completed</option>
+              <option value="all">All</option>
+            </select>
+          </div>
+          <div class="ir-col">
+            <label>&nbsp;</label>
+            <button class="btn btn-ghost" id="esc-refresh-btn" type="button">Refresh</button>
+          </div>
+          <div class="ir-col esc-new-col" id="esc-new-col" data-admin-only style="display:none;">
+            <label>&nbsp;</label>
+            <button class="btn" id="esc-new-btn" type="button">+ New escalation</button>
+          </div>
+        </div>
+
+        <!-- Create form (admin-only), hidden until "+ New escalation". -->
+        <div id="esc-create" class="ds-card esc-create" style="display:none;">
+          <div class="ds-kicker">Log a new escalation</div>
+          <div class="ir-form-grid">
+            <div class="ir-col" id="esc-c-dept-col">
+              <label for="esc-c-dept">Department</label>
+              <select id="esc-c-dept"></select>
+            </div>
+            <div class="ir-col">
+              <label for="esc-c-when">Date &amp; time</label>
+              <input type="datetime-local" id="esc-c-when">
+            </div>
+            <div class="ir-col">
+              <label for="esc-c-caller">Caller / relation</label>
+              <input type="text" id="esc-c-caller" autocomplete="off" placeholder="e.g. Daughter of patient">
+            </div>
+            <div class="ir-col">
+              <label for="esc-c-patient">Patient name</label>
+              <input type="text" id="esc-c-patient" autocomplete="off">
+            </div>
+            <div class="ir-col">
+              <label for="esc-c-trx">Trx #</label>
+              <input type="text" id="esc-c-trx" autocomplete="off">
+            </div>
+            <div class="ir-col">
+              <label for="esc-c-area">Area <span class="esc-optional">(optional)</span></label>
+              <input type="text" id="esc-c-area" autocomplete="off" placeholder="sub-team / process">
+            </div>
+          </div>
+          <div class="esc-field-full">
+            <label for="esc-c-reason">Reason for escalation</label>
+            <textarea id="esc-c-reason" rows="2"></textarea>
+          </div>
+          <div class="esc-form-actions">
+            <button class="btn" id="esc-c-save" type="button">Save escalation</button>
+            <button class="btn btn-ghost" id="esc-c-cancel" type="button">Cancel</button>
+            <span id="esc-c-error" class="status status-error" style="display:none;"></span>
+          </div>
+        </div>
+
+        <div id="esc-error" class="status status-error" style="display:none;"></div>
+        <div id="esc-loading" style="display:none;"></div>
+        <div id="esc-empty" class="empty-state" style="display:none;"></div>
+        <div id="esc-list"></div>
       </div>
     </div>
   </div>

@@ -4877,4 +4877,87 @@
   .ds-heatmap-legend__item { display: inline-flex; align-items: center; gap: 5px; }
   .ds-heatmap-legend__sw { width: 14px; height: 12px; border-radius: var(--r-sm); display: inline-block; }
   .ds-heatmap-loading { padding: 16px 0; color: var(--muted); font-size: 12px; }
+
+  /* ── Escalations ─────────────────────────────────────────────── */
+  .esc-toolbar { display: flex; gap: 14px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 12px; }
+  .esc-toolbar .ir-col { margin: 0; }
+  .esc-new-col { margin-left: auto; }
+  .esc-create { padding: 14px 16px; margin-bottom: 14px; }
+  .esc-optional { color: var(--muted); font-weight: 400; }
+  .esc-field-full { margin-top: 8px; }
+  .esc-field-full textarea, .esc-resolve textarea { width: 100%; box-sizing: border-box; resize: vertical; }
+  .esc-form-actions { display: flex; gap: 10px; align-items: center; margin-top: 10px; flex-wrap: wrap; }
+  .esc-card { padding: 12px 14px; margin-bottom: 10px; }
+  .esc-card-resolved { opacity: 0.88; }
+  .esc-card-top { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .esc-pill { font: 600 10px/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase;
+    padding: 3px 7px; border-radius: var(--r-pill); }
+  .esc-pill-pending  { background: var(--warn-soft); color: var(--warn); }
+  .esc-pill-resolved { background: var(--good-soft); color: var(--good); }
+  .esc-dept-tag { font: 600 10px/1 var(--mono); letter-spacing: 0.06em; color: var(--muted);
+    border: 1px solid var(--line); padding: 3px 7px; border-radius: var(--r-pill); }
+  .esc-reason { font-size: 14px; font-weight: 600; color: var(--ink); margin-bottom: 4px; }
+  .esc-meta { font: 400 12px/1.5 var(--mono); color: var(--muted); }
+  .esc-resolution, .esc-comments { font-size: 13px; margin-top: 6px; }
+  .esc-resolved-by { font: 400 11px/1.4 var(--mono); color: var(--muted); margin-top: 6px; }
+  .esc-resolve { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line);
+    display: flex; flex-direction: column; gap: 8px; }
+  .esc-resolve-label { display: block; font-size: 12px; color: var(--muted); }
+  .esc-resolve-label textarea { margin-top: 4px; }
+  .esc-resolved-check { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--ink); }
+  .esc-resolve-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .esc-row-error { font-size: 12px; }
+
+  /* ── Call-path drill (#3) ────────────────────────────────────── */
+  .pid-journey { margin-left: 6px; font: 600 10px/1 var(--mono); letter-spacing: 0.04em;
+    cursor: pointer; border: 1px solid var(--line); background: var(--paper); color: var(--accent);
+    border-radius: var(--r); padding: 2px 5px; }
+  .pid-journey:hover { border-color: var(--accent); }
+  .cj-overlay { position: fixed; inset: 0; z-index: 250; display: flex; align-items: center; justify-content: center; }
+  .cj-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.45); }
+  .cj-panel { position: relative; background: var(--paper); color: var(--ink);
+    border: 1px solid var(--line); border-radius: var(--r-lg); box-shadow: var(--shadow-modal);
+    max-width: 560px; width: calc(100% - 40px); max-height: 80vh; overflow: auto; padding: 18px 20px; }
+  .cj-close { position: absolute; top: 8px; right: 10px; border: none; background: none;
+    font-size: 22px; line-height: 1; cursor: pointer; color: var(--muted); }
+  .cj-title { font: 600 11px/1 var(--mono); letter-spacing: 0.18em; text-transform: uppercase;
+    color: var(--muted); margin-bottom: 8px; }
+  .cj-head { font-size: 13px; margin-bottom: 10px; color: var(--ink); }
+
+  /* ── Guided tour (#5) ────────────────────────────────────────── */
+  .tour-overlay { position: fixed; inset: 0; z-index: 300; pointer-events: auto; }
+  /* Spotlight: the highlight box dims everything OUTSIDE it via a huge
+     box-shadow, and is itself click-through so only the tip is interactive. */
+  .tour-highlight { position: fixed; border-radius: var(--r-lg);
+    box-shadow: 0 0 0 9999px rgba(0,0,0,0.55); border: 2px solid var(--accent);
+    pointer-events: none; transition: top .25s var(--ease), left .25s var(--ease),
+    width .25s var(--ease), height .25s var(--ease); }
+  .tour-tip { position: fixed; width: 300px; max-width: calc(100vw - 24px);
+    background: var(--paper); color: var(--ink); border: 1px solid var(--line);
+    border-radius: var(--r-lg); box-shadow: var(--shadow-modal); padding: 14px 16px;
+    pointer-events: auto; transition: top .25s var(--ease), left .25s var(--ease); }
+  .tour-tip-title { font-size: 15px; font-weight: 700; margin-bottom: 6px; color: var(--ink); }
+  .tour-tip-body { font-size: 13px; line-height: 1.5; color: var(--ink); }
+  .tour-tip-foot { display: flex; align-items: center; justify-content: space-between;
+    gap: 10px; margin-top: 12px; }
+  .tour-step-count { font: 600 11px/1 var(--mono); letter-spacing: 0.1em; color: var(--muted); }
+  .tour-tip-actions { display: inline-flex; gap: 6px; }
+  .tour-tip-actions .btn { padding: 4px 10px; font-size: 12px; }
+  @media (prefers-reduced-motion: reduce) {
+    .tour-highlight, .tour-tip { transition: none; }
+  }
+
+  /* ── View-as (admin manager preview) ─────────────────────────── */
+  .view-as-ctl { display: inline-flex; align-items: center; gap: 6px;
+    font: 600 10px/1 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+  .view-as-ctl select { font-family: var(--sans); font-size: 12px; letter-spacing: 0;
+    text-transform: none; padding: 3px 6px; border: 1px solid var(--line); border-radius: var(--r); background: var(--paper); color: var(--ink); }
+  /* While previewing a manager, hide every admin-only surface (nav tabs,
+     buttons, the data-admin-only Overview banners) so the admin sees exactly
+     the manager chrome. The .view-as-ctl itself has NO data-admin-only, so it
+     stays visible for switching back. */
+  body[data-view-as="manager"] [data-admin-only] { display: none !important; }
+  /* Tint the header so the admin always knows they're in preview mode. */
+  body[data-view-as="manager"] .view-as-ctl { color: var(--warn); }
+  body[data-view-as="manager"] .view-as-ctl select { border-color: var(--warn); }
 </style>

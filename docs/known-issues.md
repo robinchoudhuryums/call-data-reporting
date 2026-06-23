@@ -250,12 +250,12 @@ same time as the code change.
 | `IndividualReport.gs` | `individual:vN:` | `v8` |
 | `IndividualReport.gs` (active-in-range subset shared by all three report pickers) | `individual_active:vN:` | `v2` |
 | `PerformanceReport.gs` | `performance:vN:` | `v4` |
-| `CompareRangesReport.gs` | `compareRanges:vN:` | `v5` |
+| `CompareRangesReport.gs` | `compareRanges:vN:` | `v6` |
 | `MissedCallsReport.gs` | `missed:vN:` | `v11` |
 | `CompanyOverview.gs` | `companyOverview:vN` | `v17` |
 | `QCDReport.gs` | `qcd:vN:` | `v9` |
 | `InboundReport.gs` | `inbound:vN:` | `v3` |
-| `InsightsReport.gs` | `insights:vN:` | `v9` |
+| `InsightsReport.gs` | `insights:vN:` | `v12` |
 
 `Alerts.gs` holds no cached compute. Preview/send always re-reads the
 DQE Historical Data for the chosen date.
