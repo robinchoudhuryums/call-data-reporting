@@ -235,7 +235,12 @@ from a `both` response by summing only `matchedViaRoster=true` rows.
   manager dept check; can pick any department from the admin dropdown.
   Adding an admin is a Script-Property edit, no redeploy.
 - **Managers**: rows in the `Access Control` sheet (`Email | Department |
-  Notes`). One row per manager. Pinned to a single department.
+  Notes`). One row per manager. Pinned to a single department. If a
+  manager email appears in MULTIPLE rows with different departments, only
+  the first is honored (the dashboard pins a manager to one dept), and
+  `getManagerDepartment_` logs a warning so the ignored row(s) are
+  detectable rather than silently dropped — grant admin for cross-dept
+  access (F13).
 - **Everyone else**: gets the access-denied page.
 
 Access-control lookups are cached for 60 seconds (`AUTH_CACHE_TTL_SECONDS`).
