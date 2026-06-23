@@ -4141,6 +4141,13 @@
     deptMissedLastData = data;            // drill-in reads this
     deptMissedBucketDetail_.hide();       // reset the panel on every fetch (like the modal)
 
+    // Show the section BEFORE the radar is created below: Chart.js measures
+    // the canvas's container at construction time, and a chart built while an
+    // ancestor is display:none collapses to a zero-size (or mis-sized) render.
+    // (Surfaced by the #5 sticky QCD side-column squeeze, but the root cause
+    // is the create-while-hidden ordering.)
+    wrap.style.display = '';
+
     const dateEl = $('dept-missed-date');
     if (dateEl) dateEl.textContent = from === to ? from : from + ' to ' + to;
 
@@ -4224,8 +4231,7 @@
     // #9a: full-width detail wrapper shows only when there's detail content.
     const detail = $('dept-missed-detail');
     if (detail) detail.style.display = (queueOnly.length || agents.length) ? '' : 'none';
-
-    wrap.style.display = '';
+    // (wrap was shown at the top so the radar measured a real canvas size.)
   }
 
   /**
@@ -4274,25 +4280,63 @@
            + tile('Violations',  fmtNumber(q.violations    || 0),       violCls);
     };
 
-    // Per-queue separation: each queue (incl. sub-queue children, which
-    // can behave very differently from the parent) renders its OWN tile
-    // row; the all-queues sum renders last as a clearly-labeled muted
-    // row. Single-queue depts keep the flat row (no redundant total).
+    // Per-queue separation: each queue (incl. sub-queue children, which can
+    // behave very differently from the parent) is its OWN page. To keep the
+    // sticky side column compact, multi-queue depts render a CAROUSEL -- one
+    // queue page at a time with ‹ › nav + a dot indicator, plus a trailing
+    // "All queues" total page -- instead of stacking every queue vertically.
+    // Single-queue depts keep the flat tile row (no redundant total).
     const perQueue = qcd.perQueue || [];
     if (perQueue.length > 1) {
-      tiles.innerHTML = perQueue.map(function (q) {
+      const pages = perQueue.map(function (q) {
         const tag = q.subDept
           ? ' <span class="dept-qcd-subtag">sub-queue · ' + escapeHtml(q.subDept) + '</span>'
           : '';
-        return '<div class="dept-qcd-queue-row">'
-             +   '<div class="dept-qcd-queue-name">' + escapeHtml(q.queue) + tag + '</div>'
-             +   '<div class="dept-qcd-tiles-inner">' + tileRow(q) + '</div>'
-             + '</div>';
-      }).join('')
-      + '<div class="dept-qcd-queue-row dept-qcd-total-row">'
-      +   '<div class="dept-qcd-queue-name">All queues</div>'
-      +   '<div class="dept-qcd-tiles-inner">' + tileRow(qcd) + '</div>'
-      + '</div>';
+        return { name: escapeHtml(q.queue) + tag, html: tileRow(q) };
+      });
+      pages.push({ name: 'All queues', html: tileRow(qcd) });
+
+      tiles.innerHTML =
+          '<div class="dept-qcd-carousel">'
+        +   '<div class="dept-qcd-carousel-head">'
+        +     '<button type="button" class="dept-qcd-nav" data-dir="-1" aria-label="Previous queue">&#8249;</button>'
+        +     '<span class="dept-qcd-queue-name" id="dept-qcd-cur-name"></span>'
+        +     '<button type="button" class="dept-qcd-nav" data-dir="1" aria-label="Next queue">&#8250;</button>'
+        +   '</div>'
+        +   '<div class="dept-qcd-tiles-inner" id="dept-qcd-cur-tiles"></div>'
+        +   '<div class="dept-qcd-dots" id="dept-qcd-dots">'
+        +     pages.map(function (_p, i) { return '<span class="dept-qcd-dot" data-idx="' + i + '"></span>'; }).join('')
+        +   '</div>'
+        + '</div>';
+
+      let cur = 0;
+      const nameEl = $('dept-qcd-cur-name');
+      const curTiles = $('dept-qcd-cur-tiles');
+      const dotsWrap = $('dept-qcd-dots');
+      const showPage = function (i) {
+        cur = (i + pages.length) % pages.length;
+        if (nameEl) nameEl.innerHTML = pages[cur].name;
+        if (curTiles) curTiles.innerHTML = pages[cur].html;
+        if (dotsWrap) {
+          const dots = dotsWrap.querySelectorAll('.dept-qcd-dot');
+          for (let d = 0; d < dots.length; d++) dots[d].classList.toggle('is-active', d === cur);
+        }
+      };
+      const navs = tiles.querySelectorAll('.dept-qcd-nav');
+      for (let n = 0; n < navs.length; n++) {
+        navs[n].addEventListener('click', function () {
+          showPage(cur + Number(this.getAttribute('data-dir')));
+        });
+      }
+      if (dotsWrap) {
+        const dots = dotsWrap.querySelectorAll('.dept-qcd-dot');
+        for (let d = 0; d < dots.length; d++) {
+          dots[d].addEventListener('click', function () {
+            showPage(Number(this.getAttribute('data-idx')));
+          });
+        }
+      }
+      showPage(0);
     } else {
       tiles.innerHTML = tileRow(perQueue.length === 1 ? perQueue[0] : qcd);
     }

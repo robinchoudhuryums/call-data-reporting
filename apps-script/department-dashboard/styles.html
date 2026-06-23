@@ -176,7 +176,11 @@
 
   /* Layout */
   .container {
-    max-width: 1200px;
+    /* Data-dense dashboard -- wider cap than the old 1200px so the agent
+       table + the My-Department sticky QCD side column get more room (and the
+       Missed radar isn't squeezed). Still capped (not full-bleed) so tables
+       don't sprawl uncomfortably on ultrawide monitors. */
+    max-width: 1440px;
     margin: 0 auto;
     padding: 24px 24px 48px;
   }
@@ -893,8 +897,8 @@
   }
   .dept-qcd-tiles {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-    gap: 10px;
+    grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+    gap: 8px;
   }
   /* Per-queue separation: each queue renders its own full-width row of
      tiles (sub-queues can behave very differently from the parent, so
@@ -903,8 +907,8 @@
   .dept-qcd-queue-row { grid-column: 1 / -1; }
   .dept-qcd-tiles-inner {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-    gap: 10px;
+    grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
+    gap: 8px;
   }
   .dept-qcd-queue-name {
     font-family: var(--mono);
@@ -924,7 +928,7 @@
   }
   .dept-qcd-total-row { border-top: 1px solid var(--line); padding-top: 6px; opacity: 0.85; }
   .dept-qcd-tile {
-    padding: 8px 12px;
+    padding: 6px 8px;
     background: var(--paper-2);
     border: 1px solid var(--line);
     border-radius: var(--r);
@@ -932,20 +936,59 @@
   }
   .dept-qcd-label {
     font-family: var(--mono);
-    font-size: 10px;
+    font-size: 9px;
     color: var(--muted);
     text-transform: uppercase;
-    letter-spacing: 0.18em;
+    letter-spacing: 0.14em;
     font-weight: 600;
   }
   .dept-qcd-value {
     font-family: var(--display);
-    font-size: 20px;
+    font-size: 16px;
     font-weight: 700;
     color: var(--ink);
     margin-top: 2px;
   }
   .dept-qcd-value.dept-qcd-warn { color: var(--warn); }
+
+  /* QCD snapshot carousel (multi-queue side card): one queue page at a time
+     with ‹ › nav + a dot indicator, so the sticky side column stays compact
+     instead of stacking every queue's tiles vertically. */
+  .dept-qcd-carousel-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin: 2px 0 8px;
+  }
+  .dept-qcd-carousel-head .dept-qcd-queue-name {
+    margin: 0;
+    flex: 1 1 auto;
+    text-align: center;
+  }
+  .dept-qcd-nav {
+    flex: none;
+    width: 22px; height: 22px;
+    display: inline-flex; align-items: center; justify-content: center;
+    border: 1px solid var(--line);
+    background: var(--paper-card);
+    color: var(--muted);
+    border-radius: var(--r);
+    font-size: 15px; line-height: 1;
+    cursor: pointer;
+    padding: 0;
+  }
+  .dept-qcd-nav:hover { color: var(--ink); border-color: var(--muted); }
+  .dept-qcd-dots {
+    display: flex; justify-content: center; gap: 6px;
+    margin-top: 10px;
+  }
+  .dept-qcd-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--line); cursor: pointer;
+    transition: background var(--dur-1, 0.18s) var(--ease, ease);
+  }
+  .dept-qcd-dot.is-active { background: var(--accent); }
 
   .diagnostics {
     margin-top: 24px;
