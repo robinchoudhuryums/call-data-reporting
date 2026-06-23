@@ -43,7 +43,7 @@
  * (read-only), and reinstating that visibility is part of the
  * design intent for this view.
  *
- * Caching: REPORT_CACHE_TTL_SECONDS under `companyOverview:v16` (the
+ * Caching: REPORT_CACHE_TTL_SECONDS under `companyOverview:v17` (the
  * COMPANY_OVERVIEW_CACHE_KEY constant below). Cached blob is shared
  * across all users; admin-only fields (`companyAggregate`,
  * `pipelineFreshness`, `orphanNag`) are stripped on serve for
@@ -77,7 +77,7 @@
 // v15: per-dept QCD snapshots use DIRECT queues only (sub-queue
 // separation -- children carry their own tiles; the parent-expansion
 // overwrite pass was removed).
-const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v16';
+const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v17';
 
 // Pipeline freshness threshold (hours). If the most recent successful
 // DQE-freshness Pipeline Health row is older than this many hours, the
@@ -511,6 +511,7 @@ function getCompanyOverview() {
     // sheet outage or a slow orphan scan never blocks the Overview.
     pipelineFreshness: computeOverviewPipelineFreshness_(),
     orphanNag:         computeOverviewOrphanNag_(),
+    unmappedQcd:       computeOverviewUnmappedQcd_(),
     // viewerRole and viewerDept are NOT cached; personalizeOverview_
     // injects them per-request so a payload warmed by user A still
     // serves user B's identity correctly.
@@ -632,6 +633,30 @@ function computeOverviewOrphanNag_() {
 }
 
 /**
+ * Admin-only Overview nag (F onboarding): QCD queues SEEN in the data but
+ * mapped to NO department -- their calls never surface in any dept's QCD
+ * report until an admin assigns them in Dept Config. Reuses the real
+ * discovery (`discoverQueues_` -> the 180-day QCD scan + the effective
+ * per-dept map), so it invents no mapping. Best-effort (null on any error);
+ * stripped for non-admins by personalizeOverview_. Returns up to 3 sample
+ * queue names (busiest first -- discoverQueues_ already sorts unmapped-first
+ * then by rows).
+ */
+function computeOverviewUnmappedQcd_() {
+  try {
+    const discovered = discoverQueues_(getAllDepartments_());
+    const unmapped = (discovered || []).filter(function (q) { return !q.mappedTo; });
+    return {
+      count:       unmapped.length,
+      sampleNames: unmapped.slice(0, 3).map(function (q) { return q.queue; }),
+    };
+  } catch (e) {
+    Logger.log('computeOverviewUnmappedQcd_ failed: %s', e);
+    return null;
+  }
+}
+
+/**
  * Personalize a cached Overview blob for a specific viewer. Strips
  * the admin-only companyAggregate field for non-admins and stamps
  * the viewer's role + dept onto the response.
@@ -679,6 +704,7 @@ function personalizeOverview_(blob, user) {
     delete out.companyAggregate;
     delete out.pipelineFreshness;
     delete out.orphanNag;
+    delete out.unmappedQcd;
     // INV-48: managers see the WoW "driver" (a named individual agent +
     // delta) only for their OWN dept; admins see drivers for all depts.
     // The dept aggregate tiles stay cross-dept-visible by design, but the
