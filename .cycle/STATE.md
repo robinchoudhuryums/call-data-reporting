@@ -1,5 +1,14 @@
 # Cycle State — resume note
 
+## Latest session (feature build: #3 call-path drill-through + #5 onboarding tour)
+Branch `claude/brave-dijkstra-wuonrv`. 136/136 tests, INV-16 in sync, divs/braces balanced.
+- **#3 Inbound-call path drill-through** (commit 081491b): `InboundReport.gs::getCallJourney({callId,date,department})` returns one call's journey by (call_date, call_id); per-dept gated + scoped by `inboundDeptPredicate_` (manager only sees own-dept calls). Client "↳ path" button on abandoned 🚨 rings (Missed report + My Dept missed section) -> `#call-journey-overlay`, rendered via the reused Caller Lookup renderers (clChainHtml_/clJourneyRowHtml_). Scoped to abandoned calls (which carry a parent id); Insights/QCD aggregates don't expose per-call ids.
+- **#5 Onboarding tour** (this commit): client-only coachmark walkthrough (`initTour_`/`startTour_` + `.tour-*` styles). Spotlight via box-shadow dim; 7 steps anchored to stable IDs (missing/hidden targets skipped); reduced-motion aware. Auto-runs once for first-time visitors (localStorage `cdr.tour.done`, Overview only) + replayable from Help -> Guided tour.
+
+DEFERRED still: workday-ALIGN the prior window (vs flag-only); Escalations Phase 2 (team-tools queue); inbound-journey drill for Insights/QCD (no per-call id there). DEPLOY: Department Dashboard only (#3 + #5). #3 needs a live Neon smoke test (abandoned ring -> ↳ path -> journey renders).
+
+---
+
 ## Latest session (feature build: working-day mismatch flag + Escalations + View-as)
 Branch `claude/brave-dijkstra-wuonrv`. 136/136 tests pass, INV-16 in sync, divs/braces balanced.
 - **A — Working-day mismatch flag** (commit f5688b0): shared `Util.countWorkingDays_`; CR + Insights flag on Mon-Fri days not calendar days (no more false mismatch on equal-workday windows). Holidays deferred (no global source). Cache bumps compareRanges:v6 / insights:v12 + INV-30/INV-35 + tests.

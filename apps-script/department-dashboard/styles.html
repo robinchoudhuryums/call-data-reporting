@@ -4924,6 +4924,29 @@
     color: var(--muted); margin-bottom: 8px; }
   .cj-head { font-size: 13px; margin-bottom: 10px; color: var(--ink); }
 
+  /* ── Guided tour (#5) ────────────────────────────────────────── */
+  .tour-overlay { position: fixed; inset: 0; z-index: 300; pointer-events: auto; }
+  /* Spotlight: the highlight box dims everything OUTSIDE it via a huge
+     box-shadow, and is itself click-through so only the tip is interactive. */
+  .tour-highlight { position: fixed; border-radius: var(--r-lg);
+    box-shadow: 0 0 0 9999px rgba(0,0,0,0.55); border: 2px solid var(--accent);
+    pointer-events: none; transition: top .25s var(--ease), left .25s var(--ease),
+    width .25s var(--ease), height .25s var(--ease); }
+  .tour-tip { position: fixed; width: 300px; max-width: calc(100vw - 24px);
+    background: var(--paper); color: var(--ink); border: 1px solid var(--line);
+    border-radius: var(--r-lg); box-shadow: var(--shadow-modal); padding: 14px 16px;
+    pointer-events: auto; transition: top .25s var(--ease), left .25s var(--ease); }
+  .tour-tip-title { font-size: 15px; font-weight: 700; margin-bottom: 6px; color: var(--ink); }
+  .tour-tip-body { font-size: 13px; line-height: 1.5; color: var(--ink); }
+  .tour-tip-foot { display: flex; align-items: center; justify-content: space-between;
+    gap: 10px; margin-top: 12px; }
+  .tour-step-count { font: 600 11px/1 var(--mono); letter-spacing: 0.1em; color: var(--muted); }
+  .tour-tip-actions { display: inline-flex; gap: 6px; }
+  .tour-tip-actions .btn { padding: 4px 10px; font-size: 12px; }
+  @media (prefers-reduced-motion: reduce) {
+    .tour-highlight, .tour-tip { transition: none; }
+  }
+
   /* ── View-as (admin manager preview) ─────────────────────────── */
   .view-as-ctl { display: inline-flex; align-items: center; gap: 6px;
     font: 600 10px/1 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }

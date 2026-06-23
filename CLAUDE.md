@@ -469,6 +469,21 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `insights:v12` already makes a fresh re-generate fast too). The team
   rollup tiles dropped Total Rung / Total TTT; Queue health dropped Longest
   wait (decluttered to two labeled groups: Department rollup + Queue health).
+- **Guided onboarding tour is client-only (#5).** A self-built
+  coachmark walkthrough (no dependency): `initTour_` / `startTour_`
+  in script.html + `.tour-*` styles. Spotlight = a `#tour-highlight`
+  box with a huge `box-shadow` that dims everything else (click-through;
+  only the `#tour-tip` card is interactive); reduced-motion aware.
+  Steps (`tourAllSteps_`) anchor to stable IDs (`#page-title`,
+  `#ov-launcher`, `#freshness-pill`, `#my-dept-btn`, `#escalations-btn`,
+  `#reports-menu-btn`, `#help-fab`) and `tourVisibleSteps_` drops any
+  target that's missing or hidden (so admin-only/not-yet-rendered
+  elements are skipped gracefully -- e.g. the freshness pill before
+  data loads). Auto-runs ONCE for first-time visitors (localStorage
+  `cdr.tour.done`, gated to the Overview landing, 1.2s after load) and
+  is always replayable from **Help -> Guided tour** (`#tour-replay-btn`,
+  which closes Help first). No server endpoint / cache bump -- part of
+  the same client-only anti-intimidation layer below.
 - **Anti-intimidation layer is client-only; keep it that way.** Four
   pieces, all in script.html/styles.html with no server endpoints or
   cache bumps: (1) **answer-first headlines** -- every report's results

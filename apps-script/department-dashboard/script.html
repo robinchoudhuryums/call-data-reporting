@@ -842,6 +842,7 @@
     initDeptConfig();
     initCallerLookup();
     initEscalations();
+    initTour_();
     initQcdReport();
     initQcdAllDept_();
     // Router last so its modal-close listeners attach after each
@@ -13304,6 +13305,126 @@
     if (!el) return;
     if (!msg) { el.style.display = 'none'; el.textContent = ''; return; }
     el.textContent = msg; el.style.display = '';
+  }
+
+  // ── Guided tour (#5, onboarding) ──────────────────────────────
+  // Client-only coachmark walkthrough (fits the anti-intimidation layer).
+  // Auto-runs once for first-time visitors (localStorage cdr.tour.done) and is
+  // always replayable from Help -> Guided tour. Spotlight = a highlight box
+  // with a huge box-shadow that dims everything else; reduced-motion aware.
+  var TOUR_KEY_ = 'cdr.tour.done';
+  var tourIdx_ = 0;
+  var tourSteps_ = [];
+
+  function tourAllSteps_() {
+    return [
+      { sel: '#page-title',       title: 'Welcome 👋',              body: 'This is your Overview — a one-glance snapshot of every department’s most recent day, with a 30-day answer-rate trend.' },
+      { sel: '#ov-launcher',      title: 'Not sure where to start?', body: 'These plain-English questions jump you straight into the right report, already primed.' },
+      { sel: '#freshness-pill',   title: 'Is the data current?',    body: 'Shows the most recent day with data and how long ago that was — it turns orange if the last import is over ~36 hours old.' },
+      { sel: '#my-dept-btn',      title: 'My Department',           body: 'Your team’s per-agent detail table, with date controls and a Queue Call Data summary.' },
+      { sel: '#escalations-btn',  title: 'Escalations',             body: 'View and resolve escalation calls for your department — mark one resolved with a note on how it was handled.' },
+      { sel: '#reports-menu-btn', title: 'Deeper reports',          body: 'Missed Calls, Individual, Performance, Compare, QCD, and Insights all live here.' },
+      { sel: '#help-fab',         title: 'Help is always here',     body: 'Stuck? This button opens Help from anywhere — and you can replay this tour from Help → Guided tour any time.' },
+    ];
+  }
+  // Keep only steps whose target exists AND is visible (skips admin-only or
+  // not-yet-rendered elements gracefully).
+  function tourVisibleSteps_() {
+    return tourAllSteps_().filter(function (s) {
+      var el = document.querySelector(s.sel);
+      return el && el.offsetParent !== null;
+    });
+  }
+  function startTour_() {
+    tourSteps_ = tourVisibleSteps_();
+    if (!tourSteps_.length) return;
+    tourIdx_ = 0;
+    tourEnsureEls_();
+    tourShow_();
+  }
+  function tourEnsureEls_() {
+    if ($('tour-overlay')) return;
+    var ov = document.createElement('div');
+    ov.id = 'tour-overlay'; ov.className = 'tour-overlay'; ov.style.display = 'none';
+    ov.innerHTML = '<div class="tour-highlight" id="tour-highlight"></div>'
+      + '<div class="tour-tip" id="tour-tip" role="dialog" aria-modal="true" aria-label="Guided tour">'
+      +   '<div class="tour-tip-title" id="tour-tip-title"></div>'
+      +   '<div class="tour-tip-body" id="tour-tip-body"></div>'
+      +   '<div class="tour-tip-foot">'
+      +     '<span class="tour-step-count" id="tour-step-count"></span>'
+      +     '<span class="tour-tip-actions">'
+      +       '<button type="button" class="btn btn-ghost" id="tour-skip">Skip</button>'
+      +       '<button type="button" class="btn btn-ghost" id="tour-back">Back</button>'
+      +       '<button type="button" class="btn" id="tour-next">Next</button>'
+      +     '</span>'
+      +   '</div>'
+      + '</div>';
+    document.body.appendChild(ov);
+    $('tour-skip').addEventListener('click', tourFinish_);
+    $('tour-back').addEventListener('click', function () { if (tourIdx_ > 0) { tourIdx_--; tourShow_(); } });
+    $('tour-next').addEventListener('click', function () {
+      if (tourIdx_ < tourSteps_.length - 1) { tourIdx_++; tourShow_(); } else { tourFinish_(); }
+    });
+    document.addEventListener('keydown', tourKey_);
+    window.addEventListener('resize', tourReposition_);
+  }
+  function tourKey_(e) {
+    var ov = $('tour-overlay');
+    if (!ov || ov.style.display === 'none') return;
+    if (e.key === 'Escape') tourFinish_();
+    else if (e.key === 'ArrowRight' || e.key === 'Enter') $('tour-next').click();
+    else if (e.key === 'ArrowLeft') $('tour-back').click();
+  }
+  function tourShow_() {
+    var step = tourSteps_[tourIdx_];
+    if (!step) { tourFinish_(); return; }
+    $('tour-overlay').style.display = '';
+    $('tour-tip-title').textContent = step.title;
+    $('tour-tip-body').textContent = step.body;
+    $('tour-step-count').textContent = (tourIdx_ + 1) + ' / ' + tourSteps_.length;
+    $('tour-back').style.visibility = tourIdx_ === 0 ? 'hidden' : '';
+    $('tour-next').textContent = (tourIdx_ === tourSteps_.length - 1) ? 'Done' : 'Next';
+    tourReposition_();
+  }
+  function tourReposition_() {
+    var ov = $('tour-overlay');
+    if (!ov || ov.style.display === 'none') return;
+    var step = tourSteps_[tourIdx_];
+    var el = step && document.querySelector(step.sel);
+    if (!el) { tourFinish_(); return; }
+    var r = el.getBoundingClientRect();
+    var hl = $('tour-highlight'), tip = $('tour-tip'), pad = 6;
+    hl.style.top = (r.top - pad) + 'px';
+    hl.style.left = (r.left - pad) + 'px';
+    hl.style.width = (r.width + pad * 2) + 'px';
+    hl.style.height = (r.height + pad * 2) + 'px';
+    var tipW = 300, tipH = 150;
+    var tipTop = r.bottom + 12;
+    if (tipTop > window.innerHeight - tipH) tipTop = Math.max(12, r.top - 12 - tipH);
+    var tipLeft = Math.min(Math.max(12, r.left), window.innerWidth - tipW - 12);
+    tip.style.top = tipTop + 'px';
+    tip.style.left = tipLeft + 'px';
+  }
+  function tourFinish_() {
+    var ov = $('tour-overlay');
+    if (ov) ov.style.display = 'none';
+    try { localStorage.setItem(TOUR_KEY_, '1'); } catch (e) {}
+  }
+  function initTour_() {
+    var replay = $('tour-replay-btn');
+    if (replay) replay.addEventListener('click', function () {
+      // Close the Help modal so the tour isn't hidden behind it.
+      var help = $('help-modal');
+      if (help) { help.style.display = 'none'; help.setAttribute('aria-hidden', 'true'); }
+      document.body.style.overflow = '';
+      setTimeout(startTour_, 200);
+    });
+    var seen = true;
+    try { seen = !!localStorage.getItem(TOUR_KEY_); } catch (e) { seen = true; }
+    if (!seen) setTimeout(function () {
+      // Autostart only on the Overview landing (the steps assume it).
+      if (document.body.getAttribute('data-page') === 'overview') startTour_();
+    }, 1200);
   }
 
   function clSetDefaultDates_() {
