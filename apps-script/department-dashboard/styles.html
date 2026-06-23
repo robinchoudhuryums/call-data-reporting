@@ -1344,18 +1344,20 @@
   .chart-row {
     display: grid;
     gap: 16px;
-    grid-template-columns: 480px minmax(0, 1fr);
+    grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);   /* radar ~2/3, drill-in ~1/3 */
     margin-bottom: 16px;
     align-items: start;
-    /* Smoothly slide the radar aside / re-center as the detail track
-       grows from 0fr -> 1fr (and back). Modern browsers interpolate the
-       fr unit; older ones just snap. */
-    transition: grid-template-columns 320ms var(--ease, cubic-bezier(.4, 0, .2, 1));
+    /* Gentle ease-out so the radar eases aside as the drill-in track grows
+       (0fr -> 1fr) -- a touch longer + softer than the old 320ms snap. */
+    transition: grid-template-columns 420ms cubic-bezier(.22, .61, .36, 1);
   }
   .chart-row.no-detail {
-    grid-template-columns: 480px minmax(0, 0fr);
-    justify-content: center;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 0fr);
   }
+  /* When the radar is alone (no drill-in), keep it bounded + centered so it
+     doesn't balloon to the full row width. With the drill-in open it takes
+     its 2fr column. */
+  .chart-row.no-detail > .chart-section { max-width: 520px; margin: 0 auto; }
   /* Clip the drill-in while its track is collapsing so it slides in/out
      cleanly rather than overflowing the 0fr cell mid-animation. */
   .chart-row > .bucket-detail { overflow: hidden; }
@@ -1571,6 +1573,9 @@
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
     gap: 12px;
+    /* Cards size to their own content -- a collapsed <details> shrinks
+       instead of stretching to the tallest card in its grid row. */
+    align-items: start;
   }
   .agent-card {
     background: var(--paper-card);

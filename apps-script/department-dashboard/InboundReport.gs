@@ -161,6 +161,27 @@ function inboundDeptPredicate_(dept, deptQueues) {
  * manager's OWN dept -- it's the drill target the user asked for from the
  * Missed Calls views, and exposes no aggregate inbound data.
  */
+/**
+ * Dept scope for the per-call PATH drill (looser than the Inbound report's
+ * `inboundDeptPredicate_`, which keys ONLY on the ENTRY queue). A manager
+ * drilling from their own Missed report is often looking at an abandoned call
+ * that ENTERED via an IVR/overflow queue but abandoned IN the dept's queue --
+ * so its `entry_queue` isn't a dept queue but its `final_queue` is. Match if a
+ * dept queue is the ENTRY or FINAL queue, or the answering dept -- still
+ * dept-scoped (a call that never touched the dept's queues won't resolve), but
+ * no longer drops legitimate overflow/IVR-entry abandoned calls. Empty string
+ * for the admin company view (no scoping). Queue/dept names are config-curated
+ * but escaped anyway.
+ */
+function callJourneyDeptPredicate_(dept, deptQueues) {
+  if (!dept) return '';
+  const queueList = (deptQueues && deptQueues.length)
+    ? deptQueues.map(inboundSqlLit_).join(',') : 'NULL';
+  return ' AND (c.entry_queue IN (' + queueList + ')'
+       + ' OR c.final_queue IN (' + queueList + ')'
+       + " OR lower(trim(coalesce(c.final_dept, ''))) = lower(" + inboundSqlLit_(dept) + '))';
+}
+
 function getCallJourney(req) {
   req = req || {};
   const user = resolveUser_(Session.getActiveUser().getEmail());
@@ -180,7 +201,7 @@ function getCallJourney(req) {
   if (dept === 'ALL') dept = '';   // admin company view -> no dept scoping
 
   const deptQueues = dept ? queuesForDept_(dept) : [];
-  const predicate = inboundDeptPredicate_(dept, deptQueues);   // '' for company view
+  const predicate = callJourneyDeptPredicate_(dept, deptQueues);   // '' for company view
 
   const conn = getDashboardNeonConn_();
   if (!conn) return { available: false, found: false };
