@@ -1,5 +1,16 @@
 # Cycle State — resume note
 
+## Latest session (broad-implement: Tier 2 — F25, F13, F12, F9, F11)
+Branch `claude/brave-dijkstra-wuonrv`. 135/135 tests pass, INV-16 in sync.
+- **F25** dashboardCDR.js: `idxOr` helper (fixes the `|| dflt` index-0 trap) + a warning logging any missing/renamed CDR Historical Data list-columns that would otherwise silently report a metric as zero. Detection only; aggregation unchanged.
+- **F13** Auth.gs `getManagerDepartment_`: scans all Access Control rows and logs a warning when a manager matches >1 dept (only the first is honored — managers are pinned to one dept). Behavior unchanged for single-row managers; makes the truncation detectable.
+- **F12** InsightsReport.gs + script.html: new `meta.priorOverlap` flags a CUSTOM prior window overlapping the current range (overlapping days count toward current only); client renders an inline "Windows overlap" caveat. Cache bumped `insights:v10`→`v11` (response shape change) + doc sync. New regression test.
+- **F9** buildDQEHistoricalData.js (BOTH copies, byte-identical): counts queue legs whose START_TIME is present-but-unparseable (dropped from in-window counts) and surfaces the count in the final `buildDQE` Pipeline Health note — was silent shrinkage on a CDR format drift.
+- **F11** OrphanFix.gs `renameAgentInNeon_`: wraps the rename in an explicit transaction (atomic, rollback on error) and computes the conflict-skip count EXACTLY (rows still under the orphan name after the rename) instead of a racy pre-count subtraction.
+Deploy: Department Dashboard (F12/F13/F11) + cdr-report (F25/F9) + cdr-import (F9). No blocking operator actions.
+
+---
+
 ## Latest session (broad-implement: Tier 1 observability — F5, F6, F8, F29; F7 deferred)
 Branch `claude/brave-dijkstra-wuonrv`. 134/134 tests pass, INV-16 in sync.
 - **F29** NeonRead.gs + NeonKeepWarm.gs: `getDashboardNeonConn_(opts)` gains `skipReadHealth`; keep-warm passes it so a warm-ping failure no longer writes the DQE read-back failure streak (was a sticky false "read-back FAILING" on the sheet path).

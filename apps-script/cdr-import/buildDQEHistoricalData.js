@@ -367,6 +367,12 @@ function buildDQEHistoricalData(rawSheet, dqeSheet, opts) {
   // leg where col L = agent name — captured in Pass 1's parentMap. Pass 3
   // looks up the right talk time by matching agent name on parent legs.
 
+  // F9: count queue legs whose START_TIME is present but UNPARSEABLE (a CDR
+  // timestamp-format drift). Such legs get startPST=null and are silently
+  // dropped from windowLegs -- i.e. from the in-window Rung/Missed/Answered +
+  // slot counts -- with no prior signal. Surfaced in the final buildDQE
+  // Pipeline Health note so a format drift is visible, not silent shrinkage.
+  let unparsedStartCount = 0;
   const queueLegs = [];
 
   for (let i = 0; i < data.length; i++) {
@@ -396,7 +402,9 @@ function buildDQEHistoricalData(rawSheet, dqeSheet, opts) {
     const callId       = String(row[DQE_C.CALL_ID]).trim();
     const missed       = String(row[DQE_C.MISSED]).trim()   === 'Missed';
     const answered     = String(row[DQE_C.ANSWERED]).trim() === 'Answered';
-    const startPST     = displayToTimeSec(row[DQE_C.START_TIME]);
+    const startRaw     = row[DQE_C.START_TIME];
+    const startPST     = displayToTimeSec(startRaw);
+    if (startPST === null && startRaw && String(startRaw).trim()) unparsedStartCount++;  // F9
 
     queueLegs.push({
       agentName, queueExt, queueName,
@@ -824,7 +832,9 @@ function buildDQEHistoricalData(rawSheet, dqeSheet, opts) {
       status:     'success',
       rows:       outputRows.length,
       durationMs: Date.now() - __pipelineStartMs,
-      notes:      'callDate=' + callDateStr,
+      notes:      'callDate=' + callDateStr + (unparsedStartCount
+                    ? ' | WARN: ' + unparsedStartCount + ' leg(s) had unparseable START_TIME (dropped from in-window counts)'
+                    : ''),
     });
   } catch (pipelineLogErr) {
     Logger.log('buildDQE: pipeline-health log failed (non-fatal): %s', pipelineLogErr);

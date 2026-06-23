@@ -113,6 +113,33 @@ test('Insights F1: rosterAgentCount counts only roster members ACTIVE in the cur
   assert.equal(data.teamStats.answered.val, 8);    // team total still Anna's 8
 });
 
+test('Insights F12: meta.priorOverlap flags a custom prior window that overlaps the current range', function () {
+  install([
+    dqeRow({ date: '2026-03-10', agent: 'Anna', ext: '201', rung: 10, missed: 1, answered: 8, att: '0:03:00' }),
+  ]);
+  // Current 03-09..03-15; custom prior 03-12..03-18 overlaps on 03-12..03-15.
+  const overlap = h.call('getInsightsReport', {
+    department: 'Alpha', from: '2026-03-09', to: '2026-03-15',
+    agents: ['Anna'], priorFrom: '2026-03-12', priorTo: '2026-03-18',
+  });
+  assert.equal(overlap.meta.comparisonMode, 'custom');
+  assert.equal(overlap.meta.priorOverlap, true);
+
+  // Non-overlapping custom prior -> false.
+  const disjoint = h.call('getInsightsReport', {
+    department: 'Alpha', from: '2026-03-09', to: '2026-03-15',
+    agents: ['Anna'], priorFrom: '2026-03-01', priorTo: '2026-03-07',
+  });
+  assert.equal(disjoint.meta.priorOverlap, false);
+
+  // Auto-adjacent prior (no custom window) is disjoint by construction.
+  const auto = h.call('getInsightsReport', {
+    department: 'Alpha', from: '2026-03-09', to: '2026-03-15', agents: ['Anna'],
+  });
+  assert.equal(auto.meta.comparisonMode, 'prior');
+  assert.equal(auto.meta.priorOverlap, false);
+});
+
 test('Insights parity: teamStats + trendData match the Performance Report on identical inputs', function () {
   // THE consolidation gate: Insights bills itself as PR's department
   // rollup + per-agent deltas. Both load into this vm and share

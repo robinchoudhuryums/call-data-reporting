@@ -74,13 +74,28 @@ function getManagerDepartment_(normalizedEmail) {
 
   // Read just the Email + Department columns.
   const rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, 2).getValues();
+  const matches = [];
   for (let i = 0; i < rows.length; i++) {
     const rowEmail = String(rows[i][0] || '').toLowerCase().trim();
     const rowDept = String(rows[i][1] || '').trim();
-    if (rowEmail === normalizedEmail && rowDept) {
-      cache.put(cacheKey, rowDept, AUTH_CACHE_TTL_SECONDS);
-      return rowDept;
+    if (rowEmail === normalizedEmail && rowDept) matches.push(rowDept);
+  }
+  if (matches.length) {
+    // F13: the schema is one row per manager, and the dashboard pins a
+    // manager to a single department (assertDeptAccess_ + the UI use the
+    // singular dept). If a manager matches MULTIPLE rows with DIFFERENT
+    // depts, only the first is honored -- log a warning so the ignored
+    // row(s) are detectable rather than silently dropped (the operator may
+    // have assumed multi-row = multi-dept).
+    const distinct = matches.filter(function (d, i) { return matches.indexOf(d) === i; });
+    if (distinct.length > 1) {
+      Logger.log('getManagerDepartment_: %s matches %s Access Control depts (%s); using the '
+        + 'first (%s). Managers are pinned to one dept -- remove the extra row(s), or grant '
+        + 'admin for cross-dept access.', normalizedEmail, distinct.length,
+        distinct.join(', '), matches[0]);
     }
+    cache.put(cacheKey, matches[0], AUTH_CACHE_TTL_SECONDS);
+    return matches[0];
   }
 
   cache.put(cacheKey, '__none__', AUTH_CACHE_TTL_SECONDS);

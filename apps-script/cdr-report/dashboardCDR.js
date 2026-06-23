@@ -258,11 +258,20 @@ function generateCustomReport() {
   const colMap = {};
   histHeaders.forEach((h, i) => colMap[String(h).trim()] = i);
   const getIdx = (n) => colMap[n];
+  // F25: resolve the first present header from a list, or a literal default.
+  // Uses `in` so a legitimate column at index 0 isn't swallowed by `|| dflt`
+  // (0 is falsy). Returns the default only when NONE of the names exist.
+  const idxOr = (names, dflt) => {
+    for (let i = 0; i < names.length; i++) {
+      if (Object.prototype.hasOwnProperty.call(colMap, names[i])) return colMap[names[i]];
+    }
+    return dflt;
+  };
 
   const IDX = {
-    DATE: getIdx('Date') || 2,
-    DEPT: getIdx('Dept') || getIdx('Department') || 3,
-    NAME: getIdx('AgentName') || 4,
+    DATE: idxOr(['Date'], 2),
+    DEPT: idxOr(['Dept', 'Department'], 3),
+    NAME: idxOr(['AgentName'], 4),
 
     OB_EXT_TOT:      getIdx('OB External Total'),
     OB_EXT_ANS_LIST: getIdx('OB External List (Answered)'),
@@ -275,6 +284,28 @@ function generateCustomReport() {
     IB_ANS_MIXED: getIdx('IB Answered List (Internal & External)') || getIdx('IB Answered List (Internal & External Direct)'),
     IB_MIS_MIXED: getIdx('IB Missed List (Internal & External)')  || getIdx('IB Missed List (Internal & External Direct)'),
   };
+
+  // F25: a renamed/missing list-column header maps to undefined here, and
+  // downstream `Number(row[undefined] || 0)` silently reports that whole
+  // category as zero with no signal. Warn (loudly, in the execution log) which
+  // expected columns are absent so a header rename surfaces instead of quietly
+  // zeroing a metric. Detection only -- the aggregation below is unchanged.
+  const _expectedCols = {
+    'OB External Total': IDX.OB_EXT_TOT,
+    'OB External List (Answered)': IDX.OB_EXT_ANS_LIST,
+    'OB External List (Missed)': IDX.OB_EXT_MIS_LIST,
+    'OB External Total Duration / OB External TTT': IDX.OB_EXT_DUR,
+    'OB List Total (Internal Direct)': IDX.OB_INT_TOT,
+    'OB List Answered (Internal Direct)': IDX.OB_INT_ANS,
+    'IB Answered List (Internal & External[ Direct])': IDX.IB_ANS_MIXED,
+    'IB Missed List (Internal & External[ Direct])': IDX.IB_MIS_MIXED,
+  };
+  const _missingCols = Object.keys(_expectedCols).filter((k) => _expectedCols[k] == null);
+  if (_missingCols.length) {
+    Logger.log('generateCustomReport: CDR Historical Data is missing/renamed column(s) -> '
+      + 'these metrics will report as ZERO: ' + _missingCols.join('; ')
+      + '. Verify the header row matches the pipeline output (INV-52).');
+  }
 
   // ── 4. Aggregate Data ────────────────────────────────────────
   const data   = histSheet.getDataRange().getValues();

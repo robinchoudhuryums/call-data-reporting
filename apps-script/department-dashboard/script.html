@@ -11101,7 +11101,7 @@
       // basis line) as a warn glyph + bold label whose explanation lives in
       // a hover tooltip -- lighter than the old standalone banner.
       cmp.innerHTML = escapeHtml(basis) + escapeHtml(data.priorDateLabel || '')
-        + insLengthFlagHtml_(data.meta);
+        + insLengthFlagHtml_(data.meta) + insOverlapFlagHtml_(data.meta);
     }
 
     // Team insights callout (reuse the IR block; relabel to "Team insights").
@@ -11326,6 +11326,19 @@
       + 'compare the per-day figures on the agent cards instead.';
     return '<span class="ins-length-flag gloss" tabindex="0" title="' + escapeHtml(tip) + '">'
          + '<span class="ins-length-flag__icon" aria-hidden="true">&#9888;</span> Different window lengths</span>';
+  }
+
+  // F12: custom prior window overlaps the current range. The overlapping days
+  // count toward the current period only, so the prior baseline omits them --
+  // surface that as an inline warn glyph + tooltip (mirrors insLengthFlagHtml_)
+  // so the comparison isn't silently distorted. Returns '' unless meta.priorOverlap.
+  function insOverlapFlagHtml_(meta) {
+    if (!meta || !meta.priorOverlap) return '';
+    const tip = 'The comparison window overlaps the selected range. Days in both windows '
+      + 'count toward the current period only, so the prior baseline excludes them — '
+      + 'pick a non-overlapping prior range for a clean comparison.';
+    return '<span class="ins-length-flag gloss" tabindex="0" title="' + escapeHtml(tip) + '">'
+         + '<span class="ins-length-flag__icon" aria-hidden="true">&#9888;</span> Windows overlap</span>';
   }
 
   // The standalone #ins-length-warning banner is retired -- the caveat now

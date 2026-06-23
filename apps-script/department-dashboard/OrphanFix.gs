@@ -563,36 +563,48 @@ function renameAgentInNeon_(fromName, toName) {
     conn = Jdbc.getConnection(url, props.getProperty('NEON_USER'), props.getProperty('NEON_PASS'));
     if (!conn) return null;
 
-    // How many Neon rows currently carry the orphan name (so we can
-    // report conflict-skips as total - renamed).
-    var cntStmt = conn.prepareStatement(
-      'SELECT COUNT(*) FROM dqe_history WHERE agent_name = ?');
-    cntStmt.setString(1, fromName);
-    var crs = cntStmt.executeQuery();
-    var total = crs.next() ? crs.getInt(1) : 0;
-    crs.close(); cntStmt.close();
-    if (total === 0) return { renamed: 0, skipped: 0 };
+    // F11: run the conflict-safe rename AND the skip-count inside ONE
+    // transaction so the rename is atomic (all-or-nothing on error -- no
+    // half-renamed mirror) and the counts come from a consistent snapshot
+    // rather than a separate pre-count a concurrent import insert could skew.
+    conn.setAutoCommit(false);
+    try {
+      // Conflict-skip rename (see docstring). NOT EXISTS keyed on
+      // (call_date, agent_name) -- the near-certain uq_dqe_history columns;
+      // if the real key is broader this just skips a little more, never errors.
+      var upStmt = conn.prepareStatement(
+        'UPDATE dqe_history t SET agent_name = ? ' +
+        'WHERE t.agent_name = ? ' +
+        'AND NOT EXISTS (SELECT 1 FROM dqe_history x ' +
+        'WHERE x.call_date = t.call_date AND x.agent_name = ?)');
+      upStmt.setString(1, toName);
+      upStmt.setString(2, fromName);
+      upStmt.setString(3, toName);
+      upStmt.execute();
+      var renamed = upStmt.getUpdateCount();
+      upStmt.close();
+      if (renamed < 0) renamed = 0;
 
-    // Conflict-skip rename (see docstring). NOT EXISTS keyed on
-    // (call_date, agent_name) -- the near-certain uq_dqe_history columns;
-    // if the real key is broader this just skips a little more, never
-    // errors.
-    var upStmt = conn.prepareStatement(
-      'UPDATE dqe_history t SET agent_name = ? ' +
-      'WHERE t.agent_name = ? ' +
-      'AND NOT EXISTS (SELECT 1 FROM dqe_history x ' +
-      'WHERE x.call_date = t.call_date AND x.agent_name = ?)');
-    upStmt.setString(1, toName);
-    upStmt.setString(2, fromName);
-    upStmt.setString(3, toName);
-    upStmt.execute();
-    var renamed = upStmt.getUpdateCount();
-    upStmt.close();
-    if (renamed < 0) renamed = 0;
-    var skipped = Math.max(0, total - renamed);
-    Logger.log('renameAgentInNeon_: %s -> %s | renamed %s, conflict-skipped %s',
-      fromName, toName, renamed, skipped);
-    return { renamed: renamed, skipped: skipped };
+      // EXACT conflict-skip count: rows STILL carrying the orphan name after
+      // the rename are precisely the ones the NOT EXISTS guard skipped (a
+      // (call_date, toName) row already existed). Counted inside the same
+      // transaction -- no pre-count/subtraction, so it can't be skewed by a
+      // concurrent insert between two statements.
+      var skipStmt = conn.prepareStatement(
+        'SELECT COUNT(*) FROM dqe_history WHERE agent_name = ?');
+      skipStmt.setString(1, fromName);
+      var srs = skipStmt.executeQuery();
+      var skipped = srs.next() ? srs.getInt(1) : 0;
+      srs.close(); skipStmt.close();
+
+      conn.commit();
+      Logger.log('renameAgentInNeon_: %s -> %s | renamed %s, conflict-skipped %s',
+        fromName, toName, renamed, skipped);
+      return { renamed: renamed, skipped: skipped };
+    } catch (txErr) {
+      try { conn.rollback(); } catch (rbErr) {}
+      throw txErr;   // surface to the outer best-effort catch (returns null)
+    }
   } catch (e) {
     Logger.log('renameAgentInNeon_ failed (best-effort): ' + (e && e.message ? e.message : e));
     return null;

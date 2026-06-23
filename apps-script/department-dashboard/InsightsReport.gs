@@ -78,7 +78,7 @@
 //     (from the bySource breakdown 4a added to computeQcdReport_), so
 //     the Queue health table can annotate WHERE a queue's abandons come
 //     from. Null when no sub-source has abandons.
-const INSIGHTS_CACHE_KEY_PREFIX = 'insights:v10';
+const INSIGHTS_CACHE_KEY_PREFIX = 'insights:v11';
 
 function getInsightsReportInit(req) {
   // Same picker UX (roster + default dates + active-in-range subset) as
@@ -496,6 +496,11 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
       from: from, to: to,
       priorFrom: priorFrom, priorTo: priorTo,
       comparisonMode: priorIsCustom ? 'custom' : 'prior',
+      // F12: a custom prior window that OVERLAPS the current range silently
+      // attributes the overlapping days to the current period only (the
+      // inCurrent/else-if-inPrior branch). Flag it so the client can warn --
+      // auto-adjacent priors are disjoint by construction, so this is custom-only.
+      priorOverlap: priorIsCustom && (priorFrom <= to && from <= priorTo),
       currentDays: currentDays, priorDays: priorDays,
       lengthMismatch: lengthMismatch,
       trendStart: trendFrom, trendEnd: trendTo,
