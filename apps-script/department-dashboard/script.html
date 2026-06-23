@@ -1132,6 +1132,10 @@
 
   let ovChartInstance = null;
   let ovLastData = null;
+  // P2.4: the trend chart defaults to TOP-LEVEL depts only (de-spaghetti);
+  // sub-queue (child) lines are added on demand via the "+ sub-queues"
+  // toggle. Grid tiles are unaffected -- children always show as tiles.
+  let ovShowSubQueues_ = false;
 
   function initCompanyOverview() {
     const overviewBtn = $('overview-btn');
@@ -2115,7 +2119,13 @@
         || colors[nextColorSlot++ % colors.length];
     });
 
-    const datasets = (data.depts || []).map(function (dept) {
+    // P2.4: default to top-level depts only; children join when toggled on.
+    // colorByDept was computed over ALL depts above, so hues stay stable
+    // whether or not children are shown.
+    const chartDepts = (data.depts || []).filter(function (d) {
+      return ovShowSubQueues_ || !d.parent;
+    });
+    const datasets = chartDepts.map(function (dept) {
       const color = colorByDept[dept.name];
       const isChild = !!dept.parent;
       return {
@@ -2226,6 +2236,7 @@
       ovChartInstance._viewerDept = ovViewerDept_(data);
     }
     ovWireAxisZoom_();
+    ovWireSubqToggle_();
   }
 
   // ---- Generic Chart.js legend spotlight (shared) ----------------------
@@ -2348,6 +2359,22 @@
       ovChartInstance.update();
       btn.textContent = ovAxisZoom === 'fit' ? 'Zoom: Fit' : 'Zoom: Full';
       btn.setAttribute('aria-pressed', ovAxisZoom === 'fit' ? 'true' : 'false');
+    });
+  }
+
+  // P2.4: "+ sub-queues" toggle in the ov-chart-tabs row. Off by default so
+  // the chart shows only top-level depts; on adds the dashed child lines.
+  // Re-renders from ovLastData (grid tiles are untouched). Wired once.
+  let ovSubqWired = false;
+  function ovWireSubqToggle_() {
+    if (ovSubqWired) return;
+    const box = $('ov-subq-toggle');
+    if (!box) return;
+    ovSubqWired = true;
+    box.checked = ovShowSubQueues_;
+    box.addEventListener('change', function () {
+      ovShowSubQueues_ = !!box.checked;
+      if (ovLastData) ovRenderChart_(ovLastData);
     });
   }
 

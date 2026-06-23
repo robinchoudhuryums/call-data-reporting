@@ -744,6 +744,25 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   so the plugin always receives a parseable color. Don't pass raw
   `getComputedStyle(...).getPropertyValue('--foo')` strings to chart
   options — always go through `THEME.*`.
+- **Overview layout: stacked full-width sticky chart + 4-wide grid
+  (Pass 3b P2).** The Overview page was restructured from a
+  side-by-side grid+rail into a STACK: the 30-day trend chart is a
+  **full-width sticky-top band** (`.ov-trend-col`, `position:sticky;
+  top:8px; z-index:5`, floated above the grid via CSS `order:-1` so
+  the `dashboard.html` markup order is unchanged), and the dept-tile
+  grid is **full-width below, 4-wide** (`.ov-dept-grid`
+  `repeat(4,minmax(0,1fr))`, responsive 4→2→1). The retired side-rail
+  was an intentional `#8` decision; it's safe to retire because the
+  tile-hover→line-spotlight link works by **dept-name lookup**
+  (`ovSpotlightDept_` matches `ds._deptName`), NOT DOM proximity, so
+  the stack preserves it. Sub-queue **children stay as their own
+  indented tiles** inside the `.ov-dept-group` cell (P1 hybrid — no
+  inset strip; parent DQE metrics are independent, NOT a roll-up of
+  children, so nesting them into the parent card would falsely imply
+  aggregation). The pinned band uses a moderate 340px height
+  (`.ov-trend-col .ir-chart-wrap`) and un-sticks on short viewports
+  (`@media (max-height:640px)`); the condense-on-scroll polish was
+  intentionally skipped.
 - **Overview trend chart conventions (Phase B).** Multi-dept overlay
   on the Overview page (`ov-trend-chart`): parent depts get solid
   2.2px lines with hue assigned from `IR_CHART_COLORS` in payload
@@ -751,7 +770,12 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   [4, 3]`) inheriting their parent's hue via the `colorByDept` map
   built up front in `ovRenderChart_` (so the parent → child color
   inheritance works even if children precede parents in the
-  `depts` array). A faint dashed 92% baseline (color
+  `depts` array). **The chart defaults to TOP-LEVEL depts only
+  (Pass 3b P2.4, de-spaghetti); the dashed child lines are added on
+  demand via the `+ sub-queues` checkbox (`#ov-subq-toggle`,
+  `ovShowSubQueues_`, off by default), which re-renders from
+  `ovLastData`. Grid tiles are unaffected — children always show as
+  tiles.** A faint dashed 92% baseline (color
   `THEME.muted`) is drawn at `order: 99` so dept lines stay on
   top; the tooltip is filtered to hide the baseline from per-line
   hover. Fills are intentionally suppressed on this overlaid

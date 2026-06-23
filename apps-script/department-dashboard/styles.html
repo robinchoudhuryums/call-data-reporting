@@ -3973,31 +3973,55 @@
   }
   .ov-dept-grid {
     display: grid;
-    /* #6 (C): denser, more uniform grid -- smaller min so more cards fit per
-       row in the left ~60% column (was 240px, which left only ~2 per row and
-       read as a ragged column). */
-    grid-template-columns: repeat(auto-fill, minmax(196px, 1fr));
+    /* Pass 3b P2.3: STACKED layout reclaims the full page width from the
+       retired side-rail, so the grid goes 4-wide. align-items:start keeps
+       the bottoms clean-ragged (each .ov-dept-group cell is parent + its
+       indented children, P1-hybrid -- children stay attached, no inset
+       strip). Responsive 4 -> 2 -> 1. */
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 10px;
     margin-bottom: 18px;
     align-items: start;
   }
-  /* #8: grid (main) + trend chart (sticky right rail) side-by-side. The grid's
-     auto-fill columns reflow to fit the narrower column; the chart stays in
-     view while scrolling the grid. Collapses to one column under 1024px. */
+  @media (max-width: 1100px) { .ov-dept-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (max-width: 680px)  { .ov-dept-grid { grid-template-columns: 1fr; } }
+
+  /* Pass 3b P2.1 + P2.2: STACK the chart band above the dept grid (was a
+     side-by-side grid + rail). The chart band is full-width (de-spaghetti --
+     30 days x 7+ series read cleanly) and STICKY-TOP so it stays visible as
+     the grid scrolls under it. order:-1 floats the chart (DOM-second) above
+     the grid (DOM-first) without reordering the markup. */
   .ov-grid-trend {
-    display: grid;
-    grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr);
-    gap: 18px;
-    align-items: start;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
     margin-top: 4px;
   }
-  .ov-grid-col { min-width: 0; }
-  .ov-trend-col { min-width: 0; position: sticky; top: 12px; }
+  .ov-grid-col { min-width: 0; order: 0; }
+  .ov-trend-col {
+    min-width: 0;
+    order: -1;                 /* chart band first */
+    position: sticky;
+    top: 8px;
+    z-index: 5;                /* grid scrolls UNDER the pinned band */
+    background: var(--paper);
+  }
+  /* A moderate pinned height (vs the IR/PR 420px) so the always-visible band
+     doesn't eat the viewport (condense-on-scroll was intentionally skipped). */
+  .ov-trend-col .ir-chart-wrap { height: 340px; }
   .ov-grid-trend .ov-dept-grid { margin-bottom: 0; }
-  @media (max-width: 1024px) {
-    .ov-grid-trend { grid-template-columns: 1fr; }
+  /* Un-stick on short viewports (phones / landscape) so the band can't eat
+     the screen; the grid then flows normally below it. */
+  @media (max-height: 640px) {
     .ov-trend-col { position: static; }
   }
+  /* P2.4 chart toggle: "+ sub-queues" checkbox in the chart-tabs row. */
+  .ov-subq-toggle {
+    display: inline-flex; align-items: center; gap: 5px;
+    font: 500 12px var(--ui); color: var(--muted); cursor: pointer;
+    margin-left: auto; padding: 0 4px;
+  }
+  .ov-subq-toggle input { margin: 0; cursor: pointer; }
   /* Each parent dept + its sub-queues stack vertically in a
      single grid cell. Children inherit the parent's tile color
      (slot in IR_CHART_COLORS) via inline-set color but get an
