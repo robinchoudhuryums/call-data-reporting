@@ -1111,6 +1111,27 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   user A still personalizes correctly for user B. Adding a new
   admin-only Overview field means adding it to the strip list
   inside `personalizeOverview_`.
+- **View-as-Manager (admin preview).** Admins get a "View as"
+  control in the header (`initViewAs_`, built only for admins; it
+  carries NO `data-admin-only` so it stays visible to switch back).
+  Selecting a dept enters a manager preview: `getCompanyOverview(req)`
+  honors `req.viewAsDept` — when the caller is an admin and the dept
+  is real, it personalizes the payload as a SYNTHETIC manager of that
+  dept (reusing `personalizeOverview_`, so `companyAggregate` /
+  `pipelineFreshness` / `orphanNag` / `unmappedQcd` are genuinely
+  stripped and `viewerRole='manager'`). SAFE — admins are entitled to
+  all data, so this only HIDES; non-admin callers + unknown depts are
+  ignored (no escalation). Client-side, `body[data-view-as="manager"]`
+  drives a single CSS rule that hides every `[data-admin-only]`
+  surface (nav tabs, buttons, the three Overview banners), pins +
+  disables the dept selector, and tints the control warn so the admin
+  knows they're previewing. The per-viewer Overview SWR cache
+  (`cdr.ov.cache.v1`) is BYPASSED while previewing so a manager
+  payload never lands under the admin's cache key. No INV-30 bump —
+  personalization is post-cache (same as the existing per-viewer
+  strip). It's a VISUAL preview: report endpoints still authorize the
+  real admin (entitled), so the admin isn't locked out of clicking
+  through; the point is to see the manager's layout/content.
 - **Overview admin-only banners (Phase B).** Pipeline Health
   banner (`#ov-pipeline-banner`) and Orphan Fix nag
   (`#ov-orphan-nag`) sit above the summary line on the Overview

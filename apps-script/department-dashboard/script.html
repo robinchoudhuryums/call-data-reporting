@@ -693,6 +693,7 @@
       document.querySelectorAll('[data-admin-only]').forEach(function (el) {
         el.style.display = '';
       });
+      initViewAs_();   // admin-only "View as <dept> (manager)" preview control
     }
 
     // -- Header dropdown menus (Reports + Admin) --------------------
@@ -1213,9 +1214,64 @@
     DS_PREV_VALUES_[scopeId] = next;   // snapshot for the next render (even on first paint)
   }
 
+  // View-as (admin only): when set to a dept name, the admin is previewing
+  // that dept manager's experience. Drives the getCompanyOverview viewAsDept
+  // param (server personalizes as manager) + body[data-view-as] (CSS hides
+  // admin chrome) + a pinned dept selector. null = normal admin view.
+  var viewAsDept_ = null;
+
+  // Builds the admin-only "View as" control in the header and wires it.
+  // Created only for admins (called from the admin branch of init), and the
+  // control itself carries NO data-admin-only so it stays visible in view-as
+  // mode (the admin needs it to switch back).
+  function initViewAs_() {
+    var host = document.querySelector('.header-meta') || document.querySelector('.header-nav');
+    if (!host || $('view-as-select')) return;
+    var depts = (USER && USER.departments) || [];
+    if (!depts.length) return;
+    var wrap = document.createElement('div');
+    wrap.className = 'view-as-ctl';
+    wrap.innerHTML = '<label for="view-as-select">View as</label>'
+      + '<select id="view-as-select"><option value="">Admin (me)</option>'
+      + depts.map(function (d) { return '<option value="' + escapeHtml(d) + '">' + escapeHtml(d) + ' (manager)</option>'; }).join('')
+      + '</select>';
+    host.appendChild(wrap);
+    $('view-as-select').addEventListener('change', function () {
+      applyViewAs_(this.value || null);
+    });
+  }
+
+  // Enter (dept) / exit (null) the manager preview.
+  function applyViewAs_(dept) {
+    viewAsDept_ = dept || null;
+    var sel = $('dept-selector');
+    if (viewAsDept_) {
+      document.body.setAttribute('data-view-as', 'manager');
+      // Pin the dept selector to the previewed dept (managers can't switch).
+      if (sel) {
+        if (Array.prototype.slice.call(sel.options).some(function (o) { return o.value === viewAsDept_; })) {
+          sel.value = viewAsDept_;
+        }
+        sel.disabled = true;
+      }
+    } else {
+      document.body.removeAttribute('data-view-as');
+      if (sel) sel.disabled = false;
+    }
+    // Re-fetch the active surface so it reflects the effective role.
+    if (document.body.getAttribute('data-page') === 'overview') {
+      ovLoad_(false);
+    } else if (typeof refresh === 'function') {
+      refresh();
+    }
+  }
+
   function ovLoad_(silent) {
     var paintedFromCache = false;
-    if (!silent) {
+    // In view-as (admin previewing a manager) skip the per-viewer SWR cache
+    // entirely -- the manager-personalized payload must not be written under
+    // the admin's cache key (it would paint a manager view after exiting).
+    if (!silent && !viewAsDept_) {
       var cached = ovReadCache_();
       if (cached) {
         // Instant paint from the last snapshot; the live fetch below swaps it.
@@ -1233,7 +1289,7 @@
     google.script.run
       .withSuccessHandler(function (data) {
         ovLastData = data;
-        ovWriteCache_(data);
+        if (!viewAsDept_) ovWriteCache_(data);   // don't cache a view-as payload
         $('ov-loading').style.display = 'none';
         $('ov-body').style.display = '';
         ovSetRefreshWarn_(false);   // a refresh succeeded: clear any prior warning
@@ -1254,7 +1310,7 @@
         }
         ovScheduleAutoRefresh_();
       })
-      .getCompanyOverview();
+      .getCompanyOverview({ viewAsDept: viewAsDept_ || '' });
   }
 
   // Muted "auto-refresh failing" badge at the top of the Overview body.

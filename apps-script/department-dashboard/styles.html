@@ -4907,4 +4907,18 @@
   .esc-resolved-check { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--ink); }
   .esc-resolve-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
   .esc-row-error { font-size: 12px; }
+
+  /* ── View-as (admin manager preview) ─────────────────────────── */
+  .view-as-ctl { display: inline-flex; align-items: center; gap: 6px;
+    font: 600 10px/1 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+  .view-as-ctl select { font-family: var(--sans); font-size: 12px; letter-spacing: 0;
+    text-transform: none; padding: 3px 6px; border: 1px solid var(--line); border-radius: var(--r); background: var(--paper); color: var(--ink); }
+  /* While previewing a manager, hide every admin-only surface (nav tabs,
+     buttons, the data-admin-only Overview banners) so the admin sees exactly
+     the manager chrome. The .view-as-ctl itself has NO data-admin-only, so it
+     stays visible for switching back. */
+  body[data-view-as="manager"] [data-admin-only] { display: none !important; }
+  /* Tint the header so the admin always knows they're in preview mode. */
+  body[data-view-as="manager"] .view-as-ctl { color: var(--warn); }
+  body[data-view-as="manager"] .view-as-ctl select { border-color: var(--warn); }
 </style>

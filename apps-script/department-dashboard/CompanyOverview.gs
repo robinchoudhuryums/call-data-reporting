@@ -128,10 +128,24 @@ const OVERVIEW_PARENT_OF = Object.freeze({
  */
 const OVERVIEW_HIDDEN_DEPTS = Object.freeze(['CSR Backup']);
 
-function getCompanyOverview() {
+function getCompanyOverview(req) {
   const email = Session.getActiveUser().getEmail();
-  const user = resolveUser_(email);
-  if (user.role === 'none') throw new Error('Not authorized.');
+  const realUser = resolveUser_(email);
+  if (realUser.role === 'none') throw new Error('Not authorized.');
+
+  // View-as (admin-only preview): an admin may request the MANAGER-personalized
+  // Overview for a department to see exactly what that manager sees. SAFE --
+  // admins are entitled to all data, so this only HIDES admin-only fields
+  // (companyAggregate / pipelineFreshness / orphanNag / unmappedQcd, stripped
+  // by personalizeOverview_) and sets viewerRole='manager'. Non-admin callers
+  // and unknown depts are ignored (no privilege change). All personalization
+  // below runs against this effective user.
+  let user = realUser;
+  const viewAsDept = req && String(req.viewAsDept || '').trim();
+  if (realUser.role === 'admin' && viewAsDept
+      && getAllDepartments_().indexOf(viewAsDept) !== -1) {
+    user = { email: realUser.email, role: 'manager', department: viewAsDept, departments: [viewAsDept] };
+  }
 
   const cache = CacheService.getScriptCache();
   const cached = cache.get(COMPANY_OVERVIEW_CACHE_KEY);
