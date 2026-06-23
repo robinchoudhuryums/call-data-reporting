@@ -1307,6 +1307,7 @@
     if (!data || !data.depts) return;
     ovRenderPipelineBanner_(data);
     ovRenderOrphanNag_(data);
+    ovRenderUnmappedNag_(data);
     ovRenderSummaryLine_(data);
     ovRenderCompanyAggregate_(data);
     ovRenderUserHero_(data);
@@ -1463,6 +1464,44 @@
     if (btn) {
       btn.addEventListener('click', function () {
         const trigger = document.getElementById('orphan-fix-btn');
+        if (trigger) trigger.click();
+      });
+    }
+  }
+
+  // F onboarding: admin-only nag for QCD queues seen in the data but mapped
+  // to no department (their calls never surface until assigned). Mirrors
+  // ovRenderOrphanNag_; hidden for non-admins and when nothing is unmapped.
+  // The "Open" button programmatically opens the Dept Config modal.
+  function ovRenderUnmappedNag_(data) {
+    const el = $('ov-unmapped-nag');
+    if (!el) return;
+    const u = data && data.unmappedQcd;
+    if (data.viewerRole !== 'admin' || !u || !u.count) {
+      el.style.display = 'none';
+      el.innerHTML = '';
+      el.classList.remove('is-warn');
+      return;
+    }
+    const names = (u.sampleNames || []).map(escapeHtml).join(', ');
+    const moreCount = u.count - (u.sampleNames || []).length;
+    const moreClause = moreCount > 0 ? ' and ' + fmtNumber(moreCount) + ' more' : '';
+    el.style.display = '';
+    el.className = 'ov-status-banner is-warn';
+    el.innerHTML =
+        '<span class="ov-status-banner-kicker">Unmapped queues</span>'
+      + '<span class="ov-status-banner-body">'
+      +   '<strong>' + fmtNumber(u.count) + '</strong>'
+      +   ' QCD queue' + (u.count === 1 ? '' : 's')
+      +   ' seen in the data ' + (u.count === 1 ? 'is' : 'are') + ' mapped to no department'
+      +   (names ? ' (' + names + moreClause + ')' : '')
+      +   ". Their calls won't appear in any QCD report until you assign them in Dept Config."
+      + '</span>'
+      + '<button type="button" class="ov-status-banner-action" id="ov-unmapped-nag-open">Open Dept Config</button>';
+    const btn = $('ov-unmapped-nag-open');
+    if (btn) {
+      btn.addEventListener('click', function () {
+        const trigger = document.getElementById('dept-config-btn');
         if (trigger) trigger.click();
       });
     }
@@ -13179,11 +13218,27 @@
     var qcdDataEl  = $('qcd-data-sections');
     if (qcdUnmapped || qcdTotalCalls === 0) {
       if (qcdEmptyEl) {
-        qcdEmptyEl.innerHTML = qcdUnmapped
-          ? emptyStateHtml_('&#128230;', 'No queues mapped for this department',
-              'Map this department’s A_Q_* queues via the Dept Config tab (admin) so its QCD data can be surfaced.')
-          : emptyStateHtml_('&#128202;', 'No QCD activity in this range',
+        if (qcdUnmapped) {
+          // F onboarding: explanatory empty report + (admin) a direct CTA to
+          // Dept Config so the fix is one click away rather than a hunt.
+          var isAdmin = (USER.role === 'admin');
+          qcdEmptyEl.innerHTML = emptyStateHtml_('&#128230;', 'No queues mapped for this department',
+              'This department has no QCD queues assigned, so its queue data can’t be surfaced yet. '
+              + (isAdmin
+                  ? 'Assign its A_Q_* queues in Dept Config — the modal auto-discovers queues seen in the data and flags the unmapped ones.'
+                  : 'Ask an admin to map its A_Q_* queues in Dept Config.'))
+            + (isAdmin
+                ? '<div style="text-align:center;margin-top:12px;"><button class="btn btn-secondary" id="qcd-unmapped-cta" type="button">Open Dept Config</button></div>'
+                : '');
+          var ctaBtn = $('qcd-unmapped-cta');
+          if (ctaBtn) ctaBtn.addEventListener('click', function () {
+            var trigger = document.getElementById('dept-config-btn');
+            if (trigger) trigger.click();
+          });
+        } else {
+          qcdEmptyEl.innerHTML = emptyStateHtml_('&#128202;', 'No QCD activity in this range',
               'No calls were recorded for this department’s mapped queues on the selected dates. Try a wider range.');
+        }
         qcdEmptyEl.style.display = '';
       }
       if (qcdDataEl) qcdDataEl.style.display = 'none';

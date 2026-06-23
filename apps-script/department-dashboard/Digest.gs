@@ -424,8 +424,8 @@ function digestSummaryHtml_(dept, fromIso, toIso) {
   }
 
   return '<div style="margin: 20px 0; padding: 20px; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px;">'
-    +     '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;">'
-    +       digestStatTile_('Answer rate', pctStr)
+    +     digestHeroHtml_(pct, Number(totals.totalRung) || 0)
+    +     '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;">'
     +       digestStatTile_('Rung',         rungStr)
     +       digestStatTile_('Answered',     ansStr)
     +       digestStatTile_('Missed',       missedStr)
@@ -676,6 +676,45 @@ function digestStatTile_(label, value) {
        +   '<div style="font-size:20px;color:#111827;font-weight:700;margin-top:2px;">'
        +     escapeHtmlServer_(value)
        +   '</div>'
+       + '</div>';
+}
+
+// F (digest redesign): the answer-first hero -- a big answer-rate %, a
+// status verdict pill (the SAME 92% company standard the dashboard tints
+// on), and an email-safe target bar (filled <td> cells, no CSS bars). Leads
+// the summary email so a manager reads "where do we stand" before the tiles.
+// `pctNum` is the numeric answer rate (0-100); `rung` gates the no-data case.
+var DIGEST_ANSWER_TARGET = 92;   // company answer-rate standard (matches benchValueCls_)
+function digestHeroHtml_(pctNum, rung) {
+  if (!(Number(rung) > 0)) return '';                 // no calls -> no hero
+  var pct = Math.max(0, Number(pctNum) || 0);
+  var onTrack = pct >= DIGEST_ANSWER_TARGET;
+  var accent  = onTrack ? '#059669' : '#d97706';      // green / amber
+  var pillBg  = onTrack ? '#ECFDF5' : '#FFFBEB';
+  var pillFg  = onTrack ? '#065F46' : '#92400E';
+  var verdict = onTrack ? 'On track' : 'Watch';
+  var fill    = Math.max(0, Math.min(100, pct));
+  // Target bar: two filled cells (fill + track). Guard the 0/100 edges so a
+  // zero-width cell doesn't render oddly across mail clients.
+  var bar;
+  if (fill <= 0) {
+    bar = '<td style="height:10px;background:#e5e7eb;border-radius:6px;font-size:0;line-height:0;">&nbsp;</td>';
+  } else if (fill >= 100) {
+    bar = '<td style="height:10px;background:' + accent + ';border-radius:6px;font-size:0;line-height:0;">&nbsp;</td>';
+  } else {
+    bar = '<td width="' + Math.round(fill) + '%" style="height:10px;background:' + accent + ';border-radius:6px 0 0 6px;font-size:0;line-height:0;">&nbsp;</td>'
+        + '<td style="height:10px;background:#e5e7eb;border-radius:0 6px 6px 0;font-size:0;line-height:0;">&nbsp;</td>';
+  }
+  return '<div style="margin-bottom:16px;">'
+       +   '<div style="font-size:10px;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;font-weight:700;">Answer rate</div>'
+       +   '<div style="margin-top:2px;">'
+       +     '<span style="font-size:34px;font-weight:800;color:' + accent + ';">' + escapeHtmlServer_(pct.toFixed(1)) + '%</span>'
+       +     '<span style="display:inline-block;margin-left:10px;padding:3px 11px;border-radius:999px;background:' + pillBg + ';color:' + pillFg + ';font-size:12px;font-weight:700;vertical-align:middle;">' + verdict + '</span>'
+       +   '</div>'
+       +   '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:10px;border-collapse:collapse;"><tr>' + bar + '</tr></table>'
+       +   '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;"><tr>'
+       +     '<td width="' + DIGEST_ANSWER_TARGET + '%" style="text-align:right;font-size:10px;color:#6b7280;padding-top:3px;">target ' + DIGEST_ANSWER_TARGET + '% &#9662;</td><td></td>'
+       +   '</tr></table>'
        + '</div>';
 }
 
