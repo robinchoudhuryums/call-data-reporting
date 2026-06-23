@@ -348,8 +348,18 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   parity is pinned by `tests/unit/caller-lookup.test.js`), bound as a
   prepared-statement param, NEVER stored/logged/cached -- and the
   response renders one timeline card per call (journey when present,
-  entry->final summary for pre-extension rows). There is NO sheet
-  primary for this data: the "Inbound Calls" tab
+  entry->final summary for pre-extension rows). **Per-call drill-through
+  (#3):** `InboundReport.gs::getCallJourney({callId, date, department})`
+  returns ONE call's journey by `(call_date, call_id)` for the "↳ path"
+  affordance on ABANDONED rings in the Missed Calls report + My Department
+  missed section (those 🚨 timestamps already carry the parent call id +
+  date). Unlike the full Inbound report (admin-only while vetted), this is
+  manager-reachable for the manager's OWN dept: managers are pinned to
+  their dept AND the query is scoped by the SAME `inboundDeptPredicate_`,
+  so a crafted call_id for another dept returns `found:false`; the journey
+  carries no caller identity. Client reuses the Caller Lookup renderers
+  (`clChainHtml_`/`clJourneyRowHtml_`) in a lightweight `#call-journey-overlay`.
+  There is NO sheet primary for this data: the "Inbound Calls" tab
   (`cdr-report/inboundCallsExport.js::exportInboundCalls`,
   refresh-in-window semantics) is a fallback COPY of Neon, not a
   source. History: editor-run `backfillInboundCalls` (cdr-import)

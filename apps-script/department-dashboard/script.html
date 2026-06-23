@@ -3341,7 +3341,7 @@
           return '<li class="' + cls + '">'
                +   '<span class="ring-date">'  + escapeHtml(dateLabel) + '</span>'
                +   '<span class="ring-agent">' + escapeHtml(r.agent)   + '</span>'
-               +   '<span class="ring-time">'  + escapeHtml(r.label) + siren + parentIdBadge(r.parentId)
+               +   '<span class="ring-time">'  + escapeHtml(r.label) + siren + parentIdBadge(r.parentId, r.date)
                +   '</span>'
                + '</li>';
         }).join('') + '</ul>';
@@ -3614,15 +3614,25 @@
   // abandoned timestamp. Pasting the parent ID into raw CDR search
   // is the manual verification step, so the copy button is worth
   // the extra DOM. Returns '' for falsy IDs (non-abandoned rows).
-  function parentIdBadge(parentId) {
+  function parentIdBadge(parentId, date) {
     if (!parentId) return '';
     const safe = escapeHtml(String(parentId));
+    // #3: "view path" affordance on abandoned rings -- the parent call id +
+    // date key inbound_calls for the leg-by-leg journey (getCallJourney).
+    const pathBtn = date
+      ? '<button type="button" class="pid-journey" '
+        +   'data-journey-pid="' + safe + '" '
+        +   'data-journey-date="' + escapeHtml(String(date)) + '" '
+        +   'title="View this call’s path (IVR → queues → agents)" '
+        +   'aria-label="View call path">↳ path</button>'
+      : '';
     return ' <span class="parent-id" title="Parent call ID">'
          +   '<span class="pid-num">#' + safe + '</span>'
          +   '<button type="button" class="pid-copy" '
          +     'data-pid="' + safe + '" '
          +     'aria-label="Copy parent ID ' + safe + '" '
          +     'title="Copy">📋</button>'
+         +   pathBtn
          + '</span>';
   }
 
@@ -3648,6 +3658,14 @@
     // Calls modal AND the My Department inline missed section (#9b). Strict
     // no-op unless the click lands on a .pid-copy badge.
     document.addEventListener('click', function (e) {
+      // #3: "↳ path" drill -> open the inbound-call journey for this parent id.
+      const jbtn = e.target.closest && e.target.closest('.pid-journey');
+      if (jbtn) {
+        e.preventDefault(); e.stopPropagation();
+        callJourneyShow_(jbtn.getAttribute('data-journey-pid') || '',
+                         jbtn.getAttribute('data-journey-date') || '');
+        return;
+      }
       const btn = e.target.closest && e.target.closest('.pid-copy');
       if (!btn) return;
       e.preventDefault();
@@ -3684,6 +3702,77 @@
     });
   }
 
+  // #3: inbound-call PATH drill-through. Opens a lightweight overlay showing
+  // the leg-by-leg journey for one abandoned call (keyed by parent id + date),
+  // reusing the Caller Lookup journey renderers (clChainHtml_/clJourneyRowHtml_).
+  function ensureCallJourneyOverlay_() {
+    var ov = $('call-journey-overlay');
+    if (ov) return ov;
+    ov = document.createElement('div');
+    ov.id = 'call-journey-overlay';
+    ov.className = 'cj-overlay';
+    ov.style.display = 'none';
+    ov.innerHTML = '<div class="cj-backdrop" data-cj-close></div>'
+      + '<div class="cj-panel" role="dialog" aria-modal="true" aria-label="Call path">'
+      +   '<button type="button" class="cj-close" data-cj-close aria-label="Close">&times;</button>'
+      +   '<div class="cj-title">Call path</div>'
+      +   '<div class="cj-body"></div>'
+      + '</div>';
+    document.body.appendChild(ov);
+    ov.addEventListener('click', function (e) {
+      if (e.target.hasAttribute('data-cj-close')) callJourneyHide_();
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && ov.style.display !== 'none') callJourneyHide_();
+    });
+    return ov;
+  }
+  function callJourneyHide_() {
+    var ov = $('call-journey-overlay');
+    if (ov) ov.style.display = 'none';
+  }
+  function callJourneyShow_(callId, date) {
+    if (!callId || !date) return;
+    var ov = ensureCallJourneyOverlay_();
+    var body = ov.querySelector('.cj-body');
+    ov.style.display = '';
+    body.innerHTML = dsRingsHtml_('Loading call path…');
+    google.script.run
+      .withSuccessHandler(function (resp) {
+        if (!resp || resp.available === false) {
+          body.innerHTML = '<div class="ds-note">Call path unavailable — the inbound-calls store (Neon) could not be reached.</div>';
+          return;
+        }
+        if (!resp.found || !resp.call) {
+          body.innerHTML = '<div class="ds-note">No inbound-call path on record for this call. It may predate inbound capture, or it isn’t an inbound call attributable to this department.</div>';
+          return;
+        }
+        body.innerHTML = callJourneyHtml_(resp.call);
+      })
+      .withFailureHandler(function (err) {
+        body.innerHTML = '<div class="status status-error">' + escapeHtml(err && err.message ? err.message : String(err)) + '</div>';
+      })
+      .getCallJourney({ callId: callId, date: date, department: getRequestedDept() });
+  }
+  // Mirrors the Caller Lookup card body: full chain + timeline when the
+  // journey was captured, else the entry->final summary for pre-extension rows.
+  function callJourneyHtml_(c) {
+    var head = '<div class="cj-head">'
+      + (c.callStart ? escapeHtml(c.callStart) + ' · ' : '')
+      + escapeHtml(c.callDate || '')
+      + (c.disposition ? ' · <strong>' + escapeHtml(c.disposition) + '</strong>' : '')
+      + (c.abandonStage ? ' (' + escapeHtml(c.abandonStage) + ')' : '')
+      + (c.dialIn ? ' · dial-in ' + escapeHtml(c.dialIn) : '')
+      + '</div>';
+    if (c.journey && c.journey.length) {
+      return head + clChainHtml_(c.journey)
+        + '<div class="cl-journey">' + c.journey.map(clJourneyRowHtml_).join('') + '</div>';
+    }
+    var path = [c.entryQueue, c.finalQueue].filter(Boolean).map(escapeHtml).join(' → ');
+    return head + '<div class="cl-journey-summary">' + (path || '(no queue path recorded)')
+      + ' <span class="cl-journey-note">— leg-by-leg detail not captured for this call (recorded before the journey extension)</span></div>';
+  }
+
   // -- Queue-only abandoned section --------------------------------------
   // Renders a banner + per-queue lists for abandoned calls that never
   // rang an agent (queue had no available agent). Hidden when empty.
@@ -3717,7 +3806,7 @@
         return '<li>'
              +   '<span class="ring-date">' + escapeHtml(dateLabel) + '</span>'
              +   '<span class="ring-time">' + escapeHtml(m.label)   + ' 🚨'
-             +     parentIdBadge(m.parentId)
+             +     parentIdBadge(m.parentId, m.date)
              +     alsoInBadge(m.alsoIn)
              +   '</span>'
              + '</li>';

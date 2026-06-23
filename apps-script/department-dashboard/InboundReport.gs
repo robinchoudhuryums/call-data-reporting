@@ -137,6 +137,72 @@ function inboundDeptPredicate_(dept, deptQueues) {
        + ' AND c.entry_queue IN (' + queueList + ')))';
 }
 
+/**
+ * Drill-through (#3): the inbound-call PATH (journey) for ONE call, keyed by
+ * (date, call_id). Powers the "↳ path" affordance on ABANDONED calls in the
+ * Missed Calls report + the My Department missed section (whose 🚨 timestamps
+ * already carry the parent call id). Returns { available, found, call } --
+ * available=false when Neon is unreachable, found=false when there's no
+ * matching row (the call predates inbound capture, or isn't an inbound call,
+ * or isn't attributable to this dept).
+ *
+ * AUTH: managers are pinned to their own dept; admins may pass a dept or omit
+ * it (company view). The query is ALSO scoped by the SAME dept-attribution
+ * predicate the Inbound report uses (`inboundDeptPredicate_`), so a manager
+ * can only pull journeys for calls attributable to THEIR dept -- a crafted
+ * call_id for another dept's call returns found=false. The journey carries no
+ * caller identity (no hash/number; phone-like callee names are masked at
+ * capture), so it's appropriate per-call operational detail for the dept's
+ * own abandoned call. NOT cached (single-row lookup, cheap). Reuses
+ * `callerLookupShapeCall_` (CallerLookup.gs) for the row shape.
+ *
+ * NOTE: unlike the full Inbound REPORT (temporarily admin-only while vetted),
+ * this per-call path detail is intentionally manager-reachable for the
+ * manager's OWN dept -- it's the drill target the user asked for from the
+ * Missed Calls views, and exposes no aggregate inbound data.
+ */
+function getCallJourney(req) {
+  req = req || {};
+  const user = resolveUser_(Session.getActiveUser().getEmail());
+  if (!user || user.role === 'none') throw new Error('Not authorized.');
+  const callId = String(req.callId || '').trim();
+  const date = String(req.date || '').trim();
+  if (!callId) throw new Error('Missing call id.');
+  if (!isIsoDate_(date)) throw new Error('date must be YYYY-MM-DD.');
+
+  let dept = String(req.department || '').trim();
+  if (user.role === 'manager') {
+    if (dept && dept !== user.department) throw new Error('Not authorized for this department.');
+    dept = user.department;
+  } else if (dept && dept !== 'ALL' && getAllDepartments_().indexOf(dept) === -1) {
+    throw new Error('Unknown department: ' + dept);
+  }
+  if (dept === 'ALL') dept = '';   // admin company view -> no dept scoping
+
+  const deptQueues = dept ? queuesForDept_(dept) : [];
+  const predicate = inboundDeptPredicate_(dept, deptQueues);   // '' for company view
+
+  const conn = getDashboardNeonConn_();
+  if (!conn) return { available: false, found: false };
+  try {
+    const sql = "SELECT to_jsonb(c)::text AS j FROM inbound_calls c "
+              + "WHERE c.call_date = ?::date AND c.call_id = ?" + predicate + " LIMIT 1";
+    const stmt = conn.prepareStatement(sql);
+    stmt.setString(1, date);
+    stmt.setString(2, callId);
+    const rs = stmt.executeQuery();
+    const json = rs.next() ? rs.getString('j') : '';
+    rs.close(); stmt.close();
+    if (!json) return { available: true, found: false };
+    return { available: true, found: true, call: callerLookupShapeCall_(JSON.parse(json)) };
+  } catch (e) {
+    Logger.log('getCallJourney failed: ' + (e && e.message ? e.message : e));
+    return { available: false, found: false };
+  } finally {
+    try { conn.close(); } catch (ce) {}
+  }
+}
+
 function getInboundReport(req) {
   const scope = inboundResolveRequest_(req);
 

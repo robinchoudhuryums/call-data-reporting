@@ -4908,6 +4908,22 @@
   .esc-resolve-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
   .esc-row-error { font-size: 12px; }
 
+  /* ── Call-path drill (#3) ────────────────────────────────────── */
+  .pid-journey { margin-left: 6px; font: 600 10px/1 var(--mono); letter-spacing: 0.04em;
+    cursor: pointer; border: 1px solid var(--line); background: var(--paper); color: var(--accent);
+    border-radius: var(--r); padding: 2px 5px; }
+  .pid-journey:hover { border-color: var(--accent); }
+  .cj-overlay { position: fixed; inset: 0; z-index: 250; display: flex; align-items: center; justify-content: center; }
+  .cj-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.45); }
+  .cj-panel { position: relative; background: var(--paper); color: var(--ink);
+    border: 1px solid var(--line); border-radius: var(--r-lg); box-shadow: var(--shadow-modal);
+    max-width: 560px; width: calc(100% - 40px); max-height: 80vh; overflow: auto; padding: 18px 20px; }
+  .cj-close { position: absolute; top: 8px; right: 10px; border: none; background: none;
+    font-size: 22px; line-height: 1; cursor: pointer; color: var(--muted); }
+  .cj-title { font: 600 11px/1 var(--mono); letter-spacing: 0.18em; text-transform: uppercase;
+    color: var(--muted); margin-bottom: 8px; }
+  .cj-head { font-size: 13px; margin-bottom: 10px; color: var(--ink); }
+
   /* ── View-as (admin manager preview) ─────────────────────────── */
   .view-as-ctl { display: inline-flex; align-items: center; gap: 6px;
     font: 600 10px/1 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
