@@ -2242,6 +2242,14 @@
               <option value="all">All</option>
             </select>
           </div>
+          <div class="ir-col esc-filter-col">
+            <label for="esc-filter">Filter</label>
+            <div class="esc-filter-wrap">
+              <input type="text" id="esc-filter" autocomplete="off" placeholder="patient / caller / Trx / reason">
+              <button class="link-btn esc-filter-clear" id="esc-filter-clear" type="button" title="Clear filter">&times;</button>
+            </div>
+            <span class="esc-filter-count" id="esc-filter-count" style="display:none;"></span>
+          </div>
           <div class="ir-col">
             <label>&nbsp;</label>
             <button class="btn btn-ghost" id="esc-refresh-btn" type="button">Refresh</button>
@@ -2254,7 +2262,7 @@
 
         <!-- Create form (admin-only), hidden until "+ New escalation". -->
         <div id="esc-create" class="ds-card esc-create" style="display:none;">
-          <div class="ds-kicker">Log a new escalation</div>
+          <div class="ds-kicker" id="esc-create-title">Log a new escalation</div>
           <div class="ir-form-grid">
             <div class="ir-col" id="esc-c-dept-col">
               <label for="esc-c-dept">Department</label>

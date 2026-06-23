@@ -5002,6 +5002,44 @@
   .esc-resolve-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
   .esc-row-error { font-size: 12px; }
 
+  /* §4 toolbar filter */
+  .esc-filter-wrap { position: relative; display: inline-flex; align-items: center; }
+  .esc-filter-wrap input { padding-right: 22px; }
+  .esc-filter-clear { position: absolute; right: 6px; border: 0; background: none; color: var(--muted);
+    cursor: pointer; font-size: 15px; line-height: 1; padding: 0; }
+  .esc-filter-clear:hover { color: var(--ink); }
+  .esc-filter-count { display: block; font: 400 11px var(--mono); color: var(--muted); margin-top: 3px; }
+
+  /* §3 admin edit affordance on pending cards */
+  .esc-pending-actions { margin-top: 8px; }
+
+  /* §2 reopen affordance on resolved cards */
+  .esc-reopen-wrap { margin-top: 8px; }
+  .esc-reopen { margin-top: 8px; padding-top: 10px; border-top: 1px solid var(--line);
+    display: flex; flex-direction: column; gap: 8px; }
+  .esc-reopen textarea { width: 100%; box-sizing: border-box; resize: vertical; margin-top: 4px; }
+
+  /* §5 activity trail (collapsible, append-only timeline) */
+  .esc-activity { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 6px; }
+  .esc-activity > summary { cursor: pointer; font: 600 11px/1 var(--mono); letter-spacing: 0.1em;
+    text-transform: uppercase; color: var(--muted); user-select: none; list-style: none; padding: 2px 0; }
+  .esc-activity > summary::-webkit-details-marker { display: none; }
+  .esc-activity > summary::before { content: '▸ '; color: var(--muted); }
+  .esc-activity[open] > summary::before { content: '▾ '; }
+  .esc-activity > summary:hover { color: var(--ink); }
+  .esc-activity-loading, .esc-activity-empty { font-size: 12px; color: var(--muted); padding: 6px 0; }
+  .esc-timeline { list-style: none; margin: 8px 0 2px; padding: 0; border-left: 2px solid var(--line); }
+  .esc-timeline-item { position: relative; padding: 4px 0 8px 14px; }
+  .esc-timeline-item::before { content: ''; position: absolute; left: -5px; top: 8px; width: 8px; height: 8px;
+    border-radius: 50%; background: var(--muted); }
+  .esc-timeline-resolved::before { background: var(--good); }
+  .esc-timeline-reopened::before { background: var(--warn); }
+  .esc-timeline-created::before  { background: var(--accent); }
+  .esc-timeline-head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+  .esc-timeline-action { font: 600 12px var(--ui); color: var(--ink); }
+  .esc-timeline-meta { font: 400 11px var(--mono); color: var(--muted); }
+  .esc-timeline-detail { font-size: 12px; color: var(--ink); margin-top: 2px; white-space: pre-wrap; }
+
   /* ── Call-path drill (#3) ────────────────────────────────────── */
   .pid-journey { margin-left: 6px; font: 600 10px/1 var(--mono); letter-spacing: 0.04em;
     cursor: pointer; border: 1px solid var(--line); background: var(--paper); color: var(--accent);
