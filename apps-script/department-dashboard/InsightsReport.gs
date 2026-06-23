@@ -78,7 +78,7 @@
 //     (from the bySource breakdown 4a added to computeQcdReport_), so
 //     the Queue health table can annotate WHERE a queue's abandons come
 //     from. Null when no sub-source has abandons.
-const INSIGHTS_CACHE_KEY_PREFIX = 'insights:v11';
+const INSIGHTS_CACHE_KEY_PREFIX = 'insights:v12';
 
 function getInsightsReportInit(req) {
   // Same picker UX (roster + default dates + active-in-range subset) as
@@ -222,8 +222,13 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
   // DST transitions; round absorbs it (floor truncated spring-forward).
   const currentDays = Math.round((endDate - startDate) / msPerDay) + 1;
   const priorDays   = Math.round((priorEndDate - priorStartDate) / msPerDay) + 1;
-  const lengthMismatch = (Math.min(currentDays, priorDays) > 0)
-    && (Math.max(currentDays, priorDays) / Math.min(currentDays, priorDays) >= 1.2);
+  // INV-35: flag on WORKING days (Mon-Fri), not calendar days, so equal-
+  // workday windows with a different weekend count aren't falsely flagged.
+  // currentDays/priorDays (calendar) are kept for display/per-day sublines.
+  const currentWorkDays = countWorkingDays_(from, to);
+  const priorWorkDays   = countWorkingDays_(priorFrom, priorTo);
+  const lengthMismatch = (Math.min(currentWorkDays, priorWorkDays) > 0)
+    && (Math.max(currentWorkDays, priorWorkDays) / Math.min(currentWorkDays, priorWorkDays) >= 1.2);
 
   // --- Trend window (INV-29; shared helper in Util.gs keeps IR/PR/
   // Insights/QCD aligned) -------------------------------------------

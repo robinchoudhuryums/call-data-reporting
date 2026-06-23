@@ -242,10 +242,10 @@ canonical and reflects current code.
 | Missed Calls Report | `MissedCallsReport.gs` | `getMissedCallsReport` | `missed:v11:` | no |
 | Individual / Peer Comparison | `IndividualReport.gs` | `getIndividualReportInit`, `getIndividualReport`, `sendIndividualReportEmail` | `individual:v8:`, `individual_active:v2:` | no |
 | Performance Report (current vs prior) | `PerformanceReport.gs` | `getPerformanceReportInit` (delegates to Individual's init), `getPerformanceReport`, `sendPerformanceReportEmail` | `performance:v4:` | no |
-| Compare Ranges (two arbitrary ranges) | `CompareRangesReport.gs` | `getCompareRangesInit`, `getCompareRanges`, `sendCompareRangesEmail` | `compareRanges:v5:` | no |
+| Compare Ranges (two arbitrary ranges) | `CompareRangesReport.gs` | `getCompareRangesInit`, `getCompareRanges`, `sendCompareRangesEmail` | `compareRanges:v6:` | no |
 | Company Overview | `CompanyOverview.gs` | `getCompanyOverview` | `companyOverview:v17` | partial (admin-only `companyAggregate`, `pipelineFreshness`, `orphanNag`, `unmappedQcd` fields) |
 | QCD Report | `QCDReport.gs` | `getQcdReportInit`, `getQcdReport`, `sendQcdReportEmail` | `qcd:v9:` | no (per-dept gate like IR/PR/CR) |
-| Insights Report (period comparison: team rollup + per-agent cards) | `InsightsReport.gs` | `getInsightsReportInit`, `getInsightsReport`, `sendInsightsReportEmail` | `insights:v11:` | no (per-dept gate like IR/PR/CR) |
+| Insights Report (period comparison: team rollup + per-agent cards) | `InsightsReport.gs` | `getInsightsReportInit`, `getInsightsReport`, `sendInsightsReportEmail` | `insights:v12:` | no (per-dept gate like IR/PR/CR) |
 | Inbound Report (per-call inbound view from Neon `inbound_calls`) | `InboundReport.gs` | `getInboundReport`, `getInboundInsurerDaily` | `inbound:v3:` | no (per-dept gate; admins also get the company-wide view incl. the IVR bucket) |
 | Low Answer Rate Alerts | `Alerts.gs` | `getAlertsInit`, `previewAlerts`, `sendAlerts`, `installAlertTrigger`, `uninstallAlertTrigger` (+ `runDailyAlerts_` time trigger) | (no cache) | yes |
 | Manager Digest engine | `Digest.gs` | `getDigestsInit`, `sendPreviewDigest`, `installDigestTriggers`, `uninstallDigestTriggers` (+ `runDailyDigests_`, `runWeeklyDigests_` time triggers) | (no cache) | yes |

@@ -102,3 +102,20 @@ test('assertAdmin_ throws for non-admins, passes for admins', function () {
   h.state.userEmail = 'admin@x.com';
   assert.doesNotThrow(function () { h.call('assertAdmin_'); });
 });
+
+test('countWorkingDays_ counts Mon-Fri inclusive (INV-35 working-day mismatch)', function () {
+  // A single Mon-Fri week = 5 workdays.
+  assert.equal(h.call('countWorkingDays_', '2026-03-02', '2026-03-06'), 5);
+  // Mon..next Mon spans a weekend = 6 workdays (the 1.2x partner of 5).
+  assert.equal(h.call('countWorkingDays_', '2026-04-06', '2026-04-13'), 6);
+  // 10 calendar days (Fri..Sun, 2 weekends) and 8 calendar days (Mon..Mon,
+  // 1 weekend) are BOTH 6 workdays -- the equal-workday case that must NOT
+  // read as a mismatch despite the 1.25x calendar ratio.
+  assert.equal(h.call('countWorkingDays_', '2026-03-06', '2026-03-15'), 6);
+  assert.equal(h.call('countWorkingDays_', '2026-03-09', '2026-03-16'), 6);
+  // A single weekend = 0 workdays; empty/garbage input = 0 (guards the divide).
+  assert.equal(h.call('countWorkingDays_', '2026-03-07', '2026-03-08'), 0);
+  assert.equal(h.call('countWorkingDays_', '', ''), 0);
+  // Reversed args are tolerated (normalized).
+  assert.equal(h.call('countWorkingDays_', '2026-03-06', '2026-03-02'), 5);
+});

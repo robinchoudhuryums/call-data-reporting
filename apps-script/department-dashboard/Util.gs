@@ -140,6 +140,34 @@ function computeTrendStartDate_(startDate, endDate) {
 
 // -- Numeric (was Alerts.gs) -----------------------------------------------
 
+/**
+ * Counts WORKING days (Mon-Fri) in [fromIso, toIso] inclusive. Used by the
+ * Compare Ranges / Insights length-mismatch flag (INV-35) so two windows
+ * with the same number of workdays but a different number of calendar days
+ * (e.g. 10 calendar days spanning 2 weekends vs 8 spanning 1) are NOT
+ * falsely flagged as mismatched. Weekends only for now -- holidays are a
+ * follow-on (no global holiday source exists yet; the per-dept Alert Config
+ * `Skip Dates` is the candidate seed). UTC-noon iteration is DST-safe
+ * (mirrors computePriorWindow_). ISO strings 'YYYY-MM-DD'; returns 0 on
+ * empty input or an all-weekend window.
+ */
+function countWorkingDays_(fromIso, toIso) {
+  if (!fromIso || !toIso) return 0;
+  const f = String(fromIso).split('-');
+  const t = String(toIso).split('-');
+  let ms  = Date.UTC(Number(f[0]), Number(f[1]) - 1, Number(f[2]), 12);
+  let end = Date.UTC(Number(t[0]), Number(t[1]) - 1, Number(t[2]), 12);
+  if (isNaN(ms) || isNaN(end)) return 0;
+  if (end < ms) { const tmp = ms; ms = end; end = tmp; }
+  const dayMs = 86400000;
+  let count = 0;
+  for (let cur = ms; cur <= end; cur += dayMs) {
+    const dow = new Date(cur).getUTCDay();   // 0=Sun .. 6=Sat
+    if (dow !== 0 && dow !== 6) count++;
+  }
+  return count;
+}
+
 function round1_(n) { return Math.round((Number(n) || 0) * 10) / 10; }
 
 function escapeHtmlServer_(s) {

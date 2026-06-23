@@ -45,7 +45,7 @@
 // team accumulators (teamP1 / teamP2) gated on matchedViaRoster so
 // floaters appear in agentData but don't dilute dept totals.
 // agentData filtered to drop crafted off-dept names.
-const COMPARE_RANGES_CACHE_KEY_PREFIX = 'compareRanges:v5';
+const COMPARE_RANGES_CACHE_KEY_PREFIX = 'compareRanges:v6';
 
 function getCompareRangesInit(req) {
   const email = Session.getActiveUser().getEmail();
@@ -447,13 +447,16 @@ function computeCompareRanges_(dept, selectedAgents,
   // 1-30). Round absorbs the ±1/24 wobble in both directions.
   const p1Days = Math.round((parseIso_(p1To) - parseIso_(p1From)) / msPerDay) + 1;
   const p2Days = Math.round((parseIso_(p2To) - parseIso_(p2From)) / msPerDay) + 1;
-  // `Math.min(...) > 0` guards the divide; inputs are already
-  // validated above to ensure from <= to, so p1Days/p2Days are
-  // always >= 1 in practice -- this is belt-and-suspenders for the
-  // empty-state shape (emptyCompareRanges_ returns p1Days:0
-  // p2Days:0) which sets lengthMismatch:false correctly.
-  const lengthMismatch = (Math.min(p1Days, p2Days) > 0)
-    && (Math.max(p1Days, p2Days) / Math.min(p1Days, p2Days) >= 1.2);
+  // INV-35: the mismatch flag compares WORKING days (Mon-Fri), not calendar
+  // days, so two windows with equal workdays but a different weekend count
+  // (e.g. 10 calendar days / 2 weekends vs 8 / 1 weekend, both ~6 workdays)
+  // are NOT falsely flagged as mismatched. p1Days/p2Days (calendar) are kept
+  // for the per-day captions/CSV. `Math.min(...) > 0` guards the divide
+  // (an all-weekend or empty window has 0 workdays -> flag false).
+  const p1WorkDays = countWorkingDays_(p1From, p1To);
+  const p2WorkDays = countWorkingDays_(p2From, p2To);
+  const lengthMismatch = (Math.min(p1WorkDays, p2WorkDays) > 0)
+    && (Math.max(p1WorkDays, p2WorkDays) / Math.min(p1WorkDays, p2WorkDays) >= 1.2);
 
   // On a length mismatch, drop the raw cumulative-volume insights
   // (answered/missed counts) -- not comparable across periods of different
