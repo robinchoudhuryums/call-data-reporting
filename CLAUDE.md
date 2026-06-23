@@ -271,6 +271,20 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   intentionally NOT in CSVs; raw current-window values only.
   Floaters get chips too -- the chip is a per-agent comparison,
   independent of the INV-53 team-avg floater-exclusion gate.
+- **Missed-card ordering + severity tiers (Phase 15, commit
+  77441a7).** `missedAgentsHtml_` (the SHARED builder for the
+  per-agent missed-call cards, used by both the Missed Calls modal
+  and the My Department inline missed section) sorts agents
+  **most-missed first** (stable tiebreak by name) and tags each
+  card with a cohort-RELATIVE severity tier: **Most missed** (warn
+  left-rail + chip), **Moderate** (neutral), **Fewest** (sage).
+  Cutoffs are tertiles of the missed totals among the agents shown
+  (`missedQuantile_`), NOT an absolute standard -- there is no
+  company benchmark for per-agent missed counts. Tiering is GATED
+  OFF for low-signal cohorts (fewer than 3 agents, or a max total
+  under 3 missed) so a 1-missed agent is never branded worst; in
+  that case cards render sorted but untiered. Styles
+  (`.agent-tier`, `.agent-card--tier-*`) live in `styles.html`.
 - **Threshold-drift surface (E10, commit b3a5a51).** The Alerts
   modal config table renders a "Last 30 days" chip per dept
   summarizing the most-recent daily-trigger entries from the
@@ -640,12 +654,16 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   on first paint); wired at the end of `ovRender_` (scope `overview`, so the
   SWR cache->live swap pulses only what moved) and the My-Department
   `render()` (scope `dept:<dept>`, keyed on the answered/missed bar cell). (2)
-  **A1 Insights triage** -- when any agent is regressed, `insRenderAgentCards_`
-  stable-partitions a COPY of `sortedMain` (never `insLastData.agentData`, so
-  the Cards<->Chart toggle is unaffected) into "Needs attention" (regressed)
-  then "On track" group headers (`insTriageHeader_`, full-width grid items) +
-  an A2 rail legend (`insTriageLegend_`); the existing quiet `<details>` stays
-  the 3rd tier. (3) **Loaders** -- `dsRingsHtml_` (`.ds-loader--rings`) in
+  **A1 Insights triage** -- whenever more than one card is shown,
+  `insRenderAgentCards_` stable-partitions a COPY of `sortedMain` (never
+  `insLastData.agentData`, so the Cards<->Chart toggle is unaffected) by
+  direction-of-change into "Needs attention" (regressed) / "Mixed" /
+  "Improving" tier headers (`insTriageHeader_`, full-width grid items, tones
+  warn/muted/good) -- a header renders before each NON-EMPTY tier + an A2 rail
+  legend (`insTriageLegend_`); the existing quiet `<details>` stays the bottom
+  tier. (Phase 15 made this ALWAYS-ON; it previously rendered the grouping
+  only when at least one agent was regressed, so a healthy cohort showed a
+  flat ungrouped grid.) (3) **Loaders** -- `dsRingsHtml_` (`.ds-loader--rings`) in
   Caller Lookup's `cl-loading` state; the honest single `.ds-loader--staged`
   bar (one label, no faked stages) on the Overview boot pane. (4) **Overview
   retry** -- a "Retry now" button on the `ovSetRefreshWarn_` banner re-runs
@@ -1082,24 +1100,34 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `individual_active:`, `performance:`, `compareRanges:`, `missed:`,
   `companyOverview:`); bump the relevant version on any aggregation-rule
   change. See INV-30 for current versions.
-- **Scope is locked to `both` (Phase D + redesign cleanup,
-  commits d631719 + 53d0560).** Pre-Phase-D the dashboard
+- **Scope is locked to `roster` (Phase D → redesign cleanup →
+  Phase 14/15 roster-only flip).** Pre-Phase-D the dashboard
   shipped a `roster | queue | both` segmented control with
   `roster` default (matching the legacy DQE Report's behavior);
   Phase D flipped the default to `both` and Source-chip-tagged
   queue-only floaters so managers could see who handled their
   queue without polluting totals (INV-53). The toggle was
   retained for parallel-run validation through Phases D / D+1
-  / E, then retired in the redesign cleanup once the new
-  semantics proved out. `Data.gs::getDepartmentSummary` and
-  `MissedCallsReport.gs::getMissedCallsReport` hardcode scope
-  to `both` before passing to internal compute helpers. **The
-  internal `computeSummary_(dept, from, to, scope)` arg is
-  preserved** because `Digest.gs::renderDeptDigestEmail_` still
-  passes `'roster'` for the manager-digest path -- managers
-  read a roster-only view in their email. New callers should
-  pass `'both'` unless they have a specific reason to scope
-  narrower.
+  / E, then retired in the redesign cleanup. **In production the
+  shared-queue-overlap match proved to be mostly false positives**
+  (agents who never actually handled the dept's calls), and
+  genuine cross-dept assist is rare, so both public RPCs were
+  flipped back to roster-only: `Data.gs::getDepartmentSummary`
+  (commit 80e17da, the My Department agent table) and
+  `MissedCallsReport.gs::getMissedCallsReport` (commit 77441a7,
+  the per-agent missed-call timelines) now hardcode
+  `scope = 'roster'`. So the My-Dept table + Missed report
+  timelines list ONLY the dept's `DO NOT EDIT!` roster agents;
+  QUEUE-chipped floaters no longer appear there. **The Missed
+  report's queue-only ABANDONED section is unaffected** -- queue-
+  sentinel rows are always included by `computeMissedCallsReport_`
+  regardless of scope (INV-23), so genuinely-abandoned no-ring
+  queue calls still surface. **The internal
+  `computeSummary_(dept, from, to, scope)` arg is preserved** --
+  `Digest.gs::renderDeptDigestEmail_` also passes `'roster'`, and
+  a caller wanting the legacy floater-inclusive view can still
+  pass `'both'`. `scope` is in every cache key, so the flip can't
+  serve stale rows.
 - **DQE Report Legacy is FROZEN and the migration is COMPLETE.** All four
   legacy reports (Individual / Performance / Compare Ranges / Missed
   Calls) plus the Low Answer Rate Alerts engine are in the dashboard.
@@ -1271,7 +1299,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `sourceChipHtml_` / `sourceChipCsv_` (script.html) array-check
   defensively and fall back to bare `QUEUE` if the field is missing.
   **Totals row sums only `matchedViaRoster=true` rows** -- queue-only
-  floaters appear in the table but never factor into dept averages.
+  floaters never factor into dept averages.
   Totals object carries `rosterAgentCount` + `queueOnlyAgentCount`;
   the tfoot first-cell renders 'Total (roster only · N floaters
   excluded)' when `queueOnlyAgentCount > 0`. CSV export uses the
@@ -1279,6 +1307,15 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   INV-04 (exact agent-name match) and INV-23 (queue-sentinel `A_Q_*`
   rows skipped) are both preserved. See INV-53 for the
   floater-exclusion contract spanning all dept-level aggregations.
+  **NOTE (Phase 14, commit 80e17da):** `getDepartmentSummary` now
+  scopes to `roster` (see the "Scope is locked to `roster`" decision
+  above), so queue-only floaters no longer appear as rows in the
+  My-Dept table at all and the QUEUE Source chip never renders here
+  in practice -- `queueOnlyAgentCount` is 0 and the "N floaters
+  excluded" caption stays hidden. The Source column still renders
+  ROSTER / BOTH chips, and the chip helpers + `sourceHomes`
+  machinery survive for the IR/PR/CR pickers (which DO still surface
+  floaters in a separate picker group, INV-53) and Diagnostics.
 - **Phase E UI surfaces.** Four small affordances landed in commit
   94bbca9, each with a documented data dependency: (1) **work-window
   pill** on My Department (`#work-window-pill`) reads

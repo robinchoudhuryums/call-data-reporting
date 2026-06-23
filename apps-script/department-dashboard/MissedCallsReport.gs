@@ -60,15 +60,18 @@ function getMissedCallsReport(req) {
   }
   if (from > to) throw new Error('from must be on or before to.');
 
-  // Scope: locked to 'both' alongside the My Department agent
-  // table (Phase D scope-toggle removal). Floaters (queue-only
-  // matches) now surface in the per-agent missed-calls section
-  // when they handled the dept's queue extensions -- matches the
-  // Phase D rationale that floater activity on the dept's queue
-  // is genuinely the dept's concern. Internal scope plumbing
-  // below is preserved as dead-but-harmless code in case a
-  // future caller wants the legacy 'roster'-only view.
-  const scope = 'both';
+  // Scope: 'roster' so the per-agent missed-calls TIMELINES list
+  // exactly the dept's roster agents -- matching the My Department
+  // "Agent Call Metrics" table, which Phase 14 #4 made roster-only
+  // (getDepartmentSummary scope='roster'). Cross-dept floaters who
+  // never genuinely take the dept's calls were showing up as
+  // false-positive missed-call cards otherwise. The QUEUE-ONLY
+  // abandoned section is UNAFFECTED: queue-sentinel rows are
+  // always included (computeMissedCallsReport_ keys them on
+  // inQueue regardless of scope, INV-23), so genuinely-abandoned
+  // queue calls with no agent ring still surface. The internal
+  // scope plumbing below honors this value directly.
+  const scope = 'roster';
 
   const cache = CacheService.getScriptCache();
   // v10: per-entry parentId attached to each abandoned timestamp;

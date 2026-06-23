@@ -205,9 +205,9 @@ exist internally:
 
 | Scope | Rule |
 |---|---|
-| **Roster** | Include rows where `Agent Name ∈ dept_roster_names` |
+| **Roster** (production) | Include rows where `Agent Name ∈ dept_roster_names` |
 | **Queue** | Include rows where `row.queueExtensions ∩ dept_queue_extensions ≠ ∅` |
-| **Both** (production) | Union of the two |
+| **Both** | Union of the two |
 
 `dept_queue_extensions` is the effective queue-ext set for the dept
 (`getDeptQueueExts_` in Data.gs: the Dept Config / constant override
@@ -215,16 +215,25 @@ when set, else derived from the dept's roster agents' col-D values
 across all history).
 
 **The user-facing scope toggle was retired in the redesign cleanup
-(commit 53d0560)** after the Phase D parallel-run validation: the
-public RPCs (`getDepartmentSummary`, `getMissedCallsReport`) lock
-scope to `both`. Rows matched via Queue but not via Roster render a
-`QUEUE` Source chip (with their other-dept roster homes) and are
-excluded from dept totals and team averages (INV-53); they also
-appear in the Diagnostics panel under "Agents matched only via
-queue". The internal `scope` parameter on `computeSummary_` is
-preserved because `Digest.gs` still passes `'roster'` for the
-manager-digest path; historical roster-only numbers are reproducible
-from a `both` response by summing only `matchedViaRoster=true` rows.
+(commit 53d0560)** after the Phase D parallel-run validation. The
+production scope was then flipped back to `roster`: the
+shared-queue-overlap match proved to be mostly false positives in
+production (agents who never actually handled the dept's calls), and
+genuine cross-dept assist is rare. Both public RPCs now lock scope
+to `roster` -- `getDepartmentSummary` (commit 80e17da, My Dept agent
+table) and `getMissedCallsReport` (commit 77441a7, per-agent missed
+timelines). So those surfaces list ONLY the dept's roster agents;
+queue-only floaters no longer appear there (no `QUEUE` Source chip in
+the My-Dept table in practice). **The Missed report's queue-only
+ABANDONED section is preserved separately** -- queue-sentinel rows
+are always included by `computeMissedCallsReport_` regardless of
+scope (INV-23). The IR/PR/CR reports DO still surface floaters in a
+dedicated picker group (INV-53), and they remain in the Diagnostics
+panel under "Agents matched only via queue". The internal `scope`
+parameter on `computeSummary_` is preserved (`Digest.gs` also passes
+`'roster'`); the floater-exclusion contract is scope-independent, so
+historical roster-only numbers equal a `both` response filtered to
+`matchedViaRoster=true` rows.
 
 ## Auth and access
 

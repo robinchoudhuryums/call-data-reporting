@@ -1645,6 +1645,31 @@
     padding: 20px;
   }
 
+  /* Phase 15: relative severity tier on per-agent missed cards. A left
+     border-rail tints the card by cohort tier (most-missed = warn,
+     fewest = sage) + a small chip in the card head names the tier. */
+  .agent-card { border-left-width: 1px; }
+  .agent-card--tier-high { border-left: 3px solid var(--warn); }
+  .agent-card--tier-med  { border-left: 3px solid var(--line); }
+  .agent-card--tier-low  { border-left: 3px solid var(--good); }
+  .agent-card-meta {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 8px;
+  }
+  .agent-tier {
+    font-family: var(--mono);
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    padding: 1px 6px;
+    border-radius: 999px;
+    white-space: nowrap;
+  }
+  .agent-tier--high { background: var(--warn-soft); color: var(--warn); }
+  .agent-tier--med  { background: var(--paper-2);   color: var(--muted); }
+  .agent-tier--low  { background: var(--good-soft); color: var(--good); }
+
   /* Collapsible Missed cards: the queue-only card and each per-agent
      timeline card are <details>, so managers can fold the timestamp
      lists away. A custom caret replaces the native disclosure triangle. */
@@ -2760,6 +2785,7 @@
   .ins-group-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
   .ins-group-head--warn .ins-group-dot { background: var(--warn); }
   .ins-group-head--good .ins-group-dot { background: var(--good); }
+  .ins-group-head--muted .ins-group-dot { background: var(--muted); }
   .ins-group-count {
     font: 500 11px var(--mono); color: var(--muted);
     background: var(--paper-2); border-radius: var(--r-pill); padding: 1px 8px;

@@ -200,8 +200,9 @@ function getDepartmentSummary(req) {
   // actually handled this dept's queue calls -- and cross-dept assist is rare
   // enough that the operator chose to show ONLY agents on this dept's
   // `DO NOT EDIT!` roster. `computeSummary_` still accepts a scope arg
-  // (Digest.gs uses 'roster' too; the Missed report still passes 'both' for
-  // its queue-only abandoned section). The Source column then only ever shows
+  // (Digest.gs uses 'roster' too; the Missed report also passes 'roster' now
+  // -- its queue-only abandoned section is preserved separately via
+  // always-included queue-sentinel rows, INV-23). The Source column then only ever shows
   // ROSTER / BOTH (no QUEUE floaters). `scope` is in the cache key, so this
   // flip can't serve stale 'both' rows.
   const scope = 'roster';
