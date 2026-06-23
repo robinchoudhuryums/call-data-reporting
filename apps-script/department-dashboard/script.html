@@ -3861,7 +3861,7 @@
         const siren = m.abandoned ? ' 🚨' : '';
         return '<li class="' + cls + '">'
              +   dateLabel + escapeHtml(m.label) + siren
-             +   parentIdBadge(m.parentId)
+             +   parentIdBadge(m.parentId, m.date)
              + '</li>';
       }).join('');
 

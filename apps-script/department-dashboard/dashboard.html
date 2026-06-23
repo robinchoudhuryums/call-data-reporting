@@ -258,18 +258,14 @@
         </div>
       </div>
 
-      <!-- Queue Call Data: per-queue daily roll-up for the dept, sitting
-           directly above the agent table (below the date controls). Same
-           data, ID, and render path as before -- only its DOM position
-           moved. -->
-      <div id="dept-qcd-snapshot" class="dept-qcd-snapshot" style="display:none; margin-top:16px;">
-        <div class="dept-qcd-header">
-          <strong id="dept-qcd-title">Queue Call Data</strong>
-          <span class="dept-qcd-date" id="dept-qcd-date"></span>
-          <span class="dept-qcd-hint">Daily roll-up across this dept's mapped queues from <code>QCD Historical Data</code>. For a date range, use Reports → QCD Report.</span>
-        </div>
-        <div class="dept-qcd-tiles" id="dept-qcd-tiles"></div>
-      </div>
+      <!-- #5: two-column layout. The main report column (Queue Call Data is
+           rendered as a STICKY side-card on the right for wide screens so it
+           stays visible while scrolling the agent table / Missed section;
+           collapses to a single column with the QCD card stacked ABOVE the
+           table on narrow screens). All element IDs are unchanged -- only the
+           DOM position of #dept-qcd-snapshot moved into the aside below. -->
+      <div class="dept-layout">
+      <div class="dept-main">
 
       <div id="status" class="status" style="display:none;"></div>
 
@@ -366,6 +362,20 @@
         <summary>Diagnostics <span id="diag-count" class="diag-count"></span></summary>
         <div id="diag-content"></div>
       </details>
+
+      </div><!-- /.dept-main -->
+
+      <aside class="dept-side">
+        <div id="dept-qcd-snapshot" class="dept-qcd-snapshot" style="display:none;">
+          <div class="dept-qcd-header">
+            <strong id="dept-qcd-title">Queue Call Data</strong>
+            <span class="dept-qcd-date" id="dept-qcd-date"></span>
+            <span class="dept-qcd-hint">Daily roll-up across this dept's mapped queues from <code>QCD Historical Data</code>. For a date range, use Reports → QCD Report.</span>
+          </div>
+          <div class="dept-qcd-tiles" id="dept-qcd-tiles"></div>
+        </div>
+      </aside>
+      </div><!-- /.dept-layout -->
     </section>
   </div>
 
