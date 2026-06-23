@@ -115,6 +115,31 @@ function getDQEDrilldownRows(params) {
   var data     = rawSheet.getRange(2, 1, lastRow - 1, 26).getDisplayValues();
   var timeVals = rawSheet.getRange(2, 7, lastRow - 1, 2).getDisplayValues();
 
+  // F24: the DQE row's Agent Name (col C) is the CANONICAL roster form -- the
+  // pipeline rewrites paren-variants / aliases before writing (INV-24). Raw
+  // Data col L (callee name) is NOT canonicalized, so a raw exact-match here
+  // ("Roman Paulose" vs the canonical "Roman (Robin) Paulose", or any aliased
+  // name) returned "no matching rows" / undercounted talk time -- defeating
+  // the verification tool for exactly the agents most likely to be checked.
+  // Reuse the pipeline's own roster map (alias > exact-roster > single
+  // paren-strip) so the drill-down matches on the same canonical form the
+  // build wrote. Best-effort: loadRosterCanonicalNames_ returns empty maps if
+  // the roster sheet is missing, making canonicalize_ an identity no-op
+  // (behavior unchanged from before this fix).
+  var ROSTER_CANONICAL = loadRosterCanonicalNames_(rawSheet);
+  function canonicalize_(rawName) {
+    if (!rawName) return rawName;
+    if (ROSTER_CANONICAL.aliasMap && ROSTER_CANONICAL.aliasMap[rawName]) {
+      return ROSTER_CANONICAL.aliasMap[rawName];
+    }
+    if (ROSTER_CANONICAL.canonicalSet[rawName]) return rawName;
+    var stripped = String(rawName).replace(/\([^)]*\)/g, '').replace(/\s+/g, ' ').trim();
+    if (!stripped) return rawName;
+    var matches = ROSTER_CANONICAL.strippedMap[stripped];
+    if (matches && matches.length === 1) return matches[0];
+    return rawName;
+  }
+
   var metricType = columnToMetric(column);
   if (!metricType) return { error: 'This column is not drillable.' };
 
@@ -133,7 +158,7 @@ function getDQEDrilldownRows(params) {
     var ptalk      = timeToSecLocal(timeVals[p] ? timeVals[p][0] : '');
     var pcall      = timeToSecLocal(timeVals[p] ? timeVals[p][1] : '');
     var pabn       = String(data[p][24]).trim() === 'Abandoned';
-    var pCalleeNm  = String(data[p][11]).trim();
+    var pCalleeNm  = canonicalize_(String(data[p][11]).trim());   // F24: match canonical roster form
     if (!parentMap[pcid]) parentMap[pcid] = { legs: [], abandoned: false };
     parentMap[pcid].legs.push({ legId: plid, talkSec: ptalk, callSec: pcall, calleeName: pCalleeNm });
     if (pabn) parentMap[pcid].abandoned = true;
@@ -174,7 +199,7 @@ function getDQEDrilldownRows(params) {
     var rowDateStr = String(row[2]).trim().split(' ')[0];
     if (rowDateStr !== dateStr) continue;
 
-    var rowAgent = String(row[11]).trim();
+    var rowAgent = canonicalize_(String(row[11]).trim());   // F24: match canonical roster form
     if (rowAgent !== agentName) continue;
 
     var partial = buildRowEntry(row, timeVals[i], i);

@@ -1,5 +1,18 @@
 # Cycle State — resume note
 
+## Latest session (broad-implement: F1–F4, F10, F24)
+Branch `claude/brave-dijkstra-wuonrv`. Implemented six broad-scan findings; 134/134 tests pass, INV-16 in sync.
+- **F1** InsightsReport.gs: `meta.rosterAgentCount` now = roster members ACTIVE in the current window (INV-27), not all selected roster. `queueOnlyAgentCount` derived independently. Cache bumped `insights:v9`→`v10` (+ doc sync in CLAUDE.md/known-issues/conventions/architecture). New regression test added.
+- **F2** buildDQEHistoricalData.js (BOTH copies, byte-identical) + autoImport.js: build refuses to write when `opts.expectedDate` (the importer's date) ≠ Raw-Data-derived date; daily + bulk call sites pass `expectedDate: dateObj`. Standalone trigger unaffected (no opts).
+- **F3** NeonMirror.js: deferred DQE mirror now routes abandoned cols 29-31 through a local byte-identical `sanitizeAbandonedCellForNeon_` (+ `#REBUILD` sentinel) — matches neonbackfill.js.
+- **F4** Alerts.gs + script.html: invalid-threshold dept rows no longer silently dropped — flagged `invalidThreshold`, logged as `error` Alert Log rows, drift-skipped, and shown as "⚠ invalid" in the modal config table.
+- **F10** script.html: shared `reportReqSeq` stale-response guard on all 6 IR/PR/CR/Insights fetch sites (button always resets; render skipped if superseded).
+- **F24** DQEdrilldown.js: drill-down canonicalizes Raw Data col-L names via `loadRosterCanonicalNames_` before matching the canonical DQE agent name.
+Deploy: Department Dashboard (F1/F4/F10) + cdr-import (F2/F3) + cdr-report (F2/F24). No blocking operator actions; insights cache self-heals on deploy.
+
+---
+
+
 **Branch:** `claude/dazzling-heisenberg-2png1z` · working tree has uncommitted design Phase 1 changes
 **Verify on resume:** `node --test` (132 pass) + `bash scripts/check-duplicated-files.sh` (INV-16 in sync)
 

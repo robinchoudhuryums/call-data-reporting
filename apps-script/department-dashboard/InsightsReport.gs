@@ -78,7 +78,7 @@
 //     (from the bySource breakdown 4a added to computeQcdReport_), so
 //     the Queue health table can annotate WHERE a queue's abandons come
 //     from. Null when no sub-source has abandons.
-const INSIGHTS_CACHE_KEY_PREFIX = 'insights:v9';
+const INSIGHTS_CACHE_KEY_PREFIX = 'insights:v10';
 
 function getInsightsReportInit(req) {
   // Same picker UX (roster + default dates + active-in-range subset) as
@@ -315,6 +315,13 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
   // trend chart's Daily view; the Monthly view uses monthlyTeam). Roster-
   // gated like teamCurr so floaters don't dilute it (INV-53).
   const dailyTeam = {};   // iso -> blank()
+  // Roster members with ANY activity in the CURRENT window. This is the
+  // team-average divisor the client uses (team-total / rosterAgentCount).
+  // Matches the Individual Report's active-agent denominator (INV-27) so
+  // the two reports compute the same per-agent baseline for identical
+  // inputs -- counting all SELECTED roster members (incl. zero-activity
+  // ones) understated the baseline (F1).
+  const activeRosterCurr = {};   // agent -> true
 
   for (let i = 0; i < srcRows.length; i++) {
     const row = srcRows[i];
@@ -356,6 +363,7 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
       if (isRoster) {
         teamCurr.rung += rung; teamCurr.missed += missed; teamCurr.answered += answered;
         teamCurr.ttt += tttSec; teamCurr.att_sum += attTotal;
+        if (rung || missed || answered) activeRosterCurr[agent] = true;
         var db = dailyTeam[dateIso] || (dailyTeam[dateIso] = blank());
         db.rung += rung; db.missed += missed; db.answered += answered;
         db.ttt += tttSec; db.att_sum += attTotal;
@@ -477,7 +485,11 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
   });
 
   const fmt = function (d) { return Utilities.formatDate(d, TZ, 'MMM d, yyyy'); };
-  const rosterCount = visibleAgents.filter(function (a) { return agentMatchedViaRoster[a]; }).length;
+  // Selected roster survivors -- used ONLY to derive the floater count.
+  const selectedRosterCount = visibleAgents.filter(function (a) { return agentMatchedViaRoster[a]; }).length;
+  // Team-average divisor: roster members with activity in the current
+  // window (INV-27 / F1), not all selected roster members.
+  const activeRosterCount = Object.keys(activeRosterCurr).length;
   return {
     meta: {
       department: dept,
@@ -489,8 +501,8 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
       trendStart: trendFrom, trendEnd: trendTo,
       agents: selectedAgents,
       rosterSize: roster.names.length,
-      rosterAgentCount: rosterCount,
-      queueOnlyAgentCount: visibleAgents.length - rosterCount,
+      rosterAgentCount: activeRosterCount,
+      queueOnlyAgentCount: visibleAgents.length - selectedRosterCount,
       generatedAt: new Date().toISOString(),
     },
     dateLabel:      fmt(startDate)      + ' - ' + fmt(endDate),

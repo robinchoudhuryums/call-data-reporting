@@ -97,6 +97,22 @@ test('Insights INV-53: floater appears as a card but is excluded from the team r
   assert.equal(cara.metrics.answered.val, 50);
 });
 
+test('Insights F1: rosterAgentCount counts only roster members ACTIVE in the current window (INV-27)', function () {
+  // Both Anna + Ben selected (both on the Alpha roster), but only Anna has a
+  // row in the current window. The client divides the team total by
+  // meta.rosterAgentCount to get the per-agent team baseline -- counting Ben
+  // (zero activity) would dilute it. Pre-fix this was 2 (all selected roster);
+  // post-fix it is 1 (active roster only), matching the Individual Report.
+  install([
+    dqeRow({ date: '2026-03-10', agent: 'Anna', ext: '201', rung: 10, missed: 1, answered: 8, att: '0:03:00' }),
+  ]);
+  const data = h.call('getInsightsReport', { department: 'Alpha', from: '2026-03-09', to: '2026-03-15', agents: ['Anna', 'Ben'] });
+
+  assert.equal(data.meta.rosterAgentCount, 1);     // Anna only -- Ben had no activity
+  assert.equal(data.meta.queueOnlyAgentCount, 0);  // both selected names are roster, no floaters
+  assert.equal(data.teamStats.answered.val, 8);    // team total still Anna's 8
+});
+
 test('Insights parity: teamStats + trendData match the Performance Report on identical inputs', function () {
   // THE consolidation gate: Insights bills itself as PR's department
   // rollup + per-agent deltas. Both load into this vm and share

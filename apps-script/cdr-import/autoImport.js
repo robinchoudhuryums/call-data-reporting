@@ -449,7 +449,7 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
             // backfillDQEHistoryUpsert() once after the rebuild to mirror all
             // dates with DO UPDATE. The daily integrated path (and the
             // cdr-report standalone trigger) keep the real-time mirror.
-            buildDQEHistoricalData(rawDataSheet, dqeHD, { skipNeon: true });
+            buildDQEHistoricalData(rawDataSheet, dqeHD, { skipNeon: true, expectedDate: dateObj });
             const dqeEndRow = dqeHD.getLastRow();
             const dqeCount = Math.max(0, dqeEndRow - dqeStartRow);
             if (dqeCount > 0 && histDateCache) histDateCache.dqe.add(dateKey);
@@ -1652,7 +1652,10 @@ if (!skipCDR && obcHD) {
       const dqeStartRow = dqeHD.getLastRow();
       // In deferred mode skip the inline per-date DQE->Neon mirror; the
       // queued runNeonMirror_ re-mirrors from DQE Historical Data instead.
-      buildDQEHistoricalData(rawDataSheet, dqeHD, neonDeferred ? { skipNeon: true } : undefined);
+      // F2: always pass the importer's date so the build refuses to write
+      // under a different day than the force-path just cleared.
+      buildDQEHistoricalData(rawDataSheet, dqeHD,
+        neonDeferred ? { skipNeon: true, expectedDate: dateObj } : { expectedDate: dateObj });
       const dqeEndRow = dqeHD.getLastRow();
       dqeCount = Math.max(0, dqeEndRow - dqeStartRow);
       if (dqeCount > 0) {

@@ -238,6 +238,33 @@ function mirrorQcdForDate_(ss, iso) {
   return { rows: batch.length };
 }
 
+// Coerced-abandoned-cell guard. KEPT BYTE-IDENTICAL to
+// cdr-report/neonbackfill.js::sanitizeAbandonedCellForNeon_ (Apps Script has no
+// cross-project sharing; both copies must agree). Recovers LOSSLESS single
+// values and marks genuinely-lost multi-value coercions with the #REBUILD
+// sentinel that the dashboard's classifyAbandonedCell_ recognizes. 15 digits is
+// the safe-integer ceiling (2^53 ~ 9.0e15); a real abandoned ID / epoch-ms time
+// is 13 digits, so a correct single value always survives.
+var DQE_ABANDONED_LOST_SENTINEL = '#REBUILD';
+
+function sanitizeAbandonedCellForNeon_(raw) {
+  var s = (raw == null ? '' : String(raw)).trim();
+  if (!s) return null;                                   // genuinely empty (0 abandoned)
+  if (s === DQE_ABANDONED_LOST_SENTINEL) return DQE_ABANDONED_LOST_SENTINEL;  // already marked
+  // Coerced + re-rendered as a float: scientific notation or a decimal point.
+  if (/[eE][+\-]?\d/.test(s) || s.indexOf('.') !== -1) return DQE_ABANDONED_LOST_SENTINEL;
+  // Thousands-separated number: 1-3 leading digits then only 3-digit groups.
+  if (/^\d{1,3}(,\d{3})+$/.test(s)) {
+    var digits = s.replace(/,/g, '');
+    // single value (<=15 digits) is recoverable; multi-value lost past 2^53.
+    return digits.length <= 15 ? digits : DQE_ABANDONED_LOST_SENTINEL;
+  }
+  // Bare digit run, no separators, too long to be one real ID -> coerced + lost.
+  if (/^\d+$/.test(s) && s.length > 15) return DQE_ABANDONED_LOST_SENTINEL;
+  // Otherwise: a correct single long ID, or a comma-list of long IDs. Keep.
+  return s;
+}
+
 /** DQE Historical Data (36 cols, incl. 19 time-slot cols) -> writeDQERowsToNeon. */
 function mirrorDqeForDate_(ss, iso) {
   var sheet = ss.getSheetByName('DQE Historical Data');
@@ -259,9 +286,17 @@ function mirrorDqeForDate_(ss, iso) {
       ttt:              r[8]  || null,
       att:              r[9]  || null,
       slots:            r.slice(10, 29),
-      abParentIds:      r[29] || null,
-      abMissedIds:      r[30] || null,
-      abMissedTimes:    r[31] || null,
+      // F3: route the comma-joined abandoned-ID/time cells (AD/AE/AF, cols
+      // 30-32) through the same coercion guard the whole-sheet backfill uses
+      // (cdr-report/neonbackfill.js). getDisplayValues on a pre-protection
+      // coerced cell returns a thousands-separated / scientific number that,
+      // written as-is, mis-splits on the separator commas downstream; the
+      // sanitizer recovers lossless single values and marks genuinely-lost
+      // multi-value cells with the #REBUILD sentinel. Without this the
+      // deferred mirror wrote garbage where the backfill wrote a clean value.
+      abParentIds:      sanitizeAbandonedCellForNeon_(r[29]),
+      abMissedIds:      sanitizeAbandonedCellForNeon_(r[30]),
+      abMissedTimes:    sanitizeAbandonedCellForNeon_(r[31]),
       avgAbdWait:       r[32] || null,
       csrAvgAbdWait:    r[33] || null,
     });

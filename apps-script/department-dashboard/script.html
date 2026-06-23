@@ -3814,6 +3814,17 @@
   // an earlier, slower response can't clobber a newer one.
   var summaryReqSeq = 0;
 
+  // F10: shared monotonic token for the four agent reports (IR / PR / CR /
+  // Insights). Generate + edit-apply + dept-switch-then-regenerate can leave
+  // two fetches in flight; without a guard the slower (older) response paints
+  // last and wins, showing stale data for the now-current selection. Each
+  // fetch captures ++reportReqSeq and its handlers RESET their own button
+  // unconditionally (so a superseded request never leaves a button stuck) but
+  // SKIP rendering when the token is stale. Shared across reports on purpose:
+  // switching reports also invalidates an in-flight one, so a stale IR can't
+  // paint over a freshly-opened PR.
+  var reportReqSeq = 0;
+
   function refresh() {
     const dept = getRequestedDept();
     if (!dept) {
@@ -5305,15 +5316,18 @@
     const req = { department: dept, from: from, to: to, agents: agents };
     if (prior) { req.priorFrom = prior.from; req.priorTo = prior.to; }
 
+    const __rtok = ++reportReqSeq;   // F10 stale-response guard
     google.script.run
       .withSuccessHandler(function (data) {
         btn.disabled = false;
         btn.textContent = originalLabel;
+        if (__rtok !== reportReqSeq) return;   // superseded by a newer request
         irRenderReport(data);
       })
       .withFailureHandler(function (err) {
         btn.disabled = false;
         btn.textContent = originalLabel;
+        if (__rtok !== reportReqSeq) return;
         // #1 Part B: on a drill the form is hidden behind the loader; surface it
         // so the error is visible (showIrForm clears the loader + any prior error).
         showIrForm();
@@ -5588,13 +5602,16 @@
     const req = { department: dept, from: from, to: to, agents: newAgents };
     if (prior && !prior.error) { req.priorFrom = prior.from; req.priorTo = prior.to; }
 
+    const __rtok = ++reportReqSeq;   // F10 stale-response guard
     google.script.run
       .withSuccessHandler(function (data) {
         if (btn) { btn.textContent = 'Apply'; btn.disabled = false; }
+        if (__rtok !== reportReqSeq) return;
         irRenderReport(data);
       })
       .withFailureHandler(function (err) {
         if (btn) { btn.textContent = 'Apply'; btn.disabled = false; }
+        if (__rtok !== reportReqSeq) return;
         irSetResultsStatus('error', 'Error: ' + (err && err.message ? err.message : String(err)));
       })
       .getIndividualReport(req);
@@ -7007,15 +7024,18 @@
     const originalLabel = btn.textContent;
     btn.innerHTML = DS_EQ_HTML_ + 'Loading…';
 
+    const __rtok = ++reportReqSeq;   // F10 stale-response guard
     google.script.run
       .withSuccessHandler(function (data) {
         btn.disabled = false;
         btn.textContent = originalLabel;
+        if (__rtok !== reportReqSeq) return;
         prRenderReport_(data);
       })
       .withFailureHandler(function (err) {
         btn.disabled = false;
         btn.textContent = originalLabel;
+        if (__rtok !== reportReqSeq) return;
         prSetFormError('Error: ' + (err && err.message ? err.message : String(err)));
       })
       .getPerformanceReport(req);
@@ -8082,13 +8102,16 @@
     if (btn) { btn.disabled = true; btn.textContent = 'Loading…'; }
     crSetResultsStatus('loading', 'Refreshing report…');
 
+    const __rtok = ++reportReqSeq;   // F10 stale-response guard
     google.script.run
       .withSuccessHandler(function (data) {
         if (btn) { btn.textContent = 'Apply'; btn.disabled = false; }
+        if (__rtok !== reportReqSeq) return;
         crRenderReport_(data);
       })
       .withFailureHandler(function (err) {
         if (btn) { btn.textContent = 'Apply'; btn.disabled = false; }
+        if (__rtok !== reportReqSeq) return;
         crSetResultsStatus('error', 'Error: ' + (err && err.message ? err.message : String(err)));
       })
       .getCompareRanges({
@@ -8365,15 +8388,18 @@
     btn.innerHTML = DS_EQ_HTML_ + 'Loading…';
     crSavePrefs_();
 
+    const __rtok = ++reportReqSeq;   // F10 stale-response guard
     google.script.run
       .withSuccessHandler(function (data) {
         btn.disabled = false;
         btn.textContent = originalLabel;
+        if (__rtok !== reportReqSeq) return;
         crRenderReport_(data);
       })
       .withFailureHandler(function (err) {
         btn.disabled = false;
         btn.textContent = originalLabel;
+        if (__rtok !== reportReqSeq) return;
         crSetFormError('Error: ' + (err && err.message ? err.message : String(err)));
       })
       .getCompareRanges({
@@ -9539,9 +9565,16 @@
       } else {
         skipCell = '—';
       }
+      // F4: an invalid-threshold dept is flagged so the admin sees it's NOT
+      // being monitored, rather than the row showing a misleading "0%".
+      const threshCell = c.invalidThreshold
+        ? '<td class="num"><span class="al-active al-active-no" title="Invalid threshold ('
+            + escapeHtml(c.thresholdRaw || 'blank') + ') -- this dept is NOT monitored. '
+            + 'Set a positive number.">⚠ invalid</span></td>'
+        : '<td class="num">' + Number(c.threshold).toFixed(0) + '%</td>';
       return '<tr>'
            +   '<td>' + escapeHtml(c.department) + '</td>'
-           +   '<td class="num">' + Number(c.threshold).toFixed(0) + '%</td>'
+           +   threshCell
            +   '<td>' + alDriftCellHtml_(c, driftMap[c.department]) + '</td>'
            +   '<td>' + escapeHtml((c.extraRecipients || []).join(', ') || '(none)') + '</td>'
            +   '<td><span class="al-active ' + activeCls + '">' + activeLbl + '</span></td>'
@@ -11001,13 +11034,16 @@
     if (prior) { req.priorFrom = prior.from; req.priorTo = prior.to; }
     const gen = $('ins-generate-btn'); const prev = gen.textContent;
     gen.disabled = true; gen.innerHTML = DS_EQ_HTML_ + 'Generating…';
+    const __rtok = ++reportReqSeq;   // F10 stale-response guard
     google.script.run
       .withSuccessHandler(function (data) {
         gen.disabled = false; gen.textContent = prev;
+        if (__rtok !== reportReqSeq) return;
         insSavePrefs_(); insRenderReport_(data); insShowResults();
       })
       .withFailureHandler(function (err) {
         gen.disabled = false; gen.textContent = prev;
+        if (__rtok !== reportReqSeq) return;
         insShowForm();   // dismisses the launcher loading pane if active
         insSetFormError('Error: ' + (err && err.message ? err.message : String(err)));
       })

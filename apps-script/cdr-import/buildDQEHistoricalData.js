@@ -234,6 +234,42 @@ function buildDQEHistoricalData(rawSheet, dqeSheet, opts) {
     return;
   }
 
+  // F2: refuse to write when the build's detected date disagrees with the
+  // date the caller expected. The force re-import deletes DQE rows for the
+  // IMPORTER's date (the source sheet name, via deleteHistoricalRowsForDate
+  // matching col B by toDateString); this build independently re-derives its
+  // date from Raw Data's first valid START_TIME. If a stray carry-over leg
+  // makes them disagree, writing would stamp rows under a DIFFERENT day than
+  // was just cleared -- leaving the intended day's old rows un-deleted AND a
+  // mis-dated duplicate set (the dup-guard below keys off THIS build's date,
+  // so it can't catch it). opts.expectedDate is a Date; we compare calendar
+  // day via toDateString (same basis the deletion uses). Callers that derive
+  // their own date -- the standalone runDailyDQEBuild_ / testDQEBuild trigger
+  // -- omit opts.expectedDate, so their behavior is unchanged.
+  if (opts && opts.expectedDate) {
+    const exp = opts.expectedDate;
+    const expDayOk = exp && typeof exp.toDateString === 'function'
+                  && !isNaN(exp.getTime());
+    if (!expDayOk || exp.toDateString() !== callDateObj.toDateString()) {
+      const expLabel = expDayOk ? exp.toDateString() : String(exp);
+      Logger.log('DQE: expected date ' + expLabel + ' but Raw Data resolves to '
+        + callDateStr + ' -- refusing to write (avoids a mis-dated/duplicate set).');
+      try {
+        logPipelineHealth_(dqeSheet.getParent(), {
+          step:       'buildDQE',
+          status:     'failure',
+          rows:       0,
+          durationMs: Date.now() - __pipelineStartMs,
+          notes:      'date mismatch: expected=' + expLabel + ' rawData=' + callDateStr
+                    + ' -- build skipped, no rows written',
+        });
+      } catch (pipelineLogErr) {
+        Logger.log('buildDQE: pipeline-health log failed (non-fatal): %s', pipelineLogErr);
+      }
+      return;
+    }
+  }
+
 
   // ── Duplicate guard ────────────────────────────────────────────────────────
 
