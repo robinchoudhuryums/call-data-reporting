@@ -3853,8 +3853,35 @@
    * cards HTML so BOTH the modal (renderMissedAgents) AND the My Department
    * inline section (deptMissedRender_) render identical card markup.
    */
+  // Quantile (linear interpolation) over an ASCENDING-sorted numeric array.
+  function missedQuantile_(sortedAsc, q) {
+    if (!sortedAsc.length) return 0;
+    const pos = (sortedAsc.length - 1) * q;
+    const lo = Math.floor(pos), hi = Math.ceil(pos);
+    if (lo === hi) return sortedAsc[lo];
+    return sortedAsc[lo] + (sortedAsc[hi] - sortedAsc[lo]) * (pos - lo);
+  }
+
   function missedAgentsHtml_(agents) {
-    return agents.map(function (a) {
+    // Phase 15: most-missed first so the worst timelines lead. Stable
+    // tiebreak by name keeps equal-count agents in a deterministic order.
+    const sorted = agents.slice().sort(function (a, b) {
+      return (b.total || 0) - (a.total || 0) || a.name.localeCompare(b.name);
+    });
+
+    // Relative severity tiers across the agents shown (tertile cutoffs on
+    // the missed totals). Gated so a low-signal group -- few agents or
+    // tiny counts -- stays neutral rather than branding a 1-missed agent
+    // "Most missed". No company standard exists for per-agent missed
+    // counts, so the tiering is intentionally RELATIVE to the cohort.
+    const totalsAsc = sorted.map(function (a) { return a.total || 0; })
+      .sort(function (x, y) { return x - y; });
+    const maxTotal = totalsAsc.length ? totalsAsc[totalsAsc.length - 1] : 0;
+    const useTiers = sorted.length >= 3 && maxTotal >= 3;
+    const cutHigh = useTiers ? missedQuantile_(totalsAsc, 0.67) : Infinity;
+    const cutLow = useTiers ? missedQuantile_(totalsAsc, 0.34) : -Infinity;
+
+    return sorted.map(function (a) {
       const itemsHtml = a.missedTimes.map(function (m) {
         const dateLabel = m.date ? '<span class="date">' + escapeHtml(m.date.slice(5)) + '</span>' : '';
         const cls = m.abandoned ? 'abandoned' : '';
@@ -3865,10 +3892,22 @@
              + '</li>';
       }).join('');
 
-      return '<details class="agent-card" open>'
+      var tier = '', tierChip = '';
+      if (useTiers) {
+        const t = a.total || 0;
+        if (t >= cutHigh && t >= 3) tier = 'high';
+        else if (t <= cutLow) tier = 'low';
+        else tier = 'med';
+        const tierLabel = tier === 'high' ? 'Most missed' : (tier === 'low' ? 'Fewest' : 'Moderate');
+        tierChip = '<span class="agent-tier agent-tier--' + tier + '">' + tierLabel + '</span>';
+      }
+
+      return '<details class="agent-card' + (tier ? ' agent-card--tier-' + tier : '') + '" open>'
            +   '<summary class="agent-card-head">'
            +     '<span class="agent-name">' + escapeHtml(a.name) + '</span>'
-           +     '<span class="agent-total">' + a.total + ' missed</span>'
+           +     '<span class="agent-card-meta">' + tierChip
+           +       '<span class="agent-total">' + a.total + ' missed</span>'
+           +     '</span>'
            +   '</summary>'
            +   '<ul class="missed-list">' + itemsHtml + '</ul>'
            + '</details>';
@@ -11781,22 +11820,28 @@
     };
 
     const renderCard = function (x) { return insBuildCard_(x, teamScore, meta, teamAvg); };
-    // A1 "needs attention first" triage. Stable-partition the already-sorted
-    // COPY (never insLastData.agentData -- the Cards/Chart toggle reads that
-    // independently) into regressed vs the rest, and render labeled group
-    // headers ONLY when something is actually regressed. With nothing slipping,
-    // keep the flat grid (byte-identical to the prior behavior). The within-
-    // group order is still whatever the sort control produced.
-    const attention = sortedMain.filter(function (x) { return x.direction === 'regressed'; });
-    const ontrack   = sortedMain.filter(function (x) { return x.direction !== 'regressed'; });
-    if (attention.length && sortedMain.length > 1) {
-      let html = insTriageLegend_()
-               + insTriageHeader_('Needs attention', attention.length, 'warn')
-               + attention.map(renderCard).join('');
-      if (ontrack.length) {
-        html += insTriageHeader_('On track', ontrack.length, 'good')
-              + ontrack.map(renderCard).join('');
-      }
+    // A1 performance triage -- ALWAYS-ON tier grouping (Phase 15). Stable-
+    // partition the already-sorted COPY (never insLastData.agentData -- the
+    // Cards/Chart toggle reads that independently) by direction-of-change
+    // into Needs attention (regressed) / Mixed / Improving, and render a
+    // labeled group header before each NON-EMPTY tier whenever there's more
+    // than one card. Within-group order is whatever the sort control
+    // produced. A single card stays a flat grid (a lone header is noise).
+    const regressed = sortedMain.filter(function (x) { return x.direction === 'regressed'; });
+    const mixed     = sortedMain.filter(function (x) { return x.direction === 'mixed'; });
+    const improved  = sortedMain.filter(function (x) { return x.direction === 'improved'; });
+    if (sortedMain.length > 1) {
+      let html = insTriageLegend_();
+      const tiers = [
+        { group: regressed, label: 'Needs attention', tone: 'warn' },
+        { group: mixed,     label: 'Mixed',           tone: 'muted' },
+        { group: improved,  label: 'Improving',       tone: 'good' },
+      ];
+      tiers.forEach(function (t) {
+        if (!t.group.length) return;
+        html += insTriageHeader_(t.label, t.group.length, t.tone)
+              + t.group.map(renderCard).join('');
+      });
       wrap.innerHTML = html;
     } else {
       wrap.innerHTML = sortedMain.map(renderCard).join('');
