@@ -822,6 +822,23 @@
      abandoned %% or violation thresholds are hit. The bottom
      margin gives breathing room between the snapshot and the
      agent table that immediately follows. */
+  /* #5: My Department two-column layout. Single column by default (QCD card
+     stacked ABOVE the main content via order:-1, matching the old position);
+     at >=1100px the QCD card becomes a sticky right side-card that scrolls
+     alongside the agent table + Missed section. */
+  .dept-layout { display: grid; grid-template-columns: 1fr; gap: 20px; }
+  .dept-side { order: -1; }
+  .dept-main { min-width: 0; }
+  .dept-side .dept-qcd-snapshot { margin-top: 0; }
+  @media (min-width: 1100px) {
+    .dept-layout { grid-template-columns: minmax(0, 1fr) 320px; align-items: start; }
+    .dept-side { order: 0; position: sticky; top: 16px; align-self: start; max-height: calc(100vh - 32px); overflow: auto; }
+  }
+  /* In the narrow side column the per-queue tiles stack rather than squeeze. */
+  @media (min-width: 1100px) {
+    .dept-side .dept-qcd-tiles { grid-template-columns: 1fr; }
+  }
+
   .dept-qcd-snapshot {
     margin-top: 24px;
     margin-bottom: 16px;
@@ -3887,8 +3904,11 @@
   }
   .ov-dept-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-    gap: 12px;
+    /* #6 (C): denser, more uniform grid -- smaller min so more cards fit per
+       row in the left ~60% column (was 240px, which left only ~2 per row and
+       read as a ragged column). */
+    grid-template-columns: repeat(auto-fill, minmax(196px, 1fr));
+    gap: 10px;
     margin-bottom: 18px;
     align-items: start;
   }
@@ -3921,7 +3941,7 @@
   }
   .ov-dept-tile-child {
     border-left: 4px solid var(--accent);
-    margin-left: 24px;
+    margin-left: 16px;
     padding: 9px 13px;
     background: var(--accent-soft);
     /* Distinct rounded-corner profile vs parent's square tile,

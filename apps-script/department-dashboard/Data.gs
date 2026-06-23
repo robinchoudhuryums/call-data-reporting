@@ -194,14 +194,17 @@ function getDepartmentSummary(req) {
     throw new Error('from must be on or before to.');
   }
 
-  // Scope: locked to 'both' since the Phase D scope-toggle
-  // removal cleanup (the toggle was retained for parallel-run
-  // validation through Phases D / D+1 / E; once the 'both' default
-  // + roster-only totals semantics proved out, the user-facing
-  // toggle was retired). `computeSummary_` still accepts a scope
-  // arg because internal callers (Digest.gs) use 'roster' for the
-  // manager-digest path -- the public RPC just doesn't expose it.
-  const scope = 'both';
+  // Scope: ROSTER-only for the My Department agent table. Phase D showed
+  // queue-only "floaters" (matched via shared-queue extension overlap), but
+  // in practice that overlap produced false positives -- agents who never
+  // actually handled this dept's queue calls -- and cross-dept assist is rare
+  // enough that the operator chose to show ONLY agents on this dept's
+  // `DO NOT EDIT!` roster. `computeSummary_` still accepts a scope arg
+  // (Digest.gs uses 'roster' too; the Missed report still passes 'both' for
+  // its queue-only abandoned section). The Source column then only ever shows
+  // ROSTER / BOTH (no QUEUE floaters). `scope` is in the cache key, so this
+  // flip can't serve stale 'both' rows.
+  const scope = 'roster';
 
   const cache = CacheService.getScriptCache();
   // Bump the version suffix any time the aggregation rules change so
