@@ -176,7 +176,11 @@
 
   /* Layout */
   .container {
-    max-width: 1200px;
+    /* Data-dense dashboard -- wider cap than the old 1200px so the agent
+       table + the My-Department sticky QCD side column get more room (and the
+       Missed radar isn't squeezed). Still capped (not full-bleed) so tables
+       don't sprawl uncomfortably on ultrawide monitors. */
+    max-width: 1440px;
     margin: 0 auto;
     padding: 24px 24px 48px;
   }
@@ -893,8 +897,8 @@
   }
   .dept-qcd-tiles {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-    gap: 10px;
+    grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+    gap: 8px;
   }
   /* Per-queue separation: each queue renders its own full-width row of
      tiles (sub-queues can behave very differently from the parent, so
@@ -903,8 +907,8 @@
   .dept-qcd-queue-row { grid-column: 1 / -1; }
   .dept-qcd-tiles-inner {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-    gap: 10px;
+    grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
+    gap: 8px;
   }
   .dept-qcd-queue-name {
     font-family: var(--mono);
@@ -924,7 +928,7 @@
   }
   .dept-qcd-total-row { border-top: 1px solid var(--line); padding-top: 6px; opacity: 0.85; }
   .dept-qcd-tile {
-    padding: 8px 12px;
+    padding: 6px 8px;
     background: var(--paper-2);
     border: 1px solid var(--line);
     border-radius: var(--r);
@@ -932,20 +936,59 @@
   }
   .dept-qcd-label {
     font-family: var(--mono);
-    font-size: 10px;
+    font-size: 9px;
     color: var(--muted);
     text-transform: uppercase;
-    letter-spacing: 0.18em;
+    letter-spacing: 0.14em;
     font-weight: 600;
   }
   .dept-qcd-value {
     font-family: var(--display);
-    font-size: 20px;
+    font-size: 16px;
     font-weight: 700;
     color: var(--ink);
     margin-top: 2px;
   }
   .dept-qcd-value.dept-qcd-warn { color: var(--warn); }
+
+  /* QCD snapshot carousel (multi-queue side card): one queue page at a time
+     with ‹ › nav + a dot indicator, so the sticky side column stays compact
+     instead of stacking every queue's tiles vertically. */
+  .dept-qcd-carousel-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin: 2px 0 8px;
+  }
+  .dept-qcd-carousel-head .dept-qcd-queue-name {
+    margin: 0;
+    flex: 1 1 auto;
+    text-align: center;
+  }
+  .dept-qcd-nav {
+    flex: none;
+    width: 22px; height: 22px;
+    display: inline-flex; align-items: center; justify-content: center;
+    border: 1px solid var(--line);
+    background: var(--paper-card);
+    color: var(--muted);
+    border-radius: var(--r);
+    font-size: 15px; line-height: 1;
+    cursor: pointer;
+    padding: 0;
+  }
+  .dept-qcd-nav:hover { color: var(--ink); border-color: var(--muted); }
+  .dept-qcd-dots {
+    display: flex; justify-content: center; gap: 6px;
+    margin-top: 10px;
+  }
+  .dept-qcd-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--line); cursor: pointer;
+    transition: background var(--dur-1, 0.18s) var(--ease, ease);
+  }
+  .dept-qcd-dot.is-active { background: var(--accent); }
 
   .diagnostics {
     margin-top: 24px;
@@ -3930,31 +3973,55 @@
   }
   .ov-dept-grid {
     display: grid;
-    /* #6 (C): denser, more uniform grid -- smaller min so more cards fit per
-       row in the left ~60% column (was 240px, which left only ~2 per row and
-       read as a ragged column). */
-    grid-template-columns: repeat(auto-fill, minmax(196px, 1fr));
+    /* Pass 3b P2.3: STACKED layout reclaims the full page width from the
+       retired side-rail, so the grid goes 4-wide. align-items:start keeps
+       the bottoms clean-ragged (each .ov-dept-group cell is parent + its
+       indented children, P1-hybrid -- children stay attached, no inset
+       strip). Responsive 4 -> 2 -> 1. */
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 10px;
     margin-bottom: 18px;
     align-items: start;
   }
-  /* #8: grid (main) + trend chart (sticky right rail) side-by-side. The grid's
-     auto-fill columns reflow to fit the narrower column; the chart stays in
-     view while scrolling the grid. Collapses to one column under 1024px. */
+  @media (max-width: 1100px) { .ov-dept-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (max-width: 680px)  { .ov-dept-grid { grid-template-columns: 1fr; } }
+
+  /* Pass 3b P2.1 + P2.2: STACK the chart band above the dept grid (was a
+     side-by-side grid + rail). The chart band is full-width (de-spaghetti --
+     30 days x 7+ series read cleanly) and STICKY-TOP so it stays visible as
+     the grid scrolls under it. order:-1 floats the chart (DOM-second) above
+     the grid (DOM-first) without reordering the markup. */
   .ov-grid-trend {
-    display: grid;
-    grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr);
-    gap: 18px;
-    align-items: start;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
     margin-top: 4px;
   }
-  .ov-grid-col { min-width: 0; }
-  .ov-trend-col { min-width: 0; position: sticky; top: 12px; }
+  .ov-grid-col { min-width: 0; order: 0; }
+  .ov-trend-col {
+    min-width: 0;
+    order: -1;                 /* chart band first */
+    position: sticky;
+    top: 8px;
+    z-index: 5;                /* grid scrolls UNDER the pinned band */
+    background: var(--paper);
+  }
+  /* A moderate pinned height (vs the IR/PR 420px) so the always-visible band
+     doesn't eat the viewport (condense-on-scroll was intentionally skipped). */
+  .ov-trend-col .ir-chart-wrap { height: 340px; }
   .ov-grid-trend .ov-dept-grid { margin-bottom: 0; }
-  @media (max-width: 1024px) {
-    .ov-grid-trend { grid-template-columns: 1fr; }
+  /* Un-stick on short viewports (phones / landscape) so the band can't eat
+     the screen; the grid then flows normally below it. */
+  @media (max-height: 640px) {
     .ov-trend-col { position: static; }
   }
+  /* P2.4 chart toggle: "+ sub-queues" checkbox in the chart-tabs row. */
+  .ov-subq-toggle {
+    display: inline-flex; align-items: center; gap: 5px;
+    font: 500 12px var(--ui); color: var(--muted); cursor: pointer;
+    margin-left: auto; padding: 0 4px;
+  }
+  .ov-subq-toggle input { margin: 0; cursor: pointer; }
   /* Each parent dept + its sub-queues stack vertically in a
      single grid cell. Children inherit the parent's tile color
      (slot in IR_CHART_COLORS) via inline-set color but get an
@@ -4958,6 +5025,44 @@
   .esc-resolved-check { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--ink); }
   .esc-resolve-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
   .esc-row-error { font-size: 12px; }
+
+  /* §4 toolbar filter */
+  .esc-filter-wrap { position: relative; display: inline-flex; align-items: center; }
+  .esc-filter-wrap input { padding-right: 22px; }
+  .esc-filter-clear { position: absolute; right: 6px; border: 0; background: none; color: var(--muted);
+    cursor: pointer; font-size: 15px; line-height: 1; padding: 0; }
+  .esc-filter-clear:hover { color: var(--ink); }
+  .esc-filter-count { display: block; font: 400 11px var(--mono); color: var(--muted); margin-top: 3px; }
+
+  /* §3 admin edit affordance on pending cards */
+  .esc-pending-actions { margin-top: 8px; }
+
+  /* §2 reopen affordance on resolved cards */
+  .esc-reopen-wrap { margin-top: 8px; }
+  .esc-reopen { margin-top: 8px; padding-top: 10px; border-top: 1px solid var(--line);
+    display: flex; flex-direction: column; gap: 8px; }
+  .esc-reopen textarea { width: 100%; box-sizing: border-box; resize: vertical; margin-top: 4px; }
+
+  /* §5 activity trail (collapsible, append-only timeline) */
+  .esc-activity { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 6px; }
+  .esc-activity > summary { cursor: pointer; font: 600 11px/1 var(--mono); letter-spacing: 0.1em;
+    text-transform: uppercase; color: var(--muted); user-select: none; list-style: none; padding: 2px 0; }
+  .esc-activity > summary::-webkit-details-marker { display: none; }
+  .esc-activity > summary::before { content: '▸ '; color: var(--muted); }
+  .esc-activity[open] > summary::before { content: '▾ '; }
+  .esc-activity > summary:hover { color: var(--ink); }
+  .esc-activity-loading, .esc-activity-empty { font-size: 12px; color: var(--muted); padding: 6px 0; }
+  .esc-timeline { list-style: none; margin: 8px 0 2px; padding: 0; border-left: 2px solid var(--line); }
+  .esc-timeline-item { position: relative; padding: 4px 0 8px 14px; }
+  .esc-timeline-item::before { content: ''; position: absolute; left: -5px; top: 8px; width: 8px; height: 8px;
+    border-radius: 50%; background: var(--muted); }
+  .esc-timeline-resolved::before { background: var(--good); }
+  .esc-timeline-reopened::before { background: var(--warn); }
+  .esc-timeline-created::before  { background: var(--accent); }
+  .esc-timeline-head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+  .esc-timeline-action { font: 600 12px var(--ui); color: var(--ink); }
+  .esc-timeline-meta { font: 400 11px var(--mono); color: var(--muted); }
+  .esc-timeline-detail { font-size: 12px; color: var(--ink); margin-top: 2px; white-space: pre-wrap; }
 
   /* ── Call-path drill (#3) ────────────────────────────────────── */
   .pid-journey { margin-left: 6px; font: 600 10px/1 var(--mono); letter-spacing: 0.04em;

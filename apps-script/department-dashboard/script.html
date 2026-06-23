@@ -1132,6 +1132,10 @@
 
   let ovChartInstance = null;
   let ovLastData = null;
+  // P2.4: the trend chart defaults to TOP-LEVEL depts only (de-spaghetti);
+  // sub-queue (child) lines are added on demand via the "+ sub-queues"
+  // toggle. Grid tiles are unaffected -- children always show as tiles.
+  let ovShowSubQueues_ = false;
 
   function initCompanyOverview() {
     const overviewBtn = $('overview-btn');
@@ -2115,7 +2119,13 @@
         || colors[nextColorSlot++ % colors.length];
     });
 
-    const datasets = (data.depts || []).map(function (dept) {
+    // P2.4: default to top-level depts only; children join when toggled on.
+    // colorByDept was computed over ALL depts above, so hues stay stable
+    // whether or not children are shown.
+    const chartDepts = (data.depts || []).filter(function (d) {
+      return ovShowSubQueues_ || !d.parent;
+    });
+    const datasets = chartDepts.map(function (dept) {
       const color = colorByDept[dept.name];
       const isChild = !!dept.parent;
       return {
@@ -2226,6 +2236,7 @@
       ovChartInstance._viewerDept = ovViewerDept_(data);
     }
     ovWireAxisZoom_();
+    ovWireSubqToggle_();
   }
 
   // ---- Generic Chart.js legend spotlight (shared) ----------------------
@@ -2348,6 +2359,22 @@
       ovChartInstance.update();
       btn.textContent = ovAxisZoom === 'fit' ? 'Zoom: Fit' : 'Zoom: Full';
       btn.setAttribute('aria-pressed', ovAxisZoom === 'fit' ? 'true' : 'false');
+    });
+  }
+
+  // P2.4: "+ sub-queues" toggle in the ov-chart-tabs row. Off by default so
+  // the chart shows only top-level depts; on adds the dashed child lines.
+  // Re-renders from ovLastData (grid tiles are untouched). Wired once.
+  let ovSubqWired = false;
+  function ovWireSubqToggle_() {
+    if (ovSubqWired) return;
+    const box = $('ov-subq-toggle');
+    if (!box) return;
+    ovSubqWired = true;
+    box.checked = ovShowSubQueues_;
+    box.addEventListener('change', function () {
+      ovShowSubQueues_ = !!box.checked;
+      if (ovLastData) ovRenderChart_(ovLastData);
     });
   }
 
@@ -4141,6 +4168,13 @@
     deptMissedLastData = data;            // drill-in reads this
     deptMissedBucketDetail_.hide();       // reset the panel on every fetch (like the modal)
 
+    // Show the section BEFORE the radar is created below: Chart.js measures
+    // the canvas's container at construction time, and a chart built while an
+    // ancestor is display:none collapses to a zero-size (or mis-sized) render.
+    // (Surfaced by the #5 sticky QCD side-column squeeze, but the root cause
+    // is the create-while-hidden ordering.)
+    wrap.style.display = '';
+
     const dateEl = $('dept-missed-date');
     if (dateEl) dateEl.textContent = from === to ? from : from + ' to ' + to;
 
@@ -4224,8 +4258,7 @@
     // #9a: full-width detail wrapper shows only when there's detail content.
     const detail = $('dept-missed-detail');
     if (detail) detail.style.display = (queueOnly.length || agents.length) ? '' : 'none';
-
-    wrap.style.display = '';
+    // (wrap was shown at the top so the radar measured a real canvas size.)
   }
 
   /**
@@ -4274,25 +4307,63 @@
            + tile('Violations',  fmtNumber(q.violations    || 0),       violCls);
     };
 
-    // Per-queue separation: each queue (incl. sub-queue children, which
-    // can behave very differently from the parent) renders its OWN tile
-    // row; the all-queues sum renders last as a clearly-labeled muted
-    // row. Single-queue depts keep the flat row (no redundant total).
+    // Per-queue separation: each queue (incl. sub-queue children, which can
+    // behave very differently from the parent) is its OWN page. To keep the
+    // sticky side column compact, multi-queue depts render a CAROUSEL -- one
+    // queue page at a time with ‹ › nav + a dot indicator, plus a trailing
+    // "All queues" total page -- instead of stacking every queue vertically.
+    // Single-queue depts keep the flat tile row (no redundant total).
     const perQueue = qcd.perQueue || [];
     if (perQueue.length > 1) {
-      tiles.innerHTML = perQueue.map(function (q) {
+      const pages = perQueue.map(function (q) {
         const tag = q.subDept
           ? ' <span class="dept-qcd-subtag">sub-queue · ' + escapeHtml(q.subDept) + '</span>'
           : '';
-        return '<div class="dept-qcd-queue-row">'
-             +   '<div class="dept-qcd-queue-name">' + escapeHtml(q.queue) + tag + '</div>'
-             +   '<div class="dept-qcd-tiles-inner">' + tileRow(q) + '</div>'
-             + '</div>';
-      }).join('')
-      + '<div class="dept-qcd-queue-row dept-qcd-total-row">'
-      +   '<div class="dept-qcd-queue-name">All queues</div>'
-      +   '<div class="dept-qcd-tiles-inner">' + tileRow(qcd) + '</div>'
-      + '</div>';
+        return { name: escapeHtml(q.queue) + tag, html: tileRow(q) };
+      });
+      pages.push({ name: 'All queues', html: tileRow(qcd) });
+
+      tiles.innerHTML =
+          '<div class="dept-qcd-carousel">'
+        +   '<div class="dept-qcd-carousel-head">'
+        +     '<button type="button" class="dept-qcd-nav" data-dir="-1" aria-label="Previous queue">&#8249;</button>'
+        +     '<span class="dept-qcd-queue-name" id="dept-qcd-cur-name"></span>'
+        +     '<button type="button" class="dept-qcd-nav" data-dir="1" aria-label="Next queue">&#8250;</button>'
+        +   '</div>'
+        +   '<div class="dept-qcd-tiles-inner" id="dept-qcd-cur-tiles"></div>'
+        +   '<div class="dept-qcd-dots" id="dept-qcd-dots">'
+        +     pages.map(function (_p, i) { return '<span class="dept-qcd-dot" data-idx="' + i + '"></span>'; }).join('')
+        +   '</div>'
+        + '</div>';
+
+      let cur = 0;
+      const nameEl = $('dept-qcd-cur-name');
+      const curTiles = $('dept-qcd-cur-tiles');
+      const dotsWrap = $('dept-qcd-dots');
+      const showPage = function (i) {
+        cur = (i + pages.length) % pages.length;
+        if (nameEl) nameEl.innerHTML = pages[cur].name;
+        if (curTiles) curTiles.innerHTML = pages[cur].html;
+        if (dotsWrap) {
+          const dots = dotsWrap.querySelectorAll('.dept-qcd-dot');
+          for (let d = 0; d < dots.length; d++) dots[d].classList.toggle('is-active', d === cur);
+        }
+      };
+      const navs = tiles.querySelectorAll('.dept-qcd-nav');
+      for (let n = 0; n < navs.length; n++) {
+        navs[n].addEventListener('click', function () {
+          showPage(cur + Number(this.getAttribute('data-dir')));
+        });
+      }
+      if (dotsWrap) {
+        const dots = dotsWrap.querySelectorAll('.dept-qcd-dot');
+        for (let d = 0; d < dots.length; d++) {
+          dots[d].addEventListener('click', function () {
+            showPage(Number(this.getAttribute('data-idx')));
+          });
+        }
+      }
+      showPage(0);
     } else {
       tiles.innerHTML = tileRow(perQueue.length === 1 ? perQueue[0] : qcd);
     }
@@ -13077,6 +13148,8 @@
 
   // ── Escalations ────────────────────────────────────────────────
   var escInit_ = null;   // cached getEscalationsInit payload (role + depts)
+  var escLastResp_ = null;   // last getEscalations response (for client-side §4 filter)
+  var escEditId_ = null;     // non-null when the create form is in §3 edit mode
 
   function initEscalations() {
     const btn = $('escalations-btn');
@@ -13112,12 +13185,30 @@
     if ($('esc-refresh-btn')) $('esc-refresh-btn').addEventListener('click', escLoad_);
     if ($('esc-status'))      $('esc-status').addEventListener('change', escLoad_);
     if ($('esc-dept'))        $('esc-dept').addEventListener('change', escLoad_);
+    // §4: debounced client-side filter over the already-loaded rows.
+    if ($('esc-filter'))      $('esc-filter').addEventListener('input', escDebounceFilter_);
+    if ($('esc-filter-clear')) $('esc-filter-clear').addEventListener('click', function () {
+      if ($('esc-filter')) $('esc-filter').value = '';
+      escApplyFilter_();
+    });
     if ($('esc-new-btn'))     $('esc-new-btn').addEventListener('click', function () {
-      const f = $('esc-create'); if (f) f.style.display = (f.style.display === 'none' ? '' : 'none');
+      const f = $('esc-create'); if (!f) return;
+      const opening = (f.style.display === 'none');
+      f.style.display = opening ? '' : 'none';
+      // Opening via "+ New escalation" is always a fresh create -- clear any
+      // lingering §3 edit prefill/mode.
+      if (opening) {
+        escResetCreateMode_();
+        ['esc-c-caller','esc-c-patient','esc-c-trx','esc-c-area','esc-c-reason','esc-c-when'].forEach(function (i) {
+          if ($(i)) $(i).value = '';
+        });
+        escSetCreateError_('');
+      }
     });
     if ($('esc-c-cancel'))    $('esc-c-cancel').addEventListener('click', function () {
       const f = $('esc-create'); if (f) f.style.display = 'none';
       escSetCreateError_('');
+      escResetCreateMode_();
     });
     if ($('esc-c-save'))      $('esc-c-save').addEventListener('click', escCreate_);
 
@@ -13181,18 +13272,57 @@
   function escRenderList_(resp) {
     const listEl = $('esc-list');
     if (!listEl) return;
+    escLastResp_ = resp || {};
     if (resp.available === false) {
+      escSetFilterCount_('');
       escShowEmpty_('Escalations are temporarily unavailable — the storage (Neon) could not be reached. Try Refresh in a moment.');
       return;
     }
-    const rows = resp.rows || [];
-    if (!rows.length) {
-      const st = (resp.meta && resp.meta.status) || 'pending';
+    escApplyFilter_();
+  }
+
+  // §4: re-render the already-loaded rows narrowed by the toolbar text filter
+  // (patient / caller / Trx / reason; case-insensitive substring). Pure
+  // client-side -- no server call; filters a COPY, never mutates the source.
+  function escApplyFilter_() {
+    const listEl = $('esc-list');
+    if (!listEl || !escLastResp_) return;
+    const all = escLastResp_.rows || [];
+    const q = ($('esc-filter') ? $('esc-filter').value : '').trim().toLowerCase();
+    const rows = q ? all.filter(function (r) { return escRowMatchesQuery_(r, q); }) : all.slice();
+
+    if (!all.length) {
+      escSetFilterCount_('');
+      const st = (escLastResp_.meta && escLastResp_.meta.status) || 'pending';
       escShowEmpty_(st === 'pending' ? 'No pending escalations. 🎉' : 'No escalations to show for this filter.');
+      return;
+    }
+    // "N of M shown" (only meaningful while a query is active).
+    escSetFilterCount_(q ? (rows.length + ' of ' + all.length + ' shown') : '');
+    if (!rows.length) {
+      escShowEmpty_('No escalations match “' + q + '”. Clear the filter to see all ' + all.length + '.');
       return;
     }
     if ($('esc-empty')) $('esc-empty').style.display = 'none';
     listEl.innerHTML = rows.map(escCardHtml_).join('');
+  }
+
+  function escRowMatchesQuery_(r, q) {
+    return [r.patient_name, r.caller, r.trx, r.reason]
+      .some(function (v) { return v && String(v).toLowerCase().indexOf(q) !== -1; });
+  }
+
+  var escFilterTimer_ = null;
+  function escDebounceFilter_() {
+    if (escFilterTimer_) clearTimeout(escFilterTimer_);
+    escFilterTimer_ = setTimeout(escApplyFilter_, 160);
+  }
+
+  function escSetFilterCount_(txt) {
+    const el = $('esc-filter-count');
+    if (!el) return;
+    el.textContent = txt || '';
+    el.style.display = txt ? '' : 'none';
   }
 
   function escShowEmpty_(msg) {
@@ -13218,6 +13348,9 @@
       ? '<span class="esc-pill esc-pill-resolved">Resolved</span>'
       : '<span class="esc-pill esc-pill-pending">Pending</span>';
 
+    const idAttr = escapeHtml(r.id);
+    const isAdmin = !!(escInit_ && escInit_.isAdmin);
+
     let body = '<div class="esc-reason">' + escapeHtml(r.reason || '') + '</div>';
     body += '<div class="esc-meta">' + meta.join(' &nbsp;·&nbsp; ') + '</div>';
 
@@ -13227,10 +13360,29 @@
       const by = r.resolved_by ? (' by ' + escapeHtml(r.resolved_by)) : '';
       const at = r.resolved_at ? (' · ' + escapeHtml(escFmtWhen_(r.resolved_at))) : '';
       body += '<div class="esc-resolved-by">Resolved' + by + at + '</div>';
+      // §2: reopen affordance (per-dept; any manager of this dept + admins).
+      // The reason is REQUIRED, mirroring the resolve guard -- Reopen stays
+      // disabled until typed.
+      body += '<div class="esc-reopen-wrap">'
+        + '<button class="btn btn-ghost esc-reopen-toggle" type="button" data-id="' + idAttr + '">&#8635; Reopen</button>'
+        + '<div class="esc-reopen" data-id="' + idAttr + '" style="display:none;">'
+        +   '<label class="esc-resolve-label">Why reopen? <span class="esc-optional">(required)</span>'
+        +   '<textarea class="esc-reopen-text" rows="2" data-id="' + idAttr + '"></textarea></label>'
+        +   '<div class="esc-resolve-actions">'
+        +     '<button class="btn esc-reopen-save" type="button" data-id="' + idAttr + '" disabled>Reopen escalation</button>'
+        +     '<span class="status status-error esc-row-error" data-id="' + idAttr + '" style="display:none;"></span>'
+        +   '</div>'
+        + '</div></div>';
     } else {
+      // §3: admin-only Edit affordance on pending cards (correct wrong
+      // dept/patient/Trx/reason). Reuses the create form, prefilled.
+      if (isAdmin) {
+        body += '<div class="esc-pending-actions">'
+          + '<button class="btn btn-ghost esc-edit" type="button" data-id="' + idAttr + '">&#9998; Edit</button>'
+          + '</div>';
+      }
       // Inline resolve form. The "Resolved" checkbox + Save stay DISABLED
       // until a resolution note is entered (mirrors the server requirement).
-      const idAttr = escapeHtml(r.id);
       body += '<div class="esc-resolve" data-id="' + idAttr + '">'
         + '<label class="esc-resolve-label">Resolution (what action was taken — required)'
         + '<textarea class="esc-resolve-text" rows="2" data-id="' + idAttr + '"></textarea></label>'
@@ -13244,27 +13396,145 @@
         + '</div></div>';
     }
 
+    // §5: append-only activity trail, collapsed by default (progressive
+    // disclosure). Lazy-loaded on first open via getEscalationActivity.
+    body += '<details class="esc-activity" data-id="' + idAttr + '">'
+      + '<summary class="esc-activity-summary" data-id="' + idAttr + '">Activity</summary>'
+      + '<div class="esc-activity-body" data-id="' + idAttr + '" data-loaded="0"></div>'
+      + '</details>';
+
     return '<div class="ds-card esc-card' + (resolved ? ' esc-card-resolved' : '') + '" data-id="' + escapeHtml(r.id) + '">'
       + '<div class="esc-card-top">' + statusPill + deptTag + '</div>'
       + body + '</div>';
   }
 
-  // Enable the checkbox + Save only once a resolution note is present.
+  // Enable the checkbox + Save only once a resolution note is present; same
+  // gate for the §2 reopen reason -> its Reopen button.
   function escOnListInput_(e) {
-    if (!e.target.classList.contains('esc-resolve-text')) return;
-    const id = e.target.getAttribute('data-id');
-    const has = !!e.target.value.trim();
-    const box  = document.querySelector('.esc-resolved-box[data-id="' + escCssId_(id) + '"]');
-    const save = document.querySelector('.esc-resolve-save[data-id="' + escCssId_(id) + '"]');
-    if (box)  box.disabled = !has;
-    if (save) save.disabled = !has;
-    if (!has && box) box.checked = false;
+    if (e.target.classList.contains('esc-resolve-text')) {
+      const id = e.target.getAttribute('data-id');
+      const has = !!e.target.value.trim();
+      const box  = document.querySelector('.esc-resolved-box[data-id="' + escCssId_(id) + '"]');
+      const save = document.querySelector('.esc-resolve-save[data-id="' + escCssId_(id) + '"]');
+      if (box)  box.disabled = !has;
+      if (save) save.disabled = !has;
+      if (!has && box) box.checked = false;
+      return;
+    }
+    if (e.target.classList.contains('esc-reopen-text')) {
+      const id = e.target.getAttribute('data-id');
+      const save = document.querySelector('.esc-reopen-save[data-id="' + escCssId_(id) + '"]');
+      if (save) save.disabled = !e.target.value.trim();
+      return;
+    }
   }
 
   function escOnListClick_(e) {
     const t = e.target;
-    if (t.classList.contains('esc-resolve-save'))  { escResolve_(t.getAttribute('data-id')); return; }
-    if (t.classList.contains('esc-comment-save'))  { escSaveComment_(t.getAttribute('data-id')); return; }
+    if (t.classList.contains('esc-resolve-save'))   { escResolve_(t.getAttribute('data-id')); return; }
+    if (t.classList.contains('esc-comment-save'))   { escSaveComment_(t.getAttribute('data-id')); return; }
+    if (t.classList.contains('esc-reopen-toggle'))  {
+      const w = document.querySelector('.esc-reopen[data-id="' + escCssId_(t.getAttribute('data-id')) + '"]');
+      if (w) w.style.display = (w.style.display === 'none' ? '' : 'none');
+      return;
+    }
+    if (t.classList.contains('esc-reopen-save'))    { escReopen_(t.getAttribute('data-id')); return; }
+    if (t.classList.contains('esc-edit'))           { escEditOpen_(t.getAttribute('data-id')); return; }
+    if (t.classList.contains('esc-activity-summary')) { escLoadActivity_(t.getAttribute('data-id')); return; }
+  }
+
+  // §2: reopen a resolved escalation (requires a reason).
+  function escReopen_(id) {
+    const ta = document.querySelector('.esc-reopen-text[data-id="' + escCssId_(id) + '"]');
+    const reason = ta ? ta.value.trim() : '';
+    if (!reason) { escRowError_(id, 'Enter a reason for reopening.'); return; }
+    escRowError_(id, '');
+    const save = document.querySelector('.esc-reopen-save[data-id="' + escCssId_(id) + '"]');
+    if (save) { save.disabled = true; save.textContent = 'Reopening…'; }
+    google.script.run
+      .withSuccessHandler(function () { escLoad_(); })
+      .withFailureHandler(function (err) {
+        if (save) { save.disabled = false; save.textContent = 'Reopen escalation'; }
+        escRowError_(id, (err && err.message ? err.message : String(err)));
+      })
+      .reopenEscalation({ id: id, reason: reason });
+  }
+
+  // §3: open the create form in EDIT mode, prefilled from the row.
+  function escEditOpen_(id) {
+    if (!escLastResp_ || !escLastResp_.rows) return;
+    let row = null;
+    for (let i = 0; i < escLastResp_.rows.length; i++) {
+      if (String(escLastResp_.rows[i].id) === String(id)) { row = escLastResp_.rows[i]; break; }
+    }
+    if (!row) return;
+    escEditId_ = id;
+    escSetCreateError_('');
+    const f = $('esc-create'); if (f) f.style.display = '';
+    // Prefill. occurred_at comes back as 'YYYY-MM-DD HH:MM:SS' -> datetime-local wants 'YYYY-MM-DDTHH:MM'.
+    const setVal = function (elId, v) { if ($(elId)) $(elId).value = v || ''; };
+    if ($('esc-c-dept')) $('esc-c-dept').value = row.department || '';
+    setVal('esc-c-when', escToLocalInput_(row.occurred_at));
+    setVal('esc-c-caller', row.caller);
+    setVal('esc-c-patient', row.patient_name);
+    setVal('esc-c-trx', row.trx);
+    setVal('esc-c-area', row.area);
+    setVal('esc-c-reason', row.reason);
+    const titleEl = $('esc-create-title'); if (titleEl) titleEl.textContent = 'Edit escalation';
+    const saveBtn = $('esc-c-save'); if (saveBtn) saveBtn.textContent = 'Save changes';
+    if (f && f.scrollIntoView) f.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+
+  // Reset the create form back to "new escalation" mode.
+  function escResetCreateMode_() {
+    escEditId_ = null;
+    const titleEl = $('esc-create-title'); if (titleEl) titleEl.textContent = 'Log a new escalation';
+    const saveBtn = $('esc-c-save'); if (saveBtn) saveBtn.textContent = 'Save escalation';
+  }
+
+  // §5: lazy-load the activity trail into a card's body on first expand.
+  function escLoadActivity_(id) {
+    const body = document.querySelector('.esc-activity-body[data-id="' + escCssId_(id) + '"]');
+    if (!body || body.getAttribute('data-loaded') === '1') return;
+    body.setAttribute('data-loaded', '1');
+    body.innerHTML = '<div class="esc-activity-loading">Loading…</div>';
+    google.script.run
+      .withSuccessHandler(function (resp) { escRenderActivity_(body, resp || {}); })
+      .withFailureHandler(function (err) {
+        body.setAttribute('data-loaded', '0');
+        body.innerHTML = '<div class="esc-activity-empty">Could not load activity.</div>';
+      })
+      .getEscalationActivity({ id: id });
+  }
+
+  function escRenderActivity_(body, resp) {
+    if (resp.available === false) {
+      body.setAttribute('data-loaded', '0');
+      body.innerHTML = '<div class="esc-activity-empty">Activity is temporarily unavailable.</div>';
+      return;
+    }
+    const rows = resp.rows || [];
+    if (!rows.length) { body.innerHTML = '<div class="esc-activity-empty">No activity recorded.</div>'; return; }
+    const labels = { created: 'Created', resolved: 'Resolved', comment: 'Comment', edited: 'Edited', reopened: 'Reopened' };
+    body.innerHTML = '<ul class="esc-timeline">' + rows.map(function (a) {
+      const lab = labels[a.action] || escapeHtml(a.action || '');
+      const who = a.actor ? (' · ' + escapeHtml(a.actor)) : '';
+      const when = a.at ? escapeHtml(escFmtWhen_(a.at)) : '';
+      const detail = a.detail ? '<div class="esc-timeline-detail">' + escapeHtml(a.detail) + '</div>' : '';
+      return '<li class="esc-timeline-item esc-timeline-' + escapeHtml(a.action || '') + '">'
+        + '<div class="esc-timeline-head"><span class="esc-timeline-action">' + lab + '</span>'
+        + '<span class="esc-timeline-meta">' + when + who + '</span></div>'
+        + detail + '</li>';
+    }).join('') + '</ul>';
+  }
+
+  // 'YYYY-MM-DD HH:MM:SS' (or ISO) -> 'YYYY-MM-DDTHH:MM' for datetime-local.
+  function escToLocalInput_(s) {
+    if (!s) return '';
+    const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/.exec(String(s));
+    if (m) return m[1] + '-' + m[2] + '-' + m[3] + 'T' + m[4] + ':' + m[5];
+    const d = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(s));
+    return d ? (d[1] + '-' + d[2] + '-' + d[3] + 'T00:00') : '';
   }
 
   function escResolve_(id) {
@@ -13298,31 +13568,40 @@
     const dept = $('esc-c-dept') ? $('esc-c-dept').value : '';
     const reason = $('esc-c-reason') ? $('esc-c-reason').value.trim() : '';
     if (!reason) { escSetCreateError_('Reason for escalation is required.'); return; }
+    const editing = !!escEditId_;
     const btn = $('esc-c-save');
+    const idleLabel = editing ? 'Save changes' : 'Save escalation';
     if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
-    google.script.run
+    const payload = {
+      department: dept,
+      occurredAt: $('esc-c-when') ? $('esc-c-when').value : '',
+      caller:      $('esc-c-caller') ? $('esc-c-caller').value : '',
+      patientName: $('esc-c-patient') ? $('esc-c-patient').value : '',
+      trx:         $('esc-c-trx') ? $('esc-c-trx').value : '',
+      area:        $('esc-c-area') ? $('esc-c-area').value : '',
+      reason:      reason,
+    };
+    const runner = google.script.run
       .withSuccessHandler(function () {
-        if (btn) { btn.disabled = false; btn.textContent = 'Save escalation'; }
+        if (btn) { btn.disabled = false; btn.textContent = idleLabel; }
         ['esc-c-caller','esc-c-patient','esc-c-trx','esc-c-area','esc-c-reason','esc-c-when'].forEach(function (i) {
           if ($(i)) $(i).value = '';
         });
         const f = $('esc-create'); if (f) f.style.display = 'none';
-        if ($('esc-status')) $('esc-status').value = 'pending';
+        escResetCreateMode_();
+        if (!editing && $('esc-status')) $('esc-status').value = 'pending';
         escLoad_();
       })
       .withFailureHandler(function (err) {
-        if (btn) { btn.disabled = false; btn.textContent = 'Save escalation'; }
+        if (btn) { btn.disabled = false; btn.textContent = idleLabel; }
         escSetCreateError_(err && err.message ? err.message : String(err));
-      })
-      .createEscalation({
-        department: dept,
-        occurredAt: $('esc-c-when') ? $('esc-c-when').value : '',
-        caller:      $('esc-c-caller') ? $('esc-c-caller').value : '',
-        patientName: $('esc-c-patient') ? $('esc-c-patient').value : '',
-        trx:         $('esc-c-trx') ? $('esc-c-trx').value : '',
-        area:        $('esc-c-area') ? $('esc-c-area').value : '',
-        reason:      reason,
       });
+    if (editing) {
+      payload.id = escEditId_;
+      runner.updateEscalation(payload);
+    } else {
+      runner.createEscalation(payload);
+    }
   }
 
   function escFmtWhen_(s) {
