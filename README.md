@@ -432,6 +432,8 @@ the deployed web-app URL to land on that view:
 
 - `#/overview` — Overview page (default landing)
 - `#/dept` — My Department page
+- `#/escalations` — Escalations (managers + admins; view/resolve a dept's
+  escalation calls, admins log new ones; Neon-backed)
 - `#/report/missed` — Missed Calls report
 - `#/report/individual` — Individual Report
 - `#/report/performance` — Performance Report
@@ -466,9 +468,14 @@ with their localStorage-restored state.
 
 ## Plain-English layer (anti-intimidation)
 
-Three client-only affordances lower the barrier for managers who find
+Four client-only affordances lower the barrier for managers who find
 the reports intimidating; none add server endpoints or cache bumps:
 
+- **Guided tour** — a short spotlight walkthrough of the main areas
+  (Overview, question launcher, freshness pill, My Department,
+  Escalations, Reports, Help) runs automatically the first time a
+  user visits and is always replayable from **Help → Guided tour**.
+  Skips any step whose target isn't visible (e.g. admin-only tabs).
 - **Question launcher** — the Overview page opens with four
   plain-English question chips ("How is my team doing lately?",
   "Why did we miss calls recently?", "Is one of my agents struggling

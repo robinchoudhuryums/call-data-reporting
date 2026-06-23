@@ -1229,8 +1229,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   wrapper, not the user-facing `/exec` URL. Deep links work for
   the 7 report routes (`#/report/missed`, `#/report/individual`,
   `#/report/performance`, `#/report/compare`, `#/report/qcd`,
-  `#/admin/alerts`, `#/admin/orphan-fix`) plus the two pages
-  (`#/overview`, `#/dept`); unknown / malformed hashes quietly
+  `#/admin/alerts`, `#/admin/orphan-fix`) plus `#/escalations` and the
+  two pages (`#/overview`, `#/dept`); unknown / malformed hashes quietly
   no-op and land on Overview. A deep link to an admin-only route
   (the `data-admin-only` tabs: alerts / orphan-fix / dept-config)
   by a non-admin also quietly no-ops -- `initRouter` skips the
