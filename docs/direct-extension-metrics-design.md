@@ -1,8 +1,21 @@
 # Design — Direct-Extension Call Metrics (with busy carve-out)
 
-Status: **DESIGN / APPROVED-DEFINITIONS — not built.** Planning record only; no
-code written. Supersedes nothing yet; will become a CLAUDE.md entry + invariants
-when Phase 1 lands.
+Status: **Phase 1a SHIPPED (editor-run, numbers-only); Phase 1b (daily-import
+hook) + Phase 2 (dashboard) pending.** Definitions owner-approved.
+
+**Phase 1a (built):** `apps-script/cdr-import/directCallMetrics.js` — the pure
+overlap/busy engine `computeDirectCallMetrics` (12 unit tests in
+`tests/unit/direct-call-metrics.test.js`), the `Direct Call History` sheet
+writer + Neon `direct_call_history` mirror (both lazily created — **no setup()
+change**), and the editor-run orchestrator **`runDirectCallBuild()`** that
+computes the CURRENT `Raw Data` day for spot-checking. The daily
+`processIntegratedHistory` is intentionally **left untouched** so the numbers
+can be validated before the live import depends on them.
+
+**Phase 1b (next, small):** wire a best-effort block into
+`processIntegratedHistory` (a `processIntegratedHistory:Direct` Pipeline Health
+row) so history accrues automatically each import — after `runDirectCallBuild`
+output is validated against known agent-days.
 
 ## Goal
 
