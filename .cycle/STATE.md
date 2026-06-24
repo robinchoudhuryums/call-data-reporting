@@ -446,3 +446,21 @@ commit/push/deploy direction.
   UNMERGED. node --test 136/136; JS + CSS balance checked. Where I left off: D1b pushed, awaiting
   PR/merge decision; remaining Tier-3 items still deferred (holidays/decision, count-up/segment/
   spark cosmetic, INV-42 dead-code, D2 low-value); Tier-1 operational rollouts still open.
+
+- **Increment 41 (DONE — Direct-extension call metrics, Phase 1a):** NEW feature, owner-approved
+  definitions in `docs/direct-extension-metrics-design.md`. Per-agent per-day metrics for
+  direct/individual-extension calls (distinct from the queue DQE/QCD path) with the "missed while
+  on another call" carve-out. NEW cdr-import-only file `directCallMetrics.js` (NOT INV-16
+  duplicated): pure `computeDirectCallMetrics` two-pass engine (occupied/busy intervals from all
+  talk legs incl. queue+outbound → classify each in-window inbound miss as missed_busy [overlaps
+  another call's busy window + 5s wrap-up tail, ANY overlap] vs missed_free; hold counts as busy;
+  internal/external split; answer-rate rings work-window-filtered 6:30-15:00 PST but busy
+  detection isn't; outbound = activity only). 12 unit tests
+  (`tests/unit/direct-call-metrics.test.js`). `Direct Call History` sheet + Neon
+  `direct_call_history` mirror, both LAZILY created (no setup() change). Editor-run
+  `runDirectCallBuild()` computes the current Raw Data day for spot-checking. **Phase 1b NOT done
+  (deliberate):** the daily `processIntegratedHistory` is untouched — wire a best-effort block
+  there only AFTER the operator validates the numbers. node --test 148/148 (12 new); INV-16 clean.
+  Pushed `claude/brave-dijkstra-wuonrv`, UNMERGED. Where I left off: Phase 1a pushed; awaiting (a)
+  PR/merge decision and (b) operator spot-check of `runDirectCallBuild()` output before Phase 1b
+  (daily hook) + Phase 2 (dashboard modal). 5s tail = `DIRECT_BUSY_WRAPUP_SEC` (tunable).
