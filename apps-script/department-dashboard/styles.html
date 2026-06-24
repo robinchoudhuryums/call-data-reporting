@@ -640,6 +640,9 @@
   .status-loading { background: var(--accent-soft); color: var(--accent); border-left-color: var(--accent); }
   .status-error   { background: var(--bad-soft);    color: var(--bad);    border-left-color: var(--bad);    }
   .status-empty   { background: var(--paper-2);     color: var(--muted);  border-left-color: var(--muted); }
+  /* D1b keep-last-good staleness note: non-fatal warn tone (a refresh failed
+     but the last good report is still shown). Distinct from .status-error. */
+  .status-warn    { background: var(--warn-soft);   color: var(--warn);   border-left-color: var(--warn); }
 
   /* Agents table — document-row aesthetic: hairline rows, no rounded
      card chrome, mono-uppercase column headers, mono numerics in the
@@ -4813,6 +4816,16 @@
   @media (prefers-reduced-motion: reduce) {
     .ds-card--rail::before { transition: none; }
     .ds-card--rail, .ds-card--rail::before { animation: none; }
+  }
+
+  /* Pass-2 E-motion: skeleton -> content crossfade on the Overview boot.
+     One-shot opacity fade applied (via .ov-body-in) only when the skeleton
+     loader was showing, so the swap reads as a fade-in, not a hard pop.
+     Reduced-motion no-op. */
+  @keyframes ov-body-in { from { opacity: 0; } to { opacity: 1; } }
+  .ov-body-in { animation: ov-body-in var(--dur-2, 240ms) var(--ease, ease) both; }
+  @media (prefers-reduced-motion: reduce) {
+    .ov-body-in { animation: none; }
   }
 
   /* 2.5 · Data table + inline metric bar */
