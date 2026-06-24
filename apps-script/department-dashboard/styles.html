@@ -4815,6 +4815,16 @@
     .ds-card--rail, .ds-card--rail::before { animation: none; }
   }
 
+  /* Pass-2 E-motion: skeleton -> content crossfade on the Overview boot.
+     One-shot opacity fade applied (via .ov-body-in) only when the skeleton
+     loader was showing, so the swap reads as a fade-in, not a hard pop.
+     Reduced-motion no-op. */
+  @keyframes ov-body-in { from { opacity: 0; } to { opacity: 1; } }
+  .ov-body-in { animation: ov-body-in var(--dur-2, 240ms) var(--ease, ease) both; }
+  @media (prefers-reduced-motion: reduce) {
+    .ov-body-in { animation: none; }
+  }
+
   /* 2.5 · Data table + inline metric bar */
   .ds-table { width: 100%; border-collapse: collapse; font-size: 13px; }
   .ds-table th {

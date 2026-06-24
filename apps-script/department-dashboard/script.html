@@ -1271,6 +1271,24 @@
     }
   }
 
+  // Reveal #ov-body, hiding #ov-loading. When the skeleton loader WAS
+  // showing (cold start / first paint), run a one-shot opacity crossfade so
+  // the swap reads as a fade-in rather than a hard pop (Pass-2 E-motion;
+  // reduced-motion no-op via CSS). Fires only on the skeleton->content
+  // transition -- silent auto-refreshes (loader already hidden) don't re-fade.
+  function ovRevealBody_() {
+    var loader = $('ov-loading'), body = $('ov-body');
+    var wasLoading = !!(loader && loader.style.display !== 'none');
+    if (loader) loader.style.display = 'none';
+    if (!body) return;
+    body.style.display = '';
+    if (wasLoading) {
+      body.classList.remove('ov-body-in');
+      void body.offsetWidth;          // restart the animation
+      body.classList.add('ov-body-in');
+    }
+  }
+
   function ovLoad_(silent) {
     var paintedFromCache = false;
     // In view-as (admin previewing a manager) skip the per-viewer SWR cache
@@ -1280,8 +1298,7 @@
       var cached = ovReadCache_();
       if (cached) {
         // Instant paint from the last snapshot; the live fetch below swaps it.
-        $('ov-loading').style.display = 'none';
-        $('ov-body').style.display = '';
+        ovRevealBody_();
         ovLastData = cached;
         ovRender_(cached);
         ovSetCachedIndicator_(true);
@@ -1295,8 +1312,7 @@
       .withSuccessHandler(function (data) {
         ovLastData = data;
         if (!viewAsDept_) ovWriteCache_(data);   // don't cache a view-as payload
-        $('ov-loading').style.display = 'none';
-        $('ov-body').style.display = '';
+        ovRevealBody_();
         ovSetRefreshWarn_(false);   // a refresh succeeded: clear any prior warning
         ovSetCachedIndicator_(false);
         ovRender_(data);
