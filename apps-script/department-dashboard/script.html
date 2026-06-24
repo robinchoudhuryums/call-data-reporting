@@ -4055,6 +4055,74 @@
   // paint over a freshly-opened PR.
   var reportReqSeq = 0;
 
+  // D1b: per-report last-good payload cache (localStorage). On a FAILED fetch
+  // the report repaints the last good payload for the SAME request (if any)
+  // with a non-destructive staleness note, instead of blanking to a hard
+  // error -- the modal-report analogue of the Overview SWR cache (which the
+  // reports don't have; they re-fetch fresh each open). Bounded: ONE entry per
+  // report (keyed by report name), matched by a request signature, so it can't
+  // grow unbounded and only repaints when the SAME view's fetch fails (a
+  // transient backend blip / reopen while Neon is briefly unreachable).
+  var REPORT_LASTGOOD_PREFIX_ = 'cdr.rpt.lastgood.v1:';
+  // Per-VIEWER key segment (mirrors the Overview SWR cache's per-email keying,
+  // INV-39 spirit) so a shared browser can never repaint one viewer's cached
+  // report for another. Belt-and-suspenders on top of the dept-in-signature
+  // entitlement boundary (a manager only ever requests their own dept, so the
+  // sig already differs across depts).
+  function reportLastGoodKey_(report) {
+    var who = '';
+    try { who = (typeof USER !== 'undefined' && USER && USER.email) ? USER.email : ''; } catch (e) {}
+    return REPORT_LASTGOOD_PREFIX_ + who + ':' + report;
+  }
+  // Stable signature of a report request (agents sorted so selection order
+  // doesn't churn the key).
+  function reportSig_(req) {
+    try {
+      var clone = JSON.parse(JSON.stringify(req || {}));
+      if (Array.isArray(clone.agents)) clone.agents = clone.agents.slice().sort();
+      return JSON.stringify(clone);
+    } catch (e) { return ''; }
+  }
+  function reportLastGoodWrite_(report, sig, data) {
+    try { localStorage.setItem(reportLastGoodKey_(report),
+      JSON.stringify({ sig: sig, at: Date.now(), data: data })); } catch (e) {}
+  }
+  // Returns the cached entry ONLY when its signature matches the current
+  // request (so a stale, different-params payload is never shown as "current").
+  function reportLastGoodRead_(report, sig) {
+    try {
+      var raw = localStorage.getItem(reportLastGoodKey_(report));
+      if (!raw) return null;
+      var obj = JSON.parse(raw);
+      return (obj && obj.sig === sig && obj.data) ? obj : null;
+    } catch (e) { return null; }
+  }
+  function reportStaleNote_(at) {
+    var when = '';
+    try { when = at ? new Date(at).toLocaleString() : ''; } catch (e) {}
+    return 'Couldn’t refresh — showing the last loaded report'
+      + (when ? ' (as of ' + when + ')' : '') + '. Try again in a moment.';
+  }
+  // Generic results-status setter by element id (matches the per-report
+  // *SetResultsStatus bodies; used for reports whose setter isn't in scope here).
+  function reportSetStatus_(elId, kind, msg) {
+    var el = $(elId); if (!el) return;
+    if (!kind) { el.style.display = 'none'; el.textContent = ''; return; }
+    el.className = 'status status-' + kind; el.textContent = msg; el.style.display = '';
+  }
+  // On a failed fetch: repaint the last-good payload for this exact request
+  // (if cached) + a staleness note, and return true so the caller SKIPS its
+  // hard-error path. Returns false when there's nothing to fall back to.
+  function reportFailFallback_(report, sig, repaintFn, statusElId) {
+    var lg = reportLastGoodRead_(report, sig);
+    if (!lg) return false;
+    try {
+      repaintFn(lg.data);                                   // renders + shows the results pane
+      reportSetStatus_(statusElId, 'warn', reportStaleNote_(lg.at));
+      return true;
+    } catch (e) { return false; }
+  }
+
   function refresh() {
     const dept = getRequestedDept();
     if (!dept) {
@@ -5591,17 +5659,21 @@
     if (prior) { req.priorFrom = prior.from; req.priorTo = prior.to; }
 
     const __rtok = ++reportReqSeq;   // F10 stale-response guard
+    const __sig = reportSig_(req);   // D1b keep-last-good key
     google.script.run
       .withSuccessHandler(function (data) {
         btn.disabled = false;
         btn.textContent = originalLabel;
         if (__rtok !== reportReqSeq) return;   // superseded by a newer request
+        reportLastGoodWrite_('ir', __sig, data);
         irRenderReport(data);
       })
       .withFailureHandler(function (err) {
         btn.disabled = false;
         btn.textContent = originalLabel;
         if (__rtok !== reportReqSeq) return;
+        // D1b: repaint last-good for this exact request (if any) instead of blanking.
+        if (reportFailFallback_('ir', __sig, irRenderReport, 'ir-results-status')) return;
         // #1 Part B: on a drill the form is hidden behind the loader; surface it
         // so the error is visible (showIrForm clears the loader + any prior error).
         showIrForm();
@@ -5877,15 +5949,20 @@
     if (prior && !prior.error) { req.priorFrom = prior.from; req.priorTo = prior.to; }
 
     const __rtok = ++reportReqSeq;   // F10 stale-response guard
+    const __sig = reportSig_(req);   // D1b keep-last-good key
     google.script.run
       .withSuccessHandler(function (data) {
         if (btn) { btn.textContent = 'Apply'; btn.disabled = false; }
         if (__rtok !== reportReqSeq) return;
+        reportLastGoodWrite_('ir', __sig, data);
         irRenderReport(data);
       })
       .withFailureHandler(function (err) {
         if (btn) { btn.textContent = 'Apply'; btn.disabled = false; }
         if (__rtok !== reportReqSeq) return;
+        // D1b: repaint last-good for this request if cached; else the prior
+        // render stays (results pane already shown) with an error banner.
+        if (reportFailFallback_('ir', __sig, irRenderReport, 'ir-results-status')) return;
         irSetResultsStatus('error', 'Error: ' + (err && err.message ? err.message : String(err)));
       })
       .getIndividualReport(req);
@@ -7299,17 +7376,21 @@
     btn.innerHTML = DS_EQ_HTML_ + 'Loading…';
 
     const __rtok = ++reportReqSeq;   // F10 stale-response guard
+    const __sig = reportSig_(req);   // D1b keep-last-good key
     google.script.run
       .withSuccessHandler(function (data) {
         btn.disabled = false;
         btn.textContent = originalLabel;
         if (__rtok !== reportReqSeq) return;
+        reportLastGoodWrite_('pr', __sig, data);
         prRenderReport_(data);
       })
       .withFailureHandler(function (err) {
         btn.disabled = false;
         btn.textContent = originalLabel;
         if (__rtok !== reportReqSeq) return;
+        // D1b: repaint last-good for this exact request (if any) instead of blanking.
+        if (reportFailFallback_('pr', __sig, prRenderReport_, 'pr-results-status')) return;
         prSetFormError('Error: ' + (err && err.message ? err.message : String(err)));
       })
       .getPerformanceReport(req);
@@ -8377,15 +8458,20 @@
     crSetResultsStatus('loading', 'Refreshing report…');
 
     const __rtok = ++reportReqSeq;   // F10 stale-response guard
+    const __sig = reportSig_({ department: dept, agents: newAgents, p1From: p1From, p1To: p1To, p2From: p2From, p2To: p2To });
     google.script.run
       .withSuccessHandler(function (data) {
         if (btn) { btn.textContent = 'Apply'; btn.disabled = false; }
         if (__rtok !== reportReqSeq) return;
+        reportLastGoodWrite_('cr', __sig, data);
         crRenderReport_(data);
       })
       .withFailureHandler(function (err) {
         if (btn) { btn.textContent = 'Apply'; btn.disabled = false; }
         if (__rtok !== reportReqSeq) return;
+        // D1b: repaint last-good for this request if cached; else the prior
+        // render stays (results pane already shown) with an error banner.
+        if (reportFailFallback_('cr', __sig, crRenderReport_, 'cr-results-status')) return;
         crSetResultsStatus('error', 'Error: ' + (err && err.message ? err.message : String(err)));
       })
       .getCompareRanges({
@@ -8663,17 +8749,21 @@
     crSavePrefs_();
 
     const __rtok = ++reportReqSeq;   // F10 stale-response guard
+    const __sig = reportSig_({ department: dept, agents: agents, p1From: p1From, p1To: p1To, p2From: p2From, p2To: p2To });
     google.script.run
       .withSuccessHandler(function (data) {
         btn.disabled = false;
         btn.textContent = originalLabel;
         if (__rtok !== reportReqSeq) return;
+        reportLastGoodWrite_('cr', __sig, data);
         crRenderReport_(data);
       })
       .withFailureHandler(function (err) {
         btn.disabled = false;
         btn.textContent = originalLabel;
         if (__rtok !== reportReqSeq) return;
+        // D1b: repaint last-good for this exact request (if any) instead of blanking.
+        if (reportFailFallback_('cr', __sig, crRenderReport_, 'cr-results-status')) return;
         crSetFormError('Error: ' + (err && err.message ? err.message : String(err)));
       })
       .getCompareRanges({
@@ -12600,13 +12690,19 @@
     const dept = $('inbound-dept') ? $('inbound-dept').value : '';
     const gen = $('inbound-generate-btn'); const prev = gen.textContent;
     gen.disabled = true; gen.innerHTML = DS_EQ_HTML_ + 'Generating…';
+    const __sig = reportSig_({ from: from, to: to, department: dept });   // D1b key
+    const __inboundRepaint = function (d) { inboundRenderReport_(d); inboundShowResults(); reportSetStatus_('inbound-results-status', ''); };
     google.script.run
       .withSuccessHandler(function (data) {
         gen.disabled = false; gen.textContent = prev;
-        inboundRenderReport_(data); inboundShowResults();
+        reportLastGoodWrite_('inbound', __sig, data);
+        __inboundRepaint(data);
       })
       .withFailureHandler(function (err) {
         gen.disabled = false; gen.textContent = prev;
+        // D1b: repaint last-good for this exact request (if any) instead of just
+        // a form error (which is hidden once results show).
+        if (reportFailFallback_('inbound', __sig, __inboundRepaint, 'inbound-results-status')) return;
         inboundSetError('Error: ' + (err && err.message ? err.message : String(err)));
       })
       .getInboundReport({ from: from, to: to, department: dept });
@@ -14133,13 +14229,20 @@
     btn.disabled = true;
     const prev = btn.textContent; btn.innerHTML = DS_EQ_HTML_ + 'Loading…';
 
+    const __sig = reportSig_({ department: dept, from: from, to: to });   // D1b key
+    // Wrap render to clear any prior staleness note (qcdRenderReport_ doesn't
+    // touch qcd-results-status, which doubles as the export-status banner).
+    const __qcdRepaint = function (d) { qcdRenderReport_(d); reportSetStatus_('qcd-results-status', ''); };
     google.script.run
       .withSuccessHandler(function (data) {
         btn.disabled = false; btn.textContent = prev;
-        qcdRenderReport_(data);
+        reportLastGoodWrite_('qcd', __sig, data);
+        __qcdRepaint(data);
       })
       .withFailureHandler(function (err) {
         btn.disabled = false; btn.textContent = prev;
+        // D1b: repaint last-good for this exact request (if any) instead of blanking.
+        if (reportFailFallback_('qcd', __sig, __qcdRepaint, 'qcd-results-status')) return;
         showQcdForm();   // dismisses the launcher loading pane if active
         qcdSetFormError_('Error: ' + (err && err.message ? err.message : String(err)));
       })

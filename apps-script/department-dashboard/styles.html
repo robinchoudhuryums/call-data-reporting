@@ -640,6 +640,9 @@
   .status-loading { background: var(--accent-soft); color: var(--accent); border-left-color: var(--accent); }
   .status-error   { background: var(--bad-soft);    color: var(--bad);    border-left-color: var(--bad);    }
   .status-empty   { background: var(--paper-2);     color: var(--muted);  border-left-color: var(--muted); }
+  /* D1b keep-last-good staleness note: non-fatal warn tone (a refresh failed
+     but the last good report is still shown). Distinct from .status-error. */
+  .status-warn    { background: var(--warn-soft);   color: var(--warn);   border-left-color: var(--warn); }
 
   /* Agents table — document-row aesthetic: hairline rows, no rounded
      card chrome, mono-uppercase column headers, mono numerics in the
