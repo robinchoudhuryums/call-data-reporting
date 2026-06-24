@@ -428,3 +428,21 @@ commit/push/deploy direction.
   `DQE_READ_SOURCE=neon` cutover, uninstall `runDailyDQEBuild_` safety net, restore Inbound manager
   access). Where I left off: Tier 3 crossfade pushed to `claude/brave-dijkstra-wuonrv` (not yet
   PR'd); D1b (reports keep-last-good) is the recommended next focused task.
+
+- **Increment 40 (DONE — D1b reports keep-last-good):** added a per-report last-good payload
+  cache (localStorage) so a FAILED report fetch repaints the last good payload for the SAME
+  request + a non-destructive `.status-warn` "couldn't refresh — showing the last loaded report"
+  banner, instead of blanking to a hard error. Shared helpers in script.html (near `reportReqSeq`):
+  `reportSig_` (agents-sorted JSON), `reportLastGoodWrite_`/`reportLastGoodRead_` (ONE entry per
+  report, keyed per VIEWER via `reportLastGoodKey_`+USER.email per INV-39 spirit, matched by sig —
+  department is in the sig so the per-dept entitlement boundary holds), `reportFailFallback_`,
+  `reportSetStatus_`. Wired all 5 reports at every fetch call site: IR (generate + edit-apply),
+  PR (generate), CR (generate + edit-apply), QCD (generate, wrapped repaint to clear the shared
+  qcd-results-status), Inbound (generate, wrapped repaint to clear inbound-results-status). New
+  `.status-warn` tone (warn-soft) in styles.html. Audit finding: the literal "blank on re-fetch"
+  was ALREADY prevented (IR/CR edit-apply keep results; PR/QCD/Inbound only fetch from the form),
+  so the real D1b value delivered is surviving a transient backend failure / reopen. SKIPPED the
+  heavier paint-instantly-on-open SWR variant (follow-on). Pushed `claude/brave-dijkstra-wuonrv`,
+  UNMERGED. node --test 136/136; JS + CSS balance checked. Where I left off: D1b pushed, awaiting
+  PR/merge decision; remaining Tier-3 items still deferred (holidays/decision, count-up/segment/
+  spark cosmetic, INV-42 dead-code, D2 low-value); Tier-1 operational rollouts still open.
