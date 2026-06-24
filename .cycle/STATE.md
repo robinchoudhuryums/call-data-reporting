@@ -390,3 +390,41 @@ commit/push/deploy direction.
   LIVE SPOT-CHECK (not a code change). A1's optional "auto-collapse On-track past 4" trimmed.
   Where I left off: Pass-2 dashboard CSS/JS pass complete; awaiting user redeploy + the standing
   live verifications (heatmap colors/CST, Insights chip/rail, B1 flash, A1 triage).
+
+- **Increments 35–39 (DONE — Phase 15 + deploy feedback + design packages + Tier 3):** all on
+  branch `claude/brave-dijkstra-wuonrv`; merged via PRs #131, #132 (+ Tier 3 pushed, unmerged).
+  - **Phase 15 (PR #131):** Missed Calls report per-agent timelines flipped to roster-only
+    (`getMissedCallsReport` scope 'both'→'roster') to match the now-roster-only Agent Call Metrics
+    table; queue-only abandoned section preserved (sentinels always included). Missed cards sort
+    most-missed-first + cohort-relative severity tiers (`missedQuantile_`, gated <3 agents / max<3).
+    Insights agent-card tier grouping made ALWAYS-ON (Needs attention / Mixed / Improving) instead
+    of only-when-regressed. Docs synced (scope decision rewritten roster-only, conventions.md).
+  - **My-Dept deploy-feedback polish (PR #132):** fixed the Missed radar render (was created while
+    `#dept-missed-section` was display:none → zero-size canvas; now shown before chart build);
+    QCD side card condensed + per-queue CAROUSEL (`renderDeptQcdSnapshot_`); container max-width
+    1200→1440px.
+  - **Escalations Pass 3b (PR #132):** §4 client filter (escLastResp_ copy), §5 append-only
+    `escalation_activity` table with TRUE ATOMICITY (write paths refactored to
+    `setAutoCommit(false)`+commit/rollback; activity row in same txn), §3 admin `updateEscalation`
+    (pending-only), §2 `reopenEscalation` (reason required, retains resolved_*), §1 flag-gated
+    `NOTIFY_ON_NEW_ESCALATION` full-detail email via `lookupDeptManagers_`. New endpoint
+    `getEscalationActivity` (per-dept). INV-55 + Operator State #24 updated.
+  - **Overview layout (PR #132):** STACKED layout — full-width sticky-top trend chart (CSS
+    order:-1, position:sticky top:8px z-index:5; condense-on-scroll SKIPPED per user), 4-wide dept
+    grid (responsive 4→2→1). P1 taken as HYBRID: sub-queue children stay as their own tiles (parent
+    DQE metrics are independent — nesting would falsely imply aggregation). P2.4: chart defaults to
+    top-level depts + `#ov-subq-toggle` ("+ sub-queues"). Spotlight preserved (name-based). Retired
+    the documented #8 rail; comment + CLAUDE.md updated.
+  - **Tier 3 (this /broad-implement, pushed `ddba6ba`, UNMERGED):** implemented ONLY the
+    skeleton→content crossfade (Overview boot, `ovRevealBody_` + `.ov-body-in`, fires only when the
+    loader was showing, reduced-motion no-op). DEFERRED the rest with rationale: D1b keep-last-good
+    (doc's own separate larger item, 5 reports' distinct re-fetch models, IR already does it);
+    holiday exclusion (needs holiday-source decision); condense-on-scroll (user explicitly skipped);
+    count-up/segment-slide/chart-spark (fiddly/net-new/conflicts animation:false, low value);
+    INV-42 THEME.bad (dead code, no consumer); D2 permission-tone (no real dead-ends per F11).
+  STANDING OPERATOR ACTIONS (post-deploy): run `backfillEscalationActivity()` once; decide
+  `NOTIFY_ON_NEW_ESCALATION` (PII); live spot-check a resolve/reopen (the §5 txn refactor) + the
+  Overview sticky chart + QCD carousel. Tier-1 rollout levers still open (deferred Neon mirror,
+  `DQE_READ_SOURCE=neon` cutover, uninstall `runDailyDQEBuild_` safety net, restore Inbound manager
+  access). Where I left off: Tier 3 crossfade pushed to `claude/brave-dijkstra-wuonrv` (not yet
+  PR'd); D1b (reports keep-last-good) is the recommended next focused task.
