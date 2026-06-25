@@ -332,11 +332,22 @@ function dcBuildExtMaps_(configSheet) {
   const lastRow = configSheet.getLastRow();
   if (lastRow < 2) return { extToAgent: extToAgent, queueExtSet: queueExtSet, exclusions: exclusions };
 
-  // Queue map (cols A/B): dept | queue ext.
+  // Queue map (cols A/B): dept/queue-group | queue ext(s). Col B may be a
+  // COMMA-JOINED list of extensions (e.g. "103,108" -- the combined CSR queues
+  // A_Q_CSR + A_Q_Intake grouped under "A_Q_CustomerSuccess", which itself has
+  // no ext). Split so each ext is matched individually by queueExtSet.has(ext);
+  // adding the raw cell too is harmless.
   const queueMap = configSheet.getRange(2, 1, lastRow - 1, 2).getValues();
   queueMap.forEach(function (r) {
     if (r[0]) exclusions.add(String(r[0]).trim());
-    if (r[1]) { const ext = String(r[1]).trim(); exclusions.add(ext); queueExtSet.add(ext); }
+    if (r[1]) {
+      const raw = String(r[1]).trim();
+      exclusions.add(raw);
+      raw.split(',').forEach(function (tok) {
+        const ext = tok.trim();
+        if (ext) { exclusions.add(ext); queueExtSet.add(ext); }
+      });
+    }
   });
 
   // Roster block (cols F.. = col 6..): header row 1 = dept names; cells below

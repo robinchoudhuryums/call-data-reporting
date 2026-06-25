@@ -223,6 +223,34 @@ test('no samples collected by default (collectSamples off)', function () {
   assert.equal(res.meta.samples, undefined);
 });
 
+test('dcBuildExtMaps_ splits a comma-joined queue-ext cell (103,108) into individual exts', function () {
+  // Minimal fake DO NOT EDIT! sheet: row 1 = headers, row 2 = a queue-map row
+  // whose col B is the combined CSR queue exts "103,108".
+  function fakeConfig(grid) {
+    return {
+      getLastRow: function () { return grid.length; },
+      getRange: function (r, c, nr, nc) {
+        return { getValues: function () {
+          const out = [];
+          for (let i = 0; i < nr; i++) {
+            const rowArr = grid[r - 1 + i] || [];
+            const slice = [];
+            for (let j = 0; j < nc; j++) { const v = rowArr[c - 1 + j]; slice.push(v != null ? v : ''); }
+            out.push(slice);
+          }
+          return out;
+        } };
+      },
+    };
+  }
+  const maps = h.fn('dcBuildExtMaps_')(fakeConfig([
+    ['Queue', 'Ext'],
+    ['A_Q_CustomerSuccess', '103,108'],
+  ]));
+  assert.ok(maps.queueExtSet.has('103'), 'first ext split out');
+  assert.ok(maps.queueExtSet.has('108'), 'second ext split out');
+});
+
 test('answer rate inputs: answered excluded-from-rate busy miss surfaced separately', function () {
   const res = compute(grid([
     row({ cid: 'A1', start: D + '12:00:00', dir: 'Incoming', talk: '0:01:00', callTime: '0:01:00', caller: '+1551', callee: '101', answered: true }),
