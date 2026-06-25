@@ -28,9 +28,13 @@ function row(o) {
   r[5]  = o.dir || '';                   // Incoming | Internal | Outgoing
   r[6]  = o.talk || '';                  // H:MM:SS
   r[7]  = o.callTime || '';              // H:MM:SS (ring/hold duration)
-  r[8]  = o.caller || '';                // CALLER ext/number
-  r[10] = o.callee || '';               // CALLEE ext/number
+  r[8]  = o.caller || '';                // CALLER ext/number (col I)
+  r[9]  = o.callerName || '';            // CALLER NAME (col J)
+  r[10] = o.callee || '';               // CALLEE ext/number (col K)
+  r[11] = o.calleeName || '';            // CALLEE NAME (col L) -- e.g. 'A_Q_CSR'
   r[13] = o.ctx || '';                   // CONTEXT ('CallQueue...' => queue leg)
+  r[14] = o.parent || '';                // PARENT_CALL (col O)
+  r[22] = o.callerId || '';              // CALLER_ID (col W) -- DQE queue marker
   r[23] = o.missed ? 'Missed' : '';
   r[25] = o.answered ? 'Answered' : '';
   return r;
@@ -85,6 +89,35 @@ test('miss within the 5s wrap-up tail -> busy; miss past the tail -> free', func
     row({ cid: 'R', start: D + '10:05:08', dir: 'Incoming', callTime: '0:00:10', caller: '+15551112222', callee: '101', missed: true }),
   ]), MAPS, {});
   assert.equal(rowFor(pastTail, 'Anna').ib_ext_missed_free, 1, 'ring 8s after hangup is past the tail');
+});
+
+test('a ring whose CALLER is a queue extension is NOT a direct inbound (queue leak fix)', function () {
+  // 103 is the CS-queue ext (in queueExtSet). A "ring" from 103 -> agent is the
+  // queue distributing a call, not a direct inbound miss against the agent.
+  const res = compute(grid([
+    row({ cid: 'Q1', start: D + '11:07:45', dir: 'Internal', callTime: '0:00:20', caller: '103', callee: '101', missed: true }),
+  ]), MAPS, {});
+  assert.equal(rowFor(res, 'Anna'), undefined, 'ring from queue ext 103 is excluded from direct inbound');
+});
+
+test('answered queue call: the agent Outgoing talk leg is NOT a direct outbound (sibling-leg queue fix)', function () {
+  // Leg 1 marks the whole call as a queue call (callee 103 / name A_Q_CSR);
+  // Leg 4 (same call id) is the agent answering, shown as Outgoing with the
+  // talk time -> must NOT count as a direct outbound.
+  const res = compute(grid([
+    row({ cid: 'QC', start: D + '10:00:00', dir: 'Incoming', caller: '+15551234567', callee: '103', calleeName: 'A_Q_CSR' }),
+    row({ cid: 'QC', start: D + '10:00:15', dir: 'Outgoing', talk: '0:04:00', callTime: '0:04:00', caller: '101', callee: '+15551234567' }),
+  ]), MAPS, {});
+  const a = rowFor(res, 'Anna');
+  assert.ok(!a || (a.ob_ext_total === 0 && a.ob_int_total === 0),
+    'the answered-queue-call Outgoing leg is not counted as a direct outbound');
+});
+
+test('queue identified by CALLER_ID marker (A_Q_*) also excludes the call', function () {
+  const res = compute(grid([
+    row({ cid: 'QW', start: D + '10:30:00', dir: 'Incoming', callTime: '0:00:20', caller: '+15551234567', callee: '101', callerId: 'A_Q_CSR', missed: true }),
+  ]), MAPS, {});
+  assert.equal(rowFor(res, 'Anna'), undefined, 'CALLER_ID A_Q_CSR marks it a queue call, not a direct miss');
 });
 
 test('a QUEUE call the agent was on makes them busy for a direct miss', function () {

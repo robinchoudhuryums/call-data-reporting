@@ -39,6 +39,21 @@ already on another call**, that miss must **not** count against them.
   queue leg stays in the DQE/queue path; classification is per-leg by
   `CALLER_ID` + disposition, so a direct ring later answered via a queue is not
   also counted as a direct miss. **Must be spot-checked live.**
+- **Queue exclusion is CALL-LEVEL (Phase 1a testing fix).** Queue calls span
+  multiple legs that individually look direct: a queue ring leg shows
+  `caller = <queue ext, e.g. 103> -> agent` (looked like a direct inbound miss),
+  and the agent answering an inbound queue call shows an `Outgoing` talk leg
+  `agent -> external` whose queue identity lives on a SIBLING leg
+  (`Leg 1: -> 103 / A_Q_CSR`) (looked like a direct outbound). So
+  `computeDirectCallMetrics` does a PRE-PASS flagging every call (by call id AND
+  parent-call id) that has ANY queue-touching leg — queue signals: `CALLER_ID`
+  matching `A_Q_*`/`Backup CSR`, a `CallQueue` context, a queue EXTENSION
+  (`queueExtSet`, from the DO NOT EDIT! queue map) on either side, or a
+  caller/callee NAME matching the queue pattern — and excludes EVERY leg of a
+  flagged call from both direct buckets. Occupied/busy intervals are still
+  recorded from queue talk legs (a queue call the agent is on still makes them
+  busy for a direct miss). `dcIsPhone_(caller) && !queueExtSet.has(caller)` is a
+  belt-and-suspenders on the inbound side.
 
 ## Locked definitions (owner-approved)
 
