@@ -156,7 +156,7 @@ function computeDirectCallMetrics(rawDisplayData, maps, opts) {
     //     queue legs. Not window-filtered: a pre-window call still in progress
     //     makes them busy for an in-window ring. Self-exclusion is by cid.
     if (startSec != null && talk > 0) {
-      const occ = { cid: cid, s: startSec, e: startSec + talk + hold };
+      const occ = { cid: cid, s: startSec, e: startSec + talk + hold, info: dir + ' ' + caller + '->' + callee };
       if (callerAgent && !exclusions.has(callerAgent.name)) ensure(callerAgent.name, callerAgent.dept).occ.push(occ);
       if (calleeAgent && !exclusions.has(calleeAgent.name)) ensure(calleeAgent.name, calleeAgent.dept).occ.push(occ);
     }
@@ -169,7 +169,7 @@ function computeDirectCallMetrics(rawDisplayData, maps, opts) {
         (dir === 'Incoming' || dir === 'Internal')) {
       const b = ensure(calleeAgent.name, calleeAgent.dept);
       let ev = b.ib[cid];
-      if (!ev) { ev = b.ib[cid] = { intExt: dir === 'Internal' ? 'int' : 'ext', start: startSec, ringEnd: null, answered: false, talk: 0 }; }
+      if (!ev) { ev = b.ib[cid] = { intExt: dir === 'Internal' ? 'int' : 'ext', start: startSec, ringEnd: null, answered: false, talk: 0, caller: caller, callee: callee }; }
       if (startSec != null && (ev.start == null || startSec < ev.start)) ev.start = startSec;
       const ringEnd = (startSec != null) ? startSec + Math.max(0, dcTimeToSec_(r[C.CALLTIME])) : null;
       if (ringEnd != null && (ev.ringEnd == null || ringEnd > ev.ringEnd)) ev.ringEnd = ringEnd;
@@ -181,22 +181,35 @@ function computeDirectCallMetrics(rawDisplayData, maps, opts) {
     if (callerAgent && !exclusions.has(callerAgent.name) && dir === 'Outgoing') {
       const b = ensure(callerAgent.name, callerAgent.dept);
       let ev = b.ob[cid];
-      if (!ev) { ev = b.ob[cid] = { intExt: extToAgent[callee] ? 'int' : 'ext', start: startSec, connected: false, talk: 0 }; }
+      if (!ev) { ev = b.ob[cid] = { intExt: extToAgent[callee] ? 'int' : 'ext', start: startSec, connected: false, talk: 0, callee: callee }; }
       if (startSec != null && (ev.start == null || startSec < ev.start)) ev.start = startSec;
       if (talk > 0) { ev.connected = true; ev.talk = Math.max(ev.talk, talk); }
     }
   }
 
   function inWindow(s) { return s != null && s >= W0 && s < W1; }
-  function isBusy(occList, ring) {
-    // any overlap (>0) with a DIFFERENT call's busy window (+ tail).
+  // Returns the FIRST overlapping busy interval of a DIFFERENT call (the
+  // "blocker") or null. Overlap = any (>0) against the busy window + tail.
+  function busyBlocker(occList, ring) {
     for (let j = 0; j < occList.length; j++) {
       const o = occList[j];
       if (o.cid === ring.cid) continue;
-      if (ring.s < (o.e + TAIL) && o.s < ring.e) return true;
+      if (ring.s < (o.e + TAIL) && o.s < ring.e) return o;
     }
-    return false;
+    return null;
   }
+
+  // Sample collection (verification aid): a capped few example events per
+  // bucket, with the fields needed to find the row in Raw Data by CALL_ID.
+  const collect = !!(opts && opts.collectSamples);
+  const SAMPLE_CAP = (opts && opts.sampleCap) || 6;
+  const samples = { ib_answered: [], ib_missed_free: [], ib_missed_busy: [], ob_connected: [], ob_not_connected: [] };
+  function secToHms(s) {
+    if (s == null) return '?';
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = s % 60;
+    return (h < 10 ? '0' : '') + h + ':' + (m < 10 ? '0' : '') + m + ':' + (x < 10 ? '0' : '') + x;
+  }
+  function addSample(cat, rec) { if (collect && samples[cat].length < SAMPLE_CAP) samples[cat].push(rec); }
 
   const rows = [];
   let missedBusyTotal = 0, missedFreeTotal = 0;
@@ -217,10 +230,21 @@ function computeDirectCallMetrics(rawDisplayData, maps, opts) {
       if (ev.answered) {
         m['ib_' + k + '_answered']++;
         m['ib_' + k + '_talk_sec'] += ev.talk;
+        addSample('ib_answered', { callId: cid, agent: name, dept: a.dept, dir: k, time: secToHms(ev.start),
+          caller: ev.caller, callee: ev.callee, talkSec: ev.talk });
       } else {
         const ring = { cid: cid, s: ev.start, e: (ev.ringEnd != null ? ev.ringEnd : ev.start) };
-        if (isBusy(a.occ, ring)) { m['ib_' + k + '_missed_busy']++; missedBusyTotal++; }
-        else                     { m['ib_' + k + '_missed_free']++; missedFreeTotal++; }
+        const blocker = busyBlocker(a.occ, ring);
+        if (blocker) {
+          m['ib_' + k + '_missed_busy']++; missedBusyTotal++;
+          addSample('ib_missed_busy', { callId: cid, agent: name, dept: a.dept, dir: k,
+            ringStart: secToHms(ring.s), ringEnd: secToHms(ring.e), caller: ev.caller, callee: ev.callee,
+            blockedByCallId: blocker.cid, blockerWindow: secToHms(blocker.s) + '-' + secToHms(blocker.e) + ' (+' + TAIL + 's tail)', blockerInfo: blocker.info });
+        } else {
+          m['ib_' + k + '_missed_free']++; missedFreeTotal++;
+          addSample('ib_missed_free', { callId: cid, agent: name, dept: a.dept, dir: k,
+            ringStart: secToHms(ring.s), caller: ev.caller, callee: ev.callee });
+        }
       }
     });
 
@@ -229,7 +253,12 @@ function computeDirectCallMetrics(rawDisplayData, maps, opts) {
       if (!inWindow(ev.start)) { if (ev.start == null) droppedNoStart++; return; }
       const k = ev.intExt;
       m['ob_' + k + '_total']++;
-      if (ev.connected) { m['ob_' + k + '_connected']++; m['ob_' + k + '_talk_sec'] += ev.talk; }
+      if (ev.connected) {
+        m['ob_' + k + '_connected']++; m['ob_' + k + '_talk_sec'] += ev.talk;
+        addSample('ob_connected', { callId: cid, agent: name, dept: a.dept, dir: k, time: secToHms(ev.start), callee: ev.callee, talkSec: ev.talk });
+      } else {
+        addSample('ob_not_connected', { callId: cid, agent: name, dept: a.dept, dir: k, time: secToHms(ev.start), callee: ev.callee });
+      }
     });
 
     // Skip agents with no IN-WINDOW direct activity (all-zero row) -- keeps the
@@ -243,7 +272,9 @@ function computeDirectCallMetrics(rawDisplayData, maps, opts) {
     return (x.dept || '').localeCompare(y.dept || '') || (x.agent || '').localeCompare(y.agent || '');
   });
 
-  return { rows: rows, meta: { agents: rows.length, droppedNoStart: droppedNoStart, missedBusyTotal: missedBusyTotal, missedFreeTotal: missedFreeTotal } };
+  const meta = { agents: rows.length, droppedNoStart: droppedNoStart, missedBusyTotal: missedBusyTotal, missedFreeTotal: missedFreeTotal };
+  if (collect) meta.samples = samples;
+  return { rows: rows, meta: meta };
 }
 
 // -- Config-map builder (mirrors calculateMetricsInMemory's parse) ------------
@@ -405,12 +436,14 @@ function runDirectCallBuild() {
   const monthYear = dcMonthYearFromDate_(dateStr);
 
   const maps = dcBuildExtMaps_(configSheet);
-  const result = computeDirectCallMetrics(raw, maps, {});
+  const result = computeDirectCallMetrics(raw, maps, { collectSamples: true });
 
   const wrote = dcWriteSheet_(ss, result.rows, monthYear, dateStr);
   let neon = { inserted: 0 };
   try { neon = writeDirectCallRowsToNeon_(result.rows, monthYear, isoDate); }
   catch (e) { Logger.log('runDirectCallBuild: Neon mirror failed (non-blocking): ' + (e && e.message ? e.message : e)); }
+
+  dcLogSamples_(result.meta.samples);
 
   const ms = Date.now() - t0;
   dcLogPipelineHealth_(ss, 'success', wrote, ms,
@@ -420,6 +453,40 @@ function runDirectCallBuild() {
     wrote, dateStr, result.meta.missedBusyTotal, result.meta.missedFreeTotal,
     neon.unreachable ? 'unreachable' : (neon.error ? 'error' : 'ok'), ms);
   return { rows: wrote, date: dateStr, meta: result.meta, neon: neon };
+}
+
+/**
+ * Logs a few example events per designation so the operator can look each one
+ * up in Raw Data by CALL_ID and confirm the classification (esp. missed_busy,
+ * which also names the blocking call + its busy window). Verification aid only.
+ */
+function dcLogSamples_(samples) {
+  if (!samples) return;
+  const order = ['ib_answered', 'ib_missed_free', 'ib_missed_busy', 'ob_connected', 'ob_not_connected'];
+  const label = {
+    ib_answered: 'INBOUND ANSWERED', ib_missed_free: 'INBOUND MISSED (free -- counts against agent)',
+    ib_missed_busy: 'INBOUND MISSED (busy -- EXCLUDED, was on another call)',
+    ob_connected: 'OUTBOUND CONNECTED', ob_not_connected: 'OUTBOUND NOT CONNECTED (callee no-answer)',
+  };
+  Logger.log('--- Direct-call samples (look up CALL_ID in Raw Data to verify) ---');
+  order.forEach(function (cat) {
+    const list = samples[cat] || [];
+    Logger.log('[' + label[cat] + '] ' + list.length + ' example(s):');
+    list.forEach(function (s) {
+      if (cat === 'ib_missed_busy') {
+        Logger.log('   call %s | %s (%s) | rang %s-%s from %s -> ext %s | BLOCKED BY call %s [%s] %s',
+          s.callId, s.agent, s.dir, s.ringStart, s.ringEnd, s.caller, s.callee, s.blockedByCallId, s.blockerWindow, s.blockerInfo);
+      } else if (cat === 'ib_missed_free') {
+        Logger.log('   call %s | %s (%s) | rang %s from %s -> ext %s', s.callId, s.agent, s.dir, s.ringStart, s.caller, s.callee);
+      } else if (cat === 'ib_answered') {
+        Logger.log('   call %s | %s (%s) | %s from %s -> ext %s | talk %ss', s.callId, s.agent, s.dir, s.time, s.caller, s.callee, s.talkSec);
+      } else if (cat === 'ob_connected') {
+        Logger.log('   call %s | %s (%s) | %s ext %s -> %s | talk %ss', s.callId, s.agent, s.dir, s.time, s.agent, s.callee, s.talkSec);
+      } else {
+        Logger.log('   call %s | %s (%s) | %s ext %s -> %s', s.callId, s.agent, s.dir, s.time, s.agent, s.callee);
+      }
+    });
+  });
 }
 
 function dcMonthYearFromDate_(dateStr) {
