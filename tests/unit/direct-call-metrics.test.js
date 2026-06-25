@@ -166,6 +166,30 @@ test('busy detection uses calls even when they START before the window', functio
   assert.equal(rowFor(res, 'Anna').ib_ext_missed_busy, 1);
 });
 
+test('collectSamples: examples are gathered, and a missed_busy sample names its blocker', function () {
+  const res = compute(grid([
+    row({ cid: 'OUT', start: D + '10:00:00', dir: 'Outgoing', talk: '0:05:00', callTime: '0:05:00', caller: '101', callee: '+15559999999' }),
+    row({ cid: 'IN',  start: D + '10:02:00', dir: 'Incoming', callTime: '0:00:20', caller: '+15551234567', callee: '101', missed: true }),
+    row({ cid: 'FREE', start: D + '13:00:00', dir: 'Incoming', callTime: '0:00:20', caller: '+15558887777', callee: '101', missed: true }),
+  ]), MAPS, { collectSamples: true });
+  const s = res.meta.samples;
+  assert.ok(s, 'samples present when collectSamples=true');
+  assert.equal(s.ib_missed_busy.length, 1);
+  assert.equal(s.ib_missed_free.length, 1);
+  assert.equal(s.ob_connected.length, 1);
+  const busy = s.ib_missed_busy[0];
+  assert.equal(busy.callId, 'IN');
+  assert.equal(busy.blockedByCallId, 'OUT', 'missed_busy sample names the blocking call id for Raw Data verification');
+  assert.equal(busy.caller, '+15551234567');
+});
+
+test('no samples collected by default (collectSamples off)', function () {
+  const res = compute(grid([
+    row({ cid: 'A', start: D + '10:00:00', dir: 'Incoming', callTime: '0:00:20', caller: '+15551234567', callee: '101', missed: true }),
+  ]), MAPS, {});
+  assert.equal(res.meta.samples, undefined);
+});
+
 test('answer rate inputs: answered excluded-from-rate busy miss surfaced separately', function () {
   const res = compute(grid([
     row({ cid: 'A1', start: D + '12:00:00', dir: 'Incoming', talk: '0:01:00', callTime: '0:01:00', caller: '+1551', callee: '101', answered: true }),
