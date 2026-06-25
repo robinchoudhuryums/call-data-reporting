@@ -2507,8 +2507,15 @@ function calcCsrReport(cleanData, targetSS) {
     
     if (callerName && calleeName && startDec > time600AM && stopDec < time330PM) {
       if (!agentMetrics[callerName]) agentMetrics[callerName] = { totalCalls: 0, queues: {} };
-      if (!agentMetrics[callerName].queues[calleeName]) agentMetrics[callerName].queues[calleeName] = 0;
-      agentMetrics[callerName].queues[calleeName]++;
+      // Count DISTINCT transferred CALLS, not legs. A single transfer to a
+      // queue that fans out to N ring-legs emits N rows with the same
+      // caller->callee; without this dedup each leg was counted (e.g. 1
+      // transfer to Field Ops that rang 7 agents logged as 7). Dedup by the
+      // ROOT call id (parent-call id if present, else call id -- the same
+      // call-level identity DQE's uniqueParentCalls / inbound_calls use), so
+      // all legs of one call collapse to one transfer.
+      if (!agentMetrics[callerName].queues[calleeName]) agentMetrics[callerName].queues[calleeName] = new Set();
+      agentMetrics[callerName].queues[calleeName].add(csrRootCallId_(row));
     }
   });
   
@@ -2548,7 +2555,8 @@ csrNames.forEach(agentName => {
     queueHeaders.forEach(qHead => {
       let count = 0;
       if (agentMetrics[lowerAgent] && agentMetrics[lowerAgent].queues[qHead]) {
-        count = agentMetrics[lowerAgent].queues[qHead];
+        // queues[qHead] is a Set of distinct root-call-ids -> size = #transfers.
+        count = agentMetrics[lowerAgent].queues[qHead].size;
       }
       queueRow.push(count);
       tTransferred += count; 
@@ -2562,10 +2570,97 @@ csrNames.forEach(agentName => {
   });
 
   return { 
-    agents: colJ_Values, 
-    transPct: colK_Values, 
-    totalCalls: colL_Values, 
-    totalTransferred: colM_Values, 
-    queues: colN_X_Values 
+    agents: colJ_Values,
+    transPct: colK_Values,
+    totalCalls: colL_Values,
+    totalTransferred: colM_Values,
+    queues: colN_X_Values
   };
+}
+
+/**
+ * Root call id for transfer dedup: the parent-call id (col O / index 14) when
+ * present, else the call id (col A / index 0). Mirrors the call-level identity
+ * used by DQE (uniqueParentCalls) and inbound_calls. Multiple legs of one
+ * transferred call share this id, so counting distinct values = #transfers.
+ */
+function csrRootCallId_(row) {
+  var parent = String(row[14] == null ? '' : row[14]).trim();
+  if (parent && parent.toUpperCase() !== 'N/A') return parent;
+  return String(row[0] == null ? '' : row[0]).trim();
+}
+
+/**
+ * RETROACTIVE REPAIR (editor-run). Recomputes the per-agent CSR transfer
+ * counts for the date currently in the target "Raw Data" sheet using the
+ * fixed calcCsrReport (distinct-call dedup), and OVERWRITES IN PLACE only the
+ * affected columns of that date's rows in "CSR Transfer Historical Data" --
+ * Trans % (col E), Transferred (col G), and the 11 per-queue cols (H..R).
+ * Total Calls (col F) is left untouched (the fix doesn't change it; it's
+ * talk>0-gated). Surgical (no delete/reappend), so Month/Week/Date/Agent and
+ * the sheet's row order are preserved. Idempotent: re-running yields the same
+ * corrected numbers.
+ *
+ * Use this to fix an already-written day (e.g. 06/22) WITHOUT a full
+ * re-import, since the target "Raw Data" sheet still holds that day's legs.
+ * (CSR Transfer Historical Data is sheet-only -- not mirrored to Neon -- so
+ * there is no mirror to re-sync.) Returns a summary {date, updated, ...}.
+ */
+function repairCsrTransferForRawDataDate() {
+  var ss = SpreadsheetApp.openById(getTargetSsId_());
+  var rawSheet = ss.getSheetByName('Raw Data');
+  var csrHD = ss.getSheetByName('CSR Transfer Historical Data');
+  if (!rawSheet || !csrHD) throw new Error('Raw Data or CSR Transfer Historical Data sheet missing.');
+
+  var rawDisp = rawSheet.getDataRange().getDisplayValues();
+  if (rawDisp.length < 2) { Logger.log('repairCsrTransfer: Raw Data empty.'); return { date: null, updated: 0 }; }
+
+  // Date currently in Raw Data (from the first data row's start-time col C),
+  // normalized to yyyy-mm-dd for robust matching against the sheet.
+  var rawDateIso = null;
+  for (var i = 1; i < rawDisp.length && !rawDateIso; i++) {
+    rawDateIso = parseDateForNeon(String(rawDisp[i][2] || '').split(' ')[0]);
+  }
+  if (!rawDateIso) throw new Error('Could not determine the date from Raw Data.');
+
+  // Recompute with the FIXED engine (calcCsrReport reads the display grid).
+  var csrData = calcCsrReport(rawDisp, ss);
+  var byAgent = {};
+  csrData.agents.forEach(function (a, idx) {
+    byAgent[String(a[0]).trim().toLowerCase()] = {
+      transPct: csrData.transPct[idx][0],
+      totalCalls: csrData.totalCalls[idx][0],
+      transferred: csrData.totalTransferred[idx][0],
+      queues: csrData.queues[idx],   // 11-element array, queueHeaders order
+    };
+  });
+
+  // Walk CSR Transfer Historical Data; overwrite cols E,G,H..R for matching rows.
+  var last = csrHD.getLastRow();
+  if (last < 2) { Logger.log('repairCsrTransfer: CSR history empty.'); return { date: rawDateIso, updated: 0 }; }
+  var width = 18;   // A..R
+  var vals = csrHD.getRange(2, 1, last - 1, width).getValues();
+  var disp = csrHD.getRange(2, 1, last - 1, width).getDisplayValues();
+  var updated = 0, missing = [], totalCallsMismatch = [];
+
+  for (var r = 0; r < vals.length; r++) {
+    var rowDateIso = parseDateForNeon(String(disp[r][2] || '').trim());
+    if (rowDateIso !== rawDateIso) continue;
+    var agentKey = String(vals[r][3] || '').trim().toLowerCase();
+    var rec = byAgent[agentKey];
+    if (!rec) { missing.push(vals[r][3]); continue; }
+    if (Number(vals[r][5]) !== Number(rec.totalCalls)) {
+      totalCallsMismatch.push(vals[r][3] + ' (sheet ' + vals[r][5] + ' vs recompute ' + rec.totalCalls + ')');
+    }
+    vals[r][4] = rec.transPct;       // E Trans %
+    vals[r][6] = rec.transferred;    // G Transferred
+    for (var q = 0; q < 11; q++) vals[r][7 + q] = (rec.queues[q] != null ? rec.queues[q] : 0);   // H..R
+    updated++;
+  }
+
+  if (updated) csrHD.getRange(2, 1, last - 1, width).setValues(vals);
+
+  Logger.log('repairCsrTransfer: date=%s updated=%s rows; missing-in-recompute=%s; totalCalls-mismatch=%s',
+    rawDateIso, updated, JSON.stringify(missing), JSON.stringify(totalCallsMismatch));
+  return { date: rawDateIso, updated: updated, missingInRecompute: missing, totalCallsMismatch: totalCallsMismatch };
 }
