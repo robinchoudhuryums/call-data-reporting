@@ -332,9 +332,16 @@
           </div>
           <div id="dept-missed-headline" class="report-headline" style="display:none;"></div>
           <div class="report-summary" id="dept-missed-summary" style="display:none;"></div>
-          <!-- Radar + drill-in share a .chart-row grid (same as the modal):
-               clicking a bucket slides the radar to the side and reveals the
-               detail panel beside it; .no-detail re-centers the radar. -->
+          <!-- Bars/Radar toggle (shared mode, persisted in localStorage). -->
+          <div class="missed-chart-toolbar">
+            <div class="ds-seg missed-chart-mode" role="group" aria-label="Missed-calls chart type">
+              <button type="button" data-mode="bars" aria-pressed="true">Bars</button>
+              <button type="button" data-mode="radar" aria-pressed="false">Radar</button>
+            </div>
+          </div>
+          <!-- Chart + drill-in share a .chart-row grid (same as the modal):
+               clicking a bucket slides the chart to the side and reveals the
+               detail panel beside it; .no-detail re-centers the chart. -->
           <div id="dept-missed-chart-row" class="chart-row no-detail">
             <div class="chart-section" id="dept-missed-chart-wrap">
               <canvas id="dept-missed-chart" aria-label="Hour-of-day distribution of missed calls"></canvas>
@@ -716,6 +723,12 @@
            itself just before #missed-summary). -->
       <div id="missed-status" class="status" style="display:none;"></div>
       <div class="report-summary" id="missed-summary"></div>
+      <div class="missed-chart-toolbar">
+        <div class="ds-seg missed-chart-mode" role="group" aria-label="Missed-calls chart type">
+          <button type="button" data-mode="bars" aria-pressed="true">Bars</button>
+          <button type="button" data-mode="radar" aria-pressed="false">Radar</button>
+        </div>
+      </div>
       <div id="chart-row" class="chart-row no-detail">
         <div class="chart-section" id="missed-chart-wrap">
           <canvas id="missed-chart" aria-label="Hour-of-day distribution of missed calls"></canvas>

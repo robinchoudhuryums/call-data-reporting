@@ -3702,9 +3702,132 @@
     };
   }
 
+  // Re-alpha an 'rgb(...)'/'rgba(...)' string (THEME tokens resolve to these
+  // via colorToCanvasRgb_, INV-42). Returns the input unchanged if unparseable.
+  function rgbaWithAlpha_(str, a) {
+    const m = String(str).match(/rgba?\(([^)]+)\)/);
+    if (!m) return str;
+    const p = m[1].split(',');
+    return 'rgba(' + p[0].trim() + ',' + p[1].trim() + ',' + p[2].trim() + ',' + a + ')';
+  }
+
+  // ALTERNATE missed-calls chart: a HORIZONTAL bar (one bar per 30-min bucket,
+  // 8 AM-5 PM CST) -- far more legible than the radar for reading values +
+  // comparing buckets. Spice-up for "reads like a work day": a COLOR INTENSITY
+  // RAMP (each bar's fill alpha scales with its count, so the busiest stretch
+  // pops), the PEAK bucket outlined + tooltip-flagged, and the count printed
+  // at each bar end. Same shared `chart = {labels, counts}` + bucket-click
+  // drill as the radar.
+  function missedBarCfg_(chart, onBucketClick) {
+    const counts = (chart.counts || []).map(function (v) { return Number(v) || 0; });
+    const max = counts.reduce(function (m, v) { return Math.max(m, v); }, 0) || 1;
+    let peakIdx = -1, peakVal = -1;
+    counts.forEach(function (v, i) { if (v > peakVal) { peakVal = v; peakIdx = i; } });
+    // Intensity ramp: 0 -> faint, max -> full warn. Empty buckets stay barely-there.
+    const bg = counts.map(function (v) { return rgbaWithAlpha_(THEME.warn, 0.18 + 0.72 * (v / max)); });
+    const border = counts.map(function (v, i) { return (i === peakIdx && peakVal > 0) ? THEME.ink : 'transparent'; });
+    const borderW = counts.map(function (v, i) { return (i === peakIdx && peakVal > 0) ? 1.5 : 0; });
+    return {
+      type: 'bar',
+      data: {
+        labels: chart.labels || [],
+        datasets: [{
+          label: 'Missed calls',
+          data: counts,
+          backgroundColor: bg,
+          borderColor: border,
+          borderWidth: borderW,
+          borderRadius: 2,
+          maxBarThickness: 16,
+        }]
+      },
+      options: {
+        indexAxis: 'y',                 // horizontal bars
+        responsive: true,
+        maintainAspectRatio: true,
+        aspectRatio: 1.05,              // tallish: 18 buckets need vertical room
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              title: function (items) {
+                return items[0].label + ' CST' + (items[0].dataIndex === peakIdx && peakVal > 0 ? '  •  peak' : '');
+              },
+              label: function (item) { return item.parsed.x + ' missed call' + (item.parsed.x === 1 ? '' : 's'); }
+            }
+          },
+          // Bars are readable (unlike the radar, INV-41), so SHOW the count at
+          // each bar end. Boolean display + empty-string formatter hides zeros
+          // (avoids the function-form display footgun on this plugin version).
+          datalabels: {
+            display: true,
+            anchor: 'end', align: 'right', clamp: true,
+            color: THEME.ink, font: { size: 10 },
+            formatter: function (v) { return (Number(v) || 0) > 0 ? v : ''; }
+          }
+        },
+        scales: {
+          x: { beginAtZero: true, ticks: { precision: 0 }, grid: { color: THEME.line } },
+          y: { ticks: { font: { size: 10 } }, grid: { display: false } }
+        },
+        onClick: function (evt, items, chartObj) {
+          if (!onBucketClick) return;
+          if (items && items.length) { onBucketClick(items[0].index); return; }
+          const near = chartObj.getElementsAtEventForMode(evt, 'nearest', { intersect: false }, true);
+          if (near && near.length) onBucketClick(near[0].index);
+        }
+      }
+    };
+  }
+
+  // Persisted chart mode shared by the Missed modal + the My Department inline
+  // missed section. Default 'bars' (the more legible view).
+  const MISSED_CHART_MODE_KEY = 'cdr.missed.chartmode';
+  function missedChartMode_() {
+    try { return localStorage.getItem(MISSED_CHART_MODE_KEY) === 'radar' ? 'radar' : 'bars'; }
+    catch (e) { return 'bars'; }
+  }
+  function missedChartCfg_(chart, onBucketClick) {
+    return missedChartMode_() === 'radar'
+      ? missedRadarCfg_(chart, onBucketClick)
+      : missedBarCfg_(chart, onBucketClick);
+  }
+  // Reflect the active mode on every Bars/Radar toggle currently in the DOM.
+  function missedSyncToggles_() {
+    const mode = missedChartMode_();
+    document.querySelectorAll('.missed-chart-mode [data-mode]').forEach(function (b) {
+      const on = b.getAttribute('data-mode') === mode;
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+  }
+  function setMissedChartMode_(mode) {
+    mode = (mode === 'radar') ? 'radar' : 'bars';
+    try { localStorage.setItem(MISSED_CHART_MODE_KEY, mode); } catch (e) {}
+    missedSyncToggles_();
+    // Re-render only charts that are instantiated AND visible (offsetParent
+    // is null under display:none) -- rebuilding in a hidden container would
+    // render at zero size.
+    const visible = function (id) { const el = $(id); return el && el.offsetParent !== null; };
+    if (missedChart && lastMissedData && lastMissedData.chart && visible('missed-chart-wrap')) {
+      renderMissedChart(lastMissedData.chart);
+    }
+    if (deptMissedChart && deptMissedLastData && visible('dept-missed-chart-wrap')) {
+      deptMissedDrawChart_(deptMissedLastData);
+    }
+  }
+  // One delegated handler for both toolbars (modal + dept section).
+  document.addEventListener('click', function (e) {
+    const b = e.target.closest && e.target.closest('.missed-chart-mode [data-mode]');
+    if (b) { e.preventDefault(); setMissedChartMode_(b.getAttribute('data-mode')); }
+  });
+
   function renderMissedChart(chart) {
     const wrap = $('missed-chart-wrap');
     if (!wrap) return;
+
+    // Destroy any prior instance before we replace the canvas (a re-render via
+    // the Bars/Radar toggle would otherwise orphan the old Chart).
+    if (missedChart) { try { missedChart.destroy(); } catch (e) {} missedChart = null; }
 
     // Recreate the canvas (clearMissedChart() replaced the container
     // contents with a loading placeholder).
@@ -3718,10 +3841,9 @@
     }
 
     const ctx = canvas.getContext('2d');
-    // Radar chart, matching the legacy DQE Report's missed-calls
-    // visualization (clock-like, with each axis = a 30-min bucket).
-    // Modal version drills into the per-bucket detail panel on click.
-    const cfg = missedRadarCfg_(chart, function (idx) { missedBucketDetail_.toggle(idx); });
+    // Bars (default) or radar per the shared toggle; modal version drills into
+    // the per-bucket detail panel on click.
+    const cfg = missedChartCfg_(chart, function (idx) { missedBucketDetail_.toggle(idx); });
 
     // Refresh THEME tokens right before chart creation so values
     // resolved late reach Chart.defaults pre-instantiation.
@@ -3729,6 +3851,7 @@
     // Canvas is always freshly recreated above, so we always
     // instantiate a new Chart rather than update an existing one.
     missedChart = safeChart_(ctx, cfg);
+    missedSyncToggles_();
   }
 
   // -- Bucket detail (chart drill-in) ------------------------------------
@@ -4383,6 +4506,27 @@
     });
   }
 
+  // Draw (or redraw, on a Bars/Radar toggle) the dept missed chart from the
+  // last response. Destroys any prior instance first; honors the shared mode;
+  // re-measures after layout settles (#5).
+  function deptMissedDrawChart_(data) {
+    const m = (data && data.meta) || {};
+    const chartWrap = $('dept-missed-chart-wrap');
+    if (deptMissedChart) { try { deptMissedChart.destroy(); } catch (e) {} deptMissedChart = null; }
+    if (!chartWrap) return;
+    const hasMissed = Number(m.totalMissed || 0) > 0 || Number(m.abandonedCallCount || 0) > 0;
+    chartWrap.style.display = hasMissed ? '' : 'none';
+    if (hasMissed && typeof Chart !== 'undefined') {
+      chartWrap.innerHTML = '<canvas id="dept-missed-chart" aria-label="Hour-of-day distribution of missed calls"></canvas>';
+      refreshChartTheme();
+      deptMissedChart = safeChart_($('dept-missed-chart').getContext('2d'),
+        missedChartCfg_((data && data.chart) || { labels: [], counts: [] },
+                        function (idx) { deptMissedBucketDetail_.toggle(idx); }));
+      deptMissedResize_();
+    }
+    missedSyncToggles_();
+  }
+
   function deptMissedRender_(data, from, to) {
     const wrap = $('dept-missed-section');
     if (!wrap) return;
@@ -4427,27 +4571,9 @@
       sum.style.display = '';
     }
 
-    // Radar: same shared config as the modal. Clicks now drill IN-PLACE into
-    // the dept bucket panel (parity), via the shared bucket-detail instance.
-    const chartWrap = $('dept-missed-chart-wrap');
-    if (deptMissedChart) { try { deptMissedChart.destroy(); } catch (e) {} deptMissedChart = null; }
-    const hasMissed = Number(m.totalMissed || 0) > 0 || Number(m.abandonedCallCount || 0) > 0;
-    if (chartWrap) {
-      chartWrap.style.display = hasMissed ? '' : 'none';
-      if (hasMissed && typeof Chart !== 'undefined') {
-        chartWrap.innerHTML = '<canvas id="dept-missed-chart" aria-label="Hour-of-day distribution of missed calls"></canvas>';
-        refreshChartTheme();
-        deptMissedChart = safeChart_($('dept-missed-chart').getContext('2d'),
-          missedRadarCfg_((data && data.chart) || { labels: [], counts: [] },
-                          function (idx) { deptMissedBucketDetail_.toggle(idx); }));
-        // Some depts (notably CSR -- busiest, with the multi-queue QCD
-        // carousel still settling the dept-page layout) had the radar render
-        // at zero size because the container hadn't been measured yet at
-        // creation time. Re-measure on the next frame so the radar fills its
-        // (now laid-out) container regardless of dept.
-        deptMissedResize_();
-      }
-    }
+    // Chart (bars/radar per the shared toggle). Clicks drill IN-PLACE into the
+    // dept bucket panel (parity), via the shared bucket-detail instance.
+    deptMissedDrawChart_(data);
 
     // #9b: inline parity with the full modal -- queue-only abandoned section
     // + per-agent missed-time timelines via the SAME shared builders.
