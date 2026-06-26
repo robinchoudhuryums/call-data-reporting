@@ -929,7 +929,7 @@
   // detail page. Body[data-page] drives CSS visibility; this also
   // updates the document title block and the active-nav state.
   function setPage(page) {
-    if (page !== 'overview' && page !== 'dept') page = 'overview';
+    if (page !== 'overview' && page !== 'dept' && page !== 'escalations') page = 'overview';
     document.body.setAttribute('data-page', page);
     const kicker = $('page-kicker');
     const title  = $('page-title');
@@ -937,6 +937,12 @@
       if (kicker) kicker.textContent = 'Company · Overview';
       if (title)  title.textContent  = 'Departments Snapshot';
       ovLoad_();
+    } else if (page === 'escalations') {
+      if (kicker) kicker.textContent = 'Operations · Escalations';
+      if (title)  title.textContent  = 'Escalations';
+      // Lazy-init the controls + load on first entry (idempotent thereafter).
+      if (typeof escEnsureInit_ === 'function') escEnsureInit_(function () { escLoad_(); });
+      else if (typeof escLoad_ === 'function') escLoad_();
     } else {
       if (kicker) kicker.textContent = 'Department Dashboard';
       if (title)  title.textContent  = getRequestedDept() || '(no department)';
@@ -947,7 +953,7 @@
     // the per-button toggle that previously only handled overview /
     // my-dept buttons.
     if (typeof setRoute_ === 'function') {
-      setRoute_(page === 'dept' ? '/dept' : '/overview');
+      setRoute_(page === 'dept' ? '/dept' : (page === 'escalations' ? '/escalations' : '/overview'));
     }
   }
 
@@ -2527,7 +2533,7 @@
     '/admin/orphan-fix':   { kind: 'modal', modalId: 'orphan-fix-modal',  buttonId: 'orphan-fix-btn' },
     '/admin/dept-config':  { kind: 'modal', modalId: 'dept-config-modal', buttonId: 'dept-config-btn' },
     '/admin/caller-lookup': { kind: 'modal', modalId: 'caller-lookup-modal', buttonId: 'caller-lookup-btn' },
-    '/escalations':        { kind: 'modal', modalId: 'escalations-modal',   buttonId: 'escalations-btn' },
+    '/escalations':        { kind: 'page',  page: 'escalations' },
   };
 
   // The route currently considered "active". Starts as '/overview'
@@ -4369,8 +4375,8 @@
     $('refresh-btn').disabled = true;
     // Page title belongs to the dept page; only update it when
     // we're actually showing that page (otherwise we'd clobber
-    // "Departments Snapshot" on the Overview).
-    if (document.body.getAttribute('data-page') !== 'overview') {
+    // "Departments Snapshot" on Overview or "Escalations" on that page).
+    if (document.body.getAttribute('data-page') === 'dept') {
       $('page-title').textContent = dept;
     }
 
@@ -13545,34 +13551,14 @@
 
   function initEscalations() {
     const btn = $('escalations-btn');
-    const modal = $('escalations-modal');
-    if (!btn || !modal) return;
-    const closeBtn = modal.querySelector('.modal-close');
-    const backdrop = modal.querySelector('[data-close]');
+    const page = $('escalations-page');
+    if (!btn || !page) return;
 
-    function openModal() {
-      modal.style.display = '';
-      modal.setAttribute('aria-hidden', 'false');
-      document.body.style.overflow = 'hidden';
-      trapFocus_(modal);
-      initModalDragResize_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
-      document.addEventListener('keydown', onKeyDown);
-      escEnsureInit_(function () { escLoad_(); });
-    }
-    function closeModal() {
-      modal.style.display = 'none';
-      modal.setAttribute('aria-hidden', 'true');
-      releaseFocus_();
-      resetModalTransform_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
-      document.body.style.overflow = '';
-      document.removeEventListener('keydown', onKeyDown);
-      btn.focus();
-    }
-    function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
-
-    btn.addEventListener('click', openModal);
-    if (closeBtn) closeBtn.addEventListener('click', closeModal);
-    if (backdrop) backdrop.addEventListener('click', closeModal);
+    // Escalations is a full PAGE now (#6): the nav button navigates to it;
+    // setPage('escalations') handles the lazy init + load + header title.
+    // No modal open/close/drag/focus-trap/Escape -- it behaves like the
+    // Overview / My Department pages.
+    btn.addEventListener('click', function () { setPage('escalations'); });
 
     if ($('esc-refresh-btn')) $('esc-refresh-btn').addEventListener('click', escLoad_);
     if ($('esc-status'))      $('esc-status').addEventListener('change', escLoad_);

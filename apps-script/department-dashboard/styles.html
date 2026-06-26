@@ -195,9 +195,21 @@
      data-page attribute (driven by the header buttons). Default
      state is overview-visible; switch by clicking "My Department"
      in the nav. */
-  .page { display: block; margin-top: 6px; }
-  body[data-page="overview"] #dept-page { display: none; }
-  body[data-page="dept"]     #overview-page { display: none; }
+  /* Pages are display-toggled by body[data-page]; only the active one shows.
+     Generalized from the original two-page (overview/dept) pair to N pages
+     when Escalations became a full page (#6). */
+  .page { display: none; margin-top: 6px; }
+  body[data-page="overview"]     #overview-page     { display: block; }
+  body[data-page="dept"]         #dept-page         { display: block; }
+  body[data-page="escalations"]  #escalations-page  { display: block; }
+  /* The Escalations page lives outside the main page container (it was
+     converted in place from a modal), so give it the same bounded, centered
+     content width the other pages get from that container. */
+  .esc-page-body {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 0 4px;
+  }
   /* Loading skeleton is centered with extra breathing room for
      the inline (non-modal) presentation. */
   #overview-page > #ov-loading { padding: 64px 32px; }
