@@ -109,6 +109,59 @@ canonicalization rules from it is robust to new hires.
 
 ---
 
+## CSR Transfer ring fan-out over-count (CDR Import project)
+
+**Status:** Fixed in `calcCsrReport` (`apps-script/cdr-import/autoImport.js`).
+
+**Symptom:** Per-agent CSR transfer counts in `CSR Transfer Historical Data`
+(Transferred, Trans %, and the 11 per-queue cols) were inflated. E.g. on
+2026-06-22, Camila's transfers to the Field Ops queue logged as 22 when the
+real figure was a handful — the 22 reflected the number of agents the
+destination queue *rang*, not actual calls.
+
+**Cause:** `calcCsrReport` counted transfer **legs**, not distinct calls. A
+single transfer to a queue that fans out to N ring-legs emits N Raw Data rows
+with the same `caller -> callee`, so each leg was counted. Latent since the
+file entered the repo; exposed by a day with wide multi-agent ring queues.
+
+**Fix:** Dedup by **root call id** — `csrRootCallId_(row)` = parent-call id
+(col O / idx 14) when present, else call id (col A / idx 0), the same
+call-level identity DQE's `uniqueParentCalls` / `inbound_calls` use. The
+per-queue accumulator is now a `Set` of root ids; `.size` is the transfer
+count. `Total Calls` (col F) was never affected — it's counted independently
+from callee talk-legs (`talk > 0`), so it stays the clean baseline.
+
+**Tooling (three pieces):**
+
+- **Retroactive repair (recent dates):** `repairCsrTransferForRawDataDate()` —
+  editor-run in **CDR Import**; recomputes with the fixed engine and overwrites
+  in place cols E/G/H..R for the date currently in the `Raw Data` sheet (which
+  lives in CDR Report). Surgical, idempotent, leaves col F untouched. Only
+  works while that date's legs are still in `Raw Data` (Raw Data is pruned).
+- **Vet the whole history (B):** `vetCsrTransferHistory(referenceFromIso)` —
+  editor-run, **read-only**. Most history can't be exactly recomputed (legs
+  pruned ~14 days), so it heuristically flags likely-inflated rows by comparing
+  each agent's **trusted reference window** (`Date >= referenceFromIso`, default
+  `2026-06-22` — the repaired + post-fix era) against the **suspect era** before
+  it. Because the bug was *systematic* (uniform per-queue multiplier), a
+  within-agent spike detector would miss it — the reference comparison reveals
+  systematic inflation and estimates the fan-out factor. Three signals:
+  SYSTEMATIC (suspect median ≥ 1.8× reference median), SPIKE (a single row ≥ 3×
+  the reference median), PCT_EXTREME (Trans % > 150%). Writes findings to a
+  separate **`CSR Transfer Vet`** diagnostic sheet (never the data sheet) and
+  logs a summary. Cannot auto-fix suspect rows (legs gone) — it scopes how
+  widespread the inflation is and which agent/queue/dates to inspect.
+- **Standing guard (C):** `csrTransferGuardFindings_(csrBatch, opts)` (pure,
+  unit-tested in `tests/unit/csr-transfer.test.js`) runs inside the daily
+  `processIntegratedHistory` CSR write block. If any written row shows gross
+  inflation (Transferred ≥ 10 **and** > 3× Total Calls) it logs a best-effort
+  `processIntegratedHistory:CSR-guard` `failure` row to Pipeline Health
+  (surfaces in the Alerts modal) **without** failing the import. Deliberately
+  conservative — Transferred and Total Calls are different populations, so a
+  high Trans % alone is legitimate; only a re-inflation regression trips it.
+
+---
+
 ## Spreadsheet vs script timezone mismatch (Mexico City vs Chicago)
 
 **Status:** Worked around in code; underlying setting unchanged.
@@ -441,6 +494,76 @@ delivers a sample digest to the active admin's inbox so they can
 verify what the subscriber will see (with a yellow "Preview only"
 banner). On failure, `notifyDigestFailure_` emails the
 `ADMIN_EMAILS` set so a silent trigger crash doesn't go unnoticed.
+
+---
+
+## Two queue-name spaces: raw Raw-Data names vs QCD-canonical names
+
+**Status:** Live landmine. Worked around for the per-call journey drill;
+still latent for the per-dept Inbound report (parked / admin-only).
+
+There are **two different spellings for the same queue** in this install:
+
+- **Raw Data leg names** (CALLER_ID col 22 / CALLEE_NAME col 11): the actual
+  queue identifiers the phone system emits, e.g. `A_Q_CSR` (ext 103),
+  `A_Q_Intake` (ext 108), `A_Q_Spanish`, `Backup CSR`. `inbound_calls`
+  captures these into `entry_queue` / `final_queue` (via `icIsQueueName_`,
+  `/^A_Q_/i`).
+- **QCD-canonical names** (QCD Historical Data col D / `DEPT_QCD_QUEUES`): the
+  names the QCD pipeline writes, e.g. CSR's main queue is `A_Q_CustomerSuccess`
+  (NOT `A_Q_CSR`). `queuesForDept_` / `getDeptQcdQueues_` return THESE.
+
+So `inbound_calls.entry_queue = 'A_Q_CSR'` but `queuesForDept_('CSR')` =
+`['A_Q_CustomerSuccess', 'A_Q_Intake', 'Backup CSR']` -- the CSR main queue
+does **not** match across the two spaces (Intake / Backup CSR happen to).
+
+**Symptom that surfaced it:** the "↳ path" call-journey drill on abandoned
+rings in the Missed Calls / My Department views returned "No inbound-call path
+on record" for CSR-entry calls. `getCallJourney` (`InboundReport.gs`) scoped
+the lookup with `callJourneyDeptPredicate_` (`entry_queue`/`final_queue` IN
+`queuesForDept_(dept)`), which never matched `A_Q_CSR`.
+
+**Fix (journey drill):** `getCallJourney` now falls back to an exact
+`(call_date, call_id)` match when the dept-scoped query finds nothing. Safe
+because the call_id is **already dept-entitled upstream** -- the badge only
+appears on abandoned rings in the caller's OWN dept-scoped Missed report (DQE
+abandoned parent ids), and the journey carries no caller identity (no
+hash/number; phone-like callee names are masked at capture). Logs when the
+fallback hits.
+
+**Fix (per-dept Inbound report + journey) — Dept Config alias column.** A new
+`Inbound Queue Aliases` column on the `Dept Config` sheet (INV-54, appended at
+the end / col 10 so pre-existing 9-col prod sheets keep working) holds the RAW
+queue names per dept. `getInboundQueueAliases_` (DeptConfig.gs, sheet-only — no
+seed constant) reads it, and `InboundReport.gs::inboundQueuesForDept_` UNIONs it
+with `queuesForDept_(dept)`. BOTH inbound dept predicates now consume that union
+(`inboundResolveRequest_` → the report + heatmap; `getCallJourney` → the per-call
+path), so a call whose `entry_queue`/`final_queue` is a raw alias (e.g. `A_Q_CSR`)
+attributes to the right dept. Admin-curated via the Dept Config modal's "Inbound
+queue aliases" field; no redeploy. **To un-gate the per-dept Inbound report:**
+populate the aliases for each affected dept (CSR = `A_Q_CSR` etc.), confirm the
+slices, then remove the one-line admin gate in `inboundResolveRequest_`. The
+parked QCD-vs-inbound abandonment discrepancies are likely the same root cause —
+re-check them once aliases are populated.
+
+**Best long-term health (not yet done) — normalize the queue identity at the
+source.** The alias column is a dashboard-side bridge: it keeps TWO name spaces
+alive and depends on an admin keeping the alias list complete. The durable fix is
+to make `inbound_calls` self-consistent so every consumer works without
+per-consumer alias logic. Two ways, in order of preference:
+1. **Translate raw → canonical at capture** (`cdr-import/inboundCalls.js`): map
+   the raw queue name to its QCD-canonical name when writing
+   `entry_queue`/`final_queue`, seeded from the SAME alias data (lift the Dept
+   Config aliases into a cdr-import map, or read them cross-project). Then
+   `inbound_calls` matches `queuesForDept_` directly and the dashboard union /
+   the `getCallJourney` exact-id fallback become belt-and-suspenders. Requires a
+   one-time `backfillInboundCalls` re-run to rewrite existing rows.
+2. **Store the queue extension at capture and match by ext** (against
+   `getDeptQueueExts_`) — the ext is the real identity (`A_Q_CSR` = 103), so this
+   sidesteps queue-name spelling entirely; needs a capture schema add + backfill.
+Either makes the alias column redundant for inbound attribution (it could then be
+retired or kept only as the capture-time seed). Until then, the alias column is
+the correct, reversible, no-backfill stopgap.
 
 ---
 

@@ -1417,10 +1417,14 @@
   .chart-row.no-detail {
     grid-template-columns: minmax(0, 1fr) minmax(0, 0fr);
   }
-  /* When the radar is alone (no drill-in), keep it bounded + centered so it
-     doesn't balloon to the full row width. With the drill-in open it takes
-     its 2fr column. */
-  .chart-row.no-detail > .chart-section { max-width: 520px; margin: 0 auto; }
+  /* Keep the radar bounded + centered in BOTH states. When the drill-in
+     opens, its column grows 1fr -> 2fr, but the radar itself stays the same
+     size and centered in that track (it does NOT balloon left to fill 2fr),
+     so the chart neither reflows/resizes nor loses its centering as the
+     drill-in slides in -- the column transition animates around a stable
+     chart. (Was .no-detail-only, which dropped the centering on open ->
+     the radar snapped hard-left + Chart.js re-rendered = the jumpiness.) */
+  .chart-row > .chart-section { max-width: 520px; margin: 0 auto; }
   /* Clip the drill-in while its track is collapsing so it slides in/out
      cleanly rather than overflowing the 0fr cell mid-animation. */
   .chart-row > .bucket-detail { overflow: hidden; }
@@ -1504,11 +1508,19 @@
   }
   .bucket-detail-list .ring-date  { color: var(--muted); }
   .bucket-detail-list .ring-agent { color: var(--ink); font-family: var(--ui); }
-  .bucket-detail-list .ring-time  { text-align: right; }
-  /* Widen the time column when parent-id chips are present so the
-     #1776... ID doesn't squeeze the timestamp out. */
+  /* Let the time cell wrap its parent-id chip + "↳ path" button onto a second
+     line when the panel is narrow, instead of forcing the column to its full
+     nowrap max-content width -- which overflowed the drill-in (and, since the
+     list has overflow-y:auto, made overflow-x compute to auto = the stray
+     horizontal scrollbar). minmax(0,auto) lets the column shrink below its
+     content; white-space:normal lets the contents wrap. */
+  .bucket-detail-list .ring-time  {
+    text-align: right;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
   .bucket-detail-list li {
-    grid-template-columns: 80px 1fr auto;
+    grid-template-columns: 80px minmax(0, 1fr) minmax(0, auto);
   }
 
   /* Parent-call-ID chip + copy button. Renders inline next to the
@@ -4035,6 +4047,74 @@
     flex-direction: column;
     gap: 4px;
   }
+
+  /* Dense sub-queue chips beneath a parent tile. They sit in the group
+     cell (indented like the child tiles used to be), NOT inside the parent
+     card -- so the parent's metrics never read as a roll-up of the chips.
+     Click a chip to reveal the child's full tile (.ov-subq-tile-wrap). */
+  .ov-subq-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-left: 16px;   /* align with the old child-tile indent */
+  }
+  .ov-subq-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 7px;
+    border: 1px solid var(--accent);
+    border-left-width: 3px;
+    background: var(--accent-soft);
+    border-radius: var(--r);
+    cursor: pointer;
+    font-family: var(--ui);
+    font-size: 12px;
+    color: var(--ink);
+    line-height: 1.3;
+    transition: background var(--dur-1, 120ms) var(--ease, ease);
+  }
+  .ov-subq-chip:hover { background: var(--accent-soft-2, var(--accent-soft)); }
+  .ov-subq-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .ov-subq-chip-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    flex: 0 0 auto;
+  }
+  .ov-subq-chip-name { font-weight: 500; }
+  .ov-subq-chip-name::before {
+    content: '↳ ';
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .ov-subq-chip-pct {
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+  }
+  .ov-subq-chip-cap {
+    font-size: 10px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+  }
+  .ov-subq-chip-chev {
+    color: var(--accent);
+    font-weight: 700;
+    transition: transform var(--dur-1, 120ms) var(--ease, ease);
+  }
+  .ov-subq-chip.is-open .ov-subq-chip-chev { transform: rotate(90deg); }
+  .ov-subq-chip.is-open { background: var(--accent-soft-2, var(--accent-soft)); }
+  .ov-subq-expand {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .ov-subq-tile-wrap { margin-top: 4px; }
+  @media (prefers-reduced-motion: reduce) {
+    .ov-subq-chip, .ov-subq-chip-chev { transition: none; }
+  }
+
   .ov-dept-tile-child {
     border-left: 4px solid var(--accent);
     margin-left: 16px;

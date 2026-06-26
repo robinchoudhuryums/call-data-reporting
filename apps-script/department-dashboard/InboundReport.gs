@@ -107,12 +107,37 @@ function inboundResolveRequest_(req) {
   }
 
   const companyView = !dept;
-  // Effective queue list (Dept Config-overridable, sub-queue rollup) --
-  // the same map every QCD surface uses, so inbound dept slices and QCD
-  // dept slices can't disagree about queue ownership.
-  const deptQueues = companyView ? [] : queuesForDept_(dept);
+  // Effective queue list (Dept Config-overridable, sub-queue rollup) UNIONED
+  // with the dept's raw inbound-queue aliases -- inbound_calls stores the raw
+  // queue spellings (e.g. "A_Q_CSR") which differ from the QCD-canonical
+  // names queuesForDept_ returns (e.g. "A_Q_CustomerSuccess"). Without the
+  // union, those calls don't attribute to the dept. See inboundQueuesForDept_.
+  const deptQueues = companyView ? [] : inboundQueuesForDept_(dept);
   return { from: from, to: to, dept: dept, deptQueues: deptQueues,
            companyView: companyView, user: user };
+}
+
+/**
+ * The queue-name set used for INBOUND dept attribution (report + journey):
+ * the dept's effective QCD-canonical queues (queuesForDept_, incl. sub-queue
+ * rollup) UNIONed with its admin-curated raw inbound-queue aliases
+ * (getInboundQueueAliases_, INV-54). This bridges the two queue-name spaces:
+ * QCD Historical Data / DEPT_QCD_QUEUES carry canonical names, but
+ * inbound_calls.entry_queue/final_queue carry the raw phone-system names.
+ * Order-stable, de-duped. Used ONLY by inbound surfaces -- no QCD/DQE reader
+ * calls this (they stay on queuesForDept_).
+ */
+function inboundQueuesForDept_(dept) {
+  if (!dept) return [];
+  const out = [];
+  const seen = {};
+  const add = function (q) {
+    const v = String(q == null ? '' : q).trim();
+    if (v && !seen[v]) { seen[v] = true; out.push(v); }
+  };
+  queuesForDept_(dept).forEach(add);
+  if (typeof getInboundQueueAliases_ === 'function') getInboundQueueAliases_(dept).forEach(add);
+  return out;
 }
 
 /** Single-quote-escape a value for inline SQL literals. */
@@ -200,21 +225,50 @@ function getCallJourney(req) {
   }
   if (dept === 'ALL') dept = '';   // admin company view -> no dept scoping
 
-  const deptQueues = dept ? queuesForDept_(dept) : [];
+  // Union the QCD-canonical queues with the dept's raw inbound aliases so a
+  // call whose entry/final queue is a raw name (e.g. A_Q_CSR) still scopes to
+  // the dept (same bridge as the report; the exact-id fallback below also
+  // covers any still-unmapped alias).
+  const deptQueues = dept ? inboundQueuesForDept_(dept) : [];
   const predicate = callJourneyDeptPredicate_(dept, deptQueues);   // '' for company view
 
   const conn = getDashboardNeonConn_();
   if (!conn) return { available: false, found: false };
   try {
-    const sql = "SELECT to_jsonb(c)::text AS j FROM inbound_calls c "
-              + "WHERE c.call_date = ?::date AND c.call_id = ?" + predicate + " LIMIT 1";
-    const stmt = conn.prepareStatement(sql);
-    stmt.setString(1, date);
-    stmt.setString(2, callId);
-    const rs = stmt.executeQuery();
-    const json = rs.next() ? rs.getString('j') : '';
-    rs.close(); stmt.close();
+    // Run the lookup with an optional dept predicate. The badge's call_id is
+    // ALREADY entitled upstream -- it only appears on abandoned rings in the
+    // caller's OWN dept-scoped Missed report (DQE abandoned parent ids) -- so
+    // the predicate is defense-in-depth, not the entitlement boundary.
+    const lookup = function (pred) {
+      const sql = "SELECT to_jsonb(c)::text AS j FROM inbound_calls c "
+                + "WHERE c.call_date = ?::date AND c.call_id = ?" + pred + " LIMIT 1";
+      const stmt = conn.prepareStatement(sql);
+      stmt.setString(1, date);
+      stmt.setString(2, callId);
+      const rs = stmt.executeQuery();
+      const j = rs.next() ? rs.getString('j') : '';
+      rs.close(); stmt.close();
+      return j;
+    };
+
+    let json = lookup(predicate);
+    // FALLBACK: the dept predicate matches on inbound_calls' RAW queue-name
+    // space (entry_queue/final_queue = the Raw Data callee queue, e.g.
+    // 'A_Q_CSR'), but queuesForDept_ returns the QCD-canonical names (e.g.
+    // 'A_Q_CustomerSuccess') -- a different space for several depts, so the
+    // scoped query yields false negatives (the original "no path on record"
+    // bug). When scoped finds nothing, retry by exact (call_date, call_id)
+    // only. Safe: the id is already dept-entitled upstream and the journey
+    // carries no caller identity (no hash/number; phone-like callee names are
+    // masked at capture). Admin company view runs unscoped already (predicate
+    // === ''), so this only adds a fallback for the manager/dept path.
+    let viaFallback = false;
+    if (!json && predicate) { json = lookup(''); viaFallback = !!json; }
     if (!json) return { available: true, found: false };
+    if (viaFallback) {
+      Logger.log('getCallJourney: dept-scoped lookup missed (queue-name space), '
+        + 'resolved via exact-id fallback. call_id=%s date=%s dept=%s', callId, date, dept || '(all)');
+    }
     return { available: true, found: true, call: callerLookupShapeCall_(JSON.parse(json)) };
   } catch (e) {
     Logger.log('getCallJourney failed: ' + (e && e.message ? e.message : e));

@@ -112,6 +112,9 @@ function readDeptConfigRows_() {
                                  ? Utilities.formatDate(rows[i][7], TZ, 'yyyy-MM-dd HH:mm')
                                  : String(rows[i][7] || ''),
             notes:             String(rows[i][8] || ''),
+            // Appended at the end (col 10 / idx 9); undefined on pre-existing
+            // 9-col rows -> dcParseList_ yields [].
+            inboundAliases:    dcParseList_(rows[i][9]),
           });
         }
       }
@@ -190,6 +193,21 @@ function getDeptQueueExtsOverride_(dept) {
   if (cfg && cfg.queueExtOverrides.length) return cfg.queueExtOverrides.slice();
   const c = (typeof DEPT_QUEUE_EXT_OVERRIDES !== 'undefined') && DEPT_QUEUE_EXT_OVERRIDES[dept];
   return Array.isArray(c) ? c.slice() : [];
+}
+
+/**
+ * Raw inbound-queue aliases for `dept` from the Active config row, else [].
+ * Sheet-driven only (no seed constant): these are the raw queue spellings
+ * the phone system writes into inbound_calls.entry_queue/final_queue
+ * (e.g. "A_Q_CSR") that belong to the dept but differ from its QCD-canonical
+ * names. Consumed ONLY by the Inbound report + per-call journey predicates
+ * (InboundReport.gs::inboundQueuesForDept_), which UNION these with
+ * queuesForDept_(dept) so a call whose entry_queue is a raw alias still
+ * attributes to the dept. No QCD / Overview / DQE reader consults this.
+ */
+function getInboundQueueAliases_(dept) {
+  const cfg = getActiveDeptConfigMap_()[dept];
+  return (cfg && cfg.inboundAliases.length) ? cfg.inboundAliases.slice() : [];
 }
 
 // -- Auto-discovery -------------------------------------------------
@@ -291,6 +309,7 @@ function getDeptConfigInit() {
       overviewParent:    getOverviewParentMap_()[d] || '',
       teamAvgExcludes:   getTeamAvgExcludes_(d),
       queueExtOverrides: getDeptQueueExtsOverride_(d),
+      inboundAliases:    getInboundQueueAliases_(d),
       hasRow:            !!row,
     };
   });
@@ -337,6 +356,7 @@ function saveDeptConfig(req) {
   const overviewParent    = String((req && req.overviewParent) || '').trim();
   const teamAvgExcludes   = dcNormalizeList_(req && req.teamAvgExcludes, 'Team Avg Excludes');
   const queueExtOverrides = dcNormalizeList_(req && req.queueExtOverrides, 'Queue Ext Overrides');
+  const inboundAliases    = dcNormalizeList_(req && req.inboundAliases, 'Inbound Queue Aliases');
   const active            = !(req && req.active === false);   // default TRUE
   const notes             = String((req && req.notes) || '').trim().slice(0, 500);
 
@@ -421,6 +441,20 @@ function saveDeptConfig(req) {
     }
   }
 
+  // --- Inbound Queue Aliases validation: these are raw queue NAMES (not
+  // extensions), so a digit-only token is almost certainly a mistaken ext
+  // entry. We can't validate the names against a known list (they live only
+  // in inbound_calls / Raw Data, not on the dashboard), so this is the one
+  // hard guard; the rest is normalized (trim/dedupe/length-cap). ---
+  if (inboundAliases.length) {
+    const digitOnly = inboundAliases.filter(function (x) { return /^\d+$/.test(x); });
+    if (digitOnly.length) {
+      throw new Error('Inbound queue alias(es) look like extensions: '
+        + digitOnly.join(', ') + '. Enter the raw QUEUE NAMES the phone '
+        + 'system emits (e.g. A_Q_CSR, Backup CSR), not numeric extensions.');
+    }
+  }
+
   const admin = Session.getActiveUser().getEmail();
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(15000)) throw new Error('Could not acquire script lock; try again.');
@@ -431,6 +465,7 @@ function saveDeptConfig(req) {
       overviewParent:    overviewParent,
       teamAvgExcludes:   teamAvgExcludes,
       queueExtOverrides: queueExtOverrides,
+      inboundAliases:    inboundAliases,
       active:            active,
       notes:             notes,
       admin:             admin,
@@ -490,6 +525,7 @@ function upsertDeptConfigRow_(rec) {
     rec.admin || '',
     now,
     rec.notes || '',
+    (rec.inboundAliases || []).join(', '),   // col 10 (appended)
   ];
   if (existingRow > 0) {
     sheet.getRange(existingRow, 1, 1, rowValues.length).setValues([rowValues]);

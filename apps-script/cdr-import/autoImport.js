@@ -1636,6 +1636,25 @@ if (!skipCDR && obcHD) {
           notes: dateObj.toDateString(),
         });
       } catch (logErr) { /* best-effort */ }
+      // Standing guard (best-effort, non-blocking): flag a likely fan-out
+      // re-inflation so it surfaces in the Alerts modal Pipeline Health
+      // without failing the import. See csrTransferGuardFindings_.
+      try {
+        const csrGuard = csrTransferGuardFindings_(csrBatch);
+        if (csrGuard.length > 0) {
+          const detail = csrGuard.slice(0, 5).map(function (g) {
+            return g.agent + ' (T=' + g.transferred + '/Calls=' + g.totalCalls + ')';
+          }).join(', ');
+          logPipelineHealthWithFallback_(targetSS, {
+            step: 'processIntegratedHistory:CSR-guard',
+            status: 'failure',
+            rows: csrGuard.length,
+            durationMs: null,
+            notes: 'Possible CSR transfer fan-out inflation ' + dateObj.toDateString() +
+              ': ' + detail + (csrGuard.length > 5 ? ' +' + (csrGuard.length - 5) + ' more' : ''),
+          });
+        }
+      } catch (guardErr) { /* best-effort */ }
     }
   }
 
@@ -2591,6 +2610,37 @@ function csrRootCallId_(row) {
 }
 
 /**
+ * STANDING GUARD (pure, unit-tested). Scans a CSR Transfer Historical Data
+ * write batch for rows whose Transferred count is egregiously high relative
+ * to Total Calls -- the observable symptom of a ring fan-out re-inflation
+ * (e.g. the dedup in calcCsrReport getting reverted to leg-counting, or a new
+ * fan-out vector). Deliberately CONSERVATIVE so it doesn't false-fire on a
+ * normal day: Transferred and Total Calls are different populations (caller->
+ * queue vs callee-talk), so a high Trans % alone is legitimate -- this only
+ * trips on gross inflation (Transferred >= floor AND >= ratio x Total Calls).
+ * Returns the offending rows for a best-effort Pipeline Health tripwire; it
+ * never blocks the import. csrBatch row shape (INV: matches the write):
+ * [monthStr, weekStr, dateObj, agent, transPct, totalCalls, transferred, ...11 queues].
+ *
+ * @param {Array<Array>} csrBatch
+ * @param {{ratio?:number, floor?:number}} [opts]
+ * @returns {Array<{agent:string,totalCalls:number,transferred:number}>}
+ */
+function csrTransferGuardFindings_(csrBatch, opts) {
+  var ratio = (opts && opts.ratio) || 3;    // Transferred > 3x Total Calls
+  var floor = (opts && opts.floor) || 10;   // and >= 10 absolute
+  var out = [];
+  (csrBatch || []).forEach(function (row) {
+    var totalCalls = Number(row[5]) || 0;
+    var transferred = Number(row[6]) || 0;
+    if (transferred >= floor && transferred > ratio * Math.max(totalCalls, 1)) {
+      out.push({ agent: String(row[3] || '').trim(), totalCalls: totalCalls, transferred: transferred });
+    }
+  });
+  return out;
+}
+
+/**
  * RETROACTIVE REPAIR (editor-run). Recomputes the per-agent CSR transfer
  * counts for the date currently in the target "Raw Data" sheet using the
  * fixed calcCsrReport (distinct-call dedup), and OVERWRITES IN PLACE only the
@@ -2663,4 +2713,184 @@ function repairCsrTransferForRawDataDate() {
   Logger.log('repairCsrTransfer: date=%s updated=%s rows; missing-in-recompute=%s; totalCalls-mismatch=%s',
     rawDateIso, updated, JSON.stringify(missing), JSON.stringify(totalCallsMismatch));
   return { date: rawDateIso, updated: updated, missingInRecompute: missing, totalCallsMismatch: totalCallsMismatch };
+}
+
+/**
+ * READ-ONLY VET (editor-run). Scans the WHOLE "CSR Transfer Historical Data"
+ * sheet for rows likely inflated by the ring fan-out over-count (a single
+ * transfer to a queue that rang N agents counted as N), WITHOUT needing the
+ * per-leg Raw Data (which is pruned ~14 days, so most history can't be
+ * exactly recomputed). Never writes to the data sheet -- findings go to a
+ * separate "CSR Transfer Vet" diagnostic sheet (created/cleared each run) and
+ * to the log.
+ *
+ * Why a trusted-reference comparison (not a self-spike detector): the fan-out
+ * bug was SYSTEMATIC -- it inflated essentially every pre-fix day by roughly
+ * each destination queue's fan-out factor. A "spike vs this agent's own
+ * history" test would miss a uniform multiplier (the whole history is
+ * inflated). So we split each agent's days into a TRUSTED reference window
+ * (Date >= referenceFromIso -- the repaired 06/22 day plus any post-fix
+ * imports) and a SUSPECT era (before it), and compare medians. A suspect-era
+ * median well above the reference median reveals systematic inflation AND
+ * estimates the factor. `Total Calls` (col F) is the clean baseline -- the
+ * fix never touched it -- so Trans % drift corroborates a Transferred-only
+ * inflation.
+ *
+ * Three signals (per agent, using the agent's own days with Total Calls > 0):
+ *   1. SYSTEMATIC  -- suspect-era median of a column (Transferred total or a
+ *      per-queue col) >= INFLATION_RATIO x reference median (+ MIN_DELTA abs).
+ *      Reports the ratio (~ the fan-out factor) and a low-confidence note when
+ *      there are < 3 reference days.
+ *   2. SPIKE       -- an individual suspect row's per-queue cell >= SPIKE_RATIO
+ *      x the agent's reference median for that queue (and >= SPIKE_FLOOR abs).
+ *      Catches one-off over-counts even without a clean systematic signal.
+ *   3. PCT_EXTREME -- any row (any era) whose Trans % exceeds PCT_EXTREME; a
+ *      strong (not impossible) smell of Transferred outrunning Total Calls.
+ *
+ * Cannot auto-fix suspect rows (their legs are gone); use this to scope how
+ * widespread the inflation is and which agent/queue/dates to inspect. For the
+ * recent dates whose per-day import sheets survive, an exact recompute+repair
+ * is the follow-on (vs this heuristic). Returns a summary object.
+ *
+ * @param {string} [referenceFromIso='2026-06-22'] yyyy-mm-dd; rows on/after
+ *   this date are treated as trusted (the repaired + post-fix era).
+ */
+function vetCsrTransferHistory(referenceFromIso) {
+  var REF_FROM = String(referenceFromIso || '2026-06-22').trim();
+  var INFLATION_RATIO = 1.8;   // suspect median >= 1.8x reference median
+  var MIN_DELTA = 2;           // and at least +2 absolute, to ignore noise
+  var SPIKE_RATIO = 3;         // a single row's queue cell >= 3x ref median
+  var SPIKE_FLOOR = 5;         // and >= 5 absolute
+  var PCT_EXTREME = 1.5;       // Trans % > 150%
+  var LOW_CONF_REF_DAYS = 3;   // < this many reference days -> low confidence
+
+  var ss = SpreadsheetApp.openById(getTargetSsId_());
+  var csrHD = ss.getSheetByName('CSR Transfer Historical Data');
+  if (!csrHD) throw new Error('CSR Transfer Historical Data sheet missing.');
+
+  var last = csrHD.getLastRow();
+  if (last < 2) { Logger.log('vetCsrTransfer: history empty.'); return { rows: 0, findings: 0 }; }
+
+  var width = 18;  // A..R
+  var header = csrHD.getRange(1, 1, 1, width).getValues()[0];
+  var vals = csrHD.getRange(2, 1, last - 1, width).getValues();
+  var disp = csrHD.getRange(2, 1, last - 1, width).getDisplayValues();
+
+  // Column labels for the 11 per-queue cols (H..R = indices 7..17).
+  var queueLabels = [];
+  for (var qi = 0; qi < 11; qi++) queueLabels.push(String(header[7 + qi] || ('Queue ' + (qi + 1))).trim());
+
+  // Build per-agent day series. Each day: { dateIso, totalCalls, transferred,
+  // transPct, queues[11], rowNum (1-based sheet row), isRef }.
+  var byAgent = {};   // agentKey -> { name, days: [] }
+  for (var r = 0; r < vals.length; r++) {
+    var dateIso = parseDateForNeon(String(disp[r][2] || '').trim());
+    if (!dateIso) continue;
+    var agentName = String(vals[r][3] || '').trim();
+    var agentKey = agentName.toLowerCase();
+    if (!agentKey) continue;
+    if (!byAgent[agentKey]) byAgent[agentKey] = { name: agentName, days: [] };
+    var queues = [];
+    for (var q = 0; q < 11; q++) queues.push(Number(vals[r][7 + q]) || 0);
+    byAgent[agentKey].days.push({
+      dateIso: dateIso,
+      totalCalls: Number(vals[r][5]) || 0,
+      transferred: Number(vals[r][6]) || 0,
+      transPct: Number(vals[r][4]) || 0,
+      queues: queues,
+      rowNum: r + 2,
+      isRef: dateIso >= REF_FROM,
+    });
+  }
+
+  function median(arr) {
+    if (!arr.length) return null;
+    var s = arr.slice().sort(function (a, b) { return a - b; });
+    var m = Math.floor(s.length / 2);
+    return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+  }
+
+  // findings rows: [Type, Agent, Column, Suspect value, Reference, Ratio,
+  //                 Confidence, Date(s)/Detail]
+  var findings = [];
+  var agentKeys = Object.keys(byAgent).sort();
+
+  agentKeys.forEach(function (k) {
+    var rec = byAgent[k];
+    // Only days with real activity feed the medians.
+    var refDays = rec.days.filter(function (d) { return d.isRef && d.totalCalls > 0; });
+    var susDays = rec.days.filter(function (d) { return !d.isRef && d.totalCalls > 0; });
+
+    // Column accessors: index -1 = Transferred total, 0..10 = queue cols.
+    function colVal(day, idx) { return idx < 0 ? day.transferred : day.queues[idx]; }
+    function colLabel(idx) { return idx < 0 ? 'Transferred (total)' : queueLabels[idx]; }
+
+    for (var idx = -1; idx < 11; idx++) {
+      var refVals = refDays.map(function (d) { return colVal(d, idx); }).filter(function (v) { return v > 0; });
+      var susVals = susDays.map(function (d) { return colVal(d, idx); }).filter(function (v) { return v > 0; });
+      var refMed = median(refVals);
+
+      // 1. SYSTEMATIC inflation (needs a reference baseline + suspect data).
+      if (refMed != null && refMed > 0 && susVals.length) {
+        var susMed = median(susVals);
+        if (susMed >= INFLATION_RATIO * refMed && (susMed - refMed) >= MIN_DELTA) {
+          var conf = refDays.length < LOW_CONF_REF_DAYS ? ('low (' + refDays.length + ' ref day' + (refDays.length === 1 ? '' : 's') + ')') : 'ok';
+          findings.push(['SYSTEMATIC', rec.name, colLabel(idx), susMed, refMed,
+            +(susMed / refMed).toFixed(2), conf,
+            susDays.length + ' suspect day(s) before ' + REF_FROM]);
+        }
+      }
+
+      // 2. SPIKE: individual suspect rows far above the reference median.
+      if (refMed != null && refMed > 0) {
+        susDays.forEach(function (d) {
+          var v = colVal(d, idx);
+          if (v >= SPIKE_RATIO * refMed && v >= SPIKE_FLOOR) {
+            findings.push(['SPIKE', rec.name, colLabel(idx), v, refMed,
+              +(v / refMed).toFixed(2), '', d.dateIso + ' (row ' + d.rowNum + ')']);
+          }
+        });
+      }
+    }
+
+    // 3. PCT_EXTREME: any row with Trans % over the cap (any era).
+    rec.days.forEach(function (d) {
+      if (d.transPct > PCT_EXTREME) {
+        findings.push(['PCT_EXTREME', rec.name, 'Trans %', +(d.transPct * 100).toFixed(0) + '%', '', '',
+          d.isRef ? 'ref-era' : 'suspect-era',
+          d.dateIso + ' (row ' + d.rowNum + ', T=' + d.transferred + '/Calls=' + d.totalCalls + ')']);
+      }
+    });
+  });
+
+  // Write the findings to a separate diagnostic sheet (never the data sheet).
+  var reportName = 'CSR Transfer Vet';
+  var report = ss.getSheetByName(reportName);
+  if (!report) report = ss.insertSheet(reportName);
+  else report.clearContents();
+  var head = ['Type', 'Agent', 'Column', 'Suspect value', 'Reference (median)', 'Ratio', 'Confidence', 'Date(s) / detail'];
+  report.getRange(1, 1, 1, head.length).setValues([head]).setFontWeight('bold');
+  if (findings.length) {
+    // Stable sort: Type, then Ratio desc (most inflated first), then Agent.
+    var typeOrder = { SYSTEMATIC: 0, SPIKE: 1, PCT_EXTREME: 2 };
+    findings.sort(function (a, b) {
+      if (typeOrder[a[0]] !== typeOrder[b[0]]) return typeOrder[a[0]] - typeOrder[b[0]];
+      var ra = Number(a[5]) || 0, rb = Number(b[5]) || 0;
+      if (rb !== ra) return rb - ra;
+      return String(a[1]).localeCompare(String(b[1]));
+    });
+    report.getRange(2, 1, findings.length, head.length).setValues(findings);
+  } else {
+    report.getRange(2, 1).setValue('No likely-inflated rows found (reference from ' + REF_FROM + ').');
+  }
+  report.setFrozenRows(1);
+
+  var counts = { SYSTEMATIC: 0, SPIKE: 0, PCT_EXTREME: 0 };
+  findings.forEach(function (f) { counts[f[0]]++; });
+  Logger.log('vetCsrTransfer: scanned %s rows / %s agents; findings=%s (systematic=%s, spike=%s, pct-extreme=%s); referenceFrom=%s; report sheet="%s".',
+    vals.length, agentKeys.length, findings.length, counts.SYSTEMATIC, counts.SPIKE, counts.PCT_EXTREME, REF_FROM, reportName);
+  return {
+    rows: vals.length, agents: agentKeys.length, referenceFrom: REF_FROM,
+    findings: findings.length, byType: counts, reportSheet: reportName,
+  };
 }

@@ -609,7 +609,7 @@
     // from each row's matchedViaRoster / matchedViaQueue flags --
     // see fmtCell handling for `type: 'chip'`. Plain-text export
     // (CSV) is handled in exportTableCsv_ via sourceChipCsv_.
-    { key: 'source',               label: 'Source',          type: 'chip' },
+    { key: 'source',               label: 'Source',          type: 'chip',     hideable: true },
     { key: 'answeredBar',          label: 'Answered / Missed', type: 'bar', sortKey: 'answerRate' },
     { key: 'totalUnique',          label: 'Unique',          type: 'num',      hideable: true },
     { key: 'tttSeconds',           label: 'TTT',             type: 'duration', hideable: true },
@@ -1132,10 +1132,14 @@
 
   let ovChartInstance = null;
   let ovLastData = null;
-  // P2.4: the trend chart defaults to TOP-LEVEL depts only (de-spaghetti);
-  // sub-queue (child) lines are added on demand via the "+ sub-queues"
-  // toggle. Grid tiles are unaffected -- children always show as tiles.
-  let ovShowSubQueues_ = false;
+  // Sub-queue (child) lines are shown on the trend chart BY DEFAULT now
+  // (dashed + parent hue, so they behave like other dept queues while staying
+  // visually linked); the "sub-queues" toggle lets the user declutter to
+  // top-level depts only. In the grid, children render as dense chips beneath
+  // their parent tile (ovBuildSubqChip_) that expand to the full child tile on
+  // click -- compact, but never collapsed INTO the parent card (independent
+  // metrics, not a roll-up).
+  let ovShowSubQueues_ = true;
 
   function initCompanyOverview() {
     const overviewBtn = $('overview-btn');
@@ -1928,6 +1932,27 @@
          + '</div>';
   }
 
+  // Dense sub-queue chip for the grid: child name + % answered + an alert
+  // marker, in the parent's group cell (NOT inside the parent card, so it
+  // never implies the child rolls up into the parent's numbers). Click
+  // expands to the child's full tile (progressive disclosure); hover
+  // spotlights the child's chart line like a full tile does.
+  function ovBuildSubqChip_(dept, color) {
+    const alert = dept.alertedOnLatest
+      ? ' <span class="ov-subq-chip-alert" aria-hidden="true" title="Low-answer-rate alert on the latest date">🚨</span>'
+      : '';
+    return '<button type="button" class="ov-subq-chip" data-dept="' + escapeHtml(dept.name) + '" '
+         +   'data-subq="' + escapeHtml(dept.name) + '" aria-expanded="false" '
+         +   'title="' + escapeHtml(dept.name) + ' — sub-queue of ' + escapeHtml(dept.parent) + '. Click for full detail.">'
+         +   '<span class="ov-subq-chip-dot" style="background:' + color + '"></span>'
+         +   '<span class="ov-subq-chip-name">' + escapeHtml(dept.name) + '</span>'
+         +   '<span class="ov-subq-chip-pct">' + escapeHtml(dept.latest.pctFormatted) + '</span>'
+         +   '<span class="ov-subq-chip-cap">ans</span>'
+         +   alert
+         +   '<span class="ov-subq-chip-chev" aria-hidden="true">›</span>'
+         + '</button>';
+  }
+
   function ovRenderTiles_(data) {
     const colors = IR_CHART_COLORS;
     const viewerDept = ovViewerDept_(data);
@@ -1970,12 +1995,53 @@
     const html = groups.map(function (g) {
       const color = colors[(slotByName[g.parent.name] || 0) % colors.length];
       const parentTile = ovBuildGridTile_(g.parent, color, false, tileRoutable);
-      const childTiles = g.children.map(function (c) {
-        return ovBuildGridTile_(c, color, true, tileRoutable);
+      if (!g.children.length) {
+        return '<div class="ov-dept-group">' + parentTile + '</div>';
+      }
+      // Sub-queues render as DENSE CHIPS beneath the parent tile (compact,
+      // glance % + alert), each expanding on click to the child's FULL tile
+      // (rendered hidden in the expand container). Keeps the parent-child
+      // relationship visible + the grid compact without collapsing the
+      // sub-queue's independent metrics into the parent card.
+      const chips = g.children.map(function (c) { return ovBuildSubqChip_(c, color); }).join('');
+      const expanded = g.children.map(function (c) {
+        return '<div class="ov-subq-tile-wrap" data-subq-tile="' + escapeHtml(c.name) + '" style="display:none">'
+             +   ovBuildGridTile_(c, color, true, tileRoutable)
+             + '</div>';
       }).join('');
-      return '<div class="ov-dept-group">' + parentTile + childTiles + '</div>';
+      return '<div class="ov-dept-group">' + parentTile
+           +   '<div class="ov-subq-chips" role="group" aria-label="Sub-queues of ' + escapeHtml(g.parent.name) + '">' + chips + '</div>'
+           +   '<div class="ov-subq-expand">' + expanded + '</div>'
+           + '</div>';
     }).join('');
     $('ov-dept-grid').innerHTML = html;
+
+    // Sub-queue chip: click expands/collapses the matching child tile;
+    // hover spotlights the child's chart line (like a full tile). Match the
+    // tile by JS string compare (not a CSS attr selector) so dept names with
+    // quotes/spaces can't break the lookup.
+    $('ov-dept-grid').querySelectorAll('.ov-subq-chip').forEach(function (chip) {
+      chip.addEventListener('click', function () {
+        const name = chip.getAttribute('data-subq');
+        const group = chip.closest('.ov-dept-group');
+        if (!group) return;
+        const tiles = group.querySelectorAll('[data-subq-tile]');
+        let tile = null;
+        for (let i = 0; i < tiles.length; i++) {
+          if (tiles[i].getAttribute('data-subq-tile') === name) { tile = tiles[i]; break; }
+        }
+        if (!tile) return;
+        const open = (tile.style.display === 'none');
+        tile.style.display = open ? '' : 'none';
+        chip.setAttribute('aria-expanded', open ? 'true' : 'false');
+        chip.classList.toggle('is-open', open);
+      });
+      const target = chip.getAttribute('data-dept');
+      if (target) {
+        chip.addEventListener('mouseenter', function () { ovSpotlightDept_(target); });
+        chip.addEventListener('mouseleave', function () { ovSpotlightDept_(null); });
+      }
+    });
 
     // Admin tile-click: route the main dashboard to that dept and
     // navigate to the My Department page. Cheap because the server
@@ -4044,6 +4110,14 @@
   // an earlier, slower response can't clobber a newer one.
   var summaryReqSeq = 0;
 
+  // The dept whose rows are currently painted in the agent table. Lets
+  // refresh() blank the table the instant the dept CHANGES (admin clicking
+  // a different Overview tile, header dropdown, view-as) so the previous
+  // dept's rows don't linger on screen while the new summary loads -- the
+  // cross-dept "stale flash". A SAME-dept refresh keeps its rows (no
+  // flash-to-empty); only a genuine switch clears.
+  var lastSummaryDept_ = null;
+
   // F10: shared monotonic token for the four agent reports (IR / PR / CR /
   // Insights). Generate + edit-apply + dept-switch-then-regenerate can leave
   // two fetches in flight; without a guard the slower (older) response paints
@@ -4148,6 +4222,28 @@
       $('page-title').textContent = dept;
     }
 
+    // Dept switch: drop the prior dept's rows + dept-specific side panels NOW
+    // so they don't show as the new dept's data during the fetch. Same-dept
+    // refresh leaves them up (no flash-to-empty); only a genuine switch clears.
+    if (lastSummaryDept_ !== null && lastSummaryDept_ !== dept) {
+      state.rows = [];
+      state.totals = null;
+      render();
+      var hdr = $('dqe-table-header');
+      if (hdr) hdr.style.display = 'none';
+      var csvB = $('csv-export-btn');
+      if (csvB) csvB.style.display = 'none';
+      // QCD snapshot + Missed section paint from the prior dept until their
+      // (separate) loads return -- hide them so they re-appear with the new
+      // dept's data rather than flashing the old dept's.
+      var qcdSnap = $('dept-qcd-snapshot');
+      if (qcdSnap) qcdSnap.style.display = 'none';
+      var missedSec = $('dept-missed-section');
+      if (missedSec) missedSec.style.display = 'none';
+      var missedDetail = $('dept-missed-detail');
+      if (missedDetail) missedDetail.style.display = 'none';
+    }
+
     var myToken = ++summaryReqSeq;
     google.script.run
       .withSuccessHandler(function (data) {
@@ -4169,6 +4265,7 @@
 
   function onData(data) {
     $('refresh-btn').disabled = false;
+    lastSummaryDept_ = getRequestedDept();   // the dept now painted (stale-flash guard)
     state.rows = (data && data.rows) || [];
     state.totals = (data && data.totals) || null;
     var csvBtn = $('csv-export-btn');
@@ -10856,7 +10953,7 @@
     const tbody = $('dc-effective-tbody');
     if (!tbody) return;
     if (!effective.length) {
-      tbody.innerHTML = '<tr><td colspan="7" class="al-empty">No departments found.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="8" class="al-empty">No departments found.</td></tr>';
       return;
     }
     const cell = function (str) {
@@ -10872,6 +10969,7 @@
            +   '<td>' + cell(e.overviewParent || '') + '</td>'
            +   '<td>' + cell((e.teamAvgExcludes || []).join(', ')) + '</td>'
            +   '<td>' + cell((e.queueExtOverrides || []).join(', ')) + '</td>'
+           +   '<td>' + cell((e.inboundAliases || []).join(', ')) + '</td>'
            +   '<td>' + source + '</td>'
            +   '<td><button type="button" class="link-btn dc-row-edit" data-idx="' + idx + '">Edit</button></td>'
            + '</tr>';
@@ -10894,6 +10992,8 @@
     $('dc-edit-parent').value   = eff.overviewParent || '';
     $('dc-edit-excludes').value = (eff.teamAvgExcludes || []).join(', ');
     $('dc-edit-qext').value     = (eff.queueExtOverrides || []).join(', ');
+    var inbAliasEl = $('dc-edit-inbound-aliases');
+    if (inbAliasEl) inbAliasEl.value = (eff.inboundAliases || []).join(', ');
     $('dc-edit-notes').value    = '';
     // Deactivate only makes sense when a sheet row exists for the dept.
     const deact = $('dc-deactivate-btn');
@@ -10916,6 +11016,7 @@
       overviewParent:    $('dc-edit-parent').value,
       teamAvgExcludes:   $('dc-edit-excludes').value,
       queueExtOverrides: $('dc-edit-qext').value,
+      inboundAliases:    ($('dc-edit-inbound-aliases') || {}).value || '',
       active:            true,
       notes:             $('dc-edit-notes').value,
     };
