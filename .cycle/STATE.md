@@ -464,3 +464,24 @@ commit/push/deploy direction.
   Pushed `claude/brave-dijkstra-wuonrv`, UNMERGED. Where I left off: Phase 1a pushed; awaiting (a)
   PR/merge decision and (b) operator spot-check of `runDirectCallBuild()` output before Phase 1b
   (daily hook) + Phase 2 (dashboard modal). 5s tail = `DIRECT_BUSY_WRAPUP_SEC` (tunable).
+
+- **Increment 42 (DONE — UI polish batch + Tracks A & B):** Deploy-testing feedback,
+  multiple commits on `claude/brave-dijkstra-wuonrv` (UNMERGED past PR #137).
+  CONCRETE FIXES (shipped): queue-only abandoned cards default-collapsed on a >2-day range;
+  dept Missed radar deferred resize (CSR zero-size fix); Dept Config Save spinner; Overview
+  viewer-dept folded into the grid as a highlighted first card (hero retired); sub-queue
+  chips → expandable mini-card strips (Ans%/Abd/viol + WoW arrow, smooth height morph);
+  Source column folded into "Show all columns"; WoW "what changed" agent callout removed
+  from Overview cards (#4); inbound queue-name bridge (Dept Config `Inbound Queue Aliases`
+  col + getInboundQueueAliases_ + inboundQueuesForDept_ union — per-dept Inbound report still
+  admin-only/parked; un-gate later by populating aliases + removing the inboundResolveRequest_
+  gate). **Track A (DONE):** Missed Calls bars/radar toggle (missedChartCfg_ dispatch, mode in
+  localStorage cdr.missed.chartmode default bars), bar mode = horizontal + COLOR INTENSITY RAMP
+  + peak outline + datalabels; toggle re-render guarded to visible charts. **Track B (DONE):**
+  Escalations converted modal → full PAGE (body[data-page=escalations], setPage, route kind:'page';
+  esc-* logic + Escalations.gs unchanged). node --test 162/162; INV-16 clean; script.html JS
+  syntax-checked. PLAN doc `docs/ui-infra-roadmap.md` (Tracks A/B/C). **Track C NOT started**
+  (config sheets → Neon; phased C2 Dept Config → C1 Access Control → C3 Alert/Digest; +15-min
+  setup() hardening). Where I left off: Tracks A+B pushed UNMERGED; awaiting PR/merge decision;
+  Track C deferred (owner approved the plan, build when ready); the transient setup() timeout the
+  operator hit just needs a setup() re-run (creates Report Usage).
