@@ -4047,6 +4047,74 @@
     flex-direction: column;
     gap: 4px;
   }
+
+  /* Dense sub-queue chips beneath a parent tile. They sit in the group
+     cell (indented like the child tiles used to be), NOT inside the parent
+     card -- so the parent's metrics never read as a roll-up of the chips.
+     Click a chip to reveal the child's full tile (.ov-subq-tile-wrap). */
+  .ov-subq-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-left: 16px;   /* align with the old child-tile indent */
+  }
+  .ov-subq-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 7px;
+    border: 1px solid var(--accent);
+    border-left-width: 3px;
+    background: var(--accent-soft);
+    border-radius: var(--r);
+    cursor: pointer;
+    font-family: var(--ui);
+    font-size: 12px;
+    color: var(--ink);
+    line-height: 1.3;
+    transition: background var(--dur-1, 120ms) var(--ease, ease);
+  }
+  .ov-subq-chip:hover { background: var(--accent-soft-2, var(--accent-soft)); }
+  .ov-subq-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .ov-subq-chip-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    flex: 0 0 auto;
+  }
+  .ov-subq-chip-name { font-weight: 500; }
+  .ov-subq-chip-name::before {
+    content: '↳ ';
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .ov-subq-chip-pct {
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+  }
+  .ov-subq-chip-cap {
+    font-size: 10px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+  }
+  .ov-subq-chip-chev {
+    color: var(--accent);
+    font-weight: 700;
+    transition: transform var(--dur-1, 120ms) var(--ease, ease);
+  }
+  .ov-subq-chip.is-open .ov-subq-chip-chev { transform: rotate(90deg); }
+  .ov-subq-chip.is-open { background: var(--accent-soft-2, var(--accent-soft)); }
+  .ov-subq-expand {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .ov-subq-tile-wrap { margin-top: 4px; }
+  @media (prefers-reduced-motion: reduce) {
+    .ov-subq-chip, .ov-subq-chip-chev { transition: none; }
+  }
+
   .ov-dept-tile-child {
     border-left: 4px solid var(--accent);
     margin-left: 16px;

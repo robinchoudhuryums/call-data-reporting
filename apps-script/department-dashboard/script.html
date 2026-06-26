@@ -1132,10 +1132,14 @@
 
   let ovChartInstance = null;
   let ovLastData = null;
-  // P2.4: the trend chart defaults to TOP-LEVEL depts only (de-spaghetti);
-  // sub-queue (child) lines are added on demand via the "+ sub-queues"
-  // toggle. Grid tiles are unaffected -- children always show as tiles.
-  let ovShowSubQueues_ = false;
+  // Sub-queue (child) lines are shown on the trend chart BY DEFAULT now
+  // (dashed + parent hue, so they behave like other dept queues while staying
+  // visually linked); the "sub-queues" toggle lets the user declutter to
+  // top-level depts only. In the grid, children render as dense chips beneath
+  // their parent tile (ovBuildSubqChip_) that expand to the full child tile on
+  // click -- compact, but never collapsed INTO the parent card (independent
+  // metrics, not a roll-up).
+  let ovShowSubQueues_ = true;
 
   function initCompanyOverview() {
     const overviewBtn = $('overview-btn');
@@ -1928,6 +1932,27 @@
          + '</div>';
   }
 
+  // Dense sub-queue chip for the grid: child name + % answered + an alert
+  // marker, in the parent's group cell (NOT inside the parent card, so it
+  // never implies the child rolls up into the parent's numbers). Click
+  // expands to the child's full tile (progressive disclosure); hover
+  // spotlights the child's chart line like a full tile does.
+  function ovBuildSubqChip_(dept, color) {
+    const alert = dept.alertedOnLatest
+      ? ' <span class="ov-subq-chip-alert" aria-hidden="true" title="Low-answer-rate alert on the latest date">🚨</span>'
+      : '';
+    return '<button type="button" class="ov-subq-chip" data-dept="' + escapeHtml(dept.name) + '" '
+         +   'data-subq="' + escapeHtml(dept.name) + '" aria-expanded="false" '
+         +   'title="' + escapeHtml(dept.name) + ' — sub-queue of ' + escapeHtml(dept.parent) + '. Click for full detail.">'
+         +   '<span class="ov-subq-chip-dot" style="background:' + color + '"></span>'
+         +   '<span class="ov-subq-chip-name">' + escapeHtml(dept.name) + '</span>'
+         +   '<span class="ov-subq-chip-pct">' + escapeHtml(dept.latest.pctFormatted) + '</span>'
+         +   '<span class="ov-subq-chip-cap">ans</span>'
+         +   alert
+         +   '<span class="ov-subq-chip-chev" aria-hidden="true">›</span>'
+         + '</button>';
+  }
+
   function ovRenderTiles_(data) {
     const colors = IR_CHART_COLORS;
     const viewerDept = ovViewerDept_(data);
@@ -1970,12 +1995,53 @@
     const html = groups.map(function (g) {
       const color = colors[(slotByName[g.parent.name] || 0) % colors.length];
       const parentTile = ovBuildGridTile_(g.parent, color, false, tileRoutable);
-      const childTiles = g.children.map(function (c) {
-        return ovBuildGridTile_(c, color, true, tileRoutable);
+      if (!g.children.length) {
+        return '<div class="ov-dept-group">' + parentTile + '</div>';
+      }
+      // Sub-queues render as DENSE CHIPS beneath the parent tile (compact,
+      // glance % + alert), each expanding on click to the child's FULL tile
+      // (rendered hidden in the expand container). Keeps the parent-child
+      // relationship visible + the grid compact without collapsing the
+      // sub-queue's independent metrics into the parent card.
+      const chips = g.children.map(function (c) { return ovBuildSubqChip_(c, color); }).join('');
+      const expanded = g.children.map(function (c) {
+        return '<div class="ov-subq-tile-wrap" data-subq-tile="' + escapeHtml(c.name) + '" style="display:none">'
+             +   ovBuildGridTile_(c, color, true, tileRoutable)
+             + '</div>';
       }).join('');
-      return '<div class="ov-dept-group">' + parentTile + childTiles + '</div>';
+      return '<div class="ov-dept-group">' + parentTile
+           +   '<div class="ov-subq-chips" role="group" aria-label="Sub-queues of ' + escapeHtml(g.parent.name) + '">' + chips + '</div>'
+           +   '<div class="ov-subq-expand">' + expanded + '</div>'
+           + '</div>';
     }).join('');
     $('ov-dept-grid').innerHTML = html;
+
+    // Sub-queue chip: click expands/collapses the matching child tile;
+    // hover spotlights the child's chart line (like a full tile). Match the
+    // tile by JS string compare (not a CSS attr selector) so dept names with
+    // quotes/spaces can't break the lookup.
+    $('ov-dept-grid').querySelectorAll('.ov-subq-chip').forEach(function (chip) {
+      chip.addEventListener('click', function () {
+        const name = chip.getAttribute('data-subq');
+        const group = chip.closest('.ov-dept-group');
+        if (!group) return;
+        const tiles = group.querySelectorAll('[data-subq-tile]');
+        let tile = null;
+        for (let i = 0; i < tiles.length; i++) {
+          if (tiles[i].getAttribute('data-subq-tile') === name) { tile = tiles[i]; break; }
+        }
+        if (!tile) return;
+        const open = (tile.style.display === 'none');
+        tile.style.display = open ? '' : 'none';
+        chip.setAttribute('aria-expanded', open ? 'true' : 'false');
+        chip.classList.toggle('is-open', open);
+      });
+      const target = chip.getAttribute('data-dept');
+      if (target) {
+        chip.addEventListener('mouseenter', function () { ovSpotlightDept_(target); });
+        chip.addEventListener('mouseleave', function () { ovSpotlightDept_(null); });
+      }
+    });
 
     // Admin tile-click: route the main dashboard to that dept and
     // navigate to the My Department page. Cheap because the server

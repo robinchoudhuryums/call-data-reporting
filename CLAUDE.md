@@ -755,11 +755,17 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   was an intentional `#8` decision; it's safe to retire because the
   tile-hover→line-spotlight link works by **dept-name lookup**
   (`ovSpotlightDept_` matches `ds._deptName`), NOT DOM proximity, so
-  the stack preserves it. Sub-queue **children stay as their own
-  indented tiles** inside the `.ov-dept-group` cell (P1 hybrid — no
-  inset strip; parent DQE metrics are independent, NOT a roll-up of
-  children, so nesting them into the parent card would falsely imply
-  aggregation). The pinned band uses a moderate 340px height
+  the stack preserves it. Sub-queue **children render as dense chips**
+  beneath the parent tile inside the `.ov-dept-group` cell
+  (`ovBuildSubqChip_`: name + % answered + alert marker), each
+  **expanding on click to the child's full tile** (`.ov-subq-tile-wrap`,
+  hidden until expanded). The chips sit in the group cell, NOT inside the
+  parent card — parent DQE metrics are independent, NOT a roll-up of
+  children, so nesting them in would falsely imply aggregation. Chips
+  carry `data-dept` so hovering one spotlights the child's chart line
+  like a full tile; the expanded full tile keeps the admin route-to-dept
+  click. (Superseded the earlier P1-hybrid "indented full child tiles".)
+  The pinned band uses a moderate 340px height
   (`.ov-trend-col .ir-chart-wrap`) and un-sticks on short viewports
   (`@media (max-height:640px)`); the condense-on-scroll polish was
   intentionally skipped.
@@ -770,12 +776,13 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   [4, 3]`) inheriting their parent's hue via the `colorByDept` map
   built up front in `ovRenderChart_` (so the parent → child color
   inheritance works even if children precede parents in the
-  `depts` array). **The chart defaults to TOP-LEVEL depts only
-  (Pass 3b P2.4, de-spaghetti); the dashed child lines are added on
-  demand via the `+ sub-queues` checkbox (`#ov-subq-toggle`,
-  `ovShowSubQueues_`, off by default), which re-renders from
-  `ovLastData`. Grid tiles are unaffected — children always show as
-  tiles.** A faint dashed 92% baseline (color
+  `depts` array). **The chart shows sub-queues BY DEFAULT now
+  (`ovShowSubQueues_` defaults `true`) so they behave like other dept
+  queues while staying visually linked (dashed + parent hue); the
+  `sub-queues` checkbox (`#ov-subq-toggle`, `checked` by default) lets
+  the user declutter to top-level depts only, re-rendering from
+  `ovLastData`. Grid children are dense expand-to-tile chips (see the
+  Overview layout bullet above).** A faint dashed 92% baseline (color
   `THEME.muted`) is drawn at `order: 99` so dept lines stay on
   top; the tooltip is filtered to hide the baseline from per-line
   hover. Fills are intentionally suppressed on this overlaid
