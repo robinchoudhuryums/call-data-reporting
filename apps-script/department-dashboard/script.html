@@ -1663,57 +1663,14 @@
   // present in the overview data (e.g. listed in
   // OVERVIEW_HIDDEN_DEPTS).
   function ovRenderUserHero_(data) {
+    // RETIRED: the viewer's dept used to render as a full-width hero ABOVE the
+    // chart. It now folds into the grid as the highlighted first card
+    // (ovRenderTiles_ -> ov-dept-tile-viewer), which reads better and works
+    // when presenting several depts at once. Keep this block hidden; the
+    // function is still called from the render sequence + dept-selector change
+    // handler, so it stays a safe no-op rather than being ripped out.
     const wrap = $('ov-user-hero');
-    if (!wrap) return;
-    const viewerDept = ovViewerDept_(data);
-    if (!viewerDept) { wrap.style.display = 'none'; wrap.innerHTML = ''; return; }
-    const depts = data.depts || [];
-    const dept = depts.find(function (d) { return d.name === viewerDept; });
-    if (!dept) { wrap.style.display = 'none'; wrap.innerHTML = ''; return; }
-
-    // The viewer's children if the viewer is a top-level parent.
-    const heroChildren = depts.filter(function (d) { return d.parent === dept.name; });
-
-    // Find the dept's slot in the top-level color cycle (children
-    // inherit their parent's slot color); used for the hero's
-    // spark + accent.
-    const colors = IR_CHART_COLORS;
-    let slot = 0, ownIdx = -1, parentIdx = -1;
-    depts.forEach(function (d) {
-      if (d.parent) return;
-      if (d.name === viewerDept)         ownIdx    = slot;
-      if (dept.parent && d.name === dept.parent) parentIdx = slot;
-      slot++;
-    });
-    // Use the viewer's own slot if top-level; otherwise inherit
-    // the parent's slot. Fallback to 0 if neither matched (e.g.
-    // viewer dept was orphaned for some reason).
-    const colorIdx = ownIdx >= 0 ? ownIdx : (parentIdx >= 0 ? parentIdx : 0);
-    const color = colors[colorIdx % colors.length];
-
-    wrap.style.display = '';
-    const childTiles = heroChildren.map(function (c) {
-      return ovBuildGridTile_(c, color, /*isChild=*/true,
-                              /*routable=*/USER.role === 'admin');
-    }).join('');
-    const childBlock = heroChildren.length
-      ? '<div class="ov-user-hero-children">' + childTiles + '</div>'
-      : '';
-    wrap.innerHTML = ovBuildHeroTile_(dept, color) + childBlock;
-
-    // Hero is always clickable -- routes to the My Department
-    // page where the full configurable date-range detail lives.
-    // Children inside the hero are clickable separately (admin
-    // route-to-child); we use closest() to disambiguate.
-    wrap.onclick = function (e) {
-      const childTile = e.target.closest('.ov-user-hero-children .ov-dept-tile-clickable');
-      if (childTile && USER.role === 'admin') {
-        const target = childTile.getAttribute('data-dept');
-        if (target) { ovRouteToDept_(target); return; }
-      }
-      // Click anywhere else in the hero -> go to dept detail page.
-      setPage('dept');
-    };
+    if (wrap) { wrap.style.display = 'none'; wrap.innerHTML = ''; }
   }
 
   function ovBuildHeroTile_(dept, color) {
@@ -1896,19 +1853,26 @@
   // hero block (for parent-viewers' nested child sub-queues).
   // Set `isChild=true` for sub-queues -- they pick up the
   // accent-tinted background + tree-line connector via CSS.
-  function ovBuildGridTile_(dept, color, isChild, routable) {
+  function ovBuildGridTile_(dept, color, isChild, routable, isViewer) {
     const spark = irSparkline_(
       (dept.trend || []).map(function (v) { return v == null ? 0 : v; }),
       color);
     const parentTag = isChild
       ? '<span class="ov-dept-parent-tag">sub-queue &middot; ' + escapeHtml(dept.parent) + '</span>'
       : '';
+    // The viewer's own dept (manager) / selected dept (admin) is folded into
+    // the grid as the FIRST card with a distinctive border + "your dept"
+    // badge (replaces the old full-width hero above the chart).
+    const viewerBadge = isViewer
+      ? '<span class="ov-dept-viewer-badge">' + (USER.role === 'admin' ? 'selected' : 'your dept') + '</span>'
+      : '';
     const cls = 'ov-dept-tile'
               + (isChild ? ' ov-dept-tile-child' : '')
+              + (isViewer ? ' ov-dept-tile-viewer' : '')
               + (routable ? ' ov-dept-tile-clickable' : '');
     return '<div class="' + cls + '" data-dept="' + escapeHtml(dept.name) + '">'
          +   '<div class="ov-dept-tile-head">'
-         +     '<span class="ov-dept-name">' + escapeHtml(dept.name) + '</span>'
+         +     '<span class="ov-dept-name">' + escapeHtml(dept.name) + viewerBadge + '</span>'
          +     '<span class="ov-dept-active" title="' + escapeHtml(ovActiveTooltip_(dept)) + '">'
          +       dept.activeAgents + ' of ' + (dept.recentlyActiveCount != null ? dept.recentlyActiveCount : dept.rosterSize) + ' agents'
          +     '</span>'
@@ -1958,23 +1922,16 @@
     const viewerDept = ovViewerDept_(data);
     const depts = data.depts || [];
     const viewerObj = viewerDept ? depts.find(function (d) { return d.name === viewerDept; }) : null;
-    // If the viewer is a top-level PARENT, the entire group (parent
-    // + its children) is hoisted into the hero block above. So the
-    // grid needs to skip that whole group -- otherwise the parent
-    // appears twice (hero + grid) or the children appear orphaned
-    // below their hoisted parent. If the viewer is a CHILD, we only
-    // skip that one tile from its parent group; the parent still
-    // appears in the grid (with one fewer sub-queue).
-    const skippedParent = viewerObj && !viewerObj.parent ? viewerObj.name : null;
-    const skippedChild  = viewerObj &&  viewerObj.parent ? viewerObj.name : null;
+    // The viewer's dept is no longer hoisted into a full-width hero above the
+    // chart -- it's rendered IN the grid (first, highlighted). The top-level
+    // group the viewer belongs to (itself if top-level, else its parent's
+    // group) is moved to the front; the viewer's own tile gets a marker.
+    const viewerTopName = viewerObj ? (viewerObj.parent || viewerObj.name) : null;
 
     const groups = [];
     const slotByName = {};
     let slot = 0;
     depts.forEach(function (d) {
-      if (d.name === skippedChild) return;
-      if (d.parent === skippedParent) return;   // parent + its kids in hero
-      if (d.name === skippedParent) return;
       if (!d.parent) {
         slotByName[d.name] = slot++;
         groups.push({ parent: d, children: [] });
@@ -1982,21 +1939,27 @@
         const last = groups[groups.length - 1];
         if (last && last.parent.name === d.parent) last.children.push(d);
         else {
-          // Parent was filtered out for some other reason -- the
-          // child becomes a standalone top-level tile in the grid
-          // so it still surfaces.
+          // Parent not the previous group (filtered/missing) -- the child
+          // becomes a standalone top-level tile so it still surfaces.
           slotByName[d.name] = slot++;
           groups.push({ parent: d, children: [] });
         }
       }
     });
 
+    // Move the viewer's group to the front (stable for the rest).
+    if (viewerTopName) {
+      const vi = groups.findIndex(function (g) { return g.parent.name === viewerTopName; });
+      if (vi > 0) groups.unshift(groups.splice(vi, 1)[0]);
+    }
+
     const tileRoutable = (USER.role === 'admin');
     const html = groups.map(function (g) {
       const color = colors[(slotByName[g.parent.name] || 0) % colors.length];
-      const parentTile = ovBuildGridTile_(g.parent, color, false, tileRoutable);
+      const parentIsViewer = (g.parent.name === viewerDept);
+      const parentTile = ovBuildGridTile_(g.parent, color, false, tileRoutable, parentIsViewer);
       if (!g.children.length) {
-        return '<div class="ov-dept-group">' + parentTile + '</div>';
+        return '<div class="ov-dept-group' + (parentIsViewer ? ' ov-dept-group-viewer' : '') + '">' + parentTile + '</div>';
       }
       // Sub-queues render as DENSE CHIPS beneath the parent tile (compact,
       // glance % + alert), each expanding on click to the child's FULL tile
@@ -2009,7 +1972,7 @@
              +   ovBuildGridTile_(c, color, true, tileRoutable)
              + '</div>';
       }).join('');
-      return '<div class="ov-dept-group">' + parentTile
+      return '<div class="ov-dept-group' + (parentIsViewer ? ' ov-dept-group-viewer' : '') + '">' + parentTile
            +   '<div class="ov-subq-chips" role="group" aria-label="Sub-queues of ' + escapeHtml(g.parent.name) + '">' + chips + '</div>'
            +   '<div class="ov-subq-expand">' + expanded + '</div>'
            + '</div>';

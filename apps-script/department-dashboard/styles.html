@@ -4188,6 +4188,26 @@
     gap: 6px;
     min-width: 0;
   }
+  /* The viewer's own (manager) / selected (admin) dept: folded into the grid
+     as the first card with a distinctive accent border + corner badge (the
+     old full-width hero above the chart is retired). */
+  .ov-dept-tile-viewer {
+    border: 2px solid var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+  }
+  .ov-dept-viewer-badge {
+    margin-left: 6px;
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: var(--accent);
+    color: var(--paper-card, #fff);
+    font-family: var(--mono);
+    font-size: 9px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    vertical-align: middle;
+  }
   .ov-dept-tile-head {
     display: flex;
     justify-content: space-between;
