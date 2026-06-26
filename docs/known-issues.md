@@ -109,6 +109,59 @@ canonicalization rules from it is robust to new hires.
 
 ---
 
+## CSR Transfer ring fan-out over-count (CDR Import project)
+
+**Status:** Fixed in `calcCsrReport` (`apps-script/cdr-import/autoImport.js`).
+
+**Symptom:** Per-agent CSR transfer counts in `CSR Transfer Historical Data`
+(Transferred, Trans %, and the 11 per-queue cols) were inflated. E.g. on
+2026-06-22, Camila's transfers to the Field Ops queue logged as 22 when the
+real figure was a handful — the 22 reflected the number of agents the
+destination queue *rang*, not actual calls.
+
+**Cause:** `calcCsrReport` counted transfer **legs**, not distinct calls. A
+single transfer to a queue that fans out to N ring-legs emits N Raw Data rows
+with the same `caller -> callee`, so each leg was counted. Latent since the
+file entered the repo; exposed by a day with wide multi-agent ring queues.
+
+**Fix:** Dedup by **root call id** — `csrRootCallId_(row)` = parent-call id
+(col O / idx 14) when present, else call id (col A / idx 0), the same
+call-level identity DQE's `uniqueParentCalls` / `inbound_calls` use. The
+per-queue accumulator is now a `Set` of root ids; `.size` is the transfer
+count. `Total Calls` (col F) was never affected — it's counted independently
+from callee talk-legs (`talk > 0`), so it stays the clean baseline.
+
+**Tooling (three pieces):**
+
+- **Retroactive repair (recent dates):** `repairCsrTransferForRawDataDate()` —
+  editor-run in **CDR Import**; recomputes with the fixed engine and overwrites
+  in place cols E/G/H..R for the date currently in the `Raw Data` sheet (which
+  lives in CDR Report). Surgical, idempotent, leaves col F untouched. Only
+  works while that date's legs are still in `Raw Data` (Raw Data is pruned).
+- **Vet the whole history (B):** `vetCsrTransferHistory(referenceFromIso)` —
+  editor-run, **read-only**. Most history can't be exactly recomputed (legs
+  pruned ~14 days), so it heuristically flags likely-inflated rows by comparing
+  each agent's **trusted reference window** (`Date >= referenceFromIso`, default
+  `2026-06-22` — the repaired + post-fix era) against the **suspect era** before
+  it. Because the bug was *systematic* (uniform per-queue multiplier), a
+  within-agent spike detector would miss it — the reference comparison reveals
+  systematic inflation and estimates the fan-out factor. Three signals:
+  SYSTEMATIC (suspect median ≥ 1.8× reference median), SPIKE (a single row ≥ 3×
+  the reference median), PCT_EXTREME (Trans % > 150%). Writes findings to a
+  separate **`CSR Transfer Vet`** diagnostic sheet (never the data sheet) and
+  logs a summary. Cannot auto-fix suspect rows (legs gone) — it scopes how
+  widespread the inflation is and which agent/queue/dates to inspect.
+- **Standing guard (C):** `csrTransferGuardFindings_(csrBatch, opts)` (pure,
+  unit-tested in `tests/unit/csr-transfer.test.js`) runs inside the daily
+  `processIntegratedHistory` CSR write block. If any written row shows gross
+  inflation (Transferred ≥ 10 **and** > 3× Total Calls) it logs a best-effort
+  `processIntegratedHistory:CSR-guard` `failure` row to Pipeline Health
+  (surfaces in the Alerts modal) **without** failing the import. Deliberately
+  conservative — Transferred and Total Calls are different populations, so a
+  high Trans % alone is legitimate; only a re-inflation regression trips it.
+
+---
+
 ## Spreadsheet vs script timezone mismatch (Mexico City vs Chicago)
 
 **Status:** Worked around in code; underlying setting unchanged.
