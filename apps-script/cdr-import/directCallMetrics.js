@@ -119,10 +119,51 @@ function computeDirectCallMetrics(rawDisplayData, maps, opts) {
   const TAIL = opts.wrapupSec      != null ? opts.wrapupSec      : DIRECT_BUSY_WRAPUP_SEC;
   const extToAgent = (maps && maps.extToAgent) || {};
   const exclusions = (maps && maps.exclusions) || new Set();
-  const qRegex = /CallQueue/i;
+  const queueExtSet = (maps && maps.queueExtSet) || new Set();
 
   // Column indices (== the autoImport `idx` + DQE_C layout).
-  const C = { CALL_ID: 0, START: 2, DIR: 5, TALK: 6, CALLTIME: 7, CALLER: 8, CALLEE: 10, CTX: 13, MIS: 23, ANS: 25 };
+  const C = { CALL_ID: 0, PARENT: 14, START: 2, DIR: 5, TALK: 6, CALLTIME: 7,
+              CALLER: 8, CALLER_NAME: 9, CALLEE: 10, CALLEE_NAME: 11, CTX: 13,
+              CALLER_ID: 22, MIS: 23, ANS: 25 };
+  const qIdRe = /(A_Q_\w+|Backup CSR)/i;   // DQE queue-name convention (col W / names)
+
+  // A leg "touches a queue" if any of the queue signals fire: the DQE
+  // queue-name marker (CALLER_ID col W, or the caller/callee NAME), a
+  // CallQueue context, or a queue EXTENSION on either side (e.g. 103). This is
+  // broader than the old context-only check, which missed (a) a queue ring leg
+  // whose caller is the queue ext (103 -> agent, logged as a fake direct
+  // inbound) and (b) the agent's "Outgoing" talk leg of an answered queue call
+  // (agent -> external, logged as a fake direct outbound) whose queue identity
+  // lives on a SIBLING leg (Leg 1: -> 103 / A_Q_CSR).
+  function legTouchesQueue(caller, callee, callerName, calleeName, ctx, callerId) {
+    if (qIdRe.test(callerId)) return true;
+    if (/CallQueue/i.test(ctx)) return true;
+    if (queueExtSet.has(caller) || queueExtSet.has(callee)) return true;
+    if (qIdRe.test(callerName) || qIdRe.test(calleeName)) return true;
+    return false;
+  }
+  function realParent(p) { return (p && p.toUpperCase() !== 'N/A') ? p : ''; }
+
+  // PASS A: flag every call (by call id AND parent-call id) that has ANY
+  // queue-touching leg, so the WHOLE call is excluded from the direct buckets
+  // -- a queue call's legs span both directions and must never count as
+  // direct inbound/outbound for the answering agent.
+  const queueCallIds = new Set();
+  for (let qi = 1; qi < rawDisplayData.length; qi++) {
+    const q = rawDisplayData[qi];
+    if (!q) continue;
+    if (legTouchesQueue(dcClean_(q[C.CALLER]), dcClean_(q[C.CALLEE]),
+        dcClean_(q[C.CALLER_NAME]), dcClean_(q[C.CALLEE_NAME]),
+        String(q[C.CTX] || ''), String(q[C.CALLER_ID] || ''))) {
+      const qcid = dcClean_(q[C.CALL_ID]);
+      const qpar = realParent(dcClean_(q[C.PARENT]));
+      if (qcid) queueCallIds.add(qcid);
+      if (qpar) queueCallIds.add(qpar);
+    }
+  }
+  function isQueueCall(cid, parent) {
+    return queueCallIds.has(cid) || (parent && queueCallIds.has(parent));
+  }
 
   // agent -> { dept, occ:[{cid,s,e}], ib:{cid->ev}, ob:{cid->ev} }
   const A = {};
@@ -138,11 +179,10 @@ function computeDirectCallMetrics(rawDisplayData, maps, opts) {
     const r = rawDisplayData[i];
     if (!r) continue;
     const cid     = dcClean_(r[C.CALL_ID]);
+    const parent  = realParent(dcClean_(r[C.PARENT]));
     const caller  = dcClean_(r[C.CALLER]);
     const callee  = dcClean_(r[C.CALLEE]);
     const dir     = String(r[C.DIR] || '');
-    const ctx     = String(r[C.CTX] || '');
-    const isQueue = qRegex.test(ctx);
     const talk    = dcTimeToSec_(r[C.TALK]);
     const hold    = Math.max(0, dcTimeToSec_(r[C.CALLTIME]) - talk);
     const startSec = dcStartSec_(r[C.START]);
@@ -161,12 +201,16 @@ function computeDirectCallMetrics(rawDisplayData, maps, opts) {
       if (calleeAgent && !exclusions.has(calleeAgent.name)) ensure(calleeAgent.name, calleeAgent.dept).occ.push(occ);
     }
 
-    if (isQueue) continue;   // queue calls belong to the DQE/QCD path, not "direct"
+    // The WHOLE call belongs to the queue (DQE/QCD) path, not "direct" -- skip
+    // every leg of it (occupied was already recorded above, so a queue call
+    // the agent answered still makes them busy for a direct miss).
+    if (isQueueCall(cid, parent)) continue;
 
     // (2) INBOUND DIRECT events -- agent is the callee; caller is a real
-    //     number/ext; Incoming (external) or Internal. One event per cid.
+    //     number/ext that is NOT a queue distributor extension; Incoming
+    //     (external) or Internal. One event per cid.
     if (calleeAgent && !exclusions.has(calleeAgent.name) && dcIsPhone_(caller) &&
-        (dir === 'Incoming' || dir === 'Internal')) {
+        !queueExtSet.has(caller) && (dir === 'Incoming' || dir === 'Internal')) {
       const b = ensure(calleeAgent.name, calleeAgent.dept);
       let ev = b.ib[cid];
       if (!ev) { ev = b.ib[cid] = { intExt: dir === 'Internal' ? 'int' : 'ext', start: startSec, ringEnd: null, answered: false, talk: 0, caller: caller, callee: callee }; }
@@ -288,11 +332,22 @@ function dcBuildExtMaps_(configSheet) {
   const lastRow = configSheet.getLastRow();
   if (lastRow < 2) return { extToAgent: extToAgent, queueExtSet: queueExtSet, exclusions: exclusions };
 
-  // Queue map (cols A/B): dept | queue ext.
+  // Queue map (cols A/B): dept/queue-group | queue ext(s). Col B may be a
+  // COMMA-JOINED list of extensions (e.g. "103,108" -- the combined CSR queues
+  // A_Q_CSR + A_Q_Intake grouped under "A_Q_CustomerSuccess", which itself has
+  // no ext). Split so each ext is matched individually by queueExtSet.has(ext);
+  // adding the raw cell too is harmless.
   const queueMap = configSheet.getRange(2, 1, lastRow - 1, 2).getValues();
   queueMap.forEach(function (r) {
     if (r[0]) exclusions.add(String(r[0]).trim());
-    if (r[1]) { const ext = String(r[1]).trim(); exclusions.add(ext); queueExtSet.add(ext); }
+    if (r[1]) {
+      const raw = String(r[1]).trim();
+      exclusions.add(raw);
+      raw.split(',').forEach(function (tok) {
+        const ext = tok.trim();
+        if (ext) { exclusions.add(ext); queueExtSet.add(ext); }
+      });
+    }
   });
 
   // Roster block (cols F.. = col 6..): header row 1 = dept names; cells below
