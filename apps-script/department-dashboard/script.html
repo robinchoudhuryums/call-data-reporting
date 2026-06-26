@@ -609,7 +609,7 @@
     // from each row's matchedViaRoster / matchedViaQueue flags --
     // see fmtCell handling for `type: 'chip'`. Plain-text export
     // (CSV) is handled in exportTableCsv_ via sourceChipCsv_.
-    { key: 'source',               label: 'Source',          type: 'chip' },
+    { key: 'source',               label: 'Source',          type: 'chip',     hideable: true },
     { key: 'answeredBar',          label: 'Answered / Missed', type: 'bar', sortKey: 'answerRate' },
     { key: 'totalUnique',          label: 'Unique',          type: 'num',      hideable: true },
     { key: 'tttSeconds',           label: 'TTT',             type: 'duration', hideable: true },
