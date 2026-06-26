@@ -2169,6 +2169,23 @@
   }
   @keyframes irDrillSpin { to { transform: rotate(360deg); } }
 
+  /* Inline button spinner: a small ring shown inside a button while its
+     action is in flight (e.g. Dept Config Save). */
+  .btn-spinner {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    margin-right: 6px;
+    vertical-align: -1px;
+    border: 2px solid currentColor;
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: irDrillSpin 0.7s linear infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .btn-spinner { animation-duration: 1.6s; }
+  }
+
   /* Sort dropdown above the per-agent summary cards. Only shown
      in peer-comparison mode (2+ agents); hidden for single-agent
      reports where sort is meaningless. */

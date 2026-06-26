@@ -3894,8 +3894,21 @@
    * render identically. Takes the report meta explicitly (for the
    * unique/event counts) rather than reading a module global.
    */
+  // Range (inclusive days) between two ISO dates, or null if either is absent.
+  function isoRangeDays_(from, to) {
+    if (!from || !to) return null;
+    var a = new Date(from + 'T00:00:00'), b = new Date(to + 'T00:00:00');
+    if (isNaN(a) || isNaN(b)) return null;
+    return Math.round((b - a) / 86400000) + 1;
+  }
+
   function missedQueueOnlyParts_(queueOnly, meta) {
     meta = meta || {};
+    // Default the per-queue cards COLLAPSED on a multi-day range (> 2 days):
+    // long ranges accumulate many timestamps per queue, so an all-open list
+    // is a wall of rows. Short ranges (<= 2 days) stay open for quick scanning.
+    const rangeDays = isoRangeDays_(meta.from, meta.to);
+    const cardsOpen = !(rangeDays != null && rangeDays > 2);
     // Headline uses unique-by-parent-ID count alongside the per-queue event
     // sum, so overflow (one call ringing two queues) is visible. Fall back to
     // the raw sum if the server didn't send the unique count (older payload).
@@ -3921,7 +3934,7 @@
              +   '</span>'
              + '</li>';
       }).join('');
-      return '<details class="queue-only-card" open>'
+      return '<details class="queue-only-card"' + (cardsOpen ? ' open' : '') + '>'
            +   '<summary class="qname">' + escapeHtml(q.queue) + ' &middot; '
            +     q.total + ' abandoned</summary>'
            +   '<ul class="queue-only-list">' + itemsHtml + '</ul>'
@@ -4342,6 +4355,18 @@
       .getMissedCallsReport({ department: dept, from: from, to: to });
   }
 
+  // Re-measure the dept missed radar after layout settles. rAF (twice, to
+  // clear a sticky-side-column reflow) then an explicit resize so a chart
+  // created at zero width fills its container. No-op if the chart is gone.
+  function deptMissedResize_() {
+    if (typeof requestAnimationFrame !== 'function') return;
+    requestAnimationFrame(function () {
+      requestAnimationFrame(function () {
+        try { if (deptMissedChart) deptMissedChart.resize(); } catch (e) {}
+      });
+    });
+  }
+
   function deptMissedRender_(data, from, to) {
     const wrap = $('dept-missed-section');
     if (!wrap) return;
@@ -4399,6 +4424,12 @@
         deptMissedChart = safeChart_($('dept-missed-chart').getContext('2d'),
           missedRadarCfg_((data && data.chart) || { labels: [], counts: [] },
                           function (idx) { deptMissedBucketDetail_.toggle(idx); }));
+        // Some depts (notably CSR -- busiest, with the multi-queue QCD
+        // carousel still settling the dept-page layout) had the radar render
+        // at zero size because the container hadn't been measured yet at
+        // creation time. Re-measure on the next frame so the radar fills its
+        // (now laid-out) container regardless of dept.
+        deptMissedResize_();
       }
     }
 
@@ -11021,11 +11052,17 @@
       notes:             $('dc-edit-notes').value,
     };
     const saveBtn = $('dc-save-btn');
-    if (saveBtn) saveBtn.disabled = true;
+    if (saveBtn) {
+      saveBtn.disabled = true;
+      saveBtn.innerHTML = '<span class="btn-spinner" aria-hidden="true"></span>Saving…';
+    }
+    const restoreSaveBtn = function () {
+      if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save'; }
+    };
     dcSetStatus_('loading', 'Saving config for ' + dcEditDept + '…');
     google.script.run
       .withSuccessHandler(function (res) {
-        if (saveBtn) saveBtn.disabled = false;
+        restoreSaveBtn();
         const warns = (res && res.warnings) || [];
         if (warns.length) {
           dcSetStatus_('success', 'Saved ' + dcEditDept + '. ⚠ ' + warns.join(' ')
@@ -11040,7 +11077,7 @@
         dcLoadInit_();
       })
       .withFailureHandler(function (err) {
-        if (saveBtn) saveBtn.disabled = false;
+        restoreSaveBtn();
         dcSetStatus_('error', 'Save failed: '
           + (err && err.message ? err.message : String(err)));
       })
