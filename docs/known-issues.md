@@ -497,6 +497,53 @@ banner). On failure, `notifyDigestFailure_` emails the
 
 ---
 
+## Two queue-name spaces: raw Raw-Data names vs QCD-canonical names
+
+**Status:** Live landmine. Worked around for the per-call journey drill;
+still latent for the per-dept Inbound report (parked / admin-only).
+
+There are **two different spellings for the same queue** in this install:
+
+- **Raw Data leg names** (CALLER_ID col 22 / CALLEE_NAME col 11): the actual
+  queue identifiers the phone system emits, e.g. `A_Q_CSR` (ext 103),
+  `A_Q_Intake` (ext 108), `A_Q_Spanish`, `Backup CSR`. `inbound_calls`
+  captures these into `entry_queue` / `final_queue` (via `icIsQueueName_`,
+  `/^A_Q_/i`).
+- **QCD-canonical names** (QCD Historical Data col D / `DEPT_QCD_QUEUES`): the
+  names the QCD pipeline writes, e.g. CSR's main queue is `A_Q_CustomerSuccess`
+  (NOT `A_Q_CSR`). `queuesForDept_` / `getDeptQcdQueues_` return THESE.
+
+So `inbound_calls.entry_queue = 'A_Q_CSR'` but `queuesForDept_('CSR')` =
+`['A_Q_CustomerSuccess', 'A_Q_Intake', 'Backup CSR']` -- the CSR main queue
+does **not** match across the two spaces (Intake / Backup CSR happen to).
+
+**Symptom that surfaced it:** the "↳ path" call-journey drill on abandoned
+rings in the Missed Calls / My Department views returned "No inbound-call path
+on record" for CSR-entry calls. `getCallJourney` (`InboundReport.gs`) scoped
+the lookup with `callJourneyDeptPredicate_` (`entry_queue`/`final_queue` IN
+`queuesForDept_(dept)`), which never matched `A_Q_CSR`.
+
+**Fix (journey drill):** `getCallJourney` now falls back to an exact
+`(call_date, call_id)` match when the dept-scoped query finds nothing. Safe
+because the call_id is **already dept-entitled upstream** -- the badge only
+appears on abandoned rings in the caller's OWN dept-scoped Missed report (DQE
+abandoned parent ids), and the journey carries no caller identity (no
+hash/number; phone-like callee names are masked at capture). Logs when the
+fallback hits.
+
+**Still latent:** the full Inbound REPORT's per-dept attribution
+(`inboundDeptPredicate_`) keys on the SAME `entry_queue IN queuesForDept_`,
+so per-dept inbound numbers would under-count any dept whose raw queue name
+differs from its QCD name. Not yet exercised because the Inbound report is
+temporarily admin-only / company-view (which is unscoped). **Before un-gating
+the per-dept Inbound report, reconcile the two name spaces** -- either map raw
+-> QCD names at inbound capture, or teach `inboundDeptPredicate_` /
+`queuesForDept_` the raw aliases (e.g. via a Dept Config alias column). The
+QCD-vs-inbound abandonment discrepancies already parked for that report are
+likely the same root cause.
+
+---
+
 ## QCD Report engine
 
 **Sheet:** `QCD Historical Data` (12 cols), written daily by the

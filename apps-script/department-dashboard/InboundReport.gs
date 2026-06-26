@@ -206,15 +206,40 @@ function getCallJourney(req) {
   const conn = getDashboardNeonConn_();
   if (!conn) return { available: false, found: false };
   try {
-    const sql = "SELECT to_jsonb(c)::text AS j FROM inbound_calls c "
-              + "WHERE c.call_date = ?::date AND c.call_id = ?" + predicate + " LIMIT 1";
-    const stmt = conn.prepareStatement(sql);
-    stmt.setString(1, date);
-    stmt.setString(2, callId);
-    const rs = stmt.executeQuery();
-    const json = rs.next() ? rs.getString('j') : '';
-    rs.close(); stmt.close();
+    // Run the lookup with an optional dept predicate. The badge's call_id is
+    // ALREADY entitled upstream -- it only appears on abandoned rings in the
+    // caller's OWN dept-scoped Missed report (DQE abandoned parent ids) -- so
+    // the predicate is defense-in-depth, not the entitlement boundary.
+    const lookup = function (pred) {
+      const sql = "SELECT to_jsonb(c)::text AS j FROM inbound_calls c "
+                + "WHERE c.call_date = ?::date AND c.call_id = ?" + pred + " LIMIT 1";
+      const stmt = conn.prepareStatement(sql);
+      stmt.setString(1, date);
+      stmt.setString(2, callId);
+      const rs = stmt.executeQuery();
+      const j = rs.next() ? rs.getString('j') : '';
+      rs.close(); stmt.close();
+      return j;
+    };
+
+    let json = lookup(predicate);
+    // FALLBACK: the dept predicate matches on inbound_calls' RAW queue-name
+    // space (entry_queue/final_queue = the Raw Data callee queue, e.g.
+    // 'A_Q_CSR'), but queuesForDept_ returns the QCD-canonical names (e.g.
+    // 'A_Q_CustomerSuccess') -- a different space for several depts, so the
+    // scoped query yields false negatives (the original "no path on record"
+    // bug). When scoped finds nothing, retry by exact (call_date, call_id)
+    // only. Safe: the id is already dept-entitled upstream and the journey
+    // carries no caller identity (no hash/number; phone-like callee names are
+    // masked at capture). Admin company view runs unscoped already (predicate
+    // === ''), so this only adds a fallback for the manager/dept path.
+    let viaFallback = false;
+    if (!json && predicate) { json = lookup(''); viaFallback = !!json; }
     if (!json) return { available: true, found: false };
+    if (viaFallback) {
+      Logger.log('getCallJourney: dept-scoped lookup missed (queue-name space), '
+        + 'resolved via exact-id fallback. call_id=%s date=%s dept=%s', callId, date, dept || '(all)');
+    }
     return { available: true, found: true, call: callerLookupShapeCall_(JSON.parse(json)) };
   } catch (e) {
     Logger.log('getCallJourney failed: ' + (e && e.message ? e.message : e));

@@ -4044,6 +4044,14 @@
   // an earlier, slower response can't clobber a newer one.
   var summaryReqSeq = 0;
 
+  // The dept whose rows are currently painted in the agent table. Lets
+  // refresh() blank the table the instant the dept CHANGES (admin clicking
+  // a different Overview tile, header dropdown, view-as) so the previous
+  // dept's rows don't linger on screen while the new summary loads -- the
+  // cross-dept "stale flash". A SAME-dept refresh keeps its rows (no
+  // flash-to-empty); only a genuine switch clears.
+  var lastSummaryDept_ = null;
+
   // F10: shared monotonic token for the four agent reports (IR / PR / CR /
   // Insights). Generate + edit-apply + dept-switch-then-regenerate can leave
   // two fetches in flight; without a guard the slower (older) response paints
@@ -4148,6 +4156,28 @@
       $('page-title').textContent = dept;
     }
 
+    // Dept switch: drop the prior dept's rows + dept-specific side panels NOW
+    // so they don't show as the new dept's data during the fetch. Same-dept
+    // refresh leaves them up (no flash-to-empty); only a genuine switch clears.
+    if (lastSummaryDept_ !== null && lastSummaryDept_ !== dept) {
+      state.rows = [];
+      state.totals = null;
+      render();
+      var hdr = $('dqe-table-header');
+      if (hdr) hdr.style.display = 'none';
+      var csvB = $('csv-export-btn');
+      if (csvB) csvB.style.display = 'none';
+      // QCD snapshot + Missed section paint from the prior dept until their
+      // (separate) loads return -- hide them so they re-appear with the new
+      // dept's data rather than flashing the old dept's.
+      var qcdSnap = $('dept-qcd-snapshot');
+      if (qcdSnap) qcdSnap.style.display = 'none';
+      var missedSec = $('dept-missed-section');
+      if (missedSec) missedSec.style.display = 'none';
+      var missedDetail = $('dept-missed-detail');
+      if (missedDetail) missedDetail.style.display = 'none';
+    }
+
     var myToken = ++summaryReqSeq;
     google.script.run
       .withSuccessHandler(function (data) {
@@ -4169,6 +4199,7 @@
 
   function onData(data) {
     $('refresh-btn').disabled = false;
+    lastSummaryDept_ = getRequestedDept();   // the dept now painted (stale-flash guard)
     state.rows = (data && data.rows) || [];
     state.totals = (data && data.totals) || null;
     var csvBtn = $('csv-export-btn');
