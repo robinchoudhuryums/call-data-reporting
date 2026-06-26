@@ -10953,7 +10953,7 @@
     const tbody = $('dc-effective-tbody');
     if (!tbody) return;
     if (!effective.length) {
-      tbody.innerHTML = '<tr><td colspan="7" class="al-empty">No departments found.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="8" class="al-empty">No departments found.</td></tr>';
       return;
     }
     const cell = function (str) {
@@ -10969,6 +10969,7 @@
            +   '<td>' + cell(e.overviewParent || '') + '</td>'
            +   '<td>' + cell((e.teamAvgExcludes || []).join(', ')) + '</td>'
            +   '<td>' + cell((e.queueExtOverrides || []).join(', ')) + '</td>'
+           +   '<td>' + cell((e.inboundAliases || []).join(', ')) + '</td>'
            +   '<td>' + source + '</td>'
            +   '<td><button type="button" class="link-btn dc-row-edit" data-idx="' + idx + '">Edit</button></td>'
            + '</tr>';
@@ -10991,6 +10992,8 @@
     $('dc-edit-parent').value   = eff.overviewParent || '';
     $('dc-edit-excludes').value = (eff.teamAvgExcludes || []).join(', ');
     $('dc-edit-qext').value     = (eff.queueExtOverrides || []).join(', ');
+    var inbAliasEl = $('dc-edit-inbound-aliases');
+    if (inbAliasEl) inbAliasEl.value = (eff.inboundAliases || []).join(', ');
     $('dc-edit-notes').value    = '';
     // Deactivate only makes sense when a sheet row exists for the dept.
     const deact = $('dc-deactivate-btn');
@@ -11013,6 +11016,7 @@
       overviewParent:    $('dc-edit-parent').value,
       teamAvgExcludes:   $('dc-edit-excludes').value,
       queueExtOverrides: $('dc-edit-qext').value,
+      inboundAliases:    ($('dc-edit-inbound-aliases') || {}).value || '',
       active:            true,
       notes:             $('dc-edit-notes').value,
     };

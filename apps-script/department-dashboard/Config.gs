@@ -127,9 +127,19 @@ const ORPHAN_FIX_LOG_HEADERS = Object.freeze([
 //   Team Avg Excludes = comma-separated roster names (overrides TEAM_AVG_EXCLUDES[dept])
 //   Queue Ext Overrides = comma-separated digit extensions (overrides DEPT_QUEUE_EXT_OVERRIDES[dept]); REPLACES the data-derived queue-ext set for scope/sentinel matching
 //   Active            = TRUE/FALSE (pause without deleting)
+//   Inbound Queue Aliases = comma-separated RAW inbound queue names (the
+//     A_Q_* / "Backup CSR" spellings the phone system emits into
+//     inbound_calls.entry_queue/final_queue) that belong to this dept but
+//     differ from its QCD-canonical names. Unioned with queuesForDept_ ONLY
+//     for the per-dept Inbound report + per-call journey attribution, to
+//     bridge the two queue-name spaces (e.g. CSR's raw "A_Q_CSR" vs QCD
+//     "A_Q_CustomerSuccess"). Appended at the END (non-destructive: pre-
+//     existing 9-col prod sheets keep working; readDeptConfigRows_ reads it
+//     positionally, empty until an admin fills it). See INV-54.
 const DEPT_CONFIG_HEADERS = Object.freeze([
   'Department', 'QCD Queues', 'Overview Parent', 'Team Avg Excludes',
   'Queue Ext Overrides', 'Active', 'Updated By', 'Updated At', 'Notes',
+  'Inbound Queue Aliases',
 ]);
 // Report Usage: append-only telemetry of report opens, written by
 // Util.gs::logReportUsage_ from the public report endpoints. This is

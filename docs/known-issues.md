@@ -531,16 +531,39 @@ abandoned parent ids), and the journey carries no caller identity (no
 hash/number; phone-like callee names are masked at capture). Logs when the
 fallback hits.
 
-**Still latent:** the full Inbound REPORT's per-dept attribution
-(`inboundDeptPredicate_`) keys on the SAME `entry_queue IN queuesForDept_`,
-so per-dept inbound numbers would under-count any dept whose raw queue name
-differs from its QCD name. Not yet exercised because the Inbound report is
-temporarily admin-only / company-view (which is unscoped). **Before un-gating
-the per-dept Inbound report, reconcile the two name spaces** -- either map raw
--> QCD names at inbound capture, or teach `inboundDeptPredicate_` /
-`queuesForDept_` the raw aliases (e.g. via a Dept Config alias column). The
-QCD-vs-inbound abandonment discrepancies already parked for that report are
-likely the same root cause.
+**Fix (per-dept Inbound report + journey) — Dept Config alias column.** A new
+`Inbound Queue Aliases` column on the `Dept Config` sheet (INV-54, appended at
+the end / col 10 so pre-existing 9-col prod sheets keep working) holds the RAW
+queue names per dept. `getInboundQueueAliases_` (DeptConfig.gs, sheet-only — no
+seed constant) reads it, and `InboundReport.gs::inboundQueuesForDept_` UNIONs it
+with `queuesForDept_(dept)`. BOTH inbound dept predicates now consume that union
+(`inboundResolveRequest_` → the report + heatmap; `getCallJourney` → the per-call
+path), so a call whose `entry_queue`/`final_queue` is a raw alias (e.g. `A_Q_CSR`)
+attributes to the right dept. Admin-curated via the Dept Config modal's "Inbound
+queue aliases" field; no redeploy. **To un-gate the per-dept Inbound report:**
+populate the aliases for each affected dept (CSR = `A_Q_CSR` etc.), confirm the
+slices, then remove the one-line admin gate in `inboundResolveRequest_`. The
+parked QCD-vs-inbound abandonment discrepancies are likely the same root cause —
+re-check them once aliases are populated.
+
+**Best long-term health (not yet done) — normalize the queue identity at the
+source.** The alias column is a dashboard-side bridge: it keeps TWO name spaces
+alive and depends on an admin keeping the alias list complete. The durable fix is
+to make `inbound_calls` self-consistent so every consumer works without
+per-consumer alias logic. Two ways, in order of preference:
+1. **Translate raw → canonical at capture** (`cdr-import/inboundCalls.js`): map
+   the raw queue name to its QCD-canonical name when writing
+   `entry_queue`/`final_queue`, seeded from the SAME alias data (lift the Dept
+   Config aliases into a cdr-import map, or read them cross-project). Then
+   `inbound_calls` matches `queuesForDept_` directly and the dashboard union /
+   the `getCallJourney` exact-id fallback become belt-and-suspenders. Requires a
+   one-time `backfillInboundCalls` re-run to rewrite existing rows.
+2. **Store the queue extension at capture and match by ext** (against
+   `getDeptQueueExts_`) — the ext is the real identity (`A_Q_CSR` = 103), so this
+   sidesteps queue-name spelling entirely; needs a capture schema add + backfill.
+Either makes the alias column redundant for inbound attribution (it could then be
+retired or kept only as the capture-time seed). Until then, the alias column is
+the correct, reversible, no-backfill stopgap.
 
 ---
 

@@ -107,12 +107,37 @@ function inboundResolveRequest_(req) {
   }
 
   const companyView = !dept;
-  // Effective queue list (Dept Config-overridable, sub-queue rollup) --
-  // the same map every QCD surface uses, so inbound dept slices and QCD
-  // dept slices can't disagree about queue ownership.
-  const deptQueues = companyView ? [] : queuesForDept_(dept);
+  // Effective queue list (Dept Config-overridable, sub-queue rollup) UNIONED
+  // with the dept's raw inbound-queue aliases -- inbound_calls stores the raw
+  // queue spellings (e.g. "A_Q_CSR") which differ from the QCD-canonical
+  // names queuesForDept_ returns (e.g. "A_Q_CustomerSuccess"). Without the
+  // union, those calls don't attribute to the dept. See inboundQueuesForDept_.
+  const deptQueues = companyView ? [] : inboundQueuesForDept_(dept);
   return { from: from, to: to, dept: dept, deptQueues: deptQueues,
            companyView: companyView, user: user };
+}
+
+/**
+ * The queue-name set used for INBOUND dept attribution (report + journey):
+ * the dept's effective QCD-canonical queues (queuesForDept_, incl. sub-queue
+ * rollup) UNIONed with its admin-curated raw inbound-queue aliases
+ * (getInboundQueueAliases_, INV-54). This bridges the two queue-name spaces:
+ * QCD Historical Data / DEPT_QCD_QUEUES carry canonical names, but
+ * inbound_calls.entry_queue/final_queue carry the raw phone-system names.
+ * Order-stable, de-duped. Used ONLY by inbound surfaces -- no QCD/DQE reader
+ * calls this (they stay on queuesForDept_).
+ */
+function inboundQueuesForDept_(dept) {
+  if (!dept) return [];
+  const out = [];
+  const seen = {};
+  const add = function (q) {
+    const v = String(q == null ? '' : q).trim();
+    if (v && !seen[v]) { seen[v] = true; out.push(v); }
+  };
+  queuesForDept_(dept).forEach(add);
+  if (typeof getInboundQueueAliases_ === 'function') getInboundQueueAliases_(dept).forEach(add);
+  return out;
 }
 
 /** Single-quote-escape a value for inline SQL literals. */
@@ -200,7 +225,11 @@ function getCallJourney(req) {
   }
   if (dept === 'ALL') dept = '';   // admin company view -> no dept scoping
 
-  const deptQueues = dept ? queuesForDept_(dept) : [];
+  // Union the QCD-canonical queues with the dept's raw inbound aliases so a
+  // call whose entry/final queue is a raw name (e.g. A_Q_CSR) still scopes to
+  // the dept (same bridge as the report; the exact-id fallback below also
+  // covers any still-unmapped alias).
+  const deptQueues = dept ? inboundQueuesForDept_(dept) : [];
   const predicate = callJourneyDeptPredicate_(dept, deptQueues);   // '' for company view
 
   const conn = getDashboardNeonConn_();

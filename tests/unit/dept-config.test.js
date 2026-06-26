@@ -27,7 +27,7 @@ function setConfig(rows) {
 }
 
 // Build a Dept Config row in column order:
-// Dept | QCD | Parent | TeamExcl | QueueExt | Active | By | At | Notes
+// Dept | QCD | Parent | TeamExcl | QueueExt | Active | By | At | Notes | InboundAliases
 function row(opts) {
   return [
     opts.dept,
@@ -39,6 +39,7 @@ function row(opts) {
     opts.by || 'admin@x.com',
     opts.at || '',
     opts.notes || '',
+    opts.inboundAliases || '',
   ];
 }
 
@@ -113,6 +114,24 @@ test('getDeptQueueExtsOverride_: override and fallback to constant', function ()
   setConfig(null);
   deepEqual(h.call('getDeptQueueExtsOverride_', 'CSR').sort(),
     h.consts.DEPT_QUEUE_EXT_OVERRIDES['CSR'].slice().sort());
+});
+
+test('getInboundQueueAliases_: sheet-only, empty when absent or inactive', function () {
+  // No sheet / no row -> [] (no seed constant for inbound aliases).
+  setConfig(null);
+  deepEqual(h.call('getInboundQueueAliases_', 'CSR'), []);
+
+  // Active row with aliases -> parsed list.
+  setConfig([row({ dept: 'CSR', inboundAliases: 'A_Q_CSR, Backup CSR' })]);
+  deepEqual(h.call('getInboundQueueAliases_', 'CSR'), ['A_Q_CSR', 'Backup CSR']);
+
+  // A row that sets other fields but leaves aliases blank -> [].
+  setConfig([row({ dept: 'CSR', qcd: 'A_Q_CustomerSuccess' })]);
+  deepEqual(h.call('getInboundQueueAliases_', 'CSR'), []);
+
+  // Inactive row is ignored.
+  setConfig([row({ dept: 'CSR', inboundAliases: 'A_Q_CSR', active: false })]);
+  deepEqual(h.call('getInboundQueueAliases_', 'CSR'), []);
 });
 
 test('getOverviewParentMap_: seeds from constant, sheet overrides per dept', function () {

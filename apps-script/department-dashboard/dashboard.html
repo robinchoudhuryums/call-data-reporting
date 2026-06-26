@@ -2379,6 +2379,7 @@
               <th>Overview parent</th>
               <th>Team-avg excludes</th>
               <th>Queue ext overrides</th>
+              <th>Inbound aliases</th>
               <th>Source</th>
               <th>Edit</th>
             </tr></thead>
@@ -2404,6 +2405,10 @@
             <div class="control" style="flex:1 1 200px;">
               <label for="dc-edit-qext">Queue ext overrides (digits)</label>
               <input type="text" id="dc-edit-qext" placeholder="103, 108, 1003">
+            </div>
+            <div class="control" style="flex:1 1 240px;">
+              <label for="dc-edit-inbound-aliases" title="Raw inbound queue names (as they appear in inbound_calls) that belong to this dept but differ from its QCD queue names. Bridges per-dept Inbound report + call-path attribution.">Inbound queue aliases (raw names)</label>
+              <input type="text" id="dc-edit-inbound-aliases" placeholder="A_Q_CSR, Backup CSR">
             </div>
             <div class="control" style="flex:1 1 180px;">
               <label for="dc-edit-notes">Notes</label>
