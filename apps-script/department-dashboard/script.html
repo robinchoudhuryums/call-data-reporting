@@ -1721,7 +1721,6 @@
               + dept.wow.prevPct.toFixed(1) + '%';
     return '<span class="ov-wow-chip ' + cls + '" title="' + escapeHtml(tip) + '">'
          + arrow + ' ' + Math.abs(d).toFixed(1) + '% WoW</span>'
-         + ovBuildWowDriver_(dept)
          + ovBuildQcdCaption_(dept);
   }
 
@@ -1802,25 +1801,13 @@
     return html;
   }
 
-  // "What changed" driver: surfaces the per-agent activity change
-  // that most contributed to the dept's WoW shift. Server attaches
-  // a `driver` field on dept.wow when the delta is notable (>=1.5pt).
-  // Renders as a small caption next to the WoW chip, e.g.
-  //   "Sarah +12 answered" (positive WoW) or
-  //   "Mark +8 missed"     (negative WoW).
-  function ovBuildWowDriver_(dept) {
-    if (!dept.wow || !dept.wow.driver) return '';
-    const drv = dept.wow.driver;
-    const dlt = Number(drv.delta) || 0;
-    const sign = dlt > 0 ? '+' : '';
-    const cls = drv.positive ? 'ov-wow-driver-up' : 'ov-wow-driver-down';
-    const tip = drv.agent + ' ' + drv.metric + ': '
-              + drv.prev + ' → ' + drv.cur
-              + ' (vs prior week) — largest contributor to this dept’s shift.';
-    return '<span class="ov-wow-driver ' + cls + '" title="' + escapeHtml(tip) + '">'
-         +   escapeHtml(drv.agent) + ' ' + sign + dlt + ' ' + escapeHtml(drv.metric)
-         + '</span>';
-  }
+  // RETIRED (#4): the "what changed" per-agent driver callout (e.g.
+  // "Sarah +12 answered") was removed from the Overview cards -- naming a
+  // specific agent on the dept tile read as clutter, not at-a-glance. The
+  // server still computes dept.wow.driver (used by the manager digest's
+  // own narrative, INV-48); it's just no longer rendered on the cards.
+  // Kept as a no-op so any stray caller renders nothing.
+  function ovBuildWowDriver_(dept) { return ''; }
 
   // Tooltip text for the active-agents caption. Spells out the
   // three counts (today's active / recently active / full roster)
