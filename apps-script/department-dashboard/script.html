@@ -1136,9 +1136,9 @@
   // (dashed + parent hue, so they behave like other dept queues while staying
   // visually linked); the "sub-queues" toggle lets the user declutter to
   // top-level depts only. In the grid, children render as dense chips beneath
-  // their parent tile (ovBuildSubqChip_) that expand to the full child tile on
-  // click -- compact, but never collapsed INTO the parent card (independent
-  // metrics, not a roll-up).
+  // their parent tile (ovBuildSubqCard_) that expand IN PLACE into a near-full
+  // card on click -- compact, but never collapsed INTO the parent card
+  // (independent metrics, not a roll-up).
   let ovShowSubQueues_ = true;
 
   function initCompanyOverview() {
@@ -1896,25 +1896,97 @@
          + '</div>';
   }
 
-  // Dense sub-queue chip for the grid: child name + % answered + an alert
-  // marker, in the parent's group cell (NOT inside the parent card, so it
-  // never implies the child rolls up into the parent's numbers). Click
-  // expands to the child's full tile (progressive disclosure); hover
-  // spotlights the child's chart line like a full tile does.
-  function ovBuildSubqChip_(dept, color) {
+  // WoW direction arrow for a sub-queue strip: answer-rate up = good (sage),
+  // down = warn. Flat/absent -> nothing.
+  function ovSubqArrow_(wow) {
+    if (!wow || typeof wow.deltaPct !== 'number') return '';
+    const d = wow.deltaPct;
+    if (Math.abs(d) < 0.1) return '';
+    const up = d > 0;
+    const sign = up ? '+' : '';
+    return '<span class="ov-subq-arrow ' + (up ? 'is-up' : 'is-down') + '" '
+         +   'title="Answer rate ' + sign + d.toFixed(1) + ' pts vs prior week">'
+         +   (up ? '▲' : '▼') + '</span>';
+  }
+
+  // Sub-queue mini-card STRIP for the grid: a compact card (white, hover
+  // border) showing Ans % (+ WoW arrow), Abandoned %, and violations, that
+  // EXPANDS IN PLACE into a near-full card (rung/ans/miss, ATT, sparkline)
+  // -- one element, so the strip morphs into the card rather than a second
+  // card appearing beside it. In the parent's group cell, NOT inside the
+  // parent card (no false roll-up). Hover spotlights the child's chart line.
+  function ovBuildSubqCard_(dept, color) {
+    const qcd = dept.qcd || null;
     const alert = dept.alertedOnLatest
-      ? ' <span class="ov-subq-chip-alert" aria-hidden="true" title="Low-answer-rate alert on the latest date">🚨</span>'
+      ? '<span class="ov-subq-strip-alert" aria-hidden="true" title="Low-answer-rate alert on the latest date">🚨</span>'
       : '';
-    return '<button type="button" class="ov-subq-chip" data-dept="' + escapeHtml(dept.name) + '" '
-         +   'data-subq="' + escapeHtml(dept.name) + '" aria-expanded="false" '
-         +   'title="' + escapeHtml(dept.name) + ' — sub-queue of ' + escapeHtml(dept.parent) + '. Click for full detail.">'
-         +   '<span class="ov-subq-chip-dot" style="background:' + color + '"></span>'
-         +   '<span class="ov-subq-chip-name">' + escapeHtml(dept.name) + '</span>'
-         +   '<span class="ov-subq-chip-pct">' + escapeHtml(dept.latest.pctFormatted) + '</span>'
-         +   '<span class="ov-subq-chip-cap">ans</span>'
-         +   alert
-         +   '<span class="ov-subq-chip-chev" aria-hidden="true">›</span>'
-         + '</button>';
+    const abd = (qcd && typeof qcd.abandonedPct === 'number')
+      ? '<span class="ov-subq-metric"><span class="ov-subq-metric-lbl">Abd</span> '
+        + '<span class="' + (qcd.abandonedPct >= 5 ? 'bm-over' : '') + '">' + qcd.abandonedPct.toFixed(1) + '%</span></span>'
+      : '';
+    const viol = (qcd && qcd.violations > 0)
+      ? '<span class="ov-subq-metric ov-subq-metric-viol"><span class="ov-subq-metric-lbl">Viol</span> ' + qcd.violations + '</span>'
+      : '';
+    const spark = irSparkline_((dept.trend || []).map(function (v) { return v == null ? 0 : v; }), color);
+    const routable = (USER.role === 'admin');
+    const routeBtn = routable
+      ? '<button type="button" class="ov-subq-route" data-dept="' + escapeHtml(dept.name) + '">Open ' + escapeHtml(dept.name) + ' &rarr;</button>'
+      : '';
+    return '<div class="ov-subq-card" data-dept="' + escapeHtml(dept.name) + '" data-subq="' + escapeHtml(dept.name) + '">'
+         +   '<button type="button" class="ov-subq-strip" aria-expanded="false" '
+         +     'title="' + escapeHtml(dept.name) + ' — sub-queue of ' + escapeHtml(dept.parent) + '. Click to expand.">'
+         +     '<span class="ov-subq-strip-dot" style="background:' + color + '"></span>'
+         +     '<span class="ov-subq-strip-name">' + escapeHtml(dept.name) + '</span>'
+         +     '<span class="ov-subq-strip-metrics">'
+         +       '<span class="ov-subq-metric"><span class="ov-subq-metric-lbl">Ans</span> '
+         +         escapeHtml(dept.latest.pctFormatted) + ovSubqArrow_(dept.wow) + '</span>'
+         +       abd + viol + alert
+         +     '</span>'
+         +     '<span class="ov-subq-strip-chev" aria-hidden="true">›</span>'
+         +   '</button>'
+         +   '<div class="ov-subq-detail">'
+         +     '<div class="ov-subq-detail-inner">'
+         +       '<div class="ov-dept-tile-row">'
+         +         '<span><span class="ov-dept-stat-label">Rung</span> ' + dept.latest.rung + '</span>'
+         +         '<span><span class="ov-dept-stat-label">Ans</span> ' + dept.latest.answered + '</span>'
+         +         '<span><span class="ov-dept-stat-label">Miss</span> ' + dept.latest.missed + '</span>'
+         +       '</div>'
+         +       '<div class="ov-dept-tile-row">'
+         +         '<span><span class="ov-dept-stat-label">ATT</span> ' + escapeHtml(dept.latest.attFormatted) + '</span>'
+         +       '</div>'
+         +       '<div class="ov-dept-tile-spark" title="30-day % answered trend">' + spark + '</div>'
+         +       routeBtn
+         +     '</div>'
+         +   '</div>'
+         + '</div>';
+  }
+
+  // Smoothly expand/collapse a sub-queue card's detail by animating its
+  // height between 0 and the inner content height, then settling on `auto`
+  // (so it reflows if the viewport changes). The strip stays put -- the card
+  // grows beneath it -- so it reads as one card morphing, not two cards.
+  function ovToggleSubqCard_(card, strip, detail) {
+    const inner = detail.querySelector('.ov-subq-detail-inner');
+    const opening = !card.classList.contains('is-open');
+    strip.setAttribute('aria-expanded', opening ? 'true' : 'false');
+    card.classList.toggle('is-open', opening);
+    if (typeof requestAnimationFrame !== 'function' || !inner) {
+      detail.style.height = opening ? 'auto' : '0';   // no-animation fallback
+      return;
+    }
+    if (opening) {
+      detail.style.height = inner.offsetHeight + 'px';
+      const done = function () {
+        detail.style.height = 'auto';   // let it reflow after the transition
+        detail.removeEventListener('transitionend', done);
+      };
+      detail.addEventListener('transitionend', done);
+    } else {
+      detail.style.height = inner.offsetHeight + 'px';   // fix the current height
+      requestAnimationFrame(function () {
+        requestAnimationFrame(function () { detail.style.height = '0px'; });
+      });
+    }
   }
 
   function ovRenderTiles_(data) {
@@ -1961,48 +2033,42 @@
       if (!g.children.length) {
         return '<div class="ov-dept-group' + (parentIsViewer ? ' ov-dept-group-viewer' : '') + '">' + parentTile + '</div>';
       }
-      // Sub-queues render as DENSE CHIPS beneath the parent tile (compact,
-      // glance % + alert), each expanding on click to the child's FULL tile
-      // (rendered hidden in the expand container). Keeps the parent-child
-      // relationship visible + the grid compact without collapsing the
-      // sub-queue's independent metrics into the parent card.
-      const chips = g.children.map(function (c) { return ovBuildSubqChip_(c, color); }).join('');
-      const expanded = g.children.map(function (c) {
-        return '<div class="ov-subq-tile-wrap" data-subq-tile="' + escapeHtml(c.name) + '" style="display:none">'
-             +   ovBuildGridTile_(c, color, true, tileRoutable)
-             + '</div>';
-      }).join('');
+      // Sub-queues render as mini-card STRIPS beneath the parent tile, each
+      // expanding IN PLACE into a near-full card. In the group cell, NOT
+      // inside the parent card, so the child's independent metrics never read
+      // as a roll-up of the parent.
+      const cards = g.children.map(function (c) { return ovBuildSubqCard_(c, color); }).join('');
       return '<div class="ov-dept-group' + (parentIsViewer ? ' ov-dept-group-viewer' : '') + '">' + parentTile
-           +   '<div class="ov-subq-chips" role="group" aria-label="Sub-queues of ' + escapeHtml(g.parent.name) + '">' + chips + '</div>'
-           +   '<div class="ov-subq-expand">' + expanded + '</div>'
+           +   '<div class="ov-subq-cards" role="group" aria-label="Sub-queues of ' + escapeHtml(g.parent.name) + '">' + cards + '</div>'
            + '</div>';
     }).join('');
     $('ov-dept-grid').innerHTML = html;
 
-    // Sub-queue chip: click expands/collapses the matching child tile;
-    // hover spotlights the child's chart line (like a full tile). Match the
-    // tile by JS string compare (not a CSS attr selector) so dept names with
-    // quotes/spaces can't break the lookup.
-    $('ov-dept-grid').querySelectorAll('.ov-subq-chip').forEach(function (chip) {
-      chip.addEventListener('click', function () {
-        const name = chip.getAttribute('data-subq');
-        const group = chip.closest('.ov-dept-group');
-        if (!group) return;
-        const tiles = group.querySelectorAll('[data-subq-tile]');
-        let tile = null;
-        for (let i = 0; i < tiles.length; i++) {
-          if (tiles[i].getAttribute('data-subq-tile') === name) { tile = tiles[i]; break; }
-        }
-        if (!tile) return;
-        const open = (tile.style.display === 'none');
-        tile.style.display = open ? '' : 'none';
-        chip.setAttribute('aria-expanded', open ? 'true' : 'false');
-        chip.classList.toggle('is-open', open);
-      });
-      const target = chip.getAttribute('data-dept');
+    // Sub-queue mini-card strip: the strip button expands/collapses the
+    // card's detail IN PLACE with a smooth height transition (the strip
+    // morphs into a near-full card -- no second card appears). Admins can
+    // route to the dept via the detail's "Open" button. Hover spotlights the
+    // child's chart line.
+    $('ov-dept-grid').querySelectorAll('.ov-subq-card').forEach(function (card) {
+      const strip  = card.querySelector('.ov-subq-strip');
+      const detail = card.querySelector('.ov-subq-detail');
+      if (strip && detail) {
+        strip.addEventListener('click', function () {
+          ovToggleSubqCard_(card, strip, detail);
+        });
+      }
+      const routeBtn = card.querySelector('.ov-subq-route');
+      if (routeBtn) {
+        routeBtn.addEventListener('click', function (e) {
+          e.stopPropagation();
+          const target = routeBtn.getAttribute('data-dept');
+          if (target) ovRouteToDept_(target);
+        });
+      }
+      const target = card.getAttribute('data-dept');
       if (target) {
-        chip.addEventListener('mouseenter', function () { ovSpotlightDept_(target); });
-        chip.addEventListener('mouseleave', function () { ovSpotlightDept_(null); });
+        card.addEventListener('mouseenter', function () { ovSpotlightDept_(target); });
+        card.addEventListener('mouseleave', function () { ovSpotlightDept_(null); });
       }
     });
 
