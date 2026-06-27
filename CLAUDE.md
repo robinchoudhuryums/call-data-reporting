@@ -1695,6 +1695,22 @@ When something looks wrong, before assuming a code bug, check:
     `backfillEscalationActivity()` ONCE to seed `created`/`resolved` rows for
     escalations logged before the trail existed (idempotent, safe to re-run);
     otherwise their Activity timelines render only events that happen post-deploy.
+25. `CONFIG_SOURCE` Script Property (dashboard) -- the C2 Dept Config
+    read+write source switch read by `getConfigSource_()`. Unset / `sheet`
+    (default) = Dept Config is read+written on the `Dept Config` SHEET as
+    always (byte-identical to pre-C2). `neon` flips `readDeptConfigRows_` to
+    read the Neon `dept_config` table (one `json_agg` fetch, falls back to the
+    sheet on any error/unreachable) AND routes `saveDeptConfig`/`removeDeptConfig`
+    writes to that table (`neonUpsertDeptConfigRow_` / `neonDeactivateDeptConfig_`;
+    list cols stored as the same comma-joined text so `dcParseList_` parity is
+    exact). **Only flip to `neon` after `backfillDeptConfigToNeon()` (editor-run,
+    admin) copies the sheet rows AND `compareDeptConfigSources()` reports parity
+    clean.** Reversible with no redeploy (set back to `sheet`); to revert
+    cleanly after edits were made in Neon, copy them back to the sheet first.
+    `dept_config` is created lazily (`CREATE TABLE IF NOT EXISTS`, no setup()
+    change). Parity pinned by `tests/unit/dept-config-neon.test.js`. Needs the
+    dashboard `NEON_*` props + `script.external_request` scope. (First of the
+    config-sheets-to-Neon migration, `docs/ui-infra-roadmap.md` Track C.)
 
 ## Cycle Workflow Config
 

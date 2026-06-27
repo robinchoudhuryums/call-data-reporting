@@ -79,14 +79,40 @@ var DEPT_CONFIG_ROWS_MEMO_ = null;
 // -- Read accessors (RPC-unreachable; layered over the constants) --
 
 /**
- * Reads + parses the `Dept Config` sheet once per execution. Returns
- * an array of { dept, qcdQueues[], overviewParent, teamAvgExcludes[],
- * active, updatedBy, updatedAt, notes }. Best-effort: any failure
- * (missing sheet, read error) returns [] so callers fall back to the
- * frozen constants.
+ * C2 cutover switch: where Dept Config is read+written. `CONFIG_SOURCE`
+ * Script Property = 'sheet' (default) | 'neon'. Unset / anything other than
+ * 'neon' -> sheet, so behavior is byte-identical to pre-C2 until an admin
+ * flips it (after backfillDeptConfigToNeon + compareDeptConfigSources parity).
+ */
+function getConfigSource_() {
+  try {
+    const v = (PropertiesService.getScriptProperties().getProperty('CONFIG_SOURCE') || 'sheet')
+                .toLowerCase().trim();
+    return v === 'neon' ? 'neon' : 'sheet';
+  } catch (e) { return 'sheet'; }
+}
+
+/**
+ * Reads + parses the Dept Config rows once per execution, from the ACTIVE
+ * source (Neon when CONFIG_SOURCE=neon, else the sheet). The Neon path falls
+ * back to the sheet on any error/unreachable so a flip is safe + reversible.
+ * Returns an array of { dept, qcdQueues[], overviewParent, teamAvgExcludes[],
+ * queueExtOverrides[], active, updatedBy, updatedAt, notes, inboundAliases[] }.
+ * Best-effort: failure returns [] so callers fall back to the frozen constants.
  */
 function readDeptConfigRows_() {
   if (DEPT_CONFIG_ROWS_MEMO_) return DEPT_CONFIG_ROWS_MEMO_;
+  let out = null;
+  if (getConfigSource_() === 'neon') {
+    out = neonReadDeptConfigRows_();   // null on error/unreachable -> fall through
+  }
+  if (out === null) out = sheetReadDeptConfigRows_();
+  DEPT_CONFIG_ROWS_MEMO_ = out;
+  return out;
+}
+
+/** Sheet reader (the legacy/default source). Always returns an array. */
+function sheetReadDeptConfigRows_() {
   const out = [];
   try {
     const ss = openSpreadsheet_();
@@ -122,8 +148,60 @@ function readDeptConfigRows_() {
   } catch (e) {
     // Best-effort: leave `out` empty so constants win.
   }
-  DEPT_CONFIG_ROWS_MEMO_ = out;
   return out;
+}
+
+/** Lazily create the dept_config table (no setup() change needed). */
+function ensureDeptConfigTable_(conn) {
+  const ddl = conn.createStatement();
+  ddl.execute('CREATE TABLE IF NOT EXISTS dept_config ('
+    + 'department text PRIMARY KEY, qcd_queues text, overview_parent text, '
+    + 'team_avg_excludes text, queue_ext_overrides text, '
+    + 'active boolean NOT NULL DEFAULT true, updated_by text, '
+    + 'updated_at timestamptz DEFAULT now(), notes text, inbound_aliases text)');
+  ddl.close();
+}
+
+/**
+ * Neon reader: one json_agg fetch from dept_config, normalized to the SAME
+ * shape sheetReadDeptConfigRows_ returns (list cols stored as the same
+ * comma-joined text + parsed by dcParseList_, so parity is exact). Returns
+ * null on unreachable/error so readDeptConfigRows_ falls back to the sheet.
+ */
+function neonReadDeptConfigRows_() {
+  const conn = (typeof getDashboardNeonConn_ === 'function') ? getDashboardNeonConn_() : null;
+  if (!conn) return null;
+  try {
+    ensureDeptConfigTable_(conn);
+    const sql = "SELECT COALESCE(json_agg(t ORDER BY t.department), '[]')::text AS j FROM ("
+      + "SELECT department, qcd_queues, overview_parent, team_avg_excludes, queue_ext_overrides, "
+      + "active, updated_by, to_char(updated_at, 'YYYY-MM-DD HH24:MI') AS updated_at, "
+      + "notes, inbound_aliases FROM dept_config) t";
+    const stmt = conn.createStatement();
+    const rs = stmt.executeQuery(sql);
+    const json = rs.next() ? rs.getString('j') : '[]';
+    rs.close(); stmt.close();
+    const arr = JSON.parse(json || '[]');
+    return arr.map(function (r) {
+      return {
+        dept:              String(r.department || '').trim(),
+        qcdQueues:         dcParseList_(r.qcd_queues),
+        overviewParent:    String(r.overview_parent || '').trim(),
+        teamAvgExcludes:   dcParseList_(r.team_avg_excludes),
+        queueExtOverrides: dcParseList_(r.queue_ext_overrides),
+        active:            dcIsActive_(r.active),
+        updatedBy:         String(r.updated_by || ''),
+        updatedAt:         String(r.updated_at || ''),
+        notes:             String(r.notes || ''),
+        inboundAliases:    dcParseList_(r.inbound_aliases),
+      };
+    }).filter(function (r) { return r.dept; });
+  } catch (e) {
+    if (typeof recordNeonReadFailure_ === 'function') recordNeonReadFailure_('readDeptConfigRows_', e);
+    return null;   // fall back to the sheet
+  } finally {
+    try { conn.close(); } catch (ce) {}
+  }
 }
 
 /**
@@ -500,8 +578,15 @@ function removeDeptConfig(req) {
 }
 
 // -- Write helpers (trailing underscore; RPC-unreachable) ----------
+// Writes go to the ACTIVE source (Neon when CONFIG_SOURCE=neon, else the
+// sheet). Both clear the per-execution memo so the next accessor re-reads.
 
 function upsertDeptConfigRow_(rec) {
+  if (getConfigSource_() === 'neon') { neonUpsertDeptConfigRow_(rec); return; }
+  sheetUpsertDeptConfigRow_(rec);
+}
+
+function sheetUpsertDeptConfigRow_(rec) {
   const ss = openSpreadsheet_();
   const sheet = ss.getSheetByName(SHEETS.DEPT_CONFIG);
   if (!sheet) throw new Error('Dept Config sheet missing -- run setup().');
@@ -535,7 +620,45 @@ function upsertDeptConfigRow_(rec) {
   DEPT_CONFIG_ROWS_MEMO_ = null;   // force fresh read next accessor call
 }
 
+/** Neon upsert (department PK). List cols stored as the same comma-joined
+ *  text the sheet uses, so the reader's dcParseList_ yields identical lists. */
+function neonUpsertDeptConfigRow_(rec) {
+  const conn = (typeof getDashboardNeonConn_ === 'function') ? getDashboardNeonConn_() : null;
+  if (!conn) throw new Error('Neon unreachable -- dept_config write skipped (CONFIG_SOURCE=neon).');
+  try {
+    ensureDeptConfigTable_(conn);
+    const sql = 'INSERT INTO dept_config (department, qcd_queues, overview_parent, '
+      + 'team_avg_excludes, queue_ext_overrides, active, updated_by, updated_at, notes, inbound_aliases) '
+      + 'VALUES (?, ?, ?, ?, ?, ?, ?, now(), ?, ?) '
+      + 'ON CONFLICT (department) DO UPDATE SET qcd_queues=EXCLUDED.qcd_queues, '
+      + 'overview_parent=EXCLUDED.overview_parent, team_avg_excludes=EXCLUDED.team_avg_excludes, '
+      + 'queue_ext_overrides=EXCLUDED.queue_ext_overrides, active=EXCLUDED.active, '
+      + 'updated_by=EXCLUDED.updated_by, updated_at=now(), notes=EXCLUDED.notes, '
+      + 'inbound_aliases=EXCLUDED.inbound_aliases';
+    const st = conn.prepareStatement(sql);
+    st.setString(1, rec.dept);
+    st.setString(2, rec.qcdQueues.join(', '));
+    st.setString(3, rec.overviewParent || '');
+    st.setString(4, rec.teamAvgExcludes.join(', '));
+    st.setString(5, rec.queueExtOverrides.join(', '));
+    st.setBoolean(6, !!rec.active);
+    st.setString(7, rec.admin || '');
+    st.setString(8, rec.notes || '');
+    st.setString(9, (rec.inboundAliases || []).join(', '));
+    st.executeUpdate();
+    st.close();
+  } finally {
+    try { conn.close(); } catch (e) {}
+  }
+  DEPT_CONFIG_ROWS_MEMO_ = null;
+}
+
 function deactivateDeptConfig_(dept) {
+  if (getConfigSource_() === 'neon') return neonDeactivateDeptConfig_(dept);
+  return sheetDeactivateDeptConfig_(dept);
+}
+
+function sheetDeactivateDeptConfig_(dept) {
   const ss = openSpreadsheet_();
   const sheet = ss.getSheetByName(SHEETS.DEPT_CONFIG);
   if (!sheet) return 0;
@@ -553,6 +676,73 @@ function deactivateDeptConfig_(dept) {
   if (count > 0) range.setValues(values);
   DEPT_CONFIG_ROWS_MEMO_ = null;
   return count;
+}
+
+function neonDeactivateDeptConfig_(dept) {
+  const conn = (typeof getDashboardNeonConn_ === 'function') ? getDashboardNeonConn_() : null;
+  if (!conn) throw new Error('Neon unreachable -- dept_config deactivate skipped (CONFIG_SOURCE=neon).');
+  let count = 0;
+  try {
+    ensureDeptConfigTable_(conn);
+    const st = conn.prepareStatement('UPDATE dept_config SET active=false, updated_at=now() '
+      + 'WHERE department=? AND active=true');
+    st.setString(1, dept);
+    count = st.executeUpdate() || 0;
+    st.close();
+  } finally {
+    try { conn.close(); } catch (e) {}
+  }
+  DEPT_CONFIG_ROWS_MEMO_ = null;
+  return count;
+}
+
+/**
+ * EDITOR-RUN (admin) migration helpers for C2.
+ *   backfillDeptConfigToNeon()  -- copy every sheet row into dept_config
+ *     (idempotent upsert). Run BEFORE flipping CONFIG_SOURCE=neon.
+ *   compareDeptConfigSources()  -- parity gate: report depts present in one
+ *     source but not the other, and any field that differs. Run after the
+ *     backfill; flip the flag only when it's clean.
+ */
+function backfillDeptConfigToNeon() {
+  assertAdmin_();
+  const rows = sheetReadDeptConfigRows_();
+  let n = 0;
+  rows.forEach(function (r) {
+    neonUpsertDeptConfigRow_({
+      dept: r.dept, qcdQueues: r.qcdQueues, overviewParent: r.overviewParent,
+      teamAvgExcludes: r.teamAvgExcludes, queueExtOverrides: r.queueExtOverrides,
+      active: r.active, admin: r.updatedBy || Session.getActiveUser().getEmail(),
+      notes: r.notes, inboundAliases: r.inboundAliases,
+    });
+    n++;
+  });
+  Logger.log('backfillDeptConfigToNeon: upserted %s row(s) into dept_config.', n);
+  return { upserted: n };
+}
+
+function compareDeptConfigSources() {
+  assertAdmin_();
+  const sheet = sheetReadDeptConfigRows_();
+  const neon = neonReadDeptConfigRows_() || [];
+  const key = function (r) {
+    return JSON.stringify([r.qcdQueues, r.overviewParent, r.teamAvgExcludes,
+      r.queueExtOverrides, r.active, r.notes, r.inboundAliases]);
+  };
+  const sMap = {}, nMap = {};
+  sheet.forEach(function (r) { sMap[r.dept] = r; });
+  neon.forEach(function (r) { nMap[r.dept] = r; });
+  const missingInNeon = [], missingInSheet = [], mismatched = [];
+  sheet.forEach(function (r) {
+    if (!nMap[r.dept]) missingInNeon.push(r.dept);
+    else if (key(r) !== key(nMap[r.dept])) mismatched.push(r.dept);
+  });
+  neon.forEach(function (r) { if (!sMap[r.dept]) missingInSheet.push(r.dept); });
+  const clean = !missingInNeon.length && !missingInSheet.length && !mismatched.length;
+  Logger.log('compareDeptConfigSources: %s. missing-in-neon=%s; missing-in-sheet=%s; mismatched=%s',
+    clean ? 'PARITY CLEAN' : 'DIFFERENCES FOUND',
+    JSON.stringify(missingInNeon), JSON.stringify(missingInSheet), JSON.stringify(mismatched));
+  return { clean: clean, missingInNeon: missingInNeon, missingInSheet: missingInSheet, mismatched: mismatched };
 }
 
 /**

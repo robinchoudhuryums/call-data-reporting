@@ -110,10 +110,10 @@ count. The only way to actually retire a sheet is to replace its edit surface.
 
 **Immediate (not a project):** the `setup()` error you hit was a **transient**
 "Service Spreadsheets timed out" AFTER Dept Config was created — just **re-run
-`setup()`** (it skips existing sheets, creates Report Usage). Optional small
-hardening: `SpreadsheetApp.flush()` between `ensureSheet_` calls + a
-catch-and-continue so one slow create doesn't abort the rest. I can do that in
-~15 min independently of the migration.
+`setup()`** (it skips existing sheets, creates Report Usage). **SHIPPED** the
+hardening: `setup()` now iterates the sheet specs in a try/catch + `flush()`
+loop, so a transient failure on one sheet is logged and the loop CONTINUES to
+the rest (and reports which failed); re-running is still idempotent.
 
 **Candidates → Neon (with their CURRENT edit surface):**
 - `Dept Config` → `dept_config` — **modal CRUD already exists** (`saveDeptConfig`/
@@ -153,11 +153,15 @@ a small admin CRUD modal/section that writes the Neon table (`assertAdmin_` +
 pattern is the template).
 
 **Phasing (each independently shippable + reversible):**
-- **C2 — Dept Config (do FIRST; the clean proof-of-pattern).** Reader
-  `readDeptConfigRows_` is the single chokepoint; writers `saveDeptConfig` /
-  `removeDeptConfig` already exist. Just swap the read + the two writes to Neon
-  (keep the per-execution memo; the table must include the col-10 Inbound Queue
-  Aliases). **No new UI.** ~half day.
+- **C2 — Dept Config (SHIPPED, flag-gated, default `sheet`).** `CONFIG_SOURCE`
+  Script Property switches read+write source: `readDeptConfigRows_` splits into
+  `sheetReadDeptConfigRows_` / `neonReadDeptConfigRows_` (one `json_agg` fetch,
+  sheet fallback on error); `upsertDeptConfigRow_` / `deactivateDeptConfig_`
+  route to `neon*` variants when `CONFIG_SOURCE=neon`. `dept_config` table lazy-
+  created. Editor-run `backfillDeptConfigToNeon()` + `compareDeptConfigSources()`
+  parity gate. Parity pinned by `tests/unit/dept-config-neon.test.js`. **No new
+  UI** (the modal CRUD already existed). Cutover: backfill → compare clean →
+  flip the flag (Operator State #25). Reversible.
 - **C1 — Access Control (highest value, but needs a UI + extra care).** Readers
   `resolveUser_` + `getManagerDepartment_` (Auth.gs); schema Email|Department|
   Notes. Hand-edited today, so build a small **Access Control admin editor**
