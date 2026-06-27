@@ -87,11 +87,26 @@ generalization + router wiring; the server + the esc-* logic are reused as-is.
 ## Track C — Pure-config sheets → Neon (#8)
 
 **Why:** the dashboard now manages **10 sheets** in the CDR Report spreadsheet,
-making it unwieldy. The pure-config sheets are small and already edited through
-admin modals (not by hand), so the "edit in the sheet" benefit is mostly gone —
-they're good candidates to move to Neon (which the app already uses). The
-append-only **log** sheets stay in the spreadsheet (easy to eyeball, and they're
-write-mostly).
+making it unwieldy. Moving the pure-config sheets to Neon (which the app
+already uses) would shrink it. The append-only **log** sheets stay in the
+spreadsheet (write-mostly, human-scannable).
+
+**⚠ Key reality check (verified in code) — only Dept Config is modal-driven.**
+The roadmap originally assumed the config sheets are "already edited through
+admin modals, so edit-in-sheet UX is no longer needed." That's true for
+**Dept Config only** (`saveDeptConfig` / `removeDeptConfig`). **Access Control,
+Alert Config, and Digest Config have NO write path — they are edited BY HAND
+directly in their sheets** (the Alerts/Digest modals only *display* them +
+install triggers; Access Control has no UI at all). So moving those three to
+Neon **removes their only edit surface** unless the migration ALSO builds a
+small admin CRUD UI for each — otherwise the operator would have to edit Neon
+via raw SQL. That admin UI, not the data-access swap, is the real cost of
+Track C. The "edit in the sheet" workflow is the thing being replaced, so a
+replacement editor is mandatory, not optional, for the hand-edited sheets.
+
+A sheet→Neon *read-mirror* (keep editing the sheet, dashboard reads Neon) does
+NOT help here: the sheet would have to stay, so it wouldn't reduce the sheet
+count. The only way to actually retire a sheet is to replace its edit surface.
 
 **Immediate (not a project):** the `setup()` error you hit was a **transient**
 "Service Spreadsheets timed out" AFTER Dept Config was created — just **re-run
@@ -100,11 +115,15 @@ hardening: `SpreadsheetApp.flush()` between `ensureSheet_` calls + a
 catch-and-continue so one slow create doesn't abort the rest. I can do that in
 ~15 min independently of the migration.
 
-**Move to Neon (config, modal-driven):**
-- `Access Control` → `access_control`
-- `Dept Config` → `dept_config`
-- `Alert Config` → `alert_config`
-- `Digest Config` → `digest_config`
+**Candidates → Neon (with their CURRENT edit surface):**
+- `Dept Config` → `dept_config` — **modal CRUD already exists** (`saveDeptConfig`/
+  `removeDeptConfig`). No new UI needed. The free one.
+- `Access Control` → `access_control` — **hand-edited, NO UI.** Needs a new admin
+  editor (add/edit/remove a manager↔dept row).
+- `Alert Config` → `alert_config` — **hand-edited**, modal only displays it. Needs
+  an edit surface in the Alerts modal.
+- `Digest Config` → `digest_config` — **hand-edited**, modal shows subscribers +
+  trigger install only. Needs an edit surface in the Digest section.
 
 **Keep in the spreadsheet:**
 - Append-only logs: `Alert Log`, `Pipeline Health`, `Orphan Fix Log`,
@@ -115,36 +134,58 @@ catch-and-continue so one slow create doesn't abort the rest. I can do that in
   already has `NEON_*`), but it adds a pipeline→Neon read dependency on the
   daily build's hot path — defer to last, or keep in the sheet.
 
-**Migration discipline (mirror the proven F1 DQE read-back pattern):** each
-sheet gets (1) a Neon table with the same schema, (2) a DAL with **sheet
-fallback** gated by a Script Property flag (e.g. `CONFIG_SOURCE=neon|sheet`,
-default `sheet`), (3) a one-time backfill (sheet → Neon), (4) a parity check,
-then (5) cut over by flipping the flag — reversible with no redeploy. Writers
-(the admin modals' save paths) dual-write or switch with the same flag.
+**Per-sheet migration = two parts:** (1) the **data-access swap** (same for all,
+mirrors the proven F1 DQE read-back pattern) and (2) the **edit surface** (only
+needed for the hand-edited three).
 
-**Phasing (each is independently shippable + reversible):**
-- **C1 — Access Control.** Highest value (most-read, security-critical) but
-  therefore the most careful: keep the sheet fallback through a full validation
-  window. Reader: `resolveUser_` / the auth cache (60 s TTL already). Backfill +
-  parity + flag.
-- **C2 — Dept Config.** Cleanest swap — `readDeptConfigRows_` is the single read
-  chokepoint and `saveDeptConfig`/`removeDeptConfig` the single writers. The
-  per-execution memo stays. (Watch the col-10 Inbound Queue Aliases we just
-  added — the table schema must include it.)
-- **C3 — Alert Config + Digest Config.** Readers `readAlertConfig_` /
-  `readDigestConfig_`; writers are the Alerts/Digest modal saves. Lower traffic.
-- **C4 (optional, last) — Agent Alias Overrides.** Only if we want it off the
-  sheet; requires the cdr-report pipeline to read Neon (cross-project). Evaluate
-  whether the hot-path cost is worth retiring one more sheet.
+*Part 1 — data-access swap (mechanical, low-risk, per sheet):*
+1. Neon table mirroring the sheet schema (lazy `CREATE TABLE IF NOT EXISTS`, the
+   inbound_calls / escalations precedent — no `setup()` change).
+2. A flag-gated DAL: `neonFetch…_` / `sheetFetch…_` returning the SAME normalized
+   shape, gated by a Script Property (e.g. `CONFIG_SOURCE=neon|sheet`, default
+   `sheet`), **falling back to the sheet on any Neon error**.
+3. One-time backfill (sheet → Neon) + a parity check (the two reads agree over
+   current data) before flipping the flag. Reversible with no redeploy.
 
-**Net result:** removes up to 4–5 sheets from the CDR Report ss; `setup()`
-creates fewer sheets; config edits still flow through the same admin modals
-(UX unchanged), just persisted to Neon. Security note: Access Control governs
-who gets in — its migration must keep the sheet as a live fallback until parity
-is proven, and fail **closed** (deny) on a Neon read error rather than open.
+*Part 2 — edit surface (the real work, only for the hand-edited sheets):*
+a small admin CRUD modal/section that writes the Neon table (`assertAdmin_` +
+`LockService` + validation + an Updated By/At stamp — the INV-54 Dept Config
+pattern is the template).
 
-**Effort:** C1 ~1–1.5 days (careful), C2 ~half day, C3 ~half day, C4 ~1 day
-(cross-project). Best done one phase per PR.
+**Phasing (each independently shippable + reversible):**
+- **C2 — Dept Config (do FIRST; the clean proof-of-pattern).** Reader
+  `readDeptConfigRows_` is the single chokepoint; writers `saveDeptConfig` /
+  `removeDeptConfig` already exist. Just swap the read + the two writes to Neon
+  (keep the per-execution memo; the table must include the col-10 Inbound Queue
+  Aliases). **No new UI.** ~half day.
+- **C1 — Access Control (highest value, but needs a UI + extra care).** Readers
+  `resolveUser_` + `getManagerDepartment_` (Auth.gs); schema Email|Department|
+  Notes. Hand-edited today, so build a small **Access Control admin editor**
+  (add/edit/remove a manager↔dept row) — genuinely valuable since adding a
+  manager is the most common config edit (no more "open the sheet, add a row,
+  wait 60 s"). **SECURITY:** auth is the hot path — keep the sheet as a live
+  fallback through a long validation window, cache reads (the 60 s
+  `AUTH_CACHE_TTL_SECONDS` already helps), and **fail CLOSED (deny) on a Neon
+  read error**, never open. ~1.5–2 days incl. the editor.
+- **C3 — Alert Config + Digest Config (need edit surfaces).** Readers
+  `readAlertConfig_` / `readDigestConfig_`. Both hand-edited; their modals only
+  display + manage triggers, so each needs an edit table added to its existing
+  modal. Lower edit frequency, so weigh whether the de-clutter is worth two more
+  CRUD surfaces. ~1 day each incl. UI.
+- **C4 (optional, last) — Agent Alias Overrides.** Read CROSS-PROJECT by the
+  cdr-report pipeline (`loadRosterCanonicalNames_`, INV-46) on the daily build
+  hot path. Moving it means the pipeline reads Neon for canonicalization —
+  evaluate whether retiring one sheet is worth that build-path dependency.
+  (Has the Orphan Fix modal as a partial write surface already.)
+
+**Net result:** retires up to 4 config sheets; `setup()` creates fewer. The
+catch is the edit surfaces: only C2 is "free." Recommended scope — **C2 now**
+(proves the pattern, zero UX cost), **C1 next** (the editor is a real win on its
+own), and treat **C3/C4 as optional** depending on whether two more admin modals
+are worth shrinking the sheet list further.
+
+**Effort:** C2 ~half day; C1 ~1.5–2 days (incl. editor + security care); C3
+~1 day each; C4 ~1 day (cross-project). One phase per PR.
 
 ---
 
@@ -152,6 +193,10 @@ is proven, and fail **closed** (deny) on a Neon read error rather than open.
 
 1. **A** (Missed bar toggle) — small, immediate UX win, client-only.
 2. **B** (Escalations page) — medium, client-only, no infra risk.
-3. **C** (config → Neon) — start with **C2 Dept Config** (cleanest) to prove the
-   pattern, then **C1 Access Control** (highest value, most care), then C3, then
-   reconsider C4. Plus the 15-min `setup()` hardening up front.
+3. **C** (config → Neon) — **C2 Dept Config** first (free: modal CRUD already
+   exists, proves the pattern), then **C1 Access Control** (needs a new admin
+   editor but it's a real win; fail-closed on Neon errors), then treat **C3
+   Alert/Digest** and **C4 Agent Alias** as optional (each costs an edit
+   surface). Plus the 15-min `setup()` hardening up front. NOTE: only C2 is a
+   pure data-swap; C1/C3 each require building an admin CRUD UI to replace the
+   hand-edit-in-sheet workflow (see Track C body).
