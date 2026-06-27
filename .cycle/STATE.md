@@ -485,3 +485,25 @@ commit/push/deploy direction.
   setup() hardening). Where I left off: Tracks A+B pushed UNMERGED; awaiting PR/merge decision;
   Track C deferred (owner approved the plan, build when ready); the transient setup() timeout the
   operator hit just needs a setup() re-run (creates Report Usage).
+
+- **Increment 43 (DONE — setup() hardening + C2 Dept Config→Neon):** On
+  `claude/brave-dijkstra-wuonrv` (UNMERGED). (1) `Setup.gs::setup()` now iterates
+  the 9 managed-sheet specs in a try/catch + `SpreadsheetApp.flush()` loop, so a
+  transient "Service Spreadsheets timed out" on one sheet logs + continues
+  instead of aborting (the operator hit this — Dept Config created, Report Usage
+  not). Idempotent re-run still completes. (2) **C2** (first config-sheet→Neon
+  migration): `CONFIG_SOURCE` Script Property (default `sheet`) switches Dept
+  Config read+write to the Neon `dept_config` table. `readDeptConfigRows_` split
+  into `sheetReadDeptConfigRows_`/`neonReadDeptConfigRows_` (neon = one json_agg,
+  sheet fallback on error); `upsertDeptConfigRow_`/`deactivateDeptConfig_` route
+  to `neon*` variants when flagged; lazy `CREATE TABLE`; editor-run
+  `backfillDeptConfigToNeon()` + `compareDeptConfigSources()` parity gate. List
+  cols stored as comma-joined text → dcParseList_ parity exact. 4 new tests
+  (`dept-config-neon.test.js`); node --test 166/166; INV-16 clean. Docs:
+  Operator State #25, INV-54 note, roadmap C2 marked SHIPPED. Where I left off:
+  pushed UNMERGED; C2 ships default-`sheet` (no behavior change until an admin
+  backfills + parity-checks + flips CONFIG_SOURCE=neon). REMAINING Track C: C1
+  Access Control (needs a NEW admin editor UI — hand-edited today, fail-closed
+  on neon error), C3 Alert/Digest (need edit surfaces), C4 Agent Alias
+  (cross-project). Branch carries the whole increment-42+43 batch, awaiting
+  PR/merge decision.
