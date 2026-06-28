@@ -507,3 +507,25 @@ commit/push/deploy direction.
   on neon error), C3 Alert/Digest (need edit surfaces), C4 Agent Alias
   (cross-project). Branch carries the whole increment-42+43 batch, awaiting
   PR/merge decision.
+
+- **Increment 44 (DONE — C1 Access Control editor + C3 Alert/Digest data layer):**
+  On `claude/brave-dijkstra-wuonrv` (UNMERGED). **C1 (decision + editor):** Access
+  Control is NOT moved to Neon -- auth is the hot path and the sheet (dashboard's
+  own ss) is the most always-available store, so moving it would trade reliability
+  for nothing. Instead shipped a sheet-backed admin editor (`Auth.gs`
+  getAccessControlInit / saveAccessControlRow [upsert-by-email] /
+  removeAccessControlRow [delete-by-email], all assertAdmin_ + validation +
+  LockService + auth-cache bust; managers only -- admins are in ADMIN_EMAILS).
+  Client Access modal + nav tab + route /admin/access-control. fakeSheet gained
+  deleteRow. Tests access-control-editor.test.js (+7). **C3 (data layer only):**
+  readAlertConfig_/readDigestConfig_ now read rows from the active source via
+  alertConfigRawValues_/digestConfigRawValues_ (Neon alert_config/digest_config
+  when CONFIG_SOURCE=neon, same flag as C2, sheet fallback on error, identical
+  parse). Lazy tables + backfill{Alert,Digest}ConfigToNeon + compare*Sources
+  parity. Tests config-neon-c3.test.js (+3). node --test 176/176; INV-16 clean.
+  Docs: INV-01 (AC RPCs), Operator State #25 (C3 + C1 decision), roadmap C1/C3.
+  Where I left off: pushed UNMERGED. **C3 NOT flippable yet** -- Alert/Digest are
+  hand-edited, so CONFIG_SOURCE=neon needs admin EDIT UIs in the Alerts modal
+  (the per-dept threshold/recipients table + the digest subscribers list) first;
+  those UIs are the remaining C3 work. C4 (Agent Alias, cross-project) still open.
+  Branch carries increments 42-44; awaiting PR/merge decision.
