@@ -840,6 +840,7 @@
     initAlerts();
     initOrphanFix();
     initDeptConfig();
+    initAccessControl();
     initCallerLookup();
     initEscalations();
     initTour_();
@@ -2532,6 +2533,7 @@
     '/admin/alerts':       { kind: 'modal', modalId: 'alerts-modal',      buttonId: 'alerts-btn' },
     '/admin/orphan-fix':   { kind: 'modal', modalId: 'orphan-fix-modal',  buttonId: 'orphan-fix-btn' },
     '/admin/dept-config':  { kind: 'modal', modalId: 'dept-config-modal', buttonId: 'dept-config-btn' },
+    '/admin/access-control': { kind: 'modal', modalId: 'access-control-modal', buttonId: 'access-control-btn' },
     '/admin/caller-lookup': { kind: 'modal', modalId: 'caller-lookup-modal', buttonId: 'caller-lookup-btn' },
     '/escalations':        { kind: 'page',  page: 'escalations' },
   };
@@ -11019,6 +11021,168 @@
 
   let dcLastInit = null;
   let dcEditDept = null;
+
+  // -- Access Control modal (admin-only manager-access editor, C1) -----
+  // Add/edit/remove manager dashboard access (email + department). Writes
+  // the sheet via the admin-gated RPCs; changes take effect within the 60 s
+  // auth cache TTL. Mirrors the Dept Config modal pattern.
+  var acLastInit = { rows: [], departments: [], adminEmails: [] };
+
+  function initAccessControl() {
+    const btn = $('access-control-btn');
+    const modal = $('access-control-modal');
+    if (!btn || !modal) return;
+    const closeBtn = modal.querySelector('.modal-close');
+    const backdrop = modal.querySelector('[data-close]');
+    function openModal() {
+      modal.style.display = '';
+      modal.setAttribute('aria-hidden', 'false');
+      document.body.style.overflow = 'hidden';
+      trapFocus_(modal);
+      initModalDragResize_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
+      document.addEventListener('keydown', onKeyDown);
+      acLoadInit_();
+    }
+    function closeModal() {
+      modal.style.display = 'none';
+      modal.setAttribute('aria-hidden', 'true');
+      releaseFocus_();
+      resetModalTransform_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
+      document.body.style.overflow = '';
+      document.removeEventListener('keydown', onKeyDown);
+      btn.focus();
+    }
+    function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
+    btn.addEventListener('click', openModal);
+    if (closeBtn) closeBtn.addEventListener('click', closeModal);
+    if (backdrop) backdrop.addEventListener('click', closeModal);
+    if ($('ac-save-btn'))  $('ac-save-btn').addEventListener('click', acSave_);
+    if ($('ac-clear-btn')) $('ac-clear-btn').addEventListener('click', acClearForm_);
+    if ($('ac-tbody'))     $('ac-tbody').addEventListener('click', acOnTableClick_);
+  }
+
+  function acSetStatus_(kind, msg) {
+    const el = $('ac-run-status');
+    if (!el) return;
+    if (!kind) { el.style.display = 'none'; el.textContent = ''; return; }
+    el.className = 'status status-' + kind;
+    el.textContent = msg;
+    el.style.display = '';
+  }
+
+  function acLoadInit_() {
+    $('ac-loading').style.display = '';
+    $('ac-body').style.display = 'none';
+    acSetStatus_(null);
+    google.script.run
+      .withSuccessHandler(function (data) {
+        $('ac-loading').style.display = 'none';
+        $('ac-body').style.display = '';
+        acLastInit = data || { rows: [], departments: [], adminEmails: [] };
+        acRenderDeptOptions_(acLastInit.departments || []);
+        acRenderRows_(acLastInit.rows || []);
+        acClearForm_();
+      })
+      .withFailureHandler(function (err) {
+        $('ac-loading').textContent = 'Error: ' + (err && err.message ? err.message : String(err));
+      })
+      .getAccessControlInit();
+  }
+
+  function acRenderDeptOptions_(depts) {
+    const sel = $('ac-dept');
+    if (!sel) return;
+    sel.innerHTML = '<option value="">— pick —</option>'
+      + depts.map(function (d) { return '<option value="' + escapeHtml(d) + '">' + escapeHtml(d) + '</option>'; }).join('');
+  }
+
+  function acRenderRows_(rows) {
+    const tbody = $('ac-tbody');
+    const count = $('ac-count');
+    if (count) count.textContent = rows.length;
+    if (!tbody) return;
+    if (!rows.length) {
+      tbody.innerHTML = '<tr><td colspan="4" class="al-empty">No managers yet. Add one above.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = rows.map(function (r, idx) {
+      return '<tr data-ac-idx="' + idx + '">'
+        + '<td>' + escapeHtml(r.email) + '</td>'
+        + '<td>' + (r.department ? escapeHtml(r.department) : '<span class="al-empty-inline">—</span>') + '</td>'
+        + '<td>' + (r.notes ? escapeHtml(r.notes) : '<span class="al-empty-inline">—</span>') + '</td>'
+        + '<td>'
+        +   '<button type="button" class="link-btn ac-row-edit" data-idx="' + idx + '">Edit</button> '
+        +   '<button type="button" class="link-btn ac-row-remove" data-idx="' + idx + '">Remove</button>'
+        + '</td>'
+        + '</tr>';
+    }).join('');
+  }
+
+  function acOnTableClick_(e) {
+    const editBtn = e.target.closest && e.target.closest('.ac-row-edit');
+    if (editBtn) { acEditRow_(Number(editBtn.getAttribute('data-idx'))); return; }
+    const remBtn = e.target.closest && e.target.closest('.ac-row-remove');
+    if (remBtn) { acRemoveRow_(Number(remBtn.getAttribute('data-idx'))); return; }
+  }
+
+  function acEditRow_(idx) {
+    const r = (acLastInit.rows || [])[idx];
+    if (!r) return;
+    if ($('ac-email')) $('ac-email').value = r.email;
+    if ($('ac-dept'))  $('ac-dept').value = r.department || '';
+    if ($('ac-notes')) $('ac-notes').value = r.notes || '';
+    if ($('ac-form-title')) $('ac-form-title').textContent = 'Edit manager access';
+    if ($('ac-email')) $('ac-email').focus();
+  }
+
+  function acClearForm_() {
+    if ($('ac-email')) $('ac-email').value = '';
+    if ($('ac-dept'))  $('ac-dept').value = '';
+    if ($('ac-notes')) $('ac-notes').value = '';
+    if ($('ac-form-title')) $('ac-form-title').textContent = 'Add manager access';
+    acSetStatus_(null);
+  }
+
+  function acSave_() {
+    const email = ($('ac-email') ? $('ac-email').value : '').trim();
+    const department = ($('ac-dept') ? $('ac-dept').value : '').trim();
+    const notes = ($('ac-notes') ? $('ac-notes').value : '').trim();
+    if (!email) { acSetStatus_('error', 'Enter a manager email.'); return; }
+    if (!department) { acSetStatus_('error', 'Pick a department.'); return; }
+    const btn = $('ac-save-btn');
+    if (btn) { btn.disabled = true; btn.innerHTML = '<span class="btn-spinner" aria-hidden="true"></span>Saving…'; }
+    const restore = function () { if (btn) { btn.disabled = false; btn.textContent = 'Save'; } };
+    acSetStatus_('loading', 'Saving ' + email + '…');
+    google.script.run
+      .withSuccessHandler(function () {
+        restore();
+        acSetStatus_('success', 'Saved ' + email + ' → ' + department + '. Takes effect within ~60 s.');
+        showToast('Saved access for ' + email, 'success');
+        acLoadInit_();
+      })
+      .withFailureHandler(function (err) {
+        restore();
+        acSetStatus_('error', 'Save failed: ' + (err && err.message ? err.message : String(err)));
+      })
+      .saveAccessControlRow({ email: email, department: department, notes: notes });
+  }
+
+  function acRemoveRow_(idx) {
+    const r = (acLastInit.rows || [])[idx];
+    if (!r) return;
+    if (!window.confirm('Remove dashboard access for "' + r.email + '"? They will no longer be able to open the dashboard.')) return;
+    acSetStatus_('loading', 'Removing ' + r.email + '…');
+    google.script.run
+      .withSuccessHandler(function () {
+        acSetStatus_('success', 'Removed ' + r.email + '. Takes effect within ~60 s.');
+        showToast('Removed access for ' + r.email, 'success');
+        acLoadInit_();
+      })
+      .withFailureHandler(function (err) {
+        acSetStatus_('error', 'Remove failed: ' + (err && err.message ? err.message : String(err)));
+      })
+      .removeAccessControlRow({ email: r.email });
+  }
 
   function initDeptConfig() {
     const btn   = $('dept-config-btn');

@@ -103,6 +103,9 @@
         <button class="header-menu-btn" id="dept-config-btn" type="button"
                 data-route="/admin/dept-config" data-admin-only role="tab" aria-selected="false" style="display:none;"
                 title="Map dept queues, sub-queue nesting, and team-avg exclusions without a redeploy. Validated + auto-discovers unmapped queues. Admin-only.">Dept Config</button>
+        <button class="header-menu-btn" id="access-control-btn" type="button"
+                data-route="/admin/access-control" data-admin-only role="tab" aria-selected="false" style="display:none;"
+                title="Add, edit, or remove manager dashboard access (email + department) without hand-editing the sheet. Admin-only.">Access</button>
         <button class="header-menu-btn" id="caller-lookup-btn" type="button"
                 data-route="/admin/caller-lookup" data-admin-only role="tab" aria-selected="false" style="display:none;"
                 title="Trace every inbound call from one phone number: when they called, the path through IVR / queues / agents, and how each call ended. The number is hashed before querying and never stored. Admin-only.">Caller Lookup</button>
@@ -2326,6 +2329,64 @@
        per-dept QCD queue map, Overview sub-queue nesting, and
        team-avg exclusions, with save-time validation + auto-discovery
        of unmapped queues. Mirrors the Outlier Fix modal structure. -->
+  <!-- Access Control modal (admin-only). Add/edit/remove MANAGER dashboard
+       access (email + department) without hand-editing the sheet. Writes the
+       SHEET (auth's always-available store), NOT Neon -- see roadmap C1. -->
+  <div id="access-control-modal" class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="access-control-modal-title" style="display:none;">
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-panel modal-panel-wide" role="document">
+      <div class="modal-panel-header">
+        <button class="modal-open-tab-btn" type="button" data-open-tab-route="/admin/access-control"
+                aria-label="Open in new tab" title="Open in a new browser tab (for side-by-side viewing)">&#8599;</button>
+        <button class="modal-close" id="access-control-close" type="button" aria-label="Close">&times;</button>
+        <div class="modal-kicker">Operations &middot; Admin</div>
+        <h2 id="access-control-modal-title">Access Control</h2>
+      </div>
+      <div class="modal-panel-body">
+        <div id="ac-loading" class="ir-loader" style="text-align:center; padding:24px; color:var(--muted);"><span class="ds-loader--eq" aria-hidden="true"><i></i><i></i><i></i><i></i></span> Loading access&hellip;</div>
+        <div id="ac-body" style="display:none;">
+          <div class="al-section">
+            <p class="al-hint">
+              Grant or revoke <strong>manager</strong> dashboard access. Each row maps a
+              Google email to one department; changes take effect within ~60&nbsp;s
+              (the auth cache). <strong>Admins</strong> are managed separately via the
+              <code>ADMIN_EMAILS</code> Script Property and aren&rsquo;t listed here.
+            </p>
+            <div id="ac-run-status" class="status" style="display:none;"></div>
+          </div>
+          <div class="al-section">
+            <div class="al-section-title" id="ac-form-title">Add manager access</div>
+            <div class="ir-form-grid">
+              <div class="ir-col" style="flex:1 1 260px;">
+                <label for="ac-email">Manager email</label>
+                <input type="email" id="ac-email" autocomplete="off" placeholder="name@universalmedsupply.com">
+              </div>
+              <div class="ir-col" style="flex:1 1 200px;">
+                <label for="ac-dept">Department</label>
+                <select id="ac-dept"></select>
+              </div>
+              <div class="ir-col" style="flex:1 1 220px;">
+                <label for="ac-notes">Notes (optional)</label>
+                <input type="text" id="ac-notes" autocomplete="off" placeholder="optional">
+              </div>
+            </div>
+            <div class="esc-form-actions">
+              <button class="btn" id="ac-save-btn" type="button">Save</button>
+              <button class="btn btn-ghost" id="ac-clear-btn" type="button">Clear</button>
+            </div>
+          </div>
+          <div class="al-section">
+            <div class="al-section-title">Current managers (<span id="ac-count">0</span>)</div>
+            <table class="al-config-table">
+              <thead><tr><th>Email</th><th>Department</th><th>Notes</th><th>Actions</th></tr></thead>
+              <tbody id="ac-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div id="dept-config-modal" class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="dept-config-modal-title" style="display:none;">
     <div class="modal-backdrop" data-close></div>
     <div class="modal-panel modal-panel-wide" role="document">

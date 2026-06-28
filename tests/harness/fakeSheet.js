@@ -99,6 +99,13 @@ function makeFakeSheet(name, data) {
       return makeFakeRange(this, startRow, startCol, numRows, numCols);
     },
     appendRow: function (row) { this._data.push(row.slice()); return this; },
+    // 1-based row delete (matches SpreadsheetApp). Splices the backing grid;
+    // the header is row 1, data rows are 2..N.
+    deleteRow: function (rowPosition) {
+      const idx = rowPosition - 1;
+      if (idx >= 0 && idx < this._data.length) this._data.splice(idx, 1);
+      return this;
+    },
   };
   return sheet;
 }
