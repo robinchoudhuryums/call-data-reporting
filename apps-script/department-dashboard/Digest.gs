@@ -729,7 +729,18 @@ function digestFormatHms_(totalSeconds) {
 
 // -- Config / triggers --------------------------------------------
 
-function readDigestConfig_() {
+/**
+ * Raw Digest Config rows as a 2D array in column order
+ * [Email, Department, Cadence, Active, Notes, Format], from the ACTIVE source
+ * (C3: Neon `digest_config` when CONFIG_SOURCE=neon, else the sheet; Neon
+ * falls back to the sheet on error). readDigestConfig_ applies the SAME
+ * parse to either, so parity is exact. Returns [] (never throws).
+ */
+function digestConfigRawValues_() {
+  if (typeof getConfigSource_ === 'function' && getConfigSource_() === 'neon') {
+    const neon = neonDigestConfigRawValues_();
+    if (neon !== null) return neon;
+  }
   const ss = openSpreadsheet_();
   const sheet = ss.getSheetByName(SHEETS.DIGEST_CONFIG);
   if (!sheet) return [];
@@ -739,7 +750,46 @@ function readDigestConfig_() {
   // row -- the Alert Config Skip Dates precedent). Pre-existing sheets
   // keep their 5-col header; col F reads back as '' and normalizes to
   // 'summary', so behavior is unchanged until an admin sets a value.
-  const values = sheet.getRange(2, 1, lastRow - 1, DIGEST_CONFIG_HEADERS.length).getValues();
+  return sheet.getRange(2, 1, lastRow - 1, DIGEST_CONFIG_HEADERS.length).getValues();
+}
+
+/** Lazily create digest_config (composite PK: one digest per email per dept). */
+function ensureDigestConfigTable_(conn) {
+  const ddl = conn.createStatement();
+  ddl.execute('CREATE TABLE IF NOT EXISTS digest_config ('
+    + 'email text, department text, cadence text, '
+    + 'active boolean NOT NULL DEFAULT true, notes text, format text, '
+    + 'PRIMARY KEY (email, department))');
+  ddl.close();
+}
+
+/** Neon -> the same 6-col raw row order; null on unreachable/error. */
+function neonDigestConfigRawValues_() {
+  const conn = (typeof getDashboardNeonConn_ === 'function') ? getDashboardNeonConn_() : null;
+  if (!conn) return null;
+  try {
+    ensureDigestConfigTable_(conn);
+    const sql = "SELECT COALESCE(json_agg(t ORDER BY t.email, t.department), '[]')::text AS j FROM ("
+      + 'SELECT email, department, cadence, active, notes, format FROM digest_config) t';
+    const stmt = conn.createStatement();
+    const rs = stmt.executeQuery(sql);
+    const json = rs.next() ? rs.getString('j') : '[]';
+    rs.close(); stmt.close();
+    return JSON.parse(json || '[]').map(function (r) {
+      return [r.email || '', r.department || '', r.cadence || '',
+              (r.active === false ? 'FALSE' : 'TRUE'), r.notes || '', r.format || ''];
+    });
+  } catch (e) {
+    if (typeof recordNeonReadFailure_ === 'function') recordNeonReadFailure_('readDigestConfig_', e);
+    return null;
+  } finally {
+    try { conn.close(); } catch (ce) {}
+  }
+}
+
+function readDigestConfig_() {
+  const values = digestConfigRawValues_();
+  if (!values || !values.length) return [];
   const out = [];
   for (let i = 0; i < values.length; i++) {
     const email   = String(values[i][0] || '').trim();
@@ -760,6 +810,87 @@ function readDigestConfig_() {
     });
   }
   return out;
+}
+
+// -- C3 Digest Config -> Neon migration (editor-run; data layer only) -----
+// Backfill + parity, mirroring the Alert Config / Dept Config cutover. The
+// reader (digestConfigRawValues_) honors CONFIG_SOURCE with sheet fallback.
+// Flipping to neon needs an admin edit UI (hand-edited today) -- remaining C3.
+
+/** Upsert one digest_config row (email+department PK). Used by the backfill.
+ *  Stores the RAW cadence/format text so the reader's normalize* runs the
+ *  same on both sources. */
+function neonUpsertDigestConfigRow_(rec) {
+  const conn = (typeof getDashboardNeonConn_ === 'function') ? getDashboardNeonConn_() : null;
+  if (!conn) throw new Error('Neon unreachable -- digest_config write skipped.');
+  try {
+    ensureDigestConfigTable_(conn);
+    const sql = 'INSERT INTO digest_config (email, department, cadence, active, notes, format) '
+      + 'VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (email, department) DO UPDATE SET '
+      + 'cadence=EXCLUDED.cadence, active=EXCLUDED.active, notes=EXCLUDED.notes, format=EXCLUDED.format';
+    const st = conn.prepareStatement(sql);
+    st.setString(1, rec.email);
+    st.setString(2, rec.department);
+    st.setString(3, rec.cadence || '');
+    st.setBoolean(4, !!rec.active);
+    st.setString(5, rec.notes || '');
+    st.setString(6, rec.format || '');
+    st.executeUpdate();
+    st.close();
+  } finally {
+    try { conn.close(); } catch (e) {}
+  }
+}
+
+function backfillDigestConfigToNeon() {
+  assertAdmin_();
+  const ss = openSpreadsheet_();
+  const sheet = ss.getSheetByName(SHEETS.DIGEST_CONFIG);
+  let n = 0;
+  if (sheet && sheet.getLastRow() >= 2) {
+    const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, DIGEST_CONFIG_HEADERS.length).getValues();
+    values.forEach(function (r) {
+      const email = String(r[0] || '').trim(), dept = String(r[1] || '').trim();
+      if (!email || !dept) return;
+      neonUpsertDigestConfigRow_({
+        email: email, department: dept, cadence: String(r[2] || '').trim(),
+        active: !(r[3] === false || r[3] === 'FALSE' || r[3] === 'false' || r[3] === 0 || r[3] === 'no' || r[3] === 'No'),
+        notes: String(r[4] || '').trim(), format: String(r[5] || '').trim(),
+      });
+      n++;
+    });
+  }
+  Logger.log('backfillDigestConfigToNeon: upserted %s row(s).', n);
+  return { upserted: n };
+}
+
+function compareDigestConfigSources() {
+  assertAdmin_();
+  const norm = function (rows) {
+    const m = {};
+    rows.forEach(function (e) {
+      m[e.email.toLowerCase() + '|' + e.department] = JSON.stringify([e.cadence, e.active, e.notes, e.format]);
+    });
+    return m;
+  };
+  const prev = (typeof getConfigSource_ === 'function') ? getConfigSource_() : 'sheet';
+  let sheetRows, neonRows;
+  try {
+    PropertiesService.getScriptProperties().setProperty('CONFIG_SOURCE', 'sheet');
+    sheetRows = readDigestConfig_();
+    PropertiesService.getScriptProperties().setProperty('CONFIG_SOURCE', 'neon');
+    neonRows = readDigestConfig_();
+  } finally {
+    PropertiesService.getScriptProperties().setProperty('CONFIG_SOURCE', prev);
+  }
+  const s = norm(sheetRows), nn = norm(neonRows);
+  const missingInNeon = [], missingInSheet = [], mismatched = [];
+  Object.keys(s).forEach(function (k) { if (!(k in nn)) missingInNeon.push(k); else if (s[k] !== nn[k]) mismatched.push(k); });
+  Object.keys(nn).forEach(function (k) { if (!(k in s)) missingInSheet.push(k); });
+  const clean = !missingInNeon.length && !missingInSheet.length && !mismatched.length;
+  Logger.log('compareDigestConfigSources: %s. missing-in-neon=%s; missing-in-sheet=%s; mismatched=%s',
+    clean ? 'PARITY CLEAN' : 'DIFFERENCES', JSON.stringify(missingInNeon), JSON.stringify(missingInSheet), JSON.stringify(mismatched));
+  return { clean: clean, missingInNeon: missingInNeon, missingInSheet: missingInSheet, mismatched: mismatched };
 }
 
 function normalizeCadence_(raw) {

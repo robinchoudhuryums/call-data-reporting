@@ -162,20 +162,26 @@ pattern is the template).
   parity gate. Parity pinned by `tests/unit/dept-config-neon.test.js`. **No new
   UI** (the modal CRUD already existed). Cutover: backfill → compare clean →
   flip the flag (Operator State #25). Reversible.
-- **C1 — Access Control (highest value, but needs a UI + extra care).** Readers
-  `resolveUser_` + `getManagerDepartment_` (Auth.gs); schema Email|Department|
-  Notes. Hand-edited today, so build a small **Access Control admin editor**
-  (add/edit/remove a manager↔dept row) — genuinely valuable since adding a
-  manager is the most common config edit (no more "open the sheet, add a row,
-  wait 60 s"). **SECURITY:** auth is the hot path — keep the sheet as a live
-  fallback through a long validation window, cache reads (the 60 s
-  `AUTH_CACHE_TTL_SECONDS` already helps), and **fail CLOSED (deny) on a Neon
-  read error**, never open. ~1.5–2 days incl. the editor.
-- **C3 — Alert Config + Digest Config (need edit surfaces).** Readers
-  `readAlertConfig_` / `readDigestConfig_`. Both hand-edited; their modals only
-  display + manage triggers, so each needs an edit table added to its existing
-  modal. Lower edit frequency, so weigh whether the de-clutter is worth two more
-  CRUD surfaces. ~1 day each incl. UI.
+- **C1 — Access Control (SHIPPED as a sheet-backed editor; NOT moved to Neon).**
+  Decision: auth is the hot path and the sheet (in the dashboard's own
+  spreadsheet) is the most always-available store, so Access Control STAYS on
+  the sheet — moving it to Neon would trade reliability for nothing. The real
+  pain (hand-editing) is solved by the new admin editor: `Auth.gs`
+  `getAccessControlInit` / `saveAccessControlRow` (upsert by email) /
+  `removeAccessControlRow` (delete by email), all `assertAdmin_` + validation +
+  `LockService` + cache-bust; client Access modal + nav tab + route
+  `/admin/access-control`. Managers only (admins live in `ADMIN_EMAILS`).
+  Tests: `access-control-editor.test.js`.
+- **C3 — Alert Config + Digest Config (DATA LAYER SHIPPED; edit UIs remaining).**
+  `readAlertConfig_` / `readDigestConfig_` now read rows from the active source
+  (Neon `alert_config` / `digest_config` when `CONFIG_SOURCE=neon`, identical
+  parse, sheet fallback on error). Lazy tables, `backfill*ConfigToNeon()` +
+  `compare*ConfigSources()` parity gates, pinned by `config-neon-c3.test.js`.
+  **Not flippable yet:** both are hand-edited, so `CONFIG_SOURCE=neon` would
+  leave them uneditable until an **admin edit UI** is added to each section of
+  the Alerts modal (the per-dept threshold/recipients table + the digest
+  subscribers list). Build those edit surfaces, then backfill → compare clean →
+  flip. ~1 day each for the UIs.
 - **C4 (optional, last) — Agent Alias Overrides.** Read CROSS-PROJECT by the
   cdr-report pipeline (`loadRosterCanonicalNames_`, INV-46) on the daily build
   hot path. Moving it means the pipeline reads Neon for canonicalization —
