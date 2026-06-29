@@ -529,3 +529,19 @@ commit/push/deploy direction.
   (the per-dept threshold/recipients table + the digest subscribers list) first;
   those UIs are the remaining C3 work. C4 (Agent Alias, cross-project) still open.
   Branch carries increments 42-44; awaiting PR/merge decision.
+
+- **Increment 45 (DONE — C3 edit UIs; C3 now flippable):** On
+  `claude/brave-dijkstra-wuonrv` (UNMERGED). Admin CRUD for Alert Config +
+  Digest Config in the Alerts modal, writing the ACTIVE source (sheet, or Neon
+  when CONFIG_SOURCE=neon -- same dispatch as C2). Server: Alerts.gs
+  saveAlertConfigRow/removeAlertConfigRow (key=department) + Digest.gs
+  saveDigestConfigRow/removeDigestConfigRow (key=email+dept), all assertAdmin_
+  + validation + LockService + audit log + sheet/neon writers. Client: Actions
+  (Edit/Remove) columns on both Alerts-modal config tables + add/edit forms
+  (dashboard.html) wired in initAlerts, reload via alLoadInit_. Tests
+  config-editor-c3.test.js (+7); node --test 183/183; INV-16 clean. Docs INV-01
+  (4 new RPCs), Operator State #25 + roadmap (C3 SHIPPED + flippable). Where I
+  left off: C3 fully shipped + flippable (backfill{Alert,Digest}ConfigToNeon ->
+  compare{Alert,Digest}ConfigSources clean -> CONFIG_SOURCE=neon, one flag for
+  Dept+Alert+Digest). REMAINING Track C: C4 Agent Alias Overrides (cross-project
+  pipeline read -- optional). Branch carries increments 42-45; awaiting PR/merge.
