@@ -467,12 +467,45 @@ function writeDirectCallRowsToNeon_(rows, monthYear, isoDate) {
   }
 }
 
-// -- Editor-run orchestrator (Phase 1: manual, numbers-only validation) -------
+// -- Shared build core (Phase 1b) ---------------------------------------------
+/**
+ * Compute direct-call metrics from a Raw Data display grid + the DO NOT EDIT!
+ * config sheet, write the `Direct Call History` sheet (refresh-in-window:
+ * the date's rows are replaced, so it's idempotent), and mirror to Neon.
+ * Shared by the editor-run runDirectCallBuild AND the daily
+ * processIntegratedHistory block (Phase 1b). Best-effort Neon (never throws
+ * out of the mirror; returns a status). The date is derived from the grid's
+ * first data row (same as Phase 1a), since Raw Data holds one day.
+ * @returns {{wrote, dateStr, isoDate, monthYear, meta, neon}}
+ */
+function buildDirectCallFromRaw_(ss, rawDisp, configSheet, opts) {
+  opts = opts || {};
+  let dateStr = '';
+  for (let i = 1; i < rawDisp.length && !dateStr; i++) dateStr = dcDateStr_(rawDisp[i][2]);
+  const isoDate = (typeof parseDateForNeon === 'function') ? parseDateForNeon(dateStr) : null;
+  const monthYear = dcMonthYearFromDate_(dateStr);
+
+  const maps = dcBuildExtMaps_(configSheet);
+  const result = computeDirectCallMetrics(rawDisp, maps, opts);
+
+  const wrote = dcWriteSheet_(ss, result.rows, monthYear, dateStr);
+  let neon = { inserted: 0 };
+  if (!opts.skipNeon) {
+    try { neon = writeDirectCallRowsToNeon_(result.rows, monthYear, isoDate); }
+    catch (e) {
+      Logger.log('buildDirectCallFromRaw_: Neon mirror failed (non-blocking): ' + (e && e.message ? e.message : e));
+      neon = { inserted: 0, error: String(e && e.message ? e.message : e) };
+    }
+  }
+  return { wrote: wrote, dateStr: dateStr, isoDate: isoDate, monthYear: monthYear, meta: result.meta, neon: neon };
+}
+
+// -- Editor-run orchestrator (Phase 1a: manual, numbers-only validation) ------
 /**
  * Computes direct-call metrics for the CURRENT `Raw Data` day and writes the
  * `Direct Call History` sheet + Neon mirror. Run from the cdr-import editor.
  * Best-effort + self-contained: does NOT touch the daily import. (Phase 1b
- * will wire an equivalent block into processIntegratedHistory once validated.)
+ * wires the SAME core, buildDirectCallFromRaw_, into processIntegratedHistory.)
  */
 function runDirectCallBuild() {
   const t0 = Date.now();
@@ -484,30 +517,17 @@ function runDirectCallBuild() {
   const raw = rawSheet.getDataRange().getDisplayValues();
   if (raw.length < 2) { Logger.log('runDirectCallBuild: Raw Data empty.'); return { rows: 0 }; }
 
-  // Derive the date from the first data row's START_TIME.
-  let dateStr = '';
-  for (let i = 1; i < raw.length && !dateStr; i++) dateStr = dcDateStr_(raw[i][2]);
-  const isoDate = (typeof parseDateForNeon === 'function') ? parseDateForNeon(dateStr) : null;
-  const monthYear = dcMonthYearFromDate_(dateStr);
-
-  const maps = dcBuildExtMaps_(configSheet);
-  const result = computeDirectCallMetrics(raw, maps, { collectSamples: true });
-
-  const wrote = dcWriteSheet_(ss, result.rows, monthYear, dateStr);
-  let neon = { inserted: 0 };
-  try { neon = writeDirectCallRowsToNeon_(result.rows, monthYear, isoDate); }
-  catch (e) { Logger.log('runDirectCallBuild: Neon mirror failed (non-blocking): ' + (e && e.message ? e.message : e)); }
-
-  dcLogSamples_(result.meta.samples);
+  const r = buildDirectCallFromRaw_(ss, raw, configSheet, { collectSamples: true });
+  dcLogSamples_(r.meta.samples);
 
   const ms = Date.now() - t0;
-  dcLogPipelineHealth_(ss, 'success', wrote, ms,
-    'directBuild date=' + dateStr + ' agents=' + result.meta.agents +
-    ' missedBusy=' + result.meta.missedBusyTotal + ' neon=' + (neon.unreachable ? 'unreachable' : (neon.error ? 'error' : 'ok')));
+  const neonStr = r.neon.unreachable ? 'unreachable' : (r.neon.error ? 'error' : 'ok');
+  dcLogPipelineHealth_(ss, 'success', r.wrote, ms,
+    'directBuild date=' + r.dateStr + ' agents=' + r.meta.agents +
+    ' missedBusy=' + r.meta.missedBusyTotal + ' neon=' + neonStr);
   Logger.log('runDirectCallBuild: %s rows for %s (missedBusy=%s, missedFree=%s, neon=%s) in %sms',
-    wrote, dateStr, result.meta.missedBusyTotal, result.meta.missedFreeTotal,
-    neon.unreachable ? 'unreachable' : (neon.error ? 'error' : 'ok'), ms);
-  return { rows: wrote, date: dateStr, meta: result.meta, neon: neon };
+    r.wrote, r.dateStr, r.meta.missedBusyTotal, r.meta.missedFreeTotal, neonStr, ms);
+  return { rows: r.wrote, date: r.dateStr, meta: r.meta, neon: r.neon };
 }
 
 /**

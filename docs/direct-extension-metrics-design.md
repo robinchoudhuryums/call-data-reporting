@@ -1,21 +1,38 @@
 # Design — Direct-Extension Call Metrics (with busy carve-out)
 
-Status: **Phase 1a SHIPPED (editor-run, numbers-only); Phase 1b (daily-import
-hook) + Phase 2 (dashboard) pending.** Definitions owner-approved.
+Status: **Phase 1a + 1b + 2 SHIPPED.** Definitions owner-approved.
 
 **Phase 1a (built):** `apps-script/cdr-import/directCallMetrics.js` — the pure
 overlap/busy engine `computeDirectCallMetrics` (12 unit tests in
 `tests/unit/direct-call-metrics.test.js`), the `Direct Call History` sheet
 writer + Neon `direct_call_history` mirror (both lazily created — **no setup()
 change**), and the editor-run orchestrator **`runDirectCallBuild()`** that
-computes the CURRENT `Raw Data` day for spot-checking. The daily
-`processIntegratedHistory` is intentionally **left untouched** so the numbers
-can be validated before the live import depends on them.
+computes the CURRENT `Raw Data` day for spot-checking.
 
-**Phase 1b (next, small):** wire a best-effort block into
-`processIntegratedHistory` (a `processIntegratedHistory:Direct` Pipeline Health
-row) so history accrues automatically each import — after `runDirectCallBuild`
-output is validated against known agent-days.
+**Phase 1b (built):** the shared core `buildDirectCallFromRaw_(ss, rawDisp,
+configSheet, opts)` (sheet write + inline best-effort Neon mirror) is now called
+from BOTH `runDirectCallBuild()` AND the daily `processIntegratedHistory` (6th
+block, after DQE — `apps-script/cdr-import/autoImport.js`). The import block is
+gated only on `rawDataSheet` being present and is fully isolated (best-effort —
+a failure never affects the import or the other writes); the sheet write is
+refresh-in-window (idempotent), so a force re-import just rewrites that day's
+rows. It emits a `processIntegratedHistory:Direct` Pipeline Health row
+(success/failure; notes carry agents / missedBusy / missedFree / neon status).
+The Neon mirror runs INLINE (small per-agent-day payload — not part of the
+deferred `NeonMirror` queue). History accrues automatically each import going
+forward.
+
+**Phase 2 (built):** dashboard read surface — `DirectCallReport.gs`
+(`getDirectCallReport({from, to, department?})`, ONE json_build_object Neon
+round-trip; per-agent answer rate that EXCLUDES the busy carve-out, inbound ATT,
+outbound activity + ATT, int/ext split). **Admin-only while vetted** (the
+Inbound-report model: the per-dept manager path is written + kept intact, so
+release is a one-line gate removal + un-hiding the `data-admin-only` tab).
+Cached 30 min under `directCall:v1`; unavailable payloads not cached. Client:
+the **Direct** report tab (admin-only) + `#direct-call-modal` + route
+`#/report/direct` + CSV export. Unit coverage in
+`tests/unit/direct-call-report.test.js` (gate, derived rates, unavailable
+fallback).
 
 ## Goal
 

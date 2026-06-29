@@ -1730,6 +1730,53 @@ if (!skipCDR && obcHD) {
     }
   }
 
+  // 6. Direct-extension call metrics (Phase 1b). Computes per-agent-day
+  // inbound/outbound DIRECT call stats (the "busy" carve-out -- a miss while
+  // the agent was on another call is excused) into the `Direct Call History`
+  // sheet + the Neon `direct_call_history` mirror. Distinct population from the
+  // DQE/QCD queue metrics. Fully isolated + best-effort: a failure here never
+  // affects the import or the other writes; the sheet write is refresh-in-window
+  // (idempotent), so a re-import of the same date just rewrites that day's rows.
+  // The Neon mirror runs inline (small per-agent-day payload, not part of the
+  // deferred NeonMirror queue) and degrades cleanly when Neon is unreachable.
+  if (rawDataSheet && rawDataSheet.getLastRow() > 1) {
+    var directStart = Date.now();
+    try {
+      var directConfig = targetSS.getSheetByName('DO NOT EDIT!');
+      if (directConfig && typeof buildDirectCallFromRaw_ === 'function') {
+        var directRaw = rawDataSheet.getDataRange().getDisplayValues();
+        var dres = buildDirectCallFromRaw_(targetSS, directRaw, directConfig, {});
+        var directNeon = dres.neon || {};
+        var directNeonStr = directNeon.unreachable ? 'unreachable' : (directNeon.error ? 'error' : 'ok');
+        if (dres.wrote > 0) {
+          summaryLog.push(`- Direct Call HD: Archived ${dres.wrote} Rows`);
+        }
+        logPipelineHealthWithFallback_(targetSS, {
+          step: 'processIntegratedHistory:Direct',
+          status: 'success',
+          rows: dres.wrote,
+          durationMs: Date.now() - directStart,
+          notes: dateObj.toDateString() + ' | agents=' + dres.meta.agents +
+            ' missedBusy=' + dres.meta.missedBusyTotal +
+            ' missedFree=' + dres.meta.missedFreeTotal + ' neon=' + directNeonStr,
+        });
+      }
+    } catch (directErr) {
+      var directMsg = (directErr && directErr.message) ? directErr.message : String(directErr);
+      console.log('processIntegratedHistory: direct-call metrics failed (best-effort): ' + directMsg);
+      summaryLog.push(`- Direct Call HD: FAILED (${directMsg})`);
+      try {
+        logPipelineHealthWithFallback_(targetSS, {
+          step: 'processIntegratedHistory:Direct',
+          status: 'failure',
+          rows: null,
+          durationMs: Date.now() - directStart,
+          notes: dateObj.toDateString() + ' | ' + directMsg,
+        });
+      } catch (logErr) { /* best-effort */ }
+    }
+  }
+
   // Inbound-call capture (per-call view: insurance call counts, dial-in /
   // marketing attribution, disposition + abandon stage, abandoned-on-hold +
   // hold time, and the queue journey). Best-effort + fully isolated -- a

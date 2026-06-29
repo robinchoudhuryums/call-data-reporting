@@ -560,3 +560,26 @@ commit/push/deploy direction.
   -- C2 + C1 + C3 shipped (Dept/Alert/Digest Neon-flippable; Access Control +
   Agent Alias + logs stay sheet by design). Branch claude/brave-dijkstra-wuonrv
   carries increments 42-46, UNMERGED, awaiting PR/merge decision.
+
+- **Increment 47 (DONE — Direct-call metrics Phase 1b + Phase 2):**
+  Phase 1b: extracted the shared core `buildDirectCallFromRaw_(ss, rawDisp,
+  configSheet, opts)` in cdr-import/directCallMetrics.js (sheet write +
+  refresh-in-window + inline best-effort Neon mirror); refactored
+  `runDirectCallBuild()` to call it; wired a 6th best-effort block into
+  `processIntegratedHistory` (autoImport.js, after the DQE block) gated on
+  rawDataSheet present, logging `processIntegratedHistory:Direct` Pipeline
+  Health rows (agents/missedBusy/missedFree/neon in notes). cdr-import-only
+  (NOT INV-16 duplicated). Phase 2: new DirectCallReport.gs
+  (`getDirectCallReport`, ONE json_build_object Neon read; per-agent answer
+  rate EXCLUDING the busy carve-out, inbound ATT, outbound activity+ATT,
+  int/ext split; admin-only-while-vetted with the per-dept manager path kept
+  intact like Inbound; cached directCall:v1, unavailable not cached). Client:
+  Direct report tab (admin-only) + #direct-call-modal + route #/report/direct
+  + CSV (dashboard.html + script.html, initDirectCallReport). Tests
+  direct-call-report.test.js (+5; gate, derived rates, null-rate, unavailable).
+  node --test 188/188; INV-16 clean. Docs: direct-extension-metrics-design.md
+  (Phase 1b+2 SHIPPED). Where I left off: Phases 1b+2 done; report is sparse
+  until history accrues. Operator: deploy dashboard + cdr-import; the import
+  starts writing Direct Call History + direct_call_history automatically. INV-44
+  step list + an INV for the Direct report are a sync-docs follow-up. Branch
+  claude/brave-dijkstra-wuonrv carries increments 42-47, UNMERGED.

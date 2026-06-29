@@ -92,6 +92,9 @@
             <button class="header-menu-item" id="inbound-report-btn" type="button"
                     data-route="/report/inbound" data-admin-only role="menuitem" style="display:none;"
                     title="Inbound call analytics (admin-only while being vetted): volume + answered / abandoned / abandoned-on-hold by insurer, advertised dial-in line, and entry queue.">Inbound</button>
+            <button class="header-menu-item" id="direct-call-report-btn" type="button"
+                    data-route="/report/direct" data-admin-only role="menuitem" style="display:none;"
+                    title="Direct-extension call metrics (admin-only while being vetted): per-agent inbound answer rate (a miss while on another call is excused), inbound ATT, and outbound activity.">Direct</button>
           </div>
         </div>
         <button class="header-menu-btn" id="alerts-btn" type="button"
@@ -1880,6 +1883,109 @@
         </div>
 
         <div id="inbound-heatmap" class="ds-heatmap-panel" style="display:none;"></div>
+      </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="direct-call-modal" class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="direct-call-modal-title" style="display:none;">
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-panel modal-panel-wide" role="document">
+      <div class="modal-panel-header">
+        <button class="modal-open-tab-btn" type="button" data-open-tab-route="/report/direct"
+                aria-label="Open in new tab" title="Open this report in a new browser tab (for side-by-side viewing)">&#8599;</button>
+        <button class="modal-close" id="direct-call-close" type="button" aria-label="Close">&times;</button>
+        <div class="modal-kicker">Report &middot; Admin</div>
+        <h2 id="direct-call-modal-title">Direct Calls</h2>
+      </div>
+      <div class="modal-panel-body">
+      <div id="direct-call-form" class="ir-form">
+        <div class="ir-section-title">Date Range</div>
+        <div class="ir-row">
+          <div class="ir-col">
+            <label for="direct-call-preset">Quick select</label>
+            <select id="direct-call-preset">
+              <option value="custom">Custom range</option>
+              <option value="last7">Last 7 days</option>
+              <option value="last30" selected>Last 30 days</option>
+              <option value="thisMonth">This month</option>
+              <option value="lastMonth">Last month</option>
+              <option value="last3Months">Last 3 months</option>
+            </select>
+          </div>
+          <div class="ir-col">
+            <label for="direct-call-from">Start date</label>
+            <input type="date" id="direct-call-from">
+          </div>
+          <div class="ir-col">
+            <label for="direct-call-to">End date</label>
+            <input type="date" id="direct-call-to">
+          </div>
+          <div class="ir-col">
+            <label for="direct-call-dept">Department</label>
+            <select id="direct-call-dept"></select>
+          </div>
+        </div>
+        <div class="ir-hint">
+          Per-agent metrics for <strong>direct</strong> (individual-extension)
+          calls from <strong>Neon</strong> (<code>direct_call_history</code>) &mdash;
+          a population distinct from the department-queue (DQE/QCD) metrics. An
+          inbound ring <em>missed because the agent was already on another
+          call</em> is counted separately (&ldquo;missed (busy)&rdquo;) and
+          <em>excluded</em> from the answer rate. Admin-only while the numbers
+          are being vetted.
+        </div>
+        <div id="direct-call-form-error" class="status status-error" style="display:none;"></div>
+        <button class="btn" id="direct-call-generate-btn" type="button">Generate report</button>
+      </div>
+
+      <div id="direct-call-results" class="ir-results" style="display:none;">
+        <div class="ir-results-header">
+          <div class="ir-results-header-left">
+            <div class="ir-results-title-line">
+              <span class="ir-results-title">Direct Calls</span>
+              <span class="ir-results-date" id="direct-call-results-date"></span>
+            </div>
+          </div>
+          <div class="ir-action-buttons">
+            <button class="btn btn-secondary" id="direct-call-csv-btn" type="button">Download CSV</button>
+            <button class="btn btn-secondary" id="direct-call-back-btn" type="button">&laquo; Back</button>
+          </div>
+        </div>
+
+        <div id="direct-call-unavailable" class="empty-state" style="display:none;">
+          <div class="empty-state-icon" aria-hidden="true">&#128222;</div>
+          <div class="empty-state-title">Direct-call data unavailable</div>
+          <div class="empty-state-hint">Couldn&rsquo;t read <code>direct_call_history</code> from Neon. Confirm the import has run since the direct-call build deployed, the dashboard&rsquo;s <code>NEON_*</code> Script Properties are set, and the <code>script.external_request</code> scope is granted.</div>
+        </div>
+
+        <div id="direct-call-empty" class="empty-state" style="display:none;">
+          <div class="empty-state-icon" aria-hidden="true">&#128277;</div>
+          <div class="empty-state-title">No direct-call activity</div>
+          <div class="empty-state-hint">No direct (individual-extension) calls were recorded for this department and date range. Direct-call capture accrues going forward from its deploy date.</div>
+        </div>
+
+        <div id="direct-call-body">
+          <div id="direct-call-kpi-row" class="pr-kpi-row"></div>
+
+          <div class="al-section">
+            <div class="al-section-title">Per agent <span class="ins-rollup-cap">(inbound answer rate excludes &ldquo;missed (busy)&rdquo;)</span></div>
+            <table class="qcd-source-table">
+              <thead><tr>
+                <th>Agent</th>
+                <th class="num">IB answered</th>
+                <th class="num">IB missed (free)</th>
+                <th class="num">IB missed (busy)</th>
+                <th class="num">Answer %</th>
+                <th class="num">IB ATT</th>
+                <th class="num">OB calls</th>
+                <th class="num">OB connected</th>
+                <th class="num">OB ATT</th>
+              </tr></thead>
+              <tbody id="direct-call-agent-tbody"></tbody>
+            </table>
+          </div>
+        </div>
       </div>
       </div>
     </div>
