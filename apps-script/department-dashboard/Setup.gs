@@ -36,16 +36,41 @@
 function setup() {
   assertAdmin_();
   const ss = openSpreadsheet_();
-  ensureSheet_(ss, SHEETS.ACCESS_CONTROL,        ACCESS_CONTROL_HEADERS);
-  ensureSheet_(ss, SHEETS.ALERT_CONFIG,          ALERT_CONFIG_HEADERS);
-  ensureSheet_(ss, SHEETS.ALERT_LOG,             ALERT_LOG_HEADERS);
-  ensureSheet_(ss, SHEETS.PIPELINE_HEALTH,       PIPELINE_HEALTH_HEADERS);
-  ensureSheet_(ss, SHEETS.DIGEST_CONFIG,         DIGEST_CONFIG_HEADERS);
-  ensureSheet_(ss, SHEETS.AGENT_ALIAS_OVERRIDES, AGENT_ALIAS_OVERRIDES_HEADERS);
-  ensureSheet_(ss, SHEETS.ORPHAN_FIX_LOG,        ORPHAN_FIX_LOG_HEADERS);
-  ensureSheet_(ss, SHEETS.DEPT_CONFIG,           DEPT_CONFIG_HEADERS);
-  ensureSheet_(ss, SHEETS.REPORT_USAGE,          REPORT_USAGE_HEADERS);
-  Logger.log('Setup complete.');
+  // One spec per managed sheet. Iterated so a transient failure on one
+  // (e.g. the "Service Spreadsheets timed out" the operator hit after a
+  // sheet was created) is CAUGHT + logged and the loop CONTINUES to the
+  // rest, rather than aborting and leaving later sheets uncreated. Each
+  // create is followed by SpreadsheetApp.flush() so its write is committed
+  // before the next insertSheet -- a slow create can't pile pending ops onto
+  // the following one. Idempotent: re-running skips the ones that exist and
+  // creates whatever a prior partial run missed.
+  const specs = [
+    [SHEETS.ACCESS_CONTROL,        ACCESS_CONTROL_HEADERS],
+    [SHEETS.ALERT_CONFIG,          ALERT_CONFIG_HEADERS],
+    [SHEETS.ALERT_LOG,             ALERT_LOG_HEADERS],
+    [SHEETS.PIPELINE_HEALTH,       PIPELINE_HEALTH_HEADERS],
+    [SHEETS.DIGEST_CONFIG,         DIGEST_CONFIG_HEADERS],
+    [SHEETS.AGENT_ALIAS_OVERRIDES, AGENT_ALIAS_OVERRIDES_HEADERS],
+    [SHEETS.ORPHAN_FIX_LOG,        ORPHAN_FIX_LOG_HEADERS],
+    [SHEETS.DEPT_CONFIG,           DEPT_CONFIG_HEADERS],
+    [SHEETS.REPORT_USAGE,          REPORT_USAGE_HEADERS],
+  ];
+  const failed = [];
+  specs.forEach(function (spec) {
+    try {
+      ensureSheet_(ss, spec[0], spec[1]);
+      SpreadsheetApp.flush();
+    } catch (e) {
+      failed.push(spec[0]);
+      Logger.log('Setup: sheet "%s" failed: %s -- continuing; re-run setup() to retry (idempotent).',
+        spec[0], (e && e.message) ? e.message : e);
+    }
+  });
+  if (failed.length) {
+    Logger.log('Setup finished WITH ERRORS on: %s. Re-run setup() to create the rest.', failed.join(', '));
+  } else {
+    Logger.log('Setup complete.');
+  }
 }
 
 /**

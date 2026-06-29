@@ -486,7 +486,19 @@ function lookupDeptManagers_(dept) {
  *
  * Schema (row 1 headers): Department | Threshold % | Extra Recipients | Active | Notes | Skip Dates
  */
-function readAlertConfig_() {
+/**
+ * Raw Alert Config rows as a 2D array in column order
+ * [Department, Threshold %, Extra Recipients, Active, Notes, Skip Dates],
+ * from the ACTIVE source (C3: Neon `alert_config` when CONFIG_SOURCE=neon,
+ * else the sheet). The Neon path falls back to the sheet on any error so the
+ * flip is safe. readAlertConfig_ applies the SAME parse to either, so parity
+ * is exact. Returns [] (never throws) on a missing/empty source.
+ */
+function alertConfigRawValues_() {
+  if (typeof getConfigSource_ === 'function' && getConfigSource_() === 'neon') {
+    const neon = neonAlertConfigRawValues_();
+    if (neon !== null) return neon;   // null = unreachable/error -> sheet fallback
+  }
   const ss = openSpreadsheet_();
   const sheet = ss.getSheetByName(SHEETS.ALERT_CONFIG);
   if (!sheet) return [];
@@ -496,9 +508,47 @@ function readAlertConfig_() {
   // row). Sheets returns empty strings for col F on pre-E8 sheets
   // where setup() ran before the schema bump -- safe to read without
   // re-running setup, because the sheet's maxColumns default (26) is
-  // larger than 6. readAlertConfig_ stays backward-compatible:
-  // missing skip-dates parse to an empty array, never an error.
-  const values = sheet.getRange(2, 1, lastRow - 1, 6).getValues();
+  // larger than 6.
+  return sheet.getRange(2, 1, lastRow - 1, 6).getValues();
+}
+
+/** Lazily create alert_config (no setup() change). */
+function ensureAlertConfigTable_(conn) {
+  const ddl = conn.createStatement();
+  ddl.execute('CREATE TABLE IF NOT EXISTS alert_config ('
+    + 'department text PRIMARY KEY, threshold text, extra_recipients text, '
+    + 'active boolean NOT NULL DEFAULT true, notes text, skip_dates text)');
+  ddl.close();
+}
+
+/** Neon -> the same 6-col raw row order; null on unreachable/error. */
+function neonAlertConfigRawValues_() {
+  const conn = (typeof getDashboardNeonConn_ === 'function') ? getDashboardNeonConn_() : null;
+  if (!conn) return null;
+  try {
+    ensureAlertConfigTable_(conn);
+    const sql = "SELECT COALESCE(json_agg(t ORDER BY t.department), '[]')::text AS j FROM ("
+      + 'SELECT department, threshold, extra_recipients, active, notes, skip_dates FROM alert_config) t';
+    const stmt = conn.createStatement();
+    const rs = stmt.executeQuery(sql);
+    const json = rs.next() ? rs.getString('j') : '[]';
+    rs.close(); stmt.close();
+    return JSON.parse(json || '[]').map(function (r) {
+      return [r.department || '', r.threshold == null ? '' : r.threshold,
+              r.extra_recipients || '', (r.active === false ? 'FALSE' : 'TRUE'),
+              r.notes || '', r.skip_dates || ''];
+    });
+  } catch (e) {
+    if (typeof recordNeonReadFailure_ === 'function') recordNeonReadFailure_('readAlertConfig_', e);
+    return null;
+  } finally {
+    try { conn.close(); } catch (ce) {}
+  }
+}
+
+function readAlertConfig_() {
+  const values = alertConfigRawValues_();
+  if (!values || !values.length) return [];
   const out = [];
   for (let i = 0; i < values.length; i++) {
     const dept = String(values[i][0] || '').trim();
@@ -534,6 +584,189 @@ function readAlertConfig_() {
     });
   }
   return out;
+}
+
+// -- C3 Alert Config -> Neon migration (editor-run; data layer only) ------
+// Backfill the sheet into Neon + a parity gate, mirroring the C2 Dept Config
+// cutover discipline. The reader (alertConfigRawValues_) already honors
+// CONFIG_SOURCE with sheet fallback. NOTE: flipping CONFIG_SOURCE=neon makes
+// Alert Config editable ONLY via an admin UI (it's hand-edited in the sheet
+// today) -- that edit surface is the remaining C3 work before a flip is
+// usable; until then, keep CONFIG_SOURCE=sheet.
+
+/** Upsert one alert_config row (department PK). Used by the backfill. */
+function neonUpsertAlertConfigRow_(rec) {
+  const conn = (typeof getDashboardNeonConn_ === 'function') ? getDashboardNeonConn_() : null;
+  if (!conn) throw new Error('Neon unreachable -- alert_config write skipped.');
+  try {
+    ensureAlertConfigTable_(conn);
+    const sql = 'INSERT INTO alert_config (department, threshold, extra_recipients, active, notes, skip_dates) '
+      + 'VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (department) DO UPDATE SET '
+      + 'threshold=EXCLUDED.threshold, extra_recipients=EXCLUDED.extra_recipients, '
+      + 'active=EXCLUDED.active, notes=EXCLUDED.notes, skip_dates=EXCLUDED.skip_dates';
+    const st = conn.prepareStatement(sql);
+    st.setString(1, rec.department);
+    st.setString(2, rec.thresholdRaw == null ? '' : String(rec.thresholdRaw));
+    st.setString(3, (rec.extraRecipients || []).join(', '));
+    st.setBoolean(4, !!rec.active);
+    st.setString(5, rec.notes || '');
+    st.setString(6, rec.skipDatesRaw || '');
+    st.executeUpdate();
+    st.close();
+  } finally {
+    try { conn.close(); } catch (e) {}
+  }
+}
+
+function backfillAlertConfigToNeon() {
+  assertAdmin_();
+  // Read the SHEET explicitly (not the flag-aware reader) so the backfill
+  // always copies sheet -> Neon regardless of CONFIG_SOURCE.
+  const ss = openSpreadsheet_();
+  const sheet = ss.getSheetByName(SHEETS.ALERT_CONFIG);
+  let n = 0;
+  if (sheet && sheet.getLastRow() >= 2) {
+    const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, 6).getValues();
+    values.forEach(function (r) {
+      const dept = String(r[0] || '').trim();
+      if (!dept) return;
+      neonUpsertAlertConfigRow_({
+        department: dept, thresholdRaw: String(r[1] == null ? '' : r[1]).trim(),
+        extraRecipients: String(r[2] || '').split(',').map(function (s) { return s.trim(); }).filter(Boolean),
+        active: !(r[3] === false || r[3] === 'FALSE' || r[3] === 'false' || r[3] === 0 || r[3] === 'no' || r[3] === 'No'),
+        notes: String(r[4] || '').trim(), skipDatesRaw: String(r[5] || '').trim(),
+      });
+      n++;
+    });
+  }
+  Logger.log('backfillAlertConfigToNeon: upserted %s row(s).', n);
+  return { upserted: n };
+}
+
+function compareAlertConfigSources() {
+  assertAdmin_();
+  const norm = function (rows) {
+    const m = {};
+    rows.forEach(function (e) {
+      m[e.department] = JSON.stringify([e.threshold, e.extraRecipients, e.active, e.notes, e.skipDatesRaw]);
+    });
+    return m;
+  };
+  // Force a sheet read + a neon read, regardless of the flag.
+  const prev = (typeof getConfigSource_ === 'function') ? getConfigSource_() : 'sheet';
+  let sheetRows, neonRows;
+  try {
+    PropertiesService.getScriptProperties().setProperty('CONFIG_SOURCE', 'sheet');
+    sheetRows = readAlertConfig_();
+    PropertiesService.getScriptProperties().setProperty('CONFIG_SOURCE', 'neon');
+    neonRows = readAlertConfig_();
+  } finally {
+    PropertiesService.getScriptProperties().setProperty('CONFIG_SOURCE', prev);
+  }
+  const s = norm(sheetRows), nn = norm(neonRows);
+  const missingInNeon = [], missingInSheet = [], mismatched = [];
+  Object.keys(s).forEach(function (d) { if (!(d in nn)) missingInNeon.push(d); else if (s[d] !== nn[d]) mismatched.push(d); });
+  Object.keys(nn).forEach(function (d) { if (!(d in s)) missingInSheet.push(d); });
+  const clean = !missingInNeon.length && !missingInSheet.length && !mismatched.length;
+  Logger.log('compareAlertConfigSources: %s. missing-in-neon=%s; missing-in-sheet=%s; mismatched=%s',
+    clean ? 'PARITY CLEAN' : 'DIFFERENCES', JSON.stringify(missingInNeon), JSON.stringify(missingInSheet), JSON.stringify(mismatched));
+  return { clean: clean, missingInNeon: missingInNeon, missingInSheet: missingInSheet, mismatched: mismatched };
+}
+
+// -- C3 Alert Config WRITE path (admin editor RPCs) -----------------------
+// Public, admin-gated CRUD so the per-dept threshold/recipients config is
+// edited from the Alerts modal instead of by hand. Writes the ACTIVE source
+// (Neon when CONFIG_SOURCE=neon, else the sheet) -- the same dispatch C2 uses.
+// INV-01 config-write mitigations: assertAdmin_ + validation + LockService
+// (+ a Logger.log audit line). Keyed by department (one alert row per dept).
+
+function saveAlertConfigRow(req) {
+  assertAdmin_();
+  const department = String((req && req.department) || '').trim();
+  if (!department) throw new Error('Department is required.');
+  if (getAllDepartments_().indexOf(department) === -1) {
+    throw new Error('"' + department + '" is not a department. It must match a DO NOT EDIT! column header exactly.');
+  }
+  const thresholdNum = Number(req && req.threshold);
+  if (!isFinite(thresholdNum) || thresholdNum <= 0 || thresholdNum > 100) {
+    throw new Error('Threshold must be a number between 1 and 100.');
+  }
+  const extras = String((req && req.extraRecipients) || '').split(',')
+    .map(function (s) { return s.trim(); }).filter(Boolean);
+  const bad = extras.filter(function (e) { return !acIsValidEmail_(e); });
+  if (bad.length) throw new Error('Invalid extra-recipient email(s): ' + bad.join(', '));
+  const rec = {
+    department: department, thresholdRaw: String(thresholdNum), extraRecipients: extras,
+    active: !(req && req.active === false), notes: String((req && req.notes) || '').trim().slice(0, 500),
+    skipDatesRaw: String((req && req.skipDates) || '').trim().slice(0, 500),
+  };
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw new Error('Could not acquire script lock; try again.');
+  try {
+    if (typeof getConfigSource_ === 'function' && getConfigSource_() === 'neon') neonUpsertAlertConfigRow_(rec);
+    else sheetUpsertAlertConfigRow_(rec);
+    Logger.log('saveAlertConfigRow: %s by %s', department, Session.getActiveUser().getEmail());
+  } finally { lock.releaseLock(); }
+  return { saved: true };
+}
+
+function sheetUpsertAlertConfigRow_(rec) {
+  const ss = openSpreadsheet_();
+  const sheet = ss.getSheetByName(SHEETS.ALERT_CONFIG);
+  if (!sheet) throw new Error('Alert Config sheet missing -- run setup().');
+  const row = [rec.department, rec.thresholdRaw, (rec.extraRecipients || []).join(', '),
+               rec.active ? 'TRUE' : 'FALSE', rec.notes || '', rec.skipDatesRaw || ''];
+  const lastRow = sheet.getLastRow();
+  let found = -1;
+  if (lastRow >= 2) {
+    const col = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
+    for (let i = 0; i < col.length; i++) {
+      if (String(col[i][0] || '').trim().toLowerCase() === rec.department.toLowerCase()) { found = i + 2; break; }
+    }
+  }
+  if (found > 0) sheet.getRange(found, 1, 1, 6).setValues([row]);
+  else sheet.appendRow(row);
+}
+
+function removeAlertConfigRow(req) {
+  assertAdmin_();
+  const department = String((req && req.department) || '').trim();
+  if (!department) throw new Error('Department is required.');
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw new Error('Could not acquire script lock; try again.');
+  let removed = 0;
+  try {
+    if (typeof getConfigSource_ === 'function' && getConfigSource_() === 'neon') removed = neonRemoveAlertConfigRow_(department);
+    else removed = sheetRemoveAlertConfigRow_(department);
+    Logger.log('removeAlertConfigRow: removed %s row(s) for %s by %s', removed, department, Session.getActiveUser().getEmail());
+  } finally { lock.releaseLock(); }
+  return { removed: removed };
+}
+
+function sheetRemoveAlertConfigRow_(department) {
+  const ss = openSpreadsheet_();
+  const sheet = ss.getSheetByName(SHEETS.ALERT_CONFIG);
+  if (!sheet || sheet.getLastRow() < 2) return 0;
+  const col = sheet.getRange(2, 1, sheet.getLastRow() - 1, 1).getValues();
+  let removed = 0;
+  for (let i = col.length - 1; i >= 0; i--) {
+    if (String(col[i][0] || '').trim().toLowerCase() === department.toLowerCase()) { sheet.deleteRow(i + 2); removed++; }
+  }
+  return removed;
+}
+
+function neonRemoveAlertConfigRow_(department) {
+  const conn = (typeof getDashboardNeonConn_ === 'function') ? getDashboardNeonConn_() : null;
+  if (!conn) throw new Error('Neon unreachable -- alert_config delete skipped.');
+  let n = 0;
+  try {
+    ensureAlertConfigTable_(conn);
+    const st = conn.prepareStatement('DELETE FROM alert_config WHERE lower(department)=lower(?)');
+    st.setString(1, department);
+    n = st.executeUpdate() || 0;
+    st.close();
+  } finally { try { conn.close(); } catch (e) {} }
+  return n;
 }
 
 /**

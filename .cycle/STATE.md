@@ -464,3 +464,99 @@ commit/push/deploy direction.
   Pushed `claude/brave-dijkstra-wuonrv`, UNMERGED. Where I left off: Phase 1a pushed; awaiting (a)
   PR/merge decision and (b) operator spot-check of `runDirectCallBuild()` output before Phase 1b
   (daily hook) + Phase 2 (dashboard modal). 5s tail = `DIRECT_BUSY_WRAPUP_SEC` (tunable).
+
+- **Increment 42 (DONE — UI polish batch + Tracks A & B):** Deploy-testing feedback,
+  multiple commits on `claude/brave-dijkstra-wuonrv` (UNMERGED past PR #137).
+  CONCRETE FIXES (shipped): queue-only abandoned cards default-collapsed on a >2-day range;
+  dept Missed radar deferred resize (CSR zero-size fix); Dept Config Save spinner; Overview
+  viewer-dept folded into the grid as a highlighted first card (hero retired); sub-queue
+  chips → expandable mini-card strips (Ans%/Abd/viol + WoW arrow, smooth height morph);
+  Source column folded into "Show all columns"; WoW "what changed" agent callout removed
+  from Overview cards (#4); inbound queue-name bridge (Dept Config `Inbound Queue Aliases`
+  col + getInboundQueueAliases_ + inboundQueuesForDept_ union — per-dept Inbound report still
+  admin-only/parked; un-gate later by populating aliases + removing the inboundResolveRequest_
+  gate). **Track A (DONE):** Missed Calls bars/radar toggle (missedChartCfg_ dispatch, mode in
+  localStorage cdr.missed.chartmode default bars), bar mode = horizontal + COLOR INTENSITY RAMP
+  + peak outline + datalabels; toggle re-render guarded to visible charts. **Track B (DONE):**
+  Escalations converted modal → full PAGE (body[data-page=escalations], setPage, route kind:'page';
+  esc-* logic + Escalations.gs unchanged). node --test 162/162; INV-16 clean; script.html JS
+  syntax-checked. PLAN doc `docs/ui-infra-roadmap.md` (Tracks A/B/C). **Track C NOT started**
+  (config sheets → Neon; phased C2 Dept Config → C1 Access Control → C3 Alert/Digest; +15-min
+  setup() hardening). Where I left off: Tracks A+B pushed UNMERGED; awaiting PR/merge decision;
+  Track C deferred (owner approved the plan, build when ready); the transient setup() timeout the
+  operator hit just needs a setup() re-run (creates Report Usage).
+
+- **Increment 43 (DONE — setup() hardening + C2 Dept Config→Neon):** On
+  `claude/brave-dijkstra-wuonrv` (UNMERGED). (1) `Setup.gs::setup()` now iterates
+  the 9 managed-sheet specs in a try/catch + `SpreadsheetApp.flush()` loop, so a
+  transient "Service Spreadsheets timed out" on one sheet logs + continues
+  instead of aborting (the operator hit this — Dept Config created, Report Usage
+  not). Idempotent re-run still completes. (2) **C2** (first config-sheet→Neon
+  migration): `CONFIG_SOURCE` Script Property (default `sheet`) switches Dept
+  Config read+write to the Neon `dept_config` table. `readDeptConfigRows_` split
+  into `sheetReadDeptConfigRows_`/`neonReadDeptConfigRows_` (neon = one json_agg,
+  sheet fallback on error); `upsertDeptConfigRow_`/`deactivateDeptConfig_` route
+  to `neon*` variants when flagged; lazy `CREATE TABLE`; editor-run
+  `backfillDeptConfigToNeon()` + `compareDeptConfigSources()` parity gate. List
+  cols stored as comma-joined text → dcParseList_ parity exact. 4 new tests
+  (`dept-config-neon.test.js`); node --test 166/166; INV-16 clean. Docs:
+  Operator State #25, INV-54 note, roadmap C2 marked SHIPPED. Where I left off:
+  pushed UNMERGED; C2 ships default-`sheet` (no behavior change until an admin
+  backfills + parity-checks + flips CONFIG_SOURCE=neon). REMAINING Track C: C1
+  Access Control (needs a NEW admin editor UI — hand-edited today, fail-closed
+  on neon error), C3 Alert/Digest (need edit surfaces), C4 Agent Alias
+  (cross-project). Branch carries the whole increment-42+43 batch, awaiting
+  PR/merge decision.
+
+- **Increment 44 (DONE — C1 Access Control editor + C3 Alert/Digest data layer):**
+  On `claude/brave-dijkstra-wuonrv` (UNMERGED). **C1 (decision + editor):** Access
+  Control is NOT moved to Neon -- auth is the hot path and the sheet (dashboard's
+  own ss) is the most always-available store, so moving it would trade reliability
+  for nothing. Instead shipped a sheet-backed admin editor (`Auth.gs`
+  getAccessControlInit / saveAccessControlRow [upsert-by-email] /
+  removeAccessControlRow [delete-by-email], all assertAdmin_ + validation +
+  LockService + auth-cache bust; managers only -- admins are in ADMIN_EMAILS).
+  Client Access modal + nav tab + route /admin/access-control. fakeSheet gained
+  deleteRow. Tests access-control-editor.test.js (+7). **C3 (data layer only):**
+  readAlertConfig_/readDigestConfig_ now read rows from the active source via
+  alertConfigRawValues_/digestConfigRawValues_ (Neon alert_config/digest_config
+  when CONFIG_SOURCE=neon, same flag as C2, sheet fallback on error, identical
+  parse). Lazy tables + backfill{Alert,Digest}ConfigToNeon + compare*Sources
+  parity. Tests config-neon-c3.test.js (+3). node --test 176/176; INV-16 clean.
+  Docs: INV-01 (AC RPCs), Operator State #25 (C3 + C1 decision), roadmap C1/C3.
+  Where I left off: pushed UNMERGED. **C3 NOT flippable yet** -- Alert/Digest are
+  hand-edited, so CONFIG_SOURCE=neon needs admin EDIT UIs in the Alerts modal
+  (the per-dept threshold/recipients table + the digest subscribers list) first;
+  those UIs are the remaining C3 work. C4 (Agent Alias, cross-project) still open.
+  Branch carries increments 42-44; awaiting PR/merge decision.
+
+- **Increment 45 (DONE — C3 edit UIs; C3 now flippable):** On
+  `claude/brave-dijkstra-wuonrv` (UNMERGED). Admin CRUD for Alert Config +
+  Digest Config in the Alerts modal, writing the ACTIVE source (sheet, or Neon
+  when CONFIG_SOURCE=neon -- same dispatch as C2). Server: Alerts.gs
+  saveAlertConfigRow/removeAlertConfigRow (key=department) + Digest.gs
+  saveDigestConfigRow/removeDigestConfigRow (key=email+dept), all assertAdmin_
+  + validation + LockService + audit log + sheet/neon writers. Client: Actions
+  (Edit/Remove) columns on both Alerts-modal config tables + add/edit forms
+  (dashboard.html) wired in initAlerts, reload via alLoadInit_. Tests
+  config-editor-c3.test.js (+7); node --test 183/183; INV-16 clean. Docs INV-01
+  (4 new RPCs), Operator State #25 + roadmap (C3 SHIPPED + flippable). Where I
+  left off: C3 fully shipped + flippable (backfill{Alert,Digest}ConfigToNeon ->
+  compare{Alert,Digest}ConfigSources clean -> CONFIG_SOURCE=neon, one flag for
+  Dept+Alert+Digest). REMAINING Track C: C4 Agent Alias Overrides (cross-project
+  pipeline read -- optional). Branch carries increments 42-45; awaiting PR/merge.
+
+- **Increment 46 (DONE — C4 evaluated, recommended AGAINST; Track C closed):**
+  Doc-only. Agent Alias Overrides is read CROSS-PROJECT by the pipeline
+  (loadRosterCanonicalNames_, line 938) in BOTH buildDQEHistoricalData.js copies
+  (INV-16 byte-identical pair) + cdr-report/DQEdrilldown.js, on the daily-build
+  canonicalization hot path; written only by the dashboard Orphan Fix modal
+  (already UI-managed). Moving it to Neon would add a JDBC read + Neon-availability
+  dependency to the daily build via a delicate two-file byte-identical edit, to
+  retire ONE small rarely-edited sheet with no hand-edit pain to solve. Same call
+  as C1: keep it on the sheet (the sheet is the right store for a pipeline-hot-path
+  always-available read). Recorded the decision in docs/ui-infra-roadmap.md; NO
+  code change. node --test 183/183 (unchanged). Where I left off: Track C closed
+  -- C2 + C1 + C3 shipped (Dept/Alert/Digest Neon-flippable; Access Control +
+  Agent Alias + logs stay sheet by design). Branch claude/brave-dijkstra-wuonrv
+  carries increments 42-46, UNMERGED, awaiting PR/merge decision.
