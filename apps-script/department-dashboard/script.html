@@ -9797,6 +9797,135 @@
 
   let alLastPreview = null;     // last preview result, used to gate Send
 
+  // -- C3 Alert/Digest Config editors (admin write surfaces) -----------
+  // Loaded rows for prefill; populated by the render functions above.
+  var alCfgRows_ = [];
+  var alDgRows_ = [];
+
+  // Populate a dept <select> from the admin's full dept list (USER.departments
+  // is all depts for an admin -- the Alerts modal is admin-only).
+  function alFillDeptSelect_(id) {
+    const sel = $(id);
+    if (!sel) return;
+    const want = sel.value;
+    const depts = (USER && USER.departments) || [];
+    sel.innerHTML = '<option value="">— pick —</option>'
+      + depts.map(function (d) { return '<option value="' + escapeHtml(d) + '">' + escapeHtml(d) + '</option>'; }).join('');
+    if (want) sel.value = want;
+  }
+
+  function alCfgStatus_(kind, msg) { alMiniStatus_('al-cfg-status', kind, msg); }
+  function alDgStatus_(kind, msg)  { alMiniStatus_('al-dg-status', kind, msg); }
+  function alMiniStatus_(id, kind, msg) {
+    const el = $(id);
+    if (!el) return;
+    if (!kind) { el.style.display = 'none'; el.textContent = ''; return; }
+    el.className = 'status status-' + kind;
+    el.textContent = msg;
+    el.style.display = '';
+  }
+
+  // ---- Alert Config editor ----
+  function alCfgEdit_(idx) {
+    const c = alCfgRows_[idx];
+    if (!c) return;
+    if ($('al-cfg-dept')) { alFillDeptSelect_('al-cfg-dept'); $('al-cfg-dept').value = c.department || ''; }
+    if ($('al-cfg-threshold')) $('al-cfg-threshold').value = c.invalidThreshold ? '' : Number(c.threshold) || '';
+    if ($('al-cfg-extras')) $('al-cfg-extras').value = (c.extraRecipients || []).join(', ');
+    if ($('al-cfg-skip')) $('al-cfg-skip').value = c.skipDatesRaw || '';
+    if ($('al-cfg-notes')) $('al-cfg-notes').value = c.notes || '';
+    if ($('al-cfg-active')) $('al-cfg-active').checked = !!c.active;
+    if ($('al-cfg-dept')) $('al-cfg-dept').focus();
+  }
+  function alCfgClear_() {
+    ['al-cfg-threshold', 'al-cfg-extras', 'al-cfg-skip', 'al-cfg-notes'].forEach(function (i) { if ($(i)) $(i).value = ''; });
+    if ($('al-cfg-dept')) $('al-cfg-dept').value = '';
+    if ($('al-cfg-active')) $('al-cfg-active').checked = true;
+    alCfgStatus_(null);
+  }
+  function alCfgSave_() {
+    const department = $('al-cfg-dept') ? $('al-cfg-dept').value : '';
+    if (!department) { alCfgStatus_('error', 'Pick a department.'); return; }
+    const req = {
+      department: department,
+      threshold: $('al-cfg-threshold') ? $('al-cfg-threshold').value : '',
+      extraRecipients: $('al-cfg-extras') ? $('al-cfg-extras').value : '',
+      skipDates: $('al-cfg-skip') ? $('al-cfg-skip').value : '',
+      notes: $('al-cfg-notes') ? $('al-cfg-notes').value : '',
+      active: $('al-cfg-active') ? $('al-cfg-active').checked : true,
+    };
+    const btn = $('al-cfg-save');
+    if (btn) { btn.disabled = true; btn.innerHTML = '<span class="btn-spinner" aria-hidden="true"></span>Saving…'; }
+    const restore = function () { if (btn) { btn.disabled = false; btn.textContent = 'Save dept'; } };
+    alCfgStatus_('loading', 'Saving ' + department + '…');
+    google.script.run
+      .withSuccessHandler(function () { restore(); showToast('Saved alert config for ' + department, 'success'); alCfgClear_(); alLoadInit_(); })
+      .withFailureHandler(function (err) { restore(); alCfgStatus_('error', 'Save failed: ' + (err && err.message ? err.message : String(err))); })
+      .saveAlertConfigRow(req);
+  }
+  function alCfgRemove_(idx) {
+    const c = alCfgRows_[idx];
+    if (!c) return;
+    if (!window.confirm('Remove alert config for "' + c.department + '"? It will stop receiving low-answer-rate alerts.')) return;
+    alCfgStatus_('loading', 'Removing ' + c.department + '…');
+    google.script.run
+      .withSuccessHandler(function () { showToast('Removed alert config for ' + c.department, 'success'); alLoadInit_(); })
+      .withFailureHandler(function (err) { alCfgStatus_('error', 'Remove failed: ' + (err && err.message ? err.message : String(err))); })
+      .removeAlertConfigRow({ department: c.department });
+  }
+
+  // ---- Digest Config editor ----
+  function alDgEdit_(idx) {
+    const c = alDgRows_[idx];
+    if (!c) return;
+    if ($('al-dg-email')) $('al-dg-email').value = c.email || '';
+    if ($('al-dg-dept')) { alFillDeptSelect_('al-dg-dept'); $('al-dg-dept').value = c.department || ''; }
+    if ($('al-dg-cadence')) $('al-dg-cadence').value = c.cadence || 'daily';
+    if ($('al-dg-format')) $('al-dg-format').value = c.format || 'summary';
+    if ($('al-dg-notes')) $('al-dg-notes').value = c.notes || '';
+    if ($('al-dg-active')) $('al-dg-active').checked = !!c.active;
+    if ($('al-dg-email')) $('al-dg-email').focus();
+  }
+  function alDgClear_() {
+    ['al-dg-email', 'al-dg-notes'].forEach(function (i) { if ($(i)) $(i).value = ''; });
+    if ($('al-dg-dept')) $('al-dg-dept').value = '';
+    if ($('al-dg-cadence')) $('al-dg-cadence').value = 'daily';
+    if ($('al-dg-format')) $('al-dg-format').value = 'summary';
+    if ($('al-dg-active')) $('al-dg-active').checked = true;
+    alDgStatus_(null);
+  }
+  function alDgSave_() {
+    const email = $('al-dg-email') ? $('al-dg-email').value.trim() : '';
+    const department = $('al-dg-dept') ? $('al-dg-dept').value : '';
+    if (!email) { alDgStatus_('error', 'Enter an email.'); return; }
+    if (!department) { alDgStatus_('error', 'Pick a department.'); return; }
+    const req = {
+      email: email, department: department,
+      cadence: $('al-dg-cadence') ? $('al-dg-cadence').value : 'daily',
+      format: $('al-dg-format') ? $('al-dg-format').value : 'summary',
+      notes: $('al-dg-notes') ? $('al-dg-notes').value : '',
+      active: $('al-dg-active') ? $('al-dg-active').checked : true,
+    };
+    const btn = $('al-dg-save');
+    if (btn) { btn.disabled = true; btn.innerHTML = '<span class="btn-spinner" aria-hidden="true"></span>Saving…'; }
+    const restore = function () { if (btn) { btn.disabled = false; btn.textContent = 'Save subscriber'; } };
+    alDgStatus_('loading', 'Saving ' + email + '…');
+    google.script.run
+      .withSuccessHandler(function () { restore(); showToast('Saved digest subscriber ' + email, 'success'); alDgClear_(); alLoadInit_(); })
+      .withFailureHandler(function (err) { restore(); alDgStatus_('error', 'Save failed: ' + (err && err.message ? err.message : String(err))); })
+      .saveDigestConfigRow(req);
+  }
+  function alDgRemove_(idx) {
+    const c = alDgRows_[idx];
+    if (!c) return;
+    if (!window.confirm('Remove digest subscription for "' + c.email + '" (' + c.department + ')?')) return;
+    alDgStatus_('loading', 'Removing ' + c.email + '…');
+    google.script.run
+      .withSuccessHandler(function () { showToast('Removed digest subscriber ' + c.email, 'success'); alLoadInit_(); })
+      .withFailureHandler(function (err) { alDgStatus_('error', 'Remove failed: ' + (err && err.message ? err.message : String(err))); })
+      .removeDigestConfigRow({ email: c.email, department: c.department });
+  }
+
   function initAlerts() {
     const btn = $('alerts-btn');
     const modal = $('alerts-modal');
@@ -9834,6 +9963,12 @@
 
     const sendBtn = $('al-send-btn');
     if (sendBtn) sendBtn.addEventListener('click', alRunSend_);
+
+    // C3 config-editor form buttons.
+    if ($('al-cfg-save'))  $('al-cfg-save').addEventListener('click', alCfgSave_);
+    if ($('al-cfg-clear')) $('al-cfg-clear').addEventListener('click', alCfgClear_);
+    if ($('al-dg-save'))   $('al-dg-save').addEventListener('click', alDgSave_);
+    if ($('al-dg-clear'))  $('al-dg-clear').addEventListener('click', alDgClear_);
 
     const installBtn = $('al-install-trigger-btn');
     if (installBtn) installBtn.addEventListener('click', alInstallTrigger_);
@@ -9920,10 +10055,11 @@
     const tbody = $('al-digest-tbody');
     if (tbody) {
       const config = data.config || [];
+      alDgRows_ = config;                       // C3 editor reads this for prefill
+      alFillDeptSelect_('al-dg-dept');
       if (!config.length) {
         tbody.innerHTML = '<tr><td colspan="7" class="al-empty">'
-          + 'No digest subscribers yet. Add one row per recipient to the '
-          + 'Digest Config sheet (Email | Department | Cadence | Active | Notes | Format).'
+          + 'No digest subscribers yet. Add one with the form below.'
           + '</td></tr>';
       } else {
         tbody.innerHTML = config.map(function (c, idx) {
@@ -9936,8 +10072,11 @@
                +   '<td>' + escapeHtml(c.format || 'summary') + '</td>'
                +   '<td><span class="al-active ' + activeCls + '">' + activeLbl + '</span></td>'
                +   '<td>' + escapeHtml(c.notes || '') + '</td>'
-               +   '<td><button type="button" class="link-btn al-digest-preview-btn" '
-               +     'data-idx="' + idx + '">Send preview</button></td>'
+               +   '<td>'
+               +     '<button type="button" class="link-btn al-digest-preview-btn" data-idx="' + idx + '">Preview</button> '
+               +     '<button type="button" class="link-btn al-dg-edit" data-idx="' + idx + '">Edit</button> '
+               +     '<button type="button" class="link-btn al-dg-remove" data-idx="' + idx + '">Remove</button>'
+               +   '</td>'
                + '</tr>';
         }).join('');
 
@@ -9952,6 +10091,12 @@
             if (!row) return;
             alSendDigestPreview_(btn, row);
           });
+        });
+        tbody.querySelectorAll('.al-dg-edit').forEach(function (btn) {
+          btn.addEventListener('click', function () { alDgEdit_(Number(btn.getAttribute('data-idx'))); });
+        });
+        tbody.querySelectorAll('.al-dg-remove').forEach(function (btn) {
+          btn.addEventListener('click', function () { alDgRemove_(Number(btn.getAttribute('data-idx'))); });
         });
       }
     }
@@ -10180,15 +10325,16 @@
   function alRenderConfigTable_(config, drift) {
     const tbody = $('al-config-tbody');
     if (!tbody) return;
+    alCfgRows_ = config || [];                 // C3 editor reads this for prefill
+    alFillDeptSelect_('al-cfg-dept');
     if (!config.length) {
-      tbody.innerHTML = '<tr><td colspan="7" class="al-empty">'
-        + 'No rows in the Alert Config sheet yet. Add one row per dept that '
-        + 'should receive alerts.'
+      tbody.innerHTML = '<tr><td colspan="8" class="al-empty">'
+        + 'No alert config yet. Add one dept with the form below.'
         + '</td></tr>';
       return;
     }
     const driftMap = drift || {};
-    tbody.innerHTML = config.map(function (c) {
+    tbody.innerHTML = config.map(function (c, idx) {
       const activeCls = c.active ? 'al-active-yes' : 'al-active-no';
       const activeLbl = c.active ? 'Yes' : 'No';
       // E8 Skip Dates: prefer the parsed array (server-normalized,
@@ -10222,8 +10368,18 @@
            +   '<td><span class="al-active ' + activeCls + '">' + activeLbl + '</span></td>'
            +   '<td class="al-skip-dates">' + escapeHtml(skipCell) + '</td>'
            +   '<td>' + escapeHtml(c.notes || '') + '</td>'
+           +   '<td>'
+           +     '<button type="button" class="link-btn al-cfg-edit" data-idx="' + idx + '">Edit</button> '
+           +     '<button type="button" class="link-btn al-cfg-remove" data-idx="' + idx + '">Remove</button>'
+           +   '</td>'
            + '</tr>';
     }).join('');
+    tbody.querySelectorAll('.al-cfg-edit').forEach(function (btn) {
+      btn.addEventListener('click', function () { alCfgEdit_(Number(btn.getAttribute('data-idx'))); });
+    });
+    tbody.querySelectorAll('.al-cfg-remove').forEach(function (btn) {
+      btn.addEventListener('click', function () { alCfgRemove_(Number(btn.getAttribute('data-idx'))); });
+    });
   }
 
   // E10 threshold-drift chip. Renders per-dept summary of the most

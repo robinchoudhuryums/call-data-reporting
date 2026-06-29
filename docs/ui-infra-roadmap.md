@@ -172,16 +172,17 @@ pattern is the template).
   `LockService` + cache-bust; client Access modal + nav tab + route
   `/admin/access-control`. Managers only (admins live in `ADMIN_EMAILS`).
   Tests: `access-control-editor.test.js`.
-- **C3 — Alert Config + Digest Config (DATA LAYER SHIPPED; edit UIs remaining).**
-  `readAlertConfig_` / `readDigestConfig_` now read rows from the active source
+- **C3 — Alert Config + Digest Config (SHIPPED, flippable).** Data layer:
+  `readAlertConfig_` / `readDigestConfig_` read rows from the active source
   (Neon `alert_config` / `digest_config` when `CONFIG_SOURCE=neon`, identical
-  parse, sheet fallback on error). Lazy tables, `backfill*ConfigToNeon()` +
-  `compare*ConfigSources()` parity gates, pinned by `config-neon-c3.test.js`.
-  **Not flippable yet:** both are hand-edited, so `CONFIG_SOURCE=neon` would
-  leave them uneditable until an **admin edit UI** is added to each section of
-  the Alerts modal (the per-dept threshold/recipients table + the digest
-  subscribers list). Build those edit surfaces, then backfill → compare clean →
-  flip. ~1 day each for the UIs.
+  parse, sheet fallback), lazy tables, `backfill*ConfigToNeon()` +
+  `compare*ConfigSources()` parity gates (pinned by `config-neon-c3.test.js`).
+  Edit UIs: admin forms in the Alerts modal write the active source via
+  `saveAlertConfigRow` / `removeAlertConfigRow` (key=department) +
+  `saveDigestConfigRow` / `removeDigestConfigRow` (key=email+dept), all
+  `assertAdmin_` + validation + `LockService` (pinned by
+  `config-editor-c3.test.js`). Cutover: backfill → compare clean → set
+  `CONFIG_SOURCE=neon` (one flag covers Dept + Alert + Digest).
 - **C4 (optional, last) — Agent Alias Overrides.** Read CROSS-PROJECT by the
   cdr-report pipeline (`loadRosterCanonicalNames_`, INV-46) on the daily build
   hot path. Moving it means the pipeline reads Neon for canonicalization —

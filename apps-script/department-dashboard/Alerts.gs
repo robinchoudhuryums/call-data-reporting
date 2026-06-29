@@ -673,6 +673,102 @@ function compareAlertConfigSources() {
   return { clean: clean, missingInNeon: missingInNeon, missingInSheet: missingInSheet, mismatched: mismatched };
 }
 
+// -- C3 Alert Config WRITE path (admin editor RPCs) -----------------------
+// Public, admin-gated CRUD so the per-dept threshold/recipients config is
+// edited from the Alerts modal instead of by hand. Writes the ACTIVE source
+// (Neon when CONFIG_SOURCE=neon, else the sheet) -- the same dispatch C2 uses.
+// INV-01 config-write mitigations: assertAdmin_ + validation + LockService
+// (+ a Logger.log audit line). Keyed by department (one alert row per dept).
+
+function saveAlertConfigRow(req) {
+  assertAdmin_();
+  const department = String((req && req.department) || '').trim();
+  if (!department) throw new Error('Department is required.');
+  if (getAllDepartments_().indexOf(department) === -1) {
+    throw new Error('"' + department + '" is not a department. It must match a DO NOT EDIT! column header exactly.');
+  }
+  const thresholdNum = Number(req && req.threshold);
+  if (!isFinite(thresholdNum) || thresholdNum <= 0 || thresholdNum > 100) {
+    throw new Error('Threshold must be a number between 1 and 100.');
+  }
+  const extras = String((req && req.extraRecipients) || '').split(',')
+    .map(function (s) { return s.trim(); }).filter(Boolean);
+  const bad = extras.filter(function (e) { return !acIsValidEmail_(e); });
+  if (bad.length) throw new Error('Invalid extra-recipient email(s): ' + bad.join(', '));
+  const rec = {
+    department: department, thresholdRaw: String(thresholdNum), extraRecipients: extras,
+    active: !(req && req.active === false), notes: String((req && req.notes) || '').trim().slice(0, 500),
+    skipDatesRaw: String((req && req.skipDates) || '').trim().slice(0, 500),
+  };
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw new Error('Could not acquire script lock; try again.');
+  try {
+    if (typeof getConfigSource_ === 'function' && getConfigSource_() === 'neon') neonUpsertAlertConfigRow_(rec);
+    else sheetUpsertAlertConfigRow_(rec);
+    Logger.log('saveAlertConfigRow: %s by %s', department, Session.getActiveUser().getEmail());
+  } finally { lock.releaseLock(); }
+  return { saved: true };
+}
+
+function sheetUpsertAlertConfigRow_(rec) {
+  const ss = openSpreadsheet_();
+  const sheet = ss.getSheetByName(SHEETS.ALERT_CONFIG);
+  if (!sheet) throw new Error('Alert Config sheet missing -- run setup().');
+  const row = [rec.department, rec.thresholdRaw, (rec.extraRecipients || []).join(', '),
+               rec.active ? 'TRUE' : 'FALSE', rec.notes || '', rec.skipDatesRaw || ''];
+  const lastRow = sheet.getLastRow();
+  let found = -1;
+  if (lastRow >= 2) {
+    const col = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
+    for (let i = 0; i < col.length; i++) {
+      if (String(col[i][0] || '').trim().toLowerCase() === rec.department.toLowerCase()) { found = i + 2; break; }
+    }
+  }
+  if (found > 0) sheet.getRange(found, 1, 1, 6).setValues([row]);
+  else sheet.appendRow(row);
+}
+
+function removeAlertConfigRow(req) {
+  assertAdmin_();
+  const department = String((req && req.department) || '').trim();
+  if (!department) throw new Error('Department is required.');
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw new Error('Could not acquire script lock; try again.');
+  let removed = 0;
+  try {
+    if (typeof getConfigSource_ === 'function' && getConfigSource_() === 'neon') removed = neonRemoveAlertConfigRow_(department);
+    else removed = sheetRemoveAlertConfigRow_(department);
+    Logger.log('removeAlertConfigRow: removed %s row(s) for %s by %s', removed, department, Session.getActiveUser().getEmail());
+  } finally { lock.releaseLock(); }
+  return { removed: removed };
+}
+
+function sheetRemoveAlertConfigRow_(department) {
+  const ss = openSpreadsheet_();
+  const sheet = ss.getSheetByName(SHEETS.ALERT_CONFIG);
+  if (!sheet || sheet.getLastRow() < 2) return 0;
+  const col = sheet.getRange(2, 1, sheet.getLastRow() - 1, 1).getValues();
+  let removed = 0;
+  for (let i = col.length - 1; i >= 0; i--) {
+    if (String(col[i][0] || '').trim().toLowerCase() === department.toLowerCase()) { sheet.deleteRow(i + 2); removed++; }
+  }
+  return removed;
+}
+
+function neonRemoveAlertConfigRow_(department) {
+  const conn = (typeof getDashboardNeonConn_ === 'function') ? getDashboardNeonConn_() : null;
+  if (!conn) throw new Error('Neon unreachable -- alert_config delete skipped.');
+  let n = 0;
+  try {
+    ensureAlertConfigTable_(conn);
+    const st = conn.prepareStatement('DELETE FROM alert_config WHERE lower(department)=lower(?)');
+    st.setString(1, department);
+    n = st.executeUpdate() || 0;
+    st.close();
+  } finally { try { conn.close(); } catch (e) {} }
+  return n;
+}
+
 /**
  * Parses the E8 "Skip Dates" cell into an array of
  * {from, to} ISO-date ranges. Accepts:

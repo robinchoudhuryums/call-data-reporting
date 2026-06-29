@@ -893,6 +893,100 @@ function compareDigestConfigSources() {
   return { clean: clean, missingInNeon: missingInNeon, missingInSheet: missingInSheet, mismatched: mismatched };
 }
 
+// -- C3 Digest Config WRITE path (admin editor RPCs) ----------------------
+// Public, admin-gated CRUD so subscribers are managed from the Alerts modal
+// instead of by hand. Writes the ACTIVE source (Neon when CONFIG_SOURCE=neon,
+// else the sheet). INV-01 config-write mitigations: assertAdmin_ + validation
+// + LockService (+ audit log). Keyed by (email, department).
+
+function saveDigestConfigRow(req) {
+  assertAdmin_();
+  const email = String((req && req.email) || '').trim();
+  const department = String((req && req.department) || '').trim();
+  if (!acIsValidEmail_(email)) throw new Error('Enter a valid email address.');
+  if (!department) throw new Error('Department is required.');
+  if (getAllDepartments_().indexOf(department) === -1) {
+    throw new Error('"' + department + '" is not a department. It must match a DO NOT EDIT! column header exactly.');
+  }
+  const cadence = normalizeCadence_(String((req && req.cadence) || ''));
+  if (!cadence) throw new Error('Cadence must be daily, weekly, or monthly.');
+  const rec = {
+    email: email, department: department, cadence: cadence,
+    active: !(req && req.active === false), notes: String((req && req.notes) || '').trim().slice(0, 500),
+    format: normalizeFormat_(String((req && req.format) || '')),
+  };
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw new Error('Could not acquire script lock; try again.');
+  try {
+    if (typeof getConfigSource_ === 'function' && getConfigSource_() === 'neon') neonUpsertDigestConfigRow_(rec);
+    else sheetUpsertDigestConfigRow_(rec);
+    Logger.log('saveDigestConfigRow: %s/%s by %s', email, department, Session.getActiveUser().getEmail());
+  } finally { lock.releaseLock(); }
+  return { saved: true };
+}
+
+function sheetUpsertDigestConfigRow_(rec) {
+  const ss = openSpreadsheet_();
+  const sheet = ss.getSheetByName(SHEETS.DIGEST_CONFIG);
+  if (!sheet) throw new Error('Digest Config sheet missing -- run setup().');
+  const row = [rec.email, rec.department, rec.cadence, rec.active ? 'TRUE' : 'FALSE', rec.notes || '', rec.format || ''];
+  const lastRow = sheet.getLastRow();
+  let found = -1;
+  if (lastRow >= 2) {
+    const vals = sheet.getRange(2, 1, lastRow - 1, 2).getValues();
+    for (let i = 0; i < vals.length; i++) {
+      if (String(vals[i][0] || '').trim().toLowerCase() === rec.email.toLowerCase()
+          && String(vals[i][1] || '').trim() === rec.department) { found = i + 2; break; }
+    }
+  }
+  if (found > 0) sheet.getRange(found, 1, 1, 6).setValues([row]);
+  else sheet.appendRow(row);
+}
+
+function removeDigestConfigRow(req) {
+  assertAdmin_();
+  const email = String((req && req.email) || '').trim();
+  const department = String((req && req.department) || '').trim();
+  if (!email || !department) throw new Error('Email and department are required.');
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw new Error('Could not acquire script lock; try again.');
+  let removed = 0;
+  try {
+    if (typeof getConfigSource_ === 'function' && getConfigSource_() === 'neon') removed = neonRemoveDigestConfigRow_(email, department);
+    else removed = sheetRemoveDigestConfigRow_(email, department);
+    Logger.log('removeDigestConfigRow: removed %s for %s/%s by %s', removed, email, department, Session.getActiveUser().getEmail());
+  } finally { lock.releaseLock(); }
+  return { removed: removed };
+}
+
+function sheetRemoveDigestConfigRow_(email, department) {
+  const ss = openSpreadsheet_();
+  const sheet = ss.getSheetByName(SHEETS.DIGEST_CONFIG);
+  if (!sheet || sheet.getLastRow() < 2) return 0;
+  const vals = sheet.getRange(2, 1, sheet.getLastRow() - 1, 2).getValues();
+  let removed = 0;
+  for (let i = vals.length - 1; i >= 0; i--) {
+    if (String(vals[i][0] || '').trim().toLowerCase() === email.toLowerCase()
+        && String(vals[i][1] || '').trim() === department) { sheet.deleteRow(i + 2); removed++; }
+  }
+  return removed;
+}
+
+function neonRemoveDigestConfigRow_(email, department) {
+  const conn = (typeof getDashboardNeonConn_ === 'function') ? getDashboardNeonConn_() : null;
+  if (!conn) throw new Error('Neon unreachable -- digest_config delete skipped.');
+  let n = 0;
+  try {
+    ensureDigestConfigTable_(conn);
+    const st = conn.prepareStatement('DELETE FROM digest_config WHERE lower(email)=lower(?) AND department=?');
+    st.setString(1, email);
+    st.setString(2, department);
+    n = st.executeUpdate() || 0;
+    st.close();
+  } finally { try { conn.close(); } catch (e) {} }
+  return n;
+}
+
 function normalizeCadence_(raw) {
   const s = String(raw || '').toLowerCase().trim();
   if (s === 'daily' || s === 'd' || s === 'day') return 'daily';

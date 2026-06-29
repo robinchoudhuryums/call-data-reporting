@@ -1998,9 +1998,42 @@
               <th>Active</th>
               <th>Skip Dates</th>
               <th>Notes</th>
+              <th>Actions</th>
             </tr></thead>
             <tbody id="al-config-tbody"></tbody>
           </table>
+          <!-- C3 admin edit form (writes the active source: sheet, or Neon
+               when CONFIG_SOURCE=neon). -->
+          <div class="ir-form-grid" style="margin-top:10px; align-items:flex-end;">
+            <div class="ir-col" style="flex:1 1 150px;">
+              <label for="al-cfg-dept">Department</label>
+              <select id="al-cfg-dept"></select>
+            </div>
+            <div class="ir-col" style="flex:0 1 110px;">
+              <label for="al-cfg-threshold">Threshold %</label>
+              <input type="number" id="al-cfg-threshold" min="1" max="100" step="1" placeholder="92">
+            </div>
+            <div class="ir-col" style="flex:1 1 200px;">
+              <label for="al-cfg-extras">Extra recipients</label>
+              <input type="text" id="al-cfg-extras" autocomplete="off" placeholder="a@x.com, b@x.com">
+            </div>
+            <div class="ir-col" style="flex:1 1 160px;">
+              <label for="al-cfg-skip">Skip dates</label>
+              <input type="text" id="al-cfg-skip" autocomplete="off" placeholder="2026-12-25, 2026-12-31..2026-01-01">
+            </div>
+            <div class="ir-col" style="flex:1 1 140px;">
+              <label for="al-cfg-notes">Notes</label>
+              <input type="text" id="al-cfg-notes" autocomplete="off" placeholder="optional">
+            </div>
+            <div class="ir-col" style="flex:0 1 auto;">
+              <label class="al-inline-check"><input type="checkbox" id="al-cfg-active" checked> Active</label>
+            </div>
+          </div>
+          <div class="esc-form-actions">
+            <button class="btn" id="al-cfg-save" type="button">Save dept</button>
+            <button class="btn btn-ghost" id="al-cfg-clear" type="button">Clear</button>
+            <span id="al-cfg-status" class="status" style="display:none;"></span>
+          </div>
         </div>
 
         <div class="al-section">
@@ -2115,6 +2148,37 @@
             </tr></thead>
             <tbody id="al-digest-tbody"></tbody>
           </table>
+          <!-- C3 admin edit form (writes the active source). -->
+          <div class="ir-form-grid" style="margin-top:10px; align-items:flex-end;">
+            <div class="ir-col" style="flex:1 1 220px;">
+              <label for="al-dg-email">Email</label>
+              <input type="email" id="al-dg-email" autocomplete="off" placeholder="name@universalmedsupply.com">
+            </div>
+            <div class="ir-col" style="flex:1 1 150px;">
+              <label for="al-dg-dept">Department</label>
+              <select id="al-dg-dept"></select>
+            </div>
+            <div class="ir-col" style="flex:0 1 120px;">
+              <label for="al-dg-cadence">Cadence</label>
+              <select id="al-dg-cadence"><option value="daily">daily</option><option value="weekly">weekly</option><option value="monthly">monthly</option></select>
+            </div>
+            <div class="ir-col" style="flex:0 1 120px;">
+              <label for="al-dg-format">Format</label>
+              <select id="al-dg-format"><option value="summary">summary</option><option value="insights">insights</option></select>
+            </div>
+            <div class="ir-col" style="flex:1 1 140px;">
+              <label for="al-dg-notes">Notes</label>
+              <input type="text" id="al-dg-notes" autocomplete="off" placeholder="optional">
+            </div>
+            <div class="ir-col" style="flex:0 1 auto;">
+              <label class="al-inline-check"><input type="checkbox" id="al-dg-active" checked> Active</label>
+            </div>
+          </div>
+          <div class="esc-form-actions">
+            <button class="btn" id="al-dg-save" type="button">Save subscriber</button>
+            <button class="btn btn-ghost" id="al-dg-clear" type="button">Clear</button>
+            <span id="al-dg-status" class="status" style="display:none;"></span>
+          </div>
           <p class="al-hint" id="al-digest-trigger-status" style="margin-top: 10px;"></p>
           <div class="al-trigger-actions">
             <button class="btn btn-secondary" id="al-install-digest-btn"   type="button">Install digest triggers</button>
