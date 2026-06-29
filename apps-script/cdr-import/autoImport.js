@@ -191,7 +191,9 @@ function processBulkQueue() {
     qpath: buildHistoryDateSet(targetSS, "Q Path Historical Data"),
     qcd:   buildHistoryDateSet(targetSS, "QCD Historical Data"),
     csr:   buildHistoryDateSet(targetSS, "CSR Transfer Historical Data"),
-    dqe:   buildHistoryDateSet(targetSS, "DQE Historical Data", 2)
+    dqe:   buildHistoryDateSet(targetSS, "DQE Historical Data", 2),
+    // Direct Call History stores its date in col B (col 2), like DQE.
+    direct: buildHistoryDateSet(targetSS, "Direct Call History", 2)
   };
 
   while (index < queue.length) {
@@ -260,6 +262,9 @@ function processBulkQueue() {
   report.push("ℹ️ DQE Neon mirror was deferred (skipNeon). Run "
     + "backfillDQEHistoryUpsert() in the CDR Report project to mirror these "
     + "dates to dqe_history (DO UPDATE).");
+  report.push("ℹ️ Direct-call Neon mirror was deferred (skipNeon). Run "
+    + "backfillDirectCallToNeon() in THIS (CDR Import) project to mirror these "
+    + "dates to direct_call_history (DO UPDATE).");
 
   ui.alert("Bulk Complete", report.join("\n"), ui.ButtonSet.OK);
 
@@ -345,6 +350,9 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
     let existsInCSR   = histDateCache ? histDateCache.csr.has(dateKey)   : checkHistoryForDate(targetSS, "CSR Transfer Historical Data", dateObj);
     // DQE Historical Data stores its date in col B (col 2), not col 3 like the others.
     let existsInDQE   = histDateCache ? histDateCache.dqe.has(dateKey)   : checkHistoryForDate(targetSS, "DQE Historical Data", dateObj, 2);
+    // Direct Call History (Phase 3): col B (col 2) date, same as DQE. Bulk-only
+    // cost guard -- the daily path rebuilds it unconditionally (refresh-in-window).
+    let existsInDirect = (histDateCache && histDateCache.direct) ? histDateCache.direct.has(dateKey) : checkHistoryForDate(targetSS, "Direct Call History", dateObj, 2);
 
     if (existsInCDR && existsInQPath && existsInQCD && existsInCSR && existsInDQE && !force) {
       if (!silent) ui.alert("❌ Aborted", `Data for ${dateObj.toDateString()} already exists.`, ui.ButtonSet.OK);
@@ -377,6 +385,11 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
         if (dqeHD) { deleteHistoricalRowsForDate(dqeHD, dateObj, 2); if (histDateCache) histDateCache.dqe.delete(dateKey); }
         existsInDQE = false;
       }
+      // Direct Call History is refresh-in-window (dcWriteSheet_ deletes the
+      // date's rows before rewriting), so an explicit delete isn't required for
+      // correctness -- just keep the cache flag honest so willBuildDirect fires.
+      if (existsInDirect && histDateCache && histDateCache.direct) histDateCache.direct.delete(dateKey);
+      existsInDirect = false;
       SpreadsheetApp.flush();
     }
 
@@ -386,12 +399,17 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
     const cleanData = sourceData.map(row => row.slice(0, MAX_COLS));
 
     const isHistoricalBackfill = silent && specificDateStr;
-    // Even in bulk-backfill mode we write Raw Data when DQE still needs
-    // building for this date -- buildDQEHistoricalData reads Raw Data
-    // directly. CDR / QPath / QCD / CSR all flow through Pending Archive
-    // (in-memory results), so they don't need the sheet write.
+    // Even in bulk-backfill mode we write Raw Data when DQE OR Direct still
+    // needs building for this date -- buildDQEHistoricalData /
+    // buildDirectCallFromRaw_ both read Raw Data directly. CDR / QPath / QCD /
+    // CSR all flow through Pending Archive (in-memory results), so they don't
+    // need the sheet write. willBuildDirect is its OWN gate (not willBuildDQE):
+    // the primary backfill case is old dates that already have DQE but no
+    // Direct rows, where willBuildDQE is false yet Raw Data must still be
+    // written for the Direct build to consume.
     const willBuildDQE = !existsInDQE;
-    const needsRawDataWrite = !isHistoricalBackfill || willBuildDQE;
+    const willBuildDirect = !existsInDirect;
+    const needsRawDataWrite = !isHistoricalBackfill || willBuildDQE || willBuildDirect;
 
     if (needsRawDataWrite) {
       if (!silent) sourceSS.toast("Transferring...", "Step 2/7", -1);
@@ -480,6 +498,50 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
               });
             } catch (logErr) { /* best-effort */ }
           }
+        }
+      }
+
+      // Direct Call metrics (Phase 3): build the SHEET per date with the Neon
+      // mirror DEFERRED (skipNeon) -- the per-date JDBC latency would dominate a
+      // long bulk run, so it's mirrored in one end-pass via
+      // backfillDirectCallToNeon() (the DQE skipNeon pattern). Gated on
+      // willBuildDirect (cost guard) + fresh Raw Data (needsRawDataWrite was
+      // widened to include willBuildDirect, so the date's legs are present even
+      // when DQE already existed). Best-effort: a failure for one date never
+      // aborts the bulk run.
+      if (willBuildDirect && rawDataSheet && typeof buildDirectCallFromRaw_ === 'function') {
+        const bulkDirectStart = Date.now();
+        try {
+          const directConfig = targetSS.getSheetByName("DO NOT EDIT!");
+          if (directConfig && rawDataSheet.getLastRow() > 1) {
+            const directRaw = rawDataSheet.getDataRange().getDisplayValues();
+            const dres = buildDirectCallFromRaw_(targetSS, directRaw, directConfig, { skipNeon: true });
+            if (dres.wrote > 0 && histDateCache && histDateCache.direct) histDateCache.direct.add(dateKey);
+            historyReport.push(`- Direct Call HD: built ${dres.wrote} rows (Neon deferred)`);
+            try {
+              logPipelineHealthWithFallback_(targetSS, {
+                step:       'bulkBackfill:Direct',
+                status:     'success',
+                rows:       dres.wrote,
+                durationMs: Date.now() - bulkDirectStart,
+                notes:      dateObj.toDateString() + ' | agents=' + dres.meta.agents +
+                            ' missedBusy=' + dres.meta.missedBusyTotal + ' (skipNeon)',
+              });
+            } catch (logErr) { /* best-effort */ }
+          }
+        } catch (directErr) {
+          const dmsg = (directErr && directErr.message) ? directErr.message : String(directErr);
+          console.error('bulkBackfill Direct block failed for ' + dateKey + ': ' + dmsg);
+          historyReport.push(`- Direct Call HD: FAILED (${dmsg})`);
+          try {
+            logPipelineHealthWithFallback_(targetSS, {
+              step:       'bulkBackfill:Direct',
+              status:     'failure',
+              rows:       null,
+              durationMs: Date.now() - bulkDirectStart,
+              notes:      dateObj.toDateString() + ' | ' + dmsg,
+            });
+          } catch (logErr) { /* best-effort */ }
         }
       }
     }
