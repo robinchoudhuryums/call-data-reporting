@@ -545,3 +545,18 @@ commit/push/deploy direction.
   compare{Alert,Digest}ConfigSources clean -> CONFIG_SOURCE=neon, one flag for
   Dept+Alert+Digest). REMAINING Track C: C4 Agent Alias Overrides (cross-project
   pipeline read -- optional). Branch carries increments 42-45; awaiting PR/merge.
+
+- **Increment 46 (DONE — C4 evaluated, recommended AGAINST; Track C closed):**
+  Doc-only. Agent Alias Overrides is read CROSS-PROJECT by the pipeline
+  (loadRosterCanonicalNames_, line 938) in BOTH buildDQEHistoricalData.js copies
+  (INV-16 byte-identical pair) + cdr-report/DQEdrilldown.js, on the daily-build
+  canonicalization hot path; written only by the dashboard Orphan Fix modal
+  (already UI-managed). Moving it to Neon would add a JDBC read + Neon-availability
+  dependency to the daily build via a delicate two-file byte-identical edit, to
+  retire ONE small rarely-edited sheet with no hand-edit pain to solve. Same call
+  as C1: keep it on the sheet (the sheet is the right store for a pipeline-hot-path
+  always-available read). Recorded the decision in docs/ui-infra-roadmap.md; NO
+  code change. node --test 183/183 (unchanged). Where I left off: Track C closed
+  -- C2 + C1 + C3 shipped (Dept/Alert/Digest Neon-flippable; Access Control +
+  Agent Alias + logs stay sheet by design). Branch claude/brave-dijkstra-wuonrv
+  carries increments 42-46, UNMERGED, awaiting PR/merge decision.

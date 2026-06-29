@@ -183,11 +183,21 @@ pattern is the template).
   `assertAdmin_` + validation + `LockService` (pinned by
   `config-editor-c3.test.js`). Cutover: backfill → compare clean → set
   `CONFIG_SOURCE=neon` (one flag covers Dept + Alert + Digest).
-- **C4 (optional, last) — Agent Alias Overrides.** Read CROSS-PROJECT by the
-  cdr-report pipeline (`loadRosterCanonicalNames_`, INV-46) on the daily build
-  hot path. Moving it means the pipeline reads Neon for canonicalization —
-  evaluate whether retiring one sheet is worth that build-path dependency.
-  (Has the Orphan Fix modal as a partial write surface already.)
+- **C4 — Agent Alias Overrides. EVALUATED → RECOMMEND NOT DOING (keep on the
+  sheet).** Read CROSS-PROJECT by the pipeline (`loadRosterCanonicalNames_`,
+  line 938) in BOTH `cdr-report/` and `cdr-import/` `buildDQEHistoricalData.js`
+  — the INV-16 byte-identical pair — plus `cdr-report/DQEdrilldown.js`, on the
+  daily-build canonicalization path. Written only by the dashboard's Orphan Fix
+  modal (already UI-managed). Moving it to Neon would add a JDBC read + a
+  Neon-availability dependency to the daily build (a Neon blip mid-build drops
+  alias application that run → orphans transiently re-appear, self-heal next
+  build) via a delicate two-file byte-identical edit — to retire ONE small,
+  rarely-edited sheet, with NO hand-edit pain to solve (the modal already
+  manages it). Every availability-safe variant (dual-write / sheet-fallback)
+  keeps the sheet alive, defeating the only purpose. **Decision: keep Agent
+  Alias Overrides on the sheet** (same call as C1 Access Control — the sheet
+  is the right store for a pipeline-hot-path, always-available read). Track C's
+  de-clutter is delivered by C2 + C3; C4 is intentionally not pursued.
 
 **Net result:** retires up to 4 config sheets; `setup()` creates fewer. The
 catch is the edit surfaces: only C2 is "free." Recommended scope — **C2 now**
@@ -204,10 +214,13 @@ are worth shrinking the sheet list further.
 
 1. **A** (Missed bar toggle) — small, immediate UX win, client-only.
 2. **B** (Escalations page) — medium, client-only, no infra risk.
-3. **C** (config → Neon) — **C2 Dept Config** first (free: modal CRUD already
-   exists, proves the pattern), then **C1 Access Control** (needs a new admin
-   editor but it's a real win; fail-closed on Neon errors), then treat **C3
-   Alert/Digest** and **C4 Agent Alias** as optional (each costs an edit
-   surface). Plus the 15-min `setup()` hardening up front. NOTE: only C2 is a
-   pure data-swap; C1/C3 each require building an admin CRUD UI to replace the
-   hand-edit-in-sheet workflow (see Track C body).
+3. **C** (config → Neon) — **DONE except C4 (intentionally skipped).**
+   Shipped: C2 Dept Config (Neon-backed, modal already existed), C1 Access
+   Control (kept sheet-backed for auth availability; new admin editor), C3
+   Alert + Digest (Neon-backed data layer + new admin editors in the Alerts
+   modal), plus the `setup()` hardening. **C4 Agent Alias Overrides:
+   evaluated, recommended NOT to move** (cross-project pipeline hot-path read
+   in the INV-16 byte-identical pair; already UI-managed; one tiny sheet) —
+   stays on the sheet. De-clutter delivered: Dept Config + Alert Config +
+   Digest Config become Neon-flippable; Access Control + Agent Alias Overrides
+   + the append-only logs stay on the sheet by design.
