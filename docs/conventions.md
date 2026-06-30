@@ -447,7 +447,7 @@ mirrors it; if the two ever diverge, INV-30 wins.
 
 | Source file | Cache prefix | Current version |
 |---|---|---|
-| `Data.gs` (main table) | `summary:vN:` | `v9` |
+| `Data.gs` (main table) | `summary:vN:` | `v10` |
 | `Data.gs` (latest-date snap for default From/To) | `latestDate:vN:` | `v1` |
 | `Data.gs` (multi-source latest dates for freshness pill) | `latestDates:vN:` | `v1` |
 | `IndividualReport.gs` | `individual:vN:` | `v8` |

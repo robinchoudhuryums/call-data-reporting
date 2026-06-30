@@ -432,15 +432,26 @@ test('dept QCD snapshot separates queues (and tags sub-queue owners)', function 
   assert.equal(alpha.totalCalls, 100);
   assert.equal(alpha.abandonedPctStr, '10.00%');
   assert.equal(beta.totalCalls, 50);
-  // All-queues total still available for the labeled total row.
-  assert.equal(snap.totalCalls, 150);
-  assert.equal(snap.violations, 1);
+  // P3: the unqualified dept total is OWN-queues-only (Alpha 100), so it
+  // reconciles with the QCD modal / Overview -- the child (Beta) is NOT folded
+  // in. The all-inclusive figure is surfaced separately via allTotals; the
+  // sub-queue rollup via subTotals.
+  assert.equal(snap.totalCalls, 100, 'canonical total = own queues only');
+  assert.equal(snap.violations, 1, 'own-queue violations');
+  assert.equal(snap.mainQueueCount, 1);
+  assert.equal(snap.subQueueCount, 1);
+  assert.equal(snap.subTotals.totalCalls, 50, 'sub-queue rollup');
+  assert.equal(snap.allTotals.totalCalls, 150, 'all queues incl. sub-queues');
+  assert.equal(snap.allTotals.violations, 1);
 
-  // Single-queue dept: perQueue has exactly one entry matching the totals.
+  // Single-queue dept (no children): own total stands alone; no sub/all rollup.
   const single = h.call('computeDeptQcdSnapshot_', 'Beta', 'America/Chicago');
   assert.equal(single.perQueue.length, 1);
   assert.equal(single.perQueue[0].queue, 'A_Q_Beta');
   assert.equal(single.totalCalls, 50);
+  assert.equal(single.subQueueCount, 0);
+  assert.equal(single.subTotals, null, 'no sub-queues -> subTotals null');
+  assert.equal(single.allTotals, null, 'no sub-queues -> allTotals null');
 });
 
 test('Insights: queueHealth daily series + always-separated sub-queues', function () {

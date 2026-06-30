@@ -4685,7 +4685,33 @@
           : '';
         return { name: escapeHtml(q.queue) + tag, html: tileRow(q) };
       });
-      pages.push({ name: 'All queues', html: tileRow(qcd) });
+      // P3: gated summary pages. The own-dept total is the canonical number
+      // that reconciles with the QCD modal / Overview; the all-inclusive
+      // figure is shown only under an explicit "All queues (incl.
+      // sub-queues)" label so it can't be mistaken for the dept total. Each
+      // subtotal renders only when it isn't a redundant copy of a single row:
+      //   - Main-queues subtotal: only when >1 own queue.
+      //   - Sub-queues subtotal: only when >1 sub-queue.
+      //   - All-queues total: only when sub-queues exist (else it == main).
+      // With no sub-queues, the own rollup is simply "Department total".
+      const hasSub = (qcd.subQueueCount || 0) > 0;
+      const ownTotals = {
+        totalCalls:      qcd.totalCalls,
+        totalAnswered:   qcd.totalAnswered,
+        abandoned:       qcd.abandoned,
+        abandonedPct:    qcd.abandonedPct,
+        abandonedPctStr: qcd.abandonedPctStr,
+        violations:      qcd.violations,
+      };
+      if ((qcd.mainQueueCount || 0) > 1) {
+        pages.push({ name: hasSub ? 'Main queues' : 'Department total', html: tileRow(ownTotals) });
+      }
+      if ((qcd.subQueueCount || 0) > 1 && qcd.subTotals) {
+        pages.push({ name: 'Sub-queues (separate depts)', html: tileRow(qcd.subTotals) });
+      }
+      if (hasSub && qcd.allTotals) {
+        pages.push({ name: 'All queues (incl. sub-queues)', html: tileRow(qcd.allTotals) });
+      }
 
       tiles.innerHTML =
           '<div class="dept-qcd-carousel">'

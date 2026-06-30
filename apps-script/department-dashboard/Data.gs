@@ -230,7 +230,10 @@ function getDepartmentSummary(req) {
   // `meta.priorTo` carry the computed window so the client can
   // show it in chip hover tooltips.
   // v9: qcdSnapshot shape gains perQueue (sub-queues separated).
-  const cacheKey = 'summary:v9:' + dept + ':' + scope + ':' + from + ':' + to;
+  // v10 (P3): qcdSnapshot's unqualified total is OWN-queues-only (reconciles
+  //   with the QCD modal / Overview); adds subTotals / allTotals +
+  //   mainQueueCount / subQueueCount for the gated Main/Sub/All summary lines.
+  const cacheKey = 'summary:v10:' + dept + ':' + scope + ':' + from + ':' + to;
   const cached = cache.get(cacheKey);
   if (cached) {
     try {
@@ -757,14 +760,27 @@ function computeDeptQcdSnapshot_(dept, ssTZ) {
     }
     if (!latestDate) return null;
 
-    let total = 0, answered = 0, abandoned = 0, violations = 0;
+    // P3: decompose the day's totals into OWN (main) queues vs SUB-queues
+    // (each child queue belongs to its own department). The UNQUALIFIED dept
+    // total is OWN-queues-only, so it reconciles with the QCD modal's
+    // "Department total (own queues)", the Overview tile, and the
+    // all-departments report -- a sub-queue is never folded into the parent's
+    // headline (which would double-count it against the child's own total).
+    // The all-inclusive figure is surfaced SEPARATELY via allTotals and
+    // rendered under an explicit "All queues (incl. sub-queues)" label.
+    const ownAcc = { total: 0, answered: 0, abandoned: 0, violations: 0 };
+    const subAcc = { total: 0, answered: 0, abandoned: 0, violations: 0 };
+    let mainQueueCount = 0, subQueueCount = 0;
     // Only queues with rows on the latest date render -- a mapped queue
     // with no traffic that day would just add a zero row of noise.
     const perQueue = queues.filter(function (q) { return !!byQueue[q]; })
       .map(function (q) {
         const b = byQueue[q];
-        total += b.total; answered += b.answered;
-        abandoned += b.abandoned; violations += b.violations;
+        const isSub = !!queueOwner[q];
+        const acc = isSub ? subAcc : ownAcc;
+        acc.total += b.total; acc.answered += b.answered;
+        acc.abandoned += b.abandoned; acc.violations += b.violations;
+        if (isSub) subQueueCount++; else mainQueueCount++;
         const pct = b.total > 0 ? (b.abandoned / b.total) * 100 : 0;
         return {
           queue:           q,
@@ -777,16 +793,39 @@ function computeDeptQcdSnapshot_(dept, ssTZ) {
           violations:      b.violations,
         };
       });
-    const pct = total > 0 ? (abandoned / total) * 100 : 0;
+    const mkTotals = function (a) {
+      const pct = a.total > 0 ? (a.abandoned / a.total) * 100 : 0;
+      return {
+        totalCalls:      a.total,
+        totalAnswered:   a.answered,
+        abandoned:       a.abandoned,
+        abandonedPct:    pct,
+        abandonedPctStr: pct.toFixed(2) + '%',
+        violations:      a.violations,
+      };
+    };
+    const hasSub = subQueueCount > 0;
+    const allAcc = {
+      total:      ownAcc.total + subAcc.total,
+      answered:   ownAcc.answered + subAcc.answered,
+      abandoned:  ownAcc.abandoned + subAcc.abandoned,
+      violations: ownAcc.violations + subAcc.violations,
+    };
+    const own = mkTotals(ownAcc);
     return {
       date:             latestDate,
       perQueue:         perQueue,
-      totalCalls:       total,
-      totalAnswered:    answered,
-      abandoned:        abandoned,
-      abandonedPct:     pct,
-      abandonedPctStr:  pct.toFixed(2) + '%',
-      violations:       violations,
+      // Canonical dept total = OWN queues only (P3; reconciles cross-surface).
+      totalCalls:       own.totalCalls,
+      totalAnswered:    own.totalAnswered,
+      abandoned:        own.abandoned,
+      abandonedPct:     own.abandonedPct,
+      abandonedPctStr:  own.abandonedPctStr,
+      violations:       own.violations,
+      mainQueueCount:   mainQueueCount,
+      subQueueCount:    subQueueCount,
+      subTotals:        hasSub ? mkTotals(subAcc) : null,
+      allTotals:        hasSub ? mkTotals(allAcc) : null,
     };
   } catch (e) {
     Logger.log('computeDeptQcdSnapshot_ failed: %s', e);
