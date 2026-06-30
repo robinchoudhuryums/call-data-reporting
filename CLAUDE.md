@@ -414,12 +414,16 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   the inbound report's **admin-only vetting gate** + per-dept scoping) and
   `inboundDeptPredicate_`. Cached `inboundHeatmap:v1`. Rendered by the
   SHARED client `renderAbandonHeatmap_` / `loadAbandonHeatmap_` as a
-  CSS-grid heatmap (no Chart.js dep) in BOTH the **Inbound report**
-  (`#inbound-heatmap`, always, since that report is admin-only) AND the
+  CSS-grid heatmap (no Chart.js dep) in the **Inbound report**
+  (`#inbound-heatmap`, always, since that report is admin-only), the
   **QCD report** (`#qcd-heatmap`, companion -- the load call is gated by
   `USER.role==='admin'` in `qcdRenderReport_` so managers never hit the
   admin endpoint; opens to managers automatically when the inbound
-  report's one-line gate is later removed). Cell color pivots on the 5%
+  report's one-line gate is later removed), AND the **Insights report**
+  (`#ins-heatmap`, a Queue-health companion gated by the SAME
+  `USER.role==='admin'` check in `insRenderReport_` -- part of the
+  QCD->Insights consolidation parity; managers get the else-branch hide).
+  Cell color pivots on the 5%
   company standard (C2): ≤5% calm sage, >5% ramps warm; cells under
   `HEAT_MIN_VOLUME_`=3 calls render muted ("low signal"), colors resolve
   through `colorToCanvasRgb_` so they're OKLCH/theme-safe (INV-42).
@@ -484,6 +488,26 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   "unavailable" note on a genuine compute failure, F8) -- the consolidation path
   toward Insights replacing QCD for day-to-day use, with the QCD
   Report remaining the deep dive (per-queue charts, daily series).
+  **Phase 2 parity (heatmap + agent-free run, commit c7b6b06):** Insights
+  now also renders the temporal abandon **heatmap** (`#ins-heatmap`,
+  admin-only, reusing `getInboundHeatmap`) as a Queue-health companion,
+  and can be generated **agent-free** -- an EMPTY agent selection defaults
+  to the full dept roster (the digest pattern, INV-45; floaters excluded)
+  via the shared `resolveInsightsAgents_` used by BOTH `getInsightsReport`
+  and `sendInsightsReportEmail`, so a manager can open Insights as a queue
+  / dept dashboard without first picking agents. The non-empty path is
+  byte-equivalent to the dedup loop it replaced; the only remaining throw
+  is a genuinely empty roster. Client: Generate is enabled whenever the
+  roster is non-empty (`insUpdateGenerate` counts `.ir-agent-cb`, not
+  `:checked`), and the picker hint advertises the whole-department view.
+  **No cache bump** -- `meta.agents` already carried the resolved selection,
+  so agent-free is byte-identical to explicitly selecting the whole roster
+  (deterministic per `hashAgents_` key; insights:v14 unchanged). The QCD
+  tab/modal/`getQcdReport` are KEPT for parallel-run validation
+  (parity-first house style, INV-51); the `/report/qcd` repoint + the QCD
+  retirement (deleting the tab/modal/`getQcdReport`, keeping
+  `computeQcdReport_` / `getQcdAllDepartments` / the two snapshot paths)
+  are the deferred follow-up.
   **Chart consolidation (seq #1, insights:v14):** the 12-mo team-trend
   chart and the queue-health abandoned-% chart are ONE tabbed chart
   (`insRenderTrendChart_` on `ins-trend-chart`): metric tabs Answered /
@@ -2150,7 +2174,8 @@ S37 | Insights report end-to-end (comparison modes + CR-ported analytics) | Subs
     - Cards carry a left-border classification tint (improved=accent / regressed=warn / mixed=muted) + a "vs Team" badge; the Sort control re-orders (Most answered default / Name / Biggest improvers / Biggest regressors); agents with no notable movement collapse into "Show N quiet agents".
     - Switch Compare against to "Same window one year prior" -> hint previews the resolved YoY window; Generate -> "Comparing against the selected prior window" line + per-agent prevs from the YoY window.
     - Switch to "Custom prior range" with a window >= 1.2x longer -> form hint warns about the length difference; after Generate, the results show the different-window-lengths banner and per-day sublines on volume/time metrics (INV-35 contract).
-    - Queue health (when the dept is QCD-mapped): the per-queue detail table renders one row per queue with abandoned % / abandoned / violations. For a queue whose abandons are driven by a non-Overall call source (4c), the queue-name cell shows a muted "↳ most abandons: <source> (N)" annotation; queues with no sub-source abandons show no annotation.
+    - Queue health (when the dept is QCD-mapped): the per-queue detail table renders one row per queue with abandoned % / abandoned / violations. For a queue whose abandons are driven by a non-Overall call source (4c), the queue-name cell shows a muted "↳ most abandons: <source> (N)" annotation; queues with no sub-source abandons show no annotation. As ADMIN, an `#ins-heatmap` weekday×hour abandon heatmap renders below Queue health (the same shared panel the QCD report shows); managers don't see it.
+    - Agent-free run (Phase 2 parity): leave ALL agents unchecked and Generate -> the report runs over the whole dept roster (the digest pattern, INV-45; floaters excluded), rendering the team rollup + Queue health + every roster agent's card -- the QCD-replacement queue/dept quick-look. Generate stays enabled with nothing checked (only a truly empty roster disables it).
     - Export -> Email report sends a SERVER-RENDERED HTML report (department rollup tiles + per-agent delta table) via sendInsightsReportEmail, recomputed from the same params -- no charts in the email (Copy image / Print keep the charts); Print does the same as before.
     - Console negative test: getInsightsReport for another dept throws "Not authorized for this department."
   Expected: all of the above; teamStats matches a Performance Report run with identical inputs to the digit (the unit parity test in insights-report.test.js pins this -- if S37 and S14 ever disagree, the parity test should already be red).
