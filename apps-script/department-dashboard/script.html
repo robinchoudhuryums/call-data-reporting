@@ -11647,6 +11647,10 @@
   let insHasQuiet_ = false;        // whether the current render has quiet agents
   let insShareChartInstance = null;   // share-of-answered pie (PR port)
   let insActiveTrendMetric = 'answered';
+  // gap 1: when the trend chart's "By Queue" tab is active, which per-queue
+  // metric to plot -- 'abandonedPct' (default, the 5%-standard view) |
+  // 'totalCalls' | 'violations'. Persisted in prefs.
+  let insQueueMetric = 'abandonedPct';
   let insCardSort = 'default';      // default (answered desc) | name | improvers | regressors
   // v2: prefs gain compareMode / priorFrom / priorTo / trendMetric
   // (older v1 blobs are silently dropped per the prefs-versioning
@@ -11792,6 +11796,14 @@
         b.classList.toggle('active', active);
         b.setAttribute('aria-selected', active ? 'true' : 'false');
       });
+      insSavePrefs_();
+      if (insLastData) insRenderTrendChart_(insLastData);
+    });
+
+    // gap 1: per-queue metric sub-selector (only meaningful on the By Queue tab).
+    const queueMetricSel = $('ins-queue-metric');
+    if (queueMetricSel) queueMetricSel.addEventListener('change', function () {
+      insQueueMetric = this.value || 'abandonedPct';
       insSavePrefs_();
       if (insLastData) insRenderTrendChart_(insLastData);
     });
@@ -12433,10 +12445,17 @@
     if (!hasDaily && insTrendView === 'daily') insTrendView = 'monthly';
     const daily = (insTrendView === 'daily') && hasDaily;
 
+    // gap 1: the per-queue metric sub-selector is only meaningful on the
+    // By Queue tab -- show it there, hide it on the team-metric tabs.
+    const queueMetricWrap = $('ins-queue-metric-wrap');
+    if (queueMetricWrap) queueMetricWrap.style.display = isQueues ? '' : 'none';
+    const qMetricLabel = { abandonedPct: 'abandoned % by queue',
+      totalCalls: 'total calls by queue', violations: 'violations by queue' };
+
     const headerEl = $('ins-trend-header');
     if (headerEl) {
       headerEl.textContent = (daily ? 'Daily team trend' : '12-month team trend')
-        + (isQueues ? ' — abandoned % by queue' : '');
+        + (isQueues ? ' — ' + (qMetricLabel[insQueueMetric] || 'by queue') : '');
     }
 
     const fmtMin = function (val) {
@@ -12450,17 +12469,26 @@
     let chartConfig;
 
     if (isQueues) {
-      // Abandoned % by Queue: one line per queue + own-only dept total +
-      // the 5% threshold (the QCD violation rule). Hidden gracefully if
-      // there's no queue trend (unmapped dept / QCD unavailable).
+      // By Queue (gap 1): one line per queue + own-only dept total, for the
+      // metric the sub-selector picks (insQueueMetric). Abandoned % is the
+      // default and adds the 5% threshold line + % formatting (the QCD
+      // violation rule); Total Calls / Violations are integer counts with no
+      // threshold line. Hidden gracefully if there's no queue trend (unmapped
+      // dept / QCD unavailable).
       if (!qhTrend || !(qhTrend.labels || []).length) {
         canvas.style.display = 'none';
         return;
       }
       canvas.style.display = '';
+      const qMetric = insQueueMetric || 'abandonedPct';
+      const isPct = (qMetric === 'abandonedPct');
+      // Abandoned % reads the default/legacy series; the other metrics read
+      // trend.metrics[qMetric] (server-side, gap 1).
+      const mSrc = isPct ? qhTrend : ((qhTrend.metrics && qhTrend.metrics[qMetric]) || {});
       const labels   = daily ? qhTrend.dailyLabels : qhTrend.labels;
-      const totalSer = daily ? (qhTrend.dailyTotal || []) : (qhTrend.total || []);
-      const perQueue = daily ? (qhTrend.dailyPerQueue || {}) : (qhTrend.perQueue || {});
+      const totalSer = daily ? (mSrc.dailyTotal || []) : (mSrc.total || []);
+      const perQueue = daily ? (mSrc.dailyPerQueue || {}) : (mSrc.perQueue || {});
+      const fmtVal = function (v) { return isPct ? (Number(v).toFixed(1) + '%') : fmtNumber(v); };
       const qNames = Object.keys(perQueue);
       const datasets = qNames.map(function (q, i) {
         const c = IR_CHART_COLORS[i % IR_CHART_COLORS.length];
@@ -12472,9 +12500,11 @@
           borderColor: THEME.ink, backgroundColor: THEME.ink,
           borderDash: [5, 4], borderWidth: 1.4, pointRadius: 0, tension: 0.25, fill: false });
       }
-      datasets.push({ label: '5% threshold', data: labels.map(function () { return 5; }),
-        borderColor: THEME.muted, borderDash: [3, 4], borderWidth: 1,
-        pointRadius: 0, fill: false, order: 99 });
+      if (isPct) {
+        datasets.push({ label: '5% threshold', data: labels.map(function () { return 5; }),
+          borderColor: THEME.muted, borderDash: [3, 4], borderWidth: 1,
+          pointRadius: 0, fill: false, order: 99 });
+      }
       chartConfig = {
         type: 'line',
         data: { labels: labels, datasets: datasets },
@@ -12492,7 +12522,7 @@
               font: { family: "'IBM Plex Mono', monospace", size: 10, weight: '500' },
               formatter: function (value, c) {
                 if (c.dataset.label === '5% threshold' || value == null) return '';
-                return Number(value).toFixed(1) + '%';
+                return fmtVal(value);
               },
             },
             legend: { position: 'bottom', labels: { boxWidth: 18,
@@ -12500,13 +12530,13 @@
             tooltip: {
               filter: function (ctx) { return ctx.dataset.label !== '5% threshold'; },
               callbacks: { label: function (ctx) {
-                return ctx.dataset.label + ': ' + (ctx.parsed.y == null ? '-' : ctx.parsed.y.toFixed(1) + '%');
+                return ctx.dataset.label + ': ' + (ctx.parsed.y == null ? '-' : fmtVal(ctx.parsed.y));
               } },
             },
           },
           scales: {
             x: { ticks: { maxRotation: 0, autoSkip: true } },
-            y: { beginAtZero: true, ticks: { callback: function (v) { return v + '%'; } } },
+            y: { beginAtZero: true, ticks: { callback: function (v) { return isPct ? (v + '%') : fmtNumber(v); } } },
           },
         },
       };
@@ -13200,6 +13230,7 @@
         priorFrom:   $('ins-prior-from')   ? $('ins-prior-from').value   : '',
         priorTo:     $('ins-prior-to')     ? $('ins-prior-to').value     : '',
         trendMetric: insActiveTrendMetric,
+        queueMetric: insQueueMetric,
         trendView:   insTrendView,
         showLabels:  $('ins-show-datalabels') ? $('ins-show-datalabels').checked : false,
         cardSort:    insCardSort,
@@ -13234,6 +13265,10 @@
           b.classList.toggle('active', active);
           b.setAttribute('aria-selected', active ? 'true' : 'false');
         });
+      }
+      if (prefs.queueMetric === 'abandonedPct' || prefs.queueMetric === 'totalCalls' || prefs.queueMetric === 'violations') {
+        insQueueMetric = prefs.queueMetric;
+        if ($('ins-queue-metric')) $('ins-queue-metric').value = insQueueMetric;
       }
       if (prefs.trendView === 'daily' || prefs.trendView === 'monthly') {
         insTrendView = prefs.trendView;

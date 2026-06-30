@@ -1726,6 +1726,16 @@
                 <button type="button" class="seg-btn active" data-view="monthly" role="radio" aria-checked="true">Monthly</button>
                 <button type="button" class="seg-btn" data-view="daily" role="radio" aria-checked="false">Daily</button>
               </div>
+              <!-- gap 1: per-queue metric sub-selector, shown only when the
+                   "By Queue" tab is active (insRenderTrendChart_ toggles it). -->
+              <label class="ir-sort-control" id="ins-queue-metric-wrap" style="display:none;">
+                <span class="ir-sort-label">Queue metric:</span>
+                <select id="ins-queue-metric">
+                  <option value="abandonedPct">Abandoned %</option>
+                  <option value="totalCalls">Total Calls</option>
+                  <option value="violations">Violations</option>
+                </select>
+              </label>
               <div class="ir-toggle-box" id="ins-datalabels-box">
                 <label class="ir-toggle-label">
                   <input type="checkbox" id="ins-show-datalabels"> Show data labels
@@ -1737,7 +1747,7 @@
             <button type="button" class="pr-trend-subtab active" data-metric="answered" role="tab" aria-selected="true">Answered</button>
             <button type="button" class="pr-trend-subtab" data-metric="pct" role="tab" aria-selected="false">% Answered</button>
             <button type="button" class="pr-trend-subtab" data-metric="att" role="tab" aria-selected="false">Avg Talk Time</button>
-            <button type="button" class="pr-trend-subtab" data-metric="queues" role="tab" aria-selected="false">Abandoned % by Queue</button>
+            <button type="button" class="pr-trend-subtab" data-metric="queues" role="tab" aria-selected="false">By Queue</button>
           </div>
           <div class="ir-chart-canvas-wrap"><canvas id="ins-trend-chart"></canvas></div>
         </div>

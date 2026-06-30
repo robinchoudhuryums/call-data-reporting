@@ -505,4 +505,14 @@ test('Insights: queueHealth daily series + always-separated sub-queues', functio
   const overall = alphaRow.bySource.filter(function (s) { return s.isOverall; })[0];
   assert.ok(overall, 'bySource has the Overall rollup row');
   assert.equal(overall.totalCalls, 180);
+
+  // Consolidation Phase 1 (gap 1): trend.metrics carries Total Calls +
+  // Violations series parallel to the default abandoned-% series, so the
+  // by-queue chart tab can switch metric. Own-dept total = Alpha only.
+  // NOTE: compare via join(',') not deepEqual -- the harness returns arrays
+  // from a vm realm whose Array.prototype differs, which trips deepStrictEqual.
+  assert.ok(t.metrics && t.metrics.totalCalls && t.metrics.violations, 'trend.metrics present');
+  assert.equal(t.metrics.totalCalls.dailyTotal.join(','), '100,80', 'own-dept daily total calls');
+  assert.equal(t.metrics.totalCalls.dailyPerQueue['A_Q_Beta'].join(','), '50,0', 'child daily total calls');
+  assert.equal(t.metrics.violations.dailyTotal.join(','), '1,0', 'own-dept daily violations');
 });

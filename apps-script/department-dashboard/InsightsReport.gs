@@ -78,7 +78,7 @@
 //     (from the bySource breakdown 4a added to computeQcdReport_), so
 //     the Queue health table can annotate WHERE a queue's abandons come
 //     from. Null when no sub-source has abandons.
-const INSIGHTS_CACHE_KEY_PREFIX = 'insights:v13';
+const INSIGHTS_CACHE_KEY_PREFIX = 'insights:v14';
 
 function getInsightsReportInit(req) {
   // Same picker UX (roster + default dates + active-in-range subset) as
@@ -579,28 +579,56 @@ function insightsQueueHealth_(dept, from, to, priorFrom, priorTo) {
     let trend = null;
     const td = cur.trendData;
     if (td && Array.isArray(td.labels) && td.labels.length) {
-      const perQueuePct = {};
-      (cur.meta.queues || []).forEach(function (q) {
-        const m = td.perQueue && td.perQueue[q] && td.perQueue[q].monthly;
-        if (m) perQueuePct[q] = m.map(function (b) { return round1_(b.abandonedPct); });
-      });
+      const qList = cur.meta.queues || [];
+      // Generic per-field extractors so the queue-view metric sub-selector
+      // (consolidation Phase 1, gap 1) can render Abandoned % / Total Calls /
+      // Violations from the SAME monthly/daily buckets (each carries all three).
+      const monthlyPerQueue = function (field) {
+        const out = {};
+        qList.forEach(function (q) {
+          const m = td.perQueue && td.perQueue[q] && td.perQueue[q].monthly;
+          if (m) out[q] = m.map(function (b) { return round1_(b[field]); });
+        });
+        return out;
+      };
+      const monthlyTotal = function (field) {
+        return (td.series || []).map(function (b) { return round1_(b[field]); });
+      };
       trend = {
         labels: td.labels,
-        total: (td.series || []).map(function (b) { return round1_(b.abandonedPct); }),
-        perQueue: perQueuePct,
+        // Abandoned % is the DEFAULT/legacy series (drives the forecast +
+        // back-compat with the existing "by queue" chart path).
+        total: monthlyTotal('abandonedPct'),
+        perQueue: monthlyPerQueue('abandonedPct'),
+        // gap 1: the other two queue metrics, same monthly structure, read by
+        // the client when the queue-view sub-selector picks them.
+        metrics: {
+          totalCalls: { total: monthlyTotal('totalCalls'), perQueue: monthlyPerQueue('totalCalls') },
+          violations: { total: monthlyTotal('violations'), perQueue: monthlyPerQueue('violations') },
+        },
       };
-      // Daily view (the QCD daily series, abandoned-% only) -- selected
-      // range scoped. Also feeds the days-to-violation forecast.
+      // Daily view -- selected range scoped. dailyTotal (abandoned %) also
+      // feeds the days-to-violation forecast, so it stays the default series.
       const daily = cur.dailySeries || [];
       if (daily.length) {
+        const dailyPerQueueOf = function (field) {
+          const out = {};
+          qList.forEach(function (q) {
+            const dq = cur.perQueue && cur.perQueue[q] && cur.perQueue[q].daily;
+            if (dq) out[q] = dq.map(function (d) { return round1_(d[field]); });
+          });
+          return out;
+        };
+        const dailyTotalOf = function (field) {
+          return daily.map(function (d) { return round1_(d[field]); });
+        };
         trend.dailyLabels = daily.map(function (d) { return d.date; });
-        trend.dailyTotal  = daily.map(function (d) { return round1_(d.abandonedPct); });
-        const dailyPerQueue = {};
-        (cur.meta.queues || []).forEach(function (q) {
-          const dq = cur.perQueue && cur.perQueue[q] && cur.perQueue[q].daily;
-          if (dq) dailyPerQueue[q] = dq.map(function (d) { return round1_(d.abandonedPct); });
-        });
-        trend.dailyPerQueue = dailyPerQueue;
+        trend.dailyTotal  = dailyTotalOf('abandonedPct');
+        trend.dailyPerQueue = dailyPerQueueOf('abandonedPct');
+        trend.metrics.totalCalls.dailyTotal    = dailyTotalOf('totalCalls');
+        trend.metrics.totalCalls.dailyPerQueue = dailyPerQueueOf('totalCalls');
+        trend.metrics.violations.dailyTotal    = dailyTotalOf('violations');
+        trend.metrics.violations.dailyPerQueue = dailyPerQueueOf('violations');
       }
     }
     return {
