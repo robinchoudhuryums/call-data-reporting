@@ -86,6 +86,35 @@ function getInsightsReportInit(req) {
   return getIndividualReportInit(req);
 }
 
+/**
+ * Resolve a requested agent list to a deduped, trimmed selection. An EMPTY
+ * request defaults to the full department roster (the digest pattern, INV-45)
+ * -- this powers the agent-free "queue / dept dashboard" run of Insights (the
+ * QCD-report-replacement quick-look): a manager who picks no agent still gets
+ * the team rollup + Queue health + trend + every roster agent's card.
+ * Floaters stay excluded because only roster names seed the default. INV-53:
+ * a NON-empty selection keeps the input gate open (off-dept crafted names
+ * fall out at the row-scan layer). The non-empty path is byte-equivalent to
+ * the dedup loop it replaced in getInsightsReport / sendInsightsReportEmail.
+ */
+function resolveInsightsAgents_(rawAgents, roster) {
+  const seen = {};
+  const out = [];
+  const push = function (name) {
+    const n = String(name || '').trim();
+    if (!n || seen[n]) return;
+    seen[n] = true;
+    out.push(n);
+  };
+  const list = Array.isArray(rawAgents) ? rawAgents : [];
+  for (let i = 0; i < list.length; i++) push(list[i]);
+  if (out.length === 0) {
+    const names = (roster && roster.names) || [];
+    for (let i = 0; i < names.length; i++) push(names[i]);
+  }
+  return out;
+}
+
 function getInsightsReport(req) {
   const email = Session.getActiveUser().getEmail();
   const user = resolveUser_(email);
@@ -114,22 +143,16 @@ function getInsightsReport(req) {
     }
   }
 
-  const rawAgents = (req && req.agents) || [];
-  if (!Array.isArray(rawAgents) || rawAgents.length === 0) {
-    throw new Error('Select at least one agent.');
-  }
   const roster = getRosterForDepartment_(dept);
   // INV-53: keep the input gate open so floaters can be included; off-dept
   // crafted names with no queue overlap fall out at the row-scan layer.
-  const seen = {};
-  const selectedAgents = [];
-  for (let i = 0; i < rawAgents.length; i++) {
-    const n = String(rawAgents[i] || '').trim();
-    if (!n || seen[n]) continue;
-    seen[n] = true;
-    selectedAgents.push(n);
-  }
-  if (selectedAgents.length === 0) throw new Error('No selected agent provided.');
+  // Agent-free (QCD-replacement) run: an EMPTY selection defaults to the full
+  // department roster (resolveInsightsAgents_ -- the digest pattern, INV-45),
+  // so a manager can open Insights as a queue / dept dashboard without first
+  // picking agents and still get the team rollup + Queue health + trend +
+  // every roster agent's card.
+  const selectedAgents = resolveInsightsAgents_(req && req.agents, roster);
+  if (selectedAgents.length === 0) throw new Error('No agents on this department\'s roster.');
 
   // MD5 hash keeps the cache key bounded regardless of selection size
   // (CacheService rejects keys > 250 chars; INV-36).
@@ -802,18 +825,11 @@ function sendInsightsReportEmail(req) {
     }
   }
 
-  const rawAgents = (req && req.agents) || [];
-  if (!Array.isArray(rawAgents) || rawAgents.length === 0) throw new Error('Select at least one agent.');
   const roster = getRosterForDepartment_(dept);
-  const seen = {};
-  const selectedAgents = [];
-  for (let i = 0; i < rawAgents.length; i++) {
-    const n = String(rawAgents[i] || '').trim();
-    if (!n || seen[n]) continue;
-    seen[n] = true;
-    selectedAgents.push(n);
-  }
-  if (!selectedAgents.length) throw new Error('No selected agent provided.');
+  // Agent-free run defaults to the full roster (INV-45), mirroring
+  // getInsightsReport so the emailed report matches the on-screen one.
+  const selectedAgents = resolveInsightsAgents_(req && req.agents, roster);
+  if (!selectedAgents.length) throw new Error('No agents on this department\'s roster.');
 
   const data = computeInsights_(dept, from, to, selectedAgents, roster,
                                 customPriorFrom, customPriorTo);

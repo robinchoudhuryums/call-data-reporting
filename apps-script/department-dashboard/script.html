@@ -12031,8 +12031,12 @@
   }
   function insToggleAgents(on) { selectAllActiveAgents_($('ins-agent-list'), on); insUpdateGenerate(); insSavePrefs_(); }
   function insUpdateGenerate() {
-    const boxes = $('ins-agent-list').querySelectorAll('.ir-agent-cb:checked');
-    $('ins-generate-btn').disabled = boxes.length === 0;
+    // Agent-free run: Generate is enabled whenever the roster has any agent
+    // (checked or not) -- leaving everything unchecked runs the whole
+    // department (the QCD-style queue / dept quick-look). Only a truly empty
+    // roster disables it.
+    const total = $('ins-agent-list').querySelectorAll('.ir-agent-cb').length;
+    $('ins-generate-btn').disabled = total === 0;
   }
 
   function runInsReport() {
@@ -12041,7 +12045,8 @@
     if (!from || !to) { insSetFormError('Pick a start and end date.'); return; }
     if (from > to) { insSetFormError('Start date must be on or before end date.'); return; }
     const agents = irGetCheckedAgents_($('ins-agent-list'));
-    if (!agents.length) { insSetFormError('Select at least one agent.'); return; }
+    // Agent-free run: an empty selection is allowed -- the server defaults to
+    // the full department roster (the QCD-replacement queue / dept view).
     // Resolve the comparison window. prevPeriod -> null (server's
     // INV-28 auto-adjacent default); yoy/custom -> explicit dates.
     const prior = insResolvePriorRange_(from, to);
@@ -12163,6 +12168,15 @@
 
     insRenderLengthWarning_(data.meta);
     insRenderQueueHealth_(data.queueHealth);
+    // Temporal abandon heatmap companion to Queue health (sourced from
+    // inbound_calls). Admin only -- getInboundHeatmap inherits the inbound
+    // report's vetting gate, so managers never call it and the panel stays
+    // hidden for them (same gate as the QCD report's heatmap).
+    if (USER.role === 'admin' && data.meta) {
+      loadAbandonHeatmap_('ins-heatmap', data.meta.department || '', data.meta.from, data.meta.to);
+    } else {
+      var insHeat = $('ins-heatmap'); if (insHeat) { insHeat.style.display = 'none'; insHeat.innerHTML = ''; }
+    }
     reportHeadline_('ins-headline', 'insights-results', insHeadline_(data));
     insRenderTrendChart_(data);
     insRenderShareChart_(data.agentData || []);

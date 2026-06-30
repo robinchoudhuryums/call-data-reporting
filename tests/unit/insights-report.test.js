@@ -280,11 +280,31 @@ test('Insights: email export sends a server-rendered HTML report to the active u
   assert.ok(mail.htmlBody && mail.htmlBody.indexOf('Anna') !== -1, 'HTML body includes the agent');
   assert.ok(mail.htmlBody.indexOf('Alpha') !== -1, 'HTML body names the department');
   assert.ok(!mail.inlineImages, 'no inline image — server-rendered HTML, not a screenshot');
-  // Empty agent selection is rejected before any send (mirrors getInsightsReport).
-  assert.throws(function () {
-    h.call('sendInsightsReportEmail', { department: 'Alpha', from: '2026-03-09', to: '2026-03-15', agents: [] });
-  }, /Select at least one agent/);
-  assert.equal(h.state.sentEmails.length, 1);
+  // Agent-free run: an empty selection now DEFAULTS to the full department
+  // roster (the digest pattern, INV-45) instead of throwing -- the
+  // QCD-replacement queue / dept quick-look. The email still sends,
+  // recomputed over the whole roster (Alpha = Anna + Ben).
+  const resAll = h.call('sendInsightsReportEmail', { department: 'Alpha', from: '2026-03-09', to: '2026-03-15', agents: [] });
+  assert.equal(resAll.to, 'admin@x.com');
+  assert.equal(h.state.sentEmails.length, 2);
+  assert.ok(h.state.sentEmails[1].htmlBody.indexOf('Alpha') !== -1, 'agent-free email still names the department');
+});
+
+test('Insights: agent-free run defaults to the full department roster (INV-45)', function () {
+  install([
+    dqeRow({ date: '2026-03-10', agent: 'Anna', ext: '501', rung: 5, answered: 4 }),
+    dqeRow({ date: '2026-03-11', agent: 'Ben',  ext: '502', rung: 3, answered: 2 }),
+  ]);
+  // No agents in the request -> resolves to the whole Alpha roster (Anna, Ben),
+  // so a manager gets the team rollup + every roster card without picking.
+  const data = h.call('getInsightsReport', { department: 'Alpha', from: '2026-03-09', to: '2026-03-15', agents: [] });
+  // .join over deepEqual: harness vm-realm arrays trip deepStrictEqual's prototype check.
+  assert.equal(data.meta.agents.slice().sort().join(','), 'Anna,Ben');
+  assert.ok(agent(data, 'Anna'), 'Anna card present from the roster default');
+  assert.ok(agent(data, 'Ben'),  'Ben card present from the roster default');
+  // Identical to explicitly selecting the whole roster.
+  const explicit = h.call('getInsightsReport', { department: 'Alpha', from: '2026-03-09', to: '2026-03-15', agents: ['Anna', 'Ben'] });
+  assert.equal(data.teamStats.answered.val, explicit.teamStats.answered.val);
 });
 
 test('Insights: cross-dept request is rejected for a manager', function () {
