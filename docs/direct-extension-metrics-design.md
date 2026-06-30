@@ -1,21 +1,71 @@
 # Design — Direct-Extension Call Metrics (with busy carve-out)
 
-Status: **Phase 1a SHIPPED (editor-run, numbers-only); Phase 1b (daily-import
-hook) + Phase 2 (dashboard) pending.** Definitions owner-approved.
+Status: **Phase 1a + 1b + 2 + 3 SHIPPED.** Definitions owner-approved.
 
 **Phase 1a (built):** `apps-script/cdr-import/directCallMetrics.js` — the pure
 overlap/busy engine `computeDirectCallMetrics` (12 unit tests in
 `tests/unit/direct-call-metrics.test.js`), the `Direct Call History` sheet
 writer + Neon `direct_call_history` mirror (both lazily created — **no setup()
 change**), and the editor-run orchestrator **`runDirectCallBuild()`** that
-computes the CURRENT `Raw Data` day for spot-checking. The daily
-`processIntegratedHistory` is intentionally **left untouched** so the numbers
-can be validated before the live import depends on them.
+computes the CURRENT `Raw Data` day for spot-checking.
 
-**Phase 1b (next, small):** wire a best-effort block into
-`processIntegratedHistory` (a `processIntegratedHistory:Direct` Pipeline Health
-row) so history accrues automatically each import — after `runDirectCallBuild`
-output is validated against known agent-days.
+**Phase 1b (built):** the shared core `buildDirectCallFromRaw_(ss, rawDisp,
+configSheet, opts)` (sheet write + inline best-effort Neon mirror) is now called
+from BOTH `runDirectCallBuild()` AND the daily `processIntegratedHistory` (6th
+block, after DQE — `apps-script/cdr-import/autoImport.js`). The import block is
+gated only on `rawDataSheet` being present and is fully isolated (best-effort —
+a failure never affects the import or the other writes); the sheet write is
+refresh-in-window (idempotent), so a force re-import just rewrites that day's
+rows. It emits a `processIntegratedHistory:Direct` Pipeline Health row
+(success/failure; notes carry agents / missedBusy / missedFree / neon status).
+The Neon mirror runs INLINE (small per-agent-day payload — not part of the
+deferred `NeonMirror` queue). History accrues automatically each import going
+forward.
+
+**Phase 2 (built):** dashboard read surface — `DirectCallReport.gs`
+(`getDirectCallReport({from, to, department?})`, ONE json_build_object Neon
+round-trip; per-agent answer rate that EXCLUDES the busy carve-out, inbound ATT,
+outbound activity + ATT, int/ext split). **Admin-only while vetted** (the
+Inbound-report model: the per-dept manager path is written + kept intact, so
+release is a one-line gate removal + un-hiding the `data-admin-only` tab).
+Cached 30 min under `directCall:v1`; unavailable payloads not cached. Client:
+the **Direct** report tab (admin-only) + `#direct-call-modal` + route
+`#/report/direct` + CSV export. Unit coverage in
+`tests/unit/direct-call-report.test.js` (gate, derived rates, unavailable
+fallback).
+
+**Phase 3 (built):** the bulk-backfill path builds Direct history for past
+dates, following the DQE skipNeon + end-pass-upsert pattern.
+- `bulkHistoricalUpdate` → `processNewImport(isHistoricalBackfill)`
+  (`autoImport.js`): a new `existsInDirect` cache dimension
+  (`histDateCache.direct`, col B), a `willBuildDirect` gate, and
+  `needsRawDataWrite` widened to include it — so a date that ALREADY has DQE
+  but no Direct rows still gets its Raw Data written for the Direct build to
+  consume (the primary backfill case). The bulk branch builds the **sheet**
+  per date with `buildDirectCallFromRaw_(…, { skipNeon: true })` and logs a
+  `bulkBackfill:Direct` Pipeline Health row. Unconditional (Option A) — gated
+  only on `willBuildDirect`, matching the DQE bulk behavior; best-effort (a
+  per-date failure never aborts the run).
+- `backfillDirectCallToNeon()` (editor-run, `directCallMetrics.js`, **CDR
+  Import** — the Direct writer + table DDL are cdr-import-local, so no
+  cross-project move): one connection for the whole pass, batched
+  `ON CONFLICT DO UPDATE`, resumable via `DIRECT_UPSERT_RESUME`, optional
+  `DIRECT_UPSERT_SINCE` (YYYY-MM-DD) date floor. The deferred end-pass that
+  mirrors the sheet to Neon after a bulk rebuild (the DQE
+  `backfillDQEHistoryUpsert` analogue). The bulk-complete alert reminds the
+  operator to run it.
+- Shared SQL: `dcUpsertRows_(conn, rows)` (the INSERT…ON CONFLICT template +
+  per-row bind) is used by BOTH the single-date daily writer
+  (`writeDirectCallRowsToNeon_`) AND the multi-date backfill, so the SQL lives
+  in one place. Unit coverage in `tests/unit/direct-call-backfill.test.js`
+  (one-connection, per-row dates, ON CONFLICT, date floor, missing-sheet /
+  unreachable no-op, single-date refactor parity).
+- **Runbook:** after a bulk rebuild, run `backfillDirectCallToNeon()` from the
+  CDR Import editor (set `DIRECT_UPSERT_SINCE` to limit to recently-rebuilt
+  dates). Recommended only after the busy-carve-out numbers are spot-checked,
+  since this writes Direct history across all backfilled dates; the report
+  stays admin-only-while-vetted regardless, and both Phase-3 paths are
+  opt-in (fire only on an explicit bulk rebuild / explicit editor run).
 
 ## Goal
 

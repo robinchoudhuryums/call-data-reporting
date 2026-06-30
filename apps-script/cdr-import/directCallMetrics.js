@@ -419,6 +419,52 @@ function dcEnsureNeonTable_(conn) {
   ddl.close();
 }
 
+// Column lists for the upsert -- shared by the single-date writer + the
+// multi-date backfill so the SQL lives in ONE place (no in-file drift). The
+// 3-col PK (call_date, department, agent_name) is NOT in the UPDATE set.
+const DIRECT_CALL_INSERT_COLS = 'month_year, call_date, department, agent_name, ' +
+  'ib_int_answered, ib_int_missed_free, ib_int_missed_busy, ib_int_talk_sec, ' +
+  'ib_ext_answered, ib_ext_missed_free, ib_ext_missed_busy, ib_ext_talk_sec, ' +
+  'ob_int_total, ob_int_connected, ob_int_talk_sec, ' +
+  'ob_ext_total, ob_ext_connected, ob_ext_talk_sec';
+const DIRECT_CALL_UPDATE_COLS = ['month_year',
+  'ib_int_answered', 'ib_int_missed_free', 'ib_int_missed_busy', 'ib_int_talk_sec',
+  'ib_ext_answered', 'ib_ext_missed_free', 'ib_ext_missed_busy', 'ib_ext_talk_sec',
+  'ob_int_total', 'ob_int_connected', 'ob_int_talk_sec',
+  'ob_ext_total', 'ob_ext_connected', 'ob_ext_talk_sec'];
+
+/**
+ * One batched INSERT ... ON CONFLICT DO UPDATE for direct_call_history. Each
+ * row object carries its OWN monthYear + isoDate (so the multi-date backfill
+ * works) + dept/agent + the 14 metric fields. The CALLER owns the connection
+ * + transaction (setAutoCommit / commit / rollback) so a single connection can
+ * serve a whole daily write OR a whole multi-date backfill. Returns the count.
+ */
+function dcUpsertRows_(conn, rows) {
+  if (!rows || !rows.length) return 0;
+  const ph = '(' + new Array(18).fill('?').join(',') + ')';
+  const sql = 'INSERT INTO direct_call_history (' + DIRECT_CALL_INSERT_COLS + ') VALUES ' +
+    rows.map(function () { return ph; }).join(',') +
+    ' ON CONFLICT (call_date, department, agent_name) DO UPDATE SET ' +
+    DIRECT_CALL_UPDATE_COLS.map(function (c) { return c + ' = EXCLUDED.' + c; }).join(', ') +
+    ', updated_at = now()';
+  const stmt = conn.prepareStatement(sql);
+  let p = 0;
+  rows.forEach(function (r) {
+    stmt.setString(++p, r.monthYear);
+    stmt.setString(++p, r.isoDate);
+    stmt.setString(++p, r.dept);
+    stmt.setString(++p, r.agent);
+    [r.ib_int_answered, r.ib_int_missed_free, r.ib_int_missed_busy, r.ib_int_talk_sec,
+     r.ib_ext_answered, r.ib_ext_missed_free, r.ib_ext_missed_busy, r.ib_ext_talk_sec,
+     r.ob_int_total, r.ob_int_connected, r.ob_int_talk_sec,
+     r.ob_ext_total, r.ob_ext_connected, r.ob_ext_talk_sec].forEach(function (v) { stmt.setInt(++p, v | 0); });
+  });
+  stmt.execute();
+  stmt.close();
+  return rows.length;
+}
+
 /** Upsert per-agent-day rows for one date. Best-effort; returns a status object. */
 function writeDirectCallRowsToNeon_(rows, monthYear, isoDate) {
   if (!rows || !rows.length) return { inserted: 0, skipped: 0 };
@@ -427,37 +473,12 @@ function writeDirectCallRowsToNeon_(rows, monthYear, isoDate) {
   conn.setAutoCommit(false);
   try {
     dcEnsureNeonTable_(conn);
-    const cols = 'month_year, call_date, department, agent_name, ' +
-      'ib_int_answered, ib_int_missed_free, ib_int_missed_busy, ib_int_talk_sec, ' +
-      'ib_ext_answered, ib_ext_missed_free, ib_ext_missed_busy, ib_ext_talk_sec, ' +
-      'ob_int_total, ob_int_connected, ob_int_talk_sec, ' +
-      'ob_ext_total, ob_ext_connected, ob_ext_talk_sec';
-    const ph = '(' + new Array(18).fill('?').join(',') + ')';
-    const sql = 'INSERT INTO direct_call_history (' + cols + ') VALUES ' +
-      rows.map(function () { return ph; }).join(',') +
-      ' ON CONFLICT (call_date, department, agent_name) DO UPDATE SET ' +
-      ['month_year', 'ib_int_answered', 'ib_int_missed_free', 'ib_int_missed_busy', 'ib_int_talk_sec',
-       'ib_ext_answered', 'ib_ext_missed_free', 'ib_ext_missed_busy', 'ib_ext_talk_sec',
-       'ob_int_total', 'ob_int_connected', 'ob_int_talk_sec',
-       'ob_ext_total', 'ob_ext_connected', 'ob_ext_talk_sec']
-        .map(function (c) { return c + ' = EXCLUDED.' + c; }).join(', ') +
-      ', updated_at = now()';
-    const stmt = conn.prepareStatement(sql);
-    let p = 0;
-    rows.forEach(function (r) {
-      stmt.setString(++p, monthYear);
-      stmt.setString(++p, isoDate);
-      stmt.setString(++p, r.dept);
-      stmt.setString(++p, r.agent);
-      [r.ib_int_answered, r.ib_int_missed_free, r.ib_int_missed_busy, r.ib_int_talk_sec,
-       r.ib_ext_answered, r.ib_ext_missed_free, r.ib_ext_missed_busy, r.ib_ext_talk_sec,
-       r.ob_int_total, r.ob_int_connected, r.ob_int_talk_sec,
-       r.ob_ext_total, r.ob_ext_connected, r.ob_ext_talk_sec].forEach(function (v) { stmt.setInt(++p, v | 0); });
+    const upsertRows = rows.map(function (r) {
+      return Object.assign({ monthYear: monthYear, isoDate: isoDate }, r);
     });
-    stmt.execute();
-    stmt.close();
+    const n = dcUpsertRows_(conn, upsertRows);
     conn.commit();
-    return { inserted: rows.length };
+    return { inserted: n };
   } catch (e) {
     try { conn.rollback(); } catch (rb) {}
     Logger.log('writeDirectCallRowsToNeon_ failed: ' + (e && e.message ? e.message : e));
@@ -467,12 +488,136 @@ function writeDirectCallRowsToNeon_(rows, monthYear, isoDate) {
   }
 }
 
-// -- Editor-run orchestrator (Phase 1: manual, numbers-only validation) -------
+// -- Deferred Neon mirror backfill (Phase 3) ----------------------------------
+/**
+ * Editor-run: mirror the WHOLE `Direct Call History` sheet to Neon
+ * `direct_call_history` with ON CONFLICT DO UPDATE. The companion to the
+ * bulk-backfill path, which builds the SHEET per date with skipNeon (the
+ * per-date JDBC latency dominates a long multi-date run) and defers the mirror
+ * to this single end-pass -- exactly the DQE skipNeon + backfillDQEHistoryUpsert
+ * pattern, but cdr-import-local (the Direct writer + table DDL live here, so no
+ * cross-project move).
+ *
+ * One connection for the whole pass (the slow handshake is paid once).
+ * Resumable via the `DIRECT_UPSERT_RESUME` Script Property (clear to re-run
+ * from the top); optional `DIRECT_UPSERT_SINCE` (YYYY-MM-DD) date floor so you
+ * can mirror only recently-rebuilt dates. Commits per 50-row batch + saves the
+ * resume index so a timeout (or a batch error) loses no committed progress;
+ * the upsert is idempotent so a re-run is always safe.
+ */
+function backfillDirectCallToNeon() {
+  const ss = SpreadsheetApp.openById(getTargetSsId_());
+  const sheet = ss.getSheetByName(DIRECT_CALL_HISTORY_SHEET);
+  if (!sheet) { Logger.log('Direct upsert: "%s" sheet not found.', DIRECT_CALL_HISTORY_SHEET); return { upserted: 0 }; }
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) { Logger.log('Direct upsert: sheet is empty.'); return { upserted: 0 }; }
+
+  const data = sheet.getRange(2, 1, lastRow - 1, DIRECT_CALL_HISTORY_HEADERS.length).getDisplayValues();
+  const props = PropertiesService.getScriptProperties();
+  let startIndex = parseInt(props.getProperty('DIRECT_UPSERT_RESUME') || '0', 10) || 0;
+  let sinceFloor = props.getProperty('DIRECT_UPSERT_SINCE');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(sinceFloor || ''))) sinceFloor = null;
+  Logger.log('Direct upsert: starting at index %s of %s%s', startIndex, data.length,
+    sinceFloor ? ' (date floor >= ' + sinceFloor + ')' : '');
+  if (startIndex >= data.length) { Logger.log('Direct upsert complete. Clear DIRECT_UPSERT_RESUME to re-run.'); return { upserted: 0 }; }
+
+  const conn = getReachableNeonConn_();
+  if (!conn) { Logger.log('Direct upsert: Neon unreachable (NEON_* Script Properties set?).'); return { upserted: 0, unreachable: true }; }
+  conn.setAutoCommit(false);
+
+  const BATCH_SIZE = 50;
+  const TIME_LIMIT_MS = 240000;
+  const startTime = Date.now();
+  let totalUpserted = 0;
+  let i = startIndex;
+  try {
+    dcEnsureNeonTable_(conn);
+    while (i < data.length) {
+      if (Date.now() - startTime > TIME_LIMIT_MS) {
+        props.setProperty('DIRECT_UPSERT_RESUME', String(i));
+        Logger.log('Direct upsert: time limit reached; resume at index %s. Upserted %s. Run again to continue.', i, totalUpserted);
+        return { upserted: totalUpserted, resumeAt: i };   // finally closes conn
+      }
+      const batchStartIdx = i;
+      const batch = [];
+      const batchEnd = Math.min(i + BATCH_SIZE, data.length);
+      while (i < batchEnd) {
+        const r = data[i];
+        i++;
+        const dept = String(r[2] || '').trim();
+        const agent = String(r[3] || '').trim();
+        const cd = (typeof parseDateForNeon === 'function') ? parseDateForNeon(r[1]) : null;
+        if (!cd || !dept || !agent) continue;             // skip blank/malformed rows
+        if (sinceFloor && cd < sinceFloor) continue;      // date floor
+        batch.push({
+          monthYear: r[0] || null, isoDate: cd, dept: dept, agent: agent,
+          ib_int_answered: parseInt(r[4], 10) || 0, ib_int_missed_free: parseInt(r[5], 10) || 0,
+          ib_int_missed_busy: parseInt(r[6], 10) || 0, ib_int_talk_sec: parseInt(r[7], 10) || 0,
+          ib_ext_answered: parseInt(r[8], 10) || 0, ib_ext_missed_free: parseInt(r[9], 10) || 0,
+          ib_ext_missed_busy: parseInt(r[10], 10) || 0, ib_ext_talk_sec: parseInt(r[11], 10) || 0,
+          ob_int_total: parseInt(r[12], 10) || 0, ob_int_connected: parseInt(r[13], 10) || 0, ob_int_talk_sec: parseInt(r[14], 10) || 0,
+          ob_ext_total: parseInt(r[15], 10) || 0, ob_ext_connected: parseInt(r[16], 10) || 0, ob_ext_talk_sec: parseInt(r[17], 10) || 0,
+        });
+      }
+      if (!batch.length) continue;
+      try {
+        dcUpsertRows_(conn, batch);
+        conn.commit();
+        totalUpserted += batch.length;
+      } catch (e) {
+        try { conn.rollback(); } catch (re) {}
+        props.setProperty('DIRECT_UPSERT_RESUME', String(batchStartIdx));
+        Logger.log('Direct upsert batch failed, rolled back. Resume at %s. Error: %s', batchStartIdx, (e && e.message ? e.message : e));
+        throw e;
+      }
+    }
+    props.deleteProperty('DIRECT_UPSERT_RESUME');
+    Logger.log('Direct upsert complete. Total upserted into Neon: %s', totalUpserted);
+    return { upserted: totalUpserted };
+  } finally {
+    try { conn.close(); } catch (ce) {}
+  }
+}
+
+// -- Shared build core (Phase 1b) ---------------------------------------------
+/**
+ * Compute direct-call metrics from a Raw Data display grid + the DO NOT EDIT!
+ * config sheet, write the `Direct Call History` sheet (refresh-in-window:
+ * the date's rows are replaced, so it's idempotent), and mirror to Neon.
+ * Shared by the editor-run runDirectCallBuild AND the daily
+ * processIntegratedHistory block (Phase 1b). Best-effort Neon (never throws
+ * out of the mirror; returns a status). The date is derived from the grid's
+ * first data row (same as Phase 1a), since Raw Data holds one day.
+ * @returns {{wrote, dateStr, isoDate, monthYear, meta, neon}}
+ */
+function buildDirectCallFromRaw_(ss, rawDisp, configSheet, opts) {
+  opts = opts || {};
+  let dateStr = '';
+  for (let i = 1; i < rawDisp.length && !dateStr; i++) dateStr = dcDateStr_(rawDisp[i][2]);
+  const isoDate = (typeof parseDateForNeon === 'function') ? parseDateForNeon(dateStr) : null;
+  const monthYear = dcMonthYearFromDate_(dateStr);
+
+  const maps = dcBuildExtMaps_(configSheet);
+  const result = computeDirectCallMetrics(rawDisp, maps, opts);
+
+  const wrote = dcWriteSheet_(ss, result.rows, monthYear, dateStr);
+  let neon = { inserted: 0 };
+  if (!opts.skipNeon) {
+    try { neon = writeDirectCallRowsToNeon_(result.rows, monthYear, isoDate); }
+    catch (e) {
+      Logger.log('buildDirectCallFromRaw_: Neon mirror failed (non-blocking): ' + (e && e.message ? e.message : e));
+      neon = { inserted: 0, error: String(e && e.message ? e.message : e) };
+    }
+  }
+  return { wrote: wrote, dateStr: dateStr, isoDate: isoDate, monthYear: monthYear, meta: result.meta, neon: neon };
+}
+
+// -- Editor-run orchestrator (Phase 1a: manual, numbers-only validation) ------
 /**
  * Computes direct-call metrics for the CURRENT `Raw Data` day and writes the
  * `Direct Call History` sheet + Neon mirror. Run from the cdr-import editor.
  * Best-effort + self-contained: does NOT touch the daily import. (Phase 1b
- * will wire an equivalent block into processIntegratedHistory once validated.)
+ * wires the SAME core, buildDirectCallFromRaw_, into processIntegratedHistory.)
  */
 function runDirectCallBuild() {
   const t0 = Date.now();
@@ -484,30 +629,17 @@ function runDirectCallBuild() {
   const raw = rawSheet.getDataRange().getDisplayValues();
   if (raw.length < 2) { Logger.log('runDirectCallBuild: Raw Data empty.'); return { rows: 0 }; }
 
-  // Derive the date from the first data row's START_TIME.
-  let dateStr = '';
-  for (let i = 1; i < raw.length && !dateStr; i++) dateStr = dcDateStr_(raw[i][2]);
-  const isoDate = (typeof parseDateForNeon === 'function') ? parseDateForNeon(dateStr) : null;
-  const monthYear = dcMonthYearFromDate_(dateStr);
-
-  const maps = dcBuildExtMaps_(configSheet);
-  const result = computeDirectCallMetrics(raw, maps, { collectSamples: true });
-
-  const wrote = dcWriteSheet_(ss, result.rows, monthYear, dateStr);
-  let neon = { inserted: 0 };
-  try { neon = writeDirectCallRowsToNeon_(result.rows, monthYear, isoDate); }
-  catch (e) { Logger.log('runDirectCallBuild: Neon mirror failed (non-blocking): ' + (e && e.message ? e.message : e)); }
-
-  dcLogSamples_(result.meta.samples);
+  const r = buildDirectCallFromRaw_(ss, raw, configSheet, { collectSamples: true });
+  dcLogSamples_(r.meta.samples);
 
   const ms = Date.now() - t0;
-  dcLogPipelineHealth_(ss, 'success', wrote, ms,
-    'directBuild date=' + dateStr + ' agents=' + result.meta.agents +
-    ' missedBusy=' + result.meta.missedBusyTotal + ' neon=' + (neon.unreachable ? 'unreachable' : (neon.error ? 'error' : 'ok')));
+  const neonStr = r.neon.unreachable ? 'unreachable' : (r.neon.error ? 'error' : 'ok');
+  dcLogPipelineHealth_(ss, 'success', r.wrote, ms,
+    'directBuild date=' + r.dateStr + ' agents=' + r.meta.agents +
+    ' missedBusy=' + r.meta.missedBusyTotal + ' neon=' + neonStr);
   Logger.log('runDirectCallBuild: %s rows for %s (missedBusy=%s, missedFree=%s, neon=%s) in %sms',
-    wrote, dateStr, result.meta.missedBusyTotal, result.meta.missedFreeTotal,
-    neon.unreachable ? 'unreachable' : (neon.error ? 'error' : 'ok'), ms);
-  return { rows: wrote, date: dateStr, meta: result.meta, neon: neon };
+    r.wrote, r.dateStr, r.meta.missedBusyTotal, r.meta.missedFreeTotal, neonStr, ms);
+  return { rows: r.wrote, date: r.dateStr, meta: r.meta, neon: r.neon };
 }
 
 /**

@@ -837,6 +837,7 @@
     initCompareRanges();
     initInsightsReport();
     initInboundReport();
+    initDirectCallReport();
     initAlerts();
     initOrphanFix();
     initDeptConfig();
@@ -2530,6 +2531,7 @@
     '/report/qcd':         { kind: 'modal', modalId: 'qcd-modal',         buttonId: 'qcd-report-btn' },
     '/report/insights':    { kind: 'modal', modalId: 'insights-modal',    buttonId: 'insights-report-btn' },
     '/report/inbound':     { kind: 'modal', modalId: 'inbound-modal',     buttonId: 'inbound-report-btn' },
+    '/report/direct':      { kind: 'modal', modalId: 'direct-call-modal', buttonId: 'direct-call-report-btn' },
     '/admin/alerts':       { kind: 'modal', modalId: 'alerts-modal',      buttonId: 'alerts-btn' },
     '/admin/orphan-fix':   { kind: 'modal', modalId: 'orphan-fix-modal',  buttonId: 'orphan-fix-btn' },
     '/admin/dept-config':  { kind: 'modal', modalId: 'dept-config-modal', buttonId: 'dept-config-btn' },
@@ -13809,6 +13811,222 @@
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = 'inbound-calls_' + (meta.from || '') + '_' + (meta.to || '') + '.csv';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 0);
+  }
+
+  // ===================================================================
+  // Direct Call Report (admin-only while vetted) -- Neon-backed
+  // direct_call_history: per-agent inbound answer rate (a miss while the
+  // agent was on another call is EXCLUDED), inbound ATT, outbound activity.
+  // ===================================================================
+  let directCallLastData = null;
+
+  function initDirectCallReport() {
+    const btn = $('direct-call-report-btn');
+    const modal = $('direct-call-modal');
+    if (!btn || !modal) return;
+    const closeBtn = modal.querySelector('.modal-close');
+    const backdrop = modal.querySelector('[data-close]');
+
+    function openModal() {
+      modal.style.display = '';
+      modal.setAttribute('aria-hidden', 'false');
+      document.body.style.overflow = 'hidden';
+      trapFocus_(modal);
+      initModalDragResize_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
+      document.addEventListener('keydown', onKeyDown);
+      directCallShowForm();
+      directCallSetDefaultDates();
+      directCallEnsureDeptOptions_();
+    }
+    function closeModal() {
+      modal.style.display = 'none';
+      modal.setAttribute('aria-hidden', 'true');
+      releaseFocus_();
+      resetModalTransform_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
+      document.body.style.overflow = '';
+      document.removeEventListener('keydown', onKeyDown);
+      btn.focus();
+    }
+    function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
+
+    btn.addEventListener('click', openModal);
+    if (closeBtn) closeBtn.addEventListener('click', closeModal);
+    if (backdrop) backdrop.addEventListener('click', closeModal);
+
+    const preset = $('direct-call-preset');
+    if (preset) preset.addEventListener('change', directCallApplyPreset);
+    const fromEl = $('direct-call-from'), toEl = $('direct-call-to');
+    if (fromEl) fromEl.addEventListener('change', function () { if ($('direct-call-preset')) $('direct-call-preset').value = 'custom'; });
+    if (toEl)   toEl.addEventListener('change',   function () { if ($('direct-call-preset')) $('direct-call-preset').value = 'custom'; });
+    const gen = $('direct-call-generate-btn');
+    if (gen) gen.addEventListener('click', runDirectCallReport);
+    const back = $('direct-call-back-btn');
+    if (back) back.addEventListener('click', directCallShowForm);
+    const csv = $('direct-call-csv-btn');
+    if (csv) csv.addEventListener('click', directCallDownloadCsv_);
+  }
+
+  function directCallShowForm()    { $('direct-call-form').style.display = ''; $('direct-call-results').style.display = 'none'; directCallSetError(''); }
+  function directCallShowResults() { $('direct-call-form').style.display = 'none'; $('direct-call-results').style.display = ''; }
+  function directCallSetError(msg) {
+    const el = $('direct-call-form-error'); if (!el) return;
+    if (!msg) { el.style.display = 'none'; el.textContent = ''; return; }
+    el.textContent = msg; el.style.display = '';
+  }
+  function directCallIsoOf_(d) {
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  }
+  function directCallSetDefaultDates() {
+    if ($('direct-call-from') && $('direct-call-from').value) return;
+    const today = new Date(); const s = new Date(today); s.setDate(today.getDate() - 30);
+    if ($('direct-call-from')) $('direct-call-from').value = directCallIsoOf_(s);
+    if ($('direct-call-to'))   $('direct-call-to').value   = directCallIsoOf_(today);
+  }
+  function directCallApplyPreset() {
+    const v = $('direct-call-preset').value;
+    if (v === 'custom') return;
+    const today = new Date(); let s, e = new Date(today);
+    if (v === 'last7')        { s = new Date(today); s.setDate(today.getDate() - 7); }
+    else if (v === 'last30')  { s = new Date(today); s.setDate(today.getDate() - 30); }
+    else if (v === 'thisMonth') { s = new Date(today.getFullYear(), today.getMonth(), 1); }
+    else if (v === 'lastMonth') { s = new Date(today.getFullYear(), today.getMonth() - 1, 1); e = new Date(today.getFullYear(), today.getMonth(), 0); }
+    else if (v === 'last3Months') { s = new Date(today); s.setMonth(today.getMonth() - 3); }
+    if (!s) return;
+    $('direct-call-from').value = directCallIsoOf_(s);
+    $('direct-call-to').value   = directCallIsoOf_(e);
+  }
+  function directCallEnsureDeptOptions_() {
+    const sel = $('direct-call-dept');
+    if (!sel || sel.options.length) return;
+    if (USER.role === 'admin') {
+      const opts = ['<option value="">All departments</option>'];
+      (USER.departments || []).forEach(function (d) {
+        opts.push('<option value="' + escapeHtml(d) + '">' + escapeHtml(d) + '</option>');
+      });
+      sel.innerHTML = opts.join('');
+    } else {
+      const d = USER.department || '';
+      sel.innerHTML = '<option value="' + escapeHtml(d) + '">' + escapeHtml(d) + '</option>';
+      sel.disabled = true;
+    }
+  }
+
+  function runDirectCallReport() {
+    const from = $('direct-call-from').value, to = $('direct-call-to').value;
+    if (!from || !to) { directCallSetError('Pick a start and end date.'); return; }
+    if (from > to) { directCallSetError('Start date must be on or before end date.'); return; }
+    directCallSetError('');
+    const dept = $('direct-call-dept') ? $('direct-call-dept').value : '';
+    const gen = $('direct-call-generate-btn'); const prev = gen.textContent;
+    gen.disabled = true; gen.innerHTML = DS_EQ_HTML_ + 'Generating…';
+    google.script.run
+      .withSuccessHandler(function (data) {
+        gen.disabled = false; gen.textContent = prev;
+        directCallRenderReport_(data);
+        directCallShowResults();
+      })
+      .withFailureHandler(function (err) {
+        gen.disabled = false; gen.textContent = prev;
+        directCallSetError('Error: ' + (err && err.message ? err.message : String(err)));
+      })
+      .getDirectCallReport({ from: from, to: to, department: dept });
+  }
+
+  function directCallRenderReport_(data) {
+    directCallLastData = data;
+    const meta = (data && data.meta) || {};
+    const unavail = $('direct-call-unavailable');
+    const empty = $('direct-call-empty');
+    const body = $('direct-call-body');
+    if (unavail) unavail.style.display = 'none';
+    if (empty) empty.style.display = 'none';
+    if (body) body.style.display = '';
+
+    const dateEl = $('direct-call-results-date');
+    if (dateEl) {
+      dateEl.textContent = (meta.from || '') + ' to ' + (meta.to || '')
+        + (meta.companyView ? ' · All departments' : (meta.department ? ' · ' + meta.department : ''));
+    }
+
+    if (meta.available === false) {
+      if (body) body.style.display = 'none';
+      if (unavail) unavail.style.display = '';
+      return;
+    }
+    const agents = (data && data.agents) || [];
+    if (!agents.length) {
+      if (body) body.style.display = 'none';
+      if (empty) empty.style.display = '';
+      return;
+    }
+
+    // KPI tiles (reuse the inbound ds-kpi tile helper).
+    const k = (data && data.kpis) || {};
+    const tiles = [
+      inboundKpiTile_('Agents', fmtNumber(k.agents), 'with direct activity', ''),
+      inboundKpiTile_('IB answered', fmtNumber(k.ibAnswered),
+        fmtNumber(k.ibMissedFree) + ' missed (free)', ''),
+      inboundKpiTile_('IB answer rate', k.ibAnswerRate != null ? k.ibAnswerRate + '%' : '—',
+        'busy misses excluded', ''),
+      inboundKpiTile_('IB missed (busy)', fmtNumber(k.ibMissedBusy), 'excused — on another call', ''),
+      inboundKpiTile_('IB ATT', fmtDuration(k.ibAttSec), 'avg talk per answered', ''),
+      inboundKpiTile_('OB calls', fmtNumber(k.obTotal),
+        fmtNumber(k.obConnected) + ' connected · ATT ' + fmtDuration(k.obAttSec), ''),
+    ];
+    const kpiRow = $('direct-call-kpi-row');
+    if (kpiRow) kpiRow.innerHTML = tiles.join('');
+
+    // Per-agent table.
+    const tb = $('direct-call-agent-tbody');
+    if (tb) {
+      tb.innerHTML = agents.map(function (r) {
+        const rateStr = r.ibAnswerRate != null ? r.ibAnswerRate + '%' : '—';
+        const rateCls = r.ibAnswerRate != null ? benchValueCls_('% answered', r.ibAnswerRate + '%', true) : '';
+        return '<tr>'
+          + '<td>' + escapeHtml(r.agent) + '</td>'
+          + '<td class="num">' + fmtNumber(r.ibAnswered) + '</td>'
+          + '<td class="num">' + fmtNumber(r.ibMissedFree) + '</td>'
+          + '<td class="num">' + fmtNumber(r.ibMissedBusy) + '</td>'
+          + '<td class="num' + rateCls + '">' + rateStr + '</td>'
+          + '<td class="num">' + fmtDuration(r.ibAttSec) + '</td>'
+          + '<td class="num">' + fmtNumber(r.obTotal) + '</td>'
+          + '<td class="num">' + fmtNumber(r.obConnected) + '</td>'
+          + '<td class="num">' + fmtDuration(r.obAttSec) + '</td>'
+          + '</tr>';
+      }).join('');
+    }
+  }
+
+  function directCallDownloadCsv_() {
+    if (!directCallLastData || (directCallLastData.meta || {}).available === false) return;
+    const d = directCallLastData;
+    const meta = d.meta || {};
+    const esc = function (v) {
+      const s = csvSafeCell_(v == null ? '' : v);
+      if (/[",\n]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+      return s;
+    };
+    const row = function (cells) { return cells.map(esc).join(','); };
+    const lines = [];
+    lines.push(row(['Direct Calls report', meta.from + ' to ' + meta.to]));
+    lines.push(row(['Scope', meta.companyView ? 'All departments' : (meta.department || '')]));
+    lines.push('');
+    lines.push(row(['Agent', 'Dept', 'IB answered', 'IB missed (free)', 'IB missed (busy)',
+      'Answer %', 'IB ATT sec', 'OB calls', 'OB connected', 'OB ATT sec',
+      'IB int answered', 'IB ext answered', 'OB int calls', 'OB ext calls']));
+    (d.agents || []).forEach(function (r) {
+      lines.push(row([r.agent, r.dept, r.ibAnswered, r.ibMissedFree, r.ibMissedBusy,
+        r.ibAnswerRate != null ? r.ibAnswerRate : '', r.ibAttSec, r.obTotal, r.obConnected, r.obAttSec,
+        r.ibIntAnswered, r.ibExtAnswered, r.obIntTotal, r.obExtTotal]));
+    });
+    const blob = new Blob([lines.join('\n') + '\n'], { type: 'text/csv;charset=utf-8;' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'direct-calls_' + (meta.from || '') + '_' + (meta.to || '') + '.csv';
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
