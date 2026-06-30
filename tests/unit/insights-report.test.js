@@ -280,11 +280,31 @@ test('Insights: email export sends a server-rendered HTML report to the active u
   assert.ok(mail.htmlBody && mail.htmlBody.indexOf('Anna') !== -1, 'HTML body includes the agent');
   assert.ok(mail.htmlBody.indexOf('Alpha') !== -1, 'HTML body names the department');
   assert.ok(!mail.inlineImages, 'no inline image — server-rendered HTML, not a screenshot');
-  // Empty agent selection is rejected before any send (mirrors getInsightsReport).
-  assert.throws(function () {
-    h.call('sendInsightsReportEmail', { department: 'Alpha', from: '2026-03-09', to: '2026-03-15', agents: [] });
-  }, /Select at least one agent/);
-  assert.equal(h.state.sentEmails.length, 1);
+  // Agent-free run: an empty selection now DEFAULTS to the full department
+  // roster (the digest pattern, INV-45) instead of throwing -- the
+  // QCD-replacement queue / dept quick-look. The email still sends,
+  // recomputed over the whole roster (Alpha = Anna + Ben).
+  const resAll = h.call('sendInsightsReportEmail', { department: 'Alpha', from: '2026-03-09', to: '2026-03-15', agents: [] });
+  assert.equal(resAll.to, 'admin@x.com');
+  assert.equal(h.state.sentEmails.length, 2);
+  assert.ok(h.state.sentEmails[1].htmlBody.indexOf('Alpha') !== -1, 'agent-free email still names the department');
+});
+
+test('Insights: agent-free run defaults to the full department roster (INV-45)', function () {
+  install([
+    dqeRow({ date: '2026-03-10', agent: 'Anna', ext: '501', rung: 5, answered: 4 }),
+    dqeRow({ date: '2026-03-11', agent: 'Ben',  ext: '502', rung: 3, answered: 2 }),
+  ]);
+  // No agents in the request -> resolves to the whole Alpha roster (Anna, Ben),
+  // so a manager gets the team rollup + every roster card without picking.
+  const data = h.call('getInsightsReport', { department: 'Alpha', from: '2026-03-09', to: '2026-03-15', agents: [] });
+  // .join over deepEqual: harness vm-realm arrays trip deepStrictEqual's prototype check.
+  assert.equal(data.meta.agents.slice().sort().join(','), 'Anna,Ben');
+  assert.ok(agent(data, 'Anna'), 'Anna card present from the roster default');
+  assert.ok(agent(data, 'Ben'),  'Ben card present from the roster default');
+  // Identical to explicitly selecting the whole roster.
+  const explicit = h.call('getInsightsReport', { department: 'Alpha', from: '2026-03-09', to: '2026-03-15', agents: ['Anna', 'Ben'] });
+  assert.equal(data.teamStats.answered.val, explicit.teamStats.answered.val);
 });
 
 test('Insights: cross-dept request is rejected for a manager', function () {
@@ -432,15 +452,26 @@ test('dept QCD snapshot separates queues (and tags sub-queue owners)', function 
   assert.equal(alpha.totalCalls, 100);
   assert.equal(alpha.abandonedPctStr, '10.00%');
   assert.equal(beta.totalCalls, 50);
-  // All-queues total still available for the labeled total row.
-  assert.equal(snap.totalCalls, 150);
-  assert.equal(snap.violations, 1);
+  // P3: the unqualified dept total is OWN-queues-only (Alpha 100), so it
+  // reconciles with the QCD modal / Overview -- the child (Beta) is NOT folded
+  // in. The all-inclusive figure is surfaced separately via allTotals; the
+  // sub-queue rollup via subTotals.
+  assert.equal(snap.totalCalls, 100, 'canonical total = own queues only');
+  assert.equal(snap.violations, 1, 'own-queue violations');
+  assert.equal(snap.mainQueueCount, 1);
+  assert.equal(snap.subQueueCount, 1);
+  assert.equal(snap.subTotals.totalCalls, 50, 'sub-queue rollup');
+  assert.equal(snap.allTotals.totalCalls, 150, 'all queues incl. sub-queues');
+  assert.equal(snap.allTotals.violations, 1);
 
-  // Single-queue dept: perQueue has exactly one entry matching the totals.
+  // Single-queue dept (no children): own total stands alone; no sub/all rollup.
   const single = h.call('computeDeptQcdSnapshot_', 'Beta', 'America/Chicago');
   assert.equal(single.perQueue.length, 1);
   assert.equal(single.perQueue[0].queue, 'A_Q_Beta');
   assert.equal(single.totalCalls, 50);
+  assert.equal(single.subQueueCount, 0);
+  assert.equal(single.subTotals, null, 'no sub-queues -> subTotals null');
+  assert.equal(single.allTotals, null, 'no sub-queues -> allTotals null');
 });
 
 test('Insights: queueHealth daily series + always-separated sub-queues', function () {
@@ -478,4 +509,30 @@ test('Insights: queueHealth daily series + always-separated sub-queues', functio
   assert.equal(betaRow.subDept, 'Beta');
   const alphaRow = qh.perQueue.filter(function (q) { return q.queue === 'A_Q_Alpha'; })[0];
   assert.equal(alphaRow.subDept, null);
+
+  // Consolidation Phase 1 (gap 3): dailySeries passes through -- the per-day
+  // numeric rows the QCD modal's daily table renders, dept-OWN queues,
+  // selected-range scoped (Beta excluded from the dept daily total).
+  assert.equal(qh.dailySeries.length, 2, 'two days of own-queue QCD data');
+  assert.equal(qh.dailySeries[0].date, '2026-03-10');
+  assert.equal(qh.dailySeries[0].totalCalls, 100);
+  assert.equal(qh.dailySeries[0].abandoned, 10);
+  assert.equal(qh.dailySeries[1].totalCalls, 80);
+  // Consolidation Phase 1 (gap 2): perQueue rows carry the full bySource
+  // breakdown (here just the 'Total Calls' rollup -> 'Overall'), aggregated
+  // over the range (Alpha 100 + 80 = 180).
+  assert.ok(Array.isArray(alphaRow.bySource), 'perQueue row carries bySource');
+  const overall = alphaRow.bySource.filter(function (s) { return s.isOverall; })[0];
+  assert.ok(overall, 'bySource has the Overall rollup row');
+  assert.equal(overall.totalCalls, 180);
+
+  // Consolidation Phase 1 (gap 1): trend.metrics carries Total Calls +
+  // Violations series parallel to the default abandoned-% series, so the
+  // by-queue chart tab can switch metric. Own-dept total = Alpha only.
+  // NOTE: compare via join(',') not deepEqual -- the harness returns arrays
+  // from a vm realm whose Array.prototype differs, which trips deepStrictEqual.
+  assert.ok(t.metrics && t.metrics.totalCalls && t.metrics.violations, 'trend.metrics present');
+  assert.equal(t.metrics.totalCalls.dailyTotal.join(','), '100,80', 'own-dept daily total calls');
+  assert.equal(t.metrics.totalCalls.dailyPerQueue['A_Q_Beta'].join(','), '50,0', 'child daily total calls');
+  assert.equal(t.metrics.violations.dailyTotal.join(','), '1,0', 'own-dept daily violations');
 });

@@ -1608,7 +1608,7 @@
         </div>
 
         <div class="ir-section-title">2. Agents</div>
-        <div class="ir-hint">Pick the agents to roll up + compare.</div>
+        <div class="ir-hint">Pick the agents to roll up + compare &mdash; or leave all unchecked to see the whole department (queue / dept view).</div>
         <div class="ir-search-row">
           <input type="search" id="ins-agent-search" placeholder="Search agents by name..." autocomplete="off">
         </div>
@@ -1695,8 +1695,30 @@
               <tbody id="ins-qh-tbody"></tbody>
             </table>
           </div>
-          <div class="ins-qh-footnote">Same data the QCD Report reads &mdash; open it for per-queue trend charts and the daily series.</div>
+          <!-- Consolidation Phase 1 (gap 3): the per-day numeric table the QCD
+               modal shows, collapsed by default to keep the section compact.
+               Populated by insRenderQueueHealth_ via the shared qcdDailyRowsHtml_;
+               hidden when the dept/range has no daily QCD rows. -->
+          <details id="ins-qh-daily" class="ins-qh-daily" style="display:none; margin:0 0 12px;">
+            <summary class="ins-qh-daily-summary">Daily breakdown</summary>
+            <div class="ds-card" style="overflow:auto; margin:8px 0 0;">
+              <table class="ds-table">
+                <thead><tr>
+                  <th>Date</th>
+                  <th class="num">Total</th>
+                  <th class="num">Answered</th>
+                  <th class="num">Abandoned</th>
+                  <th class="num">Abandoned %</th>
+                  <th class="num">Violations</th>
+                </tr></thead>
+                <tbody id="ins-qh-daily-tbody"></tbody>
+              </table>
+            </div>
+          </details>
+          <div class="ins-qh-footnote">Same data the QCD Report reads &mdash; open it for the per-queue Total&nbsp;Calls / Violations trend charts.</div>
         </div>
+
+        <div id="ins-heatmap" class="ds-heatmap-panel" style="display:none;"></div>
 
         <div class="ir-chart-wrap" id="ins-trend-wrap">
           <div class="ins-trend-headrow">
@@ -1706,6 +1728,16 @@
                 <button type="button" class="seg-btn active" data-view="monthly" role="radio" aria-checked="true">Monthly</button>
                 <button type="button" class="seg-btn" data-view="daily" role="radio" aria-checked="false">Daily</button>
               </div>
+              <!-- gap 1: per-queue metric sub-selector, shown only when the
+                   "By Queue" tab is active (insRenderTrendChart_ toggles it). -->
+              <label class="ir-sort-control" id="ins-queue-metric-wrap" style="display:none;">
+                <span class="ir-sort-label">Queue metric:</span>
+                <select id="ins-queue-metric">
+                  <option value="abandonedPct">Abandoned %</option>
+                  <option value="totalCalls">Total Calls</option>
+                  <option value="violations">Violations</option>
+                </select>
+              </label>
               <div class="ir-toggle-box" id="ins-datalabels-box">
                 <label class="ir-toggle-label">
                   <input type="checkbox" id="ins-show-datalabels"> Show data labels
@@ -1717,7 +1749,7 @@
             <button type="button" class="pr-trend-subtab active" data-metric="answered" role="tab" aria-selected="true">Answered</button>
             <button type="button" class="pr-trend-subtab" data-metric="pct" role="tab" aria-selected="false">% Answered</button>
             <button type="button" class="pr-trend-subtab" data-metric="att" role="tab" aria-selected="false">Avg Talk Time</button>
-            <button type="button" class="pr-trend-subtab" data-metric="queues" role="tab" aria-selected="false">Abandoned % by Queue</button>
+            <button type="button" class="pr-trend-subtab" data-metric="queues" role="tab" aria-selected="false">By Queue</button>
           </div>
           <div class="ir-chart-canvas-wrap"><canvas id="ins-trend-chart"></canvas></div>
         </div>

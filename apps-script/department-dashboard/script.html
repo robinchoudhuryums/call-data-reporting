@@ -4647,6 +4647,13 @@
         dateStr = days[d.getDay()] + ' ' + months[d.getMonth()] + ' ' + d.getDate();
       }
       titleEl.textContent = 'Queue Call Data — ' + dateStr;
+      // This card always shows the most recent QCD day for the dept, which is
+      // independent of the date range above (QCD can update on a different day
+      // than DQE, and the range defaults to the latest DQE date). Clarify that
+      // so the static card next to the range controls doesn't read as broken.
+      titleEl.title = 'Most recent day of queue data — independent of the date '
+        + 'range above. For a specific date range, open the QCD report.';
+      titleEl.style.cursor = 'help';
     }
     var dateEl = $('dept-qcd-date');
     if (dateEl) dateEl.textContent = '';
@@ -4685,7 +4692,33 @@
           : '';
         return { name: escapeHtml(q.queue) + tag, html: tileRow(q) };
       });
-      pages.push({ name: 'All queues', html: tileRow(qcd) });
+      // P3: gated summary pages. The own-dept total is the canonical number
+      // that reconciles with the QCD modal / Overview; the all-inclusive
+      // figure is shown only under an explicit "All queues (incl.
+      // sub-queues)" label so it can't be mistaken for the dept total. Each
+      // subtotal renders only when it isn't a redundant copy of a single row:
+      //   - Main-queues subtotal: only when >1 own queue.
+      //   - Sub-queues subtotal: only when >1 sub-queue.
+      //   - All-queues total: only when sub-queues exist (else it == main).
+      // With no sub-queues, the own rollup is simply "Department total".
+      const hasSub = (qcd.subQueueCount || 0) > 0;
+      const ownTotals = {
+        totalCalls:      qcd.totalCalls,
+        totalAnswered:   qcd.totalAnswered,
+        abandoned:       qcd.abandoned,
+        abandonedPct:    qcd.abandonedPct,
+        abandonedPctStr: qcd.abandonedPctStr,
+        violations:      qcd.violations,
+      };
+      if ((qcd.mainQueueCount || 0) > 1) {
+        pages.push({ name: hasSub ? 'Main queues' : 'Department total', html: tileRow(ownTotals) });
+      }
+      if ((qcd.subQueueCount || 0) > 1 && qcd.subTotals) {
+        pages.push({ name: 'Sub-queues (separate depts)', html: tileRow(qcd.subTotals) });
+      }
+      if (hasSub && qcd.allTotals) {
+        pages.push({ name: 'All queues (incl. sub-queues)', html: tileRow(qcd.allTotals) });
+      }
 
       tiles.innerHTML =
           '<div class="dept-qcd-carousel">'
@@ -11614,6 +11647,10 @@
   let insHasQuiet_ = false;        // whether the current render has quiet agents
   let insShareChartInstance = null;   // share-of-answered pie (PR port)
   let insActiveTrendMetric = 'answered';
+  // gap 1: when the trend chart's "By Queue" tab is active, which per-queue
+  // metric to plot -- 'abandonedPct' (default, the 5%-standard view) |
+  // 'totalCalls' | 'violations'. Persisted in prefs.
+  let insQueueMetric = 'abandonedPct';
   let insCardSort = 'default';      // default (answered desc) | name | improvers | regressors
   // v2: prefs gain compareMode / priorFrom / priorTo / trendMetric
   // (older v1 blobs are silently dropped per the prefs-versioning
@@ -11759,6 +11796,14 @@
         b.classList.toggle('active', active);
         b.setAttribute('aria-selected', active ? 'true' : 'false');
       });
+      insSavePrefs_();
+      if (insLastData) insRenderTrendChart_(insLastData);
+    });
+
+    // gap 1: per-queue metric sub-selector (only meaningful on the By Queue tab).
+    const queueMetricSel = $('ins-queue-metric');
+    if (queueMetricSel) queueMetricSel.addEventListener('change', function () {
+      insQueueMetric = this.value || 'abandonedPct';
       insSavePrefs_();
       if (insLastData) insRenderTrendChart_(insLastData);
     });
@@ -11986,8 +12031,12 @@
   }
   function insToggleAgents(on) { selectAllActiveAgents_($('ins-agent-list'), on); insUpdateGenerate(); insSavePrefs_(); }
   function insUpdateGenerate() {
-    const boxes = $('ins-agent-list').querySelectorAll('.ir-agent-cb:checked');
-    $('ins-generate-btn').disabled = boxes.length === 0;
+    // Agent-free run: Generate is enabled whenever the roster has any agent
+    // (checked or not) -- leaving everything unchecked runs the whole
+    // department (the QCD-style queue / dept quick-look). Only a truly empty
+    // roster disables it.
+    const total = $('ins-agent-list').querySelectorAll('.ir-agent-cb').length;
+    $('ins-generate-btn').disabled = total === 0;
   }
 
   function runInsReport() {
@@ -11996,7 +12045,8 @@
     if (!from || !to) { insSetFormError('Pick a start and end date.'); return; }
     if (from > to) { insSetFormError('Start date must be on or before end date.'); return; }
     const agents = irGetCheckedAgents_($('ins-agent-list'));
-    if (!agents.length) { insSetFormError('Select at least one agent.'); return; }
+    // Agent-free run: an empty selection is allowed -- the server defaults to
+    // the full department roster (the QCD-replacement queue / dept view).
     // Resolve the comparison window. prevPeriod -> null (server's
     // INV-28 auto-adjacent default); yoy/custom -> explicit dates.
     const prior = insResolvePriorRange_(from, to);
@@ -12118,6 +12168,15 @@
 
     insRenderLengthWarning_(data.meta);
     insRenderQueueHealth_(data.queueHealth);
+    // Temporal abandon heatmap companion to Queue health (sourced from
+    // inbound_calls). Admin only -- getInboundHeatmap inherits the inbound
+    // report's vetting gate, so managers never call it and the panel stays
+    // hidden for them (same gate as the QCD report's heatmap).
+    if (USER.role === 'admin' && data.meta) {
+      loadAbandonHeatmap_('ins-heatmap', data.meta.department || '', data.meta.from, data.meta.to);
+    } else {
+      var insHeat = $('ins-heatmap'); if (insHeat) { insHeat.style.display = 'none'; insHeat.innerHTML = ''; }
+    }
     reportHeadline_('ins-headline', 'insights-results', insHeadline_(data));
     insRenderTrendChart_(data);
     insRenderShareChart_(data.agentData || []);
@@ -12218,6 +12277,7 @@
       const tbEl = $('ins-qh-tbody'); if (tbEl) tbEl.innerHTML = '';
       const capEl = $('ins-qh-cap'); if (capEl) capEl.textContent = '';
       const fcEl = $('ins-qh-forecast'); if (fcEl) fcEl.style.display = 'none';
+      const dEl = $('ins-qh-daily'); if (dEl) { dEl.style.display = 'none'; }
       return;
     }
     if (!qh || !qh.totals) { wrap.style.display = 'none'; return; }
@@ -12251,34 +12311,81 @@
     // chart above (the "Abandoned % by Queue" tab); this section keeps the
     // tiles + the per-queue detail table.
     const tbody = $('ins-qh-tbody');
-    if (!tbody) return;
-    tbody.innerHTML = (qh.perQueue || []).map(function (q) {
-      const pctCls = benchValueCls_('abandoned %', q.abandonedPctStr);
-      const violCls = q.violations > 3 ? ' qcd-warn-strong' : (q.violations > 0 ? ' qcd-warn-light' : '');
-      const violCell = q.violations > 0 && (q.violationDates || []).length
-        ? '<details class="ins-qh-viol"><summary>' + q.violations + '</summary>'
-          + '<div class="ins-qh-viol-dates">' + q.violationDates.map(escapeHtml).join(', ') + '</div></details>'
-        : String(q.violations || 0);
-      // Tag child sub-queue rows so the separation is visible (seq #5/#1).
-      const subTag = q.subDept
-        ? ' <span class="dept-qcd-subtag">sub-queue · ' + escapeHtml(q.subDept) + '</span>' : '';
-      // 4c: annotate WHERE this queue's abandons come from -- the call
-      // source with the most abandoned calls (from the 4a bySource
-      // breakdown). Rendered only when a sub-source actually has abandons.
-      const tas = q.topAbandonSource;
-      const srcLine = tas
-        ? '<div class="ins-qh-topsrc" title="Call source contributing the most abandoned calls in this queue for the selected range">'
-          + '&#8627; most abandons: <strong>' + escapeHtml(tas.source) + '</strong> ('
-          + fmtNumber(tas.abandoned) + ')</div>'
-        : '';
-      return '<tr>'
-        + '<td>' + escapeHtml(q.queue) + subTag + srcLine + '</td>'
-        + '<td class="num">' + fmtNumber(q.totalCalls) + '</td>'
-        + '<td class="num">' + fmtNumber(q.abandoned) + '</td>'
-        + '<td class="num' + pctCls + '">' + escapeHtml(q.abandonedPctStr) + '</td>'
-        + '<td class="num' + violCls + '">' + violCell + '</td>'
-        + '</tr>';
-    }).join('');
+    if (tbody) {
+      tbody.innerHTML = (qh.perQueue || []).map(function (q) {
+        const pctCls = benchValueCls_('abandoned %', q.abandonedPctStr);
+        const violCls = q.violations > 3 ? ' qcd-warn-strong' : (q.violations > 0 ? ' qcd-warn-light' : '');
+        // Tag child sub-queue rows so the separation is visible (seq #5/#1).
+        const subTag = q.subDept
+          ? ' <span class="dept-qcd-subtag">sub-queue · ' + escapeHtml(q.subDept) + '</span>' : '';
+        // 4c: annotate WHERE this queue's abandons come from -- the call
+        // source with the most abandoned calls (from the 4a bySource breakdown).
+        const tas = q.topAbandonSource;
+        const srcLine = tas
+          ? '<div class="ins-qh-topsrc" title="Call source contributing the most abandoned calls in this queue for the selected range">'
+            + '&#8627; most abandons: <strong>' + escapeHtml(tas.source) + '</strong> ('
+            + fmtNumber(tas.abandoned) + ')</div>'
+          : '';
+        // Consolidation Phase 1 (gap 2): expand a queue row into its FULL
+        // per-call-source subtable (+ violation dates) -- the same detail the
+        // QCD modal shows, via the shared qcdSourceSubtableHtml_ builder. The
+        // violation dates moved off the inline violations-cell <details> into
+        // this expand, mirroring the QCD modal exactly.
+        const sources = q.bySource || [];
+        const hasViolDates = q.violations > 0 && (q.violationDates || []).length;
+        const hasDetail = sources.length > 0 || hasViolDates;
+        const chevron = hasDetail ? ' <span class="qcd-expand-icon">&#9654;</span>' : '';
+        let html = '<tr class="ins-qh-row' + (hasDetail ? ' qcd-expandable' : '') + '">'
+          + '<td>' + escapeHtml(q.queue) + subTag + chevron + srcLine + '</td>'
+          + '<td class="num">' + fmtNumber(q.totalCalls) + '</td>'
+          + '<td class="num">' + fmtNumber(q.abandoned) + '</td>'
+          + '<td class="num' + pctCls + '">' + escapeHtml(q.abandonedPctStr) + '</td>'
+          + '<td class="num' + violCls + '">' + fmtNumber(q.violations) + '</td>'
+          + '</tr>';
+        if (hasDetail) {
+          let detail = qcdSourceSubtableHtml_(sources);
+          if (hasViolDates) {
+            detail += '<div class="qcd-detail-viol"><strong>Violation dates:</strong> '
+              + q.violationDates.map(escapeHtml).join(', ') + '</div>';
+          }
+          html += '<tr class="qcd-detail-row" style="display:none;"><td colspan="5">'
+            + '<div class="qcd-detail-wrap">' + detail + '</div></td></tr>';
+        }
+        return html;
+      }).join('');
+      // Delegated expand/collapse, wired ONCE per tbody (re-render replaces
+      // rows but keeps the tbody element + this listener).
+      if (!tbody._insQhExpandWired) {
+        tbody.addEventListener('click', function (e) {
+          var row = e.target.closest('.qcd-expandable');
+          if (!row || !tbody.contains(row)) return;
+          var detail = row.nextElementSibling;
+          if (!detail || !detail.classList.contains('qcd-detail-row')) return;
+          var open = detail.style.display !== 'none';
+          detail.style.display = open ? 'none' : '';
+          var icon = row.querySelector('.qcd-expand-icon');
+          if (icon) icon.textContent = open ? '▶' : '▼';
+        });
+        tbody._insQhExpandWired = true;
+      }
+    }
+
+    // Consolidation Phase 1 (gap 3): per-day numeric table (the same rows the
+    // QCD modal's daily table shows, via the shared qcdDailyRowsHtml_), in a
+    // collapsed <details> to keep the section compact. Hidden when the
+    // dept/range has no daily QCD rows.
+    const dailyTbody = $('ins-qh-daily-tbody');
+    const dailyWrap = $('ins-qh-daily');
+    if (dailyTbody) {
+      const daily = qh.dailySeries || [];
+      if (daily.length) {
+        dailyTbody.innerHTML = qcdDailyRowsHtml_(daily);
+        if (dailyWrap) dailyWrap.style.display = '';
+      } else {
+        dailyTbody.innerHTML = '';
+        if (dailyWrap) dailyWrap.style.display = 'none';
+      }
+    }
   }
 
   /**
@@ -12352,10 +12459,17 @@
     if (!hasDaily && insTrendView === 'daily') insTrendView = 'monthly';
     const daily = (insTrendView === 'daily') && hasDaily;
 
+    // gap 1: the per-queue metric sub-selector is only meaningful on the
+    // By Queue tab -- show it there, hide it on the team-metric tabs.
+    const queueMetricWrap = $('ins-queue-metric-wrap');
+    if (queueMetricWrap) queueMetricWrap.style.display = isQueues ? '' : 'none';
+    const qMetricLabel = { abandonedPct: 'abandoned % by queue',
+      totalCalls: 'total calls by queue', violations: 'violations by queue' };
+
     const headerEl = $('ins-trend-header');
     if (headerEl) {
       headerEl.textContent = (daily ? 'Daily team trend' : '12-month team trend')
-        + (isQueues ? ' — abandoned % by queue' : '');
+        + (isQueues ? ' — ' + (qMetricLabel[insQueueMetric] || 'by queue') : '');
     }
 
     const fmtMin = function (val) {
@@ -12369,17 +12483,26 @@
     let chartConfig;
 
     if (isQueues) {
-      // Abandoned % by Queue: one line per queue + own-only dept total +
-      // the 5% threshold (the QCD violation rule). Hidden gracefully if
-      // there's no queue trend (unmapped dept / QCD unavailable).
+      // By Queue (gap 1): one line per queue + own-only dept total, for the
+      // metric the sub-selector picks (insQueueMetric). Abandoned % is the
+      // default and adds the 5% threshold line + % formatting (the QCD
+      // violation rule); Total Calls / Violations are integer counts with no
+      // threshold line. Hidden gracefully if there's no queue trend (unmapped
+      // dept / QCD unavailable).
       if (!qhTrend || !(qhTrend.labels || []).length) {
         canvas.style.display = 'none';
         return;
       }
       canvas.style.display = '';
+      const qMetric = insQueueMetric || 'abandonedPct';
+      const isPct = (qMetric === 'abandonedPct');
+      // Abandoned % reads the default/legacy series; the other metrics read
+      // trend.metrics[qMetric] (server-side, gap 1).
+      const mSrc = isPct ? qhTrend : ((qhTrend.metrics && qhTrend.metrics[qMetric]) || {});
       const labels   = daily ? qhTrend.dailyLabels : qhTrend.labels;
-      const totalSer = daily ? (qhTrend.dailyTotal || []) : (qhTrend.total || []);
-      const perQueue = daily ? (qhTrend.dailyPerQueue || {}) : (qhTrend.perQueue || {});
+      const totalSer = daily ? (mSrc.dailyTotal || []) : (mSrc.total || []);
+      const perQueue = daily ? (mSrc.dailyPerQueue || {}) : (mSrc.perQueue || {});
+      const fmtVal = function (v) { return isPct ? (Number(v).toFixed(1) + '%') : fmtNumber(v); };
       const qNames = Object.keys(perQueue);
       const datasets = qNames.map(function (q, i) {
         const c = IR_CHART_COLORS[i % IR_CHART_COLORS.length];
@@ -12391,9 +12514,11 @@
           borderColor: THEME.ink, backgroundColor: THEME.ink,
           borderDash: [5, 4], borderWidth: 1.4, pointRadius: 0, tension: 0.25, fill: false });
       }
-      datasets.push({ label: '5% threshold', data: labels.map(function () { return 5; }),
-        borderColor: THEME.muted, borderDash: [3, 4], borderWidth: 1,
-        pointRadius: 0, fill: false, order: 99 });
+      if (isPct) {
+        datasets.push({ label: '5% threshold', data: labels.map(function () { return 5; }),
+          borderColor: THEME.muted, borderDash: [3, 4], borderWidth: 1,
+          pointRadius: 0, fill: false, order: 99 });
+      }
       chartConfig = {
         type: 'line',
         data: { labels: labels, datasets: datasets },
@@ -12411,7 +12536,7 @@
               font: { family: "'IBM Plex Mono', monospace", size: 10, weight: '500' },
               formatter: function (value, c) {
                 if (c.dataset.label === '5% threshold' || value == null) return '';
-                return Number(value).toFixed(1) + '%';
+                return fmtVal(value);
               },
             },
             legend: { position: 'bottom', labels: { boxWidth: 18,
@@ -12419,13 +12544,13 @@
             tooltip: {
               filter: function (ctx) { return ctx.dataset.label !== '5% threshold'; },
               callbacks: { label: function (ctx) {
-                return ctx.dataset.label + ': ' + (ctx.parsed.y == null ? '-' : ctx.parsed.y.toFixed(1) + '%');
+                return ctx.dataset.label + ': ' + (ctx.parsed.y == null ? '-' : fmtVal(ctx.parsed.y));
               } },
             },
           },
           scales: {
             x: { ticks: { maxRotation: 0, autoSkip: true } },
-            y: { beginAtZero: true, ticks: { callback: function (v) { return v + '%'; } } },
+            y: { beginAtZero: true, ticks: { callback: function (v) { return isPct ? (v + '%') : fmtNumber(v); } } },
           },
         },
       };
@@ -13119,6 +13244,7 @@
         priorFrom:   $('ins-prior-from')   ? $('ins-prior-from').value   : '',
         priorTo:     $('ins-prior-to')     ? $('ins-prior-to').value     : '',
         trendMetric: insActiveTrendMetric,
+        queueMetric: insQueueMetric,
         trendView:   insTrendView,
         showLabels:  $('ins-show-datalabels') ? $('ins-show-datalabels').checked : false,
         cardSort:    insCardSort,
@@ -13153,6 +13279,10 @@
           b.classList.toggle('active', active);
           b.setAttribute('aria-selected', active ? 'true' : 'false');
         });
+      }
+      if (prefs.queueMetric === 'abandonedPct' || prefs.queueMetric === 'totalCalls' || prefs.queueMetric === 'violations') {
+        insQueueMetric = prefs.queueMetric;
+        if ($('ins-queue-metric')) $('ins-queue-metric').value = insQueueMetric;
       }
       if (prefs.trendView === 'daily' || prefs.trendView === 'monthly') {
         insTrendView = prefs.trendView;
@@ -15237,14 +15367,11 @@
       + tile('Violations (MTD)', fmtNumber(t.violations || 0), violWarn);
   }
 
-  function qcdRenderDailyTable_(rows) {
-    const tbody = $('qcd-daily-tbody');
-    if (!tbody) return;
-    if (!rows.length) {
-      tbody.innerHTML = '<tr><td colspan="6" class="al-empty">No daily QCD rows in the selected range for this dept\'s mapped queues.</td></tr>';
-      return;
-    }
-    tbody.innerHTML = rows.map(function (r) {
+  // Pure: the per-day QCD rows (Date / Total / Answered / Abandoned / Aban% /
+  // Viol) shared by the QCD modal's daily table AND the Insights Queue health
+  // daily table (consolidation Phase 1, gap 3).
+  function qcdDailyRowsHtml_(rows) {
+    return (rows || []).map(function (r) {
       var pct = Number(r.abandonedPct) || 0;
       var pctCls = pct >= 5 ? 'num qcd-warn-light' : 'num';
       var viol = Number(r.violations) || 0;
@@ -15258,6 +15385,45 @@
            +   '<td class="' + violCls + '">' + fmtNumber(r.violations)    + '</td>'
            + '</tr>';
     }).join('');
+  }
+
+  function qcdRenderDailyTable_(rows) {
+    const tbody = $('qcd-daily-tbody');
+    if (!tbody) return;
+    if (!rows.length) {
+      tbody.innerHTML = '<tr><td colspan="6" class="al-empty">No daily QCD rows in the selected range for this dept\'s mapped queues.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = qcdDailyRowsHtml_(rows);
+  }
+
+  // Pure: the per-call-source breakdown subtable (Overall + CSR / Ad-campaign /
+  // New Call Menu / Non-CSR ...) shared by the QCD modal's expandable queue
+  // rows AND the Insights Queue health expandable rows (consolidation Phase 1,
+  // gap 2). '' when there are no sources.
+  function qcdSourceSubtableHtml_(sources) {
+    sources = sources || [];
+    if (!sources.length) return '';
+    return '<table class="qcd-source-subtable"><thead><tr>'
+         +    '<th>Call source</th><th class="num">Total</th><th class="num">Answered</th>'
+         +    '<th class="num">Abandoned</th><th class="num">Aban %</th>'
+         +    '<th class="num">Longest</th><th class="num">Avg ans</th><th class="num">Viol</th>'
+         +  '</tr></thead><tbody>'
+         +  sources.map(function (s) {
+              var sPct = Number(s.abandonedPct) || 0;
+              var sViol = Number(s.violations) || 0;
+              return '<tr class="' + (s.isOverall ? 'qcd-source-overall' : '') + '">'
+                +  '<td>' + escapeHtml(s.source) + '</td>'
+                +  '<td class="num">' + fmtNumber(s.totalCalls)    + '</td>'
+                +  '<td class="num">' + fmtNumber(s.totalAnswered) + '</td>'
+                +  '<td class="num">' + fmtNumber(s.abandoned)     + '</td>'
+                +  '<td class="num' + (sPct >= 5 ? ' qcd-warn-light' : '') + '">' + escapeHtml(s.abandonedPctStr) + '</td>'
+                +  '<td class="num">' + escapeHtml(s.longestWait)  + '</td>'
+                +  '<td class="num">' + escapeHtml(s.avgAnswer)    + '</td>'
+                +  '<td class="num' + (sViol > 0 ? ' qcd-warn-light' : '') + '">' + fmtNumber(s.violations) + '</td>'
+                +  '</tr>';
+            }).join('')
+         +  '</tbody></table>';
   }
 
   function qcdRenderQueueTable_(rows, totals) {
@@ -15298,26 +15464,7 @@
       if (hasDetail) {
         var detail = '';
         if (hasSources) {
-          detail += '<table class="qcd-source-subtable"><thead><tr>'
-                 +    '<th>Call source</th><th class="num">Total</th><th class="num">Answered</th>'
-                 +    '<th class="num">Abandoned</th><th class="num">Aban %</th>'
-                 +    '<th class="num">Longest</th><th class="num">Avg ans</th><th class="num">Viol</th>'
-                 +  '</tr></thead><tbody>'
-                 +  sources.map(function (s) {
-                      var sPct = Number(s.abandonedPct) || 0;
-                      var sViol = Number(s.violations) || 0;
-                      return '<tr class="' + (s.isOverall ? 'qcd-source-overall' : '') + '">'
-                        +  '<td>' + escapeHtml(s.source) + '</td>'
-                        +  '<td class="num">' + fmtNumber(s.totalCalls)    + '</td>'
-                        +  '<td class="num">' + fmtNumber(s.totalAnswered) + '</td>'
-                        +  '<td class="num">' + fmtNumber(s.abandoned)     + '</td>'
-                        +  '<td class="num' + (sPct >= 5 ? ' qcd-warn-light' : '') + '">' + escapeHtml(s.abandonedPctStr) + '</td>'
-                        +  '<td class="num">' + escapeHtml(s.longestWait)  + '</td>'
-                        +  '<td class="num">' + escapeHtml(s.avgAnswer)    + '</td>'
-                        +  '<td class="num' + (sViol > 0 ? ' qcd-warn-light' : '') + '">' + fmtNumber(s.violations) + '</td>'
-                        +  '</tr>';
-                    }).join('')
-                 +  '</tbody></table>';
+          detail += qcdSourceSubtableHtml_(sources);
         }
         if (hasViolDates) {
           detail += '<div class="qcd-detail-viol"><strong>Violation dates:</strong> '
