@@ -78,7 +78,7 @@
 //     (from the bySource breakdown 4a added to computeQcdReport_), so
 //     the Queue health table can annotate WHERE a queue's abandons come
 //     from. Null when no sub-source has abandons.
-const INSIGHTS_CACHE_KEY_PREFIX = 'insights:v12';
+const INSIGHTS_CACHE_KEY_PREFIX = 'insights:v13';
 
 function getInsightsReportInit(req) {
   // Same picker UX (roster + default dates + active-in-range subset) as
@@ -611,6 +611,11 @@ function insightsQueueHealth_(dept, from, to, priorFrom, priorTo) {
       priorTotals:   prior && prior.meta && !prior.meta.unmapped ? pick(prior.totals) : null,
       violationsMtd: Number(cur.totals && cur.totals.violations) || 0,
       trend:         trend,
+      // Consolidation Phase 1 (gap 3): the per-day numeric series the QCD
+      // Report renders as its daily table -- selected-range scoped, dept-OWN
+      // queues (separateSubQueues). Lets Insights Queue health show the same
+      // daily numbers the QCD modal does (not just the chart series).
+      dailySeries:   cur.dailySeries || [],
       perQueue: (cur.queueBreakdown || []).map(function (q) {
         return {
           queue:            q.queue,
@@ -625,6 +630,11 @@ function insightsQueueHealth_(dept, from, to, priorFrom, priorTo) {
           // (from the 4a bySource breakdown). Null when no sub-source has
           // any abandons -- the client renders nothing in that case.
           topAbandonSource: insTopAbandonSource_(q.bySource),
+          // Consolidation Phase 1 (gap 2): the FULL per-call-source breakdown
+          // (Overall + CSR / Ad-campaign / New Call Menu / Non-CSR ...) so the
+          // Insights queue row can expand into the same subtable the QCD modal
+          // shows -- not just the single topAbandonSource annotation.
+          bySource:         q.bySource || [],
         };
       }),
     };

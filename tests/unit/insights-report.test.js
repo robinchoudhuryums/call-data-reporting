@@ -489,4 +489,20 @@ test('Insights: queueHealth daily series + always-separated sub-queues', functio
   assert.equal(betaRow.subDept, 'Beta');
   const alphaRow = qh.perQueue.filter(function (q) { return q.queue === 'A_Q_Alpha'; })[0];
   assert.equal(alphaRow.subDept, null);
+
+  // Consolidation Phase 1 (gap 3): dailySeries passes through -- the per-day
+  // numeric rows the QCD modal's daily table renders, dept-OWN queues,
+  // selected-range scoped (Beta excluded from the dept daily total).
+  assert.equal(qh.dailySeries.length, 2, 'two days of own-queue QCD data');
+  assert.equal(qh.dailySeries[0].date, '2026-03-10');
+  assert.equal(qh.dailySeries[0].totalCalls, 100);
+  assert.equal(qh.dailySeries[0].abandoned, 10);
+  assert.equal(qh.dailySeries[1].totalCalls, 80);
+  // Consolidation Phase 1 (gap 2): perQueue rows carry the full bySource
+  // breakdown (here just the 'Total Calls' rollup -> 'Overall'), aggregated
+  // over the range (Alpha 100 + 80 = 180).
+  assert.ok(Array.isArray(alphaRow.bySource), 'perQueue row carries bySource');
+  const overall = alphaRow.bySource.filter(function (s) { return s.isOverall; })[0];
+  assert.ok(overall, 'bySource has the Overall rollup row');
+  assert.equal(overall.totalCalls, 180);
 });
