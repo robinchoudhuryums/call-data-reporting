@@ -4647,6 +4647,13 @@
         dateStr = days[d.getDay()] + ' ' + months[d.getMonth()] + ' ' + d.getDate();
       }
       titleEl.textContent = 'Queue Call Data — ' + dateStr;
+      // This card always shows the most recent QCD day for the dept, which is
+      // independent of the date range above (QCD can update on a different day
+      // than DQE, and the range defaults to the latest DQE date). Clarify that
+      // so the static card next to the range controls doesn't read as broken.
+      titleEl.title = 'Most recent day of queue data — independent of the date '
+        + 'range above. For a specific date range, open the QCD report.';
+      titleEl.style.cursor = 'help';
     }
     var dateEl = $('dept-qcd-date');
     if (dateEl) dateEl.textContent = '';
