@@ -12037,7 +12037,10 @@
       list.innerHTML = '<div class="ir-agent-empty">No agents on this department\'s roster.</div>';
       list.style.display = ''; $('ins-generate-btn').disabled = true; return;
     }
-    list.innerHTML = irBuildAgentListHtml_(insLastRoster.agents, insLastRoster.activeAgents, insLastRoster.activeFloaters);
+    // Insights is roster-only (see computeInsights_ visibleAgents) -- don't
+    // offer the queue-only floater group in the picker, so it can't be picked
+    // into a report that would then drop it. IR/PR/CR still surface floaters.
+    list.innerHTML = irBuildAgentListHtml_(insLastRoster.agents, insLastRoster.activeAgents, []);
     list.style.display = '';
     if (insListChangeHandler_) list.removeEventListener('change', insListChangeHandler_);
     insListChangeHandler_ = function () { insUpdateGenerate(); insSavePrefs_(); };

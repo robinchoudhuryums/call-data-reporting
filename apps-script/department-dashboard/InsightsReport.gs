@@ -78,7 +78,7 @@
 //     (from the bySource breakdown 4a added to computeQcdReport_), so
 //     the Queue health table can annotate WHERE a queue's abandons come
 //     from. Null when no sub-source has abandons.
-const INSIGHTS_CACHE_KEY_PREFIX = 'insights:v14';
+const INSIGHTS_CACHE_KEY_PREFIX = 'insights:v15';
 
 function getInsightsReportInit(req) {
   // Same picker UX (roster + default dates + active-in-range subset) as
@@ -429,10 +429,18 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
   };
 
   // --- Per-agent cards ----------------------------------------------
-  // Drop selected names that match neither path (off-dept crafted names
-  // with no queue overlap); roster members always pass (INV-53).
+  // ROSTER-ONLY report (matches the My Department table's Phase 14 flip,
+  // commit 80e17da): queue-only floaters -- agents matched into the dept only
+  // by a shared-queue extension overlap -- proved to be mostly false positives
+  // in production (e.g. CSR agents who merely transfer INTO Service's queue),
+  // so Insights drops them entirely; only the dept's own roster agents render.
+  // The team rollup already gated on matchedViaRoster, so teamStats/trend are
+  // unchanged -- this only removes floater cards (and off-dept crafted names,
+  // which never matched roster anyway). queueOnlyAgentCount is therefore always
+  // 0 here. Floaters remain available in IR/PR/CR (INV-53), same split as My
+  // Department.
   const visibleAgents = selectedAgents.filter(function (a) {
-    return agentMatchedViaRoster[a] || agentMatchedViaQueue[a];
+    return agentMatchedViaRoster[a];
   });
   let depsByAgent = null;
   for (let i = 0; i < visibleAgents.length; i++) {
