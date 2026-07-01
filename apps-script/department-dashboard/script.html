@@ -948,6 +948,17 @@
     } else {
       if (kicker) kicker.textContent = 'Department Dashboard';
       if (title)  title.textContent  = getRequestedDept() || '(no department)';
+      // setPage doesn't load the agent table itself. If we arrived showing a
+      // STALE prior dept -- the My Department nav button (which fires no
+      // selector 'change'), or view-as-manager where the selector is
+      // pinned+disabled -- load the CURRENT dept now, so the table (and its
+      // Missed / QCD side panels) match the dept instead of a leftover load.
+      // Skip when a load is already in flight (refresh disables the button) so
+      // a selector-change-driven load isn't doubled.
+      var _rb = $('refresh-btn');
+      if (lastSummaryDept_ !== getRequestedDept() && !(_rb && _rb.disabled)) {
+        refresh();
+      }
     }
     // Delegate the active-tab visual indicator to the router so all
     // [data-route] tabs (page-toggles + report-openers) participate
@@ -2099,30 +2110,23 @@
   // detail is visible.
   function ovRouteToDept_(deptName, isoDate) {
     const sel = $('dept-selector');
-    let changed = false;
     if (sel && sel.value !== deptName) {
       sel.value = deptName;
       // Trigger the same 'change' handler the manual dropdown uses
       // -- wipes stale roster caches and re-fetches the summary.
       sel.dispatchEvent(new Event('change'));
-      changed = true;
     }
-    setPage('dept');
     // Point-click deep-link: snap the From/To range to the clicked day
-    // and re-fetch. Runs after the change handler (which resets to the
-    // latest date); this second refresh wins and is server-cached.
+    // and re-fetch (this wins over any change-driven latest-date load).
     if (isoDate && $('from-date') && $('to-date')) {
       $('from-date').value = isoDate;
       $('to-date').value = isoDate;
       refresh();
-    } else if (!changed) {
-      // The selector was ALREADY on this dept (e.g. pinned + disabled in
-      // view-as-manager mode), so no 'change' fired and setPage('dept')
-      // doesn't load the table itself -- it would keep whatever was last
-      // shown (a stale other-dept table, or nothing). Force a load for the
-      // current dept so the click-through always lands on fresh data.
-      refresh();
     }
+    // setPage runs LAST: its stale-dept guard loads the table when neither of
+    // the above kicked off a load (selector already on this dept + no isoDate,
+    // e.g. clicking the pinned dept card in view-as-manager mode).
+    setPage('dept');
   }
 
   // Renders the user's own dept's agent table at the latest date
