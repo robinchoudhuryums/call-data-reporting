@@ -225,8 +225,8 @@
                 <th class="col-extra">CSR Avg Abd Wait</th>
               </tr>
             </thead>
+            <tbody id="ov-user-tfoot" class="agents-totals"></tbody>
             <tbody id="ov-user-tbody"></tbody>
-            <tfoot id="ov-user-tfoot"></tfoot>
           </table>
         </div>
       </div>
@@ -316,8 +316,8 @@
             <th data-sort="csrAvgAbdWaitSeconds" class="col-extra">CSR Avg Abd Wait <span class="arrow"></span></th>
           </tr>
         </thead>
+        <tbody id="agents-tfoot" class="agents-totals"></tbody>
         <tbody id="agents-tbody"></tbody>
-        <tfoot id="agents-tfoot"></tfoot>
       </table>
 
       <div id="info-line" class="info-line" style="display:none;"></div>
@@ -378,7 +378,7 @@
         <div id="dept-missed-agents" class="agent-grid" style="display:none;"></div>
       </div>
 
-      <details id="diagnostics" class="diagnostics" style="display:none;">
+      <details id="diagnostics" class="diagnostics" data-admin-only style="display:none;">
         <summary>Diagnostics <span id="diag-count" class="diag-count"></span></summary>
         <div id="diag-content"></div>
       </details>

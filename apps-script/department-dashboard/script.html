@@ -2099,11 +2099,13 @@
   // detail is visible.
   function ovRouteToDept_(deptName, isoDate) {
     const sel = $('dept-selector');
+    let changed = false;
     if (sel && sel.value !== deptName) {
       sel.value = deptName;
       // Trigger the same 'change' handler the manual dropdown uses
       // -- wipes stale roster caches and re-fetches the summary.
       sel.dispatchEvent(new Event('change'));
+      changed = true;
     }
     setPage('dept');
     // Point-click deep-link: snap the From/To range to the clicked day
@@ -2112,6 +2114,13 @@
     if (isoDate && $('from-date') && $('to-date')) {
       $('from-date').value = isoDate;
       $('to-date').value = isoDate;
+      refresh();
+    } else if (!changed) {
+      // The selector was ALREADY on this dept (e.g. pinned + disabled in
+      // view-as-manager mode), so no 'change' fired and setPage('dept')
+      // doesn't load the table itself -- it would keep whatever was last
+      // shown (a stale other-dept table, or nothing). Force a load for the
+      // current dept so the click-through always lands on fresh data.
       refresh();
     }
   }
@@ -3745,9 +3754,10 @@
         ? rgbaWithAlpha_(THEME.warn, 0.58 + 0.42 * ramp)   // solid, hot
         : rgbaWithAlpha_(THEME.warn, 0.10 + 0.13 * ramp);  // faint, recedes
     });
-    // Peak bucket keeps its outline, now bolder (was 1.5px, too subtle).
+    // Peak bucket keeps its outline: 2px reads as "marked" without the heavy
+    // 3px frame that looked too loud at the compact size.
     const border = counts.map(function (v, i) { return (i === peakIdx && peakVal > 0) ? THEME.ink : 'transparent'; });
-    const borderW = counts.map(function (v, i) { return (i === peakIdx && peakVal > 0) ? 3 : 0; });
+    const borderW = counts.map(function (v, i) { return (i === peakIdx && peakVal > 0) ? 2 : 0; });
     return {
       type: 'bar',
       data: {
@@ -4812,6 +4822,17 @@
     const wrap = $('diagnostics');
     const content = $('diag-content');
     const count = $('diag-count');
+    // Admin-only: the Diagnostics panel is an operational/debug surface (roster
+    // gaps, queue-only matches), not a manager-facing metric. Hide it for
+    // non-admins (and for the admin's own view-as-manager preview, which keeps
+    // USER.role === 'admin' -- so this is a deliberate no-hide there; the
+    // data-admin-only CSS on the panel handles the view-as case).
+    if (!wrap) return;
+    if (USER.role !== 'admin') {
+      wrap.style.display = 'none';
+      wrap.classList.remove('diag-severity-warn', 'diag-severity-bad');
+      return;
+    }
     if (!state.diagnostics) {
       wrap.style.display = 'none';
       wrap.classList.remove('diag-severity-warn', 'diag-severity-bad');

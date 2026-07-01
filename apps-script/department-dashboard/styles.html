@@ -767,15 +767,19 @@
      to 0 and 0:00:00 cells. */
   .cell-zero { color: var(--muted); opacity: 0.5; }
 
-  .agents tfoot td {
+  /* Totals row. Rendered as a <tbody class="agents-totals"> placed at the TOP
+     of the table (right under the header) rather than a <tfoot> at the bottom,
+     so the department total is the first thing read -- hence a divider BELOW
+     it (border-bottom) instead of above. */
+  .agents .agents-totals td {
     background: var(--paper-2);
     font-family: var(--mono);
     font-weight: 500;
     color: var(--ink);
-    border-top: 1px solid var(--line);
-    border-bottom: 0;
+    border-top: 0;
+    border-bottom: 2px solid var(--line);
   }
-  .agents tfoot td:first-child {
+  .agents .agents-totals td:first-child {
     font-family: var(--ui);
     text-transform: uppercase;
     letter-spacing: 0.1em;
@@ -3165,7 +3169,10 @@
   /* My Department: Missed Calls drill-down section + modal range row. */
   /* The dept Missed radar reuses the modal's .chart-section card; keep it
      from stretching too wide when no drill-in is open. */
-  #dept-missed-chart-row .chart-section { max-width: 480px; }
+  /* Radar mode keeps the compact 480px cap; bars mode uses the wider
+     .chart-row.mode-bars cap (760px). The :not() keeps this ID rule from
+     out-specificity-ing the bars widening. */
+  #dept-missed-chart-row:not(.mode-bars) .chart-section { max-width: 480px; }
   .dept-missed-open { margin-left: auto; }
   .missed-range-row { margin-bottom: 10px; }
 
