@@ -3133,6 +3133,35 @@
   }
   .ins-qh-topsrc strong { color: var(--ink); font-weight: 600; }
 
+  /* #1: secondary QCD metrics (Answered / Longest wait / Avg answer). Muted
+     dept-total line under the tiles + the same strip inside each per-queue
+     expand -- kept off the headline tiles/columns. */
+  .ins-qh-secondary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 18px;
+    margin: -2px 0 12px;
+    font-size: 12px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .ins-qh-qstats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 16px;
+    margin: 0 0 8px;
+    font-size: 12px;
+    color: var(--ink);
+    font-variant-numeric: tabular-nums;
+  }
+  .ins-qh-qstat-k {
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-size: 10px;
+    margin-right: 4px;
+  }
+
   /* My Department: Missed Calls drill-down section + modal range row. */
   /* The dept Missed radar reuses the modal's .chart-section card; keep it
      from stretching too wide when no drill-in is open. */

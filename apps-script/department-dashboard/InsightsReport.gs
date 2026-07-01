@@ -78,7 +78,7 @@
 //     (from the bySource breakdown 4a added to computeQcdReport_), so
 //     the Queue health table can annotate WHERE a queue's abandons come
 //     from. Null when no sub-source has abandons.
-const INSIGHTS_CACHE_KEY_PREFIX = 'insights:v15';
+const INSIGHTS_CACHE_KEY_PREFIX = 'insights:v16';
 
 function getInsightsReportInit(req) {
   // Same picker UX (roster + default dates + active-in-range subset) as
@@ -595,6 +595,7 @@ function insightsQueueHealth_(dept, from, to, priorFrom, priorTo) {
       t = t || {};
       return {
         totalCalls:      Number(t.totalCalls) || 0,
+        totalAnswered:   Number(t.totalAnswered) || 0,
         abandoned:       Number(t.abandoned) || 0,
         abandonedPct:    Number(t.abandonedPct) || 0,
         abandonedPctStr: t.abandonedPctStr || '0.00%',
@@ -680,6 +681,11 @@ function insightsQueueHealth_(dept, from, to, priorFrom, priorTo) {
           queue:            q.queue,
           subDept:          q.subDept || null,
           totalCalls:       q.totalCalls,
+          // Secondary metrics (#1): surfaced only in the per-queue expand +
+          // the dept-total secondary line, not the headline tiles/columns.
+          totalAnswered:    q.totalAnswered,
+          longestWait:      q.longestWait,
+          avgAnswer:        q.avgAnswer,
           abandoned:        q.abandoned,
           abandonedPct:     q.abandonedPct,
           abandonedPctStr:  q.abandonedPctStr,

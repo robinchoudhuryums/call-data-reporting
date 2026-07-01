@@ -11968,7 +11968,14 @@
     const v = $('ins-preset').value; insSavePrefs_();
     if (v === 'custom') return;
     const today = new Date(); let s, e = new Date(today);
-    if (v === 'thisMonth')        { s = new Date(today.getFullYear(), today.getMonth(), 1); }
+    // Short-window presets (#2) for the agent-free queue/dept quick-look.
+    // daysSinceMon: 0=Mon .. 6=Sun (JS getDay is 0=Sun..6=Sat).
+    if (v === 'yesterday')        { s = new Date(today); s.setDate(today.getDate() - 1); e = new Date(s); }
+    else if (v === 'thisWeek')    { const dsm = (today.getDay() + 6) % 7; s = new Date(today); s.setDate(today.getDate() - dsm); }
+    else if (v === 'lastWeek')    { const dsm = (today.getDay() + 6) % 7;
+                                    e = new Date(today); e.setDate(today.getDate() - dsm - 1);
+                                    s = new Date(e); s.setDate(e.getDate() - 6); }
+    else if (v === 'thisMonth')   { s = new Date(today.getFullYear(), today.getMonth(), 1); }
     else if (v === 'lastMonth')   { s = new Date(today.getFullYear(), today.getMonth() - 1, 1);
                                     e = new Date(today.getFullYear(), today.getMonth(), 0); }
     else if (v === 'last30')      { s = new Date(today); s.setDate(today.getDate() - 30); }
@@ -12333,6 +12340,15 @@
     ];
     $('ins-qh-tiles').innerHTML = tiles.join('');
 
+    // Secondary dept-total metrics (#1) -- Answered / Longest wait / Avg answer.
+    // A muted line under the headline tiles rather than three more tiles, so
+    // the tile row stays focused on the abandon story. Full QCD parity, minus
+    // the clutter.
+    const sec = $('ins-qh-secondary');
+    if (sec) {
+      sec.innerHTML = insQhStatStrip_(t.totalAnswered, t.longestWait, t.avgAnswer);
+    }
+
     // The per-queue abandoned-% chart now lives in the consolidated trend
     // chart above (the "Abandoned % by Queue" tab); this section keeps the
     // tiles + the per-queue detail table.
@@ -12359,24 +12375,26 @@
         // this expand, mirroring the QCD modal exactly.
         const sources = q.bySource || [];
         const hasViolDates = q.violations > 0 && (q.violationDates || []).length;
-        const hasDetail = sources.length > 0 || hasViolDates;
-        const chevron = hasDetail ? ' <span class="qcd-expand-icon">&#9654;</span>' : '';
-        let html = '<tr class="ins-qh-row' + (hasDetail ? ' qcd-expandable' : '') + '">'
+        // Every queue row is expandable now: the expand always carries the
+        // secondary metrics strip (#1: Answered / Longest wait / Avg answer),
+        // plus the call-source subtable + violation dates when present.
+        const hasDetail = true;
+        const chevron = ' <span class="qcd-expand-icon">&#9654;</span>';
+        let html = '<tr class="ins-qh-row qcd-expandable">'
           + '<td>' + escapeHtml(q.queue) + subTag + chevron + srcLine + '</td>'
           + '<td class="num">' + fmtNumber(q.totalCalls) + '</td>'
           + '<td class="num">' + fmtNumber(q.abandoned) + '</td>'
           + '<td class="num' + pctCls + '">' + escapeHtml(q.abandonedPctStr) + '</td>'
           + '<td class="num' + violCls + '">' + fmtNumber(q.violations) + '</td>'
           + '</tr>';
-        if (hasDetail) {
-          let detail = qcdSourceSubtableHtml_(sources);
-          if (hasViolDates) {
-            detail += '<div class="qcd-detail-viol"><strong>Violation dates:</strong> '
-              + q.violationDates.map(fmtViolDate_).join(', ') + '</div>';
-          }
-          html += '<tr class="qcd-detail-row" style="display:none;"><td colspan="5">'
-            + '<div class="qcd-detail-wrap">' + detail + '</div></td></tr>';
+        let detail = insQhStatStrip_(q.totalAnswered, q.longestWait, q.avgAnswer)
+          + qcdSourceSubtableHtml_(sources);
+        if (hasViolDates) {
+          detail += '<div class="qcd-detail-viol"><strong>Violation dates:</strong> '
+            + q.violationDates.map(fmtViolDate_).join(', ') + '</div>';
         }
+        html += '<tr class="qcd-detail-row" style="display:none;"><td colspan="5">'
+          + '<div class="qcd-detail-wrap">' + detail + '</div></td></tr>';
         return html;
       }).join('');
       // Delegated expand/collapse, wired ONCE per tbody (re-render replaces
@@ -15396,6 +15414,18 @@
   // Pure: the per-day QCD rows (Date / Total / Answered / Abandoned / Aban% /
   // Viol) shared by the QCD modal's daily table AND the Insights Queue health
   // daily table (consolidation Phase 1, gap 3).
+  // Secondary QCD metrics strip (#1): Answered / Longest wait / Avg answer.
+  // Shown in the Insights Queue health per-queue EXPAND detail + the dept-total
+  // secondary line (QCD-parity for the three secondary metrics without adding
+  // headline tiles/columns).
+  function insQhStatStrip_(answered, longestWait, avgAnswer) {
+    return '<div class="ins-qh-qstats">'
+      +   '<span><span class="ins-qh-qstat-k">Answered</span> ' + fmtNumber(Number(answered) || 0) + '</span>'
+      +   '<span><span class="ins-qh-qstat-k">Longest wait</span> ' + escapeHtml(String(longestWait || '0:00:00')) + '</span>'
+      +   '<span><span class="ins-qh-qstat-k">Avg answer</span> ' + escapeHtml(String(avgAnswer || '0:00:00')) + '</span>'
+      + '</div>';
+  }
+
   // YYYY-MM-DD -> MM-DD-YY for the compact "Violation dates:" lists. Returns
   // safe text (digits + dashes) on a match; escapes anything unexpected.
   function fmtViolDate_(iso) {

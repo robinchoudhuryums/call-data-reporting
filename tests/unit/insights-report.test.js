@@ -377,6 +377,13 @@ test('Insights: queueHealth carries window totals, prior deltas base, and violat
   assert.equal(qh.perQueue[0].queue, 'A_Q_Alpha');
   assert.equal(qh.perQueue[0].violations, 1);
   assert.equal(qh.perQueue[0].violationDates.join(','), '2026-03-10');
+  // v16: secondary metrics pass through (answered = total - abandoned in the
+  // fixture; longestWait/avgAnswer from the qcdRow columns) for the per-queue
+  // expand + the dept-total secondary line.
+  assert.equal(qh.totals.totalAnswered, 90);
+  assert.equal(qh.perQueue[0].totalAnswered, 90);
+  assert.equal(qh.perQueue[0].longestWait, '0:05:00');
+  assert.equal(qh.perQueue[0].avgAnswer, '0:00:30');
 });
 
 test('Insights: queueHealth is null for an unmapped dept / missing QCD sheet (best-effort)', function () {
