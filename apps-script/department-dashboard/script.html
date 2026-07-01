@@ -2099,11 +2099,13 @@
   // detail is visible.
   function ovRouteToDept_(deptName, isoDate) {
     const sel = $('dept-selector');
+    let changed = false;
     if (sel && sel.value !== deptName) {
       sel.value = deptName;
       // Trigger the same 'change' handler the manual dropdown uses
       // -- wipes stale roster caches and re-fetches the summary.
       sel.dispatchEvent(new Event('change'));
+      changed = true;
     }
     setPage('dept');
     // Point-click deep-link: snap the From/To range to the clicked day
@@ -2112,6 +2114,13 @@
     if (isoDate && $('from-date') && $('to-date')) {
       $('from-date').value = isoDate;
       $('to-date').value = isoDate;
+      refresh();
+    } else if (!changed) {
+      // The selector was ALREADY on this dept (e.g. pinned + disabled in
+      // view-as-manager mode), so no 'change' fired and setPage('dept')
+      // doesn't load the table itself -- it would keep whatever was last
+      // shown (a stale other-dept table, or nothing). Force a load for the
+      // current dept so the click-through always lands on fresh data.
       refresh();
     }
   }
@@ -3745,9 +3754,10 @@
         ? rgbaWithAlpha_(THEME.warn, 0.58 + 0.42 * ramp)   // solid, hot
         : rgbaWithAlpha_(THEME.warn, 0.10 + 0.13 * ramp);  // faint, recedes
     });
-    // Peak bucket keeps its outline, now bolder (was 1.5px, too subtle).
+    // Peak bucket keeps its outline: 2px reads as "marked" without the heavy
+    // 3px frame that looked too loud at the compact size.
     const border = counts.map(function (v, i) { return (i === peakIdx && peakVal > 0) ? THEME.ink : 'transparent'; });
-    const borderW = counts.map(function (v, i) { return (i === peakIdx && peakVal > 0) ? 3 : 0; });
+    const borderW = counts.map(function (v, i) { return (i === peakIdx && peakVal > 0) ? 2 : 0; });
     return {
       type: 'bar',
       data: {
@@ -4812,6 +4822,17 @@
     const wrap = $('diagnostics');
     const content = $('diag-content');
     const count = $('diag-count');
+    // Admin-only: the Diagnostics panel is an operational/debug surface (roster
+    // gaps, queue-only matches), not a manager-facing metric. Hide it for
+    // non-admins (and for the admin's own view-as-manager preview, which keeps
+    // USER.role === 'admin' -- so this is a deliberate no-hide there; the
+    // data-admin-only CSS on the panel handles the view-as case).
+    if (!wrap) return;
+    if (USER.role !== 'admin') {
+      wrap.style.display = 'none';
+      wrap.classList.remove('diag-severity-warn', 'diag-severity-bad');
+      return;
+    }
     if (!state.diagnostics) {
       wrap.style.display = 'none';
       wrap.classList.remove('diag-severity-warn', 'diag-severity-bad');
@@ -15936,14 +15957,6 @@
     const closeBtn = modal.querySelector('.modal-close');
     const backdrop = modal.querySelector('[data-close]');
 
-    function showForm() {
-      $('qcd-alldept-results').style.display = 'none';
-      modal.querySelector('.ir-form').style.display = '';
-    }
-    function showResults() {
-      modal.querySelector('.ir-form').style.display = 'none';
-      $('qcd-alldept-results').style.display = '';
-    }
     function openModal() {
       modal.style.display = '';
       modal.setAttribute('aria-hidden', 'false');
@@ -15951,8 +15964,10 @@
       trapFocus_(modal);
       initModalDragResize_(modal.querySelector('.modal-panel-wide') || modal.querySelector('.modal-panel'));
       document.addEventListener('keydown', onKeyDown);
-      showForm();
+      // Pre-load (#1a): default to yesterday and generate immediately, so the
+      // report opens ready-to-read instead of a blank form.
       qcdAllDeptDefaultDates_();
+      runQcdAllDept_();
     }
     function closeModal() {
       modal.style.display = 'none';
@@ -15969,8 +15984,10 @@
     if (closeBtn) closeBtn.addEventListener('click', closeModal);
     if (backdrop) backdrop.addEventListener('click', closeModal);
 
+    // In-modal date changer (#1b): a preset change re-generates immediately; a
+    // manual date edit flips the preset to Custom and the user clicks Update.
     const preset = $('qcd-alldept-preset');
-    if (preset) preset.addEventListener('change', qcdAllDeptApplyPreset_);
+    if (preset) preset.addEventListener('change', function () { qcdAllDeptApplyPreset_(); runQcdAllDept_(); });
     ['qcd-alldept-from', 'qcd-alldept-to'].forEach(function (id) {
       const el = $(id);
       if (el) el.addEventListener('change', function () {
@@ -15978,15 +15995,30 @@
         if (p) p.value = 'custom';
       });
     });
-
-    const gen = $('qcd-alldept-generate-btn');
-    if (gen) gen.addEventListener('click', function () { runQcdAllDept_(showResults); });
-    const back = $('qcd-alldept-back-btn');
-    if (back) back.addEventListener('click', showForm);
+    const refresh = $('qcd-alldept-refresh-btn');
+    if (refresh) refresh.addEventListener('click', function () { runQcdAllDept_(); });
     const csv = $('qcd-alldept-csv-btn');
     if (csv) csv.addEventListener('click', function () { qcdAllDeptCsv_(qcdAllDeptLast); });
     const prn = $('qcd-alldept-print-btn');
     if (prn) prn.addEventListener('click', function () { qcdAllDeptPrint_(qcdAllDeptLast); });
+
+    // Delegated expand/collapse for the per-queue call-source detail (#1c).
+    // Wired once; survives re-renders (the tbody content is replaced, this
+    // listener on the container is not).
+    const bodyEl = $('qcd-alldept-body');
+    if (bodyEl && !bodyEl._qcdAllExpandWired) {
+      bodyEl._qcdAllExpandWired = true;
+      bodyEl.addEventListener('click', function (e) {
+        const row = e.target.closest && e.target.closest('tr.qcd-expandable');
+        if (!row) return;
+        const detail = row.nextElementSibling;
+        if (!detail || !detail.classList.contains('qcd-detail-row')) return;
+        const isOpen = detail.style.display !== 'none';
+        detail.style.display = isOpen ? 'none' : '';
+        const icon = row.querySelector('.qcd-expand-icon');
+        if (icon) icon.innerHTML = isOpen ? '&#9654;' : '&#9660;';   // ▶ / ▼ (matches the QCD modal)
+      });
+    }
   }
 
   function qcdAllDeptIsoOf_(d) {
@@ -16031,7 +16063,7 @@
     $('qcd-alldept-to').value   = qcdAllDeptIsoOf_(e);
   }
 
-  function runQcdAllDept_(showResults) {
+  function runQcdAllDept_() {
     const from = $('qcd-alldept-from').value;
     const to   = $('qcd-alldept-to').value;
     const err  = $('qcd-alldept-form-error');
@@ -16046,21 +16078,17 @@
       err.style.display = '';
       return;
     }
-    const gen = $('qcd-alldept-generate-btn');
-    const orig = gen.textContent;
-    gen.disabled = true;
-    gen.innerHTML = DS_EQ_HTML_ + 'Generating…';
+    const gen = $('qcd-alldept-refresh-btn');
+    const orig = gen ? gen.innerHTML : '';
+    if (gen) { gen.disabled = true; gen.innerHTML = DS_EQ_HTML_ + 'Updating…'; }
     google.script.run
       .withSuccessHandler(function (data) {
-        gen.disabled = false;
-        gen.textContent = orig;
+        if (gen) { gen.disabled = false; gen.innerHTML = orig; }
         qcdAllDeptLast = data;
         qcdAllDeptRender_(data);
-        showResults();
       })
       .withFailureHandler(function (e) {
-        gen.disabled = false;
-        gen.textContent = orig;
+        if (gen) { gen.disabled = false; gen.innerHTML = orig; }
         err.textContent = (e && e.message) ? e.message : String(e);
         err.style.display = '';
       })
@@ -16089,35 +16117,50 @@
       return { pctCls: (Number(pct) >= 5 ? ' qcd-warn-light' : ''),
                violCls: (Number(viol) > 3 ? ' qcd-warn-strong' : (Number(viol) > 0 ? ' qcd-warn-light' : '')) };
     };
+    // #1d: Answered / Abandoned / Abandoned % fold into ONE split-bar column
+    // (shared qcdDailyBarCell_ -- green answered + red abandoned over total,
+    // 5% benchmark tint), like the My Department agent table. 6 columns now.
+    const NCOLS = 6;
     let html = '<table class="qcd-alldept-table agents"><thead><tr>'
-      + '<th>Queue</th><th class="num">Total</th><th class="num">Answered</th>'
-      + '<th class="num">Abandoned</th><th class="num">Aban %</th>'
+      + '<th>Queue</th><th class="num">Total</th><th>Answered vs Abandoned</th>'
       + '<th class="num">Longest</th><th class="num">Avg ans</th><th class="num">Viol</th>'
       + '</tr></thead>';
     depts.forEach(function (d) {
       const t = d.totals || {};
       const tc = cell(t.abandonedPct, t.violations);
       html += '<tbody class="qcd-alldept-dept">'
-        + '<tr class="qcd-alldept-deptrow"><td colspan="8">' + escapeHtml(d.dept) + '</td></tr>';
+        + '<tr class="qcd-alldept-deptrow"><td colspan="' + NCOLS + '">' + escapeHtml(d.dept) + '</td></tr>';
       (d.queues || []).forEach(function (q) {
         const c = cell(q.abandonedPct, q.violations);
-        html += '<tr>'
-          + '<td>' + escapeHtml(q.queue) + '</td>'
+        // #1c: expand a queue row into its per-call-source breakdown (+ any
+        // violation dates), data-driven -- each queue shows only the sources
+        // present in its own data. Reuses the shared qcdSourceSubtableHtml_.
+        const sources = q.bySource || [];
+        const hasViolDates = (Number(q.violations) || 0) > 0 && (q.violationDates || []).length;
+        const hasDetail = sources.length > 0 || hasViolDates;
+        const chevron = hasDetail ? ' <span class="qcd-expand-icon">&#9654;</span>' : '';
+        html += '<tr class="' + (hasDetail ? 'qcd-expandable' : '') + '">'
+          + '<td>' + escapeHtml(q.queue) + chevron + '</td>'
           + '<td class="num">' + fmtNumber(q.totalCalls) + '</td>'
-          + '<td class="num">' + fmtNumber(q.totalAnswered) + '</td>'
-          + '<td class="num">' + fmtNumber(q.abandoned) + '</td>'
-          + '<td class="num' + c.pctCls + '">' + escapeHtml(q.abandonedPctStr) + '</td>'
+          + '<td class="qcd-daily-bar-cell">' + qcdDailyBarCell_(q) + '</td>'
           + '<td class="num">' + escapeHtml(q.longestWait) + '</td>'
           + '<td class="num">' + escapeHtml(q.avgAnswer) + '</td>'
           + '<td class="num' + c.violCls + '">' + fmtNumber(q.violations) + '</td>'
           + '</tr>';
+        if (hasDetail) {
+          let detail = qcdSourceSubtableHtml_(sources);
+          if (hasViolDates) {
+            detail += '<div class="qcd-detail-viol"><strong>Violation dates:</strong> '
+              + q.violationDates.map(fmtViolDate_).join(', ') + '</div>';
+          }
+          html += '<tr class="qcd-detail-row" style="display:none;"><td colspan="' + NCOLS + '">'
+            + '<div class="qcd-detail-wrap">' + detail + '</div></td></tr>';
+        }
       });
       html += '<tr class="qcd-alldept-subtotal">'
         + '<td>' + escapeHtml(d.dept) + ' total</td>'
         + '<td class="num">' + fmtNumber(t.totalCalls) + '</td>'
-        + '<td class="num">' + fmtNumber(t.totalAnswered) + '</td>'
-        + '<td class="num">' + fmtNumber(t.abandoned) + '</td>'
-        + '<td class="num' + tc.pctCls + '">' + escapeHtml(t.abandonedPctStr) + '</td>'
+        + '<td class="qcd-daily-bar-cell">' + qcdDailyBarCell_(t) + '</td>'
         + '<td class="num">' + escapeHtml(t.longestWait) + '</td>'
         + '<td class="num">' + escapeHtml(t.avgAnswer) + '</td>'
         + '<td class="num' + tc.violCls + '">' + fmtNumber(t.violations) + '</td>'
@@ -16128,9 +16171,7 @@
     html += '<tfoot><tr class="qcd-alldept-grand">'
       + '<td>Company total</td>'
       + '<td class="num">' + fmtNumber(g.totalCalls) + '</td>'
-      + '<td class="num">' + fmtNumber(g.totalAnswered) + '</td>'
-      + '<td class="num">' + fmtNumber(g.abandoned) + '</td>'
-      + '<td class="num' + gc.pctCls + '">' + escapeHtml(g.abandonedPctStr) + '</td>'
+      + '<td class="qcd-daily-bar-cell">' + qcdDailyBarCell_(g) + '</td>'
       + '<td class="num">' + escapeHtml(g.longestWait) + '</td>'
       + '<td class="num">' + escapeHtml(g.avgAnswer) + '</td>'
       + '<td class="num' + gc.violCls + '">' + fmtNumber(g.violations) + '</td>'
