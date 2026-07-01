@@ -174,9 +174,12 @@
              Reproduces the legacy emailed "Daily Call Queue Report"
              PDF as a flat table across every mapped department.
              Revealed for admins by the [data-admin-only] reveal loop. -->
-        <div id="ov-admin-actions" class="ov-admin-actions" style="display:none;" data-admin-only>
+        <!-- Daily Call Queue Report is open to all managers (owner decision) --
+             company-wide, read-only, no per-dept scoping -- so this row is NOT
+             data-admin-only and is visible by default. -->
+        <div id="ov-admin-actions" class="ov-admin-actions">
           <button type="button" class="btn btn-secondary" id="ov-qcd-alldept-btn"
-            title="Company-wide daily call queue report across every department (admin only)">&#128203; Daily Call Queue Report</button>
+            title="Company-wide daily call queue report across every department">&#128203; Daily Call Queue Report</button>
         </div>
         <div id="ov-company-aggregate" class="ov-company-aggregate" style="display:none;"></div>
         <div id="ov-user-hero" class="ov-user-hero" style="display:none;"></div>
@@ -1485,57 +1488,48 @@
     <div class="modal-panel modal-panel-wide" role="document">
       <div class="modal-panel-header">
         <button class="modal-close" id="qcd-alldept-close" type="button" aria-label="Close">&times;</button>
-        <div class="modal-kicker">Report &middot; admin</div>
+        <div class="modal-kicker">Report &middot; company</div>
         <h2 id="qcd-alldept-modal-title">Daily Call Queue Report</h2>
       </div>
       <div class="modal-panel-body">
-        <div class="ir-form">
-          <div class="ir-row">
-            <div class="ir-col">
-              <label for="qcd-alldept-preset">Quick select</label>
-              <select id="qcd-alldept-preset">
-                <option value="custom">Custom range</option>
-                <option value="yesterday" selected>Yesterday</option>
-                <option value="today">Today</option>
-                <option value="thisMonth">This month</option>
-                <option value="lastMonth">Last month</option>
-                <option value="last30">Last 30 days</option>
-              </select>
-            </div>
-            <div class="ir-col">
-              <label for="qcd-alldept-from">Start date</label>
-              <input type="date" id="qcd-alldept-from">
-            </div>
-            <div class="ir-col">
-              <label for="qcd-alldept-to">End date</label>
-              <input type="date" id="qcd-alldept-to">
-            </div>
-          </div>
-          <div class="ir-hint">
-            Company-wide flat table across every mapped department, each
-            dept&rsquo;s own queues listed (sub-queues appear under their
-            own department, never double-counted). Everything is scoped to
-            the selected range. Reads <strong>QCD Historical Data</strong>.
-          </div>
-          <div id="qcd-alldept-form-error" class="status status-error" style="display:none;"></div>
-          <button class="btn" id="qcd-alldept-generate-btn" type="button">Generate report</button>
-        </div>
-
-        <div id="qcd-alldept-results" class="ir-results" style="display:none;">
+        <!-- Pre-loads yesterday on open; the date toolbar in the results
+             header changes the range + re-generates IN PLACE (no separate
+             form step). -->
+        <div id="qcd-alldept-results" class="ir-results">
           <div class="ir-results-header">
             <div class="ir-results-header-left">
               <div class="ir-results-title-line">
                 <span class="ir-results-title">Daily Call Queue Report</span>
                 <span class="ir-results-date" id="qcd-alldept-results-date"></span>
               </div>
+              <div class="qcd-alldept-daterow">
+                <select id="qcd-alldept-preset" aria-label="Quick select">
+                  <option value="custom">Custom range</option>
+                  <option value="yesterday" selected>Yesterday</option>
+                  <option value="today">Today</option>
+                  <option value="thisMonth">This month</option>
+                  <option value="lastMonth">Last month</option>
+                  <option value="last30">Last 30 days</option>
+                </select>
+                <input type="date" id="qcd-alldept-from" aria-label="Start date">
+                <span class="qcd-alldept-dash">&ndash;</span>
+                <input type="date" id="qcd-alldept-to" aria-label="End date">
+                <button class="btn btn-secondary" id="qcd-alldept-refresh-btn" type="button" title="Re-generate for the selected range">&#8635; Update</button>
+                <span id="qcd-alldept-form-error" class="status status-error" style="display:none;"></span>
+              </div>
             </div>
             <div class="ir-action-buttons">
-              <button class="btn btn-secondary" id="qcd-alldept-back-btn" type="button">&laquo; Back</button>
               <button class="btn btn-secondary" id="qcd-alldept-csv-btn" type="button"
                       title="Download the report as CSV">Download CSV</button>
               <button class="btn btn-secondary" id="qcd-alldept-print-btn" type="button"
                       title="Print this report">Print</button>
             </div>
+          </div>
+          <div class="ir-hint">
+            Company-wide flat table across every mapped department, each dept&rsquo;s
+            own queues listed (sub-queues appear under their own department, never
+            double-counted). Scoped to the selected range. Click a queue row to see
+            its per-call-source breakdown.
           </div>
           <div id="qcd-alldept-status" class="status" style="display:none;"></div>
           <div id="qcd-alldept-empty" class="empty-state" style="display:none;"></div>

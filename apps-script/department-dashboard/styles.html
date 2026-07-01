@@ -733,7 +733,7 @@
   .agents td.ans-bar-cell { padding-top: 8px; padding-bottom: 8px; }
   /* Insights Daily breakdown reuses .ans-bar for the Answered-vs-Abandoned
      split; give the cell room + a little vertical padding like the agent table. */
-  .ds-table td.qcd-daily-bar-cell { min-width: 180px; padding-top: 6px; padding-bottom: 6px; }
+  td.qcd-daily-bar-cell { min-width: 180px; padding-top: 6px; padding-bottom: 6px; }
   .ans-bar { display: flex; flex-direction: column; gap: 4px; min-width: 140px; }
   .ans-track {
     display: flex;
@@ -3711,8 +3711,20 @@
   .qcd-source-subtable .qcd-source-overall td { font-weight: 600; color: var(--ink); }
   .qcd-detail-viol { margin-top: 6px; }
 
-  /* 4b: all-departments daily call queue report (admin, Overview). */
+  /* 4b: all-departments daily call queue report (Overview; open to managers). */
   .ov-admin-actions { margin: 8px 0 12px; }
+  /* In-modal date changer in the results header. */
+  .qcd-alldept-daterow {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    margin-top: 8px;
+  }
+  .qcd-alldept-daterow select,
+  .qcd-alldept-daterow input[type="date"] { padding: 4px 6px; font-size: 13px; }
+  .qcd-alldept-daterow .qcd-alldept-dash { color: var(--muted); }
+  .qcd-alldept-daterow .status { margin: 0 0 0 6px; padding: 2px 6px; }
   .qcd-alldept-table { width: 100%; border-collapse: collapse; }
   .qcd-alldept-table th, .qcd-alldept-table td {
     padding: 4px 9px; font-size: 12px; border-bottom: 1px solid var(--line); text-align: left;

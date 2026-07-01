@@ -69,7 +69,9 @@ const QCD_CACHE_KEY_PREFIX = 'qcd:v9';
 // queue table reproducing the legacy emailed "Daily Call Queue Report"
 // PDF. Cached per (from, to) under its own prefix so it doesn't collide
 // with the per-dept qcd: keys. Bump on any aggregation-shape change.
-const QCD_ALLDEPT_CACHE_PREFIX = 'qcdAll:v1';
+// v2: queue rows gain bySource (per-call-source breakdown) + violationDates
+//     for the expandable per-queue detail in the all-dept report.
+const QCD_ALLDEPT_CACHE_PREFIX = 'qcdAll:v2';
 
 // Source filter: only the "Total Calls" callSource row carries the
 // daily aggregate we want; other callSource values are sub-counts
@@ -251,7 +253,12 @@ function getQcdReport(req) {
  *   totals, queues:[...]}], grandTotals }
  */
 function getQcdAllDepartments(req) {
-  assertAdmin_();   // company-wide view: admin only
+  // Company-wide view, opened to managers (owner decision): any signed-in
+  // manager/admin may read it. It's a read-only company snapshot with no
+  // per-dept scoping (every manager sees every dept), so the only gate is
+  // "not an unmapped visitor". (Was assertAdmin_.)
+  const _user = resolveUser_(Session.getActiveUser().getEmail());
+  if (!_user || _user.role === 'none') throw new Error('Not authorized.');
 
   const from = String((req && req.from) || '').trim();
   const to   = String((req && req.to)   || '').trim();
@@ -322,6 +329,11 @@ function getQcdAllDepartments(req) {
           longestWait:     r.longestWait,
           avgAnswer:       r.avgAnswer,
           violations:      r.violations,
+          // Per-queue call-source breakdown (data-driven -- each queue shows
+          // its own actual sources) + violation dates, for the expandable
+          // per-queue detail in the all-dept report.
+          bySource:        r.bySource || [],
+          violationDates:  r.violationDates || [],
         };
       }),
     });
