@@ -3730,13 +3730,24 @@
   // drill as the radar.
   function missedBarCfg_(chart, onBucketClick) {
     const counts = (chart.counts || []).map(function (v) { return Number(v) || 0; });
+    const abandoned = (chart.abandoned || []).map(function (v) { return Number(v) || 0; });
     const max = counts.reduce(function (m, v) { return Math.max(m, v); }, 0) || 1;
     let peakIdx = -1, peakVal = -1;
     counts.forEach(function (v, i) { if (v > peakVal) { peakVal = v; peakIdx = i; } });
-    // Intensity ramp: 0 -> faint, max -> full warn. Empty buckets stay barely-there.
-    const bg = counts.map(function (v) { return rgbaWithAlpha_(THEME.warn, 0.18 + 0.72 * (v / max)); });
+    // Color pivots on whether the bucket CONTAINS an abandoned call: a bucket
+    // with >=1 abandoned ring renders SOLID warn red (still volume-ramped so the
+    // busiest abandoned window reads hottest); an abandoned-free bucket renders
+    // a much lighter, semi-transparent warn so it recedes. (Falls back to the
+    // faint shade for a pre-v12 cached payload with no `abandoned` array.)
+    const bg = counts.map(function (v, i) {
+      const ramp = v / max;                       // 0..1 by volume
+      return (abandoned[i] || 0) > 0
+        ? rgbaWithAlpha_(THEME.warn, 0.58 + 0.42 * ramp)   // solid, hot
+        : rgbaWithAlpha_(THEME.warn, 0.10 + 0.13 * ramp);  // faint, recedes
+    });
+    // Peak bucket keeps its outline, now bolder (was 1.5px, too subtle).
     const border = counts.map(function (v, i) { return (i === peakIdx && peakVal > 0) ? THEME.ink : 'transparent'; });
-    const borderW = counts.map(function (v, i) { return (i === peakIdx && peakVal > 0) ? 1.5 : 0; });
+    const borderW = counts.map(function (v, i) { return (i === peakIdx && peakVal > 0) ? 3 : 0; });
     return {
       type: 'bar',
       data: {
@@ -3755,7 +3766,8 @@
         indexAxis: 'y',                 // horizontal bars
         responsive: true,
         maintainAspectRatio: true,
-        aspectRatio: 1.05,              // tallish: 18 buckets need vertical room
+        aspectRatio: 1.4,               // wider than the square radar (the .mode-bars
+                                        // CSS lifts the 520px cap so bars use the column)
         plugins: {
           legend: { display: false },
           tooltip: {
@@ -3802,12 +3814,21 @@
       ? missedRadarCfg_(chart, onBucketClick)
       : missedBarCfg_(chart, onBucketClick);
   }
-  // Reflect the active mode on every Bars/Radar toggle currently in the DOM.
+  // Reflect the active mode on every Bars/Radar toggle currently in the DOM,
+  // and tag each chart-row so CSS can widen the bar view (bars fill the column;
+  // the square radar keeps its 520px cap).
   function missedSyncToggles_() {
     const mode = missedChartMode_();
     document.querySelectorAll('.missed-chart-mode [data-mode]').forEach(function (b) {
       const on = b.getAttribute('data-mode') === mode;
       b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+    ['chart-row', 'dept-missed-chart-row'].forEach(function (id) {
+      const row = document.getElementById(id);
+      if (row) {
+        row.classList.toggle('mode-bars',  mode === 'bars');
+        row.classList.toggle('mode-radar', mode === 'radar');
+      }
     });
   }
   function setMissedChartMode_(mode) {
@@ -3834,6 +3855,7 @@
   function renderMissedChart(chart) {
     const wrap = $('missed-chart-wrap');
     if (!wrap) return;
+    missedSyncToggles_();   // tag the chart-row (mode-bars/mode-radar) before sizing
 
     // Destroy any prior instance before we replace the canvas (a re-render via
     // the Bars/Radar toggle would otherwise orphan the old Chart).
@@ -3885,8 +3907,8 @@
         +   'title="View this call’s path (IVR → queues → agents)" '
         +   'aria-label="View call path">↳ path</button>'
       : '';
-    return ' <span class="parent-id" title="Parent call ID">'
-         +   '<span class="pid-num">#' + safe + '</span>'
+    return ' <span class="parent-id">'
+         +   '<span class="pid-num" title="Call ID ' + safe + ' (hover for full · use 📋 to copy)">#' + safe + '</span>'
          +   '<button type="button" class="pid-copy" '
          +     'data-pid="' + safe + '" '
          +     'aria-label="Copy parent ID ' + safe + '" '
@@ -4524,6 +4546,7 @@
     const chartWrap = $('dept-missed-chart-wrap');
     if (deptMissedChart) { try { deptMissedChart.destroy(); } catch (e) {} deptMissedChart = null; }
     if (!chartWrap) return;
+    missedSyncToggles_();   // tag the chart-row (mode-bars/mode-radar) before sizing
     const hasMissed = Number(m.totalMissed || 0) > 0 || Number(m.abandonedCallCount || 0) > 0;
     chartWrap.style.display = hasMissed ? '' : 'none';
     if (hasMissed && typeof Chart !== 'undefined') {
@@ -12346,7 +12369,7 @@
           let detail = qcdSourceSubtableHtml_(sources);
           if (hasViolDates) {
             detail += '<div class="qcd-detail-viol"><strong>Violation dates:</strong> '
-              + q.violationDates.map(escapeHtml).join(', ') + '</div>';
+              + q.violationDates.map(fmtViolDate_).join(', ') + '</div>';
           }
           html += '<tr class="qcd-detail-row" style="display:none;"><td colspan="5">'
             + '<div class="qcd-detail-wrap">' + detail + '</div></td></tr>';
@@ -12379,7 +12402,7 @@
     if (dailyTbody) {
       const daily = qh.dailySeries || [];
       if (daily.length) {
-        dailyTbody.innerHTML = qcdDailyRowsHtml_(daily);
+        dailyTbody.innerHTML = qcdDailyRowsHtml_(daily, { bar: true });
         if (dailyWrap) dailyWrap.style.display = '';
       } else {
         dailyTbody.innerHTML = '';
@@ -15370,12 +15393,64 @@
   // Pure: the per-day QCD rows (Date / Total / Answered / Abandoned / Aban% /
   // Viol) shared by the QCD modal's daily table AND the Insights Queue health
   // daily table (consolidation Phase 1, gap 3).
-  function qcdDailyRowsHtml_(rows) {
+  // YYYY-MM-DD -> MM-DD-YY for the compact "Violation dates:" lists. Returns
+  // safe text (digits + dashes) on a match; escapes anything unexpected.
+  function fmtViolDate_(iso) {
+    var s = String(iso == null ? '' : iso);
+    var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+    return m ? (m[2] + '-' + m[3] + '-' + m[1].slice(2)) : escapeHtml(s);
+  }
+
+  // Answered-vs-abandoned split bar for the Insights Daily breakdown, mirroring
+  // the My Department agent table's answeredBarHtml_ (green answered + red
+  // abandoned over total calls; the rate cell shows abandoned % with the 5%
+  // benchmark tint). Reuses the .ans-bar / .ans-seg component.
+  function qcdDailyBarCell_(r) {
+    var total = Number(r.totalCalls)    || 0;
+    var a     = Number(r.totalAnswered) || 0;
+    var ab    = Number(r.abandoned)     || 0;
+    var pctA  = total ? (a  / total * 100) : 0;
+    var pctAb = total ? (ab / total * 100) : 0;
+    var rest  = Math.max(0, 100 - pctA - pctAb);
+    var abStr = r.abandonedPctStr || ((Number(r.abandonedPct) || 0).toFixed(2) + '%');
+    var rateCls = benchValueCls_('abandoned %', abStr, true);
+    var title = fmtNumber(a) + ' answered · ' + fmtNumber(ab) + ' abandoned · '
+              + fmtNumber(total) + ' calls · ' + abStr + ' abandoned';
+    var segs = total
+      ? '<span class="ans-seg ans" style="width:' + pctA + '%"></span>'
+        + '<span class="ans-seg miss" style="width:' + pctAb + '%"></span>'
+        + (rest > 0.1 ? '<span class="ans-seg none" style="width:' + rest + '%"></span>' : '')
+      : '<span class="ans-seg none" style="width:100%"></span>';
+    return '<div class="ans-bar" title="' + escapeHtml(title) + '">'
+         +   '<div class="ans-track">' + segs + '</div>'
+         +   '<div class="ans-nums">'
+         +     '<span class="ans-n">'   + fmtNumber(a)  + '</span>'
+         +     '<span class="ans-slash">/</span>'
+         +     '<span class="miss-n">'  + fmtNumber(ab) + '</span>'
+         +     '<span class="ans-rate' + rateCls + '">' + (total ? abStr : '–') + '</span>'
+         +   '</div>'
+         + '</div>';
+  }
+
+  // Shared daily QCD rows. Default = the QCD modal's 6-column numeric table.
+  // opts.bar (Insights Daily breakdown) folds Answered / Abandoned / Abandoned %
+  // into one split-bar cell -- 4 columns: Date | Total | Answered vs Abandoned |
+  // Violations (keep the #ins-qh-daily thead in sync).
+  function qcdDailyRowsHtml_(rows, opts) {
+    var bar = !!(opts && opts.bar);
     return (rows || []).map(function (r) {
       var pct = Number(r.abandonedPct) || 0;
       var pctCls = pct >= 5 ? 'num qcd-warn-light' : 'num';
       var viol = Number(r.violations) || 0;
       var violCls = viol > 0 ? 'num qcd-warn-light' : 'num';
+      if (bar) {
+        return '<tr>'
+             +   '<td>' + escapeHtml(r.date) + '</td>'
+             +   '<td class="num">' + fmtNumber(r.totalCalls) + '</td>'
+             +   '<td class="qcd-daily-bar-cell">' + qcdDailyBarCell_(r) + '</td>'
+             +   '<td class="' + violCls + '">' + fmtNumber(r.violations) + '</td>'
+             + '</tr>';
+      }
       return '<tr>'
            +   '<td>' + escapeHtml(r.date) + '</td>'
            +   '<td class="num">' + fmtNumber(r.totalCalls)    + '</td>'
@@ -15468,7 +15543,7 @@
         }
         if (hasViolDates) {
           detail += '<div class="qcd-detail-viol"><strong>Violation dates:</strong> '
-                 +  r.violationDates.map(function (d) { return escapeHtml(d); }).join(', ') + '</div>';
+                 +  r.violationDates.map(fmtViolDate_).join(', ') + '</div>';
         }
         html += '<tr class="qcd-detail-row" style="display:none;"><td colspan="8">'
              +  '<div class="qcd-detail-wrap">' + detail + '</div></td></tr>';

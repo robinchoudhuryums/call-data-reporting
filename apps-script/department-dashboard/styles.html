@@ -731,6 +731,9 @@
      proportional bar (answered green + missed red, total = rung) with
      the counts + answer rate beneath. */
   .agents td.ans-bar-cell { padding-top: 8px; padding-bottom: 8px; }
+  /* Insights Daily breakdown reuses .ans-bar for the Answered-vs-Abandoned
+     split; give the cell room + a little vertical padding like the agent table. */
+  .ds-table td.qcd-daily-bar-cell { min-width: 180px; padding-top: 6px; padding-bottom: 6px; }
   .ans-bar { display: flex; flex-direction: column; gap: 4px; min-width: 140px; }
   .ans-track {
     display: flex;
@@ -1437,6 +1440,10 @@
      chart. (Was .no-detail-only, which dropped the centering on open ->
      the radar snapped hard-left + Chart.js re-rendered = the jumpiness.) */
   .chart-row > .chart-section { max-width: 520px; margin: 0 auto; }
+  /* Bars are horizontal, so they read better with more width than the square
+     radar. In bars mode let the chart use most of the column (still bounded so
+     the modal drill-in open stays a gentle reflow); radar keeps the 520px cap. */
+  .chart-row.mode-bars > .chart-section { max-width: 760px; }
   /* Clip the drill-in while its track is collapsing so it slides in/out
      cleanly rather than overflowing the 0fr cell mid-animation. */
   .chart-row > .bucket-detail { overflow: hidden; }
@@ -1564,6 +1571,15 @@
   .parent-id .pid-num {
     font-family: var(--mono);
     font-size: 10.5px;
+    /* Long numeric call IDs (13+ digits) overran the chip and collided with
+       the agent name. Truncate to a few chars; the full value is in the hover
+       title and the 📋 copy button still copies it in full. */
+    display: inline-block;
+    max-width: 7ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    vertical-align: bottom;
   }
   .parent-id .pid-copy {
     border: 0;

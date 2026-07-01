@@ -77,7 +77,7 @@ function getMissedCallsReport(req) {
   // v10: per-entry parentId attached to each abandoned timestamp;
   // queue-only entries gain alsoIn[] for cross-queue overflow; new
   // queueOnlyUniqueCount/EventCount in meta.
-  const cacheKey = 'missed:v11:' + dept + ':' + scope + ':' + from + ':' + to;
+  const cacheKey = 'missed:v12:' + dept + ':' + scope + ':' + from + ':' + to;
   const cached = cache.get(cacheKey);
   if (cached) {
     try {
@@ -202,6 +202,11 @@ function computeMissedCallsReport_(dept, from, to, scope) {
   const totalBuckets = (MISSED_CHART_END_HOUR - MISSED_CHART_START_HOUR)
                        * (60 / MISSED_BUCKET_MINUTES);
   const chartCounts = new Array(totalBuckets).fill(0);
+  // Parallel per-bucket abandoned-ring count so the bar chart can color a
+  // bucket that CONTAINS an abandoned call differently from an abandoned-free
+  // one (solid vs faint). Incremented alongside chartCounts when the ring is
+  // abandoned.
+  const chartAbandoned = new Array(totalBuckets).fill(0);
   const startMin = MISSED_CHART_START_HOUR * 60;
   const endMin   = MISSED_CHART_END_HOUR   * 60;
 
@@ -353,6 +358,7 @@ function computeMissedCallsReport_(dept, from, to, scope) {
         if (candidate >= 0 && candidate < totalBuckets) {
           bucketIdx = candidate;
           chartCounts[candidate]++;
+          if (isAbandoned) chartAbandoned[candidate]++;
         }
       }
 
@@ -502,6 +508,7 @@ function computeMissedCallsReport_(dept, from, to, scope) {
     chart: {
       labels: chartLabels,
       counts: chartCounts,
+      abandoned: chartAbandoned,
     },
   };
 }
@@ -527,7 +534,7 @@ function emptyMissedReport_(dept, from, to, scope, rosterSize) {
     },
     agents: [],
     queueOnly: [],
-    chart: { labels: [], counts: [] },
+    chart: { labels: [], counts: [], abandoned: [] },
   };
 }
 

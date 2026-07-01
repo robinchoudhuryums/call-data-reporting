@@ -304,7 +304,7 @@ same time as the code change.
 | `IndividualReport.gs` (active-in-range subset shared by all three report pickers) | `individual_active:vN:` | `v2` |
 | `PerformanceReport.gs` | `performance:vN:` | `v4` |
 | `CompareRangesReport.gs` | `compareRanges:vN:` | `v6` |
-| `MissedCallsReport.gs` | `missed:vN:` | `v11` |
+| `MissedCallsReport.gs` | `missed:vN:` | `v12` |
 | `CompanyOverview.gs` | `companyOverview:vN` | `v17` |
 | `QCDReport.gs` | `qcd:vN:` | `v9` |
 | `InboundReport.gs` | `inbound:vN:` | `v3` |

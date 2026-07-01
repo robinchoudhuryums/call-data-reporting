@@ -239,7 +239,7 @@ canonical and reflects current code.
 | Report | File | Public entries | Cache prefix | Admin-only |
 |---|---|---|---|---|
 | Main per-agent table | `Data.gs` | `getDepartmentSummary` | `summary:v10:` | no |
-| Missed Calls Report | `MissedCallsReport.gs` | `getMissedCallsReport` | `missed:v11:` | no |
+| Missed Calls Report | `MissedCallsReport.gs` | `getMissedCallsReport` | `missed:v12:` | no |
 | Individual / Peer Comparison | `IndividualReport.gs` | `getIndividualReportInit`, `getIndividualReport`, `sendIndividualReportEmail` | `individual:v8:`, `individual_active:v2:` | no |
 | Performance Report (current vs prior) | `PerformanceReport.gs` | `getPerformanceReportInit` (delegates to Individual's init), `getPerformanceReport`, `sendPerformanceReportEmail` | `performance:v4:` | no |
 | Compare Ranges (two arbitrary ranges) | `CompareRangesReport.gs` | `getCompareRangesInit`, `getCompareRanges`, `sendCompareRangesEmail` | `compareRanges:v6:` | no |
