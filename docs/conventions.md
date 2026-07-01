@@ -454,11 +454,11 @@ mirrors it; if the two ever diverge, INV-30 wins.
 | `IndividualReport.gs` (active-in-range subset, shared with all three pickers) | `individual_active:vN:` | `v2` |
 | `PerformanceReport.gs` | `performance:vN:` | `v4` |
 | `CompareRangesReport.gs` | `compareRanges:vN:` | `v6` |
-| `MissedCallsReport.gs` | `missed:vN:` | `v11` |
+| `MissedCallsReport.gs` | `missed:vN:` | `v12` |
 | `CompanyOverview.gs` | `companyOverview:vN` | `v17` |
 | `QCDReport.gs` | `qcd:vN:` | `v9` |
 | `InboundReport.gs` | `inbound:vN:` | `v3` |
-| `InsightsReport.gs` | `insights:vN:` | `v14` |
+| `InsightsReport.gs` | `insights:vN:` | `v16` |
 
 `Alerts.gs` holds no cached compute — preview / send always re-reads
 the source sheet for the chosen date.

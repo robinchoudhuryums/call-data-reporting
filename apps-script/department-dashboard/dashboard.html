@@ -1563,6 +1563,9 @@
             <label for="ins-preset">Quick select</label>
             <select id="ins-preset">
               <option value="custom">Custom range</option>
+              <option value="yesterday">Yesterday</option>
+              <option value="thisWeek">This week</option>
+              <option value="lastWeek">Last week</option>
               <option value="thisMonth">This month</option>
               <option value="lastMonth">Last month</option>
               <option value="last30">Last 30 days</option>
@@ -1672,6 +1675,7 @@
           <div class="al-section-title">Queue health <span class="ins-rollup-cap" id="ins-qh-cap"></span></div>
           <div id="ins-qh-forecast" class="qcd-forecast" style="display:none;"></div>
           <div id="ins-qh-tiles" class="pr-kpi-row"></div>
+          <div id="ins-qh-secondary" class="ins-qh-secondary"></div>
           <!-- The per-queue abandoned-% trend chart now lives in the
                consolidated trend chart below (its "Abandoned % by Queue"
                tab); this section keeps the tiles + per-queue detail table. -->
@@ -1706,9 +1710,7 @@
                 <thead><tr>
                   <th>Date</th>
                   <th class="num">Total</th>
-                  <th class="num">Answered</th>
-                  <th class="num">Abandoned</th>
-                  <th class="num">Abandoned %</th>
+                  <th>Answered vs Abandoned</th>
                   <th class="num">Violations</th>
                 </tr></thead>
                 <tbody id="ins-qh-daily-tbody"></tbody>

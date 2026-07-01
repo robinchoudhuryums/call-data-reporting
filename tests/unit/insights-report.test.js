@@ -74,27 +74,26 @@ test('Insights: prior window + team rollup + per-agent current-vs-prior deltas',
   assert.equal(anna.metrics.att.prev, 240);
 });
 
-test('Insights INV-53: floater appears as a card but is excluded from the team rollup', function () {
+test('Insights v15: roster-only -- a queue-only floater is DROPPED, not carded', function () {
   install([
     dqeRow({ date: '2026-03-10', agent: 'Anna', ext: '501', rung: 10,  missed: 1, answered: 8,  att: '0:03:00' }),
     dqeRow({ date: '2026-03-10', agent: 'Cara', ext: '501', rung: 100, missed: 5, answered: 50, att: '0:09:00' }), // Beta floater into Alpha
   ]);
+  // Even though Cara is explicitly selected AND overlaps Alpha's queue, Insights
+  // is roster-only (v15, matching the My Department Phase 14 flip): floaters are
+  // dropped entirely rather than carded, because shared-queue overlap proved to
+  // be mostly false positives in production.
   const data = h.call('getInsightsReport', { department: 'Alpha', from: '2026-03-09', to: '2026-03-15', agents: ['Anna', 'Cara'] });
 
-  // Team current totals exclude Cara's 100/50 (floater-exclusion contract).
+  // Team totals were already roster-gated, so they're unchanged (Cara excluded).
   assert.equal(data.teamStats.rung.val, 10);
   assert.equal(data.teamStats.answered.val, 8);
   assert.equal(data.meta.rosterAgentCount, 1);
-  assert.equal(data.meta.queueOnlyAgentCount, 1);
+  assert.equal(data.meta.queueOnlyAgentCount, 0);   // roster-only: never any floaters
 
-  // Cara still gets a card, tagged as a queue-only floater with her home dept,
-  // showing her OWN numbers.
-  const cara = agent(data, 'Cara');
-  assert.equal(cara.matchedViaRoster, false);
-  assert.equal(cara.matchedViaQueue, true);
-  deepEqual(cara.sourceHomes, ['Beta']);
-  assert.equal(cara.metrics.rung.val, 100);
-  assert.equal(cara.metrics.answered.val, 50);
+  // Cara gets NO card now; Anna (roster) still does.
+  assert.equal(agent(data, 'Cara'), undefined, 'queue-only floater is not carded');
+  assert.ok(agent(data, 'Anna'), 'roster agent still carded');
 });
 
 test('Insights F1: rosterAgentCount counts only roster members ACTIVE in the current window (INV-27)', function () {
@@ -378,6 +377,13 @@ test('Insights: queueHealth carries window totals, prior deltas base, and violat
   assert.equal(qh.perQueue[0].queue, 'A_Q_Alpha');
   assert.equal(qh.perQueue[0].violations, 1);
   assert.equal(qh.perQueue[0].violationDates.join(','), '2026-03-10');
+  // v16: secondary metrics pass through (answered = total - abandoned in the
+  // fixture; longestWait/avgAnswer from the qcdRow columns) for the per-queue
+  // expand + the dept-total secondary line.
+  assert.equal(qh.totals.totalAnswered, 90);
+  assert.equal(qh.perQueue[0].totalAnswered, 90);
+  assert.equal(qh.perQueue[0].longestWait, '0:05:00');
+  assert.equal(qh.perQueue[0].avgAnswer, '0:00:30');
 });
 
 test('Insights: queueHealth is null for an unmapped dept / missing QCD sheet (best-effort)', function () {
