@@ -13898,7 +13898,8 @@
     var DOWS = [[1, 'Mon'], [2, 'Tue'], [3, 'Wed'], [4, 'Thu'], [5, 'Fri']];
 
     var html = '<div class="ds-heatmap-head"><span class="ds-heatmap-title">When are callers abandoning?</span>'
-      + '<span class="ds-heatmap-sub">abandon rate · weekday × hour (' + escapeHtml(tz) + ')</span></div>';
+      + '<span class="ds-heatmap-sub">abandon rate · weekday × hour (' + escapeHtml(tz) + ') · '
+      + 'hover a cell for its abandoned / total counts</span></div>';
     html += '<div class="ds-heatmap-wrap"><div class="ds-heatmap" style="grid-template-columns: auto repeat('
       + slotCount + ', minmax(26px, 1fr));">';
     html += '<span class="ds-heatmap__corner"></span>';

@@ -5222,7 +5222,9 @@
   /* Temporal abandon heatmap (weekday x hour), shared by Inbound + QCD. Cells
      are colored in JS (heatCellBg_) anchored on the 5% standard; this is just
      layout + chrome. */
-  .ds-heatmap-panel { margin-top: 18px; }
+  /* #12: breathing room above AND below so the heatmap doesn't crowd the
+     trend chart that follows it in the Insights report. */
+  .ds-heatmap-panel { margin-top: 18px; margin-bottom: 22px; }
   .ds-heatmap-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
   .ds-heatmap-title { font: 600 13px/1.2 var(--display); color: var(--ink); }
   .ds-heatmap-sub { font: 400 11px/1 var(--mono); color: var(--muted); letter-spacing: 0.03em; }
