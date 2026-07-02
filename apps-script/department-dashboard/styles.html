@@ -3740,6 +3740,11 @@
     text-align: right; font-variant-numeric: tabular-nums;
   }
   .qcd-alldept-table thead th { color: var(--muted); font-weight: 600; }
+  /* #3d: abandon % over the 5% threshold reads bold (color comes from the
+     bm-over / qcd-warn-light warn tint). */
+  .qcd-rate-over { font-weight: 700; }
+  /* #3: muted "· <sub-dept>" tag on a nested sub-queue row. */
+  .qcd-alldept-subq { color: var(--muted); font-size: 11px; font-weight: 400; }
   .qcd-alldept-deptrow td {
     font-weight: 700; color: var(--ink); background: var(--paper-2);
     padding-top: 9px; border-bottom: none;
