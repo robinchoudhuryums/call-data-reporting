@@ -1,5 +1,16 @@
 # Cycle State — resume note
 
+## Latest session (broad-implement: big deploy-feedback batch — 4 commits)
+Branch `claude/broad-scan-je9ga7` (restarted from merged main after PR #142). 193/193 tests, INV-16 in sync, braces/divs balanced. Commits: be9569a, f5b31fc, 01ee847, b22a837 (pushed, NOT PR'd).
+- **#8 view-as/nav stale dept (be9569a):** `setPage('dept')` now reloads when the painted dept (`lastSummaryDept_`) != requested dept (guarded vs double-load via the disabled refresh btn); `ovRouteToDept_` simplified. Fixes My-Dept nav + view-as click showing a stale wrong-dept table/Missed/QCD until Refresh.
+- **Insights categorization #11c/d/a (f5b31fc):** new `insClassifyAgent_` (STANDING-first: current %answered vs 92% target + 5-ring volume gate → strong/steady/attention) drives the card rail + triage tiers; `deltaClassify_` (trend) becomes the secondary trend pill. Tiers relabeled Strong/Steady/Needs attention. Positive Insights-banner mark ↑ green (`--good`) not blue. Client-only, no cache bump. deltaClassify_ unchanged for Compare Ranges.
+- **Small tweaks (01ee847):** #6 removed the redundant Overview "Data through … Rung …" summary line (ovRenderSummaryLine_ hidden no-op); #9 "Queue-only abandoned" gloss tooltip (both surfaces); #11e delta-chip hover tooltip (insDeltaBadge_); #4 sticky `.agents thead th` given an opaque bg (was transparent → rows showed through = the all-dept "gap").
+- **All-dept report #3 (b22a837):** nest sub-queues under parent banner (server `parent` per dept + raw longestWaitSec/avgAnswerSec; client groups + computes section total); "(dept) total" row only when section >1 queue; exclude A_Q_Intake + Backup CSR (`QCD_ALLDEPT_EXCLUDE_QUEUES`, owner-asserted roll-ups); abandon% >5% bold on the bar + source lines; CSV gains Sub-dept col. Cache qcdAll:v2→v3; INV-51 updated.
+- **DECISIONS captured this session:** #11c standing-first, #11d Strong/Steady/Needs-attention, #5 repoint chips to kept reports, #6 remove line (done), #7 add YTD (queued).
+- **STILL QUEUED (not built):** #1 Overview card→solo/Shift-multi-select chart toggle (big); #7 YTD tab on Overview chart; #10 managers get an Insights button instead of Reports dropdown; #12 heatmap↔chart gap + richer cell hover; #5 repoint question chips to Insights/Missed/Individual. **INVESTIGATIONS:** #2 dept cards with 0 metrics but a mini-chart (Manual Mobility/Eligibility MM&R/Field Ops Power/Denials — likely QCD data but no DQE agent rows); #9-Spanish (verify after the #8 fix loads correct dept; if Spanish still in Power's queue-only section, scope it to `queuesForDept_`); #11b what the 12-mo "Answered" chart measures for Power.
+DEPLOY: Department Dashboard only (`clasp push -f` + new version). No operator actions; qcdAll:v3 self-heals. Where I left off: 4 batches shipped on-branch (unmerged); awaiting redeploy + a PR/merge and/or "continue" for the queued items.
+
+
 ## Latest session (deploy feedback batch: diagnostics gate, total-to-top, missed-chart, view-as bugs, all-dept report overhaul)
 Branch `claude/broad-scan-je9ga7` (restarted from merged main after PR #141). 193/193 tests, INV-16 in sync, braces/divs balanced. Commits `e858812` (fixes) + `7b1547a` (all-dept overhaul). NOT yet PR'd.
 - **Diagnostics admin-gate:** `renderDiagnostics` early-returns for non-admins; `#diagnostics` got `data-admin-only` so view-as preview hides it too.
