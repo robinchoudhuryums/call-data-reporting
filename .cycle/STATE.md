@@ -1,5 +1,12 @@
 # Cycle State — resume note
 
+## Latest session cont'd (broad-implement #2 option a + #1 solo-toggle)
+Same branch `claude/broad-scan-je9ga7`. Commit d1097e2 (#1) + a doc-sync commit (CLAUDE.md S23/design-decision). 193/193, balanced.
+- **#2 = option (a) = NO-OP:** owner chose to leave the 0-metric cards as-is (correct-but-quiet: dept had no activity on the single latest date while the 30-day sparkline shows history). No code.
+- **#1 SHIPPED:** Overview dept-tile click now SOLOS that dept's line on the 30-day trend chart instead of navigating. Refactored the spotlight model from a single `chart._spotlightPinned` index to a `chart._spotlightPins` set (`chartSpotKey_`/`chartSpotlightStash_`/`chartSpotlightHasPins_`/`chartSpotlightApplyPins_`/`chartSpotlightTogglePin_`). Legend onClick + tile onClick both call `chartSpotlightTogglePin_(chart, key, additive)`; Shift/Cmd/Ctrl-click = additive (compare 2+). Pinned tiles get `.ov-tile-soloed` via `ovSyncTilePins_` (guarded to `chart === ovChartInstance` so the QCD chart reusing these helpers isn't cross-contaminated). NAVIGATION now via chart POINT click (`ovHandlePointClick_`→`ovRouteToDept_`) or the dept-selector dropdown. CLAUDE.md S23 + the multi-page design-decision text updated.
+- **STILL QUEUED:** #7 YTD Overview chart tab (server trend expansion + cache bump + tab UI); #11b (what the 12-mo Answered chart measures for Power — needs live numbers); #9-Spanish (re-verify after redeploy).
+- **PENDING:** PR + merge for the accumulated on-branch commits — GitHub MCP was disconnected/needs auth at end of session.
+
 ## Latest session cont'd (batch 4: #10, #5, #12 + #2/#11b investigation)
 Same branch. Commits ed74b3d (#10+#5), d9d3106 (#12). 193/193, balanced.
 - **#10:** Reports dropdown → `data-admin-only`; managers (+ admins in view-as) get a solo `#insights-solo-btn` proxying to the dropdown's launcher. Wired in init (non-admin reveal) + applyViewAs_ (view-as toggle).

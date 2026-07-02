@@ -1238,11 +1238,19 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   Settings, Missed Calls, Individual / Performance / Compare
   Ranges, QCD Report, Alerts, Orphan Fix, Dept Config) overlay any page.
   Overview auto-refreshes silently every 5 minutes when the
-  page is active, re-fetching from the server cache. Admin
-  clicks on Overview dept tiles route to the dept page via
-  `setPage('dept')` + a dept-selector swap. **`refresh()` only writes
-  the header title when `data-page === 'dept'`** so it can't clobber the
-  Overview / Escalations titles.
+  page is active, re-fetching from the server cache. **Overview dept-tile
+  click SOLOS that dept's line on the 30-day trend chart** (#1) --
+  `chartSpotlightTogglePin_(ovChartInstance, dept, additive)`, the same
+  pin-set model the chart legend uses; Shift/Cmd/Ctrl-click ADDS a dept
+  to the pinned set (compare 2+), a plain click on the lone pinned tile
+  releases it. Pinned tiles carry `.ov-tile-soloed` (synced by
+  `ovSyncTilePins_`, guarded to `chart === ovChartInstance` so the QCD
+  chart that reuses the helpers isn't cross-contaminated). **Navigation to
+  My Department is now via a chart POINT click** (`ovHandlePointClick_` ->
+  `ovRouteToDept_(dept, iso)`; admins, or a manager on their own dept's
+  line) **or the dept-selector dropdown** -- the tile no longer navigates.
+  **`refresh()` only writes the header title when `data-page === 'dept'`**
+  so it can't clobber the Overview / Escalations titles.
 - **Overview-only sub-queue nesting.** `OVERVIEW_PARENT_OF` and
   `OVERVIEW_HIDDEN_DEPTS` in CompanyOverview.gs shape the Overview
   page only — dept dropdowns, Reports modals, and Alerts treat
@@ -2041,12 +2049,15 @@ S22 | setup() creates all dashboard-managed sheets idempotently | Subsystem: Dep
     - Run setup() again.
   Expected: first run creates Access Control + Alert Config + Alert Log + Pipeline Health + Digest Config + Agent Alias Overrides + Orphan Fix Log + Dept Config + Report Usage (each with their header row + frozen first row); second run logs "already exists, skipping" for all nine -- no data overwritten on either run. New columns added in a later code change to an existing sheet are NOT applied by setup() -- the sheet's existence short-circuits ensureSheet_.
 
-S23 | Overview is the default landing + tile click routes admins | Subsystem: Department Dashboard
+S23 | Overview is the default landing + tile click solos the trend line | Subsystem: Department Dashboard
   Steps:
     - Open the deployed URL (admin or manager).
     - Confirm Overview page loads first; header h1 is "Departments Snapshot"; the Overview button has the inverted (active) styling.
-    - As admin: click any dept tile in the grid.
-  Expected: page swaps to My Department; header h1 becomes that dept's name; dept-selector reflects the clicked dept; agent table renders for the latest ISO date.
+    - Click any dept tile in the grid (#1).
+    - Shift-click (or Cmd/Ctrl-click) a second dept tile.
+    - Click the sole-pinned tile again (after releasing the others).
+    - As admin (or a manager on their own dept's line): click a POINT on a dept's trend line.
+  Expected: a plain tile click SOLOS that dept's line on the 30-day trend chart (the other lines dim; the tile gains the `.ov-tile-soloed` inset ring) -- it does NOT navigate. Shift/Cmd/Ctrl-click ADDS the second dept to the pinned set (both lines highlighted). A plain click on the lone pinned tile releases the solo (all lines back to normal). A chart POINT click routes to My Department for that dept + date (header h1 becomes the dept name, dept-selector swaps, agent table renders for the clicked ISO date); the dept-selector dropdown is the other navigation path.
 
 S24 | Sub-queue nests under parent hero on Overview | Subsystem: Department Dashboard
   Steps:
