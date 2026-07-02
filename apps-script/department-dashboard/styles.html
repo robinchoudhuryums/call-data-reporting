@@ -2387,7 +2387,9 @@
     flex-shrink: 0;
     margin-top: 1px;
   }
-  .ir-insight-mark-positive { background: var(--accent-soft); color: var(--accent); }
+  /* #11a: green (not blue) so the positive ↑ stands out from the blue-tinted
+     Insights banner instead of blending into it. */
+  .ir-insight-mark-positive { background: var(--good-soft); color: var(--good); }
   .ir-insight-mark-negative { background: var(--warn-soft); color: var(--warn); }
   .ir-insight-mark-neutral  { background: var(--paper-2); color: var(--muted); }
   /* Compact form hint for the resolved prior-range preview under

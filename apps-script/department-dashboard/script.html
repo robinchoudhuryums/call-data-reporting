@@ -12722,6 +12722,24 @@
    */
   // A1 triage: labeled group header rendered as a FULL-WIDTH grid item so it
   // spans the card grid without nesting a second grid (cards flow after it).
+  // Standing-first per-agent tier for Insights (#11c). The category reflects
+  // the agent's CURRENT standing vs the 92% company answer-rate target (with a
+  // volume gate so a handful-of-calls agent isn't branded either way), NOT the
+  // direction of change -- so a strong agent stays "Strong" through a small dip
+  // and a struggling agent stays "Needs attention" even while improving from
+  // worse. The prior-period TREND is shown separately (the trend pill).
+  // Returns 'strong' | 'steady' | 'attention'.
+  function insClassifyAgent_(card) {
+    var m = (card && card.metrics) || {};
+    var pct  = Number((m.pct  && m.pct.val)  || 0);   // current % answered (0-100)
+    var rung = Number((m.rung && m.rung.val) || 0);   // volume (total rings)
+    var TARGET = 92, WATCH = 85, MIN_VOL = 5;
+    if (rung < MIN_VOL) return 'steady';              // too little signal to judge
+    if (pct >= TARGET)  return 'strong';              // at/above the company target
+    if (pct <  WATCH)   return 'attention';           // clearly below target
+    return 'steady';                                  // near target
+  }
+
   function insTriageHeader_(label, count, tone) {
     return '<div class="ins-group-head ins-group-head--' + tone + '">'
          +   '<span class="ins-group-dot"></span>'
@@ -12729,14 +12747,16 @@
          +   '<span class="ins-group-count">' + count + '</span>'
          + '</div>';
   }
-  // A2 legend: the rail encodes DIRECTION of change (green=improving), distinct
-  // from the benchmark health tint. Rendered once above the triage groups.
+  // A2 legend: the rail now encodes STANDING vs the 92% answer-rate target
+  // (Strong / Steady / Needs attention), NOT the direction of change -- the
+  // prior-period trend is the separate trend pill. Rendered once above the
+  // triage groups.
   function insTriageLegend_() {
-    return '<div class="ins-group-legend" title="The left rail on each card shows the direction of change vs the prior period — not the health level (that\'s the benchmark tint on the % values).">'
-         +   'Rail'
-         +   '<span class="ins-leg-dot ins-leg-good"></span>improving'
-         +   '<span class="ins-leg-dot ins-leg-warn"></span>slipping'
-         +   '<span class="ins-leg-dot ins-leg-muted"></span>mixed'
+    return '<div class="ins-group-legend" title="The left rail + tier of each card show the agent\'s current standing vs the 92% answer-rate target (with a small-volume gate) — not the direction of change (that\'s the trend pill on each card).">'
+         +   'Standing'
+         +   '<span class="ins-leg-dot ins-leg-good"></span>strong'
+         +   '<span class="ins-leg-dot ins-leg-muted"></span>steady'
+         +   '<span class="ins-leg-dot ins-leg-warn"></span>needs attention'
          + '</div>';
   }
 
@@ -12762,7 +12782,8 @@
       return {
         card: c,
         score: deltaImprovementScore_(c.metrics),
-        direction: deltaClassify_(c.metrics),
+        standing: insClassifyAgent_(c),          // #11c: rail + tier (current vs target)
+        trend: deltaClassify_(c.metrics),         // secondary: direction vs prior (trend pill)
         quiet: deltaIsQuiet_(c.metrics),
       };
     });
@@ -12801,20 +12822,20 @@
     const renderCard = function (x) { return insBuildCard_(x, teamScore, meta, teamAvg); };
     // A1 performance triage -- ALWAYS-ON tier grouping (Phase 15). Stable-
     // partition the already-sorted COPY (never insLastData.agentData -- the
-    // Cards/Chart toggle reads that independently) by direction-of-change
-    // into Needs attention (regressed) / Mixed / Improving, and render a
+    // Cards/Chart toggle reads that independently) by STANDING (#11c: current
+    // vs the 92% target) into Needs attention / Steady / Strong, and render a
     // labeled group header before each NON-EMPTY tier whenever there's more
-    // than one card. Within-group order is whatever the sort control
-    // produced. A single card stays a flat grid (a lone header is noise).
-    const regressed = sortedMain.filter(function (x) { return x.direction === 'regressed'; });
-    const mixed     = sortedMain.filter(function (x) { return x.direction === 'mixed'; });
-    const improved  = sortedMain.filter(function (x) { return x.direction === 'improved'; });
+    // than one card. Within-group order is whatever the sort control produced.
+    // A single card stays a flat grid (a lone header is noise).
+    const attention = sortedMain.filter(function (x) { return x.standing === 'attention'; });
+    const steady    = sortedMain.filter(function (x) { return x.standing === 'steady'; });
+    const strong    = sortedMain.filter(function (x) { return x.standing === 'strong'; });
     if (sortedMain.length > 1) {
       let html = insTriageLegend_();
       const tiers = [
-        { group: regressed, label: 'Needs attention', tone: 'warn' },
-        { group: mixed,     label: 'Mixed',           tone: 'muted' },
-        { group: improved,  label: 'Improving',       tone: 'good' },
+        { group: attention, label: 'Needs attention', tone: 'warn' },
+        { group: steady,    label: 'Steady',          tone: 'muted' },
+        { group: strong,    label: 'Strong',          tone: 'good' },
       ];
       tiers.forEach(function (t) {
         if (!t.group.length) return;
@@ -12944,18 +12965,20 @@
     });
   }
 
-  // Trend pill -- names the card's left-rail color (improved/regressed/mixed
-  // vs the prior period) so the rail's meaning is explicit, not a mystery
-  // color. Carries a gloss tooltip; hover the card and the rail glows (CSS).
+  // Trend pill -- the SECONDARY signal: direction of change vs the prior period
+  // (rung/missed/answered/% answered). Distinct from the card's rail + tier,
+  // which now show current STANDING vs the 92% target (#11c). Carries a gloss
+  // tooltip.
   function insTrendPill_(direction) {
     var map = {
       improved:  ['ins-trend-up',   '▲ Improving'],
       regressed: ['ins-trend-down', '▼ Slipping'],
-      mixed:     ['ins-trend-flat', '≈ Mixed'],
+      mixed:     ['ins-trend-flat', '≈ Steady'],
     };
     var m = map[direction] || map.mixed;
-    var title = 'Trend vs the prior period across rung, missed, answered and % answered — '
-      + 'this is the colored left edge of the card (sage = improving, orange = slipping, grey = mixed).';
+    var title = 'Trend vs the prior period across rung, missed, answered and % answered '
+      + '(▲ improving / ▼ slipping / ≈ steady). This is the direction of change — separate from '
+      + 'the card\'s standing rail/tier, which shows the current level vs the 92% target.';
     return '<span class="ins-trend-pill ' + m[0] + ' gloss" title="' + escapeHtml(title) + '">' + m[1] + '</span>';
   }
 
@@ -12981,26 +13004,26 @@
     const isFloater = c.matchedViaQueue && !c.matchedViaRoster;
     const chip = isFloater ? sourceChipHtml_(c) : '';
     // Migrated onto the shared ds-card--rail (Phase 4): the left rail color
-    // comes from --status. Floaters keep the warn rail (the QUEUE signal wins
-    // over the classification tint); everyone else gets improved=accent /
-    // regressed=warn / mixed=muted (the CR classification pattern).
+    // comes from --status. Floaters keep the warn rail (the QUEUE signal wins);
+    // everyone else gets STANDING-based color (#11c) -- strong=good /
+    // attention=warn / steady=muted -- so the rail matches the tier grouping.
     const statusColor = isFloater ? 'var(--warn)'
-                      : x.direction === 'improved'  ? 'var(--good)'
-                      : x.direction === 'regressed' ? 'var(--warn)'
+                      : x.standing === 'strong'    ? 'var(--good)'
+                      : x.standing === 'attention' ? 'var(--warn)'
                       : 'var(--muted)';
     const debugAttrs =
-      ' data-direction="' + x.direction + '"'
+      ' data-standing="' + x.standing + '"'
+      + ' data-trend="' + x.trend + '"'
       + ' data-score="' + (x.score == null ? '' : x.score.toFixed(1)) + '"';
     const mm = c.metrics || {};
     const ta = teamAvg || {};
-    // Two DISTINCT, now-labeled signals (they used to both be change-based,
-    // which read as contradictory): the left RAIL + the trend pill show this
-    // agent's TREND vs the prior period (deltaClassify_); the vs-team chip
-    // shows their STANDING -- answered calls vs the team average THIS period
-    // (the marker on the Answered bar below). A card can legitimately be
-    // "Improving" (rail) yet "below team" (chip): better than last period but
-    // still under the average. Floaters keep only the QUEUE chip.
-    const trendPill = isFloater ? '' : insTrendPill_(x.direction);
+    // Three DISTINCT, labeled signals: the left RAIL + tier show STANDING (#11c:
+    // current % answered vs the 92% target); the trend pill shows the direction
+    // of change vs the prior period (secondary); the vs-team chip shows answered
+    // calls vs the team average this period. A card can legitimately be "Strong"
+    // (rail) yet "Slipping" (trend pill): above target but down from last period.
+    // Floaters keep only the QUEUE chip.
+    const trendPill = isFloater ? '' : insTrendPill_(x.trend);
     const vsTeam = isFloater ? '' : insVsTeamBadge_(
       Number((mm.answered || {}).val) || 0, Number(ta.answered) || 0);
 
