@@ -694,7 +694,21 @@
         el.style.display = '';
       });
       initViewAs_();   // admin-only "View as <dept> (manager)" preview control
+    } else {
+      // #10: managers get a single Insights button instead of the (admin-only)
+      // Reports dropdown. The other reports consolidate into Insights; Missed /
+      // Individual stay reachable via the Overview question chips + My Dept.
+      const _solo = $('insights-solo-btn');
+      if (_solo) _solo.style.display = '';
     }
+    // Proxy the solo Insights button to the dropdown's real launcher (whose
+    // click handler the Insights modal init wires up regardless of visibility).
+    (function () {
+      const solo = $('insights-solo-btn');
+      if (solo) solo.addEventListener('click', function () {
+        const real = $('insights-report-btn'); if (real) real.click();
+      });
+    })();
 
     // -- Header dropdown menus (Reports + Admin) --------------------
     // Toggle behavior: clicking a menu button opens its list and
@@ -1286,6 +1300,11 @@
       document.body.removeAttribute('data-view-as');
       if (sel) sel.disabled = false;
     }
+    // #10: the Reports dropdown (data-admin-only) is hidden in view-as by the
+    // existing CSS; surface the solo Insights button so the previewed manager
+    // still has a report entry point (hidden again when the admin switches back).
+    var _solo = $('insights-solo-btn');
+    if (_solo) _solo.style.display = viewAsDept_ ? '' : 'none';
     // Re-fetch the active surface so it reflects the effective role.
     if (document.body.getAttribute('data-page') === 'overview') {
       ovLoad_(false);
@@ -2755,7 +2774,10 @@
         if (kind === 'team-lately')           launcherOpenInsights_();
         else if (kind === 'missed-yesterday') launcherOpenMissed_();
         else if (kind === 'agent-trend')      launcherOpenIndividual_();
-        else if (kind === 'abandons')         launcherOpenQcd_();
+        // #5: repointed from QCD (retiring) to Insights -- its Queue health
+        // section carries the abandon %/heatmap that answers "are callers
+        // giving up?" while keeping every chip on a kept/consolidated report.
+        else if (kind === 'abandons')         launcherOpenInsights_();
       } catch (err) { /* best-effort: the modal is still open/openable by hand */ }
     });
   }

@@ -64,7 +64,13 @@
              unchanged; the dormant initHeaderMenus_ wires open/close via
              aria-controls. The trigger lights up via updateTabActiveState_
              when a report route is active. -->
-        <div class="header-menu">
+        <!-- #10: managers (and admins previewing as a manager) get a single
+             Insights button here instead of the full Reports dropdown, which
+             is admin-only. Proxies to the dropdown's #insights-report-btn. -->
+        <button class="header-menu-btn" id="insights-solo-btn" type="button"
+                data-route="/report/insights" role="tab" aria-selected="false" style="display:none;"
+                title="Insights: a department rollup + per-agent cards vs the prior period, with queue health.">Insights</button>
+        <div class="header-menu" data-admin-only style="display:none;">
           <button class="header-menu-btn" id="reports-menu-btn" type="button"
                   aria-haspopup="true" aria-expanded="false" aria-controls="reports-menu-list"
                   title="Reports: Missed Calls, Individual, Performance, Compare, QCD.">
