@@ -1,5 +1,14 @@
 # Cycle State — resume note
 
+## Latest session cont'd (batch 4: #10, #5, #12 + #2/#11b investigation)
+Same branch. Commits ed74b3d (#10+#5), d9d3106 (#12). 193/193, balanced.
+- **#10:** Reports dropdown → `data-admin-only`; managers (+ admins in view-as) get a solo `#insights-solo-btn` proxying to the dropdown's launcher. Wired in init (non-admin reveal) + applyViewAs_ (view-as toggle).
+- **#5:** Overview "abandons" question chip repointed QCD → Insights.
+- **#12:** heatmap already has rich native-title hover (abandoned/total per cell); added a subhead hint + margin-bottom gap. (Did NOT use `.gloss` — its ::after circled-i would clutter every cell.)
+- **#2 INVESTIGATED (not fixed — needs UX decision):** cards show 0 metrics + a sparkline because the headline uses ONLY the global `latestDate` (`latestDay`, CompanyOverview.gs:385) while the sparkline uses the whole 30-day `trendByDate`. Depts with no activity ON the latest date (Manual Mobility / Eligibility MM&R / Field Ops Power / Denials) read 0 but show recent history. Correct-but-confusing. FIX OPTIONS to ask: show 0 / "quiet on <date>" note / each dept's own last-active day.
+- **#7 DEFERRED (bigger):** YTD Overview chart tab needs a server trend expansion (~180+ days × 14 depts) + cache bump + tab UI.
+- **STILL QUEUED:** #1 Overview card→solo/Shift-multi-select chart toggle (big, NOT started); #7 YTD; #2 fix (pending UX decision); #11b (what the 12-mo Answered chart measures for Power — likely DQE per-agent answered summed monthly, needs the actual numbers to confirm the mismatch); #9-Spanish (RE-VERIFY after redeploy of the #8 fix — if Power's queue-only section still shows Spanish, scope it to queuesForDept_).
+
 ## Latest session (broad-implement: big deploy-feedback batch — 4 commits)
 Branch `claude/broad-scan-je9ga7` (restarted from merged main after PR #142). 193/193 tests, INV-16 in sync, braces/divs balanced. Commits: be9569a, f5b31fc, 01ee847, b22a837 (pushed, NOT PR'd).
 - **#8 view-as/nav stale dept (be9569a):** `setPage('dept')` now reloads when the painted dept (`lastSummaryDept_`) != requested dept (guarded vs double-load via the disabled refresh btn); `ovRouteToDept_` simplified. Fixes My-Dept nav + view-as click showing a stale wrong-dept table/Missed/QCD until Refresh.
