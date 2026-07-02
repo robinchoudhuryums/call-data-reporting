@@ -693,6 +693,11 @@
     white-space: nowrap;
     position: sticky;
     top: 0;
+    /* Opaque background so scrolling rows pass cleanly UNDER the sticky header
+       instead of showing through it (the #4 "gap where you see passing info"
+       on the all-dept report's sticky strip). */
+    background: var(--paper-card);
+    z-index: 2;
     border-bottom: 1px solid var(--line);
   }
   .agents thead th:hover { color: var(--ink); }

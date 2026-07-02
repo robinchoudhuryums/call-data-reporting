@@ -1429,72 +1429,13 @@
   // shape scoped to their own dept so the line surfaces meaningful numbers
   // for both audiences without leaking the admin-only company aggregate.
   function ovRenderSummaryLine_(data) {
+    // #6: this "Data through ... Rung ... % Answered ... QCD viol MTD" line was
+    // removed -- "Data through" duplicates the header freshness pill, and the
+    // Rung / % Answered / violations are already on the per-dept cards below
+    // the chart. Kept as a hidden no-op (one-line revert) so the caller and the
+    // #ov-summary-line element don't need touching.
     const el = $('ov-summary-line');
-    if (!el) return;
-    const dateLabel = data.latestDate
-      ? ovFormatDateLabel_(data.latestDate)
-      : '(no data)';
-    const sep = '<span class="ov-summary-sep">&middot;</span>';
-    const segs = [];
-    segs.push(
-      '<span class="ov-summary-label">Data through</span> '
-      + '<strong>' + escapeHtml(dateLabel) + '</strong>'
-    );
-    const isAdmin = data.viewerRole === 'admin';
-    if (isAdmin && data.companyAggregate) {
-      // Top-level dept count (sub-queues fold into their parent for
-      // the "DEPTS N" headline so the number matches what a viewer
-      // can see in the tile grid).
-      const topLevel = (data.depts || []).filter(function (d) { return !d.parent; }).length;
-      segs.push(
-        '<span class="ov-summary-label">Depts</span> '
-        + '<strong>' + fmtNumber(topLevel) + '</strong>'
-      );
-      segs.push(
-        '<span class="ov-summary-label">Rung</span> '
-        + '<strong>' + fmtNumber(data.companyAggregate.rung) + '</strong>'
-      );
-      segs.push(
-        '<span class="ov-summary-label">% Answered</span> '
-        + '<strong>' + escapeHtml(data.companyAggregate.pctFormatted) + '</strong>'
-      );
-      const violTotal = (data.depts || []).reduce(function (acc, d) {
-        return acc + ((d.qcd && d.qcd.violationsMtd) || 0);
-      }, 0);
-      segs.push(
-        '<span class="ov-summary-label">QCD viol MTD</span> '
-        + '<strong>' + fmtNumber(violTotal) + '</strong>'
-      );
-    } else {
-      // Manager view: scope to the viewer's own dept so the summary
-      // line shows actionable stats. Falls back to the data-through
-      // line alone if the viewer's dept can't be matched (defensive --
-      // the auth layer guarantees a manager has at least one dept).
-      const viewerDept = data.viewerDept;
-      const dept = viewerDept
-        ? (data.depts || []).find(function (d) { return d.name === viewerDept; })
-        : null;
-      if (dept) {
-        segs.push(
-          '<span class="ov-summary-label">Dept</span> '
-          + '<strong>' + escapeHtml(dept.name) + '</strong>'
-        );
-        segs.push(
-          '<span class="ov-summary-label">Rung</span> '
-          + '<strong>' + fmtNumber(dept.latest.rung) + '</strong>'
-        );
-        segs.push(
-          '<span class="ov-summary-label">% Answered</span> '
-          + '<strong>' + escapeHtml(dept.latest.pctFormatted) + '</strong>'
-        );
-        const violMtd = (dept.qcd && dept.qcd.violationsMtd) || 0;
-        segs.push(
-          '<span class="ov-summary-label">QCD viol MTD</span> '
-          + '<strong>' + fmtNumber(violMtd) + '</strong>'
-        );
-      }
-    }
-    el.innerHTML = segs.join(' ' + sep + ' ');
+    if (el) { el.style.display = 'none'; el.innerHTML = ''; }
   }
 
   // Admin-only banner above the summary line surfacing Pipeline
@@ -12699,13 +12640,22 @@
     const s = stat || { deltaPct: 0, type: 'volume' };
     const isPct = s.type === 'pctPoints';
     const dp = Number(s.deltaPct || 0);
-    if (Math.abs(dp) < 0.05) return '<span class="pr-delta pr-delta-neu">–</span>';
+    // #11e: explain the chip on hover -- what it compares against + the color
+    // convention -- since it's easy to wonder what these mean at a glance.
+    const baseTitle = 'Change vs the same-length prior period (the "Comparing against…" window in the '
+      + 'results header). Green = the change is good for this metric, orange = worse.';
+    if (Math.abs(dp) < 0.05) {
+      return '<span class="pr-delta pr-delta-neu" title="'
+           + escapeHtml('No meaningful change vs the prior period. ' + baseTitle) + '">–</span>';
+    }
     let cls = 'pr-delta-neu';
     if (valence === 'pos')      cls = dp > 0 ? 'pr-delta-pos' : 'pr-delta-neg';
     else if (valence === 'neg') cls = dp > 0 ? 'pr-delta-neg' : 'pr-delta-pos';
     const arrow = dp > 0 ? '▲' : '▼';
     const suffix = isPct ? ' pts' : '%';
-    return '<span class="pr-delta ' + cls + '"><span class="pr-delta-arrow">' + arrow + '</span> '
+    const title = arrow + ' ' + Math.abs(dp).toFixed(1) + suffix + ' vs the prior period. ' + baseTitle;
+    return '<span class="pr-delta ' + cls + '" title="' + escapeHtml(title) + '">'
+         + '<span class="pr-delta-arrow">' + arrow + '</span> '
          + Math.abs(dp).toFixed(1) + suffix + '</span>';
   }
 
