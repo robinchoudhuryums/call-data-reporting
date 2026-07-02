@@ -2038,28 +2038,20 @@
       }
     });
 
-    // Admin tile-click: route the main dashboard to that dept and
-    // navigate to the My Department page. Cheap because the server
-    // summary is cached. For managers, tiles are non-routing (they
-    // can't switch); their data is fully visible in the tile so no
-    // extra hover state is needed.
-    if (tileRoutable) {
-      $('ov-dept-grid').querySelectorAll('.ov-dept-tile-clickable')
-        .forEach(function (tile) {
-          tile.addEventListener('click', function () {
-            const target = tile.getAttribute('data-dept');
-            if (!target) return;
-            ovRouteToDept_(target);
-          });
-        });
-    }
-
-    // Hovering any dept tile (all roles) spotlights that dept's line in
-    // the trend chart below, connecting the two halves of the page.
-    // No-ops when a legend pin is active.
+    // #1: clicking a dept tile SOLOS its line in the trend chart (like a legend
+    // click) instead of navigating to My Department -- and Shift/Cmd/Ctrl-click
+    // ADDS it to a multi-dept comparison. Navigation still lives on the chart
+    // POINT click (ovHandlePointClick_) + the dept-selector dropdown, so the
+    // "jarring page load on a card click" is gone for every role. Hover still
+    // spotlights (no-op once a pin is active).
     $('ov-dept-grid').querySelectorAll('.ov-dept-tile').forEach(function (tile) {
       const target = tile.getAttribute('data-dept');
       if (!target) return;
+      tile.classList.add('ov-dept-tile-solo');
+      tile.addEventListener('click', function (e) {
+        const additive = !!(e && (e.shiftKey || e.metaKey || e.ctrlKey));
+        chartSpotlightTogglePin_(ovChartInstance, target, additive);
+      });
       tile.addEventListener('mouseenter', function () { ovSpotlightDept_(target); });
       tile.addEventListener('mouseleave', function () { ovSpotlightDept_(null); });
     });
@@ -2327,16 +2319,21 @@
   // reference baseline / dept-total line) is never dimmed.
   const CHART_DIM_COLOR = 'rgba(140,140,140,0.18)';
 
+  // Stable key for a dataset in the spotlight model: the Overview dept name
+  // when present (survives re-render), else the series label (e.g. QCD queues).
+  function chartSpotKey_(ds) { return (ds && (ds._deptName || ds.label)) || null; }
+
   function chartSpotlightStash_(chart, opts) {
     if (!chart || !chart.data) return;
     chart._spotlightSkip = (opts && opts.skipLabel) || null;
-    chart._spotlightPinned = null;
+    chart._spotlightPins = {};   // SET of pinned keys (multi-select, #1)
     chart.data.datasets.forEach(function (ds) {
       if (ds._origBorder == null) ds._origBorder = ds.borderColor;
       if (ds._origWidth == null) ds._origWidth = ds.borderWidth;
     });
   }
 
+  // Transient single-series highlight (dept-tile hover). Does NOT touch pins.
   function chartSpotlightApply_(chart, activeIndex) {
     if (!chart || !chart.data) return;
     chart.data.datasets.forEach(function (ds, i) {
@@ -2362,43 +2359,98 @@
     chart.update('none');
   }
 
+  function chartSpotlightHasPins_(chart) {
+    return !!(chart && chart._spotlightPins && Object.keys(chart._spotlightPins).length);
+  }
+
+  // Highlight every PINNED series, dim the rest. Empty set -> clear.
+  function chartSpotlightApplyPins_(chart) {
+    if (!chart || !chart.data) return;
+    if (!chartSpotlightHasPins_(chart)) { chartSpotlightClear_(chart); return; }
+    const pins = chart._spotlightPins;
+    chart.data.datasets.forEach(function (ds) {
+      if (chart._spotlightSkip && ds.label === chart._spotlightSkip) return;
+      const k = chartSpotKey_(ds);
+      if (k && pins[k]) {
+        ds.borderColor = ds._origBorder;
+        ds.borderWidth = (ds._origWidth || 2) + 0.8;
+      } else {
+        ds.borderColor = CHART_DIM_COLOR;
+        ds.borderWidth = ds._origWidth || 1.4;
+      }
+    });
+    chart.update('none');
+  }
+
+  // Toggle a series' pin. `additive` (Shift/Cmd/Ctrl) adds/removes from the set
+  // for multi-series comparison; a plain click SOLOS (or releases if it was
+  // already the sole pin).
+  function chartSpotlightTogglePin_(chart, key, additive) {
+    if (!chart || !key) return;
+    if (!chart._spotlightPins) chart._spotlightPins = {};
+    const pins = chart._spotlightPins;
+    if (additive) {
+      if (pins[key]) delete pins[key]; else pins[key] = true;
+    } else {
+      const keys = Object.keys(pins);
+      if (keys.length === 1 && pins[key]) { delete pins[key]; }
+      else { chart._spotlightPins = {}; chart._spotlightPins[key] = true; }
+    }
+    chartSpotlightApplyPins_(chart);
+    // Tile markers are Overview-only (the QCD multi-queue chart reuses these
+    // helpers but has no dept grid).
+    if (chart === ovChartInstance && typeof ovSyncTilePins_ === 'function') ovSyncTilePins_(chart);
+  }
+
   // Returns legend onHover/onLeave/onClick callbacks implementing the
   // spotlight model. Spread into a chart's plugins.legend config.
   function chartSpotlightLegend_() {
     return {
       onHover: function (e, item, legend) {
         const chart = legend.chart;
-        if (chart._spotlightPinned != null) return;   // pin wins over hover
+        if (chartSpotlightHasPins_(chart)) return;   // pins win over hover
         if (item && item.datasetIndex != null) chartSpotlightApply_(chart, item.datasetIndex);
       },
       onLeave: function (e, item, legend) {
         const chart = legend.chart;
-        if (chart._spotlightPinned != null) return;
+        if (chartSpotlightHasPins_(chart)) return;
         chartSpotlightClear_(chart);
       },
       onClick: function (e, item, legend) {
         const chart = legend.chart;
         if (!item || item.datasetIndex == null) return;
-        if (chart._spotlightPinned === item.datasetIndex) {
-          chart._spotlightPinned = null;
-          chartSpotlightClear_(chart);
-        } else {
-          chart._spotlightPinned = item.datasetIndex;
-          chartSpotlightApply_(chart, item.datasetIndex);
-        }
+        const ds = chart.data.datasets[item.datasetIndex];
+        const key = chartSpotKey_(ds);
+        if (!key) return;
+        const ne = e && e.native;
+        const additive = !!(ne && (ne.shiftKey || ne.metaKey || ne.ctrlKey));
+        chartSpotlightTogglePin_(chart, key, additive);
       },
     };
   }
 
-  // Spotlight a dept's line by name (used by dept-tile hover). No-op when
-  // a legend pin is active so a hover doesn't fight the pinned selection.
+  // Spotlight a dept's line by name (dept-tile hover). No-op when a pin is
+  // active so a hover doesn't fight the pinned selection.
   function ovSpotlightDept_(deptName) {
     const chart = ovChartInstance;
-    if (!chart || !chart.data || chart._spotlightPinned != null) return;
+    if (!chart || !chart.data) return;
+    if (chartSpotlightHasPins_(chart)) return;   // pins win over hover
     if (deptName == null) { chartSpotlightClear_(chart); return; }
     let idx = -1;
     chart.data.datasets.forEach(function (ds, i) { if (ds._deptName === deptName) idx = i; });
     if (idx >= 0) chartSpotlightApply_(chart, idx);
+  }
+
+  // Reflect the chart's pin set on the dept tiles (a soloed/compared marker),
+  // so the grid shows which depts are currently isolated in the chart.
+  function ovSyncTilePins_(chart) {
+    const pins = (chart && chart._spotlightPins) || {};
+    const grid = $('ov-dept-grid');
+    if (!grid) return;
+    grid.querySelectorAll('[data-dept]').forEach(function (tile) {
+      const d = tile.getAttribute('data-dept');
+      tile.classList.toggle('ov-tile-soloed', !!(d && pins[d]));
+    });
   }
 
   // Point click -> deep-link to that dept + date. Only routes for admins

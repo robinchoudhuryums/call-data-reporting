@@ -4308,6 +4308,15 @@
     gap: 6px;
     min-width: 0;
   }
+  /* #1: every dept tile solos its trend line on click (Shift-click = compare). */
+  .ov-chart-hint { font-weight: 400; font-size: 11px; color: var(--muted); letter-spacing: 0; text-transform: none; }
+  .ov-dept-tile-solo { cursor: pointer; }
+  .ov-dept-tile-solo:hover { border-color: var(--accent); }
+  /* Marker on tiles currently soloed / being compared in the trend chart. */
+  .ov-tile-soloed {
+    box-shadow: inset 0 0 0 2px var(--accent);
+    border-color: var(--accent);
+  }
   /* The viewer's own (manager) / selected (admin) dept: folded into the grid
      as the first card with a distinctive accent border + corner badge (the
      old full-width hero above the chart is retired). */
