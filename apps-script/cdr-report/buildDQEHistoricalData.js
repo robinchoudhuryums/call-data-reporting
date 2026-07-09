@@ -509,17 +509,34 @@ function buildDQEHistoricalData(rawSheet, dqeSheet, opts) {
 
     const agentParentIds    = new Set(legs.map(l => l.parentCallId).filter(Boolean));
     const agentAbandonedIds = Array.from(agentParentIds).filter(id => abandonedParentIds.has(id));
-    const abanMissedLegs = legs.filter(l =>
-      l.missed && l.parentCallId && abandonedParentIds.has(l.parentCallId)
-    );
+    // AD/AE/AF are consumed POSITIONALLY by the dashboard's Missed Calls
+    // report: AF[i] is the i-th abandoned missed-ring time and AD[i] is
+    // its parent call id -- the {time -> parent} pairing behind each 🚨
+    // timestamp's "↳ path" journey drill. Build all three columns from
+    // the SAME chronologically-sorted missed-leg list so the pairing is
+    // exact: one AD/AE/AF entry per missed leg on an abandoned parent
+    // (a parent that re-rang this agent appears once per ring -- the
+    // read side dedups ids for its unique-abandoned counts). Legs with
+    // an unparseable start time can't render a timestamp, so they're
+    // excluded from the paired section. Abandoned parents the agent
+    // touched WITHOUT a pairable missed leg (answered/unflagged leg, or
+    // unparseable time) are APPENDED to AD after the paired section --
+    // no AE/AF partner -- so the dept-wide unique-abandoned counts
+    // (which read AD as a set) keep the exact same id set as before.
+    const abanMissedLegs = legs
+      .filter(l =>
+        l.missed && l.parentCallId && abandonedParentIds.has(l.parentCallId)
+        && l.startPST !== null
+      )
+      .sort((a, b) => a.startPST - b.startPST);
 
-    const abanParentStr   = agentAbandonedIds.join(',');
-    const abanMissedIds   = Array.from(new Set(abanMissedLegs.map(l => l.callId))).join(',');
-    const abanMissedTimes = Array.from(new Set(
-      abanMissedLegs
-        .map(l => l.startPST !== null ? pstToCSTStr(l.startPST) : '')
-        .filter(Boolean)
-    )).join(',');
+    const pairedParentIds   = abanMissedLegs.map(l => l.parentCallId);
+    const pairedParentSet   = new Set(pairedParentIds);
+    const unpairedParentIds = agentAbandonedIds.filter(id => !pairedParentSet.has(id));
+
+    const abanParentStr   = pairedParentIds.concat(unpairedParentIds).join(',');
+    const abanMissedIds   = abanMissedLegs.map(l => l.callId).join(',');
+    const abanMissedTimes = abanMissedLegs.map(l => pstToCSTStr(l.startPST)).join(',');
 
     outputRows.push([
       monthYr,                                  // A  Month Year

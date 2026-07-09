@@ -499,6 +499,12 @@ function alertConfigRawValues_() {
     const neon = neonAlertConfigRawValues_();
     if (neon !== null) return neon;   // null = unreachable/error -> sheet fallback
   }
+  return sheetAlertConfigRawValues_();
+}
+
+/** SHEET-only raw read (no CONFIG_SOURCE dispatch) -- used by the flag-aware
+ * reader above and read DIRECTLY by compareAlertConfigSources (F-5). */
+function sheetAlertConfigRawValues_() {
   const ss = openSpreadsheet_();
   const sheet = ss.getSheetByName(SHEETS.ALERT_CONFIG);
   if (!sheet) return [];
@@ -547,7 +553,12 @@ function neonAlertConfigRawValues_() {
 }
 
 function readAlertConfig_() {
-  const values = alertConfigRawValues_();
+  return parseAlertConfigValues_(alertConfigRawValues_());
+}
+
+/** The shared raw-rows -> entries parse, applied identically to either
+ * source (sheet or Neon) so parity is exact. */
+function parseAlertConfigValues_(values) {
   if (!values || !values.length) return [];
   const out = [];
   for (let i = 0; i < values.length; i++) {
@@ -652,17 +663,23 @@ function compareAlertConfigSources() {
     });
     return m;
   };
-  // Force a sheet read + a neon read, regardless of the flag.
-  const prev = (typeof getConfigSource_ === 'function') ? getConfigSource_() : 'sheet';
-  let sheetRows, neonRows;
-  try {
-    PropertiesService.getScriptProperties().setProperty('CONFIG_SOURCE', 'sheet');
-    sheetRows = readAlertConfig_();
-    PropertiesService.getScriptProperties().setProperty('CONFIG_SOURCE', 'neon');
-    neonRows = readAlertConfig_();
-  } finally {
-    PropertiesService.getScriptProperties().setProperty('CONFIG_SOURCE', prev);
+  // Read each source DIRECTLY -- never through the flag-aware reader, and
+  // never by flipping the live CONFIG_SOURCE property (F-5). The old
+  // property round-trip had two flaws: (1) the flag-aware reader silently
+  // falls back to the SHEET when Neon is unreachable, so a Neon outage
+  // compared the sheet against itself and reported PARITY CLEAN -- a false
+  // green light to flip CONFIG_SOURCE against an empty/stale table; (2)
+  // Script Properties are global, so concurrent requests briefly read the
+  // flipped source. Neon-unreachable now returns clean:false + error.
+  const sheetRows = parseAlertConfigValues_(sheetAlertConfigRawValues_());
+  const neonRaw = neonAlertConfigRawValues_();
+  if (neonRaw === null) {
+    Logger.log('compareAlertConfigSources: NEON UNREACHABLE -- no comparison performed. '
+      + 'Do NOT flip CONFIG_SOURCE on this result.');
+    return { clean: false, error: 'Neon unreachable -- no comparison performed.',
+             missingInNeon: [], missingInSheet: [], mismatched: [] };
   }
+  const neonRows = parseAlertConfigValues_(neonRaw);
   const s = norm(sheetRows), nn = norm(neonRows);
   const missingInNeon = [], missingInSheet = [], mismatched = [];
   Object.keys(s).forEach(function (d) { if (!(d in nn)) missingInNeon.push(d); else if (s[d] !== nn[d]) mismatched.push(d); });

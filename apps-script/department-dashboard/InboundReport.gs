@@ -258,12 +258,23 @@ function getCallJourney(req) {
     // 'A_Q_CustomerSuccess') -- a different space for several depts, so the
     // scoped query yields false negatives (the original "no path on record"
     // bug). When scoped finds nothing, retry by exact (call_date, call_id)
-    // only. Safe: the id is already dept-entitled upstream and the journey
-    // carries no caller identity (no hash/number; phone-like callee names are
-    // masked at capture). Admin company view runs unscoped already (predicate
-    // === ''), so this only adds a fallback for the manager/dept path.
+    // only. Admin company view runs unscoped already (predicate === ''), so
+    // this only adds a fallback for the dept-scoped path.
+    //
+    // F-4 entitlement gate: the old fallback trusted the client's claim that
+    // the call_id "is already dept-entitled upstream" -- but the RPC accepts
+    // arbitrary {callId, date}, so a manager could fetch ANY dept's journey
+    // by id. Now the server verifies the claim itself for managers: the id
+    // must appear as an abandoned parent id in the manager's OWN dept's
+    // Missed Calls report for that date (the exact surface the "↳ path"
+    // badge lives on). Admins are entitled to every dept, so their fallback
+    // is ungated. The journey still carries no caller identity.
     let viaFallback = false;
-    if (!json && predicate) { json = lookup(''); viaFallback = !!json; }
+    if (!json && predicate) {
+      const entitled = (user.role === 'admin')
+        || callIdInDeptMissedReport_(dept, date, callId);
+      if (entitled) { json = lookup(''); viaFallback = !!json; }
+    }
     if (!json) return { available: true, found: false };
     if (viaFallback) {
       Logger.log('getCallJourney: dept-scoped lookup missed (queue-name space), '
@@ -275,6 +286,40 @@ function getCallJourney(req) {
     return { available: false, found: false };
   } finally {
     try { conn.close(); } catch (ce) {}
+  }
+}
+
+/**
+ * F-4 entitlement gate for getCallJourney's exact-id fallback: TRUE iff
+ * `callId` appears as an abandoned parent id in the dept's OWN Missed
+ * Calls report for `date` -- agent timelines (agents[].missedTimes) or
+ * the queue-only abandoned section (queueOnly[].entries). This is the
+ * same computation the "↳ path" badge is rendered from, so whatever id
+ * the manager can legitimately see is exactly what passes. Runs only on
+ * the manager fallback path (scoped query missed), and the report is
+ * cached (missed:vN, single-day key), so repeat drills are cheap.
+ * Best-effort: any error returns false (the fallback stays closed).
+ */
+function callIdInDeptMissedReport_(dept, date, callId) {
+  if (!dept || !callId) return false;
+  try {
+    const rpt = getMissedCallsReport({ department: dept, from: date, to: date });
+    const listHasId = function (groups, entriesKey) {
+      for (let i = 0; i < ((groups && groups.length) || 0); i++) {
+        const entries = groups[i][entriesKey] || [];
+        for (let j = 0; j < entries.length; j++) {
+          if (entries[j] && entries[j].parentId != null
+              && String(entries[j].parentId) === callId) return true;
+        }
+      }
+      return false;
+    };
+    return listHasId(rpt && rpt.agents, 'missedTimes')
+        || listHasId(rpt && rpt.queueOnly, 'entries');
+  } catch (e) {
+    Logger.log('callIdInDeptMissedReport_ failed (fallback stays closed): '
+      + (e && e.message ? e.message : e));
+    return false;
   }
 }
 

@@ -118,3 +118,20 @@ test('digest: insights-format body carries the rollup + per-agent deltas vs the 
   // Prior label is the previous calendar month, not the INV-28 auto window.
   assert.ok(html.indexOf('Apr') !== -1, 'prior label names April');
 });
+
+test('F-6: daily digest window is the previous BUSINESS day (Monday covers Friday)', function () {
+  // Monday Jun 22 2026 -> Friday Jun 19 (the documented "Monday's digest
+  // covers Friday" contract; the old code anchored to the raw calendar
+  // yesterday, which sent Friday's digest on SATURDAY and skipped Monday).
+  const mon = h.call('digestWindowFor_', 'daily', new Date(2026, 5, 22, 8));
+  assert.equal(mon.fromIso, '2026-06-19');
+  assert.equal(mon.toIso, '2026-06-19');
+  // Tuesday -> Monday (plain yesterday).
+  const tue = h.call('digestWindowFor_', 'daily', new Date(2026, 5, 23, 8));
+  assert.equal(tue.fromIso, '2026-06-22');
+  // Weekend manual run / preview -> the preceding Friday.
+  const sat = h.call('digestWindowFor_', 'daily', new Date(2026, 5, 20, 8));
+  assert.equal(sat.fromIso, '2026-06-19');
+  const sun = h.call('digestWindowFor_', 'daily', new Date(2026, 5, 21, 8));
+  assert.equal(sun.fromIso, '2026-06-19');
+});

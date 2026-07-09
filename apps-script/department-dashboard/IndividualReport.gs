@@ -65,7 +65,12 @@
 // floaters were already excluded from the team-avg numerator +
 // denominator -- the v7 -> v8 change only widens what can APPEAR in
 // summaryData).
-const INDIVIDUAL_CACHE_KEY_PREFIX = 'individual:v8';
+// v9: the v8 visibleAgents filter now ALSO gates trendData.datasets
+// (it previously applied only to summaryData, so a crafted off-dept
+// agent name still received that agent's real 12-month monthly series
+// -- the F-1 authorization gap). Bumped so cached responses computed
+// with the unfiltered trend invalidate on deploy.
+const INDIVIDUAL_CACHE_KEY_PREFIX = 'individual:v9';
 
 function getIndividualReportInit(req) {
   const email = Session.getActiveUser().getEmail();
@@ -484,6 +489,18 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
     activeDays:    dayCount,
   };
 
+  // Phase D+1 / INV-53: filter out selected names that match neither
+  // the roster nor the dept's queue overlap BEFORE building any output
+  // (trend datasets AND summary cards). A crafted off-dept name has no
+  // card, and it must not get a trend series either -- the row scan
+  // covers every dept's rows, so an unfiltered trend dataset would leak
+  // another dept's per-agent monthly metrics to any manager who typed
+  // the name (the F-1 authorization gap). Roster members ALWAYS pass
+  // since agentMatchedViaRoster was pre-populated.
+  const visibleAgents = selectedAgents.filter(function (a) {
+    return agentMatchedViaRoster[a] || agentMatchedViaQueue[a];
+  });
+
   // Trend chart data: labels + per-agent monthly buckets.
   const chartLabels = masterMonthKeys.map(function (m) {
     const parts = m.split('-');
@@ -491,7 +508,7 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
     return Utilities.formatDate(d, TZ, 'MMM, yy');
   });
   const chartDatasets = {};
-  selectedAgents.forEach(function (agent) {
+  visibleAgents.forEach(function (agent) {
     chartDatasets[agent] = masterMonthKeys.map(function (m) {
       const b = aggregatedStats[agent][m] || { rung: 0, missed: 0, answered: 0, ttt: 0, attTotal: 0 };
       const pct = b.rung > 0 ? (b.answered / b.rung) * 100 : 0;
@@ -512,13 +529,8 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
   //     floater-awareness fields. Floaters render with the QUEUE
   //     chip and are EXCLUDED from teamTotal (gated above by the
   //     existing rosterSet[agent] check).
-  // Phase D+1 / INV-53: filter out selected names that match
-  // neither path -- a crafted off-dept name with no rows would
-  // otherwise show as a zero-stats card. Roster members ALWAYS
-  // pass since agentMatchedViaRoster was pre-populated.
-  const visibleAgents = selectedAgents.filter(function (a) {
-    return agentMatchedViaRoster[a] || agentMatchedViaQueue[a];
-  });
+  // visibleAgents (the INV-53 roster/queue filter) is computed above,
+  // before the trend datasets, so BOTH output paths share it.
   // Build sourceHomes for any floaters so the QUEUE chip can show
   // their other-dept home list. Lazy; only runs if floaters exist.
   let irDeptsByAgent = null;

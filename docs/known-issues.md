@@ -300,7 +300,7 @@ same time as the code change.
 | `Data.gs` (main table) | `summary:vN:` | `v10` |
 | `Data.gs` (latest-date snap for default From/To) | `latestDate:vN:` | `v1` |
 | `Data.gs` (multi-source latest dates for freshness pill) | `latestDates:vN:` | `v1` |
-| `IndividualReport.gs` | `individual:vN:` | `v8` |
+| `IndividualReport.gs` | `individual:vN:` | `v9` |
 | `IndividualReport.gs` (active-in-range subset shared by all three report pickers) | `individual_active:vN:` | `v2` |
 | `PerformanceReport.gs` | `performance:vN:` | `v4` |
 | `CompareRangesReport.gs` | `compareRanges:vN:` | `v6` |
@@ -467,7 +467,8 @@ precedent -- so pre-existing sheets keep their 5-col header and read
 back `format='summary'` until an admin populates F.
 
 **Cadence** is `daily` (sends each weekday morning for the previous
-day's data; weekends skipped), `weekly` (sends Monday 8 AM for
+BUSINESS day's data -- Monday's digest covers Friday; weekend runs
+skipped), `weekly` (sends Monday 8 AM for
 the prior Mon-Fri window), or `monthly` (sends on the 1st, 8 AM,
 for the prior calendar month). Anything else is treated as inactive.
 
@@ -704,7 +705,7 @@ behavior byte-identical to pre-OrphanFix.
 **Cache invalidation.** `applyOrphanRename` removes the single
 fixed-key Overview cache entry (via the `COMPANY_OVERVIEW_CACHE_KEY`
 constant -- currently `companyOverview:v17`) on success. Per-(dept,
-range) caches (`summary:v10`, `individual:v8`, `performance:v4`,
+range) caches (`summary:v10`, `individual:v9`, `performance:v4`,
 etc.) are left to TTL out within 30 minutes
 (`REPORT_CACHE_TTL_SECONDS`). The Orphan Fix modal tells the user
 the Overview updates immediately and other views may lag up to the

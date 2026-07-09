@@ -380,14 +380,37 @@ function dcEnsureSheet_(ss) {
   return sh;
 }
 
+/**
+ * Normalize a Date-column cell (display string) OR the build's dateStr to
+ * ISO for comparison. Col B is written as an "M/D/YYYY" STRING, but Sheets
+ * auto-coerces date-shaped strings into Date values, so a raw getValues()
+ * read returns Date objects whose String() form never equals dateStr -- the
+ * bug that made the refresh-in-window delete a silent no-op (duplicate row
+ * sets accumulated on every force re-import / bulk pass). Compare DISPLAY
+ * values normalized to ISO instead (the INV-02-safe pattern buildDQE's
+ * dup-guard uses). parseDateForNeon (neonWrite.js, same project) handles
+ * both "M/D/YYYY" and any other date-ish display shape.
+ */
+function dcDateIso_(v) {
+  const s = String(v == null ? '' : v).trim();
+  if (!s) return '';
+  if (typeof parseDateForNeon === 'function') return parseDateForNeon(s) || '';
+  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (!m) return '';
+  return m[3] + '-' + String(parseInt(m[1], 10)).padStart(2, '0')
+             + '-' + String(parseInt(m[2], 10)).padStart(2, '0');
+}
+
 /** Refresh-in-window write: drop the date's existing rows, append the new ones. */
 function dcWriteSheet_(ss, rows, monthYear, dateStr) {
   const sh = dcEnsureSheet_(ss);
   const last = sh.getLastRow();
-  if (last > 1) {
-    const dateCol = sh.getRange(2, 2, last - 1, 1).getValues();   // col B = Date
+  const targetIso = dcDateIso_(dateStr);
+  if (last > 1 && targetIso) {
+    // getDisplayValues, not getValues (see dcDateIso_ above).
+    const dateCol = sh.getRange(2, 2, last - 1, 1).getDisplayValues();  // col B = Date
     for (let i = dateCol.length - 1; i >= 0; i--) {
-      if (String(dateCol[i][0]).trim() === dateStr) sh.deleteRow(i + 2);
+      if (dcDateIso_(dateCol[i][0]) === targetIso) sh.deleteRow(i + 2);
     }
   }
   if (!rows.length) return 0;

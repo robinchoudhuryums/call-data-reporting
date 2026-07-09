@@ -104,6 +104,45 @@ test('INV-21: queue-extension + date/agent columns are populated from the legs',
   assert.equal(row[3], '103');            // D Queue Extensions (from CallQueue(103))
 });
 
+test('F-2: AD/AE/AF are positionally paired (AF[i] time <-> AD[i] parent id)', function () {
+  // The dashboard's Missed Calls report pairs AF[i] -> AD[i] to attach a
+  // parent call id to each 🚨 timestamp (the "↳ path" journey drill), so
+  // the build must emit all three columns from the SAME ordered missed-leg
+  // list: one entry per missed leg on an abandoned parent, chronological.
+  // Abandoned parents with no pairable missed leg (e.g. the agent's leg
+  // was answered) are APPENDED to AD after the paired section, keeping the
+  // dept-wide unique-abandoned id set unchanged.
+  const rawGrid = [new Array(26).fill('')].concat([
+    // Abandoned parent PA (waitSec 120 > 60). Anna is re-rung TWICE, both
+    // missed, listed OUT of chronological order to prove the sort.
+    rawRow({ callId: 'PA', legId: 0, start: IN, callTime: '0:02:00', parentCall: 'N/A', abandoned: true }),
+    rawRow({ callId: 'QA1', legId: 0, start: '03/09/2026 7:10:00', caller: 'CallQueue(103)', calleeName: 'Anna', parentCall: 'PA', callerId: 'A_Q_CSR', missed: true }),
+    rawRow({ callId: 'QA2', legId: 0, start: '03/09/2026 7:05:00', caller: 'CallQueue(103)', calleeName: 'Anna', parentCall: 'PA', callerId: 'A_Q_CSR', missed: true }),
+    // Abandoned parent PB where Anna's queue leg was ANSWERED -> no missed
+    // leg to pair, so PB must appear in AD (appended) with no AF partner.
+    rawRow({ callId: 'PB', legId: 0, start: IN, callTime: '0:02:00', parentCall: 'N/A', abandoned: true }),
+    rawRow({ callId: 'QB1', legId: 0, start: IN, caller: 'CallQueue(103)', calleeName: 'Anna', parentCall: 'PB', callerId: 'A_Q_CSR', answered: true }),
+  ]);
+  const ss = makeFakeSpreadsheet({
+    timeZone: 'America/Chicago',
+    sheets: {
+      'Raw Data': rawGrid,
+      'DQE Historical Data': [new Array(34).fill('')],
+      'DO NOT EDIT!': rosterGrid({ CSR: ['Anna, 103'] }),
+    },
+  });
+  h.fn('buildDQEHistoricalData')(ss._sheet('Raw Data'), ss._sheet('DQE Historical Data'));
+  const row = ss._sheet('DQE Historical Data')._data.slice(1)
+    .filter(function (r) { return r[2] === 'Anna'; })[0];
+  // AF (idx 31): chronological CST times of the two missed rings.
+  assert.equal(row[31], '9:05:00,9:10:00');
+  // AE (idx 30): the missed-leg call ids, in the SAME order as AF.
+  assert.equal(row[30], 'QA2,QA1');
+  // AD (idx 29): the paired parent per missed leg (PA twice -- once per
+  // ring), then the unpaired abandoned parent PB appended at the end.
+  assert.equal(row[29], 'PA,PA,PB');
+});
+
 test('duplicate guard: a second build for the same date is a no-op', function () {
   // Build once, then build again into the SAME dqe sheet -> the date
   // already exists in col B, so the second run must add no rows.

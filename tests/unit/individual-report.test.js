@@ -84,6 +84,22 @@ test('INV-53: a queue-only floater is flagged on its summary card with sourceHom
   assert.equal(data.mode, 'comparison');               // 2 agents
 });
 
+test('F-1: a crafted off-dept agent name gets NO trend dataset (no cross-dept leak)', function () {
+  // Cara is on Beta's roster and her rows carry Beta's ext (301) -- no
+  // queue overlap with Alpha (Anna's rows use 201). Requesting her by
+  // name on an Alpha report must yield NEITHER a summary card NOR a
+  // trendData dataset: pre-fix, trendData.datasets was built from the
+  // UNFILTERED selection, leaking her real monthly series cross-dept.
+  install([
+    dqeRow({ date: '2026-03-09', agent: 'Anna', ext: '201', rung: 10, answered: 9, att: '0:03:00' }),
+    dqeRow({ date: '2026-03-09', agent: 'Cara', ext: '301', rung: 100, answered: 50, att: '0:09:00' }),
+  ]);
+  const data = h.call('getIndividualReport', { department: 'Alpha', from: '2026-03-09', to: '2026-03-09', agents: ['Anna', 'Cara'] });
+  assert.equal(entry(data, 'Cara'), undefined, 'no summary card for the off-dept name');
+  assert.ok(data.trendData.datasets.Anna, 'the legit agent keeps her trend series');
+  assert.equal(data.trendData.datasets.Cara, undefined, 'no trend series for the off-dept name');
+});
+
 test('INV-26/E4: Dept Config team-avg-exclude flips excludedFromTeamAvg (no redeploy)', function () {
   // Dept Config row makes Ben a team-avg exclusion for Alpha.
   const dcRow = ['Alpha', '', '', 'Ben', '', 'TRUE', 'admin@x.com', '', ''];
