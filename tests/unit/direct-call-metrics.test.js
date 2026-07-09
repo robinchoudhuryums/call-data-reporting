@@ -229,6 +229,12 @@ test('dcBuildExtMaps_ splits a comma-joined queue-ext cell (103,108) into indivi
   function fakeConfig(grid) {
     return {
       getLastRow: function () { return grid.length; },
+      // F-19: dcBuildExtMaps_ now sizes the roster read from getLastColumn
+      // (dept block truncated at the first blank header) instead of a
+      // hard-coded 14 columns.
+      getLastColumn: function () {
+        return grid.reduce(function (m, r) { return Math.max(m, r.length); }, 0);
+      },
       getRange: function (r, c, nr, nc) {
         return { getValues: function () {
           const out = [];
@@ -316,4 +322,61 @@ test('F-3: dcWriteSheet_ deletes the date\'s existing rows even when Sheets coer
   assert.equal(data.length, 3);
   const agents = data.slice(1).map(function (r) { return r[3]; }).sort();
   assert.equal(JSON.stringify(agents), JSON.stringify(['Anna', 'Cara']));
+});
+
+test('F-19: dcBuildExtMaps_ reads past 14 dept columns and stops at the first blank header', function () {
+  // 16 dept columns (F..U) with agents in cols 14-16 -- the old hard-coded
+  // 14-col read silently dropped everything past col S. A blank header ends
+  // the dept block (conventions.md), so the reference block beyond it (the
+  // insurance columns) must NOT be parsed even though its header is set.
+  const header = ['Queue', 'Ext', '', '', ''];       // cols A-E
+  const agentsRow = ['A_Q_X', '900', '', '', ''];
+  for (let d = 1; d <= 16; d++) {
+    header.push('Dept' + d);
+    agentsRow.push('Agent' + d + ', ' + (200 + d));
+  }
+  header.push('');                                    // the block-ending blank (col V+16)
+  agentsRow.push('');
+  header.push('SomeInsurer');                         // unrelated reference block
+  agentsRow.push('+15559998888, 42');                 // must NOT become an agent
+  function fakeConfig(grid) {
+    return {
+      getLastRow: function () { return grid.length; },
+      getLastColumn: function () {
+        return grid.reduce(function (m, r) { return Math.max(m, r.length); }, 0);
+      },
+      getRange: function (r, c, nr, nc) {
+        return { getValues: function () {
+          const out = [];
+          for (let i = 0; i < nr; i++) {
+            const rowArr = grid[r - 1 + i] || [];
+            const slice = [];
+            for (let j = 0; j < nc; j++) { const v = rowArr[c - 1 + j]; slice.push(v != null ? v : ''); }
+            out.push(slice);
+          }
+          return out;
+        } };
+      },
+    };
+  }
+  const maps = h.fn('dcBuildExtMaps_')(fakeConfig([header, agentsRow]));
+  // Agents 15 and 16 (beyond the old 14-col cap) are now mapped.
+  assert.equal(maps.extToAgent['215'].name, 'Agent15');
+  assert.equal(maps.extToAgent['216'].name, 'Agent16');
+  assert.equal(maps.extToAgent['216'].dept, 'Dept16');
+  // Nothing past the blank header leaked in (the insurer cell has a comma
+  // and would have parsed as name/ext under a naive full-width read).
+  assert.equal(maps.extToAgent['42'], undefined);
+});
+
+test('F-26: phone masks keep extensions but reduce full numbers to last-4', function () {
+  const mask = h.fn('dcMaskPhone_');
+  assert.equal(mask('+15551234567'), '…4567');
+  assert.equal(mask('101'), '101');                  // ext passes through
+  assert.equal(mask(''), '');
+  const maskText = h.fn('dcMaskPhonesInText_');
+  const out = maskText('busy 12:00-12:05 +15551234567->101');
+  assert.ok(out.indexOf('+15551234567') === -1, 'raw number removed');
+  assert.ok(out.indexOf('…4567') !== -1, 'last-4 kept');
+  assert.ok(out.indexOf('101') !== -1, 'extension kept');
 });

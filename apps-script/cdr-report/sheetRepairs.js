@@ -81,10 +81,19 @@ function repairDqeSlotTimestamps_(dryRun) {
     var start = groups[g].start, label = groups[g].label;
     var range = sheet.getRange(2, start, n, groups[g].count);
 
+    // F-52: snapshot the existing per-cell formats so the DRY RUN can
+    // restore them EXACTLY. The preview previously restored '@' (plain
+    // text), which changed what every getDisplayValues consumer -- the
+    // Missed report's sheet path, the Neon backfills -- saw for
+    // still-coerced cells (a bare serial like "0.43302..." instead of
+    // their date/time render) until the real repair was applied: a
+    // dry-run-parity violation mid-repair.
+    var priorFormats = dryRun ? range.getNumberFormats() : null;
+
     // Numeric lens: a coerced time-VALUE cell now returns its serial NUMBER
     // (not a 1899-epoch Date). Already-text cells stay strings. Applied even on
-    // a dry run so the scan sees the serials; the format is restored to '@'
-    // either way.
+    // a dry run so the scan sees the serials; the ORIGINAL formats are
+    // restored on a dry run, '@' on apply.
     range.setNumberFormat('0.############');
     SpreadsheetApp.flush();
     var vals = range.getValues();
@@ -108,13 +117,13 @@ function repairDqeSlotTimestamps_(dryRun) {
         // strings (incl. comma-joined + already-correct singles) and '' left as-is
       }
     }
-    pending.push({ range: range, vals: vals });
+    pending.push({ range: range, vals: vals, priorFormats: priorFormats });
   }
 
   if (dryRun) {
-    // Restore plain-text format (harmless, and what the apply path would set)
-    // but do NOT rewrite values.
-    for (var p = 0; p < pending.length; p++) pending[p].range.setNumberFormat('@');
+    // F-52: restore the ORIGINAL formats -- a preview must leave the sheet
+    // byte-identical for every downstream reader. Do NOT rewrite values.
+    for (var p = 0; p < pending.length; p++) pending[p].range.setNumberFormats(pending[p].priorFormats);
     SpreadsheetApp.flush();
     Logger.log('previewDqeSlotTimestampRepair: %s coerced slot/AF cell(s) WOULD be recovered. '
       + 'Samples: %s', fixed, JSON.stringify(samples));

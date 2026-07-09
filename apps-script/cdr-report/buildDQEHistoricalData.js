@@ -77,6 +77,10 @@ function remirrorExistingDqeDate_(dqeSheet, offsets, callDateStr) {
   const saneAb = (typeof sanitizeAbandonedCellForNeon_ === 'function')
     ? function (v) { const r = sanitizeAbandonedCellForNeon_(v); return r == null ? '' : r; }
     : function (v) { return v; };
+  // F-51: same treatment for the 19 slot columns (they coerce like AF).
+  const saneSlot = (typeof sanitizeSlotCellForNeon_ === 'function')
+    ? function (v) { const r = sanitizeSlotCellForNeon_(v); return r == null ? '' : r; }
+    : function (v) { return v; };
   const neonRows = [];
   for (let i = 0; i < block.length; i++) {
     // The [first..last] window can include other-date stragglers if the
@@ -94,7 +98,7 @@ function remirrorExistingDqeDate_(dqeSheet, offsets, callDateStr) {
       totalAnswered:   Number(r[7]) || 0,
       ttt:             r[8],
       att:             r[9],
-      slots:           r.slice(10, 29),
+      slots:           r.slice(10, 29).map(saneSlot),   // F-51
       abParentIds:     saneAb(r[29]),
       abMissedIds:     saneAb(r[30]),
       abMissedTimes:   saneAb(r[31]),

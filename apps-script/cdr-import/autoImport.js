@@ -1124,8 +1124,21 @@ function calculateMetricsInMemory(rawDisplayData, configSheet) {
     .filter(r => r[0] && r[1])
     .map(r => ({ dept: String(r[0]).trim(), ext: String(r[1]).trim() }));
 
-  const deptHeaders = configSheet.getRange(1, 6, 1, 14).getValues()[0];
-  const configRange = configSheet.getRange(2, 6, lastConfigRow - 1, 14).getValues();
+  // F-19: the dept block was hard-capped at 14 columns (cols F..S) --
+  // exactly the install's CURRENT width, so a 15th department's agents
+  // would silently vanish from these metrics with no error (DQE kept
+  // working: loadRosterCanonicalNames_ already scans to lastColumn --
+  // a hard-to-diagnose divergence). Read to the last column and stop at
+  // the FIRST BLANK header: the documented dept-block boundary
+  // (conventions.md), which also keeps the unrelated reference block
+  // (insurance numbers, cols X-AG) out of the roster parse.
+  const rosterWidth = Math.max(1, configSheet.getLastColumn() - 5);
+  const headerRow = configSheet.getRange(1, 6, 1, rosterWidth).getValues()[0];
+  let deptCount = 0;
+  while (deptCount < headerRow.length
+         && String(headerRow[deptCount] || '').trim() !== '') deptCount++;
+  const deptHeaders = headerRow.slice(0, Math.max(1, deptCount));
+  const configRange = configSheet.getRange(2, 6, lastConfigRow - 1, deptHeaders.length).getValues();
 
   deptHeaders.forEach(d => {
     if (d && !deptList.includes(d)) {

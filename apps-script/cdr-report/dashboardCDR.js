@@ -309,6 +309,15 @@ function generateCustomReport() {
 
   // ── 4. Aggregate Data ────────────────────────────────────────
   const data   = histSheet.getDataRange().getValues();
+  // F-11 / INV-02: the OB External Total Duration cells are "H:MM:SS"
+  // strings the writer emitted, coerced by Sheets into duration values --
+  // getValues() returns 1899-epoch Dates whose getHours() read in the
+  // SCRIPT tz carries the spreadsheet-vs-script +36:36 phantom offset (and
+  // a silent mod-24h wrap past 24h). Read that ONE column's display
+  // strings in parallel (the buildDQE timeVals pattern) and parse those.
+  const obExtDurDisp = (IDX.OB_EXT_DUR != null && data.length > 1)
+    ? histSheet.getRange(1, IDX.OB_EXT_DUR + 1, data.length, 1).getDisplayValues()
+    : null;
   const agents = {};
   const top    = { obExtA: {}, obExtM: {}, obInt: {}, ibExt: {}, ibInt: {} };
 
@@ -346,7 +355,7 @@ function generateCustomReport() {
     if (!agents[name]) agents[name] = { cur: initStats(), prev: initStats(), contacts: initContacts() };
 
     const obExtTot    = Number(row[IDX.OB_EXT_TOT] || 0);
-    const obExtDur    = durationToSeconds(row[IDX.OB_EXT_DUR]);
+    const obExtDur    = durationToSeconds(obExtDurDisp ? obExtDurDisp[i][0] : row[IDX.OB_EXT_DUR]);
     const obExtAnsStr = String(row[IDX.OB_EXT_ANS_LIST] || '');
     const obExtMisStr = String(row[IDX.OB_EXT_MIS_LIST] || '');
     const obExtAns    = countItemsInList(obExtAnsStr);

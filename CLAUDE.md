@@ -139,9 +139,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   Date value, so a later `getValues()` + `String()` comparison never
   matches the original string -- this made `Direct Call History`'s
   refresh-in-window delete a silent no-op (duplicate row sets per
-  re-import; FIXED via `dcDateIso_` + `getDisplayValues`, F-3) and still
-  breaks `inboundCallsExport.js`'s refresh-in-window semantics (F-10,
-  open). New writer-side date comparisons must compare
+  re-import; FIXED via `dcDateIso_` + `getDisplayValues`, F-3) and broke
+  `inboundCallsExport.js`'s refresh-in-window semantics (FIXED via
+  `ic_cellDateIso_`, F-10). New writer-side date comparisons must compare
   ISO-NORMALIZED DISPLAY values, never `String(getValues())`.
 - **DQE cols AD/AE/AF are POSITIONALLY PAIRED (lockstep contract).**
   The Missed Calls report pairs `AF[i]` (abandoned missed-ring time) with

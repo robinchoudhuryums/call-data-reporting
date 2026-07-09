@@ -74,6 +74,32 @@ function sanitizeAbandonedCellForNeon_(raw) {
 }
 
 
+// F-51: the 19 slot columns (K-AC) hold comma-joined H:MM:SS times and
+// coerce like AF -- but the sheet->Neon paths mirrored them VERBATIM, so a
+// still-coerced cell (a "12/30/1899 10:23:33" date render, or a bare serial
+// decimal) landed in slot_* as an unparseable token. Pass clean cells
+// through, recover the lossless single-value date-render coercion (keep the
+// time part), and EXCLUDE (null) anything else rather than mirror garbage --
+// the run-order discipline ("run repairDqeSlotTimestamps first") is now a
+// safety net instead of the only protection. KEEP THIS COPY IDENTICAL in
+// cdr-report/neonbackfill.js and cdr-import/NeonMirror.js -- enforced by
+// scripts/check-duplicated-files.sh's function-level check.
+function sanitizeSlotCellForNeon_(raw) {
+  var s = (raw == null ? '' : String(raw)).trim();
+  if (!s) return '';
+  var tokens = s.split(',').map(function (t) { return t.trim(); }).filter(function (t) { return !!t; });
+  var timeRe = /^\d{1,2}:\d{2}(:\d{2})?$/;
+  var ok = tokens.length > 0;
+  for (var i = 0; i < tokens.length; i++) {
+    if (!timeRe.test(tokens[i])) { ok = false; break; }
+  }
+  if (ok) return tokens.join(',');
+  var m = s.match(/^\d{1,2}\/\d{1,2}\/\d{4}\s+(\d{1,2}:\d{2}:\d{2})/);
+  if (m) return m[1];
+  return null;
+}
+
+
 // -- DQE backfill ------------------------------------------------------------
 
 function backfillDQEHistory() {
@@ -134,7 +160,7 @@ function backfillDQEHistory() {
           totalAnswered:    parseInt(r[7]) || 0,
           ttt:              r[8]  || null,
           att:              r[9]  || null,
-          slots:            r.slice(10, 29),
+          slots:            r.slice(10, 29).map(sanitizeSlotCellForNeon_),   // F-51
           abParentIds:      sanitizeAbandonedCellForNeon_(r[29]),
           abMissedIds:      sanitizeAbandonedCellForNeon_(r[30]),
           abMissedTimes:    sanitizeAbandonedCellForNeon_(r[31]),
@@ -314,7 +340,7 @@ function backfillDQEHistoryUpsert() {
           totalAnswered:    parseInt(r[7]) || 0,
           ttt:              r[8]  || null,
           att:              r[9]  || null,
-          slots:            r.slice(10, 29),
+          slots:            r.slice(10, 29).map(sanitizeSlotCellForNeon_),   // F-51
           abParentIds:      sanitizeAbandonedCellForNeon_(r[29]),
           abMissedIds:      sanitizeAbandonedCellForNeon_(r[30]),
           abMissedTimes:    sanitizeAbandonedCellForNeon_(r[31]),

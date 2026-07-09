@@ -352,8 +352,21 @@ function dcBuildExtMaps_(configSheet) {
 
   // Roster block (cols F.. = col 6..): header row 1 = dept names; cells below
   // are "Name, ext1, ext2, ...".
-  const deptHeaders = configSheet.getRange(1, 6, 1, 14).getValues()[0];
-  const configRange = configSheet.getRange(2, 6, lastRow - 1, 14).getValues();
+  // F-19: the dept block was hard-capped at 14 columns (cols F..S) --
+  // exactly the install's CURRENT width, so a 15th department's agents
+  // would silently vanish from these metrics with no error (DQE kept
+  // working: loadRosterCanonicalNames_ already scans to lastColumn --
+  // a hard-to-diagnose divergence). Read to the last column and stop at
+  // the FIRST BLANK header: the documented dept-block boundary
+  // (conventions.md), which also keeps the unrelated reference block
+  // (insurance numbers, cols X-AG) out of the roster parse.
+  const rosterWidth = Math.max(1, configSheet.getLastColumn() - 5);
+  const headerRow = configSheet.getRange(1, 6, 1, rosterWidth).getValues()[0];
+  let deptCount = 0;
+  while (deptCount < headerRow.length
+         && String(headerRow[deptCount] || '').trim() !== '') deptCount++;
+  const deptHeaders = headerRow.slice(0, Math.max(1, deptCount));
+  const configRange = configSheet.getRange(2, 6, lastRow - 1, deptHeaders.length).getValues();
   configRange.forEach(function (row) {
     row.forEach(function (cell, cIdx) {
       const s = String(cell);
@@ -670,6 +683,24 @@ function runDirectCallBuild() {
  * up in Raw Data by CALL_ID and confirm the classification (esp. missed_busy,
  * which also names the blocking call + its busy window). Verification aid only.
  */
+/** F-26: last-4 mask for phone-like values in LOG output. Raw external
+ * numbers must not land in Stackdriver (the one PII surface the
+ * HMAC-before-Neon / journey-masking discipline skipped). Extensions
+ * (short digit strings) pass through -- they're needed for verification.
+ * The variant with a regex masks numbers EMBEDDED in a free-text string
+ * (the busy-blocker "caller->callee" info). */
+function dcMaskPhone_(v) {
+  var s = String(v == null ? '' : v);
+  var digits = s.replace(/\D/g, '');
+  if (digits.length < 7) return s;   // ext / short token -- not a phone
+  return '\u2026' + digits.slice(-4);
+}
+function dcMaskPhonesInText_(v) {
+  return String(v == null ? '' : v).replace(/\+?\d[\d\-() ]{5,}\d/g, function (m) {
+    return dcMaskPhone_(m);
+  });
+}
+
 function dcLogSamples_(samples) {
   if (!samples) return;
   const order = ['ib_answered', 'ib_missed_free', 'ib_missed_busy', 'ob_connected', 'ob_not_connected'];
@@ -683,17 +714,20 @@ function dcLogSamples_(samples) {
     const list = samples[cat] || [];
     Logger.log('[' + label[cat] + '] ' + list.length + ' example(s):');
     list.forEach(function (s) {
+      // F-26: mask phone-like values (callers, outbound callees, and any
+      // number embedded in the blocker info) -- call id + ext + last-4 is
+      // enough to look the event up in Raw Data and verify.
       if (cat === 'ib_missed_busy') {
         Logger.log('   call %s | %s (%s) | rang %s-%s from %s -> ext %s | BLOCKED BY call %s [%s] %s',
-          s.callId, s.agent, s.dir, s.ringStart, s.ringEnd, s.caller, s.callee, s.blockedByCallId, s.blockerWindow, s.blockerInfo);
+          s.callId, s.agent, s.dir, s.ringStart, s.ringEnd, dcMaskPhone_(s.caller), s.callee, s.blockedByCallId, s.blockerWindow, dcMaskPhonesInText_(s.blockerInfo));
       } else if (cat === 'ib_missed_free') {
-        Logger.log('   call %s | %s (%s) | rang %s from %s -> ext %s', s.callId, s.agent, s.dir, s.ringStart, s.caller, s.callee);
+        Logger.log('   call %s | %s (%s) | rang %s from %s -> ext %s', s.callId, s.agent, s.dir, s.ringStart, dcMaskPhone_(s.caller), s.callee);
       } else if (cat === 'ib_answered') {
-        Logger.log('   call %s | %s (%s) | %s from %s -> ext %s | talk %ss', s.callId, s.agent, s.dir, s.time, s.caller, s.callee, s.talkSec);
+        Logger.log('   call %s | %s (%s) | %s from %s -> ext %s | talk %ss', s.callId, s.agent, s.dir, s.time, dcMaskPhone_(s.caller), s.callee, s.talkSec);
       } else if (cat === 'ob_connected') {
-        Logger.log('   call %s | %s (%s) | %s ext %s -> %s | talk %ss', s.callId, s.agent, s.dir, s.time, s.agent, s.callee, s.talkSec);
+        Logger.log('   call %s | %s (%s) | %s ext %s -> %s | talk %ss', s.callId, s.agent, s.dir, s.time, s.agent, dcMaskPhone_(s.callee), s.talkSec);
       } else {
-        Logger.log('   call %s | %s (%s) | %s ext %s -> %s', s.callId, s.agent, s.dir, s.time, s.agent, s.callee);
+        Logger.log('   call %s | %s (%s) | %s ext %s -> %s', s.callId, s.agent, s.dir, s.time, s.agent, dcMaskPhone_(s.callee));
       }
     });
   });

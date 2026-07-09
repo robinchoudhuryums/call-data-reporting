@@ -163,15 +163,27 @@ comma-joined ID/time coercion gotcha in CLAUDE.md.
   auto-removed; force re-import each affected date once (the fixed
   delete then removes all stale copies of that date), or delete the
   older duplicates by hand.
-- **Still open (F-10):** `inboundCallsExport.js::exportInboundCalls`
-  writes `call_date` ISO strings without plain-text format, so the
-  refresh-in-window delete + incremental max-date detection both fail
-  on re-runs -- the fallback tab re-appends ~30 days per run. Fix the
-  same way (display-value + normalized compare, or `'@'` format col A).
+- **Fixed (F-10):** `inboundCallsExport.js::exportInboundCalls` -- both
+  the refresh-in-window delete and the incremental max-date detection now
+  normalize col-A DISPLAY values via `ic_cellDateIso_` (pinned by
+  `tests/unit/batch2-helpers.test.js`). **Repair for existing duplicates:**
+  rows duplicated by pre-fix runs are NOT auto-removed outside the refresh
+  window; run one explicit full-range export --
+  `exportInboundCalls('<earliest-affected-iso>', '<today-iso>')` -- and the
+  now-working in-range delete replaces the whole polluted window with one
+  fresh Neon copy.
 - **Rule for new writers:** compare ISO-NORMALIZED DISPLAY values
   (`getDisplayValues()` + a parse), never `String(getValues())`, for
   any date-keyed delete/dedup; or plain-text (`'@'`) the column at
   write time.
+- **Related (F-51):** the DQE sheet->Neon paths (both backfills, the
+  deferred mirror, the dup-guard re-mirror) now route the 19 SLOT columns
+  through `sanitizeSlotCellForNeon_` (clean cells pass; a coerced cell's
+  date render recovers its time part; anything else mirrors as NULL
+  instead of garbage). The helper is duplicated across
+  cdr-report/neonbackfill.js and cdr-import/NeonMirror.js -- pinned by
+  the guard script's function-level check, like
+  `sanitizeAbandonedCellForNeon_`.
 
 ---
 

@@ -48,17 +48,39 @@ function ic_isoDaysAgo_(n) {
  * pattern as autoImport's deleteHistoricalRowsForDate), so a mid-write
  * failure can't leave the sheet half-cleared. Returns the removed count.
  */
+// F-10: col A is written as "YYYY-MM-DD" strings, but Sheets auto-coerces
+// date-shaped strings into Date VALUES, so getValues() returns Dates whose
+// String() form never matches /^\d{4}-\d{2}-\d{2}$/ -- which silently broke
+// BOTH the refresh-in-window delete (0 rows ever removed -> a duplicate
+// ~30-day window appended on every no-arg run) and the incremental max-date
+// detection (fell back to the 30-day seed forever). Normalize a col-A
+// DISPLAY string ("2026-06-22" pre-coercion, "6/22/2026" post-coercion)
+// to ISO; '' when it isn't a date. Same class + fix as Direct Call
+// History's dcDateIso_ (see CLAUDE.md's date-string coercion gotcha).
+function ic_cellDateIso_(disp) {
+  var s = String(disp == null ? '' : disp).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  var m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (!m) return '';
+  var mm = ('0' + parseInt(m[1], 10)).slice(-2);
+  var dd = ('0' + parseInt(m[2], 10)).slice(-2);
+  return m[3] + '-' + mm + '-' + dd;
+}
+
 function ic_removeRowsInRange_(sheet, startIso, endIso) {
   var lastRow = sheet.getLastRow();
   if (lastRow < 2) return 0;
   var width = INBOUND_EXPORT_HEADERS.length;
   var range = sheet.getRange(2, 1, lastRow - 1, width);
   var values = range.getValues();
+  // Parallel col-A DISPLAY read for the date test (F-10) -- `values` stays
+  // the write-back source so kept rows round-trip unchanged.
+  var dateDisp = sheet.getRange(2, 1, lastRow - 1, 1).getDisplayValues();
   var kept = [];
   var removed = 0;
   for (var i = 0; i < values.length; i++) {
-    var d = String(values[i][0] || '').trim();
-    if (/^\d{4}-\d{2}-\d{2}$/.test(d) && d >= startIso && d <= endIso) {
+    var d = ic_cellDateIso_(dateDisp[i][0]);
+    if (d && d >= startIso && d <= endIso) {
       removed++;
     } else {
       kept.push(values[i]);
@@ -94,9 +116,9 @@ function exportInboundCalls(fromIso, toIso) {
   if (fromIso) {
     startIso = fromIso;
   } else if (hasData) {
-    var existing = sheet.getRange(2, 1, lastRow - 1, 1).getValues()
-                        .map(function (r) { return String(r[0]); })
-                        .filter(function (s) { return /^\d{4}-\d{2}-\d{2}$/.test(s); });
+    var existing = sheet.getRange(2, 1, lastRow - 1, 1).getDisplayValues()
+                        .map(function (r) { return ic_cellDateIso_(r[0]); })
+                        .filter(function (s) { return !!s; });
     var maxIso = existing.sort().pop();
     startIso = maxIso || ic_isoDaysAgo_(INBOUND_EXPORT_SEED_DAYS);
   } else {

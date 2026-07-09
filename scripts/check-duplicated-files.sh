@@ -77,9 +77,10 @@ check_fn_pair() {
 check_pair apps-script/cdr-report/neonWrite.js            apps-script/cdr-import/neonWrite.js
 check_pair apps-script/cdr-report/buildDQEHistoricalData.js apps-script/cdr-import/buildDQEHistoricalData.js
 check_fn_pair apps-script/cdr-report/neonbackfill.js apps-script/cdr-import/NeonMirror.js sanitizeAbandonedCellForNeon_
+check_fn_pair apps-script/cdr-report/neonbackfill.js apps-script/cdr-import/NeonMirror.js sanitizeSlotCellForNeon_
 
 if [ "$status" -eq 0 ]; then
-  echo "INV-16 check: duplicated files (neonWrite.js, buildDQEHistoricalData.js) and the sanitizeAbandonedCellForNeon_ copies are in sync."
+  echo "INV-16 check: duplicated files (neonWrite.js, buildDQEHistoricalData.js) and the sanitize*ForNeon_ function copies are in sync."
 fi
 
 exit "$status"

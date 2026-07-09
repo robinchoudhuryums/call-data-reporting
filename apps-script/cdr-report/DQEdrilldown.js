@@ -143,8 +143,17 @@ function getDQEDrilldownRows(params) {
   var metricType = columnToMetric(column);
   if (!metricType) return { error: 'This column is not drillable.' };
 
-  // Does this metric apply a time window?
-  var usesWindow = (metricType === 'rung' || metricType === 'missed' || metricType === 'answered');
+  // Does this metric apply a time window? F-13: the build windows Unique
+  // (uniqueParentCalls from windowLegs), TTT and ATT too (the Bug 1/2
+  // fixes) -- the drill previously windowed only rung/missed/answered, so
+  // drilling col E/I/J included all-day legs, over-counted vs the stored
+  // cell, and rendered false "mismatch" flags on exactly the numbers this
+  // tool exists to verify. Abandoned (AD/AE/AF) and queue-exts stay
+  // all-day, matching the build (conventions.md: abandoned columns do not
+  // apply the work window; queueExts come from all-day legs).
+  var usesWindow = (metricType === 'rung' || metricType === 'missed'
+    || metricType === 'answered' || metricType === 'unique'
+    || metricType === 'ttt' || metricType === 'att');
 
   // Build parentMap with calleeName per leg so we can compute agent-specific
   // talk time (instead of parent.talkSec which is max across all legs and
@@ -160,13 +169,24 @@ function getDQEDrilldownRows(params) {
     var pabn       = String(data[p][24]).trim() === 'Abandoned';
     var pCalleeNm  = canonicalize_(String(data[p][11]).trim());   // F24: match canonical roster form
     if (!parentMap[pcid]) parentMap[pcid] = { legs: [], abandoned: false };
-    parentMap[pcid].legs.push({ legId: plid, talkSec: ptalk, callSec: pcall, calleeName: pCalleeNm });
+    parentMap[pcid].legs.push({ legId: plid, talkSec: ptalk, callSec: pcall, calleeName: pCalleeNm, abandoned: pabn });
     if (pabn) parentMap[pcid].abandoned = true;
   }
   for (var pk in parentMap) {
     var entry = parentMap[pk];
     entry.legs.sort(function(a, b) { return a.legId - b.legId; });
-    entry.waitSec = entry.legs.length ? entry.legs[0].callSec : 0;
+    // F-13: waitSec = the ABANDONED leg's wait, not legs[0] -- the build's
+    // IVR-routing fix (menu leg 0 is typically <15s; the queue leg that
+    // actually abandoned carries the real hold). The old legs[0] read made
+    // the drill's `waitSec > 60` abandoned filter drop IVR-routed abandons
+    // the build counts. Single-leg / non-routed parents: find returns leg 0
+    // = unchanged.
+    var abandonedLeg = null;
+    for (var al = 0; al < entry.legs.length; al++) {
+      if (entry.legs[al].abandoned) { abandonedLeg = entry.legs[al]; break; }
+    }
+    entry.waitSec = abandonedLeg ? abandonedLeg.callSec
+      : (entry.legs.length ? entry.legs[0].callSec : 0);
     entry.talkSec = entry.legs.length
       ? Math.max.apply(null, entry.legs.map(function(l) { return l.talkSec; }))
       : 0;
