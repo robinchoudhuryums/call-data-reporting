@@ -1,5 +1,16 @@
 # Cycle State — resume note
 
+## Latest session (broad-implement: Quick wins Q1-Q4 + S4/F-22)
+Branch `claude/broad-scan-xkmoam`, commit `515f54e`, PUSHED. 236/236 tests (9 added), INV-16 guard green. TWO cache bumps synced everywhere (test-enforced): summary v10->v11, individual v10->v11.
+- **Q4/F-29 follow-up (OWNER DECISION, ratified this session):** My Department totals-row ATT / Avg Abd Wait / CSR Avg Abd Wait means EXCLUDE zero rows (`avgNonzero_` in Data.gs) -- idle agents no longer drag the dept averages; the totals now use the SAME skip-zero method the per-agent accumulators use. conventions.md Totals-row spec updated. Managers will see totals-row means CHANGE (up) for ranges containing zero-value agents -- intended.
+- **Q3/F-32 follow-up:** IR carries `meta.priorOverlap` + renders the inline "Windows overlap" caveat (shared `insOverlapFlagHtml_`) when a custom prior overlaps the current range -- Insights/IR parity.
+- **Q2:** neon-write-mapping.test.js -- the LAST unit gap closed. neonWrite writers now pinned end-to-end (chunking + field mappings). Remaining manual: NeonMirror.js payload re-derivation only.
+- **Q1/F-25:** legacy sendManualAlert neutralized to a no-send stub (stale 13-manager hardcoded map; was fireable by any spreadsheet editor). Needs a dqe-report deploy to take effect (cleanup deploy, allowed under the freeze).
+- **S4/F-22:** renameHistoricalAgent_ re-verify-before-write guard -- aborts (no write, retry message) if the DQE sheet's row count or agent column changed between snapshot and write; the cross-project rename-vs-build race can no longer clobber. Mitigation, not serialization (documented in CLAUDE.md + known-issues §3). Pinned by orphan-rename-race.test.js (delete-shift + same-rowcount-cell-change + happy path).
+DEPLOY: Department Dashboard (Data.gs, IndividualReport.gs, OrphanFix.gs, script.html) + dqe-report (sendManualAlert stub; cleanup deploy). cdr projects untouched this session.
+REMAINING: strategic track only -- S1 queue normalization -> un-gate Inbound/Direct (next by priority), S2 QCD->Insights retirement, S3 F-20 deferred-mirror tail-scan, S5 holidays, S6 Escalations Phase 2, S7 legacy decommission (F-25 now done; F-59/F-60 deletion-order cautions remain).
+Where I left off: Batches 1-6 + quick-wins all shipped + pushed; branch has 19 unmerged commits awaiting PR/merge + deploys (dashboard; cdr-report + cdr-import from Batches 1-3; dqe-report for the F-25 stub).
+
 ## Latest session (broad-implement: Batch 6 -- test debt, no production code changes)
 Branch `claude/broad-scan-xkmoam`, commit `c44c825`, PUSHED. 227/227 tests (3 added), INV-16 guard green. TEST-ONLY batch -- no deploy needed.
 - **Pass-4 sentinel producer** (pipeline-build.test.js): INV-23 producer side now pinned -- no-ring abandoned queue call -> ONE sentinel row (C=queue, D=exts, E-J zeros, CST slot at the QUEUE-hit leg's time, AD=no-ring parents only, AE='', AF=slots); a rung-abandoned parent stays on the agent row (no double count). Closes the audit's oldest coverage gap.
