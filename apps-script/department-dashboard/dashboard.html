@@ -57,26 +57,24 @@
                 title="View and resolve escalation calls for your department. Admins can log new escalations.">
           Escalations
         </button>
-        <!-- Reports group: the five report launchers collapsed into a
+        <!-- Reports group: the report launchers collapsed into a
              single dropdown to de-clutter the header row. Each menu item
              keeps its stable button id + data-route, so the Phase C
              deep-link router and the per-modal open handlers are
              unchanged; the dormant initHeaderMenus_ wires open/close via
              aria-controls. The trigger lights up via updateTabActiveState_
-             when a report route is active. -->
+             when a report route is active. (Missed Calls lives inline on
+             the My Department page; QCD retired into Insights.) -->
         <div class="header-menu">
           <button class="header-menu-btn" id="reports-menu-btn" type="button"
                   aria-haspopup="true" aria-expanded="false" aria-controls="reports-menu-list"
-                  title="Reports: Missed Calls, Individual, Performance, Compare, QCD.">
+                  title="Reports: Individual, Performance, Compare, Insights.">
             Reports <span class="header-menu-caret" aria-hidden="true">&#9662;</span>
           </button>
           <div class="header-menu-list" id="reports-menu-list" role="menu" style="display:none;">
-            <button class="header-menu-item" id="missed-report-btn" type="button"
-                    data-route="/report/missed" role="menuitem"
-                    title="Per-agent missed-call timeline + queue-only abandoned events for a chosen date range.">Missed Calls <span class="tab-review-star" title="Pending consolidation review — kept until parity with the consolidated views is confirmed.">*</span></button>
             <button class="header-menu-item" id="individual-report-btn" type="button"
                     data-route="/report/individual" role="menuitem"
-                    title="Per-agent KPIs vs team avg + 12-month trend. Pick 2+ agents to switch to peer-comparison mode.">Individual <span class="tab-review-star" title="Pending consolidation review — kept until parity with the consolidated views is confirmed.">*</span></button>
+                    title="The per-agent deep dive: KPIs vs team avg, per-agent 12-month trends, and peer-comparison mode (2+ agents). Also the drill-down target when you click an agent in Insights.">Individual</button>
             <button class="header-menu-item" id="performance-report-btn" type="button"
                     data-route="/report/performance" role="menuitem"
                     title="Department-level current-vs-prior-period deltas, share-of-answered pie, and 12-month team trend.">Performance <span class="tab-review-star" title="Pending consolidation review — kept until parity with the consolidated views is confirmed.">*</span></button>
@@ -325,10 +323,11 @@
 
       <div id="info-line" class="info-line" style="display:none;"></div>
 
-      <!-- Missed Calls section (full parity with the modal): headline +
-           summary strip + hour-of-day radar with side-by-side per-bucket
-           drill-in, plus the full-width queue-only abandons + per-agent
-           missed-time timelines below in #dept-missed-detail. The Queue
+      <!-- Missed Calls section -- THE Missed Calls report (the standalone
+           modal was retired): headline + summary strip + hour-of-day chart
+           with side-by-side per-bucket drill-in, plus the full-width
+           queue-only abandons + per-agent missed-time timelines below in
+           #dept-missed-detail. Follows the page's From/To range. The Queue
            Call Data card now sits above the agent table (below the date
            controls), not here. -->
       <div class="dept-context-row">
@@ -336,8 +335,6 @@
           <div class="dept-qcd-header">
             <strong id="dept-missed-title">Missed Calls</strong>
             <span class="dept-qcd-date" id="dept-missed-date"></span>
-            <button class="btn btn-secondary dept-missed-open" id="dept-missed-open" type="button"
-                    title="Open the full Missed Calls report (per-agent timeline, queue-only abandons, custom range)">Full report</button>
           </div>
           <div id="dept-missed-headline" class="report-headline" style="display:none;"></div>
           <div class="report-summary" id="dept-missed-summary" style="display:none;"></div>
@@ -348,7 +345,7 @@
               <button type="button" data-mode="radar" aria-pressed="false">Radar</button>
             </div>
           </div>
-          <!-- Chart + drill-in share a .chart-row grid (same as the modal):
+          <!-- Chart + drill-in share a .chart-row grid:
                clicking a bucket slides the chart to the side and reveals the
                detail panel beside it; .no-detail re-centers the chart. -->
           <div id="dept-missed-chart-row" class="chart-row no-detail">
@@ -526,7 +523,7 @@
           </section>
           <section class="help-topic" id="help-topic-queuecall" hidden>
             <h3>Queue Call Data &amp; missed timelines</h3>
-            <p>Above the agent table, a <strong>Queue Call Data</strong> tile row shows each mapped queue&rsquo;s abandoned % and violations for the latest data date. Below the table, the <strong>Missed Calls</strong> section gives an hour-of-day radar (click a bar to drill into that bucket) plus each agent&rsquo;s <strong>missed-call timeline</strong> listing the timestamps of unanswered rings (abandoned ones flagged in red). For a custom range, open the full <strong>Missed Calls</strong> report.</p>
+            <p>Above the agent table, a <strong>Queue Call Data</strong> tile row shows each mapped queue&rsquo;s abandoned % and violations for the latest data date. Below the table, the <strong>Missed Calls</strong> section gives an hour-of-day chart (click a bar to drill into that bucket) plus each agent&rsquo;s <strong>missed-call timeline</strong> listing the timestamps of unanswered rings (abandoned ones flagged in red). It follows the page&rsquo;s From/To dates &mdash; change them and Refresh for a custom range (this section <em>is</em> the Missed Calls report; the old standalone report was folded in here).</p>
           </section>
           <section class="help-topic" id="help-topic-export" hidden>
             <h3>Download CSV</h3>
@@ -563,7 +560,7 @@
           </section>
           <section class="help-topic" id="help-topic-missed" hidden>
             <h3>Missed Calls</h3>
-            <p>An 18-bucket bar chart (8 AM&ndash;5 PM CST, 30-minute buckets) plus per-agent cards listing each missed ring&rsquo;s timestamp. Calls the caller actually abandoned are flagged in red with a &#128680;. For callers who gave up in the queue (vs a ring another agent answered), see the abandonment metrics in QCD / Inbound.</p>
+            <p>Lives on the <strong>My Department</strong> page, below the agent table (the standalone report was folded in there). An 18-bucket bar chart (8 AM&ndash;5 PM CST, 30-minute buckets) plus per-agent cards listing each missed ring&rsquo;s timestamp; it follows the page&rsquo;s From/To dates. Calls the caller actually abandoned are flagged in red with a &#128680;. For callers who gave up in the queue (vs a ring another agent answered), see the abandonment metrics in QCD / Inbound.</p>
           </section>
           <section class="help-topic" id="help-topic-qcd" hidden>
             <h3>QCD (Queue Call Data)</h3>
@@ -696,69 +693,6 @@
         <p>A short walkthrough of the dashboard&rsquo;s main areas. It runs automatically the first time you visit; replay it any time here.</p>
         <button class="btn" type="button" id="tour-replay-btn">Take the tour</button>
       </div>
-      </div>
-    </div>
-  </div>
-
-  <div id="missed-modal" class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="missed-modal-title" style="display:none;">
-    <div class="modal-backdrop" data-close></div>
-    <div class="modal-panel modal-panel-wide" role="document">
-      <div class="modal-panel-header">
-        <button class="modal-open-tab-btn" type="button" data-open-tab-route="/report/missed"
-                aria-label="Open in new tab" title="Open this report in a new browser tab (for side-by-side viewing)">&#8599;</button>
-        <button class="modal-close" id="missed-close" type="button" aria-label="Close">&times;</button>
-        <div class="modal-kicker">Report</div>
-        <h2 id="missed-modal-title">Missed Calls</h2>
-      </div>
-      <div class="modal-panel-body">
-      <!-- Drill-down range: the modal carries its OWN From/To (defaulted
-           from the My Department fields on open) so a manager can widen
-           or shift the window without touching the page behind it. -->
-      <div class="ir-form-grid missed-range-row">
-        <div class="ir-col">
-          <label for="missed-from">From</label>
-          <input type="date" id="missed-from">
-        </div>
-        <div class="ir-col">
-          <label for="missed-to">To</label>
-          <input type="date" id="missed-to">
-        </div>
-        <div class="ir-col">
-          <label>&nbsp;</label>
-          <button class="btn btn-secondary" id="missed-refresh-btn" type="button">Update</button>
-        </div>
-      </div>
-      <!-- Status above the summary strip so the loading/error banner
-           renders above the "At a glance" headline (which anchors
-           itself just before #missed-summary). -->
-      <div id="missed-status" class="status" style="display:none;"></div>
-      <div class="report-summary" id="missed-summary"></div>
-      <div class="missed-chart-toolbar">
-        <div class="ds-seg missed-chart-mode" role="group" aria-label="Missed-calls chart type">
-          <button type="button" data-mode="bars" aria-pressed="true">Bars</button>
-          <button type="button" data-mode="radar" aria-pressed="false">Radar</button>
-        </div>
-      </div>
-      <div id="chart-row" class="chart-row no-detail">
-        <div class="chart-section" id="missed-chart-wrap">
-          <canvas id="missed-chart" aria-label="Hour-of-day distribution of missed calls"></canvas>
-        </div>
-        <div id="missed-bucket-detail" class="bucket-detail" style="display:none;">
-          <div class="bucket-detail-header">
-            <strong id="bucket-detail-title"></strong>
-            <button class="link-btn" id="bucket-detail-close" type="button">Close</button>
-          </div>
-          <div id="bucket-detail-body"></div>
-        </div>
-      </div>
-      <div id="missed-queue-only" class="queue-only-section" style="display:none;">
-        <div class="queue-only-header">
-          <strong>🚨 Queue-only abandoned</strong>
-          <span class="muted" id="queue-only-subhead"></span>
-        </div>
-        <div id="queue-only-body"></div>
-      </div>
-      <div id="missed-agents" class="agent-grid"></div>
       </div>
     </div>
   </div>
@@ -1473,6 +1407,11 @@
               <span class="ir-results-date" id="ins-results-date"></span>
             </div>
             <div class="ins-compare-line" id="ins-compare-line"></div>
+            <div class="ir-editing-line">
+              <span class="ir-editing-label">Showing:</span>
+              <span class="ir-editing-agents" id="ins-editing-agents"></span>
+              <button class="ir-editing-edit" id="ins-edit-selection-btn" type="button">change</button>
+            </div>
           </div>
           <div class="ir-action-buttons">
             <div class="ir-export-wrap">
@@ -1487,6 +1426,34 @@
               </div>
             </div>
             <button class="btn btn-secondary" id="ins-back-btn" type="button">&laquo; Back</button>
+          </div>
+        </div>
+
+        <div id="ins-edit-popover" class="ir-edit-popover" style="display:none;" role="dialog" aria-label="Edit selection and dates">
+          <div class="ir-edit-popover-header">
+            <strong>Edit selection &amp; dates</strong>
+            <button class="ir-edit-popover-close" id="ins-edit-popover-close" type="button" aria-label="Close">&times;</button>
+          </div>
+          <div class="ir-edit-dates-row">
+            <label class="ir-edit-date-field">From<input type="date" id="ins-edit-from"></label>
+            <label class="ir-edit-date-field">To<input type="date" id="ins-edit-to"></label>
+            <label class="ir-edit-date-field">Compare
+              <select id="ins-edit-compare-mode">
+                <option value="keep">Keep current comparison</option>
+                <option value="prevPeriod">Immediately-preceding period</option>
+                <option value="yoy">Same window one year prior</option>
+              </select>
+            </label>
+          </div>
+          <div class="ir-search-row">
+            <input type="search" id="ins-edit-search" placeholder="Search agents..." autocomplete="off">
+          </div>
+          <div id="ins-edit-list" class="ir-agent-list ir-agent-list-compact"></div>
+          <div class="ir-edit-popover-actions">
+            <a href="#" id="ins-edit-select-all">Select all active</a>
+            <span class="sep">|</span>
+            <a href="#" id="ins-edit-select-none">Select none (whole department)</a>
+            <button class="btn" id="ins-edit-apply-btn" type="button">Apply</button>
           </div>
         </div>
 

@@ -828,18 +828,12 @@
       th.addEventListener('click', function () { onSort(th.getAttribute('data-sort')); });
     });
 
-    var deptMissedOpen = $('dept-missed-open');
-    if (deptMissedOpen) deptMissedOpen.addEventListener('click', function () {
-      var b = $('missed-report-btn');
-      if (b) b.click();
-    });
     var deptBucketClose = $('dept-bucket-detail-close');
     if (deptBucketClose) deptBucketClose.addEventListener('click', function () { deptMissedBucketDetail_.hide(); });
 
     initHelpModal();
     initSettingsModal();
     initCompanyOverview();
-    initMissedReport();
     initIndividualReport();
     initPerformanceReport();
     initCompareRanges();
@@ -2581,7 +2575,10 @@
   const ROUTES_ = {
     '/overview':           { kind: 'page',  page: 'overview' },
     '/dept':               { kind: 'page',  page: 'dept' },
-    '/report/missed':      { kind: 'modal', modalId: 'missed-modal',      buttonId: 'missed-report-btn' },
+    // Missed-modal retirement: the My Department inline section is the
+    // report now -- legacy #/report/missed deep-links land on the dept
+    // page and scroll to it once it renders.
+    '/report/missed':      { kind: 'page',  page: 'dept', scrollTo: 'dept-missed-section' },
     '/report/individual':  { kind: 'modal', modalId: 'individual-modal',  buttonId: 'individual-report-btn' },
     '/report/performance': { kind: 'modal', modalId: 'performance-modal', buttonId: 'performance-report-btn' },
     '/report/compare':     { kind: 'modal', modalId: 'compare-modal',     buttonId: 'compare-ranges-btn' },
@@ -2688,7 +2685,20 @@
         const route = qIdx === -1 ? normalized : normalized.slice(0, qIdx);
         const params = qIdx === -1 ? null : decodeShareParams_(normalized.slice(qIdx + 1));
         const trigger = document.querySelector('[data-route="' + route + '"]');
-        if (!trigger) return;
+        if (!trigger) {
+          // Page routes with no header tab of their own -- e.g. the retired
+          // Missed Calls modal's legacy '#/report/missed' link, repointed at
+          // the My Department missed section -- dispatch directly: swap the
+          // page, load it, and (when the route names a scroll target) arm the
+          // one-shot scroll consumed when that section renders.
+          const def = ROUTES_[route];
+          if (def && def.kind === 'page') {
+            if (def.scrollTo === 'dept-missed-section') deptMissedScrollPending_ = true;
+            setPage(def.page);
+            if (def.page === 'dept' && typeof refresh === 'function') refresh();
+          }
+          return;
+        }
         // A deep link to an admin-only view (data-admin-only tabs:
         // alerts / orphan-fix / dept-config) by a non-admin would open
         // the modal only to surface a server "admin-only" error. Skip it
@@ -2923,19 +2933,18 @@
     insEnsureRoster();
   }
 
-  // "Why did we miss calls recently?" -> Missed Calls on the most recent
-  // date with data (the report reads the My Department From/To fields,
-  // so we set those first, then keep the dept table consistent with a
-  // background refresh).
+  // "Why did we miss calls recently?" -> the My Department missed section
+  // on the most recent date with data (the modal was retired -- the inline
+  // section is the report). Sets the page dates, opens the dept page, and
+  // scrolls to the section once its fetch renders it.
   function launcherOpenMissed_() {
-    const btn = $('missed-report-btn');
-    if (!btn) return;
     const iso = latestDqeIso_ || launcherIsoDaysAgo_(1);
     if ($('from-date')) $('from-date').value = iso;
     if ($('to-date'))   $('to-date').value   = iso;
     clearActivePreset_();
-    btn.click();        // openModal fetches with the dates just set
-    refresh();          // keep the dept page's table in sync with its inputs
+    deptMissedScrollPending_ = true;   // consumed when the section renders
+    setPage('dept');
+    refresh();
   }
 
   // "Is one of my agents struggling or improving?" -> Individual Report
@@ -3175,12 +3184,11 @@
   function initDateRangeLinks_() {
     [
       ['from-date', 'to-date'],
-      ['missed-from', 'missed-to'],
       ['ir-from', 'ir-to'], ['ir-prior-from', 'ir-prior-to'], ['ir-edit-from', 'ir-edit-to'],
       ['pr-from', 'pr-to'], ['pr-prior-from', 'pr-prior-to'],
       ['cr-p1-from', 'cr-p1-to'], ['cr-p2-from', 'cr-p2-to'],
-      ['qcd-from', 'qcd-to'], ['qcd-alldept-from', 'qcd-alldept-to'],
-      ['ins-from', 'ins-to'], ['ins-prior-from', 'ins-prior-to'],
+      ['qcd-alldept-from', 'qcd-alldept-to'],
+      ['ins-from', 'ins-to'], ['ins-prior-from', 'ins-prior-to'], ['ins-edit-from', 'ins-edit-to'],
       ['inbound-from', 'inbound-to'], ['cl-from', 'cl-to'],
     ].forEach(function (p) { linkDateRange_(p[0], p[1]); });
   }
@@ -3212,8 +3220,8 @@
   /**
    * Renders `sentences` (pre-escaped HTML strings) into a headline block
    * at the top of `containerId`'s results -- inserted right after the
-   * `.ir-results-header` (or as the first child when there isn't one,
-   * e.g. the Missed Calls modal body). Creates the element on first use.
+   * `.ir-results-header` (or as the first child when there isn't one).
+   * Creates the element on first use.
    */
   function reportHeadline_(id, containerId, headline) {
     const container = $(containerId);
@@ -3454,25 +3462,26 @@
     return { sentences: s.slice(0, 3), tone: headlineTone_({ answerPct: Number(k.answerRate) }) };
   }
 
-  // -- Missed Calls Report modal -----------------------------------------
-  // Opens with the dashboard's current dept/from/to/scope. Fetches via
-  // google.script.run.getMissedCallsReport, renders a Chart.js bar chart
-  // for the hour-of-day distribution + a per-agent card grid with each
-  // agent's missed-call timestamps (abandoned ones marked).
-  //
-  // Re-fetches every time the modal opens (cheap; respects 5-min server
-  // cache). The Chart instance is kept on a closure variable and updated
-  // on subsequent renders rather than re-instantiated.
+  // -- Missed Calls report (My Department inline section) ----------------
+  // The standalone Missed Calls modal was RETIRED -- the My Department
+  // page's inline missed section (deptMissedFetch_/deptMissedRender_,
+  // below) is the report now, at full parity: shared headline composer,
+  // summary strip, the 18-bucket hour-of-day chart (bars/radar toggle) +
+  // bucket drill-in, queue-only abandoned section, and the per-agent
+  // missed-time timelines with the journey drill. Fetches via
+  // google.script.run.getMissedCallsReport on every dept-page refresh.
 
-  let missedChart = null;
-  let lastMissedData = null;       // Missed Calls MODAL's last server response
   let deptMissedLastData = null;   // My Department missed section's last response
+  // One-shot flag: scroll the dept missed section into view the next time it
+  // renders. Set by launcherOpenMissed_ and the legacy '#/report/missed' deep
+  // link (the standalone Missed Calls modal was retired -- this section IS the
+  // report); consumed in deptMissedRender_ so the scroll never races the fetch.
+  let deptMissedScrollPending_ = false;
 
-  // Factory for the chart-bucket drill-in panel, shared by the Missed Calls
-  // modal AND the My Department missed section so the two can't drift (the
-  // radar config is already shared via missedRadarCfg_). `getData` returns the
-  // current report for that surface; `ids` names its panel elements. Holds its
-  // own active-bucket state so the two surfaces don't interfere.
+  // Factory for the chart-bucket drill-in panel. Historically shared by the
+  // Missed Calls modal and the My Department missed section; the modal is
+  // retired, but the factory shape is kept (one instance now) since it holds
+  // the panel's active-bucket state cleanly.
   function makeMissedBucketDetail_(getData, ids) {
     var active = -1;
     function collectRings(data, idx) {
@@ -3538,156 +3547,11 @@
     return { toggle: toggle, hide: hide };
   }
 
-  const missedBucketDetail_ = makeMissedBucketDetail_(
-    function () { return lastMissedData; },
-    { wrap: 'missed-bucket-detail', title: 'bucket-detail-title', body: 'bucket-detail-body', row: 'chart-row' });
   const deptMissedBucketDetail_ = makeMissedBucketDetail_(
     function () { return deptMissedLastData; },
     { wrap: 'dept-missed-bucket-detail', title: 'dept-bucket-detail-title', body: 'dept-bucket-detail-body',
       row: 'dept-missed-chart-row' });
 
-  function initMissedReport() {
-    const btn = $('missed-report-btn');
-    const modal = $('missed-modal');
-    if (!btn || !modal) return;
-
-    const closeBtn = modal.querySelector('.modal-close');
-    const backdrop = modal.querySelector('[data-close]');
-
-    function openModal() {
-      modal.style.display = '';
-      modal.setAttribute('aria-hidden', 'false');
-      document.body.style.overflow = 'hidden';
-      trapFocus_(modal);
-      initModalDragResize_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
-      document.addEventListener('keydown', onKeyDown);
-      // The modal carries its OWN range (drill-down), defaulted from the
-      // My Department fields on every open so it starts in sync.
-      if ($('missed-from')) $('missed-from').value = $('from-date').value;
-      if ($('missed-to'))   $('missed-to').value   = $('to-date').value;
-      fetchAndRender();
-    }
-    function closeModal() {
-      modal.style.display = 'none';
-      modal.setAttribute('aria-hidden', 'true');
-      releaseFocus_();
-      resetModalTransform_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
-      document.body.style.overflow = '';
-      document.removeEventListener('keydown', onKeyDown);
-      btn.focus();
-    }
-    function onKeyDown(e) {
-      if (e.key === 'Escape') closeModal();
-    }
-
-    btn.addEventListener('click', openModal);
-    if (closeBtn) closeBtn.addEventListener('click', closeModal);
-    if (backdrop) backdrop.addEventListener('click', closeModal);
-
-    // Drill-down range controls (modal-local).
-    const missedRefresh = $('missed-refresh-btn');
-    if (missedRefresh) missedRefresh.addEventListener('click', fetchAndRender);
-    ['missed-from', 'missed-to'].forEach(function (id) {
-      const el = $(id);
-      if (el) el.addEventListener('change', fetchAndRender);
-    });
-
-    // Close button on the bucket-detail panel (chart drill-in).
-    const detailClose = $('bucket-detail-close');
-    if (detailClose) detailClose.addEventListener('click', function () { missedBucketDetail_.hide(); });
-
-    function fetchAndRender() {
-      const dept = getRequestedDept();
-      const req = {
-        department: dept,
-        // Modal-local range when present (drill-down); falls back to the
-        // page fields for safety.
-        from: ($('missed-from') && $('missed-from').value) || $('from-date').value,
-        to:   ($('missed-to')   && $('missed-to').value)   || $('to-date').value,
-      };
-
-      setMissedStatus('loading', 'Loading missed-call data...');
-      $('missed-summary').innerHTML = '';
-      $('missed-agents').innerHTML = '';
-      // Destroy any previous chart + canvas so the stale visual
-      // doesn't linger while the new fetch is in flight.
-      clearMissedChart();
-      missedBucketDetail_.hide();
-      hideQueueOnlySection();
-      lastMissedData = null;
-
-      google.script.run
-        .withSuccessHandler(renderMissedReport)
-        .withFailureHandler(function (err) {
-          setMissedStatus('error', 'Error: ' + (err && err.message ? err.message : String(err)));
-        })
-        .getMissedCallsReport(req);
-    }
-  }
-
-  function clearMissedChart() {
-    if (missedChart) {
-      missedChart.destroy();
-      missedChart = null;
-    }
-    const wrap = $('missed-chart-wrap');
-    if (wrap) {
-      wrap.innerHTML = '<div class="chart-loading">Loading chart&hellip;</div>';
-    }
-  }
-
-  function setMissedStatus(kind, msg) {
-    const el = $('missed-status');
-    if (!el) return;
-    if (!kind) { el.style.display = 'none'; el.textContent = ''; return; }
-    el.className = 'status status-' + kind;
-    el.textContent = msg;
-    el.style.display = '';
-  }
-
-  function renderMissedReport(data) {
-    if (!data) {
-      setMissedStatus('error', 'No data returned.');
-      return;
-    }
-    setMissedStatus(null);
-    lastMissedData = data;
-
-    const m = data.meta || {};
-    reportHeadline_('missed-headline', 'missed-summary', missedHeadline_(m));
-    const summaryParts = [
-      '<span class="label">Department:</span><span class="val">' + escapeHtml(m.department || '') + '</span>',
-      '<span class="label">Range:</span><span class="val">' + escapeHtml(m.from || '') + ' to ' + escapeHtml(m.to || '') + '</span>',
-      '<span class="label">Total missed:</span><span class="val">' + fmtNumber(m.totalMissed || 0) + '</span>',
-      // Total abandoned (rang-an-agent + queue-only). One abandoned
-      // parent counts as 1 regardless of how many agents rang.
-      '<span class="label">Abandoned calls:</span><span class="val">' + fmtNumber(m.abandonedCallCount || 0) + '</span>',
-    ];
-    // Only surface "No-ring abandons" when there are any, so the
-    // summary stays tidy on typical days.
-    if ((m.noRingAbandonCount || 0) > 0) {
-      summaryParts.push(
-        '<span class="label">No-ring abandons:</span><span class="val">' +
-          fmtNumber(m.noRingAbandonCount) + '</span>'
-      );
-    }
-    summaryParts.push(
-      '<span class="label">Agents:</span><span class="val">' + fmtNumber(m.agentCount || 0) + '</span>'
-    );
-    $('missed-summary').innerHTML = summaryParts.join('<span class="sep">|</span>');
-
-    renderMissedChart(data.chart || { labels: [], counts: [] });
-    renderQueueOnly(data.queueOnly || []);
-    renderMissedAgents(data.agents || []);
-  }
-
-  /**
-   * SHARED radar config for the missed-calls 30-min bucket chart --
-   * consumed by the Missed Calls modal AND the My Department drill-down
-   * section, so the two visualizations can't drift. `onBucketClick`
-   * receives the clicked bucket index (or pass null for non-interactive).
-   * datalabels stay off in boolean form (INV-41).
-   */
   function missedRadarCfg_(chart, onBucketClick) {
     return {
       type: 'radar',
@@ -3841,8 +3705,10 @@
     };
   }
 
-  // Persisted chart mode shared by the Missed modal + the My Department inline
-  // missed section. Default 'bars' (the more legible view).
+  // Persisted chart mode for the My Department missed section (previously
+  // shared with the retired Missed Calls modal -- the localStorage key is
+  // kept so an existing preference survives). Default 'bars' (the more
+  // legible view).
   const MISSED_CHART_MODE_KEY = 'cdr.missed.chartmode';
   function missedChartMode_() {
     try { return localStorage.getItem(MISSED_CHART_MODE_KEY) === 'radar' ? 'radar' : 'bars'; }
@@ -3862,7 +3728,7 @@
       const on = b.getAttribute('data-mode') === mode;
       b.setAttribute('aria-pressed', on ? 'true' : 'false');
     });
-    ['chart-row', 'dept-missed-chart-row'].forEach(function (id) {
+    ['dept-missed-chart-row'].forEach(function (id) {
       const row = document.getElementById(id);
       if (row) {
         row.classList.toggle('mode-bars',  mode === 'bars');
@@ -3878,57 +3744,21 @@
     // is null under display:none) -- rebuilding in a hidden container would
     // render at zero size.
     const visible = function (id) { const el = $(id); return el && el.offsetParent !== null; };
-    if (missedChart && lastMissedData && lastMissedData.chart && visible('missed-chart-wrap')) {
-      renderMissedChart(lastMissedData.chart);
-    }
     if (deptMissedChart && deptMissedLastData && visible('dept-missed-chart-wrap')) {
       deptMissedDrawChart_(deptMissedLastData);
     }
   }
-  // One delegated handler for both toolbars (modal + dept section).
+  // One delegated handler for the dept-section toolbar (delegation kept so
+  // any future surface reusing .missed-chart-mode participates for free).
   document.addEventListener('click', function (e) {
     const b = e.target.closest && e.target.closest('.missed-chart-mode [data-mode]');
     if (b) { e.preventDefault(); setMissedChartMode_(b.getAttribute('data-mode')); }
   });
 
-  function renderMissedChart(chart) {
-    const wrap = $('missed-chart-wrap');
-    if (!wrap) return;
-    missedSyncToggles_();   // tag the chart-row (mode-bars/mode-radar) before sizing
-
-    // Destroy any prior instance before we replace the canvas (a re-render via
-    // the Bars/Radar toggle would otherwise orphan the old Chart).
-    if (missedChart) { try { missedChart.destroy(); } catch (e) {} missedChart = null; }
-
-    // Recreate the canvas (clearMissedChart() replaced the container
-    // contents with a loading placeholder).
-    wrap.innerHTML = '<canvas id="missed-chart" aria-label="Hour-of-day distribution of missed calls"></canvas>';
-    const canvas = $('missed-chart');
-
-    if (typeof Chart === 'undefined') {
-      // Chart.js failed to load (CDN blocked?). Surface a fallback.
-      wrap.innerHTML = '<p class="chart-loading">Chart library failed to load. The agent grid below still shows the data.</p>';
-      return;
-    }
-
-    const ctx = canvas.getContext('2d');
-    // Bars (default) or radar per the shared toggle; modal version drills into
-    // the per-bucket detail panel on click.
-    const cfg = missedChartCfg_(chart, function (idx) { missedBucketDetail_.toggle(idx); });
-
-    // Refresh THEME tokens right before chart creation so values
-    // resolved late reach Chart.defaults pre-instantiation.
-    refreshChartTheme();
-    // Canvas is always freshly recreated above, so we always
-    // instantiate a new Chart rather than update an existing one.
-    missedChart = safeChart_(ctx, cfg);
-    missedSyncToggles_();
-  }
-
   // -- Bucket detail (chart drill-in) ------------------------------------
   // Click a chart bucket -> show all rings (date, agent, time) in that 30-min
-  // slot; click again (or Close) to dismiss. Implemented by the shared
-  // makeMissedBucketDetail_ factory (modal + My Dept instances, above).
+  // slot; click again (or Close) to dismiss. Implemented by the
+  // makeMissedBucketDetail_ factory (the My Dept instance, above).
 
   // Renders the parent-call-ID chip + copy button used on every
   // abandoned timestamp. Pasting the parent ID into raw CDR search
@@ -4098,11 +3928,11 @@
   // rang an agent (queue had no available agent). Hidden when empty.
 
   /**
-   * SHARED builder for the queue-only abandoned section -- returns the
-   * subhead string + per-queue body HTML so BOTH the Missed Calls modal
-   * (renderQueueOnly) AND the My Department inline section (deptMissedRender_)
-   * render identically. Takes the report meta explicitly (for the
-   * unique/event counts) rather than reading a module global.
+   * Builder for the queue-only abandoned section -- returns the subhead
+   * string + per-queue body HTML for the My Department inline section
+   * (deptMissedRender_; previously also the retired Missed Calls modal).
+   * Takes the report meta explicitly (for the unique/event counts) rather
+   * than reading a module global.
    */
   // Range (inclusive days) between two ISO dates, or null if either is absent.
   function isoRangeDays_(from, to) {
@@ -4153,39 +3983,6 @@
     return { subhead: '(no agent rang) — ' + headParts.join(' '), bodyHtml: bodyHtml };
   }
 
-  function renderQueueOnly(queueOnly) {
-    const wrap = $('missed-queue-only');
-    const body = $('queue-only-body');
-    const sub  = $('queue-only-subhead');
-    if (!wrap || !body) return;
-
-    if (!queueOnly.length) {
-      hideQueueOnlySection();
-      return;
-    }
-
-    const parts = missedQueueOnlyParts_(queueOnly, (lastMissedData && lastMissedData.meta) || {});
-    if (sub) sub.textContent = parts.subhead;
-    body.innerHTML = parts.bodyHtml;
-
-    wrap.style.display = '';
-    initClipboardOnce();
-  }
-
-  function hideQueueOnlySection() {
-    const wrap = $('missed-queue-only');
-    if (!wrap) return;
-    wrap.style.display = 'none';
-    const body = $('queue-only-body');
-    if (body) body.innerHTML = '';
-  }
-
-  /**
-   * SHARED builder for the per-agent missed-time cards -- returns just the
-   * cards HTML so BOTH the modal (renderMissedAgents) AND the My Department
-   * inline section (deptMissedRender_) render identical card markup.
-   */
-  // Quantile (linear interpolation) over an ASCENDING-sorted numeric array.
   function missedQuantile_(sortedAsc, q) {
     if (!sortedAsc.length) return 0;
     const pos = (sortedAsc.length - 1) * q;
@@ -4244,20 +4041,6 @@
            +   '<ul class="missed-list">' + itemsHtml + '</ul>'
            + '</details>';
     }).join('');
-  }
-
-  function renderMissedAgents(agents) {
-    const wrap = $('missed-agents');
-    if (!wrap) return;
-
-    if (!agents.length) {
-      wrap.innerHTML = emptyStateHtml_('&#128276;', 'No missed calls in this range',
-        'No agent in scope had a missed or abandoned call for the selected dates.');
-      return;
-    }
-
-    wrap.innerHTML = missedAgentsHtml_(agents);
-    initClipboardOnce();
   }
 
   function getRequestedDept() {
@@ -4654,6 +4437,13 @@
     // is the create-while-hidden ordering.)
     wrap.style.display = '';
 
+    // One-shot scroll for the launcher / legacy '#/report/missed' deep link:
+    // now that the section is visible and populated, bring it into view.
+    if (deptMissedScrollPending_) {
+      deptMissedScrollPending_ = false;
+      try { wrap.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) { /* best-effort */ }
+    }
+
     const dateEl = $('dept-missed-date');
     if (dateEl) dateEl.textContent = from === to ? from : from + ' to ' + to;
 
@@ -4668,7 +4458,7 @@
       head.style.display = lines.length ? '' : 'none';
     }
 
-    // Summary strip (same fields as the modal's #missed-summary).
+    // Summary strip (Range / Total missed / Abandoned / No-ring abandons / Agents).
     const sum = $('dept-missed-summary');
     if (sum) {
       const parts = [
@@ -5417,6 +5207,11 @@
       irCameFromInsights_ = true;
       insModal.style.display = 'none';
       const bk = $('ir-back-to-insights-btn'); if (bk) bk.style.display = '';
+      // Hide the generic "« Back" (returns to the IR setup form) for the
+      // duration of the drill -- two Back buttons side by side read as
+      // redundant/confusing, and during a drill "back" means Insights.
+      // Restored by closeModal's irCameFromInsights_ branch.
+      const gb = $('ir-back-btn'); if (gb) gb.style.display = 'none';
     }
     const btn = $('individual-report-btn');
     if (btn) btn.click();   // -> openModal -> ensureIrRoster -> renderIrAgentList
@@ -5455,6 +5250,8 @@
       if (irCameFromInsights_) {
         irCameFromInsights_ = false;
         const bk = $('ir-back-to-insights-btn'); if (bk) bk.style.display = 'none';
+        const gb = $('ir-back-btn'); if (gb) gb.style.display = '';   // restore the generic Back
+
         const insModal = $('insights-modal');
         if (insModal) {
           insModal.style.display = '';
@@ -11802,6 +11599,11 @@
   let insListChangeHandler_ = null;
   let insPendingAgentSelection_ = null;
   let insLastData = null;
+  // The agent list the LAST report request was fired with (empty array =
+  // agent-free whole-department run). insLastData.meta.agents carries the
+  // server-RESOLVED selection (full roster on agent-free runs), so the edit
+  // popover needs the requested form to preserve agent-free semantics.
+  let insLastRequestedAgents_ = null;
   let insChartInstance = null;
   let insTrendView = 'monthly';    // 'monthly' | 'daily' (consolidated trend chart toggle)
   let insCardsView = 'cards';      // 'cards' | 'chart' (per-agent comparison view, #3)
@@ -11871,6 +11673,30 @@
     if (selNone) selNone.addEventListener('click', function (e) { e.preventDefault(); insToggleAgents(false); });
     const search = $('ins-agent-search');
     if (search) search.addEventListener('input', function () { irFilterAgentList_($('ins-agent-list'), search.value); });
+
+    // Edit-selection popover wiring (results header; IR's pattern).
+    const editBtn = $('ins-edit-selection-btn');
+    if (editBtn) editBtn.addEventListener('click', insOpenEditPopover_);
+    const editClose = $('ins-edit-popover-close');
+    if (editClose) editClose.addEventListener('click', insCloseEditPopover_);
+    const editApply = $('ins-edit-apply-btn');
+    if (editApply) editApply.addEventListener('click', insApplyEditPopover_);
+    const editSelAll  = $('ins-edit-select-all');
+    const editSelNone = $('ins-edit-select-none');
+    if (editSelAll)  editSelAll.addEventListener('click',  function (e) { e.preventDefault(); insTogglePopoverAgents_(true);  });
+    if (editSelNone) editSelNone.addEventListener('click', function (e) { e.preventDefault(); insTogglePopoverAgents_(false); });
+    const editSearch = $('ins-edit-search');
+    if (editSearch) editSearch.addEventListener('input', function () {
+      irFilterAgentList_($('ins-edit-list'), editSearch.value);
+    });
+    // Close on click outside the popover.
+    document.addEventListener('click', function (e) {
+      const pop = $('ins-edit-popover');
+      if (!pop || pop.style.display === 'none') return;
+      if (pop.contains(e.target)) return;
+      if (e.target === editBtn) return;
+      insCloseEditPopover_();
+    });
 
     const genBtn = $('ins-generate-btn');
     if (genBtn) genBtn.addEventListener('click', runInsReport);
@@ -12208,6 +12034,102 @@
     $('ins-generate-btn').disabled = total === 0;
   }
 
+  // -- In-results edit popover (IR's pattern, adapted to Insights) --------
+  // Lets the user change dates / comparison / agent selection from the
+  // results header without a round-trip through the setup form (fewer
+  // screens). Two Insights-specific semantics vs the IR popover:
+  //  (1) Apply allows an EMPTY selection -- Insights' agent-free contract
+  //      runs the whole department roster (INV-45 digest pattern), so
+  //      "Select none (whole department)" is a feature, not an invalid
+  //      state, and Apply is never disabled.
+  //  (2) The compare control defaults to a 'keep' sentinel: left there,
+  //      Apply re-resolves through the MAIN form's compare mode (including
+  //      a custom prior window the popover can't represent); picking a
+  //      preset syncs it back into the form first, so the form and the
+  //      report never disagree.
+
+  /** Compact "Showing: ..." label (IR's truncation rules) + the agent-free
+   *  wording when the last request carried no explicit agents. */
+  function insRenderEditingLine_(data) {
+    const el = $('ins-editing-agents');
+    if (!el) return;
+    const meta = (data && data.meta) || {};
+    const resolved = Array.isArray(meta.agents) ? meta.agents : [];
+    let visible, tooltip;
+    if (insLastRequestedAgents_ && !insLastRequestedAgents_.length) {
+      visible = 'Whole department (' + resolved.length + ' agent' + (resolved.length === 1 ? '' : 's') + ')';
+      tooltip = resolved.join(', ');
+    } else if (resolved.length <= 3) {
+      visible = resolved.join(', ');
+      tooltip = visible;
+    } else {
+      visible = resolved.slice(0, 2).join(', ') + ', +' + (resolved.length - 2) + ' more';
+      tooltip = resolved.join(', ');
+    }
+    el.textContent = visible || '(none)';
+    el.title = tooltip;
+  }
+
+  function insOpenEditPopover_() {
+    const pop = $('ins-edit-popover');
+    const list = $('ins-edit-list');
+    if (!pop || !list) return;
+    const meta = (insLastData && insLastData.meta) || {};
+    if ($('ins-edit-from')) $('ins-edit-from').value = meta.from || ($('ins-from') ? $('ins-from').value : '');
+    if ($('ins-edit-to'))   $('ins-edit-to').value   = meta.to   || ($('ins-to')   ? $('ins-to').value   : '');
+    if ($('ins-edit-compare-mode')) $('ins-edit-compare-mode').value = 'keep';
+    // Roster-only list (no floater group), same as the main Insights picker.
+    list.innerHTML = irBuildAgentListHtml_(insLastRoster.agents || [], insLastRoster.activeAgents, []);
+    // Pre-check the REQUESTED selection -- an agent-free run pre-checks
+    // nothing, so an untouched Apply preserves the whole-department run.
+    irApplyCheckedAgents_(list, insLastRequestedAgents_ || []);
+    pop.style.display = '';
+    const search = $('ins-edit-search');
+    if (search) { search.value = ''; setTimeout(function () { search.focus(); }, 0); }
+    irFilterAgentList_(list, '');
+  }
+
+  function insCloseEditPopover_() {
+    const pop = $('ins-edit-popover');
+    if (pop) pop.style.display = 'none';
+  }
+
+  function insTogglePopoverAgents_(checked) {
+    selectAllActiveAgents_($('ins-edit-list'), checked);
+  }
+
+  function insApplyEditPopover_() {
+    const from = $('ins-edit-from') ? $('ins-edit-from').value : '';
+    const to   = $('ins-edit-to')   ? $('ins-edit-to').value   : '';
+    if (!from || !to) { insSetResultsStatus_('error', 'Pick a start and end date.'); return; }
+    if (from > to)    { insSetResultsStatus_('error', 'Start date must be on or before end date.'); return; }
+    const newAgents = irGetCheckedAgents_($('ins-edit-list'));   // empty = whole department
+    const popMode = $('ins-edit-compare-mode') ? $('ins-edit-compare-mode').value : 'keep';
+
+    // Sync the popover state back into the setup form so Back / re-open /
+    // saved prefs all agree, then reuse runInsReport end-to-end (it brings
+    // the SWR paint, D1b keep-last-good, and the stale-response guard).
+    if ($('ins-from')) $('ins-from').value = from;
+    if ($('ins-to'))   $('ins-to').value   = to;
+    if ($('ins-preset')) $('ins-preset').value = 'custom';
+    if (popMode !== 'keep' && $('ins-compare-mode')) {
+      $('ins-compare-mode').value = popMode;
+      $('ins-compare-mode').dispatchEvent(new Event('change'));   // custom-input visibility + hint
+    }
+    irApplyCheckedAgents_($('ins-agent-list'), newAgents);
+    insScheduleActiveRefetch_();   // re-group the main picker for the new range
+    insSavePrefs_();
+
+    // Validate the (possibly kept-custom) comparison BEFORE firing: the
+    // setup form is hidden here, so its error line would be invisible.
+    const prior = insResolvePriorRange_(from, to);
+    if (prior && prior.error) { insSetResultsStatus_('error', prior.error); return; }
+
+    insCloseEditPopover_();
+    insSetResultsStatus_('loading', 'Refreshing report…');
+    runInsReport();
+  }
+
   function runInsReport() {
     const dept = getRequestedDept(); if (!dept) { insSetFormError('No department selected.'); return; }
     const from = $('ins-from').value, to = $('ins-to').value;
@@ -12221,6 +12143,7 @@
     const prior = insResolvePriorRange_(from, to);
     if (prior && prior.error) { insSetFormError(prior.error); return; }
     insSetFormError('');
+    insLastRequestedAgents_ = agents.slice();   // edit popover reads the REQUESTED form
     const req = { department: dept, from: from, to: to, agents: agents };
     if (prior) { req.priorFrom = prior.from; req.priorTo = prior.to; }
     const gen = $('ins-generate-btn'); const prev = gen.textContent;
@@ -12292,6 +12215,8 @@
 
   function insRenderReport_(data) {
     insLastData = data;
+    insCloseEditPopover_();
+    insRenderEditingLine_(data);
     $('ins-results-date').textContent = '(' + (data.dateLabel || '') + ')';
     const cmp = $('ins-compare-line');
     if (cmp) {
