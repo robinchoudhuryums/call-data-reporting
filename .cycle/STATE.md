@@ -1,5 +1,16 @@
 # Cycle State — resume note
 
+## Latest session (broad-implement: Batch 5 -- Escalations hardening, F-43..F-46)
+Branch `claude/broad-scan-xkmoam`, commit `448ac45`, PUSHED. 224/224 tests (5 added: escalations-hardening.test.js -- first unit coverage of Escalations.gs), INV-16 guard green.
+- **F-45** `escAssertRowAccess_` replaces `assertDeptAccess_` at the 4 ROW-dept call sites (resolveEscalation / updateEscalationComment / reopenEscalation / getEscalationActivity): manager must match the row's STORED dept; admin passes unconditionally -- including rows whose stored dept was renamed/retired (assertDeptAccess_'s roster validation would have locked admins out, orphaning those rows unresolvable). Request-PARAM dept checks (getEscalations) keep assertDeptAccess_ -- input validates against real depts, row data doesn't.
+- **F-43** resolveEscalation is PENDING-ONLY (reads escRowMeta_, throws "already resolved... Reopen it first" on a resolved row) -- a second resolve can no longer silently overwrite the first resolution note + resolved_by/at.
+- **F-44** escCleanDateTime_ anchored + per-field range checks (mo 1-12 / da 1-31 / hh<=23 / mi,se<=59); invalid -> '' (stored NULL) per the documented contract. Old unanchored regex let '2026-01-01T99:99' / trailing garbage reach Postgres's ::timestamptz cast (opaque "Could not save").
+- **F-46** getEscalations subquery capped at ESC_MAX_ROWS=500 newest (ORDER BY occurred_at DESC NULLS LAST) + meta.truncated; client escApplyFilter_ shows "showing the N most recent -- narrow by status or department" in the filter-count chip (the text filter only searches the rows that arrived).
+- INV-55 synced in CLAUDE.md (row gate, pending-only resolve, occurred_at validation, row cap).
+DEPLOY: Department Dashboard ONLY (`clasp push -f` + new version). No operator actions; no cache bumps (Escalations is uncached by design).
+REMAINING: Batch 6 residual (Pass-4 sentinel-row producer test; F-15/F-36 QCD fixtures), strategic track (queue normalization -> un-gate Inbound/Direct, QCD retirement, F-20, F-22, holidays, Escalations Phase 2, legacy decommission incl. F-25). Awaiting ratification: F-32 (IR overlap = current-wins) + F-29 (code-is-spec comment fix).
+Where I left off: Batches 1-5 all shipped + pushed; branch has 15 unmerged commits awaiting PR/merge + deploys (dashboard: F-1..F-6 + Batches 1/4/5; cdr-report + cdr-import: Batches 1-3).
+
 ## Latest session (broad-implement: Batch 4 -- report-consistency sweep, 16 findings)
 Branch `claude/broad-scan-xkmoam`, commit `22c5fd7`, PUSHED. 219/219 tests (1 added), INV-16 guard green. SIX cache bumps synced everywhere (test-enforced): individual v9->v10, performance v4->v5, missed v12->v13, qcd v9->v10, qcdAll v2->v3, insights v16->v17.
 - **F-35** all 7 DQE readers (IR/PR/CR/Insights/Missed/Overview/computeSummary_) + deptQueueExtsForNeonReader_: sheet hard-required only on the SHEET path; neon path tolerates a trimmed/archived sheet (empty-shape fallback, never crash). getLatestDataDate was already correct. THE blocker for ever retiring the sheet.
