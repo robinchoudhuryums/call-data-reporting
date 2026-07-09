@@ -46,7 +46,6 @@ tests/
     dept-config.test.js       DeptConfig.gs: INV-54 override accessors + validators
     compute-summary.test.js   Data.gs: computeSummary_ — INV-02/04/05/23/53, S35 parity, E5 prior-window
     individual-report.test.js IndividualReport.gs: INV-25 weighted ATT, INV-53 floaters, INV-26 exclude, auth
-    compare-ranges.test.js    CompareRangesReport.gs: INV-35 length-mismatch (incl. 1.2x boundary), P1/P2 split, INV-53
     canonicalization.test.js  cdr-report/cdr-import buildDQEHistoricalData.js: INV-24/INV-46 + INV-16 cross-project
     pipeline-build.test.js    buildDQEHistoricalData end-to-end: INV-07 window legs, INV-08 TTT attribution, INV-20 PST→CST slots, INV-21 parentMap, dup guard
     digest-wow.test.js        Digest.gs: WoW "driver" narrative (#11) reusing INV-48 — gain/drop drivers, threshold, narrative HTML + escaping

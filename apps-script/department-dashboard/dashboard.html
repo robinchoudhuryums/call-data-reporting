@@ -68,16 +68,13 @@
         <div class="header-menu">
           <button class="header-menu-btn" id="reports-menu-btn" type="button"
                   aria-haspopup="true" aria-expanded="false" aria-controls="reports-menu-list"
-                  title="Reports: Individual, Compare, Insights.">
+                  title="Reports: Individual, Insights.">
             Reports <span class="header-menu-caret" aria-hidden="true">&#9662;</span>
           </button>
           <div class="header-menu-list" id="reports-menu-list" role="menu" style="display:none;">
             <button class="header-menu-item" id="individual-report-btn" type="button"
                     data-route="/report/individual" role="menuitem"
                     title="The per-agent deep dive: KPIs vs team avg, per-agent 12-month trends, and peer-comparison mode (2+ agents). Also the drill-down target when you click an agent in Insights.">Individual</button>
-            <button class="header-menu-item" id="compare-ranges-btn" type="button"
-                    data-route="/report/compare" role="menuitem"
-                    title="Side-by-side comparison of two arbitrary date ranges. Useful for year-over-year or pre/post-change analyses.">Compare <span class="tab-review-star" title="Pending consolidation review — kept until parity with the consolidated views is confirmed.">*</span></button>
             <button class="header-menu-item" id="insights-report-btn" type="button"
                     data-route="/report/insights" role="menuitem"
                     title="Combined view: a department rollup PLUS per-agent cards, each comparing the selected range to the immediately-preceding period.">Insights</button>
@@ -426,7 +423,6 @@
             <summary>Reports</summary>
             <button type="button" class="help-link" data-topic="individual">Individual</button>
             <button type="button" class="help-link" data-topic="insights">Insights</button>
-            <button type="button" class="help-link" data-topic="compare">Compare Ranges</button>
             <button type="button" class="help-link" data-topic="missed">Missed Calls</button>
             <button type="button" class="help-link" data-topic="qcd">QCD (Queue Call Data)</button>
             <button type="button" class="help-link" data-topic="inbound">Inbound Calls</button>
@@ -531,7 +527,7 @@
           </section>
           <section class="help-topic" id="help-topic-insights" hidden>
             <h3>Insights</h3>
-            <p>A team rollup + per-agent cards + 12-month trend, with comparison modes (preceding period / same window a year ago / custom). It absorbed the retired <strong>Performance Report</strong>: the KPI tiles compare against the immediately-preceding same-length window, the share-of-answered donut is below the trend chart, and the per-agent Chart view&rsquo;s <strong>Absolute</strong> toggle shows each agent&rsquo;s stacked Answered&thinsp;+&thinsp;Missed volumes with % answered dots. On each <strong>agent card</strong>:</p>
+            <p>A team rollup + per-agent cards + 12-month trend, with comparison modes (preceding period / same window a year ago / custom). It absorbed the retired <strong>Performance Report</strong> and <strong>Compare Ranges</strong>: the KPI tiles compare against the immediately-preceding same-length window, the share-of-answered donut is below the trend chart, and the per-agent Chart view has <strong>Gap vs team / Absolute / vs Prior</strong> bases (Absolute = stacked Answered&thinsp;+&thinsp;Missed volumes with % answered dots; vs Prior = each agent&rsquo;s current-vs-prior bars). For a year-over-year or any two arbitrary windows, use <strong>Compare against &rarr; Same window one year prior</strong> or <strong>Custom prior range</strong>; hover a delta badge on a card for the prior window&rsquo;s exact value. When the two windows differ in length, a note appears and per-day figures keep volumes comparable. On each <strong>agent card</strong>:</p>
             <ul>
               <li>The colored <strong>left rail</strong> and the <strong>&#9650; Improving / &#9660; Slipping / &#8776; Mixed</strong> pill show that agent&rsquo;s <em>trend</em> vs the prior period (across rung, missed, answered, % answered). Hover the card and the rail glows.</li>
               <li>The <strong>above team / below team</strong> chip shows their <em>standing</em> &mdash; answered calls vs the team average <em>this</em> period (the marker on the Answered bar). So a card can be &ldquo;Improving&rdquo; yet &ldquo;below team&rdquo;: better than last period, still under the average.</li>
@@ -545,10 +541,6 @@
             </div>
             <div class="help-figure-cap">Sage rail + &ldquo;Improving&rdquo; pill = trend vs last period; the chip = standing vs the team average (here, 142 answered vs the ~98 a teammate averaged).</div>
             <p>The bars compare % Answered / Answered / Missed against the team average. A <strong>Queue health</strong> section adds the dept&rsquo;s abandonment picture. If the two compared windows differ a lot in length, raw-count insights are dropped and a note appears.</p>
-          </section>
-          <section class="help-topic" id="help-topic-compare" hidden>
-            <h3>Compare Ranges</h3>
-            <p>Side-by-side comparison of two arbitrary date ranges (e.g. this month vs the same month last year). When the ranges differ in length by 20%+, a banner appears and per-day figures are shown so volume isn&rsquo;t compared apples-to-oranges.</p>
           </section>
           <section class="help-topic" id="help-topic-missed" hidden>
             <h3>Missed Calls</h3>
@@ -606,7 +598,7 @@
           </section>
           <section class="help-topic" id="help-topic-attlens" hidden>
             <h3>Why ATT can differ</h3>
-            <p>The <strong>My Department</strong> table shows ATT as the simple mean of each day&rsquo;s stored value. The <strong>reports</strong> (Individual / Compare / Insights) use a per-call <em>weighted</em> average (total talk &divide; calls answered), so days with no answered calls don&rsquo;t drag it down. Same range can therefore show slightly different ATT in the two places &mdash; neither is wrong; they answer different questions.</p>
+            <p>The <strong>My Department</strong> table shows ATT as the simple mean of each day&rsquo;s stored value. The <strong>reports</strong> (Individual / Insights) use a per-call <em>weighted</em> average (total talk &divide; calls answered), so days with no answered calls don&rsquo;t drag it down. Same range can therefore show slightly different ATT in the two places &mdash; neither is wrong; they answer different questions.</p>
           </section>
           <section class="help-topic" id="help-topic-alerts" hidden>
             <h3>Low answer-rate alerts <span class="help-admin-tag">admin</span></h3>
@@ -895,201 +887,6 @@
     </div>
   </div>
 
-  <div id="compare-modal" class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="compare-modal-title" style="display:none;">
-    <div class="modal-backdrop" data-close></div>
-    <div class="modal-panel modal-panel-wide" role="document">
-      <div class="modal-panel-header">
-        <button class="modal-open-tab-btn" type="button" data-open-tab-route="/report/compare"
-                aria-label="Open in new tab" title="Open this report in a new browser tab (for side-by-side viewing)">&#8599;</button>
-        <button class="modal-close" id="compare-close" type="button" aria-label="Close">&times;</button>
-        <div class="modal-kicker">Report</div>
-        <h2 id="compare-modal-title">Compare Ranges</h2>
-      </div>
-      <div class="modal-panel-body">
-      <div id="compare-form" class="ir-form">
-        <div class="ir-section-title">1. Date Ranges</div>
-        <div class="ir-row">
-          <div class="ir-col">
-            <label for="cr-preset">Quick select</label>
-            <select id="cr-preset">
-              <option value="custom">Custom ranges</option>
-              <option value="lastVsThisMonth">Last month vs This month</option>
-              <option value="yoyMonth">Same month last year vs This month</option>
-              <option value="last30VsPrev30">Last 30 days vs Previous 30 days</option>
-              <option value="last3MoVsPrev3Mo">Last 3 months vs Previous 3 months</option>
-              <option value="lastYearVsThisYear">Last year vs This year-to-date</option>
-            </select>
-          </div>
-        </div>
-
-        <div class="cr-period-block cr-period-baseline">
-          <div class="cr-period-label">Period 1 (Baseline)</div>
-          <div class="ir-row">
-            <div class="ir-col">
-              <label for="cr-p1-from">Start date</label>
-              <input type="date" id="cr-p1-from">
-            </div>
-            <div class="ir-col">
-              <label for="cr-p1-to">End date</label>
-              <input type="date" id="cr-p1-to">
-            </div>
-          </div>
-        </div>
-
-        <div class="cr-swap-row">
-          <button type="button" class="cr-swap-btn" id="cr-swap-periods" title="Swap Period 1 and Period 2 dates">
-            <span aria-hidden="true">&#8645;</span> Swap P1 &amp; P2
-          </button>
-        </div>
-
-        <div class="cr-period-block cr-period-compare">
-          <div class="cr-period-label">Period 2 (Comparison)</div>
-          <div class="ir-row">
-            <div class="ir-col">
-              <label for="cr-p2-from">Start date</label>
-              <input type="date" id="cr-p2-from">
-            </div>
-            <div class="ir-col">
-              <label for="cr-p2-to">End date</label>
-              <input type="date" id="cr-p2-to">
-            </div>
-          </div>
-        </div>
-
-        <div class="cr-length-hint" id="cr-length-hint"></div>
-
-        <div class="ir-section-title">2. Agents</div>
-        <div class="ir-hint">Compare each agent's performance across both periods. Active/inactive grouping reflects the union of both ranges.</div>
-        <div class="ir-search-row">
-          <input type="search" id="cr-agent-search" placeholder="Search agents by name..." autocomplete="off">
-        </div>
-        <div id="cr-agent-loader" class="ir-loader">
-          <div class="ir-skeleton-grid" aria-hidden="true">
-            <div class="ir-skeleton-row"></div><div class="ir-skeleton-row"></div>
-            <div class="ir-skeleton-row"></div><div class="ir-skeleton-row"></div>
-            <div class="ir-skeleton-row"></div><div class="ir-skeleton-row"></div>
-            <div class="ir-skeleton-row"></div><div class="ir-skeleton-row"></div>
-          </div>
-          <div class="ir-skeleton-label">Loading agent roster&hellip;</div>
-        </div>
-        <div id="cr-agent-list" class="ir-agent-list" style="display:none;"></div>
-        <div class="ir-agent-actions">
-          <a href="#" id="cr-select-all">Select all active</a>
-          <span class="sep">|</span>
-          <a href="#" id="cr-select-none">Select none</a>
-        </div>
-
-        <div id="cr-form-error" class="status status-error" style="display:none;"></div>
-        <button class="btn" id="cr-generate-btn" type="button" disabled>Generate report</button>
-      </div>
-
-      <div id="compare-results" class="ir-results" style="display:none;">
-        <div class="ir-results-header">
-          <div class="ir-results-header-left">
-            <div class="ir-results-title-line">
-              <span class="ir-results-title">Compare Ranges Report</span>
-            </div>
-            <div class="pr-date-pair">
-              <div class="pr-date-block pr-date-prior">
-                <div class="pr-date-label">Period 1 (Baseline)</div>
-                <div class="pr-date-value" id="cr-p1-label">&nbsp;</div>
-              </div>
-              <div class="pr-date-divider" aria-hidden="true">&rarr;</div>
-              <div class="pr-date-block pr-date-current">
-                <div class="pr-date-label">Period 2 (Comparison)</div>
-                <div class="pr-date-value" id="cr-p2-label">&nbsp;</div>
-              </div>
-            </div>
-            <div class="ir-editing-line">
-              <span class="ir-editing-label">Showing:</span>
-              <span class="ir-editing-agents" id="cr-editing-agents"></span>
-              <button class="ir-editing-edit" id="cr-edit-selection-btn" type="button">change</button>
-            </div>
-          </div>
-          <div class="ir-action-buttons">
-            <button class="btn btn-secondary" id="cr-back-btn" type="button">&laquo; Back</button>
-            <div class="ir-export-wrap">
-              <button class="btn btn-secondary" id="cr-export-btn" type="button" aria-haspopup="menu" aria-expanded="false">
-                Export <span class="ir-export-caret">&#9662;</span>
-              </button>
-              <div class="ir-export-menu" id="cr-export-menu" role="menu" style="display:none;">
-                <button type="button" role="menuitem" data-action="copy">Copy image</button>
-                <button type="button" role="menuitem" data-action="email">Email image</button>
-                <button type="button" role="menuitem" data-action="print">Print</button>
-                <button type="button" role="menuitem" data-action="csv">Download CSV</button>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div id="cr-edit-popover" class="ir-edit-popover" style="display:none;" role="dialog" aria-label="Edit selection">
-          <div class="ir-edit-popover-header">
-            <strong>Edit selection</strong>
-            <button class="ir-edit-popover-close" id="cr-edit-popover-close" type="button" aria-label="Close">&times;</button>
-          </div>
-          <div class="ir-search-row">
-            <input type="search" id="cr-edit-search" placeholder="Search agents..." autocomplete="off">
-          </div>
-          <div id="cr-edit-list" class="ir-agent-list ir-agent-list-compact"></div>
-          <div class="ir-edit-popover-actions">
-            <a href="#" id="cr-edit-select-all">Select all active</a>
-            <span class="sep">|</span>
-            <a href="#" id="cr-edit-select-none">Select none</a>
-            <button class="btn" id="cr-edit-apply-btn" type="button" disabled>Apply</button>
-          </div>
-        </div>
-
-        <div id="cr-results-status" class="status" style="display:none;"></div>
-
-        <div id="cr-length-warning" class="ds-note" style="display:none;"></div>
-        <div id="cr-team-insights"></div>
-        <div id="cr-team-tiles" class="pr-kpi-row"></div>
-
-        <div class="ir-chart-tabs" id="cr-chart-tabs" role="tablist">
-          <button type="button" class="ir-tab active" data-metric="answered" role="tab" aria-selected="true">Answered</button>
-          <button type="button" class="ir-tab" data-metric="rung" role="tab" aria-selected="false">Rung</button>
-          <button type="button" class="ir-tab" data-metric="pct" role="tab" aria-selected="false">% Answered</button>
-          <div class="ir-toggle-box" id="cr-datalabels-box">
-            <label class="ir-toggle-label">
-              <input type="checkbox" id="cr-show-datalabels" checked> Show data labels
-            </label>
-          </div>
-        </div>
-
-        <div class="cr-chart-wrap" id="cr-chart-wrap">
-          <div class="ir-chart-header" id="cr-chart-header">Answered Calls: Period 1 vs Period 2</div>
-          <div class="cr-chart-summary" id="cr-chart-summary"></div>
-          <div class="ir-chart-canvas-wrap"><canvas id="cr-chart"></canvas></div>
-        </div>
-
-        <div class="ir-cards-toolbar" id="cr-cards-toolbar">
-          <label class="ir-sort-control">
-            <span class="ir-sort-label">Sort agents:</span>
-            <select id="cr-card-sort">
-              <option value="selection">Selection order</option>
-              <option value="name">Name (A-Z)</option>
-              <option value="improvers">Biggest improvers</option>
-              <option value="regressors">Biggest regressors</option>
-            </select>
-          </label>
-        </div>
-
-        <div id="cr-agent-cards" class="cr-agent-cards"></div>
-
-        <details id="cr-quiet-details" class="cr-quiet-details" style="display:none;">
-          <summary class="cr-quiet-summary"></summary>
-          <div id="cr-quiet-cards" class="cr-agent-cards"></div>
-        </details>
-      </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- All-departments daily call queue report (4b). Admin-only;
-       launched from the Overview "Daily Call Queue Report" button.
-       Flat company-wide queue table (legacy emailed-PDF parity) with
-       CSV download + print. No charts -- this is the at-a-glance
-       operational table, the per-dept QCD modal is the deep dive. -->
   <div id="qcd-alldept-modal" class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="qcd-alldept-modal-title" style="display:none;">
     <div class="modal-backdrop" data-close></div>
     <div class="modal-panel modal-panel-wide" role="document">
@@ -1414,14 +1211,18 @@
             <button type="button" class="seg-btn active" data-view="cards" role="radio" aria-checked="true">Cards</button>
             <button type="button" class="seg-btn" data-view="chart" role="radio" aria-checked="false">Chart</button>
           </div>
-          <!-- Chart-view sub-toggle: Gap vs team (diverging bars, one metric)
-               vs Absolute (PR's stacked Answered+Missed volumes + % dots --
-               the Performance Report's Volume & Efficiency view, absorbed
-               here for the PR retirement). Metric selector is gap-only. -->
+          <!-- Chart-view sub-toggle: Gap vs team (diverging bars, one
+               metric) / Absolute (PR's stacked Answered+Missed volumes + %
+               dots -- the Performance Report's Volume & Efficiency view) /
+               vs Prior (Compare Ranges' grouped current-vs-prior bars, one
+               metric) -- the two retired reports' unique visuals, absorbed.
+               Metric selector applies to gap + prior; Absolute shows all
+               volumes at once. -->
           <div class="segmented" id="ins-cards-chart-mode" role="radiogroup"
                aria-label="Chart comparison basis" style="display:none;">
             <button type="button" class="seg-btn active" data-mode="gap" role="radio" aria-checked="true">Gap vs team</button>
             <button type="button" class="seg-btn" data-mode="abs" role="radio" aria-checked="false">Absolute</button>
+            <button type="button" class="seg-btn" data-mode="prior" role="radio" aria-checked="false">vs Prior</button>
           </div>
           <label class="ir-sort-control" id="ins-cards-chart-metric-wrap" style="display:none;">
             <span class="ir-sort-label">Metric:</span>
