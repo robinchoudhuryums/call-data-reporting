@@ -13342,13 +13342,29 @@
         + meta.priorDays + 'd) — volume totals not directly comparable; see the /day columns']));
     }
     lines.push('');
-    lines.push(row(['Team rollup (roster only)', 'Current', 'Prior', 'Delta']));
+    // Per-day helper (CR's crCsvRow_ semantics): only meaningful for the
+    // volume/time metrics, only when the windows mismatch; time formats via
+    // the shared short-duration formatter instead of raw seconds.
+    const perDay = function (raw, days, isTime) {
+      if (raw == null || !(days > 0)) return '';
+      return isTime ? crFormatSecondsShort_(raw / days) : (raw / days).toFixed(1);
+    };
+    const teamHead = ['Team rollup (roster only)', 'Current', 'Prior', 'Delta'];
+    if (mismatch) teamHead.push('Current/day', 'Prior/day');
+    lines.push(row(teamHead));
     const t = d.teamStats || {};
-    [['Rung', 'rung'], ['Missed', 'missed'], ['Answered', 'answered'],
-     ['% Answered', 'pct'], ['TTT', 'ttt'], ['Avg ATT', 'att']].forEach(function (m) {
+    [['Rung', 'rung', 'volume'], ['Missed', 'missed', 'volume'],
+     ['Answered', 'answered', 'volume'], ['% Answered', 'pct', null],
+     ['TTT', 'ttt', 'time'], ['Avg ATT', 'att', null]].forEach(function (m) {
       const st = t[m[1]] || {};
-      lines.push(row([m[0], st.formatted != null ? st.formatted : '',
-                      st.prev != null ? st.prev : '', deltaStr(st)]));
+      const cells = [m[0], st.formatted != null ? st.formatted : '',
+                     st.prev != null ? st.prev : '', deltaStr(st)];
+      if (mismatch) {
+        // Rates (% / per-call ATT) are length-independent -- no /day cells.
+        cells.push(m[2] ? perDay(st.val, meta.currentDays, m[2] === 'time') : '',
+                   m[2] ? perDay(st.prev, meta.priorDays,  m[2] === 'time') : '');
+      }
+      lines.push(row(cells));
     });
     lines.push('');
     const head = ['Agent', 'Source', 'Classification', 'Improvement score', 'Quiet'];
@@ -13376,9 +13392,10 @@
         cells.push(st.formatted != null ? st.formatted : '',
                    st.prev != null ? st.prev : '', deltaStr(st));
         if (mismatch && m[2] && m[1] !== 'pct' && m[1] !== 'att') {
-          const cur = (st.val != null && meta.currentDays > 0) ? (st.val / meta.currentDays).toFixed(1) : '';
-          const pri = (st.prev != null && meta.priorDays > 0) ? (st.prev / meta.priorDays).toFixed(1) : '';
-          cells.push(cur, pri);
+          // TTT is stored in seconds -- format its /day as a short duration
+          // (CR's crCsvRow_ 'time' kind) instead of a bare seconds number.
+          cells.push(perDay(st.val, meta.currentDays, m[1] === 'ttt'),
+                     perDay(st.prev, meta.priorDays,  m[1] === 'ttt'));
         }
       });
       lines.push(row(cells));
