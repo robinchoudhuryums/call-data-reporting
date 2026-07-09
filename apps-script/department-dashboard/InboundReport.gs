@@ -591,6 +591,56 @@ function getInboundInsurerDaily(req) {
 
 
 // ---------------------------------------------------------------------------
+// S1(c): inbound queue-name discovery scan. The RAW queue names actually
+// present in Neon `inbound_calls` (entry_queue + final_queue) over the
+// lookback window, with distinct-call counts + last-seen dates. This is the
+// inbound mirror of DeptConfig's scanQcdQueueNames_: inbound_calls carries
+// the phone system's raw names (a DIFFERENT name space from QCD-canonical,
+// bridged per dept by the INV-54 `Inbound Queue Aliases`), and until this
+// surface existed there was no way to SEE which raw names the data contains
+// -- an unaliased name silently fell out of every dept's inbound
+// attribution. Consumed by DeptConfig.gs::discoverInboundQueues_ (the Dept
+// Config modal's "Discovered inbound queues" section).
+//
+// Returns null when Neon is unreachable/unconfigured (caller renders an
+// "unavailable" note -- distinct from "no rows"), else an array of
+// { queue, calls, last_seen } ordered busiest-first.
+function scanInboundQueueNames_(lookbackDays) {
+  const days = Math.max(1, Number(lookbackDays) || 180);
+  let conn = null;
+  try {
+    conn = (typeof getDashboardNeonConn_ === 'function') ? getDashboardNeonConn_() : null;
+    if (!conn) return null;
+    // count(DISTINCT call_id): a call whose entry and final queue are the
+    // same name would otherwise count twice via the UNION ALL.
+    const sql =
+      "SELECT COALESCE(json_agg(t ORDER BY t.calls DESC), '[]')::text AS j FROM (" +
+        "SELECT q.queue AS queue, count(DISTINCT q.call_id) AS calls, " +
+          "max(q.call_date)::text AS last_seen FROM (" +
+          "SELECT entry_queue AS queue, call_id, call_date FROM inbound_calls " +
+            "WHERE call_date >= (CURRENT_DATE - ?::int) AND COALESCE(entry_queue,'') <> '' " +
+          "UNION ALL " +
+          "SELECT final_queue AS queue, call_id, call_date FROM inbound_calls " +
+            "WHERE call_date >= (CURRENT_DATE - ?::int) AND COALESCE(final_queue,'') <> ''" +
+        ") q GROUP BY q.queue) t";
+    const stmt = conn.prepareStatement(sql);
+    stmt.setInt(1, days);
+    stmt.setInt(2, days);
+    const rs = stmt.executeQuery();
+    const json = rs.next() ? rs.getString('j') : '[]';
+    rs.close(); stmt.close();
+    const arr = JSON.parse(json || '[]');
+    return Array.isArray(arr) ? arr : [];
+  } catch (e) {
+    Logger.log('scanInboundQueueNames_ failed (best-effort): ' + (e && e.message ? e.message : e));
+    if (typeof recordNeonReadFailure_ === 'function') recordNeonReadFailure_('scanInboundQueueNames_', e);
+    return null;
+  } finally {
+    if (conn) { try { conn.close(); } catch (ce) {} }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Temporal abandon heatmap (day-of-week x half-hour-slot), sourced from
 // inbound_calls. Powers the heatmap panel in BOTH the Inbound report and the
 // QCD report (a "when are callers abandoning / when are we short-staffed"

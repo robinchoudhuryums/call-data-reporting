@@ -11516,7 +11516,50 @@
       }).join('');
     }
     dcRenderDiscovered_(data.discoveredQueues || [], data.unmappedCount || 0);
+    dcRenderInboundDiscovered_(data.inboundDiscovery || null);
     dcRenderEffective_(data.effective || []);
+  }
+
+  // S1(c): the inbound name-space twin of dcRenderDiscovered_. Neon-backed,
+  // so it has an explicit "unavailable" state (distinct from "no rows").
+  function dcRenderInboundDiscovered_(disc) {
+    const tbody = $('dc-inbound-tbody');
+    if (!tbody) return;
+    const badge = $('dc-inbound-badge');
+    const queues = (disc && disc.queues) || [];
+    const unattributed = queues.filter(function (q) { return !q.mappedTo; }).length;
+    if (badge) {
+      if (unattributed > 0) {
+        badge.textContent = unattributed + ' unattributed';
+        badge.style.display = '';
+      } else {
+        badge.style.display = 'none';
+      }
+    }
+    if (!disc || disc.available === false) {
+      tbody.innerHTML = '<tr><td colspan="4" class="al-empty">'
+        + 'Inbound queue discovery is unavailable — Neon could not be reached '
+        + '(or isn’t configured on this project). The rest of this modal is unaffected.'
+        + '</td></tr>';
+      return;
+    }
+    if (!queues.length) {
+      tbody.innerHTML = '<tr><td colspan="4" class="al-empty">'
+        + 'No inbound queue names found in inbound_calls (last 180 days).'
+        + '</td></tr>';
+      return;
+    }
+    tbody.innerHTML = queues.map(function (q) {
+      const mapped = q.mappedTo
+        ? '<span class="al-active al-active-yes">' + escapeHtml(q.mappedTo) + '</span>'
+        : '<span class="al-active al-active-no">unattributed</span>';
+      return '<tr>'
+           +   '<td>' + escapeHtml(q.queue) + '</td>'
+           +   '<td class="num">' + (q.calls || 0) + '</td>'
+           +   '<td>' + escapeHtml(q.lastSeen || '') + '</td>'
+           +   '<td>' + mapped + '</td>'
+           + '</tr>';
+    }).join('');
   }
 
   function dcRenderDiscovered_(queues, unmappedCount) {

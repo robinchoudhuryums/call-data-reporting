@@ -53,6 +53,14 @@ const QCD_ALLDEPT_CACHE_PREFIX = 'qcdAll:v3';
 // label-sheet drift doesn't change behavior.
 const QCD_TOTAL_CALLS_SOURCE = 'Total Calls';
 
+// All-dept report TTL: 6h (CacheService's max) instead of the 30-min
+// REPORT_CACHE_TTL_SECONDS. QCD data lands once per day (morning ingest),
+// so a warmed yesterday-blob can legitimately serve all day; the trade-off
+// is that a rare mid-day force re-import's corrections can lag here up to
+// 6h (vs 30 min elsewhere). Paired with the CacheWarm qcdAll warm
+// (CacheWarm.gs), which only fires once QCD data for yesterday exists.
+const QCD_ALLDEPT_CACHE_TTL_SECONDS = 21600;
+
 /**
  * Returns the list of queue names that belong to `dept`, from the
  * admin-curated DEPT_QCD_QUEUES map in Config.gs. When `dept` is a
@@ -289,7 +297,7 @@ function getQcdAllDepartments(req) {
 
   const json = JSON.stringify(data);
   if (json.length <= 100000) {
-    try { cache.put(cacheKey, json, REPORT_CACHE_TTL_SECONDS); }
+    try { cache.put(cacheKey, json, QCD_ALLDEPT_CACHE_TTL_SECONDS); }
     catch (e) { Logger.log('QCD all-dept cache put failed: %s', e); }
   }
   return data;
@@ -313,6 +321,41 @@ function qcdSubQueueTags_(dept) {
   return { ownSet: ownSet, queueOwner: queueOwner };
 }
 
+// Per-EXECUTION memo of the full QCD Historical Data read (values +
+// displays + spreadsheet TZ). getQcdAllDepartments calls computeQcdReport_
+// once per mapped dept, and Insights' Queue health calls it twice (current
+// + prior window) -- each call used to re-read the WHOLE sheet (2 range
+// RPCs), so the all-dept report cost ~2 reads x N depts. One execution =
+// one snapshot; Apps Script globals reset per request (the
+// DEPT_CONFIG_ROWS_MEMO_ pattern), so this can never serve stale data
+// across requests. Tests that reinstall the fake spreadsheet reset it
+// (h.ctx.QCD_SHEET_DATA_MEMO_ = null), like the Dept Config memo.
+var QCD_SHEET_DATA_MEMO_ = null;
+
+function readQcdSheetData_() {
+  if (QCD_SHEET_DATA_MEMO_) return QCD_SHEET_DATA_MEMO_;
+  const ss = openSpreadsheet_();
+  const sheet = ss.getSheetByName('QCD Historical Data');
+  if (!sheet) {
+    QCD_SHEET_DATA_MEMO_ = { missing: true };
+    return QCD_SHEET_DATA_MEMO_;
+  }
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) {
+    QCD_SHEET_DATA_MEMO_ = { empty: true, ssTZ: ss.getSpreadsheetTimeZone() };
+    return QCD_SHEET_DATA_MEMO_;
+  }
+  // Read all 12 cols. Display values for the H:MM:SS time fields
+  // (longestWait / avgAnswer); raw values for everything else.
+  const range = sheet.getRange(2, 1, lastRow - 1, 12);
+  QCD_SHEET_DATA_MEMO_ = {
+    values:   range.getValues(),
+    displays: range.getDisplayValues(),
+    ssTZ:     ss.getSpreadsheetTimeZone(),
+  };
+  return QCD_SHEET_DATA_MEMO_;
+}
+
 function computeQcdReport_(dept, from, to, includeSubQueues, separateSubQueues) {
   const qOpts = { includeChildren: includeSubQueues !== false };
   // separateSubQueues (QCD report only): children stay visible in the
@@ -322,16 +365,14 @@ function computeQcdReport_(dept, from, to, includeSubQueues, separateSubQueues) 
   const separate = !!separateSubQueues;
   const tags = separate ? qcdSubQueueTags_(dept) : { ownSet: {}, queueOwner: {} };
   const isOwn = function (q) { return !separate || !!tags.ownSet[q]; };
-  const ss = openSpreadsheet_();
-  const sheet = ss.getSheetByName('QCD Historical Data');
-  if (!sheet) {
+  const sheetData = readQcdSheetData_();
+  if (sheetData.missing) {
     throw new Error('Sheet "QCD Historical Data" not found. Verify the pipeline has run at least once for this dept.');
   }
-  const lastRow = sheet.getLastRow();
-  if (lastRow < 2) {
+  if (sheetData.empty) {
     return emptyQcdReport_(dept, from, to, includeSubQueues, separate);
   }
-  const ssTZ = ss.getSpreadsheetTimeZone();
+  const ssTZ = sheetData.ssTZ;
 
   // Dept -> queue names. Empty = this dept isn't mapped in
   // DEPT_QCD_QUEUES; return the empty shape so the modal shows
@@ -345,12 +386,8 @@ function computeQcdReport_(dept, from, to, includeSubQueues, separateSubQueues) 
   const queueSet = {};
   queues.forEach(function (q) { queueSet[q] = true; });
 
-  // Read all 12 cols. Display values for the H:MM:SS time fields
-  // (longestWait / avgAnswer); raw values for everything else.
-  const lastCol = 12;
-  const range = sheet.getRange(2, 1, lastRow - 1, lastCol);
-  const values   = range.getValues();
-  const displays = range.getDisplayValues();
+  const values   = sheetData.values;
+  const displays = sheetData.displays;
 
   // Trend window: same logic as Individual / Performance Reports
   // (12-mo monthly buckets unless range > 366 days or full year).

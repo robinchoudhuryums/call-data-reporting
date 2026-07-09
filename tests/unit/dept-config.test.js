@@ -152,3 +152,54 @@ test('dcWouldCreateParentCycle_ detects a 2-cycle, allows acyclic', function () 
   // Z has no parent anywhere -> X -> Z is acyclic.
   assert.equal(h.call('dcWouldCreateParentCycle_', 'X', 'Z'), false);
 });
+
+// -- S1(c): inbound queue-name discovery ------------------------------------
+
+test('S1(c): classifyInboundQueues_ attributes via the map, unattributed-first then busiest', function () {
+  const scanned = [
+    { queue: 'A_Q_CSR',    calls: 500, last_seen: '2026-07-08' },
+    { queue: 'Backup CSR', calls: 40,  last_seen: '2026-07-01' },
+    { queue: 'A_Q_Ghost',  calls: 90,  last_seen: '2026-07-07' },  // no dept claims it
+    { queue: 'A_Q_Wisp',   calls: 3,   last_seen: '2026-06-20' },  // ditto, quieter
+    { queue: '  ',         calls: 9,   last_seen: '2026-07-01' },  // blank -> dropped
+  ];
+  const out = h.call('classifyInboundQueues_', scanned,
+    { 'A_Q_CSR': 'CSR', 'Backup CSR': 'CSR' });
+  deepEqual(out.map(function (r) { return r.queue; }),
+    ['A_Q_Ghost', 'A_Q_Wisp', 'A_Q_CSR', 'Backup CSR']);
+  assert.equal(out[0].mappedTo, null);
+  assert.equal(out[2].mappedTo, 'CSR');
+  assert.equal(out[2].calls, 500);
+  assert.equal(out[2].lastSeen, '2026-07-08');
+});
+
+test('S1(c): discoverInboundQueues_ -> available:false when the Neon scan is unavailable', function () {
+  // No scanInboundQueueNames_ in this harness (InboundReport.gs not loaded)
+  // -> the typeof guard treats it as Neon-unavailable.
+  const out = h.call('discoverInboundQueues_', ['CSR']);
+  assert.equal(out.available, false);
+  deepEqual(out.queues, []);
+});
+
+test('S1(c): discoverInboundQueues_ attributes via the EFFECTIVE inbound set per dept', function () {
+  h.ctx.scanInboundQueueNames_ = function (days) {
+    assert.equal(days, 180);   // the shared Dept Config lookback
+    return [{ queue: 'RAW_ALIAS', calls: 10, last_seen: '2026-07-08' },
+            { queue: 'A_Q_Other', calls: 20, last_seen: '2026-07-08' }];
+  };
+  h.ctx.inboundQueuesForDept_ = function (dept) {
+    return dept === 'CSR' ? ['A_Q_CSR', 'RAW_ALIAS'] : [];
+  };
+  try {
+    const out = h.call('discoverInboundQueues_', ['CSR', 'Sales']);
+    assert.equal(out.available, true);
+    const byName = {};
+    out.queues.forEach(function (q) { byName[q.queue] = q; });
+    assert.equal(byName['RAW_ALIAS'].mappedTo, 'CSR');
+    assert.equal(byName['A_Q_Other'].mappedTo, null);
+    assert.equal(out.queues[0].queue, 'A_Q_Other', 'unattributed sorts first');
+  } finally {
+    delete h.ctx.scanInboundQueueNames_;
+    delete h.ctx.inboundQueuesForDept_;
+  }
+});

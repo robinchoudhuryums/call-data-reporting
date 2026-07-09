@@ -46,6 +46,7 @@ function install(roster, deptConfigRows, qcdRows) {
     },
   });
   h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
+  h.ctx.QCD_SHEET_DATA_MEMO_ = null;   // per-execution QCD sheet memo
   h.state.cache.clear();
 }
 

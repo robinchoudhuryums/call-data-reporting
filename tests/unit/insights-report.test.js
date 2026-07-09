@@ -35,6 +35,7 @@ function install(rows) {
     sheets: { 'DO NOT EDIT!': ROSTER, 'DQE Historical Data': dqeSheet(rows) },
   });
   h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
+  h.ctx.QCD_SHEET_DATA_MEMO_ = null;   // per-execution QCD sheet memo
   h.state.cache.clear();
 }
 
@@ -342,6 +343,7 @@ function installWithQcd(dqeRows, deptConfigRows, qcdRows) {
   }
   h.state.spreadsheet = makeFakeSpreadsheet({ timeZone: 'America/Chicago', sheets: sheets });
   h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
+  h.ctx.QCD_SHEET_DATA_MEMO_ = null;   // per-execution QCD sheet memo
   h.state.cache.clear();
 }
 

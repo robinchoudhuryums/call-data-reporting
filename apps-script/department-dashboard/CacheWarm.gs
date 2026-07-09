@@ -89,6 +89,34 @@ function warmReportCaches_() {
         + (e && e.message ? e.message : e));
     }
   }
+
+  // All-departments Daily Queue Report (owner request): the Overview-launched
+  // modal PRE-LOADS yesterday on open, so warming that exact (yesterday,
+  // yesterday) key makes the first open of the day an instant cache hit --
+  // and the 6h qcdAll TTL (QCD_ALLDEPT_CACHE_TTL_SECONDS) keeps it hot for
+  // the working morning. GUARDED on QCD freshness: if the morning ingest
+  // hasn't landed yesterday's QCD rows yet, warming would pin an
+  // empty/partial report for the long TTL, so we skip instead (the first
+  // organic request after ingest computes fresh and caches correctly).
+  try {
+    var yesterday = Utilities.formatDate(
+      new Date(Date.now() - 86400000), TZ, 'yyyy-MM-dd');
+    var dates = null;
+    try { dates = getLatestDataDates(); } catch (e2) { dates = null; }
+    var qcdLatest = dates && dates.qcd;
+    if (qcdLatest && qcdLatest >= yesterday) {
+      getQcdAllDepartments({ from: yesterday, to: yesterday });
+      warmed++;
+    } else {
+      Logger.log('warmReportCaches_: skipping qcdAll warm (QCD latest '
+        + (qcdLatest || 'unknown') + ' < ' + yesterday + ')');
+    }
+  } catch (e) {
+    failed++;
+    Logger.log('warmReportCaches_: qcdAll warm failed: '
+      + (e && e.message ? e.message : e));
+  }
+
   var ms = Date.now() - start;
   Logger.log('warmReportCaches_: warmed=' + warmed + ' failed=' + failed
     + ' for ' + latest + ' in ' + ms + 'ms');

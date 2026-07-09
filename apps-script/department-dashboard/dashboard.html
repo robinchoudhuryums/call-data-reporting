@@ -2470,6 +2470,31 @@
           </table>
         </div>
 
+        <!-- S1(c): the inbound name-space discovery. inbound_calls stores the
+             phone system's RAW queue names (a different name space from the
+             QCD-canonical names above); a raw name attributed to no dept
+             falls out of every dept's Inbound report. Neon-backed. -->
+        <div class="al-section">
+          <div class="al-section-title">Discovered inbound queues <span id="dc-inbound-badge" class="al-active al-active-no" style="display:none;"></span></div>
+          <p class="al-hint">
+            Raw <code>entry_queue</code> / <code>final_queue</code> names seen in Neon
+            <code>inbound_calls</code> (last 180 days). These are the phone system's
+            own names &mdash; a <strong>different name space</strong> from the QCD queue names
+            above. An <strong>unattributed</strong> name belongs to no dept's Inbound report:
+            fix it by adding the raw name to the owning dept's
+            <em>Inbound Queue Aliases</em> below (or its QCD Queues if the names match).
+          </p>
+          <table class="al-config-table">
+            <thead><tr>
+              <th>Raw queue name</th>
+              <th class="num">Calls</th>
+              <th>Last seen</th>
+              <th>Attributed to</th>
+            </tr></thead>
+            <tbody id="dc-inbound-tbody"></tbody>
+          </table>
+        </div>
+
         <!-- Editor: one row per dept showing the effective config; an
              inline edit form populates from the selected dept. -->
         <div class="al-section">
