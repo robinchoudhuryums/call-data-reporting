@@ -188,7 +188,7 @@ you'll need to either also fix the main table (and accept managers
 seeing different numbers) or accept that the two surfaces serve
 slightly different reading semantics. Document any change in
 `known-issues.md` and bump every cache prefix
-(`summary:`, `individual:`, `performance:`).
+(`summary:`, `individual:`, `insights:`).
 
 ### Totals row
 
@@ -456,7 +456,7 @@ mirrors it; if the two ever diverge, INV-30 wins.
 | `Data.gs` (multi-source latest dates for freshness pill) | `latestDates:vN:` | `v1` |
 | `IndividualReport.gs` | `individual:vN:` | `v11` |
 | `IndividualReport.gs` (active-in-range subset, shared with all three pickers) | `individual_active:vN:` | `v2` |
-| `PerformanceReport.gs` | `performance:vN:` | `v5` |
+| `PerformanceReport.gs` | `performance:vN:` | RETIRED (Performance Report deleted; Insights is the replacement) |
 | `CompareRangesReport.gs` | `compareRanges:vN:` | `v6` |
 | `MissedCallsReport.gs` | `missed:vN:` | `v13` |
 | `CompanyOverview.gs` | `companyOverview:vN` | `v18` |

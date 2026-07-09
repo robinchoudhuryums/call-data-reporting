@@ -241,7 +241,7 @@ canonical and reflects current code.
 | Main per-agent table | `Data.gs` | `getDepartmentSummary` | `summary:v11:` | no |
 | Missed Calls Report | `MissedCallsReport.gs` | `getMissedCallsReport` | `missed:v13:` | no |
 | Individual / Peer Comparison | `IndividualReport.gs` | `getIndividualReportInit`, `getIndividualReport`, `sendIndividualReportEmail` | `individual:v11:`, `individual_active:v2:` | no |
-| Performance Report (current vs prior) | `PerformanceReport.gs` | `getPerformanceReportInit` (delegates to Individual's init), `getPerformanceReport`, `sendPerformanceReportEmail` | `performance:v5:` | no |
+| Performance Report | RETIRED (PR->Insights consolidation; `PerformanceReport.gs` deleted -- `deltaBlock_` moved to `Util.gs`; legacy `#/report/performance` deep links land on Insights) | — | — | — |
 | Compare Ranges (two arbitrary ranges) | `CompareRangesReport.gs` | `getCompareRangesInit`, `getCompareRanges`, `sendCompareRangesEmail` | `compareRanges:v6:` | no |
 | Company Overview | `CompanyOverview.gs` | `getCompanyOverview` | `companyOverview:v18` | partial (admin-only `companyAggregate`, `pipelineFreshness`, `orphanNag`, `unmappedQcd` fields) |
 | QCD (retired as a standalone report -- QCD->Insights consolidation; queue data lives in Insights Queue health) | `QCDReport.gs` | `getQcdAllDepartments` (all-departments daily report, open to all signed-in users; `computeQcdReport_` serves Insights + the snapshots) | `qcdAll:v3:` | no (all-dept report is company-wide read-only) |

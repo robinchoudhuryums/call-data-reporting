@@ -1207,11 +1207,11 @@ function avgNonzero_(arr, key) {
  * dodge DST edges, then re-formatted as `YYYY-MM-DD` for the
  * caller's date-string comparisons.
  *
- * Consumers: computeSummary_ (E5 per-row delta chips),
- * computePerformanceReport_ (auto prior), and computeInsights_
- * (auto prior). Any future "compare against the preceding window"
+ * Consumers: computeSummary_ (E5 per-row delta chips) and
+ * computeInsights_ (auto prior; the retired Performance Report was the
+ * third consumer). Any future "compare against the preceding window"
  * feature should call this rather than re-deriving the math --
- * the three call sites used to carry three near-identical copies.
+ * the call sites used to carry near-identical copies.
  */
 function computePriorWindow_(from, to) {
   const fParts = from.split('-');

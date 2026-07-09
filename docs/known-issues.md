@@ -380,7 +380,7 @@ same time as the code change.
 | `Data.gs` (multi-source latest dates for freshness pill) | `latestDates:vN:` | `v1` |
 | `IndividualReport.gs` | `individual:vN:` | `v11` |
 | `IndividualReport.gs` (active-in-range subset shared by all three report pickers) | `individual_active:vN:` | `v2` |
-| `PerformanceReport.gs` | `performance:vN:` | `v5` |
+| `PerformanceReport.gs` | `performance:vN:` | RETIRED (Performance Report deleted; Insights is the replacement) |
 | `CompareRangesReport.gs` | `compareRanges:vN:` | `v6` |
 | `MissedCallsReport.gs` | `missed:vN:` | `v13` |
 | `CompanyOverview.gs` | `companyOverview:vN` | `v18` |
@@ -795,7 +795,7 @@ behavior byte-identical to pre-OrphanFix.
 **Cache invalidation.** `applyOrphanRename` removes the single
 fixed-key Overview cache entry (via the `COMPANY_OVERVIEW_CACHE_KEY`
 constant -- currently `companyOverview:v18`) on success. Per-(dept,
-range) caches (`summary:v11`, `individual:v11`, `performance:v5`,
+range) caches (`summary:v11`, `individual:v11`,
 etc.) are left to TTL out within 30 minutes
 (`REPORT_CACHE_TTL_SECONDS`). The Orphan Fix modal tells the user
 the Overview updates immediately and other views may lag up to the

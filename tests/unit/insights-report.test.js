@@ -7,12 +7,13 @@ const { loadGas } = require('../harness/loadGas');
 const { makeFakeSpreadsheet } = require('../harness/fakeSheet');
 const { dqeRow, dqeSheet, rosterGrid } = require('../harness/fixtures');
 
-// InsightsReport reuses deltaBlock_ (PerformanceReport) + buildTeamInsights_
-// (Util) + the Data.gs aggregation primitives -- all loaded into the shared
-// vm global scope, mirroring Apps Script's flat scope.
+// InsightsReport reuses deltaBlock_ (Util.gs -- moved there when the
+// Performance Report was retired) + buildTeamInsights_ (Util) + the Data.gs
+// aggregation primitives -- all loaded into the shared vm global scope,
+// mirroring Apps Script's flat scope.
 const h = loadGas({
   files: ['Config.gs', 'Util.gs', 'Auth.gs', 'CompanyOverview.gs',
-          'QCDReport.gs', 'DeptConfig.gs', 'Data.gs', 'PerformanceReport.gs',
+          'QCDReport.gs', 'DeptConfig.gs', 'Data.gs',
           'InsightsReport.gs',
           // Digest.gs provides renderInsightsEmailBody_ (+ digestTakeaway_/
           // digestDeltaHtml_) that sendInsightsReportEmail reuses for the
@@ -140,14 +141,15 @@ test('Insights F12: meta.priorOverlap flags a custom prior window that overlaps 
   assert.equal(auto.meta.priorOverlap, false);
 });
 
-test('Insights parity: teamStats + trendData match the Performance Report on identical inputs', function () {
-  // THE consolidation gate: Insights bills itself as PR's department
-  // rollup + per-agent deltas. Both load into this vm and share
-  // deltaBlock_ / the INV-28 prior window / INV-25 weighted ATT /
-  // INV-53 roster gating -- so on the same fixture, the same request
-  // must produce identical team tiles, prior window, and 12-mo trend.
-  // If this ever breaks, the two reports have silently diverged and
-  // PR cannot be retired in favor of Insights.
+test('Insights pins the retired Performance Report semantics (consolidation freeze)', function () {
+  // This WAS the live parity gate (Insights vs getPerformanceReport on the
+  // same fixture); PR was retired once it held, so the inherited semantics
+  // are frozen here as fixture-derived literals instead: the INV-28
+  // auto-adjacent prior window, INV-25 weighted ATT (sum(att*answered) /
+  // sum(answered)), the INV-29 trend window, deltaBlock_'s field shape, and
+  // the INV-53 roster gate (Cara is a Beta floater -- never in Alpha's
+  // rollup). If any of these move, Insights has silently diverged from the
+  // semantics managers were promised when PR was folded into it.
   install([
     dqeRow({ date: '2026-03-10', agent: 'Anna', ext: '501', rung: 10, missed: 1, answered: 8, att: '0:03:00', ttt: '0:24:00' }),
     dqeRow({ date: '2026-03-11', agent: 'Ben',  ext: '501', rung: 6,  missed: 2, answered: 4, att: '0:02:00', ttt: '0:08:00' }),
@@ -156,30 +158,45 @@ test('Insights parity: teamStats + trendData match the Performance Report on ide
     dqeRow({ date: '2026-03-10', agent: 'Cara', ext: '501', rung: 50, missed: 9, answered: 30, att: '0:09:00' }), // Beta floater
   ]);
   const req = { department: 'Alpha', from: '2026-03-09', to: '2026-03-15', agents: ['Anna', 'Ben', 'Cara'] };
-  const pr  = h.call('getPerformanceReport', req);
-  h.state.cache.clear();   // separate prefixes anyway; cleared for hygiene
   const ins = h.call('getInsightsReport', req);
 
-  // Same auto-adjacent prior window (INV-28).
-  assert.equal(ins.meta.priorFrom, pr.meta.priorFrom);
-  assert.equal(ins.meta.priorTo,   pr.meta.priorTo);
+  // INV-28: auto-adjacent same-length prior window.
+  assert.equal(ins.meta.priorFrom, '2026-03-02');
+  assert.equal(ins.meta.priorTo,   '2026-03-08');
 
-  // Team tiles identical across all six metrics + every delta field.
-  ['rung', 'missed', 'answered', 'pct', 'ttt', 'att'].forEach(function (k) {
-    ['val', 'prev', 'delta', 'deltaPct', 'formatted', 'type'].forEach(function (f) {
-      deepEqual(ins.teamStats[k][f], pr.teamStats[k][f],
-        'teamStats.' + k + '.' + f + ' diverged between Insights and PR');
-    });
-  });
+  // Roster-gated team rollup (Anna + Ben only; Cara's 50/9/30 must not leak).
+  assert.equal(ins.teamStats.rung.val, 16);
+  assert.equal(ins.teamStats.rung.prev, 4);
+  assert.equal(ins.teamStats.missed.val, 3);
+  assert.equal(ins.teamStats.answered.val, 12);
+  assert.equal(ins.teamStats.answered.prev, 3);
 
-  // Same trend window + identical monthly rollup series.
-  assert.equal(ins.meta.trendStart, pr.meta.trendStart);
-  assert.equal(ins.meta.trendEnd,   pr.meta.trendEnd);
-  deepEqual(ins.trendData.labels, pr.trendData.labels);
-  deepEqual(ins.trendData.series, pr.trendData.series);
+  // deltaBlock_ shape + valence math (volume = relative %, pct = points).
+  assert.equal(ins.teamStats.rung.deltaPct, 300);        // (16-4)/4 * 100
+  assert.equal(ins.teamStats.pct.type, 'pctPoints');
+  assert.equal(ins.teamStats.pct.formatted, '75.0%');    // 12/16
+  assert.equal(ins.teamStats.pct.deltaPct, 0);           // prior is 3/4 = 75% too
 
-  // Same prior label rendering.
-  assert.equal(ins.priorDateLabel, pr.priorDateLabel);
+  // INV-25 weighted ATT: (180*8 + 120*4) / 12 = 160s; prior 240s. TTT sums.
+  assert.equal(ins.teamStats.att.val, 160);
+  assert.equal(ins.teamStats.att.formatted, '0:02:40');
+  assert.equal(ins.teamStats.att.prev, 240);
+  assert.equal(ins.teamStats.ttt.val, 1920);
+  assert.equal(ins.teamStats.ttt.formatted, '0:32:00');
+
+  // INV-29 trend window: first-of-month(end - 12mo) .. end -> 13 monthly buckets,
+  // and the trend-only November row lands in its bucket (roster-scoped).
+  assert.equal(ins.meta.trendStart, '2025-03-01');
+  assert.equal(ins.meta.trendEnd,   '2026-03-15');
+  assert.equal(ins.trendData.labels.length, 13);
+  // Bucket order is Mar'25..Mar'26, so Nov'25 is index 8. (Assert by index,
+  // not label text: the harness shim's Utilities.formatDate applies the
+  // America/Chicago offset to a UTC-constructed Date, shifting the label
+  // strings one month back -- a test-env artifact, not production behavior.)
+  assert.equal(ins.trendData.series[8].answered, 15);
+  // The current MONTH bucket (Mar'26, index 12) rolls up the whole month:
+  // current window 12 + the in-month prior-window row's 3.
+  assert.equal(ins.trendData.series[12].answered, 15);
 });
 
 test('Insights: explicit priorFrom/priorTo overrides the auto-adjacent window', function () {

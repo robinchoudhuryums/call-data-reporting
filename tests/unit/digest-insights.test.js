@@ -11,7 +11,7 @@ const { dqeRow, dqeSheet, rosterGrid } = require('../harness/fixtures');
 // Insights/Performance files in the loader -- Apps Script flat scope).
 const h = loadGas({
   files: ['Config.gs', 'Util.gs', 'Auth.gs', 'CompanyOverview.gs',
-          'QCDReport.gs', 'DeptConfig.gs', 'Data.gs', 'PerformanceReport.gs',
+          'QCDReport.gs', 'DeptConfig.gs', 'Data.gs',
           'InsightsReport.gs', 'Digest.gs'],
 });
 

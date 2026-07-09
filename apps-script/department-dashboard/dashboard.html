@@ -68,16 +68,13 @@
         <div class="header-menu">
           <button class="header-menu-btn" id="reports-menu-btn" type="button"
                   aria-haspopup="true" aria-expanded="false" aria-controls="reports-menu-list"
-                  title="Reports: Individual, Performance, Compare, Insights.">
+                  title="Reports: Individual, Compare, Insights.">
             Reports <span class="header-menu-caret" aria-hidden="true">&#9662;</span>
           </button>
           <div class="header-menu-list" id="reports-menu-list" role="menu" style="display:none;">
             <button class="header-menu-item" id="individual-report-btn" type="button"
                     data-route="/report/individual" role="menuitem"
                     title="The per-agent deep dive: KPIs vs team avg, per-agent 12-month trends, and peer-comparison mode (2+ agents). Also the drill-down target when you click an agent in Insights.">Individual</button>
-            <button class="header-menu-item" id="performance-report-btn" type="button"
-                    data-route="/report/performance" role="menuitem"
-                    title="Department-level current-vs-prior-period deltas, share-of-answered pie, and 12-month team trend.">Performance <span class="tab-review-star" title="Pending consolidation review — kept until parity with the consolidated views is confirmed.">*</span></button>
             <button class="header-menu-item" id="compare-ranges-btn" type="button"
                     data-route="/report/compare" role="menuitem"
                     title="Side-by-side comparison of two arbitrary date ranges. Useful for year-over-year or pre/post-change analyses.">Compare <span class="tab-review-star" title="Pending consolidation review — kept until parity with the consolidated views is confirmed.">*</span></button>
@@ -428,7 +425,6 @@
           <details class="help-cat">
             <summary>Reports</summary>
             <button type="button" class="help-link" data-topic="individual">Individual</button>
-            <button type="button" class="help-link" data-topic="performance">Performance</button>
             <button type="button" class="help-link" data-topic="insights">Insights</button>
             <button type="button" class="help-link" data-topic="compare">Compare Ranges</button>
             <button type="button" class="help-link" data-topic="missed">Missed Calls</button>
@@ -533,13 +529,9 @@
             <h3>Individual Report</h3>
             <p>Per-agent KPI tiles (with a &ldquo;Team&rdquo; average marker, share-of-dept, and a sparkline) plus three trend chart tabs (Volume / Efficiency / Duration) and a 12-month window. Pick <strong>2+ agents</strong> for a peer-comparison view with a shared legend &mdash; click a legend chip to isolate one agent across all charts. The <strong>ALL</strong> button stacks all three charts; click a tab to return to one. Optionally compare each agent against their own prior window (None / year-ago / preceding period / custom).</p>
           </section>
-          <section class="help-topic" id="help-topic-performance" hidden>
-            <h3>Performance Report</h3>
-            <p>Department-level KPIs with deltas vs the <strong>immediately-preceding period of the same length</strong> (a 31-day window compares against the prior 31 days, not &ldquo;last calendar month&rdquo;), a share-of-answered pie, and a 12-month team trend. The comparison dates are shown in the form hint and the results header.</p>
-          </section>
           <section class="help-topic" id="help-topic-insights" hidden>
             <h3>Insights</h3>
-            <p>A team rollup + per-agent cards + 12-month trend, with comparison modes (preceding period / same window a year ago / custom). On each <strong>agent card</strong>:</p>
+            <p>A team rollup + per-agent cards + 12-month trend, with comparison modes (preceding period / same window a year ago / custom). It absorbed the retired <strong>Performance Report</strong>: the KPI tiles compare against the immediately-preceding same-length window, the share-of-answered donut is below the trend chart, and the per-agent Chart view&rsquo;s <strong>Absolute</strong> toggle shows each agent&rsquo;s stacked Answered&thinsp;+&thinsp;Missed volumes with % answered dots. On each <strong>agent card</strong>:</p>
             <ul>
               <li>The colored <strong>left rail</strong> and the <strong>&#9650; Improving / &#9660; Slipping / &#8776; Mixed</strong> pill show that agent&rsquo;s <em>trend</em> vs the prior period (across rung, missed, answered, % answered). Hover the card and the rail glows.</li>
               <li>The <strong>above team / below team</strong> chip shows their <em>standing</em> &mdash; answered calls vs the team average <em>this</em> period (the marker on the Answered bar). So a card can be &ldquo;Improving&rdquo; yet &ldquo;below team&rdquo;: better than last period, still under the average.</li>
@@ -614,7 +606,7 @@
           </section>
           <section class="help-topic" id="help-topic-attlens" hidden>
             <h3>Why ATT can differ</h3>
-            <p>The <strong>My Department</strong> table shows ATT as the simple mean of each day&rsquo;s stored value. The <strong>reports</strong> (Individual / Performance / Compare / Insights) use a per-call <em>weighted</em> average (total talk &divide; calls answered), so days with no answered calls don&rsquo;t drag it down. Same range can therefore show slightly different ATT in the two places &mdash; neither is wrong; they answer different questions.</p>
+            <p>The <strong>My Department</strong> table shows ATT as the simple mean of each day&rsquo;s stored value. The <strong>reports</strong> (Individual / Compare / Insights) use a per-call <em>weighted</em> average (total talk &divide; calls answered), so days with no answered calls don&rsquo;t drag it down. Same range can therefore show slightly different ATT in the two places &mdash; neither is wrong; they answer different questions.</p>
           </section>
           <section class="help-topic" id="help-topic-alerts" hidden>
             <h3>Low answer-rate alerts <span class="help-admin-tag">admin</span></h3>
@@ -896,162 +888,6 @@
           <div class="ir-chart-wrap" id="ir-wrap-dur" data-panel="dur" style="display:none;">
             <div class="ir-chart-header">Duration (ATT)</div>
             <div class="ir-chart-canvas-wrap"><canvas id="ir-dur-chart"></canvas></div>
-          </div>
-        </div>
-      </div>
-      </div>
-    </div>
-  </div>
-
-  <div id="performance-modal" class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="performance-modal-title" style="display:none;">
-    <div class="modal-backdrop" data-close></div>
-    <div class="modal-panel modal-panel-wide" role="document">
-      <div class="modal-panel-header">
-        <button class="modal-open-tab-btn" type="button" data-open-tab-route="/report/performance"
-                aria-label="Open in new tab" title="Open this report in a new browser tab (for side-by-side viewing)">&#8599;</button>
-        <button class="modal-close" id="performance-close" type="button" aria-label="Close">&times;</button>
-        <div class="modal-kicker">Report</div>
-        <h2 id="performance-modal-title">Performance Report</h2>
-      </div>
-      <div class="modal-panel-body">
-      <div id="performance-form" class="ir-form">
-        <div class="ir-section-title">1. Date Range</div>
-        <div class="ir-row">
-          <div class="ir-col">
-            <label for="pr-preset">Quick select</label>
-            <select id="pr-preset">
-              <option value="custom">Custom range</option>
-              <option value="thisMonth">This month</option>
-              <option value="lastMonth">Last month</option>
-              <option value="last30">Last 30 days</option>
-              <option value="last3Months">Last 3 months</option>
-              <option value="last12Months">Last 12 months</option>
-              <option value="lastYear">Last year</option>
-            </select>
-          </div>
-          <div class="ir-col">
-            <label for="pr-from">Start date</label>
-            <input type="date" id="pr-from">
-          </div>
-          <div class="ir-col">
-            <label for="pr-to">End date</label>
-            <input type="date" id="pr-to">
-          </div>
-        </div>
-
-        <div class="ir-row">
-          <div class="ir-col">
-            <label for="pr-compare-mode">Compare with</label>
-            <select id="pr-compare-mode">
-              <option value="auto">Immediately-preceding period</option>
-              <option value="custom">Custom prior range&hellip;</option>
-            </select>
-          </div>
-          <div class="ir-col" id="pr-prior-from-wrap" style="display:none;">
-            <label for="pr-prior-from">Prior start</label>
-            <input type="date" id="pr-prior-from">
-          </div>
-          <div class="ir-col" id="pr-prior-to-wrap" style="display:none;">
-            <label for="pr-prior-to">Prior end</label>
-            <input type="date" id="pr-prior-to">
-          </div>
-        </div>
-        <div class="pr-prior-hint" id="pr-prior-hint"></div>
-
-        <div class="ir-section-title">2. Agents</div>
-        <div class="ir-hint">Select the agents whose performance you want to roll up into department-level deltas.</div>
-        <div class="ir-search-row">
-          <input type="search" id="pr-agent-search" placeholder="Search agents by name..." autocomplete="off">
-        </div>
-        <div id="pr-agent-loader" class="ir-loader">
-          <div class="ir-skeleton-grid" aria-hidden="true">
-            <div class="ir-skeleton-row"></div><div class="ir-skeleton-row"></div>
-            <div class="ir-skeleton-row"></div><div class="ir-skeleton-row"></div>
-            <div class="ir-skeleton-row"></div><div class="ir-skeleton-row"></div>
-            <div class="ir-skeleton-row"></div><div class="ir-skeleton-row"></div>
-          </div>
-          <div class="ir-skeleton-label">Loading agent roster&hellip;</div>
-        </div>
-        <div id="pr-agent-list" class="ir-agent-list" style="display:none;"></div>
-        <div class="ir-agent-actions">
-          <a href="#" id="pr-select-all">Select all active</a>
-          <span class="sep">|</span>
-          <a href="#" id="pr-select-none">Select none</a>
-        </div>
-
-        <div id="pr-form-error" class="status status-error" style="display:none;"></div>
-        <button class="btn" id="pr-generate-btn" type="button" disabled>Generate report</button>
-      </div>
-
-      <div id="performance-results" class="ir-results" style="display:none;">
-        <div class="ir-results-header">
-          <div class="ir-results-header-left">
-            <div class="ir-results-title-line">
-              <span class="ir-results-title">Performance Report</span>
-            </div>
-            <div class="pr-date-pair">
-              <div class="pr-date-block pr-date-current">
-                <div class="pr-date-label">Current</div>
-                <div class="pr-date-value" id="pr-current-date">&nbsp;</div>
-              </div>
-              <div class="pr-date-divider" aria-hidden="true">&rarr;</div>
-              <div class="pr-date-block pr-date-prior">
-                <div class="pr-date-label" id="pr-prior-label">vs Prior</div>
-                <div class="pr-date-value" id="pr-prior-date">&nbsp;</div>
-              </div>
-            </div>
-          </div>
-          <div class="ir-action-buttons">
-            <button class="btn btn-secondary" id="pr-back-btn" type="button">&laquo; Back</button>
-            <div class="ir-export-wrap">
-              <button class="btn btn-secondary" id="pr-export-btn" type="button" aria-haspopup="menu" aria-expanded="false">
-                Export <span class="ir-export-caret">&#9662;</span>
-              </button>
-              <div class="ir-export-menu" id="pr-export-menu" role="menu" style="display:none;">
-                <button type="button" role="menuitem" data-action="copy">Copy image</button>
-                <button type="button" role="menuitem" data-action="email">Email image</button>
-                <button type="button" role="menuitem" data-action="print">Print</button>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div id="pr-results-status" class="status" style="display:none;"></div>
-
-        <div id="pr-subset-hint" class="pr-subset-hint" style="display:none;"></div>
-        <div id="pr-team-insights"></div>
-
-        <div id="pr-kpi-row" class="pr-kpi-row"></div>
-        <div id="pr-agent-table-wrap" class="pr-agent-table-wrap"></div>
-
-        <div class="ir-chart-tabs" id="pr-chart-tabs" role="tablist">
-          <button type="button" class="ir-tab active" data-tab="share" role="tab" aria-selected="true">Share of Answered</button>
-          <button type="button" class="ir-tab" data-tab="volume" role="tab" aria-selected="false">Volume &amp; Efficiency</button>
-          <button type="button" class="ir-tab" data-tab="trend" role="tab" aria-selected="false">12-Month Trend</button>
-          <div class="ir-toggle-box" id="pr-datalabels-box">
-            <label class="ir-toggle-label">
-              <input type="checkbox" id="pr-show-datalabels" checked> Show data labels
-            </label>
-          </div>
-        </div>
-
-        <div id="pr-charts-container" class="ir-chart-area">
-          <div class="ir-chart-wrap" data-panel="share">
-            <div class="ir-chart-header">Share of Answered Calls</div>
-            <div class="ir-chart-canvas-wrap"><canvas id="pr-share-chart"></canvas></div>
-          </div>
-          <div class="ir-chart-wrap" data-panel="volume" style="display:none;">
-            <div class="ir-chart-header">Volume &amp; Efficiency</div>
-            <div class="ir-chart-canvas-wrap"><canvas id="pr-volume-chart"></canvas></div>
-          </div>
-          <div class="ir-chart-wrap" data-panel="trend" style="display:none;">
-            <div class="ir-chart-header">12-Month Team Trend</div>
-            <div class="pr-trend-subtabs" id="pr-trend-subtabs" role="tablist">
-              <button type="button" class="pr-trend-subtab active" data-metric="answered" role="tab" aria-selected="true">Answered</button>
-              <button type="button" class="pr-trend-subtab" data-metric="pct" role="tab" aria-selected="false">% Answered</button>
-              <button type="button" class="pr-trend-subtab" data-metric="att" role="tab" aria-selected="false">Avg Talk Time</button>
-            </div>
-            <div class="ir-chart-canvas-wrap"><canvas id="pr-trend-chart"></canvas></div>
           </div>
         </div>
       </div>
@@ -1577,6 +1413,15 @@
           <div class="segmented" id="ins-cards-view-toggle" role="radiogroup" aria-label="Agent comparison view">
             <button type="button" class="seg-btn active" data-view="cards" role="radio" aria-checked="true">Cards</button>
             <button type="button" class="seg-btn" data-view="chart" role="radio" aria-checked="false">Chart</button>
+          </div>
+          <!-- Chart-view sub-toggle: Gap vs team (diverging bars, one metric)
+               vs Absolute (PR's stacked Answered+Missed volumes + % dots --
+               the Performance Report's Volume & Efficiency view, absorbed
+               here for the PR retirement). Metric selector is gap-only. -->
+          <div class="segmented" id="ins-cards-chart-mode" role="radiogroup"
+               aria-label="Chart comparison basis" style="display:none;">
+            <button type="button" class="seg-btn active" data-mode="gap" role="radio" aria-checked="true">Gap vs team</button>
+            <button type="button" class="seg-btn" data-mode="abs" role="radio" aria-checked="false">Absolute</button>
           </div>
           <label class="ir-sort-control" id="ins-cards-chart-metric-wrap" style="display:none;">
             <span class="ir-sort-label">Metric:</span>

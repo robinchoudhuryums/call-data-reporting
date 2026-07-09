@@ -540,3 +540,40 @@ function classifyAbandonedCell_(raw) {
   if (/^\d+$/.test(s) && s.length > 15) return { lost: true, value: '' };
   return { lost: false, value: s };
 }
+
+/**
+ * Builds the standard delta block shared across every team-stat
+ * tile: { val, prev, formatted, delta, deltaPct, type }.
+ *
+ *   type='volume'    -> deltaPct is relative percent change of the
+ *                        underlying value (0 -> nonzero = +100).
+ *   type='pctPoints' -> deltaPct is the ABSOLUTE point difference
+ *                        of two already-percent values; semantically
+ *                        "deltaPct" is overloaded here, but the UI
+ *                        renders the same +X.X label form.
+ *
+ * MOVED here from PerformanceReport.gs when the Performance Report was
+ * retired (PR->Insights consolidation) -- InsightsReport.gs consumes it
+ * for teamStats/agent metrics, and CompareRangesReport.gs mirrors its
+ * shape.
+ */
+function deltaBlock_(curr, prev, type, formatted) {
+  let delta, deltaPct;
+  if (type === 'pctPoints') {
+    delta = curr - prev;
+    deltaPct = delta; // already in pp
+  } else {
+    delta = curr - prev;
+    if (prev === 0 && curr === 0) deltaPct = 0;
+    else if (prev === 0) deltaPct = 100;
+    else deltaPct = (delta / prev) * 100;
+  }
+  return {
+    val: curr,
+    prev: prev,
+    formatted: formatted,
+    delta: delta,
+    deltaPct: deltaPct,
+    type: type,
+  };
+}

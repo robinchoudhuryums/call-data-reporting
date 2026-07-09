@@ -36,7 +36,9 @@ const SPECS = [
   ['latestDates',       'Data.gs',                /'latestDates:v(\d+):'/],
   ['individual',        'IndividualReport.gs',    /'individual:v(\d+)'/],
   ['individual_active', 'Util.gs',                /'individual_active:v(\d+):'/],
-  ['performance',       'PerformanceReport.gs',   /'performance:v(\d+)'/],
+  // 'performance' retired with the Performance Report (PR->Insights
+  // consolidation) -- PerformanceReport.gs was deleted; Insights carries
+  // the team rollup + Absolute volume chart + share donut.
   ['compareRanges',     'CompareRangesReport.gs', /'compareRanges:v(\d+)'/],
   ['missed',            'MissedCallsReport.gs',   /'missed:v(\d+):'/],
   ['companyOverview',   'CompanyOverview.gs',     /'companyOverview:v(\d+)'/],

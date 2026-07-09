@@ -37,7 +37,8 @@
  *          teamInsights, trendData }
  *   sendInsightsReportEmail({ imageBase64, dateLabel }) -> { to }
  *
- * Reuse (Apps Script flat global scope): deltaBlock_ (Performance),
+ * Reuse (Apps Script flat global scope): deltaBlock_ (Util.gs; moved
+ * there from the retired Performance Report),
  * buildTeamInsights_ + formatSecondsHms_ (Util), getRosterForDepartment_
  * / getDeptQueueExts_ / parseExtensions_ / rowDateIso_ / parseHmsDisplay_
  * / buildDeptsByAgent_ / hashAgents_ (Data), and the F1 read helpers

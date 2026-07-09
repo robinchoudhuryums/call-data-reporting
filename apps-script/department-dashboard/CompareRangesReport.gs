@@ -547,7 +547,8 @@ function crDelta_(p2Val, p1Val, isPctType) {
 
 /**
  * Builds the team-level KPI tile data: both period values + delta.
- * Mirrors the shape used by PerformanceReport.gs's deltaBlock_ so
+ * Mirrors the shape used by Util.gs's deltaBlock_ (moved there from the
+ * retired Performance Report) so
  * the client can reuse the same tile renderer.
  */
 function crTeamPair_(p2Val, p1Val, type, p2Formatted, p1Formatted) {
