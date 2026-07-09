@@ -2289,7 +2289,9 @@
             <label for="esc-status">Show</label>
             <select id="esc-status">
               <option value="pending">Pending</option>
+              <option value="pending_review">Needs review</option>
               <option value="resolved">Completed</option>
+              <option value="rejected">Rejected</option>
               <option value="all">All</option>
             </select>
           </div>
@@ -2303,6 +2305,8 @@
           </div>
           <div class="ir-col">
             <label>&nbsp;</label>
+            <button type="button" class="esc-review-chip" id="esc-review-chip"
+                    title="Externally-submitted escalations awaiting your review — click to show them"></button>
             <button class="btn btn-ghost" id="esc-refresh-btn" type="button">Refresh</button>
           </div>
           <div class="ir-col esc-new-col" id="esc-new-col" data-admin-only style="display:none;">

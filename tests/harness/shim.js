@@ -49,6 +49,8 @@ function createShim() {
     base64Decode: function (str) { return Array.from(Buffer.from(String(str), 'base64')); },
     parseDate: function () { throw new Error('Utilities.parseDate is not shimmed; add it if a test needs it.'); },
     sleep: function () {},
+    // Deterministic uuid (escalation writes stamp activity rows with it).
+    getUuid: (function () { let n = 0; return function () { return 'uuid-' + (++n); }; })(),
   };
 
   const globals = {

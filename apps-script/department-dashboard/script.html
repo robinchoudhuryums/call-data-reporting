@@ -14472,6 +14472,11 @@
 
     if ($('esc-refresh-btn')) $('esc-refresh-btn').addEventListener('click', escLoad_);
     if ($('esc-status'))      $('esc-status').addEventListener('change', escLoad_);
+    // Phase 2: the review chip jumps straight to the review queue.
+    if ($('esc-review-chip')) $('esc-review-chip').addEventListener('click', function () {
+      if ($('esc-status')) $('esc-status').value = 'pending_review';
+      escLoad_();
+    });
     if ($('esc-dept'))        $('esc-dept').addEventListener('change', escLoad_);
     // §4: debounced client-side filter over the already-loaded rows.
     if ($('esc-filter'))      $('esc-filter').addEventListener('input', escDebounceFilter_);
@@ -14561,6 +14566,20 @@
     const listEl = $('esc-list');
     if (!listEl) return;
     escLastResp_ = resp || {};
+    // Phase 2: "N awaiting review" chip -- shown on every load (whatever the
+    // active status filter) so submissions can't sit unnoticed; hidden while
+    // already viewing the review queue, or when the count is 0/unknown.
+    const chip = $('esc-review-chip');
+    if (chip) {
+      const n = (resp && resp.meta && resp.meta.pendingReviewCount) || 0;
+      const viewing = !!(resp && resp.meta && resp.meta.status === 'pending_review');
+      if (n > 0 && !viewing) {
+        chip.textContent = '\u26a0 ' + n + ' awaiting review';
+        chip.style.display = 'inline-flex';
+      } else {
+        chip.style.display = 'none';
+      }
+    }
     if (resp.available === false) {
       escSetFilterCount_('');
       escShowEmpty_('Escalations are temporarily unavailable — the storage (Neon) could not be reached. Try Refresh in a moment.');
@@ -14582,7 +14601,9 @@
     if (!all.length) {
       escSetFilterCount_('');
       const st = (escLastResp_.meta && escLastResp_.meta.status) || 'pending';
-      escShowEmpty_(st === 'pending' ? 'No pending escalations. 🎉' : 'No escalations to show for this filter.');
+      escShowEmpty_(st === 'pending' ? 'No pending escalations. 🎉'
+        : st === 'pending_review' ? 'No submissions awaiting review. 🎉'
+        : 'No escalations to show for this filter.');
       return;
     }
     // "N of M shown" (only meaningful while a query is active). F-46: when
@@ -14631,6 +14652,9 @@
 
   function escCardHtml_(r) {
     const resolved = r.status === 'resolved';
+    // Phase 2: externally-submitted rows awaiting review / reviewed out.
+    const inReview = r.status === 'pending_review';
+    const rejected = r.status === 'rejected';
     const meta = [];
     if (r.occurred_at) meta.push('🕑 ' + escapeHtml(escFmtWhen_(r.occurred_at)));
     if (r.caller)      meta.push('☎ '  + escapeHtml(r.caller));
@@ -14639,9 +14663,18 @@
     if (r.area)        meta.push('▸ '  + escapeHtml(r.area));
     const deptTag = (escInit_ && (escInit_.isAdmin || ($('esc-dept') && $('esc-dept').value === 'ALL')))
       ? '<span class="esc-dept-tag">' + escapeHtml(r.department || '') + '</span>' : '';
-    const statusPill = resolved
-      ? '<span class="esc-pill esc-pill-resolved">Resolved</span>'
-      : '<span class="esc-pill esc-pill-pending">Pending</span>';
+    const statusPill = inReview
+      ? '<span class="esc-pill esc-pill-review">Needs review</span>'
+      : rejected
+        ? '<span class="esc-pill esc-pill-rejected">Rejected</span>'
+        : resolved
+          ? '<span class="esc-pill esc-pill-resolved">Resolved</span>'
+          : '<span class="esc-pill esc-pill-pending">Pending</span>';
+    // Submission provenance (Phase 2 contract: source='team-tools' etc.;
+    // the dashboard's own creates are 'manual' and stay untagged).
+    const sourceTag = (r.source && r.source !== 'manual')
+      ? '<span class="esc-source-tag">via ' + escapeHtml(r.source)
+        + (r.created_by ? ' · ' + escapeHtml(r.created_by) : '') + '</span>' : '';
 
     const idAttr = escapeHtml(r.id);
     const isAdmin = !!(escInit_ && escInit_.isAdmin);
@@ -14649,7 +14682,29 @@
     let body = '<div class="esc-reason">' + escapeHtml(r.reason || '') + '</div>';
     body += '<div class="esc-meta">' + meta.join(' &nbsp;·&nbsp; ') + '</div>';
 
-    if (resolved) {
+    if (inReview) {
+      // Phase 2 review verbs: Approve admits the submission into the dept
+      // worklist; Reject (required reason, mirroring reopen) reviews it out.
+      // Visible to the dept's managers + admins -- the same population the
+      // server's escAssertRowAccess_ gate accepts for this row.
+      body += '<div class="esc-reopen-wrap">'
+        + '<div class="esc-resolve-actions">'
+        +   '<button class="btn esc-approve" type="button" data-id="' + idAttr + '">&#10003; Approve into worklist</button>'
+        +   '<button class="btn btn-ghost esc-reject-toggle" type="button" data-id="' + idAttr + '">&#10007; Reject</button>'
+        +   '<span class="status status-error esc-row-error" data-id="' + idAttr + '" style="display:none;"></span>'
+        + '</div>'
+        + '<div class="esc-reject" data-id="' + idAttr + '" style="display:none;">'
+        +   '<label class="esc-resolve-label">Why reject? <span class="esc-optional">(required — goes to the activity trail)</span>'
+        +   '<textarea class="esc-reject-text" rows="2" data-id="' + idAttr + '"></textarea></label>'
+        +   '<div class="esc-resolve-actions">'
+        +     '<button class="btn esc-reject-save" type="button" data-id="' + idAttr + '" disabled>Reject submission</button>'
+        +   '</div>'
+        + '</div></div>';
+    } else if (rejected) {
+      // Terminal: data retained for the audit trail; no actions. A
+      // correction is a fresh external resubmission.
+      body += '<div class="esc-resolved-by">Rejected — see Activity for the reviewer’s reason.</div>';
+    } else if (resolved) {
       body += '<div class="esc-resolution"><strong>Resolution:</strong> ' + escapeHtml(r.resolution || '') + '</div>';
       if (r.comments) body += '<div class="esc-comments"><strong>Comments:</strong> ' + escapeHtml(r.comments) + '</div>';
       const by = r.resolved_by ? (' by ' + escapeHtml(r.resolved_by)) : '';
@@ -14698,8 +14753,8 @@
       + '<div class="esc-activity-body" data-id="' + idAttr + '" data-loaded="0"></div>'
       + '</details>';
 
-    return '<div class="ds-card esc-card' + (resolved ? ' esc-card-resolved' : '') + '" data-id="' + escapeHtml(r.id) + '">'
-      + '<div class="esc-card-top">' + statusPill + deptTag + '</div>'
+    return '<div class="ds-card esc-card' + (resolved ? ' esc-card-resolved' : '') + (rejected ? ' esc-card-resolved' : '') + '" data-id="' + escapeHtml(r.id) + '">'
+      + '<div class="esc-card-top">' + statusPill + deptTag + sourceTag + '</div>'
       + body + '</div>';
   }
 
@@ -14722,6 +14777,12 @@
       if (save) save.disabled = !e.target.value.trim();
       return;
     }
+    if (e.target.classList.contains('esc-reject-text')) {
+      const id = e.target.getAttribute('data-id');
+      const save = document.querySelector('.esc-reject-save[data-id="' + escCssId_(id) + '"]');
+      if (save) save.disabled = !e.target.value.trim();
+      return;
+    }
   }
 
   function escOnListClick_(e) {
@@ -14734,6 +14795,13 @@
       return;
     }
     if (t.classList.contains('esc-reopen-save'))    { escReopen_(t.getAttribute('data-id')); return; }
+    if (t.classList.contains('esc-approve'))        { escApprove_(t.getAttribute('data-id')); return; }
+    if (t.classList.contains('esc-reject-toggle'))  {
+      const rw = document.querySelector('.esc-reject[data-id="' + escCssId_(t.getAttribute('data-id')) + '"]');
+      if (rw) rw.style.display = (rw.style.display === 'none' ? '' : 'none');
+      return;
+    }
+    if (t.classList.contains('esc-reject-save'))    { escReject_(t.getAttribute('data-id')); return; }
     if (t.classList.contains('esc-edit'))           { escEditOpen_(t.getAttribute('data-id')); return; }
     if (t.classList.contains('esc-activity-summary')) { escLoadActivity_(t.getAttribute('data-id')); return; }
   }
@@ -14753,6 +14821,37 @@
         escRowError_(id, (err && err.message ? err.message : String(err)));
       })
       .reopenEscalation({ id: id, reason: reason });
+  }
+
+  // Phase 2: approve an external submission into the dept worklist.
+  function escApprove_(id) {
+    escRowError_(id, '');
+    const btn = document.querySelector('.esc-approve[data-id="' + escCssId_(id) + '"]');
+    if (btn) { btn.disabled = true; btn.textContent = 'Approving…'; }
+    google.script.run
+      .withSuccessHandler(function () { escLoad_(); })
+      .withFailureHandler(function (err) {
+        if (btn) { btn.disabled = false; btn.innerHTML = '&#10003; Approve into worklist'; }
+        escRowError_(id, (err && err.message ? err.message : String(err)));
+      })
+      .approveEscalation({ id: id });
+  }
+
+  // Phase 2: reject an external submission (requires a reason).
+  function escReject_(id) {
+    const ta = document.querySelector('.esc-reject-text[data-id="' + escCssId_(id) + '"]');
+    const reason = ta ? ta.value.trim() : '';
+    if (!reason) { escRowError_(id, 'Enter a reason for rejecting.'); return; }
+    escRowError_(id, '');
+    const save = document.querySelector('.esc-reject-save[data-id="' + escCssId_(id) + '"]');
+    if (save) { save.disabled = true; save.textContent = 'Rejecting…'; }
+    google.script.run
+      .withSuccessHandler(function () { escLoad_(); })
+      .withFailureHandler(function (err) {
+        if (save) { save.disabled = false; save.textContent = 'Reject submission'; }
+        escRowError_(id, (err && err.message ? err.message : String(err)));
+      })
+      .rejectEscalation({ id: id, reason: reason });
   }
 
   // §3: open the create form in EDIT mode, prefilled from the row.
