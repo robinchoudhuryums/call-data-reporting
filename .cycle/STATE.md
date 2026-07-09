@@ -1,5 +1,19 @@
 # Cycle State — resume note
 
+## Latest session (broad-implement: Batch 2 -- F-13/F-11/F-12/F-10/F-19/F-26/F-51/F-52, cdr-tooling data accuracy)
+Branch `claude/broad-scan-xkmoam`, commit `9af11e4`, PUSHED (stacks on F-1..F-6 + sync-docs + Batch 1). 214/214 tests (5 added), extended INV-16 guard green.
+- **F-13** DQEdrilldown: windows Unique/TTT/ATT (Bug 1/2 parity) + abandoned-leg wait (IVR parity) -- the verification tool agrees with the build again. Editor-tool; no unit harness (SpreadsheetApp-bound, like sheetRepairs).
+- **F-11** dashboardCDR Custom Report Builder: OB-Ext duration via parallel getDisplayValues (INV-02) -- +36:36 offset gone.
+- **F-12** emailDailyReport: NOON anchor replaces the DST-blind +1 day (winter PDFs were dated one day late); sheet-TZ coupling removed. Pinned by batch2-helpers.test.js.
+- **F-10** inboundCallsExport: ic_cellDateIso_ display-normalized delete + max-date detection. OPERATOR: one explicit full-range `exportInboundCalls('<earliest-affected>', '<today>')` heals the existing duplicated rows (known-issues runbook updated; F-10 status flipped to Fixed in CLAUDE.md + known-issues).
+- **F-19** autoImport + directCallMetrics roster reads: getLastColumn + first-blank-header stop (was hard-capped at 14 cols = current width). Test pins 16-dept grid + insurance-block exclusion.
+- **F-26** dcLogSamples_ masks phones to last-4 (dcMaskPhone_/dcMaskPhonesInText_); exts/call-ids kept.
+- **F-51** sanitizeSlotCellForNeon_ (NEW duplicated fn: neonbackfill.js + NeonMirror.js, guard-pinned) applied in both DQE backfills + deferred mirror + the INV-16 remirror (typeof-guarded saneSlot). Clean cells byte-identical; garbage -> NULL.
+- **F-52** slot-repair PREVIEW snapshots/restores original formats (dry run no longer flips displays to bare serials).
+DEPLOY: cdr-report (DQEdrilldown, dashboardCDR, emailDailyReport, inboundCallsExport, neonbackfill, sheetRepairs, buildDQE) + cdr-import (autoImport, directCallMetrics, NeonMirror, buildDQE). Dashboard NOT touched this batch.
+REMAINING: Batch 3 (bulk-path: F-7/F-17/F-18/F-21/F-55), Batch 4 (consistency Lows), Batch 5 (escalations F-43..F-46), Batch 6 (test debt F-58), strategic track.
+Where I left off: Batch 2 shipped + pushed; branch has 7 unmerged commits awaiting PR/merge + deploys (both cdr projects this batch).
+
 ## Latest session (broad-implement: Batch 1 -- F-9/F-14/F-16/F-8/F-50/F-23/F-24/F-56/F-33/F-27/F-30/F-61/F-62 + alerts weekend)
 Branch `claude/broad-scan-xkmoam`, commit `ca60afd`, PUSHED (stacks on the F-1..F-6 batch `07fb4de` + sync-docs `e7afaf0`). 209/209 tests (4 added, 1 stale expectation fixed), INV-16 guard (now extended) green.
 - **F-9** QCD modal expand: wire-once guard (`tbody._qcdExpandWired`) -- S32 regression fixed.
