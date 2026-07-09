@@ -1,5 +1,14 @@
 # Cycle State — resume note
 
+## Latest session (perceived-speed: report SWR + Insights warm keys)
+Branch `claude/broad-scan-xkmoam`, commit `05e4a65`, PUSHED. 239/239 tests, INV-16 guard green. Client + CacheWarm only; no cache-version bumps (no payload shapes changed).
+- **Report SWR layer** (script.html, `reportSwrPaint_` riding the D1b localStorage keep-last-good store): a repeat Generate whose `reportSig_` matches the stored payload paints INSTANTLY with a visible `status-loading` note "Showing your previous result for this exact selection (from <time>) — refreshing now…"; live fetch always continues -- success repaints + clears the note (every wired repaint path resets its results-status), failure swaps it for the D1b warn. Wired: IR, PR, CR (main Generate; edit-popover keeps its own refreshing status), Inbound, Insights (ALSO gained the D1b store/fail-fallback itself), My Department table (`onData(data,{swr:true})` skips deptMissedFetch_ on the stale paint so the missed section isn't double-fetched). Overview untouched (already had SWR + ovSetCachedIndicator_). CLAUDE.md gained an SWR gotcha bullet with the indicator contract + wiring rule for new reports.
+- **Warm more keys** (CacheWarm.gs): warmReportCaches_ now also warms each dept's AGENT-FREE Insights over the launcher window (last 30 days ending yesterday -- the exact request both Overview chips auto-run), LAST, under a 4-min runtime budget (INSIGHTS_WARM_BUDGET_MS) so the ~6-min trigger kill can't truncate mid-warm; skipped count logged + in the outcome line. Operator State #21 + header synced.
+- OPERATOR: warming trigger must be installed (Alerts modal) for any warm to run; watch CACHE_WARM_LAST_RESULT for "insights skipped on budget" -- if chronic, raise the hour spacing or accept partial.
+DEPLOY: Department Dashboard only.
+REMAINING perf ideas (not built): DQE_READ_SOURCE=neon flip (biggest lever, operator-gated), localStorage multi-signature SWR history (currently last-signature-only per report), Missed-report SWR (shared modal+dept-section render paths make it fiddly), prefetch-on-modal-open.
+Where I left off: 24 unmerged commits awaiting PR/merge + the four deploys.
+
 ## Latest session (S1 option-C + performance levers)
 Branch `claude/broad-scan-xkmoam`, commit `0fcb426`, PUSHED. 239/239 tests (3 added), INV-16 guard green. No cache-version bumps (TTL/memo/discovery are not shape changes).
 - **S1(c) DONE (owner picked option c).** Dept Config modal gains "Discovered inbound queues": `scanInboundQueueNames_` (InboundReport.gs, Neon json_agg over entry_queue+final_queue, 180d, count(DISTINCT call_id)) -> `discoverInboundQueues_`/`classifyInboundQueues_` (DeptConfig.gs) attribute each raw name via `inboundQueuesForDept_` (the report's own scoping set); unattributed-first; explicit Neon-unavailable state. INV-54 synced. Option (a) full capture-normalization deferred until after the Inbound/Direct accuracy vetting.
