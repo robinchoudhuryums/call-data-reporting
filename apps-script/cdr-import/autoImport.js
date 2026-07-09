@@ -118,6 +118,9 @@ function runManualExport() {
         const counts = outcome.includes(" | ") ? `\n\n${outcome.split(" | ").slice(1).join("\n")}` : "";
         ui.alert("✅ Complete", `${label} exported successfully in ${time}.${counts}`, ui.ButtonSet.OK);
 
+      } else if (outcome && String(outcome).startsWith("ERROR")) {
+        // F-55: the failure alert + admin email already fired inside
+        // processNewImport's catch -- don't stack a second dialog.
       } else {
         ui.alert("⚠️ Unexpected Result", String(outcome), ui.ButtonSet.OK);
       }
@@ -166,6 +169,22 @@ function processBulkQueue() {
     ui.alert("No Queue", "No active queue found.", ui.ButtonSet.OK);
     return;
   }
+
+  // F-17: the bulk loop rewrites the shared Raw Data sheet and appends to
+  // the same history sheets as the daily import, but never took the script
+  // lock onChange/runManualExport hold -- a daily INSERT_GRID import firing
+  // mid-bulk interleaved on Raw Data (the F2 expected-date guard catches
+  // DQE mis-dating; Direct/Inbound have no equivalent guard). Hold the lock
+  // per INVOCATION: it releases at every pause ("Resume Bulk Processing"),
+  // so a concurrent daily import slots in cleanly BETWEEN chunks; during a
+  // chunk it skips with a console log (recover via Manual Processing).
+  const bulkLock = LockService.getScriptLock();
+  if (!bulkLock.tryLock(15000)) {
+    ui.alert("⚠️ Busy", "Another import is running (daily trigger or manual export). "
+      + "Wait for it to finish, then click 'Resume Bulk Processing'.", ui.ButtonSet.OK);
+    return;
+  }
+  try {
 
   const batchStartTime = Date.now();
   // Per-invocation budget before pausing for "Resume Bulk Processing".
@@ -241,7 +260,7 @@ function processBulkQueue() {
 
   SpreadsheetApp.getActiveSpreadsheet().toast("Archiving all dates...", "Final Step", -1);
   try {
-    const archiveResult = processBatchArchive(true); 
+    const archiveResult = processBatchArchive(true, /*callerHoldsLock=*/true);
     report.push("---");
     report.push(`✅ Batch archive complete (CDR: +${archiveResult.cdrCount}, QPath: +${archiveResult.qpathCount}, QCD: +${archiveResult.qcdCount}, CSR: +${archiveResult.csrCount})`);
     appendToAuditLog(targetSS, "processBulkQueue",
@@ -265,12 +284,23 @@ function processBulkQueue() {
   report.push("ℹ️ Direct-call Neon mirror was deferred (skipNeon). Run "
     + "backfillDirectCallToNeon() in THIS (CDR Import) project to mirror these "
     + "dates to direct_call_history (DO UPDATE).");
+  // F-18: the bulk path never runs the per-call inbound capture (it rides
+  // processIntegratedHistory's daily path only), so a force-rebuilt date's
+  // inbound_calls rows are NOT refreshed -- and inbound has no sheet
+  // primary to rebuild from later. Surface that instead of staying silent.
+  report.push("ℹ️ inbound_calls was NOT captured/refreshed for these dates. "
+    + "Run backfillInboundCalls() (THIS project) to fill from surviving "
+    + "Call_Legs_* sheets -- reach is limited by their ~14-day retention.");
 
   ui.alert("Bulk Complete", report.join("\n"), ui.ButtonSet.OK);
 
   props.deleteProperty("bulkQueue");
   props.deleteProperty("bulkIndex");
   props.deleteProperty("bulkReport");
+
+  } finally {
+    bulkLock.releaseLock();   // F-17 -- also runs on the pause/stop returns
+  }
 }
 
 function getDateRange(startStr, endStr) {
@@ -646,6 +676,10 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
         // No UI in trigger context -- the email notification above
         // is the durable signal.
       }
+      // F-55: return an explicit outcome instead of falling off the end --
+      // runManualExport's switch previously showed the operator
+      // "⚠️ Unexpected Result: undefined" right after the failure alert.
+      return "ERROR: " + ((e && e.message) ? e.message : String(e));
     }
   }
 }
@@ -884,8 +918,21 @@ function queueToPendingArchive(targetSS, results, dateObj, skipCDR, skipQPath, s
 // PENDING ARCHIVE FUNCTIONS
 // -------------------------------------------------------------------------
 
-function processBatchArchive(silent = false) {
-  const ui           = SpreadsheetApp.getUi();
+function processBatchArchive(silent = false, callerHoldsLock = false) {
+  const ui = SpreadsheetApp.getUi();
+  // F-17: the standalone menu path ("Process Batch Archive") writes the four
+  // history sheets, so it must hold the same script lock as the import
+  // paths. LockService locks are NOT reentrant -- processBulkQueue already
+  // holds it and passes callerHoldsLock=true.
+  let archiveLock = null;
+  if (!callerHoldsLock) {
+    archiveLock = LockService.getScriptLock();
+    if (!archiveLock.tryLock(15000)) {
+      if (!silent) ui.alert("⚠️ Busy", "Another import is running. Try again in a moment.", ui.ButtonSet.OK);
+      return { cdrCount: 0, qpathCount: 0, qcdCount: 0, csrCount: 0, skippedBusy: true };
+    }
+  }
+  try {
   const targetSS     = SpreadsheetApp.openById(getTargetSsId_());
   const pendingSheet = targetSS.getSheetByName("Pending Archive");
 
@@ -924,7 +971,12 @@ function processBatchArchive(silent = false) {
         Number(dispRow[15])||0, Number(dispRow[16])||0,                         // LM
         row[17], row[18], row[19],                                              // NOP (Text)
         Number(dispRow[20])||0, Number(dispRow[21])||0,                         // QR
-        row[22], row[23],                                                       // ST (Durations)
+        // ST (Durations) via the DISPLAY grid (F-7 / INV-02): the queued
+        // "H:MM:SS" strings coerce to duration values in Pending Archive, so
+        // getValues() returns 1899-epoch Dates -- writing those back is
+        // type-inconsistent with the daily path, and String(Date) is what
+        // poisoned the Neon mirror's normalizeDuration.
+        dispRow[22], dispRow[23],
         row[24], row[25], row[26]                                               // UVW (Text)
       ]);
     } else if (type === "QPATH") {
@@ -942,7 +994,13 @@ function processBatchArchive(silent = false) {
       qcdBatch.push([
         row[3], row[4], parsePendingDate(row[0]), row[2], row[5],
         total, ans, abnd,
-        row[9], row[10], // Wait times (Durations)
+        // Wait times via the DISPLAY grid (F-7 / INV-02): getValues() on the
+        // coerced duration cells returns 1899-epoch Dates whose String()
+        // form ("Sat Dec 30 1899 00:12:34 GMT-0553...") sailed through
+        // normalizeDuration's indexOf(':') branch INTO Neon's longest_wait /
+        // avg_answer for every bulk-archived QCD row. Display strings are
+        // the "H:MM:SS" the daily path writes.
+        dispRow[9], dispRow[10],
         abndPct, viol
       ]);
     } else if (type === "CSR_TRANSFER") {
@@ -982,7 +1040,41 @@ function processBatchArchive(silent = false) {
   // Pending Archive clear below runs. Combined with the idempotent
   // dedup above, a re-run after a partial failure is safe.
   try {
-    if (cdrRows.length > 0      && obcHD)   obcHD.getRange(obcHD.getLastRow()     + 1, 1, cdrRows.length,      26).setValues(cdrRows);
+    if (cdrRows.length > 0      && obcHD) {
+      obcHD.getRange(obcHD.getLastRow() + 1, 1, cdrRows.length, 26).setValues(cdrRows);
+
+      // F-18: mirror the bulk-archived CDR rows to Neon (the daily path
+      // already does; the bulk path silently left call_history_dept /
+      // call_history_phones stale after a force-rebuild changed a date's
+      // numbers). Same idempotent DO-UPDATE writer + best-effort pattern
+      // as the QCD mirror below. Batch layout: [MonthYear, Week, Date,
+      // Dept, Name, C..W] -- C..W maps 1:1 onto the daily payload fields;
+      // the ST duration cells are display strings since F-7.
+      try {
+        var neonCdrRows = cdrRows.map(function (r) {
+          return {
+            callDate:   Utilities.formatDate(r[2], Session.getScriptTimeZone(), 'yyyy-MM-dd'),
+            dept:       r[3] || 'Unassigned',
+            agentName:  r[4] || null,
+            obTotal:    r[5],  obAns:      r[6],  obMiss:     r[7],
+            obListTot:  r[8],  obListAns:  r[9],  obListMiss: r[10],
+            ibTotal:    r[11], ibAns:      r[12], ibMiss:     r[13],
+            ibAnsInt:   r[14], ibAnsExt:   r[15],
+            ibListTot:  r[16], ibListAns:  r[17], ibListMiss: r[18],
+            obExtTotal: r[19], obExtAns:   r[20],
+            obExtTTT:   r[21], obExtATT:   r[22],
+            phonesX:    r[23], phonesY:    r[24], phonesZ:    r[25]
+          };
+        });
+        var neonCdrRes = writeCDRRowsToNeon(neonCdrRows);
+        if (neonCdrRes && neonCdrRes.skipped) {
+          console.log('processBatchArchive: Neon CDR mirror skipped ('
+            + neonCdrRes.skipped + ' rows — Neon unreachable).');
+        }
+      } catch (neonCdrErr) {
+        notifyNeonWriteFailure('processBatchArchive (bulk CDR)', neonCdrErr.message);
+      }
+    }
     if (qPathRows.length > 0    && salesHD) salesHD.getRange(salesHD.getLastRow() + 1, 1, qPathRows.length,    11).setValues(qPathRows);
 
     if (qcdRows.length > 0 && qcdHD) {
@@ -1049,29 +1141,44 @@ function processBatchArchive(silent = false) {
     pendingSheet.getRange(2, 1, pendingSheet.getLastRow() - 1, 34).clearContent();
   }
 
+  // F-55: report rows ACTUALLY APPENDED (post-dedup). On a recovery
+  // re-run the dedup drops already-archived dates, and the old pre-dedup
+  // counts overstated what happened.
+  const dedupSkipped = (cdrBatch.length - cdrRows.length)
+    + (qPathBatch.length - qPathRows.length)
+    + (qcdBatch.length - qcdRows.length)
+    + (csrTransBatch.length - csrRows.length);
   appendToAuditLog(targetSS, "processBatchArchive",
-    `${totalPendingRows} pending rows committed`,
-    `CDR: +${cdrBatch.length}, QPath: +${qPathBatch.length}, QCD: +${qcdBatch.length}, CSR: +${csrTransBatch.length}`
+    `${totalPendingRows} pending rows committed`
+      + (dedupSkipped > 0 ? ` (${dedupSkipped} already-archived rows skipped by dedup)` : ''),
+    `CDR: +${cdrRows.length}, QPath: +${qPathRows.length}, QCD: +${qcdRows.length}, CSR: +${csrRows.length}`
   );
 
   if (!silent) {
     ui.alert(
       "✅ Archive Complete",
-      `CDR History: +${cdrBatch.length}\n` +
-      `Q Path History: +${qPathBatch.length}\n` +
-      `QCD History: +${qcdBatch.length}\n` +
-      `CSR Transfer History: +${csrTransBatch.length}\n\n` +
-      `Pending Archive cleared.`,
+      `CDR History: +${cdrRows.length}\n` +
+      `Q Path History: +${qPathRows.length}\n` +
+      `QCD History: +${qcdRows.length}\n` +
+      `CSR Transfer History: +${csrRows.length}\n` +
+      (dedupSkipped > 0 ? `(${dedupSkipped} already-archived rows skipped)\n` : '') +
+      `\nPending Archive cleared.`,
       ui.ButtonSet.OK
     );
   }
 
+  // F-55: report rows ACTUALLY APPENDED (post-dedup), not the pre-dedup
+  // batch sizes -- a recovery re-run previously overstated every count.
   return {
-    cdrCount:   cdrBatch.length,
-    qpathCount: qPathBatch.length,
-    qcdCount:   qcdBatch.length,
-    csrCount:   csrTransBatch.length
+    cdrCount:   cdrRows.length,
+    qpathCount: qPathRows.length,
+    qcdCount:   qcdRows.length,
+    csrCount:   csrRows.length
   };
+
+  } finally {
+    if (archiveLock) archiveLock.releaseLock();   // F-17
+  }
 }
 
 function clearPendingArchive() {
