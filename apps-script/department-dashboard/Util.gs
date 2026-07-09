@@ -62,7 +62,17 @@ function assertDeptAccess_(user, dept) {
  * Do NOT add parameters that carry caller-supplied strings, and do
  * not reuse this helper for anything that isn't pure telemetry.
  */
+// F-27: set TRUE by the cache-warm trigger (CacheWarm.gs) for the duration
+// of a warm run, so automated warm traffic doesn't append rows to Report
+// Usage -- the sheet is the evidence base for report-retirement decisions,
+// and daily warm runs (~14 fresh-compute "summary" rows/day attributed to
+// the installing admin) would permanently skew it. Same-execution global:
+// Apps Script executions are single-threaded, so the trigger's nested
+// report calls see the flag; other users' executions have their own scope.
+var REPORT_USAGE_SUPPRESS_ = false;
+
 function logReportUsage_(report, dept, user, cacheHit) {
+  if (REPORT_USAGE_SUPPRESS_) return;   // cache-warm context (F-27)
   try {
     const ss = openSpreadsheet_();
     const sheet = ss.getSheetByName(SHEETS.REPORT_USAGE);

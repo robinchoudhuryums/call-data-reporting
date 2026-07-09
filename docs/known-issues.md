@@ -371,7 +371,7 @@ same time as the code change.
 | `PerformanceReport.gs` | `performance:vN:` | `v4` |
 | `CompareRangesReport.gs` | `compareRanges:vN:` | `v6` |
 | `MissedCallsReport.gs` | `missed:vN:` | `v12` |
-| `CompanyOverview.gs` | `companyOverview:vN` | `v17` |
+| `CompanyOverview.gs` | `companyOverview:vN` | `v18` |
 | `QCDReport.gs` | `qcd:vN:` | `v9` |
 | `InboundReport.gs` | `inbound:vN:` | `v3` |
 | `InsightsReport.gs` | `insights:vN:` | `v16` |
@@ -778,7 +778,7 @@ behavior byte-identical to pre-OrphanFix.
 
 **Cache invalidation.** `applyOrphanRename` removes the single
 fixed-key Overview cache entry (via the `COMPANY_OVERVIEW_CACHE_KEY`
-constant -- currently `companyOverview:v17`) on success. Per-(dept,
+constant -- currently `companyOverview:v18`) on success. Per-(dept,
 range) caches (`summary:v10`, `individual:v9`, `performance:v4`,
 etc.) are left to TTL out within 30 minutes
 (`REPORT_CACHE_TTL_SECONDS`). The Orphan Fix modal tells the user

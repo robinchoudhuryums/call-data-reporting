@@ -455,7 +455,7 @@ mirrors it; if the two ever diverge, INV-30 wins.
 | `PerformanceReport.gs` | `performance:vN:` | `v4` |
 | `CompareRangesReport.gs` | `compareRanges:vN:` | `v6` |
 | `MissedCallsReport.gs` | `missed:vN:` | `v12` |
-| `CompanyOverview.gs` | `companyOverview:vN` | `v17` |
+| `CompanyOverview.gs` | `companyOverview:vN` | `v18` |
 | `QCDReport.gs` | `qcd:vN:` | `v9` |
 | `InboundReport.gs` | `inbound:vN:` | `v3` |
 | `InsightsReport.gs` | `insights:vN:` | `v16` |

@@ -62,6 +62,10 @@ function warmReportCachesNow() {
 function warmReportCaches_() {
   var start = Date.now();
   var warmed = 0, failed = 0, latest = null;
+  // F-27: suppress Report Usage telemetry for this execution -- warm
+  // traffic isn't real manager usage. Reset in the finally below.
+  REPORT_USAGE_SUPPRESS_ = true;
+  try {
   try { latest = getLatestDataDate(); }
   catch (e) { Logger.log('warmReportCaches_: getLatestDataDate failed: ' + e); }
   if (!latest) {
@@ -90,6 +94,9 @@ function warmReportCaches_() {
     + ' for ' + latest + ' in ' + ms + 'ms');
   recordCacheWarm_('ok (' + warmed + ' warmed'
     + (failed ? ', ' + failed + ' failed' : '') + ', ' + ms + 'ms)');
+  } finally {
+    REPORT_USAGE_SUPPRESS_ = false;
+  }
 }
 
 // ── Internals ─────────────────────────────────────────────────────────

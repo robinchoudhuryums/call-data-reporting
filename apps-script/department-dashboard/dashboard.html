@@ -115,10 +115,10 @@
       </nav>
       <div class="header-meta">
         <!-- Data-freshness pill -- "Data through Mon May 19 · 14h ago".
-             Populated by setFreshnessPill_ once getLatestDataDate
-             returns. Hidden until then so the header doesn't show a
-             stale fallback. -->
-        <span class="freshness-pill" id="freshness-pill" style="display:none;" title="The most recent date with data in DQE Historical Data, and how long ago it was."></span>
+             Populated by setFreshnessPill_ once getLatestDataDates
+             (plural, DQE + QCD max) returns. Hidden until then so the
+             header doesn't show a stale fallback. -->
+        <span class="freshness-pill" id="freshness-pill" style="display:none;" title="The most recent date with data across DQE and QCD Historical Data, and how long ago it was."></span>
         <button class="help-btn" id="mode-btn" type="button" aria-label="Toggle dark mode" title="Toggle dark mode">◐</button>
         <button class="help-btn" id="settings-btn" type="button" aria-label="Settings" title="Personal preferences (background theme, etc.)">⚙</button>
         <button class="help-btn" id="help-btn" type="button" aria-label="Help & FAQ" title="Help & FAQ">?</button>
@@ -415,7 +415,7 @@
           <input type="search" id="help-search" class="help-search" placeholder="Search help&hellip;" aria-label="Search help topics">
           <details class="help-cat" open>
             <summary>Getting started</summary>
-            <button type="button" class="help-link" data-topic="pages">The two pages</button>
+            <button type="button" class="help-link" data-topic="pages">The three pages</button>
             <button type="button" class="help-link" data-topic="nav">Navigating &amp; reports</button>
             <button type="button" class="help-link" data-topic="dates">Dates, presets &amp; freshness</button>
             <button type="button" class="help-link" data-topic="display">Themes, dark mode &amp; Help</button>
@@ -462,13 +462,14 @@
         </nav>
         <div class="help-content" id="help-content">
           <section class="help-topic" id="help-topic-pages">
-            <h3>The two pages</h3>
-            <p>The dashboard has two pages, switched from the header:</p>
+            <h3>The three pages</h3>
+            <p>The dashboard has three pages, switched from the header:</p>
             <ul>
               <li><strong>Overview</strong> (the landing page) &mdash; a company-wide snapshot: a tile per department with answer rate, abandonment and a 30-day trend chart. Admins also see a company aggregate hero. Click a department tile to jump into it.</li>
               <li><strong>My Department</strong> &mdash; the per-agent table for one department, plus its Queue Call Data tiles and per-agent missed-call timelines.</li>
+              <li><strong>Escalations</strong> &mdash; the escalation worklist for your department: filter, review each escalation's activity timeline, resolve with a note, or reopen.</li>
             </ul>
-            <p>Reports (Individual, Insights, QCD, etc.) open as modals over either page.</p>
+            <p>Reports (Individual, Insights, QCD, etc.) open as modals over any page.</p>
           </section>
           <section class="help-topic" id="help-topic-nav" hidden>
             <h3>Navigating &amp; reports</h3>
@@ -1355,10 +1356,10 @@
           (written daily by the import pipeline; one row per call
           source per dept per day). KPIs are the per-day Total Calls
           source roll-up; per-source breakdown is nested below.
-          For parent departments (e.g. Sales), &ldquo;Include sub-queue
-          data&rdquo; folds child queues (e.g. PAP) into the totals and
-          charts; uncheck it to see the parent&rsquo;s own queues alone.
-          Sub-queue departments are unaffected by the toggle.
+          For parent departments (e.g. Sales), sub-queues (e.g. PAP)
+          are always shown as their own separated rows and chart lines
+          &mdash; they are <em>not</em> included in the department
+          total, which covers the parent&rsquo;s own queues only.
         </div>
         <div id="qcd-form-error" class="status status-error" style="display:none;"></div>
         <button class="btn" id="qcd-generate-btn" type="button">Generate report</button>

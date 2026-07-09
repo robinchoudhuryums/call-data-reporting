@@ -1084,13 +1084,18 @@ function rowDateIso_(v, tz) {
   if (v instanceof Date) {
     return Utilities.formatDate(v, useTz, 'yyyy-MM-dd');
   }
-  // Sheets serial date: e.g. 45726 = 2025-03-09. Plausible date range
-  // (~1982 to ~2100) keeps us from misinterpreting small ints.
+  // Sheets serial date: e.g. 45726 = 2025-03-10 (days since 1899-12-30).
+  // Plausible date range (~1982 to ~2100) keeps us from misinterpreting
+  // small ints.
   if (typeof v === 'number' && v > 30000 && v < 100000) {
     const ms = Math.round((v - 25569) * 86400 * 1000);
     const d = new Date(ms);
     if (!isNaN(d.getTime())) {
-      return Utilities.formatDate(d, useTz, 'yyyy-MM-dd');
+      // The derived instant is UTC MIDNIGHT of the calendar date, so it
+      // must be formatted in UTC -- formatting in a west-of-UTC zone (the
+      // spreadsheet's America/Mexico_City) renders 18:00 of the PREVIOUS
+      // day, silently shifting the row back one day in every reader (F-8).
+      return Utilities.formatDate(d, 'UTC', 'yyyy-MM-dd');
     }
     return '';
   }

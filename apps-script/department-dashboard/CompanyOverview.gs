@@ -43,7 +43,7 @@
  * (read-only), and reinstating that visibility is part of the
  * design intent for this view.
  *
- * Caching: REPORT_CACHE_TTL_SECONDS under `companyOverview:v17` (the
+ * Caching: REPORT_CACHE_TTL_SECONDS under `companyOverview:v18` (the
  * COMPANY_OVERVIEW_CACHE_KEY constant below). Cached blob is shared
  * across all users; admin-only fields (`companyAggregate`,
  * `pipelineFreshness`, `orphanNag`) are stripped on serve for
@@ -77,7 +77,9 @@
 // v15: per-dept QCD snapshots use DIRECT queues only (sub-queue
 // separation -- children carry their own tiles; the parent-expansion
 // overwrite pass was removed).
-const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v17';
+// v18 (F-14): MTD violations no longer truncated by the 30-day snapshot
+// window filter (see computeQcdSnapshots_).
+const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v18';
 
 // Pipeline freshness threshold (hours). If the most recent successful
 // DQE-freshness Pipeline Health row is older than this many hours, the
@@ -939,7 +941,15 @@ function computeQcdSnapshots_(allDepts, sinceIso, ssTZ) {
       const depts = queueToDepts[queue];
       if (!depts || !depts.length) continue;
       const dateIso = rowDateIso_(r[QCD_HISTORICAL_COLS.DATE - 1], tz);
-      if (!dateIso || dateIso < sinceIso) continue;
+      if (!dateIso) continue;
+      // F-14: keep a row if it's inside the snapshot window OR inside the
+      // current month. The old single `< sinceIso` filter ran BEFORE the
+      // MTD accumulation, so in months longer than the window (e.g. day 31
+      // of a 31-day month) the 1st's violations silently dropped from the
+      // "X viol MTD" chip while the QCD modal's full-scan MTD kept them.
+      // MTD-only rows are OLDER than every in-window row, so they cannot
+      // perturb the latest-day max-date tracking below.
+      if (dateIso < sinceIso && dateIso < mtdStart) continue;
 
       const totalCalls = Number(r[QCD_HISTORICAL_COLS.TOTAL_CALLS - 1]) || 0;
       const abandoned  = Number(r[QCD_HISTORICAL_COLS.ABANDONED   - 1]) || 0;

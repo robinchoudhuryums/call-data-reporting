@@ -41,8 +41,11 @@ const SPECS = [
   ['missed',            'MissedCallsReport.gs',   /'missed:v(\d+):'/],
   ['companyOverview',   'CompanyOverview.gs',     /'companyOverview:v(\d+)'/],
   ['qcd',               'QCDReport.gs',           /'qcd:v(\d+)'/],
+  ['qcdAll',            'QCDReport.gs',           /'qcdAll:v(\d+)'/],
   ['inbound',           'InboundReport.gs',       /'inbound:v(\d+)'/],
+  ['inboundHeatmap',    'InboundReport.gs',       /'inboundHeatmap:v(\d+)'/],
   ['insights',          'InsightsReport.gs',      /'insights:v(\d+)'/],
+  ['directCall',        'DirectCallReport.gs',    /'directCall:v(\d+)'/],
 ];
 
 // Build the canonical map from code at load time so every test sees it.

@@ -18,7 +18,8 @@
  *     check user.role === 'admin' independently of the client.
  *   - A daily time-driven trigger (runDailyAlerts_) can be
  *     installed via installAlertTrigger_; runs the previous
- *     calendar day's check at 8am, skipping Saturdays + Sundays.
+ *     BUSINESS day's check at 8am (Monday assesses Friday),
+ *     skipping weekend runs.
  *   - Every per-dept outcome of every run is logged to the "Alert
  *     Log" sheet -- including previews. Preview rows are marked by
  *     a "preview:" prefix on the Triggered By column and use the
@@ -180,13 +181,19 @@ function uninstallAlertTrigger() {
 function runDailyAlerts_() {
   const tz = TZ;
   const now = new Date();
-  const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 12, 0, 0);
-  const dow = yesterday.getDay();   // 0 = Sun, 6 = Sat
-  if (dow === 0 || dow === 6) {
-    Logger.log('runDailyAlerts_: skipping weekend (%s)', yesterday);
+  // F-6 class: skip when TODAY is Sat/Sun -- INV-33's documented contract
+  // (no weekend alert emails). The old check tested the DATA date's dow,
+  // which FIRED Friday's alerts on SATURDAY morning and skipped Monday
+  // entirely. The assessed date is the previous BUSINESS day, so Monday's
+  // run assesses Friday (mirrors the F-6 digest fix).
+  const dowToday = now.getDay();   // 0 = Sun, 6 = Sat
+  if (dowToday === 0 || dowToday === 6) {
+    Logger.log('runDailyAlerts_: weekend run -- skipping.');
     return;
   }
-  const dateIso = Utilities.formatDate(yesterday, tz, 'yyyy-MM-dd');
+  const back = (dowToday === 1) ? 3 : 1;   // Mon -> Fri, else yesterday
+  const target = new Date(now.getFullYear(), now.getMonth(), now.getDate() - back, 12, 0, 0);
+  const dateIso = Utilities.formatDate(target, tz, 'yyyy-MM-dd');
   try {
     runAlertsCore_(dateIso, /*dryRun=*/false, /*triggeredBy=*/'daily-trigger');
   } catch (e) {

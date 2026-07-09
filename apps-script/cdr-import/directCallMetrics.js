@@ -711,7 +711,15 @@ function dcMonthYearFromDate_(dateStr) {
 /** Best-effort Pipeline Health row (reuses the existing writer if present). */
 function dcLogPipelineHealth_(ss, status, rows, ms, notes) {
   try {
-    if (typeof logPipelineHealth_ === 'function') { logPipelineHealth_(ss, 'directBuild', status, rows, ms, notes); return; }
+    // F-50: logPipelineHealth_ (buildDQEHistoricalData.js) takes (ss, EVENT
+    // OBJECT) -- the old positional call passed 'directBuild' as the event,
+    // so every field read as undefined and the row wrote with empty
+    // Step/Status/Rows/Notes (a timestamp-only row; the INV-44 `directBuild`
+    // step never actually appeared).
+    if (typeof logPipelineHealth_ === 'function') {
+      logPipelineHealth_(ss, { step: 'directBuild', status: status, rows: rows, durationMs: ms, notes: notes });
+      return;
+    }
     const sh = ss.getSheetByName('Pipeline Health');
     if (!sh) return;
     sh.appendRow([new Date(), 'directBuild', status, rows, ms, notes]);

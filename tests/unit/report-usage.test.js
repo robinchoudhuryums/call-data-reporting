@@ -58,3 +58,22 @@ test('report usage: missing sheet (pre-setup install) is a silent no-op', functi
   assert.equal(data.meta.department, 'Alpha');
   assert.equal(h.state.spreadsheet.getSheetByName('Report Usage'), null);
 });
+
+test('F-27: cache-warm suppression -- no usage rows while REPORT_USAGE_SUPPRESS_ is set', function () {
+  // warmReportCaches_ (CacheWarm.gs) sets the flag for the duration of a
+  // warm run so automated warm traffic can't skew the report-retirement
+  // evidence base (~14 fresh "summary" rows/day attributed to the admin).
+  install(true);
+  h.ctx.REPORT_USAGE_SUPPRESS_ = true;
+  try {
+    h.call('getDepartmentSummary', REQ);
+  } finally {
+    h.ctx.REPORT_USAGE_SUPPRESS_ = false;
+  }
+  const rows = h.state.spreadsheet.getSheetByName('Report Usage')._data;
+  assert.equal(rows.length, 1, 'header only -- suppressed call appended nothing');
+  // And a normal call afterwards logs again (flag reset works).
+  h.state.cache.clear();
+  h.call('getDepartmentSummary', REQ);
+  assert.equal(h.state.spreadsheet.getSheetByName('Report Usage')._data.length, 2);
+});

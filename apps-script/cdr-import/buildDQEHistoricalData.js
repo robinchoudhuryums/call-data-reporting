@@ -64,6 +64,19 @@ function remirrorExistingDqeDate_(dqeSheet, offsets, callDateStr) {
   const block = dqeSheet.getRange(firstRow, 1, lastRow - firstRow + 1, 34).getDisplayValues();
   const matched = {};
   offsets.forEach(function (o) { matched[o] = true; });   // absolute data-region offsets
+  // F-16: route the coercion-prone abandoned ID/time cells (AD/AE/AF)
+  // through the SAME sanitizer every other sheet->Neon path uses (the
+  // backfills + the deferred mirror), so a non-force re-import of an old
+  // date whose sheet rows still carry pre-protection coerced cells writes
+  // the #REBUILD sentinel / recovered value instead of overwriting clean
+  // dqe_history values with coerced garbage via ON CONFLICT DO UPDATE.
+  // typeof-guarded because the sanitizer lives outside this INV-16 pair:
+  // neonbackfill.js (cdr-report) / NeonMirror.js (cdr-import) -- present
+  // in BOTH projects. Null (genuinely empty) coerces to '' to match what
+  // the inline daily writer sends for empty cells.
+  const saneAb = (typeof sanitizeAbandonedCellForNeon_ === 'function')
+    ? function (v) { const r = sanitizeAbandonedCellForNeon_(v); return r == null ? '' : r; }
+    : function (v) { return v; };
   const neonRows = [];
   for (let i = 0; i < block.length; i++) {
     // The [first..last] window can include other-date stragglers if the
@@ -82,9 +95,9 @@ function remirrorExistingDqeDate_(dqeSheet, offsets, callDateStr) {
       ttt:             r[8],
       att:             r[9],
       slots:           r.slice(10, 29),
-      abParentIds:     r[29],
-      abMissedIds:     r[30],
-      abMissedTimes:   r[31],
+      abParentIds:     saneAb(r[29]),
+      abMissedIds:     saneAb(r[30]),
+      abMissedTimes:   saneAb(r[31]),
       avgAbdWait:      r[32],
       csrAvgAbdWait:   r[33]
     });

@@ -243,7 +243,7 @@ canonical and reflects current code.
 | Individual / Peer Comparison | `IndividualReport.gs` | `getIndividualReportInit`, `getIndividualReport`, `sendIndividualReportEmail` | `individual:v9:`, `individual_active:v2:` | no |
 | Performance Report (current vs prior) | `PerformanceReport.gs` | `getPerformanceReportInit` (delegates to Individual's init), `getPerformanceReport`, `sendPerformanceReportEmail` | `performance:v4:` | no |
 | Compare Ranges (two arbitrary ranges) | `CompareRangesReport.gs` | `getCompareRangesInit`, `getCompareRanges`, `sendCompareRangesEmail` | `compareRanges:v6:` | no |
-| Company Overview | `CompanyOverview.gs` | `getCompanyOverview` | `companyOverview:v17` | partial (admin-only `companyAggregate`, `pipelineFreshness`, `orphanNag`, `unmappedQcd` fields) |
+| Company Overview | `CompanyOverview.gs` | `getCompanyOverview` | `companyOverview:v18` | partial (admin-only `companyAggregate`, `pipelineFreshness`, `orphanNag`, `unmappedQcd` fields) |
 | QCD Report | `QCDReport.gs` | `getQcdReportInit`, `getQcdReport`, `sendQcdReportEmail`, `getQcdAllDepartments` (all-departments daily report, open to all signed-in users) | `qcd:v9:`, `qcdAll:v2:` | no (per-dept gate like IR/PR/CR; all-dept report is company-wide read-only) |
 | Insights Report (period comparison: team rollup + per-agent cards) | `InsightsReport.gs` | `getInsightsReportInit`, `getInsightsReport`, `sendInsightsReportEmail` | `insights:v16:` | no (per-dept gate like IR/PR/CR) |
 | Inbound Report (per-call inbound view from Neon `inbound_calls`) | `InboundReport.gs` | `getInboundReport`, `getInboundInsurerDaily`, `getInboundHeatmap` (weekday×hour abandon heatmap), `getCallJourney` (per-call path drill; manager fallback entitlement-gated via the dept's own Missed report, F-4) | `inbound:v3:`, `inboundHeatmap:v1:` | TEMPORARILY admin-only while vetted (per-dept manager path kept intact); `getCallJourney` is manager-reachable for own dept |
@@ -252,7 +252,7 @@ canonical and reflects current code.
 | Escalations worklist (Neon `escalations` + `escalation_activity`) | `Escalations.gs` | `getEscalationsInit`, `getEscalations`, `getEscalationActivity` (read), `createEscalation`, `updateEscalation` (admin write), `resolveEscalation`, `updateEscalationComment`, `reopenEscalation` (per-dept write, INV-55) | (no cache) | no (per-dept; create/edit admin-only) |
 | Low Answer Rate Alerts | `Alerts.gs` | `getAlertsInit`, `previewAlerts`, `sendAlerts`, `installAlertTrigger`, `uninstallAlertTrigger` (+ `runDailyAlerts_` time trigger) | (no cache) | yes |
 | Manager Digest engine | `Digest.gs` | `getDigestsInit`, `sendPreviewDigest`, `installDigestTriggers`, `uninstallDigestTriggers` (+ `runDailyDigests_`, `runWeeklyDigests_` time triggers) | (no cache) | yes |
-| Orphan Fix engine (admin write path) | `OrphanFix.gs` | `getOrphanFixInit`, `addAgentAlias`, `removeAgentAlias`, `applyOrphanRename` | (no cache; busts `COMPANY_OVERVIEW_CACHE_KEY` -- currently `companyOverview:v17` -- on write) | yes |
+| Orphan Fix engine (admin write path) | `OrphanFix.gs` | `getOrphanFixInit`, `addAgentAlias`, `removeAgentAlias`, `applyOrphanRename` | (no cache; busts `COMPANY_OVERVIEW_CACHE_KEY` -- currently `companyOverview:v18` -- on write) | yes |
 
 All reports use the same auth resolution (`resolveUser_(email)`), the
 same roster reader (`getRosterForDepartment_`), and — for the picker —

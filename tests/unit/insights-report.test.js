@@ -542,3 +542,19 @@ test('Insights: queueHealth daily series + always-separated sub-queues', functio
   assert.equal(t.metrics.totalCalls.dailyPerQueue['A_Q_Beta'].join(','), '50,0', 'child daily total calls');
   assert.equal(t.metrics.violations.dailyTotal.join(','), '1,0', 'own-dept daily violations');
 });
+
+test('F-33: email export rejects a reversed custom prior range like the on-screen path', function () {
+  install([dqeRow({ date: '2026-03-10', agent: 'Anna', ext: '501', rung: 5, answered: 4, att: '0:02:00' })]);
+  h.state.sentEmails.length = 0;
+  // Pre-fix, sendInsightsReportEmail skipped the order check that
+  // getInsightsReport enforces, so a reversed pair reached computeInsights_
+  // where `inPrior` was never true -- the emailed report silently rendered
+  // prior = 0 everywhere (every volume delta +100%) instead of erroring.
+  assert.throws(function () {
+    h.call('sendInsightsReportEmail', {
+      department: 'Alpha', from: '2026-03-09', to: '2026-03-15', agents: ['Anna'],
+      priorFrom: '2026-03-08', priorTo: '2026-03-02',
+    });
+  }, /priorFrom must be on or before priorTo/);
+  assert.equal(h.state.sentEmails.length, 0, 'nothing sent on the rejected request');
+});

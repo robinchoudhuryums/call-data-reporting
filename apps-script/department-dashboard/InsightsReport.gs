@@ -837,6 +837,14 @@ function sendInsightsReportEmail(req) {
     if (!isIsoDate_(customPriorFrom) || !isIsoDate_(customPriorTo)) {
       throw new Error('priorFrom/priorTo must be YYYY-MM-DD.');
     }
+    // F-33: getInsightsReport enforces this order check; the email path
+    // omitted it, so a reversed pair reached computeInsights_ where
+    // `inPrior` was never true -- the emailed report silently rendered
+    // prior = 0 everywhere (every volume delta +100%) instead of erroring
+    // like the on-screen path.
+    if (customPriorFrom > customPriorTo) {
+      throw new Error('priorFrom must be on or before priorTo.');
+    }
   }
 
   const roster = getRosterForDepartment_(dept);

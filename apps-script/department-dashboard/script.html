@@ -15616,17 +15616,24 @@
       html += subRows.map(function (r) { return rowHtml(r, true); }).join('');
     }
     tbody.innerHTML = html;
-    // Expandable rows: click to toggle detail
-    tbody.addEventListener('click', function (e) {
-      var row = e.target.closest('.qcd-expandable');
-      if (!row) return;
-      var detail = row.nextElementSibling;
-      if (!detail || !detail.classList.contains('qcd-detail-row')) return;
-      var open = detail.style.display !== 'none';
-      detail.style.display = open ? 'none' : '';
-      var icon = row.querySelector('.qcd-expand-icon');
-      if (icon) icon.textContent = open ? '▶' : '▼';
-    });
+    // Expandable rows: click to toggle detail. Wire-once guard (F-9): this
+    // runs on EVERY Generate, and without the guard each render stacked
+    // another listener -- two toggles per click made expand open+close
+    // instantly (appear dead) on even-numbered generates. Mirrors the
+    // sibling tables' _insQhExpandWired / _qcdAllExpandWired guards.
+    if (!tbody._qcdExpandWired) {
+      tbody._qcdExpandWired = true;
+      tbody.addEventListener('click', function (e) {
+        var row = e.target.closest('.qcd-expandable');
+        if (!row) return;
+        var detail = row.nextElementSibling;
+        if (!detail || !detail.classList.contains('qcd-detail-row')) return;
+        var open = detail.style.display !== 'none';
+        detail.style.display = open ? 'none' : '';
+        var icon = row.querySelector('.qcd-expand-icon');
+        if (icon) icon.textContent = open ? '▶' : '▼';
+      });
+    }
     if (tfoot && totals) {
       var tPct = Number(totals.abandonedPct) || 0;
       var tPctCls = tPct >= 5 ? 'qcd-warn-light' : '';
