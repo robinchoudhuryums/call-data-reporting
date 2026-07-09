@@ -71,7 +71,18 @@ const QCD_CACHE_KEY_PREFIX = 'qcd:v9';
 // with the per-dept qcd: keys. Bump on any aggregation-shape change.
 // v2: queue rows gain bySource (per-call-source breakdown) + violationDates
 //     for the expandable per-queue detail in the all-dept report.
-const QCD_ALLDEPT_CACHE_PREFIX = 'qcdAll:v2';
+// v3: (#3) sub-queue nesting -- `parent` per dept + raw longestWaitSec /
+//     avgAnswerSec per queue (so the client computes a combined section
+//     total) -- plus roll-up queues (Intake / Backup CSR) excluded as
+//     double-counts.
+const QCD_ALLDEPT_CACHE_PREFIX = 'qcdAll:v3';
+
+// #3: queues excluded from the all-dept Daily Call Queue Report because their
+// calls are ALREADY counted within another queue (Intake / Backup CSR roll
+// into A_Q_CustomerSuccess), so listing them separately double-counts. Matched
+// case-insensitively against the QCD Call Queue name. Scoped to this report
+// only (the per-dept QCD modal / Insights are unchanged).
+const QCD_ALLDEPT_EXCLUDE_QUEUES = ['A_Q_Intake', 'Backup CSR'];
 
 // Source filter: only the "Total Calls" callSource row carries the
 // daily aggregate we want; other callSource values are sub-counts
@@ -281,6 +292,12 @@ function getQcdAllDepartments(req) {
   const t0 = Date.now();
   const allDepts = getAllDepartments_();
   const depts = [];
+  // Parent map for the client to nest sub-queue depts under their parent's
+  // banner (#3): Spanish -> CSR, PAK -> Power, PAP -> Sales, etc.
+  const parentMap = (typeof getOverviewParentMap_ === 'function') ? getOverviewParentMap_() : {};
+  // Case-insensitive exclusion set (Intake / Backup CSR -- double-counts).
+  const excludeSet = {};
+  QCD_ALLDEPT_EXCLUDE_QUEUES.forEach(function (q) { excludeSet[String(q).toLowerCase()] = true; });
 
   // Company grand totals (range-scoped; longest = MAX, avg = volume-weighted).
   let gTotal = 0, gAns = 0, gAbnd = 0, gLongest = 0, gAvgWSum = 0, gAvgWN = 0, gViol = 0;
@@ -291,7 +308,10 @@ function getQcdAllDepartments(req) {
     const rep = computeQcdReport_(dept, from, to,
                                   /*includeSubQueues=*/ false,
                                   /*separateSubQueues=*/ false);
-    const rows = rep.queueBreakdown || [];
+    // #3: drop roll-up queues already counted within another queue.
+    const rows = (rep.queueBreakdown || []).filter(function (r) {
+      return !excludeSet[String(r.queue || '').toLowerCase()];
+    });
 
     let dTotal = 0, dAns = 0, dAbnd = 0, dLongest = 0, dAvgWSum = 0, dAvgWN = 0, dViol = 0;
     rows.forEach(function (r) {
@@ -308,6 +328,7 @@ function getQcdAllDepartments(req) {
     const dPct = dTotal > 0 ? (dAbnd / dTotal) * 100 : 0;
     depts.push({
       dept: dept,
+      parent: parentMap[dept] || null,   // #3: client nests children under this
       totals: {
         totalCalls:      dTotal,
         totalAnswered:   dAns,
@@ -328,6 +349,10 @@ function getQcdAllDepartments(req) {
           abandonedPctStr: r.abandonedPctStr,
           longestWait:     r.longestWait,
           avgAnswer:       r.avgAnswer,
+          // Raw seconds so the client can compute a combined (parent+children)
+          // section total's max-longest / volume-weighted-avg (#3).
+          longestWaitSec:  Number(r.longestWaitSec) || 0,
+          avgAnswerSec:    Number(r.avgAnswerSec) || 0,
           violations:      r.violations,
           // Per-queue call-source breakdown (data-driven -- each queue shows
           // its own actual sources) + violation dates, for the expandable

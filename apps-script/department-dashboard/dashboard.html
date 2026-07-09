@@ -64,7 +64,13 @@
              unchanged; the dormant initHeaderMenus_ wires open/close via
              aria-controls. The trigger lights up via updateTabActiveState_
              when a report route is active. -->
-        <div class="header-menu">
+        <!-- #10: managers (and admins previewing as a manager) get a single
+             Insights button here instead of the full Reports dropdown, which
+             is admin-only. Proxies to the dropdown's #insights-report-btn. -->
+        <button class="header-menu-btn" id="insights-solo-btn" type="button"
+                data-route="/report/insights" role="tab" aria-selected="false" style="display:none;"
+                title="Insights: a department rollup + per-agent cards vs the prior period, with queue health.">Insights</button>
+        <div class="header-menu" data-admin-only style="display:none;">
           <button class="header-menu-btn" id="reports-menu-btn" type="button"
                   aria-haspopup="true" aria-expanded="false" aria-controls="reports-menu-list"
                   title="Reports: Missed Calls, Individual, Performance, Compare, QCD.">
@@ -204,7 +210,7 @@
               </label>
             </div>
             <div class="ir-chart-wrap" id="ov-chart-wrap">
-              <div class="ir-chart-header">Answer rate trend per department</div>
+              <div class="ir-chart-header">Answer rate trend per department<span class="ov-chart-hint"> &mdash; click a dept card to solo its line, Shift-click to compare</span></div>
               <div class="ir-chart-canvas-wrap"><canvas id="ov-trend-chart"></canvas></div>
             </div>
           </div>
@@ -373,7 +379,7 @@
       <div id="dept-missed-detail" style="display:none;">
         <div id="dept-missed-queue-only" class="queue-only-section" style="display:none;">
           <div class="queue-only-header">
-            <strong>🚨 Queue-only abandoned</strong>
+            <strong class="gloss" title="Calls that abandoned in the queue before ringing ANY agent — the caller hung up while still waiting, so no individual was ever alerted. These are attributed to the queue itself, not to an agent, and are separate from the per-agent missed rings above.">🚨 Queue-only abandoned</strong>
             <span class="muted" id="dept-queue-only-subhead"></span>
           </div>
           <div id="dept-queue-only-body"></div>
@@ -752,7 +758,7 @@
       </div>
       <div id="missed-queue-only" class="queue-only-section" style="display:none;">
         <div class="queue-only-header">
-          <strong>🚨 Queue-only abandoned</strong>
+          <strong class="gloss" title="Calls that abandoned in the queue before ringing ANY agent — the caller hung up while still waiting, so no individual was ever alerted. These are attributed to the queue itself, not to an agent, and are separate from the per-agent missed rings above.">🚨 Queue-only abandoned</strong>
           <span class="muted" id="queue-only-subhead"></span>
         </div>
         <div id="queue-only-body"></div>
