@@ -1,5 +1,17 @@
 # Cycle State — resume note
 
+## Latest session (broad-implement: Batch 3 -- F-7/F-17/F-18/F-21/F-55, bulk-path hardening)
+Branch `claude/broad-scan-xkmoam`, commit `f29160d`, PUSHED. 218/218 tests (4 added: neon-write-chunking.test.js, fake-conn), INV-16 guard green.
+- **F-7** processBatchArchive: QCD wait cols (9/10) + CDR ST duration cols (22/23) read from the already-parallel DISPLAY grid -- bulk-archived QCD rows no longer write "Sat Dec 30 1899..." garbage into Neon longest_wait/avg_answer. NOTE: PRE-fix garbage rows in qcd_history remain (no reader consumes longest_wait today); one-off SQL cleanup or a re-import of the date self-heals via DO UPDATE.
+- **F-17** processBulkQueue + standalone processBatchArchive take the script lock (per-invocation; released at pause boundaries; NOT re-entrant -> bulk passes callerHoldsLock=true). Tradeoff documented in-code: a daily INSERT_GRID during a bulk CHUNK skips with a console log (recover via Manual Processing); between chunks it runs normally.
+- **F-18** bulk archive mirrors CDR to Neon (writeCDRRowsToNeon, best-effort, QCD-mirror precedent, deduped rows); completion report gains the inbound_calls "not captured -- run backfillInboundCalls()" reminder.
+- **F-21** neonWrite.js (INV-16 pair): DQE/QCD/CDR-main INSERTs chunked (400/1000/500 rows) under the JDBC statement + 65,535-param caps; ONE commit per writer preserved. Fake-conn test pins chunks + single commit + unchanged daily single-statement path.
+- **F-55** processNewImport non-silent failure returns "ERROR: <msg>" (runManualExport suppresses the redundant second dialog); archive alert/audit/return show POST-dedup appended counts + explicit skipped count.
+DEPLOY: cdr-import (autoImport, neonWrite) + cdr-report (neonWrite -- INV-16 sync). Dashboard untouched.
+VALIDATE post-deploy: one small bulk run (2-3 dates) -- confirm lock busy-alert when a manual export races it, Neon CDR mirror lines in the log, post-dedup counts in the completion alert.
+REMAINING: Batch 4 (consistency Lows: F-15/F-28/F-29/F-31/F-32/F-34..F-49), Batch 5 (escalations F-43..F-46), Batch 6 (test debt F-58 -- partially started: chunking now covered), strategic track.
+Where I left off: Batch 3 shipped + pushed; branch has 11 unmerged commits awaiting PR/merge + the two cdr-project deploys.
+
 ## Latest session (broad-implement: Batch 2 -- F-13/F-11/F-12/F-10/F-19/F-26/F-51/F-52, cdr-tooling data accuracy)
 Branch `claude/broad-scan-xkmoam`, commit `9af11e4`, PUSHED (stacks on F-1..F-6 + sync-docs + Batch 1). 214/214 tests (5 added), extended INV-16 guard green.
 - **F-13** DQEdrilldown: windows Unique/TTT/ATT (Bug 1/2 parity) + abandoned-leg wait (IVR parity) -- the verification tool agrees with the build again. Editor-tool; no unit harness (SpreadsheetApp-bound, like sheetRepairs).
