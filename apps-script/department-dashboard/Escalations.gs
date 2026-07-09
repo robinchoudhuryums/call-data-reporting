@@ -51,6 +51,12 @@
  */
 
 var ESC_MAX_TEXT = 4000;          // length cap on free-text fields
+// F-46: cap the list fetch (newest first). The query was unbounded json_agg
+// -- fine at today's volume, but Phase 2's external pending_review inserts
+// make it an unbounded single-string JDBC fetch of PII (the failure mode
+// INBOUND_TOP_N / CALLER_LOOKUP_MAX_CALLS cap elsewhere). meta.truncated
+// tells the client when the cap was hit.
+var ESC_MAX_ROWS = 500;
 var ESC_STATUS_PENDING  = 'pending';
 var ESC_STATUS_RESOLVED = 'resolved';
 
@@ -115,6 +121,9 @@ function getEscalations(req) {
             + "resolved_by, resolved_at::text AS resolved_at, source "
             + "FROM escalations"
             + (where.length ? (' WHERE ' + where.join(' AND ')) : '')
+            // F-46: newest-first cap inside the subquery (json_agg re-sorts
+            // the capped set with the same keys, so order is unchanged).
+            + ' ORDER BY occurred_at DESC NULLS LAST, created_at DESC LIMIT ' + ESC_MAX_ROWS
             + ') t';
     var stmt = conn.prepareStatement(sql);
     for (var i = 0; i < params.length; i++) stmt.setString(i + 1, params[i]);
@@ -122,7 +131,10 @@ function getEscalations(req) {
     var json = rs.next() ? rs.getString('j') : '[]';
     rs.close(); stmt.close();
     var rows = JSON.parse(json || '[]');
-    return { available: true, rows: rows, meta: { department: scopeAll ? 'ALL' : department, status: status, count: rows.length } };
+    return { available: true, rows: rows,
+             meta: { department: scopeAll ? 'ALL' : department, status: status,
+                     count: rows.length,
+                     truncated: rows.length >= ESC_MAX_ROWS } };   // F-46
   } catch (e) {
     Logger.log('getEscalations failed: ' + (e && e.message ? e.message : e));
     return { available: false, rows: [], meta: { department: scopeAll ? 'ALL' : department, status: status } };
@@ -149,7 +161,7 @@ function getEscalationActivity(req) {
     escEnsureTable_(conn);
     var meta = escRowMeta_(conn, id);
     if (!meta) return { available: true, rows: [] };
-    assertDeptAccess_(user, meta.department);
+    escAssertRowAccess_(user, meta.department);   // F-45: row dept = data, not input
     var sql = "SELECT COALESCE(json_agg(t ORDER BY t.at ASC), '[]')::text AS j FROM ("
             + "SELECT action, actor, at::text AS at, detail FROM escalation_activity WHERE escalation_id = ?) t";
     var stmt = conn.prepareStatement(sql);
@@ -341,9 +353,18 @@ function resolveEscalation(req) {
   try {
     escEnsureTable_(conn);
     // Authorize against the row's OWN department (never trust a dept from req).
-    var dept = escRowDepartment_(conn, id);
-    if (dept === null) throw new Error('Escalation not found.');
-    assertDeptAccess_(user, dept);
+    var meta = escRowMeta_(conn, id);
+    if (!meta) throw new Error('Escalation not found.');
+    var dept = meta.department;
+    escAssertRowAccess_(user, dept);   // F-45: row dept = data, not input
+    // F-43: pending-only, mirroring reopenEscalation's resolved-only guard.
+    // Two managers racing from stale UIs previously last-write-wins
+    // clobbered the first resolution note on the row itself (only the
+    // activity trail preserved it).
+    if (meta.status === ESC_STATUS_RESOLVED) {
+      throw new Error('This escalation is already resolved. Reopen it first if the '
+        + 'resolution needs to change (the existing note would otherwise be overwritten).');
+    }
 
     conn.setAutoCommit(false); txn = true;
     var stmt = conn.prepareStatement(
@@ -397,7 +418,7 @@ function reopenEscalation(req) {
     escEnsureTable_(conn);
     var meta = escRowMeta_(conn, id);
     if (!meta) throw new Error('Escalation not found.');
-    assertDeptAccess_(user, meta.department);
+    escAssertRowAccess_(user, meta.department);   // F-45: row dept = data, not input
     if (meta.status !== ESC_STATUS_RESOLVED) {
       throw new Error('Only a resolved escalation can be reopened.');
     }
@@ -446,7 +467,7 @@ function updateEscalationComment(req) {
     escEnsureTable_(conn);
     var dept = escRowDepartment_(conn, id);
     if (dept === null) throw new Error('Escalation not found.');
-    assertDeptAccess_(user, dept);
+    escAssertRowAccess_(user, dept);   // F-45: row dept = data, not input
     conn.setAutoCommit(false); txn = true;
     var stmt = conn.prepareStatement("UPDATE escalations SET comments = NULLIF(?, ''), updated_at = now() WHERE id = ?");
     stmt.setString(1, comments);
@@ -522,6 +543,26 @@ function backfillEscalationActivity() {
 // ── Internals ───────────────────────────────────────────────────────────
 
 /** Reads an escalation's department (the authorization key). null if absent. */
+/**
+ * F-45: authorization against a row's OWN stored department. Unlike
+ * assertDeptAccess_ (whose admin branch validates the dept against the
+ * CURRENT `DO NOT EDIT!` headers -- correct for REQUEST parameters), the
+ * row's dept is authoritative DATA: if a dept column is ever renamed,
+ * existing escalation rows still carry the old name, and the header check
+ * made them un-resolvable/un-reopenable by EVERYONE including admins.
+ * Managers stay pinned to their (current) dept name -- a manager of a
+ * renamed dept needs an admin's help for pre-rename rows; admins always
+ * pass. Throws on rejection.
+ */
+function escAssertRowAccess_(user, rowDept) {
+  if (!user || user.role === 'none') throw new Error('Not authorized.');
+  if (user.role === 'manager' && rowDept !== user.department) {
+    throw new Error('Not authorized for this department.');
+  }
+  // admins: entitled to every row, including rows whose stored dept no
+  // longer matches a current roster header.
+}
+
 function escRowDepartment_(conn, id) {
   var stmt = conn.prepareStatement('SELECT department FROM escalations WHERE id = ?');
   stmt.setString(1, id);
@@ -681,7 +722,18 @@ function escClean_(v) {
 function escCleanDateTime_(v) {
   var s = (v == null ? '' : String(v)).trim();
   if (!s) return '';
-  // Loose shape check: YYYY-MM-DD optionally followed by T/space + time.
-  if (!/^\d{4}-\d{2}-\d{2}([ T]\d{2}:\d{2}(:\d{2})?)?/.test(s)) return '';
+  // F-44: ANCHORED shape check + numeric range validation. The old regex
+  // was unanchored at the end, so '2026-01-01T99:99' / '2026-01-01junk'
+  // passed "validation" and died in Postgres's ::timestamptz cast as an
+  // opaque "Could not save the escalation" instead of the documented
+  // invalid -> stored-NULL behavior.
+  var m = /^(\d{4})-(\d{2})-(\d{2})([ T](\d{2}):(\d{2})(:(\d{2}))?)?$/.exec(s);
+  if (!m) return '';
+  var mo = Number(m[2]), da = Number(m[3]);
+  if (mo < 1 || mo > 12 || da < 1 || da > 31) return '';
+  if (m[4]) {
+    var hh = Number(m[5]), mi = Number(m[6]), se = m[8] ? Number(m[8]) : 0;
+    if (hh > 23 || mi > 59 || se > 59) return '';
+  }
   return s;
 }

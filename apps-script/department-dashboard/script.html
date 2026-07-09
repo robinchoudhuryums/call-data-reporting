@@ -14450,8 +14450,15 @@
       escShowEmpty_(st === 'pending' ? 'No pending escalations. 🎉' : 'No escalations to show for this filter.');
       return;
     }
-    // "N of M shown" (only meaningful while a query is active).
-    escSetFilterCount_(q ? (rows.length + ' of ' + all.length + ' shown') : '');
+    // "N of M shown" (only meaningful while a query is active). F-46: when
+    // the server capped the list (ESC_MAX_ROWS), say so -- the text filter
+    // only searches the rows that arrived, not everything in storage.
+    const truncNote = (escLastResp_.meta && escLastResp_.meta.truncated)
+      ? 'showing the ' + all.length + ' most recent — narrow by status or department to see older rows'
+      : '';
+    escSetFilterCount_(q
+      ? (rows.length + ' of ' + all.length + ' shown' + (truncNote ? ' · ' + truncNote : ''))
+      : truncNote);
     if (!rows.length) {
       escShowEmpty_('No escalations match “' + q + '”. Clear the filter to see all ' + all.length + '.');
       return;
