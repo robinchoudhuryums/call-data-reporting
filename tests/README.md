@@ -132,13 +132,21 @@ spreadsheet). See `dept-config.test.js` for the fake-spreadsheet pattern.
     — INV-07 (only in-window legs count), INV-08/INV-21 (TTT sums the
     agent's OWN parent-leg talk via `findAgentTalkOnParent`, not the max
     across legs — a Bob decoy leg proves it), INV-20 (missed-slot
-    PST→CST +2h bucketing), and the same-date duplicate guard. Neon
-    mirror + failure-notify are stubbed (live in `neonWrite.js`).
-- **Not yet covered:** the Pass-4 queue-only abandoned **sentinel rows**
-  (INV-23 producer side) in `buildDQEHistoricalData` -- the agent-row
-  AD/AE/AF lockstep IS covered (pipeline-build.test.js, F-2) -- and the
-  Neon mirror writers themselves (`neonWrite.js`; `dal-cutover.test.js`'s
-  fake-JDBC-conn pattern shows the needed shim already half-exists).
+    PST→CST +2h bucketing), the Pass-4 INV-23 **queue-sentinel producer**
+    (a no-ring abandoned queue call emits one sentinel row with the
+    documented column contract; a rung-abandoned parent stays on the
+    agent row), and the same-date duplicate guard. Neon mirror +
+    failure-notify are stubbed (live in `neonWrite.js`).
+  - *QCD report (qcd-report.test.js):* the F-15 daily date axis (a
+    sub-queue-only date appears on the axis; dept total zero-fills,
+    the child's per-queue line keeps its numbers) and the F-36
+    all-departments grand-total dedup (a double-mapped queue counts
+    once company-wide while listing under both dept sections), via
+    Dept Config fixtures (parent/child + double-mapped queues).
+- **Not yet covered:** the Neon mirror writers' FIELD MAPPINGS
+  (`neonWrite.js` -- chunking + single-commit discipline IS pinned by
+  `neon-write-chunking.test.js`; `dal-cutover.test.js`'s fake-JDBC-conn
+  pattern shows the shim needed for a mapping test already half-exists).
   The INV-29 trend window IS covered (`trend-window.test.js`).
 - **Regression Scenarios (CLAUDE.md):** the floater-exclusion contract
   (S35) and the Sonia `0:15:03 / 0:03:01` durations (S7) are now asserted

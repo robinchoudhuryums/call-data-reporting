@@ -143,6 +143,60 @@ test('F-2: AD/AE/AF are positionally paired (AF[i] time <-> AD[i] parent id)', f
   assert.equal(row[29], 'PA,PA,PB');
 });
 
+test('INV-23 producer (Pass 4): a no-ring abandoned queue call emits ONE queue-sentinel row', function () {
+  // PX is abandoned (waitSec 120 > 60) and its parent leg HIT A_Q_CSR
+  // (calleeName carries the queue identifier) but NO agent was rung for
+  // it -> invisible to the per-agent path, so Pass 4 must emit a sentinel
+  // row keyed on the queue name. PY is also abandoned on the same queue
+  // but Anna WAS rung (missed) -> covered by her agent row, so PY must
+  // NOT appear in the sentinel (no double count).
+  const rawGrid = [new Array(26).fill('')].concat([
+    // Anna's normal activity: establishes the A_Q_CSR -> ext 103 mapping
+    // via an observed queue leg AND produces her agent row.
+    rawRow({ callId: 'P1', legId: 0, start: IN, talk: '0:03:00', calleeName: 'Anna', parentCall: 'N/A' }),
+    rawRow({ callId: 'Q1', legId: 0, start: IN, caller: 'CallQueue(103)', calleeName: 'Anna', parentCall: 'P1', callerId: 'A_Q_CSR', answered: true }),
+    // PX: abandoned, hit the queue at 7:10 PST, rang nobody.
+    rawRow({ callId: 'PX', legId: 0, start: '03/09/2026 7:10:00', callTime: '0:02:00', calleeName: 'A_Q_CSR', parentCall: 'N/A', abandoned: true }),
+    // PY: abandoned but Anna was rung (missed) -> per-agent path owns it.
+    rawRow({ callId: 'PY', legId: 0, start: IN, callTime: '0:02:00', calleeName: 'A_Q_CSR', parentCall: 'N/A', abandoned: true }),
+    rawRow({ callId: 'QY', legId: 0, start: IN, caller: 'CallQueue(103)', calleeName: 'Anna', parentCall: 'PY', callerId: 'A_Q_CSR', missed: true }),
+  ]);
+  const ss = makeFakeSpreadsheet({
+    timeZone: 'America/Chicago',
+    sheets: {
+      'Raw Data': rawGrid,
+      'DQE Historical Data': [new Array(34).fill('')],
+      'DO NOT EDIT!': rosterGrid({ CSR: ['Anna, 103'] }),
+    },
+  });
+  h.fn('buildDQEHistoricalData')(ss._sheet('Raw Data'), ss._sheet('DQE Historical Data'));
+  const rows = ss._sheet('DQE Historical Data')._data.slice(1);
+
+  const sentinels = rows.filter(function (r) { return r[2] === 'A_Q_CSR'; });
+  assert.equal(sentinels.length, 1, 'exactly one sentinel row per queue per day');
+  const s = sentinels[0];
+  // Col D carries the queue's extensions so dept-by-extension filtering works.
+  assert.equal(s[3], '103');
+  // Cols E-J are zero / "0:00:00" -- queue-level, not agent-level (INV-23).
+  assert.equal(s[4], 0); assert.equal(s[5], 0); assert.equal(s[6], 0); assert.equal(s[7], 0);
+  assert.equal(s[8], '0:00:00'); assert.equal(s[9], '0:00:00');
+  // The no-ring event is bucketed at the QUEUE-hit leg's time: 7:10 PST
+  // -> 9:10 CST, slot index 2 (7:00-7:30 PST). Same CST shape as agent
+  // rows so the Missed Calls Report reads it with the same code path.
+  assert.equal(s[10 + 2], '9:10:00');
+  // AD = the no-ring parent only (PY was rung -> excluded); AE empty
+  // (no missed agent leg exists by definition); AF mirrors the slots.
+  assert.equal(s[29], 'PX');
+  assert.equal(s[30], '');
+  assert.equal(s[31], '9:10:00');
+  assert.equal(s[32], '0:00:00'); assert.equal(s[33], '0:00:00');
+  // Anna's agent row coexists -- the sentinel doesn't displace it, and
+  // her AD carries the rung-abandoned parent PY (per-agent path).
+  const anna = rows.filter(function (r) { return r[2] === 'Anna'; })[0];
+  assert.ok(anna, 'agent row still emitted');
+  assert.ok(String(anna[29]).indexOf('PY') !== -1, "PY belongs to Anna's row");
+});
+
 test('duplicate guard: a second build for the same date is a no-op', function () {
   // Build once, then build again into the SAME dqe sheet -> the date
   // already exists in col B, so the second run must add no rows.

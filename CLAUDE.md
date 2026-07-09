@@ -63,10 +63,12 @@ bash scripts/check-duplicated-files.sh
 # INV-25, PR prior-period INV-28, CR length-mismatch INV-35, INV-53);
 # pipeline canonicalization (loadRosterCanonicalNames_ INV-24/46,
 # INV-16 cross-project); the INV-29 trend window
-# (computeTrendStartDate_, trend-window.test.js); and the end-to-end
-# buildDQEHistoricalData build (INV-07/08/20/21). See tests/README.md
-# for design + how to add tests + the remaining gaps (Pass-4 sentinel
-# rows, neonWrite JDBC).
+# (computeTrendStartDate_, trend-window.test.js); the end-to-end
+# buildDQEHistoricalData build (INV-07/08/20/21 + the Pass-4 INV-23
+# queue-sentinel producer); and the QCD report's F-15 daily axis /
+# F-36 all-dept grand-total dedup (qcd-report.test.js). See
+# tests/README.md for design + how to add tests + the remaining gap
+# (the neonWrite JDBC field mappings; chunking IS covered).
 node --test          # from repo root (or: npm test)
 
 # CI: .github/workflows/ci.yml runs `node --test` + the INV-16 guard on
@@ -81,8 +83,9 @@ scripts/deploy.sh apps-script/cdr-report <cdr-report-deployment-id>
 scripts/deploy.sh apps-script/cdr-import <cdr-import-deployment-id>
 # (omit the id to just `clasp push -f` and finish the version bump manually)
 
-# Still manual (NOT unit-covered): the Pass-4 queue-only sentinel rows
-# and the Neon mirror writers -- verify those via deploy + smoke-test
+# Still manual (NOT unit-covered): the Neon mirror writers' FIELD
+# MAPPINGS (chunking/commit discipline is pinned by
+# neon-write-chunking.test.js) -- verify via deploy + smoke-test
 # against the Regression Scenarios in the Cycle Workflow Config below.
 ```
 
@@ -1860,10 +1863,13 @@ Config accessors), the `computeSummary_` aggregator
 weighted ATT, INV-28 prior-period, INV-35 length-mismatch, INV-53),
 pipeline canonicalization (INV-24/46 + INV-16 cross-project), the
 INV-29 trend window (`computeTrendStartDate_`, trend-window.test.js),
-and the end-to-end `buildDQEHistoricalData` build (INV-07/08/20/21 +
-dup guard). NOT yet covered: the Pass-4 queue-only sentinel rows and
-the Neon mirror writers -- the manual Regression Scenarios remain the
-verification of record for those, so walk the scenarios that overlap a
+the end-to-end `buildDQEHistoricalData` build (INV-07/08/20/21 +
+dup guard + the Pass-4 INV-23 queue-sentinel producer), and the QCD
+report's F-15 daily axis / F-36 all-dept grand-total dedup
+(qcd-report.test.js). NOT yet covered: the Neon mirror writers' field
+mappings (chunking/commit discipline IS pinned by
+neon-write-chunking.test.js) -- the manual Regression Scenarios remain
+the verification of record there, so walk the scenarios that overlap a
 change in addition to running `node --test`.)
 
 ### Health Dimensions
