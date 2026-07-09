@@ -1,5 +1,14 @@
 # Cycle State — resume note
 
+## Latest session (broad-implement: Batch 6 -- test debt, no production code changes)
+Branch `claude/broad-scan-xkmoam`, commit `c44c825`, PUSHED. 227/227 tests (3 added), INV-16 guard green. TEST-ONLY batch -- no deploy needed.
+- **Pass-4 sentinel producer** (pipeline-build.test.js): INV-23 producer side now pinned -- no-ring abandoned queue call -> ONE sentinel row (C=queue, D=exts, E-J zeros, CST slot at the QUEUE-hit leg's time, AD=no-ring parents only, AE='', AF=slots); a rung-abandoned parent stays on the agent row (no double count). Closes the audit's oldest coverage gap.
+- **qcd-report.test.js** (new): F-15 daily axis (sub-queue-only date on the axis; dept total zero-fills; child per-queue line keeps its numbers; subDept tag + own-only dept total asserted) + F-36 grand-total dedup (double-mapped queue counts once company-wide, listed under both dept sections). Dept Config fixture rows drive the parent/child + double-mapped setups -- the Batch-4 deferred follow-on, now done.
+- Coverage notes synced (CLAUDE.md Key Commands + Test Command blocks, tests/README.md): remaining unit gap is ONLY the neonWrite field mappings (chunking/commit pinned by neon-write-chunking.test.js since Batch 3).
+DEPLOY: none (tests + docs only; nothing ships to Apps Script).
+REMAINING from the scan: NOTHING in the fix batches -- Batches 1-6 complete. Strategic track only (queue-identity normalization -> un-gate Inbound/Direct, QCD->Insights retirement, F-20 deferred-mirror tail-scan, F-22 rename-vs-build race, holiday awareness, Escalations Phase 2, legacy decommission incl. F-25). Awaiting ratification: F-32 (IR overlap = current-wins) + F-29 (code-is-spec comment fix).
+Where I left off: all six batches shipped + pushed; branch has 17 unmerged commits awaiting PR/merge + deploys (dashboard: F-1..F-6 + Batches 1/4/5; cdr-report + cdr-import: Batches 1-3).
+
 ## Latest session (broad-implement: Batch 5 -- Escalations hardening, F-43..F-46)
 Branch `claude/broad-scan-xkmoam`, commit `448ac45`, PUSHED. 224/224 tests (5 added: escalations-hardening.test.js -- first unit coverage of Escalations.gs), INV-16 guard green.
 - **F-45** `escAssertRowAccess_` replaces `assertDeptAccess_` at the 4 ROW-dept call sites (resolveEscalation / updateEscalationComment / reopenEscalation / getEscalationActivity): manager must match the row's STORED dept; admin passes unconditionally -- including rows whose stored dept was renamed/retired (assertDeptAccess_'s roster validation would have locked admins out, orphaning those rows unresolvable). Request-PARAM dept checks (getEscalations) keep assertDeptAccess_ -- input validates against real depts, row data doesn't.
