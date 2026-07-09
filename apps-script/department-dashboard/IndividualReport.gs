@@ -70,7 +70,7 @@
 // agent name still received that agent's real 12-month monthly series
 // -- the F-1 authorization gap). Bumped so cached responses computed
 // with the unfiltered trend invalidate on deploy.
-const INDIVIDUAL_CACHE_KEY_PREFIX = 'individual:v10';
+const INDIVIDUAL_CACHE_KEY_PREFIX = 'individual:v11';
 
 function getIndividualReportInit(req) {
   const email = Session.getActiveUser().getEmail();
@@ -655,6 +655,14 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
       from: from, to: to,
       priorFrom: hasPrior ? priorFrom : null,
       priorTo:   hasPrior ? priorTo   : null,
+      // F-32 follow-up (v11): a CUSTOM prior window can overlap the
+      // current range; overlap days count toward the CURRENT window only
+      // (else-if in the row scan), so the prior baseline omits them.
+      // Surfaced client-side as the same inline "Windows overlap" caveat
+      // Insights carries (F12). The auto modes (YoY / immediately-
+      // preceding) can never overlap, so a bare intersection test is
+      // exactly the custom-overlap signal.
+      priorOverlap: !!(hasPrior && priorFrom <= to && from <= priorTo),
       trendStart: trendStartIso,
       trendEnd:   trendEndIso,
       agents: selectedAgents,

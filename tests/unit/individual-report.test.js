@@ -144,4 +144,18 @@ test('F-32: a custom prior window overlapping the current range counts overlap d
   // Prior window has NO exclusive days with data (Mar 8 empty; Mar 9 went
   // to current) -> prior rung 0. Old behavior: 10 (Mar 9 double-counted).
   assert.equal(anna.priorRaw.rung, 0);
+  // v11: the overlap is FLAGGED so the client renders the inline
+  // "Windows overlap" caveat (same contract as Insights' F12).
+  assert.equal(data.meta.priorOverlap, true);
+});
+
+test('v11: a disjoint custom prior window does NOT flag priorOverlap', function () {
+  install([
+    dqeRow({ date: '2026-03-09', agent: 'Anna', ext: '201', rung: 10, answered: 8, att: '0:03:00' }),
+  ]);
+  const data = h.call('getIndividualReport', {
+    department: 'Alpha', from: '2026-03-09', to: '2026-03-10', agents: ['Anna'],
+    priorFrom: '2026-03-01', priorTo: '2026-03-02',
+  });
+  assert.equal(data.meta.priorOverlap, false);
 });

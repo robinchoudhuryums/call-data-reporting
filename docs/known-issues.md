@@ -375,10 +375,10 @@ same time as the code change.
 
 | Source file | Cache prefix | Current version |
 |---|---|---|
-| `Data.gs` (main table) | `summary:vN:` | `v10` |
+| `Data.gs` (main table) | `summary:vN:` | `v11` |
 | `Data.gs` (latest-date snap for default From/To) | `latestDate:vN:` | `v1` |
 | `Data.gs` (multi-source latest dates for freshness pill) | `latestDates:vN:` | `v1` |
-| `IndividualReport.gs` | `individual:vN:` | `v10` |
+| `IndividualReport.gs` | `individual:vN:` | `v11` |
 | `IndividualReport.gs` (active-in-range subset shared by all three report pickers) | `individual_active:vN:` | `v2` |
 | `PerformanceReport.gs` | `performance:vN:` | `v5` |
 | `CompareRangesReport.gs` | `compareRanges:vN:` | `v6` |
@@ -774,9 +774,15 @@ without the same belt-and-suspenders:
    (two admins clicking Apply at once). NB: LockService is
    per-script-project, so it does NOT serialize against the daily
    DQE build -- that runs in the cdr-import / cdr-report projects.
-   A force re-import that deletes a date's rows mid-rename could
-   still shift rows under the rename's read-modify-write; the
-   window is tiny, but don't rename during an active import/rebuild.
+   A force re-import that deletes a date's rows mid-rename would
+   shift rows under the rename's read-modify-write. F-22 mitigation:
+   `renameHistoricalAgent_` re-verifies the agent column + row count
+   immediately before writing and ABORTS with a "retry in a minute"
+   error if either changed since its snapshot (no partial write;
+   pinned by `tests/unit/orphan-rename-race.test.js`). The unguarded
+   window is now just the back-to-back re-read -> write RPCs -- a
+   mitigation, not a serialization, so still avoid renaming during
+   an active import/rebuild.
 4. Every action -- alias add, alias remove, rename, rename+alias
    -- appends to `Orphan Fix Log` BEFORE returning to the client.
 
@@ -791,7 +797,7 @@ behavior byte-identical to pre-OrphanFix.
 **Cache invalidation.** `applyOrphanRename` removes the single
 fixed-key Overview cache entry (via the `COMPANY_OVERVIEW_CACHE_KEY`
 constant -- currently `companyOverview:v18`) on success. Per-(dept,
-range) caches (`summary:v10`, `individual:v10`, `performance:v5`,
+range) caches (`summary:v11`, `individual:v11`, `performance:v5`,
 etc.) are left to TTL out within 30 minutes
 (`REPORT_CACHE_TTL_SECONDS`). The Orphan Fix modal tells the user
 the Overview updates immediately and other views may lag up to the

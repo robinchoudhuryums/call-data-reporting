@@ -143,10 +143,15 @@ spreadsheet). See `dept-config.test.js` for the fake-spreadsheet pattern.
     all-departments grand-total dedup (a double-mapped queue counts
     once company-wide while listing under both dept sections), via
     Dept Config fixtures (parent/child + double-mapped queues).
-- **Not yet covered:** the Neon mirror writers' FIELD MAPPINGS
-  (`neonWrite.js` -- chunking + single-commit discipline IS pinned by
-  `neon-write-chunking.test.js`; `dal-cutover.test.js`'s fake-JDBC-conn
-  pattern shows the shim needed for a mapping test already half-exists).
+- *Neon writers (`neonWrite.js`, INV-16 pair):* chunking + single-commit
+  discipline (`neon-write-chunking.test.js`) AND the field mappings
+  (`neon-write-mapping.test.js` -- a recording fake conn asserts the SQL
+  column list + every bound param's index/setter/value for the DQE /
+  QCD / CDR writers, incl. the no-HMAC NULL-JSONB path).
+- **Not yet covered:** the deferred mirror's sheet-derived payload
+  re-derivation (`NeonMirror.js::runNeonMirror_` and friends) -- the
+  writers it calls are pinned, but the sheet-to-payload re-derivation
+  itself is verified via the manual Regression Scenarios.
   The INV-29 trend window IS covered (`trend-window.test.js`).
 - **Regression Scenarios (CLAUDE.md):** the floater-exclusion contract
   (S35) and the Sonia `0:15:03 / 0:03:01` durations (S7) are now asserted

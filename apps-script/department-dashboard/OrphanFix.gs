@@ -46,8 +46,8 @@
  *      row to `Orphan Fix Log` BEFORE returning to the client.
  *      The log is append-only and idempotently created by setup().
  *
- * The downstream cache layers (companyOverview:v18, summary:v10,
- * individual:v10, etc.; see INV-30 for the canonical list) will
+ * The downstream cache layers (companyOverview:v18, summary:v11,
+ * individual:v11, etc.; see INV-30 for the canonical list) will
  * hold stale data for up to 30 minutes (REPORT_CACHE_TTL_SECONDS)
  * after a rename. We invalidate the single fixed-key
  * `companyOverview:` entry on every successful write; the
@@ -465,6 +465,18 @@ function readOrphanFixLog_(maxRows) {
  * column matches fromName. Single bulk read + single bulk write
  * so the column is atomic from any reader's perspective.
  * Returns the number of rows changed.
+ *
+ * F-22 (rename-vs-build race): LockService is PER-SCRIPT-PROJECT, so
+ * this write cannot be serialized against the cdr-import / cdr-report
+ * daily builds (other projects, same workbook). A force re-import
+ * DELETES a date's rows mid-flight -- rows below shift up, and writing
+ * this function's stale column snapshot back would misalign agent
+ * names against every shifted row's other columns. Mitigation:
+ * RE-VERIFY immediately before writing -- if the sheet's row count or
+ * ANY cell of the agent column changed since the snapshot, abort with
+ * a retry message instead of writing. This shrinks the unguarded
+ * window from read -> compute -> write to the back-to-back re-read ->
+ * write RPCs; it is a mitigation, not a serialization.
  */
 function renameHistoricalAgent_(fromName, toName) {
   const ss = openSpreadsheet_();
@@ -473,15 +485,32 @@ function renameHistoricalAgent_(fromName, toName) {
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return 0;
   const range = sheet.getRange(2, HISTORICAL_COLS.AGENT, lastRow - 1, 1);
-  const values = range.getValues();
+  const original = range.getValues();
+  const updated = new Array(original.length);
   let affected = 0;
-  for (let i = 0; i < values.length; i++) {
-    if (String(values[i][0] || '').trim() === fromName) {
-      values[i][0] = toName;
+  for (let i = 0; i < original.length; i++) {
+    if (String(original[i][0] || '').trim() === fromName) {
+      updated[i] = [toName];
       affected++;
+    } else {
+      updated[i] = [original[i][0]];
     }
   }
-  if (affected > 0) range.setValues(values);
+  if (affected === 0) return 0;
+
+  const raceMsg = 'DQE Historical Data changed while preparing the rename — '
+    + 'a build or import is likely running (the daily builds live in other '
+    + 'script projects, so the lock here cannot serialize against them). '
+    + 'Nothing was written; retry in a minute.';
+  if (sheet.getLastRow() !== lastRow) throw new Error(raceMsg);
+  const recheck = range.getValues();
+  for (let i = 0; i < recheck.length; i++) {
+    if (String(recheck[i][0] || '') !== String(original[i][0] || '')) {
+      throw new Error(raceMsg);
+    }
+  }
+
+  range.setValues(updated);
   return affected;
 }
 

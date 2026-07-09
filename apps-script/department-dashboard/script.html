@@ -6202,8 +6202,12 @@
     // string format is fixed (Utilities.formatDate with our own
     // template), but use innerHTML here only because we already
     // included the &middot; entity above. Date contents themselves
-    // are dates, not user input.
-    $('ir-results-date').innerHTML = headerDate;
+    // are dates, not user input. F-32 follow-up: when a custom prior
+    // window overlaps the current range (meta.priorOverlap, individual
+    // v11), append the same inline "Windows overlap" caveat Insights
+    // renders -- overlap days count toward the current window only.
+    $('ir-results-date').innerHTML = headerDate
+      + (data.meta && data.meta.priorOverlap ? ' ' + insOverlapFlagHtml_(data.meta) : '');
     irRenderEditingLine_(data.meta && data.meta.agents);
     showIrResults();
     irSetResultsStatus('');

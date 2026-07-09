@@ -233,7 +233,7 @@ function getDepartmentSummary(req) {
   // v10 (P3): qcdSnapshot's unqualified total is OWN-queues-only (reconciles
   //   with the QCD modal / Overview); adds subTotals / allTotals +
   //   mainQueueCount / subQueueCount for the gated Main/Sub/All summary lines.
-  const cacheKey = 'summary:v10:' + dept + ':' + scope + ':' + from + ':' + to;
+  const cacheKey = 'summary:v11:' + dept + ':' + scope + ':' + from + ':' + to;
   const cached = cache.get(cacheKey);
   if (cached) {
     try {
@@ -594,12 +594,11 @@ function computeSummary_(dept, from, to, scope) {
     return x.agent.localeCompare(y.agent);
   });
 
-  // Totals: sum the summables; simple-mean the per-row averages ACROSS
-  // ALL displayed roster rows -- including idle agents whose ATT/abd-wait
-  // is 0 (conventions.md: "mean of the per-agent rows displayed"). Note
-  // this differs from the per-agent accumulators above, which skip zero
-  // values when averaging a single agent's days (F-29: the code is the
-  // spec; this comment previously implied the two used the same method).
+  // Totals: sum the summables; mean the per-row averages across the
+  // NONZERO roster rows (avgNonzero_) -- idle agents whose ATT/abd-wait
+  // is 0 are excluded from both sides of the mean (owner decision, F-29
+  // follow-up; summary:v11). This matches the per-agent accumulators
+  // above, which skip zero values when averaging a single agent's days.
   //
   // Phase D: the totals sum only over matchedViaRoster=true rows.
   // Queue-only floaters (matchedViaQueue && !matchedViaRoster) are
@@ -617,9 +616,9 @@ function computeSummary_(dept, from, to, scope) {
     totals.totalAnswered += rosterRows[i].totalAnswered;
     totals.tttSeconds    += rosterRows[i].tttSeconds;
   }
-  totals.attSeconds = avg_(rosterRows, 'attSeconds');
-  totals.avgAbdWaitSeconds = avg_(rosterRows, 'avgAbdWaitSeconds');
-  totals.csrAvgAbdWaitSeconds = avg_(rosterRows, 'csrAvgAbdWaitSeconds');
+  totals.attSeconds = avgNonzero_(rosterRows, 'attSeconds');
+  totals.avgAbdWaitSeconds = avgNonzero_(rosterRows, 'avgAbdWaitSeconds');
+  totals.csrAvgAbdWaitSeconds = avgNonzero_(rosterRows, 'csrAvgAbdWaitSeconds');
   totals.rosterAgentCount = rosterRows.length;
   totals.queueOnlyAgentCount = rows.length - rosterRows.length;
 
@@ -1186,13 +1185,17 @@ function toSeconds_(v) {
   return Number(s) || 0;
 }
 
-function avg_(arr, key) {
+// Mean of the NONZERO per-row values (zero rows are excluded from both
+// numerator and denominator). Owner decision (F-29 follow-up): idle
+// agents -- whose ATT / abd-wait is 0 -- must not drag the totals-row
+// means down, which also makes the totals use the SAME skip-zero method
+// the per-agent accumulators use when averaging one agent's days.
+function avgNonzero_(arr, key) {
   if (!arr.length) return 0;
   let s = 0, n = 0;
   for (let i = 0; i < arr.length; i++) {
-    const raw = arr[i][key];
-    if (raw == null) continue;
-    const v = Number(raw) || 0;
+    const v = Number(arr[i][key]) || 0;
+    if (v === 0) continue;
     s += v; n++;
   }
   return n ? Math.round(s / n) : 0;
