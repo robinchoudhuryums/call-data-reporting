@@ -460,9 +460,9 @@ mirrors it; if the two ever diverge, INV-30 wins.
 | `CompareRangesReport.gs` | `compareRanges:vN:` | `v6` |
 | `MissedCallsReport.gs` | `missed:vN:` | `v13` |
 | `CompanyOverview.gs` | `companyOverview:vN` | `v18` |
-| `QCDReport.gs` | `qcd:vN:` | `v10` |
+| `QCDReport.gs` | `qcd:vN:` | RETIRED (QCD modal deleted; `qcdAll:` remains) |
 | `InboundReport.gs` | `inbound:vN:` | `v3` |
-| `InsightsReport.gs` | `insights:vN:` | `v17` |
+| `InsightsReport.gs` | `insights:vN:` | `v18` |
 | `QCDReport.gs` (all-departments daily report) | `qcdAll:vN:` | `v3` |
 | `InboundReport.gs` (weekday×hour abandon heatmap) | `inboundHeatmap:vN:` | `v1` |
 | `DirectCallReport.gs` | `directCall:vN:` | `v1` |

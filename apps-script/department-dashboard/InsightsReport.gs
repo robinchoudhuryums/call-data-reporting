@@ -78,7 +78,7 @@
 //     (from the bySource breakdown 4a added to computeQcdReport_), so
 //     the Queue health table can annotate WHERE a queue's abandons come
 //     from. Null when no sub-source has abandons.
-const INSIGHTS_CACHE_KEY_PREFIX = 'insights:v17';
+const INSIGHTS_CACHE_KEY_PREFIX = 'insights:v18';
 
 function getInsightsReportInit(req) {
   // Same picker UX (roster + default dates + active-in-range subset) as
@@ -603,7 +603,13 @@ function insightsQueueHealth_(dept, from, to, priorFrom, priorTo) {
     // their own lines/rows + EXCLUDED from the dept total. The user-facing
     // "Include sub-queues" toggle was retired here too.
     const cur = computeQcdReport_(dept, from, to, /*includeSub=*/ true, /*separate=*/ true);
-    if (!cur || !cur.meta || cur.meta.unmapped) return null;
+    if (!cur || !cur.meta) return null;
+    // v18 (QCD retirement): an UNMAPPED dept is signaled explicitly so the
+    // client can render the "no queues mapped" hint (+ admin Dept Config
+    // CTA) the retired QCD modal used to show -- Insights Queue health is
+    // now the only place a manager learns their dept needs mapping. A
+    // missing QCD sheet (above) stays null = silently hidden.
+    if (cur.meta.unmapped) return { unmapped: true };
     let prior = null;
     try { prior = computeQcdReport_(dept, priorFrom, priorTo, true, true); } catch (e) { prior = null; }
     const pick = function (t) {

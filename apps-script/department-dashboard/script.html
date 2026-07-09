@@ -853,7 +853,6 @@
     initCallerLookup();
     initEscalations();
     initTour_();
-    initQcdReport();
     initQcdAllDept_();
     // Router last so its modal-close listeners attach after each
     // per-modal init has wired up its own close-button handlers.
@@ -2571,7 +2570,9 @@
     '/report/individual':  { kind: 'modal', modalId: 'individual-modal',  buttonId: 'individual-report-btn' },
     '/report/performance': { kind: 'modal', modalId: 'performance-modal', buttonId: 'performance-report-btn' },
     '/report/compare':     { kind: 'modal', modalId: 'compare-modal',     buttonId: 'compare-ranges-btn' },
-    '/report/qcd':         { kind: 'modal', modalId: 'qcd-modal',         buttonId: 'qcd-report-btn' },
+    // QCD->Insights retirement: legacy #/report/qcd deep-links land on the
+    // Insights report (its Queue health section is the QCD replacement).
+    '/report/qcd':         { kind: 'modal', modalId: 'insights-modal',    buttonId: 'insights-report-btn' },
     '/report/insights':    { kind: 'modal', modalId: 'insights-modal',    buttonId: 'insights-report-btn' },
     '/report/inbound':     { kind: 'modal', modalId: 'inbound-modal',     buttonId: 'inbound-report-btn' },
     '/report/direct':      { kind: 'modal', modalId: 'direct-call-modal', buttonId: 'direct-call-report-btn' },
@@ -2850,7 +2851,7 @@
         if (kind === 'team-lately')           launcherOpenInsights_();
         else if (kind === 'missed-yesterday') launcherOpenMissed_();
         else if (kind === 'agent-trend')      launcherOpenIndividual_();
-        else if (kind === 'abandons')         launcherOpenQcd_();
+        else if (kind === 'abandons')         launcherOpenInsights_('Are callers giving up before we answer?');
       } catch (err) { /* best-effort: the modal is still open/openable by hand */ }
     });
   }
@@ -2892,7 +2893,7 @@
   // select-all + generate happen at a race-free synchronization point.
   // The form never flashes: a loading pane covers the roster fetch +
   // generate; failures fall back to the primed form (insShowForm).
-  function launcherOpenInsights_() {
+  function launcherOpenInsights_(question) {
     const btn = $('insights-report-btn');
     if (!btn) return;
     btn.click();
@@ -2902,7 +2903,7 @@
     if (p) p.value = 'custom';
     insLauncherAutoRun_ = true;
     launcherShowLoading_('ins-launcher-loading', 'insights-form', 'insights-results',
-      'How is my team doing lately?');
+      question || 'How is my team doing lately?');
     insEnsureRoster();
   }
 
@@ -2932,20 +2933,6 @@
     if (provider) provider.apply({ from: launcherIsoDaysAgo_(30), to: launcherIsoDaysAgo_(1) });
     const search = $('ir-agent-search');
     if (search) search.focus();
-  }
-
-  // "Are callers giving up before we answer?" -> QCD report over the
-  // last 30 days, auto-generated (no agent selection needed). Loading
-  // pane instead of a form flash; failures fall back to the form.
-  function launcherOpenQcd_() {
-    const btn = $('qcd-report-btn');
-    if (!btn) return;
-    btn.click();
-    const p = $('qcd-preset');
-    if (p) { p.value = 'last30'; applyQcdPreset(); }
-    launcherShowLoading_('qcd-launcher-loading', 'qcd-form', 'qcd-results',
-      'Are callers giving up before we answer?');
-    runQcdReport();
   }
 
   // -- Metric glossary (anti-intimidation layer) --------------------------
@@ -3428,20 +3415,6 @@
     }
     if (lostNote) s.push(lostNote);
     return s;
-  }
-
-  function qcdHeadline_(data) {
-    const t = data.totals || {};
-    if (!Number(t.totalCalls)) return ['No queue activity in this range.'];
-    const pct = Number(t.abandonedPct || 0);
-    const s = ['<strong>' + escapeHtml(String(t.abandonedPctStr || '0%')) + '</strong> of callers abandoned before being answered ('
-      + fmtNumber(t.abandoned || 0) + ' of ' + fmtNumber(t.totalCalls || 0) + ' calls) — '
-      + (pct >= 5 ? 'above' : 'within') + ' the 5% violation threshold.'];
-    if (Number(t.violations) > 0) {
-      s.push('<strong>' + fmtNumber(t.violations) + '</strong> violation day'
-        + (Number(t.violations) === 1 ? '' : 's') + ' so far this month.');
-    }
-    return { sentences: s, tone: headlineTone_({ abandonPct: Number(t.abandonedPct) }) };
   }
 
   function inboundHeadline_(data) {
@@ -11714,13 +11687,6 @@
     el.style.display = '';
   }
 
-  // -- QCD Report modal ------------------------------------------------
-  // Queue Call Detail report. Per-dept gated; reads QCD Historical
-  // Data via QCDReport.gs. Layout: dept-level KPI tiles ->
-  // per-source breakdown table -> 12-month monthly trend chart
-  // with tab strip (Total Calls / Abandoned % / Violations).
-
-  let qcdLastData = null;
   // ===================================================================
   // Insights Report (combined: department rollup + per-agent prior cards)
   // Reuses the shared picker HTML (irBuildAgentListHtml_), the shared KPI
@@ -12380,6 +12346,36 @@
       const dEl = $('ins-qh-daily'); if (dEl) { dEl.style.display = 'none'; }
       return;
     }
+    // insights v18 (QCD retirement): an UNMAPPED dept renders the explanatory
+    // hint (+ admin Dept Config CTA) the retired QCD modal used to show --
+    // this section is now where a manager learns their dept needs mapping.
+    if (qh && qh.unmapped) {
+      wrap.style.display = '';
+      const uEl = $('ins-qh-tiles');
+      if (uEl) {
+        const isAdmin = (USER.role === 'admin');
+        uEl.innerHTML = '<div class="ds-note">No queues are mapped for this department, so its '
+          + 'queue data can’t be surfaced yet. '
+          + (isAdmin
+              ? 'Assign its A_Q_* queues in Dept Config — it auto-discovers queues seen in the data and flags the unmapped ones.'
+              : 'Ask an admin to map its A_Q_* queues in Dept Config.')
+          + '</div>'
+          + (isAdmin
+              ? '<div style="margin-top:8px;"><button class="btn btn-secondary" id="ins-qh-unmapped-cta" type="button">Open Dept Config</button></div>'
+              : '');
+        const cta = $('ins-qh-unmapped-cta');
+        if (cta) cta.addEventListener('click', function () {
+          const trigger = document.getElementById('dept-config-btn');
+          if (trigger) trigger.click();
+        });
+      }
+      const tb2 = $('ins-qh-tbody'); if (tb2) tb2.innerHTML = '';
+      const cap2 = $('ins-qh-cap'); if (cap2) cap2.textContent = '';
+      const fc2 = $('ins-qh-forecast'); if (fc2) fc2.style.display = 'none';
+      const d2 = $('ins-qh-daily'); if (d2) d2.style.display = 'none';
+      const sec2 = $('ins-qh-secondary'); if (sec2) sec2.innerHTML = '';
+      return;
+    }
     if (!qh || !qh.totals) { wrap.style.display = 'none'; return; }
     wrap.style.display = '';
 
@@ -12592,6 +12588,7 @@
     const insShowLabels = !!($('ins-show-datalabels') && $('ins-show-datalabels').checked);
 
     let chartConfig;
+    let spotlightOpts = null;   // set on the multi-queue By-Queue view
 
     if (isQueues) {
       // By Queue (gap 1): one line per queue + own-only dept total, for the
@@ -12625,7 +12622,21 @@
           borderColor: THEME.ink, backgroundColor: THEME.ink,
           borderDash: [5, 4], borderWidth: 1.4, pointRadius: 0, tension: 0.25, fill: false });
       }
+      if (qNames.length > 1) {
+        spotlightOpts = isPct ? { skipLabel: '5% threshold' } : {};
+      }
       if (isPct) {
+        // Violation-day markers (ported from the retired QCD chart, #6):
+        // points at/over 5% render warn-colored + enlarged on every %
+        // series so "which days/months breached" reads at a glance.
+        const warnC = THEME.warn || '#c66b4b';
+        datasets.forEach(function (ds) {
+          const base = ds.borderColor;
+          const baseR = ds.pointRadius || 1.5;
+          ds.pointBackgroundColor = ds.data.map(function (v) { return Number(v) >= 5 ? warnC : base; });
+          ds.pointBorderColor     = ds.pointBackgroundColor;
+          ds.pointRadius          = ds.data.map(function (v) { return Number(v) >= 5 ? 4.5 : baseR; });
+        });
         datasets.push({ label: '5% threshold', data: labels.map(function () { return 5; }),
           borderColor: THEME.muted, borderDash: [3, 4], borderWidth: 1,
           pointRadius: 0, fill: false, order: 99 });
@@ -12650,8 +12661,12 @@
                 return fmtVal(value);
               },
             },
-            legend: { position: 'bottom', labels: { boxWidth: 18,
+            // Multi-queue legend gets the shared spotlight (hover-dim +
+            // click-to-pin, ported from the retired QCD chart) so one queue's
+            // line can be isolated; the 5% threshold stays out of the dimming.
+            legend: Object.assign({ position: 'bottom', labels: { boxWidth: 18,
               filter: function (item) { return item.text !== '5% threshold'; } } },
+              (qNames.length > 1 ? chartSpotlightLegend_() : {})),
             tooltip: {
               filter: function (ctx) { return ctx.dataset.label !== '5% threshold'; },
               callbacks: { label: function (ctx) {
@@ -12734,6 +12749,9 @@
     }
 
     insChartInstance = safeChart_(canvas.getContext('2d'), chartConfig);
+    if (spotlightOpts && insChartInstance) {
+      chartSpotlightStash_(insChartInstance, spotlightOpts);
+    }
   }
 
   // Delta badge mirroring dsKpiTile_'s logic for the per-agent card grid.
@@ -15088,315 +15106,6 @@
          + '</div>';
   }
 
-  let qcdChartInstance = null;
-  let qcdActiveMetric = 'totalCalls';
-  let qcdActiveView   = 'monthly';   // 'monthly' (default) | 'daily'
-
-  function initQcdReport() {
-    const btn   = $('qcd-report-btn');
-    const modal = $('qcd-modal');
-    if (!btn || !modal) return;
-
-    const closeBtn = modal.querySelector('.modal-close');
-    const backdrop = modal.querySelector('[data-close]');
-
-    function openModal() {
-      modal.style.display = '';
-      modal.setAttribute('aria-hidden', 'false');
-      document.body.style.overflow = 'hidden';
-      trapFocus_(modal);
-      initModalDragResize_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
-      document.addEventListener('keydown', onKeyDown);
-      showQcdForm();
-      setQcdDefaultDates_();
-    }
-    function closeModal() {
-      modal.style.display = 'none';
-      modal.setAttribute('aria-hidden', 'true');
-      releaseFocus_();
-      resetModalTransform_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
-      document.body.style.overflow = '';
-      document.removeEventListener('keydown', onKeyDown);
-      btn.focus();
-    }
-    function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
-
-    btn.addEventListener('click', openModal);
-    if (closeBtn) closeBtn.addEventListener('click', closeModal);
-    if (backdrop) backdrop.addEventListener('click', closeModal);
-
-    const preset = $('qcd-preset');
-    if (preset) preset.addEventListener('change', applyQcdPreset);
-    ['qcd-from', 'qcd-to'].forEach(function (id) {
-      const el = $(id);
-      if (el) el.addEventListener('change', function () {
-        const p = $('qcd-preset');
-        if (p) p.value = 'custom';
-      });
-    });
-
-    const gen = $('qcd-generate-btn');
-    if (gen) gen.addEventListener('click', runQcdReport);
-    const back = $('qcd-back-btn');
-    if (back) back.addEventListener('click', showQcdForm);
-
-    // Chart metric tabs
-    const tabs = $('qcd-chart-tabs');
-    if (tabs) tabs.addEventListener('click', function (e) {
-      const tab = e.target.closest('.ir-tab');
-      if (!tab) return;
-      qcdActiveMetric = tab.getAttribute('data-metric') || 'totalCalls';
-      tabs.querySelectorAll('.ir-tab').forEach(function (b) {
-        const active = b === tab;
-        b.classList.toggle('active', active);
-        b.setAttribute('aria-selected', active ? 'true' : 'false');
-      });
-      if (qcdLastData) qcdRenderChart_(qcdLastData);
-    });
-
-    // Chart-view toggle (Monthly / Daily). Switches the chart's
-    // x-axis between the 12-month trend window and one point per
-    // day within the selected From/To range.
-    const viewToggle = $('qcd-view-toggle');
-    if (viewToggle) viewToggle.addEventListener('click', function (e) {
-      const btn = e.target.closest('.seg-btn');
-      if (!btn) return;
-      const next = btn.getAttribute('data-view') || 'monthly';
-      if (next === qcdActiveView) return;
-      qcdActiveView = next;
-      viewToggle.querySelectorAll('.seg-btn').forEach(function (b) {
-        const active = b === btn;
-        b.classList.toggle('active', active);
-        b.setAttribute('aria-checked', active ? 'true' : 'false');
-      });
-      if (qcdLastData) qcdRenderChart_(qcdLastData);
-    });
-
-    // Data-labels toggle (opt-in; off by default like IR/PR/CR). Persisted
-    // in a standalone key since the QCD report has no prefs blob.
-    const qcdLabels = $('qcd-show-datalabels');
-    if (qcdLabels) {
-      try { qcdLabels.checked = localStorage.getItem('cdr.qcd.datalabels') === '1'; } catch (e) {}
-      qcdLabels.addEventListener('change', function () {
-        try { localStorage.setItem('cdr.qcd.datalabels', qcdLabels.checked ? '1' : '0'); } catch (e) {}
-        if (qcdLastData) qcdRenderChart_(qcdLastData);
-      });
-    }
-
-    // Export menu
-    const exportBtn  = $('qcd-export-btn');
-    const exportMenu = $('qcd-export-menu');
-    if (exportBtn && exportMenu) {
-      exportBtn.addEventListener('click', function (e) {
-        e.stopPropagation();
-        exportMenu.style.display = exportMenu.style.display === 'none' ? '' : 'none';
-      });
-      exportMenu.addEventListener('click', function (e) {
-        const item = e.target.closest('[data-action]');
-        if (!item) return;
-        const action = item.getAttribute('data-action');
-        exportMenu.style.display = 'none';
-        if (action === 'copy')  qcdCopyImage_();
-        else if (action === 'email') qcdEmailImage_();
-        else if (action === 'print') qcdPrint_();
-      });
-      document.addEventListener('click', function (e) {
-        if (exportMenu.style.display === 'none') return;
-        if (exportMenu.contains(e.target) || e.target === exportBtn) return;
-        exportMenu.style.display = 'none';
-      });
-    }
-  }
-
-  function setQcdDefaultDates_() {
-    const now = new Date();
-    const isoOf = function (d) {
-      const m = String(d.getMonth() + 1).padStart(2, '0');
-      const day = String(d.getDate()).padStart(2, '0');
-      return d.getFullYear() + '-' + m + '-' + day;
-    };
-    const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
-    $('qcd-from').value = isoOf(yesterday);
-    $('qcd-to').value   = isoOf(yesterday);
-    var p = $('qcd-preset');
-    if (p) p.value = 'yesterday';
-  }
-
-  function applyQcdPreset() {
-    const v = $('qcd-preset').value;
-    if (v === 'custom') return;
-    const now = new Date();
-    const isoOf = function (d) {
-      const m = String(d.getMonth() + 1).padStart(2, '0');
-      const day = String(d.getDate()).padStart(2, '0');
-      return d.getFullYear() + '-' + m + '-' + day;
-    };
-    let s, e;
-    if (v === 'yesterday') {
-      s = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
-      e = new Date(s);
-    } else if (v === 'thisMonth') {
-      s = new Date(now.getFullYear(), now.getMonth(), 1);
-      e = now;
-    } else if (v === 'lastMonth') {
-      s = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-      e = new Date(now.getFullYear(), now.getMonth(), 0);
-    } else if (v === 'last30') {
-      s = new Date(now.getTime() - 29 * 86400000);
-      e = now;
-    } else if (v === 'last3Months') {
-      s = new Date(now.getFullYear(), now.getMonth() - 3, 1);
-      e = now;
-    } else if (v === 'last12Months') {
-      s = new Date(now.getFullYear(), now.getMonth() - 12, 1);
-      e = now;
-    } else if (v === 'lastYear') {
-      s = new Date(now.getFullYear() - 1, 0, 1);
-      e = new Date(now.getFullYear() - 1, 11, 31);
-    }
-    if (!s) return;
-    $('qcd-from').value = isoOf(s);
-    $('qcd-to').value   = isoOf(e);
-  }
-
-  function showQcdForm() {
-    launcherHideLoading_('qcd-launcher-loading');
-    $('qcd-form').style.display    = '';
-    $('qcd-results').style.display = 'none';
-    qcdSetFormError_('');
-  }
-  function showQcdResults_() {
-    launcherHideLoading_('qcd-launcher-loading');
-    $('qcd-form').style.display    = 'none';
-    $('qcd-results').style.display = '';
-  }
-  function qcdSetFormError_(msg) {
-    const el = $('qcd-form-error');
-    if (!el) return;
-    if (!msg) { el.style.display = 'none'; el.textContent = ''; return; }
-    el.textContent = msg; el.style.display = '';
-  }
-
-  function runQcdReport() {
-    qcdSetFormError_('');
-    const dept = getRequestedDept();
-    const from = $('qcd-from').value;
-    const to   = $('qcd-to').value;
-    if (!from || !to) { qcdSetFormError_('Pick a start and end date.'); return; }
-    if (from > to)    { qcdSetFormError_('Start date must be on or before end date.'); return; }
-
-    const btn = $('qcd-generate-btn');
-    btn.disabled = true;
-    const prev = btn.textContent; btn.innerHTML = DS_EQ_HTML_ + 'Loading…';
-
-    const __sig = reportSig_({ department: dept, from: from, to: to });   // D1b key
-    // Wrap render to clear any prior staleness note (qcdRenderReport_ doesn't
-    // touch qcd-results-status, which doubles as the export-status banner).
-    const __qcdRepaint = function (d) { qcdRenderReport_(d); reportSetStatus_('qcd-results-status', ''); };
-    google.script.run
-      .withSuccessHandler(function (data) {
-        btn.disabled = false; btn.textContent = prev;
-        reportLastGoodWrite_('qcd', __sig, data);
-        __qcdRepaint(data);
-      })
-      .withFailureHandler(function (err) {
-        btn.disabled = false; btn.textContent = prev;
-        // D1b: repaint last-good for this exact request (if any) instead of blanking.
-        if (reportFailFallback_('qcd', __sig, __qcdRepaint, 'qcd-results-status')) return;
-        showQcdForm();   // dismisses the launcher loading pane if active
-        qcdSetFormError_('Error: ' + (err && err.message ? err.message : String(err)));
-      })
-      .getQcdReport({ department: dept, from: from, to: to });
-  }
-
-  function qcdRenderReport_(data) {
-    reportHeadline_('qcd-headline', 'qcd-results', qcdHeadline_(data));
-    qcdLastData = data;
-    $('qcd-results-title').textContent = 'QCD Report';
-    $('qcd-results-date').textContent  = '(' + (data.dateLabel || '') + ')';
-    showQcdResults_();
-
-    // Consistent empty-state: an unmapped dept OR no QCD activity in the
-    // selected range shows the shared .empty-state block and hides the
-    // data sections (KPIs / tables / chart) -- so it reads like the My
-    // Department empty state rather than a wall of zeros. Returns early to
-    // skip the data renders + the chart (which would otherwise draw into a
-    // now-hidden canvas).
-    var qcdUnmapped = !!(data.meta && data.meta.unmapped);
-    var qcdTotalCalls = (data.totals && Number(data.totals.totalCalls)) || 0;
-    var qcdEmptyEl = $('qcd-empty');
-    var qcdDataEl  = $('qcd-data-sections');
-    if (qcdUnmapped || qcdTotalCalls === 0) {
-      if (qcdEmptyEl) {
-        if (qcdUnmapped) {
-          // F onboarding: explanatory empty report + (admin) a direct CTA to
-          // Dept Config so the fix is one click away rather than a hunt.
-          var isAdmin = (USER.role === 'admin');
-          qcdEmptyEl.innerHTML = emptyStateHtml_('&#128230;', 'No queues mapped for this department',
-              'This department has no QCD queues assigned, so its queue data can’t be surfaced yet. '
-              + (isAdmin
-                  ? 'Assign its A_Q_* queues in Dept Config — the modal auto-discovers queues seen in the data and flags the unmapped ones.'
-                  : 'Ask an admin to map its A_Q_* queues in Dept Config.'))
-            + (isAdmin
-                ? '<div style="text-align:center;margin-top:12px;"><button class="btn btn-secondary" id="qcd-unmapped-cta" type="button">Open Dept Config</button></div>'
-                : '');
-          var ctaBtn = $('qcd-unmapped-cta');
-          if (ctaBtn) ctaBtn.addEventListener('click', function () {
-            var trigger = document.getElementById('dept-config-btn');
-            if (trigger) trigger.click();
-          });
-        } else {
-          qcdEmptyEl.innerHTML = emptyStateHtml_('&#128202;', 'No QCD activity in this range',
-              'No calls were recorded for this department’s mapped queues on the selected dates. Try a wider range.');
-        }
-        qcdEmptyEl.style.display = '';
-      }
-      if (qcdDataEl) qcdDataEl.style.display = 'none';
-      return;
-    }
-    if (qcdEmptyEl) qcdEmptyEl.style.display = 'none';
-    if (qcdDataEl)  qcdDataEl.style.display  = '';
-
-    // Temporal abandon heatmap companion (sourced from inbound_calls). Admin
-    // only -- getInboundHeatmap inherits the inbound report's vetting gate, so
-    // managers never call it and the panel stays hidden for them.
-    if (USER.role === 'admin' && data.meta) {
-      loadAbandonHeatmap_('qcd-heatmap', data.meta.department || '', data.meta.from, data.meta.to);
-    } else {
-      var qh = $('qcd-heatmap'); if (qh) { qh.style.display = 'none'; qh.innerHTML = ''; }
-    }
-
-    var hint = $('qcd-queue-hint');
-    if (hint) {
-      if (data.meta && data.meta.unmapped) {
-        hint.textContent = 'No queues mapped for this department. Add a '
-          + 'row to DEPT_QCD_QUEUES in Config.gs and redeploy.';
-        hint.style.display = '';
-      } else {
-        hint.style.display = 'none';
-      }
-    }
-    // Single-day range: hide the Daily view toggle since a single
-    // point isn't useful as a line chart; force monthly view.
-    var isSingleDay = data.meta && data.meta.from === data.meta.to;
-    var dailyBtn = document.querySelector('#qcd-view-toggle [data-view="daily"]');
-    if (dailyBtn) dailyBtn.style.display = isSingleDay ? 'none' : '';
-    if (isSingleDay && qcdActiveView === 'daily') {
-      qcdActiveView = 'monthly';
-      var vt = $('qcd-view-toggle');
-      if (vt) vt.querySelectorAll('.seg-btn').forEach(function (b) {
-        var active = b.getAttribute('data-view') === 'monthly';
-        b.classList.toggle('active', active);
-        b.setAttribute('aria-checked', active ? 'true' : 'false');
-      });
-    }
-    qcdRenderForecast_(data);
-    qcdRenderKpiTiles_(data.totals || {});
-    qcdRenderQueueTable_(data.queueBreakdown || [], data.totals || {});
-    qcdRenderDailyTable_(data.dailySeries || []);
-    requestAnimationFrame(function () { qcdRenderChart_(data); });
-  }
-
   // Days-to-violation forecast (E9, Phase E). Linear regression on
   // the last 7 entries of dailySeries.abandonedPct; if slope > 0 and
   // the regression projects a crossing of the 5% violation threshold
@@ -15450,47 +15159,6 @@
       + ' over the last ' + QCD_FORECAST_WINDOW_DAYS + ' days. '
       + 'At this rate, it crosses the 5% violation threshold in '
       + '<strong>~' + wholeDays + ' day' + (wholeDays === 1 ? '' : 's') + '</strong>.';
-  }
-
-  function qcdRenderForecast_(data) {
-    const el = $('qcd-forecast');
-    if (!el) return;
-    const series = ((data && data.dailySeries) || []).map(function (d) { return d.abandonedPct; });
-    const html = abandonForecastHtml_(series);
-    el.innerHTML = html;
-    el.style.display = html ? '' : 'none';
-  }
-
-  function qcdRenderKpiTiles_(t) {
-    const wrap = $('qcd-kpi-row');
-    if (!wrap) return;
-    // ds-kpi tiles (Phase 1 ds-* migration). No prev/delta on QCD's KPIs --
-    // absolute values only. Two tiles are warn-tinted via the ds-* STATUS
-    // mechanism (ds-kpi--status + is-warn -> .ds-kpi__value reads var(--status);
-    // specificity-safe, unlike a bare color class), preserving the prior
-    // pr-delta-neg coloring:
-    //   - Abandoned %: warn when >= 5% (pipeline's violation threshold).
-    //     Mirrors the Overview tile chip color rule.
-    //   - Violations (current month): warn when > 0. Server sources this as MTD
-    //     across the dept's mapped queues, NOT the selected-range sum --
-    //     operationally more useful as "how many bad days this month?"
-    const tile = function (label, value, warn) {
-      return '<div class="ds-kpi' + (warn ? ' ds-kpi--status is-warn' : '') + '">'
-           +   '<div class="ds-kpi__top"><span class="ds-kpi__label">' + escapeHtml(label) + '</span></div>'
-           +   '<div class="ds-kpi__value">' + escapeHtml(String(value)) + '</div>'
-           + '</div>';
-    };
-    const pct = Number(t.abandonedPct) || 0;
-    const pctWarn  = pct >= 5;
-    const violWarn = (Number(t.violations) || 0) > 0;
-    wrap.innerHTML =
-        tile('Total Calls',  fmtNumber(t.totalCalls    || 0))
-      + tile('Answered',     fmtNumber(t.totalAnswered || 0))
-      + tile('Abandoned',    fmtNumber(t.abandoned     || 0))
-      + tile('Abandoned %',  String(t.abandonedPctStr  || '0.00%'), pctWarn)
-      + tile('Longest Wait', String(t.longestWait      || '0:00:00'))
-      + tile('Avg Answer',   String(t.avgAnswer        || '0:00:00'))
-      + tile('Violations (MTD)', fmtNumber(t.violations || 0), violWarn);
   }
 
   // Pure: the per-day QCD rows (Date / Total / Answered / Abandoned / Aban% /
@@ -15577,16 +15245,6 @@
     }).join('');
   }
 
-  function qcdRenderDailyTable_(rows) {
-    const tbody = $('qcd-daily-tbody');
-    if (!tbody) return;
-    if (!rows.length) {
-      tbody.innerHTML = '<tr><td colspan="6" class="al-empty">No daily QCD rows in the selected range for this dept\'s mapped queues.</td></tr>';
-      return;
-    }
-    tbody.innerHTML = qcdDailyRowsHtml_(rows);
-  }
-
   // Pure: the per-call-source breakdown subtable (Overall + CSR / Ad-campaign /
   // New Call Menu / Non-CSR ...) shared by the QCD modal's expandable queue
   // rows AND the Insights Queue health expandable rows (consolidation Phase 1,
@@ -15614,400 +15272,6 @@
                 +  '</tr>';
             }).join('')
          +  '</tbody></table>';
-  }
-
-  function qcdRenderQueueTable_(rows, totals) {
-    var tbody = $('qcd-queue-tbody');
-    var tfoot = $('qcd-queue-tfoot');
-    if (!tbody) return;
-    if (!rows.length) {
-      tbody.innerHTML = '<tr><td colspan="8" class="al-empty">No QCD rows for this dept\'s mapped queues in the selected range.</td></tr>';
-      if (tfoot) tfoot.innerHTML = '';
-      return;
-    }
-    // One row's HTML (+ its expandable violation-dates detail row).
-    var rowHtml = function (r, isChild) {
-      var viol = Number(r.violations) || 0;
-      var pct = Number(r.abandonedPct) || 0;
-      var violCls = viol > 3 ? 'qcd-warn-strong' : (viol > 0 ? 'qcd-warn-light' : '');
-      var pctCls  = pct >= 5 ? 'qcd-warn-light' : '';
-      // 4a: a queue row expands to its call-source breakdown (always when
-      // sources exist) and the violation dates (when any).
-      var sources = r.bySource || [];
-      var hasSources = sources.length > 0;
-      var hasViolDates = viol > 0 && r.violationDates && r.violationDates.length;
-      var hasDetail = hasSources || hasViolDates;
-      var chevron = hasDetail ? ' <span class="qcd-expand-icon">&#9654;</span>' : '';
-      var rowCls = 'qcd-queue-row' + (hasDetail ? ' qcd-expandable' : '') + (isChild ? ' qcd-subqueue-row' : '');
-      var subTag = isChild && r.subDept
-        ? ' <span class="dept-qcd-subtag">sub-queue · ' + escapeHtml(r.subDept) + '</span>' : '';
-      var html = '<tr class="' + rowCls + '" data-queue="' + escapeHtml(r.queue) + '">'
-           +   '<td>' + escapeHtml(r.queue) + subTag + chevron + '</td>'
-           +   '<td class="num">' + fmtNumber(r.totalCalls)    + '</td>'
-           +   '<td class="num">' + fmtNumber(r.totalAnswered) + '</td>'
-           +   '<td class="num">' + fmtNumber(r.abandoned)     + '</td>'
-           +   '<td class="num' + (pctCls ? ' ' + pctCls : '') + '">' + escapeHtml(r.abandonedPctStr) + '</td>'
-           +   '<td class="num">' + escapeHtml(r.longestWait)  + '</td>'
-           +   '<td class="num">' + escapeHtml(r.avgAnswer)    + '</td>'
-           +   '<td class="num' + (violCls ? ' ' + violCls : '') + '">' + fmtNumber(r.violations) + '</td>'
-           + '</tr>';
-      if (hasDetail) {
-        var detail = '';
-        if (hasSources) {
-          detail += qcdSourceSubtableHtml_(sources);
-        }
-        if (hasViolDates) {
-          detail += '<div class="qcd-detail-viol"><strong>Violation dates:</strong> '
-                 +  r.violationDates.map(fmtViolDate_).join(', ') + '</div>';
-        }
-        html += '<tr class="qcd-detail-row" style="display:none;"><td colspan="8">'
-             +  '<div class="qcd-detail-wrap">' + detail + '</div></td></tr>';
-      }
-      return html;
-    };
-    // Sub-queue separation: own-dept queues first, then any child sub-queues
-    // grouped under a divider so it's clear they are NOT in the dept total.
-    var ownRows = rows.filter(function (r) { return !r.subDept; });
-    var subRows = rows.filter(function (r) { return !!r.subDept; });
-    var html = ownRows.map(function (r) { return rowHtml(r, false); }).join('');
-    if (subRows.length) {
-      html += '<tr class="qcd-subqueue-divider"><td colspan="8">'
-           +  'Sub-queues — shown separately, not included in the department total'
-           +  '</td></tr>';
-      html += subRows.map(function (r) { return rowHtml(r, true); }).join('');
-    }
-    tbody.innerHTML = html;
-    // Expandable rows: click to toggle detail. Wire-once guard (F-9): this
-    // runs on EVERY Generate, and without the guard each render stacked
-    // another listener -- two toggles per click made expand open+close
-    // instantly (appear dead) on even-numbered generates. Mirrors the
-    // sibling tables' _insQhExpandWired / _qcdAllExpandWired guards.
-    if (!tbody._qcdExpandWired) {
-      tbody._qcdExpandWired = true;
-      tbody.addEventListener('click', function (e) {
-        var row = e.target.closest('.qcd-expandable');
-        if (!row) return;
-        var detail = row.nextElementSibling;
-        if (!detail || !detail.classList.contains('qcd-detail-row')) return;
-        var open = detail.style.display !== 'none';
-        detail.style.display = open ? 'none' : '';
-        var icon = row.querySelector('.qcd-expand-icon');
-        if (icon) icon.textContent = open ? '▶' : '▼';
-      });
-    }
-    if (tfoot && totals) {
-      var tPct = Number(totals.abandonedPct) || 0;
-      var tPctCls = tPct >= 5 ? 'qcd-warn-light' : '';
-      var tViol = Number(totals.violations) || 0;
-      var tViolCls = tViol > 3 ? 'qcd-warn-strong' : (tViol > 0 ? 'qcd-warn-light' : '');
-      tfoot.innerHTML = '<tr class="qcd-row-total">'
-        +   '<td>Department total' + (subRows.length ? ' (own queues)' : '') + '</td>'
-        +   '<td class="num">' + fmtNumber(totals.totalCalls)    + '</td>'
-        +   '<td class="num">' + fmtNumber(totals.totalAnswered) + '</td>'
-        +   '<td class="num">' + fmtNumber(totals.abandoned)     + '</td>'
-        +   '<td class="num' + (tPctCls ? ' ' + tPctCls : '') + '">' + escapeHtml(totals.abandonedPctStr || '0.00%') + '</td>'
-        +   '<td class="num">' + escapeHtml(totals.longestWait || '0:00:00')   + '</td>'
-        +   '<td class="num">' + escapeHtml(totals.avgAnswer || '0:00:00')     + '</td>'
-        +   '<td class="num' + (tViolCls ? ' ' + tViolCls : '') + '">' + fmtNumber(totals.violations) + '</td>'
-        + '</tr>'
-        + '<tr class="qcd-table-note"><td colspan="8">'
-        +   'Violations: per-queue counts are for the selected range; the '
-        +   'department total is <strong>month-to-date (MTD)</strong>.'
-        + '</td></tr>';
-    }
-  }
-
-  function qcdRenderChart_(data) {
-    if (typeof Chart === 'undefined') return;
-    var canvas = document.getElementById('qcd-chart');
-    if (!canvas) return;
-    destroyOrphanedChartOnCanvas_('qcd-chart');
-    if (qcdChartInstance) { try { qcdChartInstance.destroy(); } catch (e) {} qcdChartInstance = null; }
-
-    var isDaily = (qcdActiveView === 'daily');
-    var labels, deptSeries;
-    if (isDaily) {
-      var daily = data.dailySeries || [];
-      labels = daily.map(function (r) { return r.date ? r.date.slice(5) : ''; });
-      deptSeries = daily;
-    } else {
-      var td = data.trendData || { labels: [], series: [] };
-      labels = td.labels || [];
-      deptSeries = td.series || [];
-    }
-    var metric = qcdActiveMetric;
-    var viewLabel = isDaily ? 'daily' : 'monthly';
-    var headerLabels = {
-      totalCalls:   'Total Calls (' + viewLabel + ')',
-      abandonedPct: 'Abandoned % (' + viewLabel + ')',
-      violations:   'Violations (' + viewLabel + ')',
-    };
-    $('qcd-chart-header').textContent = headerLabels[metric] || 'Trend';
-
-    var formatPct = (metric === 'abandonedPct');
-    var extractVal = function (x) {
-      if (metric === 'totalCalls') return x.totalCalls;
-      if (metric === 'abandonedPct') return Number((x.abandonedPct || 0).toFixed(2));
-      return x.violations;
-    };
-
-    var queues = (data.meta && data.meta.queues) || [];
-    var perQueue = data.perQueue || {};
-    var multiQueue = queues.length > 1;
-    var queueColors = irChartColors_();
-    var datasets = [];
-
-    if (multiQueue) {
-      queues.forEach(function (q, i) {
-        var qData = perQueue[q];
-        if (!qData) return;
-        var src = isDaily ? (qData.daily || []) : (qData.monthly || []);
-        datasets.push({
-          label: q,
-          data: src.map(extractVal),
-          borderColor: queueColors[i % queueColors.length],
-          backgroundColor: queueColors[i % queueColors.length],
-          fill: false,
-          tension: 0.25,
-          pointRadius: 3,
-          borderWidth: 2,
-        });
-      });
-      var deptColor = (THEME && THEME.muted) || '#9ca3af';
-      datasets.push({
-        label: 'Dept total',
-        data: deptSeries.map(extractVal),
-        borderColor: deptColor,
-        backgroundColor: deptColor,
-        fill: false,
-        tension: 0.25,
-        pointRadius: 2,
-        borderWidth: 2,
-        borderDash: [6, 3],
-      });
-    } else {
-      var color = (metric === 'totalCalls')
-        ? ((THEME && THEME.accent) || '#4E79A7')
-        : ((THEME && THEME.warn)   || '#c66b4b');
-      datasets.push({
-        label: headerLabels[metric] || metric,
-        data: deptSeries.map(extractVal),
-        borderColor: color,
-        backgroundColor: color,
-        fill: false,
-        tension: 0.25,
-        pointRadius: 3,
-      });
-    }
-
-    // #6: on the Abandoned % view, mark violation days (points >= 5%) in
-    // warn color with a larger radius, and draw a dashed 5% reference line,
-    // so "which days breached" reads at a glance. Applies to every % series
-    // (single, per-queue, and the dept-total line).
-    if (formatPct) {
-      var warnC = (THEME && THEME.warn) || '#c66b4b';
-      datasets.forEach(function (ds) {
-        var base = ds.borderColor;
-        var baseR = ds.pointRadius || 3;
-        ds.pointBackgroundColor = ds.data.map(function (v) { return Number(v) >= 5 ? warnC : base; });
-        ds.pointBorderColor     = ds.pointBackgroundColor;
-        ds.pointRadius          = ds.data.map(function (v) { return Number(v) >= 5 ? 5 : baseR; });
-      });
-      datasets.push({
-        label: '5% threshold',
-        data: labels.map(function () { return 5; }),
-        borderColor: warnC, backgroundColor: 'transparent',
-        borderDash: [4, 4], borderWidth: 1,
-        pointRadius: 0, pointHoverRadius: 0,
-        fill: false, tension: 0, order: 99,
-      });
-    }
-
-    refreshChartTheme();
-    qcdChartInstance = safeChart_(canvas, {
-      type: 'line',
-      data: { labels: labels, datasets: datasets },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-          datalabels: {
-            display: (typeof $ === 'function' && $('qcd-show-datalabels') && $('qcd-show-datalabels').checked),
-            align: 'top', anchor: 'center',
-            backgroundColor: THEME.paperCard,
-            color: function (ctx) { return ctx.dataset.borderColor; },
-            borderColor: function (ctx) { return ctx.dataset.borderColor; },
-            borderWidth: 1, borderRadius: 2,
-            font: { family: "'IBM Plex Mono', monospace", size: 10, weight: '500' },
-            formatter: function (value, ctx) {
-              if (ctx.dataset.label === '5% threshold') return '';
-              if (value == null) return '';
-              return formatPct ? Number(value).toFixed(1) + '%' : value;
-            },
-          },
-          // Multi-queue charts get the shared legend spotlight (hover-dim
-          // + click-to-pin), matching the Overview chart. The 5% threshold
-          // line shows in the legend but is skipped by the spotlight dimming.
-          legend: Object.assign({ display: multiQueue || formatPct },
-                                 (multiQueue ? chartSpotlightLegend_() : {})),
-          tooltip: {
-            // Hide the flat 5% reference line from hover.
-            filter: function (item) { return item.dataset.label !== '5% threshold'; },
-            callbacks: {
-              label: function (ctx) {
-                var prefix = multiQueue ? (ctx.dataset.label + ': ') : '';
-                return prefix + (formatPct ? ctx.formattedValue + '%' : ctx.formattedValue);
-              },
-            },
-          },
-        },
-        scales: {
-          y: {
-            beginAtZero: true,
-            ticks: {
-              callback: function (v) { return formatPct ? v + '%' : v; },
-            },
-          },
-        },
-      },
-    });
-    if (multiQueue) chartSpotlightStash_(qcdChartInstance,
-      formatPct ? { skipLabel: '5% threshold' } : undefined);
-  }
-
-  // -- Export helpers (mirror IR/PR/CR pattern, simplified) ---------
-  function qcdBuildCanvas_(onDone) {
-    const root = $('qcd-results');
-    if (!root || typeof html2canvas === 'undefined') return;
-    // Capture the chart as an image so html2canvas can render it
-    // alongside the rest of the DOM (canvas elements don't make it
-    // into html2canvas output otherwise).
-    const cvs = document.getElementById('qcd-chart');
-    let dataUrl = null;
-    try { if (cvs) dataUrl = cvs.toDataURL('image/png'); } catch (e) { /* OK */ }
-    html2canvas(root, {
-      backgroundColor: (THEME.paper || '#f6f7f9'),
-      scale: 2,
-      onclone: function (clonedDoc) {
-        const ab = clonedDoc.querySelector('#qcd-results .ir-action-buttons');
-        if (ab) ab.style.display = 'none';
-        const tabs = clonedDoc.getElementById('qcd-chart-tabs');
-        if (tabs) tabs.style.display = 'none';
-        const cClone = clonedDoc.getElementById('qcd-chart');
-        if (cClone && dataUrl) {
-          const img = clonedDoc.createElement('img');
-          img.src = dataUrl;
-          img.style.width = '100%';
-          img.style.height = 'auto';
-          cClone.parentNode.replaceChild(img, cClone);
-        }
-      },
-    }).then(onDone).catch(function (err) {
-      try { console.error('QCD report image capture failed', err); } catch (e) {}
-      showToast("Couldn't capture the report image — please try again.", 'error');
-      qcdSetExportStatus_('error', 'Could not capture the report image. Please try again.');
-    });
-  }
-
-  // -- Status banner helper for export feedback ---------------------
-  // The previous round of exports failed silently because none of
-  // the three actions reported back to the user (no success ack,
-  // no error toast). Every export path now routes feedback through
-  // qcdSetExportStatus_; "loading" while async work runs, then
-  // "success" or "error" depending on outcome.
-  function qcdSetExportStatus_(kind, msg) {
-    const el = $('qcd-results-status');
-    if (!el) return;
-    if (!kind) { el.style.display = 'none'; el.textContent = ''; return; }
-    el.className = 'status status-' + kind;
-    el.textContent = msg || '';
-    el.style.display = '';
-    if (kind === 'success') {
-      setTimeout(function () {
-        if (el.className.indexOf('status-success') !== -1) {
-          el.style.display = 'none';
-        }
-      }, 3500);
-    }
-  }
-
-  function qcdCopyImage_() {
-    if (!(navigator.clipboard && window.ClipboardItem)) {
-      qcdSetExportStatus_('error', 'Clipboard API not available in this browser.');
-      return;
-    }
-    qcdSetExportStatus_('loading', 'Capturing report…');
-    qcdBuildCanvas_(function (canvas) {
-      canvas.toBlob(function (blob) {
-        if (!blob) {
-          qcdSetExportStatus_('error', 'Capture produced an empty image.');
-          return;
-        }
-        navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
-          .then(function () {
-            qcdSetExportStatus_('success', 'Report image copied to clipboard.');
-          }, function (err) {
-            qcdSetExportStatus_('error', 'Clipboard write failed: '
-              + (err && err.message ? err.message : String(err)));
-          });
-      }, 'image/png');
-    });
-  }
-
-  function qcdEmailImage_() {
-    qcdSetExportStatus_('loading', 'Capturing report…');
-    qcdBuildCanvas_(function (canvas) {
-      const dataUrl = canvas.toDataURL('image/png');
-      qcdSetExportStatus_('loading', 'Sending email…');
-      google.script.run
-        .withSuccessHandler(function (res) {
-          const to = (res && res.to) ? res.to : 'your inbox';
-          qcdSetExportStatus_('success', 'Emailed report image to ' + to + '.');
-          showToast('Report emailed to ' + to, 'success');
-        })
-        .withFailureHandler(function (err) {
-          qcdSetExportStatus_('error', 'Email failed: '
-            + (err && err.message ? err.message : String(err)));
-          showToast('Email failed', 'error');
-        })
-        .sendQcdReportEmail({
-          imageBase64: dataUrl,
-          dateLabel:   qcdLastData && qcdLastData.dateLabel ? qcdLastData.dateLabel : '',
-        });
-    });
-  }
-
-  // Print opens the new window SYNCHRONOUSLY inside the click
-  // handler so the browser preserves the user gesture and doesn't
-  // popup-block the call. The captured image is written into the
-  // already-open window once html2canvas finishes. Previous
-  // implementation called window.open inside the async .then() and
-  // got silently blocked.
-  function qcdPrint_() {
-    const w = window.open('about:blank');
-    if (!w) {
-      qcdSetExportStatus_('error', 'Browser blocked the print window. Allow popups for this dashboard and retry.');
-      return;
-    }
-    try {
-      w.document.write('<title>QCD Report — printing…</title>'
-        + '<p style="font-family:sans-serif;color:#666;padding:24px;">'
-        + 'Preparing print preview…</p>');
-      w.document.close();
-    } catch (e) { /* OK */ }
-    qcdSetExportStatus_('loading', 'Capturing report for print…');
-    qcdBuildCanvas_(function (canvas) {
-      try {
-        w.document.body.innerHTML = '<img src="' + canvas.toDataURL('image/png')
-          + '" style="width:100%;display:block;">';
-        w.focus();
-        w.print();
-        qcdSetExportStatus_('success', 'Sent to print preview.');
-      } catch (e) {
-        qcdSetExportStatus_('error', 'Print failed: '
-          + (e && e.message ? e.message : String(e)));
-      }
-    });
   }
 
   // ===================================================================

@@ -14,20 +14,20 @@
  *   - 12-month trend chart (monthly buckets) over the same trend
  *     window the Individual / Performance Reports use.
  *
- * Public entries (callable via google.script.run):
- *   getQcdReportInit({ department }) -> { department, defaultStart,
- *     defaultEnd, sources }
- *   getQcdReport({ department, from, to }) -> { meta, dateLabel,
- *     totals, queueBreakdown, trendData }
- *   sendQcdReportEmail({ imageBase64, dateLabel }) -> { to }
+ * RETIRED AS A STANDALONE REPORT (QCD->Insights consolidation): the
+ * QCD tab/modal and its endpoints (getQcdReport / getQcdReportInit /
+ * sendQcdReportEmail, cache prefix `qcd:`) were deleted; the Insights
+ * report's Queue health section is the replacement (a data-superset --
+ * same computeQcdReport_ underneath). `#/report/qcd` deep-links now
+ * land on Insights.
  *
- * Authorization: same per-dept model as IR / PR / CR. Managers can
- * only request their own dept; admins can pick any dept from the
- * dropdown.
- *
- * Cache: 30 min per (dept, from, to) tuple under `qcd:v10:` prefix.
- * No agent-list dimension since QCD is queue/dept-scoped, not
- * agent-scoped.
+ * Still served from this file:
+ *   getQcdAllDepartments({ from, to }) -- the company-wide flat daily
+ *     report (any signed-in manager/admin), cache `qcdAll:`.
+ *   computeQcdReport_ / queuesForDept_ / qcdSubQueueTags_ /
+ *     computeMtdViolations_ -- consumed by Insights Queue health,
+ *     the Overview tile snapshots (CompanyOverview.gs), and the My
+ *     Department snapshot (Data.gs).
  *
  * IMPORTANT: QCD Historical Data's `callQueue` column (col D) carries
  * raw queue names like "A_Q_CustomerSuccess", "A_Q_Sales", "Backup CSR"
@@ -37,33 +37,6 @@
  * modal with a "No queues mapped" hint.
  */
 
-// v2: callQueue is a raw A_Q_* name, not a dept name; filter by
-//     DEPT_QCD_QUEUES[dept] (list of queue names) instead of strict
-//     equality. Per-queue breakdown table replaces the prior per-
-//     source breakdown.
-// v3: parent depts auto-include sub-queue queues via
-//     OVERVIEW_PARENT_OF rollup (Sales+PAP, Power+PAK, CSR+Spanish).
-//     Adds dailySeries to response; totals.violations replaced
-//     with month-to-date count (was selected-range sum).
-// v4: avgAnswer changed from mean-of-daily-averages to volume-weighted
-//     average (weighted by totalAnswered per day/queue).
-// v5: per-queue daily + monthly series for multi-line charts;
-//     violationDates per queue for expandable breakdown rows.
-// v6: empty/no-data response shape now carries `perQueue` +
-//     `trendData.perQueue` to match the populated shape (F5), so a
-//     cached old-shape empty payload can't be served (and throw) on
-//     the client after deploy.
-// v7: cache key + compute gain the includeSubQueues dimension (the
-// "Include sub-queues" toggle; default true = legacy INV-51 rollup).
-// v8: the QCD-report toggle is RETIRED -- sub-queues are ALWAYS shown but
-// clearly separated and EXCLUDED from the parent dept total (no merged
-// rollup). The shared computeQcdReport_ gains a `separateSubQueues` opt that
-// only the QCD report passes; Insights' Queue-health calls are unchanged.
-// v9: queueBreakdown rows gain `bySource` -- the per-call-source sub-rows
-// (CSR / Ad-campaign / New Call Menu / Non-CSR (internal) / ... + the
-// 'Total Calls' roll-up shown as "Overall") so a queue row expands into its
-// source breakdown like the legacy emailed report (4a).
-const QCD_CACHE_KEY_PREFIX = 'qcd:v10';
 
 // All-departments daily report (4b): admin-only, company-wide flat
 // queue table reproducing the legacy emailed "Daily Call Queue Report"
@@ -156,77 +129,6 @@ function computeMtdViolations_(dept, values, ssTZ, qOpts) {
     total += Number(r[QCD_HISTORICAL_COLS.VIOLATIONS - 1]) || 0;
   }
   return total;
-}
-
-function getQcdReportInit(req) {
-  const email = Session.getActiveUser().getEmail();
-  const user = resolveUser_(email);
-  if (user.role === 'none') throw new Error('Not authorized.');
-
-  const dept = String((req && req.department) || '').trim();
-  if (!dept) throw new Error('Department is required.');
-  assertDeptAccess_(user, dept);
-
-  const tz = TZ;
-  const now = new Date();
-  const fmt = function (d) { return Utilities.formatDate(d, tz, 'yyyy-MM-dd'); };
-  const firstOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-
-  return {
-    department:   dept,
-    defaultStart: fmt(firstOfMonth),
-    defaultEnd:   fmt(now),
-    queues:       queuesForDept_(dept),
-  };
-}
-
-function getQcdReport(req) {
-  const email = Session.getActiveUser().getEmail();
-  const user = resolveUser_(email);
-  if (user.role === 'none') throw new Error('Not authorized.');
-
-  const dept = String((req && req.department) || '').trim();
-  if (!dept) throw new Error('Department is required.');
-  assertDeptAccess_(user, dept);
-
-  const from = String((req && req.from) || '').trim();
-  const to   = String((req && req.to)   || '').trim();
-  if (!isIsoDate_(from) || !isIsoDate_(to)) {
-    throw new Error('from/to must be YYYY-MM-DD.');
-  }
-  if (from > to) throw new Error('from must be on or before to.');
-
-  const cache = CacheService.getScriptCache();
-  const cacheKey = QCD_CACHE_KEY_PREFIX + ':' + dept + ':' + from + ':' + to;
-  const cached = cache.get(cacheKey);
-  if (cached) {
-    try {
-      const parsed = JSON.parse(cached);
-      parsed.meta.cacheHit = true;
-      logReportUsage_('qcd', dept, user, true);
-      return parsed;
-    } catch (e) { /* recompute */ }
-  }
-
-  const t0 = Date.now();
-  // QCD report: always include children in the breakdown/chart but keep them
-  // SEPARATE from the dept total (separateSubQueues=true). The retired toggle
-  // used to flip includeSubQueues; now children are shown-but-not-summed.
-  const data = computeQcdReport_(dept, from, to, /*includeSubQueues=*/ true,
-                                 /*separateSubQueues=*/ true);
-  data.meta.computeMs = Date.now() - t0;
-  data.meta.cacheHit  = false;
-
-  const json = JSON.stringify(data);
-  if (json.length <= 100000) {
-    try { cache.put(cacheKey, json, REPORT_CACHE_TTL_SECONDS); }
-    catch (e) { Logger.log('QCDReport cache put failed: %s', e); }
-  } else {
-    Logger.log('QCDReport: payload %s bytes exceeds 100KB, skipping cache', json.length);
-  }
-
-  logReportUsage_('qcd', dept, user, false);
-  return data;
 }
 
 /**
@@ -835,36 +737,3 @@ function emptyQcdReport_(dept, from, to, includeSubQueues, separateSubQueues) {
   };
 }
 
-/**
- * Emails the captured QCD Report PNG to the active user. Same
- * pattern as Individual / Performance / Compare Ranges email
- * exports.
- */
-function sendQcdReportEmail(req) {
-  const email = Session.getActiveUser().getEmail();
-  const user = resolveUser_(email);
-  if (user.role === 'none') throw new Error('Not authorized.');
-
-  const dataUrl = String((req && req.imageBase64) || '');
-  const dateLabel = String((req && req.dateLabel) || 'QCD Report');
-  if (!dataUrl) throw new Error('No image payload.');
-  const commaIdx = dataUrl.indexOf(',');
-  if (commaIdx === -1) throw new Error('Malformed image payload.');
-  const decoded = Utilities.base64Decode(dataUrl.slice(commaIdx + 1));
-  const blob = Utilities.newBlob(decoded, 'image/png', 'QCD_Report.png');
-
-  MailApp.sendEmail({
-    to: email,
-    subject: 'QCD Report: ' + dateLabel,
-    htmlBody:
-      '<div style="font-family: sans-serif; color: #444; margin-bottom: 20px;">'
-      + 'Here is the visual snapshot of the QCD report (queue / call '
-      + 'detail metrics: Total Calls, Abandoned %, Violations, etc.).'
-      + '</div>'
-      + '<div style="text-align: center; border: 1px solid #eee; padding: 10px;">'
-      + '<img src="cid:reportImg" style="width:100%; max-width:1200px; height:auto;">'
-      + '</div>',
-    inlineImages: { reportImg: blob },
-  });
-  return { to: email };
-}

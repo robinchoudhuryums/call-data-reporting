@@ -40,7 +40,8 @@ const SPECS = [
   ['compareRanges',     'CompareRangesReport.gs', /'compareRanges:v(\d+)'/],
   ['missed',            'MissedCallsReport.gs',   /'missed:v(\d+):'/],
   ['companyOverview',   'CompanyOverview.gs',     /'companyOverview:v(\d+)'/],
-  ['qcd',               'QCDReport.gs',           /'qcd:v(\d+)'/],
+  // 'qcd' retired with the QCD modal (QCD->Insights consolidation) --
+  // only the all-departments 'qcdAll' prefix remains in QCDReport.gs.
   ['qcdAll',            'QCDReport.gs',           /'qcdAll:v(\d+)'/],
   ['inbound',           'InboundReport.gs',       /'inbound:v(\d+)'/],
   ['inboundHeatmap',    'InboundReport.gs',       /'inboundHeatmap:v(\d+)'/],

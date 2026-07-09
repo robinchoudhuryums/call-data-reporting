@@ -384,9 +384,9 @@ same time as the code change.
 | `CompareRangesReport.gs` | `compareRanges:vN:` | `v6` |
 | `MissedCallsReport.gs` | `missed:vN:` | `v13` |
 | `CompanyOverview.gs` | `companyOverview:vN` | `v18` |
-| `QCDReport.gs` | `qcd:vN:` | `v10` |
+| `QCDReport.gs` | `qcd:vN:` | RETIRED (QCD modal deleted; `qcdAll:` remains) |
 | `InboundReport.gs` | `inbound:vN:` | `v3` |
-| `InsightsReport.gs` | `insights:vN:` | `v17` |
+| `InsightsReport.gs` | `insights:vN:` | `v18` |
 | `QCDReport.gs` (all-departments daily report) | `qcdAll:vN:` | `v3` |
 | `InboundReport.gs` (weekday×hour abandon heatmap) | `inboundHeatmap:vN:` | `v1` |
 | `DirectCallReport.gs` | `directCall:vN:` | `v1` |
@@ -668,18 +668,14 @@ correct route is `Config.gs::DEPT_QCD_QUEUES`, an admin-curated
 dept → list-of-queue-names map.
 
 **Engine** is `apps-script/department-dashboard/QCDReport.gs`.
-Three public callables, all per-dept gated like Individual /
-Performance / Compare Ranges:
-
-- `getQcdReportInit({ department })` — returns roster, defaults,
-  and the dept's mapped queues.
-- `getQcdReport({ department, from, to })` — main aggregation.
-  Returns `meta` (with `queues` + `unmapped` flags), `dateLabel`,
-  `totals` (sum across the dept's queues), `queueBreakdown`
-  (one row per queue), `trendData` (12-month buckets matching the
-  IR/PR trend-window logic). Cache prefix `qcd:v10`.
-- `sendQcdReportEmail({ imageBase64, dateLabel })` — image
-  export like the IR/PR/CR send-email paths.
+Since the QCD->Insights consolidation, the standalone QCD Report
+modal and its endpoints (`getQcdReport` / `getQcdReportInit` /
+`sendQcdReportEmail`, per-dept `qcd:` cache prefix) are RETIRED.
+What remains public is `getQcdAllDepartments` (the company-wide
+daily report, `qcdAll:` cache); `computeQcdReport_` is the shared
+internal aggregation consumed by Insights Queue health + the
+Overview / My Department snapshots. Queue data for a dept + range
+is now read via the Insights report (Queue health section).
 
 **What gets summed.** Only `Call Source === 'Total Calls'` rows.
 The other sources (CSR / Ad-campaign / New Call Menu / Non-CSR
@@ -691,10 +687,12 @@ non-zero values** (matches legacy `buildTable4` semantics).
 **UI surfaces** all visible to everyone (no admin gate beyond the
 existing per-dept dropdown):
 
-- **Reports → QCD Report** modal: dept-level KPI tiles, per-queue
-  breakdown table with a bolded "Department total" tfoot row,
-  12-month trend chart with tab strip (Total Calls / Abandoned %
-  / Violations).
+- **Insights → Queue health** (the retired QCD modal's replacement):
+  headline tiles + secondary strip, per-queue rows with expandable
+  per-call-source detail + violation dates, the collapsed Daily
+  breakdown table, and the consolidated trend chart's "Abandoned %
+  by Queue" tab (metric sub-selector for Total Calls / Violations,
+  violation-day warn markers, legend spotlight).
 - **Overview tile chips**: an "Aban N (P%)" chip whenever QCD
   data exists (warn-tinted when P >= 5%), and a "X viol MTD" chip
   when month-to-date violations > 0. Powered by
@@ -719,7 +717,7 @@ matching entry exists in `DEPT_QCD_QUEUES`. To onboard:
 
 The 5-min cache TTLs out automatically; no manual cache bump
 needed unless the aggregation logic itself changes (in which case
-bump `qcd:vN`, `companyOverview:vN`, AND `summary:vN` since all
+bump `insights:vN` (Queue health), `companyOverview:vN`, AND `summary:vN` since all
 three read QCD now).
 
 ---

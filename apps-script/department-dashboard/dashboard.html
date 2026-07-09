@@ -83,9 +83,6 @@
             <button class="header-menu-item" id="compare-ranges-btn" type="button"
                     data-route="/report/compare" role="menuitem"
                     title="Side-by-side comparison of two arbitrary date ranges. Useful for year-over-year or pre/post-change analyses.">Compare <span class="tab-review-star" title="Pending consolidation review — kept until parity with the consolidated views is confirmed.">*</span></button>
-            <button class="header-menu-item" id="qcd-report-btn" type="button"
-                    data-route="/report/qcd" role="menuitem"
-                    title="Queue Call Detail report: dept-level totals, per-source breakdown, abandoned %, violations, and 12-month trend.">QCD <span class="tab-review-star" title="Pending consolidation review — kept until parity with the consolidated views is confirmed.">*</span></button>
             <button class="header-menu-item" id="insights-report-btn" type="button"
                     data-route="/report/insights" role="menuitem"
                     title="Combined view: a department rollup PLUS per-agent cards, each comparing the selected range to the immediately-preceding period.">Insights</button>
@@ -393,7 +390,7 @@
           <div class="dept-qcd-header">
             <strong id="dept-qcd-title">Queue Call Data</strong>
             <span class="dept-qcd-date" id="dept-qcd-date"></span>
-            <span class="dept-qcd-hint">Daily roll-up across this dept's mapped queues from <code>QCD Historical Data</code>. For a date range, use Reports → QCD Report.</span>
+            <span class="dept-qcd-hint">Daily roll-up across this dept's mapped queues from <code>QCD Historical Data</code>. For a date range, open the Insights report — its Queue health section is the range view.</span>
           </div>
           <div class="dept-qcd-tiles" id="dept-qcd-tiles"></div>
         </div>
@@ -567,7 +564,7 @@
           </section>
           <section class="help-topic" id="help-topic-qcd" hidden>
             <h3>QCD (Queue Call Data)</h3>
-            <p>Per-queue call volume, answered, abandoned, abandoned %, longest/avg wait, and <strong>violations</strong> (days a queue&rsquo;s abandoned % went over 5%). Parent departments roll up their sub-queues; the chart shows one line per queue plus a dept total. The breakdown rows expand into per-call-source detail and violation dates. A short <strong>days-to-violation forecast</strong> appears when a queue is trending toward the 5% line. Admins also get an all-departments daily report.</p>
+            <p>Per-queue call volume, answered, abandoned, abandoned %, longest/avg wait, and <strong>violations</strong> (days a queue&rsquo;s abandoned % went over 5%). Lives in the <strong>Insights report&rsquo;s Queue health section</strong> (the standalone QCD report was consolidated into it): per-queue rows expand into per-call-source detail and violation dates, the trend chart&rsquo;s &ldquo;by queue&rdquo; tab shows one line per queue plus a dept total, and a short <strong>days-to-violation forecast</strong> appears when a queue is trending toward the 5% line. Everyone also gets the all-departments <strong>Daily Call Queue Report</strong> from the Overview page.</p>
           </section>
           <section class="help-topic" id="help-topic-inbound" hidden>
             <h3>Inbound Calls <span class="help-admin-tag">admin</span></h3>
@@ -575,7 +572,7 @@
           </section>
           <section class="help-topic" id="help-topic-heatmap" hidden>
             <h3>Abandon heatmap</h3>
-            <p>A <strong>weekday &times; hour</strong> grid showing where callers abandon &mdash; the &ldquo;when are we short-staffed?&rdquo; view. Calm sage &le; 5% abandoned, warming as it rises past the 5% standard; cells with very few calls are muted (&ldquo;low signal&rdquo;). Hover any cell for the exact rate and counts. It appears on the Inbound report and as a companion on the QCD report (admin-only for now, sharing the Inbound vetting gate). Times are shown in CST.</p>
+            <p>A <strong>weekday &times; hour</strong> grid showing where callers abandon &mdash; the &ldquo;when are we short-staffed?&rdquo; view. Calm sage &le; 5% abandoned, warming as it rises past the 5% standard; cells with very few calls are muted (&ldquo;low signal&rdquo;). Hover any cell for the exact rate and counts. It appears on the Inbound report and as a companion in the Insights report&rsquo;s Queue health (admin-only for now, sharing the Inbound vetting gate). Times are shown in CST.</p>
             <div class="help-figure">
               <div class="ds-heatmap-legend">
                 <span class="ds-heatmap-legend__item"><span class="ds-heatmap-legend__sw" style="background: color-mix(in srgb, var(--good) 50%, var(--paper-card));"></span>0&ndash;5% (on target)</span>
@@ -1315,170 +1312,6 @@
     </div>
   </div>
 
-  <div id="qcd-modal" class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="qcd-modal-title" style="display:none;">
-    <div class="modal-backdrop" data-close></div>
-    <div class="modal-panel modal-panel-wide" role="document">
-      <div class="modal-panel-header">
-        <button class="modal-open-tab-btn" type="button" data-open-tab-route="/report/qcd"
-                aria-label="Open in new tab" title="Open this report in a new browser tab (for side-by-side viewing)">&#8599;</button>
-        <button class="modal-close" id="qcd-close" type="button" aria-label="Close">&times;</button>
-        <div class="modal-kicker">Report</div>
-        <h2 id="qcd-modal-title">QCD Report</h2>
-      </div>
-      <div class="modal-panel-body">
-      <div id="qcd-form" class="ir-form">
-        <div class="ir-section-title">Date Range</div>
-        <div class="ir-row">
-          <div class="ir-col">
-            <label for="qcd-preset">Quick select</label>
-            <select id="qcd-preset">
-              <option value="custom">Custom range</option>
-              <option value="yesterday" selected>Yesterday</option>
-              <option value="thisMonth">This month</option>
-              <option value="lastMonth">Last month</option>
-              <option value="last30">Last 30 days</option>
-              <option value="last3Months">Last 3 months</option>
-              <option value="last12Months">Last 12 months</option>
-              <option value="lastYear">Last year</option>
-            </select>
-          </div>
-          <div class="ir-col">
-            <label for="qcd-from">Start date</label>
-            <input type="date" id="qcd-from">
-          </div>
-          <div class="ir-col">
-            <label for="qcd-to">End date</label>
-            <input type="date" id="qcd-to">
-          </div>
-        </div>
-        <div class="ir-hint">
-          Reads from the <strong>QCD Historical Data</strong> sheet
-          (written daily by the import pipeline; one row per call
-          source per dept per day). KPIs are the per-day Total Calls
-          source roll-up; per-source breakdown is nested below.
-          For parent departments (e.g. Sales), sub-queues (e.g. PAP)
-          are always shown as their own separated rows and chart lines
-          &mdash; they are <em>not</em> included in the department
-          total, which covers the parent&rsquo;s own queues only.
-        </div>
-        <div id="qcd-form-error" class="status status-error" style="display:none;"></div>
-        <button class="btn" id="qcd-generate-btn" type="button">Generate report</button>
-      </div>
-
-      <div id="qcd-results" class="ir-results" style="display:none;">
-        <div class="ir-results-header">
-          <div class="ir-results-header-left">
-            <div class="ir-results-title-line">
-              <span class="ir-results-title" id="qcd-results-title">QCD Report</span>
-              <span class="ir-results-date" id="qcd-results-date"></span>
-            </div>
-          </div>
-          <div class="ir-action-buttons">
-            <button class="btn btn-secondary" id="qcd-back-btn" type="button">&laquo; Back</button>
-            <div class="ir-export-wrap">
-              <button class="btn btn-secondary" id="qcd-export-btn" type="button" aria-haspopup="menu" aria-expanded="false">
-                Export <span class="ir-export-caret">&#9662;</span>
-              </button>
-              <div class="ir-export-menu" id="qcd-export-menu" role="menu" style="display:none;">
-                <button type="button" role="menuitem" data-action="copy">Copy image</button>
-                <button type="button" role="menuitem" data-action="email">Email image</button>
-                <button type="button" role="menuitem" data-action="print">Print</button>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div id="qcd-results-status" class="status" style="display:none;"></div>
-
-        <!-- Consistent empty-state (shared .empty-state block) shown when
-             the dept has no queues mapped, or no QCD activity in range, so
-             the report reads like an intentional "nothing here" rather than
-             a wall of zeros. Toggled against #qcd-data-sections by
-             qcdRenderReport_. -->
-        <div id="qcd-empty" class="empty-state" style="display:none;"></div>
-
-        <div id="qcd-data-sections">
-
-        <!-- Days-to-violation forecast (E9). Renders only when a
-             linear regression on the last 7 days of dailySeries
-             abandonedPct projects a 5% threshold crossing within
-             7 days. Hidden in healthy states. -->
-        <div id="qcd-forecast" class="qcd-forecast" style="display:none;"></div>
-
-        <div id="qcd-kpi-row" class="pr-kpi-row"></div>
-
-        <div class="al-section">
-          <div class="al-section-title">Per-queue breakdown</div>
-          <p class="al-hint" id="qcd-queue-hint" style="display:none;"></p>
-          <table class="qcd-source-table">
-            <thead><tr>
-              <th>Queue</th>
-              <th class="num">Total Calls</th>
-              <th class="num">Answered</th>
-              <th class="num">Abandoned</th>
-              <th class="num">Abandoned %</th>
-              <th class="num">Longest Wait</th>
-              <th class="num">Avg Answer</th>
-              <th class="num">Violations</th>
-            </tr></thead>
-            <tbody id="qcd-queue-tbody"></tbody>
-            <tfoot id="qcd-queue-tfoot"></tfoot>
-          </table>
-        </div>
-
-        <!-- Chart controls consolidated: the monthly/daily view toggle
-             sits at the right end of the tab strip instead of on its own
-             row (pinned via .ir-chart-tabs > .qcd-view-toggle). -->
-        <div class="ir-chart-tabs" id="qcd-chart-tabs" role="tablist">
-          <button type="button" class="ir-tab active" data-metric="totalCalls" role="tab" aria-selected="true">Total Calls</button>
-          <button type="button" class="ir-tab" data-metric="abandonedPct" role="tab" aria-selected="false">Abandoned %</button>
-          <button type="button" class="ir-tab" data-metric="violations" role="tab" aria-selected="false">Violations</button>
-          <div class="qcd-view-toggle" id="qcd-view-toggle" role="radiogroup" aria-label="Chart view">
-            <button type="button" class="seg-btn active" data-view="monthly" role="radio" aria-checked="true"
-                    title="12-month trend window (rolled up across the selected range's mapped queues).">Monthly (12 mo)</button>
-            <button type="button" class="seg-btn" data-view="daily" role="radio" aria-checked="false"
-                    title="One point per day within the selected From/To range.">Daily (range)</button>
-          </div>
-          <div class="ir-toggle-box" id="qcd-datalabels-box">
-            <label class="ir-toggle-label">
-              <input type="checkbox" id="qcd-show-datalabels"> Show data labels
-            </label>
-          </div>
-        </div>
-
-        <div class="ir-chart-wrap" id="qcd-chart-wrap">
-          <div class="ir-chart-header" id="qcd-chart-header">Total Calls (monthly)</div>
-          <div class="ir-chart-canvas-wrap"><canvas id="qcd-chart"></canvas></div>
-        </div>
-
-        <div class="al-section">
-          <div class="al-section-title">Daily numbers (selected range)</div>
-          <p class="al-hint">Per-day totals across the dept's mapped queues, oldest first. Scroll if the range is long.</p>
-          <div class="qcd-daily-table-wrap">
-            <table class="qcd-source-table qcd-daily-table">
-              <thead><tr>
-                <th>Date</th>
-                <th class="num">Total Calls</th>
-                <th class="num">Answered</th>
-                <th class="num">Abandoned</th>
-                <th class="num">Abandoned %</th>
-                <th class="num">Violations</th>
-              </tr></thead>
-              <tbody id="qcd-daily-tbody"></tbody>
-            </table>
-          </div>
-        </div>
-
-        <!-- Temporal abandon heatmap (companion, sourced from inbound_calls).
-             Admin-only: the load call is gated by role in qcdRenderReport_
-             (getInboundHeatmap inherits the inbound report's admin gate). -->
-        <div id="qcd-heatmap" class="ds-heatmap-panel" style="display:none;"></div>
-        </div><!-- /#qcd-data-sections -->
-      </div>
-      </div>
-    </div>
-  </div>
-
   <!-- All-departments daily call queue report (4b). Admin-only;
        launched from the Overview "Daily Call Queue Report" button.
        Flat company-wide queue table (legacy emailed-PDF parity) with
@@ -1663,9 +1496,10 @@
 
         <!-- Queue health (QCD-into-Insights consolidation): the dept's
              queue-level abandoned % / violations for the same window +
-             prior window. Hidden when the dept has no mapped queues or
-             the QCD sheet is unavailable. The full QCD Report remains
-             the deep dive (per-queue charts, daily series). -->
+             prior window. THE queue deep-dive since the standalone QCD
+             report was retired -- an unmapped dept renders the
+             "no queues mapped" hint here; a missing QCD sheet hides the
+             section. -->
         <div id="ins-queue-health" style="display:none;">
           <div class="al-section-title">Queue health <span class="ins-rollup-cap" id="ins-qh-cap"></span></div>
           <div id="ins-qh-forecast" class="qcd-forecast" style="display:none;"></div>
@@ -1712,7 +1546,7 @@
               </table>
             </div>
           </details>
-          <div class="ins-qh-footnote">Same data the QCD Report reads &mdash; open it for the per-queue Total&nbsp;Calls / Violations trend charts.</div>
+          <div class="ins-qh-footnote">Reads <code>QCD Historical Data</code> &mdash; the trend chart above switches to per-queue Total&nbsp;Calls / Violations via the &ldquo;by queue&rdquo; tab&rsquo;s metric selector.</div>
         </div>
 
         <div id="ins-heatmap" class="ds-heatmap-panel" style="display:none;"></div>
@@ -2621,8 +2455,9 @@
           <div class="al-section-title">Discovered queues <span id="dc-unmapped-badge" class="al-active al-active-no" style="display:none;"></span></div>
           <p class="al-hint">
             Distinct <code>Call Queue</code> values seen in QCD Historical Data
-            (last 180 days). <strong>Unmapped</strong> queues produce no QCD report
-            for any dept until you add them to a dept's QCD Queues below.
+            (last 180 days). <strong>Unmapped</strong> queues surface in no dept's
+            queue data (Insights Queue health, Overview tiles, the daily report)
+            until you add them to a dept's QCD Queues below.
           </p>
           <table class="al-config-table">
             <thead><tr>

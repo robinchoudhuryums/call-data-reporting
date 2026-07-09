@@ -386,15 +386,18 @@ test('Insights: queueHealth carries window totals, prior deltas base, and violat
   assert.equal(qh.perQueue[0].avgAnswer, '0:00:30');
 });
 
-test('Insights: queueHealth is null for an unmapped dept / missing QCD sheet (best-effort)', function () {
-  // No Dept Config row for Alpha and no constant mapping -> unmapped.
+test('Insights: queueHealth flags an unmapped dept; null on a missing QCD sheet (best-effort)', function () {
+  // No Dept Config row for Alpha and no constant mapping -> unmapped is
+  // signaled EXPLICITLY (v18, QCD retirement) so the client can render the
+  // "no queues mapped" hint the retired QCD modal used to show.
   installWithQcd(
     [dqeRow({ date: '2026-03-10', agent: 'Anna', ext: '501', rung: 5, missed: 1, answered: 4, att: '0:02:00' })],
     [], [qcdRow('2026-03-10', 'A_Q_Alpha', 100, 10, 1)]);
   const unmapped = h.call('getInsightsReport', {
     department: 'Alpha', from: '2026-03-09', to: '2026-03-15', agents: ['Anna'],
   });
-  assert.equal(unmapped.queueHealth, null);
+  assert.equal(unmapped.queueHealth && unmapped.queueHealth.unmapped, true);
+  assert.equal(unmapped.queueHealth.totals, undefined, 'no data payload on the unmapped shape');
 
   // Mapped dept but no QCD sheet at all -> still null, report intact.
   installWithQcd(
