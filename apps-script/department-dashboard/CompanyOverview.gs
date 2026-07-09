@@ -166,11 +166,18 @@ function getCompanyOverview(req) {
 
   const ss = openSpreadsheet_();
   const sheet = ss.getSheetByName(SHEETS.HISTORICAL);
-  if (!sheet) return personalizeOverview_(
-    { latestDate: null, trendIsoLabels: [], trendLabels: [], depts: [] }, user);
-  const lastRow = sheet.getLastRow();
-  if (lastRow < 2) return personalizeOverview_(
-    { latestDate: latestDate, trendIsoLabels: [], trendLabels: [], depts: [] }, user);
+  // F-35: hard-require the DQE sheet only when it IS the read source (see
+  // the report readers). The Neon fallback below (sheetFetchDqeRows_) does
+  // its own missing-sheet handling and returns [] -- an empty-but-rendered
+  // Overview -- instead of the driver-free empty payload here.
+  const ovDqeSource = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
+  const ovNeonCapable = (ovDqeSource === 'neon' && typeof neonFetchDqeRows_ === 'function');
+  if (!ovNeonCapable) {
+    if (!sheet) return personalizeOverview_(
+      { latestDate: null, trendIsoLabels: [], trendLabels: [], depts: [] }, user);
+    if (sheet.getLastRow() < 2) return personalizeOverview_(
+      { latestDate: latestDate, trendIsoLabels: [], trendLabels: [], depts: [] }, user);
+  }
   const ssTZ = ss.getSpreadsheetTimeZone();
 
   // 30-day window ending on latestDate (inclusive).
@@ -294,11 +301,10 @@ function getCompanyOverview(req) {
   // DQE_READ_SOURCE flip can serve the prior source's blob for up to the
   // 5-min TTL -- harmless, since the flag is only flipped once parity is
   // clean and the two sources agree.)
-  const dqeSource = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
   let dqeRows;
   let effectiveSource = 'sheet';
   const _tRead = Date.now();
-  if (dqeSource === 'neon' && typeof neonFetchDqeRows_ === 'function') {
+  if (ovNeonCapable) {
     dqeRows = neonFetchDqeRows_(trendStartIso, latestDate);
     if (!dqeRows || !dqeRows.length) {
       Logger.log('getCompanyOverview: neon returned no rows; falling back to sheet.');

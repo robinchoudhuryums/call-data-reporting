@@ -165,6 +165,16 @@ function sendDigestsForCadence_(cadence) {
   var digestLock = LockService.getScriptLock();
   if (!digestLock.tryLock(15000)) {
     Logger.log('sendDigestsForCadence_(%s): another run holds the script lock — skipping.', cadence);
+    // F-49: a whole cadence's digests are dropped here (e.g. the alerts
+    // run holding the shared lock through its send window) -- notify the
+    // admins so the "digest didn't arrive -> check admin inbox" runbook
+    // (Operator State #12d) actually finds something.
+    try {
+      notifyDigestFailure_(cadence, new Error(
+        'script lock contention -- ' + cadence + ' digests were SKIPPED this '
+        + 'run (another run, e.g. the daily alerts send, held the lock). '
+        + 'Re-send manually via sendDigestsForCadence_ or wait for tomorrow\'s trigger.'));
+    } catch (e) { /* best-effort */ }
     return;
   }
   try {

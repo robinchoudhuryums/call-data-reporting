@@ -292,64 +292,72 @@
     var header = panel.querySelector('.modal-panel-header');
     if (!header) return;
 
-    // Add resize handle if not present
-    if (!panel.querySelector('.modal-resize-handle')) {
-      var rh = document.createElement('div');
-      rh.className = 'modal-resize-handle';
-      rh.setAttribute('aria-hidden', 'true');
-      panel.appendChild(rh);
-    }
-
-    var dragging = false, resizing = false;
-    var startX, startY, startLeft, startTop, startW, startH;
+    // F-39: this runs on EVERY openModal of every modal, and each call used
+    // to stack fresh document-level mousemove/mouseup + header mousedown
+    // listeners that were never removed -- unbounded growth in a long-lived
+    // auto-refreshing page. Shared per-panel state + wire-once for
+    // everything EXCEPT the resize handle, which resetModalTransform_
+    // REMOVES on close, so its mousedown re-wires per (re)creation.
+    var st = panel._dragState || (panel._dragState = {
+      dragging: false, resizing: false,
+      startX: 0, startY: 0, startLeft: 0, startTop: 0, startW: 0, startH: 0,
+    });
 
     function applyTransform() {
       panel.style.position = 'absolute';
       panel.style.margin = '0';
     }
 
-    // Drag via header
+    // Add resize handle if not present + wire its mousedown (per-creation).
+    if (!panel.querySelector('.modal-resize-handle')) {
+      var rh = document.createElement('div');
+      rh.className = 'modal-resize-handle';
+      rh.setAttribute('aria-hidden', 'true');
+      panel.appendChild(rh);
+      rh.addEventListener('mousedown', function (e) {
+        e.preventDefault(); e.stopPropagation();
+        st.resizing = true;
+        st.startX = e.clientX; st.startY = e.clientY;
+        var rect = panel.getBoundingClientRect();
+        st.startW = rect.width; st.startH = rect.height;
+        st.startLeft = rect.left; st.startTop = rect.top;
+        applyTransform();
+      });
+    }
+
+    if (panel._dragResizeWired) return;
+    panel._dragResizeWired = true;
+
+    // Drag via header (once per panel)
     header.addEventListener('mousedown', function (e) {
       if (e.target.closest('.modal-close') || e.target.closest('button') || e.target.closest('a')) return;
       e.preventDefault();
-      dragging = true;
+      st.dragging = true;
       var rect = panel.getBoundingClientRect();
-      startX = e.clientX; startY = e.clientY;
-      startLeft = rect.left; startTop = rect.top;
-      applyTransform();
-    });
-
-    // Resize via handle
-    var rh = panel.querySelector('.modal-resize-handle');
-    if (rh) rh.addEventListener('mousedown', function (e) {
-      e.preventDefault(); e.stopPropagation();
-      resizing = true;
-      startX = e.clientX; startY = e.clientY;
-      var rect = panel.getBoundingClientRect();
-      startW = rect.width; startH = rect.height;
-      startLeft = rect.left; startTop = rect.top;
+      st.startX = e.clientX; st.startY = e.clientY;
+      st.startLeft = rect.left; st.startTop = rect.top;
       applyTransform();
     });
 
     document.addEventListener('mousemove', function (e) {
-      if (dragging) {
-        var dx = e.clientX - startX, dy = e.clientY - startY;
-        panel.style.left = Math.max(0, startLeft + dx) + 'px';
-        panel.style.top  = Math.max(0, startTop + dy) + 'px';
-      } else if (resizing) {
-        var w = Math.max(360, startW + (e.clientX - startX));
-        var h = Math.max(280, startH + (e.clientY - startY));
+      if (st.dragging) {
+        var dx = e.clientX - st.startX, dy = e.clientY - st.startY;
+        panel.style.left = Math.max(0, st.startLeft + dx) + 'px';
+        panel.style.top  = Math.max(0, st.startTop + dy) + 'px';
+      } else if (st.resizing) {
+        var w = Math.max(360, st.startW + (e.clientX - st.startX));
+        var h = Math.max(280, st.startH + (e.clientY - st.startY));
         panel.style.width    = w + 'px';
         panel.style.maxWidth = w + 'px';
         panel.style.height    = h + 'px';
         panel.style.maxHeight = h + 'px';
-        panel.style.left = startLeft + 'px';
-        panel.style.top  = startTop + 'px';
+        panel.style.left = st.startLeft + 'px';
+        panel.style.top  = st.startTop + 'px';
       }
     });
 
     document.addEventListener('mouseup', function () {
-      dragging = false; resizing = false;
+      st.dragging = false; st.resizing = false;
     });
   }
 
@@ -921,6 +929,24 @@
     if (wrap) wrap.querySelectorAll('.date-preset-chip').forEach(function (c) { c.classList.remove('active'); });
   }
   function daysAgo_(n) { var d = new Date(); d.setDate(d.getDate() - n); return isoDate_(d); }
+  // F-38: Mon-Fri count between two ISO dates inclusive -- the client
+  // mirror of Util.gs::countWorkingDays_ (INV-35), so the CR/Insights form
+  // hints agree with the server's working-day mismatch flag. UTC-noon
+  // iteration is DST-safe, same as the server helper.
+  function workingDaysBetween_(fromIso, toIso) {
+    if (!fromIso || !toIso) return 0;
+    var f = String(fromIso).split('-'), t = String(toIso).split('-');
+    var ms = Date.UTC(+f[0], f[1] - 1, +f[2], 12);
+    var end = Date.UTC(+t[0], t[1] - 1, +t[2], 12);
+    if (isNaN(ms) || isNaN(end)) return 0;
+    if (end < ms) { var tmp = ms; ms = end; end = tmp; }
+    var count = 0;
+    for (; ms <= end; ms += 86400000) {
+      var dow = new Date(ms).getUTCDay();
+      if (dow !== 0 && dow !== 6) count++;
+    }
+    return count;
+  }
   function isoDate_(d) {
     var m = String(d.getMonth() + 1); if (m.length < 2) m = '0' + m;
     var day = String(d.getDate()); if (day.length < 2) day = '0' + day;
@@ -2131,12 +2157,18 @@
   // header dropdown. Independent of the main dashboard's date
   // range: always uses latestDate. Fetches via getDepartmentSummary,
   // which is cached server-side per (dept, scope, from, to).
+  // F-40: monotonic token so a slower earlier fetch (the SWR cached-paint +
+  // live-paint pair both call this, and admins can flip depts quickly)
+  // can't paint stale rows under a newer call's title/date -- the same
+  // guard class as summaryReqSeq / reportReqSeq elsewhere.
+  var ovUserTableSeq = 0;
   function ovRenderUserTable_(data) {
     const wrap = $('ov-user-table-wrap');
     const tbody = $('ov-user-tbody');
     const tfoot = $('ov-user-tfoot');
     const status = $('ov-user-table-status');
     if (!wrap || !tbody || !tfoot) return;
+    const myToken = ++ovUserTableSeq;
 
     const viewerDept = ovViewerDept_(data);
     if (!viewerDept || !data.latestDate) {
@@ -2157,6 +2189,7 @@
 
     google.script.run
       .withSuccessHandler(function (resp) {
+        if (myToken !== ovUserTableSeq) return;   // F-40: superseded by a newer call
         status.style.display = 'none';
         if (!resp || !resp.rows || !resp.rows.length) {
           tbody.innerHTML = '<tr><td colspan="' + COLUMNS.length + '" class="ov-user-empty">No agent rows for this dept on '
@@ -2192,6 +2225,7 @@
         }
       })
       .withFailureHandler(function (err) {
+        if (myToken !== ovUserTableSeq) return;   // F-40
         status.className = 'status status-error';
         status.textContent = 'Error loading detail: '
           + (err && err.message ? err.message : String(err));
@@ -2580,7 +2614,13 @@
   }
 
   function basePageRoute_() {
-    return document.body.getAttribute('data-page') === 'dept' ? '/dept' : '/overview';
+    // F-41: include the Escalations page -- closing a report modal opened
+    // over it previously reverted the active-tab highlight to Overview
+    // while the Escalations page stayed visible.
+    var page = document.body.getAttribute('data-page');
+    if (page === 'dept') return '/dept';
+    if (page === 'escalations') return '/escalations';
+    return '/overview';
   }
 
   function initRouter() {
@@ -8716,19 +8756,25 @@
     const ms = 86400000;
     const p1Days = Math.round((new Date(p1T+'T12:00:00') - new Date(p1F+'T12:00:00')) / ms) + 1;
     const p2Days = Math.round((new Date(p2T+'T12:00:00') - new Date(p2F+'T12:00:00')) / ms) + 1;
-    const mismatch = (Math.min(p1Days, p2Days) > 0)
-                  && (Math.max(p1Days, p2Days) / Math.min(p1Days, p2Days) >= 1.2);
+    // F-38: the mismatch RATIO uses WORKING days (Mon-Fri), matching the
+    // server's INV-35 flag (compareRanges:v6) -- the calendar-day counts
+    // above stay for the "Period N: X days" display. Pre-fix the form
+    // warned on windows the report then didn't flag (and vice versa).
+    const wd1 = workingDaysBetween_(p1F, p1T);
+    const wd2 = workingDaysBetween_(p2F, p2T);
+    const mismatch = (Math.min(wd1, wd2) > 0)
+                  && (Math.max(wd1, wd2) / Math.min(wd1, wd2) >= 1.2);
     let extra = '';
     if (p1Days === p2Days) {
       // Exactly equal -- only state in which we claim parity.
       extra = '<span class="cr-length-ok">&#10003; Equal length</span>';
     } else if (mismatch) {
-      // Big difference (>= 1.2x) -- volume totals not comparable.
-      const ratio = (Math.max(p1Days, p2Days) / Math.min(p1Days, p2Days)).toFixed(1);
+      // Big difference (>= 1.2x in WORKING days) -- volume totals not comparable.
+      const ratio = (Math.max(wd1, wd2) / Math.min(wd1, wd2)).toFixed(1);
       extra = '<span class="cr-length-warn">'
             + '&#9888; Period 2 is ' + ratio + '&times; '
-            + (p2Days > p1Days ? 'longer than P1' : 'shorter than P1')
-            + ' &mdash; volume totals aren\'t directly comparable.'
+            + (wd2 > wd1 ? 'longer than P1' : 'shorter than P1')
+            + ' in working days &mdash; volume totals aren\'t directly comparable.'
             + '</span>';
     } else {
       // Small difference -- note it but don't sound the alarm.
@@ -11941,19 +11987,15 @@
       // INV-35-style form-side warning when a custom window's length
       // differs >= 1.2x from the current range (CR's S18 pattern).
       let lengthNote = '';
-      const dayCount = function (a, b) {
-        const pa = a.split('-'), pb = b.split('-');
-        const da = new Date(Number(pa[0]), Number(pa[1]) - 1, Number(pa[2]), 12);
-        const db = new Date(Number(pb[0]), Number(pb[1]) - 1, Number(pb[2]), 12);
-        return Math.floor((db - da) / 86400000) + 1;
-      };
-      const curDays = dayCount(from, to);
-      const priDays = dayCount(prior.from, prior.to);
+      // F-38: WORKING-day ratio, matching the server's INV-35 flag
+      // (insights v12) so the hint and the generated report agree.
+      const curDays = workingDaysBetween_(from, to);
+      const priDays = workingDaysBetween_(prior.from, prior.to);
       if (curDays > 0 && priDays > 0
           && Math.max(curDays, priDays) / Math.min(curDays, priDays) >= 1.2) {
         const ratio = (Math.max(curDays, priDays) / Math.min(curDays, priDays)).toFixed(1);
         lengthNote = ' (the ' + (priDays > curDays ? 'prior window' : 'selected range')
-                   + ' is ' + ratio + 'x longer — volume totals won\'t be directly comparable)';
+                   + ' is ' + ratio + 'x longer in working days — volume totals won\'t be directly comparable)';
       }
       hint.textContent = 'Comparing against ' + prior.from + ' to ' + prior.to + '.' + lengthNote
         + (prior.warn ? ' ' + prior.warn : '');
@@ -14848,10 +14890,18 @@
   function initTour_() {
     var replay = $('tour-replay-btn');
     if (replay) replay.addEventListener('click', function () {
-      // Close the Help modal so the tour isn't hidden behind it.
+      // Close the Help modal so the tour isn't hidden behind it. F-42: go
+      // through the modal's OWN close button so the focus trap + Escape
+      // keydown listener are released -- the old direct style-write left a
+      // stale trap, and Escape mid-tour ran Help's close handler and yanked
+      // focus to the header "?".
       var help = $('help-modal');
-      if (help) { help.style.display = 'none'; help.setAttribute('aria-hidden', 'true'); }
-      document.body.style.overflow = '';
+      var closeBtn = help && help.querySelector('.modal-close');
+      if (closeBtn) { closeBtn.click(); }
+      else if (help) {
+        help.style.display = 'none'; help.setAttribute('aria-hidden', 'true');
+        document.body.style.overflow = '';
+      }
       setTimeout(startTour_, 200);
     });
     var seen = true;

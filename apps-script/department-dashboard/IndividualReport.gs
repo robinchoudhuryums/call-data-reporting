@@ -70,7 +70,7 @@
 // agent name still received that agent's real 12-month monthly series
 // -- the F-1 authorization gap). Bumped so cached responses computed
 // with the unfiltered trend invalidate on deploy.
-const INDIVIDUAL_CACHE_KEY_PREFIX = 'individual:v9';
+const INDIVIDUAL_CACHE_KEY_PREFIX = 'individual:v10';
 
 function getIndividualReportInit(req) {
   const email = Session.getActiveUser().getEmail();
@@ -240,12 +240,22 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
 
   const ss = openSpreadsheet_();
   const sheet = ss.getSheetByName(SHEETS.HISTORICAL);
-  if (!sheet) {
-    throw new Error('Sheet "' + SHEETS.HISTORICAL + '" not found.');
-  }
-  const lastRow = sheet.getLastRow();
-  if (lastRow < 2) {
-    return emptyIndividualReport_(dept, from, to, selectedAgents, masterMonthKeys);
+  // F-35: hard-require the DQE sheet only when it IS the read source. With
+  // DQE_READ_SOURCE=neon the sheet may be trimmed/archived -- the old
+  // unconditional check served the EMPTY report despite dqe_history being
+  // fully populated (so the sheet could never actually be retired). If the
+  // Neon read then fails or returns nothing, the sheet-fallback block below
+  // returns the empty report rather than crashing on the missing sheet.
+  const dqeSource = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
+  const neonCapable = (dqeSource === 'neon' && typeof neonFetchDqeRows_ === 'function');
+  const lastRow = sheet ? sheet.getLastRow() : 0;
+  if (!neonCapable) {
+    if (!sheet) {
+      throw new Error('Sheet "' + SHEETS.HISTORICAL + '" not found.');
+    }
+    if (lastRow < 2) {
+      return emptyIndividualReport_(dept, from, to, selectedAgents, masterMonthKeys);
+    }
   }
   const ssTZ = ss.getSpreadsheetTimeZone();
 
@@ -263,12 +273,11 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
   if (hasPrior && priorFrom < fetchFrom) fetchFrom = priorFrom;
   let fetchTo = to;
   if (hasPrior && priorTo > fetchTo) fetchTo = priorTo;
-  const dqeSource = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
   let srcRows = null;
   let deptQueueExts;
   let effectiveSource = 'sheet';
   const _tRead = Date.now();
-  if (dqeSource === 'neon' && typeof neonFetchDqeRows_ === 'function') {
+  if (neonCapable) {
     srcRows = neonFetchDqeRows_(fetchFrom, fetchTo);
     if (srcRows && srcRows.length) {
       deptQueueExts = deptQueueExtsForNeonReader_(dept, rosterSet, sheet, lastRow).exts;
@@ -279,6 +288,9 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
     }
   }
   if (srcRows === null) {
+    if (!sheet || lastRow < 2) {   // F-35: neon empty AND no sheet to fall back to
+      return emptyIndividualReport_(dept, from, to, selectedAgents, masterMonthKeys);
+    }
     const range = sheet.getRange(2, 1, lastRow - 1, numCols);
     const values   = range.getValues();
     const displays = range.getDisplayValues();
@@ -435,8 +447,12 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
         s.answered += answered;
         s.ttt      += tttSec;
         s.attTotal += attTotal;
-      }
-      if (inPriorRange) {
+      // F-32: when a CUSTOM prior window overlaps the current range, an
+      // overlap day counts toward the CURRENT window only (else-if) --
+      // matching the Performance/Insights semantics (F12) so identical
+      // inputs no longer produce a different prior baseline here (IR
+      // previously double-counted overlap days into BOTH windows).
+      } else if (inPriorRange) {
         const p = priorSummaryStats[agent];
         p.rung     += rung;
         p.missed   += missed;
@@ -680,11 +696,16 @@ function emptyIndividualReport_(dept, from, to, selectedAgents, masterMonthKeys)
     return Utilities.formatDate(d, TZ, 'MMM, yy');
   });
   const datasets = {};
-  selectedAgents.forEach(function (a) {
-    datasets[a] = labels.map(function () {
-      return { rung: 0, missed: 0, answered: 0, pct: 0, att: 0 };
+  // F-31: like summaryData below, only roster members get a (zeroed)
+  // dataset -- crafted off-dept names no longer echo back in the empty
+  // shape (zeros only, but the F-1/F12 filtering discipline applies to
+  // every output path).
+  selectedAgents.filter(function (a) { return !!emptyRosterSet[a]; })
+    .forEach(function (a) {
+      datasets[a] = labels.map(function () {
+        return { rung: 0, missed: 0, answered: 0, pct: 0, att: 0 };
+      });
     });
-  });
   return {
     meta: {
       department: dept, from: from, to: to,

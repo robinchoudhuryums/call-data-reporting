@@ -25,7 +25,7 @@
  * only request their own dept; admins can pick any dept from the
  * dropdown.
  *
- * Cache: 30 min per (dept, from, to) tuple under `qcd:v9:` prefix.
+ * Cache: 30 min per (dept, from, to) tuple under `qcd:v10:` prefix.
  * No agent-list dimension since QCD is queue/dept-scoped, not
  * agent-scoped.
  *
@@ -63,7 +63,7 @@
 // (CSR / Ad-campaign / New Call Menu / Non-CSR (internal) / ... + the
 // 'Total Calls' roll-up shown as "Overall") so a queue row expands into its
 // source breakdown like the legacy emailed report (4a).
-const QCD_CACHE_KEY_PREFIX = 'qcd:v9';
+const QCD_CACHE_KEY_PREFIX = 'qcd:v10';
 
 // All-departments daily report (4b): admin-only, company-wide flat
 // queue table reproducing the legacy emailed "Daily Call Queue Report"
@@ -71,7 +71,7 @@ const QCD_CACHE_KEY_PREFIX = 'qcd:v9';
 // with the per-dept qcd: keys. Bump on any aggregation-shape change.
 // v2: queue rows gain bySource (per-call-source breakdown) + violationDates
 //     for the expandable per-queue detail in the all-dept report.
-const QCD_ALLDEPT_CACHE_PREFIX = 'qcdAll:v2';
+const QCD_ALLDEPT_CACHE_PREFIX = 'qcdAll:v3';
 
 // Source filter: only the "Total Calls" callSource row carries the
 // daily aggregate we want; other callSource values are sub-counts
@@ -284,6 +284,7 @@ function getQcdAllDepartments(req) {
 
   // Company grand totals (range-scoped; longest = MAX, avg = volume-weighted).
   let gTotal = 0, gAns = 0, gAbnd = 0, gLongest = 0, gAvgWSum = 0, gAvgWN = 0, gViol = 0;
+  const gSeenQueues = {};   // F-36: dedupe double-mapped queues in the grand total
 
   allDepts.forEach(function (dept) {
     // Own queues only -- children listed under their own dept.
@@ -338,9 +339,22 @@ function getQcdAllDepartments(req) {
       }),
     });
 
-    gTotal += dTotal; gAns += dAns; gAbnd += dAbnd;
-    if (dLongest > gLongest) gLongest = dLongest;
-    gAvgWSum += dAvgWSum; gAvgWN += dAvgWN; gViol += dViol;
+    // F-36: a queue (mis)configured into TWO depts' DEPT_QCD_QUEUES lists
+    // intentionally appears under BOTH dept sections (per-dept view, the M2
+    // Overview decision) -- but the COMPANY grand total must count each
+    // queue's calls exactly once, so accumulate from unique queue names
+    // rather than summing dept subtotals.
+    rows.forEach(function (r) {
+      if (gSeenQueues[r.queue]) return;
+      gSeenQueues[r.queue] = true;
+      gTotal += r.totalCalls; gAns += r.totalAnswered; gAbnd += r.abandoned;
+      if (r.longestWaitSec > gLongest) gLongest = r.longestWaitSec;
+      if (r.avgAnswerSec > 0 && r.totalAnswered > 0) {
+        gAvgWSum += r.avgAnswerSec * r.totalAnswered;
+        gAvgWN   += r.totalAnswered;
+      }
+      gViol += (Number(r.violations) || 0);
+    });
   });
 
   depts.sort(function (a, b) { return a.dept < b.dept ? -1 : (a.dept > b.dept ? 1 : 0); });
@@ -413,7 +427,7 @@ function computeQcdReport_(dept, from, to, includeSubQueues, separateSubQueues) 
   }
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) {
-    return emptyQcdReport_(dept, from, to, includeSubQueues);
+    return emptyQcdReport_(dept, from, to, includeSubQueues, separate);
   }
   const ssTZ = ss.getSpreadsheetTimeZone();
 
@@ -422,7 +436,7 @@ function computeQcdReport_(dept, from, to, includeSubQueues, separateSubQueues) 
   // "No queues mapped" instead of throwing.
   const queues = queuesForDept_(dept, qOpts);
   if (queues.length === 0) {
-    const empty = emptyQcdReport_(dept, from, to, includeSubQueues);
+    const empty = emptyQcdReport_(dept, from, to, includeSubQueues, separate);
     empty.meta.unmapped = true;
     return empty;
   }
@@ -477,7 +491,8 @@ function computeQcdReport_(dept, from, to, includeSubQueues, separateSubQueues) 
   // per day. Only populated for dates in the selected user range
   // (the trend window's larger daily series would be too dense
   // for the chart and table to be useful).
-  const dailyAcc = {};   // iso -> { totalCalls, answered, abandoned, violations }
+  const dailyAcc = {};
+  const dailyDateSet = {};   // F-15: union of ALL queues' active dates (axis)   // iso -> { totalCalls, answered, abandoned, violations }
 
   for (let i = 0; i < values.length; i++) {
     const r  = values[i];
@@ -551,6 +566,12 @@ function computeQcdReport_(dept, from, to, includeSubQueues, separateSubQueues) 
       qDay.totalAnswered += totalAnswered;
       qDay.abandoned     += abandoned;
       qDay.violations    += violations;
+      // F-15: the daily DATE AXIS covers every in-range row (own + sub
+      // queues). It was previously derived from dailyAcc (own rows only),
+      // so a date where ONLY a sub-queue had calls silently vanished from
+      // the sub-queue's daily chart line (and from Insights' inherited
+      // queueHealth.trend daily series).
+      dailyDateSet[dateIso] = true;
       // Dept-level daily series. With separateSubQueues, the "Dept total"
       // is the parent's OWN queues only -- children render as their own
       // per-queue lines (perQueue) and are never folded into this rollup.
@@ -698,8 +719,10 @@ function computeQcdReport_(dept, from, to, includeSubQueues, separateSubQueues) 
   // Daily series for the selected user range (chart "Daily" view +
   // the scrollable daily table). Sorted oldest-first for chart
   // continuity; the table can re-sort newest-first client-side.
-  const dailySeries = Object.keys(dailyAcc).sort().map(function (iso) {
-    const b = dailyAcc[iso];
+  const dailySeries = Object.keys(dailyDateSet).sort().map(function (iso) {
+    // F-15: a date with only sub-queue activity zero-fills the dept-total
+    // row (the dept's OWN queues genuinely had no calls that day).
+    const b = dailyAcc[iso] || { totalCalls: 0, totalAnswered: 0, abandoned: 0, violations: 0 };
     const pct = b.totalCalls > 0 ? (b.abandoned / b.totalCalls) * 100 : 0;
     return {
       date:             iso,
@@ -715,7 +738,7 @@ function computeQcdReport_(dept, from, to, includeSubQueues, separateSubQueues) 
   // Per-queue series for multi-line charts. Each queue gets its own
   // monthly and daily arrays keyed on the same label sets as the
   // dept-level data so Chart.js can overlay them.
-  const allDailyDates = Object.keys(dailyAcc).sort();
+  const allDailyDates = Object.keys(dailyDateSet).sort();   // F-15: all queues' dates
   const perQueue = {};
   queues.forEach(function (q) {
     var acc = queueAcc[q];
@@ -760,8 +783,13 @@ function computeQcdReport_(dept, from, to, includeSubQueues, separateSubQueues) 
   };
 }
 
-function emptyQcdReport_(dept, from, to, includeSubQueues) {
+function emptyQcdReport_(dept, from, to, includeSubQueues, separateSubQueues) {
   const queues = queuesForDept_(dept, { includeChildren: includeSubQueues !== false });
+  // F-37: mirror the populated shape's sub-queue tagging so the client's
+  // separated rendering doesn't regress on a no-data day (the exact
+  // empty-vs-populated drift class the F5/v6 bump fixed before).
+  const separate = !!separateSubQueues;
+  const tags = separate ? qcdSubQueueTags_(dept) : { ownSet: {}, queueOwner: {} };
   // Match the populated-path response shape (F5): the populated report
   // always carries a top-level `perQueue` map (queue -> { monthly, daily })
   // and `trendData.perQueue`. The client's multi-queue chart init reads
@@ -779,6 +807,7 @@ function emptyQcdReport_(dept, from, to, includeSubQueues) {
       unmapped:   queues.length === 0,
       includeSubQueues: includeSubQueues !== false,
       hasSubQueues:     deptHasSubQueues_(dept),
+      subQueuesSeparated: separate,   // F-37: populated-shape parity
       generatedAt: new Date().toISOString(),
     },
     dateLabel: from + ' - ' + to,
@@ -788,14 +817,17 @@ function emptyQcdReport_(dept, from, to, includeSubQueues) {
       longestWait: '0:00:00', avgAnswer: '0:00:00', violations: 0,
     },
     queueBreakdown: queues.map(function (q) {
-      return {
+      const row = {
         queue: q,
         totalCalls: 0, totalAnswered: 0, abandoned: 0,
         abandonedPct: 0, abandonedPctStr: '0.00%',
         longestWait: '0:00:00', longestWaitSec: 0,
         avgAnswer: '0:00:00', avgAnswerSec: 0, violations: 0,
         bySource: [],
+        violationDates: [],   // F-37: populated rows always carry this
       };
+      if (separate) row.subDept = tags.queueOwner[q] || null;   // F-37
+      return row;
     }),
     trendData: { labels: [], series: [], perQueue: perQueueEmpty },
     dailySeries: [],

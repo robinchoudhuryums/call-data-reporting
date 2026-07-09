@@ -305,12 +305,22 @@ function computeSummary_(dept, from, to, scope) {
 
   const ss = openSpreadsheet_();
   const sheet = ss.getSheetByName(SHEETS.HISTORICAL);
-  if (!sheet) {
-    throw new Error('Sheet "' + SHEETS.HISTORICAL + '" not found.');
-  }
-  const lastRow = sheet.getLastRow();
-  if (lastRow < 2) {
-    return emptySummary_(dept, from, to, scope, roster.names.length, 0, []);
+  // F-35: hard-require the DQE sheet only when it IS the read source. With
+  // DQE_READ_SOURCE=neon the sheet may be trimmed/archived -- the old
+  // unconditional check served the EMPTY report despite dqe_history being
+  // fully populated (so the sheet could never actually be retired). If the
+  // Neon read then fails or returns nothing, the sheet-fallback block below
+  // returns the empty report rather than crashing on the missing sheet.
+  const dqeSource = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
+  const neonCapable = (dqeSource === 'neon' && typeof neonFetchDqeRows_ === 'function');
+  const lastRow = sheet ? sheet.getLastRow() : 0;
+  if (!neonCapable) {
+    if (!sheet) {
+      throw new Error('Sheet "' + SHEETS.HISTORICAL + '" not found.');
+    }
+    if (lastRow < 2) {
+      return emptySummary_(dept, from, to, scope, roster.names.length, 0, []);
+    }
   }
 
   // Pre-fetch the spreadsheet's TZ once. Used by rowDateIso_ to
@@ -342,13 +352,12 @@ function computeSummary_(dept, from, to, scope) {
   // getDeptQueueExts_ (no getDisplayValues), while the heavy windowed
   // aggregation comes from Neon; an override dept skips the scan entirely.
   // (A later step can move this derivation to a SELECT DISTINCT Neon query.)
-  const dqeSource = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
   const numCols = HISTORICAL_COLS.CSR_AVG_ABD_WAIT;
   let srcRows = null;
   let deptQueueExts, deptQueueExtsSource;
   let effectiveSource = 'sheet';
   const _tRead = Date.now();
-  if (dqeSource === 'neon' && typeof neonFetchDqeRows_ === 'function') {
+  if (neonCapable) {
     srcRows = neonFetchDqeRows_(priorFrom, to);
     if (srcRows && srcRows.length) {
       const dqr = deptQueueExtsForNeonReader_(dept, rosterSet, sheet, lastRow);
@@ -360,6 +369,9 @@ function computeSummary_(dept, from, to, scope) {
     }
   }
   if (srcRows === null) {
+    if (!sheet || lastRow < 2) {   // F-35: neon empty AND no sheet to fall back to
+      return emptySummary_(dept, from, to, scope, roster.names.length, 0, []);
+    }
     const range = sheet.getRange(2, 1, lastRow - 1, numCols);
     const values = range.getValues();
     const displays = range.getDisplayValues();
@@ -582,9 +594,12 @@ function computeSummary_(dept, from, to, scope) {
     return x.agent.localeCompare(y.agent);
   });
 
-  // Totals: sum the summables; simple-mean the per-row averages so
-  // every "average" column in the totals row uses the same method
-  // it uses in the agent rows.
+  // Totals: sum the summables; simple-mean the per-row averages ACROSS
+  // ALL displayed roster rows -- including idle agents whose ATT/abd-wait
+  // is 0 (conventions.md: "mean of the per-agent rows displayed"). Note
+  // this differs from the per-agent accumulators above, which skip zero
+  // values when averaging a single agent's days (F-29: the code is the
+  // spec; this comment previously implied the two used the same method).
   //
   // Phase D: the totals sum only over matchedViaRoster=true rows.
   // Queue-only floaters (matchedViaQueue && !matchedViaRoster) are
@@ -1045,6 +1060,10 @@ function getDeptQueueExtsNeon_(dept, rosterSet) {
 function deptQueueExtsForNeonReader_(dept, rosterSet, sheet, lastRow) {
   const ne = getDeptQueueExtsNeon_(dept, rosterSet);
   if (ne) return ne;
+  // F-35: the sheet may legitimately be absent/empty once reads are on
+  // Neon -- fall through to the override/empty derivation instead of
+  // crashing on getRange.
+  if (!sheet || !lastRow || lastRow < 2) return getDeptQueueExts_(dept, rosterSet, []);
   const extValues = sheet.getRange(2, 1, lastRow - 1, HISTORICAL_COLS.QUEUE_EXT).getValues();
   return getDeptQueueExts_(dept, rosterSet, extValues);
 }

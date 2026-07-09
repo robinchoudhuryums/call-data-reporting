@@ -2117,7 +2117,7 @@
             <code>YYYY-MM-DD</code> dates and inclusive ranges via
             <code>..</code> (e.g. <code>2026-12-25, 2026-12-31..2026-01-01</code>)
             -- honored by the daily trigger only; manual sends always fire.
-            The <strong>Last 30 days</strong> column summarizes recent
+            The <strong>Last 30 assessed days</strong> column summarizes the most recent
             trigger outcomes per dept: a warn chip means the threshold
             is firing chronically (alert fatigue likely);
             a muted chip means the threshold sits well below actual
@@ -2128,7 +2128,7 @@
             <thead><tr>
               <th>Department</th>
               <th class="num">Threshold</th>
-              <th>Last 30 days</th>
+              <th title="The most recent 30 ASSESSED daily-trigger days (statuses sent / above-threshold). Skipped, no-data and weekend days don't count, so the window can reach further back than 30 calendar days.">Last 30 assessed days</th>
               <th>Extra Recipients</th>
               <th>Active</th>
               <th>Skip Dates</th>

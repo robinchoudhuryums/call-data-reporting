@@ -390,6 +390,7 @@ function compareDqeSources_() {
  * `_`-suffixed function you need to run by hand: add a one-line wrapper.
  */
 function runDqeParityCheck() {
+  assertAdmin_();   // F-28: editor-run wrapper, but the bare name is RPC-reachable
   return compareDqeSources_();
 }
 
@@ -671,6 +672,7 @@ function validateHistoricalDqeBackfill_(oldSsId, oldSheetName) {
  * Execution log.
  */
 function runHistoricalBackfillCheck() {
+  assertAdmin_();   // F-28: editor-run wrapper, but the bare name is RPC-reachable
   var OLD_SS_ID = 'PASTE_OLD_SPREADSHEET_ID_HERE';   // <-- edit
   var OLD_SHEET = 'DQE Historical Data';             // <-- edit if the old tab is named differently
   if (OLD_SS_ID === 'PASTE_OLD_SPREADSHEET_ID_HERE') {

@@ -102,6 +102,9 @@ function inboundResolveRequest_(req) {
       throw new Error('Not authorized for this department.');
     }
     dept = user.department;
+  } else if (dept === 'ALL') {
+    dept = '';   // F-48: admins may pass 'ALL' for the company view, like
+                 // getCallJourney / directCallResolveRequest_ already accept
   } else if (dept && getAllDepartments_().indexOf(dept) === -1) {
     throw new Error('Unknown department: ' + dept);
   }

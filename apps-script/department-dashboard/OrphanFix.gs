@@ -47,7 +47,7 @@
  *      The log is append-only and idempotently created by setup().
  *
  * The downstream cache layers (companyOverview:v18, summary:v10,
- * individual:v9, etc.; see INV-30 for the canonical list) will
+ * individual:v10, etc.; see INV-30 for the canonical list) will
  * hold stale data for up to 30 minutes (REPORT_CACHE_TTL_SECONDS)
  * after a rename. We invalidate the single fixed-key
  * `companyOverview:` entry on every successful write; the

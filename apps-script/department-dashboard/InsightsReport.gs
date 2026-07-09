@@ -78,7 +78,7 @@
 //     (from the bySource breakdown 4a added to computeQcdReport_), so
 //     the Queue health table can annotate WHERE a queue's abandons come
 //     from. Null when no sub-source has abandons.
-const INSIGHTS_CACHE_KEY_PREFIX = 'insights:v16';
+const INSIGHTS_CACHE_KEY_PREFIX = 'insights:v17';
 
 function getInsightsReportInit(req) {
   // Same picker UX (roster + default dates + active-in-range subset) as
@@ -264,11 +264,21 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
 
   const ss = openSpreadsheet_();
   const sheet = ss.getSheetByName(SHEETS.HISTORICAL);
-  if (!sheet) throw new Error('Sheet "' + SHEETS.HISTORICAL + '" not found.');
-  const lastRow = sheet.getLastRow();
-  if (lastRow < 2) {
-    return emptyInsights_(dept, from, to, priorFrom, priorTo, selectedAgents,
-                          monthKeys, priorIsCustom);
+  // F-35: hard-require the DQE sheet only when it IS the read source. With
+  // DQE_READ_SOURCE=neon the sheet may be trimmed/archived -- the old
+  // unconditional check served the EMPTY report despite dqe_history being
+  // fully populated (so the sheet could never actually be retired). If the
+  // Neon read then fails or returns nothing, the sheet-fallback block below
+  // returns the empty report rather than crashing on the missing sheet.
+  const dqeSource = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
+  const neonCapable = (dqeSource === 'neon' && typeof neonFetchDqeRows_ === 'function');
+  const lastRow = sheet ? sheet.getLastRow() : 0;
+  if (!neonCapable) {
+    if (!sheet) throw new Error('Sheet "' + SHEETS.HISTORICAL + '" not found.');
+    if (lastRow < 2) {
+      return emptyInsights_(dept, from, to, priorFrom, priorTo, selectedAgents,
+                            monthKeys, priorIsCustom);
+    }
   }
   const ssTZ = ss.getSpreadsheetTimeZone();
 
@@ -283,15 +293,16 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
   if (priorFrom < fetchFrom) fetchFrom = priorFrom;
   let fetchTo = to;
   if (priorTo > fetchTo) fetchTo = priorTo;
-  const dqeSource = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
   let srcRows = null;
   let deptQueueExts;
   let effectiveSource = 'sheet';
   const _tRead = Date.now();
-  if (dqeSource === 'neon' && typeof neonFetchDqeRows_ === 'function') {
+  if (neonCapable) {
     srcRows = neonFetchDqeRows_(fetchFrom, fetchTo);
     if (srcRows && srcRows.length) {
-      const extValues = sheet.getRange(2, 1, lastRow - 1, HISTORICAL_COLS.QUEUE_EXT).getValues();
+      // F-35: tolerate a missing/empty sheet for the ext derivation.
+      const extValues = (sheet && lastRow >= 2)
+        ? sheet.getRange(2, 1, lastRow - 1, HISTORICAL_COLS.QUEUE_EXT).getValues() : [];
       deptQueueExts = getDeptQueueExts_(dept, rosterSet, extValues).exts;
       effectiveSource = 'neon';
     } else {
@@ -300,6 +311,10 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
     }
   }
   if (srcRows === null) {
+    if (!sheet || lastRow < 2) {   // F-35: neon empty AND no sheet to fall back to
+      return emptyInsights_(dept, from, to, priorFrom, priorTo, selectedAgents,
+                            monthKeys, priorIsCustom);
+    }
     const range = sheet.getRange(2, 1, lastRow - 1, numCols);
     const values   = range.getValues();
     const displays = range.getDisplayValues();

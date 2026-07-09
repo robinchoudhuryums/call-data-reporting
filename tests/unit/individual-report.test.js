@@ -125,3 +125,23 @@ test('auth: cross-dept request by a manager is refused at the server boundary', 
     h.call('getIndividualReport', { department: 'Alpha', from: '2026-03-09', to: '2026-03-09', agents: ['Anna'] });
   }, /Not authorized/);
 });
+
+test('F-32: a custom prior window overlapping the current range counts overlap days toward CURRENT only', function () {
+  // Current = Mar 9-10; custom prior = Mar 8-9 (Mar 9 overlaps). PR and
+  // Insights exclude the overlap day from the prior baseline (else-if,
+  // F12); IR previously counted it into BOTH windows, so identical inputs
+  // produced a different prior baseline here.
+  install([
+    dqeRow({ date: '2026-03-09', agent: 'Anna', ext: '201', rung: 10, answered: 8, att: '0:03:00' }),
+    dqeRow({ date: '2026-03-10', agent: 'Anna', ext: '201', rung: 6,  answered: 5, att: '0:02:00' }),
+  ]);
+  const data = h.call('getIndividualReport', {
+    department: 'Alpha', from: '2026-03-09', to: '2026-03-10', agents: ['Anna'],
+    priorFrom: '2026-03-08', priorTo: '2026-03-09',
+  });
+  const anna = entry(data, 'Anna');
+  assert.equal(anna.raw.rung, 16, 'current window keeps both days');
+  // Prior window has NO exclusive days with data (Mar 8 empty; Mar 9 went
+  // to current) -> prior rung 0. Old behavior: 10 (Mar 9 double-counted).
+  assert.equal(anna.priorRaw.rung, 0);
+});

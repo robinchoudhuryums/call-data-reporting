@@ -217,13 +217,23 @@ function computeCompareRanges_(dept, selectedAgents,
 
   const ss = openSpreadsheet_();
   const sheet = ss.getSheetByName(SHEETS.HISTORICAL);
-  if (!sheet) {
-    throw new Error('Sheet "' + SHEETS.HISTORICAL + '" not found.');
-  }
-  const lastRow = sheet.getLastRow();
-  if (lastRow < 2) {
-    return emptyCompareRanges_(dept, selectedAgents, roster,
-                               p1From, p1To, p2From, p2To);
+  // F-35: hard-require the DQE sheet only when it IS the read source. With
+  // DQE_READ_SOURCE=neon the sheet may be trimmed/archived -- the old
+  // unconditional check served the EMPTY report despite dqe_history being
+  // fully populated (so the sheet could never actually be retired). If the
+  // Neon read then fails or returns nothing, the sheet-fallback block below
+  // returns the empty report rather than crashing on the missing sheet.
+  const dqeSource = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
+  const neonCapable = (dqeSource === 'neon' && typeof neonFetchDqeRows_ === 'function');
+  const lastRow = sheet ? sheet.getLastRow() : 0;
+  if (!neonCapable) {
+    if (!sheet) {
+      throw new Error('Sheet "' + SHEETS.HISTORICAL + '" not found.');
+    }
+    if (lastRow < 2) {
+      return emptyCompareRanges_(dept, selectedAgents, roster,
+                                 p1From, p1To, p2From, p2To);
+    }
   }
   const ssTZ = ss.getSpreadsheetTimeZone();
   // F1 cutover #4c (Compare Ranges): source rows for the UNION of the two
@@ -236,12 +246,11 @@ function computeCompareRanges_(dept, selectedAgents,
   const numCols = HISTORICAL_COLS.CSR_AVG_ABD_WAIT;
   const fetchFrom = p1From < p2From ? p1From : p2From;
   const fetchTo   = p1To   > p2To   ? p1To   : p2To;
-  const dqeSource = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
   let srcRows = null;
   let deptQueueExts;
   let effectiveSource = 'sheet';
   const _tRead = Date.now();
-  if (dqeSource === 'neon' && typeof neonFetchDqeRows_ === 'function') {
+  if (neonCapable) {
     srcRows = neonFetchDqeRows_(fetchFrom, fetchTo);
     if (srcRows && srcRows.length) {
       deptQueueExts = deptQueueExtsForNeonReader_(dept, rosterSet, sheet, lastRow).exts;
@@ -252,6 +261,10 @@ function computeCompareRanges_(dept, selectedAgents,
     }
   }
   if (srcRows === null) {
+    if (!sheet || lastRow < 2) {   // F-35: neon empty AND no sheet to fall back to
+      return emptyCompareRanges_(dept, selectedAgents, roster,
+                                 p1From, p1To, p2From, p2To);
+    }
     const range = sheet.getRange(2, 1, lastRow - 1, numCols);
     const values   = range.getValues();
     const displays = range.getDisplayValues();

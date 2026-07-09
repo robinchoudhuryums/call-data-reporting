@@ -378,16 +378,16 @@ same time as the code change.
 | `Data.gs` (main table) | `summary:vN:` | `v10` |
 | `Data.gs` (latest-date snap for default From/To) | `latestDate:vN:` | `v1` |
 | `Data.gs` (multi-source latest dates for freshness pill) | `latestDates:vN:` | `v1` |
-| `IndividualReport.gs` | `individual:vN:` | `v9` |
+| `IndividualReport.gs` | `individual:vN:` | `v10` |
 | `IndividualReport.gs` (active-in-range subset shared by all three report pickers) | `individual_active:vN:` | `v2` |
-| `PerformanceReport.gs` | `performance:vN:` | `v4` |
+| `PerformanceReport.gs` | `performance:vN:` | `v5` |
 | `CompareRangesReport.gs` | `compareRanges:vN:` | `v6` |
-| `MissedCallsReport.gs` | `missed:vN:` | `v12` |
+| `MissedCallsReport.gs` | `missed:vN:` | `v13` |
 | `CompanyOverview.gs` | `companyOverview:vN` | `v18` |
-| `QCDReport.gs` | `qcd:vN:` | `v9` |
+| `QCDReport.gs` | `qcd:vN:` | `v10` |
 | `InboundReport.gs` | `inbound:vN:` | `v3` |
-| `InsightsReport.gs` | `insights:vN:` | `v16` |
-| `QCDReport.gs` (all-departments daily report) | `qcdAll:vN:` | `v2` |
+| `InsightsReport.gs` | `insights:vN:` | `v17` |
+| `QCDReport.gs` (all-departments daily report) | `qcdAll:vN:` | `v3` |
 | `InboundReport.gs` (weekday×hour abandon heatmap) | `inboundHeatmap:vN:` | `v1` |
 | `DirectCallReport.gs` | `directCall:vN:` | `v1` |
 
@@ -677,7 +677,7 @@ Performance / Compare Ranges:
   Returns `meta` (with `queues` + `unmapped` flags), `dateLabel`,
   `totals` (sum across the dept's queues), `queueBreakdown`
   (one row per queue), `trendData` (12-month buckets matching the
-  IR/PR trend-window logic). Cache prefix `qcd:v9`.
+  IR/PR trend-window logic). Cache prefix `qcd:v10`.
 - `sendQcdReportEmail({ imageBase64, dateLabel })` — image
   export like the IR/PR/CR send-email paths.
 
@@ -791,7 +791,7 @@ behavior byte-identical to pre-OrphanFix.
 **Cache invalidation.** `applyOrphanRename` removes the single
 fixed-key Overview cache entry (via the `COMPANY_OVERVIEW_CACHE_KEY`
 constant -- currently `companyOverview:v18`) on success. Per-(dept,
-range) caches (`summary:v10`, `individual:v9`, `performance:v4`,
+range) caches (`summary:v10`, `individual:v10`, `performance:v5`,
 etc.) are left to TTL out within 30 minutes
 (`REPORT_CACHE_TTL_SECONDS`). The Orphan Fix modal tells the user
 the Overview updates immediately and other views may lag up to the
