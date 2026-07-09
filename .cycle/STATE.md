@@ -1,5 +1,14 @@
 # Cycle State — resume note
 
+## Latest session (backup + health page)
+Branch `claude/broad-scan-xkmoam`, commit `c278feb`, PUSHED. 259/259 tests (6 added), INV-16 guard green. NEW OAUTH SCOPE: `auth/drive` in appsscript.json (one consent run after deploy, Operator State #9).
+- **NeonBackup.gs**: weekly Drive export of the NO-sheet-fallback tables. escalations = full JSONL snapshot/run (keep newest NEON_BACKUP_KEEP=8); escalation_activity + inbound_calls (incl. journeys) = monthly partition files, closed months immutable-skip, current month rewritten. string_agg(row_to_json) one-round-trip fetches (never per-row JDBC -- the 0.5s/row trap). Folder auto-created -> NEON_BACKUP_FOLDER_ID. Trigger: Saturdays NEON_BACKUP_HOUR=6. Admin install/uninstall/runNeonBackupNow; outcome -> NEON_BACKUP_LAST(_RESULT). Restore = psql/script over JSONL (documented in file header).
+- **SystemHealth.gs + #health-modal** (route #/admin/health, data-admin-only Health tab): live status table replacing memory-driven use of the 28-item checklist -- pipeline freshness, Neon conf/read-source/config-source/read-back/mirror, dashboard trigger presence (alerts/digests required=warn; warm/keepwarm/watchdog/backup optional=muted) + last outcomes, Script Property presence, setup()-sheet presence. Every probe individually try/caught -> its own warn row. Hosts the backup controls. NOTE: covers the DASHBOARD project only (cdr-import/cdr-report props+triggers are per-project-unreachable; rows say so).
+- Tests: system-health.test.js (backup pure helpers: nbNextMonth_/nbMonthsBetween_/nbSnapshotTrimList_; health admin gate + healthy/degraded shapes + probe-failure degradation). Shim: ScriptApp.everyWeeks/WeekDay added.
+DEPLOY: Department Dashboard only + the drive-scope consent (blocks the BACKUP feature, not the deploy). Post-deploy: open Health tab -> install backup trigger -> "Back up now" to seed.
+REMAINING strategic: S1(a) capture-normalization (post-vetting), S7 legacy decommission. Advisory list from the review session otherwise open (self-serve digests, escalation aging, anomaly alerts, mobile pass, Sonia canary, access-control case fix).
+Where I left off: 30 unmerged commits awaiting PR/merge + deploys.
+
 ## Latest session (broad-implement: S6 Escalations Phase 2)
 Branch `claude/broad-scan-xkmoam`, commit `46c01b6`, PUSHED. 253/253 tests (5 added), INV-16 guard green. Escalations stays uncached by design -- no cache bumps.
 - **Status model**: `pending_review` -> (`pending` <-> `resolved`) | `rejected` (terminal). getEscalations accepts all four + 'all'; meta gains viewer-scoped `pendingReviewCount`.
