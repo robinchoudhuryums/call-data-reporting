@@ -117,11 +117,13 @@ spreadsheet). See `dept-config.test.js` for the fake-spreadsheet pattern.
     INV-25 (answered-weighted ATT, the deliberate contrast to INV-05's
     240-vs-288 case), INV-53 floater fields, INV-26 team-avg exclude via
     a Dept Config override, and the cross-dept auth gate.
-  - *Report builders + canonicalization (Phase 3):* Performance Report —
-    INV-28 (auto prior = immediately-preceding same-length window) +
-    custom-prior override + INV-53 team gating. Compare Ranges —
-    INV-35 (length-mismatch flag, incl. the inclusive 1.2x boundary) +
-    per-agent P1/P2 split + INV-53. `loadRosterCanonicalNames_`
+  - *Report builders + canonicalization (Phase 3):* the Insights
+    consolidation-freeze (insights-report.test.js) — the retired
+    Performance / Compare Ranges semantics pinned as fixture literals:
+    INV-28 (auto prior = immediately-preceding same-length window),
+    INV-25 weighted ATT, INV-29 trend window, INV-53 roster gating;
+    INV-35's working-day math lives in util.test.js
+    (`countWorkingDays_`) + the Insights suite. `loadRosterCanonicalNames_`
     (pipeline) — INV-24 paren-strip map + ambiguity, INV-46 alias
     overrides (active/inactive/first-wins), and an INV-16 cross-project
     behavioral equivalence check (cdr-report vs cdr-import).

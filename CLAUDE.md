@@ -2006,6 +2006,8 @@ items for anything it flags or doesn't cover.)
     recently-rebuilt dates). Idempotent (re-run safe); reuses the same `NEON_*`
     props the inline mirror uses (#16). The daily import already mirrors Direct
     inline, so this is ONLY for the bulk path. Recommended only after the busy
+    carve-out numbers are spot-checked (the report stays admin-only while
+    vetted, and this writes Direct history across all backfilled dates).
 27. `COMPANY_HOLIDAYS` Script Property (dashboard) -- the S5 global
     holiday list (comma-separated ISO dates and/or `YYYY-MM-DD..YYYY-MM-DD`
     inclusive ranges; same tolerant grammar as the Alert Config Skip Dates
@@ -2034,8 +2036,15 @@ items for anything it flags or doesn't cover.)
     editor to consent (per #9). Fetches use one string_agg round-trip
     per file (never per-row JDBC). Last outcome surfaces on the Health
     page (`NEON_BACKUP_LAST_RESULT`).
-    carve-out numbers are spot-checked (the report stays admin-only while
-    vetted, and this writes Direct history across all backfilled dates).
+
+29. Retired server files must be deleted in the Apps Script WEB EDITOR
+    (INV-17: `clasp push -f` never deletes remote files). After deploying
+    the consolidation commits, remove `PerformanceReport.gs` and
+    `CompareRangesReport.gs` from the Department Dashboard project in the
+    web editor -- until then their dead endpoints (`getPerformanceReport`,
+    `getCompareRanges`, ...) remain callable (same auth gates as before;
+    harmless but stale). The retired QCD / Missed surfaces were in-file
+    edits, so no other files need manual deletion.
 
 ## Cycle Workflow Config
 
