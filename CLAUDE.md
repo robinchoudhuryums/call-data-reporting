@@ -776,8 +776,33 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   retry** -- a "Retry now" button on the `ovSetRefreshWarn_` banner re-runs
   `ovLoad_(true)`. (5) **Card-entrance motion** -- `.ds-card--rail` fade+rise
   (`ds-card-in`) + status-rail grow-in (`ds-rail-grow`). Deferred from Pass-2:
-  count-up, segment-slide, skeleton crossfade, C2 chart-slot spark, D1b
-  (reports keep-last-good), D2 (permission tone).
+  count-up, segment-slide, skeleton crossfade, C2 chart-slot spark, D2
+  (permission tone). D1b (reports keep-last-good) SHIPPED since -- and
+  gained an SWR layer (see the perceived-speed bullet below).
+- **Report SWR (stale-while-revalidate) rides the D1b keep-last-good
+  store.** `reportLastGoodWrite_/Read_` persist the LAST successful payload
+  per (user, report) in localStorage, signature-matched via `reportSig_`
+  (agents sorted). Two consumers: (1) `reportFailFallback_` -- on a failed
+  fetch, repaint last-good + a warn "couldn't refresh" note (D1b); (2)
+  `reportSwrPaint_` -- on a NEW request whose signature matches the stored
+  one, paint it IMMEDIATELY with a `status-loading` "Showing your previous
+  result for this exact selection — refreshing now…" note, while the live
+  fetch always continues behind it. THE INDICATOR CONTRACT: every wired
+  repaint path clears its results-status line (IR/PR/CR renderers clear
+  their own; Inbound + Insights use a repaint wrapper that clears
+  `*-results-status`), so the note can never outlive the response it
+  announced -- live success wipes it, failure swaps it for the D1b warn.
+  Wired on: IR, PR, CR (main Generate; the edit-popover path keeps its own
+  "Refreshing report…" status), Insights (which also gained the D1b store
+  itself here), Inbound, and the My Department table (`refresh()` --
+  its SWR paint passes `{swr:true}` to `onData` to skip the missed-section
+  fetch so that section isn't fetched twice; the live pass triggers it
+  once). Signature matching means a changed dept/range/selection never
+  paints another request's stale shape -- those take the normal skeleton
+  path. The Overview has its own separate SWR (`cdr.ov.cache.v1` +
+  `ovSetCachedIndicator_`). One entry per report per user (last signature
+  only) keeps localStorage bounded. New report run functions should wire
+  all three pieces (write + SWR + fail-fallback) together.
 - **Team-Insights volume gating on a length mismatch.**
   `Util.gs::buildTeamInsights_` takes an optional `opts.excludeVolume`;
   Insights (`computeInsights_`) and Compare Ranges (`computeCompareRanges_`)
@@ -1767,8 +1792,12 @@ When something looks wrong, before assuming a code bug, check:
     Daily Queue Report for YESTERDAY (the exact key its modal pre-loads;
     6h `qcdAll` TTL keeps it hot -- the warm is SKIPPED when the QCD latest
     date is older than yesterday, so a late ingest can't pin an empty report
-    for the long TTL) so the first manager of the day gets cache hits
-    instead of cold aggregations. **Must run in the
+    for the long TTL) + each dept's AGENT-FREE Insights over the launcher
+    window (last 30 days ending yesterday -- the exact request both Overview
+    launcher chips auto-run; runs LAST under a 4-min runtime budget so the
+    trigger can't be killed mid-warm; unwarmed depts take the cold path and
+    the outcome line reports how many were skipped) so the first manager of
+    the day gets cache hits instead of cold aggregations. **Must run in the
     dashboard project** -- CacheService is per-project, so the cdr-import
     ingest can't warm it. "Warm now" (`warmReportCachesNow`, admin) primes on
     demand. Reuses `script.scriptapp`; independent of `DQE_READ_SOURCE`

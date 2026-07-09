@@ -14,6 +14,12 @@
  *   - getCompanyOverview() -- the shared Overview blob.
  *   - getDepartmentSummary({dept, latest, latest}) for every dept -- the
  *     My Department default range (INV-43 snaps From/To to the latest date).
+ *   - getQcdAllDepartments(yesterday, yesterday) -- the exact key the
+ *     all-departments Daily Queue Report modal pre-loads (6h qcdAll TTL);
+ *     freshness-guarded so a late ingest can't pin an empty blob.
+ *   - getInsightsReport({dept, last-30-days, agents: []}) for every dept --
+ *     the agent-free launcher window both Overview chips auto-run; runs
+ *     LAST under a 4-minute runtime budget (partial warm is fine).
  *
  * NOTE: CacheService is per-Apps-Script-PROJECT, so this MUST run in the
  * dashboard project (it can't be warmed from the cdr-import ingest project).
@@ -117,11 +123,39 @@ function warmReportCaches_() {
       + (e && e.message ? e.message : e));
   }
 
+  // Agent-free Insights per dept, over the Overview launcher window (last
+  // 30 days ending yesterday, empty selection = whole roster -- the exact
+  // request BOTH launcher chips auto-run, so the key matches). This is the
+  // heaviest per-dept aggregation, so it runs LAST under a runtime budget:
+  // Apps Script kills triggers around the 6-minute mark, and a partial
+  // warm is fine -- unwarmed depts just take the normal cold path.
+  var INSIGHTS_WARM_BUDGET_MS = 4 * 60 * 1000;
+  var insFrom = Utilities.formatDate(new Date(Date.now() - 30 * 86400000), TZ, 'yyyy-MM-dd');
+  var insTo   = Utilities.formatDate(new Date(Date.now() - 86400000), TZ, 'yyyy-MM-dd');
+  var insSkipped = 0;
+  for (var j = 0; j < depts.length; j++) {
+    if (Date.now() - start > INSIGHTS_WARM_BUDGET_MS) { insSkipped = depts.length - j; break; }
+    try {
+      getInsightsReport({ department: depts[j], from: insFrom, to: insTo, agents: [] });
+      warmed++;
+    } catch (e) {
+      failed++;
+      Logger.log('warmReportCaches_: insights ' + depts[j] + ' failed: '
+        + (e && e.message ? e.message : e));
+    }
+  }
+  if (insSkipped) {
+    Logger.log('warmReportCaches_: insights warm budget hit -- '
+      + insSkipped + ' dept(s) left cold.');
+  }
+
   var ms = Date.now() - start;
   Logger.log('warmReportCaches_: warmed=' + warmed + ' failed=' + failed
     + ' for ' + latest + ' in ' + ms + 'ms');
   recordCacheWarm_('ok (' + warmed + ' warmed'
-    + (failed ? ', ' + failed + ' failed' : '') + ', ' + ms + 'ms)');
+    + (failed ? ', ' + failed + ' failed' : '')
+    + (insSkipped ? ', ' + insSkipped + ' insights skipped on budget' : '')
+    + ', ' + ms + 'ms)');
   } finally {
     REPORT_USAGE_SUPPRESS_ = false;
   }

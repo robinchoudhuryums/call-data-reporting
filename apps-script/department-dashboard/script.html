@@ -4403,6 +4403,29 @@
       return true;
     } catch (e) { return false; }
   }
+  // SWR (stale-while-revalidate) companion to the D1b store: when the
+  // last-good payload matches this EXACT request signature, paint it
+  // immediately with a visible "previous result — refreshing" note, so a
+  // repeat Generate feels instant instead of showing a skeleton for the
+  // full server round-trip. Perceived speed only -- the live fetch ALWAYS
+  // runs: on success the report's normal repaint path clears the note (every
+  // wired renderer resets its results-status line); on failure
+  // reportFailFallback_ swaps it for the couldn't-refresh warning. Signature
+  // matching means a changed dept/range/agents never paints someone else's
+  // stale shape -- those requests take the normal skeleton path.
+  function reportSwrPaint_(report, sig, repaintFn, statusElId) {
+    var lg = reportLastGoodRead_(report, sig);
+    if (!lg) return false;
+    try {
+      repaintFn(lg.data);
+      var when = '';
+      try { when = lg.at ? new Date(lg.at).toLocaleString() : ''; } catch (e) {}
+      reportSetStatus_(statusElId, 'loading',
+        'Showing your previous result for this exact selection'
+        + (when ? ' (from ' + when + ')' : '') + ' — refreshing now…');
+      return true;
+    } catch (e) { return false; }
+  }
 
   function refresh() {
     const dept = getRequestedDept();
@@ -4452,9 +4475,25 @@
     }
 
     var myToken = ++summaryReqSeq;
+    // SWR: a repeat request for the exact same (dept, from, to) paints the
+    // last-good summary instantly (localStorage, signature-matched) with a
+    // visible "refreshing" note; the live response repaints over it (and the
+    // B1 change-flash pulses whatever moved). The SWR paint passes swr:true
+    // so onData skips the missed-section fetch -- the live pass triggers it
+    // once. On a fetch failure the stale table simply stays painted under
+    // the error status.
+    var __sig = reportSig_(req);
+    var __swrHit = reportLastGoodRead_('summary', __sig);
+    if (__swrHit) {
+      try {
+        onData(__swrHit.data, { swr: true });
+        setStatus('loading', 'Showing your previous result — refreshing now…');
+      } catch (e) { /* fall through to the normal loading path */ }
+    }
     google.script.run
       .withSuccessHandler(function (data) {
         if (myToken !== summaryReqSeq) return;   // a newer request superseded this one
+        reportLastGoodWrite_('summary', __sig, data);
         onData(data);
       })
       .withFailureHandler(function (err) {
@@ -4470,7 +4509,7 @@
   // has run on the same change event.
   var refreshOnDateEdit_ = debounce_(refresh, 350);
 
-  function onData(data) {
+  function onData(data, opts) {
     $('refresh-btn').disabled = false;
     lastSummaryDept_ = getRequestedDept();   // the dept now painted (stale-flash guard)
     state.rows = (data && data.rows) || [];
@@ -4511,7 +4550,9 @@
     render();
     renderInfoLine();
     renderDeptQcdSnapshot_(data && data.qcd);
-    deptMissedFetch_();
+    // SWR paint: skip the missed-section fetch -- the live onData (arriving
+    // right behind) triggers it exactly once for this range.
+    if (!(opts && opts.swr)) deptMissedFetch_();
     renderDiagnostics();
   }
 
@@ -6030,6 +6071,7 @@
 
     const __rtok = ++reportReqSeq;   // F10 stale-response guard
     const __sig = reportSig_(req);   // D1b keep-last-good key
+    reportSwrPaint_('ir', __sig, irRenderReport, 'ir-results-status');   // SWR: instant repeat-paint
     google.script.run
       .withSuccessHandler(function (data) {
         btn.disabled = false;
@@ -7751,6 +7793,7 @@
 
     const __rtok = ++reportReqSeq;   // F10 stale-response guard
     const __sig = reportSig_(req);   // D1b keep-last-good key
+    reportSwrPaint_('pr', __sig, prRenderReport_, 'pr-results-status');   // SWR: instant repeat-paint
     google.script.run
       .withSuccessHandler(function (data) {
         btn.disabled = false;
@@ -9130,6 +9173,7 @@
 
     const __rtok = ++reportReqSeq;   // F10 stale-response guard
     const __sig = reportSig_({ department: dept, agents: agents, p1From: p1From, p1To: p1To, p2From: p2From, p2To: p2To });
+    reportSwrPaint_('cr', __sig, crRenderReport_, 'cr-results-status');   // SWR: instant repeat-paint
     google.script.run
       .withSuccessHandler(function (data) {
         btn.disabled = false;
@@ -12166,15 +12210,26 @@
     const gen = $('ins-generate-btn'); const prev = gen.textContent;
     gen.disabled = true; gen.innerHTML = DS_EQ_HTML_ + 'Generating…';
     const __rtok = ++reportReqSeq;   // F10 stale-response guard
+    const __sig = reportSig_(req);   // D1b keep-last-good key
+    // Repaint path shared by live data / SWR / fail-fallback; clears the
+    // results-status line so the SWR "refreshing" note can't outlive the
+    // response it announced.
+    const __insRepaint = function (d) {
+      insRenderReport_(d); insShowResults(); reportSetStatus_('ins-results-status', '');
+    };
+    reportSwrPaint_('ins', __sig, __insRepaint, 'ins-results-status');   // SWR: instant repeat-paint
     google.script.run
       .withSuccessHandler(function (data) {
         gen.disabled = false; gen.textContent = prev;
         if (__rtok !== reportReqSeq) return;
-        insSavePrefs_(); insRenderReport_(data); insShowResults();
+        reportLastGoodWrite_('ins', __sig, data);
+        insSavePrefs_(); __insRepaint(data);
       })
       .withFailureHandler(function (err) {
         gen.disabled = false; gen.textContent = prev;
         if (__rtok !== reportReqSeq) return;
+        // D1b: repaint last-good for this exact request (if any) instead of blanking.
+        if (reportFailFallback_('ins', __sig, __insRepaint, 'ins-results-status')) return;
         insShowForm();   // dismisses the launcher loading pane if active
         insSetFormError('Error: ' + (err && err.message ? err.message : String(err)));
       })
@@ -13602,6 +13657,7 @@
     gen.disabled = true; gen.innerHTML = DS_EQ_HTML_ + 'Generating…';
     const __sig = reportSig_({ from: from, to: to, department: dept });   // D1b key
     const __inboundRepaint = function (d) { inboundRenderReport_(d); inboundShowResults(); reportSetStatus_('inbound-results-status', ''); };
+    reportSwrPaint_('inbound', __sig, __inboundRepaint, 'inbound-results-status');   // SWR: instant repeat-paint
     google.script.run
       .withSuccessHandler(function (data) {
         gen.disabled = false; gen.textContent = prev;
