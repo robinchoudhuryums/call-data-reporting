@@ -2579,6 +2579,9 @@
     // Work-window strings for the My Department page's pill (E2).
     // Shape: { pst: "6:30 AM - 3:00 PM PST", cst: "8:30 AM - 5:00 PM CST" }.
     window.__WORK_WINDOW__ = <?!= workWindowJson ?>;
+    // S5: company-holiday ranges ([{from, to}] ISO, from COMPANY_HOLIDAYS)
+    // so the CR/Insights form hints' working-day counts match the server's.
+    window.__COMPANY_HOLIDAYS__ = <?!= companyHolidaysJson ?>;
   </script>
   <?!= include_('script') ?>
 </body>

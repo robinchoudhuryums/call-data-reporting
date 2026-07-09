@@ -191,9 +191,20 @@ function runDailyAlerts_() {
     Logger.log('runDailyAlerts_: weekend run -- skipping.');
     return;
   }
-  const back = (dowToday === 1) ? 3 : 1;   // Mon -> Fri, else yesterday
-  const target = new Date(now.getFullYear(), now.getMonth(), now.getDate() - back, 12, 0, 0);
-  const dateIso = Utilities.formatDate(target, tz, 'yyyy-MM-dd');
+  // S5: a company holiday (COMPANY_HOLIDAYS Script Property) is a
+  // non-working day too -- nobody is in to act on the alert, and the
+  // assessed data day is walked back past holidays regardless. Same
+  // TRIGGER-ONLY semantics as the weekend skip: manual sends + previews
+  // are unaffected, so an admin can still force a post-holiday catch-up.
+  const todayIso = Utilities.formatDate(now, tz, 'yyyy-MM-dd');
+  if (isCompanyHoliday_(todayIso)) {
+    Logger.log('runDailyAlerts_: company holiday (' + todayIso + ') -- skipping.');
+    return;
+  }
+  // Previous BUSINESS day, skipping weekends AND company holidays (S5;
+  // shared walker in Util.gs -- with no holidays configured this is exactly
+  // the F-6 behavior: Mon -> Fri, else yesterday).
+  const dateIso = prevBusinessDayIso_(now);
   try {
     runAlertsCore_(dateIso, /*dryRun=*/false, /*triggeredBy=*/'daily-trigger');
   } catch (e) {
@@ -793,52 +804,8 @@ function neonRemoveAlertConfigRow_(department) {
   return n;
 }
 
-/**
- * Parses the E8 "Skip Dates" cell into an array of
- * {from, to} ISO-date ranges. Accepts:
- *   - Single dates: `2026-12-25`
- *   - Inclusive ranges via `..`: `2026-12-24..2026-12-26`
- *   - Comma-separated lists of either: `2026-12-25, 2026-12-31..2026-01-01`
- *   - Whitespace tolerance around commas, `..`, and tokens.
- * Tokens that don't parse as ISO dates (or with from > to) are
- * silently dropped -- never throw; admin-curated cell + no UI
- * validator means the parser must be robust.
- */
-function parseSkipDateRanges_(raw) {
-  if (!raw) return [];
-  const tokens = String(raw).split(',');
-  const out = [];
-  const iso = /^\d{4}-\d{2}-\d{2}$/;
-  for (let i = 0; i < tokens.length; i++) {
-    const tok = tokens[i].trim();
-    if (!tok) continue;
-    const parts = tok.split('..').map(function (s) { return s.trim(); });
-    let from = '', to = '';
-    if (parts.length === 1 && iso.test(parts[0])) {
-      from = to = parts[0];
-    } else if (parts.length === 2 && iso.test(parts[0]) && iso.test(parts[1])) {
-      from = parts[0]; to = parts[1];
-      if (from > to) { const tmp = from; from = to; to = tmp; }
-    } else {
-      continue;
-    }
-    out.push({ from: from, to: to });
-  }
-  return out;
-}
-
-/**
- * True if `dateIso` (YYYY-MM-DD) falls within any of the
- * configured skip ranges. ISO string comparison is safe because
- * the format is zero-padded and lexicographically ordered.
- */
-function isDateInSkipRanges_(dateIso, ranges) {
-  if (!ranges || !ranges.length || !dateIso) return false;
-  for (let i = 0; i < ranges.length; i++) {
-    if (dateIso >= ranges[i].from && dateIso <= ranges[i].to) return true;
-  }
-  return false;
-}
+// parseSkipDateRanges_ / isDateInSkipRanges_ moved to Util.gs (S5: the
+// COMPANY_HOLIDAYS source shares the same grammar + helpers).
 
 /**
  * Appends a result row to the Alert Log sheet. Tail-only --

@@ -939,10 +939,24 @@
     var end = Date.UTC(+t[0], t[1] - 1, +t[2], 12);
     if (isNaN(ms) || isNaN(end)) return 0;
     if (end < ms) { var tmp = ms; ms = end; end = tmp; }
+    // S5: exclude company holidays (server-injected __COMPANY_HOLIDAYS__,
+    // same ranges the server's countWorkingDays_ excludes) so the form
+    // hint and the results' INV-35 length-mismatch flag can't disagree
+    // across a holiday-straddling window.
+    var holidays = (typeof window !== 'undefined' && window.__COMPANY_HOLIDAYS__) || [];
+    var isHoliday = function (iso) {
+      for (var i = 0; i < holidays.length; i++) {
+        if (iso >= holidays[i].from && iso <= holidays[i].to) return true;
+      }
+      return false;
+    };
     var count = 0;
     for (; ms <= end; ms += 86400000) {
-      var dow = new Date(ms).getUTCDay();
-      if (dow !== 0 && dow !== 6) count++;
+      var d = new Date(ms);
+      var dow = d.getUTCDay();
+      if (dow === 0 || dow === 6) continue;
+      if (isHoliday(d.toISOString().slice(0, 10))) continue;
+      count++;
     }
     return count;
   }

@@ -127,6 +127,14 @@ function runDailyDigests_() {
       Logger.log('runDailyDigests_: weekend run -- skipping.');
       return;
     }
+    // S5: company holidays skip the TRIGGER run like weekends do (manual
+    // previews unaffected); the next weekday's digest covers the previous
+    // business day via the shared holiday-aware walker below.
+    const todayIso = Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd');
+    if (isCompanyHoliday_(todayIso)) {
+      Logger.log('runDailyDigests_: company holiday (' + todayIso + ') -- skipping.');
+      return;
+    }
     sendDigestsForCadence_('daily');
   } catch (e) {
     Logger.log('runDailyDigests_ failed: %s', e);
@@ -1049,15 +1057,14 @@ function digestWindowFor_(cadence, now) {
   const tz = TZ;
   const fmt = function (d) { return Utilities.formatDate(d, tz, 'yyyy-MM-dd'); };
   if (cadence === 'daily') {
-    // Previous BUSINESS day (F-6): Tue-Fri -> yesterday; Monday -> the
-    // preceding Friday ("Monday's digest covers Friday", the documented
-    // contract). Sat/Sun only reach here via manual runs / previews (the
-    // trigger entry skips weekend runs) -- they also resolve to Friday so
-    // a weekend preview shows what the subscriber actually receives.
-    const dow = now.getDay();            // 0=Sun..6=Sat
-    const back = (dow === 1) ? 3 : (dow === 0) ? 2 : 1;   // Mon->Fri, Sun->Fri, else yesterday (Sat->Fri)
-    const day = new Date(now.getFullYear(), now.getMonth(), now.getDate() - back, 12);
-    const iso = fmt(day);
+    // Previous BUSINESS day (F-6), skipping weekends AND -- since S5 --
+    // company holidays (the Tuesday after a Monday holiday covers Friday).
+    // Shared walker (Util.gs::prevBusinessDayIso_) keeps this identical to
+    // the alerts engine's assessed day. Sat/Sun/holiday "now" values only
+    // reach here via manual runs / previews (the trigger entry skips those
+    // runs) -- they resolve the same way, so a preview shows what the
+    // subscriber actually receives.
+    const iso = prevBusinessDayIso_(now);
     return { fromIso: iso, toIso: iso };
   }
   if (cadence === 'weekly') {

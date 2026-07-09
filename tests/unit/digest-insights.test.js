@@ -135,3 +135,18 @@ test('F-6: daily digest window is the previous BUSINESS day (Monday covers Frida
   const sun = h.call('digestWindowFor_', 'daily', new Date(2026, 5, 21, 8));
   assert.equal(sun.fromIso, '2026-06-19');
 });
+
+test('S5: daily digest window walks back over company holidays too', function () {
+  try {
+    // Mon Jul 6 2026 is a company holiday: Tuesday's digest covers the
+    // preceding Friday (Jul 3), not the data-less holiday Monday.
+    h.state.props.COMPANY_HOLIDAYS = '2026-07-06';
+    h.ctx.COMPANY_HOLIDAYS_MEMO_ = null;
+    const tue = h.call('digestWindowFor_', 'daily', new Date(2026, 6, 7, 8));
+    assert.equal(tue.fromIso, '2026-07-03');
+    assert.equal(tue.toIso, '2026-07-03');
+  } finally {
+    delete h.state.props.COMPANY_HOLIDAYS;
+    h.ctx.COMPANY_HOLIDAYS_MEMO_ = null;
+  }
+});

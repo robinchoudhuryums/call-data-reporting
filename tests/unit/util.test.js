@@ -119,3 +119,54 @@ test('countWorkingDays_ counts Mon-Fri inclusive (INV-35 working-day mismatch)',
   // Reversed args are tolerated (normalized).
   assert.equal(h.call('countWorkingDays_', '2026-03-06', '2026-03-02'), 5);
 });
+
+// -- S5: company-holiday awareness -------------------------------------------
+
+function setHolidays(spec) {
+  if (spec == null) delete h.state.props.COMPANY_HOLIDAYS;
+  else h.state.props.COMPANY_HOLIDAYS = spec;
+  h.ctx.COMPANY_HOLIDAYS_MEMO_ = null;   // per-execution memo (tests reset)
+}
+
+test('S5: parseSkipDateRanges_ (now shared from Util.gs) is tolerant', function () {
+  const out = h.call('parseSkipDateRanges_',
+    ' 2026-12-25 , 2026-12-31..2027-01-01, garbage, 2026-07-06..2026-07-03 ');
+  deepEqual(out, [
+    { from: '2026-12-25', to: '2026-12-25' },
+    { from: '2026-12-31', to: '2027-01-01' },
+    { from: '2026-07-03', to: '2026-07-06' },   // reversed range swapped
+  ]);
+  deepEqual(h.call('parseSkipDateRanges_', ''), []);
+});
+
+test('S5: countWorkingDays_ excludes company holidays (INV-35)', function () {
+  try {
+    // Mon Jul 6 2026 is a holiday: Mon-Fri week counts 4, not 5.
+    setHolidays('2026-07-06');
+    assert.equal(h.call('countWorkingDays_', '2026-07-06', '2026-07-10'), 4);
+    // A holiday RANGE spanning the whole week -> 0.
+    setHolidays('2026-07-06..2026-07-10');
+    assert.equal(h.call('countWorkingDays_', '2026-07-06', '2026-07-10'), 0);
+    // A holiday falling on a WEEKEND changes nothing (already excluded).
+    setHolidays('2026-07-05');   // Sunday
+    assert.equal(h.call('countWorkingDays_', '2026-07-06', '2026-07-10'), 5);
+    // Unset property -> byte-identical to pre-S5 (regression safety).
+    setHolidays(null);
+    assert.equal(h.call('countWorkingDays_', '2026-07-06', '2026-07-10'), 5);
+  } finally { setHolidays(null); }
+});
+
+test('S5: prevBusinessDayIso_ walks back over weekends AND holidays', function () {
+  try {
+    setHolidays(null);
+    // No holidays: F-6 behavior. Tue Jun 23 -> Mon Jun 22; Mon Jun 22 -> Fri Jun 19.
+    assert.equal(h.call('prevBusinessDayIso_', new Date(2026, 5, 23, 8)), '2026-06-22');
+    assert.equal(h.call('prevBusinessDayIso_', new Date(2026, 5, 22, 8)), '2026-06-19');
+    // Mon Jul 6 2026 is a holiday: Tue Jul 7 walks Mon(holiday) -> Sun -> Sat -> Fri Jul 3.
+    setHolidays('2026-07-06');
+    assert.equal(h.call('prevBusinessDayIso_', new Date(2026, 6, 7, 8)), '2026-07-03');
+    // ...and if Fri Jul 3 is ALSO a holiday (observed 4th), lands on Thu Jul 2.
+    setHolidays('2026-07-03, 2026-07-06');
+    assert.equal(h.call('prevBusinessDayIso_', new Date(2026, 6, 7, 8)), '2026-07-02');
+  } finally { setHolidays(null); }
+});

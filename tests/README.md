@@ -148,10 +148,14 @@ spreadsheet). See `dept-config.test.js` for the fake-spreadsheet pattern.
   (`neon-write-mapping.test.js` -- a recording fake conn asserts the SQL
   column list + every bound param's index/setter/value for the DQE /
   QCD / CDR writers, incl. the no-HMAC NULL-JSONB path).
+- *Deferred-mirror tail-scan (neon-mirror-tail.test.js):* the F-20
+  `nmReadDateRowsTail_` bounded read -- accepted-window parity with a
+  full scan, widening on a top-clipped block, old-date full-scan
+  fallback, and the `NEON_MIRROR_TAIL_ROWS` default.
 - **Not yet covered:** the deferred mirror's sheet-derived payload
-  re-derivation (`NeonMirror.js::runNeonMirror_` and friends) -- the
-  writers it calls are pinned, but the sheet-to-payload re-derivation
-  itself is verified via the manual Regression Scenarios.
+  re-derivation (`NeonMirror.js`'s mirror*ForDate_ field mappings) -- the
+  writers it calls AND its tail-read are pinned, but the row-to-payload
+  mapping itself is verified via the manual Regression Scenarios.
   The INV-29 trend window IS covered (`trend-window.test.js`).
 - **Regression Scenarios (CLAUDE.md):** the floater-exclusion contract
   (S35) and the Sonia `0:15:03 / 0:03:01` durations (S7) are now asserted
