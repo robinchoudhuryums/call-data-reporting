@@ -1,5 +1,23 @@
 # Cycle State — resume note
 
+## Latest session (broad-implement: Batch 1 -- F-9/F-14/F-16/F-8/F-50/F-23/F-24/F-56/F-33/F-27/F-30/F-61/F-62 + alerts weekend)
+Branch `claude/broad-scan-xkmoam`, commit `ca60afd`, PUSHED (stacks on the F-1..F-6 batch `07fb4de` + sync-docs `e7afaf0`). 209/209 tests (4 added, 1 stale expectation fixed), INV-16 guard (now extended) green.
+- **F-9** QCD modal expand: wire-once guard (`tbody._qcdExpandWired`) -- S32 regression fixed.
+- **F-14** Overview "X viol MTD" chip: window filter no longer truncates MTD (`companyOverview:v17`->`v18` + docs synced; new `overview-qcd-snapshot.test.js`).
+- **F-16** remirrorExistingDqeDate_ (BOTH buildDQE copies) sanitizes AD/AE/AF via `sanitizeAbandonedCellForNeon_` (typeof-guarded, null->'').
+- **F-8** `rowDateIso_` serial branch formats in UTC (was -1 day for coerced numeric date cells in west-of-UTC zones); the old test pinned the bug -- corrected.
+- **F-50** `dcLogPipelineHealth_` passes the event OBJECT -- the `directBuild` Pipeline Health row now writes real Step/Status/Rows/Notes.
+- **Alerts weekend (F-6 class):** `runDailyAlerts_` skips weekend RUNS + assesses the previous BUSINESS day (Mon->Fri). Previously Friday's alerts fired SATURDAY and Monday skipped. INV-33 synced. NOTE for operator: Friday alert emails now arrive Monday morning (intended).
+- **F-33** `sendInsightsReportEmail` rejects reversed custom prior ranges (was silently emailing prior=0/+100% reports).
+- **F-27** `REPORT_USAGE_SUPPRESS_` execution flag: cache-warm runs no longer pollute Report Usage. NOTE: PRE-deploy history still contains warm rows (installing-admin email at the warm hour) -- filter when analyzing.
+- **F-30** dead `ADMIN_EMAILS_DISPLAY` deleted (CLAUDE.md synced).
+- **F-23** cache-version-sync now tracks qcdAll/inboundHeatmap/directCall (15 prefixes).
+- **F-24/F-56** check-duplicated-files.sh: missing pair file FAILS; function-level `sanitizeAbandonedCellForNeon_` drift check added (both failure paths tested).
+- **F-61/F-62** dashboard.html copy: QCD hint (retired toggle) fixed; Help "two pages"->three incl. Escalations; freshness-pill title = DQE+QCD max.
+DEPLOY: all three projects -- Department Dashboard (`clasp push -f` + version), cdr-report (buildDQE), cdr-import (buildDQE + directCallMetrics). No blocking operator actions.
+REMAINING from the scan (see the Batch plan in-session): Batch 2 (data accuracy: F-13 drilldown, F-10 inbound export dupes, F-12 winter day shift, F-11 +36:36 custom report, F-19 roster cap, F-26 PII logs, F-51/F-52), Batch 3 (bulk-path: F-7/F-17/F-18/F-21/F-55), Batch 4 (consistency Lows: F-15/F-28/F-29/F-31/F-32/F-34..F-49), Batch 5 (escalations: F-43..F-46), Batch 6 (test debt F-58), strategic track (queue normalization -> un-gate Inbound/Direct, QCD retirement, F-20, F-22, holidays, Escalations Phase 2, legacy decommission incl. F-25).
+Where I left off: Batch 1 shipped + pushed; branch has 4 unmerged commits awaiting PR/merge + the three deploys.
+
 ## Latest session (broad-implement: broad-scan F-1..F-6)
 Branch `claude/broad-scan-xkmoam`, commit `07fb4de`, PUSHED. 205/205 tests (12 added), INV-16 in sync. Preceded by a full 3-stage /broad-scan (findings F-1..F-62 in that session's report; top-5 = F-2, F-1, F-3, F-5, F-6 -- all now fixed, plus F-4).
 - **F-1** IR cross-dept trend leak: `computeIndividualReport_` now applies the INV-53 `visibleAgents` filter to `trendData.datasets` too (was summaryData-only). Cache `individual:v8`->`v9` + all doc tables synced (cache-version-sync green). Test pins no-dataset-for-crafted-name.
