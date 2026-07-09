@@ -1607,6 +1607,10 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
 ## Operator State Checklist
 
 When something looks wrong, before assuming a code bug, check:
+(**Start at the admin Health tab** — route `#/admin/health`,
+`SystemHealth.gs` — which renders most of the items below as a live
+status table with remediation hints; fall through to the numbered
+items for anything it flags or doesn't cover.)
 
 1. Did the daily ingest run? Verify the latest date in `DQE Historical Data` (CDR Report sheet).
 2. Did the dashboard's deployed version include the latest code? Apps
@@ -1921,6 +1925,22 @@ When something looks wrong, before assuming a code bug, check:
     yearly (e.g. `2026-01-01, 2026-05-25, 2026-07-03, 2026-11-26..2026-11-27,
     2026-12-25`); it is GLOBAL -- per-dept exceptions stay in Alert Config
     Skip Dates. No redeploy needed to edit.
+28. Neon backup (optional but recommended; `NeonBackup.gs`, dashboard).
+    Weekly Drive export of the tables with NO sheet fallback --
+    `escalations`, `escalation_activity`, `inbound_calls` (incl. journey
+    JSON) -- as one-JSON-object-per-line files: a full escalations
+    snapshot per run (newest `NEON_BACKUP_KEEP`=8 kept) + monthly
+    partition files for the other two (closed months written once,
+    current month rewritten). Enable from the Health modal's **Neon
+    backup** section (or `installNeonBackupTrigger()` -- Saturdays at
+    `NEON_BACKUP_HOUR`=6 Central); "Back up now" seeds the folder. The
+    Drive folder is auto-created ("Dashboard Neon Backups") and its id
+    persisted to `NEON_BACKUP_FOLDER_ID`. REQUIRES THE NEW
+    `https://www.googleapis.com/auth/drive` OAuth scope added to
+    appsscript.json -- after deploying, Run any function once in the
+    editor to consent (per #9). Fetches use one string_agg round-trip
+    per file (never per-row JDBC). Last outcome surfaces on the Health
+    page (`NEON_BACKUP_LAST_RESULT`).
     carve-out numbers are spot-checked (the report stays admin-only while
     vetted, and this writes Direct history across all backfilled dates).
 
@@ -1953,7 +1973,7 @@ Data Accuracy (DQE), Access Control Integrity, Source Pipeline Reliability, Migr
 
 ### Subsystems
 Department Dashboard:
-  apps-script/department-dashboard/Auth.gs, apps-script/department-dashboard/Code.gs, apps-script/department-dashboard/Config.gs, apps-script/department-dashboard/Data.gs, apps-script/department-dashboard/Diagnostics.gs, apps-script/department-dashboard/Setup.gs, apps-script/department-dashboard/Util.gs, apps-script/department-dashboard/NeonRead.gs, apps-script/department-dashboard/NeonKeepWarm.gs, apps-script/department-dashboard/CacheWarm.gs, apps-script/department-dashboard/IngestWatchdog.gs, apps-script/department-dashboard/MissedCallsReport.gs, apps-script/department-dashboard/IndividualReport.gs, apps-script/department-dashboard/PerformanceReport.gs, apps-script/department-dashboard/CompareRangesReport.gs, apps-script/department-dashboard/InsightsReport.gs, apps-script/department-dashboard/InboundReport.gs, apps-script/department-dashboard/DirectCallReport.gs, apps-script/department-dashboard/CallerLookup.gs, apps-script/department-dashboard/Alerts.gs, apps-script/department-dashboard/CompanyOverview.gs, apps-script/department-dashboard/Digest.gs, apps-script/department-dashboard/OrphanFix.gs, apps-script/department-dashboard/QCDReport.gs, apps-script/department-dashboard/DeptConfig.gs, apps-script/department-dashboard/Escalations.gs, apps-script/department-dashboard/access_denied.html, apps-script/department-dashboard/dashboard.html, apps-script/department-dashboard/script.html, apps-script/department-dashboard/styles.html, apps-script/department-dashboard/appsscript.json
+  apps-script/department-dashboard/Auth.gs, apps-script/department-dashboard/Code.gs, apps-script/department-dashboard/Config.gs, apps-script/department-dashboard/Data.gs, apps-script/department-dashboard/Diagnostics.gs, apps-script/department-dashboard/Setup.gs, apps-script/department-dashboard/Util.gs, apps-script/department-dashboard/NeonRead.gs, apps-script/department-dashboard/NeonKeepWarm.gs, apps-script/department-dashboard/CacheWarm.gs, apps-script/department-dashboard/IngestWatchdog.gs, apps-script/department-dashboard/NeonBackup.gs, apps-script/department-dashboard/SystemHealth.gs, apps-script/department-dashboard/MissedCallsReport.gs, apps-script/department-dashboard/IndividualReport.gs, apps-script/department-dashboard/PerformanceReport.gs, apps-script/department-dashboard/CompareRangesReport.gs, apps-script/department-dashboard/InsightsReport.gs, apps-script/department-dashboard/InboundReport.gs, apps-script/department-dashboard/DirectCallReport.gs, apps-script/department-dashboard/CallerLookup.gs, apps-script/department-dashboard/Alerts.gs, apps-script/department-dashboard/CompanyOverview.gs, apps-script/department-dashboard/Digest.gs, apps-script/department-dashboard/OrphanFix.gs, apps-script/department-dashboard/QCDReport.gs, apps-script/department-dashboard/DeptConfig.gs, apps-script/department-dashboard/Escalations.gs, apps-script/department-dashboard/access_denied.html, apps-script/department-dashboard/dashboard.html, apps-script/department-dashboard/script.html, apps-script/department-dashboard/styles.html, apps-script/department-dashboard/appsscript.json
 
 CDR DQE Pipeline:
   apps-script/cdr-report/buildDQEHistoricalData.js, apps-script/cdr-report/DQEdrilldown.js, apps-script/cdr-report/DQEDrilldownSidebar.html, apps-script/cdr-report/dataFilters.js, apps-script/cdr-report/CDR Tools menu.js, apps-script/cdr-report/appsscript.json

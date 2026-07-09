@@ -111,6 +111,7 @@ function createShim() {
         const builder = {
           timeBased: function () { return builder; },
           everyDays: function () { return builder; },
+          everyWeeks: function () { return builder; },
           atHour: function () { return builder; },
           onWeekDay: function () { return builder; },
           nearMinute: function () { return builder; },
@@ -119,6 +120,7 @@ function createShim() {
         return builder;
       },
       getProjectTriggers: function () { return []; },
+      WeekDay: { MONDAY: 'MONDAY', SATURDAY: 'SATURDAY', SUNDAY: 'SUNDAY' },
       deleteTrigger: function () {},
       WeekDay: { MONDAY: 'MONDAY' },
     },

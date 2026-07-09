@@ -854,6 +854,7 @@
     initEscalations();
     initTour_();
     initQcdAllDept_();
+    initSystemHealth_();
     // Router last so its modal-close listeners attach after each
     // per-modal init has wired up its own close-button handlers.
     initRouter();
@@ -2595,6 +2596,7 @@
     '/admin/dept-config':  { kind: 'modal', modalId: 'dept-config-modal', buttonId: 'dept-config-btn' },
     '/admin/access-control': { kind: 'modal', modalId: 'access-control-modal', buttonId: 'access-control-btn' },
     '/admin/caller-lookup': { kind: 'modal', modalId: 'caller-lookup-modal', buttonId: 'caller-lookup-btn' },
+    '/admin/health':        { kind: 'modal', modalId: 'health-modal',        buttonId: 'system-health-btn' },
     '/escalations':        { kind: 'page',  page: 'escalations' },
   };
 
@@ -14412,6 +14414,131 @@
   // the leg-by-leg path; older rows fall back to the entry->final queue
   // summary. The raw number never leaves the request payload -- the
   // server hashes it in memory and queries by hash.
+
+  // -- System Health (admin-only) ---------------------------------------
+  // Read-only status table from getSystemHealth() (SystemHealth.gs) + the
+  // Neon-backup service controls (NeonBackup.gs). Rows carry a status chip
+  // (ok / warn / muted) and a remediation hint on warn rows.
+  function initSystemHealth_() {
+    const btn = $('system-health-btn');
+    const modal = $('health-modal');
+    if (!btn || !modal) return;
+    const closeBtn = modal.querySelector('.modal-close');
+    const backdrop = modal.querySelector('[data-close]');
+    function openModal() {
+      modal.style.display = '';
+      modal.setAttribute('aria-hidden', 'false');
+      document.body.style.overflow = 'hidden';
+      trapFocus_(modal);
+      initModalDragResize_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
+      document.addEventListener('keydown', onKeyDown);
+      healthLoad_();
+    }
+    function closeModal() {
+      modal.style.display = 'none';
+      modal.setAttribute('aria-hidden', 'true');
+      releaseFocus_();
+      resetModalTransform_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
+      document.body.style.overflow = '';
+      document.removeEventListener('keydown', onKeyDown);
+      btn.focus();
+    }
+    function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
+    btn.addEventListener('click', openModal);
+    if (closeBtn) closeBtn.addEventListener('click', closeModal);
+    if (backdrop) backdrop.addEventListener('click', closeModal);
+    if ($('health-refresh-btn')) $('health-refresh-btn').addEventListener('click', healthLoad_);
+    const wireBackup = function (id, fnName, busyLabel) {
+      const b = $(id);
+      if (!b) return;
+      b.addEventListener('click', function () {
+        const prev = b.textContent;
+        b.disabled = true; b.textContent = busyLabel;
+        google.script.run
+          .withSuccessHandler(function (st) {
+            b.disabled = false; b.textContent = prev;
+            healthRenderBackup_(st);
+            healthLoad_();   // outcome rows changed
+          })
+          .withFailureHandler(function (err) {
+            b.disabled = false; b.textContent = prev;
+            const el = $('health-backup-status');
+            if (el) el.textContent = 'Error: ' + (err && err.message ? err.message : String(err));
+          })[fnName]();
+      });
+    };
+    wireBackup('health-backup-install',   'installNeonBackupTrigger',   'Installing…');
+    wireBackup('health-backup-uninstall', 'uninstallNeonBackupTrigger', 'Uninstalling…');
+    wireBackup('health-backup-now',       'runNeonBackupNow',           'Backing up… (can take a minute)');
+  }
+
+  function healthLoad_() {
+    reportSetStatus_('health-status', 'loading', 'Checking…');
+    if ($('health-table')) $('health-table').style.display = 'none';
+    google.script.run
+      .withSuccessHandler(function (data) {
+        reportSetStatus_('health-status', '');
+        healthRender_(data || { rows: [] });
+      })
+      .withFailureHandler(function (err) {
+        reportSetStatus_('health-status', 'error', 'Error: ' + (err && err.message ? err.message : String(err)));
+      })
+      .getSystemHealth();
+    google.script.run
+      .withSuccessHandler(healthRenderBackup_)
+      .withFailureHandler(function () { /* section stays hidden for non-admins/errors */ })
+      .getNeonBackupStatus();
+  }
+
+  const HEALTH_SECTIONS_ = {
+    pipeline: 'Pipeline', neon: 'Neon', triggers: 'Trigger-driven services',
+    config: 'Script Properties', sheets: 'Sheets',
+  };
+
+  function healthRender_(data) {
+    const tbody = $('health-tbody');
+    if (!tbody) return;
+    const rows = data.rows || [];
+    const chip = function (st) {
+      const cls = st === 'ok' ? 'sh-ok' : st === 'warn' ? 'sh-warn' : 'sh-muted';
+      const label = st === 'ok' ? 'OK' : st === 'warn' ? 'ATTENTION' : 'info';
+      return '<span class="sh-chip ' + cls + '">' + label + '</span>';
+    };
+    let html = '', lastSection = null;
+    rows.forEach(function (r) {
+      if (r.section !== lastSection) {
+        lastSection = r.section;
+        html += '<tr class="sh-section"><td colspan="3">'
+          + escapeHtml(HEALTH_SECTIONS_[r.section] || r.section) + '</td></tr>';
+      }
+      html += '<tr>'
+        + '<td>' + escapeHtml(r.label) + '</td>'
+        + '<td>' + chip(r.status) + '</td>'
+        + '<td>' + escapeHtml(r.value || '')
+        + (r.hint ? '<span class="sh-hint">' + escapeHtml(r.hint) + '</span>' : '')
+        + '</td></tr>';
+    });
+    tbody.innerHTML = html || '<tr><td colspan="3" class="al-empty">No checks returned.</td></tr>';
+    if ($('health-table')) $('health-table').style.display = '';
+    const sum = $('health-summary');
+    if (sum) {
+      const warns = Number(data.warnCount) || 0;
+      sum.textContent = warns
+        ? warns + ' item(s) need attention'
+        : 'All checks healthy';
+    }
+  }
+
+  function healthRenderBackup_(st) {
+    const sec = $('health-backup-section');
+    if (!sec || !st) return;
+    sec.style.display = '';
+    const el = $('health-backup-status');
+    if (el) {
+      el.textContent = (st.installed ? 'Weekly trigger installed (Sat ' + st.hour + ':00). ' : 'No trigger installed. ')
+        + (st.lastRun ? ('Last run ' + st.lastRun + ' — ' + (st.lastResult || '')) : 'Never run.');
+    }
+  }
 
   function initCallerLookup() {
     const btn = $('caller-lookup-btn');
