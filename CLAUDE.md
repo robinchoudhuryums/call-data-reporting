@@ -478,6 +478,18 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   spot-check shows the columns are off, that single constant is the knob.
   Pre-extension rows (null `call_start`) carry no time-of-day and are
   excluded; the panel hides itself silently on unavailable/unmapped/empty.
+  **Cell drill:** any cell with at least one abandon is click-to-drill --
+  `getInboundHeatmapCell({department, from, to, dow, slot})` (InboundReport.gs)
+  lists that cell's individual abandoned calls (date, CST time, entry->final
+  queue, stage, wait/hold) into a panel below the legend, each row carrying
+  the existing "↳ path" journey drill (`.pid-journey` -> `getCallJourney`).
+  Same auth (the admin-only vetting gate via `inboundResolveRequest_`) +
+  dept predicate + TZ-shift/window/slot math as the heatmap SQL, so the list
+  always reconciles with the cell's count; `disposition='abandoned'` only;
+  capped at `INBOUND_HEATMAP_CELL_MAX`=200 newest (meta.truncated);
+  intentionally UNCACHED (per-cell, cheap; unavailable payloads must not
+  pin). Pinned by tests/unit/heatmap-cell-drill.test.js. No caller identity
+  in the response.
 - **Direct-extension call metrics are a separate population from the
   DQE/QCD queue metrics, with a "busy" carve-out.** `cdr-import/directCallMetrics.js`
   (cdr-import-only -- NOT an INV-16 byte-identical duplicated file) computes
@@ -567,7 +579,17 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   dept total) -- the old `ins-qh-include-sub` toggle + the
   `queueHealthOwnOnly` request flag are retired (mirrors the QCD
   report's seq-#5 separation). The Queue health section keeps its
-  tiles + per-queue detail table. Per-agent classification
+  tiles + per-queue detail table. **Trend-point drill:** clicking a
+  data point on ANY tab of the consolidated chart re-runs Insights
+  scoped to that bucket -- a month on Monthly, a single day on Daily
+  (`insTrendPointDrill_`: requires an actual point hit, Overview-chart
+  convention; syncs the form dates, keeps agents + compare mode, goes
+  through `runInsReport`; monthly 'MMM, yy' labels are parsed
+  client-side, team-daily 'MM-DD' labels re-derive their year from the
+  selected window). **Violation-date drill:** in the Queue health
+  per-queue expand, violation dates render as chips that open the
+  collapsed Daily breakdown, scroll to, and flash that day's row
+  (`insJumpToDailyRow_`; daily rows carry `data-date`). Per-agent classification
   / improvement score / quiet thresholds are the SHARED
   `deltaClassify_` / `deltaImprovementScore_` / `deltaIsQuiet_`
   helpers in script.html (CR delegates to the same ones).

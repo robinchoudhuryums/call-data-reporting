@@ -12492,8 +12492,14 @@
         let detail = insQhStatStrip_(q.totalAnswered, q.longestWait, q.avgAnswer)
           + qcdSourceSubtableHtml_(sources);
         if (hasViolDates) {
+          // Drill: each date is a chip that jumps to (and flashes) that day's
+          // row in the Daily breakdown table below (insJumpToDailyRow_).
           detail += '<div class="qcd-detail-viol"><strong>Violation dates:</strong> '
-            + q.violationDates.map(fmtViolDate_).join(', ') + '</div>';
+            + q.violationDates.map(function (iso) {
+                return '<button type="button" class="ins-viol-date" data-date="'
+                  + escapeHtml(String(iso)) + '" title="Show this day in the Daily breakdown">'
+                  + fmtViolDate_(iso) + '</button>';
+              }).join(' ') + '</div>';
         }
         html += '<tr class="qcd-detail-row" style="display:none;"><td colspan="5">'
           + '<div class="qcd-detail-wrap">' + detail + '</div></td></tr>';
@@ -12503,6 +12509,13 @@
       // rows but keeps the tbody element + this listener).
       if (!tbody._insQhExpandWired) {
         tbody.addEventListener('click', function (e) {
+          // Violation-date chip -> jump to that day in the Daily breakdown.
+          var chip = e.target.closest('.ins-viol-date');
+          if (chip && tbody.contains(chip)) {
+            e.preventDefault();
+            insJumpToDailyRow_(chip.getAttribute('data-date') || '');
+            return;
+          }
           var row = e.target.closest('.qcd-expandable');
           if (!row || !tbody.contains(row)) return;
           var detail = row.nextElementSibling;
@@ -12532,6 +12545,24 @@
         if (dailyWrap) dailyWrap.style.display = 'none';
       }
     }
+  }
+
+  // Violation-date drill: open the collapsed Daily breakdown, scroll the
+  // day's row into view, and flash it. Silent no-op when the table is hidden
+  // or the date isn't in the series (shouldn't happen -- violation dates come
+  // from the same window the daily series covers).
+  function insJumpToDailyRow_(iso) {
+    if (!iso) return;
+    const wrap = $('ins-qh-daily');
+    const rowsBody = $('ins-qh-daily-tbody');
+    if (!wrap || !rowsBody || wrap.style.display === 'none') return;
+    const dayRow = rowsBody.querySelector('tr[data-date="' + iso + '"]');
+    if (!dayRow) return;
+    wrap.open = true;
+    try { dayRow.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) { /* best-effort */ }
+    dayRow.classList.remove('ins-daily-hit');
+    void dayRow.offsetWidth;   // restart the flash animation on repeat clicks
+    dayRow.classList.add('ins-daily-hit');
   }
 
   /**
@@ -12584,6 +12615,66 @@
    * ins-qh-chart). Colors route through THEME / IR_* per INV-42;
    * datalabels off (boolean form, INV-41).
    */
+  // -- Trend-point drill --------------------------------------------------
+  // Click a point on the consolidated trend chart -> re-run Insights scoped
+  // to that bucket (a month on the Monthly view, a single day on Daily).
+  // Keeps the agent selection + compare mode; the run goes through the
+  // normal runInsReport path (SWR + D1b + stale-guard).
+  const INS_MONTHS_ = { Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4, Jun: 5,
+                        Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11 };
+
+  // Resolve an axis label to an {from, to} ISO range, or null when the label
+  // doesn't parse. Monthly axes (team + queue) are 'MMM, yy'
+  // (Utilities.formatDate); daily axes are 'YYYY-MM-DD' (queue) or 'MM-DD'
+  // (team -- year re-derived from the selected window, which is the series'
+  // exact span).
+  function insTrendLabelToRange_(labelStr, daily) {
+    const s = String(labelStr == null ? '' : labelStr).trim();
+    if (!daily) {
+      const m = /^([A-Z][a-z]{2}),?\s*['’]?(\d{2})$/.exec(s);
+      if (!m || INS_MONTHS_[m[1]] == null) return null;
+      const first = new Date(2000 + Number(m[2]), INS_MONTHS_[m[1]], 1);
+      const last  = new Date(2000 + Number(m[2]), INS_MONTHS_[m[1]] + 1, 0);
+      return { from: insIsoOf_(first), to: insIsoOf_(last) };
+    }
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return { from: s, to: s };
+    const md = /^(\d{2})-(\d{2})$/.exec(s);
+    if (!md) return null;
+    const meta = (insLastData && insLastData.meta) || {};
+    const from = meta.from || '', to = meta.to || '';
+    const y0 = Number(from.slice(0, 4)) || Number(to.slice(0, 4));
+    const y1 = Number(to.slice(0, 4)) || y0;
+    for (let y = y0; y && y <= y1; y++) {
+      const iso = y + '-' + md[1] + '-' + md[2];
+      if ((!from || iso >= from) && (!to || iso <= to)) return { from: iso, to: iso };
+    }
+    return null;
+  }
+
+  function insTrendPointDrill_(evt, chartObj, daily) {
+    if (!chartObj || typeof chartObj.getElementsAtEventForMode !== 'function') return;
+    // Require an actual point hit (the Overview chart's convention) so a
+    // stray click on empty canvas never re-runs the report.
+    const hits = chartObj.getElementsAtEventForMode(evt, 'nearest', { intersect: true }, false);
+    if (!hits || !hits.length) return;
+    const ds = chartObj.data.datasets[hits[0].datasetIndex];
+    if (ds && ds.label === '5% threshold') return;   // reference line, not data
+    const range = insTrendLabelToRange_((chartObj.data.labels || [])[hits[0].index], daily);
+    if (!range) return;
+    const meta = (insLastData && insLastData.meta) || {};
+    if (range.from === meta.from && range.to === meta.to) return;   // already this window
+    // Sync the form (dates only -- agents + compare mode kept) and re-run:
+    // the edit-popover apply path minus the popover.
+    if ($('ins-from')) $('ins-from').value = range.from;
+    if ($('ins-to'))   $('ins-to').value   = range.to;
+    if ($('ins-preset')) $('ins-preset').value = 'custom';
+    insScheduleActiveRefetch_();
+    insSavePrefs_();
+    insSetResultsStatus_('loading', 'Loading '
+      + range.from + (range.to !== range.from ? ' – ' + range.to : '') + '…');
+    runInsReport();
+  }
+
   function insRenderTrendChart_(data) {
     const canvas = $('ins-trend-chart');
     if (!canvas) return;
@@ -12686,6 +12777,7 @@
         options: {
           responsive: true, maintainAspectRatio: false, animation: false,
           interaction: { mode: 'index', intersect: false },
+          onClick: function (evt, items, chartObj) { insTrendPointDrill_(evt, chartObj, daily); },
           plugins: {
             datalabels: {
               display: insShowLabels,
@@ -12708,9 +12800,14 @@
               (qNames.length > 1 ? chartSpotlightLegend_() : {})),
             tooltip: {
               filter: function (ctx) { return ctx.dataset.label !== '5% threshold'; },
-              callbacks: { label: function (ctx) {
-                return ctx.dataset.label + ': ' + (ctx.parsed.y == null ? '-' : fmtVal(ctx.parsed.y));
-              } },
+              callbacks: {
+                label: function (ctx) {
+                  return ctx.dataset.label + ': ' + (ctx.parsed.y == null ? '-' : fmtVal(ctx.parsed.y));
+                },
+                footer: function () {
+                  return 'Click the point to reload for this ' + (daily ? 'day' : 'month');
+                },
+              },
             },
           },
           scales: {
@@ -12750,13 +12847,19 @@
         },
         options: {
           responsive: true, maintainAspectRatio: false, animation: false,
+          onClick: function (evt, items, chartObj) { insTrendPointDrill_(evt, chartObj, daily); },
           plugins: {
             legend: { display: false },
-            tooltip: { callbacks: { label: function (ctx) {
-              if (isPercent) return label + ': ' + ctx.parsed.y + '%';
-              if (isMinutes) return label + ': ' + fmtMin(ctx.parsed.y);
-              return label + ': ' + ctx.parsed.y;
-            } } },
+            tooltip: { callbacks: {
+              label: function (ctx) {
+                if (isPercent) return label + ': ' + ctx.parsed.y + '%';
+                if (isMinutes) return label + ': ' + fmtMin(ctx.parsed.y);
+                return label + ': ' + ctx.parsed.y;
+              },
+              footer: function () {
+                return 'Click the point to reload for this ' + (daily ? 'day' : 'month');
+              },
+            } },
             datalabels: {
               display: insShowLabels,
               align: 'top', anchor: 'center',
@@ -13960,6 +14063,12 @@
   function loadAbandonHeatmap_(containerId, dept, from, to) {
     var el = $(containerId);
     if (!el) return;
+    // Stash the request scope on the container so the cell drill can re-issue
+    // it for one (dow, slot); a re-render implicitly drops any open drill.
+    el.setAttribute('data-heat-dept', dept || '');
+    el.setAttribute('data-heat-from', from || '');
+    el.setAttribute('data-heat-to', to || '');
+    initHeatmapDrillOnce_();
     el.style.display = '';
     el.innerHTML = '<div class="ds-heatmap-loading"><span class="ds-loader--eq" aria-hidden="true">'
       + '<i></i><i></i><i></i><i></i></span> Loading abandon heatmap…</div>';
@@ -14042,8 +14151,15 @@
         var bg = heatCellBg_(rate, c.calls);
         var note = c.calls < HEAT_MIN_VOLUME_ ? ' (low volume)' : '';
         var title = label + ' · ' + rate + '% abandoned (' + c.abandoned + ' of ' + c.calls + ' calls)' + note;
-        html += '<span class="ds-heatmap__cell" style="background:' + bg + ';" title="'
-          + escapeHtml(title) + '"></span>';
+        // Drill affordance: any cell with at least one abandon lists its
+        // calls on click (getInboundHeatmapCell -> the detail panel below).
+        var drill = c.abandoned > 0;
+        html += '<span class="ds-heatmap__cell' + (drill ? ' ds-heatmap__cell--drill' : '')
+          + '" style="background:' + bg + ';" title="'
+          + escapeHtml(title + (drill ? ' · click to list the calls' : '')) + '"'
+          + (drill ? ' role="button" tabindex="0" data-dow="' + d[0] + '" data-slot="' + sl
+            + '" data-label="' + escapeHtml(label) + '"' : '')
+          + '></span>';
       }
     });
     html += '</div></div>';
@@ -14060,7 +14176,117 @@
       + sw(heatCellBg_(15, 99), '15%+')
       + sw('var(--paper-2)', 'low volume (<' + HEAT_MIN_VOLUME_ + ' calls)')
       + '</div>';
+    // Cell-drill detail panel (hidden until a cell with abandons is clicked).
+    html += '<div class="ds-heatmap-detail" style="display:none;"></div>';
     el.innerHTML = html;
+  }
+
+  // -- Heatmap cell drill --------------------------------------------------
+  // Click a cell with abandons -> list the individual abandoned calls in that
+  // weekday x hour slot (getInboundHeatmapCell -- same scope + slot math as
+  // the heatmap, so the list reconciles with the cell). Each row carries the
+  // existing "↳ path" journey drill via the delegated .pid-journey handler.
+  function initHeatmapDrillOnce_() {
+    if (initHeatmapDrillOnce_.done) return;
+    initHeatmapDrillOnce_.done = true;
+    document.addEventListener('click', function (e) {
+      const cell = e.target.closest && e.target.closest('.ds-heatmap__cell--drill');
+      if (!cell) return;
+      const host = cell.closest('[data-heat-from]');
+      if (!host) return;
+      e.preventDefault();
+      heatCellToggleDrill_(host, cell);
+    });
+    // role=button cells: Enter/Space activate like a click.
+    document.addEventListener('keydown', function (e) {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      const cell = e.target.closest && e.target.closest('.ds-heatmap__cell--drill');
+      if (!cell) return;
+      e.preventDefault();
+      cell.click();
+    });
+  }
+
+  function heatCellToggleDrill_(host, cell) {
+    const detail = host.querySelector('.ds-heatmap-detail');
+    if (!detail) return;
+    const key = cell.getAttribute('data-dow') + ':' + cell.getAttribute('data-slot');
+    const clearActive = function () {
+      host.querySelectorAll('.ds-heatmap__cell--active').forEach(function (c) {
+        c.classList.remove('ds-heatmap__cell--active');
+      });
+    };
+    // Second click on the open cell closes the panel.
+    if (detail.getAttribute('data-cell') === key && detail.style.display !== 'none') {
+      detail.style.display = 'none'; detail.innerHTML = '';
+      detail.removeAttribute('data-cell');
+      clearActive();
+      return;
+    }
+    clearActive();
+    cell.classList.add('ds-heatmap__cell--active');
+    detail.setAttribute('data-cell', key);
+    detail.style.display = '';
+    detail.innerHTML = dsRingsHtml_('Loading the calls in this slot…');
+    const label = cell.getAttribute('data-label') || '';
+    // Stale-response guard: only the panel's CURRENT cell may paint.
+    google.script.run
+      .withSuccessHandler(function (resp) {
+        if (detail.getAttribute('data-cell') !== key) return;
+        detail.innerHTML = heatCellDetailHtml_(resp, label);
+      })
+      .withFailureHandler(function (err) {
+        if (detail.getAttribute('data-cell') !== key) return;
+        detail.innerHTML = '<div class="status status-error">'
+          + escapeHtml(err && err.message ? err.message : String(err)) + '</div>';
+      })
+      .getInboundHeatmapCell({
+        department: host.getAttribute('data-heat-dept') || '',
+        from: host.getAttribute('data-heat-from') || '',
+        to: host.getAttribute('data-heat-to') || '',
+        dow: Number(cell.getAttribute('data-dow')),
+        slot: Number(cell.getAttribute('data-slot')),
+      });
+  }
+
+  function heatCellDetailHtml_(resp, label) {
+    const meta = (resp && resp.meta) || {};
+    if (meta.available === false) {
+      return '<div class="ds-note">Call detail unavailable — the inbound-calls store (Neon) could not be reached.</div>';
+    }
+    const calls = (resp && resp.calls) || [];
+    if (!calls.length) {
+      return '<div class="ds-note">No abandoned calls recorded in this slot for the selected range.</div>';
+    }
+    const rows = calls.map(function (c) {
+      const path = [c.entryQueue, c.finalQueue].filter(Boolean)
+        .filter(function (v, i, a) { return a.indexOf(v) === i; })   // entry==final -> once
+        .map(escapeHtml).join(' → ');
+      const stage = c.abandonedOnHold ? 'on hold' : (c.abandonStage || '');
+      const facts = [];
+      if (stage) facts.push('abandoned ' + escapeHtml(String(stage)));
+      if (c.waitSeconds != null) facts.push('waited ' + escapeHtml(crFormatSecondsShort_(c.waitSeconds)));
+      if (c.abandonedOnHold && c.holdSeconds != null) {
+        facts.push('held ' + escapeHtml(crFormatSecondsShort_(c.holdSeconds)));
+      }
+      return '<div class="heat-drill-row">'
+        + '<span class="heat-drill-when">' + escapeHtml(c.callDate || '')
+        +   ' · ' + escapeHtml(String(c.cstStart || '').slice(0, 5)) + '</span>'
+        + '<span class="heat-drill-path">' + (path || '(no queue recorded)')
+        +   (facts.length ? ' <span class="heat-drill-facts">· ' + facts.join(' · ') + '</span>' : '')
+        + '</span>'
+        + (c.callId
+          ? '<button type="button" class="pid-journey" data-journey-pid="' + escapeHtml(c.callId)
+            + '" data-journey-date="' + escapeHtml(c.callDate || '')
+            + '" title="Show this call&#39;s leg-by-leg path">&#8627; path</button>'
+          : '')
+        + '</div>';
+    }).join('');
+    const head = '<div class="heat-drill-head"><strong>' + escapeHtml(label) + '</strong>'
+      + ' · ' + calls.length + ' abandoned call' + (calls.length === 1 ? '' : 's')
+      + (meta.truncated ? ' <span class="heat-drill-cap">(newest ' + calls.length + ' shown)</span>' : '')
+      + '</div>';
+    return head + '<div class="heat-drill-list">' + rows + '</div>';
   }
 
   /**
@@ -15507,15 +15733,16 @@
       var pctCls = pct >= 5 ? 'num qcd-warn-light' : 'num';
       var viol = Number(r.violations) || 0;
       var violCls = viol > 0 ? 'num qcd-warn-light' : 'num';
+      // data-date keys the violation-date -> daily-row jump (insJumpToDailyRow_).
       if (bar) {
-        return '<tr>'
+        return '<tr data-date="' + escapeHtml(r.date) + '">'
              +   '<td>' + escapeHtml(r.date) + '</td>'
              +   '<td class="num">' + fmtNumber(r.totalCalls) + '</td>'
              +   '<td class="qcd-daily-bar-cell">' + qcdDailyBarCell_(r) + '</td>'
              +   '<td class="' + violCls + '">' + fmtNumber(r.violations) + '</td>'
              + '</tr>';
       }
-      return '<tr>'
+      return '<tr data-date="' + escapeHtml(r.date) + '">'
            +   '<td>' + escapeHtml(r.date) + '</td>'
            +   '<td class="num">' + fmtNumber(r.totalCalls)    + '</td>'
            +   '<td class="num">' + fmtNumber(r.totalAnswered) + '</td>'

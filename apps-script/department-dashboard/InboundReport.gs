@@ -753,3 +753,111 @@ function emptyInboundHeatmap_(scope) {
     cells: [],
   };
 }
+
+// ---------------------------------------------------------------------------
+// Heatmap cell drill: the individual ABANDONED calls behind one heatmap cell
+// (weekday x hour-slot), so "there's a Tuesday-morning problem" can drill to
+// "here are the Tuesday-morning calls". Same auth + dept scoping as the
+// heatmap itself (inboundResolveRequest_ -- which carries the admin-only
+// vetting gate -- + inboundDeptPredicate_), the same TZ shift / window /
+// slot math, and the same disposition='abandoned' definition as the cell's
+// `abandoned` count, so the list reconciles with the cell to the call.
+// Newest-first, capped at INBOUND_HEATMAP_CELL_MAX rows (meta.truncated).
+// NOT cached (per-cell, cheap, and an unavailable payload must not pin --
+// the getCallJourney pattern). Response carries NO caller identity (no
+// hash/number); each row's (call_date, call_id) keys the existing
+// getCallJourney "↳ path" drill.
+const INBOUND_HEATMAP_CELL_MAX = 200;
+
+function getInboundHeatmapCell(req) {
+  const scope = inboundResolveRequest_(req);   // auth + dept scoping (throws on bad access)
+  const dow = Math.floor(Number(req && req.dow));
+  const slot = Math.floor(Number(req && req.slot));
+  const slotCount = Math.max(1, Math.round(
+    (INBOUND_HEATMAP_WINDOW_END_HOUR - INBOUND_HEATMAP_WINDOW_START_HOUR)
+    * 60 / INBOUND_HEATMAP_SLOT_MINUTES));
+  if (!(dow >= 1 && dow <= 5)) throw new Error('dow must be 1-5 (Mon-Fri).');
+  if (!(slot >= 0 && slot < slotCount)) throw new Error('slot must be 0-' + (slotCount - 1) + '.');
+
+  const out = {
+    meta: {
+      from: scope.from, to: scope.to, available: true,
+      department: scope.dept || null, companyView: scope.companyView,
+      unmapped: false, dow: dow, slot: slot, truncated: false,
+      windowStartHour: INBOUND_HEATMAP_WINDOW_START_HOUR,
+      slotMinutes: INBOUND_HEATMAP_SLOT_MINUTES, tzLabel: 'CST',
+    },
+    calls: [],
+  };
+  if (!scope.companyView && scope.deptQueues.length === 0) {
+    out.meta.unmapped = true;
+    return out;
+  }
+
+  let conn = null;
+  try {
+    conn = (typeof getDashboardNeonConn_ === 'function') ? getDashboardNeonConn_() : null;
+    if (!conn) { out.meta.available = false; return out; }
+
+    const deptPred = inboundDeptPredicate_(scope.dept, scope.deptQueues);
+    const dr = "c.call_date BETWEEN '" + scope.from + "'::date AND '" + scope.to + "'::date" + deptPred;
+    // Identical shift + bucket expressions to getInboundHeatmap so the cell
+    // and its drill can never disagree on which calls a bucket holds.
+    const cstStart = "((c.call_start)::time + interval '"
+      + INBOUND_HEATMAP_CST_SHIFT_HOURS + " hours')";
+    const cstSecs = '(EXTRACT(EPOCH FROM ' + cstStart + '))';
+    const winStartSecs = INBOUND_HEATMAP_WINDOW_START_HOUR * 3600;
+    const winEndSecs   = INBOUND_HEATMAP_WINDOW_END_HOUR * 3600;
+    const slotSecs     = INBOUND_HEATMAP_SLOT_MINUTES * 60;
+    const sql =
+      "SELECT COALESCE(json_agg(t), '[]')::text AS j FROM (" +
+        'SELECT c.call_date::text AS call_date, c.call_id, ' +
+          'to_char(' + cstStart + ", 'HH24:MI:SS') AS cst_start, " +
+          'c.entry_queue, c.final_queue, c.abandon_stage, c.abandoned_on_hold, ' +
+          'c.wait_seconds, c.hold_seconds ' +
+        'FROM inbound_calls c ' +
+        'WHERE ' + dr + ' ' +
+          "AND c.disposition='abandoned' " +
+          "AND c.call_start ~ '^[0-9]{1,2}:[0-9]{2}:[0-9]{2}$' " +
+          'AND ' + cstSecs + ' >= ' + winStartSecs + ' AND ' + cstSecs + ' < ' + winEndSecs + ' ' +
+          'AND EXTRACT(ISODOW FROM c.call_date) = ' + dow + ' ' +
+          'AND floor((' + cstSecs + ' - ' + winStartSecs + ') / ' + slotSecs + ')::int = ' + slot + ' ' +
+        'ORDER BY c.call_date DESC, cst_start DESC ' +
+        'LIMIT ' + (INBOUND_HEATMAP_CELL_MAX + 1) +
+      ') t';
+
+    const stmt = conn.createStatement();
+    const rs = stmt.executeQuery(sql);
+    const json = rs.next() ? rs.getString('j') : null;
+    rs.close(); stmt.close();
+    if (json == null) { out.meta.available = false; return out; }
+
+    let arr = JSON.parse(json);
+    if (!Array.isArray(arr)) arr = [];
+    if (arr.length > INBOUND_HEATMAP_CELL_MAX) {
+      out.meta.truncated = true;
+      arr = arr.slice(0, INBOUND_HEATMAP_CELL_MAX);
+    }
+    out.calls = arr.map(function (c) {
+      return {
+        callDate: String(c.call_date || ''),
+        callId: String(c.call_id || ''),
+        cstStart: String(c.cst_start || ''),
+        entryQueue: c.entry_queue || null,
+        finalQueue: c.final_queue || null,
+        abandonStage: c.abandon_stage || null,
+        abandonedOnHold: !!c.abandoned_on_hold,
+        waitSeconds: c.wait_seconds == null ? null : Number(c.wait_seconds),
+        holdSeconds: c.hold_seconds == null ? null : Number(c.hold_seconds),
+      };
+    });
+    return out;
+  } catch (e) {
+    Logger.log('getInboundHeatmapCell failed (best-effort): ' + (e && e.message ? e.message : e));
+    if (typeof recordNeonReadFailure_ === 'function') recordNeonReadFailure_('getInboundHeatmapCell', e);
+    out.meta.available = false;
+    return out;
+  } finally {
+    if (conn) { try { conn.close(); } catch (ce) {} }
+  }
+}
