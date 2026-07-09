@@ -109,6 +109,72 @@ canonicalization rules from it is robust to new hires.
 
 ---
 
+## AD/AE/AF positional pairing (Missed report / journey drill)
+
+**Status:** Fixed going FORWARD (F-2, both `buildDQEHistoricalData.js`
+copies); historical rows keep the old values until rebuilt.
+
+The dashboard's Missed Calls report pairs `AF[i]` (abandoned missed-ring
+time) with `AD[i]` (parent call id) positionally to hang a parent id on
+each 🚨 timestamp -- the pairing behind the "↳ path" journey drill
+(`getCallJourney` by `(call_date, call_id)`). The pre-fix build did NOT
+guarantee that: AD was the unique-abandoned-parents-with-any-leg list
+while AF was Set-deduped per-missed-leg times, so the lists diverged
+whenever a queue re-rang the same agent on one abandoned parent, an
+agent's only leg on an abandoned parent wasn't missed, or two missed
+legs shared a timestamp -- and after the first divergence every later
+🚨 timestamp carried the WRONG parent id (the drill opened a different
+caller's journey).
+
+**The fix:** all three columns now come from ONE chronologically-sorted
+missed-leg list (one AD/AE/AF entry per missed leg on an abandoned
+parent); abandoned parents with no pairable missed leg are APPENDED to
+AD with no AE/AF partner, so AD's id SET -- the dept-wide
+unique-abandoned counts -- is unchanged. Pinned by
+`tests/unit/pipeline-build.test.js` ("F-2: AD/AE/AF are positionally
+paired").
+
+**Runbook for historical rows** (only where journey-drill accuracy on
+old dates matters): rebuild the date from Raw Data via
+`buildDQEHistoricalData` where Raw Data still exists (or force
+re-import), then `backfillDQEHistoryUpsert()` (cdr-report) to refresh
+the Neon mirror. Rows that can't be rebuilt keep old pairings -- treat
+pre-fix "↳ path" results on old dates as unverified.
+
+---
+
+## Sheets auto-coercion of DATE-shaped strings (writer-side)
+
+**Status:** One instance fixed (Direct Call History, F-3); one still
+open (`inboundCallsExport.js`, F-10).
+
+Writing an `"M/D/YYYY"` STRING via `setValues` gets auto-coerced by
+Sheets into a Date value; a later `getValues()` read returns Date
+objects whose `String()` form never equals the original string. Any
+writer that "deletes the date's existing rows, then re-appends"
+using that comparison silently deletes NOTHING and duplicates the
+row set on every run. This is the date-string sibling of the
+comma-joined ID/time coercion gotcha in CLAUDE.md.
+
+- **Fixed:** `directCallMetrics.js::dcWriteSheet_` now compares
+  ISO-normalized `getDisplayValues()` via `dcDateIso_` (pinned by
+  `tests/unit/direct-call-metrics.test.js`). **Repair for existing
+  duplicates:** rows duplicated by pre-fix re-imports are NOT
+  auto-removed; force re-import each affected date once (the fixed
+  delete then removes all stale copies of that date), or delete the
+  older duplicates by hand.
+- **Still open (F-10):** `inboundCallsExport.js::exportInboundCalls`
+  writes `call_date` ISO strings without plain-text format, so the
+  refresh-in-window delete + incremental max-date detection both fail
+  on re-runs -- the fallback tab re-appends ~30 days per run. Fix the
+  same way (display-value + normalized compare, or `'@'` format col A).
+- **Rule for new writers:** compare ISO-NORMALIZED DISPLAY values
+  (`getDisplayValues()` + a parse), never `String(getValues())`, for
+  any date-keyed delete/dedup; or plain-text (`'@'`) the column at
+  write time.
+
+---
+
 ## CSR Transfer ring fan-out over-count (CDR Import project)
 
 **Status:** Fixed in `calcCsrReport` (`apps-script/cdr-import/autoImport.js`).
@@ -309,6 +375,9 @@ same time as the code change.
 | `QCDReport.gs` | `qcd:vN:` | `v9` |
 | `InboundReport.gs` | `inbound:vN:` | `v3` |
 | `InsightsReport.gs` | `insights:vN:` | `v16` |
+| `QCDReport.gs` (all-departments daily report) | `qcdAll:vN:` | `v2` |
+| `InboundReport.gs` (weekday×hour abandon heatmap) | `inboundHeatmap:vN:` | `v1` |
+| `DirectCallReport.gs` | `directCall:vN:` | `v1` |
 
 `Alerts.gs` holds no cached compute. Preview/send always re-reads the
 DQE Historical Data for the chosen date.
@@ -689,8 +758,13 @@ without the same belt-and-suspenders:
    (`A_Q_*`, `Backup CSR`), empty strings, oversized values;
    `assertOnSomeRoster_` rejects renames to names that aren't on
    any dept's roster (prevents "rename everything to garbage").
-3. `LockService.tryLock` serializes concurrent admin / build so
-   the Agent column isn't half-written when both fire at once.
+3. `LockService.tryLock` serializes concurrent DASHBOARD callers
+   (two admins clicking Apply at once). NB: LockService is
+   per-script-project, so it does NOT serialize against the daily
+   DQE build -- that runs in the cdr-import / cdr-report projects.
+   A force re-import that deletes a date's rows mid-rename could
+   still shift rows under the rename's read-modify-write; the
+   window is tiny, but don't rename during an active import/rebuild.
 4. Every action -- alias add, alias remove, rename, rename+alias
    -- appends to `Orphan Fix Log` BEFORE returning to the client.
 

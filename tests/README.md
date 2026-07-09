@@ -134,10 +134,12 @@ spreadsheet). See `dept-config.test.js` for the fake-spreadsheet pattern.
     across legs — a Bob decoy leg proves it), INV-20 (missed-slot
     PST→CST +2h bucketing), and the same-date duplicate guard. Neon
     mirror + failure-notify are stubbed (live in `neonWrite.js`).
-- **Not yet covered:** the 12-month monthly-trend alignment (INV-29)
-  shared by IR/PR; the Pass-4 queue-only abandoned **sentinel rows**
-  (INV-23 producer side) in `buildDQEHistoricalData`; and the Neon
-  mirror writers themselves (`neonWrite.js`, which need a JDBC shim).
+- **Not yet covered:** the Pass-4 queue-only abandoned **sentinel rows**
+  (INV-23 producer side) in `buildDQEHistoricalData` -- the agent-row
+  AD/AE/AF lockstep IS covered (pipeline-build.test.js, F-2) -- and the
+  Neon mirror writers themselves (`neonWrite.js`; `dal-cutover.test.js`'s
+  fake-JDBC-conn pattern shows the needed shim already half-exists).
+  The INV-29 trend window IS covered (`trend-window.test.js`).
 - **Regression Scenarios (CLAUDE.md):** the floater-exclusion contract
   (S35) and the Sonia `0:15:03 / 0:03:01` durations (S7) are now asserted
   as unit tests; the rest remain manual deploy-time checks.

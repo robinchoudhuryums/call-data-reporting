@@ -459,6 +459,9 @@ mirrors it; if the two ever diverge, INV-30 wins.
 | `QCDReport.gs` | `qcd:vN:` | `v9` |
 | `InboundReport.gs` | `inbound:vN:` | `v3` |
 | `InsightsReport.gs` | `insights:vN:` | `v16` |
+| `QCDReport.gs` (all-departments daily report) | `qcdAll:vN:` | `v2` |
+| `InboundReport.gs` (weekday×hour abandon heatmap) | `inboundHeatmap:vN:` | `v1` |
+| `DirectCallReport.gs` | `directCall:vN:` | `v1` |
 
 `Alerts.gs` holds no cached compute — preview / send always re-reads
 the source sheet for the chosen date.
