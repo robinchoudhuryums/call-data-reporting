@@ -1,5 +1,16 @@
 # Cycle State — resume note
 
+## Latest session (broad-implement: Batch 4 -- report-consistency sweep, 16 findings)
+Branch `claude/broad-scan-xkmoam`, commit `22c5fd7`, PUSHED. 219/219 tests (1 added), INV-16 guard green. SIX cache bumps synced everywhere (test-enforced): individual v9->v10, performance v4->v5, missed v12->v13, qcd v9->v10, qcdAll v2->v3, insights v16->v17.
+- **F-35** all 7 DQE readers (IR/PR/CR/Insights/Missed/Overview/computeSummary_) + deptQueueExtsForNeonReader_: sheet hard-required only on the SHEET path; neon path tolerates a trimmed/archived sheet (empty-shape fallback, never crash). getLatestDataDate was already correct. THE blocker for ever retiring the sheet.
+- **F-15/F-36/F-37** QCDReport: daily axis includes sub-queue-only dates (Insights inherits); all-dept grand total dedupes double-mapped queues (gSeenQueues); empty shape carries subQueuesSeparated/violationDates/subDept.
+- **F-32** IR custom-prior overlap -> current-wins else-if (DECISION: unified on PR/Insights' F12 semantics; test pins it). **F-31** IR/PR empty shapes roster-filtered. **F-34** abandonedRings agent-only. **F-48** inbound accepts 'ALL'. **F-49** digest lock-skip notifies admins. **F-28** assertAdmin_ on runDqeParityCheck/runHistoricalBackfillCheck + signed-in gate on getLatestDataDate(s). **F-29** totals-mean comment corrected (code = spec per conventions.md -- DECISION).
+- Client: **F-38** CR/Insights hints use workingDaysBetween_ (INV-35 parity); **F-39** modal drag/resize wire-once (handle re-wires per-creation -- resetModalTransform_ removes it); **F-40** ov mini-table stale token; **F-41** basePageRoute_ + escalations; **F-42** tour replay uses Help's real close; **F-47** "Last 30 assessed days" label + tooltip.
+DEPLOY: Department Dashboard ONLY (`clasp push -f` + new version). No operator actions; all six bumped caches self-heal.
+NOT unit-tested (fixture-heavy, noted as follow-on): F-15's sub-queue-date axis + F-36's dedup (need parent/child QCD fixtures); verify live via S32 (multi-queue dept daily chart) + the all-dept report with a deliberately double-mapped queue.
+REMAINING: Batch 5 (escalations F-43..F-46), Batch 6 residual (Pass-4 sentinel test), strategic track (queue normalization -> un-gate Inbound/Direct, QCD retirement, F-20, F-22, holidays, Escalations Phase 2, legacy decommission).
+Where I left off: Batch 4 shipped + pushed; branch has 13 unmerged commits awaiting PR/merge + the dashboard deploy (plus the two cdr deploys from Batches 2-3).
+
 ## Latest session (broad-implement: Batch 3 -- F-7/F-17/F-18/F-21/F-55, bulk-path hardening)
 Branch `claude/broad-scan-xkmoam`, commit `f29160d`, PUSHED. 218/218 tests (4 added: neon-write-chunking.test.js, fake-conn), INV-16 guard green.
 - **F-7** processBatchArchive: QCD wait cols (9/10) + CDR ST duration cols (22/23) read from the already-parallel DISPLAY grid -- bulk-archived QCD rows no longer write "Sat Dec 30 1899..." garbage into Neon longest_wait/avg_answer. NOTE: PRE-fix garbage rows in qcd_history remain (no reader consumes longest_wait today); one-off SQL cleanup or a re-import of the date self-heals via DO UPDATE.
