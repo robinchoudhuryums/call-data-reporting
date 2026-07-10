@@ -7,10 +7,10 @@
  * from Neon's `dqe_history` instead:
  *
  *   - `getDqeReadSource_()`  -- the cutover switch (Script Property
- *       `DQE_READ_SOURCE` = 'sheet' (default) | 'neon'). NOTHING in the
- *       production read path consumes it yet; the per-report cutover
- *       (Phase 3.2) will route readers through it. Default 'sheet' means
- *       this file changes ZERO production behavior on deploy.
+ *       `DQE_READ_SOURCE` = 'sheet' (default) | 'neon'). ALL DQE readers
+ *       are cut over (Operator State #19): 'neon' serves the dashboard
+ *       from dqe_history with per-reader sheet fallback. Default 'sheet'
+ *       keeps the legacy behavior.
  *   - `neonFetchDqeRows_(from, to)` / `sheetFetchDqeRows_(from, to)` --
  *       symmetric DAL primitives that return per-(date, agent) DQE rows in
  *       the SAME normalized shape from each source, so they can be diffed
@@ -30,8 +30,8 @@
 
 /**
  * Cutover switch. 'neon' only when the Script Property is explicitly set;
- * anything else (incl. unset) => 'sheet'. No production reader consumes
- * this yet -- it's scaffolding for the Phase 3.2 per-report cutover.
+ * anything else (incl. unset) => 'sheet'. Consumed by every cut-over DQE
+ * reader (Operator State #19).
  */
 function getDqeReadSource_() {
   var v = String(PropertiesService.getScriptProperties()
@@ -326,7 +326,7 @@ function compareDqeSources_() {
   var COMPARE_TO   = _props.getProperty('DQE_PARITY_TO')   || '2026-05-29';   // <-- edit or set Script Property
 
   Logger.log('=== compareDqeSources_  %s .. %s ===', COMPARE_FROM, COMPARE_TO);
-  Logger.log('DQE_READ_SOURCE = %s (production readers still use the sheet)',
+  Logger.log('DQE_READ_SOURCE = %s (neon = the cut-over readers are LIVE on dqe_history; sheet = default)',
              getDqeReadSource_());
 
   // F2: include the Missed-Calls detail columns (19 slots + abandoned IDs/times)
