@@ -702,21 +702,12 @@
         el.style.display = '';
       });
       initViewAs_();   // admin-only "View as <dept> (manager)" preview control
-    } else {
-      // #10: managers get a single Insights button instead of the (admin-only)
-      // Reports dropdown. The other reports consolidate into Insights; Missed /
-      // Individual stay reachable via the Overview question chips + My Dept.
-      const _solo = $('insights-solo-btn');
-      if (_solo) _solo.style.display = '';
     }
-    // Proxy the solo Insights button to the dropdown's real launcher (whose
-    // click handler the Insights modal init wires up regardless of visibility).
-    (function () {
-      const solo = $('insights-solo-btn');
-      if (solo) solo.addEventListener('click', function () {
-        const real = $('insights-report-btn'); if (real) real.click();
-      });
-    })();
+    // (The #10 manager-only #insights-solo-btn proxy is gone: Insights is a
+    // top-level tab visible to all roles since the modal->page conversion,
+    // so managers no longer need a stand-in for the admin-only Reports
+    // dropdown. Missed / Individual stay reachable via the Overview question
+    // chips + My Dept.)
 
     // -- Header dropdown menus (Reports + Admin) --------------------
     // Toggle behavior: clicking a menu button opens its list and
@@ -1342,11 +1333,10 @@
       document.body.removeAttribute('data-view-as');
       if (sel) sel.disabled = false;
     }
-    // #10: the Reports dropdown (data-admin-only) is hidden in view-as by the
-    // existing CSS; surface the solo Insights button so the previewed manager
-    // still has a report entry point (hidden again when the admin switches back).
-    var _solo = $('insights-solo-btn');
-    if (_solo) _solo.style.display = viewAsDept_ ? '' : 'none';
+    // (The Reports dropdown (data-admin-only) is hidden in view-as by the
+    // existing CSS; the top-level Insights tab carries no data-admin-only so
+    // it stays visible in the preview -- the old #10 solo-button surfacing
+    // is no longer needed.)
     // Re-fetch the active surface so it reflects the effective role.
     if (document.body.getAttribute('data-page') === 'overview') {
       ovLoad_(false);
@@ -9106,41 +9096,14 @@
 
   function initInsightsReport() {
     const btn = $('insights-report-btn');
-    // Page-nav (conversion Phase 2): the top-level tab navigates like the
-    // Overview / My Department / Escalations tabs; setPage('insights') runs
-    // insEnsurePage_ and the router highlight.
+    const page = $('insights-page');
+    // Insights is a full PAGE (modal->page conversion): the top-level tab
+    // navigates like the Overview / My Department / Escalations tabs;
+    // setPage('insights') runs insEnsurePage_ + the router highlight. No
+    // modal open/close/drag/focus-trap/scroll-lock/Escape -- the Escalations
+    // pattern (#6).
     if (btn) btn.addEventListener('click', function () { setPage('insights'); });
-    const modal = $('insights-modal');
-    if (!btn || !modal) return;   // Phase 3 replaces the modal machinery below
-    const closeBtn = modal.querySelector('.modal-close');
-    const backdrop = modal.querySelector('[data-close]');
-
-    function openModal() {
-      modal.style.display = '';
-      modal.setAttribute('aria-hidden', 'false');
-      document.body.style.overflow = 'hidden';
-      trapFocus_(modal);
-      initModalDragResize_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
-      document.addEventListener('keydown', onKeyDown);
-      insShowForm();
-      insSetDefaultDates();
-      insRestorePrefs_();
-      insEnsureRoster();
-    }
-    function closeModal() {
-      modal.style.display = 'none';
-      modal.setAttribute('aria-hidden', 'true');
-      releaseFocus_();
-      resetModalTransform_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
-      document.body.style.overflow = '';
-      document.removeEventListener('keydown', onKeyDown);
-      btn.focus();
-    }
-    function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
-
-    btn.addEventListener('click', openModal);
-    if (closeBtn) closeBtn.addEventListener('click', closeModal);
-    if (backdrop) backdrop.addEventListener('click', closeModal);
+    if (!btn || !page) return;
 
     const preset = $('ins-preset');
     if (preset) preset.addEventListener('change', insApplyPreset);
@@ -9217,9 +9180,9 @@
       }
     });
 
-    // Per-card IR drill-through (delegated on the modal so it covers
+    // Per-card IR drill-through (delegated on the page section so it covers
     // both the main card grid and the quiet-agents collapsible).
-    modal.addEventListener('click', function (e) {
+    page.addEventListener('click', function (e) {
       const link = e.target.closest('.ins-card-ir-link');
       if (!link) return;
       const agent = link.getAttribute('data-agent');
@@ -9243,9 +9206,9 @@
     // no marker param is possible).
     let insIrPrefetchTimer = null;
     const insIrPrefetched_ = {};
-    modal.addEventListener('mouseover', function (e) {
+    page.addEventListener('mouseover', function (e) {
       const card = e.target.closest && e.target.closest('.ins-card');
-      if (!card || !modal.contains(card)) return;
+      if (!card || !page.contains(card)) return;
       const link = card.querySelector('.ins-card-ir-link');
       const agent = link && link.getAttribute('data-agent');
       if (!agent) return;
@@ -9267,7 +9230,7 @@
           .getIndividualReport(req);
       }, 300);
     });
-    modal.addEventListener('mouseout', function (e) {
+    page.addEventListener('mouseout', function (e) {
       const card = e.target.closest && e.target.closest('.ins-card');
       if (!card) return;
       if (e.relatedTarget && card.contains(e.relatedTarget)) return;   // still inside the card

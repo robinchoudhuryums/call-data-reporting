@@ -73,13 +73,19 @@ apply after `setPage('insights')`. Digest.gs itself needs no change.
   form controls (Generate, presets, popover, export) stay unwired
   until Phase 3 — `initInsightsReport` still early-returns on the
   absent modal right after wiring the tab.
-- [ ] **Phase 3 — `initInsightsReport` rework**: strip the modal
-  machinery (openModal/closeModal, trapFocus_, drag/resize, scroll
-  lock, Escape, backdrop); tab click → `setPage('insights')`; keep all
-  form / popover / export wiring verbatim; delete the dead
-  `insights-solo-btn` wiring blocks (init reveal, proxy click, View-as
-  toggle) — the top-level tab has no `data-admin-only` so View-as
-  keeps it visible.
+- [x] **Phase 3 — `initInsightsReport` rework**: modal machinery
+  deleted (openModal/closeModal, trapFocus_, drag/resize, scroll lock,
+  Escape, backdrop, `#insights-close`); guard is now
+  `if (!btn || !page) return;`; all form / popover / export wiring
+  kept verbatim, with the three delegated listeners (card IR-drill
+  click, hover-prefetch mouseover/mouseout) retargeted from the modal
+  to `#insights-page`; the dead `insights-solo-btn` wiring blocks
+  deleted (init reveal, proxy click, View-as toggle) — the top-level
+  tab has no `data-admin-only` so View-as keeps it visible. After
+  Phase 3 the page is functionally COMPLETE except: the IR drill
+  degrades gracefully (no "Back to Insights" button — `irDrillToAgent_`
+  still probes the absent modal, Phase 4) and printing still targets
+  the modal selectors (Phase 6).
 - [ ] **Phase 4 — IR drill simplification**: `irDrillToAgent_` detects
   the Insights origin via `data-page === 'insights'`; delete the modal
   hide/re-show and the `irCameFromInsights_` scroll-lock juggling in
