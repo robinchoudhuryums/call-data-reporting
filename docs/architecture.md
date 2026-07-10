@@ -79,7 +79,7 @@ External CDR system (telephony provider)
 |---|---|---|---|
 | CSV ingest | CDR Import | `autoImport.js`, `importBulkCSVsFromDrive.js` (pending Drive auth), `AbandonedFilter.js`, `CDR Tools.js`, `DeleteOldSheets.js`, `neonWrite.js`, `inboundCalls.js` (per-call inbound capture -> Neon `inbound_calls` + `backfillInboundCalls`), `appsscript.json` | `apps-script/cdr-import/` |
 | Per-agent aggregation + downstream tooling | CDR Report | `buildDQEHistoricalData.js`, `DQEdrilldown.js`, `DQEDrilldownSidebar.html`, `dashboardCDR.js`, `dataFilters.js` (extraction sidebar), `dbHistorical.js`, `dbReporting.js`, `emailDailyReport.js`, `neonWrite.js`, `neonbackfill.js`, `inboundCallsExport.js` (Neon `inbound_calls` -> "Inbound Calls" fallback tab), `insuranceNumbers.js` (insurer-number hashing -> Neon `insurance_numbers`), `CDR Tools menu.js`, `appsscript.json` | `apps-script/cdr-report/` |
-| Manager dashboard | Department Dashboard (standalone) | `Code.gs`, `Auth.gs`, `Data.gs`, `Config.gs`, `Setup.gs`, `Util.gs`, `Diagnostics.gs`, `MissedCallsReport.gs`, `IndividualReport.gs`, `PerformanceReport.gs`, `CompareRangesReport.gs`, `InsightsReport.gs`, `InboundReport.gs`, `CompanyOverview.gs`, `QCDReport.gs`, `Alerts.gs`, `Digest.gs`, `OrphanFix.gs`, `DeptConfig.gs`, `Escalations.gs`, `NeonRead.gs`, `NeonKeepWarm.gs`, `CacheWarm.gs`, `dashboard.html`, `styles.html`, `script.html`, `access_denied.html`, `appsscript.json` | `apps-script/department-dashboard/` |
+| Manager dashboard | Department Dashboard (standalone) | `Code.gs`, `Auth.gs`, `Data.gs`, `Config.gs`, `Setup.gs`, `Util.gs`, `Diagnostics.gs`, `MissedCallsReport.gs`, `IndividualReport.gs`, `InsightsReport.gs`, `InboundReport.gs`, `DirectCallReport.gs`, `CallerLookup.gs`, `CompanyOverview.gs`, `QCDReport.gs`, `Alerts.gs`, `Digest.gs`, `OrphanFix.gs`, `DeptConfig.gs`, `Escalations.gs`, `NeonRead.gs`, `NeonKeepWarm.gs`, `CacheWarm.gs`, `IngestWatchdog.gs`, `NeonBackup.gs`, `SystemHealth.gs`, `dashboard.html`, `styles.html`, `script.html`, `access_denied.html`, `appsscript.json` | `apps-script/department-dashboard/` |
 | Postgres mirror | shared lib used by both CDR Import and CDR Report | `neonWrite.js` (duplicated across both projects, currently identical) | see [known-issues.md](known-issues.md) |
 | Per-agent DQE build (duplicated) | both CDR Import and CDR Report | `buildDQEHistoricalData.js` (duplicated across both projects, currently identical -- INV-16). cdr-import invokes inline inside `processIntegratedHistory`; cdr-report keeps a daily trigger copy as a safety net. | `apps-script/cdr-import/` + `apps-script/cdr-report/` |
 | Legacy reports (being migrated into the dashboard) | DQE Report (spreadsheet) | `DQEdashboard.js`, 4 report pairs (`SingleRangeReport`, `IndividualReport`, `MissedCallsReport`, `MultiComparisonTool` + their `.html` modals), `sendManualAlert.js`, `showFAQ.js` + `FAQGuide.html`, `menu DQE Tools.js`, `appsscript.json` | `apps-script/dqe-report/` |
@@ -239,7 +239,7 @@ canonical and reflects current code.
 | Report | File | Public entries | Cache prefix | Admin-only |
 |---|---|---|---|---|
 | Main per-agent table | `Data.gs` | `getDepartmentSummary` | `summary:v11:` | no |
-| Missed Calls Report | `MissedCallsReport.gs` | `getMissedCallsReport` | `missed:v13:` | no |
+| Missed Calls Report | `MissedCallsReport.gs` | `getMissedCallsReport` | `missed:v14:` | no |
 | Individual / Peer Comparison | `IndividualReport.gs` | `getIndividualReportInit`, `getIndividualReport`, `sendIndividualReportEmail` | `individual:v11:`, `individual_active:v2:` | no |
 | Performance Report | RETIRED (PR->Insights consolidation; `PerformanceReport.gs` deleted -- `deltaBlock_` moved to `Util.gs`; legacy `#/report/performance` deep links land on Insights) | — | — | — |
 | Compare Ranges | RETIRED (CR->Insights consolidation; `CompareRangesReport.gs` deleted -- Insights custom-prior mode + the vs-Prior chart basis replace it; legacy `#/report/compare` deep links land on Insights) | — | — | — |
@@ -268,8 +268,10 @@ Neon Postgres is the long-term archive and the future query backend.
 - `buildDQEHistoricalData.gs` writes to both the sheet AND `neonWrite.gs`.
   Sheet write is the primary; Neon write is best-effort with email
   notification on failure (`notifyNeonWriteFailure`). The three live
-  writers (`writeDQE/QCD/CDRRowsToNeon`) use `ON CONFLICT DO UPDATE`
-  (the phone child rows stay `DO NOTHING`), so a re-import / force-rebuild
+  writers (`writeDQE/QCD/CDRRowsToNeon`) use `ON CONFLICT DO UPDATE`, and
+  the phone child rows are per-parent DELETE-then-insert (IMP-4 -- the old
+  `DO NOTHING` never propagated corrections; `DO NOTHING` remains only as
+  an intra-payload duplicate guard), so a re-import / force-rebuild
   propagates corrected values to Neon instead of skipping the existing
   row — the mechanism that lets corrections (e.g. the F2 name-splitter
   fix) actually reach Neon, and a prerequisite for the read-back.

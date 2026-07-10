@@ -155,9 +155,9 @@ function computeTrendStartDate_(startDate, endDate) {
  * Compare Ranges / Insights length-mismatch flag (INV-35) so two windows
  * with the same number of workdays but a different number of calendar days
  * (e.g. 10 calendar days spanning 2 weekends vs 8 spanning 1) are NOT
- * falsely flagged as mismatched. Weekends only for now -- holidays are a
- * follow-on (no global holiday source exists yet; the per-dept Alert Config
- * `Skip Dates` is the candidate seed). UTC-noon iteration is DST-safe
+ * falsely flagged as mismatched. Weekends AND company holidays (S5: the
+ * COMPANY_HOLIDAYS Script Property, same tolerant grammar as the Alert
+ * Config Skip Dates cell) are skipped. UTC-noon iteration is DST-safe
  * (mirrors computePriorWindow_). ISO strings 'YYYY-MM-DD'; returns 0 on
  * empty input or an all-weekend window.
  */
@@ -390,8 +390,13 @@ function buildTeamInsights_(curr, prev, opts) {
  * return shape changed from `string[]` to `{agents, floaters}`.
  */
 function computeActiveAgentsInRange_(dept, from, to, roster) {
+  // CORE-3: like latestDate:v1, the key carries the ACTIVE read source so a
+  // DQE_READ_SOURCE flip can't serve a picker subset computed from the
+  // other source for up to the 30-min TTL (Neon can lag the sheet
+  // mid-backfill, and vice versa right after a rebuild).
+  const dqeSource = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
   const cache = CacheService.getScriptCache();
-  const cacheKey = 'individual_active:v2:' + dept + ':' + from + ':' + to;
+  const cacheKey = 'individual_active:v2:' + dept + ':' + from + ':' + to + ':' + dqeSource;
   const cached = cache.get(cacheKey);
   if (cached) {
     try { return JSON.parse(cached); } catch (e) { /* recompute */ }
@@ -402,9 +407,15 @@ function computeActiveAgentsInRange_(dept, from, to, roster) {
 
   const ss = openSpreadsheet_();
   const sheet = ss.getSheetByName(SHEETS.HISTORICAL);
-  if (!sheet) return { agents: [], floaters: [] };
-  const lastRow = sheet.getLastRow();
-  if (lastRow < 2) return { agents: [], floaters: [] };
+  // CORE-2 (the F-35 pattern, applied here last of the DQE readers): the
+  // sheet is hard-required only when it IS the read source. The old
+  // unconditional early-returns sat ABOVE the Neon branch, so with
+  // DQE_READ_SOURCE=neon and a trimmed/archived sheet the IR/Insights
+  // agent pickers silently rendered zero active agents while the report
+  // bodies computed fine from dqe_history.
+  const neonCapable = (dqeSource === 'neon' && typeof neonFetchDqeRows_ === 'function');
+  const lastRow = sheet ? sheet.getLastRow() : 0;
+  if (!neonCapable && (!sheet || lastRow < 2)) return { agents: [], floaters: [] };
   const ssTZ = ss.getSpreadsheetTimeZone();
 
   const activeRoster = {};
@@ -437,8 +448,7 @@ function computeActiveAgentsInRange_(dept, from, to, roster) {
   // byte-identical to pre-cutover behavior. Parity pinned by
   // tests/unit/dal-cutover.test.js.
   let usedNeon = false;
-  const dqeSource = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
-  if (dqeSource === 'neon' && typeof neonFetchDqeRows_ === 'function') {
+  if (neonCapable) {
     try {
       const _t0 = Date.now();
       const dalRows = neonFetchDqeRows_(from, to);
@@ -460,6 +470,10 @@ function computeActiveAgentsInRange_(dept, from, to, roster) {
   }
 
   if (!usedNeon) {
+    // CORE-2: on the Neon path the sheet fallback may be gone entirely
+    // (trimmed/archived) -- Neon failed or returned empty, so serve the
+    // empty shape rather than crash on the missing sheet (F-35 semantics).
+    if (!sheet || lastRow < 2) return { agents: [], floaters: [] };
     // Pull col D too -- needed for queue-extension matching against
     // the dept's queue ext set (mirrors Data.gs::computeSummary_).
     const numCols = Math.max(HISTORICAL_COLS.TOTAL_ANSWERED, HISTORICAL_COLS.QUEUE_EXT);
@@ -576,4 +590,24 @@ function deltaBlock_(curr, prev, type, formatted) {
     deltaPct: deltaPct,
     type: type,
   };
+}
+
+/**
+ * CORE-7: neutralizes spreadsheet formula injection on server-side sheet
+ * WRITES of free-text / externally-influenced values (the sheet-side
+ * sibling of the client's csvSafeCell_). Sheets executes a cell whose
+ * content starts with = + - @ (or embeds a leading tab/CR) as a live
+ * formula -- with "Execute as: Me" that formula runs against the OWNER's
+ * spreadsheet (e.g. IMPORTXML exfil) whenever the workbook opens. A
+ * leading apostrophe is Sheets' text marker: it is NOT part of the
+ * stored value, so `getValue()`/`getDisplayValue()` readers see the
+ * original string unchanged and lookups keep matching. Non-strings and
+ * safe strings pass through untouched. Use on every admin-editor /
+ * name-derived cell written via appendRow/setValue(s); values already
+ * validated to a strict shape (ISO dates, emails, real dept headers)
+ * don't need it.
+ */
+function sheetSafeCell_(v) {
+  if (typeof v !== 'string') return v;
+  return /^[=+\-@\t\r]/.test(v) ? "'" + v : v;
 }

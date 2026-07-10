@@ -94,9 +94,72 @@ function normalizeDuration(val) {
   return h + ':' + String(mn).padStart(2, '0') + ':' + String(sec).padStart(2, '0');
 }
 
+// IMP-6: Postgres rejects a multi-row INSERT ... ON CONFLICT DO UPDATE whose
+// VALUES carry two rows with the same conflict key ("ON CONFLICT DO UPDATE
+// command cannot affect row a second time"). Fresh daily builds emit unique
+// keys, but SHEET-DERIVED callers -- the deferred Neon mirror
+// (NeonMirror.js), re-mirrors of hand-pasted/duplicated history -- can pass
+// duplicate rows, and ONE poison-pill date then throws on every retry
+// (wedging the mirror queue with a failure email per 15-min run). Dedupe
+// LAST-write-wins: the later row overwrites the earlier, matching both
+// upsert intuition and the sheet's append order (a re-appended correction
+// sits below the stale copy). Returns the input array untouched when no
+// duplicates exist.
+function neonDedupeByKey_(rows, label, keyFn) {
+  var byKey = {};
+  var order = [];
+  for (var i = 0; i < rows.length; i++) {
+    var k = keyFn(rows[i]);
+    if (!(k in byKey)) order.push(k);
+    byKey[k] = rows[i];
+  }
+  if (order.length === rows.length) return rows;
+  Logger.log('%s: dropped %s duplicate-conflict-key row(s) (last-write-wins) '
+    + 'so the multi-row upsert cannot throw "cannot affect row a second time".',
+    label, rows.length - order.length);
+  return order.map(function (k) { return byKey[k]; });
+}
+
+// IMP-5: authoritative per-date REPLACE support. The mirrors were
+// upsert-only, so a force re-import whose rebuilt set is a SUBSET of the
+// old one (agent renamed via alias, a corrected extra row removed) left
+// PHANTOM rows in Neon forever -- with DQE_READ_SOURCE=neon the dashboard
+// would show a split agent + double-counted totals for that date. Callers
+// whose payload is provably the COMPLETE set for its date(s) -- the daily
+// builds, the dup-guard re-mirror, the deferred per-date mirror -- pass
+// { authoritative: true } and the writer DELETEs those dates inside the
+// SAME transaction before inserting (rollback undoes both). Partial-set
+// callers (bulk archive after dedupeAlreadyArchived_, the row-batched
+// backfills) must NOT pass it.
+function neonDistinctIsoDates_(rows, dateFn) {
+  var seen = {};
+  var out = [];
+  for (var i = 0; i < rows.length; i++) {
+    var iso = dateFn(rows[i]);
+    if (iso && !seen[iso]) { seen[iso] = true; out.push(iso); }
+  }
+  return out;
+}
+
+function neonAuthoritativeDateDelete_(conn, table, isoDates) {
+  if (!isoDates || !isoDates.length) return;
+  var stmt = conn.prepareStatement('DELETE FROM ' + table + ' WHERE call_date IN ('
+    + isoDates.map(function () { return '?::date'; }).join(',') + ')');
+  for (var i = 0; i < isoDates.length; i++) stmt.setString(i + 1, isoDates[i]);
+  stmt.execute();
+  stmt.close();
+  Logger.log('%s: authoritative replace for %s date(s): %s', table, isoDates.length, isoDates.join(', '));
+}
+
 // -- DQE writer --------------------------------------------------------------
-function writeDQERowsToNeon(rows) {
+function writeDQERowsToNeon(rows, opts) {
   if (!rows || !rows.length) return { inserted: 0, skipped: 0 };
+  // IMP-6: uq_dqe_history is (call_date, agent_name). Key on the SAME
+  // normalized date the bind below sends so duplicates collide as the DB
+  // would see them.
+  rows = neonDedupeByKey_(rows, 'writeDQERowsToNeon', function (r) {
+    return parseDateForNeon(r.callDate) + '\u0001' + r.agentName;
+  });
   var conn = getReachableNeonConn_();
   if (!conn) {
     Logger.log('writeDQERowsToNeon: Neon unreachable — skipping %s rows.', rows.length);
@@ -105,6 +168,11 @@ function writeDQERowsToNeon(rows) {
   conn.setAutoCommit(false);
 
   try {
+    // IMP-5: authoritative per-date replace (see neonAuthoritativeDateDelete_).
+    if (opts && opts.authoritative) {
+      neonAuthoritativeDateDelete_(conn, 'dqe_history',
+        neonDistinctIsoDates_(rows, function (r) { return parseDateForNeon(r.callDate); }));
+    }
     // F-21: chunk the multi-row INSERT. One statement for the whole batch
     // was fine on the daily path (~250 rows) but the bulk-archive path can
     // pass many dates at once -- past ~35 dates the SQL string blows the
@@ -194,8 +262,12 @@ function writeDQERowsToNeon(rows) {
 }
 
 // -- QCD writer --------------------------------------------------------------
-function writeQCDRowsToNeon(rows) {
+function writeQCDRowsToNeon(rows, opts) {
   if (!rows || !rows.length) return { inserted: 0 };
+  // IMP-6: uq_qcd_history is (call_date, call_queue, call_source).
+  rows = neonDedupeByKey_(rows, 'writeQCDRowsToNeon', function (r) {
+    return parseDateForNeon(r.callDate) + '\u0001' + r.callQueue + '\u0001' + r.callSource;
+  });
   var conn = getReachableNeonConn_();
   if (!conn) {
     Logger.log('writeQCDRowsToNeon: Neon unreachable — skipping %s rows.', rows.length);
@@ -204,6 +276,11 @@ function writeQCDRowsToNeon(rows) {
   conn.setAutoCommit(false);
 
   try {
+    // IMP-5: authoritative per-date replace (see neonAuthoritativeDateDelete_).
+    if (opts && opts.authoritative) {
+      neonAuthoritativeDateDelete_(conn, 'qcd_history',
+        neonDistinctIsoDates_(rows, function (r) { return parseDateForNeon(r.callDate); }));
+    }
     // F-21: chunked like the DQE writer (12 params/row; the bulk-archive
     // path mirrors the whole accumulated Pending Archive in one call).
     // ONE commit after all chunks.
@@ -272,6 +349,11 @@ function writeQCDRowsToNeon(rows) {
 
 function writeCDRRowsToNeon(rows, opts) {
   if (!rows || !rows.length) return { inserted: 0, skipped: 0, phones: 0 };
+  // IMP-6: uq_call_hist is (call_date, department, agent_name). callDate is
+  // bound raw below, so key on the raw value.
+  rows = neonDedupeByKey_(rows, 'writeCDRRowsToNeon', function (r) {
+    return r.callDate + '\u0001' + r.dept + '\u0001' + r.agentName;
+  });
   // A2: reset the per-run phone-hash memo at the entry of the only
   // call tree that hashes phones, so it's bounded to this mirror call.
   CDR_HMAC_CACHE_ = {};
@@ -295,7 +377,13 @@ function writeCDRRowsToNeon(rows, opts) {
     // CDR mirror can pass many dates at once). ONE commit after all chunks,
     // BEFORE the phone child rows (unchanged ordering -- the children look
     // up committed parent ids).
-    var CDR_CHUNK_ROWS = 500;
+    // IMP-3: 300 rows/chunk, down from 500. A FULL 500-row chunk measured
+    // ~44.2KB of SQL (85-char placeholder x 500 + column list + the ON
+    // CONFLICT tail) -- at/over the empirically observed ~44KB Apps Script
+    // JDBC cap ("Argument too large: sql"), so every exactly-full chunk on
+    // a multi-date bulk mirror was a coin-flip. 300 rows ~= 27KB: safe
+    // margin, and the daily path (~250 rows) still fits one statement.
+    var CDR_CHUNK_ROWS = 300;
     var placeholderRow = '(?,?,?,?,?,?,?::jsonb,?::jsonb,?::jsonb,?,?,?,?,?,?::jsonb,?::jsonb,?::jsonb,?,?,?,?)';
     for (var off = 0; off < rows.length; off += CDR_CHUNK_ROWS) {
     var chunk = rows.slice(off, off + CDR_CHUNK_ROWS);
@@ -407,25 +495,65 @@ function cdrInsertPhoneChildRows_(conn, rows, hmacSecret) {
   // matches the DB-readback key (getString returns JS null for a SQL NULL).
   var cdrKeyPart_ = function (x) { return x == null ? '<null>' : String(x); };
 
-  var joinPlaceholders = rows.map(function() { return '(?::date, ?, ?)'; }).join(',');
-  var idSql = 'SELECT d.id, d.call_date::text, d.department, d.agent_name ' +
-    'FROM call_history_dept d ' +
-    'JOIN (VALUES ' + joinPlaceholders + ') AS v(cd, dept, agent) ' +
-    'ON d.call_date = v.cd AND d.department IS NOT DISTINCT FROM v.dept ' +
-    'AND d.agent_name IS NOT DISTINCT FROM v.agent';
-  var idStmt = conn.prepareStatement(idSql);
-  var q = 1;
-  for (var j = 0; j < rows.length; j++) {
-    idStmt.setString(q++, rows[j].callDate);
-    idStmt.setString(q++, rows[j].dept);
-    idStmt.setString(q++, rows[j].agentName);
-  }
-  var idRs = idStmt.executeQuery();
+  // REP-2: the parent-id lookup is CHUNKED like the inserts (F-21). One
+  // (?::date, ?, ?) tuple per input row over the ENTIRE rows array crossed
+  // the ~44KB JDBC statement cap around ~2,900 rows -- reachable on the
+  // F-18 bulk-archive mirror (whole Pending Archive in one call), which
+  // then lost the phone-child mirror for the whole run.
+  var CDR_ID_LOOKUP_CHUNK_ROWS = 400;
   var idMap = {};
-  while (idRs.next()) {
-    idMap[cdrKeyPart_(idRs.getString(2)) + '|' + cdrKeyPart_(idRs.getString(3)) + '|' + cdrKeyPart_(idRs.getString(4))] = idRs.getInt(1);
+  for (var lk = 0; lk < rows.length; lk += CDR_ID_LOOKUP_CHUNK_ROWS) {
+    var lkChunk = rows.slice(lk, lk + CDR_ID_LOOKUP_CHUNK_ROWS);
+    var joinPlaceholders = lkChunk.map(function() { return '(?::date, ?, ?)'; }).join(',');
+    var idSql = 'SELECT d.id, d.call_date::text, d.department, d.agent_name ' +
+      'FROM call_history_dept d ' +
+      'JOIN (VALUES ' + joinPlaceholders + ') AS v(cd, dept, agent) ' +
+      'ON d.call_date = v.cd AND d.department IS NOT DISTINCT FROM v.dept ' +
+      'AND d.agent_name IS NOT DISTINCT FROM v.agent';
+    var idStmt = conn.prepareStatement(idSql);
+    var q = 1;
+    for (var j = 0; j < lkChunk.length; j++) {
+      idStmt.setString(q++, lkChunk[j].callDate);
+      idStmt.setString(q++, lkChunk[j].dept);
+      idStmt.setString(q++, lkChunk[j].agentName);
+    }
+    var idRs = idStmt.executeQuery();
+    while (idRs.next()) {
+      idMap[cdrKeyPart_(idRs.getString(2)) + '|' + cdrKeyPart_(idRs.getString(3)) + '|' + cdrKeyPart_(idRs.getString(4))] = idRs.getInt(1);
+    }
+    idRs.close(); idStmt.close();
   }
-  idRs.close(); idStmt.close();
+
+  // IMP-4: per-parent DELETE-then-insert. The old upsert was
+  // `ON CONFLICT ON CONSTRAINT uq_phone_entry DO NOTHING`, so a force
+  // re-import's CORRECTED entries never propagated (stale duration_sec /
+  // occurrences kept forever) and entries that DISAPPEARED from the
+  // re-exported source lingered as phantoms. Each payload row carries the
+  // COMPLETE entry set for its parent (built from that row's own
+  // phonesX/Y/Z cells), so deleting the looked-up parents' children first
+  // makes the write authoritative PER PARENT -- safe on EVERY caller,
+  // including partial-DATE bulk batches (per-parent completeness is what
+  // matters, unlike the IMP-5 date-level replace). Same transaction as
+  // the inserts: a failed insert rolls the delete back. The ON CONFLICT
+  // DO NOTHING below is kept as an intra-payload duplicate guard.
+  // (Edge, documented: if NO payload row has phones at all, the caller's
+  // hasAnyPhones gate skips this helper entirely, so an
+  // every-list-emptied re-import day would keep stale children --
+  // practically unreachable.)
+  var parentIds = [];
+  for (var pidKey in idMap) {
+    var pv = parseInt(idMap[pidKey], 10);
+    if (isFinite(pv)) parentIds.push(pv);
+  }
+  if (parentIds.length) {
+    var DEL_CHUNK = 500;   // ints, ~10 chars each -- ~5KB per statement
+    var delStmt = conn.createStatement();
+    for (var doff = 0; doff < parentIds.length; doff += DEL_CHUNK) {
+      delStmt.execute('DELETE FROM call_history_phones WHERE call_history_id IN ('
+        + parentIds.slice(doff, doff + DEL_CHUNK).join(',') + ')');
+    }
+    delStmt.close();
+  }
 
   // ---- build + hash (timed) ----
   var tBuild = Date.now();
@@ -462,6 +590,10 @@ function cdrInsertPhoneChildRows_(conn, rows, hmacSecret) {
   var uniqueHashes = Object.keys(CDR_HMAC_CACHE_).length;
 
   if (!phoneValues.length) {
+    // IMP-4: commit the per-parent delete above -- when a re-import removed
+    // every entry for these parents, the delete alone IS the correction
+    // (returning uncommitted would roll it back on close).
+    if (parentIds.length) conn.commit();
     Logger.log('cdrInsertPhoneChildRows_: 0 phone rows | build+hash ' + buildMs + 'ms (' + uniqueHashes + ' unique hashes).');
     return 0;
   }
@@ -471,7 +603,8 @@ function cdrInsertPhoneChildRows_(conn, rows, hmacSecret) {
   // throws "Argument too large: sql" near ~44KB). Each tuple is ~100 chars,
   // so 200 rows is ~20KB -- safely under, and far fewer round-trips than the
   // old 500-row bound-param chunks. ONE commit after all chunks
-  // (all-or-nothing; idempotent via ON CONFLICT DO NOTHING).
+  // (all-or-nothing with the IMP-4 per-parent delete above; ON CONFLICT
+  // DO NOTHING guards intra-payload duplicates only).
   var tInsert = Date.now();
   var INSERT_CHUNK = 200;
   var stmt = conn.createStatement();

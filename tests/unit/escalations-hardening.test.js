@@ -180,3 +180,82 @@ test('Phase 2: escNormalizeReviewFields_ is the same escClean_ the create path u
   assert.equal(out.patientName, '');
   assert.equal(out.reason, 'why');
 });
+
+test('NEO-1: resolveEscalation is PENDING-only -- pending_review and rejected rows are refused', function () {
+  // The pre-fix guard was "not already resolved", which let a manager (a)
+  // resolve an un-reviewed external submission WITHOUT passing
+  // approveEscalation's trust boundary, and (b) walk a terminal rejected
+  // row back into the worklist via resolve -> reopen.
+  const log = { writes: [] };
+  installReview({ role: 'manager', department: 'CSR', email: 'mgr@x.com' },
+    { status: 'pending_review', department: 'CSR', reason: 'r', source: 'team-tools' }, log);
+  assert.throws(function () {
+    h.call('resolveEscalation', { id: 'e1', resolution: 'called them back' });
+  }, /awaiting review/);
+  assert.equal(log.writes.length, 0, 'no writes on a pending_review refusal');
+
+  installReview({ role: 'manager', department: 'CSR', email: 'mgr@x.com' },
+    { status: 'rejected', department: 'CSR', reason: 'r' }, log);
+  assert.throws(function () {
+    h.call('resolveEscalation', { id: 'e1', resolution: 'called them back' });
+  }, /Only a pending escalation can be resolved/);
+  assert.equal(log.writes.length, 0, 'no writes on a rejected refusal');
+
+  // Resolved keeps its dedicated reopen-first message (F-43 unchanged).
+  installReview({ role: 'manager', department: 'CSR', email: 'mgr@x.com' },
+    { status: 'resolved', department: 'CSR', reason: 'r' }, log);
+  assert.throws(function () {
+    h.call('resolveEscalation', { id: 'e1', resolution: 'x' });
+  }, /already resolved.*Reopen it first/);
+  assert.equal(log.writes.length, 0);
+
+  // A genuinely pending row still resolves, with its activity row.
+  installReview({ role: 'manager', department: 'CSR', email: 'mgr@x.com' },
+    { status: 'pending', department: 'CSR', reason: 'r' }, log);
+  const res = h.call('resolveEscalation', { id: 'e1', resolution: 'called them back' });
+  assert.equal(res.id, 'e1');
+  const upd = log.writes.filter(function (w) { return w.sql.indexOf('UPDATE escalations') === 0; })[0];
+  assert.equal(upd.params[0], 'resolved');
+  const act = log.writes.filter(function (w) { return w.sql.indexOf('INSERT INTO escalation_activity') === 0; })[0];
+  assert.equal(act.params[2], 'resolved');
+});
+
+test('NEO-2: comments are worklist-only, required non-empty, and resolve preserves an existing comment', function () {
+  const log = { writes: [] };
+  // Empty comment refused (used to silently NULL the row's comment).
+  installReview({ role: 'manager', department: 'CSR', email: 'mgr@x.com' },
+    { status: 'pending', department: 'CSR', reason: 'r' }, log);
+  assert.throws(function () { h.call('updateEscalationComment', { id: 'e1', comments: '   ' }); },
+    /comment is required/);
+  assert.equal(log.writes.length, 0);
+
+  // pending_review is immutable external input until the review boundary runs.
+  installReview({ role: 'manager', department: 'CSR', email: 'mgr@x.com' },
+    { status: 'pending_review', department: 'CSR', reason: 'r', source: 'team-tools' }, log);
+  assert.throws(function () { h.call('updateEscalationComment', { id: 'e1', comments: 'note' }); },
+    /awaiting review/);
+  assert.equal(log.writes.length, 0);
+
+  // rejected is terminal.
+  installReview({ role: 'manager', department: 'CSR', email: 'mgr@x.com' },
+    { status: 'rejected', department: 'CSR', reason: 'r' }, log);
+  assert.throws(function () { h.call('updateEscalationComment', { id: 'e1', comments: 'note' }); },
+    /rejected.*cannot be annotated/);
+
+  // pending + resolved rows accept comments.
+  installReview({ role: 'manager', department: 'CSR', email: 'mgr@x.com' },
+    { status: 'pending', department: 'CSR', reason: 'r' }, log);
+  h.call('updateEscalationComment', { id: 'e1', comments: 'call them back tomorrow' });
+  const upd = log.writes.filter(function (w) { return w.sql.indexOf('UPDATE escalations SET comments') === 0; })[0];
+  assert.ok(upd, 'comment update executed');
+  assert.equal(upd.params[0], 'call them back tomorrow');
+
+  // Resolve with a BLANK comment keeps the row's existing comment (COALESCE).
+  const log2 = { writes: [] };
+  installReview({ role: 'manager', department: 'CSR', email: 'mgr@x.com' },
+    { status: 'pending', department: 'CSR', reason: 'r' }, log2);
+  h.call('resolveEscalation', { id: 'e1', resolution: 'handled' });
+  const res = log2.writes.filter(function (w) { return w.sql.indexOf('UPDATE escalations SET status') === 0; })[0];
+  assert.ok(/COALESCE\(NULLIF\(\?, ''\), comments\)/.test(res.sql),
+    'blank resolve comment preserves the stored one instead of NULLing it');
+});

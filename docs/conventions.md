@@ -396,8 +396,10 @@ From/To default (which must snap to DQE specifically).
   - `Longest Wait`: **MAX** across all days in range (worst
     observed). Avg per-day would dilute the operationally useful
     "this was the worst" signal.
-  - `Avg Answer`: simple mean across days with non-zero values
-    (matches legacy `buildTable4` semantics).
+  - `Avg Answer`: answered-volume-WEIGHTED mean
+    (`sum(avgAnswer × answered) / sum(answered)`; RPT-8 — diverges from
+    the legacy `buildTable4` day-mean, flagged for owner ratification;
+    code is spec meanwhile).
 - **Per-queue breakdown table**: one row per queue in
   `DEPT_QCD_QUEUES[dept]` (preserves config order), plus a bolded
   "Department total" tfoot row. Each row carries its own
@@ -458,7 +460,7 @@ mirrors it; if the two ever diverge, INV-30 wins.
 | `IndividualReport.gs` (active-in-range subset, shared with all three pickers) | `individual_active:vN:` | `v2` |
 | `PerformanceReport.gs` | `performance:vN:` | RETIRED (Performance Report deleted; Insights is the replacement) |
 | `CompareRangesReport.gs` | `compareRanges:vN:` | RETIRED (Compare Ranges deleted; Insights custom-prior + vs-Prior chart replace it) |
-| `MissedCallsReport.gs` | `missed:vN:` | `v13` |
+| `MissedCallsReport.gs` | `missed:vN:` | `v14` |
 | `CompanyOverview.gs` | `companyOverview:vN` | `v18` |
 | `QCDReport.gs` | `qcd:vN:` | RETIRED (QCD modal deleted; `qcdAll:` remains) |
 | `InboundReport.gs` | `inbound:vN:` | `v3` |

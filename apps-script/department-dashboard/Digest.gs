@@ -806,7 +806,6 @@ function neonDigestConfigRawValues_() {
               (r.active === false ? 'FALSE' : 'TRUE'), r.notes || '', r.format || ''];
     });
   } catch (e) {
-    if (typeof recordNeonReadFailure_ === 'function') recordNeonReadFailure_('readDigestConfig_', e);
     return null;
   } finally {
     try { conn.close(); } catch (ce) {}

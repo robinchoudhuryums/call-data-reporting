@@ -76,6 +76,11 @@ function runIngestWatchdog_() {
     var dow = parseInt(Utilities.formatDate(new Date(), TZ, 'u'), 10);
     if (dow === 6 || dow === 7) return;   // Sat / Sun -- no ingest expected
 
+    // OPS-7: company holidays are non-ingest days too, like weekends (the
+    // same gate runDailyAlerts_/runDailyDigests_ gained in S5).
+    var todayIso = Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd');
+    if (typeof isCompanyHoliday_ === 'function' && isCompanyHoliday_(todayIso)) return;
+
     var fresh = (typeof computeOverviewPipelineFreshness_ === 'function')
       ? computeOverviewPipelineFreshness_() : null;
 
@@ -85,7 +90,15 @@ function runIngestWatchdog_() {
     if (!fresh) return;
 
     var staleHours = ingestWatchdogStaleHours_(props.getProperty('INGEST_WATCHDOG_STALE_HOURS'));
-    var isStale = (fresh.hoursSinceFresh == null) || (fresh.hoursSinceFresh > staleHours);
+    // OPS-7: credit 24h per weekend/company-holiday day inside the stale
+    // gap. A zero-activity holiday produces an EXPECTED rows:0 DQE build
+    // (which deliberately doesn't reset the freshness clock, F5), so the
+    // morning after a holiday the raw gap exceeds the threshold even
+    // though the pipeline is healthy -- and the false alarm's episode
+    // flag would then SUPPRESS a real outage starting later that week.
+    var effectiveStale = staleHours
+      + ingestWatchdogNonBusinessCredit_(fresh.hoursSinceFresh);
+    var isStale = (fresh.hoursSinceFresh == null) || (fresh.hoursSinceFresh > effectiveStale);
     var alreadyAlerted = String(props.getProperty('INGEST_WATCHDOG_ALERTED') || '') === 'true';
 
     if (!isStale) {
@@ -99,25 +112,41 @@ function runIngestWatchdog_() {
       return;
     }
 
-    // Stale: email once per episode.
+    // Stale: email once per episode. OPS-1: the episode flag arms ONLY on a
+    // CONFIRMED send -- notifyIngestStale_ swallowing a MailApp failure
+    // (quota-exhausted morning) previously still armed the flag, silencing
+    // the entire stale episode while LAST_RESULT claimed "alert sent".
+    var result;
     if (!alreadyAlerted) {
-      notifyIngestStale_(fresh, staleHours);
-      try { props.setProperty('INGEST_WATCHDOG_ALERTED', 'true'); } catch (pe) {}
+      var sent = notifyIngestStale_(fresh, effectiveStale);
+      if (sent) {
+        try { props.setProperty('INGEST_WATCHDOG_ALERTED', 'true'); } catch (pe) {}
+        result = 'stale (alert sent)';
+      } else {
+        result = 'stale (alert send FAILED -- will retry next run)';
+      }
+    } else {
+      result = 'stale (already alerted)';
     }
     try {
       props.setProperty('INGEST_WATCHDOG_LAST', new Date().toISOString());
-      props.setProperty('INGEST_WATCHDOG_LAST_RESULT',
-        'stale' + (alreadyAlerted ? ' (already alerted)' : ' (alert sent)'));
+      props.setProperty('INGEST_WATCHDOG_LAST_RESULT', result);
     } catch (pe) { /* best-effort */ }
   } catch (e) {
     Logger.log('runIngestWatchdog_ failed: ' + (e && e.message ? e.message : e));
   }
 }
 
+/**
+ * Emails the admins. Returns TRUE only on a confirmed send (OPS-1) --
+ * the caller arms the once-per-episode flag on that, so a swallowed
+ * MailApp failure retries on the next run instead of silencing the
+ * whole episode.
+ */
 function notifyIngestStale_(fresh, staleHours) {
   try {
     var to = getAdminEmails_().join(',');
-    if (!to) return;
+    if (!to) return false;
     var lastTs = fresh.latestTimestamp || '(none found in recent Pipeline Health)';
     var hrs = (fresh.hoursSinceFresh == null) ? 'unknown' : fresh.hoursSinceFresh;
     var url = PropertiesService.getScriptProperties().getProperty('DASHBOARD_URL') || '';
@@ -134,12 +163,33 @@ function notifyIngestStale_(fresh, staleHours) {
              + (url ? '\nDashboard: ' + url + '\n' : '')
              + '\nYou will get ONE alert per stale episode; the next fresh build re-arms it.',
     });
+    return true;
   } catch (mailErr) {
     Logger.log('notifyIngestStale_ mail failed: ' + mailErr);
+    return false;
   }
 }
 
 // ── Internals ─────────────────────────────────────────────────────────
+
+/**
+ * OPS-7: 24h of staleness allowance per weekend/company-holiday day
+ * inside the gap since the last fresh build. Walks back at most 14
+ * calendar days (past that a real outage should alarm regardless).
+ */
+function ingestWatchdogNonBusinessCredit_(hoursSinceFresh) {
+  if (hoursSinceFresh == null || !isFinite(hoursSinceFresh)) return 0;
+  var days = Math.min(14, Math.ceil(hoursSinceFresh / 24));
+  var credit = 0;
+  for (var d = 1; d <= days; d++) {
+    var dt = new Date(Date.now() - d * 86400000);
+    var dow = parseInt(Utilities.formatDate(dt, TZ, 'u'), 10);
+    var iso = Utilities.formatDate(dt, TZ, 'yyyy-MM-dd');
+    var holiday = (typeof isCompanyHoliday_ === 'function') && isCompanyHoliday_(iso);
+    if (dow === 6 || dow === 7 || holiday) credit += 24;
+  }
+  return credit;
+}
 
 function ingestWatchdogStaleHours_(raw) {
   var n = parseFloat(raw);

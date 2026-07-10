@@ -197,7 +197,7 @@ function neonReadDeptConfigRows_() {
       };
     }).filter(function (r) { return r.dept; });
   } catch (e) {
-    if (typeof recordNeonReadFailure_ === 'function') recordNeonReadFailure_('readDeptConfigRows_', e);
+    Logger.log('neonReadDeptConfigRows_ failed (falling back to the sheet): ' + (e && e.message ? e.message : e));
     return null;   // fall back to the sheet
   } finally {
     try { conn.close(); } catch (ce) {}
@@ -653,6 +653,12 @@ function sheetUpsertDeptConfigRow_(rec) {
       if (String(col[i][0] || '').trim() === rec.dept) { existingRow = i + 2; break; }
     }
   }
+  // CORE-7: notes are admin free text and inbound aliases are raw
+  // phone-system queue names that can't be list-validated -- neutralize
+  // formula-leading values (dcParseList_/readers see the original string;
+  // the leading apostrophe is Sheets formatting, not content). The other
+  // fields are validated to known queue names / real depts / roster names
+  // / digits upstream.
   const rowValues = [
     rec.dept,
     rec.qcdQueues.join(', '),
@@ -662,8 +668,8 @@ function sheetUpsertDeptConfigRow_(rec) {
     rec.active ? 'TRUE' : 'FALSE',
     rec.admin || '',
     now,
-    rec.notes || '',
-    (rec.inboundAliases || []).join(', '),   // col 10 (appended)
+    sheetSafeCell_(rec.notes || ''),
+    sheetSafeCell_((rec.inboundAliases || []).join(', ')),   // col 10 (appended)
   ];
   if (existingRow > 0) {
     sheet.getRange(existingRow, 1, 1, rowValues.length).setValues([rowValues]);
@@ -777,7 +783,19 @@ function backfillDeptConfigToNeon() {
 function compareDeptConfigSources() {
   assertAdmin_();
   const sheet = sheetReadDeptConfigRows_();
-  const neon = neonReadDeptConfigRows_() || [];
+  // CORE-5: neonReadDeptConfigRows_ returns null on unreachable/error. The
+  // old `|| []` coercion compared the sheet against an empty phantom table
+  // -- and with an EMPTY sheet (fresh install) printed a false "PARITY
+  // CLEAN" without Neon ever having been read, green-lighting a
+  // CONFIG_SOURCE flip against nothing. Mirror the Alert/Digest compare
+  // gates (F-5): unreachable => clean:false + error, nothing compared.
+  const neon = neonReadDeptConfigRows_();
+  if (neon === null) {
+    Logger.log('compareDeptConfigSources: NEON UNREACHABLE -- no comparison performed. '
+      + 'Do NOT flip CONFIG_SOURCE on this result.');
+    return { clean: false, error: 'Neon unreachable -- no comparison performed.',
+             missingInNeon: [], missingInSheet: [], mismatched: [] };
+  }
   const key = function (r) {
     return JSON.stringify([r.qcdQueues, r.overviewParent, r.teamAvgExcludes,
       r.queueExtOverrides, r.active, r.notes, r.inboundAliases]);

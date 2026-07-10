@@ -30,6 +30,14 @@
  * empty.
  */
 function getLatestDataDate() {
+  // CORE-1/DEEP-1: signed-in gate (role 'none' refused). The F-28 commit
+  // message claimed this gate but it never landed -- until now these
+  // metadata reads were callable by ANY domain visitor (incl. ones on the
+  // access-denied page), each cache-miss burning an owner-permission
+  // whole-column scan. Internal callers (CacheWarm trigger, Overview) run
+  // as an authorized user / the owner, and auth lookups are 60s-cached.
+  const gateUser = resolveUser_(Session.getActiveUser().getEmail());
+  if (!gateUser || gateUser.role === 'none') throw new Error('Not authorized.');
   const cache = CacheService.getScriptCache();
   // F1 read-back (Phase 3.2 cutover #1): the cache key is suffixed with
   // the active source so flipping DQE_READ_SOURCE doesn't serve a value
@@ -107,6 +115,9 @@ function getLatestDataDate() {
  * land the table on an empty day).
  */
 function getLatestDataDates() {
+  // CORE-1/DEEP-1: signed-in gate, mirroring getLatestDataDate above.
+  const gateUser = resolveUser_(Session.getActiveUser().getEmail());
+  if (!gateUser || gateUser.role === 'none') throw new Error('Not authorized.');
   const cache = CacheService.getScriptCache();
   const source = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
   const KEY = 'latestDates:v1:' + source;
@@ -233,7 +244,11 @@ function getDepartmentSummary(req) {
   // v10 (P3): qcdSnapshot's unqualified total is OWN-queues-only (reconciles
   //   with the QCD modal / Overview); adds subTotals / allTotals +
   //   mainQueueCount / subQueueCount for the gated Main/Sub/All summary lines.
-  const cacheKey = 'summary:v11:' + dept + ':' + scope + ':' + from + ':' + to;
+  // CORE-3: suffixed with the ACTIVE read source (the latestDate:v1
+  // pattern) so a DQE_READ_SOURCE flip can't serve a table computed from
+  // the other source for up to the 30-min TTL.
+  const summarySource = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
+  const cacheKey = 'summary:v11:' + dept + ':' + scope + ':' + from + ':' + to + ':' + summarySource;
   const cached = cache.get(cacheKey);
   if (cached) {
     try {

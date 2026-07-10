@@ -4,6 +4,9 @@
  *
  * Most historical tables have a sheet primary, so a Neon loss is
  * recoverable by re-mirroring. THREE do not: `escalations`,
+ *   (NB: once CONFIG_SOURCE=neon is flipped, alert_config / digest_config /
+ *   dept_config also become Neon-authoritative and are NOT yet in this
+ *   backup -- OPS-5, scope extension pending.)
  * `escalation_activity`, and `inbound_calls` (incl. the per-call journey
  * JSON). If the Neon account/project is lost, that data is simply gone —
  * and escalations now takes writes from the external team-tools app

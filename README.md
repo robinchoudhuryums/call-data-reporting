@@ -256,9 +256,11 @@ scripts/deploy.sh apps-script/cdr-import <cdr-import-deployment-id>
 
 **Optional (QCD Report):**
 
-- The **QCD Report** modal (click the **QCD** tab in the header nav) reads from
-  `QCD Historical Data`, written daily by the import pipeline.
-  Visible to all managers + admins; per-dept gated.
+- (The standalone QCD Report modal is RETIRED — QCD→Insights consolidation.)
+  Queue data now lives in the **Insights** report's Queue health section
+  (per-dept gated) and the company-wide **Daily Call Queue Report** on the
+  Overview page; both read `QCD Historical Data`, written daily by the
+  import pipeline. The dept ↔ queue mapping below still applies to all of it.
 - **The dept ↔ queue mapping is admin-editable without a redeploy.**
   Each dashboard dept maps to one or more raw queue names
   (e.g. `A_Q_CustomerSuccess`, `A_Q_Sales`) — the values in
@@ -373,12 +375,15 @@ scripts/deploy.sh apps-script/cdr-import <cdr-import-deployment-id>
   visible at a glance. Such a gap self-heals on the next import of that date
   — the dup-guard re-mirrors the existing sheet rows. (Hidden when `NEON_*`
   isn't configured.)
-- **Before flipping**, run the parity gate from the Apps Script editor:
-  open `NeonRead.gs`, edit `COMPARE_FROM` / `COMPARE_TO` in
-  `compareDqeSources_` to a range fully inside the mirrored history, then
-  Run **`runDqeParityCheck`** (the editor's Run picker hides `_`-suffixed
-  functions, so use this non-underscore wrapper). A "PARITY CLEAN" log =
-  safe to cut over. Create the two indexes first so the Neon reads stay
+- **Before flipping**, run the parity gate from the Apps Script editor
+  (Department Dashboard project): set the `DQE_PARITY_FROM` /
+  `DQE_PARITY_TO` Script Properties to a range fully inside the mirrored
+  history (in-source defaults apply if unset), then Run
+  **`runDqeParityCheck`** (the editor's Run picker hides `_`-suffixed
+  functions, so use this non-underscore wrapper; admin-gated). A
+  "PARITY CLEAN" log with missing-in-neon = 0 AND missing-in-sheet = 0 =
+  safe to cut over (missing-in-sheet rows are Neon phantoms — force
+  re-import those dates first). Create the two indexes first so the Neon reads stay
   fast:
   ```sql
   CREATE INDEX IF NOT EXISTS idx_dqe_history_call_date ON dqe_history (call_date);
@@ -415,7 +420,12 @@ scripts/deploy.sh apps-script/cdr-import <cdr-import-deployment-id>
   date to a `Neon Mirror Queue` tab in the CDR Report spreadsheet; the
   trigger drains the queue minutes later by re-deriving each payload
   from the Historical Data sheets and upserting via the same writers
-  (`ON CONFLICT`, so retries are safe). The daily toast shows
+  (idempotent, so retries are safe; Neon-unreachable dates retry
+  indefinitely, but a date that HARD-errors is retried at most
+  `NEON_MIRROR_MAX_ATTEMPTS` (default 8) times then parked with a
+  `neonMirror:gave-up` row + one final email — a date whose
+  `Call_Legs_*` sheet was pruned before it drained fails the same way,
+  since its `inbound_calls` rows are unrecoverable). The daily toast shows
   `Neon ⏳ queued`; per-type outcomes land as `neonMirror:*` Pipeline
   Health rows.
 - Validate on one import before relying on it: confirm the queue drains,
@@ -439,9 +449,9 @@ the deployed web-app URL to land on that view:
   escalation calls, admins log new ones; Neon-backed)
 - `#/report/missed` — Missed Calls report
 - `#/report/individual` — Individual Report
-- `#/report/performance` — Performance Report
-- `#/report/compare` — Compare Ranges
-- `#/report/qcd` — QCD Report
+- `#/report/performance` — legacy (Performance Report retired — lands on Insights)
+- `#/report/compare` — legacy (Compare Ranges retired — lands on Insights)
+- `#/report/qcd` — legacy (QCD modal retired — lands on Insights Queue health)
 - `#/report/insights` — Insights (period comparison: team rollup + per-agent delta cards)
 - `#/report/inbound` — Inbound Report (per-dept gated; Neon-backed)
 - `#/admin/alerts` — Low Answer Rate Alerts (admin-only)
@@ -459,8 +469,7 @@ you can OS-tile two windows side-by-side for comparison. Requires
 the `DASHBOARD_URL` Script Property to be set (see Alerts setup
 above); the button silently hides when unset.
 
-For the four agent-comparison reports (Individual / Performance /
-Compare Ranges / Insights), the `↗` button also serializes the
+For the two agent reports (Individual / Insights), the `↗` button also serializes the
 modal's **current form state** — dates, compare mode, custom prior
 window, and agent selection — into the link as `#/route?from=...&
 agents=a|b`, so the new tab (or a pasted link) restores the exact
@@ -518,8 +527,8 @@ keep it fresh, in order of preference:
    re-mirrors the existing rows so `dqe_history` self-heals.
 2. **Bulk historical backfill path** — `bulkHistoricalUpdate`
    in cdr-import builds DQE per-date for the requested range,
-   writing Raw Data per-date only when DQE actually needs
-   rebuilding. Telemetry row: `bulkBackfill:DQE`. The bulk path
+   writing Raw Data per date (the bulk path runs force-mode, so every
+   date in the range rebuilds). Telemetry row: `bulkBackfill:DQE`. The bulk path
    **defers the per-date DQE→Neon mirror** (`skipNeon`) so the
    sheet rebuild isn't slowed by Neon's JDBC latency — after a
    bulk run, run **`backfillDQEHistoryUpsert()`** (CDR Report

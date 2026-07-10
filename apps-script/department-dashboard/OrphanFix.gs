@@ -56,7 +56,7 @@
  * Public entries (all admin-only, all callable via
  * google.script.run):
  *   getOrphanFixInit() ->
- *     { orphans: [{ name, rows, lastSeen, sampleDepts }],
+ *     { orphans: [{ name, rows, lastSeen, sampleExts }],
  *       rosterNames: [...],   // sorted union across all depts
  *       aliases:     [...],   // current Agent Alias Overrides rows
  *       log:         [...],   // last 20 Orphan Fix Log rows
@@ -554,7 +554,10 @@ function appendRosterEntry_(department, name, exts) {
     }
   }
   const target = sheet.getRange(writeRow, col);
-  target.setValue(name + ', ' + exts.join(', '));
+  // CORE-7: neutralize a formula-leading name -- this cell lands on the
+  // roster every dashboard consumer parses (parseRosterCell_ reads the
+  // stored string back unchanged; the apostrophe is formatting only).
+  target.setValue(sheetSafeCell_(name + ', ' + exts.join(', ')));
   return target.getA1Notation();
 }
 
@@ -666,8 +669,13 @@ function upsertAgentAlias_(oldName, canonicalName, admin, notes) {
       }
     }
   }
+  // CORE-7: oldName comes from the CDR feed (an orphan spelling), notes
+  // are free text -- neutralize formula-leading values. The apostrophe is
+  // a Sheets text marker, not content, so loadRosterCanonicalNames_ reads
+  // the original string back and alias matching is unaffected.
   const rowValues = [
-    oldName, canonicalName, 'TRUE', admin, now, notes || '',
+    sheetSafeCell_(oldName), sheetSafeCell_(canonicalName), 'TRUE',
+    admin, now, sheetSafeCell_(notes || ''),
   ];
   if (existingRow > 0) {
     sheet.getRange(existingRow, 1, 1, rowValues.length).setValues([rowValues]);
@@ -720,14 +728,17 @@ function appendOrphanFixLog_(rec) {
   if (!sheet) {
     throw new Error('Orphan Fix Log sheet missing -- run setup(). Audit row not written.');
   }
+  // CORE-7: fromName originates in the external CDR feed and notes are
+  // admin free text -- neutralize formula-leading values so the audit log
+  // can never carry an executing cell (admin/action are code-controlled).
   sheet.appendRow([
     new Date(),
     rec.admin    || '',
     rec.action   || '',
-    rec.fromName || '',
-    rec.toName   || '',
+    sheetSafeCell_(rec.fromName || ''),
+    sheetSafeCell_(rec.toName   || ''),
     rec.affected == null ? '' : rec.affected,
-    rec.notes    || '',
+    sheetSafeCell_(rec.notes    || ''),
   ]);
 }
 

@@ -238,10 +238,12 @@ function getCallJourney(req) {
   const conn = getDashboardNeonConn_();
   if (!conn) return { available: false, found: false };
   try {
-    // Run the lookup with an optional dept predicate. The badge's call_id is
-    // ALREADY entitled upstream -- it only appears on abandoned rings in the
-    // caller's OWN dept-scoped Missed report (DQE abandoned parent ids) -- so
-    // the predicate is defense-in-depth, not the entitlement boundary.
+    // Run the lookup with an optional dept predicate. For MANAGERS the real
+    // entitlement boundary is the F-4 server gate below
+    // (callIdInDeptMissedReport_ on the exact-id fallback) -- the client-side
+    // "the badge only appears in your own Missed report" property is NOT a
+    // boundary (any call_id can be sent via RPC); this predicate is
+    // defense-in-depth on top of the gate.
     const lookup = function (pred) {
       const sql = "SELECT to_jsonb(c)::text AS j FROM inbound_calls c "
                 + "WHERE c.call_date = ?::date AND c.call_id = ?" + pred + " LIMIT 1";
@@ -472,7 +474,6 @@ function computeInboundReport_(scope) {
   } catch (e) {
     // Table missing / Neon error -> graceful empty (modal shows "unavailable").
     Logger.log('computeInboundReport_ failed (best-effort): ' + (e && e.message ? e.message : e));
-    if (typeof recordNeonReadFailure_ === 'function') recordNeonReadFailure_('computeInboundReport_', e);
     empty.meta.available = false;
     return empty;
   } finally {
@@ -552,6 +553,15 @@ function getInboundInsurerDaily(req) {
     },
     daily: [],
   };
+  // NEO-5: mirror computeInboundReport_/getInboundHeatmap's unmapped-dept
+  // short-circuit. Without it, an unmapped dept ran the query with an
+  // entry-queue arm that matches nothing while the answered-on-hold
+  // final_dept carve-out could still return rows -- a drill showing data
+  // for a dept whose main report says "no queues mapped".
+  if (!scope.companyView && scope.deptQueues.length === 0) {
+    out.meta.unmapped = true;
+    return out;
+  }
   let conn = null;
   try {
     conn = (typeof getDashboardNeonConn_ === 'function') ? getDashboardNeonConn_() : null;
@@ -581,7 +591,6 @@ function getInboundInsurerDaily(req) {
     return out;
   } catch (e) {
     Logger.log('getInboundInsurerDaily failed (best-effort): ' + (e && e.message ? e.message : e));
-    if (typeof recordNeonReadFailure_ === 'function') recordNeonReadFailure_('getInboundInsurerDaily', e);
     out.meta.available = false;
     return out;
   } finally {
@@ -633,7 +642,6 @@ function scanInboundQueueNames_(lookbackDays) {
     return Array.isArray(arr) ? arr : [];
   } catch (e) {
     Logger.log('scanInboundQueueNames_ failed (best-effort): ' + (e && e.message ? e.message : e));
-    if (typeof recordNeonReadFailure_ === 'function') recordNeonReadFailure_('scanInboundQueueNames_', e);
     return null;
   } finally {
     if (conn) { try { conn.close(); } catch (ce) {} }
@@ -690,7 +698,7 @@ function getInboundHeatmap(req) {
     const deptPred = inboundDeptPredicate_(scope.dept, scope.deptQueues);
     const dr = "c.call_date BETWEEN '" + scope.from + "'::date AND '" + scope.to + "'::date" + deptPred;
     // CST seconds-since-midnight for the shifted start time; bucket into
-    // half-hour slots indexed from the 8 AM CST window start.
+    // hourly slots (INBOUND_HEATMAP_SLOT_MINUTES=60) indexed from the 8 AM CST window start.
     const cstSecs = "(EXTRACT(EPOCH FROM ((c.call_start)::time + interval '"
       + INBOUND_HEATMAP_CST_SHIFT_HOURS + " hours')))";
     const winStartSecs = INBOUND_HEATMAP_WINDOW_START_HOUR * 3600;
@@ -728,7 +736,6 @@ function getInboundHeatmap(req) {
     return out;
   } catch (e) {
     Logger.log('getInboundHeatmap failed (best-effort): ' + (e && e.message ? e.message : e));
-    if (typeof recordNeonReadFailure_ === 'function') recordNeonReadFailure_('getInboundHeatmap', e);
     out.meta.available = false;
     return out;
   } finally {
@@ -854,7 +861,6 @@ function getInboundHeatmapCell(req) {
     return out;
   } catch (e) {
     Logger.log('getInboundHeatmapCell failed (best-effort): ' + (e && e.message ? e.message : e));
-    if (typeof recordNeonReadFailure_ === 'function') recordNeonReadFailure_('getInboundHeatmapCell', e);
     out.meta.available = false;
     return out;
   } finally {

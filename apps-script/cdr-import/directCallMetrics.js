@@ -478,6 +478,25 @@ const DIRECT_CALL_UPDATE_COLS = ['month_year',
  */
 function dcUpsertRows_(conn, rows) {
   if (!rows || !rows.length) return 0;
+  // IMP-6: the PK is (call_date, department, agent_name), and Postgres
+  // rejects a multi-row upsert whose VALUES repeat a key ("cannot affect
+  // row a second time"). The sheet-derived backfill (backfillDirectCallToNeon)
+  // can carry duplicated rows (known-issues: pre-F-3 re-import duplicates are
+  // NOT auto-removed) -- one such batch previously threw and re-threw at the
+  // same DIRECT_UPSERT_RESUME index forever. Last-write-wins dedupe (the
+  // later sheet row is the fresher rebuild).
+  const seen = {};
+  const order = [];
+  rows.forEach(function (r) {
+    const k = r.isoDate + '\u0001' + r.dept + '\u0001' + r.agent;
+    if (!(k in seen)) order.push(k);
+    seen[k] = r;
+  });
+  if (order.length !== rows.length) {
+    Logger.log('dcUpsertRows_: dropped %s duplicate-key row(s) (last-write-wins).',
+      rows.length - order.length);
+    rows = order.map(function (k) { return seen[k]; });
+  }
   const ph = '(' + new Array(18).fill('?').join(',') + ')';
   const sql = 'INSERT INTO direct_call_history (' + DIRECT_CALL_INSERT_COLS + ') VALUES ' +
     rows.map(function () { return ph; }).join(',') +
@@ -509,6 +528,17 @@ function writeDirectCallRowsToNeon_(rows, monthYear, isoDate) {
   conn.setAutoCommit(false);
   try {
     dcEnsureNeonTable_(conn);
+    // IMP-5: this daily writer's rows are the COMPLETE per-agent set for
+    // isoDate (the sheet side is refresh-in-window for the same date), so
+    // replace the date authoritatively -- an agent who drops out of a
+    // force-rebuilt day no longer lingers as a phantom Neon row. Same
+    // transaction: a failed insert rolls the delete back too. The
+    // multi-date backfill (dcUpsertRows_ direct, partial 50-row batches)
+    // deliberately does NOT get this.
+    const del = conn.prepareStatement('DELETE FROM direct_call_history WHERE call_date = ?::date');
+    del.setString(1, isoDate);
+    del.execute();
+    del.close();
     const upsertRows = rows.map(function (r) {
       return Object.assign({ monthYear: monthYear, isoDate: isoDate }, r);
     });

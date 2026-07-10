@@ -580,3 +580,29 @@ test('F-33: email export rejects a reversed custom prior range like the on-scree
   }, /priorFrom must be on or before priorTo/);
   assert.equal(h.state.sentEmails.length, 0, 'nothing sent on the rejected request');
 });
+
+test('RPT-3: a queueHealth error payload is NOT cached (next request retries)', function () {
+  install([
+    dqeRow({ date: '2026-03-10', agent: 'Anna', ext: '501', rung: 10, missed: 1, answered: 8, att: '0:03:00' }),
+  ]);
+  const req = { department: 'Alpha', from: '2026-03-09', to: '2026-03-15', agents: ['Anna'] };
+
+  // Force the F8 error shape (a transient QCD read/compute failure).
+  const realQh = h.ctx.insightsQueueHealth_;
+  h.ctx.insightsQueueHealth_ = function () { return { error: true }; };
+  try {
+    const first = h.call('getInsightsReport', req);
+    assert.equal(first.queueHealth.error, true);
+    assert.equal(first.meta.cacheHit, false);
+    const second = h.call('getInsightsReport', req);
+    assert.equal(second.meta.cacheHit, false,
+      'errored queueHealth must not be pinned for the 30-min TTL');
+  } finally { h.ctx.insightsQueueHealth_ = realQh; }
+
+  // Healthy compute (unmapped dept here -> {unmapped:true}, not an error)
+  // caches normally: second call is a hit.
+  const ok1 = h.call('getInsightsReport', req);
+  assert.equal(ok1.meta.cacheHit, false);
+  const ok2 = h.call('getInsightsReport', req);
+  assert.equal(ok2.meta.cacheHit, true, 'healthy payloads still cache');
+});

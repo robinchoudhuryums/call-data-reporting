@@ -107,7 +107,9 @@ function remirrorExistingDqeDate_(dqeSheet, offsets, callDateStr) {
     });
   }
   if (!neonRows.length) return;
-  const res = writeDQERowsToNeon(neonRows);
+  // IMP-5: the re-mirror carries the COMPLETE sheet set for this date --
+  // authoritative replace clears phantom Neon rows the sheet no longer has.
+  const res = writeDQERowsToNeon(neonRows, { authoritative: true });
   if (res && res.skipped) {
     Logger.log('DQE: dup-guard re-mirror skipped (' + res.skipped
       + ' rows — Neon unreachable) for ' + callDateStr + '.');
@@ -283,7 +285,20 @@ function buildDQEHistoricalData(rawSheet, dqeSheet, opts) {
       } catch (pipelineLogErr) {
         Logger.log('buildDQE: pipeline-health log failed (non-fatal): %s', pipelineLogErr);
       }
-      return;
+      // IMP-7: THROW rather than silently return. On the force re-import
+      // path the caller has ALREADY DELETED the expected date's DQE rows,
+      // so a silent refusal leaves that date's data GONE while the daily
+      // block logs `processIntegratedHistory:DQE` success rows:0 and no
+      // email fires (notifyDqeBuildFailure_ requires a throw). Throwing
+      // routes the refusal into each caller's existing failure plumbing:
+      // daily -> `:DQE` failure row + notifyDqeBuildFailure_ email;
+      // bulk -> `bulkBackfill:DQE` failure row, loop continues (no
+      // per-date email, by design). The standalone cdr-report trigger
+      // omits expectedDate and never reaches this branch.
+      throw new Error('DQE build refused: expected ' + expLabel + ' but Raw Data resolves to '
+        + callDateStr + ' -- no rows written. If this was a force re-import, the expected '
+        + 'date\'s DQE rows were already cleared: fix Raw Data (stray carry-over leg?) and '
+        + 'force re-import that date to rebuild it.');
     }
   }
 
@@ -818,7 +833,11 @@ function buildDQEHistoricalData(rawSheet, dqeSheet, opts) {
         csrAvgAbdWait:    r[33]
       };
     });
-    var neonResult = writeDQERowsToNeon(neonRows);
+    // IMP-5: the build's rows are the COMPLETE set for callDate --
+    // authoritative replace, so a force re-import whose rebuilt set is a
+    // SUBSET (e.g. an agent consolidated under an alias) removes the
+    // stale rows from dqe_history instead of leaving a phantom split.
+    var neonResult = writeDQERowsToNeon(neonRows, { authoritative: true });
     if (neonResult && neonResult.skipped) {
       Logger.log('DQE: Neon write skipped (%s rows — Neon unreachable).', neonResult.skipped);
       // F4: a mirror-only skip (Neon unreachable, sheet write OK) does NOT

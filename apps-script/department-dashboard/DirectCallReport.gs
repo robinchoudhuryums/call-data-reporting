@@ -70,10 +70,17 @@ function directCallResolveRequest_(req) {
   }
 
   let dept = String((req && req.department) || '').trim();
-  if (dept === 'ALL') dept = '';   // admin company view
+  // NEO-6: manager branch FIRST, mirroring inboundResolveRequest_ exactly
+  // (the two resolvers promise mirror-image semantics). The old ordering
+  // cleared 'ALL' before the manager check, so a manager sending
+  // department:'ALL' was silently pinned to their own dept here while the
+  // same request THREW on the Inbound resolver -- divergent behavior the
+  // day the vetting gates are removed.
   if (user.role === 'manager') {
     if (dept && dept !== user.department) throw new Error('Not authorized for this department.');
     dept = user.department;
+  } else if (dept === 'ALL') {
+    dept = '';   // admin company view
   } else if (dept && getAllDepartments_().indexOf(dept) === -1) {
     throw new Error('Unknown department: ' + dept);
   }

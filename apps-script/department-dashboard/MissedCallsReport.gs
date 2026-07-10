@@ -17,7 +17,7 @@
  *     chart:  { labels: [..18], counts: [..18] }
  *   }
  *
- * Cached 5 min per (dept, from, to, scope) tuple. Best-effort -- large
+ * Cached 30 min (REPORT_CACHE_TTL_SECONDS) per (dept, from, to, scope) tuple. Best-effort -- large
  * ranges may exceed CacheService's per-value 100KB limit; if put fails
  * we log and continue.
  *
@@ -74,10 +74,11 @@ function getMissedCallsReport(req) {
   const scope = 'roster';
 
   const cache = CacheService.getScriptCache();
-  // v10: per-entry parentId attached to each abandoned timestamp;
-  // queue-only entries gain alsoIn[] for cross-queue overflow; new
-  // queueOnlyUniqueCount/EventCount in meta.
-  const cacheKey = 'missed:v13:' + dept + ':' + scope + ':' + from + ':' + to;
+  // v14 (RPT-1/RPT-2): AD/AF processed BEFORE the zero-slot early-continue
+  // (slot-less abandoned parents count + lost-detail flag fires), and the
+  // AF<->AD pairing is a per-time-key FIFO so duplicate seconds keep
+  // distinct parent ids. See INV-30 for the full version history.
+  const cacheKey = 'missed:v14:' + dept + ':' + scope + ':' + from + ':' + to;
   const cached = cache.get(cacheKey);
   if (cached) {
     try {
@@ -288,18 +289,19 @@ function computeMissedCallsReport_(dept, from, to, scope) {
       });
     }
 
-    if (slotTimes.length === 0) continue;
-
     // Build the set of abandoned-missed timestamps (col AF). Normalize
     // the same way as slot times so AM/PM differences or 24-vs-12 hour
     // formatting in either column don't break the cross-reference.
     //
-    // Also build a positional pairing of AF timestamps -> AD parent
-    // IDs. The two columns are populated in lockstep by the source
-    // pipeline: AF[i] is the timestamp of the i-th abandoned event in
-    // this row, AD[i] is its parent call ID. Pairing them gives us a
-    // {timeKey -> parentId} map so each red 🚨 timestamp can carry
-    // its own parent ID through to the client.
+    // RPT-1: this AD/AF block runs BEFORE the zero-slot early-continue
+    // below. F-2 legitimately emits rows whose AD is populated while
+    // K-AC is empty (abandoned parents with no pairable missed leg are
+    // appended to AD with no AE/AF partner; missed rings entirely
+    // outside the 6:00-15:30 slot band produce no slot timestamps).
+    // The old ordering silently dropped those parents from the dept-wide
+    // unique-abandoned counts AND skipped the lost-detail flagging for
+    // corrupted AD/AF cells on slot-less rows.
+    //
     // Read-side guard (classifyAbandonedCell_): never split a coerced/lost
     // AD/AF cell into fake IDs/times. Recover lossless single-value coercions;
     // flag the date when the abandoned data was genuinely lost (then treat the
@@ -308,14 +310,12 @@ function computeMissedCallsReport_(dept, from, to, scope) {
     const adClass = classifyAbandonedCell_(rd[HISTORICAL_ABANDONED_PARENT_IDS - 1]);
     if (afClass.lost || adClass.lost) abandonedDetailLostDates[dateIso] = true;
     const abandonedStr = afClass.lost ? '' : afClass.value;
-    const abandonedKeys = {};
-    const abandonedTimeToParent = {};  // timeKey -> parentId
+    // Keep positions even for unparseable entries ('' key) so AF[i]
+    // stays aligned with AD[i] for the positional pairing below.
     let abandonedTimeList = [];
     if (abandonedStr) {
       abandonedStr.split(',').forEach(function (t) {
-        const k = normTimeKey_(t.trim());
-        if (k) abandonedKeys[k] = true;
-        abandonedTimeList.push(k);
+        abandonedTimeList.push(normTimeKey_(t.trim()));
       });
     }
     const abandonedIdsCell = adClass.lost ? '' : adClass.value;
@@ -323,21 +323,34 @@ function computeMissedCallsReport_(dept, from, to, scope) {
       ? abandonedIdsCell.split(',').map(function (s) { return s.trim(); })
                         .filter(function (s) { return !!s; })
       : [];
-    // Pair positionally. Mismatched lengths shouldn't happen given the
-    // source-pipeline invariant, but pair only up to the shorter list
-    // so a malformed row doesn't throw -- it just shows missing IDs.
+    // RPT-2 pairing: the source pipeline (F-2) emits AF[i] <-> AD[i] in
+    // positional lockstep, chronologically sorted. Keying the pairing with a
+    // single {timeKey -> parentId} map collapsed DUPLICATE timestamps -- two
+    // missed legs in the same second both rendered the LAST parent's id,
+    // re-introducing the wrong-journey drill F-2 fixed on the write side.
+    // Instead keep a FIFO of parent ids per normalized time key; the slot
+    // list and AF are both chronological, so consuming in order preserves
+    // the positional pairing. Pair only up to the shorter list so a
+    // malformed row doesn't throw -- it just shows missing IDs.
+    const abandonedTimeToParents = {};  // timeKey -> [parentId, ...] (FIFO)
     const pairLen = Math.min(abandonedTimeList.length, abandonedIdList.length);
     for (let p = 0; p < pairLen; p++) {
-      if (abandonedTimeList[p]) abandonedTimeToParent[abandonedTimeList[p]] = abandonedIdList[p];
+      const tk = abandonedTimeList[p];
+      if (!tk) continue;
+      if (!abandonedTimeToParents[tk]) abandonedTimeToParents[tk] = [];
+      abandonedTimeToParents[tk].push(abandonedIdList[p]);
     }
 
     // Col AD ("Abandoned Parent Call IDs") feeds dept-wide unique-
     // abandoned-call counts. Sentinel rows additionally feed
     // uniqueNoRingParents for the "No-ring abandons: K" breakdown.
+    // Counted even when the row has no slot timestamps (RPT-1).
     abandonedIdList.forEach(function (id) {
       uniqueAbandonedParents[id] = true;
       if (isSentinel) uniqueNoRingParents[id] = true;
     });
+
+    if (slotTimes.length === 0) continue;
 
     // Pick the accumulator + push function based on row type.
     let target;
@@ -354,7 +367,10 @@ function computeMissedCallsReport_(dept, from, to, scope) {
     }
 
     slotTimes.forEach(function (item) {
-      const isAbandoned = !!abandonedKeys[item.key];
+      // RPT-2: one AF entry marks (at most) ONE ring at that second as
+      // abandoned, carrying its OWN positionally-paired parent id.
+      const pendingIds = abandonedTimeToParents[item.key];
+      const isAbandoned = !!(pendingIds && pendingIds.length);
 
       // Compute bucket index once; -1 means "outside the 8 AM-5 PM
       // chart range". The client uses this on chart-bar clicks to
@@ -382,8 +398,9 @@ function computeMissedCallsReport_(dept, from, to, scope) {
         label: formatHmsToAmPm_(item.key),
         abandoned: isAbandoned,
         // Parent call ID for abandoned entries -- null otherwise.
-        // Sourced from AF<->AD positional pairing within this row.
-        parentId: isAbandoned ? (abandonedTimeToParent[item.key] || null) : null,
+        // Sourced from AF<->AD positional pairing within this row
+        // (FIFO per time key -- duplicate seconds keep distinct ids).
+        parentId: isAbandoned ? (pendingIds.shift() || null) : null,
         // Numeric sort key (seconds past midnight) so chronological
         // sort works across 9 vs 10 hours.
         sortKey: hmsKeyToSeconds_(item.key),

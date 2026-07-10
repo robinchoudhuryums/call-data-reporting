@@ -57,7 +57,7 @@ const ALERT_DEFAULT_HOUR        = 8;    // 8 AM trigger hour
 const DRIFT_LOOKBACK_ENTRIES   = 30;
 const DRIFT_MIN_TOTAL_TO_ASSESS = 10;   // <10 entries = "—"; not enough signal
 const DRIFT_CHRONIC_FIRE_RATIO = 0.80;  // fired/total >= 80% -> chronic
-const DRIFT_LENIENT_HEADROOM_PTS = 10;  // mean rate > threshold + 10pts AND fired=0 -> lenient
+const DRIFT_LENIENT_HEADROOM_PTS = 10;  // mean rate >= threshold + 10pts AND fired=0 -> lenient
 const DRIFT_LOG_SCAN_CAP       = 2000;  // max Alert Log rows we'll read to bucket the lookback
 
 function getAlertsInit() {
@@ -563,7 +563,6 @@ function neonAlertConfigRawValues_() {
               r.notes || '', r.skip_dates || ''];
     });
   } catch (e) {
-    if (typeof recordNeonReadFailure_ === 'function') recordNeonReadFailure_('readAlertConfig_', e);
     return null;
   } finally {
     try { conn.close(); } catch (ce) {}
