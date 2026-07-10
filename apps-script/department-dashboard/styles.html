@@ -4007,23 +4007,19 @@
     body.cr-printing .ds-kpi,
     body.cr-printing .cr-agent-card { page-break-inside: avoid; }
 
+    /* Insights is a PAGE (modal->page conversion): printing runs from the
+       page's Export menu, so body[data-page="insights"] already shows the
+       section (the display:block !important is belt-and-suspenders) and the
+       other .page sections are display:none. Un-constrain the page body for
+       paper -- there is no modal panel to unwrap anymore. */
     body.ins-printing > .container { display: none !important; }
-    body.ins-printing .modal-backdrop { display: none !important; }
-    body.ins-printing #insights-modal {
-      position: static !important;
-      background: transparent !important;
-    }
-    body.ins-printing #insights-modal .modal-panel {
-      box-shadow: none !important;
-      border-radius: 0 !important;
+    body.ins-printing #insights-page { display: block !important; }
+    body.ins-printing .ins-page-body {
       max-width: 100% !important;
-      width: 100% !important;
-      max-height: none !important;
       padding: 0 !important;
-      overflow: visible !important;
     }
     body.ins-printing #insights-form,
-    body.ins-printing #insights-modal .modal-close,
+    body.ins-printing .ins-page-body > .modal-open-tab-btn,
     body.ins-printing #insights-results .ir-action-buttons,
     body.ins-printing #ins-trend-subtabs,
     body.ins-printing #ins-cards-toolbar,

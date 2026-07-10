@@ -99,14 +99,25 @@ apply after `setPage('insights')`. Digest.gs itself needs no change.
   Back-to-Insights button doesn't refresh the tab highlight (only
   `.modal-close`/`[data-close]` clicks do) — same class as the
   documented Escape-close gap.
-- [ ] **Phase 5 — launcher**: `launcherOpenInsights_` calls
-  `setPage('insights')` instead of clicking the button; auto-run flag,
-  loading pane, and the CL1-2 failure fallback unchanged.
-- [ ] **Phase 6 — CSS finish**: retarget the `body.ins-printing` print
-  block from `#insights-modal` / `.modal-panel` to `#insights-page` /
-  `.ins-page-body`; a charts-`resize()` pass on page re-entry
-  (Chart.js zero-size-while-hidden gotcha, belt-and-suspenders);
-  responsive/polish sweep of the page at 1440px.
+- [x] **Phase 5 — launcher**: `launcherOpenInsights_` calls
+  `setPage('insights')` instead of clicking the button (guarded on
+  `$('insights-page')`); auto-run flag, loading pane, and the CL1-2
+  failure fallback unchanged. On a re-entry launch, `insEnsurePage_`'s
+  roster call with the OLD dates fires first and the launcher's
+  re-ensure with the new range supersedes it — the CL1-3
+  `insRosterReqSeq_` token makes that race safe (same double-fetch the
+  modal era had).
+- [x] **Phase 6 — CSS finish**: the `body.ins-printing` print block
+  retargeted from `#insights-modal` / `.modal-panel` to
+  `#insights-page` / `.ins-page-body` (un-constrain width, hide the
+  form / open-tab button / toolbars; quiet-details + page-break rules
+  unchanged; the dead `.modal-backdrop` line dropped) — repo-wide
+  `insights-modal` references are now ZERO; `insResizeCharts_()` (the
+  `deptMissedResize_` double-rAF pattern) re-measures the trend /
+  share / cards chart instances on every page entry, guarding the
+  measure-while-hidden gotcha after a window resize on another page.
+  Visual polish at 1440px is deliberately left to the Phase 8 manual
+  smoke (fluid grids are expected to just stretch).
 - [ ] **Phase 7 — copy/docs sweep**: tour "Deeper reports" step,
   `#help-topic-insights`, Reports-menu `title=`; CLAUDE.md (multi-page
   architecture bullet, INV-37 pages list, Insights-consolidation

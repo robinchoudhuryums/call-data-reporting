@@ -2962,17 +2962,17 @@
   }
 
   // "How is my team doing lately?" -> Insights, last 30 days, all active
-  // agents, auto-generated. The button click runs the modal's normal
-  // open (defaults + prefs + roster fetch); we then override the dates
-  // and re-ensure the roster for the new range -- insRenderAgentList
-  // consumes insLauncherAutoRun_ once the picker is rendered, so the
-  // select-all + generate happen at a race-free synchronization point.
-  // The form never flashes: a loading pane covers the roster fetch +
-  // generate; failures fall back to the primed form (insShowForm).
+  // agents, auto-generated. setPage('insights') runs the page's normal
+  // entry (first-entry defaults + prefs + roster fetch via insEnsurePage_);
+  // we then override the dates and re-ensure the roster for the new range --
+  // insRenderAgentList consumes insLauncherAutoRun_ once the picker is
+  // rendered, so the select-all + generate happen at a race-free
+  // synchronization point. The form never flashes: a loading pane covers
+  // the roster fetch + generate; failures fall back to the primed form
+  // (insShowForm).
   function launcherOpenInsights_(question) {
-    const btn = $('insights-report-btn');
-    if (!btn) return;
-    btn.click();
+    if (!$('insights-page')) return;
+    setPage('insights');
     if ($('ins-from')) $('ins-from').value = launcherIsoDaysAgo_(30);
     if ($('ins-to'))   $('ins-to').value   = launcherIsoDaysAgo_(1);
     const p = $('ins-preset');
@@ -9086,6 +9086,21 @@
       insRestorePrefs_();
     }
     insEnsureRoster();
+    insResizeCharts_();
+  }
+  // Re-measure charts rendered on a previous visit: the page section is
+  // display:none while the user is elsewhere, and a window resize in
+  // between leaves Chart.js instances mis-sized (the documented
+  // measure-while-hidden gotcha; the deptMissedResize_ pattern). Double-rAF
+  // waits for the page-swap layout to settle; no-ops on first entry (all
+  // instances null) and when Chart.js failed to load.
+  function insResizeCharts_() {
+    if (typeof requestAnimationFrame !== 'function') return;
+    requestAnimationFrame(function () { requestAnimationFrame(function () {
+      [insChartInstance, insShareChartInstance, insCardsChartInstance].forEach(function (c) {
+        try { if (c) c.resize(); } catch (e) { /* destroyed mid-swap */ }
+      });
+    }); });
   }
 
   function initInsightsReport() {
