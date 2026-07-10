@@ -17,7 +17,7 @@
  *     chart:  { labels: [..18], counts: [..18] }
  *   }
  *
- * Cached 5 min per (dept, from, to, scope) tuple. Best-effort -- large
+ * Cached 30 min (REPORT_CACHE_TTL_SECONDS) per (dept, from, to, scope) tuple. Best-effort -- large
  * ranges may exceed CacheService's per-value 100KB limit; if put fails
  * we log and continue.
  *

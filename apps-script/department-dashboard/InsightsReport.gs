@@ -74,6 +74,7 @@
 //     queueHealth now always-separates sub-queues (seq #5) -- the
 //     `queueHealthOwnOnly` request flag + the cache `qhown/qhroll`
 //     dimension are retired, and queueHealth.perQueue rows carry `subDept`.
+// v9..v18: see CLAUDE.md INV-30 -- the canonical version history.
 // v8: queueHealth.perQueue rows gain `topAbandonSource` (4c) -- the
 //     non-Overall call source driving the most abandons in that queue
 //     (from the bySource breakdown 4a added to computeQcdReport_), so

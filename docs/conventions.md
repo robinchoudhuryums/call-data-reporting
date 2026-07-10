@@ -396,8 +396,10 @@ From/To default (which must snap to DQE specifically).
   - `Longest Wait`: **MAX** across all days in range (worst
     observed). Avg per-day would dilute the operationally useful
     "this was the worst" signal.
-  - `Avg Answer`: simple mean across days with non-zero values
-    (matches legacy `buildTable4` semantics).
+  - `Avg Answer`: answered-volume-WEIGHTED mean
+    (`sum(avgAnswer × answered) / sum(answered)`; RPT-8 — diverges from
+    the legacy `buildTable4` day-mean, flagged for owner ratification;
+    code is spec meanwhile).
 - **Per-queue breakdown table**: one row per queue in
   `DEPT_QCD_QUEUES[dept]` (preserves config order), plus a bolded
   "Department total" tfoot row. Each row carries its own

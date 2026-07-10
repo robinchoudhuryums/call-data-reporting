@@ -155,9 +155,9 @@ function computeTrendStartDate_(startDate, endDate) {
  * Compare Ranges / Insights length-mismatch flag (INV-35) so two windows
  * with the same number of workdays but a different number of calendar days
  * (e.g. 10 calendar days spanning 2 weekends vs 8 spanning 1) are NOT
- * falsely flagged as mismatched. Weekends only for now -- holidays are a
- * follow-on (no global holiday source exists yet; the per-dept Alert Config
- * `Skip Dates` is the candidate seed). UTC-noon iteration is DST-safe
+ * falsely flagged as mismatched. Weekends AND company holidays (S5: the
+ * COMPANY_HOLIDAYS Script Property, same tolerant grammar as the Alert
+ * Config Skip Dates cell) are skipped. UTC-noon iteration is DST-safe
  * (mirrors computePriorWindow_). ISO strings 'YYYY-MM-DD'; returns 0 on
  * empty input or an all-weekend window.
  */

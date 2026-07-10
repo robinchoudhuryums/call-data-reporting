@@ -56,7 +56,7 @@
  * Public entries (all admin-only, all callable via
  * google.script.run):
  *   getOrphanFixInit() ->
- *     { orphans: [{ name, rows, lastSeen, sampleDepts }],
+ *     { orphans: [{ name, rows, lastSeen, sampleExts }],
  *       rosterNames: [...],   // sorted union across all depts
  *       aliases:     [...],   // current Agent Alias Overrides rows
  *       log:         [...],   // last 20 Orphan Fix Log rows

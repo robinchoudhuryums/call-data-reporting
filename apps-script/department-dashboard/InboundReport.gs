@@ -238,10 +238,12 @@ function getCallJourney(req) {
   const conn = getDashboardNeonConn_();
   if (!conn) return { available: false, found: false };
   try {
-    // Run the lookup with an optional dept predicate. The badge's call_id is
-    // ALREADY entitled upstream -- it only appears on abandoned rings in the
-    // caller's OWN dept-scoped Missed report (DQE abandoned parent ids) -- so
-    // the predicate is defense-in-depth, not the entitlement boundary.
+    // Run the lookup with an optional dept predicate. For MANAGERS the real
+    // entitlement boundary is the F-4 server gate below
+    // (callIdInDeptMissedReport_ on the exact-id fallback) -- the client-side
+    // "the badge only appears in your own Missed report" property is NOT a
+    // boundary (any call_id can be sent via RPC); this predicate is
+    // defense-in-depth on top of the gate.
     const lookup = function (pred) {
       const sql = "SELECT to_jsonb(c)::text AS j FROM inbound_calls c "
                 + "WHERE c.call_date = ?::date AND c.call_id = ?" + pred + " LIMIT 1";
@@ -690,7 +692,7 @@ function getInboundHeatmap(req) {
     const deptPred = inboundDeptPredicate_(scope.dept, scope.deptQueues);
     const dr = "c.call_date BETWEEN '" + scope.from + "'::date AND '" + scope.to + "'::date" + deptPred;
     // CST seconds-since-midnight for the shifted start time; bucket into
-    // half-hour slots indexed from the 8 AM CST window start.
+    // hourly slots (INBOUND_HEATMAP_SLOT_MINUTES=60) indexed from the 8 AM CST window start.
     const cstSecs = "(EXTRACT(EPOCH FROM ((c.call_start)::time + interval '"
       + INBOUND_HEATMAP_CST_SHIFT_HOURS + " hours')))";
     const winStartSecs = INBOUND_HEATMAP_WINDOW_START_HOUR * 3600;

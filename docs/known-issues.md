@@ -419,7 +419,8 @@ Unlike the legacy `checkLowAnswerRate.js` which hardcoded a 13-dept
 threshold map + recipient map, the new engine reads two sheets:
 
 - `Alert Config` — Department | Threshold % | Extra Recipients |
-  Active | Notes. One row per dept that should receive alerts.
+  Active | Notes | Skip Dates (col F, added in E8 — honored by the
+  daily trigger only). One row per dept that should receive alerts.
 - `Alert Log` — append-only history of every preview / send /
   skip with timestamp, threshold, observed answer rate,
   recipients, and a status enum.
@@ -597,7 +598,12 @@ There are **two different spellings for the same queue** in this install:
 
 So `inbound_calls.entry_queue = 'A_Q_CSR'` but `queuesForDept_('CSR')` =
 `['A_Q_CustomerSuccess', 'A_Q_Intake', 'Backup CSR']` -- the CSR main queue
-does **not** match across the two spaces (Intake / Backup CSR happen to).
+does **not** match across the two spaces (Intake happens to). NOTE on
+`Backup CSR`: the capture-side `icIsQueueName_` only learned to emit it as a
+queue in the IMP-1 fix — rows captured BEFORE that fix carry
+`abandon_stage='ivr'` / `entry_queue=NULL` for Backup-CSR-only calls and
+only heal via `backfillInboundCalls` while their `Call_Legs_*` sheets
+survive (~14 days); post-fix captures match `queuesForDept_('CSR')` directly.
 
 **Symptom that surfaced it:** the "↳ path" call-journey drill on abandoned
 rings in the Missed Calls / My Department views returned "No inbound-call path
@@ -606,12 +612,14 @@ the lookup with `callJourneyDeptPredicate_` (`entry_queue`/`final_queue` IN
 `queuesForDept_(dept)`), which never matched `A_Q_CSR`.
 
 **Fix (journey drill):** `getCallJourney` now falls back to an exact
-`(call_date, call_id)` match when the dept-scoped query finds nothing. Safe
-because the call_id is **already dept-entitled upstream** -- the badge only
-appears on abandoned rings in the caller's OWN dept-scoped Missed report (DQE
-abandoned parent ids), and the journey carries no caller identity (no
-hash/number; phone-like callee names are masked at capture). Logs when the
-fallback hits.
+`(call_date, call_id)` match when the dept-scoped query finds nothing.
+For MANAGERS the fallback is server-gated since F-4: `callIdInDeptMissedReport_`
+requires the id to appear as an abandoned parent id in the manager's OWN
+dept's Missed report for that date (fail-closed on any error; admins
+ungated). The old "the call_id is already dept-entitled upstream" claim was
+client-trust reasoning and is NOT the entitlement boundary -- the F-4 gate is.
+The journey carries no caller identity (no hash/number; phone-like callee
+names are masked at capture). Logs when the fallback hits.
 
 **Fix (per-dept Inbound report + journey) — Dept Config alias column.** A new
 `Inbound Queue Aliases` column on the `Dept Config` sheet (INV-54, appended at
@@ -681,8 +689,11 @@ is now read via the Insights report (Queue health section).
 The other sources (CSR / Ad-campaign / New Call Menu / Non-CSR
 (internal)) are sub-counts that would double-count if added
 alongside the Total Calls roll-up. Longest Wait is the **MAX**
-across days in range; Avg Answer is the **mean across days with
-non-zero values** (matches legacy `buildTable4` semantics).
+across days in range; Avg Answer is an **answered-volume-WEIGHTED mean**
+(`sum(avgAnswer × answered) / sum(answered)` over in-range rows). NOTE
+(RPT-8): this diverges from the legacy `buildTable4` day-mean the docs
+previously claimed parity with — flagged for owner ratification; the
+code is treated as spec meanwhile (the F-29 precedent).
 
 **UI surfaces** all visible to everyone (no admin gate beyond the
 existing per-dept dropdown):

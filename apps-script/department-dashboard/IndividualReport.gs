@@ -39,7 +39,7 @@
  *   - Team % Answered, TTT, ATT: weighted across the whole team's
  *     calls in range (NOT per-agent mean of percentages).
  *
- * Caching: 5 min per (dept, from, to, sortedAgents) tuple. Best-
+ * Caching: 30 min (REPORT_CACHE_TTL_SECONDS) per (dept, from, to, sortedAgents) tuple. Best-
  * effort -- large ranges with many agents may exceed CacheService's
  * per-value 100KB limit; on cache-put failure we log + continue.
  */

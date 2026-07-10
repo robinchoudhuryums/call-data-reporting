@@ -256,9 +256,11 @@ scripts/deploy.sh apps-script/cdr-import <cdr-import-deployment-id>
 
 **Optional (QCD Report):**
 
-- The **QCD Report** modal (click the **QCD** tab in the header nav) reads from
-  `QCD Historical Data`, written daily by the import pipeline.
-  Visible to all managers + admins; per-dept gated.
+- (The standalone QCD Report modal is RETIRED — QCD→Insights consolidation.)
+  Queue data now lives in the **Insights** report's Queue health section
+  (per-dept gated) and the company-wide **Daily Call Queue Report** on the
+  Overview page; both read `QCD Historical Data`, written daily by the
+  import pipeline. The dept ↔ queue mapping below still applies to all of it.
 - **The dept ↔ queue mapping is admin-editable without a redeploy.**
   Each dashboard dept maps to one or more raw queue names
   (e.g. `A_Q_CustomerSuccess`, `A_Q_Sales`) — the values in
@@ -439,9 +441,9 @@ the deployed web-app URL to land on that view:
   escalation calls, admins log new ones; Neon-backed)
 - `#/report/missed` — Missed Calls report
 - `#/report/individual` — Individual Report
-- `#/report/performance` — Performance Report
-- `#/report/compare` — Compare Ranges
-- `#/report/qcd` — QCD Report
+- `#/report/performance` — legacy (Performance Report retired — lands on Insights)
+- `#/report/compare` — legacy (Compare Ranges retired — lands on Insights)
+- `#/report/qcd` — legacy (QCD modal retired — lands on Insights Queue health)
 - `#/report/insights` — Insights (period comparison: team rollup + per-agent delta cards)
 - `#/report/inbound` — Inbound Report (per-dept gated; Neon-backed)
 - `#/admin/alerts` — Low Answer Rate Alerts (admin-only)
@@ -459,8 +461,7 @@ you can OS-tile two windows side-by-side for comparison. Requires
 the `DASHBOARD_URL` Script Property to be set (see Alerts setup
 above); the button silently hides when unset.
 
-For the four agent-comparison reports (Individual / Performance /
-Compare Ranges / Insights), the `↗` button also serializes the
+For the two agent reports (Individual / Insights), the `↗` button also serializes the
 modal's **current form state** — dates, compare mode, custom prior
 window, and agent selection — into the link as `#/route?from=...&
 agents=a|b`, so the new tab (or a pasted link) restores the exact
@@ -518,8 +519,8 @@ keep it fresh, in order of preference:
    re-mirrors the existing rows so `dqe_history` self-heals.
 2. **Bulk historical backfill path** — `bulkHistoricalUpdate`
    in cdr-import builds DQE per-date for the requested range,
-   writing Raw Data per-date only when DQE actually needs
-   rebuilding. Telemetry row: `bulkBackfill:DQE`. The bulk path
+   writing Raw Data per date (the bulk path runs force-mode, so every
+   date in the range rebuilds). Telemetry row: `bulkBackfill:DQE`. The bulk path
    **defers the per-date DQE→Neon mirror** (`skipNeon`) so the
    sheet rebuild isn't slowed by Neon's JDBC latency — after a
    bulk run, run **`backfillDQEHistoryUpsert()`** (CDR Report
