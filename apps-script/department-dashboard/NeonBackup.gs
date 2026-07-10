@@ -4,11 +4,11 @@
  *
  * Most historical tables have a sheet primary, so a Neon loss is
  * recoverable by re-mirroring. THREE do not: `escalations`,
- *   (NB: once CONFIG_SOURCE=neon is flipped, alert_config / digest_config /
- *   dept_config also become Neon-authoritative and are NOT yet in this
- *   backup -- OPS-5, scope extension pending.)
  * `escalation_activity`, and `inbound_calls` (incl. the per-call journey
- * JSON). If the Neon account/project is lost, that data is simply gone —
+ * JSON). (OPS-5: when CONFIG_SOURCE=neon, the run ALSO snapshots the
+ * then-Neon-authoritative dept_config / alert_config / digest_config as
+ * <table>-latest.jsonl; while config is sheet-backed the sheet is the
+ * backup and they're skipped.) If the Neon account/project is lost, that data is simply gone —
  * and escalations now takes writes from the external team-tools app
  * (INV-55 Phase 2). This trigger exports them to a Drive folder weekly:
  *
@@ -116,20 +116,61 @@ function runNeonBackup_() {
         for (var i = 0; i < months.length; i++) {
           var ym = months[i];
           var name = spec.table + '-' + ym + '.jsonl';
-          if (ym < currentYm && folder.getFilesByName(name).hasNext()) { skipped++; continue; }
-          var body = nbFetchAgg_(conn,
-            "SELECT COALESCE(string_agg(row_to_json(t)::text, E'\\n'), '') AS j "
-            + 'FROM (SELECT * FROM ' + spec.table
-            + ' WHERE ' + spec.dateCol + ' >= ?::' + spec.cast
-            + ' AND ' + spec.dateCol + ' < ?::' + spec.cast
-            + ' ORDER BY ' + spec.orderBy + ') t',
-            [ym + '-01', nbNextMonth_(ym) + '-01']);
-          nbWriteFile_(folder, name, body);
+          // OPS-4: a month already written as split parts also counts as
+          // closed (the single-name check alone would refetch it forever).
+          if (ym < currentYm && (folder.getFilesByName(name).hasNext()
+              || folder.getFilesByName(spec.table + '-' + ym + '.part1.jsonl').hasNext())) {
+            skipped++; continue;
+          }
+          // OPS-4: fetch the month in ~week-sized windows so no single JDBC
+          // getString has to carry a whole month of journey-bearing rows
+          // (0.2-6KB each -- monotonic growth was heading for the JDBC/V8
+          // string and Drive setContent ceilings). Under the file budget
+          // the chunks are joined back into the ONE month file (restore
+          // format unchanged); an oversize month is written as
+          // <table>-<ym>.partN.jsonl files instead.
+          var chunks = nbFetchMonthChunks_(conn, spec, ym);
+          var total = 0;
+          for (var c = 0; c < chunks.length; c++) total += chunks[c].length;
+          if (total <= NB_FILE_BUDGET_CHARS) {
+            nbWriteFile_(folder, name, chunks.filter(function (s) { return s; }).join('\n'));
+          } else {
+            var part = 0;
+            for (var c2 = 0; c2 < chunks.length; c2++) {
+              if (!chunks[c2]) continue;
+              part++;
+              nbWriteFile_(folder, spec.table + '-' + ym + '.part' + part + '.jsonl', chunks[c2]);
+            }
+            // Remove a stale single-file version so a restore never mixes
+            // an old whole-month file with the new parts.
+            var oldIt = folder.getFilesByName(name);
+            while (oldIt.hasNext()) oldIt.next().setTrashed(true);
+          }
           written++;
         }
         outcomes.push(spec.table + ' ok (' + written + ' month file(s) written, ' + skipped + ' closed skipped)');
       } catch (e2) {
         outcomes.push(spec.table + ' FAILED: ' + (e2 && e2.message ? e2.message : e2));
+      }
+    }
+
+    // 4. OPS-5: once CONFIG_SOURCE=neon, the config tables are
+    // Neon-authoritative (the sheet stops receiving edits) -- back them up
+    // too. Tiny tables: one overwritten <table>-latest.jsonl snapshot per
+    // run. Skipped entirely while config is sheet-backed (the sheet IS the
+    // backup then).
+    if (typeof getConfigSource_ === 'function' && getConfigSource_() === 'neon') {
+      var cfgTables = ['dept_config', 'alert_config', 'digest_config'];
+      for (var ct = 0; ct < cfgTables.length; ct++) {
+        try {
+          var cfgBody = nbFetchAgg_(conn,
+            "SELECT COALESCE(string_agg(row_to_json(t)::text, E'\\n'), '') AS j "
+            + 'FROM (SELECT * FROM ' + cfgTables[ct] + ') t', []);
+          nbWriteFile_(folder, cfgTables[ct] + '-latest.jsonl', cfgBody);
+          outcomes.push(cfgTables[ct] + ' ok');
+        } catch (e3) {
+          outcomes.push(cfgTables[ct] + ' FAILED: ' + (e3 && e3.message ? e3.message : e3));
+        }
       }
     }
 
@@ -146,6 +187,32 @@ function runNeonBackup_() {
 }
 
 // ── Internals ─────────────────────────────────────────────────────────
+
+// OPS-4: per-file size budget. Drive setContent has historically
+// failed/truncated around ~10MB; stay comfortably under. Months whose
+// combined rows exceed this are written as .partN.jsonl files.
+var NB_FILE_BUDGET_CHARS = 8 * 1024 * 1024;
+
+/** OPS-4: fetch one month's rows in ~week-sized date windows (4 windows:
+ *  1st-8th, 9th-16th, 17th-24th, 25th-1st-of-next). Bounds every JDBC
+ *  string to a fraction of the month; each window keeps the same
+ *  one-string_agg-round-trip discipline. Returns one string per window
+ *  ('' for empty windows). */
+function nbFetchMonthChunks_(conn, spec, ym) {
+  var next = nbNextMonth_(ym) + '-01';
+  var bounds = [ym + '-01', ym + '-09', ym + '-17', ym + '-25', next];
+  var chunks = [];
+  for (var w = 0; w < bounds.length - 1; w++) {
+    chunks.push(nbFetchAgg_(conn,
+      "SELECT COALESCE(string_agg(row_to_json(t)::text, E'\\n'), '') AS j "
+      + 'FROM (SELECT * FROM ' + spec.table
+      + ' WHERE ' + spec.dateCol + ' >= ?::' + spec.cast
+      + ' AND ' + spec.dateCol + ' < ?::' + spec.cast
+      + ' ORDER BY ' + spec.orderBy + ') t',
+      [bounds[w], bounds[w + 1]]));
+  }
+  return chunks;
+}
 
 /** One-string aggregate fetch (never per-row JDBC iteration). */
 function nbFetchAgg_(conn, sql, params) {

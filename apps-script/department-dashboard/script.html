@@ -7464,10 +7464,18 @@
         tbody.innerHTML = config.map(function (c, idx) {
           const activeCls = c.active ? 'al-active-yes' : 'al-active-no';
           const activeLbl = c.active ? 'Yes' : 'No';
+          // OPS-6: an unrecognized cadence renders a warn chip (the row
+          // never sends) instead of the row silently vanishing from
+          // this table like it used to.
+          const cadenceCell = c.invalidCadence
+            ? '<span class="al-active al-active-no" title="Unrecognized cadence ('
+                + escapeHtml(c.cadenceRaw || 'blank') + ') -- this subscription NEVER sends. '
+                + 'Use daily, weekly, or monthly.">⚠ invalid</span>'
+            : escapeHtml(c.cadence);
           return '<tr>'
                +   '<td>' + escapeHtml(c.email)      + '</td>'
                +   '<td>' + escapeHtml(c.department) + '</td>'
-               +   '<td>' + escapeHtml(c.cadence)    + '</td>'
+               +   '<td>' + cadenceCell              + '</td>'
                +   '<td>' + escapeHtml(c.format || 'summary') + '</td>'
                +   '<td><span class="al-active ' + activeCls + '">' + activeLbl + '</span></td>'
                +   '<td>' + escapeHtml(c.notes || '') + '</td>'
@@ -7759,8 +7767,14 @@
             + escapeHtml(c.thresholdRaw || 'blank') + ') -- this dept is NOT monitored. '
             + 'Set a positive number.">⚠ invalid</span></td>'
         : '<td class="num">' + Number(c.threshold).toFixed(0) + '%</td>';
+      // OPS-9: a duplicate dept row is inert (first row wins server-side) --
+      // chip it so the admin removes it instead of editing the wrong row.
+      const dupChip = c.duplicateRow
+        ? ' <span class="al-active al-active-no" title="Duplicate row for this department -- '
+            + 'the FIRST row wins; this one is ignored. Remove it.">⚠ duplicate</span>'
+        : '';
       return '<tr>'
-           +   '<td>' + escapeHtml(c.department) + '</td>'
+           +   '<td>' + escapeHtml(c.department) + dupChip + '</td>'
            +   threshCell
            +   '<td>' + alDriftCellHtml_(c, driftMap[c.department]) + '</td>'
            +   '<td>' + escapeHtml((c.extraRecipients || []).join(', ') || '(none)') + '</td>'

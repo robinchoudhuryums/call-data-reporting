@@ -312,10 +312,11 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
   if (neonCapable) {
     srcRows = neonFetchDqeRows_(fetchFrom, fetchTo);
     if (srcRows && srcRows.length) {
-      // F-35: tolerate a missing/empty sheet for the ext derivation.
-      const extValues = (sheet && lastRow >= 2)
-        ? sheet.getRange(2, 1, lastRow - 1, HISTORICAL_COLS.QUEUE_EXT).getValues() : [];
-      deptQueueExts = getDeptQueueExts_(dept, rosterSet, extValues).exts;
+      // RPT-4: the Neon path derives the dept ext set via the shared Neon
+      // helper (its own sheet fallback covers F-35), like IR and Missed --
+      // this was the last reader still doing a full-sheet cols A..D read
+      // while flagged onto Neon.
+      deptQueueExts = deptQueueExtsForNeonReader_(dept, rosterSet, sheet, lastRow).exts;
       effectiveSource = 'neon';
     } else {
       srcRows = null;

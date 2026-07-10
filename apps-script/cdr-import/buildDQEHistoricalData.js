@@ -508,7 +508,10 @@ function buildDQEHistoricalData(rawSheet, dqeSheet, opts) {
       l.startPST !== null && l.startPST >= DQE_WINDOW_START && l.startPST < DQE_WINDOW_END
     );
 
-    const uniqueParentCalls = new Set(windowLegs.map(l => l.parentCallId).filter(Boolean));
+    // REP-4: exclude a literal 'N/A' parent id -- truthy, so it would
+    // collapse all such legs into one phantom unique parent (Pass 1's own
+    // parentMap applies the same exclusion).
+    const uniqueParentCalls = new Set(windowLegs.map(l => l.parentCallId).filter(id => id && id !== 'N/A'));
 
     const totalRung     = windowLegs.length;
     const totalMissed   = windowLegs.filter(l => l.missed).length;
@@ -562,7 +565,7 @@ function buildDQEHistoricalData(rawSheet, dqeSheet, opts) {
       return hits.length ? hits.map(l => pstToCSTStr(l.startPST)).join(',') : '';
     });
 
-    const agentParentIds    = new Set(legs.map(l => l.parentCallId).filter(Boolean));
+    const agentParentIds    = new Set(legs.map(l => l.parentCallId).filter(id => id && id !== 'N/A'));   // REP-4
     const agentAbandonedIds = Array.from(agentParentIds).filter(id => abandonedParentIds.has(id));
     // AD/AE/AF are consumed POSITIONALLY by the dashboard's Missed Calls
     // report: AF[i] is the i-th abandoned missed-ring time and AD[i] is

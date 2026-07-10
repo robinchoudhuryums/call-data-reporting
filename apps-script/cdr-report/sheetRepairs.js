@@ -118,6 +118,18 @@ function repairDqeSlotTimestamps_(dryRun) {
       }
     }
     pending.push({ range: range, vals: vals, priorFormats: priorFormats });
+    // REP-9: on APPLY, finish THIS column group end-to-end right away
+    // ('@' + write-back + flush) instead of committing the numeric lens
+    // across ALL groups first and writing later -- a crash/timeout in that
+    // gap left every still-coerced K-AC/AF cell DISPLAYING as a bare
+    // serial ("0.43302...") to all getDisplayValues consumers until the
+    // repair was re-run to completion. The exposure window is now a single
+    // group's read->write, and each completed group is durably repaired.
+    if (!dryRun) {
+      range.setNumberFormat('@');
+      range.setValues(vals);
+      SpreadsheetApp.flush();
+    }
   }
 
   if (dryRun) {
@@ -130,13 +142,8 @@ function repairDqeSlotTimestamps_(dryRun) {
     return { fixed: fixed, applied: false, samples: samples };
   }
 
-  // Lock K-AC + AF to plain text, then write the recovered strings so they STAY
-  // text (and the pipeline's matching setNumberFormat('@') keeps it that way).
-  for (var q = 0; q < pending.length; q++) {
-    pending[q].range.setNumberFormat('@');
-    pending[q].range.setValues(pending[q].vals);
-  }
-  SpreadsheetApp.flush();
+  // K-AC + AF were locked to plain text and written back PER GROUP inside
+  // the loop above (REP-9) -- nothing left to write here.
   Logger.log('repairDqeSlotTimestamps: recovered %s coerced slot/AF cell(s). Samples: %s',
     fixed, JSON.stringify(samples));
   return { fixed: fixed, applied: true, samples: samples };

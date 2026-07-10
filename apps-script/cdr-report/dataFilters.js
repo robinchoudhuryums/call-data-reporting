@@ -409,7 +409,12 @@ function getExtractionDataJSON() {
   const headers    = rawDisplay.shift(); // removes and returns the header row
 
   // --- Config sets ---
-  const csrRange   = ss.getRangeByName("csr_team").getValues();
+  // REP-5: getRangeByName returns null for a missing named range -- guard
+  // like the csr_exceptions block below so a renamed/deleted range surfaces
+  // as a clear message instead of an opaque TypeError in the sidebar.
+  const csrTeamRange = ss.getRangeByName("csr_team");
+  if (!csrTeamRange) throw new Error('Named range "csr_team" is missing -- restore it (Data > Named ranges).');
+  const csrRange   = csrTeamRange.getValues();
   const csrTeamSet = new Set();
   csrRange.forEach(row => {
     if (row[0]) csrTeamSet.add(String(row[0]).split(",")[0].trim().toLowerCase());

@@ -35,6 +35,15 @@ if [ ! -f "$DIR/.clasp.json" ]; then
   exit 1
 fi
 
+# TST-7: gate the LIVE push on the same checks CI runs (node --test + the
+# INV-16 guard). The guard is only a non-blocking SessionStart hook locally,
+# so without this a same-session drift could be pushed live even though the
+# PR's CI would later go red. DEPLOY_SKIP_CI=1 skips (emergencies only).
+if [ "${DEPLOY_SKIP_CI:-}" != "1" ]; then
+  echo "==> npm run ci   (tests + INV-16 guard; DEPLOY_SKIP_CI=1 to skip)"
+  npm run ci
+fi
+
 cd "$DIR"
 echo "==> clasp push -f   ($DIR)"
 clasp push -f

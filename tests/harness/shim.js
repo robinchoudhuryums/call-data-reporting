@@ -120,9 +120,12 @@ function createShim() {
         return builder;
       },
       getProjectTriggers: function () { return []; },
+      // TST-1: ONE WeekDay literal -- a duplicate key here once silently
+      // clobbered SATURDAY/SUNDAY (legal duplicate-key semantics), so a
+      // trigger-schedule test would have passed `undefined` into the
+      // builder and still gone green.
       WeekDay: { MONDAY: 'MONDAY', SATURDAY: 'SATURDAY', SUNDAY: 'SUNDAY' },
       deleteTrigger: function () {},
-      WeekDay: { MONDAY: 'MONDAY' },
     },
 
     Utilities: Utilities,

@@ -111,7 +111,7 @@ function backfillDQEHistory() {
   if (lastRow < 2) { Logger.log('DQE: Sheet is empty.'); return; }
 
   // Read all 36 columns as display values for consistent string handling
-  var data = sheet.getRange(2, 1, lastRow - 1, 36).getDisplayValues();
+  var data = sheet.getRange(2, 1, lastRow - 1, 34).getDisplayValues();   // REP-10: DQE schema is 34 cols (A-AH, INV-10); 36 threw on sheets trimmed to exactly the data width
 
   var props      = PropertiesService.getScriptProperties();
   var startIndex = parseInt(props.getProperty('DQE_BACKFILL_RESUME') || '0');
@@ -280,7 +280,7 @@ function backfillDQEHistoryUpsert() {
   var lastRow = sheet.getLastRow();
   if (lastRow < 2) { Logger.log('DQE upsert: Sheet is empty.'); return; }
 
-  var data = sheet.getRange(2, 1, lastRow - 1, 36).getDisplayValues();
+  var data = sheet.getRange(2, 1, lastRow - 1, 34).getDisplayValues();   // REP-10: DQE schema is 34 cols (A-AH, INV-10); 36 threw on sheets trimmed to exactly the data width
 
   var props      = PropertiesService.getScriptProperties();
   var startIndex = parseInt(props.getProperty('DQE_UPSERT_RESUME') || '0');
@@ -964,7 +964,7 @@ function diagnoseDQELongValues() {
   var lastRow = sheet.getLastRow();
   if (lastRow < 2) { Logger.log('DQE: Sheet is empty.'); return; }
 
-  var data = sheet.getRange(2, 1, lastRow - 1, 36).getDisplayValues();
+  var data = sheet.getRange(2, 1, lastRow - 1, 34).getDisplayValues();   // REP-10: DQE schema is 34 cols (A-AH, INV-10); 36 threw on sheets trimmed to exactly the data width
 
   // field label -> { idx, limit } for the size-constrained dqe_history columns.
   var COLS = [

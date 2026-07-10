@@ -200,6 +200,7 @@ function getQcdAllDepartments(req) {
     try {
       const parsed = JSON.parse(cached);
       parsed.meta.cacheHit = true;
+      logReportUsage_('qcdAllDept', 'ALL', _user, true);   // RPT-10
       return parsed;
     } catch (e) { /* recompute */ }
   }
@@ -330,6 +331,10 @@ function getQcdAllDepartments(req) {
     try { cache.put(cacheKey, json, QCD_ALLDEPT_CACHE_TTL_SECONDS); }
     catch (e) { Logger.log('QCD all-dept cache put failed: %s', e); }
   }
+  // RPT-10: the INV-01 telemetry carve-out, like IR/Insights/Missed --
+  // this report's usage was invisible to the consolidation evidence base.
+  // 'ALL' because the report has no dept dimension.
+  logReportUsage_('qcdAllDept', 'ALL', _user, false);
   return data;
 }
 

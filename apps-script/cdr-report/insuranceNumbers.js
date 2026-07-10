@@ -72,6 +72,14 @@ function readInsuranceNumberRows_() {
       if (!raw) continue;
       var digits = raw.replace(/\D/g, '');      // strip +, spaces, dashes, parens
       if (digits.length < 10) continue;         // too short to be a real number
+      // REP-7: a 10-digit entry is missing the US country code -- the
+      // call-side hashes are built from "+1XXXXXXXXXX", so "+XXXXXXXXXX"
+      // could never match and the insurer stayed "(unlabeled)" with no
+      // signal. Normalize instead of silently accepting.
+      if (digits.length === 10) {
+        Logger.log('readInsuranceNumberRows_: normalized 10-digit "%s" (%s) to +1%s', raw, name, digits);
+        digits = '1' + digits;
+      }
       out.push({ insurance: name, number: '+' + digits });
     }
   }

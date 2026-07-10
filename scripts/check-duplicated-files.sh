@@ -40,14 +40,23 @@ check_pair() {
   fi
 }
 
-# Extract one top-level function body (from its `function name(` line to the
-# first column-0 `}`) so a function-level duplicate can be diffed.
+# Extract one top-level function body so a function-level duplicate can be
+# diffed. TST-6: tracks BRACE DEPTH instead of stopping at the first
+# column-0 `}` -- a column-0 `}` inside the body (template literal, pasted
+# block) used to truncate both extractions there, hiding any drift below it.
+# (Brace counting is naive about braces inside strings/comments, which for
+# these flat sanitizer functions is fine -- and strictly better than before.)
 extract_fn() {
   local file="$1" name="$2"
   awk -v fn="$name" '
     index($0, "function " fn "(") == 1 { f = 1 }
-    f { print }
-    f && /^}/ { exit }
+    f {
+      print
+      n = gsub(/{/, "{"); m = gsub(/}/, "}")
+      depth += n - m
+      if (started && depth <= 0) exit
+      if (n > 0) started = 1
+    }
   ' "$file"
 }
 

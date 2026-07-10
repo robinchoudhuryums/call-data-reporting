@@ -170,6 +170,17 @@ function sendDigestsForCadence_(cadence) {
   // quietly -- the other run is doing the work -- since a missed run is
   // recoverable but a duplicate manager blast is not. Same project-wide script
   // lock as the alert send path / OrphanFix / DeptConfig.
+  //
+  // OPS-2: the lock is held only long enough to CLAIM the run -- a
+  // per-(cadence, window) marker in Script Properties -- and is RELEASED
+  // before the sends. An insights-format subscriber costs a full uncached
+  // computeInsights_ per email, so the old hold-across-sends kept the
+  // shared project lock busy for minutes and could bump the 8 AM alerts
+  // run (both triggers land randomly inside the same hour) off its 15s
+  // tryLock, dropping that day's alerts. Duplicate-run protection now
+  // rides the marker: a second same-window run sees it and skips. A run
+  // that dies mid-sends leaves the marker set (no auto-retry) -- same
+  // loss as the old timeout-mid-sends, and the failure email still fires.
   var digestLock = LockService.getScriptLock();
   if (!digestLock.tryLock(15000)) {
     Logger.log('sendDigestsForCadence_(%s): another run holds the script lock — skipping.', cadence);
@@ -185,11 +196,24 @@ function sendDigestsForCadence_(cadence) {
     } catch (e) { /* best-effort */ }
     return;
   }
+  var cfg, window;
   try {
+    cfg = readDigestConfig_();
+    window = digestWindowFor_(cadence, new Date());
+    if (!window) return;
+    var props = PropertiesService.getScriptProperties();
+    var markerKey = 'DIGEST_RUN_MARKER_' + cadence;
+    if (props.getProperty(markerKey) === window.toIso) {
+      Logger.log('sendDigestsForCadence_(%s): window ending %s already sent — skipping duplicate run.',
+                 cadence, window.toIso);
+      return;
+    }
+    props.setProperty(markerKey, window.toIso);
+  } finally {
+    digestLock.releaseLock();
+  }
 
-  const cfg = readDigestConfig_();
-  const window = digestWindowFor_(cadence, new Date());
-  if (!window) return;
+  // Sends run UNLOCKED from here (the marker above owns dedup).
   const failures = [];
   cfg.forEach(function (entry) {
     if (!entry.active) return;
@@ -220,10 +244,6 @@ function sendDigestsForCadence_(cadence) {
   if (failures.length) {
     try { notifyDigestRecipientFailures_(cadence, failures); }
     catch (notifyErr) { Logger.log('notifyDigestRecipientFailures_ failed: %s', notifyErr); }
-  }
-
-  } finally {
-    digestLock.releaseLock();   // F4 (runs even on the early `return` above)
   }
 }
 
@@ -825,8 +845,14 @@ function parseDigestConfigValues_(values) {
     const email   = String(values[i][0] || '').trim();
     const dept    = String(values[i][1] || '').trim();
     if (!email || !dept) continue;
-    const cadence = normalizeCadence_(String(values[i][2] || ''));
-    if (!cadence) continue;
+    const cadenceRaw = String(values[i][2] || '').trim();
+    const cadence = normalizeCadence_(cadenceRaw);
+    // OPS-6 (the Alert Config F4 pattern): an unrecognized/blank cadence is
+    // FLAGGED, not dropped -- a dropped row was invisible in the admin
+    // modal too, so a typo'd hand-edit ("biweekly", "Daily!") silently
+    // killed the subscription with no signal anywhere. cadence '' never
+    // matches a trigger cadence, so flagged rows still never send; the
+    // modal renders a "⚠ invalid" chip instead.
     const rawActive = values[i][3];
     const active = !(rawActive === false || rawActive === 'FALSE' || rawActive === 'false'
                   || rawActive === 0 || rawActive === 'no' || rawActive === 'No');
@@ -834,6 +860,8 @@ function parseDigestConfigValues_(values) {
       email:      email,
       department: dept,
       cadence:    cadence,
+      cadenceRaw: cadenceRaw,
+      invalidCadence: !cadence,
       active:     active,
       notes:      String(values[i][4] || '').trim(),
       format:     normalizeFormat_(String(values[i][5] || '')),
