@@ -1231,9 +1231,19 @@ function calculateMetricsInMemory(rawDisplayData, configSheet) {
 
   const lastConfigRow = configSheet.getLastRow();
   const queueMap      = configSheet.getRange(2, 1, lastConfigRow - 1, 2).getValues();
+  // IMP-2: col B may be a COMMA-JOINED list of extensions (e.g. "103,108"
+  // -- the combined CSR queues grouped under one row; dcBuildExtMaps_ /
+  // buildQueueNameToExts_ already split it). Keep ONE entry per config row
+  // (the Q-Path output at the bottom emits one row per entry) but carry the
+  // split tokens so the path regex below can match each ext individually --
+  // the old single `ext` string built a regex like /103,108(?!\d)/ that
+  // never matched anything.
   const deptQueues    = queueMap
     .filter(r => r[0] && r[1])
-    .map(r => ({ dept: String(r[0]).trim(), ext: String(r[1]).trim() }));
+    .map(r => ({
+      dept: String(r[0]).trim(),
+      exts: String(r[1]).trim().split(',').map(t => t.trim()).filter(Boolean),
+    }));
 
   // F-19: the dept block was hard-capped at 14 columns (cols F..S) --
   // exactly the install's CURRENT width, so a 15th department's agents
@@ -1287,9 +1297,16 @@ function calculateMetricsInMemory(rawDisplayData, configSheet) {
   queueMap.forEach(r => {
     if (r[0]) exclusions.add(String(r[0]).trim());
     if (r[1]) {
-      const ext = String(r[1]).trim();
-      exclusions.add(ext);
-      queueExtensionSet.add(ext);
+      const raw = String(r[1]).trim();
+      // IMP-2: split comma-joined cells so queueExtensionSet.has("103") /
+      // exclusions.has("108") match individual extensions (the
+      // dcBuildExtMaps_ pattern); keeping the raw cell too is harmless.
+      exclusions.add(raw);
+      queueExtensionSet.add(raw);
+      raw.split(',').forEach(tok => {
+        const ext = tok.trim();
+        if (ext) { exclusions.add(ext); queueExtensionSet.add(ext); }
+      });
     }
   });
 
@@ -1347,7 +1364,9 @@ function calculateMetricsInMemory(rawDisplayData, configSheet) {
     if (pathVal) {
       const claimedDepts = new Set();
       deptQueues.forEach(dq => {
-        if (new RegExp(dq.ext + "(?!\\d)").test(pathVal)) {
+        // IMP-2: match ANY of the row's extensions (alternation), counting
+        // the path at most once per row even when two of its exts appear.
+        if (dq.exts.some(ext => new RegExp(ext + "(?!\\d)").test(pathVal))) {
           deptPaths[dq.dept][pathVal] = (deptPaths[dq.dept][pathVal] || 0) + 1;
           claimedDepts.add(dq.dept);
         }

@@ -5301,6 +5301,14 @@
         document.body.style.overflow = '';
         btn.focus();
       }
+      // Revert the header-tab highlight to the underlying page's route.
+      // initRouter's generic revert hook only covers .modal-close /
+      // [data-close] clicks, which missed the "Back to Insights" button and
+      // Escape closes -- the Individual tab stayed lit over the Insights
+      // page. Async (like the router hook) and idempotent with it.
+      if (typeof setRoute_ === 'function') {
+        setTimeout(function () { setRoute_(basePageRoute_()); }, 0);
+      }
     }
     function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
 

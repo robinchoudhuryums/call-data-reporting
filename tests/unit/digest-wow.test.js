@@ -118,3 +118,22 @@ test('digestWowNarrative_ escapes the agent name (no HTML injection)', function 
   assert.match(html, /answer-rate drop/);
   assert.match(html, /#FFFBEB/);   // amber background
 });
+
+test('RPT-7: a GAIN driven by a missed-call DROP narrates via missed, not "answered +0/+1"', function () {
+  install([
+    // prior week: Anna 5/13 with 8 missed
+    row('2026-03-04', 'Anna', { rung: 13, missed: 8, answered: 5 }),
+    // current week: Anna 6/6, 0 missed -> big rate gain, answered only +1
+    row('2026-03-11', 'Anna', { rung: 6, missed: 0, answered: 6 }),
+  ]);
+  const wow = h.call('computeDigestWowDriver_', 'Alpha', '2026-03-14');
+  assert.ok(wow && wow.driver, 'expected a driver');
+  assert.equal(wow.driver.positive, true);
+  // |missedDelta| = 8 dominates |answeredDelta| = 1 AND is a drop ->
+  // the narrative surfaces the missed improvement ("8 fewer"), not the
+  // near-zero answered delta.
+  assert.equal(wow.driver.metric, 'missed');
+  assert.equal(wow.driver.delta, -8);
+  assert.equal(wow.driver.cur, 0);
+  assert.equal(wow.driver.prev, 8);
+});

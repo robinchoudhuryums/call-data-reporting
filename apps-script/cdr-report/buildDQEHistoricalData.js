@@ -410,7 +410,13 @@ function buildDQEHistoricalData(rawSheet, dqeSheet, opts) {
   for (let i = 0; i < data.length; i++) {
     const row         = data[i];
     const callerIdRaw = String(row[DQE_C.CALLER_ID]).trim();
-    const qnMatch     = callerIdRaw.match(/(A_Q_\w+|Backup CSR)/);
+    // IMP-8: `[\w&]+` keeps `&`-bearing names whole (A_Q_Eligibility_MM&R
+    // no longer truncates to ..._MM), and the leading (?:^|[^\w&]) boundary
+    // stops a longer token like UDC_A_Q_Main substring-matching as a
+    // phantom A_Q_Main (such tokens now simply don't match -- sentinel
+    // consumers require names STARTING with A_Q_, so capturing the full
+    // prefixed token would break INV-23 sentinel detection downstream).
+    const qnMatch     = callerIdRaw.match(/(?:^|[^\w&])(A_Q_[\w&]+|Backup CSR)/);
     if (!qnMatch) continue;
     const queueName = qnMatch[1];
 
@@ -468,6 +474,23 @@ function buildDQEHistoricalData(rawSheet, dqeSheet, opts) {
       csrAbanIds.add(leg.parentCallId);
     }
   }
+  // REP-3 (owner ruling): ALSO include NO-RING abandons that hit a CSR
+  // queue. Callers who hung up before any agent rang have no queueLegs
+  // entry, so the rung-leg scan above missed them -- while the dept-wide
+  // avgAbanWaitSec DOES include them. Since no-ring abandons are
+  // statistically the longest waits, the CSR Avg Abd Wait read LOW.
+  // Attribution mirrors the Pass-4 queue-sentinel producer: a parent leg
+  // whose calleeName carries a CSR queue identifier. Rows built before
+  // this change keep the old (rung-only) semantics until rebuilt.
+  abandonedParentIds.forEach(function (parentId) {
+    if (csrAbanIds.has(parentId)) return;
+    const parent = parentMap[parentId];
+    if (!parent || !parent.legs) return;
+    for (const l of parent.legs) {
+      const m = String(l.calleeName || '').match(/(?:^|[^\w&])(A_Q_[\w&]+|Backup CSR)/);
+      if (m && DQE_CSR_QUEUES.indexOf(m[1]) !== -1) { csrAbanIds.add(parentId); break; }
+    }
+  });
   const csrAbanWaits = Array.from(csrAbanIds)
     .map(id => parentMap[id] ? parentMap[id].waitSec : 0)
     .filter(w => w > 0);
@@ -675,10 +698,11 @@ function buildDQEHistoricalData(rawSheet, dqeSheet, opts) {
     // "Backup CSR"). The regex is intentionally NOT anchored so we
     // match even when the calleeName has surrounding text (display
     // names, domain suffixes, etc.) -- same shape as Pass 2's
-    // queue-name detection on caller_id.
+    // queue-name detection on caller_id (incl. the IMP-8 `&` +
+    // token-boundary handling; see the Pass-2 comment).
     const queueNamesHit = {};   // queueName -> the parent leg that hit it
     parent.legs.forEach(function (l) {
-      const m = String(l.calleeName || '').match(/(A_Q_\w+|Backup CSR)/);
+      const m = String(l.calleeName || '').match(/(?:^|[^\w&])(A_Q_[\w&]+|Backup CSR)/);
       if (!m) return;
       const name = m[1];
       // Keep the FIRST leg that hit this queue (lowest legId, since
