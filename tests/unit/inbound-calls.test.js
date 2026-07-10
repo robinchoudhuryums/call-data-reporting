@@ -238,3 +238,28 @@ test('size-aware SQL chunking: batches respect the char budget; oversize tuple s
 
   assert.equal(chunk([], 100).length, 0, 'no tuples -> no batches');
 });
+
+test('IMP-1: "Backup CSR" is recognized as a queue (abandon stage, entry queue, journey kind)', function () {
+  // Backup CSR is a first-class live queue (the DQE pipeline's queue regex
+  // is (A_Q_\w+|Backup CSR)). Pre-fix, a call whose only queue leg was
+  // Backup CSR was captured as abandon_stage='ivr' with entry_queue=NULL --
+  // it fell into the unattributable IVR bucket and disappeared from CSR's
+  // per-dept Inbound report/heatmap, permanently (Call_Legs prune ~14d).
+  const recs = build([
+    leg({ callId: '900001', legId: 1, start: '06/04/2026 09:10:00', stop: '06/04/2026 09:10:15', direction: 'Incoming', caller: '12145551111', callee: '999', calleeName: 'Introduction - New', dialIn: '19722281820' }),
+    leg({ callId: '900001', legId: 2, start: '06/04/2026 09:10:15', stop: '06/04/2026 09:11:45', direction: 'Incoming', caller: '12145551111', callee: '110', calleeName: 'Backup CSR', dialIn: '19722281820', missed: 'Missed', abandoned: 'Abandoned' }),
+  ]);
+  assert.equal(recs.length, 1);
+  const r = rec(recs, '900001');
+  assert.equal(r.disposition, 'abandoned');
+  assert.equal(r.abandonStage, 'queue', 'Backup CSR abandon is a QUEUE abandon, not IVR');
+  assert.equal(r.entryQueue, 'Backup CSR');
+  assert.equal(r.finalQueue, 'Backup CSR');
+  const queueEvents = r.journey.filter(function (ev) { return ev.kind === 'queue'; });
+  assert.equal(queueEvents.length, 1, 'the Backup CSR leg renders as a queue journey event');
+  assert.equal(queueEvents[0].name, 'Backup CSR');
+  // Case-insensitive like the A_Q_ arm; and non-queue names still are not queues.
+  assert.equal(h.call('icIsQueueName_', 'BACKUP CSR'), true);
+  assert.equal(h.call('icIsQueueName_', 'Backup CSR Team'), false, 'prefix-only lookalikes are NOT queues');
+  assert.equal(h.call('icIsQueueName_', 'Jane Backup CSR'), false);
+});

@@ -283,7 +283,20 @@ function buildDQEHistoricalData(rawSheet, dqeSheet, opts) {
       } catch (pipelineLogErr) {
         Logger.log('buildDQE: pipeline-health log failed (non-fatal): %s', pipelineLogErr);
       }
-      return;
+      // IMP-7: THROW rather than silently return. On the force re-import
+      // path the caller has ALREADY DELETED the expected date's DQE rows,
+      // so a silent refusal leaves that date's data GONE while the daily
+      // block logs `processIntegratedHistory:DQE` success rows:0 and no
+      // email fires (notifyDqeBuildFailure_ requires a throw). Throwing
+      // routes the refusal into each caller's existing failure plumbing:
+      // daily -> `:DQE` failure row + notifyDqeBuildFailure_ email;
+      // bulk -> `bulkBackfill:DQE` failure row, loop continues (no
+      // per-date email, by design). The standalone cdr-report trigger
+      // omits expectedDate and never reaches this branch.
+      throw new Error('DQE build refused: expected ' + expLabel + ' but Raw Data resolves to '
+        + callDateStr + ' -- no rows written. If this was a force re-import, the expected '
+        + 'date\'s DQE rows were already cleared: fix Raw Data (stray carry-over leg?) and '
+        + 'force re-import that date to rebuild it.');
     }
   }
 

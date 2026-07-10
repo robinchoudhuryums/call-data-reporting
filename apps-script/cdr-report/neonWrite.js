@@ -94,9 +94,41 @@ function normalizeDuration(val) {
   return h + ':' + String(mn).padStart(2, '0') + ':' + String(sec).padStart(2, '0');
 }
 
+// IMP-6: Postgres rejects a multi-row INSERT ... ON CONFLICT DO UPDATE whose
+// VALUES carry two rows with the same conflict key ("ON CONFLICT DO UPDATE
+// command cannot affect row a second time"). Fresh daily builds emit unique
+// keys, but SHEET-DERIVED callers -- the deferred Neon mirror
+// (NeonMirror.js), re-mirrors of hand-pasted/duplicated history -- can pass
+// duplicate rows, and ONE poison-pill date then throws on every retry
+// (wedging the mirror queue with a failure email per 15-min run). Dedupe
+// LAST-write-wins: the later row overwrites the earlier, matching both
+// upsert intuition and the sheet's append order (a re-appended correction
+// sits below the stale copy). Returns the input array untouched when no
+// duplicates exist.
+function neonDedupeByKey_(rows, label, keyFn) {
+  var byKey = {};
+  var order = [];
+  for (var i = 0; i < rows.length; i++) {
+    var k = keyFn(rows[i]);
+    if (!(k in byKey)) order.push(k);
+    byKey[k] = rows[i];
+  }
+  if (order.length === rows.length) return rows;
+  Logger.log('%s: dropped %s duplicate-conflict-key row(s) (last-write-wins) '
+    + 'so the multi-row upsert cannot throw "cannot affect row a second time".',
+    label, rows.length - order.length);
+  return order.map(function (k) { return byKey[k]; });
+}
+
 // -- DQE writer --------------------------------------------------------------
 function writeDQERowsToNeon(rows) {
   if (!rows || !rows.length) return { inserted: 0, skipped: 0 };
+  // IMP-6: uq_dqe_history is (call_date, agent_name). Key on the SAME
+  // normalized date the bind below sends so duplicates collide as the DB
+  // would see them.
+  rows = neonDedupeByKey_(rows, 'writeDQERowsToNeon', function (r) {
+    return parseDateForNeon(r.callDate) + '\u0001' + r.agentName;
+  });
   var conn = getReachableNeonConn_();
   if (!conn) {
     Logger.log('writeDQERowsToNeon: Neon unreachable — skipping %s rows.', rows.length);
@@ -196,6 +228,10 @@ function writeDQERowsToNeon(rows) {
 // -- QCD writer --------------------------------------------------------------
 function writeQCDRowsToNeon(rows) {
   if (!rows || !rows.length) return { inserted: 0 };
+  // IMP-6: uq_qcd_history is (call_date, call_queue, call_source).
+  rows = neonDedupeByKey_(rows, 'writeQCDRowsToNeon', function (r) {
+    return parseDateForNeon(r.callDate) + '\u0001' + r.callQueue + '\u0001' + r.callSource;
+  });
   var conn = getReachableNeonConn_();
   if (!conn) {
     Logger.log('writeQCDRowsToNeon: Neon unreachable — skipping %s rows.', rows.length);
@@ -272,6 +308,11 @@ function writeQCDRowsToNeon(rows) {
 
 function writeCDRRowsToNeon(rows, opts) {
   if (!rows || !rows.length) return { inserted: 0, skipped: 0, phones: 0 };
+  // IMP-6: uq_call_hist is (call_date, department, agent_name). callDate is
+  // bound raw below, so key on the raw value.
+  rows = neonDedupeByKey_(rows, 'writeCDRRowsToNeon', function (r) {
+    return r.callDate + '\u0001' + r.dept + '\u0001' + r.agentName;
+  });
   // A2: reset the per-run phone-hash memo at the entry of the only
   // call tree that hashes phones, so it's bounded to this mirror call.
   CDR_HMAC_CACHE_ = {};

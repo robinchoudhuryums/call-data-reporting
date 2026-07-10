@@ -219,3 +219,38 @@ test('duplicate guard: a second build for the same date is a no-op', function ()
   h.fn('buildDQEHistoricalData')(raw, dqe);
   assert.equal(dqe.getLastRow(), afterFirst, 'second build must not append rows for an existing date');
 });
+
+test('IMP-7 (F2 guard): an expectedDate mismatch THROWS and writes nothing', function () {
+  // On the force re-import path the caller has already deleted the expected
+  // date's DQE rows before the build runs; a silent refusal (the old
+  // `return`) left that date's data gone under a success-rows:0 telemetry
+  // row with no email. The guard now throws so the daily caller's catch
+  // fires its `:DQE` failure row + notifyDqeBuildFailure_, and the bulk
+  // caller's per-date catch logs and continues.
+  const rawGrid = [new Array(26).fill('')].concat([
+    rawRow({ callId: 'P1', legId: 0, start: IN, talk: '0:03:00', calleeName: 'Anna', parentCall: 'N/A' }),
+    rawRow({ callId: 'Q1', legId: 0, start: IN, caller: 'CallQueue(103)', calleeName: 'Anna', parentCall: 'P1', callerId: 'A_Q_CSR', answered: true }),
+  ]);
+  const ss = makeFakeSpreadsheet({
+    timeZone: 'America/Chicago',
+    sheets: {
+      'Raw Data': rawGrid,
+      'DQE Historical Data': [new Array(34).fill('')],
+      'DO NOT EDIT!': rosterGrid({ CSR: ['Anna, 103'] }),
+    },
+  });
+  // Raw Data resolves to 2026-03-09; the caller expected 2026-03-10.
+  assert.throws(function () {
+    h.fn('buildDQEHistoricalData')(ss._sheet('Raw Data'), ss._sheet('DQE Historical Data'),
+      { expectedDate: new Date(2026, 2, 10) });
+  }, /DQE build refused/);
+  const written = ss._sheet('DQE Historical Data')._data.slice(1)
+    .filter(function (r) { return String(r[2] || '') !== ''; });
+  assert.equal(written.length, 0, 'no rows written on refusal');
+  // Matching expectedDate still builds normally.
+  h.fn('buildDQEHistoricalData')(ss._sheet('Raw Data'), ss._sheet('DQE Historical Data'),
+    { expectedDate: new Date(2026, 2, 9) });
+  const anna = ss._sheet('DQE Historical Data')._data.slice(1)
+    .filter(function (r) { return r[2] === 'Anna'; });
+  assert.equal(anna.length, 1, 'matching expectedDate writes the row');
+});

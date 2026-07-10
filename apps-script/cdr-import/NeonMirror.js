@@ -41,7 +41,25 @@
 // =============================================================================
 
 var NEON_MIRROR_QUEUE_SHEET   = 'Neon Mirror Queue';
-var NEON_MIRROR_QUEUE_HEADERS = ['Enqueued At', 'Call Date', 'Source'];
+// Col 4 (Attempts) added by IMP-6 -- counts HARD-error drains (throws, not
+// Neon-unreachable) so a poison-pill date can't retry + email forever.
+// Pre-existing queue tabs keep their 3-col header; the reader treats a
+// blank col 4 as 0, so no migration is needed.
+var NEON_MIRROR_QUEUE_HEADERS = ['Enqueued At', 'Call Date', 'Source', 'Attempts'];
+
+// IMP-6: after this many HARD-error drain attempts (throws -- e.g. a SQL
+// error; Neon-UNREACHABLE never counts and retries indefinitely), the date
+// is DROPPED from the queue with a loud `neonMirror:gave-up` failure row +
+// one final email, instead of a failure email every 15-minute run forever.
+// Script-Property-tunable like NEON_MIRROR_TAIL_ROWS.
+var NEON_MIRROR_MAX_ATTEMPTS_DEFAULT = 8;
+
+function nmMaxAttempts_() {
+  var raw = null;
+  try { raw = PropertiesService.getScriptProperties().getProperty('NEON_MIRROR_MAX_ATTEMPTS'); } catch (e) {}
+  var n = parseInt(raw, 10);
+  return (isFinite(n) && n > 0) ? n : NEON_MIRROR_MAX_ATTEMPTS_DEFAULT;
+}
 
 /**
  * Returns 'deferred' only when the NEON_MIRROR_MODE Script Property is
@@ -66,7 +84,7 @@ function enqueueNeonMirror_(targetSS, dateObj) {
       sh.appendRow(NEON_MIRROR_QUEUE_HEADERS);
       sh.setFrozenRows(1);
     }
-    sh.appendRow([new Date(), iso, 'processIntegratedHistory']);
+    sh.appendRow([new Date(), iso, 'processIntegratedHistory', 0]);
     Logger.log('enqueueNeonMirror_: queued %s for deferred Neon mirror.', iso);
   } catch (e) {
     Logger.log('enqueueNeonMirror_ failed (best-effort): ' + e);
@@ -90,39 +108,83 @@ function runNeonMirror_() {
     if (!sh || sh.getLastRow() < 2) { Logger.log('runNeonMirror_: queue empty.'); return; }
 
     var tz   = Session.getScriptTimeZone();
-    var rows = sh.getRange(2, 1, sh.getLastRow() - 1, 3).getValues();
+    var rows = sh.getRange(2, 1, sh.getLastRow() - 1, 4).getValues();
     var isoOfRow = function (r) {
       return (r[1] instanceof Date)
         ? Utilities.formatDate(r[1], tz, 'yyyy-MM-dd')
         : String(r[1] || '').trim();
     };
 
-    // Distinct pending dates, in first-seen order.
+    // Distinct pending dates, in first-seen order. Per-date attempts = the
+    // MAX of the date's rows' col-4 values (blank on pre-IMP-6 rows -> 0).
     var dates = [];
     var seen = {};
+    var attemptsByDate = {};
     rows.forEach(function (r) {
       var iso = isoOfRow(r);
-      if (/^\d{4}-\d{2}-\d{2}$/.test(iso) && !seen[iso]) { seen[iso] = true; dates.push(iso); }
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return;
+      if (!seen[iso]) { seen[iso] = true; dates.push(iso); }
+      var a = parseInt(r[3], 10) || 0;
+      if (!(iso in attemptsByDate) || a > attemptsByDate[iso]) attemptsByDate[iso] = a;
     });
 
     var done = {};
+    var hardFailed = {};   // iso -> error message (a THROW, not Neon-unreachable)
     dates.forEach(function (iso) {
       try {
         if (neonMirrorDate_(ss, iso)) done[iso] = true;
         else Logger.log('runNeonMirror_: %s incomplete (Neon unreachable?), leaving queued.', iso);
       } catch (e) {
+        hardFailed[iso] = (e && e.message) ? e.message : String(e);
         Logger.log('runNeonMirror_: %s failed, leaving queued: %s', iso, e);
-        try { notifyNeonWriteFailure('runNeonMirror_ (' + iso + ')', (e && e.message) ? e.message : String(e)); }
+        try { notifyNeonWriteFailure('runNeonMirror_ (' + iso + ')', hardFailed[iso]); }
         catch (ne) { /* best-effort */ }
       }
     });
 
     // Rewrite the queue with only the rows whose date didn't fully process.
-    var remaining = rows.filter(function (r) { return !done[isoOfRow(r)]; });
-    sh.getRange(2, 1, sh.getMaxRows() - 1, 3).clearContent();
-    if (remaining.length) sh.getRange(2, 1, remaining.length, 3).setValues(remaining);
-    Logger.log('runNeonMirror_: processed %s date(s); %s row(s) left queued.',
-      Object.keys(done).length, remaining.length);
+    // IMP-6 retry cap: a HARD-error date increments its Attempts; at
+    // nmMaxAttempts_() it is DROPPED (parked) with a `neonMirror:gave-up`
+    // failure row + one final email, so a poison-pill date can't email every
+    // 15-min run forever. Neon-UNREACHABLE dates never increment -- an
+    // outage retries indefinitely, as before.
+    var maxAttempts = nmMaxAttempts_();
+    var gaveUp = [];
+    var remaining = [];
+    rows.forEach(function (r) {
+      var iso = isoOfRow(r);
+      if (done[iso]) return;
+      var attempts = attemptsByDate[iso] || 0;
+      if (hardFailed[iso]) {
+        attempts += 1;
+        if (attempts >= maxAttempts) {
+          if (gaveUp.indexOf(iso) === -1) gaveUp.push(iso);
+          return;   // dropped from the queue
+        }
+      }
+      remaining.push([r[0], r[1], r[2], attempts]);
+    });
+    gaveUp.forEach(function (iso) {
+      neonMirrorLog_(ss, 'neonMirror:gave-up', 'failure', null, Date.now(),
+        iso + ' | dropped from the queue after ' + maxAttempts + ' failed attempts: '
+        + (hardFailed[iso] || '') + ' -- fix the cause, then re-enqueue the date '
+        + '(append a row to the Neon Mirror Queue tab) or run the per-type backfills.');
+    });
+    if (gaveUp.length) {
+      try {
+        notifyNeonWriteFailure('runNeonMirror_ GAVE UP: ' + gaveUp.join(', '),
+          'Dropped from the deferred-mirror queue after ' + maxAttempts
+          + ' failed attempts each (this is the LAST email for these dates).\n\n'
+          + gaveUp.map(function (iso) { return iso + ': ' + (hardFailed[iso] || ''); }).join('\n')
+          + '\n\nFix the cause, then re-enqueue each date (append a row to the '
+          + '"Neon Mirror Queue" tab in the CDR Report spreadsheet) or run the '
+          + 'per-type backfills for it.');
+      } catch (ne) { /* best-effort */ }
+    }
+    sh.getRange(2, 1, sh.getMaxRows() - 1, 4).clearContent();
+    if (remaining.length) sh.getRange(2, 1, remaining.length, 4).setValues(remaining);
+    Logger.log('runNeonMirror_: processed %s date(s); %s row(s) left queued; %s date(s) gave up.',
+      Object.keys(done).length, remaining.length, gaveUp.length);
   } finally {
     lock.releaseLock();
   }

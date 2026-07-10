@@ -416,10 +416,23 @@ function resolveEscalation(req) {
     // F-43: pending-only, mirroring reopenEscalation's resolved-only guard.
     // Two managers racing from stale UIs previously last-write-wins
     // clobbered the first resolution note on the row itself (only the
-    // activity trail preserved it).
-    if (meta.status === ESC_STATUS_RESOLVED) {
-      throw new Error('This escalation is already resolved. Reopen it first if the '
-        + 'resolution needs to change (the existing note would otherwise be overwritten).');
+    // activity trail preserved it). NEO-1: the guard is status !== pending,
+    // NOT merely "not resolved" -- a not-resolved-only guard let a
+    // pending_review row be resolved WITHOUT passing approveEscalation (the
+    // Phase-2 trust boundary: field re-normalization + empty-reason gate +
+    // 'approved' provenance), and let a terminal rejected row be walked back
+    // into the worklist via resolve -> reopen.
+    if (meta.status !== ESC_STATUS_PENDING) {
+      if (meta.status === ESC_STATUS_RESOLVED) {
+        throw new Error('This escalation is already resolved. Reopen it first if the '
+          + 'resolution needs to change (the existing note would otherwise be overwritten).');
+      }
+      if (meta.status === ESC_STATUS_PENDING_REVIEW) {
+        throw new Error('This escalation is still awaiting review. Approve it into the '
+          + 'worklist before resolving it.');
+      }
+      throw new Error('Only a pending escalation can be resolved (this one is "'
+        + meta.status + '").');
     }
 
     conn.setAutoCommit(false); txn = true;

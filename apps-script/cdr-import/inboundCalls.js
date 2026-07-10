@@ -58,7 +58,18 @@ function icIsAnonymous_(s) {
 
 function icIsTrue_(s) { return String(s == null ? '' : s).trim().toUpperCase() === 'TRUE'; }
 
-function icIsQueueName_(name) { return /^A_Q_/i.test(String(name == null ? '' : name).trim()); }
+// IMP-1: must match every live queue identity, not just the A_Q_* family.
+// "Backup CSR" is a first-class queue in this install (the DQE pipeline's
+// queue regex is (A_Q_\w+|Backup CSR) -- buildDQEHistoricalData.js). With
+// the old /^A_Q_/-only test, a call whose (only) queue leg was Backup CSR
+// was captured with abandon_stage='ivr' and entry_queue=NULL -- it vanished
+// from CSR's per-dept Inbound report/heatmap, and (Call_Legs prune at ~14
+// days) the mis-capture was permanent. Keep this in sync with the DQE
+// pipeline's queue regex if another non-A_Q_ queue is ever added.
+function icIsQueueName_(name) {
+  var t = String(name == null ? '' : name).trim();
+  return /^A_Q_/i.test(t) || /^backup csr$/i.test(t);
+}
 
 // "H:MM:SS" -> seconds (0 on blank/N/A).
 function icTimeToSec_(s) {
