@@ -720,6 +720,15 @@ function cdrParseNameFieldJson_(val, isUnused, secret) {
       var nameRaw = countMatch ? entry.replace(countMatch[0], '').trim() : entry;
       if (isExt && cdrLooksLikePhone_(nameRaw)) {
         out.push({ display: null, phone_hash: cdrHashPhone_(nameRaw, secret), count: count });
+      } else if (isExt) {
+        // IMP-12 (owner ruling): an external non-phone CNAM string is often
+        // a PERSONAL name (patients, at a med-supply company) -- store
+        // INITIALS ONLY in Neon, never the raw name. The same pipeline
+        // HMACs every phone number for PHI; the sheet-side raw name is
+        // accepted policy, but the Neon mirror must not carry it. Rows
+        // written before this change keep their raw values until the date
+        // is re-imported.
+        out.push({ display: cdrMaskExternalName_(nameRaw), phone_hash: null, count: count });
       } else {
         out.push({ display: nameRaw, phone_hash: null, count: count });
       }
@@ -729,6 +738,19 @@ function cdrParseNameFieldJson_(val, isUnused, secret) {
 
   var result = { internal: parseEntries(internalRaw, false), external: parseEntries(externalRaw, true) };
   return JSON.stringify(result);
+}
+
+// IMP-12: reduce an external CNAM display name to initials ("SMITH JOHN"
+// -> "S.J.") so no raw personal name lands in Neon JSONB. Null when the
+// string has no word characters to take initials from.
+function cdrMaskExternalName_(name) {
+  var parts = String(name == null ? '' : name).trim().split(/\s+/).filter(function (p) { return p; });
+  var initials = [];
+  for (var i = 0; i < parts.length; i++) {
+    var ch = parts[i].charAt(0);
+    if (/[A-Za-zÀ-ÿ0-9]/.test(ch)) initials.push(ch.toUpperCase());
+  }
+  return initials.length ? initials.join('.') + '.' : null;
 }
 
 function cdrParsePhoneField_(val, secret) {

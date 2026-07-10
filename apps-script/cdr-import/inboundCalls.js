@@ -80,19 +80,27 @@ function icTimeToSec_(s) {
 }
 
 // "MM/DD/YYYY HH:MM:SS" -> epoch ms (NaN on unparseable).
+// IMP-10: the CDR's PST wall-clock string is parsed as a UTC instant
+// (Date.UTC) rather than a script-TZ-local Date. These ms values are only
+// ever DIFFERENCED, ORDERED, or re-FORMATTED (icIsoDate_/icIsoTime_ read
+// UTC getters), so treating the wall clock as UTC makes all of that pure
+// wall-clock math -- immune to the Chicago DST edges where the old
+// local-Date parse skewed overnight calls two nights a year (the
+// spring-forward hour doesn't exist locally; the fall-back hour is
+// ambiguous). Never mix these ms values with real-clock Date.now().
 function icParseTs_(s) {
   var str = String(s == null ? '' : s).trim();
   var m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2}):(\d{2})$/.exec(str);
   if (!m) return NaN;
-  return new Date(+m[3], +m[1] - 1, +m[2], +m[4], +m[5], +m[6]).getTime();
+  return Date.UTC(+m[3], +m[1] - 1, +m[2], +m[4], +m[5], +m[6]);
 }
 
 function icIsoDate_(ms) {
   if (isNaN(ms)) return null;
   var d = new Date(ms);
-  var mm = String(d.getMonth() + 1).padStart(2, '0');
-  var dd = String(d.getDate()).padStart(2, '0');
-  return d.getFullYear() + '-' + mm + '-' + dd;
+  var mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+  var dd = String(d.getUTCDate()).padStart(2, '0');
+  return d.getUTCFullYear() + '-' + mm + '-' + dd;
 }
 
 // 'HH:MM:SS' (zero-padded -> lexicographically sortable within a day).
@@ -100,7 +108,7 @@ function icIsoTime_(ms) {
   if (isNaN(ms)) return null;
   var d = new Date(ms);
   var p = function (n) { return String(n).padStart(2, '0'); };
-  return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+  return p(d.getUTCHours()) + ':' + p(d.getUTCMinutes()) + ':' + p(d.getUTCSeconds());
 }
 
 // Journey size caps. 40 events covers every real call shape we've seen

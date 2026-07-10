@@ -107,6 +107,42 @@ paren employees; would require code edits per new hire. The roster
 is already the canonical source of "who works here" so deriving
 canonicalization rules from it is robust to new hires.
 
+### REP-3: CSR Avg Abd Wait (AH) excluded no-ring abandons
+
+**Status:** Fixed going FORWARD (owner ruling; both
+`buildDQEHistoricalData.js` copies, INV-16); rows built before the fix
+keep the old rung-only semantics until rebuilt.
+
+**Symptom:** the dept-wide `Avg Abd Wait` (AG) includes ALL abandoned
+parents — including callers who hung up before any agent rang — but
+`CSR Avg Abd Wait` (AH) was built only from `queueLegs` (agent RINGS),
+so no-ring abandons on CSR queues (statistically the longest waits)
+never entered it. AH systematically read LOW relative to AG's
+population.
+
+**Fix:** after the rung-leg scan, abandoned parents are also attributed
+by their own parent legs' `calleeName` queue identifiers (the same
+attribution the Pass-4 queue-sentinel producer uses); those on
+`DQE_CSR_QUEUES` join `csrAbanIds`. Pinned by
+`tests/unit/pipeline-build.test.js` (REP-3 test). Expect AH to read
+somewhat HIGHER from the fix's deploy date onward — that's the
+correction, not a regression.
+
+### IMP-8: queue-name regex truncated `&`-names and matched embedded tokens
+
+**Status:** Fixed (both `buildDQEHistoricalData.js` copies, INV-16).
+
+**Symptom:** the Pass-2/Pass-4 queue regex `(A_Q_\w+|Backup CSR)`
+stopped at `&` (`A_Q_Eligibility_MM&R` → a truncated `A_Q_Eligibility_MM`
+sentinel that no Dept Config mapping matches) and matched MID-TOKEN
+(`UDC_A_Q_Main` → a phantom `A_Q_Main` attribution).
+
+**Fix:** `(?:^|[^\w&])(A_Q_[\w&]+|Backup CSR)` — `&` allowed in the
+tail, and a non-word boundary required before `A_Q_` so embedded tokens
+simply don't match (capturing the full prefixed token was NOT an
+option: INV-23 sentinel consumers require names STARTING with `A_Q_`).
+Pinned by `tests/unit/pipeline-build.test.js` (IMP-8 test).
+
 ---
 
 ## AD/AE/AF positional pairing (Missed report / journey drill)
@@ -306,6 +342,44 @@ before adding your change**, otherwise you'll bake the drift in further.
   version into the other location.
 
 For now, treat any change to either copy as a two-file edit.
+
+### IMP-12: external CNAM names are masked to initials in Neon (owner policy)
+
+The `ib_list_*` JSONB name-list fields' EXTERNAL side used to store a
+non-phone caller display name (CNAM) raw — often a personal name
+(patients, at a med-supply company) — while the same pipeline HMACs
+every phone number for PHI. Owner ruling: `cdrParseNameFieldJson_` now
+reduces external non-phone display strings to INITIALS
+(`cdrMaskExternalName_`: "SMITH JOHN" → "S.J."); phone-shaped entries
+keep the hash-only shape, and the INTERNAL side (employee names) plus
+the sheet-side raw values are unchanged (accepted policy). Rows written
+before the change keep their raw values until the date is re-imported.
+Pinned by `tests/unit/neon-write-mapping.test.js` (IMP-12 test).
+
+---
+
+## Batch-E CDR Import fixes (autoImport.js / inboundCalls.js)
+
+### IMP-2: legacy CDR engine now splits comma-joined queue-extension cells
+
+`calculateMetricsInMemory` treated a config col-B cell like `"103,108"`
+as ONE token: `queueExtensionSet.has("103")` never matched (queue
+remotes leaked into the F/G/H callee-name lists), `exclusions` missed
+the individual exts, and the Q-Path dept regex was built as
+`/103,108(?!\d)/` (matched nothing). Now split on commas exactly like
+`dcBuildExtMaps_` / `buildQueueNameToExts_` (the raw cell is kept too,
+harmless); the Q-Path matcher tests each ext and counts a path at most
+once per config row.
+
+### IMP-10: inbound timestamps parse as UTC instants
+
+`icParseTs_` built the CDR's PST wall-clock strings as SCRIPT-TZ-local
+Dates (America/Chicago), so the spring-forward hour didn't exist and
+the fall-back hour was ambiguous — skewed `call_start` / wait / journey
+ordering for overnight calls two nights a year. It now parses via
+`Date.UTC` and `icIsoDate_` / `icIsoTime_` read UTC getters: pure
+wall-clock math, DST-immune (the DQE/Direct pipelines were already pure
+string math). Never mix these ms values with real-clock `Date.now()`.
 
 ---
 

@@ -517,9 +517,11 @@ function computeQcdReport_(dept, from, to, includeSubQueues, separateSubQueues) 
       bucket.totalAnswered += totalAnswered;
       bucket.abandoned     += abandoned;
       // longestWait: MAX across days. avgAnswer: answered-volume-WEIGHTED
-      // mean (sum(avgAnswer*answered)/sum(answered)). NOTE (RPT-8): this
-      // diverges from the legacy buildTable4 day-mean the comment previously
-      // claimed parity with -- code is spec pending owner ratification.
+      // mean (sum(avgAnswer*answered)/sum(answered)). RPT-8 (owner-ratified):
+      // this INTENTIONALLY diverges from the legacy buildTable4 simple
+      // day-mean -- a 2-call day shouldn't weigh like a 200-call day. The
+      // weighting is applied consistently across queue rows, dept totals,
+      // bySource, and the all-dept report; docs/known-issues.md matches.
       if (longestWaitSec > bucket.longestWaitSec) bucket.longestWaitSec = longestWaitSec;
       if (avgAnswerSec > 0 && totalAnswered > 0) {
         bucket.avgAnswerWeightedSum += avgAnswerSec * totalAnswered;

@@ -254,3 +254,53 @@ test('IMP-7 (F2 guard): an expectedDate mismatch THROWS and writes nothing', fun
     .filter(function (r) { return r[2] === 'Anna'; });
   assert.equal(anna.length, 1, 'matching expectedDate writes the row');
 });
+
+test('REP-3: a NO-RING abandon on a CSR queue counts toward CSR Avg Abd Wait (AH)', function () {
+  // P9 is abandoned (120s > 60), hit A_Q_CSR (parent-leg calleeName), and
+  // rang NOBODY -- before REP-3 only rung-leg abandons entered csrAbanIds,
+  // so AH read 0:00:00 while the dept-wide AG already included P9.
+  const rawGrid = [new Array(26).fill('')].concat([
+    rawRow({ callId: 'P1', legId: 0, start: IN, talk: '0:03:00', calleeName: 'Anna', parentCall: 'N/A' }),
+    rawRow({ callId: 'Q1', legId: 0, start: IN, caller: 'CallQueue(103)', calleeName: 'Anna', parentCall: 'P1', callerId: 'A_Q_CSR', answered: true }),
+    rawRow({ callId: 'P9', legId: 0, start: IN, callTime: '0:02:00', calleeName: 'A_Q_CSR', parentCall: 'N/A', abandoned: true }),
+  ]);
+  const ss = makeFakeSpreadsheet({
+    timeZone: 'America/Chicago',
+    sheets: {
+      'Raw Data': rawGrid,
+      'DQE Historical Data': [new Array(34).fill('')],
+      'DO NOT EDIT!': rosterGrid({ CSR: ['Anna, 103'] }),
+    },
+  });
+  h.fn('buildDQEHistoricalData')(ss._sheet('Raw Data'), ss._sheet('DQE Historical Data'));
+  const anna = ss._sheet('DQE Historical Data')._data.slice(1)
+    .filter(function (r) { return r[2] === 'Anna'; })[0];
+  assert.equal(anna[32], '0:02:00');   // AG (already included the no-ring abandon)
+  assert.equal(anna[33], '0:02:00');   // AH now includes it too (was '0:00:00')
+});
+
+test('IMP-8: queue regex keeps &-names whole and ignores embedded A_Q_ tokens', function () {
+  const rawGrid = [new Array(26).fill('')].concat([
+    // Embedded token: UDC_A_Q_Main must NOT substring-match as a phantom
+    // A_Q_Main queue leg -- Anna gets no agent row from it.
+    rawRow({ callId: 'QX', legId: 0, start: IN, caller: 'CallQueue(103)', calleeName: 'Anna', parentCall: 'PX', callerId: 'UDC_A_Q_Main', answered: true }),
+    // &-bearing queue: the Pass-4 sentinel must carry the FULL name, not
+    // the pre-fix truncation 'A_Q_Elig_MM'.
+    rawRow({ callId: 'PZ', legId: 0, start: IN, callTime: '0:02:00', calleeName: 'A_Q_Elig_MM&R', parentCall: 'N/A', abandoned: true }),
+  ]);
+  const ss = makeFakeSpreadsheet({
+    timeZone: 'America/Chicago',
+    sheets: {
+      'Raw Data': rawGrid,
+      'DQE Historical Data': [new Array(34).fill('')],
+      'DO NOT EDIT!': rosterGrid({ CSR: ['Anna, 103'] }),
+    },
+  });
+  h.fn('buildDQEHistoricalData')(ss._sheet('Raw Data'), ss._sheet('DQE Historical Data'));
+  const names = ss._sheet('DQE Historical Data')._data.slice(1)
+    .map(function (r) { return String(r[2] || ''); }).filter(Boolean);
+  assert.ok(names.indexOf('Anna') === -1, 'embedded UDC_A_Q_Main token is not a queue leg');
+  assert.ok(names.indexOf('A_Q_Main') === -1, 'no phantom A_Q_Main');
+  assert.ok(names.indexOf('A_Q_Elig_MM&R') !== -1, 'full &-name sentinel emitted');
+  assert.ok(names.indexOf('A_Q_Elig_MM') === -1, 'no truncated sentinel');
+});

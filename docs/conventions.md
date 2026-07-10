@@ -183,12 +183,18 @@ simple mean above. Two reasons:
    down. Useful for agents who routinely have low-activity days
    (sick leave, training, etc.).
 
+The **Overview tile's ATT is also weighted** (CompanyOverview.gs
+accumulates `attAvg * answered`), so the tile and the adjacent My-Dept
+table can disagree slightly on the same dept/day. Documented as
+intended (RPT-6, owner ruling): the tile belongs to the weighted
+rollup family, the table to the INV-05 simple-mean family.
+
 If you ever consolidate ATT semantics across all dashboard surfaces,
 you'll need to either also fix the main table (and accept managers
 seeing different numbers) or accept that the two surfaces serve
 slightly different reading semantics. Document any change in
 `known-issues.md` and bump every cache prefix
-(`summary:`, `individual:`, `insights:`).
+(`summary:`, `individual:`, `insights:`, `companyOverview:`).
 
 ### Totals row
 

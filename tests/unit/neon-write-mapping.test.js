@@ -138,3 +138,18 @@ test('CDR writer (no HMAC): 21 params bind in the call_history_dept order; JSONB
   assert.equal(res.inserted, 1);
   assert.equal(res.phones, 0, 'no phone child rows without HMAC_SECRET');
 });
+
+test('IMP-12: external non-phone CNAM display names are masked to initials', function () {
+  const out = JSON.parse(h.fn('cdrParseNameFieldJson_')(
+    'Jane Doe (3) | SMITH JOHN (2), +13125550100 (1)', false, 'test-secret'));
+  // Internal side stays raw (sheet-parity, accepted policy).
+  assert.equal(out.internal[0].display, 'Jane Doe');
+  assert.equal(out.internal[0].count, 3);
+  // External personal name -> initials only; the raw name never lands in Neon.
+  assert.equal(out.external[0].display, 'S.J.');
+  assert.equal(out.external[0].phone_hash, null);
+  assert.equal(out.external[0].count, 2);
+  // External phone-shaped entries keep the existing hash-only shape.
+  assert.equal(out.external[1].display, null);
+  assert.ok(out.external[1].phone_hash, 'phone entry still hashed');
+});

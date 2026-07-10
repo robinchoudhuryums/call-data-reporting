@@ -858,12 +858,16 @@ function computeWowDriver_(stats, curIsoSet, prevIsoSet, deltaPct) {
   // Require a meaningful net contribution (WOW_DRIVER_MIN_DELTA), not just
   // any positive score, so a +1/+2-call agent never surfaces as the driver.
   if (!bestAgent || bestScore < WOW_DRIVER_MIN_DELTA) return null;
-  // Pick the narrative based on which delta dominates. Avoid
-  // attributing a "+50% answered" driver to a dept that's actually
-  // regressing -- the score guard above already filters those, but
-  // belt-and-suspenders.
-  const useMissedNarrative = !isPositive
-    && Math.abs(bestData.missedDelta) > Math.abs(bestData.answeredDelta);
+  // Pick the narrative based on which delta dominates. RPT-7: the
+  // dominance check runs on BOTH directions -- an improving dept whose
+  // driver score came from a missed-call DROP (answered flat) now reads
+  // "missed N fewer calls" instead of "answered +0". On the positive
+  // side the missed delta must actually be a drop (a dominant missed
+  // INCREASE on a net-positive score still narrates via answered);
+  // ties fall back to 'answered' on both sides.
+  const useMissedNarrative =
+    Math.abs(bestData.missedDelta) > Math.abs(bestData.answeredDelta)
+    && (isPositive ? bestData.missedDelta < 0 : true);
   return {
     agent:    bestAgent,
     metric:   useMissedNarrative ? 'missed' : 'answered',
