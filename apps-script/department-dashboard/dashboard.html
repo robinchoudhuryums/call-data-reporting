@@ -180,7 +180,10 @@
           <button type="button" class="btn btn-secondary" id="ov-qcd-alldept-btn"
             title="Company-wide daily call queue report across every department">&#128203; Daily Call Queue Report</button>
         </div>
-        <div id="ov-company-aggregate" class="ov-company-aggregate" style="display:none;"></div>
+        <!-- CL1-1: data-admin-only so the view-as CSS can hide the hero during a
+             manager preview (the server strips the field for real managers;
+             this closes the client-side stale-response window too). -->
+        <div id="ov-company-aggregate" class="ov-company-aggregate" data-admin-only style="display:none;"></div>
         <div id="ov-user-hero" class="ov-user-hero" style="display:none;"></div>
         <!-- Pass 3b P2.1/P2.2: STACKED layout. The 30-day trend chart is a
              full-width STICKY-TOP band (CSS order:-1 floats it above the grid
