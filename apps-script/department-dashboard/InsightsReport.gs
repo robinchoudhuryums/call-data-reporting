@@ -181,8 +181,18 @@ function getInsightsReport(req) {
   data.meta.computeMs = Date.now() - t0;
   data.meta.cacheHit = false;
 
-  try { cache.put(cacheKey, JSON.stringify(data), REPORT_CACHE_TTL_SECONDS); }
-  catch (e) { Logger.log('InsightsReport cache put failed: %s', e); }
+  // RPT-3: never cache a payload whose Queue health is the F8 error shape
+  // ({error:true}, a transient QCD read/compute failure) -- the INV-30 rule
+  // the Inbound/Direct reports already follow for unavailable payloads.
+  // Since the QCD retirement this is managers' ONLY queue surface; caching
+  // the error pinned "Queue health unavailable" for every viewer of this
+  // (dept, range, agents, prior) tuple for the full 30-min TTL.
+  if (data.queueHealth && data.queueHealth.error) {
+    Logger.log('InsightsReport: queueHealth errored -- skipping cache put so the next request retries.');
+  } else {
+    try { cache.put(cacheKey, JSON.stringify(data), REPORT_CACHE_TTL_SECONDS); }
+    catch (e) { Logger.log('InsightsReport cache put failed: %s', e); }
+  }
 
   logReportUsage_('insights', dept, user, false);
   return data;

@@ -53,13 +53,17 @@ function getDashboardNeonConn_(opts) {
     return Jdbc.getConnection(url, p.getProperty('NEON_USER'), p.getProperty('NEON_PASS'));
   } catch (e) {
     Logger.log('getDashboardNeonConn_ failed: ' + (e && e.message ? e.message : e));
-    // F4: a hard connection failure (unreachable != unconfigured) is recorded
-    // durably so the admin read-back health line can show it. F29: callers that
-    // are NOT DQE reads -- the keep-warm ping -- pass {skipReadHealth:true} so
-    // their failures don't pollute the DQE read-back streak (which is surfaced
-    // independent of DQE_READ_SOURCE and would otherwise show a sticky false
-    // "read-back FAILING" even while reads are on the sheet).
-    if (!(opts && opts.skipReadHealth)) recordNeonReadFailure_('getDashboardNeonConn_', e);
+    // F4/NEO-3: a hard connection failure (unreachable != unconfigured) is
+    // recorded durably ONLY for the DQE read-back readers -- they opt in via
+    // {recordReadHealth:true}. Recording used to be the DEFAULT (with F29
+    // carving out just the keep-warm ping via skipReadHealth), so every
+    // OTHER Neon surface (Inbound report/heatmap, Caller Lookup, escalation
+    // writes, config readers) fed NEON_READ_LAST_ERROR too -- and since only
+    // the DQE readers CLEAR it, one transient non-DQE blip pinned a sticky
+    // false "read-back FAILING" line while reads were on the sheet. The
+    // signal now reflects DQE reads only, as Operator State #20 documents.
+    // ({skipReadHealth:true} is still accepted as a no-op for old callers.)
+    if (opts && opts.recordReadHealth) recordNeonReadFailure_('getDashboardNeonConn_', e);
     return null;
   }
 }
@@ -71,7 +75,7 @@ function getDashboardNeonConn_(opts) {
  * treat null as "fall back to the sheet".
  */
 function neonGetMaxDqeDate_() {
-  var conn = getDashboardNeonConn_();
+  var conn = getDashboardNeonConn_({ recordReadHealth: true });   // NEO-3: DQE reader
   if (!conn) return null;
   try {
     var stmt = conn.createStatement();
@@ -118,7 +122,7 @@ function neonGetAgentExtPairs_() {
   var KEY = 'neonAgentExts:v1';
   var hit = cache.get(KEY);
   if (hit) { try { return JSON.parse(hit); } catch (e) { /* recompute */ } }
-  var conn = getDashboardNeonConn_();
+  var conn = getDashboardNeonConn_({ recordReadHealth: true });   // NEO-3: DQE reader
   if (!conn) return null;
   try {
     var sql = "SELECT COALESCE(json_agg(t), '[]')::text AS j FROM ("
@@ -166,7 +170,7 @@ var NEON_DQE_SLOT_COLS = [
  */
 function neonFetchDqeRows_(fromIso, toIso, opts) {
   var includeMissedDetail = !!(opts && opts.includeMissedDetail);
-  var conn = getDashboardNeonConn_();
+  var conn = getDashboardNeonConn_({ recordReadHealth: true });   // NEO-3: DQE reader
   if (!conn) return [];
   var out = [];
   try {
@@ -429,8 +433,9 @@ function logDqeReadTiming_(label, source, startMs, rowCount) {
  * NEON_READ_LAST_ERROR Script Property (queryable now; surfaceable in
  * the admin Overview pipeline banner as a follow-on) and emits a
  * distinctly-tagged log line. Best-effort: never throws -- observability
- * must not block a read. Only exercised when DQE_READ_SOURCE=neon, so
- * there is zero overhead in the default sheet configuration.
+ * must not block a read. NEO-3: fed ONLY by the three DQE read-back
+ * readers (non-DQE Neon surfaces neither record nor clear), so the
+ * admin health line is strictly a DQE read-back signal again.
  */
 function recordNeonReadFailure_(label, err) {
   try {

@@ -127,3 +127,38 @@ test('CONFIG_SOURCE=neon but Neon unreachable -> falls back to the sheet', funct
   // Sheet still serves the data despite the neon flag.
   deepEqual(JSON.parse(JSON.stringify(h.call('getDeptQcdQueues_', 'CSR'))), ['A_Q_Foo', 'A_Q_Bar']);
 });
+
+test('CORE-5: compareDeptConfigSources on unreachable Neon -> clean:false + error, nothing compared', function () {
+  // Sheet has rows; Neon reader yields null (conn failure).
+  h.state.userEmail = 'admin@x.com';
+  h.state.props.ADMIN_EMAILS = 'admin@x.com';
+  h.state.props.SPREADSHEET_ID = 'fake';
+  h.ctx.assertAdmin_ = function () {};
+  h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
+  h.state.spreadsheet = makeFakeSpreadsheet({
+    timeZone: 'America/Chicago',
+    sheets: { 'Dept Config': [HEADERS].concat(LOGICAL.map(sheetRow)) },
+  });
+  h.ctx.getDashboardNeonConn_ = function () { return null; };
+  const down = h.call('compareDeptConfigSources');
+  equal(down.clean, false, 'never PARITY CLEAN when Neon was not read');
+  equal(typeof down.error, 'string', 'carries an explicit error');
+
+  // The old false-green case: EMPTY sheet + Neon down used to print
+  // PARITY CLEAN ([] vs coerced []).
+  h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
+  h.state.spreadsheet = makeFakeSpreadsheet({
+    timeZone: 'America/Chicago',
+    sheets: { 'Dept Config': [HEADERS] },
+  });
+  const emptyDown = h.call('compareDeptConfigSources');
+  equal(emptyDown.clean, false, 'empty sheet + Neon down is NOT parity');
+  equal(typeof emptyDown.error, 'string');
+
+  // Genuinely-empty BOTH sides with Neon reachable stays a legitimate clean.
+  h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
+  h.ctx.getDashboardNeonConn_ = function () { return fakeDeptConfigConn([]); };
+  const bothEmpty = h.call('compareDeptConfigSources');
+  equal(bothEmpty.clean, true, 'reachable empty-vs-empty is real parity');
+  equal(bothEmpty.error, undefined);
+});

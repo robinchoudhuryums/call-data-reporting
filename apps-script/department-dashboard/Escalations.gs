@@ -436,8 +436,12 @@ function resolveEscalation(req) {
     }
 
     conn.setAutoCommit(false); txn = true;
+    // NEO-2: COALESCE keeps the row's EXISTING comment when the resolve
+    // request carries a blank one (a stale UI / no-prefill client used to
+    // silently NULL it; only the activity trail retained the text).
     var stmt = conn.prepareStatement(
-      'UPDATE escalations SET status = ?, resolution = ?, comments = NULLIF(?, \'\'), '
+      'UPDATE escalations SET status = ?, resolution = ?, '
+      + 'comments = COALESCE(NULLIF(?, \'\'), comments), '
       + 'resolved_by = ?, resolved_at = now(), updated_at = now() WHERE id = ?');
     stmt.setString(1, ESC_STATUS_RESOLVED);
     stmt.setString(2, resolution);
@@ -644,6 +648,10 @@ function updateEscalationComment(req) {
   var id = String(req.id || '').trim();
   if (!id) throw new Error('Missing escalation id.');
   var comments = escClean_(req.comments);
+  // NEO-2: an empty comment used to silently NULL the row's existing
+  // comment (a destructive no-op from a stale UI). Clearing a comment is
+  // not a supported operation -- the activity trail is append-only.
+  if (!comments) throw new Error('A comment is required.');
 
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(15000)) throw new Error('Another escalation write is in progress — retry in a moment.');
@@ -652,9 +660,20 @@ function updateEscalationComment(req) {
   var txn = false;
   try {
     escEnsureTable_(conn);
-    var dept = escRowDepartment_(conn, id);
-    if (dept === null) throw new Error('Escalation not found.');
+    var meta = escRowMeta_(conn, id);
+    if (!meta) throw new Error('Escalation not found.');
+    var dept = meta.department;
     escAssertRowAccess_(user, dept);   // F-45: row dept = data, not input
+    // NEO-2: comments are for rows IN the worklist (pending or resolved).
+    // A pending_review row is immutable external input until the approve/
+    // reject trust boundary runs (the team-tools INSERT contract); a
+    // rejected row is terminal.
+    if (meta.status === ESC_STATUS_PENDING_REVIEW) {
+      throw new Error('This escalation is still awaiting review — approve or reject it first.');
+    }
+    if (meta.status === ESC_STATUS_REJECTED) {
+      throw new Error('This escalation was rejected (terminal); it cannot be annotated.');
+    }
     conn.setAutoCommit(false); txn = true;
     var stmt = conn.prepareStatement("UPDATE escalations SET comments = NULLIF(?, ''), updated_at = now() WHERE id = ?");
     stmt.setString(1, comments);

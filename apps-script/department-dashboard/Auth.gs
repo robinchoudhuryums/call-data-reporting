@@ -213,11 +213,13 @@ function saveAccessControlRow(req) {
         }
       }
     }
+    // CORE-7: notes are admin free text -- neutralize formula-leading
+    // values (email + department are shape-/roster-validated upstream).
     if (firstMatch > 0) {
-      sheet.getRange(firstMatch, 1, 1, 3).setValues([[email, department, notes]]);
+      sheet.getRange(firstMatch, 1, 1, 3).setValues([[email, department, sheetSafeCell_(notes)]]);
       if (dupes > 0) Logger.log('saveAccessControlRow: %s had %s duplicate row(s); updated the first only.', normalized, dupes);
     } else {
-      sheet.appendRow([email, department, notes]);
+      sheet.appendRow([email, department, sheetSafeCell_(notes)]);
     }
     CacheService.getScriptCache().remove('access:' + normalized);
     Logger.log('saveAccessControlRow: %s -> %s by %s', normalized, department, Session.getActiveUser().getEmail());

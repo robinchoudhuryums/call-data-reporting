@@ -88,11 +88,17 @@ function getCallerLookup(req) {
     // simply lack call_start/journey keys) AND with a not-yet-redeployed
     // cdr-import (no column at all). ONE query, ONE getString.
     const inList = hashes.map(function () { return '?'; }).join(', ');
+    // NEO-4: the inner LIMIT is ordered (newest first) so truncation keeps
+    // the MOST RECENT calls -- an unordered LIMIT let the planner return an
+    // arbitrary (run-to-run unstable) subset for >cap callers. The outer
+    // json_agg re-sorts ascending for chronological display, matching the
+    // ordered-subquery pattern every sibling capped query uses.
     const sql =
       "SELECT COALESCE(json_agg(t.j ORDER BY t.j->>'call_date', COALESCE(t.j->>'call_start','')), '[]')::text AS j " +
       "FROM (SELECT to_jsonb(c) || jsonb_build_object('insurer', i.insurance_name) AS j " +
         "FROM inbound_calls c LEFT JOIN insurance_numbers i ON i.phone_hash = c.caller_hash " +
         "WHERE c.caller_hash IN (" + inList + ") AND c.call_date BETWEEN ?::date AND ?::date " +
+        "ORDER BY c.call_date DESC, c.call_start DESC NULLS LAST " +
         "LIMIT " + (CALLER_LOOKUP_MAX_CALLS + 1) + ") t";
     const stmt = conn.prepareStatement(sql);
     let p = 0;
@@ -115,7 +121,6 @@ function getCallerLookup(req) {
     return out;
   } catch (e) {
     Logger.log('getCallerLookup failed (best-effort): ' + (e && e.message ? e.message : e));
-    if (typeof recordNeonReadFailure_ === 'function') recordNeonReadFailure_('getCallerLookup', e);
     out.meta.available = false;
     return out;
   } finally {

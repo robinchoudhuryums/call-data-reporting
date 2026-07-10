@@ -118,3 +118,19 @@ test('RPT-2: an AF entry marks at most ONE ring at that second as abandoned', fu
   assert.equal(abandoned[0].parentId, 'P1');
   assert.equal(anna.missedTimes.length, 2, 'the other ring still renders, un-flagged');
 });
+
+test('CORE-1: getLatestDataDate(s) refuse role-none callers (the phantom F-28 gate, landed)', function () {
+  install([
+    { date: '2026-03-10', agent: 'Anna', ext: '501', rung: 6, missed: 1, answered: 5,
+      slots: ['', '', '9:05:11 AM'] },
+  ]);
+  // Signed-in admin: both resolve normally.
+  assert.equal(h.call('getLatestDataDate'), '2026-03-10');
+  assert.ok(h.call('getLatestDataDates').dqe, 'multi-source blob resolves');
+  // A domain visitor with no Access Control row and not in ADMIN_EMAILS
+  // (role 'none' -- the access-denied page) is refused; the console
+  // side-channel from the audit (CORE-1/DEEP-1) is closed.
+  h.state.userEmail = 'stranger@x.com';
+  assert.throws(function () { h.call('getLatestDataDate'); }, /Not authorized/);
+  assert.throws(function () { h.call('getLatestDataDates'); }, /Not authorized/);
+});

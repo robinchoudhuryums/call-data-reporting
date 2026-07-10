@@ -14,7 +14,8 @@
  *   MMM   short month name (Jan, Feb, ...)
  *
  * Observed call sites (grep Utilities.formatDate): 'yyyy-MM-dd',
- * 'yyyy-MM', 'MMM d', 'HH:mm', 'yyyy-MM-dd HH:mm'. If a test needs a
+ * 'yyyy-MM', 'MMM d', 'HH:mm', 'yyyy-MM-dd HH:mm', 'u' (ISO dow,
+ * the weekend gates in Alerts/Digest/IngestWatchdog). If a test needs a
  * token not listed here, add it to TOKENS + the map below rather than
  * guessing.
  */
@@ -32,6 +33,13 @@ function partsInTz(ts, tz) {
   return out;
 }
 
+function isoDowInTz(ts, tz) {
+  const wd = new Intl.DateTimeFormat('en-US', { timeZone: tz, weekday: 'short' })
+    .formatToParts(ts)
+    .filter(function (p) { return p.type === 'weekday'; })[0].value;
+  return String({ Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6, Sun: 7 }[wd]);
+}
+
 function shortMonthInTz(ts, tz) {
   return new Intl.DateTimeFormat('en-US', { timeZone: tz, month: 'short' })
     .formatToParts(ts)
@@ -39,7 +47,7 @@ function shortMonthInTz(ts, tz) {
 }
 
 // Longest-first so 'yyyy' wins over 'yy', 'MMM' over 'MM'/'M', etc.
-const TOKENS = /yyyy|yy|MMM|MM|dd|HH|mm|M|d/g;
+const TOKENS = /yyyy|yy|MMM|MM|dd|HH|mm|M|d|u/g;
 
 function formatDate(date, tz, pattern) {
   // Realm-safe Date check: vm-created Dates fail `instanceof Date`
@@ -60,6 +68,7 @@ function formatDate(date, tz, pattern) {
     mm: p.minute,
     M: String(Number(p.month)),
     d: String(Number(p.day)),
+    u: isoDowInTz(ts, tz),   // ISO day-of-week 1=Mon..7=Sun (weekend/holiday gates)
   };
   return String(pattern).replace(TOKENS, function (tok) { return map[tok]; });
 }

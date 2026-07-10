@@ -137,7 +137,14 @@ function getSystemHealth() {
       var at = props.getProperty(outcomes[o][2]);
       var res = props.getProperty(outcomes[o][3]);
       if (!at && !res) { add('triggers', outcomes[o][0], outcomes[o][1], 'muted', 'never run'); continue; }
-      var bad = /fail|error|unreachable|skipped/i.test(res || '');
+      // OPS-8: outcome strings are prefix-coded -- an "ok (...)" result is
+      // healthy even when its detail mentions designed-normal partial work
+      // (CacheWarm's "ok (12 warmed, 3 insights skipped on budget)").
+      // Substring-matching "skipped" inside an ok result painted the row
+      // amber every budget-limited day, training the admin to ignore the
+      // SAME row that carries the genuinely-bad "skipped (no latest
+      // date)" / "FAILED" outcomes.
+      var bad = !/^ok\b/i.test(res || '') && /fail|error|unreachable|skipped/i.test(res || '');
       add('triggers', outcomes[o][0], outcomes[o][1], bad ? 'warn' : 'ok',
         (res || '') + (at ? (' @ ' + at) : ''));
     }

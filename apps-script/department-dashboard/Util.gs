@@ -577,3 +577,23 @@ function deltaBlock_(curr, prev, type, formatted) {
     type: type,
   };
 }
+
+/**
+ * CORE-7: neutralizes spreadsheet formula injection on server-side sheet
+ * WRITES of free-text / externally-influenced values (the sheet-side
+ * sibling of the client's csvSafeCell_). Sheets executes a cell whose
+ * content starts with = + - @ (or embeds a leading tab/CR) as a live
+ * formula -- with "Execute as: Me" that formula runs against the OWNER's
+ * spreadsheet (e.g. IMPORTXML exfil) whenever the workbook opens. A
+ * leading apostrophe is Sheets' text marker: it is NOT part of the
+ * stored value, so `getValue()`/`getDisplayValue()` readers see the
+ * original string unchanged and lookups keep matching. Non-strings and
+ * safe strings pass through untouched. Use on every admin-editor /
+ * name-derived cell written via appendRow/setValue(s); values already
+ * validated to a strict shape (ISO dates, emails, real dept headers)
+ * don't need it.
+ */
+function sheetSafeCell_(v) {
+  if (typeof v !== 'string') return v;
+  return /^[=+\-@\t\r]/.test(v) ? "'" + v : v;
+}

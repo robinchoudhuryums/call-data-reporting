@@ -219,3 +219,43 @@ test('NEO-1: resolveEscalation is PENDING-only -- pending_review and rejected ro
   const act = log.writes.filter(function (w) { return w.sql.indexOf('INSERT INTO escalation_activity') === 0; })[0];
   assert.equal(act.params[2], 'resolved');
 });
+
+test('NEO-2: comments are worklist-only, required non-empty, and resolve preserves an existing comment', function () {
+  const log = { writes: [] };
+  // Empty comment refused (used to silently NULL the row's comment).
+  installReview({ role: 'manager', department: 'CSR', email: 'mgr@x.com' },
+    { status: 'pending', department: 'CSR', reason: 'r' }, log);
+  assert.throws(function () { h.call('updateEscalationComment', { id: 'e1', comments: '   ' }); },
+    /comment is required/);
+  assert.equal(log.writes.length, 0);
+
+  // pending_review is immutable external input until the review boundary runs.
+  installReview({ role: 'manager', department: 'CSR', email: 'mgr@x.com' },
+    { status: 'pending_review', department: 'CSR', reason: 'r', source: 'team-tools' }, log);
+  assert.throws(function () { h.call('updateEscalationComment', { id: 'e1', comments: 'note' }); },
+    /awaiting review/);
+  assert.equal(log.writes.length, 0);
+
+  // rejected is terminal.
+  installReview({ role: 'manager', department: 'CSR', email: 'mgr@x.com' },
+    { status: 'rejected', department: 'CSR', reason: 'r' }, log);
+  assert.throws(function () { h.call('updateEscalationComment', { id: 'e1', comments: 'note' }); },
+    /rejected.*cannot be annotated/);
+
+  // pending + resolved rows accept comments.
+  installReview({ role: 'manager', department: 'CSR', email: 'mgr@x.com' },
+    { status: 'pending', department: 'CSR', reason: 'r' }, log);
+  h.call('updateEscalationComment', { id: 'e1', comments: 'call them back tomorrow' });
+  const upd = log.writes.filter(function (w) { return w.sql.indexOf('UPDATE escalations SET comments') === 0; })[0];
+  assert.ok(upd, 'comment update executed');
+  assert.equal(upd.params[0], 'call them back tomorrow');
+
+  // Resolve with a BLANK comment keeps the row's existing comment (COALESCE).
+  const log2 = { writes: [] };
+  installReview({ role: 'manager', department: 'CSR', email: 'mgr@x.com' },
+    { status: 'pending', department: 'CSR', reason: 'r' }, log2);
+  h.call('resolveEscalation', { id: 'e1', resolution: 'handled' });
+  const res = log2.writes.filter(function (w) { return w.sql.indexOf('UPDATE escalations SET status') === 0; })[0];
+  assert.ok(/COALESCE\(NULLIF\(\?, ''\), comments\)/.test(res.sql),
+    'blank resolve comment preserves the stored one instead of NULLing it');
+});

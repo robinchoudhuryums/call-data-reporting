@@ -90,7 +90,8 @@ function keepNeonWarm_() {
   if (hour < startH || hour >= endH) return;
 
   var result;
-  // F29: skipReadHealth so a warm-ping failure doesn't write the DQE read-back
+  // F29/NEO-3: read-health recording is opt-in now (DQE readers only), so the
+  // warm ping can't pollute the DQE read-back streak; skipReadHealth kept as a no-op
   // failure streak (NEON_READ_LAST_ERROR). Keep-warm runs independent of
   // DQE_READ_SOURCE and tracks its own outcome in NEON_KEEPWARM_LAST_RESULT;
   // it must NOT masquerade as a DQE read-back failure (which never gets cleared

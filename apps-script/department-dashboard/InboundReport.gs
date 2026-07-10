@@ -474,7 +474,6 @@ function computeInboundReport_(scope) {
   } catch (e) {
     // Table missing / Neon error -> graceful empty (modal shows "unavailable").
     Logger.log('computeInboundReport_ failed (best-effort): ' + (e && e.message ? e.message : e));
-    if (typeof recordNeonReadFailure_ === 'function') recordNeonReadFailure_('computeInboundReport_', e);
     empty.meta.available = false;
     return empty;
   } finally {
@@ -554,6 +553,15 @@ function getInboundInsurerDaily(req) {
     },
     daily: [],
   };
+  // NEO-5: mirror computeInboundReport_/getInboundHeatmap's unmapped-dept
+  // short-circuit. Without it, an unmapped dept ran the query with an
+  // entry-queue arm that matches nothing while the answered-on-hold
+  // final_dept carve-out could still return rows -- a drill showing data
+  // for a dept whose main report says "no queues mapped".
+  if (!scope.companyView && scope.deptQueues.length === 0) {
+    out.meta.unmapped = true;
+    return out;
+  }
   let conn = null;
   try {
     conn = (typeof getDashboardNeonConn_ === 'function') ? getDashboardNeonConn_() : null;
@@ -583,7 +591,6 @@ function getInboundInsurerDaily(req) {
     return out;
   } catch (e) {
     Logger.log('getInboundInsurerDaily failed (best-effort): ' + (e && e.message ? e.message : e));
-    if (typeof recordNeonReadFailure_ === 'function') recordNeonReadFailure_('getInboundInsurerDaily', e);
     out.meta.available = false;
     return out;
   } finally {
@@ -635,7 +642,6 @@ function scanInboundQueueNames_(lookbackDays) {
     return Array.isArray(arr) ? arr : [];
   } catch (e) {
     Logger.log('scanInboundQueueNames_ failed (best-effort): ' + (e && e.message ? e.message : e));
-    if (typeof recordNeonReadFailure_ === 'function') recordNeonReadFailure_('scanInboundQueueNames_', e);
     return null;
   } finally {
     if (conn) { try { conn.close(); } catch (ce) {} }
@@ -730,7 +736,6 @@ function getInboundHeatmap(req) {
     return out;
   } catch (e) {
     Logger.log('getInboundHeatmap failed (best-effort): ' + (e && e.message ? e.message : e));
-    if (typeof recordNeonReadFailure_ === 'function') recordNeonReadFailure_('getInboundHeatmap', e);
     out.meta.available = false;
     return out;
   } finally {
@@ -856,7 +861,6 @@ function getInboundHeatmapCell(req) {
     return out;
   } catch (e) {
     Logger.log('getInboundHeatmapCell failed (best-effort): ' + (e && e.message ? e.message : e));
-    if (typeof recordNeonReadFailure_ === 'function') recordNeonReadFailure_('getInboundHeatmapCell', e);
     out.meta.available = false;
     return out;
   } finally {

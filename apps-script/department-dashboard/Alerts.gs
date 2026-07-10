@@ -563,7 +563,6 @@ function neonAlertConfigRawValues_() {
               r.notes || '', r.skip_dates || ''];
     });
   } catch (e) {
-    if (typeof recordNeonReadFailure_ === 'function') recordNeonReadFailure_('readAlertConfig_', e);
     return null;
   } finally {
     try { conn.close(); } catch (ce) {}
