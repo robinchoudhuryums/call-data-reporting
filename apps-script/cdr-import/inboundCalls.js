@@ -466,6 +466,19 @@ var IC_BACKFILL_TIME_LIMIT_MS = 15 * 60 * 1000;
  * still exists -- days pruned by DeleteOldSheets are gone from the
  * sheet side and cannot be reconstructed.
  */
+/**
+ * Editor-run FORCE variant (the Run picker can't pass arguments). Use for
+ * the IMP-1 heal: dates mirrored BEFORE the Backup-CSR queue fix are in
+ * `inbound_calls` already, so the plain run skips them as "already
+ * mirrored" -- force re-derives every surviving Call_Legs_* date and
+ * ON CONFLICT DO UPDATE rewrites the mis-classified rows (abandon_stage
+ * 'ivr' -> 'queue', entry/final queue populated). Idempotent; safe to
+ * re-run until the log says "complete".
+ */
+function backfillInboundCallsForce() {
+  return backfillInboundCalls(null, null, true);
+}
+
 function backfillInboundCalls(fromIso, toIso, force) {
   var startMs = Date.now();
   var ss = SpreadsheetApp.getActiveSpreadsheet();
