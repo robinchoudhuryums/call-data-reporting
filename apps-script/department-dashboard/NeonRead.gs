@@ -300,8 +300,9 @@ function sheetFetchDqeRows_(fromIso, toIso, opts) {
 }
 
 /**
- * Editor-run parity diagnostic for the F1 read-back gate. Edit COMPARE_FROM
- * / COMPARE_TO below to a representative range (start with ~1 week to keep
+ * Editor-run parity diagnostic for the F1 read-back gate. Set the
+ * DQE_PARITY_FROM / DQE_PARITY_TO Script Properties to a representative
+ * range (or edit the in-source defaults below; start with ~1 week to keep
  * the sheet read cheap), then Run this from the Apps Script editor and read
  * the Execution log.
  *

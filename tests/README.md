@@ -39,7 +39,9 @@ tests/
     fixtures.js     DQE-row + DO NOT EDIT! roster grid builders
     shim.js         mock Apps Script globals + a `state` handle to drive them
     loadGas.js      loads .gs files into one vm context (shared global scope)
-  unit/
+  unit/                       (40 suites — the directory is canonical; the
+                               rows below are representative examples, not
+                               an exhaustive index)
     util.test.js              Util.gs: formatting, month lists, insights, assertAdmin_
     data-parsing.test.js      Data.gs: rowDateIso_, parseExtensions_, parseHmsDisplay_, getDeptQueueExts_
     cache-key.test.js         Data.gs: hashAgents_ (INV-36)
@@ -49,6 +51,13 @@ tests/
     canonicalization.test.js  cdr-report/cdr-import buildDQEHistoricalData.js: INV-24/INV-46 + INV-16 cross-project
     pipeline-build.test.js    buildDQEHistoricalData end-to-end: INV-07 window legs, INV-08 TTT attribution, INV-20 PST→CST slots, INV-21 parentMap, dup guard
     digest-wow.test.js        Digest.gs: WoW "driver" narrative (#11) reusing INV-48 — gain/drop drivers, threshold, narrative HTML + escaping
+    missed-report.test.js     MissedCallsReport.gs: RPT-1 slot-less abandoned parents + lost-detail flag, RPT-2 per-second FIFO parent-id pairing
+    ingest-watchdog.test.js   IngestWatchdog.gs: OPS-1 confirmed-send episode arming, OPS-7 holiday skip + non-business-day staleness credit
+    ...                       + 29 more — dal-cutover parity, escalations
+                              hardening, neon-write chunking/mapping (incl.
+                              IMP-4/5/6 replace/dedupe pins), qcd/insights
+                              freezes, cache-version-sync, heatmap drill,
+                              system-health, neon-mirror tail/IMP-11, etc.
 ```
 
 To load a sibling pipeline project instead of the dashboard, pass

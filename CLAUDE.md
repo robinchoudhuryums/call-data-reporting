@@ -66,8 +66,11 @@ bash scripts/check-duplicated-files.sh
 # INV-16 cross-project); the INV-29 trend window
 # (computeTrendStartDate_, trend-window.test.js); the end-to-end
 # buildDQEHistoricalData build (INV-07/08/20/21 + the Pass-4 INV-23
-# queue-sentinel producer); and the QCD report's F-15 daily axis /
-# F-36 all-dept grand-total dedup (qcd-report.test.js). See
+# queue-sentinel producer); the QCD report's F-15 daily axis /
+# F-36 all-dept grand-total dedup (qcd-report.test.js); the Missed
+# report's RPT-1/2 abandoned-count + pairing pins
+# (missed-report.test.js); and the ingest watchdog's OPS-1/OPS-7
+# episode/holiday logic (ingest-watchdog.test.js). See
 # tests/README.md for design + how to add tests. The neonWrite JDBC
 # writers are pinned end-to-end (chunking/commit discipline +
 # field mappings, neon-write-mapping.test.js).

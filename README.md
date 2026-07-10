@@ -375,12 +375,15 @@ scripts/deploy.sh apps-script/cdr-import <cdr-import-deployment-id>
   visible at a glance. Such a gap self-heals on the next import of that date
   — the dup-guard re-mirrors the existing sheet rows. (Hidden when `NEON_*`
   isn't configured.)
-- **Before flipping**, run the parity gate from the Apps Script editor:
-  open `NeonRead.gs`, edit `COMPARE_FROM` / `COMPARE_TO` in
-  `compareDqeSources_` to a range fully inside the mirrored history, then
-  Run **`runDqeParityCheck`** (the editor's Run picker hides `_`-suffixed
-  functions, so use this non-underscore wrapper). A "PARITY CLEAN" log =
-  safe to cut over. Create the two indexes first so the Neon reads stay
+- **Before flipping**, run the parity gate from the Apps Script editor
+  (Department Dashboard project): set the `DQE_PARITY_FROM` /
+  `DQE_PARITY_TO` Script Properties to a range fully inside the mirrored
+  history (in-source defaults apply if unset), then Run
+  **`runDqeParityCheck`** (the editor's Run picker hides `_`-suffixed
+  functions, so use this non-underscore wrapper; admin-gated). A
+  "PARITY CLEAN" log with missing-in-neon = 0 AND missing-in-sheet = 0 =
+  safe to cut over (missing-in-sheet rows are Neon phantoms — force
+  re-import those dates first). Create the two indexes first so the Neon reads stay
   fast:
   ```sql
   CREATE INDEX IF NOT EXISTS idx_dqe_history_call_date ON dqe_history (call_date);
@@ -417,7 +420,12 @@ scripts/deploy.sh apps-script/cdr-import <cdr-import-deployment-id>
   date to a `Neon Mirror Queue` tab in the CDR Report spreadsheet; the
   trigger drains the queue minutes later by re-deriving each payload
   from the Historical Data sheets and upserting via the same writers
-  (`ON CONFLICT`, so retries are safe). The daily toast shows
+  (idempotent, so retries are safe; Neon-unreachable dates retry
+  indefinitely, but a date that HARD-errors is retried at most
+  `NEON_MIRROR_MAX_ATTEMPTS` (default 8) times then parked with a
+  `neonMirror:gave-up` row + one final email — a date whose
+  `Call_Legs_*` sheet was pruned before it drained fails the same way,
+  since its `inbound_calls` rows are unrecoverable). The daily toast shows
   `Neon ⏳ queued`; per-type outcomes land as `neonMirror:*` Pipeline
   Health rows.
 - Validate on one import before relying on it: confirm the queue drains,
