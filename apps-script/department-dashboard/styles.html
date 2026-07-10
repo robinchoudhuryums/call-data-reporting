@@ -202,6 +202,7 @@
   body[data-page="overview"]     #overview-page     { display: block; }
   body[data-page="dept"]         #dept-page         { display: block; }
   body[data-page="escalations"]  #escalations-page  { display: block; }
+  body[data-page="insights"]     #insights-page     { display: block; }
   /* The Escalations page lives outside the main page container (it was
      converted in place from a modal), so give it the same bounded, centered
      content width the other pages get from that container. */
@@ -210,6 +211,18 @@
     margin: 0 auto;
     padding: 0 4px;
   }
+  /* Insights page body (modal->page conversion, docs/insights-page-plan.md):
+     a data-dense report, so it matches the main container's 1440px rather
+     than the Escalations worklist's 1100px. position:relative anchors the
+     relocated open-in-new-tab button (absolutely positioned, from its
+     modal-header days) to the page's top-right instead of some ancestor. */
+  .ins-page-body {
+    max-width: 1440px;
+    margin: 0 auto;
+    padding: 0 4px;
+    position: relative;
+  }
+  .ins-page-body > .modal-open-tab-btn { top: 0; right: 0; }
   /* Loading skeleton is centered with extra breathing room for
      the inline (non-modal) presentation. */
   #overview-page > #ov-loading { padding: 64px 32px; }
