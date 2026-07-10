@@ -54,15 +54,25 @@ apply after `setPage('insights')`. Digest.gs itself needs no change.
   **Intermediate state: Insights is UNREACHABLE** — `initInsightsReport`
   early-returns (`$('insights-modal')` is null) so nothing is wired,
   and `setPage` doesn't know `'insights'` yet.
-- [ ] **Phase 2 — router/page plumbing** (script.html): `setPage`
+- [x] **Phase 2 — router/page plumbing** (script.html): `setPage`
   gains `'insights'` (kicker "Reports · Insights", title "Insights";
-  first-entry init = what `openModal` did: `insShowForm` + default
-  dates + prefs restore + `insEnsureRoster`; re-entry only re-ensures
-  the roster and never clobbers rendered results — decision 3);
-  `ROUTES_` re-types the 4 routes to `kind:'page', page:'insights'`;
-  `currentRouteFallback_` + the `setRoute_` call in `setPage` gain the
-  insights case; **the deep-link page branch applies SHARE_STATE_
-  query state** (the digest-email keeper, above).
+  first-entry init via the new `insEnsurePage_` = what `openModal`
+  did: `insShowForm` + default dates + prefs restore +
+  `insEnsureRoster`; re-entry only re-ensures the roster and never
+  clobbers rendered results — decision 3); `ROUTES_` re-typed the 4
+  routes to `kind:'page', page:'insights'` (buttonId/modalId fields
+  dropped); `basePageRoute_` + the `setRoute_` call in `setPage` gain
+  the insights case (so closing an IR drill modal restores the
+  Insights tab highlight); **the deep-link page branch applies
+  SHARE_STATE_ query state** (the digest-email keeper). Pulled forward
+  from Phase 3: the tab click → `setPage('insights')` wiring (the
+  deep-link trigger path clicks the tab, so the route re-types are
+  dead without it). Intermediate state after Phase 2: the page opens
+  and shows the form, and the LAUNCHER auto-run path may work
+  end-to-end (it calls `runInsReport()` programmatically), but manual
+  form controls (Generate, presets, popover, export) stay unwired
+  until Phase 3 — `initInsightsReport` still early-returns on the
+  absent modal right after wiring the tab.
 - [ ] **Phase 3 — `initInsightsReport` rework**: strip the modal
   machinery (openModal/closeModal, trapFocus_, drag/resize, scroll
   lock, Escape, backdrop); tab click → `setPage('insights')`; keep all
