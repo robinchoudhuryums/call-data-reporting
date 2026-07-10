@@ -462,18 +462,19 @@
         </nav>
         <div class="help-content" id="help-content">
           <section class="help-topic" id="help-topic-pages">
-            <h3>The three pages</h3>
-            <p>The dashboard has three pages, switched from the header:</p>
+            <h3>The four pages</h3>
+            <p>The dashboard has four pages, switched from the header:</p>
             <ul>
               <li><strong>Overview</strong> (the landing page) &mdash; a company-wide snapshot: a tile per department with answer rate, abandonment and a 30-day trend chart. Admins also see a company aggregate hero. Click a department tile to jump into it.</li>
               <li><strong>My Department</strong> &mdash; the per-agent table for one department, plus its Queue Call Data tiles and per-agent missed-call timelines.</li>
               <li><strong>Escalations</strong> &mdash; the escalation worklist for your department: filter, review each escalation's activity timeline, resolve with a note, or reopen.</li>
+              <li><strong>Insights</strong> &mdash; the flagship report as a full page: a department rollup, per-agent comparison cards, queue health, and the 12-month trend. Returning to the tab keeps your generated report.</li>
             </ul>
-            <p>Reports (Individual, Insights, QCD, etc.) open as modals over any page.</p>
+            <p>Other reports (Individual, plus the admin-vetted Inbound / Direct) open as modals over any page.</p>
           </section>
           <section class="help-topic" id="help-topic-nav" hidden>
             <h3>Navigating &amp; reports</h3>
-            <p>The header row of tabs opens each report. Every report modal has an <strong>&#8599; Open in new tab</strong> button (top-right) for side-by-side viewing, and most carry an Export menu (Download CSV / Copy image / Email / Print).</p>
+            <p>The header row of tabs opens each report. Every report (the Insights page and each report modal) has an <strong>&#8599; Open in new tab</strong> button (top-right) for side-by-side viewing, and most carry an Export menu (Download CSV / Copy image / Email / Print).</p>
             <p>The floating <strong>?</strong> button (bottom-right) opens this Help from anywhere, even over a report. Admin-only tabs (Alerts, Outlier Fix, Dept Config) are hidden for managers.</p>
           </section>
           <section class="help-topic" id="help-topic-dates" hidden>
@@ -538,6 +539,7 @@
           </section>
           <section class="help-topic" id="help-topic-insights" hidden>
             <h3>Insights</h3>
+            <p>Insights is a full <strong>page</strong> &mdash; its own header tab, next to My Department. Your generated report stays put when you switch tabs and come back.</p>
             <p>A team rollup + per-agent cards + 12-month trend, with comparison modes (preceding period / same window a year ago / custom). It absorbed the retired <strong>Performance Report</strong> and <strong>Compare Ranges</strong>: the KPI tiles compare against the immediately-preceding same-length window, the share-of-answered donut is below the trend chart, and the per-agent Chart view has <strong>Gap vs team / Absolute / vs Prior</strong> bases (Absolute = stacked Answered&thinsp;+&thinsp;Missed volumes with % answered dots; vs Prior = each agent&rsquo;s current-vs-prior bars). For a year-over-year or any two arbitrary windows, use <strong>Compare against &rarr; Same window one year prior</strong> or <strong>Custom prior range</strong>; hover a delta badge on a card for the prior window&rsquo;s exact value. When the two windows differ in length, a note appears and per-day figures keep volumes comparable. On each <strong>agent card</strong>:</p>
             <ul>
               <li>The colored <strong>left rail</strong> and the <strong>&#9650; Improving / &#9660; Slipping / &#8776; Mixed</strong> pill show that agent&rsquo;s <em>trend</em> vs the prior period (across rung, missed, answered, % answered). Hover the card and the rail glows.</li>

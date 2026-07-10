@@ -118,18 +118,45 @@ apply after `setPage('insights')`. Digest.gs itself needs no change.
   measure-while-hidden gotcha after a window resize on another page.
   Visual polish at 1440px is deliberately left to the Phase 8 manual
   smoke (fluid grids are expected to just stretch).
-- [ ] **Phase 7 — copy/docs sweep**: tour "Deeper reports" step,
-  `#help-topic-insights`, Reports-menu `title=`; CLAUDE.md (multi-page
-  architecture bullet, INV-37 pages list, Insights-consolidation
-  bullet wording, router bullet); docs tables' prose; S14/S18/S19/
-  S32/S37 scenario wording; `.cycle/STATE.md`.
-- [ ] **Phase 8 — verification**: extracted-JS `node --check`;
-  `node --test` (server tests must stay green untouched); manual walk:
-  S37 (full Insights e2e), S14 (absorbed-PR views +
-  `#/report/performance` deep link), S19 (edit popover + custom
-  prior), **a digest deep link with query state**, launcher chips
-  (incl. a forced roster failure), IR drill round-trip,
-  open-in-new-tab, S23 (tab active states).
+- [x] **Phase 7 — copy/docs sweep**: tour gained an Insights-tab step
+  and the "Deeper reports" step now describes the admin dropdown
+  (Individual + Inbound/Direct); Help "The four pages" topic + nav
+  topic + an Insights-is-a-page lead-in; CLAUDE.md (multi-page
+  architecture bullet, INV-37 re-written to the multi-page model,
+  IR-drill paragraph in the consolidation bullet, router/deep-link
+  bullet incl. the page-branch SHARE_STATE_ note, draggable-modals
+  count, PR/CR "buttonId repoint" → "page repoint", INV-45 +
+  S14/S32 "Insights modal" → "page"); docs/known-issues.md digest
+  bridge wording. No cache-version strings touched (the
+  cache-version-sync test stayed green).
+- [x] **Phase 8 — verification (automated)**: div/section nesting
+  balanced; repo-wide `insights-modal` refs = 0; extracted-JS
+  `node --check` clean; 280/280 `node --test`; INV-16 guard clean.
+  Shipped as ONE PR (all conversion commits).
+
+## Post-deploy manual smoke (operator; needs the live web app)
+
+1. **S37** — full Insights e2e from the new tab: agent-free Generate,
+   Queue health, comparison modes, exports (incl. Print — the
+   retargeted `ins-printing` block), edit popover.
+2. **S14** — absorbed-PR views + a `#/report/performance` deep link
+   (lands on the page).
+3. **Digest deep link WITH query state** — from a digest email (or
+   hand-build `#/report/insights?from=...&to=...&agents=a|b`):
+   the page opens with the form primed to those exact values.
+4. **Launcher chips** — "team lately" + "abandons" auto-run on the
+   page; loading pane covers the run; a forced roster failure falls
+   back to the form (no eternal pane).
+5. **IR drill round-trip** — card → IR modal overlays the page →
+   "Back to Insights" closes IR revealing the intact report; generic
+   "« Back" restored on IR's next direct open.
+6. **Open-in-new-tab** — the ↗ button top-right of the page carries
+   form state; disabled (hidden) when DASHBOARD_URL unset.
+7. **S23** — tab active states incl. the Insights tab; re-entry keeps
+   the rendered report; charts still sized right after a window
+   resize on another page (the `insResizeCharts_` pass).
+8. **View-as-manager** — the Insights tab stays visible and works in
+   the preview.
 
 ## Risks
 

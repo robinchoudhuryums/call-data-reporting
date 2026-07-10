@@ -556,7 +556,7 @@ for the prior calendar month). Anything else is treated as inactive.
 
 **Format** is `summary` (the KPI-tile digest + WoW driver callout;
 default) or `insights` (the digest-Insights bridge: the SAME
-`computeInsights_` the Insights modal serves, run over the dept's
+`computeInsights_` the Insights page serves, run over the dept's
 full roster -- floaters excluded -- vs a cadence-appropriate prior
 window: daily compares to the INV-28 auto-adjacent day, weekly to
 the previous Mon-Fri, monthly to the previous calendar month).
