@@ -268,8 +268,10 @@ Neon Postgres is the long-term archive and the future query backend.
 - `buildDQEHistoricalData.gs` writes to both the sheet AND `neonWrite.gs`.
   Sheet write is the primary; Neon write is best-effort with email
   notification on failure (`notifyNeonWriteFailure`). The three live
-  writers (`writeDQE/QCD/CDRRowsToNeon`) use `ON CONFLICT DO UPDATE`
-  (the phone child rows stay `DO NOTHING`), so a re-import / force-rebuild
+  writers (`writeDQE/QCD/CDRRowsToNeon`) use `ON CONFLICT DO UPDATE`, and
+  the phone child rows are per-parent DELETE-then-insert (IMP-4 -- the old
+  `DO NOTHING` never propagated corrections; `DO NOTHING` remains only as
+  an intra-payload duplicate guard), so a re-import / force-rebuild
   propagates corrected values to Neon instead of skipping the existing
   row — the mechanism that lets corrections (e.g. the F2 name-splitter
   fix) actually reach Neon, and a prerequisite for the read-back.

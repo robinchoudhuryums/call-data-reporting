@@ -207,3 +207,68 @@ test('REP-2: the phone-child parent-id lookup is chunked (400 rows/query)', func
     });
   } finally { delete h.state.props.HMAC_SECRET; }
 });
+
+test('IMP-4: phone children are per-parent DELETE-then-insert (corrections + removals propagate)', function () {
+  // Fake conn: the prepared parent-id lookup serves ids 11/12 for the two
+  // payload parents; createStatement captures the inline child DELETE +
+  // INSERT SQL so the sequence is observable.
+  const log = { sqls: [], commits: 0, rollbacks: 0 };
+  const idRows = [
+    { id: 11, d: '2026-06-22', dept: 'CSR', agent: 'Anna' },
+    { id: 12, d: '2026-06-22', dept: 'CSR', agent: 'Ben' },
+  ];
+  function conn() {
+    return {
+      setAutoCommit: function () {},
+      prepareStatement: function (sql) {
+        log.sqls.push(sql);
+        let i = -1;
+        return {
+          setString: function () {}, setInt: function () {},
+          execute: function () { return true; },
+          executeQuery: function () {
+            if (sql.indexOf('FROM call_history_dept d') === -1) throw new Error('unexpected query');
+            return {
+              next: function () { i++; return i < idRows.length; },
+              getString: function (col) {
+                return col === 2 ? idRows[i].d : col === 3 ? idRows[i].dept : idRows[i].agent;
+              },
+              getInt: function () { return idRows[i].id; },
+              close: function () {},
+            };
+          },
+          close: function () {},
+        };
+      },
+      createStatement: function () {
+        return { execute: function (sql) { log.sqls.push(sql); }, close: function () {} };
+      },
+      commit: function () { log.commits++; },
+      rollback: function () { log.rollbacks++; },
+      close: function () {},
+    };
+  }
+  h.ctx.getReachableNeonConn_ = function () { return conn(); };
+  h.state.props.HMAC_SECRET = 'test-secret';
+  try {
+    const rows = [
+      { callDate: '2026-06-22', dept: 'CSR', agentName: 'Anna',
+        obExtTTT: '0:01:00', obExtATT: '0:00:30', phonesX: '+12145550000 0:01:00 (2)' },
+      // Ben's re-imported row has NO entries left: the per-parent delete
+      // alone is his correction (phantom entries removed).
+      { callDate: '2026-06-22', dept: 'CSR', agentName: 'Ben',
+        obExtTTT: '0:01:00', obExtATT: '0:00:30' },
+    ];
+    h.fn('writeCDRRowsToNeon')(rows);
+    const del = log.sqls.filter(function (q) { return /^DELETE FROM call_history_phones/.test(q); });
+    assert.equal(del.length, 1, 'one per-parent delete statement');
+    assert.match(del[0], /call_history_id IN \(11,12\)/, 'BOTH looked-up parents cleared, incl. the now-empty one');
+    const childInserts = log.sqls.filter(function (q) { return /^INSERT INTO call_history_phones/.test(q); });
+    assert.ok(childInserts.length >= 1, 'entries re-inserted after the delete');
+    assert.match(childInserts[0], /ON CONFLICT ON CONSTRAINT uq_phone_entry DO NOTHING/,
+      'DO NOTHING kept as the intra-payload dup guard');
+    // Sequence: delete strictly before the first child insert.
+    assert.ok(log.sqls.indexOf(del[0]) < log.sqls.indexOf(childInserts[0]));
+    assert.equal(log.commits, 2, 'parent commit + one child (delete+insert) commit');
+  } finally { delete h.state.props.HMAC_SECRET; }
+});

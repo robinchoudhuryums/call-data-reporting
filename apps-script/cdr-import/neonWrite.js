@@ -524,6 +524,37 @@ function cdrInsertPhoneChildRows_(conn, rows, hmacSecret) {
     idRs.close(); idStmt.close();
   }
 
+  // IMP-4: per-parent DELETE-then-insert. The old upsert was
+  // `ON CONFLICT ON CONSTRAINT uq_phone_entry DO NOTHING`, so a force
+  // re-import's CORRECTED entries never propagated (stale duration_sec /
+  // occurrences kept forever) and entries that DISAPPEARED from the
+  // re-exported source lingered as phantoms. Each payload row carries the
+  // COMPLETE entry set for its parent (built from that row's own
+  // phonesX/Y/Z cells), so deleting the looked-up parents' children first
+  // makes the write authoritative PER PARENT -- safe on EVERY caller,
+  // including partial-DATE bulk batches (per-parent completeness is what
+  // matters, unlike the IMP-5 date-level replace). Same transaction as
+  // the inserts: a failed insert rolls the delete back. The ON CONFLICT
+  // DO NOTHING below is kept as an intra-payload duplicate guard.
+  // (Edge, documented: if NO payload row has phones at all, the caller's
+  // hasAnyPhones gate skips this helper entirely, so an
+  // every-list-emptied re-import day would keep stale children --
+  // practically unreachable.)
+  var parentIds = [];
+  for (var pidKey in idMap) {
+    var pv = parseInt(idMap[pidKey], 10);
+    if (isFinite(pv)) parentIds.push(pv);
+  }
+  if (parentIds.length) {
+    var DEL_CHUNK = 500;   // ints, ~10 chars each -- ~5KB per statement
+    var delStmt = conn.createStatement();
+    for (var doff = 0; doff < parentIds.length; doff += DEL_CHUNK) {
+      delStmt.execute('DELETE FROM call_history_phones WHERE call_history_id IN ('
+        + parentIds.slice(doff, doff + DEL_CHUNK).join(',') + ')');
+    }
+    delStmt.close();
+  }
+
   // ---- build + hash (timed) ----
   var tBuild = Date.now();
   var TYPE_LITERAL_ = {
@@ -559,6 +590,10 @@ function cdrInsertPhoneChildRows_(conn, rows, hmacSecret) {
   var uniqueHashes = Object.keys(CDR_HMAC_CACHE_).length;
 
   if (!phoneValues.length) {
+    // IMP-4: commit the per-parent delete above -- when a re-import removed
+    // every entry for these parents, the delete alone IS the correction
+    // (returning uncommitted would roll it back on close).
+    if (parentIds.length) conn.commit();
     Logger.log('cdrInsertPhoneChildRows_: 0 phone rows | build+hash ' + buildMs + 'ms (' + uniqueHashes + ' unique hashes).');
     return 0;
   }
@@ -568,7 +603,8 @@ function cdrInsertPhoneChildRows_(conn, rows, hmacSecret) {
   // throws "Argument too large: sql" near ~44KB). Each tuple is ~100 chars,
   // so 200 rows is ~20KB -- safely under, and far fewer round-trips than the
   // old 500-row bound-param chunks. ONE commit after all chunks
-  // (all-or-nothing; idempotent via ON CONFLICT DO NOTHING).
+  // (all-or-nothing with the IMP-4 per-parent delete above; ON CONFLICT
+  // DO NOTHING guards intra-payload duplicates only).
   var tInsert = Date.now();
   var INSERT_CHUNK = 200;
   var stmt = conn.createStatement();

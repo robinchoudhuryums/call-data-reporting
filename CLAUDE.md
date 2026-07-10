@@ -1186,7 +1186,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   date likewise. Partial-set callers -- the bulk archive after
   `dedupeAlreadyArchived_`, the row-batched backfills
   (`backfillDQEHistory*`, `backfillDirectCallToNeon`) -- must NOT pass it.
-  Duplicate conflict-key rows are deduped last-write-wins first (IMP-6). History: these were original gaps (never present),
+  Duplicate conflict-key rows are deduped last-write-wins first (IMP-6). The `call_history_phones` children are per-parent DELETE-then-insert (IMP-4: each payload row carries its parent's COMPLETE entry set, so per-parent replace is safe on every caller incl. partial-date bulk batches; the old `DO NOTHING` never propagated corrected durations/occurrences and kept removed entries as phantoms -- it survives only as an intra-payload dup guard; `neonbackfill.js::backfillCDRHistory`'s child path deliberately stays fill-only per its docstring). History: these were original gaps (never present),
   not a regression — the phone-child write shipped in commit 771f227 with
   a 200-row per-chunk commit, double connection, and un-memoized HMAC, and
   a ~4k-phone day took ~17 minutes. A future "move the mirror off the
