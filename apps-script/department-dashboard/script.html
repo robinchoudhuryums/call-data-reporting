@@ -5241,14 +5241,13 @@
     // (and applies the pending selection + auto-run) even if the cached
     // roster matched.
     irLastRoster = { dept: null, agents: [], activeAgents: null, activeFloaters: null, rangeKey: '' };
-    // Drill-through from Insights: hide the Insights modal (its rendered
-    // report stays in the DOM for an instant Back), flag the origin, and
+    // Drill-through from the Insights PAGE (modal->page conversion): the IR
+    // modal simply overlays it -- the rendered report stays put behind the
+    // overlay, so nothing is hidden or restored. Just flag the origin and
     // reveal the "Back to Insights" button on the IR modal (#2).
-    const insModal = $('insights-modal');
-    const fromInsights = !!(insModal && insModal.style.display !== 'none');
+    const fromInsights = document.body.getAttribute('data-page') === 'insights';
     if (fromInsights) {
       irCameFromInsights_ = true;
-      insModal.style.display = 'none';
       const bk = $('ir-back-to-insights-btn'); if (bk) bk.style.display = '';
       // Hide the generic "« Back" (returns to the IR setup form) for the
       // duration of the drill -- two Back buttons side by side read as
@@ -5288,21 +5287,16 @@
       releaseFocus_();
       resetModalTransform_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
       document.removeEventListener('keydown', onKeyDown);
-      // If we drilled in from Insights, ANY close (Back / X / Escape) returns
-      // to the already-rendered Insights modal -- no reload (#2/#7).
+      // If we drilled in from the Insights page, ANY close (Back / X /
+      // Escape) reveals it again -- the page sat behind the IR overlay all
+      // along, so there's nothing to re-show and no scroll lock to keep;
+      // just restore the Back buttons (#2/#7). Focus deliberately stays put
+      // (the launcher button lives in the admin-only Reports dropdown).
       if (irCameFromInsights_) {
         irCameFromInsights_ = false;
         const bk = $('ir-back-to-insights-btn'); if (bk) bk.style.display = 'none';
         const gb = $('ir-back-btn'); if (gb) gb.style.display = '';   // restore the generic Back
-
-        const insModal = $('insights-modal');
-        if (insModal) {
-          insModal.style.display = '';
-          insModal.setAttribute('aria-hidden', 'false');
-          document.body.style.overflow = 'hidden';   // keep the scroll lock for Insights
-        } else {
-          document.body.style.overflow = '';
-        }
+        document.body.style.overflow = '';
       } else {
         document.body.style.overflow = '';
         btn.focus();

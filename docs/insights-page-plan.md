@@ -86,12 +86,19 @@ apply after `setPage('insights')`. Digest.gs itself needs no change.
   degrades gracefully (no "Back to Insights" button — `irDrillToAgent_`
   still probes the absent modal, Phase 4) and printing still targets
   the modal selectors (Phase 6).
-- [ ] **Phase 4 — IR drill simplification**: `irDrillToAgent_` detects
-  the Insights origin via `data-page === 'insights'`; delete the modal
-  hide/re-show and the `irCameFromInsights_` scroll-lock juggling in
-  IR's `closeModal` (keep the flag for the "Back to Insights" button
-  visibility swap — the button now simply closes the IR modal, the
-  page is still there behind it).
+- [x] **Phase 4 — IR drill simplification**: `irDrillToAgent_` detects
+  the Insights origin via `data-page === 'insights'` (both
+  `$('insights-modal')` probes gone — script.html now has ZERO
+  insights-modal references); the modal hide/re-show and the
+  `irCameFromInsights_` scroll-lock juggling in IR's `closeModal` are
+  deleted (the page sits behind the IR overlay all along); the flag
+  survives solely for the "Back to Insights" button visibility swap.
+  Focus deliberately stays put on drill-close (the old `btn.focus()`
+  target lives in the admin-only Reports dropdown). Known cosmetic
+  carry-over (pre-existing, unchanged): closing IR via the
+  Back-to-Insights button doesn't refresh the tab highlight (only
+  `.modal-close`/`[data-close]` clicks do) — same class as the
+  documented Escape-close gap.
 - [ ] **Phase 5 — launcher**: `launcherOpenInsights_` calls
   `setPage('insights')` instead of clicking the button; auto-run flag,
   loading pane, and the CL1-2 failure fallback unchanged.
