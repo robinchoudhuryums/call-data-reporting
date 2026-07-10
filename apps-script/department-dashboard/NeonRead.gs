@@ -375,10 +375,18 @@ function compareDqeSources_() {
   Logger.log('--- value mismatches on common keys: %s', mismatches.length);
   mismatches.slice(0, 10).forEach(function (m) { Logger.log('   %s', m); });
 
-  var clean = (missingInNeon.length === 0 && mismatches.length === 0);
+  // EXTRA-in-Neon rows count as NOT clean: with reads on neon they are the
+  // phantom-row hazard (split agent / double-counted totals) IMP-5 exists
+  // to prevent -- the old verdict ignored them entirely.
+  var clean = (missingInNeon.length === 0 && extraInNeon.length === 0 && mismatches.length === 0);
   Logger.log('=== PARITY %s ===', clean
     ? 'CLEAN -- dqe_history matches the sheet for this range; read-back gate PASSED'
-    : 'MISMATCH -- resolve before cutover (run backfillDQEHistory() for gaps)');
+    : 'MISMATCH -- resolve before relying on the read-back. VALUE mismatches or '
+      + 'MISSING-in-Neon rows -> run backfillDQEHistoryUpsert() (cdr-report editor; '
+      + 'DO UPDATE re-mirror of the sheet, F-51-sanitized, resumable) -- NOT '
+      + 'backfillDQEHistory(), whose DO NOTHING skips every existing row. '
+      + 'EXTRA-in-Neon phantoms -> force re-import the date (authoritative '
+      + 'replace, IMP-5) or delete those rows in SQL, then re-run this check.');
 }
 
 /**
