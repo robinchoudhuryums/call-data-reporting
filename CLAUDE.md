@@ -746,9 +746,14 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   via the two-class overrides in `styles.html` (the ds-* layer lands
   after `.bm-target`/`.bm-over`).
 - **Per-report client prefs in localStorage.** Each report persists its
-  own form state under `cdr.ir.prefs.v1` and `cdr.ins.prefs.v2` (the
+  own form state under `cdr.ir.prefs.v1` and `cdr.ins.prefs.v2:<email>`
+  (the Insights key is PER-USER -- `insPrefsKey_()`, the
+  `reportLastGoodKey_` pattern -- because its blob stores the agent
+  selection, which must not restore for a different viewer on a shared
+  machine; pre-per-user blobs under the bare `cdr.ins.prefs.v2` are
+  orphans. The
   retired Performance / Compare Ranges reports' `cdr.pr.prefs.v1` /
-  `cdr.cr.prefs.v1` are orphans). Bump the trailing version when the prefs schema
+  `cdr.cr.prefs.v1` are orphans too). Bump the trailing version when the prefs schema
   changes; older saved blobs are silently dropped if JSON parsing
   fails. The chrome layer also writes `dash-mode` (light/dark toggle)
   and `dash-theme.v1` (warm / cool / clinical paper theme) — the
@@ -885,7 +890,13 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   itself here), Inbound, and the My Department table (`refresh()` --
   its SWR paint passes `{swr:true}` to `onData` to skip the missed-section
   fetch so that section isn't fetched twice; the live pass triggers it
-  once). Signature matching means a changed dept/range/selection never
+  once; a live-fetch FAILURE after an SWR paint keeps the painted table
+  under a "couldn't refresh" error instead of wiping it to empty --
+  `onError(err, hadSwrPaint)`). `reportSwrPaint_` calls its repaint
+  function as `repaintFn(data, {swr:true})` so renderers can skip
+  side-fetches on the pre-paint: Insights + Inbound skip their
+  `loadAbandonHeatmap_` call (the live repaint fetches the heatmap once).
+  Signature matching means a changed dept/range/selection never
   paints another request's stale shape -- those take the normal skeleton
   path. The Overview has its own separate SWR (`cdr.ov.cache.v1` +
   `ovSetCachedIndicator_`). One entry per report per user (last signature

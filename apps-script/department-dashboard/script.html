@@ -1363,8 +1363,17 @@
     }
   }
 
+  // CL1-1: monotonic stale-response token for the Overview fetch (the same
+  // guard class as summaryReqSeq / reportReqSeq_). Multiple fetches can be
+  // in flight -- the 5-min auto-refresh, setPage('overview'), Retry, and a
+  // View-as switch -- and without a token the OLDER response painted last:
+  // during a view-as switch that rendered the ADMIN payload (incl. the
+  // company-aggregate hero) inside the supposed manager preview.
+  var ovLoadSeq_ = 0;
+
   function ovLoad_(silent) {
     var paintedFromCache = false;
+    var __otok = ++ovLoadSeq_;
     // In view-as (admin previewing a manager) skip the per-viewer SWR cache
     // entirely -- the manager-personalized payload must not be written under
     // the admin's cache key (it would paint a manager view after exiting).
@@ -1384,6 +1393,7 @@
     }
     google.script.run
       .withSuccessHandler(function (data) {
+        if (__otok !== ovLoadSeq_) return;   // superseded (e.g. view-as switched)
         ovLastData = data;
         if (!viewAsDept_) ovWriteCache_(data);   // don't cache a view-as payload
         ovRevealBody_();
@@ -1393,6 +1403,7 @@
         ovScheduleAutoRefresh_();
       })
       .withFailureHandler(function (err) {
+        if (__otok !== ovLoadSeq_) return;   // a newer request owns the UI
         if (!silent && !paintedFromCache) {
           // No cached content to fall back on -- show the hard error.
           $('ov-loading').textContent = 'Error loading overview: '
@@ -2122,7 +2133,7 @@
   // F-40: monotonic token so a slower earlier fetch (the SWR cached-paint +
   // live-paint pair both call this, and admins can flip depts quickly)
   // can't paint stale rows under a newer call's title/date -- the same
-  // guard class as summaryReqSeq / reportReqSeq elsewhere.
+  // guard class as summaryReqSeq / reportReqSeq_ elsewhere.
   var ovUserTableSeq = 0;
   function ovRenderUserTable_(data) {
     const wrap = $('ov-user-table-wrap');
@@ -3864,14 +3875,20 @@
     var ov = $('call-journey-overlay');
     if (ov) ov.style.display = 'none';
   }
+  // Stale-response token: clicking a second "↳ path" link while the first
+  // fetch is in flight must not let the OLDER response overwrite the newer
+  // call's panel when it lands late.
+  var callJourneySeq_ = 0;
   function callJourneyShow_(callId, date) {
     if (!callId || !date) return;
     var ov = ensureCallJourneyOverlay_();
     var body = ov.querySelector('.cj-body');
     ov.style.display = '';
     body.innerHTML = dsRingsHtml_('Loading call path…');
+    var __tok = ++callJourneySeq_;
     google.script.run
       .withSuccessHandler(function (resp) {
+        if (__tok !== callJourneySeq_) return;   // superseded by a newer drill
         if (!resp || resp.available === false) {
           body.innerHTML = '<div class="ds-note">Call path unavailable — the inbound-calls store (Neon) could not be reached.</div>';
           return;
@@ -3883,6 +3900,7 @@
         body.innerHTML = callJourneyHtml_(resp.call);
       })
       .withFailureHandler(function (err) {
+        if (__tok !== callJourneySeq_) return;   // a newer drill owns the panel
         body.innerHTML = '<div class="status status-error">' + escapeHtml(err && err.message ? err.message : String(err)) + '</div>';
       })
       .getCallJourney({ callId: callId, date: date, department: getRequestedDept() });
@@ -4107,16 +4125,20 @@
   // flash-to-empty); only a genuine switch clears.
   var lastSummaryDept_ = null;
 
-  // F10: shared monotonic token for the four agent reports (IR / PR / CR /
-  // Insights). Generate + edit-apply + dept-switch-then-regenerate can leave
-  // two fetches in flight; without a guard the slower (older) response paints
-  // last and wins, showing stale data for the now-current selection. Each
-  // fetch captures ++reportReqSeq and its handlers RESET their own button
-  // unconditionally (so a superseded request never leaves a button stuck) but
-  // SKIP rendering when the token is stale. Shared across reports on purpose:
-  // switching reports also invalidates an in-flight one, so a stale IR can't
-  // paint over a freshly-opened PR.
-  var reportReqSeq = 0;
+  // F10: monotonic stale-response tokens for the agent reports. Generate +
+  // edit-apply + dept-switch-then-regenerate can leave two fetches in
+  // flight; without a guard the slower (older) response paints last and
+  // wins, showing stale data for the now-current selection. Each fetch
+  // captures ++reportReqSeq_.<report> and its handlers RESET their own
+  // button unconditionally (so a superseded request never leaves a button
+  // stuck) but SKIP rendering when the token is stale.
+  // CL2-1: PER-REPORT counters (was one shared counter). The shared token
+  // meant the Insights->IR drill's auto-run CANCELLED an in-flight Insights
+  // response: its SWR "refreshing now..." note never cleared and "Back to
+  // Insights" restored STALE data under a permanent loading note. IR and
+  // Insights render into separate containers, so cross-report responses
+  // never actually conflict.
+  var reportReqSeq_ = { ir: 0, ins: 0 };
 
   // D1b: per-report last-good payload cache (localStorage). On a FAILED fetch
   // the report repaints the last good payload for the SAME request (if any)
@@ -4199,7 +4221,9 @@
     var lg = reportLastGoodRead_(report, sig);
     if (!lg) return false;
     try {
-      repaintFn(lg.data);
+      // swr:true lets a renderer skip side-fetches (e.g. the abandon
+      // heatmap) on the pre-paint -- the live pass triggers them once.
+      repaintFn(lg.data, { swr: true });
       var when = '';
       try { when = lg.at ? new Date(lg.at).toLocaleString() : ''; } catch (e) {}
       reportSetStatus_(statusElId, 'loading',
@@ -4280,7 +4304,7 @@
       })
       .withFailureHandler(function (err) {
         if (myToken !== summaryReqSeq) return;
-        onError(err);
+        onError(err, !!__swrHit);
       })
       .getDepartmentSummary(req);
   }
@@ -4353,6 +4377,7 @@
     const dept = getRequestedDept();
     const from = $('from-date').value, to = $('to-date').value;
     if (!dept || !from || !to) {
+      deptMissedScrollPending_ = false;   // no fetch coming -- disarm the one-shot scroll
       wrap.style.display = 'none';
       const detail = $('dept-missed-detail'); if (detail) detail.style.display = 'none';
       return;
@@ -4366,6 +4391,10 @@
       })
       .withFailureHandler(function () {
         if (deptMissedReqKey !== key) return;
+        // Disarm the one-shot launcher/deep-link scroll: the render it was
+        // waiting for isn't coming, and a leaked flag would yank the page
+        // down on the NEXT unrelated dept-page refresh.
+        deptMissedScrollPending_ = false;
         wrap.style.display = 'none';
         const detail = $('dept-missed-detail'); if (detail) detail.style.display = 'none';
       })
@@ -4726,13 +4755,21 @@
     wrap.style.display = '';
   }
 
-  function onError(err) {
+  function onError(err, hadSwrPaint) {
     $('refresh-btn').disabled = false;
+    var msg = (err && err.message ? err.message : String(err));
+    // When this request SWR-painted the last-good table, keep it on screen
+    // under the error status (the behavior refresh()'s SWR comment promises)
+    // instead of wiping the rows to an empty table.
+    if (hadSwrPaint && state.rows.length) {
+      setStatus('error', "Couldn't refresh — showing your previous result. " + msg);
+      return;
+    }
     state.rows = [];
     state.totals = null;
     state.meta = null;
     state.diagnostics = null;
-    setStatus('error', 'Error: ' + (err && err.message ? err.message : String(err)));
+    setStatus('error', 'Error: ' + msg);
     render();
     renderInfoLine();
     renderDiagnostics();
@@ -5144,6 +5181,13 @@
   // has changed.
   let irLastRoster = { dept: null, agents: [], activeAgents: null, activeFloaters: null, rangeKey: '' };
   let irActiveFetchTimer = null;
+  // Stale-response token for the IR roster/active-subset fetches: the full
+  // init fetch and the debounced date-change refetch hit the same endpoint
+  // and both write irLastRoster (incl. rangeKey), so an out-of-order older
+  // response could repaint the picker with a stale grouping AND poison
+  // rangeKey so the correct refetch never fires. Each fetch takes a token;
+  // only the newest response is applied.
+  let irRosterReqSeq_ = 0;
   // Persisted user preferences (mirrors the Performance Report's
   // prefs model). Restored on modal init, saved on every state
   // change so the next visit picks up where the user left off.
@@ -5543,8 +5587,10 @@
     $('ir-agent-list').style.display = 'none';
     $('ir-generate-btn').disabled = true;
 
+    const __rk = ++irRosterReqSeq_;
     google.script.run
       .withSuccessHandler(function (data) {
+        if (__rk !== irRosterReqSeq_) return;   // superseded by a newer fetch
         irLastRoster = {
           dept: dept,
           agents: (data && data.agents) || [],
@@ -5555,6 +5601,7 @@
         renderIrAgentList(irLastRoster.agents, irLastRoster.activeAgents, irLastRoster.activeFloaters);
       })
       .withFailureHandler(function (err) {
+        if (__rk !== irRosterReqSeq_) return;   // a newer fetch owns the picker
         // #1 Part B: a drill hides the form behind the loader; if the roster
         // fetch fails, fall back to the form so the error (in the loader text)
         // is visible and cancel the pending auto-run.
@@ -5583,8 +5630,10 @@
       const rangeKey = from + '|' + to;
       if (irLastRoster.dept === dept && irLastRoster.rangeKey === rangeKey) return;
 
+      const __rk = ++irRosterReqSeq_;
       google.script.run
         .withSuccessHandler(function (data) {
+          if (__rk !== irRosterReqSeq_) return;   // superseded by a newer fetch
           irLastRoster.activeAgents   = (data && data.activeAgents)   || null;
           irLastRoster.activeFloaters = (data && data.activeFloaters) || null;
           irLastRoster.rangeKey = rangeKey;
@@ -5824,7 +5873,12 @@
     if (v === 'thisMonth')       { s = new Date(today.getFullYear(), today.getMonth(), 1); }
     else if (v === 'lastMonth')  { s = new Date(today.getFullYear(), today.getMonth() - 1, 1);
                                     e = new Date(today.getFullYear(), today.getMonth(), 0); }
-    else if (v === 'last30')     { s = new Date(today); s.setDate(today.getDate() - 30); }
+    // "Last 30 days" = a 30-day window ENDING YESTERDAY, matching the main
+    // page's preset chip (daysAgo_(30)..daysAgo_(1)) and the Overview
+    // launcher / CacheWarm window -- today's ingest usually hasn't landed,
+    // and the old today-30..today form was 31 days ending today.
+    else if (v === 'last30')     { e = new Date(today); e.setDate(today.getDate() - 1);
+                                    s = new Date(today); s.setDate(today.getDate() - 30); }
     else if (v === 'last3Months'){ s = new Date(today); s.setMonth(today.getMonth() - 3); }
     else if (v === 'last12Months'){ s = new Date(today); s.setFullYear(today.getFullYear() - 1); }
     else if (v === 'lastYear')   { s = new Date(today.getFullYear() - 1, 0, 1);
@@ -5865,21 +5919,21 @@
     const req = { department: dept, from: from, to: to, agents: agents };
     if (prior) { req.priorFrom = prior.from; req.priorTo = prior.to; }
 
-    const __rtok = ++reportReqSeq;   // F10 stale-response guard
+    const __rtok = ++reportReqSeq_.ir;   // F10 stale-response guard
     const __sig = reportSig_(req);   // D1b keep-last-good key
     reportSwrPaint_('ir', __sig, irRenderReport, 'ir-results-status');   // SWR: instant repeat-paint
     google.script.run
       .withSuccessHandler(function (data) {
         btn.disabled = false;
         btn.textContent = originalLabel;
-        if (__rtok !== reportReqSeq) return;   // superseded by a newer request
+        if (__rtok !== reportReqSeq_.ir) return;   // superseded by a newer request
         reportLastGoodWrite_('ir', __sig, data);
         irRenderReport(data);
       })
       .withFailureHandler(function (err) {
         btn.disabled = false;
         btn.textContent = originalLabel;
-        if (__rtok !== reportReqSeq) return;
+        if (__rtok !== reportReqSeq_.ir) return;
         // D1b: repaint last-good for this exact request (if any) instead of blanking.
         if (reportFailFallback_('ir', __sig, irRenderReport, 'ir-results-status')) return;
         // #1 Part B: on a drill the form is hidden behind the loader; surface it
@@ -6160,18 +6214,18 @@
     const req = { department: dept, from: from, to: to, agents: newAgents };
     if (prior && !prior.error) { req.priorFrom = prior.from; req.priorTo = prior.to; }
 
-    const __rtok = ++reportReqSeq;   // F10 stale-response guard
+    const __rtok = ++reportReqSeq_.ir;   // F10 stale-response guard
     const __sig = reportSig_(req);   // D1b keep-last-good key
     google.script.run
       .withSuccessHandler(function (data) {
         if (btn) { btn.textContent = 'Apply'; btn.disabled = false; }
-        if (__rtok !== reportReqSeq) return;
+        if (__rtok !== reportReqSeq_.ir) return;
         reportLastGoodWrite_('ir', __sig, data);
         irRenderReport(data);
       })
       .withFailureHandler(function (err) {
         if (btn) { btn.textContent = 'Apply'; btn.disabled = false; }
-        if (__rtok !== reportReqSeq) return;
+        if (__rtok !== reportReqSeq_.ir) return;
         // D1b: repaint last-good for this request if cached; else the prior
         // render stays (results pane already shown) with an error banner.
         if (reportFailFallback_('ir', __sig, irRenderReport, 'ir-results-status')) return;
@@ -8964,6 +9018,10 @@
   // ===================================================================
   let insLastRoster = { dept: null, agents: [], activeAgents: null, activeFloaters: null, rangeKey: '' };
   let insActiveFetchTimer = null;
+  // Stale-response token for the Insights roster fetches (the IR
+  // irRosterReqSeq_ pattern): only the newest init/refetch response may
+  // write insLastRoster or repaint the picker.
+  let insRosterReqSeq_ = 0;
   let insListChangeHandler_ = null;
   let insPendingAgentSelection_ = null;
   let insLastData = null;
@@ -8993,8 +9051,15 @@
   let insCardSort = 'default';      // default (answered desc) | name | improvers | regressors
   // v2: prefs gain compareMode / priorFrom / priorTo / trendMetric
   // (older v1 blobs are silently dropped per the prefs-versioning
-  // convention).
-  const INS_PREFS_KEY = 'cdr.ins.prefs.v2';
+  // convention). Keyed PER USER (the reportLastGoodKey_ pattern) because
+  // the blob stores the agent selection -- on a shared machine one
+  // viewer's saved dept/agent picks must not restore for another.
+  // (Pre-per-user blobs under the bare key become orphans and are ignored.)
+  function insPrefsKey_() {
+    var who = '';
+    try { who = (typeof USER !== 'undefined' && USER && USER.email) ? USER.email : ''; } catch (e) {}
+    return 'cdr.ins.prefs.v2:' + who;
+  }
 
   function initInsightsReport() {
     const btn = $('insights-report-btn');
@@ -9378,7 +9443,10 @@
     else if (v === 'thisMonth')   { s = new Date(today.getFullYear(), today.getMonth(), 1); }
     else if (v === 'lastMonth')   { s = new Date(today.getFullYear(), today.getMonth() - 1, 1);
                                     e = new Date(today.getFullYear(), today.getMonth(), 0); }
-    else if (v === 'last30')      { s = new Date(today); s.setDate(today.getDate() - 30); }
+    // "Last 30 days" = 30 days ending yesterday (matches the main page's
+    // chip, the Overview launcher window, and CacheWarm -- see applyIrPreset).
+    else if (v === 'last30')      { e = new Date(today); e.setDate(today.getDate() - 1);
+                                    s = new Date(today); s.setDate(today.getDate() - 30); }
     else if (v === 'last3Months') { s = new Date(today); s.setMonth(today.getMonth() - 3); }
     else if (v === 'last12Months'){ s = new Date(today); s.setFullYear(today.getFullYear() - 1); }
     else if (v === 'lastYear')    { s = new Date(today.getFullYear() - 1, 0, 1);
@@ -9399,8 +9467,10 @@
       insRenderAgentList(); return;
     }
     $('ins-agent-loader').style.display = ''; $('ins-agent-list').style.display = 'none'; $('ins-generate-btn').disabled = true;
+    const __rk = ++insRosterReqSeq_;
     google.script.run
       .withSuccessHandler(function (data) {
+        if (__rk !== insRosterReqSeq_) return;   // superseded by a newer fetch
         insLastRoster = {
           dept: dept,
           agents: (data && data.agents) || [],
@@ -9411,6 +9481,13 @@
         insRenderAgentList();
       })
       .withFailureHandler(function (err) {
+        if (__rk !== insRosterReqSeq_) return;   // a newer fetch owns the picker
+        // The Overview launcher hides the form behind its loading pane and
+        // arms a one-shot auto-run; on a roster failure, cancel the auto-run
+        // and fall back to the form so the loader error is visible instead
+        // of an eternal loading pane (the IR #1-Part-B pattern).
+        if (insLauncherAutoRun_) { insLauncherAutoRun_ = false; insShowForm(); }
+        $('ins-agent-loader').style.display = '';
         $('ins-agent-loader').textContent = 'Error loading roster: ' + (err && err.message ? err.message : String(err));
       })
       .getInsightsReportInit({ department: dept, from: from, to: to });
@@ -9423,8 +9500,10 @@
       if (!from || !to || from > to) return;
       const rangeKey = from + '|' + to;
       if (insLastRoster.dept === dept && insLastRoster.rangeKey === rangeKey) return;
+      const __rk = ++insRosterReqSeq_;
       google.script.run
         .withSuccessHandler(function (data) {
+          if (__rk !== insRosterReqSeq_) return;   // superseded by a newer fetch
           insLastRoster.activeAgents   = (data && data.activeAgents)   || null;
           insLastRoster.activeFloaters = (data && data.activeFloaters) || null;
           insLastRoster.rangeKey = rangeKey;
@@ -9586,25 +9665,25 @@
     if (prior) { req.priorFrom = prior.from; req.priorTo = prior.to; }
     const gen = $('ins-generate-btn'); const prev = gen.textContent;
     gen.disabled = true; gen.innerHTML = DS_EQ_HTML_ + 'Generating…';
-    const __rtok = ++reportReqSeq;   // F10 stale-response guard
+    const __rtok = ++reportReqSeq_.ins;   // F10 stale-response guard
     const __sig = reportSig_(req);   // D1b keep-last-good key
     // Repaint path shared by live data / SWR / fail-fallback; clears the
     // results-status line so the SWR "refreshing" note can't outlive the
     // response it announced.
-    const __insRepaint = function (d) {
-      insRenderReport_(d); insShowResults(); reportSetStatus_('ins-results-status', '');
+    const __insRepaint = function (d, opts) {
+      insRenderReport_(d, opts); insShowResults(); reportSetStatus_('ins-results-status', '');
     };
     reportSwrPaint_('ins', __sig, __insRepaint, 'ins-results-status');   // SWR: instant repeat-paint
     google.script.run
       .withSuccessHandler(function (data) {
         gen.disabled = false; gen.textContent = prev;
-        if (__rtok !== reportReqSeq) return;
+        if (__rtok !== reportReqSeq_.ins) return;
         reportLastGoodWrite_('ins', __sig, data);
         insSavePrefs_(); __insRepaint(data);
       })
       .withFailureHandler(function (err) {
         gen.disabled = false; gen.textContent = prev;
-        if (__rtok !== reportReqSeq) return;
+        if (__rtok !== reportReqSeq_.ins) return;
         // D1b: repaint last-good for this exact request (if any) instead of blanking.
         if (reportFailFallback_('ins', __sig, __insRepaint, 'ins-results-status')) return;
         insShowForm();   // dismisses the launcher loading pane if active
@@ -9651,7 +9730,7 @@
          + '</div>';
   }
 
-  function insRenderReport_(data) {
+  function insRenderReport_(data, opts) {
     insLastData = data;
     insCloseEditPopover_();
     insRenderEditingLine_(data);
@@ -9714,9 +9793,10 @@
     // Temporal abandon heatmap companion to Queue health (sourced from
     // inbound_calls). Admin only -- getInboundHeatmap inherits the inbound
     // report's vetting gate, so managers never call it and the panel stays
-    // hidden for them (same gate as the QCD report's heatmap).
+    // hidden for them (same gate as the QCD report's heatmap). Skipped on
+    // the SWR pre-paint -- the live repaint fetches it once.
     if (USER.role === 'admin' && data.meta) {
-      loadAbandonHeatmap_('ins-heatmap', data.meta.department || '', data.meta.from, data.meta.to);
+      if (!(opts && opts.swr)) loadAbandonHeatmap_('ins-heatmap', data.meta.department || '', data.meta.from, data.meta.to);
     } else {
       var insHeat = $('ins-heatmap'); if (insHeat) { insHeat.style.display = 'none'; insHeat.innerHTML = ''; }
     }
@@ -11189,7 +11269,7 @@
 
   function insSavePrefs_() {
     try {
-      localStorage.setItem(INS_PREFS_KEY, JSON.stringify({
+      localStorage.setItem(insPrefsKey_(), JSON.stringify({
         preset: $('ins-preset') ? $('ins-preset').value : 'custom',
         from:   $('ins-from')   ? $('ins-from').value   : '',
         to:     $('ins-to')     ? $('ins-to').value     : '',
@@ -11210,7 +11290,7 @@
   }
   function insRestorePrefs_() {
     try {
-      const prefs = JSON.parse(localStorage.getItem(INS_PREFS_KEY) || 'null');
+      const prefs = JSON.parse(localStorage.getItem(insPrefsKey_()) || 'null');
       if (!prefs || typeof prefs !== 'object') return;
       if (prefs.preset && $('ins-preset')) $('ins-preset').value = prefs.preset;
       if (prefs.from   && $('ins-from'))   $('ins-from').value   = prefs.from;
@@ -11387,7 +11467,7 @@
     const gen = $('inbound-generate-btn'); const prev = gen.textContent;
     gen.disabled = true; gen.innerHTML = DS_EQ_HTML_ + 'Generating…';
     const __sig = reportSig_({ from: from, to: to, department: dept });   // D1b key
-    const __inboundRepaint = function (d) { inboundRenderReport_(d); inboundShowResults(); reportSetStatus_('inbound-results-status', ''); };
+    const __inboundRepaint = function (d, opts) { inboundRenderReport_(d, opts); inboundShowResults(); reportSetStatus_('inbound-results-status', ''); };
     reportSwrPaint_('inbound', __sig, __inboundRepaint, 'inbound-results-status');   // SWR: instant repeat-paint
     google.script.run
       .withSuccessHandler(function (data) {
@@ -11646,7 +11726,7 @@
     el.style.display = '';
   }
 
-  function inboundRenderReport_(data) {
+  function inboundRenderReport_(data, opts) {
     inboundLastData = data;
     inboundDrillCache = {};   // drill-down series are per (range, dept)
     inboundCollapseDrill_();
@@ -11719,7 +11799,10 @@
     inboundRenderCrossTable_(data.byDialInInsurer);
     // Temporal abandon heatmap (companion). Separate round-trip via
     // getInboundHeatmap so it can be reused by the QCD report too.
-    loadAbandonHeatmap_('inbound-heatmap', meta.companyView ? '' : meta.department, meta.from, meta.to);
+    // Skipped on the SWR pre-paint -- the live repaint fetches it once.
+    if (!(opts && opts.swr)) {
+      loadAbandonHeatmap_('inbound-heatmap', meta.companyView ? '' : meta.department, meta.from, meta.to);
+    }
   }
 
   // ---- Temporal abandon heatmap (weekday x hour), shared by Inbound + QCD ----
@@ -11730,6 +11813,11 @@
   // calm sage, >5% ramps warm so the problem hours pop.
   var HEAT_MIN_VOLUME_ = 3;   // cells below this are "low signal" -> muted, not colored by rate
 
+  // Per-container stale-response tokens: a re-generate with a new window
+  // while the previous heatmap fetch is in flight must not let the OLDER
+  // response paint a grid that disagrees with the container's stashed
+  // data-heat-* scope (which the cell drill re-issues).
+  var heatLoadSeq_ = {};
   function loadAbandonHeatmap_(containerId, dept, from, to) {
     var el = $(containerId);
     if (!el) return;
@@ -11742,9 +11830,16 @@
     el.style.display = '';
     el.innerHTML = '<div class="ds-heatmap-loading"><span class="ds-loader--eq" aria-hidden="true">'
       + '<i></i><i></i><i></i><i></i></span> Loading abandon heatmap…</div>';
+    var __tok = heatLoadSeq_[containerId] = (heatLoadSeq_[containerId] || 0) + 1;
     google.script.run
-      .withSuccessHandler(function (data) { renderAbandonHeatmap_(containerId, data); })
-      .withFailureHandler(function () { el.style.display = 'none'; el.innerHTML = ''; })
+      .withSuccessHandler(function (data) {
+        if (__tok !== heatLoadSeq_[containerId]) return;   // superseded by a newer load
+        renderAbandonHeatmap_(containerId, data);
+      })
+      .withFailureHandler(function () {
+        if (__tok !== heatLoadSeq_[containerId]) return;   // a newer load owns the panel
+        el.style.display = 'none'; el.innerHTML = '';
+      })
       .getInboundHeatmap({ department: dept || '', from: from, to: to });
   }
 
@@ -12508,6 +12603,10 @@
       .getEscalationsInit();
   }
 
+  // Stale-response token: switching the status/dept filter (or hitting
+  // Refresh) while a load is in flight must not let the OLDER response
+  // repaint the list over the newer filter's result when it lands late.
+  var escLoadSeq_ = 0;
   function escLoad_() {
     escSetError_('');
     const listEl = $('esc-list');
@@ -12516,12 +12615,15 @@
     if ($('esc-empty')) $('esc-empty').style.display = 'none';
     if ($('esc-loading')) { $('esc-loading').style.display = ''; $('esc-loading').innerHTML = dsRingsHtml_ ? dsRingsHtml_('Loading escalations…') : 'Loading…'; }
     if (listEl) listEl.innerHTML = '';
+    var __tok = ++escLoadSeq_;
     google.script.run
       .withSuccessHandler(function (resp) {
+        if (__tok !== escLoadSeq_) return;   // superseded by a newer load
         if ($('esc-loading')) $('esc-loading').style.display = 'none';
         escRenderList_(resp || {});
       })
       .withFailureHandler(function (err) {
+        if (__tok !== escLoadSeq_) return;   // a newer load owns the list
         if ($('esc-loading')) $('esc-loading').style.display = 'none';
         escSetError_('Error: ' + (err && err.message ? err.message : String(err)));
       })
@@ -13007,7 +13109,7 @@
       { sel: '#freshness-pill',   title: 'Is the data current?',    body: 'Shows the most recent day with data and how long ago that was — it turns orange if the last import is over ~36 hours old.' },
       { sel: '#my-dept-btn',      title: 'My Department',           body: 'Your team’s per-agent detail table, with date controls and a Queue Call Data summary.' },
       { sel: '#escalations-btn',  title: 'Escalations',             body: 'View and resolve escalation calls for your department — mark one resolved with a note on how it was handled.' },
-      { sel: '#reports-menu-btn', title: 'Deeper reports',          body: 'Missed Calls, Individual, Performance, Compare, QCD, and Insights all live here.' },
+      { sel: '#reports-menu-btn', title: 'Deeper reports',          body: 'Individual (per-agent deep dive) and Insights (team rollup + per-agent comparison + queue health) live here. Missed-call detail is on the My Department page.' },
       { sel: '#help-fab',         title: 'Help is always here',     body: 'Stuck? This button opens Help from anywhere — and you can replay this tour from Help → Guided tour any time.' },
     ];
   }
@@ -13462,6 +13564,7 @@
   // queue table reproducing the legacy emailed PDF, with CSV + print.
   // ===================================================================
   var qcdAllDeptLast = null;
+  var qcdAllDeptReqSeq_ = 0;   // stale-response token for runQcdAllDept_
 
   function initQcdAllDept_() {
     const btn   = $('ov-qcd-alldept-btn');
@@ -13595,13 +13698,19 @@
     const gen = $('qcd-alldept-refresh-btn');
     const orig = gen ? gen.innerHTML : '';
     if (gen) { gen.disabled = true; gen.innerHTML = DS_EQ_HTML_ + 'Updating…'; }
+    // Stale-response token: the preset selector re-runs immediately on every
+    // change, so rapid switches overlap requests -- only the newest response
+    // may write qcdAllDeptLast (which feeds CSV/Print) or repaint the table.
+    var __tok = ++qcdAllDeptReqSeq_;
     google.script.run
       .withSuccessHandler(function (data) {
+        if (__tok !== qcdAllDeptReqSeq_) return;   // superseded by a newer run
         if (gen) { gen.disabled = false; gen.innerHTML = orig; }
         qcdAllDeptLast = data;
         qcdAllDeptRender_(data);
       })
       .withFailureHandler(function (e) {
+        if (__tok !== qcdAllDeptReqSeq_) return;   // a newer run owns the table
         if (gen) { gen.disabled = false; gen.innerHTML = orig; }
         err.textContent = (e && e.message) ? e.message : String(e);
         err.style.display = '';

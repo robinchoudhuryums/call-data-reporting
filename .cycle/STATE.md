@@ -1,5 +1,25 @@
 # Cycle State — resume note
 
+## Latest session (broad-implement: Batch D -- client staleness/races, script.html + dashboard.html only)
+Branch `claude/broad-scan-d60m5l`, 280/280 tests (none added -- script.html is outside the harness; extracted-JS `node --check` clean), INV-16 guard green. NO server/cache changes; ALL fixes are client-only.
+- **CL1-1**: Overview stale-response token (`ovLoadSeq_`; both handlers guarded) so a View-as switch mid-flight can't paint the other role's payload; `#ov-company-aggregate` gained `data-admin-only` in dashboard.html (belt-and-suspenders under the View-as CSS hide; server strip unchanged).
+- **CL2-1**: shared `reportReqSeq` split into `reportReqSeq_={ir,ins}` -- an Insights run no longer invalidates an in-flight IR drill (and vice versa).
+- **CL1-2**: insEnsureRoster failure handler now cancels `insLauncherAutoRun_` + `insShowForm()` (the IR #1-Part-B pattern) -- a launcher-chip roster failure no longer strands the eternal loading pane.
+- **CL1-3**: per-picker roster stale tokens (`irRosterReqSeq_`/`insRosterReqSeq_`) on BOTH the init fetch and the 350ms debounced refetch -- an out-of-order older response can't repaint the picker or poison rangeKey.
+- **CL1-4**: My-Dept `onError(err, hadSwrPaint)` keeps the SWR-painted table under a "couldn't refresh" error instead of wiping to empty (the behavior refresh()'s comment already promised).
+- **CL1-5**: `callJourneySeq_` token on the "↳ path" journey overlay (rapid double-drill can't cross-paint).
+- **CL1-6**: `deptMissedScrollPending_` disarmed on missed-fetch failure + the no-dept early return (a leaked one-shot no longer yanks the page down on a later unrelated refresh).
+- **CL2-2**: `escLoadSeq_` token on the Escalations list (filter-switch races).
+- **CL2-3**: `reportSwrPaint_` calls `repaintFn(data,{swr:true})`; Insights + Inbound renderers skip `loadAbandonHeatmap_` on the SWR pre-paint (live pass fetches once; fail-fallback still fetches); per-container `heatLoadSeq_` token in the heatmap loader.
+- **CL2-4**: `qcdAllDeptReqSeq_` token on the all-departments QCD report (preset changes re-run immediately -> overlap).
+- **CL2-6**: guided-tour Reports step copy updated (was listing retired Performance/Compare/QCD + the retired Missed modal).
+- **CL1-9**: IR + Insights "Last 30 days" presets are now 30 days ENDING YESTERDAY (was 31 days ending today) -- matches the main-page chip, the Overview launcher window, and CacheWarm. Inbound/Direct/qcdAllDept last30 presets deliberately untouched (different reports' semantics; noted as follow-on).
+- **CL2-7**: Insights prefs key is per-user (`insPrefsKey_()` = `cdr.ins.prefs.v2:<email>`, the reportLastGoodKey_ pattern) because the blob stores the agent selection; bare-key blobs are orphans (one-time prefs reset per user, deliberate).
+- Docs: CLAUDE.md per-report-prefs bullet (per-user ins key) + Report-SWR bullet (onError keep-last-good, repaintFn opts, heatmap skip).
+DEPLOY: Department Dashboard only (`clasp push -f` + new version). No operator actions; no cache bumps. Post-deploy smoke: S23 (Overview), S37 (Insights incl. launcher chip with a forced roster error if practical), S4 (missed deep-link scroll), S32 (all-dept QCD preset switching).
+FOLLOW-ON (not in scope): CL1-7/CL1-8 (from the audit); Inbound/Direct/qcdAllDept last30 presets still end today; IR prefs key (cdr.ir.prefs.v1) not per-user (stores no agent selection -- lower stakes).
+Where I left off: Batch D committed+pushed, PR + merge on CI green per the established flow. Remaining scan work: Batch E (owner rulings: REP-3, RPT-8, IMP-12), Batch F (polish). Operator backlog unchanged: backfillDQEHistoryUpsert() to heal the 12/30/1899 Neon slots then re-run parity for 05-18..05-22; backfillInboundCallsForce() after the cdr-import deploy (TIME-SENSITIVE); deploys.
+
 ## Latest session (broad-implement: IMP-4 -- phone-child corrections propagate)
 Branch `claude/broad-scan-d60m5l`, 280/280 tests (1 added), INV-16 guard green. Owner asked "should we address IMP-4 before merging?" -- yes (same neonWrite.js pair already queued for deploy; completes the corrections-propagate story IMP-5 started; per-parent replace is safe on EVERY caller unlike date-level).
 - **IMP-4** (both neonWrite.js copies): cdrInsertPhoneChildRows_ now DELETEs the looked-up parents' call_history_phones rows (chunked 500 ids/statement, same child transaction) before the inline inserts -- corrected duration_sec/occurrences propagate on force re-import and REMOVED entries no longer linger as phantoms. The zero-entries early-return COMMITS the delete (a re-import that emptied every list: the delete IS the correction). ON CONFLICT DO NOTHING kept as intra-payload dup guard only. Per-parent (not per-date) replace: each payload row carries its parent's COMPLETE entry set, so partial-DATE bulk batches are safe. Documented edge: an all-lists-empty payload never reaches the helper (hasAnyPhones gate) -- stale children would persist; practically unreachable. neonbackfill.js::backfillCDRHistory child path DELIBERATELY left fill-only (its documented design).
