@@ -702,21 +702,12 @@
         el.style.display = '';
       });
       initViewAs_();   // admin-only "View as <dept> (manager)" preview control
-    } else {
-      // #10: managers get a single Insights button instead of the (admin-only)
-      // Reports dropdown. The other reports consolidate into Insights; Missed /
-      // Individual stay reachable via the Overview question chips + My Dept.
-      const _solo = $('insights-solo-btn');
-      if (_solo) _solo.style.display = '';
     }
-    // Proxy the solo Insights button to the dropdown's real launcher (whose
-    // click handler the Insights modal init wires up regardless of visibility).
-    (function () {
-      const solo = $('insights-solo-btn');
-      if (solo) solo.addEventListener('click', function () {
-        const real = $('insights-report-btn'); if (real) real.click();
-      });
-    })();
+    // (The #10 manager-only #insights-solo-btn proxy is gone: Insights is a
+    // top-level tab visible to all roles since the modal->page conversion,
+    // so managers no longer need a stand-in for the admin-only Reports
+    // dropdown. Missed / Individual stay reachable via the Overview question
+    // chips + My Dept.)
 
     // -- Header dropdown menus (Reports + Admin) --------------------
     // Toggle behavior: clicking a menu button opens its list and
@@ -977,7 +968,8 @@
   // detail page. Body[data-page] drives CSS visibility; this also
   // updates the document title block and the active-nav state.
   function setPage(page) {
-    if (page !== 'overview' && page !== 'dept' && page !== 'escalations') page = 'overview';
+    if (page !== 'overview' && page !== 'dept' && page !== 'escalations'
+        && page !== 'insights') page = 'overview';
     document.body.setAttribute('data-page', page);
     const kicker = $('page-kicker');
     const title  = $('page-title');
@@ -991,6 +983,13 @@
       // Lazy-init the controls + load on first entry (idempotent thereafter).
       if (typeof escEnsureInit_ === 'function') escEnsureInit_(function () { escLoad_(); });
       else if (typeof escLoad_ === 'function') escLoad_();
+    } else if (page === 'insights') {
+      if (kicker) kicker.textContent = 'Reports · Insights';
+      if (title)  title.textContent  = 'Insights';
+      // First entry runs the old openModal init (form + defaults + prefs +
+      // roster); re-entry only re-ensures the roster and never clobbers a
+      // rendered report (owner decision 3, docs/insights-page-plan.md).
+      if (typeof insEnsurePage_ === 'function') insEnsurePage_();
     } else {
       if (kicker) kicker.textContent = 'Department Dashboard';
       if (title)  title.textContent  = getRequestedDept() || '(no department)';
@@ -1012,7 +1011,9 @@
     // the per-button toggle that previously only handled overview /
     // my-dept buttons.
     if (typeof setRoute_ === 'function') {
-      setRoute_(page === 'dept' ? '/dept' : (page === 'escalations' ? '/escalations' : '/overview'));
+      setRoute_(page === 'dept' ? '/dept'
+        : (page === 'escalations' ? '/escalations'
+        : (page === 'insights' ? '/report/insights' : '/overview')));
     }
   }
 
@@ -1332,11 +1333,10 @@
       document.body.removeAttribute('data-view-as');
       if (sel) sel.disabled = false;
     }
-    // #10: the Reports dropdown (data-admin-only) is hidden in view-as by the
-    // existing CSS; surface the solo Insights button so the previewed manager
-    // still has a report entry point (hidden again when the admin switches back).
-    var _solo = $('insights-solo-btn');
-    if (_solo) _solo.style.display = viewAsDept_ ? '' : 'none';
+    // (The Reports dropdown (data-admin-only) is hidden in view-as by the
+    // existing CSS; the top-level Insights tab carries no data-admin-only so
+    // it stays visible in the preview -- the old #10 solo-button surfacing
+    // is no longer needed.)
     // Re-fetch the active surface so it reflects the effective role.
     if (document.body.getAttribute('data-page') === 'overview') {
       ovLoad_(false);
@@ -2605,16 +2605,17 @@
     // page and scroll to it once it renders.
     '/report/missed':      { kind: 'page',  page: 'dept', scrollTo: 'dept-missed-section' },
     '/report/individual':  { kind: 'modal', modalId: 'individual-modal',  buttonId: 'individual-report-btn' },
-    // PR->Insights retirement: legacy #/report/performance deep-links land
-    // on the Insights report (team rollup + Absolute chart = PR's views).
-    '/report/performance': { kind: 'modal', modalId: 'insights-modal',    buttonId: 'insights-report-btn' },
-    // CR->Insights retirement: legacy #/report/compare deep-links land on
-    // Insights (custom prior windows + the vs-Prior chart = CR's views).
-    '/report/compare':     { kind: 'modal', modalId: 'insights-modal',    buttonId: 'insights-report-btn' },
-    // QCD->Insights retirement: legacy #/report/qcd deep-links land on the
-    // Insights report (its Queue health section is the QCD replacement).
-    '/report/qcd':         { kind: 'modal', modalId: 'insights-modal',    buttonId: 'insights-report-btn' },
-    '/report/insights':    { kind: 'modal', modalId: 'insights-modal',    buttonId: 'insights-report-btn' },
+    // Insights is a full PAGE (modal->page conversion, docs/
+    // insights-page-plan.md). The three retired-report repoints ride the
+    // same def: legacy #/report/performance (PR's team rollup + Absolute
+    // chart), #/report/compare (custom priors + vs-Prior chart), and
+    // #/report/qcd (Queue health) deep-links all land on the Insights page.
+    // Their ?query form-state is quietly dropped (no SHARE_STATE_ provider);
+    // '/report/insights' itself keeps full state via its provider.
+    '/report/performance': { kind: 'page', page: 'insights' },
+    '/report/compare':     { kind: 'page', page: 'insights' },
+    '/report/qcd':         { kind: 'page', page: 'insights' },
+    '/report/insights':    { kind: 'page', page: 'insights' },
     '/report/inbound':     { kind: 'modal', modalId: 'inbound-modal',     buttonId: 'inbound-report-btn' },
     '/report/direct':      { kind: 'modal', modalId: 'direct-call-modal', buttonId: 'direct-call-report-btn' },
     '/admin/alerts':       { kind: 'modal', modalId: 'alerts-modal',      buttonId: 'alerts-btn' },
@@ -2659,10 +2660,13 @@
   function basePageRoute_() {
     // F-41: include the Escalations page -- closing a report modal opened
     // over it previously reverted the active-tab highlight to Overview
-    // while the Escalations page stayed visible.
+    // while the Escalations page stayed visible. Insights joined when it
+    // became a page (an IR drill opens the IR modal OVER the Insights page;
+    // closing it must restore the Insights tab highlight).
     var page = document.body.getAttribute('data-page');
     if (page === 'dept') return '/dept';
     if (page === 'escalations') return '/escalations';
+    if (page === 'insights') return '/report/insights';
     return '/overview';
   }
 
@@ -2717,18 +2721,30 @@
         if (!trigger) {
           // Routes with no [data-route] element of their own:
           //  - page routes (the retired Missed modal's '#/report/missed',
-          //    repointed at the My Department missed section) dispatch
+          //    repointed at the My Department missed section, and the three
+          //    retired-report repoints onto the Insights PAGE) dispatch
           //    directly -- swap the page, load it, arm the one-shot scroll;
-          //  - retired-report MODAL repoints ('#/report/qcd',
-          //    '#/report/performance' -> the Insights modal) resolve via the
-          //    target's buttonId instead (their legacy route string is on no
-          //    element, so the querySelector above misses by design). Any
-          //    ?query form-state on a retired route is quietly dropped.
+          //  - kind:'modal' repoints resolve via the target's buttonId
+          //    (kept generic for any future modal repoint).
+          //  ?query form-state is applied via the route's SHARE_STATE_
+          //  provider AFTER the page swap (same ordering contract as the
+          //  trigger path below: setPage has run the page's synchronous
+          //  defaults + prefs restore, so the shared state wins). Routes
+          //  with no provider -- the retired repoints -- quietly drop it.
+          //  This is load-bearing for the Digest.gs email deep links
+          //  ('#/report/insights?from=...&agents=...') whenever the
+          //  Insights tab isn't in the DOM for the viewer.
           const def = ROUTES_[route];
           if (def && def.kind === 'page') {
             if (def.scrollTo === 'dept-missed-section') deptMissedScrollPending_ = true;
             setPage(def.page);
             if (def.page === 'dept' && typeof refresh === 'function') refresh();
+            if (params) {
+              const provider = SHARE_STATE_[route];
+              if (provider) {
+                try { provider.apply(params); } catch (e) { /* best-effort */ }
+              }
+            }
           } else if (def && def.kind === 'modal' && def.buttonId) {
             const btn = document.getElementById(def.buttonId);
             if (btn && !(btn.hasAttribute('data-admin-only') && USER.role !== 'admin')) btn.click();
@@ -2946,17 +2962,17 @@
   }
 
   // "How is my team doing lately?" -> Insights, last 30 days, all active
-  // agents, auto-generated. The button click runs the modal's normal
-  // open (defaults + prefs + roster fetch); we then override the dates
-  // and re-ensure the roster for the new range -- insRenderAgentList
-  // consumes insLauncherAutoRun_ once the picker is rendered, so the
-  // select-all + generate happen at a race-free synchronization point.
-  // The form never flashes: a loading pane covers the roster fetch +
-  // generate; failures fall back to the primed form (insShowForm).
+  // agents, auto-generated. setPage('insights') runs the page's normal
+  // entry (first-entry defaults + prefs + roster fetch via insEnsurePage_);
+  // we then override the dates and re-ensure the roster for the new range --
+  // insRenderAgentList consumes insLauncherAutoRun_ once the picker is
+  // rendered, so the select-all + generate happen at a race-free
+  // synchronization point. The form never flashes: a loading pane covers
+  // the roster fetch + generate; failures fall back to the primed form
+  // (insShowForm).
   function launcherOpenInsights_(question) {
-    const btn = $('insights-report-btn');
-    if (!btn) return;
-    btn.click();
+    if (!$('insights-page')) return;
+    setPage('insights');
     if ($('ins-from')) $('ins-from').value = launcherIsoDaysAgo_(30);
     if ($('ins-to'))   $('ins-to').value   = launcherIsoDaysAgo_(1);
     const p = $('ins-preset');
@@ -5225,14 +5241,13 @@
     // (and applies the pending selection + auto-run) even if the cached
     // roster matched.
     irLastRoster = { dept: null, agents: [], activeAgents: null, activeFloaters: null, rangeKey: '' };
-    // Drill-through from Insights: hide the Insights modal (its rendered
-    // report stays in the DOM for an instant Back), flag the origin, and
+    // Drill-through from the Insights PAGE (modal->page conversion): the IR
+    // modal simply overlays it -- the rendered report stays put behind the
+    // overlay, so nothing is hidden or restored. Just flag the origin and
     // reveal the "Back to Insights" button on the IR modal (#2).
-    const insModal = $('insights-modal');
-    const fromInsights = !!(insModal && insModal.style.display !== 'none');
+    const fromInsights = document.body.getAttribute('data-page') === 'insights';
     if (fromInsights) {
       irCameFromInsights_ = true;
-      insModal.style.display = 'none';
       const bk = $('ir-back-to-insights-btn'); if (bk) bk.style.display = '';
       // Hide the generic "« Back" (returns to the IR setup form) for the
       // duration of the drill -- two Back buttons side by side read as
@@ -5272,21 +5287,16 @@
       releaseFocus_();
       resetModalTransform_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
       document.removeEventListener('keydown', onKeyDown);
-      // If we drilled in from Insights, ANY close (Back / X / Escape) returns
-      // to the already-rendered Insights modal -- no reload (#2/#7).
+      // If we drilled in from the Insights page, ANY close (Back / X /
+      // Escape) reveals it again -- the page sat behind the IR overlay all
+      // along, so there's nothing to re-show and no scroll lock to keep;
+      // just restore the Back buttons (#2/#7). Focus deliberately stays put
+      // (the launcher button lives in the admin-only Reports dropdown).
       if (irCameFromInsights_) {
         irCameFromInsights_ = false;
         const bk = $('ir-back-to-insights-btn'); if (bk) bk.style.display = 'none';
         const gb = $('ir-back-btn'); if (gb) gb.style.display = '';   // restore the generic Back
-
-        const insModal = $('insights-modal');
-        if (insModal) {
-          insModal.style.display = '';
-          insModal.setAttribute('aria-hidden', 'false');
-          document.body.style.overflow = 'hidden';   // keep the scroll lock for Insights
-        } else {
-          document.body.style.overflow = '';
-        }
+        document.body.style.overflow = '';
       } else {
         document.body.style.overflow = '';
         btn.focus();
@@ -9061,39 +9071,48 @@
     return 'cdr.ins.prefs.v2:' + who;
   }
 
-  function initInsightsReport() {
-    const btn = $('insights-report-btn');
-    const modal = $('insights-modal');
-    if (!btn || !modal) return;
-    const closeBtn = modal.querySelector('.modal-close');
-    const backdrop = modal.querySelector('[data-close]');
-
-    function openModal() {
-      modal.style.display = '';
-      modal.setAttribute('aria-hidden', 'false');
-      document.body.style.overflow = 'hidden';
-      trapFocus_(modal);
-      initModalDragResize_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
-      document.addEventListener('keydown', onKeyDown);
+  // Insights is a full PAGE (modal->page conversion, docs/insights-page-plan.md).
+  // setPage('insights') calls this: first entry runs the old openModal init
+  // (form + default dates + prefs restore + roster); re-entry only re-ensures
+  // the roster -- cheap when cached, re-splits the active grouping if the
+  // dept/dates changed -- and never clobbers a rendered report (decision 3).
+  var insPageInited_ = false;
+  function insEnsurePage_() {
+    if (!$('insights-page')) return;
+    if (!insPageInited_) {
+      insPageInited_ = true;
       insShowForm();
       insSetDefaultDates();
       insRestorePrefs_();
-      insEnsureRoster();
     }
-    function closeModal() {
-      modal.style.display = 'none';
-      modal.setAttribute('aria-hidden', 'true');
-      releaseFocus_();
-      resetModalTransform_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
-      document.body.style.overflow = '';
-      document.removeEventListener('keydown', onKeyDown);
-      btn.focus();
-    }
-    function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
+    insEnsureRoster();
+    insResizeCharts_();
+  }
+  // Re-measure charts rendered on a previous visit: the page section is
+  // display:none while the user is elsewhere, and a window resize in
+  // between leaves Chart.js instances mis-sized (the documented
+  // measure-while-hidden gotcha; the deptMissedResize_ pattern). Double-rAF
+  // waits for the page-swap layout to settle; no-ops on first entry (all
+  // instances null) and when Chart.js failed to load.
+  function insResizeCharts_() {
+    if (typeof requestAnimationFrame !== 'function') return;
+    requestAnimationFrame(function () { requestAnimationFrame(function () {
+      [insChartInstance, insShareChartInstance, insCardsChartInstance].forEach(function (c) {
+        try { if (c) c.resize(); } catch (e) { /* destroyed mid-swap */ }
+      });
+    }); });
+  }
 
-    btn.addEventListener('click', openModal);
-    if (closeBtn) closeBtn.addEventListener('click', closeModal);
-    if (backdrop) backdrop.addEventListener('click', closeModal);
+  function initInsightsReport() {
+    const btn = $('insights-report-btn');
+    const page = $('insights-page');
+    // Insights is a full PAGE (modal->page conversion): the top-level tab
+    // navigates like the Overview / My Department / Escalations tabs;
+    // setPage('insights') runs insEnsurePage_ + the router highlight. No
+    // modal open/close/drag/focus-trap/scroll-lock/Escape -- the Escalations
+    // pattern (#6).
+    if (btn) btn.addEventListener('click', function () { setPage('insights'); });
+    if (!btn || !page) return;
 
     const preset = $('ins-preset');
     if (preset) preset.addEventListener('change', insApplyPreset);
@@ -9170,9 +9189,9 @@
       }
     });
 
-    // Per-card IR drill-through (delegated on the modal so it covers
+    // Per-card IR drill-through (delegated on the page section so it covers
     // both the main card grid and the quiet-agents collapsible).
-    modal.addEventListener('click', function (e) {
+    page.addEventListener('click', function (e) {
       const link = e.target.closest('.ins-card-ir-link');
       if (!link) return;
       const agent = link.getAttribute('data-agent');
@@ -9196,9 +9215,9 @@
     // no marker param is possible).
     let insIrPrefetchTimer = null;
     const insIrPrefetched_ = {};
-    modal.addEventListener('mouseover', function (e) {
+    page.addEventListener('mouseover', function (e) {
       const card = e.target.closest && e.target.closest('.ins-card');
-      if (!card || !modal.contains(card)) return;
+      if (!card || !page.contains(card)) return;
       const link = card.querySelector('.ins-card-ir-link');
       const agent = link && link.getAttribute('data-agent');
       if (!agent) return;
@@ -9220,7 +9239,7 @@
           .getIndividualReport(req);
       }, 300);
     });
-    modal.addEventListener('mouseout', function (e) {
+    page.addEventListener('mouseout', function (e) {
       const card = e.target.closest && e.target.closest('.ins-card');
       if (!card) return;
       if (e.relatedTarget && card.contains(e.relatedTarget)) return;   // still inside the card
@@ -13114,7 +13133,8 @@
       { sel: '#freshness-pill',   title: 'Is the data current?',    body: 'Shows the most recent day with data and how long ago that was — it turns orange if the last import is over ~36 hours old.' },
       { sel: '#my-dept-btn',      title: 'My Department',           body: 'Your team’s per-agent detail table, with date controls and a Queue Call Data summary.' },
       { sel: '#escalations-btn',  title: 'Escalations',             body: 'View and resolve escalation calls for your department — mark one resolved with a note on how it was handled.' },
-      { sel: '#reports-menu-btn', title: 'Deeper reports',          body: 'Individual (per-agent deep dive) and Insights (team rollup + per-agent comparison + queue health) live here. Missed-call detail is on the My Department page.' },
+      { sel: '#insights-report-btn', title: 'Insights',             body: 'The flagship report, now a full page: a department rollup, per-agent comparison cards vs the prior period, and queue health. Your generated report stays put when you switch tabs.' },
+      { sel: '#reports-menu-btn', title: 'Deeper reports',          body: 'Individual (the per-agent deep dive) lives here, alongside the admin-vetted Inbound and Direct reports. Missed-call detail is on the My Department page.' },
       { sel: '#help-fab',         title: 'Help is always here',     body: 'Stuck? This button opens Help from anywhere — and you can replay this tour from Help → Guided tour any time.' },
     ];
   }

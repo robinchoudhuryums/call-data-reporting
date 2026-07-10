@@ -293,8 +293,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   Volume & Efficiency view (stacked Answered+Missed per agent + %
   Answered dots, `insRenderCardsChartAbs_`). `PerformanceReport.gs` was
   DELETED (`deltaBlock_` moved to Util.gs -- Insights consumes it);
-  legacy `#/report/performance` deep links land on the Insights modal
-  (router buttonId repoint); the `performance:` cache prefix and the
+  legacy `#/report/performance` deep links land on the Insights page
+  (router page repoint); the `performance:` cache prefix and the
   `cdr.pr.prefs.v1` localStorage key are orphans. The frozen-literal
   test in insights-report.test.js pins the inherited semantics
   (ex-parity gate). NOTE (INV-17): `clasp push -f` does not delete
@@ -553,7 +553,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   columns were already shared (INV-35). Deliberately NOT carried over:
   floater cards (Insights is roster-only, insights v15 -- floaters
   proved to be false positives in prod; IR still surfaces them).
-  Legacy `#/report/compare` deep links land on Insights (buttonId
+  Legacy `#/report/compare` deep links land on Insights (page
   repoint); `CompareRangesReport.gs` was deleted (the shared
   `deltaClassify_` / `deltaImprovementScore_` / `deltaIsQuiet_` /
   `crFormatSecondsShort_` client helpers were re-homed to a shared
@@ -647,15 +647,18 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   agent's **gap vs the team average** as diverging bars (colored by
   favourability -- Missed is inverse), value as a datalabel, **click a bar
   to drill into IR**. Both views persist in `cdr.ins.prefs`; single-agent
-  reports force Cards view. **IR drill-through (`irDrillToAgent_`):** hides
-  the Insights modal (its rendered report stays in the DOM), opens IR, and
-  reveals a **"Back to Insights"** button (`ir-back-to-insights-btn`) while
-  HIDING IR's generic "« Back" (`ir-back-btn`, the return-to-setup-form
-  button) for the drill's duration -- two Back buttons side by side read as
-  redundant, and during a drill "back" means Insights; `closeModal`'s
-  `irCameFromInsights_` branch restores it. IR's
-  `closeModal` re-shows the intact Insights modal on any close when
-  `irCameFromInsights_` is set -- instant, no re-generate (the server cache
+  reports force Cards view. **IR drill-through (`irDrillToAgent_`):**
+  Insights is a full PAGE (modal->page conversion,
+  docs/insights-page-plan.md), so the IR modal simply OVERLAYS it -- the
+  rendered report stays put behind the overlay, nothing is hidden or
+  re-shown. The drill detects its origin via `data-page === 'insights'`,
+  opens IR, and reveals a **"Back to Insights"** button
+  (`ir-back-to-insights-btn`) while HIDING IR's generic "« Back"
+  (`ir-back-btn`, the return-to-setup-form button) for the drill's
+  duration -- two Back buttons side by side read as redundant, and during
+  a drill "back" means Insights; IR `closeModal`'s `irCameFromInsights_`
+  branch restores the buttons, and ANY close (Back / X / Escape) reveals
+  the intact page -- instant, no re-generate (the server cache
   `insights:v18` already makes a fresh re-generate fast too).
   **Insights in-results edit popover:** the Insights results header carries
   the same editing line + `change` popover IR has (`#ins-edit-popover`;
@@ -1426,21 +1429,28 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   Calls) plus the Low Answer Rate Alerts engine are in the dashboard.
   Awaiting decommission of the spreadsheet; meanwhile accepts only
   cleanup deletions.
-- **Multi-page architecture: Overview + My Department + Escalations.**
+- **Multi-page architecture: Overview + My Department + Escalations +
+  Insights.**
   The dashboard is one HTML doc with top-level `<section>` pages toggled
-  by `body[data-page="overview|dept|escalations"]` (the `.page` CSS shows
-  only the active one; generalized from the original two-page pair when
-  Escalations became a full page, #6). **Overview is the default
+  by `body[data-page="overview|dept|escalations|insights"]` (the `.page`
+  CSS shows only the active one; generalized from the original two-page
+  pair when Escalations became a full page, #6). **Overview is the default
   landing** for every page load; "My Department" is the per-dept
   agent table view that used to be the landing; **Escalations** is a
   full page (route `#/escalations`) — an interactive worklist, not a
-  modal (it was converted from one). `setPage(name)` swaps the page,
+  modal (it was converted from one); **Insights** is a full page too
+  (route `#/report/insights`, converted from a modal --
+  docs/insights-page-plan.md; first entry via `insEnsurePage_` runs the
+  old openModal init, RE-ENTRY keeps the rendered report; its top-level
+  header tab is visible to ALL roles, replacing the old manager-only
+  solo-button proxy). `setPage(name)` swaps the page,
   the header kicker/title, and triggers that page's load (Overview ->
-  `ovLoad_`; Escalations -> `escEnsureInit_`+`escLoad_`). Modals (Help,
-  Settings, Individual / Insights,
+  `ovLoad_`; Escalations -> `escEnsureInit_`+`escLoad_`; Insights ->
+  `insEnsurePage_`). Modals (Help, Settings, Individual,
   Alerts, Orphan Fix, Dept Config) overlay any page (the standalone
   Missed Calls modal is RETIRED -- the My Department page's inline
-  missed section is the Missed Calls report).
+  missed section is the Missed Calls report -- and the Insights modal
+  became the Insights page).
   Overview auto-refreshes silently every 5 minutes when the
   page is active, re-fetching from the server cache. **Overview dept-tile
   click SOLOS that dept's line on the 30-day trend chart** (#1) --
@@ -1454,7 +1464,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `ovRouteToDept_(dept, iso)`; admins, or a manager on their own dept's
   line) **or the dept-selector dropdown** -- the tile no longer navigates.
   **`refresh()` only writes the header title when `data-page === 'dept'`**
-  so it can't clobber the Overview / Escalations titles.
+  so it can't clobber the Overview / Escalations / Insights titles.
 - **Overview-only sub-queue nesting.** `OVERVIEW_PARENT_OF` and
   `OVERVIEW_HIDDEN_DEPTS` in CompanyOverview.gs shape the Overview
   page only — dept dropdowns, Reports modals, and Alerts treat
@@ -1566,15 +1576,20 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   the deployed URL from `window.location` inside the Apps Script
   iframe — that resolves to the `n-<hash>-script.googleusercontent.com`
   wrapper, not the user-facing `/exec` URL. Deep links work for
-  the report routes (`#/report/individual`,
-  `#/report/performance`, `#/report/compare`, `#/admin/alerts`,
-  `#/admin/orphan-fix`; legacy `#/report/qcd` links repoint to the
-  Insights modal since the QCD retirement, and legacy `#/report/missed`
+  the report routes (`#/report/individual`, `#/admin/alerts`,
+  `#/admin/orphan-fix`; `#/report/insights` AND its three legacy
+  repoints `#/report/performance` / `#/report/compare` / `#/report/qcd`
+  are `kind: 'page'` routes onto the Insights PAGE since the modal->page
+  conversion (docs/insights-page-plan.md) -- the deep-link page branch
+  ALSO applies the route's SHARE_STATE_ ?query form-state after
+  `setPage`, which keeps the Digest.gs email deep links
+  (`#/report/insights?from=...&agents=...`) working even when no header
+  tab carries the route; legacy `#/report/missed`
   links are a `kind: 'page'` route with `scrollTo: 'dept-missed-section'`
   since the Missed-modal retirement -- the deep-link reader dispatches
   page routes with no header tab directly via `setPage` + `refresh()`
   and arms the one-shot `deptMissedScrollPending_` scroll) plus the
-  three PAGE routes
+  three original PAGE routes
   (`#/overview`, `#/dept`, `#/escalations` — `#/escalations` is now a
   `kind: 'page'` route, not a modal); unknown / malformed hashes quietly
   no-op and land on Overview. A deep link to an admin-only route
@@ -1709,11 +1724,12 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   button (hidden until data loads) that exports the current view
   (respecting scope, date range, and sort order) as a client-side
   CSV download. No server round-trip.
-- **Draggable / resizable modals.** All 9 modals can be
+- **Draggable / resizable modals.** All modals can be
   repositioned via header drag and resized via a bottom-right
   corner handle. Position and size reset on close so the next
   open starts centered at default size. Disabled below 768px
-  viewport width (mobile).
+  viewport width (mobile). (Insights left this set when it became
+  a page -- docs/insights-page-plan.md.)
 - **Universal Help FAB.** A floating circled-`?` button (`#help-fab`,
   `z-index:150`) stays above report modals so Help is always one click
   away; it opens the SAME `#help-modal` as the header `?`. Because all
@@ -2173,7 +2189,7 @@ INV-33 | `runDailyAlerts_` (time-triggered alerts) skips Saturday/Sunday RUNS an
 INV-34 | `Alert Config` columns: Department \| Threshold % \| Extra Recipients \| Active \| Notes \| Skip Dates. `Skip Dates` (col F) was added in E8 (commit 319eca7) at the end of the row -- non-destructive on existing prod sheets, which keep their 5-col header row. `readAlertConfig_` widens its read to 6 cols and indexes by position, so pre-E8 sheets work without re-running `setup()` (col F just returns empty until an admin populates it; the col F header label `Skip Dates` only lands on fresh `setup()` runs because `ensureSheet_` short-circuits on existing sheets per INV-22). Format + parser tolerance: see INV-33. `Alert Log` columns: Timestamp \| Department \| Date Checked \| Threshold % \| Answer Rate % \| Sent \| Recipients \| Triggered By \| Notes \| Status. Both sheets idempotently created by setup(); never overwritten. Alerts.gs's `readAlertConfig_`, `appendAlertLog_`, and -- since E10 (commit b3a5a51) -- `computeThresholdDrift_` (reads the Alert Log to surface per-dept fire-rate + mean answer rate on the modal config table) all depend on these schemas. **F4:** a dept row with a present Department but an invalid Threshold % (blank / <=0 / non-numeric) is no longer silently dropped by `readAlertConfig_` -- it's returned flagged `invalidThreshold:true`, surfaced as an `error` Alert Log outcome on every run (note: "department NOT monitored") and rendered as a "⚠ invalid" chip in the modal config table, so a fat-fingered threshold can't silently un-monitor a dept. `computeThresholdDrift_` skips invalid entries. | Subsystem: Department Dashboard
 INV-35 | Insights (and the retired Compare Ranges before it) flags `meta.lengthMismatch=true` when the longer of the two compared windows is at least 1.2x the shorter, counted in **WORKING days (Mon-Fri)**, NOT calendar days, via the shared `Util.gs::countWorkingDays_` (`Math.max(wd1,wd2) / Math.min(...) >= 1.2`). Working-day counting means two windows with equal workdays but a different weekend count (e.g. 10 calendar days / 2 weekends vs 8 / 1 weekend) are NOT falsely flagged. The calendar-day counts (`currentDays`/`priorDays`) are retained for the KPI per-day captions + CSV per-day columns. **Holidays ARE excluded since S5**: the `COMPANY_HOLIDAYS` Script Property (dashboard project; same tolerant grammar as the Skip Dates cell -- comma-separated ISO dates + `..` ranges, parsed by the shared `parseSkipDateRanges_`) feeds `isCompanyHoliday_`, and `countWorkingDays_` skips Mon-Fri days that are company holidays. Unset property = byte-identical pre-S5 behavior, so NO cache-version bump was taken (the INV-54 regression-safety precedent); when the operator first sets it, stale flags age out within the 30-min TTL. The client form hints (`workingDaysBetween_`) read the same ranges via the server-injected `window.__COMPANY_HOLIDAYS__`, so hint and results flag can't disagree. The flag drives the form's warning hint, the inline results caveat, KPI per-day captions, and CSV per-day columns. Tunable threshold in `computeInsights_`. | Subsystem: Department Dashboard
 INV-36 | Cache keys that embed agent selections must hash via `Data.gs::hashAgents_` (MD5 hex, 32 chars, order-insensitive). Apps Script CacheService silently rejects keys > 250 chars; raw-joined agent lists overflow on big rosters like Sales and surface as report-generation errors. IR / Insights use the hash; future report code that caches per agent-selection must follow suit. | Subsystem: Department Dashboard
-INV-37 | The dashboard is a two-page web app toggled via `body[data-page="overview"|"dept"]`. Default landing is `overview` (set inline on the body tag so the right page paints before JS runs). `setPage(name)` swaps the page, updates the header kicker+h1, and (for `overview`) triggers a fresh `getCompanyOverview()` fetch. `refresh()` only writes the dept name into `#page-title` when the dept page is active, so swapping dept on Overview doesn't clobber "Departments Snapshot". | Subsystem: Department Dashboard
+INV-37 | The dashboard is a multi-PAGE web app toggled via `body[data-page="overview"|"dept"|"escalations"|"insights"]` (grown from the original overview/dept pair: Escalations #6, then Insights via the modal->page conversion, docs/insights-page-plan.md). Default landing is `overview` (set inline on the body tag so the right page paints before JS runs). `setPage(name)` swaps the page, updates the header kicker+h1, and triggers that page's load (`overview` -> a fresh `getCompanyOverview()` fetch; `escalations` -> `escEnsureInit_`+`escLoad_`; `insights` -> `insEnsurePage_`, whose RE-entry keeps the rendered report). `refresh()` only writes the dept name into `#page-title` when the dept page is active, so swapping dept on Overview doesn't clobber "Departments Snapshot". | Subsystem: Department Dashboard
 INV-38 | `OVERVIEW_PARENT_OF` (CompanyOverview.gs) defines sub-queue parent-child relationships for the Overview tile grid ONLY. The dept dropdown, all Reports modals, and Alerts treat each dept as independent. Keys must match the `DO NOT EDIT!` column header byte-for-byte; aliases (e.g. both `PAP` and `PAP Q` mapping to Sales) are tolerated. The constant is the seed default; the Dept Config sheet can override a dept's parent per dept (read through `getOverviewParentMap_`, save-time validated against real dept headers + cycle check -- INV-54). `OVERVIEW_HIDDEN_DEPTS` excludes depts from the Overview only (e.g. `CSR Backup`). | Subsystem: Department Dashboard
 INV-39 | Admin-only fields in the Overview payload are stripped on serve via `personalizeOverview_`: the full blob (including all admin-only fields) is cached for everyone, but the admin-only fields (`companyAggregate`, `pipelineFreshness`, `orphanNag`, `unmappedQcd`) are removed before serving non-admins. `personalizeOverview_` deep-clones via JSON round-trip so any future personalize step that mutates nested fields can't leak across viewers; if that clone ever fails it fails CLOSED (admins get a shallow copy since they see everything anyway, non-admins get a minimal driver-free view) rather than the old shallow-copy-then-mutate path that would have mutated the shared cached blob. Viewer-personalized fields `viewerRole` and `viewerDept` are injected per-request, never cached — so a payload warmed by user A still personalizes correctly for user B. Adding a new admin-only Overview field means adding its key to the strip list inside `personalizeOverview_`. | Subsystem: Department Dashboard
 INV-40 | Overview "X of Y agents" caption denominator is `recentlyActiveCount` = any rung/answered/missed activity in the last `OVERVIEW_RECENT_ACTIVE_DAYS` (=30) days, NOT full roster size. Filters out ex-employees who are kept on the `DO NOT EDIT!` sheet for historical-data preservation. Hover tooltip exposes today-active / recent-active / full-roster numbers so the choice is transparent. Same logic powers the company aggregate's Active count. | Subsystem: Department Dashboard
@@ -2181,7 +2197,7 @@ INV-41 | chartjs-plugin-datalabels requires `Chart.register(ChartDataLabels)` AN
 INV-42 | `refreshChartTheme()` (script.html) resolves every CSS custom property via `colorToCanvasRgb_()` — paints onto a 1×1 canvas and reads back canonical `rgba(...)`. Required because chartjs-plugin-datalabels' `fillStyle` path can't parse `oklch(...)` strings → silently renders empty fills (invisible labels). Never pass raw `getComputedStyle(...).getPropertyValue('--token')` to chart options; always go through `THEME.*`. Hook is re-run on dark-mode toggle so newly-rendered charts pick up the inverted palette. | Subsystem: Department Dashboard
 INV-43 | Default From/To on the My Department page snaps to the most-recent ISO date present in DQE Historical Data, via `Data.gs::getLatestDataDate()` (cached under `latestDate:v1`). Falls back to today on failure. Replaces the legacy "current-month-to-date" default so the table isn't empty when a manager opens the dashboard before today's ingest has run. | Subsystem: Department Dashboard
 INV-44 | `Pipeline Health` sheet columns: `Timestamp \| Step \| Status \| Rows \| Duration (ms) \| Notes`. Schema pinned in `Config.gs::PIPELINE_HEALTH_HEADERS`; sheet is idempotently created by `setup()`. Append-only; never overwritten. Writers are `logPipelineHealthWithFallback_` in `apps-script/cdr-import/autoImport.js`, `logPipelineHealth_` in `apps-script/cdr-import/buildDQEHistoricalData.js`, and `logPipelineHealth_` in `apps-script/cdr-report/buildDQEHistoricalData.js` (cross-project; the two buildDQE copies are byte-identical per INV-16). All writes are best-effort -- a logging failure must never block or fail the pipeline. Reader is `Alerts.gs::readPipelineHealth_(maxRows)`; UI surfaces the last 20 entries in the Alerts modal. Step values are free-form (currently `autoImport`, `buildDQE`, `processIntegratedHistory:CDR`, `:QPath`, `:QCD`, `:CSR`, `:DQE`, `:Inbound` -- the inbound_calls Neon mirror's per-run outcome incl. unreachable/error failures, F9 -- `bulkBackfill:DQE`, `buildDQE:neon` -- the DQE->Neon mirror's skip/error outcome when the sheet build succeeded but the per-date mirror was unreachable/failed (F4), `inboundBackfill` -- one summary row per editor-run `backfillInboundCalls` invocation in cdr-import/inboundCalls.js -- and, when the deferred Neon mirror is enabled (`NEON_MIRROR_MODE=deferred`, NeonMirror.js), `neonMirror:CDR`/`:QCD`/`:DQE`/`:Inbound` -- one per type per date drained by the `runNeonMirror_` trigger, status `failure` on Neon-unreachable so the date stays queued for retry -- plus `neonMirror:gave-up` (IMP-6: a date dropped from the queue after `NEON_MIRROR_MAX_ATTEMPTS` (default 8) HARD-error drains; unreachable never counts; one final email fires) -- and, for the direct-extension call metrics (directCallMetrics.js, cdr-import-only), `directBuild` (editor-run `runDirectCallBuild`), `processIntegratedHistory:Direct` (the daily import's 6th block -- per-agent-day Direct Call History + inline `direct_call_history` Neon mirror), and `bulkBackfill:Direct` (the bulk path's per-date Direct build, Neon DEFERRED via `skipNeon` -> mirrored later by the editor-run `backfillDirectCallToNeon`)); Status is `success` or `failure`. Looking up a recent fresh-DQE-write involves either `buildDQE` (cdr-report standalone trigger), `processIntegratedHistory:DQE` (cdr-import integrated daily path), OR `bulkBackfill:DQE` (cdr-import historical backfill path) -- all three share the freshness role. **A `processIntegratedHistory:DQE` `success` can carry `rows:0`** on a NO-OP build (date already in history via the dup-guard / empty Raw Data / the F2 expected-date refusal), so "ran-empty" is distinguishable from "block never ran" (no row) and "build threw" (`failure` row); `computeOverviewPipelineFreshness_` requires `rows>0`, so a no-op re-import does NOT count as fresh or reset the staleness clock (F5). | Subsystem: Department Dashboard (+ CDR Import / CDR DQE Pipeline for the writers)
-INV-45 | `Digest Config` sheet columns: `Email \| Department \| Cadence \| Active \| Notes \| Format`. Schema pinned in `Config.gs::DIGEST_CONFIG_HEADERS`; sheet is idempotently created by `setup()`. `Format` (col F) was appended at the end of the row, the Alert Config Skip Dates precedent -- pre-existing prod sheets keep their 5-col header, `readDigestConfig_` reads 6 cols positionally, and an empty col F normalizes to `summary`, so behavior is unchanged until an admin sets a value. Cadence is `daily` (sends each weekday morning for the previous BUSINESS day's data -- Monday's digest covers Friday; weekend runs skipped, F-6; since S5, COMPANY-HOLIDAY runs are skipped too and the covered day walks back over holidays via the shared `prevBusinessDayIso_`), `weekly` (sends Monday 8 AM for the prior Mon-Fri window), or `monthly` (sends on the 1st, 8 AM, for the prior calendar month -- ScriptApp `onMonthDay(1)` trigger). Format is `summary` (an answer-first answer-rate HERO -- big % + an On track/Watch verdict pill keyed on the 92% standard + an email-safe target bar built from filled `<td>` cells, `digestHeroHtml_` -- followed by Rung/Answered/Missed tiles + the WoW driver callout; the Answer-rate tile was folded into the hero, so 3 tiles not 4; default) or `insights` (the digest-Insights bridge: `digestInsightsHtml_` runs the SAME `computeInsights_` the Insights modal uses, full roster as the selection so floaters stay excluded, vs a cadence-appropriate prior window -- daily = INV-28 auto-adjacent day, weekly = previous Mon-Fri via shift-7, monthly = previous calendar month -- via `digestInsightsPrior_`). `Digest.gs` is the engine; every public callable (`getDigestsInit`, `sendPreviewDigest`, `installDigestTriggers`, `uninstallDigestTriggers`) starts with `assertAdmin_`. Trigger entry points (`runDailyDigests_`, `runWeeklyDigests_`, `runMonthlyDigests_`) end in `_` so `google.script.run` can't reach them but ScriptApp dispatch still calls them by name. Trigger lifecycle is managed via the Alerts modal's "Manager Digest Subscribers" section. | Subsystem: Department Dashboard
+INV-45 | `Digest Config` sheet columns: `Email \| Department \| Cadence \| Active \| Notes \| Format`. Schema pinned in `Config.gs::DIGEST_CONFIG_HEADERS`; sheet is idempotently created by `setup()`. `Format` (col F) was appended at the end of the row, the Alert Config Skip Dates precedent -- pre-existing prod sheets keep their 5-col header, `readDigestConfig_` reads 6 cols positionally, and an empty col F normalizes to `summary`, so behavior is unchanged until an admin sets a value. Cadence is `daily` (sends each weekday morning for the previous BUSINESS day's data -- Monday's digest covers Friday; weekend runs skipped, F-6; since S5, COMPANY-HOLIDAY runs are skipped too and the covered day walks back over holidays via the shared `prevBusinessDayIso_`), `weekly` (sends Monday 8 AM for the prior Mon-Fri window), or `monthly` (sends on the 1st, 8 AM, for the prior calendar month -- ScriptApp `onMonthDay(1)` trigger). Format is `summary` (an answer-first answer-rate HERO -- big % + an On track/Watch verdict pill keyed on the 92% standard + an email-safe target bar built from filled `<td>` cells, `digestHeroHtml_` -- followed by Rung/Answered/Missed tiles + the WoW driver callout; the Answer-rate tile was folded into the hero, so 3 tiles not 4; default) or `insights` (the digest-Insights bridge: `digestInsightsHtml_` runs the SAME `computeInsights_` the Insights page uses, full roster as the selection so floaters stay excluded, vs a cadence-appropriate prior window -- daily = INV-28 auto-adjacent day, weekly = previous Mon-Fri via shift-7, monthly = previous calendar month -- via `digestInsightsPrior_`). `Digest.gs` is the engine; every public callable (`getDigestsInit`, `sendPreviewDigest`, `installDigestTriggers`, `uninstallDigestTriggers`) starts with `assertAdmin_`. Trigger entry points (`runDailyDigests_`, `runWeeklyDigests_`, `runMonthlyDigests_`) end in `_` so `google.script.run` can't reach them but ScriptApp dispatch still calls them by name. Trigger lifecycle is managed via the Alerts modal's "Manager Digest Subscribers" section. | Subsystem: Department Dashboard
 INV-46 | `Agent Alias Overrides` sheet columns: `Old Name \| Canonical Name \| Active \| Added By \| Added At \| Notes`. Schema pinned in `Config.gs::AGENT_ALIAS_OVERRIDES_HEADERS`; sheet is idempotently created by `setup()`. Soft-coupling across two Apps Script projects: the dashboard's `OrphanFix.gs` writes rows here; the CDR Report project's `buildDQEHistoricalData.js::loadRosterCanonicalNames_` reads them on every build and folds them into the canonicalization map. The pipeline-side check is best-effort (missing/empty sheet leaves the build's behavior unchanged) so an unsynced cdr-report deploy doesn't break the dashboard's UI. Aliases with `Active=FALSE` are skipped by the pipeline. | Subsystem: Department Dashboard + CDR DQE Pipeline
 INV-47 | `Orphan Fix Log` sheet columns: `Timestamp \| Admin \| Action \| From Name \| To Name \| Affected Rows \| Notes`. Schema pinned in `Config.gs::ORPHAN_FIX_LOG_HEADERS`; sheet is idempotently created by `setup()`. Append-only; never overwritten. `OrphanFix.gs::appendOrphanFixLog_` writes one row per action. Action values: `alias-add`, `alias-remove`, `rename`, `rename+alias`, `roster-add` (the New-hire flow: From Name = the agent, To Name = the dept column written, extensions recorded in Notes). Affected Rows is the count of DQE Historical Data rows modified by a `rename` (0 for alias-only and roster-add actions). | Subsystem: Department Dashboard
 INV-48 | `dept.wow.driver` on the Overview payload ("what changed" insight) is attached only when `|dept.wow.deltaPct| >= WOW_DRIVER_THRESHOLD` (= 1.5 pts). The driver is the per-agent net answered/missed change that most explains the dept's WoW shift, picked by `computeWowDriver_` in CompanyOverview.gs. Requires at least 3 events in either week-window to avoid one-call outliers; positive WoW surfaces the biggest answered-delta, negative WoW surfaces the biggest missed-delta. `dept.wow.driver` may be null for low-activity / quiet-week depts; the client (`ovBuildWowDriver_`) renders nothing in that case. Per-dept (not admin-only) -- managers see drivers for their own dept; admins see them for all depts. Enforced server-side in `personalizeOverview_` (since commit b89d061): for non-admins, `dept.wow.driver` is deleted on every tile where `dept.name !== user.department`. The strip runs post-cache on a JSON-cloned payload, so the shared cache blob isn't mutated and no `companyOverview:` version bump is needed. **Also surfaced in the manager digest (#11):** `Digest.gs::computeDigestWowDriver_(dept, anchorIso)` builds the same `{trendByDate, agentTrendByDate}` stats over a 14-day window ending on the digest window's end date and reuses `computeWowDelta_` / `computeWowDriver_` verbatim (same threshold + scoring), so the digest email renders a "What changed · WoW" callout (`digestWowNarrative_`) below the KPI tiles. The digest path is roster-scoped (INV-53) + sentinel-skipping (INV-23) and best-effort (null on a quiet dept / any error -> no callout). | Subsystem: Department Dashboard
@@ -2286,7 +2302,7 @@ S14 | Insights team rollup: current vs prior deltas + PR-absorbed views | Subsys
     - Check the KPI tiles' deltas vs the immediately-preceding same-length window (INV-28); the "Comparing against..." line shows the explicit prior dates.
     - Scroll to the share-of-answered donut (below the trend chart) -- one slice per agent, small slices unlabeled.
     - Switch the per-agent comparison to Chart view and flip the new sub-toggle to "Absolute": one stacked bar per agent (green Answered + red Missed, stack = rung) with a % Answered dot per agent on the right axis -- PR's Volume & Efficiency view. The metric selector hides in Absolute mode; clicking a bar drills into IR.
-    - Deep-link check: open `<dashboard-url>#/report/performance` -- it lands on the Insights modal (legacy links repoint).
+    - Deep-link check: open `<dashboard-url>#/report/performance` -- it lands on the Insights page (legacy links repoint).
   Expected: all of the above; Missed keeps its warn valence on deltas; rates stay length-independent.
 
 S15 | Pipeline canonicalizes paren-variant agent names | Subsystem: CDR DQE Pipeline
@@ -2409,7 +2425,7 @@ S32 | Queue data end-to-end (Insights Queue health + retained QCD surfaces) | Su
     - Confirm the Queue health section renders: tiles (Queue calls / Abandoned % / Violations MTD -- warn-tinted per the 5% standard) + the muted secondary line (Answered / Longest wait / Avg answer); one row per queue in the dept's effective queue list, sub-queue rows tagged + excluded from the dept total; every row expands into the secondary-metric strip, the per-call-source subtable (Overall + CSR / Ad-campaign / New Call Menu / Non-CSR, Overall-first then by volume), and violation dates. The collapsed Daily breakdown table shows the per-day rows with the answered/abandoned split bar.
     - Switch the consolidated trend chart to the "Abandoned % by Queue" tab: one line per queue + a dashed "Dept total" line + the dashed 5% threshold; days/months at or over 5% render enlarged warn-colored points (violation markers). The legend shares the Overview chart's spotlight (hover to dim others; click to pin/isolate) via the `chartSpotlight*` helpers. The metric sub-selector switches to Total Calls / Violations; the Monthly/Daily toggle switches the axis.
     - As an admin, pick a dept with NO mapped queues and Generate: Queue health renders the "No queues are mapped" hint with an "Open Dept Config" button (managers get the ask-an-admin wording).
-    - Deep-link check: open `<dashboard-url>#/report/qcd` -- it lands on the Insights modal (legacy links repoint).
+    - Deep-link check: open `<dashboard-url>#/report/qcd` -- it lands on the Insights page (legacy links repoint).
     - Overview launcher: click "Are callers giving up before we answer?" -- Insights opens and auto-runs over the last 30 days.
     - Re-open the dashboard fresh and check the Overview tile for a dept with multiple queues; per-queue QCD rows appear showing each queue's abandoned %, abandoned count (if >0), and violations (if >0) with color-coding. "X viol MTD" chip renders when month-to-date violations > 0.
     - All-departments daily report (4b, open to all managers): as EITHER an admin OR a manager on the Overview page, confirm a "Daily Call Queue Report" button (`#ov-qcd-alldept-btn`) is visible (no longer `data-admin-only`). Click it; the `#qcd-alldept-modal` opens and **pre-loads yesterday** immediately (no Generate click). Confirm a flat company-wide table with one section per mapped dept (own queues only -- a sub-queue lists under its own dept exactly once, never under the parent), a per-dept subtotal row, and a "Company total" grand-total footer; **Answered / Abandoned / Abandoned % render as a split bar**; abandoned %>=5% and violation counts are warn-tinted. Change the date via the in-modal date toolbar (preset or from/to + Update) -- it re-generates in place (no back-to-form step). Click a queue row -> it expands into the per-call-source breakdown (data-driven per queue) + violation dates. Click Download CSV (scope line + per-dept rows + subtotals + grand total, all numeric columns) and Print (plain-table print window). Console check: `google.script.run.withSuccessHandler(console.log).getQcdAllDepartments({from:'2026-05-01', to:'2026-05-19'})` RESOLVES for a manager; only a `role==='none'` visitor is refused ("Not authorized.").
