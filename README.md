@@ -4,10 +4,13 @@ Source of truth for the call-data reporting stack:
 
 - **Department Dashboard** — a Google Apps Script web app that serves
   per-department managers a polished view of their team's DQE call metrics.
-  Replaces the legacy `DQE Report` spreadsheet. Two-page UI: the
-  **Overview** page (cross-department snapshot, the default landing) and
+  Replaces the legacy `DQE Report` spreadsheet. Three-page UI: the
+  **Overview** page (cross-department snapshot, the default landing),
   the **My Department** page (per-agent detail table with date-range
-  controls), toggled via header buttons.
+  controls + the inline Missed Calls report), and the **Escalations**
+  worklist page, toggled via header buttons; the Individual + Insights
+  report modals overlay any page (Insights absorbed the retired
+  Performance / Compare Ranges / QCD reports).
 - **Reference copies** of related Apps Script code from sibling projects
   (CDR Report, CDR Import) that the dashboard depends on. Pulled in
   gradually so changes across projects can be reviewed in one place.
@@ -68,12 +71,12 @@ npm test             # same thing
 
 Non-zero exit on failure. Coverage spans the date/duration parsing,
 cache-key hashing, the Dept Config override accessors, the
-`computeSummary_` aggregator, the Individual / Performance / Compare
-Ranges report builders, and the pipeline's name canonicalization. See
+`computeSummary_` aggregator, the Individual report builder + the
+Insights consolidation-freeze (the retired Performance / Compare Ranges
+semantics pinned as literals), the pipeline's name canonicalization,
+and the end-to-end `buildDQEHistoricalData` build. See
 [`tests/README.md`](tests/README.md) for the design, how to add a test,
-and the current coverage map. (The end-to-end `buildDQEHistoricalData`
-build is not yet unit-covered; the manual Regression Scenarios in
-CLAUDE.md remain the verification of record there.) A
+and the current coverage map. A
 `cache-version-sync` test also fails the suite if the docs / inline
 comments drift from the code's cache-key versions (INV-30).
 

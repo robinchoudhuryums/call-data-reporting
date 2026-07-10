@@ -40,9 +40,12 @@ test('rowDateIso_ handles Date objects honoring the passed TZ (INV-02 root cause
   assert.equal(h.call('rowDateIso_', noonUtc, 'America/Mexico_City'), '2026-03-09');
 });
 
-test('rowDateIso_ converts Sheets serial dates', function () {
-  // 45726 == 2025-03-09 (documented in Data.gs comment), in Chicago.
-  assert.equal(h.call('rowDateIso_', 45726, 'America/Chicago'), '2025-03-09');
+test('rowDateIso_ converts Sheets serial dates (F-8: right calendar day in ANY tz)', function () {
+  // Serial 45726 = 2025-03-10 (days since 1899-12-30). This test previously
+  // pinned 2025-03-09 -- the OLD off-by-one: the serial converts to UTC
+  // MIDNIGHT of the date, and formatting that instant in a west-of-UTC zone
+  // rendered 18:00 the PREVIOUS day. Fixed by formatting in UTC.
+  assert.equal(h.call('rowDateIso_', 45726, 'America/Chicago'), '2025-03-10');
   // Small ints aren't dates.
   assert.equal(h.call('rowDateIso_', 5, 'America/Chicago'), '');
 });
@@ -90,4 +93,8 @@ test('getDeptQueueExts_ derives from roster col D when no override exists', func
   const res = h.call('getDeptQueueExts_', 'Sales', rosterSet, values);
   assert.equal(res.source, 'derived');
   deepEqual(Object.keys(res.exts).sort(), ['201', '202']);
+});
+
+test('F-8: the serial branch is tz-independent (spreadsheet tz cannot shift the day)', function () {
+  assert.equal(h.call('rowDateIso_', 45726, 'America/Mexico_City'), '2025-03-10');
 });

@@ -64,6 +64,23 @@ function remirrorExistingDqeDate_(dqeSheet, offsets, callDateStr) {
   const block = dqeSheet.getRange(firstRow, 1, lastRow - firstRow + 1, 34).getDisplayValues();
   const matched = {};
   offsets.forEach(function (o) { matched[o] = true; });   // absolute data-region offsets
+  // F-16: route the coercion-prone abandoned ID/time cells (AD/AE/AF)
+  // through the SAME sanitizer every other sheet->Neon path uses (the
+  // backfills + the deferred mirror), so a non-force re-import of an old
+  // date whose sheet rows still carry pre-protection coerced cells writes
+  // the #REBUILD sentinel / recovered value instead of overwriting clean
+  // dqe_history values with coerced garbage via ON CONFLICT DO UPDATE.
+  // typeof-guarded because the sanitizer lives outside this INV-16 pair:
+  // neonbackfill.js (cdr-report) / NeonMirror.js (cdr-import) -- present
+  // in BOTH projects. Null (genuinely empty) coerces to '' to match what
+  // the inline daily writer sends for empty cells.
+  const saneAb = (typeof sanitizeAbandonedCellForNeon_ === 'function')
+    ? function (v) { const r = sanitizeAbandonedCellForNeon_(v); return r == null ? '' : r; }
+    : function (v) { return v; };
+  // F-51: same treatment for the 19 slot columns (they coerce like AF).
+  const saneSlot = (typeof sanitizeSlotCellForNeon_ === 'function')
+    ? function (v) { const r = sanitizeSlotCellForNeon_(v); return r == null ? '' : r; }
+    : function (v) { return v; };
   const neonRows = [];
   for (let i = 0; i < block.length; i++) {
     // The [first..last] window can include other-date stragglers if the
@@ -81,10 +98,10 @@ function remirrorExistingDqeDate_(dqeSheet, offsets, callDateStr) {
       totalAnswered:   Number(r[7]) || 0,
       ttt:             r[8],
       att:             r[9],
-      slots:           r.slice(10, 29),
-      abParentIds:     r[29],
-      abMissedIds:     r[30],
-      abMissedTimes:   r[31],
+      slots:           r.slice(10, 29).map(saneSlot),   // F-51
+      abParentIds:     saneAb(r[29]),
+      abMissedIds:     saneAb(r[30]),
+      abMissedTimes:   saneAb(r[31]),
       avgAbdWait:      r[32],
       csrAvgAbdWait:   r[33]
     });
@@ -509,17 +526,34 @@ function buildDQEHistoricalData(rawSheet, dqeSheet, opts) {
 
     const agentParentIds    = new Set(legs.map(l => l.parentCallId).filter(Boolean));
     const agentAbandonedIds = Array.from(agentParentIds).filter(id => abandonedParentIds.has(id));
-    const abanMissedLegs = legs.filter(l =>
-      l.missed && l.parentCallId && abandonedParentIds.has(l.parentCallId)
-    );
+    // AD/AE/AF are consumed POSITIONALLY by the dashboard's Missed Calls
+    // report: AF[i] is the i-th abandoned missed-ring time and AD[i] is
+    // its parent call id -- the {time -> parent} pairing behind each 🚨
+    // timestamp's "↳ path" journey drill. Build all three columns from
+    // the SAME chronologically-sorted missed-leg list so the pairing is
+    // exact: one AD/AE/AF entry per missed leg on an abandoned parent
+    // (a parent that re-rang this agent appears once per ring -- the
+    // read side dedups ids for its unique-abandoned counts). Legs with
+    // an unparseable start time can't render a timestamp, so they're
+    // excluded from the paired section. Abandoned parents the agent
+    // touched WITHOUT a pairable missed leg (answered/unflagged leg, or
+    // unparseable time) are APPENDED to AD after the paired section --
+    // no AE/AF partner -- so the dept-wide unique-abandoned counts
+    // (which read AD as a set) keep the exact same id set as before.
+    const abanMissedLegs = legs
+      .filter(l =>
+        l.missed && l.parentCallId && abandonedParentIds.has(l.parentCallId)
+        && l.startPST !== null
+      )
+      .sort((a, b) => a.startPST - b.startPST);
 
-    const abanParentStr   = agentAbandonedIds.join(',');
-    const abanMissedIds   = Array.from(new Set(abanMissedLegs.map(l => l.callId))).join(',');
-    const abanMissedTimes = Array.from(new Set(
-      abanMissedLegs
-        .map(l => l.startPST !== null ? pstToCSTStr(l.startPST) : '')
-        .filter(Boolean)
-    )).join(',');
+    const pairedParentIds   = abanMissedLegs.map(l => l.parentCallId);
+    const pairedParentSet   = new Set(pairedParentIds);
+    const unpairedParentIds = agentAbandonedIds.filter(id => !pairedParentSet.has(id));
+
+    const abanParentStr   = pairedParentIds.concat(unpairedParentIds).join(',');
+    const abanMissedIds   = abanMissedLegs.map(l => l.callId).join(',');
+    const abanMissedTimes = abanMissedLegs.map(l => pstToCSTStr(l.startPST)).join(',');
 
     outputRows.push([
       monthYr,                                  // A  Month Year

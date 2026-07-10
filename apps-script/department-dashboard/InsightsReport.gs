@@ -37,7 +37,8 @@
  *          teamInsights, trendData }
  *   sendInsightsReportEmail({ imageBase64, dateLabel }) -> { to }
  *
- * Reuse (Apps Script flat global scope): deltaBlock_ (Performance),
+ * Reuse (Apps Script flat global scope): deltaBlock_ (Util.gs; moved
+ * there from the retired Performance Report),
  * buildTeamInsights_ + formatSecondsHms_ (Util), getRosterForDepartment_
  * / getDeptQueueExts_ / parseExtensions_ / rowDateIso_ / parseHmsDisplay_
  * / buildDeptsByAgent_ / hashAgents_ (Data), and the F1 read helpers
@@ -78,7 +79,7 @@
 //     (from the bySource breakdown 4a added to computeQcdReport_), so
 //     the Queue health table can annotate WHERE a queue's abandons come
 //     from. Null when no sub-source has abandons.
-const INSIGHTS_CACHE_KEY_PREFIX = 'insights:v16';
+const INSIGHTS_CACHE_KEY_PREFIX = 'insights:v18';
 
 function getInsightsReportInit(req) {
   // Same picker UX (roster + default dates + active-in-range subset) as
@@ -264,11 +265,21 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
 
   const ss = openSpreadsheet_();
   const sheet = ss.getSheetByName(SHEETS.HISTORICAL);
-  if (!sheet) throw new Error('Sheet "' + SHEETS.HISTORICAL + '" not found.');
-  const lastRow = sheet.getLastRow();
-  if (lastRow < 2) {
-    return emptyInsights_(dept, from, to, priorFrom, priorTo, selectedAgents,
-                          monthKeys, priorIsCustom);
+  // F-35: hard-require the DQE sheet only when it IS the read source. With
+  // DQE_READ_SOURCE=neon the sheet may be trimmed/archived -- the old
+  // unconditional check served the EMPTY report despite dqe_history being
+  // fully populated (so the sheet could never actually be retired). If the
+  // Neon read then fails or returns nothing, the sheet-fallback block below
+  // returns the empty report rather than crashing on the missing sheet.
+  const dqeSource = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
+  const neonCapable = (dqeSource === 'neon' && typeof neonFetchDqeRows_ === 'function');
+  const lastRow = sheet ? sheet.getLastRow() : 0;
+  if (!neonCapable) {
+    if (!sheet) throw new Error('Sheet "' + SHEETS.HISTORICAL + '" not found.');
+    if (lastRow < 2) {
+      return emptyInsights_(dept, from, to, priorFrom, priorTo, selectedAgents,
+                            monthKeys, priorIsCustom);
+    }
   }
   const ssTZ = ss.getSpreadsheetTimeZone();
 
@@ -283,15 +294,16 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
   if (priorFrom < fetchFrom) fetchFrom = priorFrom;
   let fetchTo = to;
   if (priorTo > fetchTo) fetchTo = priorTo;
-  const dqeSource = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
   let srcRows = null;
   let deptQueueExts;
   let effectiveSource = 'sheet';
   const _tRead = Date.now();
-  if (dqeSource === 'neon' && typeof neonFetchDqeRows_ === 'function') {
+  if (neonCapable) {
     srcRows = neonFetchDqeRows_(fetchFrom, fetchTo);
     if (srcRows && srcRows.length) {
-      const extValues = sheet.getRange(2, 1, lastRow - 1, HISTORICAL_COLS.QUEUE_EXT).getValues();
+      // F-35: tolerate a missing/empty sheet for the ext derivation.
+      const extValues = (sheet && lastRow >= 2)
+        ? sheet.getRange(2, 1, lastRow - 1, HISTORICAL_COLS.QUEUE_EXT).getValues() : [];
       deptQueueExts = getDeptQueueExts_(dept, rosterSet, extValues).exts;
       effectiveSource = 'neon';
     } else {
@@ -300,6 +312,10 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
     }
   }
   if (srcRows === null) {
+    if (!sheet || lastRow < 2) {   // F-35: neon empty AND no sheet to fall back to
+      return emptyInsights_(dept, from, to, priorFrom, priorTo, selectedAgents,
+                            monthKeys, priorIsCustom);
+    }
     const range = sheet.getRange(2, 1, lastRow - 1, numCols);
     const values   = range.getValues();
     const displays = range.getDisplayValues();
@@ -588,7 +604,13 @@ function insightsQueueHealth_(dept, from, to, priorFrom, priorTo) {
     // their own lines/rows + EXCLUDED from the dept total. The user-facing
     // "Include sub-queues" toggle was retired here too.
     const cur = computeQcdReport_(dept, from, to, /*includeSub=*/ true, /*separate=*/ true);
-    if (!cur || !cur.meta || cur.meta.unmapped) return null;
+    if (!cur || !cur.meta) return null;
+    // v18 (QCD retirement): an UNMAPPED dept is signaled explicitly so the
+    // client can render the "no queues mapped" hint (+ admin Dept Config
+    // CTA) the retired QCD modal used to show -- Insights Queue health is
+    // now the only place a manager learns their dept needs mapping. A
+    // missing QCD sheet (above) stays null = silently hidden.
+    if (cur.meta.unmapped) return { unmapped: true };
     let prior = null;
     try { prior = computeQcdReport_(dept, priorFrom, priorTo, true, true); } catch (e) { prior = null; }
     const pick = function (t) {
@@ -836,6 +858,14 @@ function sendInsightsReportEmail(req) {
   if (customPriorFrom || customPriorTo) {
     if (!isIsoDate_(customPriorFrom) || !isIsoDate_(customPriorTo)) {
       throw new Error('priorFrom/priorTo must be YYYY-MM-DD.');
+    }
+    // F-33: getInsightsReport enforces this order check; the email path
+    // omitted it, so a reversed pair reached computeInsights_ where
+    // `inPrior` was never true -- the emailed report silently rendered
+    // prior = 0 everywhere (every volume delta +100%) instead of erroring
+    // like the on-screen path.
+    if (customPriorFrom > customPriorTo) {
+      throw new Error('priorFrom must be on or before priorTo.');
     }
   }
 

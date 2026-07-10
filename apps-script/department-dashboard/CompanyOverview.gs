@@ -43,7 +43,7 @@
  * (read-only), and reinstating that visibility is part of the
  * design intent for this view.
  *
- * Caching: REPORT_CACHE_TTL_SECONDS under `companyOverview:v17` (the
+ * Caching: REPORT_CACHE_TTL_SECONDS under `companyOverview:v18` (the
  * COMPANY_OVERVIEW_CACHE_KEY constant below). Cached blob is shared
  * across all users; admin-only fields (`companyAggregate`,
  * `pipelineFreshness`, `orphanNag`) are stripped on serve for
@@ -77,7 +77,9 @@
 // v15: per-dept QCD snapshots use DIRECT queues only (sub-queue
 // separation -- children carry their own tiles; the parent-expansion
 // overwrite pass was removed).
-const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v17';
+// v18 (F-14): MTD violations no longer truncated by the 30-day snapshot
+// window filter (see computeQcdSnapshots_).
+const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v18';
 
 // Pipeline freshness threshold (hours). If the most recent successful
 // DQE-freshness Pipeline Health row is older than this many hours, the
@@ -164,11 +166,18 @@ function getCompanyOverview(req) {
 
   const ss = openSpreadsheet_();
   const sheet = ss.getSheetByName(SHEETS.HISTORICAL);
-  if (!sheet) return personalizeOverview_(
-    { latestDate: null, trendIsoLabels: [], trendLabels: [], depts: [] }, user);
-  const lastRow = sheet.getLastRow();
-  if (lastRow < 2) return personalizeOverview_(
-    { latestDate: latestDate, trendIsoLabels: [], trendLabels: [], depts: [] }, user);
+  // F-35: hard-require the DQE sheet only when it IS the read source (see
+  // the report readers). The Neon fallback below (sheetFetchDqeRows_) does
+  // its own missing-sheet handling and returns [] -- an empty-but-rendered
+  // Overview -- instead of the driver-free empty payload here.
+  const ovDqeSource = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
+  const ovNeonCapable = (ovDqeSource === 'neon' && typeof neonFetchDqeRows_ === 'function');
+  if (!ovNeonCapable) {
+    if (!sheet) return personalizeOverview_(
+      { latestDate: null, trendIsoLabels: [], trendLabels: [], depts: [] }, user);
+    if (sheet.getLastRow() < 2) return personalizeOverview_(
+      { latestDate: latestDate, trendIsoLabels: [], trendLabels: [], depts: [] }, user);
+  }
   const ssTZ = ss.getSpreadsheetTimeZone();
 
   // 30-day window ending on latestDate (inclusive).
@@ -292,11 +301,10 @@ function getCompanyOverview(req) {
   // DQE_READ_SOURCE flip can serve the prior source's blob for up to the
   // 5-min TTL -- harmless, since the flag is only flipped once parity is
   // clean and the two sources agree.)
-  const dqeSource = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
   let dqeRows;
   let effectiveSource = 'sheet';
   const _tRead = Date.now();
-  if (dqeSource === 'neon' && typeof neonFetchDqeRows_ === 'function') {
+  if (ovNeonCapable) {
     dqeRows = neonFetchDqeRows_(trendStartIso, latestDate);
     if (!dqeRows || !dqeRows.length) {
       Logger.log('getCompanyOverview: neon returned no rows; falling back to sheet.');
@@ -939,7 +947,15 @@ function computeQcdSnapshots_(allDepts, sinceIso, ssTZ) {
       const depts = queueToDepts[queue];
       if (!depts || !depts.length) continue;
       const dateIso = rowDateIso_(r[QCD_HISTORICAL_COLS.DATE - 1], tz);
-      if (!dateIso || dateIso < sinceIso) continue;
+      if (!dateIso) continue;
+      // F-14: keep a row if it's inside the snapshot window OR inside the
+      // current month. The old single `< sinceIso` filter ran BEFORE the
+      // MTD accumulation, so in months longer than the window (e.g. day 31
+      // of a 31-day month) the 1st's violations silently dropped from the
+      // "X viol MTD" chip while the QCD modal's full-scan MTD kept them.
+      // MTD-only rows are OLDER than every in-window row, so they cannot
+      // perturb the latest-day max-date tracking below.
+      if (dateIso < sinceIso && dateIso < mtdStart) continue;
 
       const totalCalls = Number(r[QCD_HISTORICAL_COLS.TOTAL_CALLS - 1]) || 0;
       const abandoned  = Number(r[QCD_HISTORICAL_COLS.ABANDONED   - 1]) || 0;

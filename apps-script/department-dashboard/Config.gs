@@ -33,13 +33,6 @@ function getAdminEmails_() {
   return out.length ? out : ADMIN_EMAILS_FALLBACK.slice();
 }
 
-// Display-only fallback used by the access_denied template's mailto
-// link (does not need to be dynamic). All auth and alert paths use
-// getAdminEmails_() which reads the Script Property at request time.
-// Named _DISPLAY to discourage use in membership checks -- see
-// CLAUDE.md gotcha "Never read ADMIN_EMAILS directly."
-const ADMIN_EMAILS_DISPLAY = ADMIN_EMAILS_FALLBACK;
-
 // Sheet names. Roster sheet is the existing "DO NOT EDIT!" tab; the
 // Access Control sheet is auto-created by setup_() on first run if
 // missing. Queue extensions are parsed inline from the roster cells

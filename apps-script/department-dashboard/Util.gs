@@ -62,7 +62,17 @@ function assertDeptAccess_(user, dept) {
  * Do NOT add parameters that carry caller-supplied strings, and do
  * not reuse this helper for anything that isn't pure telemetry.
  */
+// F-27: set TRUE by the cache-warm trigger (CacheWarm.gs) for the duration
+// of a warm run, so automated warm traffic doesn't append rows to Report
+// Usage -- the sheet is the evidence base for report-retirement decisions,
+// and daily warm runs (~14 fresh-compute "summary" rows/day attributed to
+// the installing admin) would permanently skew it. Same-execution global:
+// Apps Script executions are single-threaded, so the trigger's nested
+// report calls see the flag; other users' executions have their own scope.
+var REPORT_USAGE_SUPPRESS_ = false;
+
 function logReportUsage_(report, dept, user, cacheHit) {
+  if (REPORT_USAGE_SUPPRESS_) return;   // cache-warm context (F-27)
   try {
     const ss = openSpreadsheet_();
     const sheet = ss.getSheetByName(SHEETS.REPORT_USAGE);
@@ -162,10 +172,110 @@ function countWorkingDays_(fromIso, toIso) {
   const dayMs = 86400000;
   let count = 0;
   for (let cur = ms; cur <= end; cur += dayMs) {
-    const dow = new Date(cur).getUTCDay();   // 0=Sun .. 6=Sat
-    if (dow !== 0 && dow !== 6) count++;
+    const d = new Date(cur);
+    const dow = d.getUTCDay();   // 0=Sun .. 6=Sat
+    if (dow === 0 || dow === 6) continue;
+    // S5: company holidays (COMPANY_HOLIDAYS Script Property) don't count
+    // as working days either -- two windows straddling a holiday unevenly
+    // no longer read as a genuine length mismatch (INV-35). Noon-UTC anchor
+    // makes the ISO slice date-stable.
+    if (isCompanyHoliday_(d.toISOString().slice(0, 10))) continue;
+    count++;
   }
   return count;
+}
+
+// -- S5: company-holiday awareness ------------------------------------------
+//
+// A GLOBAL holiday list from the `COMPANY_HOLIDAYS` Script Property
+// (dashboard project): comma-separated ISO dates and inclusive
+// `YYYY-MM-DD..YYYY-MM-DD` ranges -- the SAME tolerant grammar as the Alert
+// Config Skip Dates cell (parseSkipDateRanges_ below parses both). Distinct
+// from the per-dept Skip Dates: this is "the company is closed", not "skip
+// this dept's alert". Unset/empty => no holidays => every consumer behaves
+// byte-identically to pre-S5 (the INV-54 regression-safety pattern).
+// Consumers: countWorkingDays_ (INV-35 length-mismatch), prevBusinessDayIso_
+// (alerts + daily digest walk-back), and the trigger-run holiday skips in
+// runDailyAlerts_ / runDailyDigests_. The client form hints read the same
+// ranges via window.__COMPANY_HOLIDAYS__ (renderDashboard_).
+
+var COMPANY_HOLIDAYS_MEMO_ = null;   // per-execution (tests reset it)
+
+function getCompanyHolidayRanges_() {
+  if (COMPANY_HOLIDAYS_MEMO_) return COMPANY_HOLIDAYS_MEMO_;
+  let raw = null;
+  try { raw = PropertiesService.getScriptProperties().getProperty('COMPANY_HOLIDAYS'); } catch (e) {}
+  COMPANY_HOLIDAYS_MEMO_ = raw ? parseSkipDateRanges_(raw) : [];
+  return COMPANY_HOLIDAYS_MEMO_;
+}
+
+function isCompanyHoliday_(dateIso) {
+  return isDateInSkipRanges_(dateIso, getCompanyHolidayRanges_());
+}
+
+/**
+ * The previous BUSINESS day before `now`: walks back from yesterday over
+ * Sat/Sun AND company holidays (S5). With no holidays configured this is
+ * exactly the F-6 behavior (Tue-Fri -> yesterday; Mon/Sun/Sat -> Friday).
+ * Shared by runDailyAlerts_ + digestWindowFor_('daily') so the two can't
+ * disagree about what "Monday's run covers" means. Bounded at 14 steps --
+ * a pathological all-holiday fortnight returns the 14th day back rather
+ * than looping.
+ */
+function prevBusinessDayIso_(now) {
+  let d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 12);
+  for (let i = 0; i < 14; i++) {
+    const dow = d.getDay();
+    const iso = Utilities.formatDate(d, TZ, 'yyyy-MM-dd');
+    if (dow !== 0 && dow !== 6 && !isCompanyHoliday_(iso)) return iso;
+    d = new Date(d.getFullYear(), d.getMonth(), d.getDate() - 1, 12);
+  }
+  return Utilities.formatDate(d, TZ, 'yyyy-MM-dd');
+}
+
+/**
+ * Parses a skip/holiday spec into an array of {from, to} ISO ranges.
+ * Accepts single dates (`2026-12-25`), inclusive `..` ranges, comma
+ * lists of either, and whitespace anywhere. Malformed tokens are
+ * silently dropped, reversed ranges swapped -- admin-curated free text
+ * with no UI validator, so the parser must never throw. (Moved from
+ * Alerts.gs when the S5 company-holiday source started sharing it; the
+ * E8 Skip Dates cell + COMPANY_HOLIDAYS use the same grammar.)
+ */
+function parseSkipDateRanges_(raw) {
+  if (!raw) return [];
+  const tokens = String(raw).split(',');
+  const out = [];
+  const iso = /^\d{4}-\d{2}-\d{2}$/;
+  for (let i = 0; i < tokens.length; i++) {
+    const tok = tokens[i].trim();
+    if (!tok) continue;
+    const parts = tok.split('..').map(function (s) { return s.trim(); });
+    let from = '', to = '';
+    if (parts.length === 1 && iso.test(parts[0])) {
+      from = to = parts[0];
+    } else if (parts.length === 2 && iso.test(parts[0]) && iso.test(parts[1])) {
+      from = parts[0]; to = parts[1];
+      if (from > to) { const tmp = from; from = to; to = tmp; }
+    } else {
+      continue;
+    }
+    out.push({ from: from, to: to });
+  }
+  return out;
+}
+
+/**
+ * True if `dateIso` (YYYY-MM-DD) falls within any range. ISO string
+ * comparison is safe because the format is zero-padded and
+ * lexicographically ordered. (Moved from Alerts.gs alongside the parser.)
+ */
+function isDateInSkipRanges_(dateIso, ranges) {
+  if (!ranges || !ranges.length || !dateIso) return false;
+  for (let i = 0; i < ranges.length; i++) {
+    if (dateIso >= ranges[i].from && dateIso <= ranges[i].to) return true;
+  }
+  return false;
 }
 
 function round1_(n) { return Math.round((Number(n) || 0) * 10) / 10; }
@@ -429,4 +539,41 @@ function classifyAbandonedCell_(raw) {
   }
   if (/^\d+$/.test(s) && s.length > 15) return { lost: true, value: '' };
   return { lost: false, value: s };
+}
+
+/**
+ * Builds the standard delta block shared across every team-stat
+ * tile: { val, prev, formatted, delta, deltaPct, type }.
+ *
+ *   type='volume'    -> deltaPct is relative percent change of the
+ *                        underlying value (0 -> nonzero = +100).
+ *   type='pctPoints' -> deltaPct is the ABSOLUTE point difference
+ *                        of two already-percent values; semantically
+ *                        "deltaPct" is overloaded here, but the UI
+ *                        renders the same +X.X label form.
+ *
+ * MOVED here from PerformanceReport.gs when the Performance Report was
+ * retired (PR->Insights consolidation) -- InsightsReport.gs consumes it
+ * for teamStats/agent metrics, and CompareRangesReport.gs mirrors its
+ * shape.
+ */
+function deltaBlock_(curr, prev, type, formatted) {
+  let delta, deltaPct;
+  if (type === 'pctPoints') {
+    delta = curr - prev;
+    deltaPct = delta; // already in pp
+  } else {
+    delta = curr - prev;
+    if (prev === 0 && curr === 0) deltaPct = 0;
+    else if (prev === 0) deltaPct = 100;
+    else deltaPct = (delta / prev) * 100;
+  }
+  return {
+    val: curr,
+    prev: prev,
+    formatted: formatted,
+    delta: delta,
+    deltaPct: deltaPct,
+    type: type,
+  };
 }

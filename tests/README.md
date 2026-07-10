@@ -46,8 +46,6 @@ tests/
     dept-config.test.js       DeptConfig.gs: INV-54 override accessors + validators
     compute-summary.test.js   Data.gs: computeSummary_ — INV-02/04/05/23/53, S35 parity, E5 prior-window
     individual-report.test.js IndividualReport.gs: INV-25 weighted ATT, INV-53 floaters, INV-26 exclude, auth
-    performance-report.test.js PerformanceReport.gs: INV-28 prior-period window/deltas, custom prior, INV-53
-    compare-ranges.test.js    CompareRangesReport.gs: INV-35 length-mismatch (incl. 1.2x boundary), P1/P2 split, INV-53
     canonicalization.test.js  cdr-report/cdr-import buildDQEHistoricalData.js: INV-24/INV-46 + INV-16 cross-project
     pipeline-build.test.js    buildDQEHistoricalData end-to-end: INV-07 window legs, INV-08 TTT attribution, INV-20 PST→CST slots, INV-21 parentMap, dup guard
     digest-wow.test.js        Digest.gs: WoW "driver" narrative (#11) reusing INV-48 — gain/drop drivers, threshold, narrative HTML + escaping
@@ -119,11 +117,13 @@ spreadsheet). See `dept-config.test.js` for the fake-spreadsheet pattern.
     INV-25 (answered-weighted ATT, the deliberate contrast to INV-05's
     240-vs-288 case), INV-53 floater fields, INV-26 team-avg exclude via
     a Dept Config override, and the cross-dept auth gate.
-  - *Report builders + canonicalization (Phase 3):* Performance Report —
-    INV-28 (auto prior = immediately-preceding same-length window) +
-    custom-prior override + INV-53 team gating. Compare Ranges —
-    INV-35 (length-mismatch flag, incl. the inclusive 1.2x boundary) +
-    per-agent P1/P2 split + INV-53. `loadRosterCanonicalNames_`
+  - *Report builders + canonicalization (Phase 3):* the Insights
+    consolidation-freeze (insights-report.test.js) — the retired
+    Performance / Compare Ranges semantics pinned as fixture literals:
+    INV-28 (auto prior = immediately-preceding same-length window),
+    INV-25 weighted ATT, INV-29 trend window, INV-53 roster gating;
+    INV-35's working-day math lives in util.test.js
+    (`countWorkingDays_`) + the Insights suite. `loadRosterCanonicalNames_`
     (pipeline) — INV-24 paren-strip map + ambiguity, INV-46 alias
     overrides (active/inactive/first-wins), and an INV-16 cross-project
     behavioral equivalence check (cdr-report vs cdr-import).
@@ -132,12 +132,31 @@ spreadsheet). See `dept-config.test.js` for the fake-spreadsheet pattern.
     — INV-07 (only in-window legs count), INV-08/INV-21 (TTT sums the
     agent's OWN parent-leg talk via `findAgentTalkOnParent`, not the max
     across legs — a Bob decoy leg proves it), INV-20 (missed-slot
-    PST→CST +2h bucketing), and the same-date duplicate guard. Neon
-    mirror + failure-notify are stubbed (live in `neonWrite.js`).
-- **Not yet covered:** the 12-month monthly-trend alignment (INV-29)
-  shared by IR/PR; the Pass-4 queue-only abandoned **sentinel rows**
-  (INV-23 producer side) in `buildDQEHistoricalData`; and the Neon
-  mirror writers themselves (`neonWrite.js`, which need a JDBC shim).
+    PST→CST +2h bucketing), the Pass-4 INV-23 **queue-sentinel producer**
+    (a no-ring abandoned queue call emits one sentinel row with the
+    documented column contract; a rung-abandoned parent stays on the
+    agent row), and the same-date duplicate guard. Neon mirror +
+    failure-notify are stubbed (live in `neonWrite.js`).
+  - *QCD report (qcd-report.test.js):* the F-15 daily date axis (a
+    sub-queue-only date appears on the axis; dept total zero-fills,
+    the child's per-queue line keeps its numbers) and the F-36
+    all-departments grand-total dedup (a double-mapped queue counts
+    once company-wide while listing under both dept sections), via
+    Dept Config fixtures (parent/child + double-mapped queues).
+- *Neon writers (`neonWrite.js`, INV-16 pair):* chunking + single-commit
+  discipline (`neon-write-chunking.test.js`) AND the field mappings
+  (`neon-write-mapping.test.js` -- a recording fake conn asserts the SQL
+  column list + every bound param's index/setter/value for the DQE /
+  QCD / CDR writers, incl. the no-HMAC NULL-JSONB path).
+- *Deferred-mirror tail-scan (neon-mirror-tail.test.js):* the F-20
+  `nmReadDateRowsTail_` bounded read -- accepted-window parity with a
+  full scan, widening on a top-clipped block, old-date full-scan
+  fallback, and the `NEON_MIRROR_TAIL_ROWS` default.
+- **Not yet covered:** the deferred mirror's sheet-derived payload
+  re-derivation (`NeonMirror.js`'s mirror*ForDate_ field mappings) -- the
+  writers it calls AND its tail-read are pinned, but the row-to-payload
+  mapping itself is verified via the manual Regression Scenarios.
+  The INV-29 trend window IS covered (`trend-window.test.js`).
 - **Regression Scenarios (CLAUDE.md):** the floater-exclusion contract
   (S35) and the Sonia `0:15:03 / 0:03:01` durations (S7) are now asserted
   as unit tests; the rest remain manual deploy-time checks.

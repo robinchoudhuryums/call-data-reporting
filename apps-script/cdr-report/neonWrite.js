@@ -105,8 +105,19 @@ function writeDQERowsToNeon(rows) {
   conn.setAutoCommit(false);
 
   try {
+    // F-21: chunk the multi-row INSERT. One statement for the whole batch
+    // was fine on the daily path (~250 rows) but the bulk-archive path can
+    // pass many dates at once -- past ~35 dates the SQL string blows the
+    // Apps Script JDBC statement cap ("Argument too large: sql", the same
+    // failure inbound hit), and ~1.9k rows breach Postgres's 65,535
+    // bind-param cap (34 params/row). 400 rows/chunk stays comfortably
+    // under both. Still ONE commit after all chunks (Neon write
+    // discipline: batch inserts, commit once).
+    var DQE_CHUNK_ROWS = 400;
     var placeholderRow  = '(' + new Array(34).fill('?').join(',') + ')';
-    var allPlaceholders = rows.map(function() { return placeholderRow; }).join(',');
+    for (var off = 0; off < rows.length; off += DQE_CHUNK_ROWS) {
+    var chunk = rows.slice(off, off + DQE_CHUNK_ROWS);
+    var allPlaceholders = chunk.map(function() { return placeholderRow; }).join(',');
 
     var sql = 'INSERT INTO dqe_history (' +
       'month_year, call_date, agent_name, queue_extensions, ' +
@@ -144,8 +155,8 @@ function writeDQERowsToNeon(rows) {
 
     var stmt = conn.prepareStatement(sql);
     var p = 1;
-    for (var b = 0; b < rows.length; b++) {
-      var row = rows[b];
+    for (var b = 0; b < chunk.length; b++) {
+      var row = chunk[b];
       stmt.setString(p++, row.monthYear);
       stmt.setString(p++, parseDateForNeon(row.callDate));
       stmt.setString(p++, row.agentName);
@@ -168,6 +179,7 @@ function writeDQERowsToNeon(rows) {
 
     stmt.execute();
     stmt.close();
+    }
     conn.commit();
 
     Logger.log('writeDQERowsToNeon: wrote ' + rows.length + ' rows.');
@@ -192,8 +204,14 @@ function writeQCDRowsToNeon(rows) {
   conn.setAutoCommit(false);
 
   try {
+    // F-21: chunked like the DQE writer (12 params/row; the bulk-archive
+    // path mirrors the whole accumulated Pending Archive in one call).
+    // ONE commit after all chunks.
+    var QCD_CHUNK_ROWS = 1000;
     var placeholderRow  = '(' + new Array(12).fill('?').join(',') + ')';
-    var allPlaceholders = rows.map(function() { return placeholderRow; }).join(',');
+    for (var off = 0; off < rows.length; off += QCD_CHUNK_ROWS) {
+    var chunk = rows.slice(off, off + QCD_CHUNK_ROWS);
+    var allPlaceholders = chunk.map(function() { return placeholderRow; }).join(',');
 
     var sql = 'INSERT INTO qcd_history (' +
       'month_year, week, call_date, call_queue, call_source, ' +
@@ -213,8 +231,8 @@ function writeQCDRowsToNeon(rows) {
 
     var stmt = conn.prepareStatement(sql);
     var p = 1;
-    for (var b = 0; b < rows.length; b++) {
-      var row = rows[b];
+    for (var b = 0; b < chunk.length; b++) {
+      var row = chunk[b];
       stmt.setString(p++, row.monthYear);
       stmt.setString(p++, row.week);
       stmt.setString(p++, parseDateForNeon(row.callDate));
@@ -231,6 +249,7 @@ function writeQCDRowsToNeon(rows) {
 
     stmt.execute();
     stmt.close();
+    }
     conn.commit();
 
     Logger.log('writeQCDRowsToNeon: wrote ' + rows.length + ' rows.');
@@ -272,8 +291,15 @@ function writeCDRRowsToNeon(rows, opts) {
   conn.setAutoCommit(false);
 
   try {
+    // F-21: chunked like the DQE/QCD writers (21 params/row; the F-18 bulk
+    // CDR mirror can pass many dates at once). ONE commit after all chunks,
+    // BEFORE the phone child rows (unchanged ordering -- the children look
+    // up committed parent ids).
+    var CDR_CHUNK_ROWS = 500;
     var placeholderRow = '(?,?,?,?,?,?,?::jsonb,?::jsonb,?::jsonb,?,?,?,?,?,?::jsonb,?::jsonb,?::jsonb,?,?,?,?)';
-    var allPlaceholders = rows.map(function() { return placeholderRow; }).join(',');
+    for (var off = 0; off < rows.length; off += CDR_CHUNK_ROWS) {
+    var chunk = rows.slice(off, off + CDR_CHUNK_ROWS);
+    var allPlaceholders = chunk.map(function() { return placeholderRow; }).join(',');
 
     var sql = 'INSERT INTO call_history_dept (' +
       'call_date, department, agent_name, ' +
@@ -299,8 +325,8 @@ function writeCDRRowsToNeon(rows, opts) {
 
     var stmt = conn.prepareStatement(sql);
     var p = 1;
-    for (var i = 0; i < rows.length; i++) {
-      var row = rows[i];
+    for (var i = 0; i < chunk.length; i++) {
+      var row = chunk[i];
       stmt.setString(p++, row.callDate);
       stmt.setString(p++, row.dept);
       stmt.setString(p++, row.agentName);
@@ -326,6 +352,7 @@ function writeCDRRowsToNeon(rows, opts) {
 
     stmt.execute();
     stmt.close();
+    }
     conn.commit();
     Logger.log('writeCDRRowsToNeon: wrote ' + rows.length + ' main rows.');
 

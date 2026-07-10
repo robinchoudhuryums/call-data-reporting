@@ -49,6 +49,8 @@ function createShim() {
     base64Decode: function (str) { return Array.from(Buffer.from(String(str), 'base64')); },
     parseDate: function () { throw new Error('Utilities.parseDate is not shimmed; add it if a test needs it.'); },
     sleep: function () {},
+    // Deterministic uuid (escalation writes stamp activity rows with it).
+    getUuid: (function () { let n = 0; return function () { return 'uuid-' + (++n); }; })(),
   };
 
   const globals = {
@@ -109,6 +111,7 @@ function createShim() {
         const builder = {
           timeBased: function () { return builder; },
           everyDays: function () { return builder; },
+          everyWeeks: function () { return builder; },
           atHour: function () { return builder; },
           onWeekDay: function () { return builder; },
           nearMinute: function () { return builder; },
@@ -117,6 +120,7 @@ function createShim() {
         return builder;
       },
       getProjectTriggers: function () { return []; },
+      WeekDay: { MONDAY: 'MONDAY', SATURDAY: 'SATURDAY', SUNDAY: 'SUNDAY' },
       deleteTrigger: function () {},
       WeekDay: { MONDAY: 'MONDAY' },
     },

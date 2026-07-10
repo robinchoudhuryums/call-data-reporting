@@ -229,6 +229,12 @@ test('dcBuildExtMaps_ splits a comma-joined queue-ext cell (103,108) into indivi
   function fakeConfig(grid) {
     return {
       getLastRow: function () { return grid.length; },
+      // F-19: dcBuildExtMaps_ now sizes the roster read from getLastColumn
+      // (dept block truncated at the first blank header) instead of a
+      // hard-coded 14 columns.
+      getLastColumn: function () {
+        return grid.reduce(function (m, r) { return Math.max(m, r.length); }, 0);
+      },
       getRange: function (r, c, nr, nc) {
         return { getValues: function () {
           const out = [];
@@ -268,4 +274,109 @@ test('answer rate inputs: answered excluded-from-rate busy miss surfaced separat
   // with the 1 busy miss surfaced but excluded -- pinned here as the contract.
   const denom = a.ib_ext_answered + a.ib_ext_missed_free;
   assert.equal(a.ib_ext_answered / denom, 0.5);
+});
+
+// -- F-3: refresh-in-window delete must survive Sheets date coercion ---------
+// Col B is written as an "M/D/YYYY" string, but Sheets coerces it to a Date
+// value; the old getValues()+String() compare never matched, so the delete
+// was a silent no-op and every re-import appended a duplicate row set.
+
+const { makeFakeSpreadsheet } = require('../harness/fakeSheet');
+
+test('F-3: dcDateIso_ normalizes padded/unpadded M/D/YYYY to ISO', function () {
+  const iso = h.fn('dcDateIso_');
+  assert.equal(iso('6/22/2026'), '2026-06-22');
+  assert.equal(iso('06/22/2026'), '2026-06-22');
+  assert.equal(iso(''), '');
+});
+
+test('F-3: dcWriteSheet_ deletes the date\'s existing rows even when Sheets coerced col B to Dates', function () {
+  // Existing sheet: two rows for 06/22 (coerced -> Date values whose
+  // DISPLAY is the unpadded "6/22/2026") + one row for 06/21 (kept).
+  const HEADERS = new Array(18).fill('h');
+  const dOld = new Date(2026, 5, 22);   // what a coerced "06/22/2026" reads back as
+  const mk = function (dateVal, agent) {
+    const r = new Array(18).fill(0);
+    r[0] = 'June 2026'; r[1] = dateVal; r[2] = 'CSR'; r[3] = agent;
+    return r;
+  };
+  const values   = [HEADERS, mk(dOld, 'Anna'), mk(dOld, 'Bob'), mk(new Date(2026, 5, 21), 'Cara')];
+  const displays = [HEADERS.slice(),
+    ['June 2026', '6/22/2026', 'CSR', 'Anna'].concat(new Array(14).fill('0')),
+    ['June 2026', '6/22/2026', 'CSR', 'Bob'].concat(new Array(14).fill('0')),
+    ['June 2026', '6/21/2026', 'CSR', 'Cara'].concat(new Array(14).fill('0'))];
+  const ss = makeFakeSpreadsheet({
+    sheets: { 'Direct Call History': { values: values, displays: displays } },
+  });
+  const wrote = h.fn('dcWriteSheet_')(ss, [
+    { dept: 'CSR', agent: 'Anna',
+      ib_int_answered: 1, ib_int_missed_free: 0, ib_int_missed_busy: 0, ib_int_talk_sec: 5,
+      ib_ext_answered: 2, ib_ext_missed_free: 1, ib_ext_missed_busy: 0, ib_ext_talk_sec: 60,
+      ob_int_total: 0, ob_int_connected: 0, ob_int_talk_sec: 0,
+      ob_ext_total: 1, ob_ext_connected: 1, ob_ext_talk_sec: 30 },
+  ], 'June 2026', '06/22/2026');
+  assert.equal(wrote, 1);
+  const data = ss.getSheetByName('Direct Call History')._data;
+  // header + Cara's 06/21 row + the ONE fresh 06/22 row (both stale
+  // 06/22 rows deleted -- pre-fix this would be 5 rows, dupes kept).
+  assert.equal(data.length, 3);
+  const agents = data.slice(1).map(function (r) { return r[3]; }).sort();
+  assert.equal(JSON.stringify(agents), JSON.stringify(['Anna', 'Cara']));
+});
+
+test('F-19: dcBuildExtMaps_ reads past 14 dept columns and stops at the first blank header', function () {
+  // 16 dept columns (F..U) with agents in cols 14-16 -- the old hard-coded
+  // 14-col read silently dropped everything past col S. A blank header ends
+  // the dept block (conventions.md), so the reference block beyond it (the
+  // insurance columns) must NOT be parsed even though its header is set.
+  const header = ['Queue', 'Ext', '', '', ''];       // cols A-E
+  const agentsRow = ['A_Q_X', '900', '', '', ''];
+  for (let d = 1; d <= 16; d++) {
+    header.push('Dept' + d);
+    agentsRow.push('Agent' + d + ', ' + (200 + d));
+  }
+  header.push('');                                    // the block-ending blank (col V+16)
+  agentsRow.push('');
+  header.push('SomeInsurer');                         // unrelated reference block
+  agentsRow.push('+15559998888, 42');                 // must NOT become an agent
+  function fakeConfig(grid) {
+    return {
+      getLastRow: function () { return grid.length; },
+      getLastColumn: function () {
+        return grid.reduce(function (m, r) { return Math.max(m, r.length); }, 0);
+      },
+      getRange: function (r, c, nr, nc) {
+        return { getValues: function () {
+          const out = [];
+          for (let i = 0; i < nr; i++) {
+            const rowArr = grid[r - 1 + i] || [];
+            const slice = [];
+            for (let j = 0; j < nc; j++) { const v = rowArr[c - 1 + j]; slice.push(v != null ? v : ''); }
+            out.push(slice);
+          }
+          return out;
+        } };
+      },
+    };
+  }
+  const maps = h.fn('dcBuildExtMaps_')(fakeConfig([header, agentsRow]));
+  // Agents 15 and 16 (beyond the old 14-col cap) are now mapped.
+  assert.equal(maps.extToAgent['215'].name, 'Agent15');
+  assert.equal(maps.extToAgent['216'].name, 'Agent16');
+  assert.equal(maps.extToAgent['216'].dept, 'Dept16');
+  // Nothing past the blank header leaked in (the insurer cell has a comma
+  // and would have parsed as name/ext under a naive full-width read).
+  assert.equal(maps.extToAgent['42'], undefined);
+});
+
+test('F-26: phone masks keep extensions but reduce full numbers to last-4', function () {
+  const mask = h.fn('dcMaskPhone_');
+  assert.equal(mask('+15551234567'), '…4567');
+  assert.equal(mask('101'), '101');                  // ext passes through
+  assert.equal(mask(''), '');
+  const maskText = h.fn('dcMaskPhonesInText_');
+  const out = maskText('busy 12:00-12:05 +15551234567->101');
+  assert.ok(out.indexOf('+15551234567') === -1, 'raw number removed');
+  assert.ok(out.indexOf('…4567') !== -1, 'last-4 kept');
+  assert.ok(out.indexOf('101') !== -1, 'extension kept');
 });

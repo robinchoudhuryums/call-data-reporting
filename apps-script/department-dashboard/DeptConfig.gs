@@ -364,6 +364,55 @@ function discoverQueues_(allDepts) {
   return out;
 }
 
+/**
+ * S1(c): the inbound-calls name-space discovery for the Dept Config modal.
+ * Attributes each raw name via `inboundQueuesForDept_` -- the SAME
+ * effective set (canonical queues + Inbound Queue Aliases) the Inbound
+ * report's dept scoping uses, so "Attributed to" here is exactly what the
+ * report will claim. First-match wins over the dept list (a child queue
+ * can therefore show its parent when the parent's rollup includes it --
+ * same call the report itself makes). Best-effort: `available:false` when
+ * Neon is unreachable so the modal says so instead of hiding the section.
+ */
+function discoverInboundQueues_(allDepts) {
+  let scanned = null;
+  try {
+    scanned = (typeof scanInboundQueueNames_ === 'function')
+      ? scanInboundQueueNames_(DEPT_CONFIG_QUEUE_LOOKBACK_DAYS) : null;
+  } catch (e) { scanned = null; }
+  if (!scanned) return { available: false, queues: [] };
+  const queueToDept = {};
+  allDepts.forEach(function (d) {
+    const list = (typeof inboundQueuesForDept_ === 'function') ? inboundQueuesForDept_(d) : [];
+    list.forEach(function (q) { if (!queueToDept[q]) queueToDept[q] = d; });
+  });
+  return { available: true, queues: classifyInboundQueues_(scanned, queueToDept) };
+}
+
+/**
+ * Pure (unit-tested): annotate scanned inbound queue rows with the dept
+ * their name attributes to (null = unattributed -> the calls fall out of
+ * every dept's Inbound report), sorted unattributed-first then busiest.
+ */
+function classifyInboundQueues_(scanned, queueToDept) {
+  const out = (scanned || []).map(function (s) {
+    const name = String(s.queue == null ? '' : s.queue).trim();
+    return {
+      queue:    name,
+      calls:    Number(s.calls) || 0,
+      lastSeen: String(s.last_seen || s.lastSeen || ''),
+      mappedTo: queueToDept[name] || null,
+    };
+  }).filter(function (r) { return !!r.queue; });
+  out.sort(function (a, b) {
+    const au = a.mappedTo ? 1 : 0;
+    const bu = b.mappedTo ? 1 : 0;
+    if (au !== bu) return au - bu;          // unattributed (0) first
+    return b.calls - a.calls;               // then busiest first
+  });
+  return out;
+}
+
 // -- Public RPCs (admin-only) ---------------------------------------
 
 function getDeptConfigInit() {
@@ -396,12 +445,16 @@ function getDeptConfigInit() {
   let unmappedCount = 0;
   discovered.forEach(function (q) { if (!q.mappedTo) unmappedCount++; });
 
+  // S1(c): the inbound name-space twin of `discovered` (Neon-backed).
+  const inboundDiscovery = discoverInboundQueues_(allDepts);
+
   return {
     departments:     allDepts,
     rosterByDept:    rosterByDept,
     effective:       effective,
     rows:            readDeptConfigRows_(),
     discoveredQueues: discovered,
+    inboundDiscovery: inboundDiscovery,
     unmappedCount:   unmappedCount,
     spreadsheetUrl:  'https://docs.google.com/spreadsheets/d/' + getSpreadsheetId_() + '/edit',
   };
@@ -463,7 +516,7 @@ function saveDeptConfig(req) {
   // --- M2 hardening: NON-BLOCKING warning when a saved queue is also
   // mapped to another dept. Double-mapping is tolerated downstream (the
   // Overview attributes a shared queue to EVERY dept that lists it --
-  // companyOverview:v17 M2), so this is a heads-up, not a rejection: it's
+  // companyOverview:v18 M2), so this is a heads-up, not a rejection: it's
   // almost always a config slip that would silently inflate two depts'
   // QCD numbers from the same queue. Computed against the OTHER depts'
   // current effective lists (this dept's new row isn't written yet). ---

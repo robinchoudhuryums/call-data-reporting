@@ -178,18 +178,71 @@ function neonMirrorLog_(ss, stepName, status, rows, t0, notes) {
   } catch (e) { /* best-effort */ }
 }
 
+// --- F-20: bounded tail-scan for the per-date sheet reads --------------------
+//
+// Each drained date used to re-read the ENTIRE historical sheet (CDR 26-col /
+// QCD 12-col / DQE 36-col getDisplayValues), making every queued date cost
+// O(full history) -- a multi-date backlog could stop catching up as history
+// grows. The queue only ever holds recently-imported dates and the sheets are
+// APPEND-ORDERED (a build writes a date's rows in one contiguous append; a
+// force re-import deletes the date's rows then re-appends at the bottom), so
+// the target block lives near the bottom. Scan a bounded tail window and
+// WIDEN (x4, up to the full sheet) whenever:
+//   - no row matched (an OLD date was queued -- must still mirror correctly), or
+//   - the window's TOP row matches the date (the block may extend above it).
+// A window is accepted only when it contains matches AND a non-matching row
+// sits above the topmost match -- with contiguous per-date blocks that means
+// the COMPLETE block is inside the window, so the result is row-for-row
+// identical to a full scan. Window size tunable via the cdr-import Script
+// Property NEON_MIRROR_TAIL_ROWS (default 3000 -- weeks of daily volume).
+
+var NEON_MIRROR_TAIL_ROWS_DEFAULT = 3000;
+
+function nmTailRows_() {
+  var raw = null;
+  try { raw = PropertiesService.getScriptProperties().getProperty('NEON_MIRROR_TAIL_ROWS'); } catch (e) {}
+  var n = parseInt(raw, 10);
+  return (isFinite(n) && n > 0) ? n : NEON_MIRROR_TAIL_ROWS_DEFAULT;
+}
+
+/**
+ * Returns the DISPLAY rows (width numCols) whose date column (0-based
+ * dateCol0, matched via parseDateForNeon) equals `iso`, reading as little
+ * of the sheet as the widening rules above allow.
+ */
+function nmReadDateRowsTail_(sheet, numCols, dateCol0, iso) {
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return [];
+  var win = nmTailRows_();
+  for (;;) {
+    var start = Math.max(2, lastRow - win + 1);
+    var data = sheet.getRange(start, 1, lastRow - start + 1, numCols).getDisplayValues();
+    var matches = [];
+    var topMatches = false;
+    for (var i = 0; i < data.length; i++) {
+      var cell = data[i][dateCol0];
+      if (cell && parseDateForNeon(cell) === iso) {
+        if (i === 0) topMatches = true;
+        matches.push(data[i]);
+      }
+    }
+    if (start === 2) return matches;                    // full sheet covered
+    if (matches.length && !topMatches) return matches;  // complete block inside the window
+    win = win * 4;                                       // widen: old date, or block clipped at the top
+  }
+}
+
 // --- Per-date re-derivations (faithful to neonbackfill.js + the inline shapes) ---
 
 /** CDR Historical Data (26 cols) -> writeCDRRowsToNeon, filtered to `iso`. */
 function mirrorCdrForDate_(ss, iso) {
   var sheet = ss.getSheetByName('CDR Historical Data');
   if (!sheet || sheet.getLastRow() < 2) return { rows: 0 };
-  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, 26).getDisplayValues();
+  var data = nmReadDateRowsTail_(sheet, 26, 2, iso);   // F-20 bounded tail-scan
   // (writeCDRRowsToNeon resets the per-run CDR_HMAC_CACHE_ memo itself.)
   var batch = [];
   data.forEach(function (r) {
     if (!r[2] || !r[4]) return;                 // need a date (col 3) + agent (col 5)
-    if (parseDateForNeon(r[2]) !== iso) return; // this date only
     batch.push({
       callDate:   parseDateForNeon(r[2]),       // writeCDRRowsToNeon binds callDate raw
       dept:       r[3] || 'Unassigned',
@@ -219,11 +272,10 @@ function mirrorCdrForDate_(ss, iso) {
 function mirrorQcdForDate_(ss, iso) {
   var sheet = ss.getSheetByName('QCD Historical Data');
   if (!sheet || sheet.getLastRow() < 2) return { rows: 0 };
-  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, 12).getDisplayValues();
+  var data = nmReadDateRowsTail_(sheet, 12, 2, iso);   // F-20 bounded tail-scan
   var batch = [];
   data.forEach(function (r) {
     if (!r[2] || !r[3] || !r[4]) return;        // date (col 3), queue (col 4), source (col 5)
-    if (parseDateForNeon(r[2]) !== iso) return;
     batch.push({
       monthYear:     r[0],  week:          r[1],  callDate:      r[2],  // writer normalizes callDate
       callQueue:     r[3],  callSource:    r[4],
@@ -265,15 +317,40 @@ function sanitizeAbandonedCellForNeon_(raw) {
   return s;
 }
 
+
+// F-51: the 19 slot columns (K-AC) hold comma-joined H:MM:SS times and
+// coerce like AF -- but the sheet->Neon paths mirrored them VERBATIM, so a
+// still-coerced cell (a "12/30/1899 10:23:33" date render, or a bare serial
+// decimal) landed in slot_* as an unparseable token. Pass clean cells
+// through, recover the lossless single-value date-render coercion (keep the
+// time part), and EXCLUDE (null) anything else rather than mirror garbage --
+// the run-order discipline ("run repairDqeSlotTimestamps first") is now a
+// safety net instead of the only protection. KEEP THIS COPY IDENTICAL in
+// cdr-report/neonbackfill.js and cdr-import/NeonMirror.js -- enforced by
+// scripts/check-duplicated-files.sh's function-level check.
+function sanitizeSlotCellForNeon_(raw) {
+  var s = (raw == null ? '' : String(raw)).trim();
+  if (!s) return '';
+  var tokens = s.split(',').map(function (t) { return t.trim(); }).filter(function (t) { return !!t; });
+  var timeRe = /^\d{1,2}:\d{2}(:\d{2})?$/;
+  var ok = tokens.length > 0;
+  for (var i = 0; i < tokens.length; i++) {
+    if (!timeRe.test(tokens[i])) { ok = false; break; }
+  }
+  if (ok) return tokens.join(',');
+  var m = s.match(/^\d{1,2}\/\d{1,2}\/\d{4}\s+(\d{1,2}:\d{2}:\d{2})/);
+  if (m) return m[1];
+  return null;
+}
+
 /** DQE Historical Data (36 cols, incl. 19 time-slot cols) -> writeDQERowsToNeon. */
 function mirrorDqeForDate_(ss, iso) {
   var sheet = ss.getSheetByName('DQE Historical Data');
   if (!sheet || sheet.getLastRow() < 2) return { rows: 0 };
-  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, 36).getDisplayValues();
+  var data = nmReadDateRowsTail_(sheet, 36, 1, iso);   // F-20 bounded tail-scan
   var batch = [];
   data.forEach(function (r) {
     if (!r[1] || !r[2]) return;                 // date (col 2), agent (col 3)
-    if (parseDateForNeon(r[1]) !== iso) return;
     batch.push({
       monthYear:        r[0]  || null,
       callDate:         r[1],                    // writer normalizes callDate
@@ -285,7 +362,7 @@ function mirrorDqeForDate_(ss, iso) {
       totalAnswered:    parseInt(r[7]) || 0,
       ttt:              r[8]  || null,
       att:              r[9]  || null,
-      slots:            r.slice(10, 29),
+      slots:            r.slice(10, 29).map(sanitizeSlotCellForNeon_),   // F-51
       // F3: route the comma-joined abandoned-ID/time cells (AD/AE/AF, cols
       // 30-32) through the same coercion guard the whole-sheet backfill uses
       // (cdr-report/neonbackfill.js). getDisplayValues on a pre-protection

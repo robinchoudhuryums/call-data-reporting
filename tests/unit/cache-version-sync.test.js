@@ -36,13 +36,22 @@ const SPECS = [
   ['latestDates',       'Data.gs',                /'latestDates:v(\d+):'/],
   ['individual',        'IndividualReport.gs',    /'individual:v(\d+)'/],
   ['individual_active', 'Util.gs',                /'individual_active:v(\d+):'/],
-  ['performance',       'PerformanceReport.gs',   /'performance:v(\d+)'/],
-  ['compareRanges',     'CompareRangesReport.gs', /'compareRanges:v(\d+)'/],
+  // 'performance' retired with the Performance Report (PR->Insights
+  // consolidation) -- PerformanceReport.gs was deleted; Insights carries
+  // the team rollup + Absolute volume chart + share donut.
+  // 'compareRanges' retired with the Compare Ranges report (CR->Insights
+  // consolidation) -- CompareRangesReport.gs was deleted; Insights covers
+  // arbitrary two-window comparison via its custom prior mode + the
+  // vs-Prior chart basis.
   ['missed',            'MissedCallsReport.gs',   /'missed:v(\d+):'/],
   ['companyOverview',   'CompanyOverview.gs',     /'companyOverview:v(\d+)'/],
-  ['qcd',               'QCDReport.gs',           /'qcd:v(\d+)'/],
+  // 'qcd' retired with the QCD modal (QCD->Insights consolidation) --
+  // only the all-departments 'qcdAll' prefix remains in QCDReport.gs.
+  ['qcdAll',            'QCDReport.gs',           /'qcdAll:v(\d+)'/],
   ['inbound',           'InboundReport.gs',       /'inbound:v(\d+)'/],
+  ['inboundHeatmap',    'InboundReport.gs',       /'inboundHeatmap:v(\d+)'/],
   ['insights',          'InsightsReport.gs',      /'insights:v(\d+)'/],
+  ['directCall',        'DirectCallReport.gs',    /'directCall:v(\d+)'/],
 ];
 
 // Build the canonical map from code at load time so every test sees it.

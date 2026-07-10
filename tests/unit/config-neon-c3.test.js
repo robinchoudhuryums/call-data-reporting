@@ -11,7 +11,7 @@ const { loadGas } = require('../harness/loadGas');
 const { makeFakeSpreadsheet } = require('../harness/fakeSheet');
 
 const h = loadGas({
-  files: ['Config.gs', 'Util.gs', 'NeonRead.gs', 'DeptConfig.gs', 'Alerts.gs', 'Digest.gs'],
+  files: ['Config.gs', 'Util.gs', 'Auth.gs', 'NeonRead.gs', 'DeptConfig.gs', 'Alerts.gs', 'Digest.gs'],
 });
 
 // Logical config rows.
@@ -100,4 +100,40 @@ test('CONFIG_SOURCE=neon but unreachable -> Alert/Digest fall back to the sheet'
   h.ctx.getDashboardNeonConn_ = function () { return null; };   // unreachable
   assert.equal(h.call('readAlertConfig_').length, 2);
   assert.equal(h.call('readDigestConfig_').length, 2);
+});
+
+// -- F-5: the parity gates must read Neon DIRECTLY and fail loudly ----------
+// The old compare flipped the live CONFIG_SOURCE property and read through
+// the flag-aware readers, whose sheet fallback meant a Neon outage compared
+// the sheet against itself and reported PARITY CLEAN -- a false green light
+// to flip CONFIG_SOURCE against an empty/stale table.
+
+function asAdmin() {
+  h.state.userEmail = 'admin@x.com';
+  h.state.props.ADMIN_EMAILS = 'admin@x.com';
+}
+
+test('F-5: compare gates report parity clean when Neon really matches the sheet', function () {
+  installSheet();                        // sheet has the data
+  asAdmin();
+  h.ctx.getDashboardNeonConn_ = fakeConn;   // Neon serves the SAME rows
+  const a = h.call('compareAlertConfigSources');
+  assert.equal(a.clean, true);
+  assert.equal(a.error, undefined);
+  const d = h.call('compareDigestConfigSources');
+  assert.equal(d.clean, true);
+});
+
+test('F-5: Neon unreachable -> compare gates return clean:false + error (never a false PARITY CLEAN)', function () {
+  installSheet();                        // sheet has the data
+  asAdmin();
+  h.ctx.getDashboardNeonConn_ = function () { return null; };   // outage
+  const a = h.call('compareAlertConfigSources');
+  assert.equal(a.clean, false);
+  assert.match(a.error, /Neon unreachable/);
+  const d = h.call('compareDigestConfigSources');
+  assert.equal(d.clean, false);
+  assert.match(d.error, /Neon unreachable/);
+  // And the live CONFIG_SOURCE property is never touched by a compare.
+  assert.equal(h.state.props.CONFIG_SOURCE, undefined);
 });

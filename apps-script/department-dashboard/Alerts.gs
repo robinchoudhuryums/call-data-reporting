@@ -18,7 +18,8 @@
  *     check user.role === 'admin' independently of the client.
  *   - A daily time-driven trigger (runDailyAlerts_) can be
  *     installed via installAlertTrigger_; runs the previous
- *     calendar day's check at 8am, skipping Saturdays + Sundays.
+ *     BUSINESS day's check at 8am (Monday assesses Friday),
+ *     skipping weekend runs.
  *   - Every per-dept outcome of every run is logged to the "Alert
  *     Log" sheet -- including previews. Preview rows are marked by
  *     a "preview:" prefix on the Triggered By column and use the
@@ -180,13 +181,30 @@ function uninstallAlertTrigger() {
 function runDailyAlerts_() {
   const tz = TZ;
   const now = new Date();
-  const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 12, 0, 0);
-  const dow = yesterday.getDay();   // 0 = Sun, 6 = Sat
-  if (dow === 0 || dow === 6) {
-    Logger.log('runDailyAlerts_: skipping weekend (%s)', yesterday);
+  // F-6 class: skip when TODAY is Sat/Sun -- INV-33's documented contract
+  // (no weekend alert emails). The old check tested the DATA date's dow,
+  // which FIRED Friday's alerts on SATURDAY morning and skipped Monday
+  // entirely. The assessed date is the previous BUSINESS day, so Monday's
+  // run assesses Friday (mirrors the F-6 digest fix).
+  const dowToday = now.getDay();   // 0 = Sun, 6 = Sat
+  if (dowToday === 0 || dowToday === 6) {
+    Logger.log('runDailyAlerts_: weekend run -- skipping.');
     return;
   }
-  const dateIso = Utilities.formatDate(yesterday, tz, 'yyyy-MM-dd');
+  // S5: a company holiday (COMPANY_HOLIDAYS Script Property) is a
+  // non-working day too -- nobody is in to act on the alert, and the
+  // assessed data day is walked back past holidays regardless. Same
+  // TRIGGER-ONLY semantics as the weekend skip: manual sends + previews
+  // are unaffected, so an admin can still force a post-holiday catch-up.
+  const todayIso = Utilities.formatDate(now, tz, 'yyyy-MM-dd');
+  if (isCompanyHoliday_(todayIso)) {
+    Logger.log('runDailyAlerts_: company holiday (' + todayIso + ') -- skipping.');
+    return;
+  }
+  // Previous BUSINESS day, skipping weekends AND company holidays (S5;
+  // shared walker in Util.gs -- with no holidays configured this is exactly
+  // the F-6 behavior: Mon -> Fri, else yesterday).
+  const dateIso = prevBusinessDayIso_(now);
   try {
     runAlertsCore_(dateIso, /*dryRun=*/false, /*triggeredBy=*/'daily-trigger');
   } catch (e) {
@@ -499,6 +517,12 @@ function alertConfigRawValues_() {
     const neon = neonAlertConfigRawValues_();
     if (neon !== null) return neon;   // null = unreachable/error -> sheet fallback
   }
+  return sheetAlertConfigRawValues_();
+}
+
+/** SHEET-only raw read (no CONFIG_SOURCE dispatch) -- used by the flag-aware
+ * reader above and read DIRECTLY by compareAlertConfigSources (F-5). */
+function sheetAlertConfigRawValues_() {
   const ss = openSpreadsheet_();
   const sheet = ss.getSheetByName(SHEETS.ALERT_CONFIG);
   if (!sheet) return [];
@@ -547,7 +571,12 @@ function neonAlertConfigRawValues_() {
 }
 
 function readAlertConfig_() {
-  const values = alertConfigRawValues_();
+  return parseAlertConfigValues_(alertConfigRawValues_());
+}
+
+/** The shared raw-rows -> entries parse, applied identically to either
+ * source (sheet or Neon) so parity is exact. */
+function parseAlertConfigValues_(values) {
   if (!values || !values.length) return [];
   const out = [];
   for (let i = 0; i < values.length; i++) {
@@ -652,17 +681,23 @@ function compareAlertConfigSources() {
     });
     return m;
   };
-  // Force a sheet read + a neon read, regardless of the flag.
-  const prev = (typeof getConfigSource_ === 'function') ? getConfigSource_() : 'sheet';
-  let sheetRows, neonRows;
-  try {
-    PropertiesService.getScriptProperties().setProperty('CONFIG_SOURCE', 'sheet');
-    sheetRows = readAlertConfig_();
-    PropertiesService.getScriptProperties().setProperty('CONFIG_SOURCE', 'neon');
-    neonRows = readAlertConfig_();
-  } finally {
-    PropertiesService.getScriptProperties().setProperty('CONFIG_SOURCE', prev);
+  // Read each source DIRECTLY -- never through the flag-aware reader, and
+  // never by flipping the live CONFIG_SOURCE property (F-5). The old
+  // property round-trip had two flaws: (1) the flag-aware reader silently
+  // falls back to the SHEET when Neon is unreachable, so a Neon outage
+  // compared the sheet against itself and reported PARITY CLEAN -- a false
+  // green light to flip CONFIG_SOURCE against an empty/stale table; (2)
+  // Script Properties are global, so concurrent requests briefly read the
+  // flipped source. Neon-unreachable now returns clean:false + error.
+  const sheetRows = parseAlertConfigValues_(sheetAlertConfigRawValues_());
+  const neonRaw = neonAlertConfigRawValues_();
+  if (neonRaw === null) {
+    Logger.log('compareAlertConfigSources: NEON UNREACHABLE -- no comparison performed. '
+      + 'Do NOT flip CONFIG_SOURCE on this result.');
+    return { clean: false, error: 'Neon unreachable -- no comparison performed.',
+             missingInNeon: [], missingInSheet: [], mismatched: [] };
   }
+  const neonRows = parseAlertConfigValues_(neonRaw);
   const s = norm(sheetRows), nn = norm(neonRows);
   const missingInNeon = [], missingInSheet = [], mismatched = [];
   Object.keys(s).forEach(function (d) { if (!(d in nn)) missingInNeon.push(d); else if (s[d] !== nn[d]) mismatched.push(d); });
@@ -769,52 +804,8 @@ function neonRemoveAlertConfigRow_(department) {
   return n;
 }
 
-/**
- * Parses the E8 "Skip Dates" cell into an array of
- * {from, to} ISO-date ranges. Accepts:
- *   - Single dates: `2026-12-25`
- *   - Inclusive ranges via `..`: `2026-12-24..2026-12-26`
- *   - Comma-separated lists of either: `2026-12-25, 2026-12-31..2026-01-01`
- *   - Whitespace tolerance around commas, `..`, and tokens.
- * Tokens that don't parse as ISO dates (or with from > to) are
- * silently dropped -- never throw; admin-curated cell + no UI
- * validator means the parser must be robust.
- */
-function parseSkipDateRanges_(raw) {
-  if (!raw) return [];
-  const tokens = String(raw).split(',');
-  const out = [];
-  const iso = /^\d{4}-\d{2}-\d{2}$/;
-  for (let i = 0; i < tokens.length; i++) {
-    const tok = tokens[i].trim();
-    if (!tok) continue;
-    const parts = tok.split('..').map(function (s) { return s.trim(); });
-    let from = '', to = '';
-    if (parts.length === 1 && iso.test(parts[0])) {
-      from = to = parts[0];
-    } else if (parts.length === 2 && iso.test(parts[0]) && iso.test(parts[1])) {
-      from = parts[0]; to = parts[1];
-      if (from > to) { const tmp = from; from = to; to = tmp; }
-    } else {
-      continue;
-    }
-    out.push({ from: from, to: to });
-  }
-  return out;
-}
-
-/**
- * True if `dateIso` (YYYY-MM-DD) falls within any of the
- * configured skip ranges. ISO string comparison is safe because
- * the format is zero-padded and lexicographically ordered.
- */
-function isDateInSkipRanges_(dateIso, ranges) {
-  if (!ranges || !ranges.length || !dateIso) return false;
-  for (let i = 0; i < ranges.length; i++) {
-    if (dateIso >= ranges[i].from && dateIso <= ranges[i].to) return true;
-  }
-  return false;
-}
+// parseSkipDateRanges_ / isDateInSkipRanges_ moved to Util.gs (S5: the
+// COMPANY_HOLIDAYS source shares the same grammar + helpers).
 
 /**
  * Appends a result row to the Alert Log sheet. Tail-only --

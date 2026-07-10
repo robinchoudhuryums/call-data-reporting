@@ -65,7 +65,12 @@
 // floaters were already excluded from the team-avg numerator +
 // denominator -- the v7 -> v8 change only widens what can APPEAR in
 // summaryData).
-const INDIVIDUAL_CACHE_KEY_PREFIX = 'individual:v8';
+// v9: the v8 visibleAgents filter now ALSO gates trendData.datasets
+// (it previously applied only to summaryData, so a crafted off-dept
+// agent name still received that agent's real 12-month monthly series
+// -- the F-1 authorization gap). Bumped so cached responses computed
+// with the unfiltered trend invalidate on deploy.
+const INDIVIDUAL_CACHE_KEY_PREFIX = 'individual:v11';
 
 function getIndividualReportInit(req) {
   const email = Session.getActiveUser().getEmail();
@@ -235,12 +240,22 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
 
   const ss = openSpreadsheet_();
   const sheet = ss.getSheetByName(SHEETS.HISTORICAL);
-  if (!sheet) {
-    throw new Error('Sheet "' + SHEETS.HISTORICAL + '" not found.');
-  }
-  const lastRow = sheet.getLastRow();
-  if (lastRow < 2) {
-    return emptyIndividualReport_(dept, from, to, selectedAgents, masterMonthKeys);
+  // F-35: hard-require the DQE sheet only when it IS the read source. With
+  // DQE_READ_SOURCE=neon the sheet may be trimmed/archived -- the old
+  // unconditional check served the EMPTY report despite dqe_history being
+  // fully populated (so the sheet could never actually be retired). If the
+  // Neon read then fails or returns nothing, the sheet-fallback block below
+  // returns the empty report rather than crashing on the missing sheet.
+  const dqeSource = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
+  const neonCapable = (dqeSource === 'neon' && typeof neonFetchDqeRows_ === 'function');
+  const lastRow = sheet ? sheet.getLastRow() : 0;
+  if (!neonCapable) {
+    if (!sheet) {
+      throw new Error('Sheet "' + SHEETS.HISTORICAL + '" not found.');
+    }
+    if (lastRow < 2) {
+      return emptyIndividualReport_(dept, from, to, selectedAgents, masterMonthKeys);
+    }
   }
   const ssTZ = ss.getSpreadsheetTimeZone();
 
@@ -258,12 +273,11 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
   if (hasPrior && priorFrom < fetchFrom) fetchFrom = priorFrom;
   let fetchTo = to;
   if (hasPrior && priorTo > fetchTo) fetchTo = priorTo;
-  const dqeSource = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
   let srcRows = null;
   let deptQueueExts;
   let effectiveSource = 'sheet';
   const _tRead = Date.now();
-  if (dqeSource === 'neon' && typeof neonFetchDqeRows_ === 'function') {
+  if (neonCapable) {
     srcRows = neonFetchDqeRows_(fetchFrom, fetchTo);
     if (srcRows && srcRows.length) {
       deptQueueExts = deptQueueExtsForNeonReader_(dept, rosterSet, sheet, lastRow).exts;
@@ -274,6 +288,9 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
     }
   }
   if (srcRows === null) {
+    if (!sheet || lastRow < 2) {   // F-35: neon empty AND no sheet to fall back to
+      return emptyIndividualReport_(dept, from, to, selectedAgents, masterMonthKeys);
+    }
     const range = sheet.getRange(2, 1, lastRow - 1, numCols);
     const values   = range.getValues();
     const displays = range.getDisplayValues();
@@ -430,8 +447,12 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
         s.answered += answered;
         s.ttt      += tttSec;
         s.attTotal += attTotal;
-      }
-      if (inPriorRange) {
+      // F-32: when a CUSTOM prior window overlaps the current range, an
+      // overlap day counts toward the CURRENT window only (else-if) --
+      // matching the Performance/Insights semantics (F12) so identical
+      // inputs no longer produce a different prior baseline here (IR
+      // previously double-counted overlap days into BOTH windows).
+      } else if (inPriorRange) {
         const p = priorSummaryStats[agent];
         p.rung     += rung;
         p.missed   += missed;
@@ -484,6 +505,18 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
     activeDays:    dayCount,
   };
 
+  // Phase D+1 / INV-53: filter out selected names that match neither
+  // the roster nor the dept's queue overlap BEFORE building any output
+  // (trend datasets AND summary cards). A crafted off-dept name has no
+  // card, and it must not get a trend series either -- the row scan
+  // covers every dept's rows, so an unfiltered trend dataset would leak
+  // another dept's per-agent monthly metrics to any manager who typed
+  // the name (the F-1 authorization gap). Roster members ALWAYS pass
+  // since agentMatchedViaRoster was pre-populated.
+  const visibleAgents = selectedAgents.filter(function (a) {
+    return agentMatchedViaRoster[a] || agentMatchedViaQueue[a];
+  });
+
   // Trend chart data: labels + per-agent monthly buckets.
   const chartLabels = masterMonthKeys.map(function (m) {
     const parts = m.split('-');
@@ -491,7 +524,7 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
     return Utilities.formatDate(d, TZ, 'MMM, yy');
   });
   const chartDatasets = {};
-  selectedAgents.forEach(function (agent) {
+  visibleAgents.forEach(function (agent) {
     chartDatasets[agent] = masterMonthKeys.map(function (m) {
       const b = aggregatedStats[agent][m] || { rung: 0, missed: 0, answered: 0, ttt: 0, attTotal: 0 };
       const pct = b.rung > 0 ? (b.answered / b.rung) * 100 : 0;
@@ -512,13 +545,8 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
   //     floater-awareness fields. Floaters render with the QUEUE
   //     chip and are EXCLUDED from teamTotal (gated above by the
   //     existing rosterSet[agent] check).
-  // Phase D+1 / INV-53: filter out selected names that match
-  // neither path -- a crafted off-dept name with no rows would
-  // otherwise show as a zero-stats card. Roster members ALWAYS
-  // pass since agentMatchedViaRoster was pre-populated.
-  const visibleAgents = selectedAgents.filter(function (a) {
-    return agentMatchedViaRoster[a] || agentMatchedViaQueue[a];
-  });
+  // visibleAgents (the INV-53 roster/queue filter) is computed above,
+  // before the trend datasets, so BOTH output paths share it.
   // Build sourceHomes for any floaters so the QUEUE chip can show
   // their other-dept home list. Lazy; only runs if floaters exist.
   let irDeptsByAgent = null;
@@ -627,6 +655,14 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
       from: from, to: to,
       priorFrom: hasPrior ? priorFrom : null,
       priorTo:   hasPrior ? priorTo   : null,
+      // F-32 follow-up (v11): a CUSTOM prior window can overlap the
+      // current range; overlap days count toward the CURRENT window only
+      // (else-if in the row scan), so the prior baseline omits them.
+      // Surfaced client-side as the same inline "Windows overlap" caveat
+      // Insights carries (F12). The auto modes (YoY / immediately-
+      // preceding) can never overlap, so a bare intersection test is
+      // exactly the custom-overlap signal.
+      priorOverlap: !!(hasPrior && priorFrom <= to && from <= priorTo),
       trendStart: trendStartIso,
       trendEnd:   trendEndIso,
       agents: selectedAgents,
@@ -668,11 +704,16 @@ function emptyIndividualReport_(dept, from, to, selectedAgents, masterMonthKeys)
     return Utilities.formatDate(d, TZ, 'MMM, yy');
   });
   const datasets = {};
-  selectedAgents.forEach(function (a) {
-    datasets[a] = labels.map(function () {
-      return { rung: 0, missed: 0, answered: 0, pct: 0, att: 0 };
+  // F-31: like summaryData below, only roster members get a (zeroed)
+  // dataset -- crafted off-dept names no longer echo back in the empty
+  // shape (zeros only, but the F-1/F12 filtering discipline applies to
+  // every output path).
+  selectedAgents.filter(function (a) { return !!emptyRosterSet[a]; })
+    .forEach(function (a) {
+      datasets[a] = labels.map(function () {
+        return { rung: 0, missed: 0, answered: 0, pct: 0, att: 0 };
+      });
     });
-  });
   return {
     meta: {
       department: dept, from: from, to: to,

@@ -233,7 +233,7 @@ function getDepartmentSummary(req) {
   // v10 (P3): qcdSnapshot's unqualified total is OWN-queues-only (reconciles
   //   with the QCD modal / Overview); adds subTotals / allTotals +
   //   mainQueueCount / subQueueCount for the gated Main/Sub/All summary lines.
-  const cacheKey = 'summary:v10:' + dept + ':' + scope + ':' + from + ':' + to;
+  const cacheKey = 'summary:v11:' + dept + ':' + scope + ':' + from + ':' + to;
   const cached = cache.get(cacheKey);
   if (cached) {
     try {
@@ -305,12 +305,22 @@ function computeSummary_(dept, from, to, scope) {
 
   const ss = openSpreadsheet_();
   const sheet = ss.getSheetByName(SHEETS.HISTORICAL);
-  if (!sheet) {
-    throw new Error('Sheet "' + SHEETS.HISTORICAL + '" not found.');
-  }
-  const lastRow = sheet.getLastRow();
-  if (lastRow < 2) {
-    return emptySummary_(dept, from, to, scope, roster.names.length, 0, []);
+  // F-35: hard-require the DQE sheet only when it IS the read source. With
+  // DQE_READ_SOURCE=neon the sheet may be trimmed/archived -- the old
+  // unconditional check served the EMPTY report despite dqe_history being
+  // fully populated (so the sheet could never actually be retired). If the
+  // Neon read then fails or returns nothing, the sheet-fallback block below
+  // returns the empty report rather than crashing on the missing sheet.
+  const dqeSource = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
+  const neonCapable = (dqeSource === 'neon' && typeof neonFetchDqeRows_ === 'function');
+  const lastRow = sheet ? sheet.getLastRow() : 0;
+  if (!neonCapable) {
+    if (!sheet) {
+      throw new Error('Sheet "' + SHEETS.HISTORICAL + '" not found.');
+    }
+    if (lastRow < 2) {
+      return emptySummary_(dept, from, to, scope, roster.names.length, 0, []);
+    }
   }
 
   // Pre-fetch the spreadsheet's TZ once. Used by rowDateIso_ to
@@ -342,13 +352,12 @@ function computeSummary_(dept, from, to, scope) {
   // getDeptQueueExts_ (no getDisplayValues), while the heavy windowed
   // aggregation comes from Neon; an override dept skips the scan entirely.
   // (A later step can move this derivation to a SELECT DISTINCT Neon query.)
-  const dqeSource = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
   const numCols = HISTORICAL_COLS.CSR_AVG_ABD_WAIT;
   let srcRows = null;
   let deptQueueExts, deptQueueExtsSource;
   let effectiveSource = 'sheet';
   const _tRead = Date.now();
-  if (dqeSource === 'neon' && typeof neonFetchDqeRows_ === 'function') {
+  if (neonCapable) {
     srcRows = neonFetchDqeRows_(priorFrom, to);
     if (srcRows && srcRows.length) {
       const dqr = deptQueueExtsForNeonReader_(dept, rosterSet, sheet, lastRow);
@@ -360,6 +369,9 @@ function computeSummary_(dept, from, to, scope) {
     }
   }
   if (srcRows === null) {
+    if (!sheet || lastRow < 2) {   // F-35: neon empty AND no sheet to fall back to
+      return emptySummary_(dept, from, to, scope, roster.names.length, 0, []);
+    }
     const range = sheet.getRange(2, 1, lastRow - 1, numCols);
     const values = range.getValues();
     const displays = range.getDisplayValues();
@@ -582,9 +594,11 @@ function computeSummary_(dept, from, to, scope) {
     return x.agent.localeCompare(y.agent);
   });
 
-  // Totals: sum the summables; simple-mean the per-row averages so
-  // every "average" column in the totals row uses the same method
-  // it uses in the agent rows.
+  // Totals: sum the summables; mean the per-row averages across the
+  // NONZERO roster rows (avgNonzero_) -- idle agents whose ATT/abd-wait
+  // is 0 are excluded from both sides of the mean (owner decision, F-29
+  // follow-up; summary:v11). This matches the per-agent accumulators
+  // above, which skip zero values when averaging a single agent's days.
   //
   // Phase D: the totals sum only over matchedViaRoster=true rows.
   // Queue-only floaters (matchedViaQueue && !matchedViaRoster) are
@@ -602,9 +616,9 @@ function computeSummary_(dept, from, to, scope) {
     totals.totalAnswered += rosterRows[i].totalAnswered;
     totals.tttSeconds    += rosterRows[i].tttSeconds;
   }
-  totals.attSeconds = avg_(rosterRows, 'attSeconds');
-  totals.avgAbdWaitSeconds = avg_(rosterRows, 'avgAbdWaitSeconds');
-  totals.csrAvgAbdWaitSeconds = avg_(rosterRows, 'csrAvgAbdWaitSeconds');
+  totals.attSeconds = avgNonzero_(rosterRows, 'attSeconds');
+  totals.avgAbdWaitSeconds = avgNonzero_(rosterRows, 'avgAbdWaitSeconds');
+  totals.csrAvgAbdWaitSeconds = avgNonzero_(rosterRows, 'csrAvgAbdWaitSeconds');
   totals.rosterAgentCount = rosterRows.length;
   totals.queueOnlyAgentCount = rows.length - rosterRows.length;
 
@@ -1045,6 +1059,10 @@ function getDeptQueueExtsNeon_(dept, rosterSet) {
 function deptQueueExtsForNeonReader_(dept, rosterSet, sheet, lastRow) {
   const ne = getDeptQueueExtsNeon_(dept, rosterSet);
   if (ne) return ne;
+  // F-35: the sheet may legitimately be absent/empty once reads are on
+  // Neon -- fall through to the override/empty derivation instead of
+  // crashing on getRange.
+  if (!sheet || !lastRow || lastRow < 2) return getDeptQueueExts_(dept, rosterSet, []);
   const extValues = sheet.getRange(2, 1, lastRow - 1, HISTORICAL_COLS.QUEUE_EXT).getValues();
   return getDeptQueueExts_(dept, rosterSet, extValues);
 }
@@ -1084,13 +1102,18 @@ function rowDateIso_(v, tz) {
   if (v instanceof Date) {
     return Utilities.formatDate(v, useTz, 'yyyy-MM-dd');
   }
-  // Sheets serial date: e.g. 45726 = 2025-03-09. Plausible date range
-  // (~1982 to ~2100) keeps us from misinterpreting small ints.
+  // Sheets serial date: e.g. 45726 = 2025-03-10 (days since 1899-12-30).
+  // Plausible date range (~1982 to ~2100) keeps us from misinterpreting
+  // small ints.
   if (typeof v === 'number' && v > 30000 && v < 100000) {
     const ms = Math.round((v - 25569) * 86400 * 1000);
     const d = new Date(ms);
     if (!isNaN(d.getTime())) {
-      return Utilities.formatDate(d, useTz, 'yyyy-MM-dd');
+      // The derived instant is UTC MIDNIGHT of the calendar date, so it
+      // must be formatted in UTC -- formatting in a west-of-UTC zone (the
+      // spreadsheet's America/Mexico_City) renders 18:00 of the PREVIOUS
+      // day, silently shifting the row back one day in every reader (F-8).
+      return Utilities.formatDate(d, 'UTC', 'yyyy-MM-dd');
     }
     return '';
   }
@@ -1162,13 +1185,17 @@ function toSeconds_(v) {
   return Number(s) || 0;
 }
 
-function avg_(arr, key) {
+// Mean of the NONZERO per-row values (zero rows are excluded from both
+// numerator and denominator). Owner decision (F-29 follow-up): idle
+// agents -- whose ATT / abd-wait is 0 -- must not drag the totals-row
+// means down, which also makes the totals use the SAME skip-zero method
+// the per-agent accumulators use when averaging one agent's days.
+function avgNonzero_(arr, key) {
   if (!arr.length) return 0;
   let s = 0, n = 0;
   for (let i = 0; i < arr.length; i++) {
-    const raw = arr[i][key];
-    if (raw == null) continue;
-    const v = Number(raw) || 0;
+    const v = Number(arr[i][key]) || 0;
+    if (v === 0) continue;
     s += v; n++;
   }
   return n ? Math.round(s / n) : 0;
@@ -1180,11 +1207,11 @@ function avg_(arr, key) {
  * dodge DST edges, then re-formatted as `YYYY-MM-DD` for the
  * caller's date-string comparisons.
  *
- * Consumers: computeSummary_ (E5 per-row delta chips),
- * computePerformanceReport_ (auto prior), and computeInsights_
- * (auto prior). Any future "compare against the preceding window"
+ * Consumers: computeSummary_ (E5 per-row delta chips) and
+ * computeInsights_ (auto prior; the retired Performance Report was the
+ * third consumer). Any future "compare against the preceding window"
  * feature should call this rather than re-deriving the math --
- * the three call sites used to carry three near-identical copies.
+ * the call sites used to carry near-identical copies.
  */
 function computePriorWindow_(from, to) {
   const fParts = from.split('-');

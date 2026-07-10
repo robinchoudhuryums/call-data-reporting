@@ -82,7 +82,7 @@ External CDR system (telephony provider)
 | Manager dashboard | Department Dashboard (standalone) | `Code.gs`, `Auth.gs`, `Data.gs`, `Config.gs`, `Setup.gs`, `Util.gs`, `Diagnostics.gs`, `MissedCallsReport.gs`, `IndividualReport.gs`, `PerformanceReport.gs`, `CompareRangesReport.gs`, `InsightsReport.gs`, `InboundReport.gs`, `CompanyOverview.gs`, `QCDReport.gs`, `Alerts.gs`, `Digest.gs`, `OrphanFix.gs`, `DeptConfig.gs`, `Escalations.gs`, `NeonRead.gs`, `NeonKeepWarm.gs`, `CacheWarm.gs`, `dashboard.html`, `styles.html`, `script.html`, `access_denied.html`, `appsscript.json` | `apps-script/department-dashboard/` |
 | Postgres mirror | shared lib used by both CDR Import and CDR Report | `neonWrite.js` (duplicated across both projects, currently identical) | see [known-issues.md](known-issues.md) |
 | Per-agent DQE build (duplicated) | both CDR Import and CDR Report | `buildDQEHistoricalData.js` (duplicated across both projects, currently identical -- INV-16). cdr-import invokes inline inside `processIntegratedHistory`; cdr-report keeps a daily trigger copy as a safety net. | `apps-script/cdr-import/` + `apps-script/cdr-report/` |
-| Legacy reports (being migrated into the dashboard) | DQE Report (spreadsheet) | `DQEdashboard.js`, `syncHistoricalData.js`, 4 report pairs (`SingleRangeReport`, `IndividualReport`, `MissedCallsReport`, `MultiComparisonTool` + their `.html` modals), `sendManualAlert.js`, `checkLowAnswerRate.js`, `showFAQ.js` + `FAQGuide.html`, `setDateRange.js`, `autoDropdown.js`, `menu DQE Tools.js`, `appsscript.json` | `apps-script/dqe-report/` |
+| Legacy reports (being migrated into the dashboard) | DQE Report (spreadsheet) | `DQEdashboard.js`, 4 report pairs (`SingleRangeReport`, `IndividualReport`, `MissedCallsReport`, `MultiComparisonTool` + their `.html` modals), `sendManualAlert.js`, `showFAQ.js` + `FAQGuide.html`, `menu DQE Tools.js`, `appsscript.json` | `apps-script/dqe-report/` |
 
 Each subdirectory under `apps-script/` has its own `.clasp.json` (gitignored,
 per-developer) so each project deploys independently:
@@ -238,18 +238,21 @@ canonical and reflects current code.
 
 | Report | File | Public entries | Cache prefix | Admin-only |
 |---|---|---|---|---|
-| Main per-agent table | `Data.gs` | `getDepartmentSummary` | `summary:v10:` | no |
-| Missed Calls Report | `MissedCallsReport.gs` | `getMissedCallsReport` | `missed:v12:` | no |
-| Individual / Peer Comparison | `IndividualReport.gs` | `getIndividualReportInit`, `getIndividualReport`, `sendIndividualReportEmail` | `individual:v8:`, `individual_active:v2:` | no |
-| Performance Report (current vs prior) | `PerformanceReport.gs` | `getPerformanceReportInit` (delegates to Individual's init), `getPerformanceReport`, `sendPerformanceReportEmail` | `performance:v4:` | no |
-| Compare Ranges (two arbitrary ranges) | `CompareRangesReport.gs` | `getCompareRangesInit`, `getCompareRanges`, `sendCompareRangesEmail` | `compareRanges:v6:` | no |
-| Company Overview | `CompanyOverview.gs` | `getCompanyOverview` | `companyOverview:v17` | partial (admin-only `companyAggregate`, `pipelineFreshness`, `orphanNag`, `unmappedQcd` fields) |
-| QCD Report | `QCDReport.gs` | `getQcdReportInit`, `getQcdReport`, `sendQcdReportEmail` | `qcd:v9:` | no (per-dept gate like IR/PR/CR) |
-| Insights Report (period comparison: team rollup + per-agent cards) | `InsightsReport.gs` | `getInsightsReportInit`, `getInsightsReport`, `sendInsightsReportEmail` | `insights:v16:` | no (per-dept gate like IR/PR/CR) |
-| Inbound Report (per-call inbound view from Neon `inbound_calls`) | `InboundReport.gs` | `getInboundReport`, `getInboundInsurerDaily` | `inbound:v3:` | no (per-dept gate; admins also get the company-wide view incl. the IVR bucket) |
+| Main per-agent table | `Data.gs` | `getDepartmentSummary` | `summary:v11:` | no |
+| Missed Calls Report | `MissedCallsReport.gs` | `getMissedCallsReport` | `missed:v13:` | no |
+| Individual / Peer Comparison | `IndividualReport.gs` | `getIndividualReportInit`, `getIndividualReport`, `sendIndividualReportEmail` | `individual:v11:`, `individual_active:v2:` | no |
+| Performance Report | RETIRED (PR->Insights consolidation; `PerformanceReport.gs` deleted -- `deltaBlock_` moved to `Util.gs`; legacy `#/report/performance` deep links land on Insights) | — | — | — |
+| Compare Ranges | RETIRED (CR->Insights consolidation; `CompareRangesReport.gs` deleted -- Insights custom-prior mode + the vs-Prior chart basis replace it; legacy `#/report/compare` deep links land on Insights) | — | — | — |
+| Company Overview | `CompanyOverview.gs` | `getCompanyOverview` | `companyOverview:v18` | partial (admin-only `companyAggregate`, `pipelineFreshness`, `orphanNag`, `unmappedQcd` fields) |
+| QCD (retired as a standalone report -- QCD->Insights consolidation; queue data lives in Insights Queue health) | `QCDReport.gs` | `getQcdAllDepartments` (all-departments daily report, open to all signed-in users; `computeQcdReport_` serves Insights + the snapshots) | `qcdAll:v4:` | no (all-dept report is company-wide read-only) |
+| Insights Report (period comparison: team rollup + per-agent cards) | `InsightsReport.gs` | `getInsightsReportInit`, `getInsightsReport`, `sendInsightsReportEmail` | `insights:v18:` | no (per-dept gate like IR/PR/CR) |
+| Inbound Report (per-call inbound view from Neon `inbound_calls`) | `InboundReport.gs` | `getInboundReport`, `getInboundInsurerDaily`, `getInboundHeatmap` (weekday×hour abandon heatmap), `getCallJourney` (per-call path drill; manager fallback entitlement-gated via the dept's own Missed report, F-4) | `inbound:v3:`, `inboundHeatmap:v1:` | TEMPORARILY admin-only while vetted (per-dept manager path kept intact); `getCallJourney` is manager-reachable for own dept |
+| Direct Call Report (per-agent direct-extension metrics from Neon `direct_call_history`) | `DirectCallReport.gs` | `getDirectCallReport` | `directCall:v1:` | TEMPORARILY admin-only while the busy carve-out is vetted (per-dept manager path kept intact) |
+| Caller Lookup (per-caller timeline from Neon `inbound_calls`) | `CallerLookup.gs` | `getCallerLookup` | (intentionally uncached) | yes |
+| Escalations worklist (Neon `escalations` + `escalation_activity`) | `Escalations.gs` | `getEscalationsInit`, `getEscalations`, `getEscalationActivity` (read), `createEscalation`, `updateEscalation` (admin write), `resolveEscalation`, `updateEscalationComment`, `reopenEscalation` (per-dept write, INV-55) | (no cache) | no (per-dept; create/edit admin-only) |
 | Low Answer Rate Alerts | `Alerts.gs` | `getAlertsInit`, `previewAlerts`, `sendAlerts`, `installAlertTrigger`, `uninstallAlertTrigger` (+ `runDailyAlerts_` time trigger) | (no cache) | yes |
 | Manager Digest engine | `Digest.gs` | `getDigestsInit`, `sendPreviewDigest`, `installDigestTriggers`, `uninstallDigestTriggers` (+ `runDailyDigests_`, `runWeeklyDigests_` time triggers) | (no cache) | yes |
-| Orphan Fix engine (admin write path) | `OrphanFix.gs` | `getOrphanFixInit`, `addAgentAlias`, `removeAgentAlias`, `applyOrphanRename` | (no cache; busts `COMPANY_OVERVIEW_CACHE_KEY` -- currently `companyOverview:v17` -- on write) | yes |
+| Orphan Fix engine (admin write path) | `OrphanFix.gs` | `getOrphanFixInit`, `addAgentAlias`, `removeAgentAlias`, `applyOrphanRename` | (no cache; busts `COMPANY_OVERVIEW_CACHE_KEY` -- currently `companyOverview:v18` -- on write) | yes |
 
 All reports use the same auth resolution (`resolveUser_(email)`), the
 same roster reader (`getRosterForDepartment_`), and — for the picker —

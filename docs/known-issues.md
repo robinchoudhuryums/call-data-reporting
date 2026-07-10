@@ -109,6 +109,84 @@ canonicalization rules from it is robust to new hires.
 
 ---
 
+## AD/AE/AF positional pairing (Missed report / journey drill)
+
+**Status:** Fixed going FORWARD (F-2, both `buildDQEHistoricalData.js`
+copies); historical rows keep the old values until rebuilt.
+
+The dashboard's Missed Calls report pairs `AF[i]` (abandoned missed-ring
+time) with `AD[i]` (parent call id) positionally to hang a parent id on
+each 🚨 timestamp -- the pairing behind the "↳ path" journey drill
+(`getCallJourney` by `(call_date, call_id)`). The pre-fix build did NOT
+guarantee that: AD was the unique-abandoned-parents-with-any-leg list
+while AF was Set-deduped per-missed-leg times, so the lists diverged
+whenever a queue re-rang the same agent on one abandoned parent, an
+agent's only leg on an abandoned parent wasn't missed, or two missed
+legs shared a timestamp -- and after the first divergence every later
+🚨 timestamp carried the WRONG parent id (the drill opened a different
+caller's journey).
+
+**The fix:** all three columns now come from ONE chronologically-sorted
+missed-leg list (one AD/AE/AF entry per missed leg on an abandoned
+parent); abandoned parents with no pairable missed leg are APPENDED to
+AD with no AE/AF partner, so AD's id SET -- the dept-wide
+unique-abandoned counts -- is unchanged. Pinned by
+`tests/unit/pipeline-build.test.js` ("F-2: AD/AE/AF are positionally
+paired").
+
+**Runbook for historical rows** (only where journey-drill accuracy on
+old dates matters): rebuild the date from Raw Data via
+`buildDQEHistoricalData` where Raw Data still exists (or force
+re-import), then `backfillDQEHistoryUpsert()` (cdr-report) to refresh
+the Neon mirror. Rows that can't be rebuilt keep old pairings -- treat
+pre-fix "↳ path" results on old dates as unverified.
+
+---
+
+## Sheets auto-coercion of DATE-shaped strings (writer-side)
+
+**Status:** One instance fixed (Direct Call History, F-3); one still
+open (`inboundCallsExport.js`, F-10).
+
+Writing an `"M/D/YYYY"` STRING via `setValues` gets auto-coerced by
+Sheets into a Date value; a later `getValues()` read returns Date
+objects whose `String()` form never equals the original string. Any
+writer that "deletes the date's existing rows, then re-appends"
+using that comparison silently deletes NOTHING and duplicates the
+row set on every run. This is the date-string sibling of the
+comma-joined ID/time coercion gotcha in CLAUDE.md.
+
+- **Fixed:** `directCallMetrics.js::dcWriteSheet_` now compares
+  ISO-normalized `getDisplayValues()` via `dcDateIso_` (pinned by
+  `tests/unit/direct-call-metrics.test.js`). **Repair for existing
+  duplicates:** rows duplicated by pre-fix re-imports are NOT
+  auto-removed; force re-import each affected date once (the fixed
+  delete then removes all stale copies of that date), or delete the
+  older duplicates by hand.
+- **Fixed (F-10):** `inboundCallsExport.js::exportInboundCalls` -- both
+  the refresh-in-window delete and the incremental max-date detection now
+  normalize col-A DISPLAY values via `ic_cellDateIso_` (pinned by
+  `tests/unit/batch2-helpers.test.js`). **Repair for existing duplicates:**
+  rows duplicated by pre-fix runs are NOT auto-removed outside the refresh
+  window; run one explicit full-range export --
+  `exportInboundCalls('<earliest-affected-iso>', '<today-iso>')` -- and the
+  now-working in-range delete replaces the whole polluted window with one
+  fresh Neon copy.
+- **Rule for new writers:** compare ISO-NORMALIZED DISPLAY values
+  (`getDisplayValues()` + a parse), never `String(getValues())`, for
+  any date-keyed delete/dedup; or plain-text (`'@'`) the column at
+  write time.
+- **Related (F-51):** the DQE sheet->Neon paths (both backfills, the
+  deferred mirror, the dup-guard re-mirror) now route the 19 SLOT columns
+  through `sanitizeSlotCellForNeon_` (clean cells pass; a coerced cell's
+  date render recovers its time part; anything else mirrors as NULL
+  instead of garbage). The helper is duplicated across
+  cdr-report/neonbackfill.js and cdr-import/NeonMirror.js -- pinned by
+  the guard script's function-level check, like
+  `sanitizeAbandonedCellForNeon_`.
+
+---
+
 ## CSR Transfer ring fan-out over-count (CDR Import project)
 
 **Status:** Fixed in `calcCsrReport` (`apps-script/cdr-import/autoImport.js`).
@@ -297,18 +375,21 @@ same time as the code change.
 
 | Source file | Cache prefix | Current version |
 |---|---|---|
-| `Data.gs` (main table) | `summary:vN:` | `v10` |
+| `Data.gs` (main table) | `summary:vN:` | `v11` |
 | `Data.gs` (latest-date snap for default From/To) | `latestDate:vN:` | `v1` |
 | `Data.gs` (multi-source latest dates for freshness pill) | `latestDates:vN:` | `v1` |
-| `IndividualReport.gs` | `individual:vN:` | `v8` |
+| `IndividualReport.gs` | `individual:vN:` | `v11` |
 | `IndividualReport.gs` (active-in-range subset shared by all three report pickers) | `individual_active:vN:` | `v2` |
-| `PerformanceReport.gs` | `performance:vN:` | `v4` |
-| `CompareRangesReport.gs` | `compareRanges:vN:` | `v6` |
-| `MissedCallsReport.gs` | `missed:vN:` | `v12` |
-| `CompanyOverview.gs` | `companyOverview:vN` | `v17` |
-| `QCDReport.gs` | `qcd:vN:` | `v9` |
+| `PerformanceReport.gs` | `performance:vN:` | RETIRED (Performance Report deleted; Insights is the replacement) |
+| `CompareRangesReport.gs` | `compareRanges:vN:` | RETIRED (Compare Ranges deleted; Insights custom-prior + vs-Prior chart replace it) |
+| `MissedCallsReport.gs` | `missed:vN:` | `v13` |
+| `CompanyOverview.gs` | `companyOverview:vN` | `v18` |
+| `QCDReport.gs` | `qcd:vN:` | RETIRED (QCD modal deleted; `qcdAll:` remains) |
 | `InboundReport.gs` | `inbound:vN:` | `v3` |
-| `InsightsReport.gs` | `insights:vN:` | `v16` |
+| `InsightsReport.gs` | `insights:vN:` | `v18` |
+| `QCDReport.gs` (all-departments daily report) | `qcdAll:vN:` | `v4` |
+| `InboundReport.gs` (weekday×hour abandon heatmap) | `inboundHeatmap:vN:` | `v1` |
+| `DirectCallReport.gs` | `directCall:vN:` | `v1` |
 
 `Alerts.gs` holds no cached compute. Preview/send always re-reads the
 DQE Historical Data for the chosen date.
@@ -467,7 +548,8 @@ precedent -- so pre-existing sheets keep their 5-col header and read
 back `format='summary'` until an admin populates F.
 
 **Cadence** is `daily` (sends each weekday morning for the previous
-day's data; weekends skipped), `weekly` (sends Monday 8 AM for
+BUSINESS day's data -- Monday's digest covers Friday; weekend runs
+skipped), `weekly` (sends Monday 8 AM for
 the prior Mon-Fri window), or `monthly` (sends on the 1st, 8 AM,
 for the prior calendar month). Anything else is treated as inactive.
 
@@ -586,18 +668,14 @@ correct route is `Config.gs::DEPT_QCD_QUEUES`, an admin-curated
 dept → list-of-queue-names map.
 
 **Engine** is `apps-script/department-dashboard/QCDReport.gs`.
-Three public callables, all per-dept gated like Individual /
-Performance / Compare Ranges:
-
-- `getQcdReportInit({ department })` — returns roster, defaults,
-  and the dept's mapped queues.
-- `getQcdReport({ department, from, to })` — main aggregation.
-  Returns `meta` (with `queues` + `unmapped` flags), `dateLabel`,
-  `totals` (sum across the dept's queues), `queueBreakdown`
-  (one row per queue), `trendData` (12-month buckets matching the
-  IR/PR trend-window logic). Cache prefix `qcd:v9`.
-- `sendQcdReportEmail({ imageBase64, dateLabel })` — image
-  export like the IR/PR/CR send-email paths.
+Since the QCD->Insights consolidation, the standalone QCD Report
+modal and its endpoints (`getQcdReport` / `getQcdReportInit` /
+`sendQcdReportEmail`, per-dept `qcd:` cache prefix) are RETIRED.
+What remains public is `getQcdAllDepartments` (the company-wide
+daily report, `qcdAll:` cache); `computeQcdReport_` is the shared
+internal aggregation consumed by Insights Queue health + the
+Overview / My Department snapshots. Queue data for a dept + range
+is now read via the Insights report (Queue health section).
 
 **What gets summed.** Only `Call Source === 'Total Calls'` rows.
 The other sources (CSR / Ad-campaign / New Call Menu / Non-CSR
@@ -609,10 +687,12 @@ non-zero values** (matches legacy `buildTable4` semantics).
 **UI surfaces** all visible to everyone (no admin gate beyond the
 existing per-dept dropdown):
 
-- **Reports → QCD Report** modal: dept-level KPI tiles, per-queue
-  breakdown table with a bolded "Department total" tfoot row,
-  12-month trend chart with tab strip (Total Calls / Abandoned %
-  / Violations).
+- **Insights → Queue health** (the retired QCD modal's replacement):
+  headline tiles + secondary strip, per-queue rows with expandable
+  per-call-source detail + violation dates, the collapsed Daily
+  breakdown table, and the consolidated trend chart's "Abandoned %
+  by Queue" tab (metric sub-selector for Total Calls / Violations,
+  violation-day warn markers, legend spotlight).
 - **Overview tile chips**: an "Aban N (P%)" chip whenever QCD
   data exists (warn-tinted when P >= 5%), and a "X viol MTD" chip
   when month-to-date violations > 0. Powered by
@@ -637,7 +717,7 @@ matching entry exists in `DEPT_QCD_QUEUES`. To onboard:
 
 The 5-min cache TTLs out automatically; no manual cache bump
 needed unless the aggregation logic itself changes (in which case
-bump `qcd:vN`, `companyOverview:vN`, AND `summary:vN` since all
+bump `insights:vN` (Queue health), `companyOverview:vN`, AND `summary:vN` since all
 three read QCD now).
 
 ---
@@ -688,8 +768,19 @@ without the same belt-and-suspenders:
    (`A_Q_*`, `Backup CSR`), empty strings, oversized values;
    `assertOnSomeRoster_` rejects renames to names that aren't on
    any dept's roster (prevents "rename everything to garbage").
-3. `LockService.tryLock` serializes concurrent admin / build so
-   the Agent column isn't half-written when both fire at once.
+3. `LockService.tryLock` serializes concurrent DASHBOARD callers
+   (two admins clicking Apply at once). NB: LockService is
+   per-script-project, so it does NOT serialize against the daily
+   DQE build -- that runs in the cdr-import / cdr-report projects.
+   A force re-import that deletes a date's rows mid-rename would
+   shift rows under the rename's read-modify-write. F-22 mitigation:
+   `renameHistoricalAgent_` re-verifies the agent column + row count
+   immediately before writing and ABORTS with a "retry in a minute"
+   error if either changed since its snapshot (no partial write;
+   pinned by `tests/unit/orphan-rename-race.test.js`). The unguarded
+   window is now just the back-to-back re-read -> write RPCs -- a
+   mitigation, not a serialization, so still avoid renaming during
+   an active import/rebuild.
 4. Every action -- alias add, alias remove, rename, rename+alias
    -- appends to `Orphan Fix Log` BEFORE returning to the client.
 
@@ -703,8 +794,8 @@ behavior byte-identical to pre-OrphanFix.
 
 **Cache invalidation.** `applyOrphanRename` removes the single
 fixed-key Overview cache entry (via the `COMPANY_OVERVIEW_CACHE_KEY`
-constant -- currently `companyOverview:v17`) on success. Per-(dept,
-range) caches (`summary:v10`, `individual:v8`, `performance:v4`,
+constant -- currently `companyOverview:v18`) on success. Per-(dept,
+range) caches (`summary:v11`, `individual:v11`,
 etc.) are left to TTL out within 30 minutes
 (`REPORT_CACHE_TTL_SECONDS`). The Orphan Fix modal tells the user
 the Overview updates immediately and other views may lag up to the

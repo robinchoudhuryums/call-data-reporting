@@ -25,8 +25,8 @@
  *   runMonthlyDigests_()
  *
  * Date windows:
- *   - Daily digest covers the immediately-preceding calendar day,
- *     skipping weekends (Sat/Sun fire returns early; Monday's
+ *   - Daily digest covers the immediately-preceding BUSINESS day,
+ *     skipping weekend runs (Sat/Sun fire returns early; Monday's
  *     digest covers Friday).
  *   - Weekly digest covers Mon-Fri of the prior week, sent Monday
  *     morning.
@@ -115,14 +115,24 @@ function uninstallDigestTriggers() {
 
 function runDailyDigests_() {
   try {
-    const now = new Date();
-    // Check the DATA WINDOW date's day-of-week, not today's.
-    // On Monday (today=1), yesterday=Sunday (dow=0) → skip, so
-    // Friday data doesn't get lost. Matches runDailyAlerts_ logic.
-    const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 12);
-    const dow = yesterday.getDay();   // 0=Sun, 6=Sat
+    // F-6: skip when TODAY is Sat/Sun -- the trigger fires every day, and
+    // the contract is "sends each weekday morning; Monday's digest covers
+    // Friday". The data window is resolved by digestWindowFor_('daily') as
+    // the previous BUSINESS day, so Monday's run sends Friday's data.
+    // (The old check tested the DATA date's day-of-week instead, which
+    // sent Friday's digest on SATURDAY morning and skipped Monday
+    // entirely -- the opposite of the documented behavior.)
+    const dow = new Date().getDay();   // 0=Sun, 6=Sat
     if (dow === 0 || dow === 6) {
-      Logger.log('runDailyDigests_: skipping weekend data date (%s)', yesterday);
+      Logger.log('runDailyDigests_: weekend run -- skipping.');
+      return;
+    }
+    // S5: company holidays skip the TRIGGER run like weekends do (manual
+    // previews unaffected); the next weekday's digest covers the previous
+    // business day via the shared holiday-aware walker below.
+    const todayIso = Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd');
+    if (isCompanyHoliday_(todayIso)) {
+      Logger.log('runDailyDigests_: company holiday (' + todayIso + ') -- skipping.');
       return;
     }
     sendDigestsForCadence_('daily');
@@ -163,6 +173,16 @@ function sendDigestsForCadence_(cadence) {
   var digestLock = LockService.getScriptLock();
   if (!digestLock.tryLock(15000)) {
     Logger.log('sendDigestsForCadence_(%s): another run holds the script lock — skipping.', cadence);
+    // F-49: a whole cadence's digests are dropped here (e.g. the alerts
+    // run holding the shared lock through its send window) -- notify the
+    // admins so the "digest didn't arrive -> check admin inbox" runbook
+    // (Operator State #12d) actually finds something.
+    try {
+      notifyDigestFailure_(cadence, new Error(
+        'script lock contention -- ' + cadence + ' digests were SKIPPED this '
+        + 'run (another run, e.g. the daily alerts send, held the lock). '
+        + 'Re-send manually via sendDigestsForCadence_ or wait for tomorrow\'s trigger.'));
+    } catch (e) { /* best-effort */ }
     return;
   }
   try {
@@ -741,6 +761,12 @@ function digestConfigRawValues_() {
     const neon = neonDigestConfigRawValues_();
     if (neon !== null) return neon;
   }
+  return sheetDigestConfigRawValues_();
+}
+
+/** SHEET-only raw read (no CONFIG_SOURCE dispatch) -- used by the flag-aware
+ * reader above and read DIRECTLY by compareDigestConfigSources (F-5). */
+function sheetDigestConfigRawValues_() {
   const ss = openSpreadsheet_();
   const sheet = ss.getSheetByName(SHEETS.DIGEST_CONFIG);
   if (!sheet) return [];
@@ -788,7 +814,12 @@ function neonDigestConfigRawValues_() {
 }
 
 function readDigestConfig_() {
-  const values = digestConfigRawValues_();
+  return parseDigestConfigValues_(digestConfigRawValues_());
+}
+
+/** The shared raw-rows -> entries parse, applied identically to either
+ * source (sheet or Neon) so parity is exact. */
+function parseDigestConfigValues_(values) {
   if (!values || !values.length) return [];
   const out = [];
   for (let i = 0; i < values.length; i++) {
@@ -873,16 +904,23 @@ function compareDigestConfigSources() {
     });
     return m;
   };
-  const prev = (typeof getConfigSource_ === 'function') ? getConfigSource_() : 'sheet';
-  let sheetRows, neonRows;
-  try {
-    PropertiesService.getScriptProperties().setProperty('CONFIG_SOURCE', 'sheet');
-    sheetRows = readDigestConfig_();
-    PropertiesService.getScriptProperties().setProperty('CONFIG_SOURCE', 'neon');
-    neonRows = readDigestConfig_();
-  } finally {
-    PropertiesService.getScriptProperties().setProperty('CONFIG_SOURCE', prev);
+  // Read each source DIRECTLY -- never through the flag-aware reader, and
+  // never by flipping the live CONFIG_SOURCE property (F-5). The old
+  // property round-trip had two flaws: (1) the flag-aware reader silently
+  // falls back to the SHEET when Neon is unreachable, so a Neon outage
+  // compared the sheet against itself and reported PARITY CLEAN -- a false
+  // green light to flip CONFIG_SOURCE against an empty/stale table; (2)
+  // Script Properties are global, so concurrent requests briefly read the
+  // flipped source. Neon-unreachable now returns clean:false + error.
+  const sheetRows = parseDigestConfigValues_(sheetDigestConfigRawValues_());
+  const neonRaw = neonDigestConfigRawValues_();
+  if (neonRaw === null) {
+    Logger.log('compareDigestConfigSources: NEON UNREACHABLE -- no comparison performed. '
+      + 'Do NOT flip CONFIG_SOURCE on this result.');
+    return { clean: false, error: 'Neon unreachable -- no comparison performed.',
+             missingInNeon: [], missingInSheet: [], mismatched: [] };
   }
+  const neonRows = parseDigestConfigValues_(neonRaw);
   const s = norm(sheetRows), nn = norm(neonRows);
   const missingInNeon = [], missingInSheet = [], mismatched = [];
   Object.keys(s).forEach(function (k) { if (!(k in nn)) missingInNeon.push(k); else if (s[k] !== nn[k]) mismatched.push(k); });
@@ -1019,8 +1057,14 @@ function digestWindowFor_(cadence, now) {
   const tz = TZ;
   const fmt = function (d) { return Utilities.formatDate(d, tz, 'yyyy-MM-dd'); };
   if (cadence === 'daily') {
-    const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 12);
-    const iso = fmt(yesterday);
+    // Previous BUSINESS day (F-6), skipping weekends AND -- since S5 --
+    // company holidays (the Tuesday after a Monday holiday covers Friday).
+    // Shared walker (Util.gs::prevBusinessDayIso_) keeps this identical to
+    // the alerts engine's assessed day. Sat/Sun/holiday "now" values only
+    // reach here via manual runs / previews (the trigger entry skips those
+    // runs) -- they resolve the same way, so a preview shows what the
+    // subscriber actually receives.
+    const iso = prevBusinessDayIso_(now);
     return { fromIso: iso, toIso: iso };
   }
   if (cadence === 'weekly') {

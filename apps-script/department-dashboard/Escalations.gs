@@ -1,12 +1,16 @@
 /**
- * Escalations (Phase 1) — manager-facing escalation log.
+ * Escalations (Phases 1 + 2) — manager-facing escalation log + external
+ * submission review queue.
  *
  * Managers view and "manage" (resolve + comment on) escalation calls for
  * their own department; an admin manually logs new escalations (and sees
- * every department). Backed by the Neon `escalations` table (NOT a sheet):
- * Phase 2 will let the external team-tools app INSERT `pending_review` rows
- * into the SAME table for an admin review queue, so Neon is the shared
- * substrate from the start. There is no sheet fallback (like inbound_calls /
+ * every department). Backed by the Neon `escalations` table (NOT a sheet).
+ * PHASE 2 (live): the external team-tools app INSERTs `pending_review` rows
+ * into the SAME table (see the external-app INSERT contract below); the
+ * dashboard surfaces them as a review queue — `approveEscalation` promotes a
+ * submission into the dept worklist (re-validating it as untrusted input at
+ * that trust boundary), `rejectEscalation` reviews it out (data retained,
+ * terminal, reason required). There is no sheet fallback (like inbound_calls /
  * Caller Lookup) — when Neon is unconfigured/unreachable the list renders an
  * "unavailable" state and writes throw a clear error.
  *
@@ -18,13 +22,15 @@
  * swapped for the per-dept gate on the manager-reachable mutation paths:
  *   1. authorization — `createEscalation` / `updateEscalation` are admin-only
  *      (`assertAdmin_`); `resolveEscalation` / `updateEscalationComment` /
- *      `reopenEscalation` re-resolve the caller and
- *      `assertDeptAccess_(user, <the escalation's own department>)`, so a
+ *      `reopenEscalation` / `approveEscalation` / `rejectEscalation`
+ *      re-resolve the caller and gate via
+ *      `escAssertRowAccess_(user, <the escalation's own department>)`, so a
  *      manager can only touch their own dept's rows (the dept is read from
  *      the row, never trusted from the request).
  *   2. input validation — required fields, length caps, known-dept check,
- *      and the business rules that a resolution requires non-empty text and a
- *      reopen requires a non-empty reason.
+ *      the business rules that a resolution requires non-empty text and a
+ *      reopen/reject requires a non-empty reason, and Phase 2's
+ *      approval-time re-normalization of externally-submitted fields.
  *   3. `LockService` — serializes concurrent writes.
  *   4. audit — every row carries created_by/created_at + resolved_by/
  *      resolved_at/updated_at, AND every write appends an immutable row to the
@@ -51,8 +57,49 @@
  */
 
 var ESC_MAX_TEXT = 4000;          // length cap on free-text fields
+// F-46: cap the list fetch (newest first). The query was unbounded json_agg
+// -- fine at today's volume, but Phase 2's external pending_review inserts
+// make it an unbounded single-string JDBC fetch of PII (the failure mode
+// INBOUND_TOP_N / CALLER_LOOKUP_MAX_CALLS cap elsewhere). meta.truncated
+// tells the client when the cap was hit.
+var ESC_MAX_ROWS = 500;
 var ESC_STATUS_PENDING  = 'pending';
 var ESC_STATUS_RESOLVED = 'resolved';
+// Phase 2: externally-submitted rows awaiting a manager/admin review before
+// they enter the dept worklist, and reviewed-out rows (kept, never deleted).
+var ESC_STATUS_PENDING_REVIEW = 'pending_review';
+var ESC_STATUS_REJECTED       = 'rejected';
+
+// ── Phase 2: the external-app INSERT contract ─────────────────────────────
+//
+// The team-tools app submits escalations by INSERTing DIRECTLY into the
+// Neon `escalations` table (the shared substrate -- see escEnsureTable_ for
+// the DDL). Contract for external writers:
+//
+//   INSERT INTO escalations
+//     (id, department, occurred_at, caller, patient_name, trx, area,
+//      reason, status, created_by, source)
+//   VALUES
+//     (<uuid>, <dept -- SHOULD match a dashboard dept header>, <timestamptz
+//      or NULL>, ..., <non-empty reason>, 'pending_review',
+//      <submitter email>, 'team-tools');
+//
+//   - status MUST be 'pending_review' -- rows inserted directly as
+//     'pending' bypass the review gate and are a contract violation.
+//   - source identifies the writer ('team-tools'); the dashboard's own
+//     createEscalation writes 'manual'.
+//   - Do NOT write escalation_activity -- the dashboard's review verbs
+//     (approve/reject) own the trail from review onward; the row's
+//     created_by/created_at cover submission provenance.
+//   - Leave resolution/resolved_* NULL and never UPDATE a row after
+//     insert; corrections happen by rejecting + resubmitting.
+//
+// The dashboard treats these rows as UNTRUSTED input at the review
+// boundary: approveEscalation re-validates + normalizes (trim, ESC_MAX_TEXT
+// caps, non-empty reason, known dept) before promoting to 'pending', and a
+// mangled row can always be rejected. A dept string that matches no roster
+// header is reviewable by ADMINS only (escAssertRowAccess_ pins managers to
+// an exact dept match), so a typo'd dept can't orphan the row.
 
 // ── Public API ────────────────────────────────────────────────────────────
 
@@ -71,7 +118,7 @@ function getEscalationsInit() {
     department:  user.department || null,
     departments: isAdmin ? getAllDepartments_() : (user.department ? [user.department] : []),
     neonConfigured: !!PropertiesService.getScriptProperties().getProperty('NEON_HOST'),
-    statuses:    ['pending', 'resolved', 'all'],
+    statuses:    ['pending', 'pending_review', 'resolved', 'rejected', 'all'],
   };
 }
 
@@ -99,7 +146,7 @@ function getEscalations(req) {
   }
 
   var status = String(req.status || 'pending').toLowerCase().trim();
-  if (['pending', 'resolved', 'all'].indexOf(status) === -1) status = 'pending';
+  if (['pending', 'pending_review', 'resolved', 'rejected', 'all'].indexOf(status) === -1) status = 'pending';
 
   var conn = getDashboardNeonConn_();
   if (!conn) return { available: false, rows: [], meta: { department: scopeAll ? 'ALL' : department, status: status } };
@@ -115,6 +162,9 @@ function getEscalations(req) {
             + "resolved_by, resolved_at::text AS resolved_at, source "
             + "FROM escalations"
             + (where.length ? (' WHERE ' + where.join(' AND ')) : '')
+            // F-46: newest-first cap inside the subquery (json_agg re-sorts
+            // the capped set with the same keys, so order is unchanged).
+            + ' ORDER BY occurred_at DESC NULLS LAST, created_at DESC LIMIT ' + ESC_MAX_ROWS
             + ') t';
     var stmt = conn.prepareStatement(sql);
     for (var i = 0; i < params.length; i++) stmt.setString(i + 1, params[i]);
@@ -122,7 +172,25 @@ function getEscalations(req) {
     var json = rs.next() ? rs.getString('j') : '[]';
     rs.close(); stmt.close();
     var rows = JSON.parse(json || '[]');
-    return { available: true, rows: rows, meta: { department: scopeAll ? 'ALL' : department, status: status, count: rows.length } };
+    // Phase 2: how many externally-submitted rows await review in THIS
+    // viewer scope -- drives the client's "needs review" chip on every
+    // load, whatever status filter is active. Same connection, cheap COUNT.
+    var pendingReview = 0;
+    try {
+      var csql = 'SELECT count(*) AS n FROM escalations WHERE status = ?'
+               + (scopeAll ? '' : ' AND department = ?');
+      var cstmt = conn.prepareStatement(csql);
+      cstmt.setString(1, ESC_STATUS_PENDING_REVIEW);
+      if (!scopeAll) cstmt.setString(2, department);
+      var crs = cstmt.executeQuery();
+      if (crs.next()) pendingReview = Number(crs.getString('n')) || 0;
+      crs.close(); cstmt.close();
+    } catch (ce2) { /* best-effort: chip just hides */ }
+    return { available: true, rows: rows,
+             meta: { department: scopeAll ? 'ALL' : department, status: status,
+                     count: rows.length,
+                     pendingReviewCount: pendingReview,
+                     truncated: rows.length >= ESC_MAX_ROWS } };   // F-46
   } catch (e) {
     Logger.log('getEscalations failed: ' + (e && e.message ? e.message : e));
     return { available: false, rows: [], meta: { department: scopeAll ? 'ALL' : department, status: status } };
@@ -149,7 +217,7 @@ function getEscalationActivity(req) {
     escEnsureTable_(conn);
     var meta = escRowMeta_(conn, id);
     if (!meta) return { available: true, rows: [] };
-    assertDeptAccess_(user, meta.department);
+    escAssertRowAccess_(user, meta.department);   // F-45: row dept = data, not input
     var sql = "SELECT COALESCE(json_agg(t ORDER BY t.at ASC), '[]')::text AS j FROM ("
             + "SELECT action, actor, at::text AS at, detail FROM escalation_activity WHERE escalation_id = ?) t";
     var stmt = conn.prepareStatement(sql);
@@ -341,9 +409,18 @@ function resolveEscalation(req) {
   try {
     escEnsureTable_(conn);
     // Authorize against the row's OWN department (never trust a dept from req).
-    var dept = escRowDepartment_(conn, id);
-    if (dept === null) throw new Error('Escalation not found.');
-    assertDeptAccess_(user, dept);
+    var meta = escRowMeta_(conn, id);
+    if (!meta) throw new Error('Escalation not found.');
+    var dept = meta.department;
+    escAssertRowAccess_(user, dept);   // F-45: row dept = data, not input
+    // F-43: pending-only, mirroring reopenEscalation's resolved-only guard.
+    // Two managers racing from stale UIs previously last-write-wins
+    // clobbered the first resolution note on the row itself (only the
+    // activity trail preserved it).
+    if (meta.status === ESC_STATUS_RESOLVED) {
+      throw new Error('This escalation is already resolved. Reopen it first if the '
+        + 'resolution needs to change (the existing note would otherwise be overwritten).');
+    }
 
     conn.setAutoCommit(false); txn = true;
     var stmt = conn.prepareStatement(
@@ -397,7 +474,7 @@ function reopenEscalation(req) {
     escEnsureTable_(conn);
     var meta = escRowMeta_(conn, id);
     if (!meta) throw new Error('Escalation not found.');
-    assertDeptAccess_(user, meta.department);
+    escAssertRowAccess_(user, meta.department);   // F-45: row dept = data, not input
     if (meta.status !== ESC_STATUS_RESOLVED) {
       throw new Error('Only a resolved escalation can be reopened.');
     }
@@ -416,6 +493,124 @@ function reopenEscalation(req) {
     if (txn) { try { conn.rollback(); } catch (rb) {} }
     Logger.log('reopenEscalation failed: ' + (e && e.message ? e.message : e));
     throw new Error(e && e.message ? e.message : 'Could not reopen the escalation.');
+  } finally {
+    try { if (txn) conn.setAutoCommit(true); } catch (ae) {}
+    try { conn.close(); } catch (ce) {}
+    lock.releaseLock();
+  }
+}
+
+/**
+ * Phase 2: APPROVES an externally-submitted escalation (status
+ * 'pending_review' -> 'pending'), admitting it into the dept worklist.
+ * PER-DEPT gated like resolveEscalation (escAssertRowAccess_ on the row's
+ * OWN dept -- a manager reviews only their dept's submissions; admins any).
+ * The row is UNTRUSTED external input, so approval is the trust boundary:
+ * fields are re-normalized (trim + ESC_MAX_TEXT caps) and a row whose
+ * reason is empty after cleaning cannot be approved (reject it instead).
+ * Appends an 'approved' activity row atomically (§5). Returns { id }.
+ */
+function approveEscalation(req) {
+  req = req || {};
+  var user = resolveUser_(Session.getActiveUser().getEmail());
+  if (!user || user.role === 'none') throw new Error('Not authorized.');
+  var id = String(req.id || '').trim();
+  if (!id) throw new Error('Missing escalation id.');
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw new Error('Another escalation write is in progress — retry in a moment.');
+  var conn = getDashboardNeonConn_();
+  if (!conn) { lock.releaseLock(); throw new Error('Escalations storage (Neon) is not configured/reachable.'); }
+  var txn = false;
+  try {
+    escEnsureTable_(conn);
+    var row = escRowFull_(conn, id);
+    if (!row) throw new Error('Escalation not found.');
+    escAssertRowAccess_(user, row.department);   // F-45: row dept = data, not input
+    if (row.status !== ESC_STATUS_PENDING_REVIEW) {
+      throw new Error('Only a pending-review submission can be approved.');
+    }
+    var clean = escNormalizeReviewFields_(row);
+    if (!clean.reason) {
+      throw new Error('This submission has no reason text, so it cannot enter the '
+        + 'worklist. Reject it and have it resubmitted with a reason.');
+    }
+
+    conn.setAutoCommit(false); txn = true;
+    var stmt = conn.prepareStatement(
+      "UPDATE escalations SET status = ?, caller = NULLIF(?, ''), "
+      + "patient_name = NULLIF(?, ''), trx = NULLIF(?, ''), area = NULLIF(?, ''), "
+      + 'reason = ?, updated_at = now() WHERE id = ?');
+    stmt.setString(1, ESC_STATUS_PENDING);
+    stmt.setString(2, clean.caller);
+    stmt.setString(3, clean.patientName);
+    stmt.setString(4, clean.trx);
+    stmt.setString(5, clean.area);
+    stmt.setString(6, clean.reason);
+    stmt.setString(7, id);
+    stmt.execute();
+    stmt.close();
+    escAppendActivity_(conn, id, 'approved', user.email,
+      'Accepted into the ' + row.department + ' worklist (submitted via ' + (row.source || 'unknown') + ')');
+    conn.commit();
+    Logger.log('approveEscalation: %s approved %s (%s)', user.email, id, row.department);
+    return { id: id };
+  } catch (e) {
+    if (txn) { try { conn.rollback(); } catch (rb) {} }
+    Logger.log('approveEscalation failed: ' + (e && e.message ? e.message : e));
+    throw new Error(e && e.message ? e.message : 'Could not approve the escalation.');
+  } finally {
+    try { if (txn) conn.setAutoCommit(true); } catch (ae) {}
+    try { conn.close(); } catch (ce) {}
+    lock.releaseLock();
+  }
+}
+
+/**
+ * Phase 2: REJECTS an externally-submitted escalation (status
+ * 'pending_review' -> 'rejected'). PER-DEPT gated like approve. A
+ * non-empty reason is REQUIRED (mirrors reopen) and lands in the activity
+ * trail. The row's data is RETAINED (append-only house style -- rejected
+ * rows stay queryable under the 'rejected'/'all' filters; a correction is
+ * a fresh external resubmission). Terminal: there is no un-reject verb.
+ * Returns { id }.
+ */
+function rejectEscalation(req) {
+  req = req || {};
+  var user = resolveUser_(Session.getActiveUser().getEmail());
+  if (!user || user.role === 'none') throw new Error('Not authorized.');
+  var id = String(req.id || '').trim();
+  if (!id) throw new Error('Missing escalation id.');
+  var reason = escClean_(req.reason);
+  if (!reason) throw new Error('A reason for rejecting is required.');
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw new Error('Another escalation write is in progress — retry in a moment.');
+  var conn = getDashboardNeonConn_();
+  if (!conn) { lock.releaseLock(); throw new Error('Escalations storage (Neon) is not configured/reachable.'); }
+  var txn = false;
+  try {
+    escEnsureTable_(conn);
+    var meta = escRowMeta_(conn, id);
+    if (!meta) throw new Error('Escalation not found.');
+    escAssertRowAccess_(user, meta.department);   // F-45: row dept = data, not input
+    if (meta.status !== ESC_STATUS_PENDING_REVIEW) {
+      throw new Error('Only a pending-review submission can be rejected.');
+    }
+    conn.setAutoCommit(false); txn = true;
+    var stmt = conn.prepareStatement('UPDATE escalations SET status = ?, updated_at = now() WHERE id = ?');
+    stmt.setString(1, ESC_STATUS_REJECTED);
+    stmt.setString(2, id);
+    stmt.execute();
+    stmt.close();
+    escAppendActivity_(conn, id, 'rejected', user.email, reason);
+    conn.commit();
+    Logger.log('rejectEscalation: %s rejected %s (%s)', user.email, id, meta.department);
+    return { id: id };
+  } catch (e) {
+    if (txn) { try { conn.rollback(); } catch (rb) {} }
+    Logger.log('rejectEscalation failed: ' + (e && e.message ? e.message : e));
+    throw new Error(e && e.message ? e.message : 'Could not reject the escalation.');
   } finally {
     try { if (txn) conn.setAutoCommit(true); } catch (ae) {}
     try { conn.close(); } catch (ce) {}
@@ -446,7 +641,7 @@ function updateEscalationComment(req) {
     escEnsureTable_(conn);
     var dept = escRowDepartment_(conn, id);
     if (dept === null) throw new Error('Escalation not found.');
-    assertDeptAccess_(user, dept);
+    escAssertRowAccess_(user, dept);   // F-45: row dept = data, not input
     conn.setAutoCommit(false); txn = true;
     var stmt = conn.prepareStatement("UPDATE escalations SET comments = NULLIF(?, ''), updated_at = now() WHERE id = ?");
     stmt.setString(1, comments);
@@ -522,6 +717,26 @@ function backfillEscalationActivity() {
 // ── Internals ───────────────────────────────────────────────────────────
 
 /** Reads an escalation's department (the authorization key). null if absent. */
+/**
+ * F-45: authorization against a row's OWN stored department. Unlike
+ * assertDeptAccess_ (whose admin branch validates the dept against the
+ * CURRENT `DO NOT EDIT!` headers -- correct for REQUEST parameters), the
+ * row's dept is authoritative DATA: if a dept column is ever renamed,
+ * existing escalation rows still carry the old name, and the header check
+ * made them un-resolvable/un-reopenable by EVERYONE including admins.
+ * Managers stay pinned to their (current) dept name -- a manager of a
+ * renamed dept needs an admin's help for pre-rename rows; admins always
+ * pass. Throws on rejection.
+ */
+function escAssertRowAccess_(user, rowDept) {
+  if (!user || user.role === 'none') throw new Error('Not authorized.');
+  if (user.role === 'manager' && rowDept !== user.department) {
+    throw new Error('Not authorized for this department.');
+  }
+  // admins: entitled to every row, including rows whose stored dept no
+  // longer matches a current roster header.
+}
+
 function escRowDepartment_(conn, id) {
   var stmt = conn.prepareStatement('SELECT department FROM escalations WHERE id = ?');
   stmt.setString(1, id);
@@ -546,6 +761,47 @@ function escRowMeta_(conn, id) {
  * called inside an open transaction (the caller commits) so the activity row
  * lands atomically with its primary write. No commit here.
  */
+/** Reads the review-relevant columns of one escalation; null if absent. */
+function escRowFull_(conn, id) {
+  var stmt = conn.prepareStatement(
+    'SELECT status, department, caller, patient_name, trx, area, reason, source '
+    + 'FROM escalations WHERE id = ?');
+  stmt.setString(1, id);
+  var rs = stmt.executeQuery();
+  var row = null;
+  if (rs.next()) {
+    row = {
+      status:      rs.getString('status'),
+      department:  rs.getString('department'),
+      caller:      rs.getString('caller'),
+      patientName: rs.getString('patient_name'),
+      trx:         rs.getString('trx'),
+      area:        rs.getString('area'),
+      reason:      rs.getString('reason'),
+      source:      rs.getString('source'),
+    };
+  }
+  rs.close(); stmt.close();
+  return row;
+}
+
+/**
+ * Phase 2, pure (unit-tested): normalizes an externally-submitted row's
+ * free-text fields at the approval trust boundary -- trim + ESC_MAX_TEXT
+ * caps via the same escClean_ the dashboard's own create path applies.
+ * (occurred_at is already a typed timestamptz column; department is
+ * enforced by the review gate, not rewritten.)
+ */
+function escNormalizeReviewFields_(row) {
+  return {
+    caller:      escClean_(row.caller),
+    patientName: escClean_(row.patientName),
+    trx:         escClean_(row.trx),
+    area:        escClean_(row.area),
+    reason:      escClean_(row.reason),
+  };
+}
+
 function escAppendActivity_(conn, escId, action, actor, detail) {
   var stmt = conn.prepareStatement(
     'INSERT INTO escalation_activity (id, escalation_id, action, actor, detail) '
@@ -681,7 +937,18 @@ function escClean_(v) {
 function escCleanDateTime_(v) {
   var s = (v == null ? '' : String(v)).trim();
   if (!s) return '';
-  // Loose shape check: YYYY-MM-DD optionally followed by T/space + time.
-  if (!/^\d{4}-\d{2}-\d{2}([ T]\d{2}:\d{2}(:\d{2})?)?/.test(s)) return '';
+  // F-44: ANCHORED shape check + numeric range validation. The old regex
+  // was unanchored at the end, so '2026-01-01T99:99' / '2026-01-01junk'
+  // passed "validation" and died in Postgres's ::timestamptz cast as an
+  // opaque "Could not save the escalation" instead of the documented
+  // invalid -> stored-NULL behavior.
+  var m = /^(\d{4})-(\d{2})-(\d{2})([ T](\d{2}):(\d{2})(:(\d{2}))?)?$/.exec(s);
+  if (!m) return '';
+  var mo = Number(m[2]), da = Number(m[3]);
+  if (mo < 1 || mo > 12 || da < 1 || da > 31) return '';
+  if (m[4]) {
+    var hh = Number(m[5]), mi = Number(m[6]), se = m[8] ? Number(m[8]) : 0;
+    if (hh > 23 || mi > 59 || se > 59) return '';
+  }
   return s;
 }

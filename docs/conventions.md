@@ -188,7 +188,7 @@ you'll need to either also fix the main table (and accept managers
 seeing different numbers) or accept that the two surfaces serve
 slightly different reading semantics. Document any change in
 `known-issues.md` and bump every cache prefix
-(`summary:`, `individual:`, `performance:`).
+(`summary:`, `individual:`, `insights:`).
 
 ### Totals row
 
@@ -196,7 +196,11 @@ Per-row aggregates above; the totals row uses the same methods:
 
 - Sum columns sum the rows in the table.
 - Mean columns (ATT, Avg Abd Wait, CSR Avg Abd Wait) take a simple mean
-  of the per-agent rows displayed.
+  of the NONZERO per-agent rows displayed (`avgNonzero_`, summary:v11).
+  Idle roster agents — whose value is 0 for the range — are excluded
+  from both numerator and denominator, so they don't drag the dept
+  averages (owner decision, F-29 follow-up). This is the same skip-zero
+  method the per-agent accumulators use when averaging one agent's days.
 
 ## Dashboard scope semantics
 
@@ -447,18 +451,21 @@ mirrors it; if the two ever diverge, INV-30 wins.
 
 | Source file | Cache prefix | Current version |
 |---|---|---|
-| `Data.gs` (main table) | `summary:vN:` | `v10` |
+| `Data.gs` (main table) | `summary:vN:` | `v11` |
 | `Data.gs` (latest-date snap for default From/To) | `latestDate:vN:` | `v1` |
 | `Data.gs` (multi-source latest dates for freshness pill) | `latestDates:vN:` | `v1` |
-| `IndividualReport.gs` | `individual:vN:` | `v8` |
+| `IndividualReport.gs` | `individual:vN:` | `v11` |
 | `IndividualReport.gs` (active-in-range subset, shared with all three pickers) | `individual_active:vN:` | `v2` |
-| `PerformanceReport.gs` | `performance:vN:` | `v4` |
-| `CompareRangesReport.gs` | `compareRanges:vN:` | `v6` |
-| `MissedCallsReport.gs` | `missed:vN:` | `v12` |
-| `CompanyOverview.gs` | `companyOverview:vN` | `v17` |
-| `QCDReport.gs` | `qcd:vN:` | `v9` |
+| `PerformanceReport.gs` | `performance:vN:` | RETIRED (Performance Report deleted; Insights is the replacement) |
+| `CompareRangesReport.gs` | `compareRanges:vN:` | RETIRED (Compare Ranges deleted; Insights custom-prior + vs-Prior chart replace it) |
+| `MissedCallsReport.gs` | `missed:vN:` | `v13` |
+| `CompanyOverview.gs` | `companyOverview:vN` | `v18` |
+| `QCDReport.gs` | `qcd:vN:` | RETIRED (QCD modal deleted; `qcdAll:` remains) |
 | `InboundReport.gs` | `inbound:vN:` | `v3` |
-| `InsightsReport.gs` | `insights:vN:` | `v16` |
+| `InsightsReport.gs` | `insights:vN:` | `v18` |
+| `QCDReport.gs` (all-departments daily report) | `qcdAll:vN:` | `v4` |
+| `InboundReport.gs` (weekday×hour abandon heatmap) | `inboundHeatmap:vN:` | `v1` |
+| `DirectCallReport.gs` | `directCall:vN:` | `v1` |
 
 `Alerts.gs` holds no cached compute — preview / send always re-reads
 the source sheet for the chosen date.

@@ -128,6 +128,24 @@ test('INV-53: queue-only floaters appear as rows but are excluded from totals', 
   assert.equal(data.totals.attSeconds, 210);
 });
 
+test('summary:v11: zero-ATT rows are excluded from the totals-row means (idle-agent drag)', function () {
+  // Ben was rung but answered nothing -> his row's ATT / abd-waits are 0.
+  // Owner decision (F-29 follow-up): zero rows are excluded from both
+  // sides of the totals means, so the dept ATT is Anna's alone -- not
+  // dragged to (180+0)/2 = 90 by Ben's zero.
+  install([
+    dqeRow({ date: '2026-03-09', agent: 'Anna', ext: '501', rung: 10, missed: 1, answered: 9, att: '0:03:00', aaw: '0:00:40' }),
+    dqeRow({ date: '2026-03-09', agent: 'Ben',  ext: '501', rung: 4,  missed: 4, answered: 0, att: '0:00:00' }),
+  ]);
+  const data = h.call('computeSummary_', 'Alpha', '2026-03-09', '2026-03-09', 'both');
+  assert.equal(rowFor(data, 'Ben').attSeconds, 0, 'Ben rows with ATT 0');
+  assert.equal(data.totals.attSeconds, 180);          // NOT 90
+  assert.equal(data.totals.avgAbdWaitSeconds, 40);    // NOT 20
+  // The summables still include Ben -- only the means skip zeros.
+  assert.equal(data.totals.totalRung, 14);
+  assert.equal(data.totals.totalMissed, 5);
+});
+
 test('S35 parity: roster scope totals == both scope totals (floater-exclusion invariant)', function () {
   const rows = [
     dqeRow({ date: '2026-03-09', agent: 'Anna', ext: '501', rung: 10, answered: 9, att: '0:03:00' }),

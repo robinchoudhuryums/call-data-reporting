@@ -77,7 +77,7 @@ function getMissedCallsReport(req) {
   // v10: per-entry parentId attached to each abandoned timestamp;
   // queue-only entries gain alsoIn[] for cross-queue overflow; new
   // queueOnlyUniqueCount/EventCount in meta.
-  const cacheKey = 'missed:v12:' + dept + ':' + scope + ':' + from + ':' + to;
+  const cacheKey = 'missed:v13:' + dept + ':' + scope + ':' + from + ':' + to;
   const cached = cache.get(cacheKey);
   if (cached) {
     try {
@@ -147,12 +147,22 @@ function computeMissedCallsReport_(dept, from, to, scope) {
 
   const ss = openSpreadsheet_();
   const sheet = ss.getSheetByName(SHEETS.HISTORICAL);
-  if (!sheet) {
-    throw new Error('Sheet "' + SHEETS.HISTORICAL + '" not found.');
-  }
-  const lastRow = sheet.getLastRow();
-  if (lastRow < 2) {
-    return emptyMissedReport_(dept, from, to, scope, roster.names.length);
+  // F-35: hard-require the DQE sheet only when it IS the read source. With
+  // DQE_READ_SOURCE=neon the sheet may be trimmed/archived -- the old
+  // unconditional check served the EMPTY report despite dqe_history being
+  // fully populated (so the sheet could never actually be retired). If the
+  // Neon read then fails or returns nothing, the sheet-fallback block below
+  // returns the empty report rather than crashing on the missing sheet.
+  const dqeSource = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
+  const neonCapable = (dqeSource === 'neon' && typeof neonFetchDqeRows_ === 'function');
+  const lastRow = sheet ? sheet.getLastRow() : 0;
+  if (!neonCapable) {
+    if (!sheet) {
+      throw new Error('Sheet "' + SHEETS.HISTORICAL + '" not found.');
+    }
+    if (lastRow < 2) {
+      return emptyMissedReport_(dept, from, to, scope, roster.names.length);
+    }
   }
 
   const ssTZ = ss.getSpreadsheetTimeZone();
@@ -167,8 +177,7 @@ function computeMissedCallsReport_(dept, from, to, scope) {
   // to the sheet read -- the default path is byte-identical to
   // pre-cutover behavior. Parity is pinned by tests/unit/dal-cutover.test.js.
   let values = null, displays = null, deptQueueExts = null;
-  const dqeSource = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
-  if (dqeSource === 'neon' && typeof neonFetchDqeRows_ === 'function') {
+  if (neonCapable) {
     try {
       const _t0 = Date.now();
       const dalRows = neonFetchDqeRows_(from, to, { includeMissedDetail: true });
@@ -186,6 +195,9 @@ function computeMissedCallsReport_(dept, from, to, scope) {
     }
   }
   if (!values) {
+    if (!sheet || lastRow < 2) {   // F-35: neon empty AND no sheet to fall back to
+      return emptyMissedReport_(dept, from, to, scope, roster.names.length);
+    }
     // Read cols 1..AH. Need date (col 2) and agent (col 3) for filtering,
     // K-AC for missed times, AF for abandoned cross-reference.
     const numCols = HISTORICAL_COLS.CSR_AVG_ABD_WAIT;
@@ -343,7 +355,6 @@ function computeMissedCallsReport_(dept, from, to, scope) {
 
     slotTimes.forEach(function (item) {
       const isAbandoned = !!abandonedKeys[item.key];
-      if (isAbandoned) abandonedRings++;
 
       // Compute bucket index once; -1 means "outside the 8 AM-5 PM
       // chart range". The client uses this on chart-bar clicks to
@@ -384,6 +395,10 @@ function computeMissedCallsReport_(dept, from, to, scope) {
         target.entries.push(entry);
       } else {
         target.missedTimes.push(entry);
+        // F-34: abandonedRings is documented as AGENT rings only ("the
+        // number of red rows in the agent grid") -- the old increment ran
+        // for sentinel rows too, inflating the meta count.
+        if (isAbandoned) abandonedRings++;
         // totalMissed counts agent rings only -- queue-only abandoned
         // calls aren't "missed rings" because no agent was rung.
         totalMissed++;

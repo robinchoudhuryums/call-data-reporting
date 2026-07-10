@@ -102,6 +102,9 @@ function inboundResolveRequest_(req) {
       throw new Error('Not authorized for this department.');
     }
     dept = user.department;
+  } else if (dept === 'ALL') {
+    dept = '';   // F-48: admins may pass 'ALL' for the company view, like
+                 // getCallJourney / directCallResolveRequest_ already accept
   } else if (dept && getAllDepartments_().indexOf(dept) === -1) {
     throw new Error('Unknown department: ' + dept);
   }
@@ -258,12 +261,23 @@ function getCallJourney(req) {
     // 'A_Q_CustomerSuccess') -- a different space for several depts, so the
     // scoped query yields false negatives (the original "no path on record"
     // bug). When scoped finds nothing, retry by exact (call_date, call_id)
-    // only. Safe: the id is already dept-entitled upstream and the journey
-    // carries no caller identity (no hash/number; phone-like callee names are
-    // masked at capture). Admin company view runs unscoped already (predicate
-    // === ''), so this only adds a fallback for the manager/dept path.
+    // only. Admin company view runs unscoped already (predicate === ''), so
+    // this only adds a fallback for the dept-scoped path.
+    //
+    // F-4 entitlement gate: the old fallback trusted the client's claim that
+    // the call_id "is already dept-entitled upstream" -- but the RPC accepts
+    // arbitrary {callId, date}, so a manager could fetch ANY dept's journey
+    // by id. Now the server verifies the claim itself for managers: the id
+    // must appear as an abandoned parent id in the manager's OWN dept's
+    // Missed Calls report for that date (the exact surface the "↳ path"
+    // badge lives on). Admins are entitled to every dept, so their fallback
+    // is ungated. The journey still carries no caller identity.
     let viaFallback = false;
-    if (!json && predicate) { json = lookup(''); viaFallback = !!json; }
+    if (!json && predicate) {
+      const entitled = (user.role === 'admin')
+        || callIdInDeptMissedReport_(dept, date, callId);
+      if (entitled) { json = lookup(''); viaFallback = !!json; }
+    }
     if (!json) return { available: true, found: false };
     if (viaFallback) {
       Logger.log('getCallJourney: dept-scoped lookup missed (queue-name space), '
@@ -275,6 +289,40 @@ function getCallJourney(req) {
     return { available: false, found: false };
   } finally {
     try { conn.close(); } catch (ce) {}
+  }
+}
+
+/**
+ * F-4 entitlement gate for getCallJourney's exact-id fallback: TRUE iff
+ * `callId` appears as an abandoned parent id in the dept's OWN Missed
+ * Calls report for `date` -- agent timelines (agents[].missedTimes) or
+ * the queue-only abandoned section (queueOnly[].entries). This is the
+ * same computation the "↳ path" badge is rendered from, so whatever id
+ * the manager can legitimately see is exactly what passes. Runs only on
+ * the manager fallback path (scoped query missed), and the report is
+ * cached (missed:vN, single-day key), so repeat drills are cheap.
+ * Best-effort: any error returns false (the fallback stays closed).
+ */
+function callIdInDeptMissedReport_(dept, date, callId) {
+  if (!dept || !callId) return false;
+  try {
+    const rpt = getMissedCallsReport({ department: dept, from: date, to: date });
+    const listHasId = function (groups, entriesKey) {
+      for (let i = 0; i < ((groups && groups.length) || 0); i++) {
+        const entries = groups[i][entriesKey] || [];
+        for (let j = 0; j < entries.length; j++) {
+          if (entries[j] && entries[j].parentId != null
+              && String(entries[j].parentId) === callId) return true;
+        }
+      }
+      return false;
+    };
+    return listHasId(rpt && rpt.agents, 'missedTimes')
+        || listHasId(rpt && rpt.queueOnly, 'entries');
+  } catch (e) {
+    Logger.log('callIdInDeptMissedReport_ failed (fallback stays closed): '
+      + (e && e.message ? e.message : e));
+    return false;
   }
 }
 
@@ -543,6 +591,56 @@ function getInboundInsurerDaily(req) {
 
 
 // ---------------------------------------------------------------------------
+// S1(c): inbound queue-name discovery scan. The RAW queue names actually
+// present in Neon `inbound_calls` (entry_queue + final_queue) over the
+// lookback window, with distinct-call counts + last-seen dates. This is the
+// inbound mirror of DeptConfig's scanQcdQueueNames_: inbound_calls carries
+// the phone system's raw names (a DIFFERENT name space from QCD-canonical,
+// bridged per dept by the INV-54 `Inbound Queue Aliases`), and until this
+// surface existed there was no way to SEE which raw names the data contains
+// -- an unaliased name silently fell out of every dept's inbound
+// attribution. Consumed by DeptConfig.gs::discoverInboundQueues_ (the Dept
+// Config modal's "Discovered inbound queues" section).
+//
+// Returns null when Neon is unreachable/unconfigured (caller renders an
+// "unavailable" note -- distinct from "no rows"), else an array of
+// { queue, calls, last_seen } ordered busiest-first.
+function scanInboundQueueNames_(lookbackDays) {
+  const days = Math.max(1, Number(lookbackDays) || 180);
+  let conn = null;
+  try {
+    conn = (typeof getDashboardNeonConn_ === 'function') ? getDashboardNeonConn_() : null;
+    if (!conn) return null;
+    // count(DISTINCT call_id): a call whose entry and final queue are the
+    // same name would otherwise count twice via the UNION ALL.
+    const sql =
+      "SELECT COALESCE(json_agg(t ORDER BY t.calls DESC), '[]')::text AS j FROM (" +
+        "SELECT q.queue AS queue, count(DISTINCT q.call_id) AS calls, " +
+          "max(q.call_date)::text AS last_seen FROM (" +
+          "SELECT entry_queue AS queue, call_id, call_date FROM inbound_calls " +
+            "WHERE call_date >= (CURRENT_DATE - ?::int) AND COALESCE(entry_queue,'') <> '' " +
+          "UNION ALL " +
+          "SELECT final_queue AS queue, call_id, call_date FROM inbound_calls " +
+            "WHERE call_date >= (CURRENT_DATE - ?::int) AND COALESCE(final_queue,'') <> ''" +
+        ") q GROUP BY q.queue) t";
+    const stmt = conn.prepareStatement(sql);
+    stmt.setInt(1, days);
+    stmt.setInt(2, days);
+    const rs = stmt.executeQuery();
+    const json = rs.next() ? rs.getString('j') : '[]';
+    rs.close(); stmt.close();
+    const arr = JSON.parse(json || '[]');
+    return Array.isArray(arr) ? arr : [];
+  } catch (e) {
+    Logger.log('scanInboundQueueNames_ failed (best-effort): ' + (e && e.message ? e.message : e));
+    if (typeof recordNeonReadFailure_ === 'function') recordNeonReadFailure_('scanInboundQueueNames_', e);
+    return null;
+  } finally {
+    if (conn) { try { conn.close(); } catch (ce) {} }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Temporal abandon heatmap (day-of-week x half-hour-slot), sourced from
 // inbound_calls. Powers the heatmap panel in BOTH the Inbound report and the
 // QCD report (a "when are callers abandoning / when are we short-staffed"
@@ -654,4 +752,112 @@ function emptyInboundHeatmap_(scope) {
     },
     cells: [],
   };
+}
+
+// ---------------------------------------------------------------------------
+// Heatmap cell drill: the individual ABANDONED calls behind one heatmap cell
+// (weekday x hour-slot), so "there's a Tuesday-morning problem" can drill to
+// "here are the Tuesday-morning calls". Same auth + dept scoping as the
+// heatmap itself (inboundResolveRequest_ -- which carries the admin-only
+// vetting gate -- + inboundDeptPredicate_), the same TZ shift / window /
+// slot math, and the same disposition='abandoned' definition as the cell's
+// `abandoned` count, so the list reconciles with the cell to the call.
+// Newest-first, capped at INBOUND_HEATMAP_CELL_MAX rows (meta.truncated).
+// NOT cached (per-cell, cheap, and an unavailable payload must not pin --
+// the getCallJourney pattern). Response carries NO caller identity (no
+// hash/number); each row's (call_date, call_id) keys the existing
+// getCallJourney "↳ path" drill.
+const INBOUND_HEATMAP_CELL_MAX = 200;
+
+function getInboundHeatmapCell(req) {
+  const scope = inboundResolveRequest_(req);   // auth + dept scoping (throws on bad access)
+  const dow = Math.floor(Number(req && req.dow));
+  const slot = Math.floor(Number(req && req.slot));
+  const slotCount = Math.max(1, Math.round(
+    (INBOUND_HEATMAP_WINDOW_END_HOUR - INBOUND_HEATMAP_WINDOW_START_HOUR)
+    * 60 / INBOUND_HEATMAP_SLOT_MINUTES));
+  if (!(dow >= 1 && dow <= 5)) throw new Error('dow must be 1-5 (Mon-Fri).');
+  if (!(slot >= 0 && slot < slotCount)) throw new Error('slot must be 0-' + (slotCount - 1) + '.');
+
+  const out = {
+    meta: {
+      from: scope.from, to: scope.to, available: true,
+      department: scope.dept || null, companyView: scope.companyView,
+      unmapped: false, dow: dow, slot: slot, truncated: false,
+      windowStartHour: INBOUND_HEATMAP_WINDOW_START_HOUR,
+      slotMinutes: INBOUND_HEATMAP_SLOT_MINUTES, tzLabel: 'CST',
+    },
+    calls: [],
+  };
+  if (!scope.companyView && scope.deptQueues.length === 0) {
+    out.meta.unmapped = true;
+    return out;
+  }
+
+  let conn = null;
+  try {
+    conn = (typeof getDashboardNeonConn_ === 'function') ? getDashboardNeonConn_() : null;
+    if (!conn) { out.meta.available = false; return out; }
+
+    const deptPred = inboundDeptPredicate_(scope.dept, scope.deptQueues);
+    const dr = "c.call_date BETWEEN '" + scope.from + "'::date AND '" + scope.to + "'::date" + deptPred;
+    // Identical shift + bucket expressions to getInboundHeatmap so the cell
+    // and its drill can never disagree on which calls a bucket holds.
+    const cstStart = "((c.call_start)::time + interval '"
+      + INBOUND_HEATMAP_CST_SHIFT_HOURS + " hours')";
+    const cstSecs = '(EXTRACT(EPOCH FROM ' + cstStart + '))';
+    const winStartSecs = INBOUND_HEATMAP_WINDOW_START_HOUR * 3600;
+    const winEndSecs   = INBOUND_HEATMAP_WINDOW_END_HOUR * 3600;
+    const slotSecs     = INBOUND_HEATMAP_SLOT_MINUTES * 60;
+    const sql =
+      "SELECT COALESCE(json_agg(t), '[]')::text AS j FROM (" +
+        'SELECT c.call_date::text AS call_date, c.call_id, ' +
+          'to_char(' + cstStart + ", 'HH24:MI:SS') AS cst_start, " +
+          'c.entry_queue, c.final_queue, c.abandon_stage, c.abandoned_on_hold, ' +
+          'c.wait_seconds, c.hold_seconds ' +
+        'FROM inbound_calls c ' +
+        'WHERE ' + dr + ' ' +
+          "AND c.disposition='abandoned' " +
+          "AND c.call_start ~ '^[0-9]{1,2}:[0-9]{2}:[0-9]{2}$' " +
+          'AND ' + cstSecs + ' >= ' + winStartSecs + ' AND ' + cstSecs + ' < ' + winEndSecs + ' ' +
+          'AND EXTRACT(ISODOW FROM c.call_date) = ' + dow + ' ' +
+          'AND floor((' + cstSecs + ' - ' + winStartSecs + ') / ' + slotSecs + ')::int = ' + slot + ' ' +
+        'ORDER BY c.call_date DESC, cst_start DESC ' +
+        'LIMIT ' + (INBOUND_HEATMAP_CELL_MAX + 1) +
+      ') t';
+
+    const stmt = conn.createStatement();
+    const rs = stmt.executeQuery(sql);
+    const json = rs.next() ? rs.getString('j') : null;
+    rs.close(); stmt.close();
+    if (json == null) { out.meta.available = false; return out; }
+
+    let arr = JSON.parse(json);
+    if (!Array.isArray(arr)) arr = [];
+    if (arr.length > INBOUND_HEATMAP_CELL_MAX) {
+      out.meta.truncated = true;
+      arr = arr.slice(0, INBOUND_HEATMAP_CELL_MAX);
+    }
+    out.calls = arr.map(function (c) {
+      return {
+        callDate: String(c.call_date || ''),
+        callId: String(c.call_id || ''),
+        cstStart: String(c.cst_start || ''),
+        entryQueue: c.entry_queue || null,
+        finalQueue: c.final_queue || null,
+        abandonStage: c.abandon_stage || null,
+        abandonedOnHold: !!c.abandoned_on_hold,
+        waitSeconds: c.wait_seconds == null ? null : Number(c.wait_seconds),
+        holdSeconds: c.hold_seconds == null ? null : Number(c.hold_seconds),
+      };
+    });
+    return out;
+  } catch (e) {
+    Logger.log('getInboundHeatmapCell failed (best-effort): ' + (e && e.message ? e.message : e));
+    if (typeof recordNeonReadFailure_ === 'function') recordNeonReadFailure_('getInboundHeatmapCell', e);
+    out.meta.available = false;
+    return out;
+  } finally {
+    if (conn) { try { conn.close(); } catch (ce) {} }
+  }
 }
