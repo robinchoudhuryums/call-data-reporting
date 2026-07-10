@@ -717,10 +717,17 @@ function emptyIndividualReport_(dept, from, to, selectedAgents, masterMonthKeys)
   return {
     meta: {
       department: dept, from: from, to: to,
+      // RPT-9: mirror the populated meta shape (the F5/F-37 empty-shape
+      // discipline) -- prior fields null (no comparison ran), rosterSize
+      // from the roster that was JUST read (not a hardcoded 0), and the
+      // active/excluded fields present so client reads never see undefined.
+      priorFrom: null, priorTo: null, priorOverlap: false,
       trendStart: from, trendEnd: to,
       agents: selectedAgents,
       mode: selectedAgents.length > 1 ? 'comparison' : 'individual',
-      rosterSize: 0,
+      rosterSize: emptyRoster.names.length,
+      activeAgentCount: 0,
+      excludedAgents: Object.keys(emptyExcludedSet),
       generatedAt: new Date().toISOString(),
     },
     dateLabel: from + ' - ' + to,

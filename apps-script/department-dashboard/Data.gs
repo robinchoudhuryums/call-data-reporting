@@ -662,7 +662,10 @@ function computeSummary_(dept, from, to, scope) {
       from: from,
       to: to,
       scope: scope,
-      rowsScanned: lastRow - 1,
+      // CORE-8: clamp -- on the Neon path with no/absent sheet, lastRow is 0
+      // and `lastRow - 1` reported a nonsense -1 (this field describes the
+      // SHEET scan; the Neon row count is visible in the [dqe-read] log line).
+      rowsScanned: Math.max(0, lastRow - 1),
       rowsMatched: rowsMatched,
       rosterSize: roster.names.length,
       agentsWithData: rows.length,
@@ -707,6 +710,9 @@ function emptySummary_(dept, from, to, scope, rosterSize, rowsScanned, deptQueue
       totalUnique: 0, totalRung: 0, totalMissed: 0, totalAnswered: 0,
       tttSeconds: 0, attSeconds: 0,
       avgAbdWaitSeconds: 0, csrAvgAbdWaitSeconds: 0,
+      // CORE-8: mirror the populated path's INV-53 count fields so client
+      // code reading them never sees undefined on a no-data day.
+      rosterAgentCount: 0, queueOnlyAgentCount: 0,
     },
     qcd: null,
     diagnostics: {

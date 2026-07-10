@@ -62,7 +62,7 @@ const THEME = {
 };
 
 const REPORT_ANCHOR_ROW = 12;
-const DIAG_COL          = 12;   // Column L for diagnostics
+const DIAG_COL          = 12;   // Column L -- the diagnostics panel's MINIMUM column (REP-1: it now floats right of wide reports)
 const SHEET_NAME        = 'Custom Report Builder';
 const HIST_SHEET_NAME   = 'CDR Historical Data';
 const CONFIG_SHEET_NAME = 'DO NOT EDIT!';
@@ -778,11 +778,24 @@ function buildPieCharts(sheet, headerRow, tableRows, tableHeaders, cats, anchorR
    ═══════════════════════════════════════════ */
 
 function writeDiagnostics(dashSheet, diag, cats, agents, start1, end1) {
-  const col = DIAG_COL;
+  // REP-1: the panel FLOATS to the right of the rendered report instead of
+  // sitting at a fixed col L -- comparison-mode / 3+-category reports are
+  // >= 15 columns wide, so the fixed L-N clear+write wiped report cells
+  // (TTT / ATT-prior columns) mid-table. Ordering contract: this runs LAST
+  // (step 12), after the table render, so getLastColumn() reflects the
+  // fresh report. The render step's 40-col clear already wiped the previous
+  // panel's rows >= REPORT_ANCHOR_ROW; its rows 1..11 are cleared here via
+  // the column remembered in Script Properties (so a shrinking report
+  // doesn't leave a stale panel behind, and the panel can't ratchet
+  // rightward run over run).
+  const props = PropertiesService.getScriptProperties();
+  const prevCol = parseInt(props.getProperty('CRB_DIAG_COL') || String(DIAG_COL), 10);
+  if (prevCol >= 1) {
+    dashSheet.getRange(1, prevCol, REPORT_ANCHOR_ROW - 1, 3).clearContent().clearFormat();
+  }
+  const col = Math.max(DIAG_COL, dashSheet.getLastColumn() + 2);
+  props.setProperty('CRB_DIAG_COL', String(col));
   const maxEntries = 25;   // Cap per category to avoid overwhelming the panel
-
-  // Clear previous diagnostics
-  dashSheet.getRange(1, col, 200, 3).clearContent().clearFormat();
 
   let r = 1;
 

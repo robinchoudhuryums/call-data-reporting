@@ -89,7 +89,10 @@ function diagnoseDate_() {
  * Edit TEST_DATE below before running.
  */
 function whyNoMatches_() {
-  const TEST_DATE = '2026-03-09';  // YYYY-MM-DD
+  // CORE-9: defaults to the most recent DQE date so this editor-run
+  // diagnostic works out of the box months later; hardcode a YYYY-MM-DD
+  // here when investigating a specific historical date.
+  const TEST_DATE = getLatestDataDate() || '2026-03-09';
 
   const ss = openSpreadsheet_();
   const sheet = ss.getSheetByName(SHEETS.HISTORICAL);
@@ -303,9 +306,16 @@ function dumpCell_() {
  * Edit DEPT, FROM, TO below before running.
  */
 function diagnoseAbandoned_() {
+  // CORE-9: defaults to the most recent DQE date (single-day window) so
+  // the editor-run diagnostic works out of the box; hardcode FROM/TO when
+  // investigating a specific historical range. NOTE: the
+  // HISTORICAL_ABANDONED_PARENT_IDS constant used below lives in
+  // MissedCallsReport.gs (Apps Script global scope resolves it) -- this
+  // function breaks with a ReferenceError if that file is ever removed.
   const DEPT = 'CSR';
-  const FROM = '2026-05-15';
-  const TO   = '2026-05-18';
+  const LATEST_ = getLatestDataDate() || '2026-05-18';
+  const FROM = LATEST_;
+  const TO   = LATEST_;
 
   const ss = openSpreadsheet_();
   const sheet = ss.getSheetByName(SHEETS.HISTORICAL);

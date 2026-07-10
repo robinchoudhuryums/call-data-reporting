@@ -471,9 +471,27 @@ function getCompanyOverview(req) {
   });
 
   const depts = [];
+  const flushed_ = {};
   topLevel.forEach(function (p) {
     depts.push(p);
+    flushed_[p.name] = true;
     (childrenByParent[p.name] || []).forEach(function (c) { depts.push(c); });
+  });
+  // RPT-5: a dept whose configured parent isn't a RENDERED top-level dept
+  // (parent is hidden via OVERVIEW_HIDDEN_DEPTS, a typo'd non-dept string
+  // in the constant, or a constant-level cycle) used to vanish entirely --
+  // excluded from topLevel (it has a parent) AND never flushed (its parent
+  // isn't in topLevel). Surface such orphans as top-level tiles with a log
+  // line so the misconfig is visible instead of silently hiding a dept.
+  Object.keys(childrenByParent).forEach(function (parent) {
+    if (flushed_[parent]) return;
+    childrenByParent[parent].forEach(function (c) {
+      Logger.log('getCompanyOverview: dept "%s" has parent "%s" which is not a rendered '
+        + 'top-level dept (hidden / typo / cycle) -- rendering it as top-level instead.',
+        c.name, parent);
+      c.parent = null;   // don't claim a nesting the grid can't draw
+      depts.push(c);
+    });
   });
 
   // Company-wide aggregate for latestDate. Total roster size is the

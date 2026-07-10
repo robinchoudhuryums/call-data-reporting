@@ -383,6 +383,51 @@ string math). Never mix these ms values with real-clock `Date.now()`.
 
 ---
 
+## Batch-F polish fixes + accepted deferrals
+
+**Fixed (see the finding IDs in code comments):** OPS-2 (digest lock
+narrowed to a run-claim marker; alerts lock wait 15s→2min), OPS-4
+(backup months fetched in week windows; oversize months split into
+`.partN.jsonl`), OPS-5 (config tables snapshotted once
+`CONFIG_SOURCE=neon`), OPS-6 (invalid digest cadence flagged, not
+dropped), OPS-9 (duplicate Alert Config dept rows first-row-wins +
+flagged), OPS-11 (alerts scan the DQE sheet ONCE per run, memoized
+per date), REP-1 (Custom Report Builder diagnostics panel floats right
+of wide reports; previous column remembered in `CRB_DIAG_COL`), REP-4
+(`'N/A'` parent ids excluded from unique-parent counts), REP-5
+(`csr_team` named-range null guard), REP-7 (10-digit insurance numbers
+normalized to `+1…` with a log line), REP-9 (slot repair applies each
+column group end-to-end, shrinking the partial-apply serial-display
+window), REP-10 (neonbackfill reads 34 cols, not 36), CORE-6/8/9,
+RPT-4/5/9/10, TST-1/6/7.
+
+**Deferred (accepted, revisit when they bite):**
+
+- **OPS-3** — CacheWarm derives its warmed date keys in the SCRIPT TZ
+  while the client derives the same dates browser-locally, so the warm
+  silently misses for viewers whose browser date disagrees with
+  Central (late-evening or non-Central use). Accepted: the user base
+  is Central-office; a cold path is correct, just slower.
+- **OPS-10** — the full `auth/drive` scope is broader than NeonBackup's
+  single self-created folder needs (`drive.file` would do). Deliberate
+  grant documented in NeonBackup.gs; narrowing requires re-consent and
+  a live verification that script-created files stay reachable —
+  operator's call.
+- **REP-6** — the extraction tool (`dataFilters.js`) hardcodes the QCDR
+  Output row map, two DNIS literals, and `Steering Number!B51:H51`
+  with no drift detection; a layout change silently re-labels which
+  filter logic runs. Real fix is a config block + assertions
+  (mini-project on an internal verification tool).
+- **REP-8** — DQE drill-down on a slot column (K–AC) returns the whole
+  day's missed set, not the slot's half hour, so "Found N vs
+  Dashboard X" can read as a false mismatch. Slot-aware drilling needs
+  the slot window threaded through the drill query (admin-only tool).
+- **TST-4/TST-5** — [FROZEN: DQE Report Legacy] intentionally skipped
+  per the audit ruling; put the time into the S7 legacy decommission
+  instead.
+
+---
+
 ## Source-data quirks (not code bugs)
 
 ### "Sales Voicemails" and similar pseudo-agents

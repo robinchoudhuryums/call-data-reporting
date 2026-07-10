@@ -250,7 +250,12 @@ function runAlertsCore_(dateIso, dryRun, triggeredBy) {
   let alertLock = null;
   if (!dryRun) {
     alertLock = LockService.getScriptLock();
-    if (!alertLock.tryLock(15000)) {
+    // OPS-2: wait up to 2 minutes, not 15s. The 8 AM digest trigger shares
+    // this project-wide lock and Apps Script schedules both randomly inside
+    // the same hour; with the digest now releasing the lock before its
+    // sends (see sendDigestsForCadence_) any residual contention is brief,
+    // and waiting it out beats dropping the whole day's alerts.
+    if (!alertLock.tryLock(120000)) {
       throw new Error('Another alert run is already in progress — please retry in a moment.');
     }
   }
@@ -279,6 +284,21 @@ function runAlertsCore_(dateIso, dryRun, triggeredBy) {
   const honorSkipDates = (triggeredBy === 'daily-trigger');
 
   cfg.forEach(function (entry) {
+    // OPS-9: a duplicate dept row (first row wins; see
+    // parseAlertConfigValues_) must not re-evaluate + re-email the dept.
+    // Logged as `skipped` so the hand-edit is visible in the Alert Log.
+    if (entry.duplicateRow) {
+      pushAndLog({
+        department: entry.department,
+        status: 'skipped',
+        answerRate: null,
+        threshold: entry.threshold,
+        recipients: [],
+        notes: 'Duplicate Alert Config row for this department -- the FIRST row wins. '
+             + 'Remove this row via the modal editor.',
+      });
+      return;
+    }
     // F4: a dept configured with an invalid threshold (blank / <=0 /
     // non-numeric) would otherwise be silently un-monitored. Surface it as an
     // `error` outcome (visible in the Alert Log + modal results) so the
@@ -406,34 +426,60 @@ function runAlertsCore_(dateIso, dryRun, triggeredBy) {
  * (under ALERT_LOW_AGENT_THRESHOLD% answer rate) so the email
  * can highlight individuals.
  */
-function computeDeptAnswerRateForDate_(dept, dateIso, roster) {
+// OPS-11: ONE full-sheet scan per RUN, not per dept. The date-filtered
+// per-agent tuples are memoized per execution (Apps Script globals are
+// per-execution, so no cross-run staleness); each dept then filters the
+// small per-date subset by its roster. ~14 configured depts previously
+// re-read the whole multi-year sheet 14x per run -- linear-in-history
+// waste that lengthened exactly the lock-hold window OPS-2 cares about.
+let ALERT_DATE_ROWS_MEMO_ = { dateIso: null, rows: null };
+function alertRowsForDate_(dateIso) {
+  if (ALERT_DATE_ROWS_MEMO_.dateIso === dateIso && ALERT_DATE_ROWS_MEMO_.rows) {
+    return ALERT_DATE_ROWS_MEMO_.rows;
+  }
   const ss = openSpreadsheet_();
   const sheet = ss.getSheetByName(SHEETS.HISTORICAL);
   if (!sheet) throw new Error('Sheet "' + SHEETS.HISTORICAL + '" not found.');
   const lastRow = sheet.getLastRow();
-  if (lastRow < 2) return { rung: 0, answered: 0, missed: 0, pct: 0, lowAgents: [] };
+  const rows = [];
+  if (lastRow >= 2) {
+    const ssTZ = ss.getSpreadsheetTimeZone();
+    const values = sheet.getRange(2, 1, lastRow - 1, HISTORICAL_COLS.TOTAL_ANSWERED).getValues();
+    for (let i = 0; i < values.length; i++) {
+      const r = values[i];
+      const dIso = rowDateIso_(r[HISTORICAL_COLS.DATE - 1], ssTZ);
+      if (dIso !== dateIso) continue;
+      const agent = String(r[HISTORICAL_COLS.AGENT - 1] || '').trim();
+      if (!agent) continue;
+      if (/^A_Q_/.test(agent) || agent === 'Backup CSR') continue;   // INV-23 sentinels
+      rows.push({
+        agent:    agent,
+        rung:     Number(r[HISTORICAL_COLS.TOTAL_RUNG - 1])     || 0,
+        missed:   Number(r[HISTORICAL_COLS.TOTAL_MISSED - 1])   || 0,
+        answered: Number(r[HISTORICAL_COLS.TOTAL_ANSWERED - 1]) || 0,
+      });
+    }
+  }
+  ALERT_DATE_ROWS_MEMO_ = { dateIso: dateIso, rows: rows };
+  return rows;
+}
 
+function computeDeptAnswerRateForDate_(dept, dateIso, roster) {
   const rosterSet = {};
   for (let i = 0; i < roster.names.length; i++) rosterSet[roster.names[i]] = true;
-  const ssTZ = ss.getSpreadsheetTimeZone();
 
-  const range = sheet.getRange(2, 1, lastRow - 1, HISTORICAL_COLS.TOTAL_ANSWERED);
-  const values = range.getValues();
+  const dateRows = alertRowsForDate_(dateIso);
 
   let rung = 0, answered = 0, missed = 0;
   const lowAgents = [];
 
-  for (let i = 0; i < values.length; i++) {
-    const r = values[i];
-    const dIso = rowDateIso_(r[HISTORICAL_COLS.DATE - 1], ssTZ);
-    if (dIso !== dateIso) continue;
-    const agent = String(r[HISTORICAL_COLS.AGENT - 1] || '').trim();
-    if (!agent || !rosterSet[agent]) continue;
-    if (/^A_Q_/.test(agent) || agent === 'Backup CSR') continue;
+  for (let i = 0; i < dateRows.length; i++) {
+    const r = dateRows[i];
+    if (!rosterSet[r.agent]) continue;
 
-    const aRung     = Number(r[HISTORICAL_COLS.TOTAL_RUNG - 1])     || 0;
-    const aMissed   = Number(r[HISTORICAL_COLS.TOTAL_MISSED - 1])   || 0;
-    const aAnswered = Number(r[HISTORICAL_COLS.TOTAL_ANSWERED - 1]) || 0;
+    const aRung     = r.rung;
+    const aMissed   = r.missed;
+    const aAnswered = r.answered;
 
     rung += aRung; answered += aAnswered; missed += aMissed;
 
@@ -441,7 +487,7 @@ function computeDeptAnswerRateForDate_(dept, dateIso, roster) {
       const aPct = (aAnswered / aRung) * 100;
       if (aPct < ALERT_LOW_AGENT_THRESHOLD) {
         lowAgents.push({
-          name: agent, rung: aRung, answered: aAnswered, missed: aMissed,
+          name: r.agent, rung: aRung, answered: aAnswered, missed: aMissed,
           pct: round1_(aPct),
         });
       }
@@ -578,9 +624,20 @@ function readAlertConfig_() {
 function parseAlertConfigValues_(values) {
   if (!values || !values.length) return [];
   const out = [];
+  // OPS-9: dedupe hand-edited duplicate dept rows FIRST-ROW-WINS -- the
+  // save-editor's upsert edits the first case-insensitive match, so the
+  // first row is the one an admin's edits actually land on. Later rows are
+  // kept but FLAGGED (duplicateRow) so the modal can show them; the run
+  // loop skips them (two CSR rows used to mean two evaluations + two
+  // duplicate alert emails + two log rows). The Neon config path is immune
+  // (PK on department); the sheet -- still the default -- was not.
+  const seenDept_ = {};
   for (let i = 0; i < values.length; i++) {
     const dept = String(values[i][0] || '').trim();
     if (!dept) continue;
+    const dupKey = dept.toLowerCase();
+    const duplicateRow = !!seenDept_[dupKey];
+    seenDept_[dupKey] = true;
     // F4: a dept row with a bad threshold is flagged, not dropped, so it
     // can't silently fall out of monitoring with no log row / no UI signal.
     const thresholdRaw = String(values[i][1] == null ? '' : values[i][1]).trim();
@@ -597,6 +654,7 @@ function parseAlertConfigValues_(values) {
     const skipDatesRaw = String(values[i][5] || '').trim();
     out.push({
       department: dept,
+      duplicateRow: duplicateRow,
       threshold: invalidThreshold ? 0 : threshold,
       thresholdRaw: thresholdRaw,
       invalidThreshold: invalidThreshold,

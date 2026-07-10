@@ -499,6 +499,12 @@ function saveDeptConfig(req) {
     const constSet = {};
     const constArr = (typeof DEPT_QCD_QUEUES !== 'undefined') && DEPT_QCD_QUEUES[dept];
     if (Array.isArray(constArr)) constArr.forEach(function (q) { constSet[q] = true; });
+    // CORE-6: the dept's OWN effective queues (incl. previously-SAVED sheet
+    // rows) stay valid even after going quiet past the 180-day scan window
+    // -- otherwise a sheet-added queue with no constant entry made the row
+    // un-editable: any Save of that dept (even to change Notes) re-validated
+    // the whole list and rejected the stale-but-legitimate queue.
+    getDeptQcdQueues_(dept).forEach(function (q) { constSet[q] = true; });
     const unknown = qcdQueues.filter(function (q) {
       return !known[q] && !constSet[q];
     });
