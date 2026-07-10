@@ -200,3 +200,27 @@ test('DAL shape guard: default neonFetchDqeRows_ payload carries NO missed-detai
   const detail = h.call('neonFetchDqeRows_', '2026-03-09', '2026-03-15', { includeMissedDetail: true });
   assert.equal(detail[0].slots.length, 19);
 });
+
+test('CORE-2 (F-35): active-agents picker serves from Neon when the DQE sheet is GONE', function () {
+  // The sheet-retirement end state: reads on neon, sheet trimmed/archived.
+  // The old early-returns sat above the Neon branch, so the IR/Insights
+  // pickers rendered zero active agents while the report bodies computed
+  // fine from dqe_history.
+  install('neon');
+  h.state.spreadsheet = makeFakeSpreadsheet({
+    timeZone: 'America/Chicago',
+    sheets: { 'DO NOT EDIT!': ROSTER },   // no 'DQE Historical Data'
+  });
+  const res = h.call('computeActiveAgentsInRange_', 'Alpha', '2026-03-09', '2026-03-15',
+    { names: ['Anna', 'Ben'] });
+  assert.ok(res.agents.indexOf('Anna') !== -1, 'Anna active from dqe_history despite no sheet');
+  assert.ok(res.agents.indexOf('Ben') !== -1);
+
+  // Neon down + no sheet -> clean empty shape, no crash.
+  h.ctx.getDashboardNeonConn_ = function () { return null; };
+  h.state.cache.clear();
+  const empty = h.call('computeActiveAgentsInRange_', 'Alpha', '2026-03-09', '2026-03-15',
+    { names: ['Anna', 'Ben'] });
+  assert.equal(empty.agents.length, 0);
+  assert.equal(empty.floaters.length, 0);
+});

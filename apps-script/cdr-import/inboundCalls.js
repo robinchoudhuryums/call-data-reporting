@@ -488,7 +488,8 @@ function backfillInboundCalls(fromIso, toIso, force) {
     // -- notably NeonMirror.js::mirrorInboundForDate_ -- can distinguish
     // "nothing to mirror" from "Neon unreachable" and report a real row count.
     return { inserted: 0, processed: 0, skippedDone: 0, skippedEmpty: 0,
-             failures: 0, unreachable: false, stoppedEarly: null };
+             failures: 0, unreachable: false, stoppedEarly: null,
+             sheetsFound: 0 };   // IMP-11: lets the deferred mirror detect a pruned source
   }
 
   // Dates already mirrored (skipped unless force). Missing table /
@@ -564,6 +565,7 @@ function backfillInboundCalls(fromIso, toIso, force) {
     failures:    failures.length,
     unreachable: unreachable,
     stoppedEarly: stoppedEarly,
+    sheetsFound: candidates.length,   // IMP-11
   };
 }
 

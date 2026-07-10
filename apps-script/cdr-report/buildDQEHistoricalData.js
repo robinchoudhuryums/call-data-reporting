@@ -107,7 +107,9 @@ function remirrorExistingDqeDate_(dqeSheet, offsets, callDateStr) {
     });
   }
   if (!neonRows.length) return;
-  const res = writeDQERowsToNeon(neonRows);
+  // IMP-5: the re-mirror carries the COMPLETE sheet set for this date --
+  // authoritative replace clears phantom Neon rows the sheet no longer has.
+  const res = writeDQERowsToNeon(neonRows, { authoritative: true });
   if (res && res.skipped) {
     Logger.log('DQE: dup-guard re-mirror skipped (' + res.skipped
       + ' rows — Neon unreachable) for ' + callDateStr + '.');
@@ -831,7 +833,11 @@ function buildDQEHistoricalData(rawSheet, dqeSheet, opts) {
         csrAvgAbdWait:    r[33]
       };
     });
-    var neonResult = writeDQERowsToNeon(neonRows);
+    // IMP-5: the build's rows are the COMPLETE set for callDate --
+    // authoritative replace, so a force re-import whose rebuilt set is a
+    // SUBSET (e.g. an agent consolidated under an alias) removes the
+    // stale rows from dqe_history instead of leaving a phantom split.
+    var neonResult = writeDQERowsToNeon(neonRows, { authoritative: true });
     if (neonResult && neonResult.skipped) {
       Logger.log('DQE: Neon write skipped (%s rows — Neon unreachable).', neonResult.skipped);
       // F4: a mirror-only skip (Neon unreachable, sheet write OK) does NOT

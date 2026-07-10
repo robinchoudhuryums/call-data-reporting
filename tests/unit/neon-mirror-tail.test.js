@@ -86,3 +86,35 @@ test('F-20: default window applies when the property is unset (parity with a ful
   // default 3000-row window covers the whole small sheet (start === 2).
   deepEqual(tailRead(sheet, '2026-07-08').map(function (r) { return r[2]; }), ['a', 'b']);
 });
+
+test('IMP-11: a queued date whose Call_Legs sheet was pruned HARD-fails instead of silently dequeuing', function () {
+  // inbound_calls has NO sheet primary: once Call_Legs_<iso> is pruned
+  // (~14d retention) the date's inbound rows are unrecoverable. The old
+  // path returned rows:0 success and dequeued -- an invisible permanent
+  // loss. Now it throws (-> neonMirror:Inbound failure row; the IMP-6
+  // retry cap parks it with one final gave-up email).
+  const realBackfill = h.ctx.backfillInboundCalls;
+  try {
+    h.ctx.backfillInboundCalls = function () {
+      return { inserted: 0, processed: 0, skippedDone: 0, skippedEmpty: 0,
+               failures: 0, unreachable: false, stoppedEarly: null, sheetsFound: 0 };
+    };
+    assert.throws(function () { h.call('mirrorInboundForDate_', '2026-06-01'); },
+      /no longer exists .*unrecoverable|cannot be re-derived/i);
+
+    // Sheet present but empty (zero legs) is a legitimate nothing-to-mirror.
+    h.ctx.backfillInboundCalls = function () {
+      return { inserted: 0, processed: 0, skippedDone: 0, skippedEmpty: 1,
+               failures: 0, unreachable: false, stoppedEarly: null, sheetsFound: 1 };
+    };
+    assert.equal(h.call('mirrorInboundForDate_', '2026-06-02').rows, 0);
+
+    // Unreachable still keeps the date queued (retry-forever, never counts
+    // toward the IMP-6 hard-error cap).
+    h.ctx.backfillInboundCalls = function () {
+      return { inserted: 0, processed: 0, skippedDone: 0, skippedEmpty: 0,
+               failures: 0, unreachable: true, stoppedEarly: null, sheetsFound: 1 };
+    };
+    assert.equal(h.call('mirrorInboundForDate_', '2026-06-03').unreachable, true);
+  } finally { h.ctx.backfillInboundCalls = realBackfill; }
+});

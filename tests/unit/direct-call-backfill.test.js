@@ -132,8 +132,15 @@ test('dcUpsertRows_ + writeDirectCallRowsToNeon_ share the same single-date SQL'
   ];
   const res = h.call('writeDirectCallRowsToNeon_', rows, 'March 2026', '2026-03-09');
   assert.equal(res.inserted, 1);
-  assert.equal(cap.executed.length, 1);
-  assert.match(cap.executed[0].sql, /ON CONFLICT \(call_date, department, agent_name\) DO UPDATE SET/);
-  assert.equal(cap.executed[0].binds[1], '2026-03-09');
-  assert.equal(cap.commits, 1);
+  // IMP-5: the daily single-date writer is AUTHORITATIVE -- it deletes the
+  // date's rows in the same transaction before the upsert, so a force
+  // re-import whose rebuilt day drops an agent removes the phantom Neon
+  // row. (The multi-date backfill above stays upsert-only: its 50-row
+  // batches can hold PARTIAL dates.)
+  assert.equal(cap.executed.length, 2, 'DELETE + upsert');
+  assert.match(cap.executed[0].sql, /DELETE FROM direct_call_history WHERE call_date = \?::date/);
+  assert.equal(cap.executed[0].binds[0], '2026-03-09');
+  assert.match(cap.executed[1].sql, /ON CONFLICT \(call_date, department, agent_name\) DO UPDATE SET/);
+  assert.equal(cap.executed[1].binds[1], '2026-03-09');
+  assert.equal(cap.commits, 1, 'delete + upsert commit atomically');
 });

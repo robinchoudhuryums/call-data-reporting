@@ -70,7 +70,9 @@ test('F-21: writeQCDRowsToNeon chunks at 1000 rows/statement with ONE commit', f
   assert.equal(log.commits, 1);
 });
 
-test('F-21: writeCDRRowsToNeon (main insert, no HMAC) chunks at 500 rows with ONE commit', function () {
+test('F-21/IMP-3: writeCDRRowsToNeon (main insert, no HMAC) chunks at 300 rows with ONE commit', function () {
+  // IMP-3: 300 rows/chunk (was 500 -- a FULL 500-row chunk measured ~44.2KB
+  // of SQL, at/over the observed ~44KB Apps Script JDBC statement cap).
   const log = { stmtRows: [], commits: 0, rollbacks: 0 };
   install(log);
   const rows = [];
@@ -80,7 +82,7 @@ test('F-21: writeCDRRowsToNeon (main insert, no HMAC) chunks at 500 rows with ON
   }
   const res = h.fn('writeCDRRowsToNeon')(rows);
   assert.equal(res.inserted, 1100);
-  assert.equal(JSON.stringify(log.stmtRows), JSON.stringify([500, 500, 100]));
+  assert.equal(JSON.stringify(log.stmtRows), JSON.stringify([300, 300, 300, 200]));
   assert.equal(log.commits, 1);
 });
 
@@ -124,4 +126,84 @@ test('IMP-6: duplicate conflict-key rows are deduped LAST-write-wins (no "cannot
   assert.equal(out[1].v, 2);
   const uniq = [{ k: 'x' }, { k: 'y' }];
   assert.equal(dd(uniq, 'test', function (r) { return r.k; }), uniq, 'unique input passes through untouched');
+});
+
+// Recording conn for the IMP-5 / REP-2 tests: captures each statement's SQL
+// (the counting fakeConn above only records placeholder-row counts).
+function recordingConn(log) {
+  const emptyRs = { next: function () { return false; }, close: function () {} };
+  return {
+    setAutoCommit: function () {},
+    prepareStatement: function (sql) {
+      log.sqls.push(sql);
+      return {
+        setString: function () {}, setInt: function () {}, setDouble: function () {},
+        execute: function () { return true; },
+        executeQuery: function () { return emptyRs; },
+        close: function () {},
+      };
+    },
+    createStatement: function () { return { execute: function () {}, close: function () {} }; },
+    commit: function () { log.commits++; },
+    rollback: function () { log.rollbacks++; },
+    close: function () { log.closed = true; },
+  };
+}
+
+test('IMP-5: { authoritative: true } DELETEs the payload dates in the same txn before inserting', function () {
+  const log = { sqls: [], commits: 0, rollbacks: 0 };
+  h.ctx.getReachableNeonConn_ = function () { return recordingConn(log); };
+  const rows = [
+    { monthYear: 'June 2026', callDate: '06/22/2026', agentName: 'Anna',
+      queueExtensions: '', slots: [], abParentIds: '', abMissedIds: '',
+      abMissedTimes: '', ttt: '0:01:00', att: '0:01:00' },
+    { monthYear: 'June 2026', callDate: '06/23/2026', agentName: 'Anna',
+      queueExtensions: '', slots: [], abParentIds: '', abMissedIds: '',
+      abMissedTimes: '', ttt: '0:01:00', att: '0:01:00' },
+  ];
+  h.fn('writeDQERowsToNeon')(rows, { authoritative: true });
+  assert.match(log.sqls[0], /^DELETE FROM dqe_history WHERE call_date IN \(\?::date,\?::date\)$/,
+    'delete-first for BOTH distinct dates');
+  assert.match(log.sqls[1], /^INSERT INTO dqe_history/);
+  assert.equal(log.commits, 1, 'delete + insert commit atomically');
+
+  // QCD variant.
+  const qlog = { sqls: [], commits: 0, rollbacks: 0 };
+  h.ctx.getReachableNeonConn_ = function () { return recordingConn(qlog); };
+  h.fn('writeQCDRowsToNeon')([
+    { monthYear: 'June 2026', week: 'W1', callDate: '06/22/2026', callQueue: 'A_Q_X',
+      callSource: 'Total Calls', totalCalls: 1, totalAnswered: 1, abandoned: 0,
+      longestWait: '0:01:00', avgAnswer: '0:00:10', abandonedPct: 0, violations: 0 },
+  ], { authoritative: true });
+  assert.match(qlog.sqls[0], /^DELETE FROM qcd_history WHERE call_date IN \(\?::date\)$/);
+  assert.equal(qlog.commits, 1);
+
+  // Without the flag: NO delete (partial-set callers like the bulk archive
+  // and the row-batched backfills stay pure upserts).
+  const plog = { sqls: [], commits: 0, rollbacks: 0 };
+  h.ctx.getReachableNeonConn_ = function () { return recordingConn(plog); };
+  h.fn('writeDQERowsToNeon')([rows[0]]);
+  assert.equal(plog.sqls.filter(function (q) { return /^DELETE/.test(q); }).length, 0,
+    'plain calls never delete');
+});
+
+test('REP-2: the phone-child parent-id lookup is chunked (400 rows/query)', function () {
+  const log = { sqls: [], commits: 0, rollbacks: 0 };
+  h.ctx.getReachableNeonConn_ = function () { return recordingConn(log); };
+  h.state.props.HMAC_SECRET = 'test-secret';
+  try {
+    const rows = [];
+    for (let i = 0; i < 900; i++) {
+      rows.push({ callDate: '2026-06-22', dept: 'CSR', agentName: 'A' + i,
+                  obExtTTT: '0:01:00', obExtATT: '0:00:30',
+                  phonesX: '+12145550000 0:01:00 (1)' });   // triggers the child path
+    }
+    h.fn('writeCDRRowsToNeon')(rows);
+    const lookups = log.sqls.filter(function (q) { return q.indexOf('FROM call_history_dept d') !== -1; });
+    assert.equal(lookups.length, 3, '900 rows -> 3 id-lookup queries (400/400/100)');
+    lookups.forEach(function (q) {
+      const tuples = (q.match(/\(\?::date, \?, \?\)/g) || []).length;
+      assert.ok(tuples <= 400, 'each lookup stays within the chunk cap (got ' + tuples + ')');
+    });
+  } finally { delete h.state.props.HMAC_SECRET; }
 });

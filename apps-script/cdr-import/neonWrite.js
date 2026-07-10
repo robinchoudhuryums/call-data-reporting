@@ -120,8 +120,39 @@ function neonDedupeByKey_(rows, label, keyFn) {
   return order.map(function (k) { return byKey[k]; });
 }
 
+// IMP-5: authoritative per-date REPLACE support. The mirrors were
+// upsert-only, so a force re-import whose rebuilt set is a SUBSET of the
+// old one (agent renamed via alias, a corrected extra row removed) left
+// PHANTOM rows in Neon forever -- with DQE_READ_SOURCE=neon the dashboard
+// would show a split agent + double-counted totals for that date. Callers
+// whose payload is provably the COMPLETE set for its date(s) -- the daily
+// builds, the dup-guard re-mirror, the deferred per-date mirror -- pass
+// { authoritative: true } and the writer DELETEs those dates inside the
+// SAME transaction before inserting (rollback undoes both). Partial-set
+// callers (bulk archive after dedupeAlreadyArchived_, the row-batched
+// backfills) must NOT pass it.
+function neonDistinctIsoDates_(rows, dateFn) {
+  var seen = {};
+  var out = [];
+  for (var i = 0; i < rows.length; i++) {
+    var iso = dateFn(rows[i]);
+    if (iso && !seen[iso]) { seen[iso] = true; out.push(iso); }
+  }
+  return out;
+}
+
+function neonAuthoritativeDateDelete_(conn, table, isoDates) {
+  if (!isoDates || !isoDates.length) return;
+  var stmt = conn.prepareStatement('DELETE FROM ' + table + ' WHERE call_date IN ('
+    + isoDates.map(function () { return '?::date'; }).join(',') + ')');
+  for (var i = 0; i < isoDates.length; i++) stmt.setString(i + 1, isoDates[i]);
+  stmt.execute();
+  stmt.close();
+  Logger.log('%s: authoritative replace for %s date(s): %s', table, isoDates.length, isoDates.join(', '));
+}
+
 // -- DQE writer --------------------------------------------------------------
-function writeDQERowsToNeon(rows) {
+function writeDQERowsToNeon(rows, opts) {
   if (!rows || !rows.length) return { inserted: 0, skipped: 0 };
   // IMP-6: uq_dqe_history is (call_date, agent_name). Key on the SAME
   // normalized date the bind below sends so duplicates collide as the DB
@@ -137,6 +168,11 @@ function writeDQERowsToNeon(rows) {
   conn.setAutoCommit(false);
 
   try {
+    // IMP-5: authoritative per-date replace (see neonAuthoritativeDateDelete_).
+    if (opts && opts.authoritative) {
+      neonAuthoritativeDateDelete_(conn, 'dqe_history',
+        neonDistinctIsoDates_(rows, function (r) { return parseDateForNeon(r.callDate); }));
+    }
     // F-21: chunk the multi-row INSERT. One statement for the whole batch
     // was fine on the daily path (~250 rows) but the bulk-archive path can
     // pass many dates at once -- past ~35 dates the SQL string blows the
@@ -226,7 +262,7 @@ function writeDQERowsToNeon(rows) {
 }
 
 // -- QCD writer --------------------------------------------------------------
-function writeQCDRowsToNeon(rows) {
+function writeQCDRowsToNeon(rows, opts) {
   if (!rows || !rows.length) return { inserted: 0 };
   // IMP-6: uq_qcd_history is (call_date, call_queue, call_source).
   rows = neonDedupeByKey_(rows, 'writeQCDRowsToNeon', function (r) {
@@ -240,6 +276,11 @@ function writeQCDRowsToNeon(rows) {
   conn.setAutoCommit(false);
 
   try {
+    // IMP-5: authoritative per-date replace (see neonAuthoritativeDateDelete_).
+    if (opts && opts.authoritative) {
+      neonAuthoritativeDateDelete_(conn, 'qcd_history',
+        neonDistinctIsoDates_(rows, function (r) { return parseDateForNeon(r.callDate); }));
+    }
     // F-21: chunked like the DQE writer (12 params/row; the bulk-archive
     // path mirrors the whole accumulated Pending Archive in one call).
     // ONE commit after all chunks.
@@ -336,7 +377,13 @@ function writeCDRRowsToNeon(rows, opts) {
     // CDR mirror can pass many dates at once). ONE commit after all chunks,
     // BEFORE the phone child rows (unchanged ordering -- the children look
     // up committed parent ids).
-    var CDR_CHUNK_ROWS = 500;
+    // IMP-3: 300 rows/chunk, down from 500. A FULL 500-row chunk measured
+    // ~44.2KB of SQL (85-char placeholder x 500 + column list + the ON
+    // CONFLICT tail) -- at/over the empirically observed ~44KB Apps Script
+    // JDBC cap ("Argument too large: sql"), so every exactly-full chunk on
+    // a multi-date bulk mirror was a coin-flip. 300 rows ~= 27KB: safe
+    // margin, and the daily path (~250 rows) still fits one statement.
+    var CDR_CHUNK_ROWS = 300;
     var placeholderRow = '(?,?,?,?,?,?,?::jsonb,?::jsonb,?::jsonb,?,?,?,?,?,?::jsonb,?::jsonb,?::jsonb,?,?,?,?)';
     for (var off = 0; off < rows.length; off += CDR_CHUNK_ROWS) {
     var chunk = rows.slice(off, off + CDR_CHUNK_ROWS);
@@ -448,25 +495,34 @@ function cdrInsertPhoneChildRows_(conn, rows, hmacSecret) {
   // matches the DB-readback key (getString returns JS null for a SQL NULL).
   var cdrKeyPart_ = function (x) { return x == null ? '<null>' : String(x); };
 
-  var joinPlaceholders = rows.map(function() { return '(?::date, ?, ?)'; }).join(',');
-  var idSql = 'SELECT d.id, d.call_date::text, d.department, d.agent_name ' +
-    'FROM call_history_dept d ' +
-    'JOIN (VALUES ' + joinPlaceholders + ') AS v(cd, dept, agent) ' +
-    'ON d.call_date = v.cd AND d.department IS NOT DISTINCT FROM v.dept ' +
-    'AND d.agent_name IS NOT DISTINCT FROM v.agent';
-  var idStmt = conn.prepareStatement(idSql);
-  var q = 1;
-  for (var j = 0; j < rows.length; j++) {
-    idStmt.setString(q++, rows[j].callDate);
-    idStmt.setString(q++, rows[j].dept);
-    idStmt.setString(q++, rows[j].agentName);
-  }
-  var idRs = idStmt.executeQuery();
+  // REP-2: the parent-id lookup is CHUNKED like the inserts (F-21). One
+  // (?::date, ?, ?) tuple per input row over the ENTIRE rows array crossed
+  // the ~44KB JDBC statement cap around ~2,900 rows -- reachable on the
+  // F-18 bulk-archive mirror (whole Pending Archive in one call), which
+  // then lost the phone-child mirror for the whole run.
+  var CDR_ID_LOOKUP_CHUNK_ROWS = 400;
   var idMap = {};
-  while (idRs.next()) {
-    idMap[cdrKeyPart_(idRs.getString(2)) + '|' + cdrKeyPart_(idRs.getString(3)) + '|' + cdrKeyPart_(idRs.getString(4))] = idRs.getInt(1);
+  for (var lk = 0; lk < rows.length; lk += CDR_ID_LOOKUP_CHUNK_ROWS) {
+    var lkChunk = rows.slice(lk, lk + CDR_ID_LOOKUP_CHUNK_ROWS);
+    var joinPlaceholders = lkChunk.map(function() { return '(?::date, ?, ?)'; }).join(',');
+    var idSql = 'SELECT d.id, d.call_date::text, d.department, d.agent_name ' +
+      'FROM call_history_dept d ' +
+      'JOIN (VALUES ' + joinPlaceholders + ') AS v(cd, dept, agent) ' +
+      'ON d.call_date = v.cd AND d.department IS NOT DISTINCT FROM v.dept ' +
+      'AND d.agent_name IS NOT DISTINCT FROM v.agent';
+    var idStmt = conn.prepareStatement(idSql);
+    var q = 1;
+    for (var j = 0; j < lkChunk.length; j++) {
+      idStmt.setString(q++, lkChunk[j].callDate);
+      idStmt.setString(q++, lkChunk[j].dept);
+      idStmt.setString(q++, lkChunk[j].agentName);
+    }
+    var idRs = idStmt.executeQuery();
+    while (idRs.next()) {
+      idMap[cdrKeyPart_(idRs.getString(2)) + '|' + cdrKeyPart_(idRs.getString(3)) + '|' + cdrKeyPart_(idRs.getString(4))] = idRs.getInt(1);
+    }
+    idRs.close(); idStmt.close();
   }
-  idRs.close(); idStmt.close();
 
   // ---- build + hash (timed) ----
   var tBuild = Date.now();

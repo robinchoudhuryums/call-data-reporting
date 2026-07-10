@@ -528,6 +528,17 @@ function writeDirectCallRowsToNeon_(rows, monthYear, isoDate) {
   conn.setAutoCommit(false);
   try {
     dcEnsureNeonTable_(conn);
+    // IMP-5: this daily writer's rows are the COMPLETE per-agent set for
+    // isoDate (the sheet side is refresh-in-window for the same date), so
+    // replace the date authoritatively -- an agent who drops out of a
+    // force-rebuilt day no longer lingers as a phantom Neon row. Same
+    // transaction: a failed insert rolls the delete back too. The
+    // multi-date backfill (dcUpsertRows_ direct, partial 50-row batches)
+    // deliberately does NOT get this.
+    const del = conn.prepareStatement('DELETE FROM direct_call_history WHERE call_date = ?::date');
+    del.setString(1, isoDate);
+    del.execute();
+    del.close();
     const upsertRows = rows.map(function (r) {
       return Object.assign({ monthYear: monthYear, isoDate: isoDate }, r);
     });

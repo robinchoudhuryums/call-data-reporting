@@ -347,7 +347,9 @@ function mirrorQcdForDate_(ss, iso) {
     });
   });
   if (!batch.length) return { rows: 0 };
-  var res = writeQCDRowsToNeon(batch);
+  // IMP-5: the tail-scan returns the COMPLETE sheet block for the date --
+  // authoritative replace keeps Neon row-identical to the sheet.
+  var res = writeQCDRowsToNeon(batch, { authoritative: true });
   if (res && res.skipped) return { unreachable: true, rows: 0 };
   return { rows: batch.length };
 }
@@ -441,7 +443,8 @@ function mirrorDqeForDate_(ss, iso) {
     });
   });
   if (!batch.length) return { rows: 0 };
-  var res = writeDQERowsToNeon(batch);
+  // IMP-5: complete per-date sheet block -- authoritative replace.
+  var res = writeDQERowsToNeon(batch, { authoritative: true });
   if (res && res.skipped) return { unreachable: true, rows: 0 };
   return { rows: batch.length };
 }
@@ -462,6 +465,17 @@ function mirrorInboundForDate_(iso) {
   // unrecoverable inbound_calls data (no sheet primary) on any inbound outage.
   var res = backfillInboundCalls(iso, iso, true);
   if (res && res.unreachable) return { unreachable: true, rows: 0 };
+  // IMP-11: distinguish "sheet exists, nothing to write" (fine) from "the
+  // Call_Legs_<iso> sheet was PRUNED before this date drained" (a >14-day
+  // backlog). The old path returned rows:0 success and dequeued the date,
+  // silently accepting that its inbound_calls rows (NO sheet primary) were
+  // lost. Throw instead: the failure row + IMP-6 retry cap make the loss
+  // LOUD (one final gave-up email) rather than invisible.
+  if (res && res.sheetsFound === 0) {
+    throw new Error('Call_Legs_' + iso + ' no longer exists (pruned ~14d retention) -- '
+      + 'inbound_calls rows for this date cannot be re-derived and are lost. '
+      + 'Acknowledge via the gave-up email; do not re-enqueue unless the sheet is restored.');
+  }
   if (res && res.failures) {
     // A hard write error (not reachability) -- throw so neonMirrorDate_'s step
     // logs a real failure and keeps the date queued (mirrors how the CDR/QCD/

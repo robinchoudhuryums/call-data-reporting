@@ -244,7 +244,11 @@ function getDepartmentSummary(req) {
   // v10 (P3): qcdSnapshot's unqualified total is OWN-queues-only (reconciles
   //   with the QCD modal / Overview); adds subTotals / allTotals +
   //   mainQueueCount / subQueueCount for the gated Main/Sub/All summary lines.
-  const cacheKey = 'summary:v11:' + dept + ':' + scope + ':' + from + ':' + to;
+  // CORE-3: suffixed with the ACTIVE read source (the latestDate:v1
+  // pattern) so a DQE_READ_SOURCE flip can't serve a table computed from
+  // the other source for up to the 30-min TTL.
+  const summarySource = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
+  const cacheKey = 'summary:v11:' + dept + ':' + scope + ':' + from + ':' + to + ':' + summarySource;
   const cached = cache.get(cacheKey);
   if (cached) {
     try {

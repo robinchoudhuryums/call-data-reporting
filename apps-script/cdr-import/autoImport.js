@@ -1098,6 +1098,10 @@ function processBatchArchive(silent = false, callerHoldsLock = false) {
             violations:    r[11]
           };
         });
+        // IMP-5 note: deliberately NOT authoritative -- this bulk payload is
+        // post-dedupeAlreadyArchived_, so it can be a PARTIAL set for a date
+        // (rows already archived earlier are dropped); an authoritative
+        // delete here would nuke legitimate Neon rows.
         writeQCDRowsToNeon(neonQcdRows);
       } catch (neonErr) {
         notifyNeonWriteFailure('processBatchArchive (bulk QCD)', neonErr.message);
@@ -1776,7 +1780,10 @@ if (!skipCDR && obcHD) {
             violations:    r[11]
           };
         });
-        var neonResult = writeQCDRowsToNeon(neonQcdRows);
+        // IMP-5: the daily QCD payload is the COMPLETE recomputed set for
+        // the date -- authoritative replace clears stale (queue, source)
+        // tuples a force re-import removed.
+        var neonResult = writeQCDRowsToNeon(neonQcdRows, { authoritative: true });
         if (neonResult && neonResult.skipped) {
           setNeonStatus_('unreachable');
           console.log('processIntegratedHistory: Neon QCD write skipped (' + neonResult.skipped + ' rows — Neon unreachable).');
