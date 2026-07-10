@@ -693,6 +693,11 @@
     white-space: nowrap;
     position: sticky;
     top: 0;
+    /* Opaque background so scrolling rows pass cleanly UNDER the sticky header
+       instead of showing through it (the #4 "gap where you see passing info"
+       on the all-dept report's sticky strip). */
+    background: var(--paper-card);
+    z-index: 2;
     border-bottom: 1px solid var(--line);
   }
   .agents thead th:hover { color: var(--ink); }
@@ -2387,7 +2392,9 @@
     flex-shrink: 0;
     margin-top: 1px;
   }
-  .ir-insight-mark-positive { background: var(--accent-soft); color: var(--accent); }
+  /* #11a: green (not blue) so the positive ↑ stands out from the blue-tinted
+     Insights banner instead of blending into it. */
+  .ir-insight-mark-positive { background: var(--good-soft); color: var(--good); }
   .ir-insight-mark-negative { background: var(--warn-soft); color: var(--warn); }
   .ir-insight-mark-neutral  { background: var(--paper-2); color: var(--muted); }
   /* Compact form hint for the resolved prior-range preview under
@@ -3749,6 +3756,11 @@
     text-align: right; font-variant-numeric: tabular-nums;
   }
   .qcd-alldept-table thead th { color: var(--muted); font-weight: 600; }
+  /* #3d: abandon % over the 5% threshold reads bold (color comes from the
+     bm-over / qcd-warn-light warn tint). */
+  .qcd-rate-over { font-weight: 700; }
+  /* #3: muted "· <sub-dept>" tag on a nested sub-queue row. */
+  .qcd-alldept-subq { color: var(--muted); font-size: 11px; font-weight: 400; }
   .qcd-alldept-deptrow td {
     font-weight: 700; color: var(--ink); background: var(--paper-2);
     padding-top: 9px; border-bottom: none;
@@ -4311,6 +4323,15 @@
     flex-direction: column;
     gap: 6px;
     min-width: 0;
+  }
+  /* #1: every dept tile solos its trend line on click (Shift-click = compare). */
+  .ov-chart-hint { font-weight: 400; font-size: 11px; color: var(--muted); letter-spacing: 0; text-transform: none; }
+  .ov-dept-tile-solo { cursor: pointer; }
+  .ov-dept-tile-solo:hover { border-color: var(--accent); }
+  /* Marker on tiles currently soloed / being compared in the trend chart. */
+  .ov-tile-soloed {
+    box-shadow: inset 0 0 0 2px var(--accent);
+    border-color: var(--accent);
   }
   /* The viewer's own (manager) / selected (admin) dept: folded into the grid
      as the first card with a distinctive accent border + corner badge (the
@@ -5226,7 +5247,9 @@
   /* Temporal abandon heatmap (weekday x hour), shared by Inbound + QCD. Cells
      are colored in JS (heatCellBg_) anchored on the 5% standard; this is just
      layout + chrome. */
-  .ds-heatmap-panel { margin-top: 18px; }
+  /* #12: breathing room above AND below so the heatmap doesn't crowd the
+     trend chart that follows it in the Insights report. */
+  .ds-heatmap-panel { margin-top: 18px; margin-bottom: 22px; }
   .ds-heatmap-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
   .ds-heatmap-title { font: 600 13px/1.2 var(--display); color: var(--ink); }
   .ds-heatmap-sub { font: 400 11px/1 var(--mono); color: var(--muted); letter-spacing: 0.03em; }

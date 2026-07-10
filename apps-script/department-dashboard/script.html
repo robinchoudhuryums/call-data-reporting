@@ -702,7 +702,21 @@
         el.style.display = '';
       });
       initViewAs_();   // admin-only "View as <dept> (manager)" preview control
+    } else {
+      // #10: managers get a single Insights button instead of the (admin-only)
+      // Reports dropdown. The other reports consolidate into Insights; Missed /
+      // Individual stay reachable via the Overview question chips + My Dept.
+      const _solo = $('insights-solo-btn');
+      if (_solo) _solo.style.display = '';
     }
+    // Proxy the solo Insights button to the dropdown's real launcher (whose
+    // click handler the Insights modal init wires up regardless of visibility).
+    (function () {
+      const solo = $('insights-solo-btn');
+      if (solo) solo.addEventListener('click', function () {
+        const real = $('insights-report-btn'); if (real) real.click();
+      });
+    })();
 
     // -- Header dropdown menus (Reports + Admin) --------------------
     // Toggle behavior: clicking a menu button opens its list and
@@ -980,6 +994,17 @@
     } else {
       if (kicker) kicker.textContent = 'Department Dashboard';
       if (title)  title.textContent  = getRequestedDept() || '(no department)';
+      // setPage doesn't load the agent table itself. If we arrived showing a
+      // STALE prior dept -- the My Department nav button (which fires no
+      // selector 'change'), or view-as-manager where the selector is
+      // pinned+disabled -- load the CURRENT dept now, so the table (and its
+      // Missed / QCD side panels) match the dept instead of a leftover load.
+      // Skip when a load is already in flight (refresh disables the button) so
+      // a selector-change-driven load isn't doubled.
+      var _rb = $('refresh-btn');
+      if (lastSummaryDept_ !== getRequestedDept() && !(_rb && _rb.disabled)) {
+        refresh();
+      }
     }
     // Delegate the active-tab visual indicator to the router so all
     // [data-route] tabs (page-toggles + report-openers) participate
@@ -1307,6 +1332,11 @@
       document.body.removeAttribute('data-view-as');
       if (sel) sel.disabled = false;
     }
+    // #10: the Reports dropdown (data-admin-only) is hidden in view-as by the
+    // existing CSS; surface the solo Insights button so the previewed manager
+    // still has a report entry point (hidden again when the admin switches back).
+    var _solo = $('insights-solo-btn');
+    if (_solo) _solo.style.display = viewAsDept_ ? '' : 'none';
     // Re-fetch the active surface so it reflects the effective role.
     if (document.body.getAttribute('data-page') === 'overview') {
       ovLoad_(false);
@@ -1450,72 +1480,13 @@
   // shape scoped to their own dept so the line surfaces meaningful numbers
   // for both audiences without leaking the admin-only company aggregate.
   function ovRenderSummaryLine_(data) {
+    // #6: this "Data through ... Rung ... % Answered ... QCD viol MTD" line was
+    // removed -- "Data through" duplicates the header freshness pill, and the
+    // Rung / % Answered / violations are already on the per-dept cards below
+    // the chart. Kept as a hidden no-op (one-line revert) so the caller and the
+    // #ov-summary-line element don't need touching.
     const el = $('ov-summary-line');
-    if (!el) return;
-    const dateLabel = data.latestDate
-      ? ovFormatDateLabel_(data.latestDate)
-      : '(no data)';
-    const sep = '<span class="ov-summary-sep">&middot;</span>';
-    const segs = [];
-    segs.push(
-      '<span class="ov-summary-label">Data through</span> '
-      + '<strong>' + escapeHtml(dateLabel) + '</strong>'
-    );
-    const isAdmin = data.viewerRole === 'admin';
-    if (isAdmin && data.companyAggregate) {
-      // Top-level dept count (sub-queues fold into their parent for
-      // the "DEPTS N" headline so the number matches what a viewer
-      // can see in the tile grid).
-      const topLevel = (data.depts || []).filter(function (d) { return !d.parent; }).length;
-      segs.push(
-        '<span class="ov-summary-label">Depts</span> '
-        + '<strong>' + fmtNumber(topLevel) + '</strong>'
-      );
-      segs.push(
-        '<span class="ov-summary-label">Rung</span> '
-        + '<strong>' + fmtNumber(data.companyAggregate.rung) + '</strong>'
-      );
-      segs.push(
-        '<span class="ov-summary-label">% Answered</span> '
-        + '<strong>' + escapeHtml(data.companyAggregate.pctFormatted) + '</strong>'
-      );
-      const violTotal = (data.depts || []).reduce(function (acc, d) {
-        return acc + ((d.qcd && d.qcd.violationsMtd) || 0);
-      }, 0);
-      segs.push(
-        '<span class="ov-summary-label">QCD viol MTD</span> '
-        + '<strong>' + fmtNumber(violTotal) + '</strong>'
-      );
-    } else {
-      // Manager view: scope to the viewer's own dept so the summary
-      // line shows actionable stats. Falls back to the data-through
-      // line alone if the viewer's dept can't be matched (defensive --
-      // the auth layer guarantees a manager has at least one dept).
-      const viewerDept = data.viewerDept;
-      const dept = viewerDept
-        ? (data.depts || []).find(function (d) { return d.name === viewerDept; })
-        : null;
-      if (dept) {
-        segs.push(
-          '<span class="ov-summary-label">Dept</span> '
-          + '<strong>' + escapeHtml(dept.name) + '</strong>'
-        );
-        segs.push(
-          '<span class="ov-summary-label">Rung</span> '
-          + '<strong>' + fmtNumber(dept.latest.rung) + '</strong>'
-        );
-        segs.push(
-          '<span class="ov-summary-label">% Answered</span> '
-          + '<strong>' + escapeHtml(dept.latest.pctFormatted) + '</strong>'
-        );
-        const violMtd = (dept.qcd && dept.qcd.violationsMtd) || 0;
-        segs.push(
-          '<span class="ov-summary-label">QCD viol MTD</span> '
-          + '<strong>' + fmtNumber(violMtd) + '</strong>'
-        );
-      }
-    }
-    el.innerHTML = segs.join(' ' + sep + ' ');
+    if (el) { el.style.display = 'none'; el.innerHTML = ''; }
   }
 
   // Admin-only banner above the summary line surfacing Pipeline
@@ -2099,28 +2070,20 @@
       }
     });
 
-    // Admin tile-click: route the main dashboard to that dept and
-    // navigate to the My Department page. Cheap because the server
-    // summary is cached. For managers, tiles are non-routing (they
-    // can't switch); their data is fully visible in the tile so no
-    // extra hover state is needed.
-    if (tileRoutable) {
-      $('ov-dept-grid').querySelectorAll('.ov-dept-tile-clickable')
-        .forEach(function (tile) {
-          tile.addEventListener('click', function () {
-            const target = tile.getAttribute('data-dept');
-            if (!target) return;
-            ovRouteToDept_(target);
-          });
-        });
-    }
-
-    // Hovering any dept tile (all roles) spotlights that dept's line in
-    // the trend chart below, connecting the two halves of the page.
-    // No-ops when a legend pin is active.
+    // #1: clicking a dept tile SOLOS its line in the trend chart (like a legend
+    // click) instead of navigating to My Department -- and Shift/Cmd/Ctrl-click
+    // ADDS it to a multi-dept comparison. Navigation still lives on the chart
+    // POINT click (ovHandlePointClick_) + the dept-selector dropdown, so the
+    // "jarring page load on a card click" is gone for every role. Hover still
+    // spotlights (no-op once a pin is active).
     $('ov-dept-grid').querySelectorAll('.ov-dept-tile').forEach(function (tile) {
       const target = tile.getAttribute('data-dept');
       if (!target) return;
+      tile.classList.add('ov-dept-tile-solo');
+      tile.addEventListener('click', function (e) {
+        const additive = !!(e && (e.shiftKey || e.metaKey || e.ctrlKey));
+        chartSpotlightTogglePin_(ovChartInstance, target, additive);
+      });
       tile.addEventListener('mouseenter', function () { ovSpotlightDept_(target); });
       tile.addEventListener('mouseleave', function () { ovSpotlightDept_(null); });
     });
@@ -2131,30 +2094,23 @@
   // detail is visible.
   function ovRouteToDept_(deptName, isoDate) {
     const sel = $('dept-selector');
-    let changed = false;
     if (sel && sel.value !== deptName) {
       sel.value = deptName;
       // Trigger the same 'change' handler the manual dropdown uses
       // -- wipes stale roster caches and re-fetches the summary.
       sel.dispatchEvent(new Event('change'));
-      changed = true;
     }
-    setPage('dept');
     // Point-click deep-link: snap the From/To range to the clicked day
-    // and re-fetch. Runs after the change handler (which resets to the
-    // latest date); this second refresh wins and is server-cached.
+    // and re-fetch (this wins over any change-driven latest-date load).
     if (isoDate && $('from-date') && $('to-date')) {
       $('from-date').value = isoDate;
       $('to-date').value = isoDate;
       refresh();
-    } else if (!changed) {
-      // The selector was ALREADY on this dept (e.g. pinned + disabled in
-      // view-as-manager mode), so no 'change' fired and setPage('dept')
-      // doesn't load the table itself -- it would keep whatever was last
-      // shown (a stale other-dept table, or nothing). Force a load for the
-      // current dept so the click-through always lands on fresh data.
-      refresh();
     }
+    // setPage runs LAST: its stale-dept guard loads the table when neither of
+    // the above kicked off a load (selector already on this dept + no isoDate,
+    // e.g. clicking the pinned dept card in view-as-manager mode).
+    setPage('dept');
   }
 
   // Renders the user's own dept's agent table at the latest date
@@ -2403,16 +2359,21 @@
   // reference baseline / dept-total line) is never dimmed.
   const CHART_DIM_COLOR = 'rgba(140,140,140,0.18)';
 
+  // Stable key for a dataset in the spotlight model: the Overview dept name
+  // when present (survives re-render), else the series label (e.g. QCD queues).
+  function chartSpotKey_(ds) { return (ds && (ds._deptName || ds.label)) || null; }
+
   function chartSpotlightStash_(chart, opts) {
     if (!chart || !chart.data) return;
     chart._spotlightSkip = (opts && opts.skipLabel) || null;
-    chart._spotlightPinned = null;
+    chart._spotlightPins = {};   // SET of pinned keys (multi-select, #1)
     chart.data.datasets.forEach(function (ds) {
       if (ds._origBorder == null) ds._origBorder = ds.borderColor;
       if (ds._origWidth == null) ds._origWidth = ds.borderWidth;
     });
   }
 
+  // Transient single-series highlight (dept-tile hover). Does NOT touch pins.
   function chartSpotlightApply_(chart, activeIndex) {
     if (!chart || !chart.data) return;
     chart.data.datasets.forEach(function (ds, i) {
@@ -2438,43 +2399,98 @@
     chart.update('none');
   }
 
+  function chartSpotlightHasPins_(chart) {
+    return !!(chart && chart._spotlightPins && Object.keys(chart._spotlightPins).length);
+  }
+
+  // Highlight every PINNED series, dim the rest. Empty set -> clear.
+  function chartSpotlightApplyPins_(chart) {
+    if (!chart || !chart.data) return;
+    if (!chartSpotlightHasPins_(chart)) { chartSpotlightClear_(chart); return; }
+    const pins = chart._spotlightPins;
+    chart.data.datasets.forEach(function (ds) {
+      if (chart._spotlightSkip && ds.label === chart._spotlightSkip) return;
+      const k = chartSpotKey_(ds);
+      if (k && pins[k]) {
+        ds.borderColor = ds._origBorder;
+        ds.borderWidth = (ds._origWidth || 2) + 0.8;
+      } else {
+        ds.borderColor = CHART_DIM_COLOR;
+        ds.borderWidth = ds._origWidth || 1.4;
+      }
+    });
+    chart.update('none');
+  }
+
+  // Toggle a series' pin. `additive` (Shift/Cmd/Ctrl) adds/removes from the set
+  // for multi-series comparison; a plain click SOLOS (or releases if it was
+  // already the sole pin).
+  function chartSpotlightTogglePin_(chart, key, additive) {
+    if (!chart || !key) return;
+    if (!chart._spotlightPins) chart._spotlightPins = {};
+    const pins = chart._spotlightPins;
+    if (additive) {
+      if (pins[key]) delete pins[key]; else pins[key] = true;
+    } else {
+      const keys = Object.keys(pins);
+      if (keys.length === 1 && pins[key]) { delete pins[key]; }
+      else { chart._spotlightPins = {}; chart._spotlightPins[key] = true; }
+    }
+    chartSpotlightApplyPins_(chart);
+    // Tile markers are Overview-only (the QCD multi-queue chart reuses these
+    // helpers but has no dept grid).
+    if (chart === ovChartInstance && typeof ovSyncTilePins_ === 'function') ovSyncTilePins_(chart);
+  }
+
   // Returns legend onHover/onLeave/onClick callbacks implementing the
   // spotlight model. Spread into a chart's plugins.legend config.
   function chartSpotlightLegend_() {
     return {
       onHover: function (e, item, legend) {
         const chart = legend.chart;
-        if (chart._spotlightPinned != null) return;   // pin wins over hover
+        if (chartSpotlightHasPins_(chart)) return;   // pins win over hover
         if (item && item.datasetIndex != null) chartSpotlightApply_(chart, item.datasetIndex);
       },
       onLeave: function (e, item, legend) {
         const chart = legend.chart;
-        if (chart._spotlightPinned != null) return;
+        if (chartSpotlightHasPins_(chart)) return;
         chartSpotlightClear_(chart);
       },
       onClick: function (e, item, legend) {
         const chart = legend.chart;
         if (!item || item.datasetIndex == null) return;
-        if (chart._spotlightPinned === item.datasetIndex) {
-          chart._spotlightPinned = null;
-          chartSpotlightClear_(chart);
-        } else {
-          chart._spotlightPinned = item.datasetIndex;
-          chartSpotlightApply_(chart, item.datasetIndex);
-        }
+        const ds = chart.data.datasets[item.datasetIndex];
+        const key = chartSpotKey_(ds);
+        if (!key) return;
+        const ne = e && e.native;
+        const additive = !!(ne && (ne.shiftKey || ne.metaKey || ne.ctrlKey));
+        chartSpotlightTogglePin_(chart, key, additive);
       },
     };
   }
 
-  // Spotlight a dept's line by name (used by dept-tile hover). No-op when
-  // a legend pin is active so a hover doesn't fight the pinned selection.
+  // Spotlight a dept's line by name (dept-tile hover). No-op when a pin is
+  // active so a hover doesn't fight the pinned selection.
   function ovSpotlightDept_(deptName) {
     const chart = ovChartInstance;
-    if (!chart || !chart.data || chart._spotlightPinned != null) return;
+    if (!chart || !chart.data) return;
+    if (chartSpotlightHasPins_(chart)) return;   // pins win over hover
     if (deptName == null) { chartSpotlightClear_(chart); return; }
     let idx = -1;
     chart.data.datasets.forEach(function (ds, i) { if (ds._deptName === deptName) idx = i; });
     if (idx >= 0) chartSpotlightApply_(chart, idx);
+  }
+
+  // Reflect the chart's pin set on the dept tiles (a soloed/compared marker),
+  // so the grid shows which depts are currently isolated in the chart.
+  function ovSyncTilePins_(chart) {
+    const pins = (chart && chart._spotlightPins) || {};
+    const grid = $('ov-dept-grid');
+    if (!grid) return;
+    grid.querySelectorAll('[data-dept]').forEach(function (tile) {
+      const d = tile.getAttribute('data-dept');
+      tile.classList.toggle('ov-tile-soloed', !!(d && pins[d]));
+    });
   }
 
   // Point click -> deep-link to that dept + date. Only routes for admins
@@ -2881,6 +2897,9 @@
         if (kind === 'team-lately')           launcherOpenInsights_();
         else if (kind === 'missed-yesterday') launcherOpenMissed_();
         else if (kind === 'agent-trend')      launcherOpenIndividual_();
+        // #5: repointed from QCD (retired) to Insights -- its Queue health
+        // section carries the abandon %/heatmap that answers "are callers
+        // giving up?" while keeping every chip on a kept/consolidated report.
         else if (kind === 'abandons')         launcherOpenInsights_('Are callers giving up before we answer?');
       } catch (err) { /* best-effort: the modal is still open/openable by hand */ }
     });
@@ -10320,17 +10339,25 @@
     const s = stat || { deltaPct: 0, type: 'volume' };
     const isPct = s.type === 'pctPoints';
     const dp = Number(s.deltaPct || 0);
-    // CR-parity: Compare Ranges showed the prior period's value explicitly;
-    // here it rides the badge as a hover tooltip so the card stays compact.
-    const tip = priorLabel
-      ? ' title="' + escapeHtml('prior window: ' + priorLabel) + '"' : '';
-    if (Math.abs(dp) < 0.05) return '<span class="pr-delta pr-delta-neu"' + tip + '>–</span>';
+    // #11e: explain the chip on hover -- what it compares against + the color
+    // convention. CR-parity: when the caller passes priorLabel, the prior
+    // window's exact value leads the tooltip (Compare Ranges showed P1
+    // explicitly; here it rides the hover so the card stays compact).
+    const priorBit = priorLabel ? 'Prior window: ' + priorLabel + '. ' : '';
+    const baseTitle = 'Change vs the same-length prior period (the "Comparing against…" window in the '
+      + 'results header). Green = the change is good for this metric, orange = worse.';
+    if (Math.abs(dp) < 0.05) {
+      return '<span class="pr-delta pr-delta-neu" title="'
+           + escapeHtml(priorBit + 'No meaningful change vs the prior period. ' + baseTitle) + '">–</span>';
+    }
     let cls = 'pr-delta-neu';
     if (valence === 'pos')      cls = dp > 0 ? 'pr-delta-pos' : 'pr-delta-neg';
     else if (valence === 'neg') cls = dp > 0 ? 'pr-delta-neg' : 'pr-delta-pos';
     const arrow = dp > 0 ? '▲' : '▼';
     const suffix = isPct ? ' pts' : '%';
-    return '<span class="pr-delta ' + cls + '"' + tip + '><span class="pr-delta-arrow">' + arrow + '</span> '
+    const title = priorBit + arrow + ' ' + Math.abs(dp).toFixed(1) + suffix + ' vs the prior period. ' + baseTitle;
+    return '<span class="pr-delta ' + cls + '" title="' + escapeHtml(title) + '">'
+         + '<span class="pr-delta-arrow">' + arrow + '</span> '
          + Math.abs(dp).toFixed(1) + suffix + '</span>';
   }
 
@@ -10347,6 +10374,24 @@
    */
   // A1 triage: labeled group header rendered as a FULL-WIDTH grid item so it
   // spans the card grid without nesting a second grid (cards flow after it).
+  // Standing-first per-agent tier for Insights (#11c). The category reflects
+  // the agent's CURRENT standing vs the 92% company answer-rate target (with a
+  // volume gate so a handful-of-calls agent isn't branded either way), NOT the
+  // direction of change -- so a strong agent stays "Strong" through a small dip
+  // and a struggling agent stays "Needs attention" even while improving from
+  // worse. The prior-period TREND is shown separately (the trend pill).
+  // Returns 'strong' | 'steady' | 'attention'.
+  function insClassifyAgent_(card) {
+    var m = (card && card.metrics) || {};
+    var pct  = Number((m.pct  && m.pct.val)  || 0);   // current % answered (0-100)
+    var rung = Number((m.rung && m.rung.val) || 0);   // volume (total rings)
+    var TARGET = 92, WATCH = 85, MIN_VOL = 5;
+    if (rung < MIN_VOL) return 'steady';              // too little signal to judge
+    if (pct >= TARGET)  return 'strong';              // at/above the company target
+    if (pct <  WATCH)   return 'attention';           // clearly below target
+    return 'steady';                                  // near target
+  }
+
   function insTriageHeader_(label, count, tone) {
     return '<div class="ins-group-head ins-group-head--' + tone + '">'
          +   '<span class="ins-group-dot"></span>'
@@ -10354,14 +10399,16 @@
          +   '<span class="ins-group-count">' + count + '</span>'
          + '</div>';
   }
-  // A2 legend: the rail encodes DIRECTION of change (green=improving), distinct
-  // from the benchmark health tint. Rendered once above the triage groups.
+  // A2 legend: the rail now encodes STANDING vs the 92% answer-rate target
+  // (Strong / Steady / Needs attention), NOT the direction of change -- the
+  // prior-period trend is the separate trend pill. Rendered once above the
+  // triage groups.
   function insTriageLegend_() {
-    return '<div class="ins-group-legend" title="The left rail on each card shows the direction of change vs the prior period — not the health level (that\'s the benchmark tint on the % values).">'
-         +   'Rail'
-         +   '<span class="ins-leg-dot ins-leg-good"></span>improving'
-         +   '<span class="ins-leg-dot ins-leg-warn"></span>slipping'
-         +   '<span class="ins-leg-dot ins-leg-muted"></span>mixed'
+    return '<div class="ins-group-legend" title="The left rail + tier of each card show the agent\'s current standing vs the 92% answer-rate target (with a small-volume gate) — not the direction of change (that\'s the trend pill on each card).">'
+         +   'Standing'
+         +   '<span class="ins-leg-dot ins-leg-good"></span>strong'
+         +   '<span class="ins-leg-dot ins-leg-muted"></span>steady'
+         +   '<span class="ins-leg-dot ins-leg-warn"></span>needs attention'
          + '</div>';
   }
 
@@ -10387,7 +10434,8 @@
       return {
         card: c,
         score: deltaImprovementScore_(c.metrics),
-        direction: deltaClassify_(c.metrics),
+        standing: insClassifyAgent_(c),          // #11c: rail + tier (current vs target)
+        trend: deltaClassify_(c.metrics),         // secondary: direction vs prior (trend pill)
         quiet: deltaIsQuiet_(c.metrics),
       };
     });
@@ -10426,20 +10474,20 @@
     const renderCard = function (x) { return insBuildCard_(x, teamScore, meta, teamAvg); };
     // A1 performance triage -- ALWAYS-ON tier grouping (Phase 15). Stable-
     // partition the already-sorted COPY (never insLastData.agentData -- the
-    // Cards/Chart toggle reads that independently) by direction-of-change
-    // into Needs attention (regressed) / Mixed / Improving, and render a
+    // Cards/Chart toggle reads that independently) by STANDING (#11c: current
+    // vs the 92% target) into Needs attention / Steady / Strong, and render a
     // labeled group header before each NON-EMPTY tier whenever there's more
-    // than one card. Within-group order is whatever the sort control
-    // produced. A single card stays a flat grid (a lone header is noise).
-    const regressed = sortedMain.filter(function (x) { return x.direction === 'regressed'; });
-    const mixed     = sortedMain.filter(function (x) { return x.direction === 'mixed'; });
-    const improved  = sortedMain.filter(function (x) { return x.direction === 'improved'; });
+    // than one card. Within-group order is whatever the sort control produced.
+    // A single card stays a flat grid (a lone header is noise).
+    const attention = sortedMain.filter(function (x) { return x.standing === 'attention'; });
+    const steady    = sortedMain.filter(function (x) { return x.standing === 'steady'; });
+    const strong    = sortedMain.filter(function (x) { return x.standing === 'strong'; });
     if (sortedMain.length > 1) {
       let html = insTriageLegend_();
       const tiers = [
-        { group: regressed, label: 'Needs attention', tone: 'warn' },
-        { group: mixed,     label: 'Mixed',           tone: 'muted' },
-        { group: improved,  label: 'Improving',       tone: 'good' },
+        { group: attention, label: 'Needs attention', tone: 'warn' },
+        { group: steady,    label: 'Steady',          tone: 'muted' },
+        { group: strong,    label: 'Strong',          tone: 'good' },
       ];
       tiers.forEach(function (t) {
         if (!t.group.length) return;
@@ -10757,18 +10805,20 @@
     });
   }
 
-  // Trend pill -- names the card's left-rail color (improved/regressed/mixed
-  // vs the prior period) so the rail's meaning is explicit, not a mystery
-  // color. Carries a gloss tooltip; hover the card and the rail glows (CSS).
+  // Trend pill -- the SECONDARY signal: direction of change vs the prior period
+  // (rung/missed/answered/% answered). Distinct from the card's rail + tier,
+  // which now show current STANDING vs the 92% target (#11c). Carries a gloss
+  // tooltip.
   function insTrendPill_(direction) {
     var map = {
       improved:  ['ins-trend-up',   '▲ Improving'],
       regressed: ['ins-trend-down', '▼ Slipping'],
-      mixed:     ['ins-trend-flat', '≈ Mixed'],
+      mixed:     ['ins-trend-flat', '≈ Steady'],
     };
     var m = map[direction] || map.mixed;
-    var title = 'Trend vs the prior period across rung, missed, answered and % answered — '
-      + 'this is the colored left edge of the card (sage = improving, orange = slipping, grey = mixed).';
+    var title = 'Trend vs the prior period across rung, missed, answered and % answered '
+      + '(▲ improving / ▼ slipping / ≈ steady). This is the direction of change — separate from '
+      + 'the card\'s standing rail/tier, which shows the current level vs the 92% target.';
     return '<span class="ins-trend-pill ' + m[0] + ' gloss" title="' + escapeHtml(title) + '">' + m[1] + '</span>';
   }
 
@@ -10794,26 +10844,26 @@
     const isFloater = c.matchedViaQueue && !c.matchedViaRoster;
     const chip = isFloater ? sourceChipHtml_(c) : '';
     // Migrated onto the shared ds-card--rail (Phase 4): the left rail color
-    // comes from --status. Floaters keep the warn rail (the QUEUE signal wins
-    // over the classification tint); everyone else gets improved=accent /
-    // regressed=warn / mixed=muted (the CR classification pattern).
+    // comes from --status. Floaters keep the warn rail (the QUEUE signal wins);
+    // everyone else gets STANDING-based color (#11c) -- strong=good /
+    // attention=warn / steady=muted -- so the rail matches the tier grouping.
     const statusColor = isFloater ? 'var(--warn)'
-                      : x.direction === 'improved'  ? 'var(--good)'
-                      : x.direction === 'regressed' ? 'var(--warn)'
+                      : x.standing === 'strong'    ? 'var(--good)'
+                      : x.standing === 'attention' ? 'var(--warn)'
                       : 'var(--muted)';
     const debugAttrs =
-      ' data-direction="' + x.direction + '"'
+      ' data-standing="' + x.standing + '"'
+      + ' data-trend="' + x.trend + '"'
       + ' data-score="' + (x.score == null ? '' : x.score.toFixed(1)) + '"';
     const mm = c.metrics || {};
     const ta = teamAvg || {};
-    // Two DISTINCT, now-labeled signals (they used to both be change-based,
-    // which read as contradictory): the left RAIL + the trend pill show this
-    // agent's TREND vs the prior period (deltaClassify_); the vs-team chip
-    // shows their STANDING -- answered calls vs the team average THIS period
-    // (the marker on the Answered bar below). A card can legitimately be
-    // "Improving" (rail) yet "below team" (chip): better than last period but
-    // still under the average. Floaters keep only the QUEUE chip.
-    const trendPill = isFloater ? '' : insTrendPill_(x.direction);
+    // Three DISTINCT, labeled signals: the left RAIL + tier show STANDING (#11c:
+    // current % answered vs the 92% target); the trend pill shows the direction
+    // of change vs the prior period (secondary); the vs-team chip shows answered
+    // calls vs the team average this period. A card can legitimately be "Strong"
+    // (rail) yet "Slipping" (trend pill): above target but down from last period.
+    // Floaters keep only the QUEUE chip.
+    const trendPill = isFloater ? '' : insTrendPill_(x.trend);
     const vsTeam = isFloater ? '' : insVsTeamBadge_(
       Number((mm.answered || {}).val) || 0, Number(ta.answered) || 0);
 
@@ -11749,7 +11799,8 @@
     var DOWS = [[1, 'Mon'], [2, 'Tue'], [3, 'Wed'], [4, 'Thu'], [5, 'Fri']];
 
     var html = '<div class="ds-heatmap-head"><span class="ds-heatmap-title">When are callers abandoning?</span>'
-      + '<span class="ds-heatmap-sub">abandon rate · weekday × hour (' + escapeHtml(tz) + ')</span></div>';
+      + '<span class="ds-heatmap-sub">abandon rate · weekday × hour (' + escapeHtml(tz) + ') · '
+      + 'hover a cell for its abandoned / total counts</span></div>';
     html += '<div class="ds-heatmap-wrap"><div class="ds-heatmap" style="grid-template-columns: auto repeat('
       + slotCount + ', minmax(26px, 1fr));">';
     html += '<span class="ds-heatmap__corner"></span>';
@@ -13323,7 +13374,10 @@
     var pctAb = total ? (ab / total * 100) : 0;
     var rest  = Math.max(0, 100 - pctA - pctAb);
     var abStr = r.abandonedPctStr || ((Number(r.abandonedPct) || 0).toFixed(2) + '%');
-    var rateCls = benchValueCls_('abandoned %', abStr, true);
+    // #3d: over the 5% threshold reads BOLD (+ the warn tint from benchValueCls_)
+    // so it pops on the split bar and the granular source lines.
+    var over = (Number(r.abandonedPct) || 0) >= 5;
+    var rateCls = benchValueCls_('abandoned %', abStr, true) + (over ? ' qcd-rate-over' : '');
     var title = fmtNumber(a) + ' answered · ' + fmtNumber(ab) + ' abandoned · '
               + fmtNumber(total) + ' calls · ' + abStr + ' abandoned';
     var segs = total
@@ -13393,7 +13447,7 @@
                 +  '<td class="num">' + fmtNumber(s.totalCalls)    + '</td>'
                 +  '<td class="num">' + fmtNumber(s.totalAnswered) + '</td>'
                 +  '<td class="num">' + fmtNumber(s.abandoned)     + '</td>'
-                +  '<td class="num' + (sPct >= 5 ? ' qcd-warn-light' : '') + '">' + escapeHtml(s.abandonedPctStr) + '</td>'
+                +  '<td class="num' + (sPct >= 5 ? ' qcd-warn-light qcd-rate-over' : '') + '">' + escapeHtml(s.abandonedPctStr) + '</td>'
                 +  '<td class="num">' + escapeHtml(s.longestWait)  + '</td>'
                 +  '<td class="num">' + escapeHtml(s.avgAnswer)    + '</td>'
                 +  '<td class="num' + (sViol > 0 ? ' qcd-warn-light' : '') + '">' + fmtNumber(s.violations) + '</td>'
@@ -13559,6 +13613,39 @@
   // subtotal as a heading row), one row per queue, and a grand-total
   // footer. Abandoned % >= 5% and any violation count are warn-tinted
   // (same thresholds as the per-dept QCD report).
+  // Seconds -> H:MM:SS (client-side; server uses formatSecondsHms_).
+  function qcdSecToHms_(sec) {
+    sec = Math.max(0, Math.round(Number(sec) || 0));
+    var h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+    return h + ':' + String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+  }
+
+  // #3: combined section total across a set of queue rows (parent own +
+  // nested children). Sums volume/answered/abandoned/violations; longest =
+  // MAX; avg answer = volume-weighted -- using the raw *Sec fields the server
+  // now sends. Returns the same shape qcdDailyBarCell_ + the row cells read.
+  function qcdAllDeptSectionTotal_(queues) {
+    var tot = 0, ans = 0, abnd = 0, viol = 0, longestSec = 0, avgWSum = 0, avgWN = 0;
+    (queues || []).forEach(function (q) {
+      tot  += Number(q.totalCalls)    || 0;
+      ans  += Number(q.totalAnswered) || 0;
+      abnd += Number(q.abandoned)     || 0;
+      viol += Number(q.violations)    || 0;
+      var ls = Number(q.longestWaitSec) || 0;
+      if (ls > longestSec) longestSec = ls;
+      var as = Number(q.avgAnswerSec) || 0, a = Number(q.totalAnswered) || 0;
+      if (as > 0 && a > 0) { avgWSum += as * a; avgWN += a; }
+    });
+    var pct = tot > 0 ? (abnd / tot) * 100 : 0;
+    return {
+      totalCalls: tot, totalAnswered: ans, abandoned: abnd,
+      abandonedPct: pct, abandonedPctStr: pct.toFixed(2) + '%',
+      longestWait: qcdSecToHms_(longestSec),
+      avgAnswer: qcdSecToHms_(avgWN > 0 ? Math.round(avgWSum / avgWN) : 0),
+      violations: viol,
+    };
+  }
+
   function qcdAllDeptRender_(data) {
     $('qcd-alldept-results-date').textContent = data.dateLabel || '';
     const empty = $('qcd-alldept-empty');
@@ -13574,57 +13661,81 @@
     empty.style.display = 'none';
 
     const cell = function (pct, viol) {
-      return { pctCls: (Number(pct) >= 5 ? ' qcd-warn-light' : ''),
-               violCls: (Number(viol) > 3 ? ' qcd-warn-strong' : (Number(viol) > 0 ? ' qcd-warn-light' : '')) };
+      return { violCls: (Number(viol) > 3 ? ' qcd-warn-strong' : (Number(viol) > 0 ? ' qcd-warn-light' : '')) };
     };
+    // #3: nest sub-queue depts under their parent's banner. A dept is a child
+    // when its `parent` names another dept present here; otherwise it's a
+    // top-level section (an orphaned child falls back to its own banner).
+    const byName = {};
+    depts.forEach(function (d) { byName[d.dept] = d; });
+    const childrenOf = {};
+    const topLevel = [];
+    depts.forEach(function (d) {
+      if (d.parent && byName[d.parent]) {
+        (childrenOf[d.parent] = childrenOf[d.parent] || []).push(d);
+      } else {
+        topLevel.push(d);
+      }
+    });
+
     // #1d: Answered / Abandoned / Abandoned % fold into ONE split-bar column
-    // (shared qcdDailyBarCell_ -- green answered + red abandoned over total,
-    // 5% benchmark tint), like the My Department agent table. 6 columns now.
+    // (shared qcdDailyBarCell_). 6 columns.
     const NCOLS = 6;
     let html = '<table class="qcd-alldept-table agents"><thead><tr>'
       + '<th>Queue</th><th class="num">Total</th><th>Answered vs Abandoned</th>'
       + '<th class="num">Longest</th><th class="num">Avg ans</th><th class="num">Viol</th>'
       + '</tr></thead>';
-    depts.forEach(function (d) {
-      const t = d.totals || {};
-      const tc = cell(t.abandonedPct, t.violations);
+    const queueRow = function (q, sub) {
+      const c = cell(q.abandonedPct, q.violations);
+      const subTag = sub ? ' <span class="qcd-alldept-subq">&middot; ' + escapeHtml(sub) + '</span>' : '';
+      // #1c: expand into the per-call-source breakdown (+ violation dates).
+      const sources = q.bySource || [];
+      const hasViolDates = (Number(q.violations) || 0) > 0 && (q.violationDates || []).length;
+      const hasDetail = sources.length > 0 || hasViolDates;
+      const chevron = hasDetail ? ' <span class="qcd-expand-icon">&#9654;</span>' : '';
+      let out = '<tr class="' + (hasDetail ? 'qcd-expandable' : '') + '">'
+        + '<td>' + escapeHtml(q.queue) + subTag + chevron + '</td>'
+        + '<td class="num">' + fmtNumber(q.totalCalls) + '</td>'
+        + '<td class="qcd-daily-bar-cell">' + qcdDailyBarCell_(q) + '</td>'
+        + '<td class="num">' + escapeHtml(q.longestWait) + '</td>'
+        + '<td class="num">' + escapeHtml(q.avgAnswer) + '</td>'
+        + '<td class="num' + c.violCls + '">' + fmtNumber(q.violations) + '</td>'
+        + '</tr>';
+      if (hasDetail) {
+        let detail = qcdSourceSubtableHtml_(sources);
+        if (hasViolDates) {
+          detail += '<div class="qcd-detail-viol"><strong>Violation dates:</strong> '
+            + q.violationDates.map(fmtViolDate_).join(', ') + '</div>';
+        }
+        out += '<tr class="qcd-detail-row" style="display:none;"><td colspan="' + NCOLS + '">'
+          + '<div class="qcd-detail-wrap">' + detail + '</div></td></tr>';
+      }
+      return out;
+    };
+    topLevel.forEach(function (d) {
+      // Section queues: parent's own (untagged) + each child's (tagged).
+      const secItems = (d.queues || []).map(function (q) { return { q: q, sub: null }; });
+      (childrenOf[d.dept] || []).forEach(function (child) {
+        (child.queues || []).forEach(function (q) { secItems.push({ q: q, sub: child.dept }); });
+      });
       html += '<tbody class="qcd-alldept-dept">'
         + '<tr class="qcd-alldept-deptrow"><td colspan="' + NCOLS + '">' + escapeHtml(d.dept) + '</td></tr>';
-      (d.queues || []).forEach(function (q) {
-        const c = cell(q.abandonedPct, q.violations);
-        // #1c: expand a queue row into its per-call-source breakdown (+ any
-        // violation dates), data-driven -- each queue shows only the sources
-        // present in its own data. Reuses the shared qcdSourceSubtableHtml_.
-        const sources = q.bySource || [];
-        const hasViolDates = (Number(q.violations) || 0) > 0 && (q.violationDates || []).length;
-        const hasDetail = sources.length > 0 || hasViolDates;
-        const chevron = hasDetail ? ' <span class="qcd-expand-icon">&#9654;</span>' : '';
-        html += '<tr class="' + (hasDetail ? 'qcd-expandable' : '') + '">'
-          + '<td>' + escapeHtml(q.queue) + chevron + '</td>'
-          + '<td class="num">' + fmtNumber(q.totalCalls) + '</td>'
-          + '<td class="qcd-daily-bar-cell">' + qcdDailyBarCell_(q) + '</td>'
-          + '<td class="num">' + escapeHtml(q.longestWait) + '</td>'
-          + '<td class="num">' + escapeHtml(q.avgAnswer) + '</td>'
-          + '<td class="num' + c.violCls + '">' + fmtNumber(q.violations) + '</td>'
+      secItems.forEach(function (item) { html += queueRow(item.q, item.sub); });
+      // #3: the "(dept) total" row is redundant for a single-queue section
+      // (the lone queue line IS the total), so show it only when >1 queue.
+      if (secItems.length > 1) {
+        const st = qcdAllDeptSectionTotal_(secItems.map(function (i) { return i.q; }));
+        const tc = cell(st.abandonedPct, st.violations);
+        html += '<tr class="qcd-alldept-subtotal">'
+          + '<td>' + escapeHtml(d.dept) + ' total</td>'
+          + '<td class="num">' + fmtNumber(st.totalCalls) + '</td>'
+          + '<td class="qcd-daily-bar-cell">' + qcdDailyBarCell_(st) + '</td>'
+          + '<td class="num">' + escapeHtml(st.longestWait) + '</td>'
+          + '<td class="num">' + escapeHtml(st.avgAnswer) + '</td>'
+          + '<td class="num' + tc.violCls + '">' + fmtNumber(st.violations) + '</td>'
           + '</tr>';
-        if (hasDetail) {
-          let detail = qcdSourceSubtableHtml_(sources);
-          if (hasViolDates) {
-            detail += '<div class="qcd-detail-viol"><strong>Violation dates:</strong> '
-              + q.violationDates.map(fmtViolDate_).join(', ') + '</div>';
-          }
-          html += '<tr class="qcd-detail-row" style="display:none;"><td colspan="' + NCOLS + '">'
-            + '<div class="qcd-detail-wrap">' + detail + '</div></td></tr>';
-        }
-      });
-      html += '<tr class="qcd-alldept-subtotal">'
-        + '<td>' + escapeHtml(d.dept) + ' total</td>'
-        + '<td class="num">' + fmtNumber(t.totalCalls) + '</td>'
-        + '<td class="qcd-daily-bar-cell">' + qcdDailyBarCell_(t) + '</td>'
-        + '<td class="num">' + escapeHtml(t.longestWait) + '</td>'
-        + '<td class="num">' + escapeHtml(t.avgAnswer) + '</td>'
-        + '<td class="num' + tc.violCls + '">' + fmtNumber(t.violations) + '</td>'
-        + '</tr></tbody>';
+      }
+      html += '</tbody>';
     });
     const g = data.grandTotals || {};
     const gc = cell(g.abandonedPct, g.violations);
@@ -13649,19 +13760,37 @@
     const lines = [];
     lines.push('Daily Call Queue Report,' + (data.dateLabel || ''));
     lines.push('');
-    lines.push(row(['Department', 'Queue', 'Total Calls', 'Answered', 'Abandoned',
+    lines.push(row(['Department', 'Queue', 'Sub-dept', 'Total Calls', 'Answered', 'Abandoned',
                     'Abandoned %', 'Longest Wait', 'Avg Answer', 'Violations']));
-    (data.depts || []).forEach(function (d) {
-      (d.queues || []).forEach(function (q) {
-        lines.push(row([d.dept, q.queue, q.totalCalls, q.totalAnswered, q.abandoned,
+    // Same grouping as the table: children nested under their parent, section
+    // total only when the section has >1 queue (#3).
+    const depts = data.depts || [];
+    const byName = {};
+    depts.forEach(function (d) { byName[d.dept] = d; });
+    const childrenOf = {};
+    const topLevel = [];
+    depts.forEach(function (d) {
+      if (d.parent && byName[d.parent]) { (childrenOf[d.parent] = childrenOf[d.parent] || []).push(d); }
+      else { topLevel.push(d); }
+    });
+    topLevel.forEach(function (d) {
+      const secItems = (d.queues || []).map(function (q) { return { q: q, sub: '' }; });
+      (childrenOf[d.dept] || []).forEach(function (child) {
+        (child.queues || []).forEach(function (q) { secItems.push({ q: q, sub: child.dept }); });
+      });
+      secItems.forEach(function (it) {
+        const q = it.q;
+        lines.push(row([d.dept, q.queue, it.sub, q.totalCalls, q.totalAnswered, q.abandoned,
                         q.abandonedPctStr, q.longestWait, q.avgAnswer, q.violations]));
       });
-      const t = d.totals || {};
-      lines.push(row([d.dept, d.dept + ' total', t.totalCalls, t.totalAnswered, t.abandoned,
-                      t.abandonedPctStr, t.longestWait, t.avgAnswer, t.violations]));
+      if (secItems.length > 1) {
+        const t = qcdAllDeptSectionTotal_(secItems.map(function (i) { return i.q; }));
+        lines.push(row([d.dept, d.dept + ' total', '', t.totalCalls, t.totalAnswered, t.abandoned,
+                        t.abandonedPctStr, t.longestWait, t.avgAnswer, t.violations]));
+      }
     });
     const g = data.grandTotals || {};
-    lines.push(row(['', 'Company total', g.totalCalls, g.totalAnswered, g.abandoned,
+    lines.push(row(['', 'Company total', '', g.totalCalls, g.totalAnswered, g.abandoned,
                     g.abandonedPctStr, g.longestWait, g.avgAnswer, g.violations]));
     const blob = new Blob([lines.join('\n') + '\n'], { type: 'text/csv;charset=utf-8;' });
     const a = document.createElement('a');

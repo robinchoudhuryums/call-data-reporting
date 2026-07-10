@@ -387,7 +387,7 @@ same time as the code change.
 | `QCDReport.gs` | `qcd:vN:` | RETIRED (QCD modal deleted; `qcdAll:` remains) |
 | `InboundReport.gs` | `inbound:vN:` | `v3` |
 | `InsightsReport.gs` | `insights:vN:` | `v18` |
-| `QCDReport.gs` (all-departments daily report) | `qcdAll:vN:` | `v3` |
+| `QCDReport.gs` (all-departments daily report) | `qcdAll:vN:` | `v4` |
 | `InboundReport.gs` (weekday×hour abandon heatmap) | `inboundHeatmap:vN:` | `v1` |
 | `DirectCallReport.gs` | `directCall:vN:` | `v1` |
 
