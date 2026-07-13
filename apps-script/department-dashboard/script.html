@@ -887,6 +887,10 @@
           $('from-date').value = dqe;
           $('to-date').value = dqe;
         }
+        // Latest QCD day drives the Daily Call Queue Report's default
+        // date, so a Monday/holiday open lands on real data instead of
+        // an empty literal-yesterday (a weekend).
+        if (dates && dates.qcd) latestQcdIso_ = dates.qcd;
         setFreshnessPill_(dates || null);
         refresh();
       })
@@ -2910,6 +2914,7 @@
   // over the modals' existing open + form machinery.
 
   let latestDqeIso_ = null;          // set by the getLatestDataDates init fetch
+  let latestQcdIso_ = null;          // ditto -- drives the all-dept QCD report's default date
   let insLauncherAutoRun_ = false;   // consumed by insRenderAgentList
   let insScrollPending_ = null;      // quick-start chip target section id (one-shot, consumed on render)
 
@@ -3333,9 +3338,12 @@
         // Insert after the header AND after any status / loading / error
         // elements that immediately follow it, so transient "Loading…" and
         // error banners always render ABOVE the headline, not under it.
+        // Also skip an inline edit popover (the IR / Insights "change" panel)
+        // so it expands directly beneath its button, ABOVE the headline.
         let anchor = header.nextElementSibling;
         while (anchor && (anchor.classList.contains('status')
                           || anchor.classList.contains('ir-loader')
+                          || anchor.classList.contains('ir-edit-popover')
                           || anchor.classList.contains('empty-state'))) {
           anchor = anchor.nextElementSibling;
         }
@@ -4651,13 +4659,31 @@
     }
     // Owner note: the hover-only explanation wasn't enough -- when the
     // snapshot's day differs from the page's To date, say so VISIBLY so
-    // the card can't read as showing the selected range's numbers.
+    // the card can't read as showing the selected range's numbers. The note
+    // is diagnostic (owner follow-up): comparing against the COMPANY-wide
+    // latest QCD day (latestQcdIso_) distinguishes "queue data simply hasn't
+    // landed past this date" from "OTHER depts have newer queue rows" -- the
+    // latter usually means this dept's queue mapping misses a renamed queue.
     var dateEl = $('dept-qcd-date');
     if (dateEl) {
       var pageTo = $('to-date') ? $('to-date').value : '';
-      dateEl.textContent = (qcd.date && pageTo && qcd.date !== pageTo)
-        ? 'latest queue day — the page’s date range doesn’t apply here'
-        : '';
+      var note = '';
+      if (qcd.date && pageTo && qcd.date !== pageTo) {
+        var mmdd = function (iso) {
+          var p = String(iso).split('-');
+          return p.length === 3 ? (Number(p[1]) + '/' + Number(p[2])) : iso;
+        };
+        if (latestQcdIso_ && latestQcdIso_ > qcd.date) {
+          note = 'latest day with queue data for this department’s queues — '
+            + 'company queue data runs through ' + mmdd(latestQcdIso_)
+            + ', so if this looks behind, the dept’s queue mapping may need updating';
+        } else {
+          note = 'latest queue day — queue data lands separately from the '
+            + 'agent call data above (which runs through '
+            + mmdd(latestDqeIso_ || pageTo) + ')';
+        }
+      }
+      dateEl.textContent = note;
     }
     const tiles = $('dept-qcd-tiles');
     if (!tiles) return;
@@ -9948,11 +9974,33 @@
          + '</div>';
   }
 
+  // "N workdays" (singular-aware). Prefers the server's INV-35 count
+  // (holiday-aware) when present; falls back to the client mirror.
+  function insWorkdaysLabel_(serverCount, fromIso, toIso) {
+    const n = (serverCount && serverCount > 0)
+      ? serverCount
+      : workingDaysBetween_(fromIso, toIso);
+    if (!n) return '';
+    return n + (n === 1 ? ' workday' : ' workdays');
+  }
+
   function insRenderReport_(data, opts) {
     insLastData = data;
     insCloseEditPopover_();
     insRenderEditingLine_(data);
-    $('ins-results-date').textContent = '(' + (data.dateLabel || '') + ')';
+    // Date line: label the window so the range doesn't read as arbitrary --
+    // name the launcher-default shape ("last 30 days") when it matches, and
+    // always show how many workdays the window actually represents.
+    (function () {
+      const meta = data.meta || {};
+      const bits = [data.dateLabel || ''];
+      if (meta.from === launcherIsoDaysAgo_(30) && meta.to === launcherIsoDaysAgo_(1)) {
+        bits.push('last 30 days');
+      }
+      const wd = insWorkdaysLabel_(meta.currentWorkDays, meta.from, meta.to);
+      if (wd) bits.push(wd);
+      $('ins-results-date').textContent = '(' + bits.filter(Boolean).join(' · ') + ')';
+    })();
     const cmp = $('ins-compare-line');
     if (cmp) {
       const mode = data.meta && data.meta.comparisonMode;
@@ -9962,7 +10010,10 @@
       // Inline the different-window-lengths caveat right here (next to the
       // basis line) as a warn glyph + bold label whose explanation lives in
       // a hover tooltip -- lighter than the old standalone banner.
+      const priorWd = insWorkdaysLabel_((data.meta || {}).priorWorkDays,
+        (data.meta || {}).priorFrom, (data.meta || {}).priorTo);
       cmp.innerHTML = escapeHtml(basis) + escapeHtml(data.priorDateLabel || '')
+        + (priorWd ? escapeHtml(' (' + priorWd + ')') : '')
         + insLengthFlagHtml_(data.meta) + insOverlapFlagHtml_(data.meta);
     }
 
@@ -13873,13 +13924,43 @@
     return d.getFullYear() + '-' + m + '-' + day;
   }
 
-  function qcdAllDeptDefaultDates_() {
+  // Most recent WORKDAY on or before yesterday: walks back over Sat/Sun and
+  // company holidays (server-injected __COMPANY_HOLIDAYS__, the INV-35
+  // ranges). Client mirror of Util.gs::prevBusinessDayIso_'s semantics.
+  function prevWorkdayIso_() {
+    const holidays = (typeof window !== 'undefined' && window.__COMPANY_HOLIDAYS__) || [];
+    const isHoliday = function (iso) {
+      for (let i = 0; i < holidays.length; i++) {
+        if (iso >= holidays[i].from && iso <= holidays[i].to) return true;
+      }
+      return false;
+    };
     const now = new Date();
-    const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
-    $('qcd-alldept-from').value = qcdAllDeptIsoOf_(yesterday);
-    $('qcd-alldept-to').value   = qcdAllDeptIsoOf_(yesterday);
+    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+    for (let guard = 0; guard < 30; guard++) {
+      const dow = d.getDay();
+      if (dow !== 0 && dow !== 6 && !isHoliday(qcdAllDeptIsoOf_(d))) break;
+      d.setDate(d.getDate() - 1);
+    }
+    return qcdAllDeptIsoOf_(d);
+  }
+
+  function qcdAllDeptDefaultDates_() {
+    // Default to the most recent day that actually has queue data (the
+    // latest QCD date from the init fetch), falling back to the previous
+    // WORKDAY -- literal calendar yesterday is a weekend/holiday after a
+    // Monday-morning open, which rendered an empty report.
+    const now = new Date();
+    const literalYesterday = qcdAllDeptIsoOf_(
+      new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1));
+    const iso = latestQcdIso_ || prevWorkdayIso_();
+    $('qcd-alldept-from').value = iso;
+    $('qcd-alldept-to').value   = iso;
+    // Keep the preset honest: only claim "Yesterday" when the chosen date
+    // IS literal yesterday; otherwise show Custom so the label can't lie.
     const p = $('qcd-alldept-preset');
-    if (p) p.value = 'yesterday';
+    if (p) p.value = (iso === literalYesterday) ? 'yesterday'
+      : (iso === qcdAllDeptIsoOf_(now) ? 'today' : 'custom');
   }
 
   function qcdAllDeptApplyPreset_() {
