@@ -182,7 +182,8 @@ scripts/deploy.sh apps-script/cdr-import <cdr-import-deployment-id>
   roster entry (typos, marriages, hyphenations, exotic spellings),
   the row appears in `DQE Historical Data` but doesn't show up
   under any dept. Surface these via the dashboard's
-  **Outlier Fix** tab in the top header nav (admin-only).
+  **Outlier Fix** entry under the header nav's **Admin** dropdown
+  (admin-only).
 - For each orphan, pick a canonical name from the roster dropdown
   and click Apply. The action: (1) bulk-renames every row in
   `DQE Historical Data` where Agent Name == orphan, (2) adds the
@@ -208,7 +209,8 @@ scripts/deploy.sh apps-script/cdr-import <cdr-import-deployment-id>
 
 **Optional (Dept Config):**
 
-- The **Dept Config** tab in the header nav (admin-only) edits the
+- The **Dept Config** entry under the header nav's **Admin**
+  dropdown (admin-only) edits the
   per-dept maps that used to require a code change + redeploy:
   QCD queues, Overview sub-queue nesting (parent), team-average
   exclusions, and queue-extension overrides. Saved rows live in the
@@ -447,24 +449,30 @@ the deployed web-app URL to land on that view:
 - `#/dept` — My Department page
 - `#/escalations` — Escalations (managers + admins; view/resolve a dept's
   escalation calls, admins log new ones; Neon-backed)
-- `#/report/missed` — Missed Calls report
+- `#/report/missed` — Missed Calls report (lives inline on the My
+  Department page; the deep link opens that page and scrolls to it)
 - `#/report/individual` — Individual Report
 - `#/report/performance` — legacy (Performance Report retired — lands on Insights)
 - `#/report/compare` — legacy (Compare Ranges retired — lands on Insights)
 - `#/report/qcd` — legacy (QCD modal retired — lands on Insights Queue health)
 - `#/report/insights` — Insights (period comparison: team rollup + per-agent delta cards)
 - `#/report/inbound` — Inbound Report (per-dept gated; Neon-backed)
+- `#/report/direct` — Direct Call Report (admin-only while the busy
+  carve-out numbers are vetted; Neon-backed)
 - `#/admin/alerts` — Low Answer Rate Alerts (admin-only)
 - `#/admin/orphan-fix` — Outlier Fix (admin-only)
 - `#/admin/dept-config` — Dept Config (admin-only)
+- `#/admin/access-control` — manager Access editor (admin-only)
+- `#/admin/health` — System Health status page (admin-only)
 - `#/admin/caller-lookup` — Caller Lookup (admin-only): trace every
   inbound call from one phone number — outcome, wait/hold, and the
   leg-by-leg journey for calls captured since the journey extension.
   Requires `HMAC_SECRET` on the dashboard project (same value as CDR
   Import / CDR Report) plus the `NEON_*` properties.
 
-Each report modal also carries a small `↗` button next to its
-close X — clicking it opens the same view in a new browser tab so
+Each report view (the Insights page and each report modal) also
+carries a small `↗` button — clicking it opens the same view in a
+new browser tab so
 you can OS-tile two windows side-by-side for comparison. Requires
 the `DASHBOARD_URL` Script Property to be set (see Alerts setup
 above); the button silently hides when unset.

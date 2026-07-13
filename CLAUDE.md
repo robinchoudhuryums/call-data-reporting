@@ -1821,7 +1821,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
 ## Operator State Checklist
 
 When something looks wrong, before assuming a code bug, check:
-(**Start at the admin Health tab** — route `#/admin/health`,
+(**Start at the admin Health view** — Admin ▾ dropdown → Health, route `#/admin/health`,
 `SystemHealth.gs` — which renders most of the items below as a live
 status table with remediation hints; fall through to the numbered
 items for anything it flags or doesn't cover.)

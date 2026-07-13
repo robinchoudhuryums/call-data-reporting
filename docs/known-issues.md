@@ -443,6 +443,43 @@ These are correct rejections — don't add them to any dept roster.
 *should* drop them upstream; missing entries should be added there, not
 worked around downstream.
 
+### Blank Date column in QCD Historical Data (observed 2026-07, cause unconfirmed)
+
+Owner-reported incident: rows for 07/03–07/10 were present in
+`QCD Historical Data` with all metric columns populated but the **Date
+column (col C) blank**, while the sibling CDR / Q Path / CSR / DQE sheets
+had normal dates for the same days. Symptoms while the dates were blank:
+the My Department QCD side panel, Insights Queue health, the Overview QCD
+chips, and `computeMtdViolations_` all silently skipped those rows
+(`rowDateIso_` returns `''` for a blank cell), so queue data appeared
+"stuck" at the last dated row.
+
+What the code can and can't produce:
+
+- The **daily import cannot produce this**: `processIntegratedHistory`
+  writes the SAME `dateObj` value into CDR / Q Path / QCD / CSR in one
+  run (autoImport.js), so a QCD-only blank date column doesn't match any
+  daily write path.
+- The **one code path that can write a blank date** is the bulk Pending
+  Archive path: `parsePendingDate()` returns an Invalid Date for an
+  unparseable Pending Archive date cell, and `setValues` writes an
+  Invalid Date as a blank cell. Only relevant if a bulk archive ran for
+  the affected dates.
+- Otherwise suspect a sheet-level edit (a cleared or partially-pasted
+  column).
+
+Repair: fill the Date cells by hand (M/D/YYYY is fine — the coercion to
+a Date value is what the column wants), or force re-import the affected
+dates (deletes + rewrites each date's QCD rows). Note the Neon
+`qcd_history` mirror takes its date from the same value, so rows
+mirrored while blank likely share the gap — a force re-import re-mirrors
+them; a hand-fill does not. Report caches serve the old skip for up to
+30 min after the fix.
+
+If it recurs after a plain daily import, capture the Pipeline Health
+rows for that run and the raw sheet state before repairing — that would
+point at a genuine pipeline bug rather than an edit.
+
 ### Per-leg attribution issue on `1762242119044` (2026-03-09)
 
 Identified during Bug 3 investigation. Distinct from Bug 3 itself —

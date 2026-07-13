@@ -1,6 +1,13 @@
 # Cycle State — resume note
 
-## Latest session (post-deploy owner feedback round 4 -- Admin dropdown + rings labeling)
+## Latest session (/sync-docs sweep after feedback rounds 1-4)
+Branch `claude/broad-scan-d60m5l`, 284/284 tests, INV-16 guard green.
+- **Caught a real shipped inconsistency**: the round-3 chip rename ("When did we miss calls?") landed only in dashboard.html's Overview static block -- the `launcherRowHtml_` builder edit was dropped when the round-3 edit batch failed on read-state and only half was re-issued, so Insights + My Department showed the OLD label. FIXED in script.html (builder + comment). Lesson: after a failed multi-edit batch, re-verify EVERY edit in the batch landed, not just the ones re-issued.
+- Doc fixes: CLAUDE.md Operator State intro (Health under the Admin ▾ dropdown); README Outlier Fix / Dept Config now "under the Admin dropdown", deep-link list gained `#/report/direct` + `#/admin/access-control` + `#/admin/health`, missed-route note (inline on My Dept), ↗-button phrasing covers the Insights page; known-issues.md gained the **QCD blank-date incident** entry (07/03-07/10 rows with blank col C: daily path can't produce it -- one dateObj to all four sheets; bulk `parsePendingDate` -> Invalid Date -> blank IS possible; repair = hand-fill or force re-import, Neon mirror shares the gap; capture Pipeline Health rows if it recurs).
+- Verified clean: all subsystem file lists match disk; all INV-30 cache versions match code; no new operator-state items (rounds 1-4 were client-only); frozen dqe-report rationale intact.
+Where I left off: sync-docs sweep committed+pushed, PR + merge on CI green.
+
+## Prior session (post-deploy owner feedback round 4 -- Admin dropdown + rings labeling)
 Branch `claude/broad-scan-d60m5l`, 284/284 tests, INV-16 guard green. Client-only (script.html/dashboard.html) + docs; Department Dashboard-only deploy.
 - **Admin dropdown**: Alerts / Outlier Fix / Dept Config / Access / Health collapsed into one `.header-menu` "Admin" group (`#admin-menu-btn` / `#admin-menu-list`, dashboard.html) mirroring the Reports group -- initHeaderMenus_ + updateTabActiveState_ are already generic, so ZERO script.html changes were needed; items keep ids/data-route/data-admin-only (deep links, F11 guard, Overview-nag programmatic clicks unchanged); wrapper carries data-admin-only (managers + view-as never see it). Caller Lookup deliberately left top-level (owner listed exactly 5; fold-in is a one-move follow-up). Chose dropdown over a dedicated Admin PAGE: modals keep drag/resize/deep-links/all wiring; a page conversion (Insights-scale project) remains possible later.
 - **'% Answered (rings)' label** on the Insights rollup tile (benchValueCls_ still matches via /answer/); glossary gains `'% answered (rings)'` plain + rich entries (exact-key match would otherwise have dropped the tooltip).
