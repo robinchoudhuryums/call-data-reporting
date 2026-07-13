@@ -694,9 +694,12 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   pre-checks the REQUESTED agents via `insLastRequestedAgents_`, not the
   server-resolved `meta.agents`, so an agent-free run stays agent-free),
   and the compare control defaults to a `keep` sentinel that re-resolves
-  through the MAIN form's compare mode (preserving a custom prior window
-  the popover can't represent). Apply syncs the popover back into the
-  setup form, then reuses `runInsReport()` (SWR + D1b + stale-guard). The team
+  through the MAIN form's compare mode. Since the setup-form retirement
+  the popover can also EXPRESS a custom prior (Compare=custom reveals
+  Prior from/to inputs, prefilled from the last-used custom window) --
+  it's the only editing surface now. Apply syncs the popover back into
+  the HIDDEN setup form (still the state store the launcher / share-state
+  / prefs read), then reuses `runInsReport()` (SWR + D1b + stale-guard). The team
   rollup tiles dropped Total Rung / Total TTT; Queue health dropped Longest
   wait (decluttered to two labeled groups: Department rollup + Queue health).
 - **Guided onboarding tour is client-only (#5).** A self-built
@@ -726,17 +729,24 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   absent metric / bare-array return -> neutral "At a glance". Wired for
   IR(single)/CR/Insights (answer rate) + Inbound (abandon/answer);
   Missed + comparison-mode stay neutral. `.report-headline.is-good`/
-  `.is-warn` tint the box + badge. (2) **Overview
-  question launcher** (`initOverviewLauncher_`) -- four question chips
-  on the Overview route into Insights (two of them: "team lately" AND
-  "abandons", since the QCD retirement) / the My Department missed
-  section / Individual pre-primed; Insights auto-runs via the one-shot
+  `.is-warn` tint the box + badge. (2) **Quick-start
+  question launcher** (`initOverviewLauncher_`) -- the four question
+  chips render on ALL THREE pages (the Overview's static block plus
+  copies injected at the top of the Insights and My Department pages
+  from the one `launcherRowHtml_` builder -- keep the Overview's static
+  markup in sync). Three chips route into Insights ("team lately" ->
+  the rollup tiles, "abandons" -> Queue health, "agents struggling or
+  improving" -> the per-agent cards -- REPOINTED from the Individual
+  Report's primed setup form, owner note; IR stays reachable via the
+  Reports menu + card drills); each landing scrolls to and briefly
+  SPOTLIGHTS its section (`qsSpotlight_` + `.qs-spotlight` accent-ring
+  pulse, reduced-motion aware, consumed one-shot via `insScrollPending_`
+  at the end of `insRenderReport_`). Insights auto-runs via the one-shot
   `insLauncherAutoRun_` flag consumed in `insRenderAgentList` (the
-  race-free post-roster point), the Missed chip sets the page dates to
+  race-free post-roster point); the Missed chip sets the page dates to
   the latest DQE date, opens the dept page, and arms the one-shot
-  `deptMissedScrollPending_` scroll (the standalone Missed Calls modal
-  is retired -- the inline section is the report), Individual stops at
-  the primed form. (3) **Metric glossary** -- `METRIC_GLOSSARY_` is the ONE
+  `deptMissedScrollPending_` scroll+spotlight (the standalone Missed
+  Calls modal is retired -- the inline section is the report). (3) **Metric glossary** -- `METRIC_GLOSSARY_` is the ONE
   place metric definitions live; `initMetricGlossary_`'s debounced
   MutationObserver applies them as `title=` to `th` + KPI-label
   elements + adds `.gloss` (which renders a circled-`i` `::after`
@@ -1468,8 +1478,13 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   full page (route `#/escalations`) — an interactive worklist, not a
   modal (it was converted from one); **Insights** is a full page too
   (route `#/report/insights`, converted from a modal --
-  docs/insights-page-plan.md; first entry via `insEnsurePage_` runs the
-  old openModal init, RE-ENTRY keeps the rendered report; its top-level
+  docs/insights-page-plan.md; first entry via `insEnsurePage_`
+  AUTO-GENERATES the report -- restored prefs or the launcher-window
+  default with an agent-free whole-dept run, INV-45; the SETUP-FORM STEP
+  and its "« Back" button are RETIRED (owner) with the form kept hidden
+  as the failure/empty-roster fallback only (`insShowForm`), all editing
+  via the results-header "Edit dates & agents" popover; RE-ENTRY keeps
+  the rendered report; its top-level
   header tab is visible to ALL roles, replacing the old manager-only
   solo-button proxy). `setPage(name)` swaps the page,
   the header kicker/title, and triggers that page's load (Overview ->
@@ -2333,7 +2348,7 @@ S13 | Individual Report agent picker active/inactive grouping | Subsystem: Depar
 
 S14 | Insights team rollup: current vs prior deltas + PR-absorbed views | Subsystem: Department Dashboard
   Steps:
-    - (The standalone Performance Report is RETIRED -- Insights is the replacement.) Open Insights. Pick "Last month" and leave agents unchecked (whole department); Generate.
+    - (The standalone Performance Report is RETIRED -- Insights is the replacement.) Open Insights -- it AUTO-GENERATES the whole-department report on first entry (no setup form). Use "Edit dates & agents" to pick "Last month" and Apply with no agents checked (whole department).
     - Check the KPI tiles' deltas vs the immediately-preceding same-length window (INV-28); the "Comparing against..." line shows the explicit prior dates.
     - Scroll to the share-of-answered donut (below the trend chart) -- one slice per agent, small slices unlabeled.
     - Switch the per-agent comparison to Chart view and flip the new sub-toggle to "Absolute": one stacked bar per agent (green Answered + red Missed, stack = rung) with a % Answered dot per agent on the right axis -- PR's Volume & Efficiency view. The metric selector hides in Absolute mode; clicking a bar drills into IR.
@@ -2356,14 +2371,14 @@ S17 | RETIRED (Compare Ranges deleted -- CR->Insights consolidation). Per-dept g
 
 S18 | Insights length-mismatch surfaces per-day (ex-Compare Ranges, INV-35) | Subsystem: Department Dashboard
   Steps:
-    - Open Insights. Set Compare against = Custom prior range with a prior window >= 1.2x longer (in working days) than the selected range.
+    - Open Insights (auto-generates on first entry). Via "Edit dates & agents", set Compare = Custom prior range with a prior window >= 1.2x longer (in working days) than the selected range; Apply.
     - Generate.
-  Expected: form hint warns about the length difference; the results compare-line carries the inline "Different window lengths" caveat; raw-volume team insights are dropped (rates kept); agent cards show per-day sublines on volume/time metrics; the CSV gains /day columns (team rollup + per-agent).
+  Expected: the results compare-line carries the inline "Different window lengths" caveat; raw-volume team insights are dropped (rates kept); agent cards show per-day sublines on volume/time metrics; the CSV gains /day columns (team rollup + per-agent).
 
 S19 | Insights custom prior range round-trip (ex-Compare Ranges) | Subsystem: Department Dashboard
   Steps:
     - Open Insights; set Compare against = Custom prior range with the same month last year as the prior window and this month-to-date as the range.
-    - Generate, then click "change" in the results header, swap one agent out, leave Compare at "Keep current comparison", Apply.
+    - Then click "Edit dates & agents" in the results header, swap one agent out, leave Compare at "Keep current comparison", Apply.
   Expected: report re-runs in place against the same custom prior (the 'keep' sentinel preserves it); editing-line updates; the popover dismisses; the new agent's card appears. Hover a card delta badge for the prior window's exact value (the standalone "vs Prior" chart basis was retired by owner note; the badge tooltips are the prior-value surface).
 
 S20 | Alerts preview + send flow | Subsystem: Department Dashboard
@@ -2456,7 +2471,7 @@ S31 | Orphan Fix end-to-end (admin) | Subsystem: Department Dashboard + CDR DQE 
 S32 | Queue data end-to-end (Insights Queue health + retained QCD surfaces) | Subsystem: Department Dashboard + CDR Import
   Steps:
     - (The standalone QCD Report modal is RETIRED -- QCD->Insights consolidation. Queue data is now verified via Insights Queue health + the three retained QCD surfaces below.)
-    - Open the dashboard as a manager. Click the "Insights" tab; leave all agents unchecked and Generate over a range with known QCD activity (the agent-free whole-dept run).
+    - Open the dashboard as a manager. Click the "Insights" tab -- it AUTO-GENERATES the agent-free whole-dept report (last 30 days ending yesterday) on first entry; use "Edit dates & agents" to move to a range with known QCD activity if needed.
     - Confirm the Queue health section renders: tiles (Queue calls / Abandoned % / Violations MTD -- warn-tinted per the 5% standard) + the muted secondary line (Answered / Longest wait / Avg answer); one row per queue in the dept's effective queue list, sub-queue rows tagged + excluded from the dept total; every row expands into the secondary-metric strip, the per-call-source subtable (Overall + CSR / Ad-campaign / New Call Menu / Non-CSR, Overall-first then by volume), and violation dates. The collapsed Daily breakdown table shows the per-day rows with the answered/abandoned split bar.
     - Switch the consolidated trend chart to the "Abandoned % by Queue" tab: one line per queue + a dashed "Dept total" line + the dashed 5% threshold; days/months at or over 5% render enlarged warn-colored points (violation markers). The legend shares the Overview chart's spotlight (hover to dim others; click to pin/isolate) via the `chartSpotlight*` helpers. The metric sub-selector switches to Total Calls / Violations; the Monthly/Daily toggle switches the axis.
     - As an admin, pick a dept with NO mapped queues and Generate: Queue health renders the "No queues are mapped" hint with an "Open Dept Config" button (managers get the ask-an-admin wording).
@@ -2511,10 +2526,10 @@ S36 | Dept Config modal: auto-discovery, validation, override round-trip | Subsy
 S37 | Insights report end-to-end (comparison modes + CR-ported analytics) | Subsystem: Department Dashboard
   Steps:
     - Open the dashboard as a manager; click the "Insights" tab (visible to all; per-dept gated server-side like IR/CR).
-    - Default compare mode is "Immediately-preceding period". Pick a range with activity + 2+ agents; Generate. Confirm: 6 KPI tiles with delta badges AND 12-month sparklines; the metric-tabbed 12-Month Team Trend chart; per-agent cards each carrying 6 metrics with their OWN delta badges; floaters get the QUEUE chip + warn border and are excluded from the rollup caption's roster-only totals (INV-53).
+    - First entry AUTO-GENERATES (default compare = "Immediately-preceding period"; no setup-form step -- "Edit dates & agents" is the editing surface). Adjust to a range with activity + 2+ agents via the popover. Confirm: 6 KPI tiles with delta badges AND 12-month sparklines; the metric-tabbed 12-Month Team Trend chart; per-agent cards each carrying 6 metrics with their OWN delta badges; floaters get the QUEUE chip + warn border and are excluded from the rollup caption's roster-only totals (INV-53).
     - Cards carry a left-border classification tint (improved=accent / regressed=warn / mixed=muted) + a "vs Team" badge; the Sort control re-orders (Most answered default / Name / Biggest improvers / Biggest regressors); agents with no notable movement collapse into "Show N quiet agents".
     - Switch Compare against to "Same window one year prior" -> hint previews the resolved YoY window; Generate -> "Comparing against the selected prior window" line + per-agent prevs from the YoY window.
-    - Switch to "Custom prior range" with a window >= 1.2x longer -> form hint warns about the length difference; after Generate, the results show the different-window-lengths banner and per-day sublines on volume/time metrics (INV-35 contract).
+    - Switch to "Custom prior range" (via the popover's Prior from/to inputs) with a window >= 1.2x longer -> after Apply, the results show the different-window-lengths caveat and per-day sublines on volume/time metrics (INV-35 contract).
     - Queue health (when the dept is QCD-mapped): the per-queue detail table renders one row per queue with abandoned % / abandoned / violations. For a queue whose abandons are driven by a non-Overall call source (4c), the queue-name cell shows a muted "↳ most abandons: <source> (N)" annotation; queues with no sub-source abandons show no annotation. As ADMIN, an `#ins-heatmap` weekday×hour abandon heatmap renders below Queue health (the same shared panel the QCD report shows); managers don't see it.
     - Agent-free run (Phase 2 parity): leave ALL agents unchecked and Generate -> the report runs over the whole dept roster (the digest pattern, INV-45; floaters excluded), rendering the team rollup + Queue health + every roster agent's card -- the QCD-replacement queue/dept quick-look. Generate stays enabled with nothing checked (only a truly empty roster disables it).
     - Export -> Email report sends a SERVER-RENDERED HTML report (department rollup tiles + per-agent delta table) via sendInsightsReportEmail, recomputed from the same params -- no charts in the email (Copy image / Print keep the charts); Print does the same as before.

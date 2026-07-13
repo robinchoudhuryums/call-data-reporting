@@ -1021,6 +1021,11 @@
     margin-top: 2px;
   }
   .dept-qcd-value.dept-qcd-warn { color: var(--warn); }
+  /* Merged "Ans / Abd" tile (owner note): answered green, abandoned warm,
+     one glance instead of two look-alike number tiles. */
+  .dept-qcd-ans { color: var(--good); }
+  .dept-qcd-abd { color: var(--warn); }
+  .dept-qcd-sep { color: var(--muted); }
 
   /* QCD snapshot carousel (multi-queue side card): one queue page at a time
      with ‹ › nav + a dot indicator, so the sticky side column stays compact
@@ -3023,6 +3028,25 @@
   /* Overview question launcher (anti-intimidation layer): four
      plain-English questions, each routing to a pre-primed report. */
   .ov-launcher { margin: 12px 0 16px; }
+  /* Injected copies at the top of the Insights + My Department pages
+     (owner note) -- same chips, slightly tighter spacing. */
+  .ov-launcher--page { margin: 4px 0 14px; }
+  /* Quick-start chip landing spotlight (qsSpotlight_): a brief accent
+     ring pulse on the section that answers the clicked question.
+     Reduced-motion users get a static ring for the same duration. */
+  .qs-spotlight { animation: qs-pulse 2.4s ease; border-radius: var(--r); }
+  @keyframes qs-pulse {
+    0%   { box-shadow: 0 0 0 0 transparent; }
+    12%  { box-shadow: 0 0 0 4px var(--accent-soft), 0 0 0 1.5px var(--accent); }
+    70%  { box-shadow: 0 0 0 4px var(--accent-soft), 0 0 0 1.5px var(--accent); }
+    100% { box-shadow: 0 0 0 0 transparent; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .qs-spotlight {
+      animation: none;
+      box-shadow: 0 0 0 4px var(--accent-soft), 0 0 0 1.5px var(--accent);
+    }
+  }
   .ov-launcher-kicker {
     font-family: var(--mono);
     font-size: 9px;
