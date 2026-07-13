@@ -2932,7 +2932,7 @@
     return '<div class="ov-launcher-kicker">What do you want to know?</div>'
       + '<div class="ov-launcher-row">'
       +   '<button type="button" class="ov-launcher-q" data-launch="team-lately">How is my team doing lately?</button>'
-      +   '<button type="button" class="ov-launcher-q" data-launch="missed-yesterday">Why did we miss calls recently?</button>'
+      +   '<button type="button" class="ov-launcher-q" data-launch="missed-yesterday">When did we miss calls?</button>'
       +   '<button type="button" class="ov-launcher-q" data-launch="agent-trend">Is one of my agents struggling or improving?</button>'
       +   '<button type="button" class="ov-launcher-q" data-launch="abandons">Are callers giving up before we answer?</button>'
       + '</div>';
@@ -3027,7 +3027,7 @@
     insEnsureRoster();
   }
 
-  // "Why did we miss calls recently?" -> the My Department missed section
+  // "When did we miss calls?" -> the My Department missed section
   // on the most recent date with data (the modal was retired -- the inline
   // section is the report). Sets the page dates, opens the dept page, and
   // scrolls to the section once its fetch renders it.
