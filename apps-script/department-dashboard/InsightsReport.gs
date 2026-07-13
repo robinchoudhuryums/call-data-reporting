@@ -566,6 +566,12 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
       // auto-adjacent priors are disjoint by construction, so this is custom-only.
       priorOverlap: priorIsCustom && (priorFrom <= to && from <= priorTo),
       currentDays: currentDays, priorDays: priorDays,
+      // Working-day counts (Mon-Fri minus company holidays, INV-35's
+      // countWorkingDays_). The client's trend-pill / triage / quiet
+      // classification normalizes the VOLUME metrics per working day with
+      // these (owner note: a raw answered-count drop caused purely by a
+      // shorter/holiday-bearing window read as "Slipping" unfairly).
+      currentWorkDays: currentWorkDays, priorWorkDays: priorWorkDays,
       lengthMismatch: lengthMismatch,
       trendStart: trendFrom, trendEnd: trendTo,
       agents: selectedAgents,
@@ -805,6 +811,7 @@ function emptyInsights_(dept, from, to, priorFrom, priorTo, selectedAgents,
       priorFrom: priorFrom, priorTo: priorTo,
       comparisonMode: priorIsCustom ? 'custom' : 'prior',
       currentDays: 0, priorDays: 0,
+      currentWorkDays: 0, priorWorkDays: 0,
       lengthMismatch: false,
       trendStart: from, trendEnd: to,
       agents: selectedAgents,

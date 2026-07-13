@@ -223,7 +223,14 @@ function buildInboundCallRecords_(rawRows) {
   var records = [];
   Object.keys(groups).forEach(function (root) {
     var legs = groups[root].slice().sort(function (a, b) {
-      return (icParseTs_(a[IC_COL.START]) || 0) - (icParseTs_(b[IC_COL.START]) || 0);
+      var d = (icParseTs_(a[IC_COL.START]) || 0) - (icParseTs_(b[IC_COL.START]) || 0);
+      if (d) return d;
+      // Same-second legs (a caller/queue leg + the rings it fanned out to)
+      // keep their source LEG_ID order, so a termination leg can't
+      // interleave the ring events in the journey (owner note). Journeys
+      // already stored in Neon keep their old order until re-imported /
+      // backfilled.
+      return (Number(a[IC_COL.LEG_ID]) || 0) - (Number(b[IC_COL.LEG_ID]) || 0);
     });
 
     var incoming = legs.filter(function (l) {

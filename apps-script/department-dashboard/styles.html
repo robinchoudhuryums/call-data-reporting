@@ -297,6 +297,16 @@
     color: var(--warn);
   }
   .freshness-pill .freshness-date { color: var(--ink); }
+  /* Non-admin variant (owner note): quiet inline text, no box/border --
+     the loud chip stays admin-only. The is-stale warn tint below wins for
+     both roles (stale data changes how anyone reads the numbers). */
+  .freshness-pill--subtle:not(.is-stale) {
+    background: transparent;
+    border-color: transparent;
+    padding-left: 0;
+    padding-right: 0;
+  }
+  .freshness-pill--subtle:not(.is-stale) .freshness-date { color: var(--muted); }
 
   /* Work-window pill (E2, Phase E). Inline mono kicker below the
      dept-page controls explaining what time-of-day the Rung /
@@ -852,6 +862,27 @@
   }
   .seg-btn:last-child { border-right: 0; }
   .seg-btn:hover { background: var(--paper-2); color: var(--ink); }
+  /* seg-rich: two-line segmented options (title + lowercase hint) for
+     choices that deserve explanation -- the Insights cards-chart basis
+     selector (owner note: the bare labels read as a cryptic toggle). */
+  .seg-rich .seg-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    text-align: left;
+    padding: 8px 14px;
+  }
+  .seg-rich .seg-title { display: block; }
+  .seg-rich .seg-hint {
+    display: block;
+    font-size: 10px;
+    text-transform: none;
+    letter-spacing: 0;
+    color: var(--muted);
+    font-family: var(--sans, inherit);
+  }
+  .seg-rich .seg-btn.active .seg-hint { color: inherit; opacity: 0.85; }
   .seg-btn.active {
     background: var(--ink);
     color: var(--paper);
@@ -3343,6 +3374,16 @@
   }
   .cl-ev-queue  { border-left-color: var(--accent); }
   .cl-ev-answer { border-left-color: var(--good); }
+  /* Synthetic terminal row (owner note): marks the real hang-up moment --
+     the last leg's start + duration -- so a long abandoned wait doesn't
+     read as if the caller disconnected at the leg's START time. */
+  .cl-ev-end {
+    border-left-color: var(--warn);
+    color: var(--muted);
+    margin-top: 2px;
+    padding-top: 4px;
+    border-top: 1px dashed var(--line);
+  }
   .cl-ev-time {
     font-family: var(--mono);
     font-size: 11px;
