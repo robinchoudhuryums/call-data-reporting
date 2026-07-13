@@ -713,6 +713,10 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   window's workdays likewise. The team
   rollup tiles dropped Total Rung / Total TTT; Queue health dropped Longest
   wait (decluttered to two labeled groups: Department rollup + Queue health).
+  The rollup's rate tile is labeled **"% Answered (rings)"** (owner note):
+  it's answered ÷ rung, and rung counts RINGS -- one call can ring several
+  agents -- so it's ring-level, not share-of-unique-calls; the glossary
+  carries a matching `'% answered (rings)'` entry (plain + rich).
 - **Guided onboarding tour is client-only (#5).** A self-built
   coachmark walkthrough (no dependency): `initTour_` / `startTour_`
   in script.html + `.tour-*` styles. Spotlight = a `#tour-highlight`
@@ -1601,7 +1605,20 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   attribute and a stable button `id`, so the existing per-modal
   init functions still wire up modal-open behavior unchanged; the
   new `initRouter` in `script.html` just tracks `currentRoute` and
-  paints the active-tab indicator via `updateTabActiveState_`. Two
+  paints the active-tab indicator via `updateTabActiveState_`.
+  Two groups have since RE-collapsed into `.header-menu` dropdowns
+  (`initHeaderMenus_` wires open/close via `aria-controls`;
+  `updateTabActiveState_` lights any dropdown trigger whose item
+  route is active, generically): the **Reports** group (Individual +
+  the admin-vetted Inbound / Direct) and — post-deploy round 4,
+  owner request — the **Admin** group (`#admin-menu-btn`: Alerts,
+  Outlier Fix, Dept Config, Access, Health; Caller Lookup stays a
+  top-level admin tab). Menu items keep their stable ids +
+  `data-route` + `data-admin-only`, so deep links, the F11 non-admin
+  no-op guard, and the Overview nags' programmatic
+  `#orphan-fix-btn` / `#dept-config-btn` clicks all work unchanged;
+  the wrapper carries `data-admin-only` so view-as-manager hides the
+  whole group. Two
   click handlers fire per tab — the existing modal-open and the
   router's data-route tracker — but they don't conflict because
   each modal's `openModal` is idempotent. **No
@@ -2469,7 +2486,7 @@ S30 | Header freshness pill renders and goes stale | Subsystem: Department Dashb
 
 S31 | Orphan Fix end-to-end (admin) | Subsystem: Department Dashboard + CDR DQE Pipeline
   Steps:
-    - As admin, open the dashboard. Click the "Outlier Fix" tab in the header nav (admin-only tab; flattened from the prior Admin dropdown in Phase C).
+    - As admin, open the dashboard. Open the "Admin" dropdown in the header nav (admin-only group) and click "Outlier Fix".
     - Confirm the modal lists orphan agent names from DQE Historical Data (or "no orphans" if everyone canonicalizes cleanly).
     - For one orphan, pick a canonical roster name from the dropdown; click Apply; confirm the prompt.
     - Server returns the rename count; the orphan row disappears from the list on refresh; "Current aliases" gains a new row with Active=Yes; "Recent fix log" gains a `rename+alias` entry.
@@ -2521,7 +2538,7 @@ S35 | Phase D totals parity (roster-only floater exclusion) | Subsystem: Departm
 S36 | Dept Config modal: auto-discovery, validation, override round-trip | Subsystem: Department Dashboard
   Steps:
     - PREREQ: deploy the Dept Config commit (`clasp push -f` + new deployment version) AND re-run `setup()` as an admin so the `Dept Config` sheet exists (INV-54). Until both are done the feature is dormant and accessors fall through to the constants (so behavior is unchanged -- this is the regression-safety guarantee).
-    - As an admin, open the dashboard. Confirm the "Dept Config" tab appears in the header nav (admin-only; hidden for managers). As a non-admin manager, confirm the tab is NOT visible, and in the browser console `google.script.run.withFailureHandler(console.error).getDeptConfigInit()` throws "Alerts are admin-only." (the assertAdmin_ guard, shared message).
+    - As an admin, open the dashboard. Confirm "Dept Config" appears under the header nav's "Admin" dropdown (admin-only group; hidden for managers). As a non-admin manager, confirm the Admin dropdown is NOT visible, and in the browser console `google.script.run.withFailureHandler(console.error).getDeptConfigInit()` throws "Alerts are admin-only." (the assertAdmin_ guard, shared message).
     - Click the tab. The modal loads: a "Discovered queues" table lists distinct `Call Queue` values from QCD Historical Data (last 180 days), unmapped queues sorted first with an "unmapped" chip + an "N unmapped" badge on the section title; a "Per-department config" table shows every dept's EFFECTIVE qcdQueues / overviewParent / teamAvgExcludes / queueExtOverrides with a Source chip ("sheet" if an Active row exists, "default" if from the constant).
     - Click Edit on a dept. The edit form pre-fills from the effective values. Negative tests (each should fail server-side with a clear message, status flips to error, no row written):
         (a) QCD queue typo (a name not in QCD col D and not in the dept's constant) -> "Unknown QCD queue name(s): ... Queues seen in the last 180 days: ...".

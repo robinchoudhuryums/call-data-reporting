@@ -3114,6 +3114,9 @@
     const g = METRIC_GLOSSARY_;
     g['total rung']   = g['rung'];
     g['total missed'] = g['missed'];
+    g['% answered (rings)'] = 'Answered as a share of rings to agents (answered ÷ rung). '
+      + 'One call can ring several agents and each ring counts once, so this is ring-level '
+      + '— not the share of unique calls answered. The company-wide target is 92%.';
     g['total ttt']    = g['ttt'];
     g['avg att']      = g['att'];
     g['avg talk']     = g['att'];
@@ -3138,6 +3141,9 @@
     ['% answered', 'answer rate', 'answer rate %'].forEach(function (k) {
       m[k] = tip('% Answered', 'Answered calls as a share of calls offered.', target92);
     });
+    m['% answered (rings)'] = tip('% Answered (rings)',
+      'Answered as a share of rings to agents (answered ÷ rung). One call can ring '
+      + 'several agents and each ring counts once — ring-level, not unique calls.', target92);
     ['abandoned %', 'aband. %', 'abandon rate %'].forEach(function (k) {
       m[k] = tip('Abandoned %', 'Share of queue calls where the caller hung up before being answered.', thresh5);
     });
@@ -10051,7 +10057,7 @@
       // Team (roster) rollup -- the priority metrics first. Total Rung +
       // Total TTT were dropped (low signal); Longest Wait lives in Queue
       // health. Missed keeps its warn valence; volume/rate are neutral/pos.
-      dsKpiTile_('% Answered',   t.pct,      'pos', sparks.pct,      (THEME.accent || '#4E79A7')),
+      dsKpiTile_('% Answered (rings)', t.pct, 'pos', sparks.pct,     (THEME.accent || '#4E79A7')),
       dsKpiTile_('Answered',     t.answered, 'neu', sparks.answered, IR_VOLUME_COLORS.answered),
       dsKpiTile_('Missed (rings)', t.missed, 'neg', sparks.missed,   IR_VOLUME_COLORS.missed),
       dsKpiTile_('ATT (per call)', t.att,    'neu', sparks.att,      (THEME.muted  || '#9C755F')),

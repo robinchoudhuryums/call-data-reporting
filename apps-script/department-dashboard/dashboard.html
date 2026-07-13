@@ -94,24 +94,45 @@
                     title="Direct-extension call metrics (admin-only while being vetted): per-agent inbound answer rate (a miss while on another call is excused), inbound ATT, and outbound activity.">Direct</button>
           </div>
         </div>
-        <button class="header-menu-btn" id="alerts-btn" type="button"
-                data-route="/admin/alerts" data-admin-only role="tab" aria-selected="false" style="display:none;"
-                title="Configure low-answer-rate alerts: per-dept thresholds + recipients, manual send, or schedule a daily check.">Alerts</button>
-        <button class="header-menu-btn" id="orphan-fix-btn" type="button"
-                data-route="/admin/orphan-fix" data-admin-only role="tab" aria-selected="false" style="display:none;"
-                title="Map outlier agent names in DQE Historical Data to existing roster entries. Admin-only.">Outlier Fix</button>
-        <button class="header-menu-btn" id="dept-config-btn" type="button"
-                data-route="/admin/dept-config" data-admin-only role="tab" aria-selected="false" style="display:none;"
-                title="Map dept queues, sub-queue nesting, and team-avg exclusions without a redeploy. Validated + auto-discovers unmapped queues. Admin-only.">Dept Config</button>
-        <button class="header-menu-btn" id="access-control-btn" type="button"
-                data-route="/admin/access-control" data-admin-only role="tab" aria-selected="false" style="display:none;"
-                title="Add, edit, or remove manager dashboard access (email + department) without hand-editing the sheet. Admin-only.">Access</button>
         <button class="header-menu-btn" id="caller-lookup-btn" type="button"
                 data-route="/admin/caller-lookup" data-admin-only role="tab" aria-selected="false" style="display:none;"
                 title="Trace every inbound call from one phone number: when they called, the path through IVR / queues / agents, and how each call ended. The number is hashed before querying and never stored. Admin-only.">Caller Lookup</button>
-        <button class="header-menu-btn" id="system-health-btn" type="button"
-                data-route="/admin/health" data-admin-only role="tab" aria-selected="false" style="display:none;"
-                title="One-glance operational status: pipeline freshness, Neon health, trigger-driven services, config properties, and setup sheets — with a remediation hint on every amber row. Admin-only.">Health</button>
+        <!-- Admin group: the five admin config/ops launchers collapsed into
+             a single dropdown (owner request, post-deploy round 4) --
+             mirrors the Reports group above. Each menu item keeps its
+             stable button id + data-route + data-admin-only, so the Phase C
+             deep-link router (incl. its non-admin no-op guard, F11), the
+             per-modal open handlers, and the Overview nags' programmatic
+             #orphan-fix-btn / #dept-config-btn clicks are all unchanged;
+             initHeaderMenus_ wires open/close via aria-controls and
+             updateTabActiveState_ already lights the trigger generically
+             for any .header-menu whose item route is active. The wrapper
+             carries data-admin-only so view-as-manager hides the whole
+             group via the existing CSS. -->
+        <div class="header-menu" data-admin-only style="display:none;">
+          <button class="header-menu-btn" id="admin-menu-btn" type="button"
+                  aria-haspopup="true" aria-expanded="false" aria-controls="admin-menu-list"
+                  title="Admin tools: alerts, outlier fix, dept config, manager access, and system health.">
+            Admin <span class="header-menu-caret" aria-hidden="true">&#9662;</span>
+          </button>
+          <div class="header-menu-list" id="admin-menu-list" role="menu" style="display:none;">
+            <button class="header-menu-item" id="alerts-btn" type="button"
+                    data-route="/admin/alerts" data-admin-only role="menuitem"
+                    title="Configure low-answer-rate alerts: per-dept thresholds + recipients, manual send, or schedule a daily check.">Alerts</button>
+            <button class="header-menu-item" id="orphan-fix-btn" type="button"
+                    data-route="/admin/orphan-fix" data-admin-only role="menuitem"
+                    title="Map outlier agent names in DQE Historical Data to existing roster entries. Admin-only.">Outlier Fix</button>
+            <button class="header-menu-item" id="dept-config-btn" type="button"
+                    data-route="/admin/dept-config" data-admin-only role="menuitem"
+                    title="Map dept queues, sub-queue nesting, and team-avg exclusions without a redeploy. Validated + auto-discovers unmapped queues. Admin-only.">Dept Config</button>
+            <button class="header-menu-item" id="access-control-btn" type="button"
+                    data-route="/admin/access-control" data-admin-only role="menuitem"
+                    title="Add, edit, or remove manager dashboard access (email + department) without hand-editing the sheet. Admin-only.">Access</button>
+            <button class="header-menu-item" id="system-health-btn" type="button"
+                    data-route="/admin/health" data-admin-only role="menuitem"
+                    title="One-glance operational status: pipeline freshness, Neon health, trigger-driven services, config properties, and setup sheets — with a remediation hint on every amber row. Admin-only.">Health</button>
+          </div>
+        </div>
       </nav>
       <div class="header-meta">
         <!-- Data-freshness pill -- "Data through Mon May 19 · 14h ago".
@@ -479,7 +500,7 @@
           <section class="help-topic" id="help-topic-nav" hidden>
             <h3>Navigating &amp; reports</h3>
             <p>The header row of tabs opens each report. Every report (the Insights page and each report modal) has an <strong>&#8599; Open in new tab</strong> button (top-right) for side-by-side viewing, and most carry an Export menu (Download CSV / Copy image / Email / Print).</p>
-            <p>The floating <strong>?</strong> button (bottom-right) opens this Help from anywhere, even over a report. Admin-only tabs (Alerts, Outlier Fix, Dept Config) are hidden for managers.</p>
+            <p>The floating <strong>?</strong> button (bottom-right) opens this Help from anywhere, even over a report. Admin tools (Alerts, Outlier Fix, Dept Config, Access, Health) live under the <strong>Admin</strong> dropdown, which is hidden for managers along with Caller Lookup.</p>
           </section>
           <section class="help-topic" id="help-topic-dates" hidden>
             <h3>Dates, presets &amp; freshness</h3>
