@@ -253,6 +253,10 @@
            TTT / ATT are scoped to (INV-06). -->
       <div id="work-window-pill" class="work-window-pill" aria-label="Work window"></div>
 
+      <!-- Quick-start chips (owner note): same row as the Overview,
+           injected + wired by initOverviewLauncher_. -->
+      <div class="ov-launcher ov-launcher--page" id="dept-launcher"></div>
+
       <div class="controls">
         <div class="control" id="dept-selector-wrap" style="display:none;">
           <label for="dept-selector">Department</label>
@@ -969,6 +973,9 @@
     <div class="ins-page-body">
       <button class="modal-open-tab-btn" type="button" data-open-tab-route="/report/insights"
               aria-label="Open in new tab" title="Open this report in a new browser tab (for side-by-side viewing)">&#8599;</button>
+      <!-- Quick-start chips (owner note): the same question row the
+           Overview carries, injected + wired by initOverviewLauncher_. -->
+      <div class="ov-launcher ov-launcher--page" id="ins-launcher"></div>
       <div id="insights-form" class="ir-form">
         <div class="ir-section-title">1. Date Range</div>
         <div class="ir-row">
@@ -1079,7 +1086,11 @@
                 <button type="button" role="menuitem" data-action="print">Print</button>
               </div>
             </div>
-            <button class="btn btn-secondary" id="ins-back-btn" type="button">&laquo; Back</button>
+            <!-- The "« Back" button is RETIRED with the setup-form step
+                 (owner): the page auto-generates on first entry and the
+                 Edit dates & agents popover is the editing surface. The
+                 hidden form remains only as the failure / empty-roster
+                 fallback (insShowForm). -->
           </div>
         </div>
 
@@ -1096,8 +1107,16 @@
                 <option value="keep">Keep current comparison</option>
                 <option value="prevPeriod">Immediately-preceding period</option>
                 <option value="yoy">Same window one year prior</option>
+                <option value="custom">Custom prior range&hellip;</option>
               </select>
             </label>
+          </div>
+          <!-- Custom-prior inputs (owner note: with the setup-form step
+               retired, the popover must be able to EXPRESS a custom prior
+               window, not just keep one). Shown only for Compare=custom. -->
+          <div class="ir-edit-dates-row" id="ins-edit-prior-row" style="display:none;">
+            <label class="ir-edit-date-field">Prior from<input type="date" id="ins-edit-prior-from"></label>
+            <label class="ir-edit-date-field">Prior to<input type="date" id="ins-edit-prior-to"></label>
           </div>
           <div class="ir-search-row">
             <input type="search" id="ins-edit-search" placeholder="Search agents..." autocomplete="off">

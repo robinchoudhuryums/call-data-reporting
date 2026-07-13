@@ -2911,6 +2911,7 @@
 
   let latestDqeIso_ = null;          // set by the getLatestDataDates init fetch
   let insLauncherAutoRun_ = false;   // consumed by insRenderAgentList
+  let insScrollPending_ = null;      // quick-start chip target section id (one-shot, consumed on render)
 
   function launcherIsoDaysAgo_(n) {
     const d = new Date();
@@ -2919,22 +2920,51 @@
       + '-' + String(d.getDate()).padStart(2, '0');
   }
 
+  // The chip row markup, one source of truth. The Overview's #ov-launcher
+  // block in dashboard.html carries a STATIC copy of the same row (so it
+  // paints before JS init) -- keep the two in sync when editing chips.
+  function launcherRowHtml_() {
+    return '<div class="ov-launcher-kicker">What do you want to know?</div>'
+      + '<div class="ov-launcher-row">'
+      +   '<button type="button" class="ov-launcher-q" data-launch="team-lately">How is my team doing lately?</button>'
+      +   '<button type="button" class="ov-launcher-q" data-launch="missed-yesterday">Why did we miss calls recently?</button>'
+      +   '<button type="button" class="ov-launcher-q" data-launch="agent-trend">Is one of my agents struggling or improving?</button>'
+      +   '<button type="button" class="ov-launcher-q" data-launch="abandons">Are callers giving up before we answer?</button>'
+      + '</div>';
+  }
+
+  // Wires the quick-start chips on ALL host pages (owner note): the
+  // Overview's static block, plus injected copies at the top of the
+  // Insights page and the My Department page -- same chips, same behavior
+  // everywhere. Each chip lands on (and briefly SPOTLIGHTS) the exact
+  // report section that answers its question.
   function initOverviewLauncher_() {
-    const wrap = $('ov-launcher');
-    if (!wrap) return;
-    wrap.addEventListener('click', function (e) {
+    const onLaunch = function (e) {
       const btn = e.target.closest('[data-launch]');
       if (!btn) return;
       const kind = btn.getAttribute('data-launch');
       try {
-        if (kind === 'team-lately')           launcherOpenInsights_();
-        else if (kind === 'missed-yesterday') launcherOpenMissed_();
-        else if (kind === 'agent-trend')      launcherOpenIndividual_();
-        // #5: repointed from QCD (retired) to Insights -- its Queue health
-        // section carries the abandon %/heatmap that answers "are callers
-        // giving up?" while keeping every chip on a kept/consolidated report.
-        else if (kind === 'abandons')         launcherOpenInsights_('Are callers giving up before we answer?');
-      } catch (err) { /* best-effort: the modal is still open/openable by hand */ }
+        if (kind === 'team-lately') {
+          launcherOpenInsights_('How is my team doing lately?', 'ins-kpi-row');
+        } else if (kind === 'missed-yesterday') {
+          launcherOpenMissed_();
+        } else if (kind === 'agent-trend') {
+          // Repointed from the Individual Report's primed setup form (owner
+          // note): the Insights per-agent cards auto-run and answer the
+          // question directly; each card still drills into IR.
+          launcherOpenInsights_('Is one of my agents struggling or improving?', 'ins-agent-cards');
+        } else if (kind === 'abandons') {
+          // #5: repointed from QCD (retired) to Insights -- its Queue health
+          // section carries the abandon %/heatmap that answers the question.
+          launcherOpenInsights_('Are callers giving up before we answer?', 'ins-queue-health');
+        }
+      } catch (err) { /* best-effort: the report is still openable by hand */ }
+    };
+    ['ov-launcher', 'ins-launcher', 'dept-launcher'].forEach(function (id) {
+      const wrap = $(id);
+      if (!wrap) return;
+      if (id !== 'ov-launcher') wrap.innerHTML = launcherRowHtml_();
+      wrap.addEventListener('click', onLaunch);
     });
   }
 
@@ -2976,8 +3006,11 @@
   // synchronization point. The form never flashes: a loading pane covers
   // the roster fetch + generate; failures fall back to the primed form
   // (insShowForm).
-  function launcherOpenInsights_(question) {
+  function launcherOpenInsights_(question, scrollTarget) {
     if (!$('insights-page')) return;
+    // Land on (and spotlight) the exact section that answers the chip's
+    // question; consumed at the end of insRenderReport_ (one-shot).
+    insScrollPending_ = scrollTarget || null;
     setPage('insights');
     if ($('ins-from')) $('ins-from').value = launcherIsoDaysAgo_(30);
     if ($('ins-to'))   $('ins-to').value   = launcherIsoDaysAgo_(1);
@@ -3006,14 +3039,24 @@
   // "Is one of my agents struggling or improving?" -> Individual Report
   // primed with a 30-day window; agent choice is deliberately left to
   // the user (that IS the question), so no auto-run.
-  function launcherOpenIndividual_() {
-    const btn = $('individual-report-btn');
-    if (!btn) return;
-    btn.click();
-    const provider = SHARE_STATE_['/report/individual'];
-    if (provider) provider.apply({ from: launcherIsoDaysAgo_(30), to: launcherIsoDaysAgo_(1) });
-    const search = $('ir-agent-search');
-    if (search) search.focus();
+  // (launcherOpenIndividual_ was retired -- the "struggling or improving?"
+  // chip previously stopped at the Individual Report's primed setup form;
+  // it now routes to the Insights per-agent cards, which auto-run and
+  // answer the question directly. IR stays reachable via the Reports menu
+  // and the card/chart drill-throughs.)
+
+  // One-shot section spotlight for the quick-start chips: scrolls the
+  // target into view and pulses an accent ring so the eye lands on the
+  // exact part of the report that answers the question. Reduced-motion
+  // users get a static ring (no pulse) for the same duration.
+  function qsSpotlight_(id) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    try { el.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) { /* best-effort */ }
+    el.classList.remove('qs-spotlight');
+    void el.offsetWidth;   // restart the CSS animation on repeat clicks
+    el.classList.add('qs-spotlight');
+    setTimeout(function () { el.classList.remove('qs-spotlight'); }, 2600);
   }
 
   // -- Metric glossary (anti-intimidation layer) --------------------------
@@ -4427,14 +4470,31 @@
       .getMissedCallsReport({ department: dept, from: from, to: to });
   }
 
-  // Re-measure the dept missed radar after layout settles. rAF (twice, to
+  // Re-measure the dept missed chart after layout settles. rAF (twice, to
   // clear a sticky-side-column reflow) then an explicit resize so a chart
   // created at zero width fills its container. No-op if the chart is gone.
+  // Owner note: the FIRST bar render could come up blank -- the chart is
+  // created in the same frame the section is unhidden, so Chart.js can
+  // measure a zero-size canvas that even resize() doesn't recover (the
+  // Bars/Radar toggle "fixed" it because its re-render happens after
+  // layout settled). If the chart still measures empty after the settle +
+  // resize, destroy + rebuild ONCE from the last response.
+  var deptMissedRebuilt_ = false;
   function deptMissedResize_() {
     if (typeof requestAnimationFrame !== 'function') return;
     requestAnimationFrame(function () {
       requestAnimationFrame(function () {
-        try { if (deptMissedChart) deptMissedChart.resize(); } catch (e) {}
+        try {
+          if (!deptMissedChart) return;
+          deptMissedChart.resize();
+          if ((deptMissedChart.width === 0 || deptMissedChart.height === 0)
+              && deptMissedLastData && !deptMissedRebuilt_) {
+            deptMissedRebuilt_ = true;   // one retry -- never loop
+            deptMissedDrawChart_(deptMissedLastData);
+          } else if (deptMissedChart.width > 0 && deptMissedChart.height > 0) {
+            deptMissedRebuilt_ = false;  // healthy: re-arm for the next render
+          }
+        } catch (e) { /* chart destroyed mid-settle */ }
       });
     });
   }
@@ -4476,10 +4536,12 @@
     wrap.style.display = '';
 
     // One-shot scroll for the launcher / legacy '#/report/missed' deep link:
-    // now that the section is visible and populated, bring it into view.
+    // now that the section is visible and populated, bring it into view
+    // with the quick-start spotlight pulse (same treatment as the Insights
+    // chip landings).
     if (deptMissedScrollPending_) {
       deptMissedScrollPending_ = false;
-      try { wrap.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) { /* best-effort */ }
+      qsSpotlight_('dept-missed-section');
     }
 
     const dateEl = $('dept-missed-date');
@@ -4583,11 +4645,20 @@
       // than DQE, and the range defaults to the latest DQE date). Clarify that
       // so the static card next to the range controls doesn't read as broken.
       titleEl.title = 'Most recent day of queue data — independent of the date '
-        + 'range above. For a specific date range, open the QCD report.';
+        + 'range above. For a specific date range, open the Insights report’s '
+        + 'Queue health section.';
       titleEl.style.cursor = 'help';
     }
+    // Owner note: the hover-only explanation wasn't enough -- when the
+    // snapshot's day differs from the page's To date, say so VISIBLY so
+    // the card can't read as showing the selected range's numbers.
     var dateEl = $('dept-qcd-date');
-    if (dateEl) dateEl.textContent = '';
+    if (dateEl) {
+      var pageTo = $('to-date') ? $('to-date').value : '';
+      dateEl.textContent = (qcd.date && pageTo && qcd.date !== pageTo)
+        ? 'latest queue day — the page’s date range doesn’t apply here'
+        : '';
+    }
     const tiles = $('dept-qcd-tiles');
     if (!tiles) return;
 
@@ -4602,9 +4673,18 @@
     const tileRow = function (q) {
       const violCls = (Number(q.violations) || 0) > 0 ? 'dept-qcd-warn' : '';
       const pctCls  = (Number(q.abandonedPct) || 0) >= 5 ? 'dept-qcd-warn' : '';
+      // Owner note: Answered / Abandoned merged into ONE color-split tile
+      // ("Ans / Abd" -- green X / warm Y) so the compact side panel reads
+      // at a glance instead of two look-alike number tiles.
+      const ansAbd = '<div class="dept-qcd-tile">'
+        + '<div class="dept-qcd-label">Ans / Abd</div>'
+        + '<div class="dept-qcd-value">'
+        +   '<span class="dept-qcd-ans">' + escapeHtml(fmtNumber(q.totalAnswered || 0)) + '</span>'
+        +   '<span class="dept-qcd-sep"> / </span>'
+        +   '<span class="dept-qcd-abd">' + escapeHtml(fmtNumber(q.abandoned || 0)) + '</span>'
+        + '</div></div>';
       return tile('Total Calls', fmtNumber(q.totalCalls    || 0))
-           + tile('Answered',    fmtNumber(q.totalAnswered || 0))
-           + tile('Abandoned',   fmtNumber(q.abandoned     || 0))
+           + ansAbd
            + tile('Abandoned %', String(q.abandonedPctStr  || '0.00%'), pctCls)
            + tile('Violations',  fmtNumber(q.violations    || 0),       violCls);
     };
@@ -9140,13 +9220,25 @@
   // the roster -- cheap when cached, re-splits the active grouping if the
   // dept/dates changed -- and never clobbers a rendered report (decision 3).
   var insPageInited_ = false;
+  // First-entry auto-run one-shot (owner: the setup form is RETIRED from
+  // the normal flow). Consumed in insRenderAgentList at the race-free
+  // post-roster point, like the launcher flag.
+  var insAutoRunPending_ = false;
   function insEnsurePage_() {
     if (!$('insights-page')) return;
     if (!insPageInited_) {
       insPageInited_ = true;
-      insShowForm();
       insSetDefaultDates();
       insRestorePrefs_();
+      // Owner decision: no setup-form step. First entry AUTO-GENERATES --
+      // restored prefs (dates + any saved agent selection) or the
+      // launcher-window default with an agent-free whole-department run
+      // (INV-45) -- and every later change goes through the "Edit dates &
+      // agents" popover in the results header. The form survives HIDDEN as
+      // the failure / empty-roster fallback surface only (insShowForm).
+      insAutoRunPending_ = true;
+      launcherShowLoading_('ins-launcher-loading', 'insights-form', 'insights-results',
+        'How is my team doing lately?');
     }
     insEnsureRoster();
     insResizeCharts_();
@@ -9198,6 +9290,22 @@
     // Edit-selection popover wiring (results header; IR's pattern).
     const editBtn = $('ins-edit-selection-btn');
     if (editBtn) editBtn.addEventListener('click', insOpenEditPopover_);
+    // Custom-prior row: shown only for Compare=custom; prefilled from the
+    // main form's prior fields (which hold the last-used custom window).
+    const editCmp = $('ins-edit-compare-mode');
+    if (editCmp) editCmp.addEventListener('change', function () {
+      const row = $('ins-edit-prior-row');
+      const isCustom = editCmp.value === 'custom';
+      if (row) row.style.display = isCustom ? '' : 'none';
+      if (isCustom) {
+        if ($('ins-edit-prior-from') && !$('ins-edit-prior-from').value) {
+          $('ins-edit-prior-from').value = $('ins-prior-from') ? $('ins-prior-from').value : '';
+        }
+        if ($('ins-edit-prior-to') && !$('ins-edit-prior-to').value) {
+          $('ins-edit-prior-to').value = $('ins-prior-to') ? $('ins-prior-to').value : '';
+        }
+      }
+    });
     const editClose = $('ins-edit-popover-close');
     if (editClose) editClose.addEventListener('click', insCloseEditPopover_);
     const editApply = $('ins-edit-apply-btn');
@@ -9308,8 +9416,8 @@
       if (e.relatedTarget && card.contains(e.relatedTarget)) return;   // still inside the card
       if (insIrPrefetchTimer) { clearTimeout(insIrPrefetchTimer); insIrPrefetchTimer = null; }
     });
-    const backBtn = $('ins-back-btn');
-    if (backBtn) backBtn.addEventListener('click', insShowForm);
+    // (The results-header "« Back" button is retired with the setup-form
+    // step; insShowForm survives as the failure/empty-roster fallback.)
 
     insInitCompareMode_();
 
@@ -9506,10 +9614,12 @@
   }
   function insSetDefaultDates() {
     if ($('ins-from') && $('ins-from').value) return;   // keep restored/last value
-    const today = new Date();
-    const first = new Date(today.getFullYear(), today.getMonth(), 1);
-    if ($('ins-from')) $('ins-from').value = insIsoOf_(first);
-    if ($('ins-to'))   $('ins-to').value   = insIsoOf_(today);
+    // Default = the launcher window (last 30 days ending yesterday) -- the
+    // exact agent-free request CacheWarm pre-warms per dept, so the
+    // form-less first entry usually paints from cache instead of a cold
+    // aggregation. (Was month-to-date, which was never warmed.)
+    if ($('ins-from')) $('ins-from').value = launcherIsoDaysAgo_(30);
+    if ($('ins-to'))   $('ins-to').value   = launcherIsoDaysAgo_(1);
   }
   function insApplyPreset() {
     const v = $('ins-preset').value; insSavePrefs_();
@@ -9564,11 +9674,15 @@
       })
       .withFailureHandler(function (err) {
         if (__rk !== insRosterReqSeq_) return;   // a newer fetch owns the picker
-        // The Overview launcher hides the form behind its loading pane and
-        // arms a one-shot auto-run; on a roster failure, cancel the auto-run
+        // The launcher AND the first-entry auto-run hide the form behind a
+        // loading pane; on a roster failure, cancel the pending auto-run
         // and fall back to the form so the loader error is visible instead
         // of an eternal loading pane (the IR #1-Part-B pattern).
-        if (insLauncherAutoRun_) { insLauncherAutoRun_ = false; insShowForm(); }
+        if (insLauncherAutoRun_ || insAutoRunPending_) {
+          insLauncherAutoRun_ = false;
+          insAutoRunPending_ = false;
+          insShowForm();
+        }
         $('ins-agent-loader').style.display = '';
         $('ins-agent-loader').textContent = 'Error loading roster: ' + (err && err.message ? err.message : String(err));
       })
@@ -9619,8 +9733,17 @@
     // point to select the whole active roster and run. One-shot.
     if (insLauncherAutoRun_) {
       insLauncherAutoRun_ = false;
+      insAutoRunPending_ = false;   // the launcher run covers first-entry too
       insToggleAgents(true);
       if (!$('ins-generate-btn').disabled) runInsReport();
+      else insShowForm();   // empty roster: surface the picker's message, not an eternal pane
+    } else if (insAutoRunPending_) {
+      // First-entry auto-run (form retired): respect any prefs-restored
+      // agent selection (applied via insPendingAgentSelection_ above);
+      // nothing checked = the agent-free whole-department run (INV-45).
+      insAutoRunPending_ = false;
+      if (!$('ins-generate-btn').disabled) runInsReport();
+      else insShowForm();
     }
   }
   function insToggleAgents(on) { selectAllActiveAgents_($('ins-agent-list'), on); insUpdateGenerate(); insSavePrefs_(); }
@@ -9677,6 +9800,7 @@
     if ($('ins-edit-from')) $('ins-edit-from').value = meta.from || ($('ins-from') ? $('ins-from').value : '');
     if ($('ins-edit-to'))   $('ins-edit-to').value   = meta.to   || ($('ins-to')   ? $('ins-to').value   : '');
     if ($('ins-edit-compare-mode')) $('ins-edit-compare-mode').value = 'keep';
+    if ($('ins-edit-prior-row')) $('ins-edit-prior-row').style.display = 'none';   // re-shown on Compare=custom
     // Roster-only list (no floater group), same as the main Insights picker.
     list.innerHTML = irBuildAgentListHtml_(insLastRoster.agents || [], insLastRoster.activeAgents, []);
     // Pre-check the REQUESTED selection -- an agent-free run pre-checks
@@ -9705,7 +9829,19 @@
     const newAgents = irGetCheckedAgents_($('ins-edit-list'));   // empty = whole department
     const popMode = $('ins-edit-compare-mode') ? $('ins-edit-compare-mode').value : 'keep';
 
-    // Sync the popover state back into the setup form so Back / re-open /
+    // Custom prior range (owner note: with the setup-form step retired,
+    // the popover must be able to EXPRESS a custom prior, not just keep
+    // one): validate + stage the prior dates before the form sync below.
+    if (popMode === 'custom') {
+      const pf = $('ins-edit-prior-from') ? $('ins-edit-prior-from').value : '';
+      const pt = $('ins-edit-prior-to')   ? $('ins-edit-prior-to').value   : '';
+      if (!pf || !pt) { insSetResultsStatus_('error', 'Pick prior start and end dates.'); return; }
+      if (pf > pt)    { insSetResultsStatus_('error', 'Prior start must be on or before prior end.'); return; }
+      if ($('ins-prior-from')) $('ins-prior-from').value = pf;
+      if ($('ins-prior-to'))   $('ins-prior-to').value   = pt;
+    }
+
+    // Sync the popover state back into the (hidden) setup form so re-open /
     // saved prefs all agree, then reuse runInsReport end-to-end (it brings
     // the SWR paint, D1b keep-last-good, and the stale-response guard).
     if ($('ins-from')) $('ins-from').value = from;
@@ -9886,6 +10022,15 @@
     insRenderTrendChart_(data);
     insRenderShareChart_(data.agentData || []);
     insRenderAgentCards_(data.agentData || [], data.meta, data.teamStats);
+    // Quick-start chip landing: scroll to + spotlight the section that
+    // answers the clicked question (one-shot; a small delay lets the page
+    // swap / layout settle first). An SWR pre-paint consumes it too --
+    // scrolling on the instant paint beats waiting for the live pass.
+    if (insScrollPending_) {
+      const target = insScrollPending_;
+      insScrollPending_ = null;
+      setTimeout(function () { qsSpotlight_(target); }, 200);
+    }
   }
 
   /**
