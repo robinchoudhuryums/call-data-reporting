@@ -570,6 +570,12 @@
     }
     pill.setAttribute('title', tipParts.join('\n'));
     pill.classList.toggle('is-stale', ageHours >= 36);
+    // Non-admins get the SUBTLE variant (owner note): freshness is an
+    // operational signal admins act on; for managers the loud boxed chip
+    // read as an alarm. The stale (36h+) warn tint still applies to both
+    // -- knowing the data is old changes how anyone reads the numbers.
+    pill.classList.toggle('freshness-pill--subtle',
+      !(typeof USER !== 'undefined' && USER && USER.role === 'admin'));
     pill.style.display = '';
   }
 
@@ -3353,7 +3359,8 @@
     if (cards.length > 1) {
       let top = null, bottom = null;
       cards.forEach(function (c) {
-        const score = deltaImprovementScore_(c.metrics);
+        // Per-working-day-adjusted, matching the card trend pills below.
+        const score = deltaImprovementScore_(insPerDayMetrics_(c.metrics, data.meta));
         if (!top || score > top.score) top = { name: c.name, score: score };
         if (!bottom || score < bottom.score) bottom = { name: c.name, score: score };
       });
@@ -3363,7 +3370,9 @@
         bits.push(headlineName_(bottom.name) + ' slipped the most');
       }
       if (bits.length) s.push(bits.join('; ') + ' vs the prior window.');
-      const regressed = cards.filter(function (c) { return deltaClassify_(c.metrics) === 'regressed'; }).length;
+      const regressed = cards.filter(function (c) {
+        return deltaClassify_(insPerDayMetrics_(c.metrics, data.meta)) === 'regressed';
+      }).length;
       if (regressed > 0) {
         s.push(regressed + ' agent' + (regressed === 1 ? '' : 's')
           + ' regressed overall — their cards carry the orange edge below.');
@@ -3925,7 +3934,7 @@
   // journey was captured, else the entry->final summary for pre-extension rows.
   function callJourneyHtml_(c) {
     var head = '<div class="cj-head">'
-      + (c.callStart ? escapeHtml(c.callStart) + ' · ' : '')
+      + (c.callStart ? escapeHtml(clCstTime_(c.callStart)) + ' · ' : '')
       + escapeHtml(c.callDate || '')
       + (c.disposition ? ' · <strong>' + escapeHtml(c.disposition) + '</strong>' : '')
       + (c.abandonStage ? ' (' + escapeHtml(c.abandonStage) + ')' : '')
@@ -3933,7 +3942,8 @@
       + '</div>';
     if (c.journey && c.journey.length) {
       return head + clChainHtml_(c.journey)
-        + '<div class="cl-journey">' + c.journey.map(clJourneyRowHtml_).join('') + '</div>';
+        + '<div class="cl-journey">' + c.journey.map(clJourneyRowHtml_).join('')
+        + clJourneyEndRowHtml_(c.journey) + '</div>';
     }
     var path = [c.entryQueue, c.finalQueue].filter(Boolean).map(escapeHtml).join(' → ');
     return head + '<div class="cl-journey-summary">' + (path || '(no queue path recorded)')
@@ -7161,6 +7171,35 @@
    * metrics. Threshold of >=2 / <=-2 prevents 1-metric noise
    * from tipping the classification.
    */
+  // Per-WORKING-DAY normalization for the trend classification (owner
+  // note): comparing windows with unequal working days (a holiday week, a
+  // custom prior) made a raw answered-count drop read as "Slipping" even
+  // when the agent's per-day output held steady. Volume-type metrics
+  // (rung / missed / answered / ttt) get their deltaPct recomputed on
+  // per-working-day values; rates (pct is pp, att is per-call) are
+  // untouched, and equal-workday windows are numerically unchanged. The
+  // adjustment feeds ONLY the classifiers below (trend pill, triage tiers,
+  // quiet test, improver/regressor sort, headline, CSV classification
+  // columns) -- the card badges keep showing the raw window totals.
+  function insPerDayMetrics_(metrics, meta) {
+    const wdC = Number(meta && meta.currentWorkDays) || 0;
+    const wdP = Number(meta && meta.priorWorkDays) || 0;
+    if (!metrics || wdC <= 0 || wdP <= 0 || wdC === wdP) return metrics;
+    const out = {};
+    Object.keys(metrics).forEach(function (k) {
+      const b = metrics[k];
+      if (!b || b.type !== 'volume' || k === 'att') { out[k] = b; return; }
+      const curPd = Number(b.val) / wdC, prevPd = Number(b.prev) / wdP;
+      let dp;
+      if (prevPd === 0 && curPd === 0) dp = 0;
+      else if (prevPd === 0) dp = 100;
+      else dp = ((curPd - prevPd) / prevPd) * 100;
+      out[k] = { val: b.val, prev: b.prev, formatted: b.formatted,
+                 delta: b.delta, deltaPct: dp, type: b.type };
+    });
+    return out;
+  }
+
   function deltaClassify_(d) {
     d = d || {};
     const sign = function (v) { return v > 0.05 ? 1 : v < -0.05 ? -1 : 0; };
@@ -9068,9 +9107,11 @@
   let insCardsChartMetric = 'answered';   // metric for the grouped Chart view (gap mode)
   // Chart-view basis: 'gap' (diverging bars vs the team average, one metric)
   // | 'abs' (absolute stacked Answered+Missed per agent + % Answered dots --
-  // the retired Performance Report's Volume & Efficiency view) | 'prior'
-  // (grouped current-vs-prior bars per agent, one metric -- the retired
-  // Compare Ranges chart). Persisted in the ins prefs blob.
+  // the retired Performance Report's Volume & Efficiency view). The third
+  // 'prior' basis (Compare Ranges' grouped current-vs-prior bars) was
+  // RETIRED by owner note -- the 3-way sub-selector read as confusing, and
+  // the prior values stay reachable via the card delta-badge hover
+  // tooltips. Persisted in the ins prefs blob ('prior' restores as 'gap').
   let insCardsChartMode = 'gap';
   let insCardsChartInstance = null;
   let insHasQuiet_ = false;        // whether the current render has quiet agents
@@ -10550,14 +10591,18 @@
     // strand a 1-agent report with no way to switch back.
     if (cards.length <= 1) insCardsView = 'cards';
 
-    const teamScore = deltaImprovementScore_(teamStats || {});
+    const teamScore = deltaImprovementScore_(insPerDayMetrics_(teamStats || {}, meta));
     const enriched = cards.map(function (c) {
+      // Classification runs on per-working-day-adjusted metrics (see
+      // insPerDayMetrics_) so an unequal-window comparison can't brand an
+      // agent "Slipping" over raw volume; badges keep the raw values.
+      const adj = insPerDayMetrics_(c.metrics, meta);
       return {
         card: c,
-        score: deltaImprovementScore_(c.metrics),
+        score: deltaImprovementScore_(adj),
         standing: insClassifyAgent_(c),          // #11c: rail + tier (current vs target)
-        trend: deltaClassify_(c.metrics),         // secondary: direction vs prior (trend pill)
-        quiet: deltaIsQuiet_(c.metrics),
+        trend: deltaClassify_(adj),               // secondary: direction vs prior (trend pill)
+        quiet: deltaIsQuiet_(adj),
       };
     });
     const main  = enriched.filter(function (x) { return !x.quiet; });
@@ -10685,7 +10730,6 @@
     const meta  = (insLastData && insLastData.meta) || {};
     const ts    = (insLastData && insLastData.teamStats) || {};
     if (insCardsChartMode === 'abs')   { insRenderCardsChartAbs_(canvas, cards); return; }
-    if (insCardsChartMode === 'prior') { insRenderCardsChartPrior_(canvas, cards); return; }
     const metric = insCardsChartMetric;
     const isPct = (metric === 'pct');
     const nRoster = meta.rosterAgentCount
@@ -10763,67 +10807,6 @@
    * cards render (st.val / st.prev); click drills into IR like the other
    * bases; datalabels always on (they carry the values, like gap mode).
    */
-  function insRenderCardsChartPrior_(canvas, cards) {
-    const metric = insCardsChartMetric;
-    const isPct = (metric === 'pct');
-    const labels = cards.map(function (c) { return c.name; });
-    const pick = function (c, field) {
-      const s = c.metrics && c.metrics[metric];
-      const v = s ? Number(s[field]) : 0;
-      return isPct ? Number((v || 0).toFixed(1)) : (v || 0);
-    };
-    const cur = cards.map(function (c) { return pick(c, 'val'); });
-    const pri = cards.map(function (c) { return pick(c, 'prev'); });
-    const fmtV = function (n) { return isPct ? (Number(n).toFixed(1) + '%') : fmtNumber(Math.round(n)); };
-    const color = THEME.accent || '#4E79A7';
-    const priorColor = THEME.muted || '#9C755F';
-    const drill = function (evt, els) {
-      if (els && els.length) {
-        const name = labels[els[0].index];
-        if (name && typeof irDrillToAgent_ === 'function') {
-          irDrillToAgent_(name, $('ins-from').value, $('ins-to').value);
-        }
-      }
-    };
-    insCardsChartInstance = safeChart_(canvas.getContext('2d'), {
-      type: 'bar',
-      data: {
-        labels: labels,
-        datasets: [
-          { label: 'Current window', data: cur, backgroundColor: color, borderColor: color },
-          { label: 'Prior window', data: pri, backgroundColor: priorColor, borderColor: priorColor },
-        ],
-      },
-      options: {
-        responsive: true, maintainAspectRatio: false, animation: false,
-        onClick: drill,
-        plugins: {
-          legend: { position: 'bottom', labels: { boxWidth: 14, font: { size: 11 } } },
-          tooltip: { callbacks: { label: function (ctx) {
-            return ctx.dataset.label + ': ' + fmtV(ctx.parsed.y);
-          } } },
-          datalabels: {
-            display: true,
-            anchor: 'end', align: 'end',
-            color: THEME.ink,
-            font: { family: "'IBM Plex Mono', monospace", size: 10, weight: '500' },
-            formatter: function (v) { return v == null ? '' : fmtV(v); },
-          },
-        },
-        scales: {
-          x: { ticks: { maxRotation: 45, minRotation: 0, autoSkip: false } },
-          y: { beginAtZero: true,
-               suggestedMax: isPct ? 100 : undefined,
-               ticks: { callback: function (v) { return isPct ? v + '%' : v; } } },
-        },
-        onHover: function (evt, els) {
-          if (evt && evt.native && evt.native.target) {
-            evt.native.target.style.cursor = (els && els.length) ? 'pointer' : 'default';
-          }
-        },
-      },
-    });
-  }
 
   /**
    * Absolute basis for the cards Chart view: the Performance Report's
@@ -10938,7 +10921,9 @@
     };
     var m = map[direction] || map.mixed;
     var title = 'Trend vs the prior period across rung, missed, answered and % answered '
-      + '(▲ improving / ▼ slipping / ≈ steady). This is the direction of change — separate from '
+      + '(▲ improving / ▼ slipping / ≈ steady). Volume metrics are compared PER WORKING DAY, '
+      + 'so a shorter or holiday-bearing window doesn\'t read as a slip on raw counts alone. '
+      + 'This is the direction of change — separate from '
       + 'the card\'s standing rail/tier, which shows the current level vs the 92% target.';
     return '<span class="ins-trend-pill ' + m[0] + ' gloss" title="' + escapeHtml(title) + '">' + m[1] + '</span>';
   }
@@ -11269,12 +11254,15 @@
     lines.push(row(head));
     (d.agentData || []).forEach(function (a) {
       const isFloater = a.matchedViaQueue && !a.matchedViaRoster;
+      // Classification columns use the same per-working-day-adjusted
+      // metrics as the card trend pills (insPerDayMetrics_).
+      const adjMetrics = insPerDayMetrics_(a.metrics, d.meta);
       const cells = [
         a.name,
         isFloater ? 'QUEUE' + ((a.sourceHomes || []).length ? ' · ' + a.sourceHomes.join('/') : '') : 'ROSTER',
-        deltaClassify_(a.metrics),
-        deltaImprovementScore_(a.metrics).toFixed(1),
-        deltaIsQuiet_(a.metrics) ? 'yes' : 'no',
+        deltaClassify_(adjMetrics),
+        deltaImprovementScore_(adjMetrics).toFixed(1),
+        deltaIsQuiet_(adjMetrics) ? 'yes' : 'no',
       ];
       metricCols.forEach(function (m) {
         const st = (a.metrics && a.metrics[m[1]]) || {};
@@ -11384,7 +11372,9 @@
         insCardsChartMetric = prefs.cardsChartMetric;
         if ($('ins-cards-chart-metric')) $('ins-cards-chart-metric').value = insCardsChartMetric;
       }
-      if (prefs.cardsChartMode === 'gap' || prefs.cardsChartMode === 'abs' || prefs.cardsChartMode === 'prior') {
+      // 'prior' basis retired (owner note: the 3-way sub-selector read as
+      // confusing); a saved 'prior' pref falls back to the default gap view.
+      if (prefs.cardsChartMode === 'gap' || prefs.cardsChartMode === 'abs') {
         insCardsChartMode = prefs.cardsChartMode;
         insSyncCardsChartMode_();
       }
@@ -13357,7 +13347,7 @@
   }
 
   function clCallCardHtml_(c) {
-    const when = escapeHtml((c.callDate || '?') + (c.callStart ? ' · ' + c.callStart : ''));
+    const when = escapeHtml((c.callDate || '?') + (c.callStart ? ' · ' + clCstTime_(c.callStart) : ''));
     const facts = [];
     if (c.waitSeconds != null) facts.push('Waited ' + fmtDuration(c.waitSeconds));
     if (c.holdSeconds > 0)     facts.push('Held ' + fmtDuration(c.holdSeconds));
@@ -13366,7 +13356,8 @@
     let body;
     if (c.journey && c.journey.length) {
       body = clChainHtml_(c.journey)
-           + '<div class="cl-journey">' + c.journey.map(clJourneyRowHtml_).join('') + '</div>';
+           + '<div class="cl-journey">' + c.journey.map(clJourneyRowHtml_).join('')
+           + clJourneyEndRowHtml_(c.journey) + '</div>';
     } else {
       // Pre-journey-extension row: queue-level summary only.
       const path = c.entryQueue
@@ -13393,6 +13384,52 @@
    * "IVR → Sales → Anna ✗ → Ben ✓ 4:12" reads the whole call at a glance;
    * the timeline below keeps the exact timestamps / hold detail.
    */
+  // INV-18: inbound journey timestamps (`ev.t`, `callStart`) are STORED in
+  // raw PST wall-clock (icIsoTime_ in cdr-import preserves the CDR's own
+  // clock); every other dashboard surface speaks CST, so DISPLAY shifts
+  // +2h -- the same fixed shift the heatmap SQL applies
+  // (INBOUND_HEATMAP_CST_SHIFT_HOURS). Owner note: the Call Path overlay
+  // previously showed the raw PST values next to CST timestamps on the
+  // Missed report.
+  var CL_PST_TO_CST_SEC_ = 2 * 3600;
+  function clHmsToSec_(hms) {
+    const m = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(String(hms || '').trim());
+    if (!m) return null;
+    return (+m[1]) * 3600 + (+m[2]) * 60 + (+(m[3] || 0));
+  }
+  function clSecToHms_(sec) {
+    sec = ((sec % 86400) + 86400) % 86400;
+    const p = function (n) { return String(n).padStart(2, '0'); };
+    return p(Math.floor(sec / 3600)) + ':' + p(Math.floor((sec % 3600) / 60)) + ':' + p(sec % 60);
+  }
+  function clCstTime_(hms) {
+    const s = clHmsToSec_(hms);
+    return s == null ? String(hms || '') : clSecToHms_(s + CL_PST_TO_CST_SEC_);
+  }
+
+  // Owner note: every journey row's timestamp is that leg's START, so a
+  // long abandoned queue wait read as if the caller disconnected minutes
+  // earlier than they did (the last row's time + its duration is the real
+  // hang-up moment). Append an explicit terminal line computed from the
+  // latest leg end (start + duration), CST-shifted like the rows.
+  function clJourneyEndRowHtml_(journey) {
+    let endSec = -1, abandoned = false;
+    (journey || []).forEach(function (ev) {
+      const s = clHmsToSec_(ev.t);
+      if (s == null) return;
+      const dur = Number(ev.secs != null ? ev.secs : ev.talk) || 0;
+      if (s + dur > endSec) endSec = s + dur;
+      if (ev.abandoned) abandoned = true;
+    });
+    if (endSec < 0) return '';
+    return '<div class="cl-ev cl-ev-end">'
+         +   '<span class="cl-ev-time">' + escapeHtml(clSecToHms_(endSec + CL_PST_TO_CST_SEC_)) + '</span>'
+         +   '<span class="cl-ev-icon" aria-hidden="true">&#9632;</span>'
+         +   '<span class="cl-ev-name">Call ended</span>'
+         +   (abandoned ? '<span class="cl-ev-bits">caller disconnected here</span>' : '')
+         + '</div>';
+  }
+
   function clChainHtml_(journey) {
     const toks = [];
     let leadingIvr = false;
@@ -13426,7 +13463,7 @@
     if (ev.abandoned) bits.push('caller hung up');
     else if (ev.missed && ev.kind !== 'queue') bits.push('no answer');
     return '<div class="cl-ev' + kindCls + '">'
-         +   '<span class="cl-ev-time">' + escapeHtml(ev.t || '') + '</span>'
+         +   '<span class="cl-ev-time">' + escapeHtml(ev.t ? clCstTime_(ev.t) : '') + '</span>'
          +   '<span class="cl-ev-icon" aria-hidden="true">' + kindIcon + '</span>'
          +   '<span class="cl-ev-name">' + escapeHtml(ev.name || '(unknown)') + '</span>'
          +   (bits.length ? '<span class="cl-ev-bits">' + escapeHtml(bits.join(' · ')) + '</span>' : '')

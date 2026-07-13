@@ -408,7 +408,11 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   abandoned-on-hold + hold/wait seconds; queue journey) and upserting
   to Neon `inbound_calls` (`ON CONFLICT (call_date, call_id) DO
   UPDATE` -- re-imports refresh). Since the JOURNEY EXTENSION, each
-  record also carries `call_start` ('HH:MM:SS', CDR-native TZ) and
+  record also carries `call_start` ('HH:MM:SS', CDR-native TZ -- raw PST;
+  client renderers shift +2h to CST for display via `clCstTime_`, the
+  INV-18 heatmap convention, and journey timelines append a synthetic
+  "Call ended" terminal row at last-leg start+duration so a long
+  abandoned wait doesn't read as an early disconnect -- owner note) and
   `journey` (a JSON text column: the ordered leg-by-leg path --
   IVR/queue/agent legs with timestamps, durations, talk/hold seconds,
   missed/abandoned flags; capped at `IC_JOURNEY_MAX_EVENTS`=40; callee
@@ -552,12 +556,15 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   Compare Ranges (each RETIRED)** -- the report-consolidation thesis
   landed: Individual + Insights are the two agent reports.
   **CR's views in Insights:** arbitrary two-window comparison =
-  Compare against -> Custom prior range (or YoY); the per-agent
-  P1-vs-P2 grouped bars = the cards Chart view's **vs Prior** basis
-  (`insRenderCardsChartPrior_`, metric selector applies); the explicit
+  Compare against -> Custom prior range (or YoY); the explicit
   prior values = hover tooltips on every card delta badge
   (`insDeltaBadge_` third arg); the length-mismatch banner/per-day
-  columns were already shared (INV-35). Deliberately NOT carried over:
+  columns were already shared (INV-35). (CR's per-agent P1-vs-P2
+  grouped bars briefly lived on as a third "vs Prior" cards-chart
+  basis, RETIRED by owner note post-conversion -- the 3-way
+  sub-selector read as confusing; the remaining Gap-vs-team /
+  Absolute options render as two-line `seg-rich` choices, and a
+  saved 'prior' pref restores as 'gap'.) Deliberately NOT carried over:
   floater cards (Insights is roster-only, insights v15 -- floaters
   proved to be false positives in prod; IR still surfaces them).
   Legacy `#/report/compare` deep links land on Insights (page
@@ -642,7 +649,17 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   (`insJumpToDailyRow_`; daily rows carry `data-date`). Per-agent classification
   / improvement score / quiet thresholds are the SHARED
   `deltaClassify_` / `deltaImprovementScore_` / `deltaIsQuiet_`
-  helpers in script.html (CR delegates to the same ones).
+  helpers in script.html (CR delegated to the same ones). **All
+  classification inputs are PER-WORKING-DAY-adjusted first**
+  (`insPerDayMetrics_`, owner note): the volume metrics
+  (rung/missed/answered/ttt) have their deltaPct recomputed on
+  per-working-day values using `meta.currentWorkDays`/`priorWorkDays`
+  (INV-35's `countWorkingDays_`, holidays excluded), so a shorter or
+  holiday-bearing window can't brand an agent "▼ Slipping" on raw
+  counts alone; rates (pct/att) and equal-workday comparisons are
+  unchanged, and the card DELTA BADGES keep showing raw window totals
+  -- only the trend pill / triage / quiet / improver-sort / headline /
+  CSV classification columns consume the adjusted values.
   **Per-agent cards (seq #3, redesigned in the post-deploy pass):** each
   card leads with **% Ans / Answered / Missed** as CSS bars **vs the TEAM
   AVERAGE** (a marker on each track) + the agent's value in a right-aligned column beside each track (moved off the bar in #3 so it never overlaps the team marker)
@@ -1105,7 +1122,11 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   Past 36h adds the `.is-stale` class and tints warm orange.
   Tunable in `setFreshnessPill_` if 36h becomes too noisy. Pill
   is hidden until the server returns the latest date so the
-  header doesn't show a stale fallback. The single-source
+  header doesn't show a stale fallback. **Role-tiered prominence
+  (owner note):** non-admins get `.freshness-pill--subtle` (quiet
+  inline text, no box) -- the loud boxed chip is admin-only; the
+  `.is-stale` warn tint still wins for BOTH roles, since stale
+  data changes how anyone reads the numbers. The single-source
   `getLatestDataDate` is kept for the My Department From/To
   default (which must snap to DQE specifically -- the agent
   table draws from DQE).
@@ -2343,7 +2364,7 @@ S19 | Insights custom prior range round-trip (ex-Compare Ranges) | Subsystem: De
   Steps:
     - Open Insights; set Compare against = Custom prior range with the same month last year as the prior window and this month-to-date as the range.
     - Generate, then click "change" in the results header, swap one agent out, leave Compare at "Keep current comparison", Apply.
-  Expected: report re-runs in place against the same custom prior (the 'keep' sentinel preserves it); editing-line updates; the popover dismisses; the new agent's card appears. Flip the cards Chart view to "vs Prior" -- grouped current-vs-prior bars per agent for the selected metric; hover a card delta badge for the prior window's exact value.
+  Expected: report re-runs in place against the same custom prior (the 'keep' sentinel preserves it); editing-line updates; the popover dismisses; the new agent's card appears. Hover a card delta badge for the prior window's exact value (the standalone "vs Prior" chart basis was retired by owner note; the badge tooltips are the prior-value surface).
 
 S20 | Alerts preview + send flow | Subsystem: Department Dashboard
   Steps:
