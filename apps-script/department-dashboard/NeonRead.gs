@@ -74,22 +74,29 @@ function getDashboardNeonConn_(opts) {
  * sheet scan -- the F1 read-back's cheapest win. Best-effort: callers
  * treat null as "fall back to the sheet".
  */
-function neonGetMaxDqeDate_() {
-  var conn = getDashboardNeonConn_({ recordReadHealth: true });   // NEO-3: DQE reader
+function neonGetMaxDqeDate_(conn) {
+  // Shared-connection support (SystemHealth single-conn): with a conn PASSED we
+  // reuse it and DON'T touch the read-health signal -- a shared conn comes from
+  // a health PROBE, not a real DQE read, so it must not feed/clear the DQE-only
+  // NEON_READ_LAST_ERROR line (NEO-3). With NO conn (getLatestDataDate, the
+  // Alerts mirror-health) we open + close our own AND record/clear as a real
+  // DQE read-back reader does.
+  var ownConn = !conn;
+  if (ownConn) conn = getDashboardNeonConn_({ recordReadHealth: true });   // NEO-3: DQE reader
   if (!conn) return null;
   try {
     var stmt = conn.createStatement();
     var rs = stmt.executeQuery('SELECT MAX(call_date)::text AS d FROM dqe_history');
     var d = rs.next() ? rs.getString('d') : null;
     rs.close(); stmt.close();
-    clearNeonReadFailure_();   // F4: reachable -> reset the failure streak
+    if (ownConn) clearNeonReadFailure_();   // F4: reachable -> reset the failure streak
     return d ? String(d).trim() : null;
   } catch (e) {
     Logger.log('neonGetMaxDqeDate_ failed: ' + (e && e.message ? e.message : e));
-    recordNeonReadFailure_('neonGetMaxDqeDate_', e);
+    if (ownConn) recordNeonReadFailure_('neonGetMaxDqeDate_', e);
     return null;
   } finally {
-    try { conn.close(); } catch (ce) {}
+    if (ownConn) { try { conn.close(); } catch (ce) {} }
   }
 }
 
@@ -225,16 +232,44 @@ function neonFetchDqeRows_(fromIso, toIso, opts) {
       out.push(row);
     }
     clearNeonReadFailure_();   // F4: a successful read (even empty) means Neon is healthy
+    // LM2: mark the array REACHABLE so a consumer can tell a healthy-but-empty
+    // read (trust it, serve empty) from an unreachable/errored one (fall back
+    // to the sheet). Without this, both returned [] and every consumer ran a
+    // redundant whole-sheet scan on a genuinely-empty window. Only the SUCCESS
+    // path sets it; the !conn early return + the catch (out=[]) leave it unset,
+    // so those still fall back. Aligns with the DQE_READ_SOURCE=neon contract
+    // (trust a reachable Neon; the sheet is the ERROR fallback, not a second
+    // guess of an empty result). Read in-process only -- consumers adapt these
+    // rows into their payload, never serialize the array itself.
+    out._neonReachable = true;
   } catch (e) {
     // F4: a hard error here (SQL / JSON-parse failure) is recorded
     // durably + distinctly so it isn't mistaken for a legitimately
     // empty range when the cut-over reader falls back to the sheet.
     Logger.log('neonFetchDqeRows_ failed: ' + (e && e.message ? e.message : e));
     recordNeonReadFailure_('neonFetchDqeRows_', e);
+    // L11: if the failure came mid-loop (e.g. an unparseable duration on row i),
+    // `out` holds a TRUNCATED set. Returning it would let a cut-over reader
+    // treat partial data as authoritative and skip the sheet fallback (a
+    // silently under-counted report). Discard the partial so callers see []
+    // and fall back to the sheet, matching the connection/SQL/parse failure
+    // paths (which return an empty out).
+    out = [];
   } finally {
     try { conn.close(); } catch (ce) {}
   }
   return out;
+}
+
+/**
+ * LM2: should a cut-over reader USE a neonFetchDqeRows_ result, or fall back to
+ * the sheet? Use it when it has rows OR when it's a reachable-but-empty read
+ * (`_neonReachable`, a genuinely-empty window -- serving empty is correct and
+ * skips the redundant whole-sheet scan). Fall back only when it's `[]` WITHOUT
+ * the marker (unreachable / errored / partial-discarded).
+ */
+function neonDqeRowsUsable_(rows) {
+  return !!(rows && (rows.length || rows._neonReachable));
 }
 
 /**
@@ -541,7 +576,7 @@ function computeNeonReadHealth_() {
  * catches the common "most-recent date(s) un-mirrored" outage but not an
  * interior gap where both ends mirrored. Best-effort: never throws.
  */
-function computeNeonMirrorHealth_() {
+function computeNeonMirrorHealth_(conn) {
   var out = { configured: false, status: 'unconfigured',
               sheetMax: null, neonMax: null, gapDays: null };
   try {
@@ -550,7 +585,14 @@ function computeNeonMirrorHealth_() {
     // Source-INDEPENDENT sheet max (NOT getLatestDataDate, which reads Neon
     // when DQE_READ_SOURCE=neon -- that would compare Neon against itself).
     out.sheetMax = dqeSheetMaxDate_();
-    out.neonMax  = neonGetMaxDqeDate_();
+    // Shared-connection contract (SystemHealth single-conn): a conn arg PASSED
+    // (even null) means the caller owns the lifecycle -- an explicit null is
+    // "the shared open already failed", so report error without a second
+    // handshake; with NO arg (the Alerts modal) open our own via
+    // neonGetMaxDqeDate_() (which then records/clears read-health as before).
+    var sharedConnProvided = (arguments.length >= 1);
+    out.neonMax = sharedConnProvided ? (conn ? neonGetMaxDqeDate_(conn) : null)
+                                     : neonGetMaxDqeDate_();
     if (!out.neonMax) { out.status = 'error'; return out; }
     if (!out.sheetMax) { out.status = 'ok'; return out; }   // nothing to compare
     if (out.neonMax >= out.sheetMax) { out.status = 'ok'; out.gapDays = 0; return out; }

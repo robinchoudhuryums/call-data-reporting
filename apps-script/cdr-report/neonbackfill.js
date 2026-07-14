@@ -148,10 +148,12 @@ function backfillDQEHistory() {
       while (i < batchEnd) {
         var r = data[i];
         if (!r[1] || !r[2]) { i++; continue; }
+        var cd0 = parseDateForNeon(r[1]);
+        if (!cd0) { i++; continue; }   // unparseable date -> skip, don't poison the batch with a null call_date
 
         batch.push({
           monthYear:        r[0]  || null,
-          callDate:         parseDateForNeon(r[1]),
+          callDate:         cd0,
           agentName:        r[2],
           queueExtensions:  r[3]  || null,
           totalUnique:      parseInt(r[4]) || 0,
@@ -163,7 +165,14 @@ function backfillDQEHistory() {
           slots:            r.slice(10, 29).map(sanitizeSlotCellForNeon_),   // F-51
           abParentIds:      sanitizeAbandonedCellForNeon_(r[29]),
           abMissedIds:      sanitizeAbandonedCellForNeon_(r[30]),
-          abMissedTimes:    sanitizeAbandonedCellForNeon_(r[31]),
+          // M3: AF is a comma-joined H:MM:SS TIMES column that coerces
+          // IDENTICALLY to the K-AC slots (a "12/30/1899 10:23:33" date-render
+          // or a bare serial), NOT like the numeric AD/AE IDs. Route it through
+          // the slot sanitizer (F-51) so a coerced date-render is RECOVERED to
+          // "10:23:33" instead of mirrored verbatim as garbage by the ID
+          // sanitizer. `|| null` preserves the empty-cell -> NULL contract the
+          // ID sanitizer gave (sanitizeSlotCellForNeon_ returns '' for empty).
+          abMissedTimes:    sanitizeSlotCellForNeon_(r[31]) || null,
           // Durations via normalizeDuration so the "No abd calls" sentinel
           // (12 chars, written when a row has 0 abandoned calls) and any
           // other non-H:MM:SS value normalize to null instead of
@@ -327,8 +336,14 @@ function backfillDQEHistoryUpsert() {
         var r = data[i];
         if (!r[1] || !r[2]) { i++; continue; }
         var cd = parseDateForNeon(r[1]);
+        // A truthy-but-unparseable date yields cd=null. Skip it: pushing a null
+        // call_date violates NOT NULL / uq_dqe_history and throws for the WHOLE
+        // batch, then DQE_UPSERT_RESUME re-runs into the same poison row every
+        // time. (The sinceFloor `cd &&` below already short-circuited on null,
+        // letting the null row through -- this guard closes that.)
+        if (!cd) { i++; continue; }
         // Date floor (DQE_UPSERT_SINCE): skip rows older than the floor.
-        if (sinceFloor && cd && cd < sinceFloor) { i++; continue; }
+        if (sinceFloor && cd < sinceFloor) { i++; continue; }
         batch.push({
           monthYear:        r[0]  || null,
           callDate:         cd,
@@ -343,7 +358,14 @@ function backfillDQEHistoryUpsert() {
           slots:            r.slice(10, 29).map(sanitizeSlotCellForNeon_),   // F-51
           abParentIds:      sanitizeAbandonedCellForNeon_(r[29]),
           abMissedIds:      sanitizeAbandonedCellForNeon_(r[30]),
-          abMissedTimes:    sanitizeAbandonedCellForNeon_(r[31]),
+          // M3: AF is a comma-joined H:MM:SS TIMES column that coerces
+          // IDENTICALLY to the K-AC slots (a "12/30/1899 10:23:33" date-render
+          // or a bare serial), NOT like the numeric AD/AE IDs. Route it through
+          // the slot sanitizer (F-51) so a coerced date-render is RECOVERED to
+          // "10:23:33" instead of mirrored verbatim as garbage by the ID
+          // sanitizer. `|| null` preserves the empty-cell -> NULL contract the
+          // ID sanitizer gave (sanitizeSlotCellForNeon_ returns '' for empty).
+          abMissedTimes:    sanitizeSlotCellForNeon_(r[31]) || null,
           // See backfillDQEHistory: normalizeDuration nulls the "No abd
           // calls" sentinel + any non-H:MM:SS so it can't overflow the
           // varchar(10) abd-wait columns.

@@ -217,7 +217,15 @@ function getEscalationActivity(req) {
     escEnsureTable_(conn);
     var meta = escRowMeta_(conn, id);
     if (!meta) return { available: true, rows: [] };
-    escAssertRowAccess_(user, meta.department);   // F-45: row dept = data, not input
+    // L9: an access denial must be INDISTINGUISHABLE from not-found, else a
+    // manager probing ids can tell "exists but another dept" apart from
+    // "doesn't exist". Return the not-found shape on denial; keep the
+    // {available:false} shape for a GENUINE outage (the outer catch).
+    try {
+      escAssertRowAccess_(user, meta.department);   // F-45: row dept = data, not input
+    } catch (denied) {
+      return { available: true, rows: [] };
+    }
     var sql = "SELECT COALESCE(json_agg(t ORDER BY t.at ASC), '[]')::text AS j FROM ("
             + "SELECT action, actor, at::text AS at, detail FROM escalation_activity WHERE escalation_id = ?) t";
     var stmt = conn.prepareStatement(sql);
@@ -539,6 +547,7 @@ function approveEscalation(req) {
   var conn = getDashboardNeonConn_();
   if (!conn) { lock.releaseLock(); throw new Error('Escalations storage (Neon) is not configured/reachable.'); }
   var txn = false;
+  var notifyRec = null;   // §1: populated on success, fired after the lock releases
   try {
     escEnsureTable_(conn);
     var row = escRowFull_(conn, id);
@@ -571,7 +580,21 @@ function approveEscalation(req) {
       'Accepted into the ' + row.department + ' worklist (submitted via ' + (row.source || 'unknown') + ')');
     conn.commit();
     Logger.log('approveEscalation: %s approved %s (%s)', user.email, id, row.department);
-    return { id: id };
+    // §1: an approved pending_review is a NEW escalation ENTERING the dept
+    // worklist -- the event managers care about in Phase 2 (external inflow
+    // arrives as pending_review, not createEscalation). Capture the notify
+    // record here; fire it AFTER the lock releases (below), same as
+    // createEscalation. Flag-gated + best-effort inside the helper.
+    notifyRec = {
+      id:          id,
+      department:  row.department,
+      occurredAt:  row.occurredAt,
+      caller:      clean.caller,
+      patientName: clean.patientName,
+      trx:         clean.trx,
+      area:        clean.area,
+      reason:      clean.reason,
+    };
   } catch (e) {
     if (txn) { try { conn.rollback(); } catch (rb) {} }
     Logger.log('approveEscalation failed: ' + (e && e.message ? e.message : e));
@@ -581,6 +604,10 @@ function approveEscalation(req) {
     try { conn.close(); } catch (ce) {}
     lock.releaseLock();
   }
+  // Fire-and-log AFTER the write committed + lock released (a slow MailApp
+  // send never blocks the response or holds the lock).
+  escNotifyNewEscalation_(notifyRec);
+  return { id: id };
 }
 
 /**
@@ -978,6 +1005,14 @@ function escCleanDateTime_(v) {
   if (!m) return '';
   var mo = Number(m[2]), da = Number(m[3]);
   if (mo < 1 || mo > 12 || da < 1 || da > 31) return '';
+  // L6: the 1-31 range check still let IMPOSSIBLE calendar dates through
+  // (2026-02-31, 2026-04-31, non-leap 2026-02-29), which then died in
+  // Postgres's ::timestamptz cast as the same opaque save error F-44 fixed for
+  // out-of-range fields. Reject them here via a UTC round-trip (UTC avoids any
+  // TZ day-shift; catches month length + leap years) so they store NULL too.
+  var yr = Number(m[1]);
+  var probe = new Date(Date.UTC(yr, mo - 1, da));
+  if (probe.getUTCFullYear() !== yr || probe.getUTCMonth() !== (mo - 1) || probe.getUTCDate() !== da) return '';
   if (m[4]) {
     var hh = Number(m[5]), mi = Number(m[6]), se = m[8] ? Number(m[8]) : 0;
     if (hh > 23 || mi > 59 || se > 59) return '';

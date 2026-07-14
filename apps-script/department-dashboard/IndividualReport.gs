@@ -177,8 +177,14 @@ function getIndividualReport(req) {
   const priorKey = (priorFrom && priorTo) ? (priorFrom + '..' + priorTo) : 'none';
 
   const cache = CacheService.getScriptCache();
+  // CORE-3: suffix the key with the active DQE read source so a
+  // DQE_READ_SOURCE flip can't serve a payload computed from the other source
+  // for the TTL (the summary:/latestDate: pattern -- IR was previously
+  // unsuffixed, an undocumented gap).
+  const dqeReadSrc = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
   const cacheKey = INDIVIDUAL_CACHE_KEY_PREFIX + ':'
-                 + dept + ':' + from + ':' + to + ':' + agentsKey + ':' + priorKey;
+                 + dept + ':' + from + ':' + to + ':' + agentsKey + ':' + priorKey
+                 + ':' + dqeReadSrc;
   const cached = cache.get(cacheKey);
   if (cached) {
     try {
@@ -279,7 +285,7 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
   const _tRead = Date.now();
   if (neonCapable) {
     srcRows = neonFetchDqeRows_(fetchFrom, fetchTo);
-    if (srcRows && srcRows.length) {
+    if (neonDqeRowsUsable_(srcRows)) {   // LM2: reachable-empty is trusted; only unreachable falls back
       deptQueueExts = deptQueueExtsForNeonReader_(dept, rosterSet, sheet, lastRow).exts;
       effectiveSource = 'neon';
     } else {

@@ -1,0 +1,199 @@
+# Fix History — the "why" archive
+
+**This is the historical fix log. It is NOT a source of live rules.**
+
+The project keeps two surfaces:
+
+- **CLAUDE.md = current invariants / live truth.** The rules you must follow
+  now: the Invariant Library (`INV-01`…`INV-55`), the Common Gotchas *rules*,
+  Key Design Decisions, the Operator State Checklist, and the Cycle Workflow
+  Config. If a rule governs how you write code today, it lives in CLAUDE.md.
+- **This file = the historical fix log.** The commit-by-commit "why": what each
+  short fix code (`F-2`, `IMP-7`, `CORE-3`, `RPT-1`, `OPS-7`, `NEO-1`, …) fixed,
+  and a pointer to the CLAUDE.md invariant / gotcha the fix produced. Read this
+  when you hit a code in a comment or in CLAUDE.md and want the backstory —
+  **not** to learn a current rule.
+
+**How to use it:** codes are terse on purpose. To find a code's full narrative,
+`grep -n "<code>" CLAUDE.md docs/*.md apps-script/**` — the live rule is in
+CLAUDE.md; the reasoning is here or in `docs/known-issues.md`. When a fix code's
+rule changes, update CLAUDE.md; leave the history entry as-is (it's an archive).
+
+> Migration note: this file was introduced by splitting the fix-narrative out of
+> CLAUDE.md's prose. CLAUDE.md still contains the interwoven narrative for each
+> bullet (removing it in place is a separate, higher-risk edit); this index is
+> the browsable, drift-reconciling companion so a code can be looked up without
+> reading 2,500 lines. It is intentionally **excluded** from
+> `tests/unit/cache-version-sync.test.js`'s `DOC_FILES` list, because it
+> references past cache versions (the "from" side of `vOLD → vNEW` bumps) that
+> would otherwise fail the sync guard.
+
+---
+
+## Code taxonomy (read this first — the families overlap and collide)
+
+| Family | Meaning | Where the live rule lives |
+|---|---|---|
+| `INV-01`…`INV-55` | **Current invariants.** Not history — the live contract. | CLAUDE.md → Cycle Workflow Config → Invariant Library |
+| `F-2`…`F-56` (**dashed**) | Dashboard bug fixes / hardening from cycle + audit passes | CLAUDE.md Common Gotchas / INV-## |
+| `F1`,`F2`,`F4`… (**bare, no dash**) | The Neon read-back / feature-flag / router family. **A DIFFERENT family from `F-2`, `F-4`** — see the collision note below | CLAUDE.md F1 gotcha / Operator State #19 |
+| `IMP-4`…`IMP-11` | Neon **im**port-mirror write discipline | CLAUDE.md "Neon write discipline" gotcha, INV-16 |
+| `CORE-1`…`CORE-7` | The CORE hardening pass (auth gates, cache-source suffix, config parity) | various INV / Operator State |
+| `DEEP-1` | Companion to CORE-1 (signed-in gate) | Key Design Decisions (auth) |
+| `RPT-1`…`RPT-7` | **R**e**p**or**t** semantics rulings | INV-05/25/48, INV-30 report keys |
+| `OPS-1`…`OPS-9` | **Op**erational: watchdog / backup / digest / alerts | Operator State #22/#23/#28, INV-34/45 |
+| `NEO-1`…`NEO-6` | Escalations + Neon-read-health hardening | INV-55, Operator State #20 |
+| `TST-7` | Test / deploy gating | Key commands, Operator State #2 |
+| `M1`,`M2` | companyOverview v16 population-scoping fixes | INV-30 companyOverview, INV-51 |
+| `E2`…`E10` | **Phase E** UI surfaces (commit 94bbca9 + follow-ons) | CLAUDE.md "Phase E UI surfaces", INV-33/34/51 |
+| `S1`…`S38` | **Regression Scenarios** (Cycle Config) — but a few inline `S#` are batch-step codes, see below | Cycle Workflow Config → Regression Scenarios |
+| `Phase A`–`E`, `Phase 1`–`15`, `Phase D`/`D+1`, `Batch E`/`F` | Redesign / rollout phases named in commit narratives | commit messages + CLAUDE.md prose |
+
+### ⚠ Two collisions that WILL confuse you
+
+1. **Dashed `F-#` vs bare `F#` are different families.** `F-2` (the AD/AE/AF
+   pairing fix) has nothing to do with `F2` (the dup-guard Neon self-heal).
+   `F-4`/`F4`, `F-5`/`F5` likewise collide. Always preserve the dash (or its
+   absence) when grepping.
+2. **`S#` is overloaded.** `S1`…`S38` in the Cycle Config are **Regression
+   Scenarios**. But inline prose uses `S5` for the *holiday layer*
+   (`COMPANY_HOLIDAYS`, Operator State #27), `S1(c)` for `discoverInboundQueues_`
+   (INV-54), and `S35` both as a fix reference *and* as Regression Scenario 35
+   (Phase D totals parity). Disambiguate by context.
+
+---
+
+## `F-#` (dashed) — dashboard fixes & hardening
+
+| Code | What it fixed / changed | Live rule |
+|---|---|---|
+| `F-2` | `buildDQEHistoricalData` emits AD/AE/AF from ONE chronologically-sorted missed-leg list; unpairable abandoned parents appended to AD (no AE/AF partner) so the id SET is unchanged | "DQE cols AD/AE/AF are POSITIONALLY PAIRED" gotcha; INV-16 |
+| `F-3` | `Direct Call History` refresh-in-window: date-string coercion made the delete a silent no-op → fixed via `dcDateIso_` + `getDisplayValues` | number-coercion gotcha (date-shaped strings) |
+| `F-4` | `getCallJourney` manager fallback gated server-side by `callIdInDeptMissedReport_` (dept entitlement re-derived from the manager's own Missed report) | inbound-capture gotcha; INV-55-adjacent |
+| `F-5` | (a) `computeThresholdDrift_` counts only ASSESSED days; (b) `computeOverviewPipelineFreshness_` requires `rows>0` (no-op build ≠ fresh) | threshold-drift gotcha; Operator State #11; INV-44 |
+| `F-6` | Daily alerts/digests assess the previous BUSINESS day (old check tested the DATA date's dow → fired Friday's on Saturday, skipped Monday) | INV-33, INV-45 |
+| `F-10` | `inboundCallsExport` refresh-in-window uses `ic_cellDateIso_` ISO-display compare (same coercion class as F-3) | number-coercion gotcha |
+| `F-14` | `companyOverview:v18` stopped the 30-day snapshot window filter from also truncating the MTD violation accumulation | INV-30 companyOverview; INV-51 |
+| `F-15` | QCD daily axis unions sub-queue-only dates; inherited by Insights `queueHealth.trend` (insights v17) | INV-30 insights/qcd; qcd-report.test |
+| `F-20` | Deferred mirror per-date reads are a bounded tail-scan (`nmReadDateRowsTail_`, `NEON_MIRROR_TAIL_ROWS`) instead of O(full history) | deferred-mirror gotcha; Operator State #22 |
+| `F-22` | `renameHistoricalAgent_` re-verifies the agent column + row count immediately before writing (cross-project daily-build race mitigation) | public-write-paths gotcha; INV-01 |
+| `F-24` | `sanitizeAbandonedCellForNeon_` pinned byte-identical across `neonbackfill.js` / `NeonMirror.js` by the function-level check in `check-duplicated-files.sh` | INV-16; number-coercion gotcha |
+| `F-28` | `getLatestDataDate`/`getLatestDataDates` signed-in gate ACTUALLY implemented (an earlier commit message claimed it without shipping it) | Key Design Decisions (auth); INV-01 |
+| `F-29` | Totals-row ATT / Avg Abd Wait / CSR Avg Abd Wait exclude ZERO rows (`avgNonzero_`, `summary:v11`) so idle roster agents don't drag dept averages | INV-30 summary |
+| `F-30` | Removed the dead `ADMIN_EMAILS_DISPLAY` constant; membership + contact resolve via `getAdminEmails_()` | admin-emails gotcha; Operator State #13 |
+| `F-31` / `F-32` | `individual:v10`: the EMPTY-shape `trendData` filtered to roster members; a CUSTOM prior window overlapping the range counts overlap days to the CURRENT window only | INV-30 individual; INV-49 |
+| `F-34` | `missed:v13`: `meta.abandonedRings` counts AGENT rings only (sentinel rows no longer inflate it) | INV-30 missed |
+| `F-35` | IR/Insights hard-require the DQE sheet only when it IS the read source, so the Neon path survives a trimmed/archived sheet | F1 read-back gotcha; Operator State #19 |
+| `F-36` | QCD all-dept grand-total dedups a double-mapped queue by name (no double-count) | INV-51; qcd-report.test |
+| `F-43` | `resolveEscalation` is PENDING-ONLY (pending_review + rejected refused too) — with `NEO-1` | INV-55 |
+| `F-44` | `escCleanDateTime_` strict validation so a malformed `occurred_at` stores NULL instead of throwing at Postgres. **RESOLVED (L6): a UTC round-trip now rejects impossible calendar dates (`2026-02-31`, non-leap `2026-02-29`) too, so they store NULL.** | INV-55 |
+| `F-45` | `escAssertRowAccess_` — the dedicated row gate: managers match the row's STORED dept; admins pass unconditionally (so a renamed/retired dept doesn't orphan admin access) | INV-55 |
+| `F-46` | `getEscalations` capped at `ESC_MAX_ROWS=500` newest + `meta.truncated` | INV-55 |
+| `F-56` | `check-duplicated-files.sh` now also fails when a file is MISSING from a duplicated pair (not just when the two differ) | INV-16; Key commands |
+
+## `F#` (bare) — Neon read-back / feature flags / router
+
+| Code | What it introduced / fixed | Live rule |
+|---|---|---|
+| `F1` | Neon DQE read-back, flag-gated by `DQE_READ_SOURCE` (default `sheet`); `NeonRead.gs` DAL | F1 read-back gotcha; Operator State #19; CORE-3 |
+| `F2` | Dup-guard re-mirrors existing sheet rows to Neon on a non-force re-import (mirror self-heal); also names the `expectedDate` write-guard (with `IMP-7`) | INV-16; Neon-mirror gotcha |
+| `F4` | `buildDQE:neon` Pipeline Health FAILURE row when the sheet build succeeds but the per-date Neon mirror is unreachable/errors | INV-44; Operator State #19 |
+| `F5` (bare) | Same fix pair as dashed `F-5` is cross-referenced here in prose: `rows:0` success ≠ fresh; threshold-drift assessed-days | threshold-drift gotcha; Operator State #11 |
+| `F8` | Insights `queueHealth = {error:true}` renders a client "unavailable" note instead of silently hiding (with `RPT-3`: don't cache the error payload) | INV-30 insights |
+| `F9` | `processIntegratedHistory:Inbound` writes a Pipeline Health FAILURE row on Neon-unreachable/error (inbound has no sheet fallback) | INV-44 |
+| `F11` | Router quietly no-ops an admin-only deep link for a non-admin (no error-modal flash) | top-tab router gotcha |
+| `F12` | Insights custom-prior overlap days count to the CURRENT window only; auto/YoY priors are disjoint so `priorOverlap` is always false there | INV-30 insights; INV-28 |
+| `F29` | Keep-warm pings via `getDashboardNeonConn_({skipReadHealth:true})` so a warm-ping blip can't pollute the DQE read-back health line | Operator State #20 |
+
+## `IMP-#` — Neon import-mirror write discipline
+
+| Code | What it fixed | Live rule |
+|---|---|---|
+| `IMP-4` | `call_history_phones` children written per-parent DELETE-then-insert (each payload row carries the parent's COMPLETE entry set) | Neon write discipline gotcha |
+| `IMP-5` | Authoritative per-date replace for callers whose payload is the COMPLETE set (`{authoritative:true}` DELETEs the dates in-txn before insert) — kills phantom rows | Neon write discipline gotcha |
+| `IMP-6` | Duplicate conflict-key rows deduped last-write-wins before insert; deferred mirror parks a hard-erroring date after `NEON_MIRROR_MAX_ATTEMPTS` with `neonMirror:gave-up` | Neon write discipline; Operator State #22; INV-44 |
+| `IMP-7` | `buildDQEHistoricalData` THROWS on an `expectedDate` mismatch (routes into each caller's failure plumbing + email) instead of a silent return. **RESOLVED (M2): the sibling early-returns (empty Raw Data / no valid dates / zero rows) now throw too, gated on a new `opts.force` so only a force re-import (rows pre-deleted) alerts; the non-force F5 rows:0 path is unchanged.** | INV-16 |
+| `IMP-11` | A date whose `Call_Legs_*` sheet was pruned before it drained hard-fails the deferred mirror; the `gave-up` email says the inbound rows are unrecoverable rather than silently dequeuing | Operator State #22; INV-44 |
+
+## `CORE-#` / `DEEP-1` — core hardening pass
+
+| Code | What it fixed | Live rule |
+|---|---|---|
+| `CORE-1` / `DEEP-1` | `getLatestDataDate`/`getLatestDataDates` carry a signed-in gate (the F-28 commit had claimed it without shipping) | Key Design Decisions (auth) |
+| `CORE-2` | `computeActiveAgentsInRange_` picker subset survives a trimmed/archived sheet on the Neon path | Operator State #19 |
+| `CORE-3` | Report cache keys suffixed with the active DQE read source (`:sheet`/`:neon`) so a `DQE_READ_SOURCE` flip can't serve a cross-source blob. **RESOLVED (L1): `individual:`/`insights:`/`missed:` are now suffixed too (were the last unsuffixed cutover readers).** | INV-30 |
+| `CORE-5` | Alert / Digest / Dept-config compare gates read Neon directly and return `clean:false`+`error` on unreachable (never a false "PARITY CLEAN") | Operator State #25 |
+| `CORE-6` | Dept Config save accepts a dept's own current effective queue even if it went quiet >180 days (so a saved row stays editable) | INV-54; scenario S36 |
+| `CORE-7` | `sheetSafeCell_` neutralizes formula-leading cells on OrphanFix/Access-Control sheet writes. Pinned by `util.test.js`. **RESOLVED (L4): Access-Control `email` + `department` are now routed through it too (`acIsValidEmail_` admits a formula-leading address).** | INV-01 |
+
+## `RPT-#` — report semantics rulings
+
+| Code | Ruling | Live rule |
+|---|---|---|
+| `RPT-1` / `RPT-2` | Missed report processes AD/AF BEFORE the zero-slot early-continue; AF↔AD paired via a per-time-key FIFO (two missed legs in the same second keep distinct parent ids) | INV-30 missed (`missed:v14`) |
+| `RPT-3` | An error-shaped `queueHealth` payload is NOT cached (transient failure never pinned for the TTL) | INV-30 insights |
+| `RPT-6` | The Overview tile's weighted ATT vs the My-Dept table's simple-mean ATT may disagree — intended (tile = rollup, table = row-level), owner ruling | ATT-semantics gotcha; INV-05/25 |
+| `RPT-7` | WoW driver narrative is dominance-based (larger of \|answeredDelta\|/\|missedDelta\| names the driver; ties → 'answered') | INV-48 |
+
+## `OPS-#` — operational (watchdog / backup / digest / alerts)
+
+| Code | What it fixed | Live rule |
+|---|---|---|
+| `OPS-1` | Ingest watchdog arms its per-episode flag ONLY on a CONFIRMED send (a mail-quota failure retries next run instead of silencing the episode) | Operator State #23 |
+| `OPS-2` | `sendDigestsForCadence_` holds the shared lock only long enough to CLAIM the run via a marker, then releases before the (expensive) sends | INV-45 |
+| `OPS-4` | Neon backup fetches months in ~week-sized windows; a month over the file budget is written as `partN` files | Operator State #28 |
+| `OPS-5` | When `CONFIG_SOURCE=neon`, the backup run also snapshots the Neon-authoritative `dept_config`/`alert_config`/`digest_config` | Operator State #28 |
+| `OPS-6` | Digest unrecognized/blank cadence is FLAGGED (`invalidCadence`) not dropped — renders a "⚠ invalid" chip instead of vanishing | INV-45 |
+| `OPS-7` | Watchdog credits 24h of staleness allowance per weekend/holiday day inside the gap. **RESOLVED (LM1): the freshness scan window widened 40 -> 250 (`OVERVIEW_PIPELINE_FRESHNESS_SCAN_ROWS`) so a deferred-mirror retry storm can't evict the DQE row and force the null-freshness false-alarm. (Residual: an extreme sustained storm could still evict within 250.)** | Operator State #23 |
+| `OPS-9` | Alert Config duplicate same-dept rows deduped FIRST-ROW-WINS (parser flags later rows `duplicateRow`; run loop skips them) | INV-34 |
+
+## `NEO-#` — escalations + Neon-read-health hardening
+
+| Code | What it fixed | Live rule |
+|---|---|---|
+| `NEO-1` | `resolveEscalation` refuses `pending_review` + `rejected` too (pending-only) — with `F-43` | INV-55 |
+| `NEO-2` | A blank resolve-comment PRESERVES the stored comment (COALESCE); `updateEscalationComment` is worklist-only (pending_review/rejected refuse annotation) | INV-55 |
+| `NEO-3` | Neon read-health recording is opt-IN (`{recordReadHealth:true}`, passed only by the three DQE read-back readers) — non-DQE Neon surfaces don't pollute the line | Operator State #20 |
+| `NEO-5` | Inbound unmapped-dept short-circuit consistency across the inbound surfaces. **NOT in CLAUDE.md prose** (code-only). | InboundReport.gs |
+| `NEO-6` | Resynced the Inbound vs Direct dormant manager-auth branches (Direct cleared `'ALL'` before the manager check; Inbound threw). **NOT in CLAUDE.md prose** (code-only). **Audit S2-7 (DEFERRED): these branches are unreachable + untested and can re-diverge -- deferred until the Inbound/Direct reports are released to managers (a one-line gate removal), at which point add a parity test.** | InboundReport.gs / DirectCallReport.gs |
+
+## `M#`, `E#`, `TST-7`
+
+| Code | What it is | Live rule |
+|---|---|---|
+| `M1` / `M2` | `companyOverview:v16`: hero volume scoped to the on-roster non-hidden population (M1); a double-mapped QCD queue attributed to EVERY dept that lists it (M2) | INV-30 companyOverview; INV-51 |
+| `E2` | Phase E: work-window pill (`__WORK_WINDOW__` template inject) | Phase E UI surfaces; INV-06 |
+| `E3` | Phase E: Diagnostics severity chip | Phase E UI surfaces |
+| `E4` | Phase E: `excludedFromTeamAvg` flag on the IR response (`individual:v6`→`v7`) | Phase E; INV-26 |
+| `E5` | Phase E: per-row WoW delta chips on the agent table | "Per-row prior-period chips" gotcha |
+| `E8` | Phase E: Alert Config Skip Dates column (daily-trigger only) | INV-33 / INV-34 |
+| `E9` | Phase E: QCD days-to-violation 7-day forecast | INV-51 |
+| `E10` | Phase E: threshold-drift "Last 30 days" chip on the Alerts config table | threshold-drift gotcha |
+| `TST-7` | `scripts/deploy.sh` gates the push on `npm run ci` (tests + INV-16 guard); `DEPLOY_SKIP_CI=1` for emergencies | Key commands; Operator State #2 |
+
+## `OPS-8` — code-only (not in CLAUDE.md)
+
+`OPS-8` names the System Health outcome classifier convention (a healthy result
+starts with `ok`; the row is amber only on `fail|error|unreachable|skipped`).
+It lives in `SystemHealth.gs` comments/tests, not CLAUDE.md.
+**RESOLVED (M1): the NeonBackup summary now LEADS with an `ok`/`FAILED` status
+token so the start-with-`ok` classifier is correct for it too (it previously
+started with a table name + always contained "skipped", painting the backup
+Health row amber on every run and masking real outages). Pinned by
+`system-health.test.js`.**
+
+---
+
+## Phases & batches (rollout narrative, not rules)
+
+These name *when* something shipped, in commit messages and CLAUDE.md prose:
+
+- **Phase A–E** — the design-system redesign + Phase E UI surfaces.
+- **Phase 1–15** — feature-build phases (roster-only flip @ Phase 14/15, etc.).
+- **Phase D / D+1** — the floater / Source-column work (INV-53).
+- **Batch E / Batch F** — owner-ruled accuracy + polish backlogs.
+- **Track A / B / C** — the `docs/ui-infra-roadmap.md` tracks (Missed bar toggle,
+  Escalations page, Config→Neon; C1/C2/C3 shipped, C4 intentionally skipped).
+
+For the current state of any phase, trust CLAUDE.md + the code, not this list —
+phases are history, invariants are truth.

@@ -158,7 +158,12 @@ function inboundDeptPredicate_(dept, deptQueues) {
   const queueList = (deptQueues && deptQueues.length)
     ? deptQueues.map(inboundSqlLit_).join(',')
     : 'NULL';   // no mapped queues -> entry-queue arm matches nothing
-  const isOnHoldAnswered = "(c.disposition='answered' AND c.abandoned_on_hold)";
+  // L10: COALESCE the nullable flag to false. A NULL abandoned_on_hold would
+  // make isOnHoldAnswered NULL -> NOT isOnHoldAnswered also NULL -> BOTH arms
+  // evaluate NULL (three-valued logic) and the row is silently dropped from
+  // every dept-scoped inbound query. The live writer always emits TRUE/FALSE,
+  // so this is latent hardening for any future backfill that leaves it NULL.
+  const isOnHoldAnswered = "(c.disposition='answered' AND COALESCE(c.abandoned_on_hold, false))";
   return ' AND ((' + isOnHoldAnswered
        + " AND lower(trim(c.final_dept)) = lower(" + inboundSqlLit_(dept) + "))"
        + ' OR (NOT ' + isOnHoldAnswered

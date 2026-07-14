@@ -57,6 +57,10 @@ function installHealth(opts) {
   h.ctx.computeNeonMirrorHealth_ = function () {
     return { configured: true, status: 'ok', sheetMax: '2026-07-08', neonMax: '2026-07-08', gapDays: 0 };
   };
+  h.ctx.getQcdReadSource_ = function () { return 'sheet'; };
+  h.ctx.computeQcdMirrorHealth_ = function () {
+    return { configured: true, status: 'ok', sheetMax: '2026-07-08', neonMax: '2026-07-08', gapDays: 0 };
+  };
   const sheets = {};
   ['Access Control', 'Alert Config', 'Alert Log', 'Pipeline Health', 'Digest Config',
    'Agent Alias Overrides', 'Orphan Fix Log', 'Dept Config', 'Report Usage']
@@ -79,7 +83,9 @@ test('health: healthy install -> ok/muted rows, required-trigger warns, warnCoun
   assert.equal(rowByKey(data, 'dqe-fresh').status, 'ok');
   assert.equal(rowByKey(data, 'neon-conf').status, 'ok');
   assert.equal(rowByKey(data, 'dqe-source').status, 'muted');
+  assert.equal(rowByKey(data, 'qcd-source').status, 'muted');
   assert.equal(rowByKey(data, 'mirror-health').status, 'ok');
+  assert.equal(rowByKey(data, 'qcd-mirror-health').status, 'ok');
   // Shimmed ScriptApp has NO triggers installed -> the two required
   // services warn (with remediation hints); optional ones stay muted.
   assert.equal(rowByKey(data, 'trg-alerts').status, 'warn');
@@ -92,6 +98,33 @@ test('health: healthy install -> ok/muted rows, required-trigger warns, warnCoun
   assert.equal(rowByKey(data, 'setup-sheets').status, 'ok');
   const warns = data.rows.filter(function (r) { return r.status === 'warn'; }).length;
   assert.equal(data.warnCount, warns);
+});
+
+test('M1/OPS-8: a successful backup (leads with ok, detail says "skipped") is OK, a FAILED one warns', function () {
+  // The backup outcome string now LEADS with a status token (ok/FAILED) so the
+  // OPS-8 classifier -- healthy iff the result STARTS WITH `ok` -- is correct
+  // even though every per-table detail contains the designed-normal word
+  // "skipped". Before M1 the string started with a table name + always
+  // contained "skipped", so the backup Health row was amber on every run,
+  // masking a real outage of the no-sheet-fallback tables.
+  installHealth({ props: {
+    NEON_HOST: 'h',
+    NEON_BACKUP_LAST: '2026-07-12T06:00:00Z',
+    NEON_BACKUP_LAST_RESULT: 'ok | escalations ok (12KB) | escalation_activity ok '
+      + '(1 month file(s) written, 4 closed skipped) | inbound_calls ok '
+      + '(2 month file(s) written, 3 closed skipped) | 1234ms',
+  }});
+  assert.equal(rowByKey(h.call('getSystemHealth'), 'out-backup').status, 'ok',
+    'a fully-successful backup is not amber');
+
+  installHealth({ props: {
+    NEON_HOST: 'h',
+    NEON_BACKUP_LAST: '2026-07-12T06:00:00Z',
+    NEON_BACKUP_LAST_RESULT: 'FAILED | escalations ok (12KB) | '
+      + 'inbound_calls FAILED: connection timeout | 1234ms',
+  }});
+  assert.equal(rowByKey(h.call('getSystemHealth'), 'out-backup').status, 'warn',
+    'a failed backup surfaces as warn');
 });
 
 test('health: stale pipeline / behind mirror / missing sheets surface as warn rows', function () {
@@ -120,4 +153,35 @@ test('health: a throwing probe degrades to its own warn row (page never fails wh
   assert.equal(row.status, 'warn');
   assert.ok(row.value.indexOf('probe failed') !== -1);
   assert.ok(data.rows.length > 10, 'other sections still render');
+});
+
+// readPipelineHealth_ lives in Alerts.gs (not loaded here) -- stub it the same
+// way the other sub-probes are stubbed; the point is getSystemHealth's
+// latest-outcome-per-step classification, not the sheet read. The stub returns
+// NEWEST-first (readPipelineHealth_'s contract).
+test('single-signal: pipe-failures flags a step whose LATEST outcome is failure, not a recovered one', function () {
+  installHealth({ props: { NEON_HOST: 'h' } });
+  h.ctx.readPipelineHealth_ = function () {
+    return [   // newest-first
+      { timestamp: '2026-07-14 07:06', step: 'neonMirror:Inbound', status: 'failure', notes: 'unreachable' },
+      { timestamp: '2026-07-14 07:05', step: 'processIntegratedHistory:QCD:neon', status: 'success', notes: '' },
+      { timestamp: '2026-07-14 07:01', step: 'processIntegratedHistory:QCD:neon', status: 'failure', notes: 'timeout' },
+      { timestamp: '2026-07-14 07:00', step: 'processIntegratedHistory:CDR', status: 'success', notes: '' },
+    ];
+  };
+  const row = rowByKey(h.call('getSystemHealth'), 'pipe-failures');
+  assert.equal(row.status, 'warn', 'a currently-failing step warns');
+  assert.match(row.value, /neonMirror:Inbound/, 'names the currently-failing step');
+  assert.doesNotMatch(row.value, /QCD:neon/, 'a recovered step is NOT flagged (no wolf-crying)');
+});
+
+test('single-signal: pipe-failures is OK when every step recovered', function () {
+  installHealth({ props: { NEON_HOST: 'h' } });
+  h.ctx.readPipelineHealth_ = function () {
+    return [   // newest-first: DQE recovered
+      { timestamp: '2026-07-14 07:05', step: 'processIntegratedHistory:DQE', status: 'success', notes: '' },
+      { timestamp: '2026-07-14 07:01', step: 'processIntegratedHistory:DQE', status: 'failure', notes: 'x' },
+    ];
+  };
+  assert.equal(rowByKey(h.call('getSystemHealth'), 'pipe-failures').status, 'ok');
 });

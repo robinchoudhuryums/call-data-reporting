@@ -224,11 +224,47 @@ function buildDQEHistoricalData(rawSheet, dqeSheet, opts) {
     return h + ':' + String(m).padStart(2,'0') + ':' + String(rem).padStart(2,'0');
   }
 
+  // M2: on the FORCE re-import path the caller has ALREADY DELETED the
+  // expected date's DQE rows before calling this build (it passes opts.force
+  // alongside opts.expectedDate). IMP-7 closed the date-MISMATCH door by
+  // throwing; but the SIBLING early-returns below (empty Raw Data, no parseable
+  // dates, zero output rows) still returned silently -- leaving that date GONE
+  // under a `processIntegratedHistory:DQE success rows:0` with no email. Mirror
+  // IMP-7 on those doors, but ONLY on a force build: THROW so the caller's catch
+  // logs a `:DQE` failure row + emails (daily) / logs `bulkBackfill:DQE` failure
+  // (bulk). A NON-force build that produces no rows (a light day of only
+  // excluded-agent / out-of-window activity, or empty Raw Data on a new date)
+  // is a LEGITIMATE rows:0 outcome (F5) -- nothing was pre-deleted, so it keeps
+  // the silent return. The dup-guard's own early return (date already in
+  // history) is a separate path and is untouched here.
+  function refuseIfForce_(reason) {
+    if (!(opts && opts.expectedDate && opts.force)) return;   // only a force build (rows pre-deleted) risks silent loss
+    const exp = opts.expectedDate;
+    const expLabel = (exp && typeof exp.toDateString === 'function' && !isNaN(exp.getTime()))
+      ? exp.toDateString() : String(exp);
+    try {
+      logPipelineHealth_(dqeSheet.getParent(), {
+        step:       'buildDQE',
+        status:     'failure',
+        rows:       0,
+        durationMs: Date.now() - __pipelineStartMs,
+        notes:      'force build produced no rows for expected=' + expLabel + ': ' + reason
+                  + ' -- the expected date\'s DQE rows were already cleared',
+      });
+    } catch (pipelineLogErr) {
+      Logger.log('buildDQE: pipeline-health log failed (non-fatal): %s', pipelineLogErr);
+    }
+    throw new Error('DQE build refused: ' + reason + ' (expected ' + expLabel
+      + '). A force re-import already cleared that date\'s DQE rows and this build '
+      + 'produced none -- no rows written. Fix Raw Data for that date and force '
+      + 're-import to rebuild it.');
+  }
+
 
   // ── Read raw data ──────────────────────────────────────────────────────────
 
   const lastRow = rawSheet.getLastRow();
-  if (lastRow < 2) { Logger.log('DQE: Raw Data is empty.'); return; }
+  if (lastRow < 2) { Logger.log('DQE: Raw Data is empty.'); refuseIfForce_('Raw Data is empty'); return; }
 
   const data     = rawSheet.getRange(2, 1, lastRow - 1, 26).getDisplayValues();
   const timeVals = rawSheet.getRange(2, 7, lastRow - 1, 2).getDisplayValues();
@@ -250,6 +286,7 @@ function buildDQEHistoricalData(rawSheet, dqeSheet, opts) {
 
   if (!callDateObj || !callDateStr) {
     Logger.log('DQE: No valid dates found in Raw Data.');
+    refuseIfForce_('no valid dates found in Raw Data');
     return;
   }
 
@@ -784,6 +821,7 @@ function buildDQEHistoricalData(rawSheet, dqeSheet, opts) {
 
   if (!outputRows.length) {
     Logger.log('DQE: No agent rows produced for ' + callDateStr + '.');
+    refuseIfForce_('no agent rows produced for ' + callDateStr);
     return;
   }
 

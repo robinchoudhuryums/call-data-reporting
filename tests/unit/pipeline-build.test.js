@@ -255,6 +255,41 @@ test('IMP-7 (F2 guard): an expectedDate mismatch THROWS and writes nothing', fun
   assert.equal(anna.length, 1, 'matching expectedDate writes the row');
 });
 
+test('M2: a FORCE build (expectedDate) that produces no rows THROWS, not silent-return', function () {
+  // IMP-7 closed the date-MISMATCH door; M2 closes the SIBLING early-returns
+  // (empty Raw Data / no parseable dates / zero output rows). On the force
+  // re-import path the caller already deleted the date's DQE rows, so a silent
+  // return there left the date GONE under a success-rows:0 telemetry row with
+  // no email. With expectedDate present those doors now throw; WITHOUT it
+  // (the self-deriving standalone trigger) the silent return is unchanged.
+  const ss = makeFakeSpreadsheet({
+    timeZone: 'America/Chicago',
+    sheets: {
+      'Raw Data': [new Array(26).fill('')],            // header only -> no data rows
+      'DQE Historical Data': [new Array(34).fill('')],
+      'DO NOT EDIT!': rosterGrid({ CSR: ['Anna, 103'] }),
+    },
+  });
+  // Force path (expectedDate + force): refuses loudly (rows were pre-deleted).
+  assert.throws(function () {
+    h.fn('buildDQEHistoricalData')(ss._sheet('Raw Data'), ss._sheet('DQE Historical Data'),
+      { expectedDate: new Date(2026, 2, 9), force: true });
+  }, /DQE build refused/, 'force build over empty Raw Data throws');
+  // Non-force build WITH expectedDate (the daily path): the F5 rows:0 case --
+  // a legitimate empty day, nothing pre-deleted -- keeps the silent return.
+  assert.doesNotThrow(function () {
+    h.fn('buildDQEHistoricalData')(ss._sheet('Raw Data'), ss._sheet('DQE Historical Data'),
+      { expectedDate: new Date(2026, 2, 9) });
+  }, 'non-force build over empty Raw Data returns silently (F5)');
+  // No opts at all (standalone trigger): also silent.
+  assert.doesNotThrow(function () {
+    h.fn('buildDQEHistoricalData')(ss._sheet('Raw Data'), ss._sheet('DQE Historical Data'));
+  }, 'no-opts build over empty Raw Data returns silently');
+  const written = ss._sheet('DQE Historical Data')._data.slice(1)
+    .filter(function (r) { return String(r[2] || '') !== ''; });
+  assert.equal(written.length, 0, 'no rows written either way');
+});
+
 test('REP-3: a NO-RING abandon on a CSR queue counts toward CSR Avg Abd Wait (AH)', function () {
   // P9 is abandoned (120s > 60), hit A_Q_CSR (parent-leg calleeName), and
   // rang NOBODY -- before REP-3 only rung-leg abandons entered csrAbanIds,

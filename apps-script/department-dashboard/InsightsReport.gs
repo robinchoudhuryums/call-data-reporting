@@ -163,8 +163,13 @@ function getInsightsReport(req) {
     ? customPriorFrom + '..' + customPriorTo
     : 'auto';
   const cache = CacheService.getScriptCache();
+  // CORE-3 (extended for #3): suffix the key with BOTH read sources -- Insights
+  // embeds the DQE agent data/trend AND the QCD Queue-health section, so a flip
+  // of EITHER DQE_READ_SOURCE or QCD_READ_SOURCE can't serve a cross-source
+  // payload for the TTL.
+  const dqeReadSrc = (typeof readSourceCacheTag_ === 'function') ? readSourceCacheTag_() : 'sheet-sheet';
   const cacheKey = INSIGHTS_CACHE_KEY_PREFIX + ':' + dept + ':' + from + ':' + to
-                 + ':' + agentsKey + ':' + priorKey;
+                 + ':' + agentsKey + ':' + priorKey + ':' + dqeReadSrc;
   const cached = cache.get(cacheKey);
   if (cached) {
     try {
@@ -311,7 +316,7 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
   const _tRead = Date.now();
   if (neonCapable) {
     srcRows = neonFetchDqeRows_(fetchFrom, fetchTo);
-    if (srcRows && srcRows.length) {
+    if (neonDqeRowsUsable_(srcRows)) {   // LM2: reachable-empty is trusted; only unreachable falls back
       // RPT-4: the Neon path derives the dept ext set via the shared Neon
       // helper (its own sheet fallback covers F-35), like IR and Missed --
       // this was the last reader still doing a full-sheet cols A..D read

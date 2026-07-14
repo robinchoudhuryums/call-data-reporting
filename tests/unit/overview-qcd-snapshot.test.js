@@ -65,3 +65,72 @@ test('F-14: MTD violations survive the snapshot-window filter', function () {
   // direction would be 10 (prev month leaking in). Correct: 3.
   assert.equal(out.CSR.violationsMtd, 3);
 });
+
+// #1: per-day abandoned series feeding the Overview chart's Abandoned metric
+// views. computeQcdSnapshots_ accumulates a per-dept `daily` map (iso ->
+// {totalCalls, abandoned}) for IN-WINDOW rows (>= sinceIso), summed across the
+// dept's queues; formatDept turns it into trendAbandoned / trendAbandonedPct.
+function qcdRowTA(dateIso, queue, total, abandoned) {
+  return ['', '', dateIso, queue, 'Total Calls', total, total - abandoned, abandoned,
+          '0:01:00', '0:00:20', '', 0];
+}
+
+test('#1: per-day abandoned series accumulates in-window rows + excludes pre-window', function () {
+  h.state.props.SPREADSHEET_ID = 'fake';
+  h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
+  const q = h.call('getDeptQcdQueues_', 'CSR')[0];
+  const since = '2026-06-01';
+  h.state.spreadsheet = makeFakeSpreadsheet({
+    timeZone: 'America/Chicago',
+    sheets: {
+      'QCD Historical Data': [QCD_HEADER,
+        qcdRowTA('2026-06-02', q, 100, 8),    // in window
+        qcdRowTA('2026-06-03', q, 50, 5),     // in window
+        qcdRowTA('2026-05-20', q, 200, 40),   // BEFORE window -> excluded from daily
+      ],
+    },
+  });
+  h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
+
+  const out = h.call('computeQcdSnapshots_', ['CSR'], since, 'America/Chicago');
+  assert.ok(out.CSR && out.CSR.daily, 'daily map present on the snapshot');
+  assert.equal(out.CSR.daily['2026-06-02'].abandoned, 8);
+  assert.equal(out.CSR.daily['2026-06-02'].totalCalls, 100);
+  assert.equal(out.CSR.daily['2026-06-03'].abandoned, 5);
+  assert.equal(out.CSR.daily['2026-06-03'].totalCalls, 50);
+  assert.ok(!out.CSR.daily['2026-05-20'], 'pre-window date excluded from the daily series');
+});
+
+// summary:v12: the My Department QCD side-panel period toggle (Yesterday / MTD).
+// computeDeptQcdSnapshot_ ships the latest-day block at the top level (Yesterday)
+// PLUS an `mtd` block (+ `mtdStart`) summing every row in the latest date's
+// calendar month up to that date. Same block shape; latest-day fields untouched.
+test('summary:v12: QCD snapshot carries an MTD block summing the latest month', function () {
+  h.state.props.SPREADSHEET_ID = 'fake';
+  h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
+  const q = h.call('getDeptQcdQueues_', 'CSR')[0];
+  h.state.spreadsheet = makeFakeSpreadsheet({
+    timeZone: 'America/Chicago',
+    sheets: {
+      // Two days in the same month + one prior-month day. Latest day is 06-15.
+      'QCD Historical Data': [QCD_HEADER,
+        qcdRowTA('2026-06-01', q, 100, 10),   // in month, before latest
+        qcdRowTA('2026-06-15', q, 40, 4),      // latest day
+        qcdRowTA('2026-05-31', q, 200, 50),    // prior month -> excluded from MTD
+      ],
+    },
+  });
+  h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
+
+  const snap = h.call('computeDeptQcdSnapshot_', 'CSR', 'America/Chicago');
+  assert.ok(snap, 'snapshot returned');
+  // Yesterday (top-level) = the latest day only.
+  assert.equal(snap.date, '2026-06-15');
+  assert.equal(snap.totalCalls, 40);
+  assert.equal(snap.abandoned, 4);
+  // MTD block: 06-01 + 06-15, excluding the 05-31 prior-month row.
+  assert.ok(snap.mtd, 'mtd block present');
+  assert.equal(snap.mtdStart, '2026-06-01');
+  assert.equal(snap.mtd.totalCalls, 140);
+  assert.equal(snap.mtd.abandoned, 14);
+});

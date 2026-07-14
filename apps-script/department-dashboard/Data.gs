@@ -247,8 +247,13 @@ function getDepartmentSummary(req) {
   // CORE-3: suffixed with the ACTIVE read source (the latestDate:v1
   // pattern) so a DQE_READ_SOURCE flip can't serve a table computed from
   // the other source for up to the 30-min TTL.
-  const summarySource = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
-  const cacheKey = 'summary:v11:' + dept + ':' + scope + ':' + from + ':' + to + ':' + summarySource;
+  // CORE-3 (extended for #3): suffix with BOTH read sources -- this payload
+  // embeds the DQE agent table AND the QCD dept snapshot, so a flip of EITHER
+  // DQE_READ_SOURCE or QCD_READ_SOURCE must not serve a cross-source blob.
+  // v12: qcdSnapshot carries an `mtd` block (+ `mtdStart`) for the QCD
+  // side-panel period slider (Yesterday / MTD).
+  const summarySource = (typeof readSourceCacheTag_ === 'function') ? readSourceCacheTag_() : 'sheet-sheet';
+  const cacheKey = 'summary:v12:' + dept + ':' + scope + ':' + from + ':' + to + ':' + summarySource;
   const cached = cache.get(cacheKey);
   if (cached) {
     try {
@@ -374,7 +379,7 @@ function computeSummary_(dept, from, to, scope) {
   const _tRead = Date.now();
   if (neonCapable) {
     srcRows = neonFetchDqeRows_(priorFrom, to);
-    if (srcRows && srcRows.length) {
+    if (neonDqeRowsUsable_(srcRows)) {   // LM2: reachable-empty is trusted; only unreachable falls back
       const dqr = deptQueueExtsForNeonReader_(dept, rosterSet, sheet, lastRow);
       deptQueueExts = dqr.exts; deptQueueExtsSource = dqr.source;
       effectiveSource = 'neon';
@@ -612,7 +617,7 @@ function computeSummary_(dept, from, to, scope) {
   // Totals: sum the summables; mean the per-row averages across the
   // NONZERO roster rows (avgNonzero_) -- idle agents whose ATT/abd-wait
   // is 0 are excluded from both sides of the mean (owner decision, F-29
-  // follow-up; summary:v11). This matches the per-agent accumulators
+  // follow-up; summary:v12). This matches the per-agent accumulators
   // above, which skip zero values when averaging a single agent's days.
   //
   // Phase D: the totals sum only over matchedViaRoster=true rows.
@@ -795,39 +800,33 @@ function computeDeptQcdSnapshot_(dept, ssTZ) {
     }
     if (!latestDate) return null;
 
-    // P3: decompose the day's totals into OWN (main) queues vs SUB-queues
-    // (each child queue belongs to its own department). The UNQUALIFIED dept
-    // total is OWN-queues-only, so it reconciles with the QCD modal's
-    // "Department total (own queues)", the Overview tile, and the
-    // all-departments report -- a sub-queue is never folded into the parent's
-    // headline (which would double-count it against the child's own total).
-    // The all-inclusive figure is surfaced SEPARATELY via allTotals and
-    // rendered under an explicit "All queues (incl. sub-queues)" label.
-    const ownAcc = { total: 0, answered: 0, abandoned: 0, violations: 0 };
-    const subAcc = { total: 0, answered: 0, abandoned: 0, violations: 0 };
-    let mainQueueCount = 0, subQueueCount = 0;
-    // Only queues with rows on the latest date render -- a mapped queue
-    // with no traffic that day would just add a zero row of noise.
-    const perQueue = queues.filter(function (q) { return !!byQueue[q]; })
-      .map(function (q) {
-        const b = byQueue[q];
-        const isSub = !!queueOwner[q];
-        const acc = isSub ? subAcc : ownAcc;
-        acc.total += b.total; acc.answered += b.answered;
-        acc.abandoned += b.abandoned; acc.violations += b.violations;
-        if (isSub) subQueueCount++; else mainQueueCount++;
-        const pct = b.total > 0 ? (b.abandoned / b.total) * 100 : 0;
-        return {
-          queue:           q,
-          subDept:         queueOwner[q] || null,
-          totalCalls:      b.total,
-          totalAnswered:   b.answered,
-          abandoned:       b.abandoned,
-          abandonedPct:    pct,
-          abandonedPctStr: pct.toFixed(2) + '%',
-          violations:      b.violations,
-        };
-      });
+    // QCD side-panel period slider (Yesterday / MTD). MTD is an ISOLATED second
+    // pass over the same in-memory `values`, summing every row in the latest
+    // date's calendar month up to latestDate -- so the existing latest-day path
+    // (`byQueue`) is untouched (zero regression). Month is derived from the
+    // latest DATA date (not today's clock) so a stale-but-present month still
+    // shows an MTD figure instead of an empty one.
+    const mtdStart = latestDate.slice(0, 7) + '-01';
+    const byQueueMtd = {};
+    for (let j = 0; j < values.length; j++) {
+      const r2 = values[j];
+      if (String(r2[QCD_HISTORICAL_COLS.CALL_SOURCE - 1] || '').trim() !== 'Total Calls') continue;
+      const q2 = String(r2[QCD_HISTORICAL_COLS.CALL_QUEUE - 1] || '').trim();
+      if (!queueSet[q2]) continue;
+      const d2 = rowDateIso_(r2[QCD_HISTORICAL_COLS.DATE - 1], tz);
+      if (!d2 || d2 < mtdStart || d2 > latestDate) continue;
+      const b2 = byQueueMtd[q2] || (byQueueMtd[q2] = { total: 0, answered: 0, abandoned: 0, violations: 0 });
+      b2.total      += Number(r2[QCD_HISTORICAL_COLS.TOTAL_CALLS - 1])    || 0;
+      b2.answered   += Number(r2[QCD_HISTORICAL_COLS.TOTAL_ANSWERED - 1]) || 0;
+      b2.abandoned  += Number(r2[QCD_HISTORICAL_COLS.ABANDONED   - 1])    || 0;
+      b2.violations += Number(r2[QCD_HISTORICAL_COLS.VIOLATIONS  - 1])    || 0;
+    }
+
+    // P3: decompose a per-queue map into OWN (main) queues vs SUB-queues (each
+    // child queue belongs to its own department). The UNQUALIFIED dept total is
+    // OWN-queues-only, so it reconciles with the QCD modal's "Department total
+    // (own queues)", the Overview tile, and the all-departments report. The
+    // all-inclusive figure is surfaced SEPARATELY via allTotals.
     const mkTotals = function (a) {
       const pct = a.total > 0 ? (a.abandoned / a.total) * 100 : 0;
       return {
@@ -839,29 +838,64 @@ function computeDeptQcdSnapshot_(dept, ssTZ) {
         violations:      a.violations,
       };
     };
-    const hasSub = subQueueCount > 0;
-    const allAcc = {
-      total:      ownAcc.total + subAcc.total,
-      answered:   ownAcc.answered + subAcc.answered,
-      abandoned:  ownAcc.abandoned + subAcc.abandoned,
-      violations: ownAcc.violations + subAcc.violations,
+    // Build a snapshot block (perQueue rows + own/sub/all totals) from a
+    // per-queue map. Shared by the Yesterday (byQueue) and MTD (byQueueMtd)
+    // blocks so their shapes stay identical.
+    const buildBlock_ = function (byQueueMap, blockDate) {
+      const ownAcc = { total: 0, answered: 0, abandoned: 0, violations: 0 };
+      const subAcc = { total: 0, answered: 0, abandoned: 0, violations: 0 };
+      let mainQueueCount = 0, subQueueCount = 0;
+      const perQueue = queues.filter(function (q) { return !!byQueueMap[q]; })
+        .map(function (q) {
+          const b = byQueueMap[q];
+          const isSub = !!queueOwner[q];
+          const acc = isSub ? subAcc : ownAcc;
+          acc.total += b.total; acc.answered += b.answered;
+          acc.abandoned += b.abandoned; acc.violations += b.violations;
+          if (isSub) subQueueCount++; else mainQueueCount++;
+          const pct = b.total > 0 ? (b.abandoned / b.total) * 100 : 0;
+          return {
+            queue:           q,
+            subDept:         queueOwner[q] || null,
+            totalCalls:      b.total,
+            totalAnswered:   b.answered,
+            abandoned:       b.abandoned,
+            abandonedPct:    pct,
+            abandonedPctStr: pct.toFixed(2) + '%',
+            violations:      b.violations,
+          };
+        });
+      const hasSub = subQueueCount > 0;
+      const allAcc = {
+        total:      ownAcc.total + subAcc.total,
+        answered:   ownAcc.answered + subAcc.answered,
+        abandoned:  ownAcc.abandoned + subAcc.abandoned,
+        violations: ownAcc.violations + subAcc.violations,
+      };
+      const own = mkTotals(ownAcc);
+      return {
+        date:             blockDate,
+        perQueue:         perQueue,
+        totalCalls:       own.totalCalls,
+        totalAnswered:    own.totalAnswered,
+        abandoned:        own.abandoned,
+        abandonedPct:     own.abandonedPct,
+        abandonedPctStr:  own.abandonedPctStr,
+        violations:       own.violations,
+        mainQueueCount:   mainQueueCount,
+        subQueueCount:    subQueueCount,
+        subTotals:        hasSub ? mkTotals(subAcc) : null,
+        allTotals:        hasSub ? mkTotals(allAcc) : null,
+      };
     };
-    const own = mkTotals(ownAcc);
-    return {
-      date:             latestDate,
-      perQueue:         perQueue,
-      // Canonical dept total = OWN queues only (P3; reconciles cross-surface).
-      totalCalls:       own.totalCalls,
-      totalAnswered:    own.totalAnswered,
-      abandoned:        own.abandoned,
-      abandonedPct:     own.abandonedPct,
-      abandonedPctStr:  own.abandonedPctStr,
-      violations:       own.violations,
-      mainQueueCount:   mainQueueCount,
-      subQueueCount:    subQueueCount,
-      subTotals:        hasSub ? mkTotals(subAcc) : null,
-      allTotals:        hasSub ? mkTotals(allAcc) : null,
-    };
+
+    const latestBlock = buildBlock_(byQueue, latestDate);
+    // Top-level fields stay the Yesterday (latest-day) block for back-compat;
+    // `mtd` carries the month-to-date block for the panel's period toggle.
+    return Object.assign({}, latestBlock, {
+      mtd: buildBlock_(byQueueMtd, latestDate),
+      mtdStart: mtdStart,
+    });
   } catch (e) {
     Logger.log('computeDeptQcdSnapshot_ failed: %s', e);
     return null;

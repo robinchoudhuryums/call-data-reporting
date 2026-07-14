@@ -128,7 +128,7 @@ test('INV-53: queue-only floaters appear as rows but are excluded from totals', 
   assert.equal(data.totals.attSeconds, 210);
 });
 
-test('summary:v11: zero-ATT rows are excluded from the totals-row means (idle-agent drag)', function () {
+test('summary totals-row: zero-ATT rows are excluded from the means (idle-agent drag)', function () {
   // Ben was rung but answered nothing -> his row's ATT / abd-waits are 0.
   // Owner decision (F-29 follow-up): zero rows are excluded from both
   // sides of the totals means, so the dept ATT is Anna's alone -- not

@@ -34,6 +34,12 @@ test('F-44: out-of-range fields and trailing garbage return "" (stored NULL), no
   assert.equal(f('2026-01-32'), '');             // day 32
   assert.equal(f('2026-01-05T14:30:60'), '');    // second 60
   assert.equal(f('2026-01-05T24:00'), '');       // hour 24
+  // L6: impossible calendar dates (day in 1-31 but not real for the month)
+  // must also store NULL, not reach Postgres.
+  assert.equal(f('2026-02-31'), '');             // Feb 31
+  assert.equal(f('2026-04-31'), '');             // Apr has 30 days
+  assert.equal(f('2026-02-29'), '');             // 2026 is not a leap year
+  assert.equal(f('2024-02-29'), '2024-02-29');   // 2024 IS a leap year -> valid
   assert.equal(f('not a date'), '');
   assert.equal(f('01/05/2026'), '');             // wrong shape entirely
 });

@@ -353,8 +353,22 @@ function buildInboundCallRecords_(rawRows) {
  * Idempotent via ON CONFLICT (call_date, call_id) DO UPDATE, so re-imports
  * refresh. caller_hash uses cdrHashPhone_ (matches insurance_numbers +
  * call_history_phones); null for anonymous callers.
+ *
+ * L2 / IMP-5: `opts.authoritative` makes the write a per-date REPLACE -- it
+ * DELETEs the payload's distinct call_dates (in the SAME transaction) before
+ * the upsert, so a shrinking re-import (one that DROPS a call_id) can't leave a
+ * phantom row behind. `inbound_calls` has NO sheet primary AND is dashboard-read
+ * (Inbound report / heatmap / Caller Lookup), so an upsert-only mirror kept a
+ * removed call counting forever (the IMP-5 problem, previously unaddressed for
+ * inbound). Pass it ONLY from complete-per-date callers: the daily import
+ * (full Raw Data re-export) + the per-date backfill/deferred path (one
+ * Call_Legs sheet). A partial-set caller must NOT pass it. (An extreme
+ * date-goes-to-ZERO-inbound re-import can't be cleared this way -- an empty
+ * payload carries no date to delete; that corner keeps the old upsert
+ * behavior.)
  */
-function writeInboundCallsToNeon(rawRows) {
+function writeInboundCallsToNeon(rawRows, opts) {
+  var authoritative = !!(opts && opts.authoritative);
   try {
     var records = buildInboundCallRecords_(rawRows).filter(function (r) { return r.callDate; });
     if (!records.length) return { inserted: 0, skipped: 0 };
@@ -383,6 +397,23 @@ function writeInboundCallsToNeon(rawRows) {
       ddl.execute('ALTER TABLE inbound_calls ADD COLUMN IF NOT EXISTS call_start text');
       ddl.execute('ALTER TABLE inbound_calls ADD COLUMN IF NOT EXISTS journey text');
       ddl.close();
+
+      // L2: authoritative per-date replace. Delete the payload's distinct dates
+      // first (same txn -> atomic with the upsert below; a throw rolls back
+      // both, so a timeout can't leave a date half-cleared). Date strings are
+      // 'YYYY-MM-DD' from buildInboundCallRecords_ and escaped via icSqlStr_
+      // (same as the insert's `::date` binds), so this is injection-safe.
+      if (authoritative) {
+        var dateSet = {};
+        records.forEach(function (r) { if (r.callDate) dateSet[r.callDate] = true; });
+        var authDates = Object.keys(dateSet);
+        if (authDates.length) {
+          var delStmt = conn.createStatement();
+          delStmt.execute('DELETE FROM inbound_calls WHERE call_date IN ('
+            + authDates.map(function (d) { return icSqlStr_(d) + '::date'; }).join(',') + ')');
+          delStmt.close();
+        }
+      }
 
       var cols = 'call_date, call_id, caller_hash, dial_in_number, disposition, ' +
         'abandon_stage, abandoned_on_hold, hold_seconds, wait_seconds, entry_queue, ' +
@@ -543,7 +574,12 @@ function backfillInboundCalls(fromIso, toIso, force) {
       var legs = c.sheet.getDataRange().getDisplayValues();
       legs.shift();   // header row
       if (!legs.length) { skippedEmpty++; continue; }
-      var res = writeInboundCallsToNeon(legs);
+      // L2: one Call_Legs_<iso> sheet is the COMPLETE set for that date, so
+      // authoritative replace is safe (and matches the daily inline path +
+      // the deferred mirror, which drains through here). A force re-run
+      // refreshes cleanly; a non-force fill only writes NEW dates (the DELETE
+      // is a no-op there).
+      var res = writeInboundCallsToNeon(legs, { authoritative: true });
       if (res && res.error) {
         failures.push(c.iso);
       } else if (res && res.skipped && !res.inserted) {

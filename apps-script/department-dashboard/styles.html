@@ -654,7 +654,12 @@
     cursor: pointer;
   }
   .btn:hover { opacity: 0.88; }
-  .btn:disabled { background: var(--muted); cursor: not-allowed; }
+  /* A disabled/loading button gets the muted-gray background; force a
+     contrasting text color (var(--paper) is opposite --muted's lightness in
+     both themes) so the loader label + the currentColor equalizer bars stay
+     legible. Without this, .btn-secondary kept its dark --ink text -> black
+     text on dark gray while "Updating…"/"Generating…" showed. */
+  .btn:disabled { background: var(--muted); color: var(--paper); cursor: not-allowed; }
   .btn-secondary {
     background: var(--paper-card);
     color: var(--ink);
@@ -684,6 +689,10 @@
      stat columns. Hover lifts the row with a subtle paper-2 tint.
      Top + bottom hairlines frame the table; .container provides the
      surrounding paper bg. */
+  /* S2-3: the My-Department agent table can show 9 nowrap columns ("Show all
+     columns"). Wrap it so it scrolls inside this container on narrow viewports
+     instead of forcing the whole page body to scroll horizontally. */
+  .agents-table-wrap { overflow-x: auto; }
   .agents {
     width: 100%;
     border-collapse: collapse;
@@ -3047,6 +3056,24 @@
       box-shadow: 0 0 0 4px var(--accent-soft), 0 0 0 1.5px var(--accent);
     }
   }
+  /* Companion dim for qsSpotlight_ (qsDimOutside_): a transparent, click-through
+     box positioned over the target that dims the rest of the page via a huge
+     box-shadow -- so the section pops while the ring pulses. Below every modal
+     (100+) but above page content. The transparent hole lets the target + its
+     accent ring show through un-dimmed. */
+  .qs-dim {
+    position: absolute;
+    z-index: 80;
+    border-radius: var(--r);
+    box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0);
+    pointer-events: none;
+    transition: box-shadow 0.35s var(--ease);
+  }
+  .qs-dim.is-on { box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.42); }
+  @media (prefers-reduced-motion: reduce) {
+    /* Still dim (the emphasis is the point) but without the fade. */
+    .qs-dim { transition: none; }
+  }
   .ov-launcher-kicker {
     font-family: var(--mono);
     font-size: 9px;
@@ -3301,6 +3328,24 @@
     font-size: 11px;
     color: var(--muted);
   }
+
+  /* Outlier Fix: batch-apply toolbar + checkbox column. */
+  .of-batch-bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 0 0 10px;
+    flex-wrap: wrap;
+  }
+  .of-batch-hint { margin: 0; }
+  .of-check-col { width: 34px; text-align: center; }
+  .of-check-col input { cursor: pointer; }
+  .of-check-col input:disabled { cursor: not-allowed; }
+  /* While a write is in flight the whole body dims + goes non-interactive so
+     clicks can't queue up behind the async round-trip (belt to the JS
+     disabled-controls suspenders). */
+  .of-busy { opacity: 0.6; pointer-events: none; }
+  #of-run-status.status-loading { pointer-events: none; }
 
   /* Launcher loading pane: replaces the form while a question-chip run
      generates, so the user never sees a form flash. */
@@ -3771,7 +3816,9 @@
     background: var(--accent-soft);
   }
   .qcd-warn-light { color: var(--warn); font-weight: 600; }
-  .qcd-warn-strong { color: #c0392b; font-weight: 700; }
+  /* S2-4: use the --bad token (lightens to #e06a56 for AA on dark paper)
+     instead of a hardcoded dark red (#c0392b ~2.5:1 on the dark card). */
+  .qcd-warn-strong { color: var(--bad); font-weight: 700; }
   .qcd-expandable { cursor: pointer; }
   .qcd-expandable:hover td { background: var(--accent-soft); }
   .qcd-expand-icon { font-size: 10px; margin-left: 4px; color: var(--muted); }
@@ -3837,6 +3884,11 @@
   /* #3d: abandon % over the 5% threshold reads bold (color comes from the
      bm-over / qcd-warn-light warn tint). */
   .qcd-rate-over { font-weight: 700; }
+  /* Daily Call Queue Report: an abandoned rate at/over the 5% company
+     threshold reads BOLD + RED (not the softer warn tint) on the split bar,
+     so an over-threshold queue pops. Scoped to this report; other surfaces
+     that share qcdDailyBarCell_ (Insights daily breakdown) keep the warn tint. */
+  .qcd-alldept-table .qcd-rate-over { color: var(--bad); }
   /* #3: muted "· <sub-dept>" tag on a nested sub-queue row. */
   .qcd-alldept-subq { color: var(--muted); font-size: 11px; font-weight: 400; }
   .qcd-alldept-deptrow td {
@@ -3846,9 +3898,14 @@
   .qcd-alldept-subtotal td {
     font-weight: 600; border-top: 1px solid var(--line); border-bottom: 2px solid var(--line);
   }
+  /* Company total: the headline row -- larger + tinted + a heavier top rule
+     so it's clearly distinct from the per-dept subtotals. */
   .qcd-alldept-grand td {
-    font-weight: 700; color: var(--ink); border-top: 2px solid var(--ink);
+    font-weight: 800; color: var(--ink); font-size: 14px;
+    border-top: 3px solid var(--ink); background: var(--paper-2);
+    padding-top: 11px; padding-bottom: 11px;
   }
+  .qcd-alldept-grand td:first-child { letter-spacing: 0.02em; }
 
   .al-config-table, .al-log-table, .al-results-table {
     width: 100%;
@@ -3966,6 +4023,37 @@
      window.print() and unset right after. Everything outside the
      report panel is hidden so the page contains just the report. */
   @media print {
+    /* S2-1: window.print() prints the LIVE DOM. In dark mode the tokens flip
+       (near-white --ink text on a dark --paper), but browsers drop background
+       colors on paper by default -> near-white text on white = a blank page.
+       Re-assert the light palette for print (so a dark-mode report prints just
+       like a light-mode one) and set print-color-adjust:exact so intentional
+       fills/tints still render. Charts are already rasterized to PNG with a
+       resolved paper background, so this only affects the text/table surfaces.
+       (The QCD all-dept print sidesteps this by opening a fresh light window.) */
+    :root, body[data-mode="dark"] {
+      color-scheme: light !important;
+      --paper:       #f7f2e6 !important;
+      --paper-2:     #ede6d3 !important;
+      --paper-card:  #ffffff !important;
+      --ink:         #101418 !important;
+      --muted:       #606872 !important;
+      --line:        #d6d1c2 !important;
+      --accent:      #4e7bc4 !important;
+      --accent-soft: #e3edf8 !important;
+      --good:        #3d9476 !important;
+      --good-soft:   #e0efe6 !important;
+      --warn:        #c66b4b !important;
+      --warn-soft:   #f6e2d4 !important;
+      --bad:         #b23a2c !important;
+      --bad-soft:    #f1d7d2 !important;
+    }
+    body {
+      background: #ffffff !important;
+      color: var(--ink) !important;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
     body.ir-printing > .container { display: none !important; }
     body.ir-printing .modal-backdrop { display: none !important; }
     body.ir-printing #individual-modal {
@@ -4238,6 +4326,49 @@
     margin-left: auto; padding: 0 4px;
   }
   .ov-subq-toggle input { margin: 0; cursor: pointer; }
+
+  /* Card period slider (Yesterday / Last 30 days / YTD) above the dept grid,
+     and the chart RANGE control (30/60/90/YTD) in the chart-tabs row. Both are
+     compact segmented button groups sharing one look. */
+  .ov-period-bar {
+    display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+    margin: 0 0 10px;
+  }
+  .ov-period-lbl {
+    font-family: var(--mono); font-size: 10px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.18em; color: var(--muted);
+    margin-right: 2px;
+  }
+  .ov-chart-range { display: inline-flex; gap: 3px; margin-left: 8px; }
+  .ov-period-btn, .ov-range-btn {
+    background: var(--paper); border: 1px solid var(--line);
+    border-radius: var(--r); padding: 4px 10px;
+    font: 500 11px var(--ui); color: var(--muted); cursor: pointer;
+    transition: color 0.15s, background 0.15s, border-color 0.15s;
+  }
+  .ov-range-btn { padding: 3px 8px; }
+  .ov-period-btn:hover, .ov-range-btn:hover:not(:disabled) {
+    color: var(--ink); border-color: var(--muted);
+  }
+  .ov-period-btn.active, .ov-range-btn.active {
+    background: var(--accent-soft); border-color: var(--accent);
+    color: var(--accent); font-weight: 600;
+  }
+  .ov-range-btn:disabled { opacity: 0.6; cursor: default; }
+
+  /* QCD side-panel period toggle (Yesterday / MTD) in the snapshot header. */
+  .dept-qcd-period { display: inline-flex; gap: 3px; margin: 2px 0 8px; }
+  .dept-qcd-period-btn {
+    background: var(--paper); border: 1px solid var(--line);
+    border-radius: var(--r); padding: 3px 10px;
+    font: 500 11px var(--ui); color: var(--muted); cursor: pointer;
+    transition: color 0.15s, background 0.15s, border-color 0.15s;
+  }
+  .dept-qcd-period-btn:hover { color: var(--ink); border-color: var(--muted); }
+  .dept-qcd-period-btn.active {
+    background: var(--accent-soft); border-color: var(--accent);
+    color: var(--accent); font-weight: 600;
+  }
   /* Each parent dept + its sub-queues stack vertically in a
      single grid cell. Children inherit the parent's tile color
      (slot in IR_CHART_COLORS) via inline-set color but get an
@@ -4971,7 +5102,12 @@
     font-family: var(--ui);
     font-size: 13px;
     font-weight: 500;
-    color: #fff;
+    /* S2-2: the neutral toast is an inverted chip (text = paper, bg = ink).
+       Hardcoding color:#fff made it white-on-near-white (invisible) in dark
+       mode, where --ink flips to #ecf0f6. Use var(--paper) so the text inverts
+       WITH the background in both themes. The success/error variants re-assert
+       white below (they sit on the colored --good/--warn backgrounds). */
+    color: var(--paper);
     background: var(--ink);
     box-shadow: 0 4px 12px rgba(0,0,0,0.18);
     opacity: 0;
@@ -4979,8 +5115,49 @@
     transition: opacity 0.25s, transform 0.25s;
   }
   .toast.toast-visible { opacity: 1; transform: translateY(0); }
-  .toast-success { background: var(--good); }
-  .toast-error   { background: var(--warn); }
+  .toast-success { background: var(--good); color: #fff; }
+  .toast-error   { background: var(--warn); color: #fff; }
+
+  /* -------- App-styled confirm dialog (dsConfirm_) --------------------
+     Replaces the browser-native window.confirm (which renders in the
+     Sheets/browser chrome style). Layered above every modal (help = 200)
+     AND the toast (10100) so it works from within any modal. */
+  .ds-confirm-overlay {
+    position: fixed; inset: 0; z-index: 10200;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(0,0,0,0.42);
+    padding: 20px;
+    opacity: 0; transition: opacity var(--dur-2, 160ms) var(--ease, ease);
+  }
+  .ds-confirm-overlay.is-open { opacity: 1; }
+  .ds-confirm {
+    width: 100%; max-width: 440px;
+    background: var(--paper-card); color: var(--ink);
+    border: 1px solid var(--line);
+    border-radius: var(--r-lg); box-shadow: var(--shadow-modal);
+    padding: 18px 20px 16px;
+    transform: translateY(6px) scale(0.99);
+    transition: transform var(--dur-2, 160ms) var(--ease, ease);
+  }
+  .ds-confirm-overlay.is-open .ds-confirm { transform: none; }
+  .ds-confirm-title {
+    font-size: 15px; font-weight: 600; color: var(--ink);
+    margin-bottom: 8px;
+  }
+  .ds-confirm--danger .ds-confirm-title { color: var(--warn); }
+  .ds-confirm-body {
+    font-size: 13px; line-height: 1.5; color: var(--muted);
+    margin-bottom: 16px;
+  }
+  .ds-confirm-body strong { color: var(--ink); font-weight: 600; }
+  .ds-confirm-actions {
+    display: flex; justify-content: flex-end; gap: 8px;
+  }
+  /* Danger confirm button = warn-filled (destructive intent). */
+  .btn.ds-confirm-ok.ds-confirm--danger { background: var(--warn); color: #fff; }
+  @media (prefers-reduced-motion: reduce) {
+    .ds-confirm-overlay, .ds-confirm { transition: none; }
+  }
 
   /* -------- Date preset chips ------------------------------------ */
   .date-presets {
@@ -5009,6 +5186,15 @@
   .date-preset-chip.active {
     background: var(--accent);
     color: #fff;
+    border-color: var(--accent);
+  }
+  /* S2-5: in dark mode --accent lightens to #7ba3df (tuned as TEXT on dark
+     paper, not as a background for white text -> ~2:1). Give the active chip a
+     deep accent-tinted fill with near-white text instead, so it stays legible
+     and still reads as "active". Light mode is unchanged. */
+  body[data-mode="dark"] .date-preset-chip.active {
+    background: var(--accent-soft);
+    color: var(--ink);
     border-color: var(--accent);
   }
 

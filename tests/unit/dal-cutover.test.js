@@ -224,3 +224,12 @@ test('CORE-2 (F-35): active-agents picker serves from Neon when the DQE sheet is
   assert.equal(empty.agents.length, 0);
   assert.equal(empty.floaters.length, 0);
 });
+
+test('LM2: neonDqeRowsUsable_ trusts reachable-empty, falls back only on unreachable', function () {
+  const reachableEmpty = [];
+  reachableEmpty._neonReachable = true;            // healthy read, genuinely-empty window
+  assert.equal(h.call('neonDqeRowsUsable_', [{}]), true, 'has rows -> use neon');
+  assert.equal(h.call('neonDqeRowsUsable_', reachableEmpty), true, 'reachable-empty -> use neon (skip the redundant sheet scan)');
+  assert.equal(h.call('neonDqeRowsUsable_', []), false, 'plain [] (unreachable/errored) -> fall back to sheet');
+  assert.equal(h.call('neonDqeRowsUsable_', null), false, 'null -> fall back');
+});

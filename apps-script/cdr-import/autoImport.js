@@ -474,7 +474,7 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
     let historyReport = [];
     if (!isHistoricalBackfill) {
       if (!silent) sourceSS.toast("Archiving...", "Step 6/7", -1);
-      historyReport = processIntegratedHistory(targetSS, outputSheet, results, dateObj, existsInCDR, existsInQPath, existsInQCD, existsInCSR, existsInDQE, rawDataSheet);
+      historyReport = processIntegratedHistory(targetSS, outputSheet, results, dateObj, existsInCDR, existsInQPath, existsInQCD, existsInCSR, existsInDQE, rawDataSheet, force);
     } else {
       // Bulk-archive path: CDR / QPath / QCD / CSR go through Pending
       // Archive for one bulk write at the end. DQE bypasses that path
@@ -497,7 +497,11 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
             // backfillDQEHistoryUpsert() once after the rebuild to mirror all
             // dates with DO UPDATE. The daily integrated path (and the
             // cdr-report standalone trigger) keep the real-time mirror.
-            buildDQEHistoricalData(rawDataSheet, dqeHD, { skipNeon: true, expectedDate: dateObj });
+            // M2: `force` gates the throw-on-empty-rebuild guard. The bulk
+            // path runs force-mode (processBulkQueue passes force=true) and
+            // deletes the date's rows before this build, so a zero-row rebuild
+            // is a data-loss failure, not a legitimate rows:0.
+            buildDQEHistoricalData(rawDataSheet, dqeHD, { skipNeon: true, expectedDate: dateObj, force: !!force });
             const dqeEndRow = dqeHD.getLastRow();
             const dqeCount = Math.max(0, dqeEndRow - dqeStartRow);
             if (dqeCount > 0 && histDateCache) histDateCache.dqe.add(dateKey);
@@ -785,6 +789,36 @@ function logPipelineHealthWithFallback_(ss, event) {
   } catch (e) {
     try { console.error('logPipelineHealthWithFallback_ failed: ' + (e && e.message ? e.message : e)); } catch (e2) {}
   }
+}
+
+/**
+ * Data-loss guard convention (M2 generalized). A FORCE re-import DELETES a
+ * date's rows for EVERY historical sheet before rebuilding. If the rebuild then
+ * produces ZERO rows for a sheet, that date's data for it is GONE -- silently,
+ * with no telemetry row (the `if (count > 0)` write blocks have no else). This
+ * SURFACES that loss: on a force rebuild that wrote nothing, log a `<step>`
+ * FAILURE Pipeline Health row, which the System Health "Recent pipeline step
+ * failures" signal + the Alerts Pipeline Health panel both catch. Best-effort +
+ * NEVER throws, so the already-written sheets stand and the import completes --
+ * unlike the DQE block, which uses the STRONGER M2 throw (buildDQE's
+ * refuseIfForce_) because DQE is the authoritative dashboard source and also
+ * emails. A NON-force empty rebuild is a legitimate no-op and is NOT flagged.
+ * The rule for any force-path writer: a force rebuild that produces fewer rows
+ * than it deleted must be SURFACED, never silently returned.
+ */
+function guardForceRebuildLoss_(targetSS, step, dateObj, force, wroteCount) {
+  if (!force || wroteCount > 0) return;
+  try {
+    logPipelineHealthWithFallback_(targetSS, {
+      step:       step,
+      status:     'failure',
+      rows:       0,
+      durationMs: null,
+      notes:      (dateObj && dateObj.toDateString ? dateObj.toDateString() : '')
+                + ' | FORCE rebuild produced 0 rows AFTER the date was cleared -- that '
+                + 'date\'s ' + step + ' data may be lost. Re-check Raw Data and re-import.',
+    });
+  } catch (logErr) { /* best-effort */ }
 }
 
 // ─────────────────────────────────────────────
@@ -1544,7 +1578,7 @@ function updateOutputSheet(sheet, res, dateObj) {
   });
 }
 
-function processIntegratedHistory(targetSS, outputSheet, results, dateObj, skipCDR, skipQPath, skipQCD, skipCSR, skipDQE, rawDataSheet) {
+function processIntegratedHistory(targetSS, outputSheet, results, dateObj, skipCDR, skipQPath, skipQCD, skipCSR, skipDQE, rawDataSheet, force) {
   const summaryLog = [];
   const salesHD    = targetSS.getSheetByName("Q Path Historical Data");
   const obcHD      = targetSS.getSheetByName("CDR Historical Data");
@@ -1706,6 +1740,22 @@ if (!skipCDR && obcHD) {
       }
     } catch (neonErr) {
       setNeonStatus_('error');
+      // L7: surface the inline CDR->Neon MIRROR failure as a Pipeline Health row
+      // (sheet write already succeeded above; the outer autoImport row still
+      // logs success), so the mirror gap is visible in the admin Health/Pipeline
+      // panel after the transient email scrolls past -- parallel to the DQE
+      // mirror's `buildDQE:neon` failure row (F4) and the Inbound `:Inbound` row
+      // (F9). Step `:CDR:neon` distinguishes the MIRROR from the `:CDR` sheet step.
+      try {
+        logPipelineHealthWithFallback_(targetSS, {
+          step:       'processIntegratedHistory:CDR:neon',
+          status:     'failure',
+          rows:       null,
+          durationMs: null,
+          notes:      dateObj.toDateString() + ' | inline CDR Neon mirror error: '
+                    + (neonErr && neonErr.message ? neonErr.message : neonErr),
+        });
+      } catch (logErr) { /* best-effort */ }
       notifyNeonWriteFailure('processIntegratedHistory:CDR (' + dateObj.toDateString() + ')', neonErr.message);
     }
     }
@@ -1764,6 +1814,10 @@ if (!skipCDR && obcHD) {
         r[0], r[1], r[2], r[3], r[4], abndPct, viol
       ]);
     });
+    // Data-loss guard convention: QCD is dashboard-read (Insights Queue health /
+    // Overview / My Dept snapshot) and was force-deleted above, so a 0-row
+    // rebuild silently loses the date -- surface it (no-op unless force + empty).
+    guardForceRebuildLoss_(targetSS, 'processIntegratedHistory:QCD', dateObj, force, qcdBatch.length);
     if (qcdBatch.length > 0) {
       qcdHD.getRange(qcdHD.getLastRow() + 1, 1, qcdBatch.length, 12).setValues(qcdBatch);
       qcdCount = qcdBatch.length;
@@ -1811,6 +1865,21 @@ if (!skipCDR && obcHD) {
         }
       } catch (neonErr) {
         setNeonStatus_('error');
+        // L7: surface the inline QCD->Neon MIRROR failure as a Pipeline Health
+        // row (the QCD sheet write already succeeded; the outer autoImport row
+        // still logs success), so the mirror gap is visible in the Health panel
+        // -- parallel to `buildDQE:neon` (F4) / `:Inbound` (F9). Step `:QCD:neon`
+        // distinguishes the MIRROR from the `:QCD` sheet-write step.
+        try {
+          logPipelineHealthWithFallback_(targetSS, {
+            step:       'processIntegratedHistory:QCD:neon',
+            status:     'failure',
+            rows:       null,
+            durationMs: null,
+            notes:      dateObj.toDateString() + ' | inline QCD Neon mirror error: '
+                      + (neonErr && neonErr.message ? neonErr.message : neonErr),
+          });
+        } catch (logErr) { /* best-effort */ }
         notifyNeonWriteFailure('processIntegratedHistory (' + dateObj.toDateString() + ')', neonErr.message);
       }
       }
@@ -1881,8 +1950,14 @@ if (!skipCDR && obcHD) {
       // queued runNeonMirror_ re-mirrors from DQE Historical Data instead.
       // F2: always pass the importer's date so the build refuses to write
       // under a different day than the force-path just cleared.
+      // M2: pass `force` so the build ALSO refuses (throws) when a FORCE
+      // re-import -- which already deleted this date's rows -- rebuilds to zero
+      // rows (empty/unparseable Raw Data), rather than silently leaving the date
+      // gone under a rows:0 success. A non-force build keeps the F5 rows:0 path.
       buildDQEHistoricalData(rawDataSheet, dqeHD,
-        neonDeferred ? { skipNeon: true, expectedDate: dateObj } : { expectedDate: dateObj });
+        neonDeferred
+          ? { skipNeon: true, expectedDate: dateObj, force: !!force }
+          : { expectedDate: dateObj, force: !!force });
       const dqeEndRow = dqeHD.getLastRow();
       dqeCount = Math.max(0, dqeEndRow - dqeStartRow);
       if (dqeCount > 0) {
@@ -2007,7 +2082,10 @@ if (!skipCDR && obcHD) {
     if (rawDataSheet && rawDataSheet.getLastRow() > 1) {
       var inboundLegs = rawDataSheet.getDataRange().getDisplayValues();
       inboundLegs.shift();   // drop header row
-      var inboundRes = writeInboundCallsToNeon(inboundLegs);
+      // L2: the daily import's Raw Data is the COMPLETE inbound set for the
+      // date(s) -> authoritative per-date replace clears phantoms a force
+      // re-import that dropped a call_id would otherwise leave in inbound_calls.
+      var inboundRes = writeInboundCallsToNeon(inboundLegs, { authoritative: true });
       console.log('processIntegratedHistory: inbound_calls -> ' + JSON.stringify(inboundRes));
       if (inboundRes && inboundRes.error) {
         setNeonStatus_('error');

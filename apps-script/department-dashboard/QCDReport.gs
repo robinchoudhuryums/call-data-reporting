@@ -194,7 +194,12 @@ function getQcdAllDepartments(req) {
   if (from > to) throw new Error('from must be on or before to.');
 
   const cache = CacheService.getScriptCache();
-  const cacheKey = QCD_ALLDEPT_CACHE_PREFIX + ':' + from + ':' + to;
+  // CORE-3 pattern: suffix the (6h-TTL) all-dept key with the active QCD read
+  // source so flipping QCD_READ_SOURCE can't serve a cross-source blob for the
+  // TTL. (The shorter-TTL report caches that embed QCD -- insights/summary/
+  // companyOverview, 30min -- are parity-gated and self-heal within the TTL.)
+  const qcdSrc = (typeof getQcdReadSource_ === 'function') ? getQcdReadSource_() : 'sheet';
+  const cacheKey = QCD_ALLDEPT_CACHE_PREFIX + ':' + from + ':' + to + ':' + qcdSrc;
   const cached = cache.get(cacheKey);
   if (cached) {
     try {
@@ -224,7 +229,8 @@ function getQcdAllDepartments(req) {
     if (queuesForDept_(dept, { includeChildren: false }).length === 0) return;
     const rep = computeQcdReport_(dept, from, to,
                                   /*includeSubQueues=*/ false,
-                                  /*separateSubQueues=*/ false);
+                                  /*separateSubQueues=*/ false,
+                                  /*rangeOnly=*/ true);   // perf: only queueBreakdown is used
     // #3: drop roll-up queues already counted within another queue.
     const rows = (rep.queueBreakdown || []).filter(function (r) {
       return !excludeSet[String(r.queue || '').toLowerCase()];
@@ -391,7 +397,120 @@ function readQcdSheetData_() {
   return QCD_SHEET_DATA_MEMO_;
 }
 
-function computeQcdReport_(dept, from, to, includeSubQueues, separateSubQueues) {
+/**
+ * QCD Neon read-back switch (#3), the getDqeReadSource_ pattern. 'neon' only
+ * when the Script Property `QCD_READ_SOURCE` is explicitly set; anything else
+ * (incl. unset) => 'sheet'. Default 'sheet' keeps the whole-sheet read, so
+ * behavior is byte-identical to pre-#3 until flipped -- and every reader
+ * falls back to the sheet on any Neon miss, so the flip is reversible with
+ * no redeploy. Independent of DQE_READ_SOURCE (QCD is a separate mirror).
+ */
+function getQcdReadSource_() {
+  var v = String(PropertiesService.getScriptProperties()
+                   .getProperty('QCD_READ_SOURCE') || 'sheet').toLowerCase().trim();
+  return v === 'neon' ? 'neon' : 'sheet';
+}
+
+// Per-EXECUTION memo of windowed Neon QCD reads, keyed by 'from|to'. Like the
+// QCD_SHEET_DATA_MEMO_ whole-sheet memo, this keeps getQcdAllDepartments (which
+// calls computeQcdReport_ once per dept, all with the SAME window) to ONE Neon
+// round-trip for the whole page instead of one per dept. Reset per request
+// (Apps Script globals reset); tests null it alongside QCD_SHEET_DATA_MEMO_.
+var QCD_NEON_GRID_MEMO_ = null;
+
+/**
+ * Windowed Neon read of qcd_history for [fromIso, toIso] (inclusive), returned
+ * in the SAME sheet-cell shape readQcdSheetData_ produces ({values, displays,
+ * ssTZ}) so the computeQcdReport_ loop AND computeMtdViolations_ consume Neon
+ * rows byte-identically to sheet rows -- the "grid adapter feeds the UNCHANGED
+ * loop" pattern the Missed-Calls DAL cutover uses (missedGridsFromDal_). One
+ * json_agg round-trip (never per-row JDBC -- Apps Script JDBC is ~0.5s/row).
+ * longest_wait / avg_answer are stored as the same H:MM:SS strings the sheet
+ * DISPLAYS, so they go in the `displays` grid and parse via parseHmsDisplay_.
+ *
+ * Returns null on no-conn / error (caller falls back to the sheet); a
+ * reachable-but-empty window returns a valid {values:[], ...} grid (truthy),
+ * so the loop produces a correctly-zeroed report without a redundant
+ * whole-sheet scan (the LM2 lesson). `conn` (optional) lets a caller share a
+ * connection; when omitted we open + close our own. NEO-3: QCD is NOT a DQE
+ * read-back reader, so it opens WITHOUT {recordReadHealth} -- a QCD read miss
+ * must not pollute the DQE-only NEON_READ_LAST_ERROR health line.
+ */
+function neonFetchQcdGrid_(fromIso, toIso, conn) {
+  var ownConn = !conn;
+  if (ownConn) conn = (typeof getDashboardNeonConn_ === 'function') ? getDashboardNeonConn_() : null;
+  if (!conn) return null;
+  try {
+    var sql = "SELECT COALESCE(json_agg(t), '[]')::text AS j FROM ("
+            + "SELECT call_date::text AS d, call_queue, call_source, "
+            + "total_calls, total_answered, abandoned, longest_wait, avg_answer, violations "
+            + "FROM qcd_history WHERE call_date BETWEEN ?::date AND ?::date) t";
+    var stmt = conn.prepareStatement(sql);
+    stmt.setString(1, fromIso);
+    stmt.setString(2, toIso);
+    var rs = stmt.executeQuery();
+    var json = rs.next() ? rs.getString('j') : '[]';
+    rs.close(); stmt.close();
+    var arr = JSON.parse(json || '[]');
+    var values = [], displays = [];
+    for (var i = 0; i < arr.length; i++) {
+      var r = arr[i];
+      var v = [], d = [];
+      for (var c = 0; c < 12; c++) { v.push(''); d.push(''); }
+      // rowDateIso_ passes a 'yyyy-MM-dd' string straight through, so the
+      // date cell needs no TZ juggling.
+      v[QCD_HISTORICAL_COLS.DATE - 1]           = String(r.d || '');
+      v[QCD_HISTORICAL_COLS.CALL_QUEUE - 1]     = String(r.call_queue == null ? '' : r.call_queue);
+      v[QCD_HISTORICAL_COLS.CALL_SOURCE - 1]    = String(r.call_source == null ? '' : r.call_source);
+      v[QCD_HISTORICAL_COLS.TOTAL_CALLS - 1]    = Number(r.total_calls)    || 0;
+      v[QCD_HISTORICAL_COLS.TOTAL_ANSWERED - 1] = Number(r.total_answered) || 0;
+      v[QCD_HISTORICAL_COLS.ABANDONED - 1]      = Number(r.abandoned)      || 0;
+      v[QCD_HISTORICAL_COLS.VIOLATIONS - 1]     = Number(r.violations)     || 0;
+      d[QCD_HISTORICAL_COLS.LONGEST_WAIT - 1]   = String(r.longest_wait == null ? '' : r.longest_wait);
+      d[QCD_HISTORICAL_COLS.AVG_ANSWER - 1]     = String(r.avg_answer   == null ? '' : r.avg_answer);
+      values.push(v); displays.push(d);
+    }
+    return { values: values, displays: displays, ssTZ: TZ, _neonReachable: true };
+  } catch (e) {
+    Logger.log('neonFetchQcdGrid_ failed: ' + (e && e.message ? e.message : e));
+    return null;
+  } finally {
+    if (ownConn) { try { conn.close(); } catch (ce) {} }
+  }
+}
+
+/**
+ * Source-aware grid read for computeQcdReport_. When QCD_READ_SOURCE=neon,
+ * returns a WINDOWED Neon grid for [readFrom, readTo] (memoized per window so
+ * the all-dept report hits Neon once); falls back to the whole-sheet read on
+ * any Neon miss. When 'sheet' (default), returns the whole-sheet read exactly
+ * as before. The caller passes a window that is a SUPERSET of everything its
+ * consumers need (the trend/range rows AND the MTD-violation month), and the
+ * existing in-loop date filters keep the result identical to a whole-sheet read.
+ */
+function readQcdGrid_(readFrom, readTo) {
+  if (getQcdReadSource_() === 'neon') {
+    if (!QCD_NEON_GRID_MEMO_) QCD_NEON_GRID_MEMO_ = {};
+    var key = readFrom + '|' + readTo;
+    if (QCD_NEON_GRID_MEMO_[key]) return QCD_NEON_GRID_MEMO_[key];
+    var grid = neonFetchQcdGrid_(readFrom, readTo);
+    if (grid) { QCD_NEON_GRID_MEMO_[key] = grid; return grid; }
+    // Unreachable / error -> fall back to the sheet (may itself be missing).
+  }
+  return readQcdSheetData_();
+}
+
+// rangeOnly (perf): the all-dept Daily Call Queue Report uses ONLY
+// queueBreakdown (range-scoped), never trendData/dailySeries/perQueue -- yet it
+// calls this once per dept, each pass iterating the whole 12-month TREND window
+// of rows to build a trend it discards. When rangeOnly is set, trend-only rows
+// (in the trend window but outside [from,to]) are skipped, so a one-day report
+// processes ~1 day of rows per dept instead of ~12 months. Trend-only rows feed
+// ONLY the monthly buckets (queueBreakdown/grandTotals come from the in-range
+// accumulation), so the outputs the all-dept report reads are byte-identical --
+// only trendData/dailySeries go sparse, which that report ignores. Other
+// callers (Insights Queue health, snapshots) omit rangeOnly -> full behavior.
+function computeQcdReport_(dept, from, to, includeSubQueues, separateSubQueues, rangeOnly) {
   const qOpts = { includeChildren: includeSubQueues !== false };
   // separateSubQueues (QCD report only): children stay visible in the
   // breakdown/chart but are tagged + EXCLUDED from the dept total, the
@@ -400,7 +519,40 @@ function computeQcdReport_(dept, from, to, includeSubQueues, separateSubQueues) 
   const separate = !!separateSubQueues;
   const tags = separate ? qcdSubQueueTags_(dept) : { ownSet: {}, queueOwner: {} };
   const isOwn = function (q) { return !separate || !!tags.ownSet[q]; };
-  const sheetData = readQcdSheetData_();
+
+  // Trend window: same logic as Individual / Performance Reports
+  // (12-mo monthly buckets unless range > 366 days or full year). Computed
+  // BEFORE the data read (it needs only from/to) so the read can be WINDOWED
+  // on the Neon path (#3) instead of pulling all history.
+  const parseIso_ = function (iso) {
+    const p = iso.split('-');
+    return new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]), 12);
+  };
+  const startDate = parseIso_(from);
+  const endDate   = parseIso_(to);
+  // Trend window resolution (INV-29; shared helper in Util.gs keeps the
+  // IR/PR/Insights/QCD 12-month trend axes aligned).
+  const trendStartDate = computeTrendStartDate_(startDate, endDate);
+  const trendStartIso = Utilities.formatDate(trendStartDate, TZ, 'yyyy-MM-dd');
+  const trendEndIso   = to;
+  const monthKeys = generateMonthList_(trendStartDate, endDate);
+
+  // Read window (#3, Neon path): a SUPERSET of every window the consumers
+  // scan, so the loop's existing date filters + computeMtdViolations_ read the
+  // Neon grid byte-identically to a whole-sheet read.
+  //   - the main loop needs [rangeOnly ? from : trendStartIso, to]
+  //   - computeMtdViolations_ needs [first-of-THIS-month, today] (it keys off
+  //     `new Date()`, independent of from/to)
+  // so read [min(mainFrom, mtdStart), max(to, today)]. On the sheet path
+  // readQcdGrid_ ignores the window and returns the whole sheet (unchanged).
+  const _now = new Date();
+  const mtdStartIso = Utilities.formatDate(
+    new Date(_now.getFullYear(), _now.getMonth(), 1), TZ, 'yyyy-MM-dd');
+  const todayIso = Utilities.formatDate(_now, TZ, 'yyyy-MM-dd');
+  const mainFrom = rangeOnly ? from : trendStartIso;
+  const readFrom = (mainFrom < mtdStartIso) ? mainFrom : mtdStartIso;
+  const readTo   = (to > todayIso) ? to : todayIso;
+  const sheetData = readQcdGrid_(readFrom, readTo);
   if (sheetData.missing) {
     throw new Error('Sheet "QCD Historical Data" not found. Verify the pipeline has run at least once for this dept.');
   }
@@ -423,21 +575,6 @@ function computeQcdReport_(dept, from, to, includeSubQueues, separateSubQueues) 
 
   const values   = sheetData.values;
   const displays = sheetData.displays;
-
-  // Trend window: same logic as Individual / Performance Reports
-  // (12-mo monthly buckets unless range > 366 days or full year).
-  const parseIso_ = function (iso) {
-    const p = iso.split('-');
-    return new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]), 12);
-  };
-  const startDate = parseIso_(from);
-  const endDate   = parseIso_(to);
-  // Trend window resolution (INV-29; shared helper in Util.gs keeps the
-  // IR/PR/Insights/QCD 12-month trend axes aligned).
-  const trendStartDate = computeTrendStartDate_(startDate, endDate);
-  const trendStartIso = Utilities.formatDate(trendStartDate, TZ, 'yyyy-MM-dd');
-  const trendEndIso   = to;
-  const monthKeys = generateMonthList_(trendStartDate, endDate);
 
   // Per-queue accumulators for the selected range. Only the
   // QCD_TOTAL_CALLS_SOURCE rows are summed -- other callSource
@@ -479,7 +616,9 @@ function computeQcdReport_(dept, from, to, includeSubQueues, separateSubQueues) 
 
     const inUserRange  = (dateIso >= from && dateIso <= to);
     const inTrendRange = (dateIso >= trendStartIso && dateIso <= trendEndIso);
-    if (!inUserRange && !inTrendRange) continue;
+    // rangeOnly: skip trend-only rows (they feed only the discarded monthly
+    // trend). Full mode keeps them for the 12-month chart.
+    if (!inUserRange && (rangeOnly || !inTrendRange)) continue;
 
     const totalCalls    = Number(r[QCD_HISTORICAL_COLS.TOTAL_CALLS - 1])    || 0;
     const totalAnswered = Number(r[QCD_HISTORICAL_COLS.TOTAL_ANSWERED - 1]) || 0;
@@ -811,5 +950,191 @@ function emptyQcdReport_(dept, from, to, includeSubQueues, separateSubQueues) {
     dailySeries: [],
     perQueue: perQueueEmpty,
   };
+}
+
+/**
+ * MAX(call_date) from qcd_history as 'yyyy-MM-dd' (or null on no-conn / no
+ * data / error). The QCD analog of neonGetMaxDqeDate_, for the QCD mirror-
+ * health divergence check. `conn` (optional) shares a caller's connection;
+ * omitted, we open + close our own. NEO-3: QCD is not a DQE read-back reader,
+ * so opening our own conn does NOT touch NEON_READ_LAST_ERROR.
+ */
+function neonQcdMaxDate_(conn) {
+  var ownConn = !conn;
+  if (ownConn) conn = (typeof getDashboardNeonConn_ === 'function') ? getDashboardNeonConn_() : null;
+  if (!conn) return null;
+  try {
+    var stmt = conn.createStatement();
+    var rs = stmt.executeQuery('SELECT MAX(call_date)::text AS d FROM qcd_history');
+    var d = rs.next() ? rs.getString('d') : null;
+    rs.close(); stmt.close();
+    return d ? String(d).trim() : null;
+  } catch (e) {
+    Logger.log('neonQcdMaxDate_ failed: ' + (e && e.message ? e.message : e));
+    return null;
+  } finally {
+    if (ownConn) { try { conn.close(); } catch (ce) {} }
+  }
+}
+
+/**
+ * Source-independent MAX(call_date) from the QCD Historical Data SHEET, as
+ * 'yyyy-MM-dd' (or null). Scans only the date column. Used by the QCD mirror-
+ * health check so it always reflects the sheet regardless of QCD_READ_SOURCE
+ * (the dqeSheetMaxDate_ analog). Best-effort: null on any error.
+ */
+function qcdSheetMaxDate_() {
+  try {
+    var ss = openSpreadsheet_();
+    var sheet = ss.getSheetByName('QCD Historical Data');
+    if (!sheet) return null;
+    var lastRow = sheet.getLastRow();
+    if (lastRow < 2) return null;
+    var ssTZ = ss.getSpreadsheetTimeZone();
+    var vals = sheet.getRange(2, QCD_HISTORICAL_COLS.DATE, lastRow - 1, 1).getValues();
+    var max = '';
+    for (var i = 0; i < vals.length; i++) {
+      var iso = rowDateIso_(vals[i][0], ssTZ);
+      if (iso && iso > max) max = iso;
+    }
+    return max || null;
+  } catch (e) {
+    Logger.log('qcdSheetMaxDate_ failed: ' + (e && e.message ? e.message : e));
+    return null;
+  }
+}
+
+/**
+ * QCD->Neon mirror divergence check (the computeNeonMirrorHealth_ analog for
+ * qcd_history). Compares the SHEET's MAX(call_date) against qcd_history's, so
+ * an admin can spot a stale QCD mirror before flipping QCD_READ_SOURCE=neon.
+ * Returns { configured, status, sheetMax, neonMax, gapDays } with the same
+ * status vocabulary ('unconfigured' | 'error' | 'ok' | 'behind').
+ *
+ * `conn` (optional) shares the SystemHealth single connection. Contract: when
+ * a conn arg is PASSED (even null) the caller owns the lifecycle -- an
+ * explicit null means "the shared open already failed", so report 'error'
+ * WITHOUT a second handshake; with NO arg we open our own. Best-effort:
+ * never throws (reuses neonMirrorGapDays_ from NeonRead.gs).
+ */
+function computeQcdMirrorHealth_(conn) {
+  var out = { configured: false, status: 'unconfigured',
+              sheetMax: null, neonMax: null, gapDays: null };
+  try {
+    if (!PropertiesService.getScriptProperties().getProperty('NEON_HOST')) return out;
+    out.configured = true;
+    out.sheetMax = qcdSheetMaxDate_();
+    var sharedConnProvided = (arguments.length >= 1);
+    out.neonMax = sharedConnProvided ? (conn ? neonQcdMaxDate_(conn) : null)
+                                     : neonQcdMaxDate_();
+    if (!out.neonMax) { out.status = 'error'; return out; }
+    if (!out.sheetMax) { out.status = 'ok'; return out; }
+    if (out.neonMax >= out.sheetMax) { out.status = 'ok'; out.gapDays = 0; return out; }
+    out.status = 'behind';
+    out.gapDays = neonMirrorGapDays_(out.neonMax, out.sheetMax);
+    return out;
+  } catch (e) {
+    Logger.log('computeQcdMirrorHealth_ failed: ' + (e && e.message ? e.message : e));
+    out.status = 'error';
+    return out;
+  }
+}
+
+/**
+ * Editor-run QCD parity gate (the compareDqeSources_ analog). Reads a date
+ * range from BOTH sources (whole-sheet filtered to the window vs the windowed
+ * Neon grid) and reports per-(date,queue,source) row-count + value mismatches
+ * across the metric columns the report consumes. GATE for QCD_READ_SOURCE=neon:
+ * 0 missing-in-Neon, 0 extra-in-Neon, 0 value mismatches over a representative
+ * range => qcd_history is trustworthy to read from.
+ *
+ * Range from Script Properties QCD_PARITY_FROM / QCD_PARITY_TO (in-source
+ * defaults otherwise), so it can run unattended. Read-only; never writes.
+ */
+function compareQcdSources_() {
+  var _props = PropertiesService.getScriptProperties();
+  var COMPARE_FROM = _props.getProperty('QCD_PARITY_FROM') || '2026-05-23';   // <-- edit or set Script Property
+  var COMPARE_TO   = _props.getProperty('QCD_PARITY_TO')   || '2026-05-29';   // <-- edit or set Script Property
+
+  Logger.log('=== compareQcdSources_  %s .. %s ===', COMPARE_FROM, COMPARE_TO);
+  Logger.log('QCD_READ_SOURCE = %s (neon = the QCD readers are LIVE on qcd_history; sheet = default)',
+             getQcdReadSource_());
+
+  var sheetGrid = readQcdSheetData_();
+  if (sheetGrid.missing) { Logger.log('QCD Historical Data sheet missing -- nothing to compare.'); return; }
+  var neonGrid = neonFetchQcdGrid_(COMPARE_FROM, COMPARE_TO);
+  if (!neonGrid) {
+    Logger.log('No Neon grid -- check NEON_* Script Properties + the '
+             + 'script.external_request scope on THIS project, or that '
+             + 'qcd_history has data in range.');
+    return;
+  }
+
+  // Normalize either grid to comparable rows keyed by date|queue|source over
+  // the compare window. `windowed=true` filters (the whole-sheet grid); the
+  // Neon grid is already windowed.
+  var norm = function (grid, windowed) {
+    var m = {};
+    var vals = grid.values || [], disps = grid.displays || [];
+    var tz = grid.ssTZ || TZ;
+    for (var i = 0; i < vals.length; i++) {
+      var r = vals[i], rd = disps[i];
+      var dateIso = rowDateIso_(r[QCD_HISTORICAL_COLS.DATE - 1], tz);
+      if (!dateIso) continue;
+      if (windowed && (dateIso < COMPARE_FROM || dateIso > COMPARE_TO)) continue;
+      var key = dateIso
+        + '|' + String(r[QCD_HISTORICAL_COLS.CALL_QUEUE - 1]  || '').trim()
+        + '|' + String(r[QCD_HISTORICAL_COLS.CALL_SOURCE - 1] || '').trim();
+      m[key] = {
+        totalCalls:     Number(r[QCD_HISTORICAL_COLS.TOTAL_CALLS - 1])    || 0,
+        totalAnswered:  Number(r[QCD_HISTORICAL_COLS.TOTAL_ANSWERED - 1]) || 0,
+        abandoned:      Number(r[QCD_HISTORICAL_COLS.ABANDONED - 1])      || 0,
+        violations:     Number(r[QCD_HISTORICAL_COLS.VIOLATIONS - 1])     || 0,
+        longestWaitSec: parseHmsDisplay_(rd[QCD_HISTORICAL_COLS.LONGEST_WAIT - 1]),
+        avgAnswerSec:   parseHmsDisplay_(rd[QCD_HISTORICAL_COLS.AVG_ANSWER - 1]),
+      };
+    }
+    return m;
+  };
+  var sMap = norm(sheetGrid, true);
+  var nMap = norm(neonGrid, false);
+  Logger.log('sheet rows (in window): %s | neon rows: %s',
+             Object.keys(sMap).length, Object.keys(nMap).length);
+
+  var FIELDS = ['totalCalls', 'totalAnswered', 'abandoned', 'violations',
+                'longestWaitSec', 'avgAnswerSec'];
+  var missingInNeon = [], extraInNeon = [], mismatches = [];
+  Object.keys(sMap).forEach(function (k) {
+    if (!nMap[k]) { missingInNeon.push(k); return; }
+    var s = sMap[k], n = nMap[k], diffs = [];
+    FIELDS.forEach(function (f) {
+      if (String(s[f]) !== String(n[f])) diffs.push(f + ' sheet=' + s[f] + ' neon=' + n[f]);
+    });
+    if (diffs.length) mismatches.push(k + ' :: ' + diffs.join(', '));
+  });
+  Object.keys(nMap).forEach(function (k) { if (!sMap[k]) extraInNeon.push(k); });
+
+  Logger.log('--- missing in Neon (sheet rows not mirrored): %s', missingInNeon.length);
+  missingInNeon.slice(0, 10).forEach(function (k) { Logger.log('   %s', k); });
+  Logger.log('--- extra in Neon (not on sheet): %s', extraInNeon.length);
+  extraInNeon.slice(0, 10).forEach(function (k) { Logger.log('   %s', k); });
+  Logger.log('--- value mismatches on common keys: %s', mismatches.length);
+  mismatches.slice(0, 10).forEach(function (m) { Logger.log('   %s', m); });
+
+  var clean = (missingInNeon.length === 0 && extraInNeon.length === 0 && mismatches.length === 0);
+  Logger.log('=== QCD PARITY %s ===', clean
+    ? 'CLEAN -- qcd_history matches the sheet for this range; the QCD read-back gate PASSED'
+    : 'MISMATCH -- resolve before setting QCD_READ_SOURCE=neon. Re-run the daily import '
+      + 'for the affected date(s) (writeQCDRowsToNeon is authoritative per-date), or delete '
+      + 'EXTRA-in-Neon phantom rows in SQL, then re-run this check.');
+}
+
+/**
+ * Editor-run wrapper for compareQcdSources_ (the Run picker hides `_`-suffixed
+ * functions). Pick `runQcdParityCheck` from the dropdown and read the log.
+ */
+function runQcdParityCheck() {
+  assertAdmin_();   // editor-run wrapper, but the bare name is RPC-reachable
+  return compareQcdSources_();
 }
 
