@@ -202,7 +202,7 @@ Per-row aggregates above; the totals row uses the same methods:
 
 - Sum columns sum the rows in the table.
 - Mean columns (ATT, Avg Abd Wait, CSR Avg Abd Wait) take a simple mean
-  of the NONZERO per-agent rows displayed (`avgNonzero_`, summary:v11).
+  of the NONZERO per-agent rows displayed (`avgNonzero_`, summary:v12).
   Idle roster agents — whose value is 0 for the range — are excluded
   from both numerator and denominator, so they don't drag the dept
   averages (owner decision, F-29 follow-up). This is the same skip-zero
@@ -459,7 +459,7 @@ mirrors it; if the two ever diverge, INV-30 wins.
 
 | Source file | Cache prefix | Current version |
 |---|---|---|
-| `Data.gs` (main table) | `summary:vN:` | `v11` |
+| `Data.gs` (main table) | `summary:vN:` | `v12` |
 | `Data.gs` (latest-date snap for default From/To) | `latestDate:vN:` | `v1` |
 | `Data.gs` (multi-source latest dates for freshness pill) | `latestDates:vN:` | `v1` |
 | `IndividualReport.gs` | `individual:vN:` | `v11` |
@@ -467,7 +467,7 @@ mirrors it; if the two ever diverge, INV-30 wins.
 | `PerformanceReport.gs` | `performance:vN:` | RETIRED (Performance Report deleted; Insights is the replacement) |
 | `CompareRangesReport.gs` | `compareRanges:vN:` | RETIRED (Compare Ranges deleted; Insights custom-prior + vs-Prior chart replace it) |
 | `MissedCallsReport.gs` | `missed:vN:` | `v14` |
-| `CompanyOverview.gs` | `companyOverview:vN` | `v19` |
+| `CompanyOverview.gs` | `companyOverview:vN` | `v20` |
 | `QCDReport.gs` | `qcd:vN:` | RETIRED (QCD modal deleted; `qcdAll:` remains) |
 | `InboundReport.gs` | `inbound:vN:` | `v3` |
 | `InsightsReport.gs` | `insights:vN:` | `v18` |

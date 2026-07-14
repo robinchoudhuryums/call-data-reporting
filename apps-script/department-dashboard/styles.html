@@ -4326,6 +4326,49 @@
     margin-left: auto; padding: 0 4px;
   }
   .ov-subq-toggle input { margin: 0; cursor: pointer; }
+
+  /* Card period slider (Yesterday / Last 30 days / YTD) above the dept grid,
+     and the chart RANGE control (30/60/90/YTD) in the chart-tabs row. Both are
+     compact segmented button groups sharing one look. */
+  .ov-period-bar {
+    display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+    margin: 0 0 10px;
+  }
+  .ov-period-lbl {
+    font-family: var(--mono); font-size: 10px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.18em; color: var(--muted);
+    margin-right: 2px;
+  }
+  .ov-chart-range { display: inline-flex; gap: 3px; margin-left: 8px; }
+  .ov-period-btn, .ov-range-btn {
+    background: var(--paper); border: 1px solid var(--line);
+    border-radius: var(--r); padding: 4px 10px;
+    font: 500 11px var(--ui); color: var(--muted); cursor: pointer;
+    transition: color 0.15s, background 0.15s, border-color 0.15s;
+  }
+  .ov-range-btn { padding: 3px 8px; }
+  .ov-period-btn:hover, .ov-range-btn:hover:not(:disabled) {
+    color: var(--ink); border-color: var(--muted);
+  }
+  .ov-period-btn.active, .ov-range-btn.active {
+    background: var(--accent-soft); border-color: var(--accent);
+    color: var(--accent); font-weight: 600;
+  }
+  .ov-range-btn:disabled { opacity: 0.6; cursor: default; }
+
+  /* QCD side-panel period toggle (Yesterday / MTD) in the snapshot header. */
+  .dept-qcd-period { display: inline-flex; gap: 3px; margin: 2px 0 8px; }
+  .dept-qcd-period-btn {
+    background: var(--paper); border: 1px solid var(--line);
+    border-radius: var(--r); padding: 3px 10px;
+    font: 500 11px var(--ui); color: var(--muted); cursor: pointer;
+    transition: color 0.15s, background 0.15s, border-color 0.15s;
+  }
+  .dept-qcd-period-btn:hover { color: var(--ink); border-color: var(--muted); }
+  .dept-qcd-period-btn.active {
+    background: var(--accent-soft); border-color: var(--accent);
+    color: var(--accent); font-weight: 600;
+  }
   /* Each parent dept + its sub-queues stack vertically in a
      single grid cell. Children inherit the parent's tile color
      (slot in IR_CHART_COLORS) via inline-set color but get an

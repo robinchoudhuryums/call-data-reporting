@@ -216,6 +216,15 @@
              the relationship. Replaces the prior #8 side-by-side rail. -->
         <div class="ov-grid-trend">
           <div class="ov-grid-col">
+            <!-- Card period slider: swaps which window the dept CARDS' headline
+                 stats show (Yesterday / Last 30 days / YTD). Chart + sparklines
+                 + active-count stay period-independent. -->
+            <div id="ov-period-bar" class="ov-period-bar" role="group" aria-label="Card period">
+              <span class="ov-period-lbl">Cards:</span>
+              <button type="button" class="ov-period-btn active" data-period="yesterday" aria-pressed="true">Yesterday</button>
+              <button type="button" class="ov-period-btn" data-period="last30" aria-pressed="false">Last 30 days</button>
+              <button type="button" class="ov-period-btn" data-period="ytd" aria-pressed="false">YTD</button>
+            </div>
             <div id="ov-dept-grid" class="ov-dept-grid"></div>
           </div>
           <div class="ov-trend-col">
@@ -231,6 +240,15 @@
               <label class="ov-subq-toggle" title="Show sub-queue (child) lines on the chart (dashed, in their parent's colour). On by default; uncheck to declutter to top-level departments only.">
                 <input type="checkbox" id="ov-subq-toggle" checked> sub-queues
               </label>
+              <!-- Chart range: 30/60/90 slice the shipped series instantly; YTD
+                   fetches the year-to-date series on demand. All three metrics
+                   follow the selected range. -->
+              <span id="ov-chart-range" class="ov-chart-range" role="group" aria-label="Chart range">
+                <button type="button" class="ov-range-btn active" data-range="30" aria-pressed="true" title="Last 30 days">30d</button>
+                <button type="button" class="ov-range-btn" data-range="60" aria-pressed="false" title="Last 60 days">60d</button>
+                <button type="button" class="ov-range-btn" data-range="90" aria-pressed="false" title="Last 90 days">90d</button>
+                <button type="button" class="ov-range-btn" data-range="ytd" aria-pressed="false" title="Year to date (loaded on demand)">YTD</button>
+              </span>
             </div>
             <div class="ir-chart-wrap" id="ov-chart-wrap">
               <div class="ir-chart-header"><span id="ov-chart-header-label">Answer rate trend per department</span><span class="ov-chart-hint"> &mdash; click a dept card to solo its line, Shift-click to compare</span></div>
@@ -432,6 +450,12 @@
             <strong id="dept-qcd-title">Queue Call Data</strong>
             <span class="dept-qcd-date" id="dept-qcd-date"></span>
             <span class="dept-qcd-hint">Daily roll-up across this dept's mapped queues from <code>QCD Historical Data</code>. For a date range, open the Insights report — its Queue health section is the range view.</span>
+          </div>
+          <!-- Period toggle: Yesterday (latest queue day) / MTD (month to date).
+               Hidden when the server didn't ship an MTD block. -->
+          <div id="dept-qcd-period" class="dept-qcd-period" role="group" aria-label="Queue data period" style="display:none;">
+            <button type="button" class="dept-qcd-period-btn active" data-period="yesterday" aria-pressed="true">Yesterday</button>
+            <button type="button" class="dept-qcd-period-btn" data-period="mtd" aria-pressed="false">MTD</button>
           </div>
           <div class="dept-qcd-tiles" id="dept-qcd-tiles"></div>
         </div>

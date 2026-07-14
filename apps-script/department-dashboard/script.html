@@ -1754,7 +1754,55 @@
     if (wrap) { wrap.style.display = 'none'; wrap.innerHTML = ''; }
   }
 
+  // Card period slider (Yesterday / Last 30 / YTD). Swaps which server-shipped
+  // `periods` block the dept cards' headline stats read; the sparkline, WoW
+  // chip, and active-count stay period-independent. Persisted; default keeps
+  // the historical latest-day view.
+  const OV_CARD_PERIOD_KEY_ = 'cdr.ov.cardperiod';
+  const OV_CARD_PERIODS_ = {
+    yesterday: { label: 'Yesterday',    cap: 'answered (yesterday)' },
+    last30:    { label: 'Last 30 days', cap: 'answered (last 30 days)' },
+    ytd:       { label: 'YTD',          cap: 'answered (year to date)' },
+  };
+  let ovCardPeriod = (function () {
+    try { var v = localStorage.getItem(OV_CARD_PERIOD_KEY_); return OV_CARD_PERIODS_[v] ? v : 'yesterday'; }
+    catch (e) { return 'yesterday'; }
+  })();
+  function ovPeriodStats_(dept) {
+    return (dept && dept.periods && dept.periods[ovCardPeriod])
+      || (dept && dept.latest)
+      || { pctFormatted: '—', rung: 0, answered: 0, missed: 0, attFormatted: '—' };
+  }
+  function ovPeriodCap_() { return (OV_CARD_PERIODS_[ovCardPeriod] || OV_CARD_PERIODS_.yesterday).cap; }
+
+  // Period bar above the dept grid (static markup). Syncs the active button on
+  // every render; wires the click once. Switching re-renders only the cards
+  // (hero + grid) from ovLastData -- no re-fetch; the chart/sparklines
+  // (period-independent) are left alone.
+  let ovPeriodBarWired = false;
+  function ovWirePeriodBar_() {
+    const bar = $('ov-period-bar');
+    if (!bar) return;
+    bar.querySelectorAll('.ov-period-btn').forEach(function (b) {
+      const on = b.getAttribute('data-period') === ovCardPeriod;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-checked', on ? 'true' : 'false');
+    });
+    if (ovPeriodBarWired) return;
+    ovPeriodBarWired = true;
+    bar.addEventListener('click', function (e) {
+      const b = e.target.closest('.ov-period-btn');
+      if (!b) return;
+      const p = b.getAttribute('data-period');
+      if (!OV_CARD_PERIODS_[p] || p === ovCardPeriod) return;
+      ovCardPeriod = p;
+      try { localStorage.setItem(OV_CARD_PERIOD_KEY_, p); } catch (e2) { /* best-effort */ }
+      if (ovLastData) { ovRenderUserHero_(ovLastData); ovRenderTiles_(ovLastData); }
+    });
+  }
+
   function ovBuildHeroTile_(dept, color) {
+    const st = ovPeriodStats_(dept);
     const trend = (dept.trend || []).map(function (v) { return v == null ? 0 : v; });
     const spark = irSparkline_(trend, color);
     const subTag = dept.parent
@@ -1776,15 +1824,15 @@
          +   '</div>'
          +   '<div class="ov-hero-body">'
          +     '<div class="ov-hero-pct-block">'
-         +       '<div class="ov-hero-pct" data-flash-key="ov:' + escapeHtml(dept.name) + '">' + escapeHtml(dept.latest.pctFormatted) + '</div>'
-         +       '<div class="ov-dept-pct-cap">answered (latest day)</div>'
+         +       '<div class="ov-hero-pct" data-flash-key="ov:' + escapeHtml(dept.name) + '">' + escapeHtml(st.pctFormatted) + '</div>'
+         +       '<div class="ov-dept-pct-cap">' + escapeHtml(ovPeriodCap_()) + '</div>'
          +       ovBuildWowChip_(dept)
          +     '</div>'
          +     '<div class="ov-hero-stats">'
-         +       '<div class="ov-hero-stat"><span class="ov-dept-stat-label">Rung</span><span>' + fmtNumber(dept.latest.rung) + '</span></div>'
-         +       '<div class="ov-hero-stat"><span class="ov-dept-stat-label">Answered</span><span>' + fmtNumber(dept.latest.answered) + '</span></div>'
-         +       '<div class="ov-hero-stat"><span class="ov-dept-stat-label">Missed</span><span>' + fmtNumber(dept.latest.missed) + '</span></div>'
-         +       '<div class="ov-hero-stat"><span class="ov-dept-stat-label">ATT</span><span>' + escapeHtml(dept.latest.attFormatted) + '</span></div>'
+         +       '<div class="ov-hero-stat"><span class="ov-dept-stat-label">Rung</span><span>' + fmtNumber(st.rung) + '</span></div>'
+         +       '<div class="ov-hero-stat"><span class="ov-dept-stat-label">Answered</span><span>' + fmtNumber(st.answered) + '</span></div>'
+         +       '<div class="ov-hero-stat"><span class="ov-dept-stat-label">Missed</span><span>' + fmtNumber(st.missed) + '</span></div>'
+         +       '<div class="ov-hero-stat"><span class="ov-dept-stat-label">ATT</span><span>' + escapeHtml(st.attFormatted) + '</span></div>'
          +     '</div>'
          +     '<div class="ov-hero-spark" title="30-day % answered trend">' + spark + '</div>'
          +   '</div>'
@@ -1922,6 +1970,7 @@
   // Set `isChild=true` for sub-queues -- they pick up the
   // accent-tinted background + tree-line connector via CSS.
   function ovBuildGridTile_(dept, color, isChild, routable, isViewer) {
+    const st = ovPeriodStats_(dept);
     const spark = irSparkline_(
       (dept.trend || []).map(function (v) { return v == null ? 0 : v; }),
       color);
@@ -1948,17 +1997,17 @@
          +   parentTag
          +   ovBuildAlertPill_(dept)
          +   '<div class="ov-dept-tile-pct">'
-         +     '<span data-flash-key="ov:' + escapeHtml(dept.name) + '">' + escapeHtml(dept.latest.pctFormatted) + '</span>'
-         +     ' <span class="ov-dept-pct-cap">answered</span>'
+         +     '<span data-flash-key="ov:' + escapeHtml(dept.name) + '">' + escapeHtml(st.pctFormatted) + '</span>'
+         +     ' <span class="ov-dept-pct-cap">' + escapeHtml(ovPeriodCap_()) + '</span>'
          +     ovBuildWowChip_(dept)
          +   '</div>'
          +   '<div class="ov-dept-tile-row">'
-         +     '<span><span class="ov-dept-stat-label">Rung</span> ' + dept.latest.rung + '</span>'
-         +     '<span><span class="ov-dept-stat-label">Ans</span> ' + dept.latest.answered + '</span>'
-         +     '<span><span class="ov-dept-stat-label">Miss</span> ' + dept.latest.missed + '</span>'
+         +     '<span><span class="ov-dept-stat-label">Rung</span> ' + fmtNumber(st.rung) + '</span>'
+         +     '<span><span class="ov-dept-stat-label">Ans</span> ' + fmtNumber(st.answered) + '</span>'
+         +     '<span><span class="ov-dept-stat-label">Miss</span> ' + fmtNumber(st.missed) + '</span>'
          +   '</div>'
          +   '<div class="ov-dept-tile-row">'
-         +     '<span><span class="ov-dept-stat-label">ATT</span> ' + escapeHtml(dept.latest.attFormatted) + '</span>'
+         +     '<span><span class="ov-dept-stat-label">ATT</span> ' + escapeHtml(st.attFormatted) + '</span>'
          +   '</div>'
          +   '<div class="ov-dept-tile-spark" title="30-day % answered trend">' + spark + '</div>'
          + '</div>';
@@ -1984,6 +2033,7 @@
   // card appearing beside it. In the parent's group cell, NOT inside the
   // parent card (no false roll-up). Hover spotlights the child's chart line.
   function ovBuildSubqCard_(dept, color) {
+    const st = ovPeriodStats_(dept);
     const qcd = dept.qcd || null;
     const alert = dept.alertedOnLatest
       ? '<span class="ov-subq-strip-alert" aria-hidden="true" title="Low-answer-rate alert on the latest date">🚨</span>'
@@ -2007,7 +2057,7 @@
          +     '<span class="ov-subq-strip-name">' + escapeHtml(dept.name) + '</span>'
          +     '<span class="ov-subq-strip-metrics">'
          +       '<span class="ov-subq-metric"><span class="ov-subq-metric-lbl">Ans</span> '
-         +         escapeHtml(dept.latest.pctFormatted) + ovSubqArrow_(dept.wow) + '</span>'
+         +         escapeHtml(st.pctFormatted) + ovSubqArrow_(dept.wow) + '</span>'
          +       abd + viol + alert
          +     '</span>'
          +     '<span class="ov-subq-strip-chev" aria-hidden="true">›</span>'
@@ -2015,12 +2065,12 @@
          +   '<div class="ov-subq-detail">'
          +     '<div class="ov-subq-detail-inner">'
          +       '<div class="ov-dept-tile-row">'
-         +         '<span><span class="ov-dept-stat-label">Rung</span> ' + dept.latest.rung + '</span>'
-         +         '<span><span class="ov-dept-stat-label">Ans</span> ' + dept.latest.answered + '</span>'
-         +         '<span><span class="ov-dept-stat-label">Miss</span> ' + dept.latest.missed + '</span>'
+         +         '<span><span class="ov-dept-stat-label">Rung</span> ' + fmtNumber(st.rung) + '</span>'
+         +         '<span><span class="ov-dept-stat-label">Ans</span> ' + fmtNumber(st.answered) + '</span>'
+         +         '<span><span class="ov-dept-stat-label">Miss</span> ' + fmtNumber(st.missed) + '</span>'
          +       '</div>'
          +       '<div class="ov-dept-tile-row">'
-         +         '<span><span class="ov-dept-stat-label">ATT</span> ' + escapeHtml(dept.latest.attFormatted) + '</span>'
+         +         '<span><span class="ov-dept-stat-label">ATT</span> ' + escapeHtml(st.attFormatted) + '</span>'
          +       '</div>'
          +       '<div class="ov-dept-tile-spark" title="30-day % answered trend">' + spark + '</div>'
          +       routeBtn
@@ -2058,6 +2108,7 @@
   }
 
   function ovRenderTiles_(data) {
+    ovWirePeriodBar_();
     const colors = IR_CHART_COLORS;
     const viewerDept = ovViewerDept_(data);
     const depts = data.depts || [];
@@ -2302,6 +2353,78 @@
     catch (e) { return 'pct'; }
   })();
 
+  // Chart RANGE control (30 / 60 / 90 days / YTD). 30-60-90 slice the 90-day
+  // chart series the Overview payload already ships (client-only, instant --
+  // separate from the 30-day sparkline/active-count so those never move,
+  // INV-40). YTD is fetched on demand via getOverviewChartTrend (the full
+  // series would blow the shared Overview cache's ~100KB cap) and cached in
+  // this session. The active metric (% Answered / Abandoned calls /
+  // Abandoned %) follows whichever range is selected.
+  const OV_CHART_RANGE_KEY_ = 'cdr.ov.chartrange';
+  const OV_CHART_RANGES_ = { '30': 30, '60': 60, '90': 90, ytd: null };
+  let ovChartRange = (function () {
+    try { var v = localStorage.getItem(OV_CHART_RANGE_KEY_); return OV_CHART_RANGES_.hasOwnProperty(v) ? v : '30'; }
+    catch (e) { return '30'; }
+  })();
+  let ovYtdData = null;        // session cache of the getOverviewChartTrend payload
+  let ovYtdLoading = false;
+
+  // 'YYYY-MM-DD' minus N calendar days, UTC-stable (parse + reformat via UTC
+  // so the arithmetic can't drift across a DST boundary).
+  function ovIsoMinusDays_(iso, days) {
+    const p = String(iso).split('-');
+    if (p.length !== 3) return iso;
+    const dt = new Date(Date.UTC(+p[0], +p[1] - 1, +p[2]));
+    dt.setUTCDate(dt.getUTCDate() - days);
+    const pad = function (n) { return n < 10 ? '0' + n : String(n); };
+    return dt.getUTCFullYear() + '-' + pad(dt.getUTCMonth() + 1) + '-' + pad(dt.getUTCDate());
+  }
+
+  // Normalize the chart's data source to a single shape regardless of which
+  // range is active: { trendLabels, trendIsoLabels, depts:[{name,parent,
+  // trend,trendAbandoned,trendAbandonedPct}], latestDate }. The 30/60/90
+  // ranges slice the payload's 90-day trendChart* fields down to the trailing
+  // N-day window; YTD returns the on-demand payload verbatim (already
+  // normalized to trend/trendAbandoned/trendAbandonedPct). Falls back to the
+  // 90-day payload when a YTD fetch hasn't landed yet.
+  function ovCurrentChartView_(data) {
+    if (ovChartRange === 'ytd') {
+      if (ovYtdData && ovYtdData.available) {
+        return {
+          trendLabels: ovYtdData.trendLabels || [],
+          trendIsoLabels: ovYtdData.trendIsoLabels || [],
+          depts: ovYtdData.depts || [],
+          latestDate: ovYtdData.latestDate || (data && data.latestDate),
+        };
+      }
+      // YTD not loaded yet -> show the full 90-day window meanwhile.
+    }
+    const iso = data.chartTrendIsoLabels || [];
+    const lab = data.chartTrendLabels || [];
+    const rangeDays = OV_CHART_RANGES_[ovChartRange];
+    let startIdx = 0;
+    if (rangeDays && iso.length) {
+      const latest = data.latestDate || iso[iso.length - 1];
+      const cut = ovIsoMinusDays_(latest, rangeDays - 1);
+      startIdx = iso.findIndex(function (x) { return x >= cut; });
+      if (startIdx < 0) startIdx = 0;
+    }
+    const depts = (data.depts || []).map(function (d) {
+      return {
+        name: d.name, parent: d.parent,
+        trend: (d.trendChart || []).slice(startIdx),
+        trendAbandoned: (d.trendChartAbandoned || []).slice(startIdx),
+        trendAbandonedPct: (d.trendChartAbandonedPct || []).slice(startIdx),
+      };
+    });
+    return {
+      trendLabels: lab.slice(startIdx),
+      trendIsoLabels: iso.slice(startIdx),
+      depts: depts,
+      latestDate: data.latestDate,
+    };
+  }
+
   // Builds the y-axis config for a metric + zoom state. The Fit/Full behavior
   // (fixing the previously-inert Zoom button): Full gives % Answered the fixed
   // 0-100 context and the Abandoned metrics a 0-to-data-top scale (0-100 would
@@ -2349,7 +2472,10 @@
     destroyOrphanedChartOnCanvas_('ov-trend-chart');
     refreshChartTheme();
 
-    const labels = data.trendLabels || [];
+    // Resolve the active range (30/60/90 client-slice, or the on-demand YTD
+    // payload) to a single normalized shape before building datasets.
+    const view = ovCurrentChartView_(data);
+    const labels = view.trendLabels || [];
     const colors = IR_CHART_COLORS;
     // Color assignment: walk top-level depts in payload order and
     // give each one a slot from IR_CHART_COLORS. Child depts inherit
@@ -2360,12 +2486,12 @@
     // ordered parent-then-children today, but don't lean on it).
     const colorByDept = {};
     let nextColorSlot = 0;
-    (data.depts || []).forEach(function (dept) {
+    (view.depts || []).forEach(function (dept) {
       if (dept.parent) return;
       colorByDept[dept.name] = colors[nextColorSlot % colors.length];
       nextColorSlot++;
     });
-    (data.depts || []).forEach(function (dept) {
+    (view.depts || []).forEach(function (dept) {
       if (!dept.parent) return;
       colorByDept[dept.name] = colorByDept[dept.parent]
         || colors[nextColorSlot++ % colors.length];
@@ -2382,7 +2508,7 @@
     // P2.4: default to top-level depts only; children join when toggled on.
     // colorByDept was computed over ALL depts above, so hues stay stable
     // whether or not children are shown.
-    const chartDepts = (data.depts || []).filter(function (d) {
+    const chartDepts = (view.depts || []).filter(function (d) {
       return ovShowSubQueues_ || !d.parent;
     });
     const datasets = chartDepts.map(function (dept) {
@@ -2491,7 +2617,7 @@
     // self-guards (it early-returns on a null instance).
     if (ovChartInstance) {
       chartSpotlightStash_(ovChartInstance, { skipLabel: mcfg.baselineLabel || '__ov_no_baseline__' });
-      ovChartInstance._trendIso = data.trendIsoLabels || [];
+      ovChartInstance._trendIso = view.trendIsoLabels || [];
       ovChartInstance._viewerDept = ovViewerDept_(data);
     }
     // Chart header reflects the active metric (the click-a-card hint is a
@@ -2501,6 +2627,74 @@
     ovWireAxisZoom_();
     ovWireSubqToggle_();
     ovWireMetricTabs_();
+    ovWireChartRange_();
+  }
+
+  // Chart RANGE control (30 / 60 / 90 / YTD) in the ov-chart-tabs row. The
+  // 30/60/90 buttons re-slice the already-shipped 90-day series instantly;
+  // YTD lazily fetches getOverviewChartTrend once per session (size-guarded,
+  // server-cached), painting a "loading" state on the button meanwhile.
+  // Wired once; syncs active state + the YTD-loading affordance every render.
+  let ovChartRangeWired = false;
+  function ovWireChartRange_() {
+    const grp = $('ov-chart-range');
+    if (!grp) return;
+    grp.querySelectorAll('.ov-range-btn').forEach(function (b) {
+      const r = b.getAttribute('data-range');
+      const on = r === ovChartRange;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+      if (r === 'ytd') {
+        b.textContent = (ovChartRange === 'ytd' && ovYtdLoading) ? 'YTD…' : 'YTD';
+        b.disabled = ovYtdLoading;
+      }
+    });
+    if (ovChartRangeWired) return;
+    ovChartRangeWired = true;
+    grp.addEventListener('click', function (e) {
+      const b = e.target.closest('.ov-range-btn');
+      if (!b) return;
+      const r = b.getAttribute('data-range');
+      if (!OV_CHART_RANGES_.hasOwnProperty(r) || r === ovChartRange) return;
+      ovChartRange = r;
+      try { localStorage.setItem(OV_CHART_RANGE_KEY_, r); } catch (e2) { /* best-effort */ }
+      if (r === 'ytd' && !(ovYtdData && ovYtdData.available)) {
+        ovLoadYtdChart_();
+        return;                       // ovLoadYtdChart_ re-renders when it lands
+      }
+      if (ovLastData) ovRenderChart_(ovLastData);
+    });
+  }
+
+  // Fetch the YTD chart series on demand (kept out of the shared Overview
+  // blob, which is size-capped). Cached for the session; a failure reverts to
+  // the 90-day view with a toast so the control never dead-ends.
+  function ovLoadYtdChart_() {
+    if (ovYtdLoading) return;
+    if (ovYtdData && ovYtdData.available) { if (ovLastData) ovRenderChart_(ovLastData); return; }
+    ovYtdLoading = true;
+    ovWireChartRange_();              // paint the YTD… loading label
+    const revertTo90_ = function (msg) {
+      ovYtdLoading = false;
+      ovChartRange = '90';
+      try { localStorage.setItem(OV_CHART_RANGE_KEY_, '90'); } catch (e) { /* best-effort */ }
+      showToast(msg, 'error');
+      if (ovLastData) ovRenderChart_(ovLastData);
+    };
+    google.script.run
+      .withSuccessHandler(function (res) {
+        if (res && res.available) {
+          ovYtdLoading = false;
+          ovYtdData = res;
+          if (ovLastData) ovRenderChart_(ovLastData);
+        } else {
+          revertTo90_('Year-to-date trend is unavailable right now.');
+        }
+      })
+      .withFailureHandler(function () {
+        revertTo90_('Could not load the year-to-date trend.');
+      })
+      .getOverviewChartTrend({ viewAsDept: viewAsDept_ || '' });
   }
 
   // ---- Generic Chart.js legend spotlight (shared) ----------------------
@@ -4835,29 +5029,63 @@
    * dept isn't mapped in DEPT_QCD_QUEUES or has no recent rows).
    * Hidden when null.
    */
+  // QCD side-panel period toggle (Yesterday / MTD). Yesterday = the latest-day
+  // block (the payload's top-level fields); MTD = the `mtd` block the server
+  // ships alongside (month-to-date across the dept's queues). Client-only swap
+  // of which block the panel renders -- no re-fetch. Persisted; defaults to the
+  // historical latest-day view.
+  const DEPT_QCD_PERIOD_KEY_ = 'cdr.dept.qcdperiod';
+  let deptQcdPeriod = (function () {
+    try { var v = localStorage.getItem(DEPT_QCD_PERIOD_KEY_); return (v === 'mtd' || v === 'yesterday') ? v : 'yesterday'; }
+    catch (e) { return 'yesterday'; }
+  })();
+  let deptQcdSnap_ = null;      // last snapshot payload, for re-render on toggle
+
   function renderDeptQcdSnapshot_(qcd) {
     var wrap = $('dept-qcd-snapshot');
     if (!wrap) return;
-    if (!qcd) { wrap.style.display = 'none'; return; }
+    if (!qcd) { wrap.style.display = 'none'; deptQcdSnap_ = null; return; }
+    deptQcdSnap_ = qcd;
+    // Resolve the active period block. MTD is only offered when the server
+    // shipped it; a missing `mtd` (older cache) falls back to Yesterday.
+    var hasMtd = !!qcd.mtd;
+    var period = (deptQcdPeriod === 'mtd' && hasMtd) ? 'mtd' : 'yesterday';
+    var block = (period === 'mtd') ? qcd.mtd : qcd;
+    deptQcdWirePeriod_(hasMtd, period);
     var titleEl = $('dept-qcd-title');
     if (titleEl) {
-      var dateStr = qcd.date || '';
-      if (dateStr) {
-        var parts = dateStr.split('-');
-        var d = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
-        var days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
-        var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-        dateStr = days[d.getDay()] + ' ' + months[d.getMonth()] + ' ' + d.getDate();
+      if (period === 'mtd') {
+        var msStr = qcd.mtdStart || '';
+        var msLabel = '';
+        if (msStr) {
+          var mp = msStr.split('-');
+          var monthsShort = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+          msLabel = monthsShort[Number(mp[1]) - 1] + ' ' + Number(mp[2]);
+        }
+        titleEl.textContent = 'Queue Call Data — Month to date' + (msLabel ? ' (since ' + msLabel + ')' : '');
+        titleEl.title = 'Month-to-date across this department’s queues, through the '
+          + 'latest day with queue data. For a custom range, open the Insights '
+          + 'report’s Queue health section.';
+        titleEl.style.cursor = 'help';
+      } else {
+        var dateStr = qcd.date || '';
+        if (dateStr) {
+          var parts = dateStr.split('-');
+          var d = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+          var days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+          var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+          dateStr = days[d.getDay()] + ' ' + months[d.getMonth()] + ' ' + d.getDate();
+        }
+        titleEl.textContent = 'Queue Call Data — ' + dateStr;
+        // This card always shows the most recent QCD day for the dept, which is
+        // independent of the date range above (QCD can update on a different day
+        // than DQE, and the range defaults to the latest DQE date). Clarify that
+        // so the static card next to the range controls doesn't read as broken.
+        titleEl.title = 'Most recent day of queue data — independent of the date '
+          + 'range above. For a specific date range, open the Insights report’s '
+          + 'Queue health section.';
+        titleEl.style.cursor = 'help';
       }
-      titleEl.textContent = 'Queue Call Data — ' + dateStr;
-      // This card always shows the most recent QCD day for the dept, which is
-      // independent of the date range above (QCD can update on a different day
-      // than DQE, and the range defaults to the latest DQE date). Clarify that
-      // so the static card next to the range controls doesn't read as broken.
-      titleEl.title = 'Most recent day of queue data — independent of the date '
-        + 'range above. For a specific date range, open the Insights report’s '
-        + 'Queue health section.';
-      titleEl.style.cursor = 'help';
     }
     // Owner note: the hover-only explanation wasn't enough -- when the
     // snapshot's day differs from the page's To date, say so VISIBLY so
@@ -4870,7 +5098,10 @@
     if (dateEl) {
       var pageTo = $('to-date') ? $('to-date').value : '';
       var note = '';
-      if (qcd.date && pageTo && qcd.date !== pageTo) {
+      // The "latest queue day vs page range" diagnostic only makes sense for the
+      // single-day Yesterday view; MTD is a range so there's no one day to
+      // reconcile against the To date.
+      if (period === 'yesterday' && qcd.date && pageTo && qcd.date !== pageTo) {
         var mmdd = function (iso) {
           var p = String(iso).split('-');
           return p.length === 3 ? (Number(p[1]) + '/' + Number(p[2])) : iso;
@@ -4923,7 +5154,7 @@
     // queue page at a time with ‹ › nav + a dot indicator, plus a trailing
     // "All queues" total page -- instead of stacking every queue vertically.
     // Single-queue depts keep the flat tile row (no redundant total).
-    const perQueue = qcd.perQueue || [];
+    const perQueue = block.perQueue || [];
     if (perQueue.length > 1) {
       const pages = perQueue.map(function (q) {
         const tag = q.subDept
@@ -4940,23 +5171,23 @@
       //   - Sub-queues subtotal: only when >1 sub-queue.
       //   - All-queues total: only when sub-queues exist (else it == main).
       // With no sub-queues, the own rollup is simply "Department total".
-      const hasSub = (qcd.subQueueCount || 0) > 0;
+      const hasSub = (block.subQueueCount || 0) > 0;
       const ownTotals = {
-        totalCalls:      qcd.totalCalls,
-        totalAnswered:   qcd.totalAnswered,
-        abandoned:       qcd.abandoned,
-        abandonedPct:    qcd.abandonedPct,
-        abandonedPctStr: qcd.abandonedPctStr,
-        violations:      qcd.violations,
+        totalCalls:      block.totalCalls,
+        totalAnswered:   block.totalAnswered,
+        abandoned:       block.abandoned,
+        abandonedPct:    block.abandonedPct,
+        abandonedPctStr: block.abandonedPctStr,
+        violations:      block.violations,
       };
-      if ((qcd.mainQueueCount || 0) > 1) {
+      if ((block.mainQueueCount || 0) > 1) {
         pages.push({ name: hasSub ? 'Main queues' : 'Department total', html: tileRow(ownTotals) });
       }
-      if ((qcd.subQueueCount || 0) > 1 && qcd.subTotals) {
-        pages.push({ name: 'Sub-queues (separate depts)', html: tileRow(qcd.subTotals) });
+      if ((block.subQueueCount || 0) > 1 && block.subTotals) {
+        pages.push({ name: 'Sub-queues (separate depts)', html: tileRow(block.subTotals) });
       }
-      if (hasSub && qcd.allTotals) {
-        pages.push({ name: 'All queues (incl. sub-queues)', html: tileRow(qcd.allTotals) });
+      if (hasSub && block.allTotals) {
+        pages.push({ name: 'All queues (incl. sub-queues)', html: tileRow(block.allTotals) });
       }
 
       tiles.innerHTML =
@@ -5001,9 +5232,35 @@
       }
       showPage(0);
     } else {
-      tiles.innerHTML = tileRow(perQueue.length === 1 ? perQueue[0] : qcd);
+      tiles.innerHTML = tileRow(perQueue.length === 1 ? perQueue[0] : block);
     }
     wrap.style.display = '';
+  }
+
+  // Wire the QCD panel's Yesterday / MTD toggle. Syncs active state every
+  // render; hides the toggle entirely when the server didn't ship an MTD block
+  // (older cache). Wired once; a switch re-renders from the stashed snapshot.
+  let deptQcdPeriodWired = false;
+  function deptQcdWirePeriod_(hasMtd, activePeriod) {
+    const bar = $('dept-qcd-period');
+    if (!bar) return;
+    bar.style.display = hasMtd ? '' : 'none';
+    bar.querySelectorAll('.dept-qcd-period-btn').forEach(function (b) {
+      const on = b.getAttribute('data-period') === activePeriod;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+    if (deptQcdPeriodWired) return;
+    deptQcdPeriodWired = true;
+    bar.addEventListener('click', function (e) {
+      const b = e.target.closest('.dept-qcd-period-btn');
+      if (!b) return;
+      const p = b.getAttribute('data-period');
+      if ((p !== 'yesterday' && p !== 'mtd') || p === deptQcdPeriod) return;
+      deptQcdPeriod = p;
+      try { localStorage.setItem(DEPT_QCD_PERIOD_KEY_, p); } catch (e2) { /* best-effort */ }
+      if (deptQcdSnap_) renderDeptQcdSnapshot_(deptQcdSnap_);
+    });
   }
 
   function renderInfoLine() {

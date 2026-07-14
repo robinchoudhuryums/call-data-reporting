@@ -43,7 +43,7 @@
  * (read-only), and reinstating that visibility is part of the
  * design intent for this view.
  *
- * Caching: REPORT_CACHE_TTL_SECONDS under `companyOverview:v19` (the
+ * Caching: REPORT_CACHE_TTL_SECONDS under `companyOverview:v20` (the
  * COMPANY_OVERVIEW_CACHE_KEY constant below). Cached blob is shared
  * across all users; admin-only fields (`companyAggregate`,
  * `pipelineFreshness`, `orphanNag`) are stripped on serve for
@@ -82,7 +82,14 @@
 // v19: each dept carries per-day `trendAbandoned` (QCD abandoned count) +
 // `trendAbandonedPct` series aligned to trendIsoLabels, feeding the Overview
 // chart's new Abandoned calls / Abandoned % metric views.
-const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v19';
+// v20: the multi-dept CHART series moved to a 90-day window (`trendChart` /
+// `trendChartAbandoned` / `trendChartAbandonedPct` + top-level
+// `chartTrendIsoLabels` / `chartTrendLabels`), client-sliced to 30/60/90;
+// the 30-day `trend` stays for the card sparklines. Each dept also gains a
+// `periods` block (yesterday/last30/ytd) for the card period slider (the DQE
+// read is widened to Jan 1 to source YTD). The v19 30-day `trendAbandoned` /
+// `trendAbandonedPct` are removed (superseded by the 90-day chart series).
+const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v20';
 
 /**
  * The Overview cache key, suffixed with the combined DQE+QCD read source
@@ -94,6 +101,64 @@ const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v19';
 function overviewCacheKey_() {
   var tag = (typeof readSourceCacheTag_ === 'function') ? readSourceCacheTag_() : 'sheet-sheet';
   return COMPANY_OVERVIEW_CACHE_KEY + ':' + tag;
+}
+
+// Chart-range slider (hybrid). The multi-dept chart ships a 90-day series
+// (client-sliced to 30/60/90) kept SEPARATE from the 30-day sparkline / "X of
+// Y active" data so those stay unchanged; YTD is fetched on demand via
+// getOverviewChartTrend (below), never in the shared blob (100KB cap).
+var OV_CHART_TREND_DAYS = 90;
+var OVERVIEW_CHART_TREND_CACHE_PREFIX = 'overviewChartYtd:v1';
+
+/**
+ * Weekday-only ISO labels (skips Sat/Sun) from fromIso..toIso inclusive -- the
+ * same axis convention as the 30-day trend. Shared by the 90-day payload chart
+ * series and the on-demand YTD endpoint.
+ */
+function ovWeekdayIsoLabels_(fromIso, toIso) {
+  var out = [];
+  var f = parseIsoNoon_(fromIso), t = parseIsoNoon_(toIso);
+  if (!f || !t) return out;
+  for (var ms = f.getTime(); ms <= t.getTime(); ms += 86400000) {
+    var d = new Date(ms);
+    var dow = parseInt(Utilities.formatDate(d, TZ, 'u'), 10);
+    if (dow === 6 || dow === 7) continue;
+    out.push(Utilities.formatDate(d, TZ, 'yyyy-MM-dd'));
+  }
+  return out;
+}
+
+/** 'MMM d' display labels for a weekday ISO list. */
+function ovTrendDisplayLabels_(isoLabels) {
+  return isoLabels.map(function (iso) {
+    var p = iso.split('-');
+    var d = new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]));
+    return Utilities.formatDate(d, TZ, 'MMM d');
+  });
+}
+
+/**
+ * One dept's chart series (answered % + abandoned count + abandoned %) aligned
+ * to `labels`, from a DQE per-day {rung,answered} map and a QCD per-day
+ * {totalCalls,abandoned} map. Null on days with no rows (weekday gaps / unmapped
+ * QCD). Shared by getCompanyOverview (90-day) and getOverviewChartTrend (YTD).
+ */
+function ovDeptChartSeries_(labels, dqeDaily, qcdDaily) {
+  dqeDaily = dqeDaily || {}; qcdDaily = qcdDaily || {};
+  return {
+    trend: labels.map(function (iso) {
+      var d = dqeDaily[iso];
+      return (d && d.rung > 0) ? round1_((d.answered / d.rung) * 100) : null;
+    }),
+    trendAbandoned: labels.map(function (iso) {
+      var q = qcdDaily[iso];
+      return q ? q.abandoned : null;
+    }),
+    trendAbandonedPct: labels.map(function (iso) {
+      var q = qcdDaily[iso];
+      return (q && q.totalCalls > 0) ? round1_((q.abandoned / q.totalCalls) * 100) : null;
+    }),
+  };
 }
 
 // Pipeline freshness threshold (hours). If the most recent successful
@@ -242,6 +307,18 @@ function getCompanyOverview(req) {
     return Utilities.formatDate(d, TZ, 'MMM d');
   });
 
+  // 90-day CHART window (client-sliced to 30/60/90). Separate axis from the
+  // 30-day trendIsoLabels above so the card sparklines + active-count stay
+  // 30-day. YTD start (for the card period slider) too. The DQE read below is
+  // widened to cover the earliest of these so no extra read is needed.
+  const chartTrendStart = new Date(latestDateObj.getTime() - (OV_CHART_TREND_DAYS - 1) * 86400000);
+  const chartTrendStartIso = Utilities.formatDate(chartTrendStart, TZ, 'yyyy-MM-dd');
+  const chartTrendIsoLabels = ovWeekdayIsoLabels_(chartTrendStartIso, latestDate);
+  const chartTrendLabels = ovTrendDisplayLabels_(chartTrendIsoLabels);
+  const ytdStartIso = Utilities.formatDate(
+    new Date(latestDateObj.getFullYear(), 0, 1), TZ, 'yyyy-MM-dd');
+  const readFromIso = [ytdStartIso, chartTrendStartIso].sort()[0];
+
   // Load every dept's roster up front. Build a name->dept lookup so
   // we can attribute each row to the right dept(s) in O(1) inside
   // the bulk scan.  Agents on multiple rosters count in each.
@@ -342,17 +419,17 @@ function getCompanyOverview(req) {
   let effectiveSource = 'sheet';
   const _tRead = Date.now();
   if (ovNeonCapable) {
-    dqeRows = neonFetchDqeRows_(trendStartIso, latestDate);
+    dqeRows = neonFetchDqeRows_(readFromIso, latestDate);
     if (!neonDqeRowsUsable_(dqeRows)) {   // LM2: reachable-empty is trusted; only unreachable falls back
       Logger.log('getCompanyOverview: neon returned no rows; falling back to sheet.');
       dqeRows = (typeof sheetFetchDqeRows_ === 'function')
-        ? sheetFetchDqeRows_(trendStartIso, latestDate) : [];
+        ? sheetFetchDqeRows_(readFromIso, latestDate) : [];
     } else {
       effectiveSource = 'neon';
     }
   } else {
     dqeRows = (typeof sheetFetchDqeRows_ === 'function')
-      ? sheetFetchDqeRows_(trendStartIso, latestDate) : [];
+      ? sheetFetchDqeRows_(readFromIso, latestDate) : [];
   }
   if (typeof logDqeReadTiming_ === 'function') logDqeReadTiming_('getCompanyOverview', effectiveSource, _tRead, dqeRows.length);
   for (let i = 0; i < dqeRows.length; i++) {
@@ -438,6 +515,66 @@ function getCompanyOverview(req) {
     });
   }
 
+  // ── Card period aggregates + 90-day chart series ────────────────────
+  // Isolated pass over the SAME dqeRows (already read back to readFromIso).
+  // Kept SEPARATE from the main loop above so that loop's 30-day gate -- and
+  // every existing output (sparklines, company aggregate, WoW, recentlyActive)
+  // -- is untouched. Builds: per-dept period SUMS (yesterday/last30/ytd) for
+  // the card slider, and a per-dept per-day {rung,answered} map over the 90-day
+  // chart window for the chart's answered series.
+  const deptPeriodAcc = {};
+  const deptChartDaily = {};
+  allDepts.forEach(function (d) {
+    deptPeriodAcc[d] = {
+      yesterday: { rung: 0, missed: 0, answered: 0, att_sum: 0 },
+      last30:    { rung: 0, missed: 0, answered: 0, att_sum: 0 },
+      ytd:       { rung: 0, missed: 0, answered: 0, att_sum: 0 },
+    };
+    deptChartDaily[d] = {};
+  });
+  for (let pi = 0; pi < dqeRows.length; pi++) {
+    const pr = dqeRows[pi];
+    const pDate = pr.dateIso;
+    if (!pDate || pDate < readFromIso) continue;
+    const pAgent = pr.agent;
+    if (!pAgent || /^A_Q_/.test(pAgent) || pAgent === 'Backup CSR') continue;
+    const owners = deptsForAgent[pAgent];
+    if (!owners || !owners.length) continue;
+    const pRung     = Number(pr.totalRung)     || 0;
+    const pMissed   = Number(pr.totalMissed)   || 0;
+    const pAnswered = Number(pr.totalAnswered) || 0;
+    const pAttTotal = pAnswered > 0 ? (Number(pr.attSec) || 0) * pAnswered : 0;
+    const inYtd    = (pDate >= ytdStartIso);
+    const inLast30 = (pDate >= trendStartIso);
+    const isLatest = (pDate === latestDate);
+    const inChart  = (pDate >= chartTrendStartIso);
+    owners.forEach(function (d) {
+      const pa = deptPeriodAcc[d];
+      if (pa) {
+        const bump = function (b) { b.rung += pRung; b.missed += pMissed; b.answered += pAnswered; b.att_sum += pAttTotal; };
+        if (inYtd)    bump(pa.ytd);
+        if (inLast30) bump(pa.last30);
+        if (isLatest) bump(pa.yesterday);
+      }
+      if (inChart) {
+        const cd = deptChartDaily[d];
+        let cday = cd[pDate];
+        if (!cday) { cday = { rung: 0, answered: 0 }; cd[pDate] = cday; }
+        cday.rung     += pRung;
+        cday.answered += pAnswered;
+      }
+    });
+  }
+  const fmtPeriod_ = function (b) {
+    const pct = b.rung > 0 ? (b.answered / b.rung) * 100 : 0;
+    const att = b.answered > 0 ? b.att_sum / b.answered : 0;
+    return {
+      rung: b.rung, missed: b.missed, answered: b.answered,
+      pct: round1_(pct), pctFormatted: pct.toFixed(1) + '%',
+      attFormatted: formatSecondsHms_(att),
+    };
+  };
+
   // Format per-dept output. Hidden depts (OVERVIEW_HIDDEN_DEPTS)
   // are skipped entirely; sub-queues get a `parent` reference and
   // are slotted right after their parent in the output order.
@@ -450,34 +587,27 @@ function getCompanyOverview(req) {
   // sheet read of QCD Historical Data, scoped to the last 30 days).
   // Returns dept -> { latestDate, totalCalls, abandonedPct,
   // violations } or null if no QCD rows for that dept in window.
-  const qcdSnapshotsByDept = computeQcdSnapshots_(allDepts, trendStartIso, ssTZ);
+  // computeQcdSnapshots_ scanned with the 90-day chart window so its per-dept
+  // `daily` map covers the full chart series (the tile-chip latest/MTD fields
+  // are date-gated and unaffected by the wider window).
+  const qcdSnapshotsByDept = computeQcdSnapshots_(allDepts, chartTrendStartIso, ssTZ);
   const formatDept = function (d) {
     const stats = deptStats[d];
     const ld = stats.latestDay;
     const pct = ld.rung > 0 ? (ld.answered / ld.rung) * 100 : 0;
     const att = ld.answered > 0 ? ld.att_sum / ld.answered : 0;
+    // 30-day sparkline series (answered %) -- card sparklines only.
     const trend = trendIsoLabels.map(function (iso) {
       const day = stats.trendByDate[iso];
       if (!day || day.rung <= 0) return null;
       return round1_((day.answered / day.rung) * 100);
     });
-    // Per-day QCD abandoned series (own queues) for the chart's Abandoned
-    // calls / Abandoned % metric views, aligned to the same weekday-only axis
-    // as `trend`. Null on days with no QCD row (and all-null for QCD-unmapped
-    // depts -> no line). Sourced from the snapshot's `daily` map (built in
-    // computeQcdSnapshots_), which is then stripped so the raw map doesn't
-    // ship inside the tile-chip `qcd` payload.
+    // 90-day CHART series (client-sliced to 30/60/90): answered % from the
+    // per-day DQE map + abandoned count/% from the QCD snapshot's `daily` map,
+    // both aligned to chartTrendIsoLabels. Null on gap days / QCD-unmapped depts.
     const snap = qcdSnapshotsByDept[d] || null;
     const qcdDaily = (snap && snap.daily) || {};
-    const trendAbandoned = trendIsoLabels.map(function (iso) {
-      const day = qcdDaily[iso];
-      return day ? day.abandoned : null;
-    });
-    const trendAbandonedPct = trendIsoLabels.map(function (iso) {
-      const day = qcdDaily[iso];
-      if (!day || day.totalCalls <= 0) return null;
-      return round1_((day.abandoned / day.totalCalls) * 100);
-    });
+    const chartSeries = ovDeptChartSeries_(chartTrendIsoLabels, deptChartDaily[d], qcdDaily);
     if (snap) delete snap.daily;   // don't ship the raw per-day map on the tile chip
     return {
       name: d,
@@ -504,9 +634,17 @@ function getCompanyOverview(req) {
       // Visible to everyone (no admin gate) -- managers see the same
       // QCD numbers their own dept's full report shows.
       qcd: snap,
-      trend: trend,
-      trendAbandoned: trendAbandoned,
-      trendAbandonedPct: trendAbandonedPct,
+      trend: trend,                                     // 30-day sparkline
+      trendChart: chartSeries.trend,                    // 90-day chart (answered %)
+      trendChartAbandoned: chartSeries.trendAbandoned,  // 90-day chart (abandoned count)
+      trendChartAbandonedPct: chartSeries.trendAbandonedPct,
+      // Card period slider (Yesterday / Last 30 / YTD). `latest` above stays
+      // the Yesterday view for back-compat; the client picks a block here.
+      periods: {
+        yesterday: fmtPeriod_(deptPeriodAcc[d].yesterday),
+        last30:    fmtPeriod_(deptPeriodAcc[d].last30),
+        ytd:       fmtPeriod_(deptPeriodAcc[d].ytd),
+      },
     };
   };
   const allFormatted = allDepts
@@ -601,6 +739,9 @@ function getCompanyOverview(req) {
     latestDate:       latestDate,
     trendIsoLabels:   trendIsoLabels,
     trendLabels:      trendLabels,
+    // 90-day chart axis (client slices to 30/60/90; YTD fetched on demand).
+    chartTrendIsoLabels: chartTrendIsoLabels,
+    chartTrendLabels:    chartTrendLabels,
     depts:            depts,
     companyAggregate: companyAggregate,
     // Admin-only surface fields (stripped by personalizeOverview_ for
@@ -618,6 +759,104 @@ function getCompanyOverview(req) {
   catch (e) { Logger.log('CompanyOverview cache put failed: %s', e); }
 
   return personalizeOverview_(result, user);
+}
+
+/**
+ * On-demand YTD chart series for the Overview chart-range slider's YTD button.
+ * Returns ONLY the per-dept trend series (answered % + abandoned count/%) over
+ * the year-to-date window -- NOT the full Overview payload -- so the big YTD
+ * series never rides the shared companyOverview blob (100KB cap). Cached
+ * separately with a size guard. Visible to any signed-in user (the Overview
+ * dept lines are, too). All depts (no admin-only fields), so no personalize.
+ *
+ *  -> { available, latestDate, trendIsoLabels, trendLabels,
+ *       depts: [{ name, parent, trend, trendAbandoned, trendAbandonedPct }] }
+ */
+function getOverviewChartTrend(req) {
+  const user = resolveUser_(Session.getActiveUser().getEmail());
+  if (!user || user.role === 'none') throw new Error('Not authorized.');
+
+  const latestDate = getLatestDataDate();
+  if (!latestDate) return { available: false };
+
+  const cache = CacheService.getScriptCache();
+  const tag = (typeof readSourceCacheTag_ === 'function') ? readSourceCacheTag_() : 'sheet-sheet';
+  const cacheKey = OVERVIEW_CHART_TREND_CACHE_PREFIX + ':' + latestDate + ':' + tag;
+  const cached = cache.get(cacheKey);
+  if (cached) { try { return JSON.parse(cached); } catch (e) { /* recompute */ } }
+
+  const ss = openSpreadsheet_();
+  const ssTZ = ss.getSpreadsheetTimeZone();
+  const latestDateObj = parseIsoNoon_(latestDate);
+  const ytdStartIso = Utilities.formatDate(new Date(latestDateObj.getFullYear(), 0, 1), TZ, 'yyyy-MM-dd');
+  const labels = ovWeekdayIsoLabels_(ytdStartIso, latestDate);
+  const displayLabels = ovTrendDisplayLabels_(labels);
+
+  // Roster attribution (agent -> dept[]), same as getCompanyOverview.
+  const allDepts = getAllDepartments_();
+  const overviewParentMap = getOverviewParentMap_();
+  const deptsForAgent = {};
+  allDepts.forEach(function (d) {
+    getRosterForDepartment_(d).names.forEach(function (n) {
+      (deptsForAgent[n] = deptsForAgent[n] || []).push(d);
+    });
+  });
+
+  // DQE read [ytdStart, latest] -> per-dept per-day {rung, answered}.
+  let dqeRows;
+  const dqeSource = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
+  if (dqeSource === 'neon' && typeof neonFetchDqeRows_ === 'function') {
+    dqeRows = neonFetchDqeRows_(ytdStartIso, latestDate);
+    if (typeof neonDqeRowsUsable_ === 'function' && !neonDqeRowsUsable_(dqeRows)) {
+      dqeRows = (typeof sheetFetchDqeRows_ === 'function') ? sheetFetchDqeRows_(ytdStartIso, latestDate) : [];
+    }
+  } else {
+    dqeRows = (typeof sheetFetchDqeRows_ === 'function') ? sheetFetchDqeRows_(ytdStartIso, latestDate) : [];
+  }
+  const deptDaily = {};
+  allDepts.forEach(function (d) { deptDaily[d] = {}; });
+  for (let i = 0; i < dqeRows.length; i++) {
+    const r = dqeRows[i];
+    const iso = r.dateIso;
+    if (!iso || iso < ytdStartIso) continue;
+    const agent = r.agent;
+    if (!agent || /^A_Q_/.test(agent) || agent === 'Backup CSR') continue;
+    const owners = deptsForAgent[agent];
+    if (!owners || !owners.length) continue;
+    const rung = Number(r.totalRung) || 0, answered = Number(r.totalAnswered) || 0;
+    owners.forEach(function (d) {
+      const cd = deptDaily[d];
+      let day = cd[iso];
+      if (!day) { day = { rung: 0, answered: 0 }; cd[iso] = day; }
+      day.rung += rung; day.answered += answered;
+    });
+  }
+
+  // QCD per-day (abandoned) over the YTD window (reuses the snapshot's `daily`).
+  const qcdSnaps = computeQcdSnapshots_(allDepts, ytdStartIso, ssTZ);
+
+  const depts = allDepts
+    .filter(function (d) { return OVERVIEW_HIDDEN_DEPTS.indexOf(d) === -1; })
+    .map(function (d) {
+      const snap = qcdSnaps[d] || null;
+      const series = ovDeptChartSeries_(labels, deptDaily[d], (snap && snap.daily) || {});
+      return { name: d, parent: overviewParentMap[d] || null,
+               trend: series.trend, trendAbandoned: series.trendAbandoned, trendAbandonedPct: series.trendAbandonedPct };
+    });
+
+  const data = {
+    available: true, latestDate: latestDate,
+    trendIsoLabels: labels, trendLabels: displayLabels, depts: depts,
+  };
+  const json = JSON.stringify(data);
+  // Size guard: skip caching an oversized blob (CacheService ~100KB cap) rather
+  // than silently failing the put; the YTD fetch is on-demand + rare, so an
+  // uncached recompute is acceptable on a very large install.
+  if (json.length <= 92000) {
+    try { cache.put(cacheKey, json, REPORT_CACHE_TTL_SECONDS); }
+    catch (e) { Logger.log('overviewChartTrend cache put failed: %s', e); }
+  }
+  return data;
 }
 
 /**
