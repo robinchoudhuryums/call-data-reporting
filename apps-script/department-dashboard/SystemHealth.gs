@@ -94,6 +94,12 @@ function getSystemHealth() {
                      : 'Reads come from the DQE sheet; flip to neon after a clean runDqeParityCheck (Operator State #19).');
   } catch (e) { add('neon', 'dqe-source', 'DQE read source', 'warn', 'probe failed', String(e && e.message || e)); }
   try {
+    var qsrc = (typeof getQcdReadSource_ === 'function') ? getQcdReadSource_() : 'sheet';
+    add('neon', 'qcd-source', 'QCD read source (QCD_READ_SOURCE)', 'muted', qsrc,
+      qsrc === 'neon' ? 'Queue-report reads come from qcd_history; sheet is the fallback.'
+                      : 'Queue-report reads come from the QCD sheet; flip to neon after a clean runQcdParityCheck.');
+  } catch (e) { add('neon', 'qcd-source', 'QCD read source', 'warn', 'probe failed', String(e && e.message || e)); }
+  try {
     var cfgSrc = (typeof getConfigSource_ === 'function') ? getConfigSource_() : 'sheet';
     add('neon', 'config-source', 'Config source (CONFIG_SOURCE)', 'muted', cfgSrc,
       cfgSrc === 'neon' ? 'Dept/Alert/Digest Config read+write Neon tables.' : 'Config sheets are authoritative (default).');
@@ -110,24 +116,52 @@ function getSystemHealth() {
         'Neon DQE reads are silently falling back to the sheet — sustained outage serves aging data (Operator State #19).');
     }
   } catch (e) { add('neon', 'read-health', 'Neon read-back health', 'warn', 'probe failed', String(e && e.message || e)); }
+  // Both mirror-health probes (DQE + QCD) share ONE Neon connection so the
+  // page pays at most a single free-tier cold-start, not one handshake per
+  // probe. Opened here, threaded into both compute*MirrorHealth_(conn), closed
+  // in the finally. An explicit null (Neon configured but unreachable) tells
+  // each helper to report 'error' WITHOUT re-attempting its own connection.
+  var sharedNeonConn = null;
+  if (neonConfigured && typeof getDashboardNeonConn_ === 'function') {
+    try { sharedNeonConn = getDashboardNeonConn_(); } catch (e) { sharedNeonConn = null; }
+  }
   try {
-    if (neonConfigured) {
-      var mh = computeNeonMirrorHealth_();
+    var renderMirror = function (key, label, mh, upsertHint) {
       if (mh.status === 'ok') {
-        add('neon', 'mirror-health', 'DQE→Neon mirror', 'ok',
+        add('neon', key, label, 'ok',
           'neon max ' + (mh.neonMax || '?') + (mh.sheetMax ? (' vs sheet ' + mh.sheetMax) : ''));
       } else if (mh.status === 'behind') {
-        add('neon', 'mirror-health', 'DQE→Neon mirror', 'warn',
+        add('neon', key, label, 'warn',
           'behind by ' + mh.gapDays + ' day(s) (neon ' + mh.neonMax + ' < sheet ' + mh.sheetMax + ')',
-        'Re-import the missing date(s) or run backfillDQEHistoryUpsert() (Operator State #19).');
+          upsertHint);
       } else {
-        add('neon', 'mirror-health', 'DQE→Neon mirror', 'warn', mh.status,
-          'Could not read dqe_history max date — check Neon reachability.');
+        add('neon', key, label, 'warn', mh.status,
+          'Could not read the mirror max date — check Neon reachability.');
       }
-    } else {
-      add('neon', 'mirror-health', 'DQE→Neon mirror', 'muted', 'n/a (Neon unconfigured)');
-    }
-  } catch (e) { add('neon', 'mirror-health', 'DQE→Neon mirror', 'warn', 'probe failed', String(e && e.message || e)); }
+    };
+    try {
+      if (neonConfigured) {
+        renderMirror('mirror-health', 'DQE→Neon mirror',
+          computeNeonMirrorHealth_(sharedNeonConn),
+          'Re-import the missing date(s) or run backfillDQEHistoryUpsert() (Operator State #19).');
+      } else {
+        add('neon', 'mirror-health', 'DQE→Neon mirror', 'muted', 'n/a (Neon unconfigured)');
+      }
+    } catch (e) { add('neon', 'mirror-health', 'DQE→Neon mirror', 'warn', 'probe failed', String(e && e.message || e)); }
+    try {
+      if (neonConfigured && typeof computeQcdMirrorHealth_ === 'function') {
+        renderMirror('qcd-mirror-health', 'QCD→Neon mirror',
+          computeQcdMirrorHealth_(sharedNeonConn),
+          'Re-import the missing date(s) — writeQCDRowsToNeon is authoritative per-date.');
+      } else if (neonConfigured) {
+        add('neon', 'qcd-mirror-health', 'QCD→Neon mirror', 'muted', 'n/a (probe unavailable)');
+      } else {
+        add('neon', 'qcd-mirror-health', 'QCD→Neon mirror', 'muted', 'n/a (Neon unconfigured)');
+      }
+    } catch (e) { add('neon', 'qcd-mirror-health', 'QCD→Neon mirror', 'warn', 'probe failed', String(e && e.message || e)); }
+  } finally {
+    if (sharedNeonConn) { try { sharedNeonConn.close(); } catch (ce) {} }
+  }
 
   // ── Trigger-driven services (THIS project) ──────────────────────────
   try {

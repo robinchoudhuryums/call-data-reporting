@@ -74,22 +74,29 @@ function getDashboardNeonConn_(opts) {
  * sheet scan -- the F1 read-back's cheapest win. Best-effort: callers
  * treat null as "fall back to the sheet".
  */
-function neonGetMaxDqeDate_() {
-  var conn = getDashboardNeonConn_({ recordReadHealth: true });   // NEO-3: DQE reader
+function neonGetMaxDqeDate_(conn) {
+  // Shared-connection support (SystemHealth single-conn): with a conn PASSED we
+  // reuse it and DON'T touch the read-health signal -- a shared conn comes from
+  // a health PROBE, not a real DQE read, so it must not feed/clear the DQE-only
+  // NEON_READ_LAST_ERROR line (NEO-3). With NO conn (getLatestDataDate, the
+  // Alerts mirror-health) we open + close our own AND record/clear as a real
+  // DQE read-back reader does.
+  var ownConn = !conn;
+  if (ownConn) conn = getDashboardNeonConn_({ recordReadHealth: true });   // NEO-3: DQE reader
   if (!conn) return null;
   try {
     var stmt = conn.createStatement();
     var rs = stmt.executeQuery('SELECT MAX(call_date)::text AS d FROM dqe_history');
     var d = rs.next() ? rs.getString('d') : null;
     rs.close(); stmt.close();
-    clearNeonReadFailure_();   // F4: reachable -> reset the failure streak
+    if (ownConn) clearNeonReadFailure_();   // F4: reachable -> reset the failure streak
     return d ? String(d).trim() : null;
   } catch (e) {
     Logger.log('neonGetMaxDqeDate_ failed: ' + (e && e.message ? e.message : e));
-    recordNeonReadFailure_('neonGetMaxDqeDate_', e);
+    if (ownConn) recordNeonReadFailure_('neonGetMaxDqeDate_', e);
     return null;
   } finally {
-    try { conn.close(); } catch (ce) {}
+    if (ownConn) { try { conn.close(); } catch (ce) {} }
   }
 }
 
@@ -569,7 +576,7 @@ function computeNeonReadHealth_() {
  * catches the common "most-recent date(s) un-mirrored" outage but not an
  * interior gap where both ends mirrored. Best-effort: never throws.
  */
-function computeNeonMirrorHealth_() {
+function computeNeonMirrorHealth_(conn) {
   var out = { configured: false, status: 'unconfigured',
               sheetMax: null, neonMax: null, gapDays: null };
   try {
@@ -578,7 +585,14 @@ function computeNeonMirrorHealth_() {
     // Source-INDEPENDENT sheet max (NOT getLatestDataDate, which reads Neon
     // when DQE_READ_SOURCE=neon -- that would compare Neon against itself).
     out.sheetMax = dqeSheetMaxDate_();
-    out.neonMax  = neonGetMaxDqeDate_();
+    // Shared-connection contract (SystemHealth single-conn): a conn arg PASSED
+    // (even null) means the caller owns the lifecycle -- an explicit null is
+    // "the shared open already failed", so report error without a second
+    // handshake; with NO arg (the Alerts modal) open our own via
+    // neonGetMaxDqeDate_() (which then records/clears read-health as before).
+    var sharedConnProvided = (arguments.length >= 1);
+    out.neonMax = sharedConnProvided ? (conn ? neonGetMaxDqeDate_(conn) : null)
+                                     : neonGetMaxDqeDate_();
     if (!out.neonMax) { out.status = 'error'; return out; }
     if (!out.sheetMax) { out.status = 'ok'; return out; }   // nothing to compare
     if (out.neonMax >= out.sheetMax) { out.status = 'ok'; out.gapDays = 0; return out; }

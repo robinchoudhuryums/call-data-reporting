@@ -150,3 +150,156 @@ test('rangeOnly perf flag: queueBreakdown + totals are byte-identical to a full 
   assert.equal(full.totals.totalCalls, 180);
   assert.equal(ranged.totals.totalCalls, 180);
 });
+
+// ── #3: QCD Neon read-back parity (QCD_READ_SOURCE=neon) ───────────────────
+// computeQcdReport_ must produce an IDENTICAL report whether it reads the QCD
+// sheet (default) or qcd_history via neonFetchQcdGrid_. A fake JDBC connection
+// serves json_agg payloads built from the SAME logical rows the sheet fixture
+// holds -- honoring the bound date params, so the windowed read is exercised.
+
+// One logical dataset -> both sources. source defaults to 'Total Calls' and
+// the durations match qcdRow ('0:01:00' longest / '0:00:20' avg).
+const QDATA = [
+  { date: '2026-06-01', queue: 'A_Q_Alpha', total: 100, answered: 90, abandoned: 10, violations: 1 },
+  { date: '2026-06-02', queue: 'A_Q_Alpha', total: 80,  answered: 78, abandoned: 2,  violations: 0 },
+  { date: '2026-06-02', queue: 'A_Q_Kid',   total: 50,  answered: 40, abandoned: 10, violations: 1 },
+  // Older row (inside the 12-mo trend window, outside the selected range).
+  { date: '2026-03-15', queue: 'A_Q_Alpha', total: 40,  answered: 38, abandoned: 2,  violations: 0 },
+];
+
+function qcdSheetRowsFromData() {
+  return QDATA.map(function (d) {
+    return qcdRow(d.date, d.queue, d.total, d.answered, d.abandoned, d.violations);
+  });
+}
+
+function qcdNeonRowsFor(fromIso, toIso) {
+  return QDATA
+    .filter(function (d) { return d.date >= fromIso && d.date <= toIso; })
+    .map(function (d) {
+      return {
+        d: d.date, call_queue: d.queue, call_source: 'Total Calls',
+        total_calls: d.total, total_answered: d.answered, abandoned: d.abandoned,
+        longest_wait: '0:01:00', avg_answer: '0:00:20', violations: d.violations,
+      };
+    });
+}
+
+function fakeQcdConn() {
+  const rsFor = function (json) {
+    let consumed = false;
+    return {
+      next: function () { if (consumed) return false; consumed = true; return true; },
+      getString: function () { return json; },
+      close: function () {},
+    };
+  };
+  return {
+    prepareStatement: function (sql) {
+      const params = {};
+      return {
+        setString: function (i, v) { params[i] = v; },
+        executeQuery: function () {
+          if (sql.indexOf('FROM qcd_history WHERE call_date BETWEEN') !== -1) {
+            return rsFor(JSON.stringify(qcdNeonRowsFor(params[1], params[2])));
+          }
+          throw new Error('Unexpected prepared SQL: ' + sql);
+        },
+        close: function () {},
+      };
+    },
+    createStatement: function () {
+      return {
+        executeQuery: function (sql) {
+          if (sql.indexOf('MAX(call_date)') !== -1) {
+            const max = QDATA.map(function (d) { return d.date; }).sort().pop();
+            return rsFor(JSON.stringify([{ d: max }]));  // shape unused by the parity path
+          }
+          throw new Error('Unexpected SQL: ' + sql);
+        },
+        close: function () {},
+      };
+    },
+    close: function () {},
+  };
+}
+
+function installQcd(source) {
+  install(
+    rosterGrid({ Alpha: ['Anna, 201'], Kid: ['Kara, 301'] }),
+    [dcRow('Alpha', 'A_Q_Alpha'), dcRow('Kid', 'A_Q_Kid', 'Alpha')],
+    qcdSheetRowsFromData());
+  h.ctx.QCD_NEON_GRID_MEMO_ = null;   // reset the per-window Neon memo too
+  if (source === 'neon') {
+    h.state.props.QCD_READ_SOURCE = 'neon';
+    h.ctx.getDashboardNeonConn_ = fakeQcdConn;
+  } else {
+    delete h.state.props.QCD_READ_SOURCE;
+    h.ctx.getDashboardNeonConn_ = function () { return null; };
+  }
+}
+
+function scrubQcd(rep) {
+  const c = JSON.parse(JSON.stringify(rep));
+  if (c.meta) delete c.meta.generatedAt;
+  return c;
+}
+
+test('#3 QCD Neon parity: computeQcdReport_ is identical from sheet and Neon (full trend path)', function () {
+  installQcd('sheet');
+  const fromSheet = scrubQcd(h.call('computeQcdReport_', 'Alpha', '2026-06-01', '2026-06-02', true, true));
+  installQcd('neon');
+  const fromNeon = scrubQcd(h.call('computeQcdReport_', 'Alpha', '2026-06-01', '2026-06-02', true, true));
+
+  assert.equal(JSON.stringify(fromNeon), JSON.stringify(fromSheet),
+    'queueBreakdown, totals, dailySeries, trendData all match across sources');
+  // Sanity: non-trivial (own queue total = 180; child excluded from dept total).
+  assert.equal(fromSheet.totals.totalCalls, 180);
+  const kid = fromSheet.queueBreakdown.filter(function (r) { return r.queue === 'A_Q_Kid'; })[0];
+  assert.equal(kid.subDept, 'Kid');
+  // The older trend-window row folds into the monthly series identically.
+  assert.ok(fromSheet.trendData.series.length > 0);
+});
+
+test('#3 QCD Neon parity: rangeOnly path identical across sources', function () {
+  installQcd('sheet');
+  const s = scrubQcd(h.call('computeQcdReport_', 'Alpha', '2026-06-01', '2026-06-02', false, false, true));
+  installQcd('neon');
+  const n = scrubQcd(h.call('computeQcdReport_', 'Alpha', '2026-06-01', '2026-06-02', false, false, true));
+  assert.equal(JSON.stringify(n), JSON.stringify(s));
+});
+
+test('#3 QCD Neon fallback: neon flag with no connection serves the sheet result', function () {
+  installQcd('neon');
+  h.ctx.getDashboardNeonConn_ = function () { return null; };   // Neon down
+  h.ctx.QCD_NEON_GRID_MEMO_ = null;
+  const fallback = scrubQcd(h.call('computeQcdReport_', 'Alpha', '2026-06-01', '2026-06-02', true, true));
+  installQcd('sheet');
+  const sheet = scrubQcd(h.call('computeQcdReport_', 'Alpha', '2026-06-01', '2026-06-02', true, true));
+  assert.equal(JSON.stringify(fallback), JSON.stringify(sheet), 'graceful fallback, no throw');
+});
+
+test('#3 QCD Neon parity: getQcdAllDepartments (the Daily Call Queue Report) identical across sources', function () {
+  installQcd('sheet');
+  const s = h.call('getQcdAllDepartments', { from: '2026-06-01', to: '2026-06-02' });
+  installQcd('neon');
+  const n = h.call('getQcdAllDepartments', { from: '2026-06-01', to: '2026-06-02' });
+  // Scrub run-volatile meta (cacheHit / computeMs).
+  const scrub = function (d) { const c = JSON.parse(JSON.stringify(d)); if (c.meta) { delete c.meta.cacheHit; delete c.meta.computeMs; } return c; };
+  assert.equal(JSON.stringify(scrub(n)), JSON.stringify(scrub(s)),
+    'company grand total + per-dept sections match across sources');
+  // Each dept lists its OWN queues (includeChildren:false): Alpha's A_Q_Alpha
+  // (100+80) as one section, Kid's A_Q_Kid (50) as its own section. Grand
+  // total dedups by unique queue name: 180 + 50 = 230.
+  assert.equal(s.grandTotals.totalCalls, 230);
+  assert.equal(s.depts.length, 2, 'Alpha and Kid each render as their own section');
+});
+
+test('#3 getQcdReadSource_ defaults to sheet, honors explicit neon', function () {
+  installQcd('sheet');
+  assert.equal(h.call('getQcdReadSource_'), 'sheet');
+  h.state.props.QCD_READ_SOURCE = 'NEON';   // case-insensitive
+  assert.equal(h.call('getQcdReadSource_'), 'neon');
+  h.state.props.QCD_READ_SOURCE = 'garbage';
+  assert.equal(h.call('getQcdReadSource_'), 'sheet');
+});

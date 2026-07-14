@@ -2255,6 +2255,32 @@ items for anything it flags or doesn't cover.)
     `getCompareRanges`, ...) remain callable (same auth gates as before;
     harmless but stale). The retired QCD / Missed surfaces were in-file
     edits, so no other files need manual deletion.
+30. `QCD_READ_SOURCE` Script Property (dashboard) -- the #3 Neon read-back
+    switch for QCD, read by `getQcdReadSource_()` (QCDReport.gs). Unset /
+    `sheet` (default) = `computeQcdReport_` reads the whole `QCD Historical
+    Data` sheet as always (byte-identical to pre-#3); `neon` flips it to a
+    WINDOWED read of `qcd_history` via `neonFetchQcdGrid_` -- a sheet-shaped
+    grid adapter (the missedGridsFromDal_ pattern) so the compute loop +
+    `computeMtdViolations_` are unchanged, and a one-day all-dept report scans
+    ~days of rows per dept instead of all history (the windowed read is
+    order-independent, unlike a sheet tail-scan). Reversible with no redeploy
+    (set back to `sheet`); every path falls back to the sheet on any Neon
+    error/unreachable. Independent of `DQE_READ_SOURCE` (QCD is a separate
+    mirror). **Only flip to `neon` after `runQcdParityCheck` (editor-run
+    wrapper for `compareQcdSources_`, QCDReport.gs -- reads the optional
+    `QCD_PARITY_FROM`/`QCD_PARITY_TO` Script Properties for its range) reports
+    parity-CLEAN over a representative range AND `qcd_history` is fully
+    mirrored** (the daily import mirrors QCD authoritatively per-date; a bulk
+    QCD backfill is force-mode, so re-import fills gaps). The Health page
+    surfaces a **QCD read source** row + a **QCD→Neon mirror** health row
+    (`computeQcdMirrorHealth_`, sheet vs `qcd_history` `MAX(call_date)`) so a
+    stale mirror is visible before you flip. Affects ALL QCD compute surfaces
+    (Insights Queue health, Overview QCD chips, My Dept snapshot, the all-dept
+    Daily Call Queue Report) since they share `computeQcdReport_`. Needs the
+    dashboard `NEON_*` props + `script.external_request` scope; parity pinned
+    by `tests/unit/qcd-report.test.js`. NOTE (NEO-3): QCD reads do NOT feed the
+    DQE-only `NEON_READ_LAST_ERROR` read-back health line -- a QCD miss logs
+    and falls back silently.
 
 ## Cycle Workflow Config
 

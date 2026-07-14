@@ -57,6 +57,10 @@ function installHealth(opts) {
   h.ctx.computeNeonMirrorHealth_ = function () {
     return { configured: true, status: 'ok', sheetMax: '2026-07-08', neonMax: '2026-07-08', gapDays: 0 };
   };
+  h.ctx.getQcdReadSource_ = function () { return 'sheet'; };
+  h.ctx.computeQcdMirrorHealth_ = function () {
+    return { configured: true, status: 'ok', sheetMax: '2026-07-08', neonMax: '2026-07-08', gapDays: 0 };
+  };
   const sheets = {};
   ['Access Control', 'Alert Config', 'Alert Log', 'Pipeline Health', 'Digest Config',
    'Agent Alias Overrides', 'Orphan Fix Log', 'Dept Config', 'Report Usage']
@@ -79,7 +83,9 @@ test('health: healthy install -> ok/muted rows, required-trigger warns, warnCoun
   assert.equal(rowByKey(data, 'dqe-fresh').status, 'ok');
   assert.equal(rowByKey(data, 'neon-conf').status, 'ok');
   assert.equal(rowByKey(data, 'dqe-source').status, 'muted');
+  assert.equal(rowByKey(data, 'qcd-source').status, 'muted');
   assert.equal(rowByKey(data, 'mirror-health').status, 'ok');
+  assert.equal(rowByKey(data, 'qcd-mirror-health').status, 'ok');
   // Shimmed ScriptApp has NO triggers installed -> the two required
   // services warn (with remediation hints); optional ones stay muted.
   assert.equal(rowByKey(data, 'trg-alerts').status, 'warn');
