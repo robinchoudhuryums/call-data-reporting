@@ -231,6 +231,13 @@ function neonFetchDqeRows_(fromIso, toIso, opts) {
     // empty range when the cut-over reader falls back to the sheet.
     Logger.log('neonFetchDqeRows_ failed: ' + (e && e.message ? e.message : e));
     recordNeonReadFailure_('neonFetchDqeRows_', e);
+    // L11: if the failure came mid-loop (e.g. an unparseable duration on row i),
+    // `out` holds a TRUNCATED set. Returning it would let a cut-over reader
+    // treat partial data as authoritative and skip the sheet fallback (a
+    // silently under-counted report). Discard the partial so callers see []
+    // and fall back to the sheet, matching the connection/SQL/parse failure
+    // paths (which return an empty out).
+    out = [];
   } finally {
     try { conn.close(); } catch (ce) {}
   }

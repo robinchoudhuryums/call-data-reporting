@@ -5337,7 +5337,17 @@
   let irCameFromInsights_ = false; // drill-through from Insights -> show "Back to Insights"
   let irEditPopoverSeededCustom_ = false; // #1: edit popover opened over a custom-prior report
   let irListChangeHandler_ = null;
-  const IR_PREFS_KEY = 'cdr.ir.prefs.v1';
+  // L3: per-email key. The IR prefs blob stores the AGENT SELECTION, which must
+  // NOT restore for a different viewer on a shared machine (the same reason
+  // insPrefsKey_ is per-email). IR previously used a bare global key, leaking
+  // one manager's dates / compare mode / agent names -- and pre-checking a
+  // same-dept colleague's exact selection -- into the next viewer's session.
+  // Pre-per-user blobs under the old bare `cdr.ir.prefs.v1` are now orphaned.
+  function irPrefsKey_() {
+    var who = '';
+    try { who = (typeof USER !== 'undefined' && USER && USER.email) ? USER.email : ''; } catch (e) {}
+    return 'cdr.ir.prefs.v1:' + who;
+  }
 
   /**
    * Drill-through entry: open the Individual Report for ONE agent over a
@@ -5590,14 +5600,14 @@
         chartTab:    irActiveChartTab,
         showAllCharts: irShowAllCharts,
       };
-      localStorage.setItem(IR_PREFS_KEY, JSON.stringify(prefs));
+      localStorage.setItem(irPrefsKey_(), JSON.stringify(prefs));
     } catch (e) { /* ignore */ }
   }
 
   function irRestorePrefs_() {
     let prefs;
     try {
-      const raw = localStorage.getItem(IR_PREFS_KEY);
+      const raw = localStorage.getItem(irPrefsKey_());
       if (!raw) return;
       prefs = JSON.parse(raw);
     } catch (e) { return; }

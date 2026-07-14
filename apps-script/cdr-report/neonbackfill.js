@@ -148,10 +148,12 @@ function backfillDQEHistory() {
       while (i < batchEnd) {
         var r = data[i];
         if (!r[1] || !r[2]) { i++; continue; }
+        var cd0 = parseDateForNeon(r[1]);
+        if (!cd0) { i++; continue; }   // unparseable date -> skip, don't poison the batch with a null call_date
 
         batch.push({
           monthYear:        r[0]  || null,
-          callDate:         parseDateForNeon(r[1]),
+          callDate:         cd0,
           agentName:        r[2],
           queueExtensions:  r[3]  || null,
           totalUnique:      parseInt(r[4]) || 0,
@@ -334,8 +336,14 @@ function backfillDQEHistoryUpsert() {
         var r = data[i];
         if (!r[1] || !r[2]) { i++; continue; }
         var cd = parseDateForNeon(r[1]);
+        // A truthy-but-unparseable date yields cd=null. Skip it: pushing a null
+        // call_date violates NOT NULL / uq_dqe_history and throws for the WHOLE
+        // batch, then DQE_UPSERT_RESUME re-runs into the same poison row every
+        // time. (The sinceFloor `cd &&` below already short-circuited on null,
+        // letting the null row through -- this guard closes that.)
+        if (!cd) { i++; continue; }
         // Date floor (DQE_UPSERT_SINCE): skip rows older than the floor.
-        if (sinceFloor && cd && cd < sinceFloor) { i++; continue; }
+        if (sinceFloor && cd < sinceFloor) { i++; continue; }
         batch.push({
           monthYear:        r[0]  || null,
           callDate:         cd,

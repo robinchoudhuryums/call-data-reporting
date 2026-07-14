@@ -78,7 +78,10 @@ function getMissedCallsReport(req) {
   // (slot-less abandoned parents count + lost-detail flag fires), and the
   // AF<->AD pairing is a per-time-key FIFO so duplicate seconds keep
   // distinct parent ids. See INV-30 for the full version history.
-  const cacheKey = 'missed:v14:' + dept + ':' + scope + ':' + from + ':' + to;
+  // CORE-3: suffix the key with the active DQE read source so a
+  // DQE_READ_SOURCE flip can't serve a cross-source payload for the TTL.
+  const dqeReadSrc = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
+  const cacheKey = 'missed:v14:' + dept + ':' + scope + ':' + from + ':' + to + ':' + dqeReadSrc;
   const cached = cache.get(cacheKey);
   if (cached) {
     try {

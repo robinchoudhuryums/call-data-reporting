@@ -334,6 +334,11 @@
                 aria-expanded="false"
                 title="Show or hide the Unique / TTT / Avg Abd Wait detail columns">Show all columns</button>
       </div>
+      <!-- S2-3: wrap the table so a wide "Show all columns" view scrolls
+           INSIDE this container on narrow viewports instead of overflowing the
+           page body (the .pr-agent-table-wrap / .ds-heatmap-wrap pattern). The
+           table keeps its id/structure, so the render + sort JS is unchanged. -->
+      <div class="agents-table-wrap">
       <table id="agents-table" class="agents">
         <thead>
           <tr>
@@ -350,6 +355,7 @@
         <tbody id="agents-tfoot" class="agents-totals"></tbody>
         <tbody id="agents-tbody"></tbody>
       </table>
+      </div>
 
       <div id="info-line" class="info-line" style="display:none;"></div>
 

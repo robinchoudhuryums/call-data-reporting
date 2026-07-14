@@ -15,10 +15,16 @@ function pullReportData(startDate, endDate, department) {
       ORDER BY call_date, agent_name
     `);
 
+    // Bind SQL NULL (not the string 'undefined') when no department is passed,
+    // so the `? IS NULL OR department = ?` all-departments branch actually
+    // fires. setString(idx, undefined) would coerce to 'undefined' and filter
+    // to zero rows -- the "pass null for all depts" affordance the SQL
+    // advertises never worked from JS.
+    var deptParam = (department == null || department === '') ? null : department;
     stmt.setString(1, startDate);   // "YYYY-MM-DD"
     stmt.setString(2, endDate);
-    stmt.setString(3, department);
-    stmt.setString(4, department);
+    stmt.setString(3, deptParam);
+    stmt.setString(4, deptParam);
 
     const rs      = stmt.executeQuery();
     const meta    = rs.getMetaData();

@@ -213,13 +213,17 @@ function saveAccessControlRow(req) {
         }
       }
     }
-    // CORE-7: notes are admin free text -- neutralize formula-leading
-    // values (email + department are shape-/roster-validated upstream).
+    // CORE-7 + L4: neutralize formula-leading values on ALL three admin-entered
+    // columns. `department` is roster-validated (real header, safe) but wrapped
+    // for uniformity; `email` MUST be wrapped -- acIsValidEmail_'s regex
+    // (`[^@\s]+@...`) admits a formula-leading address like `=cmd|'..'!A1@x.com`,
+    // which under "Execute as: Me" would evaluate as a live cell in a sheet read
+    // on every request. A normal email passes through unchanged.
     if (firstMatch > 0) {
-      sheet.getRange(firstMatch, 1, 1, 3).setValues([[email, department, sheetSafeCell_(notes)]]);
+      sheet.getRange(firstMatch, 1, 1, 3).setValues([[sheetSafeCell_(email), sheetSafeCell_(department), sheetSafeCell_(notes)]]);
       if (dupes > 0) Logger.log('saveAccessControlRow: %s had %s duplicate row(s); updated the first only.', normalized, dupes);
     } else {
-      sheet.appendRow([email, department, sheetSafeCell_(notes)]);
+      sheet.appendRow([sheetSafeCell_(email), sheetSafeCell_(department), sheetSafeCell_(notes)]);
     }
     CacheService.getScriptCache().remove('access:' + normalized);
     Logger.log('saveAccessControlRow: %s -> %s by %s', normalized, department, Session.getActiveUser().getEmail());

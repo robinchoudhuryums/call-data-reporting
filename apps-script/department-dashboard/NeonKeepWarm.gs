@@ -76,6 +76,11 @@ function uninstallNeonKeepWarmTrigger() {
  * last ping outcome to Script Properties for the modal's status line.
  */
 function keepNeonWarm_() {
+  // Outer guard for parity with the sibling triggers (runIngestWatchdog_ /
+  // runNeonBackup_): a throw above the connection (property/clock helpers, or
+  // any future edit) would otherwise surface as a failed trigger execution.
+  // Best-effort by contract -- never throw.
+  try {
   var props = PropertiesService.getScriptProperties();
   if (String(props.getProperty('NEON_KEEPWARM_ENABLED') || '') !== 'true') return;
 
@@ -116,6 +121,9 @@ function keepNeonWarm_() {
     props.setProperty('NEON_KEEPWARM_LAST', new Date().toISOString());
     props.setProperty('NEON_KEEPWARM_LAST_RESULT', result);
   } catch (pe) { /* best-effort */ }
+  } catch (e) {
+    Logger.log('keepNeonWarm_ failed: ' + (e && e.message ? e.message : e));
+  }
 }
 
 // ── Internals ─────────────────────────────────────────────────────────

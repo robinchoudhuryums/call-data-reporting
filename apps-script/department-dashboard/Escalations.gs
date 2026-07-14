@@ -217,7 +217,15 @@ function getEscalationActivity(req) {
     escEnsureTable_(conn);
     var meta = escRowMeta_(conn, id);
     if (!meta) return { available: true, rows: [] };
-    escAssertRowAccess_(user, meta.department);   // F-45: row dept = data, not input
+    // L9: an access denial must be INDISTINGUISHABLE from not-found, else a
+    // manager probing ids can tell "exists but another dept" apart from
+    // "doesn't exist". Return the not-found shape on denial; keep the
+    // {available:false} shape for a GENUINE outage (the outer catch).
+    try {
+      escAssertRowAccess_(user, meta.department);   // F-45: row dept = data, not input
+    } catch (denied) {
+      return { available: true, rows: [] };
+    }
     var sql = "SELECT COALESCE(json_agg(t ORDER BY t.at ASC), '[]')::text AS j FROM ("
             + "SELECT action, actor, at::text AS at, detail FROM escalation_activity WHERE escalation_id = ?) t";
     var stmt = conn.prepareStatement(sql);
@@ -978,6 +986,14 @@ function escCleanDateTime_(v) {
   if (!m) return '';
   var mo = Number(m[2]), da = Number(m[3]);
   if (mo < 1 || mo > 12 || da < 1 || da > 31) return '';
+  // L6: the 1-31 range check still let IMPOSSIBLE calendar dates through
+  // (2026-02-31, 2026-04-31, non-leap 2026-02-29), which then died in
+  // Postgres's ::timestamptz cast as the same opaque save error F-44 fixed for
+  // out-of-range fields. Reject them here via a UTC round-trip (UTC avoids any
+  // TZ day-shift; catches month length + leap years) so they store NULL too.
+  var yr = Number(m[1]);
+  var probe = new Date(Date.UTC(yr, mo - 1, da));
+  if (probe.getUTCFullYear() !== yr || probe.getUTCMonth() !== (mo - 1) || probe.getUTCDate() !== da) return '';
   if (m[4]) {
     var hh = Number(m[5]), mi = Number(m[6]), se = m[8] ? Number(m[8]) : 0;
     if (hh > 23 || mi > 59 || se > 59) return '';

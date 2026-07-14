@@ -134,6 +134,16 @@ function runNeonBackup_() {
           for (var c = 0; c < chunks.length; c++) total += chunks[c].length;
           if (total <= NB_FILE_BUDGET_CHARS) {
             nbWriteFile_(folder, name, chunks.filter(function (s) { return s; }).join('\n'));
+            // Symmetry with the parts branch below: if this month was
+            // PREVIOUSLY written as parts (a heavier prior run) and now fits a
+            // single file (e.g. a re-import shrank it), trash the stale part
+            // files so a restore never mixes the new whole-month file with old
+            // partN files (= duplicated rows).
+            for (var sp = 1; ; sp++) {
+              var partIt = folder.getFilesByName(spec.table + '-' + ym + '.part' + sp + '.jsonl');
+              if (!partIt.hasNext()) break;
+              while (partIt.hasNext()) partIt.next().setTrashed(true);
+            }
           } else {
             var part = 0;
             for (var c2 = 0; c2 < chunks.length; c2++) {

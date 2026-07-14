@@ -367,7 +367,7 @@ scripts/deploy.sh apps-script/cdr-import <cdr-import-deployment-id>
   default. To read from Neon's `dqe_history` instead, set the
   `DQE_READ_SOURCE` Script Property to `neon` (anything else / unset =
   `sheet`). Cut-over readers (`getLatestDataDate`, `getCompanyOverview`,
-  `computeSummary_`, and the Individual / Performance / Compare builders)
+  `computeSummary_`, and the Individual / Insights builders)
   fall back to the sheet on any Neon null/error, so the flip is reversible
   with no redeploy. Needs the `NEON_*` props + `script.external_request`
   scope (same as the orphan-rename mirror).

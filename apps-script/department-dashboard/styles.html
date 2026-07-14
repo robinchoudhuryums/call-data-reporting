@@ -684,6 +684,10 @@
      stat columns. Hover lifts the row with a subtle paper-2 tint.
      Top + bottom hairlines frame the table; .container provides the
      surrounding paper bg. */
+  /* S2-3: the My-Department agent table can show 9 nowrap columns ("Show all
+     columns"). Wrap it so it scrolls inside this container on narrow viewports
+     instead of forcing the whole page body to scroll horizontally. */
+  .agents-table-wrap { overflow-x: auto; }
   .agents {
     width: 100%;
     border-collapse: collapse;
@@ -3771,7 +3775,9 @@
     background: var(--accent-soft);
   }
   .qcd-warn-light { color: var(--warn); font-weight: 600; }
-  .qcd-warn-strong { color: #c0392b; font-weight: 700; }
+  /* S2-4: use the --bad token (lightens to #e06a56 for AA on dark paper)
+     instead of a hardcoded dark red (#c0392b ~2.5:1 on the dark card). */
+  .qcd-warn-strong { color: var(--bad); font-weight: 700; }
   .qcd-expandable { cursor: pointer; }
   .qcd-expandable:hover td { background: var(--accent-soft); }
   .qcd-expand-icon { font-size: 10px; margin-left: 4px; color: var(--muted); }
@@ -5045,6 +5051,15 @@
   .date-preset-chip.active {
     background: var(--accent);
     color: #fff;
+    border-color: var(--accent);
+  }
+  /* S2-5: in dark mode --accent lightens to #7ba3df (tuned as TEXT on dark
+     paper, not as a background for white text -> ~2:1). Give the active chip a
+     deep accent-tinted fill with near-white text instead, so it stays legible
+     and still reads as "active". Light mode is unchanged. */
+  body[data-mode="dark"] .date-preset-chip.active {
+    background: var(--accent-soft);
+    color: var(--ink);
     border-color: var(--accent);
   }
 

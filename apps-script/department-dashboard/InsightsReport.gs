@@ -163,8 +163,11 @@ function getInsightsReport(req) {
     ? customPriorFrom + '..' + customPriorTo
     : 'auto';
   const cache = CacheService.getScriptCache();
+  // CORE-3: suffix the key with the active DQE read source so a
+  // DQE_READ_SOURCE flip can't serve a cross-source payload for the TTL.
+  const dqeReadSrc = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
   const cacheKey = INSIGHTS_CACHE_KEY_PREFIX + ':' + dept + ':' + from + ':' + to
-                 + ':' + agentsKey + ':' + priorKey;
+                 + ':' + agentsKey + ':' + priorKey + ':' + dqeReadSrc;
   const cached = cache.get(cacheKey);
   if (cached) {
     try {

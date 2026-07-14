@@ -86,7 +86,7 @@ rule changes, update CLAUDE.md; leave the history entry as-is (it's an archive).
 | `F-35` | IR/Insights hard-require the DQE sheet only when it IS the read source, so the Neon path survives a trimmed/archived sheet | F1 read-back gotcha; Operator State #19 |
 | `F-36` | QCD all-dept grand-total dedups a double-mapped queue by name (no double-count) | INV-51; qcd-report.test |
 | `F-43` | `resolveEscalation` is PENDING-ONLY (pending_review + rejected refused too) — with `NEO-1` | INV-55 |
-| `F-44` | `escCleanDateTime_` strict validation so a malformed `occurred_at` stores NULL instead of throwing at Postgres. **NOTE: audit found this incomplete — impossible calendar dates (`2026-02-31`) still reach Postgres (finding L6).** | INV-55 |
+| `F-44` | `escCleanDateTime_` strict validation so a malformed `occurred_at` stores NULL instead of throwing at Postgres. **RESOLVED (L6): a UTC round-trip now rejects impossible calendar dates (`2026-02-31`, non-leap `2026-02-29`) too, so they store NULL.** | INV-55 |
 | `F-45` | `escAssertRowAccess_` — the dedicated row gate: managers match the row's STORED dept; admins pass unconditionally (so a renamed/retired dept doesn't orphan admin access) | INV-55 |
 | `F-46` | `getEscalations` capped at `ESC_MAX_ROWS=500` newest + `meta.truncated` | INV-55 |
 | `F-56` | `check-duplicated-files.sh` now also fails when a file is MISSING from a duplicated pair (not just when the two differ) | INV-16; Key commands |
@@ -112,7 +112,7 @@ rule changes, update CLAUDE.md; leave the history entry as-is (it's an archive).
 | `IMP-4` | `call_history_phones` children written per-parent DELETE-then-insert (each payload row carries the parent's COMPLETE entry set) | Neon write discipline gotcha |
 | `IMP-5` | Authoritative per-date replace for callers whose payload is the COMPLETE set (`{authoritative:true}` DELETEs the dates in-txn before insert) — kills phantom rows | Neon write discipline gotcha |
 | `IMP-6` | Duplicate conflict-key rows deduped last-write-wins before insert; deferred mirror parks a hard-erroring date after `NEON_MIRROR_MAX_ATTEMPTS` with `neonMirror:gave-up` | Neon write discipline; Operator State #22; INV-44 |
-| `IMP-7` | `buildDQEHistoricalData` THROWS on an `expectedDate` mismatch (routes into each caller's failure plumbing + email) instead of a silent return. **NOTE: audit M2 — the OTHER early-returns (empty Raw Data / no valid dates / zero rows) still silently return on the same force path.** | INV-16 |
+| `IMP-7` | `buildDQEHistoricalData` THROWS on an `expectedDate` mismatch (routes into each caller's failure plumbing + email) instead of a silent return. **RESOLVED (M2): the sibling early-returns (empty Raw Data / no valid dates / zero rows) now throw too, gated on a new `opts.force` so only a force re-import (rows pre-deleted) alerts; the non-force F5 rows:0 path is unchanged.** | INV-16 |
 | `IMP-11` | A date whose `Call_Legs_*` sheet was pruned before it drained hard-fails the deferred mirror; the `gave-up` email says the inbound rows are unrecoverable rather than silently dequeuing | Operator State #22; INV-44 |
 
 ## `CORE-#` / `DEEP-1` — core hardening pass
@@ -121,10 +121,10 @@ rule changes, update CLAUDE.md; leave the history entry as-is (it's an archive).
 |---|---|---|
 | `CORE-1` / `DEEP-1` | `getLatestDataDate`/`getLatestDataDates` carry a signed-in gate (the F-28 commit had claimed it without shipping) | Key Design Decisions (auth) |
 | `CORE-2` | `computeActiveAgentsInRange_` picker subset survives a trimmed/archived sheet on the Neon path | Operator State #19 |
-| `CORE-3` | Report cache keys suffixed with the active DQE read source (`:sheet`/`:neon`) so a `DQE_READ_SOURCE` flip can't serve a cross-source blob. **NOTE: audit L1 — `individual:`/`insights:`/`missed:` are NOT yet suffixed; only `summary:`/`latestDate:`/`latestDates:`/`individual_active:` are.** | INV-30 |
+| `CORE-3` | Report cache keys suffixed with the active DQE read source (`:sheet`/`:neon`) so a `DQE_READ_SOURCE` flip can't serve a cross-source blob. **RESOLVED (L1): `individual:`/`insights:`/`missed:` are now suffixed too (were the last unsuffixed cutover readers).** | INV-30 |
 | `CORE-5` | Alert / Digest / Dept-config compare gates read Neon directly and return `clean:false`+`error` on unreachable (never a false "PARITY CLEAN") | Operator State #25 |
 | `CORE-6` | Dept Config save accepts a dept's own current effective queue even if it went quiet >180 days (so a saved row stays editable) | INV-54; scenario S36 |
-| `CORE-7` | `sheetSafeCell_` neutralizes formula-leading cells on OrphanFix/Access-Control sheet writes. **NOT in CLAUDE.md prose** (see drift note); pinned by `util.test.js`. **Audit L4 — Access-Control `email`/`department` are NOT routed through it.** | INV-01 (implied) |
+| `CORE-7` | `sheetSafeCell_` neutralizes formula-leading cells on OrphanFix/Access-Control sheet writes. Pinned by `util.test.js`. **RESOLVED (L4): Access-Control `email` + `department` are now routed through it too (`acIsValidEmail_` admits a formula-leading address).** | INV-01 |
 
 ## `RPT-#` — report semantics rulings
 
@@ -144,7 +144,7 @@ rule changes, update CLAUDE.md; leave the history entry as-is (it's an archive).
 | `OPS-4` | Neon backup fetches months in ~week-sized windows; a month over the file budget is written as `partN` files | Operator State #28 |
 | `OPS-5` | When `CONFIG_SOURCE=neon`, the backup run also snapshots the Neon-authoritative `dept_config`/`alert_config`/`digest_config` | Operator State #28 |
 | `OPS-6` | Digest unrecognized/blank cadence is FLAGGED (`invalidCadence`) not dropped — renders a "⚠ invalid" chip instead of vanishing | INV-45 |
-| `OPS-7` | Watchdog credits 24h of staleness allowance per weekend/holiday day inside the gap. **NOTE: audit LM1 — the credit is inert when freshness resolves to `null` (fresh row scrolled out of the 40-row scan).** | Operator State #23 |
+| `OPS-7` | Watchdog credits 24h of staleness allowance per weekend/holiday day inside the gap. **RESOLVED (LM1): the freshness scan window widened 40 -> 250 (`OVERVIEW_PIPELINE_FRESHNESS_SCAN_ROWS`) so a deferred-mirror retry storm can't evict the DQE row and force the null-freshness false-alarm. (Residual: an extreme sustained storm could still evict within 250.)** | Operator State #23 |
 | `OPS-9` | Alert Config duplicate same-dept rows deduped FIRST-ROW-WINS (parser flags later rows `duplicateRow`; run loop skips them) | INV-34 |
 
 ## `NEO-#` — escalations + Neon-read-health hardening
@@ -155,7 +155,7 @@ rule changes, update CLAUDE.md; leave the history entry as-is (it's an archive).
 | `NEO-2` | A blank resolve-comment PRESERVES the stored comment (COALESCE); `updateEscalationComment` is worklist-only (pending_review/rejected refuse annotation) | INV-55 |
 | `NEO-3` | Neon read-health recording is opt-IN (`{recordReadHealth:true}`, passed only by the three DQE read-back readers) — non-DQE Neon surfaces don't pollute the line | Operator State #20 |
 | `NEO-5` | Inbound unmapped-dept short-circuit consistency across the inbound surfaces. **NOT in CLAUDE.md prose** (code-only). | InboundReport.gs |
-| `NEO-6` | Resynced the Inbound vs Direct dormant manager-auth branches (Direct cleared `'ALL'` before the manager check; Inbound threw). **NOT in CLAUDE.md prose** (code-only). **Audit S2-7 — these branches are unreachable + untested and can re-diverge.** | InboundReport.gs / DirectCallReport.gs |
+| `NEO-6` | Resynced the Inbound vs Direct dormant manager-auth branches (Direct cleared `'ALL'` before the manager check; Inbound threw). **NOT in CLAUDE.md prose** (code-only). **Audit S2-7 (DEFERRED): these branches are unreachable + untested and can re-diverge -- deferred until the Inbound/Direct reports are released to managers (a one-line gate removal), at which point add a parity test.** | InboundReport.gs / DirectCallReport.gs |
 
 ## `M#`, `E#`, `TST-7`
 
@@ -176,9 +176,11 @@ rule changes, update CLAUDE.md; leave the history entry as-is (it's an archive).
 `OPS-8` names the System Health outcome classifier convention (a healthy result
 starts with `ok`; the row is amber only on `fail|error|unreachable|skipped`).
 It lives in `SystemHealth.gs` comments/tests, not CLAUDE.md.
-**Audit M1 — the classifier's start-with-`ok` assumption mis-flags the Neon
-backup row (whose outcome string starts with a table name and always contains
-"skipped") as amber on every run, masking real backup outages.**
+**RESOLVED (M1): the NeonBackup summary now LEADS with an `ok`/`FAILED` status
+token so the start-with-`ok` classifier is correct for it too (it previously
+started with a table name + always contained "skipped", painting the backup
+Health row amber on every run and masking real outages). Pinned by
+`system-health.test.js`.**
 
 ---
 

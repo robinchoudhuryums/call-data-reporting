@@ -1,6 +1,14 @@
 # Cycle State — resume note
 
-## Latest session (/broad-implement: P0 + P1 fixes)
+## Latest session (/broad-implement: P2 + P3 fixes + /sync-docs)
+Branch `claude/broad-scan-ekn18f`, **286/286 tests**, INV-16 guard green. 15 files.
+Implemented P2: L1 (source-suffix IR/Insights/Missed cache keys, CORE-3), L3 (IR prefs per-email `irPrefsKey_`), L4 (Access Control email/dept via sheetSafeCell_), L6 (escCleanDateTime_ rejects impossible calendar dates via UTC round-trip + test), L9 (getEscalationActivity denial returns not-found shape, no existence oracle), L10 (inboundDeptPredicate_ COALESCE(abandoned_on_hold,false)), L11 (neonFetchDqeRows_ resets out=[] on error so a mid-loop throw falls back to sheet), S2-3 (agent table `.agents-table-wrap` overflow-x), S2-4 (.qcd-warn-strong -> var(--bad)), S2-5 (dark-mode .date-preset-chip.active override).
+P3: neonbackfill null-date skip (both backfill loops, prevents poison batch), NeonBackup stale-parts-on-shrink trash, dbReporting undefined-dept binds SQL NULL, keepNeonWarm_ outer try/catch.
+DEFERRED (with rationale): L2 (inbound authoritative replace -- risky transactional DELETE on no-sheet-fallback table for a Low finding; needs a deliberate tested change), LM2 (empty-vs-unreachable -- current conflation is protective during mirror lag), LM3 (deferred-mirror per-type independence -- M effort, opt-in), S2-6 (CacheWarm budget -- marginal), S2-7 (dead-branch test -- reports still admin-only), L8 (roster-missing guard -- sensitive), sheetRepairs PST-half/preview-format edges. L5 (ATT wording) -> doc.
+Then ran /sync-docs (apply): see next commit for doc updates (INV-44 :CDR:neon/:QCD:neon steps, number-coercion AF gotcha, CORE-3 IR/Insights/Missed, fix-history resolved notes, freshness 250, CSV five writers, README Insights builders).
+Where I left off: P2/P3 + docs committed/pushed? see git log. NOT deployed (Dashboard + cdr-import + cdr-report clasp pushes pending). All ranked findings now addressed or explicitly deferred.
+
+## Prior session (/broad-implement: P0 + P1 fixes)
 Branch `claude/broad-scan-ekn18f`, **286/286 tests** (added 2), INV-16 guard green, buildDQE copies byte-identical.
 Implemented 7 findings (P0: M1/M2/M3; P1: S2-1/S2-2/L7/LM1). 10 files, 3 subsystems.
 - **M2** (both buildDQEHistoricalData.js copies + autoImport.js): force-path silent DQE loss. New `refuseIfForce_` helper throws (mirrors IMP-7) on the empty/no-dates/zero-rows early-returns, GATED on `opts.force` (threaded a `force` param into processIntegratedHistory + both build call sites) so the daily NON-force F5 rows:0 path is unchanged -- only a force re-import (rows pre-deleted) alerts. New test in pipeline-build.test.js.
