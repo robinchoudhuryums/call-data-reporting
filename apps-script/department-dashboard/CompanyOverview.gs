@@ -81,6 +81,18 @@
 // window filter (see computeQcdSnapshots_).
 const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v18';
 
+/**
+ * The Overview cache key, suffixed with the combined DQE+QCD read source
+ * (CORE-3, extended for #3). ONE place so the read, the write, and every bust
+ * site (OrphanFix, DeptConfig) target the identical key -- a suffix that the
+ * busts didn't mirror would leak stale Overview data after an orphan rename /
+ * dept-config save. Defaults to '...:sheet-sheet' when the flags are unset.
+ */
+function overviewCacheKey_() {
+  var tag = (typeof readSourceCacheTag_ === 'function') ? readSourceCacheTag_() : 'sheet-sheet';
+  return COMPANY_OVERVIEW_CACHE_KEY + ':' + tag;
+}
+
 // Pipeline freshness threshold (hours). If the most recent successful
 // DQE-freshness Pipeline Health row is older than this many hours, the
 // Overview banner picks up the .is-stale variant and warns admins.
@@ -166,7 +178,13 @@ function getCompanyOverview(req) {
   }
 
   const cache = CacheService.getScriptCache();
-  const cached = cache.get(COMPANY_OVERVIEW_CACHE_KEY);
+  // CORE-3 (extended for #3): the Overview blob embeds BOTH the DQE aggregate
+  // AND the per-dept QCD chips, so key it by the combined read source -- a flip
+  // of EITHER DQE_READ_SOURCE or QCD_READ_SOURCE can't serve a cross-source
+  // blob. The write (below) + every bust site (OrphanFix, DeptConfig) use this
+  // SAME suffixed key via overviewCacheKey_().
+  const ovCacheKey = overviewCacheKey_();
+  const cached = cache.get(ovCacheKey);
   if (cached) {
     try {
       const parsed = JSON.parse(cached);
@@ -313,10 +331,10 @@ function getCompanyOverview(req) {
   // Default 'sheet' => behavior identical to pre-cutover: sheetFetchDqeRows_
   // reads the same whole-sheet range and filters [trendStart, latest],
   // which equals the old ">= trendStart" filter since latest is the max date.
-  // (Cache note: COMPANY_OVERVIEW_CACHE_KEY is NOT source-suffixed, so a
-  // DQE_READ_SOURCE flip can serve the prior source's blob for up to the
-  // 5-min TTL -- harmless, since the flag is only flipped once parity is
-  // clean and the two sources agree.)
+  // (Cache note: the Overview key IS source-suffixed via overviewCacheKey_()
+  // -- CORE-3 extended for the #3 QCD read-back -- so a DQE_READ_SOURCE OR
+  // QCD_READ_SOURCE flip can never serve the prior source's blob. The bust
+  // sites, OrphanFix + DeptConfig, use the same suffixed key.)
   let dqeRows;
   let effectiveSource = 'sheet';
   const _tRead = Date.now();
@@ -573,7 +591,7 @@ function getCompanyOverview(req) {
     // serves user B's identity correctly.
   };
 
-  try { cache.put(COMPANY_OVERVIEW_CACHE_KEY, JSON.stringify(result), REPORT_CACHE_TTL_SECONDS); }
+  try { cache.put(ovCacheKey, JSON.stringify(result), REPORT_CACHE_TTL_SECONDS); }
   catch (e) { Logger.log('CompanyOverview cache put failed: %s', e); }
 
   return personalizeOverview_(result, user);

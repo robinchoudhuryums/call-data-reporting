@@ -243,7 +243,7 @@ function applyOrphanRename(req) {
     // Bust the single fixed-key Overview cache so the change shows
     // up immediately on the landing page. Per-(dept, range) caches
     // are TTL'd out naturally within 30 min (REPORT_CACHE_TTL_SECONDS).
-    try { CacheService.getScriptCache().remove(COMPANY_OVERVIEW_CACHE_KEY); }
+    try { CacheService.getScriptCache().remove(overviewCacheKey_()); }
     catch (e) { /* best-effort */ }
   } finally {
     lock.releaseLock();
@@ -318,7 +318,7 @@ function addOrphanToRoster(req) {
     });
     // New roster member changes dept rosters / active counts on the
     // Overview immediately; per-(dept, range) caches TTL out.
-    try { CacheService.getScriptCache().remove(COMPANY_OVERVIEW_CACHE_KEY); }
+    try { CacheService.getScriptCache().remove(overviewCacheKey_()); }
     catch (e) { /* best-effort */ }
   } finally {
     lock.releaseLock();

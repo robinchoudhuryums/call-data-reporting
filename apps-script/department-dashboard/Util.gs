@@ -280,6 +280,22 @@ function isDateInSkipRanges_(dateIso, ranges) {
 
 function round1_(n) { return Math.round((Number(n) || 0) * 10) / 10; }
 
+/**
+ * Combined DQE+QCD read-source cache-key suffix (CORE-3, extended for the #3
+ * QCD read-back). Returns e.g. 'sheet-sheet' | 'neon-sheet' | 'neon-neon'.
+ *
+ * Any cache whose payload embeds BOTH the DQE metrics AND the QCD queue data
+ * (the My-Department summary, Insights, the Overview) must suffix its key with
+ * this so a flip of EITHER DQE_READ_SOURCE or QCD_READ_SOURCE can't serve a
+ * cross-source blob for the TTL. Both getters default to 'sheet' when unset /
+ * unloaded (test harnesses), so the tag is 'sheet-sheet' = pre-flag behavior.
+ */
+function readSourceCacheTag_() {
+  var dqe = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
+  var qcd = (typeof getQcdReadSource_ === 'function') ? getQcdReadSource_() : 'sheet';
+  return dqe + '-' + qcd;
+}
+
 function escapeHtmlServer_(s) {
   return String(s == null ? '' : s)
     .replace(/&/g, '&amp;')

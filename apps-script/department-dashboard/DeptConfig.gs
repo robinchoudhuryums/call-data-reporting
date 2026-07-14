@@ -830,7 +830,7 @@ function compareDeptConfigSources() {
  * keys isn't practical.
  */
 function dcBustCaches_() {
-  try { CacheService.getScriptCache().remove(COMPANY_OVERVIEW_CACHE_KEY); }
+  try { CacheService.getScriptCache().remove(overviewCacheKey_()); }
   catch (e) { /* best-effort */ }
 }
 

@@ -247,7 +247,10 @@ function getDepartmentSummary(req) {
   // CORE-3: suffixed with the ACTIVE read source (the latestDate:v1
   // pattern) so a DQE_READ_SOURCE flip can't serve a table computed from
   // the other source for up to the 30-min TTL.
-  const summarySource = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
+  // CORE-3 (extended for #3): suffix with BOTH read sources -- this payload
+  // embeds the DQE agent table AND the QCD dept snapshot, so a flip of EITHER
+  // DQE_READ_SOURCE or QCD_READ_SOURCE must not serve a cross-source blob.
+  const summarySource = (typeof readSourceCacheTag_ === 'function') ? readSourceCacheTag_() : 'sheet-sheet';
   const cacheKey = 'summary:v11:' + dept + ':' + scope + ':' + from + ':' + to + ':' + summarySource;
   const cached = cache.get(cacheKey);
   if (cached) {
