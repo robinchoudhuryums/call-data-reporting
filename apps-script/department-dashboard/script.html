@@ -2270,6 +2270,77 @@
       });
   }
 
+  // Overview trend-chart metric views. `field` = the per-dept data array on the
+  // payload; `unit` = 'pct' | 'count' (axis + tooltip format); `baseline` = a
+  // dashed reference line value (null = none). % Answered is DQE (ring
+  // answer-rate); the two Abandoned metrics are QCD (queue-level) -- so
+  // Abandoned % is NOT 100 - % Answered (different populations), hence the
+  // "(queue)" header qualifier.
+  const OV_CHART_METRICS_ = {
+    pct: {
+      field: 'trend', unit: 'pct', axisTitle: '% Answered',
+      baseline: 92, baselineLabel: '92% target',
+      header: 'Answer rate trend per department (rings)',
+      fmt: function (v) { return v.toFixed(1) + '%'; },
+    },
+    abandonedCalls: {
+      field: 'trendAbandoned', unit: 'count', axisTitle: 'Abandoned calls',
+      baseline: null, baselineLabel: '',
+      header: 'Abandoned calls per department (queue)',
+      fmt: function (v) { return Math.round(v).toLocaleString(); },
+    },
+    abandonedPct: {
+      field: 'trendAbandonedPct', unit: 'pct', axisTitle: 'Abandoned %',
+      baseline: 5, baselineLabel: '5% threshold',
+      header: 'Abandoned % per department (queue)',
+      fmt: function (v) { return v.toFixed(1) + '%'; },
+    },
+  };
+  const OV_CHART_METRIC_KEY_ = 'cdr.ov.chartmetric';
+  let ovChartMetric = (function () {
+    try { var v = localStorage.getItem(OV_CHART_METRIC_KEY_); return OV_CHART_METRICS_[v] ? v : 'pct'; }
+    catch (e) { return 'pct'; }
+  })();
+
+  // Builds the y-axis config for a metric + zoom state. The Fit/Full behavior
+  // (fixing the previously-inert Zoom button): Full gives % Answered the fixed
+  // 0-100 context and the Abandoned metrics a 0-to-data-top scale (0-100 would
+  // bury a ~0-8% abandon line at the very bottom); Fit tightens to the actual
+  // data range on every metric. The reference baseline is EXCLUDED from the
+  // range math so it can't pin the axis. Now applied inside the render, so the
+  // zoom persists across re-renders (5-min refresh / sub-queue / metric switch)
+  // instead of resetting to Full.
+  function ovYAxis_(mcfg, zoom, datasets, skipLabels) {
+    let lo = Infinity, hi = -Infinity;
+    datasets.forEach(function (ds) {
+      if (skipLabels.indexOf(ds.label) !== -1) return;
+      (ds.data || []).forEach(function (v) {
+        if (v == null || isNaN(v)) return;
+        if (v < lo) lo = v;
+        if (v > hi) hi = v;
+      });
+    });
+    const hasData = isFinite(lo) && isFinite(hi);
+    const axis = {
+      ticks: { callback: mcfg.unit === 'pct'
+        ? function (v) { return v + '%'; }
+        : function (v) { return Number(v).toLocaleString(); } },
+      title: { display: true, text: mcfg.axisTitle, font: { size: 11 } },
+    };
+    if (zoom === 'fit' && hasData) {
+      const pad = Math.max(1, (hi - lo) * 0.08);
+      axis.beginAtZero = false;
+      axis.min = Math.max(0, Math.floor(lo - pad));
+      axis.max = (mcfg.unit === 'pct') ? Math.min(100, Math.ceil(hi + pad)) : Math.ceil(hi + pad);
+    } else {
+      axis.beginAtZero = true;
+      axis.min = 0;
+      if (mcfg.field === 'trend') axis.max = 100;
+      else axis.max = hasData ? Math.ceil(hi * 1.15) + (mcfg.unit === 'pct' ? 1 : 0) : undefined;
+    }
+    return axis;
+  }
+
   function ovRenderChart_(data) {
     if (ovChartInstance) {
       try { ovChartInstance.destroy(); } catch (e) {}
@@ -2300,6 +2371,14 @@
         || colors[nextColorSlot++ % colors.length];
     });
 
+    // Metric view (% Answered / Abandoned calls / Abandoned %). The per-dept
+    // data array + axis/baseline/format all switch on this. % Answered is DQE
+    // (ring answer-rate, dept.trend); the two Abandoned metrics are QCD
+    // (dept.trendAbandoned / dept.trendAbandonedPct) -- so they are NOT
+    // 100 - answered% (different populations).
+    const metric = OV_CHART_METRICS_[ovChartMetric] ? ovChartMetric : 'pct';
+    const mcfg = OV_CHART_METRICS_[metric];
+
     // P2.4: default to top-level depts only; children join when toggled on.
     // colorByDept was computed over ALL depts above, so hues stay stable
     // whether or not children are shown.
@@ -2311,7 +2390,7 @@
       const isChild = !!dept.parent;
       return {
         label: dept.name + (isChild ? ' (sub-queue)' : ''),
-        data: dept.trend || [],
+        data: (dept[mcfg.field] || []),
         borderColor: color,
         // Stash the resting style so the legend hover-dim can restore it
         // (see chartSpotlight* helpers). _deptName lets the tile-hover and
@@ -2339,24 +2418,28 @@
       };
     });
 
-    // 92% target dashed baseline -- visualizes the answer-rate goal
-    // alert thresholds typically cluster around. Drawn as a faint
-    // muted line behind the dept series so it reads as a reference
-    // rather than competing data.
-    datasets.push({
-      label: '92% target',
-      data: labels.map(function () { return 92; }),
-      borderColor: (THEME && THEME.muted) || '#606872',
-      backgroundColor: 'rgba(0,0,0,0)',
-      borderWidth: 1,
-      borderDash: [6, 4],
-      pointRadius: 0,
-      pointHoverRadius: 0,
-      fill: false,
-      tension: 0,
-      // Render behind everything else so dept lines stay on top.
-      order: 99,
-    });
+    // Metric-specific dashed reference baseline drawn behind the dept series
+    // (92% answer-rate goal for % Answered; 5% abandon threshold for
+    // Abandoned %; none for the raw Abandoned-calls count). Excluded from the
+    // Fit auto-scale computation below so it can't pin the y-range.
+    if (mcfg.baseline != null) {
+      datasets.push({
+        label: mcfg.baselineLabel,
+        data: labels.map(function () { return mcfg.baseline; }),
+        borderColor: (THEME && THEME.muted) || '#606872',
+        backgroundColor: 'rgba(0,0,0,0)',
+        borderWidth: 1,
+        borderDash: [6, 4],
+        pointRadius: 0,
+        pointHoverRadius: 0,
+        fill: false,
+        tension: 0,
+        // Render behind everything else so dept lines stay on top.
+        order: 99,
+      });
+    }
+    // The reference-baseline labels the spotlight + tooltip must skip.
+    const OV_BASELINE_LABELS_ = ['92% target', '5% threshold'];
 
     const ovPlugins = (typeof ChartDataLabels !== 'undefined') ? [ChartDataLabels] : [];
 
@@ -2373,26 +2456,21 @@
           }, chartSpotlightLegend_()),
           tooltip: {
             filter: function (ctx) {
-              // Hide the 92% baseline from the per-line tooltip list.
-              return ctx.dataset.label !== '92% target';
+              // Hide the reference baseline from the per-line tooltip list.
+              return OV_BASELINE_LABELS_.indexOf(ctx.dataset.label) === -1;
             },
             callbacks: {
               label: function (ctx) {
                 const v = ctx.parsed && ctx.parsed.y;
                 if (v == null) return ctx.dataset.label + ': no data';
-                return ctx.dataset.label + ': ' + v.toFixed(1) + '%';
+                return ctx.dataset.label + ': ' + mcfg.fmt(v);
               },
             },
           },
           datalabels: { display: false },
         },
         scales: {
-          y: {
-            beginAtZero: true,
-            max: 100,
-            ticks: { callback: function (v) { return v + '%'; } },
-            title: { display: true, text: '% Answered', font: { size: 11 } },
-          },
+          y: ovYAxis_(mcfg, ovAxisZoom, datasets, OV_BASELINE_LABELS_),
           x: { ticks: { autoSkip: true, maxTicksLimit: 10 } },
         },
         interaction: { mode: 'index', intersect: false },
@@ -2412,12 +2490,17 @@
     // still paints with the inline "chart unavailable" note. ovWireAxisZoom_
     // self-guards (it early-returns on a null instance).
     if (ovChartInstance) {
-      chartSpotlightStash_(ovChartInstance, { skipLabel: '92% target' });
+      chartSpotlightStash_(ovChartInstance, { skipLabel: mcfg.baselineLabel || '__ov_no_baseline__' });
       ovChartInstance._trendIso = data.trendIsoLabels || [];
       ovChartInstance._viewerDept = ovViewerDept_(data);
     }
+    // Chart header reflects the active metric (the click-a-card hint is a
+    // sibling span, left intact).
+    const hdr = $('ov-chart-header-label');
+    if (hdr) hdr.textContent = mcfg.header;
     ovWireAxisZoom_();
     ovWireSubqToggle_();
+    ovWireMetricTabs_();
   }
 
   // ---- Generic Chart.js legend spotlight (shared) ----------------------
@@ -2584,22 +2667,48 @@
   let ovAxisZoom = 'full';
   let ovAxisZoomWired = false;
   function ovWireAxisZoom_() {
-    if (ovAxisZoomWired) return;
+    // Keep the button label in sync on every render (the metric switch /
+    // 5-min refresh re-runs the render, and the axis is now computed from
+    // ovAxisZoom INSIDE the render via ovYAxis_, so the state persists).
     const btn = $('ov-axis-zoom-btn');
+    if (btn) {
+      btn.textContent = ovAxisZoom === 'fit' ? 'Zoom: Fit' : 'Zoom: Full';
+      btn.setAttribute('aria-pressed', ovAxisZoom === 'fit' ? 'true' : 'false');
+    }
+    if (ovAxisZoomWired) return;
     if (!btn) return;
     ovAxisZoomWired = true;
     btn.addEventListener('click', function () {
-      if (!ovChartInstance) return;
       ovAxisZoom = (ovAxisZoom === 'full') ? 'fit' : 'full';
-      const y = ovChartInstance.options.scales.y;
-      if (ovAxisZoom === 'fit') {
-        y.beginAtZero = false; y.min = undefined; y.max = undefined;
-      } else {
-        y.beginAtZero = true;  y.min = undefined; y.max = 100;
-      }
-      ovChartInstance.update();
-      btn.textContent = ovAxisZoom === 'fit' ? 'Zoom: Fit' : 'Zoom: Full';
-      btn.setAttribute('aria-pressed', ovAxisZoom === 'fit' ? 'true' : 'false');
+      // Re-render so the metric-aware axis (ovYAxis_) is recomputed and the
+      // new zoom survives the next refresh. Previously this mutated the live
+      // chart's scale directly, which the next re-render silently reset.
+      if (ovLastData) ovRenderChart_(ovLastData);
+    });
+  }
+
+  // Metric tabs (% Answered / Abandoned calls / Abandoned %) in the
+  // ov-chart-tabs row. Wired once; re-renders from ovLastData on switch and
+  // persists the choice. The grid tiles are untouched (they stay latest-day).
+  let ovMetricTabsWired = false;
+  function ovWireMetricTabs_() {
+    const tabs = document.querySelectorAll('#ov-chart-tabs .ir-tab[data-metric]');
+    // Sync active state every render.
+    tabs.forEach(function (t) {
+      const on = t.getAttribute('data-metric') === ovChartMetric;
+      t.classList.toggle('active', on);
+      t.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
+    if (ovMetricTabsWired) return;
+    ovMetricTabsWired = true;
+    tabs.forEach(function (t) {
+      t.addEventListener('click', function () {
+        const m = t.getAttribute('data-metric');
+        if (!OV_CHART_METRICS_[m] || m === ovChartMetric) return;
+        ovChartMetric = m;
+        try { localStorage.setItem(OV_CHART_METRIC_KEY_, m); } catch (e) { /* best-effort */ }
+        if (ovLastData) ovRenderChart_(ovLastData);
+      });
     });
   }
 
@@ -10783,6 +10892,16 @@
     const toggle = $('ins-trend-view-toggle');
     if (toggle) toggle.style.display = hasDaily ? '' : 'none';
     if (!hasDaily && insTrendView === 'daily') insTrendView = 'monthly';
+    // #4: the trend spans a DIFFERENT window than the report header (12 months
+    // in Monthly, the selected window in Daily), so label its range explicitly
+    // rather than leaving a bare "12-month team trend" beside a 30-day report.
+    const insTrendHdr = $('ins-trend-header');
+    if (insTrendHdr) {
+      const tm = data.meta || {};
+      insTrendHdr.textContent = (insTrendView === 'daily')
+        ? ('Daily trend' + (tm.from && tm.to ? ' · ' + isoDateShort_(tm.from) + '–' + isoDateShort_(tm.to) + ' (selected window)' : ''))
+        : ('12-month trend' + (tm.to ? ' · through ' + isoDateShort_(tm.to) : ''));
+    }
     const daily = (insTrendView === 'daily') && hasDaily;
 
     // gap 1: the per-queue metric sub-selector is only meaningful on the
@@ -12385,6 +12504,13 @@
     var hr = h % 12; if (hr === 0) hr = 12;
     return hr + ampm;
   }
+  // Compact "Jun 2" ISO formatter for the heatmap aggregation caption (#4).
+  function isoDateShort_(iso) {
+    var p = String(iso).split('-');
+    if (p.length !== 3) return String(iso);
+    var mo = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][(+p[1]) - 1] || p[1];
+    return mo + ' ' + (+p[2]);
+  }
 
   function renderAbandonHeatmap_(containerId, data) {
     var el = $(containerId);
@@ -12416,9 +12542,21 @@
 
     var DOWS = [[1, 'Mon'], [2, 'Tue'], [3, 'Wed'], [4, 'Thu'], [5, 'Fri']];
 
+    // #4: the grid COLLAPSES the whole report window into one weekday × hour
+    // summary, so it can read as "one week" next to the report's 30-day header.
+    // Spell out the aggregation window (from the container's stashed scope) so
+    // the framing is explicit, not dissonant.
+    var hFrom = el.getAttribute('data-heat-from') || meta.from || '';
+    var hTo   = el.getAttribute('data-heat-to')   || meta.to   || '';
+    var heatRangeNote = '';
+    if (hFrom && hTo) {
+      var heatWd = (typeof workingDaysBetween_ === 'function') ? workingDaysBetween_(hFrom, hTo) : 0;
+      heatRangeNote = ' · aggregated over ' + isoDateShort_(hFrom) + '–' + isoDateShort_(hTo)
+        + (heatWd ? ' (' + heatWd + ' weekday' + (heatWd === 1 ? '' : 's') + ')' : '');
+    }
     var html = '<div class="ds-heatmap-head"><span class="ds-heatmap-title">When are callers abandoning?</span>'
-      + '<span class="ds-heatmap-sub">abandon rate · weekday × hour (' + escapeHtml(tz) + ') · '
-      + 'hover a cell for its abandoned / total counts</span></div>';
+      + '<span class="ds-heatmap-sub">abandon rate · weekday × hour (' + escapeHtml(tz) + ')'
+      + escapeHtml(heatRangeNote) + ' · hover a cell for its abandoned / total counts</span></div>';
     html += '<div class="ds-heatmap-wrap"><div class="ds-heatmap" style="grid-template-columns: auto repeat('
       + slotCount + ', minmax(26px, 1fr));">';
     html += '<span class="ds-heatmap__corner"></span>';

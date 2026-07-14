@@ -220,15 +220,20 @@
           </div>
           <div class="ov-trend-col">
             <div class="ir-chart-tabs" id="ov-chart-tabs" role="tablist">
-              <button type="button" class="ir-tab active" data-metric="pct" role="tab" aria-selected="true">% Answered (30 days)</button>
+              <button type="button" class="ir-tab active" data-metric="pct" role="tab" aria-selected="true"
+                title="% of rings answered per day (DQE)">% Answered</button>
+              <button type="button" class="ir-tab" data-metric="abandonedCalls" role="tab" aria-selected="false"
+                title="Abandoned call count per day (queue data)">Abandoned calls</button>
+              <button type="button" class="ir-tab" data-metric="abandonedPct" role="tab" aria-selected="false"
+                title="Abandoned % per day (queue data)">Abandoned %</button>
               <button type="button" class="ir-tab" id="ov-axis-zoom-btn" aria-pressed="false"
-                title="Toggle the y-axis between the full 0–100% scale and an auto-fit zoom to the data range">Zoom: Full</button>
+                title="Toggle the y-axis between the full scale and an auto-fit zoom to the data range">Zoom: Full</button>
               <label class="ov-subq-toggle" title="Show sub-queue (child) lines on the chart (dashed, in their parent's colour). On by default; uncheck to declutter to top-level departments only.">
                 <input type="checkbox" id="ov-subq-toggle" checked> sub-queues
               </label>
             </div>
             <div class="ir-chart-wrap" id="ov-chart-wrap">
-              <div class="ir-chart-header">Answer rate trend per department<span class="ov-chart-hint"> &mdash; click a dept card to solo its line, Shift-click to compare</span></div>
+              <div class="ir-chart-header"><span id="ov-chart-header-label">Answer rate trend per department</span><span class="ov-chart-hint"> &mdash; click a dept card to solo its line, Shift-click to compare</span></div>
               <div class="ir-chart-canvas-wrap"><canvas id="ov-trend-chart"></canvas></div>
             </div>
           </div>

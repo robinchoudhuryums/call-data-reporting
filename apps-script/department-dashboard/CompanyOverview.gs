@@ -43,7 +43,7 @@
  * (read-only), and reinstating that visibility is part of the
  * design intent for this view.
  *
- * Caching: REPORT_CACHE_TTL_SECONDS under `companyOverview:v18` (the
+ * Caching: REPORT_CACHE_TTL_SECONDS under `companyOverview:v19` (the
  * COMPANY_OVERVIEW_CACHE_KEY constant below). Cached blob is shared
  * across all users; admin-only fields (`companyAggregate`,
  * `pipelineFreshness`, `orphanNag`) are stripped on serve for
@@ -79,7 +79,10 @@
 // overwrite pass was removed).
 // v18 (F-14): MTD violations no longer truncated by the 30-day snapshot
 // window filter (see computeQcdSnapshots_).
-const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v18';
+// v19: each dept carries per-day `trendAbandoned` (QCD abandoned count) +
+// `trendAbandonedPct` series aligned to trendIsoLabels, feeding the Overview
+// chart's new Abandoned calls / Abandoned % metric views.
+const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v19';
 
 /**
  * The Overview cache key, suffixed with the combined DQE+QCD read source
@@ -458,6 +461,24 @@ function getCompanyOverview(req) {
       if (!day || day.rung <= 0) return null;
       return round1_((day.answered / day.rung) * 100);
     });
+    // Per-day QCD abandoned series (own queues) for the chart's Abandoned
+    // calls / Abandoned % metric views, aligned to the same weekday-only axis
+    // as `trend`. Null on days with no QCD row (and all-null for QCD-unmapped
+    // depts -> no line). Sourced from the snapshot's `daily` map (built in
+    // computeQcdSnapshots_), which is then stripped so the raw map doesn't
+    // ship inside the tile-chip `qcd` payload.
+    const snap = qcdSnapshotsByDept[d] || null;
+    const qcdDaily = (snap && snap.daily) || {};
+    const trendAbandoned = trendIsoLabels.map(function (iso) {
+      const day = qcdDaily[iso];
+      return day ? day.abandoned : null;
+    });
+    const trendAbandonedPct = trendIsoLabels.map(function (iso) {
+      const day = qcdDaily[iso];
+      if (!day || day.totalCalls <= 0) return null;
+      return round1_((day.abandoned / day.totalCalls) * 100);
+    });
+    if (snap) delete snap.daily;   // don't ship the raw per-day map on the tile chip
     return {
       name: d,
       parent: overviewParentMap[d] || null,
@@ -482,8 +503,10 @@ function getCompanyOverview(req) {
       // QCD snapshot from the most recent date in the trend window.
       // Visible to everyone (no admin gate) -- managers see the same
       // QCD numbers their own dept's full report shows.
-      qcd: qcdSnapshotsByDept[d] || null,
+      qcd: snap,
       trend: trend,
+      trendAbandoned: trendAbandoned,
+      trendAbandonedPct: trendAbandonedPct,
     };
   };
   const allFormatted = allDepts
@@ -1027,12 +1050,23 @@ function computeQcdSnapshots_(allDepts, sinceIso, ssTZ) {
             latestViolations: 0,
             mtdViolations:   0,
             perQueue:        {},   // queue -> { totalCalls, abandoned, violations }
+            daily:           {},   // iso -> { totalCalls, abandoned } (window rows, summed across queues) -- feeds the Overview chart's Abandoned metrics
           };
           acc[dept] = a;
         }
 
         // MTD violations: any row dated >= mtdStart contributes.
         if (dateIso >= mtdStart) a.mtdViolations += violations;
+
+        // Per-day (in-window) abandoned series for the Overview trend chart's
+        // Abandoned calls / Abandoned % metric views. Only window rows
+        // (>= sinceIso) count -- MTD-only older rows are excluded from the axis.
+        if (dateIso >= sinceIso) {
+          var dday = a.daily[dateIso];
+          if (!dday) { dday = { totalCalls: 0, abandoned: 0 }; a.daily[dateIso] = dday; }
+          dday.totalCalls += totalCalls;
+          dday.abandoned  += abandoned;
+        }
 
         // Latest-day totals: accumulate across queues for the latest
         // date we've seen. If we see a newer date, reset.
@@ -1082,6 +1116,7 @@ function computeQcdSnapshots_(allDepts, sinceIso, ssTZ) {
         violations:       a.latestViolations,
         violationsMtd:    a.mtdViolations,
         perQueue:         perQueueOut,
+        daily:            a.daily,   // consumed by formatDept -> trendAbandoned/Pct; stripped before the tile-chip payload ships
       };
     });
 
