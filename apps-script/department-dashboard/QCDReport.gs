@@ -224,7 +224,8 @@ function getQcdAllDepartments(req) {
     if (queuesForDept_(dept, { includeChildren: false }).length === 0) return;
     const rep = computeQcdReport_(dept, from, to,
                                   /*includeSubQueues=*/ false,
-                                  /*separateSubQueues=*/ false);
+                                  /*separateSubQueues=*/ false,
+                                  /*rangeOnly=*/ true);   // perf: only queueBreakdown is used
     // #3: drop roll-up queues already counted within another queue.
     const rows = (rep.queueBreakdown || []).filter(function (r) {
       return !excludeSet[String(r.queue || '').toLowerCase()];
@@ -391,7 +392,17 @@ function readQcdSheetData_() {
   return QCD_SHEET_DATA_MEMO_;
 }
 
-function computeQcdReport_(dept, from, to, includeSubQueues, separateSubQueues) {
+// rangeOnly (perf): the all-dept Daily Call Queue Report uses ONLY
+// queueBreakdown (range-scoped), never trendData/dailySeries/perQueue -- yet it
+// calls this once per dept, each pass iterating the whole 12-month TREND window
+// of rows to build a trend it discards. When rangeOnly is set, trend-only rows
+// (in the trend window but outside [from,to]) are skipped, so a one-day report
+// processes ~1 day of rows per dept instead of ~12 months. Trend-only rows feed
+// ONLY the monthly buckets (queueBreakdown/grandTotals come from the in-range
+// accumulation), so the outputs the all-dept report reads are byte-identical --
+// only trendData/dailySeries go sparse, which that report ignores. Other
+// callers (Insights Queue health, snapshots) omit rangeOnly -> full behavior.
+function computeQcdReport_(dept, from, to, includeSubQueues, separateSubQueues, rangeOnly) {
   const qOpts = { includeChildren: includeSubQueues !== false };
   // separateSubQueues (QCD report only): children stay visible in the
   // breakdown/chart but are tagged + EXCLUDED from the dept total, the
@@ -479,7 +490,9 @@ function computeQcdReport_(dept, from, to, includeSubQueues, separateSubQueues) 
 
     const inUserRange  = (dateIso >= from && dateIso <= to);
     const inTrendRange = (dateIso >= trendStartIso && dateIso <= trendEndIso);
-    if (!inUserRange && !inTrendRange) continue;
+    // rangeOnly: skip trend-only rows (they feed only the discarded monthly
+    // trend). Full mode keeps them for the 12-month chart.
+    if (!inUserRange && (rangeOnly || !inTrendRange)) continue;
 
     const totalCalls    = Number(r[QCD_HISTORICAL_COLS.TOTAL_CALLS - 1])    || 0;
     const totalAnswered = Number(r[QCD_HISTORICAL_COLS.TOTAL_ANSWERED - 1]) || 0;

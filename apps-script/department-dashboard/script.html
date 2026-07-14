@@ -14114,6 +14114,19 @@
         topLevel.push(d);
       }
     });
+    // Convenience: float the VIEWER's own dept's section to the top. If their
+    // dept is a sub-queue (nested child), float its parent section instead so
+    // their dept still appears in the first section. No-op for admins with no
+    // dept / a dept absent from this window. (Array.sort is stable in V8.)
+    const myDept = (typeof USER !== 'undefined' && USER && USER.department) ? USER.department : '';
+    let mySection = '';
+    if (myDept && byName[myDept]) {
+      const md = byName[myDept];
+      mySection = (md.parent && byName[md.parent]) ? md.parent : myDept;
+      topLevel.sort(function (a, b) {
+        return (a.dept === mySection ? 0 : 1) - (b.dept === mySection ? 0 : 1);
+      });
+    }
 
     // #1d: Answered / Abandoned / Abandoned % fold into ONE split-bar column
     // (shared qcdDailyBarCell_). 6 columns.
@@ -14155,7 +14168,7 @@
       (childrenOf[d.dept] || []).forEach(function (child) {
         (child.queues || []).forEach(function (q) { secItems.push({ q: q, sub: child.dept }); });
       });
-      html += '<tbody class="qcd-alldept-dept">'
+      html += '<tbody class="qcd-alldept-dept" data-dept="' + escapeHtml(d.dept) + '">'
         + '<tr class="qcd-alldept-deptrow"><td colspan="' + NCOLS + '">' + escapeHtml(d.dept) + '</td></tr>';
       secItems.forEach(function (item) { html += queueRow(item.q, item.sub); });
       // #3: the "(dept) total" row is redundant for a single-queue section
@@ -14185,6 +14198,17 @@
       + '<td class="num' + gc.violCls + '">' + fmtNumber(g.violations) + '</td>'
       + '</tr></tfoot></table>';
     body.innerHTML = html;
+    // Auto-expand the viewer's own dept section (its per-queue source detail)
+    // so their numbers are front-and-center on open. Mirrors the click-expand:
+    // reveal each queue's detail row + flip its chevron. Bounded to the one
+    // section; a no-op when the viewer has no dept in this window.
+    if (mySection) {
+      const sectionTbody = body.querySelector('.qcd-alldept-dept[data-dept="' + escCssId_(mySection) + '"]');
+      if (sectionTbody) {
+        sectionTbody.querySelectorAll('tr.qcd-detail-row').forEach(function (dr) { dr.style.display = ''; });
+        sectionTbody.querySelectorAll('tr.qcd-expandable .qcd-expand-icon').forEach(function (ic) { ic.innerHTML = '&#9660;'; });
+      }
+    }
   }
 
   function qcdAllDeptCsv_(data) {

@@ -654,7 +654,12 @@
     cursor: pointer;
   }
   .btn:hover { opacity: 0.88; }
-  .btn:disabled { background: var(--muted); cursor: not-allowed; }
+  /* A disabled/loading button gets the muted-gray background; force a
+     contrasting text color (var(--paper) is opposite --muted's lightness in
+     both themes) so the loader label + the currentColor equalizer bars stay
+     legible. Without this, .btn-secondary kept its dark --ink text -> black
+     text on dark gray while "Updating…"/"Generating…" showed. */
+  .btn:disabled { background: var(--muted); color: var(--paper); cursor: not-allowed; }
   .btn-secondary {
     background: var(--paper-card);
     color: var(--ink);
@@ -3843,6 +3848,11 @@
   /* #3d: abandon % over the 5% threshold reads bold (color comes from the
      bm-over / qcd-warn-light warn tint). */
   .qcd-rate-over { font-weight: 700; }
+  /* Daily Call Queue Report: an abandoned rate at/over the 5% company
+     threshold reads BOLD + RED (not the softer warn tint) on the split bar,
+     so an over-threshold queue pops. Scoped to this report; other surfaces
+     that share qcdDailyBarCell_ (Insights daily breakdown) keep the warn tint. */
+  .qcd-alldept-table .qcd-rate-over { color: var(--bad); }
   /* #3: muted "· <sub-dept>" tag on a nested sub-queue row. */
   .qcd-alldept-subq { color: var(--muted); font-size: 11px; font-weight: 400; }
   .qcd-alldept-deptrow td {
@@ -3852,9 +3862,14 @@
   .qcd-alldept-subtotal td {
     font-weight: 600; border-top: 1px solid var(--line); border-bottom: 2px solid var(--line);
   }
+  /* Company total: the headline row -- larger + tinted + a heavier top rule
+     so it's clearly distinct from the per-dept subtotals. */
   .qcd-alldept-grand td {
-    font-weight: 700; color: var(--ink); border-top: 2px solid var(--ink);
+    font-weight: 800; color: var(--ink); font-size: 14px;
+    border-top: 3px solid var(--ink); background: var(--paper-2);
+    padding-top: 11px; padding-bottom: 11px;
   }
+  .qcd-alldept-grand td:first-child { letter-spacing: 0.02em; }
 
   .al-config-table, .al-log-table, .al-results-table {
     width: 100%;

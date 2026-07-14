@@ -110,3 +110,43 @@ test('F-36: a double-mapped queue counts ONCE in the company grand total (per-de
   assert.equal(rep.grandTotals.abandoned, 10);
   assert.equal(rep.grandTotals.violations, 2);
 });
+
+test('rangeOnly perf flag: queueBreakdown + totals are byte-identical to a full compute when out-of-range trend rows exist', function () {
+  // The all-departments Daily Call Queue Report consumes ONLY
+  // rep.queueBreakdown / rep.totals (it discards trendData / dailySeries /
+  // perQueue), so getQcdAllDepartments passes rangeOnly=true to skip the
+  // 12-month trend-window rows. This pins that the skip cannot alter the
+  // range-scoped output: a full compute (which folds trend-only rows into
+  // monthly buckets) and a rangeOnly compute must produce the same
+  // queueBreakdown / totals.
+  install(
+    rosterGrid({ Alpha: ['Anna, 201'] }),
+    [dcRow('Alpha', 'A_Q_Alpha')],
+    [
+      // In-range rows (the selected window).
+      qcdRow('2026-06-01', 'A_Q_Alpha', 100, 90, 10, 1),
+      qcdRow('2026-06-02', 'A_Q_Alpha',  80, 78,  2, 0),
+      // Out-of-range but WITHIN the 12-month trend window -- a full compute
+      // folds these into monthly buckets; rangeOnly must skip them without
+      // touching queueBreakdown / totals.
+      qcdRow('2026-03-15', 'A_Q_Alpha', 999, 111, 888, 9),
+      qcdRow('2026-01-10', 'A_Q_Alpha', 500, 250, 250, 5),
+    ]);
+
+  const full = h.call('computeQcdReport_', 'Alpha', '2026-06-01', '2026-06-02',
+    false, false, /*rangeOnly=*/ false);
+  // Reset the per-execution QCD memo so the second compute re-reads cleanly.
+  h.ctx.QCD_SHEET_DATA_MEMO_ = null;
+  h.state.cache.clear();
+  const ranged = h.call('computeQcdReport_', 'Alpha', '2026-06-01', '2026-06-02',
+    false, false, /*rangeOnly=*/ true);
+
+  // The range-scoped surfaces the all-dept report reads are identical.
+  deepEqual(ranged.queueBreakdown, full.queueBreakdown);
+  deepEqual(ranged.totals, full.totals);
+
+  // Sanity: the range total reflects ONLY the two in-range days (180 calls),
+  // never the out-of-range trend rows (which would have added 1499).
+  assert.equal(full.totals.totalCalls, 180);
+  assert.equal(ranged.totals.totalCalls, 180);
+});
