@@ -3111,6 +3111,44 @@
     void el.offsetWidth;   // restart the CSS animation on repeat clicks
     el.classList.add('qs-spotlight');
     setTimeout(function () { el.classList.remove('qs-spotlight'); }, 2600);
+    qsDimOutside_(el);     // briefly dim everything OUTSIDE the target
+  }
+
+  // Companion to the accent-ring pulse: a transient overlay that dims the rest
+  // of the page so the eye is pulled to the spotlighted section (the guided
+  // tour's box-shadow-spotlight technique, as a one-shot). A transparent box is
+  // positioned over the target in DOCUMENT coordinates (scroll-invariant, so it
+  // stays aligned through the smooth-scroll) and dims everything else via a huge
+  // box-shadow; it's click-through and self-removes. Sits below all modals
+  // (z-index in styles.html), so it never fires over one in practice (the
+  // launcher chips land on pages, not modals).
+  function qsDimOutside_(el) {
+    var prev = document.getElementById('qs-dim-overlay');
+    if (prev && prev.parentNode) prev.parentNode.removeChild(prev);   // no stacking on rapid re-clicks
+    var ov = document.createElement('div');
+    ov.id = 'qs-dim-overlay';
+    ov.className = 'qs-dim';
+    document.body.appendChild(ov);
+    var pad = 8;
+    var position = function () {
+      var r = el.getBoundingClientRect();
+      // Document coords: rect (viewport-relative) + scroll offset is constant as
+      // the viewport scrolls, so the hole tracks the element without per-frame
+      // work -- the RAF loop below only corrects late layout shifts on render.
+      ov.style.top = (r.top + (window.pageYOffset || 0) - pad) + 'px';
+      ov.style.left = (r.left + (window.pageXOffset || 0) - pad) + 'px';
+      ov.style.width = (r.width + pad * 2) + 'px';
+      ov.style.height = (r.height + pad * 2) + 'px';
+    };
+    position();
+    var start = Date.now();
+    var track = function () { position(); if (Date.now() - start < 700) requestAnimationFrame(track); };
+    requestAnimationFrame(track);
+    requestAnimationFrame(function () { ov.classList.add('is-on'); });   // fade the dim in
+    setTimeout(function () {
+      ov.classList.remove('is-on');                                     // fade it back out
+      setTimeout(function () { if (ov.parentNode) ov.parentNode.removeChild(ov); }, 400);
+    }, 2000);
   }
 
   // -- Metric glossary (anti-intimidation layer) --------------------------

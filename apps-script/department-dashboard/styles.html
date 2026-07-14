@@ -3056,6 +3056,24 @@
       box-shadow: 0 0 0 4px var(--accent-soft), 0 0 0 1.5px var(--accent);
     }
   }
+  /* Companion dim for qsSpotlight_ (qsDimOutside_): a transparent, click-through
+     box positioned over the target that dims the rest of the page via a huge
+     box-shadow -- so the section pops while the ring pulses. Below every modal
+     (100+) but above page content. The transparent hole lets the target + its
+     accent ring show through un-dimmed. */
+  .qs-dim {
+    position: absolute;
+    z-index: 80;
+    border-radius: var(--r);
+    box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0);
+    pointer-events: none;
+    transition: box-shadow 0.35s var(--ease);
+  }
+  .qs-dim.is-on { box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.42); }
+  @media (prefers-reduced-motion: reduce) {
+    /* Still dim (the emphasis is the point) but without the fade. */
+    .qs-dim { transition: none; }
+  }
   .ov-launcher-kicker {
     font-family: var(--mono);
     font-size: 9px;
