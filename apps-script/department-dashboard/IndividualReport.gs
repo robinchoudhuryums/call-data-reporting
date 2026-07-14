@@ -285,7 +285,7 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
   const _tRead = Date.now();
   if (neonCapable) {
     srcRows = neonFetchDqeRows_(fetchFrom, fetchTo);
-    if (srcRows && srcRows.length) {
+    if (neonDqeRowsUsable_(srcRows)) {   // LM2: reachable-empty is trusted; only unreachable falls back
       deptQueueExts = deptQueueExtsForNeonReader_(dept, rosterSet, sheet, lastRow).exts;
       effectiveSource = 'neon';
     } else {

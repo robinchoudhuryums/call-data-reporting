@@ -547,6 +547,7 @@ function approveEscalation(req) {
   var conn = getDashboardNeonConn_();
   if (!conn) { lock.releaseLock(); throw new Error('Escalations storage (Neon) is not configured/reachable.'); }
   var txn = false;
+  var notifyRec = null;   // §1: populated on success, fired after the lock releases
   try {
     escEnsureTable_(conn);
     var row = escRowFull_(conn, id);
@@ -579,7 +580,21 @@ function approveEscalation(req) {
       'Accepted into the ' + row.department + ' worklist (submitted via ' + (row.source || 'unknown') + ')');
     conn.commit();
     Logger.log('approveEscalation: %s approved %s (%s)', user.email, id, row.department);
-    return { id: id };
+    // §1: an approved pending_review is a NEW escalation ENTERING the dept
+    // worklist -- the event managers care about in Phase 2 (external inflow
+    // arrives as pending_review, not createEscalation). Capture the notify
+    // record here; fire it AFTER the lock releases (below), same as
+    // createEscalation. Flag-gated + best-effort inside the helper.
+    notifyRec = {
+      id:          id,
+      department:  row.department,
+      occurredAt:  row.occurredAt,
+      caller:      clean.caller,
+      patientName: clean.patientName,
+      trx:         clean.trx,
+      area:        clean.area,
+      reason:      clean.reason,
+    };
   } catch (e) {
     if (txn) { try { conn.rollback(); } catch (rb) {} }
     Logger.log('approveEscalation failed: ' + (e && e.message ? e.message : e));
@@ -589,6 +604,10 @@ function approveEscalation(req) {
     try { conn.close(); } catch (ce) {}
     lock.releaseLock();
   }
+  // Fire-and-log AFTER the write committed + lock released (a slow MailApp
+  // send never blocks the response or holds the lock).
+  escNotifyNewEscalation_(notifyRec);
+  return { id: id };
 }
 
 /**

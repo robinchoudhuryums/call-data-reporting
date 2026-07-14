@@ -263,3 +263,47 @@ test('IMP-1: "Backup CSR" is recognized as a queue (abandon stage, entry queue, 
   assert.equal(h.call('icIsQueueName_', 'Backup CSR Team'), false, 'prefix-only lookalikes are NOT queues');
   assert.equal(h.call('icIsQueueName_', 'Jane Backup CSR'), false);
 });
+
+// ---- L2: authoritative per-date replace (writeInboundCallsToNeon opts) --------
+// A fake JDBC conn records every executed statement so we can assert the
+// authoritative write DELETEs the payload's dates (same txn, before the upsert)
+// and a plain write does not. Stubs getReachableNeonConn_ (neonWrite.js, not
+// loaded); no HMAC_SECRET so the caller_hash path stays off (cdrHashPhone_ is
+// never reached).
+function fakeInboundConn(cap) {
+  cap.executed = []; cap.commits = 0; cap.rollbacks = 0;
+  function stmt() { return { execute: function (sql) { cap.executed.push(sql); return true; }, close: function () {} }; }
+  return {
+    setAutoCommit: function () {},
+    createStatement: stmt,
+    commit: function () { cap.commits++; },
+    rollback: function () { cap.rollbacks++; },
+    close: function () {},
+  };
+}
+const L2_ROWS = [
+  leg({ callId: '668970', legId: 1, start: '06/04/2026 10:36:07', stop: '06/04/2026 10:36:25', direction: 'Incoming', caller: '12159998888', callee: '999', calleeName: 'Introduction - New', dialIn: '19722281820' }),
+  leg({ callId: '668970', legId: 3, start: '06/04/2026 10:37:06', stop: '06/04/2026 10:38:24', direction: 'Incoming', caller: '12159998888', callee: '108', calleeName: 'A_Q_Intake', dialIn: '19722281820', missed: 'Missed', abandoned: 'Abandoned' }),
+];
+
+test('L2: authoritative write DELETEs the payload dates before the upsert (same txn)', function () {
+  const cap = {};
+  h.ctx.getReachableNeonConn_ = function () { return fakeInboundConn(cap); };
+  h.call('writeInboundCallsToNeon', L2_ROWS, { authoritative: true });
+  const dels = cap.executed.filter(s => /DELETE FROM inbound_calls/.test(s));
+  assert.equal(dels.length, 1, 'exactly one DELETE fired');
+  assert.match(dels[0], /call_date IN \('2026-06-04'::date\)/, 'DELETE scoped to the payload date');
+  const delIdx = cap.executed.findIndex(s => /DELETE FROM inbound_calls/.test(s));
+  const insIdx = cap.executed.findIndex(s => /INSERT INTO inbound_calls/.test(s));
+  assert.ok(delIdx >= 0 && insIdx > delIdx, 'DELETE precedes the INSERT');
+  assert.equal(cap.commits, 1, 'one commit (delete + insert are atomic)');
+});
+
+test('L2: non-authoritative write is upsert-only (no DELETE)', function () {
+  const cap = {};
+  h.ctx.getReachableNeonConn_ = function () { return fakeInboundConn(cap); };
+  h.call('writeInboundCallsToNeon', L2_ROWS);   // no opts -> upsert-only
+  assert.equal(cap.executed.filter(s => /DELETE FROM inbound_calls/.test(s)).length, 0,
+    'a partial-set caller (no authoritative) never deletes');
+  assert.ok(cap.executed.some(s => /INSERT INTO inbound_calls/.test(s)), 'still upserts');
+});

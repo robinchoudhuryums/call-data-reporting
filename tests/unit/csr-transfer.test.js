@@ -83,3 +83,28 @@ test('guard returns every offending row and respects opts', function () {
   // prototype differs from a host literal, which deepStrictEqual rejects.
   assert.equal(guard(batch, { ratio: 3, floor: 10 }).map(g => g.agent).sort().join(','), 'A,C');
 });
+
+// Data-loss guard convention (M2 generalized): a FORCE rebuild that produces 0
+// rows AFTER the date was force-deleted must surface a Pipeline Health failure
+// (caught by the System Health "Recent pipeline step failures" signal), not
+// vanish silently. A non-force empty rebuild is a legitimate no-op.
+test('guardForceRebuildLoss_: force + 0 rows logs a FAILURE row; non-force / >0 rows no-op', function () {
+  const g = h.fn('guardForceRebuildLoss_');
+  const appended = [];
+  const fakeSS = {
+    getSheetByName: function (n) {
+      return n === 'Pipeline Health' ? { appendRow: function (r) { appended.push(r); } } : null;
+    },
+  };
+  const d = new Date(2026, 6, 14);
+
+  g(fakeSS, 'processIntegratedHistory:QCD', d, true, 0);   // force + empty rebuild -> surface
+  assert.equal(appended.length, 1, 'force + 0 rows -> one failure row');
+  assert.equal(appended[0][1], 'processIntegratedHistory:QCD', 'Step column');
+  assert.equal(appended[0][2], 'failure', 'Status column');
+
+  appended.length = 0;
+  g(fakeSS, 'processIntegratedHistory:QCD', d, true, 5);    // rebuilt rows -> no-op
+  g(fakeSS, 'processIntegratedHistory:QCD', d, false, 0);   // non-force empty -> legitimate no-op
+  assert.equal(appended.length, 0, 'no false alarm when rows were written OR it was not a force build');
+});

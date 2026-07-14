@@ -322,7 +322,7 @@ function getCompanyOverview(req) {
   const _tRead = Date.now();
   if (ovNeonCapable) {
     dqeRows = neonFetchDqeRows_(trendStartIso, latestDate);
-    if (!dqeRows || !dqeRows.length) {
+    if (!neonDqeRowsUsable_(dqeRows)) {   // LM2: reachable-empty is trusted; only unreachable falls back
       Logger.log('getCompanyOverview: neon returned no rows; falling back to sheet.');
       dqeRows = (typeof sheetFetchDqeRows_ === 'function')
         ? sheetFetchDqeRows_(trendStartIso, latestDate) : [];

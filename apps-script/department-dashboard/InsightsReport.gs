@@ -314,7 +314,7 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
   const _tRead = Date.now();
   if (neonCapable) {
     srcRows = neonFetchDqeRows_(fetchFrom, fetchTo);
-    if (srcRows && srcRows.length) {
+    if (neonDqeRowsUsable_(srcRows)) {   // LM2: reachable-empty is trusted; only unreachable falls back
       // RPT-4: the Neon path derives the dept ext set via the shared Neon
       // helper (its own sheet fallback covers F-35), like IR and Missed --
       // this was the last reader still doing a full-sheet cols A..D read

@@ -374,7 +374,7 @@ function computeSummary_(dept, from, to, scope) {
   const _tRead = Date.now();
   if (neonCapable) {
     srcRows = neonFetchDqeRows_(priorFrom, to);
-    if (srcRows && srcRows.length) {
+    if (neonDqeRowsUsable_(srcRows)) {   // LM2: reachable-empty is trusted; only unreachable falls back
       const dqr = deptQueueExtsForNeonReader_(dept, rosterSet, sheet, lastRow);
       deptQueueExts = dqr.exts; deptQueueExtsSource = dqr.source;
       effectiveSource = 'neon';

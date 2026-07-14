@@ -1,6 +1,17 @@
 # Cycle State — resume note
 
-## Latest session (/broad-implement: P2 + P3 fixes + /sync-docs)
+## Latest session (/broad-implement: L2 + LM2 + strategic hardening)
+Branch `claude/broad-scan-ekn18f`, **292/292 tests** (6 new), INV-16 + cache-version-sync green. 16 files.
+Implemented the deferred/strategic set:
+- **L2**: `writeInboundCallsToNeon({authoritative:true})` -- per-date REPLACE (DELETE payload dates in-txn before upsert) so a shrinking re-import can't leave a phantom in the dashboard-read, sheet-primary-less `inbound_calls`. Both callers (daily inline + per-date backfill/deferred) pass it (complete-per-date). Fake-conn test in inbound-calls.test.js.
+- **LM2**: `neonFetchDqeRows_` marks `out._neonReachable`; all 6 cutover consumers gate on the shared `neonDqeRowsUsable_` -- reachable-empty is TRUSTED (skip redundant sheet scan), only unreachable/errored `[]` falls back (aligns with the neon cutover contract). Helper test in dal-cutover.test.js.
+- **Health single signal**: SystemHealth "Recent pipeline step failures" row -- flags a step only when its LATEST outcome is failure (recovered steps don't warn; no wolf-crying). Catches :neon inline mirrors, neonMirror:* drains, guardForceRebuildLoss_. 2 tests.
+- **Escalation notify on approve**: `approveEscalation` now also fires `escNotifyNewEscalation_` (Phase 2's real new-escalation inflow is team-tools->pending_review->approve, not create). Same flag/PII gating.
+- **Data-loss guard convention**: new shared `guardForceRebuildLoss_(ss, step, dateObj, force, wroteCount)` (autoImport.js) -- on force+0-rows logs a `<step>` failure Pipeline Health row (caught by the Health signal), no throw. Applied to QCD (dashboard-read force-path writer with no empty-rebuild handling); DQE keeps its stronger M2 throw. Documented as a Common Gotcha. csr-transfer.test.js pins the helper.
+Docs: CLAUDE.md gained the force-path convention + Health-signal gotchas; updated IMP-5 (inbound now authoritative), INV-55 §1 (notify on approve), F1 read-back (LM2 reachable-empty).
+Where I left off: committed/pushed? see git log. NOT deployed (Dashboard + cdr-import clasp pushes pending). Every ranked finding from the original scan is now implemented or explicitly deferred-with-reason (the remaining defers -- LM3/S2-6/S2-7/L8/sheetRepairs edges/L5-doc -- are the truly-low-value/frozen ones).
+
+## Prior session (/broad-implement: P2 + P3 fixes + /sync-docs)
 Branch `claude/broad-scan-ekn18f`, **286/286 tests**, INV-16 guard green. 15 files.
 Implemented P2: L1 (source-suffix IR/Insights/Missed cache keys, CORE-3), L3 (IR prefs per-email `irPrefsKey_`), L4 (Access Control email/dept via sheetSafeCell_), L6 (escCleanDateTime_ rejects impossible calendar dates via UTC round-trip + test), L9 (getEscalationActivity denial returns not-found shape, no existence oracle), L10 (inboundDeptPredicate_ COALESCE(abandoned_on_hold,false)), L11 (neonFetchDqeRows_ resets out=[] on error so a mid-loop throw falls back to sheet), S2-3 (agent table `.agents-table-wrap` overflow-x), S2-4 (.qcd-warn-strong -> var(--bad)), S2-5 (dark-mode .date-preset-chip.active override).
 P3: neonbackfill null-date skip (both backfill loops, prevents poison batch), NeonBackup stale-parts-on-shrink trash, dbReporting undefined-dept binds SQL NULL, keepNeonWarm_ outer try/catch.

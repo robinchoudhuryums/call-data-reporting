@@ -46,6 +46,37 @@ function getSystemHealth() {
     }
   } catch (e) { add('pipeline', 'dqe-fresh', 'DQE build freshness', 'warn', 'probe failed', String(e && e.message || e)); }
 
+  // ── Recent pipeline step failures (the single trustworthy signal) ────
+  // Flags a step ONLY when its MOST RECENT outcome is `failure` -- a step that
+  // failed then recovered (its latest row is `success`) is NOT flagged, so this
+  // never cries wolf about a fixed blip (the OPS-8/M1 lesson). Catches every
+  // step name in one place: the CDR/QCD/DQE/Inbound sheet writes, the `:neon`
+  // inline-mirror failures (L7), the `buildDQE:neon` (F4) / `:Inbound` (F9)
+  // rows, and the deferred `neonMirror:*` drains -- so the admin doesn't have
+  // to scan Pipeline Health by eye to know something is currently broken.
+  try {
+    var phRows = (typeof readPipelineHealth_ === 'function') ? readPipelineHealth_(80) : [];
+    if (!phRows || !phRows.length) {
+      add('pipeline', 'pipe-failures', 'Recent pipeline step failures', 'muted', 'no Pipeline Health rows');
+    } else {
+      var latestByStep = {};   // readPipelineHealth_ returns NEWEST-first, so first-seen per step is its latest
+      phRows.forEach(function (r) { if (r && r.step && !(r.step in latestByStep)) latestByStep[r.step] = r; });
+      var failingSteps = Object.keys(latestByStep).filter(function (s) {
+        return String(latestByStep[s].status || '').toLowerCase() === 'failure';
+      });
+      if (!failingSteps.length) {
+        add('pipeline', 'pipe-failures', 'Recent pipeline step failures', 'ok', 'no step currently failing');
+      } else {
+        var latestFail = latestByStep[failingSteps[0]];
+        add('pipeline', 'pipe-failures', 'Recent pipeline step failures', 'warn',
+          failingSteps.length + ' step(s) whose latest outcome is failure: ' + failingSteps.join(', '),
+          'Most recent: ' + failingSteps[0] + (latestFail.timestamp ? ' @ ' + latestFail.timestamp : '')
+          + (latestFail.notes ? ' — ' + latestFail.notes : '')
+          + '. See Alerts modal → Pipeline Health for the full Notes.');
+      }
+    }
+  } catch (e) { add('pipeline', 'pipe-failures', 'Recent pipeline step failures', 'warn', 'probe failed', String(e && e.message || e)); }
+
   // ── Neon ────────────────────────────────────────────────────────────
   var props = PropertiesService.getScriptProperties();
   var neonConfigured = false;

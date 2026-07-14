@@ -148,3 +148,34 @@ test('health: a throwing probe degrades to its own warn row (page never fails wh
   assert.ok(row.value.indexOf('probe failed') !== -1);
   assert.ok(data.rows.length > 10, 'other sections still render');
 });
+
+// readPipelineHealth_ lives in Alerts.gs (not loaded here) -- stub it the same
+// way the other sub-probes are stubbed; the point is getSystemHealth's
+// latest-outcome-per-step classification, not the sheet read. The stub returns
+// NEWEST-first (readPipelineHealth_'s contract).
+test('single-signal: pipe-failures flags a step whose LATEST outcome is failure, not a recovered one', function () {
+  installHealth({ props: { NEON_HOST: 'h' } });
+  h.ctx.readPipelineHealth_ = function () {
+    return [   // newest-first
+      { timestamp: '2026-07-14 07:06', step: 'neonMirror:Inbound', status: 'failure', notes: 'unreachable' },
+      { timestamp: '2026-07-14 07:05', step: 'processIntegratedHistory:QCD:neon', status: 'success', notes: '' },
+      { timestamp: '2026-07-14 07:01', step: 'processIntegratedHistory:QCD:neon', status: 'failure', notes: 'timeout' },
+      { timestamp: '2026-07-14 07:00', step: 'processIntegratedHistory:CDR', status: 'success', notes: '' },
+    ];
+  };
+  const row = rowByKey(h.call('getSystemHealth'), 'pipe-failures');
+  assert.equal(row.status, 'warn', 'a currently-failing step warns');
+  assert.match(row.value, /neonMirror:Inbound/, 'names the currently-failing step');
+  assert.doesNotMatch(row.value, /QCD:neon/, 'a recovered step is NOT flagged (no wolf-crying)');
+});
+
+test('single-signal: pipe-failures is OK when every step recovered', function () {
+  installHealth({ props: { NEON_HOST: 'h' } });
+  h.ctx.readPipelineHealth_ = function () {
+    return [   // newest-first: DQE recovered
+      { timestamp: '2026-07-14 07:05', step: 'processIntegratedHistory:DQE', status: 'success', notes: '' },
+      { timestamp: '2026-07-14 07:01', step: 'processIntegratedHistory:DQE', status: 'failure', notes: 'x' },
+    ];
+  };
+  assert.equal(rowByKey(h.call('getSystemHealth'), 'pipe-failures').status, 'ok');
+});

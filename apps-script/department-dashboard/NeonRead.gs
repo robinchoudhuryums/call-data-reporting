@@ -225,6 +225,16 @@ function neonFetchDqeRows_(fromIso, toIso, opts) {
       out.push(row);
     }
     clearNeonReadFailure_();   // F4: a successful read (even empty) means Neon is healthy
+    // LM2: mark the array REACHABLE so a consumer can tell a healthy-but-empty
+    // read (trust it, serve empty) from an unreachable/errored one (fall back
+    // to the sheet). Without this, both returned [] and every consumer ran a
+    // redundant whole-sheet scan on a genuinely-empty window. Only the SUCCESS
+    // path sets it; the !conn early return + the catch (out=[]) leave it unset,
+    // so those still fall back. Aligns with the DQE_READ_SOURCE=neon contract
+    // (trust a reachable Neon; the sheet is the ERROR fallback, not a second
+    // guess of an empty result). Read in-process only -- consumers adapt these
+    // rows into their payload, never serialize the array itself.
+    out._neonReachable = true;
   } catch (e) {
     // F4: a hard error here (SQL / JSON-parse failure) is recorded
     // durably + distinctly so it isn't mistaken for a legitimately
@@ -242,6 +252,17 @@ function neonFetchDqeRows_(fromIso, toIso, opts) {
     try { conn.close(); } catch (ce) {}
   }
   return out;
+}
+
+/**
+ * LM2: should a cut-over reader USE a neonFetchDqeRows_ result, or fall back to
+ * the sheet? Use it when it has rows OR when it's a reachable-but-empty read
+ * (`_neonReachable`, a genuinely-empty window -- serving empty is correct and
+ * skips the redundant whole-sheet scan). Fall back only when it's `[]` WITHOUT
+ * the marker (unreachable / errored / partial-discarded).
+ */
+function neonDqeRowsUsable_(rows) {
+  return !!(rows && (rows.length || rows._neonReachable));
 }
 
 /**

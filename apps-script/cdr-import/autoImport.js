@@ -791,6 +791,36 @@ function logPipelineHealthWithFallback_(ss, event) {
   }
 }
 
+/**
+ * Data-loss guard convention (M2 generalized). A FORCE re-import DELETES a
+ * date's rows for EVERY historical sheet before rebuilding. If the rebuild then
+ * produces ZERO rows for a sheet, that date's data for it is GONE -- silently,
+ * with no telemetry row (the `if (count > 0)` write blocks have no else). This
+ * SURFACES that loss: on a force rebuild that wrote nothing, log a `<step>`
+ * FAILURE Pipeline Health row, which the System Health "Recent pipeline step
+ * failures" signal + the Alerts Pipeline Health panel both catch. Best-effort +
+ * NEVER throws, so the already-written sheets stand and the import completes --
+ * unlike the DQE block, which uses the STRONGER M2 throw (buildDQE's
+ * refuseIfForce_) because DQE is the authoritative dashboard source and also
+ * emails. A NON-force empty rebuild is a legitimate no-op and is NOT flagged.
+ * The rule for any force-path writer: a force rebuild that produces fewer rows
+ * than it deleted must be SURFACED, never silently returned.
+ */
+function guardForceRebuildLoss_(targetSS, step, dateObj, force, wroteCount) {
+  if (!force || wroteCount > 0) return;
+  try {
+    logPipelineHealthWithFallback_(targetSS, {
+      step:       step,
+      status:     'failure',
+      rows:       0,
+      durationMs: null,
+      notes:      (dateObj && dateObj.toDateString ? dateObj.toDateString() : '')
+                + ' | FORCE rebuild produced 0 rows AFTER the date was cleared -- that '
+                + 'date\'s ' + step + ' data may be lost. Re-check Raw Data and re-import.',
+    });
+  } catch (logErr) { /* best-effort */ }
+}
+
 // ─────────────────────────────────────────────
 //  Pending Archive: Queue
 // ─────────────────────────────────────────────
@@ -1784,6 +1814,10 @@ if (!skipCDR && obcHD) {
         r[0], r[1], r[2], r[3], r[4], abndPct, viol
       ]);
     });
+    // Data-loss guard convention: QCD is dashboard-read (Insights Queue health /
+    // Overview / My Dept snapshot) and was force-deleted above, so a 0-row
+    // rebuild silently loses the date -- surface it (no-op unless force + empty).
+    guardForceRebuildLoss_(targetSS, 'processIntegratedHistory:QCD', dateObj, force, qcdBatch.length);
     if (qcdBatch.length > 0) {
       qcdHD.getRange(qcdHD.getLastRow() + 1, 1, qcdBatch.length, 12).setValues(qcdBatch);
       qcdCount = qcdBatch.length;
@@ -2048,7 +2082,10 @@ if (!skipCDR && obcHD) {
     if (rawDataSheet && rawDataSheet.getLastRow() > 1) {
       var inboundLegs = rawDataSheet.getDataRange().getDisplayValues();
       inboundLegs.shift();   // drop header row
-      var inboundRes = writeInboundCallsToNeon(inboundLegs);
+      // L2: the daily import's Raw Data is the COMPLETE inbound set for the
+      // date(s) -> authoritative per-date replace clears phantoms a force
+      // re-import that dropped a call_id would otherwise leave in inbound_calls.
+      var inboundRes = writeInboundCallsToNeon(inboundLegs, { authoritative: true });
       console.log('processIntegratedHistory: inbound_calls -> ' + JSON.stringify(inboundRes));
       if (inboundRes && inboundRes.error) {
         setNeonStatus_('error');

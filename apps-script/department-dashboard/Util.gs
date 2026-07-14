@@ -452,7 +452,7 @@ function computeActiveAgentsInRange_(dept, from, to, roster) {
     try {
       const _t0 = Date.now();
       const dalRows = neonFetchDqeRows_(from, to);
-      if (dalRows && dalRows.length) {
+      if (neonDqeRowsUsable_(dalRows)) {   // LM2: reachable-empty is trusted; only unreachable falls back
         const neonExts = deptQueueExtsForNeonReader_(dept, rosterSet, sheet, lastRow).exts;
         for (let i = 0; i < dalRows.length; i++) {
           const row = dalRows[i];
