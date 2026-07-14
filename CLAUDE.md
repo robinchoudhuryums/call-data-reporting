@@ -29,6 +29,16 @@ For deeper context, in priority order:
   pipeline or the dashboard's data layer.
 - [`docs/conventions.md`](docs/conventions.md) — time windows, aggregation
   rules, naming conventions, scope semantics.
+- [`docs/fix-history.md`](docs/fix-history.md) — the **historical fix log**:
+  what each short fix code (`F-2`, `IMP-7`, `CORE-3`, `RPT-1`, `OPS-7`,
+  `NEO-1`, the bare-`F#` Neon family, …) fixed, with a pointer to the live
+  rule it produced. **This file (CLAUDE.md) is the current-invariants / live
+  truth; fix-history is the "why" archive.** Read fix-history when you hit a
+  code in a comment and want the backstory — not to learn a current rule. It
+  also flags the two code-family collisions that trip everyone up (dashed
+  `F-#` vs bare `F#`; `S#` = Regression Scenario vs inline batch-step) and
+  lists codes that live in the code but never made it into CLAUDE.md
+  (`CORE-7`, `OPS-8`, `NEO-5`, `NEO-6`).
 - [`README.md`](README.md) — clasp setup + deploy flow.
 
 ## Key commands
@@ -100,6 +110,11 @@ scripts/deploy.sh apps-script/cdr-import <cdr-import-deployment-id>
 ## Common Gotchas
 
 A few things that have bitten us repeatedly. See `docs/known-issues.md` for full detail.
+
+> The bullets below are **live rules**. Where a bullet cites a fix code
+> (`F-2`, `IMP-7`, `CORE-3`, `RPT-1`, `OPS-7`, `NEO-1`, bare `F#`, …), that
+> code's backstory + a family index live in [`docs/fix-history.md`](docs/fix-history.md)
+> — follow a rule from here, look up a code's history there.
 
 - **Spreadsheet TZ ≠ script TZ**. The CDR Report spreadsheet is on
   `America/Mexico_City`; the script is on `America/Chicago`. Duration cells
