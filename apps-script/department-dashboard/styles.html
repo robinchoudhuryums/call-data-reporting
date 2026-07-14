@@ -3311,6 +3311,24 @@
     color: var(--muted);
   }
 
+  /* Outlier Fix: batch-apply toolbar + checkbox column. */
+  .of-batch-bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 0 0 10px;
+    flex-wrap: wrap;
+  }
+  .of-batch-hint { margin: 0; }
+  .of-check-col { width: 34px; text-align: center; }
+  .of-check-col input { cursor: pointer; }
+  .of-check-col input:disabled { cursor: not-allowed; }
+  /* While a write is in flight the whole body dims + goes non-interactive so
+     clicks can't queue up behind the async round-trip (belt to the JS
+     disabled-controls suspenders). */
+  .of-busy { opacity: 0.6; pointer-events: none; }
+  #of-run-status.status-loading { pointer-events: none; }
+
   /* Launcher loading pane: replaces the form while a question-chip run
      generates, so the user never sees a form flash. */
   .launcher-loading { padding: 8px 0 16px; }
@@ -5038,6 +5056,47 @@
   .toast.toast-visible { opacity: 1; transform: translateY(0); }
   .toast-success { background: var(--good); color: #fff; }
   .toast-error   { background: var(--warn); color: #fff; }
+
+  /* -------- App-styled confirm dialog (dsConfirm_) --------------------
+     Replaces the browser-native window.confirm (which renders in the
+     Sheets/browser chrome style). Layered above every modal (help = 200)
+     AND the toast (10100) so it works from within any modal. */
+  .ds-confirm-overlay {
+    position: fixed; inset: 0; z-index: 10200;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(0,0,0,0.42);
+    padding: 20px;
+    opacity: 0; transition: opacity var(--dur-2, 160ms) var(--ease, ease);
+  }
+  .ds-confirm-overlay.is-open { opacity: 1; }
+  .ds-confirm {
+    width: 100%; max-width: 440px;
+    background: var(--paper-card); color: var(--ink);
+    border: 1px solid var(--line);
+    border-radius: var(--r-lg); box-shadow: var(--shadow-modal);
+    padding: 18px 20px 16px;
+    transform: translateY(6px) scale(0.99);
+    transition: transform var(--dur-2, 160ms) var(--ease, ease);
+  }
+  .ds-confirm-overlay.is-open .ds-confirm { transform: none; }
+  .ds-confirm-title {
+    font-size: 15px; font-weight: 600; color: var(--ink);
+    margin-bottom: 8px;
+  }
+  .ds-confirm--danger .ds-confirm-title { color: var(--warn); }
+  .ds-confirm-body {
+    font-size: 13px; line-height: 1.5; color: var(--muted);
+    margin-bottom: 16px;
+  }
+  .ds-confirm-body strong { color: var(--ink); font-weight: 600; }
+  .ds-confirm-actions {
+    display: flex; justify-content: flex-end; gap: 8px;
+  }
+  /* Danger confirm button = warn-filled (destructive intent). */
+  .btn.ds-confirm-ok.ds-confirm--danger { background: var(--warn); color: #fff; }
+  @media (prefers-reduced-motion: reduce) {
+    .ds-confirm-overlay, .ds-confirm { transition: none; }
+  }
 
   /* -------- Date preset chips ------------------------------------ */
   .date-presets {

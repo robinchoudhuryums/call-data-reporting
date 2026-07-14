@@ -1944,8 +1944,13 @@
 
         <div class="al-section">
           <div class="al-section-title">Outliers (last 180 days)</div>
+          <div id="of-batch-bar" class="of-batch-bar" style="display:none;">
+            <button type="button" class="btn of-batch-apply" id="of-batch-apply" disabled>Apply selected</button>
+            <span class="al-hint of-batch-hint">Tick the rows you&rsquo;ve mapped, then apply them in one pass. Or use each row&rsquo;s <strong>Apply</strong>.</span>
+          </div>
           <table class="al-config-table">
             <thead><tr>
+              <th class="of-check-col"><input type="checkbox" id="of-select-all" title="Select all mapped rows" aria-label="Select all mapped rows"></th>
               <th>Outlier name</th>
               <th class="num">Rows</th>
               <th>Last seen</th>

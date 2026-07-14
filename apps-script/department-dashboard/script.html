@@ -493,6 +493,55 @@
   }
 
   /**
+   * App-styled confirmation dialog -- a themed replacement for the browser's
+   * native window.confirm (which renders in the Google Sheets / browser chrome
+   * style, incongruent with the app). Returns a Promise<boolean> that resolves
+   * true on confirm, false on cancel / Escape / backdrop click.
+   *
+   * opts: { title, message | messageHtml, confirmLabel, cancelLabel, tone }
+   *   - message     : plain text (escaped for you)
+   *   - messageHtml : pre-built HTML (caller MUST escape any dynamic values;
+   *                   use this for emphasis like <strong> around names)
+   *   - tone        : 'danger' tints the confirm button + header rule warn
+   * Layered above every modal (z-index in styles.html) so it works from within
+   * the Outlier Fix / Alerts / Dept Config modals.
+   */
+  function dsConfirm_(opts) {
+    return new Promise(function (resolve) {
+      var o = opts || {};
+      var toneCls = o.tone === 'danger' ? ' ds-confirm--danger' : '';
+      var overlay = document.createElement('div');
+      overlay.className = 'ds-confirm-overlay';
+      overlay.innerHTML =
+          '<div class="ds-confirm' + toneCls + '" role="alertdialog" aria-modal="true">'
+        +   '<div class="ds-confirm-title">' + escapeHtml(o.title || 'Please confirm') + '</div>'
+        +   '<div class="ds-confirm-body">' + (o.messageHtml || escapeHtml(o.message || '')) + '</div>'
+        +   '<div class="ds-confirm-actions">'
+        +     '<button type="button" class="btn btn-secondary ds-confirm-cancel">' + escapeHtml(o.cancelLabel || 'Cancel') + '</button>'
+        +     '<button type="button" class="btn ds-confirm-ok' + toneCls + '">' + escapeHtml(o.confirmLabel || 'Confirm') + '</button>'
+        +   '</div>'
+        + '</div>';
+      document.body.appendChild(overlay);
+      var okBtn = overlay.querySelector('.ds-confirm-ok');
+      var cancelBtn = overlay.querySelector('.ds-confirm-cancel');
+      var settle = function (val) {
+        document.removeEventListener('keydown', onKey, true);
+        if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+        resolve(val);
+      };
+      var onKey = function (e) {
+        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); settle(false); }
+        else if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); settle(true); }
+      };
+      okBtn.addEventListener('click', function () { settle(true); });
+      cancelBtn.addEventListener('click', function () { settle(false); });
+      overlay.addEventListener('mousedown', function (e) { if (e.target === overlay) settle(false); });
+      document.addEventListener('keydown', onKey, true);
+      requestAnimationFrame(function () { overlay.classList.add('is-open'); okBtn.focus(); });
+    });
+  }
+
+  /**
    * Renders the header data-freshness pill: "Data through Mon May 19
    * · 14h ago".  Source is getLatestDataDates -- which returns
    * { dqe, qcd, latest }.  The pill's visible date is `latest`
@@ -8417,6 +8466,11 @@
   // feature.
 
   let ofLastInit = null;
+  // Guards against the click-race the user hit: after Apply fired, the modal
+  // still accepted more clicks until the async write returned + relaunched.
+  // While true, every write handler no-ops and ofSetBusy_ disables the
+  // controls, so a batch/single apply can't be double-submitted.
+  let ofBusy_ = false;
 
   function initOrphanFix() {
     const btn   = $('orphan-fix-btn');
@@ -8425,6 +8479,19 @@
 
     const closeBtn = modal.querySelector('.modal-close');
     const backdrop = modal.querySelector('[data-close]');
+
+    // Batch controls (static elements) wired once. Row checkboxes + selects
+    // are dynamic, wired per-render in ofRenderOrphans_.
+    const selAll = $('of-select-all');
+    if (selAll) selAll.addEventListener('change', function () {
+      if (ofBusy_) return;
+      const tbody = $('of-orphans-tbody');
+      if (tbody) tbody.querySelectorAll('.of-row-check:not(:disabled)')
+        .forEach(function (c) { c.checked = selAll.checked; });
+      ofUpdateBatchState_();
+    });
+    const batchApply = $('of-batch-apply');
+    if (batchApply) batchApply.addEventListener('click', ofBatchApply_);
 
     function openModal() {
       modal.style.display = '';
@@ -8451,10 +8518,14 @@
     if (backdrop) backdrop.addEventListener('click', closeModal);
   }
 
-  function ofLoadInit_() {
+  // preserveStatus: keep the current #of-run-status message across the reload
+  // (the write paths set a result message + reload; without this the reload's
+  // clear would wipe a batch's "N applied, M failed" summary). The status div
+  // lives inside #of-body, so it just re-appears when the body re-shows.
+  function ofLoadInit_(preserveStatus) {
     $('of-loading').style.display = '';
     $('of-body').style.display = 'none';
-    ofSetStatus_(null);
+    if (!preserveStatus) ofSetStatus_(null);
     google.script.run
       .withSuccessHandler(function (data) {
         $('of-loading').style.display = 'none';
@@ -8483,10 +8554,12 @@
     const tbody = $('of-orphans-tbody');
     if (!tbody) return;
     if (!orphans.length) {
-      tbody.innerHTML = '<tr><td colspan="6" class="al-empty">'
+      tbody.innerHTML = '<tr><td colspan="7" class="al-empty">'
         + 'No outliers in the last 180 days. Every agent name in DQE '
         + 'Historical Data maps to a roster entry. &#x1F389;'
         + '</td></tr>';
+      const bar0 = $('of-batch-bar'); if (bar0) bar0.style.display = 'none';
+      const sa0 = $('of-select-all'); if (sa0) { sa0.checked = false; sa0.indeterminate = false; sa0.disabled = true; }
       return;
     }
     // Build the roster-name <option> list once; reused per row.
@@ -8507,6 +8580,8 @@
       // the "this is actually a NEW EMPLOYEE" flow -- adds them to a
       // dept's DO NOT EDIT! column instead of renaming to someone else.
       return '<tr data-orphan-idx="' + idx + '">'
+           +   '<td class="of-check-col"><input type="checkbox" class="of-row-check" data-idx="' + idx + '" '
+           +       'title="Select for batch apply (enabled once mapped)" aria-label="Select ' + escapeHtml(o.name) + ' for batch apply" disabled></td>'
            +   '<td>' + escapeHtml(o.name) + '</td>'
            +   '<td class="num">' + o.rows + '</td>'
            +   '<td>' + escapeHtml(o.lastSeen || '') + '</td>'
@@ -8522,37 +8597,47 @@
            +   '</td>'
            + '</tr>'
            + '<tr class="of-add-row" data-add-idx="' + idx + '" style="display:none;">'
-           +   '<td colspan="6">'
+           +   '<td colspan="7">'
            +     '<div class="of-add-form">'
            +       '<span class="of-add-label">Add <strong>' + escapeHtml(o.name) + '</strong> to roster:</span>'
            +       '<select class="of-add-dept" data-idx="' + idx + '">' + deptOptionsHtml + '</select>'
            +       '<input type="text" class="of-add-exts" data-idx="' + idx + '" '
-           +         'placeholder="extensions (comma-separated)" '
+           +         'placeholder="e.g. 1042 — the agent’s own extension" '
            +         'value="' + (o.sampleExts || []).map(escapeHtml).join(', ') + '">'
            +       '<button type="button" class="btn of-add-confirm" data-idx="' + idx + '" disabled>Add to roster</button>'
-           +       '<span class="of-add-hint">Writes one &ldquo;Name, ext1, ext2&rdquo; cell to the bottom of that dept’s DO NOT EDIT! column. Extensions are required. Audited to Orphan Fix Log.</span>'
+           +       '<span class="of-add-hint"><strong>Enter the agent’s own individual (direct) extension</strong> — NOT the department queue extension. '
+           +         'Digit-only; comma-separate multiple. Writes one &ldquo;Name, ext1, ext2&rdquo; cell to the bottom of that dept’s '
+           +         'DO NOT EDIT! column (required; audited to Orphan Fix Log).</span>'
            +     '</div>'
            +   '</td>'
            + '</tr>';
     }).join('');
 
-    // Wire selects to enable Apply when a non-empty value is chosen,
-    // and Apply buttons to fire the rename.
+    // Wire selects to enable Apply + the batch checkbox when a canonical name
+    // is chosen (clearing the select disables + unchecks the checkbox).
     tbody.querySelectorAll('.of-row-select').forEach(function (sel) {
       sel.addEventListener('change', function () {
         const idx = sel.getAttribute('data-idx');
         const applyBtn = tbody.querySelector('.of-row-apply[data-idx="' + idx + '"]');
-        if (applyBtn) applyBtn.disabled = !sel.value;
+        const chk = tbody.querySelector('.of-row-check[data-idx="' + idx + '"]');
+        const has = !!sel.value;
+        if (applyBtn) applyBtn.disabled = !has;
+        if (chk) { chk.disabled = !has; if (!has) chk.checked = false; }
+        ofUpdateBatchState_();
       });
+    });
+    tbody.querySelectorAll('.of-row-check').forEach(function (chk) {
+      chk.addEventListener('change', ofUpdateBatchState_);
     });
     tbody.querySelectorAll('.of-row-apply').forEach(function (btn) {
       btn.addEventListener('click', function () {
+        if (ofBusy_) return;
         const idx = Number(btn.getAttribute('data-idx'));
         const orphan = (ofLastInit.orphans || [])[idx];
         const sel = tbody.querySelector('.of-row-select[data-idx="' + idx + '"]');
         const canonical = sel ? sel.value : '';
         if (!orphan || !canonical) return;
-        ofConfirmAndApply_(btn, orphan, canonical);
+        ofConfirmAndApply_(orphan, canonical);
       });
     });
 
@@ -8581,40 +8666,187 @@
     });
     tbody.querySelectorAll('.of-add-confirm').forEach(function (btn) {
       btn.addEventListener('click', function () {
+        if (ofBusy_) return;
         const idx = Number(btn.getAttribute('data-idx'));
         const orphan = (ofLastInit.orphans || [])[idx];
         const dept = tbody.querySelector('.of-add-dept[data-idx="' + idx + '"]');
         const exts = tbody.querySelector('.of-add-exts[data-idx="' + idx + '"]');
         if (!orphan || !dept || !dept.value || !exts || !exts.value.trim()) return;
-        ofConfirmAndAddToRoster_(btn, orphan, dept.value, exts.value);
+        ofConfirmAndAddToRoster_(orphan, dept.value, exts.value);
+      });
+    });
+
+    // Batch bar visible now there are outliers; reset selection state.
+    const bar = $('of-batch-bar');
+    if (bar) bar.style.display = '';
+    const selAll = $('of-select-all');
+    if (selAll) { selAll.checked = false; selAll.indeterminate = false; }
+    ofUpdateBatchState_();
+  }
+
+  // Recomputes the batch toolbar + select-all from the current row state.
+  function ofUpdateBatchState_() {
+    const tbody = $('of-orphans-tbody');
+    if (!tbody) return;
+    const checked = tbody.querySelectorAll('.of-row-check:checked').length;
+    const enabled = tbody.querySelectorAll('.of-row-check:not(:disabled)').length;
+    const applyBtn = $('of-batch-apply');
+    if (applyBtn) {
+      applyBtn.disabled = ofBusy_ || checked === 0;
+      applyBtn.textContent = checked ? ('Apply ' + checked + ' selected') : 'Apply selected';
+    }
+    const selAll = $('of-select-all');
+    if (selAll) {
+      selAll.checked = enabled > 0 && checked === enabled;
+      selAll.indeterminate = checked > 0 && checked < enabled;
+      selAll.disabled = ofBusy_ || enabled === 0;
+    }
+  }
+
+  // Disables/enables every interactive control while a write is in flight so
+  // clicks can't queue up behind the async round-trip (the reported race).
+  function ofSetBusy_(busy) {
+    ofBusy_ = busy;
+    const body = $('of-body');
+    if (body) body.classList.toggle('of-busy', busy);
+    if (busy) {
+      ['of-orphans-tbody', 'of-aliases-tbody'].forEach(function (id) {
+        const t = $(id);
+        if (t) t.querySelectorAll('button, select, input').forEach(function (el) { el.disabled = true; });
+      });
+      const sa = $('of-select-all'); if (sa) sa.disabled = true;
+      const ba = $('of-batch-apply'); if (ba) ba.disabled = true;
+    } else {
+      ofRefreshRowStates_();
+    }
+  }
+
+  // Restores each control's correct enabled/disabled state after a busy spell
+  // (deterministic from the current DOM values -- no reload needed on failure).
+  function ofRefreshRowStates_() {
+    const tbody = $('of-orphans-tbody');
+    if (tbody) {
+      tbody.querySelectorAll('.of-row-select').forEach(function (sel) {
+        const idx = sel.getAttribute('data-idx');
+        const has = !!sel.value;
+        const ab = tbody.querySelector('.of-row-apply[data-idx="' + idx + '"]'); if (ab) ab.disabled = !has;
+        const ck = tbody.querySelector('.of-row-check[data-idx="' + idx + '"]'); if (ck) ck.disabled = !has;
+        sel.disabled = false;
+      });
+      tbody.querySelectorAll('.of-row-addnew, .of-add-dept, .of-add-exts').forEach(function (el) { el.disabled = false; });
+      tbody.querySelectorAll('.of-add-confirm').forEach(function (btn) {
+        const idx = btn.getAttribute('data-idx');
+        const dept = tbody.querySelector('.of-add-dept[data-idx="' + idx + '"]');
+        const exts = tbody.querySelector('.of-add-exts[data-idx="' + idx + '"]');
+        btn.disabled = !(dept && dept.value && exts && exts.value.trim());
+      });
+    }
+    const aliasTbody = $('of-aliases-tbody');
+    if (aliasTbody) aliasTbody.querySelectorAll('.of-alias-remove').forEach(function (b) { b.disabled = false; });
+    ofUpdateBatchState_();
+  }
+
+  // Applies a list of {fromName,toName} renames SEQUENTIALLY (server-side
+  // LockService serializes writes anyway, so parallel would just contend).
+  // Resolves { ok:[{item,renamed}], failed:[{item,err}] }.
+  function ofRunApplySequence_(items, onProgress) {
+    return new Promise(function (resolve) {
+      const ok = [], failed = [];
+      let i = 0;
+      const next = function () {
+        if (i >= items.length) { resolve({ ok: ok, failed: failed }); return; }
+        const it = items[i];
+        if (onProgress) onProgress(i, items.length, it);
+        google.script.run
+          .withSuccessHandler(function (res) { ok.push({ item: it, renamed: (res && res.renamed) || 0 }); i++; next(); })
+          .withFailureHandler(function (err) { failed.push({ item: it, err: (err && err.message) ? err.message : String(err) }); i++; next(); })
+          .applyOrphanRename({ fromName: it.fromName, toName: it.toName, alsoAddAlias: true, notes: '' });
+      };
+      next();
+    });
+  }
+
+  function ofBatchApply_() {
+    if (ofBusy_) return;
+    const tbody = $('of-orphans-tbody');
+    if (!tbody) return;
+    const items = [];
+    tbody.querySelectorAll('.of-row-check:checked').forEach(function (chk) {
+      const idx = Number(chk.getAttribute('data-idx'));
+      const orphan = (ofLastInit.orphans || [])[idx];
+      const sel = tbody.querySelector('.of-row-select[data-idx="' + idx + '"]');
+      if (orphan && sel && sel.value) {
+        items.push({ fromName: orphan.name, toName: sel.value, rows: orphan.rows || 0 });
+      }
+    });
+    if (!items.length) return;
+    const totalRows = items.reduce(function (a, b) { return a + (b.rows || 0); }, 0);
+    dsConfirm_({
+      title: 'Apply ' + items.length + ' rename' + (items.length === 1 ? '' : 's'),
+      tone: 'danger',
+      messageHtml: 'Rename <strong>' + items.length + '</strong> outlier'
+        + (items.length === 1 ? '' : 's') + ' across <strong>' + totalRows + '</strong> historical row'
+        + (totalRows === 1 ? '' : 's') + '? Each also adds an alias so future imports map correctly. '
+        + 'This modifies past data in DQE Historical Data and is audited to Orphan Fix Log.',
+      confirmLabel: 'Apply ' + items.length, cancelLabel: 'Cancel',
+    }).then(function (okc) {
+      if (!okc) return;
+      ofSetBusy_(true);
+      ofRunApplySequence_(items, function (k, total, it) {
+        ofSetStatus_('loading', 'Applying ' + (k + 1) + ' of ' + total + ': '
+          + it.fromName + ' → ' + it.toName + '…');
+      }).then(function (res) {
+        ofSetBusy_(false);
+        const renamed = res.ok.reduce(function (a, b) { return a + b.renamed; }, 0);
+        if (res.failed.length) {
+          ofSetStatus_('error', 'Applied ' + res.ok.length + ' of ' + items.length + '. '
+            + res.failed.length + ' failed: '
+            + res.failed.map(function (f) { return f.item.fromName + ' (' + f.err + ')'; }).join('; '));
+        } else {
+          ofSetStatus_('success', 'Renamed ' + renamed + ' row' + (renamed === 1 ? '' : 's')
+            + ' across ' + res.ok.length + ' outlier' + (res.ok.length === 1 ? '' : 's')
+            + '. Aliases added so future imports map correctly. Overview updates immediately; '
+            + 'other views may take up to 30 minutes (cache TTL).');
+        }
+        showToast('Applied ' + res.ok.length + ' rename' + (res.ok.length === 1 ? '' : 's'),
+          res.failed.length ? 'error' : 'success');
+        ofLoadInit_(true);   // one reload at the very end; keep the result summary
       });
     });
   }
 
-  function ofConfirmAndAddToRoster_(btn, orphan, dept, exts) {
-    const msg = 'Add "' + orphan.name + '" to the ' + dept + ' roster with extension(s) '
-              + exts + '?\n\nThis writes one cell to the DO NOT EDIT! sheet. Their '
-              + orphan.rows + ' existing data row' + (orphan.rows === 1 ? '' : 's')
-              + ' will match immediately (the orphan name becomes the roster name), and '
-              + 'future imports canonicalize against it. The action is audited to Orphan Fix Log.';
-    if (!window.confirm(msg)) return;
+  function ofConfirmAndAddToRoster_(orphan, dept, exts) {
+    if (ofBusy_) return;
+    dsConfirm_({
+      title: 'Add new hire to roster',
+      messageHtml: 'Add <strong>' + escapeHtml(orphan.name) + '</strong> to the <strong>'
+        + escapeHtml(dept) + '</strong> roster with extension(s) <strong>' + escapeHtml(exts) + '</strong>? '
+        + 'Enter the agent&rsquo;s own individual extension, not the department queue extension. '
+        + 'This writes one cell to the DO NOT EDIT! sheet. Their ' + orphan.rows + ' existing data row'
+        + (orphan.rows === 1 ? '' : 's') + ' will match immediately, and future imports canonicalize '
+        + 'against it. Audited to Orphan Fix Log.',
+      confirmLabel: 'Add to roster', cancelLabel: 'Cancel',
+    }).then(function (okc) {
+      if (!okc) return;
+      ofSetBusy_(true);
+      ofSetStatus_('loading', 'Adding ' + orphan.name + ' to the ' + dept + ' roster…');
+      ofDoAddToRoster_(orphan, dept, exts);
+    });
+  }
 
-    btn.disabled = true;
-    const prev = btn.textContent; btn.textContent = 'Adding…';
-    ofSetStatus_('loading', 'Adding ' + orphan.name + ' to the ' + dept + ' roster…');
-
+  function ofDoAddToRoster_(orphan, dept, exts) {
     google.script.run
       .withSuccessHandler(function (res) {
-        btn.disabled = false; btn.textContent = prev;
+        ofSetBusy_(false);
         ofSetStatus_('success',
           'Added "' + orphan.name + '" to ' + dept
           + (res && res.cell ? ' (cell ' + res.cell + ')' : '')
           + '. Overview updates immediately; other views may take up to 30 minutes (cache TTL).');
         showToast('Added to ' + dept + ' roster', 'success');
-        ofLoadInit_();
+        ofLoadInit_(true);
       })
       .withFailureHandler(function (err) {
-        btn.disabled = false; btn.textContent = prev;
+        ofSetBusy_(false);
         ofSetStatus_('error', 'Add failed: '
           + (err && err.message ? err.message : String(err)));
       })
@@ -8626,41 +8858,38 @@
       });
   }
 
-  function ofConfirmAndApply_(btn, orphan, canonical) {
-    const msg = 'Rename "' + orphan.name + '" to "' + canonical + '" in '
-              + orphan.rows + ' historical row' + (orphan.rows === 1 ? '' : 's')
-              + '?\n\nThis modifies past data in DQE Historical Data. An '
-              + 'alias will also be added to Agent Alias Overrides so the '
-              + 'next daily build keeps the mapping. The action is audited '
-              + 'to Orphan Fix Log.';
-    if (!window.confirm(msg)) return;
-
-    btn.disabled = true;
-    const prev = btn.textContent; btn.textContent = 'Applying…';
-    ofSetStatus_('loading', 'Applying rename: ' + orphan.name + ' -> ' + canonical + '…');
-
-    google.script.run
-      .withSuccessHandler(function (res) {
-        btn.disabled = false; btn.textContent = prev;
-        const n = (res && res.renamed) || 0;
-        ofSetStatus_('success',
-          'Renamed ' + n + ' row' + (n === 1 ? '' : 's')
-          + '. Alias added so future imports map correctly. '
-          + 'Overview updates immediately; other dashboard views may take up to 30 minutes (cache TTL) to reflect the change.');
-        showToast('Renamed ' + n + ' row' + (n === 1 ? '' : 's'), 'success');
-        ofLoadInit_();
-      })
-      .withFailureHandler(function (err) {
-        btn.disabled = false; btn.textContent = prev;
-        ofSetStatus_('error', 'Rename failed: '
-          + (err && err.message ? err.message : String(err)));
-      })
-      .applyOrphanRename({
-        fromName:     orphan.name,
-        toName:       canonical,
-        alsoAddAlias: true,
-        notes:        '',
-      });
+  function ofConfirmAndApply_(orphan, canonical) {
+    if (ofBusy_) return;
+    dsConfirm_({
+      title: 'Rename outlier',
+      tone: 'danger',
+      messageHtml: 'Rename <strong>' + escapeHtml(orphan.name) + '</strong> to <strong>'
+        + escapeHtml(canonical) + '</strong> in <strong>' + orphan.rows + '</strong> historical row'
+        + (orphan.rows === 1 ? '' : 's') + '? This modifies past data in DQE Historical Data and adds '
+        + 'an alias to Agent Alias Overrides so the next daily build keeps the mapping. '
+        + 'Audited to Orphan Fix Log.',
+      confirmLabel: 'Rename', cancelLabel: 'Cancel',
+    }).then(function (okc) {
+      if (!okc) return;
+      ofSetBusy_(true);
+      ofSetStatus_('loading', 'Applying rename: ' + orphan.name + ' → ' + canonical + '…');
+      ofRunApplySequence_([{ fromName: orphan.name, toName: canonical, rows: orphan.rows }])
+        .then(function (res) {
+          ofSetBusy_(false);
+          if (res.failed.length) {
+            ofSetStatus_('error', 'Rename failed: ' + res.failed[0].err);
+            showToast('Rename failed', 'error');
+            return;
+          }
+          const n = res.ok[0].renamed;
+          ofSetStatus_('success',
+            'Renamed ' + n + ' row' + (n === 1 ? '' : 's')
+            + '. Alias added so future imports map correctly. '
+            + 'Overview updates immediately; other dashboard views may take up to 30 minutes (cache TTL) to reflect the change.');
+          showToast('Renamed ' + n + ' row' + (n === 1 ? '' : 's'), 'success');
+          ofLoadInit_(true);
+        });
+    });
   }
 
   function ofRenderAliases_(aliases) {
@@ -8692,23 +8921,33 @@
 
     tbody.querySelectorAll('.of-alias-remove').forEach(function (btn) {
       btn.addEventListener('click', function () {
+        if (ofBusy_) return;
         const oldName = btn.getAttribute('data-old');
-        if (!window.confirm('Deactivate alias for "' + oldName + '"? The pipeline will stop mapping this raw name on the next build. Historical rows that were already renamed stay renamed.')) return;
-        btn.disabled = true;
-        ofSetStatus_('loading', 'Deactivating alias…');
-        google.script.run
-          .withSuccessHandler(function (res) {
-            const n = (res && res.removed) || 0;
-            ofSetStatus_('success', 'Deactivated ' + n + ' alias row'
-              + (n === 1 ? '' : 's') + '.');
-            ofLoadInit_();
-          })
-          .withFailureHandler(function (err) {
-            btn.disabled = false;
-            ofSetStatus_('error', 'Deactivate failed: '
-              + (err && err.message ? err.message : String(err)));
-          })
-          .removeAgentAlias({ oldName: oldName });
+        dsConfirm_({
+          title: 'Deactivate alias',
+          messageHtml: 'Deactivate the alias for <strong>' + escapeHtml(oldName) + '</strong>? '
+            + 'The pipeline will stop mapping this raw name on the next build. '
+            + 'Historical rows that were already renamed stay renamed.',
+          confirmLabel: 'Deactivate', cancelLabel: 'Cancel',
+        }).then(function (okc) {
+          if (!okc) return;
+          ofSetBusy_(true);
+          ofSetStatus_('loading', 'Deactivating alias…');
+          google.script.run
+            .withSuccessHandler(function (res) {
+              ofSetBusy_(false);
+              const n = (res && res.removed) || 0;
+              ofSetStatus_('success', 'Deactivated ' + n + ' alias row'
+                + (n === 1 ? '' : 's') + '.');
+              ofLoadInit_(true);
+            })
+            .withFailureHandler(function (err) {
+              ofSetBusy_(false);
+              ofSetStatus_('error', 'Deactivate failed: '
+                + (err && err.message ? err.message : String(err)));
+            })
+            .removeAgentAlias({ oldName: oldName });
+        });
       });
     });
   }
