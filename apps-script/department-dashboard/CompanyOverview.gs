@@ -88,6 +88,22 @@ const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v18';
 // surfaces agree on what "stale" means.
 const OVERVIEW_PIPELINE_STALE_HOURS = 36;
 
+// LM1: how many recent Pipeline Health rows computeOverviewPipelineFreshness_
+// scans for the latest DQE-freshness success. This was hardcoded to 40 -- too
+// tight: the deferred Neon mirror (NeonMirror.js) can append up to 4
+// `neonMirror:*` FAILURE rows every 15 min per queued date during a retry
+// storm (~16/hr), which evicts the morning's DQE success row from a 40-row
+// window within a couple hours even though the DQE SHEET build is healthy.
+// When no DQE row is found, freshness resolves to {hoursSinceFresh:null,
+// isStale:true} -> the ingest watchdog false-alarms (and OPS-1 then suppresses
+// a later real episode) AND the Overview pipeline banner falsely warns. A
+// genuine outage keeps the DQE row visible (nothing new is appended when the
+// pipeline is down), so widening the window strictly reduces false positives
+// without missing a real stall. 250 covers ~2+ weeks of normal logging
+// (~7-15 rows/day) and a moderate storm; readPipelineHealth_ is one bounded
+// range read (cheap, and this field is cached inside getCompanyOverview).
+const OVERVIEW_PIPELINE_FRESHNESS_SCAN_ROWS = 250;
+
 // Orphan nag window (days). An orphan is "active" if its lastSeen in
 // DQE Historical Data is within this many days of today. Active
 // orphans are the ones likely produced by recent CDR imports, so
@@ -576,7 +592,7 @@ function getCompanyOverview(req) {
  */
 function computeOverviewPipelineFreshness_() {
   try {
-    const rows = readPipelineHealth_(40);
+    const rows = readPipelineHealth_(OVERVIEW_PIPELINE_FRESHNESS_SCAN_ROWS);   // LM1: widened from 40
     if (!rows || !rows.length) return null;
     const dqeSteps = {
       'buildDQE':                       true,

@@ -3966,6 +3966,37 @@
      window.print() and unset right after. Everything outside the
      report panel is hidden so the page contains just the report. */
   @media print {
+    /* S2-1: window.print() prints the LIVE DOM. In dark mode the tokens flip
+       (near-white --ink text on a dark --paper), but browsers drop background
+       colors on paper by default -> near-white text on white = a blank page.
+       Re-assert the light palette for print (so a dark-mode report prints just
+       like a light-mode one) and set print-color-adjust:exact so intentional
+       fills/tints still render. Charts are already rasterized to PNG with a
+       resolved paper background, so this only affects the text/table surfaces.
+       (The QCD all-dept print sidesteps this by opening a fresh light window.) */
+    :root, body[data-mode="dark"] {
+      color-scheme: light !important;
+      --paper:       #f7f2e6 !important;
+      --paper-2:     #ede6d3 !important;
+      --paper-card:  #ffffff !important;
+      --ink:         #101418 !important;
+      --muted:       #606872 !important;
+      --line:        #d6d1c2 !important;
+      --accent:      #4e7bc4 !important;
+      --accent-soft: #e3edf8 !important;
+      --good:        #3d9476 !important;
+      --good-soft:   #e0efe6 !important;
+      --warn:        #c66b4b !important;
+      --warn-soft:   #f6e2d4 !important;
+      --bad:         #b23a2c !important;
+      --bad-soft:    #f1d7d2 !important;
+    }
+    body {
+      background: #ffffff !important;
+      color: var(--ink) !important;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
     body.ir-printing > .container { display: none !important; }
     body.ir-printing .modal-backdrop { display: none !important; }
     body.ir-printing #individual-modal {
@@ -4971,7 +5002,12 @@
     font-family: var(--ui);
     font-size: 13px;
     font-weight: 500;
-    color: #fff;
+    /* S2-2: the neutral toast is an inverted chip (text = paper, bg = ink).
+       Hardcoding color:#fff made it white-on-near-white (invisible) in dark
+       mode, where --ink flips to #ecf0f6. Use var(--paper) so the text inverts
+       WITH the background in both themes. The success/error variants re-assert
+       white below (they sit on the colored --good/--warn backgrounds). */
+    color: var(--paper);
     background: var(--ink);
     box-shadow: 0 4px 12px rgba(0,0,0,0.18);
     opacity: 0;
@@ -4979,8 +5015,8 @@
     transition: opacity 0.25s, transform 0.25s;
   }
   .toast.toast-visible { opacity: 1; transform: translateY(0); }
-  .toast-success { background: var(--good); }
-  .toast-error   { background: var(--warn); }
+  .toast-success { background: var(--good); color: #fff; }
+  .toast-error   { background: var(--warn); color: #fff; }
 
   /* -------- Date preset chips ------------------------------------ */
   .date-presets {

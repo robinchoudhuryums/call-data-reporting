@@ -175,7 +175,17 @@ function runNeonBackup_() {
     }
 
     var ms = Date.now() - t0;
-    var summary = outcomes.join(' | ') + ' | ' + ms + 'ms';
+    // M1: lead the outcome string with a status token (ok/FAILED). The
+    // SystemHealth OPS-8 classifier treats a result as healthy iff it STARTS
+    // WITH `ok` (so a designed-normal "...closed skipped" detail doesn't paint
+    // the row amber). This summary was `outcomes.join(...)`, which starts with a
+    // TABLE NAME and always contains the word "skipped" -- so the backup Health
+    // row rendered WARN on every run, incl. fully-successful ones, masking a
+    // real outage of the no-sheet-fallback tables. Prefixing a status token
+    // (like the total-failure `nbRecord_('FAILED: ...')` path already does)
+    // makes the shared classifier correct for backup too.
+    var anyFail = outcomes.some(function (o) { return /\bFAILED\b/.test(o); });
+    var summary = (anyFail ? 'FAILED' : 'ok') + ' | ' + outcomes.join(' | ') + ' | ' + ms + 'ms';
     Logger.log('runNeonBackup_: ' + summary);
     nbRecord_(summary);
   } catch (e) {

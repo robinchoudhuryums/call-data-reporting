@@ -427,17 +427,22 @@ function mirrorDqeForDate_(ss, iso) {
       ttt:              r[8]  || null,
       att:              r[9]  || null,
       slots:            r.slice(10, 29).map(sanitizeSlotCellForNeon_),   // F-51
-      // F3: route the comma-joined abandoned-ID/time cells (AD/AE/AF, cols
-      // 30-32) through the same coercion guard the whole-sheet backfill uses
+      // F3: route the comma-joined abandoned-ID cells (AD/AE, cols 30-31)
+      // through the ID coercion guard the whole-sheet backfill uses
       // (cdr-report/neonbackfill.js). getDisplayValues on a pre-protection
       // coerced cell returns a thousands-separated / scientific number that,
       // written as-is, mis-splits on the separator commas downstream; the
       // sanitizer recovers lossless single values and marks genuinely-lost
-      // multi-value cells with the #REBUILD sentinel. Without this the
+      // multi-value ID cells with the #REBUILD sentinel. Without this the
       // deferred mirror wrote garbage where the backfill wrote a clean value.
       abParentIds:      sanitizeAbandonedCellForNeon_(r[29]),
       abMissedIds:      sanitizeAbandonedCellForNeon_(r[30]),
-      abMissedTimes:    sanitizeAbandonedCellForNeon_(r[31]),
+      // M3: AF (col 32) is a comma-joined H:MM:SS TIMES column that coerces
+      // like the K-AC slots (date-render / bare serial), NOT like the numeric
+      // AD/AE IDs -- route it through the slot sanitizer (F-51) so a coerced
+      // date-render is RECOVERED, not mirrored verbatim. `|| null` keeps the
+      // empty-cell -> NULL contract (sanitizeSlotCellForNeon_ returns '').
+      abMissedTimes:    sanitizeSlotCellForNeon_(r[31]) || null,
       avgAbdWait:       r[32] || null,
       csrAvgAbdWait:    r[33] || null,
     });

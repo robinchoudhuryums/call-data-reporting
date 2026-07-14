@@ -1,6 +1,18 @@
 # Cycle State — resume note
 
-## Latest session (/broad-scan 3-stage audit + /broad-implement: CLAUDE.md split)
+## Latest session (/broad-implement: P0 + P1 fixes)
+Branch `claude/broad-scan-ekn18f`, **286/286 tests** (added 2), INV-16 guard green, buildDQE copies byte-identical.
+Implemented 7 findings (P0: M1/M2/M3; P1: S2-1/S2-2/L7/LM1). 10 files, 3 subsystems.
+- **M2** (both buildDQEHistoricalData.js copies + autoImport.js): force-path silent DQE loss. New `refuseIfForce_` helper throws (mirrors IMP-7) on the empty/no-dates/zero-rows early-returns, GATED on `opts.force` (threaded a `force` param into processIntegratedHistory + both build call sites) so the daily NON-force F5 rows:0 path is unchanged -- only a force re-import (rows pre-deleted) alerts. New test in pipeline-build.test.js.
+- **M1** (NeonBackup.gs): backup Health row amber-on-every-run. Summary now LEADS with `ok`/`FAILED` so the OPS-8 `/^ok\b/` classifier is correct (was starting with a table name + always contained "skipped"). New test in system-health.test.js.
+- **M3** (neonbackfill.js ×2 + NeonMirror.js): AF (`abandoned_missed_times`) routed through `sanitizeSlotCellForNeon_(r[31]) || null` (was the ID sanitizer) so a coerced date-render is RECOVERED not mirrored as garbage; `|| null` preserves empty→NULL. Sanitize FUNCTIONS untouched (F-24/F-51 guard green -- only call sites changed).
+- **S2-1** (styles.html): dark-mode Print blank page -> `@media print` re-asserts the light palette + `print-color-adjust:exact`.
+- **S2-2** (styles.html): neutral toast invisible in dark mode -> `color: var(--paper)`; success/error re-assert `#fff`.
+- **L7** (autoImport.js): inline CDR/QCD Neon-mirror errors now log `processIntegratedHistory:CDR:neon` / `:QCD:neon` Pipeline Health failure rows (parallel to `buildDQE:neon`/`:Inbound`).
+- **LM1** (CompanyOverview.gs): watchdog/banner false-alarm -> `computeOverviewPipelineFreshness_` scan window widened 40 -> `OVERVIEW_PIPELINE_FRESHNESS_SCAN_ROWS=250` so a deferred-mirror retry storm can't evict the DQE-freshness row.
+Where I left off: fixes complete + committed/pushed? see git log. NOT deployed (Dashboard + cdr-import + cdr-report clasp pushes pending, operator). DOC updates pending (INV-44 new steps, number-coercion gotcha AF, fix-history M1/M2/M3 resolved) -> run /sync-docs. Remaining scan findings (P2/P3) not started.
+
+## Prior session (/broad-scan 3-stage audit + /broad-implement: CLAUDE.md split)
 Branch `claude/broad-scan-ekn18f`, 284/284 tests, INV-16 guard green. Working tree: 3 files changed, none deployed (docs only).
 - **Ran a full 3-stage /broad-scan** (8 parallel subsystem agents + 2 Stage-2 deep-dive agents; every top finding independently verified at source). Verdict: mature, well-tested, airtight auth + correct core math; residual risk clusters in **observability** and **force-path/edge handling**, plus lots of **built-but-dormant** capability (Neon read-back/config-Neon default to sheet; Inbound/Direct admin-only "while vetted"; Escalations Phase-2 unfed). Full ranked findings + effort in the session transcript (P0: M2 force-reimport silent DQE loss, M1 SystemHealth backup always-amber, M3 AF sanitizer mis-routing — all Small).
 - **Implemented (scope = docs only, per /broad-implement args)**: split CLAUDE.md into current-invariants (CLAUDE.md stays live truth) vs a new **`docs/fix-history.md`** historical fix-log (code taxonomy + per-family index tables F-#/bare-F#/IMP/CORE/RPT/OPS/NEO/M/E/TST, the dashed-vs-bare-F and S#-overload collision warnings, and codes that are in code but NOT CLAUDE.md: CORE-7/OPS-8/NEO-5/NEO-6). Added two additive CLAUDE.md pointers (Read-first bullet + Common-Gotchas note). **Did NOT** do the aggressive in-place shrink (risk of dropping a live rule) — awaiting owner go-ahead; AskUserQuestion was interrupted so defaulted to the safe non-destructive archive.

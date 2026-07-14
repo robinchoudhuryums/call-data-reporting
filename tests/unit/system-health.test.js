@@ -94,6 +94,33 @@ test('health: healthy install -> ok/muted rows, required-trigger warns, warnCoun
   assert.equal(data.warnCount, warns);
 });
 
+test('M1/OPS-8: a successful backup (leads with ok, detail says "skipped") is OK, a FAILED one warns', function () {
+  // The backup outcome string now LEADS with a status token (ok/FAILED) so the
+  // OPS-8 classifier -- healthy iff the result STARTS WITH `ok` -- is correct
+  // even though every per-table detail contains the designed-normal word
+  // "skipped". Before M1 the string started with a table name + always
+  // contained "skipped", so the backup Health row was amber on every run,
+  // masking a real outage of the no-sheet-fallback tables.
+  installHealth({ props: {
+    NEON_HOST: 'h',
+    NEON_BACKUP_LAST: '2026-07-12T06:00:00Z',
+    NEON_BACKUP_LAST_RESULT: 'ok | escalations ok (12KB) | escalation_activity ok '
+      + '(1 month file(s) written, 4 closed skipped) | inbound_calls ok '
+      + '(2 month file(s) written, 3 closed skipped) | 1234ms',
+  }});
+  assert.equal(rowByKey(h.call('getSystemHealth'), 'out-backup').status, 'ok',
+    'a fully-successful backup is not amber');
+
+  installHealth({ props: {
+    NEON_HOST: 'h',
+    NEON_BACKUP_LAST: '2026-07-12T06:00:00Z',
+    NEON_BACKUP_LAST_RESULT: 'FAILED | escalations ok (12KB) | '
+      + 'inbound_calls FAILED: connection timeout | 1234ms',
+  }});
+  assert.equal(rowByKey(h.call('getSystemHealth'), 'out-backup').status, 'warn',
+    'a failed backup surfaces as warn');
+});
+
 test('health: stale pipeline / behind mirror / missing sheets surface as warn rows', function () {
   installHealth({ props: { NEON_HOST: 'h' }, missingSheets: ['Report Usage'] });
   h.ctx.computeOverviewPipelineFreshness_ = function () {
