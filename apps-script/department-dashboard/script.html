@@ -3847,6 +3847,22 @@
     return warn ? { cls: 'is-warn', badge: 'Watch' } : { cls: 'is-good', badge: 'On track' };
   }
 
+  // IR1: PEER-AWARE banner tone for the single-agent Individual Report. The
+  // absolute headlineTone_ read "Watch" (red) whenever the agent was under 92%,
+  // even when they beat their team. Instead:
+  //   - agent meets the 92% company standard        -> "On track" (green)
+  //   - below 92% but AT/ABOVE the team average      -> NEUTRAL (no tint; owner
+  //     ruling: beating a struggling team isn't "Watch", but isn't "On track")
+  //   - below the team average                       -> "Watch" (warn)
+  function irHeadlineTone_(agentPct, teamPct) {
+    if (agentPct == null || !isFinite(Number(agentPct))) return null;
+    const a = Number(agentPct);
+    if (a >= 92) return { cls: 'is-good', badge: 'On track' };
+    const tp = Number(teamPct);
+    if (teamPct != null && isFinite(tp) && tp > 0 && a >= tp) return null;   // neutral
+    return { cls: 'is-warn', badge: 'Watch' };
+  }
+
   function insHeadline_(data) {
     const t = data.teamStats || {};
     if (!Number((t.rung || {}).val) && !Number((t.rung || {}).prev)) {
@@ -3872,12 +3888,17 @@
         bits.push(headlineName_(bottom.name) + ' slipped the most');
       }
       if (bits.length) s.push(bits.join('; ') + ' vs the prior window.');
-      const regressed = cards.filter(function (c) {
-        return deltaClassify_(insPerDayMetrics_(c.metrics, data.meta)) === 'regressed';
+      // I6: count the SAME set the card rails flag -- agents BEHIND the team
+      // (peer-relative standing), so the headline number matches the orange
+      // edges below exactly (was a direction-of-change "regressed" count, which
+      // disagreed with the standing-based rails).
+      const teamPctH = Number((t.pct || {}).val) || 0;
+      const behind = cards.filter(function (c) {
+        return insClassifyAgent_(c, teamPctH) === 'attention';
       }).length;
-      if (regressed > 0) {
-        s.push(regressed + ' agent' + (regressed === 1 ? '' : 's')
-          + ' regressed overall — their cards carry the orange edge below.');
+      if (behind > 0) {
+        s.push(behind + ' agent' + (behind === 1 ? '' : 's')
+          + ' ' + (behind === 1 ? 'is' : 'are') + ' behind the team average — their cards carry the orange edge below.');
       }
     }
     // Queue health: one sentence when the abandon rate crosses the 5%
@@ -3922,7 +3943,8 @@
         + escapeHtml(String(a.stats.pct)) + '</strong>' + vsTeam + ').'];
       const ins = a.insights || [];
       if (ins.length && ins[0].text) s.push(escapeHtml(ins[0].text));
-      return { sentences: s, tone: headlineTone_({ answerPct: (a.raw || {}).pct }) };
+      // IR1: peer-aware tone (below 92% but at/above team reads neutral, not red).
+      return { sentences: s, tone: irHeadlineTone_((a.raw || {}).pct, teamPct) };
     }
     let top = cards[0];
     cards.forEach(function (c) { if ((c.raw || {}).answered > (top.raw || {}).answered) top = c; });
@@ -10244,9 +10266,11 @@
     const genBtn = $('ins-generate-btn');
     if (genBtn) genBtn.addEventListener('click', runInsReport);
 
-    // A1: needs-attention strip -- a chip scrolls to that agent's card.
-    const naStrip = $('ins-needs-attention');
-    if (naStrip) naStrip.addEventListener('click', function (e) {
+    // I2: needs-attention chips live inside the headline banner now -- delegate
+    // from the results container so a chip click scrolls to that agent's card
+    // wherever the chips are rendered.
+    const insResults = $('insights-results');
+    if (insResults) insResults.addEventListener('click', function (e) {
       const chip = e.target.closest('.ds-attn-chip');
       if (!chip) return;
       insSpotlightAgentCard_(chip.getAttribute('data-agent'));
@@ -10932,39 +10956,42 @@
     return worst ? { label: worst.label, arrow: worst.arrow } : null;
   }
 
-  // A1: needs-attention strip directly under the headline. One chip per
-  // REGRESSED agent -- deltaClassify_ on per-day-adjusted metrics, the
-  // DIRECTION of change (distinct from the standing-based "Needs attention"
-  // CARD TIER, which is current-vs-target). Each chip scrolls to that agent's
-  // card. Zero regressed -> a quiet "all steady/improving" line. Hidden for a
-  // single-agent report (no cohort to triage). Reuses the regressed set the
-  // headline sentence already counts -- no new server data.
+  // I2: the needs-attention chips are now folded INTO the headline banner (one
+  // "here's who's behind" surface instead of a separate strip). One chip per
+  // BEHIND-TEAM agent -- the SAME peer-relative set the card orange rails flag
+  // (insClassifyAgent_ 'attention'), so the banner count, these chips, and the
+  // rails all agree (I6). Each chip scrolls to that agent's card. Hidden for a
+  // single-agent report; no chips when nobody's behind (the banner's team
+  // sentence carries the story). The standalone #ins-needs-attention element is
+  // retired (kept hidden).
   function insRenderNeedsAttentionStrip_(data) {
-    var host = $('ins-needs-attention');
-    if (!host) return;
+    var strip = $('ins-needs-attention');
+    if (strip) { strip.style.display = 'none'; strip.innerHTML = ''; }
+    var headEl = $('ins-headline');
+    if (!headEl) return;
+    // Clear any chips appended on a prior render (reportHeadline_ rebuilds the
+    // banner's innerHTML, but guard anyway).
+    var prev = headEl.querySelector('.ins-headline-attn');
+    if (prev && prev.parentNode) prev.parentNode.removeChild(prev);
+    if (headEl.style.display === 'none') return;
     var cards = (data && data.agentData) || [];
-    var meta = (data && data.meta) || {};
-    if (cards.length <= 1) { host.style.display = 'none'; host.innerHTML = ''; return; }
-    var regressed = cards.filter(function (c) {
-      return deltaClassify_(insPerDayMetrics_(c.metrics, meta)) === 'regressed';
-    });
-    host.style.display = '';
-    if (!regressed.length) {
-      host.className = 'ds-attention ds-attention--calm';
-      host.innerHTML = '<span class="ds-attention-icon">✓</span>'
-        + '<span class="ds-attention-msg">All agents are steady or improving vs the prior period.</span>';
-      return;
-    }
-    host.className = 'ds-attention ds-attention--warn';
-    var chips = regressed.map(function (c) {
-      var w = insWorstMover_(c.metrics, meta);
-      var sub = w ? '<span class="ds-attn-chip-metric">' + w.arrow + ' ' + escapeHtml(w.label) + '</span>' : '';
+    if (cards.length <= 1) return;
+    var ts = (data && data.teamStats) || {};
+    var teamPct = Number((ts.pct && ts.pct.val) || 0);
+    var behind = cards.filter(function (c) { return insClassifyAgent_(c, teamPct) === 'attention'; });
+    if (!behind.length) return;
+    var chips = behind.map(function (c) {
+      var pct = Number((c.metrics && c.metrics.pct && c.metrics.pct.val) || 0);
+      var gap = Math.round(teamPct - pct);
+      var sub = '<span class="ds-attn-chip-metric">' + (gap > 0 ? gap + ' pts behind' : 'behind') + '</span>';
       return '<button type="button" class="ds-attn-chip" data-agent="' + escapeHtml(c.name) + '"'
         + ' title="Jump to ' + escapeHtml(c.name) + '’s card">'
         + '<span class="ds-attn-chip-name">' + escapeHtml(c.name) + '</span>' + sub + '</button>';
     }).join('');
-    host.innerHTML = '<span class="ds-attention-label">Needs attention</span>'
-      + '<span class="ds-attn-chips">' + chips + '</span>';
+    var row = document.createElement('div');
+    row.className = 'ins-headline-attn ds-attn-chips';
+    row.innerHTML = chips;
+    headEl.appendChild(row);
   }
 
   // A1: scroll to + pulse an agent's card by name (the strip chip target).
@@ -10994,6 +11021,10 @@
   function insRenderReport_(data, opts) {
     insLastData = data;
     insCloseEditPopover_();
+    // I1: belt-and-suspenders -- ensure the launcher's auto-generate loading
+    // pane is hidden whenever a report renders. Its ~120px skeleton, if left
+    // visible, reads as a large blank band above the results.
+    launcherHideLoading_('ins-launcher-loading');
     insRenderEditingLine_(data);
     // Date line: label the window so the range doesn't read as arbitrary --
     // name the launcher-default shape ("last 30 days") when it matches, and
@@ -11782,15 +11813,23 @@
   // and a struggling agent stays "Needs attention" even while improving from
   // worse. The prior-period TREND is shown separately (the trend pill).
   // Returns 'strong' | 'steady' | 'attention'.
-  function insClassifyAgent_(card) {
+  // I7/I6: PEER-RELATIVE standing -- an agent's answer rate vs their TEAM's
+  // answer rate (not the absolute 92% company target, which unfairly branded an
+  // agent who beats a struggling team). Returns 'attention' (Behind team),
+  // 'steady' (On par), or 'strong' (Ahead of team). A volume gate keeps a
+  // handful-of-calls agent "on par" (too little signal). The direction-of-
+  // change TREND stays a separate secondary pill (insTrendPill_).
+  var INS_PEER_GAP_PTS = 5;   // >= this many points below/above team = Behind/Ahead
+  var INS_MIN_VOL      = 5;   // fewer rung calls than this = on par (low signal)
+  function insClassifyAgent_(card, teamPct) {
     var m = (card && card.metrics) || {};
     var pct  = Number((m.pct  && m.pct.val)  || 0);   // current % answered (0-100)
     var rung = Number((m.rung && m.rung.val) || 0);   // volume (total rings)
-    var TARGET = 92, WATCH = 85, MIN_VOL = 5;
-    if (rung < MIN_VOL) return 'steady';              // too little signal to judge
-    if (pct >= TARGET)  return 'strong';              // at/above the company target
-    if (pct <  WATCH)   return 'attention';           // clearly below target
-    return 'steady';                                  // near target
+    if (rung < INS_MIN_VOL) return 'steady';          // too little signal to judge
+    var d = pct - (Number(teamPct) || 0);
+    if (d <= -INS_PEER_GAP_PTS) return 'attention';   // behind the team
+    if (d >=  INS_PEER_GAP_PTS) return 'strong';      // ahead of the team
+    return 'steady';                                  // on par with the team
   }
 
   function insTriageHeader_(label, count, tone) {
@@ -11800,16 +11839,15 @@
          +   '<span class="ins-group-count">' + count + '</span>'
          + '</div>';
   }
-  // A2 legend: the rail now encodes STANDING vs the 92% answer-rate target
-  // (Strong / Steady / Needs attention), NOT the direction of change -- the
-  // prior-period trend is the separate trend pill. Rendered once above the
-  // triage groups.
+  // Legend: the rail + tier encode PEER-RELATIVE standing (vs the team's answer
+  // rate, with a small-volume gate), NOT the absolute 92% target and NOT the
+  // direction of change (that's the separate trend pill).
   function insTriageLegend_() {
-    return '<div class="ins-group-legend" title="The left rail + tier of each card show the agent\'s current standing vs the 92% answer-rate target (with a small-volume gate) — not the direction of change (that\'s the trend pill on each card).">'
-         +   'Standing'
-         +   '<span class="ins-leg-dot ins-leg-good"></span>strong'
-         +   '<span class="ins-leg-dot ins-leg-muted"></span>steady'
-         +   '<span class="ins-leg-dot ins-leg-warn"></span>needs attention'
+    return '<div class="ins-group-legend" title="The left rail + tier of each card show how the agent\'s answer rate compares to the TEAM average (with a small-volume gate) — not the 92% company target, and not the direction of change (that\'s the trend pill on each card).">'
+         +   'vs team'
+         +   '<span class="ins-leg-dot ins-leg-good"></span>ahead'
+         +   '<span class="ins-leg-dot ins-leg-muted"></span>on par'
+         +   '<span class="ins-leg-dot ins-leg-warn"></span>behind'
          + '</div>';
   }
 
@@ -11831,6 +11869,9 @@
     if (cards.length <= 1) insCardsView = 'cards';
 
     const teamScore = deltaImprovementScore_(insPerDayMetrics_(teamStats || {}, meta));
+    // I6/I7: peer baseline for the standing classification -- the team's answer
+    // rate this window. The rail/tier compare each agent to THIS, not 92%.
+    const teamPctForStanding = Number((teamStats && teamStats.pct && teamStats.pct.val) || 0);
     const enriched = cards.map(function (c) {
       // Classification runs on per-working-day-adjusted metrics (see
       // insPerDayMetrics_) so an unequal-window comparison can't brand an
@@ -11839,7 +11880,7 @@
       return {
         card: c,
         score: deltaImprovementScore_(adj),
-        standing: insClassifyAgent_(c),          // #11c: rail + tier (current vs target)
+        standing: insClassifyAgent_(c, teamPctForStanding),  // rail + tier (peer-relative)
         trend: deltaClassify_(adj),               // secondary: direction vs prior (trend pill)
         quiet: deltaIsQuiet_(adj),
       };
@@ -11890,9 +11931,9 @@
     if (sortedMain.length > 1) {
       let html = insTriageLegend_();
       const tiers = [
-        { group: attention, label: 'Needs attention', tone: 'warn' },
-        { group: steady,    label: 'Steady',          tone: 'muted' },
-        { group: strong,    label: 'Strong',          tone: 'good' },
+        { group: attention, label: 'Behind team', tone: 'warn' },
+        { group: steady,    label: 'On par',      tone: 'muted' },
+        { group: strong,    label: 'Ahead of team', tone: 'good' },
       ];
       tiers.forEach(function (t) {
         if (!t.group.length) return;

@@ -772,8 +772,13 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `headlineTone_` using ONLY the 92%/5% company standards (answer >=92%
   -> green "On track"; answer <92% OR abandon >=5% -> orange "Watch");
   absent metric / bare-array return -> neutral "At a glance". Wired for
-  IR(single)/CR/Insights (answer rate) + Inbound (abandon/answer);
-  Missed + comparison-mode stay neutral. `.report-headline.is-good`/
+  Insights (team answer rate) + Inbound (abandon/answer);
+  Missed + comparison-mode stay neutral. **EXCEPTION (IR1): the Individual
+  Report (single agent) uses `irHeadlineTone_` instead -- PEER-AWARE:
+  agent >=92% -> "On track"; below 92% but AT/ABOVE the team avg -> NEUTRAL
+  (owner ruling: beating a struggling team isn't "Watch"); below the team
+  avg -> "Watch". So an above-team agent under 92% no longer reads red.**
+  `.report-headline.is-good`/
   `.is-warn` tint the box + badge. (2) **Quick-start
   question launcher** (`initOverviewLauncher_`) -- the four question
   chips render on ALL THREE pages (the Overview's static block plus
