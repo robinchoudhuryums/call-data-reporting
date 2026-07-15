@@ -129,16 +129,21 @@ function buildDQEHistoricalData(rawSheet, dqeSheet, opts) {
   // ── Helpers ────────────────────────────────────────────────────────────────
 
   // Roster-driven agent-name canonicalization. The CDR feed sometimes
-  // spells an agent's name without their parenthesized nickname (e.g.
-  // "Roman Robin Paulose" instead of "Roman (Robin) Paulose"), which
-  // produces split daily rows for the same person. We treat the
-  // roster sheet (DO NOT EDIT! in the same spreadsheet) as the source
-  // of canonical names and rewrite any raw name whose paren-stripped
-  // form unambiguously matches a roster entry.
+  // mangles an agent's parenthesized nickname, producing split daily rows
+  // for the same person. We treat the roster sheet (DO NOT EDIT! in the
+  // same spreadsheet) as the source of canonical names and rewrite any raw
+  // name whose paren-NORMALIZED form unambiguously matches a roster entry.
+  // TWO feed variants are canonicalized (roster canonical: "Roman (Robin)
+  // Paulose"):
+  //   - nickname OMITTED entirely  -> "Roman Paulose"       (strip form)
+  //   - nickname UN-PARENTHESIZED  -> "Roman Robin Paulose" (flatten form,
+  //     the ~90% orphan case) -- previously NOT matched, since stripping the
+  //     whole parenthetical left the extra word in place; the flatten key
+  //     (drop only the parens, keep the words) closes it.
   //
   // Edge cases:
   //   - Raw name already matches a roster entry exactly  -> no-op.
-  //   - Stripped form matches >1 roster entry            -> no-op
+  //   - Normalized form matches >1 roster entry          -> no-op
   //     (ambiguous; preserve raw rather than guess).
   //   - Raw name not on roster at all                    -> no-op
   //     (new hire not yet rostered; same behavior as before).
@@ -149,25 +154,44 @@ function buildDQEHistoricalData(rawSheet, dqeSheet, opts) {
   // roster layout there.
   const ROSTER_CANONICAL = loadRosterCanonicalNames_(rawSheet);
 
+  // Drop the WHOLE parenthetical (parens + contents): catches the
+  // nickname-omitted form "Roman Paulose".
   function stripParens_(name) {
     return String(name || '').replace(/\([^)]*\)/g, '').replace(/\s+/g, ' ').trim();
+  }
+  // Drop ONLY the parenthesis characters, KEEP the contents:
+  // "Roman (Robin) Paulose" -> "Roman Robin Paulose" -- the un-parenthesized
+  // nickname form the feed emits (the ~90% orphan case).
+  function flattenParens_(name) {
+    return String(name || '').replace(/[()]/g, '').replace(/\s+/g, ' ').trim();
   }
 
   function canonicalizeAgentName(rawName) {
     if (!rawName) return rawName;
     // Admin-curated overrides (Agent Alias Overrides sheet) take
     // precedence over both the roster-exact match and the paren
-    // strip. Lets an admin rename a typo-orphan like "Sarah Q. Smith"
-    // -> "Sarah Smith" without having to add the orphan form into
-    // the roster cell. Loaded inside ROSTER_CANONICAL.aliasMap.
+    // normalization. Lets an admin rename a typo-orphan like
+    // "Sarah Q. Smith" -> "Sarah Smith" without having to add the orphan
+    // form into the roster cell. Loaded inside ROSTER_CANONICAL.aliasMap.
     if (ROSTER_CANONICAL.aliasMap && ROSTER_CANONICAL.aliasMap[rawName]) {
       return ROSTER_CANONICAL.aliasMap[rawName];
     }
     if (ROSTER_CANONICAL.canonicalSet[rawName]) return rawName;
-    const stripped = stripParens_(rawName);
-    if (!stripped) return rawName;
-    const matches = ROSTER_CANONICAL.strippedMap[stripped];
-    if (matches && matches.length === 1) return matches[0];
+    // Match against BOTH normalized forms of every roster name (strip +
+    // flatten, both registered in strippedMap). Union the candidates and
+    // canonicalize ONLY on a unique roster match; ambiguous (>1) or unknown
+    // (0) names are preserved as-is -- never a wrong guess.
+    const keys = [stripParens_(rawName), flattenParens_(rawName)];
+    const seen = {};
+    const cands = [];
+    for (let k = 0; k < keys.length; k++) {
+      const list = keys[k] && ROSTER_CANONICAL.strippedMap[keys[k]];
+      if (!list) continue;
+      for (let j = 0; j < list.length; j++) {
+        if (!seen[list[j]]) { seen[list[j]] = true; cands.push(list[j]); }
+      }
+    }
+    if (cands.length === 1) return cands[0];
     return rawName;
   }
 
@@ -1035,12 +1059,21 @@ function loadRosterCanonicalNames_(anySheet) {
         if (!name) continue;
         if (canonicalSet[name]) continue;
         canonicalSet[name] = true;
-        const stripped = name.replace(/\([^)]*\)/g, '').replace(/\s+/g, ' ').trim();
-        if (!stripped) continue;
-        if (!strippedMap[stripped]) strippedMap[stripped] = [];
-        if (strippedMap[stripped].indexOf(name) === -1) {
-          strippedMap[stripped].push(name);
-        }
+        // Register the canonical name under TWO normalized keys so BOTH feed
+        // variants resolve (see canonicalizeAgentName):
+        //   strip   = drop the whole parenthetical -> "Roman Paulose"
+        //             (nickname omitted)
+        //   flatten = drop only the ( ) chars, keep words -> "Roman Robin
+        //             Paulose" (nickname un-parenthesized, the ~90% case)
+        // A no-paren roster name yields strip === flatten (one key); per-key
+        // dedup stops it self-colliding into a false >1 (ambiguous) match.
+        const stripped  = name.replace(/\([^)]*\)/g, '').replace(/\s+/g, ' ').trim();
+        const flattened = name.replace(/[()]/g, '').replace(/\s+/g, ' ').trim();
+        [stripped, flattened].forEach(function (key) {
+          if (!key) return;
+          if (!strippedMap[key]) strippedMap[key] = [];
+          if (strippedMap[key].indexOf(name) === -1) strippedMap[key].push(name);
+        });
       }
     }
 
