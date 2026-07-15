@@ -482,6 +482,89 @@ function backfillDQEHistoryUpsert() {
 }
 
 
+// ── Editor-run diagnostic: duplicate (call_date, agent_name) rows ───────────
+//
+// The DQE Historical Data -> Neon mirror keys on uq_dqe_history
+// (call_date, agent_name). Two sheet rows sharing that key (a) collide inside
+// one ON CONFLICT batch -- the "cannot affect row a second time" error
+// backfillDQEHistoryUpsert now dedups past -- and (b) DOUBLE-COUNT that agent
+// on that day in the SHEET-based dashboard reads (DQE_READ_SOURCE unset/sheet).
+// This READ-ONLY scan lists every duplicate key so the source rows can be
+// reconciled. It uses the SAME display-value read + parseDateForNeon date
+// normalization as the upsert, so the report is EXACTLY the set of rows that
+// would collide. It writes a "DQE Duplicate Rows" report sheet (created +
+// cleared each run) and logs a summary; it NEVER modifies DQE Historical Data.
+//
+// Run from the Apps Script editor (cdr-report project) via the Run picker
+// (non-underscore name, so it's listed).
+function findDqeDuplicateRows() {
+  var ss    = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('DQE Historical Data');
+  if (!sheet) { Logger.log('DQE dup scan: "DQE Historical Data" not found.'); return; }
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) { Logger.log('DQE dup scan: sheet is empty.'); return; }
+
+  // Same read as backfillDQEHistoryUpsert (getDisplayValues, 34 cols, INV-10):
+  // col B (index 1) = call_date, col C (index 2) = agent_name.
+  var data = sheet.getRange(2, 1, lastRow - 1, 34).getDisplayValues();
+
+  var groups = {};   // key -> [{ row, date, agent, unique, rung, missed, answered, ttt, att }]
+  for (var i = 0; i < data.length; i++) {
+    var r = data[i];
+    if (!r[1] || !r[2]) continue;               // same skip as the upsert
+    var cd = parseDateForNeon(r[1]);
+    if (!cd) continue;                           // unparseable date -> not a key
+    var agent = String(r[2]);
+    var key = cd + ' ' + agent;
+    (groups[key] = groups[key] || []).push({
+      row:    i + 2,                             // 1-based sheet row (data starts at row 2)
+      date:   cd, agent: agent,
+      unique: r[4], rung: r[5], missed: r[6], answered: r[7], ttt: r[8], att: r[9]
+    });
+  }
+
+  var dupKeys = Object.keys(groups).filter(function (k) { return groups[k].length > 1; });
+  dupKeys.sort();   // key = 'YYYY-MM-DD agent' -> chronological, then agent
+  var totalDupRows = 0;
+  dupKeys.forEach(function (k) { totalDupRows += groups[k].length; });
+
+  Logger.log('DQE dup scan: ' + dupKeys.length + ' duplicate (date, agent) key(s) spanning '
+    + totalDupRows + ' rows (of ' + data.length + ' scanned).');
+
+  // Write / refresh the report sheet (non-destructive to the source).
+  var REPORT = 'DQE Duplicate Rows';
+  var out = ss.getSheetByName(REPORT) || ss.insertSheet(REPORT);
+  out.clear();
+  var headers = ['Group', 'Sheet Row', 'Date', 'Agent', 'Unique', 'Rung', 'Missed', 'Answered', 'TTT', 'ATT'];
+  var rows = [headers];
+  var g = 0;
+  dupKeys.forEach(function (k) {
+    g++;
+    groups[k].forEach(function (e) {
+      rows.push([g, e.row, e.date, e.agent, e.unique, e.rung, e.missed, e.answered, e.ttt, e.att]);
+    });
+  });
+  if (rows.length === 1) {
+    rows.push(['—', '', '', 'No duplicate (date, agent) rows found', '', '', '', '', '', '']);
+  }
+  out.getRange(1, 1, rows.length, headers.length).setValues(rows);
+  out.setFrozenRows(1);
+  out.getRange(1, 1, 1, headers.length).setFontWeight('bold');
+  try { out.autoResizeColumns(1, headers.length); } catch (rz) {}
+
+  // Log the first groups inline for a quick glance without opening the sheet.
+  dupKeys.slice(0, 20).forEach(function (k) {
+    var e = groups[k];
+    Logger.log('  ' + e[0].date + ' / ' + e[0].agent + '  ->  rows '
+      + e.map(function (x) { return x.row; }).join(', '));
+  });
+  if (dupKeys.length > 20) {
+    Logger.log('  ...and ' + (dupKeys.length - 20) + ' more (see the "' + REPORT + '" sheet).');
+  }
+  Logger.log('DQE dup scan: full report written to the "' + REPORT + '" sheet.');
+}
+
+
 // -- CDR backfill ------------------------------------------------------------
 //
 // Re-mirrors "CDR Historical Data" sheet rows to Neon
