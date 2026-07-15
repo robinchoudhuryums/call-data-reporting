@@ -525,3 +525,172 @@ function repairDqeOldPstTimestampShift_(dryRun) {
     JSON.stringify(samples.anomaly), JSON.stringify(samples.af));
   return { applied: true, stats: stats, samples: samples };
 }
+
+
+// -- Duplicate (call_date, agent_name) row merge ----------------------------
+//
+// Collapses two-or-more DQE Historical Data rows that share the same
+// (call_date, agent_name) into ONE row. These arise when an Orphan/Outlier Fix
+// rename rewrote a stray name spelling to a canonical name that ALREADY had a
+// row that day (renameHistoricalAgent_ renames in place without merging; the
+// sheet reader tolerates the dual rows by SUMMING, but the Neon mirror's
+// uq_dqe_history can't hold both -- so backfillDQEHistoryUpsert keeps only one
+// and undercounts, and the row is left for this manual merge).
+//
+// Merge rules (reproduce the single row a clean rebuild would emit):
+//   - total_unique / rung / missed / answered, TTT : SUMMED
+//   - ATT : ANSWERED-WEIGHTED mean (sum(att*answered)/sum(answered)); simple
+//           mean of the non-zero ATTs if no answered calls
+//   - slots K-AC (11-29) + abandoned AD/AE/AF (30-32) : comma-concatenated
+//     across the rows (a `#REBUILD` sentinel survives if a column had no
+//     recoverable value)
+//   - avg_abd_wait / csr_avg_abd_wait : simple mean of the non-zero values
+//     (APPROXIMATE -- these are per-day averages with no stored denominator;
+//     for an EXACT value, reprocess the date from Raw Data instead, where it
+//     still exists)
+//   - month_year / call_date / agent_name : unchanged (cols A-C are NOT
+//     rewritten, so the date cell's type/format is never disturbed)
+//   - queue_extensions : first non-empty across the group
+//
+// The merged values land on the group's FIRST row (coercion-prone cols get
+// plain-text @ format first, per the number-coercion gotcha); the extra rows
+// are deleted bottom-up so row numbers don't shift mid-loop. Idempotent
+// (a second run finds no duplicates).
+//
+// Usage:
+//   1. Run the coercion + PST repairs FIRST if this sheet still has any
+//      (repairDqeSlotTimestamps / repairDqeAbandonedIds / repairDqeOldPstTimestampShift)
+//      so the slot/abandoned cells are clean text before they're concatenated.
+//   2. (Recommended) previewDqeDuplicateMerge() -- logs every group + the
+//      merged counts, writes NOTHING.
+//   3. repairDqeDuplicateMerge() -- applies the merge + deletes the extras.
+//   4. If DQE_READ_SOURCE=neon (or the mirror is consumed), re-run
+//      backfillDQEHistoryUpsert() so dqe_history reflects the merged rows.
+// Run OFF the daily-build window (editor-run, unlocked -- like the other
+// repairs). See findDqeDuplicateRows (neonbackfill.js) for a read-only list.
+
+/** Preview only: report what WOULD merge; no writes. */
+function previewDqeDuplicateMerge() { return mergeDqeDuplicateRows_(/*dryRun=*/true); }
+
+/** Apply the merge: collapse each duplicate (date, agent) group to one row. */
+function repairDqeDuplicateMerge() { return mergeDqeDuplicateRows_(/*dryRun=*/false); }
+
+function scHmsToSec_(s) {
+  var t = String(s == null ? '' : s).trim();
+  if (!/^\d+:\d{2}(:\d{2})?$/.test(t)) return 0;
+  var p = t.split(':').map(Number);
+  return p.length === 3 ? (p[0] * 3600 + p[1] * 60 + p[2]) : (p[0] * 60 + p[1]);
+}
+function scSecToHms_(sec) {
+  sec = Math.max(0, Math.round(Number(sec) || 0));
+  var h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+  return h + ':' + ('0' + m).slice(-2) + ':' + ('0' + s).slice(-2);
+}
+
+function mergeDqeDuplicateRows_(dryRun) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('DQE Historical Data');
+  if (!sheet) { Logger.log('DQE merge: "DQE Historical Data" not found.'); return; }
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) { Logger.log('DQE merge: sheet is empty.'); return; }
+
+  // Same read as the upsert (getDisplayValues, 34 cols): col B (idx 1) =
+  // call_date, col C (idx 2) = agent_name.
+  var data = sheet.getRange(2, 1, lastRow - 1, 34).getDisplayValues();
+
+  var groups = {};   // key -> [0-based row indexes into data]
+  for (var i = 0; i < data.length; i++) {
+    var r = data[i];
+    if (!r[1] || !r[2]) continue;
+    var cd = parseDateForNeon(r[1]);
+    if (!cd) continue;
+    var key = cd + ' ' + String(r[2]);
+    (groups[key] = groups[key] || []).push(i);
+  }
+  var dupKeys = Object.keys(groups).filter(function (k) { return groups[k].length > 1; });
+  dupKeys.sort();
+  if (!dupKeys.length) { Logger.log('DQE merge: no duplicate (date, agent) rows. Nothing to do.'); return; }
+
+  var REBUILD = '#REBUILD';
+  var joinCells = function (vals) {
+    var hasSentinel = false, parts = [];
+    vals.forEach(function (v) {
+      var t = String(v == null ? '' : v).trim();
+      if (!t) return;
+      if (t === REBUILD) { hasSentinel = true; return; }
+      parts.push(t);
+    });
+    if (!parts.length && hasSentinel) return REBUILD;   // all-lost stays lost
+    return parts.join(',');
+  };
+
+  var writes = [];       // { row: 1-based, vals: [31 values for cols D..AH] }
+  var deleteRows = [];   // 1-based sheet rows to delete
+  var summary = [];
+
+  dupKeys.forEach(function (key) {
+    var idxs = groups[key];
+    var rows = idxs.map(function (i) { return data[i]; });
+
+    var sumUnique = 0, sumRung = 0, sumMissed = 0, sumAns = 0, sumTtt = 0;
+    var attNum = 0, attDen = 0, attVals = [], aawVals = [], cawVals = [];
+    rows.forEach(function (r) {
+      sumUnique += parseInt(r[4]) || 0;
+      sumRung   += parseInt(r[5]) || 0;
+      sumMissed += parseInt(r[6]) || 0;
+      var ans = parseInt(r[7]) || 0; sumAns += ans;
+      sumTtt += scHmsToSec_(r[8]);
+      var attSec = scHmsToSec_(r[9]);
+      if (attSec > 0) { attNum += attSec * ans; attDen += ans; attVals.push(attSec); }
+      var aaw = scHmsToSec_(r[32]); if (aaw > 0) aawVals.push(aaw);
+      var caw = scHmsToSec_(r[33]); if (caw > 0) cawVals.push(caw);
+    });
+    var mean = function (arr) { return arr.length ? arr.reduce(function (a, b) { return a + b; }, 0) / arr.length : 0; };
+    var attMerged = attDen > 0 ? (attNum / attDen) : mean(attVals);
+
+    // Build the col D..AH (indices 3..33) merged slice.
+    var m = rows[0].slice(3, 34);   // start from the first row's D..AH
+    m[0] = rows.map(function (r) { return String(r[3] || '').trim(); }).filter(Boolean)[0] || '';  // queue exts (D)
+    m[1] = sumUnique;                 // E total_unique
+    m[2] = sumRung;                   // F total_rung
+    m[3] = sumMissed;                 // G total_missed
+    m[4] = sumAns;                    // H total_answered
+    m[5] = scSecToHms_(sumTtt);       // I ttt
+    m[6] = scSecToHms_(attMerged);    // J att
+    for (var c = 10; c <= 28; c++) m[c - 3] = joinCells(rows.map(function (r) { return r[c]; }));  // K-AC slots
+    m[29 - 3] = joinCells(rows.map(function (r) { return r[29]; }));   // AD parent ids
+    m[30 - 3] = joinCells(rows.map(function (r) { return r[30]; }));   // AE missed ids
+    m[31 - 3] = joinCells(rows.map(function (r) { return r[31]; }));   // AF missed times
+    m[32 - 3] = scSecToHms_(mean(aawVals));   // AG avg_abd_wait (approx)
+    m[33 - 3] = scSecToHms_(mean(cawVals));   // AH csr_avg_abd_wait (approx)
+
+    var firstRow1 = idxs[0] + 2;
+    writes.push({ row: firstRow1, vals: m });
+    idxs.slice(1).forEach(function (i) { deleteRows.push(i + 2); });
+    summary.push(key.replace(' ', ' / ') + '  rows ' + idxs.map(function (i) { return i + 2; }).join(',')
+      + '  -> answered=' + sumAns + ' rung=' + sumRung + ' missed=' + sumMissed + ' unique=' + sumUnique);
+  });
+
+  Logger.log('DQE merge: ' + dupKeys.length + ' duplicate key(s), ' + deleteRows.length
+    + ' extra row(s) to remove.' + (dryRun ? '  [DRY RUN -- no writes]' : ''));
+  summary.slice(0, 50).forEach(function (s) { Logger.log('  ' + s); });
+  if (summary.length > 50) Logger.log('  ...and ' + (summary.length - 50) + ' more.');
+
+  if (dryRun) { Logger.log('DQE merge: dry run only. Run repairDqeDuplicateMerge() to apply.'); return; }
+
+  // Plain-text-protect the coercion-prone cols on each target row, then write
+  // cols D..AH only (A-C untouched -> no date-cell coercion).
+  writes.forEach(function (w) {
+    sheet.getRange(w.row, 4).setNumberFormat('@');           // D queue exts
+    sheet.getRange(w.row, 11, 1, 19).setNumberFormat('@');   // K-AC slots
+    sheet.getRange(w.row, 30, 1, 3).setNumberFormat('@');    // AD/AE/AF
+    sheet.getRange(w.row, 4, 1, 31).setValues([w.vals]);
+  });
+  SpreadsheetApp.flush();
+  // Delete extras bottom-up so earlier deletions don't shift later row numbers.
+  deleteRows.sort(function (a, b) { return b - a; }).forEach(function (rn) { sheet.deleteRow(rn); });
+
+  Logger.log('DQE merge: merged ' + dupKeys.length + ' group(s), deleted ' + deleteRows.length + ' row(s).\n'
+    + 'If DQE_READ_SOURCE=neon (or the mirror is consumed), re-run backfillDQEHistoryUpsert() to refresh dqe_history.');
+  return { applied: true, merged: dupKeys.length, deleted: deleteRows.length };
+}

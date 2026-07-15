@@ -34,9 +34,32 @@ test('INV-24: canonicalSet = all roster names; strippedMap removes parenthetical
 
   assert.equal(r.canonicalSet['Roman (Robin) Paulose'], true);
   assert.equal(r.canonicalSet['Jane Doe'], true);
-  // The strip removes the PAREN + its contents, then collapses spaces:
-  // "Roman (Robin) Paulose" -> "Roman Paulose" (NOT "Roman Robin Paulose").
+  // The STRIP key removes the paren + its contents: "Roman (Robin) Paulose"
+  // -> "Roman Paulose" (the nickname-omitted feed form).
   deepEqual(r.strippedMap['Roman Paulose'], ['Roman (Robin) Paulose']);
+  deepEqual(r.strippedMap['Jane Doe'], ['Jane Doe']);
+});
+
+test('INV-24: strippedMap ALSO registers the flatten key (un-parenthesized nickname, ~90% orphan case)', function () {
+  const h = loadCanon('cdr-report');
+  withSheets(h, {
+    roster: rosterGrid({ Sales: ['Roman (Robin) Paulose, 401', 'Jane Doe, 402'] }),
+  });
+  const r = h.call('loadRosterCanonicalNames_', null);
+  // The FLATTEN key drops only the parens, keeping the words:
+  // "Roman (Robin) Paulose" -> "Roman Robin Paulose" -- the un-parenthesized
+  // nickname form the feed emits, which previously did NOT match. This is
+  // the key that closes the 90% orphan case.
+  deepEqual(r.strippedMap['Roman Robin Paulose'], ['Roman (Robin) Paulose']);
+});
+
+test('INV-24: a no-paren roster name registers ONE entry (strip === flatten dedup, no false ambiguity)', function () {
+  const h = loadCanon('cdr-report');
+  withSheets(h, { roster: rosterGrid({ Sales: ['Jane Doe, 401'] }) });
+  const r = h.call('loadRosterCanonicalNames_', null);
+  // strip('Jane Doe') === flatten('Jane Doe') === 'Jane Doe'. Per-key dedup
+  // must keep it a SINGLE-entry list, else the name would look ambiguous
+  // (>1) and never canonicalize.
   deepEqual(r.strippedMap['Jane Doe'], ['Jane Doe']);
 });
 
