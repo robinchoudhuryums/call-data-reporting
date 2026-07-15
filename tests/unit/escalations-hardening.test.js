@@ -204,7 +204,9 @@ test('NEO-1: resolveEscalation is PENDING-only -- pending_review and rejected ro
     { status: 'rejected', department: 'CSR', reason: 'r' }, log);
   assert.throws(function () {
     h.call('resolveEscalation', { id: 'e1', resolution: 'called them back' });
-  }, /Only a pending escalation can be resolved/);
+    // C6 widened the fallback message to "pending or in-progress" (an
+    // in_progress row now resolves); rejected/pending_review are still refused.
+  }, /Only a pending or in-progress escalation can be resolved/);
   assert.equal(log.writes.length, 0, 'no writes on a rejected refusal');
 
   // Resolved keeps its dedicated reopen-first message (F-43 unchanged).
@@ -224,6 +226,51 @@ test('NEO-1: resolveEscalation is PENDING-only -- pending_review and rejected ro
   assert.equal(upd.params[0], 'resolved');
   const act = log.writes.filter(function (w) { return w.sql.indexOf('INSERT INTO escalation_activity') === 0; })[0];
   assert.equal(act.params[2], 'resolved');
+});
+
+test('C6: startEscalation promotes pending -> in_progress with a "started" activity row; pending-only', function () {
+  const log = { writes: [] };
+  // A pending row starts, writing status=in_progress + a 'started' activity
+  // entry (the actor is the owner). Reuses the exact write/txn template.
+  installReview({ role: 'manager', department: 'CSR', email: 'mgr@x.com' },
+    { status: 'pending', department: 'CSR', reason: 'r' }, log);
+  const res = h.call('startEscalation', { id: 'e1', note: 'on it' });
+  assert.equal(res.id, 'e1');
+  const upd = log.writes.filter(function (w) { return w.sql.indexOf('UPDATE escalations SET status') === 0; })[0];
+  assert.equal(upd.params[0], 'in_progress');
+  const act = log.writes.filter(function (w) { return w.sql.indexOf('INSERT INTO escalation_activity') === 0; })[0];
+  assert.equal(act.params[2], 'started');
+
+  // Already in progress -> refused, no writes.
+  const log2 = { writes: [] };
+  installReview({ role: 'manager', department: 'CSR', email: 'mgr@x.com' },
+    { status: 'in_progress', department: 'CSR', reason: 'r' }, log2);
+  assert.throws(function () { h.call('startEscalation', { id: 'e1' }); }, /already in progress/);
+  assert.equal(log2.writes.length, 0);
+
+  // A pending_review row can't be started (must be approved first).
+  const log3 = { writes: [] };
+  installReview({ role: 'manager', department: 'CSR', email: 'mgr@x.com' },
+    { status: 'pending_review', department: 'CSR', reason: 'r', source: 'team-tools' }, log3);
+  assert.throws(function () { h.call('startEscalation', { id: 'e1' }); }, /Only a pending escalation can be started/);
+  assert.equal(log3.writes.length, 0);
+
+  // Cross-dept manager is refused by the row gate (no writes).
+  const log4 = { writes: [] };
+  installReview({ role: 'manager', department: 'Sales', email: 'mgr@x.com' },
+    { status: 'pending', department: 'CSR', reason: 'r' }, log4);
+  assert.throws(function () { h.call('startEscalation', { id: 'e1' }); }, /Not authorized for this department/);
+  assert.equal(log4.writes.length, 0);
+});
+
+test('C6: resolveEscalation accepts an in_progress row (worklist completion)', function () {
+  const log = { writes: [] };
+  installReview({ role: 'manager', department: 'CSR', email: 'mgr@x.com' },
+    { status: 'in_progress', department: 'CSR', reason: 'r' }, log);
+  const res = h.call('resolveEscalation', { id: 'e1', resolution: 'handled it' });
+  assert.equal(res.id, 'e1');
+  const upd = log.writes.filter(function (w) { return w.sql.indexOf('UPDATE escalations') === 0; })[0];
+  assert.equal(upd.params[0], 'resolved');
 });
 
 test('NEO-2: comments are worklist-only, required non-empty, and resolve preserves an existing comment', function () {

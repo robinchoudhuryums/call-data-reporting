@@ -349,6 +349,16 @@
         <div class="empty-state-hint" id="dept-empty-hint"></div>
       </div>
 
+      <!-- B1/B2: team summary strip for the SELECTED RANGE (roster rollup),
+           hidden until data. The "this range" scope label distinguishes it
+           from the daily Queue Call Data aside (queue-level, latest day) so
+           the two aren't misread as the same numbers. Values are lifted from
+           the same server totals the tfoot renders -- no new fetch. The
+           vs-prior delta is derived client-side from the per-row prior fields
+           (only shown when a prior baseline exists). -->
+      <div id="dept-team-zone" class="ds-zone" style="display:none;"><span class="ds-zone-label">Team &middot; this range</span></div>
+      <div id="dept-team-strip" class="dept-team-strip" style="display:none;"></div>
+
       <div id="dqe-table-header" class="dept-qcd-header" style="display:none; margin-top:20px; margin-bottom:8px;">
         <strong id="dqe-table-title">Agent Call Metrics</strong>
         <span id="dqe-table-date" class="dept-qcd-date"></span>
@@ -1187,11 +1197,35 @@
         </div>
 
         <div id="ins-results-status" class="status" style="display:none;"></div>
+        <!-- A1: needs-attention strip. Renders directly under the injected
+             #ins-headline (reportHeadline_ inserts before this element, the
+             first non-skipped sibling after #ins-results-status). One chip per
+             REGRESSED agent (direction of change, computed client-side from the
+             per-card trend -- distinct from the standing-based "Needs
+             attention" card tier); each chip scrolls to that agent's card.
+             Zero-regressed -> a one-line "all steady/improving" note. -->
+        <div id="ins-needs-attention" class="ds-attention" style="display:none;"></div>
         <div id="ins-length-warning" class="ds-note" style="display:none;"></div>
         <div id="ins-team-insights"></div>
 
+        <!-- A3: zone wayfinding. The report splits into a Team zone (rollup +
+             collapsible team detail) and an Agents zone (per-agent cards). -->
+        <div class="ds-zone"><span class="ds-zone-label">Team</span></div>
         <div class="al-section-title">Department rollup <span class="ins-rollup-cap" id="ins-rollup-cap"></span></div>
         <div id="ins-kpi-row" class="pr-kpi-row"></div>
+
+        <!-- A2: Team detail (progressive disclosure). Queue health, heatmap,
+             the 12-month trend chart, and the share-of-answered chart collapse
+             here so the report leads with the answer (headline + strip + KPI
+             tiles). The two Chart.js canvases (trend + share) render at
+             zero height if built while collapsed, so insRenderReport_ DEFERS
+             them until this <details> is open and the toggle handler
+             (initInsightsReport) renders them on first open. Queue health +
+             heatmap are DOM/CSS-grid (no canvas) so they populate fine while
+             collapsed. The admin gate on the heatmap + the data-presence hides
+             on queue health/share are unchanged -- this only wraps them. -->
+        <details id="ins-team-detail" class="ds-team-detail">
+          <summary class="ds-team-detail-summary">Team detail &mdash; queue health, 12-month trend, heatmap &amp; share</summary>
 
         <!-- Queue health (QCD-into-Insights consolidation): the dept's
              queue-level abandoned % / violations for the same window +
@@ -1291,7 +1325,11 @@
           <div class="ir-chart-header">Share of answered calls</div>
           <div class="ir-chart-canvas-wrap ins-share-canvas-wrap"><canvas id="ins-share-chart"></canvas></div>
         </div>
+        </details>
+        <!-- /A2 Team detail -->
 
+        <!-- A3: Agents zone -->
+        <div class="ds-zone"><span class="ds-zone-label">Agents</span></div>
         <div class="al-section-title">Per-agent comparison (vs prior period)</div>
         <div class="ir-cards-toolbar" id="ins-cards-toolbar">
           <label class="ir-sort-control">
@@ -2043,6 +2081,11 @@
        Escalations" title; setPage('escalations') toggles body[data-page]. -->
   <section id="escalations-page" class="page page-escalations">
     <div class="esc-page-body">
+      <!-- C2: filter sidebar (left rail) + main worklist column. Collapses to
+           a top toolbar below ~900px. All control IDs + handlers are unchanged
+           (escLoad_ / escApplyFilter_ wiring), only the layout container moved. -->
+      <div class="esc-layout">
+        <aside class="esc-sidebar">
         <div class="ds-toolbar esc-toolbar">
           <div class="ir-col" id="esc-dept-col" style="display:none;">
             <label for="esc-dept">Department</label>
@@ -2053,9 +2096,17 @@
             <select id="esc-status">
               <option value="pending">Pending</option>
               <option value="pending_review">Needs review</option>
+              <option value="in_progress">In progress</option>
               <option value="resolved">Completed</option>
               <option value="rejected">Rejected</option>
               <option value="all">All</option>
+            </select>
+          </div>
+          <div class="ir-col">
+            <label for="esc-sort">Sort</label>
+            <select id="esc-sort">
+              <option value="oldest">Oldest first</option>
+              <option value="newest">Newest first</option>
             </select>
           </div>
           <div class="ir-col esc-filter-col">
@@ -2077,6 +2128,13 @@
             <button class="btn" id="esc-new-btn" type="button">+ New escalation</button>
           </div>
         </div>
+        </aside>
+
+        <div class="esc-main">
+        <!-- C1: triage summary band (hidden until data). Populated from
+             meta.statusCounts / resolvedLast7 / oldestOpenAt + the client age
+             calc. Tiles are click-to-filter shortcuts. -->
+        <div id="esc-summary-band" class="esc-summary-band" style="display:none;"></div>
 
         <!-- Create form (admin-only), hidden until "+ New escalation". -->
         <div id="esc-create" class="ds-card esc-create" style="display:none;">
@@ -2122,6 +2180,8 @@
         <div id="esc-loading" style="display:none;"></div>
         <div id="esc-empty" class="empty-state" style="display:none;"></div>
         <div id="esc-list"></div>
+        </div><!-- /.esc-main -->
+      </div><!-- /.esc-layout -->
     </div>
   </section>
 
