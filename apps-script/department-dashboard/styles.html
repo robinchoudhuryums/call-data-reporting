@@ -5581,7 +5581,13 @@
   .ds-zone-label { font: 600 11px/1 var(--mono); letter-spacing: 0.18em;
     text-transform: uppercase; color: var(--muted); white-space: nowrap; }
 
-  /* A1 needs-attention strip (Insights). */
+  /* I2: needs-attention chips folded into the headline banner (a divider
+     separates them from the banner sentences). */
+  .ins-headline-attn { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line);
+    display: flex; gap: 6px; flex-wrap: wrap; }
+
+  /* A1 needs-attention strip (Insights) -- retired standalone element, kept for
+     any legacy reference; the ds-attention rules below are still used elsewhere. */
   .ds-attention { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
     margin: 10px 0 6px; padding: 8px 12px; border-radius: var(--r-lg); border: 1px solid var(--line); }
   .ds-attention--warn { background: var(--warn-soft); border-color: var(--warn); }
