@@ -3495,6 +3495,40 @@
     refresh();
   }
 
+  // Lighter Insights <-> My Department hand-off (the two pages stay separate;
+  // the relationship is made explicit). The department is the shared global
+  // selector, so only the DATE window needs carrying.
+
+  // My Department -> Insights: carry an explicit window into the Insights page
+  // and (re-)generate it -- a parametrized launcherOpenInsights_. Re-entry
+  // normally keeps the rendered report, so we arm the auto-run flag + re-ensure
+  // the roster (the launcher-chip path) to force a run for the carried window.
+  function handoffToInsights_(fromIso, toIso, scrollTarget) {
+    if (!$('insights-page')) return;
+    insScrollPending_ = scrollTarget || null;
+    setPage('insights');
+    if (fromIso && $('ins-from')) $('ins-from').value = fromIso;
+    if (toIso   && $('ins-to'))   $('ins-to').value   = toIso;
+    const p = $('ins-preset'); if (p) p.value = 'custom';
+    insLauncherAutoRun_ = true;
+    launcherShowLoading_('ins-launcher-loading', 'insights-form', 'insights-results',
+      'Insights for this department & range');
+    insEnsureRoster();
+  }
+
+  // Insights -> My Department: carry the window into the dept page and load it.
+  // opts.missed arms the one-shot scroll to the Missed Calls section (the Queue
+  // health "See missed calls" drilldown). Mirrors launcherOpenMissed_.
+  function handoffToMyDept_(fromIso, toIso, opts) {
+    opts = opts || {};
+    if (fromIso && $('from-date')) $('from-date').value = fromIso;
+    if (toIso   && $('to-date'))   $('to-date').value   = toIso;
+    if (typeof clearActivePreset_ === 'function') clearActivePreset_();
+    if (opts.missed) deptMissedScrollPending_ = true;
+    setPage('dept');
+    refresh();
+  }
+
   // "Is one of my agents struggling or improving?" -> Individual Report
   // primed with a 30-day window; agent choice is deliberately left to
   // the user (that IS the question), so no auto-run.
@@ -5828,6 +5862,74 @@
     dsFlashChanged_(strip, 'deptstrip:' + getRequestedDept());
   }
 
+  // Lighter Insights hand-off strip: a COLLAPSED one-line summary of the
+  // deeper Insights report for this dept + range, expandable, with an
+  // "Open full report" button that carries the current dept & dates. The
+  // one-line takeaway is derived from the SAME server totals the team strip
+  // uses (no new fetch); the full per-agent / queue-health / heatmap story is
+  // one click away on the Insights page. Hidden when there are no data rows.
+  function renderDeptInsightsStrip_(state) {
+    var strip = $('dept-insights-strip');
+    if (!strip) return;
+    var t = state && state.totals;
+    if (!t || !state.rows || !state.rows.length) {
+      strip.style.display = 'none'; strip.innerHTML = '';
+      return;
+    }
+    var a = Number(t.totalAnswered) || 0;
+    var m = Number(t.totalMissed)   || 0;
+    var total = a + m;
+    var rate = total ? Math.round(a / total * 100) : 0;
+    var dept = getRequestedDept() || 'this department';
+    var from = ($('from-date') && $('from-date').value) || '';
+    var to   = ($('to-date')   && $('to-date').value)   || '';
+    var teaser = total
+      ? 'Team answered <strong>' + rate + '%</strong> of rings this range · <strong>' + fmtNumber(m) + '</strong> missed.'
+      : 'No call activity in this range.';
+    strip.innerHTML =
+        '<div class="dis-row">'
+      +   '<button class="dis-toggle" type="button" aria-expanded="false" aria-controls="dept-insights-more" '
+      +           'title="Show what the full Insights report adds">'
+      +     '<span class="dis-chevron" aria-hidden="true">&#9656;</span>'
+      +     '<span class="dis-kicker">Insights</span>'
+      +   '</button>'
+      +   '<span class="dis-teaser">' + teaser + '</span>'
+      +   '<button class="btn btn-secondary dis-open" type="button" '
+      +           'title="Open the full Insights report for this department and date range.">Open full report &#8594;</button>'
+      + '</div>'
+      + '<div class="dis-more" id="dept-insights-more" hidden>'
+      +   'The full Insights report adds per-agent improvers &amp; laggards (vs the team average), '
+      +   'queue health &amp; violations, and the abandon heatmap &mdash; for <strong>' + escapeHtml(dept) + '</strong>'
+      +   (from && to ? ', <strong>' + escapeHtml(from) + '</strong> to <strong>' + escapeHtml(to) + '</strong>' : '') + '.'
+      + '</div>';
+    strip.style.display = '';
+    wireDeptInsightsStrip_();
+  }
+
+  // Delegated wiring for the Insights hand-off strip (attached once on the
+  // container so the per-render innerHTML swap never detaches it).
+  var deptInsightsStripWired_ = false;
+  function wireDeptInsightsStrip_() {
+    if (deptInsightsStripWired_) return;
+    var strip = $('dept-insights-strip');
+    if (!strip) return;
+    deptInsightsStripWired_ = true;
+    strip.addEventListener('click', function (e) {
+      if (e.target.closest('.dis-open')) {
+        handoffToInsights_(($('from-date') || {}).value, ($('to-date') || {}).value, null);
+        return;
+      }
+      var tog = e.target.closest('.dis-toggle');
+      if (tog) {
+        var more = $('dept-insights-more');
+        var expanded = tog.getAttribute('aria-expanded') === 'true';
+        tog.setAttribute('aria-expanded', expanded ? 'false' : 'true');
+        tog.classList.toggle('is-open', !expanded);
+        if (more) more.hidden = expanded;
+      }
+    });
+  }
+
   function render() {
     // Header sort arrows
     document.querySelectorAll('#agents-table thead th[data-sort]').forEach(function (th) {
@@ -5850,6 +5952,7 @@
       tbody.innerHTML = '';
       tfoot.innerHTML = '';
       renderDeptTeamStrip_(state);   // B1: hides itself when there are no rows
+      renderDeptInsightsStrip_(state);   // Insights hand-off strip (hides too)
       return;
     }
 
@@ -5900,6 +6003,7 @@
     // from the same server totals -- rendered here so it repaints on sort /
     // refresh alongside the table.
     renderDeptTeamStrip_(state);
+    renderDeptInsightsStrip_(state);   // Insights hand-off strip (collapsed summary + link-out)
     // B1: flash agents whose Answered/Missed changed since the last paint for
     // this dept. Scoped per dept so switching depts doesn't cross-flash; a sort
     // re-render leaves values unchanged per key, so it never flashes.
@@ -10297,6 +10401,16 @@
     const editApply = $('ins-edit-apply-btn');
     if (editApply) editApply.addEventListener('click', insApplyEditPopover_);
     insWirePeriodBar_();   // I4: unified period slider drives the report window
+    // Lighter hand-off: Insights -> My Department (agent table / Missed detail)
+    // for the same dept + window. handoffToMyDept_ carries the dates.
+    const insMyDeptBtn = $('ins-open-mydept-btn');
+    if (insMyDeptBtn) insMyDeptBtn.addEventListener('click', function () {
+      handoffToMyDept_(($('ins-from') || {}).value, ($('ins-to') || {}).value, {});
+    });
+    const insQhMissedBtn = $('ins-qh-missed-link');
+    if (insQhMissedBtn) insQhMissedBtn.addEventListener('click', function () {
+      handoffToMyDept_(($('ins-from') || {}).value, ($('ins-to') || {}).value, { missed: true });
+    });
     const editSelAll  = $('ins-edit-select-all');
     const editSelNone = $('ins-edit-select-none');
     if (editSelAll)  editSelAll.addEventListener('click',  function (e) { e.preventDefault(); insTogglePopoverAgents_(true);  });
