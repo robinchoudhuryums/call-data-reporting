@@ -170,9 +170,12 @@
       if (radial.pointLabels) radial.pointLabels.color = THEME.muted;
       if (radial.ticks)       radial.ticks.color       = THEME.muted;
     }
-    // Tooltip — paper-card panel with ink text, mono body, display title
+    // Tooltip — paper-card panel with ink text, mono body, display title.
+    // O2: slightly translucent so chart lines behind it stay legible (the
+    // Overview trend chart's tooltip used to fully occlude the lines).
     const tt = Chart.defaults.plugins.tooltip;
-    tt.backgroundColor = THEME.paperCard;
+    tt.backgroundColor = (typeof rgbaWithAlpha_ === 'function')
+      ? rgbaWithAlpha_(THEME.paperCard, 0.92) : THEME.paperCard;
     tt.titleColor      = THEME.ink;
     tt.bodyColor       = THEME.ink;
     tt.borderColor     = THEME.line;
@@ -243,6 +246,25 @@
         Chart.defaults.plugins.datalabels.display = true;
       } catch (e2) { /* defaults not ready; per-chart display still works */ }
     } catch (e) { /* ignore -- fall back to per-chart `plugins` option */ }
+  })();
+
+  // O2: register the "topBand" tooltip positioner once at load. It pins the
+  // tooltip to the TOP of the plot area instead of the default 'average'
+  // (centered over the hovered index, occluding the lines). Opt-in per chart
+  // via options.plugins.tooltip.position='topBand' (the Overview trend chart).
+  // Guarded -- Chart.Tooltip may be absent in a partial build; consumers fall
+  // back to the default position when the positioner is missing.
+  (function registerTopBandPositioner_() {
+    try {
+      if (typeof Chart !== 'undefined' && Chart.Tooltip && Chart.Tooltip.positioners
+          && !Chart.Tooltip.positioners.topBand) {
+        Chart.Tooltip.positioners.topBand = function (elements, eventPosition) {
+          const ca = this.chart && this.chart.chartArea;
+          if (!ca) return eventPosition;
+          return { x: eventPosition.x, y: ca.top + 6 };
+        };
+      }
+    } catch (e) { /* positioner optional */ }
   })();
 
   // Graceful fallback when the Chart.js CDN fails to load (Part 4).
@@ -2437,6 +2459,7 @@
     let lo = Infinity, hi = -Infinity;
     datasets.forEach(function (ds) {
       if (skipLabels.indexOf(ds.label) !== -1) return;
+      if (ds.hidden) return;   // O1: an Alt-hidden dept line is excluded from Fit scaling
       (ds.data || []).forEach(function (v) {
         if (v == null || isNaN(v)) return;
         if (v < lo) lo = v;
@@ -2581,6 +2604,11 @@
             labels: { boxWidth: 12, font: { size: 11 } },
           }, chartSpotlightLegend_()),
           tooltip: {
+            // O2: park the card at the top of the plot so it doesn't sit over
+            // the lines. Degrades to the default position if the positioner
+            // isn't available in this Chart build.
+            position: (typeof Chart !== 'undefined' && Chart.Tooltip && Chart.Tooltip.positioners
+                       && Chart.Tooltip.positioners.topBand) ? 'topBand' : undefined,
             filter: function (ctx) {
               // Hide the reference baseline from the per-line tooltip list.
               return OV_BASELINE_LABELS_.indexOf(ctx.dataset.label) === -1;
@@ -2619,6 +2647,10 @@
       chartSpotlightStash_(ovChartInstance, { skipLabel: mcfg.baselineLabel || '__ov_no_baseline__' });
       ovChartInstance._trendIso = view.trendIsoLabels || [];
       ovChartInstance._viewerDept = ovViewerDept_(data);
+      // O1: stash the metric config + baseline labels so chartSpotlightAfterHide_
+      // can recompute the Fit y-axis (excluding Alt-hidden lines) in place.
+      ovChartInstance._mcfg = mcfg;
+      ovChartInstance._skipLabels = OV_BASELINE_LABELS_;
     }
     // Chart header reflects the active metric (the click-a-card hint is a
     // sibling span, left intact).
@@ -2810,10 +2842,33 @@
         const key = chartSpotKey_(ds);
         if (!key) return;
         const ne = e && e.native;
+        // O1: Alt/Option-click HIDES a series (and rescales the y-axis) rather
+        // than pinning it -- lets the user drop an outlier dept so the rest
+        // scale properly. Plain click = solo-pin; Shift/Cmd/Ctrl = add to pins.
+        if (ne && ne.altKey) {
+          ds.hidden = !ds.hidden;
+          chartSpotlightAfterHide_(chart);
+          return;
+        }
         const additive = !!(ne && (ne.shiftKey || ne.metaKey || ne.ctrlKey));
         chartSpotlightTogglePin_(chart, key, additive);
       },
     };
+  }
+
+  // O1: after Alt-hiding/showing a series, rescale + repaint. The Overview
+  // chart uses a custom metric-aware y-axis (ovYAxis_, which now skips hidden
+  // datasets), so recompute its min/max from the stashed mcfg; the QCD chart
+  // uses Chart.js default scales, which already exclude hidden datasets, so a
+  // plain update() suffices there.
+  function chartSpotlightAfterHide_(chart) {
+    if (chart === ovChartInstance && chart._mcfg && chart.options && chart.options.scales) {
+      const y = ovYAxis_(chart._mcfg, ovAxisZoom, chart.data.datasets, chart._skipLabels || []);
+      chart.options.scales.y.min = y.min;
+      chart.options.scales.y.max = y.max;
+      chart.options.scales.y.beginAtZero = y.beginAtZero;
+    }
+    chart.update();
   }
 
   // Spotlight a dept's line by name (dept-tile hover). No-op when a pin is
@@ -4573,6 +4628,30 @@
          + '</div>';
   }
 
+  // M3: frost-and-ripple overlay. Frosts `host` (blur + dim) with the ripple
+  // loader centered over it, so data being refreshed stays in place instead of
+  // collapsing to a top skeleton that pushes the page down. Idempotent; the
+  // host gains position:relative via .ds-frost-host.
+  function dsFrostShow_(host, label) {
+    if (!host) return;
+    var ov = host.querySelector(':scope > .ds-frost');
+    if (!ov) {
+      ov = document.createElement('div');
+      ov.className = 'ds-frost';
+      ov.innerHTML = dsRingsHtml_(label || 'Refreshing…');
+      host.appendChild(ov);
+    } else {
+      ov.style.display = '';
+    }
+    host.classList.add('ds-frost-host');
+  }
+  function dsFrostHide_(host) {
+    if (!host) return;
+    var ov = host.querySelector(':scope > .ds-frost');
+    if (ov) ov.style.display = 'none';
+    host.classList.remove('ds-frost-host');
+  }
+
   // Generic trailing-edge debounce. Returns a wrapped fn that defers
   // invocation until `ms` have elapsed since the last call.
   function debounce_(fn, ms) {
@@ -4722,7 +4801,15 @@
       return;
     }
 
-    setStatus('loading', 'Loading...');
+    // M3: when the table already holds data for the SAME dept, frost it in
+    // place (blur + ripple) rather than showing the top skeleton that pushes
+    // the page down then pops back. First load / dept switch (nothing to
+    // frost) keeps the skeleton.
+    var __deptSwitch = (lastSummaryDept_ !== null && lastSummaryDept_ !== dept);
+    var __frostHost = document.querySelector('.agents-table-wrap');
+    var __useFrost = !__deptSwitch && state.rows.length > 0 && !!__frostHost;
+    if (__useFrost) { dsFrostShow_(__frostHost, 'Refreshing…'); setStatus(null); }
+    else { setStatus('loading', 'Loading...'); }
     $('refresh-btn').disabled = true;
     // Page title belongs to the dept page; only update it when
     // we're actually showing that page (otherwise we'd clobber
@@ -4766,7 +4853,10 @@
     if (__swrHit) {
       try {
         onData(__swrHit.data, { swr: true });
-        setStatus('loading', 'Showing your previous result — refreshing now…');
+        // With the frost overlay up (same-dept refresh with data), the top
+        // "showing previous result" skeleton note is redundant + would push
+        // the page down -- skip it and let the frost signal the refresh.
+        if (!__useFrost) setStatus('loading', 'Showing your previous result — refreshing now…');
       } catch (e) { /* fall through to the normal loading path */ }
     }
     google.script.run
@@ -4790,6 +4880,12 @@
 
   function onData(data, opts) {
     $('refresh-btn').disabled = false;
+    // M3: clear the frost on the LIVE repaint (not the SWR pre-paint, which is
+    // still "loading").
+    if (!(opts && opts.swr)) {
+      var __fh = document.querySelector('.agents-table-wrap');
+      if (__fh) dsFrostHide_(__fh);
+    }
     lastSummaryDept_ = getRequestedDept();   // the dept now painted (stale-flash guard)
     state.rows = (data && data.rows) || [];
     state.totals = (data && data.totals) || null;
@@ -4906,6 +5002,8 @@
   // Draw (or redraw, on a Bars/Radar toggle) the dept missed chart from the
   // last response. Destroys any prior instance first; honors the shared mode;
   // re-measures after layout settles (#5).
+  // MC2: bounded rAF retry when the container isn't measurable yet (see below).
+  var deptMissedDrawAttempts_ = 0;
   function deptMissedDrawChart_(data) {
     const m = (data && data.meta) || {};
     const chartWrap = $('dept-missed-chart-wrap');
@@ -4914,14 +5012,28 @@
     missedSyncToggles_();   // tag the chart-row (mode-bars/mode-radar) before sizing
     const hasMissed = Number(m.totalMissed || 0) > 0 || Number(m.abandonedCallCount || 0) > 0;
     chartWrap.style.display = hasMissed ? '' : 'none';
-    if (hasMissed && typeof Chart !== 'undefined') {
-      chartWrap.innerHTML = '<canvas id="dept-missed-chart" aria-label="Hour-of-day distribution of missed calls"></canvas>';
-      refreshChartTheme();
-      deptMissedChart = safeChart_($('dept-missed-chart').getContext('2d'),
-        missedChartCfg_((data && data.chart) || { labels: [], counts: [] },
-                        function (idx) { deptMissedBucketDetail_.toggle(idx); }));
-      deptMissedResize_();
+    if (!hasMissed || typeof Chart === 'undefined') { missedSyncToggles_(); return; }
+    // MC2: don't CREATE the chart while the container is unmeasurable (the dept
+    // page / missed section can still be under a display:none ancestor on the
+    // first paint -- notably manager view -- so Chart.js measures a zero-size
+    // canvas that even the resize() retry can't recover, and it comes up blank).
+    // Defer creation via rAF until it's laid out; bounded so it can't spin if
+    // the section never becomes visible.
+    const measurable = chartWrap.offsetParent !== null && chartWrap.clientWidth > 0;
+    if (!measurable) {
+      if (deptMissedDrawAttempts_ < 30 && typeof requestAnimationFrame === 'function') {
+        deptMissedDrawAttempts_++;
+        requestAnimationFrame(function () { deptMissedDrawChart_(data); });
+      }
+      return;
     }
+    deptMissedDrawAttempts_ = 0;
+    chartWrap.innerHTML = '<canvas id="dept-missed-chart" aria-label="Hour-of-day distribution of missed calls"></canvas>';
+    refreshChartTheme();
+    deptMissedChart = safeChart_($('dept-missed-chart').getContext('2d'),
+      missedChartCfg_((data && data.chart) || { labels: [], counts: [] },
+                      function (idx) { deptMissedBucketDetail_.toggle(idx); }));
+    deptMissedResize_();
     missedSyncToggles_();
   }
 
@@ -5348,6 +5460,9 @@
 
   function onError(err, hadSwrPaint) {
     $('refresh-btn').disabled = false;
+    // M3: clear the frost overlay on failure (the stale table stays visible).
+    var __fh = document.querySelector('.agents-table-wrap');
+    if (__fh) dsFrostHide_(__fh);
     var msg = (err && err.message ? err.message : String(err));
     // When this request SWR-painted the last-good table, keep it on screen
     // under the error status (the behavior refresh()'s SWR comment promises)
