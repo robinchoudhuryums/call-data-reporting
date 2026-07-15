@@ -69,6 +69,13 @@ var ESC_STATUS_RESOLVED = 'resolved';
 // they enter the dept worklist, and reviewed-out rows (kept, never deleted).
 var ESC_STATUS_PENDING_REVIEW = 'pending_review';
 var ESC_STATUS_REJECTED       = 'rejected';
+// C6: an escalation actively being worked (a real status transition, not a
+// passive comment -- signals ownership + gets its own triage group). It slots
+// into the existing chain: pending_review -> (approve) -> pending -> (start) ->
+// in_progress -> (resolve) -> resolved; rejected stays the terminal branch off
+// review. Started via startEscalation; the 'started' activity event records
+// the owner. resolveEscalation accepts it (pending OR in_progress can resolve).
+var ESC_STATUS_IN_PROGRESS = 'in_progress';
 
 // ── Phase 2: the external-app INSERT contract ─────────────────────────────
 //
@@ -118,7 +125,7 @@ function getEscalationsInit() {
     department:  user.department || null,
     departments: isAdmin ? getAllDepartments_() : (user.department ? [user.department] : []),
     neonConfigured: !!PropertiesService.getScriptProperties().getProperty('NEON_HOST'),
-    statuses:    ['pending', 'pending_review', 'resolved', 'rejected', 'all'],
+    statuses:    ['pending', 'pending_review', 'in_progress', 'resolved', 'rejected', 'all'],
   };
 }
 
@@ -146,7 +153,7 @@ function getEscalations(req) {
   }
 
   var status = String(req.status || 'pending').toLowerCase().trim();
-  if (['pending', 'pending_review', 'resolved', 'rejected', 'all'].indexOf(status) === -1) status = 'pending';
+  if (['pending', 'pending_review', 'in_progress', 'resolved', 'rejected', 'all'].indexOf(status) === -1) status = 'pending';
 
   var conn = getDashboardNeonConn_();
   if (!conn) return { available: false, rows: [], meta: { department: scopeAll ? 'ALL' : department, status: status } };
@@ -172,24 +179,53 @@ function getEscalations(req) {
     var json = rs.next() ? rs.getString('j') : '[]';
     rs.close(); stmt.close();
     var rows = JSON.parse(json || '[]');
-    // Phase 2: how many externally-submitted rows await review in THIS
-    // viewer scope -- drives the client's "needs review" chip on every
-    // load, whatever status filter is active. Same connection, cheap COUNT.
-    var pendingReview = 0;
+    // C1 triage band + Phase-2 review chip: ONE cheap aggregate over the SAME
+    // viewer scope as the list (dept or ALL). Computed server-side, NOT from
+    // the in-memory rows -- those are filtered to the active status, so the
+    // band can't be derived from them (e.g. the In-progress count while
+    // viewing Pending). Same connection, best-effort (band + chip just hide on
+    // failure). Subsumes the old pending_review-only COUNT.
+    var counts = { pending: 0, in_progress: 0, pending_review: 0, resolved: 0, rejected: 0 };
+    var pendingReview = 0, resolvedLast7 = 0, oldestOpen = null, overdue = 0;
     try {
-      var csql = 'SELECT count(*) AS n FROM escalations WHERE status = ?'
-               + (scopeAll ? '' : ' AND department = ?');
-      var cstmt = conn.prepareStatement(csql);
-      cstmt.setString(1, ESC_STATUS_PENDING_REVIEW);
-      if (!scopeAll) cstmt.setString(2, department);
-      var crs = cstmt.executeQuery();
-      if (crs.next()) pendingReview = Number(crs.getString('n')) || 0;
-      crs.close(); cstmt.close();
-    } catch (ce2) { /* best-effort: chip just hides */ }
+      // ESC_OVERDUE_DAYS(=3) mirrors the client's overdue threshold; calendar
+      // days here (plain SQL interval) so the band's Overdue count and the
+      // per-card age badge use the SAME definition (client uses calendar days
+      // too -- see escDaysOpen_).
+      var asql = 'SELECT '
+        + "count(*) FILTER (WHERE status = 'pending') AS n_pending, "
+        + "count(*) FILTER (WHERE status = 'in_progress') AS n_inprog, "
+        + "count(*) FILTER (WHERE status = 'pending_review') AS n_review, "
+        + "count(*) FILTER (WHERE status = 'resolved') AS n_resolved, "
+        + "count(*) FILTER (WHERE status = 'rejected') AS n_rejected, "
+        + "count(*) FILTER (WHERE status = 'resolved' AND resolved_at >= now() - interval '7 days') AS n_resolved7, "
+        + "count(*) FILTER (WHERE status IN ('pending','in_progress') AND occurred_at < now() - interval '3 days') AS n_overdue, "
+        + "min(occurred_at) FILTER (WHERE status IN ('pending','in_progress'))::text AS oldest_open "
+        + 'FROM escalations' + (scopeAll ? '' : ' WHERE department = ?');
+      var astmt = conn.prepareStatement(asql);
+      if (!scopeAll) astmt.setString(1, department);
+      var ars = astmt.executeQuery();
+      if (ars.next()) {
+        counts.pending        = Number(ars.getString('n_pending'))  || 0;
+        counts.in_progress    = Number(ars.getString('n_inprog'))   || 0;
+        counts.pending_review = Number(ars.getString('n_review'))   || 0;
+        counts.resolved       = Number(ars.getString('n_resolved')) || 0;
+        counts.rejected       = Number(ars.getString('n_rejected')) || 0;
+        pendingReview = counts.pending_review;
+        resolvedLast7 = Number(ars.getString('n_resolved7')) || 0;
+        overdue       = Number(ars.getString('n_overdue'))   || 0;
+        oldestOpen = ars.getString('oldest_open') || null;
+      }
+      ars.close(); astmt.close();
+    } catch (ce2) { /* best-effort: band + chip just hide */ }
     return { available: true, rows: rows,
              meta: { department: scopeAll ? 'ALL' : department, status: status,
                      count: rows.length,
-                     pendingReviewCount: pendingReview,
+                     pendingReviewCount: pendingReview,      // back-compat (review chip)
+                     statusCounts: counts,                    // C1 band
+                     resolvedLast7: resolvedLast7,            // C1 "Resolved · 7d" tile
+                     overdueCount: overdue,                   // C1 "Overdue >3d" tile
+                     oldestOpenAt: oldestOpen,                // C1 "Oldest open" tile
                      truncated: rows.length >= ESC_MAX_ROWS } };   // F-46
   } catch (e) {
     Logger.log('getEscalations failed: ' + (e && e.message ? e.message : e));
@@ -430,7 +466,9 @@ function resolveEscalation(req) {
     // Phase-2 trust boundary: field re-normalization + empty-reason gate +
     // 'approved' provenance), and let a terminal rejected row be walked back
     // into the worklist via resolve -> reopen.
-    if (meta.status !== ESC_STATUS_PENDING) {
+    // C6: an IN-PROGRESS row resolves directly too (pending -> resolved and
+    // in_progress -> resolved are both valid worklist completions).
+    if (meta.status !== ESC_STATUS_PENDING && meta.status !== ESC_STATUS_IN_PROGRESS) {
       if (meta.status === ESC_STATUS_RESOLVED) {
         throw new Error('This escalation is already resolved. Reopen it first if the '
           + 'resolution needs to change (the existing note would otherwise be overwritten).');
@@ -439,7 +477,7 @@ function resolveEscalation(req) {
         throw new Error('This escalation is still awaiting review. Approve it into the '
           + 'worklist before resolving it.');
       }
-      throw new Error('Only a pending escalation can be resolved (this one is "'
+      throw new Error('Only a pending or in-progress escalation can be resolved (this one is "'
         + meta.status + '").');
     }
 
@@ -518,6 +556,61 @@ function reopenEscalation(req) {
     if (txn) { try { conn.rollback(); } catch (rb) {} }
     Logger.log('reopenEscalation failed: ' + (e && e.message ? e.message : e));
     throw new Error(e && e.message ? e.message : 'Could not reopen the escalation.');
+  } finally {
+    try { if (txn) conn.setAutoCommit(true); } catch (ae) {}
+    try { conn.close(); } catch (ce) {}
+    lock.releaseLock();
+  }
+}
+
+/**
+ * C6: STARTS work on an escalation (status 'pending' -> 'in_progress'),
+ * signaling ownership so it moves to its own triage group. PER-DEPT gated
+ * like resolveEscalation (escAssertRowAccess_ on the row's OWN dept). PENDING-
+ * ONLY (an already in-progress / resolved / review / rejected row can't be
+ * started). An optional note is captured in the activity trail (§5) as the
+ * 'started' event; the actor IS the owner. Reuses the exact
+ * lock + txn + escAppendActivity_ template as the other write verbs -- no new
+ * permission path, no schema change (in_progress is just a status value, and
+ * 'started' is just an action string on the existing append-only trail).
+ * Returns { id }.
+ */
+function startEscalation(req) {
+  req = req || {};
+  var user = resolveUser_(Session.getActiveUser().getEmail());
+  if (!user || user.role === 'none') throw new Error('Not authorized.');
+  var id = String(req.id || '').trim();
+  if (!id) throw new Error('Missing escalation id.');
+  var note = escClean_(req.note);
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw new Error('Another escalation write is in progress — retry in a moment.');
+  var conn = getDashboardNeonConn_();
+  if (!conn) { lock.releaseLock(); throw new Error('Escalations storage (Neon) is not configured/reachable.'); }
+  var txn = false;
+  try {
+    escEnsureTable_(conn);
+    var meta = escRowMeta_(conn, id);
+    if (!meta) throw new Error('Escalation not found.');
+    escAssertRowAccess_(user, meta.department);   // F-45: row dept = data, not input
+    if (meta.status !== ESC_STATUS_PENDING) {
+      if (meta.status === ESC_STATUS_IN_PROGRESS) throw new Error('This escalation is already in progress.');
+      throw new Error('Only a pending escalation can be started (this one is "' + meta.status + '").');
+    }
+    conn.setAutoCommit(false); txn = true;
+    var stmt = conn.prepareStatement('UPDATE escalations SET status = ?, updated_at = now() WHERE id = ?');
+    stmt.setString(1, ESC_STATUS_IN_PROGRESS);
+    stmt.setString(2, id);
+    stmt.execute();
+    stmt.close();
+    escAppendActivity_(conn, id, 'started', user.email, note || 'Marked in progress');
+    conn.commit();
+    Logger.log('startEscalation: %s started %s (%s)', user.email, id, meta.department);
+    return { id: id };
+  } catch (e) {
+    if (txn) { try { conn.rollback(); } catch (rb) {} }
+    Logger.log('startEscalation failed: ' + (e && e.message ? e.message : e));
+    throw new Error(e && e.message ? e.message : 'Could not start the escalation.');
   } finally {
     try { if (txn) conn.setAutoCommit(true); } catch (ae) {}
     try { conn.close(); } catch (ce) {}

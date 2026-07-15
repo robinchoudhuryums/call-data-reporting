@@ -5554,10 +5554,145 @@
   .heat-drill-path { color: var(--ink); min-width: 0; }
   .heat-drill-facts { color: var(--muted); }
 
+  /* ── Design bundle: Reports & Escalations (additive) ─────────────
+     Shared presentation components introduced by the Insights (Part A),
+     My Department (Part B), and Escalations (Part C) design pass. All
+     token-driven so they adapt to light/dark + theme. */
+
+  /* A3 / B2 zone divider: a labeled hairline separating page zones. */
+  .ds-zone { display: flex; align-items: center; gap: 12px; margin: 22px 0 10px; }
+  .ds-zone::after { content: ''; flex: 1; height: 1px; background: var(--line); }
+  .ds-zone-label { font: 600 11px/1 var(--mono); letter-spacing: 0.18em;
+    text-transform: uppercase; color: var(--muted); white-space: nowrap; }
+
+  /* A1 needs-attention strip (Insights). */
+  .ds-attention { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    margin: 10px 0 6px; padding: 8px 12px; border-radius: var(--r-lg); border: 1px solid var(--line); }
+  .ds-attention--warn { background: var(--warn-soft); border-color: var(--warn); }
+  .ds-attention--calm { background: var(--good-soft); border-color: var(--good); }
+  .ds-attention-label { font: 600 11px/1 var(--mono); letter-spacing: 0.1em;
+    text-transform: uppercase; color: var(--warn); }
+  .ds-attention-icon { color: var(--good); font-weight: 700; }
+  .ds-attention-msg { font-size: 13px; color: var(--ink); }
+  .ds-attn-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+  .ds-attn-chip { display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+    border: 1px solid var(--warn); background: var(--paper); color: var(--ink);
+    border-radius: var(--r-pill); padding: 3px 10px; font-size: 12px; }
+  .ds-attn-chip:hover { background: var(--warn-soft); }
+  .ds-attn-chip-name { font-weight: 600; }
+  .ds-attn-chip-metric { font: 600 11px var(--mono); color: var(--warn); }
+
+  /* A2 Team-detail progressive-disclosure expander (Insights). */
+  .ds-team-detail { margin: 6px 0 4px; }
+  .ds-team-detail > summary { cursor: pointer; list-style: none; user-select: none;
+    display: inline-flex; align-items: center; gap: 8px; font: 600 12px var(--ui);
+    color: var(--accent); padding: 6px 0; }
+  .ds-team-detail > summary::-webkit-details-marker { display: none; }
+  .ds-team-detail > summary::before { content: '▸'; color: var(--muted); }
+  .ds-team-detail[open] > summary::before { content: '▾'; }
+  .ds-team-detail > summary:hover { color: var(--ink); }
+
+  /* B1 team summary strip (My Department). A 4-up rollup for the selected
+     range -- distinct from the daily queue aside (which is queue-level). */
+  .dept-team-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 10px; margin: 10px 0 14px; }
+  .dept-team-strip[hidden] { display: none; }
+  .dts-tile { border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--paper);
+    padding: 10px 12px; box-shadow: var(--shadow-1); }
+  .dts-tile--hero { border-color: var(--accent); }
+  .dts-label { font: 600 10px/1 var(--mono); letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--muted); display: flex; align-items: baseline; gap: 6px; }
+  .dts-scope { font-weight: 400; letter-spacing: 0.04em; color: var(--ink-muted); }
+  .dts-value { font: 700 22px/1.1 var(--ui); font-variant-numeric: tabular-nums;
+    color: var(--ink); margin-top: 6px; }
+  .dts-value.bm-target { color: var(--good); }
+  .dts-value.bm-over { color: var(--warn); }
+  .dts-sub { font: 400 11px/1.3 var(--mono); color: var(--muted); margin-top: 3px;
+    display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .dts-delta { font-weight: 600; }
+  .dts-delta.wow-chip-good { color: var(--good); }
+  .dts-delta.wow-chip-warn { color: var(--warn); }
+  .dts-delta.wow-chip-muted { color: var(--muted); }
+  /* Hero answer-rate mini-track with the 92% target tick (B1). */
+  .dts-track { position: relative; height: 6px; border-radius: var(--r-pill);
+    background: var(--paper-2); margin-top: 8px; overflow: visible; }
+  .dts-track-fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: var(--r-pill);
+    background: var(--good); }
+  .dts-track-fill.is-under { background: var(--warn); }
+  .dts-track-tick { position: absolute; top: -2px; bottom: -2px; width: 2px; left: 92%;
+    background: var(--ink); opacity: 0.55; }
+  @media (max-width: 720px) { .dept-team-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
   /* ── Escalations ─────────────────────────────────────────────── */
   .esc-toolbar { display: flex; gap: 14px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 12px; }
   .esc-toolbar .ir-col { margin: 0; }
   .esc-new-col { margin-left: auto; }
+
+  /* C2: filter sidebar + main worklist column. Collapses to a top toolbar
+     below 900px. Same control IDs -- only the container layout changed. */
+  .esc-layout { display: flex; gap: 18px; align-items: flex-start; }
+  .esc-sidebar { flex: 0 0 230px; position: sticky; top: 8px; }
+  .esc-main { flex: 1 1 auto; min-width: 0; }
+  .esc-sidebar .esc-toolbar { flex-direction: column; align-items: stretch; gap: 12px; margin-bottom: 0; }
+  .esc-sidebar .esc-toolbar .ir-col { width: 100%; }
+  .esc-sidebar .esc-toolbar select { width: 100%; box-sizing: border-box; }
+  .esc-sidebar .esc-toolbar .esc-filter-wrap { display: flex; width: 100%; }
+  .esc-sidebar .esc-toolbar .esc-filter-wrap input { width: 100%; box-sizing: border-box; }
+  .esc-sidebar .esc-new-col { margin-left: 0; }
+  @media (max-width: 900px) {
+    .esc-layout { flex-direction: column; }
+    .esc-sidebar { position: static; flex-basis: auto; width: 100%; }
+    .esc-sidebar .esc-toolbar { flex-direction: row; flex-wrap: wrap; align-items: flex-end; gap: 14px; }
+    .esc-sidebar .esc-toolbar .ir-col { width: auto; }
+    .esc-sidebar .esc-toolbar select { width: auto; }
+    .esc-sidebar .esc-new-col { margin-left: auto; }
+  }
+
+  /* C1: triage summary band. */
+  .esc-summary-band { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 8px; margin: 0 0 14px; }
+  .esc-band-tile { border: 1px solid var(--line); border-left-width: 3px; border-radius: var(--r-lg);
+    background: var(--paper); padding: 8px 10px; }
+  .esc-band-clickable { cursor: pointer; }
+  .esc-band-clickable:hover { border-color: var(--accent); }
+  .esc-band-value { font: 700 20px/1.1 var(--ui); font-variant-numeric: tabular-nums; color: var(--ink); }
+  .esc-band-label { font: 600 10px/1.2 var(--mono); letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--muted); margin-top: 3px; }
+  .esc-band-tile--warn   { border-left-color: var(--warn); }
+  .esc-band-tile--accent { border-left-color: var(--accent); }
+  .esc-band-tile--good   { border-left-color: var(--good); }
+  .esc-band-tile--muted  { border-left-color: var(--line); }
+  .esc-band-tile--warn   .esc-band-value { color: var(--warn); }
+  .esc-band-tile--accent .esc-band-value { color: var(--accent); }
+  @media (max-width: 900px) { .esc-summary-band { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+  @media (max-width: 560px) { .esc-summary-band { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+  /* C4: triage group headers (mirrors the Insights tier pattern). */
+  .esc-group-head { display: flex; align-items: center; gap: 8px; margin: 16px 0 8px; }
+  .esc-group-head:first-child { margin-top: 2px; }
+  .esc-group-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .esc-group-label { font: 600 12px var(--ui); color: var(--ink); }
+  .esc-group-count { font: 600 11px var(--mono); color: var(--muted); background: var(--paper-2);
+    border-radius: var(--r-pill); padding: 1px 8px; }
+  .esc-group-head--warn   .esc-group-dot { background: var(--warn); }
+  .esc-group-head--accent .esc-group-dot { background: var(--accent); }
+  .esc-group-head--good   .esc-group-dot { background: var(--good); }
+  .esc-group-head--muted  .esc-group-dot { background: var(--muted); }
+
+  /* C5: labeled field grid (replaces the emoji meta run-on). */
+  .esc-fields { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 4px; }
+  .esc-field { display: flex; flex-direction: column; gap: 1px; }
+  .esc-field-k { font: 600 9px/1 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+  .esc-field-v { font-size: 13px; color: var(--ink); }
+
+  /* C3: age badge (right-aligned in the card top via the spacer). */
+  .esc-card-top-spacer { flex: 1 1 auto; }
+  .esc-age { font: 600 11px/1 var(--mono); color: var(--muted); white-space: nowrap; }
+  .esc-age-over { color: var(--warn); }
+
+  /* C6: in-progress status treatment. */
+  .esc-pill-progress { background: var(--accent-soft); color: var(--accent); }
+  .esc-card-progress { border-left: 3px solid var(--accent); }
   .esc-create { padding: 14px 16px; margin-bottom: 14px; }
   .esc-optional { color: var(--muted); font-weight: 400; }
   .esc-field-full { margin-top: 8px; }
@@ -5636,6 +5771,9 @@
   .esc-timeline-resolved::before { background: var(--good); }
   .esc-timeline-reopened::before { background: var(--warn); }
   .esc-timeline-created::before  { background: var(--accent); }
+  .esc-timeline-started::before  { background: var(--accent); }
+  .esc-timeline-approved::before { background: var(--good); }
+  .esc-timeline-rejected::before { background: var(--warn); }
   .esc-timeline-head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
   .esc-timeline-action { font: 600 12px var(--ui); color: var(--ink); }
   .esc-timeline-meta { font: 400 11px var(--mono); color: var(--muted); }

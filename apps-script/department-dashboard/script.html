@@ -5535,6 +5535,115 @@
     return '';
   }
 
+  // B1: derive the ROSTER team prior-window totals from the per-row prior
+  // fields the server already ships (priorAnswered/priorMissed/priorRung on
+  // matchedViaRoster rows with priorHasData). Same roster-only scope as the
+  // tfoot totals + the same limitation as the per-row WoW chips: agents with
+  // prior-only activity (no current-window row) aren't represented. `has` is
+  // false when no row carried a prior baseline -> the strip shows no delta.
+  function deptTeamPrior_(rows) {
+    var out = { answered: 0, missed: 0, rung: 0, has: false };
+    (rows || []).forEach(function (r) {
+      if (!r.matchedViaRoster || r.priorHasData !== true) return;
+      out.answered += Number(r.priorAnswered) || 0;
+      out.missed   += Number(r.priorMissed)   || 0;
+      out.rung     += Number(r.priorRung)     || 0;
+      out.has = true;
+    });
+    return out;
+  }
+
+  // B1: compact vs-prior delta chip for the team strip. Mirrors the table's
+  // WoW valence + noise-muting (WOW_NOISE_THRESHOLD) so a small move stays
+  // quiet. `valence` = 'good' (up is good: answered/rate) or 'warn' (up is
+  // bad: missed).
+  function deptStripDelta_(delta, valence, threshold, unit, tip) {
+    var abs = Math.abs(delta);
+    var cls, arrow;
+    if (delta === 0) { cls = 'wow-chip-muted'; arrow = '→'; }
+    else if (abs < threshold) { cls = 'wow-chip-muted'; arrow = delta > 0 ? '▲' : '▼'; }
+    else {
+      var up = delta > 0;
+      cls = (valence === 'good') ? (up ? 'wow-chip-good' : 'wow-chip-warn')
+                                 : (up ? 'wow-chip-warn' : 'wow-chip-good');
+      arrow = up ? '▲' : '▼';
+    }
+    var sign = delta > 0 ? '+' : (delta < 0 ? '−' : '');
+    var label = delta === 0 ? '0' : (sign + abs + (unit || ''));
+    return '<span class="dts-delta ' + cls + '" title="' + escapeHtml(tip || '') + '">'
+         + arrow + ' ' + label + '</span>';
+  }
+
+  // B1: team summary strip (answer rate hero + answered / missed / avg talk)
+  // for the selected range. Built from state.totals (roster-only, server-
+  // summed) -- no new fetch. Hidden when there are no data rows.
+  function renderDeptTeamStrip_(state) {
+    var zone = $('dept-team-zone');
+    var strip = $('dept-team-strip');
+    if (!strip) return;
+    var t = state && state.totals;
+    if (!t || !state.rows || !state.rows.length) {
+      strip.style.display = 'none'; strip.innerHTML = '';
+      if (zone) zone.style.display = 'none';
+      return;
+    }
+    var a = Number(t.totalAnswered) || 0;
+    var m = Number(t.totalMissed)   || 0;
+    var total = a + m;
+    var rate = total ? Math.round(a / total * 100) : 0;
+    var att = Number(t.attSeconds) || 0;
+
+    var prior = deptTeamPrior_(state.rows);
+    var priorTip = '';
+    if (prior.has) {
+      var pf = (state.meta && state.meta.priorFrom) || '';
+      var pt = (state.meta && state.meta.priorTo)   || '';
+      priorTip = 'Prior period ' + pf + ' – ' + pt;
+    }
+    var rateDeltaHtml = '', ansDeltaHtml = '', missDeltaHtml = '';
+    if (prior.has) {
+      var pTotal = prior.answered + prior.missed;
+      var pRate = pTotal ? Math.round(prior.answered / pTotal * 100) : 0;
+      rateDeltaHtml = deptStripDelta_(rate - pRate, 'good', 1, ' pts', priorTip + ': ' + pRate + '%');
+      ansDeltaHtml  = deptStripDelta_(a - prior.answered, 'good', WOW_NOISE_THRESHOLD, '', priorTip + ': ' + prior.answered);
+      missDeltaHtml = deptStripDelta_(m - prior.missed, 'warn', WOW_NOISE_THRESHOLD, '', priorTip + ': ' + prior.missed);
+    }
+
+    var rateCls = total ? benchValueCls_('% answered', rate + '%', true) : '';
+    var under92 = total && rate < 92;
+    var fillPct = total ? Math.max(0, Math.min(100, rate)) : 0;
+
+    var heroTile = '<div class="dts-tile dts-tile--hero">'
+      + '<div class="dts-label">Answer rate <span class="dts-scope">this range</span></div>'
+      + '<div class="dts-value' + rateCls + '" data-flash-key="dts:rate">' + (total ? rate + '%' : '–') + '</div>'
+      + '<div class="dts-track" title="92% company target">'
+      +   '<span class="dts-track-fill' + (under92 ? ' is-under' : '') + '" style="width:' + fillPct + '%"></span>'
+      +   '<span class="dts-track-tick"></span>'
+      + '</div>'
+      + (rateDeltaHtml ? '<div class="dts-sub">' + rateDeltaHtml + ' vs prior</div>' : '')
+      + '</div>';
+    var ansTile = '<div class="dts-tile">'
+      + '<div class="dts-label">Answered</div>'
+      + '<div class="dts-value" data-flash-key="dts:answered">' + fmtNumber(a) + '</div>'
+      + (ansDeltaHtml ? '<div class="dts-sub">' + ansDeltaHtml + ' vs prior</div>' : '')
+      + '</div>';
+    var missTile = '<div class="dts-tile">'
+      + '<div class="dts-label">Missed</div>'
+      + '<div class="dts-value" data-flash-key="dts:missed">' + fmtNumber(m) + '</div>'
+      + (missDeltaHtml ? '<div class="dts-sub">' + missDeltaHtml + ' vs prior</div>' : '')
+      + '</div>';
+    var attTile = '<div class="dts-tile">'
+      + '<div class="dts-label">Avg talk (ATT)</div>'
+      + '<div class="dts-value" data-flash-key="dts:att">' + fmtDuration(att) + '</div>'
+      + '<div class="dts-sub">per answered call</div>'
+      + '</div>';
+
+    strip.innerHTML = heroTile + ansTile + missTile + attTile;
+    strip.style.display = '';
+    if (zone) zone.style.display = '';
+    dsFlashChanged_(strip, 'deptstrip:' + getRequestedDept());
+  }
+
   function render() {
     // Header sort arrows
     document.querySelectorAll('#agents-table thead th[data-sort]').forEach(function (th) {
@@ -5556,6 +5665,7 @@
     if (!state.rows.length) {
       tbody.innerHTML = '';
       tfoot.innerHTML = '';
+      renderDeptTeamStrip_(state);   // B1: hides itself when there are no rows
       return;
     }
 
@@ -5602,6 +5712,10 @@
     } else {
       tfoot.innerHTML = '';
     }
+    // B1: team summary strip for the selected range (roster rollup), lifted
+    // from the same server totals -- rendered here so it repaints on sort /
+    // refresh alongside the table.
+    renderDeptTeamStrip_(state);
     // B1: flash agents whose Answered/Missed changed since the last paint for
     // this dept. Scoped per dept so switching depts doesn't cross-flash; a sort
     // re-render leaves values unchanged per key, so it never flashes.
@@ -10015,6 +10129,22 @@
     const genBtn = $('ins-generate-btn');
     if (genBtn) genBtn.addEventListener('click', runInsReport);
 
+    // A1: needs-attention strip -- a chip scrolls to that agent's card.
+    const naStrip = $('ins-needs-attention');
+    if (naStrip) naStrip.addEventListener('click', function (e) {
+      const chip = e.target.closest('.ds-attn-chip');
+      if (!chip) return;
+      insSpotlightAgentCard_(chip.getAttribute('data-agent'));
+    });
+
+    // A2: Team-detail expander -- render the deferred trend + share canvases
+    // on first open (and re-sync on later opens, cheap) so they never build
+    // at zero height inside a collapsed <details>.
+    const teamDetail = $('ins-team-detail');
+    if (teamDetail) teamDetail.addEventListener('toggle', function () {
+      if (teamDetail.open) insRenderDeferredCharts_();
+    });
+
     // Consolidated trend chart: Monthly/Daily view toggle (client-only
     // re-render from the cached payload; applies to all metric tabs).
     const trendViewToggle = $('ins-trend-view-toggle');
@@ -10643,6 +10773,109 @@
     return n + (n === 1 ? ' workday' : ' workdays');
   }
 
+  // A2: is the Team-detail <details> currently expanded? A missing wrapper
+  // (older markup) counts as open so the charts always render.
+  function insDetailOpen_() {
+    var d = $('ins-team-detail');
+    return !d || d.open;
+  }
+
+  // A2: render the two Chart.js canvases (trend + share) from the cached
+  // payload. Called during the main render when the Team-detail is already
+  // open, and by the <details> toggle handler on first open (charts built
+  // while collapsed render at zero height -- the missed-chart offsetParent
+  // lesson). Queue health + heatmap are DOM/CSS-grid, so they render in the
+  // main pass whether or not this section is open.
+  function insRenderDeferredCharts_() {
+    if (!insLastData || !insDetailOpen_()) return;
+    insRenderTrendChart_(insLastData);
+    insRenderShareChart_(insLastData.agentData || []);
+  }
+
+  // A1: among the valenced volume/rate metrics, the one that moved MOST
+  // unfavorably (per-working-day-adjusted, matching the trend pill's
+  // classification). Returns { label, arrow } or null when nothing moved
+  // the wrong way. Valence: % answered / answered up = good; missed up = bad.
+  function insWorstMover_(metrics, meta) {
+    var adj = insPerDayMetrics_(metrics || {}, meta) || {};
+    var defs = [
+      { key: 'pct',      label: '% answered', inverse: false },
+      { key: 'answered', label: 'answered',   inverse: false },
+      { key: 'missed',   label: 'missed',     inverse: true  },
+    ];
+    var worst = null;
+    defs.forEach(function (d) {
+      var st = adj[d.key];
+      if (!st || st.deltaPct == null) return;
+      var dp = Number(st.deltaPct) || 0;
+      var badness = d.inverse ? dp : -dp;   // > 0 = an unfavorable move
+      if (badness <= 0.05) return;
+      if (!worst || badness > worst.badness) {
+        worst = { badness: badness, label: d.label, arrow: d.inverse ? '▲' : '▼' };
+      }
+    });
+    return worst ? { label: worst.label, arrow: worst.arrow } : null;
+  }
+
+  // A1: needs-attention strip directly under the headline. One chip per
+  // REGRESSED agent -- deltaClassify_ on per-day-adjusted metrics, the
+  // DIRECTION of change (distinct from the standing-based "Needs attention"
+  // CARD TIER, which is current-vs-target). Each chip scrolls to that agent's
+  // card. Zero regressed -> a quiet "all steady/improving" line. Hidden for a
+  // single-agent report (no cohort to triage). Reuses the regressed set the
+  // headline sentence already counts -- no new server data.
+  function insRenderNeedsAttentionStrip_(data) {
+    var host = $('ins-needs-attention');
+    if (!host) return;
+    var cards = (data && data.agentData) || [];
+    var meta = (data && data.meta) || {};
+    if (cards.length <= 1) { host.style.display = 'none'; host.innerHTML = ''; return; }
+    var regressed = cards.filter(function (c) {
+      return deltaClassify_(insPerDayMetrics_(c.metrics, meta)) === 'regressed';
+    });
+    host.style.display = '';
+    if (!regressed.length) {
+      host.className = 'ds-attention ds-attention--calm';
+      host.innerHTML = '<span class="ds-attention-icon">✓</span>'
+        + '<span class="ds-attention-msg">All agents are steady or improving vs the prior period.</span>';
+      return;
+    }
+    host.className = 'ds-attention ds-attention--warn';
+    var chips = regressed.map(function (c) {
+      var w = insWorstMover_(c.metrics, meta);
+      var sub = w ? '<span class="ds-attn-chip-metric">' + w.arrow + ' ' + escapeHtml(w.label) + '</span>' : '';
+      return '<button type="button" class="ds-attn-chip" data-agent="' + escapeHtml(c.name) + '"'
+        + ' title="Jump to ' + escapeHtml(c.name) + '’s card">'
+        + '<span class="ds-attn-chip-name">' + escapeHtml(c.name) + '</span>' + sub + '</button>';
+    }).join('');
+    host.innerHTML = '<span class="ds-attention-label">Needs attention</span>'
+      + '<span class="ds-attn-chips">' + chips + '</span>';
+  }
+
+  // A1: scroll to + pulse an agent's card by name (the strip chip target).
+  // Reuses the .qs-spotlight accent-ring pulse (reduced-motion aware via CSS).
+  function insSpotlightAgentCard_(name) {
+    var wrap = $('ins-agent-cards');
+    if (!wrap || !name) return;
+    var el = wrap.querySelector('[data-ins-agent="' + escCssId_(name) + '"]');
+    // A regressed agent whose card is in the collapsed quiet group won't be
+    // found in the main grid -- expand it so the target exists, then retry.
+    if (!el) {
+      var det = $('ins-quiet-details');
+      if (det) {
+        det.open = true;
+        var qc = $('ins-quiet-cards');
+        el = qc && qc.querySelector('[data-ins-agent="' + escCssId_(name) + '"]');
+      }
+    }
+    if (!el) return;
+    try { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) {}
+    el.classList.remove('qs-spotlight');
+    void el.offsetWidth;
+    el.classList.add('qs-spotlight');
+    setTimeout(function () { el.classList.remove('qs-spotlight'); }, 2600);
+  }
+
   function insRenderReport_(data, opts) {
     insLastData = data;
     insCloseEditPopover_();
@@ -10729,8 +10962,15 @@
       var insHeat = $('ins-heatmap'); if (insHeat) { insHeat.style.display = 'none'; insHeat.innerHTML = ''; }
     }
     reportHeadline_('ins-headline', 'insights-results', insHeadline_(data));
-    insRenderTrendChart_(data);
-    insRenderShareChart_(data.agentData || []);
+    insRenderNeedsAttentionStrip_(data);
+    // A2: the trend + share Chart.js canvases render at zero height if built
+    // inside the collapsed Team-detail <details>, so defer them until it's
+    // open; the toggle handler renders them on first open. Queue health +
+    // heatmap already ran above (DOM/CSS-grid, safe while collapsed).
+    if (insDetailOpen_()) {
+      insRenderTrendChart_(data);
+      insRenderShareChart_(data.agentData || []);
+    }
     insRenderAgentCards_(data.agentData || [], data.meta, data.teamStats);
     // Quick-start chip landing: scroll to + spotlight the section that
     // answers the clicked question (one-shot; a small delay lets the page
@@ -10739,6 +10979,16 @@
     if (insScrollPending_) {
       const target = insScrollPending_;
       insScrollPending_ = null;
+      // A2: if the target section moved inside the collapsed Team-detail
+      // (e.g. the "abandons" chip -> ins-queue-health), open it + render its
+      // deferred charts so the spotlight lands on a visible element, not a
+      // zero-height collapsed panel.
+      const tEl = $(target);
+      const det = $('ins-team-detail');
+      if (tEl && det && det.contains(tEl) && !det.open) {
+        det.open = true;
+        insRenderDeferredCharts_();
+      }
       setTimeout(function () { qsSpotlight_(target); }, 200);
     }
   }
@@ -11890,7 +12140,8 @@
     const irLink = '<button type="button" class="ins-card-ir-link" data-agent="' + escapeHtml(c.name) + '"'
       + ' title="Open this agent&#39;s Individual Report for the same date range">IR &#8599;</button>';
 
-    return '<div class="ds-card ds-card--rail ins-card" style="--status:' + statusColor + '"' + debugAttrs + '>'
+    return '<div class="ds-card ds-card--rail ins-card" style="--status:' + statusColor + '"'
+         +   ' data-ins-agent="' + escapeHtml(c.name) + '"' + debugAttrs + '>'
          +   '<div class="ins-card-head"><span class="ins-card-name">' + escapeHtml(c.name) + '</span>' + trendPill + chip + vsTeam + irLink + '</div>'
          +   primary
          +   '<details class="ins-card-more"><summary>Rung &middot; ATT &middot; TTT</summary>'
@@ -13453,6 +13704,16 @@
 
     if ($('esc-refresh-btn')) $('esc-refresh-btn').addEventListener('click', escLoad_);
     if ($('esc-status'))      $('esc-status').addEventListener('change', escLoad_);
+    // C2: client-side sort re-renders the already-loaded rows (no server call).
+    if ($('esc-sort'))        $('esc-sort').addEventListener('change', escApplyFilter_);
+    // C1: band tiles are click-to-filter shortcuts (Needs review / Pending /
+    // In progress jump the status selector + reload).
+    if ($('esc-summary-band')) $('esc-summary-band').addEventListener('click', function (e) {
+      const tile = e.target.closest('[data-jump]');
+      if (!tile) return;
+      if ($('esc-status')) $('esc-status').value = tile.getAttribute('data-jump');
+      escLoad_();
+    });
     // Phase 2: the review chip jumps straight to the review queue.
     if ($('esc-review-chip')) $('esc-review-chip').addEventListener('click', function () {
       if ($('esc-status')) $('esc-status').value = 'pending_review';
@@ -13568,6 +13829,8 @@
         chip.style.display = 'none';
       }
     }
+    // C1: triage summary band (hides itself on unavailable / missing meta).
+    escRenderSummaryBand_(resp);
     if (resp.available === false) {
       escSetFilterCount_('');
       escShowEmpty_('Escalations are temporarily unavailable — the storage (Neon) could not be reached. Try Refresh in a moment.');
@@ -13608,7 +13871,23 @@
       return;
     }
     if ($('esc-empty')) $('esc-empty').style.display = 'none';
-    listEl.innerHTML = rows.map(escCardHtml_).join('');
+    // C2 sort + C4 grouping. Group into triage tiers ONLY in the "All" view;
+    // any single-status filter renders one flat (sorted) tier -- respecting
+    // the filter the user picked. Sort/group operate on a COPY.
+    const sortMode = ($('esc-sort') && $('esc-sort').value) || 'oldest';
+    const activeStatus = (escLastResp_.meta && escLastResp_.meta.status) || 'pending';
+    if (activeStatus === 'all') {
+      const byTier = {};
+      rows.forEach(function (r) { const k = escTierOf_(r); (byTier[k] = byTier[k] || []).push(r); });
+      listEl.innerHTML = ESC_TIERS_.map(function (t) {
+        const g = byTier[t.key];
+        if (!g || !g.length) return '';
+        return escTierHeaderHtml_(t.label, g.length, t.tone)
+          + escSortRows_(g, sortMode).map(escCardHtml_).join('');
+      }).join('');
+    } else {
+      listEl.innerHTML = escSortRows_(rows, sortMode).map(escCardHtml_).join('');
+    }
   }
 
   function escRowMatchesQuery_(r, q) {
@@ -13638,17 +13917,141 @@
     }
   }
 
+  // ── C1-C4 triage helpers ─────────────────────────────────────────
+  // C3: overdue threshold in CALENDAR days (front-end constant; presentation
+  // only -- no schema field / server alerting). Kept in sync with the server's
+  // n_overdue interval in getEscalations so the band count + the card badge use
+  // the SAME definition.
+  var ESC_OVERDUE_DAYS = 3;
+
+  // C3: calendar days an escalation has been open, from occurred_at (nullable
+  // -> null = render no badge, never "0 days"). Date-only basis, matching the
+  // server's band count.
+  function escDaysOpen_(r) {
+    if (!r || !r.occurred_at) return null;
+    var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(r.occurred_at));
+    if (!m) return null;
+    var occ = Date.UTC(+m[1], +m[2] - 1, +m[3]);
+    var now = new Date();
+    var today = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+    var days = Math.floor((today - occ) / 86400000);
+    return days < 0 ? 0 : days;
+  }
+  function escIsOpenStatus_(s) { return s === 'pending' || s === 'in_progress'; }
+  function escIsOverdueRow_(r) {
+    if (!r || !escIsOpenStatus_(r.status)) return false;
+    var d = escDaysOpen_(r);
+    return d != null && d >= ESC_OVERDUE_DAYS;
+  }
+  // C3: age badge for an OPEN card (turns red ⚑ past the threshold).
+  function escAgeBadgeHtml_(r) {
+    if (!escIsOpenStatus_(r.status)) return '';
+    var d = escDaysOpen_(r);
+    if (d == null) return '';
+    var overdue = d >= ESC_OVERDUE_DAYS;
+    var label = (d === 0 ? 'today' : d + 'd open');
+    return '<span class="esc-age' + (overdue ? ' esc-age-over' : '') + '"'
+      + (overdue ? ' title="Open ' + d + ' days — over the ' + ESC_OVERDUE_DAYS + '-day threshold"' : '') + '>'
+      + (overdue ? '⚑ ' : '') + label + '</span>';
+  }
+
+  // C2: sort a COPY (never mutates escLastResp_.rows -- the filter reads it
+  // live). Default oldest-first (most stale on top, the triage default).
+  function escSortRows_(rows, mode) {
+    var key = function (r) { return String(r.occurred_at || r.created_at || ''); };
+    return rows.slice().sort(function (a, b) {
+      var ak = key(a), bk = key(b);
+      if (ak === bk) return 0;
+      return (mode === 'newest') ? (ak < bk ? 1 : -1) : (ak < bk ? -1 : 1);
+    });
+  }
+
+  // C4: which triage tier a row belongs to (exactly one). Overdue pulls
+  // pending/in-progress rows past the threshold OUT of their status tier.
+  function escTierOf_(r) {
+    if (r.status === 'pending_review') return 'review';
+    if (r.status === 'resolved')       return 'resolved';
+    if (r.status === 'rejected')       return 'rejected';
+    if (escIsOverdueRow_(r))           return 'overdue';
+    if (r.status === 'in_progress')    return 'in_progress';
+    return 'pending';
+  }
+  var ESC_TIERS_ = [
+    { key: 'review',      label: 'Needs review', tone: 'accent' },
+    { key: 'overdue',     label: 'Overdue',      tone: 'warn'   },
+    { key: 'in_progress', label: 'In progress',  tone: 'accent' },
+    { key: 'pending',     label: 'Pending',      tone: 'warn'   },
+    { key: 'resolved',    label: 'Resolved',     tone: 'good'   },
+    { key: 'rejected',    label: 'Rejected',     tone: 'muted'  },
+  ];
+  function escTierHeaderHtml_(label, count, tone) {
+    return '<div class="esc-group-head esc-group-head--' + tone + '">'
+      + '<span class="esc-group-dot"></span>'
+      + '<span class="esc-group-label">' + escapeHtml(label) + '</span>'
+      + '<span class="esc-group-count">' + count + '</span>'
+      + '</div>';
+  }
+
+  // ── C1 triage summary band ───────────────────────────────────────
+  // Renders from server-computed meta (statusCounts / overdueCount /
+  // resolvedLast7 / oldestOpenAt) -- accurate for ANY active filter, unlike a
+  // count over the filtered in-memory rows. Hidden when unavailable.
+  function escRenderSummaryBand_(resp) {
+    var band = $('esc-summary-band');
+    if (!band) return;
+    var meta = (resp && resp.meta) || {};
+    var c = meta.statusCounts;
+    if (!resp || resp.available === false || !c) { band.style.display = 'none'; band.innerHTML = ''; return; }
+    var reviewN = Number(meta.pendingReviewCount || c.pending_review || 0);
+    var tiles = [];
+    // Needs review leads (external submissions shouldn't sit unnoticed).
+    tiles.push(escBandTile_('Needs review', reviewN, reviewN > 0 ? 'accent' : 'muted', 'pending_review'));
+    tiles.push(escBandTile_('Pending', Number(c.pending || 0), (c.pending > 0) ? 'warn' : 'muted', 'pending'));
+    tiles.push(escBandTile_('In progress', Number(c.in_progress || 0), (c.in_progress > 0) ? 'accent' : 'muted', 'in_progress'));
+    tiles.push(escBandTile_('Overdue >' + ESC_OVERDUE_DAYS + 'd', Number(meta.overdueCount || 0), (meta.overdueCount > 0) ? 'warn' : 'muted', null));
+    tiles.push(escBandOldestTile_(meta.oldestOpenAt));
+    tiles.push(escBandTile_('Resolved · 7d', Number(meta.resolvedLast7 || 0), 'good', null));
+    band.innerHTML = tiles.join('');
+    band.style.display = '';
+  }
+  function escBandTile_(label, value, tone, jumpStatus) {
+    var cls = 'esc-band-tile esc-band-tile--' + tone + (jumpStatus ? ' esc-band-clickable' : '');
+    var attr = jumpStatus ? ' data-jump="' + escapeHtml(jumpStatus) + '" role="button" tabindex="0"' : '';
+    return '<div class="' + cls + '"' + attr + '>'
+      + '<div class="esc-band-value">' + value + '</div>'
+      + '<div class="esc-band-label">' + escapeHtml(label) + '</div>'
+      + '</div>';
+  }
+  function escBandOldestTile_(oldestIso) {
+    var d = oldestIso ? escDaysOpen_({ occurred_at: oldestIso, status: 'pending' }) : null;
+    var val = (d == null) ? '—' : (d === 0 ? 'today' : d + 'd');
+    var tone = (d != null && d >= ESC_OVERDUE_DAYS) ? 'warn' : 'muted';
+    return '<div class="esc-band-tile esc-band-tile--' + tone + '">'
+      + '<div class="esc-band-value">' + val + '</div>'
+      + '<div class="esc-band-label">Oldest open</div>'
+      + '</div>';
+  }
+
   function escCardHtml_(r) {
     const resolved = r.status === 'resolved';
     // Phase 2: externally-submitted rows awaiting review / reviewed out.
     const inReview = r.status === 'pending_review';
     const rejected = r.status === 'rejected';
-    const meta = [];
-    if (r.occurred_at) meta.push('🕑 ' + escapeHtml(escFmtWhen_(r.occurred_at)));
-    if (r.caller)      meta.push('☎ '  + escapeHtml(r.caller));
-    if (r.patient_name)meta.push('🧑 ' + escapeHtml(r.patient_name));
-    if (r.trx)         meta.push('# '  + escapeHtml(r.trx));
-    if (r.area)        meta.push('▸ '  + escapeHtml(r.area));
+    const inProgress = r.status === 'in_progress';   // C6
+    // C5: labeled field grid replaces the emoji meta run-on.
+    const fields = [
+      ['When',    r.occurred_at ? escFmtWhen_(r.occurred_at) : ''],
+      ['Caller',  r.caller || ''],
+      ['Patient', r.patient_name || ''],
+      ['Trx',     r.trx || ''],
+      ['Area',    r.area || ''],
+    ].filter(function (f) { return f[1]; });
+    const fieldGrid = fields.length
+      ? '<div class="esc-fields">' + fields.map(function (f) {
+          return '<div class="esc-field"><span class="esc-field-k">' + escapeHtml(f[0]) + '</span>'
+            + '<span class="esc-field-v">' + escapeHtml(f[1]) + '</span></div>';
+        }).join('') + '</div>'
+      : '';
     const deptTag = (escInit_ && (escInit_.isAdmin || ($('esc-dept') && $('esc-dept').value === 'ALL')))
       ? '<span class="esc-dept-tag">' + escapeHtml(r.department || '') + '</span>' : '';
     const statusPill = inReview
@@ -13657,7 +14060,11 @@
         ? '<span class="esc-pill esc-pill-rejected">Rejected</span>'
         : resolved
           ? '<span class="esc-pill esc-pill-resolved">Resolved</span>'
-          : '<span class="esc-pill esc-pill-pending">Pending</span>';
+          : inProgress
+            ? '<span class="esc-pill esc-pill-progress">In progress</span>'
+            : '<span class="esc-pill esc-pill-pending">Pending</span>';
+    // C3: age badge (open cards only).
+    const ageBadge = escAgeBadgeHtml_(r);
     // Submission provenance (Phase 2 contract: source='team-tools' etc.;
     // the dashboard's own creates are 'manual' and stay untagged).
     const sourceTag = (r.source && r.source !== 'manual')
@@ -13668,7 +14075,7 @@
     const isAdmin = !!(escInit_ && escInit_.isAdmin);
 
     let body = '<div class="esc-reason">' + escapeHtml(r.reason || '') + '</div>';
-    body += '<div class="esc-meta">' + meta.join(' &nbsp;·&nbsp; ') + '</div>';
+    body += fieldGrid;
 
     if (inReview) {
       // Phase 2 review verbs: Approve admits the submission into the dept
@@ -13712,13 +14119,19 @@
         +   '</div>'
         + '</div></div>';
     } else {
-      // §3: admin-only Edit affordance on pending cards (correct wrong
-      // dept/patient/Trx/reason). Reuses the create form, prefilled.
-      if (isAdmin) {
-        body += '<div class="esc-pending-actions">'
-          + '<button class="btn btn-ghost esc-edit" type="button" data-id="' + idAttr + '">&#9998; Edit</button>'
-          + '</div>';
+      // pending OR in_progress -- the two worklist states share the resolve
+      // form (its "Save comment only" IS the progress note). Pending cards
+      // additionally get admin Edit (§3, pending-only per the server guard)
+      // and a Start button (C6, pending -> in_progress). In-progress cards
+      // omit both (edit is pending-only; you can't re-start).
+      const pa = [];
+      if (isAdmin && !inProgress) {
+        pa.push('<button class="btn btn-ghost esc-edit" type="button" data-id="' + idAttr + '">&#9998; Edit</button>');
       }
+      if (!inProgress) {
+        pa.push('<button class="btn btn-ghost esc-start" type="button" data-id="' + idAttr + '">&#9680; Start</button>');
+      }
+      if (pa.length) body += '<div class="esc-pending-actions">' + pa.join('') + '</div>';
       // Inline resolve form. The "Resolved" checkbox + Save stay DISABLED
       // until a resolution note is entered (mirrors the server requirement).
       body += '<div class="esc-resolve" data-id="' + idAttr + '">'
@@ -13741,8 +14154,11 @@
       + '<div class="esc-activity-body" data-id="' + idAttr + '" data-loaded="0"></div>'
       + '</details>';
 
-    return '<div class="ds-card esc-card' + (resolved ? ' esc-card-resolved' : '') + (rejected ? ' esc-card-resolved' : '') + '" data-id="' + escapeHtml(r.id) + '">'
-      + '<div class="esc-card-top">' + statusPill + deptTag + sourceTag + '</div>'
+    return '<div class="ds-card esc-card' + (resolved ? ' esc-card-resolved' : '')
+      + (rejected ? ' esc-card-resolved' : '') + (inProgress ? ' esc-card-progress' : '')
+      + '" data-id="' + escapeHtml(r.id) + '">'
+      + '<div class="esc-card-top">' + statusPill + deptTag + sourceTag
+      +   (ageBadge ? '<span class="esc-card-top-spacer"></span>' + ageBadge : '') + '</div>'
       + body + '</div>';
   }
 
@@ -13790,8 +14206,23 @@
       return;
     }
     if (t.classList.contains('esc-reject-save'))    { escReject_(t.getAttribute('data-id')); return; }
+    if (t.classList.contains('esc-start'))          { escStart_(t.getAttribute('data-id')); return; }
     if (t.classList.contains('esc-edit'))           { escEditOpen_(t.getAttribute('data-id')); return; }
     if (t.classList.contains('esc-activity-summary')) { escLoadActivity_(t.getAttribute('data-id')); return; }
+  }
+
+  // C6: start work on a pending escalation (pending -> in_progress).
+  function escStart_(id) {
+    escRowError_(id, '');
+    const btn = document.querySelector('.esc-start[data-id="' + escCssId_(id) + '"]');
+    if (btn) { btn.disabled = true; btn.textContent = 'Starting…'; }
+    google.script.run
+      .withSuccessHandler(function () { escLoad_(); })
+      .withFailureHandler(function (err) {
+        if (btn) { btn.disabled = false; btn.innerHTML = '&#9680; Start'; }
+        escRowError_(id, (err && err.message ? err.message : String(err)));
+      })
+      .startEscalation({ id: id });
   }
 
   // §2: reopen a resolved escalation (requires a reason).
@@ -13897,7 +14328,8 @@
     }
     const rows = resp.rows || [];
     if (!rows.length) { body.innerHTML = '<div class="esc-activity-empty">No activity recorded.</div>'; return; }
-    const labels = { created: 'Created', resolved: 'Resolved', comment: 'Comment', edited: 'Edited', reopened: 'Reopened' };
+    const labels = { created: 'Created', resolved: 'Resolved', comment: 'Comment', edited: 'Edited',
+      reopened: 'Reopened', started: 'Started', approved: 'Approved', rejected: 'Rejected' };
     body.innerHTML = '<ul class="esc-timeline">' + rows.map(function (a) {
       const lab = labels[a.action] || escapeHtml(a.action || '');
       const who = a.actor ? (' · ' + escapeHtml(a.actor)) : '';
