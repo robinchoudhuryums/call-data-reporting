@@ -109,6 +109,166 @@ function getMissedCallsReport(req) {
   return data;
 }
 
+// ---------------------------------------------------------------------------
+// Chart -> Missed drill-down: filtered slice (Phase 1, docs/insights-drilldown-spec.md)
+//
+// getMissedCallsSlice returns the SAME per-call Missed detail computeMissedCallsReport_
+// produces, narrowed to a scope: a weekday (isoDow), a CST hour window
+// (hourStart/hourEnd), an agent, and/or a queue. It powers the "DQE missed-ring
+// lens" surfaced next to the Insights heatmap cell drill + the Queue-health
+// hand-off -- ALWAYS a separate, labeled lens (this is the dqe_history missed-
+// ring count, a different source & definition than the inbound_calls abandon
+// count the heatmap colors, or the qcd_history queue roll-up). It re-uses the
+// section's cached compute (no new heavy read) and filters IN MEMORY -- filter
+// params never touch SQL. Auth is identical to getMissedCallsReport
+// (signed-in + assertDeptAccess_; manager -> own dept only); the journey drill
+// on each abandoned entry stays F-4-gated in getCallJourney.
+// ---------------------------------------------------------------------------
+
+// ISO day-of-week (Mon=1 .. Sun=7) from a 'YYYY-MM-DD' string, TZ-safe via
+// Date.UTC (the icParseTs_ convention -- no wall-clock drift).
+function missedSliceIsoDow_(iso) {
+  const p = String(iso).split('-');
+  if (p.length !== 3) return 0;
+  const d = new Date(Date.UTC(Number(p[0]), Number(p[1]) - 1, Number(p[2])));
+  const wd = d.getUTCDay();          // 0=Sun .. 6=Sat
+  return wd === 0 ? 7 : wd;          // ISO: Mon=1 .. Sun=7
+}
+
+// Validate + normalize the slice filter. Throws on malformed input (never
+// silently ignores a bad value). Returns raw HH:MM strings for the echo plus
+// startSec/endSec for the in-memory comparison. Times are CST seconds-past-
+// midnight, aligning with the DQE stored-CST slot times (INV-20) and the
+// heatmap's +2h-shifted CST slot axis.
+function missedSliceValidateFilter_(req) {
+  req = req || {};
+  const out = { isoDow: null, hourStart: null, hourEnd: null,
+                startSec: null, endSec: null, queue: null, agent: null };
+  if (req.isoDow != null && req.isoDow !== '') {
+    const d = Math.floor(Number(req.isoDow));
+    if (!(d >= 1 && d <= 7)) throw new Error('isoDow must be 1-7 (Mon-Sun).');
+    out.isoDow = d;
+  }
+  const hmSec = function (v, name) {
+    if (v == null || v === '') return null;
+    const s = String(v).trim();
+    if (!/^\d{1,2}:\d{2}$/.test(s)) throw new Error(name + ' must be HH:MM.');
+    const p = s.split(':');
+    const sec = (Number(p[0]) * 60 + Number(p[1])) * 60;
+    if (!(sec >= 0 && sec <= 86400)) throw new Error(name + ' out of range.');
+    return { raw: s, sec: sec };
+  };
+  const hs = hmSec(req.hourStart, 'hourStart');
+  const he = hmSec(req.hourEnd, 'hourEnd');
+  if ((hs == null) !== (he == null)) throw new Error('hourStart and hourEnd must be given together.');
+  if (hs && he) {
+    if (hs.sec >= he.sec) throw new Error('hourStart must be before hourEnd.');
+    out.hourStart = hs.raw; out.startSec = hs.sec;
+    out.hourEnd = he.raw;   out.endSec = he.sec;
+  }
+  if (req.queue != null && String(req.queue).trim()) out.queue = String(req.queue).trim();
+  if (req.agent != null && String(req.agent).trim()) out.agent = String(req.agent).trim();
+  return out;
+}
+
+// PURE filter over a computeMissedCallsReport_ payload. Flattens the per-agent
+// timelines + queue-only abandoned entries into ONE chronologically-sorted list
+// of the entries matching the filter. Semantics worth knowing:
+//   - agent filter matches agent-ring entries only (queue-only entries have no
+//     agent, so an agent filter excludes them);
+//   - queue filter matches queue-only entries only (agent rings are NOT queue-
+//     tagged in the Missed payload, so a queue filter excludes them -- a Phase-1
+//     limitation noted in the spec; the heatmap's weekday/hour path doesn't use
+//     the queue filter).
+function missedSliceFilter_(reportData, filter) {
+  filter = filter || {};
+  const entries = [];
+  let abandonedCount = 0;
+  const push = function (e, who, kind, queueName) {
+    if (filter.isoDow && missedSliceIsoDow_(e.date) !== filter.isoDow) return;
+    if (filter.startSec != null && !(e.sortKey >= filter.startSec && e.sortKey < filter.endSec)) return;
+    if (filter.agent && who !== filter.agent) return;
+    if (filter.queue && queueName !== filter.queue) return;
+    entries.push({
+      date: e.date, time: e.time, label: e.label,
+      abandoned: !!e.abandoned, parentId: e.parentId || null,
+      sortKey: e.sortKey, bucket: e.bucket,
+      source: kind, who: who,
+    });
+    if (e.abandoned) abandonedCount++;
+  };
+  (reportData.agents || []).forEach(function (a) {
+    (a.missedTimes || []).forEach(function (e) { push(e, a.name, 'agent', null); });
+  });
+  (reportData.queueOnly || []).forEach(function (q) {
+    (q.entries || []).forEach(function (e) { push(e, q.queue, 'queue', q.queue); });
+  });
+  entries.sort(function (a, b) {
+    if (a.date !== b.date) return a.date < b.date ? -1 : 1;
+    return a.sortKey - b.sortKey;
+  });
+  return { entries: entries, abandonedCount: abandonedCount };
+}
+
+// Read (or compute) the roster-scope Missed report for (dept, from, to),
+// sharing the SAME cache the section render uses so a drill after the section
+// loaded is a cache hit. Key mirrors getMissedCallsReport's (missed:v14,
+// scope=roster, source-suffixed per CORE-3).
+function missedReportDataCached_(dept, from, to) {
+  const cache = CacheService.getScriptCache();
+  const dqeReadSrc = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
+  const cacheKey = 'missed:v14:' + dept + ':roster:' + from + ':' + to + ':' + dqeReadSrc;
+  const cached = cache.get(cacheKey);
+  if (cached) { try { return JSON.parse(cached); } catch (e) { /* recompute */ } }
+  const data = computeMissedCallsReport_(dept, from, to, 'roster');
+  try {
+    const json = JSON.stringify(data);
+    if (json.length <= 100000) cache.put(cacheKey, json, REPORT_CACHE_TTL_SECONDS);
+  } catch (e) { /* best-effort */ }
+  return data;
+}
+
+/**
+ * Public RPC: the filtered Missed-detail slice for a chart drill-down.
+ * Read-only; auth-gated exactly like getMissedCallsReport.
+ */
+function getMissedCallsSlice(req) {
+  const user = resolveUser_(Session.getActiveUser().getEmail());
+  if (!user || user.role === 'none') throw new Error('Not authorized.');
+  const dept = String((req && req.department) || '').trim();
+  if (!dept) throw new Error('Department is required.');
+  assertDeptAccess_(user, dept);
+
+  const from = String((req && req.from) || '').trim();
+  const to   = String((req && req.to)   || '').trim();
+  if (!isIsoDate_(from) || !isIsoDate_(to)) throw new Error('from/to must be YYYY-MM-DD.');
+  if (from > to) throw new Error('from must be on or before to.');
+
+  const filter = missedSliceValidateFilter_(req);
+  const full = missedReportDataCached_(dept, from, to);
+  const sliced = missedSliceFilter_(full, filter);
+
+  return {
+    meta: {
+      department: dept, from: from, to: to,
+      // Echo the applied filter (raw HH:MM strings, not the internal seconds).
+      filter: {
+        isoDow: filter.isoDow, hourStart: filter.hourStart,
+        hourEnd: filter.hourEnd, queue: filter.queue, agent: filter.agent,
+      },
+      lens: 'dqe-missed',                 // the agent-ring lens (distinct source)
+      source: 'dqe',
+      matchedCount: sliced.entries.length,
+      abandonedCount: sliced.abandonedCount,
+      // Inherit the coerced/lost-detail flag so a partial-data window is
+      // surfaced in the drill overlay (same note the section shows).
+      abandonedDetailLost: !!(full.meta && full.meta.abandonedDetailLost),
+      generatedAt: (full.meta && full.meta.generatedAt) || null,
+    },
+    entries: sliced.entries,
+  };
+}
+
 /**
  * Adapts normalized DAL rows (neonFetchDqeRows_ with includeMissedDetail)
  * into the { values, displays } grid shape the sheet read produces, so
