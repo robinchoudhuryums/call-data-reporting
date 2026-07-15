@@ -1,5 +1,17 @@
 # Cycle State — resume note
 
+## Latest session (/broad-implement — lighter Insights↔My-Department hand-off + summary strip + drilldown)
+Branch `claude/reports-escalations-design-c2t0n7` (design-update track, PRs #159-167 merged; this is the follow-up). **304/304 tests**, INV-16 guard clean, script.html parses. Client-only (dashboard.html + script.html + styles.html); no server/cache/endpoint change. The owner-approved "lighter alternative" (keep two pages, make the relationship explicit) — scoped to NAVIGATIONAL hand-offs per "lighter alternative first."
+- **Hand-off (both directions, dept is the shared global selector so only DATES are carried):** `handoffToInsights_(from,to,scroll)` (parametrized `launcherOpenInsights_` — arms `insLauncherAutoRun_` + `insEnsureRoster()`) and `handoffToMyDept_(from,to,{missed})` (mirrors `launcherOpenMissed_`; `missed:true` arms `deptMissedScrollPending_`).
+- **Collapsed Insights summary strip on My Department** (`#dept-insights-strip`, `renderDeptInsightsStrip_` called beside `renderDeptTeamStrip_` in `render()`): one-line teaser (answer-rate + missed, from the SAME server totals — no new fetch) + expand (`.dis-more`) describing what Insights adds + "Open full report →" (→ `handoffToInsights_` with the dept-page dates). Delegated wiring (`wireDeptInsightsStrip_`, once, survives innerHTML swaps).
+- **Insights → My Department affordances:** header "My Department →" button (`#ins-open-mydept-btn`) + Queue-health "See missed calls →" drilldown (`#ins-qh-missed-link`, `{missed:true}`), both wired in `initInsightsReport`.
+- CSS: `.dept-insights-strip`/`.dis-*` + `.ins-handoff-link` (styles.html, reduced-motion aware).
+- **DECISION:** built the LIGHTER (navigational) drilldown. The agent missed-calls bar chart already has its per-bucket detail (`makeMissedBucketDetail_`); the heatmap already has its per-cell drill; so the only NEW drill affordance is Queue-health→Missed. DEFERRED as heavier follow-on: deep per-cell / per-weekday-hour cross-page drilling into a specifically-filtered missed view (heatmap weekday×hour has no clean missed-section equivalent).
+- **Where I left off:** merged? see git log / PR. NOT deployed (Department Dashboard `clasp push -f` + New version — owner). Live smoke: S1 (My Dept strip renders + expand + Open full report → Insights carries dates), S32/S37 (Insights "My Department →" + Queue-health "See missed calls →" land on the dept page / scroll to missed). Prior track follow-ups still open: `insWorstMover_` dead code; the heavier per-cell drilldown above.
+
+## Latest session (/broad-implement I4 — Insights unified period slider + trend-chart move) [MERGED PR #167, squash b98dad2]
+I4 shipped: `#ins-period-bar` preset slider (Last 7/Last 30/MTD/YTD/Custom…) drives the whole Insights window via `runInsReport` (preserving compare mode + agents); the 12-month trend chart moved out of the Team-detail <details> to an always-visible bottom "Trends" section (measure-guarded `insDrawTrendChart_`). Client-only; no cache bump.
+
 ## Latest session (/broad-implement: L2 + LM2 + strategic hardening)
 Branch `claude/broad-scan-ekn18f`, **292/292 tests** (6 new), INV-16 + cache-version-sync green. 16 files.
 Implemented the deferred/strategic set:

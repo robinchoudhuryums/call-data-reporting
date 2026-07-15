@@ -368,6 +368,17 @@
       <div id="dept-team-zone" class="ds-zone" style="display:none;"><span class="ds-zone-label">Team &middot; this range</span></div>
       <div id="dept-team-strip" class="dept-team-strip" style="display:none;"></div>
 
+      <!-- Lighter Insights hand-off (kept as two pages, relationship made
+           explicit): a COLLAPSED one-line summary of the deeper Insights
+           report for THIS dept + range, expandable, with an "Open full
+           Insights" button that carries the current dept & dates
+           (handoffToInsights_). The one-line takeaway is derived from the
+           same server totals the team strip uses -- no new fetch; the full
+           per-agent / queue-health / heatmap story is one click away on the
+           Insights page. Rendered + wired by renderDeptInsightsStrip_;
+           hidden until data. -->
+      <div id="dept-insights-strip" class="dept-insights-strip" style="display:none;"></div>
+
       <div id="dqe-table-header" class="dept-qcd-header" style="display:none; margin-top:20px; margin-bottom:8px;">
         <strong id="dqe-table-title">Agent Call Metrics</strong>
         <span id="dqe-table-date" class="dept-qcd-date"></span>
@@ -1150,6 +1161,12 @@
                  untouched. -->
             <button class="btn btn-secondary" id="ins-edit-selection-btn" type="button"
                     title="Change the dates, comparison window, or agent selection without leaving the report.">&#9998; Edit dates &amp; agents</button>
+            <!-- Lighter Insights<->My Department hand-off: jump to the agent
+                 table / Missed Calls detail for THIS dept + the same date
+                 window (handoffToMyDept_ carries the dates). The reverse
+                 hand-off lives on the My Department page (#dept-insights-strip). -->
+            <button class="btn btn-secondary" id="ins-open-mydept-btn" type="button"
+                    title="Open the My Department agent table for this department and the same date range.">My Department &#8594;</button>
             <div class="ir-export-wrap">
               <button class="btn btn-secondary" id="ins-export-btn" type="button" aria-haspopup="menu" aria-expanded="false">
                 Export <span class="ir-export-caret">&#9662;</span>
@@ -1262,7 +1279,15 @@
              "no queues mapped" hint here; a missing QCD sheet hides the
              section. -->
         <div id="ins-queue-health" style="display:none;">
-          <div class="al-section-title">Queue health <span class="ins-rollup-cap" id="ins-qh-cap"></span></div>
+          <div class="al-section-title">Queue health <span class="ins-rollup-cap" id="ins-qh-cap"></span>
+            <!-- Drilldown hand-off: the abandoned/violation numbers here roll
+                 up the queue; the call-by-call detail (who rang, when, the
+                 abandoned 🚨 timestamps with the "↳ path" journey) lives in the
+                 My Department Missed Calls section. This jumps there for the
+                 same dept + range (handoffToMyDept_, scrolls to the section). -->
+            <button class="ins-handoff-link" id="ins-qh-missed-link" type="button"
+                    title="Open the My Department Missed Calls detail for this department and date range.">See missed calls &#8594;</button>
+          </div>
           <div id="ins-qh-forecast" class="qcd-forecast" style="display:none;"></div>
           <div id="ins-qh-tiles" class="pr-kpi-row"></div>
           <div id="ins-qh-secondary" class="ins-qh-secondary"></div>
