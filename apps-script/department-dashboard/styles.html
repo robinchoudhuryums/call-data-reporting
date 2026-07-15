@@ -205,9 +205,11 @@
   body[data-page="insights"]     #insights-page     { display: block; }
   /* The Escalations page lives outside the main page container (it was
      converted in place from a modal), so give it the same bounded, centered
-     content width the other pages get from that container. */
+     content width the other pages get from that container. Widened from the
+     original 1100px "worklist" width to 1440px to match Overview / My Dept /
+     Insights (owner request -- the C2 sidebar layout uses the extra width). */
   .esc-page-body {
-    max-width: 1100px;
+    max-width: 1440px;
     margin: 0 auto;
     padding: 0 4px;
   }
@@ -666,6 +668,15 @@
     border: 1px solid var(--line);
   }
   .btn-secondary:hover { background: var(--paper-2); color: var(--ink); }
+  /* M4: compact icon-only button (Refresh / Download CSV on My Department).
+     Square, glyph-centered; the accessible label lives in title/aria-label. */
+  .btn-icon {
+    padding: 6px 9px;
+    font-size: 15px;
+    line-height: 1;
+    min-width: 32px;
+    text-align: center;
+  }
   .control-reports { margin-left: auto; }
 
   /* Status — flat soft-bg banners with a 3px valence stripe on the left
@@ -878,17 +889,19 @@
     display: flex;
     flex-direction: column;
     align-items: flex-start;
-    gap: 2px;
+    gap: 1px;
     text-align: left;
-    padding: 8px 14px;
+    padding: 5px 11px;
   }
-  .seg-rich .seg-title { display: block; }
+  /* I5b: smaller, lighter sub-selector so it reads as a secondary control. */
+  .seg-rich .seg-title { display: block; font-size: 11px; }
   .seg-rich .seg-hint {
     display: block;
-    font-size: 10px;
+    font-size: 9px;
     text-transform: none;
     letter-spacing: 0;
     color: var(--muted);
+    opacity: 0.8;
     font-family: var(--sans, inherit);
   }
   .seg-rich .seg-btn.active .seg-hint { color: inherit; opacity: 0.85; }
@@ -1510,7 +1523,7 @@
   /* Bars are horizontal, so they read better with more width than the square
      radar. In bars mode let the chart use most of the column (still bounded so
      the modal drill-in open stays a gentle reflow); radar keeps the 520px cap. */
-  .chart-row.mode-bars > .chart-section { max-width: 760px; }
+  .chart-row.mode-bars > .chart-section { max-width: 960px; }
   /* Clip the drill-in while its track is collapsing so it slides in/out
      cleanly rather than overflowing the 0fr cell mid-animation. */
   .chart-row > .bucket-detail { overflow: hidden; }
@@ -1759,6 +1772,9 @@
     border-radius: 2px;
     padding: 12px 14px;
     font-size: 13px;
+    /* Clip the expanded missed-list's scroll box to the card's rounded
+       corners so the first (auto-expanded) card doesn't visually overrun. */
+    overflow: hidden;
   }
   .agent-card .agent-name {
     font-weight: 500;
@@ -5597,7 +5613,7 @@
   .dept-team-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 10px; margin: 10px 0 14px; }
   .dept-team-strip[hidden] { display: none; }
-  .dts-tile { border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--paper);
+  .dts-tile { border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--paper-card);
     padding: 10px 12px; box-shadow: var(--shadow-1); }
   .dts-tile--hero { border-color: var(--accent); }
   .dts-label { font: 600 10px/1 var(--mono); letter-spacing: 0.14em; text-transform: uppercase;
@@ -5652,7 +5668,7 @@
   .esc-summary-band { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr));
     gap: 8px; margin: 0 0 14px; }
   .esc-band-tile { border: 1px solid var(--line); border-left-width: 3px; border-radius: var(--r-lg);
-    background: var(--paper); padding: 8px 10px; }
+    background: var(--paper-card); padding: 8px 10px; }
   .esc-band-clickable { cursor: pointer; }
   .esc-band-clickable:hover { border-color: var(--accent); }
   .esc-band-value { font: 700 20px/1.1 var(--ui); font-variant-numeric: tabular-nums; color: var(--ink); }

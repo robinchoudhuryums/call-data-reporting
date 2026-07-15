@@ -1981,7 +1981,7 @@
     // the grid as the FIRST card with a distinctive border + "your dept"
     // badge (replaces the old full-width hero above the chart).
     const viewerBadge = isViewer
-      ? '<span class="ov-dept-viewer-badge">' + (USER.role === 'admin' ? 'selected' : 'your dept') + '</span>'
+      ? '<span class="ov-dept-viewer-badge">' + (USER.role === 'admin' ? 'selected' : 'My Dept') + '</span>'
       : '';
     const cls = 'ov-dept-tile'
               + (isChild ? ' ov-dept-tile-child' : '')
@@ -4110,8 +4110,8 @@
     const bg = counts.map(function (v, i) {
       const ramp = v / max;                       // 0..1 by volume
       return (abandoned[i] || 0) > 0
-        ? rgbaWithAlpha_(THEME.warn, 0.58 + 0.42 * ramp)   // solid, hot
-        : rgbaWithAlpha_(THEME.warn, 0.10 + 0.13 * ramp);  // faint, recedes
+        ? rgbaWithAlpha_(THEME.warn, 0.58 + 0.42 * ramp)   // solid, hot (has abandons)
+        : rgbaWithAlpha_(THEME.warn, 0.28 + 0.22 * ramp);  // light orange, clearly visible
     });
     // Peak bucket keeps its outline: 2px reads as "marked" without the heavy
     // 3px frame that looked too loud at the compact size.
@@ -11138,12 +11138,21 @@
     }
 
     const t = qh.totals, p = qh.priorTotals;
+    // I8: tint the Abandoned % + Violations tile VALUES (were plain black).
+    // Abandoned % uses the 5% company standard (benchValueCls_ symmetric --
+    // green under 5, warn at/over); Violations MTD is green at 0, warn once
+    // any day this month crossed 5% (the per-queue rows carry the finer
+    // light/strong gradient).
+    const violMtd = Number(qh.violationsMtd) || 0;
+    const violValCls = violMtd > 0 ? ' bm-over' : ' bm-target';
     const tiles = [
       inboundKpiTile_('Queue calls', fmtNumber(t.totalCalls), '',
         p ? inboundDelta_(t.totalCalls, p.totalCalls, 'neu', false) : ''),
       inboundKpiTile_('Abandoned %', t.abandonedPctStr, fmtNumber(t.abandoned) + ' abandoned',
-        p ? inboundDelta_(t.abandonedPct, p.abandonedPct, 'neg', true) : ''),
-      inboundKpiTile_('Violations (MTD)', fmtNumber(qh.violationsMtd), 'days over the 5% threshold this month', ''),
+        p ? inboundDelta_(t.abandonedPct, p.abandonedPct, 'neg', true) : '',
+        benchValueCls_('abandoned %', t.abandonedPctStr, true)),
+      inboundKpiTile_('Violations (MTD)', fmtNumber(qh.violationsMtd), 'days over the 5% threshold this month', '',
+        violValCls),
     ];
     $('ins-qh-tiles').innerHTML = tiles.join('');
 
@@ -12641,13 +12650,13 @@
   // pre-formatted value + pre-built delta badge + a bench-tinted caption.
   // (Phase 1 ds-* migration; cap tint preserved by the .ds-kpi__foot.bm-*
   // overrides in styles.html.)
-  function inboundKpiTile_(label, value, cap, deltaHtml) {
+  function inboundKpiTile_(label, value, cap, deltaHtml, valueCls) {
     return '<div class="ds-kpi">'
       + '<div class="ds-kpi__top">'
       +   '<span class="ds-kpi__label">' + escapeHtml(label) + '</span>'
       +   (deltaHtml || '')
       + '</div>'
-      + '<div class="ds-kpi__value">' + escapeHtml(String(value)) + '</div>'
+      + '<div class="ds-kpi__value' + (valueCls || '') + '">' + escapeHtml(String(value)) + '</div>'
       + (cap ? '<div class="ds-kpi__foot' + benchValueCls_(label, cap, true) + '">' + escapeHtml(cap) + '</div>' : '')
       + '</div>';
   }
