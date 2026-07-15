@@ -261,6 +261,15 @@
             <span id="ov-user-table-title">Department detail</span>
             <span class="ov-user-table-date" id="ov-user-table-date"></span>
           </div>
+          <!-- O4: period slider for the agent table (re-fetches the dept
+               summary for Yesterday / Last 30 / YTD). Separate from the card
+               period bar above (which drives the dept tiles). -->
+          <div id="ov-user-table-period" class="ov-period-bar" role="group" aria-label="Agent table period">
+            <span class="ov-period-lbl">Table:</span>
+            <button type="button" class="ov-period-btn active" data-period="yesterday" aria-pressed="true">Yesterday</button>
+            <button type="button" class="ov-period-btn" data-period="last30" aria-pressed="false">Last 30 days</button>
+            <button type="button" class="ov-period-btn" data-period="ytd" aria-pressed="false">YTD</button>
+          </div>
           <div id="ov-user-table-status" class="status" style="display:none;"></div>
           <table class="agents ov-user-table hide-extra">
             <thead>

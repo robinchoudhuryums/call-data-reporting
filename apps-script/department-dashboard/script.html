@@ -1797,6 +1797,48 @@
   }
   function ovPeriodCap_() { return (OV_CARD_PERIODS_[ovCardPeriod] || OV_CARD_PERIODS_.yesterday).cap; }
 
+  // O4: independent period for the bottom AGENT TABLE (re-fetches the dept
+  // summary for the selected range), separate from the card period above.
+  const OV_TABLE_PERIOD_KEY_ = 'cdr.ov.tableperiod.v1';
+  let ovTablePeriod = (function () {
+    try { var v = localStorage.getItem(OV_TABLE_PERIOD_KEY_); return OV_CARD_PERIODS_[v] ? v : 'yesterday'; }
+    catch (e) { return 'yesterday'; }
+  })();
+  // Resolve { from, to } from the latest DQE date + the selected table period.
+  function ovTableRange_(latestIso) {
+    if (!latestIso || ovTablePeriod === 'yesterday') return { from: latestIso, to: latestIso };
+    var p = String(latestIso).split('-');
+    var y = +p[0], mo = (+p[1]) - 1, d = +p[2];
+    if (ovTablePeriod === 'ytd') return { from: y + '-01-01', to: latestIso };
+    var start = new Date(Date.UTC(y, mo, d - 29));   // last30: latest - 29d inclusive
+    var iso = function (dt) {
+      return dt.getUTCFullYear() + '-' + String(dt.getUTCMonth() + 1).padStart(2, '0')
+        + '-' + String(dt.getUTCDate()).padStart(2, '0');
+    };
+    return { from: iso(start), to: latestIso };
+  }
+  let ovTablePeriodWired = false;
+  function ovWireTablePeriodBar_() {
+    const bar = $('ov-user-table-period');
+    if (!bar) return;
+    bar.querySelectorAll('.ov-period-btn').forEach(function (b) {
+      const on = b.getAttribute('data-period') === ovTablePeriod;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+    if (ovTablePeriodWired) return;
+    ovTablePeriodWired = true;
+    bar.addEventListener('click', function (e) {
+      const b = e.target.closest('.ov-period-btn');
+      if (!b) return;
+      const p = b.getAttribute('data-period');
+      if (!OV_CARD_PERIODS_[p] || p === ovTablePeriod) return;
+      ovTablePeriod = p;
+      try { localStorage.setItem(OV_TABLE_PERIOD_KEY_, p); } catch (e2) { /* best-effort */ }
+      if (ovLastData) ovRenderUserTable_(ovLastData);
+    });
+  }
+
   // Period bar above the dept grid (static markup). Syncs the active button on
   // every render; wires the click once. Switching re-renders only the cards
   // (hero + grid) from ovLastData -- no re-fetch; the chart/sparklines
@@ -2284,7 +2326,12 @@
 
     const title = (USER.role === 'admin' ? 'Selected dept: ' : 'Your dept: ') + viewerDept;
     $('ov-user-table-title').textContent = title;
-    $('ov-user-table-date').textContent = ovFormatDateLabel_(data.latestDate);
+    // O4: the table follows its own period slider (re-fetches the range).
+    ovWireTablePeriodBar_();
+    const range = ovTableRange_(data.latestDate);
+    $('ov-user-table-date').textContent = (range.from === range.to)
+      ? ovFormatDateLabel_(range.to)
+      : (ovFormatDateLabel_(range.from) + ' – ' + ovFormatDateLabel_(range.to));
 
     status.style.display = '';
     status.className = 'status status-loading';
@@ -2297,8 +2344,8 @@
         if (myToken !== ovUserTableSeq) return;   // F-40: superseded by a newer call
         status.style.display = 'none';
         if (!resp || !resp.rows || !resp.rows.length) {
-          tbody.innerHTML = '<tr><td colspan="' + COLUMNS.length + '" class="ov-user-empty">No agent rows for this dept on '
-                          + escapeHtml(data.latestDate) + '.</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="' + COLUMNS.length + '" class="ov-user-empty">No agent rows for this dept in '
+                          + escapeHtml(range.from === range.to ? range.to : (range.from + ' – ' + range.to)) + '.</td></tr>';
           return;
         }
         // Default sort: missed desc, then name asc -- matches the
@@ -2337,8 +2384,8 @@
       })
       .getDepartmentSummary({
         department: viewerDept,
-        from:       data.latestDate,
-        to:         data.latestDate,
+        from:       range.from,
+        to:         range.to,
         scope:      'roster',
       });
   }
@@ -10119,7 +10166,10 @@
   let insLastRequestedAgents_ = null;
   let insChartInstance = null;
   let insTrendView = 'monthly';    // 'monthly' | 'daily' (consolidated trend chart toggle)
-  let insCardsView = 'cards';      // 'cards' | 'chart' (per-agent comparison view, #3)
+  // I5a: MANAGERS default to the Absolute bar chart (chart view + 'abs' basis)
+  // -- a glanceable per-agent volume read -- while admins/owner keep the cards
+  // grid default. A saved pref (insRestorePrefs_) still overrides either way.
+  let insCardsView = (typeof USER !== 'undefined' && USER && USER.role === 'manager') ? 'chart' : 'cards';   // 'cards' | 'chart' (#3)
   let insCardsChartMetric = 'answered';   // metric for the grouped Chart view (gap mode)
   // Chart-view basis: 'gap' (diverging bars vs the team average, one metric)
   // | 'abs' (absolute stacked Answered+Missed per agent + % Answered dots --
@@ -10128,7 +10178,7 @@
   // RETIRED by owner note -- the 3-way sub-selector read as confusing, and
   // the prior values stay reachable via the card delta-badge hover
   // tooltips. Persisted in the ins prefs blob ('prior' restores as 'gap').
-  let insCardsChartMode = 'gap';
+  let insCardsChartMode = (typeof USER !== 'undefined' && USER && USER.role === 'manager') ? 'abs' : 'gap';   // I5a: managers default to Absolute
   let insCardsChartInstance = null;
   let insHasQuiet_ = false;        // whether the current render has quiet agents
   let insShareChartInstance = null;   // share-of-answered pie (PR port)
@@ -11056,9 +11106,31 @@
     }
 
     // Team insights callout (reuse the IR block; relabel to "Team insights").
+    // I3: limited to % Answered (rings) + Abandoned % -- the volume + talk-time
+    // insights are dropped (owner request; client-side filter so the shared
+    // buildTeamInsights_ / digest are unaffected). Abandoned % is added here
+    // from queue health (buildTeamInsights_ is DQE-only and never produced it).
     const host = $('ins-team-insights');
     if (host) {
-      const ins = data.teamInsights || [];
+      const ins = (data.teamInsights || []).filter(function (x) {
+        return /^Answer rate/.test(String((x && x.text) || ''));
+      });
+      const qh = data.queueHealth;
+      if (qh && qh.totals && Number(qh.totals.totalCalls) > 0) {
+        const cur = Number(qh.totals.abandonedPct);
+        const prv = (qh.priorTotals && qh.priorTotals.abandonedPct != null)
+          ? Number(qh.priorTotals.abandonedPct) : null;
+        if (prv != null && isFinite(prv) && Math.abs(cur - prv) >= 1) {
+          const up = cur > prv;
+          const prvStr = (qh.priorTotals && qh.priorTotals.abandonedPctStr) || (prv.toFixed(1) + '%');
+          ins.push({ type: up ? 'negative' : 'positive',
+            text: 'Abandoned % ' + (up ? 'rose' : 'fell') + ' ' + Math.abs(cur - prv).toFixed(1)
+              + ' pts vs prior (' + qh.totals.abandonedPctStr + ' vs ' + prvStr + ').' });
+        } else if (cur >= 5) {
+          ins.push({ type: 'negative',
+            text: 'Abandoned % is ' + qh.totals.abandonedPctStr + ' — over the 5% threshold.' });
+        }
+      }
       host.innerHTML = ins.length
         ? irInsightsBlock_(ins).replace('<div class="ir-insights-label">Insights</div>',
                                         '<div class="ir-insights-label">Team insights</div>')
@@ -11967,6 +12039,16 @@
    */
   function insApplyCardsView_() {
     const chartView = (insCardsView === 'chart');
+    // I5a: sync the Cards/Chart toggle + Gap/Absolute sub-toggle to the active
+    // state on every render, so a role default (or programmatic change) with no
+    // saved pref is reflected in the buttons.
+    const vseg = $('ins-cards-view-toggle');
+    if (vseg) vseg.querySelectorAll('.seg-btn').forEach(function (b) {
+      const on = (b.getAttribute('data-view') === insCardsView);
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-checked', on ? 'true' : 'false');
+    });
+    insSyncCardsChartMode_();
     const cardsWrap = $('ins-agent-cards');
     const chartWrap = $('ins-cards-chart-wrap');
     const det = $('ins-quiet-details');
