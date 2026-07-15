@@ -5639,6 +5639,28 @@
     background: var(--ink); opacity: 0.55; }
   @media (max-width: 720px) { .dept-team-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 
+  /* M3: frost-and-ripple loading overlay -- frosts data being refreshed in
+     place (over the existing table) instead of a skeleton that pushes the
+     page down then pops back. Host gets position:relative via .ds-frost-host. */
+  .ds-frost-host { position: relative; }
+  .ds-frost {
+    position: absolute; inset: 0; z-index: 4;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(255, 255, 255, 0.42);
+    -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px);
+    border-radius: var(--r-lg);
+  }
+  body[data-mode="dark"] .ds-frost { background: rgba(10, 12, 16, 0.42); }
+  @media (prefers-reduced-motion: reduce) {
+    .ds-frost { -webkit-backdrop-filter: none; backdrop-filter: none; }
+  }
+
+  /* I9: gentle reveal on the Queue-health per-queue expand (collapse stays
+     instant -- animating a table row's height is unreliable across browsers). */
+  @keyframes qcdDetailIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+  .qcd-detail-row .qcd-detail-wrap { animation: qcdDetailIn 0.2s ease; }
+  @media (prefers-reduced-motion: reduce) { .qcd-detail-row .qcd-detail-wrap { animation: none; } }
+
   /* ── Escalations ─────────────────────────────────────────────── */
   .esc-toolbar { display: flex; gap: 14px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 12px; }
   .esc-toolbar .ir-col { margin: 0; }
