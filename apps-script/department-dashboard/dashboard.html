@@ -1169,6 +1169,24 @@
           </div>
         </div>
 
+        <!-- I4: unified period slider. One control drives the whole report
+             window (KPI tiles, Team insights, Queue health, heatmap, per-agent
+             cards) so the common "change the range" action no longer needs the
+             Edit popover -- decluttering the header. Presets keep the launcher
+             convention (window ends yesterday); "Custom…" opens the Edit
+             popover for arbitrary windows / agents / comparison. The 12-month
+             trend chart is the deliberate exception (it always spans ~12
+             months, not the selected short window) and lives at the bottom of
+             the report. Reuses the Overview O4 .ov-period-* styling. -->
+        <div id="ins-period-bar" class="ov-period-bar ins-period-bar" role="group" aria-label="Report period">
+          <span class="ov-period-lbl">Period:</span>
+          <button type="button" class="ov-period-btn" data-ins-period="last7" aria-pressed="false">Last 7</button>
+          <button type="button" class="ov-period-btn" data-ins-period="last30" aria-pressed="false">Last 30</button>
+          <button type="button" class="ov-period-btn" data-ins-period="mtd" aria-pressed="false">MTD</button>
+          <button type="button" class="ov-period-btn" data-ins-period="ytd" aria-pressed="false">YTD</button>
+          <button type="button" class="ov-period-btn" data-ins-period="custom" aria-pressed="false">Custom&hellip;</button>
+        </div>
+
         <div id="ins-edit-popover" class="ir-edit-popover" style="display:none;" role="dialog" aria-label="Edit selection and dates">
           <div class="ir-edit-popover-header">
             <strong>Edit selection &amp; dates</strong>
@@ -1224,17 +1242,18 @@
         <div id="ins-kpi-row" class="pr-kpi-row"></div>
 
         <!-- A2: Team detail (progressive disclosure). Queue health, heatmap,
-             the 12-month trend chart, and the share-of-answered chart collapse
-             here so the report leads with the answer (headline + strip + KPI
-             tiles). The two Chart.js canvases (trend + share) render at
-             zero height if built while collapsed, so insRenderReport_ DEFERS
-             them until this <details> is open and the toggle handler
-             (initInsightsReport) renders them on first open. Queue health +
-             heatmap are DOM/CSS-grid (no canvas) so they populate fine while
-             collapsed. The admin gate on the heatmap + the data-presence hides
-             on queue health/share are unchanged -- this only wraps them. -->
+             and the share-of-answered chart collapse here so the report leads
+             with the answer (headline + strip + KPI tiles). The share
+             Chart.js canvas renders at zero height if built while collapsed,
+             so insRenderReport_ DEFERS it until this <details> is open and the
+             toggle handler (initInsightsReport) renders it on first open.
+             Queue health + heatmap are DOM/CSS-grid (no canvas) so they
+             populate fine while collapsed. The admin gate on the heatmap + the
+             data-presence hides on queue health/share are unchanged -- this
+             only wraps them. (I4: the 12-month trend chart was moved OUT of
+             this section to the bottom of the report -- see #ins-trend-wrap.) -->
         <details id="ins-team-detail" class="ds-team-detail">
-          <summary class="ds-team-detail-summary">Team detail &mdash; queue health, 12-month trend, heatmap &amp; share</summary>
+          <summary class="ds-team-detail-summary">Team detail &mdash; queue health, heatmap &amp; share</summary>
 
         <!-- Queue health (QCD-into-Insights consolidation): the dept's
              queue-level abandoned % / violations for the same window +
@@ -1288,44 +1307,10 @@
               </table>
             </div>
           </details>
-          <div class="ins-qh-footnote">Reads <code>QCD Historical Data</code> &mdash; the trend chart above switches to per-queue Total&nbsp;Calls / Violations via the &ldquo;by queue&rdquo; tab&rsquo;s metric selector.</div>
+          <div class="ins-qh-footnote">Reads <code>QCD Historical Data</code> &mdash; the trend chart at the bottom of the report switches to per-queue Total&nbsp;Calls / Violations via the &ldquo;Abd&nbsp;%&rdquo; tab&rsquo;s metric selector.</div>
         </div>
 
         <div id="ins-heatmap" class="ds-heatmap-panel" style="display:none;"></div>
-
-        <div class="ir-chart-wrap" id="ins-trend-wrap">
-          <div class="ins-trend-headrow">
-            <div class="ir-chart-header" id="ins-trend-header">12-month team trend</div>
-            <div class="ins-trend-headctl">
-              <div class="segmented" id="ins-trend-view-toggle" role="radiogroup" aria-label="Trend chart view" style="display:none;">
-                <button type="button" class="seg-btn active" data-view="monthly" role="radio" aria-checked="true">Monthly</button>
-                <button type="button" class="seg-btn" data-view="daily" role="radio" aria-checked="false">Daily</button>
-              </div>
-              <!-- gap 1: per-queue metric sub-selector, shown only when the
-                   "By Queue" tab is active (insRenderTrendChart_ toggles it). -->
-              <label class="ir-sort-control" id="ins-queue-metric-wrap" style="display:none;">
-                <span class="ir-sort-label">Queue metric:</span>
-                <select id="ins-queue-metric">
-                  <option value="abandonedPct">Abandoned %</option>
-                  <option value="totalCalls">Total Calls</option>
-                  <option value="violations">Violations</option>
-                </select>
-              </label>
-              <div class="ir-toggle-box" id="ins-datalabels-box">
-                <label class="ir-toggle-label">
-                  <input type="checkbox" id="ins-show-datalabels"> Show data labels
-                </label>
-              </div>
-            </div>
-          </div>
-          <div class="pr-trend-subtabs" id="ins-trend-subtabs" role="tablist">
-            <button type="button" class="pr-trend-subtab active" data-metric="answered" role="tab" aria-selected="true">Answered</button>
-            <button type="button" class="pr-trend-subtab" data-metric="pct" role="tab" aria-selected="false">% Answered</button>
-            <button type="button" class="pr-trend-subtab" data-metric="att" role="tab" aria-selected="false">Avg Talk Time</button>
-            <button type="button" class="pr-trend-subtab" data-metric="queues" role="tab" aria-selected="false">Abd %</button>
-          </div>
-          <div class="ir-chart-canvas-wrap"><canvas id="ins-trend-chart"></canvas></div>
-        </div>
 
         <!-- Share-of-answered pie (ported from the Performance Report so
              PR can retire without losing the view): each selected
@@ -1396,6 +1381,51 @@
           <summary class="cr-quiet-summary"></summary>
           <div id="ins-quiet-cards" class="ins-agent-cards"></div>
         </details>
+
+        <!-- I4: the 12-month team trend is the ONE view the period slider does
+             NOT govern -- it always spans ~12 months (or the selected window in
+             Daily), not the short windowed sections above -- so it lives here
+             at the bottom of the report as its own full-width Trends section
+             rather than beside the windowed sections. Moved out of the Team
+             detail <details> (where it was A2-deferred); now rendered in the
+             main pass via insDrawTrendChart_, which measure-guards the canvas
+             (like the missed chart, MC2) since this section can be laid out
+             before the results container is shown on first paint. All controls
+             keep their ids, so the view/metric/datalabels wiring is untouched. -->
+        <div class="ds-zone"><span class="ds-zone-label">Trends</span></div>
+        <div class="ir-chart-wrap" id="ins-trend-wrap">
+          <div class="ins-trend-headrow">
+            <div class="ir-chart-header" id="ins-trend-header">12-month team trend</div>
+            <div class="ins-trend-headctl">
+              <div class="segmented" id="ins-trend-view-toggle" role="radiogroup" aria-label="Trend chart view" style="display:none;">
+                <button type="button" class="seg-btn active" data-view="monthly" role="radio" aria-checked="true">Monthly</button>
+                <button type="button" class="seg-btn" data-view="daily" role="radio" aria-checked="false">Daily</button>
+              </div>
+              <!-- gap 1: per-queue metric sub-selector, shown only when the
+                   "Abd %" tab is active (insRenderTrendChart_ toggles it). -->
+              <label class="ir-sort-control" id="ins-queue-metric-wrap" style="display:none;">
+                <span class="ir-sort-label">Queue metric:</span>
+                <select id="ins-queue-metric">
+                  <option value="abandonedPct">Abandoned %</option>
+                  <option value="totalCalls">Total Calls</option>
+                  <option value="violations">Violations</option>
+                </select>
+              </label>
+              <div class="ir-toggle-box" id="ins-datalabels-box">
+                <label class="ir-toggle-label">
+                  <input type="checkbox" id="ins-show-datalabels"> Show data labels
+                </label>
+              </div>
+            </div>
+          </div>
+          <div class="pr-trend-subtabs" id="ins-trend-subtabs" role="tablist">
+            <button type="button" class="pr-trend-subtab active" data-metric="answered" role="tab" aria-selected="true">Answered</button>
+            <button type="button" class="pr-trend-subtab" data-metric="pct" role="tab" aria-selected="false">% Answered</button>
+            <button type="button" class="pr-trend-subtab" data-metric="att" role="tab" aria-selected="false">Avg Talk Time</button>
+            <button type="button" class="pr-trend-subtab" data-metric="queues" role="tab" aria-selected="false">Abd %</button>
+          </div>
+          <div class="ir-chart-canvas-wrap"><canvas id="ins-trend-chart"></canvas></div>
+        </div>
       </div>
     </div>
   </section>

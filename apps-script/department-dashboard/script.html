@@ -10296,6 +10296,7 @@
     if (editClose) editClose.addEventListener('click', insCloseEditPopover_);
     const editApply = $('ins-edit-apply-btn');
     if (editApply) editApply.addEventListener('click', insApplyEditPopover_);
+    insWirePeriodBar_();   // I4: unified period slider drives the report window
     const editSelAll  = $('ins-edit-select-all');
     const editSelNone = $('ins-edit-select-none');
     if (editSelAll)  editSelAll.addEventListener('click',  function (e) { e.preventDefault(); insTogglePopoverAgents_(true);  });
@@ -10825,6 +10826,74 @@
     selectAllActiveAgents_($('ins-edit-list'), checked);
   }
 
+  // I4: unified period slider. Resolves a preset id to an absolute { from, to }
+  // window that ENDS yesterday (the launcher convention every Insights default
+  // uses). 'custom' returns null -- that button opens the Edit popover instead.
+  function insPeriodRange_(preset) {
+    const to = launcherIsoDaysAgo_(1);
+    if (preset === 'last7')  return { from: launcherIsoDaysAgo_(7),  to: to };
+    if (preset === 'last30') return { from: launcherIsoDaysAgo_(30), to: to };
+    if (preset === 'mtd')    return { from: String(to).slice(0, 8) + '01', to: to };   // first of to's month
+    if (preset === 'ytd')    return { from: String(to).slice(0, 4) + '-01-01', to: to };
+    return null;
+  }
+
+  // Sync the active preset button to the currently-rendered window; highlight
+  // "Custom…" when the window matches no preset (e.g. after an Edit-popover
+  // custom range, or when viewing a report generated on a prior day).
+  function insSyncPeriodBar_(meta) {
+    const bar = $('ins-period-bar');
+    if (!bar) return;
+    const from = meta && meta.from, to = meta && meta.to;
+    let active = 'custom';
+    ['last7', 'last30', 'mtd', 'ytd'].some(function (p) {
+      const r = insPeriodRange_(p);
+      if (r && r.from === from && r.to === to) { active = p; return true; }
+      return false;
+    });
+    bar.querySelectorAll('.ov-period-btn').forEach(function (b) {
+      const on = b.getAttribute('data-ins-period') === active;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+  }
+
+  // Wire the period slider once. A preset drives the WHOLE report window by
+  // setting the hidden form dates + reusing runInsReport (so it inherits the
+  // SWR paint, D1b keep-last-good, and stale-response guard), preserving the
+  // compare mode + agent selection -- the same path insApplyEditPopover_ takes,
+  // minus the popover. "Custom…" defers to the Edit popover for arbitrary
+  // windows / agents / comparison. No prefs schema change: the window persists
+  // via the existing from/to prefs and the button re-syncs from meta on render.
+  let insPeriodBarWired_ = false;
+  function insWirePeriodBar_() {
+    const bar = $('ins-period-bar');
+    if (!bar || insPeriodBarWired_) return;
+    insPeriodBarWired_ = true;
+    bar.addEventListener('click', function (e) {
+      const b = e.target.closest('.ov-period-btn');
+      if (!b) return;
+      const preset = b.getAttribute('data-ins-period');
+      if (preset === 'custom') {
+        const eb = $('ins-edit-selection-btn'); if (eb) eb.click();
+        return;
+      }
+      const r = insPeriodRange_(preset);
+      if (!r) return;
+      if ($('ins-from')) $('ins-from').value = r.from;
+      if ($('ins-to'))   $('ins-to').value   = r.to;
+      if ($('ins-preset')) $('ins-preset').value = 'custom';
+      // Validate the (kept) comparison before firing -- the setup form is
+      // hidden, so its error line would be invisible; surface on the results.
+      const prior = insResolvePriorRange_(r.from, r.to);
+      if (prior && prior.error) { insSetResultsStatus_('error', prior.error); return; }
+      insScheduleActiveRefetch_();   // re-group the picker for the new range
+      insSavePrefs_();
+      insSetResultsStatus_('loading', 'Refreshing report…');
+      runInsReport();
+    });
+  }
+
   function insApplyEditPopover_() {
     const from = $('ins-edit-from') ? $('ins-edit-from').value : '';
     const to   = $('ins-edit-to')   ? $('ins-edit-to').value   : '';
@@ -10977,8 +11046,34 @@
   // main pass whether or not this section is open.
   function insRenderDeferredCharts_() {
     if (!insLastData || !insDetailOpen_()) return;
-    insRenderTrendChart_(insLastData);
+    // I4: only the share doughnut is deferred now -- the trend chart moved out
+    // of this <details> to the always-visible bottom Trends section and renders
+    // in the main pass (insDrawTrendChart_).
     insRenderShareChart_(insLastData.agentData || []);
+  }
+
+  // I4: measure-guarded trend render for the main pass. The trend chart lives
+  // at the bottom of the report as its own always-visible section now, but the
+  // main render can run before #insights-results is shown (the __insRepaint
+  // path renders then calls insShowResults), so Chart.js could measure a
+  // zero-size canvas and come up blank. Defer creation via bounded rAF until
+  // the wrap is laid out -- the missed-chart lesson (MC2). User-interaction
+  // callers (subtab / view toggle / datalabels) run while visible and call
+  // insRenderTrendChart_ directly.
+  var insTrendDrawAttempts_ = 0;
+  function insDrawTrendChart_(data) {
+    var wrap = $('ins-trend-wrap');
+    if (!wrap) { insRenderTrendChart_(data); return; }   // older markup: render directly
+    var measurable = wrap.offsetParent !== null && wrap.clientWidth > 0;
+    if (!measurable) {
+      if (insTrendDrawAttempts_ < 30 && typeof requestAnimationFrame === 'function') {
+        insTrendDrawAttempts_++;
+        requestAnimationFrame(function () { insDrawTrendChart_(data); });
+      }
+      return;
+    }
+    insTrendDrawAttempts_ = 0;
+    insRenderTrendChart_(data);
   }
 
   // A1: among the valenced volume/rate metrics, the one that moved MOST
@@ -11089,6 +11184,7 @@
       if (wd) bits.push(wd);
       $('ins-results-date').textContent = '(' + bits.filter(Boolean).join(' · ') + ')';
     })();
+    insSyncPeriodBar_(data.meta);   // I4: reflect the rendered window on the slider
     const cmp = $('ins-compare-line');
     if (cmp) {
       const mode = data.meta && data.meta.comparisonMode;
@@ -11181,12 +11277,16 @@
     }
     reportHeadline_('ins-headline', 'insights-results', insHeadline_(data));
     insRenderNeedsAttentionStrip_(data);
-    // A2: the trend + share Chart.js canvases render at zero height if built
-    // inside the collapsed Team-detail <details>, so defer them until it's
-    // open; the toggle handler renders them on first open. Queue health +
-    // heatmap already ran above (DOM/CSS-grid, safe while collapsed).
+    // I4: the 12-month trend chart moved OUT of the collapsed Team-detail to
+    // its own always-visible section at the bottom of the report, so it renders
+    // in the main pass now -- measure-guarded (insDrawTrendChart_), since this
+    // pass can run before the results container is shown on first paint.
+    // The share doughnut still lives inside the Team-detail <details>, so it
+    // stays deferred (renders at zero height while collapsed) -- only rendered
+    // here when the section is already open; the toggle handler renders it on
+    // first open. Queue health + heatmap already ran above (DOM/CSS-grid).
+    insDrawTrendChart_(data);
     if (insDetailOpen_()) {
-      insRenderTrendChart_(data);
       insRenderShareChart_(data.agentData || []);
     }
     insRenderAgentCards_(data.agentData || [], data.meta, data.teamStats);
