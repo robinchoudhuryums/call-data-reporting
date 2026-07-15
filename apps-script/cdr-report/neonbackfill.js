@@ -374,6 +374,29 @@ function backfillDQEHistoryUpsert() {
         });
         i++;
       }
+      // IMP-6: a single INSERT ... ON CONFLICT DO UPDATE cannot touch the same
+      // conflict key twice ("ON CONFLICT DO UPDATE command cannot affect row a
+      // second time"). The DQE sheet can hold two rows for the same
+      // (call_date, agent_name) -- e.g. a pre-canonicalization duplicate of an
+      // agent on a day -- and if both fall in one 50-row batch the whole
+      // statement throws. Collapse the batch to one row per key, LAST-write-
+      // wins (keeping position), mirroring the inline writers' dedup. Dupes
+      // split across batch boundaries are already safe (separate statements;
+      // the second batch's DO UPDATE just refreshes the row).
+      if (batch.length > 1) {
+        var seenKey_ = {};
+        var deduped_ = [];
+        for (var d = 0; d < batch.length; d++) {
+          var key_ = batch[d].callDate + ' ' + batch[d].agentName;
+          if (seenKey_[key_] !== undefined) {
+            deduped_[seenKey_[key_]] = batch[d];   // last-write-wins, same slot
+          } else {
+            seenKey_[key_] = deduped_.length;
+            deduped_.push(batch[d]);
+          }
+        }
+        batch = deduped_;
+      }
       if (batch.length === 0) continue;
 
       try {
