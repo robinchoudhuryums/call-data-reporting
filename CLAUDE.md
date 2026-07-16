@@ -770,9 +770,11 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   (mirrors `launcherOpenMissed_`; `missed:true` arms `deptMissedScrollPending_`).
   My Department renders a **collapsed one-line Insights summary strip**
   (`#dept-insights-strip`, `renderDeptInsightsStrip_` beside
-  `renderDeptTeamStrip_`) -- a teaser from the SAME server totals (no new
-  fetch) + an expand + "Open full report ->" (-> Insights, carrying the
-  dept-page dates). Insights carries a header **"My Department ->"** button and
+  `renderDeptTeamStrip_`) -- a value-prompt + an expand + "Open full report
+  ->" (-> Insights, carrying the dept-page dates). (Batch A dropped the
+  strip's numeric rate%/missed restatement -- it duplicated the KPI tiles
+  in `renderDeptTeamStrip_` directly above it, whose answer-rate tile is now
+  labeled "% Answered (rings)" to match the Insights rollup.) Insights carries a header **"My Department ->"** button and
   a Queue-health **"See missed calls ->"** drill (both -> `handoffToMyDept_`,
   wired in `initInsightsReport`). (3) **Chart->Missed drill-down slice
   (Phase 1):** `MissedCallsReport.gs::getMissedCallsSlice` -- a read-only RPC
@@ -1223,6 +1225,38 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   constant was dead code and was REMOVED (F-30). **Never read a
   constant for membership checks**; always go through
   `getAdminEmails_()`.
+- **Role model + the all-departments manager (`allDepts`).** Three roles
+  (`admin` | `manager` | `none`; `Auth.gs::resolveUser_`). A manager is
+  looked up in the `Access Control` sheet and pinned to ONE department --
+  **EXCEPT** when the Department cell is the sentinel `ALL` (or `*`,
+  case-insensitive, `isAllDeptsSentinel_`): that grants an
+  **all-departments manager** -- `role:'manager'` with a new
+  `allDepts:true` flag, `department:null`, `departments:getAllDepartments_()`.
+  It sees EVERY department's non-admin data (like an admin for data breadth)
+  but NOT admin surfaces. **Design invariant (fail-safe):** it stays
+  `role:'manager'`, so every admin-SURFACE check (`assertAdmin_`,
+  `data-admin-only`, `personalizeOverview_`'s admin-field strip) keeps
+  excluding it automatically; only DATA-BREADTH gates opt it in. Server:
+  `assertDeptAccess_` lets `allDepts` managers (like admins) reach any
+  existing dept while single-dept managers stay pinned (`!user.allDepts`);
+  `personalizeOverview_` keeps all WoW drivers for them (they see every
+  dept) but still strips the 4 admin-only fields; `getEscalations` /
+  `getEscalationsInit` give them all-dept escalation scope (create stays
+  `assertAdmin_`); `Code.gs` ships `allDepts` + the full dept list in the
+  client user envelope. Client: `isAllDeptViewer_()` (=
+  `role==='admin' || USER.allDepts`) gates DATA-BREADTH only -- the header
+  dept selector, `getRequestedDept`, `ovViewerDept_`, Overview point/tile
+  routing + spotlight, the escalations dept picker. Admin-surface checks
+  stay `role==='admin'`. Crucially each widened check evaluates identically
+  for admin (true) and a normal manager (false), so existing roles have
+  ZERO behavior change and a missed widening degrades the new role to a
+  single-dept manager (least privilege). **Grant it** by setting an Access
+  Control row's Department cell to `ALL` (Access Control admin modal or the
+  sheet; `saveAccessControlRow` accepts + canonicalizes the sentinel) --
+  no Script Property / scope. Pinned by
+  `tests/unit/access-control-editor.test.js`. **If you add a new
+  `role==='admin'` check, decide: is it an admin SURFACE (keep it) or DATA
+  BREADTH (use `isAllDeptViewer_()` / `user.allDepts`)?**
 - **Alert Log captures every outcome of every run** -- `sent`,
   `would-send`, `above-threshold`, `no-data`, `no-recipients`,
   `skipped`, `error`. Preview rows (from the modal's **Preview**
@@ -1828,16 +1862,26 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   Rung/Missed/Answered numeric columns; built by `answeredBarHtml_`, carries
   the E5 WoW chips inline on the answered/missed counts, answer-rate gets
   the 92% benchmark tint, sorts by computed `answerRate` via a special case
-  in `sortRows`) · Unique · TTT · ATT · Avg Abd Wait · CSR Avg Abd Wait. The
-  five `hideable:true` columns (Source / Unique / TTT / Avg Abd Wait /
-  CSR Avg Abd Wait) FOLD AWAY by default behind the **"Show all columns"** toggle
+  in `sortRows`) · **Total calls** (rung) · **Answer %** (a `type:'pct'`
+  cell = answered/(answered+missed), 92% benchmark tint; both added in
+  Batch B (#8) as always-visible columns surfacing what the bar folds, and
+  the Answer % column shares the bar's `answerRate` sort key) · Unique ·
+  TTT · ATT · Avg Abd Wait · CSR Avg Abd Wait. The five `hideable:true`
+  columns (Source / Unique / TTT / Avg Abd Wait / CSR Avg Abd Wait) FOLD
+  AWAY by default behind the **"Show all columns"** toggle
   (`#dept-cols-toggle`, persisted in `cdr.dept.cols`, applied via the
   `hide-extra` class + `.col-extra` cells through the shared `cellClass_`
   helper); the Overview mini-table carries `hide-extra` permanently
   (glance view). Default sort is `answerRate` ascending (worst answer rate
   first; idle/no-activity agents always sink to the bottom regardless of
-  direction). CSV export (`exportTableCsv_`) emits ALL columns regardless
-  of the toggle and renders the bar as `answered / missed (rate%)` text.
+  direction). **The Overview mini-table (`ov-user-table`) is now
+  header-sortable too (Batch B)** with its OWN sort state (`ovUserSort_`,
+  same worst-first default, `ovRenderUserRows_`/`ovOnUserSort_`); `sortRows`
+  is parametrized `(rows, sortKey, sortDir)` so both tables share it, and
+  each table's Total row renders from `totals` (never part of the sort).
+  CSV export (`exportTableCsv_`) emits ALL columns regardless of the toggle
+  and renders the bar as `answered / missed (rate%)` text + the Answer %
+  column via `pctCsv`.
 - **Source column + roster-only totals (Phase D).** The agent table's
   Source column (between Agent and the Answered/Missed bar) renders one of
   three chips per row: **ROSTER** (accent-soft) for agents on this
@@ -2470,7 +2514,7 @@ DQE Report Legacy:
   apps-script/dqe-report/DQEdashboard.js, apps-script/dqe-report/FAQGuide.html, apps-script/dqe-report/IndividualReport.js, apps-script/dqe-report/IndividualReportModal.html, apps-script/dqe-report/MissedCallsReport.js, apps-script/dqe-report/MissedReportModal.html, apps-script/dqe-report/MultiCompModal.html, apps-script/dqe-report/MultiComparisonTool.js, apps-script/dqe-report/SingleRangeReport.js, apps-script/dqe-report/SingleReportModal.html, apps-script/dqe-report/menu DQE Tools.js, apps-script/dqe-report/sendManualAlert.js, apps-script/dqe-report/showFAQ.js, apps-script/dqe-report/appsscript.json
 
 ### Invariant Library
-INV-01 | No public function (callable via google.script.run) writes to any spreadsheet EXCEPT admin-gated paths: `OrphanFix.gs` (`addAgentAlias`, `removeAgentAlias`, `applyOrphanRename`, `addOrphanToRoster` -- the New-hire flow appends one "Name, ext1, ext2" cell to a dept's DO NOT EDIT! column; extensions REQUIRED, write structurally confined to the dept block by the first-blank-terminated header scan), `setup()` in `Setup.gs` (sheet creation), `DeptConfig.gs` (`saveDeptConfig`, `removeDeptConfig` -- config-sheet writes, INV-54), `Auth.gs` (`saveAccessControlRow`, `removeAccessControlRow` -- the C1 manager-access editor; writes the Access Control SHEET, upsert-by-email / delete-by-email, busts the per-email auth cache), and the C3 config editors `Alerts.gs` (`saveAlertConfigRow`, `removeAlertConfigRow` -- per-dept alert threshold/recipients, key=department) + `Digest.gs` (`saveDigestConfigRow`, `removeDigestConfigRow` -- digest subscribers, key=(email,department)); both write the ACTIVE config source (sheet, or Neon when `CONFIG_SOURCE=neon`). Every other write-capable helper ends in `_` so Apps Script blocks it from RPC. All carve-outs start with `assertAdmin_()`. The OrphanFix path (data-mutation) additionally has input-validation (queue-sentinel names rejected, length-capped, canonical destination must be on some roster), `LockService` serialization, and `Orphan Fix Log` audit trail. The DeptConfig path (config, not data-mutation) has `assertAdmin_()` + save-time validation + `LockService` + an Updated By/At row stamp. The Access Control editor path (config) has `assertAdmin_()` + input validation (email shape + a real dept) + `LockService` + a `Logger.log` audit line; it manages MANAGERS only (admins live in the `ADMIN_EMAILS` Script Property, so the editor can't lock an admin out). New data-mutation public functions need all four mitigations; new admin-only creation/config paths need at minimum `assertAdmin_()`. **One sanctioned non-admin exception: the TELEMETRY CARVE-OUT** -- `Util.gs::logReportUsage_` appends one fixed-schema row to the `Report Usage` sheet from the public report endpoints (both cache-hit and fresh paths) so report-consolidation decisions have usage evidence. It is safe by construction: append-only, no user-controlled free text (Report is a code constant per call site; Department has already passed the caller's dept validation), and best-effort (missing sheet / any failure silently no-ops -- telemetry never blocks a report). Do not extend it beyond pure telemetry, and do not route caller-supplied strings into it. | Subsystem: Department Dashboard
+INV-01 | No public function (callable via google.script.run) writes to any spreadsheet EXCEPT admin-gated paths: `OrphanFix.gs` (`addAgentAlias`, `removeAgentAlias`, `applyOrphanRename`, `addOrphanToRoster` -- the New-hire flow appends one "Name, ext1, ext2" cell to a dept's DO NOT EDIT! column; extensions REQUIRED, write structurally confined to the dept block by the first-blank-terminated header scan), `setup()` in `Setup.gs` (sheet creation), `DeptConfig.gs` (`saveDeptConfig`, `removeDeptConfig` -- config-sheet writes, INV-54), `Auth.gs` (`saveAccessControlRow`, `removeAccessControlRow` -- the C1 manager-access editor; writes the Access Control SHEET, upsert-by-email / delete-by-email, busts the per-email auth cache), and the C3 config editors `Alerts.gs` (`saveAlertConfigRow`, `removeAlertConfigRow` -- per-dept alert threshold/recipients, key=department) + `Digest.gs` (`saveDigestConfigRow`, `removeDigestConfigRow` -- digest subscribers, key=(email,department)); both write the ACTIVE config source (sheet, or Neon when `CONFIG_SOURCE=neon`). Every other write-capable helper ends in `_` so Apps Script blocks it from RPC. All carve-outs start with `assertAdmin_()`. The OrphanFix path (data-mutation) additionally has input-validation (queue-sentinel names rejected, length-capped, canonical destination must be on some roster), `LockService` serialization, and `Orphan Fix Log` audit trail. The DeptConfig path (config, not data-mutation) has `assertAdmin_()` + save-time validation + `LockService` + an Updated By/At row stamp. The Access Control editor path (config) has `assertAdmin_()` + input validation (email shape + a real dept **OR the `ALL`/`*` all-departments sentinel, canonicalized to `ALL`** -- see the role-model gotcha) + `LockService` + a `Logger.log` audit line; it manages MANAGERS only (admins live in the `ADMIN_EMAILS` Script Property, so the editor can't lock an admin out). New data-mutation public functions need all four mitigations; new admin-only creation/config paths need at minimum `assertAdmin_()`. **One sanctioned non-admin exception: the TELEMETRY CARVE-OUT** -- `Util.gs::logReportUsage_` appends one fixed-schema row to the `Report Usage` sheet from the public report endpoints (both cache-hit and fresh paths) so report-consolidation decisions have usage evidence. It is safe by construction: append-only, no user-controlled free text (Report is a code constant per call site; Department has already passed the caller's dept validation), and best-effort (missing sheet / any failure silently no-ops -- telemetry never blocks a report). Do not extend it beyond pure telemetry, and do not route caller-supplied strings into it. | Subsystem: Department Dashboard
 INV-02 | Duration columns (TTT, ATT, AvgAbdWait, CSRAvgAbdWait) are read via getDisplayValues(), not getValue(), to bypass spreadsheet-vs-script TZ mismatch. | Subsystem: Department Dashboard
 INV-03 | DO NOT EDIT! roster cells follow the format "Name, ext1, ext2, …" — name is everything before the first comma; subsequent digit-only tokens are extensions. | Subsystem: Department Dashboard
 INV-04 | Agent-name match between DQE Historical Data Col C and DO NOT EDIT! roster cells is exact (case + whitespace sensitive); no alias normalization. | Subsystem: Department Dashboard
