@@ -274,14 +274,16 @@
           <table class="agents ov-user-table hide-extra">
             <thead>
               <tr>
-                <th>Agent</th>
+                <th data-sort="agent">Agent <span class="arrow"></span></th>
                 <th class="col-extra">Source</th>
-                <th>Answered / Missed</th>
-                <th class="col-extra">Unique</th>
-                <th class="col-extra">TTT</th>
-                <th>ATT (daily avg)</th>
-                <th class="col-extra">Avg Abd Wait</th>
-                <th class="col-extra">CSR Avg Abd Wait</th>
+                <th data-sort="answerRate">Answered / Missed <span class="arrow"></span></th>
+                <th data-sort="totalRung">Total calls <span class="arrow"></span></th>
+                <th data-sort="answerRate">Answer % <span class="arrow"></span></th>
+                <th data-sort="totalUnique" class="col-extra">Unique <span class="arrow"></span></th>
+                <th data-sort="tttSeconds" class="col-extra">TTT <span class="arrow"></span></th>
+                <th data-sort="attSeconds">ATT (daily avg) <span class="arrow"></span></th>
+                <th data-sort="avgAbdWaitSeconds" class="col-extra">Avg Abd Wait <span class="arrow"></span></th>
+                <th data-sort="csrAvgAbdWaitSeconds" class="col-extra">CSR Avg Abd Wait <span class="arrow"></span></th>
               </tr>
             </thead>
             <tbody id="ov-user-tfoot" class="agents-totals"></tbody>
@@ -398,6 +400,8 @@
             <th data-sort="agent">Agent <span class="arrow"></span></th>
             <th class="col-extra">Source</th>
             <th data-sort="answerRate">Answered / Missed <span class="arrow"></span></th>
+            <th data-sort="totalRung">Total calls <span class="arrow"></span></th>
+            <th data-sort="answerRate">Answer % <span class="arrow"></span></th>
             <th data-sort="totalUnique" class="col-extra">Unique <span class="arrow"></span></th>
             <th data-sort="tttSeconds" class="col-extra">TTT <span class="arrow"></span></th>
             <th data-sort="attSeconds">ATT (daily avg) <span class="arrow"></span></th>
