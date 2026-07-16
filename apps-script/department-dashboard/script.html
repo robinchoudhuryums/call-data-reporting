@@ -698,6 +698,11 @@
     // (CSV) is handled in exportTableCsv_ via sourceChipCsv_.
     { key: 'source',               label: 'Source',          type: 'chip',     hideable: true },
     { key: 'answeredBar',          label: 'Answered / Missed', type: 'bar', sortKey: 'answerRate' },
+    // #8: Total calls (rung) + Answer % as their own always-visible columns,
+    // surfacing the numbers the stacked bar folds together (sortable; Answer %
+    // shares the bar's answerRate sort key + the 92% benchmark tint).
+    { key: 'totalRung',            label: 'Total calls',     type: 'num' },
+    { key: 'answerRate',           label: 'Answer %',        type: 'pct', sortKey: 'answerRate' },
     { key: 'totalUnique',          label: 'Unique',          type: 'num',      hideable: true },
     { key: 'tttSeconds',           label: 'TTT',             type: 'duration', hideable: true },
     { key: 'attSeconds',           label: 'ATT (daily avg)', type: 'duration' },
@@ -2311,6 +2316,14 @@
   // can't paint stale rows under a newer call's title/date -- the same
   // guard class as summaryReqSeq / reportReqSeq_ elsewhere.
   var ovUserTableSeq = 0;
+  // #8: the Overview mini-table is now header-sortable with its OWN sort state
+  // (default worst-answer-rate first, like My Department), reusing the shared
+  // sortRows/COLUMNS/fmtCell. Stored rows/totals let a header click re-sort
+  // without re-fetching. The Total row renders from `ovUserTotals_`, so it's
+  // never part of the sorted body.
+  var ovUserRows_ = [], ovUserTotals_ = null;
+  var ovUserSort_ = { key: 'answerRate', dir: 'asc' };
+  var ovUserSortWired_ = false;
   function ovRenderUserTable_(data) {
     const wrap = $('ov-user-table-wrap');
     const tbody = $('ov-user-tbody');
@@ -2346,37 +2359,18 @@
         if (myToken !== ovUserTableSeq) return;   // F-40: superseded by a newer call
         status.style.display = 'none';
         if (!resp || !resp.rows || !resp.rows.length) {
+          ovUserRows_ = []; ovUserTotals_ = null;
           tbody.innerHTML = '<tr><td colspan="' + COLUMNS.length + '" class="ov-user-empty">No agent rows for this dept in '
                           + escapeHtml(range.from === range.to ? range.to : (range.from + ' – ' + range.to)) + '.</td></tr>';
+          tfoot.innerHTML = '';
           return;
         }
-        // Default sort: missed desc, then name asc -- matches the
-        // server's default. Users wanting more sort control can
-        // close the modal and use the main table.
-        const rows = resp.rows.slice().sort(function (a, b) {
-          if (b.totalMissed !== a.totalMissed) return b.totalMissed - a.totalMissed;
-          return a.agent.localeCompare(b.agent);
-        });
-        tbody.innerHTML = rows.map(function (row) {
-          const rowClass = (row.matchedViaQueue && !row.matchedViaRoster) ? 'via-queue' : '';
-          return '<tr' + (rowClass ? ' class="' + rowClass + '"' : '') + '>'
-               + COLUMNS.map(function (col, i) {
-                   return '<td class="' + cellClass_(col, i) + '">' + fmtCell(col, row) + '</td>';
-                 }).join('')
-               + '</tr>';
-        }).join('');
-        if (resp.totals) {
-          const queueCount = resp.totals.queueOnlyAgentCount || 0;
-          const totalLabel = queueCount > 0
-            ? 'Totals (roster only · ' + queueCount + ' floater' + (queueCount === 1 ? '' : 's') + ' excluded)'
-            : 'Totals';
-          tfoot.innerHTML = '<tr>' + COLUMNS.map(function (col, i) {
-            const cls = cellClass_(col, i);
-            if (i === 0) return '<td class="' + cls + '">' + totalLabel + '</td>';
-            if (col.type === 'chip' && col.key === 'source') return '<td class="' + cls + '"></td>';
-            return '<td class="' + cls + '">' + fmtCell(col, resp.totals) + '</td>';
-          }).join('') + '</tr>';
-        }
+        // #8: store the rows/totals and render via the shared, sortable path
+        // (default worst-answer-rate first). A header click re-sorts in place.
+        ovUserRows_ = resp.rows;
+        ovUserTotals_ = resp.totals || null;
+        ovWireUserSort_();
+        ovRenderUserRows_();
       })
       .withFailureHandler(function (err) {
         if (myToken !== ovUserTableSeq) return;   // F-40
@@ -2390,6 +2384,75 @@
         to:         range.to,
         scope:      'roster',
       });
+  }
+
+  // #8: renders the Overview mini-table body + totals from the stored rows using
+  // the current ovUserSort_, and paints the header arrows. Reuses the shared
+  // sortRows/COLUMNS/fmtCell/cellClass_ so it stays byte-for-byte consistent with
+  // the My Department table's cells.
+  function ovRenderUserRows_() {
+    var tbody = $('ov-user-tbody'), tfoot = $('ov-user-tfoot');
+    if (!tbody || !tfoot) return;
+    document.querySelectorAll('.ov-user-table thead th[data-sort]').forEach(function (th) {
+      var key = th.getAttribute('data-sort');
+      var arrow = th.querySelector('.arrow');
+      if (!arrow) return;
+      if (key === ovUserSort_.key) {
+        arrow.textContent = ovUserSort_.dir === 'asc' ? '▲' : '▼';
+        arrow.style.color = THEME.ink || '#374151';
+      } else {
+        arrow.textContent = '▽';
+        arrow.style.color = THEME.muted || '#9ca3af';
+      }
+    });
+    var sorted = sortRows(ovUserRows_, ovUserSort_.key, ovUserSort_.dir);
+    tbody.innerHTML = sorted.map(function (row) {
+      var rowClass = (row.matchedViaQueue && !row.matchedViaRoster) ? 'via-queue' : '';
+      return '<tr' + (rowClass ? ' class="' + rowClass + '"' : '') + '>'
+           + COLUMNS.map(function (col, i) {
+               return '<td class="' + cellClass_(col, i) + '">' + fmtCell(col, row) + '</td>';
+             }).join('')
+           + '</tr>';
+    }).join('');
+    if (ovUserTotals_) {
+      var queueCount = ovUserTotals_.queueOnlyAgentCount || 0;
+      var totalLabel = queueCount > 0
+        ? 'Totals (roster only · ' + queueCount + ' floater' + (queueCount === 1 ? '' : 's') + ' excluded)'
+        : 'Totals';
+      tfoot.innerHTML = '<tr>' + COLUMNS.map(function (col, i) {
+        var cls = cellClass_(col, i);
+        if (i === 0) return '<td class="' + cls + '">' + totalLabel + '</td>';
+        if (col.type === 'chip' && col.key === 'source') return '<td class="' + cls + '"></td>';
+        return '<td class="' + cls + '">' + fmtCell(col, ovUserTotals_) + '</td>';
+      }).join('') + '</tr>';
+    } else {
+      tfoot.innerHTML = '';
+    }
+  }
+
+  // Wire the Overview mini-table header clicks once (the thead is static).
+  function ovWireUserSort_() {
+    if (ovUserSortWired_) return;
+    var table = document.querySelector('.ov-user-table');
+    if (!table) return;
+    ovUserSortWired_ = true;
+    table.querySelectorAll('thead th[data-sort]').forEach(function (th) {
+      th.style.cursor = 'pointer';
+      th.addEventListener('click', function () { ovOnUserSort_(th.getAttribute('data-sort')); });
+    });
+  }
+
+  // Header-click sort for the Overview mini-table (mirrors My Dept's onSort:
+  // toggle direction on the same key, else numbers default desc / text asc).
+  function ovOnUserSort_(key) {
+    if (ovUserSort_.key === key) {
+      ovUserSort_.dir = ovUserSort_.dir === 'asc' ? 'desc' : 'asc';
+    } else {
+      ovUserSort_.key = key;
+      var col = COLUMNS.find(function (c) { return c.key === key; });
+      ovUserSort_.dir = (col && col.type === 'text') ? 'asc' : 'desc';
+    }
+    ovRenderUserRows_();
   }
 
   // Overview trend-chart metric views. `field` = the per-dept data array on the
@@ -5600,9 +5663,12 @@
     render();
   }
 
-  function sortRows(rows) {
-    const key = state.sortKey;
-    const dir = state.sortDir === 'asc' ? 1 : -1;
+  // #8: parametrized so the Overview mini-table can reuse it with its own sort
+  // state (was reading the My Department `state` globals). Callers pass
+  // (rows, sortKey, sortDir).
+  function sortRows(rows, sortKey, sortDir) {
+    const key = sortKey;
+    const dir = sortDir === 'asc' ? 1 : -1;
     const col = COLUMNS.find(function (c) { return c.key === key; });
     const isText = col && col.type === 'text';
     return rows.slice().sort(function (a, b) {
@@ -5636,6 +5702,15 @@
     }
     if (col.type === 'bar') {
       return answeredBarHtml_(row);
+    }
+    if (col.type === 'pct') {
+      // #8 Answer % = answered / (answered + missed), matching the bar + the
+      // answerRate sort. Idle rows (no rung) show a muted dash; the rest carry
+      // the 92% benchmark tint (symmetric), like the bar's inline rate.
+      const pa = Number(row.totalAnswered) || 0, pm = Number(row.totalMissed) || 0, pt = pa + pm;
+      if (!pt) return zeroCell_('–');
+      const prate = Math.round(pa / pt * 100);
+      return '<span class="ans-rate' + benchValueCls_('% answered', prate + '%', true) + '">' + prate + '%</span>';
     }
     const v = row[col.key];
     if (col.type === 'text') return escapeHtml(v == null ? '' : v);
@@ -5958,7 +6033,7 @@
       return;
     }
 
-    const sorted = sortRows(state.rows);
+    const sorted = sortRows(state.rows, state.sortKey, state.sortDir);
     tbody.innerHTML = sorted.map(function (row) {
       // Agents matched only via queue (not in the roster) get a small
       // "(queue-only)" tag next to the name in CSS.
@@ -6014,7 +6089,7 @@
 
   // -- CSV export for the main agent table --------------------------------
   function exportTableCsv_() {
-    var sorted = sortRows(state.rows);
+    var sorted = sortRows(state.rows, state.sortKey, state.sortDir);
     if (!sorted.length) return;
     var csvEscape = function (v) {
       var s = csvSafeCell_(v);
@@ -6028,11 +6103,17 @@
       var a = Number(row.totalAnswered) || 0, m = Number(row.totalMissed) || 0, t = a + m;
       return a + ' / ' + m + (t ? ' (' + Math.round(a / t * 100) + '%)' : '');
     };
+    // #8: Answer % column value for CSV (answered / (answered+missed)).
+    var pctCsv = function (row) {
+      var a = Number(row.totalAnswered) || 0, m = Number(row.totalMissed) || 0, t = a + m;
+      return t ? Math.round(a / t * 100) + '%' : '';
+    };
     var header = COLUMNS.map(function (c) { return csvEscape(c.label); }).join(',');
     var rows = sorted.map(function (row) {
       return COLUMNS.map(function (col) {
         if (col.type === 'chip' && col.key === 'source') return csvEscape(sourceChipCsv_(row));
         if (col.type === 'bar') return csvEscape(barCsv(row));
+        if (col.type === 'pct') return csvEscape(pctCsv(row));
         if (col.type === 'duration') return csvEscape(fmtDuration(row[col.key]));
         return csvEscape(row[col.key]);
       }).join(',');
@@ -6043,6 +6124,7 @@
         // Source column has no aggregate meaning in the totals row.
         if (col.type === 'chip' && col.key === 'source') return '';
         if (col.type === 'bar') return csvEscape(barCsv(state.totals));
+        if (col.type === 'pct') return csvEscape(pctCsv(state.totals));
         if (col.type === 'duration') return csvEscape(fmtDuration(state.totals[col.key]));
         return csvEscape(state.totals[col.key]);
       }).join(','));
@@ -11273,7 +11355,17 @@
       if (!b) return;
       const preset = b.getAttribute('data-ins-period');
       if (preset === 'custom') {
+        // Custom opens the Edit-selection popover (its From/To are the custom
+        // range). #3c: the popover can open below the fold / not obviously tied
+        // to this click ("Custom did nothing"), so scroll it into view and land
+        // focus on the From date -- without touching the shared open handler.
         const eb = $('ins-edit-selection-btn'); if (eb) eb.click();
+        const pop = $('ins-edit-popover');
+        if (pop && pop.style.display !== 'none') {
+          try { pop.scrollIntoView({ block: 'nearest' }); } catch (scrollErr) { /* older browsers */ }
+          const fromEl = $('ins-edit-from');
+          if (fromEl) setTimeout(function () { try { fromEl.focus(); } catch (focusErr) {} }, 0);
+        }
         return;
       }
       const r = insPeriodRange_(preset);
