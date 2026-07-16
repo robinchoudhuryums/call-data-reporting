@@ -187,6 +187,8 @@ function getSystemHealth() {
       'Optional; only matters once DQE_READ_SOURCE=neon (Operator State #20).');
     svc('trg-watchdog','Ingest-failure watchdog', ['runIngestWatchdog_'], false,
       'Optional: emails admins when no fresh DQE build lands (Operator State #23).');
+    svc('trg-pipewatch','Pipeline-failure watchdog', ['runPipelineWatch_'], false,
+      'Optional: emails admins when a Pipeline Health failure row is logged — enable via installPipelineWatchTrigger().');
     svc('trg-backup',  'Neon backup (escalations / inbound_calls)', ['runNeonBackup_'], false,
       'Optional but recommended: these tables have NO sheet fallback — install via installNeonBackupTrigger().');
   } catch (e) { add('triggers', 'trg-probe', 'Trigger inventory', 'warn', 'probe failed', String(e && e.message || e)); }
@@ -197,6 +199,7 @@ function getSystemHealth() {
       ['out-warm',     'Cache warm — last outcome',   'CACHE_WARM_LAST',    'CACHE_WARM_LAST_RESULT'],
       ['out-keepwarm', 'Keep-warm — last ping',       'NEON_KEEPWARM_LAST', 'NEON_KEEPWARM_LAST_RESULT'],
       ['out-backup',   'Neon backup — last run',      'NEON_BACKUP_LAST',   'NEON_BACKUP_LAST_RESULT'],
+      ['out-pipewatch','Pipeline watch — last run',   'PIPELINE_WATCH_LAST','PIPELINE_WATCH_LAST_RESULT'],
     ];
     for (var o = 0; o < outcomes.length; o++) {
       var at = props.getProperty(outcomes[o][2]);
