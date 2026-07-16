@@ -50,6 +50,7 @@ const SHEETS = Object.freeze({
   ORPHAN_FIX_LOG: 'Orphan Fix Log',
   DEPT_CONFIG: 'Dept Config',
   REPORT_USAGE: 'Report Usage',
+  QUEUE_REPORT_SUBSCRIBERS: 'Queue Report Subscribers',
 });
 
 const ACCESS_CONTROL_HEADERS = Object.freeze(['Email', 'Department', 'Notes']);
@@ -83,6 +84,15 @@ const PIPELINE_HEALTH_HEADERS = Object.freeze([
 // no in-app form.
 const DIGEST_CONFIG_HEADERS = Object.freeze([
   'Email', 'Department', 'Cadence', 'Active', 'Notes', 'Format',
+]);
+// Queue Report Subscribers: opt-in recipient list for the automated
+// "Daily Call Queue Report" email (the all-departments QCD snapshot for the
+// previous workday). One row per email; Active=FALSE pauses without deleting.
+// Managed by admins via the Alerts modal's "Daily Call Queue Report" section
+// (QueueReportEmail.gs); the report is company-wide, so there is no per-dept
+// column -- every subscriber receives the full all-departments report.
+const QUEUE_REPORT_SUBSCRIBERS_HEADERS = Object.freeze([
+  'Email', 'Active', 'Notes',
 ]);
 // Agent Alias Overrides: persistent rename map used by the CDR
 // pipeline's loadRosterCanonicalNames_ on every build. Each row

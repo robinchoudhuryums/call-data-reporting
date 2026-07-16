@@ -2020,6 +2020,50 @@
         </div>
 
         <div class="al-section">
+          <div class="al-section-title">Daily Call Queue Report <span class="al-state-pill" id="al-qr-pill"></span></div>
+          <p class="al-hint">
+            Emails the all-departments <strong>Daily Call Queue Report</strong> (the company-wide
+            QCD snapshot) for the <strong>previous workday</strong>, once each weekday morning &mdash;
+            but only after that day&rsquo;s Raw Data has been imported and processed completely.
+            Each subscriber below receives the full report. <span id="al-qr-window"></span>
+          </p>
+          <table class="al-config-table">
+            <thead><tr>
+              <th>Email</th>
+              <th>Active</th>
+              <th>Notes</th>
+              <th></th>
+            </tr></thead>
+            <tbody id="al-qr-tbody"></tbody>
+          </table>
+          <div class="ir-form-grid" style="margin-top:10px; align-items:flex-end;">
+            <div class="ir-col" style="flex:1 1 240px;">
+              <label for="al-qr-email">Email</label>
+              <input type="email" id="al-qr-email" autocomplete="off" placeholder="name@universalmedsupply.com">
+            </div>
+            <div class="ir-col" style="flex:1 1 180px;">
+              <label for="al-qr-notes">Notes</label>
+              <input type="text" id="al-qr-notes" autocomplete="off" placeholder="optional">
+            </div>
+            <div class="ir-col" style="flex:0 1 auto;">
+              <label class="al-inline-check"><input type="checkbox" id="al-qr-active" checked> Active</label>
+            </div>
+          </div>
+          <div class="esc-form-actions">
+            <button class="btn" id="al-qr-save" type="button">Save subscriber</button>
+            <button class="btn btn-ghost" id="al-qr-clear" type="button">Clear</button>
+            <button class="btn btn-secondary" id="al-qr-preview" type="button" title="Send yourself a preview of the previous workday's report">Send me a preview</button>
+            <span id="al-qr-status" class="status" style="display:none;"></span>
+          </div>
+          <p class="al-hint" id="al-qr-trigger-status" style="margin-top: 10px;"></p>
+          <div class="al-trigger-actions">
+            <button class="btn btn-secondary" id="al-install-qr-btn"   type="button">Install daily trigger</button>
+            <button class="btn btn-secondary" id="al-uninstall-qr-btn" type="button" style="display:none;">Uninstall trigger</button>
+          </div>
+          <p class="al-hint" id="al-qr-last" style="margin-top: 8px;"></p>
+        </div>
+
+        <div class="al-section">
           <div class="al-section-title">Pipeline Health</div>
           <p class="al-hint">Last 20 entries from the Pipeline Health sheet (most recent first). Failures are highlighted; a long quiet stretch on `autoImport` or `buildDQE` is a sign the daily ingest or rebuild hasn't run.</p>
           <!-- F2 divergence detector: sheet-vs-Neon DQE max-date comparison.

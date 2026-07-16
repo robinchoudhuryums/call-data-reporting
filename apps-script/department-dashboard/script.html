@@ -8410,6 +8410,15 @@
     const warmNowBtn = $('al-warm-now-btn');
     if (warmNowBtn) warmNowBtn.addEventListener('click', alWarmNow_);
 
+    // Daily Call Queue Report subscribers + trigger.
+    if ($('al-qr-save'))    $('al-qr-save').addEventListener('click', alQrSave_);
+    if ($('al-qr-clear'))   $('al-qr-clear').addEventListener('click', alQrClear_);
+    if ($('al-qr-preview')) $('al-qr-preview').addEventListener('click', alQrPreview_);
+    const installQrBtn = $('al-install-qr-btn');
+    if (installQrBtn) installQrBtn.addEventListener('click', alInstallQueueReport_);
+    const uninstallQrBtn = $('al-uninstall-qr-btn');
+    if (uninstallQrBtn) uninstallQrBtn.addEventListener('click', alUninstallQueueReport_);
+
     const dateEl = $('al-date');
     if (dateEl) dateEl.addEventListener('change', function () {
       // Date change invalidates the previous preview -- Send must
@@ -8457,6 +8466,15 @@
             alRenderCacheWarm_({ loadError: (err && err.message) ? err.message : String(err) });
           })
           .getCacheWarmStatus();
+        // Daily Call Queue Report subscribers + trigger status (separate, same
+        // resilience so a mid-deploy missing QueueReportEmail.gs doesn't break
+        // the whole Alerts modal).
+        google.script.run
+          .withSuccessHandler(function (qr) { alRenderQueueReport_(qr || {}); })
+          .withFailureHandler(function (err) {
+            alRenderQueueReport_({ loadError: (err && err.message) ? err.message : String(err) });
+          })
+          .getQueueReportInit();
       })
       .withFailureHandler(function (err) {
         $('al-loading').textContent = 'Error: '
@@ -8619,6 +8637,136 @@
         alSetRunStatus_('error', 'Uninstall failed: ' + (err && err.message ? err.message : String(err)));
       })
       .uninstallDigestTriggers();
+  }
+
+  // -- Daily Call Queue Report subscribers + trigger ---------------------
+  var alQrRows_ = [];
+  function alQrSetStatus_(kind, msg) {
+    const el = $('al-qr-status'); if (!el) return;
+    if (!msg) { el.style.display = 'none'; el.textContent = ''; return; }
+    el.style.display = ''; el.className = 'status status-' + (kind || 'loading'); el.textContent = msg;
+  }
+  function alRenderQueueReport_(data) {
+    data = data || {};
+    alQrRows_ = data.subscribers || [];
+    const win = $('al-qr-window');
+    if (win) win.textContent = (!data.loadError && data.windowLabel) ? ('Runs ' + data.windowLabel + '.') : '';
+    const tbody = $('al-qr-tbody');
+    if (tbody) {
+      if (data.loadError) {
+        tbody.innerHTML = '<tr><td colspan="4" class="al-empty">Could not load subscribers: '
+          + escapeHtml(data.loadError) + '</td></tr>';
+      } else if (!alQrRows_.length) {
+        tbody.innerHTML = '<tr><td colspan="4" class="al-empty">No subscribers yet. Add one with the form below.</td></tr>';
+      } else {
+        tbody.innerHTML = alQrRows_.map(function (s, idx) {
+          const activeCls = s.active ? 'al-active-yes' : 'al-active-no';
+          const activeLbl = s.active ? 'Yes' : 'No';
+          return '<tr>'
+            + '<td>' + escapeHtml(s.email) + '</td>'
+            + '<td><span class="al-active ' + activeCls + '">' + activeLbl + '</span></td>'
+            + '<td>' + escapeHtml(s.notes || '') + '</td>'
+            + '<td>'
+            +   '<button type="button" class="link-btn al-qr-edit" data-idx="' + idx + '">Edit</button> '
+            +   '<button type="button" class="link-btn al-qr-remove" data-idx="' + idx + '">Remove</button>'
+            + '</td></tr>';
+        }).join('');
+        tbody.querySelectorAll('.al-qr-edit').forEach(function (b) {
+          b.addEventListener('click', function () { alQrEdit_(Number(b.getAttribute('data-idx'))); });
+        });
+        tbody.querySelectorAll('.al-qr-remove').forEach(function (b) {
+          b.addEventListener('click', function () { alQrRemove_(Number(b.getAttribute('data-idx'))); });
+        });
+      }
+    }
+    const installed = !!data.installed;
+    alSetStatePill_('al-qr-pill', installed);
+    const statusEl = $('al-qr-trigger-status');
+    if (statusEl) {
+      statusEl.textContent = data.loadError ? ''
+        : (installed
+            ? 'Installed — checks each weekday morning and emails once the previous workday’s data is fully processed.'
+            : 'No trigger installed. Subscribers won’t receive the report until you click Install.');
+    }
+    const lastEl = $('al-qr-last');
+    if (lastEl) lastEl.textContent = data.lastResult ? ('Last run: ' + data.lastResult) : '';
+    const installBtn = $('al-install-qr-btn'), uninstallBtn = $('al-uninstall-qr-btn');
+    if (installBtn)   installBtn.style.display   = installed ? 'none' : '';
+    if (uninstallBtn) uninstallBtn.style.display = installed ? ''     : 'none';
+  }
+  function alQrReload_() {
+    google.script.run
+      .withSuccessHandler(function (d) { alRenderQueueReport_(d || {}); })
+      .withFailureHandler(function (err) { alRenderQueueReport_({ loadError: (err && err.message) ? err.message : String(err) }); })
+      .getQueueReportInit();
+  }
+  function alQrEdit_(idx) {
+    const s = alQrRows_[idx]; if (!s) return;
+    if ($('al-qr-email'))  $('al-qr-email').value  = s.email || '';
+    if ($('al-qr-notes'))  $('al-qr-notes').value  = s.notes || '';
+    if ($('al-qr-active')) $('al-qr-active').checked = !!s.active;
+    alQrSetStatus_('', '');
+  }
+  function alQrClear_() {
+    if ($('al-qr-email'))  $('al-qr-email').value  = '';
+    if ($('al-qr-notes'))  $('al-qr-notes').value  = '';
+    if ($('al-qr-active')) $('al-qr-active').checked = true;
+    alQrSetStatus_('', '');
+  }
+  function alQrSave_() {
+    const email = (($('al-qr-email') && $('al-qr-email').value) || '').trim();
+    if (!email) { alQrSetStatus_('error', 'Enter an email address.'); return; }
+    const req = {
+      email:  email,
+      notes:  (($('al-qr-notes') && $('al-qr-notes').value) || '').trim(),
+      active: !($('al-qr-active') && !$('al-qr-active').checked),
+    };
+    const btn = $('al-qr-save'); if (btn) btn.disabled = true;
+    alQrSetStatus_('loading', 'Saving…');
+    google.script.run
+      .withSuccessHandler(function () { if (btn) btn.disabled = false; alQrClear_(); alQrSetStatus_('success', 'Saved.'); alQrReload_(); })
+      .withFailureHandler(function (err) { if (btn) btn.disabled = false; alQrSetStatus_('error', 'Save failed: ' + (err && err.message ? err.message : String(err))); })
+      .saveQueueReportSubscriber(req);
+  }
+  function alQrRemove_(idx) {
+    const s = alQrRows_[idx]; if (!s) return;
+    if (!window.confirm('Remove ' + s.email + ' from the Daily Call Queue Report?')) return;
+    google.script.run
+      .withSuccessHandler(function () { alQrReload_(); })
+      .withFailureHandler(function (err) { alQrSetStatus_('error', 'Remove failed: ' + (err && err.message ? err.message : String(err))); })
+      .removeQueueReportSubscriber({ email: s.email });
+  }
+  function alQrPreview_() {
+    const btn = $('al-qr-preview'); if (!btn) return;
+    btn.disabled = true; const prev = btn.textContent; btn.textContent = 'Sending…';
+    google.script.run
+      .withSuccessHandler(function (res) {
+        btn.disabled = false; btn.textContent = prev;
+        alQrSetStatus_('success', 'Preview sent to ' + (res && res.to ? res.to : 'you')
+          + ' for ' + (res && res.date ? res.date : 'the previous workday') + '.');
+      })
+      .withFailureHandler(function (err) {
+        btn.disabled = false; btn.textContent = prev;
+        alQrSetStatus_('error', 'Preview failed: ' + (err && err.message ? err.message : String(err)));
+      })
+      .sendQueueReportPreview();
+  }
+  function alInstallQueueReport_() {
+    const btn = $('al-install-qr-btn'); if (!btn) return;
+    btn.disabled = true; const prev = btn.textContent; btn.textContent = 'Installing…';
+    google.script.run
+      .withSuccessHandler(function () { btn.disabled = false; btn.textContent = prev; alQrReload_(); })
+      .withFailureHandler(function (err) { btn.disabled = false; btn.textContent = prev; alQrSetStatus_('error', 'Install failed: ' + (err && err.message ? err.message : String(err))); })
+      .installQueueReportTrigger();
+  }
+  function alUninstallQueueReport_() {
+    if (!window.confirm('Stop the Daily Call Queue Report trigger? Subscribers stop receiving it until you re-install.')) return;
+    const btn = $('al-uninstall-qr-btn'); if (!btn) return;
+    btn.disabled = true; const prev = btn.textContent; btn.textContent = 'Uninstalling…';
+    google.script.run
+      .withSuccessHandler(function () { btn.disabled = false; btn.textContent = prev; alQrReload_(); })
+      .withFailureHandler(function (err) { btn.disabled = false; btn.textContent = prev; alQrSetStatus_('error', 'Uninstall failed: ' + (err && err.message ? err.message : String(err))); })
+      .uninstallQueueReportTrigger();
   }
 
   function alRenderInit_(data) {
