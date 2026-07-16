@@ -709,7 +709,7 @@
           </section>
           <section class="help-topic" id="help-topic-digests" hidden>
             <h3>Manager digests <span class="help-admin-tag">admin</span></h3>
-            <p>Scheduled email summaries per manager &mdash; daily, weekly, or monthly &mdash; in a KPI &ldquo;summary&rdquo; format or the richer &ldquo;insights&rdquo; format. Managed from the Alerts modal&rsquo;s Manager Digest Subscribers section; install the triggers there.</p>
+            <p>Scheduled email summaries per manager &mdash; daily, weekly, or monthly &mdash; in a KPI &ldquo;summary&rdquo; format or the richer &ldquo;insights&rdquo; format. Managed from the Alerts modal&rsquo;s Report Subscribers section (tick &ldquo;Manager Digest&rdquo;); install the digest triggers there.</p>
           </section>
           <section class="help-topic" id="help-topic-deptconfig" hidden>
             <h3>Dept Config <span class="help-admin-tag">admin</span></h3>
@@ -1958,20 +1958,22 @@
         </div>
 
         <div class="al-section">
-          <div class="al-section-title">Manager Digest Subscribers <span class="al-state-pill" id="al-digest-pill"></span></div>
+          <div class="al-section-title">Report Subscribers</div>
           <p class="al-hint">
-            Per-recipient subscriptions configured in the <strong>Digest Config</strong>
-            sheet (Email | Department | Cadence | Active | Notes | Format). Cadence is
-            <code>daily</code> (each weekday morning for the previous day),
-            <code>weekly</code> (Monday morning for the prior Mon-Fri), or
-            <code>monthly</code> (the 1st for the prior calendar month). Format is
-            <code>summary</code> (KPI tiles, default) or <code>insights</code>
-            (team rollup + per-agent deltas vs the prior window).
+            One place to manage who receives which scheduled report. Two report types:
+            <strong>Manager Digest</strong> (a per-manager email &mdash; daily, weekly, or
+            monthly, scoped to a department, in <code>summary</code> KPI or richer
+            <code>insights</code> format) and the <strong>Daily Call Queue Report</strong>
+            (the company-wide all-departments queue snapshot for the previous workday). A
+            person can be on either or both &mdash; tick the report type(s) in the form below.
+            Digest subscriptions live in the <strong>Digest Config</strong> sheet; Queue Report
+            subscriptions in the <strong>Queue Report Subscribers</strong> sheet.
             <a href="#" id="al-open-digest-sheet" target="_blank">Open Digest Config sheet &rarr;</a>
           </p>
           <table class="al-config-table">
             <thead><tr>
               <th>Email</th>
+              <th>Report</th>
               <th>Department</th>
               <th>Cadence</th>
               <th>Format</th>
@@ -1979,92 +1981,75 @@
               <th>Notes</th>
               <th></th>
             </tr></thead>
-            <tbody id="al-digest-tbody"></tbody>
+            <tbody id="al-rs-tbody"></tbody>
           </table>
-          <!-- C3 admin edit form (writes the active source). -->
-          <div class="ir-form-grid" style="margin-top:10px; align-items:flex-end;">
+          <!-- Unified add/edit form. Digest-only fields (dept/cadence/format) reveal
+               when the Manager Digest type is ticked. Writes go to the existing
+               per-report sheets/RPCs unchanged. -->
+          <div class="ir-form-grid" id="al-rs-form" style="margin-top:10px; align-items:flex-end;">
+            <div class="ir-col" style="flex:1 1 100%;">
+              <label>Report type</label>
+              <div class="al-rs-types">
+                <label class="al-inline-check"><input type="checkbox" id="al-rs-type-digest" checked> Manager Digest</label>
+                <label class="al-inline-check"><input type="checkbox" id="al-rs-type-queue"> Daily Call Queue Report</label>
+              </div>
+            </div>
             <div class="ir-col" style="flex:1 1 220px;">
-              <label for="al-dg-email">Email</label>
-              <input type="email" id="al-dg-email" autocomplete="off" placeholder="name@universalmedsupply.com">
+              <label for="al-rs-email">Email</label>
+              <input type="email" id="al-rs-email" autocomplete="off" placeholder="name@universalmedsupply.com">
             </div>
-            <div class="ir-col" style="flex:1 1 150px;">
-              <label for="al-dg-dept">Department</label>
-              <select id="al-dg-dept"></select>
+            <div class="ir-col al-rs-digest-only" style="flex:1 1 150px;">
+              <label for="al-rs-dept">Department</label>
+              <select id="al-rs-dept"></select>
             </div>
-            <div class="ir-col" style="flex:0 1 120px;">
-              <label for="al-dg-cadence">Cadence</label>
-              <select id="al-dg-cadence"><option value="daily">daily</option><option value="weekly">weekly</option><option value="monthly">monthly</option></select>
+            <div class="ir-col al-rs-digest-only" style="flex:0 1 120px;">
+              <label for="al-rs-cadence">Cadence</label>
+              <select id="al-rs-cadence"><option value="daily">daily</option><option value="weekly">weekly</option><option value="monthly">monthly</option></select>
             </div>
-            <div class="ir-col" style="flex:0 1 120px;">
-              <label for="al-dg-format">Format</label>
-              <select id="al-dg-format"><option value="summary">summary</option><option value="insights">insights</option></select>
+            <div class="ir-col al-rs-digest-only" style="flex:0 1 120px;">
+              <label for="al-rs-format">Format</label>
+              <select id="al-rs-format"><option value="summary">summary</option><option value="insights">insights</option></select>
             </div>
             <div class="ir-col" style="flex:1 1 140px;">
-              <label for="al-dg-notes">Notes</label>
-              <input type="text" id="al-dg-notes" autocomplete="off" placeholder="optional">
+              <label for="al-rs-notes">Notes</label>
+              <input type="text" id="al-rs-notes" autocomplete="off" placeholder="optional">
             </div>
             <div class="ir-col" style="flex:0 1 auto;">
-              <label class="al-inline-check"><input type="checkbox" id="al-dg-active" checked> Active</label>
+              <label class="al-inline-check"><input type="checkbox" id="al-rs-active" checked> Active</label>
             </div>
           </div>
           <div class="esc-form-actions">
-            <button class="btn" id="al-dg-save" type="button">Save subscriber</button>
-            <button class="btn btn-ghost" id="al-dg-clear" type="button">Clear</button>
-            <span id="al-dg-status" class="status" style="display:none;"></span>
+            <button class="btn" id="al-rs-save" type="button">Save subscriber</button>
+            <button class="btn btn-ghost" id="al-rs-clear" type="button">Clear</button>
+            <button class="btn btn-secondary" id="al-rs-qr-preview" type="button" title="Send yourself a preview of the previous workday's Daily Call Queue Report">Send me a Queue Report preview</button>
+            <span id="al-rs-status" class="status" style="display:none;"></span>
           </div>
-          <p class="al-hint" id="al-digest-trigger-status" style="margin-top: 10px;"></p>
-          <div class="al-trigger-actions">
-            <button class="btn btn-secondary" id="al-install-digest-btn"   type="button">Install digest triggers</button>
-            <button class="btn btn-secondary" id="al-uninstall-digest-btn" type="button" style="display:none;">Uninstall digest triggers</button>
-          </div>
-          <p class="al-hint" style="margin-top: 8px;">
-            Daily trigger runs 8 AM weekdays for the previous day's data.
-            Weekly trigger runs 8 AM Monday for the prior Mon&ndash;Fri window.
-          </p>
-        </div>
 
-        <div class="al-section">
-          <div class="al-section-title">Daily Call Queue Report <span class="al-state-pill" id="al-qr-pill"></span></div>
-          <p class="al-hint">
-            Emails the all-departments <strong>Daily Call Queue Report</strong> (the company-wide
-            QCD snapshot) for the <strong>previous workday</strong>, once each weekday morning &mdash;
-            but only after that day&rsquo;s Raw Data has been imported and processed completely.
-            Each subscriber below receives the full report. <span id="al-qr-window"></span>
-          </p>
-          <table class="al-config-table">
-            <thead><tr>
-              <th>Email</th>
-              <th>Active</th>
-              <th>Notes</th>
-              <th></th>
-            </tr></thead>
-            <tbody id="al-qr-tbody"></tbody>
-          </table>
-          <div class="ir-form-grid" style="margin-top:10px; align-items:flex-end;">
-            <div class="ir-col" style="flex:1 1 240px;">
-              <label for="al-qr-email">Email</label>
-              <input type="email" id="al-qr-email" autocomplete="off" placeholder="name@universalmedsupply.com">
+          <!-- The two report engines run on independent triggers. -->
+          <div class="al-rs-schedules">
+            <div class="al-rs-schedule">
+              <div class="al-section-subtitle">Manager digest schedule <span class="al-state-pill" id="al-digest-pill"></span></div>
+              <p class="al-hint" id="al-digest-trigger-status" style="margin-top: 6px;"></p>
+              <div class="al-trigger-actions">
+                <button class="btn btn-secondary" id="al-install-digest-btn"   type="button">Install digest triggers</button>
+                <button class="btn btn-secondary" id="al-uninstall-digest-btn" type="button" style="display:none;">Uninstall digest triggers</button>
+              </div>
+              <p class="al-hint" style="margin-top: 8px;">
+                Daily 8 AM weekdays (previous day) &middot; Weekly Mon 8 AM (prior Mon&ndash;Fri)
+                &middot; Monthly 1st 8 AM (prior month).
+              </p>
             </div>
-            <div class="ir-col" style="flex:1 1 180px;">
-              <label for="al-qr-notes">Notes</label>
-              <input type="text" id="al-qr-notes" autocomplete="off" placeholder="optional">
-            </div>
-            <div class="ir-col" style="flex:0 1 auto;">
-              <label class="al-inline-check"><input type="checkbox" id="al-qr-active" checked> Active</label>
+            <div class="al-rs-schedule">
+              <div class="al-section-subtitle">Daily Call Queue Report schedule <span class="al-state-pill" id="al-qr-pill"></span></div>
+              <p class="al-hint" style="margin-top: 6px;"><span id="al-qr-window"></span> Emails once each weekday morning, only after the previous workday&rsquo;s data is fully processed.</p>
+              <p class="al-hint" id="al-qr-trigger-status" style="margin-top: 6px;"></p>
+              <div class="al-trigger-actions">
+                <button class="btn btn-secondary" id="al-install-qr-btn"   type="button">Install daily trigger</button>
+                <button class="btn btn-secondary" id="al-uninstall-qr-btn" type="button" style="display:none;">Uninstall trigger</button>
+              </div>
+              <p class="al-hint" id="al-qr-last" style="margin-top: 8px;"></p>
             </div>
           </div>
-          <div class="esc-form-actions">
-            <button class="btn" id="al-qr-save" type="button">Save subscriber</button>
-            <button class="btn btn-ghost" id="al-qr-clear" type="button">Clear</button>
-            <button class="btn btn-secondary" id="al-qr-preview" type="button" title="Send yourself a preview of the previous workday's report">Send me a preview</button>
-            <span id="al-qr-status" class="status" style="display:none;"></span>
-          </div>
-          <p class="al-hint" id="al-qr-trigger-status" style="margin-top: 10px;"></p>
-          <div class="al-trigger-actions">
-            <button class="btn btn-secondary" id="al-install-qr-btn"   type="button">Install daily trigger</button>
-            <button class="btn btn-secondary" id="al-uninstall-qr-btn" type="button" style="display:none;">Uninstall trigger</button>
-          </div>
-          <p class="al-hint" id="al-qr-last" style="margin-top: 8px;"></p>
         </div>
 
         <div class="al-section">
