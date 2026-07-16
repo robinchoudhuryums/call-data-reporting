@@ -5726,6 +5726,23 @@
   .dis-more[hidden] { display: none; }
   @media (prefers-reduced-motion: reduce) { .dis-chevron { transition: none; } }
 
+  /* Batch E: explicit date-sync offer chip (My Department <-> Insights). A
+     quiet accent-tinted inline banner shown on tab entry when the two pages'
+     windows differ; one click aligns them, the × dismisses the offer. */
+  .dsync-chip { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    border: 1px solid var(--line); border-left: 3px solid var(--accent);
+    border-radius: var(--r-lg); background: var(--accent-soft);
+    padding: 7px 12px; margin: 0 0 14px; font-size: 13px; color: var(--ink); }
+  .dsync-txt { flex: 1 1 auto; min-width: 160px; }
+  .dsync-txt strong { font-variant-numeric: tabular-nums; }
+  .dsync-apply { flex: 0 0 auto; background: var(--accent); color: #fff; border: 0;
+    border-radius: var(--r-pill, 999px); padding: 4px 12px; cursor: pointer;
+    font: 600 12px var(--ui); white-space: nowrap; }
+  .dsync-apply:hover { filter: brightness(1.05); }
+  .dsync-x { flex: 0 0 auto; background: none; border: 0; cursor: pointer;
+    font-size: 18px; line-height: 1; color: var(--muted); padding: 0 2px; }
+  .dsync-x:hover { color: var(--ink); }
+
   /* Drilldown hand-off link (Insights Queue health -> My Department Missed). */
   .ins-handoff-link { background: none; border: 0; padding: 0 0 0 8px; cursor: pointer;
     font: 500 12px var(--ui); color: var(--accent); }

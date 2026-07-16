@@ -336,6 +336,11 @@
         </div>
       </div>
 
+      <!-- Batch E: explicit date-sync offer. Shown only on entry when the
+           Insights page's last-viewed window differs from this page's dates.
+           One click applies; it never changes the dates on its own. -->
+      <div id="dept-date-sync" class="dsync-chip" style="display:none;"></div>
+
       <!-- #5: two-column layout. The main report column (Queue Call Data is
            rendered as a STICKY side-card on the right for wide screens so it
            stays visible while scrolling the agent table / Missed section;
@@ -1211,6 +1216,11 @@
           <button type="button" class="ov-period-btn" data-ins-period="ytd" aria-pressed="false">YTD</button>
           <button type="button" class="ov-period-btn" data-ins-period="custom" aria-pressed="false">Custom&hellip;</button>
         </div>
+
+        <!-- Batch E: explicit date-sync offer (mirrors My Department's). Shown
+             on entry when My Department's last-viewed window differs from this
+             report's window. One click applies; never silent. -->
+        <div id="ins-date-sync" class="dsync-chip" style="display:none;"></div>
 
         <div id="ins-edit-popover" class="ir-edit-popover" style="display:none;" role="dialog" aria-label="Edit selection and dates">
           <div class="ir-edit-popover-header">
