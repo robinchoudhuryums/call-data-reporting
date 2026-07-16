@@ -1,6 +1,7 @@
 # Spec — Chart → Missed-Calls drill-down (heavier / per-cell)
 
-Status: **APPROVED — Phase 1 implemented; Phases 2–4 pending.** Follows the
+Status: **APPROVED — all phases implemented (Phase 1 server slice; Phases 2–4
+UI).** Follows the
 shipped *lighter* hand-off (PR #168: navigational "See missed calls →" from
 Insights Queue health + the collapsed Insights summary strip on My Department).
 This spec covers the **heavier** version: clicking a specific element on the
@@ -204,16 +205,37 @@ req = {
   the queue-only abandoned section only — agent rings aren't queue-tagged in the
   Missed payload, so a queue filter excludes them (the weekday/hour path the
   heatmap needs is unaffected). No UI yet. Zero risk to existing reports.
-- **Phase 2 — bar-chart bucket enrichment (§A).** `.pid-journey` chips in the
-  Missed bucket detail. Client-only, smallest visible win, no new endpoint call
-  (bucket data is already client-side).
-- **Phase 3 — Queue-health queue-scoped hand-off (§B1).** Upgrade PR #168's
-  "See missed calls →" to carry the queue + pre-filter. Uses Phase 1 for the
-  filtered view (or the existing section with a client filter).
-- **Phase 4 — heatmap dual-lens cell drill (§C).** Add Lens 2 to the cell panel
-  via `getMissedCallsSlice` + the overlay. Admin-only; highest-effort, do last.
+- **Phase 2 — bar-chart bucket enrichment (§A). ✅ ALREADY PRESENT.** The My
+  Department missed **bucket detail** (`makeMissedBucketDetail_`) already renders
+  each abandoned entry through `parentIdBadge(parentId, date)`, which emits the
+  `↳ path` journey chip; the delegated `initClipboardOnce` handler already wires
+  `.pid-journey` → `callJourneyShow_`. No change was needed — the spec's premise
+  (that the bucket panel lacked the journey link) was stale.
+- **Phase 3 — Queue-health per-queue DQE missed lens (§B1). ✅ SHIPPED.** Each
+  Queue-health per-queue **expand** carries a "↳ no-ring abandons (DQE missed
+  lens)" toggle (`insQhMissedDrill_`) that fetches `getMissedCallsSlice({queue})`
+  for the current Insights window and renders the labeled list IN PLACE (shared
+  `missedSliceListHtml_`). The section-level "See missed calls →" navigate
+  (PR #168) stays as the coarse "open the whole Missed section" hand-off.
+  **Limit (inherited Phase-1):** the queue filter matches queue-only abandons
+  whose DQE sentinel spelling equals the QCD `q.queue` name — it shows empty when
+  the two pipelines spell a queue differently; labeled honestly.
+- **Phase 4 — heatmap dual-lens cell drill (§C). ✅ SHIPPED.** A cell drill now
+  paints TWO labeled lenses (`heatCellToggleDrill_`): **Lens 1** the existing
+  inbound-abandon list (`getInboundHeatmapCell`, reconciles with the cell) and
+  **Lens 2** the DQE missed rings for the same weekday × CST hour window
+  (`getMissedCallsSlice`, computed from the host's stashed slot geometry
+  `data-heat-starth` / `data-heat-slotmin` via `missedSliceHm_`). Each fetches
+  independently, guarded by the panel's current cell key; the company view
+  (`dept=''`) shows a "pick a department" note for Lens 2. Admin-only (rides the
+  admin-gated Insights heatmap). The `↳ path` chips on both lenses now work on an
+  Insights-only session — `heatCellToggleDrill_` calls `initClipboardOnce()`
+  (its handler was previously wired only by the My-Dept render paths).
 
-Each phase is independently shippable and independently valuable.
+Each phase is independently shippable and independently valuable. Phases 3 & 4
+share `missedSliceListHtml_` (the labeled DQE-lens renderer). No new overlay was
+needed — both render in place (owner ruling), Phase 4 inside the existing cell
+panel and Phase 3 inside the queue expand.
 
 ---
 

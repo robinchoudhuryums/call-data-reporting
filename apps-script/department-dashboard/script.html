@@ -11505,6 +11505,39 @@
    * Hidden when the server sent null (unmapped dept / missing sheet,
    * or a pre-v4 cached payload).
    */
+  // Phase 3: in-place per-queue DQE missed-ring drill from the Queue-health
+  // per-queue expand. Toggles a labeled list of the no-ring abandoned calls the
+  // Missed report attributes to this queue for the current Insights window
+  // (getMissedCallsSlice queue filter). Guarded on the slot's data-open flag so
+  // a stale response can't paint a closed slot.
+  function insQhMissedDrill_(btn) {
+    const slotEl = btn.parentNode && btn.parentNode.querySelector('.ins-qh-missed-slot');
+    if (!slotEl) return;
+    if (slotEl.getAttribute('data-open') === '1') {           // toggle closed
+      slotEl.innerHTML = ''; slotEl.removeAttribute('data-open');
+      btn.classList.remove('is-open');
+      return;
+    }
+    const meta = (insLastData && insLastData.meta) || {};
+    if (!meta.department || !meta.from || !meta.to) return;
+    const queue = btn.getAttribute('data-qh-queue') || '';
+    initClipboardOnce();   // wire the delegated .pid-journey handler (idempotent)
+    slotEl.setAttribute('data-open', '1');
+    btn.classList.add('is-open');
+    slotEl.innerHTML = dsRingsHtml_('Loading missed detail…');
+    google.script.run
+      .withSuccessHandler(function (resp) {
+        if (slotEl.getAttribute('data-open') !== '1') return;
+        slotEl.innerHTML = missedSliceListHtml_(resp, 'No-ring abandons · ' + queue);
+      })
+      .withFailureHandler(function (err) {
+        if (slotEl.getAttribute('data-open') !== '1') return;
+        slotEl.innerHTML = '<div class="status status-error">'
+          + escapeHtml(err && err.message ? err.message : String(err)) + '</div>';
+      })
+      .getMissedCallsSlice({ department: meta.department, from: meta.from, to: meta.to, queue: queue });
+  }
+
   function insRenderQueueHealth_(qh) {
     const wrap = $('ins-queue-health');
     if (!wrap) return;
@@ -11647,6 +11680,17 @@
                   + fmtViolDate_(iso) + '</button>';
               }).join(' ') + '</div>';
         }
+        // Phase 3: per-queue DQE missed-ring drill (in-place). Opens the
+        // no-ring abandoned calls the DQE Missed report attributes to THIS
+        // queue for the report window (getMissedCallsSlice queue filter) --
+        // a LABELED separate lens (dqe_history rings, distinct from the QCD
+        // roll-up above). May be empty when the QCD queue name differs from
+        // the DQE sentinel spelling (documented Phase-1 limit).
+        detail += '<div class="ins-qh-missed-drill">'
+          + '<button type="button" class="ins-qh-missed" data-qh-queue="' + escapeHtml(q.queue) + '"'
+          + ' title="Show the no-ring abandoned calls the Missed report attributes to this queue">'
+          + '&#8627; no-ring abandons (DQE missed lens)</button>'
+          + '<div class="ins-qh-missed-slot"></div></div>';
         html += '<tr class="qcd-detail-row" style="display:none;"><td colspan="5">'
           + '<div class="qcd-detail-wrap">' + detail + '</div></td></tr>';
         return html;
@@ -11660,6 +11704,13 @@
           if (chip && tbody.contains(chip)) {
             e.preventDefault();
             insJumpToDailyRow_(chip.getAttribute('data-date') || '');
+            return;
+          }
+          // Phase 3: per-queue DQE missed-ring drill (in-place toggle).
+          var mbtn = e.target.closest('.ins-qh-missed');
+          if (mbtn && tbody.contains(mbtn)) {
+            e.preventDefault();
+            insQhMissedDrill_(mbtn);
             return;
           }
           var row = e.target.closest('.qcd-expandable');
@@ -13501,6 +13552,12 @@
     var perHour = 60 / slotMin;
     var slotCount = Math.max(1, Math.round((endH - startH) * perHour));
     var tz = meta.tzLabel || 'CST';
+    // Phase 4 dual-lens: stash the slot geometry on the host so a cell drill can
+    // reconstruct the CST hour window (startH + slot*slotMin) for the DQE
+    // missed-ring lens (getMissedCallsSlice). Attributes survive the innerHTML
+    // swap below.
+    el.setAttribute('data-heat-starth', startH);
+    el.setAttribute('data-heat-slotmin', slotMin);
 
     // cellMap[dow][slot] = {calls, abandoned}
     var cellMap = {};
@@ -13606,6 +13663,10 @@
   function heatCellToggleDrill_(host, cell) {
     const detail = host.querySelector('.ds-heatmap-detail');
     if (!detail) return;
+    // Ensure the delegated .pid-journey handler is live -- both lenses emit
+    // "↳ path" chips, and on an Insights-only session initClipboardOnce may not
+    // have run yet (its other call sites are the My-Dept missed render paths).
+    initClipboardOnce();
     const key = cell.getAttribute('data-dow') + ':' + cell.getAttribute('data-slot');
     const clearActive = function () {
       host.querySelectorAll('.ds-heatmap__cell--active').forEach(function (c) {
@@ -13623,26 +13684,55 @@
     cell.classList.add('ds-heatmap__cell--active');
     detail.setAttribute('data-cell', key);
     detail.style.display = '';
-    detail.innerHTML = dsRingsHtml_('Loading the calls in this slot…');
     const label = cell.getAttribute('data-label') || '';
-    // Stale-response guard: only the panel's CURRENT cell may paint.
+    const dept = host.getAttribute('data-heat-dept') || '';
+    const from = host.getAttribute('data-heat-from') || '';
+    const to   = host.getAttribute('data-heat-to') || '';
+    const dow  = Number(cell.getAttribute('data-dow'));
+    const slot = Number(cell.getAttribute('data-slot'));
+
+    // Phase 4: TWO labeled lenses in the same panel -- the inbound_calls
+    // abandon list (Lens 1, reconciles with the cell's own count) and the
+    // dqe_history missed-ring lens for the SAME weekday × hour (Lens 2). The
+    // counts are NOT expected to match (different source & definition); each
+    // lens is labeled. Both fetch independently, each guarded by the panel's
+    // current cell key so a stale response can't paint.
+    detail.innerHTML =
+        '<div class="heat-lens" data-lens="inbound">' + dsRingsHtml_('Loading abandoned inbound calls…') + '</div>'
+      + '<div class="heat-lens" data-lens="missed">'  + dsRingsHtml_('Loading DQE missed rings…')      + '</div>';
+    const inboundSlot = detail.querySelector('[data-lens="inbound"]');
+    const missedSlot  = detail.querySelector('[data-lens="missed"]');
+    const guard = function () { return detail.getAttribute('data-cell') === key; };
+
+    // Lens 1 -- inbound abandons (unchanged behavior).
     google.script.run
-      .withSuccessHandler(function (resp) {
-        if (detail.getAttribute('data-cell') !== key) return;
-        detail.innerHTML = heatCellDetailHtml_(resp, label);
-      })
+      .withSuccessHandler(function (resp) { if (guard() && inboundSlot) inboundSlot.innerHTML = heatCellDetailHtml_(resp, label); })
       .withFailureHandler(function (err) {
-        if (detail.getAttribute('data-cell') !== key) return;
-        detail.innerHTML = '<div class="status status-error">'
+        if (guard() && inboundSlot) inboundSlot.innerHTML = '<div class="status status-error">'
           + escapeHtml(err && err.message ? err.message : String(err)) + '</div>';
       })
-      .getInboundHeatmapCell({
-        department: host.getAttribute('data-heat-dept') || '',
-        from: host.getAttribute('data-heat-from') || '',
-        to: host.getAttribute('data-heat-to') || '',
-        dow: Number(cell.getAttribute('data-dow')),
-        slot: Number(cell.getAttribute('data-slot')),
-      });
+      .getInboundHeatmapCell({ department: dept, from: from, to: to, dow: dow, slot: slot });
+
+    // Lens 2 -- DQE missed rings for the same weekday × CST hour window. Needs a
+    // single department (the missed report is per-dept); the company view
+    // (dept='') shows a note instead.
+    if (!dept) {
+      if (missedSlot) missedSlot.innerHTML =
+        '<div class="heat-drill-head"><strong>DQE missed rings</strong> · <span class="ms-lens-note">agent-ring lens (DQE)</span></div>'
+        + '<div class="ds-note">Pick a single department to see the agent-ring missed detail for this slot.</div>';
+    } else {
+      const startH  = Number(host.getAttribute('data-heat-starth'));
+      const slotMin = Number(host.getAttribute('data-heat-slotmin')) || 60;
+      const startMin = (isFinite(startH) ? startH : 8) * 60 + slot * slotMin;
+      google.script.run
+        .withSuccessHandler(function (resp) { if (guard() && missedSlot) missedSlot.innerHTML = missedSliceListHtml_(resp); })
+        .withFailureHandler(function (err) {
+          if (guard() && missedSlot) missedSlot.innerHTML = '<div class="status status-error">'
+            + escapeHtml(err && err.message ? err.message : String(err)) + '</div>';
+        })
+        .getMissedCallsSlice({ department: dept, from: from, to: to,
+          isoDow: dow, hourStart: missedSliceHm_(startMin), hourEnd: missedSliceHm_(startMin + slotMin) });
+    }
   }
 
   function heatCellDetailHtml_(resp, label) {
@@ -13683,6 +13773,45 @@
       + (meta.truncated ? ' <span class="heat-drill-cap">(newest ' + calls.length + ' shown)</span>' : '')
       + '</div>';
     return head + '<div class="heat-drill-list">' + rows + '</div>';
+  }
+
+  // Shared renderer for a getMissedCallsSlice payload (the DQE missed-ring
+  // LENS surfaced by the heatmap dual-lens cell drill + the Queue-health
+  // per-queue drill). This is a DIFFERENT source & definition than the inbound
+  // abandon count / QCD roll-up it sits beside -- the two won't reconcile, so
+  // the header labels it explicitly (owner ruling: two labeled lenses).
+  // Abandoned entries carry the existing "↳ path" journey chip via
+  // parentIdBadge (the delegated .pid-journey handler renders the overlay).
+  function missedSliceListHtml_(resp, headLabel) {
+    var meta = (resp && resp.meta) || {};
+    var entries = (resp && resp.entries) || [];
+    var lens = '<span class="ms-lens-note" title="From dqe_history missed rings — a different source and definition than the inbound abandon count. The two are not expected to reconcile.">agent-ring lens (DQE)</span>';
+    var head = '<div class="heat-drill-head"><strong>' + escapeHtml(headLabel || 'DQE missed rings')
+      + '</strong> · ' + entries.length + ' ring' + (entries.length === 1 ? '' : 's')
+      + ' · ' + lens + '</div>';
+    if (!entries.length) {
+      return head + '<div class="ds-note">No DQE missed rings recorded here for the selected range.</div>';
+    }
+    var lost = meta.abandonedDetailLost
+      ? '<div class="ds-note ms-lost">Some abandoned-call detail in this range was corrupted (rebuild pending) and is excluded.</div>'
+      : '';
+    var rows = entries.map(function (e) {
+      var siren = e.abandoned ? ' 🚨' : '';
+      var dateLabel = e.date ? String(e.date).slice(5) : '';   // MM-DD
+      return '<div class="heat-drill-row' + (e.abandoned ? ' abandoned' : '') + '">'
+        + '<span class="heat-drill-when">' + escapeHtml(dateLabel) + ' · '
+        +   escapeHtml(e.label || e.time || '') + siren + '</span>'
+        + '<span class="heat-drill-path">' + escapeHtml(e.who || '') + '</span>'
+        + parentIdBadge(e.parentId, e.date)
+        + '</div>';
+    }).join('');
+    return head + lost + '<div class="heat-drill-list">' + rows + '</div>';
+  }
+
+  // "HH:MM" from minutes-past-midnight (CST), for the slice hour window.
+  function missedSliceHm_(mins) {
+    var h = Math.floor(mins / 60), m = mins % 60;
+    return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
   }
 
   /**

@@ -5570,6 +5570,24 @@
   .heat-drill-path { color: var(--ink); min-width: 0; }
   .heat-drill-facts { color: var(--muted); }
 
+  /* Phase 4: the two labeled lenses inside a heatmap cell drill (inbound
+     abandons + the DQE missed-ring lens) stack, divided by a hairline. */
+  .heat-lens + .heat-lens { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+  /* Shared missed-lens label (also used by the Queue-health per-queue drill):
+     signals "different source, counts may differ." */
+  .ms-lens-note { font-family: var(--mono); font-size: 10px; letter-spacing: 0.06em;
+    text-transform: uppercase; color: var(--muted); cursor: help; }
+  .ms-lost { margin: 4px 0; }
+
+  /* Phase 3: per-queue DQE missed-ring drill in the Queue-health expand. */
+  .ins-qh-missed-drill { margin-top: 8px; }
+  .ins-qh-missed { background: none; border: 0; padding: 0; cursor: pointer;
+    font: 500 12px var(--ui); color: var(--accent); }
+  .ins-qh-missed:hover { text-decoration: underline; }
+  .ins-qh-missed.is-open { font-weight: 600; }
+  .ins-qh-missed-slot:not(:empty) { margin-top: 6px; padding: 8px 10px;
+    background: var(--paper-card); border: 1px solid var(--line); border-radius: var(--r-lg); }
+
   /* ── Design bundle: Reports & Escalations (additive) ─────────────
      Shared presentation components introduced by the Insights (Part A),
      My Department (Part B), and Escalations (Part C) design pass. All
