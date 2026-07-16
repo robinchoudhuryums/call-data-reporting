@@ -15925,19 +15925,79 @@
     };
   }
 
+  // Verdict layer (design update): a KPI band + alert callout rendered ABOVE the
+  // table, derived from data.grandTotals (F-36-deduped, correct total-abandoned/
+  // total-offered basis -- NOT a client re-sum of the sections, which would
+  // double-count a queue mapped to two depts). "Queues in violation" = count of
+  // UNIQUE queues with abandoned % >= 5% (owner ruling; distinct from the
+  // Violations column). No new server call; the table/CSV/print are unchanged.
+  // The 5%-overage callout uses .is-warn (not .is-bad) per the CSS-token
+  // convention: --bad is hard errors, --warn is warnings (a threshold overage).
+  function qcdAllDeptVerdictHtml_(data) {
+    const g = (data && data.grandTotals) || {};
+    const depts = (data && data.depts) || [];
+    const total = Number(g.totalCalls) || 0;
+    const ans = Number(g.totalAnswered) || 0;
+    const companyPct = Number(g.abandonedPct) || 0;
+    const companyPctStr = g.abandonedPctStr || (companyPct.toFixed(2) + '%');
+    const answeredPct = total > 0 ? (ans / total * 100) : 0;
+    const seen = {}, offenders = [];
+    depts.forEach(function (d) {
+      (d.queues || []).forEach(function (q) {
+        if (seen[q.queue]) return; seen[q.queue] = true;
+        if (Number(q.abandonedPct) >= 5) {
+          offenders.push({ queue: q.queue, pct: Number(q.abandonedPct) || 0,
+            pctStr: q.abandonedPctStr || (Number(q.abandonedPct) || 0).toFixed(1) + '%',
+            viol: Number(q.violations) || 0 });
+        }
+      });
+    });
+    offenders.sort(function (a, b) { return (b.viol - a.viol) || (b.pct - a.pct); });
+    const tile = function (label, value, tone) {
+      return '<div class="qcd-verdict-tile qcd-verdict--' + tone + '">'
+        + '<div class="qcd-verdict-label">' + label + '</div>'
+        + '<div class="qcd-verdict-value">' + escapeHtml(String(value)) + '</div></div>';
+    };
+    const band = '<div class="qcd-verdict-band">'
+      + tile('Company aban %', companyPctStr, companyPct >= 5 ? 'warn' : 'neu')
+      + tile('Total calls', fmtNumber(total), 'neu')
+      + tile('Queues in violation', fmtNumber(offenders.length), offenders.length > 0 ? 'warn' : 'neu')
+      + tile('Answered %', answeredPct.toFixed(1) + '%', 'good')
+      + '</div>';
+    let callout;
+    if (offenders.length) {
+      const parts = offenders.map(function (o) {
+        return '<strong>' + escapeHtml(o.queue) + '</strong> ' + escapeHtml(o.pctStr)
+          + (o.viol > 0 ? ' (' + fmtNumber(o.viol) + ' viol)' : '');
+      }).join(', ');
+      callout = '<div class="ds-banner is-warn qcd-verdict-callout">'
+        + '<span class="ds-banner__badge">Watch</span>'
+        + '<div>' + offenders.length + ' queue' + (offenders.length === 1 ? '' : 's')
+        + ' over the 5% line — ' + parts + '.</div></div>';
+    } else {
+      callout = '<div class="ds-banner is-good qcd-verdict-callout">'
+        + '<span class="ds-banner__badge">On track</span>'
+        + '<div>All queues under the 5% line.</div></div>';
+    }
+    return band + callout;
+  }
+
   function qcdAllDeptRender_(data) {
     $('qcd-alldept-results-date').textContent = data.dateLabel || '';
     const empty = $('qcd-alldept-empty');
     const body  = $('qcd-alldept-body');
+    const verdict = $('qcd-alldept-verdict');
     const depts = (data && data.depts) || [];
     if (!depts.length) {
       body.innerHTML = '';
+      if (verdict) verdict.innerHTML = '';
       empty.innerHTML = emptyStateHtml_('&#128202;', 'No queue activity in range',
         'No department had Total Calls in the selected window. Try a wider range.');
       empty.style.display = '';
       return;
     }
     empty.style.display = 'none';
+    if (verdict) verdict.innerHTML = qcdAllDeptVerdictHtml_(data);
 
     const cell = function (pct, viol) {
       return { violCls: (Number(viol) > 3 ? ' qcd-warn-strong' : (Number(viol) > 0 ? ' qcd-warn-light' : '')) };

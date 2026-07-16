@@ -177,99 +177,209 @@ function sendQueueReportForDate_(targetIso, opts) {
 }
 
 /**
- * Email-safe HTML for the all-departments report. Inline styles only (mail
- * clients don't honor <style>/CSS vars -- the Digest.gs / Alerts.gs
- * convention). Per-dept subtotals + a company grand-total row; abandoned % is
- * warn-tinted at/over the 5% company standard. Per-queue detail is
- * intentionally omitted (too dense for email) -- the dashboard link opens it.
+ * Email-safe HTML for the all-departments report -- the "verdict layer" design
+ * (docs: the Daily Call Queue Report design update). Leads with the answer:
+ * a verdict alert naming any queues over the 5% line, a KPI row, then a
+ * WORST-FIRST dept table whose abandoned-% cells are filled <td> bars (NOT
+ * Chart.js -- images/canvas are blocked in mail). Inline styles only,
+ * nested role="presentation" tables, system fonts, hidden preheader, bulletproof
+ * CTA. Bound entirely to the SAME server figures the web report uses
+ * (`computeQcdAllDepartments_`); compute / the 5% rule / the exported data are
+ * unchanged. Worst-first ordering is EMAIL-ONLY (the web report keeps its
+ * viewer-float + parent-grouping order; owner ruling). "Queues in violation" =
+ * count of unique queues with abandoned % >= 5% (owner ruling), distinct from
+ * the Violations column. Company figures come from `grandTotals` (F-36-deduped,
+ * total-abandoned/total-offered basis) -- NOT a client-style re-sum of the
+ * sections, which would double-count a queue mapped to two depts.
  */
 function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
   const esc = function (v) { return escapeHtmlServer_(String(v == null ? '' : v)); };
   const depts = (data && data.depts) || [];
   const gt = (data && data.grandTotals) || {};
-
-  const th = 'padding:6px 10px;text-align:right;font:600 12px Arial,sans-serif;'
-    + 'color:#374151;border-bottom:2px solid #E5E7EB;';
-  const thL = th + 'text-align:left;';
-  const td = 'padding:6px 10px;text-align:right;font:400 13px Arial,sans-serif;'
-    + 'color:#111827;border-bottom:1px solid #F3F4F6;';
-  const tdL = td + 'text-align:left;';
-  // Abandoned-% cell style: warn tint at/over the 5% standard.
-  const pctCell = function (pctStr, pct) {
-    const warn = Number(pct) >= 5;
-    return td + (warn ? 'color:#B45309;font-weight:700;' : '');
+  const mono = "'Courier New',monospace";
+  const C = {
+    bad: '#b23a2c', watch: '#c66b4b', good: '#3d9476',
+    ink: '#101418', mut: '#606872', line: '#e2e8ee', rowline: '#eef2f6',
+    track: '#eef2f6', headbg: '#f2f6fa', page: '#e7ecf1',
+    alertBg: '#f6e2d4', alertB: '#e3b39c', alertInk: '#7a3520',
+    okBg: '#e6f0ea', okB: '#cfe3d7', okInk: '#2f5f4a',
+    neuTile: '#f2f6fa', neuTileB: '#dde6ee',
+    badTile: '#fbeae2', badTileB: '#eccbbb', goodTile: '#e6f0ea', goodTileB: '#cfe3d7',
+  };
+  // Tier from the ONLY company standard (5% aban) + the existing violation
+  // tiering (viol>3 strong / >0 light) -- no invented thresholds.
+  const tierOf = function (pct, viol) {
+    if (Number(viol) > 3) return { label: 'IN VIOLATION', color: C.bad };
+    if (Number(viol) > 0 || Number(pct) >= 5) return { label: 'WATCH', color: C.watch };
+    return { label: 'HEALTHY', color: C.good };
+  };
+  const barW = function (pct) { return Math.max(0, Math.min(100, Math.round((Number(pct) || 0) * 5))); };
+  const barHtml = function (pct, pctStr, barColor, textColor, bold) {
+    const w = barW(pct);
+    return '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"><tr>'
+      + '<td style="padding:0;"><table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:' + C.track + ';border-radius:5px;"><tr>'
+      +   '<td width="' + w + '%" style="background:' + barColor + ';height:8px;line-height:8px;font-size:0;border-radius:5px;">&nbsp;</td><td>&nbsp;</td>'
+      + '</tr></table></td>'
+      + '<td width="42" align="right" style="font:' + (bold ? 'bold ' : '') + '11px ' + mono + ';color:' + textColor + ';padding-left:6px;">' + esc(pctStr) + '</td>'
+      + '</tr></table>';
+  };
+  // A dept's report lines: its queues[] when present, else the dept total as one.
+  const deptQueues = function (d) {
+    if (d.queues && d.queues.length) return d.queues;
+    const t = d.totals || {};
+    return [{ queue: d.dept, totalCalls: t.totalCalls, abandonedPct: t.abandonedPct,
+              abandonedPctStr: t.abandonedPctStr, violations: t.violations }];
   };
 
-  let rows = '';
+  // Offenders (unique queues >= 5%) for the alert + preheader, worst-first.
+  const seen = {}, offenders = [];
   depts.forEach(function (d) {
-    const t = d.totals || {};
-    const name = d.parent
-      ? ('&nbsp;&nbsp;↳ ' + esc(d.dept) + ' <span style="color:#9CA3AF;">(sub-queue · ' + esc(d.parent) + ')</span>')
-      : esc(d.dept);
-    rows += '<tr>'
-      + '<td style="' + tdL + '">' + name + '</td>'
-      + '<td style="' + td + '">' + esc(t.totalCalls) + '</td>'
-      + '<td style="' + td + '">' + esc(t.totalAnswered) + '</td>'
-      + '<td style="' + td + '">' + esc(t.abandoned) + '</td>'
-      + '<td style="' + pctCell(t.abandonedPctStr, t.abandonedPct) + '">' + esc(t.abandonedPctStr) + '</td>'
-      + '<td style="' + td + '">' + esc(t.longestWait) + '</td>'
-      + '<td style="' + td + '">' + esc(t.violations) + '</td>'
-      + '</tr>';
+    deptQueues(d).forEach(function (q) {
+      if (seen[q.queue]) return; seen[q.queue] = true;
+      if (Number(q.abandonedPct) >= 5) {
+        offenders.push({ queue: q.queue, pct: Number(q.abandonedPct) || 0,
+          pctStr: q.abandonedPctStr || (Number(q.abandonedPct) || 0).toFixed(2) + '%',
+          viol: Number(q.violations) || 0 });
+      }
+    });
+  });
+  offenders.sort(function (a, b) { return (b.viol - a.viol) || (b.pct - a.pct); });
+
+  // Worst-first dept order (EMAIL ONLY).
+  const ordered = depts.slice().sort(function (a, b) {
+    const pa = Number((a.totals || {}).abandonedPct) || 0, pb = Number((b.totals || {}).abandonedPct) || 0;
+    const va = Number((a.totals || {}).violations) || 0, vb = Number((b.totals || {}).violations) || 0;
+    return (pb - pa) || (vb - va);
   });
 
-  const grandRow = '<tr>'
-    + '<td style="' + tdL + 'font-weight:700;border-top:2px solid #E5E7EB;">Company total</td>'
-    + '<td style="' + td + 'font-weight:700;border-top:2px solid #E5E7EB;">' + esc(gt.totalCalls) + '</td>'
-    + '<td style="' + td + 'font-weight:700;border-top:2px solid #E5E7EB;">' + esc(gt.totalAnswered) + '</td>'
-    + '<td style="' + td + 'font-weight:700;border-top:2px solid #E5E7EB;">' + esc(gt.abandoned) + '</td>'
-    + '<td style="' + pctCell(gt.abandonedPctStr, gt.abandonedPct) + 'border-top:2px solid #E5E7EB;">' + esc(gt.abandonedPctStr) + '</td>'
-    + '<td style="' + td + 'font-weight:700;border-top:2px solid #E5E7EB;">' + esc(gt.longestWait) + '</td>'
-    + '<td style="' + td + 'font-weight:700;border-top:2px solid #E5E7EB;">' + esc(gt.violations) + '</td>'
-    + '</tr>';
-
-  const emptyNote = depts.length ? '' :
-    '<p style="font:400 13px Arial,sans-serif;color:#6B7280;">No queue activity recorded for this day.</p>';
+  const gPct = Number(gt.abandonedPct) || 0;
+  const gTotal = Number(gt.totalCalls) || 0;
+  const gAns = Number(gt.totalAnswered) || 0;
+  const gAnsPct = gTotal > 0 ? (gAns / gTotal * 100) : 0;
+  const gViol = Number(gt.violations) || 0;
+  const overCount = offenders.length;
 
   const dashUrl = PropertiesService.getScriptProperties().getProperty('DASHBOARD_URL') || '';
-  const linkBtn = dashUrl
-    ? ('<p style="margin:16px 0 0;"><a href="' + esc(dashUrl) + '#/overview" '
-      + 'style="background:#2563EB;color:#fff;text-decoration:none;padding:9px 16px;'
-      + 'border-radius:4px;font:600 13px Arial,sans-serif;display:inline-block;">'
-      + 'Open the dashboard for per-queue detail</a></p>')
+  const dateLbl = esc(data.dateLabel || targetIso);
+
+  // ---- preheader ----
+  const preheadTxt = overCount
+    ? (overCount + ' queue' + (overCount === 1 ? '' : 's') + ' over the 5% line — '
+        + offenders.slice(0, 2).map(function (o) { return o.queue + ' ' + o.pctStr; }).join(', ')
+        + '. Company aban ' + (gt.abandonedPctStr || gPct.toFixed(1) + '%') + '.')
+    : ('All queues under the 5% line. Company aban ' + (gt.abandonedPctStr || gPct.toFixed(1) + '%') + '.');
+  const preheader = '<div style="display:none;max-height:0;overflow:hidden;opacity:0;mso-hide:all;'
+    + 'font-size:1px;line-height:1px;color:' + C.page + ';">' + esc(preheadTxt) + '</div>';
+
+  // ---- verdict alert ----
+  const alertHtml = overCount
+    ? ('<tr><td style="padding:18px 26px 0;"><table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" '
+      +   'style="background:' + C.alertBg + ';border:1px solid ' + C.alertB + ';border-radius:10px;"><tr>'
+      + '<td style="padding:14px 16px;font:400 14px/1.5 Arial,sans-serif;color:' + C.alertInk + ';">'
+      + '<strong>&#9873; ' + overCount + ' queue' + (overCount === 1 ? '' : 's') + ' over the 5% line.</strong><br>'
+      + '<strong>' + esc(offenders[0].queue) + '</strong> hit <strong>' + esc(offenders[0].pctStr) + '</strong> &mdash; '
+      +   esc(String(offenders[0].viol)) + ' violation' + (offenders[0].viol === 1 ? '' : 's') + '.'
+      + (overCount > 1 ? ' <strong>' + esc(offenders[1].queue) + '</strong> hit <strong>' + esc(offenders[1].pctStr) + '</strong>.' : '')
+      + ' All other queues held under 5%.'
+      + '</td></tr></table></td></tr>')
+    : ('<tr><td style="padding:18px 26px 0;"><table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" '
+      +   'style="background:' + C.okBg + ';border:1px solid ' + C.okB + ';border-radius:10px;"><tr>'
+      + '<td style="padding:14px 16px;font:400 14px/1.5 Arial,sans-serif;color:' + C.okInk + ';">'
+      + '<strong>&#10003; All queues held under the 5% line.</strong></td></tr></table></td></tr>');
+
+  // ---- KPI row ----
+  const kpi = function (label, value, bg, bd, labelColor, valColor, pad) {
+    return '<td class="kpi" width="25%" valign="top" style="' + (pad || '') + '">'
+      + '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:' + bg + ';border:1px solid ' + bd + ';border-radius:10px;"><tr>'
+      + '<td class="kpi-cell" style="padding:12px 14px;">'
+      + '<div style="font:9px ' + mono + ';letter-spacing:1px;text-transform:uppercase;color:' + labelColor + ';">' + esc(label) + '</div>'
+      + '<div style="font:bold 26px Arial,sans-serif;color:' + valColor + ';padding-top:2px;">' + esc(value) + '</div>'
+      + '</td></tr></table></td>';
+  };
+  const abanOver = gPct >= 5;
+  const kpiRow = '<tr><td style="padding:16px 26px 4px;"><table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"><tr>'
+    + kpi('Company aban %', (gt.abandonedPctStr || gPct.toFixed(1) + '%'),
+        abanOver ? C.badTile : C.neuTile, abanOver ? C.badTileB : C.neuTileB,
+        abanOver ? '#8a5a44' : '#6b7580', abanOver ? C.bad : C.ink, 'padding-right:6px;')
+    + kpi('Total calls', gTotal, C.neuTile, C.neuTileB, '#6b7580', C.ink, 'padding:0 3px;')
+    + kpi('Queues in viol.', overCount, overCount > 0 ? C.badTile : C.neuTile, overCount > 0 ? C.badTileB : C.neuTileB,
+        overCount > 0 ? '#8a5a44' : '#6b7580', overCount > 0 ? C.bad : C.ink, 'padding:0 3px;')
+    + kpi('Answered', gAnsPct.toFixed(1) + '%', C.goodTile, C.goodTileB, '#3f7a5f', C.good, 'padding-left:6px;')
+    + '</tr></table></td></tr>';
+
+  // ---- table (worst-first sections) ----
+  let tbl = '<tr style="background:' + C.headbg + ';">'
+    + '<td style="padding:9px 12px;font:9px ' + mono + ';letter-spacing:1px;text-transform:uppercase;color:#8a97a4;">Queue</td>'
+    + '<td align="right" style="padding:9px 8px;font:9px ' + mono + ';letter-spacing:1px;text-transform:uppercase;color:#8a97a4;">Total</td>'
+    + '<td width="150" style="padding:9px 8px;font:9px ' + mono + ';letter-spacing:1px;text-transform:uppercase;color:#8a97a4;">Abandoned %</td>'
+    + '<td align="right" style="padding:9px 12px;font:9px ' + mono + ';letter-spacing:1px;text-transform:uppercase;color:#8a97a4;">Viol</td></tr>';
+  ordered.forEach(function (d) {
+    const dt = tierOf((d.totals || {}).abandonedPct, (d.totals || {}).violations);
+    tbl += '<tr><td colspan="4" style="padding:9px 12px 3px;font:bold 13px Arial,sans-serif;color:' + C.ink + ';border-top:1px solid ' + C.rowline + ';">'
+      + esc(d.dept) + ' &nbsp;<span style="font:10px ' + mono + ';color:' + dt.color + ';">' + dt.label + '</span></td></tr>';
+    deptQueues(d).forEach(function (q) {
+      const pct = Number(q.abandonedPct) || 0;
+      const t = tierOf(pct, q.violations);
+      const pctStr = q.abandonedPctStr || pct.toFixed(1) + '%';
+      const viol = Number(q.violations) || 0;
+      tbl += '<tr>'
+        + '<td style="padding:6px 12px;font:12px ' + mono + ';color:' + C.ink + ';border-top:1px solid ' + C.rowline + ';">' + esc(q.queue) + '</td>'
+        + '<td align="right" style="padding:6px 8px;font:12px ' + mono + ';color:' + C.ink + ';border-top:1px solid ' + C.rowline + ';">' + esc(q.totalCalls) + '</td>'
+        + '<td style="padding:6px 8px;border-top:1px solid ' + C.rowline + ';">' + barHtml(pct, pctStr, t.color, pct >= 5 ? t.color : C.mut, pct >= 5) + '</td>'
+        + '<td align="right" style="padding:6px 12px;font:' + (viol > 0 ? 'bold ' : '') + '12px ' + mono + ';color:' + (viol > 0 ? t.color : C.mut) + ';border-top:1px solid ' + C.rowline + ';">' + esc(String(viol)) + '</td>'
+        + '</tr>';
+    });
+  });
+  const gTier = tierOf(gPct, gViol);
+  tbl += '<tr>'
+    + '<td style="padding:9px 12px;font:bold 12px Arial,sans-serif;color:' + C.ink + ';border-top:2px solid ' + C.ink + ';">Company total</td>'
+    + '<td align="right" style="padding:9px 8px;font:bold 12px ' + mono + ';color:' + C.ink + ';border-top:2px solid ' + C.ink + ';">' + esc(gTotal) + '</td>'
+    + '<td style="padding:9px 8px;border-top:2px solid ' + C.ink + ';">' + barHtml(gPct, (gt.abandonedPctStr || gPct.toFixed(1) + '%'), gTier.color, gPct >= 5 ? gTier.color : C.mut, true) + '</td>'
+    + '<td align="right" style="padding:9px 12px;font:bold 12px ' + mono + ';color:' + (gViol > 0 ? gTier.color : C.mut) + ';border-top:2px solid ' + C.ink + ';">' + esc(gViol) + '</td>'
+    + '</tr>';
+
+  const tableBlock = depts.length
+    ? ('<tr><td style="padding:18px 26px 6px;"><table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border:1px solid ' + C.line + ';border-radius:10px;border-collapse:separate;overflow:hidden;">'
+      + tbl + '</table>'
+      + '<div style="font:10px ' + mono + ';color:#9aa6b2;padding:8px 2px 0;">Depts sorted worst-first &middot; bars scale to the 5% threshold &middot; full columns (Ans/Longest/Avg) live in the dashboard.</div>'
+      + '</td></tr>')
+    : '<tr><td style="padding:18px 26px 6px;font:400 14px Arial,sans-serif;color:' + C.mut + ';">No queue activity recorded for this day.</td></tr>';
+
+  // ---- bulletproof CTA (there is no direct route to the all-dept modal; land
+  // on Overview, where the "Daily Call Queue Report" button opens it). ----
+  const ctaBlock = dashUrl
+    ? ('<tr><td style="padding:12px 26px 24px;" align="left"><table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>'
+      + '<td bgcolor="' + C.ink + '" style="border-radius:8px;"><a href="' + esc(dashUrl) + '#/overview" '
+      +   'style="display:block;padding:11px 20px;font:bold 13px Arial,sans-serif;color:#ffffff;text-decoration:none;">Open the dashboard &rarr;</a>'
+      + '</td></tr></table></td></tr>')
     : '';
 
-  const previewBanner = isPreview
-    ? ('<div style="background:#FEF3C7;border-left:4px solid #D97706;padding:10px 14px;'
-      + 'border-radius:4px;margin-bottom:12px;font:400 13px Arial,sans-serif;">'
-      + '<strong style="color:#92400E;">Preview only.</strong> '
-      + '<span style="color:#7C2D12;">This is what subscribers receive each weekday morning '
-      + 'once the previous workday&rsquo;s data has been processed.</span></div>')
+  const previewBar = isPreview
+    ? ('<tr><td style="padding:14px 26px 0;"><div style="background:#FEF3C7;border-left:4px solid #D97706;padding:10px 14px;border-radius:6px;font:400 13px Arial,sans-serif;color:#7C2D12;">'
+      + '<strong style="color:#92400E;">Preview only.</strong> This is what subscribers receive each weekday morning once the previous workday&rsquo;s data has been processed.</div></td></tr>')
     : '';
 
   return ''
-    + '<div style="max-width:760px;margin:0 auto;font-family:Arial,sans-serif;color:#111827;">'
-    +   previewBanner
-    +   '<h2 style="font:700 18px Arial,sans-serif;margin:0 0 2px;">Daily Call Queue Report</h2>'
-    +   '<div style="font:400 13px Arial,sans-serif;color:#6B7280;margin-bottom:14px;">'
-    +     esc(data.dateLabel || targetIso) + ' · all departments</div>'
-    +   emptyNote
-    +   (depts.length
-        ? ('<table style="border-collapse:collapse;width:100%;">'
-          + '<thead><tr>'
-          +   '<th style="' + thL + '">Department</th>'
-          +   '<th style="' + th + '">Total</th>'
-          +   '<th style="' + th + '">Answered</th>'
-          +   '<th style="' + th + '">Abandoned</th>'
-          +   '<th style="' + th + '">Abd %</th>'
-          +   '<th style="' + th + '">Longest wait</th>'
-          +   '<th style="' + th + '">Violations</th>'
-          + '</tr></thead><tbody>' + rows + grandRow + '</tbody></table>')
-        : '')
-    +   linkBtn
-    +   '<p style="font:400 11px Arial,sans-serif;color:#9CA3AF;margin-top:18px;">'
-    +     'You are receiving this because you subscribed to the Daily Call Queue Report. '
-    +     'An admin can remove you from the Alerts &rarr; Daily Call Queue Report list.</p>'
-    + '</div>';
+    + preheader
+    + '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:' + C.page + ';"><tr><td align="center" style="padding:24px 12px;">'
+    + '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="600" class="wrap" style="width:600px;max-width:600px;background:#ffffff;border-radius:14px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;">'
+    // header
+    + '<tr><td style="padding:22px 26px 18px;border-bottom:1px solid ' + C.line + ';">'
+    +   '<div style="font:11px ' + mono + ';letter-spacing:2px;text-transform:uppercase;color:#8a97a4;">Call Data &middot; Daily report</div>'
+    +   '<div style="font:bold 23px Arial,sans-serif;color:' + C.ink + ';letter-spacing:-0.4px;padding-top:4px;">Daily Call Queue Report</div>'
+    +   '<div style="font:400 13px Arial,sans-serif;color:' + C.mut + ';padding-top:3px;">' + dateLbl + ' &middot; all departments</div>'
+    + '</td></tr>'
+    + previewBar
+    + alertHtml
+    + kpiRow
+    + tableBlock
+    + ctaBlock
+    // footer
+    + '<tr><td style="padding:16px 26px 22px;border-top:1px solid ' + C.line + ';background:#f7fafc;">'
+    +   '<div style="font:400 11px/1.6 Arial,sans-serif;color:#8a97a4;">Automated daily summary from the Call Data dashboard. Times shown in CST for the previous business day.<br>'
+    +   'An admin can manage this notification in Alerts &rarr; Daily Call Queue Report.</div>'
+    + '</td></tr>'
+    + '</table></td></tr></table>';
 }
 
 function notifyQueueReportFailure_(err) {

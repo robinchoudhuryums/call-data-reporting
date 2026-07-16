@@ -96,30 +96,58 @@ test('readiness read: no QCD sheet -> empty (not-ready)', function () {
   assert.equal(h.call('queueReportQcdLatestIso_', null), '');
 });
 
-test('email HTML: renders dept rows + grand total, warn-tints abandoned % over 5%', function () {
-  h.state.props.DASHBOARD_URL = 'https://example.com/exec';
-  const data = {
+// Verdict-layer email (design update): verdict alert + KPI row + worst-first
+// per-queue td-bar table. CSR (7.0%, 2 viol) is a WATCH offender; Sales (2.5%,
+// 0 viol) is HEALTHY.
+function emailFixture() {
+  return {
     dateLabel: 'Jul 10, 2026',
     depts: [
-      { dept: 'CSR', parent: null, totals: { totalCalls: 100, totalAnswered: 93, abandoned: 7,
-        abandonedPct: 7.0, abandonedPctStr: '7.00%', longestWait: '0:02:10', avgAnswer: '0:00:20', violations: 2 } },
-      { dept: 'Sales', parent: null, totals: { totalCalls: 40, totalAnswered: 39, abandoned: 1,
-        abandonedPct: 2.5, abandonedPctStr: '2.50%', longestWait: '0:01:00', avgAnswer: '0:00:15', violations: 0 } },
+      { dept: 'CSR', parent: null,
+        totals: { totalCalls: 100, totalAnswered: 93, abandoned: 7, abandonedPct: 7.0,
+          abandonedPctStr: '7.00%', longestWait: '0:02:10', avgAnswer: '0:00:20', violations: 2 },
+        queues: [{ queue: 'A_Q_CSR', totalCalls: 100, totalAnswered: 93, abandoned: 7,
+          abandonedPct: 7.0, abandonedPctStr: '7.00%', violations: 2 }] },
+      { dept: 'Sales', parent: null,
+        totals: { totalCalls: 40, totalAnswered: 39, abandoned: 1, abandonedPct: 2.5,
+          abandonedPctStr: '2.50%', longestWait: '0:01:00', avgAnswer: '0:00:15', violations: 0 },
+        queues: [{ queue: 'A_Q_SALES', totalCalls: 40, totalAnswered: 39, abandoned: 1,
+          abandonedPct: 2.5, abandonedPctStr: '2.50%', violations: 0 }] },
     ],
     grandTotals: { totalCalls: 140, totalAnswered: 132, abandoned: 8, abandonedPct: 5.71,
       abandonedPctStr: '5.71%', longestWait: '0:02:10', avgAnswer: '0:00:18', violations: 2 },
   };
-  const html = h.call('buildQueueReportEmailHtml_', data, '2026-07-10', false);
+}
+
+test('email HTML: verdict alert + KPI row + worst-first table, bound to server figures', function () {
+  h.state.props.DASHBOARD_URL = 'https://example.com/exec';
+  const html = h.call('buildQueueReportEmailHtml_', emailFixture(), '2026-07-10', false);
   assert.match(html, /Daily Call Queue Report/);
   assert.match(html, /Jul 10, 2026/);
-  assert.match(html, /CSR/);
   assert.match(html, /Company total/);
-  assert.match(html, /7\.00%/);
-  assert.match(html, /5\.71%/);
-  assert.match(html, /example\.com\/exec#\/overview/);   // dashboard link
-  // The 7.00% (>=5) cell carries the warn color; the 2.50% (<5) does not.
-  assert.match(html, /#B45309[^<]*>7\.00%/);
-  assert.doesNotMatch(html, /#B45309[^<]*>2\.50%/);
+  assert.match(html, /5\.71%/);                             // company aban % (grandTotals)
+  assert.match(html, /example\.com\/exec#\/overview/);      // bulletproof CTA
+  // Verdict: 1 queue over 5% (A_Q_CSR) -> alert fires with the offender.
+  assert.match(html, /over the 5% line/);
+  assert.match(html, /A_Q_CSR/);
+  // WATCH offender carries the watch color; the HEALTHY row the green.
+  assert.match(html, /#c66b4b/);                            // CSR (7%, 2 viol) = WATCH
+  assert.match(html, /#3d9476/);                            // Sales (2.5%) = HEALTHY
+  // Worst-first: CSR section precedes Sales.
+  assert.ok(html.indexOf('CSR') < html.indexOf('Sales'), 'worst-first: CSR before Sales');
+  // Old plain-table warn color is gone.
+  assert.doesNotMatch(html, /#B45309/);
+});
+
+test('email HTML: a clean day renders the "under the 5% line" verdict (no alert)', function () {
+  const clean = emailFixture();
+  clean.depts[0].totals.abandonedPct = 3.0; clean.depts[0].totals.abandonedPctStr = '3.00%';
+  clean.depts[0].totals.violations = 0; clean.depts[0].queues[0].abandonedPct = 3.0;
+  clean.depts[0].queues[0].abandonedPctStr = '3.00%'; clean.depts[0].queues[0].violations = 0;
+  clean.grandTotals.abandonedPct = 2.8; clean.grandTotals.abandonedPctStr = '2.80%'; clean.grandTotals.violations = 0;
+  const html = h.call('buildQueueReportEmailHtml_', clean, '2026-07-10', false);
+  assert.match(html, /All queues held under the 5% line/);
+  assert.doesNotMatch(html, /over the 5% line/);
 });
 
 test('email HTML: empty day renders the no-activity note without throwing', function () {
