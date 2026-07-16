@@ -1113,6 +1113,9 @@
         : (page === 'escalations' ? '/escalations'
         : (page === 'insights' ? '/report/insights' : '/overview')));
     }
+    // Batch E: on entering My Department / Insights, offer to align dates with
+    // the other page if its last-viewed window differs (explicit, dismissible).
+    if (page === 'dept' || page === 'insights') maybeShowDateSyncChip_(page);
   }
 
   // -- Help & FAQ modal ---------------------------------------------------
@@ -3604,6 +3607,83 @@
     refresh();
   }
 
+  // -- Batch E: explicit date-sync between My Department and Insights ---------
+  // The two pages keep INDEPENDENT date windows by design (owner: no silent
+  // auto-change when you switch tabs). The hand-off buttons above carry a
+  // window when you explicitly cross over; this covers the OTHER path -- a
+  // plain nav-tab switch -- by noticing when the page you land on shows a
+  // different window than the one you left, and offering a one-click align.
+  // It NEVER changes the dates on its own; the chip is a dismissible offer.
+  var pageActiveWindow_ = { dept: null, insights: null };   // last-rendered window per page
+  var dateSyncDismissed_ = {};   // `<page>|<from>|<to>` -> true (don't re-nag the same offer)
+
+  function recordPageWindow_(page, from, to) {
+    if (!from || !to) return;
+    pageActiveWindow_[page] = { from: from, to: to };
+  }
+
+  function dsyncFmtRange_(from, to) {
+    function one(iso) {
+      var p = String(iso).split('-');
+      if (p.length !== 3) return String(iso);
+      var d = new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]));
+      return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    }
+    return from === to ? one(from) : one(from) + ' – ' + one(to);
+  }
+
+  // Render (or hide) the sync chip on the page just entered. Compares the
+  // target page's CURRENT date inputs to the OTHER page's last-rendered window.
+  function maybeShowDateSyncChip_(page) {
+    if (page !== 'dept' && page !== 'insights') return;
+    var otherKey = page === 'dept' ? 'insights' : 'dept';
+    var hostId   = page === 'dept' ? 'dept-date-sync' : 'ins-date-sync';
+    var host = $(hostId);
+    if (!host) return;
+    var otherWin = pageActiveWindow_[otherKey];
+    var fromEl = page === 'dept' ? $('from-date') : $('ins-from');
+    var toEl   = page === 'dept' ? $('to-date')   : $('ins-to');
+    var curFrom = fromEl ? fromEl.value : '';
+    var curTo   = toEl ? toEl.value : '';
+    // Nothing to offer: the other page hasn't been viewed, this page has no
+    // window yet, or the two already match.
+    if (!otherWin || !curFrom || !curTo
+        || (otherWin.from === curFrom && otherWin.to === curTo)) {
+      host.style.display = 'none'; host.innerHTML = ''; return;
+    }
+    var dismissKey = page + '|' + otherWin.from + '|' + otherWin.to;
+    if (dateSyncDismissed_[dismissKey]) { host.style.display = 'none'; host.innerHTML = ''; return; }
+    var otherLabel = otherKey === 'dept' ? 'My Department' : 'Insights';
+    var range = dsyncFmtRange_(otherWin.from, otherWin.to);
+    host.innerHTML =
+        '<span class="dsync-txt">' + otherLabel + ' is showing <strong>' + escapeHtml(range) + '</strong></span>'
+      + '<button type="button" class="dsync-apply" data-dsync-apply="1">Use these dates</button>'
+      + '<button type="button" class="dsync-x" data-dsync-x="1" aria-label="Dismiss">×</button>';
+    host.style.display = '';
+    host.querySelector('[data-dsync-apply]').onclick = function () {
+      applyDateSync_(page, otherWin.from, otherWin.to);
+    };
+    host.querySelector('[data-dsync-x]').onclick = function () {
+      dateSyncDismissed_[dismissKey] = true;
+      host.style.display = 'none'; host.innerHTML = '';
+    };
+  }
+
+  function applyDateSync_(page, from, to) {
+    var host = $(page === 'dept' ? 'dept-date-sync' : 'ins-date-sync');
+    if (host) { host.style.display = 'none'; host.innerHTML = ''; }
+    if (page === 'dept') {
+      if ($('from-date')) $('from-date').value = from;
+      if ($('to-date'))   $('to-date').value   = to;
+      if (typeof clearActivePreset_ === 'function') clearActivePreset_();
+      refresh();
+    } else {
+      if ($('ins-from')) $('ins-from').value = from;
+      if ($('ins-to'))   $('ins-to').value   = to;
+      if (typeof runInsReport === 'function') runInsReport();
+    }
+  }
+
   // "Is one of my agents struggling or improving?" -> Individual Report
   // primed with a 30-day window; agent choice is deliberately left to
   // the user (that IS the question), so no auto-run.
@@ -4978,6 +5058,7 @@
       setStatus('error', 'Pick a from and to date.');
       return;
     }
+    recordPageWindow_('dept', req.from, req.to);   // Batch E: for the Insights date-sync offer
 
     // M3: when the table already holds data for the SAME dept, frost it in
     // place (blur + ripple) rather than showing the top skeleton that pushes
@@ -11359,6 +11440,7 @@
     const bar = $('ins-period-bar');
     if (!bar) return;
     const from = meta && meta.from, to = meta && meta.to;
+    recordPageWindow_('insights', from, to);   // Batch E: for the My Department date-sync offer
     let active = 'custom';
     ['last7', 'last30', 'mtd', 'ytd'].some(function (p) {
       const r = insPeriodRange_(p);

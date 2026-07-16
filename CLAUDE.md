@@ -776,7 +776,18 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   in `renderDeptTeamStrip_` directly above it, whose answer-rate tile is now
   labeled "% Answered (rings)" to match the Insights rollup.) Insights carries a header **"My Department ->"** button and
   a Queue-health **"See missed calls ->"** drill (both -> `handoffToMyDept_`,
-  wired in `initInsightsReport`). (3) **Chart->Missed drill-down slice
+  wired in `initInsightsReport`). **Batch E date-sync chip (client-only, no
+  server/cache change):** the hand-off buttons carry a window only when you
+  explicitly cross over; the plain NAV-TAB path is covered by an explicit,
+  dismissible offer -- `maybeShowDateSyncChip_(page)` (called from `setPage`
+  for `dept`/`insights`) compares the entered page's date inputs to the OTHER
+  page's last-rendered window (`pageActiveWindow_`, recorded in `refresh()`
+  and `insSyncPeriodBar_`) and, when they differ, renders a `.dsync-chip`
+  (`#dept-date-sync` / `#ins-date-sync`) offering "Use these dates";
+  `applyDateSync_` sets the inputs + re-runs (`refresh` / `runInsReport`). It
+  NEVER changes the dates on its own (owner: explicit sync, no surprise);
+  dismissals are memoized per `<page>|<from>|<to>` so the same offer doesn't
+  re-nag. (3) **Chart->Missed drill-down slice
   (Phase 1):** `MissedCallsReport.gs::getMissedCallsSlice` -- a read-only RPC
   (auth identical to `getMissedCallsReport`: signed-in + `assertDeptAccess_`)
   returning the SAME per-call Missed detail `computeMissedCallsReport_`
