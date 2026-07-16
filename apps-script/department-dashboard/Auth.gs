@@ -17,12 +17,23 @@
  *
  * Shape:
  *   { email, role: 'admin'|'manager'|'none', department: string|null,
- *     departments: string[] }
+ *     departments: string[], allDepts: boolean }
+ *
+ * All-departments manager (#1): an Access Control row whose Department cell is
+ * the sentinel "ALL" (or "*") grants a manager who sees EVERY department's
+ * non-admin data -- the same data breadth as an admin, but NOT admin surfaces
+ * (Alerts/Dept Config/Outlier Fix/etc. stay `role === 'admin'`-gated). It is
+ * `role: 'manager'` with `allDepts: true`, so every admin-surface check keeps
+ * excluding it automatically; data-breadth gates opt it in explicitly.
  */
+function isAllDeptsSentinel_(s) {
+  return /^(all|\*)$/i.test(String(s == null ? '' : s).trim());
+}
+
 function resolveUser_(email) {
   const normalized = (email || '').toLowerCase().trim();
   if (!normalized) {
-    return { email: '', role: 'none', department: null, departments: [] };
+    return { email: '', role: 'none', department: null, departments: [], allDepts: false };
   }
 
   if (isAdmin_(normalized)) {
@@ -31,20 +42,31 @@ function resolveUser_(email) {
       role: 'admin',
       department: null,
       departments: getAllDepartments_(),
+      allDepts: false,
     };
   }
 
   const dept = getManagerDepartment_(normalized);
   if (dept) {
+    if (isAllDeptsSentinel_(dept)) {
+      return {
+        email: normalized,
+        role: 'manager',
+        department: null,
+        departments: getAllDepartments_(),
+        allDepts: true,
+      };
+    }
     return {
       email: normalized,
       role: 'manager',
       department: dept,
       departments: [dept],
+      allDepts: false,
     };
   }
 
-  return { email: normalized, role: 'none', department: null, departments: [] };
+  return { email: normalized, role: 'none', department: null, departments: [], allDepts: false };
 }
 
 function isAdmin_(normalizedEmail) {
@@ -191,9 +213,14 @@ function saveAccessControlRow(req) {
   const notes = String((req && req.notes) || '').trim().slice(0, 500);
   if (!acIsValidEmail_(email)) throw new Error('Enter a valid email address.');
   if (!department) throw new Error('Department is required.');
-  if (getAllDepartments_().indexOf(department) === -1) {
+  // #1: "ALL" (or "*") is the all-departments-manager sentinel; otherwise the
+  // value must be a real roster column header. Store the sentinel canonically
+  // as "ALL" so resolveUser_ sees a consistent value.
+  const departmentToStore = isAllDeptsSentinel_(department) ? 'ALL' : department;
+  if (departmentToStore !== 'ALL' && getAllDepartments_().indexOf(department) === -1) {
     throw new Error('"' + department + '" is not a department. It must match a '
-      + 'DO NOT EDIT! roster column header exactly.');
+      + 'DO NOT EDIT! roster column header exactly, or be "ALL" for '
+      + 'all-department (read-only, no admin surfaces) access.');
   }
   const normalized = email.toLowerCase();
 
@@ -220,13 +247,13 @@ function saveAccessControlRow(req) {
     // which under "Execute as: Me" would evaluate as a live cell in a sheet read
     // on every request. A normal email passes through unchanged.
     if (firstMatch > 0) {
-      sheet.getRange(firstMatch, 1, 1, 3).setValues([[sheetSafeCell_(email), sheetSafeCell_(department), sheetSafeCell_(notes)]]);
+      sheet.getRange(firstMatch, 1, 1, 3).setValues([[sheetSafeCell_(email), sheetSafeCell_(departmentToStore), sheetSafeCell_(notes)]]);
       if (dupes > 0) Logger.log('saveAccessControlRow: %s had %s duplicate row(s); updated the first only.', normalized, dupes);
     } else {
-      sheet.appendRow([sheetSafeCell_(email), sheetSafeCell_(department), sheetSafeCell_(notes)]);
+      sheet.appendRow([sheetSafeCell_(email), sheetSafeCell_(departmentToStore), sheetSafeCell_(notes)]);
     }
     CacheService.getScriptCache().remove('access:' + normalized);
-    Logger.log('saveAccessControlRow: %s -> %s by %s', normalized, department, Session.getActiveUser().getEmail());
+    Logger.log('saveAccessControlRow: %s -> %s by %s', normalized, departmentToStore, Session.getActiveUser().getEmail());
   } finally {
     lock.releaseLock();
   }

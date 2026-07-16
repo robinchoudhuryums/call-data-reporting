@@ -94,3 +94,52 @@ test('editor RPCs are admin-gated', function () {
   assert.throws(function () { h.call('saveAccessControlRow', { email: 'a@b.com', department: 'CSR' }); });
   assert.throws(function () { h.call('removeAccessControlRow', { email: 'a@b.com' }); });
 });
+
+// -- #1: all-departments manager role (Access Control dept = "ALL") ----------
+
+test('isAllDeptsSentinel_: ALL / all / * are sentinels; a real dept is not', function () {
+  install([]);
+  assert.equal(h.call('isAllDeptsSentinel_', 'ALL'), true);
+  assert.equal(h.call('isAllDeptsSentinel_', 'all'), true);
+  assert.equal(h.call('isAllDeptsSentinel_', ' * '), true);
+  assert.equal(h.call('isAllDeptsSentinel_', 'CSR'), false);
+  assert.equal(h.call('isAllDeptsSentinel_', ''), false);
+});
+
+test('resolveUser_: dept "ALL" -> all-departments manager (allDepts, every dept)', function () {
+  install([['boss@x.com', 'ALL', 'regional']]);
+  const u = h.call('resolveUser_', 'BOSS@x.com');   // case-insensitive email
+  assert.equal(u.role, 'manager', 'role is manager (NOT admin -- no admin surfaces)');
+  assert.equal(u.allDepts, true);
+  assert.equal(u.department, null);
+  deepEqual(JSON.parse(JSON.stringify(u.departments)), ['CSR', 'Sales', 'Power']);
+});
+
+test('resolveUser_: a normal manager stays single-dept (allDepts false)', function () {
+  install([['m@x.com', 'CSR', '']]);
+  const u = h.call('resolveUser_', 'm@x.com');
+  assert.equal(u.role, 'manager');
+  assert.equal(u.allDepts, false);
+  assert.equal(u.department, 'CSR');
+  deepEqual(JSON.parse(JSON.stringify(u.departments)), ['CSR']);
+});
+
+test('assertDeptAccess_: all-dept manager reaches any dept; single-dept pinned', function () {
+  install([]);
+  const allMgr = { role: 'manager', department: null, allDepts: true, departments: ['CSR', 'Sales', 'Power'] };
+  h.call('assertDeptAccess_', allMgr, 'Sales');   // no throw
+  h.call('assertDeptAccess_', allMgr, 'Power');    // no throw
+  assert.throws(function () { h.call('assertDeptAccess_', allMgr, 'Nope'); }, /Unknown department/);
+  const oneMgr = { role: 'manager', department: 'CSR', allDepts: false, departments: ['CSR'] };
+  h.call('assertDeptAccess_', oneMgr, 'CSR');       // no throw
+  assert.throws(function () { h.call('assertDeptAccess_', oneMgr, 'Sales'); }, /Not authorized for this department/);
+  assert.throws(function () { h.call('assertDeptAccess_', { role: 'none' }, 'CSR'); }, /Not authorized/);
+});
+
+test('saveAccessControlRow accepts the ALL sentinel, stored canonically as ALL', function () {
+  install([]);
+  h.call('saveAccessControlRow', { email: 'boss@x.com', department: 'all', notes: '' });
+  assert.equal(acSheetRows()[0][1], 'ALL', 'lowercase all normalized to ALL');
+  h.call('saveAccessControlRow', { email: 'boss2@x.com', department: '*', notes: '' });
+  assert.equal(acSheetRows()[1][1], 'ALL', '* normalized to ALL');
+});

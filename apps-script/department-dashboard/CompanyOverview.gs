@@ -1050,7 +1050,9 @@ function personalizeOverview_(blob, user) {
     // The dept aggregate tiles stay cross-dept-visible by design, but the
     // per-agent attribution is stripped from other depts' tiles so a
     // manager can't see which named individual drove another team's shift.
-    if (Array.isArray(out.depts)) {
+    // #1: an all-departments manager sees every dept's data, so it keeps all
+    // drivers (only single-dept managers are restricted here).
+    if (Array.isArray(out.depts) && !user.allDepts) {
       out.depts.forEach(function (d) {
         if (d && d.wow && d.wow.driver && d.name !== user.department) {
           delete d.wow.driver;
@@ -1060,6 +1062,7 @@ function personalizeOverview_(blob, user) {
   }
   out.viewerRole = user.role;
   out.viewerDept = user.department || null;
+  out.viewerAllDepts = !!user.allDepts;
   return out;
 }
 
