@@ -171,11 +171,13 @@
       if (radial.ticks)       radial.ticks.color       = THEME.muted;
     }
     // Tooltip — paper-card panel with ink text, mono body, display title.
-    // O2: slightly translucent so chart lines behind it stay legible (the
-    // Overview trend chart's tooltip used to fully occlude the lines).
+    // O2: translucent so chart lines behind it stay legible (the Overview
+    // trend chart's tooltip used to fully occlude the lines). Alpha lowered
+    // 0.92 -> 0.6 so trend lines read through the card (the 1px border +
+    // ink text keep it legible on the paper theme).
     const tt = Chart.defaults.plugins.tooltip;
     tt.backgroundColor = (typeof rgbaWithAlpha_ === 'function')
-      ? rgbaWithAlpha_(THEME.paperCard, 0.92) : THEME.paperCard;
+      ? rgbaWithAlpha_(THEME.paperCard, 0.6) : THEME.paperCard;
     tt.titleColor      = THEME.ink;
     tt.bodyColor       = THEME.ink;
     tt.borderColor     = THEME.line;
@@ -5832,7 +5834,7 @@
     var fillPct = total ? Math.max(0, Math.min(100, rate)) : 0;
 
     var heroTile = '<div class="dts-tile dts-tile--hero">'
-      + '<div class="dts-label">Answer rate <span class="dts-scope">this range</span></div>'
+      + '<div class="dts-label">% Answered (rings) <span class="dts-scope">this range</span></div>'
       + '<div class="dts-value' + rateCls + '" data-flash-key="dts:rate">' + (total ? rate + '%' : '–') + '</div>'
       + '<div class="dts-track" title="92% company target">'
       +   '<span class="dts-track-fill' + (under92 ? ' is-under' : '') + '" style="width:' + fillPct + '%"></span>'
@@ -5876,15 +5878,15 @@
       strip.style.display = 'none'; strip.innerHTML = '';
       return;
     }
-    var a = Number(t.totalAnswered) || 0;
-    var m = Number(t.totalMissed)   || 0;
-    var total = a + m;
-    var rate = total ? Math.round(a / total * 100) : 0;
+    var total = (Number(t.totalAnswered) || 0) + (Number(t.totalMissed) || 0);
     var dept = getRequestedDept() || 'this department';
     var from = ($('from-date') && $('from-date').value) || '';
     var to   = ($('to-date')   && $('to-date').value)   || '';
+    // #3b: the rate% / missed count already live in the KPI tiles above, so the
+    // strip no longer restates them (that duplication was the flagged clutter).
+    // It keeps its "what the full report adds" hook + the Open-report hand-off.
     var teaser = total
-      ? 'Team answered <strong>' + rate + '%</strong> of rings this range · <strong>' + fmtNumber(m) + '</strong> missed.'
+      ? 'Deeper per-agent &amp; queue-health breakdown for this range.'
       : 'No call activity in this range.';
     strip.innerHTML =
         '<div class="dis-row">'
