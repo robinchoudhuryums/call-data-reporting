@@ -9522,7 +9522,7 @@
           return '<option value="' + escapeHtml(n) + '">' + escapeHtml(n) + '</option>';
         }).join('');
 
-    // Dept options for the "new hire" add-to-roster flow.
+    // Dept options for the "New Assignment" add-to-roster flow.
     const deptOptionsHtml = '<option value="">(pick department)</option>'
       + ((ofLastInit && ofLastInit.departments) || []).map(function (d) {
           return '<option value="' + escapeHtml(d) + '">' + escapeHtml(d) + '</option>';
@@ -9547,7 +9547,7 @@
            +     '<button type="button" class="btn btn-secondary of-row-apply" '
            +       'data-idx="' + idx + '" disabled>Apply</button> '
            +     '<button type="button" class="btn btn-secondary of-row-addnew" data-idx="' + idx + '" '
-           +       'title="This isn’t a misspelling of an existing agent — it’s a new employee. Add them to a department’s roster.">New hire…</button>'
+           +       'title="This isn’t a misspelling of an existing agent — it’s a new assignment (a new employee, or someone being added to this department). Add them to a department’s roster.">New Assignment…</button>'
            +   '</td>'
            + '</tr>'
            + '<tr class="of-add-row" data-add-idx="' + idx + '" style="display:none;">'
@@ -9595,7 +9595,7 @@
       });
     });
 
-    // "New hire…" toggles the inline add-to-roster form; the confirm
+    // "New Assignment…" toggles the inline add-to-roster form; the confirm
     // button enables once a dept is picked AND the ext field is non-empty.
     tbody.querySelectorAll('.of-row-addnew').forEach(function (btn) {
       btn.addEventListener('click', function () {
@@ -9700,9 +9700,30 @@
     ofUpdateBatchState_();
   }
 
+  // Item 5a: seamless in-place refresh after a write, replacing ofLoadInit_(true)
+  // (which re-fetches getOrphanFixInit and re-runs the expensive orphan scan --
+  // the "relaunch" feel testers flagged). Removes the just-fixed orphans from
+  // the in-memory list and refreshes the aliases / log / rosterNames panels from
+  // the write RESPONSE (the RPCs now return them), then re-renders with no loader
+  // and no round-trip. The server busts its init cache on every write, so a
+  // subsequent COLD open still recomputes from scratch.
+  function ofApplyLocalUpdate_(res, removedNames) {
+    if (!ofLastInit) { ofLoadInit_(true); return; }   // nothing loaded -> fall back
+    res = res || {};
+    if (removedNames && removedNames.length) {
+      const drop = {};
+      removedNames.forEach(function (n) { drop[n] = true; });
+      ofLastInit.orphans = (ofLastInit.orphans || []).filter(function (o) { return !drop[o.name]; });
+    }
+    if (res.aliases)     ofLastInit.aliases = res.aliases;
+    if (res.log)         ofLastInit.log = res.log;
+    if (res.rosterNames) ofLastInit.rosterNames = res.rosterNames;
+    ofRender_(ofLastInit);   // re-renders + re-wires all three panels in place
+  }
+
   // Applies a list of {fromName,toName} renames SEQUENTIALLY (server-side
   // LockService serializes writes anyway, so parallel would just contend).
-  // Resolves { ok:[{item,renamed}], failed:[{item,err}] }.
+  // Resolves { ok:[{item,renamed,res}], failed:[{item,err}] }.
   function ofRunApplySequence_(items, onProgress) {
     return new Promise(function (resolve) {
       const ok = [], failed = [];
@@ -9712,7 +9733,7 @@
         const it = items[i];
         if (onProgress) onProgress(i, items.length, it);
         google.script.run
-          .withSuccessHandler(function (res) { ok.push({ item: it, renamed: (res && res.renamed) || 0 }); i++; next(); })
+          .withSuccessHandler(function (res) { ok.push({ item: it, renamed: (res && res.renamed) || 0, res: res }); i++; next(); })
           .withFailureHandler(function (err) { failed.push({ item: it, err: (err && err.message) ? err.message : String(err) }); i++; next(); })
           .applyOrphanRename({ fromName: it.fromName, toName: it.toName, alsoAddAlias: true, notes: '' });
       };
@@ -9764,7 +9785,12 @@
         }
         showToast('Applied ' + res.ok.length + ' rename' + (res.ok.length === 1 ? '' : 's'),
           res.failed.length ? 'error' : 'success');
-        ofLoadInit_(true);   // one reload at the very end; keep the result summary
+        // Item 5a: update in place -- drop every successfully-applied orphan and
+        // refresh aliases/log from the LAST successful response (cumulative, so
+        // the newest carries the full current state). No re-fetch.
+        const applied = res.ok.map(function (o) { return o.item.fromName; });
+        const lastRes = res.ok.length ? res.ok[res.ok.length - 1].res : {};
+        ofApplyLocalUpdate_(lastRes, applied);
       });
     });
   }
@@ -9772,7 +9798,7 @@
   function ofConfirmAndAddToRoster_(orphan, dept, exts) {
     if (ofBusy_) return;
     dsConfirm_({
-      title: 'Add new hire to roster',
+      title: 'Add new assignment to roster',
       messageHtml: 'Add <strong>' + escapeHtml(orphan.name) + '</strong> to the <strong>'
         + escapeHtml(dept) + '</strong> roster with extension(s) <strong>' + escapeHtml(exts) + '</strong>? '
         + 'Enter the agent&rsquo;s own individual extension, not the department queue extension. '
@@ -9797,7 +9823,9 @@
           + (res && res.cell ? ' (cell ' + res.cell + ')' : '')
           + '. Overview updates immediately; other views may take up to 30 minutes (cache TTL).');
         showToast('Added to ' + dept + ' roster', 'success');
-        ofLoadInit_(true);
+        // Item 5a: drop the now-rostered agent from the outlier list + refresh
+        // the log / roster-name options in place (res carries rosterNames + log).
+        ofApplyLocalUpdate_(res, [orphan.name]);
       })
       .withFailureHandler(function (err) {
         ofSetBusy_(false);
@@ -9841,7 +9869,8 @@
             + '. Alias added so future imports map correctly. '
             + 'Overview updates immediately; other dashboard views may take up to 30 minutes (cache TTL) to reflect the change.');
           showToast('Renamed ' + n + ' row' + (n === 1 ? '' : 's'), 'success');
-          ofLoadInit_(true);
+          // Item 5a: drop the renamed orphan + refresh aliases/log in place.
+          ofApplyLocalUpdate_(res.ok[0].res, [orphan.name]);
         });
     });
   }
@@ -9893,7 +9922,9 @@
               const n = (res && res.removed) || 0;
               ofSetStatus_('success', 'Deactivated ' + n + ' alias row'
                 + (n === 1 ? '' : 's') + '.');
-              ofLoadInit_(true);
+              // Item 5a: refresh the aliases + log panels in place (res carries
+              // both); no orphan changes on an alias deactivate.
+              ofApplyLocalUpdate_(res, []);
             })
             .withFailureHandler(function (err) {
               ofSetBusy_(false);

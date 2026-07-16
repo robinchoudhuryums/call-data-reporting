@@ -155,7 +155,11 @@ function queueReportQcdLatestIso_() {
  */
 function sendQueueReportForDate_(targetIso, opts) {
   opts = opts || {};
-  const data = computeQcdAllDepartments_(targetIso, targetIso);
+  // Batch 1 item 2: reuse the 6h-TTL qcdAll cache the web report warms, so an
+  // admin "Send me a preview" doesn't pay the full cold compute when the exact
+  // (targetIso,targetIso) blob is already warm (and a preview warms it for the
+  // next web open). Falls through to a fresh compute + cache when cold.
+  const data = qcdAllDeptCachedData_(targetIso, targetIso).data;
   const recipients = opts.to
     ? [String(opts.to).trim()].filter(Boolean)
     : readQueueReportSubscribers_().filter(function (s) { return s.active; })

@@ -415,8 +415,20 @@ function classifyInboundQueues_(scanned, queueToDept) {
 
 // -- Public RPCs (admin-only) ---------------------------------------
 
+// Batch 1 (item 6): the Dept Config init blob is expensive to build --
+// discoverQueues_ scans QCD Historical Data and discoverInboundQueues_ hits
+// Neon. Cache it so re-opening the modal is instant; every write path
+// (saveDeptConfig / removeDeptConfig) busts it via dcBustCaches_(). Admin-only
+// surface, so the shared script cache is safe (no per-viewer personalization).
+const DEPT_CONFIG_INIT_CACHE_KEY = 'deptConfig:init:v1';
+
 function getDeptConfigInit() {
   assertAdmin_();
+  const cache = CacheService.getScriptCache();
+  try {
+    const hit = cache.get(DEPT_CONFIG_INIT_CACHE_KEY);
+    if (hit) return JSON.parse(hit);
+  } catch (e) { /* best-effort: fall through to a fresh build */ }
   const allDepts = getAllDepartments_();
   const cfgMap = getActiveDeptConfigMap_();
 
@@ -448,7 +460,7 @@ function getDeptConfigInit() {
   // S1(c): the inbound name-space twin of `discovered` (Neon-backed).
   const inboundDiscovery = discoverInboundQueues_(allDepts);
 
-  return {
+  const init = {
     departments:     allDepts,
     rosterByDept:    rosterByDept,
     effective:       effective,
@@ -458,6 +470,9 @@ function getDeptConfigInit() {
     unmappedCount:   unmappedCount,
     spreadsheetUrl:  'https://docs.google.com/spreadsheets/d/' + getSpreadsheetId_() + '/edit',
   };
+  try { cache.put(DEPT_CONFIG_INIT_CACHE_KEY, JSON.stringify(init), REPORT_CACHE_TTL_SECONDS); }
+  catch (e) { /* best-effort */ }
+  return init;
 }
 
 /**
@@ -831,6 +846,10 @@ function compareDeptConfigSources() {
  */
 function dcBustCaches_() {
   try { CacheService.getScriptCache().remove(overviewCacheKey_()); }
+  catch (e) { /* best-effort */ }
+  // Item 6: bust the cached Dept Config init blob so a save/remove shows up
+  // on the next cold modal open.
+  try { CacheService.getScriptCache().remove(DEPT_CONFIG_INIT_CACHE_KEY); }
   catch (e) { /* best-effort */ }
 }
 

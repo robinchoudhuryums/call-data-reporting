@@ -83,9 +83,22 @@
 
 const ORPHAN_FIX_MAX_NAME_LENGTH = 200;
 
+// Batch 1 (item 6): the Outlier Fix modal's init blob is expensive to build
+// -- computeOrphans_ scans up to ORPHAN_LOOKBACK_DAYS of DQE Historical Data.
+// Cache the whole blob so re-opening the modal is instant. Every write path
+// busts it via bustOrphanFixCache_() (and the client updates in place per
+// item 5a, so the bust only matters for the NEXT cold open). Admin-only
+// surface, so the shared script cache is safe (no per-viewer personalization).
+const ORPHAN_FIX_INIT_CACHE_KEY = 'orphanFix:init:v1';
+
 function getOrphanFixInit() {
   assertAdmin_();
-  return {
+  const cache = CacheService.getScriptCache();
+  try {
+    const hit = cache.get(ORPHAN_FIX_INIT_CACHE_KEY);
+    if (hit) return JSON.parse(hit);
+  } catch (e) { /* best-effort: fall through to a fresh build */ }
+  const init = {
     orphans:        computeOrphans_(),
     rosterNames:    collectAllRosterNames_(),
     departments:    getAllDepartments_(),   // for the add-to-roster dept picker
@@ -93,6 +106,18 @@ function getOrphanFixInit() {
     log:            readOrphanFixLog_(20),
     spreadsheetUrl: 'https://docs.google.com/spreadsheets/d/' + getSpreadsheetId_() + '/edit',
   };
+  try { cache.put(ORPHAN_FIX_INIT_CACHE_KEY, JSON.stringify(init), REPORT_CACHE_TTL_SECONDS); }
+  catch (e) { /* best-effort */ }
+  return init;
+}
+
+/**
+ * Bust the cached init blob. Called from every public write path so a
+ * subsequent cold modal open recomputes orphans / aliases / log. Best-effort.
+ */
+function bustOrphanFixCache_() {
+  try { CacheService.getScriptCache().remove(ORPHAN_FIX_INIT_CACHE_KEY); }
+  catch (e) { /* best-effort */ }
 }
 
 /**
@@ -130,10 +155,13 @@ function addAgentAlias(req) {
       affected: 0,
       notes:    notes,
     });
+    bustOrphanFixCache_();
   } finally {
     lock.releaseLock();
   }
-  return { added: 1 };
+  // Item 5a: return the refreshed aliases + log so the client can update in
+  // place without a full re-fetch (which would recompute the orphan scan).
+  return { added: 1, aliases: readAgentAliases_(), log: readOrphanFixLog_(20) };
 }
 
 /**
@@ -161,10 +189,12 @@ function removeAgentAlias(req) {
       affected: removed,
       notes:    '',
     });
+    bustOrphanFixCache_();
   } finally {
     lock.releaseLock();
   }
-  return { removed: removed };
+  // Item 5a: return refreshed aliases + log for in-place client update.
+  return { removed: removed, aliases: readAgentAliases_(), log: readOrphanFixLog_(20) };
 }
 
 /**
@@ -245,6 +275,7 @@ function applyOrphanRename(req) {
     // are TTL'd out naturally within 30 min (REPORT_CACHE_TTL_SECONDS).
     try { CacheService.getScriptCache().remove(overviewCacheKey_()); }
     catch (e) { /* best-effort */ }
+    bustOrphanFixCache_();
   } finally {
     lock.releaseLock();
   }
@@ -256,6 +287,11 @@ function applyOrphanRename(req) {
     // reconciliation (see renameAgentInNeon_).
     neonRenamed: neonRename ? neonRename.renamed : null,
     neonSkipped: neonRename ? neonRename.skipped : null,
+    // Item 5a: refreshed aliases + log so the client updates in place
+    // (removes the fixed orphan, refreshes the aliases/log panels) without
+    // a full re-fetch that would recompute the orphan scan.
+    aliases: readAgentAliases_(),
+    log:     readOrphanFixLog_(20),
   };
 }
 
@@ -320,10 +356,20 @@ function addOrphanToRoster(req) {
     // Overview immediately; per-(dept, range) caches TTL out.
     try { CacheService.getScriptCache().remove(overviewCacheKey_()); }
     catch (e) { /* best-effort */ }
+    bustOrphanFixCache_();
   } finally {
     lock.releaseLock();
   }
-  return { added: 1, cell: cell };
+  // Item 5a: refreshed log so the client updates in place (the newly-rostered
+  // agent drops off the orphan list, the log panel refreshes) without a full
+  // re-fetch. rosterNames also changes -- return it so the roster picker /
+  // "already on roster" guard stay current in the open modal.
+  return {
+    added:       1,
+    cell:        cell,
+    rosterNames: collectAllRosterNames_(),
+    log:         readOrphanFixLog_(20),
+  };
 }
 
 // -- Read helpers (read-only; trailing underscore) ----------------
