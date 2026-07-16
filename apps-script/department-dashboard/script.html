@@ -8216,6 +8216,9 @@
   // Loaded rows for prefill; populated by the render functions above.
   var alCfgRows_ = [];
   var alDgRows_ = [];
+  // Batch 3: the unified Report Subscribers table draws from BOTH lists, each
+  // loaded by its own async init; track per-list load errors for a partial note.
+  var alDgLoadError_ = null, alQrLoadError_ = null;
 
   // Populate a dept <select> from the admin's full dept list (USER.departments
   // is all depts for an admin -- the Alerts modal is admin-only).
@@ -8230,7 +8233,8 @@
   }
 
   function alCfgStatus_(kind, msg) { alMiniStatus_('al-cfg-status', kind, msg); }
-  function alDgStatus_(kind, msg)  { alMiniStatus_('al-dg-status', kind, msg); }
+  function alDgStatus_(kind, msg)  { alMiniStatus_('al-rs-status', kind, msg); }
+  function alRsStatus_(kind, msg)  { alMiniStatus_('al-rs-status', kind, msg); }
   function alMiniStatus_(id, kind, msg) {
     const el = $(id);
     if (!el) return;
@@ -8289,47 +8293,181 @@
       .removeAlertConfigRow({ department: c.department });
   }
 
-  // ---- Digest Config editor ----
-  function alDgEdit_(idx) {
-    const c = alDgRows_[idx];
-    if (!c) return;
-    if ($('al-dg-email')) $('al-dg-email').value = c.email || '';
-    if ($('al-dg-dept')) { alFillDeptSelect_('al-dg-dept'); $('al-dg-dept').value = c.department || ''; }
-    if ($('al-dg-cadence')) $('al-dg-cadence').value = c.cadence || 'daily';
-    if ($('al-dg-format')) $('al-dg-format').value = c.format || 'summary';
-    if ($('al-dg-notes')) $('al-dg-notes').value = c.notes || '';
-    if ($('al-dg-active')) $('al-dg-active').checked = !!c.active;
-    if ($('al-dg-email')) $('al-dg-email').focus();
+  // ---- Report Subscribers (Batch 3): unified Digest + Queue Report ----
+  // Presentation only -- routes to the existing per-report RPCs unchanged
+  // (saveDigestConfigRow / saveQueueReportSubscriber, and the remove/preview
+  // helpers below). One table, one add/edit form with a report-type multi-select.
+
+  // Reveal/hide the digest-only form fields based on the ticked report type(s).
+  function alRsSyncTypeFields_() {
+    const digest = !!($('al-rs-type-digest') && $('al-rs-type-digest').checked);
+    const form = $('al-rs-form');
+    if (form) form.classList.toggle('al-rs-hide-digest', !digest);
   }
-  function alDgClear_() {
-    ['al-dg-email', 'al-dg-notes'].forEach(function (i) { if ($(i)) $(i).value = ''; });
-    if ($('al-dg-dept')) $('al-dg-dept').value = '';
-    if ($('al-dg-cadence')) $('al-dg-cadence').value = 'daily';
-    if ($('al-dg-format')) $('al-dg-format').value = 'summary';
-    if ($('al-dg-active')) $('al-dg-active').checked = true;
-    alDgStatus_(null);
+
+  // Render the unified table from BOTH loaded lists (alDgRows_ + alQrRows_).
+  // Either list may arrive first (two async inits) or fail to load -- we render
+  // whatever we have and note a partial-load error.
+  function alRenderSubscribersTable_() {
+    const tbody = $('al-rs-tbody');
+    if (!tbody) return;
+    alFillDeptSelect_('al-rs-dept');
+    const dg = alDgRows_ || [], qr = alQrRows_ || [];
+    if (!dg.length && !qr.length) {
+      const err = alDgLoadError_ || alQrLoadError_;
+      tbody.innerHTML = '<tr><td colspan="8" class="al-empty">'
+        + (err ? ('Could not load subscribers: ' + escapeHtml(err))
+               : 'No report subscribers yet. Add one with the form below.')
+        + '</td></tr>';
+      return;
+    }
+    let html = '';
+    dg.forEach(function (c, idx) {
+      const activeCls = c.active ? 'al-active-yes' : 'al-active-no';
+      // OPS-6: an unrecognized cadence renders a warn chip (the row never sends)
+      // instead of silently vanishing from the table.
+      const cadenceCell = c.invalidCadence
+        ? '<span class="al-active al-active-no" title="Unrecognized cadence ('
+            + escapeHtml(c.cadenceRaw || 'blank') + ') -- this subscription NEVER sends. '
+            + 'Use daily, weekly, or monthly.">⚠ invalid</span>'
+        : escapeHtml(c.cadence);
+      html += '<tr>'
+        + '<td>' + escapeHtml(c.email) + '</td>'
+        + '<td><span class="al-report-chip al-report-digest">Digest</span></td>'
+        + '<td>' + escapeHtml(c.department) + '</td>'
+        + '<td>' + cadenceCell + '</td>'
+        + '<td>' + escapeHtml(c.format || 'summary') + '</td>'
+        + '<td><span class="al-active ' + activeCls + '">' + (c.active ? 'Yes' : 'No') + '</span></td>'
+        + '<td>' + escapeHtml(c.notes || '') + '</td>'
+        + '<td>'
+        +   '<button type="button" class="link-btn al-rs-dg-preview" data-idx="' + idx + '">Preview</button> '
+        +   '<button type="button" class="link-btn al-rs-dg-edit" data-idx="' + idx + '">Edit</button> '
+        +   '<button type="button" class="link-btn al-rs-dg-remove" data-idx="' + idx + '">Remove</button>'
+        + '</td></tr>';
+    });
+    qr.forEach(function (s, idx) {
+      const activeCls = s.active ? 'al-active-yes' : 'al-active-no';
+      html += '<tr>'
+        + '<td>' + escapeHtml(s.email) + '</td>'
+        + '<td><span class="al-report-chip al-report-queue">Queue Report</span></td>'
+        + '<td class="al-empty-inline">—</td>'
+        + '<td class="al-empty-inline">—</td>'
+        + '<td class="al-empty-inline">—</td>'
+        + '<td><span class="al-active ' + activeCls + '">' + (s.active ? 'Yes' : 'No') + '</span></td>'
+        + '<td>' + escapeHtml(s.notes || '') + '</td>'
+        + '<td>'
+        +   '<button type="button" class="link-btn al-rs-qr-edit" data-idx="' + idx + '">Edit</button> '
+        +   '<button type="button" class="link-btn al-rs-qr-remove" data-idx="' + idx + '">Remove</button>'
+        + '</td></tr>';
+    });
+    tbody.innerHTML = html;
+    tbody.querySelectorAll('.al-rs-dg-preview').forEach(function (b) {
+      b.addEventListener('click', function () { const c = alDgRows_[Number(b.getAttribute('data-idx'))]; if (c) alSendDigestPreview_(b, c); });
+    });
+    tbody.querySelectorAll('.al-rs-dg-edit').forEach(function (b) {
+      b.addEventListener('click', function () { alRsEditDigest_(Number(b.getAttribute('data-idx'))); });
+    });
+    tbody.querySelectorAll('.al-rs-dg-remove').forEach(function (b) {
+      b.addEventListener('click', function () { alDgRemove_(Number(b.getAttribute('data-idx'))); });
+    });
+    tbody.querySelectorAll('.al-rs-qr-edit').forEach(function (b) {
+      b.addEventListener('click', function () { alRsEditQueue_(Number(b.getAttribute('data-idx'))); });
+    });
+    tbody.querySelectorAll('.al-rs-qr-remove').forEach(function (b) {
+      b.addEventListener('click', function () { alQrRemove_(Number(b.getAttribute('data-idx'))); });
+    });
   }
-  function alDgSave_() {
-    const email = $('al-dg-email') ? $('al-dg-email').value.trim() : '';
-    const department = $('al-dg-dept') ? $('al-dg-dept').value : '';
-    if (!email) { alDgStatus_('error', 'Enter an email.'); return; }
-    if (!department) { alDgStatus_('error', 'Pick a department.'); return; }
-    const req = {
-      email: email, department: department,
-      cadence: $('al-dg-cadence') ? $('al-dg-cadence').value : 'daily',
-      format: $('al-dg-format') ? $('al-dg-format').value : 'summary',
-      notes: $('al-dg-notes') ? $('al-dg-notes').value : '',
-      active: $('al-dg-active') ? $('al-dg-active').checked : true,
-    };
-    const btn = $('al-dg-save');
-    if (btn) { btn.disabled = true; btn.innerHTML = '<span class="btn-spinner" aria-hidden="true"></span>Saving…'; }
-    const restore = function () { if (btn) { btn.disabled = false; btn.textContent = 'Save subscriber'; } };
-    alDgStatus_('loading', 'Saving ' + email + '…');
-    google.script.run
-      .withSuccessHandler(function () { restore(); showToast('Saved digest subscriber ' + email, 'success'); alDgClear_(); alLoadInit_(); })
-      .withFailureHandler(function (err) { restore(); alDgStatus_('error', 'Save failed: ' + (err && err.message ? err.message : String(err))); })
-      .saveDigestConfigRow(req);
+
+  function alRsEditDigest_(idx) {
+    const c = alDgRows_[idx]; if (!c) return;
+    if ($('al-rs-type-digest')) $('al-rs-type-digest').checked = true;
+    if ($('al-rs-type-queue'))  $('al-rs-type-queue').checked = false;
+    alRsSyncTypeFields_();
+    if ($('al-rs-email'))   $('al-rs-email').value = c.email || '';
+    alFillDeptSelect_('al-rs-dept');
+    if ($('al-rs-dept'))    $('al-rs-dept').value = c.department || '';
+    if ($('al-rs-cadence')) $('al-rs-cadence').value = c.cadence || 'daily';
+    if ($('al-rs-format'))  $('al-rs-format').value = c.format || 'summary';
+    if ($('al-rs-notes'))   $('al-rs-notes').value = c.notes || '';
+    if ($('al-rs-active'))  $('al-rs-active').checked = !!c.active;
+    if ($('al-rs-email'))   $('al-rs-email').focus();
   }
+
+  function alRsEditQueue_(idx) {
+    const s = alQrRows_[idx]; if (!s) return;
+    if ($('al-rs-type-digest')) $('al-rs-type-digest').checked = false;
+    if ($('al-rs-type-queue'))  $('al-rs-type-queue').checked = true;
+    alRsSyncTypeFields_();
+    if ($('al-rs-email'))  $('al-rs-email').value = s.email || '';
+    if ($('al-rs-notes'))  $('al-rs-notes').value = s.notes || '';
+    if ($('al-rs-active')) $('al-rs-active').checked = !!s.active;
+    if ($('al-rs-email'))  $('al-rs-email').focus();
+  }
+
+  function alRsClear_() {
+    if ($('al-rs-email'))  $('al-rs-email').value = '';
+    if ($('al-rs-notes'))  $('al-rs-notes').value = '';
+    if ($('al-rs-dept'))   $('al-rs-dept').value = '';
+    if ($('al-rs-cadence')) $('al-rs-cadence').value = 'daily';
+    if ($('al-rs-format'))  $('al-rs-format').value = 'summary';
+    if ($('al-rs-active'))  $('al-rs-active').checked = true;
+    if ($('al-rs-type-digest')) $('al-rs-type-digest').checked = true;
+    if ($('al-rs-type-queue'))  $('al-rs-type-queue').checked = false;
+    alRsSyncTypeFields_();
+    alRsStatus_(null);
+  }
+
+  function alRsSave_() {
+    const email = (($('al-rs-email') && $('al-rs-email').value) || '').trim();
+    const wantDigest = !!($('al-rs-type-digest') && $('al-rs-type-digest').checked);
+    const wantQueue  = !!($('al-rs-type-queue')  && $('al-rs-type-queue').checked);
+    if (!email) { alRsStatus_('error', 'Enter an email address.'); return; }
+    if (!wantDigest && !wantQueue) { alRsStatus_('error', 'Tick at least one report type.'); return; }
+    const dept = $('al-rs-dept') ? $('al-rs-dept').value : '';
+    if (wantDigest && !dept) { alRsStatus_('error', 'Pick a department for the Manager Digest.'); return; }
+    const notes  = $('al-rs-notes') ? $('al-rs-notes').value.trim() : '';
+    const active = $('al-rs-active') ? $('al-rs-active').checked : true;
+    const btn = $('al-rs-save');
+    if (btn) btn.disabled = true;
+    alRsStatus_('loading', 'Saving ' + email + '…');
+
+    // Route to the existing per-report RPCs; both fire if both are ticked.
+    const tasks = [];
+    if (wantDigest) tasks.push(function (next) {
+      google.script.run
+        .withSuccessHandler(function () { next(); })
+        .withFailureHandler(function (err) { next(err || new Error('digest save failed')); })
+        .saveDigestConfigRow({
+          email: email, department: dept,
+          cadence: $('al-rs-cadence') ? $('al-rs-cadence').value : 'daily',
+          format:  $('al-rs-format')  ? $('al-rs-format').value  : 'summary',
+          notes: notes, active: active,
+        });
+    });
+    if (wantQueue) tasks.push(function (next) {
+      google.script.run
+        .withSuccessHandler(function () { next(); })
+        .withFailureHandler(function (err) { next(err || new Error('queue save failed')); })
+        .saveQueueReportSubscriber({ email: email, notes: notes, active: active });
+    });
+    let i = 0;
+    (function run(err) {
+      if (err) {
+        if (btn) btn.disabled = false;
+        alRsStatus_('error', 'Save failed: ' + (err && err.message ? err.message : String(err)));
+        return;
+      }
+      if (i >= tasks.length) {
+        if (btn) btn.disabled = false;
+        showToast('Saved subscriber ' + email, 'success');
+        alRsClear_();
+        alLoadInit_();   // reload both lists + trigger status
+        return;
+      }
+      tasks[i++](run);
+    })();
+  }
+
   function alDgRemove_(idx) {
     const c = alDgRows_[idx];
     if (!c) return;
@@ -8382,8 +8520,13 @@
     // C3 config-editor form buttons.
     if ($('al-cfg-save'))  $('al-cfg-save').addEventListener('click', alCfgSave_);
     if ($('al-cfg-clear')) $('al-cfg-clear').addEventListener('click', alCfgClear_);
-    if ($('al-dg-save'))   $('al-dg-save').addEventListener('click', alDgSave_);
-    if ($('al-dg-clear'))  $('al-dg-clear').addEventListener('click', alDgClear_);
+    // Unified Report Subscribers add/edit form (Batch 3).
+    if ($('al-rs-save'))       $('al-rs-save').addEventListener('click', alRsSave_);
+    if ($('al-rs-clear'))      $('al-rs-clear').addEventListener('click', alRsClear_);
+    if ($('al-rs-qr-preview')) $('al-rs-qr-preview').addEventListener('click', alQrPreview_);
+    if ($('al-rs-type-digest')) $('al-rs-type-digest').addEventListener('change', alRsSyncTypeFields_);
+    if ($('al-rs-type-queue'))  $('al-rs-type-queue').addEventListener('change', alRsSyncTypeFields_);
+    alRsSyncTypeFields_();
 
     const installBtn = $('al-install-trigger-btn');
     if (installBtn) installBtn.addEventListener('click', alInstallTrigger_);
@@ -8410,10 +8553,8 @@
     const warmNowBtn = $('al-warm-now-btn');
     if (warmNowBtn) warmNowBtn.addEventListener('click', alWarmNow_);
 
-    // Daily Call Queue Report subscribers + trigger.
-    if ($('al-qr-save'))    $('al-qr-save').addEventListener('click', alQrSave_);
-    if ($('al-qr-clear'))   $('al-qr-clear').addEventListener('click', alQrClear_);
-    if ($('al-qr-preview')) $('al-qr-preview').addEventListener('click', alQrPreview_);
+    // Daily Call Queue Report trigger (subscribers live in the unified
+    // Report Subscribers table now; preview button is al-rs-qr-preview above).
     const installQrBtn = $('al-install-qr-btn');
     if (installQrBtn) installQrBtn.addEventListener('click', alInstallQueueReport_);
     const uninstallQrBtn = $('al-uninstall-qr-btn');
@@ -8485,62 +8626,11 @@
 
   function alRenderDigestInit_(data) {
     if (!data) return;
-    const tbody = $('al-digest-tbody');
-    if (tbody) {
-      const config = data.config || [];
-      alDgRows_ = config;                       // C3 editor reads this for prefill
-      alFillDeptSelect_('al-dg-dept');
-      if (!config.length) {
-        tbody.innerHTML = '<tr><td colspan="7" class="al-empty">'
-          + 'No digest subscribers yet. Add one with the form below.'
-          + '</td></tr>';
-      } else {
-        tbody.innerHTML = config.map(function (c, idx) {
-          const activeCls = c.active ? 'al-active-yes' : 'al-active-no';
-          const activeLbl = c.active ? 'Yes' : 'No';
-          // OPS-6: an unrecognized cadence renders a warn chip (the row
-          // never sends) instead of the row silently vanishing from
-          // this table like it used to.
-          const cadenceCell = c.invalidCadence
-            ? '<span class="al-active al-active-no" title="Unrecognized cadence ('
-                + escapeHtml(c.cadenceRaw || 'blank') + ') -- this subscription NEVER sends. '
-                + 'Use daily, weekly, or monthly.">⚠ invalid</span>'
-            : escapeHtml(c.cadence);
-          return '<tr>'
-               +   '<td>' + escapeHtml(c.email)      + '</td>'
-               +   '<td>' + escapeHtml(c.department) + '</td>'
-               +   '<td>' + cadenceCell              + '</td>'
-               +   '<td>' + escapeHtml(c.format || 'summary') + '</td>'
-               +   '<td><span class="al-active ' + activeCls + '">' + activeLbl + '</span></td>'
-               +   '<td>' + escapeHtml(c.notes || '') + '</td>'
-               +   '<td>'
-               +     '<button type="button" class="link-btn al-digest-preview-btn" data-idx="' + idx + '">Preview</button> '
-               +     '<button type="button" class="link-btn al-dg-edit" data-idx="' + idx + '">Edit</button> '
-               +     '<button type="button" class="link-btn al-dg-remove" data-idx="' + idx + '">Remove</button>'
-               +   '</td>'
-               + '</tr>';
-        }).join('');
-
-        // Wire the per-row Send Preview buttons. `data-idx` indexes
-        // into the same `config` array we just rendered from, so we
-        // pull the email/department/cadence directly without
-        // parsing the DOM.
-        tbody.querySelectorAll('.al-digest-preview-btn').forEach(function (btn) {
-          btn.addEventListener('click', function () {
-            const idx = Number(btn.getAttribute('data-idx'));
-            const row = config[idx];
-            if (!row) return;
-            alSendDigestPreview_(btn, row);
-          });
-        });
-        tbody.querySelectorAll('.al-dg-edit').forEach(function (btn) {
-          btn.addEventListener('click', function () { alDgEdit_(Number(btn.getAttribute('data-idx'))); });
-        });
-        tbody.querySelectorAll('.al-dg-remove').forEach(function (btn) {
-          btn.addEventListener('click', function () { alDgRemove_(Number(btn.getAttribute('data-idx'))); });
-        });
-      }
-    }
+    // Batch 3: feed the unified Report Subscribers table (the two async inits
+    // each set their list + call the shared renderer; trigger status is below).
+    alDgRows_ = data.config || [];
+    alDgLoadError_ = data.loadError || null;
+    alRenderSubscribersTable_();
 
     // Trigger status caption + install/uninstall buttons.
     const trig = data.trigger || { daily: false, weekly: false, monthly: false };
@@ -8641,44 +8731,15 @@
 
   // -- Daily Call Queue Report subscribers + trigger ---------------------
   var alQrRows_ = [];
-  function alQrSetStatus_(kind, msg) {
-    const el = $('al-qr-status'); if (!el) return;
-    if (!msg) { el.style.display = 'none'; el.textContent = ''; return; }
-    el.style.display = ''; el.className = 'status status-' + (kind || 'loading'); el.textContent = msg;
-  }
+  function alQrSetStatus_(kind, msg) { alMiniStatus_('al-rs-status', kind, msg); }
   function alRenderQueueReport_(data) {
     data = data || {};
     alQrRows_ = data.subscribers || [];
+    // Batch 3: feed the unified Report Subscribers table (trigger status below).
+    alQrLoadError_ = data.loadError || null;
+    alRenderSubscribersTable_();
     const win = $('al-qr-window');
     if (win) win.textContent = (!data.loadError && data.windowLabel) ? ('Runs ' + data.windowLabel + '.') : '';
-    const tbody = $('al-qr-tbody');
-    if (tbody) {
-      if (data.loadError) {
-        tbody.innerHTML = '<tr><td colspan="4" class="al-empty">Could not load subscribers: '
-          + escapeHtml(data.loadError) + '</td></tr>';
-      } else if (!alQrRows_.length) {
-        tbody.innerHTML = '<tr><td colspan="4" class="al-empty">No subscribers yet. Add one with the form below.</td></tr>';
-      } else {
-        tbody.innerHTML = alQrRows_.map(function (s, idx) {
-          const activeCls = s.active ? 'al-active-yes' : 'al-active-no';
-          const activeLbl = s.active ? 'Yes' : 'No';
-          return '<tr>'
-            + '<td>' + escapeHtml(s.email) + '</td>'
-            + '<td><span class="al-active ' + activeCls + '">' + activeLbl + '</span></td>'
-            + '<td>' + escapeHtml(s.notes || '') + '</td>'
-            + '<td>'
-            +   '<button type="button" class="link-btn al-qr-edit" data-idx="' + idx + '">Edit</button> '
-            +   '<button type="button" class="link-btn al-qr-remove" data-idx="' + idx + '">Remove</button>'
-            + '</td></tr>';
-        }).join('');
-        tbody.querySelectorAll('.al-qr-edit').forEach(function (b) {
-          b.addEventListener('click', function () { alQrEdit_(Number(b.getAttribute('data-idx'))); });
-        });
-        tbody.querySelectorAll('.al-qr-remove').forEach(function (b) {
-          b.addEventListener('click', function () { alQrRemove_(Number(b.getAttribute('data-idx'))); });
-        });
-      }
-    }
     const installed = !!data.installed;
     alSetStatePill_('al-qr-pill', installed);
     const statusEl = $('al-qr-trigger-status');
@@ -8700,34 +8761,6 @@
       .withFailureHandler(function (err) { alRenderQueueReport_({ loadError: (err && err.message) ? err.message : String(err) }); })
       .getQueueReportInit();
   }
-  function alQrEdit_(idx) {
-    const s = alQrRows_[idx]; if (!s) return;
-    if ($('al-qr-email'))  $('al-qr-email').value  = s.email || '';
-    if ($('al-qr-notes'))  $('al-qr-notes').value  = s.notes || '';
-    if ($('al-qr-active')) $('al-qr-active').checked = !!s.active;
-    alQrSetStatus_('', '');
-  }
-  function alQrClear_() {
-    if ($('al-qr-email'))  $('al-qr-email').value  = '';
-    if ($('al-qr-notes'))  $('al-qr-notes').value  = '';
-    if ($('al-qr-active')) $('al-qr-active').checked = true;
-    alQrSetStatus_('', '');
-  }
-  function alQrSave_() {
-    const email = (($('al-qr-email') && $('al-qr-email').value) || '').trim();
-    if (!email) { alQrSetStatus_('error', 'Enter an email address.'); return; }
-    const req = {
-      email:  email,
-      notes:  (($('al-qr-notes') && $('al-qr-notes').value) || '').trim(),
-      active: !($('al-qr-active') && !$('al-qr-active').checked),
-    };
-    const btn = $('al-qr-save'); if (btn) btn.disabled = true;
-    alQrSetStatus_('loading', 'Saving…');
-    google.script.run
-      .withSuccessHandler(function () { if (btn) btn.disabled = false; alQrClear_(); alQrSetStatus_('success', 'Saved.'); alQrReload_(); })
-      .withFailureHandler(function (err) { if (btn) btn.disabled = false; alQrSetStatus_('error', 'Save failed: ' + (err && err.message ? err.message : String(err))); })
-      .saveQueueReportSubscriber(req);
-  }
   function alQrRemove_(idx) {
     const s = alQrRows_[idx]; if (!s) return;
     if (!window.confirm('Remove ' + s.email + ' from the Daily Call Queue Report?')) return;
@@ -8737,7 +8770,7 @@
       .removeQueueReportSubscriber({ email: s.email });
   }
   function alQrPreview_() {
-    const btn = $('al-qr-preview'); if (!btn) return;
+    const btn = $('al-rs-qr-preview'); if (!btn) return;
     btn.disabled = true; const prev = btn.textContent; btn.textContent = 'Sending…';
     google.script.run
       .withSuccessHandler(function (res) {

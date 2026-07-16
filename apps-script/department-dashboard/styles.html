@@ -3728,6 +3728,30 @@
   .al-state-pill:empty { display: none; }
   .al-state-pill.is-on  { background: var(--good-soft); color: var(--good); }
   .al-state-pill.is-off { background: var(--line); color: var(--muted); }
+  /* Batch 3: unified Report Subscribers section (Digest + Queue Report). */
+  .al-section-subtitle {
+    font-weight: 600;
+    font-size: 12px;
+    letter-spacing: 0.02em;
+    margin-bottom: 2px;
+  }
+  .al-rs-types { display: flex; gap: 18px; flex-wrap: wrap; }
+  .al-rs-schedules { display: flex; gap: 24px; flex-wrap: wrap; margin-top: 16px; }
+  .al-rs-schedule { flex: 1 1 300px; min-width: 0; }
+  /* Digest-only form fields hide when the Manager Digest type is unticked. */
+  .al-rs-hide-digest .al-rs-digest-only { display: none; }
+  /* Report-type chip in the unified subscriber table. */
+  .al-report-chip {
+    display: inline-block;
+    padding: 1px 8px;
+    border-radius: 999px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    white-space: nowrap;
+  }
+  .al-report-chip.al-report-digest { background: var(--accent-soft); color: var(--accent); }
+  .al-report-chip.al-report-queue  { background: var(--good-soft); color: var(--good); }
   .al-hint { font-size: 12px; color: var(--muted); margin: 0 0 10px; }
   .al-hint a { color: var(--accent); text-decoration: none; }
   /* F2 Neon mirror-health line (sheet-vs-Neon DQE max-date check). */
