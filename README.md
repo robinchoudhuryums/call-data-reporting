@@ -165,8 +165,9 @@ scripts/deploy.sh apps-script/cdr-import <cdr-import-deployment-id>
   Active (TRUE/FALSE) | Notes | Format (`summary` default, or
   `insights` for the Insights-report digest: team rollup deltas + a
   per-agent delta table vs the cadence-appropriate prior window).
-- In the deployed dashboard, open Alerts (admin-only) → **Manager
-  Digest Subscribers** → **Install digest triggers**. Daily fires
+- In the deployed dashboard, open Alerts (admin-only) → **Report
+  Subscribers** (the unified Digest + Daily Call Queue Report
+  subscriber table) → **Install digest triggers**. Daily fires
   weekday mornings for the previous day; weekly fires Monday morning
   for the prior Mon&ndash;Fri window; monthly fires on the 1st for
   the prior calendar month.
