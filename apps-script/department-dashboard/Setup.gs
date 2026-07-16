@@ -54,6 +54,7 @@ function setup() {
     [SHEETS.ORPHAN_FIX_LOG,        ORPHAN_FIX_LOG_HEADERS],
     [SHEETS.DEPT_CONFIG,           DEPT_CONFIG_HEADERS],
     [SHEETS.REPORT_USAGE,          REPORT_USAGE_HEADERS],
+    [SHEETS.QUEUE_REPORT_SUBSCRIBERS, QUEUE_REPORT_SUBSCRIBERS_HEADERS],
   ];
   const failed = [];
   specs.forEach(function (spec) {

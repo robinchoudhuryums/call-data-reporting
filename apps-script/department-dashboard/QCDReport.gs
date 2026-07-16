@@ -210,6 +210,15 @@ function getQcdAllDepartments(req) {
     } catch (e) { /* recompute */ }
   }
 
+  const data = computeQcdAllDepartments_(from, to);
+  return qcdAllDeptCacheAndReturn_(data, cache, cacheKey, _user);
+}
+
+// Pure all-departments QCD compute (no auth / cache / usage log), split out so
+// the automated Daily Call Queue Report email (QueueReportEmail.gs) can reuse
+// the EXACT report compute in a trigger context, which has no Session user to
+// feed getQcdAllDepartments' auth gate (the computeDigestStats_ convention).
+function computeQcdAllDepartments_(from, to) {
   const t0 = Date.now();
   const allDepts = getAllDepartments_();
   const depts = [];
@@ -332,6 +341,13 @@ function getQcdAllDepartments(req) {
     grandTotals: grandTotals,
   };
 
+  return data;
+}
+
+// Cache-put + usage-log tail for getQcdAllDepartments, split from the compute
+// so QueueReportEmail.gs can call computeQcdAllDepartments_ directly in a
+// trigger context (no Session user, no cache identity to log).
+function qcdAllDeptCacheAndReturn_(data, cache, cacheKey, user) {
   const json = JSON.stringify(data);
   if (json.length <= 100000) {
     try { cache.put(cacheKey, json, QCD_ALLDEPT_CACHE_TTL_SECONDS); }
@@ -340,7 +356,7 @@ function getQcdAllDepartments(req) {
   // RPT-10: the INV-01 telemetry carve-out, like IR/Insights/Missed --
   // this report's usage was invisible to the consolidation evidence base.
   // 'ALL' because the report has no dept dimension.
-  logReportUsage_('qcdAllDept', 'ALL', _user, false);
+  logReportUsage_('qcdAllDept', 'ALL', user, false);
   return data;
 }
 
