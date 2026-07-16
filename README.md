@@ -138,7 +138,10 @@ scripts/deploy.sh apps-script/cdr-import <cdr-import-deployment-id>
   reads, Orphan Fix log) don't silently no-op against missing
   sheets.
 - Populate the `Access Control` sheet with one row per manager
-  (Email | Department | Notes).
+  (Email | Department | Notes). A manager is pinned to that one
+  department; set **Department to `ALL`** (or `*`) instead to grant an
+  **all-departments manager** — sees every department's data but no
+  admin-only surfaces.
 - Add yourself to the admin list. Two options:
   - **Preferred:** Project Settings → Script Properties → add
     `ADMIN_EMAILS` set to a comma-separated list of admin emails.
