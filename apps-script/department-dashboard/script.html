@@ -3660,9 +3660,20 @@
       + '<button type="button" class="dsync-apply" data-dsync-apply="1">Use these dates</button>'
       + '<button type="button" class="dsync-x" data-dsync-x="1" aria-label="Dismiss">×</button>';
     host.style.display = '';
-    host.querySelector('[data-dsync-apply]').onclick = function () {
+    var applyBtn = host.querySelector('[data-dsync-apply]');
+    applyBtn.onclick = function () {
       applyDateSync_(page, otherWin.from, otherWin.to);
     };
+    // #5 Option A: the dept chip's Apply re-runs My Department for the offered
+    // window (applyDateSync_ -> refresh), so warm that summary on hover -- it'll
+    // SWR-paint the moment they click. Fire directly (not debounced): the button
+    // is small, prefetchDeptSummary_ is one-per-sig idempotent, and the Insights
+    // chip is skipped (its Apply re-runs Insights, whose sig isn't prefetchable).
+    if (page === 'dept') {
+      applyBtn.addEventListener('mouseover', function () {
+        prefetchDeptSummary_(otherWin.from, otherWin.to);
+      });
+    }
     host.querySelector('[data-dsync-x]').onclick = function () {
       dateSyncDismissed_[dismissKey] = true;
       host.style.display = 'none'; host.innerHTML = '';
@@ -5041,6 +5052,33 @@
         + (when ? ' (from ' + when + ')' : '') + ' — refreshing now…');
       return true;
     } catch (e) { return false; }
+  }
+
+  // #5 Option A: intent-gated prefetch of the OTHER page's data on hand-off
+  // hover, so the cross-page jump SWR-paints instantly instead of showing a
+  // skeleton for the full round-trip. Mirrors the IR hover-prefetch: one fetch
+  // per (report, signature) per session, skipped when the D1b store already
+  // holds the signature, best-effort throughout (a failed prefetch is silent;
+  // the real navigation fetch still surfaces any error). Scoped to the
+  // reliably-reconstructable direction -> My Department (getDepartmentSummary,
+  // req = {department, from, to}, so reportSig_ matches refresh()'s to the byte).
+  // The Insights direction is intentionally NOT prefetched: its request
+  // signature (agents + compare mode + resolved prior window) isn't reliably
+  // known at hover time, so a prefetch would usually miss the sig and just
+  // waste the call (see the follow-on note).
+  var deptSummaryPrefetched_ = {};   // sig -> true (one speculative fetch per window per session)
+  function prefetchDeptSummary_(fromIso, toIso) {
+    var dept = (typeof getRequestedDept === 'function') ? getRequestedDept() : '';
+    if (!dept || !fromIso || !toIso) return;
+    var req = { department: dept, from: fromIso, to: toIso };
+    var sig = reportSig_(req);
+    if (!sig || deptSummaryPrefetched_[sig]) return;
+    deptSummaryPrefetched_[sig] = true;               // mark up front so hover jitter can't double-fire
+    if (reportLastGoodRead_('summary', sig)) return;  // already warm (a real run or prior prefetch)
+    google.script.run
+      .withSuccessHandler(function (data) { reportLastGoodWrite_('summary', sig, data); })
+      .withFailureHandler(function () { /* best-effort -- the navigation's own fetch surfaces errors */ })
+      .getDepartmentSummary(req);
   }
 
   function refresh() {
@@ -10891,6 +10929,26 @@
     const insQhMissedBtn = $('ins-qh-missed-link');
     if (insQhMissedBtn) insQhMissedBtn.addEventListener('click', function () {
       handoffToMyDept_(($('ins-from') || {}).value, ($('ins-to') || {}).value, { missed: true });
+    });
+    // #5 Option A: delegated ~300ms hover-prefetch on the two Insights -> My
+    // Department hand-offs (the button + the Queue-health missed link, which is
+    // re-rendered with each report) so the jump SWR-paints instantly. Delegated
+    // on the page (not the elements) so dynamically-rendered targets are
+    // covered; the window is read lazily at fire time so a period/date edit
+    // between hover and click is respected.
+    let insMdPrefetchTimer = null;
+    page.addEventListener('mouseover', function (e) {
+      const t = e.target.closest && e.target.closest('#ins-open-mydept-btn, #ins-qh-missed-link');
+      if (!t || !page.contains(t)) return;
+      if (insMdPrefetchTimer) clearTimeout(insMdPrefetchTimer);
+      insMdPrefetchTimer = setTimeout(function () {
+        insMdPrefetchTimer = null;
+        prefetchDeptSummary_(($('ins-from') || {}).value, ($('ins-to') || {}).value);
+      }, 300);
+    });
+    page.addEventListener('mouseout', function (e) {
+      const t = e.target.closest && e.target.closest('#ins-open-mydept-btn, #ins-qh-missed-link');
+      if (t && insMdPrefetchTimer) { clearTimeout(insMdPrefetchTimer); insMdPrefetchTimer = null; }
     });
     const editSelAll  = $('ins-edit-select-all');
     const editSelNone = $('ins-edit-select-none');

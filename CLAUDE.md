@@ -787,7 +787,22 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `applyDateSync_` sets the inputs + re-runs (`refresh` / `runInsReport`). It
   NEVER changes the dates on its own (owner: explicit sync, no surprise);
   dismissals are memoized per `<page>|<from>|<to>` so the same offer doesn't
-  re-nag. (3) **Chart->Missed drill-down slice
+  re-nag. **#5 Option A hover-prefetch (client-only):** the cross-page
+  hand-offs that land on My Department -- the Insights **"My Department ->"**
+  button + Queue-health **"See missed calls ->"** link (delegated ~300ms
+  hover intent on `#insights-page`), and the dept-side `.dsync-chip`'s "Use
+  these dates" (fired on Apply-button hover) -- warm My Department's summary
+  for the target window via `prefetchDeptSummary_` (one `getDepartmentSummary`
+  call, `req={department,from,to}`, seeded into the D1b store under the
+  `'summary'` key so `refresh()`'s SWR paints instantly on click). Guards
+  mirror the IR hover-prefetch: one fetch per signature per session
+  (`deptSummaryPrefetched_`), skipped when the store is already warm,
+  best-effort (a failed prefetch is silent). ONLY the My-Department direction
+  is prefetched -- the Insights direction's request signature (agents +
+  compare mode + resolved prior window) isn't reliably known at hover time,
+  so it's intentionally left cold (a sig miss would just waste the call).
+  Like the IR prefetch, a warmed summary is a real endpoint call, so Report
+  Usage telemetry counts it. (3) **Chart->Missed drill-down slice
   (Phase 1):** `MissedCallsReport.gs::getMissedCallsSlice` -- a read-only RPC
   (auth identical to `getMissedCallsReport`: signed-in + `assertDeptAccess_`)
   returning the SAME per-call Missed detail `computeMissedCallsReport_`
