@@ -301,6 +301,7 @@
     rows: [],
     totals: null,
     meta: null,
+    qcd: null,   // Batch D: the dept QCD snapshot (data.qcd) -- team-strip range tiles read state.qcd.range
     diagnostics: null,
     sortKey: 'answerRate',   // default sort: the stacked Answered/Missed bar
     sortDir: 'asc',          // 'asc' | 'desc' -- asc => worst answer rate first
@@ -5069,6 +5070,7 @@
     var csvBtn = $('csv-export-btn');
     if (csvBtn) csvBtn.style.display = state.rows.length ? '' : 'none';
     state.meta = (data && data.meta) || null;
+    state.qcd = (data && data.qcd) || null;   // Batch D: feeds the team-strip range QCD tiles
     state.diagnostics = (data && data.diagnostics) || null;
 
     var dqeHeader = $('dqe-table-header');
@@ -5942,7 +5944,30 @@
       + '<div class="dts-sub">per answered call</div>'
       + '</div>';
 
-    strip.innerHTML = heroTile + ansTile + missTile + attTile;
+    // Batch D: range-scoped Queue calls + Abandoned % tiles from the QCD
+    // snapshot's `range` block (own-queues-only, the selected From/To). Shown
+    // only for QCD-mapped depts with queue activity in the range.
+    var qcdTiles = '';
+    var qr = state.qcd && state.qcd.range;
+    if (qr && (Number(qr.totalCalls) || 0) > 0) {
+      var qCalls = Number(qr.totalCalls) || 0;
+      var qAbd   = Number(qr.abandoned) || 0;
+      var abStr  = qr.abandonedPctStr || ((Number(qr.abandonedPct) || 0).toFixed(2) + '%');
+      var abCls  = benchValueCls_('abandoned %', abStr, true);   // 5% company standard
+      qcdTiles =
+          '<div class="dts-tile">'
+        +   '<div class="dts-label">Queue calls <span class="dts-scope">this range</span></div>'
+        +   '<div class="dts-value" data-flash-key="dts:qcalls">' + fmtNumber(qCalls) + '</div>'
+        +   '<div class="dts-sub">across mapped queues</div>'
+        + '</div>'
+        + '<div class="dts-tile">'
+        +   '<div class="dts-label">Abandoned %</div>'
+        +   '<div class="dts-value' + abCls + '" data-flash-key="dts:qabd">' + escapeHtml(abStr) + '</div>'
+        +   '<div class="dts-sub">' + fmtNumber(qAbd) + ' abandoned</div>'
+        + '</div>';
+    }
+
+    strip.innerHTML = heroTile + ansTile + missTile + attTile + qcdTiles;
     strip.style.display = '';
     if (zone) zone.style.display = '';
     dsFlashChanged_(strip, 'deptstrip:' + getRequestedDept());

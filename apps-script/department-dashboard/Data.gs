@@ -253,7 +253,7 @@ function getDepartmentSummary(req) {
   // v12: qcdSnapshot carries an `mtd` block (+ `mtdStart`) for the QCD
   // side-panel period slider (Yesterday / MTD).
   const summarySource = (typeof readSourceCacheTag_ === 'function') ? readSourceCacheTag_() : 'sheet-sheet';
-  const cacheKey = 'summary:v12:' + dept + ':' + scope + ':' + from + ':' + to + ':' + summarySource;
+  const cacheKey = 'summary:v13:' + dept + ':' + scope + ':' + from + ':' + to + ':' + summarySource;
   const cached = cache.get(cacheKey);
   if (cached) {
     try {
@@ -617,7 +617,7 @@ function computeSummary_(dept, from, to, scope) {
   // Totals: sum the summables; mean the per-row averages across the
   // NONZERO roster rows (avgNonzero_) -- idle agents whose ATT/abd-wait
   // is 0 are excluded from both sides of the mean (owner decision, F-29
-  // follow-up; summary:v12). This matches the per-agent accumulators
+  // follow-up; summary:v13). This matches the per-agent accumulators
   // above, which skip zero values when averaging a single agent's days.
   //
   // Phase D: the totals sum only over matchedViaRoster=true rows.
@@ -659,7 +659,7 @@ function computeSummary_(dept, from, to, scope) {
   // mapped queues from DEPT_QCD_QUEUES). Used by the My Department
   // page's "Yesterday's QCD" section. Nullable when dept has no
   // QCD mapping OR no recent QCD rows; client renders nothing.
-  const qcdSnapshot = computeDeptQcdSnapshot_(dept, ssTZ);
+  const qcdSnapshot = computeDeptQcdSnapshot_(dept, ssTZ, { from: from, to: to });
 
   return {
     meta: {
@@ -746,7 +746,7 @@ function emptySummary_(dept, from, to, scope, rosterSize, rowsScanned, deptQueue
  * Returns null when the dept isn't mapped OR no recent QCD rows exist;
  * client renders nothing.
  */
-function computeDeptQcdSnapshot_(dept, ssTZ) {
+function computeDeptQcdSnapshot_(dept, ssTZ, opts) {
   try {
     const queues = (typeof queuesForDept_ === 'function')
                    ? queuesForDept_(dept) : [];
@@ -822,6 +822,29 @@ function computeDeptQcdSnapshot_(dept, ssTZ) {
       b2.violations += Number(r2[QCD_HISTORICAL_COLS.VIOLATIONS  - 1])    || 0;
     }
 
+    // Batch D: range-scoped block over the page's selected From/To, feeding the
+    // My Department team strip's "Queue calls" + "Abandoned %" tiles. Same
+    // in-memory `values` scan as the Yesterday/MTD passes (own-queues-only via
+    // buildBlock_, the P3 convention). Only runs when a range is supplied.
+    const rFrom = (opts && opts.from) ? String(opts.from) : '';
+    const rTo   = (opts && opts.to)   ? String(opts.to)   : '';
+    const byQueueRange = {};
+    if (rFrom && rTo) {
+      for (let k = 0; k < values.length; k++) {
+        const r3 = values[k];
+        if (String(r3[QCD_HISTORICAL_COLS.CALL_SOURCE - 1] || '').trim() !== 'Total Calls') continue;
+        const q3 = String(r3[QCD_HISTORICAL_COLS.CALL_QUEUE - 1] || '').trim();
+        if (!queueSet[q3]) continue;
+        const d3 = rowDateIso_(r3[QCD_HISTORICAL_COLS.DATE - 1], tz);
+        if (!d3 || d3 < rFrom || d3 > rTo) continue;
+        const b3 = byQueueRange[q3] || (byQueueRange[q3] = { total: 0, answered: 0, abandoned: 0, violations: 0 });
+        b3.total      += Number(r3[QCD_HISTORICAL_COLS.TOTAL_CALLS - 1])    || 0;
+        b3.answered   += Number(r3[QCD_HISTORICAL_COLS.TOTAL_ANSWERED - 1]) || 0;
+        b3.abandoned  += Number(r3[QCD_HISTORICAL_COLS.ABANDONED   - 1])    || 0;
+        b3.violations += Number(r3[QCD_HISTORICAL_COLS.VIOLATIONS  - 1])    || 0;
+      }
+    }
+
     // P3: decompose a per-queue map into OWN (main) queues vs SUB-queues (each
     // child queue belongs to its own department). The UNQUALIFIED dept total is
     // OWN-queues-only, so it reconciles with the QCD modal's "Department total
@@ -895,6 +918,9 @@ function computeDeptQcdSnapshot_(dept, ssTZ) {
     return Object.assign({}, latestBlock, {
       mtd: buildBlock_(byQueueMtd, latestDate),
       mtdStart: mtdStart,
+      // Batch D: the selected-period block for the team-strip QCD tiles (null
+      // when no range supplied). Carries from/to for the tile subtitle.
+      range: (rFrom && rTo) ? Object.assign(buildBlock_(byQueueRange, null), { from: rFrom, to: rTo }) : null,
     });
   } catch (e) {
     Logger.log('computeDeptQcdSnapshot_ failed: %s', e);
