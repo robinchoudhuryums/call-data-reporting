@@ -9458,6 +9458,10 @@
   // While true, every write handler no-ops and ofSetBusy_ disables the
   // controls, so a batch/single apply can't be double-submitted.
   let ofBusy_ = false;
+  // Batch 4: membership set of valid roster names, for the searchable
+  // "Map to roster name" input (an <input list> can hold free text -- a row is
+  // only rename-ready when its value is an EXACT roster name).
+  let ofRosterSet_ = {};
 
   function initOrphanFix() {
     const btn   = $('orphan-fix-btn');
@@ -9549,11 +9553,17 @@
       const sa0 = $('of-select-all'); if (sa0) { sa0.checked = false; sa0.indeterminate = false; sa0.disabled = true; }
       return;
     }
-    // Build the roster-name <option> list once; reused per row.
-    const optionsHtml = '<option value="">(pick canonical name)</option>'
-      + rosterNames.map(function (n) {
-          return '<option value="' + escapeHtml(n) + '">' + escapeHtml(n) + '</option>';
-        }).join('');
+    // Batch 4: membership set for the searchable canonical-name input.
+    ofRosterSet_ = {};
+    rosterNames.forEach(function (n) { ofRosterSet_[n] = true; });
+    // Populate the shared datalist for the searchable "Map to roster name"
+    // inputs (one datalist, reused by every row via list="of-roster-datalist").
+    const dl = $('of-roster-datalist');
+    if (dl) {
+      dl.innerHTML = rosterNames.map(function (n) {
+        return '<option value="' + escapeHtml(n) + '"></option>';
+      }).join('');
+    }
 
     // Dept options for the "New Assignment" add-to-roster flow.
     const deptOptionsHtml = '<option value="">(pick department)</option>'
@@ -9564,18 +9574,18 @@
     tbody.innerHTML = orphans.map(function (o, idx) {
       const exts = (o.sampleExts || []).map(escapeHtml).join(', ') || '<span class="al-empty-inline">-</span>';
       // Two rows per orphan: the main row, plus a hidden inline form for
-      // the "this is actually a NEW EMPLOYEE" flow -- adds them to a
+      // the "this is actually a NEW ASSIGNMENT" flow -- adds them to a
       // dept's DO NOT EDIT! column instead of renaming to someone else.
       return '<tr data-orphan-idx="' + idx + '">'
            +   '<td class="of-check-col"><input type="checkbox" class="of-row-check" data-idx="' + idx + '" '
-           +       'title="Select for batch apply (enabled once mapped)" aria-label="Select ' + escapeHtml(o.name) + ' for batch apply" disabled></td>'
+           +       'title="Select for batch apply (enabled once mapped or a new assignment is filled)" aria-label="Select ' + escapeHtml(o.name) + ' for batch apply" disabled></td>'
            +   '<td>' + escapeHtml(o.name) + '</td>'
            +   '<td class="num">' + o.rows + '</td>'
            +   '<td>' + escapeHtml(o.lastSeen || '') + '</td>'
            +   '<td>' + exts + '</td>'
-           +   '<td><select class="of-row-select" data-idx="' + idx + '">'
-           +     optionsHtml
-           +     '</select></td>'
+           +   '<td><input type="text" class="of-row-select" data-idx="' + idx + '" '
+           +       'list="of-roster-datalist" autocomplete="off" spellcheck="false" '
+           +       'placeholder="type to search roster…" aria-label="Map ' + escapeHtml(o.name) + ' to a roster name"></td>'
            +   '<td class="of-action-cell">'
            +     '<button type="button" class="btn btn-secondary of-row-apply" '
            +       'data-idx="' + idx + '" disabled>Apply</button> '
@@ -9594,24 +9604,19 @@
            +       '<button type="button" class="btn of-add-confirm" data-idx="' + idx + '" disabled>Add to roster</button>'
            +       '<span class="of-add-hint"><strong>Enter the agent’s own individual (direct) extension</strong> — NOT the department queue extension. '
            +         'Digit-only; comma-separate multiple. Writes one &ldquo;Name, ext1, ext2&rdquo; cell to the bottom of that dept’s '
-           +         'DO NOT EDIT! column (required; audited to Orphan Fix Log).</span>'
+           +         'DO NOT EDIT! column (required; audited to Orphan Fix Log). Tick the row to include it in a batch apply.</span>'
            +     '</div>'
            +   '</td>'
            + '</tr>';
     }).join('');
 
-    // Wire selects to enable Apply + the batch checkbox when a canonical name
-    // is chosen (clearing the select disables + unchecks the checkbox).
-    tbody.querySelectorAll('.of-row-select').forEach(function (sel) {
-      sel.addEventListener('change', function () {
-        const idx = sel.getAttribute('data-idx');
-        const applyBtn = tbody.querySelector('.of-row-apply[data-idx="' + idx + '"]');
-        const chk = tbody.querySelector('.of-row-check[data-idx="' + idx + '"]');
-        const has = !!sel.value;
-        if (applyBtn) applyBtn.disabled = !has;
-        if (chk) { chk.disabled = !has; if (!has) chk.checked = false; }
-        ofUpdateBatchState_();
-      });
+    // Searchable canonical-name input: a row is rename-ready only when its value
+    // is an EXACT roster name (ofSyncRowReady_ enforces membership). Both 'input'
+    // (typing) and 'change' (datalist pick / blur) update readiness live.
+    tbody.querySelectorAll('.of-row-select').forEach(function (inp) {
+      const sync = function () { ofSyncRowReady_(inp.getAttribute('data-idx')); };
+      inp.addEventListener('input', sync);
+      inp.addEventListener('change', sync);
     });
     tbody.querySelectorAll('.of-row-check').forEach(function (chk) {
       chk.addEventListener('change', ofUpdateBatchState_);
@@ -9621,35 +9626,29 @@
         if (ofBusy_) return;
         const idx = Number(btn.getAttribute('data-idx'));
         const orphan = (ofLastInit.orphans || [])[idx];
-        const sel = tbody.querySelector('.of-row-select[data-idx="' + idx + '"]');
-        const canonical = sel ? sel.value : '';
+        const inp = tbody.querySelector('.of-row-select[data-idx="' + idx + '"]');
+        const canonical = (inp && ofRosterSet_[inp.value]) ? inp.value : '';
         if (!orphan || !canonical) return;
         ofConfirmAndApply_(orphan, canonical);
       });
     });
 
-    // "New Assignment…" toggles the inline add-to-roster form; the confirm
-    // button enables once a dept is picked AND the ext field is non-empty.
+    // "New Assignment…" toggles the inline add-to-roster form; opening/closing it
+    // (and editing dept/ext) updates batch readiness so a filled new-assignment
+    // row can be ticked for a batch apply alongside renames.
     tbody.querySelectorAll('.of-row-addnew').forEach(function (btn) {
       btn.addEventListener('click', function () {
         const idx = btn.getAttribute('data-idx');
         const row = tbody.querySelector('.of-add-row[data-add-idx="' + idx + '"]');
         if (row) row.style.display = row.style.display === 'none' ? '' : 'none';
+        ofSyncRowReady_(idx);
       });
     });
-    const refreshAddConfirm = function (idx) {
-      const dept = tbody.querySelector('.of-add-dept[data-idx="' + idx + '"]');
-      const exts = tbody.querySelector('.of-add-exts[data-idx="' + idx + '"]');
-      const confirm = tbody.querySelector('.of-add-confirm[data-idx="' + idx + '"]');
-      if (confirm) confirm.disabled = !(dept && dept.value && exts && exts.value.trim());
-    };
     tbody.querySelectorAll('.of-add-dept').forEach(function (sel) {
-      sel.addEventListener('change', function () { refreshAddConfirm(sel.getAttribute('data-idx')); });
+      sel.addEventListener('change', function () { ofSyncRowReady_(sel.getAttribute('data-idx')); });
     });
     tbody.querySelectorAll('.of-add-exts').forEach(function (inp) {
-      inp.addEventListener('input', function () { refreshAddConfirm(inp.getAttribute('data-idx')); });
-      // Sample exts may have prefilled the field -- refresh once now.
-      refreshAddConfirm(inp.getAttribute('data-idx'));
+      inp.addEventListener('input', function () { ofSyncRowReady_(inp.getAttribute('data-idx')); });
     });
     tbody.querySelectorAll('.of-add-confirm').forEach(function (btn) {
       btn.addEventListener('click', function () {
@@ -9668,6 +9667,49 @@
     if (bar) bar.style.display = '';
     const selAll = $('of-select-all');
     if (selAll) { selAll.checked = false; selAll.indeterminate = false; }
+    ofUpdateBatchState_();
+  }
+
+  // Batch 4: a row's batch action + readiness. A row is batch-ready when its
+  // canonical-name input holds a valid roster name (=> rename) OR its New
+  // Assignment form is open and filled (=> roster-add). The New-Assignment path
+  // takes precedence when its form is open+filled (an explicit "new person"
+  // intent), else the canonical rename.
+  function ofRowReady_(idx) {
+    const tbody = $('of-orphans-tbody');
+    if (!tbody) return { ready: false };
+    const inp  = tbody.querySelector('.of-row-select[data-idx="' + idx + '"]');
+    const dept = tbody.querySelector('.of-add-dept[data-idx="' + idx + '"]');
+    const exts = tbody.querySelector('.of-add-exts[data-idx="' + idx + '"]');
+    const addRow = tbody.querySelector('.of-add-row[data-add-idx="' + idx + '"]');
+    const canonical = (inp && ofRosterSet_[inp.value]) ? inp.value : '';
+    const addOpen = !!(addRow && addRow.style.display !== 'none');
+    const addFilled = !!(addOpen && dept && dept.value && exts && exts.value.trim());
+    let kind = null;
+    if (addFilled) kind = 'roster-add';
+    else if (canonical) kind = 'rename';
+    return {
+      ready:     !!kind,
+      kind:      kind,
+      canonical: canonical,
+      addFilled: addFilled,
+      department: (dept && dept.value) || '',
+      extensions: (exts && exts.value.trim()) || '',
+    };
+  }
+
+  // Reconciles a single row's Apply / Add-to-roster / checkbox enabled state
+  // from its current values, then refreshes the batch toolbar.
+  function ofSyncRowReady_(idx) {
+    const tbody = $('of-orphans-tbody');
+    if (!tbody) return;
+    const r = ofRowReady_(idx);
+    const applyBtn   = tbody.querySelector('.of-row-apply[data-idx="' + idx + '"]');
+    const addConfirm = tbody.querySelector('.of-add-confirm[data-idx="' + idx + '"]');
+    const chk        = tbody.querySelector('.of-row-check[data-idx="' + idx + '"]');
+    if (applyBtn)   applyBtn.disabled   = !r.canonical;   // single Apply = rename only
+    if (addConfirm) addConfirm.disabled = !r.addFilled;
+    if (chk) { chk.disabled = !r.ready; if (!r.ready) chk.checked = false; }
     ofUpdateBatchState_();
   }
 
@@ -9713,19 +9755,15 @@
   function ofRefreshRowStates_() {
     const tbody = $('of-orphans-tbody');
     if (tbody) {
-      tbody.querySelectorAll('.of-row-select').forEach(function (sel) {
-        const idx = sel.getAttribute('data-idx');
-        const has = !!sel.value;
-        const ab = tbody.querySelector('.of-row-apply[data-idx="' + idx + '"]'); if (ab) ab.disabled = !has;
-        const ck = tbody.querySelector('.of-row-check[data-idx="' + idx + '"]'); if (ck) ck.disabled = !has;
-        sel.disabled = false;
-      });
-      tbody.querySelectorAll('.of-row-addnew, .of-add-dept, .of-add-exts').forEach(function (el) { el.disabled = false; });
-      tbody.querySelectorAll('.of-add-confirm').forEach(function (btn) {
-        const idx = btn.getAttribute('data-idx');
-        const dept = tbody.querySelector('.of-add-dept[data-idx="' + idx + '"]');
-        const exts = tbody.querySelector('.of-add-exts[data-idx="' + idx + '"]');
-        btn.disabled = !(dept && dept.value && exts && exts.value.trim());
+      // Re-enable the inputs first, then reconcile each row's Apply /
+      // Add-to-roster / checkbox state from its current values (ofSyncRowReady_
+      // handles both the rename and new-assignment readiness paths).
+      tbody.querySelectorAll('.of-row-select, .of-row-addnew, .of-add-dept, .of-add-exts')
+        .forEach(function (el) { el.disabled = false; });
+      const seen = {};
+      tbody.querySelectorAll('.of-row-select').forEach(function (inp) {
+        const idx = inp.getAttribute('data-idx');
+        if (!seen[idx]) { seen[idx] = true; ofSyncRowReady_(idx); }
       });
     }
     const aliasTbody = $('of-aliases-tbody');
@@ -9754,9 +9792,11 @@
     ofRender_(ofLastInit);   // re-renders + re-wires all three panels in place
   }
 
-  // Applies a list of {fromName,toName} renames SEQUENTIALLY (server-side
-  // LockService serializes writes anyway, so parallel would just contend).
-  // Resolves { ok:[{item,renamed,res}], failed:[{item,err}] }.
+  // Applies a list of actions SEQUENTIALLY (server-side LockService serializes
+  // writes anyway, so parallel would just contend). Each item is a rename
+  // ({kind:'rename'|undefined, fromName, toName}) or a new-assignment
+  // ({kind:'roster-add', fromName, department, extensions}). Resolves
+  // { ok:[{item,renamed,res}], failed:[{item,err}] }.
   function ofRunApplySequence_(items, onProgress) {
     return new Promise(function (resolve) {
       const ok = [], failed = [];
@@ -9765,10 +9805,14 @@
         if (i >= items.length) { resolve({ ok: ok, failed: failed }); return; }
         const it = items[i];
         if (onProgress) onProgress(i, items.length, it);
-        google.script.run
+        const runner = google.script.run
           .withSuccessHandler(function (res) { ok.push({ item: it, renamed: (res && res.renamed) || 0, res: res }); i++; next(); })
-          .withFailureHandler(function (err) { failed.push({ item: it, err: (err && err.message) ? err.message : String(err) }); i++; next(); })
-          .applyOrphanRename({ fromName: it.fromName, toName: it.toName, alsoAddAlias: true, notes: '' });
+          .withFailureHandler(function (err) { failed.push({ item: it, err: (err && err.message) ? err.message : String(err) }); i++; next(); });
+        if (it.kind === 'roster-add') {
+          runner.addOrphanToRoster({ name: it.fromName, department: it.department, extensions: it.extensions, notes: '' });
+        } else {
+          runner.applyOrphanRename({ fromName: it.fromName, toName: it.toName, alsoAddAlias: true, notes: '' });
+        }
       };
       next();
     });
@@ -9778,52 +9822,78 @@
     if (ofBusy_) return;
     const tbody = $('of-orphans-tbody');
     if (!tbody) return;
+    // Batch 4: a checked row is a rename OR a new-assignment (add-to-roster),
+    // per ofRowReady_. Collect the right action for each.
     const items = [];
     tbody.querySelectorAll('.of-row-check:checked').forEach(function (chk) {
       const idx = Number(chk.getAttribute('data-idx'));
       const orphan = (ofLastInit.orphans || [])[idx];
-      const sel = tbody.querySelector('.of-row-select[data-idx="' + idx + '"]');
-      if (orphan && sel && sel.value) {
-        items.push({ fromName: orphan.name, toName: sel.value, rows: orphan.rows || 0 });
+      if (!orphan) return;
+      const r = ofRowReady_(idx);
+      if (r.kind === 'roster-add') {
+        items.push({ kind: 'roster-add', fromName: orphan.name,
+          department: r.department, extensions: r.extensions, rows: orphan.rows || 0 });
+      } else if (r.kind === 'rename') {
+        items.push({ kind: 'rename', fromName: orphan.name, toName: r.canonical, rows: orphan.rows || 0 });
       }
     });
     if (!items.length) return;
-    const totalRows = items.reduce(function (a, b) { return a + (b.rows || 0); }, 0);
+    const renameItems = items.filter(function (it) { return it.kind === 'rename'; });
+    const addItems    = items.filter(function (it) { return it.kind === 'roster-add'; });
+    const totalRows   = renameItems.reduce(function (a, b) { return a + (b.rows || 0); }, 0);
+    const parts = [];
+    if (renameItems.length) parts.push('<strong>' + renameItems.length + '</strong> rename'
+      + (renameItems.length === 1 ? '' : 's') + ' across <strong>' + totalRows + '</strong> historical row'
+      + (totalRows === 1 ? '' : 's'));
+    if (addItems.length) parts.push('<strong>' + addItems.length + '</strong> new roster assignment'
+      + (addItems.length === 1 ? '' : 's'));
     dsConfirm_({
-      title: 'Apply ' + items.length + ' rename' + (items.length === 1 ? '' : 's'),
+      title: 'Apply ' + items.length + ' change' + (items.length === 1 ? '' : 's'),
       tone: 'danger',
-      messageHtml: 'Rename <strong>' + items.length + '</strong> outlier'
-        + (items.length === 1 ? '' : 's') + ' across <strong>' + totalRows + '</strong> historical row'
-        + (totalRows === 1 ? '' : 's') + '? Each also adds an alias so future imports map correctly. '
-        + 'This modifies past data in DQE Historical Data and is audited to Orphan Fix Log.',
+      messageHtml: 'Apply ' + parts.join(' and ') + '? '
+        + (renameItems.length ? 'Renames modify past data in DQE Historical Data and add aliases so future imports map correctly. ' : '')
+        + (addItems.length ? 'New assignments append a cell to the department roster. ' : '')
+        + 'All actions are audited to Orphan Fix Log.',
       confirmLabel: 'Apply ' + items.length, cancelLabel: 'Cancel',
     }).then(function (okc) {
       if (!okc) return;
       ofSetBusy_(true);
       ofRunApplySequence_(items, function (k, total, it) {
-        ofSetStatus_('loading', 'Applying ' + (k + 1) + ' of ' + total + ': '
-          + it.fromName + ' → ' + it.toName + '…');
+        const label = it.kind === 'roster-add'
+          ? (it.fromName + ' → ' + it.department + ' (new)')
+          : (it.fromName + ' → ' + it.toName);
+        ofSetStatus_('loading', 'Applying ' + (k + 1) + ' of ' + total + ': ' + label + '…');
       }).then(function (res) {
         ofSetBusy_(false);
-        const renamed = res.ok.reduce(function (a, b) { return a + b.renamed; }, 0);
+        const renamedRows = res.ok.reduce(function (a, b) { return a + (b.renamed || 0); }, 0);
+        const okRenames = res.ok.filter(function (o) { return o.item.kind !== 'roster-add'; }).length;
+        const okAdds    = res.ok.filter(function (o) { return o.item.kind === 'roster-add'; }).length;
         if (res.failed.length) {
           ofSetStatus_('error', 'Applied ' + res.ok.length + ' of ' + items.length + '. '
             + res.failed.length + ' failed: '
             + res.failed.map(function (f) { return f.item.fromName + ' (' + f.err + ')'; }).join('; '));
         } else {
-          ofSetStatus_('success', 'Renamed ' + renamed + ' row' + (renamed === 1 ? '' : 's')
-            + ' across ' + res.ok.length + ' outlier' + (res.ok.length === 1 ? '' : 's')
-            + '. Aliases added so future imports map correctly. Overview updates immediately; '
-            + 'other views may take up to 30 minutes (cache TTL).');
+          const bits = [];
+          if (okRenames) bits.push('renamed ' + renamedRows + ' row' + (renamedRows === 1 ? '' : 's')
+            + ' across ' + okRenames + ' outlier' + (okRenames === 1 ? '' : 's'));
+          if (okAdds) bits.push('added ' + okAdds + ' new assignment' + (okAdds === 1 ? '' : 's'));
+          ofSetStatus_('success', 'Done — ' + bits.join(' and ')
+            + '. Overview updates immediately; other views may take up to 30 minutes (cache TTL).');
         }
-        showToast('Applied ' + res.ok.length + ' rename' + (res.ok.length === 1 ? '' : 's'),
+        showToast('Applied ' + res.ok.length + ' change' + (res.ok.length === 1 ? '' : 's'),
           res.failed.length ? 'error' : 'success');
-        // Item 5a: update in place -- drop every successfully-applied orphan and
-        // refresh aliases/log from the LAST successful response (cumulative, so
-        // the newest carries the full current state). No re-fetch.
+        // Seamless refresh (Batch 1): drop applied orphans + merge the freshest
+        // aliases / log / rosterNames across the batch (roster-adds return
+        // rosterNames+log; renames return aliases+log -- take the latest of each).
         const applied = res.ok.map(function (o) { return o.item.fromName; });
-        const lastRes = res.ok.length ? res.ok[res.ok.length - 1].res : {};
-        ofApplyLocalUpdate_(lastRes, applied);
+        const merged = {};
+        res.ok.forEach(function (o) {
+          const rr = o.res || {};
+          if (rr.aliases)     merged.aliases = rr.aliases;
+          if (rr.log)         merged.log = rr.log;
+          if (rr.rosterNames) merged.rosterNames = rr.rosterNames;
+        });
+        ofApplyLocalUpdate_(merged, applied);
       });
     });
   }
