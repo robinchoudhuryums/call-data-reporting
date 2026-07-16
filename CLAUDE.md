@@ -747,6 +747,52 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   it's answered ÷ rung, and rung counts RINGS -- one call can ring several
   agents -- so it's ring-level, not share-of-unique-calls; the glossary
   carries a matching `'% answered (rings)'` entry (plain + rich).
+- **Insights period slider, trend-at-bottom, and the Insights<->My-Department
+  hand-off (PRs #167-169, all client-only except the one drill endpoint).**
+  Three pieces that de-clutter Insights and make the two-page relationship
+  explicit. (1) **I4 period slider:** the Insights results header carries a
+  compact preset slider (`#ins-period-bar`: Last 7 / Last 30 / MTD / YTD /
+  Custom...) that drives the WHOLE report window via `runInsReport`
+  (preserving compare mode + agents; Custom... opens the Edit popover),
+  reusing the Overview O4 `.ov-period-*` styling; the active button re-syncs
+  from `meta.from/to` every render, so NO prefs bump. The **12-mo team-trend
+  chart moved OUT of the Team-detail `<details>` to its own always-visible
+  "Trends" section at the BOTTOM** of the report -- it's the one view the
+  slider doesn't govern (always ~12 months) -- rendered in the main pass via
+  the measure-guarded `insDrawTrendChart_` (the MC2 offsetParent lesson, since
+  the render pass can run before the results container is shown); the share
+  doughnut stays deferred inside Team-detail (`insRenderDeferredCharts_` is
+  share-only now). NB the by-queue trend tab is labeled **"Abd %"** in the UI
+  (the mega-bullet's "Abandoned % by Queue" is the internal
+  `data-metric="queues"`). (2) **Hand-off (the department is the shared global
+  selector, so only DATES are carried):** `handoffToInsights_(from,to,scroll)`
+  (a parametrized `launcherOpenInsights_`) and `handoffToMyDept_(from,to,{missed})`
+  (mirrors `launcherOpenMissed_`; `missed:true` arms `deptMissedScrollPending_`).
+  My Department renders a **collapsed one-line Insights summary strip**
+  (`#dept-insights-strip`, `renderDeptInsightsStrip_` beside
+  `renderDeptTeamStrip_`) -- a teaser from the SAME server totals (no new
+  fetch) + an expand + "Open full report ->" (-> Insights, carrying the
+  dept-page dates). Insights carries a header **"My Department ->"** button and
+  a Queue-health **"See missed calls ->"** drill (both -> `handoffToMyDept_`,
+  wired in `initInsightsReport`). (3) **Chart->Missed drill-down slice
+  (Phase 1):** `MissedCallsReport.gs::getMissedCallsSlice` -- a read-only RPC
+  (auth identical to `getMissedCallsReport`: signed-in + `assertDeptAccess_`)
+  returning the SAME per-call Missed detail `computeMissedCallsReport_`
+  produces, narrowed IN MEMORY by `{isoDow, hourStart, hourEnd (CST), agent,
+  queue}` (pure `missedSliceFilter_` + `missedSliceValidateFilter_` +
+  TZ-safe `missedSliceIsoDow_`; `missedReportDataCached_` shares the section's
+  `missed:v14` cache). It is the **DQE missed-ring lens** the heatmap cell
+  drill + Queue-health hand-off will surface as a SEPARATE, LABELED lens: the
+  three drill surfaces count DIFFERENT things and DON'T reconcile (heatmap =
+  `inbound_calls` abandons, Queue health = `qcd_history` roll-up, missed bar =
+  `dqe_history` rings -- the parked QCD-vs-inbound discrepancy). **Owner
+  rulings: two labeled lenses (never silently swap the count) + an in-place
+  overlay.** Phase-1 limit: the `queue` filter narrows the queue-only section
+  only (agent rings aren't queue-tagged). No UI wired yet (the endpoint is
+  dormant); the full design + phasing (Phase 2 = missed-bucket journey chips,
+  Phase 3 = queue-scoped hand-off, Phase 4 = heatmap dual-lens overlay) lives
+  in **`docs/insights-drilldown-spec.md`**. Pinned by
+  `tests/unit/missed-slice.test.js`.
 - **Guided onboarding tour is client-only (#5).** A self-built
   coachmark walkthrough (no dependency): `initTour_` / `startTour_`
   in script.html + `.tour-*` styles. Spotlight = a `#tour-highlight`
