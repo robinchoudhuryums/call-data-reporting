@@ -812,11 +812,20 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   box with a huge `box-shadow` that dims everything else (click-through;
   only the `#tour-tip` card is interactive); reduced-motion aware.
   Steps (`tourAllSteps_`) anchor to stable IDs (`#page-title`,
-  `#ov-launcher`, `#freshness-pill`, `#my-dept-btn`, `#escalations-btn`,
+  `#ov-launcher`, `#freshness-pill`, `#ov-trend-chart`, `#ov-period-bar`,
+  `#my-dept-btn`, `#escalations-btn`, `#insights-report-btn`,
   `#reports-menu-btn`, `#help-fab`) and `tourVisibleSteps_` drops any
   target that's missing or hidden (so admin-only/not-yet-rendered
   elements are skipped gracefully -- e.g. the freshness pill before
-  data loads). Auto-runs ONCE for first-time visitors (localStorage
+  data loads, or -- since Batch F added the `#ov-trend-chart` /
+  `#ov-period-bar` steps, both inside the data-gated `#ov-body` -- those
+  two on a cold first load before the Overview payload reveals the body;
+  they always show on replay + warm loads, the established freshness-pill
+  pattern). The nav-button step bodies also describe the newer per-page
+  surfaces they open (My Department's team strip + range Queue tiles +
+  inline Missed report; Insights' period slider + the Batch E date-sync
+  chip) since those live off the Overview landing and can't be their own
+  visible steps. Auto-runs ONCE for first-time visitors (localStorage
   `cdr.tour.done`, gated to the Overview landing, 1.2s after load) and
   is always replayable from **Help -> Guided tour** (`#tour-replay-btn`,
   which closes Help first). No server endpoint / cache bump -- part of
