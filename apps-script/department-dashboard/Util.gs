@@ -26,6 +26,7 @@ function assertAdmin_() {
  *   - role 'none'    -> 'Not authorized.' (defense-in-depth; callers
  *                       generally check this earlier too)
  *   - manager        -> may only request their own department
+ *   - manager+allDepts (#1) -> like admin: any department that exists
  *   - admin          -> may request any department that exists
  *
  * Reports with a non-standard scope (InboundReport's company-view /
@@ -34,10 +35,12 @@ function assertAdmin_() {
  */
 function assertDeptAccess_(user, dept) {
   if (!user || user.role === 'none') throw new Error('Not authorized.');
-  if (user.role === 'manager' && dept !== user.department) {
+  // Single-dept managers are pinned; all-dept managers (Access Control dept =
+  // "ALL") + admins may request any department that exists.
+  if (user.role === 'manager' && !user.allDepts && dept !== user.department) {
     throw new Error('Not authorized for this department.');
   }
-  if (user.role === 'admin' && getAllDepartments_().indexOf(dept) === -1) {
+  if ((user.role === 'admin' || user.allDepts) && getAllDepartments_().indexOf(dept) === -1) {
     throw new Error('Unknown department: ' + dept);
   }
 }

@@ -119,11 +119,15 @@ function getEscalationsInit() {
   var user = resolveUser_(Session.getActiveUser().getEmail());
   if (!user || user.role === 'none') throw new Error('Not authorized.');
   var isAdmin = user.role === 'admin';
+  // #1: an all-departments manager sees every dept's escalations (like admin
+  // for data breadth), but createEscalation stays assertAdmin_-gated.
+  var allDepts = !!user.allDepts;
   return {
     role:        user.role,
     isAdmin:     isAdmin,
+    allDepts:    allDepts,
     department:  user.department || null,
-    departments: isAdmin ? getAllDepartments_() : (user.department ? [user.department] : []),
+    departments: (isAdmin || allDepts) ? getAllDepartments_() : (user.department ? [user.department] : []),
     neonConfigured: !!PropertiesService.getScriptProperties().getProperty('NEON_HOST'),
     statuses:    ['pending', 'pending_review', 'in_progress', 'resolved', 'rejected', 'all'],
   };
@@ -141,9 +145,10 @@ function getEscalations(req) {
   var user = resolveUser_(Session.getActiveUser().getEmail());
   if (!user || user.role === 'none') throw new Error('Not authorized.');
 
-  // Managers are pinned to their own dept; admins may pick a dept or 'ALL'.
+  // Single-dept managers are pinned to their own dept; admins + all-dept
+  // managers (#1) may pick a dept or 'ALL'.
   var department, scopeAll = false;
-  if (user.role === 'admin') {
+  if (user.role === 'admin' || user.allDepts) {
     var reqDept = String(req.department || '').trim();
     if (!reqDept || reqDept === 'ALL') { scopeAll = true; }
     else { assertDeptAccess_(user, reqDept); department = reqDept; }

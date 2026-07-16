@@ -770,11 +770,19 @@
 
   const $ = function (id) { return document.getElementById(id); };
 
+  // #1: an all-departments manager (Access Control dept = "ALL") sees every
+  // dept's non-admin data like an admin, but NOT admin surfaces. Use this for
+  // DATA-BREADTH gates (dept selector, cross-dept routing); admin-SURFACE gates
+  // stay `USER.role === 'admin'`, which excludes this role automatically.
+  function isAllDeptViewer_() {
+    return typeof USER !== 'undefined' && !!USER && (USER.role === 'admin' || USER.allDepts === true);
+  }
+
   function init() {
     // Header
     $('user-email').textContent = USER.email || '(unknown)';
     const tag = $('role-tag');
-    tag.textContent = USER.role;
+    tag.textContent = USER.allDepts ? 'manager · all depts' : USER.role;
     tag.classList.add('tag-' + USER.role);
 
     // Admin-only menu items: Compare Ranges (under Reports) and
@@ -840,8 +848,9 @@
       });
     })();
 
-    // Department selector vs static label
-    if (USER.role === 'admin' && USER.departments && USER.departments.length) {
+    // Department selector vs static label. All-dept managers get the selector
+    // too (#1) so they can view any department.
+    if (isAllDeptViewer_() && USER.departments && USER.departments.length) {
       const sel = $('dept-selector');
       USER.departments.forEach(function (d) {
         const opt = document.createElement('option');
@@ -1709,7 +1718,7 @@
   // admins show whichever dept is currently selected in the header
   // dropdown (so they can pin a focus dept).
   function ovViewerDept_(data) {
-    if (USER.role === 'admin') {
+    if (isAllDeptViewer_()) {
       const sel = $('dept-selector');
       return (sel && sel.value) || (USER.departments && USER.departments[0]) || null;
     }
@@ -2052,7 +2061,7 @@
     // the grid as the FIRST card with a distinctive border + "your dept"
     // badge (replaces the old full-width hero above the chart).
     const viewerBadge = isViewer
-      ? '<span class="ov-dept-viewer-badge">' + (USER.role === 'admin' ? 'selected' : 'My Dept') + '</span>'
+      ? '<span class="ov-dept-viewer-badge">' + (isAllDeptViewer_() ? 'selected' : 'My Dept') + '</span>'
       : '';
     const cls = 'ov-dept-tile'
               + (isChild ? ' ov-dept-tile-child' : '')
@@ -2117,7 +2126,7 @@
       ? '<span class="ov-subq-metric ov-subq-metric-viol"><span class="ov-subq-metric-lbl">Viol</span> ' + qcd.violations + '</span>'
       : '';
     const spark = irSparkline_((dept.trend || []).map(function (v) { return v == null ? 0 : v; }), color);
-    const routable = (USER.role === 'admin');
+    const routable = isAllDeptViewer_();
     const routeBtn = routable
       ? '<button type="button" class="ov-subq-route" data-dept="' + escapeHtml(dept.name) + '">Open ' + escapeHtml(dept.name) + ' &rarr;</button>'
       : '';
@@ -2215,7 +2224,7 @@
       if (vi > 0) groups.unshift(groups.splice(vi, 1)[0]);
     }
 
-    const tileRoutable = (USER.role === 'admin');
+    const tileRoutable = isAllDeptViewer_();
     const html = groups.map(function (g) {
       const color = colors[(slotByName[g.parent.name] || 0) % colors.length];
       const parentIsViewer = (g.parent.name === viewerDept);
@@ -2339,7 +2348,7 @@
     }
     wrap.style.display = '';
 
-    const title = (USER.role === 'admin' ? 'Selected dept: ' : 'Your dept: ') + viewerDept;
+    const title = (isAllDeptViewer_() ? 'Selected dept: ' : 'Your dept: ') + viewerDept;
     $('ov-user-table-title').textContent = title;
     // O4: the table follows its own period slider (re-fetches the range).
     ovWireTablePeriodBar_();
@@ -3017,7 +3026,7 @@
     if (!ds || !ds._deptName) return;                 // baseline / non-dept line
     const deptName = ds._deptName;
     const viewerDept = chart._viewerDept || ovViewerDept_(data);
-    if (USER.role !== 'admin' && deptName !== viewerDept) return;
+    if (!isAllDeptViewer_() && deptName !== viewerDept) return;
     const iso = (chart._trendIso || [])[hits[0].index] || null;
     ovRouteToDept_(deptName, iso);
   }
@@ -4741,7 +4750,7 @@
   }
 
   function getRequestedDept() {
-    if (USER.role === 'admin') {
+    if (isAllDeptViewer_()) {
       const sel = $('dept-selector');
       return sel ? sel.value : '';
     }
@@ -14730,12 +14739,15 @@
         const sel = $('esc-dept');
         if (sel) {
           let opts = '';
-          if (escInit_.isAdmin) opts += '<option value="ALL">All departments</option>';
+          // #1: admins + all-dept managers get the cross-dept "All departments"
+          // option; single-dept managers get only their own dept.
+          const escAllDept = escInit_.isAdmin || escInit_.allDepts;
+          if (escAllDept) opts += '<option value="ALL">All departments</option>';
           opts += depts.map(function (d) { return '<option value="' + escapeHtml(d) + '">' + escapeHtml(d) + '</option>'; }).join('');
           sel.innerHTML = opts;
-          // Managers have one dept -> hide the selector entirely.
+          // Single-dept managers have one dept -> hide the selector entirely.
           const col = $('esc-dept-col');
-          if (col) col.style.display = (escInit_.isAdmin || depts.length > 1) ? '' : 'none';
+          if (col) col.style.display = (escAllDept || depts.length > 1) ? '' : 'none';
         }
         // Create-form dept selector (admins choose any dept).
         const cdept = $('esc-c-dept');
@@ -15018,7 +15030,7 @@
             + '<span class="esc-field-v">' + escapeHtml(f[1]) + '</span></div>';
         }).join('') + '</div>'
       : '';
-    const deptTag = (escInit_ && (escInit_.isAdmin || ($('esc-dept') && $('esc-dept').value === 'ALL')))
+    const deptTag = (escInit_ && (escInit_.isAdmin || escInit_.allDepts || ($('esc-dept') && $('esc-dept').value === 'ALL')))
       ? '<span class="esc-dept-tag">' + escapeHtml(r.department || '') + '</span>' : '';
     const statusPill = inReview
       ? '<span class="esc-pill esc-pill-review">Needs review</span>'
