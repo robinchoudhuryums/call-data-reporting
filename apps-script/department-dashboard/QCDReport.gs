@@ -193,6 +193,25 @@ function getQcdAllDepartments(req) {
   }
   if (from > to) throw new Error('from must be on or before to.');
 
+  const res = qcdAllDeptCachedData_(from, to);
+  // RPT-10: the INV-01 telemetry carve-out. 'ALL' because the report has no
+  // dept dimension. Logged here (the RPC boundary) with the real cacheHit.
+  logReportUsage_('qcdAllDept', 'ALL', _user, res.cacheHit);
+  return res.data;
+}
+
+/**
+ * The cache-checked all-departments QCD compute, shared by the RPC
+ * (getQcdAllDepartments) AND the automated email (QueueReportEmail.gs's
+ * preview + trigger sends). Batch 1 item 2: the email path used to call the
+ * pure computeQcdAllDepartments_ directly, so an admin "Send me a preview"
+ * paid the full cold compute (~minutes) even when the web report had just
+ * warmed the exact (from,to) blob. Routing both through this helper means the
+ * preview reuses the 6h-TTL qcdAll cache -- and, conversely, a preview warms
+ * it for the next web open. Returns { data, cacheHit }; NO auth / usage log
+ * (those stay with the RPC so a trigger-context send has no Session to feed).
+ */
+function qcdAllDeptCachedData_(from, to) {
   const cache = CacheService.getScriptCache();
   // CORE-3 pattern: suffix the (6h-TTL) all-dept key with the active QCD read
   // source so flipping QCD_READ_SOURCE can't serve a cross-source blob for the
@@ -204,14 +223,17 @@ function getQcdAllDepartments(req) {
   if (cached) {
     try {
       const parsed = JSON.parse(cached);
-      parsed.meta.cacheHit = true;
-      logReportUsage_('qcdAllDept', 'ALL', _user, true);   // RPT-10
-      return parsed;
+      if (parsed && parsed.meta) parsed.meta.cacheHit = true;
+      return { data: parsed, cacheHit: true };
     } catch (e) { /* recompute */ }
   }
-
   const data = computeQcdAllDepartments_(from, to);
-  return qcdAllDeptCacheAndReturn_(data, cache, cacheKey, _user);
+  const json = JSON.stringify(data);
+  if (json.length <= 100000) {
+    try { cache.put(cacheKey, json, QCD_ALLDEPT_CACHE_TTL_SECONDS); }
+    catch (e) { Logger.log('QCD all-dept cache put failed: %s', e); }
+  }
+  return { data: data, cacheHit: false };
 }
 
 // Pure all-departments QCD compute (no auth / cache / usage log), split out so
@@ -341,22 +363,6 @@ function computeQcdAllDepartments_(from, to) {
     grandTotals: grandTotals,
   };
 
-  return data;
-}
-
-// Cache-put + usage-log tail for getQcdAllDepartments, split from the compute
-// so QueueReportEmail.gs can call computeQcdAllDepartments_ directly in a
-// trigger context (no Session user, no cache identity to log).
-function qcdAllDeptCacheAndReturn_(data, cache, cacheKey, user) {
-  const json = JSON.stringify(data);
-  if (json.length <= 100000) {
-    try { cache.put(cacheKey, json, QCD_ALLDEPT_CACHE_TTL_SECONDS); }
-    catch (e) { Logger.log('QCD all-dept cache put failed: %s', e); }
-  }
-  // RPT-10: the INV-01 telemetry carve-out, like IR/Insights/Missed --
-  // this report's usage was invisible to the consolidation evidence base.
-  // 'ALL' because the report has no dept dimension.
-  logReportUsage_('qcdAllDept', 'ALL', user, false);
   return data;
 }
 

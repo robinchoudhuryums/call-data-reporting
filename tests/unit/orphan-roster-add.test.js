@@ -90,6 +90,31 @@ test('roster-add: validation rejects bad input before any write', function () {
   assert.equal(h.state.spreadsheet._sheet('Orphan Fix Log')._data.length, 1);
 });
 
+test('roster-add: response carries refreshed rosterNames + log (Batch 1 5a seamless update)', function () {
+  install();
+  const res = add({ name: 'Dana New', department: 'Beta', extensions: '305' });
+  // The client updates the open modal in place from these instead of re-fetching.
+  assert.ok(Array.isArray(res.rosterNames), 'rosterNames array returned');
+  assert.ok(res.rosterNames.indexOf('Dana New') !== -1, 'new name present in returned rosterNames');
+  assert.ok(Array.isArray(res.log) && res.log.length >= 1, 'log array returned');
+  assert.equal(res.log[0].action, 'roster-add');   // readOrphanFixLog_ is most-recent-first
+  assert.equal(res.log[0].fromName, 'Dana New');
+});
+
+test('getOrphanFixInit caches the init blob; a write busts it (Batch 1 item 6)', function () {
+  install();
+  const first = h.call('getOrphanFixInit', null);
+  assert.equal(first.rosterNames.indexOf('Zoe New'), -1);
+  assert.ok(h.state.cache.has('orphanFix:init:v1'), 'init blob cached after first read');
+
+  // A write busts the cache so a subsequent cold open recomputes.
+  add({ name: 'Zoe New', department: 'Beta', extensions: '399' });
+  assert.equal(h.state.cache.has('orphanFix:init:v1'), false, 'write busts the init cache');
+
+  const second = h.call('getOrphanFixInit', null);
+  assert.ok(second.rosterNames.indexOf('Zoe New') !== -1, 'fresh read reflects the write');
+});
+
 test('roster-add: admin-only; audit sheet is a precondition', function () {
   install({ email: 'manager@x.com' });
   assert.throws(function () {
