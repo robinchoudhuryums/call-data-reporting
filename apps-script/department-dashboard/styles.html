@@ -813,6 +813,54 @@
   /* R5: the missed section hosts a frost-and-ripple while its fetch runs;
      min-height so a first-load (empty) section can center the overlay. */
   #dept-missed-section.dm-loading { min-height: 220px; }
+
+  /* ---- D1-D3: Insights Simple/Detailed density (presentation only) ------ */
+  /* Simple hides the heavy analytical blocks. display:none (not collapse):
+     render code keeps populating the DOM nodes; the trend/share CANVASES are
+     skipped in Simple and built on the toggle (the hidden-chart trap). */
+  #insights-results.ds-density-simple #ins-team-detail,
+  #insights-results.ds-density-simple #ins-trend-wrap,
+  #insights-results.ds-density-simple #ins-cards-view-toggle,
+  #insights-results.ds-density-simple #ins-cards-chart-mode,
+  #insights-results.ds-density-simple #ins-cards-chart-metric-wrap,
+  #insights-results.ds-density-simple #ins-cards-chart-wrap {
+    display: none !important;
+  }
+  /* The Trends zone label would otherwise float alone above the hidden chart. */
+  #insights-results.ds-density-simple .ds-zone:has(+ #ins-trend-wrap) { display: none; }
+  .ins-density-seg .seg-btn { min-width: 64px; }
+  .ins-simple-note { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+  /* D1: Simple's collapsed on-track tiers -- a full-width item inside the
+     card grid (like the triage headers); the inner wrapper re-grids the
+     cards. Summary styled after the quiet-agents details. */
+  .ins-agent-cards .ins-ontrack-details { grid-column: 1 / -1; }
+  .ins-ontrack-details > summary {
+    cursor: pointer; color: var(--muted); font-size: 13px;
+    padding: 6px 2px; user-select: none;
+  }
+  .ins-ontrack-details[open] > summary { margin-bottom: 8px; }
+  /* (.ins-ontrack-cards also carries .ins-agent-cards, whose grid def applies.) */
+  /* D3 (#4): plain-language Agents caption, Simple only. */
+  .ins-agents-cap { display: none; color: var(--muted); font-size: 13px; margin: -2px 0 10px; }
+  #insights-results.ds-density-simple .ins-agents-cap { display: block; }
+  /* D3 (#6): all-clear line appended to the headline banner. */
+  .ins-headline-allclear { color: var(--muted); font-size: 13px; margin-top: 6px; }
+  /* D3 (#7): small-sample mode mutes the per-card delta pills (annotation --
+     the values stay readable, just de-emphasized). */
+  #insights-results.ins-small-sample-mode .ins-agent-cards .pr-delta,
+  #insights-results.ins-small-sample-mode #ins-quiet-cards .pr-delta { opacity: 0.55; }
+  /* D3: first-run intro card. */
+  .ins-intro-card { margin-bottom: 10px; }
+  .ins-intro-card .link-btn { margin-left: 8px; }
+  /* D2: Advanced options inside the edit popover. */
+  .ins-edit-advanced { margin: 8px 0 4px; }
+  .ins-edit-advanced > summary {
+    cursor: pointer; font-weight: 600; font-size: 13px; padding: 4px 0;
+    user-select: none;
+  }
+  .ins-edit-adv-hint { color: var(--muted); font-weight: 400; font-size: 12px; margin-left: 6px; }
+  .ir-edit-popover-links { margin: 6px 0 2px; font-size: 12.5px; }
+  .ir-edit-popover-links .sep { color: var(--muted); margin: 0 4px; }
   .ans-nums .ans-rate { margin-left: auto; color: var(--muted); font-weight: 500; }
   /* WoW chips that ride inside the bar counts shouldn't inherit the
      bold green/red of the count they annotate. */

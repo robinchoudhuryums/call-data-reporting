@@ -842,6 +842,35 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   Phase 3 = queue-scoped hand-off, Phase 4 = heatmap dual-lens overlay) lives
   in **`docs/insights-drilldown-spec.md`**. Pinned by
   `tests/unit/missed-slice.test.js`.
+- **Insights Simple/Detailed density toggle (D1-D3, density-design Phase 1)
+  is client-only; keep it that way.** One disclosure mode per user
+  (`insDensity`, persisted in the `cdr.ins.prefs` blob as an additive
+  `density` field; ROLE DEFAULT when never toggled: manager=simple,
+  admin=detailed -- owner ruling). PRESENTATION ONLY -- no compute,
+  request-shape, cache, or gate changes. **Simple** hides (CSS
+  `ds-density-simple` class on `#insights-results`): the Team-detail
+  `<details>` (queue health + admin heatmap + share donut), the 12-mo
+  trend (`#ins-trend-wrap` + its zone label), and the cross-agent Chart
+  controls (`insApplyCardsView_` forces the cards DISPLAY without touching
+  the saved `insCardsView` pref); collapses the On-par/Ahead card tiers
+  behind one "+N on track" `<details>` (`insRenderAgentCards_` density
+  branch -- Behind-team stays expanded); and shows a "Simple view --
+  ...hidden. Switch to Detailed" note. **Chart trap (C3):** Simple SKIPS
+  the trend/share/heatmap builds (`insDrawTrendChart_` gives up after 30
+  hidden frames), and `insSetDensity_('detailed')` rebuilds all three --
+  never render-then-hide a chart. The quick-start chips keep their promise
+  in Simple: a chip landing inside Team detail switches to Detailed first
+  (the `insScrollPending_` branch). Companion D2/D3 pieces: the edit
+  popover's compare/prior/agent controls live behind an **Advanced
+  options** `<details>` (`#ins-edit-advanced`, field IDs unchanged;
+  auto-opens when the current report uses a custom prior or a partial
+  agent selection); a dismissible first-run intro card
+  (`#ins-intro-card`, localStorage `cdr.ins.intro.v1`); the #6 all-clear
+  headline line (renders only when NO agent is behind team AND
+  |team pct delta| <= `INS_ALLCLEAR_MAX_PTS_`=1.5 pts); and the #7
+  small-sample guard (`INS_SMALL_SAMPLE_PER_AGENT_`=10 avg answerable
+  calls/agent -- a note + muted delta pills, display-only, never hides
+  data).
 - **Guided onboarding tour is client-only (#5).** A self-built
   coachmark walkthrough (no dependency): `initTour_` / `startTour_`
   in script.html + `.tour-*` styles. Spotlight = a `#tour-highlight`

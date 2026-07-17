@@ -10939,6 +10939,60 @@
   // 'totalCalls' | 'violations'. Persisted in prefs.
   let insQueueMetric = 'abandonedPct';
   let insCardSort = 'default';      // default (answered desc) | name | improvers | regressors
+  // D1 (density design, Phase 1): Simple/Detailed disclosure mode.
+  // PRESENTATION ONLY -- no compute, request, cache, or gate changes. Simple
+  // hides the Team-detail <details> (queue health + heatmap + share), the
+  // 12-month trend, and the cross-agent Chart controls, and collapses the
+  // on-track card tiers. Role default (owner ruling): managers=simple,
+  // admins=detailed; sticky per user via the prefs blob once toggled.
+  // null = not yet resolved (insIsSimple_ lazily applies the role default,
+  // so a restored pref set before first use wins).
+  let insDensity = null;            // 'simple' | 'detailed' | null
+  function insIsSimple_() {
+    if (insDensity !== 'simple' && insDensity !== 'detailed') {
+      insDensity = (typeof USER !== 'undefined' && USER && USER.role === 'admin')
+        ? 'detailed' : 'simple';
+    }
+    return insDensity === 'simple';
+  }
+  // Reflect the mode on the DOM: the gating class on #insights-results (the
+  // CSS hides the heavy blocks), the toggle buttons, and the Simple note.
+  function insSyncDensity_() {
+    const simple = insIsSimple_();
+    const res = $('insights-results');
+    if (res) res.classList.toggle('ds-density-simple', simple);
+    const seg = $('ins-density-toggle');
+    if (seg) seg.querySelectorAll('.seg-btn').forEach(function (b) {
+      const on = (b.getAttribute('data-density') === insDensity);
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-checked', on ? 'true' : 'false');
+    });
+    const note = $('ins-simple-note');
+    if (note) note.style.display = (simple && insLastData) ? '' : 'none';
+  }
+  function insSetDensity_(mode) {
+    if (mode !== 'simple' && mode !== 'detailed') return;
+    if (insDensity === mode) return;
+    insDensity = mode;
+    insSyncDensity_();
+    insSavePrefs_();
+    if (!insLastData) return;
+    // Re-render the disclosure-dependent pieces from the LAST payload -- no
+    // refetch. Cards re-render both ways (the on-track collapse differs);
+    // switching to Detailed must BUILD what Simple skipped: the trend chart
+    // (insDrawTrendChart_ gives up after 30 hidden frames, so a
+    // render-while-hidden never drew it -- the C3 trap), the share doughnut
+    // (only if Team detail is open), and the admin heatmap fetch.
+    insRenderAgentCards_(insLastData.agentData || [], insLastData.meta, insLastData.teamStats);
+    if (mode === 'detailed') {
+      insDrawTrendChart_(insLastData);
+      if (insDetailOpen_()) insRenderShareChart_(insLastData.agentData || []);
+      if (USER.role === 'admin' && insLastData.meta) {
+        loadAbandonHeatmap_('ins-heatmap', insLastData.meta.department || '',
+          insLastData.meta.from, insLastData.meta.to);
+      }
+    }
+  }
   // v2: prefs gain compareMode / priorFrom / priorTo / trendMetric
   // (older v1 blobs are silently dropped per the prefs-versioning
   // convention). Keyed PER USER (the reportLastGoodKey_ pattern) because
@@ -11216,6 +11270,25 @@
       if (insLastData) {
         insRenderAgentCards_(insLastData.agentData || [], insLastData.meta, insLastData.teamStats);
       }
+    });
+
+    // D1: Simple/Detailed density toggle + the Simple note's inline switch +
+    // the D3 first-run intro dismiss.
+    const densitySeg = $('ins-density-toggle');
+    if (densitySeg) densitySeg.addEventListener('click', function (e) {
+      const b = e.target.closest('.seg-btn');
+      if (!b) return;
+      insSetDensity_(b.getAttribute('data-density') || 'detailed');
+    });
+    const simpleNoteBtn = $('ins-simple-note-detailed');
+    if (simpleNoteBtn) simpleNoteBtn.addEventListener('click', function () {
+      insSetDensity_('detailed');
+    });
+    const introDismiss = $('ins-intro-dismiss');
+    if (introDismiss) introDismiss.addEventListener('click', function () {
+      try { localStorage.setItem('cdr.ins.intro.v1', 'done'); } catch (e2) {}
+      const card = $('ins-intro-card');
+      if (card) card.style.display = 'none';
     });
 
     // Cards/Chart view toggle (#3) + the Chart-view metric selector.
@@ -11592,6 +11665,17 @@
     // Pre-check the REQUESTED selection -- an agent-free run pre-checks
     // nothing, so an untouched Apply preserves the whole-department run.
     irApplyCheckedAgents_(list, insLastRequestedAgents_ || []);
+    // D2: the compare / prior / agent controls live behind Advanced options
+    // now. Auto-open it when the CURRENT report already uses them -- a custom
+    // prior window or a partial agent selection must stay visible, never
+    // silently folded away.
+    const adv = $('ins-edit-advanced');
+    if (adv) {
+      const partialAgents = !!(insLastRequestedAgents_ && insLastRequestedAgents_.length);
+      const customPrior = (insLastData && insLastData.meta
+        && insLastData.meta.comparisonMode === 'custom');
+      adv.open = partialAgents || !!customPrior;
+    }
     pop.style.display = '';
     const search = $('ins-edit-search');
     if (search) { search.value = ''; setTimeout(function () { search.focus(); }, 0); }
@@ -11901,6 +11985,39 @@
   // single-agent report; no chips when nobody's behind (the banner's team
   // sentence carries the story). The standalone #ins-needs-attention element is
   // retired (kept hidden).
+  // D3 (#6): the all-clear renders only when the team is also flat -- within
+  // this many pct-POINTS of the prior window (the pct stat is pctPoints).
+  var INS_ALLCLEAR_MAX_PTS_ = 1.5;
+
+  // D3 (#7): small-sample display threshold -- average answerable calls
+  // (answered + missed) per shown agent over the window. FRONT-END display
+  // constant only: below it a note renders near the headline and the delta
+  // pills mute (CSS), so a newcomer doesn't over-read a ±40% swing on 5
+  // calls. Never changes the compute or hides data.
+  var INS_SMALL_SAMPLE_PER_AGENT_ = 10;
+  function insRenderSmallSampleNote_(data) {
+    var el = $('ins-small-sample');
+    var res = $('insights-results');
+    if (!el) return;
+    var cards = (data && data.agentData) || [];
+    var small = false;
+    if (cards.length) {
+      var total = 0;
+      cards.forEach(function (c) {
+        var m = c.metrics || {};
+        total += (Number(m.answered && m.answered.val) || 0)
+               + (Number(m.missed && m.missed.val) || 0);
+      });
+      small = (total / cards.length) < INS_SMALL_SAMPLE_PER_AGENT_;
+    }
+    el.style.display = small ? '' : 'none';
+    if (small) {
+      el.textContent = 'Small sample — on average fewer than ' + INS_SMALL_SAMPLE_PER_AGENT_
+        + ' calls per agent in this window, so the change indicators may be noisy.';
+    }
+    if (res) res.classList.toggle('ins-small-sample-mode', small);
+  }
+
   function insRenderNeedsAttentionStrip_(data) {
     var strip = $('ins-needs-attention');
     if (strip) { strip.style.display = 'none'; strip.innerHTML = ''; }
@@ -11916,7 +12033,21 @@
     var ts = (data && data.teamStats) || {};
     var teamPct = Number((ts.pct && ts.pct.val) || 0);
     var behind = cards.filter(function (c) { return insClassifyAgent_(c, teamPct) === 'attention'; });
-    if (!behind.length) return;
+    if (!behind.length) {
+      // D3 (#6): an explicit all-clear beats empty space for occasional
+      // users -- but ONLY when the team is also flat vs prior (a big team
+      // move already carries the headline's story). Same values the
+      // headline computes; presentation only.
+      var teamDp = Number((ts.pct && ts.pct.deltaPct) || 0);
+      if (isFinite(teamDp) && Math.abs(teamDp) <= INS_ALLCLEAR_MAX_PTS_) {
+        var ok = document.createElement('div');
+        ok.className = 'ins-headline-attn ins-headline-allclear';
+        ok.textContent = 'Steady period — no agent is behind the team average, and the team answer rate is within ±'
+          + INS_ALLCLEAR_MAX_PTS_ + ' pts of the prior period.';
+        headEl.appendChild(ok);
+      }
+      return;
+    }
     var chips = behind.map(function (c) {
       var pct = Number((c.metrics && c.metrics.pct && c.metrics.pct.val) || 0);
       var gap = Math.round(teamPct - pct);
@@ -11957,6 +12088,18 @@
 
   function insRenderReport_(data, opts) {
     insLastData = data;
+    // D1: apply the density class + toggle state before painting so the
+    // Simple gating is in effect for everything below (incl. SWR pre-paints).
+    insSyncDensity_();
+    // D3: one-time first-run intro (dismissible). Shown until dismissed;
+    // best-effort on storage errors (private mode -> just keeps showing).
+    (function () {
+      const card = $('ins-intro-card');
+      if (!card) return;
+      let done = null;
+      try { done = localStorage.getItem('cdr.ins.intro.v1'); } catch (e) {}
+      card.style.display = done ? 'none' : '';
+    })();
     insCloseEditPopover_();
     // I1: belt-and-suspenders -- ensure the launcher's auto-generate loading
     // pane is hidden whenever a report renders. Its ~120px skeleton, if left
@@ -12062,9 +12205,11 @@
     // report's vetting gate, so managers never call it and the panel stays
     // hidden for them (same gate as the QCD report's heatmap). Skipped on
     // the SWR pre-paint -- the live repaint fetches it once.
-    if (USER.role === 'admin' && data.meta) {
+    // D1: in Simple the heatmap's host section is hidden -- skip the fetch
+    // (insSetDensity_ fires it when the admin switches to Detailed).
+    if (USER.role === 'admin' && data.meta && !insIsSimple_()) {
       if (!(opts && opts.swr)) loadAbandonHeatmap_('ins-heatmap', data.meta.department || '', data.meta.from, data.meta.to);
-    } else {
+    } else if (USER.role !== 'admin') {
       var insHeat = $('ins-heatmap'); if (insHeat) { insHeat.style.display = 'none'; insHeat.innerHTML = ''; }
     }
     reportHeadline_('ins-headline', 'insights-results', insHeadline_(data));
@@ -12077,10 +12222,16 @@
     // stays deferred (renders at zero height while collapsed) -- only rendered
     // here when the section is already open; the toggle handler renders it on
     // first open. Queue health + heatmap already ran above (DOM/CSS-grid).
-    insDrawTrendChart_(data);
-    if (insDetailOpen_()) {
-      insRenderShareChart_(data.agentData || []);
+    // D1: Simple SKIPS the trend + share draws (not render-then-hide --
+    // insDrawTrendChart_ gives up after 30 hidden frames and the chart would
+    // never exist; insSetDensity_ builds both on the switch to Detailed).
+    if (!insIsSimple_()) {
+      insDrawTrendChart_(data);
+      if (insDetailOpen_()) {
+        insRenderShareChart_(data.agentData || []);
+      }
     }
+    insRenderSmallSampleNote_(data);   // D3 (#7): annotation only, both modes
     insRenderAgentCards_(data.agentData || [], data.meta, data.teamStats);
     // Quick-start chip landing: scroll to + spotlight the section that
     // answers the clicked question (one-shot; a small delay lets the page
@@ -12095,9 +12246,15 @@
       // zero-height collapsed panel.
       const tEl = $(target);
       const det = $('ins-team-detail');
-      if (tEl && det && det.contains(tEl) && !det.open) {
-        det.open = true;
-        insRenderDeferredCharts_();
+      if (tEl && det && det.contains(tEl)) {
+        // D1: the chips promise a section Simple hides (e.g. "abandons" ->
+        // Queue health inside Team detail) -- honor the promise by switching
+        // to Detailed first, then opening the collapsed panel.
+        if (insIsSimple_()) insSetDensity_('detailed');
+        if (!det.open) {
+          det.open = true;
+          insRenderDeferredCharts_();
+        }
       }
       setTimeout(function () { qsSpotlight_(target); }, 200);
     }
@@ -13032,12 +13189,40 @@
         { group: steady,    label: 'On par',      tone: 'muted' },
         { group: strong,    label: 'Ahead of team', tone: 'good' },
       ];
-      tiers.forEach(function (t) {
-        if (!t.group.length) return;
-        html += insTriageHeader_(t.label, t.group.length, t.tone)
-              + t.group.map(renderCard).join('');
-      });
-      wrap.innerHTML = html;
+      if (insIsSimple_()) {
+        // D1 Simple: only the Behind-team tier stays expanded; On par +
+        // Ahead of team fold behind one "+N on track" expander (full-width
+        // grid item, same headers inside). Quiet agents keep their own
+        // existing <details> below. Presentation only -- same cards, same
+        // order, same renderCard.
+        if (attention.length) {
+          html += insTriageHeader_('Behind team', attention.length, 'warn')
+                + attention.map(renderCard).join('');
+        }
+        const onTrack = steady.concat(strong);
+        if (onTrack.length) {
+          let inner = '';
+          [{ group: steady, label: 'On par', tone: 'muted' },
+           { group: strong, label: 'Ahead of team', tone: 'good' }].forEach(function (t) {
+            if (!t.group.length) return;
+            inner += insTriageHeader_(t.label, t.group.length, t.tone)
+                   + t.group.map(renderCard).join('');
+          });
+          html += '<details class="ins-ontrack-details">'
+                +   '<summary>+ ' + onTrack.length + ' agent' + (onTrack.length === 1 ? '' : 's')
+                +     ' on track (on par or ahead of the team average)</summary>'
+                +   '<div class="ins-agent-cards ins-ontrack-cards">' + inner + '</div>'
+                + '</details>';
+        }
+        wrap.innerHTML = html;
+      } else {
+        tiers.forEach(function (t) {
+          if (!t.group.length) return;
+          html += insTriageHeader_(t.label, t.group.length, t.tone)
+                + t.group.map(renderCard).join('');
+        });
+        wrap.innerHTML = html;
+      }
     } else {
       wrap.innerHTML = sortedMain.map(renderCard).join('');
     }
@@ -13063,7 +13248,10 @@
    * grouped current-vs-prior bar across all selected agents.
    */
   function insApplyCardsView_() {
-    const chartView = (insCardsView === 'chart');
+    // D1: Simple is cards-only -- force the cards DISPLAY without touching
+    // the saved insCardsView pref (a manager's default-chart pref survives
+    // and re-applies the moment they switch to Detailed).
+    const chartView = (insCardsView === 'chart') && !insIsSimple_();
     // I5a: sync the Cards/Chart toggle + Gap/Absolute sub-toggle to the active
     // state on every render, so a role default (or programmatic change) with no
     // saved pref is reflected in the buttons.
@@ -13701,6 +13889,10 @@
         cardsView:   insCardsView,
         cardsChartMetric: insCardsChartMetric,
         cardsChartMode: insCardsChartMode,
+        // D1: Simple/Detailed disclosure mode. null (never toggled and never
+        // resolved) is simply omitted -- the role default applies at read
+        // time via insIsSimple_. Additive field; tolerant parser, no bump.
+        density:     insDensity || undefined,
         agents: irGetCheckedAgents_($('ins-agent-list')),
       }));
     } catch (e) { /* ignore */ }
@@ -13751,6 +13943,9 @@
       }
       if (typeof prefs.showLabels === 'boolean' && $('ins-show-datalabels')) {
         $('ins-show-datalabels').checked = prefs.showLabels;
+      }
+      if (prefs.density === 'simple' || prefs.density === 'detailed') {
+        insDensity = prefs.density;   // D1: sticky per user; else role default
       }
       if (prefs.cardsView === 'cards' || prefs.cardsView === 'chart') {
         insCardsView = prefs.cardsView;
