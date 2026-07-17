@@ -2514,7 +2514,13 @@ items for anything it flags or doesn't cover.)
     `QCD_PARITY_FROM`/`QCD_PARITY_TO` Script Properties for its range) reports
     parity-CLEAN over a representative range AND `qcd_history` is fully
     mirrored** (the daily import mirrors QCD authoritatively per-date; a bulk
-    QCD backfill is force-mode, so re-import fills gaps). The Health page
+    QCD backfill is force-mode, so re-import fills gaps). The gate holds
+    counts/violations EXACT but IGNORES ±1s diffs on the two duration
+    fields (avgAnswer/longestWait), reporting them separately -- write-time
+    `Math.round(serial*86400)` and Sheets' display formatter round a
+    half-second average to different sides of the boundary,
+    deterministically, so that noise is not drift and a re-import can't
+    clear it (R5; pinned by qcd-report.test.js). The Health page
     surfaces a **QCD read source** row + a **QCD→Neon mirror** health row
     (`computeQcdMirrorHealth_`, sheet vs `qcd_history` `MAX(call_date)`) so a
     stale mirror is visible before you flip. **Coverage (R-1, fixed): ALL QCD
