@@ -206,11 +206,26 @@ dashed-`F-#` vs bare-`F#`.
 | `O-7` | A day whose QCD landed after the send window closed was silently never reported. Post-window polls flag it ONCE (`QUEUE_REPORT_LAST_MISSED` + MISSED result + one admin email). | Operator State #31 |
 | `O-8` | Alerts modal defaulted to calendar yesterday — every Monday opened on Sunday (guaranteed all-`no-data` preview). Now `prevBusinessDayIso_`. | INV-34 |
 
-Scan findings NOT yet implemented (queued): `R-1` (QCD read-source coverage
-gap — see the Operator State #30 warning), `R-2`/`R-3`, `A-1`…`A-4` (incl. the
-OrphanFix audit-gap + Escalations approve known-dept overclaims), `C-1`…`C-9`
-(client regressions incl. the C-2 tour-replay/Settings mismatch), `T-1`…`T-7`,
-`O-5`/`O-6`, `P-6`…`P-8`.
+**Batch 3+4 (same scan, second implement pass).** `R-#` = dashboard report
+endpoints (NOT the `RPT-#` semantics-rulings family); `A-#` = auth/admin-path
+findings.
+
+| Code | What it fixed | Where the live rule lives |
+|---|---|---|
+| `R-1` | The Overview QCD chips, My-Dept QCD panel, and freshness-pill QCD component were hard-wired sheet scans -- flipping `QCD_READ_SOURCE` stranded them on an aging sheet. All three now route through `readQcdGrid_` / `neonGetMaxQcdDate_` with sheet fallback. | Operator State #30, INV-30 (`latestDates` combined suffix) |
+| `R-2` | Caller Lookup truncation kept the OLDEST 200 of the fetched newest-201 (ascending re-sort + head-slice), dropping the caller's most recent call. Tail-slice now. | NEO-4 note in code |
+| `R-3` | The allDepts manager threw on every journey drill (`getCallJourney` compared against a null `user.department`); latent same-pattern in the inbound/direct resolvers. Pinning is `manager && !allDepts`; the F-4 fallback entitles `allDepts` like admins. | Role-model gotcha (widening note) |
+| `A-1` | `applyOrphanRename` with `alsoAddAlias` could throw in `upsertAgentAlias_` AFTER the irreversible rename but BEFORE the audit append. The Agent Alias Overrides sheet is now pre-flighted alongside the Log. | INV-01 / OrphanFix "audit before returning" (claim holds again) |
+| `A-2` | `escRowFull_` never selected `occurred_at`, so approve-path notification emails always dropped their "When" line. | INV-55 |
+| `A-3` | Dept Config effective map was last-row-wins while the save editor edits the FIRST match -- a hand-edited duplicate made modal saves silently ineffective. First-ACTIVE-row-wins now (OPS-9 convention). | INV-54 (accessor comment) |
+| `A-4` | `approveEscalation` had no known-dept check despite the header's mitigation list claiming one -- a typo-dept submission entered a worklist no manager could see. Refused with a reject-and-resubmit message. | INV-55 |
+| `O-5` | System Health's expected-sheets list stopped at nine and its trigger/outcome inventory omitted the queue-report engine; the OPS-8 classifier also learned the `^MISSED` prefix. | Operator State #31 |
+| `O-6` | PipelineWatch advanced its watermark past rows evicted from the 300-row tail by a retry storm, silencing those failures forever. Clipped tails widen x4 (bounded) via `pipelineWatchTailClipped_`. | Operator State #32 |
+| Gap #3 | External `pending_review` submissions could sit unseen (no dashboard event fires on a direct Neon INSERT). Count-only PII-free hourly ping via PipelineWatch, `NOTIFY_PENDING_REVIEW` flag, OPS-1 watermark. | Operator State #32, INV-55 |
+
+Scan findings NOT yet implemented (queued): `C-1`…`C-9`
+(client regressions incl. the C-2 tour-replay/Settings mismatch), `T-1`…`T-7`
+(repair/backfill tools), `P-6`…`P-8`.
 
 ---
 
