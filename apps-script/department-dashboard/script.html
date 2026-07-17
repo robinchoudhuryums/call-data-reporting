@@ -4788,9 +4788,21 @@
     const bodyHtml = queueOnly.map(function (q) {
       const itemsHtml = q.entries.map(function (m) {
         const dateLabel = m.date ? m.date.slice(5) : '';   // MM-DD
+        // R5 (owner): per-call facts from the server's inbound_calls
+        // enrichment -- wait time before abandoning + the insurer label
+        // when the caller is a labeled insurance number. Absent fields
+        // (Neon miss / pre-capture rows / non-insurer callers) render
+        // nothing, so the line degrades to the old shape.
+        const facts = [];
+        if (m.waitSec != null) facts.push('waited ' + crFormatSecondsShort_(m.waitSec));
+        if (m.insurer) facts.push(escapeHtml(m.insurer));
+        const factsHtml = facts.length
+          ? ' <span class="qo-facts" title="From the inbound-call record: time the caller waited before hanging up' + (m.insurer ? ' · caller is a labeled insurance line' : '') + '">· ' + facts.join(' · ') + '</span>'
+          : '';
         return '<li>'
              +   '<span class="ring-date">' + escapeHtml(dateLabel) + '</span>'
              +   '<span class="ring-time">' + escapeHtml(m.label)   + ' 🚨'
+             +     factsHtml
              +     parentIdBadge(m.parentId, m.date)
              +     alsoInBadge(m.alsoIn)
              +   '</span>'
@@ -5275,13 +5287,25 @@
     }
     const key = dept + '|' + from + '|' + to;
     deptMissedReqKey = key;
+    // R5 (owner): the section used to sit hidden/stale with NO indication
+    // while its fetch ran (a cold fetch can take seconds), which read as
+    // "charts not loading". Frost-and-ripple it for the fetch's duration --
+    // the M3 pattern the agents table uses; the dm-loading class gives an
+    // empty first-load section enough height to host the overlay.
+    wrap.style.display = '';
+    wrap.classList.add('dm-loading');
+    dsFrostShow_(wrap, 'Loading missed calls…');
     google.script.run
       .withSuccessHandler(function (data) {
         if (deptMissedReqKey !== key) return;   // stale response
+        dsFrostHide_(wrap);
+        wrap.classList.remove('dm-loading');
         deptMissedRender_(data, from, to);
       })
       .withFailureHandler(function () {
         if (deptMissedReqKey !== key) return;
+        dsFrostHide_(wrap);
+        wrap.classList.remove('dm-loading');
         // Disarm the one-shot launcher/deep-link scroll: the render it was
         // waiting for isn't coming, and a leaked flag would yank the page
         // down on the NEXT unrelated dept-page refresh.
@@ -10475,7 +10499,13 @@
   function acRenderDeptOptions_(depts) {
     const sel = $('ac-dept');
     if (!sel) return;
+    // R5 (owner): surface the ALL-DEPARTMENTS sentinel the server already
+    // supports (saveAccessControlRow canonicalizes 'ALL'/'*'; see the
+    // role-model gotcha) -- a manager-role viewer with every dept's DATA
+    // breadth (dept selector like an admin) but no admin surfaces. No new
+    // role needed; this only makes the existing grant reachable from the UI.
     sel.innerHTML = '<option value="">— pick —</option>'
+      + '<option value="ALL">ALL — every department (manager, no admin surfaces)</option>'
       + depts.map(function (d) { return '<option value="' + escapeHtml(d) + '">' + escapeHtml(d) + '</option>'; }).join('');
   }
 
@@ -10553,18 +10583,27 @@
   function acRemoveRow_(idx) {
     const r = (acLastInit.rows || [])[idx];
     if (!r) return;
-    if (!window.confirm('Remove dashboard access for "' + r.email + '"? They will no longer be able to open the dashboard.')) return;
-    acSetStatus_('loading', 'Removing ' + r.email + '…');
-    google.script.run
-      .withSuccessHandler(function () {
-        acSetStatus_('success', 'Removed ' + r.email + '. Takes effect within ~60 s.');
-        showToast('Removed access for ' + r.email, 'success');
-        acLoadInit_();
-      })
-      .withFailureHandler(function (err) {
-        acSetStatus_('error', 'Remove failed: ' + (err && err.message ? err.message : String(err)));
-      })
-      .removeAccessControlRow({ email: r.email });
+    // R5: app-styled confirm (dsConfirm_) instead of the browser-native
+    // window.confirm that rendered in Sheets chrome (owner note).
+    dsConfirm_({
+      title: 'Remove dashboard access',
+      tone: 'danger',
+      message: 'Remove dashboard access for "' + r.email + '"? They will no longer be able to open the dashboard.',
+      confirmLabel: 'Remove access', cancelLabel: 'Cancel',
+    }).then(function (ok) {
+      if (!ok) return;
+      acSetStatus_('loading', 'Removing ' + r.email + '…');
+      google.script.run
+        .withSuccessHandler(function () {
+          acSetStatus_('success', 'Removed ' + r.email + '. Takes effect within ~60 s.');
+          showToast('Removed access for ' + r.email, 'success');
+          acLoadInit_();
+        })
+        .withFailureHandler(function (err) {
+          acSetStatus_('error', 'Remove failed: ' + (err && err.message ? err.message : String(err)));
+        })
+        .removeAccessControlRow({ email: r.email });
+    });
   }
 
   function initDeptConfig() {
@@ -14179,8 +14218,14 @@
     // dept -- the bucket only renders on the company-wide view (decision C).
     if (meta.companyView) {
       tiles.push(inboundKpiTile_('Abandoned in IVR', fmtNumber(k.abandonedIvr),
-        'unattributable — no queue reached',
+        'hung up in the menus — no queue, no agent',
         inboundDelta_(k.abandonedIvr, p.abandonedIvr, 'neg', false)));
+      // R5: abandoned DIRECT calls (rang a person's line, no queue) were
+      // split out of the IVR bucket at capture -- old rows keep stage=ivr
+      // until re-imported, so this tile grows as history heals.
+      tiles.push(inboundKpiTile_('Abandoned direct', fmtNumber(k.abandonedDirect),
+        'rang an agent’s line — no queue',
+        inboundDelta_(k.abandonedDirect, p.abandonedDirect, 'neg', false)));
     }
     $('inbound-kpi-row').innerHTML = tiles.join('');
 

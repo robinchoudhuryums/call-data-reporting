@@ -15,7 +15,9 @@
 //
 // Captures: caller_hash (deterministic HMAC, matches insurance_numbers +
 // call_history_phones; null for Anonymous), dial_in_number (DID / marketing
-// line), disposition (answered|abandoned|missed) + abandon_stage (ivr|queue),
+// line), disposition (answered|abandoned|missed) + abandon_stage
+// (ivr|queue|direct -- R5: 'direct' = abandoned while ringing a PERSON's
+// line, split out of 'ivr'), first_agent (first person the call rang),
 // abandoned_on_hold + hold_seconds, wait_seconds (time-to-answer / -abandon),
 // the queue journey (entry/final queue, num_queues, num_transfers), the call
 // start time (call_start, 'HH:MM:SS' in the CDR's native timezone), and the
@@ -265,7 +267,18 @@ function buildInboundCallRecords_(rawRows) {
     var disposition = answered ? 'answered' : (abandoned ? 'abandoned' : 'missed');
     var abandonStage = null;
     if (abandoned) {
-      abandonStage = icIsQueueName_(abandonLeg[IC_COL.CALLEE_NAME]) ? 'queue' : 'ivr';
+      // R5 (owner): three stages now -- 'queue', 'direct', 'ivr'. The old
+      // queue-else-ivr split lumped every abandoned DIRECT call (caller
+      // dialed an agent's DID, it rang, they hung up) into 'ivr', inflating
+      // the report's "Abandoned in IVR" tile to ~25% of calls. Discriminator:
+      // an agent/person leg carries a real Departments value; IVR /
+      // auto-attendant legs don't (the same signal finalDept relies on).
+      // Old rows heal on a force re-import within the Call_Legs retention.
+      var abCallee = String(abandonLeg[IC_COL.CALLEE_NAME] == null ? '' : abandonLeg[IC_COL.CALLEE_NAME]).trim();
+      var abDept   = String(abandonLeg[IC_COL.DEPARTMENTS] == null ? '' : abandonLeg[IC_COL.DEPARTMENTS]).trim();
+      if (icIsQueueName_(abCallee)) abandonStage = 'queue';
+      else if (abDept && abDept.toUpperCase() !== 'N/A') abandonStage = 'direct';
+      else abandonStage = 'ivr';
     }
 
     // Abandoned-on-hold: for inbound the customer is the CALLER, so the
@@ -303,6 +316,23 @@ function buildInboundCallRecords_(rawRows) {
       if (di) { dialIn = di; break; }
     }
 
+    // R5 (owner): first PERSON the call rang -- the callee of the first
+    // non-queue leg that carries a real Departments value (IVR/menu legs
+    // don't). Feeds the Inbound report's derived dial-in labeling: a
+    // direct-DID line's dominant first_agent names the line's owner.
+    // Phone-shaped callee names are skipped (PHI: never store a raw number).
+    var firstAgent = null;
+    for (var fa = 0; fa < legs.length; fa++) {
+      var facn = String(legs[fa][IC_COL.CALLEE_NAME] == null ? '' : legs[fa][IC_COL.CALLEE_NAME]).trim();
+      if (!facn || facn.toUpperCase() === 'N/A') continue;
+      if (icIsQueueName_(facn)) continue;
+      if (/^\+?[\d\s\-().]{7,}$/.test(facn)) continue;
+      var fad = String(legs[fa][IC_COL.DEPARTMENTS] == null ? '' : legs[fa][IC_COL.DEPARTMENTS]).trim();
+      if (!fad || fad.toUpperCase() === 'N/A') continue;
+      firstAgent = facn.slice(0, IC_JOURNEY_NAME_MAX);
+      break;
+    }
+
     // Wait seconds: from first incoming Start to the first answer Connected,
     // or to the abandon Stop.
     var firstStart = icParseTs_(incoming[0][IC_COL.START]);
@@ -336,6 +366,7 @@ function buildInboundCallRecords_(rawRows) {
       entryQueue:      queues.length ? queues[0] : null,
       finalQueue:      queues.length ? queues[queues.length - 1] : null,
       finalDept:       finalDept,
+      firstAgent:      firstAgent,
       numQueues:       queues.length,
       numTransfers:    Math.max(0, queues.length - 1),
       journey:         icBuildJourney_(legs)
@@ -422,6 +453,9 @@ function writeInboundCallsToNeon(rawRows, opts) {
       // capture (the CREATE above only fires on a fresh database).
       ddl.execute('ALTER TABLE inbound_calls ADD COLUMN IF NOT EXISTS call_start text');
       ddl.execute('ALTER TABLE inbound_calls ADD COLUMN IF NOT EXISTS journey text');
+      // R5: first person the call rang (dial-in labeling); NULL on
+      // pre-extension rows until re-imported/backfilled.
+      ddl.execute('ALTER TABLE inbound_calls ADD COLUMN IF NOT EXISTS first_agent text');
       ddl.close();
 
       // L2: authoritative per-date replace. Delete the payload's distinct dates
@@ -443,7 +477,7 @@ function writeInboundCallsToNeon(rawRows, opts) {
 
       var cols = 'call_date, call_id, caller_hash, dial_in_number, disposition, ' +
         'abandon_stage, abandoned_on_hold, hold_seconds, wait_seconds, entry_queue, ' +
-        'final_queue, final_dept, num_queues, num_transfers, call_start, journey';
+        'final_queue, final_dept, num_queues, num_transfers, call_start, journey, first_agent';
       var onConflict = ' ON CONFLICT (call_date, call_id) DO UPDATE SET ' +
         'caller_hash=EXCLUDED.caller_hash, dial_in_number=EXCLUDED.dial_in_number, ' +
         'disposition=EXCLUDED.disposition, abandon_stage=EXCLUDED.abandon_stage, ' +
@@ -451,7 +485,8 @@ function writeInboundCallsToNeon(rawRows, opts) {
         'wait_seconds=EXCLUDED.wait_seconds, entry_queue=EXCLUDED.entry_queue, ' +
         'final_queue=EXCLUDED.final_queue, final_dept=EXCLUDED.final_dept, ' +
         'num_queues=EXCLUDED.num_queues, num_transfers=EXCLUDED.num_transfers, ' +
-        'call_start=EXCLUDED.call_start, journey=EXCLUDED.journey, updated_at=now()';
+        'call_start=EXCLUDED.call_start, journey=EXCLUDED.journey, ' +
+        'first_agent=EXCLUDED.first_agent, updated_at=now()';
 
       // INLINE multi-row upsert (no bound params) -- removes ~16 JDBC
       // bind-bridge calls PER ROW (the dominant cost; ~40ms each in Apps
@@ -471,7 +506,8 @@ function writeInboundCallsToNeon(rawRows, opts) {
           + ',' + icSqlInt_(r.waitSeconds) + ',' + icSqlStr_(r.entryQueue) + ',' + icSqlStr_(r.finalQueue)
           + ',' + icSqlStr_(r.finalDept) + ',' + icSqlInt_(r.numQueues) + ',' + icSqlInt_(r.numTransfers)
           + ',' + icSqlStr_(r.callStart)
-          + ',' + icSqlStr_(r.journey && r.journey.length ? JSON.stringify(r.journey) : null) + ')';
+          + ',' + icSqlStr_(r.journey && r.journey.length ? JSON.stringify(r.journey) : null)
+          + ',' + icSqlStr_(r.firstAgent) + ')';
       });
       var buildMs = Date.now() - tBuild;
 

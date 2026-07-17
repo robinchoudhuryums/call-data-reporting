@@ -27,11 +27,20 @@
          var subject = encodeURIComponent('Department Dashboard access request');
          var bodyText = encodeURIComponent('Please add ' + (visitorEmail || '<my email>') + ' to the dashboard access list.');
     ?>
+      <!-- R5 (owner): the primary button opens Gmail's web compose (this is a
+           Workspace domain -- everyone lives in browser Gmail; the old bare
+           mailto: launched the OS "Mail" app nobody uses). A small mailto
+           fallback stays for anyone who does use a desktop client. -->
       <p>
         <a class="btn" style="display:inline-block;text-decoration:none;"
-           href="mailto:<?= adminContact ?>?subject=<?= subject ?>&body=<?= bodyText ?>">
-          Email admin
+           target="_blank" rel="noopener"
+           href="https://mail.google.com/mail/?view=cm&fs=1&to=<?= adminContact ?>&su=<?= subject ?>&body=<?= bodyText ?>">
+          Email admin (opens Gmail)
         </a>
+      </p>
+      <p class="small">
+        Prefer your mail app instead?
+        <a href="mailto:<?= adminContact ?>?subject=<?= subject ?>&body=<?= bodyText ?>">Use default mail client</a>
       </p>
     <? } ?>
 
