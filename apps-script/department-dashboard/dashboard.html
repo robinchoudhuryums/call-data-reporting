@@ -277,7 +277,6 @@
                 <th data-sort="agent">Agent <span class="arrow"></span></th>
                 <th class="col-extra">Source</th>
                 <th data-sort="answerRate">Answered / Missed <span class="arrow"></span></th>
-                <th data-sort="totalRung">Total calls <span class="arrow"></span></th>
                 <th data-sort="answerRate">Answer % <span class="arrow"></span></th>
                 <th data-sort="totalUnique" class="col-extra">Unique <span class="arrow"></span></th>
                 <th data-sort="tttSeconds" class="col-extra">TTT <span class="arrow"></span></th>
@@ -405,7 +404,6 @@
             <th data-sort="agent">Agent <span class="arrow"></span></th>
             <th class="col-extra">Source</th>
             <th data-sort="answerRate">Answered / Missed <span class="arrow"></span></th>
-            <th data-sort="totalRung">Total calls <span class="arrow"></span></th>
             <th data-sort="answerRate">Answer % <span class="arrow"></span></th>
             <th data-sort="totalUnique" class="col-extra">Unique <span class="arrow"></span></th>
             <th data-sort="tttSeconds" class="col-extra">TTT <span class="arrow"></span></th>
@@ -1464,7 +1462,10 @@
           <div class="pr-trend-subtabs" id="ins-trend-subtabs" role="tablist">
             <button type="button" class="pr-trend-subtab active" data-metric="answered" role="tab" aria-selected="true">Answered</button>
             <button type="button" class="pr-trend-subtab" data-metric="pct" role="tab" aria-selected="false">% Answered</button>
-            <button type="button" class="pr-trend-subtab" data-metric="att" role="tab" aria-selected="false">Avg Talk Time</button>
+            <!-- Round 4 (owner): Avg Talk Time is an admin-only lens -- managers
+                 read talk time per agent in IR / the dept table, and the team-level
+                 ATT trend mostly invited misreading. data-admin-only convention. -->
+            <button type="button" class="pr-trend-subtab" data-metric="att" role="tab" aria-selected="false" data-admin-only style="display:none;">Avg Talk Time</button>
             <button type="button" class="pr-trend-subtab" data-metric="queues" role="tab" aria-selected="false">Abd %</button>
           </div>
           <div class="ir-chart-canvas-wrap"><canvas id="ins-trend-chart"></canvas></div>

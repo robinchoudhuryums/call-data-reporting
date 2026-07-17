@@ -1149,16 +1149,31 @@ function compareQcdSources_() {
   Logger.log('sheet rows (in window): %s | neon rows: %s',
              Object.keys(sMap).length, Object.keys(nMap).length);
 
-  var FIELDS = ['totalCalls', 'totalAnswered', 'abandoned', 'violations',
-                'longestWaitSec', 'avgAnswerSec'];
-  var missingInNeon = [], extraInNeon = [], mismatches = [];
+  // Counts must match EXACTLY; the two duration-derived fields get a ±1s
+  // tolerance (R5, owner parity run). WHY: the writer stores avg_answer /
+  // longest_wait via normalizeDuration's Math.round(serial * 86400), and an
+  // IEEE double puts a x.5-second average at 20.499999999999996 -> 20, while
+  // Sheets' own display formatter rounds the SAME serial to "0:00:21". Both
+  // sides are then re-parsed from display strings here, so a half-second
+  // average deterministically reads 1s apart -- a re-import reproduces it
+  // identically (it is NOT drift, and the gate's re-import advice can't
+  // clear it). Anything >1s apart is still a real mismatch.
+  var EXACT_FIELDS = ['totalCalls', 'totalAnswered', 'abandoned', 'violations'];
+  var TOLERANT_FIELDS = ['longestWaitSec', 'avgAnswerSec'];   // ±1s = display-rounding noise
+  var missingInNeon = [], extraInNeon = [], mismatches = [], roundingOnly = 0;
   Object.keys(sMap).forEach(function (k) {
     if (!nMap[k]) { missingInNeon.push(k); return; }
-    var s = sMap[k], n = nMap[k], diffs = [];
-    FIELDS.forEach(function (f) {
+    var s = sMap[k], n = nMap[k], diffs = [], hadRounding = false;
+    EXACT_FIELDS.forEach(function (f) {
       if (String(s[f]) !== String(n[f])) diffs.push(f + ' sheet=' + s[f] + ' neon=' + n[f]);
     });
+    TOLERANT_FIELDS.forEach(function (f) {
+      var d = Math.abs((Number(s[f]) || 0) - (Number(n[f]) || 0));
+      if (d > 1) diffs.push(f + ' sheet=' + s[f] + ' neon=' + n[f]);
+      else if (d === 1) hadRounding = true;
+    });
     if (diffs.length) mismatches.push(k + ' :: ' + diffs.join(', '));
+    else if (hadRounding) roundingOnly++;
   });
   Object.keys(nMap).forEach(function (k) { if (!sMap[k]) extraInNeon.push(k); });
 
@@ -1168,6 +1183,11 @@ function compareQcdSources_() {
   extraInNeon.slice(0, 10).forEach(function (k) { Logger.log('   %s', k); });
   Logger.log('--- value mismatches on common keys: %s', mismatches.length);
   mismatches.slice(0, 10).forEach(function (m) { Logger.log('   %s', m); });
+  if (roundingOnly) {
+    Logger.log('--- ±1s duration rounding diffs (IGNORED -- write-time float rounding '
+      + 'vs Sheets display rounding at half-second averages; deterministic, not drift): %s',
+      roundingOnly);
+  }
 
   var clean = (missingInNeon.length === 0 && extraInNeon.length === 0 && mismatches.length === 0);
   Logger.log('=== QCD PARITY %s ===', clean

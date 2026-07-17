@@ -345,3 +345,52 @@ test('#3 getQcdReadSource_ defaults to sheet, honors explicit neon', function ()
   h.state.props.QCD_READ_SOURCE = 'garbage';
   assert.equal(h.call('getQcdReadSource_'), 'sheet');
 });
+
+// ---- R5: parity-gate ±1s duration tolerance ----------------------------------
+// The writer's normalizeDuration Math.round(serial*86400) and Sheets' display
+// formatter round a half-second average to DIFFERENT sides of the boundary
+// (20.4999...96 -> 20 vs "0:00:21"), deterministically -- re-import reproduces
+// it. The gate ignores ±1s on the two duration fields (counts stay exact) so
+// that float noise can't block the QCD_READ_SOURCE flip, while >1s drift and
+// any count difference still fail.
+function parityGrids_(sheetAvg, neonAvg, sheetCalls, neonCalls) {
+  const mk = function (avg, calls) {
+    const row = ['', '', '2026-06-24', 'A_Q_Alpha', 'Total Calls',
+                 calls, calls, 0, '0:01:00', avg, '', 0];
+    return { values: [row], displays: [row.map(String)], ssTZ: 'America/Chicago' };
+  };
+  h.ctx.readQcdSheetData_ = function () { return mk(sheetAvg, sheetCalls); };
+  h.ctx.neonFetchQcdGrid_ = function () { return mk(neonAvg, neonCalls); };
+}
+
+function parityRun_() {
+  const lines = [];
+  const realLogger = h.ctx.Logger;
+  h.ctx.Logger = { log: function () {
+    let s = String(arguments[0]);
+    for (let i = 1; i < arguments.length; i++) s = s.replace(/%s/, String(arguments[i]));
+    lines.push(s);
+  } };
+  try { h.call('compareQcdSources_'); } finally { h.ctx.Logger = realLogger; }
+  return lines.join('\n');
+}
+
+test('R5: ±1s avgAnswer rounding diff is IGNORED (gate passes, diff surfaced as rounding)', function () {
+  installQcd('sheet');
+  h.state.props.QCD_PARITY_FROM = '2026-06-24';
+  h.state.props.QCD_PARITY_TO = '2026-06-24';
+  parityGrids_('0:00:21', '0:00:20', 10, 10);
+  const log = parityRun_();
+  assert.match(log, /QCD PARITY CLEAN/, 'off-by-one duration must not block the flip');
+  assert.match(log, /rounding diffs \(IGNORED/, 'the ignored diff is still surfaced');
+});
+
+test('R5: >1s duration drift and count differences still FAIL the gate', function () {
+  installQcd('sheet');
+  h.state.props.QCD_PARITY_FROM = '2026-06-24';
+  h.state.props.QCD_PARITY_TO = '2026-06-24';
+  parityGrids_('0:00:25', '0:00:20', 10, 10);
+  assert.match(parityRun_(), /QCD PARITY MISMATCH/, '5s apart is real drift');
+  parityGrids_('0:00:20', '0:00:20', 10, 9);
+  assert.match(parityRun_(), /QCD PARITY MISMATCH/, 'counts stay exact');
+});

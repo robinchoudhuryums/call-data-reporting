@@ -264,6 +264,45 @@ test('IMP-1: "Backup CSR" is recognized as a queue (abandon stage, entry queue, 
   assert.equal(h.call('icIsQueueName_', 'Jane Backup CSR'), false);
 });
 
+// ---- R5: ivr/direct stage split + first_agent capture --------------------------
+
+test('R5: abandoned DIRECT call (rang a person, no queue) -> abandon_stage=direct, firstAgent set', function () {
+  // Caller dialed an agent's DID; the ring leg carries the agent's name +
+  // a real Departments value (the discriminator -- IVR/menu legs have
+  // dept N/A). Pre-fix this landed in the 'ivr' bucket, inflating the
+  // Inbound report's "Abandoned in IVR" tile to ~25% of calls.
+  const recs = build([
+    leg({ callId: '910001', legId: 1, start: '06/04/2026 11:20:00', stop: '06/04/2026 11:20:40', direction: 'Incoming', caller: '12145552222', callee: '352', calleeName: 'Daniel (Dishant) Sahani', dialIn: '19725550123', missed: 'Missed', abandoned: 'Abandoned', dept: 'Customer Success' }),
+  ]);
+  const r = rec(recs, '910001');
+  assert.equal(r.disposition, 'abandoned');
+  assert.equal(r.abandonStage, 'direct', 'person-leg abandon is DIRECT, not IVR');
+  assert.equal(r.entryQueue, null);
+  assert.equal(r.firstAgent, 'Daniel (Dishant) Sahani');
+});
+
+test('R5: true IVR abandon stays ivr; firstAgent null when no person leg rang', function () {
+  const recs = build([
+    leg({ callId: '910002', legId: 1, start: '06/04/2026 05:41:26', stop: '06/04/2026 05:41:43', direction: 'Incoming', caller: '14047773333', callee: '999', calleeName: 'Introduction - New', dialIn: '19722281820' }),
+    leg({ callId: '910002', legId: 2, start: '06/04/2026 05:41:43', stop: '06/04/2026 05:42:27', direction: 'Incoming', caller: '14047773333', callee: '9999', calleeName: 'Normal Call Menu - New', dialIn: '19722281820', missed: 'Missed', abandoned: 'Abandoned' }),
+  ]);
+  const r = rec(recs, '910002');
+  assert.equal(r.abandonStage, 'ivr', 'menu legs carry no dept -> still IVR');
+  assert.equal(r.firstAgent, null);
+});
+
+test('R5: firstAgent = FIRST person leg (queues/menus skipped; phone-shaped callees never stored)', function () {
+  const recs = build([
+    leg({ callId: '910003', legId: 1, start: '06/04/2026 10:00:00', stop: '06/04/2026 10:00:10', direction: 'Incoming', caller: '12145554444', callee: '999', calleeName: 'Introduction - New', dialIn: '19722281820' }),
+    leg({ callId: '910003', legId: 2, start: '06/04/2026 10:00:10', stop: '06/04/2026 10:00:50', direction: 'Incoming', caller: '12145554444', callee: '103', calleeName: 'A_Q_CSR', dialIn: '19722281820' }),
+    leg({ callId: '910003', legId: 3, start: '06/04/2026 10:00:50', stop: '06/04/2026 10:01:10', direction: 'Incoming', caller: '12145554444', callee: '241', calleeName: '+1 (312) 555-0100', dialIn: '19722281820', dept: 'CSR' }),
+    leg({ callId: '910003', legId: 4, start: '06/04/2026 10:01:10', connected: '06/04/2026 10:01:10', stop: '06/04/2026 10:05:00', direction: 'Incoming', talk: '0:03:50', caller: '12145554444', callee: '352', calleeName: 'Anna Smith', answered: 'Answered', dialIn: '19722281820', dept: 'CSR' }),
+  ]);
+  const r = rec(recs, '910003');
+  assert.equal(r.firstAgent, 'Anna Smith',
+    'IVR (no dept), queue, and phone-shaped legs are all skipped');
+});
+
 // ---- L2: authoritative per-date replace (writeInboundCallsToNeon opts) --------
 // A fake JDBC conn records every executed statement so we can assert the
 // authoritative write DELETEs the payload's dates (same txn, before the upsert)

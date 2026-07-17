@@ -60,7 +60,14 @@
 // v3: per-dept gating (manager access; optional `department` scoping via
 // entry-queue attribution + the answered-on-hold final_dept carve-out);
 // kpis.abandonedIvr; meta gains department / unmapped / companyView.
-const INBOUND_CACHE_KEY_PREFIX = 'inbound:v3';
+// v4 (round 4): byInsurer + byDialInInsurer are LABELED-insurer-only (the
+// '(unlabeled)' catch-all row -- every non-insurer caller -- was dropped as
+// misleading) and byQueue is queue-entered-calls-only (the '(none)' row --
+// direct/DID calls, >50% of volume -- was dropped; Direct has its own report).
+// v5 (R5): abandon_stage gains 'direct' (kpis.abandonedDirect; old rows heal
+// on re-import), byDialIn rows carry display labels (DIAL_IN_LABELS map >
+// derived dominant first_agent > raw number; raw kept in `number`).
+const INBOUND_CACHE_KEY_PREFIX = 'inbound:v5';
 const INBOUND_TOP_N = 50;
 // Cap the requested window so an over-wide range can't trigger an
 // unbounded Neon aggregation (mirrors CallerLookup's range guard). A
@@ -408,6 +415,19 @@ function computeInboundReport_(scope) {
     const deptPred = inboundDeptPredicate_(scope.dept, scope.deptQueues);
     const dr = "c.call_date BETWEEN '" + from + "'::date AND '" + to + "'::date" + deptPred;
     const priorDr = "c.call_date BETWEEN '" + prior.from + "'::date AND '" + prior.to + "'::date" + deptPred;
+    // R5: the derived dial-in agent label reads first_agent, a column the
+    // cdr-import capture adds via its idempotent DDL. Guard on its existence
+    // so deploying the dashboard BEFORE the next import can't error the
+    // whole report (one cheap catalog probe per cold compute).
+    let hasFirstAgent = false;
+    try {
+      const probeSt = conn.createStatement();
+      const probeRs = probeSt.executeQuery(
+        "SELECT 1 FROM information_schema.columns " +
+        "WHERE table_name='inbound_calls' AND column_name='first_agent'");
+      hasFirstAgent = probeRs.next();
+      probeRs.close(); probeSt.close();
+    } catch (probeErr) { hasFirstAgent = false; }
     const kpiSelect = function (range) {
       return "(SELECT json_build_object(" +
             "'total', count(*), " +
@@ -416,6 +436,11 @@ function computeInboundReport_(scope) {
             "'missed', count(*) FILTER (WHERE disposition='missed'), " +
             "'abandonedOnHold', count(*) FILTER (WHERE abandoned_on_hold), " +
             "'abandonedIvr', count(*) FILTER (WHERE disposition='abandoned' AND abandon_stage='ivr'), " +
+            // R5: 'direct' split out of 'ivr' at capture (an abandon whose leg
+            // rang a PERSON is a direct-line abandon, not an IVR one). Old
+            // rows keep stage='ivr' until re-imported, so this counts only
+            // post-fix data.
+            "'abandonedDirect', count(*) FILTER (WHERE disposition='abandoned' AND abandon_stage='direct'), " +
             "'anonymous', count(*) FILTER (WHERE caller_hash IS NULL), " +
             "'avgWaitSec', COALESCE(round(avg(wait_seconds))::int, 0), " +
             "'avgHoldSec', COALESCE(round(avg(NULLIF(hold_seconds,0)))::int, 0)" +
@@ -425,35 +450,52 @@ function computeInboundReport_(scope) {
       "SELECT json_build_object(" +
         "'kpis', " + kpiSelect(dr) + ", " +
         "'kpisPrior', " + kpiSelect(priorDr) + ", " +
+        // Round 4 (owner): LABELED insurers only. The old '(unlabeled)'
+        // catch-all lumped every non-insurer caller (patients, doctor
+        // offices, ...) into one misleading mega-row -- insurers are a small
+        // labeled subset, so the table shows only them now.
         "'byInsurer', (SELECT COALESCE(json_agg(t), '[]') FROM (" +
-            "SELECT COALESCE(i.insurance_name,'(unlabeled)') AS label, count(*) AS calls, " +
+            "SELECT i.insurance_name AS label, count(*) AS calls, " +
               "count(*) FILTER (WHERE c.disposition='answered') AS answered, " +
               "count(*) FILTER (WHERE c.disposition='abandoned') AS abandoned, " +
               "count(*) FILTER (WHERE c.abandoned_on_hold) AS on_hold, " +
               "COALESCE(round(avg(c.wait_seconds))::int, 0) AS avg_wait " +
-            "FROM inbound_calls c LEFT JOIN insurance_numbers i ON i.phone_hash=c.caller_hash " +
+            "FROM inbound_calls c JOIN insurance_numbers i ON i.phone_hash=c.caller_hash " +
             "WHERE " + dr + " AND c.caller_hash IS NOT NULL " +
             "GROUP BY 1 ORDER BY calls DESC LIMIT " + INBOUND_TOP_N + ") t), " +
         "'byDialIn', (SELECT COALESCE(json_agg(t), '[]') FROM (" +
             "SELECT COALESCE(dial_in_number,'(none)') AS label, count(*) AS calls, " +
               "count(*) FILTER (WHERE disposition='answered') AS answered, " +
               "count(*) FILTER (WHERE disposition='abandoned') AS abandoned, " +
-              "COALESCE(round(avg(wait_seconds))::int, 0) AS avg_wait " +
+              "COALESCE(round(avg(wait_seconds))::int, 0) AS avg_wait" +
+              // R5: dominant first-rung person per line -- labels an agent's
+              // direct DID with its owner (post-parse: DIAL_IN_LABELS map
+              // wins for the main lines).
+              (hasFirstAgent
+                ? ", mode() WITHIN GROUP (ORDER BY first_agent) FILTER (WHERE first_agent IS NOT NULL) AS agent_label "
+                : " ") +
             "FROM inbound_calls c WHERE " + dr + " " +
             "GROUP BY 1 ORDER BY calls DESC LIMIT " + INBOUND_TOP_N + ") t), " +
+        // Round 4 (owner): queue-entered calls only. The old '(none)' row --
+        // direct-to-agent/DID calls that never touched a queue, >50% of
+        // volume -- swamped the per-queue read; direct traffic has its own
+        // report (DirectCallReport).
         "'byQueue', (SELECT COALESCE(json_agg(t), '[]') FROM (" +
-            "SELECT COALESCE(entry_queue,'(none)') AS label, count(*) AS calls, " +
+            "SELECT entry_queue AS label, count(*) AS calls, " +
               "count(*) FILTER (WHERE disposition='answered') AS answered, " +
               "count(*) FILTER (WHERE disposition='abandoned') AS abandoned, " +
               "COALESCE(round(avg(wait_seconds))::int, 0) AS avg_wait " +
-            "FROM inbound_calls c WHERE " + dr + " " +
+            "FROM inbound_calls c WHERE " + dr + " AND entry_queue IS NOT NULL " +
             "GROUP BY 1 ORDER BY calls DESC LIMIT " + INBOUND_TOP_N + ") t), " +
+        // Round 4: the cross-cut goes labeled-insurers-only too (same
+        // rationale as byInsurer -- an '(unlabeled)' row is every
+        // non-insurer caller, not a segment).
         "'byDialInInsurer', (SELECT COALESCE(json_agg(t), '[]') FROM (" +
             "SELECT COALESCE(c.dial_in_number,'(none)') AS dial_in, " +
-              "COALESCE(i.insurance_name,'(unlabeled)') AS insurer, count(*) AS calls, " +
+              "i.insurance_name AS insurer, count(*) AS calls, " +
               "count(*) FILTER (WHERE c.disposition='answered') AS answered, " +
               "count(*) FILTER (WHERE c.disposition='abandoned') AS abandoned " +
-            "FROM inbound_calls c LEFT JOIN insurance_numbers i ON i.phone_hash=c.caller_hash " +
+            "FROM inbound_calls c JOIN insurance_numbers i ON i.phone_hash=c.caller_hash " +
             "WHERE " + dr + " AND c.caller_hash IS NOT NULL " +
             "GROUP BY 1, 2 ORDER BY calls DESC LIMIT " + INBOUND_TOP_N + ") t), " +
         "'daily', (SELECT COALESCE(json_agg(t ORDER BY t.d), '[]') FROM (" +
@@ -469,6 +511,25 @@ function computeInboundReport_(scope) {
     if (!json) { empty.meta.available = false; return empty; }
 
     const obj = JSON.parse(json);
+    // R5: dial-in display labels. Precedence: the admin-curated
+    // DIAL_IN_LABELS map (main lines) > the derived dominant first agent
+    // (direct DIDs) > the raw number. Raw number kept in `number` for the
+    // hover/CSV.
+    const dlMap = inboundDialInLabels_();
+    const dialInDisplay = function (num) {
+      const digits = String(num == null ? '' : num).replace(/\D/g, '');
+      return (digits && dlMap[digits]) || null;
+    };
+    (Array.isArray(obj.byDialIn) ? obj.byDialIn : []).forEach(function (r) {
+      r.number = r.label;
+      const mapped = dialInDisplay(r.label);
+      if (mapped) r.label = mapped;
+      else if (r.agent_label) r.label = r.label + ' · ' + r.agent_label;
+    });
+    (Array.isArray(obj.byDialInInsurer) ? obj.byDialInInsurer : []).forEach(function (r) {
+      const mapped = dialInDisplay(r.dial_in);
+      if (mapped) r.dial_in = mapped;
+    });
     const kpis = inboundShapeKpis_(obj.kpis);
     return {
       meta: {
@@ -507,12 +568,38 @@ function inboundShapeKpis_(k) {
     missed:          Number(k.missed) || 0,
     abandonedOnHold: Number(k.abandonedOnHold) || 0,
     abandonedIvr:    Number(k.abandonedIvr) || 0,
+    abandonedDirect: Number(k.abandonedDirect) || 0,   // R5 stage split
     anonymous:       Number(k.anonymous) || 0,
     avgWaitSec:      Number(k.avgWaitSec) || 0,
     avgHoldSec:      Number(k.avgHoldSec) || 0,
     abandonRate:     total > 0 ? Math.round((Number(k.abandoned) || 0) / total * 1000) / 10 : 0,
     answerRate:      total > 0 ? Math.round((Number(k.answered) || 0) / total * 1000) / 10 : 0,
   };
+}
+
+/**
+ * R5: admin-curated labels for the MAIN dial-in lines, from the
+ * DIAL_IN_LABELS Script Property (dashboard project; no redeploy to edit).
+ * Format: comma-separated `number = Label` pairs, e.g.
+ *   "18668646332 = Main CSR Line, 19722281820 = Intake Line"
+ * Keys are digit-normalized ('+1 (866) 864-6332' matches too). Tolerant:
+ * malformed tokens are dropped silently (the Skip Dates grammar
+ * discipline). Direct-DID lines usually don't need an entry -- the derived
+ * dominant-first-agent label covers them.
+ */
+function inboundDialInLabels_() {
+  let raw = '';
+  try { raw = PropertiesService.getScriptProperties().getProperty('DIAL_IN_LABELS') || ''; }
+  catch (e) { return {}; }
+  const map = {};
+  String(raw).split(',').forEach(function (tok) {
+    const i = tok.indexOf('=');
+    if (i < 1) return;
+    const num = tok.slice(0, i).replace(/\D/g, '');
+    const label = tok.slice(i + 1).trim();
+    if (num && label) map[num] = label;
+  });
+  return map;
 }
 
 function emptyInboundReport_(scope) {

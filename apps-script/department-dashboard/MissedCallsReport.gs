@@ -77,11 +77,13 @@ function getMissedCallsReport(req) {
   // v14 (RPT-1/RPT-2): AD/AF processed BEFORE the zero-slot early-continue
   // (slot-less abandoned parents count + lost-detail flag fires), and the
   // AF<->AD pairing is a per-time-key FIFO so duplicate seconds keep
-  // distinct parent ids. See INV-30 for the full version history.
+  // distinct parent ids. v15 (R5): queue-only abandoned entries enriched
+  // from inbound_calls (waitSec + insurer label, best-effort/Neon-optional).
+  // See INV-30 for the full version history.
   // CORE-3: suffix the key with the active DQE read source so a
   // DQE_READ_SOURCE flip can't serve a cross-source payload for the TTL.
   const dqeReadSrc = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
-  const cacheKey = 'missed:v14:' + dept + ':' + scope + ':' + from + ':' + to + ':' + dqeReadSrc;
+  const cacheKey = 'missed:v15:' + dept + ':' + scope + ':' + from + ':' + to + ':' + dqeReadSrc;
   const cached = cache.get(cacheKey);
   if (cached) {
     try {
@@ -212,12 +214,12 @@ function missedSliceFilter_(reportData, filter) {
 
 // Read (or compute) the roster-scope Missed report for (dept, from, to),
 // sharing the SAME cache the section render uses so a drill after the section
-// loaded is a cache hit. Key mirrors getMissedCallsReport's (missed:v14,
+// loaded is a cache hit. Key mirrors getMissedCallsReport's (missed:v15,
 // scope=roster, source-suffixed per CORE-3).
 function missedReportDataCached_(dept, from, to) {
   const cache = CacheService.getScriptCache();
   const dqeReadSrc = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
-  const cacheKey = 'missed:v14:' + dept + ':roster:' + from + ':' + to + ':' + dqeReadSrc;
+  const cacheKey = 'missed:v15:' + dept + ':roster:' + from + ':' + to + ':' + dqeReadSrc;
   const cached = cache.get(cacheKey);
   if (cached) { try { return JSON.parse(cached); } catch (e) { /* recompute */ } }
   const data = computeMissedCallsReport_(dept, from, to, 'roster');
@@ -226,6 +228,85 @@ function missedReportDataCached_(dept, from, to) {
     if (json.length <= 100000) cache.put(cacheKey, json, REPORT_CACHE_TTL_SECONDS);
   } catch (e) { /* best-effort */ }
   return data;
+}
+
+// ---------------------------------------------------------------------------
+// R5 (owner): per-call enrichment of the queue-only abandoned entries.
+//
+// The queue-only card lists 🚨 timestamps with their parent call ids; the
+// caller-side FACTS live in Neon `inbound_calls` (wait_seconds) and the
+// insurer labeling in `insurance_numbers` (joined on caller_hash). One
+// batched lookup per report compute stamps `waitSec` + `insurer` onto each
+// entry. Rules:
+//   - best-effort + Neon-optional: unconfigured/unreachable/missing tables
+//     leave the entries un-enriched (the card renders exactly as before);
+//   - PHI: only the admin-entered insurer LABEL crosses into the payload --
+//     hashes and phone numbers never do;
+//   - bounded: at most MISSED_ENRICH_MAX_CALLS_ distinct (date, id) pairs
+//     join the IN-list (a multi-week range can list hundreds of abandons;
+//     the oldest overflow entries just stay un-enriched).
+// Enriched fields ride the cached payload (missed:v15).
+// ---------------------------------------------------------------------------
+var MISSED_ENRICH_MAX_CALLS_ = 400;
+
+function missedEnrichQueueOnlyFromInbound_(queueOnly) {
+  try {
+    if (!queueOnly || !queueOnly.length) return;
+    if (typeof getDashboardNeonConn_ !== 'function') return;
+    if (!PropertiesService.getScriptProperties().getProperty('NEON_HOST')) return;
+
+    const pairs = [];
+    const seen = {};
+    queueOnly.forEach(function (q) {
+      (q.entries || []).forEach(function (e) {
+        if (!e.parentId || !e.date) return;
+        const k = e.date + '|' + e.parentId;
+        if (seen[k]) return;
+        seen[k] = true;
+        if (pairs.length < MISSED_ENRICH_MAX_CALLS_) pairs.push({ date: e.date, id: e.parentId });
+      });
+    });
+    if (!pairs.length) return;
+
+    const conn = getDashboardNeonConn_();   // NEO-3: not a DQE read -- no read-health recording
+    if (!conn) return;
+    try {
+      // Dates are ISO out of the build; ids are the AD parent ids (numeric
+      // strings). Escaped anyway -- the values pass through sheet cells.
+      const sqlStr = function (s) { return "'" + String(s).replace(/'/g, "''") + "'"; };
+      const tuples = pairs.map(function (p) {
+        return '(' + sqlStr(p.date) + '::date,' + sqlStr(p.id) + ')';
+      });
+      const st = conn.createStatement();
+      const rs = st.executeQuery(
+        'SELECT c.call_date::text AS d, c.call_id, c.wait_seconds, i.insurance_name ' +
+        'FROM inbound_calls c ' +
+        'LEFT JOIN insurance_numbers i ON i.phone_hash = c.caller_hash ' +
+        'WHERE (c.call_date, c.call_id) IN (' + tuples.join(',') + ')');
+      const facts = {};
+      while (rs.next()) {
+        const w = parseInt(rs.getString(3), 10);
+        facts[rs.getString(1) + '|' + rs.getString(2)] = {
+          waitSec: isFinite(w) ? w : null,
+          insurer: rs.getString(4) || null,
+        };
+      }
+      rs.close(); st.close();
+      queueOnly.forEach(function (q) {
+        (q.entries || []).forEach(function (e) {
+          const hit = e.parentId && facts[e.date + '|' + e.parentId];
+          if (!hit) return;
+          if (hit.waitSec != null) e.waitSec = hit.waitSec;
+          if (hit.insurer) e.insurer = hit.insurer;
+        });
+      });
+    } finally {
+      try { conn.close(); } catch (ce) {}
+    }
+  } catch (err) {
+    Logger.log('missedEnrichQueueOnlyFromInbound_ (best-effort): '
+      + (err && err.message ? err.message : err));
+  }
 }
 
 /**
@@ -658,6 +739,11 @@ function computeMissedCallsReport_(dept, from, to, scope) {
   const queueOnlyUniqueCount = Object.keys(parentToQueues).length;
   const queueOnlyEventCount = queueOnly.reduce(
     function (s, q) { return s + q.total; }, 0);
+
+  // R5 (owner): enrich the queue-only abandoned entries with per-call facts
+  // from inbound_calls (wait time + insurer label). Best-effort -- a Neon
+  // miss leaves the entries exactly as before.
+  missedEnrichQueueOnlyFromInbound_(queueOnly);
 
   // Chart labels
   const chartLabels = [];
