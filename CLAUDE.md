@@ -854,9 +854,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   visible steps. Auto-runs ONCE for first-time visitors (localStorage
   `cdr.tour.done`, gated to the Overview landing, 1.2s after load) and
   is always replayable from **Settings -> "Take the tour"** (`#tour-replay-btn`
-  lives in the Settings modal, dashboard.html; NB the replay handler still
-  closes the HELP modal -- a stale assumption from before the button moved,
-  scan finding C-2, fix queued in Batch 5). No server endpoint / cache bump -- part of
+  lives in the Settings modal, dashboard.html; the replay handler closes the
+  SETTINGS modal via its own close button -- the F-42 focus-trap discipline --
+  before starting the tour, C-2). No server endpoint / cache bump -- part of
   the same client-only anti-intimidation layer below.
 - **Anti-intimidation layer is client-only; keep it that way.** Four
   pieces, all in script.html/styles.html with no server endpoints or

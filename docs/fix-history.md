@@ -223,9 +223,35 @@ findings.
 | `O-6` | PipelineWatch advanced its watermark past rows evicted from the 300-row tail by a retry storm, silencing those failures forever. Clipped tails widen x4 (bounded) via `pipelineWatchTailClipped_`. | Operator State #32 |
 | Gap #3 | External `pending_review` submissions could sit unseen (no dashboard event fires on a direct Neon INSERT). Count-only PII-free hourly ping via PipelineWatch, `NOTIFY_PENDING_REVIEW` flag, OPS-1 watermark. | Operator State #32, INV-55 |
 
-Scan findings NOT yet implemented (queued): `C-1`…`C-9`
-(client regressions incl. the C-2 tour-replay/Settings mismatch), `T-1`…`T-7`
-(repair/backfill tools), `P-6`…`P-8`.
+**Batch 5+6 (same scan, third implement pass).** `C-#` = client (script.html);
+`T-#` = cdr-report tools. One-liners only -- the full narratives live in
+known-issues.md ("Broad-scan Batch 5+6 fixes" + the AD/AE/AF and
+date-coercion sections).
+
+| Code | What it fixed |
+|---|---|
+| `C-1` | Second `#ins-trend-header` writer clobbered the explicit range label -- merged into one writer |
+| `C-2` | Tour replay closed HELP while the button lives in SETTINGS -- stranded Settings under the tour |
+| `C-3` | Overview mini-table WoW tooltips cited the dept page's prior window -- now their own response meta |
+| `C-4`/`C-9` | `escCssId_` stripped quotes (lookups could never match) + raw hash in router selectors threw -- proper escaping both places |
+| `C-5` | All-dept QCD CSV title line split on the dateLabel comma |
+| `C-6` | `irRenderCharts` empty-datasets early-return left all three chart panels stacked visible |
+| `C-7` | `escapeHtml` into textContent double-encoded the Neon-health lines |
+| `C-8` | Inbound/Direct runners lacked stale-response tokens -- joined `reportReqSeq_` |
+| `T-1` | Duplicate-row merge broke the F-2 AD/AE/AF lockstep -- re-pairs + time-sorts now |
+| `T-2`/`T-3` | CDR/QCD backfills wedged forever on an unparseable date cell -- skip + log |
+| `T-4` | `abandoned_pct` mixed units -- percent-number convention matching the inline writer |
+| `T-6` | Drilldown queue gate used the pre-IMP-8 loose regex -- false verification mismatches |
+| `T-7` | Stale diagnostics panel stranded beyond col 40 -- full-height clear |
+| `P-7` | Stale Pending-Archive rows beat a fresh recompute -- replaced when fresh rows exist |
+| `P-8` | ISO-text date cells parsed as UTC midnight (previous Chicago day) in the dup-guard/force-delete -- `parseHistoryDateCell_` local-noon |
+
+**All corrective findings from the 2026-07 broad scan are implemented** (P-6
+optional/deferred: `call_history_*` isn't dashboard-read). Remaining scan work
+is strategic (Batches 8-10): inbound queue-identity normalization + manager
+un-gating (gates stay ON while the reports are vetted -- owner), the Neon flip
+execution (unblocked since R-1), smoke harness, Report Usage review, legacy
+decommission.
 
 ---
 
