@@ -373,6 +373,40 @@ function writeCDRRowsToNeon(rows, opts) {
   conn.setAutoCommit(false);
 
   try {
+    // P-6 (the IMP-5 pattern): authoritative per-date replace. Callers whose
+    // payload is provably the COMPLETE CDR set for its date(s) -- the daily
+    // inline mirror + the deferred per-date mirror -- pass
+    // { authoritative: true }: the writer DELETEs those dates' PHONE CHILD
+    // rows first (they hang off call_history_dept ids; a deleted parent
+    // would otherwise strand its children as phantoms -- or refuse to
+    // delete at all under a plain FK), then the call_history_dept parents,
+    // inside the SAME transaction as the main insert. A shrinking force
+    // re-import (agent consolidated under an alias, a corrected row
+    // removed) can no longer leave phantom parent/child rows.
+    // Partial-set callers (the bulk archive after dedupeAlreadyArchived_,
+    // neonbackfill's row-batched backfill) must NOT pass it.
+    // Known window: the main txn (delete + parent insert) commits before
+    // the phone-child step runs its own txn -- a phone-insert failure
+    // after that commit leaves the date's children absent until the
+    // caller's retry (the throw already notifies / keeps the date queued).
+    if (opts && opts.authoritative) {
+      var cdrIsoDates = neonDistinctIsoDates_(rows, function (r) {
+        // All current callers pass ISO callDate already; the guard avoids
+        // parseDateForNeon's UTC-midnight parse shift on an ISO input.
+        var s = String(r.callDate == null ? '' : r.callDate).trim();
+        return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : parseDateForNeon(s);
+      });
+      if (cdrIsoDates.length) {
+        var chDel = conn.prepareStatement(
+          'DELETE FROM call_history_phones WHERE call_history_id IN ' +
+          '(SELECT id FROM call_history_dept WHERE call_date IN (' +
+          cdrIsoDates.map(function () { return '?::date'; }).join(',') + '))');
+        for (var cd = 0; cd < cdrIsoDates.length; cd++) chDel.setString(cd + 1, cdrIsoDates[cd]);
+        chDel.execute();
+        chDel.close();
+        neonAuthoritativeDateDelete_(conn, 'call_history_dept', cdrIsoDates);
+      }
+    }
     // F-21: chunked like the DQE/QCD writers (21 params/row; the F-18 bulk
     // CDR mirror can pass many dates at once). ONE commit after all chunks,
     // BEFORE the phone child rows (unchanged ordering -- the children look
@@ -718,7 +752,12 @@ function cdrParseNameFieldJson_(val, isUnused, secret) {
       var countMatch = entry.match(/\((\d+)\)\s*$/);
       var count = countMatch ? parseInt(countMatch[1]) : 1;
       var nameRaw = countMatch ? entry.replace(countMatch[0], '').trim() : entry;
-      if (isExt && cdrLooksLikePhone_(nameRaw)) {
+      if (cdrLooksLikePhone_(nameRaw)) {
+        // P-2 hardening: a phone-shaped entry is a raw number regardless of
+        // which side of the "|" it sits on -- a pre-fix external-only cell
+        // (see autoImport.js::join) parses as internal, and no employee name
+        // is phone-shaped, so hashing here can never mask a legitimate
+        // internal display name. Hash-only shape on BOTH sides.
         out.push({ display: null, phone_hash: cdrHashPhone_(nameRaw, secret), count: count });
       } else if (isExt) {
         // IMP-12 (owner ruling): an external non-phone CNAM string is often

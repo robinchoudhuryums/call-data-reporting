@@ -119,7 +119,12 @@ function getLatestDataDates() {
   const gateUser = resolveUser_(Session.getActiveUser().getEmail());
   if (!gateUser || gateUser.role === 'none') throw new Error('Not authorized.');
   const cache = CacheService.getScriptCache();
-  const source = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
+  // R-1: the blob now has a source-aware QCD component too, so the key uses
+  // the COMBINED DQE+QCD tag (readSourceCacheTag_, the CORE-3 pattern) --
+  // a flip of EITHER read-source flag can't serve a cross-source blob.
+  const source = (typeof readSourceCacheTag_ === 'function')
+    ? readSourceCacheTag_()
+    : ((typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet');
   const KEY = 'latestDates:v1:' + source;
   const cached = cache.get(KEY);
   if (cached) {
@@ -145,21 +150,30 @@ function getLatestDataDates() {
     // autoImport.js's processIntegratedHistory QCD block; the
     // sheet may be absent on a fresh CDR Report ss that hasn't
     // ingested QCD yet, in which case we leave result.qcd null.
-    const qcdSheet = ss.getSheetByName('QCD Historical Data');
-    if (qcdSheet) {
-      const lastRow = qcdSheet.getLastRow();
-      if (lastRow >= 2) {
-        const values = qcdSheet
-          .getRange(2, QCD_HISTORICAL_COLS.DATE, lastRow - 1, 1)
-          .getValues();
-        let qcdLatest = '';
-        for (let i = 0; i < values.length; i++) {
-          const iso = rowDateIso_(values[i][0], ssTZ);
-          if (iso && iso > qcdLatest) qcdLatest = iso;
+    // R-1: honor QCD_READ_SOURCE -- with reads on Neon the sheet may be
+    // trimmed/aging, and the pill's QCD component previously went stale
+    // with it. Neon null/empty/error falls back to the sheet scan.
+    let qcdLatest = '';
+    if (typeof getQcdReadSource_ === 'function' && getQcdReadSource_() === 'neon'
+        && typeof neonGetMaxQcdDate_ === 'function') {
+      qcdLatest = neonGetMaxQcdDate_() || '';
+    }
+    if (!qcdLatest) {
+      const qcdSheet = ss.getSheetByName('QCD Historical Data');
+      if (qcdSheet) {
+        const lastRow = qcdSheet.getLastRow();
+        if (lastRow >= 2) {
+          const values = qcdSheet
+            .getRange(2, QCD_HISTORICAL_COLS.DATE, lastRow - 1, 1)
+            .getValues();
+          for (let i = 0; i < values.length; i++) {
+            const iso = rowDateIso_(values[i][0], ssTZ);
+            if (iso && iso > qcdLatest) qcdLatest = iso;
+          }
         }
-        if (qcdLatest) result.qcd = qcdLatest;
       }
     }
+    if (qcdLatest) result.qcd = qcdLatest;
 
     // Overall max -- drives the pill's visible date + age. When
     // both sources agree, the pill matches DQE (normal steady
@@ -767,13 +781,30 @@ function computeDeptQcdSnapshot_(dept, ssTZ, opts) {
       });
     });
 
-    const ss = openSpreadsheet_();
-    const sheet = ss.getSheetByName('QCD Historical Data');
-    if (!sheet) return null;
-    const lastRow = sheet.getLastRow();
-    if (lastRow < 2) return null;
-    const tz = ssTZ || ss.getSpreadsheetTimeZone();
-    const values = sheet.getRange(2, 1, lastRow - 1, 12).getValues();
+    // R-1: source-aware read (readQcdGrid_, QCDReport.gs) so this panel
+    // honors QCD_READ_SOURCE instead of staying hard-wired to the sheet.
+    // Sheet path: whole-sheet read, byte-identical to before (and now
+    // memo-shared with computeQcdReport_ via readQcdSheetData_). Neon path:
+    // a windowed superset of every pass below -- the selected range, the
+    // MTD month (derived from the latest DATA date, so covered as long as
+    // the latest row is inside the lookback), and a 180-day latest-day
+    // lookback (a dept whose newest QCD row is older than that renders no
+    // panel on the Neon path -- acceptable: 6-months-quiet queue data is
+    // stale, and the panel's diagnostic note story covers mapping drift).
+    const _optFrom = (opts && opts.from) ? String(opts.from) : '';
+    const _optTo   = (opts && opts.to)   ? String(opts.to)   : '';
+    const _nowSnap = new Date();
+    const _todayIso = Utilities.formatDate(_nowSnap, TZ, 'yyyy-MM-dd');
+    const _lookbackIso = Utilities.formatDate(
+      new Date(_nowSnap.getFullYear(), _nowSnap.getMonth(), _nowSnap.getDate() - 180, 12), TZ, 'yyyy-MM-dd');
+    let _readFrom = _lookbackIso;
+    if (_optFrom && _optFrom < _readFrom) _readFrom = _optFrom;
+    const _readTo = (_optTo && _optTo > _todayIso) ? _optTo : _todayIso;
+    const grid = (typeof readQcdGrid_ === 'function') ? readQcdGrid_(_readFrom, _readTo) : null;
+    if (!grid || grid.missing || grid.empty) return null;
+    const tz = ssTZ || grid.ssTZ;
+    const values = grid.values;
+    if (!values.length) return null;
 
     let latestDate = '';
     let byQueue = {};   // queue -> { total, answered, abandoned, violations } on latestDate

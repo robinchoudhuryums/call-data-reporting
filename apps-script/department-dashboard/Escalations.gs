@@ -659,6 +659,20 @@ function approveEscalation(req) {
       throw new Error('This submission has no reason text, so it cannot enter the '
         + 'worklist. Reject it and have it resubmitted with a reason.');
     }
+    // A-4: a submission whose department matches no roster header would enter
+    // a worklist NO manager can ever see (managers are pinned to exact dept
+    // match; the admin dept filter validates against real depts, so the row
+    // would be reachable only under the 'ALL' scope). The INSERT-contract
+    // header anticipates this ("reject it") -- now enforced. Fail-open if the
+    // roster read itself returns nothing, so a sheet hiccup can't block
+    // legitimate approvals.
+    var knownDeptsA4 = [];
+    try { knownDeptsA4 = getAllDepartments_(); } catch (kdErr) { knownDeptsA4 = []; }
+    if (knownDeptsA4.length && knownDeptsA4.indexOf(row.department) === -1) {
+      throw new Error('Department "' + row.department + '" matches no roster (DO NOT EDIT!) '
+        + 'header, so no manager could ever see this escalation. Reject it and have it '
+        + 'resubmitted with the exact department name (case-sensitive).');
+    }
 
     conn.setAutoCommit(false); txn = true;
     var stmt = conn.prepareStatement(
@@ -921,7 +935,11 @@ function escRowMeta_(conn, id) {
 /** Reads the review-relevant columns of one escalation; null if absent. */
 function escRowFull_(conn, id) {
   var stmt = conn.prepareStatement(
-    'SELECT status, department, caller, patient_name, trx, area, reason, source '
+    // A-2: occurred_at was missing, so the approve-path notification email
+    // (escNotifyNewEscalation_ builds its rec from THIS row) silently
+    // dropped its "When" line on every approved submission.
+    'SELECT status, department, caller, patient_name, trx, area, reason, source, '
+    + 'occurred_at::text AS occurred_at '
     + 'FROM escalations WHERE id = ?');
   stmt.setString(1, id);
   var rs = stmt.executeQuery();
@@ -936,6 +954,7 @@ function escRowFull_(conn, id) {
       area:        rs.getString('area'),
       reason:      rs.getString('reason'),
       source:      rs.getString('source'),
+      occurredAt:  rs.getString('occurred_at'),
     };
   }
   rs.close(); stmt.close();
@@ -981,6 +1000,81 @@ function escAppendActivity_(conn, escId, action, actor, detail) {
  * Carries full escalation detail (operator decision): this is a PII surface,
  * which is why it stays off until explicitly enabled.
  */
+/**
+ * Gap #3: count-only admin ping for NEW `pending_review` submissions.
+ * team-tools INSERTs directly into Neon, so no dashboard code runs at
+ * submission time -- the review queue is pull-only, and with
+ * NOTIFY_ON_NEW_ESCALATION off (the PII default) external submissions can
+ * sit unseen until an admin happens to open Escalations. This is the
+ * POLLED complement: called from runPipelineWatch_'s hourly run (the
+ * existing admin-push engine), gated by its OWN `NOTIFY_PENDING_REVIEW`
+ * Script Property ('true' to enable; default OFF). PII-FREE by design --
+ * the email carries a COUNT + dept names only, never caller/patient/
+ * reason, so it composes safely with the PII flag staying off.
+ *
+ * Watermark discipline (OPS-1): `ESC_REVIEW_PING_WATERMARK` stores the max
+ * created_at examined. First run BASELINES silently (no backlog blast);
+ * later runs email once per new batch and advance the watermark only on a
+ * CONFIRMED send (a mail failure retries next hour). Best-effort: never
+ * throws into the caller; Neon-unreachable is a silent skip.
+ */
+function escPendingReviewPing_() {
+  try {
+    var props = PropertiesService.getScriptProperties();
+    if (String(props.getProperty('NOTIFY_PENDING_REVIEW') || '') !== 'true') return;
+    var conn = getDashboardNeonConn_();
+    if (!conn) return;   // Neon down -- next hourly run retries
+    try {
+      var watermark = props.getProperty('ESC_REVIEW_PING_WATERMARK') || '';
+      if (!watermark) {
+        // Baseline: record the newest row (ANY status -- simplest monotonic
+        // clock) and never email the historical backlog.
+        var bstmt = conn.createStatement();
+        var brs = bstmt.executeQuery("SELECT COALESCE(MAX(created_at)::text, '') AS m FROM escalations");
+        var base = brs.next() ? (brs.getString('m') || '') : '';
+        brs.close(); bstmt.close();
+        props.setProperty('ESC_REVIEW_PING_WATERMARK', base || '1970-01-01 00:00:00');
+        return;
+      }
+      var stmt = conn.prepareStatement(
+        'SELECT COALESCE(count(*), 0) AS n, '
+        + "COALESCE(MAX(created_at)::text, '') AS maxts, "
+        + "COALESCE(string_agg(DISTINCT department, ', '), '') AS depts "
+        + "FROM escalations WHERE status = 'pending_review' AND created_at > ?::timestamptz");
+      stmt.setString(1, watermark);
+      var rs = stmt.executeQuery();
+      var n = 0, maxts = '', depts = '';
+      if (rs.next()) {
+        n = Number(rs.getString('n')) || 0;
+        maxts = rs.getString('maxts') || '';
+        depts = rs.getString('depts') || '';
+      }
+      rs.close(); stmt.close();
+      if (!n) return;
+      var to = getAdminEmails_().join(',');
+      if (!to) return;   // no recipients -- leave the watermark; retry later
+      var url = props.getProperty('DASHBOARD_URL') || '';
+      MailApp.sendEmail({
+        to: to,
+        subject: '[Dashboard] ' + n + ' escalation submission' + (n === 1 ? '' : 's') + ' awaiting review',
+        body: n + ' new externally-submitted escalation' + (n === 1 ? ' is' : 's are')
+          + ' awaiting review (department' + (depts.indexOf(',') !== -1 ? 's' : '') + ': '
+          + (depts || 'unknown') + ').\n\n'
+          + 'Review them under Escalations -> the "awaiting review" chip.\n'
+          + (url ? '\nDashboard: ' + url + '#/escalations\n' : '')
+          + '\nThis is a count-only notice (no call/patient detail). One email per new batch; '
+          + 'enable NOTIFY_ON_NEW_ESCALATION for full-detail manager emails (PII surface).',
+      });
+      // OPS-1: advance only after the confirmed send above.
+      if (maxts) props.setProperty('ESC_REVIEW_PING_WATERMARK', maxts);
+    } finally {
+      try { conn.close(); } catch (ce) {}
+    }
+  } catch (e) {
+    Logger.log('escPendingReviewPing_ failed (best-effort): ' + (e && e.message ? e.message : e));
+  }
+}
+
 function escNotifyNewEscalation_(rec) {
   try {
     var props = PropertiesService.getScriptProperties();

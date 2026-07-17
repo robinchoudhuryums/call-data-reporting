@@ -366,11 +366,37 @@ function buildInboundCallRecords_(rawRows) {
  * date-goes-to-ZERO-inbound re-import can't be cleared this way -- an empty
  * payload carries no date to delete; that corner keeps the old upsert
  * behavior.)
+ *
+ * P-1: `opts.expectedDateIso` ('YYYY-MM-DD') is the F2-class guard for the
+ * authoritative DELETE above. Records are dated from their OWN first leg
+ * (icIsoDate_), so a stray carry-over leg from D-1 in day-D's source used to
+ * put D-1 into the payload's date set -- and the authoritative replace then
+ * WIPED all of D-1's inbound_calls rows (no sheet primary; permanent after
+ * the ~14-day Call_Legs retention), replacing them with the lone stray
+ * fragment. With expectedDateIso set, stray-dated records are DROPPED with a
+ * log line (their home date's own import already wrote its complete set --
+ * even a plain upsert of a fragment would corrupt that record), so the
+ * DELETE can only ever touch the date being imported. Every current caller
+ * passes it; omitting it keeps the old trust-the-payload behavior.
  */
 function writeInboundCallsToNeon(rawRows, opts) {
   var authoritative = !!(opts && opts.authoritative);
+  var expectedDateIso = (opts && opts.expectedDateIso) ? String(opts.expectedDateIso) : '';
   try {
     var records = buildInboundCallRecords_(rawRows).filter(function (r) { return r.callDate; });
+    if (expectedDateIso) {
+      var strayCount = 0;
+      records = records.filter(function (r) {
+        if (r.callDate === expectedDateIso) return true;
+        strayCount++;
+        return false;
+      });
+      if (strayCount) {
+        Logger.log('writeInboundCallsToNeon: dropped %s stray record(s) dated outside %s '
+          + '(carry-over legs; their home date owns them -- P-1 guard).',
+          strayCount, expectedDateIso);
+      }
+    }
     if (!records.length) return { inserted: 0, skipped: 0 };
 
     var secret = PropertiesService.getScriptProperties().getProperty('HMAC_SECRET');
@@ -579,7 +605,9 @@ function backfillInboundCalls(fromIso, toIso, force) {
       // the deferred mirror, which drains through here). A force re-run
       // refreshes cleanly; a non-force fill only writes NEW dates (the DELETE
       // is a no-op there).
-      var res = writeInboundCallsToNeon(legs, { authoritative: true });
+      // P-1: pin the write to this sheet's own date -- a carry-over leg from
+      // the previous day inside Call_Legs_<iso> must not delete that day.
+      var res = writeInboundCallsToNeon(legs, { authoritative: true, expectedDateIso: c.iso });
       if (res && res.error) {
         failures.push(c.iso);
       } else if (res && res.skipped && !res.inserted) {

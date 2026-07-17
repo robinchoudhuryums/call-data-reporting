@@ -78,6 +78,16 @@ function uninstallPipelineWatchTrigger() {
  * ScriptApp dispatch still calls it by name). Best-effort: never throws.
  */
 function runPipelineWatch_() {
+  // Gap #3: piggyback the hourly cadence for the count-only pending-review
+  // ping (Escalations.gs; its OWN NOTIFY_PENDING_REVIEW flag, default off --
+  // a no-op unless explicitly enabled). Dispatched FIRST because the
+  // pipeline scan below has several early returns (disabled / empty sheet /
+  // baseline / no failures) that must not starve it; itself best-effort.
+  try {
+    if (typeof escPendingReviewPing_ === 'function') escPendingReviewPing_();
+  } catch (pe) {
+    Logger.log('escPendingReviewPing_ dispatch failed: ' + (pe && pe.message ? pe.message : pe));
+  }
   try {
     var props = PropertiesService.getScriptProperties();
     if (String(props.getProperty('PIPELINE_WATCH_ENABLED') || '') !== 'true') return;
@@ -89,6 +99,22 @@ function runPipelineWatch_() {
     var lastTsRaw = props.getProperty('PIPELINE_WATCH_LAST_TS');
     var firstRun = (lastTsRaw == null || lastTsRaw === '');
     var sinceMs = firstRun ? null : (parseFloat(lastTsRaw) || 0);
+
+    // O-6: the fixed tail read + watermark-advance pair silently skipped rows.
+    // If the OLDEST examined row is still newer than the watermark AND the
+    // read came back clipped (exactly the requested row count), failures may
+    // sit between the watermark and the window top -- a retry storm (the LM1
+    // class that logs >300 rows in one interval) would evict them, and
+    // advancing the watermark below then silenced them FOREVER. Widen the
+    // read x4 (the F-20 tail-scan pattern) until the window reaches the
+    // watermark or the whole sheet, bounded at 3 widenings (x64 = 19,200
+    // rows -- far beyond any real storm).
+    var widenGuard = 0;
+    while (pipelineWatchTailClipped_(rows, scanRows, sinceMs) && widenGuard < 3) {
+      scanRows = scanRows * 4;
+      rows = pipelineWatchReadRows_(scanRows);
+      widenGuard++;
+    }
 
     var scan = pipelineWatchScan_(rows, sinceMs);
 
@@ -135,6 +161,21 @@ function pipelineWatchRecord_(props, watermarkMs, result) {
     props.setProperty('PIPELINE_WATCH_LAST', new Date().toISOString());
     props.setProperty('PIPELINE_WATCH_LAST_RESULT', result);
   } catch (pe) { /* best-effort */ }
+}
+
+/**
+ * O-6 pure predicate (unit-tested): TRUE when the tail read is CLIPPED (came
+ * back with exactly the requested row count, so older rows exist beyond the
+ * window top) AND the oldest examined row is still newer than the watermark --
+ * i.e. there may be unexamined rows the watermark hasn't cleared. First-run
+ * baselines (sinceMs null/0) never widen: the baseline intentionally ignores
+ * the backlog.
+ */
+function pipelineWatchTailClipped_(rows, requestedRows, sinceMs) {
+  if (sinceMs == null || !(sinceMs > 0)) return false;
+  if (!rows || rows.length < requestedRows) return false;   // whole sheet already read
+  var oldest = rows[0] && rows[0].tsMs;
+  return oldest != null && isFinite(oldest) && oldest > sinceMs;
 }
 
 /**

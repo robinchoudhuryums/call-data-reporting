@@ -112,7 +112,11 @@ function getCallerLookup(req) {
     let rows = JSON.parse(json || '[]');
     if (!Array.isArray(rows)) rows = [];
     if (rows.length > CALLER_LOOKUP_MAX_CALLS) {
-      rows = rows.slice(0, CALLER_LOOKUP_MAX_CALLS);
+      // R-2: the inner LIMIT kept the newest rows, but json_agg re-sorted
+      // them ASCENDING -- so slice(0, MAX) dropped the caller's MOST RECENT
+      // call (exactly the one an admin is usually investigating) instead of
+      // the oldest of the fetched window. Keep the tail of the ascending list.
+      rows = rows.slice(rows.length - CALLER_LOOKUP_MAX_CALLS);
       out.meta.truncated = true;
     }
     out.calls = rows.map(callerLookupShapeCall_);

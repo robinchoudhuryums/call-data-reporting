@@ -10,7 +10,7 @@
  *
  *   yyyy  4-digit year        MM  2-digit month   dd  2-digit day
  *   M     1-2 digit month     d   1-2 digit day
- *   HH    2-digit hour (00-23)  mm  2-digit minute
+ *   HH    2-digit hour (00-23)  mm  2-digit minute   H  unpadded hour (0-23)
  *   MMM   short month name (Jan, Feb, ...)
  *
  * Observed call sites (grep Utilities.formatDate): 'yyyy-MM-dd',
@@ -46,8 +46,8 @@ function shortMonthInTz(ts, tz) {
     .filter(function (p) { return p.type === 'month'; })[0].value;
 }
 
-// Longest-first so 'yyyy' wins over 'yy', 'MMM' over 'MM'/'M', etc.
-const TOKENS = /yyyy|yy|MMM|MM|dd|HH|mm|M|d|u/g;
+// Longest-first so 'yyyy' wins over 'yy', 'MMM' over 'MM'/'M', 'HH' over 'H'.
+const TOKENS = /yyyy|yy|MMM|MM|dd|HH|mm|M|d|u|H/g;
 
 function formatDate(date, tz, pattern) {
   // Realm-safe Date check: vm-created Dates fail `instanceof Date`
@@ -68,6 +68,7 @@ function formatDate(date, tz, pattern) {
     mm: p.minute,
     M: String(Number(p.month)),
     d: String(Number(p.day)),
+    H: String(Number(p.hour)),   // unpadded 0-23 (the QueueReportEmail window gate)
     u: isoDowInTz(ts, tz),   // ISO day-of-week 1=Mon..7=Sun (weekend/holiday gates)
   };
   return String(pattern).replace(TOKENS, function (tok) { return map[tok]; });

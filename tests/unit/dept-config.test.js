@@ -203,3 +203,26 @@ test('S1(c): discoverInboundQueues_ attributes via the EFFECTIVE inbound set per
     delete h.ctx.inboundQueuesForDept_;
   }
 });
+
+// ── A-3: duplicate dept rows are FIRST-active-row-wins ───────────────────────
+test('A-3: getActiveDeptConfigMap_ uses the FIRST active row on a duplicate dept', function () {
+  // The sheet editor upserts the FIRST matching row; the effective map used
+  // to give the LAST active row precedence, so a modal save against a
+  // hand-edited duplicate reported success while the stale later row stayed
+  // in force.
+  setConfig([
+    row({ dept: 'CSR', qcd: 'A_Q_First' }),
+    row({ dept: 'CSR', qcd: 'A_Q_StaleDuplicate' }),
+  ]);
+  assert.deepEqual(Array.from(h.call('getDeptQcdQueues_', 'CSR')), ['A_Q_First'],
+    'the row the editor edits is the row that takes effect');
+});
+
+test('A-3: an INACTIVE first copy does not shadow an active later copy', function () {
+  setConfig([
+    row({ dept: 'CSR', qcd: 'A_Q_Old', active: false }),
+    row({ dept: 'CSR', qcd: 'A_Q_Live' }),
+  ]);
+  assert.deepEqual(Array.from(h.call('getDeptQcdQueues_', 'CSR')), ['A_Q_Live'],
+    'inactive rows never block an active one (deactivate-all still reverts to constants)');
+});

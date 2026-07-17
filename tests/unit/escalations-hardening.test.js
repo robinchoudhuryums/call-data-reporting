@@ -312,3 +312,88 @@ test('NEO-2: comments are worklist-only, required non-empty, and resolve preserv
   assert.ok(/COALESCE\(NULLIF\(\?, ''\), comments\)/.test(res.sql),
     'blank resolve comment preserves the stored one instead of NULLing it');
 });
+
+// ── Gap #3: count-only pending-review ping (escPendingReviewPing_) ───────────
+function pingConn(state) {
+  return {
+    createStatement: function () {
+      return {
+        executeQuery: function () {
+          let done = false;
+          return {
+            next: function () { if (done) return false; done = true; return true; },
+            getString: function () { return state.baselineMax; },
+            close: function () {},
+          };
+        },
+        close: function () {},
+      };
+    },
+    prepareStatement: function () {
+      return {
+        setString: function (i, v) { state.boundWatermark = v; },
+        executeQuery: function () {
+          let done = false;
+          return {
+            next: function () { if (done) return false; done = true; return true; },
+            getString: function (col) {
+              if (col === 'n') return String(state.newCount);
+              if (col === 'maxts') return state.newMax;
+              if (col === 'depts') return state.depts;
+              return '';
+            },
+            close: function () {},
+          };
+        },
+        close: function () {},
+      };
+    },
+    close: function () {},
+  };
+}
+
+function installPing(state) {
+  h.state.props = { NOTIFY_PENDING_REVIEW: 'true', ADMIN_EMAILS: 'admin@x.com' };
+  h.ctx.getAdminEmails_ = function () { return ['admin@x.com']; };
+  h.ctx.getDashboardNeonConn_ = function () { return pingConn(state); };
+  const mails = [];
+  h.ctx.MailApp = { sendEmail: function (m) { mails.push(m); } };
+  return mails;
+}
+
+test('Gap #3: flag off -> no query, no mail', function () {
+  const state = { baselineMax: '2026-07-01 10:00:00', newCount: 3, newMax: '', depts: '' };
+  const mails = installPing(state);
+  h.state.props.NOTIFY_PENDING_REVIEW = 'false';
+  h.ctx.getDashboardNeonConn_ = function () { throw new Error('must not connect'); };
+  h.call('escPendingReviewPing_');
+  assert.equal(mails.length, 0);
+});
+
+test('Gap #3: first run baselines silently; second run pings once and advances the watermark', function () {
+  const state = { baselineMax: '2026-07-01 10:00:00', newCount: 2,
+                  newMax: '2026-07-02 09:00:00', depts: 'CSR, Sales' };
+  const mails = installPing(state);
+  h.call('escPendingReviewPing_');   // baseline
+  assert.equal(mails.length, 0, 'no backlog blast');
+  assert.equal(h.state.props.ESC_REVIEW_PING_WATERMARK, '2026-07-01 10:00:00');
+  h.call('escPendingReviewPing_');   // real run
+  assert.equal(mails.length, 1, 'one count-only email');
+  assert.equal(state.boundWatermark, '2026-07-01 10:00:00', 'queried since the baseline');
+  assert.match(mails[0].subject, /2 escalation submissions awaiting review/);
+  assert.match(mails[0].body, /CSR, Sales/);
+  assert.ok(mails[0].body.indexOf('patient') === -1 || /no call\/patient detail/.test(mails[0].body),
+    'PII-free: only the count-only disclaimer mentions patients');
+  assert.equal(h.state.props.ESC_REVIEW_PING_WATERMARK, '2026-07-02 09:00:00', 'advanced after confirmed send');
+});
+
+test('Gap #3: a mail failure leaves the watermark un-advanced (OPS-1 retry)', function () {
+  const state = { baselineMax: '2026-07-01 10:00:00', newCount: 1,
+                  newMax: '2026-07-02 09:00:00', depts: 'CSR' };
+  installPing(state);
+  h.state.props.ESC_REVIEW_PING_WATERMARK = '2026-07-01 10:00:00';
+  h.ctx.MailApp = { sendEmail: function () { throw new Error('quota'); } };
+  h.call('escPendingReviewPing_');
+  assert.equal(h.state.props.ESC_REVIEW_PING_WATERMARK, '2026-07-01 10:00:00',
+    'same batch retries on the next hourly run');
+});

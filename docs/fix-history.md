@@ -184,6 +184,89 @@ Health row amber on every run and masking real outages). Pinned by
 
 ---
 
+## `P-#` / `O-#` — broad-scan Batch 1+2 (2026-07-17)
+
+Findings from the 2026-07 three-stage broad scan, implemented in the
+"Batch 1+2" commit. `P-#` = **p**ipeline (cdr-import/cdr-report); `O-#` =
+dashboard **o**ps engines. **NB: `O-#` is a DIFFERENT family from `OPS-#`**
+(the earlier watchdog/backup/digest pass) — the same collision class as
+dashed-`F-#` vs bare-`F#`.
+
+| Code | What it fixed | Where the live rule lives |
+|---|---|---|
+| `P-1` | Inbound authoritative DELETE trusted payload-derived dates; a stray D-1 carry-over leg wiped D-1's `inbound_calls` rows. `expectedDateIso` pins the delete + drops strays. | Neon write discipline rule (4), CLAUDE.md |
+| `P-2` | External-only NOP cells bypassed IMP-12 PHI masking (`join()` omitted the `\|` separator; parser treated pipe-less cells as internal). Producer always emits the separator; parser hashes phone-shaped entries on BOTH sides. | known-issues.md IMP-12/P-2 section |
+| `P-3` | Force re-import deleted 5 sheets' rows BEFORE validating the source; an empty/corrupt source destroyed the date then threw. Source read+validate now precedes the delete block. | Force-path guard convention (M2) bullet, CLAUDE.md |
+| `P-4` | Direct-call build stamped the whole day with the grid's first-row date (no F2 guard); a stray first row mislabeled + wiped D-1. `opts.expectedDate` refusal, both callers pass it. | Direct-extension metrics bullet, CLAUDE.md |
+| `P-5` | `writeDirectCallRowsToNeon_` early-returned on empty rows before its date-DELETE while the sheet writer cleared the date — permanent sheet/Neon divergence on goes-to-zero force re-imports. | Direct-extension metrics bullet, CLAUDE.md |
+| `O-1` | Queue-report send loop had no per-recipient isolation; a mid-list mail failure re-blasted earlier subscribers every 30-min poll while later ones never got it. Isolated + marker-on-partial-success + `notifyQueueReportSendFailures_`. | Operator State #31 |
+| `O-2` | Digest run-claim marker armed pre-send made a TOTAL failure unrecoverable for the day; now cleared on zero-success + `DIGEST_LAST_RESULT_<cadence>` surfaced in the modal. | INV-45 OPS-2/O-2 paragraph |
+| `O-3` | An Alert/Digest Config Department matching no roster header silently un-monitored the dept forever (perpetual `no-data` / all-zero digest). Alerts: `error` outcome + "⚠ unknown dept" chip; digests: skip + admin notify. | INV-34, INV-45, Operator State #12 |
+| `O-4` | Hand-edited duplicate subscriber rows double-sent digests / queue reports. OPS-9 first-row-wins dedup + `duplicateRow` flag + modal chips (Digest Config key = email+dept; Queue Report Subscribers key = email). | INV-45, Operator State #31 |
+| `O-7` | A day whose QCD landed after the send window closed was silently never reported. Post-window polls flag it ONCE (`QUEUE_REPORT_LAST_MISSED` + MISSED result + one admin email). | Operator State #31 |
+| `O-8` | Alerts modal defaulted to calendar yesterday — every Monday opened on Sunday (guaranteed all-`no-data` preview). Now `prevBusinessDayIso_`. | INV-34 |
+
+**Batch 3+4 (same scan, second implement pass).** `R-#` = dashboard report
+endpoints (NOT the `RPT-#` semantics-rulings family); `A-#` = auth/admin-path
+findings.
+
+| Code | What it fixed | Where the live rule lives |
+|---|---|---|
+| `R-1` | The Overview QCD chips, My-Dept QCD panel, and freshness-pill QCD component were hard-wired sheet scans -- flipping `QCD_READ_SOURCE` stranded them on an aging sheet. All three now route through `readQcdGrid_` / `neonGetMaxQcdDate_` with sheet fallback. | Operator State #30, INV-30 (`latestDates` combined suffix) |
+| `R-2` | Caller Lookup truncation kept the OLDEST 200 of the fetched newest-201 (ascending re-sort + head-slice), dropping the caller's most recent call. Tail-slice now. | NEO-4 note in code |
+| `R-3` | The allDepts manager threw on every journey drill (`getCallJourney` compared against a null `user.department`); latent same-pattern in the inbound/direct resolvers. Pinning is `manager && !allDepts`; the F-4 fallback entitles `allDepts` like admins. | Role-model gotcha (widening note) |
+| `A-1` | `applyOrphanRename` with `alsoAddAlias` could throw in `upsertAgentAlias_` AFTER the irreversible rename but BEFORE the audit append. The Agent Alias Overrides sheet is now pre-flighted alongside the Log. | INV-01 / OrphanFix "audit before returning" (claim holds again) |
+| `A-2` | `escRowFull_` never selected `occurred_at`, so approve-path notification emails always dropped their "When" line. | INV-55 |
+| `A-3` | Dept Config effective map was last-row-wins while the save editor edits the FIRST match -- a hand-edited duplicate made modal saves silently ineffective. First-ACTIVE-row-wins now (OPS-9 convention). | INV-54 (accessor comment) |
+| `A-4` | `approveEscalation` had no known-dept check despite the header's mitigation list claiming one -- a typo-dept submission entered a worklist no manager could see. Refused with a reject-and-resubmit message. | INV-55 |
+| `O-5` | System Health's expected-sheets list stopped at nine and its trigger/outcome inventory omitted the queue-report engine; the OPS-8 classifier also learned the `^MISSED` prefix. | Operator State #31 |
+| `O-6` | PipelineWatch advanced its watermark past rows evicted from the 300-row tail by a retry storm, silencing those failures forever. Clipped tails widen x4 (bounded) via `pipelineWatchTailClipped_`. | Operator State #32 |
+| Gap #3 | External `pending_review` submissions could sit unseen (no dashboard event fires on a direct Neon INSERT). Count-only PII-free hourly ping via PipelineWatch, `NOTIFY_PENDING_REVIEW` flag, OPS-1 watermark. | Operator State #32, INV-55 |
+
+**Batch 5+6 (same scan, third implement pass).** `C-#` = client (script.html);
+`T-#` = cdr-report tools. One-liners only -- the full narratives live in
+known-issues.md ("Broad-scan Batch 5+6 fixes" + the AD/AE/AF and
+date-coercion sections).
+
+| Code | What it fixed |
+|---|---|
+| `C-1` | Second `#ins-trend-header` writer clobbered the explicit range label -- merged into one writer |
+| `C-2` | Tour replay closed HELP while the button lives in SETTINGS -- stranded Settings under the tour |
+| `C-3` | Overview mini-table WoW tooltips cited the dept page's prior window -- now their own response meta |
+| `C-4`/`C-9` | `escCssId_` stripped quotes (lookups could never match) + raw hash in router selectors threw -- proper escaping both places |
+| `C-5` | All-dept QCD CSV title line split on the dateLabel comma |
+| `C-6` | `irRenderCharts` empty-datasets early-return left all three chart panels stacked visible |
+| `C-7` | `escapeHtml` into textContent double-encoded the Neon-health lines |
+| `C-8` | Inbound/Direct runners lacked stale-response tokens -- joined `reportReqSeq_` |
+| `T-1` | Duplicate-row merge broke the F-2 AD/AE/AF lockstep -- re-pairs + time-sorts now |
+| `T-2`/`T-3` | CDR/QCD backfills wedged forever on an unparseable date cell -- skip + log |
+| `T-4` | `abandoned_pct` mixed units -- percent-number convention matching the inline writer |
+| `T-6` | Drilldown queue gate used the pre-IMP-8 loose regex -- false verification mismatches |
+| `T-7` | Stale diagnostics panel stranded beyond col 40 -- full-height clear |
+| `P-7` | Stale Pending-Archive rows beat a fresh recompute -- replaced when fresh rows exist |
+| `P-8` | ISO-text date cells parsed as UTC midnight (previous Chicago day) in the dup-guard/force-delete -- `parseHistoryDateCell_` local-noon |
+
+**All corrective findings from the 2026-07 broad scan are implemented.**
+Batch 8 shipped its vetting slice -- `runInboundQcdParityCheck`
+(InboundReport.gs), the QCD-vs-inbound reconciliation the un-gating decision
+needs; the gates stay ON (owner) and capture-time raw→canonical queue
+normalization is DEFERRED (needs an owner-decided raw→canonical mapping
+schema -- the alias column maps dept→raw names, ambiguous for multi-queue
+depts). Batch 9's flip runbook is consolidated in the README.
+
+**Batch 10 (same scan, strategic pass).**
+
+| Code | What it shipped | Where the live rule lives |
+|---|---|---|
+| `P-6` | `writeCDRRowsToNeon({authoritative:true})` -- per-date replace for the CDR mirror (children-first delete via the parent-id subselect, then parents, in-txn). Daily inline + deferred `mirrorCdrForDate_` pass it; the bulk post-dedup mirror stays non-authoritative. Was "optional" (call_history_* isn't dashboard-read) but closes the last phantom-row family. | Neon write discipline rule (4), CLAUDE.md |
+| Usage review | The Report Usage telemetry finally got a READER: `computeReportUsageSummary_` (SystemHealth.gs) renders a per-report runs / unique users / manager-runs / cache-hit-rate section on the Health page -- the consolidation/un-gating evidence surfaced instead of hand-pivoted. | System Health bullet, CLAUDE.md |
+| Smoke | `SmokeCheck.gs::runLiveSmoke` -- editor-run, admin-gated, read-only 7-check sweep of the live read paths with a pass/fail email + `SMOKE_LAST_RESULT` Health row. | System Health bullet, CLAUDE.md |
+
+Remaining strategic work: legacy dqe-report decommission (incl. T-8 onOpen
+collision) + the deferred capture-time queue normalization above.
+
+---
+
 ## Phases & batches (rollout narrative, not rules)
 
 These name *when* something shipped, in commit messages and CLAUDE.md prose:

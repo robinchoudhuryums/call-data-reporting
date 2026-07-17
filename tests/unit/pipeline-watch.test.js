@@ -137,3 +137,20 @@ test('trigger: a failed send leaves the watermark un-advanced so it retries (OPS
   assert.equal(h.state.sentEmails.length, 1, 'retry delivers the previously-failed alert');
   assert.equal(h.state.props.PIPELINE_WATCH_LAST_TS, '4000');
 });
+
+// ── O-6: tail-clip widening predicate ────────────────────────────────────────
+test('O-6: pipelineWatchTailClipped_ flags a clipped tail whose oldest row is past the watermark', function () {
+  const f = h.fn('pipelineWatchTailClipped_');
+  const rows = [{ tsMs: 5000 }, { tsMs: 6000 }, { tsMs: 7000 }];
+  // Clipped (3 of 3 requested) + oldest (5000) > watermark (1000) -> widen.
+  assert.equal(f(rows, 3, 1000), true);
+  // Window already reaches the watermark -> no widen.
+  assert.equal(f(rows, 3, 5000), false);
+  // Not clipped (whole sheet fits in the request) -> no widen.
+  assert.equal(f(rows, 300, 1000), false);
+  // First-run baseline (null / 0 watermark) never widens.
+  assert.equal(f(rows, 3, null), false);
+  assert.equal(f(rows, 3, 0), false);
+  // No usable oldest timestamp -> can't reason, no widen.
+  assert.equal(f([{ tsMs: null }, { tsMs: 6000 }, { tsMs: 7000 }], 3, 1000), false);
+});

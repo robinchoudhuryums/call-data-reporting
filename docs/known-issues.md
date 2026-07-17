@@ -177,6 +177,15 @@ re-import), then `backfillDQEHistoryUpsert()` (cdr-report) to refresh
 the Neon mirror. Rows that can't be rebuilt keep old pairings -- treat
 pre-fix "↳ path" results on old dates as unverified.
 
+**The duplicate-row merge repair honors the pairing since T-1**:
+`mergeDqeDuplicateRows_` (sheetRepairs.js) rebuilds AD/AE/AF as ONE
+chronologically-sorted paired list + trailing unpaired parent ids --
+its earlier per-row concatenation broke the lockstep whenever a source
+row carried unpaired AD appends. If the merge was ever APPLIED before
+the T-1 fix, those merged rows keep mispaired values until their dates
+are rebuilt (same runbook as above). Pinned by
+`tests/unit/sheet-repairs-merge.test.js`.
+
 ---
 
 ## Sheets auto-coercion of DATE-shaped strings (writer-side)
@@ -212,6 +221,15 @@ comma-joined ID/time coercion gotcha in CLAUDE.md.
   (`getDisplayValues()` + a parse), never `String(getValues())`, for
   any date-keyed delete/dedup; or plain-text (`'@'`) the column at
   write time.
+- **Fixed (P-8):** the autoImport history-date comparisons
+  (`checkHistoryForDate` / `buildHistoryDateSet` /
+  `dedupeAlreadyArchived_` / `deleteHistoricalRowsForDate`) parse
+  ISO-shaped TEXT cells via `parseHistoryDateCell_` (local-noon
+  construction) instead of `new Date("YYYY-MM-DD")`, which is UTC
+  midnight = the PREVIOUS Chicago day -- an ISO-typed text cell (the
+  README-sanctioned paste-old-rows flow can leave them) made the
+  dup-guard report the wrong day and the force-delete silently no-op.
+  Pinned by the P-8 test in `tests/unit/csr-transfer.test.js`.
 - **Related (F-51):** the DQE sheet->Neon paths (both backfills, the
   deferred mirror, the dup-guard re-mirror) now route the 19 SLOT columns
   through `sanitizeSlotCellForNeon_` (clean cells pass; a coerced cell's
@@ -356,6 +374,24 @@ the sheet-side raw values are unchanged (accepted policy). Rows written
 before the change keep their raw values until the date is re-imported.
 Pinned by `tests/unit/neon-write-mapping.test.js` (IMP-12 test).
 
+**P-2 (masking-bypass fix):** the parser splits internal|external on the
+`|` separator, but `autoImport.js::join` used to OMIT the separator when
+the internal side was empty — so an external-only NOP cell parsed
+entirely as INTERNAL and skipped the IMP-12 masking + phone hashing on
+its way into Neon (any agent-day whose inbound callers were all-external
+wrote raw CNAM strings / numbers into `ib_list_*` JSONB). Two-part fix:
+(1) `join` always emits the separator when an external side exists
+(external-only cells now render with a leading `|` line sheet-side — the
+same separator mixed cells already show); (2) the parser (both INV-16
+`neonWrite.js` copies) hashes phone-shaped entries on the INTERNAL side
+too — no employee name is phone-shaped, so a raw number can no longer
+land in the JSONB from either side. Rows written before the fix heal on
+re-import of their date (within the ~14-day Call_Legs retention); for
+older dates, `backfillCDRHistory` re-hashes phone-shaped entries, but
+raw NAME strings in old external-only cells heal only via re-import or
+a one-off SQL cleanup. Pinned by the P-2 tests in
+`tests/unit/neon-write-mapping.test.js`.
+
 ---
 
 ## Batch-E CDR Import fixes (autoImport.js / inboundCalls.js)
@@ -425,6 +461,33 @@ RPT-4/5/9/10, TST-1/6/7.
 - **TST-4/TST-5** — [FROZEN: DQE Report Legacy] intentionally skipped
   per the audit ruling; put the time into the S7 legacy decommission
   instead.
+
+---
+
+## Broad-scan Batch 5+6 fixes (2026-07, compact list)
+
+Client (script.html): C-1 single `#ins-trend-header` writer (the range label
+renders now), C-2 tour replay closes Settings, C-3 Overview mini-table WoW
+tooltips use their own response meta, C-4/C-9 `escCssId_` escapes (not strips)
+quotes for attribute selectors + the router deep-link lookups use it, C-5 the
+all-dept QCD CSV title line routes through the shared escaper, C-6
+`irRenderCharts` restores panel visibility on its empty early-return, C-7 no
+double-encoding in the textContent Neon-health lines, C-8 Inbound/Direct
+runners carry `reportReqSeq_` stale-response tokens.
+
+Tools: T-1 (see the AD/AE/AF section above), T-2/T-3 null-date poison-row
+guards in `backfillCDRHistory`/`backfillQCDHistory` (an unparseable date cell
+used to wedge the resumable loop on the same batch forever), T-4
+`backfillQCDHistory` stores `abandoned_pct` in PERCENT units matching the
+inline writer ('%'-suffixed display = percent; bare <=1 = raw fraction x100 --
+the old `>1 -> /100` heuristic mixed units; already-written values heal on
+re-run), T-6 DQEdrilldown's col-W queue gate uses the IMP-8 boundary regex
+(the verification sidebar accepts exactly what the build accepts), T-7
+`writeDiagnostics` clears the previous panel's full height, P-7
+`queueToPendingArchive` replaces a type's stale queued rows when the run
+produced fresh ones (a failed-drain queue no longer beats a corrected
+recompute; never deletes without a replacement), P-8 (see the date-coercion
+section above).
 
 ---
 
@@ -513,9 +576,10 @@ through a public function that explicitly checks `resolveUser_(email).role
 
 `setup()` creates `Access Control`, `Alert Config`, `Alert Log`,
 `Pipeline Health`, `Digest Config`, `Agent Alias Overrides`,
-`Orphan Fix Log`, `Dept Config`, and `Report Usage` sheets if they
+`Orphan Fix Log`, `Dept Config`, `Report Usage`, and
+`Queue Report Subscribers` sheets if they
 don't exist (each with a frozen header row). It never overwrites
-existing rows on any of the nine. Safe to re-run as many
+existing rows on any of the ten. Safe to re-run as many
 times as you want. Keep it that way; the alerts engine assumes
 `appendAlertLog_` can blindly append without coordinating reads.
 

@@ -22,6 +22,9 @@
  *   - Report Usage          (append-only telemetry of report opens --
  *                            the INV-01 telemetry carve-out; feeds the
  *                            report-consolidation decisions)
+ *   - Queue Report Subscribers (opt-in list for the automated Daily
+ *                            Call Queue Report email -- QueueReportEmail.gs,
+ *                            Operator State #31)
  *
  * Safe to re-run; existing sheets are left untouched (no data
  * overwritten).

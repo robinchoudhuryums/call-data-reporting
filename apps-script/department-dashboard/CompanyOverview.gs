@@ -1218,11 +1218,20 @@ function computeWowDriver_(stats, curIsoSet, prevIsoSet, deltaPct) {
 function computeQcdSnapshots_(allDepts, sinceIso, ssTZ) {
   const out = {};
   try {
-    const ss = openSpreadsheet_();
-    const sheet = ss.getSheetByName('QCD Historical Data');
-    if (!sheet) return out;
-    const lastRow = sheet.getLastRow();
-    if (lastRow < 2) return out;
+    // R-1: source-aware read (readQcdGrid_, QCDReport.gs) so the Overview
+    // QCD chips honor QCD_READ_SOURCE. The existing row filter below keeps
+    // only rows >= min(sinceIso, mtdStart), so a Neon window of exactly
+    // [min(sinceIso, mtdStart), today] is equivalent to the old whole-sheet
+    // scan; the sheet path still reads the whole sheet (unchanged, and now
+    // memo-shared with the other QCD readers).
+    const _tzWin = ssTZ || TZ;
+    const _nowWin = new Date();
+    const _mtdStartWin = Utilities.formatDate(
+      new Date(_nowWin.getFullYear(), _nowWin.getMonth(), 1), _tzWin, 'yyyy-MM-dd');
+    const _readFrom = (sinceIso && sinceIso < _mtdStartWin) ? sinceIso : _mtdStartWin;
+    const _readTo = Utilities.formatDate(_nowWin, _tzWin, 'yyyy-MM-dd');
+    const grid = (typeof readQcdGrid_ === 'function') ? readQcdGrid_(_readFrom, _readTo) : null;
+    if (!grid || grid.missing || grid.empty) return out;
 
     // Build queue -> [depts] lookup from each dept's effective DIRECT
     // queue list (Dept Config sheet overriding the DEPT_QCD_QUEUES
@@ -1248,7 +1257,7 @@ function computeQcdSnapshots_(allDepts, sinceIso, ssTZ) {
     // place to see the combined view.
 
     const tz = ssTZ || TZ;
-    const values = sheet.getRange(2, 1, lastRow - 1, 12).getValues();
+    const values = grid.values;
 
     // First pass: track the latest date per dept (so we can grab
     // the right "latest day" totals in a second pass).

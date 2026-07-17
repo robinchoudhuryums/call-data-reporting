@@ -522,6 +522,32 @@ function readQcdGrid_(readFrom, readTo) {
   return readQcdSheetData_();
 }
 
+/**
+ * R-1: MAX(call_date) from qcd_history -- the QCD sibling of NeonRead.gs's
+ * neonGetMaxDqeDate_, consumed by getLatestDataDates' QCD component when
+ * QCD_READ_SOURCE=neon (the freshness pill was the last QCD reader still
+ * hard-wired to the sheet). Null on no-conn / error / empty table; the
+ * caller falls back to the sheet scan. NEO-3: opens WITHOUT
+ * {recordReadHealth} -- QCD reads never pollute the DQE-only read-back
+ * health line.
+ */
+function neonGetMaxQcdDate_() {
+  var conn = (typeof getDashboardNeonConn_ === 'function') ? getDashboardNeonConn_() : null;
+  if (!conn) return null;
+  try {
+    var stmt = conn.createStatement();
+    var rs = stmt.executeQuery('SELECT MAX(call_date)::text AS d FROM qcd_history');
+    var d = rs.next() ? rs.getString('d') : null;
+    rs.close(); stmt.close();
+    return d || null;
+  } catch (e) {
+    Logger.log('neonGetMaxQcdDate_ failed: ' + (e && e.message ? e.message : e));
+    return null;
+  } finally {
+    try { conn.close(); } catch (ce) {}
+  }
+}
+
 // rangeOnly (perf): the all-dept Daily Call Queue Report uses ONLY
 // queueBreakdown (range-scoped), never trendData/dailySeries/perQueue -- yet it
 // calls this once per dept, each pass iterating the whole 12-month TREND window

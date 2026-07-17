@@ -108,3 +108,15 @@ test('guardForceRebuildLoss_: force + 0 rows logs a FAILURE row; non-force / >0 
   g(fakeSS, 'processIntegratedHistory:QCD', d, false, 0);   // non-force empty -> legitimate no-op
   assert.equal(appended.length, 0, 'no false alarm when rows were written OR it was not a force build');
 });
+
+// ── P-8: history date-cell parsing (the F-3/F-10 coercion class) ────────────
+test('P-8: parseHistoryDateCell_ parses ISO-shaped TEXT as a local day, not UTC midnight', function () {
+  const f = h.fn('parseHistoryDateCell_');
+  // ISO text: new Date("2026-05-19") is UTC midnight = the PREVIOUS Chicago
+  // day; the helper constructs local noon instead.
+  assert.equal(f('2026-05-19').toDateString(), new Date(2026, 4, 19, 12).toDateString());
+  // Legacy M/D/YYYY strings keep their local parse.
+  assert.equal(f('5/19/2026').toDateString(), new Date(2026, 4, 19).toDateString());
+  // Garbage still yields an invalid date (callers already isNaN-guard).
+  assert.ok(isNaN(f('garbage').getTime()));
+});

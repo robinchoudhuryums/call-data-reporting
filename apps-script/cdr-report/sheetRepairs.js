@@ -195,7 +195,10 @@ function repairDqeSlotTimestamps_(dryRun) {
 //      unrecoverable counts, samples, and the distinct dates needing a rebuild.
 //   2. repairDqeAbandonedIds()        -- recover the lossless single-value cells,
 //      mark unrecoverable cells "#REBUILD" (so they read as unavailable, not 0),
-//      and lock AD-AF to plain text.
+//      and lock AD-AE to plain text (T-5: this repair touches the ID columns
+//      AD-AE ONLY; AF -- the comma-joined H:MM:SS times column -- is recovered
+//      AND plain-text-locked by the SLOT repair, repairDqeSlotTimestamps().
+//      Run both if AF may be coercion-prone).
 //   3. If you've started the Neon backfill (or DQE_READ_SOURCE=neon): re-mirror
 //      the affected dates with backfillDQEHistoryUpsert() -- its ON CONFLICT DO
 //      UPDATE OVERWRITES the rows already backfilled from the bad cells. No new
@@ -268,8 +271,9 @@ function repairDqeAbandonedIds_(dryRun) {
              applied: false, recSamples: recSamples, lostSamples: lostSamples };
   }
 
-  // Lock AD-AF to plain text (so recovered values + the sentinel STAY text and
-  // the column can't re-coerce), then write back.
+  // Lock AD-AE to plain text (so recovered values + the sentinel STAY text and
+  // the columns can't re-coerce), then write back. (T-5: AF's plain-text lock
+  // lives in the slot repair, which owns that column's recovery.)
   range.setNumberFormat('@');
   range.setValues(vals);
   SpreadsheetApp.flush();
@@ -651,6 +655,9 @@ function mergeDqeDuplicateRows_(dryRun) {
     // Build the col D..AH (indices 3..33) merged slice.
     var m = rows[0].slice(3, 34);   // start from the first row's D..AH
     m[0] = rows.map(function (r) { return String(r[3] || '').trim(); }).filter(Boolean)[0] || '';  // queue exts (D)
+    // NB total_unique is SUMMED across the group -- a parent rung under both
+    // name spellings double-counts here. An APPROXIMATION like AG/AH below
+    // (exact recovery needs the per-parent ids, which cols E-J don't carry).
     m[1] = sumUnique;                 // E total_unique
     m[2] = sumRung;                   // F total_rung
     m[3] = sumMissed;                 // G total_missed
@@ -658,9 +665,54 @@ function mergeDqeDuplicateRows_(dryRun) {
     m[5] = scSecToHms_(sumTtt);       // I ttt
     m[6] = scSecToHms_(attMerged);    // J att
     for (var c = 10; c <= 28; c++) m[c - 3] = joinCells(rows.map(function (r) { return r[c]; }));  // K-AC slots
-    m[29 - 3] = joinCells(rows.map(function (r) { return r[29]; }));   // AD parent ids
-    m[30 - 3] = joinCells(rows.map(function (r) { return r[30]; }));   // AE missed ids
-    m[31 - 3] = joinCells(rows.map(function (r) { return r[31]; }));   // AF missed times
+
+    // T-1: AD/AE/AF are POSITIONALLY PAIRED (the F-2 lockstep contract:
+    // AF[i]'s timestamp belongs to AD[i]'s parent call -- the "↳ path"
+    // journey drill hangs on it). The old per-row joinCells concatenation
+    // broke the pairing whenever an earlier row carried unpaired-parent AD
+    // appends (AD longer than AE/AF): every later AF timestamp then paired
+    // against the wrong AD id and the drill opened a DIFFERENT caller's
+    // journey. Rebuild the three columns the way a clean rebuild emits them:
+    // ONE merged, chronologically-sorted paired list, then the unpaired
+    // parent ids appended to AD only. Rows whose detail is #REBUILD-lost are
+    // skipped (partial data from clean rows wins, matching joinCells'
+    // sentinel rule); all-lost stays #REBUILD.
+    var t1Pairs = [], t1Unpaired = [], t1Lost = 0, t1Clean = 0, t1Dropped = 0;
+    rows.forEach(function (r) {
+      var adRaw = String(r[29] == null ? '' : r[29]).trim();
+      var aeRaw = String(r[30] == null ? '' : r[30]).trim();
+      var afRaw = String(r[31] == null ? '' : r[31]).trim();
+      if (adRaw === REBUILD || aeRaw === REBUILD || afRaw === REBUILD) { t1Lost++; return; }
+      if (adRaw || aeRaw || afRaw) t1Clean++;
+      var ad = adRaw ? adRaw.split(',') : [];
+      var ae = aeRaw ? aeRaw.split(',') : [];
+      var af = afRaw ? afRaw.split(',') : [];
+      var paired = Math.min(ad.length, ae.length, af.length);
+      // Defensive on corrupt (pre-F-2) rows where AE/AF outrun AD: a pair
+      // without a parent id can't feed the drill -- dropped + logged.
+      t1Dropped += Math.min(ae.length, af.length) - paired;
+      for (var pi = 0; pi < paired; pi++) {
+        t1Pairs.push({ id: String(ad[pi]).trim(), mid: String(ae[pi]).trim(),
+                       t: String(af[pi]).trim(), sec: scHmsToSec_(af[pi]) });
+      }
+      for (var ui = paired; ui < ad.length; ui++) {
+        var uid = String(ad[ui]).trim();
+        if (uid) t1Unpaired.push(uid);
+      }
+    });
+    t1Pairs.sort(function (a, b) { return a.sec - b.sec; });   // V8 sort is stable: ties keep source order
+    var t1AllLost = (t1Clean === 0 && t1Lost > 0);
+    m[29 - 3] = t1AllLost ? REBUILD
+      : t1Pairs.map(function (p) { return p.id; }).concat(t1Unpaired).join(',');   // AD parent ids
+    m[30 - 3] = t1AllLost ? REBUILD
+      : t1Pairs.map(function (p) { return p.mid; }).join(',');                     // AE missed ids
+    m[31 - 3] = t1AllLost ? REBUILD
+      : t1Pairs.map(function (p) { return p.t; }).join(',');                       // AF missed times
+    if (t1Dropped > 0) {
+      Logger.log('DQE merge [' + key + ']: dropped ' + t1Dropped
+        + ' unpairable AE/AF tail entr' + (t1Dropped === 1 ? 'y' : 'ies')
+        + ' (source row had more times than parent ids -- pre-F-2 corruption).');
+    }
     m[32 - 3] = scSecToHms_(mean(aawVals));   // AG avg_abd_wait (approx)
     m[33 - 3] = scSecToHms_(mean(cawVals));   // AH csr_avg_abd_wait (approx)
 

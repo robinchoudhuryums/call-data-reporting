@@ -139,6 +139,93 @@ test('CDR writer (no HMAC): 21 params bind in the call_history_dept order; JSONB
   assert.equal(res.phones, 0, 'no phone child rows without HMAC_SECRET');
 });
 
+// Ordered-recording conn for the P-6 tests: captures EVERY statement's SQL
+// + bound params in execution order (recConn above keeps only the last one).
+function seqConn(log) {
+  function stmt(sql) {
+    const entry = { sql: sql, params: [] };
+    log.push(entry);
+    return {
+      setString: function (i, v) { entry.params[i - 1] = v; },
+      setInt:    function (i, v) { entry.params[i - 1] = v; },
+      setDouble: function (i, v) { entry.params[i - 1] = v; },
+      execute: function (adhoc) { if (typeof adhoc === 'string') log.push({ sql: adhoc, params: [] }); return true; },
+      close: function () {},
+    };
+  }
+  return {
+    setAutoCommit: function () {},
+    prepareStatement: stmt,
+    createStatement: function () { return stmt('(adhoc)'); },
+    commit: function () {}, rollback: function () {}, close: function () {},
+  };
+}
+
+test('P-6: authoritative CDR write deletes phone children THEN parents for the payload dates, before the insert', function () {
+  const log = [];
+  h.ctx.getReachableNeonConn_ = function () { return seqConn(log); };
+  delete h.state.props.HMAC_SECRET;
+  h.fn('writeCDRRowsToNeon')([
+    { callDate: '2026-06-22', dept: 'CSR',   agentName: 'Anna' },
+    { callDate: '2026-06-23', dept: 'Sales', agentName: 'Bob' },
+    { callDate: '06/22/2026', dept: 'CSR',   agentName: 'Cara' },  // non-ISO -> parseDateForNeon, dedups into 06-22
+  ], { authoritative: true });
+
+  const sqls = log.map(function (e) { return e.sql; });
+  assert.match(sqls[0], /DELETE FROM call_history_phones WHERE call_history_id IN \(SELECT id FROM call_history_dept WHERE call_date IN \(\?::date,\?::date\)\)/,
+    'children deleted first, via the parent-id subselect');
+  assert.deepEqual(Array.from(log[0].params), ['2026-06-22', '2026-06-23']);
+  assert.match(sqls[1], /DELETE FROM call_history_dept WHERE call_date IN \(\?::date,\?::date\)/,
+    'parents deleted second');
+  assert.deepEqual(Array.from(log[1].params), ['2026-06-22', '2026-06-23']);
+  assert.match(sqls[2], /INSERT INTO call_history_dept/, 'insert runs after both deletes');
+});
+
+test('P-6: non-authoritative CDR write issues no deletes (pre-P-6 behavior byte-identical)', function () {
+  const log = [];
+  h.ctx.getReachableNeonConn_ = function () { return seqConn(log); };
+  delete h.state.props.HMAC_SECRET;
+  h.fn('writeCDRRowsToNeon')([
+    { callDate: '2026-06-22', dept: 'CSR', agentName: 'Anna' },
+  ]);
+  assert.ok(log.length >= 1, 'at least the insert ran');
+  assert.match(log[0].sql, /INSERT INTO call_history_dept/, 'first statement is the insert');
+  log.forEach(function (e) {
+    assert.ok(!/DELETE FROM call_history/.test(e.sql), 'no authoritative delete without the flag');
+  });
+});
+
+test('P-2: external-only NOP cells (leading separator) parse as EXTERNAL and mask', function () {
+  // autoImport.js::join now emits "\n|\n" + ext when the internal side is
+  // empty, so the parser's pipe contract holds for external-only cells.
+  const out = JSON.parse(h.fn('cdrParseNameFieldJson_')(
+    '\n|\nSMITH JOHN (2), +13125550100 (1)', false, 'test-secret'));
+  assert.deepEqual(out.internal, [], 'no internal entries on an external-only cell');
+  assert.equal(out.external[0].display, 'S.J.', 'external CNAM masked to initials');
+  assert.equal(out.external[1].display, null);
+  assert.ok(out.external[1].phone_hash, 'external phone entry hashed');
+});
+
+test('P-2 hardening: phone-shaped entries hash on the INTERNAL side too', function () {
+  // A pre-fix external-only cell parses as internal (no pipe); no employee
+  // name is phone-shaped, so the internal path also stores hash-only for
+  // phone-shaped entries -- a raw number can no longer land in Neon JSONB.
+  const out = JSON.parse(h.fn('cdrParseNameFieldJson_')(
+    'Jane Doe (2), +13125550100 (1)', false, 'test-secret'));
+  assert.equal(out.internal[0].display, 'Jane Doe', 'internal names stay raw (IMP-12 policy)');
+  assert.equal(out.internal[1].display, null, 'internal phone-shaped entry not stored raw');
+  assert.ok(out.internal[1].phone_hash, 'internal phone-shaped entry hashed');
+});
+
+test('P-2: autoImport join() always emits the separator when an external side exists', function () {
+  const imp = loadGas({ project: 'cdr-import', files: ['autoImport.js'] });
+  const join = imp.fn('join');
+  assert.equal(join('a', 'b'), 'a\n|\nb', 'both sides unchanged');
+  assert.equal(join('a', ''), 'a', 'internal-only unchanged');
+  assert.equal(join('', ''), '', 'empty unchanged');
+  assert.equal(join('', 'b'), '\n|\nb', 'external-only now carries the separator');
+});
+
 test('IMP-12: external non-phone CNAM display names are masked to initials', function () {
   const out = JSON.parse(h.fn('cdrParseNameFieldJson_')(
     'Jane Doe (3) | SMITH JOHN (2), +13125550100 (1)', false, 'test-secret'));

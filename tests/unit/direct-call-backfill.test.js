@@ -144,3 +144,34 @@ test('dcUpsertRows_ + writeDirectCallRowsToNeon_ share the same single-date SQL'
   assert.equal(cap.executed[1].binds[1], '2026-03-09');
   assert.equal(cap.commits, 1, 'delete + upsert commit atomically');
 });
+
+test('P-5: an EMPTY row set still clears the date in Neon (matches the sheet delete)', function () {
+  const cap = { executed: [], prepared: [], commits: 0, rollbacks: 0, closes: 0, ddl: 0 };
+  h.ctx.getReachableNeonConn_ = function () { return fakeConn(cap); };
+  const res = h.call('writeDirectCallRowsToNeon_', [], 'March 2026', '2026-03-09');
+  assert.equal(res.inserted, 0);
+  assert.equal(cap.executed.length, 1, 'DELETE only -- no upsert for zero rows');
+  assert.match(cap.executed[0].sql, /DELETE FROM direct_call_history WHERE call_date = \?::date/);
+  assert.equal(cap.executed[0].binds[0], '2026-03-09');
+  assert.equal(cap.commits, 1, 'the delete IS the correction and commits');
+});
+
+test('P-5: empty rows with NO date is still a clean no-op (nothing to clear)', function () {
+  const cap = { executed: [], prepared: [], commits: 0, rollbacks: 0, closes: 0, ddl: 0 };
+  h.ctx.getReachableNeonConn_ = function () { return fakeConn(cap); };
+  const res = h.call('writeDirectCallRowsToNeon_', [], 'March 2026', null);
+  assert.equal(res.inserted, 0);
+  assert.equal(cap.executed.length, 0, 'no connection work without a date');
+});
+
+test('P-4: buildDirectCallFromRaw_ refuses a derived date that disagrees with expectedDate', function () {
+  // The guard throws BEFORE any sheet/Neon write touches the derived date, so
+  // ss/configSheet are never reached -- pass nulls to prove it.
+  const rawDisp = [
+    ['CALL ID', 'LEG', 'START', 'x'],
+    ['1', '1', '03/08/2026 10:00:00', 'x'],   // stray carry-over first row (D-1)
+  ];
+  assert.throws(function () {
+    h.fn('buildDirectCallFromRaw_')(null, rawDisp, null, { expectedDate: new Date(2026, 2, 9, 12, 0, 0) });
+  }, /derives date 2026-03-08 but the caller expected 2026-03-09/);
+});

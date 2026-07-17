@@ -522,7 +522,13 @@ function dcUpsertRows_(conn, rows) {
 
 /** Upsert per-agent-day rows for one date. Best-effort; returns a status object. */
 function writeDirectCallRowsToNeon_(rows, monthYear, isoDate) {
-  if (!rows || !rows.length) return { inserted: 0, skipped: 0 };
+  // P-5: an EMPTY row set still runs the authoritative date-DELETE below --
+  // dcWriteSheet_ clears the sheet's rows for the date even when zero new
+  // rows are produced, so early-returning here left the full stale row set
+  // in direct_call_history forever (silent sheet/Neon divergence on a force
+  // re-import of a date whose direct activity legitimately dropped to zero).
+  // Only skip entirely when there's no date to clear.
+  if ((!rows || !rows.length) && !isoDate) return { inserted: 0, skipped: 0 };
   const conn = getReachableNeonConn_();
   if (!conn) { Logger.log('writeDirectCallRowsToNeon_: Neon unreachable -- skipping %s rows.', rows.length); return { inserted: 0, unreachable: true }; }
   conn.setAutoCommit(false);
@@ -539,7 +545,7 @@ function writeDirectCallRowsToNeon_(rows, monthYear, isoDate) {
     del.setString(1, isoDate);
     del.execute();
     del.close();
-    const upsertRows = rows.map(function (r) {
+    const upsertRows = (rows || []).map(function (r) {
       return Object.assign({ monthYear: monthYear, isoDate: isoDate }, r);
     });
     const n = dcUpsertRows_(conn, upsertRows);
@@ -662,6 +668,26 @@ function buildDirectCallFromRaw_(ss, rawDisp, configSheet, opts) {
   for (let i = 1; i < rawDisp.length && !dateStr; i++) dateStr = dcDateStr_(rawDisp[i][2]);
   const isoDate = (typeof parseDateForNeon === 'function') ? parseDateForNeon(dateStr) : null;
   const monthYear = dcMonthYearFromDate_(dateStr);
+
+  // P-4 (the F2 class, mirrored from buildDQEHistoricalData's expectedDate
+  // guard): the build stamps the WHOLE day with the grid's first-row date, and
+  // dcWriteSheet_ + the Neon writer then DELETE that derived date's rows
+  // before rewriting. A stray carry-over first row dated D-1 would therefore
+  // wipe D-1's correct rows (sheet AND direct_call_history) and replace them
+  // with day-D metrics mislabeled D-1 -- while day D itself is never written.
+  // When the caller supplies its own date, refuse the write on a mismatch;
+  // the throw lands in the caller's existing catch (Pipeline Health failure
+  // row), so the corruption is surfaced instead of silently written.
+  if (opts.expectedDate instanceof Date && !isNaN(opts.expectedDate.getTime())) {
+    const expIso = opts.expectedDate.getFullYear() + '-'
+      + ('0' + (opts.expectedDate.getMonth() + 1)).slice(-2) + '-'
+      + ('0' + opts.expectedDate.getDate()).slice(-2);
+    if (isoDate !== expIso) {
+      throw new Error('buildDirectCallFromRaw_: Raw Data derives date ' + (isoDate || dateStr || '(none)')
+        + ' but the caller expected ' + expIso
+        + ' -- refusing to write (stray first row? fix Raw Data and re-run).');
+    }
+  }
 
   const maps = dcBuildExtMaps_(configSheet);
   const result = computeDirectCallMetrics(rawDisp, maps, opts);

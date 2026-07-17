@@ -127,8 +127,8 @@ scripts/deploy.sh apps-script/cdr-import <cdr-import-deployment-id>
 - Run the `setup` function once to create the dashboard-managed
   sheets: `Access Control`, `Alert Config`, `Alert Log`,
   `Pipeline Health`, `Digest Config`, `Agent Alias Overrides`,
-  `Orphan Fix Log`, `Dept Config`, and `Report Usage` (nine total;
-  created only if missing).
+  `Orphan Fix Log`, `Dept Config`, `Report Usage`, and
+  `Queue Report Subscribers` (ten total; created only if missing).
   Requires admin auth — run from the Apps Script editor while
   logged in as an admin listed in `ADMIN_EMAILS` Script Property
   (or `ADMIN_EMAILS_FALLBACK`).
@@ -398,6 +398,29 @@ scripts/deploy.sh apps-script/cdr-import <cdr-import-deployment-id>
   Each cut-over reader logs `[dqe-read] <label> source=<neon|sheet>
   rows=<n> ms=<elapsed>` so you can compare read cost in the Executions
   panel.
+- **The full flip runbook (Batch 9, one place to follow — every code
+  prerequisite is shipped, incl. R-1's QCD-surface coverage):**
+  1. Deploy the latest Department Dashboard + cdr-import + cdr-report.
+  2. Create the two `dqe_history` indexes above (one-time SQL).
+  3. Run `backfillDQEHistoryUpsert()` (cdr-report editor) so re-calculated
+     sheet rows overwrite any stale `dqe_history` rows.
+  4. Run **`runDqeParityCheck`** until PARITY CLEAN with missing-in-neon = 0
+     AND missing-in-sheet = 0 (phantoms → force re-import those dates).
+  5. Set `DQE_READ_SOURCE=neon` (dashboard Script Properties). Watch the
+     Alerts modal's **Neon read-back health** line + the `[dqe-read]`
+     timings for a day or two; optionally enable keep-warm (below).
+  6. For QCD: run **`runQcdParityCheck`** (range via `QCD_PARITY_FROM/_TO`)
+     until clean, confirm the Health page's **QCD→Neon mirror** row is
+     current, then set `QCD_READ_SOURCE=neon`. All QCD surfaces honor the
+     flag (Insights Queue health, the all-dept report, Overview chips,
+     My-Dept panel, freshness pill — Operator State #30).
+  7. For config sheets: `backfillDeptConfigToNeon` / `backfillAlertConfigToNeon`
+     / `backfillDigestConfigToNeon`, then the three `compare*ConfigSources`
+     gates clean (never flip on a result carrying `error`), then
+     `CONFIG_SOURCE=neon` (one flag covers all three; Operator State #25).
+  8. Everything is reversible with no redeploy: clear the property to fall
+     back to the sheet. Do NOT trim the sheets' history until the flags
+     have soaked (the sheet is the error fallback).
 - **Keep-warm (optional):** Neon's free tier suspends the compute after
   ~5 min idle, so the first DQE read of a lull pays a cold-start penalty.
   In the dashboard, open Alerts (admin) → **Neon keep-warm** → **Enable**
@@ -498,7 +521,7 @@ the reports intimidating; none add server endpoints or cache bumps:
 - **Guided tour** — a short spotlight walkthrough of the main areas
   (Overview, question launcher, freshness pill, My Department,
   Escalations, Reports, Help) runs automatically the first time a
-  user visits and is always replayable from **Help → Guided tour**.
+  user visits and is always replayable from **Settings → Take the tour**.
   Skips any step whose target isn't visible (e.g. admin-only tabs).
 - **Question launcher** — the Overview, Insights, and My Department
   pages carry four plain-English question chips ("How is my team

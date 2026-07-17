@@ -68,6 +68,23 @@ function getAlertsInit() {
   // table simply renders no drift column data; the rest of the
   // payload is unaffected.
   const config = readAlertConfig_();
+  // O-3: flag config rows whose Department matches no DO NOT EDIT! header
+  // (typo, or a header renamed after the row was saved). Such a dept reads
+  // an empty roster -> rung 0 -> perpetual plausible-looking `no-data`, so
+  // it is silently never monitored. Best-effort (a roster read failure just
+  // skips the flag); the modal renders a "⚠ unknown dept" chip and
+  // runAlertsCore_ logs an `error` outcome per run.
+  try {
+    const knownDepts = {};
+    getAllDepartments_().forEach(function (d) { knownDepts[d] = true; });
+    if (Object.keys(knownDepts).length) {
+      config.forEach(function (c) {
+        if (c.department && !knownDepts[c.department]) c.unknownDept = true;
+      });
+    }
+  } catch (e) {
+    Logger.log('getAlertsInit: dept validation skipped: %s', e);
+  }
   let drift = {};
   try {
     drift = computeThresholdDrift_(config, DRIFT_LOOKBACK_ENTRIES);
@@ -102,7 +119,11 @@ function getAlertsInit() {
     neonMirror: neonMirror,
     neonRead: neonRead,
     spreadsheetUrl: 'https://docs.google.com/spreadsheets/d/' + getSpreadsheetId_() + '/edit',
-    defaultDate: yesterdayIso_(),
+    // O-8: default to the previous BUSINESS day (what the daily trigger
+    // actually assesses, INV-33) -- calendar yesterday made every Monday
+    // open on Sunday, a guaranteed all-`no-data` preview that read like a
+    // broken pipeline.
+    defaultDate: prevBusinessDayIso_(new Date()),
   };
 }
 
@@ -283,6 +304,16 @@ function runAlertsCore_(dateIso, dryRun, triggeredBy) {
   // post-holiday review). Matches the INV-33 policy.
   const honorSkipDates = (triggeredBy === 'daily-trigger');
 
+  // O-3: real dept headers, resolved once per run. Best-effort -- if the
+  // roster read fails, validation is skipped (null set = old behavior)
+  // rather than erroring every dept.
+  let alertKnownDeptSet = null;
+  try {
+    alertKnownDeptSet = {};
+    getAllDepartments_().forEach(function (d) { alertKnownDeptSet[d] = true; });
+    if (!Object.keys(alertKnownDeptSet).length) alertKnownDeptSet = null;
+  } catch (deptErr) { alertKnownDeptSet = null; }
+
   cfg.forEach(function (entry) {
     // OPS-9: a duplicate dept row (first row wins; see
     // parseAlertConfigValues_) must not re-evaluate + re-email the dept.
@@ -312,6 +343,24 @@ function runAlertsCore_(dateIso, dryRun, triggeredBy) {
         recipients: [],
         notes: 'Invalid threshold in Alert Config ("' + (entry.thresholdRaw || '') + '") -- '
              + 'department NOT monitored. Set a positive number (e.g. 80).',
+      });
+      return;
+    }
+    // O-3 (the F4 pattern, for the Department cell): a dept name matching no
+    // DO NOT EDIT! header yields an empty roster -> rung 0 -> a perpetual,
+    // plausible-looking `no-data`, so a renamed/typo'd dept silently stops
+    // being monitored forever. Surface it as an `error` outcome instead.
+    // Exact match -- the roster join is case-sensitive (INV-04).
+    if (alertKnownDeptSet && !alertKnownDeptSet[entry.department]) {
+      pushAndLog({
+        department: entry.department,
+        status: 'error',
+        answerRate: null,
+        threshold: entry.threshold,
+        recipients: [],
+        notes: 'Department not found on the roster sheet (renamed or typo?) -- '
+             + 'NOT monitored. Fix the Department cell to match the DO NOT EDIT! '
+             + 'header exactly (case-sensitive).',
       });
       return;
     }

@@ -67,3 +67,50 @@ test('F-4: blank dept or id -> refused without computing a report', function () 
   assert.equal(h.call('callIdInDeptMissedReport_', '', '2026-06-22', 'PA'), false);
   assert.equal(h.call('callIdInDeptMissedReport_', 'CSR', '2026-06-22', ''), false);
 });
+
+// ── R-3: the all-departments manager (Access Control dept = ALL) ────────────
+function fakeJourneyConn(callJson) {
+  return {
+    prepareStatement: function () {
+      let done = false;
+      return {
+        setString: function () {},
+        executeQuery: function () {
+          return {
+            next: function () { if (done) return false; done = true; return true; },
+            getString: function () { return callJson; },
+            close: function () {},
+          };
+        },
+        close: function () {},
+      };
+    },
+    close: function () {},
+  };
+}
+
+test('R-3: allDepts manager can drill any dept\'s journey (was: threw on every drill)', function () {
+  h.ctx.isIsoDate_ = function (s) { return /^\d{4}-\d{2}-\d{2}$/.test(String(s)); };
+  h.ctx.resolveUser_ = function () {
+    return { role: 'manager', allDepts: true, department: null, departments: ['CSR', 'Sales'] };
+  };
+  h.ctx.getAllDepartments_ = function () { return ['CSR', 'Sales']; };
+  h.ctx.inboundQueuesForDept_ = function () { return ['A_Q_CustomerSuccess']; };
+  h.ctx.callerLookupShapeCall_ = function (c) { return c; };
+  h.ctx.getDashboardNeonConn_ = function () {
+    return fakeJourneyConn(JSON.stringify({ call_date: '2026-06-22', call_id: 'PA' }));
+  };
+  const res = h.call('getCallJourney', { callId: 'PA', date: '2026-06-22', department: 'Sales' });
+  assert.equal(res.found, true, 'no "Not authorized" throw for the viewed dept');
+});
+
+test('R-3: single-dept managers stay pinned (no widening leak)', function () {
+  h.ctx.isIsoDate_ = function (s) { return /^\d{4}-\d{2}-\d{2}$/.test(String(s)); };
+  h.ctx.resolveUser_ = function () {
+    return { role: 'manager', allDepts: false, department: 'CSR' };
+  };
+  h.ctx.getAllDepartments_ = function () { return ['CSR', 'Sales']; };
+  assert.throws(function () {
+    h.call('getCallJourney', { callId: 'PA', date: '2026-06-22', department: 'Sales' });
+  }, /Not authorized for this department/);
+});

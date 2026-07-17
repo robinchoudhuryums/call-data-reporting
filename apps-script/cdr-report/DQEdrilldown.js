@@ -225,7 +225,12 @@ function getDQEDrilldownRows(params) {
     var partial = buildRowEntry(row, timeVals[i], i);
 
     var w = String(row[22]).trim();
-    var hasQueue = /A_Q_\w+|Backup CSR/.test(w);
+    // T-6: the IMP-8 boundary regex, matching the build's Pass-2/Pass-4 gate
+    // (buildDQEHistoricalData). The old loose /A_Q_\w+/ stopped at '&' and
+    // matched MID-TOKEN (e.g. UDC_A_Q_Main), so this verification sidebar
+    // accepted legs the build rejects -- false "Found N vs Dashboard X ✗"
+    // mismatches on exactly the tool meant to certify the numbers.
+    var hasQueue = /(?:^|[^\w&])(?:A_Q_[\w&]+|Backup CSR)/.test(w);
     if (!hasQueue) {
       addRejected(rejected, rejectReasons, partial, 'No queue context (col W)');
       continue;
