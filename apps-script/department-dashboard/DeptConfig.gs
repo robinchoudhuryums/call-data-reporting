@@ -205,14 +205,20 @@ function neonReadDeptConfigRows_() {
 }
 
 /**
- * dept -> parsed Active config row (last write wins on duplicate
- * dept). Inactive rows are dropped so deactivating a row reverts the
+ * dept -> parsed Active config row (FIRST active row wins on duplicate
+ * dept -- A-3). Inactive rows are dropped so deactivating a row reverts the
  * dept to constant behavior.
  */
 function getActiveDeptConfigMap_() {
   const map = {};
   readDeptConfigRows_().forEach(function (r) {
-    if (r.active) map[r.dept] = r;
+    // A-3 (the OPS-9 convention): FIRST active row wins on a duplicate dept,
+    // matching sheetUpsertDeptConfigRow_'s edit-the-first-match semantics.
+    // The old last-write-wins made modal saves silently ineffective on a
+    // hand-edited duplicate: Save updated row 1, the stale later row stayed
+    // in force, and the modal reported success. (Deactivate already handles
+    // all copies; the Neon path is immune via its PK on department.)
+    if (r.active && !(r.dept in map)) map[r.dept] = r;
   });
   return map;
 }

@@ -76,11 +76,13 @@ function directCallResolveRequest_(req) {
   // department:'ALL' was silently pinned to their own dept here while the
   // same request THREW on the Inbound resolver -- divergent behavior the
   // day the vetting gates are removed.
-  if (user.role === 'manager') {
+  if (user.role === 'manager' && !user.allDepts) {
+    // R-3: single-dept managers pinned; the allDepts manager takes the
+    // admin-style branch (data breadth) -- mirrors inboundResolveRequest_.
     if (dept && dept !== user.department) throw new Error('Not authorized for this department.');
     dept = user.department;
   } else if (dept === 'ALL') {
-    dept = '';   // admin company view
+    dept = '';   // admin / allDepts company view
   } else if (dept && getAllDepartments_().indexOf(dept) === -1) {
     throw new Error('Unknown department: ' + dept);
   }

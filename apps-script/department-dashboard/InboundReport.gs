@@ -96,8 +96,12 @@ function inboundResolveRequest_(req) {
   }
 
   let dept = String((req && req.department) || '').trim();
-  if (user.role === 'manager') {
-    // Managers are pinned to their own dept; absent = their dept.
+  if (user.role === 'manager' && !user.allDepts) {
+    // R-3: SINGLE-dept managers are pinned to their own dept; absent = their
+    // dept. The all-departments manager falls through to the admin-style
+    // branch (data breadth per the role model) -- latent until the vetting
+    // gate above is removed, but the resolver must not throw on a null
+    // user.department that day.
     if (dept && dept !== user.department) {
       throw new Error('Not authorized for this department.');
     }
@@ -225,13 +229,18 @@ function getCallJourney(req) {
   if (!isIsoDate_(date)) throw new Error('date must be YYYY-MM-DD.');
 
   let dept = String(req.department || '').trim();
-  if (user.role === 'manager') {
+  // R-3: only SINGLE-dept managers are pinned. The all-departments manager
+  // (Access Control dept = ALL sentinel; user.allDepts, department:null) has
+  // admin-equivalent DATA BREADTH per the role model -- the old bare
+  // role==='manager' check compared dept against a null user.department and
+  // threw on every journey drill for that role.
+  if (user.role === 'manager' && !user.allDepts) {
     if (dept && dept !== user.department) throw new Error('Not authorized for this department.');
     dept = user.department;
   } else if (dept && dept !== 'ALL' && getAllDepartments_().indexOf(dept) === -1) {
     throw new Error('Unknown department: ' + dept);
   }
-  if (dept === 'ALL') dept = '';   // admin company view -> no dept scoping
+  if (dept === 'ALL') dept = '';   // admin / allDepts company view -> no dept scoping
 
   // Union the QCD-canonical queues with the dept's raw inbound aliases so a
   // call whose entry/final queue is a raw name (e.g. A_Q_CSR) still scopes to
@@ -281,7 +290,9 @@ function getCallJourney(req) {
     // is ungated. The journey still carries no caller identity.
     let viaFallback = false;
     if (!json && predicate) {
-      const entitled = (user.role === 'admin')
+      // R-3: allDepts managers are entitled to every dept's data (breadth
+      // gate, like assertDeptAccess_), so their fallback is ungated too.
+      const entitled = (user.role === 'admin') || !!user.allDepts
         || callIdInDeptMissedReport_(dept, date, callId);
       if (entitled) { json = lookup(''); viaFallback = !!json; }
     }

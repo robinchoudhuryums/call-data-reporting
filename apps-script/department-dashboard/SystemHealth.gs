@@ -191,6 +191,11 @@ function getSystemHealth() {
       'Optional: emails admins when a Pipeline Health failure row is logged — enable via installPipelineWatchTrigger().');
     svc('trg-backup',  'Neon backup (escalations / inbound_calls)', ['runNeonBackup_'], false,
       'Optional but recommended: these tables have NO sheet fallback — install via installNeonBackupTrigger().');
+    // O-5: the queue-report poller was the one trigger-driven engine this
+    // inventory missed -- a deleted trigger was invisible on the page that
+    // claims to replace the operator checklist.
+    svc('trg-queuereport', 'Daily Call Queue Report email', ['runDailyQueueReport_'], false,
+      'Optional: emails the all-dept queue report to subscribers each weekday morning (Operator State #31).');
   } catch (e) { add('triggers', 'trg-probe', 'Trigger inventory', 'warn', 'probe failed', String(e && e.message || e)); }
 
   // Last outcomes of the optional services (property-backed, cheap).
@@ -200,6 +205,10 @@ function getSystemHealth() {
       ['out-keepwarm', 'Keep-warm — last ping',       'NEON_KEEPWARM_LAST', 'NEON_KEEPWARM_LAST_RESULT'],
       ['out-backup',   'Neon backup — last run',      'NEON_BACKUP_LAST',   'NEON_BACKUP_LAST_RESULT'],
       ['out-pipewatch','Pipeline watch — last run',   'PIPELINE_WATCH_LAST','PIPELINE_WATCH_LAST_RESULT'],
+      // O-5: queue-report outcome (this engine has no *_LAST timestamp prop;
+      // the result string carries its own timestamp). MISSED / FAILED-ALL
+      // outcomes trip the OPS-8 classifier's bad-word match, as intended.
+      ['out-queuereport', 'Queue report — last outcome', 'QUEUE_REPORT_LAST', 'QUEUE_REPORT_LAST_RESULT'],
     ];
     for (var o = 0; o < outcomes.length; o++) {
       var at = props.getProperty(outcomes[o][2]);
@@ -212,7 +221,10 @@ function getSystemHealth() {
       // amber every budget-limited day, training the admin to ignore the
       // SAME row that carries the genuinely-bad "skipped (no latest
       // date)" / "FAILED" outcomes.
-      var bad = !/^ok\b/i.test(res || '') && /fail|error|unreachable|skipped/i.test(res || '');
+      // O-5: the queue report's not-sent outcome leads with "MISSED <iso>" --
+      // none of the substring bad-words match it, so classify by prefix too.
+      var bad = !/^ok\b/i.test(res || '')
+        && (/fail|error|unreachable|skipped/i.test(res || '') || /^MISSED\b/.test(res || ''));
       add('triggers', outcomes[o][0], outcomes[o][1], bad ? 'warn' : 'ok',
         (res || '') + (at ? (' @ ' + at) : ''));
     }
@@ -241,7 +253,8 @@ function getSystemHealth() {
     var ss = openSpreadsheet_();
     var expected = ['Access Control', 'Alert Config', 'Alert Log', 'Pipeline Health',
                     'Digest Config', 'Agent Alias Overrides', 'Orphan Fix Log',
-                    'Dept Config', 'Report Usage'];
+                    'Dept Config', 'Report Usage',
+                    'Queue Report Subscribers'];   // O-5: the tenth setup() sheet (INV-12)
     var missing = expected.filter(function (n) { return !ss.getSheetByName(n); });
     add('sheets', 'setup-sheets', 'setup()-managed sheets',
       missing.length ? 'warn' : 'ok',

@@ -63,7 +63,8 @@ function installHealth(opts) {
   };
   const sheets = {};
   ['Access Control', 'Alert Config', 'Alert Log', 'Pipeline Health', 'Digest Config',
-   'Agent Alias Overrides', 'Orphan Fix Log', 'Dept Config', 'Report Usage']
+   'Agent Alias Overrides', 'Orphan Fix Log', 'Dept Config', 'Report Usage',
+   'Queue Report Subscribers']   // O-5: the tenth setup() sheet
     .forEach(function (n) { if (!(opts.missingSheets || []).length || (opts.missingSheets || []).indexOf(n) === -1) sheets[n] = [['h']]; });
   h.state.spreadsheet = makeFakeSpreadsheet({ sheets: sheets });
 }
@@ -184,4 +185,23 @@ test('single-signal: pipe-failures is OK when every step recovered', function ()
     ];
   };
   assert.equal(rowByKey(h.call('getSystemHealth'), 'pipe-failures').status, 'ok');
+});
+
+test('O-5: queue-report trigger + MISSED outcome are covered by the Health page', function () {
+  installHealth({ props: {
+    NEON_HOST: 'h',
+    QUEUE_REPORT_LAST_RESULT: 'MISSED 2026-07-09 — QCD data was not ready before the window closed (12:00).',
+  } });
+  const data = h.call('getSystemHealth');
+  assert.equal(rowByKey(data, 'trg-queuereport').status, 'muted', 'optional trigger, not installed -> muted');
+  assert.equal(rowByKey(data, 'out-queuereport').status, 'warn', 'a MISSED day paints the outcome row amber');
+});
+
+test('O-5: a healthy "Sent ..." queue-report outcome stays green', function () {
+  installHealth({ props: {
+    NEON_HOST: 'h',
+    QUEUE_REPORT_LAST_RESULT: 'Sent 2026-07-16 to 4 subscribers at Thu Jul 17 2026',
+  } });
+  const data = h.call('getSystemHealth');
+  assert.equal(rowByKey(data, 'out-queuereport').status, 'ok');
 });

@@ -213,7 +213,7 @@ function fakeQcdConn() {
         executeQuery: function (sql) {
           if (sql.indexOf('MAX(call_date)') !== -1) {
             const max = QDATA.map(function (d) { return d.date; }).sort().pop();
-            return rsFor(JSON.stringify([{ d: max }]));  // shape unused by the parity path
+            return rsFor(max);   // neonGetMaxQcdDate_ reads getString('d') -> the ISO
           }
           throw new Error('Unexpected SQL: ' + sql);
         },
@@ -230,6 +230,7 @@ function installQcd(source) {
     [dcRow('Alpha', 'A_Q_Alpha'), dcRow('Kid', 'A_Q_Kid', 'Alpha')],
     qcdSheetRowsFromData());
   h.ctx.QCD_NEON_GRID_MEMO_ = null;   // reset the per-window Neon memo too
+  h.ctx.QCD_SHEET_DATA_MEMO_ = null;  // R-1: snapshots share the whole-sheet memo now
   if (source === 'neon') {
     h.state.props.QCD_READ_SOURCE = 'neon';
     h.ctx.getDashboardNeonConn_ = fakeQcdConn;
@@ -293,6 +294,47 @@ test('#3 QCD Neon parity: getQcdAllDepartments (the Daily Call Queue Report) ide
   // total dedups by unique queue name: 180 + 50 = 230.
   assert.equal(s.grandTotals.totalCalls, 230);
   assert.equal(s.depts.length, 2, 'Alpha and Kid each render as their own section');
+});
+
+// ── R-1: the three formerly sheet-hardwired QCD readers honor the flag ──────
+
+test('R-1: computeQcdSnapshots_ (Overview chips) identical from sheet and Neon', function () {
+  installQcd('sheet');
+  const s = h.call('computeQcdSnapshots_', ['Alpha', 'Kid'], '2026-06-01', 'America/Chicago');
+  installQcd('neon');
+  const n = h.call('computeQcdSnapshots_', ['Alpha', 'Kid'], '2026-06-01', 'America/Chicago');
+  assert.equal(JSON.stringify(n), JSON.stringify(s), 'per-dept snapshots match across sources');
+  assert.ok(s.Alpha, 'Alpha snapshot present (sanity: fixture rows in window)');
+});
+
+test('R-1: computeDeptQcdSnapshot_ (My Department panel) identical from sheet and Neon', function () {
+  installQcd('sheet');
+  const s = h.call('computeDeptQcdSnapshot_', 'Alpha', 'America/Chicago',
+    { from: '2026-06-01', to: '2026-06-02' });
+  installQcd('neon');
+  const n = h.call('computeDeptQcdSnapshot_', 'Alpha', 'America/Chicago',
+    { from: '2026-06-01', to: '2026-06-02' });
+  assert.equal(JSON.stringify(n), JSON.stringify(s), 'panel payload matches across sources');
+  assert.ok(s && s.date, 'sanity: non-null snapshot with a latest date');
+});
+
+test('R-1: neonGetMaxQcdDate_ serves the freshness pill QCD component; null falls back', function () {
+  installQcd('neon');
+  assert.equal(h.call('neonGetMaxQcdDate_'), '2026-06-02');
+  h.ctx.getDashboardNeonConn_ = function () { return null; };   // Neon down
+  assert.equal(h.call('neonGetMaxQcdDate_'), null, 'no conn -> null (caller falls back to the sheet scan)');
+});
+
+test('R-1: neon flag with Neon down falls back to the sheet for both snapshot readers', function () {
+  installQcd('neon');
+  h.ctx.getDashboardNeonConn_ = function () { return null; };
+  h.ctx.QCD_NEON_GRID_MEMO_ = null;
+  const fb = h.call('computeDeptQcdSnapshot_', 'Alpha', 'America/Chicago',
+    { from: '2026-06-01', to: '2026-06-02' });
+  installQcd('sheet');
+  const s = h.call('computeDeptQcdSnapshot_', 'Alpha', 'America/Chicago',
+    { from: '2026-06-01', to: '2026-06-02' });
+  assert.equal(JSON.stringify(fb), JSON.stringify(s), 'graceful sheet fallback, no throw');
 });
 
 test('#3 getQcdReadSource_ defaults to sheet, honors explicit neon', function () {

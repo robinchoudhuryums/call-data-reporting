@@ -44,6 +44,8 @@ test('F-14: MTD violations survive the snapshot-window filter', function () {
   // sheet installed -> constant fallback, INV-54). Use its first queue.
   h.state.props.SPREADSHEET_ID = 'fake';
   h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
+  h.ctx.QCD_SHEET_DATA_MEMO_ = null;   // R-1: snapshots now read via readQcdGrid_ (memoized)
+  h.ctx.QCD_NEON_GRID_MEMO_ = null;
   const csrQueues = h.call('getDeptQcdQueues_', 'CSR');
   assert.ok(csrQueues.length > 0, 'CSR has constant-mapped queues');
   const q = csrQueues[0];
@@ -58,6 +60,8 @@ test('F-14: MTD violations survive the snapshot-window filter', function () {
     },
   });
   h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
+  h.ctx.QCD_SHEET_DATA_MEMO_ = null;   // R-1: snapshots now read via readQcdGrid_ (memoized)
+  h.ctx.QCD_NEON_GRID_MEMO_ = null;
 
   const out = h.call('computeQcdSnapshots_', ['CSR'], tomorrow, 'America/Chicago');
   assert.ok(out.CSR, 'CSR snapshot exists (the MTD row keeps the dept alive)');
@@ -78,6 +82,8 @@ function qcdRowTA(dateIso, queue, total, abandoned) {
 test('#1: per-day abandoned series accumulates in-window rows + excludes pre-window', function () {
   h.state.props.SPREADSHEET_ID = 'fake';
   h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
+  h.ctx.QCD_SHEET_DATA_MEMO_ = null;   // R-1: snapshots now read via readQcdGrid_ (memoized)
+  h.ctx.QCD_NEON_GRID_MEMO_ = null;
   const q = h.call('getDeptQcdQueues_', 'CSR')[0];
   const since = '2026-06-01';
   h.state.spreadsheet = makeFakeSpreadsheet({
@@ -91,6 +97,8 @@ test('#1: per-day abandoned series accumulates in-window rows + excludes pre-win
     },
   });
   h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
+  h.ctx.QCD_SHEET_DATA_MEMO_ = null;   // R-1: snapshots now read via readQcdGrid_ (memoized)
+  h.ctx.QCD_NEON_GRID_MEMO_ = null;
 
   const out = h.call('computeQcdSnapshots_', ['CSR'], since, 'America/Chicago');
   assert.ok(out.CSR && out.CSR.daily, 'daily map present on the snapshot');
@@ -108,6 +116,8 @@ test('#1: per-day abandoned series accumulates in-window rows + excludes pre-win
 test('summary:v12: QCD snapshot carries an MTD block summing the latest month', function () {
   h.state.props.SPREADSHEET_ID = 'fake';
   h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
+  h.ctx.QCD_SHEET_DATA_MEMO_ = null;   // R-1: snapshots now read via readQcdGrid_ (memoized)
+  h.ctx.QCD_NEON_GRID_MEMO_ = null;
   const q = h.call('getDeptQcdQueues_', 'CSR')[0];
   h.state.spreadsheet = makeFakeSpreadsheet({
     timeZone: 'America/Chicago',
@@ -121,6 +131,8 @@ test('summary:v12: QCD snapshot carries an MTD block summing the latest month', 
     },
   });
   h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
+  h.ctx.QCD_SHEET_DATA_MEMO_ = null;   // R-1: snapshots now read via readQcdGrid_ (memoized)
+  h.ctx.QCD_NEON_GRID_MEMO_ = null;
 
   const snap = h.call('computeDeptQcdSnapshot_', 'CSR', 'America/Chicago');
   assert.ok(snap, 'snapshot returned');

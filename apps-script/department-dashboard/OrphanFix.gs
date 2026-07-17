@@ -233,6 +233,17 @@ function applyOrphanRename(req) {
   // renameHistoricalAgent_ below, so a missing Orphan Fix Log can never
   // leave a bulk DQE Agent-column rewrite with no audit record.
   assertOrphanFixLogExists_();
+  // A-1: when the alias will ALSO be written, pre-flight ITS sheet too.
+  // upsertAgentAlias_ throws on a missing Agent Alias Overrides sheet, and
+  // that throw used to land AFTER the rename had committed but BEFORE the
+  // appendOrphanFixLog_ call -- an irreversible bulk rewrite with no audit
+  // row, no cache bust, and no Neon mirror. setup() explicitly tolerates
+  // partial sheet creation, so "Log exists, Alias sheet doesn't" is a
+  // reachable state.
+  if (alsoAddAlias && !openSpreadsheet_().getSheetByName(SHEETS.AGENT_ALIAS_OVERRIDES)) {
+    throw new Error('Agent Alias Overrides sheet missing -- run setup() before applying '
+      + 'a rename with an alias (checked BEFORE the rename so no unaudited write can happen).');
+  }
 
   const admin = Session.getActiveUser().getEmail();
   const lock = LockService.getScriptLock();
