@@ -320,7 +320,9 @@ function mirrorCdrForDate_(ss, iso) {
     });
   });
   if (!batch.length) return { rows: 0 };
-  var res = writeCDRRowsToNeon(batch);
+  // P-6: the re-derived batch is the sheet's COMPLETE set for `iso`, so the
+  // deferred mirror is an authoritative per-date replace (IMP-5 pattern).
+  var res = writeCDRRowsToNeon(batch, { authoritative: true });
   if (res && res.skipped) return { unreachable: true, rows: 0 };
   // F6: surface the phone-child row count in the Pipeline Health note so the
   // secondary mirror (call_history_phones) is observable. (A phone-insert

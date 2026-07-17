@@ -139,6 +139,62 @@ test('CDR writer (no HMAC): 21 params bind in the call_history_dept order; JSONB
   assert.equal(res.phones, 0, 'no phone child rows without HMAC_SECRET');
 });
 
+// Ordered-recording conn for the P-6 tests: captures EVERY statement's SQL
+// + bound params in execution order (recConn above keeps only the last one).
+function seqConn(log) {
+  function stmt(sql) {
+    const entry = { sql: sql, params: [] };
+    log.push(entry);
+    return {
+      setString: function (i, v) { entry.params[i - 1] = v; },
+      setInt:    function (i, v) { entry.params[i - 1] = v; },
+      setDouble: function (i, v) { entry.params[i - 1] = v; },
+      execute: function (adhoc) { if (typeof adhoc === 'string') log.push({ sql: adhoc, params: [] }); return true; },
+      close: function () {},
+    };
+  }
+  return {
+    setAutoCommit: function () {},
+    prepareStatement: stmt,
+    createStatement: function () { return stmt('(adhoc)'); },
+    commit: function () {}, rollback: function () {}, close: function () {},
+  };
+}
+
+test('P-6: authoritative CDR write deletes phone children THEN parents for the payload dates, before the insert', function () {
+  const log = [];
+  h.ctx.getReachableNeonConn_ = function () { return seqConn(log); };
+  delete h.state.props.HMAC_SECRET;
+  h.fn('writeCDRRowsToNeon')([
+    { callDate: '2026-06-22', dept: 'CSR',   agentName: 'Anna' },
+    { callDate: '2026-06-23', dept: 'Sales', agentName: 'Bob' },
+    { callDate: '06/22/2026', dept: 'CSR',   agentName: 'Cara' },  // non-ISO -> parseDateForNeon, dedups into 06-22
+  ], { authoritative: true });
+
+  const sqls = log.map(function (e) { return e.sql; });
+  assert.match(sqls[0], /DELETE FROM call_history_phones WHERE call_history_id IN \(SELECT id FROM call_history_dept WHERE call_date IN \(\?::date,\?::date\)\)/,
+    'children deleted first, via the parent-id subselect');
+  assert.deepEqual(Array.from(log[0].params), ['2026-06-22', '2026-06-23']);
+  assert.match(sqls[1], /DELETE FROM call_history_dept WHERE call_date IN \(\?::date,\?::date\)/,
+    'parents deleted second');
+  assert.deepEqual(Array.from(log[1].params), ['2026-06-22', '2026-06-23']);
+  assert.match(sqls[2], /INSERT INTO call_history_dept/, 'insert runs after both deletes');
+});
+
+test('P-6: non-authoritative CDR write issues no deletes (pre-P-6 behavior byte-identical)', function () {
+  const log = [];
+  h.ctx.getReachableNeonConn_ = function () { return seqConn(log); };
+  delete h.state.props.HMAC_SECRET;
+  h.fn('writeCDRRowsToNeon')([
+    { callDate: '2026-06-22', dept: 'CSR', agentName: 'Anna' },
+  ]);
+  assert.ok(log.length >= 1, 'at least the insert ran');
+  assert.match(log[0].sql, /INSERT INTO call_history_dept/, 'first statement is the insert');
+  log.forEach(function (e) {
+    assert.ok(!/DELETE FROM call_history/.test(e.sql), 'no authoritative delete without the flag');
+  });
+});
+
 test('P-2: external-only NOP cells (leading separator) parse as EXTERNAL and mask', function () {
   // autoImport.js::join now emits "\n|\n" + ext when the internal side is
   // empty, so the parser's pipe contract holds for external-only cells.

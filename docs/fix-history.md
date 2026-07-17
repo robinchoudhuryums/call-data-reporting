@@ -246,15 +246,24 @@ date-coercion sections).
 | `P-7` | Stale Pending-Archive rows beat a fresh recompute -- replaced when fresh rows exist |
 | `P-8` | ISO-text date cells parsed as UTC midnight (previous Chicago day) in the dup-guard/force-delete -- `parseHistoryDateCell_` local-noon |
 
-**All corrective findings from the 2026-07 broad scan are implemented** (P-6
-optional/deferred: `call_history_*` isn't dashboard-read). Batch 8 shipped its
-vetting slice -- `runInboundQcdParityCheck` (InboundReport.gs), the
-QCD-vs-inbound reconciliation the un-gating decision needs; the gates stay ON
-(owner) and capture-time raw→canonical queue normalization is DEFERRED (needs
-an owner-decided raw→canonical mapping schema -- the alias column maps
-dept→raw names, ambiguous for multi-queue depts). Batch 9's flip runbook is
-consolidated in the README. Remaining strategic work (Batch 10): smoke
-harness, Report Usage review, legacy decommission, optional P-6.
+**All corrective findings from the 2026-07 broad scan are implemented.**
+Batch 8 shipped its vetting slice -- `runInboundQcdParityCheck`
+(InboundReport.gs), the QCD-vs-inbound reconciliation the un-gating decision
+needs; the gates stay ON (owner) and capture-time raw→canonical queue
+normalization is DEFERRED (needs an owner-decided raw→canonical mapping
+schema -- the alias column maps dept→raw names, ambiguous for multi-queue
+depts). Batch 9's flip runbook is consolidated in the README.
+
+**Batch 10 (same scan, strategic pass).**
+
+| Code | What it shipped | Where the live rule lives |
+|---|---|---|
+| `P-6` | `writeCDRRowsToNeon({authoritative:true})` -- per-date replace for the CDR mirror (children-first delete via the parent-id subselect, then parents, in-txn). Daily inline + deferred `mirrorCdrForDate_` pass it; the bulk post-dedup mirror stays non-authoritative. Was "optional" (call_history_* isn't dashboard-read) but closes the last phantom-row family. | Neon write discipline rule (4), CLAUDE.md |
+| Usage review | The Report Usage telemetry finally got a READER: `computeReportUsageSummary_` (SystemHealth.gs) renders a per-report runs / unique users / manager-runs / cache-hit-rate section on the Health page -- the consolidation/un-gating evidence surfaced instead of hand-pivoted. | System Health bullet, CLAUDE.md |
+| Smoke | `SmokeCheck.gs::runLiveSmoke` -- editor-run, admin-gated, read-only 7-check sweep of the live read paths with a pass/fail email + `SMOKE_LAST_RESULT` Health row. | System Health bullet, CLAUDE.md |
+
+Remaining strategic work: legacy dqe-report decommission (incl. T-8 onOpen
+collision) + the deferred capture-time queue normalization above.
 
 ---
 

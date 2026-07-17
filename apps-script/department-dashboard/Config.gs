@@ -152,8 +152,10 @@ const DEPT_CONFIG_HEADERS = Object.freeze([
 // best-effort (a missing sheet or a write failure silently no-ops --
 // telemetry must never block or fail a report). Exists to give the
 // report-consolidation decisions (PR/CR retirement) real usage
-// evidence. Reader: the operator, directly in the sheet (pivot by
-// Report / Email).
+// evidence. Readers: SystemHealth.gs::computeReportUsageSummary_
+// (the Health page's "Report usage (last 30 days)" section -- runs /
+// unique users / manager runs / cache-hit rate per report), or the
+// operator directly in the sheet (pivot by Report / Email).
 const REPORT_USAGE_HEADERS = Object.freeze([
   'Timestamp', 'Report', 'Department', 'Role', 'Email', 'Cache Hit',
 ]);

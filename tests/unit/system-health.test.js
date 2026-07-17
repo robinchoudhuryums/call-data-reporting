@@ -197,6 +197,78 @@ test('O-5: queue-report trigger + MISSED outcome are covered by the Health page'
   assert.equal(rowByKey(data, 'out-queuereport').status, 'warn', 'a MISSED day paints the outcome row amber');
 });
 
+// -- Report Usage summary (Batch 10) ------------------------------------------
+
+function daysAgo(n) {
+  const d = new Date();
+  d.setDate(d.getDate() - n);
+  return d;
+}
+
+test('usage: computeReportUsageSummary_ aggregates runs/users/manager-runs/hit-rate per report, busiest-first, window-scoped', function () {
+  installHealth({});
+  h.state.spreadsheet = makeFakeSpreadsheet({ sheets: { 'Report Usage': [
+    ['Timestamp', 'Report', 'Department', 'Role', 'Email', 'Cache Hit'],
+    [daysAgo(2),  'insights', 'CSR',   'manager', 'm1@x.com', 'TRUE'],
+    [daysAgo(1),  'insights', 'CSR',   'manager', 'm1@x.com', 'FALSE'],
+    [daysAgo(1),  'insights', 'Sales', 'admin',   'a@x.com',  'TRUE'],
+    [daysAgo(1),  'insights', 'CSR',   'manager', 'm2@x.com', 'TRUE'],
+    [daysAgo(3),  'inbound',  '(all)', 'admin',   'a@x.com',  'FALSE'],
+    [daysAgo(45), 'summary',  'CSR',   'manager', 'm1@x.com', 'FALSE'],  // outside the 30d window
+  ] } });
+  const ru = h.call('computeReportUsageSummary_');
+  assert.equal(ru.available, true);
+  assert.equal(ru.rowsInWindow, 5, 'the 45-day-old row is excluded');
+  assert.equal(ru.clipped, false);
+  assert.deepEqual(Array.from(ru.reports.map(function (r) { return r.report; })), ['insights', 'inbound'],
+    'busiest-first; the out-of-window report does not appear');
+  const ins = ru.reports[0];
+  assert.equal(ins.runs, 4);
+  assert.equal(ins.users, 3, 'unique emails');
+  assert.equal(ins.managerRuns, 3, 'the un-gating signal');
+  assert.equal(ins.cacheHitPct, 75);
+  assert.match(String(ins.lastUsed), /^\d{4}-\d{2}-\d{2}$/);
+  const inb = ru.reports[1];
+  assert.equal(inb.managerRuns, 0, 'admin-only use shows zero manager runs');
+});
+
+test('usage: missing sheet -> available:false; getSystemHealth degrades to a muted unavailable row', function () {
+  installHealth({ missingSheets: ['Report Usage'] });
+  const ru = h.call('computeReportUsageSummary_');
+  assert.equal(ru.available, false);
+  assert.match(ru.reason, /setup/i);
+  const row = rowByKey(h.call('getSystemHealth'), 'usage-none');
+  assert.equal(row.status, 'muted');
+  assert.match(row.value, /unavailable/);
+});
+
+test('usage: getSystemHealth renders one muted row per report + never warns (evidence, not health)', function () {
+  installHealth({});
+  h.state.spreadsheet.getSheetByName('Report Usage').appendRow([daysAgo(1), 'summary', 'CSR', 'manager', 'm1@x.com', 'FALSE']);
+  const data = h.call('getSystemHealth');
+  const row = rowByKey(data, 'usage-summary');
+  assert.ok(row, 'per-report usage row present');
+  assert.equal(row.status, 'muted');
+  assert.match(row.value, /1 run\(s\) · 1 user\(s\) · 1 by managers · 0% cache hits · last \d{4}-\d{2}-\d{2}/);
+  assert.ok(!rowByKey(data, 'usage-clipped'), 'no clip note when the scan covered the window');
+});
+
+test('usage: header-only sheet -> "no report opens recorded" muted row', function () {
+  installHealth({});   // fixture sheets are header-only
+  const row = rowByKey(h.call('getSystemHealth'), 'usage-none');
+  assert.equal(row.status, 'muted');
+  assert.match(row.value, /no report opens/);
+});
+
+test('O-5/Batch-10: a smoke FAILED outcome paints the out-smoke row amber; ok stays green', function () {
+  installHealth({ props: { SMOKE_LAST: '2026-07-16T12:00:00Z',
+    SMOKE_LAST_RESULT: 'FAILED 1/7 | sheet-open ok | latest-dqe-date ok | dept-summary ok | missed-report ok | insights ok | qcd-alldept ok | neon FAIL' } });
+  assert.equal(rowByKey(h.call('getSystemHealth'), 'out-smoke').status, 'warn');
+  installHealth({ props: { SMOKE_LAST: '2026-07-16T12:00:00Z',
+    SMOKE_LAST_RESULT: 'ok 7/7 | sheet-open ok | latest-dqe-date ok | dept-summary ok | missed-report ok | insights ok | qcd-alldept ok | neon ok' } });
+  assert.equal(rowByKey(h.call('getSystemHealth'), 'out-smoke').status, 'ok');
+});
+
 test('O-5: a healthy "Sent ..." queue-report outcome stays green', function () {
   installHealth({ props: {
     NEON_HOST: 'h',

@@ -1144,6 +1144,10 @@ function processBatchArchive(silent = false, callerHoldsLock = false) {
             phonesX:    r[23], phonesY:    r[24], phonesZ:    r[25]
           };
         });
+        // P-6 note: deliberately NOT authoritative -- this bulk payload is
+        // post-dedupeAlreadyArchived_, so it can be a PARTIAL set for a
+        // date; an authoritative delete here would nuke legitimate Neon
+        // rows (same reasoning as the bulk QCD mirror below).
         var neonCdrRes = writeCDRRowsToNeon(neonCdrRows);
         if (neonCdrRes && neonCdrRes.skipped) {
           console.log('processBatchArchive: Neon CDR mirror skipped ('
@@ -1774,7 +1778,11 @@ if (!skipCDR && obcHD) {
           phonesX:    r[19], phonesY:   r[20], phonesZ:    r[21]
         };
       });
-      var neonCdrResult = writeCDRRowsToNeon(neonCdrRows);
+      // P-6: the daily payload is the COMPLETE per-agent CDR set for
+      // dateObj, so the mirror is an authoritative per-date replace
+      // (IMP-5 pattern) -- a shrinking force re-import can't leave
+      // phantom call_history_dept / call_history_phones rows.
+      var neonCdrResult = writeCDRRowsToNeon(neonCdrRows, { authoritative: true });
       if (neonCdrResult && neonCdrResult.skipped) {
         setNeonStatus_('unreachable');
         console.log('processIntegratedHistory: Neon CDR write skipped (' + neonCdrResult.skipped + ' rows — Neon unreachable).');

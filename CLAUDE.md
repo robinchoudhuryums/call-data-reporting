@@ -1447,7 +1447,15 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   the same transaction before inserting): the daily DQE build + dup-guard
   re-mirror (both INV-16 copies), the daily QCD mirror, the deferred
   per-date mirrors (NeonMirror.js); the daily Direct writer deletes its
-  date likewise; and **`writeInboundCallsToNeon({authoritative:true,
+  date likewise; **`writeCDRRowsToNeon({authoritative:true})` (P-6)** --
+  the daily inline CDR mirror + the deferred `mirrorCdrForDate_` each pass
+  the COMPLETE per-date CDR set, and the writer deletes the dates'
+  `call_history_phones` CHILDREN first (via the parent-id subselect --
+  deleted parents would otherwise strand their children, or an FK would
+  refuse the delete), then the `call_history_dept` parents, in the same
+  txn as the insert (the bulk post-`dedupeAlreadyArchived_` CDR mirror is
+  a partial set and stays NON-authoritative, like its QCD sibling; pinned
+  by neon-write-mapping.test.js); and **`writeInboundCallsToNeon({authoritative:true,
   expectedDateIso})` (L2 + P-1)** -- the daily import + the per-date
   backfill/deferred path each pass
   the COMPLETE inbound set for their date(s), so a shrinking re-import that
@@ -1512,7 +1520,22 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `guardForceRebuildLoss_` QCD signal above. Pinned by `system-health.test.js`.
   This page is the PULL view; the optional **Pipeline-failure watchdog**
   (`PipelineWatch.gs`, Operator State #32) PUSHES the same new failure rows to
-  admins by email.
+  admins by email. Two Batch-10 additions on the same page: (a) a **"Report
+  usage (last 30 days)"** section (`computeReportUsageSummary_` -- per-report
+  runs / unique users / MANAGER runs / cache-hit rate / last-used from the
+  Report Usage telemetry sheet, bounded tail read `REPORT_USAGE_SCAN_CAP_`
+  =5000 with an explicit "window clipped" note; all rows muted -- it's the
+  consolidation/un-gating EVIDENCE, not a health state), and (b) a **"Live
+  smoke — last run"** outcome row fed by `SmokeCheck.gs::runLiveSmoke` -- an
+  editor-run, admin-gated, READ-ONLY sweep of the live read paths (sheet
+  open, latest DQE date, dept summary, missed, agent-free Insights, all-dept
+  QCD, Neon `SELECT 1`), each check independently try/caught + timed, result
+  emailed to `getAdminEmails_()` and stored OPS-8 prefix-coded in
+  `SMOKE_LAST`/`SMOKE_LAST_RESULT`. It complements the unit harness (live
+  wiring: properties, scopes, sheets, Neon) -- client-side surfaces (deep
+  links, tour, modals) still need the manual Regression Scenarios. Run it
+  after every deploy. Both pinned by `system-health.test.js` /
+  `smoke-check.test.js`.
 - **Neon read-back (F1) is flag-gated and defaults OFF.** The dashboard
   still reads DQE from the `DQE Historical Data` sheet by default; the
   read-back lives in `NeonRead.gs` behind the `DQE_READ_SOURCE` Script
@@ -2627,7 +2650,7 @@ Data Accuracy (DQE), Access Control Integrity, Source Pipeline Reliability, Migr
 
 ### Subsystems
 Department Dashboard:
-  apps-script/department-dashboard/Auth.gs, apps-script/department-dashboard/Code.gs, apps-script/department-dashboard/Config.gs, apps-script/department-dashboard/Data.gs, apps-script/department-dashboard/Diagnostics.gs, apps-script/department-dashboard/Setup.gs, apps-script/department-dashboard/Util.gs, apps-script/department-dashboard/NeonRead.gs, apps-script/department-dashboard/NeonKeepWarm.gs, apps-script/department-dashboard/CacheWarm.gs, apps-script/department-dashboard/IngestWatchdog.gs, apps-script/department-dashboard/PipelineWatch.gs, apps-script/department-dashboard/NeonBackup.gs, apps-script/department-dashboard/SystemHealth.gs, apps-script/department-dashboard/MissedCallsReport.gs, apps-script/department-dashboard/IndividualReport.gs, apps-script/department-dashboard/InsightsReport.gs, apps-script/department-dashboard/InboundReport.gs, apps-script/department-dashboard/DirectCallReport.gs, apps-script/department-dashboard/CallerLookup.gs, apps-script/department-dashboard/Alerts.gs, apps-script/department-dashboard/CompanyOverview.gs, apps-script/department-dashboard/Digest.gs, apps-script/department-dashboard/QueueReportEmail.gs, apps-script/department-dashboard/OrphanFix.gs, apps-script/department-dashboard/QCDReport.gs, apps-script/department-dashboard/DeptConfig.gs, apps-script/department-dashboard/Escalations.gs, apps-script/department-dashboard/access_denied.html, apps-script/department-dashboard/dashboard.html, apps-script/department-dashboard/script.html, apps-script/department-dashboard/styles.html, apps-script/department-dashboard/appsscript.json
+  apps-script/department-dashboard/Auth.gs, apps-script/department-dashboard/Code.gs, apps-script/department-dashboard/Config.gs, apps-script/department-dashboard/Data.gs, apps-script/department-dashboard/Diagnostics.gs, apps-script/department-dashboard/Setup.gs, apps-script/department-dashboard/Util.gs, apps-script/department-dashboard/NeonRead.gs, apps-script/department-dashboard/NeonKeepWarm.gs, apps-script/department-dashboard/CacheWarm.gs, apps-script/department-dashboard/IngestWatchdog.gs, apps-script/department-dashboard/PipelineWatch.gs, apps-script/department-dashboard/NeonBackup.gs, apps-script/department-dashboard/SystemHealth.gs, apps-script/department-dashboard/SmokeCheck.gs, apps-script/department-dashboard/MissedCallsReport.gs, apps-script/department-dashboard/IndividualReport.gs, apps-script/department-dashboard/InsightsReport.gs, apps-script/department-dashboard/InboundReport.gs, apps-script/department-dashboard/DirectCallReport.gs, apps-script/department-dashboard/CallerLookup.gs, apps-script/department-dashboard/Alerts.gs, apps-script/department-dashboard/CompanyOverview.gs, apps-script/department-dashboard/Digest.gs, apps-script/department-dashboard/QueueReportEmail.gs, apps-script/department-dashboard/OrphanFix.gs, apps-script/department-dashboard/QCDReport.gs, apps-script/department-dashboard/DeptConfig.gs, apps-script/department-dashboard/Escalations.gs, apps-script/department-dashboard/access_denied.html, apps-script/department-dashboard/dashboard.html, apps-script/department-dashboard/script.html, apps-script/department-dashboard/styles.html, apps-script/department-dashboard/appsscript.json
 
 CDR DQE Pipeline:
   apps-script/cdr-report/buildDQEHistoricalData.js, apps-script/cdr-report/DQEdrilldown.js, apps-script/cdr-report/DQEDrilldownSidebar.html, apps-script/cdr-report/dataFilters.js, apps-script/cdr-report/CDR Tools menu.js, apps-script/cdr-report/appsscript.json

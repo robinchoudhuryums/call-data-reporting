@@ -209,6 +209,9 @@ function getSystemHealth() {
       // the result string carries its own timestamp). MISSED / FAILED-ALL
       // outcomes trip the OPS-8 classifier's bad-word match, as intended.
       ['out-queuereport', 'Queue report — last outcome', 'QUEUE_REPORT_LAST', 'QUEUE_REPORT_LAST_RESULT'],
+      // Live smoke harness (SmokeCheck.gs, editor-run): result string is
+      // OPS-8 prefix-coded ('ok N/N ...' / 'FAILED k/N ...').
+      ['out-smoke', 'Live smoke — last run', 'SMOKE_LAST', 'SMOKE_LAST_RESULT'],
     ];
     for (var o = 0; o < outcomes.length; o++) {
       var at = props.getProperty(outcomes[o][2]);
@@ -262,6 +265,112 @@ function getSystemHealth() {
       missing.length ? 'Re-run setup() from the editor as an admin (Operator State #6) — writers against missing sheets silently no-op.' : '');
   } catch (e) { add('sheets', 'setup-sheets', 'setup()-managed sheets', 'warn', 'probe failed', String(e && e.message || e)); }
 
+  // ── Report usage (last 30 days) ─────────────────────────────────────
+  // The consolidation / un-gating EVIDENCE the Report Usage telemetry
+  // carve-out (INV-01) exists to provide, surfaced instead of asking the
+  // operator to hand-pivot the sheet. Informational only (every row is
+  // 'muted' -- usage is evidence, not a health state), busiest-first.
+  try {
+    var ru = computeReportUsageSummary_();
+    var ruLabelDays = 'Report usage (last ' + REPORT_USAGE_SUMMARY_DAYS_ + ' days)';
+    if (!ru.available) {
+      add('usage', 'usage-none', ruLabelDays, 'muted', 'unavailable — ' + (ru.reason || 'unknown'));
+    } else if (!ru.reports.length) {
+      add('usage', 'usage-none', ruLabelDays, 'muted', 'no report opens recorded');
+    } else {
+      ru.reports.forEach(function (rep) {
+        add('usage', 'usage-' + rep.report, rep.report, 'muted',
+          rep.runs + ' run(s) · ' + rep.users + ' user(s)'
+          + (rep.managerRuns ? ' · ' + rep.managerRuns + ' by managers' : ' · admin-only use')
+          + ' · ' + rep.cacheHitPct + '% cache hits · last ' + (rep.lastUsed || '?'));
+      });
+      if (ru.clipped) {
+        add('usage', 'usage-clipped', 'Usage scan window', 'muted',
+          'scan capped at the newest ' + REPORT_USAGE_SCAN_CAP_ + ' rows — counts above understate the full '
+          + REPORT_USAGE_SUMMARY_DAYS_ + '-day window');
+      }
+    }
+  } catch (e) { add('usage', 'usage-none', 'Report usage', 'warn', 'probe failed', String(e && e.message || e)); }
+
   var warnCount = rows.filter(function (r) { return r.status === 'warn'; }).length;
   return { generatedAt: new Date().toISOString(), rows: rows, warnCount: warnCount };
+}
+
+// -- Report Usage summary ------------------------------------------------------
+
+var REPORT_USAGE_SUMMARY_DAYS_ = 30;   // aggregation window
+// Bounded tail read (the F-20 / DRIFT_LOG_SCAN_CAP discipline): the sheet is
+// append-only and grows with every report open, so an unbounded read would
+// eventually blow the Health page's budget. 5000 rows comfortably covers 30
+// days at current traffic; if it ever clips the window, the summary says so.
+var REPORT_USAGE_SCAN_CAP_ = 5000;
+
+/**
+ * Aggregates the Report Usage telemetry sheet (Util.gs::logReportUsage_,
+ * schema REPORT_USAGE_HEADERS: Timestamp | Report | Department | Role |
+ * Email | Cache Hit) over the last REPORT_USAGE_SUMMARY_DAYS_ days.
+ *
+ * Returns { available, reason? , reports: [{ report, runs, users,
+ * managerRuns, cacheHitPct, lastUsed }], rowsInWindow, clipped } with
+ * reports sorted busiest-first. `managerRuns` is the number the
+ * un-gating decisions care about: a vetted-gated report (Inbound /
+ * Direct) shows admin-only use by construction, while a candidate for
+ * retirement shows near-zero manager traffic. `clipped` is true when
+ * the scan cap cut into the window (oldest scanned row is younger than
+ * the window floor), i.e. the counts are a floor, not the total.
+ */
+function computeReportUsageSummary_() {
+  var ss = openSpreadsheet_();
+  var sheet = ss.getSheetByName(SHEETS.REPORT_USAGE);
+  if (!sheet) return { available: false, reason: 'Report Usage sheet missing — re-run setup() (Operator State #6)' };
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return { available: true, reports: [], rowsInWindow: 0, clipped: false };
+
+  var count = Math.min(lastRow - 1, REPORT_USAGE_SCAN_CAP_);
+  var start = lastRow - count + 1;
+  var vals = sheet.getRange(start, 1, count, 6).getValues();
+  var floor = new Date();
+  floor.setDate(floor.getDate() - REPORT_USAGE_SUMMARY_DAYS_);
+
+  var tz = Session.getScriptTimeZone();
+  var byReport = {};
+  var rowsInWindow = 0;
+  for (var i = 0; i < vals.length; i++) {
+    var ts = vals[i][0];
+    if (!(ts instanceof Date)) ts = new Date(ts);
+    if (isNaN(ts.getTime()) || ts < floor) continue;
+    rowsInWindow++;
+    var rep = String(vals[i][1] || '') || '(unknown)';
+    var b = byReport[rep];
+    if (!b) b = byReport[rep] = { report: rep, runs: 0, hits: 0, managerRuns: 0, userSet: {}, last: null };
+    b.runs++;
+    if (String(vals[i][5] || '').toUpperCase() === 'TRUE') b.hits++;
+    if (String(vals[i][3] || '').toLowerCase() === 'manager') b.managerRuns++;
+    var email = String(vals[i][4] || '').toLowerCase();
+    if (email) b.userSet[email] = true;
+    if (!b.last || ts > b.last) b.last = ts;
+  }
+
+  // Clipped = the cap dropped older rows AND the oldest row we DID scan is
+  // already inside the window (so in-window rows were cut off below it).
+  var clipped = false;
+  if (count < lastRow - 1 && vals.length) {
+    var oldest = vals[0][0];
+    if (!(oldest instanceof Date)) oldest = new Date(oldest);
+    clipped = !isNaN(oldest.getTime()) && oldest >= floor;
+  }
+
+  var reports = Object.keys(byReport).map(function (k) {
+    var b = byReport[k];
+    return {
+      report: b.report,
+      runs: b.runs,
+      users: Object.keys(b.userSet).length,
+      managerRuns: b.managerRuns,
+      cacheHitPct: b.runs ? Math.round((b.hits / b.runs) * 100) : 0,
+      lastUsed: b.last ? Utilities.formatDate(b.last, tz, 'yyyy-MM-dd') : null,
+    };
+  }).sort(function (a, b) { return b.runs - a.runs || (a.report < b.report ? -1 : 1); });
+
+  return { available: true, reports: reports, rowsInWindow: rowsInWindow, clipped: clipped };
 }

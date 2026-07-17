@@ -60,6 +60,8 @@ function createShim() {
     Session: {
       getActiveUser: function () { return { getEmail: function () { return state.userEmail; } }; },
       getEffectiveUser: function () { return { getEmail: function () { return state.userEmail; } }; },
+      // Batch 10: computeReportUsageSummary_ formats lastUsed in script TZ.
+      getScriptTimeZone: function () { return 'America/Chicago'; },
     },
 
     PropertiesService: {
