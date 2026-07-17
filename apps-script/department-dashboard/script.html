@@ -2336,6 +2336,11 @@
   // never part of the sorted body.
   var ovUserRows_ = [], ovUserTotals_ = null;
   var ovUserSort_ = { key: 'answerRate', dir: 'asc' };
+  // C-3: the Overview mini-table's own response meta (priorFrom/priorTo for
+  // the WoW-chip tooltips) + the synchronous render-pass override consumed
+  // by wowChipHtml_ (see there).
+  var ovUserMeta_ = null;
+  var wowChipMetaOverride_ = null;
   var ovUserSortWired_ = false;
   function ovRenderUserTable_(data) {
     const wrap = $('ov-user-table-wrap');
@@ -2372,7 +2377,7 @@
         if (myToken !== ovUserTableSeq) return;   // F-40: superseded by a newer call
         status.style.display = 'none';
         if (!resp || !resp.rows || !resp.rows.length) {
-          ovUserRows_ = []; ovUserTotals_ = null;
+          ovUserRows_ = []; ovUserTotals_ = null; ovUserMeta_ = null;
           tbody.innerHTML = '<tr><td colspan="' + COLUMNS.length + '" class="ov-user-empty">No agent rows for this dept in '
                           + escapeHtml(range.from === range.to ? range.to : (range.from + ' – ' + range.to)) + '.</td></tr>';
           tfoot.innerHTML = '';
@@ -2382,6 +2387,7 @@
         // (default worst-answer-rate first). A header click re-sorts in place.
         ovUserRows_ = resp.rows;
         ovUserTotals_ = resp.totals || null;
+        ovUserMeta_ = resp.meta || null;   // C-3: this table's own prior window
         ovWireUserSort_();
         ovRenderUserRows_();
       })
@@ -2419,6 +2425,9 @@
       }
     });
     var sorted = sortRows(ovUserRows_, ovUserSort_.key, ovUserSort_.dir);
+    // C-3: point the WoW-chip tooltips at THIS table's prior window for the
+    // duration of the (synchronous) render, then clear.
+    wowChipMetaOverride_ = ovUserMeta_;
     tbody.innerHTML = sorted.map(function (row) {
       var rowClass = (row.matchedViaQueue && !row.matchedViaRoster) ? 'via-queue' : '';
       return '<tr' + (rowClass ? ' class="' + rowClass + '"' : '') + '>'
@@ -2427,6 +2436,7 @@
              }).join('')
            + '</tr>';
     }).join('');
+    wowChipMetaOverride_ = null;
     if (ovUserTotals_) {
       var queueCount = ovUserTotals_.queueOnlyAgentCount || 0;
       var totalLabel = queueCount > 0
@@ -3188,7 +3198,7 @@
       const trigger = menu.querySelector('.header-menu-btn[aria-controls]');
       if (!trigger) return;
       const hasActive = !!menu.querySelector(
-        '.header-menu-list [data-route="' + route + '"]');
+        '.header-menu-list [data-route="' + escCssId_(route) + '"]');   // C-4
       trigger.classList.toggle('header-nav-current', hasActive);
     });
   }
@@ -3259,7 +3269,10 @@
         const qIdx = normalized.indexOf('?');
         const route = qIdx === -1 ? normalized : normalized.slice(0, qIdx);
         const params = qIdx === -1 ? null : decodeShareParams_(normalized.slice(qIdx + 1));
-        const trigger = document.querySelector('[data-route="' + route + '"]');
+        // C-4: escape the hand-typed hash -- a crafted quote/backslash used
+        // to throw a selector SyntaxError inside this callback, silently
+        // killing all deep-link handling for the load.
+        const trigger = document.querySelector('[data-route="' + escCssId_(route) + '"]');
         if (!trigger) {
           // Routes with no [data-route] element of their own:
           //  - page routes (the retired Missed modal's '#/report/missed',
@@ -4959,7 +4972,7 @@
   // Insights" restored STALE data under a permanent loading note. IR and
   // Insights render into separate containers, so cross-report responses
   // never actually conflict.
-  var reportReqSeq_ = { ir: 0, ins: 0 };
+  var reportReqSeq_ = { ir: 0, ins: 0, inb: 0, dir: 0 };   // C-8: inbound/direct join the guard family
 
   // D1b: per-report last-good payload cache (localStorage). On a FAILED fetch
   // the report repaints the last good payload for the SAME request (if any)
@@ -5910,10 +5923,16 @@
     const sign = delta > 0 ? '+' : (delta < 0 ? '−' : '');  // − minus
     const label = delta === 0 ? '0' : (sign + abs);
     // Tooltip carries the raw prior value + the explicit window so
-    // a manager can sanity-check the delta without doing math. Uses
-    // STATE.meta.priorFrom/priorTo (populated by the server).
-    const pf = (state.meta && state.meta.priorFrom) || '';
-    const pt = (state.meta && state.meta.priorTo)   || '';
+    // a manager can sanity-check the delta without doing math. Uses the
+    // RENDER CONTEXT's meta (C-3): the Overview mini-table sets
+    // wowChipMetaOverride_ for its synchronous render pass, because its rows
+    // come from its OWN getDepartmentSummary call -- reading the dept PAGE's
+    // state.meta here cited that page's prior window (or blank) on the
+    // Overview chips. Deltas were always per-row correct; only this hover
+    // label borrowed the wrong window.
+    const wm = wowChipMetaOverride_ || (state && state.meta) || {};
+    const pf = wm.priorFrom || '';
+    const pt = wm.priorTo   || '';
     const tip = 'Prior period ' + pf + ' – ' + pt
               + ': ' + prior + '. Delta ' + (delta >= 0 ? '+' : '') + delta + '.';
     return ' <span class="wow-chip ' + cls + '" title="' + escapeHtml(tip) + '">'
@@ -7933,7 +7952,13 @@
     const labels   = data.trendData.labels || [];
     const datasets = data.trendData.datasets || {};
     const agents   = Object.keys(datasets);
-    if (!agents.length) return;
+    if (!agents.length) {
+      // C-6: restore panel visibility before bailing -- the reveal above
+      // otherwise left all three chart panels stacked visible regardless of
+      // the active tab.
+      irPanels.forEach(function (p, i) { p.style.display = irSavedDisplays[i]; });
+      return;
+    }
 
     // Build dataset descriptors with a `hexColor` field; the chart
     // factory wires up gradient fill callbacks per-dataset against
@@ -9105,10 +9130,12 @@
     if (m.status === 'behind') {
       const days = (m.gapDays == null) ? '?' : m.gapDays;
       cls = 'al-neon-mirror-warn';
+      // C-7: plain strings only -- this element is set via textContent, so
+      // escapeHtml here DOUBLE-encoded (& rendered literally as &amp;).
       msg = '⚠ Neon mirror is behind the sheet by ' + days + ' day'
           + (days === 1 ? '' : 's') + ' (sheet through '
-          + escapeHtml(m.sheetMax || '?') + ', Neon through '
-          + escapeHtml(m.neonMax || '?') + '). Re-import the missing date(s) '
+          + (m.sheetMax || '?') + ', Neon through '
+          + (m.neonMax || '?') + '). Re-import the missing date(s) '
           + '— the dup-guard re-mirror heals it — or run '
           + 'backfillDQEHistoryUpsert(). Only affects reads when '
           + 'DQE_READ_SOURCE=neon.';
@@ -9120,7 +9147,7 @@
     } else {
       cls = 'al-neon-mirror-ok';
       msg = '✓ Neon mirror current with the sheet (both through '
-          + escapeHtml(m.neonMax || m.sheetMax || '?') + ').';
+          + (m.neonMax || m.sheetMax || '?') + ').';   // C-7: textContent sink
     }
     el.className = 'al-neon-mirror ' + cls;
     el.textContent = msg;
@@ -9148,11 +9175,13 @@
     if (failing) {
       const n = Number(m.count) || 0;
       cls = 'al-neon-mirror-warn';
+      // C-7: plain strings only (textContent sink; escapeHtml double-encoded
+      // any &/< in the recorded error message).
       msg = '⚠ Neon read-back is FAILING — serving the sheet as a fallback'
           + (m.source === 'neon' ? ' (reads may be stale if the sheet has aged)' : '')
-          + '. Last error ' + escapeHtml(m.at || '?')
-          + (m.label ? ' [' + escapeHtml(m.label) + ']' : '')
-          + ': ' + escapeHtml(m.message || '(no message)')
+          + '. Last error ' + (m.at || '?')
+          + (m.label ? ' [' + (m.label) + ']' : '')
+          + ': ' + (m.message || '(no message)')
           + '. ' + n + ' consecutive failure' + (n === 1 ? '' : 's')
           + '. Check the NEON_* Script Properties / Neon instance.';
     } else {
@@ -12480,16 +12509,6 @@
     const toggle = $('ins-trend-view-toggle');
     if (toggle) toggle.style.display = hasDaily ? '' : 'none';
     if (!hasDaily && insTrendView === 'daily') insTrendView = 'monthly';
-    // #4: the trend spans a DIFFERENT window than the report header (12 months
-    // in Monthly, the selected window in Daily), so label its range explicitly
-    // rather than leaving a bare "12-month team trend" beside a 30-day report.
-    const insTrendHdr = $('ins-trend-header');
-    if (insTrendHdr) {
-      const tm = data.meta || {};
-      insTrendHdr.textContent = (insTrendView === 'daily')
-        ? ('Daily trend' + (tm.from && tm.to ? ' · ' + isoDateShort_(tm.from) + '–' + isoDateShort_(tm.to) + ' (selected window)' : ''))
-        : ('12-month trend' + (tm.to ? ' · through ' + isoDateShort_(tm.to) : ''));
-    }
     const daily = (insTrendView === 'daily') && hasDaily;
 
     // gap 1: the per-queue metric sub-selector is only meaningful on the
@@ -12499,9 +12518,18 @@
     const qMetricLabel = { abandonedPct: 'abandoned % by queue',
       totalCalls: 'total calls by queue', violations: 'violations by queue' };
 
+    // #4 + gap 1, MERGED (C-1): ONE header writer. These were two consecutive
+    // writers to the same element -- the second unconditionally clobbered the
+    // #4 explicit range label, so it never rendered. The trend spans a
+    // DIFFERENT window than the report header (12 months in Monthly, the
+    // selected window in Daily), so label its range explicitly, plus the
+    // by-queue metric suffix when the By Queue tab is active.
     const headerEl = $('ins-trend-header');
     if (headerEl) {
-      headerEl.textContent = (daily ? 'Daily team trend' : '12-month team trend')
+      const tm = data.meta || {};
+      headerEl.textContent = (daily
+          ? ('Daily team trend' + (tm.from && tm.to ? ' · ' + isoDateShort_(tm.from) + '–' + isoDateShort_(tm.to) + ' (selected window)' : ''))
+          : ('12-month team trend' + (tm.to ? ' · through ' + isoDateShort_(tm.to) : '')))
         + (isQueues ? ' — ' + (qMetricLabel[insQueueMetric] || 'by queue') : '');
     }
 
@@ -13718,15 +13746,18 @@
     const gen = $('inbound-generate-btn'); const prev = gen.textContent;
     gen.disabled = true; gen.innerHTML = DS_EQ_HTML_ + 'Generating…';
     const __sig = reportSig_({ from: from, to: to, department: dept });   // D1b key
+    const __rtok = ++reportReqSeq_.inb;   // C-8: stale-response guard
     const __inboundRepaint = function (d, opts) { inboundRenderReport_(d, opts); inboundShowResults(); reportSetStatus_('inbound-results-status', ''); };
     reportSwrPaint_('inbound', __sig, __inboundRepaint, 'inbound-results-status');   // SWR: instant repeat-paint
     google.script.run
       .withSuccessHandler(function (data) {
+        if (__rtok !== reportReqSeq_.inb) return;   // superseded by a newer request
         gen.disabled = false; gen.textContent = prev;
         reportLastGoodWrite_('inbound', __sig, data);
         __inboundRepaint(data);
       })
       .withFailureHandler(function (err) {
+        if (__rtok !== reportReqSeq_.inb) return;
         gen.disabled = false; gen.textContent = prev;
         // D1b: repaint last-good for this exact request (if any) instead of just
         // a form error (which is hidden once results show).
@@ -14581,13 +14612,16 @@
     const dept = $('direct-call-dept') ? $('direct-call-dept').value : '';
     const gen = $('direct-call-generate-btn'); const prev = gen.textContent;
     gen.disabled = true; gen.innerHTML = DS_EQ_HTML_ + 'Generating…';
+    const __rtok = ++reportReqSeq_.dir;   // C-8: stale-response guard
     google.script.run
       .withSuccessHandler(function (data) {
+        if (__rtok !== reportReqSeq_.dir) return;   // superseded by a newer request
         gen.disabled = false; gen.textContent = prev;
         directCallRenderReport_(data);
         directCallShowResults();
       })
       .withFailureHandler(function (err) {
+        if (__rtok !== reportReqSeq_.dir) return;
         gen.disabled = false; gen.textContent = prev;
         directCallSetError('Error: ' + (err && err.message ? err.message : String(err)));
       })
@@ -15609,7 +15643,13 @@
     return d ? (d[2] + '/' + d[3] + '/' + d[1]) : String(s);
   }
   // CSS-attr-safe id (UUIDs are hex+hyphen, but guard anyway).
-  function escCssId_(id) { return String(id).replace(/["\\]/g, ''); }
+  // C-9: ESCAPE quotes/backslashes for use inside a double-quoted attribute
+  // selector ([data-x="..."]) instead of STRIPPING them -- a stripped value
+  // could never match an attribute that actually contains a quote (agent /
+  // dept names are feed-originated), so those lookups silently no-op'd.
+  function escCssId_(id) {
+    return String(id).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  }
   function escSetError_(msg) {
     const el = $('esc-error'); if (!el) return;
     if (!msg) { el.style.display = 'none'; el.textContent = ''; return; }
@@ -15736,16 +15776,18 @@
   function initTour_() {
     var replay = $('tour-replay-btn');
     if (replay) replay.addEventListener('click', function () {
-      // Close the Help modal so the tour isn't hidden behind it. F-42: go
-      // through the modal's OWN close button so the focus trap + Escape
-      // keydown listener are released -- the old direct style-write left a
-      // stale trap, and Escape mid-tour ran Help's close handler and yanked
-      // focus to the header "?".
-      var help = $('help-modal');
-      var closeBtn = help && help.querySelector('.modal-close');
+      // C-2: the replay button lives in the SETTINGS modal (dashboard.html)
+      // -- close THAT modal so the tour isn't hidden behind it. (The old
+      // handler still closed HELP from before the button moved: it released
+      // Settings' focus trap via Help's closeModal and left Settings open
+      // under -- and after -- the tour.) F-42 still applies: go through the
+      // modal's OWN close button so the focus trap + Escape keydown listener
+      // are released.
+      var settings = $('settings-modal');
+      var closeBtn = settings && settings.querySelector('.modal-close');
       if (closeBtn) { closeBtn.click(); }
-      else if (help) {
-        help.style.display = 'none'; help.setAttribute('aria-hidden', 'true');
+      else if (settings) {
+        settings.style.display = 'none'; settings.setAttribute('aria-hidden', 'true');
         document.body.style.overflow = '';
       }
       setTimeout(startTour_, 200);
@@ -16567,7 +16609,10 @@
     };
     const row = function (cells) { return cells.map(esc).join(','); };
     const lines = [];
-    lines.push('Daily Call Queue Report,' + (data.dateLabel || ''));
+    // C-5: route the title cells through the shared escaper too -- the
+    // server-built dateLabel contains a comma ("Jul 10, 2026"), which split
+    // this line into three columns.
+    lines.push(row(['Daily Call Queue Report', data.dateLabel || '']));
     lines.push('');
     lines.push(row(['Department', 'Queue', 'Sub-dept', 'Total Calls', 'Answered', 'Abandoned',
                     'Abandoned %', 'Longest Wait', 'Avg Answer', 'Violations']));

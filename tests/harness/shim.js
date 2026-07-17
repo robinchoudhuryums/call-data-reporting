@@ -91,6 +91,7 @@ function createShim() {
       // (loadRosterCanonicalNames_ falls back to getActive()).
       getActive: function () { return state.spreadsheet; },
       getActiveSpreadsheet: function () { return state.spreadsheet; },
+      flush: function () {},   // T-1: sheetRepairs' merge flushes between write + delete
     },
 
     LockService: {

@@ -851,25 +851,41 @@ function queueToPendingArchive(targetSS, results, dateObj, skipCDR, skipQPath, s
   const monthStr = getMonthYearStr(dateObj);
   const weekStr  = getWeekOfMonthStr(dateObj);
 
-  // Check for already-queued types for this date.
+  // P-7: track already-queued (date, type) rows BY ROW NUMBER. The old
+  // Set-only check made a queued type WIN over the fresh recompute: after a
+  // failed batch archive left Pending Archive populated and the operator
+  // re-ran the bulk rebuild against corrected source data, the STALE queued
+  // rows -- not the fresh recompute -- were what processBatchArchive
+  // eventually wrote to history + mirrored to Neon. Now a type this run
+  // produced fresh rows for REPLACES its queued rows (deleted bottom-up
+  // below); a type with no fresh rows keeps its queued rows (never delete
+  // without a replacement -- the force-path guard convention).
   // Uses parsePendingDate to handle both legacy Date objects and new ISO strings.
-  const alreadyQueued  = new Set();
+  const queuedRowsByType = {};   // type -> [1-based sheet row numbers] for this date
   const lastPendingRow = pendingSheet.getLastRow();
   if (lastPendingRow > 1) {
     const existingMeta = pendingSheet.getRange(2, 1, lastPendingRow - 1, 2).getValues();
     const targetStr    = dateObj.toDateString();
-    existingMeta.forEach(row => {
+    existingMeta.forEach((row, idx) => {
       const d    = row[0];
       const type = String(row[1]);
       const dStr = parsePendingDate(d).toDateString();
-      if (dStr === targetStr) alreadyQueued.add(type);
+      if (dStr === targetStr) {
+        (queuedRowsByType[type] = queuedRowsByType[type] || []).push(idx + 2);
+      }
     });
   }
 
   const rowsToAdd = [];
+  const producedTypes = [];
+  let blockStartLen = 0;
+  const markProduced = function (type) {
+    if (rowsToAdd.length > blockStartLen) producedTypes.push(type);
+    blockStartLen = rowsToAdd.length;
+  };
 
   // 1. Add CDR
-  if (!skipCDR && !alreadyQueued.has("CDR") && results.Agents) {
+  if (!skipCDR && results.Agents) {
     results.Agents.Names.forEach((name, i) => {
       const dept = results.NameToDept[name] || "Unassigned";
       rowsToAdd.push([
@@ -887,8 +903,10 @@ function queueToPendingArchive(targetSS, results, dateObj, skipCDR, skipQPath, s
     });
   }
 
+  markProduced("CDR");
+
   // 2. Add QPATH
-  if (!skipQPath && !alreadyQueued.has("QPATH")) {
+  if (!skipQPath) {
     if (results.SalesStats && results.SalesStats.total > 0) {
       const pct          = results.SalesStats.nonOpt1 / results.SalesStats.total;
       const pObj         = results.SalesStats.paths;
@@ -916,8 +934,10 @@ function queueToPendingArchive(targetSS, results, dateObj, skipCDR, skipQPath, s
     }
   }
 
+  markProduced("QPATH");
+
   // 3. Add QCD
-  if (!skipQCD && !alreadyQueued.has("QCD") && results.qcdData) {
+  if (!skipQCD && results.qcdData) {
     const out = results.qcdData.output;
     const lab = results.qcdData.labels;
     out.forEach((row, i) => {
@@ -931,8 +951,10 @@ function queueToPendingArchive(targetSS, results, dateObj, skipCDR, skipQPath, s
     });
   }
 
+  markProduced("QCD");
+
   // 4. Add CSR_TRANSFER
-  if (!skipCSR && !alreadyQueued.has("CSR_TRANSFER") && results.csrData) {
+  if (!skipCSR && results.csrData) {
     const ag = results.csrData.agents;
     const tc = results.csrData.totalCalls;
     const qu = results.csrData.queues;
@@ -947,6 +969,21 @@ function queueToPendingArchive(targetSS, results, dateObj, skipCDR, skipQPath, s
         "", "", "", "", "", "", ""
       ]);
     });
+  }
+
+  markProduced("CSR_TRANSFER");
+
+  // P-7: fresh rows replace their type's stale queued rows for this date.
+  // Delete bottom-up so earlier deletions don't shift later row numbers.
+  const staleRows = [];
+  producedTypes.forEach(function (t) {
+    (queuedRowsByType[t] || []).forEach(function (rn) { staleRows.push(rn); });
+  });
+  if (staleRows.length) {
+    staleRows.sort(function (a, b) { return b - a; })
+             .forEach(function (rn) { pendingSheet.deleteRow(rn); });
+    console.log('queueToPendingArchive: replaced ' + staleRows.length
+      + ' stale queued row(s) for ' + dateStr + ' [' + producedTypes.join(', ') + '].');
   }
 
   if (rowsToAdd.length > 0) {
@@ -2197,6 +2234,23 @@ function parsePendingDate(val) {
 // CDR / Q Path / QCD / CSR Historical Data hold their date in col 3;
 // DQE Historical Data holds it in col 2. Default keeps backward
 // compatibility for the four legacy callers; pass 2 explicitly for DQE.
+/**
+ * P-8: parse a non-Date history date cell WITHOUT the UTC-midnight trap.
+ * `new Date("2026-05-19")` parses ISO-shaped TEXT as UTC midnight, which is
+ * the PREVIOUS day in America/Chicago -- so an ISO-typed text cell (the
+ * README-sanctioned paste-old-rows flow can leave them) made the dup-guard
+ * report the wrong day and the force-delete silently no-op (duplicate row
+ * sets on re-import; the F-3/F-10 date-comparison-coercion class). ISO
+ * shapes get a LOCAL-noon construction; everything else keeps the legacy
+ * `new Date(v)` parse (M/D/YYYY strings already parse local).
+ */
+function parseHistoryDateCell_(v) {
+  const s = String(v == null ? '' : v).trim();
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 12, 0, 0);
+  return new Date(v);
+}
+
 function checkHistoryForDate(targetSS, sheetName, importDateObj, dateColIndex) {
   const col = dateColIndex || 3;
   const histSheet = targetSS.getSheetByName(sheetName);
@@ -2205,7 +2259,7 @@ function checkHistoryForDate(targetSS, sheetName, importDateObj, dateColIndex) {
   const targetStr = importDateObj.toDateString();
   return dates.some(d => {
     if (d instanceof Date) return d.toDateString() === targetStr;
-    const parsed = new Date(d);
+    const parsed = parseHistoryDateCell_(d);   // P-8
     if (!isNaN(parsed.getTime())) return parsed.toDateString() === targetStr;
     return false;
   });
@@ -2222,7 +2276,7 @@ function buildHistoryDateSet(targetSS, sheetName, dateColIndex) {
     if (d instanceof Date && !isNaN(d.getTime())) {
       result.add(d.toDateString());
     } else {
-      const parsed = new Date(d);
+      const parsed = parseHistoryDateCell_(d);   // P-8
       if (!isNaN(parsed.getTime())) result.add(parsed.toDateString());
     }
   });
@@ -2248,7 +2302,7 @@ function dedupeAlreadyArchived_(targetSS, batch, sheetName) {
   if (!seen.size) return batch;
   const kept = batch.filter(function (r) {
     const d = r[2];
-    const key = (d instanceof Date) ? d.toDateString() : new Date(d).toDateString();
+    const key = (d instanceof Date) ? d.toDateString() : parseHistoryDateCell_(d).toDateString();   // P-8
     return !seen.has(key);
   });
   if (kept.length !== batch.length) {
@@ -2272,12 +2326,12 @@ function deleteHistoricalRowsForDate(sheet, dateObj, dateColIndex) {
   let   removedCount = 0;
 
   allRows.forEach(row => {
-    const d = row[dateColIndex - 1]; 
+    const d = row[dateColIndex - 1];
     let match = false;
     if (d instanceof Date) {
       match = d.toDateString() === targetStr;
     } else if (d) {
-      const parsed = new Date(d);
+      const parsed = parseHistoryDateCell_(d);   // P-8
       if (!isNaN(parsed.getTime())) match = parsed.toDateString() === targetStr;
     }
     if (match) { removedCount++; }

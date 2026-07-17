@@ -649,8 +649,17 @@ function backfillCDRHistory() {
         var r = data[i];
         // Skip rows with no date (col 3 -> idx 2) or no agent (col 5 -> idx 4).
         if (!r[2] || !r[4]) { i++; continue; }
+        // T-2 (the DQE paths' poison-row guard, previously missing here): a
+        // truthy-but-unparseable date nulls call_date, the whole batch throws
+        // on the NOT NULL constraint, and the resume index re-hits the same
+        // row forever -- the backfill could never complete past that batch.
+        var cdrCallDate = parseDateForNeon(r[2]);
+        if (!cdrCallDate) {
+          Logger.log('CDR backfill: skipping row ' + (i + 2) + ' -- unparseable date "' + r[2] + '".');
+          i++; continue;
+        }
         batch.push({
-          callDate:   parseDateForNeon(r[2]),
+          callDate:   cdrCallDate,
           dept:       r[3] || 'Unassigned',
           agentName:  r[4],
           obTotal:    r[5],  obAns:     r[6],  obMiss:     r[7],
@@ -904,16 +913,34 @@ function backfillQCDHistory() {
       while (i < batchEnd) {
         var r = data[i];
         if (!r[2] || !r[3] || !r[4]) { i++; continue; }
+        // T-3 (same poison-row guard as the DQE/CDR paths): an unparseable
+        // date would null call_date and wedge the resumable backfill on the
+        // same batch forever. The known blank-date QCD incident (known-issues
+        // 2026-07) shows this column does drift.
+        var qcdCallDate = parseDateForNeon(r[2]);
+        if (!qcdCallDate) {
+          Logger.log('QCD backfill: skipping row ' + (i + 2) + ' -- unparseable date "' + r[2] + '".');
+          i++; continue;
+        }
 
-        var pctStr = String(r[10] || '').trim().replace('%', '');
-        var pctVal = parseFloat(pctStr);
-        if (!isNaN(pctVal) && pctVal > 1) pctVal = pctVal / 100;
+        // T-4: store abandoned_pct in PERCENT UNITS (10 = 10%), matching the
+        // inline writer (writeQCDRowsToNeon binds the daily rows' percent
+        // numbers verbatim -- pinned by neon-write-mapping.test.js). The old
+        // ">1 -> /100" heuristic mixed units: "5.26%" stored 0.0526 while
+        // "0.53%" stored 0.53 (100x large under the fraction convention) and
+        // both clashed with the inline writer's 5.26. A '%'-suffixed display
+        // is already percent units; a bare value <= 1 is a raw percent-format
+        // fraction (getValues on a %-formatted cell) -> x100.
+        var pctRaw = String(r[10] || '').trim();
+        var hadPctSign = pctRaw.indexOf('%') !== -1;
+        var pctVal = parseFloat(pctRaw.replace('%', ''));
         if (isNaN(pctVal)) pctVal = 0;
+        else if (!hadPctSign && pctVal <= 1) pctVal = pctVal * 100;
 
         batch.push({
           monthYear:     r[0] || null,
           week:          r[1] || null,
-          callDate:      parseDateForNeon(r[2]),
+          callDate:      qcdCallDate,
           callQueue:     r[3],
           callSource:    r[4],
           totalCalls:    parseInt(r[5]) || 0,
