@@ -60,7 +60,11 @@
 // v3: per-dept gating (manager access; optional `department` scoping via
 // entry-queue attribution + the answered-on-hold final_dept carve-out);
 // kpis.abandonedIvr; meta gains department / unmapped / companyView.
-const INBOUND_CACHE_KEY_PREFIX = 'inbound:v3';
+// v4 (round 4): byInsurer + byDialInInsurer are LABELED-insurer-only (the
+// '(unlabeled)' catch-all row -- every non-insurer caller -- was dropped as
+// misleading) and byQueue is queue-entered-calls-only (the '(none)' row --
+// direct/DID calls, >50% of volume -- was dropped; Direct has its own report).
+const INBOUND_CACHE_KEY_PREFIX = 'inbound:v4';
 const INBOUND_TOP_N = 50;
 // Cap the requested window so an over-wide range can't trigger an
 // unbounded Neon aggregation (mirrors CallerLookup's range guard). A
@@ -425,13 +429,17 @@ function computeInboundReport_(scope) {
       "SELECT json_build_object(" +
         "'kpis', " + kpiSelect(dr) + ", " +
         "'kpisPrior', " + kpiSelect(priorDr) + ", " +
+        // Round 4 (owner): LABELED insurers only. The old '(unlabeled)'
+        // catch-all lumped every non-insurer caller (patients, doctor
+        // offices, ...) into one misleading mega-row -- insurers are a small
+        // labeled subset, so the table shows only them now.
         "'byInsurer', (SELECT COALESCE(json_agg(t), '[]') FROM (" +
-            "SELECT COALESCE(i.insurance_name,'(unlabeled)') AS label, count(*) AS calls, " +
+            "SELECT i.insurance_name AS label, count(*) AS calls, " +
               "count(*) FILTER (WHERE c.disposition='answered') AS answered, " +
               "count(*) FILTER (WHERE c.disposition='abandoned') AS abandoned, " +
               "count(*) FILTER (WHERE c.abandoned_on_hold) AS on_hold, " +
               "COALESCE(round(avg(c.wait_seconds))::int, 0) AS avg_wait " +
-            "FROM inbound_calls c LEFT JOIN insurance_numbers i ON i.phone_hash=c.caller_hash " +
+            "FROM inbound_calls c JOIN insurance_numbers i ON i.phone_hash=c.caller_hash " +
             "WHERE " + dr + " AND c.caller_hash IS NOT NULL " +
             "GROUP BY 1 ORDER BY calls DESC LIMIT " + INBOUND_TOP_N + ") t), " +
         "'byDialIn', (SELECT COALESCE(json_agg(t), '[]') FROM (" +
@@ -441,19 +449,26 @@ function computeInboundReport_(scope) {
               "COALESCE(round(avg(wait_seconds))::int, 0) AS avg_wait " +
             "FROM inbound_calls c WHERE " + dr + " " +
             "GROUP BY 1 ORDER BY calls DESC LIMIT " + INBOUND_TOP_N + ") t), " +
+        // Round 4 (owner): queue-entered calls only. The old '(none)' row --
+        // direct-to-agent/DID calls that never touched a queue, >50% of
+        // volume -- swamped the per-queue read; direct traffic has its own
+        // report (DirectCallReport).
         "'byQueue', (SELECT COALESCE(json_agg(t), '[]') FROM (" +
-            "SELECT COALESCE(entry_queue,'(none)') AS label, count(*) AS calls, " +
+            "SELECT entry_queue AS label, count(*) AS calls, " +
               "count(*) FILTER (WHERE disposition='answered') AS answered, " +
               "count(*) FILTER (WHERE disposition='abandoned') AS abandoned, " +
               "COALESCE(round(avg(wait_seconds))::int, 0) AS avg_wait " +
-            "FROM inbound_calls c WHERE " + dr + " " +
+            "FROM inbound_calls c WHERE " + dr + " AND entry_queue IS NOT NULL " +
             "GROUP BY 1 ORDER BY calls DESC LIMIT " + INBOUND_TOP_N + ") t), " +
+        // Round 4: the cross-cut goes labeled-insurers-only too (same
+        // rationale as byInsurer -- an '(unlabeled)' row is every
+        // non-insurer caller, not a segment).
         "'byDialInInsurer', (SELECT COALESCE(json_agg(t), '[]') FROM (" +
             "SELECT COALESCE(c.dial_in_number,'(none)') AS dial_in, " +
-              "COALESCE(i.insurance_name,'(unlabeled)') AS insurer, count(*) AS calls, " +
+              "i.insurance_name AS insurer, count(*) AS calls, " +
               "count(*) FILTER (WHERE c.disposition='answered') AS answered, " +
               "count(*) FILTER (WHERE c.disposition='abandoned') AS abandoned " +
-            "FROM inbound_calls c LEFT JOIN insurance_numbers i ON i.phone_hash=c.caller_hash " +
+            "FROM inbound_calls c JOIN insurance_numbers i ON i.phone_hash=c.caller_hash " +
             "WHERE " + dr + " AND c.caller_hash IS NOT NULL " +
             "GROUP BY 1, 2 ORDER BY calls DESC LIMIT " + INBOUND_TOP_N + ") t), " +
         "'daily', (SELECT COALESCE(json_agg(t ORDER BY t.d), '[]') FROM (" +

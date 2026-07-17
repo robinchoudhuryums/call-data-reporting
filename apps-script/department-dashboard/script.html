@@ -699,10 +699,10 @@
     // (CSV) is handled in exportTableCsv_ via sourceChipCsv_.
     { key: 'source',               label: 'Source',          type: 'chip',     hideable: true },
     { key: 'answeredBar',          label: 'Answered / Missed', type: 'bar', sortKey: 'answerRate' },
-    // #8: Total calls (rung) + Answer % as their own always-visible columns,
-    // surfacing the numbers the stacked bar folds together (sortable; Answer %
-    // shares the bar's answerRate sort key + the 92% benchmark tint).
-    { key: 'totalRung',            label: 'Total calls',     type: 'num' },
+    // #8 -> owner round 4: the dedicated Total-calls column was FOLDED into
+    // the split-bar cell (answeredBarHtml_ renders the rung total inline as
+    // the muted "(N)"), saving a column; the CSV still emits a numeric
+    // Total calls column (exportTableCsv_ splices it after the bar).
     { key: 'answerRate',           label: 'Answer %',        type: 'pct', sortKey: 'answerRate' },
     { key: 'totalUnique',          label: 'Unique',          type: 'num',      hideable: true },
     { key: 'tttSeconds',           label: 'TTT',             type: 'duration', hideable: true },
@@ -749,7 +749,11 @@
     var rate = total ? Math.round(a / total * 100) : 0;
     var aChip = wowChipHtml_(row, { key: 'totalAnswered' });
     var mChip = wowChipHtml_(row, { key: 'totalMissed' });
-    var title = a + ' answered · ' + m + ' missed · ' + total + ' rung'
+    // Owner round 4: the rung total renders inline (the dedicated Total-calls
+    // column was folded away). Prefer the server's own totalRung when present
+    // (definitionally = answered + missed, but never invent a number).
+    var rung = (row.totalRung != null && row.totalRung !== '') ? (Number(row.totalRung) || 0) : total;
+    var title = a + ' answered · ' + m + ' missed · ' + rung + ' total calls (rung)'
               + (total ? ' · ' + rate + '% answered' : '');
     var segs = total
       ? '<span class="ans-seg ans" style="width:' + pctA + '%"></span>'
@@ -762,6 +766,7 @@
          +     '<span class="ans-n">' + a + aChip + '</span>'
          +     '<span class="ans-slash">/</span>'
          +     '<span class="miss-n">' + m + mChip + '</span>'
+         +     '<span class="ans-total" title="Total calls (rung)">(' + rung + ')</span>'
          +     '<span class="ans-rate' + rateCls + '">' + (total ? rate + '%' : '–') + '</span>'
          +   '</div>'
          + '</div>';
@@ -4579,6 +4584,12 @@
         +   'title="View this call’s path (IVR → queues → agents)" '
         +   'aria-label="View call path">↳ path</button>'
       : '';
+    // Owner round 4: the raw call-ID chip + copy button are the ADMIN
+    // verification workflow (paste into raw CDR search); managers only need
+    // the journey drill, so non-admins get the "↳ path" button alone.
+    if (typeof USER !== 'undefined' && USER && USER.role !== 'admin') {
+      return pathBtn ? ' <span class="parent-id">' + pathBtn + '</span>' : '';
+    }
     return ' <span class="parent-id">'
          +   '<span class="pid-num" title="Call ID ' + safe + ' (hover for full · use 📋 to copy)">#' + safe + '</span>'
          +   '<button type="button" class="pid-copy" '
@@ -5688,6 +5699,12 @@
 
   function renderInfoLine() {
     const el = $('info-line');
+    // Owner round 4: the roster/matched/compute-time + cache-hit line is an
+    // operational/debug readout -- admin-only, like the Diagnostics panel.
+    if (typeof USER !== 'undefined' && USER && USER.role !== 'admin') {
+      el.style.display = 'none';
+      return;
+    }
     if (!state.meta) { el.style.display = 'none'; return; }
     const m = state.meta;
     const parts = [
@@ -6035,7 +6052,6 @@
     var m = Number(t.totalMissed)   || 0;
     var total = a + m;
     var rate = total ? Math.round(a / total * 100) : 0;
-    var att = Number(t.attSeconds) || 0;
 
     var prior = deptTeamPrior_(state.rows);
     var priorTip = '';
@@ -6044,13 +6060,12 @@
       var pt = (state.meta && state.meta.priorTo)   || '';
       priorTip = 'Prior period ' + pf + ' – ' + pt;
     }
-    var rateDeltaHtml = '', ansDeltaHtml = '', missDeltaHtml = '';
+    var rateDeltaHtml = '', ansDeltaHtml = '';
     if (prior.has) {
       var pTotal = prior.answered + prior.missed;
       var pRate = pTotal ? Math.round(prior.answered / pTotal * 100) : 0;
       rateDeltaHtml = deptStripDelta_(rate - pRate, 'good', 1, ' pts', priorTip + ': ' + pRate + '%');
       ansDeltaHtml  = deptStripDelta_(a - prior.answered, 'good', WOW_NOISE_THRESHOLD, '', priorTip + ': ' + prior.answered);
-      missDeltaHtml = deptStripDelta_(m - prior.missed, 'warn', WOW_NOISE_THRESHOLD, '', priorTip + ': ' + prior.missed);
     }
 
     var rateCls = total ? benchValueCls_('% answered', rate + '%', true) : '';
@@ -6071,41 +6086,44 @@
       + '<div class="dts-value" data-flash-key="dts:answered">' + fmtNumber(a) + '</div>'
       + (ansDeltaHtml ? '<div class="dts-sub">' + ansDeltaHtml + ' vs prior</div>' : '')
       + '</div>';
-    var missTile = '<div class="dts-tile">'
-      + '<div class="dts-label">Missed</div>'
-      + '<div class="dts-value" data-flash-key="dts:missed">' + fmtNumber(m) + '</div>'
-      + (missDeltaHtml ? '<div class="dts-sub">' + missDeltaHtml + ' vs prior</div>' : '')
-      + '</div>';
-    var attTile = '<div class="dts-tile">'
-      + '<div class="dts-label">Avg talk (ATT)</div>'
-      + '<div class="dts-value" data-flash-key="dts:att">' + fmtDuration(att) + '</div>'
-      + '<div class="dts-sub">per answered call</div>'
-      + '</div>';
+    // (Owner round: the Missed + Avg-talk tiles were dropped so the strip fits
+    // one row -- missed lives in the agent table's split bar + the Missed
+    // section below; ATT keeps its per-agent column.)
 
     // Batch D: range-scoped Queue calls + Abandoned % tiles from the QCD
     // snapshot's `range` block (own-queues-only, the selected From/To). Shown
-    // only for QCD-mapped depts with queue activity in the range.
-    var qcdTiles = '';
+    // only for QCD-mapped depts with queue activity in the range. Owner round:
+    // Queue calls renders BETWEEN the hero and Answered, and carries an
+    // implied per-WORKDAY rate (Mon-Fri minus company holidays -- the INV-35
+    // workingDaysBetween_ mirror, so it agrees with the Insights workday math).
+    var qCallsTile = '', qAbdTile = '';
     var qr = state.qcd && state.qcd.range;
     if (qr && (Number(qr.totalCalls) || 0) > 0) {
       var qCalls = Number(qr.totalCalls) || 0;
       var qAbd   = Number(qr.abandoned) || 0;
       var abStr  = qr.abandonedPctStr || ((Number(qr.abandonedPct) || 0).toFixed(2) + '%');
       var abCls  = benchValueCls_('abandoned %', abStr, true);   // 5% company standard
-      qcdTiles =
-          '<div class="dts-tile">'
+      var qFrom = (state.meta && state.meta.from) || ($('from-date') && $('from-date').value) || '';
+      var qTo   = (state.meta && state.meta.to)   || ($('to-date')   && $('to-date').value)   || '';
+      var wd = workingDaysBetween_(qFrom, qTo);
+      var perDaySub = wd > 0
+        ? '&asymp; ' + (Math.round((qCalls / wd) * 10) / 10) + '/day over ' + wd + ' workday' + (wd === 1 ? '' : 's')
+        : 'across mapped queues';
+      qCallsTile =
+          '<div class="dts-tile" title="Across the department&#39;s mapped queues. Workdays = Mon&ndash;Fri minus company holidays.">'
         +   '<div class="dts-label">Queue calls <span class="dts-scope">this range</span></div>'
         +   '<div class="dts-value" data-flash-key="dts:qcalls">' + fmtNumber(qCalls) + '</div>'
-        +   '<div class="dts-sub">across mapped queues</div>'
-        + '</div>'
-        + '<div class="dts-tile">'
+        +   '<div class="dts-sub">' + perDaySub + '</div>'
+        + '</div>';
+      qAbdTile =
+          '<div class="dts-tile">'
         +   '<div class="dts-label">Abandoned %</div>'
         +   '<div class="dts-value' + abCls + '" data-flash-key="dts:qabd">' + escapeHtml(abStr) + '</div>'
         +   '<div class="dts-sub">' + fmtNumber(qAbd) + ' abandoned</div>'
         + '</div>';
     }
 
-    strip.innerHTML = heroTile + ansTile + missTile + attTile + qcdTiles;
+    strip.innerHTML = heroTile + qCallsTile + ansTile + qAbdTile;
     strip.style.display = '';
     if (zone) zone.style.display = '';
     dsFlashChanged_(strip, 'deptstrip:' + getRequestedDept());
@@ -6280,27 +6298,30 @@
       var a = Number(row.totalAnswered) || 0, m = Number(row.totalMissed) || 0, t = a + m;
       return t ? Math.round(a / t * 100) + '%' : '';
     };
-    var header = COLUMNS.map(function (c) { return csvEscape(c.label); }).join(',');
-    var rows = sorted.map(function (row) {
-      return COLUMNS.map(function (col) {
-        if (col.type === 'chip' && col.key === 'source') return csvEscape(sourceChipCsv_(row));
-        if (col.type === 'bar') return csvEscape(barCsv(row));
-        if (col.type === 'pct') return csvEscape(pctCsv(row));
-        if (col.type === 'duration') return csvEscape(fmtDuration(row[col.key]));
-        return csvEscape(row[col.key]);
-      }).join(',');
-    });
-    if (state.totals) {
-      rows.push(COLUMNS.map(function (col, i) {
-        if (i === 0) return csvEscape('Total (roster only)');
+    // Owner round 4: the on-screen Total-calls column folded into the bar,
+    // but the CSV stays complete -- a numeric Total calls column is spliced
+    // in right after the bar column.
+    var cellsFor = function (row, isTotals) {
+      var out = [];
+      COLUMNS.forEach(function (col, i) {
+        if (isTotals && i === 0) { out.push(csvEscape('Total (roster only)')); }
         // Source column has no aggregate meaning in the totals row.
-        if (col.type === 'chip' && col.key === 'source') return '';
-        if (col.type === 'bar') return csvEscape(barCsv(state.totals));
-        if (col.type === 'pct') return csvEscape(pctCsv(state.totals));
-        if (col.type === 'duration') return csvEscape(fmtDuration(state.totals[col.key]));
-        return csvEscape(state.totals[col.key]);
-      }).join(','));
-    }
+        else if (col.type === 'chip' && col.key === 'source') out.push(isTotals ? '' : csvEscape(sourceChipCsv_(row)));
+        else if (col.type === 'bar') out.push(csvEscape(barCsv(row)));
+        else if (col.type === 'pct') out.push(csvEscape(pctCsv(row)));
+        else if (col.type === 'duration') out.push(csvEscape(fmtDuration(row[col.key])));
+        else out.push(csvEscape(row[col.key]));
+        if (col.type === 'bar') out.push(csvEscape(row.totalRung != null ? row.totalRung : ''));
+      });
+      return out.join(',');
+    };
+    var header = COLUMNS.reduce(function (acc, c) {
+      acc.push(csvEscape(c.label));
+      if (c.type === 'bar') acc.push(csvEscape('Total calls'));
+      return acc;
+    }, []).join(',');
+    var rows = sorted.map(function (row) { return cellsFor(row, false); });
+    if (state.totals) rows.push(cellsFor(state.totals, true));
     var blob = new Blob([header + '\n' + rows.join('\n')], { type: 'text/csv' });
     var a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
@@ -12128,6 +12149,11 @@
   // Missed report attributes to this queue for the current Insights window
   // (getMissedCallsSlice queue filter). Guarded on the slot's data-open flag so
   // a stale response can't paint a closed slot.
+  function insQhMissedSig_() {
+    const meta = (insLastData && insLastData.meta) || {};
+    return (meta.department || '') + '|' + (meta.from || '') + '|' + (meta.to || '');
+  }
+
   function insQhMissedDrill_(btn) {
     const slotEl = btn.parentNode && btn.parentNode.querySelector('.ins-qh-missed-slot');
     if (!slotEl) return;
@@ -12142,6 +12168,19 @@
     initClipboardOnce();   // wire the delegated .pid-journey handler (idempotent)
     slotEl.setAttribute('data-open', '1');
     btn.classList.add('is-open');
+    // Round 4: serve from the gate's prefetched whole-window slice when it
+    // matches -- instant, and the CASE-INSENSITIVE queue match sidesteps
+    // QCD-vs-DQE queue-name case drift (the "button doesn't work" report).
+    const c = insQhNoRingCache_;
+    if (c && c.sig === insQhMissedSig_()) {
+      const ql = queue.toLowerCase();
+      const entries = c.entries.filter(function (e) {
+        return e.source === 'queue' && String(e.who || '').toLowerCase() === ql;
+      });
+      slotEl.innerHTML = missedSliceListHtml_({ meta: c.meta, entries: entries },
+        'No-ring abandons · ' + queue);
+      return;
+    }
     slotEl.innerHTML = dsRingsHtml_('Loading missed detail…');
     google.script.run
       .withSuccessHandler(function (resp) {
@@ -12154,6 +12193,51 @@
           + escapeHtml(err && err.message ? err.message : String(err)) + '</div>';
       })
       .getMissedCallsSlice({ department: meta.department, from: meta.from, to: meta.to, queue: queue });
+  }
+
+  // Round 4: gate + count the per-queue no-ring drill buttons on REAL data.
+  // ONE whole-window getMissedCallsSlice per (dept, window) resolves every
+  // queue's no-ring abandon count: zero-count buttons stay hidden, the rest
+  // reveal with "(N)" in the label, and the prefetched entries serve the
+  // click instantly. Best-effort: a failed prefetch reveals the plain
+  // buttons (old behavior) rather than losing the drill.
+  let insQhNoRingCache_ = null;   // { sig, byQueue: {lcQueue: n}, entries, meta }
+  function insQhNoRingGate_() {
+    const tbody = $('ins-qh-tbody');
+    if (!tbody || !tbody.querySelector('.ins-qh-missed')) return;
+    const meta = (insLastData && insLastData.meta) || {};
+    if (!meta.department || !meta.from || !meta.to) return;
+    const sig = insQhMissedSig_();
+    const apply = function () {
+      const c = insQhNoRingCache_;
+      if (!c || c.sig !== insQhMissedSig_()) return;   // stale response guard
+      tbody.querySelectorAll('.ins-qh-missed').forEach(function (b) {
+        const wrap = b.closest('.ins-qh-missed-drill');
+        const n = c.byQueue[String(b.getAttribute('data-qh-queue') || '').toLowerCase()] || 0;
+        if (wrap) wrap.style.display = n ? '' : 'none';
+        if (n) b.innerHTML = '&#8627; no-ring abandons (' + n + ')';
+      });
+    };
+    if (insQhNoRingCache_ && insQhNoRingCache_.sig === sig) { apply(); return; }
+    google.script.run
+      .withSuccessHandler(function (resp) {
+        const byQueue = {};
+        const entries = (resp && resp.entries) || [];
+        entries.forEach(function (e) {
+          if (e.source !== 'queue') return;
+          const k = String(e.who || '').toLowerCase();
+          byQueue[k] = (byQueue[k] || 0) + 1;
+        });
+        insQhNoRingCache_ = { sig: sig, byQueue: byQueue, entries: entries,
+                             meta: (resp && resp.meta) || {} };
+        apply();
+      })
+      .withFailureHandler(function () {
+        tbody.querySelectorAll('.ins-qh-missed-drill').forEach(function (w) {
+          w.style.display = '';
+        });
+      })
+      .getMissedCallsSlice({ department: meta.department, from: meta.from, to: meta.to });
   }
 
   function insRenderQueueHealth_(qh) {
@@ -12298,16 +12382,16 @@
                   + fmtViolDate_(iso) + '</button>';
               }).join(' ') + '</div>';
         }
-        // Phase 3: per-queue DQE missed-ring drill (in-place). Opens the
-        // no-ring abandoned calls the DQE Missed report attributes to THIS
-        // queue for the report window (getMissedCallsSlice queue filter) --
-        // a LABELED separate lens (dqe_history rings, distinct from the QCD
-        // roll-up above). May be empty when the QCD queue name differs from
-        // the DQE sentinel spelling (documented Phase-1 limit).
-        detail += '<div class="ins-qh-missed-drill">'
+        // Phase 3 -> round 4: per-queue DQE missed-ring drill (in-place).
+        // Rendered HIDDEN and revealed by insQhNoRingGate_ ONLY for queues
+        // with at least one no-ring abandon in the window (the gate's one
+        // whole-window slice fetch also stamps the count into the label and
+        // serves the click instantly) -- an always-on button that mostly
+        // answered "none recorded" read as broken (owner report).
+        detail += '<div class="ins-qh-missed-drill" style="display:none;">'
           + '<button type="button" class="ins-qh-missed" data-qh-queue="' + escapeHtml(q.queue) + '"'
-          + ' title="Show the no-ring abandoned calls the Missed report attributes to this queue">'
-          + '&#8627; no-ring abandons (DQE missed lens)</button>'
+          + ' title="Show the no-ring abandoned calls the Missed report attributes to this queue (agent-ring lens, DQE)">'
+          + '&#8627; no-ring abandons</button>'
           + '<div class="ins-qh-missed-slot"></div></div>';
         html += '<tr class="qcd-detail-row" style="display:none;"><td colspan="5">'
           + '<div class="qcd-detail-wrap">' + detail + '</div></td></tr>';
@@ -12342,6 +12426,9 @@
         });
         tbody._insQhExpandWired = true;
       }
+      // Round 4: resolve which queues actually have no-ring abandons (one
+      // whole-window slice fetch) and reveal/count their drill buttons.
+      insQhNoRingGate_();
     }
 
     // Consolidation Phase 1 (gap 3): per-day numeric table (the same rows the
@@ -12566,10 +12653,23 @@
       const perQueue = daily ? (mSrc.dailyPerQueue || {}) : (mSrc.perQueue || {});
       const fmtVal = function (v) { return isPct ? (Number(v).toFixed(1) + '%') : fmtNumber(v); };
       const qNames = Object.keys(perQueue);
+      // Round 4 (owner): this tab read visually different from the team tabs
+      // (thin flat multi-lines vs their filled single curve). A SINGLE-queue
+      // dept -- the common case -- now renders in the same filled
+      // single-series style as the team tabs; multi-queue keeps the
+      // comparative multi-line look (fills would occlude, the Overview-chart
+      // convention) but with the same line weight/curve as the rest.
+      const singleQ = qNames.length === 1;
       const datasets = qNames.map(function (q, i) {
         const c = IR_CHART_COLORS[i % IR_CHART_COLORS.length];
-        return { label: q, data: perQueue[q], borderColor: c, backgroundColor: c,
-                 borderWidth: 1.8, pointRadius: 1.5, tension: 0.25, fill: false };
+        return singleQ
+          ? { label: q, data: perQueue[q], borderColor: c,
+              backgroundColor: function (ctx) { return irGradientFill_(ctx.chart, c); },
+              borderWidth: 2.2, tension: 0.4, fill: true,
+              pointBackgroundColor: c, pointBorderColor: THEME.paperCard,
+              pointBorderWidth: 1.5, pointRadius: 3, pointHoverRadius: 5 }
+          : { label: q, data: perQueue[q], borderColor: c, backgroundColor: c,
+              borderWidth: 2.2, pointRadius: 2.5, tension: 0.4, fill: false };
       });
       if (qNames.length > 1 && totalSer.length) {
         datasets.push({ label: 'Dept total', data: totalSer,
@@ -12619,7 +12719,11 @@
             // Multi-queue legend gets the shared spotlight (hover-dim +
             // click-to-pin, ported from the retired QCD chart) so one queue's
             // line can be isolated; the 5% threshold stays out of the dimming.
-            legend: Object.assign({ position: 'bottom', labels: { boxWidth: 18,
+            // Round 4: a single-queue view hides the one-item legend (the
+            // team tabs are legendless too); multi-queue keeps the
+            // spotlight legend.
+            legend: Object.assign({ display: qNames.length > 1, position: 'bottom',
+              labels: { boxWidth: 18,
               filter: function (item) { return item.text !== '5% threshold'; } } },
               (qNames.length > 1 ? chartSpotlightLegend_() : {})),
             tooltip: {
@@ -13581,6 +13685,11 @@
       }
       if (prefs.trendMetric) {
         insActiveTrendMetric = prefs.trendMetric;
+        // Round 4: the ATT tab is admin-only now -- a non-admin's previously
+        // saved 'att' pref would render a chart whose tab is hidden.
+        if (insActiveTrendMetric === 'att' && USER.role !== 'admin') {
+          insActiveTrendMetric = 'answered';
+        }
         const subTabs = $('ins-trend-subtabs');
         if (subTabs) subTabs.querySelectorAll('.pr-trend-subtab').forEach(function (b) {
           const active = b.getAttribute('data-metric') === insActiveTrendMetric;
@@ -14319,7 +14428,7 @@
     // current cell key so a stale response can't paint.
     detail.innerHTML =
         '<div class="heat-lens" data-lens="inbound">' + dsRingsHtml_('Loading abandoned inbound calls…') + '</div>'
-      + '<div class="heat-lens" data-lens="missed">'  + dsRingsHtml_('Loading DQE missed rings…')      + '</div>';
+      + '<div class="heat-lens" data-lens="missed">'  + dsRingsHtml_('Loading missed rings…')          + '</div>';
     const inboundSlot = detail.querySelector('[data-lens="inbound"]');
     const missedSlot  = detail.querySelector('[data-lens="missed"]');
     const guard = function () { return detail.getAttribute('data-cell') === key; };
@@ -14338,7 +14447,7 @@
     // (dept='') shows a note instead.
     if (!dept) {
       if (missedSlot) missedSlot.innerHTML =
-        '<div class="heat-drill-head"><strong>DQE missed rings</strong> · <span class="ms-lens-note">agent-ring lens (DQE)</span></div>'
+        '<div class="heat-drill-head"><strong>Missed Rings</strong> · <span class="ms-lens-note">agent-ring lens (DQE)</span></div>'
         + '<div class="ds-note">Pick a single department to see the agent-ring missed detail for this slot.</div>';
     } else {
       const startH  = Number(host.getAttribute('data-heat-starth'));
@@ -14406,11 +14515,11 @@
     var meta = (resp && resp.meta) || {};
     var entries = (resp && resp.entries) || [];
     var lens = '<span class="ms-lens-note" title="From dqe_history missed rings — a different source and definition than the inbound abandon count. The two are not expected to reconcile.">agent-ring lens (DQE)</span>';
-    var head = '<div class="heat-drill-head"><strong>' + escapeHtml(headLabel || 'DQE missed rings')
+    var head = '<div class="heat-drill-head"><strong>' + escapeHtml(headLabel || 'Missed Rings')
       + '</strong> · ' + entries.length + ' ring' + (entries.length === 1 ? '' : 's')
       + ' · ' + lens + '</div>';
     if (!entries.length) {
-      return head + '<div class="ds-note">No DQE missed rings recorded here for the selected range.</div>';
+      return head + '<div class="ds-note">No missed rings recorded here for the selected range.</div>';
     }
     var lost = meta.abandonedDetailLost
       ? '<div class="ds-note ms-lost">Some abandoned-call detail in this range was corrupted (rebuild pending) and is excluded.</div>'
@@ -15684,7 +15793,7 @@
       { sel: '#freshness-pill',   title: 'Is the data current?',    body: 'Shows the most recent day with data and how long ago that was — it turns orange if the last import is over ~36 hours old.' },
       { sel: '#ov-trend-chart',   title: 'The department trend',    body: 'Each department’s answer rate over time. Click a card below to spotlight its line (Shift-click to compare a few); click a point on a line to open that department & day in My Department. The tabs switch to abandoned calls / %, and the range buttons zoom to 30 / 60 / 90 days.' },
       { sel: '#ov-period-bar',    title: 'Change the card window',  body: 'Flip the department cards between Yesterday, Last 30 days, and Year-to-date. The trend chart keeps its own range control just beside it.' },
-      { sel: '#my-dept-btn',      title: 'My Department',           body: 'Your team’s per-agent table — sortable by any column, worst answer rate first by default. A summary strip up top (% Answered, Answered, Missed, ATT, plus Queue calls & Abandoned % for the range) and the full Missed Calls report with per-agent timelines below the table.' },
+      { sel: '#my-dept-btn',      title: 'My Department',           body: 'Your team’s per-agent table — sortable by any column, worst answer rate first by default. A summary strip up top (% Answered, Queue calls, Answered, Abandoned % for the range) and the full Missed Calls report with per-agent timelines below the table.' },
       { sel: '#escalations-btn',  title: 'Escalations',             body: 'View and resolve escalation calls for your department — start one, mark it resolved with a note on how it was handled, and see the full activity trail.' },
       { sel: '#insights-report-btn', title: 'Insights',             body: 'The flagship report, now a full page: a department rollup, per-agent cards vs the prior period, and queue health. Use the period slider (Last 7 / 30 / MTD / YTD) to reframe it; when its window differs from My Department, a one-click chip offers to line them up. Your generated report stays put when you switch tabs.' },
       { sel: '#reports-menu-btn', title: 'Deeper reports',          body: 'Individual (the per-agent deep dive) lives here, alongside the admin-vetted Inbound and Direct reports. Missed-call detail is on the My Department page.' },

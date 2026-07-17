@@ -605,7 +605,7 @@ same time as the code change.
 | `MissedCallsReport.gs` | `missed:vN:` | `v14` |
 | `CompanyOverview.gs` | `companyOverview:vN` | `v20` |
 | `QCDReport.gs` | `qcd:vN:` | RETIRED (QCD modal deleted; `qcdAll:` remains) |
-| `InboundReport.gs` | `inbound:vN:` | `v3` |
+| `InboundReport.gs` | `inbound:vN:` | `v4` |
 | `InsightsReport.gs` | `insights:vN:` | `v18` |
 | `QCDReport.gs` (all-departments daily report) | `qcdAll:vN:` | `v4` |
 | `InboundReport.gs` (weekday×hour abandon heatmap) | `inboundHeatmap:vN:` | `v1` |
