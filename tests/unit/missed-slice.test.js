@@ -40,6 +40,8 @@ function install(dataset) {
   h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
   h.state.cache.clear();
   h.ctx.getDashboardNeonConn_ = function () { return null; };
+  // R6: sentinels attribute by queue NAME against the dept's effective list.
+  h.ctx.queuesForDept_ = function (d) { return d === 'Alpha' ? ['A_Q_Alpha'] : []; };
 }
 
 // 2026-03-09 (M) and 2026-03-16 (M, +7d) share a weekday; 2026-03-10 (Tu) is a

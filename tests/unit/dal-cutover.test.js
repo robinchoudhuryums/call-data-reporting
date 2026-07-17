@@ -126,6 +126,8 @@ function install(source) {
   h.ctx.getDashboardNeonConn_ = (source === 'neon')
     ? fakeNeonConn
     : function () { return null; };
+  // R6: sentinels attribute by queue NAME against the dept's effective list.
+  h.ctx.queuesForDept_ = function (d) { return d === 'Alpha' ? ['A_Q_Alpha'] : []; };
 }
 
 /** Strips run-volatile fields so payload comparison is value-only. */
