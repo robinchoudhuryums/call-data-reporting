@@ -899,6 +899,13 @@ function sendInsightsReportEmail(req) {
   const selectedAgents = resolveInsightsAgents_(req && req.agents, roster);
   if (!selectedAgents.length) throw new Error('No agents on this department\'s roster.');
 
+  // Density Phase 2 (#9): style='summary' sends the short form -- takeaway +
+  // rollup tiles + only the behind-team-average agents -- instead of the full
+  // per-agent table. Same auth, same compute, same recipient (the caller);
+  // only the TEMPLATE differs, so the dept-permission story is unchanged.
+  const style = String((req && req.style) || '').trim().toLowerCase();
+  const summary = style === 'summary';
+
   const data = computeInsights_(dept, from, to, selectedAgents, roster,
                                 customPriorFrom, customPriorTo);
   const dateLabel  = (data && data.dateLabel) || (from + ' - ' + to);
@@ -912,7 +919,7 @@ function sendInsightsReportEmail(req) {
     +   '<div style="color:#3730a3;font-size:13px;">' + escapeHtmlServer_(dateLabel)
     +     ' &middot; vs ' + escapeHtmlServer_(priorLabel) + '</div>'
     + '</div>'
-    + renderInsightsEmailBody_(data)
+    + (summary ? renderInsightsEmailSummary_(data) : renderInsightsEmailBody_(data))
     + (dashboardUrl
         ? '<div style="margin-top:20px;"><a href="' + escapeHtmlServer_(dashboardUrl)
           + '" style="display:inline-block;background:#1d4ed8;color:#fff;padding:8px 16px;border-radius:6px;'
@@ -924,6 +931,8 @@ function sendInsightsReportEmail(req) {
     + '</div>'
     + '</div>';
 
-  MailApp.sendEmail({ to: email, subject: 'Insights Report: ' + dateLabel, htmlBody: htmlBody });
+  MailApp.sendEmail({ to: email,
+    subject: (summary ? 'Insights Summary: ' : 'Insights Report: ') + dateLabel,
+    htmlBody: htmlBody });
   return { to: email };
 }

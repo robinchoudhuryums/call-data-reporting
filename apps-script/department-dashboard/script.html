@@ -3419,6 +3419,28 @@
       function (list) { insPendingAgentSelection_ = list; }),
   };
 
+  // Phase 2 #8: the Insights provider also carries the Simple/Detailed mode
+  // (`view` param) so a shared link / saved view restores the disclosure
+  // level. Wrapper over the generic provider -- collect/apply run on user
+  // action, long after insDensity is initialized.
+  (function () {
+    const base = SHARE_STATE_['/report/insights'];
+    SHARE_STATE_['/report/insights'] = {
+      collect: function () {
+        const s = base.collect() || {};
+        if (insDensity === 'simple' || insDensity === 'detailed') s.view = insDensity;
+        return (s.from || s.view) ? s : null;
+      },
+      apply: function (params) {
+        base.apply(params || {});
+        if (params && (params.view === 'simple' || params.view === 'detailed')) {
+          insDensity = params.view;
+          insSyncDensity_();
+        }
+      },
+    };
+  })();
+
   // Open-in-new-tab buttons on each report modal. Builds the target
   // URL from window.__DASHBOARD_URL__ (DASHBOARD_URL Script Property)
   // + the modal's data-open-tab-route. Hidden via .is-disabled when
@@ -10917,6 +10939,14 @@
   let insLastRequestedAgents_ = null;
   let insChartInstance = null;
   let insTrendView = 'monthly';    // 'monthly' | 'daily' (consolidated trend chart toggle)
+  // Phase 2 #10: trend RENDERER for the team-metric tabs -- 'line' (the
+  // chart) | 'calendar' (a weekday day-grid over the selected window, a
+  // second renderer of the SAME trendDaily series). Line is the default;
+  // Calendar is offered only when the window is long enough to read as a
+  // calendar (INS_CALENDAR_MIN_DAYS_) and short enough that 'MM-DD' daily
+  // labels are unambiguous (<= 366 days).
+  let insTrendRender = 'line';     // 'line' | 'calendar'
+  let insCalMetric = 'pct';        // calendar cell metric: 'pct' | 'missed'
   // I5a: MANAGERS default to the Absolute bar chart (chart view + 'abs' basis)
   // -- a glanceable per-agent volume read -- while admins/owner keep the cards
   // grid default. A saved pref (insRestorePrefs_) still overrides either way.
@@ -11188,6 +11218,40 @@
       if (insLastData) insRenderTrendChart_(insLastData);
     });
 
+    // Phase 2 #10: Line/Calendar renderer toggle (team-metric tabs only;
+    // insRenderTrendChart_ shows it only when the calendar is applicable).
+    const trendRenderToggle = $('ins-trend-render-toggle');
+    if (trendRenderToggle) trendRenderToggle.addEventListener('click', function (e) {
+      const b = e.target.closest('.seg-btn');
+      if (!b) return;
+      const next = b.getAttribute('data-render') || 'line';
+      if (next === insTrendRender) return;
+      insTrendRender = next;
+      insSavePrefs_();
+      if (insLastData) insRenderTrendChart_(insLastData);
+    });
+    // Calendar interactions (delegated, wired once): the metric seg + the
+    // per-day drill (click a day -> reload the report for that day, the
+    // trend-point-drill convention).
+    const calHostInit = $('ins-trend-calendar');
+    if (calHostInit) calHostInit.addEventListener('click', function (e) {
+      const mBtn = e.target.closest('[data-cal-metric]');
+      if (mBtn) {
+        const m = mBtn.getAttribute('data-cal-metric') || 'pct';
+        if (m !== insCalMetric) {
+          insCalMetric = m;
+          insSavePrefs_();
+          if (insLastData) insRenderTrendCalendar_(insLastData);
+        }
+        return;
+      }
+      const cell = e.target.closest('.ins-cal-drill');
+      if (cell) {
+        const iso = cell.getAttribute('data-iso') || '';
+        if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) insDrillToRange_({ from: iso, to: iso });
+      }
+    });
+
     // Data-labels toggle (opt-in; off by default like IR/CR).
     const insLabels = $('ins-show-datalabels');
     if (insLabels) insLabels.addEventListener('change', function () {
@@ -11365,8 +11429,59 @@
         if (action === 'csv')        insDownloadCsv_();
         else if (action === 'copy')  insCopyImage_();
         else if (action === 'email') insEmailReport_();
+        else if (action === 'email-summary') insEmailReport_({ summary: true });   // Phase 2 #9
         else if (action === 'print') insPrint_();
       });
+
+      // Phase 2 #8: Views menu (saved views + copy share link). Rebuilt on
+      // every open so the list reflects saves/deletes; clicks inside the
+      // save row keep the menu open.
+      const viewsBtn = $('ins-views-btn');
+      const viewsMenu = $('ins-views-menu');
+      if (viewsBtn && viewsMenu) {
+        const setViewsOpen = function (open) {
+          viewsMenu.style.display = open ? '' : 'none';
+          viewsBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+          if (open) insRenderViewsMenu_();
+        };
+        viewsBtn.addEventListener('click', function () {
+          setViewsOpen(viewsMenu.style.display === 'none');
+        });
+        document.addEventListener('click', function (e) {
+          if (viewsMenu.style.display === 'none') return;
+          if (viewsBtn.contains(e.target) || viewsMenu.contains(e.target)) return;
+          setViewsOpen(false);
+        });
+        viewsMenu.addEventListener('click', function (e) {
+          if (e.target.closest('[data-views-action="share"]')) {
+            setViewsOpen(false);
+            insCopyShareLink_();
+            return;
+          }
+          const del = e.target.closest('.ins-views-del');
+          if (del) {
+            const views = insViewsLoad_();
+            views.splice(Number(del.getAttribute('data-view-idx')), 1);
+            insViewsStore_(views);
+            insRenderViewsMenu_();
+            return;
+          }
+          const apply = e.target.closest('.ins-views-apply');
+          if (apply) {
+            const v = insViewsLoad_()[Number(apply.getAttribute('data-view-idx'))];
+            setViewsOpen(false);
+            if (v) insApplyViewState_(v.state);
+            return;
+          }
+          if (e.target.closest('#ins-views-save')) insSaveCurrentView_();
+        });
+        viewsMenu.addEventListener('keydown', function (e) {
+          if (e.key === 'Enter' && e.target && e.target.id === 'ins-views-name') {
+            e.preventDefault();
+            insSaveCurrentView_();
+          }
+        });
+      }
       document.addEventListener('click', function (e) {
         if (exportMenu.style.display === 'none') return;
         if (exportMenu.contains(e.target) || e.target === exportBtn) return;
@@ -12758,11 +12873,15 @@
     const ds = chartObj.data.datasets[hits[0].datasetIndex];
     if (ds && ds.label === '5% threshold') return;   // reference line, not data
     const range = insTrendLabelToRange_((chartObj.data.labels || [])[hits[0].index], daily);
+    insDrillToRange_(range);
+  }
+
+  // Shared drill tail (trend-point click + the #10 calendar day click):
+  // sync the form dates (agents + compare mode kept) and re-run.
+  function insDrillToRange_(range) {
     if (!range) return;
     const meta = (insLastData && insLastData.meta) || {};
     if (range.from === meta.from && range.to === meta.to) return;   // already this window
-    // Sync the form (dates only -- agents + compare mode kept) and re-run:
-    // the edit-popover apply path minus the popover.
     if ($('ins-from')) $('ins-from').value = range.from;
     if ($('ins-to'))   $('ins-to').value   = range.to;
     if ($('ins-preset')) $('ins-preset').value = 'custom';
@@ -12771,6 +12890,21 @@
     insSetResultsStatus_('loading', 'Loading '
       + range.from + (range.to !== range.from ? ' – ' + range.to : '') + '…');
     runInsReport();
+  }
+
+  // Phase 2 #10: the calendar renderer applies to the TEAM volume/rate tabs
+  // over a window long enough to read as a calendar. The <=366-day cap keeps
+  // the 'MM-DD' daily labels unambiguous (the same constraint the daily
+  // point-drill's year re-derivation relies on).
+  var INS_CALENDAR_MIN_DAYS_ = 14;
+  var INS_CALENDAR_MAX_DAYS_ = 366;
+  function insCalendarEligible_(data) {
+    if (insActiveTrendMetric !== 'answered' && insActiveTrendMetric !== 'pct') return false;
+    const labels = (data && data.trendDaily && data.trendDaily.labels) || [];
+    if (labels.length <= 1) return false;
+    const meta = (data && data.meta) || {};
+    const span = isoRangeDays_(meta.from, meta.to);
+    return span != null && span >= INS_CALENDAR_MIN_DAYS_ && span <= INS_CALENDAR_MAX_DAYS_;
   }
 
   function insRenderTrendChart_(data) {
@@ -12783,6 +12917,42 @@
     const metric = insActiveTrendMetric;
     const isQueues = (metric === 'queues');
     const qhTrend = (data.queueHealth && data.queueHealth.trend) || null;
+
+    // Phase 2 #10: Line/Calendar renderer switch. The toggle shows only when
+    // the calendar is applicable; picking Calendar swaps the canvas for the
+    // day-grid (same trendDaily series, second renderer -- no new data) and
+    // returns early. The insTrendRender pref survives ineligible tabs/windows
+    // (they just render the line).
+    const calendarOk = insCalendarEligible_(data);
+    const renderToggle = $('ins-trend-render-toggle');
+    if (renderToggle) {
+      renderToggle.style.display = calendarOk ? '' : 'none';
+      renderToggle.querySelectorAll('.seg-btn').forEach(function (b) {
+        const on = (b.getAttribute('data-render') || 'line')
+          === (calendarOk ? insTrendRender : 'line');
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-checked', on ? 'true' : 'false');
+      });
+    }
+    const useCalendar = calendarOk && insTrendRender === 'calendar';
+    const calHost = $('ins-trend-calendar');
+    const canvasWrap = $('ins-trend-canvas-wrap');
+    if (calHost) calHost.style.display = useCalendar ? '' : 'none';
+    if (canvasWrap) canvasWrap.style.display = useCalendar ? 'none' : '';
+    const dlBox = $('ins-datalabels-box');
+    if (dlBox) dlBox.style.display = useCalendar ? 'none' : '';
+    if (useCalendar) {
+      const vt0 = $('ins-trend-view-toggle');
+      if (vt0) vt0.style.display = 'none';   // calendar is inherently daily
+      const qmw0 = $('ins-queue-metric-wrap');
+      if (qmw0) qmw0.style.display = 'none';
+      const head0 = $('ins-trend-header');
+      const tm0 = data.meta || {};
+      if (head0) head0.textContent = 'Daily calendar'
+        + (tm0.from && tm0.to ? ' · ' + isoDateShort_(tm0.from) + '–' + isoDateShort_(tm0.to) + ' (selected window)' : '');
+      insRenderTrendCalendar_(data);
+      return;
+    }
 
     // Daily availability + Monthly/Daily toggle visibility. Queues view
     // uses the QCD daily series; the team metrics use trendDaily.
@@ -13018,6 +13188,102 @@
     if (spotlightOpts && insChartInstance) {
       chartSpotlightStash_(insChartInstance, spotlightOpts);
     }
+  }
+
+  /**
+   * Phase 2 #10: calendar-day grid renderer over the SAME trendDaily series
+   * the Daily line view plots -- "which DAYS were good/bad" (the abandon
+   * heatmap answers "when in the day"; both are labeled so they read as
+   * complementary). Weekday columns only (Mon-Fri -- the work-window
+   * convention; weekends carry no DQE data). Cell color pivots on the
+   * existing benchmarks: Answer % on the 92% target (sage at/above, warm
+   * ramp below), Missed as a warn intensity ramp. The number stays IN the
+   * cell so color is never the only cue; a weekday with no data (holiday /
+   * no rows) renders muted. Click a day -> reload the report for it (the
+   * trend-point-drill convention, via insDrillToRange_).
+   */
+  function insRenderTrendCalendar_(data) {
+    const host = $('ins-trend-calendar');
+    if (!host) return;
+    const meta = (data && data.meta) || {};
+    const td = (data && data.trendDaily) || {};
+    const byLabel = {};
+    (td.labels || []).forEach(function (l, i) { byLabel[l] = (td.series || [])[i]; });
+    const isMissed = insCalMetric === 'missed';
+    let maxMissed = 0;
+    (td.series || []).forEach(function (s) {
+      maxMissed = Math.max(maxMissed, Number(s && s.missed) || 0);
+    });
+
+    const seg = function (m, label, title) {
+      const on = insCalMetric === m;
+      return '<button type="button" class="seg-btn' + (on ? ' active' : '') + '" data-cal-metric="' + m + '"'
+        + ' role="radio" aria-checked="' + (on ? 'true' : 'false') + '" title="' + escapeHtml(title) + '">'
+        + label + '</button>';
+    };
+    const legend = isMissed
+      ? 'Darker = more missed rings that day.'
+      : 'Sage = at/above the 92% answer target · warmer = further below it.';
+    let html = '<div class="ins-cal-toolbar">'
+      + '<div class="segmented" role="radiogroup" aria-label="Calendar metric">'
+      +   seg('pct', 'Answer %', 'Each day colored against the 92% company answer-rate target.')
+      +   seg('missed', 'Missed', 'Each day shaded by how many rings went unanswered.')
+      + '</div>'
+      + '<span class="ins-cal-legend">' + legend + '</span>'
+      + '</div>';
+    html += '<div class="ins-cal-head">'
+      + ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'].map(function (d) {
+          return '<span>' + d + '</span>';
+        }).join('') + '</div>';
+
+    // Walk Monday-of-first-week .. meta.to, five weekday cells per row.
+    const fp = String(meta.from || '').split('-');
+    const tp = String(meta.to   || '').split('-');
+    if (fp.length !== 3 || tp.length !== 3) { host.innerHTML = html; return; }
+    const cur = new Date(+fp[0], fp[1] - 1, +fp[2], 12);
+    const end = new Date(+tp[0], tp[1] - 1, +tp[2], 12);
+    cur.setDate(cur.getDate() - ((cur.getDay() + 6) % 7));   // rewind to Monday
+    let weeks = '';
+    while (cur <= end) {
+      let cells = '';
+      for (let i = 0; i < 5; i++) {
+        const iso = insIsoOf_(cur);
+        const inWin = iso >= meta.from && iso <= meta.to;
+        const s = inWin ? byLabel[iso.slice(5)] : null;
+        const dayNum = cur.getDate();
+        if (!inWin) {
+          cells += '<span class="ins-cal-cell ins-cal-out" aria-hidden="true"></span>';
+        } else if (!s) {
+          cells += '<span class="ins-cal-cell ins-cal-none" title="' + iso + ' — no call data (holiday / not imported)">'
+            + '<span class="ins-cal-day">' + dayNum + '</span><span class="ins-cal-val">–</span></span>';
+        } else {
+          const pct = Math.round(Number(s.pct) || 0);
+          const missed = Number(s.missed) || 0;
+          let style;
+          if (isMissed) {
+            const sev = maxMissed > 0 ? (missed / maxMissed) : 0;
+            style = missed === 0
+              ? 'background: color-mix(in srgb, var(--good) 12%, var(--paper-card));'
+              : 'background: color-mix(in srgb, var(--warn) ' + Math.round(12 + 48 * sev) + '%, var(--paper-card));';
+          } else {
+            style = pct >= 92
+              ? 'background: color-mix(in srgb, var(--good) ' + Math.round(14 + Math.min(22, (pct - 92) * 3)) + '%, var(--paper-card));'
+              : 'background: color-mix(in srgb, var(--warn) ' + Math.round(14 + Math.min(46, (92 - pct) * 1.6)) + '%, var(--paper-card));';
+          }
+          const title = iso + ' — ' + (Number(s.answered) || 0) + ' answered · '
+            + missed + ' missed · ' + pct + '% answered. Click to reload for this day.';
+          cells += '<button type="button" class="ins-cal-cell ins-cal-drill" data-iso="' + iso + '"'
+            + ' style="' + style + '" title="' + escapeHtml(title) + '">'
+            + '<span class="ins-cal-day">' + dayNum + '</span>'
+            + '<span class="ins-cal-val">' + (isMissed ? missed : pct + '%') + '</span>'
+            + '</button>';
+        }
+        cur.setDate(cur.getDate() + 1);
+      }
+      cur.setDate(cur.getDate() + 2);   // hop the weekend
+      weeks += '<div class="ins-cal-week">' + cells + '</div>';
+    }
+    host.innerHTML = html + weeks;
   }
 
   // Delta badge mirroring dsKpiTile_'s logic for the per-agent card grid.
@@ -13729,7 +13995,118 @@
   // screenshot, which mis-rendered the per-agent card bars in mail clients).
   // Sends the same params the modal used so the server recomputes the identical
   // report. Charts stay in the web app (Copy image / Print).
-  function insEmailReport_() {
+  // ---- Phase 2 #8: saved views + copy share link ------------------------
+  // Views are PERSONAL (localStorage, per user -- the prefs-key pattern) and
+  // snapshot the SHARE_STATE_ provider's state: dates, compare mode, custom
+  // prior, agents ('' = whole department), Simple/Detailed. Deliberately NOT
+  // the department -- the header selector owns that, and managers are pinned.
+  // Applying a view (or opening a shared link) runs the NORMAL fetch +
+  // permission path; nothing is rendered from storage.
+  var INS_VIEWS_MAX_ = 12;
+  function insViewsKey_() {
+    return 'cdr.ins.views.v1:' + String((typeof USER !== 'undefined' && USER && USER.email) || '').toLowerCase();
+  }
+  function insViewsLoad_() {
+    try {
+      const v = JSON.parse(localStorage.getItem(insViewsKey_()) || '[]');
+      return Array.isArray(v) ? v : [];
+    } catch (e) { return []; }
+  }
+  function insViewsStore_(views) {
+    try { localStorage.setItem(insViewsKey_(), JSON.stringify(views.slice(0, INS_VIEWS_MAX_))); }
+    catch (e) { /* storage full/blocked: best-effort */ }
+  }
+  function insCurrentViewState_() {
+    try {
+      const provider = SHARE_STATE_['/report/insights'];
+      return provider ? provider.collect() : null;
+    } catch (e) { return null; }
+  }
+  function insApplyViewState_(state) {
+    if (!state) return;
+    try { SHARE_STATE_['/report/insights'].apply(state); } catch (e) {}
+    // The provider's pending-selection hook fires on the NEXT roster render;
+    // when the picker is already rendered, apply the selection directly. A
+    // view with NO agents param is an agent-free (whole-department) snapshot
+    // -- uncheck everything so the run stays agent-free.
+    const list = $('ins-agent-list');
+    if (list && list.querySelector('.ir-agent-cb')) {
+      const want = state.agents != null
+        ? String(state.agents).split('|').filter(function (a) { return !!a; }) : [];
+      irApplyCheckedAgents_(list, want);
+      insPendingAgentSelection_ = null;
+    }
+    insSavePrefs_();
+    runInsReport();
+  }
+  function insCopyShareLink_() {
+    const baseUrl = (typeof window !== 'undefined' && window.__DASHBOARD_URL__) || '';
+    if (!baseUrl) {
+      showToast('Set the DASHBOARD_URL Script Property to enable share links.', 'error');
+      return;
+    }
+    let suffix = '';
+    try {
+      const state = insCurrentViewState_();
+      const encoded = state ? encodeShareParams_(state) : '';
+      if (encoded) suffix = '?' + encoded;
+    } catch (e) { /* bare route */ }
+    const url = baseUrl + '#/report/insights' + suffix;
+    const ok = function () { showToast('Share link copied. Recipients see only departments they can access.', 'success'); };
+    const fail = function () { showToast('Copy blocked by the browser — link: ' + url, 'error'); };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(url).then(ok, fail);
+    } else {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = url; ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta); ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        ok();
+      } catch (e) { fail(); }
+    }
+  }
+  function insRenderViewsMenu_() {
+    const menu = $('ins-views-menu');
+    if (!menu) return;
+    const views = insViewsLoad_();
+    let html = '<button type="button" role="menuitem" data-views-action="share" '
+      + 'title="Copy a link that opens Insights with these dates, comparison, agents, and view mode.">Copy share link</button>'
+      + '<div class="ins-views-sep"></div>';
+    if (views.length) {
+      html += views.map(function (v, i) {
+        return '<div class="ins-views-row">'
+          + '<button type="button" role="menuitem" class="ins-views-apply" data-view-idx="' + i + '" '
+          +   'title="Apply this saved view">' + escapeHtml(v.name) + '</button>'
+          + '<button type="button" class="ins-views-del" data-view-idx="' + i + '" '
+          +   'title="Delete this saved view" aria-label="Delete ' + escapeHtml(v.name) + '">&times;</button>'
+          + '</div>';
+      }).join('') + '<div class="ins-views-sep"></div>';
+    } else {
+      html += '<div class="ins-views-empty">No saved views yet.</div>';
+    }
+    html += '<div class="ins-views-saverow">'
+      + '<input type="text" id="ins-views-name" placeholder="Name this view…" maxlength="40">'
+      + '<button type="button" class="btn" id="ins-views-save">Save</button>'
+      + '</div>'
+      + '<div class="ins-views-note">Saves dates, comparison, agents &amp; Simple/Detailed — not the department.</div>';
+    menu.innerHTML = html;
+  }
+  function insSaveCurrentView_() {
+    const nameEl = $('ins-views-name');
+    const name = String((nameEl && nameEl.value) || '').trim();
+    if (!name) { showToast('Name the view first.', 'error'); return; }
+    const state = insCurrentViewState_();
+    if (!state) { showToast('Generate a report first.', 'error'); return; }
+    const views = insViewsLoad_().filter(function (v) { return v.name !== name; });
+    views.unshift({ name: name, state: state });
+    insViewsStore_(views);
+    insRenderViewsMenu_();
+    showToast('View “' + name + '” saved.', 'success');
+  }
+
+  function insEmailReport_(opts) {
     if (!insLastData || !insLastData.meta) {
       showToast('Generate a report first.', 'error');
       return;
@@ -13754,6 +14131,8 @@
         agents:     m.agents || [],
         priorFrom:  m.priorFrom || '',
         priorTo:    m.priorTo || '',
+        // Phase 2 #9: 'summary' = takeaway + tiles + behind-team list only.
+        style:      (opts && opts.summary) ? 'summary' : '',
       });
   }
 
@@ -13884,6 +14263,8 @@
         trendMetric: insActiveTrendMetric,
         queueMetric: insQueueMetric,
         trendView:   insTrendView,
+        trendRender: insTrendRender,   // Phase 2 #10: line | calendar
+        calMetric:   insCalMetric,     // Phase 2 #10: pct | missed
         showLabels:  $('ins-show-datalabels') ? $('ins-show-datalabels').checked : false,
         cardSort:    insCardSort,
         cardsView:   insCardsView,
@@ -13946,6 +14327,12 @@
       }
       if (prefs.density === 'simple' || prefs.density === 'detailed') {
         insDensity = prefs.density;   // D1: sticky per user; else role default
+      }
+      if (prefs.trendRender === 'line' || prefs.trendRender === 'calendar') {
+        insTrendRender = prefs.trendRender;   // #10 (button state synced per render)
+      }
+      if (prefs.calMetric === 'pct' || prefs.calMetric === 'missed') {
+        insCalMetric = prefs.calMetric;
       }
       if (prefs.cardsView === 'cards' || prefs.cardsView === 'chart') {
         insCardsView = prefs.cardsView;

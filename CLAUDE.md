@@ -871,6 +871,37 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   small-sample guard (`INS_SMALL_SAMPLE_PER_AGENT_`=10 avg answerable
   calls/agent -- a note + muted delta pills, display-only, never hides
   data).
+- **Insights density Phase 2 (#8/#9/#10) — saved views, share link,
+  calendar trend, summary email.** All presentation/plumbing on existing
+  contracts. (#8) The results header's **Views** menu (`#ins-views-btn`)
+  holds PERSONAL named saved views (localStorage
+  `cdr.ins.views.v1:<email>`, max 12; snapshot = the SHARE_STATE_
+  provider's state: dates/compare/custom-prior/agents (''=whole dept)/
+  Simple-Detailed — NOT the department) + **Copy share link**, which
+  reuses the existing `#/report/insights?…` deep-link machinery
+  (`encodeShareParams_`), so an opened link runs the normal auth+fetch
+  path and can never grant an unentitled dept. The Insights SHARE_STATE_
+  provider is WRAPPED to carry a `view=simple|detailed` param
+  (density restores from links/views). Applying a view re-checks the
+  already-rendered picker directly (the pending-selection hook only
+  fires on a roster render); a view with no agents param UNCHECKS all
+  (agent-free semantics preserved). (#10) The trend chart's team tabs
+  gain a **Line ⇄ Calendar** renderer toggle (`insTrendRender` +
+  `insCalMetric` in prefs): Calendar is a Mon–Fri day-grid second
+  RENDERER of the same `trendDaily` series (no server change), cells
+  colored by the existing benchmarks (Answer % vs the 92% target;
+  Missed as a warn intensity ramp) with the number in-cell, per-day
+  click-drill via the shared `insDrillToRange_` (extracted from the
+  trend-point drill); offered only for 14–366-day windows
+  (`INS_CALENDAR_MIN/MAX_DAYS_` — the MM-DD daily labels must stay
+  unambiguous), Detailed-only by construction (the whole trend hides in
+  Simple). (#9) `sendInsightsReportEmail` accepts `style:'summary'`
+  (Export → **Email summary**): `renderInsightsEmailSummary_`
+  (Digest.gs) sends takeaway + rollup tiles + ONLY the behind-team
+  list (answer rate below the team average, min
+  `INSIGHTS_EMAIL_MIN_CALLS_`=10 answerable calls — a PLAIN DEFINITION,
+  deliberately not a replica of the client tier classifier); same auth,
+  same compute, same caller-recipient as the full email.
 - **Guided onboarding tour is client-only (#5).** A self-built
   coachmark walkthrough (no dependency): `initTour_` / `startTour_`
   in script.html + `.tour-*` styles. Spotlight = a `#tour-highlight`
