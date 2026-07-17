@@ -665,6 +665,165 @@ function scanInboundQueueNames_(lookbackDays) {
 }
 
 // ---------------------------------------------------------------------------
+// Batch 8 vetting tool: QCD-vs-inbound abandonment reconciliation.
+//
+// The parked "QCD-vs-inbound abandonment discrepancy" (different source +
+// definitions) is THE stated blocker for un-gating the Inbound / Direct
+// reports to managers. This makes it QUANTIFIABLE: for one dept over a date
+// range it joins, per day,
+//   - QCD Historical Data's Abandoned column (canonical queue space,
+//     source='Total Calls' roll-up, read via the source-aware readQcdGrid_),
+//     summed over queuesForDept_(dept), against
+//   - Neon inbound_calls abandons attributed by the SAME
+//     inboundDeptPredicate_ the report/heatmap/journey use -- reported BOTH
+//     ways the definition could go: strict `disposition='abandoned'` and
+//     answered-but-abandoned-ON-HOLD (the carve-out population), so the
+//     vetting can see which definition reconciles.
+// It also classifies the window's raw entry_queue names against EVERY dept's
+// inboundQueuesForDept_ union -- calls in unattributed queues are invisible
+// to all dept slices and are the usual residual once definitions align (the
+// Dept Config "Inbound queue aliases" column is the fix for those).
+//
+// READ-ONLY; never writes. Editor-run via runInboundQcdParityCheck() (the
+// runDqeParityCheck convention; admin-gated so the RPC surface stays clean),
+// which reads the optional INBOUND_QCD_PARITY_FROM / _TO / _DEPT Script
+// Properties (defaults: last 14 days; every dept with a non-empty inbound
+// queue union).
+
+function compareInboundVsQcdAbandons_(dept, fromIso, toIso, conn) {
+  const out = { dept: dept, from: fromIso, to: toIso, available: true,
+                qcdQueues: [], inboundQueues: [], days: [],
+                totals: { qcd: 0, inboundAbandoned: 0, inboundOnHold: 0 } };
+  out.qcdQueues = queuesForDept_(dept);
+  out.inboundQueues = inboundQueuesForDept_(dept);
+
+  // QCD side: per-day Abandoned over the dept's canonical queues.
+  const qcdByDay = {};
+  const grid = (typeof readQcdGrid_ === 'function') ? readQcdGrid_(fromIso, toIso) : null;
+  if (grid && !grid.missing && !grid.empty) {
+    const qSet = {};
+    out.qcdQueues.forEach(function (q) { qSet[q] = true; });
+    const tz = grid.ssTZ;
+    for (let i = 0; i < grid.values.length; i++) {
+      const r = grid.values[i];
+      if (String(r[QCD_HISTORICAL_COLS.CALL_SOURCE - 1] || '').trim() !== 'Total Calls') continue;
+      if (!qSet[String(r[QCD_HISTORICAL_COLS.CALL_QUEUE - 1] || '').trim()]) continue;
+      const d = rowDateIso_(r[QCD_HISTORICAL_COLS.DATE - 1], tz);
+      if (!d || d < fromIso || d > toIso) continue;   // sheet path returns the whole sheet
+      qcdByDay[d] = (qcdByDay[d] || 0) + (Number(r[QCD_HISTORICAL_COLS.ABANDONED - 1]) || 0);
+    }
+  }
+
+  // Inbound side: per-day strict abandons + answered-on-hold, dept-attributed
+  // by the SAME predicate every inbound surface uses.
+  const inbByDay = {};
+  const predicate = inboundDeptPredicate_(dept, out.inboundQueues);
+  const sql = "SELECT COALESCE(json_agg(t), '[]')::text AS j FROM ("
+    + 'SELECT call_date::text AS d, '
+    + "count(*) FILTER (WHERE c.disposition = 'abandoned') AS ab, "
+    + "count(*) FILTER (WHERE c.disposition = 'answered' AND COALESCE(c.abandoned_on_hold, false)) AS hold "
+    + 'FROM inbound_calls c WHERE c.call_date BETWEEN ?::date AND ?::date' + predicate
+    + ' GROUP BY call_date) t';
+  const stmt = conn.prepareStatement(sql);
+  stmt.setString(1, fromIso);
+  stmt.setString(2, toIso);
+  const rs = stmt.executeQuery();
+  const json = rs.next() ? rs.getString('j') : '[]';
+  rs.close(); stmt.close();
+  JSON.parse(json || '[]').forEach(function (r) {
+    inbByDay[String(r.d)] = { ab: Number(r.ab) || 0, hold: Number(r.hold) || 0 };
+  });
+
+  const allDays = {};
+  Object.keys(qcdByDay).forEach(function (d) { allDays[d] = true; });
+  Object.keys(inbByDay).forEach(function (d) { allDays[d] = true; });
+  Object.keys(allDays).sort().forEach(function (d) {
+    const q = qcdByDay[d] || 0;
+    const b = inbByDay[d] || { ab: 0, hold: 0 };
+    out.days.push({ date: d, qcdAbandoned: q, inboundAbandoned: b.ab,
+                    inboundOnHold: b.hold, diff: b.ab - q, diffWithHold: (b.ab + b.hold) - q });
+    out.totals.qcd += q;
+    out.totals.inboundAbandoned += b.ab;
+    out.totals.inboundOnHold += b.hold;
+  });
+  return out;
+}
+
+/**
+ * Editor-run wrapper (admin-gated). Logs a per-dept, per-day reconciliation
+ * table + the window's UNATTRIBUTED raw entry-queues, and returns the full
+ * object. Optional Script Properties: INBOUND_QCD_PARITY_FROM / _TO
+ * (YYYY-MM-DD; default last 14 days ending yesterday) and
+ * INBOUND_QCD_PARITY_DEPT (default: every dept with a non-empty inbound
+ * queue union).
+ */
+function runInboundQcdParityCheck() {
+  assertAdmin_();
+  const props = PropertiesService.getScriptProperties();
+  const now = new Date();
+  const iso = function (d) { return Utilities.formatDate(d, TZ, 'yyyy-MM-dd'); };
+  const defTo = iso(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 12));
+  const defFrom = iso(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 14, 12));
+  const fromIso = String(props.getProperty('INBOUND_QCD_PARITY_FROM') || defFrom);
+  const toIso   = String(props.getProperty('INBOUND_QCD_PARITY_TO')   || defTo);
+  const onlyDept = String(props.getProperty('INBOUND_QCD_PARITY_DEPT') || '').trim();
+
+  const conn = getDashboardNeonConn_();
+  if (!conn) { Logger.log('Inbound/QCD parity: Neon unreachable (NEON_* props set?).'); return { available: false }; }
+  try {
+    const depts = onlyDept ? [onlyDept]
+      : getAllDepartments_().filter(function (d) { return inboundQueuesForDept_(d).length > 0; });
+    const results = [];
+    depts.forEach(function (dept) {
+      const r = compareInboundVsQcdAbandons_(dept, fromIso, toIso, conn);
+      results.push(r);
+      Logger.log('=== %s  %s..%s  (QCD queues: %s | inbound union: %s)', dept, fromIso, toIso,
+        r.qcdQueues.join(', ') || '(none)', r.inboundQueues.join(', ') || '(none)');
+      r.days.forEach(function (day) {
+        Logger.log('  %s  qcd=%s  inbound=%s (+%s on-hold)  diff=%s  diffWithHold=%s',
+          day.date, day.qcdAbandoned, day.inboundAbandoned, day.inboundOnHold, day.diff, day.diffWithHold);
+      });
+      Logger.log('  TOTALS qcd=%s inbound=%s onHold=%s diff=%s diffWithHold=%s',
+        r.totals.qcd, r.totals.inboundAbandoned, r.totals.inboundOnHold,
+        r.totals.inboundAbandoned - r.totals.qcd,
+        (r.totals.inboundAbandoned + r.totals.inboundOnHold) - r.totals.qcd);
+    });
+
+    // Unattributed raw entry-queues in the window: invisible to EVERY dept's
+    // inbound slice -- the usual residual. (Dept Config "Inbound queue
+    // aliases" is the no-redeploy fix.)
+    const attributed = {};
+    getAllDepartments_().forEach(function (d) {
+      inboundQueuesForDept_(d).forEach(function (q) { attributed[q] = true; });
+    });
+    const uq = [];
+    const uStmt = conn.prepareStatement(
+      "SELECT COALESCE(json_agg(t ORDER BY t.n DESC), '[]')::text AS j FROM ("
+      + "SELECT entry_queue AS q, count(*) AS n FROM inbound_calls "
+      + "WHERE call_date BETWEEN ?::date AND ?::date AND COALESCE(entry_queue, '') <> '' "
+      + 'GROUP BY entry_queue) t');
+    uStmt.setString(1, fromIso);
+    uStmt.setString(2, toIso);
+    const uRs = uStmt.executeQuery();
+    const uJson = uRs.next() ? uRs.getString('j') : '[]';
+    uRs.close(); uStmt.close();
+    JSON.parse(uJson || '[]').forEach(function (r) {
+      if (!attributed[String(r.q)]) uq.push({ queue: String(r.q), calls: Number(r.n) || 0 });
+    });
+    if (uq.length) {
+      Logger.log('UNATTRIBUTED raw entry-queues in window (belong to NO dept\'s inbound union -- '
+        + 'add to Dept Config "Inbound queue aliases"): '
+        + uq.map(function (u) { return u.queue + ' (' + u.calls + ')'; }).join(', '));
+    } else {
+      Logger.log('All raw entry-queues in the window attribute to a dept. ✓');
+    }
+    return { available: true, from: fromIso, to: toIso, depts: results, unattributed: uq };
+  } finally {
+    try { conn.close(); } catch (ce) {}
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Temporal abandon heatmap (day-of-week x half-hour-slot), sourced from
 // inbound_calls. Powers the heatmap panel in BOTH the Inbound report and the
 // QCD report (a "when are callers abandoning / when are we short-staffed"

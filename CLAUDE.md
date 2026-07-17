@@ -496,6 +496,16 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   definitions -- are parked until then); the per-dept manager path is
   kept intact in `inboundResolveRequest_`, so restoring manager access
   is a one-line gate removal + un-hiding the `data-admin-only` tab.
+  **Vetting tool (Batch 8): `runInboundQcdParityCheck`** (editor-run,
+  admin-gated, read-only; optional `INBOUND_QCD_PARITY_FROM/_TO/_DEPT`
+  Script Properties, default last 14 days / all mapped depts) joins the two
+  lenses per dept per day -- QCD Abandoned (canonical queues, source-aware
+  grid) vs inbound_calls abandons via the SAME `inboundDeptPredicate_`,
+  reporting strict abandons AND the answered-on-hold carve-out separately so
+  the definitional gap is quantifiable -- and lists the window's
+  UNATTRIBUTED raw entry-queues (fix: the Dept Config "Inbound queue
+  aliases" column). Pinned by tests/unit/inbound-qcd-parity.test.js. Run it
+  (+ populate aliases, re-run) BEFORE any un-gating decision.
   Once released: managers see their own dept's slice; admins can also pick "All
   departments" (the only view that includes the "Abandoned in IVR"
   bucket -- IVR abandons never reached a queue so they're

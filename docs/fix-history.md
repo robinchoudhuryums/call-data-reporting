@@ -247,11 +247,14 @@ date-coercion sections).
 | `P-8` | ISO-text date cells parsed as UTC midnight (previous Chicago day) in the dup-guard/force-delete -- `parseHistoryDateCell_` local-noon |
 
 **All corrective findings from the 2026-07 broad scan are implemented** (P-6
-optional/deferred: `call_history_*` isn't dashboard-read). Remaining scan work
-is strategic (Batches 8-10): inbound queue-identity normalization + manager
-un-gating (gates stay ON while the reports are vetted -- owner), the Neon flip
-execution (unblocked since R-1), smoke harness, Report Usage review, legacy
-decommission.
+optional/deferred: `call_history_*` isn't dashboard-read). Batch 8 shipped its
+vetting slice -- `runInboundQcdParityCheck` (InboundReport.gs), the
+QCD-vs-inbound reconciliation the un-gating decision needs; the gates stay ON
+(owner) and capture-time raw→canonical queue normalization is DEFERRED (needs
+an owner-decided raw→canonical mapping schema -- the alias column maps
+dept→raw names, ambiguous for multi-queue depts). Batch 9's flip runbook is
+consolidated in the README. Remaining strategic work (Batch 10): smoke
+harness, Report Usage review, legacy decommission, optional P-6.
 
 ---
 
