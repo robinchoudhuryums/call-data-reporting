@@ -718,7 +718,12 @@ function cdrParseNameFieldJson_(val, isUnused, secret) {
       var countMatch = entry.match(/\((\d+)\)\s*$/);
       var count = countMatch ? parseInt(countMatch[1]) : 1;
       var nameRaw = countMatch ? entry.replace(countMatch[0], '').trim() : entry;
-      if (isExt && cdrLooksLikePhone_(nameRaw)) {
+      if (cdrLooksLikePhone_(nameRaw)) {
+        // P-2 hardening: a phone-shaped entry is a raw number regardless of
+        // which side of the "|" it sits on -- a pre-fix external-only cell
+        // (see autoImport.js::join) parses as internal, and no employee name
+        // is phone-shaped, so hashing here can never mask a legitimate
+        // internal display name. Hash-only shape on BOTH sides.
         out.push({ display: null, phone_hash: cdrHashPhone_(nameRaw, secret), count: count });
       } else if (isExt) {
         // IMP-12 (owner ruling): an external non-phone CNAM string is often

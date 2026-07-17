@@ -139,6 +139,37 @@ test('CDR writer (no HMAC): 21 params bind in the call_history_dept order; JSONB
   assert.equal(res.phones, 0, 'no phone child rows without HMAC_SECRET');
 });
 
+test('P-2: external-only NOP cells (leading separator) parse as EXTERNAL and mask', function () {
+  // autoImport.js::join now emits "\n|\n" + ext when the internal side is
+  // empty, so the parser's pipe contract holds for external-only cells.
+  const out = JSON.parse(h.fn('cdrParseNameFieldJson_')(
+    '\n|\nSMITH JOHN (2), +13125550100 (1)', false, 'test-secret'));
+  assert.deepEqual(out.internal, [], 'no internal entries on an external-only cell');
+  assert.equal(out.external[0].display, 'S.J.', 'external CNAM masked to initials');
+  assert.equal(out.external[1].display, null);
+  assert.ok(out.external[1].phone_hash, 'external phone entry hashed');
+});
+
+test('P-2 hardening: phone-shaped entries hash on the INTERNAL side too', function () {
+  // A pre-fix external-only cell parses as internal (no pipe); no employee
+  // name is phone-shaped, so the internal path also stores hash-only for
+  // phone-shaped entries -- a raw number can no longer land in Neon JSONB.
+  const out = JSON.parse(h.fn('cdrParseNameFieldJson_')(
+    'Jane Doe (2), +13125550100 (1)', false, 'test-secret'));
+  assert.equal(out.internal[0].display, 'Jane Doe', 'internal names stay raw (IMP-12 policy)');
+  assert.equal(out.internal[1].display, null, 'internal phone-shaped entry not stored raw');
+  assert.ok(out.internal[1].phone_hash, 'internal phone-shaped entry hashed');
+});
+
+test('P-2: autoImport join() always emits the separator when an external side exists', function () {
+  const imp = loadGas({ project: 'cdr-import', files: ['autoImport.js'] });
+  const join = imp.fn('join');
+  assert.equal(join('a', 'b'), 'a\n|\nb', 'both sides unchanged');
+  assert.equal(join('a', ''), 'a', 'internal-only unchanged');
+  assert.equal(join('', ''), '', 'empty unchanged');
+  assert.equal(join('', 'b'), '\n|\nb', 'external-only now carries the separator');
+});
+
 test('IMP-12: external non-phone CNAM display names are masked to initials', function () {
   const out = JSON.parse(h.fn('cdrParseNameFieldJson_')(
     'Jane Doe (3) | SMITH JOHN (2), +13125550100 (1)', false, 'test-secret'));

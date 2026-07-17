@@ -389,6 +389,17 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
       return "ALREADY IN HISTORY";
     }
 
+    // P-3: read + validate the SOURCE before the force-delete block below.
+    // The delete used to run first, so a force re-run against an existing but
+    // empty/corrupted Call_Legs sheet (truncated re-download, botched CSV
+    // import) destroyed the date's rows across all five historical sheets and
+    // THEN threw "Source sheet empty." -- data gone until a good source could
+    // be re-imported. Reading first makes that failure a clean no-op.
+    const sourceSheet = sourceSS.getSheetByName(latestName);
+    const sourceData  = sourceSheet.getDataRange().getDisplayValues();
+    if (sourceData.length < 2) throw new Error("Source sheet empty.");
+    const cleanData = sourceData.map(row => row.slice(0, MAX_COLS));
+
     if (force) {
       if (existsInCDR) {
         const obcHD = targetSS.getSheetByName("CDR Historical Data");
@@ -422,11 +433,6 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
       existsInDirect = false;
       SpreadsheetApp.flush();
     }
-
-    const sourceSheet = sourceSS.getSheetByName(latestName);
-    const sourceData  = sourceSheet.getDataRange().getDisplayValues();
-    if (sourceData.length < 2) throw new Error("Source sheet empty.");
-    const cleanData = sourceData.map(row => row.slice(0, MAX_COLS));
 
     const isHistoricalBackfill = silent && specificDateStr;
     // Even in bulk-backfill mode we write Raw Data when DQE OR Direct still
@@ -549,7 +555,8 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
           const directConfig = targetSS.getSheetByName("DO NOT EDIT!");
           if (directConfig && rawDataSheet.getLastRow() > 1) {
             const directRaw = rawDataSheet.getDataRange().getDisplayValues();
-            const dres = buildDirectCallFromRaw_(targetSS, directRaw, directConfig, { skipNeon: true });
+            // P-4: pass the bulk date so a stray first row can't mislabel the day.
+            const dres = buildDirectCallFromRaw_(targetSS, directRaw, directConfig, { skipNeon: true, expectedDate: dateObj });
             if (dres.wrote > 0 && histDateCache && histDateCache.direct) histDateCache.direct.add(dateKey);
             historyReport.push(`- Direct Call HD: built ${dres.wrote} rows (Neon deferred)`);
             try {
@@ -2028,7 +2035,8 @@ if (!skipCDR && obcHD) {
       var directConfig = targetSS.getSheetByName('DO NOT EDIT!');
       if (directConfig && typeof buildDirectCallFromRaw_ === 'function') {
         var directRaw = rawDataSheet.getDataRange().getDisplayValues();
-        var dres = buildDirectCallFromRaw_(targetSS, directRaw, directConfig, {});
+        // P-4: pass the importer's date so a stray first row can't mislabel the day.
+        var dres = buildDirectCallFromRaw_(targetSS, directRaw, directConfig, { expectedDate: dateObj });
         var directNeon = dres.neon || {};
         var directNeonStr = directNeon.unreachable ? 'unreachable' : (directNeon.error ? 'error' : 'ok');
         if (dres.wrote > 0) {
@@ -2085,7 +2093,13 @@ if (!skipCDR && obcHD) {
       // L2: the daily import's Raw Data is the COMPLETE inbound set for the
       // date(s) -> authoritative per-date replace clears phantoms a force
       // re-import that dropped a call_id would otherwise leave in inbound_calls.
-      var inboundRes = writeInboundCallsToNeon(inboundLegs, { authoritative: true });
+      // P-1: pass the importer's date so a stray carry-over leg from another
+      // day can't put that day into the authoritative DELETE's date set.
+      var inboundExpectedIso = dateObj.getFullYear() + '-'
+        + ('0' + (dateObj.getMonth() + 1)).slice(-2) + '-'
+        + ('0' + dateObj.getDate()).slice(-2);
+      var inboundRes = writeInboundCallsToNeon(inboundLegs,
+        { authoritative: true, expectedDateIso: inboundExpectedIso });
       console.log('processIntegratedHistory: inbound_calls -> ' + JSON.stringify(inboundRes));
       if (inboundRes && inboundRes.error) {
         setNeonStatus_('error');
@@ -2318,7 +2332,19 @@ function agg(l) {
   return Object.entries(c).sort((a, b) => b[1] - a[1]).map(([n, k]) => k > 1 ? `${n} (${k})` : n).join(", ");
 }
 
-function join(a, b) { const r = []; if (a) r.push(a); if (b) r.push(b); return r.join("\n|\n"); }
+// P-2: cdrParseNameFieldJson_ (neonWrite.js) splits a NOP cell's
+// internal|external sides on the "|" separator. The old join dropped the
+// separator whenever the INTERNAL side was empty, so an external-only cell
+// parsed entirely as INTERNAL downstream and skipped the IMP-12 PHI
+// masking / phone hashing on its way into Neon. Always emit the separator
+// when an external side exists; internal-only and both-sides cells are
+// byte-identical to before. (Sheet-side: an external-only cell now renders
+// with a leading "|" line -- the same separator mixed cells already show.)
+// Rows written before this fix heal on re-import of their date.
+function join(a, b) {
+  if (!b) return a || "";
+  return (a || "") + "\n|\n" + b;
+}
 
 function fmt(d) {
   if (!d) return "0:00:00";

@@ -47,6 +47,7 @@ const QUEUE_REPORT_EVERY_MINUTES     = 30;   // Apps Script allows 1/5/10/15/30
 const QUEUE_REPORT_ENABLED_PROP    = 'QUEUE_REPORT_ENABLED';       // 'true' to arm
 const QUEUE_REPORT_LAST_SENT_PROP  = 'QUEUE_REPORT_LAST_SENT';     // target ISO already sent (dedupe)
 const QUEUE_REPORT_LAST_RESULT_PROP = 'QUEUE_REPORT_LAST_RESULT';  // human status for the modal
+const QUEUE_REPORT_LAST_MISSED_PROP = 'QUEUE_REPORT_LAST_MISSED';  // O-7: target ISO already flagged as missed
 
 // ── Trigger entry point ───────────────────────────────────────────────────
 
@@ -87,7 +88,13 @@ function runDailyQueueReport_() {
       lastSent: props.getProperty(QUEUE_REPORT_LAST_SENT_PROP) || '',
       latestQcd: '9999-99-99',   // readiness checked below only if the rest pass
     });
-    if (!pre.send) return;
+    if (!pre.send) {
+      // O-7: the window closed without a send for the target day (data landed
+      // late, or never) -- surface it ONCE instead of silently moving on to
+      // the next weekday's target.
+      if (pre.reason === 'outside-window') queueReportFlagMissedDay_(props, now, targetIso);
+      return;
+    }
 
     // Readiness gate: has the import finished writing QCD for the target date?
     const latestQcd = queueReportQcdLatestIso_();
@@ -100,13 +107,29 @@ function runDailyQueueReport_() {
     if (!decision.send) return;   // 'not-ready' -> no-op, retry next poll
 
     const result = sendQueueReportForDate_(targetIso, {});
-    // Only claim the date as sent once a send actually happened (recipients > 0
-    // OR a clean no-recipients run). A thrown error leaves the marker unset so
-    // the next poll retries.
-    props.setProperty(QUEUE_REPORT_LAST_SENT_PROP, targetIso);
-    props.setProperty(QUEUE_REPORT_LAST_RESULT_PROP,
-      'Sent ' + targetIso + ' to ' + result.count + ' subscriber'
-      + (result.count === 1 ? '' : 's') + ' at ' + new Date());
+    const failed = result.failed || [];
+    // O-1: marker discipline around per-recipient failures.
+    //  - At least one send landed (or a clean no-recipients run): claim the
+    //    date. The recipients who already got it must NEVER be re-blasted by
+    //    the next poll, so partial failures are notified, not retried.
+    //  - EVERY send failed (recipients existed, zero delivered): leave the
+    //    marker unset so the next poll retries -- nobody received it, so a
+    //    retry can't duplicate. Notify once per target date.
+    if (result.count > 0 || !failed.length) {
+      props.setProperty(QUEUE_REPORT_LAST_SENT_PROP, targetIso);
+      props.setProperty(QUEUE_REPORT_LAST_RESULT_PROP,
+        'Sent ' + targetIso + ' to ' + result.count + ' subscriber'
+        + (result.count === 1 ? '' : 's')
+        + (failed.length ? ' — FAILED for ' + failed.length + ' (see admin email)' : '')
+        + ' at ' + new Date());
+      if (failed.length) notifyQueueReportSendFailures_(targetIso, failed, /*allFailed=*/false);
+    } else {
+      const alreadyFlagged = (props.getProperty(QUEUE_REPORT_LAST_RESULT_PROP) || '')
+        .indexOf('FAILED-ALL ' + targetIso) === 0;
+      props.setProperty(QUEUE_REPORT_LAST_RESULT_PROP,
+        'FAILED-ALL ' + targetIso + ' — every subscriber send failed; will retry next poll. At ' + new Date());
+      if (!alreadyFlagged) notifyQueueReportSendFailures_(targetIso, failed, /*allFailed=*/true);
+    }
   } catch (e) {
     Logger.log('runDailyQueueReport_ failed: %s', e);
     try {
@@ -162,22 +185,106 @@ function sendQueueReportForDate_(targetIso, opts) {
   const data = qcdAllDeptCachedData_(targetIso, targetIso).data;
   const recipients = opts.to
     ? [String(opts.to).trim()].filter(Boolean)
-    : readQueueReportSubscribers_().filter(function (s) { return s.active; })
+    : readQueueReportSubscribers_()
+        .filter(function (s) { return s.active && !s.duplicateRow; })   // O-4: dupes never double-send
         .map(function (s) { return s.email; });
 
   if (!recipients.length) {
     Logger.log('sendQueueReportForDate_(%s): no active subscribers -- nothing sent.', targetIso);
-    return { count: 0, to: [] };
+    return { count: 0, to: [], failed: [] };
   }
 
   const subject = 'Daily Call Queue Report — ' + (data.dateLabel || targetIso);
   const html = buildQueueReportEmailHtml_(data, targetIso, !!opts.isPreview);
   // One send with the full list on `to` would expose every subscriber's
   // address to the others; send individually (small list, weekday-once).
+  // O-1: per-recipient isolation -- one malformed hand-edited address or a
+  // mid-list quota failure previously aborted the loop, so earlier
+  // subscribers were re-blasted on every 30-min poll (marker never set)
+  // while later ones never received the report at all. The single-address
+  // preview path (opts.to) still throws so the admin sees the error in the
+  // modal.
+  const sentTo = [];
+  const failed = [];
   recipients.forEach(function (addr) {
-    MailApp.sendEmail({ to: addr, subject: subject, htmlBody: html });
+    try {
+      MailApp.sendEmail({ to: addr, subject: subject, htmlBody: html });
+      sentTo.push(addr);
+    } catch (e) {
+      if (opts.to) throw e;
+      failed.push({ email: addr, error: (e && e.message) ? e.message : String(e) });
+      Logger.log('sendQueueReportForDate_(%s): send to %s failed: %s', targetIso, addr, e);
+    }
   });
-  return { count: recipients.length, to: recipients };
+  return { count: sentTo.length, to: sentTo, failed: failed };
+}
+
+/**
+ * O-1: one batched admin notification listing the subscriber sends that
+ * failed for a target date (partial or total). Best-effort; never throws.
+ */
+function notifyQueueReportSendFailures_(targetIso, failed, allFailed) {
+  try {
+    const to = getAdminEmails_().join(',');
+    if (!to) return;
+    const lines = (failed || []).map(function (f) {
+      return ' - ' + f.email + ': ' + f.error;
+    });
+    MailApp.sendEmail({
+      to: to,
+      subject: '[Dashboard] Daily Call Queue Report — '
+        + (allFailed ? 'ALL subscriber sends failed' : 'some subscriber sends failed')
+        + ' (' + targetIso + ')',
+      body: (allFailed
+          ? 'Every subscriber send failed; the run will RETRY on the next 30-min poll inside the window.\n'
+          : 'The report was delivered to the other subscribers; the failures below are NOT retried automatically '
+            + '(re-add or fix the address, then use "Send me a preview" to verify).\n')
+        + '\nFailed sends for ' + targetIso + ':\n' + lines.join('\n')
+        + '\n\nTime: ' + new Date(),
+    });
+  } catch (mailErr) {
+    Logger.log('notifyQueueReportSendFailures_ also failed: %s', mailErr);
+  }
+}
+
+/**
+ * O-7: called on post-window polls. If the target day's report was never
+ * sent (data landed after the window closed, or never landed), record a
+ * MISSED outcome + email admins ONCE for that day -- previously the day was
+ * silently skipped forever and LAST_RESULT kept showing the prior success.
+ * Suppressed when nothing was ever sent (fresh install, no baseline).
+ */
+function queueReportFlagMissedDay_(props, now, targetIso) {
+  try {
+    const hour = Number(Utilities.formatDate(now, TZ, 'H'));
+    if (hour < QUEUE_REPORT_WINDOW_END_HOUR) return;                    // pre-window morning poll
+    const dow = now.getDay();
+    if (dow === 0 || dow === 6) return;
+    if (isCompanyHoliday_(Utilities.formatDate(now, TZ, 'yyyy-MM-dd'))) return;
+    if (!targetIso) return;
+    const lastSent = props.getProperty(QUEUE_REPORT_LAST_SENT_PROP) || '';
+    if (!lastSent || lastSent === targetIso) return;                    // sent today, or never armed
+    if ((props.getProperty(QUEUE_REPORT_LAST_MISSED_PROP) || '') === targetIso) return; // already flagged
+    props.setProperty(QUEUE_REPORT_LAST_MISSED_PROP, targetIso);
+    props.setProperty(QUEUE_REPORT_LAST_RESULT_PROP,
+      'MISSED ' + targetIso + ' — QCD data was not ready before the window closed ('
+      + QUEUE_REPORT_WINDOW_END_HOUR + ':00 Central). Not retried automatically; use '
+      + '"Send me a preview" to verify the data, or wait for the next weekday window. Flagged at ' + new Date());
+    const to = getAdminEmails_().join(',');
+    if (to) {
+      MailApp.sendEmail({
+        to: to,
+        subject: '[Dashboard] Daily Call Queue Report was NOT sent for ' + targetIso,
+        body: 'The ' + QUEUE_REPORT_WINDOW_START_HOUR + ':00–' + QUEUE_REPORT_WINDOW_END_HOUR
+          + ':00 send window closed without the report going out for ' + targetIso
+          + ' (QCD data was not ready in time, or the import did not run).\n\n'
+          + 'It is NOT retried automatically. If the data has since landed, subscribers can be '
+          + 'served manually, or the next weekday\'s report resumes normally.\n\nTime: ' + new Date(),
+      });
+    }
+  } catch (e) {
+    Logger.log('queueReportFlagMissedDay_ failed (best-effort): %s', e);
+  }
 }
 
 /**
@@ -413,13 +520,23 @@ function readQueueReportSubscribers_() {
   if (lastRow < 2) return [];
   const values = sheet.getRange(2, 1, lastRow - 1, QUEUE_REPORT_SUBSCRIBERS_HEADERS.length).getValues();
   const out = [];
+  const seenEmail = {};   // O-4: OPS-9 discipline -- first-row-wins on hand-edited duplicates
   for (let i = 0; i < values.length; i++) {
     const email = String(values[i][0] || '').trim();
     if (!email) continue;
     const rawActive = values[i][1];
     const active = !(rawActive === false || rawActive === 'FALSE' || rawActive === 'false'
                    || rawActive === 0 || rawActive === 'no' || rawActive === 'No');
-    out.push({ email: email, active: active, notes: String(values[i][2] || '').trim() });
+    const entry = { email: email, active: active, notes: String(values[i][2] || '').trim() };
+    const key = email.toLowerCase();
+    if (seenEmail[key]) {
+      // Duplicate hand-edited row: flag it (kept in the list so the modal
+      // shows it and remove deletes all copies) but the send loop skips it,
+      // so the subscriber gets ONE email per run, not one per row.
+      entry.duplicateRow = true;
+    }
+    seenEmail[key] = true;
+    out.push(entry);
   }
   return out;
 }

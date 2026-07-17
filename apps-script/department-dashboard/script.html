@@ -9207,8 +9207,17 @@
         ? ' <span class="al-active al-active-no" title="Duplicate row for this department -- '
             + 'the FIRST row wins; this one is ignored. Remove it.">⚠ duplicate</span>'
         : '';
+      // O-3: a dept name matching no roster header is silently un-monitored
+      // (empty roster -> perpetual no-data) -- chip it like the F4 invalid
+      // threshold so the admin fixes the Department cell.
+      const unknownChip = c.unknownDept
+        ? ' <span class="al-active al-active-no" title="This department matches no roster '
+            + '(DO NOT EDIT!) header -- renamed or typo? It is NOT monitored (reads an empty '
+            + 'roster, logs no-data every run). Fix it to match the header exactly '
+            + '(case-sensitive).">⚠ unknown dept</span>'
+        : '';
       return '<tr>'
-           +   '<td>' + escapeHtml(c.department) + dupChip + '</td>'
+           +   '<td>' + escapeHtml(c.department) + dupChip + unknownChip + '</td>'
            +   threshCell
            +   '<td>' + alDriftCellHtml_(c, driftMap[c.department]) + '</td>'
            +   '<td>' + escapeHtml((c.extraRecipients || []).join(', ') || '(none)') + '</td>'

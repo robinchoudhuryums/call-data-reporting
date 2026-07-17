@@ -307,3 +307,35 @@ test('L2: non-authoritative write is upsert-only (no DELETE)', function () {
     'a partial-set caller (no authoritative) never deletes');
   assert.ok(cap.executed.some(s => /INSERT INTO inbound_calls/.test(s)), 'still upserts');
 });
+
+// ---- P-1: expectedDateIso pins the authoritative replace to the import's date.
+// A stray carry-over leg from the previous day (the F2 scenario) used to put
+// D-1 into the payload's date set -- the authoritative DELETE then wiped ALL
+// of D-1's inbound_calls rows (no sheet primary -> permanent loss) and
+// replaced them with the lone stray fragment.
+const P1_STRAY_ROWS = L2_ROWS.concat([
+  leg({ callId: '555001', legId: 1, start: '06/03/2026 14:00:00', stop: '06/03/2026 14:01:00', direction: 'Incoming', caller: '12155550000', callee: '108', calleeName: 'A_Q_Intake', dialIn: '19722281820' }),
+]);
+
+test('P-1: stray-dated records are dropped and the DELETE never touches their date', function () {
+  const cap = {};
+  h.ctx.getReachableNeonConn_ = function () { return fakeInboundConn(cap); };
+  h.call('writeInboundCallsToNeon', P1_STRAY_ROWS,
+    { authoritative: true, expectedDateIso: '2026-06-04' });
+  const dels = cap.executed.filter(s => /DELETE FROM inbound_calls/.test(s));
+  assert.equal(dels.length, 1, 'exactly one DELETE fired');
+  assert.match(dels[0], /call_date IN \('2026-06-04'::date\)/, 'DELETE scoped to the expected date');
+  assert.ok(!dels[0].includes('2026-06-03'), 'the stray D-1 date is NOT deleted');
+  const ins = cap.executed.filter(s => /INSERT INTO inbound_calls/.test(s)).join('\n');
+  assert.ok(!ins.includes('2026-06-03'), 'the stray fragment is not written either');
+});
+
+test('P-1: without expectedDateIso the old trust-the-payload behavior is unchanged', function () {
+  const cap = {};
+  h.ctx.getReachableNeonConn_ = function () { return fakeInboundConn(cap); };
+  h.call('writeInboundCallsToNeon', P1_STRAY_ROWS, { authoritative: true });
+  const dels = cap.executed.filter(s => /DELETE FROM inbound_calls/.test(s));
+  assert.equal(dels.length, 1);
+  assert.ok(dels[0].includes('2026-06-04') && dels[0].includes('2026-06-03'),
+    'both payload dates deleted when no expected date is pinned (legacy contract)');
+});

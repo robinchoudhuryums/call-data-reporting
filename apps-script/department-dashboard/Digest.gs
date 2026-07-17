@@ -52,9 +52,21 @@ const DIGEST_MONTHLY_TRIGGER_HOUR = 8;   // 1st of the month, 8 AM
 
 function getDigestsInit() {
   assertAdmin_();
+  // O-2: last per-cadence run outcome (see sendDigestsForCadence_'s
+  // DIGEST_LAST_RESULT_* records). Best-effort; '' when never run.
+  let lastResults = { daily: '', weekly: '', monthly: '' };
+  try {
+    const p = PropertiesService.getScriptProperties();
+    lastResults = {
+      daily:   p.getProperty('DIGEST_LAST_RESULT_daily')   || '',
+      weekly:  p.getProperty('DIGEST_LAST_RESULT_weekly')  || '',
+      monthly: p.getProperty('DIGEST_LAST_RESULT_monthly') || '',
+    };
+  } catch (e) { /* best-effort */ }
   return {
     config:         readDigestConfig_(),
     trigger:        getDigestTriggerStatus_(),
+    lastResults:    lastResults,
     spreadsheetUrl: 'https://docs.google.com/spreadsheets/d/' + getSpreadsheetId_() + '/edit',
   };
 }
@@ -214,10 +226,42 @@ function sendDigestsForCadence_(cadence) {
   }
 
   // Sends run UNLOCKED from here (the marker above owns dedup).
+  // O-3: resolve the real dept headers ONCE so a Digest Config row whose
+  // Department matches no DO NOT EDIT! header (typo, or the header was
+  // renamed after the row was saved) is surfaced as a failure instead of
+  // silently sending an all-zero digest forever. Best-effort: if the roster
+  // read itself fails, skip the validation (old behavior) rather than
+  // blocking every digest.
+  let knownDeptSet = null;
+  try {
+    knownDeptSet = {};
+    getAllDepartments_().forEach(function (d) { knownDeptSet[d] = true; });
+    if (!Object.keys(knownDeptSet).length) knownDeptSet = null;
+  } catch (deptErr) { knownDeptSet = null; }
+
   const failures = [];
+  let attempted = 0;
+  let sent = 0;
   cfg.forEach(function (entry) {
     if (!entry.active) return;
     if (entry.cadence !== cadence) return;
+    // O-4: hand-edited duplicate (email, dept) rows are first-row-wins --
+    // the flagged later copy must not double-send.
+    if (entry.duplicateRow) {
+      Logger.log('sendDigestsForCadence_(%s): skipping duplicate row for %s / %s.',
+        cadence, entry.email, entry.department);
+      return;
+    }
+    if (knownDeptSet && !knownDeptSet[entry.department]) {
+      failures.push({
+        email: entry.email, dept: entry.department,
+        error: 'Department "' + entry.department + '" matches no roster (DO NOT EDIT!) header '
+             + '-- renamed or typo? Digest NOT sent (it would be all-zero). Fix the row '
+             + 'to match the header exactly (case-sensitive).',
+      });
+      return;
+    }
+    attempted++;
     try {
       sendDigestEmail_({
         to:        entry.email,
@@ -228,6 +272,7 @@ function sendDigestsForCadence_(cadence) {
         toIso:     window.toIso,
         isPreview: false,
       });
+      sent++;
     } catch (e) {
       // Per-subscriber failure shouldn't stop the rest. The outer
       // catch in runDaily/Weekly/MonthlyDigests_ only fires on
@@ -237,6 +282,31 @@ function sendDigestsForCadence_(cadence) {
       failures.push({ email: entry.email, dept: entry.department, error: msg });
     }
   });
+  // O-2: the run-claim marker is armed BEFORE the sends (concurrency dedup),
+  // which previously made a TOTAL failure unrecoverable for the day -- every
+  // send failing (e.g. mail quota exhausted) left the marker set, so a
+  // same-day manual re-run silently no-op'd and nothing said why. When
+  // recipients were attempted and ZERO went out, clear the marker so a
+  // retry/manual re-run can deliver (nobody received anything, so a retry
+  // can't duplicate). Partial success keeps the marker -- the recipients who
+  // got theirs must not be re-blasted. The last outcome is also recorded per
+  // cadence so the operator can see it without spelunking logs.
+  const resultKey = 'DIGEST_LAST_RESULT_' + cadence;
+  try {
+    const propsOut = PropertiesService.getScriptProperties();
+    if (attempted > 0 && sent === 0) {
+      propsOut.deleteProperty(markerKey);
+      propsOut.setProperty(resultKey,
+        'FAILED-ALL ' + window.toIso + ': 0 of ' + attempted + ' digests sent -- run marker '
+        + 'cleared, so a manual sendDigestsForCadence_(\'' + cadence + '\') (or the next '
+        + 'trigger inside the same window) will retry. At ' + new Date());
+    } else {
+      propsOut.setProperty(resultKey,
+        'ok ' + window.toIso + ': sent ' + sent + ' of ' + attempted
+        + (failures.length ? ' (' + failures.length + ' failure(s) -- see admin email)' : '')
+        + ' at ' + new Date());
+    }
+  } catch (propErr) { Logger.log('digest last-result record failed: %s', propErr); }
   // A swallowed per-subscriber failure was previously only in the log, so a
   // chronically failing recipient (bad address, per-recipient quota) stayed
   // invisible. Surface a single best-effort summary to admins; the run still
@@ -841,6 +911,7 @@ function readDigestConfig_() {
 function parseDigestConfigValues_(values) {
   if (!values || !values.length) return [];
   const out = [];
+  const seenKey = {};   // O-4: OPS-9 first-row-wins on hand-edited duplicates
   for (let i = 0; i < values.length; i++) {
     const email   = String(values[i][0] || '').trim();
     const dept    = String(values[i][1] || '').trim();
@@ -856,7 +927,7 @@ function parseDigestConfigValues_(values) {
     const rawActive = values[i][3];
     const active = !(rawActive === false || rawActive === 'FALSE' || rawActive === 'false'
                   || rawActive === 0 || rawActive === 'no' || rawActive === 'No');
-    out.push({
+    const entry = {
       email:      email,
       department: dept,
       cadence:    cadence,
@@ -865,7 +936,16 @@ function parseDigestConfigValues_(values) {
       active:     active,
       notes:      String(values[i][4] || '').trim(),
       format:     normalizeFormat_(String(values[i][5] || '')),
-    });
+    };
+    // O-4 (the OPS-9 pattern, previously Alert-Config-only): the sheet editor
+    // upserts by (email, department) and the Neon table PKs on it, but a
+    // hand-edited sheet can carry duplicate rows -- which double-sent the
+    // digest on every run. First row wins; later copies are flagged (kept in
+    // the list so the modal shows them) and the send loop skips them.
+    const key = email.toLowerCase() + '\u0001' + dept;
+    if (seenKey[key]) entry.duplicateRow = true;
+    seenKey[key] = true;
+    out.push(entry);
   }
   return out;
 }

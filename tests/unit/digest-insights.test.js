@@ -80,6 +80,19 @@ test('digest: readDigestConfig_ parses Format (col F) with the legacy 5-col fall
   assert.equal(cfg[1].format,  'summary');                    // empty F -> default
 });
 
+test('O-4: duplicate (email, dept) Digest Config rows are flagged first-row-wins', function () {
+  install([], [
+    ['mgr@x.com',  'Alpha', 'daily', true, 'first', ''],
+    ['MGR@x.com',  'Alpha', 'daily', true, 'hand-edited duplicate', ''],
+    ['mgr@x.com',  'Beta',  'daily', true, 'different dept -- NOT a duplicate', ''],
+  ]);
+  const cfg = h.call('readDigestConfig_');
+  assert.equal(cfg.length, 3, 'duplicate stays visible for the modal');
+  assert.equal(cfg[0].duplicateRow, undefined);
+  assert.equal(cfg[1].duplicateRow, true, 'later copy flagged (email match is case-insensitive)');
+  assert.equal(cfg[2].duplicateRow, undefined, 'same email + other dept is a distinct subscription');
+});
+
 test('digest: deep link primes the Insights report in the share-state format', function () {
   install([]);
   // Unset DASHBOARD_URL -> '' (caller falls back to the generic link path).

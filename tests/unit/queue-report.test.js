@@ -154,3 +154,110 @@ test('email HTML: empty day renders the no-activity note without throwing', func
   const html = h.call('buildQueueReportEmailHtml_', { dateLabel: 'Jul 10, 2026', depts: [], grandTotals: {} }, '2026-07-10', false);
   assert.match(html, /No queue activity recorded/);
 });
+
+// ── Batch 2 (O-1 / O-4 / O-7): send-loop reliability ────────────────────────
+
+test('O-4: duplicate subscriber rows are flagged first-row-wins (no double-send)', function () {
+  h.state.props.SPREADSHEET_ID = 'fake';
+  h.state.spreadsheet = makeFakeSpreadsheet({
+    timeZone: 'America/Chicago',
+    sheets: {
+      'Queue Report Subscribers': [
+        ['Email', 'Active', 'Notes'],
+        ['a@x.com', 'TRUE', 'first'],
+        ['A@X.com', 'TRUE', 'hand-edited duplicate'],
+        ['b@x.com', 'TRUE', ''],
+      ],
+    },
+  });
+  const subs = h.call('readQueueReportSubscribers_', null);
+  assert.equal(subs.length, 3, 'duplicate stays visible in the list');
+  assert.equal(subs[0].duplicateRow, undefined);
+  assert.equal(subs[1].duplicateRow, true, 'later copy flagged');
+  assert.equal(subs.filter(function (s) { return s.active && !s.duplicateRow; }).length, 2,
+    'send loop sees each subscriber once');
+});
+
+test('O-1: a mid-list send failure is isolated; successes and failures both reported', function () {
+  h.state.props.SPREADSHEET_ID = 'fake';
+  h.state.spreadsheet = makeFakeSpreadsheet({
+    timeZone: 'America/Chicago',
+    sheets: {
+      'Queue Report Subscribers': [
+        ['Email', 'Active', 'Notes'],
+        ['ok1@x.com', 'TRUE', ''], ['bad@x.com', 'TRUE', ''], ['ok2@x.com', 'TRUE', ''],
+      ],
+    },
+  });
+  h.ctx.qcdAllDeptCachedData_ = function () {
+    return { data: { dateLabel: 'Jul 10, 2026', depts: [], grandTotals: {} } };
+  };
+  const sent = [];
+  h.ctx.MailApp = { sendEmail: function (arg) {
+    if (String(arg.to).indexOf('bad@') === 0) throw new Error('Invalid email: bad@x.com');
+    sent.push(arg.to);
+  } };
+  const res = h.call('sendQueueReportForDate_', '2026-07-10', {});
+  // Array.from: vm-realm arrays fail deepStrictEqual on prototype identity.
+  assert.deepEqual(Array.from(res.to), ['ok1@x.com', 'ok2@x.com'], 'later subscriber still receives the report');
+  assert.equal(res.count, 2);
+  assert.equal(res.failed.length, 1);
+  assert.equal(res.failed[0].email, 'bad@x.com');
+});
+
+test('O-1: the single-address preview path still throws (admin sees the error)', function () {
+  h.ctx.qcdAllDeptCachedData_ = function () {
+    return { data: { dateLabel: 'Jul 10, 2026', depts: [], grandTotals: {} } };
+  };
+  h.ctx.MailApp = { sendEmail: function () { throw new Error('quota'); } };
+  assert.throws(function () {
+    h.call('sendQueueReportForDate_', '2026-07-10', { to: 'admin@x.com', isPreview: true });
+  }, /quota/);
+});
+
+test('O-7: a window-closed-without-send day is flagged ONCE (MISSED result + one admin email)', function () {
+  h.state.props = { ADMIN_EMAILS: 'admin@x.com', QUEUE_REPORT_LAST_SENT: '2026-07-08' };
+  h.state.sentEmails.length = 0;
+  const props = {
+    getProperty: function (k) { return h.state.props[k] || null; },
+    setProperty: function (k, v) { h.state.props[k] = String(v); },
+  };
+  const mails = [];
+  h.ctx.MailApp = { sendEmail: function (arg) { mails.push(arg); } };
+  // TZ-absolute so the fixture is host-TZ independent: Fri Jul 10, 2 PM
+  // Chicago (CDT = UTC-5) -- post-window.
+  const afternoon = new Date('2026-07-10T14:00:00-05:00');
+  h.call('queueReportFlagMissedDay_', props, afternoon, '2026-07-09');
+  assert.equal(h.state.props.QUEUE_REPORT_LAST_MISSED, '2026-07-09');
+  assert.match(h.state.props.QUEUE_REPORT_LAST_RESULT, /^MISSED 2026-07-09/);
+  assert.equal(mails.length, 1, 'one admin notification');
+  // Second post-window poll the same day: no re-flag, no second email.
+  h.call('queueReportFlagMissedDay_', props, afternoon, '2026-07-09');
+  assert.equal(mails.length, 1, 'flagged once per target day');
+});
+
+test('O-7: morning polls, sent days, and fresh installs are never flagged', function () {
+  const mails = [];
+  h.ctx.MailApp = { sendEmail: function (arg) { mails.push(arg); } };
+  function freshProps(over) {
+    const bag = Object.assign({ ADMIN_EMAILS: 'admin@x.com' }, over || {});
+    return {
+      bag: bag,
+      getProperty: function (k) { return bag[k] || null; },
+      setProperty: function (k, v) { bag[k] = String(v); },
+    };
+  }
+  // Morning (pre-window-close, 7 AM Chicago) -> no flag.
+  let p = freshProps({ QUEUE_REPORT_LAST_SENT: '2026-07-08' });
+  h.call('queueReportFlagMissedDay_', p, new Date('2026-07-10T07:00:00-05:00'), '2026-07-09');
+  assert.equal(p.bag.QUEUE_REPORT_LAST_MISSED, undefined);
+  // Already sent the target -> no flag.
+  p = freshProps({ QUEUE_REPORT_LAST_SENT: '2026-07-09' });
+  h.call('queueReportFlagMissedDay_', p, new Date('2026-07-10T14:00:00-05:00'), '2026-07-09');
+  assert.equal(p.bag.QUEUE_REPORT_LAST_MISSED, undefined);
+  // Fresh install (nothing ever sent) -> no baseline, no flag.
+  p = freshProps({});
+  h.call('queueReportFlagMissedDay_', p, new Date('2026-07-10T14:00:00-05:00'), '2026-07-09');
+  assert.equal(p.bag.QUEUE_REPORT_LAST_MISSED, undefined);
+  assert.equal(mails.length, 0);
+});
