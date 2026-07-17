@@ -356,6 +356,24 @@ the sheet-side raw values are unchanged (accepted policy). Rows written
 before the change keep their raw values until the date is re-imported.
 Pinned by `tests/unit/neon-write-mapping.test.js` (IMP-12 test).
 
+**P-2 (masking-bypass fix):** the parser splits internal|external on the
+`|` separator, but `autoImport.js::join` used to OMIT the separator when
+the internal side was empty — so an external-only NOP cell parsed
+entirely as INTERNAL and skipped the IMP-12 masking + phone hashing on
+its way into Neon (any agent-day whose inbound callers were all-external
+wrote raw CNAM strings / numbers into `ib_list_*` JSONB). Two-part fix:
+(1) `join` always emits the separator when an external side exists
+(external-only cells now render with a leading `|` line sheet-side — the
+same separator mixed cells already show); (2) the parser (both INV-16
+`neonWrite.js` copies) hashes phone-shaped entries on the INTERNAL side
+too — no employee name is phone-shaped, so a raw number can no longer
+land in the JSONB from either side. Rows written before the fix heal on
+re-import of their date (within the ~14-day Call_Legs retention); for
+older dates, `backfillCDRHistory` re-hashes phone-shaped entries, but
+raw NAME strings in old external-only cells heal only via re-import or
+a one-off SQL cleanup. Pinned by the P-2 tests in
+`tests/unit/neon-write-mapping.test.js`.
+
 ---
 
 ## Batch-E CDR Import fixes (autoImport.js / inboundCalls.js)
@@ -513,9 +531,10 @@ through a public function that explicitly checks `resolveUser_(email).role
 
 `setup()` creates `Access Control`, `Alert Config`, `Alert Log`,
 `Pipeline Health`, `Digest Config`, `Agent Alias Overrides`,
-`Orphan Fix Log`, `Dept Config`, and `Report Usage` sheets if they
+`Orphan Fix Log`, `Dept Config`, `Report Usage`, and
+`Queue Report Subscribers` sheets if they
 don't exist (each with a frozen header row). It never overwrites
-existing rows on any of the nine. Safe to re-run as many
+existing rows on any of the ten. Safe to re-run as many
 times as you want. Keep it that way; the alerts engine assumes
 `appendAlertLog_` can blindly append without coordinating reads.
 

@@ -195,7 +195,10 @@ function repairDqeSlotTimestamps_(dryRun) {
 //      unrecoverable counts, samples, and the distinct dates needing a rebuild.
 //   2. repairDqeAbandonedIds()        -- recover the lossless single-value cells,
 //      mark unrecoverable cells "#REBUILD" (so they read as unavailable, not 0),
-//      and lock AD-AF to plain text.
+//      and lock AD-AE to plain text (T-5: this repair touches the ID columns
+//      AD-AE ONLY; AF -- the comma-joined H:MM:SS times column -- is recovered
+//      AND plain-text-locked by the SLOT repair, repairDqeSlotTimestamps().
+//      Run both if AF may be coercion-prone).
 //   3. If you've started the Neon backfill (or DQE_READ_SOURCE=neon): re-mirror
 //      the affected dates with backfillDQEHistoryUpsert() -- its ON CONFLICT DO
 //      UPDATE OVERWRITES the rows already backfilled from the bad cells. No new
@@ -268,8 +271,9 @@ function repairDqeAbandonedIds_(dryRun) {
              applied: false, recSamples: recSamples, lostSamples: lostSamples };
   }
 
-  // Lock AD-AF to plain text (so recovered values + the sentinel STAY text and
-  // the column can't re-coerce), then write back.
+  // Lock AD-AE to plain text (so recovered values + the sentinel STAY text and
+  // the columns can't re-coerce), then write back. (T-5: AF's plain-text lock
+  // lives in the slot repair, which owns that column's recovery.)
   range.setNumberFormat('@');
   range.setValues(vals);
   SpreadsheetApp.flush();

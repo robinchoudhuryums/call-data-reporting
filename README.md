@@ -127,8 +127,8 @@ scripts/deploy.sh apps-script/cdr-import <cdr-import-deployment-id>
 - Run the `setup` function once to create the dashboard-managed
   sheets: `Access Control`, `Alert Config`, `Alert Log`,
   `Pipeline Health`, `Digest Config`, `Agent Alias Overrides`,
-  `Orphan Fix Log`, `Dept Config`, and `Report Usage` (nine total;
-  created only if missing).
+  `Orphan Fix Log`, `Dept Config`, `Report Usage`, and
+  `Queue Report Subscribers` (ten total; created only if missing).
   Requires admin auth — run from the Apps Script editor while
   logged in as an admin listed in `ADMIN_EMAILS` Script Property
   (or `ADMIN_EMAILS_FALLBACK`).
@@ -498,7 +498,7 @@ the reports intimidating; none add server endpoints or cache bumps:
 - **Guided tour** — a short spotlight walkthrough of the main areas
   (Overview, question launcher, freshness pill, My Department,
   Escalations, Reports, Help) runs automatically the first time a
-  user visits and is always replayable from **Help → Guided tour**.
+  user visits and is always replayable from **Settings → Take the tour**.
   Skips any step whose target isn't visible (e.g. admin-only tabs).
 - **Question launcher** — the Overview, Insights, and My Department
   pages carry four plain-English question chips ("How is my team

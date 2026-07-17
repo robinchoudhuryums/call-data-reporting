@@ -8568,8 +8568,15 @@
             + escapeHtml(c.cadenceRaw || 'blank') + ') -- this subscription NEVER sends. '
             + 'Use daily, weekly, or monthly.">⚠ invalid</span>'
         : escapeHtml(c.cadence);
+      // O-4: a duplicate (email, dept) row is inert (first row wins
+      // server-side) -- chip it so the admin removes it rather than editing
+      // the wrong row. Remove deletes ALL copies for the key.
+      const dgDupChip = c.duplicateRow
+        ? ' <span class="al-active al-active-no" title="Duplicate row for this email + department -- '
+            + 'the FIRST row wins; this one never sends. Remove re-adds cleanly.">⚠ duplicate</span>'
+        : '';
       html += '<tr>'
-        + '<td>' + escapeHtml(c.email) + '</td>'
+        + '<td>' + escapeHtml(c.email) + dgDupChip + '</td>'
         + '<td><span class="al-report-chip al-report-digest">Digest</span></td>'
         + '<td>' + escapeHtml(c.department) + '</td>'
         + '<td>' + cadenceCell + '</td>'
@@ -8584,8 +8591,14 @@
     });
     qr.forEach(function (s, idx) {
       const activeCls = s.active ? 'al-active-yes' : 'al-active-no';
+      // O-4: same duplicate-row chip for hand-edited Queue Report Subscribers
+      // duplicates (first row wins; the send loop skips flagged copies).
+      const qrDupChip = s.duplicateRow
+        ? ' <span class="al-active al-active-no" title="Duplicate row for this email -- '
+            + 'the FIRST row wins; this one never sends. Remove deletes all copies.">⚠ duplicate</span>'
+        : '';
       html += '<tr>'
-        + '<td>' + escapeHtml(s.email) + '</td>'
+        + '<td>' + escapeHtml(s.email) + qrDupChip + '</td>'
         + '<td><span class="al-report-chip al-report-queue">Queue Report</span></td>'
         + '<td class="al-empty-inline">—</td>'
         + '<td class="al-empty-inline">—</td>'
@@ -8896,6 +8909,23 @@
     if (data.spreadsheetUrl) {
       const link = $('al-open-digest-sheet');
       if (link) link.href = data.spreadsheetUrl;
+    }
+
+    // O-2: surface the last per-cadence run outcome (sendDigestsForCadence_'s
+    // DIGEST_LAST_RESULT_* records). A FAILED-ALL line is warn-tinted -- the
+    // marker was cleared server-side, so a same-day re-run/manual send works.
+    const lastEl = $('al-digest-last-results');
+    if (lastEl) {
+      const lr = data.lastResults || {};
+      const lines = ['daily', 'weekly', 'monthly']
+        .filter(function (c) { return lr[c]; })
+        .map(function (c) {
+          const failed = String(lr[c]).indexOf('FAILED-ALL') === 0;
+          return '<span' + (failed ? ' class="al-active al-active-no"' : '') + '>'
+            + escapeHtml(c) + ': ' + escapeHtml(lr[c]) + '</span>';
+        });
+      lastEl.innerHTML = lines.length ? ('Last runs — ' + lines.join('<br>')) : '';
+      lastEl.style.display = lines.length ? '' : 'none';
     }
   }
 

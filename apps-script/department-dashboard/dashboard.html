@@ -2044,6 +2044,10 @@
             <div class="al-rs-schedule">
               <div class="al-section-subtitle">Manager digest schedule <span class="al-state-pill" id="al-digest-pill"></span></div>
               <p class="al-hint" id="al-digest-trigger-status" style="margin-top: 6px;"></p>
+              <!-- O-2: last per-cadence run outcome (DIGEST_LAST_RESULT_* Script
+                   Properties via getDigestsInit.lastResults). Hidden until a
+                   run has recorded something. -->
+              <p class="al-hint" id="al-digest-last-results" style="margin-top: 4px; display:none;"></p>
               <div class="al-trigger-actions">
                 <button class="btn btn-secondary" id="al-install-digest-btn"   type="button">Install digest triggers</button>
                 <button class="btn btn-secondary" id="al-uninstall-digest-btn" type="button" style="display:none;">Uninstall digest triggers</button>

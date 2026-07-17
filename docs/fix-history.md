@@ -184,6 +184,36 @@ Health row amber on every run and masking real outages). Pinned by
 
 ---
 
+## `P-#` / `O-#` — broad-scan Batch 1+2 (2026-07-17)
+
+Findings from the 2026-07 three-stage broad scan, implemented in the
+"Batch 1+2" commit. `P-#` = **p**ipeline (cdr-import/cdr-report); `O-#` =
+dashboard **o**ps engines. **NB: `O-#` is a DIFFERENT family from `OPS-#`**
+(the earlier watchdog/backup/digest pass) — the same collision class as
+dashed-`F-#` vs bare-`F#`.
+
+| Code | What it fixed | Where the live rule lives |
+|---|---|---|
+| `P-1` | Inbound authoritative DELETE trusted payload-derived dates; a stray D-1 carry-over leg wiped D-1's `inbound_calls` rows. `expectedDateIso` pins the delete + drops strays. | Neon write discipline rule (4), CLAUDE.md |
+| `P-2` | External-only NOP cells bypassed IMP-12 PHI masking (`join()` omitted the `\|` separator; parser treated pipe-less cells as internal). Producer always emits the separator; parser hashes phone-shaped entries on BOTH sides. | known-issues.md IMP-12/P-2 section |
+| `P-3` | Force re-import deleted 5 sheets' rows BEFORE validating the source; an empty/corrupt source destroyed the date then threw. Source read+validate now precedes the delete block. | Force-path guard convention (M2) bullet, CLAUDE.md |
+| `P-4` | Direct-call build stamped the whole day with the grid's first-row date (no F2 guard); a stray first row mislabeled + wiped D-1. `opts.expectedDate` refusal, both callers pass it. | Direct-extension metrics bullet, CLAUDE.md |
+| `P-5` | `writeDirectCallRowsToNeon_` early-returned on empty rows before its date-DELETE while the sheet writer cleared the date — permanent sheet/Neon divergence on goes-to-zero force re-imports. | Direct-extension metrics bullet, CLAUDE.md |
+| `O-1` | Queue-report send loop had no per-recipient isolation; a mid-list mail failure re-blasted earlier subscribers every 30-min poll while later ones never got it. Isolated + marker-on-partial-success + `notifyQueueReportSendFailures_`. | Operator State #31 |
+| `O-2` | Digest run-claim marker armed pre-send made a TOTAL failure unrecoverable for the day; now cleared on zero-success + `DIGEST_LAST_RESULT_<cadence>` surfaced in the modal. | INV-45 OPS-2/O-2 paragraph |
+| `O-3` | An Alert/Digest Config Department matching no roster header silently un-monitored the dept forever (perpetual `no-data` / all-zero digest). Alerts: `error` outcome + "⚠ unknown dept" chip; digests: skip + admin notify. | INV-34, INV-45, Operator State #12 |
+| `O-4` | Hand-edited duplicate subscriber rows double-sent digests / queue reports. OPS-9 first-row-wins dedup + `duplicateRow` flag + modal chips (Digest Config key = email+dept; Queue Report Subscribers key = email). | INV-45, Operator State #31 |
+| `O-7` | A day whose QCD landed after the send window closed was silently never reported. Post-window polls flag it ONCE (`QUEUE_REPORT_LAST_MISSED` + MISSED result + one admin email). | Operator State #31 |
+| `O-8` | Alerts modal defaulted to calendar yesterday — every Monday opened on Sunday (guaranteed all-`no-data` preview). Now `prevBusinessDayIso_`. | INV-34 |
+
+Scan findings NOT yet implemented (queued): `R-1` (QCD read-source coverage
+gap — see the Operator State #30 warning), `R-2`/`R-3`, `A-1`…`A-4` (incl. the
+OrphanFix audit-gap + Escalations approve known-dept overclaims), `C-1`…`C-9`
+(client regressions incl. the C-2 tour-replay/Settings mismatch), `T-1`…`T-7`,
+`O-5`/`O-6`, `P-6`…`P-8`.
+
+---
+
 ## Phases & batches (rollout narrative, not rules)
 
 These name *when* something shipped, in commit messages and CLAUDE.md prose:
