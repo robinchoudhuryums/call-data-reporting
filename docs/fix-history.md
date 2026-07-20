@@ -282,6 +282,28 @@ contract:
 (Also from this stretch: the QCD parity gate's ±1s duration tolerance --
 write-time float rounding vs Sheets display rounding, Operator State #30.)
 
+**Owner feedback round 7 (2026-07-20).** Three batches (A = bug fixes,
+B = visual/UX, C = server/ops); code comments cite `R7 (<id>)`:
+
+| Code | What it fixed / added | Live rule lives in |
+|---|---|---|
+| A1 / O-1 | ROOT CAUSE of the opaque chart tooltip + flat missed-bar ramp: canvas fillStyle returns HEX for opaque colors, so `rgbaWithAlpha_`'s rgb()-only regex silently no-op'd on THEME tokens; now delegates to `colorWithAlpha_` | INV-41 bullet note, CLAUDE.md; known-issues |
+| A2 / O-3 | 'selected'/'My Dept' tile badge + mini-table chip are view-as-aware; instant pre-paint on view-as switch; manager wording 'My dept:' | code (`ovBuildGridTile_`, `applyViewAs_`) |
+| A3 / M-1 | Missed-section frost arms at refresh() start (all roles), not only when the missed fetch begins; onError unfrosts | code (`deptMissedFrostArm_`) |
+| A4 / M-4 | Queue-calls per-day sub-note only when workdays > 1 | code (`renderDeptTeamStrip_`) |
+| A5 / I-1 | Calendar v2: ‹ › month pagination (fixed the fixed-height clipping = "only first month"), 'Abd %' metric (queues tab eligible), visible-but-disabled toggle with reason tooltip | Density Phase-2 #10 bullet, CLAUDE.md |
+| A6 / I-3 | Re-runs frost the whole Insights results (SWR paint under it); intro card shows once automatically | Density bullets, CLAUDE.md |
+| A7 / N-1 | ↻ Refresh button in the Insights results header (server cache TTL still applies) | code (`#ins-refresh-btn`) |
+| A8 / N-2 | Zero-activity agents dropped from both cross-agent charts (cards unchanged) | code (`insAgentHasActivity_`) |
+| B1 / O-2 | Global chart animations (400ms easeOutQuart, prefers-reduced-motion off); per-chart `animation:false` opt-outs removed | INV-41 bullet note, CLAUDE.md |
+| B2 / M-3 | Missed bars flipped VERTICAL (workday timeline) + vector clock-face watermark (`missedClockWatermark_`) | INV-41 bullet, CLAUDE.md |
+| B3 / M-5, I-2 | Sticky context toplines (dept · window + ↻) on My Department + Insights (`initStickyBar_`, IntersectionObserver, fixed-position) | code (`.page-sticky-bar`) |
+| B4 / I-4 | seg-rich sub-selector smaller/lighter (accent-soft active); Cards⇄Chart / Gap⇄Absolute one-shot fade | code (`.ins-view-fade`) |
+| C1 / M-2 | getCallJourney miss carries `reason` (before-capture / date-gap / not-captured), probed only when the unscoped lookup was entitled | Inbound bullet, CLAUDE.md |
+| C2 / G-2 | `runNeonCoverageCheck` — per-date sheet-vs-Neon reconciliation + inbound zero-row weekdays; Health `out-coverage` row | Op State #35 + System Health bullet |
+| C3 / G-1 | PipelineWatch aux signals: failed NeonBackup run + read-back streak ≥3, once per episode, OPS-1 markers | Op State #32, CLAUDE.md |
+| C4 / G-3 | `UI_FLAGS` admin surface toggles (curated registry, Health editor, CSS + fetch gates, no redeploy) | Op State #34, CLAUDE.md |
+
 ---
 
 ## Phases & batches (rollout narrative, not rules)
