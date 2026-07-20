@@ -296,6 +296,12 @@
          agent table, and diagnostics. Hidden by default; revealed
          when the user clicks "My Department" in the header. -->
     <section id="dept-page" class="page page-dept">
+      <!-- R7 (M-5): slim sticky context bar -- dept + date range pinned to the
+           top while the controls row is scrolled out (initStickyBar_). -->
+      <div class="page-sticky-bar" id="dept-sticky-bar" aria-hidden="true">
+        <span class="psb-text" id="dept-sticky-text"></span>
+        <button type="button" class="psb-refresh" id="dept-sticky-refresh" title="Refresh the table for this range">&#8635;</button>
+      </div>
       <div id="mock-banner" class="mock-banner" style="display:none;">
         <strong>Mock data.</strong> Step C uses placeholder rows so the UI is verifiable end-to-end before the data layer is wired. Step D replaces this with real reads from <code>DQE Historical Data</code>.
       </div>
@@ -1067,6 +1073,12 @@
        .modal-open-tab-btn class -- the share-state wiring loop keys on the
        class + data-open-tab-route, not on being inside a modal. -->
   <section id="insights-page" class="page page-insights">
+    <!-- R7 (I-2): slim sticky context bar -- dept + report window pinned to
+         the top while the results header is scrolled out (initStickyBar_). -->
+    <div class="page-sticky-bar" id="ins-sticky-bar" aria-hidden="true">
+      <span class="psb-text" id="ins-sticky-text"></span>
+      <button type="button" class="psb-refresh" id="ins-sticky-refresh" title="Re-run the report for the current selection">&#8635;</button>
+    </div>
     <div class="ins-page-body">
       <button class="modal-open-tab-btn" type="button" data-open-tab-route="/report/insights"
               aria-label="Open in new tab" title="Open this report in a new browser tab (for side-by-side viewing)">&#8599;</button>

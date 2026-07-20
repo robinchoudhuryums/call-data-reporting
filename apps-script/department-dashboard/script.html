@@ -250,6 +250,21 @@
     } catch (e) { /* ignore -- fall back to per-chart `plugins` option */ }
   })();
 
+  // R7 (O-2): smooth chart animations, globally. One default -- 400ms
+  // easeOutQuart on create/update -- honoring prefers-reduced-motion (falls
+  // back to Chart.js-off, the established reduced-motion discipline). The
+  // spotlight/pin interactions stay instant (they call update('none'));
+  // per-chart `animation:` options would still win but the old blanket
+  // `animation: false` opt-outs were removed with this change.
+  (function setChartAnimationDefaults_() {
+    if (typeof Chart === 'undefined') return;
+    try {
+      var reduce = false;
+      try { reduce = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches); } catch (e2) {}
+      Chart.defaults.animation = reduce ? false : { duration: 400, easing: 'easeOutQuart' };
+    } catch (e) { /* animations are polish -- never block chart setup */ }
+  })();
+
   // O2: register the "topBand" tooltip positioner once at load. It pins the
   // tooltip to the TOP of the plot area instead of the default 'average'
   // (centered over the hovered index, occluding the lines). Opt-in per chart
@@ -902,6 +917,11 @@
     $('refresh-btn').addEventListener('click', refresh);
     var csvBtn = $('csv-export-btn');
     if (csvBtn) csvBtn.addEventListener('click', exportTableCsv_);
+    // R7 (M-5): sticky context bar -- reveals once the controls row scrolls
+    // out; its ↻ reuses the normal refresh path.
+    initStickyBar_('dept-sticky-bar', '#dept-page .controls', 'dept');
+    var stickyRefresh = $('dept-sticky-refresh');
+    if (stickyRefresh) stickyRefresh.addEventListener('click', refresh);
 
     var colsToggle = $('dept-cols-toggle');
     if (colsToggle) colsToggle.addEventListener('click', function () {
@@ -2755,7 +2775,7 @@
       data: { labels: labels, datasets: datasets },
       plugins: ovPlugins,
       options: {
-        responsive: true, maintainAspectRatio: false, animation: false,
+        responsive: true, maintainAspectRatio: false,
         plugins: {
           legend: Object.assign({
             position: 'bottom',
@@ -4478,13 +4498,62 @@
     return 'rgba(' + p[0].trim() + ',' + p[1].trim() + ',' + p[2].trim() + ',' + a + ')';
   }
 
-  // ALTERNATE missed-calls chart: a HORIZONTAL bar (one bar per 30-min bucket,
-  // 8 AM-5 PM CST) -- far more legible than the radar for reading values +
-  // comparing buckets. Spice-up for "reads like a work day": a COLOR INTENSITY
-  // RAMP (each bar's fill alpha scales with its count, so the busiest stretch
-  // pops), the PEAK bucket outlined + tooltip-flagged, and the count printed
-  // at each bar end. Same shared `chart = {labels, counts}` + bucket-click
-  // drill as the radar.
+  // R7 (M-3): faint clock-face watermark behind the missed-calls BAR chart
+  // (owner ask). Drawn as vectors (circle + ticks + hands) so it's crisp,
+  // theme-safe (muted token at low alpha via the same canvas-resolve path the
+  // charts use), and needs no emoji font. beforeDraw = behind the bars.
+  const missedClockWatermark_ = {
+    id: 'missedClockWatermark',
+    beforeDraw: function (chart) {
+      try {
+        const area = chart.chartArea;
+        if (!area) return;
+        const ctx = chart.ctx;
+        const cx = (area.left + area.right) / 2;
+        const cy = (area.top + area.bottom) / 2;
+        const r = Math.min(area.right - area.left, area.bottom - area.top) * 0.32;
+        if (r < 24) return;   // too small to read as a clock -- skip
+        const stroke = rgbaWithAlpha_(THEME.muted || '#8a8578', 0.14);
+        ctx.save();
+        ctx.strokeStyle = stroke;
+        ctx.lineCap = 'round';
+        // Face
+        ctx.lineWidth = Math.max(2, r * 0.05);
+        ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke();
+        // Hour ticks
+        ctx.lineWidth = Math.max(1.5, r * 0.035);
+        for (let h = 0; h < 12; h++) {
+          const a = (h / 12) * Math.PI * 2;
+          ctx.beginPath();
+          ctx.moveTo(cx + Math.sin(a) * r * 0.86, cy - Math.cos(a) * r * 0.86);
+          ctx.lineTo(cx + Math.sin(a) * r * 0.94, cy - Math.cos(a) * r * 0.94);
+          ctx.stroke();
+        }
+        // Hands (a static ~10:10 -- the classic legible pose)
+        ctx.lineWidth = Math.max(2, r * 0.055);
+        const hand = function (angleDeg, len) {
+          const a = (angleDeg / 360) * Math.PI * 2;
+          ctx.beginPath();
+          ctx.moveTo(cx, cy);
+          ctx.lineTo(cx + Math.sin(a) * r * len, cy - Math.cos(a) * r * len);
+          ctx.stroke();
+        };
+        hand(305, 0.5);    // hour
+        hand(50, 0.72);    // minute
+        ctx.restore();
+      } catch (e) { /* watermark is decoration -- never break the chart */ }
+    }
+  };
+
+  // ALTERNATE missed-calls chart: a VERTICAL bar timeline (one bar per 30-min
+  // bucket, 8 AM-5 PM CST left-to-right -- R7/M-3 swapped the axes from the
+  // earlier horizontal layout so the buckets read as a workday timeline and
+  // fill the wide chart slot). Spice-up for "reads like a work day": a COLOR
+  // INTENSITY RAMP (each bar's fill alpha scales with its count, so the
+  // busiest stretch pops), the PEAK bucket outlined + tooltip-flagged, the
+  // count printed above each bar, and a faint clock watermark behind the
+  // plot. Same shared `chart = {labels, counts}` + bucket-click drill as the
+  // radar.
   function missedBarCfg_(chart, onBucketClick) {
     const counts = (chart.counts || []).map(function (v) { return Number(v) || 0; });
     const abandoned = (chart.abandoned || []).map(function (v) { return Number(v) || 0; });
@@ -4517,15 +4586,14 @@
           borderColor: border,
           borderWidth: borderW,
           borderRadius: 2,
-          maxBarThickness: 16,
+          maxBarThickness: 26,
         }]
       },
+      plugins: [missedClockWatermark_],   // R7 (M-3): faint clock behind the bars
       options: {
-        indexAxis: 'y',                 // horizontal bars
         responsive: true,
         maintainAspectRatio: true,
-        aspectRatio: 1.4,               // wider than the square radar (the .mode-bars
-                                        // CSS lifts the 520px cap so bars use the column)
+        aspectRatio: 2,                 // wide-and-short: the timeline fills the slot
         plugins: {
           legend: { display: false },
           tooltip: {
@@ -4533,22 +4601,31 @@
               title: function (items) {
                 return items[0].label + ' CST' + (items[0].dataIndex === peakIdx && peakVal > 0 ? '  •  peak' : '');
               },
-              label: function (item) { return item.parsed.x + ' missed call' + (item.parsed.x === 1 ? '' : 's'); }
+              label: function (item) { return item.parsed.y + ' missed call' + (item.parsed.y === 1 ? '' : 's'); }
             }
           },
-          // Bars are readable (unlike the radar, INV-41), so SHOW the count at
-          // each bar end. Boolean display + empty-string formatter hides zeros
-          // (avoids the function-form display footgun on this plugin version).
+          // Bars are readable (unlike the radar, INV-41), so SHOW the count
+          // above each bar. Boolean display + empty-string formatter hides
+          // zeros (avoids the function-form display footgun on this plugin
+          // version).
           datalabels: {
             display: true,
-            anchor: 'end', align: 'right', clamp: true,
+            anchor: 'end', align: 'end', clamp: true,
             color: THEME.ink, font: { size: 10 },
             formatter: function (v) { return (Number(v) || 0) > 0 ? v : ''; }
           }
         },
         scales: {
-          x: { beginAtZero: true, ticks: { precision: 0 }, grid: { color: THEME.line } },
-          y: { ticks: { font: { size: 10 } }, grid: { display: false } }
+          // Time buckets on X (workday reads left->right); every other label
+          // shown so 18 buckets don't crowd the half-width column.
+          x: {
+            ticks: {
+              font: { size: 10 }, maxRotation: 0, autoSkip: false,
+              callback: function (v, i) { return i % 2 === 0 ? this.getLabelForValue(v) : ''; }
+            },
+            grid: { display: false }
+          },
+          y: { beginAtZero: true, ticks: { precision: 0 }, grid: { color: THEME.line } }
         },
         onClick: function (evt, items, chartObj) {
           if (!onBucketClick) return;
@@ -5004,6 +5081,28 @@
     host.classList.remove('ds-frost-host');
   }
 
+  // R7 (M-5/I-2): sticky context bar. The bar (position:fixed, hidden by
+  // default) reveals while `sentinel` -- the page's own controls / results
+  // header row -- is scrolled ABOVE the viewport top and its page is active.
+  // IntersectionObserver keeps it scroll-handler-free; a hidden page's
+  // sentinel reports a zeroed rect, which fails the `top < 0` test, so bars
+  // never leak across pages (the fixed bar also lives inside its display:none
+  // page section, which hides it outright on page swaps).
+  function initStickyBar_(barId, sentinelSel, pageName) {
+    const bar = $(barId);
+    const sentinel = document.querySelector(sentinelSel);
+    if (!bar || !sentinel || typeof IntersectionObserver === 'undefined') return;
+    new IntersectionObserver(function (entries) {
+      const en = entries[entries.length - 1];
+      const pageOk = document.body.getAttribute('data-page') === pageName;
+      const gone = !!(en && !en.isIntersecting
+        && en.boundingClientRect && en.boundingClientRect.top < 0);
+      const stuck = pageOk && gone;
+      bar.classList.toggle('is-stuck', stuck);
+      bar.setAttribute('aria-hidden', stuck ? 'false' : 'true');
+    }, { threshold: 0 }).observe(sentinel);
+  }
+
   // Generic trailing-edge debounce. Returns a wrapped fn that defers
   // invocation until `ms` have elapsed since the last call.
   function debounce_(fn, ms) {
@@ -5180,6 +5279,12 @@
       return;
     }
     recordPageWindow_('dept', req.from, req.to);   // Batch E: for the Insights date-sync offer
+    // R7 (M-5): keep the sticky context bar's text current (dept · window).
+    var __stTxt = $('dept-sticky-text');
+    if (__stTxt) {
+      __stTxt.textContent = dept + ' · '
+        + (req.from === req.to ? req.from : req.from + ' – ' + req.to);
+    }
 
     // M3: when the table already holds data for the SAME dept, frost it in
     // place (blur + ripple) rather than showing the top skeleton that pushes
@@ -8280,7 +8385,6 @@
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        animation: false,
         devicePixelRatio: 1,
         plugins: {
           title:   { display: true, text: title },
@@ -11204,6 +11308,11 @@
     // report cache still applies (data refreshes as the 30-min TTL allows).
     const insRefreshBtn = $('ins-refresh-btn');
     if (insRefreshBtn) insRefreshBtn.addEventListener('click', function () { runInsReport(); });
+    // R7 (I-2): sticky context bar -- reveals once the results-header period
+    // slider scrolls out; its ↻ re-runs the report like the header button.
+    initStickyBar_('ins-sticky-bar', '#ins-period-bar', 'insights');
+    const insStickyRefresh = $('ins-sticky-refresh');
+    if (insStickyRefresh) insStickyRefresh.addEventListener('click', function () { runInsReport(); });
     const insQhMissedBtn = $('ins-qh-missed-link');
     if (insQhMissedBtn) insQhMissedBtn.addEventListener('click', function () {
       handoffToMyDept_(($('ins-from') || {}).value, ($('ins-to') || {}).value, { missed: true });
@@ -11905,6 +12014,12 @@
     if (!bar) return;
     const from = meta && meta.from, to = meta && meta.to;
     recordPageWindow_('insights', from, to);   // Batch E: for the My Department date-sync offer
+    // R7 (I-2): keep the sticky context bar's text current (dept · window).
+    const stTxt = $('ins-sticky-text');
+    if (stTxt && from && to) {
+      stTxt.textContent = 'Insights · ' + (getRequestedDept() || '')
+        + ' · ' + (from === to ? from : from + ' – ' + to);
+    }
     let active = 'custom';
     ['last7', 'last30', 'mtd', 'ytd'].some(function (p) {
       const r = insPeriodRange_(p);
@@ -12510,7 +12625,7 @@
       },
       plugins: plugins,
       options: {
-        responsive: true, maintainAspectRatio: false, animation: false,
+        responsive: true, maintainAspectRatio: false,
         plugins: {
           legend: { position: 'right', labels: { boxWidth: 12, font: { size: 12 } } },
           tooltip: {
@@ -13198,7 +13313,7 @@
         type: 'line',
         data: { labels: labels, datasets: datasets },
         options: {
-          responsive: true, maintainAspectRatio: false, animation: false,
+          responsive: true, maintainAspectRatio: false,
           interaction: { mode: 'index', intersect: false },
           onClick: function (evt, items, chartObj) { insTrendPointDrill_(evt, chartObj, daily); },
           plugins: {
@@ -13273,7 +13388,7 @@
           }],
         },
         options: {
-          responsive: true, maintainAspectRatio: false, animation: false,
+          responsive: true, maintainAspectRatio: false,
           onClick: function (evt, items, chartObj) { insTrendPointDrill_(evt, chartObj, daily); },
           plugins: {
             legend: { display: false },
@@ -13750,6 +13865,15 @@
     if (metricWrap) metricWrap.style.display = (chartView && insCardsChartMode !== 'abs') ? '' : 'none';
     if (modeSeg)    modeSeg.style.display = chartView ? '' : 'none';
     if (chartView) insRenderCardsChart_();
+    // R7 (I-4): one-shot fade on whichever view just became visible, so
+    // Cards⇄Chart / Gap⇄Absolute swaps read as a transition, not a pop
+    // (reduced-motion no-ops via CSS).
+    const shownWrap = chartView ? chartWrap : cardsWrap;
+    if (shownWrap) {
+      shownWrap.classList.remove('ins-view-fade');
+      void shownWrap.offsetWidth;   // restart the animation on repeat swaps
+      shownWrap.classList.add('ins-view-fade');
+    }
   }
 
   // Reflect insCardsChartMode on the sub-toggle's buttons (restore + click).
@@ -13824,7 +13948,7 @@
       data: { labels: labels, datasets: [{ label: 'Gap vs team avg', data: gaps,
         backgroundColor: colors, borderColor: colors }] },
       options: {
-        responsive: true, maintainAspectRatio: false, animation: false,
+        responsive: true, maintainAspectRatio: false,
         onClick: function (evt, els) {
           if (els && els.length) {
             const name = labels[els[0].index];
@@ -13922,7 +14046,7 @@
         ],
       },
       options: {
-        responsive: true, maintainAspectRatio: false, animation: false,
+        responsive: true, maintainAspectRatio: false,
         onClick: drill,
         plugins: {
           legend: { position: 'bottom', labels: { boxWidth: 14, font: { size: 11 } } },
@@ -14931,7 +15055,7 @@
         }],
       },
       options: {
-        responsive: true, maintainAspectRatio: false, animation: false,
+        responsive: true, maintainAspectRatio: false,
         plugins: {
           legend: { display: false },
           datalabels: { display: false },
