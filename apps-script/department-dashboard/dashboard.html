@@ -296,6 +296,12 @@
          agent table, and diagnostics. Hidden by default; revealed
          when the user clicks "My Department" in the header. -->
     <section id="dept-page" class="page page-dept">
+      <!-- R7 (M-5): slim sticky context bar -- dept + date range pinned to the
+           top while the controls row is scrolled out (initStickyBar_). -->
+      <div class="page-sticky-bar" id="dept-sticky-bar" aria-hidden="true">
+        <span class="psb-text" id="dept-sticky-text"></span>
+        <button type="button" class="psb-refresh" id="dept-sticky-refresh" title="Refresh the table for this range">&#8635;</button>
+      </div>
       <div id="mock-banner" class="mock-banner" style="display:none;">
         <strong>Mock data.</strong> Step C uses placeholder rows so the UI is verifiable end-to-end before the data layer is wired. Step D replaces this with real reads from <code>DQE Historical Data</code>.
       </div>
@@ -1067,6 +1073,12 @@
        .modal-open-tab-btn class -- the share-state wiring loop keys on the
        class + data-open-tab-route, not on being inside a modal. -->
   <section id="insights-page" class="page page-insights">
+    <!-- R7 (I-2): slim sticky context bar -- dept + report window pinned to
+         the top while the results header is scrolled out (initStickyBar_). -->
+    <div class="page-sticky-bar" id="ins-sticky-bar" aria-hidden="true">
+      <span class="psb-text" id="ins-sticky-text"></span>
+      <button type="button" class="psb-refresh" id="ins-sticky-refresh" title="Re-run the report for the current selection">&#8635;</button>
+    </div>
     <div class="ins-page-body">
       <button class="modal-open-tab-btn" type="button" data-open-tab-route="/report/insights"
               aria-label="Open in new tab" title="Open this report in a new browser tab (for side-by-side viewing)">&#8599;</button>
@@ -1191,6 +1203,11 @@
                  hand-off lives on the My Department page (#dept-insights-strip). -->
             <button class="btn btn-secondary" id="ins-open-mydept-btn" type="button"
                     title="Open the My Department agent table for this department and the same date range.">My Department &#8594;</button>
+            <!-- R7 (N-1): re-run the report for the current selection (frosts
+                 the results while the fresh fetch runs; server cache still
+                 applies, so data refreshes as the 30-min report TTL allows). -->
+            <button class="btn btn-secondary" id="ins-refresh-btn" type="button"
+                    title="Re-run this report for the current dates, comparison, and agent selection.">&#8635; Refresh</button>
             <div class="ir-export-wrap">
               <button class="btn btn-secondary" id="ins-export-btn" type="button" aria-haspopup="menu" aria-expanded="false">
                 Export <span class="ir-export-caret">&#9662;</span>
@@ -1794,6 +1811,22 @@
           <thead><tr><th>Check</th><th>Status</th><th>Detail</th></tr></thead>
           <tbody id="health-tbody"></tbody>
         </table>
+        <!-- R7 (G-3): admin UI-surface toggles (UI_FLAGS Script Property).
+             Checked = hidden for ALL viewers; presentation-only escape hatch
+             while a surface is being fixed/investigated. -->
+        <div class="al-section" id="health-uiflags-section" style="display:none;">
+          <div class="al-section-title">UI surface toggles</div>
+          <p class="al-hint">
+            Hide a dashboard surface for <strong>all users</strong> while it's being
+            fixed or investigated. Presentation-only — data, endpoints, and caches
+            are unchanged; viewers pick a change up on their next page load. No redeploy.
+          </p>
+          <div id="health-uiflags-list" class="health-uiflags-list">Loading…</div>
+          <div class="esc-resolve-actions">
+            <button class="btn" id="health-uiflags-save" type="button">Save toggles</button>
+            <span id="health-uiflags-status" class="al-hint"></span>
+          </div>
+        </div>
         <div class="al-section" id="health-backup-section" style="display:none;">
           <div class="al-section-title">Neon backup</div>
           <p class="al-hint">
@@ -2607,6 +2640,9 @@
     // S5: company-holiday ranges ([{from, to}] ISO, from COMPANY_HOLIDAYS)
     // so the CR/Insights form hints' working-day counts match the server's.
     window.__COMPANY_HOLIDAYS__ = <?!= companyHolidaysJson ?>;
+    // R7 (G-3): admin UI-surface toggles (UI_FLAGS Script Property; keys from
+    // the Config.gs UI_FLAG_SURFACES registry). Applied as body[data-ui-flags].
+    window.__UI_FLAGS__ = <?!= uiFlagsJson ?>;
   </script>
   <?!= include_('script') ?>
 </body>

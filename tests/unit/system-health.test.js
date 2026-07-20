@@ -277,3 +277,33 @@ test('O-5: a healthy "Sent ..." queue-report outcome stays green', function () {
   const data = h.call('getSystemHealth');
   assert.equal(rowByKey(data, 'out-queuereport').status, 'ok');
 });
+
+// ── R7 (G-3): UI surface toggles (UI_FLAGS) ──────────────────────────────
+
+test('uiflags: sanitize dedupes, lowercases, drops unknown keys (tolerant grammar)', function () {
+  const out = h.ctx.uiFlagsSanitize_(
+    ' dept-team-strip , NOPE, Ins-Heatmap, dept-team-strip ,, ov-user-table ');
+  assert.deepEqual(Array.from(out), ['dept-team-strip', 'ins-heatmap', 'ov-user-table']);
+  assert.deepEqual(Array.from(h.ctx.uiFlagsSanitize_(null)), []);
+  assert.deepEqual(Array.from(h.ctx.uiFlagsSanitize_(['dept-qcd-side', 'garbage'])), ['dept-qcd-side']);
+});
+
+test('uiflags: save is admin-gated; writes the property, clears it when empty', function () {
+  h.state.userEmail = 'stranger@x.com';
+  h.state.props = { ADMIN_EMAILS: 'admin@x.com', SPREADSHEET_ID: 'fake' };
+  h.state.spreadsheet = makeFakeSpreadsheet({ sheets: { 'DO NOT EDIT!': [['h']] } });
+  assert.throws(function () { h.call('saveUiFlags', { flags: ['dept-team-strip'] }); }, /admin/i);
+
+  h.state.userEmail = 'admin@x.com';
+  const saved = h.call('saveUiFlags', { flags: ['dept-team-strip', 'bogus', 'ins-queue-health'] });
+  assert.deepEqual(Array.from(saved.flags), ['dept-team-strip', 'ins-queue-health']);
+  assert.equal(h.state.props.UI_FLAGS, 'dept-team-strip,ins-queue-health');
+
+  const read = h.call('getUiFlags');
+  assert.deepEqual(Array.from(read.flags), ['dept-team-strip', 'ins-queue-health']);
+  assert.ok(read.registry && read.registry['dept-missed-section'], 'registry ships to the editor');
+
+  const cleared = h.call('saveUiFlags', { flags: [] });
+  assert.deepEqual(Array.from(cleared.flags), []);
+  assert.equal(h.state.props.UI_FLAGS, undefined, 'empty set deletes the property');
+});

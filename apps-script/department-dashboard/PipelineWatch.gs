@@ -45,6 +45,10 @@
 
 var PIPELINE_WATCH_DEFAULT_SCAN_ROWS = 300;
 var PIPELINE_WATCH_MAX_EMAIL_ROWS = 25;   // cap the digest body (a burst can be large)
+// R7 (G-1): the read-back streak must reach this many consecutive failures
+// before the watchdog emails -- a single blip self-heals via
+// clearNeonReadFailure_ and shouldn't page anyone.
+var PIPELINE_WATCH_READBACK_MIN_STREAK = 3;
 
 // ── Public (admin-gated) API ──────────────────────────────────────────
 
@@ -92,9 +96,24 @@ function runPipelineWatch_() {
     var props = PropertiesService.getScriptProperties();
     if (String(props.getProperty('PIPELINE_WATCH_ENABLED') || '') !== 'true') return;
 
+    // R7 (G-1): two property-backed signals ride the same hourly cadence --
+    // a NeonBackup run that didn't end 'ok', and a sustained Neon read-back
+    // failure streak (NEON_READ_LAST_ERROR). Each alerts once per episode
+    // (its own marker property), and markers advance only on a CONFIRMED
+    // send (OPS-1). Computed up front so the pipeline scan's early returns
+    // can still dispatch an aux-only email.
+    var aux = pipelineWatchAuxDecide_({
+      backupResult: props.getProperty('NEON_BACKUP_LAST_RESULT'),
+      backupAt:     props.getProperty('NEON_BACKUP_LAST'),
+      backupMark:   props.getProperty('PIPELINE_WATCH_BACKUP_MARK'),
+      readErrRaw:   props.getProperty('NEON_READ_LAST_ERROR'),
+      readMark:     props.getProperty('PIPELINE_WATCH_READBACK_MARK'),
+      minStreak:    PIPELINE_WATCH_READBACK_MIN_STREAK,
+    });
+
     var scanRows = pipelineWatchScanRows_(props.getProperty('PIPELINE_WATCH_SCAN_ROWS'));
     var rows = pipelineWatchReadRows_(scanRows);
-    if (!rows.length) return;   // empty / missing sheet -- nothing to do
+    if (!rows.length) { pipelineWatchAuxDispatch_(props, aux); return; }   // empty / missing sheet
 
     var lastTsRaw = props.getProperty('PIPELINE_WATCH_LAST_TS');
     var firstRun = (lastTsRaw == null || lastTsRaw === '');
@@ -124,6 +143,7 @@ function runPipelineWatch_() {
       // keeps the System Health outcome row green (OPS-8: its classifier paints
       // amber on a "fail"/"error" substring UNLESS the result starts with "ok").
       pipelineWatchRecord_(props, scan.maxTsMs, 'ok (baseline established)');
+      pipelineWatchAuxDispatch_(props, aux);   // R7 (G-1): aux signals still fire
       return;
     }
 
@@ -132,11 +152,14 @@ function runPipelineWatch_() {
       // prefix so the healthy "no new failures" line doesn't read as a warning
       // via the OPS-8 "failures" substring.
       pipelineWatchRecord_(props, Math.max(sinceMs, scan.maxTsMs), 'ok (no new failures)');
+      pipelineWatchAuxDispatch_(props, aux);   // R7 (G-1): aux signals still fire
       return;
     }
 
-    var sent = notifyPipelineFailures_(scan.newFailures);
+    // R7 (G-1): fold any aux alerts into the same failure digest email.
+    var sent = notifyPipelineFailures_(scan.newFailures, aux.alerts);
     if (sent) {
+      pipelineWatchAuxCommit_(props, aux);   // markers advance only on a confirmed send
       pipelineWatchRecord_(props, Math.max(sinceMs, scan.maxTsMs),
         scan.newFailures.length + ' failure(s) emailed');
     } else {
@@ -203,12 +226,96 @@ function pipelineWatchScan_(rows, sinceMs) {
 }
 
 /**
- * Emails the admins a digest of the new failures. Returns TRUE only on a
- * confirmed send (OPS-1); a swallowed MailApp failure / no-admins returns
- * false so the caller leaves the watermark un-advanced and retries.
+ * R7 (G-1) pure decision (unit-tested): which property-backed signals should
+ * alert this run, and how the dedup markers should move afterward.
+ *
+ * Inputs (all raw property strings, null when unset):
+ *   backupResult/backupAt - NEON_BACKUP_LAST_RESULT / NEON_BACKUP_LAST
+ *   backupMark            - PIPELINE_WATCH_BACKUP_MARK (the backupAt already alerted)
+ *   readErrRaw             - NEON_READ_LAST_ERROR (JSON {at,label,message,count})
+ *   readMark               - PIPELINE_WATCH_READBACK_MARK ('' unset; set = this streak alerted)
+ *   minStreak              - consecutive failures before the read-back alerts
+ *
+ * Returns { alerts: [line strings], backupMarkNext, readMarkNext } where a
+ * markNext of undefined = leave as-is, '' = CLEAR, string = SET. Rules:
+ *   backup:   alert once per failed RUN (identity = its NEON_BACKUP_LAST
+ *             timestamp); an ok-prefixed result clears the marker.
+ *   read-back: alert once per STREAK when count >= minStreak; the marker
+ *             clears when the property clears (a successful DQE read).
  */
-function notifyPipelineFailures_(failures) {
+function pipelineWatchAuxDecide_(s) {
+  s = s || {};
+  var alerts = [];
+  var out = { alerts: alerts, backupMarkNext: undefined, readMarkNext: undefined };
+
+  var br = String(s.backupResult || '');
+  if (br && !/^ok\b/i.test(br)) {
+    if (s.backupAt && s.backupAt !== s.backupMark) {
+      alerts.push('Neon backup — last run did not complete cleanly: ' + br.slice(0, 300)
+        + (s.backupAt ? ' (run at ' + s.backupAt + ')' : '')
+        + '. These tables have NO sheet fallback (Operator State #28).');
+      out.backupMarkNext = s.backupAt;
+    }
+  } else if (s.backupMark) {
+    out.backupMarkNext = '';   // healthy again -> re-arm for the next failed run
+  }
+
+  if (s.readErrRaw) {
+    var rec = null;
+    try { rec = JSON.parse(s.readErrRaw); } catch (e) { rec = null; }
+    var count = rec ? (Number(rec.count) || 0) : 0;
+    if (count >= (s.minStreak || 1) && !s.readMark) {
+      alerts.push('Neon read-back — ' + count + ' consecutive DQE read failure(s); reads are '
+        + 'silently falling back to the sheet (last: '
+        + ((rec && rec.message) || 'unknown') + ((rec && rec.at) ? ' at ' + rec.at : '')
+        + '). Sustained outage serves aging data (Operator State #19).');
+      out.readMarkNext = 'alerted@' + count;
+    }
+  } else if (s.readMark) {
+    out.readMarkNext = '';   // streak cleared -> re-arm
+  }
+  return out;
+}
+
+/** Applies the decided marker moves (post-confirmed-send only, OPS-1). */
+function pipelineWatchAuxCommit_(props, aux) {
   try {
+    var apply = function (key, next) {
+      if (next === undefined) return;
+      if (next === '') props.deleteProperty(key);
+      else props.setProperty(key, next);
+    };
+    apply('PIPELINE_WATCH_BACKUP_MARK', aux.backupMarkNext);
+    apply('PIPELINE_WATCH_READBACK_MARK', aux.readMarkNext);
+  } catch (e) { /* best-effort */ }
+}
+
+/**
+ * Aux-only dispatch for the scan's early-return paths: send the aux alerts as
+ * their own email (when any), committing markers only on a confirmed send.
+ * Marker CLEARS (healthy-again re-arms) are always safe to apply -- they send
+ * nothing -- so a no-alert decision still commits.
+ */
+function pipelineWatchAuxDispatch_(props, aux) {
+  try {
+    if (!aux) return;
+    if (!aux.alerts.length) { pipelineWatchAuxCommit_(props, aux); return; }
+    var sent = notifyPipelineFailures_([], aux.alerts);
+    if (sent) pipelineWatchAuxCommit_(props, aux);
+  } catch (e) { /* best-effort */ }
+}
+
+/**
+ * Emails the admins a digest of the new failures (and/or the R7 aux signal
+ * alerts -- backup / read-back). Returns TRUE only on a confirmed send
+ * (OPS-1); a swallowed MailApp failure / no-admins returns false so the
+ * caller leaves the watermark + aux markers un-advanced and retries.
+ */
+function notifyPipelineFailures_(failures, auxLines) {
+  try {
+    failures = failures || [];
+    auxLines = auxLines || [];
+    if (!failures.length && !auxLines.length) return false;
     var to = getAdminEmails_().join(',');
     if (!to) return false;
     var url = PropertiesService.getScriptProperties().getProperty('DASHBOARD_URL') || '';
@@ -221,18 +328,27 @@ function notifyPipelineFailures_(failures) {
     var more = failures.length > PIPELINE_WATCH_MAX_EMAIL_ROWS
       ? ('\n  … and ' + (failures.length - PIPELINE_WATCH_MAX_EMAIL_ROWS) + ' more.') : '';
     var n = failures.length;
-    MailApp.sendEmail({
-      to:      to,
-      subject: '[Dashboard] Pipeline failure' + (n === 1 ? '' : 's') + ': ' + n + ' new',
-      body:    n + ' new Pipeline Health failure' + (n === 1 ? '' : 's') + ' logged:\n\n'
-             + lines.join('\n') + more + '\n\n'
-             + 'Each is a pipeline step whose run logged a failure. Investigate via:\n'
-             + '  1. System Health (Admin ▾ → Health) — "Recent pipeline step failures"\n'
-             + '  2. The cdr-import / cdr-report execution log for the failing step\n'
-             + '  3. Pipeline Health sheet (Alerts modal → Pipeline Health)\n'
-             + (url ? '\nDashboard: ' + url + '\n' : '')
-             + '\nOne email per new batch; you will not be re-alerted for these same rows.',
-    });
+    var body = '';
+    if (n) {
+      body += n + ' new Pipeline Health failure' + (n === 1 ? '' : 's') + ' logged:\n\n'
+            + lines.join('\n') + more + '\n\n'
+            + 'Each is a pipeline step whose run logged a failure. Investigate via:\n'
+            + '  1. System Health (Admin ▾ → Health) — "Recent pipeline step failures"\n'
+            + '  2. The cdr-import / cdr-report execution log for the failing step\n'
+            + '  3. Pipeline Health sheet (Alerts modal → Pipeline Health)\n';
+    }
+    if (auxLines.length) {
+      body += (n ? '\n' : '') + 'Other monitored signals:\n\n'
+            + auxLines.map(function (a) { return '  • ' + a; }).join('\n') + '\n';
+    }
+    body += (url ? '\nDashboard: ' + url + '\n' : '')
+          + '\nOne email per new batch/episode; you will not be re-alerted for these same items.';
+    var subject = n
+      ? '[Dashboard] Pipeline failure' + (n === 1 ? '' : 's') + ': ' + n + ' new'
+        + (auxLines.length ? ' (+' + auxLines.length + ' signal(s))' : '')
+      : '[Dashboard] Monitoring signal' + (auxLines.length === 1 ? '' : 's') + ': '
+        + auxLines.length + ' new';
+    MailApp.sendEmail({ to: to, subject: subject, body: body });
     return true;
   } catch (mailErr) {
     Logger.log('notifyPipelineFailures_ mail failed: ' + mailErr);

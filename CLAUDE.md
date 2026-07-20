@@ -87,7 +87,9 @@ bash scripts/check-duplicated-files.sh
 # inbound-qcd-parity, inbound-calls (capture incl. the R5
 # direct-stage/first_agent pins), sheet-repairs-merge, dept-config-neon
 # / config-neon-c3, escalations-hardening, caller-lookup,
-# access-control-editor, cache-version-sync (doc↔code cache-pin drift).
+# access-control-editor, neon-coverage (the R7 sheet-vs-Neon
+# reconciliation's pure pieces), cache-version-sync (doc↔code cache-pin
+# drift).
 # See tests/README.md for design + how to add tests. The neonWrite JDBC
 # writers are pinned end-to-end (chunking/commit discipline +
 # field mappings, neon-write-mapping.test.js).
@@ -481,7 +483,13 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   predicate) is gated for managers by `callIdInDeptMissedReport_`, which
   requires the id to appear as an abandoned parent id in the manager's
   OWN dept's Missed report for that date (admins ungated; fail-closed on
-  any error). The journey carries no caller identity. Client reuses the Caller Lookup renderers
+  any error). Since R7 (M-2) a MISS carries a `reason` -- `'before-capture'`
+  (+`minDate`) / `'date-gap'` (zero inbound rows for the date -- see the
+  Neon coverage check, Op State #35) / `'not-captured'` (date has rows;
+  this call wasn't a captured inbound call) -- probed via one cheap
+  MIN/EXISTS query ONLY when the unscoped lookup was entitled to run, so a
+  gate-closed manager learns nothing; the client renders the matching
+  actionable note. The journey carries no caller identity. Client reuses the Caller Lookup renderers
   (`clChainHtml_`/`clJourneyRowHtml_`) in a lightweight `#call-journey-overlay`.
   There is NO sheet primary for this data: the "Inbound Calls" tab
   (`cdr-report/inboundCallsExport.js::exportInboundCalls`,
@@ -871,8 +879,10 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   popover's compare/prior/agent controls live behind an **Advanced
   options** `<details>` (`#ins-edit-advanced`, field IDs unchanged;
   auto-opens when the current report uses a custom prior or a partial
-  agent selection); a dismissible first-run intro card
-  (`#ins-intro-card`, localStorage `cdr.ins.intro.v1`); the #6 all-clear
+  agent selection); a first-run intro card
+  (`#ins-intro-card`, localStorage `cdr.ins.intro.v1` -- since R7/I-3 it
+  shows ONCE, period: the first render auto-marks it seen, no click
+  required; the dismiss button still hides it immediately); the #6 all-clear
   headline line (renders only when NO agent is behind team AND
   |team pct delta| <= `INS_ALLCLEAR_MAX_PTS_`=1.5 pts); and the #7
   small-sample guard (`INS_SMALL_SAMPLE_PER_AGENT_`=10 avg answerable
@@ -899,10 +909,24 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   colored by the existing benchmarks (Answer % vs the 92% target;
   Missed as a warn intensity ramp) with the number in-cell, per-day
   click-drill via the shared `insDrillToRange_` (extracted from the
-  trend-point drill); offered only for 14–366-day windows
+  trend-point drill); eligible for 14–366-day windows
   (`INS_CALENDAR_MIN/MAX_DAYS_` — the MM-DD daily labels must stay
   unambiguous), Detailed-only by construction (the whole trend hides in
-  Simple). (#9) `sendInsightsReportEmail` accepts `style:'summary'`
+  Simple). **Calendar v2 (R7/I-1):** one MONTH renders per view with
+  ‹ › month pagination (`insCalMonth_`, defaults to the MOST RECENT
+  month, resets on window change — the old all-weeks render CLIPPED
+  past month 1 inside the fixed-height chart wrap, which calendar mode
+  now also releases via `.ir-chart-wrap--cal`); a third **'Abd %'**
+  cell metric (`insCalMetric='abd'`, dept-total daily abandoned % from
+  `queueHealth.dailySeries`, colored on the 5% standard) makes the
+  QUEUES trend tab calendar-eligible too (entering Calendar from that
+  tab auto-selects it; a saved 'abd' pref self-heals to 'pct' when the
+  dept has no queue daily series; ATT stays line-only); and the
+  Line⇄Calendar toggle stays VISIBLE but disabled with a reason
+  tooltip (`insCalendarIneligibleReason_`) on ineligible tabs/windows
+  instead of vanishing (the discoverability fix — it used to hide
+  entirely, which read as "the calendar view is gone" whenever the
+  saved trend-tab pref was Abd %/ATT). (#9) `sendInsightsReportEmail` accepts `style:'summary'`
   (Export → **Email summary**): `renderInsightsEmailSummary_`
   (Digest.gs) sends takeaway + rollup tiles + ONLY the behind-team
   list (answer rate below the team average, min
@@ -1601,8 +1625,17 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `SMOKE_LAST`/`SMOKE_LAST_RESULT`. It complements the unit harness (live
   wiring: properties, scopes, sheets, Neon) -- client-side surfaces (deep
   links, tour, modals) still need the manual Regression Scenarios. Run it
-  after every deploy. Both pinned by `system-health.test.js` /
-  `smoke-check.test.js`.
+  after every deploy. And (c) **Neon coverage — `runNeonCoverageCheck`**
+  (NeonCoverage.gs, R7/G-2; editor-run, admin-gated, READ-ONLY): per-date
+  sheet-vs-Neon row-count reconciliation over `NEON_COVERAGE_DAYS` (=30,
+  ending yesterday) for dqe/qcd/cdr/direct history (findings classified
+  missing-in-neon / count-mismatch / extra-in-neon, each emailed with its
+  runbook fix) plus `inbound_calls` zero-row-WEEKDAY gaps (holiday-aware,
+  floored at the capture-start MIN(call_date)); outcome OPS-8-coded in
+  `NEON_COVERAGE_LAST(_RESULT)` and surfaced as the "Neon coverage — last
+  check" row (Op State #35; the outcome classifier also flags a `GAPS`
+  prefix). All pinned by `system-health.test.js` / `smoke-check.test.js` /
+  `neon-coverage.test.js`.
 - **Neon read-back (F1) is flag-gated and defaults OFF.** The dashboard
   still reads DQE from the `DQE Historical Data` sheet by default; the
   read-back lives in `NeonRead.gs` behind the `DQE_READ_SOURCE` Script
@@ -2703,6 +2736,17 @@ items for anything it flags or doesn't cover.)
     carries count + dept names ONLY (never caller/patient/reason), so it
     composes safely with `NOTIFY_ON_NEW_ESCALATION` (the full-detail PII
     surface) staying off. Pinned by tests/unit/escalations-hardening.test.js.
+    **R7 (G-1) aux signals:** each hourly run ALSO folds in two
+    property-backed alerts (pure `pipelineWatchAuxDecide_`, pinned by
+    pipeline-watch.test.js): a NeonBackup run whose `NEON_BACKUP_LAST_RESULT`
+    isn't ok-prefixed (incl. 'skipped — unreachable'; once per run timestamp
+    via `PIPELINE_WATCH_BACKUP_MARK`, re-arms on an ok run) and a Neon
+    read-back failure streak (`NEON_READ_LAST_ERROR` count >=
+    `PIPELINE_WATCH_READBACK_MIN_STREAK`=3; once per streak via
+    `PIPELINE_WATCH_READBACK_MARK`, re-arms when the property clears). Both
+    markers advance ONLY on a confirmed send (OPS-1); alerts fold into the
+    failure digest or send standalone on the scan's early-return paths.
+    They fire only while the PipelineWatch trigger is installed.
 33. `DIAL_IN_LABELS` Script Property (dashboard; optional, R5) -- names the
     MAIN dial-in lines in the Inbound report's "By advertised line" table.
     Comma-separated `number = Label` pairs (e.g. `18668646332 = Main CSR
@@ -2712,6 +2756,42 @@ items for anything it flags or doesn't cover.)
     first-rung agent (`inbound_calls.first_agent` -- populates going
     forward / on re-import) > the raw number. Agents' direct DIDs usually
     need no entry; only the shared/IVR main lines do.
+
+34. `UI_FLAGS` Script Property (dashboard; optional, R7/G-3) -- admin
+    UI-surface toggles. Comma-separated keys from the CURATED
+    `Config.gs::UI_FLAG_SURFACES` registry (dept-team-strip,
+    dept-queue-tiles, dept-missed-section, dept-qcd-side, ov-user-table,
+    ins-heatmap, ins-queue-health); each listed key HIDES that surface for
+    ALL viewers (presentation-only -- data/endpoints/caches unchanged) while
+    it's being fixed or investigated. Managed from the Health page's
+    **"UI surface toggles"** editor (`getUiFlags`/`saveUiFlags`,
+    SystemHealth.gs -- assertAdmin_ + registry validation + LockService +
+    Logger audit; empty set deletes the property); unknown keys are silently
+    dropped (`uiFlagsSanitize_`, the Skip Dates grammar discipline).
+    Injected as `window.__UI_FLAGS__` (renderDashboard_) -> stamped on
+    `body[data-ui-flags]` -> enumerated `!important` CSS rules in
+    styles.html (which beat the render paths' inline display), plus fetch
+    gates so hidden sections don't still call the server. Changes apply on
+    each viewer's NEXT page load -- no redeploy. Adding a surface = registry
+    key + CSS rule + optional fetch gate.
+35. Neon coverage check (optional but recommended; `NeonCoverage.gs`,
+    dashboard; R7/G-2). Editor-run `runNeonCoverageCheck()` (admin,
+    READ-ONLY) reconciles per-date row counts sheet-vs-Neon over
+    `NEON_COVERAGE_DAYS` (default 30, ending yesterday) for `dqe_history`,
+    `qcd_history`, `call_history_dept`, `direct_call_history` -- findings
+    per date: missing-in-neon / count-mismatch / extra-in-neon (phantoms),
+    each emailed with its runbook fix (force re-import /
+    `backfillDQEHistoryUpsert` / `backfillCDRHistory` /
+    `backfillDirectCallToNeon`) -- and flags `inbound_calls` zero-row
+    WEEKDAYS (holiday-aware, floored at the capture-start MIN(call_date);
+    days past the ~14-day Call_Legs retention are unrecoverable, IMP-11).
+    Outcome in `NEON_COVERAGE_LAST(_RESULT)` ('ok clean' / 'GAPS n
+    finding(s)' / 'FAILED*'), surfaced as the Health page's "Neon coverage
+    -- last check" row. Complements the MAX(call_date)-only mirror-health
+    lines (#19/#30): those catch a LAGGING mirror; this catches INTERIOR
+    gaps and count drift. Run after deploys that touched mirrors, or when
+    a journey drill reports a 'date-gap'. It never writes -- remediation is
+    always the existing idempotent re-import/backfill paths.
 
 ## Cycle Workflow Config
 
@@ -2742,7 +2822,7 @@ Data Accuracy (DQE), Access Control Integrity, Source Pipeline Reliability, Migr
 
 ### Subsystems
 Department Dashboard:
-  apps-script/department-dashboard/Auth.gs, apps-script/department-dashboard/Code.gs, apps-script/department-dashboard/Config.gs, apps-script/department-dashboard/Data.gs, apps-script/department-dashboard/Diagnostics.gs, apps-script/department-dashboard/Setup.gs, apps-script/department-dashboard/Util.gs, apps-script/department-dashboard/NeonRead.gs, apps-script/department-dashboard/NeonKeepWarm.gs, apps-script/department-dashboard/CacheWarm.gs, apps-script/department-dashboard/IngestWatchdog.gs, apps-script/department-dashboard/PipelineWatch.gs, apps-script/department-dashboard/NeonBackup.gs, apps-script/department-dashboard/SystemHealth.gs, apps-script/department-dashboard/SmokeCheck.gs, apps-script/department-dashboard/MissedCallsReport.gs, apps-script/department-dashboard/IndividualReport.gs, apps-script/department-dashboard/InsightsReport.gs, apps-script/department-dashboard/InboundReport.gs, apps-script/department-dashboard/DirectCallReport.gs, apps-script/department-dashboard/CallerLookup.gs, apps-script/department-dashboard/Alerts.gs, apps-script/department-dashboard/CompanyOverview.gs, apps-script/department-dashboard/Digest.gs, apps-script/department-dashboard/QueueReportEmail.gs, apps-script/department-dashboard/OrphanFix.gs, apps-script/department-dashboard/QCDReport.gs, apps-script/department-dashboard/DeptConfig.gs, apps-script/department-dashboard/Escalations.gs, apps-script/department-dashboard/access_denied.html, apps-script/department-dashboard/dashboard.html, apps-script/department-dashboard/script.html, apps-script/department-dashboard/styles.html, apps-script/department-dashboard/appsscript.json
+  apps-script/department-dashboard/Auth.gs, apps-script/department-dashboard/Code.gs, apps-script/department-dashboard/Config.gs, apps-script/department-dashboard/Data.gs, apps-script/department-dashboard/Diagnostics.gs, apps-script/department-dashboard/Setup.gs, apps-script/department-dashboard/Util.gs, apps-script/department-dashboard/NeonRead.gs, apps-script/department-dashboard/NeonKeepWarm.gs, apps-script/department-dashboard/CacheWarm.gs, apps-script/department-dashboard/IngestWatchdog.gs, apps-script/department-dashboard/PipelineWatch.gs, apps-script/department-dashboard/NeonBackup.gs, apps-script/department-dashboard/NeonCoverage.gs, apps-script/department-dashboard/SystemHealth.gs, apps-script/department-dashboard/SmokeCheck.gs, apps-script/department-dashboard/MissedCallsReport.gs, apps-script/department-dashboard/IndividualReport.gs, apps-script/department-dashboard/InsightsReport.gs, apps-script/department-dashboard/InboundReport.gs, apps-script/department-dashboard/DirectCallReport.gs, apps-script/department-dashboard/CallerLookup.gs, apps-script/department-dashboard/Alerts.gs, apps-script/department-dashboard/CompanyOverview.gs, apps-script/department-dashboard/Digest.gs, apps-script/department-dashboard/QueueReportEmail.gs, apps-script/department-dashboard/OrphanFix.gs, apps-script/department-dashboard/QCDReport.gs, apps-script/department-dashboard/DeptConfig.gs, apps-script/department-dashboard/Escalations.gs, apps-script/department-dashboard/access_denied.html, apps-script/department-dashboard/dashboard.html, apps-script/department-dashboard/script.html, apps-script/department-dashboard/styles.html, apps-script/department-dashboard/appsscript.json
 
 CDR DQE Pipeline:
   apps-script/cdr-report/buildDQEHistoricalData.js, apps-script/cdr-report/DQEdrilldown.js, apps-script/cdr-report/DQEDrilldownSidebar.html, apps-script/cdr-report/dataFilters.js, apps-script/cdr-report/CDR Tools menu.js, apps-script/cdr-report/appsscript.json
@@ -2797,7 +2877,7 @@ INV-37 | The dashboard is a multi-PAGE web app toggled via `body[data-page="over
 INV-38 | `OVERVIEW_PARENT_OF` (CompanyOverview.gs) defines sub-queue parent-child relationships for the Overview tile grid ONLY. The dept dropdown, all Reports modals, and Alerts treat each dept as independent. Keys must match the `DO NOT EDIT!` column header byte-for-byte; aliases (e.g. both `PAP` and `PAP Q` mapping to Sales) are tolerated. The constant is the seed default; the Dept Config sheet can override a dept's parent per dept (read through `getOverviewParentMap_`, save-time validated against real dept headers + cycle check -- INV-54). `OVERVIEW_HIDDEN_DEPTS` excludes depts from the Overview only (e.g. `CSR Backup`). | Subsystem: Department Dashboard
 INV-39 | Admin-only fields in the Overview payload are stripped on serve via `personalizeOverview_`: the full blob (including all admin-only fields) is cached for everyone, but the admin-only fields (`companyAggregate`, `pipelineFreshness`, `orphanNag`, `unmappedQcd`) are removed before serving non-admins. `personalizeOverview_` deep-clones via JSON round-trip so any future personalize step that mutates nested fields can't leak across viewers; if that clone ever fails it fails CLOSED (admins get a shallow copy since they see everything anyway, non-admins get a minimal driver-free view) rather than the old shallow-copy-then-mutate path that would have mutated the shared cached blob. Viewer-personalized fields `viewerRole` and `viewerDept` are injected per-request, never cached — so a payload warmed by user A still personalizes correctly for user B. Adding a new admin-only Overview field means adding its key to the strip list inside `personalizeOverview_`. | Subsystem: Department Dashboard
 INV-40 | Overview "X of Y agents" caption denominator is `recentlyActiveCount` = any rung/answered/missed activity in the last `OVERVIEW_RECENT_ACTIVE_DAYS` (=30) days, NOT full roster size. Filters out ex-employees who are kept on the `DO NOT EDIT!` sheet for historical-data preservation. Hover tooltip exposes today-active / recent-active / full-roster numbers so the choice is transparent. Same logic powers the company aggregate's Active count. | Subsystem: Department Dashboard
-INV-41 | chartjs-plugin-datalabels requires `Chart.register(ChartDataLabels)` AND `Chart.defaults.plugins.datalabels.display = true` at module load (the `registerChartDataLabels_` IIFE in script.html does both). Chart.js v4 dropped script-tag auto-registration; the plugin defaults to display=false since v1.0.0. Per-chart `display: false` overrides still suppress labels (Missed Calls **radar** mode, Overview multi-line trend). Use the boolean form of `display` per chart — the function form returns false unpredictably on mixed bar+line charts in this plugin version. **Missed Calls bars/radar toggle (Track A):** the missed-calls chart (the My Department missed section -- the standalone modal it also served is retired) has a Bars/Radar toggle (`missedChartCfg_` dispatches `missedBarCfg_` / `missedRadarCfg_`; mode persisted in `localStorage` `cdr.missed.chartmode`, default `bars`). The BAR mode (horizontal, one bar per 30-min bucket) turns datalabels ON (boolean display + empty-string formatter to hide zero buckets -- readable, unlike the radar) and spices up the work-day read with a color INTENSITY RAMP (per-bar fill alpha scales with count via `rgbaWithAlpha_(THEME.warn,...)`) + the peak bucket outlined. A toggle re-render is guarded to charts that are instantiated AND visible (`offsetParent`) so it never rebuilds a hidden chart at zero size. | Subsystem: Department Dashboard
+INV-41 | chartjs-plugin-datalabels requires `Chart.register(ChartDataLabels)` AND `Chart.defaults.plugins.datalabels.display = true` at module load (the `registerChartDataLabels_` IIFE in script.html does both). Chart.js v4 dropped script-tag auto-registration; the plugin defaults to display=false since v1.0.0. Per-chart `display: false` overrides still suppress labels (Missed Calls **radar** mode, Overview multi-line trend). Use the boolean form of `display` per chart — the function form returns false unpredictably on mixed bar+line charts in this plugin version. **Missed Calls bars/radar toggle (Track A):** the missed-calls chart (the My Department missed section -- the standalone modal it also served is retired) has a Bars/Radar toggle (`missedChartCfg_` dispatches `missedBarCfg_` / `missedRadarCfg_`; mode persisted in `localStorage` `cdr.missed.chartmode`, default `bars`). The BAR mode (VERTICAL since R7/M-3 -- time buckets on the x-axis so the workday reads left→right as a timeline, every other x label shown, counts printed above bars) turns datalabels ON (boolean display + empty-string formatter to hide zero buckets -- readable, unlike the radar) and spices up the work-day read with a color INTENSITY RAMP (per-bar fill alpha scales with count via `rgbaWithAlpha_(THEME.warn,...)`) + the peak bucket outlined + a faint vector CLOCK-FACE watermark drawn behind the plot (`missedClockWatermark_` inline plugin -- circle/ticks/hands in the muted token at low alpha, skipped when the plot is too small; radar has no watermark). A toggle re-render is guarded to charts that are instantiated AND visible (`offsetParent`) so it never rebuilds a hidden chart at zero size. NOTE (R7/O-2): charts inherit the GLOBAL animation default now (`setChartAnimationDefaults_`: 400ms easeOutQuart, `false` under prefers-reduced-motion); the old per-chart `animation: false` opt-outs were removed -- spotlight/pin interactions stay instant via their `update('none')` calls. ALSO (R7/O-1 root cause): `rgbaWithAlpha_` delegates to the canvas-based `colorWithAlpha_` when its rgb() regex misses -- canvas fillStyle normalizes OPAQUE colors to HEX, so THEME-token callers used to silently no-op (opaque tooltip, flat bar ramp); never regex-parse only rgb()/rgba() when re-alphaing a THEME token. | Subsystem: Department Dashboard
 INV-42 | `refreshChartTheme()` (script.html) resolves every CSS custom property via `colorToCanvasRgb_()` — paints onto a 1×1 canvas and reads back canonical `rgba(...)`. Required because chartjs-plugin-datalabels' `fillStyle` path can't parse `oklch(...)` strings → silently renders empty fills (invisible labels). Never pass raw `getComputedStyle(...).getPropertyValue('--token')` to chart options; always go through `THEME.*`. Hook is re-run on dark-mode toggle so newly-rendered charts pick up the inverted palette. | Subsystem: Department Dashboard
 INV-43 | Default From/To on the My Department page snaps to the most-recent ISO date present in DQE Historical Data, via `Data.gs::getLatestDataDate()` (cached under `latestDate:v1`). Falls back to today on failure. Replaces the legacy "current-month-to-date" default so the table isn't empty when a manager opens the dashboard before today's ingest has run. | Subsystem: Department Dashboard
 INV-44 | `Pipeline Health` sheet columns: `Timestamp \| Step \| Status \| Rows \| Duration (ms) \| Notes`. Schema pinned in `Config.gs::PIPELINE_HEALTH_HEADERS`; sheet is idempotently created by `setup()`. Append-only; never overwritten. Writers are `logPipelineHealthWithFallback_` in `apps-script/cdr-import/autoImport.js`, `logPipelineHealth_` in `apps-script/cdr-import/buildDQEHistoricalData.js`, and `logPipelineHealth_` in `apps-script/cdr-report/buildDQEHistoricalData.js` (cross-project; the two buildDQE copies are byte-identical per INV-16). All writes are best-effort -- a logging failure must never block or fail the pipeline. Reader is `Alerts.gs::readPipelineHealth_(maxRows)`; UI surfaces the last 20 entries in the Alerts modal. Step values are free-form (currently `autoImport`, `buildDQE`, `processIntegratedHistory:CDR`, `:QPath`, `:QCD`, `:CSR`, `:DQE`, `:Inbound` -- the inbound_calls Neon mirror's per-run outcome incl. unreachable/error failures, F9 -- `bulkBackfill:DQE`, `buildDQE:neon` -- the DQE->Neon mirror's skip/error outcome when the sheet build succeeded but the per-date mirror was unreachable/failed (F4), `processIntegratedHistory:CDR:neon` / `:QCD:neon` -- the inline CDR / QCD Neon MIRROR's error outcome when the sheet write succeeded but the per-date mirror threw (L7, parallel to `buildDQE:neon`; the sheet-write steps stay `:CDR`/`:QCD`), `inboundBackfill` -- one summary row per editor-run `backfillInboundCalls` invocation in cdr-import/inboundCalls.js -- and, when the deferred Neon mirror is enabled (`NEON_MIRROR_MODE=deferred`, NeonMirror.js), `neonMirror:CDR`/`:QCD`/`:DQE`/`:Inbound` -- one per type per date drained by the `runNeonMirror_` trigger, status `failure` on Neon-unreachable so the date stays queued for retry -- plus `neonMirror:gave-up` (IMP-6: a date dropped from the queue after `NEON_MIRROR_MAX_ATTEMPTS` (default 8) HARD-error drains; unreachable never counts; one final email fires) -- and, for the direct-extension call metrics (directCallMetrics.js, cdr-import-only), `directBuild` (editor-run `runDirectCallBuild`), `processIntegratedHistory:Direct` (the daily import's 6th block -- per-agent-day Direct Call History + inline `direct_call_history` Neon mirror), and `bulkBackfill:Direct` (the bulk path's per-date Direct build, Neon DEFERRED via `skipNeon` -> mirrored later by the editor-run `backfillDirectCallToNeon`)); Status is `success` or `failure`. Looking up a recent fresh-DQE-write involves either `buildDQE` (cdr-report standalone trigger), `processIntegratedHistory:DQE` (cdr-import integrated daily path), OR `bulkBackfill:DQE` (cdr-import historical backfill path) -- all three share the freshness role. **A `processIntegratedHistory:DQE` `success` can carry `rows:0`** on a NO-OP build (date already in history via the dup-guard / empty Raw Data / the F2 expected-date refusal), so "ran-empty" is distinguishable from "block never ran" (no row) and "build threw" (`failure` row); `computeOverviewPipelineFreshness_` requires `rows>0`, so a no-op re-import does NOT count as fresh or reset the staleness clock (F5). | Subsystem: Department Dashboard (+ CDR Import / CDR DQE Pipeline for the writers)

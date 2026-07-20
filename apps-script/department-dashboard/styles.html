@@ -867,12 +867,80 @@
   .ins-views-saverow input { flex: 1 1 auto; min-width: 0; }
   .ins-views-note { color: var(--muted); font-size: 11.5px; padding: 4px 10px 6px; }
 
+  /* ---- R7 (G-3): admin UI-surface toggles -------------------------------
+     One rule per UI_FLAG_SURFACES registry key (Config.gs). !important beats
+     the inline style.display='' the render paths set on these elements. */
+  body[data-ui-flags~="dept-team-strip"] #dept-team-zone { display: none !important; }
+  body[data-ui-flags~="dept-queue-tiles"] .dts-tile--queue { display: none !important; }
+  body[data-ui-flags~="dept-missed-section"] #dept-missed-section,
+  body[data-ui-flags~="dept-missed-section"] #dept-missed-detail { display: none !important; }
+  body[data-ui-flags~="dept-qcd-side"] #dept-qcd-snapshot { display: none !important; }
+  body[data-ui-flags~="ov-user-table"] #ov-user-table-wrap { display: none !important; }
+  body[data-ui-flags~="ins-heatmap"] #ins-heatmap { display: none !important; }
+  body[data-ui-flags~="ins-queue-health"] #ins-queue-health { display: none !important; }
+
+  /* R7 (G-3): the Health page's toggle editor rows. */
+  .health-uiflags-list { display: flex; flex-direction: column; gap: 6px; margin: 8px 0 10px; }
+  .health-uiflag-row { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
+  .health-uiflag-key { color: var(--muted); font-size: 11px; }
+
+  /* ---- R7 (M-5/I-2): slim sticky context bar ---------------------------
+     Dept + date window pinned to the viewport top while the page's own
+     controls / results header are scrolled out. Fixed (not sticky) so it
+     reserves no layout space; initStickyBar_ toggles .is-stuck via an
+     IntersectionObserver sentinel. Below modal z (100). */
+  .page-sticky-bar {
+    position: fixed; top: 8px; left: 50%;
+    width: min(1100px, calc(100% - 32px));
+    z-index: 90;
+    display: flex; align-items: center; gap: 10px;
+    padding: 6px 12px;
+    background: color-mix(in srgb, var(--paper-card) 90%, transparent);
+    backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+    border: 1px solid var(--line); border-radius: var(--r);
+    box-shadow: var(--shadow-1, 0 2px 10px rgba(0, 0, 0, 0.08));
+    transform: translate(-50%, -160%); opacity: 0; pointer-events: none;
+    transition: transform 0.18s var(--ease, ease-out), opacity 0.18s var(--ease, ease-out);
+  }
+  .page-sticky-bar.is-stuck { transform: translate(-50%, 0); opacity: 1; pointer-events: auto; }
+  .psb-text {
+    font-family: var(--mono); font-size: 12px; color: var(--ink);
+    font-variant-numeric: tabular-nums; letter-spacing: 0;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .psb-refresh {
+    margin-left: auto; flex: 0 0 auto; font: inherit; font-size: 13px;
+    line-height: 1; padding: 3px 9px; cursor: pointer;
+    border: 1px solid var(--line); border-radius: var(--r);
+    background: var(--paper-card); color: var(--ink);
+  }
+  .psb-refresh:hover { border-color: var(--accent); color: var(--accent); }
+  @media (prefers-reduced-motion: reduce) { .page-sticky-bar { transition: none; } }
+
   /* ---- Phase 2 #10: calendar trend renderer (CSS grid, no Chart.js) ----- */
   .ins-trend-calendar { padding: 8px 2px 4px; }
+  /* R7 (I-1): the chart wrap's fixed 420px is for the canvas; calendar mode
+     releases it so a tall month never clips (class toggled per render). */
+  .ir-chart-wrap--cal { height: auto; min-height: 280px; }
   .ins-cal-toolbar {
     display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
     margin-bottom: 8px;
   }
+  /* R7 (I-1): month pagination controls. */
+  .ins-cal-nav { display: inline-flex; align-items: center; gap: 6px; }
+  .ins-cal-nav-btn {
+    font: inherit; line-height: 1; padding: 2px 9px; cursor: pointer;
+    border: 1px solid var(--line); border-radius: var(--r);
+    background: var(--paper-card); color: var(--ink);
+  }
+  .ins-cal-nav-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  .ins-cal-nav-btn:disabled { opacity: 0.35; cursor: default; }
+  .ins-cal-month { font-size: 12px; color: var(--ink); white-space: nowrap; }
+  .ins-cal-month-pos { color: var(--muted); font-size: 11px; }
+  /* R7 (I-1): the Line/Calendar toggle stays visible but inert when the
+     calendar isn't applicable (hover title explains why). */
+  .segmented.is-disabled { opacity: 0.45; }
+  .segmented.is-disabled .seg-btn { cursor: default; }
   .ins-cal-legend { color: var(--muted); font-size: 12px; }
   .ins-cal-head, .ins-cal-week {
     display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px;
@@ -990,22 +1058,37 @@
     display: flex;
     flex-direction: column;
     align-items: flex-start;
-    gap: 1px;
+    gap: 0;
     text-align: left;
-    padding: 5px 11px;
+    padding: 3px 9px;
   }
-  /* I5b: smaller, lighter sub-selector so it reads as a secondary control. */
-  .seg-rich .seg-title { display: block; font-size: 11px; }
+  /* I5b + R7 (I-4): smaller, lighter sub-selector so it reads as a clearly
+     SECONDARY control next to the primary Cards/Chart toggle -- muted titles,
+     and a soft accent active state instead of the full ink inversion. */
+  .seg-rich .seg-title { display: block; font-size: 10px; color: var(--muted); }
   .seg-rich .seg-hint {
     display: block;
-    font-size: 9px;
+    font-size: 8.5px;
     text-transform: none;
     letter-spacing: 0;
     color: var(--muted);
-    opacity: 0.8;
+    opacity: 0.7;
     font-family: var(--sans, inherit);
   }
+  .seg-rich .seg-btn.active {
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+  .seg-rich .seg-btn.active .seg-title { color: var(--accent); }
   .seg-rich .seg-btn.active .seg-hint { color: inherit; opacity: 0.85; }
+  /* R7 (I-4): gentle fade when the per-agent comparison swaps views
+     (Cards⇄Chart, Gap⇄Absolute) -- applied one-shot by insApplyCardsView_. */
+  @keyframes ins-view-fade {
+    from { opacity: 0; transform: translateY(4px); }
+    to   { opacity: 1; transform: none; }
+  }
+  .ins-view-fade { animation: ins-view-fade 0.22s var(--ease, ease-out); }
+  @media (prefers-reduced-motion: reduce) { .ins-view-fade { animation: none; } }
   .seg-btn.active {
     background: var(--ink);
     color: var(--paper);
@@ -1621,9 +1704,10 @@
      chart. (Was .no-detail-only, which dropped the centering on open ->
      the radar snapped hard-left + Chart.js re-rendered = the jumpiness.) */
   .chart-row > .chart-section { max-width: 520px; margin: 0 auto; }
-  /* Bars are horizontal, so they read better with more width than the square
-     radar. In bars mode let the chart use most of the column (still bounded so
-     the modal drill-in open stays a gentle reflow); radar keeps the 520px cap. */
+  /* Bars mode is a wide timeline (R7/M-3: vertical bars, time on x), so it
+     reads better with more width than the square radar. Let the chart use
+     most of the column (still bounded so the modal drill-in open stays a
+     gentle reflow); radar keeps the 520px cap. */
   .chart-row.mode-bars > .chart-section { max-width: 960px; }
   /* Clip the drill-in while its track is collapsing so it slides in/out
      cleanly rather than overflowing the 0fr cell mid-animation. */

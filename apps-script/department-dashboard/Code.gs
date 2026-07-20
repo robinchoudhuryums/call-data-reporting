@@ -77,6 +77,11 @@ function renderDashboard_(user) {
   let holidayRanges = [];
   try { holidayRanges = getCompanyHolidayRanges_(); } catch (e) { holidayRanges = []; }
   tmpl.companyHolidaysJson = JSON.stringify(holidayRanges).replace(/</g, '\\u003c');
+  // R7 (G-3): admin UI-surface toggles (UI_FLAGS Script Property, sanitized
+  // against the Config.gs registry). [] when unset; best-effort.
+  let uiFlags = [];
+  try { uiFlags = getUiFlags_(); } catch (e) { uiFlags = []; }
+  tmpl.uiFlagsJson = JSON.stringify(uiFlags).replace(/</g, '\\u003c');
   return tmpl.evaluate()
     .setTitle('Department Dashboard')
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);

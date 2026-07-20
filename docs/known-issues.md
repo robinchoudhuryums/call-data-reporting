@@ -618,6 +618,24 @@ If you change ATT or % Answered semantics anywhere, you almost
 certainly need to bump every prefix downstream of it. When in doubt,
 bump.
 
+### Chart color re-alphaing goes through canvas (R7/O-1 lesson)
+
+Canvas `fillStyle` normalizes **opaque** colors to a HEX string
+(`#rrggbb`) — it returns `rgba(...)` only when alpha < 1. Since
+`colorToCanvasRgb_` (INV-42) reads back `fillStyle`, every `THEME.*`
+token is HEX in practice. `rgbaWithAlpha_` used to parse only
+`rgb()`/`rgba()` and **return the input unchanged** on a miss — a silent
+no-op that kept the chart tooltip fully opaque despite the alpha-0.6
+setting and flattened the missed-bar volume ramp (every bar the same
+solid warn) for weeks. Since R7 it delegates to the canvas-based
+`colorWithAlpha_` on a parse miss.
+
+The rule: **never regex-parse a THEME token for re-alphaing** — route
+through `colorWithAlpha_`/`rgbaWithAlpha_` (which now handle every
+format), and never "return the input unchanged" when a color transform
+fails to parse; delegate or fail loudly, because the unchanged-input
+path renders plausibly and hides for weeks.
+
 ### Pipeline depends on the dashboard's roster sheet
 
 `buildDQEHistoricalData` (CDR Report project) reads `DO NOT EDIT!` —
