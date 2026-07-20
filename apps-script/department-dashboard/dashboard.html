@@ -1165,6 +1165,19 @@
             </div>
           </div>
           <div class="ir-action-buttons">
+            <!-- D1 (density design, Phase 1): Simple/Detailed disclosure toggle.
+                 Presentation-only -- Simple hides the Team-detail block, the
+                 12-month trend, and the cross-agent Chart controls via a
+                 ds-density-simple class on #insights-results (all IDs + render
+                 code unchanged). Default by role (manager=Simple,
+                 admin=Detailed, owner ruling); sticky per user via the
+                 cdr.ins.prefs blob. -->
+            <div class="segmented ins-density-seg" id="ins-density-toggle" role="radiogroup" aria-label="Report detail level">
+              <button type="button" class="seg-btn" data-density="simple" role="radio" aria-checked="false"
+                      title="The short view: headline, team tiles, and agent cards.">Simple</button>
+              <button type="button" class="seg-btn" data-density="detailed" role="radio" aria-checked="false"
+                      title="The full analytical view: adds queue health, the heatmap, share of answered, the 12-month trend, and the cross-agent chart.">Detailed</button>
+            </div>
             <!-- Owner note: the tiny inline "change" link read as
                  undiscoverable -- the edit popover's trigger is now a real
                  button up here with the other report actions. Same id, so
@@ -1186,8 +1199,23 @@
                 <button type="button" role="menuitem" data-action="csv">Download CSV</button>
                 <button type="button" role="menuitem" data-action="copy">Copy image</button>
                 <button type="button" role="menuitem" data-action="email">Email report</button>
+                <!-- Phase 2 #9: the short form -- takeaway + rollup tiles +
+                     behind-team list only (style='summary' server-side). -->
+                <button type="button" role="menuitem" data-action="email-summary">Email summary</button>
                 <button type="button" role="menuitem" data-action="print">Print</button>
               </div>
+            </div>
+            <!-- Phase 2 #8: saved views + share link. Views are PERSONAL
+                 (localStorage, per user) and carry dates + compare mode +
+                 agents + Simple/Detailed -- NOT the department (the header
+                 selector owns that, and managers are pinned anyway). The
+                 share link reuses the SHARE_STATE_ deep-link machinery, so
+                 opening one runs the normal auth + fetch path. -->
+            <div class="ir-export-wrap">
+              <button class="btn btn-secondary" id="ins-views-btn" type="button" aria-haspopup="menu" aria-expanded="false">
+                Views <span class="ir-export-caret">&#9662;</span>
+              </button>
+              <div class="ir-export-menu ins-views-menu" id="ins-views-menu" role="menu" style="display:none;"></div>
             </div>
             <!-- The "« Back" button is RETIRED with the setup-form step
                  (owner): the page auto-generates on first entry and the
@@ -1228,34 +1256,58 @@
           <div class="ir-edit-dates-row">
             <label class="ir-edit-date-field">From<input type="date" id="ins-edit-from"></label>
             <label class="ir-edit-date-field">To<input type="date" id="ins-edit-to"></label>
-            <label class="ir-edit-date-field">Compare
-              <select id="ins-edit-compare-mode">
-                <option value="keep">Keep current comparison</option>
-                <option value="prevPeriod">Immediately-preceding period</option>
-                <option value="yoy">Same window one year prior</option>
-                <option value="custom">Custom prior range&hellip;</option>
-              </select>
-            </label>
           </div>
-          <!-- Custom-prior inputs (owner note: with the setup-form step
-               retired, the popover must be able to EXPRESS a custom prior
-               window, not just keep one). Shown only for Compare=custom. -->
-          <div class="ir-edit-dates-row" id="ins-edit-prior-row" style="display:none;">
-            <label class="ir-edit-date-field">Prior from<input type="date" id="ins-edit-prior-from"></label>
-            <label class="ir-edit-date-field">Prior to<input type="date" id="ins-edit-prior-to"></label>
-          </div>
-          <div class="ir-search-row">
-            <input type="search" id="ins-edit-search" placeholder="Search agents..." autocomplete="off">
-          </div>
-          <div id="ins-edit-list" class="ir-agent-list ir-agent-list-compact"></div>
+          <!-- D2 (density design, Phase 1): the compare mode, custom-prior
+               window, and agent selection collapse behind Advanced options --
+               the default path is "pick a range -> Apply" (whole department,
+               auto-adjacent prior). Field IDs + wiring untouched (this is a
+               wrapper, not a rewrite); insOpenEditPopover_ auto-opens it when
+               the current report already uses a custom prior or a partial
+               agent selection so those states stay visible. -->
+          <details id="ins-edit-advanced" class="ins-edit-advanced">
+            <summary>Advanced options <span class="ins-edit-adv-hint">comparison window &amp; agent selection — a quick-start chip or preset fills these in for you</span></summary>
+            <div class="ir-edit-dates-row">
+              <label class="ir-edit-date-field">Compare
+                <select id="ins-edit-compare-mode">
+                  <option value="keep">Keep current comparison</option>
+                  <option value="prevPeriod">Immediately-preceding period</option>
+                  <option value="yoy">Same window one year prior</option>
+                  <option value="custom">Custom prior range&hellip;</option>
+                </select>
+              </label>
+            </div>
+            <!-- Custom-prior inputs (owner note: with the setup-form step
+                 retired, the popover must be able to EXPRESS a custom prior
+                 window, not just keep one). Shown only for Compare=custom. -->
+            <div class="ir-edit-dates-row" id="ins-edit-prior-row" style="display:none;">
+              <label class="ir-edit-date-field">Prior from<input type="date" id="ins-edit-prior-from"></label>
+              <label class="ir-edit-date-field">Prior to<input type="date" id="ins-edit-prior-to"></label>
+            </div>
+            <div class="ir-search-row">
+              <input type="search" id="ins-edit-search" placeholder="Search agents..." autocomplete="off">
+            </div>
+            <div id="ins-edit-list" class="ir-agent-list ir-agent-list-compact"></div>
+            <div class="ir-edit-popover-links">
+              <a href="#" id="ins-edit-select-all">Select all active</a>
+              <span class="sep">|</span>
+              <a href="#" id="ins-edit-select-none">Select none (whole department)</a>
+            </div>
+          </details>
           <div class="ir-edit-popover-actions">
-            <a href="#" id="ins-edit-select-all">Select all active</a>
-            <span class="sep">|</span>
-            <a href="#" id="ins-edit-select-none">Select none (whole department)</a>
             <button class="btn" id="ins-edit-apply-btn" type="button">Apply</button>
           </div>
         </div>
 
+        <!-- D3: one-time first-run intro (dismissible; localStorage
+             cdr.ins.intro.v1). Sits ABOVE the status line so the injected
+             #ins-headline lands below it, not between the header and it. -->
+        <div id="ins-intro-card" class="ds-note ins-intro-card" style="display:none;">
+          <strong>What this report answers:</strong> how the team performed over the
+          selected window, which agents are behind or ahead of the team average, and
+          (in Detailed) how the queues and the last 12 months look. The question
+          chips above run it for you &mdash; no setup needed.
+          <button type="button" class="link-btn" id="ins-intro-dismiss">Got it</button>
+        </div>
         <div id="ins-results-status" class="status" style="display:none;"></div>
         <!-- A1: needs-attention strip. Renders directly under the injected
              #ins-headline (reportHeadline_ inserts before this element, the
@@ -1266,6 +1318,16 @@
              Zero-regressed -> a one-line "all steady/improving" note. -->
         <div id="ins-needs-attention" class="ds-attention" style="display:none;"></div>
         <div id="ins-length-warning" class="ds-note" style="display:none;"></div>
+        <!-- D3 (#7): small-sample annotation -- front-end display constant
+             only; never hides data (see INS_SMALL_SAMPLE_PER_AGENT_). -->
+        <div id="ins-small-sample" class="ds-note" style="display:none;"></div>
+        <!-- D1: Simple-mode disclosure note so the hidden sections read as a
+             choice, not a bug. Shown only in Simple (insSyncDensity_). -->
+        <div id="ins-simple-note" class="ds-note ins-simple-note" style="display:none;">
+          Simple view &mdash; queue health, the heatmap, share of answered, and the
+          12-month trend are hidden.
+          <button type="button" class="link-btn" id="ins-simple-note-detailed">Switch to Detailed</button>
+        </div>
         <div id="ins-team-insights"></div>
 
         <!-- A3: zone wayfinding. The report splits into a Team zone (rollup +
@@ -1365,6 +1427,8 @@
 
         <!-- A3: Agents zone -->
         <div class="ds-zone"><span class="ds-zone-label">Agents</span></div>
+        <!-- D3 (#4): plain-language caption, Simple mode only (CSS-gated). -->
+        <div id="ins-agents-cap" class="ins-agents-cap">How each agent changed vs the prior period &mdash; grouped by where they stand against the team average.</div>
         <div class="al-section-title">Per-agent comparison (vs prior period)</div>
         <div class="ir-cards-toolbar" id="ins-cards-toolbar">
           <label class="ir-sort-control">
@@ -1442,6 +1506,16 @@
                 <button type="button" class="seg-btn active" data-view="monthly" role="radio" aria-checked="true">Monthly</button>
                 <button type="button" class="seg-btn" data-view="daily" role="radio" aria-checked="false">Daily</button>
               </div>
+              <!-- Phase 2 #10: Line / Calendar renderer toggle for the TEAM
+                   metric tabs. Calendar = a weekday day-grid of the selected
+                   window (a second RENDERER of the same trendDaily series --
+                   no new server data); shown only when the window is long
+                   enough to read as a calendar (insRenderTrendChart_ gates). -->
+              <div class="segmented" id="ins-trend-render-toggle" role="radiogroup" aria-label="Trend renderer" style="display:none;">
+                <button type="button" class="seg-btn active" data-render="line" role="radio" aria-checked="true">Line</button>
+                <button type="button" class="seg-btn" data-render="calendar" role="radio" aria-checked="false"
+                        title="Calendar days over the selected window — which DAYS were good or bad (the abandon heatmap answers when in the day).">Calendar</button>
+              </div>
               <!-- gap 1: per-queue metric sub-selector, shown only when the
                    "Abd %" tab is active (insRenderTrendChart_ toggles it). -->
               <label class="ir-sort-control" id="ins-queue-metric-wrap" style="display:none;">
@@ -1465,10 +1539,15 @@
             <!-- Round 4 (owner): Avg Talk Time is an admin-only lens -- managers
                  read talk time per agent in IR / the dept table, and the team-level
                  ATT trend mostly invited misreading. data-admin-only convention. -->
-            <button type="button" class="pr-trend-subtab" data-metric="att" role="tab" aria-selected="false" data-admin-only style="display:none;">Avg Talk Time</button>
-            <button type="button" class="pr-trend-subtab" data-metric="queues" role="tab" aria-selected="false">Abd %</button>
+            <button type="button" class="pr-trend-subtab" data-metric="att" role="tab" aria-selected="false" data-admin-only style="display:none;"
+                    title="Average talk time per answered call, by month or day.">Avg Talk Time</button>
+            <button type="button" class="pr-trend-subtab" data-metric="queues" role="tab" aria-selected="false"
+                    title="Abandoned % by queue — the share of queue calls where the caller hung up before being answered (5%+ on a day counts as a violation).">Abd %</button>
           </div>
-          <div class="ir-chart-canvas-wrap"><canvas id="ins-trend-chart"></canvas></div>
+          <div class="ir-chart-canvas-wrap" id="ins-trend-canvas-wrap"><canvas id="ins-trend-chart"></canvas></div>
+          <!-- Phase 2 #10: the calendar day-grid renderer (CSS grid, no
+               Chart.js). Populated by insRenderTrendCalendar_. -->
+          <div id="ins-trend-calendar" class="ins-trend-calendar" style="display:none;"></div>
         </div>
       </div>
     </div>

@@ -319,8 +319,20 @@ scripts/deploy.sh apps-script/cdr-import <cdr-import-deployment-id>
   cols X–AG (header row = insurer name, rows below = that insurer's
   published numbers incl. country code), then run
   `syncInsuranceNumbersToNeon` from the **CDR Report** editor. Re-run
-  it after every edit to the block — unsynced numbers show as
-  "(unlabeled)" in the report. Only the HMAC hash + label reach Neon.
+  it after every edit to the block — the By-insurer tables list LABELED
+  insurers only (the "(unlabeled)" catch-all row was removed in round 4
+  as misleading: it was every non-insurer caller), so an unsynced
+  number's calls simply don't appear there until synced. Only the HMAC
+  hash + label reach Neon.
+- **Dial-in line labels:** the "By advertised line (dial-in)" table
+  labels each line by precedence: the `DIAL_IN_LABELS` dashboard
+  Script Property when it names the number (comma-separated
+  `number = Label` pairs, e.g. `18668646332 = Main CSR Line`;
+  digit-normalized, no redeploy to edit) → the line's dominant
+  first-rung agent (from the `first_agent` column the capture stamps
+  per call — populates going forward and on re-import/backfill) → the
+  raw number. Maintain the property for the handful of main lines;
+  agents' direct DIDs label themselves from the data.
 - **History:** run `backfillInboundCalls` from the **CDR Import**
   editor (repeat until the log says "complete") to fill
   `inbound_calls` from the per-day `Call_Legs_*` sheets that still

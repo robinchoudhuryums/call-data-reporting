@@ -37,6 +37,10 @@ function install(dataset) {
   h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
   h.state.cache.clear();
   h.ctx.getDashboardNeonConn_ = function () { return null; };
+  // R6: sentinel rows attribute by queue NAME against the dept's effective
+  // queue list now (not shared-ext overlap) -- map Alpha's queue for the
+  // fixtures, like a Dept Config / DEPT_QCD_QUEUES entry would.
+  h.ctx.queuesForDept_ = function (d) { return d === 'Alpha' ? ['A_Q_Alpha'] : []; };
 }
 
 test('RPT-1: abandoned parents on a ZERO-slot row still count (agent + sentinel)', function () {
@@ -100,6 +104,34 @@ test('RPT-2: duplicate-second missed legs keep DISTINCT positionally-paired pare
     'duplicate seconds carry DISTINCT parent ids (pre-fix: P2,P2,P3)');
   assert.equal(r.meta.abandonedRings, 3);
   assert.equal(r.meta.abandonedCallCount, 3);
+});
+
+test('R6: sentinel attribution is by queue NAME -- another dept\'s queue on a shared extension is EXCLUDED', function () {
+  install([
+    // Alpha's own queue: in Alpha's effective list -> included.
+    { date: '2026-03-10', agent: 'A_Q_Alpha', ext: '501', rung: 0, missed: 0, answered: 0,
+      slots: ['', '', '9:05:11 AM'], abdIds: 'P1', abdTimes: '9:05:11 AM' },
+    // ANOTHER dept's queue sharing extension 501 -- the pre-R6 leak vector
+    // (ext-overlap inclusion). Must NOT appear on Alpha's card or counts.
+    { date: '2026-03-10', agent: 'A_Q_Beta', ext: '501', rung: 0, missed: 0, answered: 0,
+      slots: ['', '', '9:10:00 AM'], abdIds: 'P2', abdTimes: '9:10:00 AM' },
+  ]);
+  const r = h.call('computeMissedCallsReport_', 'Alpha', '2026-03-09', '2026-03-15', 'roster');
+  assert.equal(r.queueOnly.length, 1, 'only the dept-owned queue renders');
+  assert.equal(r.queueOnly[0].queue, 'A_Q_Alpha');
+  assert.equal(r.meta.noRingAbandonCount, 1, 'P2 (other dept) excluded from the no-ring count');
+  assert.equal(r.meta.abandonedCallCount, 1, 'P2 excluded from the dept-wide unique-abandoned count');
+});
+
+test('R6: an unmapped dept renders NO queue-only section (hide-when-none)', function () {
+  install([
+    { date: '2026-03-10', agent: 'A_Q_Alpha', ext: '501', rung: 0, missed: 0, answered: 0,
+      slots: ['', '', '9:05:11 AM'], abdIds: 'P1', abdTimes: '9:05:11 AM' },
+  ]);
+  h.ctx.queuesForDept_ = function () { return []; };   // no effective queues mapped
+  const r = h.call('computeMissedCallsReport_', 'Alpha', '2026-03-09', '2026-03-15', 'roster');
+  assert.equal(r.queueOnly.length, 0);
+  assert.equal(r.meta.queueOnlyUniqueCount, 0);
 });
 
 test('RPT-2: an AF entry marks at most ONE ring at that second as abandoned', function () {

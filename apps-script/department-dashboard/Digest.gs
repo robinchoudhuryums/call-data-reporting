@@ -739,6 +739,91 @@ function renderInsightsEmailBody_(data) {
 }
 
 /**
+ * Density Phase 2 (#9): the SUMMARY variant of the Insights email --
+ * takeaway line + the rollup tiles + ONLY the agents currently behind the
+ * team's answer rate (with a minimum-volume gate so a two-call agent isn't
+ * flagged). Deliberately a PLAIN DEFINITION ("answer rate below the team
+ * average this window, min N answerable calls") rather than a replica of
+ * the page's client-side tier classifier -- close enough to agree in
+ * practice, honest when it doesn't. Full detail stays one click away via
+ * the dashboard button the caller appends.
+ */
+var INSIGHTS_EMAIL_MIN_CALLS_ = 10;   // answerable calls (answered+missed) gate
+
+function renderInsightsEmailSummary_(data) {
+  const t = (data && data.teamStats) || {};
+  const takeaway = digestTakeaway_(t);
+  const takeawayHtml = takeaway
+    ? '<div style="margin:16px 0 0;padding:12px 16px;background:#EFF6FF;border-left:3px solid #1d4ed8;'
+      + 'border-radius:4px;font-size:14px;color:#1f2937;line-height:1.5;">'
+      + escapeHtmlServer_(takeaway) + '</div>'
+    : '';
+
+  const tile = function (label, stat, valence) {
+    return '<td style="padding:10px 12px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;text-align:center;">'
+      + '<div style="font-size:10px;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;font-weight:700;">'
+      +   escapeHtmlServer_(label) + '</div>'
+      + '<div style="font-size:18px;color:#111827;font-weight:700;margin-top:2px;">'
+      +   escapeHtmlServer_(String((stat && stat.formatted) || '-')) + '</div>'
+      + '<div style="margin-top:2px;">' + digestDeltaHtml_(stat, valence) + '</div>'
+      + '</td>';
+  };
+
+  const teamPct = Number((t.pct && t.pct.val) || 0);
+  const behind = (data.agentData || []).filter(function (a) {
+    const m = a.metrics || {};
+    const vol = (Number(m.answered && m.answered.val) || 0)
+              + (Number(m.missed && m.missed.val) || 0);
+    return vol >= INSIGHTS_EMAIL_MIN_CALLS_
+        && (Number(m.pct && m.pct.val) || 0) < teamPct;
+  }).sort(function (a, b) {
+    return (Number(a.metrics.pct && a.metrics.pct.val) || 0)
+         - (Number(b.metrics.pct && b.metrics.pct.val) || 0);
+  });
+
+  const behindRows = behind.map(function (a) {
+    const pct = Number(a.metrics.pct && a.metrics.pct.val) || 0;
+    const gap = Math.round(teamPct - pct);
+    return '<tr>'
+      + '<td style="padding:6px 10px;border-bottom:1px solid #f3f4f6;">' + escapeHtmlServer_(a.name) + '</td>'
+      + '<td style="padding:6px 10px;text-align:right;border-bottom:1px solid #f3f4f6;">'
+      +   escapeHtmlServer_(String((a.metrics.pct && a.metrics.pct.formatted) || '-')) + '</td>'
+      + '<td style="padding:6px 10px;text-align:right;border-bottom:1px solid #f3f4f6;color:#92400E;">'
+      +   (gap > 0 ? gap + ' pts behind' : 'behind') + '</td>'
+      + '</tr>';
+  }).join('');
+
+  return takeawayHtml
+    + '<div style="margin: 20px 0; padding: 20px; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px;">'
+    +   '<div style="font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;font-weight:700;margin-bottom:8px;">'
+    +     'Department rollup &middot; vs ' + escapeHtmlServer_(data.priorDateLabel || 'prior period')
+    +   '</div>'
+    +   '<table style="border-collapse:separate;border-spacing:6px;width:100%;"><tr>'
+    +     tile('% Answered', t.pct, 'pos') + tile('Answered', t.answered, 'pos')
+    +     tile('Missed', t.missed, 'neg') + tile('Avg ATT', t.att, 'neu')
+    +   '</tr></table>'
+    + '</div>'
+    + '<div style="margin: 16px 0; padding: 20px; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px;">'
+    +   '<div style="font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;font-weight:700;margin-bottom:8px;">'
+    +     'Behind the team average'
+    +   '</div>'
+    +   (behindRows
+          ? '<table style="border-collapse:collapse;width:100%;font-size:13px;">'
+            + '<thead><tr style="background:#f9fafb;">'
+            +   '<th style="text-align:left;padding:8px 10px;border-bottom:1px solid #e5e7eb;">Agent</th>'
+            +   '<th style="text-align:right;padding:8px 10px;border-bottom:1px solid #e5e7eb;">% Ans</th>'
+            +   '<th style="text-align:right;padding:8px 10px;border-bottom:1px solid #e5e7eb;">Gap</th>'
+            + '</tr></thead><tbody>' + behindRows + '</tbody></table>'
+          : '<div style="font-size:13px;color:#065F46;">No agent is behind the team average this window.</div>')
+    +   '<div style="margin-top:8px;font-size:11px;color:#9ca3af;">'
+    +     'Answer rate below the team average this window, minimum '
+    +     INSIGHTS_EMAIL_MIN_CALLS_ + ' answerable calls. The full per-agent table is in the '
+    +     'web report (or use Email report for the long form).'
+    +   '</div>'
+    + '</div>';
+}
+
+/**
  * Renders the WoW "driver" callout (#11) from a computeDigestWowDriver_
  * result. Empty string when there's no notable shift / no attributable
  * agent (wow null or wow.driver absent) -- the digest then shows just

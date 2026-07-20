@@ -79,11 +79,14 @@ function getMissedCallsReport(req) {
   // AF<->AD pairing is a per-time-key FIFO so duplicate seconds keep
   // distinct parent ids. v15 (R5): queue-only abandoned entries enriched
   // from inbound_calls (waitSec + insurer label, best-effort/Neon-optional).
+  // v16 (R6): queue-only sentinel rows attributed by QUEUE NAME against the
+  // dept's effective queue list (queuesForDept_), not shared-ext overlap --
+  // other depts' queues no longer leak onto the card.
   // See INV-30 for the full version history.
   // CORE-3: suffix the key with the active DQE read source so a
   // DQE_READ_SOURCE flip can't serve a cross-source payload for the TTL.
   const dqeReadSrc = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
-  const cacheKey = 'missed:v15:' + dept + ':' + scope + ':' + from + ':' + to + ':' + dqeReadSrc;
+  const cacheKey = 'missed:v16:' + dept + ':' + scope + ':' + from + ':' + to + ':' + dqeReadSrc;
   const cached = cache.get(cacheKey);
   if (cached) {
     try {
@@ -214,12 +217,12 @@ function missedSliceFilter_(reportData, filter) {
 
 // Read (or compute) the roster-scope Missed report for (dept, from, to),
 // sharing the SAME cache the section render uses so a drill after the section
-// loaded is a cache hit. Key mirrors getMissedCallsReport's (missed:v15,
+// loaded is a cache hit. Key mirrors getMissedCallsReport's (missed:v16,
 // scope=roster, source-suffixed per CORE-3).
 function missedReportDataCached_(dept, from, to) {
   const cache = CacheService.getScriptCache();
   const dqeReadSrc = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
-  const cacheKey = 'missed:v15:' + dept + ':roster:' + from + ':' + to + ':' + dqeReadSrc;
+  const cacheKey = 'missed:v16:' + dept + ':roster:' + from + ':' + to + ':' + dqeReadSrc;
   const cached = cache.get(cacheKey);
   if (cached) { try { return JSON.parse(cached); } catch (e) { /* recompute */ } }
   const data = computeMissedCallsReport_(dept, from, to, 'roster');
@@ -245,7 +248,7 @@ function missedReportDataCached_(dept, from, to) {
 //   - bounded: at most MISSED_ENRICH_MAX_CALLS_ distinct (date, id) pairs
 //     join the IN-list (a multi-week range can list hundreds of abandons;
 //     the oldest overflow entries just stay un-enriched).
-// Enriched fields ride the cached payload (missed:v15).
+// Enriched fields ride the cached payload (missed:v16).
 // ---------------------------------------------------------------------------
 var MISSED_ENRICH_MAX_CALLS_ = 400;
 
@@ -455,6 +458,22 @@ function computeMissedCallsReport_(dept, from, to, scope) {
     deptQueueExts = getDeptQueueExts_(dept, rosterSet, values).exts;
   }
 
+  // R6 (owner): QUEUE-NAME attribution for the queue-only abandoned section.
+  // Sentinel rows used to ride in on shared-EXTENSION overlap (col D vs the
+  // dept's derived ext set), which leaked OTHER depts' queues onto the card
+  // whenever queues share extensions (the same false-positive class that
+  // drove the Phase-14/15 roster-only flips for agents). A sentinel's
+  // "agent" IS the raw queue name, and the dept's effective queue list
+  // (queuesForDept_ -- the same Dept-Config-backed map every QCD surface
+  // uses) is the ownership map, so match on that instead (case-insensitive,
+  // the round-4 no-ring-drill convention). A dept with no mapped queues, or
+  // no queue-only abandons on ITS queues in range, renders no card. If a
+  // queue that used to appear goes missing, map it to the dept in Dept
+  // Config (Operator State #14).
+  const deptQueueNames = {};
+  (typeof queuesForDept_ === 'function' ? (queuesForDept_(dept) || []) : [])
+    .forEach(function (q) { deptQueueNames[String(q).trim().toLowerCase()] = true; });
+
   // Chart buckets: 8 AM-5 PM CST in 30-min slots = 18 buckets
   const totalBuckets = (MISSED_CHART_END_HOUR - MISSED_CHART_START_HOUR)
                        * (60 / MISSED_BUCKET_MINUTES);
@@ -493,12 +512,11 @@ function computeMissedCallsReport_(dept, from, to, scope) {
     // through roster matching -- they're intrinsically queue-level data.
     const isSentinel = /^A_Q_/.test(agent) || agent === 'Backup CSR';
 
-    // Both sentinel and agent rows match against deptQueueExts -- col D
-    // is the shared-queue extension in either case. (Previously agent
-    // rows tested against deptExtensions, but that's the
-    // personal-extension set and never overlaps.)
+    // Legacy queue/both scopes match AGENT rows against deptQueueExts --
+    // col D is the shared-queue extension. (Sentinel rows no longer use
+    // this: R6 attributes them by queue NAME, above.)
     let inQueue = false;
-    if (isSentinel || scope !== 'roster') {
+    if (!isSentinel && scope !== 'roster') {
       const rowExts = parseExtensions_(r[HISTORICAL_COLS.QUEUE_EXT - 1]);
       for (let j = 0; j < rowExts.length; j++) {
         if (deptQueueExts[rowExts[j]]) { inQueue = true; break; }
@@ -508,10 +526,10 @@ function computeMissedCallsReport_(dept, from, to, scope) {
 
     let include;
     if (isSentinel) {
-      // Queue-only entries are always included when their queue
-      // serves this dept, regardless of the user's scope toggle.
-      // Roster matching doesn't apply (no agent).
-      include = inQueue;
+      // Queue-only entries are included when the queue BELONGS to this
+      // dept (effective queue list, R6), regardless of the user's scope
+      // toggle. Roster matching doesn't apply (no agent).
+      include = !!deptQueueNames[agent.toLowerCase()];
     } else if (scope === 'roster')     { include = inRoster; }
     else if (scope === 'queue')        { include = inQueue; }
     else                               { include = inRoster || inQueue; }
