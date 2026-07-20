@@ -100,6 +100,7 @@ function createShim() {
       getScriptLock: function () {
         return {
           tryLock: function () { state.locks++; return true; },
+          waitLock: function () { state.locks++; return true; },   // R7: saveUiFlags path
           releaseLock: function () {},
         };
       },

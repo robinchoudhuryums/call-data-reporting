@@ -296,14 +296,60 @@ function getCallJourney(req) {
     // badge lives on). Admins are entitled to every dept, so their fallback
     // is ungated. The journey still carries no caller identity.
     let viaFallback = false;
+    let ranUnscoped = !predicate;   // admin/allDepts company view already ran unscoped
     if (!json && predicate) {
       // R-3: allDepts managers are entitled to every dept's data (breadth
       // gate, like assertDeptAccess_), so their fallback is ungated too.
       const entitled = (user.role === 'admin') || !!user.allDepts
         || callIdInDeptMissedReport_(dept, date, callId);
-      if (entitled) { json = lookup(''); viaFallback = !!json; }
+      if (entitled) { json = lookup(''); viaFallback = !!json; ranUnscoped = true; }
     }
-    if (!json) return { available: true, found: false };
+    if (!json) {
+      // R7 (M-2): classify WHY there's no record so the client can say
+      // something actionable instead of the generic three-possibilities
+      // message. Computed only when the unscoped lookup actually ran (so a
+      // gate-closed manager learns nothing about other depts' data): probe
+      // the capture floor + whether the DATE has any rows at all.
+      //   'before-capture' - date predates the oldest inbound_calls row
+      //   'date-gap'       - capture spans the date but has ZERO rows for it
+      //                      (missed import / mirror gap -- see Neon coverage)
+      //   'not-captured'   - the date has rows; THIS call just isn't one of
+      //                      them (internal / direct / not inbound)
+      const miss = { available: true, found: false };
+      if (ranUnscoped) {
+        try {
+          const ps = conn.prepareStatement(
+            'SELECT MIN(call_date)::text AS min_d, '
+            + 'EXISTS(SELECT 1 FROM inbound_calls WHERE call_date = ?::date) AS day_has '
+            + 'FROM inbound_calls');
+          ps.setString(1, date);
+          const prs = ps.executeQuery();
+          if (prs.next()) {
+            const minD = prs.getString('min_d');
+            let dayHas = false;
+            try { dayHas = !!prs.getBoolean('day_has'); }
+            catch (be) {
+              const s = String(prs.getString('day_has') || '').toLowerCase();
+              dayHas = (s === 't' || s === 'true');
+            }
+            if (!minD) {
+              miss.reason = 'before-capture';   // capture store is empty entirely
+            } else if (date < String(minD).trim()) {
+              miss.reason = 'before-capture'; miss.minDate = String(minD).trim();
+            } else if (!dayHas) {
+              miss.reason = 'date-gap';
+            } else {
+              miss.reason = 'not-captured';
+            }
+          }
+          prs.close(); ps.close();
+        } catch (pe) {
+          Logger.log('getCallJourney reason probe failed (generic miss returned): '
+            + (pe && pe.message ? pe.message : pe));
+        }
+      }
+      return miss;
+    }
     if (viaFallback) {
       Logger.log('getCallJourney: dept-scoped lookup missed (queue-name space), '
         + 'resolved via exact-id fallback. call_id=%s date=%s dept=%s', callId, date, dept || '(all)');

@@ -356,3 +356,28 @@ function getSpreadsheetId_() {
 function openSpreadsheet_() {
   return SpreadsheetApp.openById(getSpreadsheetId_());
 }
+
+/**
+ * R7 (G-3): admin UI-surface toggles. An admin lists keys in the `UI_FLAGS`
+ * Script Property (comma-separated; managed from the Health page's
+ * "UI surface toggles" editor) to HIDE a client surface for ALL viewers while
+ * something is being fixed or investigated. Presentation-only by design: no
+ * server compute, cache, or auth gate changes — the flags ride into the page
+ * as `window.__UI_FLAGS__` (renderDashboard_) and apply via
+ * `body[data-ui-flags~="key"]` CSS rules in styles.html (plus a couple of
+ * fetch gates in script.html so hidden sections don't still fetch). Viewers
+ * pick up a change on their next page load — no redeploy.
+ *
+ * CURATED registry: unknown keys in the property are silently dropped
+ * (uiFlagsSanitize_, the Skip Dates tolerant-grammar discipline). Adding a
+ * surface = a key here + a CSS rule (styles.html) + an optional fetch gate.
+ */
+const UI_FLAG_SURFACES = Object.freeze({
+  'dept-team-strip':     'My Department — team summary strip',
+  'dept-queue-tiles':    'My Department — Queue calls / Abandoned % tiles',
+  'dept-missed-section': 'My Department — Missed Calls section',
+  'dept-qcd-side':       'My Department — Queue Call Data side card',
+  'ov-user-table':       'Overview — dept agent mini-table',
+  'ins-heatmap':         'Insights — abandon heatmap (admin panel)',
+  'ins-queue-health':    'Insights — Queue health section',
+});

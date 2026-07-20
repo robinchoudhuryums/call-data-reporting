@@ -154,3 +154,68 @@ test('O-6: pipelineWatchTailClipped_ flags a clipped tail whose oldest row is pa
   // No usable oldest timestamp -> can't reason, no widen.
   assert.equal(f([{ tsMs: null }, { tsMs: 6000 }, { tsMs: 7000 }], 3, 1000), false);
 });
+
+// ── R7 (G-1): aux signals — NeonBackup failure + read-back streak ────────
+
+test('aux: failed backup run alerts once per run timestamp, re-arms on ok', function () {
+  // New failed run, no marker -> alert + marker set to the run timestamp.
+  let d = h.ctx.pipelineWatchAuxDecide_({
+    backupResult: 'FAILED: quota exceeded', backupAt: '2026-07-19T06:00:00Z',
+    backupMark: null, readErrRaw: null, readMark: null, minStreak: 3,
+  });
+  assert.equal(d.alerts.length, 1);
+  assert.match(d.alerts[0], /Neon backup/);
+  assert.equal(d.backupMarkNext, '2026-07-19T06:00:00Z');
+
+  // Same failed run already alerted -> silent, marker untouched.
+  d = h.ctx.pipelineWatchAuxDecide_({
+    backupResult: 'FAILED: quota exceeded', backupAt: '2026-07-19T06:00:00Z',
+    backupMark: '2026-07-19T06:00:00Z', readErrRaw: null, readMark: null, minStreak: 3,
+  });
+  assert.equal(d.alerts.length, 0);
+  assert.equal(d.backupMarkNext, undefined);
+
+  // Healthy run -> marker clears (re-armed for the NEXT failed run).
+  d = h.ctx.pipelineWatchAuxDecide_({
+    backupResult: 'ok | escalations 120 rows', backupAt: '2026-07-26T06:00:00Z',
+    backupMark: '2026-07-19T06:00:00Z', readErrRaw: null, readMark: null, minStreak: 3,
+  });
+  assert.equal(d.alerts.length, 0);
+  assert.equal(d.backupMarkNext, '');
+
+  // A 'skipped (Neon unreachable...)' run is NOT ok-prefixed -> alertable.
+  d = h.ctx.pipelineWatchAuxDecide_({
+    backupResult: 'skipped (Neon unreachable/unconfigured)', backupAt: '2026-08-02T06:00:00Z',
+    backupMark: null, readErrRaw: null, readMark: null, minStreak: 3,
+  });
+  assert.equal(d.alerts.length, 1);
+});
+
+test('aux: read-back streak alerts once per streak at the threshold, re-arms on clear', function () {
+  const err = function (count) {
+    return JSON.stringify({ at: '2026-07-20 09:00', label: 'neonFetchDqeRows_',
+      message: 'connection refused', count: count });
+  };
+  // Below threshold -> silent.
+  let d = h.ctx.pipelineWatchAuxDecide_({ readErrRaw: err(2), readMark: null, minStreak: 3 });
+  assert.equal(d.alerts.length, 0);
+  assert.equal(d.readMarkNext, undefined);
+
+  // At threshold, unalerted streak -> alert + mark.
+  d = h.ctx.pipelineWatchAuxDecide_({ readErrRaw: err(3), readMark: null, minStreak: 3 });
+  assert.equal(d.alerts.length, 1);
+  assert.match(d.alerts[0], /read-back/);
+  assert.equal(d.readMarkNext, 'alerted@3');
+
+  // Streak keeps growing but already alerted -> silent.
+  d = h.ctx.pipelineWatchAuxDecide_({ readErrRaw: err(9), readMark: 'alerted@3', minStreak: 3 });
+  assert.equal(d.alerts.length, 0);
+
+  // Property cleared (a DQE read succeeded) -> marker clears.
+  d = h.ctx.pipelineWatchAuxDecide_({ readErrRaw: null, readMark: 'alerted@3', minStreak: 3 });
+  assert.equal(d.readMarkNext, '');
+
+  // Malformed JSON -> never throws, no alert.
+  d = h.ctx.pipelineWatchAuxDecide_({ readErrRaw: '{oops', readMark: null, minStreak: 3 });
+  assert.equal(d.alerts.length, 0);
+});

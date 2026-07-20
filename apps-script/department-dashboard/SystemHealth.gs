@@ -212,6 +212,9 @@ function getSystemHealth() {
       // Live smoke harness (SmokeCheck.gs, editor-run): result string is
       // OPS-8 prefix-coded ('ok N/N ...' / 'FAILED k/N ...').
       ['out-smoke', 'Live smoke — last run', 'SMOKE_LAST', 'SMOKE_LAST_RESULT'],
+      // R7 (G-2): Neon coverage check (NeonCoverage.gs, editor-run):
+      // 'ok clean ...' / 'GAPS n finding(s) ...' / 'FAILED...' / 'skipped...'.
+      ['out-coverage', 'Neon coverage — last check', 'NEON_COVERAGE_LAST', 'NEON_COVERAGE_LAST_RESULT'],
     ];
     for (var o = 0; o < outcomes.length; o++) {
       var at = props.getProperty(outcomes[o][2]);
@@ -226,8 +229,10 @@ function getSystemHealth() {
       // date)" / "FAILED" outcomes.
       // O-5: the queue report's not-sent outcome leads with "MISSED <iso>" --
       // none of the substring bad-words match it, so classify by prefix too.
+      // R7 (G-2): likewise the coverage check's findings outcome ("GAPS n ...").
       var bad = !/^ok\b/i.test(res || '')
-        && (/fail|error|unreachable|skipped/i.test(res || '') || /^MISSED\b/.test(res || ''));
+        && (/fail|error|unreachable|skipped/i.test(res || '')
+            || /^MISSED\b/.test(res || '') || /^GAPS\b/.test(res || ''));
       add('triggers', outcomes[o][0], outcomes[o][1], bad ? 'warn' : 'ok',
         (res || '') + (at ? (' @ ' + at) : ''));
     }
@@ -294,6 +299,59 @@ function getSystemHealth() {
 
   var warnCount = rows.filter(function (r) { return r.status === 'warn'; }).length;
   return { generatedAt: new Date().toISOString(), rows: rows, warnCount: warnCount };
+}
+
+// -- UI surface toggles (R7 / G-3) ---------------------------------------------
+// Admin-only editor for the `UI_FLAGS` Script Property: a curated set of
+// client surfaces (Config.gs::UI_FLAG_SURFACES) that can be HIDDEN for all
+// viewers while something is fixed/investigated. INV-01 config-path
+// mitigations: assertAdmin_ + registry validation + LockService + a
+// Logger.log audit line. Presentation-only — nothing here changes compute,
+// caches, or auth gates; viewers pick a change up on their next page load.
+
+/** Pure (unit-tested): comma-list/array → deduped, registry-valid key list. */
+function uiFlagsSanitize_(raw, registry) {
+  var keys = registry || UI_FLAG_SURFACES;
+  var toks = Array.isArray(raw) ? raw : String(raw == null ? '' : raw).split(',');
+  var out = [], seen = {};
+  for (var i = 0; i < toks.length; i++) {
+    var k = String(toks[i] || '').trim().toLowerCase();
+    if (k && Object.prototype.hasOwnProperty.call(keys, k) && !seen[k]) {
+      seen[k] = true; out.push(k);
+    }
+  }
+  return out;
+}
+
+/** Internal read (renderDashboard_ injection + the editor). Never throws. */
+function getUiFlags_() {
+  try {
+    return uiFlagsSanitize_(PropertiesService.getScriptProperties().getProperty('UI_FLAGS'));
+  } catch (e) { return []; }
+}
+
+/** Admin RPC: current flags + the registry (key → label) for the editor UI. */
+function getUiFlags() {
+  assertAdmin_();
+  return { flags: getUiFlags_(), registry: UI_FLAG_SURFACES };
+}
+
+/** Admin RPC: replace the flag set. Unknown keys are dropped (tolerant). */
+function saveUiFlags(req) {
+  assertAdmin_();
+  var lock = LockService.getScriptLock();
+  lock.waitLock(10 * 1000);
+  try {
+    var clean = uiFlagsSanitize_((req && req.flags) || []);
+    var props = PropertiesService.getScriptProperties();
+    if (clean.length) props.setProperty('UI_FLAGS', clean.join(','));
+    else props.deleteProperty('UI_FLAGS');
+    Logger.log('saveUiFlags: %s set UI_FLAGS=%s',
+      Session.getActiveUser().getEmail(), clean.join(',') || '(none)');
+    return { flags: clean };
+  } finally {
+    try { lock.releaseLock(); } catch (e) { /* best-effort */ }
+  }
 }
 
 // -- Report Usage summary ------------------------------------------------------

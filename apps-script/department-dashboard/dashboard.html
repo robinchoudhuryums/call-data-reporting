@@ -1811,6 +1811,22 @@
           <thead><tr><th>Check</th><th>Status</th><th>Detail</th></tr></thead>
           <tbody id="health-tbody"></tbody>
         </table>
+        <!-- R7 (G-3): admin UI-surface toggles (UI_FLAGS Script Property).
+             Checked = hidden for ALL viewers; presentation-only escape hatch
+             while a surface is being fixed/investigated. -->
+        <div class="al-section" id="health-uiflags-section" style="display:none;">
+          <div class="al-section-title">UI surface toggles</div>
+          <p class="al-hint">
+            Hide a dashboard surface for <strong>all users</strong> while it's being
+            fixed or investigated. Presentation-only — data, endpoints, and caches
+            are unchanged; viewers pick a change up on their next page load. No redeploy.
+          </p>
+          <div id="health-uiflags-list" class="health-uiflags-list">Loading…</div>
+          <div class="esc-resolve-actions">
+            <button class="btn" id="health-uiflags-save" type="button">Save toggles</button>
+            <span id="health-uiflags-status" class="al-hint"></span>
+          </div>
+        </div>
         <div class="al-section" id="health-backup-section" style="display:none;">
           <div class="al-section-title">Neon backup</div>
           <p class="al-hint">
@@ -2624,6 +2640,9 @@
     // S5: company-holiday ranges ([{from, to}] ISO, from COMPANY_HOLIDAYS)
     // so the CR/Insights form hints' working-day counts match the server's.
     window.__COMPANY_HOLIDAYS__ = <?!= companyHolidaysJson ?>;
+    // R7 (G-3): admin UI-surface toggles (UI_FLAGS Script Property; keys from
+    // the Config.gs UI_FLAG_SURFACES registry). Applied as body[data-ui-flags].
+    window.__UI_FLAGS__ = <?!= uiFlagsJson ?>;
   </script>
   <?!= include_('script') ?>
 </body>

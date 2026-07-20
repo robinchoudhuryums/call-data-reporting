@@ -250,6 +250,23 @@
     } catch (e) { /* ignore -- fall back to per-chart `plugins` option */ }
   })();
 
+  // R7 (G-3): admin UI-surface toggles. The server injects the sanitized
+  // UI_FLAGS list (window.__UI_FLAGS__); stamping it on <body> lets the
+  // enumerated `body[data-ui-flags~="key"]` CSS rules (styles.html) hide each
+  // surface with !important -- which beats the inline style.display='' the
+  // render paths set. uiFlagOn_ also gates a few fetches so hidden sections
+  // don't still burn server calls.
+  (function applyUiFlags_() {
+    try {
+      var f = window.__UI_FLAGS__ || [];
+      if (f.length) document.body.setAttribute('data-ui-flags', f.join(' '));
+    } catch (e) { /* flags are an admin escape hatch -- never block boot */ }
+  })();
+  function uiFlagOn_(key) {
+    try { return (window.__UI_FLAGS__ || []).indexOf(key) !== -1; }
+    catch (e) { return false; }
+  }
+
   // R7 (O-2): smooth chart animations, globally. One default -- 400ms
   // easeOutQuart on create/update -- honoring prefers-reduced-motion (falls
   // back to Chart.js-off, the established reduced-motion discipline). The
@@ -2388,6 +2405,7 @@
     const tfoot = $('ov-user-tfoot');
     const status = $('ov-user-table-status');
     if (!wrap || !tbody || !tfoot) return;
+    if (uiFlagOn_('ov-user-table')) { wrap.style.display = 'none'; return; }   // R7 (G-3)
     const myToken = ++ovUserTableSeq;
 
     const viewerDept = ovViewerDept_(data);
@@ -4838,7 +4856,23 @@
           return;
         }
         if (!resp.found || !resp.call) {
-          body.innerHTML = '<div class="ds-note">No inbound-call path on record for this call. It may predate inbound capture, or it isn’t an inbound call attributable to this department.</div>';
+          // R7 (M-2): the server now classifies WHY (reason probe on the
+          // unscoped miss) so the note is actionable, not three maybes.
+          var cjMsg;
+          if (resp.reason === 'before-capture') {
+            cjMsg = 'This call predates inbound-call capture'
+              + (resp.minDate ? ' (records begin ' + escapeHtml(resp.minDate) + ')' : '') + ', so no path was recorded.';
+          } else if (resp.reason === 'date-gap') {
+            cjMsg = 'No inbound-call records exist for this date at all — the day looks like a capture gap.'
+              + (USER && USER.role === 'admin'
+                ? ' Run the Neon coverage check (Health page) and re-import / backfill the date if it’s within the Call_Legs retention window.'
+                : ' An admin can check data coverage for this date.');
+          } else if (resp.reason === 'not-captured') {
+            cjMsg = 'This call isn’t in the inbound-call records for its date — it was likely an internal or direct call rather than a captured inbound call, so no path is available.';
+          } else {
+            cjMsg = 'No inbound-call path on record for this call. It may predate inbound capture, or it isn’t an inbound call attributable to this department.';
+          }
+          body.innerHTML = '<div class="ds-note">' + cjMsg + '</div>';
           return;
         }
         body.innerHTML = callJourneyHtml_(resp.call);
@@ -5440,6 +5474,7 @@
   function deptMissedFrostArm_() {
     const wrap = $('dept-missed-section');
     if (!wrap) return;
+    if (uiFlagOn_('dept-missed-section')) return;   // R7 (G-3): surface toggled off
     const dept = getRequestedDept();
     const from = $('from-date') ? $('from-date').value : '';
     const to = $('to-date') ? $('to-date').value : '';
@@ -5452,6 +5487,8 @@
   function deptMissedFetch_() {
     const wrap = $('dept-missed-section');
     if (!wrap) return;
+    // R7 (G-3): surface toggled off -- skip the fetch too (CSS already hides).
+    if (uiFlagOn_('dept-missed-section')) { deptMissedScrollPending_ = false; return; }
     const dept = getRequestedDept();
     const from = $('from-date').value, to = $('to-date').value;
     if (!dept || !from || !to) {
@@ -6315,13 +6352,13 @@
         ? '&asymp; ' + (Math.round((qCalls / wd) * 10) / 10) + '/day over ' + wd + ' workdays'
         : 'across mapped queues';
       qCallsTile =
-          '<div class="dts-tile" title="Across the department&#39;s mapped queues. Workdays = Mon&ndash;Fri minus company holidays.">'
+          '<div class="dts-tile dts-tile--queue" title="Across the department&#39;s mapped queues. Workdays = Mon&ndash;Fri minus company holidays.">'
         +   '<div class="dts-label">Queue calls <span class="dts-scope">this range</span></div>'
         +   '<div class="dts-value" data-flash-key="dts:qcalls">' + fmtNumber(qCalls) + '</div>'
         +   '<div class="dts-sub">' + perDaySub + '</div>'
         + '</div>';
       qAbdTile =
-          '<div class="dts-tile">'
+          '<div class="dts-tile dts-tile--queue">'
         +   '<div class="dts-label">Abandoned %</div>'
         +   '<div class="dts-value' + abCls + '" data-flash-key="dts:qabd">' + escapeHtml(abStr) + '</div>'
         +   '<div class="dts-sub">' + fmtNumber(qAbd) + ' abandoned</div>'
@@ -15187,6 +15224,9 @@
   function loadAbandonHeatmap_(containerId, dept, from, to) {
     var el = $(containerId);
     if (!el) return;
+    // R7 (G-3): the Insights heatmap surface can be admin-toggled off -- skip
+    // the fetch too (CSS hides #ins-heatmap; the Inbound copy stays live).
+    if (containerId === 'ins-heatmap' && uiFlagOn_('ins-heatmap')) { el.style.display = 'none'; return; }
     // Stash the request scope on the container so the cell drill can re-issue
     // it for one (dow, slot); a re-render implicitly drops any open drill.
     el.setAttribute('data-heat-dept', dept || '');
@@ -15872,11 +15912,57 @@
     wireBackup('health-backup-install',   'installNeonBackupTrigger',   'Installing…');
     wireBackup('health-backup-uninstall', 'uninstallNeonBackupTrigger', 'Uninstalling…');
     wireBackup('health-backup-now',       'runNeonBackupNow',           'Backing up… (can take a minute)');
+    // R7 (G-3): UI surface toggles editor.
+    const uiSave = $('health-uiflags-save');
+    if (uiSave) uiSave.addEventListener('click', function () {
+      const list = $('health-uiflags-list');
+      if (!list) return;
+      const flags = Array.prototype.slice.call(list.querySelectorAll('input[type=checkbox]:checked'))
+        .map(function (cb) { return cb.getAttribute('data-flag'); });
+      const st = $('health-uiflags-status');
+      if (st) st.textContent = 'Saving…';
+      uiSave.disabled = true;
+      google.script.run
+        .withSuccessHandler(function (resp) {
+          uiSave.disabled = false;
+          if (st) st.textContent = 'Saved — '
+            + ((resp && resp.flags && resp.flags.length) ? (resp.flags.length + ' surface(s) hidden') : 'all surfaces visible')
+            + '. Users pick this up on their next page load.';
+        })
+        .withFailureHandler(function (err) {
+          uiSave.disabled = false;
+          if (st) st.textContent = 'Error: ' + (err && err.message ? err.message : String(err));
+        })
+        .saveUiFlags({ flags: flags });
+    });
+  }
+
+  // R7 (G-3): render the UI-toggle checkboxes from the server registry
+  // (checked = HIDDEN). Loaded alongside the health table.
+  function healthLoadUiFlags_() {
+    const list = $('health-uiflags-list');
+    const section = $('health-uiflags-section');
+    if (!list || !section) return;
+    google.script.run
+      .withSuccessHandler(function (resp) {
+        if (!resp || !resp.registry) { section.style.display = 'none'; return; }
+        section.style.display = '';
+        const flags = resp.flags || [];
+        list.innerHTML = Object.keys(resp.registry).map(function (k) {
+          const on = flags.indexOf(k) !== -1;
+          return '<label class="health-uiflag-row"><input type="checkbox" data-flag="' + escapeHtml(k) + '"'
+            + (on ? ' checked' : '') + '> ' + escapeHtml(resp.registry[k])
+            + ' <code class="health-uiflag-key">' + escapeHtml(k) + '</code></label>';
+        }).join('');
+      })
+      .withFailureHandler(function () { section.style.display = 'none'; })
+      .getUiFlags();
   }
 
   function healthLoad_() {
     reportSetStatus_('health-status', 'loading', 'Checking…');
     if ($('health-table')) $('health-table').style.display = 'none';
+    healthLoadUiFlags_();   // R7 (G-3): the toggle editor loads alongside
     google.script.run
       .withSuccessHandler(function (data) {
         reportSetStatus_('health-status', '');
