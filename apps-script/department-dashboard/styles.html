@@ -869,10 +869,28 @@
 
   /* ---- Phase 2 #10: calendar trend renderer (CSS grid, no Chart.js) ----- */
   .ins-trend-calendar { padding: 8px 2px 4px; }
+  /* R7 (I-1): the chart wrap's fixed 420px is for the canvas; calendar mode
+     releases it so a tall month never clips (class toggled per render). */
+  .ir-chart-wrap--cal { height: auto; min-height: 280px; }
   .ins-cal-toolbar {
     display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
     margin-bottom: 8px;
   }
+  /* R7 (I-1): month pagination controls. */
+  .ins-cal-nav { display: inline-flex; align-items: center; gap: 6px; }
+  .ins-cal-nav-btn {
+    font: inherit; line-height: 1; padding: 2px 9px; cursor: pointer;
+    border: 1px solid var(--line); border-radius: var(--r);
+    background: var(--paper-card); color: var(--ink);
+  }
+  .ins-cal-nav-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  .ins-cal-nav-btn:disabled { opacity: 0.35; cursor: default; }
+  .ins-cal-month { font-size: 12px; color: var(--ink); white-space: nowrap; }
+  .ins-cal-month-pos { color: var(--muted); font-size: 11px; }
+  /* R7 (I-1): the Line/Calendar toggle stays visible but inert when the
+     calendar isn't applicable (hover title explains why). */
+  .segmented.is-disabled { opacity: 0.45; }
+  .segmented.is-disabled .seg-btn { cursor: default; }
   .ins-cal-legend { color: var(--muted); font-size: 12px; }
   .ins-cal-head, .ins-cal-week {
     display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px;

@@ -1191,6 +1191,11 @@
                  hand-off lives on the My Department page (#dept-insights-strip). -->
             <button class="btn btn-secondary" id="ins-open-mydept-btn" type="button"
                     title="Open the My Department agent table for this department and the same date range.">My Department &#8594;</button>
+            <!-- R7 (N-1): re-run the report for the current selection (frosts
+                 the results while the fresh fetch runs; server cache still
+                 applies, so data refreshes as the 30-min report TTL allows). -->
+            <button class="btn btn-secondary" id="ins-refresh-btn" type="button"
+                    title="Re-run this report for the current dates, comparison, and agent selection.">&#8635; Refresh</button>
             <div class="ir-export-wrap">
               <button class="btn btn-secondary" id="ins-export-btn" type="button" aria-haspopup="menu" aria-expanded="false">
                 Export <span class="ir-export-caret">&#9662;</span>

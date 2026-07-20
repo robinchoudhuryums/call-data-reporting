@@ -1445,6 +1445,17 @@
     // is no longer needed.)
     // Re-fetch the active surface so it reflects the effective role.
     if (document.body.getAttribute('data-page') === 'overview') {
+      // R7 (O-3): repaint the viewer-scoped bits IMMEDIATELY from the last
+      // payload so the 'My Dept' badge + mini-table chip move on the spot --
+      // the live re-fetch below can take seconds (the per-viewer SWR cache is
+      // bypassed in view-as), and the stale chip read as "not changing".
+      if (typeof ovLastData !== 'undefined' && ovLastData && ovLastData.depts) {
+        try {
+          ovRenderUserHero_(ovLastData);
+          ovRenderUserTable_(ovLastData);
+          ovRenderTiles_(ovLastData);
+        } catch (e) { /* best-effort pre-paint; the fetch below repaints */ }
+      }
       ovLoad_(false);
     } else if (typeof refresh === 'function') {
       refresh();
@@ -2069,8 +2080,12 @@
     // The viewer's own dept (manager) / selected dept (admin) is folded into
     // the grid as the FIRST card with a distinctive border + "your dept"
     // badge (replaces the old full-width hero above the chart).
+    // R7 (O-3): in View-as-Manager the badge reads 'My Dept' like the real
+    // manager experience being previewed -- isAllDeptViewer_() alone stays
+    // true there (the client USER is still the admin), which kept the badge
+    // on 'selected' mid-preview.
     const viewerBadge = isViewer
-      ? '<span class="ov-dept-viewer-badge">' + (isAllDeptViewer_() ? 'selected' : 'My Dept') + '</span>'
+      ? '<span class="ov-dept-viewer-badge">' + ((isAllDeptViewer_() && !viewAsDept_) ? 'selected' : 'My Dept') + '</span>'
       : '';
     const cls = 'ov-dept-tile'
               + (isChild ? ' ov-dept-tile-child' : '')
@@ -2362,7 +2377,10 @@
     }
     wrap.style.display = '';
 
-    const title = (isAllDeptViewer_() ? 'Selected dept: ' : 'Your dept: ') + viewerDept;
+    // R7 (O-3): 'My dept' for managers (owner wording) AND for the view-as
+    // preview (which presents the manager experience); 'Selected dept' only
+    // for a genuine all-dept viewer driving the selector.
+    const title = ((isAllDeptViewer_() && !viewAsDept_) ? 'Selected dept: ' : 'My dept: ') + viewerDept;
     $('ov-user-table-title').textContent = title;
     // O4: the table follows its own period slider (re-fetches the range).
     ovWireTablePeriodBar_();
@@ -4444,11 +4462,18 @@
     };
   }
 
-  // Re-alpha an 'rgb(...)'/'rgba(...)' string (THEME tokens resolve to these
-  // via colorToCanvasRgb_, INV-42). Returns the input unchanged if unparseable.
+  // Re-alpha a color string. Fast path parses 'rgb(...)'/'rgba(...)'; anything
+  // else (HEX in particular) delegates to the canvas-based colorWithAlpha_.
+  // R7 (O-1) root cause: colorToCanvasRgb_ (INV-42) returns canvas fillStyle,
+  // which is '#rrggbb' HEX for fully-OPAQUE colors ('rgba(...)' only when
+  // alpha < 1) -- so THEME tokens missed the old rgb-only regex and this
+  // function silently returned them UNCHANGED. That kept the chart tooltip
+  // fully opaque despite the alpha-0.6 setting AND flattened the missed-bar
+  // volume ramp (every bar the same solid warn). Never return the input
+  // un-alpha'd when a parse misses -- delegate instead.
   function rgbaWithAlpha_(str, a) {
     const m = String(str).match(/rgba?\(([^)]+)\)/);
-    if (!m) return str;
+    if (!m) return colorWithAlpha_(str, a);   // HEX / named / oklch -> canvas resolve
     const p = m[1].split(',');
     return 'rgba(' + p[0].trim() + ',' + p[1].trim() + ',' + p[2].trim() + ',' + a + ')';
   }
@@ -5195,6 +5220,14 @@
       if (missedDetail) missedDetail.style.display = 'none';
     }
 
+    // R7 (M-1): frost the Missed Calls section from the MOMENT the summary
+    // fetch begins, not only when its own fetch starts (deptMissedFetch_ runs
+    // only after the summary returns, so the section sat stale/unfrosted for
+    // the whole summary leg -- the window managers kept catching). The frost
+    // stays up through deptMissedFetch_ (which re-frosts idempotently) and is
+    // cleared by its handlers; a summary FAILURE clears it in onError.
+    deptMissedFrostArm_();
+
     var myToken = ++summaryReqSeq;
     // SWR: a repeat request for the exact same (dept, from, to) paints the
     // last-good summary instantly (localStorage, signature-matched) with a
@@ -5295,6 +5328,21 @@
   // modal, which carries its own range for deeper digging.
   let deptMissedChart = null;
   let deptMissedReqKey = '';   // ignore out-of-order responses
+
+  // R7 (M-1): early frost, armed by refresh() when a summary fetch starts so
+  // the section signals "loading" for the summary+missed duration (all roles).
+  // Mirrors deptMissedFetch_'s own frost lines; safe to run twice (idempotent).
+  function deptMissedFrostArm_() {
+    const wrap = $('dept-missed-section');
+    if (!wrap) return;
+    const dept = getRequestedDept();
+    const from = $('from-date') ? $('from-date').value : '';
+    const to = $('to-date') ? $('to-date').value : '';
+    if (!dept || !from || !to) return;   // deptMissedFetch_ would hide the section anyway
+    wrap.style.display = '';
+    wrap.classList.add('dm-loading');
+    dsFrostShow_(wrap, 'Loading missed calls…');
+  }
 
   function deptMissedFetch_() {
     const wrap = $('dept-missed-section');
@@ -5837,6 +5885,10 @@
     // M3: clear the frost overlay on failure (the stale table stays visible).
     var __fh = document.querySelector('.agents-table-wrap');
     if (__fh) dsFrostHide_(__fh);
+    // R7 (M-1): the missed-section frost armed at refresh() start has no
+    // deptMissedFetch_ coming to clear it -- unfrost here (content stays as-is).
+    var __mw = $('dept-missed-section');
+    if (__mw) { dsFrostHide_(__mw); __mw.classList.remove('dm-loading'); }
     var msg = (err && err.message ? err.message : String(err));
     // When this request SWR-painted the last-good table, keep it on screen
     // under the error status (the behavior refresh()'s SWR comment promises)
@@ -6152,8 +6204,10 @@
       var qFrom = (state.meta && state.meta.from) || ($('from-date') && $('from-date').value) || '';
       var qTo   = (state.meta && state.meta.to)   || ($('to-date')   && $('to-date').value)   || '';
       var wd = workingDaysBetween_(qFrom, qTo);
-      var perDaySub = wd > 0
-        ? '&asymp; ' + (Math.round((qCalls / wd) * 10) / 10) + '/day over ' + wd + ' workday' + (wd === 1 ? '' : 's')
+      // R7 (M-4): a 1-workday range's "≈ N/day over 1 workday" just restates
+      // the headline number -- show the per-day sub only for multi-day ranges.
+      var perDaySub = wd > 1
+        ? '&asymp; ' + (Math.round((qCalls / wd) * 10) / 10) + '/day over ' + wd + ' workdays'
         : 'across mapped queues';
       qCallsTile =
           '<div class="dts-tile" title="Across the department&#39;s mapped queues. Workdays = Mon&ndash;Fri minus company holidays.">'
@@ -10946,7 +11000,14 @@
   // calendar (INS_CALENDAR_MIN_DAYS_) and short enough that 'MM-DD' daily
   // labels are unambiguous (<= 366 days).
   let insTrendRender = 'line';     // 'line' | 'calendar'
-  let insCalMetric = 'pct';        // calendar cell metric: 'pct' | 'missed'
+  let insCalMetric = 'pct';        // calendar cell metric: 'pct' | 'missed' | 'abd' (R7)
+  // R7 (I-1): month pagination -- ONE calendar month renders at a time
+  // ('YYYY-MM'); ‹ › arrows flip through the months intersecting the report
+  // window (the old all-weeks render clipped past the first month inside the
+  // fixed-height chart slot). Defaults to the MOST RECENT month; resets when
+  // the report window changes.
+  let insCalMonth_ = '';
+  let insCalWinKey_ = '';
   // I5a: MANAGERS default to the Absolute bar chart (chart view + 'abs' basis)
   // -- a glanceable per-agent volume read -- while admins/owner keep the cards
   // grid default. A saved pref (insRestorePrefs_) still overrides either way.
@@ -11138,6 +11199,11 @@
     if (insMyDeptBtn) insMyDeptBtn.addEventListener('click', function () {
       handoffToMyDept_(($('ins-from') || {}).value, ($('ins-to') || {}).value, {});
     });
+    // R7 (N-1): re-run the report in place for the current selection. Rides
+    // runInsReport's SWR + the I-3 whole-report frost; note the server-side
+    // report cache still applies (data refreshes as the 30-min TTL allows).
+    const insRefreshBtn = $('ins-refresh-btn');
+    if (insRefreshBtn) insRefreshBtn.addEventListener('click', function () { runInsReport(); });
     const insQhMissedBtn = $('ins-qh-missed-link');
     if (insQhMissedBtn) insQhMissedBtn.addEventListener('click', function () {
       handoffToMyDept_(($('ins-from') || {}).value, ($('ins-to') || {}).value, { missed: true });
@@ -11222,8 +11288,11 @@
     // insRenderTrendChart_ shows it only when the calendar is applicable).
     const trendRenderToggle = $('ins-trend-render-toggle');
     if (trendRenderToggle) trendRenderToggle.addEventListener('click', function (e) {
+      // R7 (I-1): ineligible tabs/windows show the toggle disabled (hover
+      // title explains why) -- clicks are inert until it's eligible again.
+      if (trendRenderToggle.classList.contains('is-disabled')) return;
       const b = e.target.closest('.seg-btn');
-      if (!b) return;
+      if (!b || b.disabled) return;
       const next = b.getAttribute('data-render') || 'line';
       if (next === insTrendRender) return;
       insTrendRender = next;
@@ -11241,6 +11310,16 @@
         if (m !== insCalMetric) {
           insCalMetric = m;
           insSavePrefs_();
+          if (insLastData) insRenderTrendCalendar_(insLastData);
+        }
+        return;
+      }
+      // R7 (I-1): ‹ › month nav -- the button carries its target 'YYYY-MM'.
+      const nBtn = e.target.closest('[data-cal-nav]');
+      if (nBtn) {
+        const ym = nBtn.getAttribute('data-cal-nav') || '';
+        if (ym && ym !== insCalMonth_) {
+          insCalMonth_ = ym;
           if (insLastData) insRenderTrendCalendar_(insLastData);
         }
         return;
@@ -11949,13 +12028,27 @@
     gen.disabled = true; gen.innerHTML = DS_EQ_HTML_ + 'Generating…';
     const __rtok = ++reportReqSeq_.ins;   // F10 stale-response guard
     const __sig = reportSig_(req);   // D1b keep-last-good key
+    // R7 (I-3): a re-run over an ALREADY-RENDERED report (period slider, edit
+    // popover, Refresh) frosts the whole results container -- the M3/M-1
+    // pattern -- instead of relying on the thin one-line status note. The SWR
+    // pre-paint below stays readable under the frost; live/fail handlers clear
+    // it. A first run (results hidden) keeps the existing loading pane.
+    const __insFrostHost = $('insights-results');
+    const __insUseFrost = !!(__insFrostHost && __insFrostHost.style.display !== 'none'
+                             && __insFrostHost.childElementCount > 0);
+    if (__insUseFrost) dsFrostShow_(__insFrostHost, 'Refreshing report…');
     // Repaint path shared by live data / SWR / fail-fallback; clears the
     // results-status line so the SWR "refreshing" note can't outlive the
     // response it announced.
     const __insRepaint = function (d, opts) {
       insRenderReport_(d, opts); insShowResults(); reportSetStatus_('ins-results-status', '');
+      // SWR pre-paint keeps the frost up (still refreshing); live/fallback clears.
+      if (!(opts && opts.swr) && __insFrostHost) dsFrostHide_(__insFrostHost);
     };
     reportSwrPaint_('ins', __sig, __insRepaint, 'ins-results-status');   // SWR: instant repeat-paint
+    // With the frost up, the "previous result — refreshing" status line is
+    // redundant (the dept-table M3 precedent) -- the frost signals the refresh.
+    if (__insUseFrost) reportSetStatus_('ins-results-status', '');
     google.script.run
       .withSuccessHandler(function (data) {
         gen.disabled = false; gen.textContent = prev;
@@ -11966,6 +12059,7 @@
       .withFailureHandler(function (err) {
         gen.disabled = false; gen.textContent = prev;
         if (__rtok !== reportReqSeq_.ins) return;
+        if (__insFrostHost) dsFrostHide_(__insFrostHost);   // R7 (I-3)
         // D1b: repaint last-good for this exact request (if any) instead of blanking.
         if (reportFailFallback_('ins', __sig, __insRepaint, 'ins-results-status')) return;
         insShowForm();   // dismisses the launcher loading pane if active
@@ -12206,14 +12300,18 @@
     // D1: apply the density class + toggle state before painting so the
     // Simple gating is in effect for everything below (incl. SWR pre-paints).
     insSyncDensity_();
-    // D3: one-time first-run intro (dismissible). Shown until dismissed;
-    // best-effort on storage errors (private mode -> just keeps showing).
+    // D3: one-time first-run intro. R7 (I-3, owner): shown ONCE, period --
+    // the first render auto-marks it seen, so it never re-nags on later
+    // entries even if the user doesn't click Got it (the dismiss button still
+    // hides it immediately this session). Best-effort on storage errors
+    // (private mode -> shows each visit, the pre-R7 behavior).
     (function () {
       const card = $('ins-intro-card');
       if (!card) return;
       let done = null;
       try { done = localStorage.getItem('cdr.ins.intro.v1'); } catch (e) {}
       card.style.display = done ? 'none' : '';
+      if (!done) { try { localStorage.setItem('cdr.ins.intro.v1', 'done'); } catch (e2) {} }
     })();
     insCloseEditPopover_();
     // I1: belt-and-suspenders -- ensure the launcher's auto-generate loading
@@ -12898,13 +12996,36 @@
   // point-drill's year re-derivation relies on).
   var INS_CALENDAR_MIN_DAYS_ = 14;
   var INS_CALENDAR_MAX_DAYS_ = 366;
+  // R7 (I-1): the Abd % (queues) tab is calendar-eligible too, backed by the
+  // dept-total daily abandoned-% series (queueHealth.dailySeries). ATT stays
+  // line-only.
   function insCalendarEligible_(data) {
-    if (insActiveTrendMetric !== 'answered' && insActiveTrendMetric !== 'pct') return false;
-    const labels = (data && data.trendDaily && data.trendDaily.labels) || [];
-    if (labels.length <= 1) return false;
     const meta = (data && data.meta) || {};
     const span = isoRangeDays_(meta.from, meta.to);
-    return span != null && span >= INS_CALENDAR_MIN_DAYS_ && span <= INS_CALENDAR_MAX_DAYS_;
+    if (span == null || span < INS_CALENDAR_MIN_DAYS_ || span > INS_CALENDAR_MAX_DAYS_) return false;
+    if (insActiveTrendMetric === 'queues') {
+      return (((data && data.queueHealth && data.queueHealth.dailySeries) || []).length > 1);
+    }
+    if (insActiveTrendMetric !== 'answered' && insActiveTrendMetric !== 'pct') return false;
+    return (((data && data.trendDaily && data.trendDaily.labels) || []).length > 1);
+  }
+
+  // R7 (I-1): why the Calendar option is unavailable right now -- shown as the
+  // disabled toggle's hover title so the feature stays discoverable instead of
+  // vanishing on ineligible tabs/windows.
+  function insCalendarIneligibleReason_(data) {
+    if (insActiveTrendMetric === 'att') {
+      return 'Calendar view is available on the Answered / % Answered / Abd % tabs.';
+    }
+    const meta = (data && data.meta) || {};
+    const span = isoRangeDays_(meta.from, meta.to);
+    if (span != null && span < INS_CALENDAR_MIN_DAYS_) {
+      return 'Calendar view needs a report window of at least ' + INS_CALENDAR_MIN_DAYS_ + ' days.';
+    }
+    if (span != null && span > INS_CALENDAR_MAX_DAYS_) {
+      return 'Calendar view supports report windows up to ' + INS_CALENDAR_MAX_DAYS_ + ' days.';
+    }
+    return 'Calendar view is unavailable here — this tab has no daily series for the window.';
   }
 
   function insRenderTrendChart_(data) {
@@ -12926,12 +13047,17 @@
     const calendarOk = insCalendarEligible_(data);
     const renderToggle = $('ins-trend-render-toggle');
     if (renderToggle) {
-      renderToggle.style.display = calendarOk ? '' : 'none';
+      // R7 (I-1): keep the toggle VISIBLE but disabled when ineligible (it
+      // used to vanish entirely, which read as "the calendar view is gone").
+      renderToggle.style.display = '';
+      renderToggle.classList.toggle('is-disabled', !calendarOk);
+      renderToggle.title = calendarOk ? '' : insCalendarIneligibleReason_(data);
       renderToggle.querySelectorAll('.seg-btn').forEach(function (b) {
         const on = (b.getAttribute('data-render') || 'line')
           === (calendarOk ? insTrendRender : 'line');
         b.classList.toggle('active', on);
         b.setAttribute('aria-checked', on ? 'true' : 'false');
+        b.disabled = !calendarOk && (b.getAttribute('data-render') === 'calendar');
       });
     }
     const useCalendar = calendarOk && insTrendRender === 'calendar';
@@ -12939,6 +13065,13 @@
     const canvasWrap = $('ins-trend-canvas-wrap');
     if (calHost) calHost.style.display = useCalendar ? '' : 'none';
     if (canvasWrap) canvasWrap.style.display = useCalendar ? 'none' : '';
+    // R7 (I-1): the chart wrap is fixed-height (420px) for the canvas; let it
+    // grow in calendar mode -- the old all-weeks calendar CLIPPED past the
+    // first month inside it (the "only shows the first month" symptom).
+    if (calHost) {
+      const cw = calHost.closest('.ir-chart-wrap');
+      if (cw) cw.classList.toggle('ir-chart-wrap--cal', useCalendar);
+    }
     const dlBox = $('ins-datalabels-box');
     if (dlBox) dlBox.style.display = useCalendar ? 'none' : '';
     if (useCalendar) {
@@ -13202,6 +13335,29 @@
    * no rows) renders muted. Click a day -> reload the report for it (the
    * trend-point-drill convention, via insDrillToRange_).
    */
+  // R7 (I-1): the months ('YYYY-MM') a from..to window intersects, oldest first.
+  function insCalMonthsInWindow_(fromIso, toIso) {
+    const out = [];
+    const fp = String(fromIso || '').split('-');
+    const tp = String(toIso || '').split('-');
+    if (fp.length !== 3 || tp.length !== 3) return out;
+    let y = +fp[0], m = +fp[1];
+    const endY = +tp[0], endM = +tp[1];
+    let guard = 0;
+    while ((y < endY || (y === endY && m <= endM)) && guard++ < 24) {
+      out.push(y + '-' + (m < 10 ? '0' + m : String(m)));
+      m++; if (m > 12) { m = 1; y++; }
+    }
+    return out;
+  }
+
+  function insCalMonthLabel_(ym) {
+    const p = String(ym || '').split('-');
+    if (p.length !== 2) return ym || '';
+    return new Date(+p[0], +p[1] - 1, 1, 12)
+      .toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  }
+
   function insRenderTrendCalendar_(data) {
     const host = $('ins-trend-calendar');
     if (!host) return;
@@ -13209,11 +13365,33 @@
     const td = (data && data.trendDaily) || {};
     const byLabel = {};
     (td.labels || []).forEach(function (l, i) { byLabel[l] = (td.series || [])[i]; });
+    // R7 (I-1): dept-total daily abandoned % (queueHealth.dailySeries, ISO
+    // dates) backs the new 'Abd %' calendar metric. Offered only when present.
+    const qhDaily = (data && data.queueHealth && data.queueHealth.dailySeries) || [];
+    const byIsoAbd = {};
+    qhDaily.forEach(function (d) { if (d && d.date) byIsoAbd[d.date] = d; });
+    const hasAbd = qhDaily.length > 0;
+    // Arriving from the Abd % trend tab, default the cells to the abandon
+    // metric (the tab the user toggled Calendar from); a saved 'abd' pref
+    // falls back to Answer % when this dept has no queue daily series.
+    if (insActiveTrendMetric === 'queues' && hasAbd && insCalMetric !== 'abd') insCalMetric = 'abd';
+    if (insCalMetric === 'abd' && !hasAbd) insCalMetric = 'pct';
     const isMissed = insCalMetric === 'missed';
+    const isAbd    = insCalMetric === 'abd';
     let maxMissed = 0;
     (td.series || []).forEach(function (s) {
       maxMissed = Math.max(maxMissed, Number(s && s.missed) || 0);
     });
+
+    // Month pagination: one month per view; ‹ › flip within the window.
+    const months = insCalMonthsInWindow_(meta.from, meta.to);
+    if (!months.length) { host.innerHTML = ''; return; }
+    const winKey = String(meta.from || '') + '|' + String(meta.to || '');
+    if (winKey !== insCalWinKey_ || months.indexOf(insCalMonth_) === -1) {
+      insCalWinKey_ = winKey;
+      insCalMonth_ = months[months.length - 1];   // default: most recent month
+    }
+    const mi = months.indexOf(insCalMonth_);
 
     const seg = function (m, label, title) {
       const on = insCalMetric === m;
@@ -13223,12 +13401,26 @@
     };
     const legend = isMissed
       ? 'Darker = more missed rings that day.'
-      : 'Sage = at/above the 92% answer target · warmer = further below it.';
+      : (isAbd
+        ? 'Sage = under the 5% abandon threshold · warmer = at/above it.'
+        : 'Sage = at/above the 92% answer target · warmer = further below it.');
+    const navBtn = function (idx, glyph, label) {
+      const ok = idx >= 0 && idx < months.length;
+      return '<button type="button" class="ins-cal-nav-btn"' + (ok ? ' data-cal-nav="' + months[idx] + '"' : ' disabled')
+        + ' aria-label="' + label + '" title="' + label + '">' + glyph + '</button>';
+    };
     let html = '<div class="ins-cal-toolbar">'
       + '<div class="segmented" role="radiogroup" aria-label="Calendar metric">'
       +   seg('pct', 'Answer %', 'Each day colored against the 92% company answer-rate target.')
       +   seg('missed', 'Missed', 'Each day shaded by how many rings went unanswered.')
+      +   (hasAbd ? seg('abd', 'Abd %', 'Each day colored against the 5% queue-abandon threshold (dept total across mapped queues).') : '')
       + '</div>'
+      + (months.length > 1
+        ? '<div class="ins-cal-nav">' + navBtn(mi - 1, '&lsaquo;', 'Previous month')
+          + '<span class="ins-cal-month">' + escapeHtml(insCalMonthLabel_(insCalMonth_))
+          + ' <span class="ins-cal-month-pos">(' + (mi + 1) + ' of ' + months.length + ')</span></span>'
+          + navBtn(mi + 1, '&rsaquo;', 'Next month') + '</div>'
+        : '<span class="ins-cal-month">' + escapeHtml(insCalMonthLabel_(insCalMonth_)) + '</span>')
       + '<span class="ins-cal-legend">' + legend + '</span>'
       + '</div>';
     html += '<div class="ins-cal-head">'
@@ -13236,46 +13428,63 @@
           return '<span>' + d + '</span>';
         }).join('') + '</div>';
 
-    // Walk Monday-of-first-week .. meta.to, five weekday cells per row.
-    const fp = String(meta.from || '').split('-');
-    const tp = String(meta.to   || '').split('-');
-    if (fp.length !== 3 || tp.length !== 3) { host.innerHTML = html; return; }
-    const cur = new Date(+fp[0], fp[1] - 1, +fp[2], 12);
-    const end = new Date(+tp[0], tp[1] - 1, +tp[2], 12);
+    // Walk the SELECTED month clipped to the report window, five weekday
+    // cells per row. Days outside the month-window intersection render as
+    // blank out-of-window cells.
+    const mp = insCalMonth_.split('-');
+    const monthStart = new Date(+mp[0], +mp[1] - 1, 1, 12);
+    const monthEnd   = new Date(+mp[0], +mp[1], 0, 12);   // last day of month
+    const cur = new Date(monthStart.getTime());
+    const end = monthEnd;
     cur.setDate(cur.getDate() - ((cur.getDay() + 6) % 7));   // rewind to Monday
     let weeks = '';
     while (cur <= end) {
       let cells = '';
       for (let i = 0; i < 5; i++) {
         const iso = insIsoOf_(cur);
-        const inWin = iso >= meta.from && iso <= meta.to;
-        const s = inWin ? byLabel[iso.slice(5)] : null;
+        const inMonth = iso.slice(0, 7) === insCalMonth_;
+        const inWin = inMonth && iso >= meta.from && iso <= meta.to;
+        const s = inWin ? (isAbd ? byIsoAbd[iso] : byLabel[iso.slice(5)]) : null;
         const dayNum = cur.getDate();
         if (!inWin) {
           cells += '<span class="ins-cal-cell ins-cal-out" aria-hidden="true"></span>';
         } else if (!s) {
-          cells += '<span class="ins-cal-cell ins-cal-none" title="' + iso + ' — no call data (holiday / not imported)">'
+          const noneHint = isAbd ? 'no queue call data (holiday / not imported / unmapped)'
+                                 : 'no call data (holiday / not imported)';
+          cells += '<span class="ins-cal-cell ins-cal-none" title="' + iso + ' — ' + noneHint + '">'
             + '<span class="ins-cal-day">' + dayNum + '</span><span class="ins-cal-val">–</span></span>';
         } else {
-          const pct = Math.round(Number(s.pct) || 0);
-          const missed = Number(s.missed) || 0;
-          let style;
-          if (isMissed) {
-            const sev = maxMissed > 0 ? (missed / maxMissed) : 0;
-            style = missed === 0
-              ? 'background: color-mix(in srgb, var(--good) 12%, var(--paper-card));'
-              : 'background: color-mix(in srgb, var(--warn) ' + Math.round(12 + 48 * sev) + '%, var(--paper-card));';
+          let style, valHtml, title;
+          if (isAbd) {
+            const abd = Math.round((Number(s.abandonedPct) || 0) * 10) / 10;
+            const calls = Number(s.totalCalls) || 0;
+            style = abd < 5
+              ? 'background: color-mix(in srgb, var(--good) ' + Math.round(14 + Math.min(22, (5 - abd) * 4)) + '%, var(--paper-card));'
+              : 'background: color-mix(in srgb, var(--warn) ' + Math.round(14 + Math.min(46, (abd - 5) * 6)) + '%, var(--paper-card));';
+            valHtml = abd + '%';
+            title = iso + ' — ' + calls + ' queue call' + (calls === 1 ? '' : 's') + ' · '
+              + (Number(s.abandoned) || 0) + ' abandoned · ' + abd + '% abandoned (5% threshold). Click to reload for this day.';
           } else {
-            style = pct >= 92
-              ? 'background: color-mix(in srgb, var(--good) ' + Math.round(14 + Math.min(22, (pct - 92) * 3)) + '%, var(--paper-card));'
-              : 'background: color-mix(in srgb, var(--warn) ' + Math.round(14 + Math.min(46, (92 - pct) * 1.6)) + '%, var(--paper-card));';
+            const pct = Math.round(Number(s.pct) || 0);
+            const missed = Number(s.missed) || 0;
+            if (isMissed) {
+              const sev = maxMissed > 0 ? (missed / maxMissed) : 0;
+              style = missed === 0
+                ? 'background: color-mix(in srgb, var(--good) 12%, var(--paper-card));'
+                : 'background: color-mix(in srgb, var(--warn) ' + Math.round(12 + 48 * sev) + '%, var(--paper-card));';
+            } else {
+              style = pct >= 92
+                ? 'background: color-mix(in srgb, var(--good) ' + Math.round(14 + Math.min(22, (pct - 92) * 3)) + '%, var(--paper-card));'
+                : 'background: color-mix(in srgb, var(--warn) ' + Math.round(14 + Math.min(46, (92 - pct) * 1.6)) + '%, var(--paper-card));';
+            }
+            valHtml = isMissed ? String(missed) : pct + '%';
+            title = iso + ' — ' + (Number(s.answered) || 0) + ' answered · '
+              + missed + ' missed · ' + pct + '% answered. Click to reload for this day.';
           }
-          const title = iso + ' — ' + (Number(s.answered) || 0) + ' answered · '
-            + missed + ' missed · ' + pct + '% answered. Click to reload for this day.';
           cells += '<button type="button" class="ins-cal-cell ins-cal-drill" data-iso="' + iso + '"'
             + ' style="' + style + '" title="' + escapeHtml(title) + '">'
             + '<span class="ins-cal-day">' + dayNum + '</span>'
-            + '<span class="ins-cal-val">' + (isMissed ? missed : pct + '%') + '</span>'
+            + '<span class="ins-cal-val">' + valHtml + '</span>'
             + '</button>';
         }
         cur.setDate(cur.getDate() + 1);
@@ -13561,13 +13770,28 @@
    * Value labels show the absolute number; click a bar to drill into IR.
    * Colors via THEME (INV-42); datalabels on (INV-41) to carry the values.
    */
+  // R7 (N-2): does this agent have ANY activity in the current window?
+  // Ex-employees kept on the roster (historical-data preservation) and agents
+  // absent for the range come back all-zero -- they add no information as
+  // chart bars, so both cross-agent charts drop them. Cards are untouched
+  // (the quiet tier already folds inactive agents away in the grid).
+  function insAgentHasActivity_(c) {
+    const v = function (k) {
+      const s = c && c.metrics && c.metrics[k];
+      return s ? (Number(s.val) || 0) : 0;
+    };
+    return (v('rung') + v('missed') + v('answered')) > 0;
+  }
+
   function insRenderCardsChart_() {
     const canvas = $('ins-cards-chart');
     if (!canvas) return;
     refreshChartTheme();
     destroyOrphanedChartOnCanvas_('ins-cards-chart');
     if (insCardsChartInstance) { try { insCardsChartInstance.destroy(); } catch (e) {} insCardsChartInstance = null; }
-    const cards = (insLastData && insLastData.agentData) || [];
+    // R7 (N-2): zero-activity agents are excluded from BOTH chart bases
+    // (the 'abs' dispatch below passes this filtered set through).
+    const cards = ((insLastData && insLastData.agentData) || []).filter(insAgentHasActivity_);
     const meta  = (insLastData && insLastData.meta) || {};
     const ts    = (insLastData && insLastData.teamStats) || {};
     if (insCardsChartMode === 'abs')   { insRenderCardsChartAbs_(canvas, cards); return; }
@@ -14264,7 +14488,7 @@
         queueMetric: insQueueMetric,
         trendView:   insTrendView,
         trendRender: insTrendRender,   // Phase 2 #10: line | calendar
-        calMetric:   insCalMetric,     // Phase 2 #10: pct | missed
+        calMetric:   insCalMetric,     // Phase 2 #10: pct | missed | abd (R7)
         showLabels:  $('ins-show-datalabels') ? $('ins-show-datalabels').checked : false,
         cardSort:    insCardSort,
         cardsView:   insCardsView,
@@ -14331,8 +14555,8 @@
       if (prefs.trendRender === 'line' || prefs.trendRender === 'calendar') {
         insTrendRender = prefs.trendRender;   // #10 (button state synced per render)
       }
-      if (prefs.calMetric === 'pct' || prefs.calMetric === 'missed') {
-        insCalMetric = prefs.calMetric;
+      if (prefs.calMetric === 'pct' || prefs.calMetric === 'missed' || prefs.calMetric === 'abd') {
+        insCalMetric = prefs.calMetric;   // 'abd' (R7) self-heals to 'pct' when no queue daily series
       }
       if (prefs.cardsView === 'cards' || prefs.cardsView === 'chart') {
         insCardsView = prefs.cardsView;
