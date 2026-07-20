@@ -80,8 +80,15 @@ bash scripts/check-duplicated-files.sh
 # F-36 all-dept grand-total dedup (qcd-report.test.js); the Missed
 # report's RPT-1/2 abandoned-count + pairing pins
 # (missed-report.test.js); and the ingest watchdog's OPS-1/OPS-7
-# episode/holiday logic (ingest-watchdog.test.js). See
-# tests/README.md for design + how to add tests. The neonWrite JDBC
+# episode/holiday logic (ingest-watchdog.test.js). The ops/report
+# surfaces added since each pin under a same-named suite:
+# system-health + smoke-check, queue-report, pipeline-watch,
+# missed-slice, dal-cutover (sheet-vs-neon parity), heatmap-cell-drill,
+# inbound-qcd-parity, inbound-calls (capture incl. the R5
+# direct-stage/first_agent pins), sheet-repairs-merge, dept-config-neon
+# / config-neon-c3, escalations-hardening, caller-lookup,
+# access-control-editor, cache-version-sync (doc↔code cache-pin drift).
+# See tests/README.md for design + how to add tests. The neonWrite JDBC
 # writers are pinned end-to-end (chunking/commit discipline +
 # field mappings, neon-write-mapping.test.js).
 node --test          # from repo root (or: npm test)
@@ -2696,6 +2703,15 @@ items for anything it flags or doesn't cover.)
     carries count + dept names ONLY (never caller/patient/reason), so it
     composes safely with `NOTIFY_ON_NEW_ESCALATION` (the full-detail PII
     surface) staying off. Pinned by tests/unit/escalations-hardening.test.js.
+33. `DIAL_IN_LABELS` Script Property (dashboard; optional, R5) -- names the
+    MAIN dial-in lines in the Inbound report's "By advertised line" table.
+    Comma-separated `number = Label` pairs (e.g. `18668646332 = Main CSR
+    Line, 19722281820 = Intake Line`); keys are digit-normalized, malformed
+    tokens dropped silently (the Skip Dates grammar discipline), edits need
+    no redeploy. Precedence per line: this map > the derived dominant
+    first-rung agent (`inbound_calls.first_agent` -- populates going
+    forward / on re-import) > the raw number. Agents' direct DIDs usually
+    need no entry; only the shared/IVR main lines do.
 
 ## Cycle Workflow Config
 

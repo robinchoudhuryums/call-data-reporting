@@ -265,6 +265,23 @@ depts). Batch 9's flip runbook is consolidated in the README.
 Remaining strategic work: legacy dqe-report decommission (incl. T-8 onOpen
 collision) + the deferred capture-time queue normalization above.
 
+**Owner feedback rounds 4-6 + density design (2026-07-20).** Code comments
+carry `R4`/`R5`/`R6` (post-deploy owner rounds -- NOT the Batch-3+4 `R-#`
+endpoint family) and `D1-D3` / `#8-#10` (the density-design phases). The
+live rules all live in CLAUDE.md; one-liners here for the code→backstory
+contract:
+
+| Code | What it shipped/fixed | Where the live rule lives |
+|---|---|---|
+| R4 (round 4) | Team strip reduced to one row (+per-workday Queue calls sub); Total-calls column folded into the split bar; call-ID/copy + info-line admin-only; Insights no-ring drill gated+counted via a whole-window slice prefetch; 'Missed Rings' rename; ATT trend tab admin-only; Abd% tab styling aligned; Inbound v4 dropped '(unlabeled)'/'(none)' rows | Team-strip/agent-table/consolidation bullets + INV-30 inbound v4, CLAUDE.md |
+| R5 (round 5) | missed:v15 queue-only enrichment (waitSec + insurer from inbound_calls); inbound v5 ivr→ivr\|direct stage split + `first_agent` capture + DIAL_IN_LABELS/derived dial-in labels; missed-section frost loader; access-denied Gmail compose; Access Control ALL option + dsConfirm_ | Number-coercion/missed bullets, INV-30 inbound v5, Operator State #33 |
+| R6 | Queue-only sentinel attribution by QUEUE NAME (`queuesForDept_`) instead of shared-ext overlap -- cross-dept card leak killed; missed:v16 | "Scope is locked to roster" decision, CLAUDE.md |
+| D1-D3 | Insights Simple/Detailed density toggle (role default manager=simple/admin=detailed), popover Advanced collapse, intro card / all-clear line / small-sample guard | Density Phase-1 bullet, CLAUDE.md |
+| #8/#9/#10 (density Phase 2) | Saved views + copy share link (SHARE_STATE_ + `view` param); Line⇄Calendar trend renderer over trendDaily; `style:'summary'` Insights email | Density Phase-2 bullet, CLAUDE.md |
+
+(Also from this stretch: the QCD parity gate's ±1s duration tolerance --
+write-time float rounding vs Sheets display rounding, Operator State #30.)
+
 ---
 
 ## Phases & batches (rollout narrative, not rules)
