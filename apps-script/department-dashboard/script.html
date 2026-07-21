@@ -278,7 +278,21 @@
     try {
       var reduce = false;
       try { reduce = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches); } catch (e2) {}
-      Chart.defaults.animation = reduce ? false : { duration: 400, easing: 'easeOutQuart' };
+      // R9-6: MUTATE the existing defaults.animation keys -- never REPLACE the
+      // object. Chart.js builds each animated-property group by copying only
+      // `Object.keys(defaults.animation)` (Animations.configure), so a
+      // replacement object holding just {duration, easing} drops the stock
+      // `type` key, the built-in `colors` group loses its type:'color' tag,
+      // and the first animated color throws "this._fn is not a function" in
+      // the SHARED animator loop -- freezing every chart on the page (the
+      // post-deploy "all charts not loading" outage). Reduced motion uses
+      // duration 0 (the transitions.resize convention) for the same reason:
+      // `animation = false` also empties that key list.
+      var anim = Chart.defaults.animation;
+      if (anim && typeof anim === 'object') {
+        anim.duration = reduce ? 0 : 400;
+        anim.easing = 'easeOutQuart';
+      }
     } catch (e) { /* animations are polish -- never block chart setup */ }
   })();
 
