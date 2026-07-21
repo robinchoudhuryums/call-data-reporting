@@ -64,6 +64,23 @@ test('F-45: admins pass for ANY stored dept, including one no longer on the rost
   assert.doesNotThrow(function () { f(admin, null); });
 });
 
+test('R8-4: an ALL-departments manager (allDepts) passes the row gate for ANY dept', function () {
+  const f = h.fn('escAssertRowAccess_');
+  // resolveUser_'s ALL-sentinel shape: role manager, department null,
+  // allDepts true. Pre-fix `rowDept !== null` threw on EVERY row -- the
+  // role could see all-dept lists but act on nothing, and activity
+  // timelines rendered silently blank via the L9 not-found shape.
+  const allMgr = { role: 'manager', department: null, allDepts: true };
+  assert.doesNotThrow(function () { f(allMgr, 'CSR'); });
+  assert.doesNotThrow(function () { f(allMgr, 'Sales'); });
+  // Like admins, entitled even to rows whose stored dept was renamed.
+  assert.doesNotThrow(function () { f(allMgr, 'Renamed Legacy Dept'); });
+  // A single-dept manager with allDepts explicitly false stays pinned.
+  assert.throws(function () {
+    f({ role: 'manager', department: 'CSR', allDepts: false }, 'Sales');
+  }, /Not authorized for this department/);
+});
+
 test('F-45: unauthenticated / role-none callers are refused outright', function () {
   const f = h.fn('escAssertRowAccess_');
   assert.throws(function () { f(null, 'CSR'); }, /Not authorized\./);

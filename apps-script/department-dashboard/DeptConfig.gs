@@ -755,11 +755,15 @@ function sheetDeactivateDeptConfig_(dept) {
   let count = 0;
   for (let i = 0; i < values.length; i++) {
     if (String(values[i][0] || '').trim() === dept && dcIsActive_(values[i][5])) {
-      values[i][5] = 'FALSE';
+      // R8-3 (CORE-7 completion): write ONLY the Active cell (col 6). The old
+      // whole-block round-trip re-armed neutralized formula cells (the
+      // leading apostrophe is formatting -- getValues returns the bare
+      // "=..." string, setValues makes it a live formula) across the
+      // ENTIRE block: notes, inbound aliases, any admin free text.
+      sheet.getRange(2 + i, 6).setValue('FALSE');
       count++;
     }
   }
-  if (count > 0) range.setValues(values);
   DEPT_CONFIG_ROWS_MEMO_ = null;
   return count;
 }

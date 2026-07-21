@@ -7531,7 +7531,14 @@
     }
     if (mode === 'prevPeriod') {
       const ms = 86400000;
-      const durationDays = Math.floor((end - start) / ms);
+      // R8-5: Math.ROUND, not floor. The noon-local Dates protect the DATE
+      // formatting from DST, but the DIFFERENCE across spring-forward is
+      // N*24h - 1h, which floor truncates to N-1 -- the resolved prior
+      // window came out one day short for any DST-spanning range,
+      // violating INV-28 (the server's computePriorWindow_ uses
+      // Date.UTC + Math.round and was immune; this client copy resolves
+      // the IR prevPeriod + the form hints, so it must match).
+      const durationDays = Math.round((end - start) / ms);
       const pe = new Date(start.getTime() - ms);
       const ps = new Date(pe.getTime() - durationDays * ms);
       return { from: isoOf(ps), to: isoOf(pe) };

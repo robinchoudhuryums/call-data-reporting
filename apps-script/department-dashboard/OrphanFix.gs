@@ -752,11 +752,16 @@ function deactivateAgentAlias_(oldName) {
   let count = 0;
   for (let i = 0; i < values.length; i++) {
     if (String(values[i][0] || '').trim() === oldName) {
-      values[i][2] = 'FALSE';
+      // R8-3 (CORE-7 completion): write ONLY the Active cell. The old
+      // whole-block getValues -> setValues round-trip re-armed neutralized
+      // formula cells: sheetSafeCell_'s leading apostrophe is FORMATTING,
+      // not content, so getValues returns the bare "=..." string and
+      // setValues re-interprets it as a LIVE formula -- for every
+      // formula-leading cell anywhere in the block, not just this row.
+      sheet.getRange(2 + i, 3).setValue('FALSE');
       count++;
     }
   }
-  if (count > 0) range.setValues(values);
   return count;
 }
 

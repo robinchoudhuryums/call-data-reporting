@@ -226,3 +226,37 @@ test('A-3: an INACTIVE first copy does not shadow an active later copy', functio
   assert.deepEqual(Array.from(h.call('getDeptQcdQueues_', 'CSR')), ['A_Q_Live'],
     'inactive rows never block an active one (deactivate-all still reverts to constants)');
 });
+
+// --- R8-3 (audit 2026-07-21): CORE-7 completion -- the sheet deactivate must
+// write ONLY the Active cell. The old whole-block getValues -> setValues
+// round-trip re-armed neutralized formula cells (leading apostrophe is
+// formatting; the block write re-interprets the bare "=..." as a formula)
+// across the entire sheet, incl. other depts' notes/aliases.
+test('R8-3: sheetDeactivateDeptConfig_ writes only the Active cell (no whole-block setValues)', function () {
+  setConfig([
+    row({ dept: 'Alpha', qcd: 'A_Q_A', notes: '=HYPERLINK("http://evil","x")' }),
+    row({ dept: 'Beta', qcd: 'A_Q_B' }),
+  ]);
+  const sheet = h.state.spreadsheet._sheet('Dept Config');
+  const writes = [];
+  const realGetRange = sheet.getRange.bind(sheet);
+  sheet.getRange = function (r, c, nr, nc) {
+    const range = realGetRange(r, c, nr, nc);
+    const realSetValues = range.setValues.bind(range);
+    range.setValues = function (vals) {
+      writes.push({ r, c, cells: vals.length * vals[0].length });
+      return realSetValues(vals);
+    };
+    return range;
+  };
+  const count = h.call('sheetDeactivateDeptConfig_', 'Beta');
+  assert.equal(count, 1);
+  assert.equal(writes.length, 1, 'exactly one write');
+  assert.deepEqual(writes[0], { r: 3, c: 6, cells: 1 },
+    'single-cell write at (Beta row 3, Active col 6)');
+  const grid = sheet._data;
+  assert.equal(grid[2][5], 'FALSE', 'Beta deactivated');
+  assert.equal(grid[1][5], 'TRUE', 'Alpha untouched');
+  assert.equal(grid[1][8], '=HYPERLINK("http://evil","x")',
+    'formula-shaped notes cell never re-written');
+});

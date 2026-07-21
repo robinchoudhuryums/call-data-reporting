@@ -138,8 +138,11 @@ function inboundResolveRequest_(req) {
  * (getInboundQueueAliases_, INV-54). This bridges the two queue-name spaces:
  * QCD Historical Data / DEPT_QCD_QUEUES carry canonical names, but
  * inbound_calls.entry_queue/final_queue carry the raw phone-system names.
- * Order-stable, de-duped. Used ONLY by inbound surfaces -- no QCD/DQE reader
- * calls this (they stay on queuesForDept_).
+ * Order-stable, de-duped. Consumers: the inbound surfaces AND (since the
+ * R8-1 name-space fix, missed:v17) the Missed report's queue-only SENTINEL
+ * attribution in computeMissedCallsReport_ -- DQE sentinel rows carry the
+ * same RAW queue names inbound_calls does, so they need the same union.
+ * No QCD reader calls this (those stay on queuesForDept_).
  */
 function inboundQueuesForDept_(dept) {
   if (!dept) return [];

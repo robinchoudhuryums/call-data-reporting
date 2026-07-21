@@ -304,6 +304,18 @@ B = visual/UX, C = server/ops); code comments cite `R7 (<id>)`:
 | C3 / G-1 | PipelineWatch aux signals: failed NeonBackup run + read-back streak ≥3, once per episode, OPS-1 markers | Op State #32, CLAUDE.md |
 | C4 / G-3 | `UI_FLAGS` admin surface toggles (curated registry, Health editor, CSS + fetch gates, no redeploy) | Op State #34, CLAUDE.md |
 
+**Broad-scan Round 8 (2026-07-21).** Audit findings 1–5 implemented; code
+comments cite `R8-<n>` (deliberately NOT bare `F<n>` — that family is taken
+by the Neon read-back codes, see the collision warning above):
+
+| Code | What it fixed | Live rule lives in |
+|---|---|---|
+| R8-1 | Missed report queue-only sentinel match used the QCD-CANONICAL name space while DQE sentinels carry RAW phone-system names — CSR's `A_Q_CSR` no-ring abandons silently vanished (an R6 regression). Match set is now the inbound union `inboundQueuesForDept_` (queuesForDept_ + Dept Config inbound aliases); missed:v17 | "Scope is locked to roster" decision + INV-30, CLAUDE.md |
+| R8-2 | Deferred Neon mirror: `mirrorDqeForDate_` read 36 cols (REP-10's 34-col fix never propagated — threw on a width-trimmed sheet) and `mirrorQcdForDate_` fed raw DISPLAY strings into `setInt`/`setDouble` (every drained date would hard-error toward `neonMirror:gave-up`). Now 34 cols + `nmInt_`/`nmPctFraction_` parsing (fractions match the inline writer's units) | Deferred-mirror gotcha, CLAUDE.md; neon-mirror-tail.test.js |
+| R8-3 | CORE-7 completion: the two deactivate paths (`deactivateAgentAlias_`, `sheetDeactivateDeptConfig_`) round-tripped the whole block via getValues→setValues, re-arming neutralized formula cells as LIVE formulas; they now write only the Active cell | INV-01 mitigations context; orphan-roster-add / dept-config tests |
+| R8-4 | `escAssertRowAccess_` had no `allDepts` branch — the ALL-departments manager could list escalations but not act on any, and activity timelines rendered silently blank | Role-model bullet (R-3 note), CLAUDE.md |
+| R8-5 | Client `resolveComparisonWindow_` prevPeriod used `Math.floor` on a local-noon date diff — one day short across spring-forward (INV-28 violation in IR's client-resolved prior window); now `Math.round`, matching the server's `computePriorWindow_` | INV-28, CLAUDE.md |
+
 ---
 
 ## Phases & batches (rollout narrative, not rules)
