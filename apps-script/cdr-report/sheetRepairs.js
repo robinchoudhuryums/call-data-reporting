@@ -129,14 +129,25 @@ function repairDqeSlotTimestamps_(dryRun) {
       range.setNumberFormat('@');
       range.setValues(vals);
       SpreadsheetApp.flush();
+    } else {
+      // R8-E2 (REP-9's per-group discipline, applied to the PREVIEW too):
+      // restore THIS group's formats immediately after its scan instead of
+      // after all groups. The end-of-run restore left group K-AC holding
+      // the numeric lens across the second group's format-set/flush/read
+      // -- a timeout/crash in that window PERSISTED the lens, so every
+      // still-coerced cell displayed as a bare serial ("0.43302...") to
+      // all getDisplayValues consumers until a repair run completed: the
+      // dry-run-parity violation F-52 closed, surviving on the
+      // abnormal-exit path. The window is now a single group's scan.
+      range.setNumberFormats(priorFormats);
+      SpreadsheetApp.flush();
     }
   }
 
   if (dryRun) {
-    // F-52: restore the ORIGINAL formats -- a preview must leave the sheet
+    // F-52: formats already restored per-group above (R8-E2); nothing
+    // sheet-touching left to do -- a preview leaves the sheet
     // byte-identical for every downstream reader. Do NOT rewrite values.
-    for (var p = 0; p < pending.length; p++) pending[p].range.setNumberFormats(pending[p].priorFormats);
-    SpreadsheetApp.flush();
     Logger.log('previewDqeSlotTimestampRepair: %s coerced slot/AF cell(s) WOULD be recovered. '
       + 'Samples: %s', fixed, JSON.stringify(samples));
     return { fixed: fixed, applied: false, samples: samples };
@@ -558,8 +569,22 @@ function repairDqeOldPstTimestampShift_(dryRun) {
 //
 // The merged values land on the group's FIRST row (coercion-prone cols get
 // plain-text @ format first, per the number-coercion gotcha); the extra rows
-// are deleted bottom-up so row numbers don't shift mid-loop. Idempotent
-// (a second run finds no duplicates).
+// are deleted bottom-up AFTER all merged rows are written, so row numbers
+// don't shift mid-loop. A completed run is idempotent (a second run finds no
+// duplicates).
+//
+// R8-B6 -- interrupted-apply recovery. A timeout/crash between the merged-row
+// writes and the deletes leaves SUMMED first rows with their duplicates still
+// present (temporary double-count), and a naive re-run would group the merged
+// row with the survivors and SUM AGAIN (compounding). The apply now detects
+// that state per group: when every duplicate's detail tokens (K-AC slot
+// timestamps + AD parent ids) are already contained, count-for-count, in the
+// first row's cells, the first row is an already-merged row -- the re-run
+// deletes the leftover duplicates WITHOUT re-summing. So the recovery for an
+// interrupted apply is simply: run repairDqeDuplicateMerge() again. Residual
+// caveat: a group whose duplicates carry NO detail tokens at all (counts-only
+// rows, no slots/abandons -- rare) is unverifiable and falls back to a normal
+// re-sum; such groups are logged with a caution during recovery.
 //
 // Usage:
 //   1. Run the coercion + PST repairs FIRST if this sheet still has any
@@ -584,6 +609,42 @@ function scHmsToSec_(s) {
   if (!/^\d+:\d{2}(:\d{2})?$/.test(t)) return 0;
   var p = t.split(':').map(Number);
   return p.length === 3 ? (p[0] * 3600 + p[1] * 60 + p[2]) : (p[0] * 60 + p[1]);
+}
+
+// R8-B6: TRUE when the group's first row is an ALREADY-MERGED row from an
+// interrupted apply -- i.e. every duplicate row's detail tokens (K-AC slot
+// timestamps, cols idx 10-28, + AD parent ids, idx 29) already appear in the
+// first row's corresponding cell, counted as a MULTISET (a merged cell is the
+// comma-concat of all source rows', duplicates preserved). Requires at least
+// one non-empty dup token to verify positively -- counts-only groups return
+// false (unverifiable; caller re-sums as normal). Any #REBUILD sentinel in
+// the compared cells also returns false (the normal merge path owns sentinel
+// semantics).
+function scMergeAlreadyApplied_(firstRow, dupRows) {
+  var REBUILD = '#REBUILD';
+  var tokens = function (cell) {
+    var t = String(cell == null ? '' : cell).trim();
+    if (!t) return [];
+    return t.split(',').map(function (x) { return x.trim(); }).filter(Boolean);
+  };
+  var sawAnyDupToken = false;
+  for (var c = 10; c <= 29; c++) {
+    var firstRaw = String(firstRow[c] == null ? '' : firstRow[c]).trim();
+    if (firstRaw === REBUILD) return false;
+    var avail = {};
+    tokens(firstRaw).forEach(function (tk) { avail[tk] = (avail[tk] || 0) + 1; });
+    for (var d = 0; d < dupRows.length; d++) {
+      var dupRaw = String(dupRows[d][c] == null ? '' : dupRows[d][c]).trim();
+      if (dupRaw === REBUILD) return false;
+      var tks = tokens(dupRaw);
+      for (var t2 = 0; t2 < tks.length; t2++) {
+        sawAnyDupToken = true;
+        if (!avail[tks[t2]]) return false;   // token missing (or multiset exhausted)
+        avail[tks[t2]]--;
+      }
+    }
+  }
+  return sawAnyDupToken;
 }
 function scSecToHms_(sec) {
   sec = Math.max(0, Math.round(Number(sec) || 0));
@@ -632,9 +693,29 @@ function mergeDqeDuplicateRows_(dryRun) {
   var deleteRows = [];   // 1-based sheet rows to delete
   var summary = [];
 
+  var recovered = 0, unverifiable = 0;
   dupKeys.forEach(function (key) {
     var idxs = groups[key];
     var rows = idxs.map(function (i) { return data[i]; });
+
+    // R8-B6: interrupted-apply recovery. If a previous apply wrote this
+    // group's merged first row but died before deleting the duplicates, the
+    // first row already CONTAINS every duplicate's detail tokens -- re-summing
+    // would compound the counts. Detect that state and only delete the
+    // leftover duplicates. (See the docblock above; counts-only groups are
+    // unverifiable and fall through to a normal re-sum, with a caution.)
+    if (scMergeAlreadyApplied_(rows[0], rows.slice(1))) {
+      recovered++;
+      idxs.slice(1).forEach(function (i) { deleteRows.push(i + 2); });
+      summary.push(key.replace(' ', ' / ') + '  rows ' + idxs.map(function (i) { return i + 2; }).join(',')
+        + '  -> ALREADY MERGED (interrupted apply); deleting leftover duplicate(s) only');
+      return;
+    }
+    var groupHasDetail = rows.slice(1).some(function (r) {
+      for (var c = 10; c <= 29; c++) { if (String(r[c] == null ? '' : r[c]).trim()) return true; }
+      return false;
+    });
+    if (!groupHasDetail) unverifiable++;
 
     var sumUnique = 0, sumRung = 0, sumMissed = 0, sumAns = 0, sumTtt = 0;
     var attNum = 0, attDen = 0, attVals = [], aawVals = [], cawVals = [];
@@ -724,7 +805,12 @@ function mergeDqeDuplicateRows_(dryRun) {
   });
 
   Logger.log('DQE merge: ' + dupKeys.length + ' duplicate key(s), ' + deleteRows.length
-    + ' extra row(s) to remove.' + (dryRun ? '  [DRY RUN -- no writes]' : ''));
+    + ' extra row(s) to remove.'
+    + (recovered ? '  [' + recovered + ' group(s) = interrupted-apply recovery: delete-only, no re-sum]' : '')
+    + (unverifiable ? '  [CAUTION: ' + unverifiable + ' counts-only group(s) have no detail tokens -- an'
+      + ' interrupted prior apply on those could not be detected; if this run follows a crash,'
+      + ' spot-check them against Raw Data before trusting the sums]' : '')
+    + (dryRun ? '  [DRY RUN -- no writes]' : ''));
   summary.slice(0, 50).forEach(function (s) { Logger.log('  ' + s); });
   if (summary.length > 50) Logger.log('  ...and ' + (summary.length - 50) + ' more.');
 

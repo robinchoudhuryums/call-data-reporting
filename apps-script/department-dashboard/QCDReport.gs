@@ -229,9 +229,15 @@ function qcdAllDeptCachedData_(from, to) {
   }
   const data = computeQcdAllDepartments_(from, to);
   const json = JSON.stringify(data);
-  if (json.length <= 100000) {
+  // R8-C4: a failed Dept Config read means the dept->queue maps may be
+  // constant-only this request -- and this cache's 6h TTL makes pinning
+  // that especially costly. Serve uncached; the next request re-reads.
+  const cfgFailed = (typeof deptConfigReadFailed_ === 'function' && deptConfigReadFailed_());
+  if (json.length <= 100000 && !cfgFailed) {
     try { cache.put(cacheKey, json, QCD_ALLDEPT_CACHE_TTL_SECONDS); }
     catch (e) { Logger.log('QCD all-dept cache put failed: %s', e); }
+  } else if (cfgFailed) {
+    Logger.log('qcdAllDeptCachedData_: Dept Config read errored -- skipping cache put.');
   }
   return { data: data, cacheHit: false };
 }

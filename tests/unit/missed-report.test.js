@@ -41,6 +41,10 @@ function install(dataset) {
   // queue list now (not shared-ext overlap) -- map Alpha's queue for the
   // fixtures, like a Dept Config / DEPT_QCD_QUEUES entry would.
   h.ctx.queuesForDept_ = function (d) { return d === 'Alpha' ? ['A_Q_Alpha'] : []; };
+  // R8-1: when InboundReport.gs is loaded, the sentinel match set is the
+  // inbound name-space union instead. Reset between tests so a stub from
+  // one test can't leak into the next (absence = queuesForDept_ fallback).
+  delete h.ctx.inboundQueuesForDept_;
 }
 
 test('RPT-1: abandoned parents on a ZERO-slot row still count (agent + sentinel)', function () {
@@ -121,6 +125,43 @@ test('R6: sentinel attribution is by queue NAME -- another dept\'s queue on a sh
   assert.equal(r.queueOnly[0].queue, 'A_Q_Alpha');
   assert.equal(r.meta.noRingAbandonCount, 1, 'P2 (other dept) excluded from the no-ring count');
   assert.equal(r.meta.abandonedCallCount, 1, 'P2 excluded from the dept-wide unique-abandoned count');
+});
+
+test('R8-1: sentinel match set is the INBOUND union -- a RAW-named queue (Dept Config alias) is included', function () {
+  install([
+    // The two-name-space case: the sentinel carries the RAW phone-system
+    // name (A_Q_AlphaRaw, like CSR's A_Q_CSR) while queuesForDept_ knows
+    // only the QCD-canonical A_Q_Alpha. R6's canonical-only match dropped
+    // this row; with the alias in the inbound union it must be included.
+    { date: '2026-03-10', agent: 'A_Q_AlphaRaw', ext: '501', rung: 0, missed: 0, answered: 0,
+      slots: ['', '', '9:05:11 AM'], abdIds: 'P1', abdTimes: '9:05:11 AM' },
+    // Another dept's raw queue stays excluded -- the union widens the
+    // NAME SPACE, not the leak surface.
+    { date: '2026-03-10', agent: 'A_Q_BetaRaw', ext: '501', rung: 0, missed: 0, answered: 0,
+      slots: ['', '', '9:10:00 AM'], abdIds: 'P2', abdTimes: '9:10:00 AM' },
+  ]);
+  h.ctx.inboundQueuesForDept_ = function (d) {
+    return d === 'Alpha' ? ['A_Q_Alpha', 'A_Q_AlphaRaw'] : [];
+  };
+  const r = h.call('computeMissedCallsReport_', 'Alpha', '2026-03-09', '2026-03-15', 'roster');
+  assert.equal(r.queueOnly.length, 1, 'the raw-named dept queue renders');
+  assert.equal(r.queueOnly[0].queue, 'A_Q_AlphaRaw');
+  assert.equal(r.meta.noRingAbandonCount, 1, 'P2 (other dept raw queue) still excluded');
+  assert.equal(r.meta.abandonedCallCount, 1);
+});
+
+test('R8-1: without InboundReport.gs loaded the match falls back to queuesForDept_ (R6 behavior)', function () {
+  install([
+    { date: '2026-03-10', agent: 'A_Q_Alpha', ext: '501', rung: 0, missed: 0, answered: 0,
+      slots: ['', '', '9:05:11 AM'], abdIds: 'P1', abdTimes: '9:05:11 AM' },
+    // Raw-named sentinel with NO union available: not matchable (documented
+    // fallback -- the fix requires the alias column via inboundQueuesForDept_).
+    { date: '2026-03-10', agent: 'A_Q_AlphaRaw', ext: '501', rung: 0, missed: 0, answered: 0,
+      slots: ['', '', '9:10:00 AM'], abdIds: 'P2', abdTimes: '9:10:00 AM' },
+  ]);
+  const r = h.call('computeMissedCallsReport_', 'Alpha', '2026-03-09', '2026-03-15', 'roster');
+  assert.equal(r.queueOnly.length, 1, 'canonical-named queue only');
+  assert.equal(r.queueOnly[0].queue, 'A_Q_Alpha');
 });
 
 test('R6: an unmapped dept renders NO queue-only section (hide-when-none)', function () {

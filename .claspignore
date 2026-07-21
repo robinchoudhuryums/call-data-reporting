@@ -1,4 +1,4 @@
-# Clasp pushes everything under rootDir (./src) by default.
+# Clasp pushes everything under rootDir (./apps-script/department-dashboard) by default.
 # These patterns are relative to .clasp.json and exclude repo-level
 # files that should never reach Apps Script.
 .git/**

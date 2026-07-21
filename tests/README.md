@@ -39,7 +39,7 @@ tests/
     fixtures.js     DQE-row + DO NOT EDIT! roster grid builders
     shim.js         mock Apps Script globals + a `state` handle to drive them
     loadGas.js      loads .gs files into one vm context (shared global scope)
-  unit/                       (40 suites — the directory is canonical; the
+  unit/                       (the directory is canonical; the
                                rows below are representative examples, not
                                an exhaustive index)
     util.test.js              Util.gs: formatting, month lists, insights, assertAdmin_

@@ -235,10 +235,23 @@ function runBatch(reportConfig, reportLabel) {
       debugLog.push(`❌ Failed: ${errorMsg}`);
     }
 
+    // R8-E4: restore the LIVE report's driving date cell after EVERY day,
+    // not only after the whole batch. Apps Script's execution-ceiling kill
+    // does not run finally blocks -- a ~65-weekday batch (PDF fetch + 2s
+    // sleep each) can plausibly hit the ceiling, and the old single
+    // post-loop restore then left the cell on an arbitrary batch date: the
+    // next emailDailyQueueReportPDF run passed its `instanceof Date` check
+    // and emailed a correctly-dated SUBJECT over a stale-dated report
+    // body. Per-day restore bounds the stale-cell exposure to a kill
+    // DURING one day's fetch.
+    reportSheet.getRange(reportConfig.dateCell).setValue(originalDate);
+    SpreadsheetApp.flush();
+
     Utilities.sleep(2000); // Pause between requests to avoid rate limiting
   }
 
-  // --- Restore original date cell value
+  // --- Restore original date cell value (covers the zero-weekday path;
+  // per-day restores above already covered each iteration)
   reportSheet.getRange(reportConfig.dateCell).setValue(originalDate);
   SpreadsheetApp.flush();
 

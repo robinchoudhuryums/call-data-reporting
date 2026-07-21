@@ -237,9 +237,11 @@ queue-only floaters no longer appear there (no `QUEUE` Source chip in
 the My-Dept table in practice). **The Missed report's queue-only
 ABANDONED section is preserved separately** -- queue-sentinel rows
 are always included by `computeMissedCallsReport_` regardless of
-scope (INV-23). The IR/PR/CR reports DO still surface floaters in a
-dedicated picker group (INV-53), and they remain in the Diagnostics
-panel under "Agents matched only via queue". The internal `scope`
+scope (INV-23). The Individual Report still surfaces floaters in a
+dedicated picker group (INV-53) -- it is the LAST report that does:
+the Performance / Compare Ranges reports were retired into Insights,
+which is roster-only since its v15 bump -- and floaters remain in the
+Diagnostics panel under "Agents matched only via queue". The internal `scope`
 parameter on `computeSummary_` is preserved (`Digest.gs` also passes
 `'roster'`); the floater-exclusion contract is scope-independent, so
 historical roster-only numbers equal a `both` response filtered to
@@ -466,7 +468,7 @@ mirrors it; if the two ever diverge, INV-30 wins.
 | `IndividualReport.gs` (active-in-range subset, shared with all three pickers) | `individual_active:vN:` | `v2` |
 | `PerformanceReport.gs` | `performance:vN:` | RETIRED (Performance Report deleted; Insights is the replacement) |
 | `CompareRangesReport.gs` | `compareRanges:vN:` | RETIRED (Compare Ranges deleted; Insights custom-prior + vs-Prior chart replace it) |
-| `MissedCallsReport.gs` | `missed:vN:` | `v16` |
+| `MissedCallsReport.gs` | `missed:vN:` | `v17` |
 | `CompanyOverview.gs` | `companyOverview:vN` | `v20` |
 | `QCDReport.gs` | `qcd:vN:` | RETIRED (QCD modal deleted; `qcdAll:` remains) |
 | `InboundReport.gs` | `inbound:vN:` | `v5` |

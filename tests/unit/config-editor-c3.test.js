@@ -74,6 +74,11 @@ test('saveDigestConfigRow appends + upserts by (email, dept)', function () {
   // Same email, DIFFERENT dept -> new row.
   h.call('saveDigestConfigRow', { email: 'm@x.com', department: 'Sales', cadence: 'daily' });
   assert.equal(rows('Digest Config').length, 2);
+  // R8-B4: the stored email is LOWERCASED at the editor -- the Neon path's
+  // ON CONFLICT (email, department) PK is exact-case, so mixed-case saves
+  // used to create duplicate rows there while the sheet path edited one.
+  assert.equal(rows('Digest Config')[0][0], 'm@x.com',
+    'mixed-case save stored lowercase (one PK key for both stores)');
 });
 
 test('saveDigestConfigRow validates email, dept, cadence', function () {
@@ -99,4 +104,69 @@ test('all C3 write RPCs are admin-gated', function () {
   assert.throws(function () { h.call('removeAlertConfigRow', { department: 'CSR' }); });
   assert.throws(function () { h.call('saveDigestConfigRow', { email: 'a@b.com', department: 'CSR', cadence: 'daily' }); });
   assert.throws(function () { h.call('removeDigestConfigRow', { email: 'a@b.com', department: 'CSR' }); });
+});
+
+// ---- R8-A5 (audit 2026-07-21): threshold drift honors OPS-9 first-row-wins ----
+test('R8-A5: computeThresholdDrift_ uses the FIRST duplicate row\'s threshold, not the last', function () {
+  h.state.userEmail = 'admin@x.com';
+  h.state.props.ADMIN_EMAILS = 'admin@x.com';
+  h.state.props.SPREADSHEET_ID = 'fake';
+  const logRows = [];
+  for (let i = 0; i < 12; i++) {
+    // [ts, dept, dateChecked, threshold, answerRate, sent, recipients, triggeredBy, notes, status]
+    logRows.push(['t' + i, 'CSR', '2026-07-0' + (i % 9 + 1), 50, 62, 'FALSE', '', 'daily-trigger', '', 'above-threshold']);
+  }
+  h.state.spreadsheet = makeFakeSpreadsheet({ sheets: {
+    'Alert Log': [['Timestamp', 'Department', 'Date Checked', 'Threshold %', 'Answer Rate %',
+                   'Sent', 'Recipients', 'Triggered By', 'Notes', 'Status']].concat(logRows),
+  } });
+  // First row (authoritative, OPS-9): threshold 50 -> meanRate 62 >= 50+10 =
+  // LENIENT. The hand-edited duplicate carries 95; pre-fix it OVERWROTE the
+  // bucket and the chip read 'ok' against a threshold the engine never uses.
+  const config = [
+    { department: 'CSR', threshold: 50 },
+    { department: 'CSR', threshold: 95, duplicateRow: true },
+  ];
+  const out = h.call('computeThresholdDrift_', config, 30);
+  assert.equal(out.CSR.total, 12);
+  assert.equal(out.CSR.fired, 0);
+  assert.equal(out.CSR.severity, 'lenient', 'classified against the FIRST row\'s threshold (50)');
+});
+
+// ---- R8-N: saveDeptConfig validates `raw=canonical` inbound-alias pairs ----
+function installDeptCfgSave() {
+  h.state.userEmail = 'admin@x.com';
+  h.state.props.ADMIN_EMAILS = 'admin@x.com';
+  h.state.props.SPREADSHEET_ID = 'fake';
+  delete h.state.props.CONFIG_SOURCE;
+  h.state.spreadsheet = makeFakeSpreadsheet({ sheets: {
+    'DO NOT EDIT!': [ROSTER_HEADERS],
+    'Dept Config': [['Department', 'QCD Queues', 'Overview Parent', 'Team Avg Excludes',
+      'Queue Ext Overrides', 'Active', 'Updated By', 'Updated At', 'Notes', 'Inbound Queue Aliases']],
+  } });
+  h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
+  if (h.state.cache && h.state.cache.clear) h.state.cache.clear();
+}
+
+test('R8-N: pair whose canonical side is NOT one of the dept\'s QCD queues is rejected', function () {
+  installDeptCfgSave();
+  assert.throws(function () {
+    h.call('saveDeptConfig', { dept: 'CSR', inboundAliases: 'A_Q_CSR=A_Q_Nope' });
+  }, /not one of CSR's QCD queues/);
+  assert.throws(function () {
+    h.call('saveDeptConfig', { dept: 'CSR', inboundAliases: '=A_Q_CustomerSuccess' });
+  }, /Malformed inbound alias pair/);
+});
+
+test('R8-N: a valid pair (canonical in the dept\'s effective/constant queue list) saves', function () {
+  installDeptCfgSave();
+  // No qcdQueues in the request -> allowed canonical falls back to the
+  // dept's effective list; queuesForDept_ isn't loaded in this suite, so
+  // stub it (the typeof guard consumes it when present).
+  h.ctx.queuesForDept_ = function (d) { return d === 'CSR' ? ['A_Q_CustomerSuccess'] : []; };
+  const res = h.call('saveDeptConfig', { dept: 'CSR', inboundAliases: 'A_Q_CSR=A_Q_CustomerSuccess, Backup CSR' });
+  assert.ok(res && res.saved !== false);
+  const grid = h.state.spreadsheet.getSheetByName('Dept Config')._data;
+  assert.ok(String(grid[1][9]).indexOf('A_Q_CSR=A_Q_CustomerSuccess') !== -1, 'pair stored verbatim');
+  delete h.ctx.queuesForDept_;
 });

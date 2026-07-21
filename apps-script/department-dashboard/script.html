@@ -7441,7 +7441,13 @@
     btn.innerHTML = DS_EQ_HTML_ + 'Loading…';
 
     const req = { department: dept, from: from, to: to, agents: agents };
-    if (prior) { req.priorFrom = prior.from; req.priorTo = prior.to; }
+    // R8-D3: prevPeriod sends the MODE and lets the server resolve the
+    // window via the canonical computePriorWindow_ (INV-28) -- the client
+    // resolver stays for the form HINT only (its math drifted once, R8-5).
+    // YoY/custom keep explicit dates (YoY construction is DST-immune).
+    const __irCmpMode = $('ir-compare-mode') ? $('ir-compare-mode').value : 'none';
+    if (__irCmpMode === 'prevPeriod') { req.priorMode = 'prevPeriod'; }
+    else if (prior) { req.priorFrom = prior.from; req.priorTo = prior.to; }
 
     const __rtok = ++reportReqSeq_.ir;   // F10 stale-response guard
     const __sig = reportSig_(req);   // D1b keep-last-good key
@@ -7531,7 +7537,14 @@
     }
     if (mode === 'prevPeriod') {
       const ms = 86400000;
-      const durationDays = Math.floor((end - start) / ms);
+      // R8-5: Math.ROUND, not floor. The noon-local Dates protect the DATE
+      // formatting from DST, but the DIFFERENCE across spring-forward is
+      // N*24h - 1h, which floor truncates to N-1 -- the resolved prior
+      // window came out one day short for any DST-spanning range,
+      // violating INV-28 (the server's computePriorWindow_ uses
+      // Date.UTC + Math.round and was immune; this client copy resolves
+      // the IR prevPeriod + the form hints, so it must match).
+      const durationDays = Math.round((end - start) / ms);
       const pe = new Date(start.getTime() - ms);
       const ps = new Date(pe.getTime() - durationDays * ms);
       return { from: isoOf(ps), to: isoOf(pe) };
@@ -7736,7 +7749,10 @@
     irSetResultsStatus('loading', 'Refreshing report…');
 
     const req = { department: dept, from: from, to: to, agents: newAgents };
-    if (prior && !prior.error) { req.priorFrom = prior.from; req.priorTo = prior.to; }
+    // R8-D3: prevPeriod resolves server-side (see runIrReport). keepCustom
+    // keeps its explicit custom dates.
+    if (!keepCustom && popMode === 'prevPeriod') { req.priorMode = 'prevPeriod'; }
+    else if (prior && !prior.error) { req.priorFrom = prior.from; req.priorTo = prior.to; }
 
     const __rtok = ++reportReqSeq_.ir;   // F10 stale-response guard
     const __sig = reportSig_(req);   // D1b keep-last-good key
@@ -11882,6 +11898,11 @@
           insAutoRunPending_ = false;
           insShowForm();
         }
+        // R8-A7: disarm the one-shot chip-scroll too (the dept page's
+        // deptMissedScrollPending_ discipline) -- a leaked flag would
+        // scroll-jump + spotlight on the NEXT unrelated successful render,
+        // and in Simple mode force-switch the user to Detailed.
+        insScrollPending_ = null;
         $('ins-agent-loader').style.display = '';
         $('ins-agent-loader').textContent = 'Error loading roster: ' + (err && err.message ? err.message : String(err));
       })
@@ -12214,6 +12235,10 @@
         if (__insFrostHost) dsFrostHide_(__insFrostHost);   // R7 (I-3)
         // D1b: repaint last-good for this exact request (if any) instead of blanking.
         if (reportFailFallback_('ins', __sig, __insRepaint, 'ins-results-status')) return;
+        // R8-A7: no render is coming -- disarm the one-shot chip scroll so it
+        // can't fire on a later unrelated render. (The fallback branch above
+        // is fine: its repaint consumes the flag normally.)
+        insScrollPending_ = null;
         insShowForm();   // dismisses the launcher loading pane if active
         insSetFormError('Error: ' + (err && err.message ? err.message : String(err)));
       })
@@ -12764,6 +12789,10 @@
   // buttons (old behavior) rather than losing the drill.
   let insQhNoRingCache_ = null;   // { sig, byQueue: {lcQueue: n}, entries, meta }
   function insQhNoRingGate_() {
+    // R8-A1: the whole Queue health section is UI-flag-hidden -- honor the
+    // documented "fetch gates so hidden sections don't still call the
+    // server" contract (this prefetch was the one caller still firing).
+    if (uiFlagOn_('ins-queue-health')) return;
     const tbody = $('ins-qh-tbody');
     if (!tbody || !tbody.querySelector('.ins-qh-missed')) return;
     const meta = (insLastData && insLastData.meta) || {};
@@ -14563,6 +14592,16 @@
       if (raw == null || !(days > 0)) return '';
       return isTime ? crFormatSecondsShort_(raw / days) : (raw / days).toFixed(1);
     };
+    // R8-A7: format the Prior column like its Current sibling. st.prev is
+    // RAW numeric (seconds for TTT/ATT, percent-scale float for %), so the
+    // export used to show "2:03:00" beside "7380" -- adjacent columns in
+    // different units with no header hint.
+    const priorCell = function (key, prev) {
+      if (prev == null) return '';
+      if (key === 'ttt' || key === 'att') return crFormatSecondsShort_(prev);
+      if (key === 'pct') return (typeof prev === 'number' ? prev.toFixed(1) + '%' : prev);
+      return prev;
+    };
     const teamHead = ['Team rollup (roster only)', 'Current', 'Prior', 'Delta'];
     if (mismatch) teamHead.push('Current/day', 'Prior/day');
     lines.push(row(teamHead));
@@ -14572,7 +14611,7 @@
      ['TTT', 'ttt', 'time'], ['Avg ATT', 'att', null]].forEach(function (m) {
       const st = t[m[1]] || {};
       const cells = [m[0], st.formatted != null ? st.formatted : '',
-                     st.prev != null ? st.prev : '', deltaStr(st)];
+                     priorCell(m[1], st.prev), deltaStr(st)];   // R8-A7
       if (mismatch) {
         // Rates (% / per-call ATT) are length-independent -- no /day cells.
         cells.push(m[2] ? perDay(st.val, meta.currentDays, m[2] === 'time') : '',
@@ -14607,7 +14646,7 @@
       metricCols.forEach(function (m) {
         const st = (a.metrics && a.metrics[m[1]]) || {};
         cells.push(st.formatted != null ? st.formatted : '',
-                   st.prev != null ? st.prev : '', deltaStr(st));
+                   priorCell(m[1], st.prev), deltaStr(st));   // R8-A7
         if (mismatch && m[2] && m[1] !== 'pct' && m[1] !== 'att') {
           // TTT is stored in seconds -- format its /day as a short duration
           // (CR's crCsvRow_ 'time' kind) instead of a bare seconds number.
@@ -16066,7 +16105,9 @@
     if (lookupBtn) lookupBtn.addEventListener('click', runCallerLookup_);
     const phoneInput = $('cl-phone');
     if (phoneInput) phoneInput.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter') runCallerLookup_();
+      // R8-A3: don't launch a second overlapping lookup while one is in
+      // flight -- Enter used to bypass the disabled button entirely.
+      if (e.key === 'Enter' && !($('cl-lookup-btn') && $('cl-lookup-btn').disabled)) runCallerLookup_();
     });
   }
 
@@ -16991,6 +17032,8 @@
     });
   }
 
+  let clLookupSeq_ = 0;   // R8-A3: stale-response token for the lookup fetch
+
   function runCallerLookup_() {
     clSetError_('');
     const phone = ($('cl-phone') && $('cl-phone').value) || '';
@@ -17008,12 +17051,21 @@
     if (loadEl) loadEl.innerHTML = dsRingsHtml_('Looking up inbound calls…');
     clShowOnly_('cl-loading');
 
+    // R8-A3: monotonic stale-response token (the reportReqSeq_ family). The
+    // button-disable guard alone couldn't stop an older in-flight response
+    // from painting over a newer one -- on a PII surface where the queried
+    // number isn't echoed in the results, caller A's history could silently
+    // render under an input reading number B.
+    clLookupSeq_++;
+    const __cltok = clLookupSeq_;
     google.script.run
       .withSuccessHandler(function (data) {
+        if (__cltok !== clLookupSeq_) return;   // superseded by a newer lookup
         btn.disabled = false; btn.textContent = prev;
         clRenderResults_(data);
       })
       .withFailureHandler(function (err) {
+        if (__cltok !== clLookupSeq_) return;
         btn.disabled = false; btn.textContent = prev;
         clShowOnly_('');
         clSetError_('Error: ' + (err && err.message ? err.message : String(err)));

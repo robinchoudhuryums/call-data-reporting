@@ -155,6 +155,18 @@ function runNeonBackup_() {
             // an old whole-month file with the new parts.
             var oldIt = folder.getFilesByName(name);
             while (oldIt.hasNext()) oldIt.next().setTrashed(true);
+            // R8-E1: ALSO trash higher-numbered parts from a heavier prior
+            // run of this same month. If a re-import shrank the month from
+            // 4 parts to 3, the stale part4 kept old (possibly deleted)
+            // rows; once the month closed, the part1 existence check froze
+            // it in the archive forever -- a restore then duplicated /
+            // resurrected rows, defeating exactly the mixing guarantee the
+            // two cleanup passes above exist for.
+            for (var xp = part + 1; ; xp++) {
+              var staleIt = folder.getFilesByName(spec.table + '-' + ym + '.part' + xp + '.jsonl');
+              if (!staleIt.hasNext()) break;
+              while (staleIt.hasNext()) staleIt.next().setTrashed(true);
+            }
           }
           written++;
         }

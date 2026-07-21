@@ -140,6 +140,7 @@ function addAgentAlias(req) {
     throw new Error('Old name and canonical name must differ.');
   }
   assertOnSomeRoster_(canonicalName);
+  assertNotOnAnyRoster_(oldName, 'the alias Old Name');   // R8-B2
   assertOrphanFixLogExists_();   // F1/F2: refuse to write without an audit trail
 
   const admin = Session.getActiveUser().getEmail();
@@ -229,6 +230,10 @@ function applyOrphanRename(req) {
     throw new Error('fromName and toName must differ.');
   }
   assertOnSomeRoster_(toName);
+  // R8-B2: a fromName that is a LIVE roster name would bulk-rewrite that
+  // agent's historical rows away (and, with alsoAddAlias, reroute all
+  // their future builds). Same merge escape hatch: de-roster first.
+  assertNotOnAnyRoster_(fromName, 'the rename source (fromName)');
   // F1/F2: pre-flight the audit sheet BEFORE the irreversible
   // renameHistoricalAgent_ below, so a missing Orphan Fix Log can never
   // leave a bulk DQE Agent-column rewrite with no audit record.
@@ -752,11 +757,16 @@ function deactivateAgentAlias_(oldName) {
   let count = 0;
   for (let i = 0; i < values.length; i++) {
     if (String(values[i][0] || '').trim() === oldName) {
-      values[i][2] = 'FALSE';
+      // R8-3 (CORE-7 completion): write ONLY the Active cell. The old
+      // whole-block getValues -> setValues round-trip re-armed neutralized
+      // formula cells: sheetSafeCell_'s leading apostrophe is FORMATTING,
+      // not content, so getValues returns the bare "=..." string and
+      // setValues re-interprets it as a LIVE formula -- for every
+      // formula-leading cell anywhere in the block, not just this row.
+      sheet.getRange(2 + i, 3).setValue('FALSE');
       count++;
     }
   }
-  if (count > 0) range.setValues(values);
   return count;
 }
 
@@ -833,5 +843,28 @@ function assertOnSomeRoster_(name) {
   if (rosterNames.indexOf(name) === -1) {
     throw new Error('"' + name + '" is not on any dept roster. '
       + 'Add them to the DO NOT EDIT! sheet first, then re-try.');
+  }
+}
+
+/**
+ * R8-B2: the inverse guard, for the SOURCE side of an alias/rename. The
+ * pipeline's aliasMap lookup runs BEFORE the exact-roster match
+ * (buildDQEHistoricalData.js), so an alias whose Old Name equals a LIVE
+ * roster agent's canonical name would silently reroute that agent's every
+ * future daily build under someone else's name -- an ongoing
+ * misattribution with no error anywhere (the agent just goes quiet in
+ * every report). A fat-fingered A->B pick (instead of B->A) produces
+ * exactly this. Legitimate flows are unaffected: a renamed/married
+ * agent's OLD name is no longer a roster cell, and a deliberate
+ * duplicate-person merge removes the duplicate's roster cell first.
+ */
+function assertNotOnAnyRoster_(name, label) {
+  const rosterNames = collectAllRosterNames_();
+  if (rosterNames.indexOf(name) !== -1) {
+    throw new Error('"' + name + '" is a CURRENT roster name -- refusing to use it as '
+      + (label || 'the old/source name') + '. An alias or rename whose source is a live '
+      + 'roster agent would silently reroute that agent\'s future data to another name '
+      + 'on every daily build. If this is a deliberate merge, remove "' + name
+      + '" from the DO NOT EDIT! roster first, then re-try.');
   }
 }

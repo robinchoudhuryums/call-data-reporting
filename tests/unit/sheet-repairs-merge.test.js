@@ -82,3 +82,87 @@ test('T-1: an all-#REBUILD group keeps the sentinel on all three columns', funct
   assert.equal(merged[30], '#REBUILD');
   assert.equal(merged[31], '#REBUILD');
 });
+
+// --- R8-B6 (audit 2026-07-21): interrupted-apply recovery ---------------------
+
+test('R8-B6: a re-run after a crashed apply deletes leftover duplicates WITHOUT re-summing', function () {
+  // Simulate the crash state: the first row already carries the MERGED
+  // content (counts summed, slots + AD tokens concatenated) but the
+  // duplicate source rows were never deleted. The old re-run grouped them
+  // and summed AGAIN (rung 4 -> 6, slots duplicated); the detector must
+  // recognize containment and only delete.
+  h.state.props.SPREADSHEET_ID = 'fake';
+  h.state.spreadsheet = makeFakeSpreadsheet({
+    timeZone: 'America/Chicago',
+    sheets: {
+      'DQE Historical Data': [
+        new Array(34).fill('h'),
+        // Already-merged first row: rung 4 = 2+2, slots/AD = concat of both dups.
+        dqeRow('06/22/2026', 'Anna Smith', {
+          5: '4', 7: '2',
+          10: '9:15:00,10:30:00', 29: 'P2,P1', 30: 'M2,M1', 31: '9:15:00,10:30:00',
+        }),
+        // The leftover duplicates (their tokens are subsets of the first row's).
+        dqeRow('06/22/2026', 'Anna Smith', { 10: '10:30:00', 29: 'P1', 30: 'M1', 31: '10:30:00' }),
+        dqeRow('06/22/2026', 'Anna Smith', { 10: '9:15:00', 29: 'P2', 30: 'M2', 31: '9:15:00' }),
+      ],
+    },
+  });
+  const res = h.call('repairDqeDuplicateMerge');
+  assert.equal(res.deleted, 2, 'both leftover duplicates deleted');
+  const sheet = h.state.spreadsheet.getSheetByName('DQE Historical Data');
+  const rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, 34).getDisplayValues()
+    .filter(function (r) { return r[2] === 'Anna Smith'; });
+  assert.equal(rows.length, 1, 'one row remains');
+  assert.equal(String(rows[0][5]), '4', 'rung NOT re-summed (4, not 6)');
+  assert.equal(rows[0][29], 'P2,P1', 'AD unchanged (no duplicated tokens)');
+  assert.equal(rows[0][10], '9:15:00,10:30:00', 'slot cell unchanged');
+});
+
+test('R8-B6: genuinely-distinct duplicate rows still MERGE (detector must not false-positive)', function () {
+  // Normal un-merged state: the first row does NOT contain the second row's
+  // tokens -- the detector must decline and the ordinary sum must run.
+  h.state.props.SPREADSHEET_ID = 'fake';
+  h.state.spreadsheet = makeFakeSpreadsheet({
+    timeZone: 'America/Chicago',
+    sheets: {
+      'DQE Historical Data': [
+        new Array(34).fill('h'),
+        dqeRow('06/22/2026', 'Anna Smith', { 10: '10:30:00', 29: 'P1', 30: 'M1', 31: '10:30:00' }),
+        dqeRow('06/22/2026', 'Anna Smith', { 10: '9:15:00', 29: 'P2', 30: 'M2', 31: '9:15:00' }),
+      ],
+    },
+  });
+  const res = h.call('repairDqeDuplicateMerge');
+  assert.equal(res.deleted, 1);
+  const sheet = h.state.spreadsheet.getSheetByName('DQE Historical Data');
+  const rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, 34).getDisplayValues()
+    .filter(function (r) { return r[2] === 'Anna Smith'; });
+  assert.equal(String(rows[0][5]), '4', 'rung summed 2+2');
+  assert.equal(rows[0][29], 'P2,P1', 'AD merged, time-sorted');
+});
+
+test('R8-B6: IDENTICAL duplicate rows (double-append) are deduped, not doubled', function () {
+  // Two byte-identical rows = a double-append of the same build output. The
+  // detector's multiset containment holds (first row's tokens exactly cover
+  // the dup's), so one copy is kept AS-IS -- the old behavior summed the
+  // copies, doubling the real values.
+  h.state.props.SPREADSHEET_ID = 'fake';
+  h.state.spreadsheet = makeFakeSpreadsheet({
+    timeZone: 'America/Chicago',
+    sheets: {
+      'DQE Historical Data': [
+        new Array(34).fill('h'),
+        dqeRow('06/22/2026', 'Anna Smith', { 10: '10:30:00', 29: 'P1', 30: 'M1', 31: '10:30:00' }),
+        dqeRow('06/22/2026', 'Anna Smith', { 10: '10:30:00', 29: 'P1', 30: 'M1', 31: '10:30:00' }),
+      ],
+    },
+  });
+  const res = h.call('repairDqeDuplicateMerge');
+  assert.equal(res.deleted, 1);
+  const sheet = h.state.spreadsheet.getSheetByName('DQE Historical Data');
+  const rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, 34).getDisplayValues()
+    .filter(function (r) { return r[2] === 'Anna Smith'; });
+  assert.equal(String(rows[0][5]), '2', 'rung kept at 2, not doubled to 4');
+  assert.equal(rows[0][29], 'P1', 'AD kept, not duplicated');
+});

@@ -61,7 +61,9 @@ function getLatestDataDate() {
   // indexed query vs a whole-column sheet scan). Best-effort: any
   // null/empty/error falls through to the sheet scan below, so a Neon
   // hiccup degrades to today's behavior rather than failing.
+  let neonAttempted = false;   // R8-C2: see cacheNegative_ below
   if (source === 'neon' && typeof neonGetMaxDqeDate_ === 'function') {
+    neonAttempted = true;
     const _t0 = Date.now();
     const neonMax = neonGetMaxDqeDate_();
     if (neonMax) {
@@ -71,12 +73,22 @@ function getLatestDataDate() {
     Logger.log('getLatestDataDate: neon returned no date; falling back to sheet.');
   }
 
+  // R8-C2 (the F6 discipline, applied here): only cache the NEGATIVE
+  // sentinel when it was computed WITHOUT a failed primary source. On the
+  // neon path, reaching the sheet fallback means Neon just errored/returned
+  // null -- if the sheet is also absent/empty (the trimmed-sheet end state),
+  // caching NEGATIVE pins "no data" under the :neon key for the 5-min TTL
+  // even after Neon recovers, blanking the My-Department date default and
+  // the freshness pill's DQE component. Serve null uncached instead so the
+  // next request retries.
+  const cacheNegative_ = function () { if (!neonAttempted) cachePut(NEGATIVE); };
+
   const _tSheet = Date.now();
   const ss = openSpreadsheet_();
   const sheet = ss.getSheetByName(SHEETS.HISTORICAL);
-  if (!sheet) { cachePut(NEGATIVE); return null; }
+  if (!sheet) { cacheNegative_(); return null; }
   const lastRow = sheet.getLastRow();
-  if (lastRow < 2) { cachePut(NEGATIVE); return null; }
+  if (lastRow < 2) { cacheNegative_(); return null; }
   const ssTZ = ss.getSpreadsheetTimeZone();
 
   // The Date column is at HISTORICAL_COLS.DATE.  Scan only that
@@ -87,7 +99,7 @@ function getLatestDataDate() {
     const iso = rowDateIso_(values[i][0], ssTZ);
     if (iso && iso > latest) latest = iso;
   }
-  if (!latest) { cachePut(NEGATIVE); return null; }
+  if (!latest) { cacheNegative_(); return null; }   // R8-C2
   if (typeof logDqeReadTiming_ === 'function') logDqeReadTiming_('getLatestDataDate', 'sheet', _tSheet, lastRow - 1);
   cachePut(latest);
   return latest;
@@ -286,12 +298,20 @@ function getDepartmentSummary(req) {
   data.meta.computeMs = Date.now() - t0;
   data.meta.cacheHit = false;
 
-  try {
-    cache.put(cacheKey, JSON.stringify(data), REPORT_CACHE_TTL_SECONDS);
-  } catch (e) {
-    // CacheService values are capped at ~100KB. A single dept's
-    // summary is well under that, but log if it ever fails.
-    Logger.log('Cache put failed: %s', e);
+  if (typeof deptConfigReadFailed_ === 'function' && deptConfigReadFailed_()) {
+    // R8-C4: the Dept Config read ERRORED this execution -- the payload's
+    // QCD snapshot was built with constant-only config (sheet overrides
+    // silently missing). Serve it, but don't pin the wrong view for the
+    // 30-min TTL; the next request re-reads config.
+    Logger.log('getDepartmentSummary: Dept Config read errored -- skipping cache put.');
+  } else {
+    try {
+      cache.put(cacheKey, JSON.stringify(data), REPORT_CACHE_TTL_SECONDS);
+    } catch (e) {
+      // CacheService values are capped at ~100KB. A single dept's
+      // summary is well under that, but log if it ever fails.
+      Logger.log('Cache put failed: %s', e);
+    }
   }
 
   logReportUsage_('summary', dept, user, false);

@@ -158,6 +158,31 @@ function bulkHistoricalUpdate() {
   processBulkQueue();
 }
 
+// R8-B3: bounded, non-fatal persistence for the bulk progress report -- the
+// F2 lastSheets discipline applied to its sibling property. The report grows
+// one ~80-100 char line per date and was re-saved UNCAPPED after every date:
+// a long bulk range (365 allowed) crossed Script Properties' ~9KB value
+// ceiling around date ~100, and the uncaught setProperty throw killed the
+// run AFTER the date's data landed -- each "Resume" then processed exactly
+// one date and died again. The in-memory report stays FULL (the final
+// "Bulk Complete" alert shows everything from this invocation); only the
+// persisted copy is tail-trimmed, and it exists to survive a pause/resume,
+// where the newest lines are the ones that matter.
+const BULK_REPORT_MAX_LINES = 80;   // ~80-100 chars/line -> comfortably under 9KB
+function saveBulkReport_(props, report) {
+  try {
+    let out = report;
+    if (report.length > BULK_REPORT_MAX_LINES) {
+      out = ['… (' + (report.length - BULK_REPORT_MAX_LINES) + ' earlier lines trimmed -- see Pipeline Health for per-date rows)']
+        .concat(report.slice(-BULK_REPORT_MAX_LINES));
+    }
+    props.setProperty("bulkReport", JSON.stringify(out));
+  } catch (propErr) {
+    console.warn('bulkReport property write failed (non-fatal): '
+      + (propErr && propErr.message ? propErr.message : propErr));
+  }
+}
+
 function processBulkQueue() {
   const ui    = SpreadsheetApp.getUi();
   const props = PropertiesService.getScriptProperties();
@@ -219,7 +244,7 @@ function processBulkQueue() {
     if (Date.now() - batchStartTime > TIME_LIMIT) {
       const remaining = queue.length - index;
       props.setProperty("bulkIndex",  String(index));
-      props.setProperty("bulkReport", JSON.stringify(report));
+      saveBulkReport_(props, report);   // R8-B3: capped + non-fatal
       ui.alert("⏳ Time Limit", `Paused to avoid timeout.\n${remaining} dates remaining.\n\nClick 'Resume Bulk Processing' to continue.`, ui.ButtonSet.OK);
       return;
     }
@@ -247,7 +272,7 @@ function processBulkQueue() {
         report.push(`❌ ${dateStr}: Failed (${e.message})`);
       } else {
         props.setProperty("bulkIndex",  String(index));
-        props.setProperty("bulkReport", JSON.stringify(report));
+        saveBulkReport_(props, report);   // R8-B3: capped + non-fatal
         ui.alert("⛔ Stopped", "Bulk processing stopped.", ui.ButtonSet.OK);
         return;
       }
@@ -255,7 +280,7 @@ function processBulkQueue() {
 
     index++;
     props.setProperty("bulkIndex",  String(index));
-    props.setProperty("bulkReport", JSON.stringify(report));
+    saveBulkReport_(props, report);   // R8-B3: capped + non-fatal
   }
 
   SpreadsheetApp.getActiveSpreadsheet().toast("Archiving all dates...", "Final Step", -1);
@@ -2096,6 +2121,37 @@ if (!skipCDR && obcHD) {
             ' missedBusy=' + dres.meta.missedBusyTotal +
             ' missedFree=' + dres.meta.missedFreeTotal + ' neon=' + directNeonStr,
         });
+        // R8-A2: the Direct mirror was the only Neon writer outside the
+        // L7/F4/F9 failure-row convention -- a mirror skip/error was buried
+        // in the SUCCESS row's notes, invisible to System Health's
+        // "Recent pipeline step failures" (keys on status=failure) and the
+        // PipelineWatch push, so sheet vs direct_call_history could diverge
+        // for weeks unnoticed. Log a dedicated `:Direct:neon` failure row
+        // (the `:CDR:neon` step-name pattern; sheet write already succeeded).
+        // Unreachable-because-UNCONFIGURED (no NEON_HOST) stays silent --
+        // unlike inbound_calls (F9, no sheet primary), Direct has its sheet,
+        // and a deliberately-unconfigured install shouldn't warn daily.
+        // (No wrote>0 gate: even an EMPTY set runs the P-5 authoritative
+        // date-DELETE, so a skipped mirror can leave stale Neon rows.)
+        if (directNeonStr !== 'ok') {
+          var directNeonConfigured = false;
+          try {
+            directNeonConfigured = !!PropertiesService.getScriptProperties().getProperty('NEON_HOST');
+          } catch (propErr) { /* treat as unconfigured */ }
+          if (directNeonStr === 'error' || directNeonConfigured) {
+            try {
+              logPipelineHealthWithFallback_(targetSS, {
+                step: 'processIntegratedHistory:Direct:neon',
+                status: 'failure',
+                rows: null,
+                durationMs: Date.now() - directStart,
+                notes: dateObj.toDateString() + ' | direct_call_history mirror '
+                  + directNeonStr + (dres.neon && dres.neon.error ? (': ' + dres.neon.error) : '')
+                  + ' -- sheet wrote ' + dres.wrote + ' rows; re-import the date or run backfillDirectCallToNeon once fixed.',
+              });
+            } catch (logErr) { /* best-effort */ }
+          }
+        }
       }
     } catch (directErr) {
       var directMsg = (directErr && directErr.message) ? directErr.message : String(directErr);

@@ -606,3 +606,31 @@ test('RPT-3: a queueHealth error payload is NOT cached (next request retries)', 
   const ok2 = h.call('getInsightsReport', req);
   assert.equal(ok2.meta.cacheHit, true, 'healthy payloads still cache');
 });
+
+// --- R8-C3 (audit 2026-07-21): Queue health's QCD-sheet pre-check is
+// source-aware -- with QCD_READ_SOURCE=neon a trimmed QCD sheet must not
+// silently hide the section (computeQcdReport_ reads qcd_history there).
+test('R8-C3: insightsQueueHealth_ proceeds without the QCD sheet when QCD_READ_SOURCE=neon', function () {
+  h.state.props.SPREADSHEET_ID = 'fake';
+  h.state.spreadsheet = makeFakeSpreadsheet({
+    timeZone: 'America/Chicago',
+    sheets: { 'DO NOT EDIT!': rosterGrid({ Alpha: ['Anna, 501'] }) },   // NO QCD sheet
+  });
+  const realCompute = h.ctx.computeQcdReport_;
+  try {
+    h.ctx.computeQcdReport_ = function () {
+      return { meta: { queues: ['A_Q_X'] }, totals: {}, queueBreakdown: [], dailySeries: [], trendData: null };
+    };
+    // Sheet source + missing sheet: the F8 benign-hide stands.
+    delete h.state.props.QCD_READ_SOURCE;
+    assert.equal(h.call('insightsQueueHealth_', 'Alpha', '2026-03-01', '2026-03-07', '2026-02-22', '2026-02-28'), null,
+      'sheet source: missing QCD sheet still hides (F8)');
+    // Neon source + missing sheet: the section must COMPUTE.
+    h.state.props.QCD_READ_SOURCE = 'neon';
+    const qh = h.call('insightsQueueHealth_', 'Alpha', '2026-03-01', '2026-03-07', '2026-02-22', '2026-02-28');
+    assert.ok(qh, 'neon source: Queue health computed despite the trimmed sheet');
+  } finally {
+    h.ctx.computeQcdReport_ = realCompute;
+    delete h.state.props.QCD_READ_SOURCE;
+  }
+});

@@ -82,11 +82,15 @@ function getMissedCallsReport(req) {
   // v16 (R6): queue-only sentinel rows attributed by QUEUE NAME against the
   // dept's effective queue list (queuesForDept_), not shared-ext overlap --
   // other depts' queues no longer leak onto the card.
+  // v17 (R8-1): sentinel names are RAW phone-system queue names, so the match
+  // set is the inbound name-space union (inboundQueuesForDept_ =
+  // queuesForDept_ + Dept Config inbound aliases) -- R6's canonical-only
+  // match silently dropped raw-named queues (CSR's A_Q_CSR).
   // See INV-30 for the full version history.
   // CORE-3: suffix the key with the active DQE read source so a
   // DQE_READ_SOURCE flip can't serve a cross-source payload for the TTL.
   const dqeReadSrc = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
-  const cacheKey = 'missed:v16:' + dept + ':' + scope + ':' + from + ':' + to + ':' + dqeReadSrc;
+  const cacheKey = 'missed:v17:' + dept + ':' + scope + ':' + from + ':' + to + ':' + dqeReadSrc;
   const cached = cache.get(cacheKey);
   if (cached) {
     try {
@@ -103,7 +107,11 @@ function getMissedCallsReport(req) {
   data.meta.cacheHit = false;
 
   const json = JSON.stringify(data);
-  if (json.length <= 100000) {
+  if (data.meta && data.meta.sourceUnavailable) {
+    // R8-C1: outage-empty shape (Neon unreachable + no DQE sheet) -- skip
+    // the put so the next request retries instead of serving "no data".
+    Logger.log('MissedCallsReport: DQE source unavailable -- skipping cache put.');
+  } else if (json.length <= 100000) {
     try { cache.put(cacheKey, json, REPORT_CACHE_TTL_SECONDS); }
     catch (e) { Logger.log('MissedCallsReport cache put failed: %s', e); }
   } else {
@@ -217,18 +225,21 @@ function missedSliceFilter_(reportData, filter) {
 
 // Read (or compute) the roster-scope Missed report for (dept, from, to),
 // sharing the SAME cache the section render uses so a drill after the section
-// loaded is a cache hit. Key mirrors getMissedCallsReport's (missed:v16,
+// loaded is a cache hit. Key mirrors getMissedCallsReport's (missed:v17,
 // scope=roster, source-suffixed per CORE-3).
 function missedReportDataCached_(dept, from, to) {
   const cache = CacheService.getScriptCache();
   const dqeReadSrc = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
-  const cacheKey = 'missed:v16:' + dept + ':roster:' + from + ':' + to + ':' + dqeReadSrc;
+  const cacheKey = 'missed:v17:' + dept + ':roster:' + from + ':' + to + ':' + dqeReadSrc;
   const cached = cache.get(cacheKey);
   if (cached) { try { return JSON.parse(cached); } catch (e) { /* recompute */ } }
   const data = computeMissedCallsReport_(dept, from, to, 'roster');
   try {
     const json = JSON.stringify(data);
-    if (json.length <= 100000) cache.put(cacheKey, json, REPORT_CACHE_TTL_SECONDS);
+    // R8-C1: never pin the outage-empty shape (see computeMissedCallsReport_).
+    if (json.length <= 100000 && !(data.meta && data.meta.sourceUnavailable)) {
+      cache.put(cacheKey, json, REPORT_CACHE_TTL_SECONDS);
+    }
   } catch (e) { /* best-effort */ }
   return data;
 }
@@ -248,7 +259,7 @@ function missedReportDataCached_(dept, from, to) {
 //   - bounded: at most MISSED_ENRICH_MAX_CALLS_ distinct (date, id) pairs
 //     join the IN-list (a multi-week range can list hundreds of abandons;
 //     the oldest overflow entries just stay un-enriched).
-// Enriched fields ride the cached payload (missed:v16).
+// Enriched fields ride the cached payload (missed:v17).
 // ---------------------------------------------------------------------------
 var MISSED_ENRICH_MAX_CALLS_ = 400;
 
@@ -274,18 +285,28 @@ function missedEnrichQueueOnlyFromInbound_(queueOnly) {
     const conn = getDashboardNeonConn_();   // NEO-3: not a DQE read -- no read-health recording
     if (!conn) return;
     try {
-      // Dates are ISO out of the build; ids are the AD parent ids (numeric
-      // strings). Escaped anyway -- the values pass through sheet cells.
-      const sqlStr = function (s) { return "'" + String(s).replace(/'/g, "''") + "'"; };
-      const tuples = pairs.map(function (p) {
-        return '(' + sqlStr(p.date) + '::date,' + sqlStr(p.id) + ')';
-      });
-      const st = conn.createStatement();
-      const rs = st.executeQuery(
+      // R8-B5: bind the (date, id) tuples as prepared-statement params --
+      // this was the ONE Neon query in the dashboard that inlined
+      // cell-derived values (AD parent ids + sheet dates transit the
+      // external CDR feed and the coercion-prone columns) with hand
+      // escaping. The escaping was functionally sound, but every sibling
+      // query (journey, insurer daily, caller lookup, heatmap) binds, and
+      // a future writer-side change to AD's content would silently have
+      // inherited the inline path. Placeholders only in the SQL string;
+      // bounded at MISSED_ENRICH_MAX_CALLS_ pairs (800 params, well under
+      // the 65535 bind cap).
+      const placeholders = pairs.map(function () { return '(?::date,?)'; }).join(',');
+      const st = conn.prepareStatement(
         'SELECT c.call_date::text AS d, c.call_id, c.wait_seconds, i.insurance_name ' +
         'FROM inbound_calls c ' +
         'LEFT JOIN insurance_numbers i ON i.phone_hash = c.caller_hash ' +
-        'WHERE (c.call_date, c.call_id) IN (' + tuples.join(',') + ')');
+        'WHERE (c.call_date, c.call_id) IN (' + placeholders + ')');
+      let p = 1;
+      pairs.forEach(function (pair) {
+        st.setString(p++, pair.date);
+        st.setString(p++, pair.id);
+      });
+      const rs = st.executeQuery();
       const facts = {};
       while (rs.next()) {
         const w = parseInt(rs.getString(3), 10);
@@ -444,7 +465,14 @@ function computeMissedCallsReport_(dept, from, to, scope) {
   }
   if (!values) {
     if (!sheet || lastRow < 2) {   // F-35: neon empty AND no sheet to fall back to
-      return emptyMissedReport_(dept, from, to, scope, roster.names.length);
+      // R8-C1: this corner is only reachable on the neon path (the
+      // !neonCapable branch above throws / returns for a missing or empty
+      // sheet before the DAL read), so reaching it means the source was
+      // UNREACHABLE (reachable-empty is trusted, LM2) -- an OUTAGE shape.
+      // Mark it so the callers skip their cache puts.
+      const e = emptyMissedReport_(dept, from, to, scope, roster.names.length);
+      e.meta.sourceUnavailable = true;
+      return e;
     }
     // Read cols 1..AH. Need date (col 2) and agent (col 3) for filtering,
     // K-AC for missed times, AF for abandoned cross-reference.
@@ -463,15 +491,29 @@ function computeMissedCallsReport_(dept, from, to, scope) {
   // dept's derived ext set), which leaked OTHER depts' queues onto the card
   // whenever queues share extensions (the same false-positive class that
   // drove the Phase-14/15 roster-only flips for agents). A sentinel's
-  // "agent" IS the raw queue name, and the dept's effective queue list
-  // (queuesForDept_ -- the same Dept-Config-backed map every QCD surface
-  // uses) is the ownership map, so match on that instead (case-insensitive,
-  // the round-4 no-ring-drill convention). A dept with no mapped queues, or
-  // no queue-only abandons on ITS queues in range, renders no card. If a
-  // queue that used to appear goes missing, map it to the dept in Dept
-  // Config (Operator State #14).
+  // "agent" IS the raw queue name, so match on the dept's queue-NAME set
+  // instead (case-insensitive, the round-4 no-ring-drill convention).
+  //
+  // R8-1 (name-space fix): sentinel names are the RAW phone-system queue
+  // names from Raw Data (e.g. `A_Q_CSR`), NOT the QCD-canonical names
+  // queuesForDept_ returns (e.g. `A_Q_CustomerSuccess`) -- the two-name-
+  // space landmine in docs/known-issues.md. Matching queuesForDept_ alone
+  // silently dropped every sentinel whose raw name differs from its
+  // canonical name (CSR's main queue). So match the UNION the inbound
+  // surfaces already use -- inboundQueuesForDept_ = queuesForDept_ +
+  // the Dept Config "Inbound queue aliases" column (INV-54 col 10) --
+  // falling back to queuesForDept_ when InboundReport.gs isn't loaded.
+  // A dept with no mapped queues, or no queue-only abandons on ITS queues
+  // in range, renders no card. If a queue that used to appear goes
+  // missing, map its RAW name in Dept Config's "Inbound queue aliases"
+  // field (Operator State #14 -- the QCD Queues field only accepts
+  // canonical names seen in QCD col D, so raw-only names go in aliases).
   const deptQueueNames = {};
-  (typeof queuesForDept_ === 'function' ? (queuesForDept_(dept) || []) : [])
+  const sentinelQueueNames =
+    (typeof inboundQueuesForDept_ === 'function') ? (inboundQueuesForDept_(dept) || [])
+    : (typeof queuesForDept_ === 'function')      ? (queuesForDept_(dept) || [])
+    : [];
+  sentinelQueueNames
     .forEach(function (q) { deptQueueNames[String(q).trim().toLowerCase()] = true; });
 
   // Chart buckets: 8 AM-5 PM CST in 30-min slots = 18 buckets

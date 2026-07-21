@@ -304,6 +304,61 @@ B = visual/UX, C = server/ops); code comments cite `R7 (<id>)`:
 | C3 / G-1 | PipelineWatch aux signals: failed NeonBackup run + read-back streak ≥3, once per episode, OPS-1 markers | Op State #32, CLAUDE.md |
 | C4 / G-3 | `UI_FLAGS` admin surface toggles (curated registry, Health editor, CSS + fetch gates, no redeploy) | Op State #34, CLAUDE.md |
 
+**Broad-scan Round 8 (2026-07-21).** Audit findings 1–5 implemented; code
+comments cite `R8-<n>` (deliberately NOT bare `F<n>` — that family is taken
+by the Neon read-back codes, see the collision warning above):
+
+| Code | What it fixed | Live rule lives in |
+|---|---|---|
+| R8-1 | Missed report queue-only sentinel match used the QCD-CANONICAL name space while DQE sentinels carry RAW phone-system names — CSR's `A_Q_CSR` no-ring abandons silently vanished (an R6 regression). Match set is now the inbound union `inboundQueuesForDept_` (queuesForDept_ + Dept Config inbound aliases); missed:v17 | "Scope is locked to roster" decision + INV-30, CLAUDE.md |
+| R8-2 | Deferred Neon mirror: `mirrorDqeForDate_` read 36 cols (REP-10's 34-col fix never propagated — threw on a width-trimmed sheet) and `mirrorQcdForDate_` fed raw DISPLAY strings into `setInt`/`setDouble` (every drained date would hard-error toward `neonMirror:gave-up`). Now 34 cols + `nmInt_`/`nmPctFraction_` parsing (fractions match the inline writer's units) | Deferred-mirror gotcha, CLAUDE.md; neon-mirror-tail.test.js |
+| R8-3 | CORE-7 completion: the two deactivate paths (`deactivateAgentAlias_`, `sheetDeactivateDeptConfig_`) round-tripped the whole block via getValues→setValues, re-arming neutralized formula cells as LIVE formulas; they now write only the Active cell | INV-01 mitigations context; orphan-roster-add / dept-config tests |
+| R8-4 | `escAssertRowAccess_` had no `allDepts` branch — the ALL-departments manager could list escalations but not act on any, and activity timelines rendered silently blank | Role-model bullet (R-3 note), CLAUDE.md |
+| R8-5 | Client `resolveComparisonWindow_` prevPeriod used `Math.floor` on a local-noon date diff — one day short across spring-forward (INV-28 violation in IR's client-resolved prior window); now `Math.round`, matching the server's `computePriorWindow_` | INV-28, CLAUDE.md |
+
+Batches A+B (the audit's remaining quick-win + correctness tail, same session family):
+
+| Code | What it fixed | Live rule lives in |
+|---|---|---|
+| R8-A1 | UI_FLAGS `dept-team-strip` CSS hid only the caption (`#dept-team-zone`), not the strip; `ins-queue-health`'s no-ring prefetch still fired while the section was flag-hidden | Op State #34, CLAUDE.md |
+| R8-A2 | Direct Neon-mirror skip/error was buried in a SUCCESS row's notes — now a `processIntegratedHistory:Direct:neon` failure row (L7 pattern; unconfigured installs stay silent) | INV-44, CLAUDE.md |
+| R8-A3 | Caller Lookup: Enter bypassed the disabled button and the fetch had no stale-response token — overlapping lookups could paint caller A's history under input B | code (`clLookupSeq_`) |
+| R8-A4 | Custom Report Builder cleared 40 cols but a 4-category comparison renders 45 — stale columns survived beside fresh reports and parked the T-7 diagnostics panel far right forever | code (`dashboardCDR.js` render clear) |
+| R8-A5 | Threshold-drift ignored the OPS-9 `duplicateRow` flag — the LAST duplicate's threshold drove the chip while everything else is first-row-wins | INV-34/E10 context; config-editor-c3 test |
+| R8-A6 | PipelineWatch could persist watermark `'0'` (no parseable timestamps) — the next run would treat 0 as real and blast the whole failure backlog | code (`pipelineWatchRecord_`); pipeline-watch test |
+| R8-A7 | `insScrollPending_` leaked on Insights failures (scroll-jump on a later unrelated render); Insights CSV "Prior" columns emitted raw seconds / raw floats beside formatted "Current" values | code (script.html) |
+| R8-B1 | T-4's unit analysis was inverted — the backfill now stores `abandoned_pct` as a FRACTION matching the inline writer; T-4-era rows heal via force re-import or one-off SQL (DO NOTHING insert can't heal them) | known-issues T-4 entry (corrected) |
+| R8-B2 | `addAgentAlias`/`applyOrphanRename` accepted a SOURCE name that is a live roster agent — alias precedence would silently reroute that agent's every future build; new `assertNotOnAnyRoster_` guard (de-roster first for deliberate merges) | INV-01 OrphanFix mitigations |
+| R8-B3 | `bulkReport` Script Property was unbounded — crossed the ~9KB ceiling around date ~100 of a bulk run, killing the run after each date on resume; now tail-capped + non-fatal (`saveBulkReport_`, the F2 lastSheets discipline) | code (autoImport.js) |
+| R8-B4 | `saveDigestConfigRow` lowercases the email — Neon's exact-case `(email, department)` PK created duplicate rows where the sheet path's case-insensitive match edited one | code (Digest.gs); config-editor-c3 test |
+| R8-B5 | `missedEnrichQueueOnlyFromInbound_` inlined cell-derived (date, id) tuples into SQL with hand escaping — the one binding-discipline deviation; now bound `(?::date,?)` params | code (MissedCallsReport.gs) |
+| R8-B6 | `mergeDqeDuplicateRows_` interrupted-apply recovery: a crash between the merged-row writes and the deletes used to leave a double-count that a re-run COMPOUNDED; the apply now detects already-merged groups (multiset containment of slot/AD tokens) and deletes leftovers without re-summing — also dedupes byte-identical double-append rows instead of doubling them; counts-only groups stay unverifiable (logged caution) | sheet-repairs-merge tests; docblock in sheetRepairs.js |
+
+Batches C+D (sheet-retirement outage sweep + recurrence-prevention tooling):
+
+| Code | What it fixed / added | Live rule lives in |
+|---|---|---|
+| R8-C1 | IR / Insights / Missed cached the OUTAGE-empty shape (Neon unreachable + no sheet) for the 30-min TTL — the empty return now carries `meta.sourceUnavailable` and every cache-put site skips it (the Inbound/Direct unavailable-not-cached discipline); reachable-empty (LM2) stays cacheable | INV-30 discipline; dal-cutover tests |
+| R8-C2 | `getLatestDataDate` cached the `__none__` negative sentinel after a FAILED neon read with no sheet fallback — negative now caches only when no primary source failed (the F6 discipline) | code (Data.gs); dal-cutover tests |
+| R8-C3 | `insightsQueueHealth_`'s QCD-sheet pre-check is source-aware — with `QCD_READ_SOURCE=neon` a trimmed QCD sheet no longer silently hides Queue health (the F-35 treatment, applied to QCD) | code (InsightsReport.gs); insights-report test |
+| R8-C4 | A THROWING Dept Config sheet read (vs the documented absent-sheet fallback) is now flagged (`deptConfigReadFailed_`) and the four QCD-embedding cache puts (summary / insights / companyOverview / qcdAll) skip pinning that request's constant-only view | INV-54 context; dept-config tests |
+| R8-D1 | Cross-file width tripwires (`cross-file-pins.test.js`): NeonMirror's DQE/QCD read widths + the merge repair's read width extract-and-compare against the Config.gs schema constants — the REP-10/R8-2 drift class now fails CI | tests/unit/cross-file-pins.test.js |
+| R8-D2 | UI_FLAGS registry↔CSS↔markup parity test: every `UI_FLAG_SURFACES` key must have a CSS hide rule and every rule target must exist in the markup/client — missing-rule and stale-target drift now fails CI (the R8-A1 class; a rule targeting the WRONG-but-existing element still needs eyes) | tests/unit/cross-file-pins.test.js |
+| R8-D3 | IR prevPeriod comparison resolves SERVER-side: the client sends `priorMode:'prevPeriod'` and `getIndividualReport` resolves via the canonical `computePriorWindow_` (INV-28) — removes the duplicated client math whose drift caused R8-5; YoY/custom stay explicit dates | INV-49, CLAUDE.md; individual-report tests |
+| R8-D4 | DQEdrilldown's `canonicalize_` gained INV-24's strip+flatten UNION — the verification sidebar now canonicalizes the same names the build does (paren-carrying feed names matching via FLATTEN no longer read as false mismatches) | code (DQEdrilldown.js) |
+
+Batch E (ops tail + doc sweep) + R8-N (capture-time queue normalization):
+
+| Code | What it fixed / added | Live rule lives in |
+|---|---|---|
+| R8-E1 | NeonBackup: a shrinking parts-month now trashes higher-numbered stale `.partN.jsonl` files (restore can't duplicate/resurrect rows; the month no longer freezes closed with a stale part) | code (NeonBackup.gs) |
+| R8-E2 | Slot-repair PREVIEW restores each group's number formats immediately (per-group, the REP-9 discipline) — an abnormal exit can no longer persist the numeric lens across K-AC | code (sheetRepairs.js) |
+| R8-E3 | `exportInboundCalls` refresh-in-window deletes only the DATES the Neon fetch returned — interior dates Neon lost keep their fallback-copy rows | code (inboundCallsExport.js) |
+| R8-E4 | `runBatch` restores the live report's date cell after EVERY day (execution-ceiling kills skip finally blocks); malformed Neon Mirror Queue rows are dropped with a log line instead of living forever | code (emailDailyReport.js / NeonMirror.js) |
+| R8-E5 | Operator State #8 reworded: uninstalling the cdr-report safety-net DQE trigger is a CORRECTNESS step (cross-project write race can freeze a partial day), not just redundancy cleanup | Op State #8, CLAUDE.md |
+| R8-E6 | Doc-drift sweep: architecture.md (migration COMPLETE label, root-clasp layout, missing dashboard files), conventions.md (IR is the last floater-surfacing report), .claspignore comment, INV-16 guard doc (checks BOTH sanitizers), Op State #14 raw-name pointer, known-issues R8-1 cross-ref, and the STALE "drilldown endpoint is dormant" claim (Phases 2–4 shipped long since — `insQhMissedDrill_` / `heatCellToggleDrill_` / `missedSliceListHtml_`) | the corrected docs |
+| R8-N | Capture-time queue-name normalization (the two-name-space root-cause fix, option 1): Dept Config inbound aliases accept `raw=canonical` pairs; cdr-import's `icQueueCanonicalMap_` reads them cross-project and `writeInboundCallsToNeon` writes canonical `entry_queue`/`final_queue` on every capture path (journey stays raw; union predicates kept as belt-and-suspenders; save-validated; best-effort = raw on any failure) | known-issues two-name-spaces entry + INV-54, CLAUDE.md |
+
 ---
 
 ## Phases & batches (rollout narrative, not rules)

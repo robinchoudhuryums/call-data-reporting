@@ -67,7 +67,13 @@ function ic_cellDateIso_(disp) {
   return m[3] + '-' + mm + '-' + dd;
 }
 
-function ic_removeRowsInRange_(sheet, startIso, endIso) {
+// R8-E3: optional `onlyDates` (dict of ISO date -> true) narrows the delete
+// to rows whose date the fresh Neon fetch actually RETURNED. The sheet is
+// the durable fallback copy that "survives a Neon outage" -- the old
+// whole-window delete erased the fallback's rows for interior dates Neon
+// had lost (or that predate capture), replacing the unique surviving copy
+// with nothing. Per-date replace preserves exactly the fallback property.
+function ic_removeRowsInRange_(sheet, startIso, endIso, onlyDates) {
   var lastRow = sheet.getLastRow();
   if (lastRow < 2) return 0;
   var width = INBOUND_EXPORT_HEADERS.length;
@@ -80,7 +86,7 @@ function ic_removeRowsInRange_(sheet, startIso, endIso) {
   var removed = 0;
   for (var i = 0; i < values.length; i++) {
     var d = ic_cellDateIso_(dateDisp[i][0]);
-    if (d && d >= startIso && d <= endIso) {
+    if (d && d >= startIso && d <= endIso && (!onlyDates || onlyDates[d])) {
       removed++;
     } else {
       kept.push(values[i]);
@@ -158,10 +164,15 @@ function exportInboundCalls(fromIso, toIso) {
       Logger.log('exportInboundCalls: no inbound_calls rows for %s..%s — sheet left untouched.', startIso, endIso);
       return;
     }
-    // Refresh-in-window: drop any existing sheet rows inside [start, end]
-    // so the append below can't duplicate them, then append the fresh
-    // Neon rows. Only done AFTER a non-empty fetch (above guard).
-    var replaced = ic_removeRowsInRange_(sheet, startIso, endIso);
+    // Refresh-in-window: drop existing sheet rows for the DATES the fetch
+    // actually returned (R8-E3 per-date replace) so the append below can't
+    // duplicate them -- dates Neon no longer has keep their fallback rows.
+    // Only done AFTER a non-empty fetch (above guard).
+    var fetchedDates = {};
+    for (var fd = 0; fd < rows.length; fd++) {
+      if (rows[fd][0]) fetchedDates[String(rows[fd][0])] = true;
+    }
+    var replaced = ic_removeRowsInRange_(sheet, startIso, endIso, fetchedDates);
     // Normalize booleans/nulls for the sheet.
     var values = rows.map(function (r) {
       r[7] = r[7] === true ? 'TRUE' : (r[7] === false ? 'FALSE' : '');

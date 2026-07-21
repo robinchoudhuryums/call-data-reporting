@@ -178,7 +178,15 @@ function runPipelineWatch_() {
 
 function pipelineWatchRecord_(props, watermarkMs, result) {
   try {
-    if (watermarkMs != null && isFinite(watermarkMs)) {
+    // R8-A6: never persist a ZERO watermark. pipelineWatchScan_ returns
+    // maxTsMs=0 when no scanned row had a parseable timestamp (e.g. a
+    // locale-formatted Timestamp column Date.parse can't read); storing
+    // '0' would make the NEXT run treat 0 as a real watermark
+    // (sinceMs==null is false), flagging every historical failure row as
+    // "new" -- one email blast of the whole backlog, violating the
+    // baseline-never-blasts contract. Leaving the property unset keeps the
+    // next run in baseline mode instead.
+    if (watermarkMs != null && isFinite(watermarkMs) && watermarkMs > 0) {
       props.setProperty('PIPELINE_WATCH_LAST_TS', String(watermarkMs));
     }
     props.setProperty('PIPELINE_WATCH_LAST', new Date().toISOString());

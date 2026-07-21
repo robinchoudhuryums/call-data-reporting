@@ -519,7 +519,16 @@ function generateCustomReport() {
   const lastRow  = dashSheet.getLastRow();
 
   if (lastRow >= startRow) {
-    const clearRange = dashSheet.getRange(startRow, 1, Math.max(lastRow - startRow + 60, 60), 40);
+    // R8-A4: clear the WIDEST possible report, not 40 cols. A 4-category
+    // comparison report is 45 cols (1 agent + OB Ext 14 + 3 blocks x 10);
+    // the old 40-col clear left cols 41-45 of a previous wide report
+    // standing beside a narrower fresh one (stale numbers presented as
+    // current), and the surviving columns kept getLastColumn() >= 45,
+    // permanently parking the T-7 diagnostics panel far right. Take the
+    // max of the known ceiling and this run's own width so a future
+    // column add can't re-shrink the clear below the render.
+    const clearCols = Math.max(45, tableHeaders.length + 1);
+    const clearRange = dashSheet.getRange(startRow, 1, Math.max(lastRow - startRow + 60, 60), clearCols);
     clearRange.clearContent().clearFormat().setNumberFormat('@');
     clearRange.setNumberFormat('');
     try { clearRange.getBandings().forEach(b => b.remove()); } catch (_) {}

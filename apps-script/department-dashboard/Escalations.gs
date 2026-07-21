@@ -901,11 +901,17 @@ function backfillEscalationActivity() {
  */
 function escAssertRowAccess_(user, rowDept) {
   if (!user || user.role === 'none') throw new Error('Not authorized.');
-  if (user.role === 'manager' && rowDept !== user.department) {
+  // R8-4 (the R-3 class): an ALL-departments manager (allDepts:true,
+  // department:null) is a DATA-BREADTH role and passes like an admin --
+  // this row gate is data breadth, not an admin surface. Without the
+  // branch, `rowDept !== null` threw on EVERY row: all six worklist verbs
+  // failed and getEscalationActivity's not-found shape rendered every
+  // activity timeline silently blank for the role.
+  if (user.role === 'manager' && !user.allDepts && rowDept !== user.department) {
     throw new Error('Not authorized for this department.');
   }
-  // admins: entitled to every row, including rows whose stored dept no
-  // longer matches a current roster header.
+  // admins + allDepts managers: entitled to every row, including rows
+  // whose stored dept no longer matches a current roster header.
 }
 
 function escRowDepartment_(conn, id) {

@@ -118,3 +118,73 @@ test('IMP-11: a queued date whose Call_Legs sheet was pruned HARD-fails instead 
     assert.equal(h.call('mirrorInboundForDate_', '2026-06-03').unreachable, true);
   } finally { h.ctx.backfillInboundCalls = realBackfill; }
 });
+
+// --- R8-2 (audit 2026-07-21): deferred-mirror payload correctness pins ---------
+
+const { makeFakeSpreadsheet } = require('../harness/fakeSheet');
+
+test('R8-2: mirrorQcdForDate_ parses DISPLAY strings to numbers (setInt/setDouble-safe) and %-displays to FRACTIONS', function () {
+  delete h.state.props.NEON_MIRROR_TAIL_ROWS;
+  const ss = makeFakeSpreadsheet({ sheets: { 'QCD Historical Data': [
+    ['Month Year', 'Week', 'Date', 'Call Queue', 'Call Source', 'Total Calls',
+     'Total Answered', 'Abandoned', 'Longest Wait', 'Avg Answer', 'Abandoned %', 'Violations'],
+    // Thousands-grouped + %-formatted displays (what getDisplayValues serves
+    // on a formatted sheet).
+    ['Jul 2026', 'W2', '07/08/2026', 'A_Q_X', 'Total Calls', '1,234', '1,200', '34',
+     '0:01:00', '0:00:30', '2.76%', '1'],
+    // Bare-decimal display (unformatted cell) passes through as the fraction.
+    ['Jul 2026', 'W2', '07/08/2026', 'A_Q_Y', 'Total Calls', '72', '68', '4',
+     '0:00:40', '0:00:20', '0.0526', '0'],
+  ] } });
+  let captured = null;
+  const realWrite = h.ctx.writeQCDRowsToNeon;
+  try {
+    h.ctx.writeQCDRowsToNeon = function (batch, opts) { captured = { batch, opts }; return { rows: batch.length }; };
+    const res = h.call('mirrorQcdForDate_', ss, '2026-07-08');
+    assert.equal(res.rows, 2);
+    const b0 = captured.batch[0], b1 = captured.batch[1];
+    // Numeric fields are NUMBERS -- "72" || 0 used to keep the STRING, which
+    // the Jdbc bridge rejects at setInt/setDouble.
+    assert.equal(b0.totalCalls, 1234);
+    assert.equal(b0.totalAnswered, 1200);
+    assert.equal(b0.abandoned, 34);
+    assert.equal(b0.violations, 1);
+    // "%"-display converts to the inline writer's FRACTION units
+    // (Config.gs ABANDONED_PCT: 0..1 decimal, NOT percent).
+    assert.ok(Math.abs(b0.abandonedPct - 0.0276) < 1e-9, 'percent display -> fraction');
+    assert.equal(b1.abandonedPct, 0.0526, 'bare decimal passes through');
+    [b0, b1].forEach(function (b) {
+      ['totalCalls', 'totalAnswered', 'abandoned', 'violations', 'abandonedPct'].forEach(function (k) {
+        assert.equal(typeof b[k], 'number', k + ' must be a number');
+      });
+    });
+    // Durations stay display strings -- the writer runs normalizeDuration.
+    assert.equal(b0.longestWait, '0:01:00');
+    assert.equal(captured.opts.authoritative, true, 'IMP-5 per-date replace preserved');
+  } finally { h.ctx.writeQCDRowsToNeon = realWrite; }
+});
+
+test('R8-2 (REP-10 propagated): mirrorDqeForDate_ reads 34 cols (A-AH) -- 36 threw on a width-trimmed sheet', function () {
+  delete h.state.props.NEON_MIRROR_TAIL_ROWS;
+  const dqeHeader = [];
+  for (let c = 0; c < 34; c++) dqeHeader.push('h' + c);
+  const dqeRow = new Array(34).fill('');
+  dqeRow[0] = 'Jul 2026'; dqeRow[1] = '07/08/2026'; dqeRow[2] = 'Anna';
+  dqeRow[4] = '3'; dqeRow[5] = '5'; dqeRow[6] = '1'; dqeRow[7] = '4';
+  const ss = makeFakeSpreadsheet({ sheets: { 'DQE Historical Data': [dqeHeader, dqeRow] } });
+  const sheet = ss.getSheetByName('DQE Historical Data');
+  const widths = [];
+  const realGetRange = sheet.getRange.bind(sheet);
+  sheet.getRange = function (r, c, nr, nc) { widths.push(nc); return realGetRange(r, c, nr, nc); };
+  let captured = null;
+  const realWrite = h.ctx.writeDQERowsToNeon;
+  try {
+    h.ctx.writeDQERowsToNeon = function (batch, opts) { captured = batch; return { rows: batch.length }; };
+    const res = h.call('mirrorDqeForDate_', ss, '2026-07-08');
+    assert.equal(res.rows, 1);
+    assert.ok(widths.length > 0, 'tail read happened');
+    widths.forEach(function (w) { assert.equal(w, 34, 'every DQE read is 34 cols wide'); });
+    assert.equal(captured[0].agentName, 'Anna');
+    assert.equal(captured[0].totalRung, 5);
+  } finally { h.ctx.writeDQERowsToNeon = realWrite; }
+});

@@ -159,3 +159,42 @@ test('v11: a disjoint custom prior window does NOT flag priorOverlap', function 
   });
   assert.equal(data.meta.priorOverlap, false);
 });
+
+// --- R8-D3 (audit 2026-07-21): prevPeriod resolves SERVER-side --------------
+test('R8-D3: priorMode=prevPeriod resolves the INV-28 window server-side (byte-equal to explicit dates)', function () {
+  const rows = [
+    dqeRow({ date: '2026-03-09', agent: 'Anna', rung: 6, missed: 1, answered: 5,
+             ttt: '0:20:00', att: '0:04:00' }),
+    // Activity inside the expected prior window (Mar 5-6 for a Mar 7-8 range... 
+    // range below is Mar 9-10, so prior = Mar 7-8).
+    dqeRow({ date: '2026-03-08', agent: 'Anna', rung: 4, missed: 2, answered: 2,
+             ttt: '0:08:00', att: '0:04:00' }),
+  ];
+  install(rows);
+  const viaMode = h.call('getIndividualReport',
+    { department: 'Alpha', from: '2026-03-09', to: '2026-03-10', agents: ['Anna'], priorMode: 'prevPeriod' });
+  h.state.cache.clear();
+  const pw = h.call('computePriorWindow_', '2026-03-09', '2026-03-10');
+  assert.equal(pw.from, '2026-03-07');
+  assert.equal(pw.to, '2026-03-08');
+  const viaDates = h.call('getIndividualReport',
+    { department: 'Alpha', from: '2026-03-09', to: '2026-03-10', agents: ['Anna'],
+      priorFrom: pw.from, priorTo: pw.to });
+  // Same resolved comparison: identical priorStats + label.
+  assert.equal(viaMode.priorDateLabel, viaDates.priorDateLabel);
+  assert.deepEqual(JSON.parse(JSON.stringify(entry(viaMode, 'Anna').priorRaw)),
+                   JSON.parse(JSON.stringify(entry(viaDates, 'Anna').priorRaw)));
+  assert.ok(entry(viaMode, 'Anna').priorStats, 'comparison actually resolved');
+});
+
+test('R8-D3: explicit priorFrom/priorTo win over a stray priorMode (no silent override)', function () {
+  install([
+    dqeRow({ date: '2026-03-09', agent: 'Anna', rung: 6, missed: 1, answered: 5,
+             ttt: '0:20:00', att: '0:04:00' }),
+  ]);
+  const data = h.call('getIndividualReport',
+    { department: 'Alpha', from: '2026-03-09', to: '2026-03-10', agents: ['Anna'],
+      priorMode: 'prevPeriod', priorFrom: '2025-03-09', priorTo: '2025-03-10' });
+  assert.ok(String(data.priorDateLabel || '').indexOf('2025') !== -1,
+    'explicit dates used, priorMode ignored');
+});

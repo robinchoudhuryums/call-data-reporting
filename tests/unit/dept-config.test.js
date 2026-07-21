@@ -226,3 +226,68 @@ test('A-3: an INACTIVE first copy does not shadow an active later copy', functio
   assert.deepEqual(Array.from(h.call('getDeptQcdQueues_', 'CSR')), ['A_Q_Live'],
     'inactive rows never block an active one (deactivate-all still reverts to constants)');
 });
+
+// --- R8-3 (audit 2026-07-21): CORE-7 completion -- the sheet deactivate must
+// write ONLY the Active cell. The old whole-block getValues -> setValues
+// round-trip re-armed neutralized formula cells (leading apostrophe is
+// formatting; the block write re-interprets the bare "=..." as a formula)
+// across the entire sheet, incl. other depts' notes/aliases.
+test('R8-3: sheetDeactivateDeptConfig_ writes only the Active cell (no whole-block setValues)', function () {
+  setConfig([
+    row({ dept: 'Alpha', qcd: 'A_Q_A', notes: '=HYPERLINK("http://evil","x")' }),
+    row({ dept: 'Beta', qcd: 'A_Q_B' }),
+  ]);
+  const sheet = h.state.spreadsheet._sheet('Dept Config');
+  const writes = [];
+  const realGetRange = sheet.getRange.bind(sheet);
+  sheet.getRange = function (r, c, nr, nc) {
+    const range = realGetRange(r, c, nr, nc);
+    const realSetValues = range.setValues.bind(range);
+    range.setValues = function (vals) {
+      writes.push({ r, c, cells: vals.length * vals[0].length });
+      return realSetValues(vals);
+    };
+    return range;
+  };
+  const count = h.call('sheetDeactivateDeptConfig_', 'Beta');
+  assert.equal(count, 1);
+  assert.equal(writes.length, 1, 'exactly one write');
+  assert.deepEqual(writes[0], { r: 3, c: 6, cells: 1 },
+    'single-cell write at (Beta row 3, Active col 6)');
+  const grid = sheet._data;
+  assert.equal(grid[2][5], 'FALSE', 'Beta deactivated');
+  assert.equal(grid[1][5], 'TRUE', 'Alpha untouched');
+  assert.equal(grid[1][8], '=HYPERLINK("http://evil","x")',
+    'formula-shaped notes cell never re-written');
+});
+
+// --- R8-C4 (audit 2026-07-21): errored sheet read is flagged, absent is not --
+test('R8-C4: a THROWING config read serves constants and sets deptConfigReadFailed_', function () {
+  setConfig([row({ dept: 'CSR', qcd: 'A_Q_Custom' })]);
+  const sheet = h.state.spreadsheet._sheet('Dept Config');
+  sheet.getRange = function () { throw new Error('Service Spreadsheets timed out'); };
+  h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
+  // Falls back to the constant (regression-safe serve)...
+  deepEqual(h.call('getDeptQcdQueues_', 'CSR'), h.consts.DEPT_QCD_QUEUES.CSR.slice());
+  // ...but the failure is FLAGGED so QCD-embedding cache puts skip pinning
+  // this request's constant-only view for the TTL.
+  assert.equal(h.call('deptConfigReadFailed_'), true);
+  // A healthy read resets the flag (and serves the sheet override).
+  setConfig([row({ dept: 'CSR', qcd: 'A_Q_Custom' })]);
+  deepEqual(h.call('getDeptQcdQueues_', 'CSR'), ['A_Q_Custom']);
+  assert.equal(h.call('deptConfigReadFailed_'), false);
+});
+
+test('R8-C4: an ABSENT Dept Config sheet is the documented fallback, NOT a failure', function () {
+  setConfig(null);   // no sheet at all (pre-setup() install)
+  deepEqual(h.call('getDeptQcdQueues_', 'CSR'), h.consts.DEPT_QCD_QUEUES.CSR.slice());
+  assert.equal(h.call('deptConfigReadFailed_'), false,
+    'pre-setup installs stay cacheable (byte-identical pre-feature behavior)');
+});
+
+// --- R8-N: inbound alias entries may be `raw=canonical` pairs ---------------
+test('R8-N: getInboundQueueAliases_ returns the RAW side of pair entries (union name space)', function () {
+  setConfig([row({ dept: 'CSR', inboundAliases: 'A_Q_CSR=A_Q_CustomerSuccess, Backup CSR' })]);
+  deepEqual(h.call('getInboundQueueAliases_', 'CSR'), ['A_Q_CSR', 'Backup CSR'],
+    'pair entries contribute their raw (left) side; plain entries pass through');
+});

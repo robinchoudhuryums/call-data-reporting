@@ -23,7 +23,7 @@
 // Data sheets are the source of truth and we read durations via
 // getDisplayValues() so the INV-02 spreadsheet-vs-script TZ +36:36 offset is
 // avoided -- the field mappings below are faithful to the proven whole-sheet
-// backfills in cdr-report/neonbackfill.js (CDR cols, DQE 36-col incl. slots,
+// backfills in cdr-report/neonbackfill.js (CDR cols, DQE 34-col incl. slots,
 // QCD 12-col) and to the inline payload shapes in autoImport.js.
 //
 // Operator notes (deferred mode only):
@@ -153,6 +153,16 @@ function runNeonMirror_() {
     var remaining = [];
     rows.forEach(function (r) {
       var iso = isoOfRow(r);
+      // R8-E4: a row whose Call Date cell fails the ISO shape (a hand-edited
+      // re-enqueue typo -- the gave-up email tells operators to re-enqueue by
+      // appending a row) was skipped by the `dates` builder above but KEPT by
+      // this rewrite forever: never processed, never counted, an invisible
+      // immortal row. Drop it with a log line instead.
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) {
+        Logger.log('runNeonMirror_: dropping malformed queue row (Call Date "' + r[0]
+          + '" is not YYYY-MM-DD) -- re-enqueue with an ISO date if it was meant to mirror.');
+        return;
+      }
       if (done[iso]) return;
       var attempts = attemptsByDate[iso] || 0;
       if (hardFailed[iso]) {
@@ -243,7 +253,7 @@ function neonMirrorLog_(ss, stepName, status, rows, t0, notes) {
 // --- F-20: bounded tail-scan for the per-date sheet reads --------------------
 //
 // Each drained date used to re-read the ENTIRE historical sheet (CDR 26-col /
-// QCD 12-col / DQE 36-col getDisplayValues), making every queued date cost
+// QCD 12-col / DQE 34-col getDisplayValues), making every queued date cost
 // O(full history) -- a multi-date backlog could stop catching up as history
 // grows. The queue only ever holds recently-imported dates and the sheets are
 // APPEND-ORDERED (a build writes a date's rows in one contiguous append; a
@@ -332,6 +342,32 @@ function mirrorCdrForDate_(ss, iso) {
   return { rows: batch.length, note: 'phones=' + ((res && res.phones) || 0) };
 }
 
+// R8-2: nmReadDateRowsTail_ returns DISPLAY strings, but writeQCDRowsToNeon
+// binds the numeric fields via stmt.setInt/setDouble ("72" || 0 keeps the
+// STRING) -- the Jdbc bridge rejects string args to those setters, so every
+// drained date would hard-error toward neonMirror:gave-up. Its siblings
+// already parse (writeCDRRowsToNeon internally; mirrorDqeForDate_ in its
+// payload builder); parse here too. Thousands separators stripped.
+function nmInt_(v) {
+  var n = parseInt(String(v == null ? '' : v).replace(/,/g, ''), 10);
+  return isFinite(n) ? n : 0;
+}
+
+// R8-2: abandoned-pct display -> the FRACTION the inline writer stores.
+// autoImport's abndPct = abnd/total (0..1; Config.gs ABANDONED_PCT pins
+// "decimal, NOT percent") and the daily mirror binds it verbatim -- so a
+// "%"-formatted display ("5.26%") converts /100, a bare decimal ("0.0526")
+// passes through. (NB the cdr-report backfill's T-4 currently stores PERCENT
+// units -- a known mixed-unit issue in that tool, out of scope here; this
+// path matches the authoritative inline writer.)
+function nmPctFraction_(v) {
+  var s = String(v == null ? '' : v).trim();
+  var hadPct = s.indexOf('%') !== -1;
+  var n = parseFloat(s.replace(/[%,]/g, ''));
+  if (!isFinite(n)) return 0;
+  return hadPct ? n / 100 : n;
+}
+
 /** QCD Historical Data (12 cols) -> writeQCDRowsToNeon, filtered to `iso`. */
 function mirrorQcdForDate_(ss, iso) {
   var sheet = ss.getSheetByName('QCD Historical Data');
@@ -343,9 +379,9 @@ function mirrorQcdForDate_(ss, iso) {
     batch.push({
       monthYear:     r[0],  week:          r[1],  callDate:      r[2],  // writer normalizes callDate
       callQueue:     r[3],  callSource:    r[4],
-      totalCalls:    r[5],  totalAnswered: r[6],  abandoned:     r[7],
-      longestWait:   r[8],  avgAnswer:     r[9],
-      abandonedPct:  r[10], violations:    r[11],
+      totalCalls:    nmInt_(r[5]),  totalAnswered: nmInt_(r[6]),  abandoned: nmInt_(r[7]),
+      longestWait:   r[8],  avgAnswer:     r[9],   // writer runs normalizeDuration on these
+      abandonedPct:  nmPctFraction_(r[10]), violations: nmInt_(r[11]),
     });
   });
   if (!batch.length) return { rows: 0 };
@@ -409,11 +445,15 @@ function sanitizeSlotCellForNeon_(raw) {
   return null;
 }
 
-/** DQE Historical Data (36 cols, incl. 19 time-slot cols) -> writeDQERowsToNeon. */
+/** DQE Historical Data (34 cols A-AH, incl. 19 time-slot cols) -> writeDQERowsToNeon. */
 function mirrorDqeForDate_(ss, iso) {
   var sheet = ss.getSheetByName('DQE Historical Data');
   if (!sheet || sheet.getLastRow() < 2) return { rows: 0 };
-  var data = nmReadDateRowsTail_(sheet, 36, 1, iso);   // F-20 bounded tail-scan
+  // R8-2 (REP-10 propagated): the DQE schema is 34 cols (A-AH, INV-10) and the
+  // payload below reads r[0]..r[33]. Requesting 36 threw out-of-bounds on a
+  // sheet trimmed to exactly the data width -- the same failure REP-10 fixed
+  // at neonbackfill.js's three read sites; this copy had kept the old 36.
+  var data = nmReadDateRowsTail_(sheet, 34, 1, iso);   // F-20 bounded tail-scan
   var batch = [];
   data.forEach(function (r) {
     if (!r[1] || !r[2]) return;                 // date (col 2), agent (col 3)
