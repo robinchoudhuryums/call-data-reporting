@@ -2025,6 +2025,7 @@
          +       '<div class="ov-hero-pct" data-flash-key="ov:' + escapeHtml(dept.name) + '">' + escapeHtml(st.pctFormatted) + '</div>'
          +       '<div class="ov-dept-pct-cap">' + escapeHtml(ovPeriodCap_()) + '</div>'
          +       ovBuildWowChip_(dept)
+         +       ovBuildQcdCaption_(dept)   // R9-7: independent of the WoW chip
          +     '</div>'
          +     '<div class="ov-hero-stats">'
          +       '<div class="ov-hero-stat"><span class="ov-dept-stat-label">Rung</span><span>' + fmtNumber(st.rung) + '</span></div>'
@@ -2046,9 +2047,14 @@
     if (d < -0.5) cls = 'ov-wow-down';
     const tip = 'Last 7 days ' + dept.wow.curPct.toFixed(1) + '% vs prior 7 days '
               + dept.wow.prevPct.toFixed(1) + '%';
+    // R9-7: the QCD caption is NOT appended here anymore -- it used to ride
+    // inside this builder, so the `!dept.wow` early-return above silently
+    // dropped a dept's QCD chips whenever its DQE rung was zero in either
+    // 7-day window (exactly the queue-centric low-ring depts, e.g. Denials
+    // at 50% abandoned, whose QCD data matters most). The tile builders now
+    // call ovBuildQcdCaption_ independently.
     return '<span class="ov-wow-chip ' + cls + '" title="' + escapeHtml(tip) + '">'
-         + arrow + ' ' + Math.abs(d).toFixed(1) + '% WoW</span>'
-         + ovBuildQcdCaption_(dept);
+         + arrow + ' ' + Math.abs(d).toFixed(1) + '% WoW</span>';
   }
 
   // QCD info that isn't already covered by DQE on the dept tile.
@@ -2202,6 +2208,7 @@
          +     '<span data-flash-key="ov:' + escapeHtml(dept.name) + '">' + escapeHtml(st.pctFormatted) + '</span>'
          +     ' <span class="ov-dept-pct-cap">' + escapeHtml(ovPeriodCap_()) + '</span>'
          +     ovBuildWowChip_(dept)
+         +     ovBuildQcdCaption_(dept)   // R9-7: independent of the WoW chip
          +   '</div>'
          +   '<div class="ov-dept-tile-row">'
          +     '<span><span class="ov-dept-stat-label">Rung</span> ' + fmtNumber(st.rung) + '</span>'
