@@ -10,7 +10,8 @@ Branch `claude/broad-scan-ak8g04`, **433/433 tests** (2 added: R10-5 in overview
 - **R10-6:** `.dash-header` margin-bottom 24→12 (+ launcher removal) kills the blank strip.
 - **R10-7:** missed bars: `.missed-chart-hwrap--bars` fixed 320px wrap + `maintainAspectRatio:false` (aspectRatio removed) + bars-mode section cap none; radar untouched.
 - **R10-8:** QCD all-dept verdict: callout retired (return band only), tile values 32px, hero 42px + 12px labeled bar (`.qcd-hero-tick-lbl` "5%") + min-width fill, `.qcd-deptrow-mini` 13px ink + `.qcd-mini-pct` bold row-toned.
-- **Where I left off:** implemented, NOT yet committed. Next: commit/push, PR if asked. Live smoke adds: Help modal chips + tour button, side-card clearance, count-up/bar animations (and reduced-motion off), pass/fail bar tints, CSR strip tiles (needs CSR Transfer sheet data in range), blank-strip gone, missed bars filling, QCD verdict layout.
+- **R10-9 (follow-up note, same round):** sticky table headers on the Inbound + Direct report tables — `#inbound-modal/#direct-call-modal .qcd-source-table th { position:sticky; top:0 }`, with the table's `overflow:hidden` → `clip` in those two modals only (hidden = a scroll container that traps sticky) + a box-shadow bottom line (collapsed borders don't travel with a stuck header).
+- **Where I left off:** R10-1..9 committed/pushed. Live smoke adds: Help modal chips + tour button, side-card clearance, count-up/bar animations (and reduced-motion off), pass/fail bar tints, CSR strip tiles (needs CSR Transfer sheet data in range), blank-strip gone, missed bars filling, QCD verdict layout, Inbound/Direct sticky headers on long tables.
 
 ## Prior session (R9 — post-deploy owner testing notes, client-only)
 Branch `claude/broad-scan-ak8g04`, **431/431 tests**, INV-16 green, script.html parses. Deploy: Department Dashboard ONLY. Owner notes → fixes:

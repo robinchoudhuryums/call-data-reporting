@@ -397,6 +397,7 @@ except R10-5 (summary:v14); code comments cite `R10-<n>`:
 | R10-6 | The unexplained blank strip under the app header (Insights especially) — the launcher row's reserved space (gone with R10-1) + `.dash-header` margin-bottom trimmed 24→12px | code (styles.html) |
 | R10-7 | Missed-calls bar chart stuck small in its slot: `aspectRatio:2` derived height from a possibly-mid-transition width measurement — bars now render in a fixed-height wrap (`.missed-chart-hwrap--bars`, 320px) with `maintainAspectRatio:false` and the bars-mode 960px section cap removed; radar unchanged | INV-41 Track A note, CLAUDE.md |
 | R10-8 | Daily Call Queue Report polish: Watch/On-track callout RETIRED (rows are color-coded + the violation tile carries the count), verdict tile values 24→32px, hero value 42px + thicker labeled target bar ("5%" caption on the tick) + min-width fill, dept banner mini-summary 11px-muted → 13px with the abandon% bold + row-toned (`.qcd-mini-pct`) | code (`qcdAllDeptVerdictHtml_` + styles.html R10-8 blocks) |
+| R10-9 | Sticky column headers on the Inbound + Direct report tables (follow-up note): `th` pins to the `.modal-panel-body` scrollport. The table's `overflow: hidden` corner clip becomes `overflow: clip` in these two modals only — `hidden` creates a scroll container that traps the sticky th inside the non-scrolling table; a box-shadow stands in for the collapsed bottom border, which doesn't travel with a stuck header | code (styles.html R10-9 block) |
 
 ---
 

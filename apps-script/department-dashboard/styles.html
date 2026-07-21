@@ -4069,6 +4069,22 @@
     border-bottom: 1px solid var(--line);
   }
   .qcd-source-table tr:last-child td { border-bottom: none; }
+  /* R10-9: sticky column headers on the Inbound + Direct report tables.
+     These long tables scroll inside .modal-panel-body; the header row pins
+     to the top of that scrollport (th already has the opaque --paper-2
+     background). `overflow: clip` replaces the table's `hidden` in these two
+     modals ONLY -- hidden creates a scroll container, which would trap the
+     sticky th inside the (non-scrolling) table; clip keeps the rounded-
+     corner clipping without becoming a scroll container. The box-shadow
+     stands in for the collapsed border-bottom, which doesn't travel with a
+     stuck header. */
+  #inbound-modal .qcd-source-table,
+  #direct-call-modal .qcd-source-table { overflow: clip; }
+  #inbound-modal .qcd-source-table th,
+  #direct-call-modal .qcd-source-table th {
+    position: sticky; top: 0; z-index: 3;
+    box-shadow: 0 1px 0 var(--line);
+  }
   .qcd-source-table .qcd-row-total td {
     font-weight: 700;
     background: var(--accent-soft);
