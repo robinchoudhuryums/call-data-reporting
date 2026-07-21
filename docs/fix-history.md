@@ -359,6 +359,18 @@ Batch E (ops tail + doc sweep) + R8-N (capture-time queue normalization):
 | R8-E6 | Doc-drift sweep: architecture.md (migration COMPLETE label, root-clasp layout, missing dashboard files), conventions.md (IR is the last floater-surfacing report), .claspignore comment, INV-16 guard doc (checks BOTH sanitizers), Op State #14 raw-name pointer, known-issues R8-1 cross-ref, and the STALE "drilldown endpoint is dormant" claim (Phases 2–4 shipped long since — `insQhMissedDrill_` / `heatCellToggleDrill_` / `missedSliceListHtml_`) | the corrected docs |
 | R8-N | Capture-time queue-name normalization (the two-name-space root-cause fix, option 1): Dept Config inbound aliases accept `raw=canonical` pairs; cdr-import's `icQueueCanonicalMap_` reads them cross-project and `writeInboundCallsToNeon` writes canonical `entry_queue`/`final_queue` on every capture path (journey stays raw; union predicates kept as belt-and-suspenders; save-validated; best-effort = raw on any failure) | known-issues two-name-spaces entry + INV-54, CLAUDE.md |
 
+**QV — Daily Call Queue Report visual second pass (2026-07-21, owner-approved
+design handoff; presentation + two mail endpoints, no compute/CSV/print-content
+change).** Code comments cite `QV-<n>`:
+
+| Code | What it shipped | Live rule lives in |
+|---|---|---|
+| QV-1 | 5%-threshold tick on the all-dept split bars (opt-in `{tick:true}`; positioned at answered%+5 since the bar is share-of-total; hidden >95% answered; `qcd-screen-only`, stripped from the print clone) | INV-51 QV note, CLAUDE.md |
+| QV-2 | Dept banner rows: binary health rail (warn ≥5%/violations, sage, muted-empty — no invented amber band per the benchmark convention), 16px name, light tint, right-aligned calls·abandon% mini-summary (screen-only) | INV-51 QV note |
+| QV-3 | Company-abandon% hero tile in the verdict band (0–10% target bar, 5% tick, "N of M calls lost" from `grandTotals`); sparklines deliberately OMITTED (no trailing series in the data path — a future server extension) | INV-51 QV note |
+| QV-4 | "Email me this report" — `sendQcdAllDeptEmail`: caller-only, displayed range, signed-in gate matching the report (the `sendInsightsReportEmail` precedent) | Op State #31, CLAUDE.md |
+| QV-5 | Admin-only "Send to subscribers…" — `sendQcdAllDeptToSubscribers`: single-day, O-1 isolation reused, claims `QUEUE_REPORT_LAST_SENT` only for the gate's current target day with ≥1 delivery; never writes LAST_RESULT | Op State #31, CLAUDE.md |
+
 ---
 
 ## Phases & batches (rollout narrative, not rules)

@@ -17317,7 +17317,7 @@
   // the My Department agent table's answeredBarHtml_ (green answered + red
   // abandoned over total calls; the rate cell shows abandoned % with the 5%
   // benchmark tint). Reuses the .ans-bar / .ans-seg component.
-  function qcdDailyBarCell_(r) {
+  function qcdDailyBarCell_(r, opts) {
     var total = Number(r.totalCalls)    || 0;
     var a     = Number(r.totalAnswered) || 0;
     var ab    = Number(r.abandoned)     || 0;
@@ -17331,13 +17331,25 @@
     var rateCls = benchValueCls_('abandoned %', abStr, true) + (over ? ' qcd-rate-over' : '');
     var title = fmtNumber(a) + ' answered · ' + fmtNumber(ab) + ' abandoned · '
               + fmtNumber(total) + ' calls · ' + abStr + ' abandoned';
+    // QV-1 (opt-in, all-dept report only): a 5%-threshold tick on the split
+    // bar. The bar is share-of-total (green answered, then red abandoned),
+    // so the tick sits at (answered% + 5%) -- the red segment ENDING past it
+    // is exactly "abandoned > 5% of offered". Hidden when answered > 95%
+    // (the tick would overflow, and abandon can't exceed 5% there anyway)
+    // and on zero-volume rows. Screen-only decoration (`qcd-screen-only` is
+    // stripped by the print path; the CSV builds from data, never the DOM) --
+    // exported cell text is unchanged.
+    var tick = '';
+    if (opts && opts.tick && total > 0 && (pctA + 5) < 100) {
+      tick = '<span class="qcd-thresh-tick qcd-screen-only" style="left:' + (pctA + 5) + '%"></span>';
+    }
     var segs = total
       ? '<span class="ans-seg ans" style="width:' + pctA + '%"></span>'
         + '<span class="ans-seg miss" style="width:' + pctAb + '%"></span>'
         + (rest > 0.1 ? '<span class="ans-seg none" style="width:' + rest + '%"></span>' : '')
       : '<span class="ans-seg none" style="width:100%"></span>';
     return '<div class="ans-bar" title="' + escapeHtml(title) + '">'
-         +   '<div class="ans-track">' + segs + '</div>'
+         +   '<div class="ans-track">' + segs + tick + '</div>'
          +   '<div class="ans-nums">'
          +     '<span class="ans-n">'   + fmtNumber(a)  + '</span>'
          +     '<span class="ans-slash">/</span>'
@@ -17467,6 +17479,65 @@
     if (csv) csv.addEventListener('click', function () { qcdAllDeptCsv_(qcdAllDeptLast); });
     const prn = $('qcd-alldept-print-btn');
     if (prn) prn.addEventListener('click', function () { qcdAllDeptPrint_(qcdAllDeptLast); });
+
+    // QV-4: "Email me this report" -- caller-only send of the DISPLAYED
+    // range (server: sendQcdAllDeptEmail, same signed-in gate as the report).
+    const emailBtn = $('qcd-alldept-email-btn');
+    if (emailBtn) emailBtn.addEventListener('click', function () {
+      const meta = qcdAllDeptLast && qcdAllDeptLast.meta;
+      if (!meta || !meta.from || !meta.to) return;
+      emailBtn.disabled = true;
+      const prev = emailBtn.textContent;
+      emailBtn.textContent = 'Sending…';
+      google.script.run
+        .withSuccessHandler(function (res) {
+          emailBtn.disabled = false; emailBtn.textContent = prev;
+          showToast('Report emailed to ' + ((res && res.to) || 'you') + '.');
+        })
+        .withFailureHandler(function (err) {
+          emailBtn.disabled = false; emailBtn.textContent = prev;
+          showToast('Email failed: ' + (err && err.message ? err.message : String(err)), 'error');
+        })
+        .sendQcdAllDeptEmail({ from: meta.from, to: meta.to });
+    });
+
+    // QV-5 (admin-only): manual subscriber blast of the displayed SINGLE day.
+    // Ranges are for self-sends -- the subscriber engine is single-day, so
+    // qcdAllDeptRender_ disables this button on multi-day views. dsConfirm_
+    // per the confirm-dialog convention (never window.confirm).
+    const blastBtn = $('qcd-alldept-blast-btn');
+    if (blastBtn) blastBtn.addEventListener('click', function () {
+      const meta = qcdAllDeptLast && qcdAllDeptLast.meta;
+      if (!meta || !meta.from || meta.from !== meta.to || blastBtn.disabled) return;
+      const day = meta.from;
+      dsConfirm_({
+        title: 'Send to all subscribers',
+        message: 'Email the ' + day + ' Daily Call Queue Report to every active subscriber now? '
+          + 'If this is the day the automated morning send targets, sending here claims that '
+          + 'day so subscribers are not emailed twice.',
+        confirmLabel: 'Send now', cancelLabel: 'Cancel',
+      }).then(function (ok) {
+        if (!ok) return;
+        blastBtn.disabled = true;
+        const prev = blastBtn.textContent;
+        blastBtn.textContent = 'Sending…';
+        google.script.run
+          .withSuccessHandler(function (res) {
+            blastBtn.disabled = false; blastBtn.textContent = prev;
+            const failed = (res && res.failed && res.failed.length) || 0;
+            showToast('Sent ' + day + ' to ' + ((res && res.count) || 0) + ' subscriber'
+              + (res && res.count === 1 ? '' : 's')
+              + (failed ? ' (' + failed + ' failed — admins notified via the modal log)' : '')
+              + (res && res.markerClaimed ? ' · claimed today’s automated send' : '')
+              + ((res && res.count) === 0 ? ' — no active subscribers' : '') + '.');
+          })
+          .withFailureHandler(function (err) {
+            blastBtn.disabled = false; blastBtn.textContent = prev;
+            showToast('Send failed: ' + (err && err.message ? err.message : String(err)), 'error');
+          })
+          .sendQcdAllDeptToSubscribers({ date: day });
+      });
+    });
 
     // Delegated expand/collapse for the per-queue call-source detail (#1c).
     // Wired once; survives re-renders (the tbody content is replaced, this
@@ -17669,12 +17740,33 @@
         + '<div class="qcd-verdict-label">' + label + '</div>'
         + '<div class="qcd-verdict-value">' + escapeHtml(String(value)) + '</div></div>';
     };
-    const band = '<div class="qcd-verdict-band">'
-      + tile('Company aban %', companyPctStr, companyPct >= 5 ? 'warn' : 'neu')
+    // QV-3: the company abandon% leads as a HERO tile -- big number, a 0-10%
+    // target bar with the 5% tick at midpoint, and "N of M calls lost" --
+    // so "is today bad?" answers before the table. Company pct comes from
+    // grandTotals (total abandoned / total offered -- already the correct
+    // aggregate, never an average of per-queue rates). Tone stays BINARY on
+    // the 5% standard (the benchValueCls_ convention). The verdict container
+    // is outside #qcd-alldept-body, so it never enters the print clone.
+    const abandoned = Number(g.abandoned) || Math.max(0, total - ans);
+    const heroFill = Math.max(0, Math.min(100, companyPct * 10));   // 0-10% scale
+    const heroTone = companyPct >= 5 ? 'warn' : 'good';
+    const hero = '<div class="qcd-hero qcd-hero--' + heroTone + '">'
+      + '<div class="qcd-verdict-label">Company abandoned %</div>'
+      + '<div class="qcd-hero-value">' + escapeHtml(companyPctStr) + '</div>'
+      + '<div class="qcd-hero-bar" title="0–10% scale · tick = the 5% company standard">'
+      +   '<span class="qcd-hero-fill" style="width:' + heroFill + '%"></span>'
+      +   '<span class="qcd-hero-tick"></span>'
+      + '</div>'
+      + '<div class="qcd-hero-sub">' + fmtNumber(abandoned) + ' of ' + fmtNumber(total)
+      +   ' calls lost</div>'
+      + '</div>';
+    const band = '<div class="qcd-verdict-band qcd-verdict-band--hero">'
+      + hero
+      + '<div class="qcd-verdict-rest">'
       + tile('Total calls', fmtNumber(total), 'neu')
       + tile('Queues in violation', fmtNumber(offenders.length), offenders.length > 0 ? 'warn' : 'neu')
       + tile('Answered %', answeredPct.toFixed(1) + '%', 'good')
-      + '</div>';
+      + '</div></div>';
     let callout;
     if (offenders.length) {
       const parts = offenders.map(function (o) {
@@ -17695,6 +17787,16 @@
 
   function qcdAllDeptRender_(data) {
     $('qcd-alldept-results-date').textContent = data.dateLabel || '';
+    // QV-5: the subscriber blast is single-day only (the engine's unit of
+    // send); disable it with a reason on multi-day views.
+    const blastBtn = $('qcd-alldept-blast-btn');
+    if (blastBtn) {
+      const singleDay = !!(data.meta && data.meta.from && data.meta.from === data.meta.to);
+      blastBtn.disabled = !singleDay;
+      blastBtn.title = singleDay
+        ? 'Email the displayed day to every active subscriber now'
+        : 'Subscriber sends are single-day — narrow the range to one day first';
+    }
     const empty = $('qcd-alldept-empty');
     const body  = $('qcd-alldept-body');
     const verdict = $('qcd-alldept-verdict');
@@ -17759,7 +17861,7 @@
       let out = '<tr class="' + (hasDetail ? 'qcd-expandable' : '') + '">'
         + '<td>' + escapeHtml(q.queue) + subTag + chevron + '</td>'
         + '<td class="num">' + fmtNumber(q.totalCalls) + '</td>'
-        + '<td class="qcd-daily-bar-cell">' + qcdDailyBarCell_(q) + '</td>'
+        + '<td class="qcd-daily-bar-cell">' + qcdDailyBarCell_(q, { tick: true }) + '</td>'   // QV-1
         + '<td class="num">' + escapeHtml(q.longestWait) + '</td>'
         + '<td class="num">' + escapeHtml(q.avgAnswer) + '</td>'
         + '<td class="num' + c.violCls + '">' + fmtNumber(q.violations) + '</td>'
@@ -17781,18 +17883,36 @@
       (childrenOf[d.dept] || []).forEach(function (child) {
         (child.queues || []).forEach(function (q) { secItems.push({ q: q, sub: child.dept }); });
       });
+      // QV-2: the dept banner row leads with a health-toned rail + a bigger
+      // name + a right-aligned mini-summary. Tone is BINARY per the
+      // benchmark convention (no invented bands): warn when the section's
+      // abandon% >= 5 OR any of its queues is in violation; muted for a
+      // zero-call section; sage otherwise. The mini-summary is screen-only
+      // (stripped from the print clone; CSV builds from data).
+      const st = qcdAllDeptSectionTotal_(secItems.map(function (i) { return i.q; }));
+      const secViol = secItems.some(function (i) { return (Number(i.q.violations) || 0) > 0; });
+      const secTotal = Number(st.totalCalls) || 0;
+      const secPct = Number(st.abandonedPct) || 0;
+      const tone = secTotal === 0 ? 'muted'
+        : (secPct >= 5 || secViol) ? 'warn' : 'good';
+      const secPctStr = st.abandonedPctStr || (secPct.toFixed(2) + '%');
+      const mini = secTotal > 0
+        ? '<span class="qcd-deptrow-mini qcd-screen-only">' + fmtNumber(secTotal)
+          + ' calls &middot; ' + escapeHtml(secPctStr) + ' abandoned</span>'
+        : '<span class="qcd-deptrow-mini qcd-screen-only">no calls</span>';
       html += '<tbody class="qcd-alldept-dept" data-dept="' + escapeHtml(d.dept) + '">'
-        + '<tr class="qcd-alldept-deptrow"><td colspan="' + NCOLS + '">' + escapeHtml(d.dept) + '</td></tr>';
+        + '<tr class="qcd-alldept-deptrow qcd-deptrow--' + tone + '"><td colspan="' + NCOLS + '">'
+        + '<span class="qcd-deptrow-name">' + escapeHtml(d.dept) + '</span>' + mini
+        + '</td></tr>';
       secItems.forEach(function (item) { html += queueRow(item.q, item.sub); });
       // #3: the "(dept) total" row is redundant for a single-queue section
       // (the lone queue line IS the total), so show it only when >1 queue.
       if (secItems.length > 1) {
-        const st = qcdAllDeptSectionTotal_(secItems.map(function (i) { return i.q; }));
         const tc = cell(st.abandonedPct, st.violations);
         html += '<tr class="qcd-alldept-subtotal">'
           + '<td>' + escapeHtml(d.dept) + ' total</td>'
           + '<td class="num">' + fmtNumber(st.totalCalls) + '</td>'
-          + '<td class="qcd-daily-bar-cell">' + qcdDailyBarCell_(st) + '</td>'
+          + '<td class="qcd-daily-bar-cell">' + qcdDailyBarCell_(st, { tick: true }) + '</td>'   // QV-1
           + '<td class="num">' + escapeHtml(st.longestWait) + '</td>'
           + '<td class="num">' + escapeHtml(st.avgAnswer) + '</td>'
           + '<td class="num' + tc.violCls + '">' + fmtNumber(st.violations) + '</td>'
@@ -17805,7 +17925,7 @@
     html += '<tfoot><tr class="qcd-alldept-grand">'
       + '<td>Company total</td>'
       + '<td class="num">' + fmtNumber(g.totalCalls) + '</td>'
-      + '<td class="qcd-daily-bar-cell">' + qcdDailyBarCell_(g) + '</td>'
+      + '<td class="qcd-daily-bar-cell">' + qcdDailyBarCell_(g, { tick: true }) + '</td>'   // QV-1
       + '<td class="num">' + escapeHtml(g.longestWait) + '</td>'
       + '<td class="num">' + escapeHtml(g.avgAnswer) + '</td>'
       + '<td class="num' + gc.violCls + '">' + fmtNumber(g.violations) + '</td>'
@@ -17896,9 +18016,20 @@
       + '.qcd-alldept-subtotal td{font-weight:600;border-top:1px solid #999;}'
       + '.qcd-alldept-grand td{font-weight:700;border-top:2px solid #333;}'
       + '.qcd-warn-light{background:#fff3e0;}.qcd-warn-strong{background:#ffd9b3;}';
+    // QV-1/QV-2: strip screen-only decorations (threshold ticks, banner
+    // mini-summaries) from the print clone so the printed table stays
+    // byte-identical to the pre-polish output. The print window's own CSS
+    // never styles them, but the mini-summary carries TEXT that would
+    // otherwise render.
+    let printHtml = '';
+    if (tableEl) {
+      const clone = tableEl.cloneNode(true);
+      clone.querySelectorAll('.qcd-screen-only').forEach(function (n) { n.remove(); });
+      printHtml = clone.innerHTML;
+    }
     w.document.write('<title>Daily Call Queue Report</title><style>' + css + '</style>'
       + '<h1>Daily Call Queue Report</h1><p class="sub">' + escapeHtml(data.dateLabel || '') + '</p>'
-      + (tableEl ? tableEl.innerHTML : ''));
+      + printHtml);
     w.document.close();
     w.focus();
     setTimeout(function () { try { w.print(); } catch (e) {} }, 250);

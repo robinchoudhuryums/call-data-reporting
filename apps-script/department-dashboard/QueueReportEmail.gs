@@ -662,6 +662,65 @@ function sendQueueReportPreview() {
   return { to: adminEmail, date: targetIso };
 }
 
+/**
+ * QV-4: manual self-send from the all-dept report modal -- emails the CALLER
+ * the report for the CURRENTLY DISPLAYED range. Read-only + MailApp (the
+ * sendInsightsReportEmail precedent: caller-recipient, same auth as the
+ * report it renders -- getQcdAllDepartments is open to every signed-in
+ * manager/admin, so this is too). No preview banner, no subscriber list, no
+ * interplay with the automated engine's dedupe marker. Range-safe: the email
+ * builder reads data.dateLabel (its targetIso arg is only the label
+ * fallback), and qcdAllDeptCachedData_ already serves multi-day blobs.
+ */
+function sendQcdAllDeptEmail(req) {
+  const user = resolveUser_(Session.getActiveUser().getEmail());
+  if (!user || user.role === 'none') throw new Error('Not authorized.');
+  const from = String((req && req.from) || '').trim();
+  const to   = String((req && req.to)   || '').trim();
+  if (!isIsoDate_(from) || !isIsoDate_(to)) throw new Error('from/to must be YYYY-MM-DD.');
+  if (from > to) throw new Error('from must be on or before to.');
+  const data = qcdAllDeptCachedData_(from, to).data;
+  const email = Session.getActiveUser().getEmail();
+  const label = data.dateLabel || (from === to ? from : (from + ' – ' + to));
+  const html = buildQueueReportEmailHtml_(data, label, false);
+  MailApp.sendEmail({ to: email, subject: 'Daily Call Queue Report — ' + label, htmlBody: html });
+  Logger.log('sendQcdAllDeptEmail: %s..%s -> %s', from, to, email);
+  return { to: email, dateLabel: label };
+}
+
+/**
+ * QV-5: manual SUBSCRIBER blast from the modal (admin-only) -- sends ONE
+ * day's report to the active subscriber list on demand, reusing
+ * sendQueueReportForDate_'s per-recipient isolation (O-1).
+ *
+ * Dedupe-marker semantics (the one interplay with the automated engine): when
+ * the sent day IS the gate's current target (previous business day) and at
+ * least one recipient received it, the QUEUE_REPORT_LAST_SENT marker is
+ * CLAIMED so the morning poll can't double-blast the same day (the O-1
+ * partial-claim rule: delivered recipients are never re-blasted). Any other
+ * date never touches the marker -- the automated engine only ever sends the
+ * current target day, so there is nothing to dedupe against.
+ * QUEUE_REPORT_LAST_RESULT is deliberately NOT written (it is the TRIGGER
+ * run's diagnostic; a manual send must not repaint the Health outcome row).
+ */
+function sendQcdAllDeptToSubscribers(req) {
+  assertAdmin_();
+  const date = String((req && req.date) || '').trim();
+  if (!isIsoDate_(date)) throw new Error('date must be YYYY-MM-DD.');
+  const result = sendQueueReportForDate_(date, {});
+  let markerClaimed = false;
+  if (result.count > 0 && date === prevBusinessDayIso_(new Date())) {
+    try {
+      PropertiesService.getScriptProperties().setProperty(QUEUE_REPORT_LAST_SENT_PROP, date);
+      markerClaimed = true;
+    } catch (e) { /* best-effort -- worst case the morning poll re-sends */ }
+  }
+  Logger.log('sendQcdAllDeptToSubscribers: %s -> %s sent, %s failed, markerClaimed=%s',
+    date, result.count, (result.failed || []).length, markerClaimed);
+  return { date: date, count: result.count, failed: result.failed || [],
+           markerClaimed: markerClaimed };
+}
+
 // ── Trigger lifecycle helpers ─────────────────────────────────────────────
 
 function uninstallQueueReportTrigger_() {
