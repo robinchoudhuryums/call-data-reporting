@@ -153,6 +153,16 @@ function runNeonMirror_() {
     var remaining = [];
     rows.forEach(function (r) {
       var iso = isoOfRow(r);
+      // R8-E4: a row whose Call Date cell fails the ISO shape (a hand-edited
+      // re-enqueue typo -- the gave-up email tells operators to re-enqueue by
+      // appending a row) was skipped by the `dates` builder above but KEPT by
+      // this rewrite forever: never processed, never counted, an invisible
+      // immortal row. Drop it with a log line instead.
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) {
+        Logger.log('runNeonMirror_: dropping malformed queue row (Call Date "' + r[0]
+          + '" is not YYYY-MM-DD) -- re-enqueue with an ISO date if it was meant to mirror.');
+        return;
+      }
       if (done[iso]) return;
       var attempts = attemptsByDate[iso] || 0;
       if (hardFailed[iso]) {

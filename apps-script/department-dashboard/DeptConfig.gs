@@ -311,7 +311,23 @@ function getDeptQueueExtsOverride_(dept) {
  */
 function getInboundQueueAliases_(dept) {
   const cfg = getActiveDeptConfigMap_()[dept];
-  return (cfg && cfg.inboundAliases.length) ? cfg.inboundAliases.slice() : [];
+  const entries = (cfg && cfg.inboundAliases.length) ? cfg.inboundAliases : [];
+  // R8-N: entries may be plain raw names (`A_Q_CSR`) or capture-time
+  // translation pairs (`A_Q_CSR=A_Q_CustomerSuccess`). Consumers of THIS
+  // accessor want the RAW name space (the inboundQueuesForDept_ union that
+  // matches pre-normalization rows + DQE sentinels), so return the raw
+  // (left) side of a pair; the canonical side is already in
+  // queuesForDept_. The pair syntax itself is consumed by cdr-import's
+  // icQueueCanonicalMap_ (capture-time entry/final_queue translation).
+  const out = [];
+  const seen = {};
+  entries.forEach(function (e) {
+    const t = String(e || '').trim();
+    const eq = t.indexOf('=');
+    const raw = eq > 0 ? t.slice(0, eq).trim() : t;
+    if (raw && !seen[raw]) { seen[raw] = true; out.push(raw); }
+  });
+  return out;
 }
 
 // -- Auto-discovery -------------------------------------------------
@@ -625,7 +641,39 @@ function saveDeptConfig(req) {
   // in inbound_calls / Raw Data, not on the dashboard), so this is the one
   // hard guard; the rest is normalized (trim/dedupe/length-cap). ---
   if (inboundAliases.length) {
-    const digitOnly = inboundAliases.filter(function (x) { return /^\d+$/.test(x); });
+    // R8-N: an entry may be `raw` (attribution-only alias, as before) or
+    // `raw=canonical` (alias + capture-time translation -- cdr-import's
+    // icQueueCanonicalMap_ reads the pair). Validate both shapes.
+    const rawSides = [];
+    const badPairs = [];
+    const badCanonical = [];
+    // The canonical targets a pair may name: the row's own QCD Queues field
+    // (being saved now), falling back to the dept's current effective list.
+    const allowedCanonical = {};
+    (qcdQueues.length ? qcdQueues
+      : (typeof queuesForDept_ === 'function' ? (queuesForDept_(dept) || []) : []))
+      .forEach(function (q) { allowedCanonical[String(q).trim().toLowerCase()] = true; });
+    inboundAliases.forEach(function (t) {
+      const s = String(t || '').trim();
+      const eq = s.indexOf('=');
+      if (eq === -1) { rawSides.push(s); return; }
+      const raw = s.slice(0, eq).trim();
+      const canonical = s.slice(eq + 1).trim();
+      if (!raw || !canonical || canonical.indexOf('=') !== -1) { badPairs.push(s); return; }
+      rawSides.push(raw);
+      if (!allowedCanonical[canonical.toLowerCase()]) badCanonical.push(s);
+    });
+    if (badPairs.length) {
+      throw new Error('Malformed inbound alias pair(s): ' + badPairs.join(', ')
+        + '. Use `RawName` or `RawName=CanonicalQcdQueue` (one `=`).');
+    }
+    if (badCanonical.length) {
+      throw new Error('Inbound alias pair(s) name a canonical queue that is not one of '
+        + dept + '\'s QCD queues: ' + badCanonical.join(', ')
+        + '. The `=` right side must match a queue in the QCD Queues field '
+        + '(capture-time translation writes it into inbound_calls.entry_queue).');
+    }
+    const digitOnly = rawSides.filter(function (x) { return /^\d+$/.test(x); });
     if (digitOnly.length) {
       throw new Error('Inbound queue alias(es) look like extensions: '
         + digitOnly.join(', ') + '. Enter the raw QUEUE NAMES the phone '

@@ -410,11 +410,84 @@ function buildInboundCallRecords_(rawRows) {
  * DELETE can only ever touch the date being imported. Every current caller
  * passes it; omitting it keeps the old trust-the-payload behavior.
  */
+// ── R8-N: capture-time queue-name normalization (raw -> QCD-canonical) ──────
+//
+// The durable fix for the two-queue-name-spaces landmine (known-issues):
+// the phone system emits RAW queue names (`A_Q_CSR`) while every dashboard
+// map speaks QCD-canonical (`A_Q_CustomerSuccess`). Instead of each consumer
+// bridging per-surface, ENTRY_QUEUE/FINAL_QUEUE are translated at capture,
+// seeded from the SAME admin-curated Dept Config "Inbound queue aliases"
+// column (INV-54 col 10) -- entries may now be either:
+//   `A_Q_CSR`                      plain RAW alias (attribution-only, as before)
+//   `A_Q_CSR=A_Q_CustomerSuccess`  alias + capture-time translation target
+// The `=` right side must be one of the dept's QCD queues (validated at
+// save). Only entry_queue/final_queue are translated -- the journey JSON
+// keeps the raw phone-system names (faithful leg-by-leg record), and
+// num_queues/num_transfers count raw legs as before. Cross-project
+// soft-coupling mirrors loadRosterCanonicalNames_ (INV-46): cdr-import
+// reads the dashboard-owned sheet best-effort -- any failure yields an
+// empty map = capture behaves exactly as pre-normalization. The dashboard's
+// union predicates (inboundQueuesForDept_) keep the raw names too, so rows
+// captured BEFORE normalization still attribute.
+var IC_QUEUE_CANON_MEMO_ = null;
+function icQueueCanonicalMap_() {
+  if (IC_QUEUE_CANON_MEMO_) return IC_QUEUE_CANON_MEMO_;
+  var map = {};
+  try {
+    var ssId = (typeof getTargetSsId_ === 'function') ? getTargetSsId_() : null;
+    var ss = ssId ? SpreadsheetApp.openById(ssId) : null;
+    var sheet = ss ? ss.getSheetByName('Dept Config') : null;
+    if (sheet && sheet.getLastRow() >= 2) {
+      var rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, 10).getValues();
+      rows.forEach(function (r) {
+        // Strict truthy Active (the editor writes TRUE/FALSE) -- an
+        // unrecognized marker means NO normalization from that row, the
+        // safe direction.
+        var active = /^(true|yes|1)$/i.test(String(r[5] == null ? '' : r[5]).trim());
+        if (!active) return;
+        String(r[9] == null ? '' : r[9]).split(',').forEach(function (tok) {
+          var t = String(tok).trim();
+          var eq = t.indexOf('=');
+          if (eq <= 0 || eq === t.length - 1) return;   // plain alias / malformed
+          var raw = t.slice(0, eq).trim();
+          var canonical = t.slice(eq + 1).trim();
+          if (!raw || !canonical) return;
+          var key = raw.toLowerCase();
+          if (map[key] && map[key] !== canonical) {
+            Logger.log('icQueueCanonicalMap_: raw queue "' + raw + '" mapped to both "'
+              + map[key] + '" and "' + canonical + '" -- keeping the first (fix Dept Config).');
+            return;
+          }
+          map[key] = canonical;
+        });
+      });
+    }
+  } catch (e) {
+    Logger.log('icQueueCanonicalMap_ (best-effort, capture stays raw): '
+      + (e && e.message ? e.message : e));
+  }
+  IC_QUEUE_CANON_MEMO_ = map;
+  return map;
+}
+
+function icNormalizeQueue_(name, map) {
+  if (!name) return name;
+  return map[String(name).trim().toLowerCase()] || name;
+}
+
 function writeInboundCallsToNeon(rawRows, opts) {
   var authoritative = !!(opts && opts.authoritative);
   var expectedDateIso = (opts && opts.expectedDateIso) ? String(opts.expectedDateIso) : '';
   try {
+    IC_QUEUE_CANON_MEMO_ = null;   // fresh map per run (config can change between runs)
     var records = buildInboundCallRecords_(rawRows).filter(function (r) { return r.callDate; });
+    // R8-N: translate the attribution columns to canonical names when the
+    // admin has mapped them; everything else (journey, counts) stays raw.
+    var canonMap = icQueueCanonicalMap_();
+    records.forEach(function (r) {
+      r.entryQueue = icNormalizeQueue_(r.entryQueue, canonMap);
+      r.finalQueue = icNormalizeQueue_(r.finalQueue, canonMap);
+    });
     if (expectedDateIso) {
       var strayCount = 0;
       records = records.filter(function (r) {

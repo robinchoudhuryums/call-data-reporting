@@ -347,6 +347,18 @@ Batches C+D (sheet-retirement outage sweep + recurrence-prevention tooling):
 | R8-D3 | IR prevPeriod comparison resolves SERVER-side: the client sends `priorMode:'prevPeriod'` and `getIndividualReport` resolves via the canonical `computePriorWindow_` (INV-28) — removes the duplicated client math whose drift caused R8-5; YoY/custom stay explicit dates | INV-49, CLAUDE.md; individual-report tests |
 | R8-D4 | DQEdrilldown's `canonicalize_` gained INV-24's strip+flatten UNION — the verification sidebar now canonicalizes the same names the build does (paren-carrying feed names matching via FLATTEN no longer read as false mismatches) | code (DQEdrilldown.js) |
 
+Batch E (ops tail + doc sweep) + R8-N (capture-time queue normalization):
+
+| Code | What it fixed / added | Live rule lives in |
+|---|---|---|
+| R8-E1 | NeonBackup: a shrinking parts-month now trashes higher-numbered stale `.partN.jsonl` files (restore can't duplicate/resurrect rows; the month no longer freezes closed with a stale part) | code (NeonBackup.gs) |
+| R8-E2 | Slot-repair PREVIEW restores each group's number formats immediately (per-group, the REP-9 discipline) — an abnormal exit can no longer persist the numeric lens across K-AC | code (sheetRepairs.js) |
+| R8-E3 | `exportInboundCalls` refresh-in-window deletes only the DATES the Neon fetch returned — interior dates Neon lost keep their fallback-copy rows | code (inboundCallsExport.js) |
+| R8-E4 | `runBatch` restores the live report's date cell after EVERY day (execution-ceiling kills skip finally blocks); malformed Neon Mirror Queue rows are dropped with a log line instead of living forever | code (emailDailyReport.js / NeonMirror.js) |
+| R8-E5 | Operator State #8 reworded: uninstalling the cdr-report safety-net DQE trigger is a CORRECTNESS step (cross-project write race can freeze a partial day), not just redundancy cleanup | Op State #8, CLAUDE.md |
+| R8-E6 | Doc-drift sweep: architecture.md (migration COMPLETE label, root-clasp layout, missing dashboard files), conventions.md (IR is the last floater-surfacing report), .claspignore comment, INV-16 guard doc (checks BOTH sanitizers), Op State #14 raw-name pointer, known-issues R8-1 cross-ref, and the STALE "drilldown endpoint is dormant" claim (Phases 2–4 shipped long since — `insQhMissedDrill_` / `heatCellToggleDrill_` / `missedSliceListHtml_`) | the corrected docs |
+| R8-N | Capture-time queue-name normalization (the two-name-space root-cause fix, option 1): Dept Config inbound aliases accept `raw=canonical` pairs; cdr-import's `icQueueCanonicalMap_` reads them cross-project and `writeInboundCallsToNeon` writes canonical `entry_queue`/`final_queue` on every capture path (journey stays raw; union predicates kept as belt-and-suspenders; save-validated; best-effort = raw on any failure) | known-issues two-name-spaces entry + INV-54, CLAUDE.md |
+
 ---
 
 ## Phases & batches (rollout narrative, not rules)

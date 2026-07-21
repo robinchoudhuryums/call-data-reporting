@@ -871,7 +871,10 @@ names are masked at capture). Logs when the fallback hits.
 the end / col 10 so pre-existing 9-col prod sheets keep working) holds the RAW
 queue names per dept. `getInboundQueueAliases_` (DeptConfig.gs, sheet-only — no
 seed constant) reads it, and `InboundReport.gs::inboundQueuesForDept_` UNIONs it
-with `queuesForDept_(dept)`. BOTH inbound dept predicates now consume that union
+with `queuesForDept_(dept)`. Since R8-1 (missed:v17) the **Missed report's
+queue-only SENTINEL attribution** consumes the same union too -- DQE sentinel
+rows carry the raw names, so R6's canonical-only match silently dropped CSR's
+`A_Q_CSR` no-ring abandons until the union was wired in. BOTH inbound dept predicates now consume that union
 (`inboundResolveRequest_` → the report + heatmap; `getCallJourney` → the per-call
 path), so a call whose `entry_queue`/`final_queue` is a raw alias (e.g. `A_Q_CSR`)
 attributes to the right dept. Admin-curated via the Dept Config modal's "Inbound
@@ -881,24 +884,39 @@ slices, then remove the one-line admin gate in `inboundResolveRequest_`. The
 parked QCD-vs-inbound abandonment discrepancies are likely the same root cause —
 re-check them once aliases are populated.
 
-**Best long-term health (not yet done) — normalize the queue identity at the
-source.** The alias column is a dashboard-side bridge: it keeps TWO name spaces
-alive and depends on an admin keeping the alias list complete. The durable fix is
-to make `inbound_calls` self-consistent so every consumer works without
-per-consumer alias logic. Two ways, in order of preference:
-1. **Translate raw → canonical at capture** (`cdr-import/inboundCalls.js`): map
-   the raw queue name to its QCD-canonical name when writing
-   `entry_queue`/`final_queue`, seeded from the SAME alias data (lift the Dept
-   Config aliases into a cdr-import map, or read them cross-project). Then
-   `inbound_calls` matches `queuesForDept_` directly and the dashboard union /
-   the `getCallJourney` exact-id fallback become belt-and-suspenders. Requires a
-   one-time `backfillInboundCalls` re-run to rewrite existing rows.
-2. **Store the queue extension at capture and match by ext** (against
-   `getDeptQueueExts_`) — the ext is the real identity (`A_Q_CSR` = 103), so this
-   sidesteps queue-name spelling entirely; needs a capture schema add + backfill.
-Either makes the alias column redundant for inbound attribution (it could then be
-retired or kept only as the capture-time seed). Until then, the alias column is
-the correct, reversible, no-backfill stopgap.
+**Capture-time normalization — IMPLEMENTED (R8-N, 2026-07-21), option 1 of the
+two designs previously sketched here.** `inbound_calls.entry_queue`/`final_queue`
+are now translated raw → QCD-canonical AT CAPTURE
+(`cdr-import/inboundCalls.js::icQueueCanonicalMap_` + `icNormalizeQueue_`,
+applied inside `writeInboundCallsToNeon` so the daily import, the deferred
+mirror, and `backfillInboundCalls` all normalize), seeded from the SAME
+admin-curated Dept Config "Inbound queue aliases" column via a new
+backward-compatible **`raw=canonical` pair syntax**:
+
+- `A_Q_CSR` — plain RAW alias: attribution-only via the dashboard union,
+  exactly as before.
+- `A_Q_CSR=A_Q_CustomerSuccess` — alias + capture-time translation: new
+  captures write the canonical name into `entry_queue`/`final_queue`. The
+  `=` right side is validated at save against the dept's QCD queues.
+
+Scope decisions: ONLY the two attribution columns are translated — the
+journey JSON keeps the raw phone-system names (faithful leg record) and
+`num_queues`/`num_transfers` count raw legs. The cross-project read is
+best-effort (the INV-46 soft-coupling pattern): any failure yields an empty
+map and capture stays raw. The dashboard union (`inboundQueuesForDept_`,
+which now takes the RAW side of pair entries) is KEPT as belt-and-suspenders
+— it still matches rows captured before normalization and the DQE sentinels
+(which remain raw; the R8-1 Missed-report union is unaffected).
+
+**Operator steps to activate:** (1) edit each affected dept's "Inbound queue
+aliases" to the pair form (e.g. CSR: `A_Q_CSR=A_Q_CustomerSuccess`); (2)
+re-run `backfillInboundCalls` (cdr-import editor) to rewrite rows still
+inside the ~14-day Call_Legs retention; (3) older rows keep raw names — the
+union covers them, or a one-off SQL
+`UPDATE inbound_calls SET entry_queue='A_Q_CustomerSuccess' WHERE
+entry_queue='A_Q_CSR'` (repeat per mapping/column) migrates them fully.
+Option 2 (store the queue EXTENSION at capture) remains unbuilt — revisit
+only if name-pair curation proves burdensome.
 
 ---
 

@@ -79,19 +79,24 @@ External CDR system (telephony provider)
 |---|---|---|---|
 | CSV ingest | CDR Import | `autoImport.js`, `importBulkCSVsFromDrive.js` (pending Drive auth), `AbandonedFilter.js`, `CDR Tools.js`, `DeleteOldSheets.js`, `neonWrite.js`, `inboundCalls.js` (per-call inbound capture -> Neon `inbound_calls` + `backfillInboundCalls`), `appsscript.json` | `apps-script/cdr-import/` |
 | Per-agent aggregation + downstream tooling | CDR Report | `buildDQEHistoricalData.js`, `DQEdrilldown.js`, `DQEDrilldownSidebar.html`, `dashboardCDR.js`, `dataFilters.js` (extraction sidebar), `dbHistorical.js`, `dbReporting.js`, `emailDailyReport.js`, `neonWrite.js`, `neonbackfill.js`, `inboundCallsExport.js` (Neon `inbound_calls` -> "Inbound Calls" fallback tab), `insuranceNumbers.js` (insurer-number hashing -> Neon `insurance_numbers`), `CDR Tools menu.js`, `appsscript.json` | `apps-script/cdr-report/` |
-| Manager dashboard | Department Dashboard (standalone) | `Code.gs`, `Auth.gs`, `Data.gs`, `Config.gs`, `Setup.gs`, `Util.gs`, `Diagnostics.gs`, `MissedCallsReport.gs`, `IndividualReport.gs`, `InsightsReport.gs`, `InboundReport.gs`, `DirectCallReport.gs`, `CallerLookup.gs`, `CompanyOverview.gs`, `QCDReport.gs`, `Alerts.gs`, `Digest.gs`, `OrphanFix.gs`, `DeptConfig.gs`, `Escalations.gs`, `NeonRead.gs`, `NeonKeepWarm.gs`, `CacheWarm.gs`, `IngestWatchdog.gs`, `NeonBackup.gs`, `SystemHealth.gs`, `dashboard.html`, `styles.html`, `script.html`, `access_denied.html`, `appsscript.json` | `apps-script/department-dashboard/` |
+| Manager dashboard | Department Dashboard (standalone) | `Code.gs`, `Auth.gs`, `Data.gs`, `Config.gs`, `Setup.gs`, `Util.gs`, `Diagnostics.gs`, `MissedCallsReport.gs`, `IndividualReport.gs`, `InsightsReport.gs`, `InboundReport.gs`, `DirectCallReport.gs`, `CallerLookup.gs`, `CompanyOverview.gs`, `QCDReport.gs`, `Alerts.gs`, `Digest.gs`, `OrphanFix.gs`, `DeptConfig.gs`, `Escalations.gs`, `NeonRead.gs`, `NeonKeepWarm.gs`, `CacheWarm.gs`, `IngestWatchdog.gs`, `PipelineWatch.gs`, `NeonBackup.gs`, `NeonCoverage.gs`, `SystemHealth.gs`, `SmokeCheck.gs`, `QueueReportEmail.gs`, `dashboard.html`, `styles.html`, `script.html`, `access_denied.html`, `appsscript.json` | `apps-script/department-dashboard/` |
 | Postgres mirror | shared lib used by both CDR Import and CDR Report | `neonWrite.js` (duplicated across both projects, currently identical) | see [known-issues.md](known-issues.md) |
 | Per-agent DQE build (duplicated) | both CDR Import and CDR Report | `buildDQEHistoricalData.js` (duplicated across both projects, currently identical -- INV-16). cdr-import invokes inline inside `processIntegratedHistory`; cdr-report keeps a daily trigger copy as a safety net. | `apps-script/cdr-import/` + `apps-script/cdr-report/` |
-| Legacy reports (being migrated into the dashboard) | DQE Report (spreadsheet) | `DQEdashboard.js`, 4 report pairs (`SingleRangeReport`, `IndividualReport`, `MissedCallsReport`, `MultiComparisonTool` + their `.html` modals), `sendManualAlert.js`, `showFAQ.js` + `FAQGuide.html`, `menu DQE Tools.js`, `appsscript.json` | `apps-script/dqe-report/` |
+| Legacy reports (migration COMPLETE — frozen, awaiting spreadsheet decommission) | DQE Report (spreadsheet) | `DQEdashboard.js`, 4 report pairs (`SingleRangeReport`, `IndividualReport`, `MissedCallsReport`, `MultiComparisonTool` + their `.html` modals), `sendManualAlert.js`, `showFAQ.js` + `FAQGuide.html`, `menu DQE Tools.js`, `appsscript.json` | `apps-script/dqe-report/` |
 
 Each subdirectory under `apps-script/` has its own `.clasp.json` (gitignored,
 per-developer) so each project deploys independently:
 
 ```bash
-cd apps-script/department-dashboard && clasp push -f     # the web app
+clasp push -f                                            # the web app (dashboard) — pushed from the REPO ROOT
 cd apps-script/cdr-report          && clasp push -f      # the data hub
 cd apps-script/cdr-import          && clasp push -f      # the CSV ingester
 ```
+
+NB the dashboard's `.clasp.json` lives at the **repo root** (with
+`rootDir: "./apps-script/department-dashboard"`) — there is deliberately no
+`.clasp.json` inside `apps-script/department-dashboard/` itself; only the two
+sibling projects carry their own.
 
 A first-time checkout needs to populate each `.clasp.json` with the
 corresponding scriptId (from the Apps Script project's Settings page).

@@ -378,3 +378,54 @@ test('P-1: without expectedDateIso the old trust-the-payload behavior is unchang
   assert.ok(dels[0].includes('2026-06-04') && dels[0].includes('2026-06-03'),
     'both payload dates deleted when no expected date is pinned (legacy contract)');
 });
+
+// ---- R8-N: capture-time queue-name normalization (raw -> QCD-canonical) -----
+// Seeded from Dept Config's "Inbound queue aliases" `raw=canonical` pairs
+// (cross-project best-effort read, the INV-46 soft-coupling pattern).
+
+const DC_HEADERS_N = ['Department', 'QCD Queues', 'Overview Parent', 'Team Avg Excludes',
+  'Queue Ext Overrides', 'Active', 'Updated By', 'Updated At', 'Notes', 'Inbound Queue Aliases'];
+const { makeFakeSpreadsheet } = require('../harness/fakeSheet');
+
+function installDeptConfigN(aliasCell, active) {
+  h.ctx.getTargetSsId_ = function () { return 'fake-target'; };
+  h.state.spreadsheet = makeFakeSpreadsheet({ sheets: {
+    'Dept Config': [DC_HEADERS_N,
+      ['CSR', 'A_Q_CustomerSuccess', '', '', '', active === false ? 'FALSE' : 'TRUE',
+       'admin@x.com', '', '', aliasCell]],
+  } });
+}
+
+test('R8-N: icQueueCanonicalMap_ parses raw=canonical pairs; plain aliases and inactive rows do not map', function () {
+  installDeptConfigN('A_Q_CSR=A_Q_CustomerSuccess, Backup CSR');
+  h.ctx.IC_QUEUE_CANON_MEMO_ = null;
+  const map = h.call('icQueueCanonicalMap_');
+  assert.equal(map['a_q_csr'], 'A_Q_CustomerSuccess', 'pair maps (case-insensitive key)');
+  assert.equal(map['backup csr'], undefined, 'plain alias stays attribution-only');
+  installDeptConfigN('A_Q_CSR=A_Q_CustomerSuccess', /*active=*/false);
+  h.ctx.IC_QUEUE_CANON_MEMO_ = null;
+  assert.deepEqual(Object.keys(h.call('icQueueCanonicalMap_')), [], 'inactive row ignored');
+  delete h.ctx.getTargetSsId_;
+});
+
+test('R8-N: entry/final_queue are translated at capture; the journey keeps the RAW name', function () {
+  installDeptConfigN('A_Q_Intake=A_Q_IntakeCanon');
+  const cap = {};
+  h.ctx.getReachableNeonConn_ = function () { return fakeInboundConn(cap); };
+  h.call('writeInboundCallsToNeon', L2_ROWS);
+  const ins = cap.executed.filter(s => /INSERT INTO inbound_calls/.test(s))[0];
+  assert.ok(ins, 'insert fired');
+  assert.match(ins, /'A_Q_IntakeCanon'/, 'entry_queue translated to the canonical name');
+  assert.match(ins, /A_Q_Intake(?!Canon)/, 'journey JSON keeps the raw phone-system name');
+  delete h.ctx.getTargetSsId_;
+});
+
+test('R8-N: no Dept Config reachable -> capture stays raw (best-effort no-op)', function () {
+  delete h.ctx.getTargetSsId_;   // loader can't resolve the target ss
+  h.state.spreadsheet = null;
+  const cap = {};
+  h.ctx.getReachableNeonConn_ = function () { return fakeInboundConn(cap); };
+  h.call('writeInboundCallsToNeon', L2_ROWS);
+  const ins = cap.executed.filter(s => /INSERT INTO inbound_calls/.test(s))[0];
+  assert.match(ins, /'A_Q_Intake'/, 'raw name preserved when no map is available');
+});

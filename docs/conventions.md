@@ -237,9 +237,11 @@ queue-only floaters no longer appear there (no `QUEUE` Source chip in
 the My-Dept table in practice). **The Missed report's queue-only
 ABANDONED section is preserved separately** -- queue-sentinel rows
 are always included by `computeMissedCallsReport_` regardless of
-scope (INV-23). The IR/PR/CR reports DO still surface floaters in a
-dedicated picker group (INV-53), and they remain in the Diagnostics
-panel under "Agents matched only via queue". The internal `scope`
+scope (INV-23). The Individual Report still surfaces floaters in a
+dedicated picker group (INV-53) -- it is the LAST report that does:
+the Performance / Compare Ranges reports were retired into Insights,
+which is roster-only since its v15 bump -- and floaters remain in the
+Diagnostics panel under "Agents matched only via queue". The internal `scope`
 parameter on `computeSummary_` is preserved (`Digest.gs` also passes
 `'roster'`); the floater-exclusion contract is scope-independent, so
 historical roster-only numbers equal a `both` response filtered to

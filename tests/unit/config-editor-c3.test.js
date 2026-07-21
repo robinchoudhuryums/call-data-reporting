@@ -132,3 +132,41 @@ test('R8-A5: computeThresholdDrift_ uses the FIRST duplicate row\'s threshold, n
   assert.equal(out.CSR.fired, 0);
   assert.equal(out.CSR.severity, 'lenient', 'classified against the FIRST row\'s threshold (50)');
 });
+
+// ---- R8-N: saveDeptConfig validates `raw=canonical` inbound-alias pairs ----
+function installDeptCfgSave() {
+  h.state.userEmail = 'admin@x.com';
+  h.state.props.ADMIN_EMAILS = 'admin@x.com';
+  h.state.props.SPREADSHEET_ID = 'fake';
+  delete h.state.props.CONFIG_SOURCE;
+  h.state.spreadsheet = makeFakeSpreadsheet({ sheets: {
+    'DO NOT EDIT!': [ROSTER_HEADERS],
+    'Dept Config': [['Department', 'QCD Queues', 'Overview Parent', 'Team Avg Excludes',
+      'Queue Ext Overrides', 'Active', 'Updated By', 'Updated At', 'Notes', 'Inbound Queue Aliases']],
+  } });
+  h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
+  if (h.state.cache && h.state.cache.clear) h.state.cache.clear();
+}
+
+test('R8-N: pair whose canonical side is NOT one of the dept\'s QCD queues is rejected', function () {
+  installDeptCfgSave();
+  assert.throws(function () {
+    h.call('saveDeptConfig', { dept: 'CSR', inboundAliases: 'A_Q_CSR=A_Q_Nope' });
+  }, /not one of CSR's QCD queues/);
+  assert.throws(function () {
+    h.call('saveDeptConfig', { dept: 'CSR', inboundAliases: '=A_Q_CustomerSuccess' });
+  }, /Malformed inbound alias pair/);
+});
+
+test('R8-N: a valid pair (canonical in the dept\'s effective/constant queue list) saves', function () {
+  installDeptCfgSave();
+  // No qcdQueues in the request -> allowed canonical falls back to the
+  // dept's effective list; queuesForDept_ isn't loaded in this suite, so
+  // stub it (the typeof guard consumes it when present).
+  h.ctx.queuesForDept_ = function (d) { return d === 'CSR' ? ['A_Q_CustomerSuccess'] : []; };
+  const res = h.call('saveDeptConfig', { dept: 'CSR', inboundAliases: 'A_Q_CSR=A_Q_CustomerSuccess, Backup CSR' });
+  assert.ok(res && res.saved !== false);
+  const grid = h.state.spreadsheet.getSheetByName('Dept Config')._data;
+  assert.ok(String(grid[1][9]).indexOf('A_Q_CSR=A_Q_CustomerSuccess') !== -1, 'pair stored verbatim');
+  delete h.ctx.queuesForDept_;
+});

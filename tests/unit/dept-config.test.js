@@ -284,3 +284,10 @@ test('R8-C4: an ABSENT Dept Config sheet is the documented fallback, NOT a failu
   assert.equal(h.call('deptConfigReadFailed_'), false,
     'pre-setup installs stay cacheable (byte-identical pre-feature behavior)');
 });
+
+// --- R8-N: inbound alias entries may be `raw=canonical` pairs ---------------
+test('R8-N: getInboundQueueAliases_ returns the RAW side of pair entries (union name space)', function () {
+  setConfig([row({ dept: 'CSR', inboundAliases: 'A_Q_CSR=A_Q_CustomerSuccess, Backup CSR' })]);
+  deepEqual(h.call('getInboundQueueAliases_', 'CSR'), ['A_Q_CSR', 'Backup CSR'],
+    'pair entries contribute their raw (left) side; plain entries pass through');
+});

@@ -129,14 +129,25 @@ function repairDqeSlotTimestamps_(dryRun) {
       range.setNumberFormat('@');
       range.setValues(vals);
       SpreadsheetApp.flush();
+    } else {
+      // R8-E2 (REP-9's per-group discipline, applied to the PREVIEW too):
+      // restore THIS group's formats immediately after its scan instead of
+      // after all groups. The end-of-run restore left group K-AC holding
+      // the numeric lens across the second group's format-set/flush/read
+      // -- a timeout/crash in that window PERSISTED the lens, so every
+      // still-coerced cell displayed as a bare serial ("0.43302...") to
+      // all getDisplayValues consumers until a repair run completed: the
+      // dry-run-parity violation F-52 closed, surviving on the
+      // abnormal-exit path. The window is now a single group's scan.
+      range.setNumberFormats(priorFormats);
+      SpreadsheetApp.flush();
     }
   }
 
   if (dryRun) {
-    // F-52: restore the ORIGINAL formats -- a preview must leave the sheet
+    // F-52: formats already restored per-group above (R8-E2); nothing
+    // sheet-touching left to do -- a preview leaves the sheet
     // byte-identical for every downstream reader. Do NOT rewrite values.
-    for (var p = 0; p < pending.length; p++) pending[p].range.setNumberFormats(pending[p].priorFormats);
-    SpreadsheetApp.flush();
     Logger.log('previewDqeSlotTimestampRepair: %s coerced slot/AF cell(s) WOULD be recovered. '
       + 'Samples: %s', fixed, JSON.stringify(samples));
     return { fixed: fixed, applied: false, samples: samples };
