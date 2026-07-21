@@ -531,18 +531,20 @@ Four client-only affordances lower the barrier for managers who find
 the reports intimidating; none add server endpoints or cache bumps:
 
 - **Guided tour** — a short spotlight walkthrough of the main areas
-  (Overview, question launcher, freshness pill, My Department,
-  Escalations, Reports, Help) runs automatically the first time a
-  user visits and is always replayable from **Settings → Take the tour**.
-  Skips any step whose target isn't visible (e.g. admin-only tabs).
-- **Question launcher** — the Overview, Insights, and My Department
-  pages carry four plain-English question chips ("How is my team
-  doing lately?", "When did we miss calls?", "Is one of my agents
-  struggling or improving?", "Are callers giving up before we
-  answer?"). Three route into Insights (rollup tiles / per-agent
-  cards / Queue health) and one into the My Department missed
-  section; each landing auto-generates, scrolls to, and briefly
-  spotlights the section that answers the question.
+  (Overview, freshness pill, My Department, Escalations, Reports,
+  Help) runs automatically the first time a user visits and is always
+  replayable from **Settings → Take the tour** or the Help modal's
+  **▶ Take the tour** button. Skips any step whose target isn't
+  visible (e.g. admin-only tabs).
+- **Question launcher** — the Help modal opens with four plain-English
+  question chips ("How is my team doing lately?", "When did we miss
+  calls?", "Is one of my agents struggling or improving?", "Are
+  callers giving up before we answer?"). Three route into Insights
+  (rollup tiles / per-agent cards / Queue health) and one into the My
+  Department missed section; clicking one closes Help, then
+  auto-generates, scrolls to, and briefly spotlights the section that
+  answers the question. (They previously rendered pinned atop every
+  page; moved into Help for screen space.)
 - **Metric glossary** — one central dictionary in `script.html`
   (`METRIC_GLOSSARY_`) applies hover/tap definitions to table headers
   and KPI labels everywhere (dotted underline = definition available).
