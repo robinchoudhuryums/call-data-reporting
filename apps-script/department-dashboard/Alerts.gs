@@ -982,6 +982,13 @@ function computeThresholdDrift_(config, lookbackEntries) {
     // 0, so the lenient/chronic ratios would be meaningless. They surface
     // via the `error` Alert Log row + the modal config-table flag instead.
     if (config[i].invalidThreshold) continue;
+    // R8-A5: honor the OPS-9 first-row-wins dedup. Without this, a
+    // hand-edited duplicate dept row OVERWROTE the bucket + threshold, so
+    // the LAST duplicate's threshold drove the lenient/chronic
+    // classification while the run loop, save editor, and modal all use
+    // the FIRST row -- the drift chip could brand a dept "lenient" against
+    // a threshold the alert engine never evaluates.
+    if (config[i].duplicateRow) continue;
     buckets[config[i].department] = { fired: 0, total: 0, rateSum: 0, rateCount: 0 };
     thresholdsByDept[config[i].department] = config[i].threshold;
   }

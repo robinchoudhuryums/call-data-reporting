@@ -278,18 +278,28 @@ function missedEnrichQueueOnlyFromInbound_(queueOnly) {
     const conn = getDashboardNeonConn_();   // NEO-3: not a DQE read -- no read-health recording
     if (!conn) return;
     try {
-      // Dates are ISO out of the build; ids are the AD parent ids (numeric
-      // strings). Escaped anyway -- the values pass through sheet cells.
-      const sqlStr = function (s) { return "'" + String(s).replace(/'/g, "''") + "'"; };
-      const tuples = pairs.map(function (p) {
-        return '(' + sqlStr(p.date) + '::date,' + sqlStr(p.id) + ')';
-      });
-      const st = conn.createStatement();
-      const rs = st.executeQuery(
+      // R8-B5: bind the (date, id) tuples as prepared-statement params --
+      // this was the ONE Neon query in the dashboard that inlined
+      // cell-derived values (AD parent ids + sheet dates transit the
+      // external CDR feed and the coercion-prone columns) with hand
+      // escaping. The escaping was functionally sound, but every sibling
+      // query (journey, insurer daily, caller lookup, heatmap) binds, and
+      // a future writer-side change to AD's content would silently have
+      // inherited the inline path. Placeholders only in the SQL string;
+      // bounded at MISSED_ENRICH_MAX_CALLS_ pairs (800 params, well under
+      // the 65535 bind cap).
+      const placeholders = pairs.map(function () { return '(?::date,?)'; }).join(',');
+      const st = conn.prepareStatement(
         'SELECT c.call_date::text AS d, c.call_id, c.wait_seconds, i.insurance_name ' +
         'FROM inbound_calls c ' +
         'LEFT JOIN insurance_numbers i ON i.phone_hash = c.caller_hash ' +
-        'WHERE (c.call_date, c.call_id) IN (' + tuples.join(',') + ')');
+        'WHERE (c.call_date, c.call_id) IN (' + placeholders + ')');
+      let p = 1;
+      pairs.forEach(function (pair) {
+        st.setString(p++, pair.date);
+        st.setString(p++, pair.id);
+      });
+      const rs = st.executeQuery();
       const facts = {};
       while (rs.next()) {
         const w = parseInt(rs.getString(3), 10);

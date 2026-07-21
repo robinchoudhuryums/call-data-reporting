@@ -478,10 +478,17 @@ runners carry `reportReqSeq_` stale-response tokens.
 Tools: T-1 (see the AD/AE/AF section above), T-2/T-3 null-date poison-row
 guards in `backfillCDRHistory`/`backfillQCDHistory` (an unparseable date cell
 used to wedge the resumable loop on the same batch forever), T-4
-`backfillQCDHistory` stores `abandoned_pct` in PERCENT units matching the
-inline writer ('%'-suffixed display = percent; bare <=1 = raw fraction x100 --
-the old `>1 -> /100` heuristic mixed units; already-written values heal on
-re-run), T-6 DQEdrilldown's col-W queue gate uses the IMP-8 boundary regex
+`backfillQCDHistory` abandoned_pct units — **CORRECTED by R8-B1 (2026-07-21):
+T-4's unit analysis was INVERTED.** The inline writer stores a FRACTION
+(autoImport's `abndPct = abnd/total`, 0..1, mirrored verbatim; Config.gs
+ABANDONED_PCT pins "0..1 decimal, NOT percent"), so T-4's percent-units
+backfill made the column mixed-unit (backfilled rows 100x the inline ones).
+The backfill now normalizes to fraction ('%'-display or bare >1 → /100;
+bare <=1 kept). Rows written by the T-4-era backfill do NOT heal on re-run
+(the INSERT is DO NOTHING); heal via force re-import of the date or
+`UPDATE qcd_history SET abandoned_pct = abandoned_pct/100 WHERE
+abandoned_pct > 1`. No dashboard reader consumes the column (pct is
+recomputed from abandoned/total), T-6 DQEdrilldown's col-W queue gate uses the IMP-8 boundary regex
 (the verification sidebar accepts exactly what the build accepts), T-7
 `writeDiagnostics` clears the previous panel's full height, P-7
 `queueToPendingArchive` replaces a type's stale queued rows when the run

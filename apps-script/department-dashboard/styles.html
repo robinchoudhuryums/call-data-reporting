@@ -870,7 +870,11 @@
   /* ---- R7 (G-3): admin UI-surface toggles -------------------------------
      One rule per UI_FLAG_SURFACES registry key (Config.gs). !important beats
      the inline style.display='' the render paths set on these elements. */
-  body[data-ui-flags~="dept-team-strip"] #dept-team-zone { display: none !important; }
+  /* R8-A1: hide the STRIP too, not just its zone label -- the registry's
+     promise is "hides that surface for ALL viewers", and #dept-team-zone is
+     only the caption; #dept-team-strip is the actual tile row. */
+  body[data-ui-flags~="dept-team-strip"] #dept-team-zone,
+  body[data-ui-flags~="dept-team-strip"] #dept-team-strip { display: none !important; }
   body[data-ui-flags~="dept-queue-tiles"] .dts-tile--queue { display: none !important; }
   body[data-ui-flags~="dept-missed-section"] #dept-missed-section,
   body[data-ui-flags~="dept-missed-section"] #dept-missed-detail { display: none !important; }

@@ -1131,7 +1131,16 @@ function compareDigestConfigSources() {
 
 function saveDigestConfigRow(req) {
   assertAdmin_();
-  const email = String((req && req.email) || '').trim();
+  // R8-B4: normalize case at the editor. The sheet upsert matches the
+  // existing row case-INsensitively, but Neon's ON CONFLICT (email,
+  // department) PK is exact-case -- with CONFIG_SOURCE=neon, saving
+  // "Bob@x.com" then "bob@x.com" created TWO rows where the sheet path
+  // edited one (downstream was protected by the O-4 duplicateRow flag,
+  // but the admin saw a permanent "duplicate" chip and a phantom parity
+  // mismatch). Lowercasing here feeds BOTH stores the same key; the
+  // sheet's case-insensitive match means an existing mixed-case row is
+  // updated in place rather than duplicated.
+  const email = String((req && req.email) || '').trim().toLowerCase();
   const department = String((req && req.department) || '').trim();
   if (!acIsValidEmail_(email)) throw new Error('Enter a valid email address.');
   if (!department) throw new Error('Department is required.');

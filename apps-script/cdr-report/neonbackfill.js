@@ -923,19 +923,30 @@ function backfillQCDHistory() {
           i++; continue;
         }
 
-        // T-4: store abandoned_pct in PERCENT UNITS (10 = 10%), matching the
-        // inline writer (writeQCDRowsToNeon binds the daily rows' percent
-        // numbers verbatim -- pinned by neon-write-mapping.test.js). The old
-        // ">1 -> /100" heuristic mixed units: "5.26%" stored 0.0526 while
-        // "0.53%" stored 0.53 (100x large under the fraction convention) and
-        // both clashed with the inline writer's 5.26. A '%'-suffixed display
-        // is already percent units; a bare value <= 1 is a raw percent-format
-        // fraction (getValues on a %-formatted cell) -> x100.
+        // R8-B1 (corrects T-4, whose unit analysis was INVERTED): store
+        // abandoned_pct as a FRACTION (0..1), matching the inline writer.
+        // The daily importer computes abndPct = abnd/total -- a fraction
+        // (autoImport.js; the violation gate is `> 0.05`), writes that to
+        // the sheet, and writeQCDRowsToNeon mirrors it VERBATIM -- so for a
+        // 5.26% day the inline writer stores 0.0526, not T-4's claimed
+        // 5.26 (Config.gs ABANDONED_PCT pins the sheet convention:
+        // "0..1 decimal, NOT percent"). T-4 made this column mixed-unit:
+        // backfilled rows 100x the inline-written ones. Normalization to
+        // fraction: '%'-suffixed display -> /100; bare > 1 -> a percent-
+        // scale render without the sign -> /100 (a legitimate fraction
+        // can never exceed 1); bare <= 1 -> already a fraction, keep.
+        // NB rows written by the T-4-era backfill keep percent units --
+        // this INSERT is DO NOTHING (fill-only), so they heal only via a
+        // force re-import of their date (authoritative inline writer) or
+        // a one-off SQL: UPDATE qcd_history SET abandoned_pct =
+        // abandoned_pct/100 WHERE abandoned_pct > 1. No dashboard reader
+        // consumes the column (pct is recomputed from abandoned/total),
+        // so exposure is ad-hoc SQL + future consumers.
         var pctRaw = String(r[10] || '').trim();
         var hadPctSign = pctRaw.indexOf('%') !== -1;
         var pctVal = parseFloat(pctRaw.replace('%', ''));
         if (isNaN(pctVal)) pctVal = 0;
-        else if (!hadPctSign && pctVal <= 1) pctVal = pctVal * 100;
+        else if (hadPctSign || pctVal > 1) pctVal = pctVal / 100;
 
         batch.push({
           monthYear:     r[0] || null,

@@ -316,6 +316,24 @@ by the Neon read-back codes, see the collision warning above):
 | R8-4 | `escAssertRowAccess_` had no `allDepts` branch — the ALL-departments manager could list escalations but not act on any, and activity timelines rendered silently blank | Role-model bullet (R-3 note), CLAUDE.md |
 | R8-5 | Client `resolveComparisonWindow_` prevPeriod used `Math.floor` on a local-noon date diff — one day short across spring-forward (INV-28 violation in IR's client-resolved prior window); now `Math.round`, matching the server's `computePriorWindow_` | INV-28, CLAUDE.md |
 
+Batches A+B (the audit's remaining quick-win + correctness tail, same session family):
+
+| Code | What it fixed | Live rule lives in |
+|---|---|---|
+| R8-A1 | UI_FLAGS `dept-team-strip` CSS hid only the caption (`#dept-team-zone`), not the strip; `ins-queue-health`'s no-ring prefetch still fired while the section was flag-hidden | Op State #34, CLAUDE.md |
+| R8-A2 | Direct Neon-mirror skip/error was buried in a SUCCESS row's notes — now a `processIntegratedHistory:Direct:neon` failure row (L7 pattern; unconfigured installs stay silent) | INV-44, CLAUDE.md |
+| R8-A3 | Caller Lookup: Enter bypassed the disabled button and the fetch had no stale-response token — overlapping lookups could paint caller A's history under input B | code (`clLookupSeq_`) |
+| R8-A4 | Custom Report Builder cleared 40 cols but a 4-category comparison renders 45 — stale columns survived beside fresh reports and parked the T-7 diagnostics panel far right forever | code (`dashboardCDR.js` render clear) |
+| R8-A5 | Threshold-drift ignored the OPS-9 `duplicateRow` flag — the LAST duplicate's threshold drove the chip while everything else is first-row-wins | INV-34/E10 context; config-editor-c3 test |
+| R8-A6 | PipelineWatch could persist watermark `'0'` (no parseable timestamps) — the next run would treat 0 as real and blast the whole failure backlog | code (`pipelineWatchRecord_`); pipeline-watch test |
+| R8-A7 | `insScrollPending_` leaked on Insights failures (scroll-jump on a later unrelated render); Insights CSV "Prior" columns emitted raw seconds / raw floats beside formatted "Current" values | code (script.html) |
+| R8-B1 | T-4's unit analysis was inverted — the backfill now stores `abandoned_pct` as a FRACTION matching the inline writer; T-4-era rows heal via force re-import or one-off SQL (DO NOTHING insert can't heal them) | known-issues T-4 entry (corrected) |
+| R8-B2 | `addAgentAlias`/`applyOrphanRename` accepted a SOURCE name that is a live roster agent — alias precedence would silently reroute that agent's every future build; new `assertNotOnAnyRoster_` guard (de-roster first for deliberate merges) | INV-01 OrphanFix mitigations |
+| R8-B3 | `bulkReport` Script Property was unbounded — crossed the ~9KB ceiling around date ~100 of a bulk run, killing the run after each date on resume; now tail-capped + non-fatal (`saveBulkReport_`, the F2 lastSheets discipline) | code (autoImport.js) |
+| R8-B4 | `saveDigestConfigRow` lowercases the email — Neon's exact-case `(email, department)` PK created duplicate rows where the sheet path's case-insensitive match edited one | code (Digest.gs); config-editor-c3 test |
+| R8-B5 | `missedEnrichQueueOnlyFromInbound_` inlined cell-derived (date, id) tuples into SQL with hand escaping — the one binding-discipline deviation; now bound `(?::date,?)` params | code (MissedCallsReport.gs) |
+| R8-B6 | `mergeDqeDuplicateRows_` interrupted-apply recovery: a crash between the merged-row writes and the deletes used to leave a double-count that a re-run COMPOUNDED; the apply now detects already-merged groups (multiset containment of slot/AD tokens) and deletes leftovers without re-summing — also dedupes byte-identical double-append rows instead of doubling them; counts-only groups stay unverifiable (logged caution) | sheet-repairs-merge tests; docblock in sheetRepairs.js |
+
 ---
 
 ## Phases & batches (rollout narrative, not rules)

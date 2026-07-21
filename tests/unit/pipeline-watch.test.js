@@ -219,3 +219,17 @@ test('aux: read-back streak alerts once per streak at the threshold, re-arms on 
   d = h.ctx.pipelineWatchAuxDecide_({ readErrRaw: '{oops', readMark: null, minStreak: 3 });
   assert.equal(d.alerts.length, 0);
 });
+
+// ---- R8-A6 (audit 2026-07-21): never persist a ZERO watermark ---------------
+test('R8-A6: pipelineWatchRecord_ refuses watermark 0 (keeps the next run in baseline mode)', function () {
+  const set = {};
+  const props = { setProperty: function (k, v) { set[k] = v; } };
+  // maxTsMs 0 = no scanned row had a parseable timestamp. Persisting '0'
+  // would make the next run treat 0 as a REAL watermark and flag the whole
+  // historical failure backlog as new (one email blast).
+  h.fn('pipelineWatchRecord_')(props, 0, 'ok (baseline established)');
+  assert.equal(set.PIPELINE_WATCH_LAST_TS, undefined, 'zero watermark NOT stored');
+  assert.equal(set.PIPELINE_WATCH_LAST_RESULT, 'ok (baseline established)', 'outcome still recorded');
+  h.fn('pipelineWatchRecord_')(props, 1234, 'ok (no new failures)');
+  assert.equal(set.PIPELINE_WATCH_LAST_TS, '1234', 'real watermark stored');
+});
