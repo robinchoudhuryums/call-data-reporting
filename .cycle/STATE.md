@@ -1,6 +1,18 @@
 # Cycle State — resume note
 
-## Latest session (R9 — post-deploy owner testing notes, client-only)
+## Latest session (R10 — second post-deploy testing pass, 8 owner notes)
+Branch `claude/broad-scan-ak8g04`, **433/433 tests** (2 added: R10-5 in overview-qcd-snapshot), INV-16 green, script.html parses. Deploy: Department Dashboard ONLY. All client-only except R10-5 (summary:v13→v14).
+- **R10-1:** quick-start chips → Help modal (`.help-quickstart`/`#help-launcher`; `initOverviewLauncher_` injects there only, chips close Help first); `#help-tour-btn` added; page-top launcher rows + `#ov-launcher` static block + `.ov-launcher--page` CSS removed; tour step folded into the Help step.
+- **R10-2:** `.dept-side` sticky top = `calc(var(--dept-sticky-h) + 10px)`; `syncDeptStickyOffset_` (ResizeObserver on `#dept-page .controls`) publishes the var.
+- **R10-3:** `initCountUp_` (debounced MO, `CU_SELECTORS_`, once-per-node so the observer refiring on its own text mutations can't re-target an intermediate value; skips durations/rich text; reduced-motion off) + `ds-bar-grow` scaleX keyframe on `.ans-track`/`.dts-track-fill`/`.qcd-hero-fill`/`.ins-cbar-fill`.
+- **R10-4:** `.ans-bar--pass` (red seg opacity .35) / `.ans-bar--fail` (bold value) on `answeredBarHtml_` (92%) + `qcdDailyBarCell_` (5%).
+- **R10-5:** `computeDeptQcdSnapshot_` range block gains answered-weighted `avgAnswerSec`/`avgAnswer` (displays grid + `parseHmsDisplay_`; Yesterday/MTD blocks null); new `computeCsrTransferRange_` (Data.gs; CSR-only, `CSR Transfer Historical Data` cols C/F/G via getDisplayValues + `rowDateIso_`, weighted transferred/total, null best-effort) → `csrTransfer` on the summary response (+ emptySummary_ mirror); team strip renders Avg answer (any dept with data) + Transfer % (CSR) tiles. summary:v14 — docs synced everywhere the cache-version-sync test pins (CLAUDE.md INV-30/INV-51, known-issues table, architecture, conventions, OrphanFix.gs comment, Data.gs F-29 comment).
+- **R10-6:** `.dash-header` margin-bottom 24→12 (+ launcher removal) kills the blank strip.
+- **R10-7:** missed bars: `.missed-chart-hwrap--bars` fixed 320px wrap + `maintainAspectRatio:false` (aspectRatio removed) + bars-mode section cap none; radar untouched.
+- **R10-8:** QCD all-dept verdict: callout retired (return band only), tile values 32px, hero 42px + 12px labeled bar (`.qcd-hero-tick-lbl` "5%") + min-width fill, `.qcd-deptrow-mini` 13px ink + `.qcd-mini-pct` bold row-toned.
+- **Where I left off:** implemented, NOT yet committed. Next: commit/push, PR if asked. Live smoke adds: Help modal chips + tour button, side-card clearance, count-up/bar animations (and reduced-motion off), pass/fail bar tints, CSR strip tiles (needs CSR Transfer sheet data in range), blank-strip gone, missed bars filling, QCD verdict layout.
+
+## Prior session (R9 — post-deploy owner testing notes, client-only)
 Branch `claude/broad-scan-ak8g04`, **431/431 tests**, INV-16 green, script.html parses. Deploy: Department Dashboard ONLY. Owner notes → fixes:
 - **R9-1:** retired the R7 B3 sticky BANNERS (`initStickyBar_`, `.page-sticky-bar`, both markup blocks) — the REAL controls are sticky now: `#dept-page .controls` + `#ins-period-bar` get `position:sticky; top:0; z-index:60` on an opaque `var(--paper)` strip (above `.dept-side`'s sticky card, below modal z 100). Scoped selectors — the Dept Config modal's `.controls` is unaffected.
 - **R9-2:** dept toolbar = horizontal `.control-btn-row` with "↻ Refresh" (btn-secondary, Insights parity) + an "Export ▾" `.ir-export-wrap` menu (single item: Download CSV → `exportTableCsv_`). The WRAP keeps id `#csv-export-btn` so the two hidden-until-data gating sites are untouched. Help topic reworded.

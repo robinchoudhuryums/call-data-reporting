@@ -279,7 +279,9 @@ function getDepartmentSummary(req) {
   // v12: qcdSnapshot carries an `mtd` block (+ `mtdStart`) for the QCD
   // side-panel period slider (Yesterday / MTD).
   const summarySource = (typeof readSourceCacheTag_ === 'function') ? readSourceCacheTag_() : 'sheet-sheet';
-  const cacheKey = 'summary:v13:' + dept + ':' + scope + ':' + from + ':' + to + ':' + summarySource;
+  // v14 (R10-5): + qcd.range.avgAnswer(Sec) (answered-weighted, own queues)
+  // and the CSR-only `csrTransfer` block for the team-strip tiles.
+  const cacheKey = 'summary:v14:' + dept + ':' + scope + ':' + from + ':' + to + ':' + summarySource;
   const cached = cache.get(cacheKey);
   if (cached) {
     try {
@@ -651,7 +653,7 @@ function computeSummary_(dept, from, to, scope) {
   // Totals: sum the summables; mean the per-row averages across the
   // NONZERO roster rows (avgNonzero_) -- idle agents whose ATT/abd-wait
   // is 0 are excluded from both sides of the mean (owner decision, F-29
-  // follow-up; summary:v13). This matches the per-agent accumulators
+  // follow-up; the summary v11 bump). This matches the per-agent accumulators
   // above, which skip zero values when averaging a single agent's days.
   //
   // Phase D: the totals sum only over matchedViaRoster=true rows.
@@ -695,6 +697,11 @@ function computeSummary_(dept, from, to, scope) {
   // QCD mapping OR no recent QCD rows; client renders nothing.
   const qcdSnapshot = computeDeptQcdSnapshot_(dept, ssTZ, { from: from, to: to });
 
+  // R10-5: CSR-only range transfer stats from CSR Transfer Historical Data
+  // (the dashboard's first read of that sheet -- INV-52 said "not consumed";
+  // read-only, best-effort, null for every other dept / missing sheet).
+  const csrTransfer = computeCsrTransferRange_(dept, from, to);
+
   return {
     meta: {
       department: dept,
@@ -719,11 +726,56 @@ function computeSummary_(dept, from, to, scope) {
     rows: rows,
     totals: totals,
     qcd: qcdSnapshot,
+    csrTransfer: csrTransfer,   // R10-5: null except CSR-with-data
     diagnostics: {
       rosterWithNoData: rosterWithNoData,
       queueOnlyMatched: queueOnlyMatched,
     },
   };
+}
+
+/**
+ * R10-5: dept-level transfer stats for CSR over [from, to], read from the
+ * `CSR Transfer Historical Data` sheet (INV-52 schema: Month Year | Week |
+ * Date | Agent | Trans % | Total Calls | Transferred | ...). Weighted:
+ * sum(Transferred) / sum(Total Calls) across all agent-day rows in range --
+ * never an average of the per-row Trans % values. Display values feed the
+ * date compare (ISO-normalized via rowDateIso_, the F-3/F-10 rule) and the
+ * numeric parses. Best-effort: null when the dept isn't CSR, the sheet is
+ * missing/empty, or no rows land in range -- the client renders no tile.
+ */
+function computeCsrTransferRange_(dept, from, to) {
+  try {
+    if (String(dept) !== 'CSR' || !from || !to) return null;
+    const ss = openSpreadsheet_();
+    const sheet = ss.getSheetByName('CSR Transfer Historical Data');
+    if (!sheet) return null;
+    const lastRow = sheet.getLastRow();
+    if (lastRow < 2) return null;
+    const disp = sheet.getRange(2, 1, lastRow - 1, 7).getDisplayValues();
+    const tz = ss.getSpreadsheetTimeZone();
+    let totalCalls = 0, transferred = 0;
+    const days = {};
+    for (let i = 0; i < disp.length; i++) {
+      const iso = rowDateIso_(disp[i][2], tz);
+      if (!iso || iso < from || iso > to) continue;
+      totalCalls  += Number(String(disp[i][5]).replace(/,/g, '')) || 0;
+      transferred += Number(String(disp[i][6]).replace(/,/g, '')) || 0;
+      days[iso] = true;
+    }
+    if (totalCalls <= 0) return null;
+    const pct = (transferred / totalCalls) * 100;
+    return {
+      pct: round1_(pct),
+      pctStr: pct.toFixed(1) + '%',
+      transferred: transferred,
+      totalCalls: totalCalls,
+      days: Object.keys(days).length,
+    };
+  } catch (e) {
+    Logger.log('computeCsrTransferRange_ failed: %s', e);
+    return null;
+  }
 }
 
 function emptySummary_(dept, from, to, scope, rosterSize, rowsScanned, deptQueueExts) {
@@ -754,6 +806,7 @@ function emptySummary_(dept, from, to, scope, rosterSize, rowsScanned, deptQueue
       rosterAgentCount: 0, queueOnlyAgentCount: 0,
     },
     qcd: null,
+    csrTransfer: null,   // R10-5: mirror the populated shape (CORE-8 discipline)
     diagnostics: {
       rosterWithNoData: [],
       queueOnlyMatched: [],
@@ -824,6 +877,9 @@ function computeDeptQcdSnapshot_(dept, ssTZ, opts) {
     if (!grid || grid.missing || grid.empty) return null;
     const tz = ssTZ || grid.ssTZ;
     const values = grid.values;
+    // R10-5: the H:MM:SS Avg Answer strings live in the parallel `displays`
+    // grid (INV-02 discipline; the Neon adapter ships an aligned copy).
+    const displays = grid.displays || null;
     if (!values.length) return null;
 
     let latestDate = '';
@@ -888,11 +944,18 @@ function computeDeptQcdSnapshot_(dept, ssTZ, opts) {
         if (!queueSet[q3]) continue;
         const d3 = rowDateIso_(r3[QCD_HISTORICAL_COLS.DATE - 1], tz);
         if (!d3 || d3 < rFrom || d3 > rTo) continue;
-        const b3 = byQueueRange[q3] || (byQueueRange[q3] = { total: 0, answered: 0, abandoned: 0, violations: 0 });
+        const b3 = byQueueRange[q3] || (byQueueRange[q3] = { total: 0, answered: 0, abandoned: 0, violations: 0, avgWSum: 0, avgWN: 0 });
         b3.total      += Number(r3[QCD_HISTORICAL_COLS.TOTAL_CALLS - 1])    || 0;
         b3.answered   += Number(r3[QCD_HISTORICAL_COLS.TOTAL_ANSWERED - 1]) || 0;
         b3.abandoned  += Number(r3[QCD_HISTORICAL_COLS.ABANDONED   - 1])    || 0;
         b3.violations += Number(r3[QCD_HISTORICAL_COLS.VIOLATIONS  - 1])    || 0;
+        // R10-5: answered-weighted avg-answer accumulation for the range
+        // block (the computeQcdReport_ convention -- rows with 0s skipped).
+        if (displays && typeof parseHmsDisplay_ === 'function') {
+          const ansN = Number(r3[QCD_HISTORICAL_COLS.TOTAL_ANSWERED - 1]) || 0;
+          const avgS = parseHmsDisplay_(displays[k][QCD_HISTORICAL_COLS.AVG_ANSWER - 1]);
+          if (ansN > 0 && avgS > 0) { b3.avgWSum += avgS * ansN; b3.avgWN += ansN; }
+        }
       }
     }
 
@@ -918,6 +981,9 @@ function computeDeptQcdSnapshot_(dept, ssTZ, opts) {
     const buildBlock_ = function (byQueueMap, blockDate) {
       const ownAcc = { total: 0, answered: 0, abandoned: 0, violations: 0 };
       const subAcc = { total: 0, answered: 0, abandoned: 0, violations: 0 };
+      // R10-5: answered-weighted avg-answer over the dept's OWN queues (only
+      // the range pass populates avgWSum/avgWN; other blocks yield null).
+      let ownAvgWSum = 0, ownAvgWN = 0;
       let mainQueueCount = 0, subQueueCount = 0;
       const perQueue = queues.filter(function (q) { return !!byQueueMap[q]; })
         .map(function (q) {
@@ -926,6 +992,7 @@ function computeDeptQcdSnapshot_(dept, ssTZ, opts) {
           const acc = isSub ? subAcc : ownAcc;
           acc.total += b.total; acc.answered += b.answered;
           acc.abandoned += b.abandoned; acc.violations += b.violations;
+          if (!isSub && (b.avgWN || 0) > 0) { ownAvgWSum += b.avgWSum; ownAvgWN += b.avgWN; }
           if (isSub) subQueueCount++; else mainQueueCount++;
           const pct = b.total > 0 ? (b.abandoned / b.total) * 100 : 0;
           return {
@@ -960,6 +1027,11 @@ function computeDeptQcdSnapshot_(dept, ssTZ, opts) {
         subQueueCount:    subQueueCount,
         subTotals:        hasSub ? mkTotals(subAcc) : null,
         allTotals:        hasSub ? mkTotals(allAcc) : null,
+        // R10-5: own-queues answered-weighted average answer time; null on
+        // blocks that don't accumulate it (Yesterday / MTD) so the client
+        // tile renders only where the data exists.
+        avgAnswerSec:     ownAvgWN > 0 ? Math.round(ownAvgWSum / ownAvgWN) : null,
+        avgAnswer:        ownAvgWN > 0 ? formatSecondsHms_(Math.round(ownAvgWSum / ownAvgWN)) : null,
       };
     };
 

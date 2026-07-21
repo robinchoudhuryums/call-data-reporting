@@ -239,7 +239,10 @@
     gap: 12px;
     padding-bottom: 18px;
     border-bottom: 1px solid var(--line);
-    margin-bottom: 24px;
+    /* R10-6: was 24px -- with the quick-start row moved into Help (R10-1),
+       page content starts right under the divider; the old gap read as an
+       unexplained blank strip (owner note, Insights especially). */
+    margin-bottom: 12px;
   }
   .dash-kicker {
     font-family: var(--mono);
@@ -794,6 +797,25 @@
   .ans-seg.ans  { background: var(--good); }
   .ans-seg.miss { background: var(--warn); }
   .ans-seg.none { background: var(--paper-2); }
+  /* R10-4: threshold-aware red on the split bars (both builders --
+     answeredBarHtml_'s 92% standard, qcdDailyBarCell_'s 5% standard).
+     Passing rows soften the red segment so it recedes; failing rows keep
+     the full red and bold their value. */
+  .ans-bar--pass .ans-seg.miss { opacity: 0.35; }
+  .ans-bar--fail .ans-rate, .ans-bar--fail .miss-n { font-weight: 700; }
+  /* R10-3: bar fill-in load animation -- tracks/fills grow from the left on
+     render. Applied to the shared split-bar track, the team-strip target
+     fill, the QCD hero fill, and the Insights card bars; reduced-motion
+     users get the static bar. Transform-based, so widths/labels are
+     untouched and layout never shifts. */
+  .ans-track, .dts-track-fill, .qcd-hero-fill, .ins-cbar-fill {
+    animation: ds-bar-grow 0.55s cubic-bezier(.22, .61, .36, 1);
+    transform-origin: left center;
+  }
+  @keyframes ds-bar-grow { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+  @media (prefers-reduced-motion: reduce) {
+    .ans-track, .dts-track-fill, .qcd-hero-fill, .ins-cbar-fill { animation: none; }
+  }
   .ans-nums {
     display: flex;
     align-items: baseline;
@@ -1106,7 +1128,11 @@
   .dept-side .dept-qcd-snapshot { margin-top: 0; }
   @media (min-width: 1100px) {
     .dept-layout { grid-template-columns: minmax(0, 1fr) 320px; align-items: start; }
-    .dept-side { order: 0; position: sticky; top: 16px; align-self: start; max-height: calc(100vh - 32px); overflow: auto; }
+    /* R10-2: the side card's sticky top clears the R9-1 sticky controls
+       strip (whose measured height lands in --dept-sticky-h, set by
+       syncDeptStickyOffset_ in script.html), so scrolling never slides the
+       QCD panel underneath the pinned strip. */
+    .dept-side { order: 0; position: sticky; top: calc(var(--dept-sticky-h, 84px) + 10px); align-self: start; max-height: calc(100vh - var(--dept-sticky-h, 84px) - 20px); overflow: auto; }
   }
   /* In the narrow side column the per-queue tiles stack rather than squeeze. */
   @media (min-width: 1100px) {
@@ -1698,10 +1724,14 @@
      the radar snapped hard-left + Chart.js re-rendered = the jumpiness.) */
   .chart-row > .chart-section { max-width: 520px; margin: 0 auto; }
   /* Bars mode is a wide timeline (R7/M-3: vertical bars, time on x), so it
-     reads better with more width than the square radar. Let the chart use
-     most of the column (still bounded so the modal drill-in open stays a
-     gentle reflow); radar keeps the 520px cap. */
-  .chart-row.mode-bars > .chart-section { max-width: 960px; }
+     reads better with more width than the square radar. R10-7: the cap is
+     GONE -- bars fill the whole column (owner: the chart read as too small
+     in its slot) -- and the canvas lives in a fixed-height wrap so
+     maintainAspectRatio:false always fills it; radar keeps the 520px cap. */
+  .chart-row.mode-bars > .chart-section { max-width: none; }
+  .missed-chart-hwrap { position: relative; }
+  .missed-chart-hwrap--bars { height: 320px; }
+  @media (max-width: 720px) { .missed-chart-hwrap--bars { height: 240px; } }
   /* Clip the drill-in while its track is collapsing so it slides in/out
      cleanly rather than overflowing the 0fr cell mid-animation. */
   .chart-row > .bucket-detail { overflow: hidden; }
@@ -3231,9 +3261,17 @@
   /* Overview question launcher (anti-intimidation layer): four
      plain-English questions, each routing to a pre-primed report. */
   .ov-launcher { margin: 12px 0 16px; }
+  /* R10-1: quick-start row's home is the Help modal now -- a strip between
+     the modal header and the two-pane help layout, with the tour-replay
+     button beside it. Horizontal padding matches .modal-panel-body. */
+  .help-quickstart { display: flex; align-items: flex-end; gap: 14px; flex-wrap: wrap;
+    padding: 14px 40px 0; }
+  .help-quickstart .ov-launcher { margin: 0; flex: 1 1 auto; }
+  .help-tour-btn { flex: 0 0 auto; white-space: nowrap; }
   /* Injected copies at the top of the Insights + My Department pages
      (owner note) -- same chips, slightly tighter spacing. */
-  .ov-launcher--page { margin: 4px 0 14px; }
+  /* (R10-1: .ov-launcher--page retired -- the chip row's only host is the
+     Help modal's .help-quickstart now.) */
   /* Quick-start chip landing spotlight (qsSpotlight_): a brief accent
      ring pulse on the section that answers the clicked question.
      Reduced-motion users get a static ring for the same duration. */
@@ -4103,8 +4141,10 @@
   .qcd-verdict--neu  { border-left-color: var(--line); }
   .qcd-verdict-label { font: 600 10px/1 var(--mono); letter-spacing: 0.14em;
     text-transform: uppercase; color: var(--muted); }
-  .qcd-verdict-value { font: 700 24px/1.1 var(--display); font-variant-numeric: tabular-nums;
-    color: var(--ink); margin-top: 4px; }
+  /* R10-8: tile values read at KPI weight (were 24px -- too small beside the
+     hero, owner note). */
+  .qcd-verdict-value { font: 700 32px/1.1 var(--display); font-variant-numeric: tabular-nums;
+    color: var(--ink); margin-top: 6px; }
   .qcd-verdict--warn .qcd-verdict-value { color: var(--warn); }
   .qcd-verdict--good .qcd-verdict-value { color: var(--good); }
   .qcd-verdict-callout { margin: 0 0 14px; }
@@ -4119,17 +4159,22 @@
   .qcd-hero--warn { border-left-color: var(--warn); background: var(--warn-soft); }
   .qcd-hero--warn .qcd-hero-value { color: var(--warn); }
   .qcd-hero--good .qcd-hero-value { color: var(--good); }
-  .qcd-hero-value { font: 700 34px/1.05 var(--display); font-variant-numeric: tabular-nums;
+  /* R10-8: hero refresh -- bigger value, a thicker labeled target bar (the
+     bare 8px bar + unlabeled floating tick "didn't look right", owner note),
+     and a minimum visible fill so a healthy sub-1% day still registers. */
+  .qcd-hero-value { font: 700 42px/1.05 var(--display); font-variant-numeric: tabular-nums;
     margin-top: 4px; color: var(--ink); }
-  .qcd-hero-bar { position: relative; height: 8px; margin: 8px 0 6px;
+  .qcd-hero-bar { position: relative; height: 12px; margin: 14px 0 8px;
     background: var(--paper-inset, var(--line)); border-radius: var(--r-pill); overflow: visible; }
-  .qcd-hero-fill { position: absolute; left: 0; top: 0; bottom: 0;
+  .qcd-hero-fill { position: absolute; left: 0; top: 0; bottom: 0; min-width: 5px;
     background: currentColor; border-radius: var(--r-pill); }
   .qcd-hero--warn .qcd-hero-fill { background: var(--warn); }
   .qcd-hero--good .qcd-hero-fill { background: var(--good); }
-  .qcd-hero-tick { position: absolute; left: 50%; top: -3px; bottom: -3px; width: 2px;
+  .qcd-hero-tick { position: absolute; left: 50%; top: -4px; bottom: -4px; width: 2px;
     background: var(--ink); opacity: 0.45; }
-  .qcd-hero-sub { font: 500 11.5px/1.3 var(--body, inherit); color: var(--muted); }
+  .qcd-hero-tick-lbl { position: absolute; top: -14px; left: 50%; transform: translateX(-50%);
+    font: 600 9px/1 var(--mono); letter-spacing: 0.08em; color: var(--muted); }
+  .qcd-hero-sub { font: 500 12px/1.3 var(--body, inherit); color: var(--muted); }
   @media (max-width: 720px) {
     .qcd-verdict-band--hero { grid-template-columns: 1fr; }
     .qcd-verdict-rest { grid-template-columns: repeat(3, minmax(0, 1fr)); }
@@ -4151,8 +4196,14 @@
   .qcd-deptrow--good td { border-left: 5px solid var(--good); background: var(--good-soft); }
   .qcd-deptrow--muted td { border-left: 5px solid var(--muted); background: transparent; }
   .qcd-deptrow-name { font: 700 16px/1.2 var(--display); color: var(--ink); }
-  .qcd-deptrow-mini { float: right; font: 600 11px/1.6 var(--mono);
-    font-variant-numeric: tabular-nums; color: var(--muted); }
+  /* R10-8: mini-summary sized up (was 11px muted -- the per-dept abandon%
+     was unreadable, owner note); the % rides the row tone via .qcd-mini-pct. */
+  .qcd-deptrow-mini { float: right; font: 500 13px/1.5 var(--mono);
+    font-variant-numeric: tabular-nums; color: var(--ink); }
+  .qcd-mini-pct { font-weight: 700; }
+  .qcd-deptrow--warn .qcd-mini-pct { color: var(--warn); }
+  .qcd-deptrow--good .qcd-mini-pct { color: var(--good); }
+  .qcd-deptrow--muted .qcd-deptrow-mini { color: var(--muted); }
 
   .qcd-alldept-table { width: 100%; border-collapse: collapse; }
   .qcd-alldept-table th, .qcd-alldept-table td {

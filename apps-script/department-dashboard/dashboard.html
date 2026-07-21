@@ -182,15 +182,9 @@
              opens the Dept Config modal. -->
         <div id="ov-unmapped-nag" class="ov-status-banner" style="display:none;" data-admin-only></div>
         <div class="ov-summary-line" id="ov-summary-line"></div>
-        <div class="ov-launcher" id="ov-launcher">
-          <div class="ov-launcher-kicker">What do you want to know?</div>
-          <div class="ov-launcher-row">
-            <button type="button" class="ov-launcher-q" data-launch="team-lately">How is my team doing lately?</button>
-            <button type="button" class="ov-launcher-q" data-launch="missed-yesterday">When did we miss calls?</button>
-            <button type="button" class="ov-launcher-q" data-launch="agent-trend">Is one of my agents struggling or improving?</button>
-            <button type="button" class="ov-launcher-q" data-launch="abandons">Are callers giving up before we answer?</button>
-          </div>
-        </div>
+        <!-- R10-1: the quick-start question row moved into the Help modal
+             (#help-launcher) -- still global, no longer pinned atop every
+             page (owner: saves screen space, declutters). -->
         <!-- Admin-only: company-wide daily call queue report (4b).
              Reproduces the legacy emailed "Daily Call Queue Report"
              PDF as a flat table across every mapped department.
@@ -311,9 +305,7 @@
            TTT / ATT are scoped to (INV-06). -->
       <div id="work-window-pill" class="work-window-pill" aria-label="Work window"></div>
 
-      <!-- Quick-start chips (owner note): same row as the Overview,
-           injected + wired by initOverviewLauncher_. -->
-      <div class="ov-launcher ov-launcher--page" id="dept-launcher"></div>
+      <!-- (R10-1: the quick-start chip row moved into the Help modal.) -->
 
       <div class="controls">
         <div class="control" id="dept-selector-wrap" style="display:none;">
@@ -525,6 +517,15 @@
         <button class="modal-close" id="help-close" type="button" aria-label="Close">&times;</button>
         <div class="modal-kicker">Reference</div>
         <h2 id="help-modal-title">Help &amp; Reference</h2>
+      </div>
+      <!-- R10-1: the quick-start question row lives HERE now (moved off the
+           page tops -- still global via Help). Chips are injected + wired by
+           initOverviewLauncher_; clicking one closes Help, then navigates.
+           The tour is replayable from here too (the tour's own closing step
+           already pointed at Help). -->
+      <div class="help-quickstart">
+        <div class="ov-launcher" id="help-launcher"></div>
+        <button class="btn btn-secondary help-tour-btn" type="button" id="help-tour-btn">&#9654; Take the tour</button>
       </div>
       <div class="modal-panel-body help-layout">
         <nav class="help-nav" aria-label="Help topics">
@@ -1096,9 +1097,7 @@
     <div class="ins-page-body">
       <button class="modal-open-tab-btn" type="button" data-open-tab-route="/report/insights"
               aria-label="Open in new tab" title="Open this report in a new browser tab (for side-by-side viewing)">&#8599;</button>
-      <!-- Quick-start chips (owner note): the same question row the
-           Overview carries, injected + wired by initOverviewLauncher_. -->
-      <div class="ov-launcher ov-launcher--page" id="ins-launcher"></div>
+      <!-- (R10-1: the quick-start chip row moved into the Help modal.) -->
       <div id="insights-form" class="ir-form">
         <div class="ir-section-title">1. Date Range</div>
         <div class="ir-row">
