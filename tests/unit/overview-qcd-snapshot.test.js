@@ -146,3 +146,75 @@ test('summary:v12: QCD snapshot carries an MTD block summing the latest month', 
   assert.equal(snap.mtd.totalCalls, 140);
   assert.equal(snap.mtd.abandoned, 14);
 });
+
+// R10-5 (summary:v14): the range block carries an answered-weighted average
+// answer time over the dept's own queues, parsed from the Avg Answer DISPLAY
+// strings (INV-02). The Yesterday/MTD blocks don't accumulate it -> null.
+function qcdRowAvg(dateIso, queue, answered, avgAnswer) {
+  return ['', '', dateIso, queue, 'Total Calls', answered, answered, 0,
+          '0:01:00', avgAnswer, '', 0];
+}
+
+test('R10-5: range block avgAnswer is answered-weighted; other blocks stay null', function () {
+  h.state.props.SPREADSHEET_ID = 'fake';
+  h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
+  h.ctx.QCD_SHEET_DATA_MEMO_ = null;
+  h.ctx.QCD_NEON_GRID_MEMO_ = null;
+  const q = h.call('getDeptQcdQueues_', 'CSR')[0];
+  h.state.spreadsheet = makeFakeSpreadsheet({
+    timeZone: 'America/Chicago',
+    sheets: {
+      'QCD Historical Data': [QCD_HEADER,
+        qcdRowAvg('2026-06-02', q, 90, '0:00:20'),   // 90 answered @ 20s
+        qcdRowAvg('2026-06-03', q, 10, '0:01:00'),   // 10 answered @ 60s
+      ],
+    },
+  });
+  h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
+  h.ctx.QCD_SHEET_DATA_MEMO_ = null;
+  h.ctx.QCD_NEON_GRID_MEMO_ = null;
+
+  const snap = h.call('computeDeptQcdSnapshot_', 'CSR', 'America/Chicago',
+    { from: '2026-06-01', to: '2026-06-30' });
+  assert.ok(snap && snap.range, 'range block present');
+  // Weighted: (20*90 + 60*10) / 100 = 24s -- NOT the 40s row-mean.
+  assert.equal(snap.range.avgAnswerSec, 24);
+  assert.equal(snap.range.avgAnswer, '0:00:24');
+  // Yesterday / MTD blocks never accumulate it.
+  assert.equal(snap.avgAnswerSec, null);
+  assert.equal(snap.mtd.avgAnswerSec, null);
+});
+
+// R10-5: CSR-only dept transfer stats from CSR Transfer Historical Data --
+// weighted sum(Transferred)/sum(Total Calls) over in-range rows; null for
+// non-CSR depts and missing sheets (best-effort, the dashboard's first read
+// of that INV-52 sheet).
+const CSR_TR_HEADER = ['Month Year', 'Week', 'Date', 'Agent', 'Trans %',
+  'Total Calls', 'Transferred'];
+
+test('R10-5: computeCsrTransferRange_ weights by calls, scopes to range, gates to CSR', function () {
+  h.state.props.SPREADSHEET_ID = 'fake';
+  h.state.spreadsheet = makeFakeSpreadsheet({
+    timeZone: 'America/Chicago',
+    sheets: {
+      'CSR Transfer Historical Data': [CSR_TR_HEADER,
+        ['', '', '2026-06-02', 'Agent A', '10.0%', 100, 10],
+        ['', '', '2026-06-03', 'Agent B', '40.0%', 50, 20],
+        ['', '', '2026-05-20', 'Agent A', '90.0%', 200, 180],   // out of range
+      ],
+    },
+  });
+  const out = h.call('computeCsrTransferRange_', 'CSR', '2026-06-01', '2026-06-30');
+  assert.ok(out, 'CSR in-range rows produce a block');
+  // Weighted: 30/150 = 20.0% -- NOT the 25% mean of the per-row Trans %.
+  assert.equal(out.pct, 20);
+  assert.equal(out.pctStr, '20.0%');
+  assert.equal(out.transferred, 30);
+  assert.equal(out.totalCalls, 150);
+  assert.equal(out.days, 2);
+  // Non-CSR dept -> null (server ships the tile only for CSR).
+  assert.equal(h.call('computeCsrTransferRange_', 'Sales', '2026-06-01', '2026-06-30'), null);
+  // Missing sheet -> null, never a throw.
+  h.state.spreadsheet = makeFakeSpreadsheet({ timeZone: 'America/Chicago', sheets: {} });
+  assert.equal(h.call('computeCsrTransferRange_', 'CSR', '2026-06-01', '2026-06-30'), null);
+});

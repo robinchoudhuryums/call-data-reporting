@@ -202,7 +202,7 @@ Per-row aggregates above; the totals row uses the same methods:
 
 - Sum columns sum the rows in the table.
 - Mean columns (ATT, Avg Abd Wait, CSR Avg Abd Wait) take a simple mean
-  of the NONZERO per-agent rows displayed (`avgNonzero_`, summary:v13).
+  of the NONZERO per-agent rows displayed (`avgNonzero_`; introduced in the summary cache's v11 bump — current prefix summary:v14).
   Idle roster agents — whose value is 0 for the range — are excluded
   from both numerator and denominator, so they don't drag the dept
   averages (owner decision, F-29 follow-up). This is the same skip-zero
@@ -461,7 +461,7 @@ mirrors it; if the two ever diverge, INV-30 wins.
 
 | Source file | Cache prefix | Current version |
 |---|---|---|
-| `Data.gs` (main table) | `summary:vN:` | `v13` |
+| `Data.gs` (main table) | `summary:vN:` | `v14` |
 | `Data.gs` (latest-date snap for default From/To) | `latestDate:vN:` | `v1` |
 | `Data.gs` (multi-source latest dates for freshness pill) | `latestDates:vN:` | `v1` |
 | `IndividualReport.gs` | `individual:vN:` | `v11` |

@@ -348,6 +348,7 @@
     totals: null,
     meta: null,
     qcd: null,   // Batch D: the dept QCD snapshot (data.qcd) -- team-strip range tiles read state.qcd.range
+    csrTransfer: null,   // R10-5: CSR-only range transfer stats (data.csrTransfer)
     diagnostics: null,
     sortKey: 'answerRate',   // default sort: the stacked Answered/Missed bar
     sortDir: 'asc',          // 'asc' | 'desc' -- asc => worst answer rate first
@@ -806,7 +807,11 @@
         + '<span class="ans-seg miss" style="width:' + (100 - pctA) + '%"></span>'
       : '<span class="ans-seg none" style="width:100%"></span>';
     var rateCls = total ? benchValueCls_('% answered', rate + '%', true) : '';
-    return '<div class="ans-bar" title="' + escapeHtml(title) + '">'
+    // R10-4: threshold-aware red -- passing the 92% standard renders the
+    // missed segment light/translucent so healthy rows recede; failing keeps
+    // the full red + a bold value (styles.html .ans-bar--pass/--fail).
+    var passCls = total ? (rate >= 92 ? ' ans-bar--pass' : ' ans-bar--fail') : '';
+    return '<div class="ans-bar' + passCls + '" title="' + escapeHtml(title) + '">'
          +   '<div class="ans-track">' + segs + '</div>'
          +   '<div class="ans-nums">'
          +     '<span class="ans-n">' + a + aChip + '</span>'
@@ -946,6 +951,25 @@
     initDatePresets_();
 
     $('refresh-btn').addEventListener('click', refresh);
+    // R10-2: publish the sticky controls strip's real height as a CSS var so
+    // the QCD side card's sticky top clears it (styles.html .dept-side).
+    // ResizeObserver tracks wraps (admin selector row, narrow viewports);
+    // best-effort -- the CSS fallback (84px) covers no-RO browsers.
+    (function syncDeptStickyOffset_() {
+      var strip = document.querySelector('#dept-page .controls');
+      if (!strip) return;
+      var apply = function () {
+        try {
+          document.documentElement.style.setProperty('--dept-sticky-h', strip.offsetHeight + 'px');
+        } catch (e) {}
+      };
+      apply();
+      if (typeof ResizeObserver === 'function') {
+        try { new ResizeObserver(apply).observe(strip); } catch (e) {}
+      } else {
+        window.addEventListener('resize', apply);
+      }
+    })();
     // R9-2: the one-click CSV icon became an Export dropdown (the Insights
     // toolbar convention). #csv-export-btn is the WRAP now (id kept so the
     // existing hidden-until-data gating shows/hides the same element);
@@ -1034,6 +1058,7 @@
     initWorkWindowPill_();
     initOverviewLauncher_();
     initMetricGlossary_();
+    initCountUp_();   // R10-3: KPI count-up load animation (reduced-motion aware)
     initGlossTooltip_();
     initDateRangeLinks_();
 
@@ -3634,16 +3659,19 @@
       + '</div>';
   }
 
-  // Wires the quick-start chips on ALL host pages (owner note): the
-  // Overview's static block, plus injected copies at the top of the
-  // Insights page and the My Department page -- same chips, same behavior
-  // everywhere. Each chip lands on (and briefly SPOTLIGHTS) the exact
-  // report section that answers its question.
+  // R10-1: the quick-start chips live in the HELP modal now (#help-launcher)
+  // -- one global home instead of a pinned row atop every page (owner:
+  // saves screen space, declutters). Same chips, same landings: each still
+  // lands on (and briefly SPOTLIGHTS) the exact report section that answers
+  // its question; clicking one closes Help first (its own close button, the
+  // F-42 focus-trap discipline) so the navigation isn't hidden behind it.
   function initOverviewLauncher_() {
     const onLaunch = function (e) {
       const btn = e.target.closest('[data-launch]');
       if (!btn) return;
       const kind = btn.getAttribute('data-launch');
+      const helpClose = $('help-close');
+      if (helpClose) { try { helpClose.click(); } catch (e2) {} }
       try {
         if (kind === 'team-lately') {
           launcherOpenInsights_('How is my team doing lately?', 'ins-kpi-row');
@@ -3661,12 +3689,10 @@
         }
       } catch (err) { /* best-effort: the report is still openable by hand */ }
     };
-    ['ov-launcher', 'ins-launcher', 'dept-launcher'].forEach(function (id) {
-      const wrap = $(id);
-      if (!wrap) return;
-      if (id !== 'ov-launcher') wrap.innerHTML = launcherRowHtml_();
-      wrap.addEventListener('click', onLaunch);
-    });
+    const wrap = $('help-launcher');
+    if (!wrap) return;
+    wrap.innerHTML = launcherRowHtml_();
+    wrap.addEventListener('click', onLaunch);
   }
 
   // Launcher-initiated runs skip the form: a loading pane (with the
@@ -4075,6 +4101,71 @@
       timer = setTimeout(function () { applyGlossaryTooltips_(document); }, 250);
     });
     obs.observe(document.body, { childList: true, subtree: true });
+  }
+
+  // -- R10-3: count-up load animation on KPI values -----------------------
+  // Purely aesthetic (owner: "if this would impact performance or function,
+  // disregard" -- so every guard fails to the plain static value). Newly
+  // rendered KPI-value elements count from 0 to their rendered number over
+  // ~600ms. Scope is a curated selector list of NUMERIC value surfaces;
+  // durations (H:MM:SS), dashes, and non-numeric text are left untouched.
+  // Wired via the same debounced MutationObserver pattern as the metric
+  // glossary; runs AFTER each render's dsFlashChanged_ snapshot (which is
+  // synchronous), so change-flash comparisons always see final values.
+  var CU_SELECTORS_ = '.ds-kpi__value, .dts-value, .qcd-verdict-value, '
+    + '.qcd-hero-value, .ov-hero-pct, .ov-dept-tile-pct > [data-flash-key]';
+  var CU_RE_ = /^([\d,]+(?:\.\d+)?)(%|\s*pts)?$/;
+  function cuAnimate_(el, finalText) {
+    var m = CU_RE_.exec(finalText.trim());
+    if (!m) return;                       // durations / dashes / rich text: leave as-is
+    var target = parseFloat(m[1].replace(/,/g, ''));
+    if (!isFinite(target) || target === 0) return;
+    var decimals = (m[1].split('.')[1] || '').length;
+    var hasCommas = m[1].indexOf(',') !== -1;
+    var suffix = m[2] || '';
+    var t0 = null, DUR = 600;
+    var fmt = function (v) {
+      var s = v.toFixed(decimals);
+      if (hasCommas) {
+        var parts = s.split('.');
+        parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+        s = parts.join('.');
+      }
+      return s + suffix;
+    };
+    var step = function (ts) {
+      if (t0 === null) t0 = ts;
+      var p = Math.min(1, (ts - t0) / DUR);
+      var eased = 1 - Math.pow(1 - p, 3);   // easeOutCubic
+      try { el.textContent = p >= 1 ? finalText : fmt(target * eased); } catch (e) { return; }
+      if (p < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }
+  function applyCountUps_() {
+    document.querySelectorAll(CU_SELECTORS_).forEach(function (el) {
+      // Value-only elements: skip anything with child elements (chips,
+      // sub-rows) -- textContent writes would flatten them.
+      if (el.children.length > 0) return;
+      // Once per node lifetime: re-renders create fresh nodes (which animate),
+      // while the observer refiring on the animation's own text mutations
+      // must NOT re-target an intermediate frame's value.
+      if (el.dataset.cuDone) return;
+      el.dataset.cuDone = '1';
+      cuAnimate_(el, el.textContent || '');
+    });
+  }
+  function initCountUp_() {
+    try {
+      if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+      if (typeof requestAnimationFrame !== 'function' || typeof MutationObserver !== 'function') return;
+      applyCountUps_();
+      var timer = null;
+      new MutationObserver(function () {
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(applyCountUps_, 120);
+      }).observe(document.body, { childList: true, subtree: true });
+    } catch (e) { /* aesthetic only -- never block init */ }
   }
 
   // -- Universal benchmark tints (anti-intimidation layer) ----------------
@@ -4631,9 +4722,13 @@
       },
       plugins: [missedClockWatermark_],   // R7 (M-3): faint clock behind the bars
       options: {
+        // R10-7: fixed-height wrap (.missed-chart-hwrap--bars) + no aspect
+        // ratio -- the aspectRatio:2 form derived height from the measured
+        // width, so a mid-transition/hidden measurement left the chart
+        // permanently small in its slot (owner report). With
+        // maintainAspectRatio:false the canvas always fills the wrap.
         responsive: true,
-        maintainAspectRatio: true,
-        aspectRatio: 2,                 // wide-and-short: the timeline fills the slot
+        maintainAspectRatio: false,
         plugins: {
           legend: { display: false },
           tooltip: {
@@ -5424,6 +5519,7 @@
     if (csvBtn) csvBtn.style.display = state.rows.length ? '' : 'none';
     state.meta = (data && data.meta) || null;
     state.qcd = (data && data.qcd) || null;   // Batch D: feeds the team-strip range QCD tiles
+    state.csrTransfer = (data && data.csrTransfer) || null;   // R10-5: CSR-only Transfer % tile
     state.diagnostics = (data && data.diagnostics) || null;
 
     var dqeHeader = $('dqe-table-header');
@@ -5590,7 +5686,12 @@
       return;
     }
     deptMissedDrawAttempts_ = 0;
-    chartWrap.innerHTML = '<canvas id="dept-missed-chart" aria-label="Hour-of-day distribution of missed calls"></canvas>';
+    // R10-7: bars render inside a fixed-height wrap (Chart.js sizes to the
+    // parent box under maintainAspectRatio:false -- the .ir-chart-wrap
+    // pattern); the square radar keeps its own aspect-driven sizing.
+    var hwrapCls = 'missed-chart-hwrap' + (missedChartMode_() === 'bars' ? ' missed-chart-hwrap--bars' : '');
+    chartWrap.innerHTML = '<div class="' + hwrapCls + '">'
+      + '<canvas id="dept-missed-chart" aria-label="Hour-of-day distribution of missed calls"></canvas></div>';
     refreshChartTheme();
     deptMissedChart = safeChart_($('dept-missed-chart').getContext('2d'),
       missedChartCfg_((data && data.chart) || { labels: [], counts: [] },
@@ -6369,7 +6470,32 @@
         + '</div>';
     }
 
-    strip.innerHTML = heroTile + qCallsTile + ansTile + qAbdTile;
+    // R10-5: Avg answer time tile -- answered-weighted over the dept's own
+    // queues for the selected range (qcd.range.avgAnswer, QCD Historical
+    // Data col J). Renders wherever the data exists (any QCD-mapped dept).
+    var qAvgTile = '';
+    if (qr && qr.avgAnswer) {
+      qAvgTile =
+          '<div class="dts-tile dts-tile--queue" title="Answered-weighted average time to answer across the department&#39;s mapped queues, this range.">'
+        +   '<div class="dts-label">Avg answer <span class="dts-scope">queue</span></div>'
+        +   '<div class="dts-value" data-flash-key="dts:qavg">' + escapeHtml(qr.avgAnswer) + '</div>'
+        +   '<div class="dts-sub">time to answer</div>'
+        + '</div>';
+    }
+    // R10-5: Transfer % tile -- CSR only (server ships csrTransfer only for
+    // CSR, from CSR Transfer Historical Data; weighted transferred/total).
+    var trTile = '';
+    var tr = state.csrTransfer;
+    if (tr && tr.pctStr) {
+      trTile =
+          '<div class="dts-tile dts-tile--queue" title="Transferred &divide; total calls across CSR agents, this range (CSR Transfer Historical Data).">'
+        +   '<div class="dts-label">Transfer % <span class="dts-scope">this range</span></div>'
+        +   '<div class="dts-value" data-flash-key="dts:transfer">' + escapeHtml(tr.pctStr) + '</div>'
+        +   '<div class="dts-sub">' + fmtNumber(tr.transferred) + ' of ' + fmtNumber(tr.totalCalls) + ' calls</div>'
+        + '</div>';
+    }
+
+    strip.innerHTML = heroTile + qCallsTile + ansTile + qAbdTile + qAvgTile + trTile;
     strip.style.display = '';
     if (zone) zone.style.display = '';
     dsFlashChanged_(strip, 'deptstrip:' + getRequestedDept());
@@ -16906,7 +17032,8 @@
   function tourAllSteps_() {
     return [
       { sel: '#page-title',       title: 'Welcome 👋',              body: 'This is your Overview — a one-glance snapshot of every department’s most recent day, with a 30-day answer-rate trend.' },
-      { sel: '#ov-launcher',      title: 'Not sure where to start?', body: 'These plain-English questions jump you straight into the right report, already primed.' },
+      // (R10-1: the quick-start question row moved into the Help modal, so
+      // its step folded into the Help closing step below.)
       { sel: '#freshness-pill',   title: 'Is the data current?',    body: 'Shows the most recent day with data and how long ago that was — it turns orange if the last import is over ~36 hours old.' },
       { sel: '#ov-trend-chart',   title: 'The department trend',    body: 'Each department’s answer rate over time. Click a card below to spotlight its line (Shift-click to compare a few); click a point on a line to open that department & day in My Department. The tabs switch to abandoned calls / %, and the range buttons zoom to 30 / 60 / 90 days.' },
       { sel: '#ov-period-bar',    title: 'Change the card window',  body: 'Flip the department cards between Yesterday, Last 30 days, and Year-to-date. The trend chart keeps its own range control just beside it.' },
@@ -16914,7 +17041,7 @@
       { sel: '#escalations-btn',  title: 'Escalations',             body: 'View and resolve escalation calls for your department — start one, mark it resolved with a note on how it was handled, and see the full activity trail.' },
       { sel: '#insights-report-btn', title: 'Insights',             body: 'The flagship report, now a full page: a department rollup, per-agent cards vs the prior period, and queue health. Use the period slider (Last 7 / 30 / MTD / YTD) to reframe it — Insights and My Department share one date window, so whichever you set most recently carries over. Your generated report stays put when you switch tabs.' },
       { sel: '#reports-menu-btn', title: 'Deeper reports',          body: 'Individual (the per-agent deep dive) lives here, alongside the admin-vetted Inbound and Direct reports. Missed-call detail is on the My Department page.' },
-      { sel: '#help-fab',         title: 'Help is always here',     body: 'Stuck? This button opens Help from anywhere — and you can replay this tour from Help → Guided tour any time.' },
+      { sel: '#help-fab',         title: 'Help is always here',     body: 'Stuck? This button opens Help from anywhere. Inside you’ll find plain-English quick-start questions that jump you straight into the right report, plus a button to replay this tour any time.' },
     ];
   }
   // Keep only steps whose target exists AND is visible (skips admin-only or
@@ -17017,6 +17144,15 @@
         settings.style.display = 'none'; settings.setAttribute('aria-hidden', 'true');
         document.body.style.overflow = '';
       }
+      setTimeout(startTour_, 200);
+    });
+    // R10-1: the tour is replayable from the HELP modal too (the tour's own
+    // closing step always pointed users at Help). Same F-42 discipline:
+    // close Help via its OWN close button so the focus trap releases.
+    var helpTour = $('help-tour-btn');
+    if (helpTour) helpTour.addEventListener('click', function () {
+      var hc = $('help-close');
+      if (hc) hc.click();
       setTimeout(startTour_, 200);
     });
     var seen = true;
@@ -17363,7 +17499,11 @@
         + '<span class="ans-seg miss" style="width:' + pctAb + '%"></span>'
         + (rest > 0.1 ? '<span class="ans-seg none" style="width:' + rest + '%"></span>' : '')
       : '<span class="ans-seg none" style="width:100%"></span>';
-    return '<div class="ans-bar" title="' + escapeHtml(title) + '">'
+    // R10-4: passing the 5% standard renders the abandoned segment
+    // light/translucent; failing keeps the full red (value bolding already
+    // rides .qcd-rate-over above).
+    var passCls = total ? (over ? ' ans-bar--fail' : ' ans-bar--pass') : '';
+    return '<div class="ans-bar' + passCls + '" title="' + escapeHtml(title) + '">'
          +   '<div class="ans-track">' + segs + tick + '</div>'
          +   '<div class="ans-nums">'
          +     '<span class="ans-n">'   + fmtNumber(a)  + '</span>'
@@ -17770,7 +17910,7 @@
       + '<div class="qcd-hero-value">' + escapeHtml(companyPctStr) + '</div>'
       + '<div class="qcd-hero-bar" title="0–10% scale · tick = the 5% company standard">'
       +   '<span class="qcd-hero-fill" style="width:' + heroFill + '%"></span>'
-      +   '<span class="qcd-hero-tick"></span>'
+      +   '<span class="qcd-hero-tick"><span class="qcd-hero-tick-lbl">5%</span></span>'
       + '</div>'
       + '<div class="qcd-hero-sub">' + fmtNumber(abandoned) + ' of ' + fmtNumber(total)
       +   ' calls lost</div>'
@@ -17782,22 +17922,10 @@
       + tile('Queues in violation', fmtNumber(offenders.length), offenders.length > 0 ? 'warn' : 'neu')
       + tile('Answered %', answeredPct.toFixed(1) + '%', 'good')
       + '</div></div>';
-    let callout;
-    if (offenders.length) {
-      const parts = offenders.map(function (o) {
-        return '<strong>' + escapeHtml(o.queue) + '</strong> ' + escapeHtml(o.pctStr)
-          + (o.viol > 0 ? ' (' + fmtNumber(o.viol) + ' viol)' : '');
-      }).join(', ');
-      callout = '<div class="ds-banner is-warn qcd-verdict-callout">'
-        + '<span class="ds-banner__badge">Watch</span>'
-        + '<div>' + offenders.length + ' queue' + (offenders.length === 1 ? '' : 's')
-        + ' over the 5% line — ' + parts + '.</div></div>';
-    } else {
-      callout = '<div class="ds-banner is-good qcd-verdict-callout">'
-        + '<span class="ds-banner__badge">On track</span>'
-        + '<div>All queues under the 5% line.</div></div>';
-    }
-    return band + callout;
+    // R10-8: the Watch/On-track callout banner is RETIRED (owner): the queue
+    // rows are already color-coded and the "Queues in violation" tile carries
+    // the count, so the banner restated both.
+    return band;
   }
 
   function qcdAllDeptRender_(data) {
@@ -17911,9 +18039,13 @@
       const tone = secTotal === 0 ? 'muted'
         : (secPct >= 5 || secViol) ? 'warn' : 'good';
       const secPctStr = st.abandonedPctStr || (secPct.toFixed(2) + '%');
+      // R10-8: the abandon% leads the mini-summary at full weight (it was an
+      // 11px muted afterthought); tone color rides the row's qcd-deptrow--*
+      // class via .qcd-mini-pct.
       const mini = secTotal > 0
         ? '<span class="qcd-deptrow-mini qcd-screen-only">' + fmtNumber(secTotal)
-          + ' calls &middot; ' + escapeHtml(secPctStr) + ' abandoned</span>'
+          + ' calls &middot; <strong class="qcd-mini-pct">' + escapeHtml(secPctStr)
+          + '</strong> abandoned</span>'
         : '<span class="qcd-deptrow-mini qcd-screen-only">no calls</span>';
       html += '<tbody class="qcd-alldept-dept" data-dept="' + escapeHtml(d.dept) + '">'
         + '<tr class="qcd-alldept-deptrow qcd-deptrow--' + tone + '"><td colspan="' + NCOLS + '">'
