@@ -261,3 +261,68 @@ test('O-7: morning polls, sent days, and fresh installs are never flagged', func
   assert.equal(p.bag.QUEUE_REPORT_LAST_MISSED, undefined);
   assert.equal(mails.length, 0);
 });
+
+// ---- QV-4/QV-5 (queue-report visual pass): the modal's manual send buttons ----
+
+function qvInstall_(role) {
+  h.state.userEmail = role === 'admin' ? 'admin@x.com' : 'mgr@x.com';
+  h.state.props.ADMIN_EMAILS = 'admin@x.com';
+  h.state.props.SPREADSHEET_ID = 'fake';
+  delete h.state.props.QUEUE_REPORT_LAST_SENT;
+  h.ctx.resolveUser_ = function (email) {
+    if (email === 'admin@x.com') return { email: email, role: 'admin' };
+    if (email === 'mgr@x.com')   return { email: email, role: 'manager', department: 'CSR' };
+    return { email: email, role: 'none' };
+  };
+  h.ctx.qcdAllDeptCachedData_ = function (from, to) {
+    return { data: { dateLabel: from === to ? from : (from + ' - ' + to),
+                     depts: [], grandTotals: {}, meta: { from: from, to: to } } };
+  };
+}
+
+test('QV-4: sendQcdAllDeptEmail mails the CALLER only, for the requested range', function () {
+  qvInstall_('manager');
+  const sent = [];
+  h.ctx.MailApp = { sendEmail: function (arg) { sent.push(arg); } };
+  const res = h.call('sendQcdAllDeptEmail', { from: '2026-07-14', to: '2026-07-18' });
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].to, 'mgr@x.com', 'caller-recipient, never subscribers');
+  assert.ok(sent[0].subject.indexOf('2026-07-14 - 2026-07-18') !== -1, 'range label in subject');
+  assert.equal(res.to, 'mgr@x.com');
+  // Signed-in gate matches the report (managers allowed; role-none refused).
+  h.state.userEmail = 'stranger@x.com';
+  assert.throws(function () {
+    h.call('sendQcdAllDeptEmail', { from: '2026-07-14', to: '2026-07-14' });
+  }, /Not authorized/);
+  delete h.ctx.resolveUser_;
+});
+
+test('QV-5: subscriber blast is admin-only and claims the dedupe marker ONLY for the gate target day', function () {
+  qvInstall_('admin');
+  h.state.spreadsheet = makeFakeSpreadsheet({
+    timeZone: 'America/Chicago',
+    sheets: { 'Queue Report Subscribers': [['Email', 'Active', 'Notes'], ['s1@x.com', 'TRUE', '']] },
+  });
+  const sent = [];
+  h.ctx.MailApp = { sendEmail: function (arg) { sent.push(arg.to); } };
+  h.ctx.prevBusinessDayIso_ = function () { return '2026-07-20'; };   // the gate's current target
+
+  // A PAST day: sends, but never touches the marker (nothing to dedupe).
+  let res = h.call('sendQcdAllDeptToSubscribers', { date: '2026-07-10' });
+  assert.equal(res.count, 1);
+  assert.equal(res.markerClaimed, false);
+  assert.equal(h.state.props.QUEUE_REPORT_LAST_SENT, undefined, 'marker untouched for a non-target day');
+
+  // The TARGET day: claims the marker so the morning poll can't double-blast.
+  res = h.call('sendQcdAllDeptToSubscribers', { date: '2026-07-20' });
+  assert.equal(res.markerClaimed, true);
+  assert.equal(h.state.props.QUEUE_REPORT_LAST_SENT, '2026-07-20');
+
+  // Non-admin refused outright.
+  h.state.userEmail = 'mgr@x.com';
+  assert.throws(function () {
+    h.call('sendQcdAllDeptToSubscribers', { date: '2026-07-20' });
+  });
+  delete h.ctx.resolveUser_;
+  delete h.ctx.prevBusinessDayIso_;
+});

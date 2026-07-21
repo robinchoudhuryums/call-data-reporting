@@ -295,9 +295,9 @@ B = visual/UX, C = server/ops); code comments cite `R7 (<id>)`:
 | A6 / I-3 | Re-runs frost the whole Insights results (SWR paint under it); intro card shows once automatically | Density bullets, CLAUDE.md |
 | A7 / N-1 | ↻ Refresh button in the Insights results header (server cache TTL still applies) | code (`#ins-refresh-btn`) |
 | A8 / N-2 | Zero-activity agents dropped from both cross-agent charts (cards unchanged) | code (`insAgentHasActivity_`) |
-| B1 / O-2 | Global chart animations (400ms easeOutQuart, prefers-reduced-motion off); per-chart `animation:false` opt-outs removed | INV-41 bullet note, CLAUDE.md |
+| B1 / O-2 | Global chart animations (400ms easeOutQuart, prefers-reduced-motion off); per-chart `animation:false` opt-outs removed. **As shipped it REPLACED `Chart.defaults.animation`, which broke every chart in prod ("this._fn is not a function") — corrected by R9-6 (mutate keys, never replace)** | INV-41 bullet note (R9-6), CLAUDE.md |
 | B2 / M-3 | Missed bars flipped VERTICAL (workday timeline) + vector clock-face watermark (`missedClockWatermark_`) | INV-41 bullet, CLAUDE.md |
-| B3 / M-5, I-2 | Sticky context toplines (dept · window + ↻) on My Department + Insights (`initStickyBar_`, IntersectionObserver, fixed-position) | code (`.page-sticky-bar`) |
+| B3 / M-5, I-2 | Sticky context toplines (dept · window + ↻) on My Department + Insights (`initStickyBar_`, IntersectionObserver, fixed-position) — **RETIRED by R9-1** (the banner overlapped the QCD side card and couldn't edit the range; the controls strip / period bar are the sticky elements now) | superseded — see R9-1 |
 | B4 / I-4 | seg-rich sub-selector smaller/lighter (accent-soft active); Cards⇄Chart / Gap⇄Absolute one-shot fade | code (`.ins-view-fade`) |
 | C1 / M-2 | getCallJourney miss carries `reason` (before-capture / date-gap / not-captured), probed only when the unscoped lookup was entitled | Inbound bullet, CLAUDE.md |
 | C2 / G-2 | `runNeonCoverageCheck` — per-date sheet-vs-Neon reconciliation + inbound zero-row weekdays; Health `out-coverage` row | Op State #35 + System Health bullet |
@@ -358,6 +358,31 @@ Batch E (ops tail + doc sweep) + R8-N (capture-time queue normalization):
 | R8-E5 | Operator State #8 reworded: uninstalling the cdr-report safety-net DQE trigger is a CORRECTNESS step (cross-project write race can freeze a partial day), not just redundancy cleanup | Op State #8, CLAUDE.md |
 | R8-E6 | Doc-drift sweep: architecture.md (migration COMPLETE label, root-clasp layout, missing dashboard files), conventions.md (IR is the last floater-surfacing report), .claspignore comment, INV-16 guard doc (checks BOTH sanitizers), Op State #14 raw-name pointer, known-issues R8-1 cross-ref, and the STALE "drilldown endpoint is dormant" claim (Phases 2–4 shipped long since — `insQhMissedDrill_` / `heatCellToggleDrill_` / `missedSliceListHtml_`) | the corrected docs |
 | R8-N | Capture-time queue-name normalization (the two-name-space root-cause fix, option 1): Dept Config inbound aliases accept `raw=canonical` pairs; cdr-import's `icQueueCanonicalMap_` reads them cross-project and `writeInboundCallsToNeon` writes canonical `entry_queue`/`final_queue` on every capture path (journey stays raw; union predicates kept as belt-and-suspenders; save-validated; best-effort = raw on any failure) | known-issues two-name-spaces entry + INV-54, CLAUDE.md |
+
+**QV — Daily Call Queue Report visual second pass (2026-07-21, owner-approved
+design handoff; presentation + two mail endpoints, no compute/CSV/print-content
+change).** Code comments cite `QV-<n>`:
+
+| Code | What it shipped | Live rule lives in |
+|---|---|---|
+| QV-1 | 5%-threshold tick on the all-dept split bars (opt-in `{tick:true}`; positioned at answered%+5 since the bar is share-of-total; hidden >95% answered; `qcd-screen-only`, stripped from the print clone) | INV-51 QV note, CLAUDE.md |
+| QV-2 | Dept banner rows: binary health rail (warn ≥5%/violations, sage, muted-empty — no invented amber band per the benchmark convention), 16px name, light tint, right-aligned calls·abandon% mini-summary (screen-only) | INV-51 QV note |
+| QV-3 | Company-abandon% hero tile in the verdict band (0–10% target bar, 5% tick, "N of M calls lost" from `grandTotals`); sparklines deliberately OMITTED (no trailing series in the data path — a future server extension) | INV-51 QV note |
+| QV-4 | "Email me this report" — `sendQcdAllDeptEmail`: caller-only, displayed range, signed-in gate matching the report (the `sendInsightsReportEmail` precedent) | Op State #31, CLAUDE.md |
+| QV-5 | Admin-only "Send to subscribers…" — `sendQcdAllDeptToSubscribers`: single-day, O-1 isolation reused, claims `QUEUE_REPORT_LAST_SENT` only for the gate's current target day with ≥1 delivery; never writes LAST_RESULT | Op State #31, CLAUDE.md |
+
+**Owner feedback round 9 (2026-07-21, post-deploy testing notes).** All
+client-only; code comments cite `R9-<n>`:
+
+| Code | What it fixed / added | Live rule lives in |
+|---|---|---|
+| R9-1 | Retired the R7 B3 sticky context BANNERS (`initStickyBar_`, `.page-sticky-bar`) — they overlapped the QCD side card and duplicated the range read-only. The REAL controls are sticky now: `#dept-page .controls` and `#ins-period-bar` pin via CSS `position:sticky` on an opaque strip (z 60, above `.dept-side`, below modals), so users change the range from the pinned strip itself | code (styles.html R9-1 block) |
+| R9-2 | My Department toolbar matches the Insights convention: Refresh + an "Export ▾" dropdown sit horizontally (`.control-btn-row`); the one-click CSV icon became the `.ir-export-wrap` menu (wrap keeps the `#csv-export-btn` id so the hidden-until-data gating is untouched) | "My Department CSV export" decision, CLAUDE.md |
+| R9-3 | Retired the Batch-E "Use these dates" offer chip (`maybeShowDateSyncChip_`/`applyDateSync_`/`.dsync-chip`) — My Department and Insights now SHARE one date window: `adoptSharedWindow_` (setPage) silently adopts the other page's more-RECENTLY-rendered window (`pageActiveWindow_` entries carry a timestamp; newest explicit choice wins; hand-off buttons unaffected) | Insights hand-off bullet (R9-3), CLAUDE.md |
+| R9-4 | Escalations first entry painted a blank page until init returned — `escEnsureInit_` now shows the `dsRingsHtml_` loader in `#esc-loading` at fetch start | code (script.html) |
+| R9-5 | View-as-manager on Escalations still showed every dept (client list default) — `escLoad_` pins the request dept to `viewAsDept_` and hides the dept filter; exiting view-as restores + reloads. Real managers were always pinned SERVER-side (`getEscalations`); this closes the admin-preview parity gap only | code (`escLoad_` / `applyViewAs_`) |
+| R9-6 | "All charts not loading" prod outage: R7 B1/O-2 REPLACED `Chart.defaults.animation` with `{duration, easing}` — Chart.js's `Animations.configure` copies only `Object.keys(defaults.animation)` into each animated-property group, so the stock `type` key vanished, the `colors` group lost `type:'color'`, and the first animated color (theme refresh / SWR repaint / hover) threw `this._fn is not a function` in the SHARED animator, freezing every chart. Fix: mutate `anim.duration`/`anim.easing` on the existing object; reduced-motion = duration 0 (`animation:false` empties the key list the same way). Reproduced + fix proven headless against chart.js@4.4.4 | INV-41 R9-6 hard rule, CLAUDE.md |
+| R9-7 | Overview tiles dropped a dept's QCD chips whenever its DQE WoW was null: the QCD caption (`ovBuildQcdCaption_`) was appended from INSIDE `ovBuildWowChip_`, whose `!dept.wow` early-return fired for any dept with zero rung in either 7-day window (`computeWowDelta_`) — exactly the queue-centric low-ring depts (Denials at 50% abandoned, FieldOps' A_Q_FieldOps_Power) whose QCD data matters most; the snapshot was computed + shipped, never rendered. Fix: the hero + grid tile builders call `ovBuildQcdCaption_` independently, same DOM position | code (`ovBuildGridTile_` / `ovBuildHeroTile_`) |
 
 ---
 

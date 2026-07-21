@@ -278,7 +278,21 @@
     try {
       var reduce = false;
       try { reduce = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches); } catch (e2) {}
-      Chart.defaults.animation = reduce ? false : { duration: 400, easing: 'easeOutQuart' };
+      // R9-6: MUTATE the existing defaults.animation keys -- never REPLACE the
+      // object. Chart.js builds each animated-property group by copying only
+      // `Object.keys(defaults.animation)` (Animations.configure), so a
+      // replacement object holding just {duration, easing} drops the stock
+      // `type` key, the built-in `colors` group loses its type:'color' tag,
+      // and the first animated color throws "this._fn is not a function" in
+      // the SHARED animator loop -- freezing every chart on the page (the
+      // post-deploy "all charts not loading" outage). Reduced motion uses
+      // duration 0 (the transitions.resize convention) for the same reason:
+      // `animation = false` also empties that key list.
+      var anim = Chart.defaults.animation;
+      if (anim && typeof anim === 'object') {
+        anim.duration = reduce ? 0 : 400;
+        anim.easing = 'easeOutQuart';
+      }
     } catch (e) { /* animations are polish -- never block chart setup */ }
   })();
 
@@ -932,13 +946,38 @@
     initDatePresets_();
 
     $('refresh-btn').addEventListener('click', refresh);
-    var csvBtn = $('csv-export-btn');
-    if (csvBtn) csvBtn.addEventListener('click', exportTableCsv_);
-    // R7 (M-5): sticky context bar -- reveals once the controls row scrolls
-    // out; its ↻ reuses the normal refresh path.
-    initStickyBar_('dept-sticky-bar', '#dept-page .controls', 'dept');
-    var stickyRefresh = $('dept-sticky-refresh');
-    if (stickyRefresh) stickyRefresh.addEventListener('click', refresh);
+    // R9-2: the one-click CSV icon became an Export dropdown (the Insights
+    // toolbar convention). #csv-export-btn is the WRAP now (id kept so the
+    // existing hidden-until-data gating shows/hides the same element);
+    // #dept-export-btn toggles the menu, data-action items dispatch.
+    var deptExportBtn = $('dept-export-btn');
+    var deptExportMenu = $('dept-export-menu');
+    if (deptExportBtn && deptExportMenu) {
+      var setDeptExportOpen = function (open) {
+        deptExportMenu.style.display = open ? '' : 'none';
+        deptExportBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+      };
+      deptExportBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        setDeptExportOpen(deptExportMenu.style.display === 'none');
+      });
+      deptExportMenu.addEventListener('click', function (e) {
+        var item = e.target.closest('[data-action]');
+        if (!item) return;
+        setDeptExportOpen(false);
+        if (item.getAttribute('data-action') === 'csv') exportTableCsv_();
+      });
+      document.addEventListener('click', function (e) {
+        if (deptExportMenu.style.display === 'none') return;
+        if (deptExportBtn.contains(e.target) || deptExportMenu.contains(e.target)) return;
+        setDeptExportOpen(false);
+      });
+    }
+    // R9-1: the R7 (M-5) fixed sticky context BANNER is retired (it
+    // overlapped the QCD side card and couldn't edit the range) -- the
+    // CONTROLS ROW ITSELF is the sticky element now (CSS `position:sticky`
+    // on `#dept-page .controls`, opaque strip), so the real date inputs +
+    // Refresh + Export stay reachable while scrolling.
 
     var colsToggle = $('dept-cols-toggle');
     if (colsToggle) colsToggle.addEventListener('click', function () {
@@ -1130,9 +1169,20 @@
       // roster); re-entry only re-ensures the roster and never clobbers a
       // rendered report (owner decision 3, docs/insights-page-plan.md).
       if (typeof insEnsurePage_ === 'function') insEnsurePage_();
+      // R9-3: adopt My Department's window when it's the more recent one.
+      // First entry: the pending auto-run reads the (now-rewritten) inputs
+      // when it fires post-roster, so no explicit re-run. Re-entry: re-run
+      // for the adopted window.
+      if (typeof adoptSharedWindow_ === 'function' && adoptSharedWindow_('insights')
+          && !insAutoRunPending_ && typeof runInsReport === 'function') {
+        runInsReport();
+      }
     } else {
       if (kicker) kicker.textContent = 'Department Dashboard';
       if (title)  title.textContent  = getRequestedDept() || '(no department)';
+      // R9-3: adopt the Insights window when it's the more recent one (sets
+      // the date inputs; the refresh below re-runs for it).
+      var adoptedWin_ = (typeof adoptSharedWindow_ === 'function') && adoptSharedWindow_('dept');
       // setPage doesn't load the agent table itself. If we arrived showing a
       // STALE prior dept -- the My Department nav button (which fires no
       // selector 'change'), or view-as-manager where the selector is
@@ -1141,7 +1191,7 @@
       // Skip when a load is already in flight (refresh disables the button) so
       // a selector-change-driven load isn't doubled.
       var _rb = $('refresh-btn');
-      if (lastSummaryDept_ !== getRequestedDept() && !(_rb && _rb.disabled)) {
+      if ((lastSummaryDept_ !== getRequestedDept() || adoptedWin_) && !(_rb && _rb.disabled)) {
         refresh();
       }
     }
@@ -1155,9 +1205,9 @@
         : (page === 'escalations' ? '/escalations'
         : (page === 'insights' ? '/report/insights' : '/overview')));
     }
-    // Batch E: on entering My Department / Insights, offer to align dates with
-    // the other page if its last-viewed window differs (explicit, dismissible).
-    if (page === 'dept' || page === 'insights') maybeShowDateSyncChip_(page);
+    // (R9-3: the Batch-E maybeShowDateSyncChip_ offer is retired -- the two
+    // pages now silently adopt each other's newer window via
+    // adoptSharedWindow_ in the per-page branches above.)
   }
 
   // -- Help & FAQ modal ---------------------------------------------------
@@ -1475,6 +1525,13 @@
     } else {
       document.body.removeAttribute('data-view-as');
       if (sel) sel.disabled = false;
+      // R9-5: restore the Escalations dept-filter column hidden by the
+      // view-as pin (escLoad_) -- re-apply its normal visibility rule.
+      const vaCol = $('esc-dept-col');
+      if (vaCol && typeof escInit_ !== 'undefined' && escInit_) {
+        const escAllDept = escInit_.isAdmin || escInit_.allDepts;
+        vaCol.style.display = (escAllDept || (escInit_.departments || []).length > 1) ? '' : 'none';
+      }
     }
     // (The Reports dropdown (data-admin-only) is hidden in view-as by the
     // existing CSS; the top-level Insights tab carries no data-admin-only so
@@ -1494,6 +1551,10 @@
         } catch (e) { /* best-effort pre-paint; the fetch below repaints */ }
       }
       ovLoad_(false);
+    } else if (document.body.getAttribute('data-page') === 'escalations') {
+      // R9-5: reload the worklist under the previewed dept's scope (or the
+      // full scope when exiting the preview).
+      if (typeof escLoad_ === 'function') escLoad_();
     } else if (typeof refresh === 'function') {
       refresh();
     }
@@ -1964,6 +2025,7 @@
          +       '<div class="ov-hero-pct" data-flash-key="ov:' + escapeHtml(dept.name) + '">' + escapeHtml(st.pctFormatted) + '</div>'
          +       '<div class="ov-dept-pct-cap">' + escapeHtml(ovPeriodCap_()) + '</div>'
          +       ovBuildWowChip_(dept)
+         +       ovBuildQcdCaption_(dept)   // R9-7: independent of the WoW chip
          +     '</div>'
          +     '<div class="ov-hero-stats">'
          +       '<div class="ov-hero-stat"><span class="ov-dept-stat-label">Rung</span><span>' + fmtNumber(st.rung) + '</span></div>'
@@ -1985,9 +2047,14 @@
     if (d < -0.5) cls = 'ov-wow-down';
     const tip = 'Last 7 days ' + dept.wow.curPct.toFixed(1) + '% vs prior 7 days '
               + dept.wow.prevPct.toFixed(1) + '%';
+    // R9-7: the QCD caption is NOT appended here anymore -- it used to ride
+    // inside this builder, so the `!dept.wow` early-return above silently
+    // dropped a dept's QCD chips whenever its DQE rung was zero in either
+    // 7-day window (exactly the queue-centric low-ring depts, e.g. Denials
+    // at 50% abandoned, whose QCD data matters most). The tile builders now
+    // call ovBuildQcdCaption_ independently.
     return '<span class="ov-wow-chip ' + cls + '" title="' + escapeHtml(tip) + '">'
-         + arrow + ' ' + Math.abs(d).toFixed(1) + '% WoW</span>'
-         + ovBuildQcdCaption_(dept);
+         + arrow + ' ' + Math.abs(d).toFixed(1) + '% WoW</span>';
   }
 
   // QCD info that isn't already covered by DQE on the dept tile.
@@ -2141,6 +2208,7 @@
          +     '<span data-flash-key="ov:' + escapeHtml(dept.name) + '">' + escapeHtml(st.pctFormatted) + '</span>'
          +     ' <span class="ov-dept-pct-cap">' + escapeHtml(ovPeriodCap_()) + '</span>'
          +     ovBuildWowChip_(dept)
+         +     ovBuildQcdCaption_(dept)   // R9-7: independent of the WoW chip
          +   '</div>'
          +   '<div class="ov-dept-tile-row">'
          +     '<span><span class="ov-dept-stat-label">Rung</span> ' + fmtNumber(st.rung) + '</span>'
@@ -3703,92 +3771,46 @@
     refresh();
   }
 
-  // -- Batch E: explicit date-sync between My Department and Insights ---------
-  // The two pages keep INDEPENDENT date windows by design (owner: no silent
-  // auto-change when you switch tabs). The hand-off buttons above carry a
-  // window when you explicitly cross over; this covers the OTHER path -- a
-  // plain nav-tab switch -- by noticing when the page you land on shows a
-  // different window than the one you left, and offering a one-click align.
-  // It NEVER changes the dates on its own; the chip is a dismissible offer.
-  var pageActiveWindow_ = { dept: null, insights: null };   // last-rendered window per page
-  var dateSyncDismissed_ = {};   // `<page>|<from>|<to>` -> true (don't re-nag the same offer)
+  // -- R9-3: shared date window between My Department and Insights ------------
+  // Owner feedback (post-deploy round): the two pages should feel like ONE
+  // top-line date strip -- so the Batch-E "Use these dates" offer chip is
+  // RETIRED and replaced with silent adoption. On entering either page, if
+  // the OTHER page rendered a window more RECENTLY than this one, this page
+  // adopts it (rewrites its date inputs; setPage re-runs the report). The
+  // newest explicit choice wins wherever it was made, so the two windows
+  // converge instead of drifting apart. Explicit hand-off buttons
+  // (handoffTo* above) still carry their window verbatim: they either set
+  // inputs AFTER setPage (Insights direction) or carry the other page's
+  // already-recorded window (dept direction), so adoption never fights them.
+  var pageActiveWindow_ = { dept: null, insights: null };   // last-rendered window per page (+ at: ms)
 
   function recordPageWindow_(page, from, to) {
     if (!from || !to) return;
-    pageActiveWindow_[page] = { from: from, to: to };
+    pageActiveWindow_[page] = { from: from, to: to, at: Date.now() };
   }
 
-  function dsyncFmtRange_(from, to) {
-    function one(iso) {
-      var p = String(iso).split('-');
-      if (p.length !== 3) return String(iso);
-      var d = new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]));
-      return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-    }
-    return from === to ? one(from) : one(from) + ' – ' + one(to);
-  }
-
-  // Render (or hide) the sync chip on the page just entered. Compares the
-  // target page's CURRENT date inputs to the OTHER page's last-rendered window.
-  function maybeShowDateSyncChip_(page) {
-    if (page !== 'dept' && page !== 'insights') return;
-    var otherKey = page === 'dept' ? 'insights' : 'dept';
-    var hostId   = page === 'dept' ? 'dept-date-sync' : 'ins-date-sync';
-    var host = $(hostId);
-    if (!host) return;
-    var otherWin = pageActiveWindow_[otherKey];
+  // Returns true when the entered page's date inputs were rewritten to the
+  // other page's newer window (the setPage caller decides how to re-run).
+  // No-ops when the other page hasn't rendered yet, this page's own window
+  // is at least as recent, or the inputs already match.
+  function adoptSharedWindow_(page) {
+    if (page !== 'dept' && page !== 'insights') return false;
+    var other = pageActiveWindow_[page === 'dept' ? 'insights' : 'dept'];
+    var mine  = pageActiveWindow_[page];
+    if (!other) return false;
+    if (mine && mine.at >= other.at) return false;
     var fromEl = page === 'dept' ? $('from-date') : $('ins-from');
     var toEl   = page === 'dept' ? $('to-date')   : $('ins-to');
-    var curFrom = fromEl ? fromEl.value : '';
-    var curTo   = toEl ? toEl.value : '';
-    // Nothing to offer: the other page hasn't been viewed, this page has no
-    // window yet, or the two already match.
-    if (!otherWin || !curFrom || !curTo
-        || (otherWin.from === curFrom && otherWin.to === curTo)) {
-      host.style.display = 'none'; host.innerHTML = ''; return;
-    }
-    var dismissKey = page + '|' + otherWin.from + '|' + otherWin.to;
-    if (dateSyncDismissed_[dismissKey]) { host.style.display = 'none'; host.innerHTML = ''; return; }
-    var otherLabel = otherKey === 'dept' ? 'My Department' : 'Insights';
-    var range = dsyncFmtRange_(otherWin.from, otherWin.to);
-    host.innerHTML =
-        '<span class="dsync-txt">' + otherLabel + ' is showing <strong>' + escapeHtml(range) + '</strong></span>'
-      + '<button type="button" class="dsync-apply" data-dsync-apply="1">Use these dates</button>'
-      + '<button type="button" class="dsync-x" data-dsync-x="1" aria-label="Dismiss">×</button>';
-    host.style.display = '';
-    var applyBtn = host.querySelector('[data-dsync-apply]');
-    applyBtn.onclick = function () {
-      applyDateSync_(page, otherWin.from, otherWin.to);
-    };
-    // #5 Option A: the dept chip's Apply re-runs My Department for the offered
-    // window (applyDateSync_ -> refresh), so warm that summary on hover -- it'll
-    // SWR-paint the moment they click. Fire directly (not debounced): the button
-    // is small, prefetchDeptSummary_ is one-per-sig idempotent, and the Insights
-    // chip is skipped (its Apply re-runs Insights, whose sig isn't prefetchable).
+    if (!fromEl || !toEl) return false;
+    if (fromEl.value === other.from && toEl.value === other.to) return false;
+    fromEl.value = other.from;
+    toEl.value   = other.to;
     if (page === 'dept') {
-      applyBtn.addEventListener('mouseover', function () {
-        prefetchDeptSummary_(otherWin.from, otherWin.to);
-      });
-    }
-    host.querySelector('[data-dsync-x]').onclick = function () {
-      dateSyncDismissed_[dismissKey] = true;
-      host.style.display = 'none'; host.innerHTML = '';
-    };
-  }
-
-  function applyDateSync_(page, from, to) {
-    var host = $(page === 'dept' ? 'dept-date-sync' : 'ins-date-sync');
-    if (host) { host.style.display = 'none'; host.innerHTML = ''; }
-    if (page === 'dept') {
-      if ($('from-date')) $('from-date').value = from;
-      if ($('to-date'))   $('to-date').value   = to;
       if (typeof clearActivePreset_ === 'function') clearActivePreset_();
-      refresh();
     } else {
-      if ($('ins-from')) $('ins-from').value = from;
-      if ($('ins-to'))   $('ins-to').value   = to;
-      if (typeof runInsReport === 'function') runInsReport();
+      var p = $('ins-preset'); if (p) p.value = 'custom';
     }
+    return true;
   }
 
   // "Is one of my agents struggling or improving?" -> Individual Report
@@ -5122,20 +5144,8 @@
   // sentinel reports a zeroed rect, which fails the `top < 0` test, so bars
   // never leak across pages (the fixed bar also lives inside its display:none
   // page section, which hides it outright on page swaps).
-  function initStickyBar_(barId, sentinelSel, pageName) {
-    const bar = $(barId);
-    const sentinel = document.querySelector(sentinelSel);
-    if (!bar || !sentinel || typeof IntersectionObserver === 'undefined') return;
-    new IntersectionObserver(function (entries) {
-      const en = entries[entries.length - 1];
-      const pageOk = document.body.getAttribute('data-page') === pageName;
-      const gone = !!(en && !en.isIntersecting
-        && en.boundingClientRect && en.boundingClientRect.top < 0);
-      const stuck = pageOk && gone;
-      bar.classList.toggle('is-stuck', stuck);
-      bar.setAttribute('aria-hidden', stuck ? 'false' : 'true');
-    }, { threshold: 0 }).observe(sentinel);
-  }
+  // (R9-1: initStickyBar_ retired -- the controls strip / period bar are
+  // position:sticky themselves now; no observer-driven banner.)
 
   // Generic trailing-edge debounce. Returns a wrapped fn that defers
   // invocation until `ms` have elapsed since the last call.
@@ -5312,13 +5322,7 @@
       setStatus('error', 'Pick a from and to date.');
       return;
     }
-    recordPageWindow_('dept', req.from, req.to);   // Batch E: for the Insights date-sync offer
-    // R7 (M-5): keep the sticky context bar's text current (dept · window).
-    var __stTxt = $('dept-sticky-text');
-    if (__stTxt) {
-      __stTxt.textContent = dept + ' · '
-        + (req.from === req.to ? req.from : req.from + ' – ' + req.to);
-    }
+    recordPageWindow_('dept', req.from, req.to);   // R9-3: the shared-window store
 
     // M3: when the table already holds data for the SAME dept, frost it in
     // place (blur + ripple) rather than showing the top skeleton that pushes
@@ -11361,11 +11365,9 @@
     // report cache still applies (data refreshes as the 30-min TTL allows).
     const insRefreshBtn = $('ins-refresh-btn');
     if (insRefreshBtn) insRefreshBtn.addEventListener('click', function () { runInsReport(); });
-    // R7 (I-2): sticky context bar -- reveals once the results-header period
-    // slider scrolls out; its ↻ re-runs the report like the header button.
-    initStickyBar_('ins-sticky-bar', '#ins-period-bar', 'insights');
-    const insStickyRefresh = $('ins-sticky-refresh');
-    if (insStickyRefresh) insStickyRefresh.addEventListener('click', function () { runInsReport(); });
+    // R9-1: the R7 (I-2) fixed sticky banner is retired -- the period bar
+    // itself is sticky now (CSS on #ins-period-bar), so the real preset
+    // slider + Custom… stay reachable while scrolling.
     const insQhMissedBtn = $('ins-qh-missed-link');
     if (insQhMissedBtn) insQhMissedBtn.addEventListener('click', function () {
       handoffToMyDept_(($('ins-from') || {}).value, ($('ins-to') || {}).value, { missed: true });
@@ -12071,13 +12073,7 @@
     const bar = $('ins-period-bar');
     if (!bar) return;
     const from = meta && meta.from, to = meta && meta.to;
-    recordPageWindow_('insights', from, to);   // Batch E: for the My Department date-sync offer
-    // R7 (I-2): keep the sticky context bar's text current (dept · window).
-    const stTxt = $('ins-sticky-text');
-    if (stTxt && from && to) {
-      stTxt.textContent = 'Insights · ' + (getRequestedDept() || '')
-        + ' · ' + (from === to ? from : from + ' – ' + to);
-    }
+    recordPageWindow_('insights', from, to);   // R9-3: the shared-window store
     let active = 'custom';
     ['last7', 'last30', 'mtd', 'ytd'].some(function (p) {
       const r = insPeriodRange_(p);
@@ -16181,6 +16177,14 @@
   // admin-only create controls. cb() runs after (or immediately if cached).
   function escEnsureInit_(cb) {
     if (escInit_) { cb && cb(); return; }
+    // R9-4: the init fetch painted NOTHING -- on a cold entry the page sat
+    // as blank background until getEscalationsInit returned and escLoad_'s
+    // own loader took over. Show the same rings loader from the first frame.
+    if ($('esc-loading')) {
+      $('esc-loading').style.display = '';
+      $('esc-loading').innerHTML = (typeof dsRingsHtml_ === 'function')
+        ? dsRingsHtml_('Loading escalations…') : 'Loading…';
+    }
     google.script.run
       .withSuccessHandler(function (init) {
         escInit_ = init || {};
@@ -16220,7 +16224,18 @@
     escSetError_('');
     const listEl = $('esc-list');
     const status = $('esc-status') ? $('esc-status').value : 'pending';
-    const dept = $('esc-dept') ? $('esc-dept').value : '';
+    // R9-5: the admin "View as <dept> (manager)" preview pins the Escalations
+    // scope to the previewed dept. View-as is a VISUAL preview -- the server
+    // still authorizes the real admin -- so without this override the page
+    // kept showing every dept's escalations in manager preview. The dept
+    // filter column is hidden while previewing (single-dept managers already
+    // have it hidden); real managers are pinned SERVER-side regardless.
+    let dept = $('esc-dept') ? $('esc-dept').value : '';
+    if (typeof viewAsDept_ !== 'undefined' && viewAsDept_) {
+      dept = viewAsDept_;
+      const vaCol = $('esc-dept-col');
+      if (vaCol) vaCol.style.display = 'none';
+    }
     if ($('esc-empty')) $('esc-empty').style.display = 'none';
     if ($('esc-loading')) { $('esc-loading').style.display = ''; $('esc-loading').innerHTML = dsRingsHtml_ ? dsRingsHtml_('Loading escalations…') : 'Loading…'; }
     if (listEl) listEl.innerHTML = '';
@@ -16897,7 +16912,7 @@
       { sel: '#ov-period-bar',    title: 'Change the card window',  body: 'Flip the department cards between Yesterday, Last 30 days, and Year-to-date. The trend chart keeps its own range control just beside it.' },
       { sel: '#my-dept-btn',      title: 'My Department',           body: 'Your team’s per-agent table — sortable by any column, worst answer rate first by default. A summary strip up top (% Answered, Queue calls, Answered, Abandoned % for the range) and the full Missed Calls report with per-agent timelines below the table.' },
       { sel: '#escalations-btn',  title: 'Escalations',             body: 'View and resolve escalation calls for your department — start one, mark it resolved with a note on how it was handled, and see the full activity trail.' },
-      { sel: '#insights-report-btn', title: 'Insights',             body: 'The flagship report, now a full page: a department rollup, per-agent cards vs the prior period, and queue health. Use the period slider (Last 7 / 30 / MTD / YTD) to reframe it; when its window differs from My Department, a one-click chip offers to line them up. Your generated report stays put when you switch tabs.' },
+      { sel: '#insights-report-btn', title: 'Insights',             body: 'The flagship report, now a full page: a department rollup, per-agent cards vs the prior period, and queue health. Use the period slider (Last 7 / 30 / MTD / YTD) to reframe it — Insights and My Department share one date window, so whichever you set most recently carries over. Your generated report stays put when you switch tabs.' },
       { sel: '#reports-menu-btn', title: 'Deeper reports',          body: 'Individual (the per-agent deep dive) lives here, alongside the admin-vetted Inbound and Direct reports. Missed-call detail is on the My Department page.' },
       { sel: '#help-fab',         title: 'Help is always here',     body: 'Stuck? This button opens Help from anywhere — and you can replay this tour from Help → Guided tour any time.' },
     ];
@@ -17317,7 +17332,7 @@
   // the My Department agent table's answeredBarHtml_ (green answered + red
   // abandoned over total calls; the rate cell shows abandoned % with the 5%
   // benchmark tint). Reuses the .ans-bar / .ans-seg component.
-  function qcdDailyBarCell_(r) {
+  function qcdDailyBarCell_(r, opts) {
     var total = Number(r.totalCalls)    || 0;
     var a     = Number(r.totalAnswered) || 0;
     var ab    = Number(r.abandoned)     || 0;
@@ -17331,13 +17346,25 @@
     var rateCls = benchValueCls_('abandoned %', abStr, true) + (over ? ' qcd-rate-over' : '');
     var title = fmtNumber(a) + ' answered · ' + fmtNumber(ab) + ' abandoned · '
               + fmtNumber(total) + ' calls · ' + abStr + ' abandoned';
+    // QV-1 (opt-in, all-dept report only): a 5%-threshold tick on the split
+    // bar. The bar is share-of-total (green answered, then red abandoned),
+    // so the tick sits at (answered% + 5%) -- the red segment ENDING past it
+    // is exactly "abandoned > 5% of offered". Hidden when answered > 95%
+    // (the tick would overflow, and abandon can't exceed 5% there anyway)
+    // and on zero-volume rows. Screen-only decoration (`qcd-screen-only` is
+    // stripped by the print path; the CSV builds from data, never the DOM) --
+    // exported cell text is unchanged.
+    var tick = '';
+    if (opts && opts.tick && total > 0 && (pctA + 5) < 100) {
+      tick = '<span class="qcd-thresh-tick qcd-screen-only" style="left:' + (pctA + 5) + '%"></span>';
+    }
     var segs = total
       ? '<span class="ans-seg ans" style="width:' + pctA + '%"></span>'
         + '<span class="ans-seg miss" style="width:' + pctAb + '%"></span>'
         + (rest > 0.1 ? '<span class="ans-seg none" style="width:' + rest + '%"></span>' : '')
       : '<span class="ans-seg none" style="width:100%"></span>';
     return '<div class="ans-bar" title="' + escapeHtml(title) + '">'
-         +   '<div class="ans-track">' + segs + '</div>'
+         +   '<div class="ans-track">' + segs + tick + '</div>'
          +   '<div class="ans-nums">'
          +     '<span class="ans-n">'   + fmtNumber(a)  + '</span>'
          +     '<span class="ans-slash">/</span>'
@@ -17467,6 +17494,65 @@
     if (csv) csv.addEventListener('click', function () { qcdAllDeptCsv_(qcdAllDeptLast); });
     const prn = $('qcd-alldept-print-btn');
     if (prn) prn.addEventListener('click', function () { qcdAllDeptPrint_(qcdAllDeptLast); });
+
+    // QV-4: "Email me this report" -- caller-only send of the DISPLAYED
+    // range (server: sendQcdAllDeptEmail, same signed-in gate as the report).
+    const emailBtn = $('qcd-alldept-email-btn');
+    if (emailBtn) emailBtn.addEventListener('click', function () {
+      const meta = qcdAllDeptLast && qcdAllDeptLast.meta;
+      if (!meta || !meta.from || !meta.to) return;
+      emailBtn.disabled = true;
+      const prev = emailBtn.textContent;
+      emailBtn.textContent = 'Sending…';
+      google.script.run
+        .withSuccessHandler(function (res) {
+          emailBtn.disabled = false; emailBtn.textContent = prev;
+          showToast('Report emailed to ' + ((res && res.to) || 'you') + '.');
+        })
+        .withFailureHandler(function (err) {
+          emailBtn.disabled = false; emailBtn.textContent = prev;
+          showToast('Email failed: ' + (err && err.message ? err.message : String(err)), 'error');
+        })
+        .sendQcdAllDeptEmail({ from: meta.from, to: meta.to });
+    });
+
+    // QV-5 (admin-only): manual subscriber blast of the displayed SINGLE day.
+    // Ranges are for self-sends -- the subscriber engine is single-day, so
+    // qcdAllDeptRender_ disables this button on multi-day views. dsConfirm_
+    // per the confirm-dialog convention (never window.confirm).
+    const blastBtn = $('qcd-alldept-blast-btn');
+    if (blastBtn) blastBtn.addEventListener('click', function () {
+      const meta = qcdAllDeptLast && qcdAllDeptLast.meta;
+      if (!meta || !meta.from || meta.from !== meta.to || blastBtn.disabled) return;
+      const day = meta.from;
+      dsConfirm_({
+        title: 'Send to all subscribers',
+        message: 'Email the ' + day + ' Daily Call Queue Report to every active subscriber now? '
+          + 'If this is the day the automated morning send targets, sending here claims that '
+          + 'day so subscribers are not emailed twice.',
+        confirmLabel: 'Send now', cancelLabel: 'Cancel',
+      }).then(function (ok) {
+        if (!ok) return;
+        blastBtn.disabled = true;
+        const prev = blastBtn.textContent;
+        blastBtn.textContent = 'Sending…';
+        google.script.run
+          .withSuccessHandler(function (res) {
+            blastBtn.disabled = false; blastBtn.textContent = prev;
+            const failed = (res && res.failed && res.failed.length) || 0;
+            showToast('Sent ' + day + ' to ' + ((res && res.count) || 0) + ' subscriber'
+              + (res && res.count === 1 ? '' : 's')
+              + (failed ? ' (' + failed + ' failed — admins notified via the modal log)' : '')
+              + (res && res.markerClaimed ? ' · claimed today’s automated send' : '')
+              + ((res && res.count) === 0 ? ' — no active subscribers' : '') + '.');
+          })
+          .withFailureHandler(function (err) {
+            blastBtn.disabled = false; blastBtn.textContent = prev;
+            showToast('Send failed: ' + (err && err.message ? err.message : String(err)), 'error');
+          })
+          .sendQcdAllDeptToSubscribers({ date: day });
+      });
+    });
 
     // Delegated expand/collapse for the per-queue call-source detail (#1c).
     // Wired once; survives re-renders (the tbody content is replaced, this
@@ -17669,12 +17755,33 @@
         + '<div class="qcd-verdict-label">' + label + '</div>'
         + '<div class="qcd-verdict-value">' + escapeHtml(String(value)) + '</div></div>';
     };
-    const band = '<div class="qcd-verdict-band">'
-      + tile('Company aban %', companyPctStr, companyPct >= 5 ? 'warn' : 'neu')
+    // QV-3: the company abandon% leads as a HERO tile -- big number, a 0-10%
+    // target bar with the 5% tick at midpoint, and "N of M calls lost" --
+    // so "is today bad?" answers before the table. Company pct comes from
+    // grandTotals (total abandoned / total offered -- already the correct
+    // aggregate, never an average of per-queue rates). Tone stays BINARY on
+    // the 5% standard (the benchValueCls_ convention). The verdict container
+    // is outside #qcd-alldept-body, so it never enters the print clone.
+    const abandoned = Number(g.abandoned) || Math.max(0, total - ans);
+    const heroFill = Math.max(0, Math.min(100, companyPct * 10));   // 0-10% scale
+    const heroTone = companyPct >= 5 ? 'warn' : 'good';
+    const hero = '<div class="qcd-hero qcd-hero--' + heroTone + '">'
+      + '<div class="qcd-verdict-label">Company abandoned %</div>'
+      + '<div class="qcd-hero-value">' + escapeHtml(companyPctStr) + '</div>'
+      + '<div class="qcd-hero-bar" title="0–10% scale · tick = the 5% company standard">'
+      +   '<span class="qcd-hero-fill" style="width:' + heroFill + '%"></span>'
+      +   '<span class="qcd-hero-tick"></span>'
+      + '</div>'
+      + '<div class="qcd-hero-sub">' + fmtNumber(abandoned) + ' of ' + fmtNumber(total)
+      +   ' calls lost</div>'
+      + '</div>';
+    const band = '<div class="qcd-verdict-band qcd-verdict-band--hero">'
+      + hero
+      + '<div class="qcd-verdict-rest">'
       + tile('Total calls', fmtNumber(total), 'neu')
       + tile('Queues in violation', fmtNumber(offenders.length), offenders.length > 0 ? 'warn' : 'neu')
       + tile('Answered %', answeredPct.toFixed(1) + '%', 'good')
-      + '</div>';
+      + '</div></div>';
     let callout;
     if (offenders.length) {
       const parts = offenders.map(function (o) {
@@ -17695,6 +17802,16 @@
 
   function qcdAllDeptRender_(data) {
     $('qcd-alldept-results-date').textContent = data.dateLabel || '';
+    // QV-5: the subscriber blast is single-day only (the engine's unit of
+    // send); disable it with a reason on multi-day views.
+    const blastBtn = $('qcd-alldept-blast-btn');
+    if (blastBtn) {
+      const singleDay = !!(data.meta && data.meta.from && data.meta.from === data.meta.to);
+      blastBtn.disabled = !singleDay;
+      blastBtn.title = singleDay
+        ? 'Email the displayed day to every active subscriber now'
+        : 'Subscriber sends are single-day — narrow the range to one day first';
+    }
     const empty = $('qcd-alldept-empty');
     const body  = $('qcd-alldept-body');
     const verdict = $('qcd-alldept-verdict');
@@ -17759,7 +17876,7 @@
       let out = '<tr class="' + (hasDetail ? 'qcd-expandable' : '') + '">'
         + '<td>' + escapeHtml(q.queue) + subTag + chevron + '</td>'
         + '<td class="num">' + fmtNumber(q.totalCalls) + '</td>'
-        + '<td class="qcd-daily-bar-cell">' + qcdDailyBarCell_(q) + '</td>'
+        + '<td class="qcd-daily-bar-cell">' + qcdDailyBarCell_(q, { tick: true }) + '</td>'   // QV-1
         + '<td class="num">' + escapeHtml(q.longestWait) + '</td>'
         + '<td class="num">' + escapeHtml(q.avgAnswer) + '</td>'
         + '<td class="num' + c.violCls + '">' + fmtNumber(q.violations) + '</td>'
@@ -17781,18 +17898,36 @@
       (childrenOf[d.dept] || []).forEach(function (child) {
         (child.queues || []).forEach(function (q) { secItems.push({ q: q, sub: child.dept }); });
       });
+      // QV-2: the dept banner row leads with a health-toned rail + a bigger
+      // name + a right-aligned mini-summary. Tone is BINARY per the
+      // benchmark convention (no invented bands): warn when the section's
+      // abandon% >= 5 OR any of its queues is in violation; muted for a
+      // zero-call section; sage otherwise. The mini-summary is screen-only
+      // (stripped from the print clone; CSV builds from data).
+      const st = qcdAllDeptSectionTotal_(secItems.map(function (i) { return i.q; }));
+      const secViol = secItems.some(function (i) { return (Number(i.q.violations) || 0) > 0; });
+      const secTotal = Number(st.totalCalls) || 0;
+      const secPct = Number(st.abandonedPct) || 0;
+      const tone = secTotal === 0 ? 'muted'
+        : (secPct >= 5 || secViol) ? 'warn' : 'good';
+      const secPctStr = st.abandonedPctStr || (secPct.toFixed(2) + '%');
+      const mini = secTotal > 0
+        ? '<span class="qcd-deptrow-mini qcd-screen-only">' + fmtNumber(secTotal)
+          + ' calls &middot; ' + escapeHtml(secPctStr) + ' abandoned</span>'
+        : '<span class="qcd-deptrow-mini qcd-screen-only">no calls</span>';
       html += '<tbody class="qcd-alldept-dept" data-dept="' + escapeHtml(d.dept) + '">'
-        + '<tr class="qcd-alldept-deptrow"><td colspan="' + NCOLS + '">' + escapeHtml(d.dept) + '</td></tr>';
+        + '<tr class="qcd-alldept-deptrow qcd-deptrow--' + tone + '"><td colspan="' + NCOLS + '">'
+        + '<span class="qcd-deptrow-name">' + escapeHtml(d.dept) + '</span>' + mini
+        + '</td></tr>';
       secItems.forEach(function (item) { html += queueRow(item.q, item.sub); });
       // #3: the "(dept) total" row is redundant for a single-queue section
       // (the lone queue line IS the total), so show it only when >1 queue.
       if (secItems.length > 1) {
-        const st = qcdAllDeptSectionTotal_(secItems.map(function (i) { return i.q; }));
         const tc = cell(st.abandonedPct, st.violations);
         html += '<tr class="qcd-alldept-subtotal">'
           + '<td>' + escapeHtml(d.dept) + ' total</td>'
           + '<td class="num">' + fmtNumber(st.totalCalls) + '</td>'
-          + '<td class="qcd-daily-bar-cell">' + qcdDailyBarCell_(st) + '</td>'
+          + '<td class="qcd-daily-bar-cell">' + qcdDailyBarCell_(st, { tick: true }) + '</td>'   // QV-1
           + '<td class="num">' + escapeHtml(st.longestWait) + '</td>'
           + '<td class="num">' + escapeHtml(st.avgAnswer) + '</td>'
           + '<td class="num' + tc.violCls + '">' + fmtNumber(st.violations) + '</td>'
@@ -17805,7 +17940,7 @@
     html += '<tfoot><tr class="qcd-alldept-grand">'
       + '<td>Company total</td>'
       + '<td class="num">' + fmtNumber(g.totalCalls) + '</td>'
-      + '<td class="qcd-daily-bar-cell">' + qcdDailyBarCell_(g) + '</td>'
+      + '<td class="qcd-daily-bar-cell">' + qcdDailyBarCell_(g, { tick: true }) + '</td>'   // QV-1
       + '<td class="num">' + escapeHtml(g.longestWait) + '</td>'
       + '<td class="num">' + escapeHtml(g.avgAnswer) + '</td>'
       + '<td class="num' + gc.violCls + '">' + fmtNumber(g.violations) + '</td>'
@@ -17896,9 +18031,20 @@
       + '.qcd-alldept-subtotal td{font-weight:600;border-top:1px solid #999;}'
       + '.qcd-alldept-grand td{font-weight:700;border-top:2px solid #333;}'
       + '.qcd-warn-light{background:#fff3e0;}.qcd-warn-strong{background:#ffd9b3;}';
+    // QV-1/QV-2: strip screen-only decorations (threshold ticks, banner
+    // mini-summaries) from the print clone so the printed table stays
+    // byte-identical to the pre-polish output. The print window's own CSS
+    // never styles them, but the mini-summary carries TEXT that would
+    // otherwise render.
+    let printHtml = '';
+    if (tableEl) {
+      const clone = tableEl.cloneNode(true);
+      clone.querySelectorAll('.qcd-screen-only').forEach(function (n) { n.remove(); });
+      printHtml = clone.innerHTML;
+    }
     w.document.write('<title>Daily Call Queue Report</title><style>' + css + '</style>'
       + '<h1>Daily Call Queue Report</h1><p class="sub">' + escapeHtml(data.dateLabel || '') + '</p>'
-      + (tableEl ? tableEl.innerHTML : ''));
+      + printHtml);
     w.document.close();
     w.focus();
     setTimeout(function () { try { w.print(); } catch (e) {} }, 250);
