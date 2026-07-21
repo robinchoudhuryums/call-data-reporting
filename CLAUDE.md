@@ -797,7 +797,11 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   Custom...) that drives the WHOLE report window via `runInsReport`
   (preserving compare mode + agents; Custom... opens the Edit popover),
   reusing the Overview O4 `.ov-period-*` styling; the active button re-syncs
-  from `meta.from/to` every render, so NO prefs bump. The **12-mo team-trend
+  from `meta.from/to` every render, so NO prefs bump. (R9-1: this period bar
+  AND the My Department controls row are the pages' STICKY elements --
+  `position:sticky; top:0` on an opaque strip, styles.html R9-1 block --
+  replacing the retired R7 B3 fixed context banners, so the pinned strip is
+  the real, editable range control.) The **12-mo team-trend
   chart moved OUT of the Team-detail `<details>` to its own always-visible
   "Trends" section at the BOTTOM** of the report -- it's the one view the
   slider doesn't govern (always ~12 months) -- rendered in the main pass via
@@ -1980,7 +1984,11 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   drives a single CSS rule that hides every `[data-admin-only]`
   surface (nav tabs, buttons, the three Overview banners), pins +
   disables the dept selector, and tints the control warn so the admin
-  knows they're previewing. The per-viewer Overview SWR cache
+  knows they're previewing. Since R9-5 the ESCALATIONS page is scoped
+  too: `escLoad_` pins the request dept to `viewAsDept_` and hides the
+  dept filter while previewing (exiting view-as restores the filter +
+  reloads) -- real managers were always pinned SERVER-side in
+  `getEscalations`, so this closes the admin-preview parity gap only. The per-viewer Overview SWR cache
   (`cdr.ov.cache.v1`) is BYPASSED while previewing so a manager
   payload never lands under the admin's cache key. No INV-30 bump —
   personalization is post-cache (same as the existing per-viewer
@@ -2956,7 +2964,7 @@ S1 | Manager loads own-dept dashboard | Subsystem: Department Dashboard
     - Confirm the page lands on Overview ("Departments Snapshot" kicker + h1); the email + blue "manager" tag appear in the header.
     - Click "My Department" in the header nav.
     - Confirm header h1 swaps to the manager's dept name; From/To both default to the latest ISO date in DQE Historical Data; agent table populates within 3 seconds.
-    - Confirm the My Department controls row shows only the dept selector, date inputs, and the Refresh button -- no scope toggle (retired in the redesign cleanup, commit 53d0560).
+    - Confirm the My Department controls row shows the dept selector, date inputs, Quick select presets, and the horizontal Refresh + Export ▾ pair (R9-2; Export hidden until data loads) -- no scope toggle (retired in the redesign cleanup, commit 53d0560). Scroll the table: the controls row itself pins to the top on an opaque strip (R9-1) with no overlap of the QCD side card.
   Expected: that manager's dept roster agents appear, plus any queue-only floaters tagged with QUEUE chips in the Source column; info-line shows "fresh read" first load, "cache hit" on immediate refresh.
 
 S2 | Admin switches departments | Subsystem: Department Dashboard
