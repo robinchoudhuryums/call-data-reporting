@@ -888,38 +888,27 @@
   .health-uiflag-row { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
   .health-uiflag-key { color: var(--muted); font-size: 11px; }
 
-  /* ---- R7 (M-5/I-2): slim sticky context bar ---------------------------
-     Dept + date window pinned to the viewport top while the page's own
-     controls / results header are scrolled out. Fixed (not sticky) so it
-     reserves no layout space; initStickyBar_ toggles .is-stuck via an
-     IntersectionObserver sentinel. Below modal z (100). */
-  .page-sticky-bar {
-    position: fixed; top: 8px; left: 50%;
-    width: min(1100px, calc(100% - 32px));
-    z-index: 90;
-    display: flex; align-items: center; gap: 10px;
-    padding: 6px 12px;
-    background: color-mix(in srgb, var(--paper-card) 90%, transparent);
-    backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
-    border: 1px solid var(--line); border-radius: var(--r);
-    box-shadow: var(--shadow-1, 0 2px 10px rgba(0, 0, 0, 0.08));
-    transform: translate(-50%, -160%); opacity: 0; pointer-events: none;
-    transition: transform 0.18s var(--ease, ease-out), opacity 0.18s var(--ease, ease-out);
+  /* ---- R9-1: sticky controls strips (replaced the R7 M-5/I-2 banner) ----
+     The REAL controls are the sticky element now: the My Department
+     controls row and the Insights period bar pin to the viewport top on an
+     opaque strip while the page scrolls, so users change the range from the
+     pinned strip itself (no duplicate read-only banner, no side-panel
+     overlap). z-index sits above the sticky QCD side card (.dept-side,
+     z auto) and below modal z (100). The strip bleeds slightly wider than
+     its content so the page background never peeks through at the edges. */
+  #dept-page .controls,
+  #insights-page .ins-period-bar {
+    position: sticky; top: 0; z-index: 60;
+    background: var(--paper);
+    box-shadow: 0 8px 10px -10px rgba(0, 0, 0, 0.25);
+    margin-left: -8px; margin-right: -8px;
+    padding-left: 8px; padding-right: 8px;
+    padding-top: 8px; padding-bottom: 8px;
   }
-  .page-sticky-bar.is-stuck { transform: translate(-50%, 0); opacity: 1; pointer-events: auto; }
-  .psb-text {
-    font-family: var(--mono); font-size: 12px; color: var(--ink);
-    font-variant-numeric: tabular-nums; letter-spacing: 0;
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  }
-  .psb-refresh {
-    margin-left: auto; flex: 0 0 auto; font: inherit; font-size: 13px;
-    line-height: 1; padding: 3px 9px; cursor: pointer;
-    border: 1px solid var(--line); border-radius: var(--r);
-    background: var(--paper-card); color: var(--ink);
-  }
-  .psb-refresh:hover { border-color: var(--accent); color: var(--accent); }
-  @media (prefers-reduced-motion: reduce) { .page-sticky-bar { transition: none; } }
+  #dept-page .controls { margin-bottom: 14px; }
+  /* R9-2: horizontal Refresh + Export pair inside the dept controls row
+     (the .control column otherwise stacks its children vertically). */
+  .control-btn-row { display: flex; flex-direction: row; align-items: center; gap: 8px; }
 
   /* ---- Phase 2 #10: calendar trend renderer (CSS grid, no Chart.js) ----- */
   .ins-trend-calendar { padding: 8px 2px 4px; }
@@ -5959,22 +5948,8 @@
   .dis-more[hidden] { display: none; }
   @media (prefers-reduced-motion: reduce) { .dis-chevron { transition: none; } }
 
-  /* Batch E: explicit date-sync offer chip (My Department <-> Insights). A
-     quiet accent-tinted inline banner shown on tab entry when the two pages'
-     windows differ; one click aligns them, the × dismisses the offer. */
-  .dsync-chip { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-    border: 1px solid var(--line); border-left: 3px solid var(--accent);
-    border-radius: var(--r-lg); background: var(--accent-soft);
-    padding: 7px 12px; margin: 0 0 14px; font-size: 13px; color: var(--ink); }
-  .dsync-txt { flex: 1 1 auto; min-width: 160px; }
-  .dsync-txt strong { font-variant-numeric: tabular-nums; }
-  .dsync-apply { flex: 0 0 auto; background: var(--accent); color: #fff; border: 0;
-    border-radius: var(--r-pill, 999px); padding: 4px 12px; cursor: pointer;
-    font: 600 12px var(--ui); white-space: nowrap; }
-  .dsync-apply:hover { filter: brightness(1.05); }
-  .dsync-x { flex: 0 0 auto; background: none; border: 0; cursor: pointer;
-    font-size: 18px; line-height: 1; color: var(--muted); padding: 0 2px; }
-  .dsync-x:hover { color: var(--ink); }
+  /* (R9-3: the Batch-E .dsync-chip date-sync offer CSS was retired with the
+     chip -- the dept and Insights pages share one date window now.) */
 
   /* Drilldown hand-off link (Insights Queue health -> My Department Missed). */
   .ins-handoff-link { background: none; border: 0; padding: 0 0 0 8px; cursor: pointer;

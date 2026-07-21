@@ -297,7 +297,7 @@ B = visual/UX, C = server/ops); code comments cite `R7 (<id>)`:
 | A8 / N-2 | Zero-activity agents dropped from both cross-agent charts (cards unchanged) | code (`insAgentHasActivity_`) |
 | B1 / O-2 | Global chart animations (400ms easeOutQuart, prefers-reduced-motion off); per-chart `animation:false` opt-outs removed | INV-41 bullet note, CLAUDE.md |
 | B2 / M-3 | Missed bars flipped VERTICAL (workday timeline) + vector clock-face watermark (`missedClockWatermark_`) | INV-41 bullet, CLAUDE.md |
-| B3 / M-5, I-2 | Sticky context toplines (dept · window + ↻) on My Department + Insights (`initStickyBar_`, IntersectionObserver, fixed-position) | code (`.page-sticky-bar`) |
+| B3 / M-5, I-2 | Sticky context toplines (dept · window + ↻) on My Department + Insights (`initStickyBar_`, IntersectionObserver, fixed-position) — **RETIRED by R9-1** (the banner overlapped the QCD side card and couldn't edit the range; the controls strip / period bar are the sticky elements now) | superseded — see R9-1 |
 | B4 / I-4 | seg-rich sub-selector smaller/lighter (accent-soft active); Cards⇄Chart / Gap⇄Absolute one-shot fade | code (`.ins-view-fade`) |
 | C1 / M-2 | getCallJourney miss carries `reason` (before-capture / date-gap / not-captured), probed only when the unscoped lookup was entitled | Inbound bullet, CLAUDE.md |
 | C2 / G-2 | `runNeonCoverageCheck` — per-date sheet-vs-Neon reconciliation + inbound zero-row weekdays; Health `out-coverage` row | Op State #35 + System Health bullet |
@@ -370,6 +370,17 @@ change).** Code comments cite `QV-<n>`:
 | QV-3 | Company-abandon% hero tile in the verdict band (0–10% target bar, 5% tick, "N of M calls lost" from `grandTotals`); sparklines deliberately OMITTED (no trailing series in the data path — a future server extension) | INV-51 QV note |
 | QV-4 | "Email me this report" — `sendQcdAllDeptEmail`: caller-only, displayed range, signed-in gate matching the report (the `sendInsightsReportEmail` precedent) | Op State #31, CLAUDE.md |
 | QV-5 | Admin-only "Send to subscribers…" — `sendQcdAllDeptToSubscribers`: single-day, O-1 isolation reused, claims `QUEUE_REPORT_LAST_SENT` only for the gate's current target day with ≥1 delivery; never writes LAST_RESULT | Op State #31, CLAUDE.md |
+
+**Owner feedback round 9 (2026-07-21, post-deploy testing notes).** All
+client-only; code comments cite `R9-<n>`:
+
+| Code | What it fixed / added | Live rule lives in |
+|---|---|---|
+| R9-1 | Retired the R7 B3 sticky context BANNERS (`initStickyBar_`, `.page-sticky-bar`) — they overlapped the QCD side card and duplicated the range read-only. The REAL controls are sticky now: `#dept-page .controls` and `#ins-period-bar` pin via CSS `position:sticky` on an opaque strip (z 60, above `.dept-side`, below modals), so users change the range from the pinned strip itself | code (styles.html R9-1 block) |
+| R9-2 | My Department toolbar matches the Insights convention: Refresh + an "Export ▾" dropdown sit horizontally (`.control-btn-row`); the one-click CSV icon became the `.ir-export-wrap` menu (wrap keeps the `#csv-export-btn` id so the hidden-until-data gating is untouched) | "My Department CSV export" decision, CLAUDE.md |
+| R9-3 | Retired the Batch-E "Use these dates" offer chip (`maybeShowDateSyncChip_`/`applyDateSync_`/`.dsync-chip`) — My Department and Insights now SHARE one date window: `adoptSharedWindow_` (setPage) silently adopts the other page's more-RECENTLY-rendered window (`pageActiveWindow_` entries carry a timestamp; newest explicit choice wins; hand-off buttons unaffected) | Insights hand-off bullet (R9-3), CLAUDE.md |
+| R9-4 | Escalations first entry painted a blank page until init returned — `escEnsureInit_` now shows the `dsRingsHtml_` loader in `#esc-loading` at fetch start | code (script.html) |
+| R9-5 | View-as-manager on Escalations still showed every dept (client list default) — `escLoad_` pins the request dept to `viewAsDept_` and hides the dept filter; exiting view-as restores + reloads. Real managers were always pinned SERVER-side (`getEscalations`); this closes the admin-preview parity gap only | code (`escLoad_` / `applyViewAs_`) |
 
 ---
 

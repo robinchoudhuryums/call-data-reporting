@@ -818,22 +818,25 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   in `renderDeptTeamStrip_` directly above it, whose answer-rate tile is now
   labeled "% Answered (rings)" to match the Insights rollup.) Insights carries a header **"My Department ->"** button and
   a Queue-health **"See missed calls ->"** drill (both -> `handoffToMyDept_`,
-  wired in `initInsightsReport`). **Batch E date-sync chip (client-only, no
-  server/cache change):** the hand-off buttons carry a window only when you
-  explicitly cross over; the plain NAV-TAB path is covered by an explicit,
-  dismissible offer -- `maybeShowDateSyncChip_(page)` (called from `setPage`
-  for `dept`/`insights`) compares the entered page's date inputs to the OTHER
-  page's last-rendered window (`pageActiveWindow_`, recorded in `refresh()`
-  and `insSyncPeriodBar_`) and, when they differ, renders a `.dsync-chip`
-  (`#dept-date-sync` / `#ins-date-sync`) offering "Use these dates";
-  `applyDateSync_` sets the inputs + re-runs (`refresh` / `runInsReport`). It
-  NEVER changes the dates on its own (owner: explicit sync, no surprise);
-  dismissals are memoized per `<page>|<from>|<to>` so the same offer doesn't
-  re-nag. **#5 Option A hover-prefetch (client-only):** the cross-page
+  wired in `initInsightsReport`). **R9-3 shared date window (client-only, no
+  server/cache change; SUPERSEDED the Batch-E "Use these dates" offer
+  chip):** the hand-off buttons carry a window only when you explicitly
+  cross over; the plain NAV-TAB path now SILENTLY converges --
+  `adoptSharedWindow_(page)` (called from `setPage`'s `dept`/`insights`
+  branches) compares the two pages' last-rendered windows
+  (`pageActiveWindow_`, recorded WITH a timestamp in `refresh()` and
+  `insSyncPeriodBar_`) and, when the OTHER page's window is the more
+  RECENT one and differs from this page's inputs, rewrites the entered
+  page's date inputs and re-runs (dept: the setPage refresh branch;
+  Insights: `runInsReport`, or the first-entry pending auto-run just reads
+  the rewritten inputs). Newest explicit choice wins wherever it was made,
+  so the two pages feel like one top-line date strip (owner feedback,
+  post-deploy R9). The `.dsync-chip` markup/CSS,
+  `maybeShowDateSyncChip_`/`applyDateSync_`, and the dismissal memo are
+  all retired. **#5 Option A hover-prefetch (client-only):** the cross-page
   hand-offs that land on My Department -- the Insights **"My Department ->"**
   button + Queue-health **"See missed calls ->"** link (delegated ~300ms
-  hover intent on `#insights-page`), and the dept-side `.dsync-chip`'s "Use
-  these dates" (fired on Apply-button hover) -- warm My Department's summary
+  hover intent on `#insights-page`) -- warm My Department's summary
   for the target window via `prefetchDeptSummary_` (one `getDepartmentSummary`
   call, `req={department,from,to}`, seeded into the D1b store under the
   `'summary'` key so `refresh()`'s SWR paints instantly on click). Guards
@@ -963,8 +966,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   they always show on replay + warm loads, the established freshness-pill
   pattern). The nav-button step bodies also describe the newer per-page
   surfaces they open (My Department's team strip + range Queue tiles +
-  inline Missed report; Insights' period slider + the Batch E date-sync
-  chip) since those live off the Overview landing and can't be their own
+  inline Missed report; Insights' period slider + the R9-3 shared date
+  window) since those live off the Overview landing and can't be their own
   visible steps. Auto-runs ONCE for first-time visitors (localStorage
   `cdr.tour.done`, gated to the Overview landing, 1.2s after load) and
   is always replayable from **Settings -> "Take the tour"** (`#tour-replay-btn`
@@ -2227,10 +2230,13 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `performance:v3` -> `v4`, `compareRanges:v3` -> `v4`. INV-53
   describes the underlying contract; INV-26 describes the separate
   TEAM_AVG_EXCLUDES path which composes with the floater gate in IR.
-- **My Department CSV export.** The agent table has a "Download CSV"
-  button (hidden until data loads) that exports the current view
-  (respecting scope, date range, and sort order) as a client-side
-  CSV download. No server round-trip.
+- **My Department CSV export.** The agent table has an "Export ▾" menu
+  (R9-2: the Insights-toolbar dropdown convention replaced the old
+  one-click download icon; the wrap keeps the `#csv-export-btn` id so
+  the hidden-until-data gating is unchanged, and it sits horizontally
+  beside Refresh in `.control-btn-row`) whose "Download CSV" item
+  exports the current view (respecting scope, date range, and sort
+  order) as a client-side CSV download. No server round-trip.
 - **Draggable / resizable modals.** All modals can be
   repositioned via header drag and resized via a bottom-right
   corner handle. Position and size reset on close so the next

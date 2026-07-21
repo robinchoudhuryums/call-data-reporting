@@ -296,12 +296,10 @@
          agent table, and diagnostics. Hidden by default; revealed
          when the user clicks "My Department" in the header. -->
     <section id="dept-page" class="page page-dept">
-      <!-- R7 (M-5): slim sticky context bar -- dept + date range pinned to the
-           top while the controls row is scrolled out (initStickyBar_). -->
-      <div class="page-sticky-bar" id="dept-sticky-bar" aria-hidden="true">
-        <span class="psb-text" id="dept-sticky-text"></span>
-        <button type="button" class="psb-refresh" id="dept-sticky-refresh" title="Refresh the table for this range">&#8635;</button>
-      </div>
+      <!-- R9-1: the R7 M-5 sticky context BANNER is retired (it overlapped the
+           QCD side panel and duplicated the range read-only). The controls row
+           below is the sticky element now (CSS position:sticky on
+           #dept-page .controls), so the real date inputs stay reachable. -->
       <div id="mock-banner" class="mock-banner" style="display:none;">
         <strong>Mock data.</strong> Step C uses placeholder rows so the UI is verifiable end-to-end before the data layer is wired. Step D replaces this with real reads from <code>DQE Historical Data</code>.
       </div>
@@ -336,15 +334,28 @@
         </div>
         <div class="control">
           <label>&nbsp;</label>
-          <button class="btn btn-icon" id="refresh-btn" title="Refresh" aria-label="Refresh">&#8635;</button>
-          <button class="btn btn-secondary btn-icon" id="csv-export-btn" title="Download the agent table as CSV" aria-label="Download CSV" style="display:none;">&#8681;</button>
+          <!-- R9-2: Refresh + Export sit side by side (Insights-toolbar
+               convention). Export is the same .ir-export-wrap dropdown the
+               Insights page uses; hidden until data loads (the old
+               #csv-export-btn gating, id kept on the wrap so the JS shows
+               the same element). -->
+          <div class="control-btn-row">
+            <button class="btn btn-secondary" id="refresh-btn" title="Refresh" aria-label="Refresh">&#8635; Refresh</button>
+            <div class="ir-export-wrap" id="csv-export-btn" style="display:none;">
+              <button class="btn btn-secondary" id="dept-export-btn" type="button" aria-haspopup="menu" aria-expanded="false">
+                Export <span class="ir-export-caret">&#9662;</span>
+              </button>
+              <div class="ir-export-menu" id="dept-export-menu" role="menu" style="display:none;">
+                <button type="button" role="menuitem" data-action="csv">Download CSV</button>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
-      <!-- Batch E: explicit date-sync offer. Shown only on entry when the
-           Insights page's last-viewed window differs from this page's dates.
-           One click applies; it never changes the dates on its own. -->
-      <div id="dept-date-sync" class="dsync-chip" style="display:none;"></div>
+      <!-- R9-3: the Batch-E date-sync offer chip is retired -- the dept and
+           Insights pages now share one date window (silent adoption of the
+           newer page's window on entry), so there is nothing to offer. -->
 
       <!-- #5: two-column layout. The main report column (Queue Call Data is
            rendered as a STICKY side-card on the right for wide screens so it
@@ -531,7 +542,7 @@
             <button type="button" class="help-link" data-topic="source">Source &amp; floaters</button>
             <button type="button" class="help-link" data-topic="wow">Prior-period chips</button>
             <button type="button" class="help-link" data-topic="queuecall">Queue Call Data &amp; missed timelines</button>
-            <button type="button" class="help-link" data-topic="export">Download CSV</button>
+            <button type="button" class="help-link" data-topic="export">Export (CSV)</button>
           </details>
           <details class="help-cat">
             <summary>Reports</summary>
@@ -633,8 +644,8 @@
             <p>Above the agent table, a <strong>Queue Call Data</strong> tile row shows each mapped queue&rsquo;s abandoned % and violations for the latest data date. Below the table, the <strong>Missed Calls</strong> section gives an hour-of-day chart (click a bar to drill into that bucket) plus each agent&rsquo;s <strong>missed-call timeline</strong> listing the timestamps of unanswered rings (abandoned ones flagged in red). It follows the page&rsquo;s From/To dates &mdash; change them and Refresh for a custom range (this section <em>is</em> the Missed Calls report; the old standalone report was folded in here).</p>
           </section>
           <section class="help-topic" id="help-topic-export" hidden>
-            <h3>Download CSV</h3>
-            <p>The <strong>Download CSV</strong> button (appears once data loads) exports the current table view &mdash; respecting your date range and sort order &mdash; with no server round-trip. Agent names are sanitized so spreadsheet apps can&rsquo;t treat them as formulas.</p>
+            <h3>Export (CSV)</h3>
+            <p>The <strong>Export</strong> menu (appears once data loads) downloads the current table view as CSV &mdash; respecting your date range and sort order &mdash; with no server round-trip. Agent names are sanitized so spreadsheet apps can&rsquo;t treat them as formulas.</p>
           </section>
           <section class="help-topic" id="help-topic-individual" hidden>
             <h3>Individual Report</h3>
@@ -1078,12 +1089,10 @@
        .modal-open-tab-btn class -- the share-state wiring loop keys on the
        class + data-open-tab-route, not on being inside a modal. -->
   <section id="insights-page" class="page page-insights">
-    <!-- R7 (I-2): slim sticky context bar -- dept + report window pinned to
-         the top while the results header is scrolled out (initStickyBar_). -->
-    <div class="page-sticky-bar" id="ins-sticky-bar" aria-hidden="true">
-      <span class="psb-text" id="ins-sticky-text"></span>
-      <button type="button" class="psb-refresh" id="ins-sticky-refresh" title="Re-run the report for the current selection">&#8635;</button>
-    </div>
+    <!-- R9-1: the R7 I-2 sticky context BANNER is retired -- the period bar
+         itself (#ins-period-bar) is the sticky element now (CSS
+         position:sticky, opaque strip), so the real range presets stay
+         reachable while scrolled. -->
     <div class="ins-page-body">
       <button class="modal-open-tab-btn" type="button" data-open-tab-route="/report/insights"
               aria-label="Open in new tab" title="Open this report in a new browser tab (for side-by-side viewing)">&#8599;</button>
@@ -1265,10 +1274,8 @@
           <button type="button" class="ov-period-btn" data-ins-period="custom" aria-pressed="false">Custom&hellip;</button>
         </div>
 
-        <!-- Batch E: explicit date-sync offer (mirrors My Department's). Shown
-             on entry when My Department's last-viewed window differs from this
-             report's window. One click applies; never silent. -->
-        <div id="ins-date-sync" class="dsync-chip" style="display:none;"></div>
+        <!-- R9-3: the Batch-E date-sync offer chip is retired -- the dept and
+             Insights pages share one date window now (silent adoption). -->
 
         <div id="ins-edit-popover" class="ir-edit-popover" style="display:none;" role="dialog" aria-label="Edit selection and dates">
           <div class="ir-edit-popover-header">
