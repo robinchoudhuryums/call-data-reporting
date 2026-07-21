@@ -111,9 +111,22 @@ function readDeptConfigRows_() {
   return out;
 }
 
+// R8-C4: per-execution flag distinguishing "config sheet ABSENT / empty"
+// (the documented INV-54 constants-fallback, regression-safe) from "the
+// sheet read ERRORED" (a transient 'Service Spreadsheets timed out' etc.).
+// Both fall back to constants so the request still serves -- but an ERRORED
+// read means the served payload may be missing real sheet overrides (a
+// sheet-mapped dept loses its QCD queues entirely), and the 30-min report
+// caches would amplify that transient into a half-hour of wrong config.
+// The QCD-embedding cache-put sites consult deptConfigReadFailed_() and
+// skip the put, so the next request (with a healthy read) recomputes.
+var DEPT_CONFIG_READ_FAILED_ = false;
+function deptConfigReadFailed_() { return DEPT_CONFIG_READ_FAILED_; }
+
 /** Sheet reader (the legacy/default source). Always returns an array. */
 function sheetReadDeptConfigRows_() {
   const out = [];
+  DEPT_CONFIG_READ_FAILED_ = false;
   try {
     const ss = openSpreadsheet_();
     const sheet = ss.getSheetByName(SHEETS.DEPT_CONFIG);
@@ -146,7 +159,14 @@ function sheetReadDeptConfigRows_() {
       }
     }
   } catch (e) {
-    // Best-effort: leave `out` empty so constants win.
+    // Best-effort: leave `out` empty so constants win -- but flag the
+    // ERROR (R8-C4) so QCD-embedding cache puts skip pinning this
+    // request's constant-only view for the TTL. Absent-sheet installs
+    // never reach this catch (getSheetByName returning null is handled
+    // above), so pre-setup() behavior is unchanged.
+    DEPT_CONFIG_READ_FAILED_ = true;
+    Logger.log('sheetReadDeptConfigRows_: read errored -- serving constants uncached: '
+      + (e && e.message ? e.message : e));
   }
   return out;
 }

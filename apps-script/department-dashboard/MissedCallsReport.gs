@@ -107,7 +107,11 @@ function getMissedCallsReport(req) {
   data.meta.cacheHit = false;
 
   const json = JSON.stringify(data);
-  if (json.length <= 100000) {
+  if (data.meta && data.meta.sourceUnavailable) {
+    // R8-C1: outage-empty shape (Neon unreachable + no DQE sheet) -- skip
+    // the put so the next request retries instead of serving "no data".
+    Logger.log('MissedCallsReport: DQE source unavailable -- skipping cache put.');
+  } else if (json.length <= 100000) {
     try { cache.put(cacheKey, json, REPORT_CACHE_TTL_SECONDS); }
     catch (e) { Logger.log('MissedCallsReport cache put failed: %s', e); }
   } else {
@@ -232,7 +236,10 @@ function missedReportDataCached_(dept, from, to) {
   const data = computeMissedCallsReport_(dept, from, to, 'roster');
   try {
     const json = JSON.stringify(data);
-    if (json.length <= 100000) cache.put(cacheKey, json, REPORT_CACHE_TTL_SECONDS);
+    // R8-C1: never pin the outage-empty shape (see computeMissedCallsReport_).
+    if (json.length <= 100000 && !(data.meta && data.meta.sourceUnavailable)) {
+      cache.put(cacheKey, json, REPORT_CACHE_TTL_SECONDS);
+    }
   } catch (e) { /* best-effort */ }
   return data;
 }
@@ -458,7 +465,14 @@ function computeMissedCallsReport_(dept, from, to, scope) {
   }
   if (!values) {
     if (!sheet || lastRow < 2) {   // F-35: neon empty AND no sheet to fall back to
-      return emptyMissedReport_(dept, from, to, scope, roster.names.length);
+      // R8-C1: this corner is only reachable on the neon path (the
+      // !neonCapable branch above throws / returns for a missing or empty
+      // sheet before the DAL read), so reaching it means the source was
+      // UNREACHABLE (reachable-empty is trusted, LM2) -- an OUTAGE shape.
+      // Mark it so the callers skip their cache puts.
+      const e = emptyMissedReport_(dept, from, to, scope, roster.names.length);
+      e.meta.sourceUnavailable = true;
+      return e;
     }
     // Read cols 1..AH. Need date (col 2) and agent (col 3) for filtering,
     // K-AC for missed times, AF for abandoned cross-reference.

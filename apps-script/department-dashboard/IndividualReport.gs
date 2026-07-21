@@ -136,8 +136,21 @@ function getIndividualReport(req) {
   // Optional prior-period for same-agent YoY / vs-self comparison.
   // Both dates required if either is supplied; absent = no
   // comparison (legacy behavior, no `priorStats` field in output).
-  const priorFrom = String((req && req.priorFrom) || '').trim();
-  const priorTo   = String((req && req.priorTo)   || '').trim();
+  let priorFrom = String((req && req.priorFrom) || '').trim();
+  let priorTo   = String((req && req.priorTo)   || '').trim();
+  // R8-D3: `priorMode: 'prevPeriod'` resolves the immediately-preceding
+  // same-length window SERVER-side via the canonical computePriorWindow_
+  // (INV-28) instead of trusting a client-resolved copy of the math --
+  // the client copy drifted once already (R8-5: a DST-spanning duration
+  // floor'd one day short). YoY / custom priors stay explicit-date params
+  // (YoY is pure year-minus-one date construction, DST-immune). Explicit
+  // dates win if both are somehow supplied.
+  if (!priorFrom && !priorTo && req && req.priorMode === 'prevPeriod'
+      && typeof computePriorWindow_ === 'function') {
+    const pw = computePriorWindow_(from, to);
+    priorFrom = pw.from;
+    priorTo   = pw.to;
+  }
   if (priorFrom || priorTo) {
     if (!isIsoDate_(priorFrom) || !isIsoDate_(priorTo)) {
       throw new Error('priorFrom/priorTo must be YYYY-MM-DD.');
@@ -201,11 +214,17 @@ function getIndividualReport(req) {
   data.meta.computeMs = Date.now() - t0;
   data.meta.cacheHit = false;
 
-  try {
-    cache.put(cacheKey, JSON.stringify(data), REPORT_CACHE_TTL_SECONDS);
-  } catch (e) {
-    // Big ranges with many agents may exceed cache size; harmless.
-    Logger.log('IndividualReport cache put failed: %s', e);
+  if (data.meta && data.meta.sourceUnavailable) {
+    // R8-C1: an outage-empty shape (Neon unreachable + no sheet) must not
+    // pin under the :neon key -- skip the put so the next request retries.
+    Logger.log('IndividualReport: source unavailable -- skipping cache put.');
+  } else {
+    try {
+      cache.put(cacheKey, JSON.stringify(data), REPORT_CACHE_TTL_SECONDS);
+    } catch (e) {
+      // Big ranges with many agents may exceed cache size; harmless.
+      Logger.log('IndividualReport cache put failed: %s', e);
+    }
   }
 
   logReportUsage_('individual', dept, user, false);
@@ -295,7 +314,16 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
   }
   if (srcRows === null) {
     if (!sheet || lastRow < 2) {   // F-35: neon empty AND no sheet to fall back to
-      return emptyIndividualReport_(dept, from, to, selectedAgents, masterMonthKeys);
+      const e = emptyIndividualReport_(dept, from, to, selectedAgents, masterMonthKeys);
+      // R8-C1: on the neon path this corner means the source was
+      // UNREACHABLE (a reachable-empty read is trusted upstream, LM2) and
+      // there is no sheet -- an OUTAGE shape, not a real "no data". Mark
+      // it so the caller skips the cache put (the Inbound/Direct
+      // unavailable-not-cached discipline); otherwise a transient Neon
+      // blip on a trimmed sheet pins an indistinguishable-from-real empty
+      // report for every viewer of this tuple for the 30-min TTL.
+      if (neonCapable) e.meta.sourceUnavailable = true;
+      return e;
     }
     const range = sheet.getRange(2, 1, lastRow - 1, numCols);
     const values   = range.getValues();

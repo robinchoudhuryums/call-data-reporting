@@ -755,8 +755,14 @@ function getCompanyOverview(req) {
     // serves user B's identity correctly.
   };
 
-  try { cache.put(ovCacheKey, JSON.stringify(result), REPORT_CACHE_TTL_SECONDS); }
-  catch (e) { Logger.log('CompanyOverview cache put failed: %s', e); }
+  if (typeof deptConfigReadFailed_ === 'function' && deptConfigReadFailed_()) {
+    // R8-C4: config read errored -> QCD snapshots / parent map may be
+    // constant-only this request; don't pin the shared blob for the TTL.
+    Logger.log('getCompanyOverview: Dept Config read errored -- skipping cache put.');
+  } else {
+    try { cache.put(ovCacheKey, JSON.stringify(result), REPORT_CACHE_TTL_SECONDS); }
+    catch (e) { Logger.log('CompanyOverview cache put failed: %s', e); }
+  }
 
   return personalizeOverview_(result, user);
 }

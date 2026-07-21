@@ -334,6 +334,19 @@ Batches A+B (the audit's remaining quick-win + correctness tail, same session fa
 | R8-B5 | `missedEnrichQueueOnlyFromInbound_` inlined cell-derived (date, id) tuples into SQL with hand escaping — the one binding-discipline deviation; now bound `(?::date,?)` params | code (MissedCallsReport.gs) |
 | R8-B6 | `mergeDqeDuplicateRows_` interrupted-apply recovery: a crash between the merged-row writes and the deletes used to leave a double-count that a re-run COMPOUNDED; the apply now detects already-merged groups (multiset containment of slot/AD tokens) and deletes leftovers without re-summing — also dedupes byte-identical double-append rows instead of doubling them; counts-only groups stay unverifiable (logged caution) | sheet-repairs-merge tests; docblock in sheetRepairs.js |
 
+Batches C+D (sheet-retirement outage sweep + recurrence-prevention tooling):
+
+| Code | What it fixed / added | Live rule lives in |
+|---|---|---|
+| R8-C1 | IR / Insights / Missed cached the OUTAGE-empty shape (Neon unreachable + no sheet) for the 30-min TTL — the empty return now carries `meta.sourceUnavailable` and every cache-put site skips it (the Inbound/Direct unavailable-not-cached discipline); reachable-empty (LM2) stays cacheable | INV-30 discipline; dal-cutover tests |
+| R8-C2 | `getLatestDataDate` cached the `__none__` negative sentinel after a FAILED neon read with no sheet fallback — negative now caches only when no primary source failed (the F6 discipline) | code (Data.gs); dal-cutover tests |
+| R8-C3 | `insightsQueueHealth_`'s QCD-sheet pre-check is source-aware — with `QCD_READ_SOURCE=neon` a trimmed QCD sheet no longer silently hides Queue health (the F-35 treatment, applied to QCD) | code (InsightsReport.gs); insights-report test |
+| R8-C4 | A THROWING Dept Config sheet read (vs the documented absent-sheet fallback) is now flagged (`deptConfigReadFailed_`) and the four QCD-embedding cache puts (summary / insights / companyOverview / qcdAll) skip pinning that request's constant-only view | INV-54 context; dept-config tests |
+| R8-D1 | Cross-file width tripwires (`cross-file-pins.test.js`): NeonMirror's DQE/QCD read widths + the merge repair's read width extract-and-compare against the Config.gs schema constants — the REP-10/R8-2 drift class now fails CI | tests/unit/cross-file-pins.test.js |
+| R8-D2 | UI_FLAGS registry↔CSS↔markup parity test: every `UI_FLAG_SURFACES` key must have a CSS hide rule and every rule target must exist in the markup/client — missing-rule and stale-target drift now fails CI (the R8-A1 class; a rule targeting the WRONG-but-existing element still needs eyes) | tests/unit/cross-file-pins.test.js |
+| R8-D3 | IR prevPeriod comparison resolves SERVER-side: the client sends `priorMode:'prevPeriod'` and `getIndividualReport` resolves via the canonical `computePriorWindow_` (INV-28) — removes the duplicated client math whose drift caused R8-5; YoY/custom stay explicit dates | INV-49, CLAUDE.md; individual-report tests |
+| R8-D4 | DQEdrilldown's `canonicalize_` gained INV-24's strip+flatten UNION — the verification sidebar now canonicalizes the same names the build does (paren-carrying feed names matching via FLATTEN no longer read as false mismatches) | code (DQEdrilldown.js) |
+
 ---
 
 ## Phases & batches (rollout narrative, not rules)

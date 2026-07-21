@@ -235,3 +235,63 @@ test('LM2: neonDqeRowsUsable_ trusts reachable-empty, falls back only on unreach
   assert.equal(h.call('neonDqeRowsUsable_', []), false, 'plain [] (unreachable/errored) -> fall back to sheet');
   assert.equal(h.call('neonDqeRowsUsable_', null), false, 'null -> fall back');
 });
+
+// --- R8-C1/C2 (audit 2026-07-21): the outage + trimmed-sheet corner ----------
+
+test('R8-C1: Neon unreachable + NO sheet -> outage-empty shape carries meta.sourceUnavailable', function () {
+  install('neon');
+  h.ctx.getDashboardNeonConn_ = function () { return null; };   // outage
+  h.state.spreadsheet = makeFakeSpreadsheet({
+    timeZone: 'America/Chicago',
+    sheets: { 'DO NOT EDIT!': ROSTER },   // DQE sheet trimmed/retired
+  });
+  const r = h.call('computeMissedCallsReport_', 'Alpha', '2026-03-09', '2026-03-15', 'roster');
+  assert.equal(r.meta.sourceUnavailable, true,
+    'outage empty is FLAGGED so callers skip the cache put');
+  assert.equal(r.meta.totalMissed, 0);
+});
+
+test('R8-C1: Neon REACHABLE-empty + no sheet is a real (unflagged, cacheable) empty', function () {
+  install('neon');   // fake conn serves the dataset; ask outside its dates
+  h.state.spreadsheet = makeFakeSpreadsheet({
+    timeZone: 'America/Chicago',
+    sheets: { 'DO NOT EDIT!': ROSTER },
+  });
+  const r = h.call('computeMissedCallsReport_', 'Alpha', '2030-01-01', '2030-01-07', 'roster');
+  assert.ok(!r.meta.sourceUnavailable, 'reachable-empty (LM2 trusted) is NOT flagged');
+  assert.equal(r.meta.totalMissed, 0);
+});
+
+test('R8-C2: getLatestDataDate does NOT cache the negative sentinel after a failed neon read', function () {
+  install('neon');
+  h.ctx.neonGetMaxDqeDate_ = function () { return null; };   // neon errored/empty
+  h.state.spreadsheet = makeFakeSpreadsheet({
+    timeZone: 'America/Chicago',
+    sheets: { 'DO NOT EDIT!': ROSTER },   // no DQE sheet to fall back to
+  });
+  h.state.cache.clear();
+  const out = h.call('getLatestDataDate');
+  assert.equal(out, null);
+  let negativeCached = false;
+  h.state.cache.forEach(function (v, k) {
+    if (String(k).indexOf('latestDate:') === 0) negativeCached = true;
+  });
+  assert.equal(negativeCached, false,
+    'no latestDate: entry pinned -- next request retries the recovered source');
+  delete h.ctx.neonGetMaxDqeDate_;
+});
+
+test('R8-C2: the sheet source still caches its negative (empty install, no outage involved)', function () {
+  install('sheet');
+  h.state.spreadsheet = makeFakeSpreadsheet({
+    timeZone: 'America/Chicago',
+    sheets: { 'DO NOT EDIT!': ROSTER },   // no DQE sheet at all
+  });
+  h.state.cache.clear();
+  assert.equal(h.call('getLatestDataDate'), null);
+  let cachedNegative = 0;
+  h.state.cache.forEach(function (v, k) {
+    if (String(k).indexOf('latestDate:') === 0) cachedNegative++;
+  });
+  assert.equal(cachedNegative, 1, 'sheet-source empty install keeps the cheap negative cache');
+});

@@ -7441,7 +7441,13 @@
     btn.innerHTML = DS_EQ_HTML_ + 'Loading…';
 
     const req = { department: dept, from: from, to: to, agents: agents };
-    if (prior) { req.priorFrom = prior.from; req.priorTo = prior.to; }
+    // R8-D3: prevPeriod sends the MODE and lets the server resolve the
+    // window via the canonical computePriorWindow_ (INV-28) -- the client
+    // resolver stays for the form HINT only (its math drifted once, R8-5).
+    // YoY/custom keep explicit dates (YoY construction is DST-immune).
+    const __irCmpMode = $('ir-compare-mode') ? $('ir-compare-mode').value : 'none';
+    if (__irCmpMode === 'prevPeriod') { req.priorMode = 'prevPeriod'; }
+    else if (prior) { req.priorFrom = prior.from; req.priorTo = prior.to; }
 
     const __rtok = ++reportReqSeq_.ir;   // F10 stale-response guard
     const __sig = reportSig_(req);   // D1b keep-last-good key
@@ -7743,7 +7749,10 @@
     irSetResultsStatus('loading', 'Refreshing report…');
 
     const req = { department: dept, from: from, to: to, agents: newAgents };
-    if (prior && !prior.error) { req.priorFrom = prior.from; req.priorTo = prior.to; }
+    // R8-D3: prevPeriod resolves server-side (see runIrReport). keepCustom
+    // keeps its explicit custom dates.
+    if (!keepCustom && popMode === 'prevPeriod') { req.priorMode = 'prevPeriod'; }
+    else if (prior && !prior.error) { req.priorFrom = prior.from; req.priorTo = prior.to; }
 
     const __rtok = ++reportReqSeq_.ir;   // F10 stale-response guard
     const __sig = reportSig_(req);   // D1b keep-last-good key

@@ -194,6 +194,14 @@ function getInsightsReport(req) {
   // (dept, range, agents, prior) tuple for the full 30-min TTL.
   if (data.queueHealth && data.queueHealth.error) {
     Logger.log('InsightsReport: queueHealth errored -- skipping cache put so the next request retries.');
+  } else if (data.meta && data.meta.sourceUnavailable) {
+    // R8-C1: outage-empty shape (Neon unreachable + no DQE sheet) -- never
+    // pin it for the TTL; the next request retries the live source.
+    Logger.log('InsightsReport: DQE source unavailable -- skipping cache put.');
+  } else if (typeof deptConfigReadFailed_ === 'function' && deptConfigReadFailed_()) {
+    // R8-C4: Queue health was built with constant-only config after a
+    // failed Dept Config read -- serve it, don't pin it.
+    Logger.log('InsightsReport: Dept Config read errored -- skipping cache put.');
   } else {
     try { cache.put(cacheKey, JSON.stringify(data), REPORT_CACHE_TTL_SECONDS); }
     catch (e) { Logger.log('InsightsReport cache put failed: %s', e); }
@@ -330,8 +338,13 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
   }
   if (srcRows === null) {
     if (!sheet || lastRow < 2) {   // F-35: neon empty AND no sheet to fall back to
-      return emptyInsights_(dept, from, to, priorFrom, priorTo, selectedAgents,
-                            monthKeys, priorIsCustom);
+      const e = emptyInsights_(dept, from, to, priorFrom, priorTo, selectedAgents,
+                               monthKeys, priorIsCustom);
+      // R8-C1: neon-path corner = source OUTAGE (reachable-empty is trusted
+      // upstream, LM2), not real data -- mark so the caller skips the cache
+      // put (the RPT-3 / Inbound unavailable-not-cached discipline).
+      if (neonCapable) e.meta.sourceUnavailable = true;
+      return e;
     }
     const range = sheet.getRange(2, 1, lastRow - 1, numCols);
     const values   = range.getValues();
@@ -621,8 +634,17 @@ function insightsQueueHealth_(dept, from, to, priorFrom, priorTo) {
     // -- treat it like unmapped (null, hide). Only an UNEXPECTED throw with the
     // sheet present is surfaced as {error:true} below, so a real data problem
     // isn't masked as a normal empty.
-    const _ss = (typeof openSpreadsheet_ === 'function') ? openSpreadsheet_() : null;
-    if (_ss && !_ss.getSheetByName('QCD Historical Data')) return null;
+    // R8-C3 (the F-35 treatment, applied to QCD): hard-require the sheet
+    // only when it IS the read source. With QCD_READ_SOURCE=neon,
+    // computeQcdReport_ reads qcd_history and the sheet may be trimmed --
+    // the unconditional check silently hid Queue health for every dept
+    // despite Neon being fully populated (and this is managers' ONLY queue
+    // surface since the QCD retirement).
+    const _qcdSrc = (typeof getQcdReadSource_ === 'function') ? getQcdReadSource_() : 'sheet';
+    if (_qcdSrc !== 'neon') {
+      const _ss = (typeof openSpreadsheet_ === 'function') ? openSpreadsheet_() : null;
+      if (_ss && !_ss.getSheetByName('QCD Historical Data')) return null;
+    }
     // Always separate sub-queues (seq #5 semantics): children are shown as
     // their own lines/rows + EXCLUDED from the dept total. The user-facing
     // "Include sub-queues" toggle was retired here too.

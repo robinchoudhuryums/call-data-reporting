@@ -133,10 +133,27 @@ function getDQEDrilldownRows(params) {
       return ROSTER_CANONICAL.aliasMap[rawName];
     }
     if (ROSTER_CANONICAL.canonicalSet[rawName]) return rawName;
-    var stripped = String(rawName).replace(/\([^)]*\)/g, '').replace(/\s+/g, ' ').trim();
-    if (!stripped) return rawName;
-    var matches = ROSTER_CANONICAL.strippedMap[stripped];
-    if (matches && matches.length === 1) return matches[0];
+    // R8-D4: mirror the build's FULL strip+flatten UNION (INV-24), not just
+    // the strip key. The build's canonicalizeAgentName unions candidates
+    // from BOTH normalized forms of the incoming name and canonicalizes on
+    // a unique roster match; this copy had only the strip form, so a
+    // paren-carrying feed name whose roster match is via FLATTEN (feed
+    // "Ana (Maria) Lopez" vs roster "Ana Maria Lopez") canonicalized in
+    // the build but NOT here -- the verification sidebar reported false
+    // "no matching rows" for exactly the agents F24 was written to fix.
+    var stripped  = String(rawName).replace(/\([^)]*\)/g, '').replace(/\s+/g, ' ').trim();
+    var flattened = String(rawName).replace(/[()]/g, '').replace(/\s+/g, ' ').trim();
+    var keys = [stripped, flattened];
+    var seen = {};
+    var cands = [];
+    for (var k = 0; k < keys.length; k++) {
+      var list = keys[k] && ROSTER_CANONICAL.strippedMap[keys[k]];
+      if (!list) continue;
+      for (var j = 0; j < list.length; j++) {
+        if (!seen[list[j]]) { seen[list[j]] = true; cands.push(list[j]); }
+      }
+    }
+    if (cands.length === 1) return cands[0];
     return rawName;
   }
 

@@ -260,3 +260,27 @@ test('R8-3: sheetDeactivateDeptConfig_ writes only the Active cell (no whole-blo
   assert.equal(grid[1][8], '=HYPERLINK("http://evil","x")',
     'formula-shaped notes cell never re-written');
 });
+
+// --- R8-C4 (audit 2026-07-21): errored sheet read is flagged, absent is not --
+test('R8-C4: a THROWING config read serves constants and sets deptConfigReadFailed_', function () {
+  setConfig([row({ dept: 'CSR', qcd: 'A_Q_Custom' })]);
+  const sheet = h.state.spreadsheet._sheet('Dept Config');
+  sheet.getRange = function () { throw new Error('Service Spreadsheets timed out'); };
+  h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
+  // Falls back to the constant (regression-safe serve)...
+  deepEqual(h.call('getDeptQcdQueues_', 'CSR'), h.consts.DEPT_QCD_QUEUES.CSR.slice());
+  // ...but the failure is FLAGGED so QCD-embedding cache puts skip pinning
+  // this request's constant-only view for the TTL.
+  assert.equal(h.call('deptConfigReadFailed_'), true);
+  // A healthy read resets the flag (and serves the sheet override).
+  setConfig([row({ dept: 'CSR', qcd: 'A_Q_Custom' })]);
+  deepEqual(h.call('getDeptQcdQueues_', 'CSR'), ['A_Q_Custom']);
+  assert.equal(h.call('deptConfigReadFailed_'), false);
+});
+
+test('R8-C4: an ABSENT Dept Config sheet is the documented fallback, NOT a failure', function () {
+  setConfig(null);   // no sheet at all (pre-setup() install)
+  deepEqual(h.call('getDeptQcdQueues_', 'CSR'), h.consts.DEPT_QCD_QUEUES.CSR.slice());
+  assert.equal(h.call('deptConfigReadFailed_'), false,
+    'pre-setup installs stay cacheable (byte-identical pre-feature behavior)');
+});
