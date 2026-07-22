@@ -360,7 +360,12 @@ function computeQcdAllDepartments_(from, to) {
     return new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]), 12);
   };
   const fmt = function (d) { return Utilities.formatDate(d, TZ, 'MMM d, yyyy'); };
-  const dateLabel = fmt(parseIso_(from)) + ' - ' + fmt(parseIso_(to));
+  // R11-B4: a single-day range labels as ONE date -- "Jul 20, 2026", not
+  // "Jul 20, 2026 - Jul 20, 2026" (feeds the web header AND the email
+  // subject; the report defaults to a single day, so this is the usual case).
+  const dateLabel = (from === to)
+    ? fmt(parseIso_(from))
+    : fmt(parseIso_(from)) + ' - ' + fmt(parseIso_(to));
 
   const data = {
     meta:        { from: from, to: to, cacheHit: false, computeMs: Date.now() - t0, deptCount: depts.length },

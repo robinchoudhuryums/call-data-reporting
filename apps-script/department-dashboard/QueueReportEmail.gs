@@ -307,7 +307,10 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
   const esc = function (v) { return escapeHtmlServer_(String(v == null ? '' : v)); };
   const depts = (data && data.depts) || [];
   const gt = (data && data.grandTotals) || {};
-  const mono = "'Courier New',monospace";
+  // R11-B4: labels/data were 'Courier New' mono (the only mono most mail
+  // clients can render) -- owner disliked the look; Arial-based styling now,
+  // matching the app's tone as closely as email-safe fonts allow.
+  const sans = 'Arial,Helvetica,sans-serif';
   const C = {
     bad: '#b23a2c', watch: '#c66b4b', good: '#3d9476',
     ink: '#101418', mut: '#606872', line: '#e2e8ee', rowline: '#eef2f6',
@@ -324,14 +327,38 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
     if (Number(viol) > 0 || Number(pct) >= 5) return { label: 'WATCH', color: C.watch };
     return { label: 'HEALTHY', color: C.good };
   };
-  const barW = function (pct) { return Math.max(0, Math.min(100, Math.round((Number(pct) || 0) * 5))); };
-  const barHtml = function (pct, pctStr, barColor, textColor, bold) {
-    const w = barW(pct);
+  // R11-B4 (owner-confirmed): share-of-total SPLIT bar (green answered /
+  // red abandoned), replacing the old 0-20%-scaled fill where a 50%-abandon
+  // day clamped to a full orange bar that contradicted its own number.
+  // Mirrors the web report's qcdDailyBarCell_; the red softens when the row
+  // passes the 5% standard (the R10-4 convention).
+  const barHtml = function (row, pctStr, textColor, bold) {
+    const total = Number(row.totalCalls) || 0;
+    const abPct = Number(row.abandonedPct) || 0;
+    if (total <= 0) {
+      return '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"><tr>'
+        + '<td style="padding:0;"><table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:' + C.track + ';border-radius:5px;"><tr>'
+        +   '<td style="height:8px;line-height:8px;font-size:0;">&nbsp;</td></tr></table></td>'
+        + '<td width="42" align="right" style="font:11px ' + sans + ';color:' + C.mut + ';padding-left:6px;">&ndash;</td>'
+        + '</tr></table>';
+    }
+    const ansPct = row.totalAnswered != null
+      ? Math.max(0, Math.min(100, (Number(row.totalAnswered) || 0) / total * 100))
+      : Math.max(0, 100 - abPct);
+    let abW = Math.round(abPct);
+    if (abPct > 0 && abW < 2) abW = 2;   // a real abandon stays visible
+    let ansW = Math.min(100 - abW, Math.round(ansPct));
+    const restW = Math.max(0, 100 - ansW - abW);
+    const redC = abPct >= 5 ? C.bad : '#e8c4b2';   // full red only past the 5% standard
+    let cells = '';
+    if (ansW > 0)  cells += '<td width="' + ansW + '%" style="background:' + C.good + ';height:8px;line-height:8px;font-size:0;">&nbsp;</td>';
+    if (abW > 0)   cells += '<td width="' + abW + '%" style="background:' + redC + ';height:8px;line-height:8px;font-size:0;">&nbsp;</td>';
+    if (restW > 0) cells += '<td width="' + restW + '%" style="background:' + C.track + ';height:8px;line-height:8px;font-size:0;">&nbsp;</td>';
     return '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"><tr>'
       + '<td style="padding:0;"><table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:' + C.track + ';border-radius:5px;"><tr>'
-      +   '<td width="' + w + '%" style="background:' + barColor + ';height:8px;line-height:8px;font-size:0;border-radius:5px;">&nbsp;</td><td>&nbsp;</td>'
+      +   cells
       + '</tr></table></td>'
-      + '<td width="42" align="right" style="font:' + (bold ? 'bold ' : '') + '11px ' + mono + ';color:' + textColor + ';padding-left:6px;">' + esc(pctStr) + '</td>'
+      + '<td width="42" align="right" style="font:' + (bold ? 'bold ' : '') + '11px ' + sans + ';color:' + textColor + ';padding-left:6px;">' + esc(pctStr) + '</td>'
       + '</tr></table>';
   };
   // A dept's report lines: its queues[] when present, else the dept total as one.
@@ -382,28 +409,15 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
   const preheader = '<div style="display:none;max-height:0;overflow:hidden;opacity:0;mso-hide:all;'
     + 'font-size:1px;line-height:1px;color:' + C.page + ';">' + esc(preheadTxt) + '</div>';
 
-  // ---- verdict alert ----
-  const alertHtml = overCount
-    ? ('<tr><td style="padding:18px 26px 0;"><table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" '
-      +   'style="background:' + C.alertBg + ';border:1px solid ' + C.alertB + ';border-radius:10px;"><tr>'
-      + '<td style="padding:14px 16px;font:400 14px/1.5 Arial,sans-serif;color:' + C.alertInk + ';">'
-      + '<strong>&#9873; ' + overCount + ' queue' + (overCount === 1 ? '' : 's') + ' over the 5% line.</strong><br>'
-      + '<strong>' + esc(offenders[0].queue) + '</strong> hit <strong>' + esc(offenders[0].pctStr) + '</strong> &mdash; '
-      +   esc(String(offenders[0].viol)) + ' violation' + (offenders[0].viol === 1 ? '' : 's') + '.'
-      + (overCount > 1 ? ' <strong>' + esc(offenders[1].queue) + '</strong> hit <strong>' + esc(offenders[1].pctStr) + '</strong>.' : '')
-      + ' All other queues held under 5%.'
-      + '</td></tr></table></td></tr>')
-    : ('<tr><td style="padding:18px 26px 0;"><table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" '
-      +   'style="background:' + C.okBg + ';border:1px solid ' + C.okB + ';border-radius:10px;"><tr>'
-      + '<td style="padding:14px 16px;font:400 14px/1.5 Arial,sans-serif;color:' + C.okInk + ';">'
-      + '<strong>&#10003; All queues held under the 5% line.</strong></td></tr></table></td></tr>');
+  // R11-B4 (owner): the verdict alert banner is RETIRED -- the KPI tiles +
+  // per-row color already carry it. (offenders still feed the preheader.)
 
   // ---- KPI row ----
   const kpi = function (label, value, bg, bd, labelColor, valColor, pad) {
     return '<td class="kpi" width="25%" valign="top" style="' + (pad || '') + '">'
       + '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:' + bg + ';border:1px solid ' + bd + ';border-radius:10px;"><tr>'
       + '<td class="kpi-cell" style="padding:12px 14px;">'
-      + '<div style="font:9px ' + mono + ';letter-spacing:1px;text-transform:uppercase;color:' + labelColor + ';">' + esc(label) + '</div>'
+      + '<div style="font:600 9px ' + sans + ';letter-spacing:0.8px;text-transform:uppercase;color:' + labelColor + ';">' + esc(label) + '</div>'
       + '<div style="font:bold 26px Arial,sans-serif;color:' + valColor + ';padding-top:2px;">' + esc(value) + '</div>'
       + '</td></tr></table></td>';
   };
@@ -420,39 +434,39 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
 
   // ---- table (worst-first sections) ----
   let tbl = '<tr style="background:' + C.headbg + ';">'
-    + '<td style="padding:9px 12px;font:9px ' + mono + ';letter-spacing:1px;text-transform:uppercase;color:#8a97a4;">Queue</td>'
-    + '<td align="right" style="padding:9px 8px;font:9px ' + mono + ';letter-spacing:1px;text-transform:uppercase;color:#8a97a4;">Total</td>'
-    + '<td width="150" style="padding:9px 8px;font:9px ' + mono + ';letter-spacing:1px;text-transform:uppercase;color:#8a97a4;">Abandoned %</td>'
-    + '<td align="right" style="padding:9px 12px;font:9px ' + mono + ';letter-spacing:1px;text-transform:uppercase;color:#8a97a4;">Viol</td></tr>';
+    + '<td style="padding:9px 12px;font:600 9px ' + sans + ';letter-spacing:0.8px;text-transform:uppercase;color:#8a97a4;">Queue</td>'
+    + '<td align="right" style="padding:9px 8px;font:600 9px ' + sans + ';letter-spacing:0.8px;text-transform:uppercase;color:#8a97a4;">Total</td>'
+    + '<td width="150" style="padding:9px 8px;font:600 9px ' + sans + ';letter-spacing:0.8px;text-transform:uppercase;color:#8a97a4;">Abandoned %</td>'
+    + '<td align="right" style="padding:9px 12px;font:600 9px ' + sans + ';letter-spacing:0.8px;text-transform:uppercase;color:#8a97a4;">Viol</td></tr>';
   ordered.forEach(function (d) {
     const dt = tierOf((d.totals || {}).abandonedPct, (d.totals || {}).violations);
     tbl += '<tr><td colspan="4" style="padding:9px 12px 3px;font:bold 13px Arial,sans-serif;color:' + C.ink + ';border-top:1px solid ' + C.rowline + ';">'
-      + esc(d.dept) + ' &nbsp;<span style="font:10px ' + mono + ';color:' + dt.color + ';">' + dt.label + '</span></td></tr>';
+      + esc(d.dept) + ' &nbsp;<span style="font:10px ' + sans + ';color:' + dt.color + ';">' + dt.label + '</span></td></tr>';
     deptQueues(d).forEach(function (q) {
       const pct = Number(q.abandonedPct) || 0;
       const t = tierOf(pct, q.violations);
       const pctStr = q.abandonedPctStr || pct.toFixed(1) + '%';
       const viol = Number(q.violations) || 0;
       tbl += '<tr>'
-        + '<td style="padding:6px 12px;font:12px ' + mono + ';color:' + C.ink + ';border-top:1px solid ' + C.rowline + ';">' + esc(q.queue) + '</td>'
-        + '<td align="right" style="padding:6px 8px;font:12px ' + mono + ';color:' + C.ink + ';border-top:1px solid ' + C.rowline + ';">' + esc(q.totalCalls) + '</td>'
-        + '<td style="padding:6px 8px;border-top:1px solid ' + C.rowline + ';">' + barHtml(pct, pctStr, t.color, pct >= 5 ? t.color : C.mut, pct >= 5) + '</td>'
-        + '<td align="right" style="padding:6px 12px;font:' + (viol > 0 ? 'bold ' : '') + '12px ' + mono + ';color:' + (viol > 0 ? t.color : C.mut) + ';border-top:1px solid ' + C.rowline + ';">' + esc(String(viol)) + '</td>'
+        + '<td style="padding:6px 12px;font:12px ' + sans + ';color:' + C.ink + ';border-top:1px solid ' + C.rowline + ';">' + esc(q.queue) + '</td>'
+        + '<td align="right" style="padding:6px 8px;font:12px ' + sans + ';color:' + C.ink + ';border-top:1px solid ' + C.rowline + ';">' + esc(q.totalCalls) + '</td>'
+        + '<td style="padding:6px 8px;border-top:1px solid ' + C.rowline + ';">' + barHtml(q, pctStr, pct >= 5 ? t.color : C.mut, pct >= 5) + '</td>'
+        + '<td align="right" style="padding:6px 12px;font:' + (viol > 0 ? 'bold ' : '') + '12px ' + sans + ';color:' + (viol > 0 ? t.color : C.mut) + ';border-top:1px solid ' + C.rowline + ';">' + esc(String(viol)) + '</td>'
         + '</tr>';
     });
   });
   const gTier = tierOf(gPct, gViol);
   tbl += '<tr>'
     + '<td style="padding:9px 12px;font:bold 12px Arial,sans-serif;color:' + C.ink + ';border-top:2px solid ' + C.ink + ';">Company total</td>'
-    + '<td align="right" style="padding:9px 8px;font:bold 12px ' + mono + ';color:' + C.ink + ';border-top:2px solid ' + C.ink + ';">' + esc(gTotal) + '</td>'
-    + '<td style="padding:9px 8px;border-top:2px solid ' + C.ink + ';">' + barHtml(gPct, (gt.abandonedPctStr || gPct.toFixed(1) + '%'), gTier.color, gPct >= 5 ? gTier.color : C.mut, true) + '</td>'
-    + '<td align="right" style="padding:9px 12px;font:bold 12px ' + mono + ';color:' + (gViol > 0 ? gTier.color : C.mut) + ';border-top:2px solid ' + C.ink + ';">' + esc(gViol) + '</td>'
+    + '<td align="right" style="padding:9px 8px;font:bold 12px ' + sans + ';color:' + C.ink + ';border-top:2px solid ' + C.ink + ';">' + esc(gTotal) + '</td>'
+    + '<td style="padding:9px 8px;border-top:2px solid ' + C.ink + ';">' + barHtml({ totalCalls: gTotal, totalAnswered: gAns, abandonedPct: gPct }, (gt.abandonedPctStr || gPct.toFixed(1) + '%'), gPct >= 5 ? gTier.color : C.mut, true) + '</td>'
+    + '<td align="right" style="padding:9px 12px;font:bold 12px ' + sans + ';color:' + (gViol > 0 ? gTier.color : C.mut) + ';border-top:2px solid ' + C.ink + ';">' + esc(gViol) + '</td>'
     + '</tr>';
 
   const tableBlock = depts.length
     ? ('<tr><td style="padding:18px 26px 6px;"><table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border:1px solid ' + C.line + ';border-radius:10px;border-collapse:separate;overflow:hidden;">'
       + tbl + '</table>'
-      + '<div style="font:10px ' + mono + ';color:#9aa6b2;padding:8px 2px 0;">Depts sorted worst-first &middot; bars scale to the 5% threshold &middot; full columns (Ans/Longest/Avg) live in the dashboard.</div>'
+      + '<div style="font:10px ' + sans + ';color:#9aa6b2;padding:8px 2px 0;">Depts sorted worst-first &middot; bars show answered (green) vs abandoned (red) share of calls &middot; full columns (Ans/Longest/Avg) live in the dashboard.</div>'
       + '</td></tr>')
     : '<tr><td style="padding:18px 26px 6px;font:400 14px Arial,sans-serif;color:' + C.mut + ';">No queue activity recorded for this day.</td></tr>';
 
@@ -476,12 +490,11 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
     + '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="600" class="wrap" style="width:600px;max-width:600px;background:#ffffff;border-radius:14px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;">'
     // header
     + '<tr><td style="padding:22px 26px 18px;border-bottom:1px solid ' + C.line + ';">'
-    +   '<div style="font:11px ' + mono + ';letter-spacing:2px;text-transform:uppercase;color:#8a97a4;">Call Data &middot; Daily report</div>'
+    +   '<div style="font:600 11px ' + sans + ';letter-spacing:1.5px;text-transform:uppercase;color:#8a97a4;">Call Data &middot; Daily report</div>'
     +   '<div style="font:bold 23px Arial,sans-serif;color:' + C.ink + ';letter-spacing:-0.4px;padding-top:4px;">Daily Call Queue Report</div>'
     +   '<div style="font:400 13px Arial,sans-serif;color:' + C.mut + ';padding-top:3px;">' + dateLbl + ' &middot; all departments</div>'
     + '</td></tr>'
     + previewBar
-    + alertHtml
     + kpiRow
     + tableBlock
     + ctaBlock

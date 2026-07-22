@@ -970,6 +970,13 @@
         window.addEventListener('resize', apply);
       }
     })();
+    // R11-B6: the missed chart-row's grid-column transition (bucket drill
+    // open/close) changes the chart column's width -- re-measure once the
+    // 420ms transition settles so the canvas tracks its real slot.
+    var missedRowEl = $('dept-missed-chart-row');
+    if (missedRowEl) missedRowEl.addEventListener('transitionend', function (e) {
+      if (e.propertyName === 'grid-template-columns') deptMissedResize_();
+    });
     // R9-2: the one-click CSV icon became an Export dropdown (the Insights
     // toolbar convention). #csv-export-btn is the WRAP now (id kept so the
     // existing hidden-until-data gating shows/hides the same element);
@@ -1059,6 +1066,8 @@
     initOverviewLauncher_();
     initMetricGlossary_();
     initCountUp_();   // R10-3: KPI count-up load animation (reduced-motion aware)
+    ovWireTrendCollapse_();   // R11-B5: collapsible Overview chart band
+    initChartHelp_();         // R11-B8: chart-tips popovers
     initGlossTooltip_();
     initDateRangeLinks_();
 
@@ -2021,6 +2030,39 @@
       ovCardPeriod = p;
       try { localStorage.setItem(OV_CARD_PERIOD_KEY_, p); } catch (e2) { /* best-effort */ }
       if (ovLastData) { ovRenderUserHero_(ovLastData); ovRenderTiles_(ovLastData); }
+    });
+  }
+
+  // R11-B5: collapse/expand the Overview trend band (chart + its controls),
+  // persisted per user, so the dept cards can take the whole screen. The
+  // band's markup keeps its DOM (charts aren't destroyed) -- CSS hides it via
+  // .ov-trend-collapsed; expanding re-measures the chart (the hidden-render
+  // gotcha) with a double-rAF resize.
+  var OV_TREND_COLLAPSE_KEY_ = 'cdr.ov.trendcollapsed';
+  function ovWireTrendCollapse_() {
+    var btn = $('ov-trend-collapse-btn');
+    var col = document.querySelector('.ov-trend-col');
+    if (!btn || !col) return;
+    var apply = function (collapsed) {
+      col.classList.toggle('ov-trend-collapsed', collapsed);
+      btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+      var lbl = btn.querySelector('.ov-trend-collapse-lbl');
+      var chev = btn.querySelector('.ov-trend-collapse-chev');
+      if (lbl) lbl.textContent = collapsed ? 'Show trend chart' : 'Hide trend chart';
+      if (chev) chev.innerHTML = collapsed ? '&#9656;' : '&#9662;';
+      if (!collapsed && typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(function () { requestAnimationFrame(function () {
+          try { if (ovChartInstance) ovChartInstance.resize(); } catch (e) {}
+        }); });
+      }
+    };
+    var saved = false;
+    try { saved = localStorage.getItem(OV_TREND_COLLAPSE_KEY_) === '1'; } catch (e) {}
+    apply(saved);
+    btn.addEventListener('click', function () {
+      var next = !col.classList.contains('ov-trend-collapsed');
+      try { localStorage.setItem(OV_TREND_COLLAPSE_KEY_, next ? '1' : ''); } catch (e) {}
+      apply(next);
     });
   }
 
@@ -4103,6 +4145,69 @@
     obs.observe(document.body, { childList: true, subtree: true });
   }
 
+  // -- R11-B8: chart-tips popover -----------------------------------------
+  // A small circled-? on each chart toolbar (static buttons carrying
+  // data-charthelp) opens a popover listing that chart's ACTUAL interactions
+  // -- the spotlight/pin/drill shortcuts are otherwise invisible. One shared
+  // popover element, delegated wiring, outside-click/Escape closes.
+  var CHART_HELP_ = {
+    overview: [
+      'Hover a department card (or a legend name) to spotlight its line.',
+      'Click a card to solo its line; Shift-click more cards to compare several. Click the solo card again to release.',
+      'Click a point on a line to open that department & day in My Department.',
+      'Zoom toggles the y-axis between the full 0–100% scale and a fit to the data.',
+      '30d / 60d / 90d / YTD change the chart window; the sub-queues box shows or hides dashed child-queue lines.',
+    ],
+    insTrend: [
+      'Tabs switch the metric; Monthly / Daily switches the axis.',
+      'Line ⇄ Calendar re-renders the daily series as a month grid (windows of 14+ days).',
+      'Click a data point — or a calendar day — to reload the whole report scoped to that month or day.',
+      'On the Abd % tab, click a legend entry to pin/isolate that queue’s line; hover previews.',
+      '"Show data labels" prints the values on the chart.',
+    ],
+    ir: [
+      'With 2+ agents, click a legend chip to isolate that agent across all charts; click again to release.',
+      'Shift-click a chip to hide/show that agent’s series entirely.',
+      'Hovering a chip previews the spotlight without pinning.',
+      'ALL stacks the Volume, Efficiency and Duration charts together.',
+    ],
+    missed: [
+      'Click a bar to open that half-hour’s rings in the detail panel beside the chart.',
+      'Solid red bars contain abandoned calls; lighter bars had rings but no abandons.',
+      'The outlined bar marks the peak missed-call window.',
+      'Timestamps in the per-agent cards below carry a ↳ path drill for abandoned rings.',
+    ],
+  };
+  function initChartHelp_() {
+    var pop = null;
+    var close = function () { if (pop) { pop.remove(); pop = null; } };
+    document.addEventListener('click', function (e) {
+      var btn = e.target.closest && e.target.closest('.chart-help-btn');
+      if (!btn) {
+        if (pop && !pop.contains(e.target)) close();
+        return;
+      }
+      e.stopPropagation();
+      if (pop) { close(); return; }   // second click on the ? closes
+      var lines = CHART_HELP_[btn.getAttribute('data-charthelp')] || [];
+      if (!lines.length) return;
+      pop = document.createElement('div');
+      pop.className = 'chart-help-pop';
+      pop.setAttribute('role', 'dialog');
+      pop.innerHTML = '<div class="chp-title">Chart tips</div><ul>'
+        + lines.map(function (l) { return '<li>' + l + '</li>'; }).join('') + '</ul>';
+      document.body.appendChild(pop);
+      var r = btn.getBoundingClientRect();
+      var w = Math.min(340, window.innerWidth - 24);
+      pop.style.width = w + 'px';
+      pop.style.top = (r.bottom + 6) + 'px';
+      pop.style.left = Math.max(12, Math.min(r.left, window.innerWidth - w - 12)) + 'px';
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') close();
+    });
+  }
+
   // -- R10-3: count-up load animation on KPI values -----------------------
   // Purely aesthetic (owner: "if this would impact performance or function,
   // disregard" -- so every guard fails to the plain static value). Newly
@@ -4752,11 +4857,19 @@
         },
         scales: {
           // Time buckets on X (workday reads left->right); every other label
-          // shown so 18 buckets don't crowd the half-width column.
+          // shown so 18 buckets don't crowd the column. R11-B6: labels render
+          // COMPACT ("8AM", not "8:00 AM") so they stay legible at any width.
           x: {
             ticks: {
               font: { size: 10 }, maxRotation: 0, autoSkip: false,
-              callback: function (v, i) { return i % 2 === 0 ? this.getLabelForValue(v) : ''; }
+              callback: function (v, i) {
+                if (i % 2 !== 0) return '';
+                var lbl = String(this.getLabelForValue(v) || '');
+                // "8:00 AM" -> "8AM"; "8:30 AM" -> "8:30" (half-hours are
+                // skipped by the modulo above, but keep the branch safe).
+                return /:00\s/.test(lbl) ? lbl.replace(':00', '').replace(/\s+/, '')
+                                         : lbl.replace(/\s*[AP]M$/i, '');
+              }
             },
             grid: { display: false }
           },
@@ -4778,7 +4891,13 @@
   // legible view).
   const MISSED_CHART_MODE_KEY = 'cdr.missed.chartmode';
   function missedChartMode_() {
-    try { return localStorage.getItem(MISSED_CHART_MODE_KEY) === 'radar' ? 'radar' : 'bars'; }
+    // R11-B7: the Bars/Radar toggle is admin-only -- a manager with a saved
+    // 'radar' pref (from before the fence) would otherwise be stuck in radar
+    // with no way back, so non-admins always resolve to bars.
+    try {
+      if (typeof USER !== 'undefined' && USER && USER.role !== 'admin') return 'bars';
+      return localStorage.getItem(MISSED_CHART_MODE_KEY) === 'radar' ? 'radar' : 'bars';
+    }
     catch (e) { return 'bars'; }
   }
   function missedChartCfg_(chart, onBucketClick) {
@@ -5645,11 +5764,17 @@
         try {
           if (!deptMissedChart) return;
           deptMissedChart.resize();
-          if ((deptMissedChart.width === 0 || deptMissedChart.height === 0)
+          // R11-B6: a chart that settled markedly NARROWER than its wrap
+          // (the stuck-square prod symptom -- built mid-transition and never
+          // recovered) counts as broken too, not just zero-size.
+          var wrapEl = document.querySelector('#dept-missed-chart-wrap .missed-chart-hwrap');
+          var tooNarrow = !!(wrapEl && wrapEl.clientWidth > 0
+            && deptMissedChart.width < wrapEl.clientWidth * 0.7);
+          if ((deptMissedChart.width === 0 || deptMissedChart.height === 0 || tooNarrow)
               && deptMissedLastData && !deptMissedRebuilt_) {
             deptMissedRebuilt_ = true;   // one retry -- never loop
             deptMissedDrawChart_(deptMissedLastData);
-          } else if (deptMissedChart.width > 0 && deptMissedChart.height > 0) {
+          } else if (deptMissedChart.width > 0 && deptMissedChart.height > 0 && !tooNarrow) {
             deptMissedRebuilt_ = false;  // healthy: re-arm for the next render
           }
         } catch (e) { /* chart destroyed mid-settle */ }
@@ -15089,6 +15214,76 @@
     return '<td class="num' + benchValueCls_('abandoned %', txt) + '">' + txt + '</td>';
   }
 
+  // -- R11-B11: shared click-to-sort machinery for the report tables -------
+  // Static theads carry data-sort="<field>" (the special "__abdPct" computes
+  // abandoned/calls). Default order (owner-confirmed) is the IMPACT score:
+  // (100 - answer%) x calls, descending -- worst-AND-busiest first, so a
+  // busy 70%-answered queue outranks a one-call 0% row. A column click
+  // overrides with a plain per-column sort (second click flips direction);
+  // renderers re-paint their tbody from the re-sorted cached rows.
+  var srtState_ = {};      // tbodyId -> { key: ''|field, dir: 'asc'|'desc' } ('' = impact default)
+  var srtRegistry_ = {};   // tbodyId -> { rows, paint, impact } (last render's inputs)
+  var srtWired_ = {};
+  function srtImpactInbound_(r) {
+    var c = Number(r.calls) || 0;
+    if (c <= 0) return 0;
+    var rate = (Number(r.answered) || 0) / c * 100;
+    return (100 - rate) * c;
+  }
+  function srtValue_(r, key) {
+    if (key === '__abdPct') {
+      var c = Number(r.calls) || 0;
+      return c > 0 ? (Number(r.abandoned) || 0) / c : 0;
+    }
+    return r[key];
+  }
+  function srtApply_(tbodyId, rows, paint, impactFn) {
+    var st = srtState_[tbodyId] || (srtState_[tbodyId] = { key: '', dir: 'desc' });
+    var sorted = (rows || []).slice();
+    if (!st.key) {
+      sorted.sort(function (a, b) { return (impactFn(b) || 0) - (impactFn(a) || 0); });
+    } else {
+      var dir = st.dir === 'asc' ? 1 : -1;
+      sorted.sort(function (a, b) {
+        var va = srtValue_(a, st.key), vb = srtValue_(b, st.key);
+        var na = Number(va), nb = Number(vb);
+        var numeric = isFinite(na) && isFinite(nb)
+          && !(typeof va === 'string' && va.trim() === '')
+          && !(typeof vb === 'string' && vb.trim() === '');
+        if (numeric) return (na - nb) * dir;
+        return String(va == null ? '' : va).localeCompare(String(vb == null ? '' : vb)) * dir;
+      });
+    }
+    paint(sorted);
+    srtRegistry_[tbodyId] = { rows: rows, paint: paint, impact: impactFn };
+    var tbody = $(tbodyId); if (!tbody) return;
+    var table = tbody.closest('table'); if (!table) return;
+    var thead = table.querySelector('thead'); if (!thead) return;
+    if (!srtWired_[tbodyId]) {
+      srtWired_[tbodyId] = true;
+      thead.addEventListener('click', function (e) {
+        var th = e.target.closest('th[data-sort]');
+        if (!th) return;
+        var key = th.getAttribute('data-sort');
+        var cur = srtState_[tbodyId];
+        if (cur.key === key) { cur.dir = cur.dir === 'asc' ? 'desc' : 'asc'; }
+        else {
+          cur.key = key;
+          // Text columns start ascending; numerics start descending.
+          cur.dir = /^(label|agent|insurer|dial_in)$/.test(key) ? 'asc' : 'desc';
+        }
+        var reg = srtRegistry_[tbodyId];
+        if (reg) srtApply_(tbodyId, reg.rows, reg.paint, reg.impact);
+      });
+    }
+    thead.querySelectorAll('th[data-sort]').forEach(function (th) {
+      var on = st.key === th.getAttribute('data-sort');
+      th.classList.add('sortable');
+      th.classList.toggle('srt-asc', on && st.dir === 'asc');
+      th.classList.toggle('srt-desc', on && st.dir === 'desc');
+    });
+  }
+
   function inboundRenderTable_(tbodyId, rows, extraOnHold) {
     const tbody = $(tbodyId); if (!tbody) return;
     const cols = extraOnHold ? 7 : 6;
@@ -15096,16 +15291,18 @@
       tbody.innerHTML = '<tr><td colspan="' + cols + '" class="al-empty">No data in range.</td></tr>';
       return;
     }
-    tbody.innerHTML = rows.map(function (r) {
-      var html = '<tr><td>' + escapeHtml(r.label) + '</td>'
-        + '<td class="num">' + fmtNumber(r.calls) + '</td>'
-        + '<td class="num">' + fmtNumber(r.answered) + '</td>'
-        + '<td class="num">' + fmtNumber(r.abandoned) + '</td>'
-        + inboundAbandonPctCell_(r);
-      if (extraOnHold) html += '<td class="num">' + fmtNumber(r.on_hold) + '</td>';
-      html += '<td class="num">' + fmtDuration(r.avg_wait || 0) + '</td>';
-      return html + '</tr>';
-    }).join('');
+    srtApply_(tbodyId, rows, function (sorted) {
+      tbody.innerHTML = sorted.map(function (r) {
+        var html = '<tr><td>' + escapeHtml(r.label) + '</td>'
+          + '<td class="num">' + fmtNumber(r.calls) + '</td>'
+          + '<td class="num">' + fmtNumber(r.answered) + '</td>'
+          + '<td class="num">' + fmtNumber(r.abandoned) + '</td>'
+          + inboundAbandonPctCell_(r);
+        if (extraOnHold) html += '<td class="num">' + fmtNumber(r.on_hold) + '</td>';
+        html += '<td class="num">' + fmtDuration(r.avg_wait || 0) + '</td>';
+        return html + '</tr>';
+      }).join('');
+    }, srtImpactInbound_);
   }
 
   function inboundRenderCrossTable_(rows) {
@@ -15114,13 +15311,15 @@
       tbody.innerHTML = '<tr><td colspan="5" class="al-empty">No labeled callers in range.</td></tr>';
       return;
     }
-    tbody.innerHTML = rows.map(function (r) {
-      return '<tr><td>' + escapeHtml(r.dial_in) + '</td>'
-        + '<td>' + escapeHtml(r.insurer) + '</td>'
-        + '<td class="num">' + fmtNumber(r.calls) + '</td>'
-        + '<td class="num">' + fmtNumber(r.answered) + '</td>'
-        + '<td class="num">' + fmtNumber(r.abandoned) + '</td></tr>';
-    }).join('');
+    srtApply_('inbound-dialin-insurer-tbody', rows, function (sorted) {
+      tbody.innerHTML = sorted.map(function (r) {
+        return '<tr><td>' + escapeHtml(r.dial_in) + '</td>'
+          + '<td>' + escapeHtml(r.insurer) + '</td>'
+          + '<td class="num">' + fmtNumber(r.calls) + '</td>'
+          + '<td class="num">' + fmtNumber(r.answered) + '</td>'
+          + '<td class="num">' + fmtNumber(r.abandoned) + '</td></tr>';
+      }).join('');
+    }, srtImpactInbound_);
   }
 
   /**
@@ -15136,24 +15335,27 @@
       tbody.innerHTML = '<tr><td colspan="7" class="al-empty">No data in range.</td></tr>';
       return;
     }
-    tbody.innerHTML = rows.map(function (r) {
-      return '<tr class="inbound-insurer-row" data-insurer="' + escapeHtml(r.label) + '" tabindex="0" role="button"'
-        + ' title="Show this insurer’s daily trend">'
-        + '<td><span class="inbound-drill-chevron" aria-hidden="true">&#9656;</span> ' + escapeHtml(r.label) + '</td>'
-        + '<td class="num">' + fmtNumber(r.calls) + '</td>'
-        + '<td class="num">' + fmtNumber(r.answered) + '</td>'
-        + '<td class="num">' + fmtNumber(r.abandoned) + '</td>'
-        + inboundAbandonPctCell_(r)
-        + '<td class="num">' + fmtNumber(r.on_hold) + '</td>'
-        + '<td class="num">' + fmtDuration(r.avg_wait || 0) + '</td>'
-        + '</tr>';
-    }).join('');
-    tbody.querySelectorAll('.inbound-insurer-row').forEach(function (tr) {
-      tr.addEventListener('click', function () { inboundToggleDrill_(tr); });
-      tr.addEventListener('keydown', function (e) {
-        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); inboundToggleDrill_(tr); }
+    srtApply_('inbound-insurer-tbody', rows, function (sorted) {
+      inboundCollapseDrill_();   // a re-sort re-renders rows; any open drill closes
+      tbody.innerHTML = sorted.map(function (r) {
+        return '<tr class="inbound-insurer-row" data-insurer="' + escapeHtml(r.label) + '" tabindex="0" role="button"'
+          + ' title="Show this insurer’s daily trend">'
+          + '<td><span class="inbound-drill-chevron" aria-hidden="true">&#9656;</span> ' + escapeHtml(r.label) + '</td>'
+          + '<td class="num">' + fmtNumber(r.calls) + '</td>'
+          + '<td class="num">' + fmtNumber(r.answered) + '</td>'
+          + '<td class="num">' + fmtNumber(r.abandoned) + '</td>'
+          + inboundAbandonPctCell_(r)
+          + '<td class="num">' + fmtNumber(r.on_hold) + '</td>'
+          + '<td class="num">' + fmtDuration(r.avg_wait || 0) + '</td>'
+          + '</tr>';
+      }).join('');
+      tbody.querySelectorAll('.inbound-insurer-row').forEach(function (tr) {
+        tr.addEventListener('click', function () { inboundToggleDrill_(tr); });
+        tr.addEventListener('keydown', function (e) {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); inboundToggleDrill_(tr); }
+        });
       });
-    });
+    }, srtImpactInbound_);
   }
 
   function inboundCollapseDrill_() {
@@ -15957,24 +16159,32 @@
     const kpiRow = $('direct-call-kpi-row');
     if (kpiRow) kpiRow.innerHTML = tiles.join('');
 
-    // Per-agent table.
+    // Per-agent table (R11-B11: sortable; impact default = the busy-excluded
+    // answerable population, so busy-heavy agents rank by their REAL misses).
     const tb = $('direct-call-agent-tbody');
     if (tb) {
-      tb.innerHTML = agents.map(function (r) {
-        const rateStr = r.ibAnswerRate != null ? r.ibAnswerRate + '%' : '—';
-        const rateCls = r.ibAnswerRate != null ? benchValueCls_('% answered', r.ibAnswerRate + '%', true) : '';
-        return '<tr>'
-          + '<td>' + escapeHtml(r.agent) + '</td>'
-          + '<td class="num">' + fmtNumber(r.ibAnswered) + '</td>'
-          + '<td class="num">' + fmtNumber(r.ibMissedFree) + '</td>'
-          + '<td class="num">' + fmtNumber(r.ibMissedBusy) + '</td>'
-          + '<td class="num' + rateCls + '">' + rateStr + '</td>'
-          + '<td class="num">' + fmtDuration(r.ibAttSec) + '</td>'
-          + '<td class="num">' + fmtNumber(r.obTotal) + '</td>'
-          + '<td class="num">' + fmtNumber(r.obConnected) + '</td>'
-          + '<td class="num">' + fmtDuration(r.obAttSec) + '</td>'
-          + '</tr>';
-      }).join('');
+      srtApply_('direct-call-agent-tbody', agents, function (sorted) {
+        tb.innerHTML = sorted.map(function (r) {
+          const rateStr = r.ibAnswerRate != null ? r.ibAnswerRate + '%' : '—';
+          const rateCls = r.ibAnswerRate != null ? benchValueCls_('% answered', r.ibAnswerRate + '%', true) : '';
+          return '<tr>'
+            + '<td>' + escapeHtml(r.agent) + '</td>'
+            + '<td class="num">' + fmtNumber(r.ibAnswered) + '</td>'
+            + '<td class="num">' + fmtNumber(r.ibMissedFree) + '</td>'
+            + '<td class="num">' + fmtNumber(r.ibMissedBusy) + '</td>'
+            + '<td class="num' + rateCls + '">' + rateStr + '</td>'
+            + '<td class="num">' + fmtDuration(r.ibAttSec) + '</td>'
+            + '<td class="num">' + fmtNumber(r.obTotal) + '</td>'
+            + '<td class="num">' + fmtNumber(r.obConnected) + '</td>'
+            + '<td class="num">' + fmtDuration(r.obAttSec) + '</td>'
+            + '</tr>';
+        }).join('');
+      }, function (r) {
+        var answerable = (Number(r.ibAnswered) || 0) + (Number(r.ibMissedFree) || 0);
+        if (answerable <= 0) return 0;
+        var rate = (Number(r.ibAnswered) || 0) / answerable * 100;
+        return (100 - rate) * answerable;
+      });
     }
   }
 
@@ -17630,31 +17840,52 @@
     });
     const refresh = $('qcd-alldept-refresh-btn');
     if (refresh) refresh.addEventListener('click', function () { runQcdAllDept_(); });
-    const csv = $('qcd-alldept-csv-btn');
-    if (csv) csv.addEventListener('click', function () { qcdAllDeptCsv_(qcdAllDeptLast); });
-    const prn = $('qcd-alldept-print-btn');
-    if (prn) prn.addEventListener('click', function () { qcdAllDeptPrint_(qcdAllDeptLast); });
 
-    // QV-4: "Email me this report" -- caller-only send of the DISPLAYED
-    // range (server: sendQcdAllDeptEmail, same signed-in gate as the report).
-    const emailBtn = $('qcd-alldept-email-btn');
-    if (emailBtn) emailBtn.addEventListener('click', function () {
+    // R11-B3: Export dropdown (Download CSV / Print / Email me). QV-4's
+    // caller-only email rides the Export button for its "Sending…" feedback.
+    const qadExportBtn = $('qcd-alldept-export-btn');
+    const qadExportMenu = $('qcd-alldept-export-menu');
+    const qadEmailSelf = function () {
       const meta = qcdAllDeptLast && qcdAllDeptLast.meta;
-      if (!meta || !meta.from || !meta.to) return;
-      emailBtn.disabled = true;
-      const prev = emailBtn.textContent;
-      emailBtn.textContent = 'Sending…';
+      if (!meta || !meta.from || !meta.to || !qadExportBtn) return;
+      qadExportBtn.disabled = true;
+      const prev = qadExportBtn.innerHTML;
+      qadExportBtn.textContent = 'Sending…';
       google.script.run
         .withSuccessHandler(function (res) {
-          emailBtn.disabled = false; emailBtn.textContent = prev;
+          qadExportBtn.disabled = false; qadExportBtn.innerHTML = prev;
           showToast('Report emailed to ' + ((res && res.to) || 'you') + '.');
         })
         .withFailureHandler(function (err) {
-          emailBtn.disabled = false; emailBtn.textContent = prev;
+          qadExportBtn.disabled = false; qadExportBtn.innerHTML = prev;
           showToast('Email failed: ' + (err && err.message ? err.message : String(err)), 'error');
         })
         .sendQcdAllDeptEmail({ from: meta.from, to: meta.to });
-    });
+    };
+    if (qadExportBtn && qadExportMenu) {
+      const setOpen = function (open) {
+        qadExportMenu.style.display = open ? '' : 'none';
+        qadExportBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+      };
+      qadExportBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        setOpen(qadExportMenu.style.display === 'none');
+      });
+      qadExportMenu.addEventListener('click', function (e) {
+        const item = e.target.closest('[data-action]');
+        if (!item) return;
+        setOpen(false);
+        const action = item.getAttribute('data-action');
+        if (action === 'csv')        qcdAllDeptCsv_(qcdAllDeptLast);
+        else if (action === 'print') qcdAllDeptPrint_(qcdAllDeptLast);
+        else if (action === 'email') qadEmailSelf();
+      });
+      document.addEventListener('click', function (e) {
+        if (qadExportMenu.style.display === 'none') return;
+        if (qadExportBtn.contains(e.target) || qadExportMenu.contains(e.target)) return;
+        setOpen(false);
+      });
+    }
 
     // QV-5 (admin-only): manual subscriber blast of the displayed SINGLE day.
     // Ranges are for self-sends -- the subscriber engine is single-day, so
@@ -18033,11 +18264,14 @@
       // zero-call section; sage otherwise. The mini-summary is screen-only
       // (stripped from the print clone; CSV builds from data).
       const st = qcdAllDeptSectionTotal_(secItems.map(function (i) { return i.q; }));
-      const secViol = secItems.some(function (i) { return (Number(i.q.violations) || 0) > 0; });
       const secTotal = Number(st.totalCalls) || 0;
       const secPct = Number(st.abandonedPct) || 0;
-      const tone = secTotal === 0 ? 'muted'
-        : (secPct >= 5 || secViol) ? 'warn' : 'good';
+      // R11-B2 (owner ruling): the dept banner's tone reads the department
+      // AS A WHOLE -- section abandon% vs the 5% standard ONLY. A sub-queue
+      // in violation keeps its own red row/violation cell, but no longer
+      // flips a healthy dept's banner to warn (CSR at 0.82% was reading red
+      // because A_Q_Spanish sat at 6.25%).
+      const tone = secTotal === 0 ? 'muted' : (secPct >= 5 ? 'warn' : 'good');
       const secPctStr = st.abandonedPctStr || (secPct.toFixed(2) + '%');
       // R10-8: the abandon% leads the mini-summary at full weight (it was an
       // 11px muted afterthought); tone color rides the row's qcd-deptrow--*

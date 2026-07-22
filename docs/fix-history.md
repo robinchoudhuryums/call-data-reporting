@@ -399,6 +399,23 @@ except R10-5 (summary:v14); code comments cite `R10-<n>`:
 | R10-8 | Daily Call Queue Report polish: Watch/On-track callout RETIRED (rows are color-coded + the violation tile carries the count), verdict tile values 24→32px, hero value 42px + thicker labeled target bar ("5%" caption on the tick) + min-width fill, dept banner mini-summary 11px-muted → 13px with the abandon% bold + row-toned (`.qcd-mini-pct`) | code (`qcdAllDeptVerdictHtml_` + styles.html R10-8 blocks) |
 | R10-9 | Sticky column headers on the Inbound + Direct report tables (follow-up note): `th` pins to the `.modal-panel-body` scrollport. The table's `overflow: hidden` corner clip becomes `overflow: clip` in these two modals only — `hidden` creates a scroll container that traps the sticky th inside the non-scrolling table; a box-shadow stands in for the collapsed bottom border, which doesn't travel with a stuck header | code (styles.html R10-9 block) |
 
+**Owner feedback round 11, Phase B (2026-07-22, third testing pass; owner-approved
+plan).** Client + email template only; code comments cite `R11-B<n>`:
+
+| Code | What it fixed / added | Live rule lives in |
+|---|---|---|
+| R11-B1 | Daily Call Queue Report verdict band: the three secondary tiles center their values, tile values 32→28px, hero 42→36px — the row reads slightly smaller | code (styles.html R11-B1) |
+| R11-B2 | Dept banner tone reads the DEPARTMENT AS A WHOLE (section abandon% vs 5% only — a sub-queue in violation keeps its red row but no longer flips a healthy dept's banner; CSR at 0.82% read red because A_Q_Spanish sat at 6.25%); the calls·abandon% mini-summary moved LEFT beside the dept name | INV-51 QV-2 note, CLAUDE.md |
+| R11-B3 | QCD modal's Download CSV / Print / Email-me consolidated into an Export ▾ dropdown (Insights convention); the admin-only subscriber blast stays a separate deliberate button | INV-51 QV-4/5 note |
+| R11-B4 | Email report: verdict banner RETIRED (KPI tiles + row color carry it; preheader keeps the offender line); single-day ranges label as ONE date (shared dateLabel builder — fixes the subject and the web header); the 0–20%-scaled bar became a green/red share-of-total SPLIT bar (a 50%-abandon day rendered a full orange bar that contradicted its number; red softens under 5% per the R10-4 convention); Courier New labels became Arial-based styling | queue-report tests (R11-B4 pins) |
+| R11-B5 | Overview trend band is collapsible (`#ov-trend-collapse-btn`, persisted `cdr.ov.trendcollapsed`) so the dept cards can take the whole screen; chart re-measures on expand | Overview layout bullet, CLAUDE.md |
+| R11-B6 | Missed bars stuck small in prod despite R10-7 — belt-and-braces: canvas display size forced to 100% of the fixed wrap, re-measure on the chart-row's grid transition end, rebuild when the canvas settles under 70% of wrap width; x labels render compact ("8AM") | INV-41 note, CLAUDE.md |
+| R11-B7 | Bars/Radar toggle is ADMIN-ONLY (`data-admin-only` on the segment; `missedChartMode_` resolves non-admins to bars so a pre-fence saved radar pref can't strand a manager); the toolbar stays for the B8 tips button | INV-41 note, CLAUDE.md |
+| R11-B8 | Chart-tips "?" popover on the Overview trend, Insights trend, IR charts, and missed chart toolbars — lists each chart's real interactions (spotlight/pin/Shift-click/point drills/zoom), which were otherwise invisible | code (`initChartHelp_` / `CHART_HELP_`) |
+| R11-B9 | Insights sticky strip is the WHOLE results header now (title + toolbar + period presets — the My Department pattern); the period bar moved inside the header markup, same ids | Insights period-slider bullet, CLAUDE.md |
+| R11-B10 | Inbound/Direct modals: the scroll body's 18px top padding read as a gap strip above the stuck table headers — padding moved onto the first child so the pinned row hugs the modal bar | code (styles.html R11-B10) |
+| R11-B11 | Click-to-sort columns on all four Inbound tables + the Direct per-agent table (static theads carry `data-sort`; shared `srtApply_` machinery). Default order = the IMPACT score `(100 − answer%) × calls` desc (owner-confirmed) — worst-AND-busiest first; Direct's impact uses the busy-excluded answerable population | code (`srtApply_` + theads) |
+
 ---
 
 ## Phases & batches (rollout narrative, not rules)
