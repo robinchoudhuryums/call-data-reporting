@@ -1419,6 +1419,22 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   flips the y-axis between Full (0-100%) and Fit (auto-scale to the
   data range). The same `chartSpotlight*` legend spotlight is reused
   by the QCD multi-queue chart.
+  **R11-G auto-zoom-fit on solo (shared, all spotlight charts):**
+  `chartSpotlightFitAxis_` auto-fits the y-axis to just the PINNED
+  (soloed) series whenever the pin set changes (called from
+  `chartSpotlightApplyPins_`); un-solo restores the build-time axis
+  stashed by `chartSpotlightStash_` (`_origYAxis`). It reads scalar or
+  `{x,y}` data and caps a percent axis at 100. The manual Overview
+  Full/Fit toggle was KEPT -- it still fits ALL lines and composes with
+  the stash/restore (the stash captures whatever the toggle built).
+  **R11-G tooltip behavior (shared `chartTooltipPinFilter_`, set as the
+  Chart.js default tooltip `filter` + composed into the Overview-baseline
+  / QCD-threshold per-chart filters):** (5a) when a chart has soloed
+  series, the hover card shows ONLY those; (5b) a GLOBAL "Show chart
+  hover cards" Settings toggle (`cdr.charts.tooltips`, flag
+  `CHART_TOOLTIPS_OFF_`) turns the card off across every chart by
+  filtering out all items -- live on the next hover, no per-instance
+  update, and the hovered point still highlights.
 - **Recently-active denominator.** The Overview tile caption "X of Y
   agents" uses `recentlyActiveCount` (any rung / answered / missed
   activity in the last `OVERVIEW_RECENT_ACTIVE_DAYS` = 30 days), NOT

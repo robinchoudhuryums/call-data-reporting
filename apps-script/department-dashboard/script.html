@@ -187,6 +187,9 @@
     tt.titleFont       = { family: FONT_DISPLAY, size: 12, weight: '500' };
     tt.bodyFont        = { family: FONT_MONO,    size: 11 };
     tt.boxPadding      = 4;
+    // R11-G (items 5a/5b): the shared pin-aware / global-off tooltip filter as
+    // the default -- charts with their own filter compose it in explicitly.
+    if (typeof chartTooltipPinFilter_ === 'function') tt.filter = chartTooltipPinFilter_;
     // Legend — muted mono labels (matches the kicker rhythm)
     const lg = Chart.defaults.plugins.legend.labels;
     lg.color = THEME.muted;
@@ -1375,6 +1378,8 @@
       syncChips();
       const fabToggle = $('help-fab-toggle');
       if (fabToggle) fabToggle.checked = !helpFabHidden_();
+      const ttToggle = $('chart-tooltip-toggle');
+      if (ttToggle) ttToggle.checked = !CHART_TOOLTIPS_OFF_;
       modal.style.display = '';
       modal.setAttribute('aria-hidden', 'false');
       document.body.style.overflow = 'hidden';
@@ -1403,6 +1408,15 @@
     if (fabToggle) fabToggle.addEventListener('change', function () {
       try { localStorage.setItem('cdr.help.fab', fabToggle.checked ? 'on' : 'off'); } catch (e) {}
       applyHelpFabPref_();
+    });
+
+    // R11-G (item 5b): global chart hover-card on/off. The filter reads
+    // CHART_TOOLTIPS_OFF_ live, so flipping it takes effect on the next hover
+    // -- no per-chart update needed.
+    const ttToggle = $('chart-tooltip-toggle');
+    if (ttToggle) ttToggle.addEventListener('change', function () {
+      CHART_TOOLTIPS_OFF_ = !ttToggle.checked;
+      try { localStorage.setItem('cdr.charts.tooltips', ttToggle.checked ? 'on' : 'off'); } catch (e) {}
     });
 
     // Chip click: apply + persist theme. Modal stays open so the
@@ -2949,8 +2963,10 @@
             position: (typeof Chart !== 'undefined' && Chart.Tooltip && Chart.Tooltip.positioners
                        && Chart.Tooltip.positioners.topBand) ? 'topBand' : undefined,
             filter: function (ctx) {
-              // Hide the reference baseline from the per-line tooltip list.
-              return OV_BASELINE_LABELS_.indexOf(ctx.dataset.label) === -1;
+              // Hide the reference baseline from the per-line tooltip list;
+              // R11-G composes the shared pin/off filter (5a/5b).
+              return OV_BASELINE_LABELS_.indexOf(ctx.dataset.label) === -1
+                && chartTooltipPinFilter_(ctx);
             },
             callbacks: {
               label: function (ctx) {
@@ -3089,6 +3105,73 @@
       if (ds._origBorder == null) ds._origBorder = ds.borderColor;
       if (ds._origWidth == null) ds._origWidth = ds.borderWidth;
     });
+    // R11-G (item 4): remember the built y-axis bounds so an auto-fit-on-solo
+    // can restore them when the solo is released. Captured at BUILD time, so it
+    // respects whatever the chart configured (e.g. the Overview Full/Fit
+    // toggle's ovYAxis_ output) -- solo fits to the pinned data, un-solo
+    // restores the natural axis.
+    var y = chart.options && chart.options.scales && chart.options.scales.y;
+    if (y && chart._origYAxis == null) {
+      chart._origYAxis = { min: y.min, max: y.max, beginAtZero: y.beginAtZero };
+    }
+  }
+
+  // R11-G (item 4): auto-zoom-fit the y-axis to the PINNED (soloed) series so a
+  // soloed line fills the plot vertically instead of hugging the bottom. When
+  // no pin is active, restore the axis captured at build time. Generic across
+  // every spotlight chart (Overview / Insights trend / per-agent trend / QCD);
+  // caller applies chart.update. Handles both scalar data and {x,y} points.
+  function chartSpotlightFitAxis_(chart) {
+    var y = chart && chart.options && chart.options.scales && chart.options.scales.y;
+    if (!y) return;
+    var pins = chart._spotlightPins || {};
+    if (!Object.keys(pins).length) {
+      if (chart._origYAxis) {
+        y.min = chart._origYAxis.min; y.max = chart._origYAxis.max;
+        y.beginAtZero = chart._origYAxis.beginAtZero;
+      }
+      return;
+    }
+    var skip = chart._spotlightSkip, lo = Infinity, hi = -Infinity;
+    chart.data.datasets.forEach(function (ds) {
+      if (ds.hidden) return;
+      if (skip && ds.label === skip) return;
+      var key = chartSpotKey_(ds);
+      if (!key || !pins[key]) return;                 // pinned only
+      (ds.data || []).forEach(function (v) {
+        var n = (v && typeof v === 'object') ? v.y : v;
+        if (n == null || isNaN(n)) return;
+        if (n < lo) lo = n;
+        if (n > hi) hi = n;
+      });
+    });
+    if (!isFinite(lo) || !isFinite(hi)) return;
+    var pad = Math.max(1, (hi - lo) * 0.1);
+    y.beginAtZero = false;
+    y.min = Math.max(0, Math.floor(lo - pad));
+    y.max = Math.ceil(hi + pad);
+    // Percent axes (built capped at 100) stay capped so "fit" can't overshoot.
+    if (chart._origYAxis && chart._origYAxis.max === 100 && y.max > 100) y.max = 100;
+  }
+
+  // R11-G (items 5a + 5b): the SHARED Chart.js tooltip filter. (5b) When the
+  // global "chart tooltips" setting is OFF, suppress the hover card entirely
+  // (the point still highlights) by filtering out every item -- live, no
+  // per-instance update needed. (5a) When a chart has PINNED (soloed) series,
+  // show ONLY those in the hover card so a solo'd comparison isn't buried under
+  // every dimmed line. Set as the global default AND composed into the two
+  // charts that carry their own filter (Overview baseline / QCD threshold).
+  var CHART_TOOLTIPS_OFF_ = (function () {
+    try { return localStorage.getItem('cdr.charts.tooltips') === 'off'; } catch (e) { return false; }
+  })();
+  function chartTooltipPinFilter_(ctx) {
+    if (CHART_TOOLTIPS_OFF_) return false;               // 5b: global off
+    var chart = ctx && ctx.chart;
+    var pins = chart && chart._spotlightPins;
+    if (!pins || !Object.keys(pins).length) return true; // no solo -> show all
+    var ds = chart.data.datasets[ctx.datasetIndex];
+    var key = chartSpotKey_(ds);
+    return !!(key && pins[key]);                          // solo -> pinned only
   }
 
   // Transient single-series highlight (dept-tile hover). Does NOT touch pins.
@@ -3124,7 +3207,13 @@
   // Highlight every PINNED series, dim the rest. Empty set -> clear.
   function chartSpotlightApplyPins_(chart) {
     if (!chart || !chart.data) return;
-    if (!chartSpotlightHasPins_(chart)) { chartSpotlightClear_(chart); return; }
+    if (!chartSpotlightHasPins_(chart)) {
+      // R11-G: no pins -> restore the natural y-axis (fitAxis reads the empty
+      // pin set), then reset the line styling. Both applied in one update.
+      chartSpotlightFitAxis_(chart);
+      chartSpotlightClear_(chart);
+      return;
+    }
     const pins = chart._spotlightPins;
     chart.data.datasets.forEach(function (ds) {
       if (chart._spotlightSkip && ds.label === chart._spotlightSkip) return;
@@ -3137,6 +3226,7 @@
         ds.borderWidth = ds._origWidth || 1.4;
       }
     });
+    chartSpotlightFitAxis_(chart);   // R11-G (item 4): zoom to the pinned series
     chart.update('none');
   }
 
@@ -3207,6 +3297,9 @@
       chart.options.scales.y.max = y.max;
       chart.options.scales.y.beginAtZero = y.beginAtZero;
     }
+    // R11-G: if a solo is active, the pin-fit wins over the recomputed full
+    // axis (it reads the current pins; a no-pin chart is left as recomputed).
+    chartSpotlightFitAxis_(chart);
     chart.update();
   }
 
@@ -13849,7 +13942,7 @@
               filter: function (item) { return item.text !== '5% threshold'; } } },
               (qNames.length > 1 ? chartSpotlightLegend_() : {})),
             tooltip: {
-              filter: function (ctx) { return ctx.dataset.label !== '5% threshold'; },
+              filter: function (ctx) { return ctx.dataset.label !== '5% threshold' && chartTooltipPinFilter_(ctx); },
               callbacks: {
                 label: function (ctx) {
                   return ctx.dataset.label + ': ' + (ctx.parsed.y == null ? '-' : fmtVal(ctx.parsed.y));
