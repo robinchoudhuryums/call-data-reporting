@@ -2357,12 +2357,26 @@
            (escLoad_ / escApplyFilter_ wiring), only the layout container moved. -->
       <div class="esc-layout">
         <aside class="esc-sidebar">
+        <!-- R11-D: the controls are a vertical left-rail menu (>900px) that
+             collapses to a horizontal toolbar (<=900px). The native <select>s
+             remain in the DOM as the state store + the <=900px fallback; the
+             rich affordances (category list, sort toggle) are the wide-viewport
+             layer, toggled purely by CSS breakpoint. Same ids/handlers/values. -->
         <div class="ds-toolbar esc-toolbar">
-          <div class="ir-col" id="esc-dept-col" style="display:none;">
-            <label for="esc-dept">Department</label>
-            <select id="esc-dept"></select>
+          <!-- D2/D4: dept (name text for single-dept managers, selector for
+               admins) + refresh icon, at the top of the menu. -->
+          <div class="esc-sb-head">
+            <div class="ir-col" id="esc-dept-col" style="display:none;">
+              <label for="esc-dept">Department</label>
+              <select id="esc-dept"></select>
+              <span class="esc-dept-name" id="esc-dept-name" style="display:none;"></span>
+            </div>
+            <button class="esc-icon-btn" id="esc-refresh-btn" type="button" title="Refresh" aria-label="Refresh">&#8635;</button>
           </div>
-          <div class="ir-col">
+          <!-- D1: status filter. Category list (wide) + native select (<=900px
+               fallback). Both write #esc-status; the list's counts come from
+               meta.statusCounts (server aggregate), NOT the filtered rows. -->
+          <div class="ir-col esc-status-col">
             <label for="esc-status">Show</label>
             <select id="esc-status">
               <option value="pending">Pending</option>
@@ -2373,13 +2387,17 @@
               <option value="all">All</option>
             </select>
           </div>
-          <div class="ir-col">
+          <nav class="esc-cat-menu" id="esc-cat-menu" aria-label="Filter escalations by status"></nav>
+          <!-- D3: sort. Toggle (wide) + native select (<=900px fallback). Both
+               write #esc-sort; escApplyFilter_ re-sorts in place (no fetch). -->
+          <div class="ir-col esc-sort-col">
             <label for="esc-sort">Sort</label>
             <select id="esc-sort">
               <option value="oldest">Oldest first</option>
               <option value="newest">Newest first</option>
             </select>
           </div>
+          <button class="esc-sort-toggle" id="esc-sort-toggle" type="button"></button>
           <div class="ir-col esc-filter-col">
             <label for="esc-filter">Filter</label>
             <div class="esc-filter-wrap">
@@ -2389,13 +2407,10 @@
             <span class="esc-filter-count" id="esc-filter-count" style="display:none;"></span>
           </div>
           <div class="ir-col">
-            <label>&nbsp;</label>
             <button type="button" class="esc-review-chip" id="esc-review-chip"
                     title="Externally-submitted escalations awaiting your review — click to show them"></button>
-            <button class="btn btn-ghost" id="esc-refresh-btn" type="button">Refresh</button>
           </div>
           <div class="ir-col esc-new-col" id="esc-new-col" data-admin-only style="display:none;">
-            <label>&nbsp;</label>
             <button class="btn" id="esc-new-btn" type="button">+ New escalation</button>
           </div>
         </div>

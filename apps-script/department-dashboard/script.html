@@ -16795,7 +16795,25 @@
     if ($('esc-refresh-btn')) $('esc-refresh-btn').addEventListener('click', escLoad_);
     if ($('esc-status'))      $('esc-status').addEventListener('change', escLoad_);
     // C2: client-side sort re-renders the already-loaded rows (no server call).
-    if ($('esc-sort'))        $('esc-sort').addEventListener('change', escApplyFilter_);
+    if ($('esc-sort'))        $('esc-sort').addEventListener('change', function () {
+      escSyncSortToggle_(); escApplyFilter_();
+    });
+    // R11-D1: the category list is the wide-viewport status filter -- a row
+    // click writes the SAME #esc-status value the select wrote, then reloads.
+    if ($('esc-cat-menu')) $('esc-cat-menu').addEventListener('click', function (e) {
+      const row = e.target.closest('[data-jump]');
+      if (!row) return;
+      if ($('esc-status')) $('esc-status').value = row.getAttribute('data-jump');
+      escLoad_();
+    });
+    // R11-D3: the sort toggle flips the same #esc-sort value + re-sorts in place.
+    if ($('esc-sort-toggle')) $('esc-sort-toggle').addEventListener('click', function () {
+      const sel = $('esc-sort');
+      if (sel) sel.value = (sel.value === 'newest') ? 'oldest' : 'newest';
+      escSyncSortToggle_();
+      escApplyFilter_();
+    });
+    escSyncSortToggle_();
     // C1: band tiles are click-to-filter shortcuts (Needs review / Pending /
     // In progress jump the status selector + reload).
     if ($('esc-summary-band')) $('esc-summary-band').addEventListener('click', function (e) {
@@ -16868,15 +16886,35 @@
           if (escAllDept) opts += '<option value="ALL">All departments</option>';
           opts += depts.map(function (d) { return '<option value="' + escapeHtml(d) + '">' + escapeHtml(d) + '</option>'; }).join('');
           sel.innerHTML = opts;
-          // Single-dept managers have one dept -> hide the selector entirely.
+          // R11-D4: a viewer with a real choice (admin/all-dept, or a rare
+          // multi-dept manager) gets the SELECTOR; a single-dept manager gets
+          // the dept NAME as plain text (nothing to switch to -- previously the
+          // whole control was hidden). Reuses the existing role signal; no new
+          // permission. The selector's change handler still runs the normal
+          // fetch + server auth path, so an unreachable dept can't be selected.
+          const canSwitch = escAllDept || depts.length > 1;
+          const nameEl = $('esc-dept-name');
           const col = $('esc-dept-col');
-          if (col) col.style.display = (escAllDept || depts.length > 1) ? '' : 'none';
+          if (canSwitch) {
+            sel.style.display = '';
+            if (nameEl) nameEl.style.display = 'none';
+            if (col) col.style.display = '';
+          } else if (depts.length === 1) {
+            sel.style.display = 'none';
+            if (nameEl) { nameEl.textContent = depts[0]; nameEl.style.display = ''; }
+            if (col) col.style.display = '';
+          } else {
+            if (col) col.style.display = 'none';   // no dept at all -> nothing to show
+          }
         }
         // Create-form dept selector (admins choose any dept).
         const cdept = $('esc-c-dept');
         if (cdept) cdept.innerHTML = depts.map(function (d) {
           return '<option value="' + escapeHtml(d) + '">' + escapeHtml(d) + '</option>';
         }).join('');
+        // R11-D1: seed the (countless) category list so the wide-viewport status
+        // filter is present immediately; escRenderList_ refreshes it with counts.
+        escRenderCatMenu_(null);
         cb && cb();
       })
       .withFailureHandler(function (err) {
@@ -16943,6 +16981,8 @@
     }
     // C1: triage summary band (hides itself on unavailable / missing meta).
     escRenderSummaryBand_(resp);
+    // R11-D1: sidebar status category list (counts from meta.statusCounts).
+    escRenderCatMenu_(resp);
     if (resp.available === false) {
       escSetFilterCount_('');
       escShowEmpty_('Escalations are temporarily unavailable — the storage (Neon) could not be reached. Try Refresh in a moment.');
@@ -17114,17 +17154,66 @@
     var meta = (resp && resp.meta) || {};
     var c = meta.statusCounts;
     if (!resp || resp.available === false || !c) { band.style.display = 'none'; band.innerHTML = ''; return; }
-    var reviewN = Number(meta.pendingReviewCount || c.pending_review || 0);
     var tiles = [];
-    // Needs review leads (external submissions shouldn't sit unnoticed).
-    tiles.push(escBandTile_('Needs review', reviewN, reviewN > 0 ? 'accent' : 'muted', 'pending_review'));
-    tiles.push(escBandTile_('Pending', Number(c.pending || 0), (c.pending > 0) ? 'warn' : 'muted', 'pending'));
-    tiles.push(escBandTile_('In progress', Number(c.in_progress || 0), (c.in_progress > 0) ? 'accent' : 'muted', 'in_progress'));
+    // R11-D1: the per-status counts (Needs review / Pending / In progress) moved
+    // to the sidebar category menu (escRenderCatMenu_) so counts live in ONE
+    // place. The band is now the "health" strip: the derived signals that AREN'T
+    // status-filter categories -- Overdue, Oldest open, Resolved in the last 7d.
     tiles.push(escBandTile_('Overdue >' + ESC_OVERDUE_DAYS + 'd', Number(meta.overdueCount || 0), (meta.overdueCount > 0) ? 'warn' : 'muted', null));
     tiles.push(escBandOldestTile_(meta.oldestOpenAt));
     tiles.push(escBandTile_('Resolved · 7d', Number(meta.resolvedLast7 || 0), 'good', null));
     band.innerHTML = tiles.join('');
     band.style.display = '';
+  }
+
+  // R11-D1: the sidebar status category list. Counts come from the server
+  // aggregate meta.statusCounts (+ meta.pendingReviewCount) -- accurate for ANY
+  // active filter, unlike a count over the status-filtered in-memory rows (which
+  // hold only the active status). A row click writes #esc-status + reloads; the
+  // active row tracks meta.status. Mirrors the native <select>'s six options.
+  function escRenderCatMenu_(resp) {
+    var menu = $('esc-cat-menu');
+    if (!menu) return;
+    var meta = (resp && resp.meta) || {};
+    // Counts are OPTIONAL: the six rows always render so the wide-viewport
+    // status filter is present during the first load AND on an unavailable
+    // (Neon-down) response -- clicking a row re-fetches, which is the recovery.
+    var c = (resp && resp.available !== false && meta.statusCounts) || null;
+    var reviewN = c ? Number(meta.pendingReviewCount || c.pending_review || 0) : null;
+    var total = c ? (Number(c.pending || 0) + Number(c.in_progress || 0) + reviewN
+              + Number(c.resolved || 0) + Number(c.rejected || 0)) : null;
+    var active = (meta.status) || ($('esc-status') && $('esc-status').value) || 'pending';
+    // [value, label, count-or-null, dot-tone]. Order = triage priority.
+    var cats = [
+      ['pending_review', 'Needs review', c ? reviewN                  : null, 'accent'],
+      ['pending',        'Pending',      c ? Number(c.pending || 0)   : null, 'warn'],
+      ['in_progress',    'In progress',  c ? Number(c.in_progress || 0) : null, 'accent'],
+      ['resolved',       'Completed',    c ? Number(c.resolved || 0)  : null, 'good'],
+      ['rejected',       'Rejected',     c ? Number(c.rejected || 0)  : null, 'muted'],
+      ['all',            'All',          total,                              'muted'],
+    ];
+    menu.innerHTML = '<div class="esc-cat-label">Show</div>' + cats.map(function (t) {
+      var on = t[0] === active;
+      var count = (t[2] == null) ? '' : ('<span class="esc-cat-count">' + t[2] + '</span>');
+      return '<button type="button" class="esc-cat-row' + (on ? ' is-active' : '')
+        + '" data-jump="' + t[0] + '"' + (on ? ' aria-current="true"' : '') + '>'
+        + '<span class="esc-cat-dot esc-cat-dot--' + t[3] + '"></span>'
+        + '<span class="esc-cat-name">' + escapeHtml(t[1]) + '</span>'
+        + count
+        + '</button>';
+    }).join('');
+  }
+
+  // R11-D3: reflect the #esc-sort value onto the toggle button (glyph + label +
+  // tooltip). Oldest-first is an up arrow (oldest at the top of the list).
+  function escSyncSortToggle_() {
+    var btn = $('esc-sort-toggle');
+    if (!btn) return;
+    var newest = (($('esc-sort') && $('esc-sort').value) || 'oldest') === 'newest';
+    btn.innerHTML = '<span class="esc-sort-arrow">' + (newest ? '↓' : '↑') + '</span>'
+      + '<span class="esc-sort-lbl">' + (newest ? 'Newest first' : 'Oldest first') + '</span>';
+    btn.setAttribute('title', newest ? 'Newest first (click for oldest)' : 'Oldest first (click for newest)');
+    btn.setAttribute('aria-label', 'Sort order: ' + (newest ? 'newest first' : 'oldest first'));
   }
   function escBandTile_(label, value, tone, jumpStatus) {
     var cls = 'esc-band-tile esc-band-tile--' + tone + (jumpStatus ? ' esc-band-clickable' : '');

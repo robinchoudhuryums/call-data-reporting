@@ -6232,6 +6232,47 @@
   .esc-sidebar .esc-toolbar .esc-filter-wrap { display: flex; width: 100%; }
   .esc-sidebar .esc-toolbar .esc-filter-wrap input { width: 100%; box-sizing: border-box; }
   .esc-sidebar .esc-new-col { margin-left: 0; }
+
+  /* R11-D: sidebar head (dept name/selector + refresh icon). */
+  .esc-sb-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 8px; }
+  .esc-sb-head #esc-dept-col { flex: 1 1 auto; }
+  .esc-dept-name { display: inline-block; font: 600 14px/1.4 var(--ui); color: var(--ink); padding: 4px 0; }
+  .esc-icon-btn { flex: 0 0 auto; width: 32px; height: 32px; border: 1px solid var(--line);
+    border-radius: var(--r); background: var(--paper-card); color: var(--ink); cursor: pointer;
+    font-size: 16px; line-height: 1; display: inline-flex; align-items: center; justify-content: center; }
+  .esc-icon-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+  /* R11-D1: status category list (the wide-viewport status filter). Counts from
+     meta.statusCounts; the native #esc-status select is the <=900px fallback. */
+  .esc-cat-label { font: 600 10px/1.2 var(--mono); letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--muted); margin-bottom: 4px; }
+  .esc-cat-menu { display: flex; flex-direction: column; gap: 2px; }
+  .esc-cat-row { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+    padding: 6px 8px; border: 1px solid transparent; border-radius: var(--r); background: none;
+    color: var(--ink); cursor: pointer; font: inherit; }
+  .esc-cat-row:hover { background: var(--paper-2); }
+  .esc-cat-row.is-active { background: var(--paper-2); border-color: var(--line); font-weight: 600; }
+  .esc-cat-dot { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; background: var(--line); }
+  .esc-cat-dot--warn   { background: var(--warn); }
+  .esc-cat-dot--accent { background: var(--accent); }
+  .esc-cat-dot--good   { background: var(--good); }
+  .esc-cat-dot--muted  { background: var(--muted); }
+  .esc-cat-name { flex: 1 1 auto; min-width: 0; }
+  .esc-cat-count { flex: 0 0 auto; font-variant-numeric: tabular-nums; color: var(--muted); font-size: 12px; }
+  .esc-cat-row.is-active .esc-cat-count { color: var(--ink); }
+
+  /* R11-D3: sort toggle (wide). The native #esc-sort select is the fallback. */
+  .esc-sort-toggle { display: inline-flex; align-items: center; gap: 6px; width: 100%;
+    padding: 6px 10px; border: 1px solid var(--line); border-radius: var(--r);
+    background: var(--paper-card); color: var(--ink); cursor: pointer; font: inherit; }
+  .esc-sort-toggle:hover { border-color: var(--accent); }
+  .esc-sort-arrow { font-weight: 700; }
+  .esc-sort-lbl { font-size: 12px; }
+
+  /* Wide (sidebar) mode: the rich affordances own the controls; the native
+     selects stay in the DOM as the state store but are hidden. */
+  .esc-sidebar .esc-status-col, .esc-sidebar .esc-sort-col { display: none; }
+
   @media (max-width: 900px) {
     .esc-layout { flex-direction: column; }
     .esc-sidebar { position: static; flex-basis: auto; width: 100%; }
@@ -6239,10 +6280,16 @@
     .esc-sidebar .esc-toolbar .ir-col { width: auto; }
     .esc-sidebar .esc-toolbar select { width: auto; }
     .esc-sidebar .esc-new-col { margin-left: auto; }
+    /* Toolbar (narrow) mode: native selects return; rich affordances hide. */
+    .esc-sidebar .esc-status-col, .esc-sidebar .esc-sort-col { display: block; }
+    .esc-sidebar .esc-cat-menu, .esc-sidebar .esc-sort-toggle { display: none; }
+    .esc-sb-head { align-items: flex-end; }
   }
 
-  /* C1: triage summary band. */
-  .esc-summary-band { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr));
+  /* C1: triage summary band -- R11-D1 trimmed to the non-status "health" tiles
+     (Overdue / Oldest open / Resolved 7d); per-status counts moved to the
+     sidebar category list. auto-fit handles the reduced tile count. */
+  .esc-summary-band { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
     gap: 8px; margin: 0 0 14px; }
   .esc-band-tile { border: 1px solid var(--line); border-left-width: 3px; border-radius: var(--r-lg);
     background: var(--paper-card); padding: 8px 10px; }
@@ -6257,8 +6304,6 @@
   .esc-band-tile--muted  { border-left-color: var(--line); }
   .esc-band-tile--warn   .esc-band-value { color: var(--warn); }
   .esc-band-tile--accent .esc-band-value { color: var(--accent); }
-  @media (max-width: 900px) { .esc-summary-band { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
-  @media (max-width: 560px) { .esc-summary-band { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 
   /* C4: triage group headers (mirrors the Insights tier pattern). */
   .esc-group-head { display: flex; align-items: center; gap: 8px; margin: 16px 0 8px; }
