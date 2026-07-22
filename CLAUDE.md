@@ -1118,10 +1118,11 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   retired Performance / Compare Ranges reports' `cdr.pr.prefs.v1` /
   `cdr.cr.prefs.v1` are orphans too. Bump the trailing version when the prefs schema
   changes; older saved blobs are silently dropped if JSON parsing
-  fails. The chrome layer also writes `dash-mode` (light/dark toggle)
-  and `dash-theme.v1` (warm / cool / clinical paper theme) — the
-  theme picker re-reads these on every render so no cache bump is
-  needed when palette tokens change. Default for first-time visitors
+  fails. The chrome layer also writes `dash-mode` (light/dark toggle),
+  `dash-theme.v1` (warm / cool / clinical paper theme), and
+  `cdr.charts.tooltips` (R11-G global chart hover-card on/off, Settings
+  → "Show chart hover cards") — the theme picker re-reads these on every
+  render so no cache bump is needed when palette tokens change. Default for first-time visitors
   (no `dash-theme.v1` value) is `cool` since the Phase A redesign
   rollout (commit 99e7253); explicit saved values, including `'warm'`,
   are preserved untouched. The `:root` tokens in `styles.html` remain
