@@ -935,12 +935,17 @@
   #insights-page #insights-results > .ir-results-header .ins-period-bar {
     flex: 1 1 100%; margin: 6px 0 0;
   }
-  /* R11-E (item 2): tighten the band between the app header and the Insights
-     sticky strip -- the strip's top padding + the header margin read as an
-     awkward blank gap (owner note). Pull the results block up under the
-     divider and trim the strip's top padding. */
+  /* R11-E/F (item 2): collapse the blank band between the app header and the
+     Insights sticky strip (owner note -- persisted through R10-6 + R11-E2).
+     Zero every top-spacing contributor on the Insights page so the results
+     header sits flush under the app-header divider: the .page margin-top, the
+     .ins-page-body padding, the .ir-results padding-top, and the first flow
+     child's margin-top. (The hidden form + launcher-loading are display:none,
+     so they add no space -- this targets accumulated top padding/margins.) */
+  #insights-page.page { margin-top: 0; }
   #insights-page .ins-page-body { padding-top: 0; }
-  #insights-page #insights-results { margin-top: -6px; }
+  #insights-page #insights-results { margin-top: 0; padding-top: 0; }
+  #insights-page #insights-results > *:first-child { margin-top: 0; }
   #insights-page #insights-results > .ir-results-header { padding-top: 4px; }
   /* R11-E (item 5): make the active window PROMINENT on the sticky strip (the
      My Department treatment) -- a solid pill instead of a muted mono caption.
@@ -4847,9 +4852,27 @@
     color: var(--muted);
   }
   .ov-trend-collapse-btn:hover { color: var(--accent); }
+  /* R11-F: animate the collapse instead of display:none. The inner
+     .ir-chart-wrap keeps its fixed 340px height, so the canvas never resizes
+     to zero (no re-measure needed) -- the wrapper just clips it via an
+     animated max-height + fade. */
+  #ov-chart-tabs, #ov-chart-wrap {
+    overflow: hidden;
+    max-height: 420px; opacity: 1;
+    transition: max-height var(--dur-2, 0.3s) var(--ease, ease),
+                opacity var(--dur-1, 0.18s) var(--ease, ease);
+  }
   .ov-trend-collapsed #ov-chart-tabs,
-  .ov-trend-collapsed #ov-chart-wrap { display: none; }
+  .ov-trend-collapsed #ov-chart-wrap { max-height: 0; opacity: 0; }
   .ov-trend-collapsed { padding-bottom: 0; }
+  @media (prefers-reduced-motion: reduce) {
+    #ov-chart-tabs, #ov-chart-wrap { transition: none; }
+  }
+  /* R11-F: fade the Overview "My Department" mini-table when its range
+     (period) switches, so the value/row swap reads as a transition. */
+  @keyframes ovTblFade { from { opacity: 0.35; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+  .ov-tbl-fade { animation: ovTblFade var(--dur-2, 0.3s) var(--ease, ease); }
+  @media (prefers-reduced-motion: reduce) { .ov-tbl-fade { animation: none; } }
   .ov-grid-trend .ov-dept-grid { margin-bottom: 0; }
   /* Un-stick on short viewports (phones / landscape) so the band can't eat
      the screen; the grid then flows normally below it. */
