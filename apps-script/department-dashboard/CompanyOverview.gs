@@ -1404,3 +1404,78 @@ function parseIsoNoon_(iso) {
   const p = iso.split('-');
   return new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]), 12, 0, 0);
 }
+
+/**
+ * R11-C0 diagnostic (editor-run, admin-gated, READ-ONLY): why do specific
+ * dates render as a GAP on the Overview chart while the parity gate is
+ * clean? Both sources verifiably hold the 2026-05-06..26 rows, so the loss
+ * must be inside the chart pipeline's own per-row filters. This replays
+ * them over OV_PROBE_FROM..OV_PROBE_TO (Script Properties; defaults to the
+ * May range) using the ACTIVE read source and logs, per date:
+ *   rows fetched | sentinel-skipped | roster-UNMATCHED (with sample names)
+ *   | attributed rung total
+ * A date whose rows all land in "roster-unmatched" pins the gap on the
+ * agent-name -> roster join (INV-04 exact match) and the sample names show
+ * exactly which spellings to fix (Outlier Fix / alias). A date with rows
+ * but attributed rung 0 pins it on zeroed count columns instead.
+ */
+function probeOverviewChartDates() {
+  assertAdmin_();
+  const props = PropertiesService.getScriptProperties();
+  const from = props.getProperty('OV_PROBE_FROM') || '2026-05-06';
+  const to   = props.getProperty('OV_PROBE_TO')   || '2026-05-26';
+  let rows = null, source = 'sheet';
+  if (typeof getDqeReadSource_ === 'function' && getDqeReadSource_() === 'neon') {
+    rows = neonFetchDqeRows_(from, to);
+    source = 'neon';
+    if (!(rows && (rows.length || rows._neonReachable))) { rows = null; }
+  }
+  if (!rows) { rows = sheetFetchDqeRows_(from, to); source = source === 'neon' ? 'neon->sheet-fallback' : 'sheet'; }
+  Logger.log('=== probeOverviewChartDates %s..%s | source=%s | rows=%s ===', from, to, source, rows.length);
+
+  const allDepts = getAllDepartments_();
+  const deptsForAgent = {};
+  allDepts.forEach(function (d) {
+    getRosterForDepartment_(d).names.forEach(function (name) {
+      if (!deptsForAgent[name]) deptsForAgent[name] = [];
+      deptsForAgent[name].push(d);
+    });
+  });
+
+  const byDate = {};
+  rows.forEach(function (r) {
+    const iso = r.dateIso;
+    if (!iso) return;
+    const b = byDate[iso] || (byDate[iso] = { rows: 0, sentinel: 0, unmatched: 0, rung: 0, samples: {} });
+    b.rows++;
+    const agent = r.agent;
+    if (!agent || /^A_Q_/.test(agent) || agent === 'Backup CSR') { b.sentinel++; return; }
+    if (!deptsForAgent[agent] || !deptsForAgent[agent].length) {
+      b.unmatched++;
+      if (Object.keys(b.samples).length < 3) b.samples[agent] = true;
+      return;
+    }
+    b.rung += Number(r.totalRung) || 0;
+  });
+  Object.keys(byDate).sort().forEach(function (iso) {
+    const b = byDate[iso];
+    Logger.log('%s | rows=%s sentinel=%s roster-unmatched=%s attributedRung=%s%s',
+      iso, b.rows, b.sentinel, b.unmatched, b.rung,
+      Object.keys(b.samples).length ? ' | unmatched samples: ' + Object.keys(b.samples).join(', ') : '');
+  });
+  const isoSet = {};
+  rows.forEach(function (r) { if (r.dateIso) isoSet[r.dateIso] = true; });
+  Logger.log('Dates with NO rows at all in %s..%s: %s', from, to,
+    (function () {
+      const missing = [];
+      const cur = new Date(Number(from.slice(0,4)), Number(from.slice(5,7)) - 1, Number(from.slice(8,10)), 12);
+      const end  = new Date(Number(to.slice(0,4)), Number(to.slice(5,7)) - 1, Number(to.slice(8,10)), 12);
+      while (cur <= end) {
+        const iso = Utilities.formatDate(cur, TZ, 'yyyy-MM-dd');
+        const dow = cur.getDay();
+        if (dow !== 0 && dow !== 6 && !isoSet[iso]) missing.push(iso);
+        cur.setDate(cur.getDate() + 1);
+      }
+      return missing.length ? missing.join(', ') : '(none)';
+    })());
+}

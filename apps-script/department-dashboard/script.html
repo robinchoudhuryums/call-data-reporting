@@ -1242,6 +1242,8 @@
     // (R9-3: the Batch-E maybeShowDateSyncChip_ offer is retired -- the two
     // pages now silently adopt each other's newer window via
     // adoptSharedWindow_ in the per-page branches above.)
+    // R11-C2: arm the cross-page dwell-prefetch (no-op page values clear it).
+    if (typeof armDwellPrefetch_ === 'function') armDwellPrefetch_(page);
   }
 
   // -- Help & FAQ modal ---------------------------------------------------
@@ -3855,6 +3857,67 @@
   function recordPageWindow_(page, from, to) {
     if (!from || !to) return;
     pageActiveWindow_[page] = { from: from, to: to, at: Date.now() };
+    // R11-C2: a fresh render restarts the dwell-prefetch clock, so date
+    // changes made while staying on the page get their own warm pass.
+    if (typeof armDwellPrefetch_ === 'function'
+        && document.body.getAttribute('data-page') === page) {
+      armDwellPrefetch_(page);
+    }
+  }
+
+  // -- R11-C2: dwell-prefetch between My Department and Insights ------------
+  // Insights' first entry is a heavy cold aggregation (30-60s, owner report),
+  // and since R9-3 the entry window follows the dept page -- so after ~10s of
+  // dwelling on My Department we silently fire the EXACT request Insights'
+  // agent-free entry would run (dept + the dept page's rendered window +
+  // empty agents = the INV-45 whole-department default; prevPeriod compare
+  // adds no prior fields, matching insResolvePriorRange_'s null) and seed the
+  // D1b keep-last-good store under its reportSig_, so the tab switch
+  // SWR-paints instantly. Guards: one fetch per signature per session,
+  // skipped when Insights already shows that window, best-effort (failures
+  // silent). A user with SAVED agent/compare prefs produces a different
+  // signature on entry -- the prefetch then just warms the server cache for
+  // the agent-free key (documented cost; the IR-prefetch telemetry tradeoff
+  // applies: warmed requests count in Report Usage). The REVERSE direction
+  // (dwelling on Insights) warms the dept summary via the existing
+  // prefetchDeptSummary_. Timers arm on setPage entry and are cleared on
+  // any page switch.
+  var DWELL_PREFETCH_MS_ = 10000;
+  var dwellTimer_ = null;
+  var insPrefetchedSigs_ = {};
+  function clearDwellTimer_() { if (dwellTimer_) { clearTimeout(dwellTimer_); dwellTimer_ = null; } }
+  function armDwellPrefetch_(page) {
+    clearDwellTimer_();
+    if (page !== 'dept' && page !== 'insights') return;
+    dwellTimer_ = setTimeout(function () {
+      try {
+        if (document.body.getAttribute('data-page') !== page) return;
+        if (page === 'dept') insDwellPrefetch_();
+        else {
+          // Insights -> warm My Department's summary for the shared window.
+          var f = $('ins-from') && $('ins-from').value, t = $('ins-to') && $('ins-to').value;
+          if (f && t && typeof prefetchDeptSummary_ === 'function') prefetchDeptSummary_(f, t);
+        }
+      } catch (e) { /* best-effort */ }
+    }, DWELL_PREFETCH_MS_);
+  }
+  function insDwellPrefetch_() {
+    var dept = getRequestedDept(); if (!dept) return;
+    var win = pageActiveWindow_.dept;
+    if (!win || !win.from || !win.to) return;
+    // Already showing this window on Insights? Nothing to warm.
+    if (typeof insLastData !== 'undefined' && insLastData && insLastData.meta
+        && insLastData.meta.from === win.from && insLastData.meta.to === win.to) return;
+    var req = { department: dept, from: win.from, to: win.to, agents: [] };
+    var sig = reportSig_(req);
+    if (insPrefetchedSigs_[sig]) return;
+    insPrefetchedSigs_[sig] = true;
+    google.script.run
+      .withSuccessHandler(function (data) {
+        try { reportLastGoodWrite_('ins', sig, data); } catch (e) { /* storage full etc. */ }
+      })
+      .withFailureHandler(function () { /* best-effort: entry takes the cold path */ })
+      .getInsightsReport(req);
   }
 
   // Returns true when the entered page's date inputs were rewritten to the
@@ -6598,25 +6661,42 @@
     // R10-5: Avg answer time tile -- answered-weighted over the dept's own
     // queues for the selected range (qcd.range.avgAnswer, QCD Historical
     // Data col J). Renders wherever the data exists (any QCD-mapped dept).
+    // R11-C1: + a delta chip vs the E5 prior window (qcd.rangePrior).
+    // LOWER is better for time-to-answer, so valence is inverted ('bad' =
+    // an increase warns); 3s noise threshold.
     var qAvgTile = '';
     if (qr && qr.avgAnswer) {
+      var qAvgChip = '';
+      var qrp = state.qcd && state.qcd.rangePrior;
+      if (qrp && qrp.avgAnswerSec != null && qr.avgAnswerSec != null) {
+        qAvgChip = deptStripDelta_(qr.avgAnswerSec - qrp.avgAnswerSec, 'bad', 3, 's',
+          priorTip + ': ' + qrp.avgAnswer);
+      }
       qAvgTile =
           '<div class="dts-tile dts-tile--queue" title="Answered-weighted average time to answer across the department&#39;s mapped queues, this range.">'
         +   '<div class="dts-label">Avg answer <span class="dts-scope">queue</span></div>'
         +   '<div class="dts-value" data-flash-key="dts:qavg">' + escapeHtml(qr.avgAnswer) + '</div>'
-        +   '<div class="dts-sub">time to answer</div>'
+        +   '<div class="dts-sub">' + (qAvgChip ? qAvgChip + ' vs prior' : 'time to answer') + '</div>'
         + '</div>';
     }
     // R10-5: Transfer % tile -- CSR only (server ships csrTransfer only for
     // CSR, from CSR Transfer Historical Data; weighted transferred/total).
+    // R11-C1: + a delta chip vs the prior window (csrTransfer.prior). A
+    // transfer-rate INCREASE reads warn (more hand-offs); 1pt noise floor.
     var trTile = '';
     var tr = state.csrTransfer;
     if (tr && tr.pctStr) {
+      var trChip = '';
+      if (tr.prior && tr.prior.pct != null && tr.pct != null) {
+        trChip = deptStripDelta_(Math.round((tr.pct - tr.prior.pct) * 10) / 10, 'bad', 1, ' pts',
+          priorTip + ': ' + tr.prior.pctStr);
+      }
       trTile =
           '<div class="dts-tile dts-tile--queue" title="Transferred &divide; total calls across CSR agents, this range (CSR Transfer Historical Data).">'
         +   '<div class="dts-label">Transfer % <span class="dts-scope">this range</span></div>'
         +   '<div class="dts-value" data-flash-key="dts:transfer">' + escapeHtml(tr.pctStr) + '</div>'
-        +   '<div class="dts-sub">' + fmtNumber(tr.transferred) + ' of ' + fmtNumber(tr.totalCalls) + ' calls</div>'
+        +   '<div class="dts-sub">' + fmtNumber(tr.transferred) + ' of ' + fmtNumber(tr.totalCalls) + ' calls'
+        +     (trChip ? ' &middot; ' + trChip + ' vs prior' : '') + '</div>'
         + '</div>';
     }
 

@@ -183,6 +183,40 @@ test('R10-5: range block avgAnswer is answered-weighted; other blocks stay null'
   // Yesterday / MTD blocks never accumulate it.
   assert.equal(snap.avgAnswerSec, null);
   assert.equal(snap.mtd.avgAnswerSec, null);
+  // R11-C1: no prior window supplied -> no prior block.
+  assert.equal(snap.rangePrior, null);
+});
+
+// R11-C1 (summary:v15): the E5 prior window rides into the snapshot as a
+// second range block, so the Avg-answer tile can chip its delta. Same
+// single-scan accumulation; disjoint windows bucket independently.
+test('R11-C1: rangePrior accumulates the prior window separately from range', function () {
+  h.state.props.SPREADSHEET_ID = 'fake';
+  h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
+  h.ctx.QCD_SHEET_DATA_MEMO_ = null;
+  h.ctx.QCD_NEON_GRID_MEMO_ = null;
+  const q = h.call('getDeptQcdQueues_', 'CSR')[0];
+  h.state.spreadsheet = makeFakeSpreadsheet({
+    timeZone: 'America/Chicago',
+    sheets: {
+      'QCD Historical Data': [QCD_HEADER,
+        qcdRowAvg('2026-06-10', q, 50, '0:00:30'),   // current window: 30s
+        qcdRowAvg('2026-06-03', q, 50, '0:01:00'),   // prior window: 60s
+      ],
+    },
+  });
+  h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
+  h.ctx.QCD_SHEET_DATA_MEMO_ = null;
+  h.ctx.QCD_NEON_GRID_MEMO_ = null;
+
+  const snap = h.call('computeDeptQcdSnapshot_', 'CSR', 'America/Chicago',
+    { from: '2026-06-08', to: '2026-06-12', priorFrom: '2026-06-01', priorTo: '2026-06-05' });
+  assert.ok(snap && snap.range && snap.rangePrior, 'both blocks present');
+  assert.equal(snap.range.avgAnswerSec, 30);
+  assert.equal(snap.range.totalCalls, 50);
+  assert.equal(snap.rangePrior.avgAnswerSec, 60);
+  assert.equal(snap.rangePrior.totalCalls, 50);
+  assert.equal(snap.rangePrior.from, '2026-06-01');
 });
 
 // R10-5: CSR-only dept transfer stats from CSR Transfer Historical Data --

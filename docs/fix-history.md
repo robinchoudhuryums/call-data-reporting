@@ -416,6 +416,14 @@ plan).** Client + email template only; code comments cite `R11-B<n>`:
 | R11-B10 | Inbound/Direct modals: the scroll body's 18px top padding read as a gap strip above the stuck table headers — padding moved onto the first child so the pinned row hugs the modal bar | code (styles.html R11-B10) |
 | R11-B11 | Click-to-sort columns on all four Inbound tables + the Direct per-agent table (static theads carry `data-sort`; shared `srtApply_` machinery). Default order = the IMPACT score `(100 − answer%) × calls` desc (owner-confirmed) — worst-AND-busiest first; Direct's impact uses the busy-excluded answerable population | code (`srtApply_` + theads) |
 
+**Phase C, cycle 1 (same round):**
+
+| Code | What it fixed / added | Live rule lives in |
+|---|---|---|
+| R11-C0 | `probeOverviewChartDates()` (CompanyOverview.gs; editor-run, admin, read-only) — the May 6–26 chart gap persists while BOTH sources verifiably hold the rows and parity is clean, so the loss is inside the chart pipeline's own per-row filters; the probe replays them (fetch → sentinel skip → roster join → rung accumulation) over `OV_PROBE_FROM/TO` and logs per-date counts + sample unmatched agent names, pinning which filter eats the rows | code (probe docstring) |
+| R11-C1 | Avg answer + Transfer % tiles gained prior-window delta chips: `computeDeptQcdSnapshot_` accumulates a `rangePrior` block (the E5 prior window, same single scan) and `csrTransfer.prior` rides the summary response; client chips use INVERTED valence (lower is better) with 3s / 1pt noise floors. summary:v14→v15 | INV-30 v15 note, CLAUDE.md |
+| R11-C2 | Cross-page dwell-prefetch: after ~10s on My Department, the client silently fires the EXACT agent-free Insights request first entry would run (dept + shared window + `agents:[]`, the INV-45 default) and seeds the D1b store under its `reportSig_` — the tab switch SWR-paints instantly instead of a 30–60s cold wait; the reverse direction warms the dept summary via `prefetchDeptSummary_`. One fetch per signature per session; re-renders re-arm the timer; saved agent/compare prefs produce a different entry signature (documented miss — prefetch then only warms the server's agent-free key); warmed requests count in Report Usage telemetry (the IR-prefetch tradeoff) | Insights hand-off bullet context; code (`armDwellPrefetch_`) |
+
 ---
 
 ## Phases & batches (rollout narrative, not rules)
