@@ -975,7 +975,10 @@
     // 420ms transition settles so the canvas tracks its real slot.
     var missedRowEl = $('dept-missed-chart-row');
     if (missedRowEl) missedRowEl.addEventListener('transitionend', function (e) {
-      if (e.propertyName === 'grid-template-columns') deptMissedResize_();
+      // R11-C6: resize ONLY -- never rebuild -- when the detail panel toggles.
+      // The tooNarrow rebuild guard is for the initial-paint stuck-square case;
+      // firing a full destroy+recreate here flashed the chart on every bar click.
+      if (e.propertyName === 'grid-template-columns') deptMissedResize_(false);
     });
     // R9-2: the one-click CSV icon became an Export dropdown (the Insights
     // toolbar convention). #csv-export-btn is the WRAP now (id kept so the
@@ -5844,7 +5847,8 @@
   // layout settled). If the chart still measures empty after the settle +
   // resize, destroy + rebuild ONCE from the last response.
   var deptMissedRebuilt_ = false;
-  function deptMissedResize_() {
+  function deptMissedResize_(allowRebuild) {
+    if (allowRebuild === undefined) allowRebuild = true;   // R11-C6: toggle passes false
     if (typeof requestAnimationFrame !== 'function') return;
     requestAnimationFrame(function () {
       requestAnimationFrame(function () {
@@ -5857,7 +5861,8 @@
           var wrapEl = document.querySelector('#dept-missed-chart-wrap .missed-chart-hwrap');
           var tooNarrow = !!(wrapEl && wrapEl.clientWidth > 0
             && deptMissedChart.width < wrapEl.clientWidth * 0.7);
-          if ((deptMissedChart.width === 0 || deptMissedChart.height === 0 || tooNarrow)
+          if (allowRebuild
+              && (deptMissedChart.width === 0 || deptMissedChart.height === 0 || tooNarrow)
               && deptMissedLastData && !deptMissedRebuilt_) {
             deptMissedRebuilt_ = true;   // one retry -- never loop
             deptMissedDrawChart_(deptMissedLastData);

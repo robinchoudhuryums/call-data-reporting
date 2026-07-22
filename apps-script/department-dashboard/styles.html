@@ -2131,7 +2131,15 @@
     align-items: baseline;
     justify-content: space-between;
     gap: 8px;
+    /* R11-C6: on a narrow (220px) card the meta (tier chip + "N missed" +
+       the "■ chart" button) can outrun the row and get clipped by the card's
+       overflow:hidden. Let the row wrap so the meta drops to a second line
+       fully visible instead of the button being cut off at the right edge. */
+    flex-wrap: wrap;
+    row-gap: 6px;
   }
+  .agent-card > summary.agent-card-head .agent-name { min-width: 0; }
+  .agent-card-meta { flex-wrap: wrap; margin-left: auto; }
   .queue-only-card > summary.qname::-webkit-details-marker,
   .agent-card > summary.agent-card-head::-webkit-details-marker { display: none; }
   .queue-only-card > summary.qname::after,
