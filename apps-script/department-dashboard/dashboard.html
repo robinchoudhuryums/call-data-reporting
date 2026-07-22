@@ -460,6 +460,9 @@
                missedChartMode_ ignores a saved radar pref for non-admins.
                The toolbar itself stays visible for the B8 chart-tips button. -->
           <div class="missed-chart-toolbar">
+            <!-- R11-C4: shows "Chart: <agent> ✕" while the hour-of-day chart is
+                 scoped to one agent via a card's ■ chart button. -->
+            <span id="dept-missed-scope-chip" class="missed-scope-chip" style="display:none;"></span>
             <button type="button" class="chart-help-btn" data-charthelp="missed" aria-label="Chart tips" title="Chart tips">?</button>
             <div class="ds-seg missed-chart-mode" role="group" aria-label="Missed-calls chart type" data-admin-only>
               <button type="button" data-mode="bars" aria-pressed="true">Bars</button>
@@ -1564,16 +1567,6 @@
                 <button type="button" class="seg-btn" data-render="calendar" role="radio" aria-checked="false"
                         title="Calendar days over the selected window — which DAYS were good or bad (the abandon heatmap answers when in the day).">Calendar</button>
               </div>
-              <!-- gap 1: per-queue metric sub-selector, shown only when the
-                   "Abd %" tab is active (insRenderTrendChart_ toggles it). -->
-              <label class="ir-sort-control" id="ins-queue-metric-wrap" style="display:none;">
-                <span class="ir-sort-label">Queue metric:</span>
-                <select id="ins-queue-metric">
-                  <option value="abandonedPct">Abandoned %</option>
-                  <option value="totalCalls">Total Calls</option>
-                  <option value="violations">Violations</option>
-                </select>
-              </label>
               <div class="ir-toggle-box" id="ins-datalabels-box">
                 <label class="ir-toggle-label">
                   <input type="checkbox" id="ins-show-datalabels"> Show data labels
@@ -1582,16 +1575,27 @@
               <button type="button" class="chart-help-btn" data-charthelp="insTrend" aria-label="Chart tips" title="Chart tips">?</button>
             </div>
           </div>
-          <div class="pr-trend-subtabs" id="ins-trend-subtabs" role="tablist">
-            <button type="button" class="pr-trend-subtab active" data-metric="answered" role="tab" aria-selected="true">Answered</button>
-            <button type="button" class="pr-trend-subtab" data-metric="pct" role="tab" aria-selected="false">% Answered</button>
-            <!-- Round 4 (owner): Avg Talk Time is an admin-only lens -- managers
-                 read talk time per agent in IR / the dept table, and the team-level
-                 ATT trend mostly invited misreading. data-admin-only convention. -->
-            <button type="button" class="pr-trend-subtab" data-metric="att" role="tab" aria-selected="false" data-admin-only style="display:none;"
-                    title="Average talk time per answered call, by month or day.">Avg Talk Time</button>
-            <button type="button" class="pr-trend-subtab" data-metric="queues" role="tab" aria-selected="false"
-                    title="Abandoned % by queue — the share of queue calls where the caller hung up before being answered (5%+ on a day counts as a violation).">Abd %</button>
+          <!-- R11-C3 (owner-approved consolidation): the metric sub-tabs, the
+               per-queue metric select, and the calendar's own cell-metric
+               segment collapsed into ONE metric dropdown. Queue metrics ride
+               the same list as "Queue: …" entries; Avg talk time stays the
+               admin-only lens (the option is REMOVED for non-admins at init
+               -- <option> can't use the data-admin-only reveal). The
+               calendar's cells follow this same metric. -->
+          <div class="pr-trend-subtabs ins-trend-metric-row" id="ins-trend-metric-row">
+            <label class="ir-sort-control">
+              <span class="ir-sort-label">Metric:</span>
+              <select id="ins-trend-metric">
+                <option value="answered">Answered</option>
+                <option value="pct">% Answered</option>
+                <option value="missed">Missed</option>
+                <option value="volume">Call volume (rung)</option>
+                <option value="att" data-admin-metric="1">Avg talk time</option>
+                <option value="queues:abandonedPct">Queue: Abandoned %</option>
+                <option value="queues:totalCalls">Queue: Total calls</option>
+                <option value="queues:violations">Queue: Violations</option>
+              </select>
+            </label>
           </div>
           <div class="ir-chart-canvas-wrap" id="ins-trend-canvas-wrap"><canvas id="ins-trend-chart"></canvas></div>
           <!-- Phase 2 #10: the calendar day-grid renderer (CSS grid, no
@@ -1799,7 +1803,10 @@
         <div id="direct-call-body">
           <div id="direct-call-kpi-row" class="pr-kpi-row"></div>
 
-          <div class="al-section">
+          <!-- R11-C5: company view (All departments) hides this flat table and
+               renders per-dept cards into #direct-call-dept-cards instead;
+               single-dept view keeps this table. -->
+          <div class="al-section" id="direct-call-agent-section">
             <div class="al-section-title">Per agent <span class="ins-rollup-cap">(inbound answer rate excludes &ldquo;missed (busy)&rdquo;)</span></div>
             <table class="qcd-source-table">
               <thead><tr>
@@ -1816,6 +1823,7 @@
               <tbody id="direct-call-agent-tbody"></tbody>
             </table>
           </div>
+          <div id="direct-call-dept-cards" class="direct-dept-cards" style="display:none;"></div>
         </div>
       </div>
       </div>

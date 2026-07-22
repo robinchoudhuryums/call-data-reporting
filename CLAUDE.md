@@ -394,6 +394,16 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   under 3 missed) so a 1-missed agent is never branded worst; in
   that case cards render sorted but untiered. Styles
   (`.agent-tier`, `.agent-card--tier-*`) live in `styles.html`.
+  **Agent-scoped chart (R11-C4):** each card's summary carries a
+  "■ chart" button (`.agent-scope-btn`) that rebuckets the 18-slot
+  hour-of-day chart above from THAT agent's own timeline entries
+  (pure client rebucket via `missedTimeBucketIdx_` -- the times are
+  already in the payload, no fetch); a toolbar chip
+  (`#dept-missed-scope-chip`) names the active scope with an ✕
+  clear. Clicks are intercepted in the delegated document handler
+  with preventDefault so the button never toggles the card's
+  `<details>`. The bucket drill panel stays DEPT-WIDE by design;
+  scope resets on every fresh fetch (`deptMissedRender_`).
 - **Threshold-drift surface (E10, commit b3a5a51).** The Alerts
   modal config table renders a "Last 30 days" chip per dept
   summarizing the most-recent daily-trigger entries from the
@@ -623,7 +633,17 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   vetted** (the Inbound-report model: the per-dept manager path is written +
   kept intact, so release is a one-line gate removal in
   `directCallResolveRequest_` + un-hiding the `data-admin-only` Direct tab).
-  Route `#/report/direct`. See `docs/direct-extension-metrics-design.md`.
+  Route `#/report/direct`. **Company view renders per-DEPT cards (R11-C5):**
+  when an admin runs "All departments", the flat all-agents table is
+  replaced by `<details>` cards grouped client-side from the same per-agent
+  rows via `r.dept` -- aggregate headline stats on the summary (agents / IB
+  answered / missed free+busy / busy-excluded answer % with the 92% tint /
+  answered-weighted IB ATT / OB calls), each expanding into that dept's own
+  sortable agent table (shared `directAgentRowHtml_` / `directImpact_`;
+  dynamic `direct-dept-tbody-*` sort wiring is dropped + re-armed per
+  render). Card order = the R11-B11 impact score on the dept aggregate.
+  Single-dept view keeps the flat table; the CSV stays flat with its Dept
+  column. See `docs/direct-extension-metrics-design.md`.
 - **The Insights report ABSORBED BOTH the Performance Report AND
   Compare Ranges (each RETIRED)** -- the report-consolidation thesis
   landed: Individual + Insights are the two agent reports.
@@ -698,10 +718,17 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   warn markers + legend spotlight.
   **Chart consolidation (seq #1, the insights v7 bump):** the 12-mo team-trend
   chart and the queue-health abandoned-% chart are ONE tabbed chart
-  (`insRenderTrendChart_` on `ins-trend-chart`): metric tabs Answered /
-  % Answered / ATT / **Abandoned % by Queue**, plus a **Monthly/Daily**
-  toggle (`insTrendView`). Daily for the team metrics reads the new
-  `trendDaily` response field (daily answered/%/ATT over the selected
+  (`insRenderTrendChart_` on `ins-trend-chart`). **Since R11-C3 the metric
+  sub-tabs + the per-queue metric select + the calendar's cell-metric
+  segment are consolidated into ONE `#ins-trend-metric` dropdown** (owner:
+  "too many selectors"): Answered / % Answered / Missed / Call volume
+  (rung) / Avg talk time (ADMIN-only -- the `data-admin-metric` option is
+  REMOVED at init for non-admins, since `<option>` can't use the
+  data-admin-only reveal) / the queue metrics as `queues:<metric>` values
+  (Abandoned % / Total calls / Violations -- these split into the old
+  queues tab + `insQueueMetric`). Plus a **Monthly/Daily**
+  toggle (`insTrendView`), hidden in Calendar mode. Daily for the team metrics reads the
+  `trendDaily` response field (daily answered/missed/rung/%/ATT over the selected
   window); Daily for the queue tab reads `queueHealth.trend.daily*`.
   `queueHealth` now ALWAYS-separates sub-queues (children shown as
   their own lines/rows + tagged `subDept`, EXCLUDED from the own-only
@@ -809,9 +836,11 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   the measure-guarded `insDrawTrendChart_` (the MC2 offsetParent lesson, since
   the render pass can run before the results container is shown); the share
   doughnut stays deferred inside Team-detail (`insRenderDeferredCharts_` is
-  share-only now). NB the by-queue trend tab is labeled **"Abd %"** in the UI
-  (the mega-bullet's "Abandoned % by Queue" is the internal
-  `data-metric="queues"`). (2) **Hand-off (the department is the shared global
+  share-only now). NB since R11-C3 the by-queue metrics are entries in the
+  ONE `#ins-trend-metric` dropdown ("Queue: Abandoned %" etc. -- the
+  mega-bullet's "Abandoned % by Queue" is the internal
+  `data-metric="queues"` + `insQueueMetric`; the old sub-tab row + queue
+  select are retired). (2) **Hand-off (the department is the shared global
   selector, so only DATES are carried):** `handoffToInsights_(from,to,scroll)`
   (a parametrized `launcherOpenInsights_`) and `handoffToMyDept_(from,to,{missed})`
   (mirrors `launcherOpenMissed_`; `missed:true` arms `deptMissedScrollPending_`).
@@ -925,12 +954,13 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   (density restores from links/views). Applying a view re-checks the
   already-rendered picker directly (the pending-selection hook only
   fires on a roster render); a view with no agents param UNCHECKS all
-  (agent-free semantics preserved). (#10) The trend chart's team tabs
-  gain a **Line ⇄ Calendar** renderer toggle (`insTrendRender` +
-  `insCalMetric` in prefs): Calendar is a Mon–Fri day-grid second
+  (agent-free semantics preserved). (#10) The trend chart gains
+  a **Line ⇄ Calendar** renderer toggle (`insTrendRender` in prefs):
+  Calendar is a Mon–Fri day-grid second
   RENDERER of the same `trendDaily` series (no server change), cells
   colored by the existing benchmarks (Answer % vs the 92% target;
-  Missed as a warn intensity ramp) with the number in-cell, per-day
+  Missed / Call volume / Answered as intensity ramps) with the number
+  in-cell, per-day
   click-drill via the shared `insDrillToRange_` (extracted from the
   trend-point drill); eligible for 14–366-day windows
   (`INS_CALENDAR_MIN/MAX_DAYS_` — the MM-DD daily labels must stay
@@ -939,17 +969,26 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   ‹ › month pagination (`insCalMonth_`, defaults to the MOST RECENT
   month, resets on window change — the old all-weeks render CLIPPED
   past month 1 inside the fixed-height chart wrap, which calendar mode
-  now also releases via `.ir-chart-wrap--cal`); a third **'Abd %'**
-  cell metric (`insCalMetric='abd'`, dept-total daily abandoned % from
+  now also releases via `.ir-chart-wrap--cal`); an **'Abandoned %'**
+  cell rendering (dept-total daily abandoned % from
   `queueHealth.dailySeries`, colored on the 5% standard) makes the
-  QUEUES trend tab calendar-eligible too (entering Calendar from that
-  tab auto-selects it; a saved 'abd' pref self-heals to 'pct' when the
-  dept has no queue daily series; ATT stays line-only); and the
+  Queue: Abandoned % metric calendar-eligible too; and the
   Line⇄Calendar toggle stays VISIBLE but disabled with a reason
-  tooltip (`insCalendarIneligibleReason_`) on ineligible tabs/windows
+  tooltip (`insCalendarIneligibleReason_`) on ineligible metrics/windows
   instead of vanishing (the discoverability fix — it used to hide
-  entirely, which read as "the calendar view is gone" whenever the
-  saved trend-tab pref was Abd %/ATT). (#9) `sendInsightsReportEmail` accepts `style:'summary'`
+  entirely, which read as "the calendar view is gone"). **Since R11-C3
+  the calendar has NO metric selector of its own** — the cell metric is
+  DERIVED from the ONE `#ins-trend-metric` dropdown
+  (`insActiveTrendMetric` → ans/pct/missed/vol, or abd for Queue:
+  Abandoned %; a muted `.ins-cal-metric-lbl` label names it in the
+  toolbar; the old per-calendar segment + the `insCalMetric` pref are
+  vestigial). Calendar-capable metrics: Answered / % Answered / Missed
+  / Call volume + Queue: Abandoned %; ATT and the count queue metrics
+  stay line-only (`insCalendarEligible_`). The Monthly/Daily toggle
+  hides while Calendar is active (a calendar is inherently daily), and
+  the calendar's day-drill + month-nav clicks are wired DIRECTLY on the
+  rendered nodes each render (belt-and-braces after the delegated
+  handler missed on some paths — the reported day-click no-op). (#9) `sendInsightsReportEmail` accepts `style:'summary'`
   (Export → **Email summary**): `renderInsightsEmailSummary_`
   (Digest.gs) sends takeaway + rollup tiles + ONLY the behind-team
   list (answer rate below the team average, min

@@ -4222,7 +4222,7 @@
       '30d / 60d / 90d / YTD change the chart window; the sub-queues box shows or hides dashed child-queue lines.',
     ],
     insTrend: [
-      'Tabs switch the metric; Monthly / Daily switches the axis.',
+      'The Metric dropdown switches what the chart shows (team metrics + the Queue: entries); Monthly / Daily switches the axis.',
       'Line ⇄ Calendar re-renders the daily series as a month grid (windows of 14+ days).',
       'Click a data point — or a calendar day — to reload the whole report scoped to that month or day.',
       'On the Abd % tab, click a legend entry to pin/isolate that queue’s line; hover previews.',
@@ -5063,6 +5063,21 @@
     // Calls modal AND the My Department inline missed section (#9b). Strict
     // no-op unless the click lands on a .pid-copy badge.
     document.addEventListener('click', function (e) {
+      // R11-C4: agent-scope toggle on a missed card (lives inside the card's
+      // <summary>, so preventDefault stops the <details> from toggling) + the
+      // chart chip's ✕ clear. Both funnel through deptMissedSetScope_'s toggle.
+      const sbtn = e.target.closest && e.target.closest('.agent-scope-btn');
+      if (sbtn) {
+        e.preventDefault(); e.stopPropagation();
+        deptMissedSetScope_(sbtn.getAttribute('data-scope-agent') || '');
+        return;
+      }
+      const sclr = e.target.closest && e.target.closest('[data-scope-clear]');
+      if (sclr) {
+        e.preventDefault(); e.stopPropagation();
+        deptMissedSetScope_(deptMissedAgentScope_);   // toggle-off the active scope
+        return;
+      }
       // #3: "↳ path" drill -> open the inbound-call journey for this parent id.
       const jbtn = e.target.closest && e.target.closest('.pid-journey');
       if (jbtn) {
@@ -5322,11 +5337,20 @@
         tierChip = '<span class="agent-tier agent-tier--' + tier + '">' + tierLabel + '</span>';
       }
 
+      // R11-C4: per-card chart-scope toggle -- scopes the hour-of-day chart
+      // above to this agent's own rings (client rebucket; the button never
+      // toggles the <details>, stopPropagation in the delegated handler).
+      const scoped = deptMissedAgentScope_ === a.name;
       return '<details class="agent-card' + (tier ? ' agent-card--tier-' + tier : '') + '" open>'
            +   '<summary class="agent-card-head">'
            +     '<span class="agent-name">' + escapeHtml(a.name) + '</span>'
            +     '<span class="agent-card-meta">' + tierChip
            +       '<span class="agent-total">' + a.total + ' missed</span>'
+           +       '<button type="button" class="agent-scope-btn' + (scoped ? ' is-on' : '') + '"'
+           +         ' data-scope-agent="' + escapeHtml(a.name) + '"'
+           +         ' title="' + (scoped ? 'Show the whole department on the chart again'
+                                         : 'Scope the hour-of-day chart above to this agent') + '">'
+           +         (scoped ? '&#10005; chart' : '&#9632; chart') + '</button>'
            +     '</span>'
            +   '</summary>'
            +   '<ul class="missed-list">' + itemsHtml + '</ul>'
@@ -5850,6 +5874,45 @@
   // re-measures after layout settles (#5).
   // MC2: bounded rAF retry when the container isn't measurable yet (see below).
   var deptMissedDrawAttempts_ = 0;
+  // R11-C4: agent scope for the missed hour-of-day chart. Clicking an agent
+  // card's "chart" button rebuckets the 18-slot chart from THAT agent's own
+  // timeline entries (times are already in the payload; no new fetch). The
+  // bucket drill panel stays DEPT-WIDE by design -- it lists every ring in
+  // the bucket regardless of scope. Scope resets on every fresh fetch.
+  var deptMissedAgentScope_ = null;
+  function missedTimeBucketIdx_(label) {
+    const mm = /^(\d{1,2}):(\d{2})(?::\d{2})?\s*(AM|PM)$/i.exec(String(label || '').trim());
+    if (!mm) return -1;
+    let h = Number(mm[1]) % 12;
+    if (/pm/i.test(mm[3])) h += 12;
+    const idx = Math.floor(((h * 60 + Number(mm[2])) - 480) / 30);   // 8:00 AM base, 30-min slots
+    return (idx >= 0 && idx < 18) ? idx : -1;
+  }
+  function deptMissedScopedChart_(data) {
+    if (!deptMissedAgentScope_) return null;
+    const agents = (data && data.agents) || [];
+    const ag = agents.filter(function (a) { return a.name === deptMissedAgentScope_; })[0];
+    const base = (data && data.chart) || {};
+    if (!ag || !(base.labels || []).length) return null;
+    const counts = base.labels.map(function () { return 0; });
+    const abandoned = base.labels.map(function () { return 0; });
+    (ag.missedTimes || []).forEach(function (m) {
+      const idx = missedTimeBucketIdx_(m.label);
+      if (idx < 0 || idx >= counts.length) return;   // outside the 8-5 band (RPT-1 rings)
+      counts[idx]++;
+      if (m.abandoned) abandoned[idx]++;
+    });
+    return { labels: base.labels, counts: counts, abandoned: abandoned };
+  }
+  function deptMissedSetScope_(name) {
+    deptMissedAgentScope_ = (deptMissedAgentScope_ === name) ? null : name;
+    if (deptMissedLastData) {
+      deptMissedDrawChart_(deptMissedLastData);
+      // Re-render the cards so the active button state tracks.
+      const agWrap0 = $('dept-missed-agents');
+      if (agWrap0) agWrap0.innerHTML = missedAgentsHtml_(deptMissedLastData.agents || []);
+    }
+  }
   function deptMissedDrawChart_(data) {
     const m = (data && data.meta) || {};
     const chartWrap = $('dept-missed-chart-wrap');
@@ -5881,8 +5944,19 @@
     chartWrap.innerHTML = '<div class="' + hwrapCls + '">'
       + '<canvas id="dept-missed-chart" aria-label="Hour-of-day distribution of missed calls"></canvas></div>';
     refreshChartTheme();
+    const scopedChart = deptMissedScopedChart_(data);   // R11-C4
+    const chipEl = $('dept-missed-scope-chip');
+    if (chipEl) {
+      if (scopedChart) {
+        chipEl.innerHTML = 'Chart: <strong>' + escapeHtml(deptMissedAgentScope_) + '</strong>'
+          + ' <button type="button" class="scope-chip-x" data-scope-clear="1" title="Show the whole department">&#10005;</button>';
+        chipEl.style.display = '';
+      } else {
+        chipEl.style.display = 'none'; chipEl.innerHTML = '';
+      }
+    }
     deptMissedChart = safeChart_($('dept-missed-chart').getContext('2d'),
-      missedChartCfg_((data && data.chart) || { labels: [], counts: [] },
+      missedChartCfg_(scopedChart || (data && data.chart) || { labels: [], counts: [] },
                       function (idx) { deptMissedBucketDetail_.toggle(idx); }));
     deptMissedResize_();
     missedSyncToggles_();
@@ -5893,6 +5967,7 @@
     if (!wrap) return;
     const m = (data && data.meta) || {};
     deptMissedLastData = data;            // drill-in reads this
+    deptMissedAgentScope_ = null;         // R11-C4: fresh data = dept-wide chart
     deptMissedBucketDetail_.hide();       // reset the panel on every fetch (like the modal)
 
     // Show the section BEFORE the radar is created below: Chart.js measures
@@ -11964,28 +12039,29 @@
       insApplyCardsView_();   // re-toggles the gap-only metric selector + re-renders
     });
 
-    // Trend-metric sub-tabs (same pattern as the PR trend chart).
-    const subTabs = $('ins-trend-subtabs');
-    if (subTabs) subTabs.addEventListener('click', function (e) {
-      const tab = e.target.closest('.pr-trend-subtab');
-      if (!tab) return;
-      insActiveTrendMetric = tab.getAttribute('data-metric') || 'answered';
-      subTabs.querySelectorAll('.pr-trend-subtab').forEach(function (b) {
-        const active = b === tab;
-        b.classList.toggle('active', active);
-        b.setAttribute('aria-selected', active ? 'true' : 'false');
+    // R11-C3 (owner-approved consolidation): ONE metric dropdown replaced
+    // the trend sub-tabs, the per-queue metric select, and the calendar's
+    // cell-metric segment. "queues:<m>" values split into the queues view +
+    // its sub-metric; the Avg-talk-time option is REMOVED for non-admins
+    // (an <option> can't ride the data-admin-only reveal loop).
+    const trendSel = $('ins-trend-metric');
+    if (trendSel) {
+      if (typeof USER === 'undefined' || !USER || USER.role !== 'admin') {
+        const attOpt = trendSel.querySelector('option[data-admin-metric]');
+        if (attOpt) attOpt.remove();
+      }
+      trendSel.addEventListener('change', function () {
+        const v = trendSel.value || 'answered';
+        if (v.indexOf('queues:') === 0) {
+          insActiveTrendMetric = 'queues';
+          insQueueMetric = v.slice(7) || 'abandonedPct';
+        } else {
+          insActiveTrendMetric = v;
+        }
+        insSavePrefs_();
+        if (insLastData) insRenderTrendChart_(insLastData);
       });
-      insSavePrefs_();
-      if (insLastData) insRenderTrendChart_(insLastData);
-    });
-
-    // gap 1: per-queue metric sub-selector (only meaningful on the By Queue tab).
-    const queueMetricSel = $('ins-queue-metric');
-    if (queueMetricSel) queueMetricSel.addEventListener('change', function () {
-      insQueueMetric = this.value || 'abandonedPct';
-      insSavePrefs_();
-      if (insLastData) insRenderTrendChart_(insLastData);
-    });
+    }
 
     // Export dropdown -- same pattern as Individual / Performance.
     const exportBtn  = $('ins-export-btn');
@@ -13512,9 +13588,13 @@
     const span = isoRangeDays_(meta.from, meta.to);
     if (span == null || span < INS_CALENDAR_MIN_DAYS_ || span > INS_CALENDAR_MAX_DAYS_) return false;
     if (insActiveTrendMetric === 'queues') {
+      // R11-C3: only the abandoned-% queue metric has a calendar rendering.
+      if (insQueueMetric !== 'abandonedPct') return false;
       return (((data && data.queueHealth && data.queueHealth.dailySeries) || []).length > 1);
     }
-    if (insActiveTrendMetric !== 'answered' && insActiveTrendMetric !== 'pct') return false;
+    // R11-C3: every team COUNT/RATE metric is calendar-capable; ATT stays
+    // line-only (a duration grid reads poorly and invites misreading).
+    if (['answered', 'pct', 'missed', 'volume'].indexOf(insActiveTrendMetric) === -1) return false;
     return (((data && data.trendDaily && data.trendDaily.labels) || []).length > 1);
   }
 
@@ -13523,7 +13603,10 @@
   // vanishing on ineligible tabs/windows.
   function insCalendarIneligibleReason_(data) {
     if (insActiveTrendMetric === 'att') {
-      return 'Calendar view is available on the Answered / % Answered / Abd % tabs.';
+      return 'Calendar view is available for the count and rate metrics (Answered, % Answered, Missed, Call volume, Queue: Abandoned %).';
+    }
+    if (insActiveTrendMetric === 'queues' && insQueueMetric !== 'abandonedPct') {
+      return 'Calendar view is available for Queue: Abandoned % (the count queue metrics are line-only).';
     }
     const meta = (data && data.meta) || {};
     const span = isoRangeDays_(meta.from, meta.to);
@@ -13536,9 +13619,23 @@
     return 'Calendar view is unavailable here — this tab has no daily series for the window.';
   }
 
+  // R11-C3: reflect the state pair (insActiveTrendMetric + insQueueMetric)
+  // onto the consolidated dropdown; a value the select no longer offers
+  // (a non-admin's saved 'att') self-heals to Answered.
+  function insSyncTrendMetricSel_() {
+    const sel = $('ins-trend-metric');
+    if (!sel) return;
+    const want = insActiveTrendMetric === 'queues'
+      ? ('queues:' + (insQueueMetric || 'abandonedPct'))
+      : insActiveTrendMetric;
+    sel.value = want;
+    if (sel.value !== want) { insActiveTrendMetric = 'answered'; sel.value = 'answered'; }
+  }
+
   function insRenderTrendChart_(data) {
     const canvas = $('ins-trend-chart');
     if (!canvas) return;
+    insSyncTrendMetricSel_();
     refreshChartTheme();
     destroyOrphanedChartOnCanvas_('ins-trend-chart');
     if (insChartInstance) { try { insChartInstance.destroy(); } catch (e) {} insChartInstance = null; }
@@ -13763,6 +13860,14 @@
       } else if (metric === 'att') {
         dataPoints = series.map(function (s) { return Number(((s.att || 0) / 60).toFixed(2)); });
         color = THEME.muted || '#9C755F'; label = 'Avg Talk Time'; isMinutes = true;
+      } else if (metric === 'missed') {
+        // R11-C3: Missed as a first-class metric (both series carry .missed).
+        dataPoints = series.map(function (s) { return Number(s.missed) || 0; });
+        color = (IR_VOLUME_COLORS && IR_VOLUME_COLORS.missed) || THEME.warn; label = 'Missed';
+      } else if (metric === 'volume') {
+        // R11-C3: Call volume = rung (ring events; answered + missed).
+        dataPoints = series.map(function (s) { return Number(s.rung) || 0; });
+        color = THEME.ink || '#101418'; label = 'Call volume (rung)';
       } else {
         dataPoints = series.map(function (s) { return s.answered; });
         color = IR_VOLUME_COLORS.answered; label = 'Answered';
@@ -13879,16 +13984,26 @@
     const byIsoAbd = {};
     qhDaily.forEach(function (d) { if (d && d.date) byIsoAbd[d.date] = d; });
     const hasAbd = qhDaily.length > 0;
-    // Arriving from the Abd % trend tab, default the cells to the abandon
-    // metric (the tab the user toggled Calendar from); a saved 'abd' pref
-    // falls back to Answer % when this dept has no queue daily series.
-    if (insActiveTrendMetric === 'queues' && hasAbd && insCalMetric !== 'abd') insCalMetric = 'abd';
-    if (insCalMetric === 'abd' && !hasAbd) insCalMetric = 'pct';
-    const isMissed = insCalMetric === 'missed';
-    const isAbd    = insCalMetric === 'abd';
-    let maxMissed = 0;
+    // R11-C3: the calendar's cell metric FOLLOWS the consolidated metric
+    // dropdown (the calendar's own cell-metric segment is retired):
+    // % Answered -> pct cells, Missed -> missed ramp, Answered / Call
+    // volume -> count ramps, Queue: Abandoned % -> abd cells. Eligibility
+    // (insCalendarEligible_) guarantees the backing series exists.
+    let calMetric;
+    if (insActiveTrendMetric === 'queues') calMetric = hasAbd ? 'abd' : 'pct';
+    else if (insActiveTrendMetric === 'pct') calMetric = 'pct';
+    else if (insActiveTrendMetric === 'missed') calMetric = 'missed';
+    else if (insActiveTrendMetric === 'volume') calMetric = 'vol';
+    else calMetric = 'ans';
+    const isMissed = calMetric === 'missed';
+    const isAbd    = calMetric === 'abd';
+    const isVol    = calMetric === 'vol';
+    const isAns    = calMetric === 'ans';
+    let maxMissed = 0, maxVol = 0, maxAns = 0;
     (td.series || []).forEach(function (s) {
       maxMissed = Math.max(maxMissed, Number(s && s.missed) || 0);
+      maxVol    = Math.max(maxVol,    Number(s && s.rung)   || 0);
+      maxAns    = Math.max(maxAns,    Number(s && s.answered) || 0);
     });
 
     // Month pagination: one month per view; ‹ › flip within the window.
@@ -13901,28 +14016,24 @@
     }
     const mi = months.indexOf(insCalMonth_);
 
-    const seg = function (m, label, title) {
-      const on = insCalMetric === m;
-      return '<button type="button" class="seg-btn' + (on ? ' active' : '') + '" data-cal-metric="' + m + '"'
-        + ' role="radio" aria-checked="' + (on ? 'true' : 'false') + '" title="' + escapeHtml(title) + '">'
-        + label + '</button>';
-    };
     const legend = isMissed
       ? 'Darker = more missed rings that day.'
       : (isAbd
         ? 'Sage = under the 5% abandon threshold · warmer = at/above it.'
-        : 'Sage = at/above the 92% answer target · warmer = further below it.');
+        : (isVol ? 'Darker = more ring events (answered + missed) that day.'
+        : (isAns ? 'Darker sage = more answered calls that day.'
+        : 'Sage = at/above the 92% answer target · warmer = further below it.')));
     const navBtn = function (idx, glyph, label) {
       const ok = idx >= 0 && idx < months.length;
       return '<button type="button" class="ins-cal-nav-btn"' + (ok ? ' data-cal-nav="' + months[idx] + '"' : ' disabled')
         + ' aria-label="' + label + '" title="' + label + '">' + glyph + '</button>';
     };
+    // R11-C3: cell-metric label replaces the retired segment (the metric
+    // dropdown in the trend header is the one selector now).
+    const calMetricLabel = isAbd ? 'Abandoned %' : (isMissed ? 'Missed'
+      : (isVol ? 'Call volume' : (isAns ? 'Answered' : 'Answer %')));
     let html = '<div class="ins-cal-toolbar">'
-      + '<div class="segmented" role="radiogroup" aria-label="Calendar metric">'
-      +   seg('pct', 'Answer %', 'Each day colored against the 92% company answer-rate target.')
-      +   seg('missed', 'Missed', 'Each day shaded by how many rings went unanswered.')
-      +   (hasAbd ? seg('abd', 'Abd %', 'Each day colored against the 5% queue-abandon threshold (dept total across mapped queues).') : '')
-      + '</div>'
+      + '<span class="ins-cal-metric-lbl">' + calMetricLabel + '</span>'
       + (months.length > 1
         ? '<div class="ins-cal-nav">' + navBtn(mi - 1, '&lsaquo;', 'Previous month')
           + '<span class="ins-cal-month">' + escapeHtml(insCalMonthLabel_(insCalMonth_))
@@ -13975,18 +14086,28 @@
           } else {
             const pct = Math.round(Number(s.pct) || 0);
             const missed = Number(s.missed) || 0;
+            const rung = Number(s.rung) || 0;
+            const answeredN = Number(s.answered) || 0;
             if (isMissed) {
               const sev = maxMissed > 0 ? (missed / maxMissed) : 0;
               style = missed === 0
                 ? 'background: color-mix(in srgb, var(--good) 12%, var(--paper-card));'
                 : 'background: color-mix(in srgb, var(--warn) ' + Math.round(12 + 48 * sev) + '%, var(--paper-card));';
+            } else if (isVol) {
+              // R11-C3: neutral accent ramp -- volume is informational, not
+              // good/bad (no invented thresholds).
+              const sevV = maxVol > 0 ? (rung / maxVol) : 0;
+              style = 'background: color-mix(in srgb, var(--accent) ' + Math.round(8 + 34 * sevV) + '%, var(--paper-card));';
+            } else if (isAns) {
+              const sevA = maxAns > 0 ? (answeredN / maxAns) : 0;
+              style = 'background: color-mix(in srgb, var(--good) ' + Math.round(8 + 34 * sevA) + '%, var(--paper-card));';
             } else {
               style = pct >= 92
                 ? 'background: color-mix(in srgb, var(--good) ' + Math.round(14 + Math.min(22, (pct - 92) * 3)) + '%, var(--paper-card));'
                 : 'background: color-mix(in srgb, var(--warn) ' + Math.round(14 + Math.min(46, (92 - pct) * 1.6)) + '%, var(--paper-card));';
             }
-            valHtml = isMissed ? String(missed) : pct + '%';
-            title = iso + ' — ' + (Number(s.answered) || 0) + ' answered · '
+            valHtml = isMissed ? String(missed) : (isVol ? String(rung) : (isAns ? String(answeredN) : pct + '%'));
+            title = iso + ' — ' + answeredN + ' answered · '
               + missed + ' missed · ' + pct + '% answered. Click to reload for this day.';
           }
           cells += '<button type="button" class="ins-cal-cell ins-cal-drill" data-iso="' + iso + '"'
@@ -14001,6 +14122,28 @@
       weeks += '<div class="ins-cal-week">' + cells + '</div>';
     }
     host.innerHTML = html + weeks;
+    // R11-C3 (owner report: Answer%/Missed day-clicks did nothing in prod):
+    // belt-and-braces DIRECT wiring on the freshly rendered cells + nav, in
+    // addition to the delegated host listener -- stopPropagation keeps the
+    // two from double-firing. Whatever swallowed the delegated path in prod,
+    // the direct handlers cannot miss.
+    host.querySelectorAll('.ins-cal-drill').forEach(function (btn) {
+      btn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        const iso = btn.getAttribute('data-iso') || '';
+        if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) insDrillToRange_({ from: iso, to: iso });
+      });
+    });
+    host.querySelectorAll('[data-cal-nav]').forEach(function (btn) {
+      btn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        const ym = btn.getAttribute('data-cal-nav') || '';
+        if (ym && ym !== insCalMonth_) {
+          insCalMonth_ = ym;
+          if (insLastData) insRenderTrendCalendar_(insLastData);
+        }
+      });
+    });
   }
 
   // Delta badge mirroring dsKpiTile_'s logic for the per-agent card grid.
@@ -14682,8 +14825,8 @@
         onclone: function (clonedDoc) {
           const btns = clonedDoc.querySelector('#insights-results .ir-action-buttons');
           if (btns) btns.style.display = 'none';
-          const subTabs = clonedDoc.getElementById('ins-trend-subtabs');
-          if (subTabs) subTabs.style.display = 'none';
+          const metricRow = clonedDoc.getElementById('ins-trend-metric-row');
+          if (metricRow) metricRow.style.display = 'none';
           const status = clonedDoc.getElementById('ins-results-status');
           if (status) status.style.display = 'none';
           const toolbar = clonedDoc.getElementById('ins-cards-toolbar');
@@ -15048,22 +15191,16 @@
       }
       if (prefs.trendMetric) {
         insActiveTrendMetric = prefs.trendMetric;
-        // Round 4: the ATT tab is admin-only now -- a non-admin's previously
-        // saved 'att' pref would render a chart whose tab is hidden.
+        // Round 4: ATT is admin-only -- a non-admin's saved 'att' self-heals.
         if (insActiveTrendMetric === 'att' && USER.role !== 'admin') {
           insActiveTrendMetric = 'answered';
         }
-        const subTabs = $('ins-trend-subtabs');
-        if (subTabs) subTabs.querySelectorAll('.pr-trend-subtab').forEach(function (b) {
-          const active = b.getAttribute('data-metric') === insActiveTrendMetric;
-          b.classList.toggle('active', active);
-          b.setAttribute('aria-selected', active ? 'true' : 'false');
-        });
       }
       if (prefs.queueMetric === 'abandonedPct' || prefs.queueMetric === 'totalCalls' || prefs.queueMetric === 'violations') {
         insQueueMetric = prefs.queueMetric;
-        if ($('ins-queue-metric')) $('ins-queue-metric').value = insQueueMetric;
       }
+      // R11-C3: both restore onto the consolidated dropdown.
+      if (typeof insSyncTrendMetricSel_ === 'function') insSyncTrendMetricSel_();
       if (prefs.trendView === 'daily' || prefs.trendView === 'monthly') {
         insTrendView = prefs.trendView;
         const vt = $('ins-trend-view-toggle');
@@ -16239,33 +16376,144 @@
     const kpiRow = $('direct-call-kpi-row');
     if (kpiRow) kpiRow.innerHTML = tiles.join('');
 
+    // R11-C5: COMPANY view (admin, All departments) renders DEPT CARDS --
+    // the same per-agent rows grouped by r.dept, each card expanding into
+    // that dept's own sortable agent table -- instead of one flat all-agents
+    // table (which mixed 14 depts' agents into a single impact ordering).
+    // Single-dept view keeps the flat table unchanged.
+    const agentSection = $('direct-call-agent-section');
+    const deptCards = $('direct-call-dept-cards');
+    if (meta.companyView && deptCards) {
+      if (agentSection) agentSection.style.display = 'none';
+      deptCards.style.display = '';
+      directCallRenderDeptCards_(agents, deptCards);
+      return;
+    }
+    if (deptCards) { deptCards.style.display = 'none'; deptCards.innerHTML = ''; }
+    if (agentSection) agentSection.style.display = '';
+
     // Per-agent table (R11-B11: sortable; impact default = the busy-excluded
     // answerable population, so busy-heavy agents rank by their REAL misses).
     const tb = $('direct-call-agent-tbody');
     if (tb) {
       srtApply_('direct-call-agent-tbody', agents, function (sorted) {
-        tb.innerHTML = sorted.map(function (r) {
-          const rateStr = r.ibAnswerRate != null ? r.ibAnswerRate + '%' : '—';
-          const rateCls = r.ibAnswerRate != null ? benchValueCls_('% answered', r.ibAnswerRate + '%', true) : '';
-          return '<tr>'
-            + '<td>' + escapeHtml(r.agent) + '</td>'
-            + '<td class="num">' + fmtNumber(r.ibAnswered) + '</td>'
-            + '<td class="num">' + fmtNumber(r.ibMissedFree) + '</td>'
-            + '<td class="num">' + fmtNumber(r.ibMissedBusy) + '</td>'
-            + '<td class="num' + rateCls + '">' + rateStr + '</td>'
-            + '<td class="num">' + fmtDuration(r.ibAttSec) + '</td>'
-            + '<td class="num">' + fmtNumber(r.obTotal) + '</td>'
-            + '<td class="num">' + fmtNumber(r.obConnected) + '</td>'
-            + '<td class="num">' + fmtDuration(r.obAttSec) + '</td>'
-            + '</tr>';
-        }).join('');
-      }, function (r) {
-        var answerable = (Number(r.ibAnswered) || 0) + (Number(r.ibMissedFree) || 0);
-        if (answerable <= 0) return 0;
-        var rate = (Number(r.ibAnswered) || 0) / answerable * 100;
-        return (100 - rate) * answerable;
-      });
+        tb.innerHTML = sorted.map(directAgentRowHtml_).join('');
+      }, directImpact_);
     }
+  }
+
+  // Shared per-agent row template + impact score (flat table AND the C5
+  // per-dept expanded tables).
+  function directAgentRowHtml_(r) {
+    const rateStr = r.ibAnswerRate != null ? r.ibAnswerRate + '%' : '—';
+    const rateCls = r.ibAnswerRate != null ? benchValueCls_('% answered', r.ibAnswerRate + '%', true) : '';
+    return '<tr>'
+      + '<td>' + escapeHtml(r.agent) + '</td>'
+      + '<td class="num">' + fmtNumber(r.ibAnswered) + '</td>'
+      + '<td class="num">' + fmtNumber(r.ibMissedFree) + '</td>'
+      + '<td class="num">' + fmtNumber(r.ibMissedBusy) + '</td>'
+      + '<td class="num' + rateCls + '">' + rateStr + '</td>'
+      + '<td class="num">' + fmtDuration(r.ibAttSec) + '</td>'
+      + '<td class="num">' + fmtNumber(r.obTotal) + '</td>'
+      + '<td class="num">' + fmtNumber(r.obConnected) + '</td>'
+      + '<td class="num">' + fmtDuration(r.obAttSec) + '</td>'
+      + '</tr>';
+  }
+  function directImpact_(r) {
+    var answerable = (Number(r.ibAnswered) || 0) + (Number(r.ibMissedFree) || 0);
+    if (answerable <= 0) return 0;
+    var rate = (Number(r.ibAnswered) || 0) / answerable * 100;
+    return (100 - rate) * answerable;
+  }
+
+  // R11-C5: group the per-agent rows by their dept (the payload's
+  // max(department) field) and aggregate the card headline metrics. IB ATT
+  // is answered-weighted across the dept's agents; the answer rate excludes
+  // the busy carve-out like everywhere else in this report. Card order is
+  // the same impact score applied to the dept aggregate.
+  function directCallDeptGroups_(agents) {
+    const by = {};
+    agents.forEach(function (r) {
+      const d = r.dept || '(unassigned)';
+      (by[d] = by[d] || []).push(r);
+    });
+    return Object.keys(by).map(function (d) {
+      const rows = by[d];
+      const g = { dept: d, rows: rows, agents: rows.length, ibAnswered: 0, ibMissedFree: 0,
+                  ibMissedBusy: 0, obTotal: 0, obConnected: 0, talkSec: 0 };
+      rows.forEach(function (r) {
+        g.ibAnswered   += Number(r.ibAnswered)   || 0;
+        g.ibMissedFree += Number(r.ibMissedFree) || 0;
+        g.ibMissedBusy += Number(r.ibMissedBusy) || 0;
+        g.obTotal      += Number(r.obTotal)      || 0;
+        g.obConnected  += Number(r.obConnected)  || 0;
+        g.talkSec      += (Number(r.ibAttSec) || 0) * (Number(r.ibAnswered) || 0);
+      });
+      const answerable = g.ibAnswered + g.ibMissedFree;
+      g.ibAnswerRate = answerable > 0 ? Math.round(g.ibAnswered / answerable * 1000) / 10 : null;
+      g.ibAttSec = g.ibAnswered > 0 ? Math.round(g.talkSec / g.ibAnswered) : 0;
+      g.impact = answerable > 0 ? (100 - g.ibAnswered / answerable * 100) * answerable : 0;
+      return g;
+    }).sort(function (a, b) {
+      return (b.impact - a.impact) || a.dept.localeCompare(b.dept);
+    });
+  }
+
+  var DIRECT_AGENT_THEAD_ = '<thead><tr>'
+    + '<th data-sort="agent">Agent</th>'
+    + '<th class="num" data-sort="ibAnswered">IB answered</th>'
+    + '<th class="num" data-sort="ibMissedFree">IB missed (free)</th>'
+    + '<th class="num" data-sort="ibMissedBusy">IB missed (busy)</th>'
+    + '<th class="num" data-sort="ibAnswerRate">Answer %</th>'
+    + '<th class="num" data-sort="ibAttSec">IB ATT</th>'
+    + '<th class="num" data-sort="obTotal">OB calls</th>'
+    + '<th class="num" data-sort="obConnected">OB connected</th>'
+    + '<th class="num" data-sort="obAttSec">OB ATT</th>'
+    + '</tr></thead>';
+
+  function directCallRenderDeptCards_(agents, wrap) {
+    // The dynamic tables are rebuilt wholesale each render (innerHTML swap
+    // destroys the old theads while srtWired_ would still claim them wired)
+    // -- drop their stale sort machinery so re-renders re-arm cleanly.
+    Object.keys(srtWired_).forEach(function (k) {
+      if (k.indexOf('direct-dept-tbody-') === 0) {
+        delete srtWired_[k]; delete srtState_[k]; delete srtRegistry_[k];
+      }
+    });
+    const groups = directCallDeptGroups_(agents);
+    wrap.innerHTML = '<div class="al-section-title">Per department'
+      + ' <span class="ins-rollup-cap">(click a card for its agents; inbound answer rate excludes &ldquo;missed (busy)&rdquo;)</span></div>'
+      + groups.map(function (g, i) {
+        const rateStr = g.ibAnswerRate != null ? g.ibAnswerRate + '%' : '—';
+        const rateCls = g.ibAnswerRate != null
+          ? benchValueCls_('% answered', g.ibAnswerRate + '%', true).trim() : '';
+        return '<details class="direct-dept-card"' + (groups.length === 1 ? ' open' : '') + '>'
+          + '<summary class="direct-dept-head">'
+          +   '<span class="direct-dept-name">' + escapeHtml(g.dept) + '</span>'
+          +   '<span class="direct-dept-stats">'
+          +     '<span class="ddc-stat"><b>' + fmtNumber(g.agents) + '</b> agent' + (g.agents === 1 ? '' : 's') + '</span>'
+          +     '<span class="ddc-stat"><b>' + fmtNumber(g.ibAnswered) + '</b> IB answered</span>'
+          +     '<span class="ddc-stat"><b>' + fmtNumber(g.ibMissedFree) + '</b> missed (free)</span>'
+          +     '<span class="ddc-stat"><b>' + fmtNumber(g.ibMissedBusy) + '</b> missed (busy)</span>'
+          +     '<span class="ddc-stat"><b' + (rateCls ? ' class="' + rateCls + '"' : '') + '>' + rateStr + '</b> answer</span>'
+          +     '<span class="ddc-stat"><b>' + fmtDuration(g.ibAttSec) + '</b> IB ATT</span>'
+          +     '<span class="ddc-stat"><b>' + fmtNumber(g.obTotal) + '</b> OB</span>'
+          +   '</span>'
+          + '</summary>'
+          + '<div class="direct-dept-body">'
+          +   '<table class="qcd-source-table">' + DIRECT_AGENT_THEAD_
+          +     '<tbody id="direct-dept-tbody-' + i + '"></tbody></table>'
+          + '</div>'
+          + '</details>';
+      }).join('');
+    groups.forEach(function (g, i) {
+      const id = 'direct-dept-tbody-' + i;
+      const tbEl = $(id);
+      if (!tbEl) return;
+      srtApply_(id, g.rows, function (sorted) {
+        tbEl.innerHTML = sorted.map(directAgentRowHtml_).join('');
+      }, directImpact_);
+    });
   }
 
   function directCallDownloadCsv_() {
