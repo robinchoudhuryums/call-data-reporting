@@ -1,7 +1,7 @@
 # Insights modal → dedicated page — approved plan
 
 Owner-approved 2026-07-10. Client-only conversion (script.html /
-dashboard.html / styles.html); InsightsReport.gs, the `insights:v18`
+dashboard.html / styles.html); InsightsReport.gs, the `insights:v19`
 cache, and the consolidation-freeze test are untouched. Single PR,
 one Department Dashboard deploy, reversible by revert.
 

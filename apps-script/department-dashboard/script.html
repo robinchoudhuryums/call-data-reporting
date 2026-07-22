@@ -13068,19 +13068,29 @@
   function insRenderShareChart_(cards) {
     const wrap = $('ins-share-wrap');
     if (!wrap) return;
-    const slices = (cards || [])
+    const agentSlices = (cards || [])
       .map(function (c) {
         return { label: c.name, value: Number((c.metrics && c.metrics.answered && c.metrics.answered.val) || 0) };
       })
       .filter(function (d) { return d.value > 0; })
       .sort(function (a, b) { return b.value - a.value; });
+    // R11-E (item 6): shares are of the WHOLE department's answered calls, not
+    // just the selected agents -- so an agent's slice reads the same whether the
+    // report is run for the whole dept or a subset. The unselected agents fold
+    // into a single muted "Other agents" slice (deptTotal - sum(selected)), so
+    // the donut still sums to the true 100%.
+    const selectedTotal = agentSlices.reduce(function (a, s) { return a + s.value; }, 0);
+    const deptTotal = Number(insLastData && insLastData.meta && insLastData.meta.answeredDeptTotal) || selectedTotal;
+    const other = Math.max(0, deptTotal - selectedTotal);
+    const slices = agentSlices.slice();
+    if (other > 0) slices.push({ label: 'Other agents', value: other, other: true });
     if (insShareChartInstance) { try { insShareChartInstance.destroy(); } catch (e) {} insShareChartInstance = null; }
     if (slices.length < 2) { wrap.style.display = 'none'; return; }
     wrap.style.display = '';
     refreshChartTheme();
     destroyOrphanedChartOnCanvas_('ins-share-chart');
 
-    const colors = slices.map(function (_, i) { return IR_CHART_COLORS[i % IR_CHART_COLORS.length]; });
+    const colors = slices.map(function (d, i) { return d.other ? THEME.muted : IR_CHART_COLORS[i % IR_CHART_COLORS.length]; });
     const plugins = (typeof ChartDataLabels !== 'undefined') ? [ChartDataLabels] : [];
     insShareChartInstance = safeChart_($('ins-share-chart').getContext('2d'), {
       type: 'doughnut',
@@ -14460,6 +14470,7 @@
     const meta  = (insLastData && insLastData.meta) || {};
     const ts    = (insLastData && insLastData.teamStats) || {};
     if (insCardsChartMode === 'abs')   { insRenderCardsChartAbs_(canvas, cards); return; }
+    if (insCardsChartMode === 'trend') { insRenderCardsChartTrend_(canvas, cards); return; }
     const metric = insCardsChartMetric;
     const isPct = (metric === 'pct');
     const nRoster = meta.rosterAgentCount
@@ -14527,6 +14538,92 @@
         },
       },
     });
+  }
+
+  /**
+   * R11-E (item 4): per-agent TREND line chart -- one line per selected agent
+   * for the chosen metric (insCardsChartMetric) over the 12-month trend axis
+   * (insLastData.trendData.labels; each card carries a `trendMonthly` series
+   * aligned to it). Reuses the Overview chart's spotlight/pin model
+   * (chartSpotlight*): hover a legend item to dim the rest, click to pin/solo,
+   * Shift/Cmd/Ctrl-click to add to the pinned set, Alt-click to hide. Clicking a
+   * data point drills into that agent's Individual Report. Data labels are off
+   * (many overlaid lines, the Overview multi-line convention, INV-41).
+   */
+  function insRenderCardsChartTrend_(canvas, cards) {
+    const td = (insLastData && insLastData.trendData) || {};
+    const labels = td.labels || [];
+    const allowed = ['pct', 'answered', 'missed', 'rung'];
+    const metric = allowed.indexOf(insCardsChartMetric) >= 0 ? insCardsChartMetric : 'pct';
+    const isPct = (metric === 'pct');
+    const metricLabel = { pct: '% Answered', answered: 'Answered', missed: 'Missed', rung: 'Call volume (rung)' }[metric];
+    const fmtV = function (n) { return n == null ? '—' : (isPct ? Number(n).toFixed(1) + '%' : String(Math.round(n))); };
+    if (!labels.length || !cards.length) {
+      // Nothing to plot -- leave the (already-destroyed) canvas blank.
+      return;
+    }
+    const datasets = cards.map(function (c, i) {
+      const color = IR_CHART_COLORS[i % IR_CHART_COLORS.length];
+      const series = (c.trendMonthly || []).map(function (b) {
+        return (b && b[metric] != null) ? Number(b[metric]) : null;
+      });
+      return {
+        label: c.name,
+        data: series,
+        borderColor: color,
+        backgroundColor: color,
+        borderWidth: 2,
+        tension: 0.25,
+        spanGaps: true,
+        pointRadius: 2,
+        pointHoverRadius: 5,
+        fill: false,
+      };
+    });
+    insCardsChartInstance = safeChart_(canvas.getContext('2d'), {
+      type: 'line',
+      data: { labels: labels, datasets: datasets },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        interaction: { mode: 'nearest', intersect: false },
+        onClick: function (evt, els) {
+          if (els && els.length) {
+            const ds = datasets[els[0].datasetIndex];
+            const name = ds && ds.label;
+            if (name && typeof irDrillToAgent_ === 'function') {
+              irDrillToAgent_(name, $('ins-from').value, $('ins-to').value);
+            }
+          }
+        },
+        onHover: function (evt, els) {
+          if (evt && evt.native && evt.native.target) {
+            evt.native.target.style.cursor = (els && els.length) ? 'pointer' : 'default';
+          }
+        },
+        plugins: {
+          legend: Object.assign({ display: true, position: 'bottom',
+            labels: { boxWidth: 12, font: { size: 11 }, usePointStyle: true } },
+            chartSpotlightLegend_()),
+          datalabels: { display: false },
+          tooltip: {
+            callbacks: {
+              label: function (ctx) { return ctx.dataset.label + ': ' + fmtV(ctx.parsed.y); },
+            },
+          },
+        },
+        scales: {
+          x: { ticks: { maxRotation: 45, minRotation: 0, autoSkip: true } },
+          y: {
+            beginAtZero: !isPct,
+            min: isPct ? 0 : undefined,
+            max: isPct ? 100 : undefined,
+            title: { display: true, text: metricLabel },
+            ticks: { callback: function (v) { return isPct ? v + '%' : v; } },
+          },
+        },
+      },
+    });
+    chartSpotlightStash_(insCardsChartInstance, {});
   }
 
   /**
@@ -17875,8 +17972,47 @@
       + (meta.truncated ? ' (truncated)' : '');
     const dateEl = $('cl-results-date');
     if (dateEl) dateEl.textContent = (meta.from || '') + ' → ' + (meta.to || '');
-    $('cl-call-list').innerHTML = calls.map(clCallCardHtml_).join('');
+    $('cl-call-list').innerHTML = clGroupByDayHtml_(calls);
     clShowOnly_('cl-results');
+  }
+
+  // R11-E (item 1): group the call cards into collapsible per-day sections
+  // (newest day first, most-recent day open) so a wide date range reads as a
+  // scannable diary rather than a flat wall of cards. Each day header shows the
+  // weekday + date and that day's call count. Single-day results render one
+  // (open, header-less) group so nothing changes for the common case.
+  function clGroupByDayHtml_(calls) {
+    const order = [];
+    const byDay = {};
+    calls.forEach(function (c) {
+      const d = c.callDate || '?';
+      if (!byDay[d]) { byDay[d] = []; order.push(d); }
+      byDay[d].push(c);
+    });
+    // calls arrive newest-first from the server; keep that order for days too.
+    if (order.length <= 1) {
+      return '<div class="cl-day-cards">' + calls.map(clCallCardHtml_).join('') + '</div>';
+    }
+    return order.map(function (d, i) {
+      const list = byDay[d];
+      const label = clDayLabel_(d);
+      return '<details class="cl-day"' + (i === 0 ? ' open' : '') + '>'
+        + '<summary class="cl-day-head">'
+        +   '<span class="cl-day-date">' + escapeHtml(label) + '</span>'
+        +   '<span class="cl-day-count">' + list.length + ' call' + (list.length === 1 ? '' : 's') + '</span>'
+        + '</summary>'
+        + '<div class="cl-day-cards">' + list.map(clCallCardHtml_).join('') + '</div>'
+        + '</details>';
+    }).join('');
+  }
+  function clDayLabel_(iso) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || '').trim());
+    if (!m) return String(iso || '?');
+    const dt = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+    if (isNaN(dt.getTime())) return iso;
+    const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const mons = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    return days[dt.getDay()] + ' · ' + mons[dt.getMonth()] + ' ' + Number(m[3]) + ', ' + m[1];
   }
 
   function clOutcomeChip_(c) {

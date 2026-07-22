@@ -935,6 +935,28 @@
   #insights-page #insights-results > .ir-results-header .ins-period-bar {
     flex: 1 1 100%; margin: 6px 0 0;
   }
+  /* R11-E (item 2): tighten the band between the app header and the Insights
+     sticky strip -- the strip's top padding + the header margin read as an
+     awkward blank gap (owner note). Pull the results block up under the
+     divider and trim the strip's top padding. */
+  #insights-page .ins-page-body { padding-top: 0; }
+  #insights-page #insights-results { margin-top: -6px; }
+  #insights-page #insights-results > .ir-results-header { padding-top: 4px; }
+  /* R11-E (item 5): make the active window PROMINENT on the sticky strip (the
+     My Department treatment) -- a solid pill instead of a muted mono caption.
+     Scoped to #insights-page so the Individual Report's date is untouched. */
+  #insights-page #ins-results-date {
+    font-family: var(--ui);
+    font-size: 14px;
+    font-weight: 600;
+    text-transform: none;
+    letter-spacing: 0;
+    color: var(--ink);
+    background: var(--paper-2);
+    border: 1px solid var(--line);
+    border-radius: var(--r-pill, 999px);
+    padding: 2px 12px;
+  }
   /* R9-2: horizontal Refresh + Export pair inside the dept controls row
      (the .control column otherwise stacks its children vertically). */
   .control-btn-row { display: flex; flex-direction: row; align-items: center; gap: 8px; }
@@ -3681,6 +3703,24 @@
   .bm-over   { color: var(--warn); }
 
   /* Caller Lookup: one timeline card per inbound call. */
+  /* R11-E (item 1): per-day collapsible grouping of the call cards. */
+  .cl-day { margin-bottom: 10px; border: 1px solid var(--line); border-radius: var(--r); background: var(--paper-2); }
+  .cl-day > summary.cl-day-head {
+    cursor: pointer; list-style: none;
+    display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+    padding: 8px 12px;
+  }
+  .cl-day > summary.cl-day-head::-webkit-details-marker { display: none; }
+  .cl-day > summary.cl-day-head::after {
+    content: '▸'; color: var(--muted); font-size: 10px; margin-left: 4px;
+    transition: transform var(--dur-1, 0.18s) var(--ease, ease);
+  }
+  .cl-day[open] > summary.cl-day-head::after { transform: rotate(90deg); }
+  .cl-day-date { font-weight: 600; font-size: 13px; color: var(--ink); }
+  .cl-day-count { font-family: var(--mono); font-size: 11px; color: var(--muted); letter-spacing: 0.06em; }
+  .cl-day-cards { padding: 0 10px 8px; }
+  .cl-day-cards .cl-call-card:last-child { margin-bottom: 0; }
+
   .cl-call-card {
     border: 1px solid var(--line);
     border-radius: var(--r);
