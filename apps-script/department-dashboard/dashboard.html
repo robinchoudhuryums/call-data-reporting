@@ -222,6 +222,14 @@
             <div id="ov-dept-grid" class="ov-dept-grid"></div>
           </div>
           <div class="ov-trend-col">
+            <!-- R11-B5: collapse the whole chart band (persisted) so the dept
+                 cards can take the screen. The chevron + slim strip render
+                 via CSS on .ov-trend-collapsed; ovWireTrendCollapse_ toggles. -->
+            <button type="button" class="ov-trend-collapse-btn" id="ov-trend-collapse-btn"
+                    aria-expanded="true" title="Collapse or expand the trend chart">
+              <span class="ov-trend-collapse-chev" aria-hidden="true">&#9662;</span>
+              <span class="ov-trend-collapse-lbl">Hide trend chart</span>
+            </button>
             <div class="ir-chart-tabs" id="ov-chart-tabs" role="tablist">
               <button type="button" class="ir-tab active" data-metric="pct" role="tab" aria-selected="true"
                 title="% of rings answered per day (DQE)">% Answered</button>
@@ -243,6 +251,8 @@
                 <button type="button" class="ov-range-btn" data-range="90" aria-pressed="false" title="Last 90 days">90d</button>
                 <button type="button" class="ov-range-btn" data-range="ytd" aria-pressed="false" title="Year to date (loaded on demand)">YTD</button>
               </span>
+              <!-- R11-B8: chart-tips popover trigger (shared chartHelp machinery) -->
+              <button type="button" class="chart-help-btn" data-charthelp="overview" aria-label="Chart tips" title="Chart tips">?</button>
             </div>
             <div class="ir-chart-wrap" id="ov-chart-wrap">
               <div class="ir-chart-header"><span id="ov-chart-header-label">Answer rate trend per department</span><span class="ov-chart-hint"> &mdash; click a dept card to solo its line, Shift-click to compare</span></div>
@@ -444,8 +454,17 @@
           <div id="dept-missed-headline" class="report-headline" style="display:none;"></div>
           <div class="report-summary" id="dept-missed-summary" style="display:none;"></div>
           <!-- Bars/Radar toggle (shared mode, persisted in localStorage). -->
+          <!-- R11-B7: the Bars/Radar SEGMENT is ADMIN-ONLY now (owner: fewer
+               options for managers; radar kept behind the admin fence in case
+               it proves generally preferred). Managers always get bars --
+               missedChartMode_ ignores a saved radar pref for non-admins.
+               The toolbar itself stays visible for the B8 chart-tips button. -->
           <div class="missed-chart-toolbar">
-            <div class="ds-seg missed-chart-mode" role="group" aria-label="Missed-calls chart type">
+            <!-- R11-C4: shows "Chart: <agent> ✕" while the hour-of-day chart is
+                 scoped to one agent via a card's ■ chart button. -->
+            <span id="dept-missed-scope-chip" class="missed-scope-chip" style="display:none;"></span>
+            <button type="button" class="chart-help-btn" data-charthelp="missed" aria-label="Chart tips" title="Chart tips">?</button>
+            <div class="ds-seg missed-chart-mode" role="group" aria-label="Missed-calls chart type" data-admin-only>
               <button type="button" data-mode="bars" aria-pressed="true">Bars</button>
               <button type="button" data-mode="radar" aria-pressed="false">Radar</button>
             </div>
@@ -992,6 +1011,7 @@
               <input type="checkbox" id="ir-show-datalabels"> Show data labels
             </label>
           </div>
+          <button type="button" class="chart-help-btn" data-charthelp="ir" aria-label="Chart tips" title="Chart tips">?</button>
         </div>
 
         <div id="ir-shared-legend" class="ir-shared-legend" style="display:none;"></div>
@@ -1050,13 +1070,20 @@
                 <span id="qcd-alldept-form-error" class="status status-error" style="display:none;"></span>
               </div>
             </div>
+            <!-- R11-B3: Download CSV / Print / Email me consolidated into the
+                 Export dropdown (Insights convention); the admin-only
+                 subscriber blast stays a separate, deliberate button. -->
             <div class="ir-action-buttons">
-              <button class="btn btn-secondary" id="qcd-alldept-csv-btn" type="button"
-                      title="Download the report as CSV">Download CSV</button>
-              <button class="btn btn-secondary" id="qcd-alldept-print-btn" type="button"
-                      title="Print this report">Print</button>
-              <button class="btn btn-secondary" id="qcd-alldept-email-btn" type="button"
-                      title="Email the displayed report to yourself">Email me this report</button>
+              <div class="ir-export-wrap">
+                <button class="btn btn-secondary" id="qcd-alldept-export-btn" type="button" aria-haspopup="menu" aria-expanded="false">
+                  Export <span class="ir-export-caret">&#9662;</span>
+                </button>
+                <div class="ir-export-menu" id="qcd-alldept-export-menu" role="menu" style="display:none;">
+                  <button type="button" role="menuitem" data-action="csv">Download CSV</button>
+                  <button type="button" role="menuitem" data-action="print">Print</button>
+                  <button type="button" role="menuitem" data-action="email">Email me this report</button>
+                </div>
+              </div>
               <button class="btn btn-secondary" id="qcd-alldept-blast-btn" type="button"
                       data-admin-only style="display:none;"
                       title="Email the displayed day to every active subscriber now">Send to subscribers&hellip;</button>
@@ -1253,24 +1280,20 @@
                  hidden form remains only as the failure / empty-roster
                  fallback (insShowForm). -->
           </div>
-        </div>
-
-        <!-- I4: unified period slider. One control drives the whole report
-             window (KPI tiles, Team insights, Queue health, heatmap, per-agent
-             cards) so the common "change the range" action no longer needs the
-             Edit popover -- decluttering the header. Presets keep the launcher
-             convention (window ends yesterday); "Custom…" opens the Edit
-             popover for arbitrary windows / agents / comparison. The 12-month
-             trend chart is the deliberate exception (it always spans ~12
-             months, not the selected short window) and lives at the bottom of
-             the report. Reuses the Overview O4 .ov-period-* styling. -->
-        <div id="ins-period-bar" class="ov-period-bar ins-period-bar" role="group" aria-label="Report period">
-          <span class="ov-period-lbl">Period:</span>
-          <button type="button" class="ov-period-btn" data-ins-period="last7" aria-pressed="false">Last 7</button>
-          <button type="button" class="ov-period-btn" data-ins-period="last30" aria-pressed="false">Last 30</button>
-          <button type="button" class="ov-period-btn" data-ins-period="mtd" aria-pressed="false">MTD</button>
-          <button type="button" class="ov-period-btn" data-ins-period="ytd" aria-pressed="false">YTD</button>
-          <button type="button" class="ov-period-btn" data-ins-period="custom" aria-pressed="false">Custom&hellip;</button>
+          <!-- I4: unified period slider. One control drives the whole report
+               window; "Custom…" opens the Edit popover. R11-B9: the bar
+               lives INSIDE the results header now, and the whole header
+               (title + toolbar + period presets) is the page's sticky strip
+               -- the My Department pattern (same JS ids, only DOM position
+               moved). -->
+          <div id="ins-period-bar" class="ov-period-bar ins-period-bar" role="group" aria-label="Report period">
+            <span class="ov-period-lbl">Period:</span>
+            <button type="button" class="ov-period-btn" data-ins-period="last7" aria-pressed="false">Last 7</button>
+            <button type="button" class="ov-period-btn" data-ins-period="last30" aria-pressed="false">Last 30</button>
+            <button type="button" class="ov-period-btn" data-ins-period="mtd" aria-pressed="false">MTD</button>
+            <button type="button" class="ov-period-btn" data-ins-period="ytd" aria-pressed="false">YTD</button>
+            <button type="button" class="ov-period-btn" data-ins-period="custom" aria-pressed="false">Custom&hellip;</button>
+          </div>
         </div>
 
         <!-- R9-3: the Batch-E date-sync offer chip is retired -- the dept and
@@ -1544,33 +1567,35 @@
                 <button type="button" class="seg-btn" data-render="calendar" role="radio" aria-checked="false"
                         title="Calendar days over the selected window — which DAYS were good or bad (the abandon heatmap answers when in the day).">Calendar</button>
               </div>
-              <!-- gap 1: per-queue metric sub-selector, shown only when the
-                   "Abd %" tab is active (insRenderTrendChart_ toggles it). -->
-              <label class="ir-sort-control" id="ins-queue-metric-wrap" style="display:none;">
-                <span class="ir-sort-label">Queue metric:</span>
-                <select id="ins-queue-metric">
-                  <option value="abandonedPct">Abandoned %</option>
-                  <option value="totalCalls">Total Calls</option>
-                  <option value="violations">Violations</option>
-                </select>
-              </label>
               <div class="ir-toggle-box" id="ins-datalabels-box">
                 <label class="ir-toggle-label">
                   <input type="checkbox" id="ins-show-datalabels"> Show data labels
                 </label>
               </div>
+              <button type="button" class="chart-help-btn" data-charthelp="insTrend" aria-label="Chart tips" title="Chart tips">?</button>
             </div>
           </div>
-          <div class="pr-trend-subtabs" id="ins-trend-subtabs" role="tablist">
-            <button type="button" class="pr-trend-subtab active" data-metric="answered" role="tab" aria-selected="true">Answered</button>
-            <button type="button" class="pr-trend-subtab" data-metric="pct" role="tab" aria-selected="false">% Answered</button>
-            <!-- Round 4 (owner): Avg Talk Time is an admin-only lens -- managers
-                 read talk time per agent in IR / the dept table, and the team-level
-                 ATT trend mostly invited misreading. data-admin-only convention. -->
-            <button type="button" class="pr-trend-subtab" data-metric="att" role="tab" aria-selected="false" data-admin-only style="display:none;"
-                    title="Average talk time per answered call, by month or day.">Avg Talk Time</button>
-            <button type="button" class="pr-trend-subtab" data-metric="queues" role="tab" aria-selected="false"
-                    title="Abandoned % by queue — the share of queue calls where the caller hung up before being answered (5%+ on a day counts as a violation).">Abd %</button>
+          <!-- R11-C3 (owner-approved consolidation): the metric sub-tabs, the
+               per-queue metric select, and the calendar's own cell-metric
+               segment collapsed into ONE metric dropdown. Queue metrics ride
+               the same list as "Queue: …" entries; Avg talk time stays the
+               admin-only lens (the option is REMOVED for non-admins at init
+               -- <option> can't use the data-admin-only reveal). The
+               calendar's cells follow this same metric. -->
+          <div class="pr-trend-subtabs ins-trend-metric-row" id="ins-trend-metric-row">
+            <label class="ir-sort-control">
+              <span class="ir-sort-label">Metric:</span>
+              <select id="ins-trend-metric">
+                <option value="answered">Answered</option>
+                <option value="pct">% Answered</option>
+                <option value="missed">Missed</option>
+                <option value="volume">Call volume (rung)</option>
+                <option value="att" data-admin-metric="1">Avg talk time</option>
+                <option value="queues:abandonedPct">Queue: Abandoned %</option>
+                <option value="queues:totalCalls">Queue: Total calls</option>
+                <option value="queues:violations">Queue: Violations</option>
+              </select>
+            </label>
           </div>
           <div class="ir-chart-canvas-wrap" id="ins-trend-canvas-wrap"><canvas id="ins-trend-chart"></canvas></div>
           <!-- Phase 2 #10: the calendar day-grid renderer (CSS grid, no
@@ -1662,7 +1687,7 @@
           <div class="al-section">
             <div class="al-section-title">By insurer <span class="ins-rollup-cap">(labeled inbound numbers only &middot; click a row for its daily trend)</span></div>
             <table class="qcd-source-table">
-              <thead><tr><th>Insurer</th><th class="num">Calls</th><th class="num">Answered</th><th class="num">Abandoned</th><th class="num">Aband. %</th><th class="num">On-hold abandon</th><th class="num">Avg wait</th></tr></thead>
+              <thead><tr><th data-sort="label">Insurer</th><th class="num" data-sort="calls">Calls</th><th class="num" data-sort="answered">Answered</th><th class="num" data-sort="abandoned">Abandoned</th><th class="num" data-sort="__abdPct">Aband. %</th><th class="num" data-sort="on_hold">On-hold abandon</th><th class="num" data-sort="avg_wait">Avg wait</th></tr></thead>
               <tbody id="inbound-insurer-tbody"></tbody>
             </table>
           </div>
@@ -1670,7 +1695,7 @@
           <div class="al-section">
             <div class="al-section-title">By advertised line (dial-in)</div>
             <table class="qcd-source-table">
-              <thead><tr><th>Dial-in number</th><th class="num">Calls</th><th class="num">Answered</th><th class="num">Abandoned</th><th class="num">Aband. %</th><th class="num">Avg wait</th></tr></thead>
+              <thead><tr><th data-sort="label">Dial-in number</th><th class="num" data-sort="calls">Calls</th><th class="num" data-sort="answered">Answered</th><th class="num" data-sort="abandoned">Abandoned</th><th class="num" data-sort="__abdPct">Aband. %</th><th class="num" data-sort="avg_wait">Avg wait</th></tr></thead>
               <tbody id="inbound-dialin-tbody"></tbody>
             </table>
           </div>
@@ -1678,7 +1703,7 @@
           <div class="al-section">
             <div class="al-section-title">By entry queue</div>
             <table class="qcd-source-table">
-              <thead><tr><th>Entry queue</th><th class="num">Calls</th><th class="num">Answered</th><th class="num">Abandoned</th><th class="num">Aband. %</th><th class="num">Avg wait</th></tr></thead>
+              <thead><tr><th data-sort="label">Entry queue</th><th class="num" data-sort="calls">Calls</th><th class="num" data-sort="answered">Answered</th><th class="num" data-sort="abandoned">Abandoned</th><th class="num" data-sort="__abdPct">Aband. %</th><th class="num" data-sort="avg_wait">Avg wait</th></tr></thead>
               <tbody id="inbound-queue-tbody"></tbody>
             </table>
           </div>
@@ -1686,7 +1711,7 @@
           <div class="al-section">
             <div class="al-section-title">By dial-in &times; insurer <span class="ins-rollup-cap">(marketing-line attribution; labeled callers only)</span></div>
             <table class="qcd-source-table">
-              <thead><tr><th>Dial-in number</th><th>Insurer</th><th class="num">Calls</th><th class="num">Answered</th><th class="num">Abandoned</th></tr></thead>
+              <thead><tr><th data-sort="dial_in">Dial-in number</th><th data-sort="insurer">Insurer</th><th class="num" data-sort="calls">Calls</th><th class="num" data-sort="answered">Answered</th><th class="num" data-sort="abandoned">Abandoned</th></tr></thead>
               <tbody id="inbound-dialin-insurer-tbody"></tbody>
             </table>
           </div>
@@ -1778,23 +1803,27 @@
         <div id="direct-call-body">
           <div id="direct-call-kpi-row" class="pr-kpi-row"></div>
 
-          <div class="al-section">
+          <!-- R11-C5: company view (All departments) hides this flat table and
+               renders per-dept cards into #direct-call-dept-cards instead;
+               single-dept view keeps this table. -->
+          <div class="al-section" id="direct-call-agent-section">
             <div class="al-section-title">Per agent <span class="ins-rollup-cap">(inbound answer rate excludes &ldquo;missed (busy)&rdquo;)</span></div>
             <table class="qcd-source-table">
               <thead><tr>
-                <th>Agent</th>
-                <th class="num">IB answered</th>
-                <th class="num">IB missed (free)</th>
-                <th class="num">IB missed (busy)</th>
-                <th class="num">Answer %</th>
-                <th class="num">IB ATT</th>
-                <th class="num">OB calls</th>
-                <th class="num">OB connected</th>
-                <th class="num">OB ATT</th>
+                <th data-sort="agent">Agent</th>
+                <th class="num" data-sort="ibAnswered">IB answered</th>
+                <th class="num" data-sort="ibMissedFree">IB missed (free)</th>
+                <th class="num" data-sort="ibMissedBusy">IB missed (busy)</th>
+                <th class="num" data-sort="ibAnswerRate">Answer %</th>
+                <th class="num" data-sort="ibAttSec">IB ATT</th>
+                <th class="num" data-sort="obTotal">OB calls</th>
+                <th class="num" data-sort="obConnected">OB connected</th>
+                <th class="num" data-sort="obAttSec">OB ATT</th>
               </tr></thead>
               <tbody id="direct-call-agent-tbody"></tbody>
             </table>
           </div>
+          <div id="direct-call-dept-cards" class="direct-dept-cards" style="display:none;"></div>
         </div>
       </div>
       </div>

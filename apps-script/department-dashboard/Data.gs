@@ -281,7 +281,9 @@ function getDepartmentSummary(req) {
   const summarySource = (typeof readSourceCacheTag_ === 'function') ? readSourceCacheTag_() : 'sheet-sheet';
   // v14 (R10-5): + qcd.range.avgAnswer(Sec) (answered-weighted, own queues)
   // and the CSR-only `csrTransfer` block for the team-strip tiles.
-  const cacheKey = 'summary:v14:' + dept + ':' + scope + ':' + from + ':' + to + ':' + summarySource;
+  // v15 (R11-C1): + qcd.rangePrior (the E5 prior window's block) and
+  // csrTransfer.prior, feeding the Avg answer / Transfer % delta chips.
+  const cacheKey = 'summary:v15:' + dept + ':' + scope + ':' + from + ':' + to + ':' + summarySource;
   const cached = cache.get(cacheKey);
   if (cached) {
     try {
@@ -695,12 +697,20 @@ function computeSummary_(dept, from, to, scope) {
   // mapped queues from DEPT_QCD_QUEUES). Used by the My Department
   // page's "Yesterday's QCD" section. Nullable when dept has no
   // QCD mapping OR no recent QCD rows; client renders nothing.
-  const qcdSnapshot = computeDeptQcdSnapshot_(dept, ssTZ, { from: from, to: to });
+  // R11-C1: the E5 prior window rides along so the QCD range block (and the
+  // Avg-answer tile chip it feeds) gets a prior baseline in the same scan.
+  const qcdSnapshot = computeDeptQcdSnapshot_(dept, ssTZ,
+    { from: from, to: to, priorFrom: priorFrom, priorTo: priorTo });
 
   // R10-5: CSR-only range transfer stats from CSR Transfer Historical Data
   // (the dashboard's first read of that sheet -- INV-52 said "not consumed";
   // read-only, best-effort, null for every other dept / missing sheet).
+  // R11-C1: + the prior window's stats for the Transfer % tile's delta chip
+  // (attached as .prior; nullable independently of the current block).
   const csrTransfer = computeCsrTransferRange_(dept, from, to);
+  if (csrTransfer && priorFrom && priorTo) {
+    csrTransfer.prior = computeCsrTransferRange_(dept, priorFrom, priorTo);
+  }
 
   return {
     meta: {
@@ -935,27 +945,40 @@ function computeDeptQcdSnapshot_(dept, ssTZ, opts) {
     // buildBlock_, the P3 convention). Only runs when a range is supplied.
     const rFrom = (opts && opts.from) ? String(opts.from) : '';
     const rTo   = (opts && opts.to)   ? String(opts.to)   : '';
+    // R11-C1: optional PRIOR range (the E5 prior window computeSummary_
+    // already carries) accumulated in the same single scan, so the team
+    // strip's Avg-answer tile can carry a delta chip like its siblings.
+    const pFrom = (opts && opts.priorFrom) ? String(opts.priorFrom) : '';
+    const pTo   = (opts && opts.priorTo)   ? String(opts.priorTo)   : '';
     const byQueueRange = {};
-    if (rFrom && rTo) {
+    const byQueueRangePrior = {};
+    if ((rFrom && rTo) || (pFrom && pTo)) {
       for (let k = 0; k < values.length; k++) {
         const r3 = values[k];
         if (String(r3[QCD_HISTORICAL_COLS.CALL_SOURCE - 1] || '').trim() !== 'Total Calls') continue;
         const q3 = String(r3[QCD_HISTORICAL_COLS.CALL_QUEUE - 1] || '').trim();
         if (!queueSet[q3]) continue;
         const d3 = rowDateIso_(r3[QCD_HISTORICAL_COLS.DATE - 1], tz);
-        if (!d3 || d3 < rFrom || d3 > rTo) continue;
-        const b3 = byQueueRange[q3] || (byQueueRange[q3] = { total: 0, answered: 0, abandoned: 0, violations: 0, avgWSum: 0, avgWN: 0 });
-        b3.total      += Number(r3[QCD_HISTORICAL_COLS.TOTAL_CALLS - 1])    || 0;
-        b3.answered   += Number(r3[QCD_HISTORICAL_COLS.TOTAL_ANSWERED - 1]) || 0;
-        b3.abandoned  += Number(r3[QCD_HISTORICAL_COLS.ABANDONED   - 1])    || 0;
-        b3.violations += Number(r3[QCD_HISTORICAL_COLS.VIOLATIONS  - 1])    || 0;
-        // R10-5: answered-weighted avg-answer accumulation for the range
-        // block (the computeQcdReport_ convention -- rows with 0s skipped).
-        if (displays && typeof parseHmsDisplay_ === 'function') {
-          const ansN = Number(r3[QCD_HISTORICAL_COLS.TOTAL_ANSWERED - 1]) || 0;
-          const avgS = parseHmsDisplay_(displays[k][QCD_HISTORICAL_COLS.AVG_ANSWER - 1]);
-          if (ansN > 0 && avgS > 0) { b3.avgWSum += avgS * ansN; b3.avgWN += ansN; }
-        }
+        if (!d3) continue;
+        const inRange = rFrom && rTo && d3 >= rFrom && d3 <= rTo;
+        const inPrior = pFrom && pTo && d3 >= pFrom && d3 <= pTo;
+        if (!inRange && !inPrior) continue;
+        const bump3 = function (map) {
+          const b3 = map[q3] || (map[q3] = { total: 0, answered: 0, abandoned: 0, violations: 0, avgWSum: 0, avgWN: 0 });
+          b3.total      += Number(r3[QCD_HISTORICAL_COLS.TOTAL_CALLS - 1])    || 0;
+          b3.answered   += Number(r3[QCD_HISTORICAL_COLS.TOTAL_ANSWERED - 1]) || 0;
+          b3.abandoned  += Number(r3[QCD_HISTORICAL_COLS.ABANDONED   - 1])    || 0;
+          b3.violations += Number(r3[QCD_HISTORICAL_COLS.VIOLATIONS  - 1])    || 0;
+          // R10-5: answered-weighted avg-answer accumulation for the range
+          // blocks (the computeQcdReport_ convention -- rows with 0s skipped).
+          if (displays && typeof parseHmsDisplay_ === 'function') {
+            const ansN = Number(r3[QCD_HISTORICAL_COLS.TOTAL_ANSWERED - 1]) || 0;
+            const avgS = parseHmsDisplay_(displays[k][QCD_HISTORICAL_COLS.AVG_ANSWER - 1]);
+            if (ansN > 0 && avgS > 0) { b3.avgWSum += avgS * ansN; b3.avgWN += ansN; }
+          }
+        };
+        if (inRange) bump3(byQueueRange);
+        if (inPrior) bump3(byQueueRangePrior);
       }
     }
 
@@ -1044,6 +1067,9 @@ function computeDeptQcdSnapshot_(dept, ssTZ, opts) {
       // Batch D: the selected-period block for the team-strip QCD tiles (null
       // when no range supplied). Carries from/to for the tile subtitle.
       range: (rFrom && rTo) ? Object.assign(buildBlock_(byQueueRange, null), { from: rFrom, to: rTo }) : null,
+      // R11-C1: the same block over the E5 prior window (null when no prior
+      // supplied) -- consumed by the Avg-answer tile's delta chip.
+      rangePrior: (pFrom && pTo) ? Object.assign(buildBlock_(byQueueRangePrior, null), { from: pFrom, to: pTo }) : null,
     });
   } catch (e) {
     Logger.log('computeDeptQcdSnapshot_ failed: %s', e);

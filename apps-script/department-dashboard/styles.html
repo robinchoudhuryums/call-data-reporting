@@ -919,7 +919,7 @@
      z auto) and below modal z (100). The strip bleeds slightly wider than
      its content so the page background never peeks through at the edges. */
   #dept-page .controls,
-  #insights-page .ins-period-bar {
+  #insights-page #insights-results > .ir-results-header {
     position: sticky; top: 0; z-index: 60;
     background: var(--paper);
     box-shadow: 0 8px 10px -10px rgba(0, 0, 0, 0.25);
@@ -928,6 +928,13 @@
     padding-top: 8px; padding-bottom: 8px;
   }
   #dept-page .controls { margin-bottom: 14px; }
+  /* R11-B9: the Insights sticky strip is the WHOLE results header now
+     (title + toolbar + period presets -- the My Department pattern). The
+     period bar sits as a full-width third row inside the flex header. */
+  #insights-page #insights-results > .ir-results-header { flex-wrap: wrap; }
+  #insights-page #insights-results > .ir-results-header .ins-period-bar {
+    flex: 1 1 100%; margin: 6px 0 0;
+  }
   /* R9-2: horizontal Refresh + Export pair inside the dept controls row
      (the .control column otherwise stacks its children vertically). */
   .control-btn-row { display: flex; flex-direction: row; align-items: center; gap: 8px; }
@@ -952,6 +959,17 @@
   .ins-cal-nav-btn:disabled { opacity: 0.35; cursor: default; }
   .ins-cal-month { font-size: 12px; color: var(--ink); white-space: nowrap; }
   .ins-cal-month-pos { color: var(--muted); font-size: 11px; }
+  /* R11-C3: the calendar's cell-metric is a LABEL now (the trend header's
+     metric dropdown is the one selector); the old segment CSS is retired. */
+  .ins-cal-metric-lbl {
+    font-family: var(--mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+  .ins-trend-metric-row { display: flex; align-items: center; gap: 10px; }
   /* R7 (I-1): the Line/Calendar toggle stays visible but inert when the
      calendar isn't applicable (hover title explains why). */
   .segmented.is-disabled { opacity: 0.45; }
@@ -1731,6 +1749,11 @@
   .chart-row.mode-bars > .chart-section { max-width: none; }
   .missed-chart-hwrap { position: relative; }
   .missed-chart-hwrap--bars { height: 320px; }
+  /* R11-B6: belt-and-braces -- force the canvas's DISPLAY size to the wrap
+     regardless of what width Chart.js measured at construct time (a
+     mid-transition measurement left it square in prod, twice). Chart.js'
+     ResizeObserver then corrects the render size to match. */
+  .missed-chart-hwrap--bars canvas { width: 100% !important; height: 100% !important; }
   @media (max-width: 720px) { .missed-chart-hwrap--bars { height: 240px; } }
   /* Clip the drill-in while its track is collapsing so it slides in/out
      cleanly rather than overflowing the 0fr cell mid-animation. */
@@ -2052,6 +2075,50 @@
   .agent-tier--high { background: var(--warn-soft); color: var(--warn); }
   .agent-tier--med  { background: var(--paper-2);   color: var(--muted); }
   .agent-tier--low  { background: var(--good-soft); color: var(--good); }
+
+  /* R11-C4: per-card chart-scope button (■ chart / ✕ chart) + the toolbar
+     chip that names the active scope. The button sits inside the card's
+     <summary>; its clicks are intercepted before the <details> toggle. */
+  .agent-scope-btn {
+    font-family: var(--mono);
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    padding: 1px 7px;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    background: var(--paper-card);
+    color: var(--muted);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .agent-scope-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .agent-scope-btn.is-on {
+    background: var(--accent-soft);
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .missed-scope-chip {
+    margin-right: auto;                 /* toolbar is flex-end; chip sits left */
+    align-self: center;
+    font-size: 12px;
+    color: var(--ink);
+    background: var(--accent-soft);
+    border: 1px solid var(--accent);
+    border-radius: 999px;
+    padding: 2px 10px;
+    white-space: nowrap;
+  }
+  .missed-scope-chip .scope-chip-x {
+    border: 0;
+    background: none;
+    color: var(--accent);
+    font-size: 11px;
+    cursor: pointer;
+    padding: 0 0 0 4px;
+    line-height: 1;
+  }
+  .missed-scope-chip .scope-chip-x:hover { color: var(--ink); }
 
   /* Collapsible Missed cards: the queue-only card and each per-agent
      timeline card are <details>, so managers can fold the timestamp
@@ -4085,6 +4152,64 @@
     position: sticky; top: 0; z-index: 3;
     box-shadow: 0 1px 0 var(--line);
   }
+  /* R11-B10: the stuck header should hug the modal's top bar -- the scroll
+     body's 18px top padding read as an awkward gap strip above the pinned
+     row (rows scrolling through it). Move that breathing room onto the
+     first child instead, so the scrollport's top edge is flush. */
+  #inbound-modal .modal-panel-body,
+  #direct-call-modal .modal-panel-body { padding-top: 0; }
+  #inbound-modal .modal-panel-body > :first-child,
+  #direct-call-modal .modal-panel-body > :first-child { margin-top: 14px; }
+  /* R11-C5: Direct report company view -- per-dept cards that expand into
+     that dept's agent table. <details> disclosure like the missed agent
+     cards; the summary carries the dept's aggregate headline stats. */
+  .direct-dept-cards { display: flex; flex-direction: column; gap: 10px; margin-top: 18px; }
+  .direct-dept-card {
+    background: var(--paper-card);
+    border: 1px solid var(--line);
+    border-radius: var(--r);
+  }
+  .direct-dept-card > summary.direct-dept-head {
+    cursor: pointer;
+    list-style: none;
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+    flex-wrap: wrap;
+    padding: 10px 14px;
+  }
+  .direct-dept-card > summary.direct-dept-head::-webkit-details-marker { display: none; }
+  .direct-dept-card > summary.direct-dept-head::after {
+    content: '▸';
+    color: var(--muted);
+    font-size: 10px;
+    margin-left: auto;
+    transition: transform var(--dur-1, 0.18s) var(--ease, ease);
+  }
+  .direct-dept-card[open] > summary.direct-dept-head::after { transform: rotate(90deg); }
+  .direct-dept-name { font-weight: 600; font-size: 14px; }
+  .direct-dept-stats {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 12px;
+    flex-wrap: wrap;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .ddc-stat { white-space: nowrap; }
+  .ddc-stat b {
+    font-weight: 600;
+    color: var(--ink);
+    font-variant-numeric: tabular-nums;
+  }
+  .direct-dept-body { padding: 0 14px 12px; border-top: 1px solid var(--line); }
+  .direct-dept-body .qcd-source-table { margin-top: 10px; }
+
+  /* R11-B11: click-to-sort headers on the report tables. */
+  .qcd-source-table th[data-sort] { cursor: pointer; -webkit-user-select: none; user-select: none; }
+  .qcd-source-table th[data-sort]:hover { color: var(--ink); }
+  .qcd-source-table th.srt-asc::after  { content: ' \25B4'; font-size: 9px; }
+  .qcd-source-table th.srt-desc::after { content: ' \25BE'; font-size: 9px; }
   .qcd-source-table .qcd-row-total td {
     font-weight: 700;
     background: var(--accent-soft);
@@ -4158,9 +4283,11 @@
   .qcd-verdict-label { font: 600 10px/1 var(--mono); letter-spacing: 0.14em;
     text-transform: uppercase; color: var(--muted); }
   /* R10-8: tile values read at KPI weight (were 24px -- too small beside the
-     hero, owner note). */
-  .qcd-verdict-value { font: 700 32px/1.1 var(--display); font-variant-numeric: tabular-nums;
+     hero, owner note). R11-B1: the three secondary tiles CENTER their
+     label+value and the row is slightly smaller overall. */
+  .qcd-verdict-value { font: 700 28px/1.1 var(--display); font-variant-numeric: tabular-nums;
     color: var(--ink); margin-top: 6px; }
+  .qcd-verdict-rest .qcd-verdict-tile { text-align: center; padding: 9px 10px; }
   .qcd-verdict--warn .qcd-verdict-value { color: var(--warn); }
   .qcd-verdict--good .qcd-verdict-value { color: var(--good); }
   .qcd-verdict-callout { margin: 0 0 14px; }
@@ -4178,8 +4305,8 @@
   /* R10-8: hero refresh -- bigger value, a thicker labeled target bar (the
      bare 8px bar + unlabeled floating tick "didn't look right", owner note),
      and a minimum visible fill so a healthy sub-1% day still registers. */
-  .qcd-hero-value { font: 700 42px/1.05 var(--display); font-variant-numeric: tabular-nums;
-    margin-top: 4px; color: var(--ink); }
+  .qcd-hero-value { font: 700 36px/1.05 var(--display); font-variant-numeric: tabular-nums;
+    margin-top: 4px; color: var(--ink); }   /* R11-B1: 42 -> 36, row slightly smaller */
   .qcd-hero-bar { position: relative; height: 12px; margin: 14px 0 8px;
     background: var(--paper-inset, var(--line)); border-radius: var(--r-pill); overflow: visible; }
   .qcd-hero-fill { position: absolute; left: 0; top: 0; bottom: 0; min-width: 5px;
@@ -4213,8 +4340,9 @@
   .qcd-deptrow--muted td { border-left: 5px solid var(--muted); background: transparent; }
   .qcd-deptrow-name { font: 700 16px/1.2 var(--display); color: var(--ink); }
   /* R10-8: mini-summary sized up (was 11px muted -- the per-dept abandon%
-     was unreadable, owner note); the % rides the row tone via .qcd-mini-pct. */
-  .qcd-deptrow-mini { float: right; font: 500 13px/1.5 var(--mono);
+     was unreadable, owner note); the % rides the row tone via .qcd-mini-pct.
+     R11-B2: sits LEFT beside the dept name now (was floated far right). */
+  .qcd-deptrow-mini { font: 500 13px/1.5 var(--mono); margin-left: 14px;
     font-variant-numeric: tabular-nums; color: var(--ink); }
   .qcd-mini-pct { font-weight: 700; }
   .qcd-deptrow--warn .qcd-mini-pct { color: var(--warn); }
@@ -4661,6 +4789,19 @@
   /* A moderate pinned height (vs the IR/PR 420px) so the always-visible band
      doesn't eat the viewport (condense-on-scroll was intentionally skipped). */
   .ov-trend-col .ir-chart-wrap { height: 340px; }
+  /* R11-B5: collapsible trend band. Collapsed = only the slim toggle strip
+     remains (chart + controls hidden, DOM kept so the chart instance
+     survives; expand re-measures). */
+  .ov-trend-collapse-btn {
+    display: flex; align-items: center; gap: 6px;
+    background: none; border: 0; cursor: pointer; padding: 2px 0 6px;
+    font: 600 10px var(--mono); letter-spacing: 0.18em; text-transform: uppercase;
+    color: var(--muted);
+  }
+  .ov-trend-collapse-btn:hover { color: var(--accent); }
+  .ov-trend-collapsed #ov-chart-tabs,
+  .ov-trend-collapsed #ov-chart-wrap { display: none; }
+  .ov-trend-collapsed { padding-bottom: 0; }
   .ov-grid-trend .ov-dept-grid { margin-bottom: 0; }
   /* Un-stick on short viewports (phones / landscape) so the band can't eat
      the screen; the grid then flows normally below it. */
@@ -6017,6 +6158,28 @@
 
   /* (R9-3: the Batch-E .dsync-chip date-sync offer CSS was retired with the
      chip -- the dept and Insights pages share one date window now.) */
+
+  /* R11-B8: chart-tips ? button + popover (shared across chart toolbars). */
+  .chart-help-btn {
+    flex: 0 0 auto; width: 20px; height: 20px; border-radius: 50%;
+    border: 1px solid var(--line); background: var(--paper-card);
+    color: var(--muted); font: 600 11px/1 var(--mono); cursor: pointer;
+    margin-left: 6px; align-self: center;
+  }
+  .chart-help-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .chart-help-pop {
+    position: fixed; z-index: 260;
+    background: var(--paper-card); border: 1px solid var(--line);
+    border-left: 3px solid var(--accent); border-radius: var(--r-lg);
+    box-shadow: var(--shadow-2, 0 8px 24px rgba(0,0,0,0.14));
+    padding: 10px 14px; font-size: 12.5px; color: var(--ink);
+  }
+  .chart-help-pop .chp-title {
+    font: 600 10px var(--mono); letter-spacing: 0.18em; text-transform: uppercase;
+    color: var(--muted); margin-bottom: 6px;
+  }
+  .chart-help-pop ul { margin: 0; padding-left: 16px; }
+  .chart-help-pop li { margin: 4px 0; line-height: 1.45; }
 
   /* Drilldown hand-off link (Insights Queue health -> My Department Missed). */
   .ins-handoff-link { background: none; border: 0; padding: 0 0 0 8px; cursor: pointer;

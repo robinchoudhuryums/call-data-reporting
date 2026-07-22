@@ -119,7 +119,7 @@ function emailFixture() {
   };
 }
 
-test('email HTML: verdict alert + KPI row + worst-first table, bound to server figures', function () {
+test('email HTML: KPI row + worst-first table, bound to server figures (banner retired, R11-B4)', function () {
   h.state.props.DASHBOARD_URL = 'https://example.com/exec';
   const html = h.call('buildQueueReportEmailHtml_', emailFixture(), '2026-07-10', false);
   assert.match(html, /Daily Call Queue Report/);
@@ -127,8 +127,10 @@ test('email HTML: verdict alert + KPI row + worst-first table, bound to server f
   assert.match(html, /Company total/);
   assert.match(html, /5\.71%/);                             // company aban % (grandTotals)
   assert.match(html, /example\.com\/exec#\/overview/);      // bulletproof CTA
-  // Verdict: 1 queue over 5% (A_Q_CSR) -> alert fires with the offender.
-  assert.match(html, /over the 5% line/);
+  // R11-B4: the verdict alert BANNER is retired (KPI tiles + row color carry
+  // it); the hidden preheader still names the offender for inbox previews.
+  assert.match(html, /over the 5% line/);                   // preheader only
+  assert.doesNotMatch(html, /&#9873;/);                     // the banner's flag glyph is gone
   assert.match(html, /A_Q_CSR/);
   // WATCH offender carries the watch color; the HEALTHY row the green.
   assert.match(html, /#c66b4b/);                            // CSR (7%, 2 viol) = WATCH
@@ -137,17 +139,37 @@ test('email HTML: verdict alert + KPI row + worst-first table, bound to server f
   assert.ok(html.indexOf('CSR') < html.indexOf('Sales'), 'worst-first: CSR before Sales');
   // Old plain-table warn color is gone.
   assert.doesNotMatch(html, /#B45309/);
+  // R11-B4: no Courier -- email-safe Arial styling now.
+  assert.doesNotMatch(html, /Courier New/);
 });
 
-test('email HTML: a clean day renders the "under the 5% line" verdict (no alert)', function () {
+test('email HTML: clean day -- no banner either way; split bar shows share-of-total (R11-B4)', function () {
   const clean = emailFixture();
   clean.depts[0].totals.abandonedPct = 3.0; clean.depts[0].totals.abandonedPctStr = '3.00%';
   clean.depts[0].totals.violations = 0; clean.depts[0].queues[0].abandonedPct = 3.0;
   clean.depts[0].queues[0].abandonedPctStr = '3.00%'; clean.depts[0].queues[0].violations = 0;
   clean.grandTotals.abandonedPct = 2.8; clean.grandTotals.abandonedPctStr = '2.80%'; clean.grandTotals.violations = 0;
   const html = h.call('buildQueueReportEmailHtml_', clean, '2026-07-10', false);
-  assert.match(html, /All queues held under the 5% line/);
-  assert.doesNotMatch(html, /over the 5% line/);
+  assert.doesNotMatch(html, /All queues held under the 5% line/);   // green banner retired too
+  // Preheader keeps the all-clear line; no offender wording anywhere.
+  assert.match(html, /All queues under the 5% line/);
+  // R11-B4 split bar: the abandoned segment is the SHARE of calls (3% wide
+  // for a 3%-abandon row), not the old 0-20%-scaled fill (which rendered
+  // 3% as a 15%-wide bar). Passing rows carry the softened red.
+  assert.match(html, /width="3%" style="background:#e8c4b2/);
+  assert.doesNotMatch(html, /width="15%"/);
+});
+
+test('email HTML: over-threshold row fills red by its real share, full-strength (R11-B4)', function () {
+  // The Denials-class case: 2 of 4 abandoned = 50%. The OLD bar clamped
+  // 50%*5 -> a full orange bar; the split bar must render ~half red.
+  const d = emailFixture();
+  d.depts[0].queues[0] = { queue: 'A_Q_Denials', totalCalls: 4, totalAnswered: 2,
+    abandonedPct: 50, abandonedPctStr: '50.00%', violations: 1 };
+  d.depts[0].totals.abandonedPct = 50; d.depts[0].totals.violations = 1;
+  const html = h.call('buildQueueReportEmailHtml_', d, '2026-07-10', false);
+  assert.match(html, /width="50%" style="background:#b23a2c/);   // half red, full-strength (>=5%)
+  assert.doesNotMatch(html, /width="100%" style="background:#b23a2c/);
 });
 
 test('email HTML: empty day renders the no-activity note without throwing', function () {

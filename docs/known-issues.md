@@ -602,7 +602,7 @@ same time as the code change.
 
 | Source file | Cache prefix | Current version |
 |---|---|---|
-| `Data.gs` (main table) | `summary:vN:` | `v14` |
+| `Data.gs` (main table) | `summary:vN:` | `v15` |
 | `Data.gs` (latest-date snap for default From/To) | `latestDate:vN:` | `v1` |
 | `Data.gs` (multi-source latest dates for freshness pill) | `latestDates:vN:` | `v1` |
 | `IndividualReport.gs` | `individual:vN:` | `v11` |
@@ -964,9 +964,11 @@ existing per-dept dropdown):
 - **Insights → Queue health** (the retired QCD modal's replacement):
   headline tiles + secondary strip, per-queue rows with expandable
   per-call-source detail + violation dates, the collapsed Daily
-  breakdown table, and the consolidated trend chart's "Abandoned %
-  by Queue" tab (metric sub-selector for Total Calls / Violations,
-  violation-day warn markers, legend spotlight).
+  breakdown table, and the consolidated trend chart's queue metrics
+  (since R11-C3 the "Queue: Abandoned % / Total calls / Violations"
+  entries in the ONE `#ins-trend-metric` dropdown — the old by-queue
+  tab + metric sub-selector are retired; violation-day warn markers +
+  legend spotlight unchanged).
 - **Overview tile chips**: an "Aban N (P%)" chip whenever QCD
   data exists (warn-tinted when P >= 5%), and a "X viol MTD" chip
   when month-to-date violations > 0. Powered by
@@ -1069,7 +1071,7 @@ behavior byte-identical to pre-OrphanFix.
 **Cache invalidation.** `applyOrphanRename` removes the single
 fixed-key Overview cache entry (via the `COMPANY_OVERVIEW_CACHE_KEY`
 constant -- currently `companyOverview:v20`) on success. Per-(dept,
-range) caches (`summary:v14`, `individual:v11`,
+range) caches (`summary:v15`, `individual:v11`,
 etc.) are left to TTL out within 30 minutes
 (`REPORT_CACHE_TTL_SECONDS`). The Orphan Fix modal tells the user
 the Overview updates immediately and other views may lag up to the
