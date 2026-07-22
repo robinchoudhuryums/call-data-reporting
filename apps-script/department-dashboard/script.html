@@ -187,6 +187,9 @@
     tt.titleFont       = { family: FONT_DISPLAY, size: 12, weight: '500' };
     tt.bodyFont        = { family: FONT_MONO,    size: 11 };
     tt.boxPadding      = 4;
+    // R11-G (items 5a/5b): the shared pin-aware / global-off tooltip filter as
+    // the default -- charts with their own filter compose it in explicitly.
+    if (typeof chartTooltipPinFilter_ === 'function') tt.filter = chartTooltipPinFilter_;
     // Legend — muted mono labels (matches the kicker rhythm)
     const lg = Chart.defaults.plugins.legend.labels;
     lg.color = THEME.muted;
@@ -975,7 +978,10 @@
     // 420ms transition settles so the canvas tracks its real slot.
     var missedRowEl = $('dept-missed-chart-row');
     if (missedRowEl) missedRowEl.addEventListener('transitionend', function (e) {
-      if (e.propertyName === 'grid-template-columns') deptMissedResize_();
+      // R11-C6: resize ONLY -- never rebuild -- when the detail panel toggles.
+      // The tooNarrow rebuild guard is for the initial-paint stuck-square case;
+      // firing a full destroy+recreate here flashed the chart on every bar click.
+      if (e.propertyName === 'grid-template-columns') deptMissedResize_(false);
     });
     // R9-2: the one-click CSV icon became an Export dropdown (the Insights
     // toolbar convention). #csv-export-btn is the WRAP now (id kept so the
@@ -1372,6 +1378,8 @@
       syncChips();
       const fabToggle = $('help-fab-toggle');
       if (fabToggle) fabToggle.checked = !helpFabHidden_();
+      const ttToggle = $('chart-tooltip-toggle');
+      if (ttToggle) ttToggle.checked = !CHART_TOOLTIPS_OFF_;
       modal.style.display = '';
       modal.setAttribute('aria-hidden', 'false');
       document.body.style.overflow = 'hidden';
@@ -1400,6 +1408,15 @@
     if (fabToggle) fabToggle.addEventListener('change', function () {
       try { localStorage.setItem('cdr.help.fab', fabToggle.checked ? 'on' : 'off'); } catch (e) {}
       applyHelpFabPref_();
+    });
+
+    // R11-G (item 5b): global chart hover-card on/off. The filter reads
+    // CHART_TOOLTIPS_OFF_ live, so flipping it takes effect on the next hover
+    // -- no per-chart update needed.
+    const ttToggle = $('chart-tooltip-toggle');
+    if (ttToggle) ttToggle.addEventListener('change', function () {
+      CHART_TOOLTIPS_OFF_ = !ttToggle.checked;
+      try { localStorage.setItem('cdr.charts.tooltips', ttToggle.checked ? 'on' : 'off'); } catch (e) {}
     });
 
     // Chip click: apply + persist theme. Modal stays open so the
@@ -2006,6 +2023,9 @@
       ovTablePeriod = p;
       try { localStorage.setItem(OV_TABLE_PERIOD_KEY_, p); } catch (e2) { /* best-effort */ }
       if (ovLastData) ovRenderUserTable_(ovLastData);
+      // R11-F: fade the table on the range swap (reduced-motion no-ops via CSS).
+      var wrap = $('ov-user-table-wrap');
+      if (wrap) { wrap.classList.remove('ov-tbl-fade'); void wrap.offsetWidth; wrap.classList.add('ov-tbl-fade'); }
     });
   }
 
@@ -2943,8 +2963,10 @@
             position: (typeof Chart !== 'undefined' && Chart.Tooltip && Chart.Tooltip.positioners
                        && Chart.Tooltip.positioners.topBand) ? 'topBand' : undefined,
             filter: function (ctx) {
-              // Hide the reference baseline from the per-line tooltip list.
-              return OV_BASELINE_LABELS_.indexOf(ctx.dataset.label) === -1;
+              // Hide the reference baseline from the per-line tooltip list;
+              // R11-G composes the shared pin/off filter (5a/5b).
+              return OV_BASELINE_LABELS_.indexOf(ctx.dataset.label) === -1
+                && chartTooltipPinFilter_(ctx);
             },
             callbacks: {
               label: function (ctx) {
@@ -3083,6 +3105,73 @@
       if (ds._origBorder == null) ds._origBorder = ds.borderColor;
       if (ds._origWidth == null) ds._origWidth = ds.borderWidth;
     });
+    // R11-G (item 4): remember the built y-axis bounds so an auto-fit-on-solo
+    // can restore them when the solo is released. Captured at BUILD time, so it
+    // respects whatever the chart configured (e.g. the Overview Full/Fit
+    // toggle's ovYAxis_ output) -- solo fits to the pinned data, un-solo
+    // restores the natural axis.
+    var y = chart.options && chart.options.scales && chart.options.scales.y;
+    if (y && chart._origYAxis == null) {
+      chart._origYAxis = { min: y.min, max: y.max, beginAtZero: y.beginAtZero };
+    }
+  }
+
+  // R11-G (item 4): auto-zoom-fit the y-axis to the PINNED (soloed) series so a
+  // soloed line fills the plot vertically instead of hugging the bottom. When
+  // no pin is active, restore the axis captured at build time. Generic across
+  // every spotlight chart (Overview / Insights trend / per-agent trend / QCD);
+  // caller applies chart.update. Handles both scalar data and {x,y} points.
+  function chartSpotlightFitAxis_(chart) {
+    var y = chart && chart.options && chart.options.scales && chart.options.scales.y;
+    if (!y) return;
+    var pins = chart._spotlightPins || {};
+    if (!Object.keys(pins).length) {
+      if (chart._origYAxis) {
+        y.min = chart._origYAxis.min; y.max = chart._origYAxis.max;
+        y.beginAtZero = chart._origYAxis.beginAtZero;
+      }
+      return;
+    }
+    var skip = chart._spotlightSkip, lo = Infinity, hi = -Infinity;
+    chart.data.datasets.forEach(function (ds) {
+      if (ds.hidden) return;
+      if (skip && ds.label === skip) return;
+      var key = chartSpotKey_(ds);
+      if (!key || !pins[key]) return;                 // pinned only
+      (ds.data || []).forEach(function (v) {
+        var n = (v && typeof v === 'object') ? v.y : v;
+        if (n == null || isNaN(n)) return;
+        if (n < lo) lo = n;
+        if (n > hi) hi = n;
+      });
+    });
+    if (!isFinite(lo) || !isFinite(hi)) return;
+    var pad = Math.max(1, (hi - lo) * 0.1);
+    y.beginAtZero = false;
+    y.min = Math.max(0, Math.floor(lo - pad));
+    y.max = Math.ceil(hi + pad);
+    // Percent axes (built capped at 100) stay capped so "fit" can't overshoot.
+    if (chart._origYAxis && chart._origYAxis.max === 100 && y.max > 100) y.max = 100;
+  }
+
+  // R11-G (items 5a + 5b): the SHARED Chart.js tooltip filter. (5b) When the
+  // global "chart tooltips" setting is OFF, suppress the hover card entirely
+  // (the point still highlights) by filtering out every item -- live, no
+  // per-instance update needed. (5a) When a chart has PINNED (soloed) series,
+  // show ONLY those in the hover card so a solo'd comparison isn't buried under
+  // every dimmed line. Set as the global default AND composed into the two
+  // charts that carry their own filter (Overview baseline / QCD threshold).
+  var CHART_TOOLTIPS_OFF_ = (function () {
+    try { return localStorage.getItem('cdr.charts.tooltips') === 'off'; } catch (e) { return false; }
+  })();
+  function chartTooltipPinFilter_(ctx) {
+    if (CHART_TOOLTIPS_OFF_) return false;               // 5b: global off
+    var chart = ctx && ctx.chart;
+    var pins = chart && chart._spotlightPins;
+    if (!pins || !Object.keys(pins).length) return true; // no solo -> show all
+    var ds = chart.data.datasets[ctx.datasetIndex];
+    var key = chartSpotKey_(ds);
+    return !!(key && pins[key]);                          // solo -> pinned only
   }
 
   // Transient single-series highlight (dept-tile hover). Does NOT touch pins.
@@ -3118,7 +3207,13 @@
   // Highlight every PINNED series, dim the rest. Empty set -> clear.
   function chartSpotlightApplyPins_(chart) {
     if (!chart || !chart.data) return;
-    if (!chartSpotlightHasPins_(chart)) { chartSpotlightClear_(chart); return; }
+    if (!chartSpotlightHasPins_(chart)) {
+      // R11-G: no pins -> restore the natural y-axis (fitAxis reads the empty
+      // pin set), then reset the line styling. Both applied in one update.
+      chartSpotlightFitAxis_(chart);
+      chartSpotlightClear_(chart);
+      return;
+    }
     const pins = chart._spotlightPins;
     chart.data.datasets.forEach(function (ds) {
       if (chart._spotlightSkip && ds.label === chart._spotlightSkip) return;
@@ -3131,6 +3226,7 @@
         ds.borderWidth = ds._origWidth || 1.4;
       }
     });
+    chartSpotlightFitAxis_(chart);   // R11-G (item 4): zoom to the pinned series
     chart.update('none');
   }
 
@@ -3201,6 +3297,9 @@
       chart.options.scales.y.max = y.max;
       chart.options.scales.y.beginAtZero = y.beginAtZero;
     }
+    // R11-G: if a solo is active, the pin-fit wins over the recomputed full
+    // axis (it reads the current pins; a no-pin chart is left as recomputed).
+    chartSpotlightFitAxis_(chart);
     chart.update();
   }
 
@@ -5844,7 +5943,8 @@
   // layout settled). If the chart still measures empty after the settle +
   // resize, destroy + rebuild ONCE from the last response.
   var deptMissedRebuilt_ = false;
-  function deptMissedResize_() {
+  function deptMissedResize_(allowRebuild) {
+    if (allowRebuild === undefined) allowRebuild = true;   // R11-C6: toggle passes false
     if (typeof requestAnimationFrame !== 'function') return;
     requestAnimationFrame(function () {
       requestAnimationFrame(function () {
@@ -5857,7 +5957,8 @@
           var wrapEl = document.querySelector('#dept-missed-chart-wrap .missed-chart-hwrap');
           var tooNarrow = !!(wrapEl && wrapEl.clientWidth > 0
             && deptMissedChart.width < wrapEl.clientWidth * 0.7);
-          if ((deptMissedChart.width === 0 || deptMissedChart.height === 0 || tooNarrow)
+          if (allowRebuild
+              && (deptMissedChart.width === 0 || deptMissedChart.height === 0 || tooNarrow)
               && deptMissedLastData && !deptMissedRebuilt_) {
             deptMissedRebuilt_ = true;   // one retry -- never loop
             deptMissedDrawChart_(deptMissedLastData);
@@ -13063,19 +13164,29 @@
   function insRenderShareChart_(cards) {
     const wrap = $('ins-share-wrap');
     if (!wrap) return;
-    const slices = (cards || [])
+    const agentSlices = (cards || [])
       .map(function (c) {
         return { label: c.name, value: Number((c.metrics && c.metrics.answered && c.metrics.answered.val) || 0) };
       })
       .filter(function (d) { return d.value > 0; })
       .sort(function (a, b) { return b.value - a.value; });
+    // R11-E (item 6): shares are of the WHOLE department's answered calls, not
+    // just the selected agents -- so an agent's slice reads the same whether the
+    // report is run for the whole dept or a subset. The unselected agents fold
+    // into a single muted "Other agents" slice (deptTotal - sum(selected)), so
+    // the donut still sums to the true 100%.
+    const selectedTotal = agentSlices.reduce(function (a, s) { return a + s.value; }, 0);
+    const deptTotal = Number(insLastData && insLastData.meta && insLastData.meta.answeredDeptTotal) || selectedTotal;
+    const other = Math.max(0, deptTotal - selectedTotal);
+    const slices = agentSlices.slice();
+    if (other > 0) slices.push({ label: 'Other agents', value: other, other: true });
     if (insShareChartInstance) { try { insShareChartInstance.destroy(); } catch (e) {} insShareChartInstance = null; }
     if (slices.length < 2) { wrap.style.display = 'none'; return; }
     wrap.style.display = '';
     refreshChartTheme();
     destroyOrphanedChartOnCanvas_('ins-share-chart');
 
-    const colors = slices.map(function (_, i) { return IR_CHART_COLORS[i % IR_CHART_COLORS.length]; });
+    const colors = slices.map(function (d, i) { return d.other ? THEME.muted : IR_CHART_COLORS[i % IR_CHART_COLORS.length]; });
     const plugins = (typeof ChartDataLabels !== 'undefined') ? [ChartDataLabels] : [];
     insShareChartInstance = safeChart_($('ins-share-chart').getContext('2d'), {
       type: 'doughnut',
@@ -13831,7 +13942,7 @@
               filter: function (item) { return item.text !== '5% threshold'; } } },
               (qNames.length > 1 ? chartSpotlightLegend_() : {})),
             tooltip: {
-              filter: function (ctx) { return ctx.dataset.label !== '5% threshold'; },
+              filter: function (ctx) { return ctx.dataset.label !== '5% threshold' && chartTooltipPinFilter_(ctx); },
               callbacks: {
                 label: function (ctx) {
                   return ctx.dataset.label + ': ' + (ctx.parsed.y == null ? '-' : fmtVal(ctx.parsed.y));
@@ -14455,6 +14566,7 @@
     const meta  = (insLastData && insLastData.meta) || {};
     const ts    = (insLastData && insLastData.teamStats) || {};
     if (insCardsChartMode === 'abs')   { insRenderCardsChartAbs_(canvas, cards); return; }
+    if (insCardsChartMode === 'trend') { insRenderCardsChartTrend_(canvas, cards); return; }
     const metric = insCardsChartMetric;
     const isPct = (metric === 'pct');
     const nRoster = meta.rosterAgentCount
@@ -14522,6 +14634,92 @@
         },
       },
     });
+  }
+
+  /**
+   * R11-E (item 4): per-agent TREND line chart -- one line per selected agent
+   * for the chosen metric (insCardsChartMetric) over the 12-month trend axis
+   * (insLastData.trendData.labels; each card carries a `trendMonthly` series
+   * aligned to it). Reuses the Overview chart's spotlight/pin model
+   * (chartSpotlight*): hover a legend item to dim the rest, click to pin/solo,
+   * Shift/Cmd/Ctrl-click to add to the pinned set, Alt-click to hide. Clicking a
+   * data point drills into that agent's Individual Report. Data labels are off
+   * (many overlaid lines, the Overview multi-line convention, INV-41).
+   */
+  function insRenderCardsChartTrend_(canvas, cards) {
+    const td = (insLastData && insLastData.trendData) || {};
+    const labels = td.labels || [];
+    const allowed = ['pct', 'answered', 'missed', 'rung'];
+    const metric = allowed.indexOf(insCardsChartMetric) >= 0 ? insCardsChartMetric : 'pct';
+    const isPct = (metric === 'pct');
+    const metricLabel = { pct: '% Answered', answered: 'Answered', missed: 'Missed', rung: 'Call volume (rung)' }[metric];
+    const fmtV = function (n) { return n == null ? '—' : (isPct ? Number(n).toFixed(1) + '%' : String(Math.round(n))); };
+    if (!labels.length || !cards.length) {
+      // Nothing to plot -- leave the (already-destroyed) canvas blank.
+      return;
+    }
+    const datasets = cards.map(function (c, i) {
+      const color = IR_CHART_COLORS[i % IR_CHART_COLORS.length];
+      const series = (c.trendMonthly || []).map(function (b) {
+        return (b && b[metric] != null) ? Number(b[metric]) : null;
+      });
+      return {
+        label: c.name,
+        data: series,
+        borderColor: color,
+        backgroundColor: color,
+        borderWidth: 2,
+        tension: 0.25,
+        spanGaps: true,
+        pointRadius: 2,
+        pointHoverRadius: 5,
+        fill: false,
+      };
+    });
+    insCardsChartInstance = safeChart_(canvas.getContext('2d'), {
+      type: 'line',
+      data: { labels: labels, datasets: datasets },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        interaction: { mode: 'nearest', intersect: false },
+        onClick: function (evt, els) {
+          if (els && els.length) {
+            const ds = datasets[els[0].datasetIndex];
+            const name = ds && ds.label;
+            if (name && typeof irDrillToAgent_ === 'function') {
+              irDrillToAgent_(name, $('ins-from').value, $('ins-to').value);
+            }
+          }
+        },
+        onHover: function (evt, els) {
+          if (evt && evt.native && evt.native.target) {
+            evt.native.target.style.cursor = (els && els.length) ? 'pointer' : 'default';
+          }
+        },
+        plugins: {
+          legend: Object.assign({ display: true, position: 'bottom',
+            labels: { boxWidth: 12, font: { size: 11 }, usePointStyle: true } },
+            chartSpotlightLegend_()),
+          datalabels: { display: false },
+          tooltip: {
+            callbacks: {
+              label: function (ctx) { return ctx.dataset.label + ': ' + fmtV(ctx.parsed.y); },
+            },
+          },
+        },
+        scales: {
+          x: { ticks: { maxRotation: 45, minRotation: 0, autoSkip: true } },
+          y: {
+            beginAtZero: !isPct,
+            min: isPct ? 0 : undefined,
+            max: isPct ? 100 : undefined,
+            title: { display: true, text: metricLabel },
+            ticks: { callback: function (v) { return isPct ? v + '%' : v; } },
+          },
+        },
+      },
+    });
+    chartSpotlightStash_(insCardsChartInstance, {});
   }
 
   /**
@@ -16790,7 +16988,25 @@
     if ($('esc-refresh-btn')) $('esc-refresh-btn').addEventListener('click', escLoad_);
     if ($('esc-status'))      $('esc-status').addEventListener('change', escLoad_);
     // C2: client-side sort re-renders the already-loaded rows (no server call).
-    if ($('esc-sort'))        $('esc-sort').addEventListener('change', escApplyFilter_);
+    if ($('esc-sort'))        $('esc-sort').addEventListener('change', function () {
+      escSyncSortToggle_(); escApplyFilter_();
+    });
+    // R11-D1: the category list is the wide-viewport status filter -- a row
+    // click writes the SAME #esc-status value the select wrote, then reloads.
+    if ($('esc-cat-menu')) $('esc-cat-menu').addEventListener('click', function (e) {
+      const row = e.target.closest('[data-jump]');
+      if (!row) return;
+      if ($('esc-status')) $('esc-status').value = row.getAttribute('data-jump');
+      escLoad_();
+    });
+    // R11-D3: the sort toggle flips the same #esc-sort value + re-sorts in place.
+    if ($('esc-sort-toggle')) $('esc-sort-toggle').addEventListener('click', function () {
+      const sel = $('esc-sort');
+      if (sel) sel.value = (sel.value === 'newest') ? 'oldest' : 'newest';
+      escSyncSortToggle_();
+      escApplyFilter_();
+    });
+    escSyncSortToggle_();
     // C1: band tiles are click-to-filter shortcuts (Needs review / Pending /
     // In progress jump the status selector + reload).
     if ($('esc-summary-band')) $('esc-summary-band').addEventListener('click', function (e) {
@@ -16863,15 +17079,35 @@
           if (escAllDept) opts += '<option value="ALL">All departments</option>';
           opts += depts.map(function (d) { return '<option value="' + escapeHtml(d) + '">' + escapeHtml(d) + '</option>'; }).join('');
           sel.innerHTML = opts;
-          // Single-dept managers have one dept -> hide the selector entirely.
+          // R11-D4: a viewer with a real choice (admin/all-dept, or a rare
+          // multi-dept manager) gets the SELECTOR; a single-dept manager gets
+          // the dept NAME as plain text (nothing to switch to -- previously the
+          // whole control was hidden). Reuses the existing role signal; no new
+          // permission. The selector's change handler still runs the normal
+          // fetch + server auth path, so an unreachable dept can't be selected.
+          const canSwitch = escAllDept || depts.length > 1;
+          const nameEl = $('esc-dept-name');
           const col = $('esc-dept-col');
-          if (col) col.style.display = (escAllDept || depts.length > 1) ? '' : 'none';
+          if (canSwitch) {
+            sel.style.display = '';
+            if (nameEl) nameEl.style.display = 'none';
+            if (col) col.style.display = '';
+          } else if (depts.length === 1) {
+            sel.style.display = 'none';
+            if (nameEl) { nameEl.textContent = depts[0]; nameEl.style.display = ''; }
+            if (col) col.style.display = '';
+          } else {
+            if (col) col.style.display = 'none';   // no dept at all -> nothing to show
+          }
         }
         // Create-form dept selector (admins choose any dept).
         const cdept = $('esc-c-dept');
         if (cdept) cdept.innerHTML = depts.map(function (d) {
           return '<option value="' + escapeHtml(d) + '">' + escapeHtml(d) + '</option>';
         }).join('');
+        // R11-D1: seed the (countless) category list so the wide-viewport status
+        // filter is present immediately; escRenderList_ refreshes it with counts.
+        escRenderCatMenu_(null);
         cb && cb();
       })
       .withFailureHandler(function (err) {
@@ -16938,6 +17174,8 @@
     }
     // C1: triage summary band (hides itself on unavailable / missing meta).
     escRenderSummaryBand_(resp);
+    // R11-D1: sidebar status category list (counts from meta.statusCounts).
+    escRenderCatMenu_(resp);
     if (resp.available === false) {
       escSetFilterCount_('');
       escShowEmpty_('Escalations are temporarily unavailable — the storage (Neon) could not be reached. Try Refresh in a moment.');
@@ -17109,17 +17347,66 @@
     var meta = (resp && resp.meta) || {};
     var c = meta.statusCounts;
     if (!resp || resp.available === false || !c) { band.style.display = 'none'; band.innerHTML = ''; return; }
-    var reviewN = Number(meta.pendingReviewCount || c.pending_review || 0);
     var tiles = [];
-    // Needs review leads (external submissions shouldn't sit unnoticed).
-    tiles.push(escBandTile_('Needs review', reviewN, reviewN > 0 ? 'accent' : 'muted', 'pending_review'));
-    tiles.push(escBandTile_('Pending', Number(c.pending || 0), (c.pending > 0) ? 'warn' : 'muted', 'pending'));
-    tiles.push(escBandTile_('In progress', Number(c.in_progress || 0), (c.in_progress > 0) ? 'accent' : 'muted', 'in_progress'));
+    // R11-D1: the per-status counts (Needs review / Pending / In progress) moved
+    // to the sidebar category menu (escRenderCatMenu_) so counts live in ONE
+    // place. The band is now the "health" strip: the derived signals that AREN'T
+    // status-filter categories -- Overdue, Oldest open, Resolved in the last 7d.
     tiles.push(escBandTile_('Overdue >' + ESC_OVERDUE_DAYS + 'd', Number(meta.overdueCount || 0), (meta.overdueCount > 0) ? 'warn' : 'muted', null));
     tiles.push(escBandOldestTile_(meta.oldestOpenAt));
     tiles.push(escBandTile_('Resolved · 7d', Number(meta.resolvedLast7 || 0), 'good', null));
     band.innerHTML = tiles.join('');
     band.style.display = '';
+  }
+
+  // R11-D1: the sidebar status category list. Counts come from the server
+  // aggregate meta.statusCounts (+ meta.pendingReviewCount) -- accurate for ANY
+  // active filter, unlike a count over the status-filtered in-memory rows (which
+  // hold only the active status). A row click writes #esc-status + reloads; the
+  // active row tracks meta.status. Mirrors the native <select>'s six options.
+  function escRenderCatMenu_(resp) {
+    var menu = $('esc-cat-menu');
+    if (!menu) return;
+    var meta = (resp && resp.meta) || {};
+    // Counts are OPTIONAL: the six rows always render so the wide-viewport
+    // status filter is present during the first load AND on an unavailable
+    // (Neon-down) response -- clicking a row re-fetches, which is the recovery.
+    var c = (resp && resp.available !== false && meta.statusCounts) || null;
+    var reviewN = c ? Number(meta.pendingReviewCount || c.pending_review || 0) : null;
+    var total = c ? (Number(c.pending || 0) + Number(c.in_progress || 0) + reviewN
+              + Number(c.resolved || 0) + Number(c.rejected || 0)) : null;
+    var active = (meta.status) || ($('esc-status') && $('esc-status').value) || 'pending';
+    // [value, label, count-or-null, dot-tone]. Order = triage priority.
+    var cats = [
+      ['pending_review', 'Needs review', c ? reviewN                  : null, 'accent'],
+      ['pending',        'Pending',      c ? Number(c.pending || 0)   : null, 'warn'],
+      ['in_progress',    'In progress',  c ? Number(c.in_progress || 0) : null, 'accent'],
+      ['resolved',       'Completed',    c ? Number(c.resolved || 0)  : null, 'good'],
+      ['rejected',       'Rejected',     c ? Number(c.rejected || 0)  : null, 'muted'],
+      ['all',            'All',          total,                              'muted'],
+    ];
+    menu.innerHTML = '<div class="esc-cat-label">Show</div>' + cats.map(function (t) {
+      var on = t[0] === active;
+      var count = (t[2] == null) ? '' : ('<span class="esc-cat-count">' + t[2] + '</span>');
+      return '<button type="button" class="esc-cat-row' + (on ? ' is-active' : '')
+        + '" data-jump="' + t[0] + '"' + (on ? ' aria-current="true"' : '') + '>'
+        + '<span class="esc-cat-dot esc-cat-dot--' + t[3] + '"></span>'
+        + '<span class="esc-cat-name">' + escapeHtml(t[1]) + '</span>'
+        + count
+        + '</button>';
+    }).join('');
+  }
+
+  // R11-D3: reflect the #esc-sort value onto the toggle button (glyph + label +
+  // tooltip). Oldest-first is an up arrow (oldest at the top of the list).
+  function escSyncSortToggle_() {
+    var btn = $('esc-sort-toggle');
+    if (!btn) return;
+    var newest = (($('esc-sort') && $('esc-sort').value) || 'oldest') === 'newest';
+    btn.innerHTML = '<span class="esc-sort-arrow">' + (newest ? '↓' : '↑') + '</span>'
+      + '<span class="esc-sort-lbl">' + (newest ? 'Newest first' : 'Oldest first') + '</span>';
+    btn.setAttribute('title', newest ? 'Newest first (click for oldest)' : 'Oldest first (click for newest)');
+    btn.setAttribute('aria-label', 'Sort order: ' + (newest ? 'newest first' : 'oldest first'));
   }
   function escBandTile_(label, value, tone, jumpStatus) {
     var cls = 'esc-band-tile esc-band-tile--' + tone + (jumpStatus ? ' esc-band-clickable' : '');
@@ -17781,8 +18068,47 @@
       + (meta.truncated ? ' (truncated)' : '');
     const dateEl = $('cl-results-date');
     if (dateEl) dateEl.textContent = (meta.from || '') + ' → ' + (meta.to || '');
-    $('cl-call-list').innerHTML = calls.map(clCallCardHtml_).join('');
+    $('cl-call-list').innerHTML = clGroupByDayHtml_(calls);
     clShowOnly_('cl-results');
+  }
+
+  // R11-E (item 1): group the call cards into collapsible per-day sections
+  // (newest day first, most-recent day open) so a wide date range reads as a
+  // scannable diary rather than a flat wall of cards. Each day header shows the
+  // weekday + date and that day's call count. Single-day results render one
+  // (open, header-less) group so nothing changes for the common case.
+  function clGroupByDayHtml_(calls) {
+    const order = [];
+    const byDay = {};
+    calls.forEach(function (c) {
+      const d = c.callDate || '?';
+      if (!byDay[d]) { byDay[d] = []; order.push(d); }
+      byDay[d].push(c);
+    });
+    // calls arrive newest-first from the server; keep that order for days too.
+    if (order.length <= 1) {
+      return '<div class="cl-day-cards">' + calls.map(clCallCardHtml_).join('') + '</div>';
+    }
+    return order.map(function (d, i) {
+      const list = byDay[d];
+      const label = clDayLabel_(d);
+      return '<details class="cl-day"' + (i === 0 ? ' open' : '') + '>'
+        + '<summary class="cl-day-head">'
+        +   '<span class="cl-day-date">' + escapeHtml(label) + '</span>'
+        +   '<span class="cl-day-count">' + list.length + ' call' + (list.length === 1 ? '' : 's') + '</span>'
+        + '</summary>'
+        + '<div class="cl-day-cards">' + list.map(clCallCardHtml_).join('') + '</div>'
+        + '</details>';
+    }).join('');
+  }
+  function clDayLabel_(iso) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || '').trim());
+    if (!m) return String(iso || '?');
+    const dt = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+    if (isNaN(dt.getTime())) return iso;
+    const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const mons = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    return days[dt.getDay()] + ' · ' + mons[dt.getMonth()] + ' ' + Number(m[3]) + ', ' + m[1];
   }
 
   function clOutcomeChip_(c) {

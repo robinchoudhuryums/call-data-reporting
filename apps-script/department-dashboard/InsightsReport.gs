@@ -80,7 +80,7 @@
 //     (from the bySource breakdown 4a added to computeQcdReport_), so
 //     the Queue health table can annotate WHERE a queue's abandons come
 //     from. Null when no sub-source has abandons.
-const INSIGHTS_CACHE_KEY_PREFIX = 'insights:v18';
+const INSIGHTS_CACHE_KEY_PREFIX = 'insights:v19';
 
 function getInsightsReportInit(req) {
   // Same picker UX (roster + default dates + active-in-range subset) as
@@ -396,6 +396,16 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
   // inputs -- counting all SELECTED roster members (incl. zero-activity
   // ones) understated the baseline (F1).
   const activeRosterCurr = {};   // agent -> true
+  // R11-E (item 6): full-department answered total in the CURRENT window over
+  // ALL active roster agents -- NOT just the selected ones. The share-of-
+  // answered donut divides by this (and folds unselected agents into an
+  // "Other" slice) so a given agent's share is the same whether the report is
+  // run for the whole dept or a subset (it was previously a share of the
+  // SELECTED agents' answered, which inflated shares on a partial selection).
+  let deptAnsweredCurr = 0;
+  // R11-E (item 4): per-agent monthly series for the per-agent trend line chart
+  // (one line per selected agent, month axis = trendLabels). agent -> ym -> {}.
+  const perAgentMonthly = {};
 
   for (let i = 0; i < srcRows.length; i++) {
     const row = srcRows[i];
@@ -405,6 +415,11 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
     if (!agent) continue;
     // Queue-sentinel rows (queue-only abandoned events) -- not real agents.
     if (/^A_Q_/.test(agent) || agent === 'Backup CSR') continue;
+    // R11-E (item 6): accumulate the dept-wide answered total BEFORE the
+    // selection gate, so the donut's denominator is the whole department.
+    if (rosterSet[agent] && dateIso >= from && dateIso <= to) {
+      deptAnsweredCurr += (row.totalAnswered || 0);
+    }
     if (!selectedSet[agent]) continue;
 
     const inCurrent = (dateIso >= from && dateIso <= to);
@@ -452,11 +467,17 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
       }
     }
     if (inTrend && isRoster) {
-      const mb = monthlyTeam[dateIso.slice(0, 7)];
+      const ym = dateIso.slice(0, 7);
+      const mb = monthlyTeam[ym];
       if (mb) {
         mb.rung += rung; mb.missed += missed; mb.answered += answered;
         mb.ttt += tttSec; mb.att_sum += attTotal;
       }
+      // R11-E (item 4): per-agent monthly buckets (rung/answered/missed) for
+      // the per-agent trend line chart, aligned to the same month axis.
+      const pam = perAgentMonthly[agent] || (perAgentMonthly[agent] = {});
+      const pamb = pam[ym] || (pam[ym] = { rung: 0, answered: 0, missed: 0 });
+      pamb.rung += rung; pamb.answered += answered; pamb.missed += missed;
     }
   }
 
@@ -521,6 +542,14 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
         att:      deltaBlock_(cAtt,       pAtt,       'volume',    formatSecondsHms_(cAtt)),
       },
       rawAnswered: c.answered,
+      // R11-E (item 4): per-agent monthly series aligned to trendLabels/monthKeys
+      // (null on a gap month), for the per-agent trend line chart.
+      trendMonthly: monthKeys.map(function (m) {
+        const b = (perAgentMonthly[agent] || {})[m];
+        if (!b) return null;
+        const pct = b.rung > 0 ? (b.answered / b.rung) * 100 : 0;
+        return { rung: b.rung, answered: b.answered, missed: b.missed, pct: round1_(pct) };
+      }),
     };
   }).sort(function (a, b) { return b.rawAnswered - a.rawAnswered; });
 
@@ -596,6 +625,9 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
       rosterSize: roster.names.length,
       rosterAgentCount: activeRosterCount,
       queueOnlyAgentCount: visibleAgents.length - selectedRosterCount,
+      // R11-E (item 6): whole-department answered total (current window, all
+      // active roster agents) -- the true denominator for the share donut.
+      answeredDeptTotal: deptAnsweredCurr,
       generatedAt: new Date().toISOString(),
     },
     dateLabel:      fmt(startDate)      + ' - ' + fmt(endDate),

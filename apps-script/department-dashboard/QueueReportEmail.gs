@@ -439,9 +439,26 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
     + '<td width="150" style="padding:9px 8px;font:600 9px ' + sans + ';letter-spacing:0.8px;text-transform:uppercase;color:#8a97a4;">Abandoned %</td>'
     + '<td align="right" style="padding:9px 12px;font:600 9px ' + sans + ';letter-spacing:0.8px;text-transform:uppercase;color:#8a97a4;">Viol</td></tr>';
   ordered.forEach(function (d) {
-    const dt = tierOf((d.totals || {}).abandonedPct, (d.totals || {}).violations);
-    tbl += '<tr><td colspan="4" style="padding:9px 12px 3px;font:bold 13px Arial,sans-serif;color:' + C.ink + ';border-top:1px solid ' + C.rowline + ';">'
-      + esc(d.dept) + ' &nbsp;<span style="font:10px ' + sans + ';color:' + dt.color + ';">' + dt.label + '</span></td></tr>';
+    const dTotals = d.totals || {};
+    const dt = tierOf(dTotals.abandonedPct, dTotals.violations);
+    // R11-F (owner): the dept name strip carries its health VERDICT as a
+    // colored LEFT EDGE (green / watch / red) + a distinct tinted background so
+    // it stands out from the queue rows, replacing the HEALTHY/WATCH text
+    // label; and its mini-summary now includes the ABANDONED COUNT + % (the
+    // web app's QV-2 dept-banner shape) so "how many calls did we lose" reads
+    // without opening the dashboard.
+    const dCalls = Number(dTotals.totalCalls) || 0;
+    const dAbnd  = Number(dTotals.abandoned)  || 0;
+    const dPct   = Number(dTotals.abandonedPct) || 0;
+    const dPctStr = dTotals.abandonedPctStr || dPct.toFixed(1) + '%';
+    const stripBg = dt.color === C.bad ? C.badTile : (dt.color === C.watch ? C.alertBg : C.okBg);
+    tbl += '<tr><td colspan="4" style="padding:0;border-top:1px solid ' + C.rowline + ';">'
+      + '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:' + stripBg + ';border-left:4px solid ' + dt.color + ';border-collapse:separate;"><tr>'
+      +   '<td style="padding:8px 12px;font:bold 13px Arial,sans-serif;color:' + C.ink + ';">' + esc(d.dept) + '</td>'
+      +   '<td align="right" style="padding:8px 12px;font:12px ' + sans + ';color:' + C.mut + ';white-space:nowrap;">'
+      +     esc(dCalls) + ' calls &middot; <span style="font-weight:bold;color:' + (dPct >= 5 ? C.bad : C.ink) + ';">' + esc(dAbnd) + ' abandoned</span> (' + esc(dPctStr) + ')'
+      +   '</td>'
+      + '</tr></table></td></tr>';
     deptQueues(d).forEach(function (q) {
       const pct = Number(q.abandonedPct) || 0;
       const t = tierOf(pct, q.violations);

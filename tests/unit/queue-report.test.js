@@ -135,6 +135,11 @@ test('email HTML: KPI row + worst-first table, bound to server figures (banner r
   // WATCH offender carries the watch color; the HEALTHY row the green.
   assert.match(html, /#c66b4b/);                            // CSR (7%, 2 viol) = WATCH
   assert.match(html, /#3d9476/);                            // Sales (2.5%) = HEALTHY
+  // R11-F: the dept name strip carries its verdict as a colored LEFT EDGE
+  // (no HEALTHY/WATCH text) + the abandoned COUNT in its mini-summary.
+  assert.match(html, /border-left:4px solid #c66b4b/);      // CSR strip: watch left edge
+  assert.match(html, /7 abandoned/);                        // CSR abandoned count
+  assert.match(html, /1 abandoned/);                        // Sales abandoned count
   // Worst-first: CSR section precedes Sales.
   assert.ok(html.indexOf('CSR') < html.indexOf('Sales'), 'worst-first: CSR before Sales');
   // Old plain-table warn color is gone.
