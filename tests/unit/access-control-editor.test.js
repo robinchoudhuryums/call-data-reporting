@@ -143,3 +143,97 @@ test('saveAccessControlRow accepts the ALL sentinel, stored canonically as ALL',
   h.call('saveAccessControlRow', { email: 'boss2@x.com', department: '*', notes: '' });
   assert.equal(acSheetRows()[1][1], 'ALL', '* normalized to ALL');
 });
+
+// -- Tier C: multi-department managers + alias emails ------------------------
+
+test('resolveUser_: multiple rows -> multi-dept manager (departments unioned)', function () {
+  install([['m@x.com', 'CSR', 'note'], ['m@x.com', 'Sales', ''], ['other@x.com', 'Power', '']]);
+  const u = h.call('resolveUser_', 'M@x.com');
+  assert.equal(u.role, 'manager');
+  assert.equal(u.allDepts, false);
+  assert.equal(u.department, 'CSR', 'first assigned dept is the default');
+  deepEqual(JSON.parse(JSON.stringify(u.departments)), ['CSR', 'Sales']);
+});
+
+test('resolveUser_: duplicate rows for one dept collapse to a single entry', function () {
+  install([['m@x.com', 'CSR', ''], ['m@x.com', 'CSR', '']]);
+  const u = h.call('resolveUser_', 'm@x.com');
+  deepEqual(JSON.parse(JSON.stringify(u.departments)), ['CSR']);
+});
+
+test('assertDeptAccess_: multi-dept manager reaches any assigned dept, not others', function () {
+  install([]);
+  const multi = { role: 'manager', department: 'CSR', allDepts: false, departments: ['CSR', 'Sales'] };
+  h.call('assertDeptAccess_', multi, 'CSR');    // no throw
+  h.call('assertDeptAccess_', multi, 'Sales');  // no throw
+  assert.throws(function () { h.call('assertDeptAccess_', multi, 'Power'); }, /Not authorized for this department/);
+});
+
+test('resolveUser_: alias email resolves to the canonical user access', function () {
+  install([['john@x.com', 'CSR', '']]);
+  h.state.props.EMAIL_ALIASES = 'john.doe@x.com = john@x.com';
+  const u = h.call('resolveUser_', 'John.Doe@x.com');   // signed in via the alias
+  assert.equal(u.role, 'manager');
+  assert.equal(u.email, 'john@x.com', 'returns the canonical identity');
+  deepEqual(JSON.parse(JSON.stringify(u.departments)), ['CSR']);
+});
+
+test('resolveUser_: alias maps to an ADMIN canonical -> admin', function () {
+  install([]);
+  h.state.props.ADMIN_EMAILS = 'admin@x.com';
+  h.state.props.EMAIL_ALIASES = 'a.dmin@x.com=admin@x.com';
+  const u = h.call('resolveUser_', 'a.dmin@x.com');
+  assert.equal(u.role, 'admin');
+  assert.equal(u.email, 'admin@x.com');
+});
+
+test('parseEmailAliases_: malformed tokens dropped, self-maps ignored', function () {
+  install([]);
+  h.state.props.EMAIL_ALIASES = 'no-equals-here, x@y.com = x@y.com, good@x.com = canon@x.com, junk = also-junk';
+  const m = h.call('parseEmailAliases_');
+  assert.equal(m['good@x.com'], 'canon@x.com');
+  assert.equal(Object.keys(m).length, 1, 'only the one valid, non-self pair survives');
+});
+
+test('saveAccessControlRow: departments[] writes one row per dept (replace-all)', function () {
+  install([['m@x.com', 'CSR', 'old']]);
+  h.call('saveAccessControlRow', { email: 'M@x.com', departments: ['CSR', 'Sales'], notes: 'both' });
+  const rows = acSheetRows().filter(function (r) { return String(r[0]).toLowerCase() === 'm@x.com'; });
+  assert.equal(rows.length, 2, 'one row per dept');
+  deepEqual(rows.map(function (r) { return r[1]; }).sort(), ['CSR', 'Sales']);
+  assert.equal(rows[0][2], 'both', 'notes on each row');
+});
+
+test('saveAccessControlRow: re-save with fewer depts removes the dropped ones', function () {
+  install([['m@x.com', 'CSR', ''], ['m@x.com', 'Sales', '']]);
+  h.call('saveAccessControlRow', { email: 'm@x.com', departments: ['Sales'], notes: '' });
+  const rows = acSheetRows().filter(function (r) { return String(r[0]).toLowerCase() === 'm@x.com'; });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0][1], 'Sales');
+});
+
+test('saveAccessControlRow: ALL sentinel is exclusive (mixing collapses to ALL)', function () {
+  install([]);
+  h.call('saveAccessControlRow', { email: 'boss@x.com', departments: ['CSR', 'ALL'], notes: '' });
+  const rows = acSheetRows().filter(function (r) { return String(r[0]).toLowerCase() === 'boss@x.com'; });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0][1], 'ALL');
+});
+
+test('saveAccessControlRow: rejects an unknown dept in the list, writes nothing', function () {
+  install([]);
+  assert.throws(function () {
+    h.call('saveAccessControlRow', { email: 'a@b.com', departments: ['CSR', 'Nope'] });
+  }, /not a department/);
+  assert.equal(acSheetRows().length, 0);
+});
+
+test('getAccessControlInit: groups rows into managers with a departments list', function () {
+  install([['m@x.com', 'CSR', 'n'], ['m@x.com', 'Sales', ''], ['solo@x.com', 'Power', 'p']]);
+  const init = h.call('getAccessControlInit');
+  const mgr = init.managers.find(function (x) { return x.email.toLowerCase() === 'm@x.com'; });
+  deepEqual(JSON.parse(JSON.stringify(mgr.departments)), ['CSR', 'Sales']);
+  assert.equal(mgr.notes, 'n');
+  const solo = init.managers.find(function (x) { return x.email.toLowerCase() === 'solo@x.com'; });
+  deepEqual(JSON.parse(JSON.stringify(solo.departments)), ['Power']);
+});

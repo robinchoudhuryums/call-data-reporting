@@ -1516,6 +1516,41 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `tests/unit/access-control-editor.test.js`. **If you add a new
   `role==='admin'` check, decide: is it an admin SURFACE (keep it) or DATA
   BREADTH (use `isAllDeptViewer_()` / `user.allDepts`)?**
+  **MULTI-DEPARTMENT manager (Tier C).** A manager may hold MORE THAN ONE
+  `Access Control` row (same email, different dept). `resolveUser_` now
+  UNIONS them into `departments` (was: only the first honored, F13 --
+  now removed); `department` is the first (default landing), `allDepts`
+  stays FALSE (they see only their assigned depts, not every dept). The
+  security gates accept a list: `assertDeptAccess_` + `escAssertRowAccess_`
+  + the (latent, admin-only) `inbound`/`direct`/`getCallJourney` pins check
+  `dept ∈ user.departments`; a single-dept manager's `departments` is a
+  one-element list, so those are byte-equivalent to the old `!== department`
+  check (least privilege preserved). `getEscalations` scopes a multi-dept
+  manager to `department IN (...)` (all their depts by default, or a chosen
+  one); `personalizeOverview_` keeps WoW drivers for all their depts. Client:
+  a NEW `canPickDept_()` (= `isAllDeptViewer_() || manager with
+  departments.length>1`) gates ONLY the dept-SWITCH surfaces (header selector
+  population, `getRequestedDept`, `ovViewerDept_`); the Overview cross-dept
+  routing/spotlight stay `isAllDeptViewer_()`-gated (a multi-dept manager
+  switches via the selector; the server rejects any non-assigned dept
+  regardless). `Code.gs` ships `departments` when `length>1`. The editor's
+  `saveAccessControlRow` is a REPLACE-ALL by email (accepts `departments[]`
+  OR the legacy single `department`; ALL/* is exclusive), and
+  `getAccessControlInit` returns a grouped `managers` list; the modal's dept
+  picker is a multi-select. Multiple managers per dept already worked
+  (different emails, one row each). Pinned by
+  `tests/unit/access-control-editor.test.js` +
+  `escalations-hardening.test.js`.
+  **ALIAS EMAILS (Tier C).** The optional `EMAIL_ALIASES` Script Property
+  (comma/newline-separated `alias@x = canonical@x` pairs, tolerant grammar
+  like `DIAL_IN_LABELS`) lets several sign-in addresses resolve to ONE
+  identity: `resolveUser_` canonicalizes the address (via
+  `canonicalizeEmail_`, memoized on the raw property, ≤5 hops to break a
+  mis-entered loop) BEFORE the admin/manager lookup, so an alias inherits
+  the canonical user's role + departments, and the returned `email` is the
+  canonical identity. Unset = pre-Tier-C behavior. Note Gmail dot-normalization
+  does NOT cover `john.doe`→`john` (different local parts), so the map is
+  explicit + admin-curated (Operator State #36).
 - **Alert Log captures every outcome of every run** -- `sent`,
   `would-send`, `above-threshold`, `no-data`, `no-recipients`,
   `skipped`, `error`. Preview rows (from the modal's **Preview**
@@ -2936,6 +2971,23 @@ items for anything it flags or doesn't cover.)
     gaps and count drift. Run after deploys that touched mirrors, or when
     a journey drill reports a 'date-gap'. It never writes -- remediation is
     always the existing idempotent re-import/backfill paths.
+36. `EMAIL_ALIASES` Script Property (dashboard; optional, Tier C) -- maps
+    sign-in alias addresses to a canonical identity so several Workspace
+    addresses that route to one person resolve to the SAME role + departments.
+    Comma/newline-separated `alias@x = canonical@x` pairs (tolerant grammar
+    like `DIAL_IN_LABELS` / `COMPANY_HOLIDAYS`: a token missing `=`, with a
+    non-email side, or mapping an address to itself is silently dropped;
+    never throws). `resolveUser_` canonicalizes BEFORE the admin/manager
+    lookup, so an alias inherits the canonical user's access and the returned
+    identity is canonical. Unset = no aliasing. Gmail dot-normalization does
+    NOT cover `john.doe`→`john` (different local parts), so the map is
+    explicit. No redeploy to edit (memoized per request on the raw value).
+    Also note (Tier C, same feature area, no property): a manager with
+    MULTIPLE `Access Control` rows (same email, different dept) is a
+    multi-department manager -- they get the header dept selector for their
+    assigned subset; see the "Role model" gotcha. If a manager who should
+    see several depts sees only one, check for a stale 60s auth cache or
+    that all their rows share the exact same email.
 
 ## Cycle Workflow Config
 
@@ -2981,7 +3033,7 @@ DQE Report Legacy:
   apps-script/dqe-report/DQEdashboard.js, apps-script/dqe-report/FAQGuide.html, apps-script/dqe-report/IndividualReport.js, apps-script/dqe-report/IndividualReportModal.html, apps-script/dqe-report/MissedCallsReport.js, apps-script/dqe-report/MissedReportModal.html, apps-script/dqe-report/MultiCompModal.html, apps-script/dqe-report/MultiComparisonTool.js, apps-script/dqe-report/SingleRangeReport.js, apps-script/dqe-report/SingleReportModal.html, apps-script/dqe-report/menu DQE Tools.js, apps-script/dqe-report/sendManualAlert.js, apps-script/dqe-report/showFAQ.js, apps-script/dqe-report/appsscript.json
 
 ### Invariant Library
-INV-01 | No public function (callable via google.script.run) writes to any spreadsheet EXCEPT admin-gated paths: `OrphanFix.gs` (`addAgentAlias`, `removeAgentAlias`, `applyOrphanRename`, `addOrphanToRoster` -- the New-hire flow appends one "Name, ext1, ext2" cell to a dept's DO NOT EDIT! column; extensions REQUIRED, write structurally confined to the dept block by the first-blank-terminated header scan), `setup()` in `Setup.gs` (sheet creation), `DeptConfig.gs` (`saveDeptConfig`, `removeDeptConfig` -- config-sheet writes, INV-54), `Auth.gs` (`saveAccessControlRow`, `removeAccessControlRow` -- the C1 manager-access editor; writes the Access Control SHEET, upsert-by-email / delete-by-email, busts the per-email auth cache), and the C3 config editors `Alerts.gs` (`saveAlertConfigRow`, `removeAlertConfigRow` -- per-dept alert threshold/recipients, key=department) + `Digest.gs` (`saveDigestConfigRow`, `removeDigestConfigRow` -- digest subscribers, key=(email,department)); both write the ACTIVE config source (sheet, or Neon when `CONFIG_SOURCE=neon`). Every other write-capable helper ends in `_` so Apps Script blocks it from RPC. All carve-outs start with `assertAdmin_()`. The OrphanFix path (data-mutation) additionally has input-validation (queue-sentinel names rejected, length-capped, canonical destination must be on some roster, and -- R8-B2 -- the alias/rename SOURCE name must NOT be a current roster name via `assertNotOnAnyRoster_`, since the pipeline's aliasMap outranks the exact-roster match and a roster-name source would silently reroute that live agent's future builds; de-roster first for deliberate merges), `LockService` serialization, and `Orphan Fix Log` audit trail. The DeptConfig path (config, not data-mutation) has `assertAdmin_()` + save-time validation + `LockService` + an Updated By/At row stamp. The Access Control editor path (config) has `assertAdmin_()` + input validation (email shape + a real dept **OR the `ALL`/`*` all-departments sentinel, canonicalized to `ALL`** -- see the role-model gotcha) + `LockService` + a `Logger.log` audit line; it manages MANAGERS only (admins live in the `ADMIN_EMAILS` Script Property, so the editor can't lock an admin out). New data-mutation public functions need all four mitigations; new admin-only creation/config paths need at minimum `assertAdmin_()`. **One sanctioned non-admin exception: the TELEMETRY CARVE-OUT** -- `Util.gs::logReportUsage_` appends one fixed-schema row to the `Report Usage` sheet from the public report endpoints (both cache-hit and fresh paths) so report-consolidation decisions have usage evidence. It is safe by construction: append-only, no user-controlled free text (Report is a code constant per call site; Department has already passed the caller's dept validation), and best-effort (missing sheet / any failure silently no-ops -- telemetry never blocks a report). Do not extend it beyond pure telemetry, and do not route caller-supplied strings into it. | Subsystem: Department Dashboard
+INV-01 | No public function (callable via google.script.run) writes to any spreadsheet EXCEPT admin-gated paths: `OrphanFix.gs` (`addAgentAlias`, `removeAgentAlias`, `applyOrphanRename`, `addOrphanToRoster` -- the New-hire flow appends one "Name, ext1, ext2" cell to a dept's DO NOT EDIT! column; extensions REQUIRED, write structurally confined to the dept block by the first-blank-terminated header scan), `setup()` in `Setup.gs` (sheet creation), `DeptConfig.gs` (`saveDeptConfig`, `removeDeptConfig` -- config-sheet writes, INV-54), `Auth.gs` (`saveAccessControlRow`, `removeAccessControlRow` -- the C1 manager-access editor; writes the Access Control SHEET, REPLACE-ALL-by-email (Tier C: accepts `departments[]` -- one row per dept -- OR the legacy single `department`; ALL/* is exclusive) / delete-by-email, busts the per-email auth cache), and the C3 config editors `Alerts.gs` (`saveAlertConfigRow`, `removeAlertConfigRow` -- per-dept alert threshold/recipients, key=department) + `Digest.gs` (`saveDigestConfigRow`, `removeDigestConfigRow` -- digest subscribers, key=(email,department)); both write the ACTIVE config source (sheet, or Neon when `CONFIG_SOURCE=neon`). Every other write-capable helper ends in `_` so Apps Script blocks it from RPC. All carve-outs start with `assertAdmin_()`. The OrphanFix path (data-mutation) additionally has input-validation (queue-sentinel names rejected, length-capped, canonical destination must be on some roster, and -- R8-B2 -- the alias/rename SOURCE name must NOT be a current roster name via `assertNotOnAnyRoster_`, since the pipeline's aliasMap outranks the exact-roster match and a roster-name source would silently reroute that live agent's future builds; de-roster first for deliberate merges), `LockService` serialization, and `Orphan Fix Log` audit trail. The DeptConfig path (config, not data-mutation) has `assertAdmin_()` + save-time validation + `LockService` + an Updated By/At row stamp. The Access Control editor path (config) has `assertAdmin_()` + input validation (email shape + a real dept **OR the `ALL`/`*` all-departments sentinel, canonicalized to `ALL`** -- see the role-model gotcha) + `LockService` + a `Logger.log` audit line; it manages MANAGERS only (admins live in the `ADMIN_EMAILS` Script Property, so the editor can't lock an admin out). New data-mutation public functions need all four mitigations; new admin-only creation/config paths need at minimum `assertAdmin_()`. **One sanctioned non-admin exception: the TELEMETRY CARVE-OUT** -- `Util.gs::logReportUsage_` appends one fixed-schema row to the `Report Usage` sheet from the public report endpoints (both cache-hit and fresh paths) so report-consolidation decisions have usage evidence. It is safe by construction: append-only, no user-controlled free text (Report is a code constant per call site; Department has already passed the caller's dept validation), and best-effort (missing sheet / any failure silently no-ops -- telemetry never blocks a report). Do not extend it beyond pure telemetry, and do not route caller-supplied strings into it. | Subsystem: Department Dashboard
 INV-02 | Duration columns (TTT, ATT, AvgAbdWait, CSRAvgAbdWait) are read via getDisplayValues(), not getValue(), to bypass spreadsheet-vs-script TZ mismatch. | Subsystem: Department Dashboard
 INV-03 | DO NOT EDIT! roster cells follow the format "Name, ext1, ext2, …" — name is everything before the first comma; subsequent digit-only tokens are extensions. | Subsystem: Department Dashboard
 INV-04 | Agent-name match between DQE Historical Data Col C and DO NOT EDIT! roster cells is exact (case + whitespace sensitive); no alias normalization. | Subsystem: Department Dashboard

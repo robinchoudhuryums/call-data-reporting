@@ -837,12 +837,29 @@
   function isAllDeptViewer_() {
     return typeof USER !== 'undefined' && !!USER && (USER.role === 'admin' || USER.allDepts === true);
   }
+  // Tier C: who gets the header dept SELECTOR. Admins + all-dept managers pick
+  // any dept; a MULTI-dept manager (>1 assigned dept, allDepts false) picks
+  // among their assigned subset. A single-dept manager has no selector (their
+  // one dept is USER.department). This is a superset of isAllDeptViewer_ used
+  // ONLY for the dept-switch surfaces (selector population, getRequestedDept,
+  // ovViewerDept_) -- the cross-dept Overview routing/spotlight affordances
+  // stay isAllDeptViewer_-gated (the server rejects a non-assigned dept
+  // regardless, so a multi-dept manager just uses the selector).
+  function canPickDept_() {
+    return isAllDeptViewer_()
+      || (typeof USER !== 'undefined' && !!USER && USER.role === 'manager'
+          && !!USER.departments && USER.departments.length > 1);
+  }
 
   function init() {
     // Header
     $('user-email').textContent = USER.email || '(unknown)';
     const tag = $('role-tag');
-    tag.textContent = USER.allDepts ? 'manager · all depts' : USER.role;
+    // Tier C: label a multi-dept manager so the extra reach is visible.
+    const multiDept = USER.role === 'manager' && !USER.allDepts
+      && USER.departments && USER.departments.length > 1;
+    tag.textContent = USER.allDepts ? 'manager · all depts'
+      : (multiDept ? ('manager · ' + USER.departments.length + ' depts') : USER.role);
     tag.classList.add('tag-' + USER.role);
 
     // Admin-only menu items: Compare Ranges (under Reports) and
@@ -909,8 +926,9 @@
     })();
 
     // Department selector vs static label. All-dept managers get the selector
-    // too (#1) so they can view any department.
-    if (isAllDeptViewer_() && USER.departments && USER.departments.length) {
+    // too (#1); a multi-dept manager (Tier C) gets it populated with their
+    // assigned subset.
+    if (canPickDept_() && USER.departments && USER.departments.length) {
       const sel = $('dept-selector');
       USER.departments.forEach(function (d) {
         const opt = document.createElement('option');
@@ -1889,7 +1907,7 @@
   // admins show whichever dept is currently selected in the header
   // dropdown (so they can pin a focus dept).
   function ovViewerDept_(data) {
-    if (isAllDeptViewer_()) {
+    if (canPickDept_()) {
       const sel = $('dept-selector');
       return (sel && sel.value) || (USER.departments && USER.departments[0]) || null;
     }
@@ -5462,7 +5480,7 @@
   }
 
   function getRequestedDept() {
-    if (isAllDeptViewer_()) {
+    if (canPickDept_()) {
       const sel = $('dept-selector');
       return sel ? sel.value : '';
     }
@@ -11233,9 +11251,9 @@
       .withSuccessHandler(function (data) {
         $('ac-loading').style.display = 'none';
         $('ac-body').style.display = '';
-        acLastInit = data || { rows: [], departments: [], adminEmails: [] };
+        acLastInit = data || { rows: [], managers: [], departments: [], adminEmails: [] };
         acRenderDeptOptions_(acLastInit.departments || []);
-        acRenderRows_(acLastInit.rows || []);
+        acRenderRows_(acLastInit.managers || []);
         acClearForm_();
       })
       .withFailureHandler(function (err) {
@@ -11252,25 +11270,31 @@
     // role-model gotcha) -- a manager-role viewer with every dept's DATA
     // breadth (dept selector like an admin) but no admin surfaces. No new
     // role needed; this only makes the existing grant reachable from the UI.
-    sel.innerHTML = '<option value="">— pick —</option>'
-      + '<option value="ALL">ALL — every department (manager, no admin surfaces)</option>'
+    // Tier C: the dept picker is a MULTI-select now (no "— pick —" placeholder).
+    sel.innerHTML = '<option value="ALL">ALL — every department (manager, no admin surfaces)</option>'
       + depts.map(function (d) { return '<option value="' + escapeHtml(d) + '">' + escapeHtml(d) + '</option>'; }).join('');
   }
 
-  function acRenderRows_(rows) {
+  // Tier C: rows are the GROUPED managers now (one per email, dept LIST).
+  function acRenderRows_(managers) {
     const tbody = $('ac-tbody');
     const count = $('ac-count');
-    if (count) count.textContent = rows.length;
+    managers = managers || [];
+    if (count) count.textContent = managers.length;
     if (!tbody) return;
-    if (!rows.length) {
+    if (!managers.length) {
       tbody.innerHTML = '<tr><td colspan="4" class="al-empty">No managers yet. Add one above.</td></tr>';
       return;
     }
-    tbody.innerHTML = rows.map(function (r, idx) {
+    tbody.innerHTML = managers.map(function (m, idx) {
+      const depts = (m.departments || []);
+      const deptCell = depts.length
+        ? depts.map(function (d) { return '<span class="ac-dept-chip">' + escapeHtml(d) + '</span>'; }).join(' ')
+        : '<span class="al-empty-inline">—</span>';
       return '<tr data-ac-idx="' + idx + '">'
-        + '<td>' + escapeHtml(r.email) + '</td>'
-        + '<td>' + (r.department ? escapeHtml(r.department) : '<span class="al-empty-inline">—</span>') + '</td>'
-        + '<td>' + (r.notes ? escapeHtml(r.notes) : '<span class="al-empty-inline">—</span>') + '</td>'
+        + '<td>' + escapeHtml(m.email) + '</td>'
+        + '<td>' + deptCell + '</td>'
+        + '<td>' + (m.notes ? escapeHtml(m.notes) : '<span class="al-empty-inline">—</span>') + '</td>'
         + '<td>'
         +   '<button type="button" class="link-btn ac-row-edit" data-idx="' + idx + '">Edit</button> '
         +   '<button type="button" class="link-btn ac-row-remove" data-idx="' + idx + '">Remove</button>'
@@ -11286,19 +11310,25 @@
     if (remBtn) { acRemoveRow_(Number(remBtn.getAttribute('data-idx'))); return; }
   }
 
+  // Tier C: preselect the manager's assigned depts in the multi-select.
   function acEditRow_(idx) {
-    const r = (acLastInit.rows || [])[idx];
-    if (!r) return;
-    if ($('ac-email')) $('ac-email').value = r.email;
-    if ($('ac-dept'))  $('ac-dept').value = r.department || '';
-    if ($('ac-notes')) $('ac-notes').value = r.notes || '';
+    const m = (acLastInit.managers || [])[idx];
+    if (!m) return;
+    if ($('ac-email')) $('ac-email').value = m.email;
+    const sel = $('ac-dept');
+    const depts = m.departments || [];
+    if (sel) Array.prototype.forEach.call(sel.options, function (o) {
+      o.selected = depts.indexOf(o.value) !== -1;
+    });
+    if ($('ac-notes')) $('ac-notes').value = m.notes || '';
     if ($('ac-form-title')) $('ac-form-title').textContent = 'Edit manager access';
     if ($('ac-email')) $('ac-email').focus();
   }
 
   function acClearForm_() {
     if ($('ac-email')) $('ac-email').value = '';
-    if ($('ac-dept'))  $('ac-dept').value = '';
+    const sel = $('ac-dept');
+    if (sel) Array.prototype.forEach.call(sel.options, function (o) { o.selected = false; });
     if ($('ac-notes')) $('ac-notes').value = '';
     if ($('ac-form-title')) $('ac-form-title').textContent = 'Add manager access';
     acSetStatus_(null);
@@ -11306,10 +11336,14 @@
 
   function acSave_() {
     const email = ($('ac-email') ? $('ac-email').value : '').trim();
-    const department = ($('ac-dept') ? $('ac-dept').value : '').trim();
+    const sel = $('ac-dept');
+    const departments = sel
+      ? Array.prototype.filter.call(sel.options, function (o) { return o.selected; }).map(function (o) { return o.value; })
+      : [];
     const notes = ($('ac-notes') ? $('ac-notes').value : '').trim();
     if (!email) { acSetStatus_('error', 'Enter a manager email.'); return; }
-    if (!department) { acSetStatus_('error', 'Pick a department.'); return; }
+    if (!departments.length) { acSetStatus_('error', 'Pick at least one department.'); return; }
+    const label = departments.join(', ');
     const btn = $('ac-save-btn');
     if (btn) { btn.disabled = true; btn.innerHTML = '<span class="btn-spinner" aria-hidden="true"></span>Saving…'; }
     const restore = function () { if (btn) { btn.disabled = false; btn.textContent = 'Save'; } };
@@ -11317,7 +11351,7 @@
     google.script.run
       .withSuccessHandler(function () {
         restore();
-        acSetStatus_('success', 'Saved ' + email + ' → ' + department + '. Takes effect within ~60 s.');
+        acSetStatus_('success', 'Saved ' + email + ' → ' + label + '. Takes effect within ~60 s.');
         showToast('Saved access for ' + email, 'success');
         acLoadInit_();
       })
@@ -11325,11 +11359,11 @@
         restore();
         acSetStatus_('error', 'Save failed: ' + (err && err.message ? err.message : String(err)));
       })
-      .saveAccessControlRow({ email: email, department: department, notes: notes });
+      .saveAccessControlRow({ email: email, departments: departments, notes: notes });
   }
 
   function acRemoveRow_(idx) {
-    const r = (acLastInit.rows || [])[idx];
+    const r = (acLastInit.managers || [])[idx];
     if (!r) return;
     // R5: app-styled confirm (dsConfirm_) instead of the browser-native
     // window.confirm that rendered in Sheets chrome (owner note).
@@ -17209,9 +17243,14 @@
         if (sel) {
           let opts = '';
           // #1: admins + all-dept managers get the cross-dept "All departments"
-          // option; single-dept managers get only their own dept.
+          // option; single-dept managers get only their own dept. Tier C: a
+          // multi-dept manager gets an "All my departments" option (the server
+          // scopes a blank/ALL request to their assigned depts only) so the
+          // combined view is their default, plus a per-dept narrow.
           const escAllDept = escInit_.isAdmin || escInit_.allDepts;
+          const escMultiMgr = !escAllDept && depts.length > 1;
           if (escAllDept) opts += '<option value="ALL">All departments</option>';
+          else if (escMultiMgr) opts += '<option value="ALL">All my departments</option>';
           opts += depts.map(function (d) { return '<option value="' + escapeHtml(d) + '">' + escapeHtml(d) + '</option>'; }).join('');
           sel.innerHTML = opts;
           // R11-D4: a viewer with a real choice (admin/all-dept, or a rare

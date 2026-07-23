@@ -2576,8 +2576,12 @@
                 <input type="email" id="ac-email" autocomplete="off" placeholder="name@universalmedsupply.com">
               </div>
               <div class="ir-col" style="flex:1 1 200px;">
-                <label for="ac-dept">Department</label>
-                <select id="ac-dept"></select>
+                <label for="ac-dept">Department(s)</label>
+                <!-- Tier C: multi-select -- a manager may hold more than one
+                     department. Ctrl/Cmd-click to pick several. "ALL" is
+                     exclusive (grants every dept, no admin surfaces). -->
+                <select id="ac-dept" multiple size="6"></select>
+                <span class="al-help-inline">Ctrl/Cmd-click to select multiple.</span>
               </div>
               <div class="ir-col" style="flex:1 1 220px;">
                 <label for="ac-notes">Notes (optional)</label>
@@ -2592,7 +2596,7 @@
           <div class="al-section">
             <div class="al-section-title">Current managers (<span id="ac-count">0</span>)</div>
             <table class="al-config-table">
-              <thead><tr><th>Email</th><th>Department</th><th>Notes</th><th>Actions</th></tr></thead>
+              <thead><tr><th>Email</th><th>Department(s)</th><th>Notes</th><th>Actions</th></tr></thead>
               <tbody id="ac-tbody"></tbody>
             </table>
           </div>

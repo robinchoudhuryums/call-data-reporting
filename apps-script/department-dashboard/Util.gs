@@ -35,10 +35,14 @@ function assertAdmin_() {
  */
 function assertDeptAccess_(user, dept) {
   if (!user || user.role === 'none') throw new Error('Not authorized.');
-  // Single-dept managers are pinned; all-dept managers (Access Control dept =
-  // "ALL") + admins may request any department that exists.
-  if (user.role === 'manager' && !user.allDepts && dept !== user.department) {
-    throw new Error('Not authorized for this department.');
+  // Managers are pinned to their ASSIGNED dept(s); all-dept managers (Access
+  // Control dept = "ALL") + admins may request any department that exists.
+  // Tier C: a manager may hold MORE THAN ONE dept -- accept any in the list.
+  // `departments` is a one-element list for single-dept managers, so this is
+  // byte-equivalent to the old `dept !== user.department` check for them.
+  if (user.role === 'manager' && !user.allDepts) {
+    var mine = (user.departments && user.departments.length) ? user.departments : [user.department];
+    if (mine.indexOf(dept) === -1) throw new Error('Not authorized for this department.');
   }
   if ((user.role === 'admin' || user.allDepts) && getAllDepartments_().indexOf(dept) === -1) {
     throw new Error('Unknown department: ' + dept);

@@ -79,8 +79,15 @@ function directCallResolveRequest_(req) {
   if (user.role === 'manager' && !user.allDepts) {
     // R-3: single-dept managers pinned; the allDepts manager takes the
     // admin-style branch (data breadth) -- mirrors inboundResolveRequest_.
-    if (dept && dept !== user.department) throw new Error('Not authorized for this department.');
-    dept = user.department;
+    // Tier C: a multi-dept manager may pass ANY of their assigned depts; a
+    // blank/ALL request defaults to their first. (Latent -- this report is
+    // admin-only while vetted -- but kept consistent per the R-3 discipline.)
+    var mine = (user.departments && user.departments.length) ? user.departments : (user.department ? [user.department] : []);
+    if (dept && dept !== 'ALL') {
+      if (mine.indexOf(dept) === -1) throw new Error('Not authorized for this department.');
+    } else {
+      dept = mine[0] || user.department;
+    }
   } else if (dept === 'ALL') {
     dept = '';   // admin / allDepts company view
   } else if (dept && getAllDepartments_().indexOf(dept) === -1) {

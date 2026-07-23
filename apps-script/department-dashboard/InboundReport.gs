@@ -109,10 +109,13 @@ function inboundResolveRequest_(req) {
     // branch (data breadth per the role model) -- latent until the vetting
     // gate above is removed, but the resolver must not throw on a null
     // user.department that day.
-    if (dept && dept !== user.department) {
-      throw new Error('Not authorized for this department.');
+    // Tier C: a multi-dept manager may pass ANY assigned dept; blank -> first.
+    var mine = (user.departments && user.departments.length) ? user.departments : (user.department ? [user.department] : []);
+    if (dept && dept !== 'ALL') {
+      if (mine.indexOf(dept) === -1) throw new Error('Not authorized for this department.');
+    } else {
+      dept = mine[0] || user.department;
     }
-    dept = user.department;
   } else if (dept === 'ALL') {
     dept = '';   // F-48: admins may pass 'ALL' for the company view, like
                  // getCallJourney / directCallResolveRequest_ already accept
@@ -245,8 +248,13 @@ function getCallJourney(req) {
   // role==='manager' check compared dept against a null user.department and
   // threw on every journey drill for that role.
   if (user.role === 'manager' && !user.allDepts) {
-    if (dept && dept !== user.department) throw new Error('Not authorized for this department.');
-    dept = user.department;
+    // Tier C: a multi-dept manager may pass ANY assigned dept; blank -> first.
+    var mine = (user.departments && user.departments.length) ? user.departments : (user.department ? [user.department] : []);
+    if (dept && dept !== 'ALL') {
+      if (mine.indexOf(dept) === -1) throw new Error('Not authorized for this department.');
+    } else {
+      dept = mine[0] || user.department;
+    }
   } else if (dept && dept !== 'ALL' && getAllDepartments_().indexOf(dept) === -1) {
     throw new Error('Unknown department: ' + dept);
   }

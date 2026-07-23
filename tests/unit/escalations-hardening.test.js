@@ -81,6 +81,14 @@ test('R8-4: an ALL-departments manager (allDepts) passes the row gate for ANY de
   }, /Not authorized for this department/);
 });
 
+test('Tier C: a multi-dept manager passes the row gate for any assigned dept', function () {
+  const f = h.fn('escAssertRowAccess_');
+  const multi = { role: 'manager', department: 'CSR', allDepts: false, departments: ['CSR', 'Sales'] };
+  assert.doesNotThrow(function () { f(multi, 'CSR'); });
+  assert.doesNotThrow(function () { f(multi, 'Sales'); });
+  assert.throws(function () { f(multi, 'Power'); }, /Not authorized for this department/);
+});
+
 test('F-45: unauthenticated / role-none callers are refused outright', function () {
   const f = h.fn('escAssertRowAccess_');
   assert.throws(function () { f(null, 'CSR'); }, /Not authorized\./);
