@@ -1401,13 +1401,28 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   chart -- the soft-area gradient via `irGradientFill_` is
   reserved for single-series IR / PR trend tabs where it reads
   cleanly without 10+ overlapping fills competing. **The trend axis
-  skips weekends** -- `trendIsoLabels` (built server-side in
-  `CompanyOverview.gs`) drops Sat/Sun because the weekday-only work
-  window makes them always-no-data, which otherwise rendered a
-  sawtooth dip in every chart consuming the axis (per-dept card
-  sparklines, the company sparkline, this chart). The Neon/sheet
-  FETCH range stays the full calendar window so no weekday row is
-  lost. **Interactivity (shared `chartSpotlight*` helpers in
+  skips weekends AND weekday company holidays** -- `trendIsoLabels`
+  (built server-side in `CompanyOverview.gs`, plus the shared
+  `ovWeekdayIsoLabels_` for the 90-day / YTD chart series) drops Sat/Sun
+  AND any `COMPANY_HOLIDAYS` weekday (S5, R11-L via `isCompanyHoliday_`)
+  because the weekday-only work window makes them always-no-data, which
+  otherwise rendered a sawtooth dip in every chart consuming the axis
+  (per-dept card sparklines/arrows, the company sparkline, this chart).
+  The Neon/sheet FETCH range stays the full calendar window so no
+  weekday row is lost. Unset `COMPANY_HOLIDAYS` = no holidays dropped =
+  pre-R11-L behavior (no cache bump, the S5 precedent). **Overview
+  dept-grid tiles show a TREND ARROW, not a sparkline (R11-L)** --
+  `irTrendArrow_` renders the real least-squares slope of the 30-day
+  % answered series as an angled, color-graded arrow (angle measured on
+  a fixed 70-100% band grown to include outliers, capped ±60°;
+  red-amber-green gradient saturating by ±30°; nulls skipped). The
+  auto-scaled sparkline exaggerated tiny drifts; the arrow reads
+  direction+magnitude at a glance. Sparklines STAY on the roomier
+  surfaces (hero tile, company aggregate, expanded sub-queue card) but
+  are now HONEST-SCALED there too -- `irSparkline_(vals, color, {band:[70,100]})`
+  uses the same grown fixed band + gap-connects nulls (a no-data day no
+  longer plots a 0% crash); omitting `opts` keeps the legacy auto-scale
+  for count/duration sparks (IR/Insights KPI tiles). **Interactivity (shared `chartSpotlight*` helpers in
   `script.html`):** hovering a legend item dims the others
   (transient preview); clicking one PINS/isolates it (persistent
   dim of the rest -- click again or another to release/switch);
@@ -2737,9 +2752,13 @@ items for anything it flags or doesn't cover.)
     cell). Feeds: INV-35 working-day counts (CR + Insights length-mismatch,
     server AND the client form hints via `window.__COMPANY_HOLIDAYS__`),
     the daily alerts + daily digest trigger runs (skipped on a holiday,
-    like weekends), and the previous-business-day walk-back
+    like weekends), the previous-business-day walk-back
     (`prevBusinessDayIso_` -- the Tuesday after a Monday holiday assesses /
-    covers Friday). Unset = no holidays = pre-S5 behavior. Maintain it
+    covers Friday), AND (R11-L) the OVERVIEW CHART AXES -- `trendIsoLabels`
+    + `ovWeekdayIsoLabels_` drop weekday holidays like weekends via
+    `isCompanyHoliday_`, so a weekday holiday no longer draws a false dip
+    in the dept sparklines/arrows + the trend chart (no cache bump; unset
+    property = no dates dropped). Unset = no holidays = pre-S5 behavior. Maintain it
     yearly (e.g. `2026-01-01, 2026-05-25, 2026-07-03, 2026-11-26..2026-11-27,
     2026-12-25`); it is GLOBAL -- per-dept exceptions stay in Alert Config
     Skip Dates. No redeploy needed to edit.

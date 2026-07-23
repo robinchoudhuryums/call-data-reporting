@@ -111,9 +111,9 @@ var OV_CHART_TREND_DAYS = 90;
 var OVERVIEW_CHART_TREND_CACHE_PREFIX = 'overviewChartYtd:v1';
 
 /**
- * Weekday-only ISO labels (skips Sat/Sun) from fromIso..toIso inclusive -- the
- * same axis convention as the 30-day trend. Shared by the 90-day payload chart
- * series and the on-demand YTD endpoint.
+ * Weekday-only ISO labels (skips Sat/Sun AND weekday COMPANY_HOLIDAYS, S5) from
+ * fromIso..toIso inclusive -- the same axis convention as the 30-day trend.
+ * Shared by the 90-day payload chart series and the on-demand YTD endpoint.
  */
 function ovWeekdayIsoLabels_(fromIso, toIso) {
   var out = [];
@@ -123,7 +123,9 @@ function ovWeekdayIsoLabels_(fromIso, toIso) {
     var d = new Date(ms);
     var dow = parseInt(Utilities.formatDate(d, TZ, 'u'), 10);
     if (dow === 6 || dow === 7) continue;
-    out.push(Utilities.formatDate(d, TZ, 'yyyy-MM-dd'));
+    var iso = Utilities.formatDate(d, TZ, 'yyyy-MM-dd');
+    if (isCompanyHoliday_(iso)) continue;   // S5: weekday holidays are no-data too (see the 30-day loop)
+    out.push(iso);
   }
   return out;
 }
@@ -299,7 +301,13 @@ function getCompanyOverview(req) {
     // stays the full calendar window so all weekday rows are captured.
     const dow = parseInt(Utilities.formatDate(d, TZ, 'u'), 10);
     if (dow === 6 || dow === 7) continue;
-    trendIsoLabels.push(Utilities.formatDate(d, TZ, 'yyyy-MM-dd'));
+    const iso = Utilities.formatDate(d, TZ, 'yyyy-MM-dd');
+    // S5: a WEEKDAY company holiday (COMPANY_HOLIDAYS) is a zero/no-data day
+    // just like a weekend, so drop it from the axis too -- otherwise it draws a
+    // false dip in every chart on this axis. Unset property = no holidays =
+    // pre-change behavior (so no cache-version bump, the S5/INV-54 precedent).
+    if (isCompanyHoliday_(iso)) continue;
+    trendIsoLabels.push(iso);
   }
   const trendLabels = trendIsoLabels.map(function (iso) {
     const p = iso.split('-');
