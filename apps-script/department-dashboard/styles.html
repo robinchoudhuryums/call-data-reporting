@@ -935,18 +935,24 @@
   #insights-page #insights-results > .ir-results-header .ins-period-bar {
     flex: 1 1 100%; margin: 6px 0 0;
   }
-  /* R11-E/F (item 2): collapse the blank band between the app header and the
-     Insights sticky strip (owner note -- persisted through R10-6 + R11-E2).
-     Zero every top-spacing contributor on the Insights page so the results
-     header sits flush under the app-header divider: the .page margin-top, the
-     .ins-page-body padding, the .ir-results padding-top, and the first flow
-     child's margin-top. (The hidden form + launcher-loading are display:none,
-     so they add no space -- this targets accumulated top padding/margins.) */
-  #insights-page.page { margin-top: 0; }
-  #insights-page .ins-page-body { padding-top: 0; }
-  #insights-page #insights-results { margin-top: 0; padding-top: 0; }
-  #insights-page #insights-results > *:first-child { margin-top: 0; }
-  #insights-page #insights-results > .ir-results-header { padding-top: 4px; }
+  /* R11-I (item 2): the compare + selection context, relocated out of the
+     sticky header into normal flow so the pinned strip is shorter. */
+  #insights-page .ins-subhead { margin: 8px 0 10px; }
+  /* R11-I (item 2 -- ROOT CAUSE, confirmed via the owner's element dimensions):
+     the top gap on Insights/Escalations was NOT the page's own top spacing. The
+     Insights + Escalations pages are siblings AFTER .container (both converted
+     from modals), so when one is active, .container collapses to hold ONLY the
+     app header -- and its padding-bottom:48px + the header's margin-bottom:12px
+     (60px total) then render as DEAD SPACE above the sibling page. (Owner's
+     measurement: .container 195.69 = 24 pad-top + 111.69 header + 12 header mb +
+     48 pad-bottom; the header itself is 111.69.) Fix at the source: on those two
+     pages drop the container's bottom padding, keeping the header's 12px margin
+     as the sole (consistent) gap under the divider. The out-of-container pages
+     then start ~12px under the divider, matching the in-container pages'
+     header-mb(12)+page-mt(6). Earlier R11-E2/F1 attempts zeroed the page's own
+     top spacing (which wasn't the culprit) and are superseded here. */
+  body[data-page="insights"] .container,
+  body[data-page="escalations"] .container { padding-bottom: 0; }
   /* R11-E (item 5): make the active window PROMINENT on the sticky strip (the
      My Department treatment) -- a solid pill instead of a muted mono caption.
      Scoped to #insights-page so the Individual Report's date is untouched. */

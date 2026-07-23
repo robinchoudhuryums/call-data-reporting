@@ -1213,11 +1213,11 @@
               <span class="ir-results-title">Insights</span>
               <span class="ir-results-date" id="ins-results-date"></span>
             </div>
-            <div class="ins-compare-line" id="ins-compare-line"></div>
-            <div class="ir-editing-line">
-              <span class="ir-editing-label">Showing:</span>
-              <span class="ir-editing-agents" id="ins-editing-agents"></span>
-            </div>
+            <!-- R11-I (item 2): the "Comparing against…" + "Showing: N agents"
+                 lines were MOVED OUT of the sticky header (below, in .ins-subhead)
+                 so the pinned strip is shorter -- it now holds only the title,
+                 the toolbar, and the period bar. Same ids, so the render code
+                 (#ins-compare-line / #ins-editing-agents) is unchanged. -->
           </div>
           <div class="ir-action-buttons">
             <!-- D1 (density design, Phase 1): Simple/Detailed disclosure toggle.
@@ -1349,6 +1349,18 @@
           </details>
           <div class="ir-edit-popover-actions">
             <button class="btn" id="ins-edit-apply-btn" type="button">Apply</button>
+          </div>
+        </div>
+
+        <!-- R11-I (item 2): the compare + selection context lines, relocated
+             out of the sticky header (above) into normal flow so the pinned
+             strip is shorter. reportHeadline_ skips .ins-subhead in its anchor
+             loop, so #ins-headline still lands directly below this block. -->
+        <div class="ins-subhead" id="ins-subhead">
+          <div class="ins-compare-line" id="ins-compare-line"></div>
+          <div class="ir-editing-line">
+            <span class="ir-editing-label">Showing:</span>
+            <span class="ir-editing-agents" id="ins-editing-agents"></span>
           </div>
         </div>
 

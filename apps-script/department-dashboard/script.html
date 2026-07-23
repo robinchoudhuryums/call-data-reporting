@@ -4518,6 +4518,10 @@
         while (anchor && (anchor.classList.contains('status')
                           || anchor.classList.contains('ir-loader')
                           || anchor.classList.contains('ir-edit-popover')
+                          // R11-I: Insights' relocated compare/selection lines
+                          // (moved out of the sticky header) sit here too --
+                          // keep the headline anchored BELOW them.
+                          || anchor.classList.contains('ins-subhead')
                           || anchor.classList.contains('empty-state'))) {
           anchor = anchor.nextElementSibling;
         }
