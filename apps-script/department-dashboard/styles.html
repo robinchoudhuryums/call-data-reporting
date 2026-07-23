@@ -6114,6 +6114,26 @@
   .heat-drill-path { color: var(--ink); min-width: 0; }
   .heat-drill-facts { color: var(--muted); }
 
+  /* R11-H: heatmap drilldown rows are grouped by date, with a colored per-date
+     header + a left rail so a multi-date slot reads as distinct day-clusters.
+     Tone cycles through a small token palette keyed on first-seen date order. */
+  .heat-drill-dategroup { border-left: 2px solid var(--line); padding-left: 8px; margin-top: 6px; }
+  .heat-drill-dategroup:first-child { margin-top: 0; }
+  .heat-drill-datehdr { display: flex; align-items: center; gap: 6px; padding: 3px 0;
+    font: 600 11px/1.3 var(--mono); letter-spacing: 0.04em; color: var(--ink); }
+  .heat-drill-datehdr + .heat-drill-row { border-top: none; }
+  .heat-drill-datedot { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; background: var(--line); }
+  .heat-drill-dow { color: var(--muted); font-weight: 500; }
+  .heat-drill-datecount { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .heat-drill-dategroup--accent { border-left-color: var(--accent); }
+  .heat-drill-dategroup--good   { border-left-color: var(--good); }
+  .heat-drill-dategroup--warn   { border-left-color: var(--warn); }
+  .heat-drill-dategroup--muted  { border-left-color: var(--muted); }
+  .heat-drill-datehdr--accent .heat-drill-datedot { background: var(--accent); }
+  .heat-drill-datehdr--good   .heat-drill-datedot { background: var(--good); }
+  .heat-drill-datehdr--warn   .heat-drill-datedot { background: var(--warn); }
+  .heat-drill-datehdr--muted  .heat-drill-datedot { background: var(--muted); }
+
   /* Phase 4: the two labeled lenses inside a heatmap cell drill (inbound
      abandons + the DQE missed-ring lens) stack, divided by a hairline. */
   .heat-lens + .heat-lens { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
@@ -6324,16 +6344,12 @@
   .esc-cat-count { flex: 0 0 auto; font-variant-numeric: tabular-nums; color: var(--muted); font-size: 12px; }
   .esc-cat-row.is-active .esc-cat-count { color: var(--ink); }
 
-  /* R11-D3: sort toggle (wide). The native #esc-sort select is the fallback. */
-  .esc-sort-toggle { display: inline-flex; align-items: center; gap: 6px; width: 100%;
-    padding: 6px 10px; border: 1px solid var(--line); border-radius: var(--r);
-    background: var(--paper-card); color: var(--ink); cursor: pointer; font: inherit; }
-  .esc-sort-toggle:hover { border-color: var(--accent); }
-  .esc-sort-arrow { font-weight: 700; }
-  .esc-sort-lbl { font-size: 12px; }
+  /* R11-H: sort is now the compact #esc-sort-toggle arrow icon (.esc-icon-btn)
+     in .esc-sb-head, always shown at every viewport. The native #esc-sort
+     select stays in the DOM as the state store but is hidden everywhere. */
 
-  /* Wide (sidebar) mode: the rich affordances own the controls; the native
-     selects stay in the DOM as the state store but are hidden. */
+  /* Wide (sidebar) mode: the rich affordances own the status filter; the native
+     select stays in the DOM as the state store but is hidden. */
   .esc-sidebar .esc-status-col, .esc-sidebar .esc-sort-col { display: none; }
 
   @media (max-width: 900px) {
@@ -6343,9 +6359,10 @@
     .esc-sidebar .esc-toolbar .ir-col { width: auto; }
     .esc-sidebar .esc-toolbar select { width: auto; }
     .esc-sidebar .esc-new-col { margin-left: auto; }
-    /* Toolbar (narrow) mode: native selects return; rich affordances hide. */
-    .esc-sidebar .esc-status-col, .esc-sidebar .esc-sort-col { display: block; }
-    .esc-sidebar .esc-cat-menu, .esc-sidebar .esc-sort-toggle { display: none; }
+    /* Toolbar (narrow) mode: native status select returns; the category menu
+       hides. Sort stays the arrow icon in the head (.esc-sort-col stays hidden). */
+    .esc-sidebar .esc-status-col { display: block; }
+    .esc-sidebar .esc-cat-menu { display: none; }
     .esc-sb-head { align-items: flex-end; }
   }
 

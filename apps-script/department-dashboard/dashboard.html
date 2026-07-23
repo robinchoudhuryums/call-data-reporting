@@ -2378,6 +2378,10 @@
               <select id="esc-dept"></select>
               <span class="esc-dept-name" id="esc-dept-name" style="display:none;"></span>
             </div>
+            <!-- R11-H: the sort direction is a compact ↑/↓ arrow icon beside
+                 Refresh (hover explains), shown at every viewport; the native
+                 #esc-sort <select> below stays only as the state store (hidden). -->
+            <button class="esc-icon-btn" id="esc-sort-toggle" type="button"></button>
             <button class="esc-icon-btn" id="esc-refresh-btn" type="button" title="Refresh" aria-label="Refresh">&#8635;</button>
           </div>
           <!-- D1: status filter. Category list (wide) + native select (<=900px
@@ -2395,8 +2399,9 @@
             </select>
           </div>
           <nav class="esc-cat-menu" id="esc-cat-menu" aria-label="Filter escalations by status"></nav>
-          <!-- D3: sort. Toggle (wide) + native select (<=900px fallback). Both
-               write #esc-sort; escApplyFilter_ re-sorts in place (no fetch). -->
+          <!-- D3: sort state store. The #esc-sort-toggle arrow icon (in the head)
+               is the only visible control; this <select> stays hidden as the
+               state store. escApplyFilter_ re-sorts in place (no fetch). -->
           <div class="ir-col esc-sort-col">
             <label for="esc-sort">Sort</label>
             <select id="esc-sort">
@@ -2404,7 +2409,6 @@
               <option value="newest">Newest first</option>
             </select>
           </div>
-          <button class="esc-sort-toggle" id="esc-sort-toggle" type="button"></button>
           <div class="ir-col esc-filter-col">
             <label for="esc-filter">Filter</label>
             <div class="esc-filter-wrap">

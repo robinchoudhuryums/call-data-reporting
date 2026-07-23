@@ -191,7 +191,7 @@ function getEscalations(req) {
     // viewing Pending). Same connection, best-effort (band + chip just hide on
     // failure). Subsumes the old pending_review-only COUNT.
     var counts = { pending: 0, in_progress: 0, pending_review: 0, resolved: 0, rejected: 0 };
-    var pendingReview = 0, resolvedLast7 = 0, oldestOpen = null, overdue = 0;
+    var pendingReview = 0, resolvedMTD = 0, oldestOpen = null, overdue = 0;
     try {
       // ESC_OVERDUE_DAYS(=3) mirrors the client's overdue threshold; calendar
       // days here (plain SQL interval) so the band's Overdue count and the
@@ -203,7 +203,7 @@ function getEscalations(req) {
         + "count(*) FILTER (WHERE status = 'pending_review') AS n_review, "
         + "count(*) FILTER (WHERE status = 'resolved') AS n_resolved, "
         + "count(*) FILTER (WHERE status = 'rejected') AS n_rejected, "
-        + "count(*) FILTER (WHERE status = 'resolved' AND resolved_at >= now() - interval '7 days') AS n_resolved7, "
+        + "count(*) FILTER (WHERE status = 'resolved' AND resolved_at >= date_trunc('month', now())) AS n_resolved_mtd, "
         + "count(*) FILTER (WHERE status IN ('pending','in_progress') AND occurred_at < now() - interval '3 days') AS n_overdue, "
         + "min(occurred_at) FILTER (WHERE status IN ('pending','in_progress'))::text AS oldest_open "
         + 'FROM escalations' + (scopeAll ? '' : ' WHERE department = ?');
@@ -217,7 +217,7 @@ function getEscalations(req) {
         counts.resolved       = Number(ars.getString('n_resolved')) || 0;
         counts.rejected       = Number(ars.getString('n_rejected')) || 0;
         pendingReview = counts.pending_review;
-        resolvedLast7 = Number(ars.getString('n_resolved7')) || 0;
+        resolvedMTD = Number(ars.getString('n_resolved_mtd')) || 0;
         overdue       = Number(ars.getString('n_overdue'))   || 0;
         oldestOpen = ars.getString('oldest_open') || null;
       }
@@ -228,7 +228,7 @@ function getEscalations(req) {
                      count: rows.length,
                      pendingReviewCount: pendingReview,      // back-compat (review chip)
                      statusCounts: counts,                    // C1 band
-                     resolvedLast7: resolvedLast7,            // C1 "Resolved · 7d" tile
+                     resolvedMTD: resolvedMTD,                // C1 "Resolved · MTD" tile (R11-H)
                      overdueCount: overdue,                   // C1 "Overdue >3d" tile
                      oldestOpenAt: oldestOpen,                // C1 "Oldest open" tile
                      truncated: rows.length >= ESC_MAX_ROWS } };   // F-46

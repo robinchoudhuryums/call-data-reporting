@@ -11679,7 +11679,10 @@
   // I5a: MANAGERS default to the Absolute bar chart (chart view + 'abs' basis)
   // -- a glanceable per-agent volume read -- while admins/owner keep the cards
   // grid default. A saved pref (insRestorePrefs_) still overrides either way.
-  let insCardsView = (typeof USER !== 'undefined' && USER && USER.role === 'manager') ? 'chart' : 'cards';   // 'cards' | 'chart' (#3)
+  // R11-H (owner): the per-agent Trend chart is the DEFAULT Agents view for
+  // everyone now (was cards / role-split). A saved pref still wins; single-agent
+  // reports + Simple density force cards, unchanged.
+  let insCardsView = 'chart';   // 'cards' | 'chart' (#3)
   let insCardsChartMetric = 'answered';   // metric for the grouped Chart view (gap mode)
   // Chart-view basis: 'gap' (diverging bars vs the team average, one metric)
   // | 'abs' (absolute stacked Answered+Missed per agent + % Answered dots --
@@ -11688,7 +11691,7 @@
   // RETIRED by owner note -- the 3-way sub-selector read as confusing, and
   // the prior values stay reachable via the card delta-badge hover
   // tooltips. Persisted in the ins prefs blob ('prior' restores as 'gap').
-  let insCardsChartMode = (typeof USER !== 'undefined' && USER && USER.role === 'manager') ? 'abs' : 'gap';   // I5a: managers default to Absolute
+  let insCardsChartMode = 'trend';   // R11-H: 'gap' | 'abs' | 'trend'; Trend is the default basis now
   let insCardsChartInstance = null;
   let insHasQuiet_ = false;        // whether the current render has quiet agents
   let insShareChartInstance = null;   // share-of-answered pie (PR port)
@@ -14665,14 +14668,20 @@
       });
       return {
         label: c.name,
+        // R11-H: match the app's canonical trend-line style (Overview /
+        // Insights team trend): tension 0.4, 2.2px lines, no resting points,
+        // no fill -- so this reads as one of the same family of charts.
         data: series,
         borderColor: color,
-        backgroundColor: color,
-        borderWidth: 2,
-        tension: 0.25,
+        backgroundColor: 'rgba(0,0,0,0)',
+        borderWidth: 2.2,
+        tension: 0.4,
         spanGaps: true,
-        pointRadius: 2,
-        pointHoverRadius: 5,
+        pointRadius: 0,
+        pointHoverRadius: 4,
+        pointBackgroundColor: color,
+        pointBorderColor: THEME.paperCard,
+        pointBorderWidth: 1.5,
         fill: false,
       };
     });
@@ -16257,6 +16266,44 @@
     }
   }
 
+  // R11-H: group heat-drill rows by their date, with a colored per-date header
+  // + a left rail, so a multi-date slot reads as distinct day-clusters. Tone
+  // cycles through a small token palette keyed on first-seen date order. A
+  // single-date slot renders one (still-headered) group.
+  var HEAT_DRILL_DATE_TONES_ = ['accent', 'good', 'warn', 'muted'];
+  function heatDrillDateHeader_(dateIso, count, toneIdx) {
+    var tone = HEAT_DRILL_DATE_TONES_[toneIdx % HEAT_DRILL_DATE_TONES_.length];
+    var wd = '';
+    if (dateIso && /^\d{4}-\d{2}-\d{2}$/.test(dateIso)) {
+      var p = dateIso.split('-');
+      var d = new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]));
+      wd = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getDay()] || '';
+    }
+    var label = dateIso ? String(dateIso).slice(5) : '(no date)';   // MM-DD
+    return '<div class="heat-drill-datehdr heat-drill-datehdr--' + tone + '">'
+      + '<span class="heat-drill-datedot"></span>'
+      + escapeHtml(label) + (wd ? ' <span class="heat-drill-dow">' + wd + '</span>' : '')
+      + ' <span class="heat-drill-datecount">' + count + '</span></div>';
+  }
+  function heatDrillGroupedList_(items, getDate, rowHtmlFn) {
+    var order = [], byDate = {};
+    items.forEach(function (it) {
+      var d = getDate(it) || '';
+      if (!byDate[d]) { byDate[d] = []; order.push(d); }
+      byDate[d].push(it);
+    });
+    var toneIdx = 0;
+    return order.map(function (d) {
+      var grp = byDate[d];
+      var tone = HEAT_DRILL_DATE_TONES_[toneIdx % HEAT_DRILL_DATE_TONES_.length];
+      var html = '<div class="heat-drill-dategroup heat-drill-dategroup--' + tone + '">'
+        + heatDrillDateHeader_(d, grp.length, toneIdx)
+        + grp.map(rowHtmlFn).join('') + '</div>';
+      toneIdx++;
+      return html;
+    }).join('');
+  }
+
   function heatCellDetailHtml_(resp, label) {
     const meta = (resp && resp.meta) || {};
     if (meta.available === false) {
@@ -16266,35 +16313,38 @@
     if (!calls.length) {
       return '<div class="ds-note">No abandoned calls recorded in this slot for the selected range.</div>';
     }
-    const rows = calls.map(function (c) {
-      const path = [c.entryQueue, c.finalQueue].filter(Boolean)
-        .filter(function (v, i, a) { return a.indexOf(v) === i; })   // entry==final -> once
-        .map(escapeHtml).join(' → ');
-      const stage = c.abandonedOnHold ? 'on hold' : (c.abandonStage || '');
-      const facts = [];
-      if (stage) facts.push('abandoned ' + escapeHtml(String(stage)));
-      if (c.waitSeconds != null) facts.push('waited ' + escapeHtml(crFormatSecondsShort_(c.waitSeconds)));
-      if (c.abandonedOnHold && c.holdSeconds != null) {
-        facts.push('held ' + escapeHtml(crFormatSecondsShort_(c.holdSeconds)));
-      }
-      return '<div class="heat-drill-row">'
-        + '<span class="heat-drill-when">' + escapeHtml(c.callDate || '')
-        +   ' · ' + escapeHtml(String(c.cstStart || '').slice(0, 5)) + '</span>'
-        + '<span class="heat-drill-path">' + (path || '(no queue recorded)')
-        +   (facts.length ? ' <span class="heat-drill-facts">· ' + facts.join(' · ') + '</span>' : '')
-        + '</span>'
-        + (c.callId
-          ? '<button type="button" class="pid-journey" data-journey-pid="' + escapeHtml(c.callId)
-            + '" data-journey-date="' + escapeHtml(c.callDate || '')
-            + '" title="Show this call&#39;s leg-by-leg path">&#8627; path</button>'
-          : '')
-        + '</div>';
-    }).join('');
+    // Rows grouped by date (the date is in the group header, so each row shows
+    // the CST time only).
+    const body = heatDrillGroupedList_(calls,
+      function (c) { return c.callDate || ''; },
+      function (c) {
+        const path = [c.entryQueue, c.finalQueue].filter(Boolean)
+          .filter(function (v, i, a) { return a.indexOf(v) === i; })   // entry==final -> once
+          .map(escapeHtml).join(' → ');
+        const stage = c.abandonedOnHold ? 'on hold' : (c.abandonStage || '');
+        const facts = [];
+        if (stage) facts.push('abandoned ' + escapeHtml(String(stage)));
+        if (c.waitSeconds != null) facts.push('waited ' + escapeHtml(crFormatSecondsShort_(c.waitSeconds)));
+        if (c.abandonedOnHold && c.holdSeconds != null) {
+          facts.push('held ' + escapeHtml(crFormatSecondsShort_(c.holdSeconds)));
+        }
+        return '<div class="heat-drill-row">'
+          + '<span class="heat-drill-when">' + escapeHtml(String(c.cstStart || '').slice(0, 5)) + '</span>'
+          + '<span class="heat-drill-path">' + (path || '(no queue recorded)')
+          +   (facts.length ? ' <span class="heat-drill-facts">· ' + facts.join(' · ') + '</span>' : '')
+          + '</span>'
+          + (c.callId
+            ? '<button type="button" class="pid-journey" data-journey-pid="' + escapeHtml(c.callId)
+              + '" data-journey-date="' + escapeHtml(c.callDate || '')
+              + '" title="Show this call&#39;s leg-by-leg path">&#8627; path</button>'
+            : '')
+          + '</div>';
+      });
     const head = '<div class="heat-drill-head"><strong>' + escapeHtml(label) + '</strong>'
       + ' · ' + calls.length + ' abandoned call' + (calls.length === 1 ? '' : 's')
       + (meta.truncated ? ' <span class="heat-drill-cap">(newest ' + calls.length + ' shown)</span>' : '')
       + '</div>';
-    return head + '<div class="heat-drill-list">' + rows + '</div>';
+    return head + '<div class="heat-drill-list">' + body + '</div>';
   }
 
   // Shared renderer for a getMissedCallsSlice payload (the DQE missed-ring
@@ -16317,16 +16367,18 @@
     var lost = meta.abandonedDetailLost
       ? '<div class="ds-note ms-lost">Some abandoned-call detail in this range was corrupted (rebuild pending) and is excluded.</div>'
       : '';
-    var rows = entries.map(function (e) {
-      var siren = e.abandoned ? ' 🚨' : '';
-      var dateLabel = e.date ? String(e.date).slice(5) : '';   // MM-DD
-      return '<div class="heat-drill-row' + (e.abandoned ? ' abandoned' : '') + '">'
-        + '<span class="heat-drill-when">' + escapeHtml(dateLabel) + ' · '
-        +   escapeHtml(e.label || e.time || '') + siren + '</span>'
-        + '<span class="heat-drill-path">' + escapeHtml(e.who || '') + '</span>'
-        + parentIdBadge(e.parentId, e.date)
-        + '</div>';
-    }).join('');
+    // R11-H: grouped by date (the date is in the group header, so each row shows
+    // the ring time only).
+    var rows = heatDrillGroupedList_(entries,
+      function (e) { return e.date || ''; },
+      function (e) {
+        var siren = e.abandoned ? ' 🚨' : '';
+        return '<div class="heat-drill-row' + (e.abandoned ? ' abandoned' : '') + '">'
+          + '<span class="heat-drill-when">' + escapeHtml(e.label || e.time || '') + siren + '</span>'
+          + '<span class="heat-drill-path">' + escapeHtml(e.who || '') + '</span>'
+          + parentIdBadge(e.parentId, e.date)
+          + '</div>';
+      });
     return head + lost + '<div class="heat-drill-list">' + rows + '</div>';
   }
 
@@ -17354,7 +17406,7 @@
     // status-filter categories -- Overdue, Oldest open, Resolved in the last 7d.
     tiles.push(escBandTile_('Overdue >' + ESC_OVERDUE_DAYS + 'd', Number(meta.overdueCount || 0), (meta.overdueCount > 0) ? 'warn' : 'muted', null));
     tiles.push(escBandOldestTile_(meta.oldestOpenAt));
-    tiles.push(escBandTile_('Resolved · 7d', Number(meta.resolvedLast7 || 0), 'good', null));
+    tiles.push(escBandTile_('Resolved · MTD', Number(meta.resolvedMTD || 0), 'good', null));   // R11-H: 7d -> month-to-date
     band.innerHTML = tiles.join('');
     band.style.display = '';
   }
@@ -17377,8 +17429,11 @@
               + Number(c.resolved || 0) + Number(c.rejected || 0)) : null;
     var active = (meta.status) || ($('esc-status') && $('esc-status').value) || 'pending';
     // [value, label, count-or-null, dot-tone]. Order = triage priority.
+    // R11-H (owner): the "Needs review" row was dropped from the sidebar list
+    // -- the pending_review review queue is still reachable via the "N awaiting
+    // review" chip (which appears only when there ARE items) + the native
+    // <select> fallback; it just no longer takes a permanent list slot.
     var cats = [
-      ['pending_review', 'Needs review', c ? reviewN                  : null, 'accent'],
       ['pending',        'Pending',      c ? Number(c.pending || 0)   : null, 'warn'],
       ['in_progress',    'In progress',  c ? Number(c.in_progress || 0) : null, 'accent'],
       ['resolved',       'Completed',    c ? Number(c.resolved || 0)  : null, 'good'],
@@ -17397,14 +17452,14 @@
     }).join('');
   }
 
-  // R11-D3: reflect the #esc-sort value onto the toggle button (glyph + label +
-  // tooltip). Oldest-first is an up arrow (oldest at the top of the list).
+  // R11-D3 / R11-H: reflect the #esc-sort value onto the compact arrow toggle
+  // beside Refresh -- glyph only (hover explains). Oldest-first = up arrow
+  // (oldest at the top of the list).
   function escSyncSortToggle_() {
     var btn = $('esc-sort-toggle');
     if (!btn) return;
     var newest = (($('esc-sort') && $('esc-sort').value) || 'oldest') === 'newest';
-    btn.innerHTML = '<span class="esc-sort-arrow">' + (newest ? '↓' : '↑') + '</span>'
-      + '<span class="esc-sort-lbl">' + (newest ? 'Newest first' : 'Oldest first') + '</span>';
+    btn.innerHTML = newest ? '&#8595;' : '&#8593;';   // ↓ / ↑
     btn.setAttribute('title', newest ? 'Newest first (click for oldest)' : 'Oldest first (click for newest)');
     btn.setAttribute('aria-label', 'Sort order: ' + (newest ? 'newest first' : 'oldest first'));
   }
