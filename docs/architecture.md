@@ -252,7 +252,7 @@ canonical and reflects current code.
 | QCD (retired as a standalone report -- QCD->Insights consolidation; queue data lives in Insights Queue health) | `QCDReport.gs` | `getQcdAllDepartments` (all-departments daily report, open to all signed-in users; `computeQcdReport_` serves Insights + the snapshots) | `qcdAll:v4:` | no (all-dept report is company-wide read-only) |
 | Insights Report (period comparison: team rollup + per-agent cards) | `InsightsReport.gs` | `getInsightsReportInit`, `getInsightsReport`, `sendInsightsReportEmail` | `insights:v19:` | no (per-dept gate like IR/PR/CR) |
 | Inbound Report (per-call inbound view from Neon `inbound_calls`) | `InboundReport.gs` | `getInboundReport`, `getInboundInsurerDaily`, `getInboundHeatmap` (weekday×hour abandon heatmap), `getCallJourney` (per-call path drill; manager fallback entitlement-gated via the dept's own Missed report, F-4) | `inbound:v5:`, `inboundHeatmap:v1:` | TEMPORARILY admin-only while vetted (per-dept manager path kept intact); `getCallJourney` is manager-reachable for own dept |
-| Direct Call Report (per-agent direct-extension metrics from Neon `direct_call_history`) | `DirectCallReport.gs` | `getDirectCallReport` | `directCall:v1:` | TEMPORARILY admin-only while the busy carve-out is vetted (per-dept manager path kept intact) |
+| Direct Call Report (per-agent direct-extension metrics from Neon `direct_call_history`) | `DirectCallReport.gs` | `getDirectCallReport` | `directCall:v2:` | TEMPORARILY admin-only while the busy carve-out is vetted (per-dept manager path kept intact) |
 | Caller Lookup (per-caller timeline from Neon `inbound_calls`) | `CallerLookup.gs` | `getCallerLookup` | (intentionally uncached) | yes |
 | Escalations worklist (Neon `escalations` + `escalation_activity`) | `Escalations.gs` | `getEscalationsInit`, `getEscalations`, `getEscalationActivity` (read), `createEscalation`, `updateEscalation` (admin write), `resolveEscalation`, `updateEscalationComment`, `reopenEscalation` (per-dept write, INV-55) | (no cache) | no (per-dept; create/edit admin-only) |
 | Low Answer Rate Alerts | `Alerts.gs` | `getAlertsInit`, `previewAlerts`, `sendAlerts`, `installAlertTrigger`, `uninstallAlertTrigger` (+ `runDailyAlerts_` time trigger) | (no cache) | yes |
@@ -301,7 +301,13 @@ Neon Postgres is the long-term archive and the future query backend.
   call from Raw Data (caller HMAC hash, dial-in line, disposition +
   abandon stage, abandoned-on-hold + hold/wait seconds, queue journey)
   and upserts them to Neon's `inbound_calls` (PK `(call_date,
-  call_id)`, `ON CONFLICT DO UPDATE`). Historical gaps are filled by
+  call_id)`, `ON CONFLICT DO UPDATE`). The journey is enriched with
+  internal-transfer paths (R11-N): when the answering agent transfers
+  the caller to a queue where they then abandon — a separate internal
+  leg group the builder otherwise drops — the abandon is cross-referenced
+  back to that agent's concurrent inbound and, ONLY on a unique match,
+  appended as a synthetic `transfer:true` abandon event (journey-only;
+  no disposition/count/queue field changes). Historical gaps are filled by
   the editor-run `backfillInboundCalls` (same file; iterates surviving
   `Call_Legs_*` sheets, skips already-mirrored dates, time-budgeted).
   `cdr-report/inboundCallsExport.js::exportInboundCalls` mirrors

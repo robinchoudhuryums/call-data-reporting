@@ -125,3 +125,31 @@ test('Neon unreachable -> meta.available=false (clean unavailable state)', funct
   assert.equal(out.meta.available, false);
   assert.deepEqual(JSON.parse(JSON.stringify(out.agents)), []);
 });
+
+test('v2: kpisPrior + deptsPrior shaped when present; null/[] when absent', function () {
+  // Absent (fixture without prior keys) -> defaults, no throw.
+  installAdmin();
+  const noPrior = h.call('getDirectCallReport', REQ);
+  assert.equal(noPrior.kpisPrior, null);
+  assert.deepEqual(JSON.parse(JSON.stringify(noPrior.deptsPrior)), []);
+
+  // Present -> derived rate/ATT on the prior block + per-dept rows.
+  installAdmin(function () {
+    return fakeConn({
+      kpis: { agents: 1, ibAnswered: 20, ibMissedFree: 5, ibMissedBusy: 0, ibTalkSec: 400,
+        obTotal: 4, obConnected: 3, obTalkSec: 300 },
+      agents: [{ agent: 'Anna', dept: 'CSR', ib_answered: 20, ib_missed_free: 5, ib_missed_busy: 0,
+        ib_talk_sec: 400, ib_int_answered: 8, ib_ext_answered: 12,
+        ob_total: 4, ob_connected: 3, ob_talk_sec: 300, ob_int_total: 2, ob_ext_total: 2 }],
+      kpisPrior: { ibAnswered: 15, ibMissedFree: 5, ibMissedBusy: 1, ibTalkSec: 300,
+        obTotal: 2, obConnected: 2, obTalkSec: 200 },
+      deptsPrior: [{ dept: 'CSR', ib_answered: 15, ib_missed_free: 5, ib_missed_busy: 1, ob_total: 2 }],
+    });
+  });
+  const out = h.call('getDirectCallReport', REQ);
+  assert.equal(out.kpisPrior.ibAnswered, 15);
+  assert.equal(out.kpisPrior.ibAnswerRate, 75);   // 15/(15+5)
+  assert.equal(out.kpisPrior.ibAttSec, 20);       // 300/15
+  assert.equal(out.deptsPrior[0].dept, 'CSR');
+  assert.equal(out.deptsPrior[0].ibAnswerRate, 75);
+});

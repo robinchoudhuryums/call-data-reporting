@@ -442,6 +442,112 @@ function getInboundReport(req) {
   return data;
 }
 
+/**
+ * R11-M (#4b): email the Inbound report (current view) to the CALLER as a
+ * styled HTML summary. Same auth + scope as getInboundReport (admin-only while
+ * vetted, per-dept via inboundResolveRequest_); recomputes from the same params
+ * so the email matches the on-screen report. Charts (daily trend, insurer
+ * drill) stay in the web app -- the Insights-email precedent.
+ */
+function sendInboundReportEmail(req) {
+  const scope = inboundResolveRequest_(req);
+  const email = (scope.user && scope.user.email) || Session.getActiveUser().getEmail();
+  const data = computeInboundReport_(scope);
+  if (!data || data.meta.available === false) {
+    throw new Error('The Inbound report is unavailable right now — try again shortly.');
+  }
+  const meta = data.meta || {};
+  const k = data.kpis || {};
+  const p = data.kpisPrior || {};
+  const scopeLabel = meta.companyView ? 'All departments' : (meta.department || '');
+  const dateLabel = (meta.from || '') + ' – ' + (meta.to || '');
+  const priorLabel = (meta.priorFrom || '') + ' – ' + (meta.priorTo || '');
+
+  const kpiRows =
+      inboundEmailKpiRow_('Inbound calls', fmtNum_(k.total), inboundEmailDelta_(k.total, p.total, true))
+    + inboundEmailKpiRow_('Answered', fmtNum_(k.answered) + ' (' + (k.answerRate || 0) + '%)', inboundEmailDelta_(k.answered, p.answered, true))
+    + inboundEmailKpiRow_('Abandoned', fmtNum_(k.abandoned) + ' (' + (k.abandonRate || 0) + '%)', inboundEmailDelta_(k.abandoned, p.abandoned, false))
+    + inboundEmailKpiRow_('Abandoned on hold', fmtNum_(k.abandonedOnHold), inboundEmailDelta_(k.abandonedOnHold, p.abandonedOnHold, false))
+    + inboundEmailKpiRow_('Avg wait', inboundEmailDur_(k.avgWaitSec), inboundEmailDelta_(k.avgWaitSec, p.avgWaitSec, false))
+    + inboundEmailKpiRow_('Avg hold', inboundEmailDur_(k.avgHoldSec), '');
+
+  const dashboardUrl = PropertiesService.getScriptProperties().getProperty('DASHBOARD_URL') || '';
+  const htmlBody =
+    '<div style="font-family: Arial, sans-serif; color:#1f2937; max-width:760px;">'
+    + '<div style="background:#FFF7ED;border-left:4px solid #c2703a;padding:16px 20px;border-radius:4px;">'
+    +   '<h2 style="margin:0 0 4px;color:#9a3412;font-size:18px;">Inbound Calls &mdash; ' + escapeHtmlServer_(scopeLabel) + '</h2>'
+    +   '<div style="color:#7c2d12;font-size:13px;">' + escapeHtmlServer_(dateLabel)
+    +     ' &middot; vs prior ' + escapeHtmlServer_(priorLabel) + '</div>'
+    + '</div>'
+    + '<table style="border-collapse:collapse;margin:16px 0;width:100%;max-width:420px;">' + kpiRows + '</table>'
+    + inboundEmailBreakdownTable_('By insurer', data.byInsurer)
+    + inboundEmailBreakdownTable_('By advertised line', data.byDialIn)
+    + (dashboardUrl
+        ? '<div style="margin-top:20px;"><a href="' + escapeHtmlServer_(dashboardUrl)
+          + '" style="display:inline-block;background:#c2703a;color:#fff;padding:8px 16px;border-radius:6px;'
+          + 'text-decoration:none;font-size:13px;font-weight:600;">Open Department Dashboard</a></div>'
+        : '')
+    + '<div style="margin-top:24px;font-size:11px;color:#9ca3af;">'
+    +   'Sent from the Department Dashboard Inbound report. The daily trend + per-insurer drill charts '
+    +   'are in the web app. Numbers are from the inbound-calls capture (a different lens than QCD).'
+    + '</div>'
+    + '</div>';
+
+  MailApp.sendEmail({ to: email,
+    subject: 'Inbound Calls Report: ' + dateLabel + ' (' + scopeLabel + ')',
+    htmlBody: htmlBody });
+  return { to: email };
+}
+
+function fmtNum_(n) { return String(Number(n) || 0).replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
+function inboundEmailDur_(sec) {
+  sec = Math.max(0, Math.round(Number(sec) || 0));
+  const m = Math.floor(sec / 60), s = sec % 60;
+  return m + ':' + String(s).padStart(2, '0');
+}
+function inboundEmailDelta_(cur, prev, goodUp) {
+  cur = Number(cur) || 0; prev = Number(prev) || 0;
+  if (prev === 0 && cur === 0) return '';
+  const dp = prev === 0 ? 100 : Math.round(((cur - prev) / prev) * 100);
+  if (dp === 0) return '<span style="color:#9ca3af;font-size:11px;"> flat</span>';
+  const up = dp > 0;
+  const color = (up === goodUp) ? '#3d9476' : '#c66b4b';
+  return '<span style="color:' + color + ';font-size:11px;"> ' + (up ? '▲+' : '▼') + dp + '% vs prior</span>';
+}
+function inboundEmailKpiRow_(label, value, deltaHtml) {
+  return '<tr>'
+    + '<td style="padding:6px 10px;border-bottom:1px solid #eee;color:#6b7280;font-size:13px;">' + escapeHtmlServer_(label) + '</td>'
+    + '<td style="padding:6px 10px;border-bottom:1px solid #eee;text-align:right;font-weight:700;font-size:14px;">'
+    +   escapeHtmlServer_(String(value)) + (deltaHtml || '') + '</td>'
+    + '</tr>';
+}
+function inboundEmailBreakdownTable_(title, rows) {
+  rows = (rows || []).slice(0, 10);
+  if (!rows.length) return '';
+  const body = rows.map(function (r) {
+    const name = r.label || r.insurer || r.number || r.dial_in || '(none)';
+    const calls = Number(r.calls) || 0;
+    const ab = Number(r.abandoned) || 0;
+    const abPct = calls > 0 ? ((ab / calls) * 100).toFixed(1) + '%' : '–';
+    return '<tr>'
+      + '<td style="padding:5px 8px;border-bottom:1px solid #f0f0f0;font-size:13px;">' + escapeHtmlServer_(String(name)) + '</td>'
+      + '<td style="padding:5px 8px;border-bottom:1px solid #f0f0f0;text-align:right;font-size:13px;">' + fmtNum_(calls) + '</td>'
+      + '<td style="padding:5px 8px;border-bottom:1px solid #f0f0f0;text-align:right;font-size:13px;">' + fmtNum_(r.answered) + '</td>'
+      + '<td style="padding:5px 8px;border-bottom:1px solid #f0f0f0;text-align:right;font-size:13px;">' + fmtNum_(ab) + '</td>'
+      + '<td style="padding:5px 8px;border-bottom:1px solid #f0f0f0;text-align:right;font-size:13px;color:' + (calls > 0 && (ab / calls) >= 0.05 ? '#c66b4b' : '#6b7280') + ';">' + abPct + '</td>'
+      + '</tr>';
+  }).join('');
+  return '<h3 style="margin:18px 0 6px;font-size:14px;color:#374151;">' + escapeHtmlServer_(title) + '</h3>'
+    + '<table style="border-collapse:collapse;width:100%;max-width:560px;">'
+    + '<thead><tr>'
+    +   '<th style="text-align:left;padding:5px 8px;border-bottom:2px solid #ddd;font-size:11px;color:#6b7280;">Name</th>'
+    +   '<th style="text-align:right;padding:5px 8px;border-bottom:2px solid #ddd;font-size:11px;color:#6b7280;">Calls</th>'
+    +   '<th style="text-align:right;padding:5px 8px;border-bottom:2px solid #ddd;font-size:11px;color:#6b7280;">Answered</th>'
+    +   '<th style="text-align:right;padding:5px 8px;border-bottom:2px solid #ddd;font-size:11px;color:#6b7280;">Abandoned</th>'
+    +   '<th style="text-align:right;padding:5px 8px;border-bottom:2px solid #ddd;font-size:11px;color:#6b7280;">Abd %</th>'
+    + '</tr></thead><tbody>' + body + '</tbody></table>';
+}
+
 function computeInboundReport_(scope) {
   const from = scope.from, to = scope.to;
   const empty = emptyInboundReport_(scope);

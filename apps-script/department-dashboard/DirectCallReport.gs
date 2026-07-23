@@ -40,7 +40,10 @@
 
 // v1: initial -- team KPIs + per-agent rows (inbound answer rate excluding
 // the busy carve-out, inbound ATT, outbound activity + ATT, int/ext split).
-const DIRECT_CALL_CACHE_KEY_PREFIX = 'directCall:v1';
+// v2 (R11-M): adds `kpisPrior` (scope-level, over the INV-28 immediately-
+// preceding same-length window) + `deptsPrior` (per-dept prior aggregates) so
+// the client renders delta/trend chips on the KPI cards + dept header rows.
+const DIRECT_CALL_CACHE_KEY_PREFIX = 'directCall:v2';
 const DIRECT_CALL_MAX_RANGE_DAYS = 366;
 
 /**
@@ -114,7 +117,31 @@ function emptyDirectCallReport_(scope) {
       ibAnswerRate: null, ibAttSec: 0,
       obTotal: 0, obConnected: 0, obTalkSec: 0, obAttSec: 0,
     },
+    kpisPrior: null,   // v2
+    deptsPrior: [],    // v2
     agents: [],
+  };
+}
+
+/** Shape a scope-level prior KPI block from the raw prior sums (v2). */
+function directCallPriorKpis_(k) {
+  if (!k) return null;
+  const ibAnswered = Number(k.ibAnswered) || 0;
+  const ibMissedFree = Number(k.ibMissedFree) || 0;
+  const ibTalkSec = Number(k.ibTalkSec) || 0;
+  const obConnected = Number(k.obConnected) || 0;
+  const obTalkSec = Number(k.obTalkSec) || 0;
+  return {
+    ibAnswered: ibAnswered,
+    ibMissedFree: ibMissedFree,
+    ibMissedBusy: Number(k.ibMissedBusy) || 0,
+    ibTalkSec: ibTalkSec,
+    ibAnswerRate: directCallAnswerRate_(ibAnswered, ibMissedFree),
+    ibAttSec: ibAnswered ? Math.round(ibTalkSec / ibAnswered) : 0,
+    obTotal: Number(k.obTotal) || 0,
+    obConnected: obConnected,
+    obTalkSec: obTalkSec,
+    obAttSec: obConnected ? Math.round(obTalkSec / obConnected) : 0,
   };
 }
 
@@ -158,6 +185,19 @@ function computeDirectCallReport_(scope) {
     // roster-derived dept header, not free user text). ONE query, ONE getString.
     const deptPred = scope.companyView ? '' : ' AND c.department = ' + directCallSqlLit_(scope.dept);
     const dr = "c.call_date BETWEEN '" + from + "'::date AND '" + to + "'::date" + deptPred;
+    // v2: INV-28 immediately-preceding same-length window for the delta chips.
+    const pw = computePriorWindow_(from, to);
+    const priorDr = "c.call_date BETWEEN '" + pw.from + "'::date AND '" + pw.to + "'::date" + deptPred;
+    // Scope-level prior KPI sums + per-dept prior aggregates (for the company
+    // view's dept header-row deltas). ib_talk kept so ATT can be re-derived.
+    const priorKpiSel = "json_build_object(" +
+      "'ibAnswered', COALESCE(sum(ib_int_answered+ib_ext_answered),0), " +
+      "'ibMissedFree', COALESCE(sum(ib_int_missed_free+ib_ext_missed_free),0), " +
+      "'ibMissedBusy', COALESCE(sum(ib_int_missed_busy+ib_ext_missed_busy),0), " +
+      "'ibTalkSec', COALESCE(sum(ib_int_talk_sec+ib_ext_talk_sec),0), " +
+      "'obTotal', COALESCE(sum(ob_int_total+ob_ext_total),0), " +
+      "'obConnected', COALESCE(sum(ob_int_connected+ob_ext_connected),0), " +
+      "'obTalkSec', COALESCE(sum(ob_int_talk_sec+ob_ext_talk_sec),0))";
 
     // Per-agent sums; derived rates computed client-/server-side after the
     // fetch. ib_answered/ib_missed_free drive the answer rate (busy excluded).
@@ -184,7 +224,16 @@ function computeDirectCallReport_(scope) {
               "sum(ob_int_connected+ob_ext_connected) AS ob_connected, " +
               "sum(ob_int_talk_sec+ob_ext_talk_sec) AS ob_talk_sec, " +
               "sum(ob_int_total) AS ob_int_total, sum(ob_ext_total) AS ob_ext_total " +
-            "FROM direct_call_history c WHERE " + dr + " GROUP BY agent_name) t)" +
+            "FROM direct_call_history c WHERE " + dr + " GROUP BY agent_name) t), " +
+        // v2 prior window (deltas):
+        "'kpisPrior', (SELECT " + priorKpiSel + " FROM direct_call_history c WHERE " + priorDr + "), " +
+        "'deptsPrior', (SELECT COALESCE(json_agg(t2), '[]') FROM (" +
+            "SELECT department AS dept, " +
+              "sum(ib_int_answered+ib_ext_answered) AS ib_answered, " +
+              "sum(ib_int_missed_free+ib_ext_missed_free) AS ib_missed_free, " +
+              "sum(ib_int_missed_busy+ib_ext_missed_busy) AS ib_missed_busy, " +
+              "sum(ob_int_total+ob_ext_total) AS ob_total " +
+            "FROM direct_call_history c WHERE " + priorDr + " GROUP BY department) t2)" +
       ")::text AS j";
 
     const stmt = conn.createStatement();
@@ -220,6 +269,18 @@ function computeDirectCallReport_(scope) {
         obTalkSec: obTalkSec,
         obAttSec: obConnected ? Math.round(obTalkSec / obConnected) : 0,
       },
+      kpisPrior: directCallPriorKpis_(obj.kpisPrior || null),
+      deptsPrior: (obj.deptsPrior || []).map(function (d) {
+        const a = Number(d.ib_answered) || 0, mf = Number(d.ib_missed_free) || 0;
+        return {
+          dept: String(d.dept || ''),
+          ibAnswered: a,
+          ibMissedFree: mf,
+          ibMissedBusy: Number(d.ib_missed_busy) || 0,
+          obTotal: Number(d.ob_total) || 0,
+          ibAnswerRate: directCallAnswerRate_(a, mf),
+        };
+      }),
       agents: agents,
     };
   } catch (e) {

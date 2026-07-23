@@ -823,6 +823,9 @@
         <h3>Chart hover cards</h3>
         <p>The pop-up card that appears when you hover a chart. Uncheck to turn it off across every chart &mdash; the hovered point still highlights, just without the card. (When you solo one or a few lines on a chart, the card shows only those.)</p>
         <label class="settings-toggle"><input type="checkbox" id="chart-tooltip-toggle" checked> Show chart hover cards</label>
+        <h3>Report summary banners</h3>
+        <p>The plain-language summary strip at the top of each report (the green &ldquo;On track&rdquo; / orange &ldquo;Watch&rdquo; banners). Uncheck to hide them everywhere.</p>
+        <label class="settings-toggle"><input type="checkbox" id="report-banner-toggle" checked> Show report summary banners</label>
         <h3>Guided tour</h3>
         <p>A short walkthrough of the dashboard&rsquo;s main areas. It runs automatically the first time you visit; replay it any time here.</p>
         <button class="btn" type="button" id="tour-replay-btn">Take the tour</button>
@@ -1391,7 +1394,7 @@
              choice, not a bug. Shown only in Simple (insSyncDensity_). -->
         <div id="ins-simple-note" class="ds-note ins-simple-note" style="display:none;">
           Simple view &mdash; queue health, the heatmap, share of answered, and the
-          12-month trend are hidden.
+          team's 12-month trend are hidden, and Agents shows the per-agent trend chart.
           <button type="button" class="link-btn" id="ins-simple-note-detailed">Switch to Detailed</button>
         </div>
         <div id="ins-team-insights"></div>
@@ -1494,7 +1497,7 @@
         <!-- A3: Agents zone -->
         <div class="ds-zone"><span class="ds-zone-label">Agents</span></div>
         <!-- D3 (#4): plain-language caption, Simple mode only (CSS-gated). -->
-        <div id="ins-agents-cap" class="ins-agents-cap">How each agent changed vs the prior period &mdash; grouped by where they stand against the team average.</div>
+        <div id="ins-agents-cap" class="ins-agents-cap">Each agent's trend over the last 12 months &mdash; click a point to open that agent's report, or switch to Detailed for the per-agent cards and comparison views.</div>
         <div class="al-section-title">Per-agent comparison (vs prior period)</div>
         <div class="ir-cards-toolbar" id="ins-cards-toolbar">
           <label class="ir-sort-control">
@@ -1733,6 +1736,7 @@
           </div>
           <div class="ir-action-buttons">
             <button class="btn btn-secondary" id="inbound-csv-btn" type="button">Download CSV</button>
+            <button class="btn btn-secondary" id="inbound-email-btn" type="button">Email me this report</button>
             <button class="btn btn-secondary" id="inbound-back-btn" type="button">&laquo; Back</button>
           </div>
         </div>

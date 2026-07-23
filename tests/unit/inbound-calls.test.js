@@ -303,6 +303,86 @@ test('R5: firstAgent = FIRST person leg (queues/menus skipped; phone-shaped call
     'IVR (no dept), queue, and phone-shaped legs are all skipped');
 });
 
+// ---- Internal-transfer path enrichment (journey-only, unique-match-only) ------
+// An agent answers an inbound call and transfers the caller to a queue; the
+// caller abandons in that queue. The transfer-abandon is a SEPARATE
+// internal-only leg group the record builder drops, so the caller's captured
+// inbound journey used to just end at the transfer. The enrichment cross-refs
+// the abandon to the answering agent's concurrent inbound call and, ONLY on a
+// unique match, appends one synthetic transfer-abandon event to that journey.
+// Metric fields (disposition/counts/queues) are NEVER touched.
+
+// A captured inbound answered by ext 215 (RAYMOND MATHEWS), 10:00:05 -> 10:05:00.
+function capturedInboundAnsweredBy215(callId) {
+  return [
+    leg({ callId: callId, legId: 1, start: '06/04/2026 09:59:50', stop: '06/04/2026 10:00:05', direction: 'Incoming', caller: '12145559999', callee: '103', calleeName: 'A_Q_CSR', dialIn: '19722281820' }),
+    leg({ callId: callId, legId: 2, start: '06/04/2026 10:00:05', connected: '06/04/2026 10:00:05', stop: '06/04/2026 10:05:00', direction: 'Incoming', talk: '0:04:55', caller: '12145559999', callee: '215', calleeName: 'Raymond (Ray) Mathews', answered: 'Answered', dialIn: '19722281820', dept: 'CSR' }),
+  ];
+}
+// The internal-only transfer group: ext 215 transfers to A_Q_Spanish @ 10:03:00,
+// caller abandons after a 40s wait. No Incoming leg -> not its own record.
+function transferAbandonBy215(callId, startTime) {
+  return leg({ callId: callId, legId: 1, start: startTime, stop: '06/04/2026 10:03:40', direction: 'Internal', talk: '0:00:00', callTime: '0:00:40', caller: '215', callee: '260', calleeName: 'A_Q_Spanish', abandoned: 'Abandoned', missed: 'Missed' });
+}
+
+test('transfer-path: unique concurrent inbound -> synthetic abandon appended to that journey', function () {
+  const recs = build(capturedInboundAnsweredBy215('820001').concat([
+    transferAbandonBy215('820900', '06/04/2026 10:03:00'),
+  ]));
+  // The internal-only group never becomes its own record.
+  assert.equal(recs.length, 1);
+  const r = rec(recs, '820001');
+  assert.ok(r, 'the captured inbound record exists');
+  // Metric fields are untouched -- the caller was still ANSWERED; queues from
+  // the call's OWN legs only.
+  assert.equal(r.disposition, 'answered');
+  assert.equal(r.entryQueue, 'A_Q_CSR');
+  assert.equal(r.finalQueue, 'A_Q_CSR');
+  assert.equal(r.numQueues, 1);
+  assert.equal(r.numTransfers, 0);
+  // The journey gains ONE synthetic transfer-abandon event at the end.
+  assert.equal(r.journey.length, 3);
+  const t = r.journey[r.journey.length - 1];
+  assert.equal(t.kind, 'queue');
+  assert.equal(t.name, 'A_Q_Spanish');
+  assert.equal(t.abandoned, true);
+  assert.equal(t.transfer, true, 'flagged as a cross-referenced enrichment');
+  assert.equal(t.t, '10:03:00');
+  assert.equal(t.secs, 40);
+});
+
+test('transfer-path: AMBIGUOUS (agent on two concurrent inbound calls) -> no enrichment', function () {
+  const recs = build(
+    capturedInboundAnsweredBy215('820002').concat(
+    capturedInboundAnsweredBy215('820003')).concat([
+      transferAbandonBy215('820901', '06/04/2026 10:03:00'),
+  ]));
+  // Both captured calls stay 2-event journeys; neither gets the abandon.
+  assert.equal(rec(recs, '820002').journey.length, 2);
+  assert.equal(rec(recs, '820003').journey.length, 2);
+  assert.ok(recs.every(r => r.journey.every(e => !e.transfer)),
+    'never guesses which of two concurrent calls owns the transfer');
+});
+
+test('transfer-path: no concurrent inbound for the ext -> left as-is (no path reconstructed)', function () {
+  const recs = build(capturedInboundAnsweredBy215('820004').concat([
+    // ext 999 transfers/abandons, but no captured inbound was answered by 999.
+    leg({ callId: '820902', legId: 1, start: '06/04/2026 10:03:00', stop: '06/04/2026 10:03:30', direction: 'Internal', caller: '999', callee: '260', calleeName: 'A_Q_Spanish', abandoned: 'Abandoned', missed: 'Missed' }),
+  ]));
+  const r = rec(recs, '820004');
+  assert.equal(r.journey.length, 2, 'unchanged');
+  assert.ok(r.journey.every(e => !e.transfer));
+});
+
+test('transfer-path: abandon OUTSIDE the +/-5s window is not attached (no window widening)', function () {
+  const recs = build(capturedInboundAnsweredBy215('820005').concat([
+    // Abandon at 10:05:10 -- 10s past the answered leg stop (10:05:00) -> miss.
+    transferAbandonBy215('820903', '06/04/2026 10:05:10'),
+  ]));
+  const r = rec(recs, '820005');
+  assert.equal(r.journey.length, 2, 'temporal near-miss stays unresolved');
+});
+
 // ---- L2: authoritative per-date replace (writeInboundCallsToNeon opts) --------
 // A fake JDBC conn records every executed statement so we can assert the
 // authoritative write DELETEs the payload's dates (same txn, before the upsert)

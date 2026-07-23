@@ -840,12 +840,15 @@
   /* Simple hides the heavy analytical blocks. display:none (not collapse):
      render code keeps populating the DOM nodes; the trend/share CANVASES are
      skipped in Simple and built on the toggle (the hidden-chart trap). */
+  /* R11-M: Simple now SHOWS the per-agent Chart (forced to the Trend basis) --
+     the cards move to Detailed. So #ins-cards-chart-wrap is NO LONGER hidden;
+     only the cross-agent CONTROLS (view/basis/metric) + the heavy team blocks
+     stay hidden in Simple. */
   #insights-results.ds-density-simple #ins-team-detail,
   #insights-results.ds-density-simple #ins-trend-wrap,
   #insights-results.ds-density-simple #ins-cards-view-toggle,
   #insights-results.ds-density-simple #ins-cards-chart-mode,
-  #insights-results.ds-density-simple #ins-cards-chart-metric-wrap,
-  #insights-results.ds-density-simple #ins-cards-chart-wrap {
+  #insights-results.ds-density-simple #ins-cards-chart-metric-wrap {
     display: none !important;
   }
   /* The Trends zone label would otherwise float alone above the hidden chart. */
@@ -904,6 +907,10 @@
   body[data-ui-flags~="ov-user-table"] #ov-user-table-wrap { display: none !important; }
   body[data-ui-flags~="ins-heatmap"] #ins-heatmap { display: none !important; }
   body[data-ui-flags~="ins-queue-health"] #ins-queue-health { display: none !important; }
+  /* R11-M: report summary banners -- per-user (Settings) via body.headlines-off,
+     and admin-global via the report-headlines UI flag. */
+  body.headlines-off .report-headline,
+  body[data-ui-flags~="report-headlines"] .report-headline { display: none !important; }
 
   /* R7 (G-3): the Health page's toggle editor rows. */
   .health-uiflags-list { display: flex; flex-direction: column; gap: 6px; margin: 8px 0 10px; }
@@ -4264,8 +4271,14 @@
   .direct-dept-card {
     background: var(--paper-card);
     border: 1px solid var(--line);
+    border-left-width: 3px;
     border-radius: var(--r);
   }
+  /* R11-M: per-dept answer-rate tone rail (92% standard) so a struggling dept
+     reads distinct at a glance. */
+  .direct-dept-card.ddc-tone-good  { border-left-color: var(--good); }
+  .direct-dept-card.ddc-tone-warn  { border-left-color: var(--warn); }
+  .direct-dept-card.ddc-tone-muted { border-left-color: var(--line); }
   .direct-dept-card > summary.direct-dept-head {
     cursor: pointer;
     list-style: none;

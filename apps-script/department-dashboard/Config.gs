@@ -380,4 +380,5 @@ const UI_FLAG_SURFACES = Object.freeze({
   'ov-user-table':       'Overview — dept agent mini-table',
   'ins-heatmap':         'Insights — abandon heatmap (admin panel)',
   'ins-queue-health':    'Insights — Queue health section',
+  'report-headlines':    'Reports — answer-first summary banners (On track / Watch)',
 });
