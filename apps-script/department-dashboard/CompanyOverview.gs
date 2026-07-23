@@ -1058,9 +1058,13 @@ function personalizeOverview_(blob, user) {
     // manager can't see which named individual drove another team's shift.
     // #1: an all-departments manager sees every dept's data, so it keeps all
     // drivers (only single-dept managers are restricted here).
+    // Tier C: a multi-dept manager keeps drivers for ALL their assigned depts.
+    // `departments` is a one-element list for single-dept managers, so this is
+    // unchanged for them.
     if (Array.isArray(out.depts) && !user.allDepts) {
+      var mine = (user.departments && user.departments.length) ? user.departments : (user.department ? [user.department] : []);
       out.depts.forEach(function (d) {
-        if (d && d.wow && d.wow.driver && d.name !== user.department) {
+        if (d && d.wow && d.wow.driver && mine.indexOf(d.name) === -1) {
           delete d.wow.driver;
         }
       });

@@ -1213,11 +1213,11 @@
               <span class="ir-results-title">Insights</span>
               <span class="ir-results-date" id="ins-results-date"></span>
             </div>
-            <div class="ins-compare-line" id="ins-compare-line"></div>
-            <div class="ir-editing-line">
-              <span class="ir-editing-label">Showing:</span>
-              <span class="ir-editing-agents" id="ins-editing-agents"></span>
-            </div>
+            <!-- R11-I (item 2): the "Comparing against…" + "Showing: N agents"
+                 lines were MOVED OUT of the sticky header (below, in .ins-subhead)
+                 so the pinned strip is shorter -- it now holds only the title,
+                 the toolbar, and the period bar. Same ids, so the render code
+                 (#ins-compare-line / #ins-editing-agents) is unchanged. -->
           </div>
           <div class="ir-action-buttons">
             <!-- D1 (density design, Phase 1): Simple/Detailed disclosure toggle.
@@ -1349,6 +1349,18 @@
           </details>
           <div class="ir-edit-popover-actions">
             <button class="btn" id="ins-edit-apply-btn" type="button">Apply</button>
+          </div>
+        </div>
+
+        <!-- R11-I (item 2): the compare + selection context lines, relocated
+             out of the sticky header (above) into normal flow so the pinned
+             strip is shorter. reportHeadline_ skips .ins-subhead in its anchor
+             loop, so #ins-headline still lands directly below this block. -->
+        <div class="ins-subhead" id="ins-subhead">
+          <div class="ins-compare-line" id="ins-compare-line"></div>
+          <div class="ir-editing-line">
+            <span class="ir-editing-label">Showing:</span>
+            <span class="ir-editing-agents" id="ins-editing-agents"></span>
           </div>
         </div>
 
@@ -1608,6 +1620,51 @@
           <!-- Phase 2 #10: the calendar day-grid renderer (CSS grid, no
                Chart.js). Populated by insRenderTrendCalendar_. -->
           <div id="ins-trend-calendar" class="ins-trend-calendar" style="display:none;"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- R11-J: small FLOATING admin A/B control (Insights only). It is a
+         REMOTE for the existing view toggles -- each button forwards a click
+         to the real segmented control, so all state/prefs/render wiring fires
+         once (no duplicated logic); insSyncAbPanel_ reflects the live state
+         back onto it after each render. Admin-gated via data-admin-only (the
+         reveal loop drops the inline display:none for admins); it lives INSIDE
+         #insights-page, so it auto-hides on every other page (the fixed panel
+         is inside a display:none ancestor) and during view-as-manager. -->
+    <div id="ins-ab-panel" class="ins-ab-panel" data-admin-only style="display:none;"
+         role="group" aria-label="Admin A/B view controls">
+      <div class="ins-ab-head">
+        <span class="ins-ab-title">A/B views</span>
+        <button type="button" class="ins-ab-collapse" id="ins-ab-collapse"
+                title="Collapse / expand" aria-label="Collapse or expand">&#8211;</button>
+      </div>
+      <div class="ins-ab-body" id="ins-ab-body">
+        <div class="ins-ab-row">
+          <span class="ins-ab-lbl">Agents</span>
+          <div class="ins-ab-seg">
+            <button type="button" data-ab-view="cards">Cards</button>
+            <button type="button" data-ab-view="chart">Chart</button>
+          </div>
+        </div>
+        <div class="ins-ab-row" id="ins-ab-basis-row">
+          <span class="ins-ab-lbl">Basis</span>
+          <div class="ins-ab-seg">
+            <button type="button" data-ab-mode="gap">Gap</button>
+            <button type="button" data-ab-mode="abs">Abs</button>
+            <button type="button" data-ab-mode="trend">Trend</button>
+          </div>
+        </div>
+        <div class="ins-ab-row">
+          <span class="ins-ab-lbl">Trends</span>
+          <div class="ins-ab-seg">
+            <button type="button" data-ab-render="line">Line</button>
+            <button type="button" data-ab-render="calendar">Cal</button>
+          </div>
+        </div>
+        <div class="ins-ab-row">
+          <span class="ins-ab-lbl">Metric</span>
+          <select id="ins-ab-metric" class="ins-ab-sel" aria-label="Trend metric"></select>
         </div>
       </div>
     </div>
@@ -2378,6 +2435,10 @@
               <select id="esc-dept"></select>
               <span class="esc-dept-name" id="esc-dept-name" style="display:none;"></span>
             </div>
+            <!-- R11-H: the sort direction is a compact ↑/↓ arrow icon beside
+                 Refresh (hover explains), shown at every viewport; the native
+                 #esc-sort <select> below stays only as the state store (hidden). -->
+            <button class="esc-icon-btn" id="esc-sort-toggle" type="button"></button>
             <button class="esc-icon-btn" id="esc-refresh-btn" type="button" title="Refresh" aria-label="Refresh">&#8635;</button>
           </div>
           <!-- D1: status filter. Category list (wide) + native select (<=900px
@@ -2395,8 +2456,9 @@
             </select>
           </div>
           <nav class="esc-cat-menu" id="esc-cat-menu" aria-label="Filter escalations by status"></nav>
-          <!-- D3: sort. Toggle (wide) + native select (<=900px fallback). Both
-               write #esc-sort; escApplyFilter_ re-sorts in place (no fetch). -->
+          <!-- D3: sort state store. The #esc-sort-toggle arrow icon (in the head)
+               is the only visible control; this <select> stays hidden as the
+               state store. escApplyFilter_ re-sorts in place (no fetch). -->
           <div class="ir-col esc-sort-col">
             <label for="esc-sort">Sort</label>
             <select id="esc-sort">
@@ -2404,7 +2466,6 @@
               <option value="newest">Newest first</option>
             </select>
           </div>
-          <button class="esc-sort-toggle" id="esc-sort-toggle" type="button"></button>
           <div class="ir-col esc-filter-col">
             <label for="esc-filter">Filter</label>
             <div class="esc-filter-wrap">
@@ -2515,8 +2576,12 @@
                 <input type="email" id="ac-email" autocomplete="off" placeholder="name@universalmedsupply.com">
               </div>
               <div class="ir-col" style="flex:1 1 200px;">
-                <label for="ac-dept">Department</label>
-                <select id="ac-dept"></select>
+                <label for="ac-dept">Department(s)</label>
+                <!-- Tier C: multi-select -- a manager may hold more than one
+                     department. Ctrl/Cmd-click to pick several. "ALL" is
+                     exclusive (grants every dept, no admin surfaces). -->
+                <select id="ac-dept" multiple size="6"></select>
+                <span class="al-help-inline">Ctrl/Cmd-click to select multiple.</span>
               </div>
               <div class="ir-col" style="flex:1 1 220px;">
                 <label for="ac-notes">Notes (optional)</label>
@@ -2531,7 +2596,7 @@
           <div class="al-section">
             <div class="al-section-title">Current managers (<span id="ac-count">0</span>)</div>
             <table class="al-config-table">
-              <thead><tr><th>Email</th><th>Department</th><th>Notes</th><th>Actions</th></tr></thead>
+              <thead><tr><th>Email</th><th>Department(s)</th><th>Notes</th><th>Actions</th></tr></thead>
               <tbody id="ac-tbody"></tbody>
             </table>
           </div>

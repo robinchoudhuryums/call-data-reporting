@@ -837,12 +837,29 @@
   function isAllDeptViewer_() {
     return typeof USER !== 'undefined' && !!USER && (USER.role === 'admin' || USER.allDepts === true);
   }
+  // Tier C: who gets the header dept SELECTOR. Admins + all-dept managers pick
+  // any dept; a MULTI-dept manager (>1 assigned dept, allDepts false) picks
+  // among their assigned subset. A single-dept manager has no selector (their
+  // one dept is USER.department). This is a superset of isAllDeptViewer_ used
+  // ONLY for the dept-switch surfaces (selector population, getRequestedDept,
+  // ovViewerDept_) -- the cross-dept Overview routing/spotlight affordances
+  // stay isAllDeptViewer_-gated (the server rejects a non-assigned dept
+  // regardless, so a multi-dept manager just uses the selector).
+  function canPickDept_() {
+    return isAllDeptViewer_()
+      || (typeof USER !== 'undefined' && !!USER && USER.role === 'manager'
+          && !!USER.departments && USER.departments.length > 1);
+  }
 
   function init() {
     // Header
     $('user-email').textContent = USER.email || '(unknown)';
     const tag = $('role-tag');
-    tag.textContent = USER.allDepts ? 'manager · all depts' : USER.role;
+    // Tier C: label a multi-dept manager so the extra reach is visible.
+    const multiDept = USER.role === 'manager' && !USER.allDepts
+      && USER.departments && USER.departments.length > 1;
+    tag.textContent = USER.allDepts ? 'manager · all depts'
+      : (multiDept ? ('manager · ' + USER.departments.length + ' depts') : USER.role);
     tag.classList.add('tag-' + USER.role);
 
     // Admin-only menu items: Compare Ranges (under Reports) and
@@ -909,8 +926,9 @@
     })();
 
     // Department selector vs static label. All-dept managers get the selector
-    // too (#1) so they can view any department.
-    if (isAllDeptViewer_() && USER.departments && USER.departments.length) {
+    // too (#1); a multi-dept manager (Tier C) gets it populated with their
+    // assigned subset.
+    if (canPickDept_() && USER.departments && USER.departments.length) {
       const sel = $('dept-selector');
       USER.departments.forEach(function (d) {
         const opt = document.createElement('option');
@@ -1889,7 +1907,7 @@
   // admins show whichever dept is currently selected in the header
   // dropdown (so they can pin a focus dept).
   function ovViewerDept_(data) {
-    if (isAllDeptViewer_()) {
+    if (canPickDept_()) {
       const sel = $('dept-selector');
       return (sel && sel.value) || (USER.departments && USER.departments[0]) || null;
     }
@@ -4518,6 +4536,10 @@
         while (anchor && (anchor.classList.contains('status')
                           || anchor.classList.contains('ir-loader')
                           || anchor.classList.contains('ir-edit-popover')
+                          // R11-I: Insights' relocated compare/selection lines
+                          // (moved out of the sticky header) sit here too --
+                          // keep the headline anchored BELOW them.
+                          || anchor.classList.contains('ins-subhead')
                           || anchor.classList.contains('empty-state'))) {
           anchor = anchor.nextElementSibling;
         }
@@ -5458,7 +5480,7 @@
   }
 
   function getRequestedDept() {
-    if (isAllDeptViewer_()) {
+    if (canPickDept_()) {
       const sel = $('dept-selector');
       return sel ? sel.value : '';
     }
@@ -11229,9 +11251,9 @@
       .withSuccessHandler(function (data) {
         $('ac-loading').style.display = 'none';
         $('ac-body').style.display = '';
-        acLastInit = data || { rows: [], departments: [], adminEmails: [] };
+        acLastInit = data || { rows: [], managers: [], departments: [], adminEmails: [] };
         acRenderDeptOptions_(acLastInit.departments || []);
-        acRenderRows_(acLastInit.rows || []);
+        acRenderRows_(acLastInit.managers || []);
         acClearForm_();
       })
       .withFailureHandler(function (err) {
@@ -11248,25 +11270,31 @@
     // role-model gotcha) -- a manager-role viewer with every dept's DATA
     // breadth (dept selector like an admin) but no admin surfaces. No new
     // role needed; this only makes the existing grant reachable from the UI.
-    sel.innerHTML = '<option value="">— pick —</option>'
-      + '<option value="ALL">ALL — every department (manager, no admin surfaces)</option>'
+    // Tier C: the dept picker is a MULTI-select now (no "— pick —" placeholder).
+    sel.innerHTML = '<option value="ALL">ALL — every department (manager, no admin surfaces)</option>'
       + depts.map(function (d) { return '<option value="' + escapeHtml(d) + '">' + escapeHtml(d) + '</option>'; }).join('');
   }
 
-  function acRenderRows_(rows) {
+  // Tier C: rows are the GROUPED managers now (one per email, dept LIST).
+  function acRenderRows_(managers) {
     const tbody = $('ac-tbody');
     const count = $('ac-count');
-    if (count) count.textContent = rows.length;
+    managers = managers || [];
+    if (count) count.textContent = managers.length;
     if (!tbody) return;
-    if (!rows.length) {
+    if (!managers.length) {
       tbody.innerHTML = '<tr><td colspan="4" class="al-empty">No managers yet. Add one above.</td></tr>';
       return;
     }
-    tbody.innerHTML = rows.map(function (r, idx) {
+    tbody.innerHTML = managers.map(function (m, idx) {
+      const depts = (m.departments || []);
+      const deptCell = depts.length
+        ? depts.map(function (d) { return '<span class="ac-dept-chip">' + escapeHtml(d) + '</span>'; }).join(' ')
+        : '<span class="al-empty-inline">—</span>';
       return '<tr data-ac-idx="' + idx + '">'
-        + '<td>' + escapeHtml(r.email) + '</td>'
-        + '<td>' + (r.department ? escapeHtml(r.department) : '<span class="al-empty-inline">—</span>') + '</td>'
-        + '<td>' + (r.notes ? escapeHtml(r.notes) : '<span class="al-empty-inline">—</span>') + '</td>'
+        + '<td>' + escapeHtml(m.email) + '</td>'
+        + '<td>' + deptCell + '</td>'
+        + '<td>' + (m.notes ? escapeHtml(m.notes) : '<span class="al-empty-inline">—</span>') + '</td>'
         + '<td>'
         +   '<button type="button" class="link-btn ac-row-edit" data-idx="' + idx + '">Edit</button> '
         +   '<button type="button" class="link-btn ac-row-remove" data-idx="' + idx + '">Remove</button>'
@@ -11282,19 +11310,25 @@
     if (remBtn) { acRemoveRow_(Number(remBtn.getAttribute('data-idx'))); return; }
   }
 
+  // Tier C: preselect the manager's assigned depts in the multi-select.
   function acEditRow_(idx) {
-    const r = (acLastInit.rows || [])[idx];
-    if (!r) return;
-    if ($('ac-email')) $('ac-email').value = r.email;
-    if ($('ac-dept'))  $('ac-dept').value = r.department || '';
-    if ($('ac-notes')) $('ac-notes').value = r.notes || '';
+    const m = (acLastInit.managers || [])[idx];
+    if (!m) return;
+    if ($('ac-email')) $('ac-email').value = m.email;
+    const sel = $('ac-dept');
+    const depts = m.departments || [];
+    if (sel) Array.prototype.forEach.call(sel.options, function (o) {
+      o.selected = depts.indexOf(o.value) !== -1;
+    });
+    if ($('ac-notes')) $('ac-notes').value = m.notes || '';
     if ($('ac-form-title')) $('ac-form-title').textContent = 'Edit manager access';
     if ($('ac-email')) $('ac-email').focus();
   }
 
   function acClearForm_() {
     if ($('ac-email')) $('ac-email').value = '';
-    if ($('ac-dept'))  $('ac-dept').value = '';
+    const sel = $('ac-dept');
+    if (sel) Array.prototype.forEach.call(sel.options, function (o) { o.selected = false; });
     if ($('ac-notes')) $('ac-notes').value = '';
     if ($('ac-form-title')) $('ac-form-title').textContent = 'Add manager access';
     acSetStatus_(null);
@@ -11302,10 +11336,14 @@
 
   function acSave_() {
     const email = ($('ac-email') ? $('ac-email').value : '').trim();
-    const department = ($('ac-dept') ? $('ac-dept').value : '').trim();
+    const sel = $('ac-dept');
+    const departments = sel
+      ? Array.prototype.filter.call(sel.options, function (o) { return o.selected; }).map(function (o) { return o.value; })
+      : [];
     const notes = ($('ac-notes') ? $('ac-notes').value : '').trim();
     if (!email) { acSetStatus_('error', 'Enter a manager email.'); return; }
-    if (!department) { acSetStatus_('error', 'Pick a department.'); return; }
+    if (!departments.length) { acSetStatus_('error', 'Pick at least one department.'); return; }
+    const label = departments.join(', ');
     const btn = $('ac-save-btn');
     if (btn) { btn.disabled = true; btn.innerHTML = '<span class="btn-spinner" aria-hidden="true"></span>Saving…'; }
     const restore = function () { if (btn) { btn.disabled = false; btn.textContent = 'Save'; } };
@@ -11313,7 +11351,7 @@
     google.script.run
       .withSuccessHandler(function () {
         restore();
-        acSetStatus_('success', 'Saved ' + email + ' → ' + department + '. Takes effect within ~60 s.');
+        acSetStatus_('success', 'Saved ' + email + ' → ' + label + '. Takes effect within ~60 s.');
         showToast('Saved access for ' + email, 'success');
         acLoadInit_();
       })
@@ -11321,11 +11359,11 @@
         restore();
         acSetStatus_('error', 'Save failed: ' + (err && err.message ? err.message : String(err)));
       })
-      .saveAccessControlRow({ email: email, department: department, notes: notes });
+      .saveAccessControlRow({ email: email, departments: departments, notes: notes });
   }
 
   function acRemoveRow_(idx) {
-    const r = (acLastInit.rows || [])[idx];
+    const r = (acLastInit.managers || [])[idx];
     if (!r) return;
     // R5: app-styled confirm (dsConfirm_) instead of the browser-native
     // window.confirm that rendered in Sheets chrome (owner note).
@@ -11679,7 +11717,10 @@
   // I5a: MANAGERS default to the Absolute bar chart (chart view + 'abs' basis)
   // -- a glanceable per-agent volume read -- while admins/owner keep the cards
   // grid default. A saved pref (insRestorePrefs_) still overrides either way.
-  let insCardsView = (typeof USER !== 'undefined' && USER && USER.role === 'manager') ? 'chart' : 'cards';   // 'cards' | 'chart' (#3)
+  // R11-H (owner): the per-agent Trend chart is the DEFAULT Agents view for
+  // everyone now (was cards / role-split). A saved pref still wins; single-agent
+  // reports + Simple density force cards, unchanged.
+  let insCardsView = 'chart';   // 'cards' | 'chart' (#3)
   let insCardsChartMetric = 'answered';   // metric for the grouped Chart view (gap mode)
   // Chart-view basis: 'gap' (diverging bars vs the team average, one metric)
   // | 'abs' (absolute stacked Answered+Missed per agent + % Answered dots --
@@ -11688,7 +11729,7 @@
   // RETIRED by owner note -- the 3-way sub-selector read as confusing, and
   // the prior values stay reachable via the card delta-badge hover
   // tooltips. Persisted in the ins prefs blob ('prior' restores as 'gap').
-  let insCardsChartMode = (typeof USER !== 'undefined' && USER && USER.role === 'manager') ? 'abs' : 'gap';   // I5a: managers default to Absolute
+  let insCardsChartMode = 'trend';   // R11-H: 'gap' | 'abs' | 'trend'; Trend is the default basis now
   let insCardsChartInstance = null;
   let insHasQuiet_ = false;        // whether the current render has quiet agents
   let insShareChartInstance = null;   // share-of-answered pie (PR port)
@@ -12161,6 +12202,41 @@
         }
         insSavePrefs_();
         if (insLastData) insRenderTrendChart_(insLastData);
+      });
+    }
+
+    // R11-J: floating admin A/B remote. Its buttons FORWARD a click to the
+    // real segmented controls (so the existing state/prefs/render wiring runs
+    // once, unduplicated); the metric select mirrors #ins-trend-metric.
+    // insSyncAbPanel_ reflects state back onto it after each render.
+    const abPanel = $('ins-ab-panel');
+    if (abPanel) {
+      const abForward = function (realId, attr, val) {
+        const real = $(realId);
+        if (!real) return;
+        const btn = real.querySelector('.seg-btn[' + attr + '="' + val + '"]');
+        if (btn) btn.click();
+      };
+      abPanel.addEventListener('click', function (e) {
+        const col = e.target.closest('#ins-ab-collapse');
+        if (col) {
+          const on = abPanel.classList.toggle('ins-ab-collapsed');
+          col.innerHTML = on ? '+' : '&#8211;';
+          return;
+        }
+        const vb = e.target.closest('[data-ab-view]');
+        if (vb) { abForward('ins-cards-view-toggle', 'data-view', vb.getAttribute('data-ab-view')); return; }
+        const mb = e.target.closest('[data-ab-mode]');
+        if (mb) { abForward('ins-cards-chart-mode', 'data-mode', mb.getAttribute('data-ab-mode')); return; }
+        const rb = e.target.closest('[data-ab-render]');
+        if (rb) { abForward('ins-trend-render-toggle', 'data-render', rb.getAttribute('data-ab-render')); return; }
+      });
+      const abMetric = $('ins-ab-metric');
+      if (abMetric) abMetric.addEventListener('change', function () {
+        const real = $('ins-trend-metric');
+        if (!real) return;
+        real.value = abMetric.value;
+        real.dispatchEvent(new Event('change'));
       });
     }
 
@@ -13776,6 +13852,9 @@
         b.disabled = !calendarOk && (b.getAttribute('data-render') === 'calendar');
       });
     }
+    insSyncAbPanel_();   // R11-J: reflect render/metric/eligibility onto the
+                         // floating admin remote (runs before the calendar
+                         // early-return below so it fires on both paths).
     const useCalendar = calendarOk && insTrendRender === 'calendar';
     const calHost = $('ins-trend-calendar');
     const canvasWrap = $('ins-trend-canvas-wrap');
@@ -14484,6 +14563,46 @@
    * shows the card grid (+ quiet collapsible if any); Chart view shows a
    * grouped current-vs-prior bar across all selected agents.
    */
+  // R11-J: reflect the live Insights view state onto the floating admin A/B
+  // remote (active seg buttons + the mirrored metric select + the trend
+  // render's eligibility). No-op when the panel isn't present (non-admin).
+  function insSyncAbPanel_() {
+    const panel = $('ins-ab-panel');
+    if (!panel) return;
+    const setActive = function (attr, val) {
+      panel.querySelectorAll('[' + attr + ']').forEach(function (b) {
+        b.classList.toggle('active', b.getAttribute(attr) === val);
+      });
+    };
+    setActive('data-ab-view', insCardsView);
+    setActive('data-ab-mode', insCardsChartMode);
+    setActive('data-ab-render', insTrendRender);
+    // Basis only applies in Chart view -- dim + disable it in Cards view.
+    const basisRow = $('ins-ab-basis-row');
+    if (basisRow) {
+      basisRow.style.opacity = (insCardsView === 'chart') ? '' : '0.45';
+      basisRow.querySelectorAll('[data-ab-mode]').forEach(function (b) {
+        b.disabled = (insCardsView !== 'chart');
+      });
+    }
+    // Trend render eligibility mirrors the real toggle's disabled state.
+    const realRender = $('ins-trend-render-toggle');
+    const renderDisabled = !!(realRender && realRender.classList.contains('is-disabled'));
+    panel.querySelectorAll('[data-ab-render]').forEach(function (b) {
+      b.disabled = renderDisabled && (b.getAttribute('data-ab-render') === 'calendar');
+    });
+    // Mirror the real metric select's options + value (admin option set can
+    // differ; rebuild only when the counts diverge).
+    const realMetric = $('ins-trend-metric');
+    const abMetric = $('ins-ab-metric');
+    if (realMetric && abMetric) {
+      if (abMetric.options.length !== realMetric.options.length) {
+        abMetric.innerHTML = realMetric.innerHTML;
+      }
+      abMetric.value = realMetric.value;
+    }
+  }
+
   function insApplyCardsView_() {
     // D1: Simple is cards-only -- force the cards DISPLAY without touching
     // the saved insCardsView pref (a manager's default-chart pref survives
@@ -14521,6 +14640,7 @@
       void shownWrap.offsetWidth;   // restart the animation on repeat swaps
       shownWrap.classList.add('ins-view-fade');
     }
+    insSyncAbPanel_();   // R11-J: keep the floating admin remote in sync
   }
 
   // Reflect insCardsChartMode on the sub-toggle's buttons (restore + click).
@@ -14665,14 +14785,20 @@
       });
       return {
         label: c.name,
+        // R11-H: match the app's canonical trend-line style (Overview /
+        // Insights team trend): tension 0.4, 2.2px lines, no resting points,
+        // no fill -- so this reads as one of the same family of charts.
         data: series,
         borderColor: color,
-        backgroundColor: color,
-        borderWidth: 2,
-        tension: 0.25,
+        backgroundColor: 'rgba(0,0,0,0)',
+        borderWidth: 2.2,
+        tension: 0.4,
         spanGaps: true,
-        pointRadius: 2,
-        pointHoverRadius: 5,
+        pointRadius: 0,
+        pointHoverRadius: 4,
+        pointBackgroundColor: color,
+        pointBorderColor: THEME.paperCard,
+        pointBorderWidth: 1.5,
         fill: false,
       };
     });
@@ -16257,6 +16383,44 @@
     }
   }
 
+  // R11-H: group heat-drill rows by their date, with a colored per-date header
+  // + a left rail, so a multi-date slot reads as distinct day-clusters. Tone
+  // cycles through a small token palette keyed on first-seen date order. A
+  // single-date slot renders one (still-headered) group.
+  var HEAT_DRILL_DATE_TONES_ = ['accent', 'good', 'warn', 'muted'];
+  function heatDrillDateHeader_(dateIso, count, toneIdx) {
+    var tone = HEAT_DRILL_DATE_TONES_[toneIdx % HEAT_DRILL_DATE_TONES_.length];
+    var wd = '';
+    if (dateIso && /^\d{4}-\d{2}-\d{2}$/.test(dateIso)) {
+      var p = dateIso.split('-');
+      var d = new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]));
+      wd = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getDay()] || '';
+    }
+    var label = dateIso ? String(dateIso).slice(5) : '(no date)';   // MM-DD
+    return '<div class="heat-drill-datehdr heat-drill-datehdr--' + tone + '">'
+      + '<span class="heat-drill-datedot"></span>'
+      + escapeHtml(label) + (wd ? ' <span class="heat-drill-dow">' + wd + '</span>' : '')
+      + ' <span class="heat-drill-datecount">' + count + '</span></div>';
+  }
+  function heatDrillGroupedList_(items, getDate, rowHtmlFn) {
+    var order = [], byDate = {};
+    items.forEach(function (it) {
+      var d = getDate(it) || '';
+      if (!byDate[d]) { byDate[d] = []; order.push(d); }
+      byDate[d].push(it);
+    });
+    var toneIdx = 0;
+    return order.map(function (d) {
+      var grp = byDate[d];
+      var tone = HEAT_DRILL_DATE_TONES_[toneIdx % HEAT_DRILL_DATE_TONES_.length];
+      var html = '<div class="heat-drill-dategroup heat-drill-dategroup--' + tone + '">'
+        + heatDrillDateHeader_(d, grp.length, toneIdx)
+        + grp.map(rowHtmlFn).join('') + '</div>';
+      toneIdx++;
+      return html;
+    }).join('');
+  }
+
   function heatCellDetailHtml_(resp, label) {
     const meta = (resp && resp.meta) || {};
     if (meta.available === false) {
@@ -16266,35 +16430,38 @@
     if (!calls.length) {
       return '<div class="ds-note">No abandoned calls recorded in this slot for the selected range.</div>';
     }
-    const rows = calls.map(function (c) {
-      const path = [c.entryQueue, c.finalQueue].filter(Boolean)
-        .filter(function (v, i, a) { return a.indexOf(v) === i; })   // entry==final -> once
-        .map(escapeHtml).join(' → ');
-      const stage = c.abandonedOnHold ? 'on hold' : (c.abandonStage || '');
-      const facts = [];
-      if (stage) facts.push('abandoned ' + escapeHtml(String(stage)));
-      if (c.waitSeconds != null) facts.push('waited ' + escapeHtml(crFormatSecondsShort_(c.waitSeconds)));
-      if (c.abandonedOnHold && c.holdSeconds != null) {
-        facts.push('held ' + escapeHtml(crFormatSecondsShort_(c.holdSeconds)));
-      }
-      return '<div class="heat-drill-row">'
-        + '<span class="heat-drill-when">' + escapeHtml(c.callDate || '')
-        +   ' · ' + escapeHtml(String(c.cstStart || '').slice(0, 5)) + '</span>'
-        + '<span class="heat-drill-path">' + (path || '(no queue recorded)')
-        +   (facts.length ? ' <span class="heat-drill-facts">· ' + facts.join(' · ') + '</span>' : '')
-        + '</span>'
-        + (c.callId
-          ? '<button type="button" class="pid-journey" data-journey-pid="' + escapeHtml(c.callId)
-            + '" data-journey-date="' + escapeHtml(c.callDate || '')
-            + '" title="Show this call&#39;s leg-by-leg path">&#8627; path</button>'
-          : '')
-        + '</div>';
-    }).join('');
+    // Rows grouped by date (the date is in the group header, so each row shows
+    // the CST time only).
+    const body = heatDrillGroupedList_(calls,
+      function (c) { return c.callDate || ''; },
+      function (c) {
+        const path = [c.entryQueue, c.finalQueue].filter(Boolean)
+          .filter(function (v, i, a) { return a.indexOf(v) === i; })   // entry==final -> once
+          .map(escapeHtml).join(' → ');
+        const stage = c.abandonedOnHold ? 'on hold' : (c.abandonStage || '');
+        const facts = [];
+        if (stage) facts.push('abandoned ' + escapeHtml(String(stage)));
+        if (c.waitSeconds != null) facts.push('waited ' + escapeHtml(crFormatSecondsShort_(c.waitSeconds)));
+        if (c.abandonedOnHold && c.holdSeconds != null) {
+          facts.push('held ' + escapeHtml(crFormatSecondsShort_(c.holdSeconds)));
+        }
+        return '<div class="heat-drill-row">'
+          + '<span class="heat-drill-when">' + escapeHtml(String(c.cstStart || '').slice(0, 5)) + '</span>'
+          + '<span class="heat-drill-path">' + (path || '(no queue recorded)')
+          +   (facts.length ? ' <span class="heat-drill-facts">· ' + facts.join(' · ') + '</span>' : '')
+          + '</span>'
+          + (c.callId
+            ? '<button type="button" class="pid-journey" data-journey-pid="' + escapeHtml(c.callId)
+              + '" data-journey-date="' + escapeHtml(c.callDate || '')
+              + '" title="Show this call&#39;s leg-by-leg path">&#8627; path</button>'
+            : '')
+          + '</div>';
+      });
     const head = '<div class="heat-drill-head"><strong>' + escapeHtml(label) + '</strong>'
       + ' · ' + calls.length + ' abandoned call' + (calls.length === 1 ? '' : 's')
       + (meta.truncated ? ' <span class="heat-drill-cap">(newest ' + calls.length + ' shown)</span>' : '')
       + '</div>';
-    return head + '<div class="heat-drill-list">' + rows + '</div>';
+    return head + '<div class="heat-drill-list">' + body + '</div>';
   }
 
   // Shared renderer for a getMissedCallsSlice payload (the DQE missed-ring
@@ -16317,16 +16484,18 @@
     var lost = meta.abandonedDetailLost
       ? '<div class="ds-note ms-lost">Some abandoned-call detail in this range was corrupted (rebuild pending) and is excluded.</div>'
       : '';
-    var rows = entries.map(function (e) {
-      var siren = e.abandoned ? ' 🚨' : '';
-      var dateLabel = e.date ? String(e.date).slice(5) : '';   // MM-DD
-      return '<div class="heat-drill-row' + (e.abandoned ? ' abandoned' : '') + '">'
-        + '<span class="heat-drill-when">' + escapeHtml(dateLabel) + ' · '
-        +   escapeHtml(e.label || e.time || '') + siren + '</span>'
-        + '<span class="heat-drill-path">' + escapeHtml(e.who || '') + '</span>'
-        + parentIdBadge(e.parentId, e.date)
-        + '</div>';
-    }).join('');
+    // R11-H: grouped by date (the date is in the group header, so each row shows
+    // the ring time only).
+    var rows = heatDrillGroupedList_(entries,
+      function (e) { return e.date || ''; },
+      function (e) {
+        var siren = e.abandoned ? ' 🚨' : '';
+        return '<div class="heat-drill-row' + (e.abandoned ? ' abandoned' : '') + '">'
+          + '<span class="heat-drill-when">' + escapeHtml(e.label || e.time || '') + siren + '</span>'
+          + '<span class="heat-drill-path">' + escapeHtml(e.who || '') + '</span>'
+          + parentIdBadge(e.parentId, e.date)
+          + '</div>';
+      });
     return head + lost + '<div class="heat-drill-list">' + rows + '</div>';
   }
 
@@ -17074,9 +17243,14 @@
         if (sel) {
           let opts = '';
           // #1: admins + all-dept managers get the cross-dept "All departments"
-          // option; single-dept managers get only their own dept.
+          // option; single-dept managers get only their own dept. Tier C: a
+          // multi-dept manager gets an "All my departments" option (the server
+          // scopes a blank/ALL request to their assigned depts only) so the
+          // combined view is their default, plus a per-dept narrow.
           const escAllDept = escInit_.isAdmin || escInit_.allDepts;
+          const escMultiMgr = !escAllDept && depts.length > 1;
           if (escAllDept) opts += '<option value="ALL">All departments</option>';
+          else if (escMultiMgr) opts += '<option value="ALL">All my departments</option>';
           opts += depts.map(function (d) { return '<option value="' + escapeHtml(d) + '">' + escapeHtml(d) + '</option>'; }).join('');
           sel.innerHTML = opts;
           // R11-D4: a viewer with a real choice (admin/all-dept, or a rare
@@ -17354,7 +17528,7 @@
     // status-filter categories -- Overdue, Oldest open, Resolved in the last 7d.
     tiles.push(escBandTile_('Overdue >' + ESC_OVERDUE_DAYS + 'd', Number(meta.overdueCount || 0), (meta.overdueCount > 0) ? 'warn' : 'muted', null));
     tiles.push(escBandOldestTile_(meta.oldestOpenAt));
-    tiles.push(escBandTile_('Resolved · 7d', Number(meta.resolvedLast7 || 0), 'good', null));
+    tiles.push(escBandTile_('Resolved · MTD', Number(meta.resolvedMTD || 0), 'good', null));   // R11-H: 7d -> month-to-date
     band.innerHTML = tiles.join('');
     band.style.display = '';
   }
@@ -17377,8 +17551,11 @@
               + Number(c.resolved || 0) + Number(c.rejected || 0)) : null;
     var active = (meta.status) || ($('esc-status') && $('esc-status').value) || 'pending';
     // [value, label, count-or-null, dot-tone]. Order = triage priority.
+    // R11-H (owner): the "Needs review" row was dropped from the sidebar list
+    // -- the pending_review review queue is still reachable via the "N awaiting
+    // review" chip (which appears only when there ARE items) + the native
+    // <select> fallback; it just no longer takes a permanent list slot.
     var cats = [
-      ['pending_review', 'Needs review', c ? reviewN                  : null, 'accent'],
       ['pending',        'Pending',      c ? Number(c.pending || 0)   : null, 'warn'],
       ['in_progress',    'In progress',  c ? Number(c.in_progress || 0) : null, 'accent'],
       ['resolved',       'Completed',    c ? Number(c.resolved || 0)  : null, 'good'],
@@ -17397,14 +17574,14 @@
     }).join('');
   }
 
-  // R11-D3: reflect the #esc-sort value onto the toggle button (glyph + label +
-  // tooltip). Oldest-first is an up arrow (oldest at the top of the list).
+  // R11-D3 / R11-H: reflect the #esc-sort value onto the compact arrow toggle
+  // beside Refresh -- glyph only (hover explains). Oldest-first = up arrow
+  // (oldest at the top of the list).
   function escSyncSortToggle_() {
     var btn = $('esc-sort-toggle');
     if (!btn) return;
     var newest = (($('esc-sort') && $('esc-sort').value) || 'oldest') === 'newest';
-    btn.innerHTML = '<span class="esc-sort-arrow">' + (newest ? '↓' : '↑') + '</span>'
-      + '<span class="esc-sort-lbl">' + (newest ? 'Newest first' : 'Oldest first') + '</span>';
+    btn.innerHTML = newest ? '&#8595;' : '&#8593;';   // ↓ / ↑
     btn.setAttribute('title', newest ? 'Newest first (click for oldest)' : 'Oldest first (click for newest)');
     btn.setAttribute('aria-label', 'Sort order: ' + (newest ? 'newest first' : 'oldest first'));
   }

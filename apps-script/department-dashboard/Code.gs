@@ -39,10 +39,14 @@ function renderDashboard_(user) {
     email: user.email,
     role: user.role,
     department: user.department,
-    // #1: all-departments managers get the full dept list (for the header
-    // selector) + the allDepts flag; single-dept managers still get neither.
     allDepts: !!user.allDepts,
-    departments: (user.role === 'admin' || user.allDepts) ? user.departments : [],
+    // #1: all-departments managers get the full dept list (for the header
+    // selector) + the allDepts flag. Tier C: a MULTI-dept manager (>1 assigned
+    // dept) also gets their dept list so the header selector can offer their
+    // subset. Single-dept managers still get neither (they use `department`).
+    departments: (user.role === 'admin' || user.allDepts
+                  || (user.departments && user.departments.length > 1))
+      ? user.departments : [],
   };
   // Pre-escape the JSON server-side and pass as a single template
   // string. Two reasons we do this here instead of inline in the

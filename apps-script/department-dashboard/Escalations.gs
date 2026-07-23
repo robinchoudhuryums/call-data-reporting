@@ -127,7 +127,11 @@ function getEscalationsInit() {
     isAdmin:     isAdmin,
     allDepts:    allDepts,
     department:  user.department || null,
-    departments: (isAdmin || allDepts) ? getAllDepartments_() : (user.department ? [user.department] : []),
+    // Tier C: a multi-dept manager gets their assigned list (for the esc dept
+    // picker); single-dept managers get their one dept; admins/all-dept get all.
+    departments: (isAdmin || allDepts) ? getAllDepartments_()
+      : ((user.departments && user.departments.length) ? user.departments
+         : (user.department ? [user.department] : [])),
     neonConfigured: !!PropertiesService.getScriptProperties().getProperty('NEON_HOST'),
     statuses:    ['pending', 'pending_review', 'in_progress', 'resolved', 'rejected', 'all'],
   };
@@ -146,27 +150,44 @@ function getEscalations(req) {
   if (!user || user.role === 'none') throw new Error('Not authorized.');
 
   // Single-dept managers are pinned to their own dept; admins + all-dept
-  // managers (#1) may pick a dept or 'ALL'.
-  var department, scopeAll = false;
+  // managers (#1) may pick a dept or 'ALL'. Tier C: a MULTI-dept manager may
+  // pick any of their assigned depts, or (default) see all of them (deptList).
+  var department = null, scopeAll = false, deptList = null;
   if (user.role === 'admin' || user.allDepts) {
     var reqDept = String(req.department || '').trim();
     if (!reqDept || reqDept === 'ALL') { scopeAll = true; }
     else { assertDeptAccess_(user, reqDept); department = reqDept; }
   } else {
-    department = user.department;
-    if (!department) throw new Error('Not authorized.');
+    var mine = (user.departments && user.departments.length) ? user.departments
+      : (user.department ? [user.department] : []);
+    if (!mine.length) throw new Error('Not authorized.');
+    var reqDept2 = String(req.department || '').trim();
+    if (reqDept2 && reqDept2 !== 'ALL') { assertDeptAccess_(user, reqDept2); department = reqDept2; }
+    else if (mine.length === 1) { department = mine[0]; }
+    else { deptList = mine; }   // all of the manager's assigned depts
   }
+  // Dept predicate shared by the list + aggregate queries.
+  var escDeptWhere_ = function () {
+    if (scopeAll) return { clause: '', params: [] };
+    if (deptList) return {
+      clause: 'department IN (' + deptList.map(function () { return '?'; }).join(',') + ')',
+      params: deptList.slice(),
+    };
+    return { clause: 'department = ?', params: [department] };
+  };
+  var metaDept = scopeAll ? 'ALL' : (deptList ? deptList.join(', ') : department);
 
   var status = String(req.status || 'pending').toLowerCase().trim();
   if (['pending', 'pending_review', 'in_progress', 'resolved', 'rejected', 'all'].indexOf(status) === -1) status = 'pending';
 
   var conn = getDashboardNeonConn_();
-  if (!conn) return { available: false, rows: [], meta: { department: scopeAll ? 'ALL' : department, status: status } };
+  if (!conn) return { available: false, rows: [], meta: { department: metaDept, status: status } };
   try {
     escEnsureTable_(conn);
     var where = [];
     var params = [];
-    if (!scopeAll) { where.push('department = ?'); params.push(department); }
+    var dw = escDeptWhere_();
+    if (dw.clause) { where.push(dw.clause); params = params.concat(dw.params); }
     if (status !== 'all') { where.push('status = ?'); params.push(status); }
     var sql = "SELECT COALESCE(json_agg(t ORDER BY t.occurred_at DESC NULLS LAST, t.created_at DESC), '[]')::text AS j FROM ("
             + "SELECT id, department, occurred_at::text AS occurred_at, caller, patient_name, trx, area, reason, "
@@ -191,7 +212,7 @@ function getEscalations(req) {
     // viewing Pending). Same connection, best-effort (band + chip just hide on
     // failure). Subsumes the old pending_review-only COUNT.
     var counts = { pending: 0, in_progress: 0, pending_review: 0, resolved: 0, rejected: 0 };
-    var pendingReview = 0, resolvedLast7 = 0, oldestOpen = null, overdue = 0;
+    var pendingReview = 0, resolvedMTD = 0, oldestOpen = null, overdue = 0;
     try {
       // ESC_OVERDUE_DAYS(=3) mirrors the client's overdue threshold; calendar
       // days here (plain SQL interval) so the band's Overdue count and the
@@ -203,12 +224,12 @@ function getEscalations(req) {
         + "count(*) FILTER (WHERE status = 'pending_review') AS n_review, "
         + "count(*) FILTER (WHERE status = 'resolved') AS n_resolved, "
         + "count(*) FILTER (WHERE status = 'rejected') AS n_rejected, "
-        + "count(*) FILTER (WHERE status = 'resolved' AND resolved_at >= now() - interval '7 days') AS n_resolved7, "
+        + "count(*) FILTER (WHERE status = 'resolved' AND resolved_at >= date_trunc('month', now())) AS n_resolved_mtd, "
         + "count(*) FILTER (WHERE status IN ('pending','in_progress') AND occurred_at < now() - interval '3 days') AS n_overdue, "
         + "min(occurred_at) FILTER (WHERE status IN ('pending','in_progress'))::text AS oldest_open "
-        + 'FROM escalations' + (scopeAll ? '' : ' WHERE department = ?');
+        + 'FROM escalations' + (dw.clause ? (' WHERE ' + dw.clause) : '');
       var astmt = conn.prepareStatement(asql);
-      if (!scopeAll) astmt.setString(1, department);
+      for (var ai = 0; ai < dw.params.length; ai++) astmt.setString(ai + 1, dw.params[ai]);
       var ars = astmt.executeQuery();
       if (ars.next()) {
         counts.pending        = Number(ars.getString('n_pending'))  || 0;
@@ -217,24 +238,24 @@ function getEscalations(req) {
         counts.resolved       = Number(ars.getString('n_resolved')) || 0;
         counts.rejected       = Number(ars.getString('n_rejected')) || 0;
         pendingReview = counts.pending_review;
-        resolvedLast7 = Number(ars.getString('n_resolved7')) || 0;
+        resolvedMTD = Number(ars.getString('n_resolved_mtd')) || 0;
         overdue       = Number(ars.getString('n_overdue'))   || 0;
         oldestOpen = ars.getString('oldest_open') || null;
       }
       ars.close(); astmt.close();
     } catch (ce2) { /* best-effort: band + chip just hide */ }
     return { available: true, rows: rows,
-             meta: { department: scopeAll ? 'ALL' : department, status: status,
+             meta: { department: metaDept, status: status,
                      count: rows.length,
                      pendingReviewCount: pendingReview,      // back-compat (review chip)
                      statusCounts: counts,                    // C1 band
-                     resolvedLast7: resolvedLast7,            // C1 "Resolved · 7d" tile
+                     resolvedMTD: resolvedMTD,                // C1 "Resolved · MTD" tile (R11-H)
                      overdueCount: overdue,                   // C1 "Overdue >3d" tile
                      oldestOpenAt: oldestOpen,                // C1 "Oldest open" tile
                      truncated: rows.length >= ESC_MAX_ROWS } };   // F-46
   } catch (e) {
     Logger.log('getEscalations failed: ' + (e && e.message ? e.message : e));
-    return { available: false, rows: [], meta: { department: scopeAll ? 'ALL' : department, status: status } };
+    return { available: false, rows: [], meta: { department: metaDept, status: status } };
   } finally {
     try { conn.close(); } catch (ce) {}
   }
@@ -907,8 +928,12 @@ function escAssertRowAccess_(user, rowDept) {
   // branch, `rowDept !== null` threw on EVERY row: all six worklist verbs
   // failed and getEscalationActivity's not-found shape rendered every
   // activity timeline silently blank for the role.
-  if (user.role === 'manager' && !user.allDepts && rowDept !== user.department) {
-    throw new Error('Not authorized for this department.');
+  // Tier C: a manager may hold MORE THAN ONE dept -- accept a row in any of
+  // them. `departments` is a one-element list for single-dept managers, so
+  // this is byte-equivalent to the old `rowDept !== user.department` check.
+  if (user.role === 'manager' && !user.allDepts) {
+    var mine = (user.departments && user.departments.length) ? user.departments : [user.department];
+    if (mine.indexOf(rowDept) === -1) throw new Error('Not authorized for this department.');
   }
   // admins + allDepts managers: entitled to every row, including rows
   // whose stored dept no longer matches a current roster header.

@@ -796,3 +796,99 @@ function icFetchMirroredDates_() {
   }
   return out;
 }
+
+/**
+ * READ-ONLY diagnostic -- NOT wired into any pipeline. Replays the (fragile)
+ * "cross-reference an internal queue-abandon to the agent's concurrent inbound
+ * call" idea against a Call_Legs_<iso> sheet and LOGS what path it WOULD build,
+ * plus a unique/ambiguous/miss tally, so the accuracy can be judged before
+ * anyone commits the real capture change. Writes nothing; safe to delete.
+ *
+ * CDR Import editor: previewInternalTransferPaths('2026-07-21')
+ * (no arg -> the most recent Call_Legs_* sheet). Only dates whose Call_Legs
+ * sheet still exists (~14-day retention) can be analyzed.
+ */
+function previewInternalTransferPaths(dateIso) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = null, iso = dateIso || '';
+  if (dateIso) {
+    sheet = ss.getSheetByName('Call_Legs_' + dateIso);
+  } else {
+    ss.getSheets().forEach(function (s) {
+      var m = s.getName().match(/^Call_Legs_(\d{4}-\d{2}-\d{2})$/i);
+      if (m && m[1] > iso) { iso = m[1]; sheet = s; }
+    });
+  }
+  if (!sheet) { Logger.log('previewInternalTransferPaths: no Call_Legs sheet for ' + (dateIso || '(latest)') + '.'); return; }
+
+  var legs = sheet.getDataRange().getDisplayValues();
+  legs.shift();   // header row
+
+  // Group legs by ROOT (Parent Call ID if present, else own) -- same as buildInboundCallRecords_.
+  var groups = {};
+  legs.forEach(function (r) {
+    var own = String(r[IC_COL.CALL_ID] || '').trim();
+    if (!own) return;
+    var parent = String(r[IC_COL.PARENT_CALL_ID] || '').trim();
+    var root = (parent && parent.toUpperCase() !== 'N/A') ? parent : own;
+    (groups[root] = groups[root] || []).push(r);
+  });
+
+  var isIncoming = function (l) { return String(l[IC_COL.DIRECTION] || '').trim() === 'Incoming'; };
+
+  // Index answered agent legs on CAPTURED (has-Incoming) inbound calls, for the
+  // cross-ref: ext -> when that agent was on a call + which call it was.
+  var agentBusy = [];
+  Object.keys(groups).forEach(function (root) {
+    var g = groups[root];
+    if (!g.some(isIncoming)) return;                         // not a captured inbound call
+    var entry = '', caller = '';
+    g.forEach(function (l) {
+      if (!entry && icIsQueueName_(l[IC_COL.CALLEE_NAME])) entry = String(l[IC_COL.CALLEE_NAME]).trim();
+      if (!caller && icExternalNumber_(l[IC_COL.CALLER])) caller = String(l[IC_COL.CALLER_NAME] || '').trim();
+    });
+    g.forEach(function (l) {
+      if (String(l[IC_COL.ANSWERED] || '').trim() !== 'Answered' || icTimeToSec_(l[IC_COL.TALK]) <= 0) return;
+      var ext = icDigits_(l[IC_COL.CALLEE]);                 // the agent's extension
+      var s = icParseTs_(l[IC_COL.CONNECTED]), e = icParseTs_(l[IC_COL.STOP]);
+      if (!ext || isNaN(s) || isNaN(e)) return;
+      agentBusy.push({ callId: root, ext: ext, startMs: s, endMs: e, entry: entry, caller: caller });
+    });
+  });
+
+  // Candidates: SKIPPED (internal-only) groups holding an abandoned queue leg.
+  var nCand = 0, nUnique = 0, nAmbig = 0, nMiss = 0;
+  Object.keys(groups).forEach(function (root) {
+    var g = groups[root];
+    if (g.some(isIncoming)) return;
+    var ab = g.filter(function (l) {
+      return String(l[IC_COL.ABANDONED] || '').trim() === 'Abandoned' && icIsQueueName_(l[IC_COL.CALLEE_NAME]);
+    })[0];
+    if (!ab) return;
+    nCand++;
+    var ext = icDigits_(ab[IC_COL.CALLER]);                  // the agent who placed the transfer
+    var queue = String(ab[IC_COL.CALLEE_NAME] || '').trim();
+    var tMs = icParseTs_(ab[IC_COL.START]);
+    var head = 'ABANDON ' + root + ' | ext ' + ext + ' -> ' + queue
+      + ' @ ' + String(ab[IC_COL.START]).trim() + ' (wait ' + String(ab[IC_COL.CALL_TIME] || '').trim() + ')';
+    var matches = agentBusy.filter(function (a) {
+      return a.ext === ext && a.callId !== root && !isNaN(tMs) && tMs >= a.startMs - 5000 && tMs <= a.endMs + 5000;
+    });
+    if (matches.length === 1) {
+      nUnique++;
+      var m = matches[0];
+      Logger.log(head + '\n   => PATH: ' + (m.entry || '(direct)') + ' -> agent ' + ext
+        + ' [inbound call ' + m.callId + ', caller ' + (m.caller || '?') + '] -> transfer ' + queue + ' (ABANDONED)');
+    } else if (matches.length > 1) {
+      nAmbig++;
+      Logger.log(head + '\n   => AMBIGUOUS: ' + matches.length + ' concurrent inbound calls for ext ' + ext
+        + ' -> ' + matches.map(function (m) { return m.callId; }).join(', '));
+    } else {
+      nMiss++;
+      Logger.log(head + '\n   => NO concurrent inbound call found for ext ' + ext);
+    }
+  });
+
+  Logger.log('previewInternalTransferPaths(' + iso + '): ' + nCand + ' internal queue-abandon candidate(s) -- '
+    + nUnique + ' unique-resolved, ' + nAmbig + ' AMBIGUOUS, ' + nMiss + ' unresolved.');
+}

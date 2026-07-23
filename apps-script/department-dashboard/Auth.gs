@@ -25,9 +25,76 @@
  * (Alerts/Dept Config/Outlier Fix/etc. stay `role === 'admin'`-gated). It is
  * `role: 'manager'` with `allDepts: true`, so every admin-surface check keeps
  * excluding it automatically; data-breadth gates opt it in explicitly.
+ *
+ * MULTI-DEPARTMENT manager (Tier C): a manager may hold MORE THAN ONE Access
+ * Control row (same email, different dept) -- e.g. someone who oversees two
+ * teams. resolveUser_ now UNIONS those rows into `departments` (was: only the
+ * first was honored, F13). `department` is the first (the default landing);
+ * `allDepts` stays false (they see only their assigned depts, not every dept).
+ * The security gates (assertDeptAccess_, escAssertRowAccess_) accept any dept
+ * in `departments`, so single-dept managers -- whose `departments` is a
+ * one-element list -- behave exactly as before (least-privilege preserved).
+ *
+ * ALIAS EMAILS (Tier C): in a Workspace, several addresses can route to one
+ * person (e.g. john.doe@x = john@x). The optional `EMAIL_ALIASES` Script
+ * Property maps `alias = canonical` pairs (comma-separated, tolerant grammar
+ * like DIAL_IN_LABELS / COMPANY_HOLIDAYS); resolveUser_ canonicalizes the
+ * signed-in address through it BEFORE the admin/manager lookup, so an alias
+ * inherits the canonical user's role + departments. Unset = no aliasing =
+ * pre-Tier-C behavior.
  */
 function isAllDeptsSentinel_(s) {
   return /^(all|\*)$/i.test(String(s == null ? '' : s).trim());
+}
+
+// Memo for the parsed EMAIL_ALIASES map, KEYED on the raw property string so a
+// changed property (or a fresh test) rebuilds it rather than serving a stale map.
+var EMAIL_ALIASES_MEMO_ = null;
+var EMAIL_ALIASES_MEMO_RAW_ = null;
+
+/**
+ * Parses the `EMAIL_ALIASES` Script Property into an { alias: canonical } map
+ * (both sides lowercased/trimmed). Grammar: comma- or newline-separated
+ * `alias@x = canonical@x` pairs. Tolerant (the DIAL_IN_LABELS / Skip-Dates
+ * discipline): a token missing the `=`, or with a non-email-shaped side, or
+ * that maps an address to itself, is silently dropped -- never throws, since
+ * the property is admin-curated free text with no UI validator. Memoized per
+ * execution.
+ */
+function parseEmailAliases_() {
+  var raw = '';
+  try { raw = PropertiesService.getScriptProperties().getProperty('EMAIL_ALIASES') || ''; } catch (e) { raw = ''; }
+  if (EMAIL_ALIASES_MEMO_ && EMAIL_ALIASES_MEMO_RAW_ === raw) return EMAIL_ALIASES_MEMO_;
+  var map = {};
+  String(raw).split(/[,\n]/).forEach(function (tok) {
+    var eq = tok.indexOf('=');
+    if (eq === -1) return;
+    var alias = tok.slice(0, eq).toLowerCase().trim();
+    var canon = tok.slice(eq + 1).toLowerCase().trim();
+    if (!acIsValidEmail_(alias) || !acIsValidEmail_(canon)) return;
+    if (alias === canon) return;
+    map[alias] = canon;
+  });
+  EMAIL_ALIASES_MEMO_ = map;
+  EMAIL_ALIASES_MEMO_RAW_ = raw;
+  return map;
+}
+
+/**
+ * Resolves an alias address to its canonical form via EMAIL_ALIASES. Follows
+ * at most a few hops (guarding a mis-entered A=B, B=A loop) and returns the
+ * input unchanged when it isn't an alias. Input must already be normalized
+ * (lowercased/trimmed).
+ */
+function canonicalizeEmail_(normalizedEmail) {
+  var map = parseEmailAliases_();
+  var cur = normalizedEmail;
+  for (var hops = 0; hops < 5; hops++) {
+    var next = map[cur];
+    if (!next || next === cur) break;
+    cur = next;
+  }
+  return cur;
 }
 
 function resolveUser_(email) {
@@ -35,10 +102,14 @@ function resolveUser_(email) {
   if (!normalized) {
     return { email: '', role: 'none', department: null, departments: [], allDepts: false };
   }
+  // Tier C: resolve alias -> canonical BEFORE any lookup, so an alias address
+  // inherits the canonical user's role + departments. The returned `email` is
+  // the canonical identity (what logging / recipient lookups should use).
+  const canonical = canonicalizeEmail_(normalized);
 
-  if (isAdmin_(normalized)) {
+  if (isAdmin_(canonical)) {
     return {
-      email: normalized,
+      email: canonical,
       role: 'admin',
       department: null,
       departments: getAllDepartments_(),
@@ -46,27 +117,31 @@ function resolveUser_(email) {
     };
   }
 
-  const dept = getManagerDepartment_(normalized);
-  if (dept) {
-    if (isAllDeptsSentinel_(dept)) {
+  const depts = getManagerDepartments_(canonical);
+  if (depts.length) {
+    // Any ALL/* sentinel row wins -> all-departments manager (data breadth of
+    // an admin, no admin surfaces).
+    if (depts.some(isAllDeptsSentinel_)) {
       return {
-        email: normalized,
+        email: canonical,
         role: 'manager',
         department: null,
         departments: getAllDepartments_(),
         allDepts: true,
       };
     }
+    // One OR more specific depts: a single-dept manager is just the
+    // one-element case (behaves exactly as before).
     return {
-      email: normalized,
+      email: canonical,
       role: 'manager',
-      department: dept,
-      departments: [dept],
+      department: depts[0],
+      departments: depts,
       allDepts: false,
     };
   }
 
-  return { email: normalized, role: 'none', department: null, departments: [], allDepts: false };
+  return { email: canonical, role: 'none', department: null, departments: [], allDepts: false };
 }
 
 function isAdmin_(normalizedEmail) {
@@ -76,22 +151,32 @@ function isAdmin_(normalizedEmail) {
 }
 
 /**
- * Reads the Access Control sheet for a manager's department. Returns
- * the department string or null. Cached per email.
+ * Reads the Access Control sheet for ALL of a manager's departments. Returns
+ * a distinct, sheet-order list of dept strings (empty if the email isn't a
+ * manager). Tier C: multiple rows for one email are UNIONED (was: only the
+ * first honored). Cached per email (JSON-encoded list; '__none__' sentinel
+ * for no-match, matching the prior cache contract).
  */
-function getManagerDepartment_(normalizedEmail) {
+function getManagerDepartments_(normalizedEmail) {
   const cache = CacheService.getScriptCache();
   const cacheKey = 'access:' + normalizedEmail;
   const cached = cache.get(cacheKey);
   if (cached !== null) {
-    return cached === '__none__' ? null : cached;
+    if (cached === '__none__') return [];
+    // JSON list (Tier C). A pre-deploy bare-string value (old format) fails
+    // Array.isArray / JSON.parse and falls through to a fresh sheet read --
+    // self-heals within the 60s TTL, no cache-key bump needed.
+    try {
+      const arr = JSON.parse(cached);
+      if (Array.isArray(arr)) return arr;
+    } catch (e) { /* fall through to re-read */ }
   }
 
   const ss = openSpreadsheet_();
   const sheet = ss.getSheetByName(SHEETS.ACCESS_CONTROL);
   if (!sheet || sheet.getLastRow() < 2) {
     cache.put(cacheKey, '__none__', AUTH_CACHE_TTL_SECONDS);
-    return null;
+    return [];
   }
 
   // Read just the Email + Department columns.
@@ -100,28 +185,17 @@ function getManagerDepartment_(normalizedEmail) {
   for (let i = 0; i < rows.length; i++) {
     const rowEmail = String(rows[i][0] || '').toLowerCase().trim();
     const rowDept = String(rows[i][1] || '').trim();
-    if (rowEmail === normalizedEmail && rowDept) matches.push(rowDept);
+    if (rowEmail === normalizedEmail && rowDept && matches.indexOf(rowDept) === -1) {
+      matches.push(rowDept);
+    }
   }
   if (matches.length) {
-    // F13: the schema is one row per manager, and the dashboard pins a
-    // manager to a single department (assertDeptAccess_ + the UI use the
-    // singular dept). If a manager matches MULTIPLE rows with DIFFERENT
-    // depts, only the first is honored -- log a warning so the ignored
-    // row(s) are detectable rather than silently dropped (the operator may
-    // have assumed multi-row = multi-dept).
-    const distinct = matches.filter(function (d, i) { return matches.indexOf(d) === i; });
-    if (distinct.length > 1) {
-      Logger.log('getManagerDepartment_: %s matches %s Access Control depts (%s); using the '
-        + 'first (%s). Managers are pinned to one dept -- remove the extra row(s), or grant '
-        + 'admin for cross-dept access.', normalizedEmail, distinct.length,
-        distinct.join(', '), matches[0]);
-    }
-    cache.put(cacheKey, matches[0], AUTH_CACHE_TTL_SECONDS);
-    return matches[0];
+    cache.put(cacheKey, JSON.stringify(matches), AUTH_CACHE_TTL_SECONDS);
+    return matches;
   }
 
   cache.put(cacheKey, '__none__', AUTH_CACHE_TTL_SECONDS);
-  return null;
+  return [];
 }
 
 /**
@@ -197,30 +271,64 @@ function getAccessControlInit() {
     }
     rows.sort(function (a, b) { return a.email.toLowerCase().localeCompare(b.email.toLowerCase()); });
   }
-  return { rows: rows, departments: getAllDepartments_(), adminEmails: getAdminEmails_() };
+  // Tier C: also return a GROUPED view (one entry per email with its full
+  // dept list) so the editor can render + edit multi-department managers.
+  // `rows` (raw, one per row) is kept unchanged for back-compat.
+  const byEmail = {};
+  const managers = [];
+  rows.forEach(function (r) {
+    const key = r.email.toLowerCase();
+    if (!byEmail[key]) {
+      byEmail[key] = { email: r.email, departments: [], notes: r.notes || '' };
+      managers.push(byEmail[key]);
+    }
+    if (r.department && byEmail[key].departments.indexOf(r.department) === -1) {
+      byEmail[key].departments.push(r.department);
+    }
+    if (!byEmail[key].notes && r.notes) byEmail[key].notes = r.notes;
+  });
+  return { rows: rows, managers: managers, departments: getAllDepartments_(), adminEmails: getAdminEmails_() };
 }
 
 /**
- * Upsert a manager keyed by EMAIL (lowercased). A manager is pinned to one
- * dept, so save sets that email's single row -- updating the FIRST matching
- * row's dept/notes if present (logging if there were stray duplicates),
- * else appending. Validates email shape + a real department.
+ * Set a manager's departments (Tier C: replace-all by EMAIL). Accepts
+ * `req.departments` (an array) OR the legacy single `req.department`. Every
+ * dept must be a real roster header OR the "ALL"/"*" sentinel (stored
+ * canonically as "ALL", which is EXCLUSIVE -- if present, the manager gets a
+ * single ALL row). All of the email's existing rows are removed and one row
+ * per resolved dept is appended, so re-saving can't silently collapse a
+ * multi-dept manager (nor leave stray duplicates). Validates BEFORE any write.
  */
 function saveAccessControlRow(req) {
   assertAdmin_();
   const email = String((req && req.email) || '').trim();
-  const department = String((req && req.department) || '').trim();
   const notes = String((req && req.notes) || '').trim().slice(0, 500);
+  // Accept an array (departments) or the legacy single department.
+  let requested = [];
+  if (req && Array.isArray(req.departments)) requested = req.departments;
+  else if (req && req.department != null) requested = [req.department];
+  requested = requested.map(function (d) { return String(d || '').trim(); }).filter(Boolean);
+
   if (!acIsValidEmail_(email)) throw new Error('Enter a valid email address.');
-  if (!department) throw new Error('Department is required.');
-  // #1: "ALL" (or "*") is the all-departments-manager sentinel; otherwise the
-  // value must be a real roster column header. Store the sentinel canonically
-  // as "ALL" so resolveUser_ sees a consistent value.
-  const departmentToStore = isAllDeptsSentinel_(department) ? 'ALL' : department;
-  if (departmentToStore !== 'ALL' && getAllDepartments_().indexOf(department) === -1) {
-    throw new Error('"' + department + '" is not a department. It must match a '
-      + 'DO NOT EDIT! roster column header exactly, or be "ALL" for '
-      + 'all-department (read-only, no admin surfaces) access.');
+  if (!requested.length) throw new Error('Pick at least one department.');
+
+  // Validate + canonicalize. ALL/* is the all-departments sentinel and is
+  // EXCLUSIVE: if any requested value is the sentinel, the stored set is
+  // exactly ["ALL"] (mixing ALL with specific depts is meaningless).
+  const allDepts = getAllDepartments_();
+  let toStore = [];
+  const hasAll = requested.some(isAllDeptsSentinel_);
+  if (hasAll) {
+    toStore = ['ALL'];
+  } else {
+    requested.forEach(function (d) {
+      if (allDepts.indexOf(d) === -1) {
+        throw new Error('"' + d + '" is not a department. It must match a '
+          + 'DO NOT EDIT! roster column header exactly, or be "ALL" for '
+          + 'all-department (read-only, no admin surfaces) access.');
+      }
+      if (toStore.indexOf(d) === -1) toStore.push(d);
+    });
   }
   const normalized = email.toLowerCase();
 
@@ -230,34 +338,32 @@ function saveAccessControlRow(req) {
     const ss = openSpreadsheet_();
     let sheet = ss.getSheetByName(SHEETS.ACCESS_CONTROL);
     if (!sheet) throw new Error('Access Control sheet missing -- run setup().');
+    // Replace-all: delete every existing row for this email (bottom-up so
+    // indices don't shift), then append one row per resolved dept.
     const lastRow = sheet.getLastRow();
-    let firstMatch = -1, dupes = 0;
     if (lastRow >= 2) {
       const col = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
-      for (let i = 0; i < col.length; i++) {
+      for (let i = col.length - 1; i >= 0; i--) {
         if (String(col[i][0] || '').toLowerCase().trim() === normalized) {
-          if (firstMatch === -1) firstMatch = i + 2; else dupes++;
+          sheet.deleteRow(i + 2);
         }
       }
     }
-    // CORE-7 + L4: neutralize formula-leading values on ALL three admin-entered
-    // columns. `department` is roster-validated (real header, safe) but wrapped
+    // CORE-7 + L4: neutralize formula-leading values on ALL admin-entered
+    // columns. Depts are roster-validated (real header / ALL, safe) but wrapped
     // for uniformity; `email` MUST be wrapped -- acIsValidEmail_'s regex
     // (`[^@\s]+@...`) admits a formula-leading address like `=cmd|'..'!A1@x.com`,
     // which under "Execute as: Me" would evaluate as a live cell in a sheet read
     // on every request. A normal email passes through unchanged.
-    if (firstMatch > 0) {
-      sheet.getRange(firstMatch, 1, 1, 3).setValues([[sheetSafeCell_(email), sheetSafeCell_(departmentToStore), sheetSafeCell_(notes)]]);
-      if (dupes > 0) Logger.log('saveAccessControlRow: %s had %s duplicate row(s); updated the first only.', normalized, dupes);
-    } else {
-      sheet.appendRow([sheetSafeCell_(email), sheetSafeCell_(departmentToStore), sheetSafeCell_(notes)]);
-    }
+    toStore.forEach(function (d) {
+      sheet.appendRow([sheetSafeCell_(email), sheetSafeCell_(d), sheetSafeCell_(notes)]);
+    });
     CacheService.getScriptCache().remove('access:' + normalized);
-    Logger.log('saveAccessControlRow: %s -> %s by %s', normalized, departmentToStore, Session.getActiveUser().getEmail());
+    Logger.log('saveAccessControlRow: %s -> [%s] by %s', normalized, toStore.join(', '), Session.getActiveUser().getEmail());
   } finally {
     lock.releaseLock();
   }
-  return { saved: true };
+  return { saved: true, departments: toStore };
 }
 
 /** Remove ALL Access Control rows for an email (revokes manager access). */
