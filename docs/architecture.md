@@ -301,7 +301,13 @@ Neon Postgres is the long-term archive and the future query backend.
   call from Raw Data (caller HMAC hash, dial-in line, disposition +
   abandon stage, abandoned-on-hold + hold/wait seconds, queue journey)
   and upserts them to Neon's `inbound_calls` (PK `(call_date,
-  call_id)`, `ON CONFLICT DO UPDATE`). Historical gaps are filled by
+  call_id)`, `ON CONFLICT DO UPDATE`). The journey is enriched with
+  internal-transfer paths (R11-N): when the answering agent transfers
+  the caller to a queue where they then abandon — a separate internal
+  leg group the builder otherwise drops — the abandon is cross-referenced
+  back to that agent's concurrent inbound and, ONLY on a unique match,
+  appended as a synthetic `transfer:true` abandon event (journey-only;
+  no disposition/count/queue field changes). Historical gaps are filled by
   the editor-run `backfillInboundCalls` (same file; iterates surviving
   `Call_Legs_*` sheets, skips already-mirrored dates, time-budgeted).
   `cdr-report/inboundCallsExport.js::exportInboundCalls` mirrors

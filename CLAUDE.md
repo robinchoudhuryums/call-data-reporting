@@ -472,7 +472,32 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   IVR/queue/agent legs with timestamps, durations, talk/hold seconds,
   missed/abandoned flags; capped at `IC_JOURNEY_MAX_EVENTS`=40; callee
   names that look like phone numbers are MASKED so no raw number lands
-  in Neon). The writer's idempotent `ALTER TABLE ... ADD COLUMN IF NOT
+  in Neon). **Internal-transfer path enrichment (R11-N):** when an agent
+  ANSWERS an inbound call and TRANSFERS the caller to a queue where the
+  caller then abandons, that transfer is a SEPARATE internal-only leg
+  group (no Incoming leg) which the record builder drops -- so the
+  caller's journey used to just end at the transfer. `buildInboundCallRecords_`
+  now cross-references each such internal queue-abandon to the answering
+  agent's concurrent captured inbound call and, ONLY on a UNIQUE match
+  (that agent's Answered + Talk>0 leg overlapping the abandon within
+  +/-5s), APPENDS one synthetic `{kind:queue, abandoned:true, transfer:true}`
+  event to that call's journey. Strictly JOURNEY-ONLY -- disposition /
+  counts / entryQueue / finalQueue / numQueues / numTransfers are NEVER
+  touched (zero metric impact), and 0-or->1 matches are left as-is (it
+  never guesses). Pure + deterministic over Raw Data, so a re-import
+  within the ~14-day Call_Legs window re-enriches old journeys
+  idempotently. Surfaces in Caller Lookup + the Inbound per-call journey
+  drills (which read `inbound_calls` by the caller's OWN call); whether
+  the Missed report's abandon-🚨 "↳ path" resolves depends on which
+  parent id the DQE pipeline stamps into col AD (unverified -- the
+  DQE build was intentionally not touched). Two read-only editor
+  diagnostics scoped the fix and its ceiling: `previewInternalTransferPaths`
+  (unique/ambiguous/unresolved tally + an unresolved breakdown --
+  ironclad-Talk=0-recoverable / time-window near-miss / chained-uncaptured)
+  and `previewInternalTransferChains` (PHI-masked deep-dive on the
+  chained bucket + a bounded 1-hop trace); both write nothing and are
+  safe to delete. Pinned by `tests/unit/inbound-calls.test.js`. The
+  writer's idempotent `ALTER TABLE ... ADD COLUMN IF NOT
   EXISTS` upgrades pre-extension tables in place; the inline insert
   chunks SIZE-AWARE via `icChunkTuplesByChars_` (30K-char budget per
   statement, `IC_SQL_CHUNK_BUDGET_CHARS`) because journey rows vary
