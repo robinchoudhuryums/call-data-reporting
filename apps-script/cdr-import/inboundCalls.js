@@ -1026,3 +1026,158 @@ function previewInternalTransferPaths(dateIso) {
     }
   }
 }
+
+/**
+ * READ-ONLY deep-dive for the CHAINED/UNCAPTURED bucket of
+ * previewInternalTransferPaths -- the internal queue-abandons where the
+ * abandoning agent's extension never DIRECTLY answered a captured inbound
+ * (so the base ext-match can't reach it: the caller arrived at that agent via
+ * ANOTHER agent or a queue transfer). For each such case it dumps, PHI-masked,
+ * HOW the call reached the abandoning agent (every leg that rang that ext,
+ * nearest-in-time first: who was on the other end, whether that leg's call was
+ * a captured inbound, and the disposition/talk/timing) and attempts a bounded
+ * 1-HOP trace -- if a single upstream agent uniquely answered a captured
+ * inbound overlapping the abandon, it reports the full reconstructable path.
+ * The tally at the end says how many chained cases a unique 1-hop trace would
+ * surface, so a follow-up capture change can be judged against the same
+ * 0-ambiguity bar as the base build. Writes nothing; safe to delete.
+ *
+ * PHI: external caller numbers/names are NEVER printed -- only internal
+ * extensions, queue tokens, and timings. CDR Import editor:
+ *   previewInternalTransferChains('2026-07-20')   // no arg -> latest sheet
+ */
+function previewInternalTransferChains(dateIso) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = null, iso = dateIso || '';
+  if (dateIso) {
+    sheet = ss.getSheetByName('Call_Legs_' + dateIso);
+  } else {
+    ss.getSheets().forEach(function (s) {
+      var m = s.getName().match(/^Call_Legs_(\d{4}-\d{2}-\d{2})$/i);
+      if (m && m[1] > iso) { iso = m[1]; sheet = s; }
+    });
+  }
+  if (!sheet) { Logger.log('previewInternalTransferChains: no Call_Legs sheet for ' + (dateIso || '(latest)') + '.'); return; }
+
+  var rows = sheet.getDataRange().getDisplayValues();
+  rows.shift();
+
+  // Group by root (Parent if present, else own) -- same stitching as capture.
+  var groups = {};
+  rows.forEach(function (r) {
+    var own = String(r[IC_COL.CALL_ID] || '').trim();
+    if (!own) return;
+    var parent = String(r[IC_COL.PARENT_CALL_ID] || '').trim();
+    var root = (parent && parent.toUpperCase() !== 'N/A') ? parent : own;
+    (groups[root] = groups[root] || []).push(r);
+  });
+  var isIncoming = function (l) { return String(l[IC_COL.DIRECTION] || '').trim() === 'Incoming'; };
+  var captured = {};
+  Object.keys(groups).forEach(function (root) { captured[root] = groups[root].some(isIncoming); });
+
+  // Classify a caller cell without leaking PHI.
+  var callerInfo = function (cell) {
+    var raw = String(cell == null ? '' : cell).trim();
+    if (icExternalNumber_(raw)) return { kind: 'external', ext: '', show: '(external caller)' };
+    if (/queue/i.test(raw)) return { kind: 'queue', ext: icDigits_(raw), show: raw.slice(0, 40) };
+    var d = icDigits_(raw);
+    if (d && /^\d{2,5}$/.test(d)) return { kind: 'ext', ext: d, show: 'ext ' + d };
+    return { kind: 'other', ext: '', show: raw ? raw.slice(0, 24) : '(blank)' };
+  };
+
+  // Flatten every leg with parsed fields, for the neighborhood scan.
+  var allLegs = [];
+  Object.keys(groups).forEach(function (root) {
+    groups[root].forEach(function (l) {
+      var ci = callerInfo(l[IC_COL.CALLER]);
+      allLegs.push({
+        root: root, captured: captured[root],
+        dir: String(l[IC_COL.DIRECTION] || '').trim(),
+        caller: ci,
+        calleeExt: icDigits_(l[IC_COL.CALLEE]),
+        answered: String(l[IC_COL.ANSWERED] || '').trim() === 'Answered',
+        missed: String(l[IC_COL.MISSED] || '').trim() === 'Missed',
+        abandoned: String(l[IC_COL.ABANDONED] || '').trim() === 'Abandoned',
+        talk: icTimeToSec_(l[IC_COL.TALK]),
+        startMs: icParseTs_(l[IC_COL.START]),
+        connMs: icParseTs_(l[IC_COL.CONNECTED]),
+        stopMs: icParseTs_(l[IC_COL.STOP])
+      });
+    });
+  });
+
+  // ext -> answered a captured inbound (Talk>0): the base build's resolvable set.
+  var extAnsweredCaptured = {};
+  allLegs.forEach(function (a) {
+    if (a.captured && a.answered && a.talk > 0 && a.calleeExt) extAnsweredCaptured[a.calleeExt] = true;
+  });
+
+  var nCase = 0, nOneHop = 0, nViaQueue = 0, nNoSource = 0;
+  Object.keys(groups).forEach(function (root) {
+    if (captured[root]) return;
+    var g = groups[root];
+    var ab = g.filter(function (l) {
+      return String(l[IC_COL.ABANDONED] || '').trim() === 'Abandoned' && icIsQueueName_(l[IC_COL.CALLEE_NAME]);
+    })[0];
+    if (!ab) return;
+    var X = icDigits_(ab[IC_COL.CALLER]);
+    var T = icParseTs_(ab[IC_COL.START]);
+    if (!X || isNaN(T)) return;
+    if (extAnsweredCaptured[X]) return;   // handled by the base build / near-miss bucket, not chained
+    nCase++;
+    var queue = String(ab[IC_COL.CALLEE_NAME] || '').trim();
+    Logger.log('CHAIN CASE ' + nCase + ': ext ' + X + ' -> ' + queue + ' ABANDONED @ '
+      + String(ab[IC_COL.START]).trim() + ' (internal group ' + root + ')');
+
+    // (a) Every leg that RANG ext X, nearest to the abandon time first.
+    var delivered = allLegs.filter(function (a) { return a.calleeExt === X && !isNaN(a.startMs) && a.root !== root; })
+      .sort(function (p, q) { return Math.abs(p.startMs - T) - Math.abs(q.startMs - T); })
+      .slice(0, 6);
+    if (!delivered.length) {
+      Logger.log('   (nothing in this sheet rang ext ' + X + ' -- source call is outside the day / uncaptured)');
+    }
+    delivered.forEach(function (a) {
+      Logger.log('   <- rung by ' + a.caller.show + ' | group ' + a.root
+        + (a.captured ? ' [CAPTURED inbound]' : ' [internal]') + ' | ' + a.dir
+        + ' | ' + (a.answered ? 'Answered talk=' + a.talk + 's' : (a.missed ? 'Missed' : (a.abandoned ? 'Abandoned' : '-')))
+        + ' | ' + (isNaN(a.connMs) ? '--:--:--' : icIsoTime_(a.connMs)) + '..' + (isNaN(a.stopMs) ? '--:--:--' : icIsoTime_(a.stopMs))
+        + ' | dT ' + Math.round((a.startMs - T) / 1000) + 's');
+    });
+
+    // (b) Bounded 1-HOP trace: did a single upstream AGENT (an ext, not a queue)
+    //     who rang X also answer a captured inbound overlapping the abandon?
+    var upstreamAgents = {};
+    delivered.forEach(function (a) { if (a.caller.kind === 'ext' && a.caller.ext) upstreamAgents[a.caller.ext] = true; });
+    var hopRoots = {};
+    Object.keys(upstreamAgents).forEach(function (Y) {
+      allLegs.forEach(function (a) {
+        if (a.captured && a.answered && a.talk > 0 && a.calleeExt === Y
+            && !isNaN(a.connMs) && !isNaN(a.stopMs) && T >= a.connMs - 5000 && T <= a.stopMs + 5000) {
+          hopRoots[a.root] = Y;
+        }
+      });
+    });
+    var roots = Object.keys(hopRoots);
+    if (roots.length === 1) {
+      nOneHop++;
+      Logger.log('   => 1-HOP RESOLVABLE (unique): captured inbound ' + roots[0]
+        + ' answered by ext ' + hopRoots[roots[0]] + ' -> transferred to ext ' + X
+        + ' -> ' + queue + ' (ABANDONED).');
+    } else if (roots.length > 1) {
+      Logger.log('   => 1-hop AMBIGUOUS: ' + roots.length + ' upstream captured inbounds -- would not auto-resolve.');
+    } else if (delivered.some(function (a) { return a.caller.kind === 'queue'; })) {
+      nViaQueue++;
+      Logger.log('   => reached ext ' + X + ' via a QUEUE ring (not an agent transfer) -- upstream is whoever entered that queue; needs queue-membership tracing, not a 1-hop agent trace.');
+    } else if (!delivered.length) {
+      nNoSource++;
+    } else {
+      Logger.log('   => no upstream captured inbound within window -- deeper chain (2+ hops) or the source leg was itself uncaptured.');
+    }
+  });
+
+  Logger.log('previewInternalTransferChains(' + iso + '): ' + nCase + ' chained/uncaptured case(s) -- '
+    + nOneHop + ' resolvable via a UNIQUE 1-hop agent trace, ' + nViaQueue + ' reached via a queue ring, '
+    + nNoSource + ' with no source leg in the sheet.');
+  Logger.log('  (Paste this whole log back: the "<- rung by" lines show the real link structure so the '
+    + 'accurate join for these can be designed against the same 0-ambiguity bar.)');
+}
