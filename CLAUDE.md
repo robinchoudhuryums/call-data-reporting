@@ -928,12 +928,16 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   request-shape, cache, or gate changes. **Simple** hides (CSS
   `ds-density-simple` class on `#insights-results`): the Team-detail
   `<details>` (queue health + admin heatmap + share donut), the 12-mo
-  trend (`#ins-trend-wrap` + its zone label), and the cross-agent Chart
-  controls (`insApplyCardsView_` forces the cards DISPLAY without touching
-  the saved `insCardsView` pref); collapses the On-par/Ahead card tiers
-  behind one "+N on track" `<details>` (`insRenderAgentCards_` density
-  branch -- Behind-team stays expanded); and shows a "Simple view --
-  ...hidden. Switch to Detailed" note. **Chart trap (C3):** Simple SKIPS
+  team trend (`#ins-trend-wrap` + its zone label), and the cross-agent Chart
+  controls (view/basis/metric). **R11-M: in Simple the Agents section shows
+  the per-agent CHART forced to the Trend basis** (`insApplyCardsView_` sets
+  `chartView=true` in Simple; `insRenderCardsChart_` forces `mode='trend'` --
+  neither touches the saved `insCardsView`/`insCardsChartMode` prefs, which
+  restore in Detailed); the per-agent cards + the On-par/Ahead tier collapse
+  are the DETAILED view now (was: Simple forced the cards; `#ins-cards-chart-wrap`
+  was dropped from the `ds-density-simple` hide list). Simple shows a "Simple
+  view -- ...hidden, and Agents shows the per-agent trend chart. Switch to
+  Detailed" note. **Chart trap (C3):** Simple SKIPS
   the trend/share/heatmap builds (`insDrawTrendChart_` gives up after 30
   hidden frames), and `insSetDensity_('detailed')` rebuilds all three --
   never render-then-hide a chart. The quick-start chips keep their promise
@@ -1054,7 +1058,11 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   pieces, all in script.html/styles.html with no server endpoints or
   cache bumps: (1) **answer-first headlines** -- every report's results
   open with 2-3 plain sentences via `reportHeadline_` + per-report
-  `*Headline_` composers (each guards its no-data case). The headline is
+  `*Headline_` composers (each guards its no-data case). **R11-M: a
+  per-user Settings toggle ("Show report summary banners", localStorage
+  `cdr.headlines`) hides ALL `.report-headline` banners via `body.headlines-off`
+  for users who find the tone distracting; the `report-headlines` UI flag is
+  the admin-global equivalent.** The headline is
   a STATUS-TONED banner (redesign): a composer may return
   `{sentences, tone}` instead of a bare array, where `tone` comes from
   `headlineTone_` using ONLY the 92%/5% company standards (answer >=92%
@@ -1135,8 +1143,12 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   fails. The chrome layer also writes `dash-mode` (light/dark toggle),
   `dash-theme.v1` (warm / cool / clinical paper theme), and
   `cdr.charts.tooltips` (R11-G global chart hover-card on/off, Settings
-  → "Show chart hover cards") — the theme picker re-reads these on every
-  render so no cache bump is needed when palette tokens change. Default for first-time visitors
+  → "Show chart hover cards"), and `cdr.headlines` (R11-M report summary-banner
+  on/off, Settings → "Show report summary banners" — `off` adds
+  `body.headlines-off`, whose CSS hides every `.report-headline`; the
+  `report-headlines` UI flag is the admin-global equivalent) — the theme
+  picker re-reads these on every render so no cache bump is needed when
+  palette tokens change. Default for first-time visitors
   (no `dash-theme.v1` value) is `cool` since the Phase A redesign
   rollout (commit 99e7253); explicit saved values, including `'warm'`,
   are preserved untouched. The `:root` tokens in `styles.html` remain
@@ -2973,7 +2985,8 @@ items for anything it flags or doesn't cover.)
     UI-surface toggles. Comma-separated keys from the CURATED
     `Config.gs::UI_FLAG_SURFACES` registry (dept-team-strip,
     dept-queue-tiles, dept-missed-section, dept-qcd-side, ov-user-table,
-    ins-heatmap, ins-queue-health); each listed key HIDES that surface for
+    ins-heatmap, ins-queue-health, report-headlines -- R11-M, the answer-first
+    summary banners); each listed key HIDES that surface for
     ALL viewers (presentation-only -- data/endpoints/caches unchanged) while
     it's being fixed or investigated. Managed from the Health page's
     **"UI surface toggles"** editor (`getUiFlags`/`saveUiFlags`,

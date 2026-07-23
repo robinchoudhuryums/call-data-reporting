@@ -1282,6 +1282,16 @@
     const fab = $('help-fab');
     if (fab) fab.classList.toggle('is-hidden', helpFabHidden_());
   }
+  // R11-M: per-user toggle for the answer-first report summary banners
+  // (`.report-headline`). Some users find the "Watch" tone distracting. A body
+  // class + CSS hides ALL report headlines instantly + for future renders;
+  // admins can also hide them globally via the `report-headlines` UI flag.
+  function headlinesHidden_() {
+    try { return localStorage.getItem('cdr.headlines') === 'off'; } catch (e) { return false; }
+  }
+  function applyHeadlinesPref_() {
+    document.body.classList.toggle('headlines-off', headlinesHidden_());
+  }
 
   function initHelpModal() {
     const btn = $('help-btn');
@@ -1322,6 +1332,7 @@
     if (closeBtn) closeBtn.addEventListener('click', closeModal);
     if (backdrop) backdrop.addEventListener('click', closeModal);
     applyHelpFabPref_();   // honor the saved Settings pref on load
+    applyHeadlinesPref_();   // R11-M: honor the saved summary-banner pref on load
     initHelpNav_();        // wire the two-pane topic tree + search
   }
 
@@ -1398,6 +1409,8 @@
       if (fabToggle) fabToggle.checked = !helpFabHidden_();
       const ttToggle = $('chart-tooltip-toggle');
       if (ttToggle) ttToggle.checked = !CHART_TOOLTIPS_OFF_;
+      const bannerToggle = $('report-banner-toggle');
+      if (bannerToggle) bannerToggle.checked = !headlinesHidden_();
       modal.style.display = '';
       modal.setAttribute('aria-hidden', 'false');
       document.body.style.overflow = 'hidden';
@@ -1435,6 +1448,14 @@
     if (ttToggle) ttToggle.addEventListener('change', function () {
       CHART_TOOLTIPS_OFF_ = !ttToggle.checked;
       try { localStorage.setItem('cdr.charts.tooltips', ttToggle.checked ? 'on' : 'off'); } catch (e) {}
+    });
+
+    // R11-M: hide the answer-first report summary banners (per user). Applies
+    // instantly via a body class; future report renders inherit it.
+    const bannerToggle = $('report-banner-toggle');
+    if (bannerToggle) bannerToggle.addEventListener('change', function () {
+      try { localStorage.setItem('cdr.headlines', bannerToggle.checked ? 'on' : 'off'); } catch (e) {}
+      applyHeadlinesPref_();
     });
 
     // Chip click: apply + persist theme. Modal stays open so the
@@ -3210,14 +3231,16 @@
     chart.update('none');
   }
 
-  function chartSpotlightClear_(chart) {
+  function chartSpotlightClear_(chart, animate) {
     if (!chart || !chart.data) return;
     chart.data.datasets.forEach(function (ds) {
       if (chart._spotlightSkip && ds.label === chart._spotlightSkip) return;
       if (ds._origBorder != null) ds.borderColor = ds._origBorder;
       if (ds._origWidth != null) ds.borderWidth = ds._origWidth;
     });
-    chart.update('none');
+    // R11-M: transient hover-out stays instant ('none'); a pin RELEASE animates
+    // the axis zoom-back so it doesn't flash (caller passes animate=true).
+    chart.update(animate ? undefined : 'none');
   }
 
   function chartSpotlightHasPins_(chart) {
@@ -3229,9 +3252,10 @@
     if (!chart || !chart.data) return;
     if (!chartSpotlightHasPins_(chart)) {
       // R11-G: no pins -> restore the natural y-axis (fitAxis reads the empty
-      // pin set), then reset the line styling. Both applied in one update.
+      // pin set), then reset the line styling. R11-M: animate the zoom-back so
+      // releasing a solo eases out instead of flashing.
       chartSpotlightFitAxis_(chart);
-      chartSpotlightClear_(chart);
+      chartSpotlightClear_(chart, true);
       return;
     }
     const pins = chart._spotlightPins;
@@ -3247,7 +3271,10 @@
       }
     });
     chartSpotlightFitAxis_(chart);   // R11-G (item 4): zoom to the pinned series
-    chart.update('none');
+    // R11-M: animate the zoom-IN + dim on a click-pin (the hover-preview path
+    // keeps its own instant 'none' update). The global 400ms easeOutQuart
+    // (R9-6) tweens the axis + colors so the focus eases in, not flashes.
+    chart.update();
   }
 
   // Toggle a series' pin. `additive` (Shift/Cmd/Ctrl) adds/removes from the set
@@ -4821,6 +4848,7 @@
       }
       wrap.style.display = '';
       if (ids.row) { var row = $(ids.row); if (row) row.classList.remove('no-detail'); }
+      if (ids.onGridChange) ids.onGridChange();   // R11-M: smooth resize during the column transition
       initClipboardOnce();
       wrap.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }
@@ -4832,6 +4860,7 @@
       var bodyEl = $(ids.body);
       if (bodyEl) bodyEl.innerHTML = '';
       if (ids.row) { var row = $(ids.row); if (row) row.classList.add('no-detail'); }
+      if (ids.onGridChange) ids.onGridChange();   // R11-M
     }
     function toggle(idx) { if (idx === active) hide(); else show(idx); }
     return { toggle: toggle, hide: hide };
@@ -4840,7 +4869,7 @@
   const deptMissedBucketDetail_ = makeMissedBucketDetail_(
     function () { return deptMissedLastData; },
     { wrap: 'dept-missed-bucket-detail', title: 'dept-bucket-detail-title', body: 'dept-bucket-detail-body',
-      row: 'dept-missed-chart-row' });
+      row: 'dept-missed-chart-row', onGridChange: deptMissedResizeDuringTransition_ });
 
   function missedRadarCfg_(chart, onBucketClick) {
     return {
@@ -5992,6 +6021,30 @@
         } catch (e) { /* chart destroyed mid-settle */ }
       });
     });
+  }
+
+  // R11-M: resize the missed chart CONTINUOUSLY while the chart-row grid-column
+  // transition runs (open/close of the bucket drill), so the canvas bitmap
+  // tracks the shrinking/growing column every frame instead of stretching and
+  // snapping sharp only at transitionend (the residual open-flash R11-C6 left).
+  // Bounded by a deadline just past the 420ms CSS transition; resize() carries
+  // no animation so per-frame cost is trivial. Never rebuilds (the tooNarrow
+  // guard stays off).
+  var deptMissedResizeRaf_ = null;
+  function deptMissedResizeDuringTransition_() {
+    if (!deptMissedChart || typeof requestAnimationFrame !== 'function') return;
+    if (deptMissedResizeRaf_) cancelAnimationFrame(deptMissedResizeRaf_);
+    var end = Date.now() + 480;
+    var step = function () {
+      try { if (deptMissedChart) deptMissedChart.resize(); } catch (e) { /* destroyed mid-settle */ }
+      if (Date.now() < end) {
+        deptMissedResizeRaf_ = requestAnimationFrame(step);
+      } else {
+        deptMissedResizeRaf_ = null;
+        deptMissedResize_(false);   // final settle (no rebuild)
+      }
+    };
+    deptMissedResizeRaf_ = requestAnimationFrame(step);
   }
 
   // Draw (or redraw, on a Bars/Radar toggle) the dept missed chart from the
@@ -14727,10 +14780,11 @@
   }
 
   function insApplyCardsView_() {
-    // D1: Simple is cards-only -- force the cards DISPLAY without touching
-    // the saved insCardsView pref (a manager's default-chart pref survives
-    // and re-applies the moment they switch to Detailed).
-    const chartView = (insCardsView === 'chart') && !insIsSimple_();
+    // R11-M: Simple now shows the per-agent CHART (forced to the Trend basis in
+    // insRenderCardsChart_) -- the cards are the Detailed view. Detailed honors
+    // the saved insCardsView pref (cards or chart), untouched. (Was: Simple
+    // forced cards.)
+    const chartView = insIsSimple_() ? true : (insCardsView === 'chart');
     // I5a: sync the Cards/Chart toggle + Gap/Absolute sub-toggle to the active
     // state on every render, so a role default (or programmatic change) with no
     // saved pref is reflected in the buttons.
@@ -14808,8 +14862,11 @@
     const cards = ((insLastData && insLastData.agentData) || []).filter(insAgentHasActivity_);
     const meta  = (insLastData && insLastData.meta) || {};
     const ts    = (insLastData && insLastData.teamStats) || {};
-    if (insCardsChartMode === 'abs')   { insRenderCardsChartAbs_(canvas, cards); return; }
-    if (insCardsChartMode === 'trend') { insRenderCardsChartTrend_(canvas, cards); return; }
+    // R11-M: Simple forces the Trend basis (the glanceable per-agent view)
+    // without mutating the saved insCardsChartMode pref.
+    const mode = insIsSimple_() ? 'trend' : insCardsChartMode;
+    if (mode === 'abs')   { insRenderCardsChartAbs_(canvas, cards); return; }
+    if (mode === 'trend') { insRenderCardsChartTrend_(canvas, cards); return; }
     const metric = insCardsChartMetric;
     const isPct = (metric === 'pct');
     const nRoster = meta.rosterAgentCount
@@ -14903,20 +14960,28 @@
     }
     const datasets = cards.map(function (c, i) {
       const color = IR_CHART_COLORS[i % IR_CHART_COLORS.length];
+      // R11-M (metric-aware gaps): a per-agent series has real ABSENCES (months
+      // the agent wasn't active). For COUNT metrics an absent month is 0 (drop
+      // to 0 and recover); for % Answered a 0 would read as "answered none of
+      // their calls", so keep the null and BREAK the line (spanGaps:false) over
+      // the gap. This fixes the R11-H1 regression -- it copied the CONTINUOUS
+      // team trend's tension:0.4 + spanGaps:true, which drew one straight line
+      // ACROSS an absence (the "slow decline" instead of a drop-and-recover).
       const series = (c.trendMonthly || []).map(function (b) {
-        return (b && b[metric] != null) ? Number(b[metric]) : null;
+        const v = (b && b[metric] != null) ? Number(b[metric]) : null;
+        return (v == null && !isPct) ? 0 : v;
       });
       return {
         label: c.name,
-        // R11-H: match the app's canonical trend-line style (Overview /
-        // Insights team trend): tension 0.4, 2.2px lines, no resting points,
-        // no fill -- so this reads as one of the same family of charts.
         data: series,
         borderColor: color,
         backgroundColor: 'rgba(0,0,0,0)',
         borderWidth: 2.2,
-        tension: 0.4,
-        spanGaps: true,
+        // monotone keeps the curve crisp + prevents overshoot below 0 on a
+        // sharp drop-to-zero (a plain tension bezier would dip under the axis).
+        cubicInterpolationMode: 'monotone',
+        tension: 0,
+        spanGaps: false,   // % Answered breaks the line over an absent month
         pointRadius: 0,
         pointHoverRadius: 4,
         pointBackgroundColor: color,
@@ -16097,36 +16162,56 @@
     if (!canvas) return;
     const isRate = inboundDrillMetric === 'rate';
     const labels = daily.map(function (d) { return d.d; });
-    const points = daily.map(function (d) {
-      if (!isRate) return Number(d.calls) || 0;
-      const calls = Number(d.calls) || 0;
-      return calls > 0 ? Number((((Number(d.abandoned) || 0) / calls) * 100).toFixed(1)) : 0;
-    });
-    const color = isRate ? (THEME.warn || '#E15759') : (THEME.accent || '#4E79A7');
+    const accent = THEME.accent || '#4E79A7';
+    const warn = THEME.warn || '#E15759';
+    let datasets;
+    if (isRate) {
+      const points = daily.map(function (d) {
+        const calls = Number(d.calls) || 0;
+        return calls > 0 ? Number((((Number(d.abandoned) || 0) / calls) * 100).toFixed(1)) : 0;
+      });
+      datasets = [{
+        label: 'Abandon %', data: points, borderColor: warn,
+        backgroundColor: function (ctx) { return irGradientFill_(ctx.chart, warn); },
+        tension: 0.3, fill: true,
+        pointBackgroundColor: warn, pointBorderColor: THEME.paperCard, pointBorderWidth: 1.5,
+        pointRadius: 2.5, pointHoverRadius: 4,
+      }];
+    } else {
+      // R11-M: Volume view overlays the ABANDONED-call volume (warn/red) on the
+      // total-calls line so lost volume reads against total at a glance.
+      datasets = [
+        {
+          label: 'Calls', data: daily.map(function (d) { return Number(d.calls) || 0; }),
+          borderColor: accent,
+          backgroundColor: function (ctx) { return irGradientFill_(ctx.chart, accent); },
+          tension: 0.3, fill: true,
+          pointBackgroundColor: accent, pointBorderColor: THEME.paperCard, pointBorderWidth: 1.5,
+          pointRadius: 2.5, pointHoverRadius: 4,
+        },
+        {
+          label: 'Abandoned', data: daily.map(function (d) { return Number(d.abandoned) || 0; }),
+          borderColor: warn, backgroundColor: 'rgba(0,0,0,0)',
+          tension: 0.3, fill: false,
+          pointBackgroundColor: warn, pointBorderColor: THEME.paperCard, pointBorderWidth: 1.5,
+          pointRadius: 2.5, pointHoverRadius: 4,
+        },
+      ];
+    }
     inboundDrillChart = safeChart_(canvas.getContext('2d'), {
       type: 'line',
-      data: {
-        labels: labels,
-        datasets: [{
-          label: isRate ? 'Abandon %' : 'Calls',
-          data: points,
-          borderColor: color,
-          backgroundColor: function (ctx) { return irGradientFill_(ctx.chart, color); },
-          tension: 0.3, fill: true,
-          pointBackgroundColor: color,
-          pointBorderColor: THEME.paperCard, pointBorderWidth: 1.5,
-          pointRadius: 2.5, pointHoverRadius: 4,
-        }],
-      },
+      data: { labels: labels, datasets: datasets },
       options: {
         responsive: true, maintainAspectRatio: false,
         plugins: {
-          legend: { display: false },
+          legend: { display: !isRate, position: 'bottom', labels: { boxWidth: 12, usePointStyle: true } },
           datalabels: { display: false },
           tooltip: {
             callbacks: {
               label: function (ctx) {
-                return (isRate ? 'Abandon %: ' + ctx.parsed.y + '%' : 'Calls: ' + ctx.parsed.y);
+                return isRate
+                  ? 'Abandon %: ' + ctx.parsed.y + '%'
+                  : ctx.dataset.label + ': ' + ctx.parsed.y;
               },
             },
           },
