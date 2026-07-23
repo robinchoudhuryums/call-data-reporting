@@ -12171,6 +12171,41 @@
       });
     }
 
+    // R11-J: floating admin A/B remote. Its buttons FORWARD a click to the
+    // real segmented controls (so the existing state/prefs/render wiring runs
+    // once, unduplicated); the metric select mirrors #ins-trend-metric.
+    // insSyncAbPanel_ reflects state back onto it after each render.
+    const abPanel = $('ins-ab-panel');
+    if (abPanel) {
+      const abForward = function (realId, attr, val) {
+        const real = $(realId);
+        if (!real) return;
+        const btn = real.querySelector('.seg-btn[' + attr + '="' + val + '"]');
+        if (btn) btn.click();
+      };
+      abPanel.addEventListener('click', function (e) {
+        const col = e.target.closest('#ins-ab-collapse');
+        if (col) {
+          const on = abPanel.classList.toggle('ins-ab-collapsed');
+          col.innerHTML = on ? '+' : '&#8211;';
+          return;
+        }
+        const vb = e.target.closest('[data-ab-view]');
+        if (vb) { abForward('ins-cards-view-toggle', 'data-view', vb.getAttribute('data-ab-view')); return; }
+        const mb = e.target.closest('[data-ab-mode]');
+        if (mb) { abForward('ins-cards-chart-mode', 'data-mode', mb.getAttribute('data-ab-mode')); return; }
+        const rb = e.target.closest('[data-ab-render]');
+        if (rb) { abForward('ins-trend-render-toggle', 'data-render', rb.getAttribute('data-ab-render')); return; }
+      });
+      const abMetric = $('ins-ab-metric');
+      if (abMetric) abMetric.addEventListener('change', function () {
+        const real = $('ins-trend-metric');
+        if (!real) return;
+        real.value = abMetric.value;
+        real.dispatchEvent(new Event('change'));
+      });
+    }
+
     // Export dropdown -- same pattern as Individual / Performance.
     const exportBtn  = $('ins-export-btn');
     const exportMenu = $('ins-export-menu');
@@ -13783,6 +13818,9 @@
         b.disabled = !calendarOk && (b.getAttribute('data-render') === 'calendar');
       });
     }
+    insSyncAbPanel_();   // R11-J: reflect render/metric/eligibility onto the
+                         // floating admin remote (runs before the calendar
+                         // early-return below so it fires on both paths).
     const useCalendar = calendarOk && insTrendRender === 'calendar';
     const calHost = $('ins-trend-calendar');
     const canvasWrap = $('ins-trend-canvas-wrap');
@@ -14491,6 +14529,46 @@
    * shows the card grid (+ quiet collapsible if any); Chart view shows a
    * grouped current-vs-prior bar across all selected agents.
    */
+  // R11-J: reflect the live Insights view state onto the floating admin A/B
+  // remote (active seg buttons + the mirrored metric select + the trend
+  // render's eligibility). No-op when the panel isn't present (non-admin).
+  function insSyncAbPanel_() {
+    const panel = $('ins-ab-panel');
+    if (!panel) return;
+    const setActive = function (attr, val) {
+      panel.querySelectorAll('[' + attr + ']').forEach(function (b) {
+        b.classList.toggle('active', b.getAttribute(attr) === val);
+      });
+    };
+    setActive('data-ab-view', insCardsView);
+    setActive('data-ab-mode', insCardsChartMode);
+    setActive('data-ab-render', insTrendRender);
+    // Basis only applies in Chart view -- dim + disable it in Cards view.
+    const basisRow = $('ins-ab-basis-row');
+    if (basisRow) {
+      basisRow.style.opacity = (insCardsView === 'chart') ? '' : '0.45';
+      basisRow.querySelectorAll('[data-ab-mode]').forEach(function (b) {
+        b.disabled = (insCardsView !== 'chart');
+      });
+    }
+    // Trend render eligibility mirrors the real toggle's disabled state.
+    const realRender = $('ins-trend-render-toggle');
+    const renderDisabled = !!(realRender && realRender.classList.contains('is-disabled'));
+    panel.querySelectorAll('[data-ab-render]').forEach(function (b) {
+      b.disabled = renderDisabled && (b.getAttribute('data-ab-render') === 'calendar');
+    });
+    // Mirror the real metric select's options + value (admin option set can
+    // differ; rebuild only when the counts diverge).
+    const realMetric = $('ins-trend-metric');
+    const abMetric = $('ins-ab-metric');
+    if (realMetric && abMetric) {
+      if (abMetric.options.length !== realMetric.options.length) {
+        abMetric.innerHTML = realMetric.innerHTML;
+      }
+      abMetric.value = realMetric.value;
+    }
+  }
+
   function insApplyCardsView_() {
     // D1: Simple is cards-only -- force the cards DISPLAY without touching
     // the saved insCardsView pref (a manager's default-chart pref survives
@@ -14528,6 +14606,7 @@
       void shownWrap.offsetWidth;   // restart the animation on repeat swaps
       shownWrap.classList.add('ins-view-fade');
     }
+    insSyncAbPanel_();   // R11-J: keep the floating admin remote in sync
   }
 
   // Reflect insCardsChartMode on the sub-toggle's buttons (restore + click).

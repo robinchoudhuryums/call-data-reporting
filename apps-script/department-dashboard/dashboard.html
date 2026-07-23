@@ -1623,6 +1623,51 @@
         </div>
       </div>
     </div>
+
+    <!-- R11-J: small FLOATING admin A/B control (Insights only). It is a
+         REMOTE for the existing view toggles -- each button forwards a click
+         to the real segmented control, so all state/prefs/render wiring fires
+         once (no duplicated logic); insSyncAbPanel_ reflects the live state
+         back onto it after each render. Admin-gated via data-admin-only (the
+         reveal loop drops the inline display:none for admins); it lives INSIDE
+         #insights-page, so it auto-hides on every other page (the fixed panel
+         is inside a display:none ancestor) and during view-as-manager. -->
+    <div id="ins-ab-panel" class="ins-ab-panel" data-admin-only style="display:none;"
+         role="group" aria-label="Admin A/B view controls">
+      <div class="ins-ab-head">
+        <span class="ins-ab-title">A/B views</span>
+        <button type="button" class="ins-ab-collapse" id="ins-ab-collapse"
+                title="Collapse / expand" aria-label="Collapse or expand">&#8211;</button>
+      </div>
+      <div class="ins-ab-body" id="ins-ab-body">
+        <div class="ins-ab-row">
+          <span class="ins-ab-lbl">Agents</span>
+          <div class="ins-ab-seg">
+            <button type="button" data-ab-view="cards">Cards</button>
+            <button type="button" data-ab-view="chart">Chart</button>
+          </div>
+        </div>
+        <div class="ins-ab-row" id="ins-ab-basis-row">
+          <span class="ins-ab-lbl">Basis</span>
+          <div class="ins-ab-seg">
+            <button type="button" data-ab-mode="gap">Gap</button>
+            <button type="button" data-ab-mode="abs">Abs</button>
+            <button type="button" data-ab-mode="trend">Trend</button>
+          </div>
+        </div>
+        <div class="ins-ab-row">
+          <span class="ins-ab-lbl">Trends</span>
+          <div class="ins-ab-seg">
+            <button type="button" data-ab-render="line">Line</button>
+            <button type="button" data-ab-render="calendar">Cal</button>
+          </div>
+        </div>
+        <div class="ins-ab-row">
+          <span class="ins-ab-lbl">Metric</span>
+          <select id="ins-ab-metric" class="ins-ab-sel" aria-label="Trend metric"></select>
+        </div>
+      </div>
+    </div>
   </section>
 
   <div id="inbound-modal" class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="inbound-modal-title" style="display:none;">

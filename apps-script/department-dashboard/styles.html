@@ -938,6 +938,44 @@
   /* R11-I (item 2): the compare + selection context, relocated out of the
      sticky header into normal flow so the pinned strip is shorter. */
   #insights-page .ins-subhead { margin: 8px 0 10px; }
+
+  /* R11-J: floating ADMIN A/B remote (Insights). A compact fixed card that
+     mirrors the in-report view toggles for quick live A/B testing. Admin-only
+     (data-admin-only) + inside #insights-page, so it auto-hides on every other
+     page and during view-as-manager. z sits below modals (100). */
+  /* sits ABOVE the Help FAB (right:20 bottom:20, 44px) so the two don't overlap. */
+  .ins-ab-panel { position: fixed; right: 20px; bottom: 76px; z-index: 90;
+    width: 188px; background: var(--paper-card); border: 1px solid var(--line);
+    border-radius: var(--r-lg); box-shadow: var(--shadow-2);
+    font: 500 12px/1.3 var(--ui); overflow: hidden; }
+  .ins-ab-head { display: flex; align-items: center; justify-content: space-between;
+    gap: 6px; padding: 6px 8px; border-bottom: 1px solid var(--line); background: var(--paper-2); }
+  .ins-ab-title { font: 600 10px/1.2 var(--mono); letter-spacing: 0.14em;
+    text-transform: uppercase; color: var(--muted); }
+  .ins-ab-collapse { width: 20px; height: 20px; border: 1px solid var(--line);
+    border-radius: var(--r); background: var(--paper-card); color: var(--ink);
+    cursor: pointer; line-height: 1; font-size: 14px; display: inline-flex;
+    align-items: center; justify-content: center; }
+  .ins-ab-collapse:hover { border-color: var(--accent); color: var(--accent); }
+  .ins-ab-body { display: flex; flex-direction: column; gap: 6px; padding: 8px; }
+  .ins-ab-panel.ins-ab-collapsed .ins-ab-body { display: none; }
+  .ins-ab-row { display: flex; align-items: center; gap: 8px; }
+  .ins-ab-lbl { flex: 0 0 42px; font-size: 11px; color: var(--muted); }
+  .ins-ab-seg { display: inline-flex; flex: 1 1 auto; border: 1px solid var(--line);
+    border-radius: var(--r); overflow: hidden; }
+  .ins-ab-seg button { flex: 1 1 auto; padding: 3px 4px; border: none;
+    border-left: 1px solid var(--line); background: var(--paper-card);
+    color: var(--ink); cursor: pointer; font: inherit; font-size: 11px; }
+  .ins-ab-seg button:first-child { border-left: none; }
+  .ins-ab-seg button:hover:not(:disabled) { background: var(--paper-2); }
+  .ins-ab-seg button.active { background: var(--ink); color: var(--paper); }
+  .ins-ab-seg button:disabled { opacity: 0.4; cursor: default; }
+  .ins-ab-sel { flex: 1 1 auto; min-width: 0; padding: 2px 4px; border: 1px solid var(--line);
+    border-radius: var(--r); background: var(--paper-card); color: var(--ink);
+    font: inherit; font-size: 11px; }
+  /* The remote is a wide-viewport convenience; hide it on small screens where
+     the fixed card would crowd the report. */
+  @media (max-width: 900px) { .ins-ab-panel { display: none !important; } }
   /* R11-I (item 2 -- ROOT CAUSE, confirmed via the owner's element dimensions):
      the top gap on Insights/Escalations was NOT the page's own top spacing. The
      Insights + Escalations pages are siblings AFTER .container (both converted
