@@ -373,6 +373,75 @@ function buildInboundCallRecords_(rawRows) {
     });
   });
 
+  // --- Internal-transfer path enrichment (journey-only, strictly additive) ---
+  // When an agent ANSWERS an inbound call and TRANSFERS the caller to a queue,
+  // that transfer is a SEPARATE internal-only leg group (no Incoming leg) which
+  // the record builder drops. If the caller then ABANDONS in the transferred-to
+  // queue, the abandon is invisible on the caller's captured inbound journey --
+  // it just ends where the agent transferred out. This pass cross-references
+  // each such internal queue-abandon to the answering agent's concurrent
+  // captured inbound call and, ONLY on a UNIQUE match (exactly one captured
+  // inbound the agent was on, Answered + Talk>0, overlapping the abandon within
+  // +/-5s), appends one synthetic transfer-abandon event to THAT call's journey.
+  //
+  // Contract (deliberately conservative -- the read-only diagnostic
+  // `previewInternalTransferPaths` settled these before this shipped):
+  //   * JOURNEY-ONLY. disposition / counts / entryQueue / finalQueue /
+  //     numQueues / numTransfers are NEVER touched -- no metric impact.
+  //   * UNIQUE-MATCH-ONLY. 0 matches (no captured inbound found) or >1 (the
+  //     agent was on two concurrent inbound calls) -> left as-is; the path
+  //     simply isn't reconstructed. It never guesses.
+  //   * PURE + DETERMINISTIC over rawRows, so a re-import reproduces the same
+  //     journey (idempotent under the ON CONFLICT upsert).
+  var recordByRoot = {};
+  records.forEach(function (rr) { recordByRoot[rr.callId] = rr; });
+
+  // Index: agent extension -> the captured inbound call they were talking on.
+  var agentBusy = [];
+  Object.keys(groups).forEach(function (root) {
+    if (!recordByRoot[root]) return;   // only captured inbound calls carry a record
+    groups[root].forEach(function (l) {
+      if (String(l[IC_COL.ANSWERED] == null ? '' : l[IC_COL.ANSWERED]).trim() !== 'Answered'
+          || icTimeToSec_(l[IC_COL.TALK]) <= 0) return;
+      var aext = icDigits_(l[IC_COL.CALLEE]);
+      var as = icParseTs_(l[IC_COL.CONNECTED]), ae = icParseTs_(l[IC_COL.STOP]);
+      if (!aext || isNaN(as) || isNaN(ae)) return;
+      agentBusy.push({ root: root, ext: aext, startMs: as, endMs: ae });
+    });
+  });
+
+  Object.keys(groups).forEach(function (root) {
+    if (recordByRoot[root]) return;    // captured inbound -> not a transfer-abandon source
+    var g = groups[root];
+    var ab = null;
+    for (var ci = 0; ci < g.length; ci++) {
+      if (String(g[ci][IC_COL.ABANDONED] == null ? '' : g[ci][IC_COL.ABANDONED]).trim() === 'Abandoned'
+          && icIsQueueName_(g[ci][IC_COL.CALLEE_NAME])) { ab = g[ci]; break; }
+    }
+    if (!ab) return;
+    var xext = icDigits_(ab[IC_COL.CALLER]);           // the agent who placed the transfer
+    if (!xext) return;
+    var tMs = icParseTs_(ab[IC_COL.START]);
+    if (isNaN(tMs)) return;
+    var matches = agentBusy.filter(function (a) {
+      return a.ext === xext && a.root !== root && tMs >= a.startMs - 5000 && tMs <= a.endMs + 5000;
+    });
+    if (matches.length !== 1) return;                  // 0 = no path; >1 = ambiguous -> no guessing
+    var rec = recordByRoot[matches[0].root];
+    if (!rec || !rec.journey || rec.journey.length >= IC_JOURNEY_MAX_EVENTS) return;
+    var qn = String(ab[IC_COL.CALLEE_NAME] == null ? '' : ab[IC_COL.CALLEE_NAME]).trim();
+    var stopMs = icParseTs_(ab[IC_COL.STOP]);
+    var ev = {
+      t: icIsoTime_(tMs),
+      name: qn.slice(0, IC_JOURNEY_NAME_MAX),
+      kind: 'queue',
+      abandoned: true,
+      transfer: true                                   // cross-referenced enrichment, not an in-call leg
+    };
+    if (!isNaN(stopMs)) ev.secs = Math.max(0, Math.round((stopMs - tMs) / 1000));
+    rec.journey.push(ev);
+  });
+
   return records;
 }
 
@@ -837,8 +906,15 @@ function previewInternalTransferPaths(dateIso) {
   var isIncoming = function (l) { return String(l[IC_COL.DIRECTION] || '').trim() === 'Incoming'; };
 
   // Index answered agent legs on CAPTURED (has-Incoming) inbound calls, for the
-  // cross-ref: ext -> when that agent was on a call + which call it was.
+  // cross-ref: ext -> when that agent was on a call + which call it was. Two
+  // tiers so the deeper diagnostic can tell an ironclad recoverable from a
+  // guess: `agentBusy` = the current signal (Answered AND Talk>0);
+  // `agentBusyZero` = Answered but Talk=0 (an immediate transfer where the
+  // metric never registered talk) -- same ext-identity + overlap signal, only
+  // the duration is missing, so a UNIQUE Talk=0 match is still ironclad.
   var agentBusy = [];
+  var agentBusyZero = [];
+  var extEverAnswered = {};   // ext -> true: answered a captured inbound at all (any talk)
   Object.keys(groups).forEach(function (root) {
     var g = groups[root];
     if (!g.some(isIncoming)) return;                         // not a captured inbound call
@@ -848,16 +924,39 @@ function previewInternalTransferPaths(dateIso) {
       if (!caller && icExternalNumber_(l[IC_COL.CALLER])) caller = String(l[IC_COL.CALLER_NAME] || '').trim();
     });
     g.forEach(function (l) {
-      if (String(l[IC_COL.ANSWERED] || '').trim() !== 'Answered' || icTimeToSec_(l[IC_COL.TALK]) <= 0) return;
+      if (String(l[IC_COL.ANSWERED] || '').trim() !== 'Answered') return;
       var ext = icDigits_(l[IC_COL.CALLEE]);                 // the agent's extension
       var s = icParseTs_(l[IC_COL.CONNECTED]), e = icParseTs_(l[IC_COL.STOP]);
       if (!ext || isNaN(s) || isNaN(e)) return;
-      agentBusy.push({ callId: root, ext: ext, startMs: s, endMs: e, entry: entry, caller: caller });
+      var rec = { callId: root, ext: ext, startMs: s, endMs: e, entry: entry, caller: caller };
+      extEverAnswered[ext] = true;
+      if (icTimeToSec_(l[IC_COL.TALK]) > 0) agentBusy.push(rec);
+      else agentBusyZero.push(rec);
     });
   });
 
+  var inWindow = function (a, tMs) {
+    return !isNaN(tMs) && tMs >= a.startMs - 5000 && tMs <= a.endMs + 5000;
+  };
+  // Smallest distance (sec) from tMs to the nearest [start,end] window of `ext`
+  // in `pool` -- 0 when inside. Quantifies a time-window near-miss.
+  var nearestGapSec = function (pool, ext, tMs) {
+    if (isNaN(tMs)) return null;
+    var best = null;
+    pool.forEach(function (a) {
+      if (a.ext !== ext) return;
+      var gap = (tMs < a.startMs) ? (a.startMs - tMs) : (tMs > a.endMs ? tMs - a.endMs : 0);
+      if (best === null || gap < best) best = gap;
+    });
+    return best === null ? null : Math.round(best / 1000);
+  };
+
   // Candidates: SKIPPED (internal-only) groups holding an abandoned queue leg.
   var nCand = 0, nUnique = 0, nAmbig = 0, nMiss = 0;
+  // Deeper breakdown of the unresolved pool:
+  var nRecoverZeroTalk = 0;   // would UNIQUELY resolve if Talk=0 answered legs counted (ironclad)
+  var nWindowNear = 0;        // ext answered a captured inbound, but the abandon is outside the window (risky to widen)
+  var nChainOrUncaptured = 0; // ext never answered a captured inbound (chained transfer / uncaptured source)
   Object.keys(groups).forEach(function (root) {
     var g = groups[root];
     if (g.some(isIncoming)) return;
@@ -872,7 +971,7 @@ function previewInternalTransferPaths(dateIso) {
     var head = 'ABANDON ' + root + ' | ext ' + ext + ' -> ' + queue
       + ' @ ' + String(ab[IC_COL.START]).trim() + ' (wait ' + String(ab[IC_COL.CALL_TIME] || '').trim() + ')';
     var matches = agentBusy.filter(function (a) {
-      return a.ext === ext && a.callId !== root && !isNaN(tMs) && tMs >= a.startMs - 5000 && tMs <= a.endMs + 5000;
+      return a.ext === ext && a.callId !== root && inWindow(a, tMs);
     });
     if (matches.length === 1) {
       nUnique++;
@@ -885,10 +984,45 @@ function previewInternalTransferPaths(dateIso) {
         + ' -> ' + matches.map(function (m) { return m.callId; }).join(', '));
     } else {
       nMiss++;
-      Logger.log(head + '\n   => NO concurrent inbound call found for ext ' + ext);
+      // Deepen: WHY did it miss, and would an ironclad relaxation resolve it?
+      var zt = agentBusyZero.filter(function (a) {
+        return a.ext === ext && a.callId !== root && inWindow(a, tMs);
+      });
+      if (zt.length === 1) {
+        nRecoverZeroTalk++;
+        var z = zt[0];
+        Logger.log(head + '\n   => UNRESOLVED (RECOVERABLE -- Talk=0 answered leg): would UNIQUELY map to '
+          + (z.entry || '(direct)') + ' inbound call ' + z.callId + ', caller ' + (z.caller || '?')
+          + ' -- excluded only by the Talk>0 gate.');
+      } else if (zt.length > 1) {
+        Logger.log(head + '\n   => UNRESOLVED (Talk=0 legs AMBIGUOUS: ' + zt.length
+          + ') -- not recoverable without guessing.');
+      } else if (extEverAnswered[ext]) {
+        nWindowNear++;
+        var gapPos = nearestGapSec(agentBusy, ext, tMs);
+        var gapAny = nearestGapSec(agentBusy.concat(agentBusyZero), ext, tMs);
+        Logger.log(head + '\n   => UNRESOLVED (time-window near-miss): ext answered a captured inbound, but the abandon sits '
+          + (gapPos != null ? gapPos + 's' : '?') + ' past the nearest Talk>0 window'
+          + (gapAny != null ? ' (' + gapAny + 's from the nearest answered leg of any talk)' : '')
+          + '. Widening the window risks ambiguity -- NOT ironclad.');
+      } else {
+        nChainOrUncaptured++;
+        Logger.log(head + '\n   => UNRESOLVED (no captured inbound for ext ' + ext
+          + '): the source call likely reached the agent via an internal transfer (chain) or was itself uncaptured. '
+          + 'Needs hop-following -- separate effort.');
+      }
     }
   });
 
   Logger.log('previewInternalTransferPaths(' + iso + '): ' + nCand + ' internal queue-abandon candidate(s) -- '
     + nUnique + ' unique-resolved, ' + nAmbig + ' AMBIGUOUS, ' + nMiss + ' unresolved.');
+  if (nMiss) {
+    Logger.log('  unresolved breakdown: ' + nRecoverZeroTalk + ' IRONCLAD-recoverable (Talk=0 unique-match), '
+      + nWindowNear + ' time-window near-miss (risky to widen), '
+      + nChainOrUncaptured + ' chained/uncaptured source (needs hop-following).');
+    if (nRecoverZeroTalk > 0) {
+      Logger.log('  => Admitting Talk=0 ANSWERED legs (still unique-match-only, no window change) would shrink '
+        + 'unresolved from ' + nMiss + ' to ' + (nMiss - nRecoverZeroTalk) + ' with ZERO new ambiguity.');
+    }
+  }
 }
