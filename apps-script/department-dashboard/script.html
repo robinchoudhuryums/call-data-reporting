@@ -1930,8 +1930,8 @@
     // visually anchors above the dept tiles (which cycle through
     // the IR palette starting at the same accent slot).
     const sparkColor = (THEME && THEME.accent) || IR_CHART_COLORS[0] || '#4E79A7';
-    const trend = (agg.trend || []).map(function (v) { return v == null ? 0 : v; });
-    const spark = trend.length ? irSparkline_(trend, sparkColor) : '';
+    // R11-L: honest 70-100% band + raw series (nulls gap-connected, not 0-filled).
+    const spark = (agg.trend || []).length ? irSparkline_(agg.trend || [], sparkColor, { band: [70, 100] }) : '';
 
     wrap.style.display = '';
     wrap.innerHTML =
@@ -2108,8 +2108,8 @@
 
   function ovBuildHeroTile_(dept, color) {
     const st = ovPeriodStats_(dept);
-    const trend = (dept.trend || []).map(function (v) { return v == null ? 0 : v; });
-    const spark = irSparkline_(trend, color);
+    // R11-L: honest 70-100% band + raw series (nulls gap-connected).
+    const spark = irSparkline_(dept.trend || [], color, { band: [70, 100] });
     const subTag = dept.parent
       ? '<span class="ov-dept-parent-tag">sub-queue &middot; ' + escapeHtml(dept.parent) + '</span>'
       : '';
@@ -2282,9 +2282,10 @@
   // accent-tinted background + tree-line connector via CSS.
   function ovBuildGridTile_(dept, color, isChild, routable, isViewer) {
     const st = ovPeriodStats_(dept);
-    const spark = irSparkline_(
-      (dept.trend || []).map(function (v) { return v == null ? 0 : v; }),
-      color);
+    // R11-L: dense grid tiles use the compact trend ARROW (real regression
+    // slope on the fixed 70-100% band) instead of the auto-scaled sparkline,
+    // which exaggerated tiny drifts. Nulls skipped (not zero-filled).
+    const spark = irTrendArrow_(dept.trend || [], { label: '% answered (30-day)' });
     const parentTag = isChild
       ? '<span class="ov-dept-parent-tag">sub-queue &middot; ' + escapeHtml(dept.parent) + '</span>'
       : '';
@@ -2325,7 +2326,7 @@
          +   '<div class="ov-dept-tile-row">'
          +     '<span><span class="ov-dept-stat-label">ATT</span> ' + escapeHtml(st.attFormatted) + '</span>'
          +   '</div>'
-         +   '<div class="ov-dept-tile-spark" title="30-day % answered trend">' + spark + '</div>'
+         +   '<div class="ov-dept-tile-spark ov-dept-tile-arrow">' + spark + '</div>'
          + '</div>';
   }
 
@@ -2361,7 +2362,8 @@
     const viol = (qcd && qcd.violations > 0)
       ? '<span class="ov-subq-metric ov-subq-metric-viol"><span class="ov-subq-metric-lbl">Viol</span> ' + qcd.violations + '</span>'
       : '';
-    const spark = irSparkline_((dept.trend || []).map(function (v) { return v == null ? 0 : v; }), color);
+    // R11-L: honest 70-100% band + raw series (nulls gap-connected).
+    const spark = irSparkline_(dept.trend || [], color, { band: [70, 100] });
     const routable = isAllDeptViewer_();
     const routeBtn = routable
       ? '<button type="button" class="ov-subq-route" data-dept="' + escapeHtml(dept.name) + '">Open ' + escapeHtml(dept.name) + ' &rarr;</button>'
@@ -8640,7 +8642,27 @@
    * innerHTML. Renders a 70x22 stroke with subtle area fill below;
    * collapses to a flat baseline if all values are 0.
    */
-  function irSparkline_(values, color) {
+  // R11-L: honest-scale band. Given a series and a fixed band [lo,hi], return
+  // the effective [min,max] GROWN to include any out-of-band outlier (so a
+  // metric that sits inside the band renders against the fixed scale -- small
+  // drifts read small -- while a rare outlier extends the scale rather than
+  // clipping). Shared by irSparkline_ (opts.band) + irTrendArrow_.
+  function honestBand_(values, band) {
+    let lo = band[0], hi = band[1];
+    (values || []).forEach(function (raw) {
+      if (raw == null) return;
+      const v = Number(raw);
+      if (!isFinite(v)) return;
+      if (v < lo) lo = v;
+      if (v > hi) hi = v;
+    });
+    return [lo, hi];
+  }
+
+  // opts.band = [lo,hi] gives an HONEST fixed scale (grown to include outliers)
+  // so tiny drifts don't fill the box (the auto-scale exaggeration). Omit opts
+  // for the legacy auto-scale (backward-compatible for count/duration sparks).
+  function irSparkline_(values, color, opts) {
     const W = 70, H = 22;
     const n = (values || []).length;
     if (n < 2) {
@@ -8653,26 +8675,127 @@
       if (v > max) max = v;
     }
     if (!isFinite(min) || !isFinite(max)) { min = 0; max = 0; }
+    if (opts && opts.band) { const b = honestBand_(values, opts.band); min = b[0]; max = b[1]; }
     const range = max - min;
     const xStep = W / (n - 1);
     const pad = 2;
     const innerH = H - pad * 2;
+    // Band callers skip null/no-data points (gap-connect) so a missing day
+    // doesn't plot as a 0% crash; legacy (no-band) callers keep null->0.
+    const skipNull = !!(opts && opts.band);
     const pts = [];
+    let firstX = 0, lastX = (n - 1) * xStep;
     for (let i = 0; i < n; i++) {
-      const v = Number(values[i]) || 0;
+      const raw = values[i];
+      if (skipNull && (raw == null || !isFinite(Number(raw)))) continue;
+      const v = Number(raw) || 0;
+      const x = i * xStep;
       const y = range === 0
         ? H / 2
         : pad + innerH - ((v - min) / range) * innerH;
-      pts.push((i * xStep).toFixed(1) + ',' + y.toFixed(1));
+      if (!pts.length) firstX = x;
+      lastX = x;
+      pts.push(x.toFixed(1) + ',' + y.toFixed(1));
+    }
+    if (pts.length < 2) {
+      return '<svg class="ir-spark-svg" width="' + W + '" height="' + H + '"></svg>';
     }
     const linePath = 'M' + pts.join(' L');
     const areaPath = linePath
-                   + ' L' + ((n - 1) * xStep).toFixed(1) + ',' + H
-                   + ' L0,' + H + ' Z';
+                   + ' L' + lastX.toFixed(1) + ',' + H
+                   + ' L' + firstX.toFixed(1) + ',' + H + ' Z';
     return '<svg class="ir-spark-svg" width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '">'
          +   '<path d="' + areaPath + '" fill="' + color + '" fill-opacity="0.15" stroke="none"/>'
          +   '<path d="' + linePath + '" fill="none" stroke="' + color + '" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>'
          + '</svg>';
+  }
+
+  // -- R11-L: compact trend ARROW (dense-tile alternative to the sparkline) ----
+  // The angle is the REAL least-squares slope of the series over the period,
+  // measured against a FIXED value band (default 70-100% for answer rate, grown
+  // to include outliers) so a 90->91% drift reads shallow and a 92->80% drop
+  // reads steep -- the "look deeper" signal. Capped at +/-60deg. Color is a
+  // red-amber-green gradient on the slope (amber = flat), saturating by +/-30deg.
+  // Nulls (no-data days) are skipped, not zero-filled. up = good by default;
+  // pass opts.inverse for a "lower is better" metric (color valence only).
+  function linRegSlope_(xs, ys) {
+    const n = xs.length;
+    if (n < 2) return 0;
+    let sx = 0, sy = 0, sxx = 0, sxy = 0;
+    for (let i = 0; i < n; i++) { sx += xs[i]; sy += ys[i]; sxx += xs[i] * xs[i]; sxy += xs[i] * ys[i]; }
+    const denom = n * sxx - sx * sx;
+    return denom === 0 ? 0 : (n * sxy - sx * sy) / denom;
+  }
+  function parseColorRgb_(s) {
+    s = String(s || '').trim();
+    let m = s.match(/^#([0-9a-f]{3})$/i);
+    if (m) { const h = m[1]; return [parseInt(h[0] + h[0], 16), parseInt(h[1] + h[1], 16), parseInt(h[2] + h[2], 16)]; }
+    m = s.match(/^#([0-9a-f]{6})$/i);
+    if (m) { const h = m[1]; return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)]; }
+    m = s.match(/rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)/i);
+    if (m) return [Math.round(+m[1]), Math.round(+m[2]), Math.round(+m[3])];
+    return [128, 128, 128];
+  }
+  function arrowAnchorColors_() {
+    const css = getComputedStyle(document.documentElement);
+    const resolve = function (token, themeKey, fallback) {
+      if (themeKey && THEME[themeKey]) return THEME[themeKey];
+      const raw = (css.getPropertyValue(token) || '').trim();
+      return raw ? colorToCanvasRgb_(raw) : fallback;
+    };
+    return {
+      good: parseColorRgb_(resolve('--good', 'good', '#3d9476')),
+      warn: parseColorRgb_(resolve('--warn', 'warn', '#d99a2b')),
+      bad:  parseColorRgb_(resolve('--bad', null, '#c0392b')),   // --bad isn't in THEME (INV-42)
+    };
+  }
+  function arrowGradientColor_(t, anchors) {
+    // t in [-1,1]: 0 = amber(warn), +1 = good, -1 = bad. Linear RGB lerp.
+    const a = anchors.warn;
+    const b = t >= 0 ? anchors.good : anchors.bad;
+    const k = Math.min(1, Math.abs(t));
+    const c = [0, 1, 2].map(function (i) { return Math.round(a[i] + (b[i] - a[i]) * k); });
+    return 'rgb(' + c[0] + ',' + c[1] + ',' + c[2] + ')';
+  }
+  function irTrendArrow_(values, opts) {
+    opts = opts || {};
+    const band = opts.band || [70, 100];
+    const W = 42, H = 22, cy = H / 2;
+    const vals = values || [];
+    const n = vals.length;
+    const eff = honestBand_(vals, band);
+    const lo = eff[0], span = (eff[1] - eff[0]) || 1;
+    const xs = [], ys = [];
+    for (let i = 0; i < n; i++) {
+      const raw = vals[i];
+      if (raw == null || !isFinite(Number(raw))) continue;
+      xs.push(n > 1 ? i / (n - 1) : 0);
+      ys.push((Number(raw) - lo) / span);
+    }
+    if (xs.length < 2) {   // not enough data to trend -> a muted flat dash
+      return '<span class="ir-trend-arrow" title="Not enough data to show a trend">'
+        + '<svg width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '" aria-hidden="true">'
+        + '<line x1="9" y1="' + cy + '" x2="33" y2="' + cy + '" stroke="' + (THEME.muted || '#999')
+        + '" stroke-width="2" stroke-linecap="round" stroke-opacity="0.5"/></svg></span>';
+    }
+    const slope = linRegSlope_(xs, ys);        // dy/dx in unit space (+ = up)
+    let angle = Math.atan(slope) * 180 / Math.PI;
+    const CAP = 60;
+    if (angle > CAP) angle = CAP; else if (angle < -CAP) angle = -CAP;
+    const signed = opts.inverse ? -angle : angle;              // valence for color
+    const color = arrowGradientColor_(Math.max(-1, Math.min(1, signed / 30)), arrowAnchorColors_());
+    const deltaPts = slope * span;                             // fitted change over the window
+    const dir = angle > 1 ? 'up' : (angle < -1 ? 'down' : 'flat');
+    const title = (opts.label || 'Trend') + ': '
+      + (deltaPts >= 0 ? '+' : '') + deltaPts.toFixed(1) + ' pts over the window (' + dir + ')';
+    // SVG y is down, so an UP trend (angle>0) rotates the arrow UP = negative.
+    const rot = (-angle).toFixed(1);
+    return '<span class="ir-trend-arrow" title="' + escapeHtml(title) + '">'
+      + '<svg width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="' + escapeHtml(title) + '">'
+      + '<g transform="rotate(' + rot + ' ' + (W / 2) + ' ' + cy + ')">'
+      + '<line x1="9" y1="' + cy + '" x2="30" y2="' + cy + '" stroke="' + color + '" stroke-width="2.6" stroke-linecap="round"/>'
+      + '<path d="M30 ' + cy + ' L24 ' + (cy - 4) + ' M30 ' + cy + ' L24 ' + (cy + 4) + '" stroke="' + color + '" stroke-width="2.6" stroke-linecap="round" fill="none"/>'
+      + '</g></svg></span>';
   }
 
   function irFlashButton(btn, text) {
