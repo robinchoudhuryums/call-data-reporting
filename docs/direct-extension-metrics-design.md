@@ -28,7 +28,7 @@ round-trip; per-agent answer rate that EXCLUDES the busy carve-out, inbound ATT,
 outbound activity + ATT, int/ext split). **Admin-only while vetted** (the
 Inbound-report model: the per-dept manager path is written + kept intact, so
 release is a one-line gate removal + un-hiding the `data-admin-only` tab).
-Cached 30 min under `directCall:v1`; unavailable payloads not cached. Client:
+Cached 30 min under `directCall:v2` (+ `kpisPrior`/`deptsPrior` for delta chips, R11-M); unavailable payloads not cached. Client:
 the **Direct** report tab (admin-only) + `#direct-call-modal` + route
 `#/report/direct` + CSV export. Unit coverage in
 `tests/unit/direct-call-report.test.js` (gate, derived rates, unavailable

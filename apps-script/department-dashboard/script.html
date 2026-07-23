@@ -15811,6 +15811,23 @@
     if (back) back.addEventListener('click', inboundShowForm);
     const csv = $('inbound-csv-btn');
     if (csv) csv.addEventListener('click', inboundDownloadCsv_);
+    const emailBtn = $('inbound-email-btn');
+    if (emailBtn) emailBtn.addEventListener('click', inboundEmailReport_);
+  }
+
+  // R11-M (#4b): email the current Inbound view to the caller (server renders a
+  // styled HTML summary; admin-gated like the report).
+  function inboundEmailReport_() {
+    if (!inboundLastData || (inboundLastData.meta || {}).available === false) return;
+    const meta = inboundLastData.meta || {};
+    const btn = $('inbound-email-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+    const restore = function () { if (btn) { btn.disabled = false; btn.textContent = 'Email me this report'; } };
+    google.script.run
+      .withSuccessHandler(function (res) { restore(); showToast('Emailed to ' + ((res && res.to) || 'you'), 'success'); })
+      .withFailureHandler(function (err) { restore(); showToast('Email failed: ' + (err && err.message ? err.message : err), 'error'); })
+      .sendInboundReportEmail({ from: meta.from, to: meta.to,
+        department: meta.companyView ? 'ALL' : (meta.department || '') });
   }
 
   function inboundShowForm()    { $('inbound-form').style.display = ''; $('inbound-results').style.display = 'none'; inboundSetError(''); }
@@ -16935,18 +16952,25 @@
       return;
     }
 
-    // KPI tiles (reuse the inbound ds-kpi tile helper).
+    // KPI tiles (reuse the inbound ds-kpi tile helper). R11-M: delta chips vs
+    // the prior window (kpisPrior) on IB answered (up=good), IB answer rate
+    // (up=good), and OB calls (up=good, more outbound activity).
     const k = (data && data.kpis) || {};
+    const p = (data && data.kpisPrior) || null;
+    const rateDelta = (p && k.ibAnswerRate != null && p.ibAnswerRate != null)
+      ? inboundDelta_(k.ibAnswerRate, p.ibAnswerRate, 'pos', true) : '';
     const tiles = [
       inboundKpiTile_('Agents', fmtNumber(k.agents), 'with direct activity', ''),
       inboundKpiTile_('IB answered', fmtNumber(k.ibAnswered),
-        fmtNumber(k.ibMissedFree) + ' missed (free)', ''),
+        fmtNumber(k.ibMissedFree) + ' missed (free)',
+        p ? inboundDelta_(k.ibAnswered, p.ibAnswered, 'pos', false) : ''),
       inboundKpiTile_('IB answer rate', k.ibAnswerRate != null ? k.ibAnswerRate + '%' : '—',
-        'busy misses excluded', ''),
+        'busy misses excluded', rateDelta),
       inboundKpiTile_('IB missed (busy)', fmtNumber(k.ibMissedBusy), 'excused — on another call', ''),
       inboundKpiTile_('IB ATT', fmtDuration(k.ibAttSec), 'avg talk per answered', ''),
       inboundKpiTile_('OB calls', fmtNumber(k.obTotal),
-        fmtNumber(k.obConnected) + ' connected · ATT ' + fmtDuration(k.obAttSec), ''),
+        fmtNumber(k.obConnected) + ' connected · ATT ' + fmtDuration(k.obAttSec),
+        p ? inboundDelta_(k.obTotal, p.obTotal, 'pos', false) : ''),
     ];
     const kpiRow = $('direct-call-kpi-row');
     if (kpiRow) kpiRow.innerHTML = tiles.join('');
@@ -17007,6 +17031,11 @@
   // the busy carve-out like everywhere else in this report. Card order is
   // the same impact score applied to the dept aggregate.
   function directCallDeptGroups_(agents) {
+    // R11-M: prior per-dept aggregates for the header-row delta chips.
+    const priorMap = {};
+    ((directCallLastData && directCallLastData.deptsPrior) || []).forEach(function (d) {
+      priorMap[d.dept || '(unassigned)'] = d;
+    });
     const by = {};
     agents.forEach(function (r) {
       const d = r.dept || '(unassigned)';
@@ -17028,6 +17057,7 @@
       g.ibAnswerRate = answerable > 0 ? Math.round(g.ibAnswered / answerable * 1000) / 10 : null;
       g.ibAttSec = g.ibAnswered > 0 ? Math.round(g.talkSec / g.ibAnswered) : 0;
       g.impact = answerable > 0 ? (100 - g.ibAnswered / answerable * 100) * answerable : 0;
+      g.prior = priorMap[d] || null;   // R11-M
       return g;
     }).sort(function (a, b) {
       return (b.impact - a.impact) || a.dept.localeCompare(b.dept);
@@ -17062,17 +17092,29 @@
         const rateStr = g.ibAnswerRate != null ? g.ibAnswerRate + '%' : '—';
         const rateCls = g.ibAnswerRate != null
           ? benchValueCls_('% answered', g.ibAnswerRate + '%', true).trim() : '';
-        return '<details class="direct-dept-card"' + (groups.length === 1 ? ' open' : '') + '>'
+        // R11-M: a left-rail tone on the whole dept row keyed on the 92%
+        // answer-rate standard, so a struggling dept reads distinct at a glance.
+        const toneCls = g.ibAnswerRate == null ? 'ddc-tone-muted'
+          : (g.ibAnswerRate >= 92 ? 'ddc-tone-good' : 'ddc-tone-warn');
+        // R11-M: delta chips vs the prior window (per-dept). answered/OB up=good,
+        // missed up=bad, answer% up=good (pctPoints).
+        const pr = g.prior;
+        const dAns  = pr ? inboundDelta_(g.ibAnswered, pr.ibAnswered, 'pos', false) : '';
+        const dMiss = pr ? inboundDelta_(g.ibMissedFree, pr.ibMissedFree, 'neg', false) : '';
+        const dOb   = pr ? inboundDelta_(g.obTotal, pr.obTotal, 'pos', false) : '';
+        const dRate = (pr && g.ibAnswerRate != null && pr.ibAnswerRate != null)
+          ? inboundDelta_(g.ibAnswerRate, pr.ibAnswerRate, 'pos', true) : '';
+        return '<details class="direct-dept-card ' + toneCls + '"' + (groups.length === 1 ? ' open' : '') + '>'
           + '<summary class="direct-dept-head">'
           +   '<span class="direct-dept-name">' + escapeHtml(g.dept) + '</span>'
           +   '<span class="direct-dept-stats">'
           +     '<span class="ddc-stat"><b>' + fmtNumber(g.agents) + '</b> agent' + (g.agents === 1 ? '' : 's') + '</span>'
-          +     '<span class="ddc-stat"><b>' + fmtNumber(g.ibAnswered) + '</b> IB answered</span>'
-          +     '<span class="ddc-stat"><b>' + fmtNumber(g.ibMissedFree) + '</b> missed (free)</span>'
+          +     '<span class="ddc-stat"><b>' + fmtNumber(g.ibAnswered) + '</b> IB answered' + dAns + '</span>'
+          +     '<span class="ddc-stat"><b>' + fmtNumber(g.ibMissedFree) + '</b> missed (free)' + dMiss + '</span>'
           +     '<span class="ddc-stat"><b>' + fmtNumber(g.ibMissedBusy) + '</b> missed (busy)</span>'
-          +     '<span class="ddc-stat"><b' + (rateCls ? ' class="' + rateCls + '"' : '') + '>' + rateStr + '</b> answer</span>'
+          +     '<span class="ddc-stat"><b' + (rateCls ? ' class="' + rateCls + '"' : '') + '>' + rateStr + '</b> answer' + dRate + '</span>'
           +     '<span class="ddc-stat"><b>' + fmtDuration(g.ibAttSec) + '</b> IB ATT</span>'
-          +     '<span class="ddc-stat"><b>' + fmtNumber(g.obTotal) + '</b> OB</span>'
+          +     '<span class="ddc-stat"><b>' + fmtNumber(g.obTotal) + '</b> OB' + dOb + '</span>'
           +   '</span>'
           + '</summary>'
           + '<div class="direct-dept-body">'

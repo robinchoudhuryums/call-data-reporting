@@ -4271,8 +4271,14 @@
   .direct-dept-card {
     background: var(--paper-card);
     border: 1px solid var(--line);
+    border-left-width: 3px;
     border-radius: var(--r);
   }
+  /* R11-M: per-dept answer-rate tone rail (92% standard) so a struggling dept
+     reads distinct at a glance. */
+  .direct-dept-card.ddc-tone-good  { border-left-color: var(--good); }
+  .direct-dept-card.ddc-tone-warn  { border-left-color: var(--warn); }
+  .direct-dept-card.ddc-tone-muted { border-left-color: var(--line); }
   .direct-dept-card > summary.direct-dept-head {
     cursor: pointer;
     list-style: none;
