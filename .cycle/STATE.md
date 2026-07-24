@@ -1347,3 +1347,18 @@ commit/push/deploy direction.
   clips are the truth). Where I left off: batch 2 pushed on
   claude/broad-scan-ak8g04; Phase 2 findings awaiting owner pick; no PR
   opened for R12 batches yet; dashboard deploy pending.
+
+- **Increment 51 (DONE — R12 batch 3: Insights Phase-2 fixes, commit 4a30a81):**
+  R12-10 (I-1) Insights sticky header 4px viewport bleed -> spread-shadow
+  bleed (0px overflow everywhere now); R12-11 (I-2) admin A/B VIEWS card
+  defaults COLLAPSED + persists (cdr.ins.abpanel) so it can't occlude
+  chart/calendar data unnoticed; R12-12 (I-3) Agents toolbar wraps <=700px
+  (was clipped at 390 with segments unreachable); R12-13 (I-4) trend Metric
+  dropdown relocated into .ins-trend-headctl beside Monthly/Daily +
+  Line/Calendar (headctl now an explicit wrapping flex row; export onclone
+  hides it by id, unchanged). Harness-verified: 0px overflow 1440+390,
+  collapse persistence round-trip, toolbar within viewport, no page errors;
+  CI 452/452. Where I left off: R12 batches 1-3 all pushed on
+  claude/broad-scan-ak8g04, NO PR yet; /sync-docs pending for R12-1..13
+  fix-history entries + INV-41/42 oklch note; dashboard deploy pending;
+  remaining audit phases (modals beyond IR, Escalations page) unstarted.
