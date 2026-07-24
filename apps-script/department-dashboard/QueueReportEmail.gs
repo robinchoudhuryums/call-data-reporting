@@ -465,11 +465,16 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
     + '</tr></table></td></tr>';
 
   // ---- table (worst-first sections) ----
+  // Viol is RANGE-scoped (this report never mixes in MTD, unlike the per-dept
+  // dashboard tile): the daily subscriber email shows THAT DAY's violations;
+  // the manual ranged email shows the selected range's. Label accordingly.
+  const singleDay = !!(data.meta && data.meta.from && data.meta.from === data.meta.to);
+  const violHdr = singleDay ? 'Viol (day)' : 'Viol (range)';
   let tbl = '<tr style="background:' + C.headbg + ';">'
     + '<td style="padding:9px 12px;font:600 9px ' + sans + ';letter-spacing:0.8px;text-transform:uppercase;color:#8a97a4;">Queue</td>'
     + '<td align="right" style="padding:9px 8px;font:600 9px ' + sans + ';letter-spacing:0.8px;text-transform:uppercase;color:#8a97a4;">Total</td>'
     + '<td width="150" style="padding:9px 8px;font:600 9px ' + sans + ';letter-spacing:0.8px;text-transform:uppercase;color:#8a97a4;">Abandoned %</td>'
-    + '<td align="right" style="padding:9px 12px;font:600 9px ' + sans + ';letter-spacing:0.8px;text-transform:uppercase;color:#8a97a4;">Viol</td></tr>';
+    + '<td align="right" style="padding:9px 12px;font:600 9px ' + sans + ';letter-spacing:0.8px;text-transform:uppercase;color:#8a97a4;white-space:nowrap;">' + violHdr + '</td></tr>';
   ordered.forEach(function (d) {
     const sec = secTotals(d);
     const dt = tierOf(sec.pct, sec.viol);
@@ -497,7 +502,7 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
       + '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:' + stripBg + ';border-left:4px solid ' + dt.color + ';border-collapse:separate;"><tr>'
       +   '<td style="padding:8px 12px;font:bold 13px Arial,sans-serif;color:' + C.ink + ';">' + bannerName + '</td>'
       +   '<td align="right" style="padding:8px 12px;font:12px ' + sans + ';color:' + C.mut + ';white-space:nowrap;">'
-      +     esc(dCalls) + ' calls &middot; <span style="font-weight:bold;color:' + (dPct >= 5 ? C.bad : C.ink) + ';">' + esc(dAbnd) + ' abandoned</span> (' + esc(dPctStr) + ')'
+      +     esc(dCalls) + ' calls &middot; <span style="' + (dPct >= 5 ? 'font-weight:bold;color:' + C.bad : 'color:' + C.ink) + ';">' + esc(dAbnd) + ' abandoned (' + esc(dPctStr) + ')</span>'
       +   '</td>'
       + '</tr></table></td></tr>';
     if (singleRow) return;   // the banner IS the row -- no duplicate numbers
@@ -529,7 +534,7 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
   const tableBlock = depts.length
     ? ('<tr><td style="padding:18px 26px 6px;"><table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border:1px solid ' + C.line + ';border-radius:10px;border-collapse:separate;overflow:hidden;">'
       + tbl + '</table>'
-      + '<div style="font:10px ' + sans + ';color:#9aa6b2;padding:8px 2px 0;">Depts sorted worst-first &middot; bars show answered (green) vs abandoned (red) share of calls &middot; full columns (Ans/Longest/Avg) live in the dashboard.</div>'
+      + '<div style="font:10px ' + sans + ';color:#9aa6b2;padding:8px 2px 0;">Depts sorted worst-first &middot; bars show answered (green) vs abandoned (red) share of calls &middot; full columns (Ans/Longest/Avg) live in the dashboard &middot; Viol counts 5%-violations within this report\u2019s ' + (singleDay ? 'day' : 'range') + ' (not month-to-date).</div>'
       + '</td></tr>')
     : '<tr><td style="padding:18px 26px 6px;font:400 14px Arial,sans-serif;color:' + C.mut + ';">No queue activity recorded for this day.</td></tr>';
 

@@ -197,7 +197,12 @@ test('R12-22: parent-grouped sections -- child nests as a sub-row, single-queue 
   assert.match(html, /&#8627; <b>Spanish<\/b>/);
   assert.doesNotMatch(html, /bold 13px Arial,sans-serif;color:#101418;">Spanish</);
   // The CSR banner carries the SECTION total inline: 100+20 calls, 7+2 abandoned.
-  assert.match(html, /120 calls &middot; <span[^>]*>9 abandoned<\/span> \(7\.5%\)/);
+  // >=5%: count AND pct together, bold red (owner ruling).
+  assert.match(html, /120 calls &middot; <span style="font-weight:bold;color:#b23a2c;">9 abandoned \(7\.5%\)<\/span>/);
+  // <5% (Sales at 2.5%): plain ink, no bold.
+  assert.match(html, /40 calls &middot; <span style="color:#101418;">1 abandoned \(2\.5%\)<\/span>/);
+  // Range-accurate Viol header (this fixture carries no meta -> 'range').
+  assert.match(html, /Viol \(range\)/);
   // Sales stays single-queue: banner-only with the queue name inline -- the
   // old duplicate row (same numbers twice) is gone.
   assert.match(html, /Sales <span[^>]*>&middot; A_Q_SALES<\/span>/);
