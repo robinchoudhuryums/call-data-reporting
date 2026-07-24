@@ -313,6 +313,24 @@ Neon Postgres is the long-term archive and the future query backend.
   `cdr-report/inboundCallsExport.js::exportInboundCalls` mirrors
   `inbound_calls` into the "Inbound Calls" tab as a durable,
   pivot-friendly fallback copy (refresh-in-window semantics).
+- **Per-call outbound capture** (`cdr-import/outboundCalls.js`, Option
+  B — the outbound twin): right after the inbound block,
+  `processIntegratedHistory` builds one record per distinct OUTBOUND
+  external call (a leg group with NO Incoming leg + at least one
+  Outgoing leg to an external number — the no-Incoming gate keeps an
+  answered inbound call's agent 'Outgoing' talk leg out) and upserts to
+  Neon's `outbound_calls` (PK `(call_date, call_id)`, authoritative
+  per-date replace + the P-1 expected-date guard; the writer
+  auto-creates the table + `idx_outbound_calls_callee_hash`). Captures
+  the hashed callee (`callee_hash`, the same HMAC space as
+  `inbound_calls.caller_hash` / `call_history_phones`), the dialing
+  agent, connected/talk/ring/attempts, raw-PST `call_start`, and the
+  PHI-masked journey. NO sheet primary — failures surface as
+  `processIntegratedHistory:Outbound` Pipeline Health rows + email;
+  deferred mode drains it as `neonMirror:Outbound`. History: editor-run
+  `backfillOutboundCalls` (surviving `Call_Legs_*` sheets only). Sole
+  consumer: the Caller Lookup communication history, which also reads
+  `call_history_phones` day-level aggregates for pre-capture dates.
 - **Insurer labeling** (`cdr-report/insuranceNumbers.js`): the
   insurance block in `DO NOT EDIT!` (cols X–AG: header = insurer name,
   rows = that insurer's published numbers) is hashed with the same

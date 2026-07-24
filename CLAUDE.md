@@ -87,7 +87,9 @@ bash scripts/check-duplicated-files.sh
 # system-health + smoke-check, queue-report, pipeline-watch,
 # missed-slice, dal-cutover (sheet-vs-neon parity), heatmap-cell-drill,
 # inbound-qcd-parity, inbound-calls (capture incl. the R5
-# direct-stage/first_agent pins), sheet-repairs-merge, dept-config-neon
+# direct-stage/first_agent pins), outbound-calls (the Option B per-call
+# outbound capture: builder gates + writer authoritative/P-1/hash
+# pins), sheet-repairs-merge, dept-config-neon
 # / config-neon-c3, escalations-hardening, caller-lookup,
 # access-control-editor, neon-coverage (the R7 sheet-vs-Neon
 # reconciliation's pure pieces), cache-version-sync (doc↔code cache-pin
@@ -495,7 +497,13 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   (unique/ambiguous/unresolved tally + an unresolved breakdown --
   ironclad-Talk=0-recoverable / time-window near-miss / chained-uncaptured)
   and `previewInternalTransferChains` (PHI-masked deep-dive on the
-  chained bucket + a bounded 1-hop trace); both write nothing and are
+  chained bucket + a bounded 1-hop trace; since R11-N3 also a 2-HOP
+  trace -- when the agent was reached via a queue ring INSIDE an
+  internal source group, the same captured-overlap check runs on that
+  group's own originator exts -- and an INTERNAL-ORIGIN classification:
+  a chain internal at every hop with no concurrent captured inbound has
+  NO external caller, so there is no journey to enrich and the base
+  build's no-op is correct); both write nothing and are
   safe to delete. Pinned by `tests/unit/inbound-calls.test.js`. The
   writer's idempotent `ALTER TABLE ... ADD COLUMN IF NOT
   EXISTS` upgrades pre-extension tables in place; the inline insert
@@ -3170,7 +3178,7 @@ CDR Reporting Tools:
   apps-script/cdr-report/dashboardCDR.js, apps-script/cdr-report/dbHistorical.js, apps-script/cdr-report/dbReporting.js, apps-script/cdr-report/emailDailyReport.js, apps-script/cdr-report/neonbackfill.js, apps-script/cdr-report/neonWrite.js, apps-script/cdr-report/inboundCallsExport.js, apps-script/cdr-report/insuranceNumbers.js, apps-script/cdr-report/sheetRepairs.js
 
 CDR Import:
-  apps-script/cdr-import/AbandonedFilter.js, apps-script/cdr-import/CDR Tools.js, apps-script/cdr-import/DeleteOldSheets.js, apps-script/cdr-import/autoImport.js, apps-script/cdr-import/buildDQEHistoricalData.js, apps-script/cdr-import/importBulkCSVsFromDrive.js, apps-script/cdr-import/inboundCalls.js, apps-script/cdr-import/NeonMirror.js, apps-script/cdr-import/directCallMetrics.js, apps-script/cdr-import/neonWrite.js, apps-script/cdr-import/appsscript.json
+  apps-script/cdr-import/AbandonedFilter.js, apps-script/cdr-import/CDR Tools.js, apps-script/cdr-import/DeleteOldSheets.js, apps-script/cdr-import/autoImport.js, apps-script/cdr-import/buildDQEHistoricalData.js, apps-script/cdr-import/importBulkCSVsFromDrive.js, apps-script/cdr-import/inboundCalls.js, apps-script/cdr-import/outboundCalls.js, apps-script/cdr-import/NeonMirror.js, apps-script/cdr-import/directCallMetrics.js, apps-script/cdr-import/neonWrite.js, apps-script/cdr-import/appsscript.json
 
 DQE Report Legacy:
   apps-script/dqe-report/DQEdashboard.js, apps-script/dqe-report/FAQGuide.html, apps-script/dqe-report/IndividualReport.js, apps-script/dqe-report/IndividualReportModal.html, apps-script/dqe-report/MissedCallsReport.js, apps-script/dqe-report/MissedReportModal.html, apps-script/dqe-report/MultiCompModal.html, apps-script/dqe-report/MultiComparisonTool.js, apps-script/dqe-report/SingleRangeReport.js, apps-script/dqe-report/SingleReportModal.html, apps-script/dqe-report/menu DQE Tools.js, apps-script/dqe-report/sendManualAlert.js, apps-script/dqe-report/showFAQ.js, apps-script/dqe-report/appsscript.json
