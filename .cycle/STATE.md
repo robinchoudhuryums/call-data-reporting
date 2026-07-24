@@ -1362,3 +1362,27 @@ commit/push/deploy direction.
   claude/broad-scan-ak8g04, NO PR yet; /sync-docs pending for R12-1..13
   fix-history entries + INV-41/42 oklch note; dashboard deploy pending;
   remaining audit phases (modals beyond IR, Escalations page) unstarted.
+
+- **Increment 52 (DONE — audit Phase 3: Escalations + admin modals; AUDIT ONLY,
+  no fixes):** Harness extended with a fake JDBC conn (escalation rows +
+  aggregates) + real-server payloads for esc-init/list/activity, alerts-init,
+  digests-init, queuereport-init, orphan-init, deptconfig-init, access-init,
+  health, ui-flags. CLEAN: Escalations page admin+manager (cat-menu counts,
+  health band, review chip, filter, + New escalation admin-only,
+  single-dept manager gets the NAME-TEXT dept control, zero data-admin-only
+  leaks, 0px overflow 1440+390); all six admin modals aria-modal + labelled,
+  Escape closes all, panels fit viewport, content renders (Orphan Fix showed
+  the Jon Smyth orphan + datalist mapping correctly); zero console errors.
+  FINDINGS (unfixed): P3-1 (MED, root-caused) trapFocus_'s FOCUSABLE query
+  doesn't exclude HIDDEN elements, so the first/last wrap never fires in
+  modals whose last focusable node is display:none (collapsed edit forms) --
+  Tab ESCAPES Orphan Fix (21/25 presses), Dept Config (18/25), Health
+  (15/25) while Alerts/Access/Caller trap 0/25; fix = filter els to visible
+  (offsetParent) inside the keydown handler, repairing every modal at once.
+  P3-2 (LOW, owner call): the Escalations 'All' view repeats the full
+  expanded resolution form on every open card -- a disclosure would compact
+  the list. P3-3 (INFO) hidden status divs retain their 'Loading...' text
+  after success (DOM-only, not visible). Harness limits: write flows +
+  Caller Lookup search + modal drag/resize not exercised. Where I left off:
+  Phase 3 findings awaiting owner pick; R12 batches 1-3 still un-PR'd;
+  /sync-docs pending (R12-1..13); dashboard deploy pending.
