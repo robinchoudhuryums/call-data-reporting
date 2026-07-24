@@ -1323,3 +1323,27 @@ commit/push/deploy direction.
   CLAUDE.md INV-42 note are a sync-docs follow-up. Where I left off: R12
   committed+pushed on claude/broad-scan-ak8g04 (ahead of merged PR #199),
   no PR opened yet; operator deploy of the dashboard pending.
+
+- **Increment 50 (DONE — R12 batch 2 + audit Phase 2, commit a6f7b56):**
+  Batch-2 fixes: R12-8 mock-banner relic removed (markup+CSS+dead meta.mock
+  check); R12-8b Overview chart zoom DEFAULTS to Fit (owner via R6; persisted
+  cdr.ov.axiszoom; static markup label synced); R12-9 IR modal chart tabs
+  completed as a real APG tabs pattern (inner role=tablist wrapper w/
+  display:contents so the mixed toolbar keeps layout; aria-controls + roving
+  tabindex anchored to irActiveChartTab; role=tabpanel + aria-labelledby;
+  Left/Right/Home/End move+activate). Harness-verified (Fit axis 83-97;
+  ArrowRight activates+focuses; no page errors); CI 452/452. AUDIT PHASE 2
+  (Insights page; audit-only, no fixes): auto-run, density Simple/Detailed
+  (chart-trap avoided; Simple forces trend chart AND instantiates visible),
+  popover+advanced, period bar, calendar v2 (month pagination), manager
+  gating (no ATT option / AB panel / heatmap; role-default Simple) ALL
+  CLEAN; zero console errors. Findings (unfixed): I-1 .ir-results-header 4px
+  page overflow (every viewport); I-2 R11-J A/B VIEWS panel occludes chart/
+  calendar data when expanded at 1440x950 (suggest default-collapsed or
+  persisted collapse); I-3 390px Agents toolbar clips (sort label cut,
+  Cards/Chart + basis segments unreachable without undiscoverable horizontal
+  scroll); I-4 (polish) trend Metric dropdown floats detached center-chart.
+  Harness lesson: fullPage screenshots race Chart.js re-layout (viewport
+  clips are the truth). Where I left off: batch 2 pushed on
+  claude/broad-scan-ak8g04; Phase 2 findings awaiting owner pick; no PR
+  opened for R12 batches yet; dashboard deploy pending.
