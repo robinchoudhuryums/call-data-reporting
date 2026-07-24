@@ -6580,6 +6580,16 @@
   .esc-reopen textarea { width: 100%; box-sizing: border-box; resize: vertical; margin-top: 4px; }
 
   /* §5 activity trail (collapsible, append-only timeline) */
+  /* R12-15 (P3-2): the inline resolve form sits behind a disclosure so a
+     multi-card list isn't a wall of repeated empty textareas. Mirrors the
+     Activity summary styling (accent-tinted since it's the primary action). */
+  .esc-resolve-disc { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 6px; }
+  .esc-resolve-disc > summary { cursor: pointer; font: 600 11px/1 var(--mono); letter-spacing: 0.1em;
+    text-transform: uppercase; color: var(--accent); user-select: none; list-style: none; padding: 2px 0; }
+  .esc-resolve-disc > summary::-webkit-details-marker { display: none; }
+  .esc-resolve-disc > summary::before { content: '▸ '; }
+  .esc-resolve-disc[open] > summary::before { content: '▾ '; }
+  .esc-resolve-disc > summary:hover { color: var(--ink); }
   .esc-activity { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 6px; }
   .esc-activity > summary { cursor: pointer; font: 600 11px/1 var(--mono); letter-spacing: 0.1em;
     text-transform: uppercase; color: var(--muted); user-select: none; list-style: none; padding: 2px 0; }

@@ -18060,7 +18060,13 @@
       if (pa.length) body += '<div class="esc-pending-actions">' + pa.join('') + '</div>';
       // Inline resolve form. The "Resolved" checkbox + Save stay DISABLED
       // until a resolution note is entered (mirrors the server requirement).
-      body += '<div class="esc-resolve" data-id="' + idAttr + '">'
+      // R12-15 (P3-2): the form sits behind a disclosure (the Activity
+      // pattern) so a multi-card list isn't a wall of repeated empty
+      // textareas; all field classes/data-ids are unchanged, so the
+      // delegated save/comment handlers are untouched.
+      body += '<details class="esc-resolve-disc">'
+        + '<summary class="esc-resolve-disc-summary">Resolve / comment&hellip;</summary>'
+        + '<div class="esc-resolve" data-id="' + idAttr + '">'
         + '<label class="esc-resolve-label">Resolution (what action was taken — required)'
         + '<textarea class="esc-resolve-text" rows="2" data-id="' + idAttr + '"></textarea></label>'
         + '<label class="esc-resolve-label">Comments <span class="esc-optional">(optional)</span>'
@@ -18070,7 +18076,7 @@
         + '<button class="btn esc-resolve-save" type="button" data-id="' + idAttr + '" disabled>Save resolution</button>'
         + '<button class="btn btn-ghost esc-comment-save" type="button" data-id="' + idAttr + '">Save comment only</button>'
         + '<span class="status status-error esc-row-error" data-id="' + idAttr + '" style="display:none;"></span>'
-        + '</div></div>';
+        + '</div></div></details>';
     }
 
     // §5: append-only activity trail, collapsed by default (progressive
