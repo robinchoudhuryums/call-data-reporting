@@ -1289,3 +1289,37 @@ commit/push/deploy direction.
   CDR Import editor (DIRECT_UPSERT_SINCE to scope); recommended only after the
   carve-out numbers are vetted. INV-44 step list (bulkBackfill:Direct) is a
   sync-docs follow-up. Branch claude/brave-dijkstra-wuonrv carries 42-48, UNMERGED.
+
+- **Increment 49 (DONE — R12: UI-audit Phase 1 fixes, commit 64cd132):** A
+  rendered-harness UI/UX audit (scratchpad-only tooling: real client
+  script/styles/markup + payloads computed by the REAL server code via the
+  unit-test vm harness over fixture sheets, driven in headless Chromium at
+  1440/1024/768/390, light+dark, admin+manager) found 7 issues on
+  Overview + My Department; all fixed + harness-verified. R12-1 (BUG): missed
+  chart never instantiated when refresh() ran during the Overview landing --
+  the MC2 create-while-hidden guard exhausts 30 rAF attempts vs the
+  display:none dept page and nothing re-armed on entry (blank until manual
+  Refresh); setPage's dept branch now re-draws from deptMissedLastData when
+  no instance exists (likely the true root cause under the R10-7/R11-B6
+  band-aids). R12-2 (BUG): colorToCanvasRgb_ fillStyle-readback does NOT
+  canonicalize oklch in modern browsers (serialized back verbatim) -- THEME
+  carried oklch strings, parseColorRgb_ fell to gray, so every R11-L trend
+  arrow rendered gray; non-rgb/hex readbacks now resolve via 1x1 getImageData.
+  R12-3: .header-meta wraps <=640px + .ov-user-table-wrap overflow-x:auto ->
+  0px page overflow at 390/768 (was 290px pan). R12-4: ovPeriodStats_ shows
+  the no-data dash when rung===0 (was a catastrophic-looking "0.0%
+  answered"). R12-5 (a11y): both agent tables' sort headers keyboard-operable
+  (tabIndex + Enter/Space) + aria-sort. R12-6 (a11y): header nav dropped
+  role=tablist/tab -> aria-current="page" (updateTabActiveState_); Overview
+  chart toolbar role=group + aria-pressed metric buttons. R12-7 (a11y):
+  .ir-sort-control select keeps a visible focus ring. npm run ci 452/452 +
+  INV-16 clean; harness regression sweep: 0 console errors, 0 overflow,
+  manager admin-leak check clean. Clean audit results worth keeping: contrast
+  >=4.5:1 AA both modes; focus order logical; 92% boundary tint exact.
+  Follow-ons (NOT done): S4 dead #mock-banner relic; IR modal's real
+  role=tab set lacks tabpanel/arrow-key wiring (out of Phase-1 scope);
+  R6 default Zoom:Full dead space (owner call); audit Phase 2 (Insights page
+  or modals+Escalations) not started. Docs: fix-history R12 entries +
+  CLAUDE.md INV-42 note are a sync-docs follow-up. Where I left off: R12
+  committed+pushed on claude/broad-scan-ak8g04 (ahead of merged PR #199),
+  no PR opened yet; operator deploy of the dashboard pending.
