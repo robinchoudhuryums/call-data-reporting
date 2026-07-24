@@ -279,6 +279,14 @@
     gap: 10px;
   }
   .header-meta .email { font-family: var(--mono); font-size: 12px; }
+  /* R12-3: on phones the meta cluster (email + role tag + view-as) used to
+     overflow the viewport and pan the whole page sideways -- let it wrap
+     and allow the email to break instead. */
+  @media (max-width: 640px) {
+    .header-meta { flex-wrap: wrap; justify-content: flex-end; row-gap: 6px; }
+    .header-meta > div { min-width: 0; }
+    .header-meta .email { overflow-wrap: anywhere; }
+  }
 
   /* Data-freshness pill: sits in .header-meta showing "Data through
      Mon May 19 · 14h ago".  Color cools when data is stale relative
@@ -604,18 +612,6 @@
   .tag-manager { background: var(--accent-soft); color: var(--accent); }
   .tag-none    { background: var(--warn-soft); color: var(--warn); }
 
-  /* Mock banner */
-  .mock-banner {
-    background: var(--warn-soft);
-    border: 1px solid var(--line);
-    border-left: 3px solid var(--warn);
-    color: var(--muted);
-    padding: 8px 12px;
-    border-radius: 2px;
-    font-size: 12px;
-    margin-bottom: 16px;
-  }
-
   /* Controls — mono-uppercase kicker labels, sharp-cornered inputs. */
   .controls {
     display: flex;
@@ -939,6 +935,17 @@
      (title + toolbar + period presets -- the My Department pattern). The
      period bar sits as a full-width third row inside the flex header. */
   #insights-page #insights-results > .ir-results-header { flex-wrap: wrap; }
+  /* R12-10 (I-1): on the Insights page the -8px bleed margins pushed the
+     strip 4px past the viewport (a permanent horizontal wiggle --
+     #insights-page sits OUTSIDE .container, whose padding absorbed the
+     bleed on the dept page). Paint the bleed with spread shadows instead:
+     zero layout impact, same edge coverage. */
+  #insights-page #insights-results > .ir-results-header {
+    margin-left: 0; margin-right: 0;
+    padding-left: 0; padding-right: 0;
+    box-shadow: -8px 0 0 var(--paper), 8px 0 0 var(--paper),
+                0 8px 10px -10px rgba(0, 0, 0, 0.25);
+  }
   #insights-page #insights-results > .ir-results-header .ins-period-bar {
     flex: 1 1 100%; margin: 6px 0 0;
   }
@@ -2672,6 +2679,15 @@
     justify-content: flex-end;
     margin-bottom: 10px;
   }
+  /* R12-12 (I-3): on phones the toolbar (sort + Cards/Chart + basis segments)
+     clipped past the viewport with no visible scroll affordance -- wrap it. */
+  @media (max-width: 700px) {
+    .ir-cards-toolbar {
+      flex-wrap: wrap;
+      justify-content: flex-start;
+      row-gap: 8px;
+    }
+  }
   .ir-sort-control {
     display: inline-flex;
     align-items: center;
@@ -2698,7 +2714,13 @@
     color: var(--ink);
     cursor: pointer;
   }
-  .ir-sort-control select:focus { outline: none; }
+  /* R12-7: keep a visible focus indicator (the bare outline:none removed the
+     ring with no replacement -- the .ir-search-row accent-ring pattern). */
+  .ir-sort-control select:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent-soft);
+  }
 
   /* Per-agent summary card — hairline panel with display-font agent
      name. KPI grid below uses paper-2 inner tiles for separation. */
@@ -2885,6 +2907,10 @@
 
   /* Tabbed chart container: only one of Volume/Efficiency/Duration
      is visible at a time so each gets the full container width. */
+  /* R12-9: the IR tab trio sits inside a real role=tablist wrapper;
+     display:contents keeps the buttons as direct flex items of the strip
+     so the toolbar layout is unchanged. */
+  .ir-tablist-inline { display: contents; }
   .ir-chart-tabs {
     display: flex;
     flex-wrap: wrap;           /* inline chart controls wrap on narrow widths */
@@ -3597,6 +3623,14 @@
     align-items: center;
     justify-content: space-between;
     gap: 12px;
+    flex-wrap: wrap;
+  }
+  /* R12-13 (I-4): the metric dropdown lives in this control cluster now
+     (beside Monthly/Daily + Line/Calendar), so it lays out as one row. */
+  .ins-trend-headctl {
+    display: flex;
+    align-items: center;
+    gap: 10px;
     flex-wrap: wrap;
   }
 
@@ -5572,6 +5606,10 @@
      scroll container so it doesn't blow out the modal width. */
   .ov-user-table-wrap {
     margin-top: 18px;
+    /* R12-3: the mini-table must scroll INSIDE its wrap on narrow viewports
+       (the .agents-table-wrap S2-3 pattern) -- it was the last element
+       panning the whole page sideways on phones. */
+    overflow-x: auto;
   }
   .ov-user-table-wrap .ir-chart-header {
     display: flex;

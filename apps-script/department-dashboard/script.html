@@ -451,9 +451,18 @@
   function trapFocus_(modal) {
     releaseFocus_();
     var FOCUSABLE = 'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
+    // R12-14: only VISIBLE elements count. The browser skips hidden nodes in
+    // tab order, so if the modal's LAST focusable node is display:none (a
+    // collapsed edit form -- Outlier Fix / Dept Config / Health), focus never
+    // lands on it, the boundary wrap below never fires, and Tab walks out of
+    // the dialog.
+    function focusables() {
+      return Array.prototype.filter.call(modal.querySelectorAll(FOCUSABLE),
+        function (el) { return el.offsetParent !== null; });
+    }
     function handler(e) {
       if (e.key !== 'Tab') return;
-      var els = modal.querySelectorAll(FOCUSABLE);
+      var els = focusables();
       if (!els.length) return;
       var first = els[0], last = els[els.length - 1];
       if (e.shiftKey && document.activeElement === first) {
@@ -464,8 +473,10 @@
     }
     modal.addEventListener('keydown', handler);
     activeFocusTrap_ = { modal: modal, handler: handler };
-    var first = modal.querySelector(FOCUSABLE);
-    if (first) setTimeout(function () { first.focus(); }, 0);
+    setTimeout(function () {
+      var els = focusables();
+      if (els.length) els[0].focus();
+    }, 0);
   }
   function releaseFocus_() {
     if (!activeFocusTrap_) return;
@@ -1058,9 +1069,16 @@
       if (typeof irDrillToAgent_ === 'function') irDrillToAgent_(agent, from, to);
     });
 
-    // Sortable headers
+    // Sortable headers. R12-5: keyboard-operable too -- focusable, with
+    // Enter/Space triggering the same sort (they were click-only).
     document.querySelectorAll('#agents-table thead th[data-sort]').forEach(function (th) {
+      th.tabIndex = 0;
       th.addEventListener('click', function () { onSort(th.getAttribute('data-sort')); });
+      th.addEventListener('keydown', function (e) {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        e.preventDefault();   // Space must not scroll the page
+        onSort(th.getAttribute('data-sort'));
+      });
     });
 
     var deptBucketClose = $('dept-bucket-detail-close');
@@ -1251,6 +1269,17 @@
       var _rb = $('refresh-btn');
       if ((lastSummaryDept_ !== getRequestedDept() || adoptedWin_) && !(_rb && _rb.disabled)) {
         refresh();
+      }
+      // R12-1: re-arm the missed chart when its data landed while this page
+      // was hidden -- the initial refresh() runs during the Overview landing,
+      // so deptMissedDrawChart_'s create-while-hidden guard (MC2) exhausts
+      // its 30 rAF attempts against the display:none page and nothing else
+      // re-draws on page entry (blank chart until a manual Refresh).
+      // Idempotent: if a refresh was also kicked above, its render rebuilds.
+      if (!deptMissedChart && deptMissedLastData
+          && typeof deptMissedDrawChart_ === 'function') {
+        deptMissedDrawAttempts_ = 0;
+        deptMissedDrawChart_(deptMissedLastData);
       }
     }
     // Delegate the active-tab visual indicator to the router so all
@@ -2017,9 +2046,18 @@
     catch (e) { return 'yesterday'; }
   })();
   function ovPeriodStats_(dept) {
-    return (dept && dept.periods && dept.periods[ovCardPeriod])
+    const st = (dept && dept.periods && dept.periods[ovCardPeriod])
       || (dept && dept.latest)
       || { pctFormatted: '—', rung: 0, answered: 0, missed: 0, attFormatted: '—' };
+    // R12-4: a dept with queue/QCD data but ZERO rings in the window (e.g. a
+    // mapped dept whose roster had no agent activity) would headline
+    // "0.0% answered" -- reads as catastrophic when it means "no agent
+    // data". Show the no-data dash instead; a true all-missed day keeps its
+    // real 0.0% because rung > 0 there.
+    if (!(Number(st.rung) > 0)) {
+      return Object.assign({}, st, { pctFormatted: '—', attFormatted: '—' });
+    }
+    return st;
   }
   function ovPeriodCap_() { return (OV_CARD_PERIODS_[ovCardPeriod] || OV_CARD_PERIODS_.yesterday).cap; }
 
@@ -2678,9 +2716,11 @@
       if (key === ovUserSort_.key) {
         arrow.textContent = ovUserSort_.dir === 'asc' ? '▲' : '▼';
         arrow.style.color = THEME.ink || '#374151';
+        th.setAttribute('aria-sort', ovUserSort_.dir === 'asc' ? 'ascending' : 'descending');
       } else {
         arrow.textContent = '▽';
         arrow.style.color = THEME.muted || '#9ca3af';
+        th.removeAttribute('aria-sort');
       }
     });
     var sorted = sortRows(ovUserRows_, ovUserSort_.key, ovUserSort_.dir);
@@ -2720,7 +2760,13 @@
     ovUserSortWired_ = true;
     table.querySelectorAll('thead th[data-sort]').forEach(function (th) {
       th.style.cursor = 'pointer';
+      th.tabIndex = 0;   // R12-5: keyboard-operable sort (was click-only)
       th.addEventListener('click', function () { ovOnUserSort_(th.getAttribute('data-sort')); });
+      th.addEventListener('keydown', function (e) {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        e.preventDefault();
+        ovOnUserSort_(th.getAttribute('data-sort'));
+      });
     });
   }
 
@@ -3391,8 +3437,16 @@
 
   // Axis zoom toggle: Full (0-100%) <-> Fit (auto-scale to the data range,
   // so depts clustered near the top spread out). Wired once; the button
-  // lives in the ov-chart-tabs row (dashboard.html).
-  let ovAxisZoom = 'full';
+  // lives in the ov-chart-tabs row (dashboard.html). R12-8 (owner): Fit is
+  // the DEFAULT -- lines cluster at 85-95%, so Full renders ~80% dead plot;
+  // the choice persists per user.
+  const OV_AXIS_ZOOM_KEY_ = 'cdr.ov.axiszoom';
+  let ovAxisZoom = (function () {
+    try {
+      var v = localStorage.getItem(OV_AXIS_ZOOM_KEY_);
+      return (v === 'full' || v === 'fit') ? v : 'fit';
+    } catch (e) { return 'fit'; }
+  })();
   let ovAxisZoomWired = false;
   function ovWireAxisZoom_() {
     // Keep the button label in sync on every render (the metric switch /
@@ -3408,6 +3462,7 @@
     ovAxisZoomWired = true;
     btn.addEventListener('click', function () {
       ovAxisZoom = (ovAxisZoom === 'full') ? 'fit' : 'full';
+      try { localStorage.setItem(OV_AXIS_ZOOM_KEY_, ovAxisZoom); } catch (e) {}
       // Re-render so the metric-aware axis (ovYAxis_) is recomputed and the
       // new zoom survives the next refresh. Previously this mutated the live
       // chart's scale directly, which the next re-render silently reset.
@@ -3425,7 +3480,9 @@
     tabs.forEach(function (t) {
       const on = t.getAttribute('data-metric') === ovChartMetric;
       t.classList.toggle('active', on);
-      t.setAttribute('aria-selected', on ? 'true' : 'false');
+      // R12-6: the toolbar mixes non-tab controls (zoom, range, checkbox), so
+      // it isn't a tablist -- these are toggle buttons (aria-pressed).
+      t.setAttribute('aria-pressed', on ? 'true' : 'false');
     });
     if (ovMetricTabsWired) return;
     ovMetricTabsWired = true;
@@ -3532,7 +3589,11 @@
     document.querySelectorAll('[data-route]').forEach(function (btn) {
       const isActive = btn.getAttribute('data-route') === route;
       btn.classList.toggle('header-nav-current', isActive);
-      btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
+      // R12-6: page-nav semantics, not tab semantics -- these buttons have no
+      // tabpanels/arrow-key model, so aria-selected (a tab attribute) was
+      // announced wrong. aria-current="page" is the nav equivalent.
+      if (isActive) btn.setAttribute('aria-current', 'page');
+      else btn.removeAttribute('aria-current');
     });
     // If the active route lives inside a collapsed header dropdown (the
     // Reports group), its menu-item highlight is hidden, so also light
@@ -5891,15 +5952,6 @@
       }
     }
 
-    // Mock banner (only shown if the server flagged a mocked response;
-    // Step D returns real data so this should always hide).
-    const banner = $('mock-banner');
-    if (state.meta && state.meta.mock) {
-      banner.style.display = '';
-    } else {
-      banner.style.display = 'none';
-    }
-
     if (!state.rows.length) {
       var hint = state.meta && state.meta.rosterSize === 0
         ? 'No agents are mapped to this department in the roster sheet. Check the DO NOT EDIT! tab or contact your admin.'
@@ -7036,9 +7088,11 @@
       if (key === state.sortKey) {
         arrow.textContent = state.sortDir === 'asc' ? '▲' : '▼';
         arrow.style.color = THEME.ink || '#374151';
+        th.setAttribute('aria-sort', state.sortDir === 'asc' ? 'ascending' : 'descending');
       } else {
         arrow.textContent = '▽';
         arrow.style.color = THEME.muted || '#9ca3af';
+        th.removeAttribute('aria-sort');
       }
     });
 
@@ -7220,7 +7274,19 @@
       const sentinel = ctx.fillStyle;
       ctx.fillStyle = color;
       if (ctx.fillStyle === sentinel) return color;
-      return ctx.fillStyle;
+      const out = ctx.fillStyle;
+      // R12-2: modern browsers serialize non-legacy colors (oklch()/oklab()/
+      // color()) back from fillStyle VERBATIM, so the readback alone does NOT
+      // canonicalize them and regex consumers downstream (datalabels' fill
+      // parsing, parseColorRgb_'s arrow gradient) silently fall to their
+      // fallbacks. Resolve those via a painted-pixel readback, which always
+      // yields a real RGB triple.
+      if (/^#|^rgba?\(/i.test(out)) return out;
+      ctx.fillRect(0, 0, 1, 1);
+      const px = ctx.getImageData(0, 0, 1, 1).data;
+      const a = px[3] / 255;
+      return a >= 1 ? 'rgb(' + px[0] + ',' + px[1] + ',' + px[2] + ')'
+        : 'rgba(' + px[0] + ',' + px[1] + ',' + px[2] + ',' + (Math.round(a * 1000) / 1000) + ')';
     } catch (e) { return color; }
   }
 
@@ -7524,6 +7590,27 @@
       irActiveChartTab = tab.getAttribute('data-tab');
       irActivateChartTab_();
       irSavePrefs_();
+    });
+    // R12-9: APG tabs keyboard model -- Left/Right/Home/End move focus AND
+    // activate (selection follows focus; panels are cheap show/hides).
+    if (tabContainer) tabContainer.addEventListener('keydown', function (e) {
+      const tab = e.target.closest && e.target.closest('.ir-tab');
+      if (!tab) return;
+      const keys = ['ArrowLeft', 'ArrowRight', 'Home', 'End'];
+      if (keys.indexOf(e.key) === -1) return;
+      e.preventDefault();
+      const tabs = Array.prototype.slice.call(tabContainer.querySelectorAll('.ir-tab'));
+      let i = tabs.indexOf(tab);
+      if (e.key === 'ArrowLeft') i = (i - 1 + tabs.length) % tabs.length;
+      else if (e.key === 'ArrowRight') i = (i + 1) % tabs.length;
+      else if (e.key === 'Home') i = 0;
+      else i = tabs.length - 1;
+      const next = tabs[i];
+      if (irShowAllCharts) irShowAllCharts = false;
+      irActiveChartTab = next.getAttribute('data-tab');
+      irActivateChartTab_();
+      irSavePrefs_();
+      next.focus();
     });
 
     // Card-sort dropdown: re-renders the summary cards in place.
@@ -8375,6 +8462,10 @@
         const active = !irShowAllCharts && b.getAttribute('data-tab') === irActiveChartTab;
         b.classList.toggle('active', active);
         b.setAttribute('aria-selected', active ? 'true' : 'false');
+        // R12-9: roving tabindex (APG tabs pattern). Anchored to
+        // irActiveChartTab even in all-mode so the tablist always keeps
+        // exactly one Tab stop.
+        b.tabIndex = (b.getAttribute('data-tab') === irActiveChartTab) ? 0 : -1;
       });
     }
     const cont = $('ir-charts-container');
@@ -12387,6 +12478,19 @@
     // insSyncAbPanel_ reflects state back onto it after each render.
     const abPanel = $('ins-ab-panel');
     if (abPanel) {
+      // R12-11 (I-2): the fixed card sits over real chart/calendar data when
+      // expanded, so it starts COLLAPSED unless the admin last left it open;
+      // the choice persists (localStorage).
+      const AB_OPEN_KEY = 'cdr.ins.abpanel';
+      const abCol = $('ins-ab-collapse');
+      (function () {
+        let open = false;
+        try { open = localStorage.getItem(AB_OPEN_KEY) === 'open'; } catch (e) {}
+        if (!open) {
+          abPanel.classList.add('ins-ab-collapsed');
+          if (abCol) abCol.innerHTML = '+';
+        }
+      })();
       const abForward = function (realId, attr, val) {
         const real = $(realId);
         if (!real) return;
@@ -12398,6 +12502,7 @@
         if (col) {
           const on = abPanel.classList.toggle('ins-ab-collapsed');
           col.innerHTML = on ? '+' : '&#8211;';
+          try { localStorage.setItem(AB_OPEN_KEY, on ? 'collapsed' : 'open'); } catch (e2) {}
           return;
         }
         const vb = e.target.closest('[data-ab-view]');

@@ -1176,7 +1176,10 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   → "Show chart hover cards"), and `cdr.headlines` (R11-M report summary-banner
   on/off, Settings → "Show report summary banners" — `off` adds
   `body.headlines-off`, whose CSS hides every `.report-headline`; the
-  `report-headlines` UI flag is the admin-global equivalent) — the theme
+  `report-headlines` UI flag is the admin-global equivalent), plus two
+  R12 view prefs: `cdr.ov.axiszoom` (Overview chart Full⇄Fit; default
+  `fit`, R12-8b) and `cdr.ins.abpanel` (the admin A/B VIEWS card's
+  open/collapsed state; default collapsed, R12-11) — the theme
   picker re-reads these on every render so no cache bump is needed when
   palette tokens change. Default for first-time visitors
   (no `dash-theme.v1` value) is `cool` since the Phase A redesign
@@ -1408,7 +1411,15 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `colorToCanvasRgb_()` and reads back the canonical `rgba(...)` form
   so the plugin always receives a parseable color. Don't pass raw
   `getComputedStyle(...).getPropertyValue('--foo')` strings to chart
-  options — always go through `THEME.*`.
+  options — always go through `THEME.*`. **R12-2 caveat: the fillStyle
+  READBACK alone does NOT canonicalize non-legacy colors** — modern
+  browsers serialize an oklch/oklab/color() fillStyle back VERBATIM,
+  which silently defeated the whole mechanism for the oklch tokens
+  (accent/good/warn/bad + softs) and rendered every R11-L trend arrow
+  gray via `parseColorRgb_`'s fallback. `colorToCanvasRgb_` now detects
+  a non-`#hex`/`rgb()` readback and resolves it via a painted-pixel
+  `getImageData` (which always yields a real RGB triple). Any future
+  color plumbing must not regress to bare fillStyle readback.
 - **Overview layout: stacked full-width sticky chart + 4-wide grid
   (Pass 3b P2).** The Overview page was restructured from a
   side-by-side grid+rail into a STACK: the 30-day trend chart is a
@@ -1489,8 +1500,10 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `ovRouteToDept_(dept, iso)`; admins, or a manager clicking their
   own dept's line). An axis-zoom toggle button (`ov-axis-zoom-btn`)
   flips the y-axis between Full (0-100%) and Fit (auto-scale to the
-  data range). The same `chartSpotlight*` legend spotlight is reused
-  by the QCD multi-queue chart.
+  data range) — **Fit is the DEFAULT since R12-8b** (owner: lines
+  cluster at 85-95%, so Full rendered ~80% dead plot); the choice
+  persists per user (`cdr.ov.axiszoom`). The same `chartSpotlight*`
+  legend spotlight is reused by the QCD multi-queue chart.
   **R11-G auto-zoom-fit on solo (shared, all spotlight charts):**
   `chartSpotlightFitAxis_` auto-fits the y-axis to just the PINNED
   (soloed) series whenever the pin set changes (called from

@@ -41,19 +41,16 @@
            (report / admin items). Admin-only tabs use the existing
            data-admin-only convention -- they start hidden inline and
            are revealed for admins by the init in script.html. -->
-      <nav class="header-nav" aria-label="Dashboard sections" role="tablist">
-        <button class="header-menu-btn header-nav-current" id="overview-btn" type="button"
-                data-route="/overview" role="tab" aria-selected="true"
+      <nav class="header-nav" aria-label="Dashboard sections">
+        <button class="header-menu-btn header-nav-current" id="overview-btn" type="button" data-route="/overview"
                 title="Cross-department snapshot of the most recent day, with a 30-day answer-rate trend per dept.">
           Overview
         </button>
-        <button class="header-menu-btn" id="my-dept-btn" type="button"
-                data-route="/dept" role="tab" aria-selected="false"
+        <button class="header-menu-btn" id="my-dept-btn" type="button" data-route="/dept"
                 title="Your department's per-agent detail table with a configurable date range.">
           My Department
         </button>
-        <button class="header-menu-btn" id="escalations-btn" type="button"
-                data-route="/escalations" role="tab" aria-selected="false"
+        <button class="header-menu-btn" id="escalations-btn" type="button" data-route="/escalations"
                 title="View and resolve escalation calls for your department. Admins can log new escalations.">
           Escalations
         </button>
@@ -64,8 +61,7 @@
              ALL roles -- it replaced the manager-only #insights-solo-btn
              proxy (#10), whose null-checked wiring in script.html now
              no-ops. -->
-        <button class="header-menu-btn" id="insights-report-btn" type="button"
-                data-route="/report/insights" role="tab" aria-selected="false"
+        <button class="header-menu-btn" id="insights-report-btn" type="button" data-route="/report/insights"
                 title="Insights: a department rollup + per-agent cards vs the prior period, with queue health.">Insights</button>
         <!-- Reports group: the report launchers collapsed into a
              single dropdown to de-clutter the header row. Each menu item
@@ -94,8 +90,7 @@
                     title="Direct-extension call metrics (admin-only while being vetted): per-agent inbound answer rate (a miss while on another call is excused), inbound ATT, and outbound activity.">Direct</button>
           </div>
         </div>
-        <button class="header-menu-btn" id="caller-lookup-btn" type="button"
-                data-route="/admin/caller-lookup" data-admin-only role="tab" aria-selected="false" style="display:none;"
+        <button class="header-menu-btn" id="caller-lookup-btn" type="button" data-route="/admin/caller-lookup" data-admin-only style="display:none;"
                 title="Trace every inbound call from one phone number: when they called, the path through IVR / queues / agents, and how each call ended. The number is hashed before querying and never stored. Admin-only.">Caller Lookup</button>
         <!-- Admin group: the five admin config/ops launchers collapsed into
              a single dropdown (owner request, post-deploy round 4) --
@@ -230,15 +225,15 @@
               <span class="ov-trend-collapse-chev" aria-hidden="true">&#9662;</span>
               <span class="ov-trend-collapse-lbl">Hide trend chart</span>
             </button>
-            <div class="ir-chart-tabs" id="ov-chart-tabs" role="tablist">
-              <button type="button" class="ir-tab active" data-metric="pct" role="tab" aria-selected="true"
+            <div class="ir-chart-tabs" id="ov-chart-tabs" role="group" aria-label="Trend chart metric and range">
+              <button type="button" class="ir-tab active" data-metric="pct" aria-pressed="true"
                 title="% of rings answered per day (DQE)">% Answered</button>
-              <button type="button" class="ir-tab" data-metric="abandonedCalls" role="tab" aria-selected="false"
+              <button type="button" class="ir-tab" data-metric="abandonedCalls" aria-pressed="false"
                 title="Abandoned call count per day (queue data)">Abandoned calls</button>
-              <button type="button" class="ir-tab" data-metric="abandonedPct" role="tab" aria-selected="false"
+              <button type="button" class="ir-tab" data-metric="abandonedPct" aria-pressed="false"
                 title="Abandoned % per day (queue data)">Abandoned %</button>
-              <button type="button" class="ir-tab" id="ov-axis-zoom-btn" aria-pressed="false"
-                title="Toggle the y-axis between the full scale and an auto-fit zoom to the data range">Zoom: Full</button>
+              <button type="button" class="ir-tab" id="ov-axis-zoom-btn" aria-pressed="true"
+                title="Toggle the y-axis between the full scale and an auto-fit zoom to the data range">Zoom: Fit</button>
               <label class="ov-subq-toggle" title="Show sub-queue (child) lines on the chart (dashed, in their parent's colour). On by default; uncheck to declutter to top-level departments only.">
                 <input type="checkbox" id="ov-subq-toggle" checked> sub-queues
               </label>
@@ -304,9 +299,6 @@
            QCD side panel and duplicated the range read-only). The controls row
            below is the sticky element now (CSS position:sticky on
            #dept-page .controls), so the real date inputs stay reachable. -->
-      <div id="mock-banner" class="mock-banner" style="display:none;">
-        <strong>Mock data.</strong> Step C uses placeholder rows so the UI is verifiable end-to-end before the data layer is wired. Step D replaces this with real reads from <code>DQE Historical Data</code>.
-      </div>
 
       <!-- Work-window pill (E2). Populated from window.__WORK_WINDOW__
            at init time so the strings come from the dashboard's
@@ -1004,10 +996,12 @@
         <!-- Chart controls consolidated onto one band: the data-labels
              toggle sits at the right end of the tab strip instead of on
              its own row above it (pinned via .ir-chart-tabs > .ir-toggle-box). -->
-        <div class="ir-chart-tabs" id="ir-chart-tabs" role="tablist">
-          <button type="button" class="ir-tab active" data-tab="vol" role="tab" aria-selected="true">Volume</button>
-          <button type="button" class="ir-tab" data-tab="eff" role="tab" aria-selected="false">Efficiency</button>
-          <button type="button" class="ir-tab" data-tab="dur" role="tab" aria-selected="false">Duration</button>
+        <div class="ir-chart-tabs" id="ir-chart-tabs">
+          <span role="tablist" aria-label="Chart view" class="ir-tablist-inline">
+            <button type="button" class="ir-tab active" id="ir-tab-vol" data-tab="vol" role="tab" aria-selected="true" aria-controls="ir-wrap-vol" tabindex="0">Volume</button>
+            <button type="button" class="ir-tab" id="ir-tab-eff" data-tab="eff" role="tab" aria-selected="false" aria-controls="ir-wrap-eff" tabindex="-1">Efficiency</button>
+            <button type="button" class="ir-tab" id="ir-tab-dur" data-tab="dur" role="tab" aria-selected="false" aria-controls="ir-wrap-dur" tabindex="-1">Duration</button>
+          </span>
           <!-- #4: stack all three trend charts (Volume/Efficiency/Duration)
                instead of one tab at a time. -->
           <button type="button" class="ir-allcharts-toggle" id="ir-allcharts-toggle" aria-pressed="false"
@@ -1023,15 +1017,15 @@
         <div id="ir-shared-legend" class="ir-shared-legend" style="display:none;"></div>
 
         <div id="ir-charts-container" class="ir-chart-area">
-          <div class="ir-chart-wrap" id="ir-wrap-vol" data-panel="vol">
+          <div class="ir-chart-wrap" id="ir-wrap-vol" data-panel="vol" role="tabpanel" aria-labelledby="ir-tab-vol">
             <div class="ir-chart-header">Volume Trends</div>
             <div class="ir-chart-canvas-wrap"><canvas id="ir-vol-chart"></canvas></div>
           </div>
-          <div class="ir-chart-wrap" id="ir-wrap-eff" data-panel="eff" style="display:none;">
+          <div class="ir-chart-wrap" id="ir-wrap-eff" data-panel="eff" role="tabpanel" aria-labelledby="ir-tab-eff" style="display:none;">
             <div class="ir-chart-header">Efficiency (% Answered)</div>
             <div class="ir-chart-canvas-wrap"><canvas id="ir-eff-chart"></canvas></div>
           </div>
-          <div class="ir-chart-wrap" id="ir-wrap-dur" data-panel="dur" style="display:none;">
+          <div class="ir-chart-wrap" id="ir-wrap-dur" data-panel="dur" role="tabpanel" aria-labelledby="ir-tab-dur" style="display:none;">
             <div class="ir-chart-header">Duration (ATT)</div>
             <div class="ir-chart-canvas-wrap"><canvas id="ir-dur-chart"></canvas></div>
           </div>
@@ -1575,6 +1569,27 @@
           <div class="ins-trend-headrow">
             <div class="ir-chart-header" id="ins-trend-header">12-month team trend</div>
             <div class="ins-trend-headctl">
+              <!-- R11-C3 consolidation: ONE metric dropdown (queue metrics ride
+                   the same list; Avg talk time is admin-only -- the option is
+                   REMOVED for non-admins at init). R12-13: it lives IN the
+                   toolbar row beside Monthly/Daily + Line/Calendar now (it
+                   previously rendered as a detached centered row over the
+                   chart). The calendar's cells follow this same metric. -->
+              <div class="ins-trend-metric-row" id="ins-trend-metric-row">
+                <label class="ir-sort-control">
+                  <span class="ir-sort-label">Metric:</span>
+                  <select id="ins-trend-metric">
+                    <option value="answered">Answered</option>
+                    <option value="pct">% Answered</option>
+                    <option value="missed">Missed</option>
+                    <option value="volume">Call volume (rung)</option>
+                    <option value="att" data-admin-metric="1">Avg talk time</option>
+                    <option value="queues:abandonedPct">Queue: Abandoned %</option>
+                    <option value="queues:totalCalls">Queue: Total calls</option>
+                    <option value="queues:violations">Queue: Violations</option>
+                  </select>
+                </label>
+              </div>
               <div class="segmented" id="ins-trend-view-toggle" role="radiogroup" aria-label="Trend chart view" style="display:none;">
                 <button type="button" class="seg-btn active" data-view="monthly" role="radio" aria-checked="true">Monthly</button>
                 <button type="button" class="seg-btn" data-view="daily" role="radio" aria-checked="false">Daily</button>
@@ -1596,28 +1611,6 @@
               </div>
               <button type="button" class="chart-help-btn" data-charthelp="insTrend" aria-label="Chart tips" title="Chart tips">?</button>
             </div>
-          </div>
-          <!-- R11-C3 (owner-approved consolidation): the metric sub-tabs, the
-               per-queue metric select, and the calendar's own cell-metric
-               segment collapsed into ONE metric dropdown. Queue metrics ride
-               the same list as "Queue: …" entries; Avg talk time stays the
-               admin-only lens (the option is REMOVED for non-admins at init
-               -- <option> can't use the data-admin-only reveal). The
-               calendar's cells follow this same metric. -->
-          <div class="pr-trend-subtabs ins-trend-metric-row" id="ins-trend-metric-row">
-            <label class="ir-sort-control">
-              <span class="ir-sort-label">Metric:</span>
-              <select id="ins-trend-metric">
-                <option value="answered">Answered</option>
-                <option value="pct">% Answered</option>
-                <option value="missed">Missed</option>
-                <option value="volume">Call volume (rung)</option>
-                <option value="att" data-admin-metric="1">Avg talk time</option>
-                <option value="queues:abandonedPct">Queue: Abandoned %</option>
-                <option value="queues:totalCalls">Queue: Total calls</option>
-                <option value="queues:violations">Queue: Violations</option>
-              </select>
-            </label>
           </div>
           <div class="ir-chart-canvas-wrap" id="ins-trend-canvas-wrap"><canvas id="ins-trend-chart"></canvas></div>
           <!-- Phase 2 #10: the calendar day-grid renderer (CSS grid, no

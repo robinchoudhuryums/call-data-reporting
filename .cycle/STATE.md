@@ -1289,3 +1289,100 @@ commit/push/deploy direction.
   CDR Import editor (DIRECT_UPSERT_SINCE to scope); recommended only after the
   carve-out numbers are vetted. INV-44 step list (bulkBackfill:Direct) is a
   sync-docs follow-up. Branch claude/brave-dijkstra-wuonrv carries 42-48, UNMERGED.
+
+- **Increment 49 (DONE — R12: UI-audit Phase 1 fixes, commit 64cd132):** A
+  rendered-harness UI/UX audit (scratchpad-only tooling: real client
+  script/styles/markup + payloads computed by the REAL server code via the
+  unit-test vm harness over fixture sheets, driven in headless Chromium at
+  1440/1024/768/390, light+dark, admin+manager) found 7 issues on
+  Overview + My Department; all fixed + harness-verified. R12-1 (BUG): missed
+  chart never instantiated when refresh() ran during the Overview landing --
+  the MC2 create-while-hidden guard exhausts 30 rAF attempts vs the
+  display:none dept page and nothing re-armed on entry (blank until manual
+  Refresh); setPage's dept branch now re-draws from deptMissedLastData when
+  no instance exists (likely the true root cause under the R10-7/R11-B6
+  band-aids). R12-2 (BUG): colorToCanvasRgb_ fillStyle-readback does NOT
+  canonicalize oklch in modern browsers (serialized back verbatim) -- THEME
+  carried oklch strings, parseColorRgb_ fell to gray, so every R11-L trend
+  arrow rendered gray; non-rgb/hex readbacks now resolve via 1x1 getImageData.
+  R12-3: .header-meta wraps <=640px + .ov-user-table-wrap overflow-x:auto ->
+  0px page overflow at 390/768 (was 290px pan). R12-4: ovPeriodStats_ shows
+  the no-data dash when rung===0 (was a catastrophic-looking "0.0%
+  answered"). R12-5 (a11y): both agent tables' sort headers keyboard-operable
+  (tabIndex + Enter/Space) + aria-sort. R12-6 (a11y): header nav dropped
+  role=tablist/tab -> aria-current="page" (updateTabActiveState_); Overview
+  chart toolbar role=group + aria-pressed metric buttons. R12-7 (a11y):
+  .ir-sort-control select keeps a visible focus ring. npm run ci 452/452 +
+  INV-16 clean; harness regression sweep: 0 console errors, 0 overflow,
+  manager admin-leak check clean. Clean audit results worth keeping: contrast
+  >=4.5:1 AA both modes; focus order logical; 92% boundary tint exact.
+  Follow-ons (NOT done): S4 dead #mock-banner relic; IR modal's real
+  role=tab set lacks tabpanel/arrow-key wiring (out of Phase-1 scope);
+  R6 default Zoom:Full dead space (owner call); audit Phase 2 (Insights page
+  or modals+Escalations) not started. Docs: fix-history R12 entries +
+  CLAUDE.md INV-42 note are a sync-docs follow-up. Where I left off: R12
+  committed+pushed on claude/broad-scan-ak8g04 (ahead of merged PR #199),
+  no PR opened yet; operator deploy of the dashboard pending.
+
+- **Increment 50 (DONE — R12 batch 2 + audit Phase 2, commit a6f7b56):**
+  Batch-2 fixes: R12-8 mock-banner relic removed (markup+CSS+dead meta.mock
+  check); R12-8b Overview chart zoom DEFAULTS to Fit (owner via R6; persisted
+  cdr.ov.axiszoom; static markup label synced); R12-9 IR modal chart tabs
+  completed as a real APG tabs pattern (inner role=tablist wrapper w/
+  display:contents so the mixed toolbar keeps layout; aria-controls + roving
+  tabindex anchored to irActiveChartTab; role=tabpanel + aria-labelledby;
+  Left/Right/Home/End move+activate). Harness-verified (Fit axis 83-97;
+  ArrowRight activates+focuses; no page errors); CI 452/452. AUDIT PHASE 2
+  (Insights page; audit-only, no fixes): auto-run, density Simple/Detailed
+  (chart-trap avoided; Simple forces trend chart AND instantiates visible),
+  popover+advanced, period bar, calendar v2 (month pagination), manager
+  gating (no ATT option / AB panel / heatmap; role-default Simple) ALL
+  CLEAN; zero console errors. Findings (unfixed): I-1 .ir-results-header 4px
+  page overflow (every viewport); I-2 R11-J A/B VIEWS panel occludes chart/
+  calendar data when expanded at 1440x950 (suggest default-collapsed or
+  persisted collapse); I-3 390px Agents toolbar clips (sort label cut,
+  Cards/Chart + basis segments unreachable without undiscoverable horizontal
+  scroll); I-4 (polish) trend Metric dropdown floats detached center-chart.
+  Harness lesson: fullPage screenshots race Chart.js re-layout (viewport
+  clips are the truth). Where I left off: batch 2 pushed on
+  claude/broad-scan-ak8g04; Phase 2 findings awaiting owner pick; no PR
+  opened for R12 batches yet; dashboard deploy pending.
+
+- **Increment 51 (DONE — R12 batch 3: Insights Phase-2 fixes, commit 4a30a81):**
+  R12-10 (I-1) Insights sticky header 4px viewport bleed -> spread-shadow
+  bleed (0px overflow everywhere now); R12-11 (I-2) admin A/B VIEWS card
+  defaults COLLAPSED + persists (cdr.ins.abpanel) so it can't occlude
+  chart/calendar data unnoticed; R12-12 (I-3) Agents toolbar wraps <=700px
+  (was clipped at 390 with segments unreachable); R12-13 (I-4) trend Metric
+  dropdown relocated into .ins-trend-headctl beside Monthly/Daily +
+  Line/Calendar (headctl now an explicit wrapping flex row; export onclone
+  hides it by id, unchanged). Harness-verified: 0px overflow 1440+390,
+  collapse persistence round-trip, toolbar within viewport, no page errors;
+  CI 452/452. Where I left off: R12 batches 1-3 all pushed on
+  claude/broad-scan-ak8g04, NO PR yet; /sync-docs pending for R12-1..13
+  fix-history entries + INV-41/42 oklch note; dashboard deploy pending;
+  remaining audit phases (modals beyond IR, Escalations page) unstarted.
+
+- **Increment 52 (DONE — audit Phase 3: Escalations + admin modals; AUDIT ONLY,
+  no fixes):** Harness extended with a fake JDBC conn (escalation rows +
+  aggregates) + real-server payloads for esc-init/list/activity, alerts-init,
+  digests-init, queuereport-init, orphan-init, deptconfig-init, access-init,
+  health, ui-flags. CLEAN: Escalations page admin+manager (cat-menu counts,
+  health band, review chip, filter, + New escalation admin-only,
+  single-dept manager gets the NAME-TEXT dept control, zero data-admin-only
+  leaks, 0px overflow 1440+390); all six admin modals aria-modal + labelled,
+  Escape closes all, panels fit viewport, content renders (Orphan Fix showed
+  the Jon Smyth orphan + datalist mapping correctly); zero console errors.
+  FINDINGS (unfixed): P3-1 (MED, root-caused) trapFocus_'s FOCUSABLE query
+  doesn't exclude HIDDEN elements, so the first/last wrap never fires in
+  modals whose last focusable node is display:none (collapsed edit forms) --
+  Tab ESCAPES Orphan Fix (21/25 presses), Dept Config (18/25), Health
+  (15/25) while Alerts/Access/Caller trap 0/25; fix = filter els to visible
+  (offsetParent) inside the keydown handler, repairing every modal at once.
+  P3-2 (LOW, owner call): the Escalations 'All' view repeats the full
+  expanded resolution form on every open card -- a disclosure would compact
+  the list. P3-3 (INFO) hidden status divs retain their 'Loading...' text
+  after success (DOM-only, not visible). Harness limits: write flows +
+  Caller Lookup search + modal drag/resize not exercised. Where I left off:
+  Phase 3 findings awaiting owner pick; R12 batches 1-3 still un-PR'd;
+  /sync-docs pending (R12-1..13); dashboard deploy pending.
