@@ -403,6 +403,8 @@
         <button class="link-btn dept-cols-toggle" id="dept-cols-toggle" type="button"
                 aria-expanded="false"
                 title="Show or hide the Unique / TTT / Avg Abd Wait detail columns">Show all columns</button>
+        <button class="link-btn dept-cols-toggle" id="dept-rows-toggle" type="button" aria-pressed="false"
+                title="Tighter row padding so large rosters fit more agents per screen">Compact rows</button>
       </div>
       <!-- S2-3: wrap the table so a wide "Show all columns" view scrolls
            INSIDE this container on narrow viewports instead of overflowing the
@@ -1413,6 +1415,23 @@
         <details id="ins-team-detail" class="ds-team-detail">
           <summary class="ds-team-detail-summary">Team detail &mdash; queue health, heatmap &amp; share</summary>
 
+        <div id="ins-heatmap" class="ds-heatmap-panel" style="display:none;"></div>
+
+        <!-- Share-of-answered pie (ported from the Performance Report so
+             PR can retire without losing the view): each selected
+             agent's slice of the team's answered calls in the range. -->
+        <div class="ir-chart-wrap ins-share-wrap" id="ins-share-wrap" style="display:none;">
+          <div class="ir-chart-header">Share of answered calls</div>
+          <div class="ir-chart-canvas-wrap ins-share-canvas-wrap"><canvas id="ins-share-chart"></canvas></div>
+        </div>
+        </details>
+        <!-- /A2 Team detail -->
+
+        <!-- R12-17 (#5): Queue health PROMOTED out of the Team-detail fold to
+             its own always-visible zone (Detailed mode) -- it is the QCD
+             replacement, the consolidation's point. Simple mode still hides it
+             (styles.html ds-density-simple list). -->
+        <div class="ds-zone"><span class="ds-zone-label">Queue health</span></div>
         <!-- Queue health (QCD-into-Insights consolidation): the dept's
              queue-level abandoned % / violations for the same window +
              prior window. THE queue deep-dive since the standalone QCD
@@ -1476,17 +1495,7 @@
           <div class="ins-qh-footnote">Reads <code>QCD Historical Data</code> &mdash; the trend chart at the bottom of the report switches to per-queue Total&nbsp;Calls / Violations via the &ldquo;Abd&nbsp;%&rdquo; tab&rsquo;s metric selector.</div>
         </div>
 
-        <div id="ins-heatmap" class="ds-heatmap-panel" style="display:none;"></div>
 
-        <!-- Share-of-answered pie (ported from the Performance Report so
-             PR can retire without losing the view): each selected
-             agent's slice of the team's answered calls in the range. -->
-        <div class="ir-chart-wrap ins-share-wrap" id="ins-share-wrap" style="display:none;">
-          <div class="ir-chart-header">Share of answered calls</div>
-          <div class="ir-chart-canvas-wrap ins-share-canvas-wrap"><canvas id="ins-share-chart"></canvas></div>
-        </div>
-        </details>
-        <!-- /A2 Team detail -->
 
         <!-- A3: Agents zone -->
         <div class="ds-zone"><span class="ds-zone-label">Agents</span></div>

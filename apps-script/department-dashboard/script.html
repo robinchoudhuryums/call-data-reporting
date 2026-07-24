@@ -775,7 +775,18 @@
   // Foldable detail-columns toggle for the My Department agent table.
   // Default 'compact' (extra columns hidden); persisted per-browser.
   const DEPT_COLS_KEY = 'cdr.dept.cols';
+  // R12-16 (#4): compact row density for big rosters -- tighter cell padding
+  // via .agents--compact; persisted; applied alongside the cols pref.
+  const DEPT_ROWS_KEY = 'cdr.dept.rowdensity';
   function applyDeptColsPref_() {
+    var dense = (localStorage.getItem(DEPT_ROWS_KEY) === 'compact');
+    var t2 = $('agents-table');
+    if (t2) t2.classList.toggle('agents--compact', dense);
+    var rbtn = $('dept-rows-toggle');
+    if (rbtn) {
+      rbtn.textContent = dense ? 'Comfortable rows' : 'Compact rows';
+      rbtn.setAttribute('aria-pressed', dense ? 'true' : 'false');
+    }
     var compact = (localStorage.getItem(DEPT_COLS_KEY) !== 'all');   // default compact
     var table = $('agents-table');
     if (table) table.classList.toggle('hide-extra', compact);
@@ -1049,6 +1060,12 @@
     if (colsToggle) colsToggle.addEventListener('click', function () {
       var next = (localStorage.getItem(DEPT_COLS_KEY) === 'all') ? 'compact' : 'all';
       try { localStorage.setItem(DEPT_COLS_KEY, next); } catch (e) {}
+      applyDeptColsPref_();
+    });
+    var rowsBtn = $('dept-rows-toggle');
+    if (rowsBtn) rowsBtn.addEventListener('click', function () {
+      var dense = (localStorage.getItem(DEPT_ROWS_KEY) === 'compact');
+      try { localStorage.setItem(DEPT_ROWS_KEY, dense ? 'comfortable' : 'compact'); } catch (e) {}
       applyDeptColsPref_();
     });
     applyDeptColsPref_();
@@ -18149,7 +18166,7 @@
     const btn = document.querySelector('.esc-start[data-id="' + escCssId_(id) + '"]');
     if (btn) { btn.disabled = true; btn.textContent = 'Starting…'; }
     google.script.run
-      .withSuccessHandler(function () { escLoad_(); })
+      .withSuccessHandler(function () { showToast('Saved \u2713', 'success'); escLoad_(); })
       .withFailureHandler(function (err) {
         if (btn) { btn.disabled = false; btn.innerHTML = '&#9680; Start'; }
         escRowError_(id, (err && err.message ? err.message : String(err)));
@@ -18166,7 +18183,7 @@
     const save = document.querySelector('.esc-reopen-save[data-id="' + escCssId_(id) + '"]');
     if (save) { save.disabled = true; save.textContent = 'Reopening…'; }
     google.script.run
-      .withSuccessHandler(function () { escLoad_(); })
+      .withSuccessHandler(function () { showToast('Saved \u2713', 'success'); escLoad_(); })
       .withFailureHandler(function (err) {
         if (save) { save.disabled = false; save.textContent = 'Reopen escalation'; }
         escRowError_(id, (err && err.message ? err.message : String(err)));
@@ -18180,7 +18197,7 @@
     const btn = document.querySelector('.esc-approve[data-id="' + escCssId_(id) + '"]');
     if (btn) { btn.disabled = true; btn.textContent = 'Approving…'; }
     google.script.run
-      .withSuccessHandler(function () { escLoad_(); })
+      .withSuccessHandler(function () { showToast('Saved \u2713', 'success'); escLoad_(); })
       .withFailureHandler(function (err) {
         if (btn) { btn.disabled = false; btn.innerHTML = '&#10003; Approve into worklist'; }
         escRowError_(id, (err && err.message ? err.message : String(err)));
@@ -18197,7 +18214,7 @@
     const save = document.querySelector('.esc-reject-save[data-id="' + escCssId_(id) + '"]');
     if (save) { save.disabled = true; save.textContent = 'Rejecting…'; }
     google.script.run
-      .withSuccessHandler(function () { escLoad_(); })
+      .withSuccessHandler(function () { showToast('Saved \u2713', 'success'); escLoad_(); })
       .withFailureHandler(function (err) {
         if (save) { save.disabled = false; save.textContent = 'Reject submission'; }
         escRowError_(id, (err && err.message ? err.message : String(err)));
@@ -18292,7 +18309,7 @@
     const save = document.querySelector('.esc-resolve-save[data-id="' + escCssId_(id) + '"]');
     if (save) { save.disabled = true; save.textContent = 'Saving…'; }
     google.script.run
-      .withSuccessHandler(function () { escLoad_(); })
+      .withSuccessHandler(function () { showToast('Saved \u2713', 'success'); escLoad_(); })
       .withFailureHandler(function (err) {
         if (save) { save.disabled = false; save.textContent = 'Save resolution'; }
         escRowError_(id, (err && err.message ? err.message : String(err)));
@@ -18304,7 +18321,7 @@
     const comm = document.querySelector('.esc-comments-text[data-id="' + escCssId_(id) + '"]');
     escRowError_(id, '');
     google.script.run
-      .withSuccessHandler(function () { escLoad_(); })
+      .withSuccessHandler(function () { showToast('Saved \u2713', 'success'); escLoad_(); })
       .withFailureHandler(function (err) { escRowError_(id, (err && err.message ? err.message : String(err))); })
       .updateEscalationComment({ id: id, comments: comm ? comm.value.trim() : '' });
   }

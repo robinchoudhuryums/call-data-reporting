@@ -841,6 +841,7 @@
      only the cross-agent CONTROLS (view/basis/metric) + the heavy team blocks
      stay hidden in Simple. */
   #insights-results.ds-density-simple #ins-team-detail,
+  #insights-results.ds-density-simple #ins-queue-health,
   #insights-results.ds-density-simple #ins-trend-wrap,
   #insights-results.ds-density-simple #ins-cards-view-toggle,
   #insights-results.ds-density-simple #ins-cards-chart-mode,
@@ -931,6 +932,16 @@
     padding-top: 8px; padding-bottom: 8px;
   }
   #dept-page .controls { margin-bottom: 14px; }
+  /* R12-18 (#7): on short laptop viewports the sticky strips eat too much
+     vertical budget -- tighten their padding (the max-height pattern the
+     Overview chart band already uses). */
+  @media (max-height: 800px) {
+    #dept-page .controls,
+    #insights-page #insights-results > .ir-results-header {
+      padding-top: 4px; padding-bottom: 4px;
+    }
+    #insights-page #insights-results > .ir-results-header .ins-period-bar { margin-top: 2px; }
+  }
   /* R11-B9: the Insights sticky strip is the WHOLE results header now
      (title + toolbar + period presets -- the My Department pattern). The
      period bar sits as a full-width third row inside the flex header. */
@@ -5611,6 +5622,16 @@
        panning the whole page sideways on phones. */
     overflow-x: auto;
   }
+  /* R12-16 (#4): compact row density -- tighter cells so Sales-sized rosters
+     fit more agents per screen; toggled via #dept-rows-toggle. The row height
+     is CONTENT-driven by the bar cell, so compact also tightens its inner
+     stack + type, not just cell padding. */
+  #agents-table.agents--compact th, #agents-table.agents--compact td {
+    padding-top: 3px; padding-bottom: 3px;
+  }
+  #agents-table.agents--compact td { line-height: 1.15; font-size: 12px; }
+  #agents-table.agents--compact .ans-bar-cell { padding-top: 2px; padding-bottom: 2px; }
+  #agents-table.agents--compact .ans-bar-cell > div { margin-top: 1px; margin-bottom: 1px; }
   .ov-user-table-wrap .ir-chart-header {
     display: flex;
     align-items: baseline;
