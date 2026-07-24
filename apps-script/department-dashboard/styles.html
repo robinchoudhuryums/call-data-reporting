@@ -612,18 +612,6 @@
   .tag-manager { background: var(--accent-soft); color: var(--accent); }
   .tag-none    { background: var(--warn-soft); color: var(--warn); }
 
-  /* Mock banner */
-  .mock-banner {
-    background: var(--warn-soft);
-    border: 1px solid var(--line);
-    border-left: 3px solid var(--warn);
-    color: var(--muted);
-    padding: 8px 12px;
-    border-radius: 2px;
-    font-size: 12px;
-    margin-bottom: 16px;
-  }
-
   /* Controls — mono-uppercase kicker labels, sharp-cornered inputs. */
   .controls {
     display: flex;
@@ -2899,6 +2887,10 @@
 
   /* Tabbed chart container: only one of Volume/Efficiency/Duration
      is visible at a time so each gets the full container width. */
+  /* R12-9: the IR tab trio sits inside a real role=tablist wrapper;
+     display:contents keeps the buttons as direct flex items of the strip
+     so the toolbar layout is unchanged. */
+  .ir-tablist-inline { display: contents; }
   .ir-chart-tabs {
     display: flex;
     flex-wrap: wrap;           /* inline chart controls wrap on narrow widths */

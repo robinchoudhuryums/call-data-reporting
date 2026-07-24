@@ -3426,8 +3426,16 @@
 
   // Axis zoom toggle: Full (0-100%) <-> Fit (auto-scale to the data range,
   // so depts clustered near the top spread out). Wired once; the button
-  // lives in the ov-chart-tabs row (dashboard.html).
-  let ovAxisZoom = 'full';
+  // lives in the ov-chart-tabs row (dashboard.html). R12-8 (owner): Fit is
+  // the DEFAULT -- lines cluster at 85-95%, so Full renders ~80% dead plot;
+  // the choice persists per user.
+  const OV_AXIS_ZOOM_KEY_ = 'cdr.ov.axiszoom';
+  let ovAxisZoom = (function () {
+    try {
+      var v = localStorage.getItem(OV_AXIS_ZOOM_KEY_);
+      return (v === 'full' || v === 'fit') ? v : 'fit';
+    } catch (e) { return 'fit'; }
+  })();
   let ovAxisZoomWired = false;
   function ovWireAxisZoom_() {
     // Keep the button label in sync on every render (the metric switch /
@@ -3443,6 +3451,7 @@
     ovAxisZoomWired = true;
     btn.addEventListener('click', function () {
       ovAxisZoom = (ovAxisZoom === 'full') ? 'fit' : 'full';
+      try { localStorage.setItem(OV_AXIS_ZOOM_KEY_, ovAxisZoom); } catch (e) {}
       // Re-render so the metric-aware axis (ovYAxis_) is recomputed and the
       // new zoom survives the next refresh. Previously this mutated the live
       // chart's scale directly, which the next re-render silently reset.
@@ -5932,15 +5941,6 @@
       }
     }
 
-    // Mock banner (only shown if the server flagged a mocked response;
-    // Step D returns real data so this should always hide).
-    const banner = $('mock-banner');
-    if (state.meta && state.meta.mock) {
-      banner.style.display = '';
-    } else {
-      banner.style.display = 'none';
-    }
-
     if (!state.rows.length) {
       var hint = state.meta && state.meta.rosterSize === 0
         ? 'No agents are mapped to this department in the roster sheet. Check the DO NOT EDIT! tab or contact your admin.'
@@ -7580,6 +7580,27 @@
       irActivateChartTab_();
       irSavePrefs_();
     });
+    // R12-9: APG tabs keyboard model -- Left/Right/Home/End move focus AND
+    // activate (selection follows focus; panels are cheap show/hides).
+    if (tabContainer) tabContainer.addEventListener('keydown', function (e) {
+      const tab = e.target.closest && e.target.closest('.ir-tab');
+      if (!tab) return;
+      const keys = ['ArrowLeft', 'ArrowRight', 'Home', 'End'];
+      if (keys.indexOf(e.key) === -1) return;
+      e.preventDefault();
+      const tabs = Array.prototype.slice.call(tabContainer.querySelectorAll('.ir-tab'));
+      let i = tabs.indexOf(tab);
+      if (e.key === 'ArrowLeft') i = (i - 1 + tabs.length) % tabs.length;
+      else if (e.key === 'ArrowRight') i = (i + 1) % tabs.length;
+      else if (e.key === 'Home') i = 0;
+      else i = tabs.length - 1;
+      const next = tabs[i];
+      if (irShowAllCharts) irShowAllCharts = false;
+      irActiveChartTab = next.getAttribute('data-tab');
+      irActivateChartTab_();
+      irSavePrefs_();
+      next.focus();
+    });
 
     // Card-sort dropdown: re-renders the summary cards in place.
     const sortSel = $('ir-card-sort');
@@ -8430,6 +8451,10 @@
         const active = !irShowAllCharts && b.getAttribute('data-tab') === irActiveChartTab;
         b.classList.toggle('active', active);
         b.setAttribute('aria-selected', active ? 'true' : 'false');
+        // R12-9: roving tabindex (APG tabs pattern). Anchored to
+        // irActiveChartTab even in all-mode so the tablist always keeps
+        // exactly one Tab stop.
+        b.tabIndex = (b.getAttribute('data-tab') === irActiveChartTab) ? 0 : -1;
       });
     }
     const cont = $('ir-charts-container');

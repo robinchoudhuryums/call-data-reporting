@@ -232,8 +232,8 @@
                 title="Abandoned call count per day (queue data)">Abandoned calls</button>
               <button type="button" class="ir-tab" data-metric="abandonedPct" aria-pressed="false"
                 title="Abandoned % per day (queue data)">Abandoned %</button>
-              <button type="button" class="ir-tab" id="ov-axis-zoom-btn" aria-pressed="false"
-                title="Toggle the y-axis between the full scale and an auto-fit zoom to the data range">Zoom: Full</button>
+              <button type="button" class="ir-tab" id="ov-axis-zoom-btn" aria-pressed="true"
+                title="Toggle the y-axis between the full scale and an auto-fit zoom to the data range">Zoom: Fit</button>
               <label class="ov-subq-toggle" title="Show sub-queue (child) lines on the chart (dashed, in their parent's colour). On by default; uncheck to declutter to top-level departments only.">
                 <input type="checkbox" id="ov-subq-toggle" checked> sub-queues
               </label>
@@ -299,9 +299,6 @@
            QCD side panel and duplicated the range read-only). The controls row
            below is the sticky element now (CSS position:sticky on
            #dept-page .controls), so the real date inputs stay reachable. -->
-      <div id="mock-banner" class="mock-banner" style="display:none;">
-        <strong>Mock data.</strong> Step C uses placeholder rows so the UI is verifiable end-to-end before the data layer is wired. Step D replaces this with real reads from <code>DQE Historical Data</code>.
-      </div>
 
       <!-- Work-window pill (E2). Populated from window.__WORK_WINDOW__
            at init time so the strings come from the dashboard's
@@ -999,10 +996,12 @@
         <!-- Chart controls consolidated onto one band: the data-labels
              toggle sits at the right end of the tab strip instead of on
              its own row above it (pinned via .ir-chart-tabs > .ir-toggle-box). -->
-        <div class="ir-chart-tabs" id="ir-chart-tabs" role="tablist">
-          <button type="button" class="ir-tab active" data-tab="vol" role="tab" aria-selected="true">Volume</button>
-          <button type="button" class="ir-tab" data-tab="eff" role="tab" aria-selected="false">Efficiency</button>
-          <button type="button" class="ir-tab" data-tab="dur" role="tab" aria-selected="false">Duration</button>
+        <div class="ir-chart-tabs" id="ir-chart-tabs">
+          <span role="tablist" aria-label="Chart view" class="ir-tablist-inline">
+            <button type="button" class="ir-tab active" id="ir-tab-vol" data-tab="vol" role="tab" aria-selected="true" aria-controls="ir-wrap-vol" tabindex="0">Volume</button>
+            <button type="button" class="ir-tab" id="ir-tab-eff" data-tab="eff" role="tab" aria-selected="false" aria-controls="ir-wrap-eff" tabindex="-1">Efficiency</button>
+            <button type="button" class="ir-tab" id="ir-tab-dur" data-tab="dur" role="tab" aria-selected="false" aria-controls="ir-wrap-dur" tabindex="-1">Duration</button>
+          </span>
           <!-- #4: stack all three trend charts (Volume/Efficiency/Duration)
                instead of one tab at a time. -->
           <button type="button" class="ir-allcharts-toggle" id="ir-allcharts-toggle" aria-pressed="false"
@@ -1018,15 +1017,15 @@
         <div id="ir-shared-legend" class="ir-shared-legend" style="display:none;"></div>
 
         <div id="ir-charts-container" class="ir-chart-area">
-          <div class="ir-chart-wrap" id="ir-wrap-vol" data-panel="vol">
+          <div class="ir-chart-wrap" id="ir-wrap-vol" data-panel="vol" role="tabpanel" aria-labelledby="ir-tab-vol">
             <div class="ir-chart-header">Volume Trends</div>
             <div class="ir-chart-canvas-wrap"><canvas id="ir-vol-chart"></canvas></div>
           </div>
-          <div class="ir-chart-wrap" id="ir-wrap-eff" data-panel="eff" style="display:none;">
+          <div class="ir-chart-wrap" id="ir-wrap-eff" data-panel="eff" role="tabpanel" aria-labelledby="ir-tab-eff" style="display:none;">
             <div class="ir-chart-header">Efficiency (% Answered)</div>
             <div class="ir-chart-canvas-wrap"><canvas id="ir-eff-chart"></canvas></div>
           </div>
-          <div class="ir-chart-wrap" id="ir-wrap-dur" data-panel="dur" style="display:none;">
+          <div class="ir-chart-wrap" id="ir-wrap-dur" data-panel="dur" role="tabpanel" aria-labelledby="ir-tab-dur" style="display:none;">
             <div class="ir-chart-header">Duration (ATT)</div>
             <div class="ir-chart-canvas-wrap"><canvas id="ir-dur-chart"></canvas></div>
           </div>
