@@ -71,3 +71,14 @@ test('coverage: null capture floor (empty table) -> every eligible weekday is a 
     function () { return false; });
   assert.deepEqual(Array.from(gaps), ['2026-07-13', '2026-07-14', '2026-07-15']);
 });
+
+// ── ncMissingTableError_ (outbound_calls may predate its capture deploy) ─
+
+test('coverage: missing-table probe errors classify as clean skips, real failures do not', function () {
+  assert.equal(h.ctx.ncMissingTableError_('outbound_calls: relation "outbound_calls" does not exist'), true);
+  assert.equal(h.ctx.ncMissingTableError_('ERROR: relation "outbound_calls" does not exist (SQLState 42P01)'), true);
+  assert.equal(h.ctx.ncMissingTableError_('outbound_calls: connection reset by peer'), false);
+  assert.equal(h.ctx.ncMissingTableError_('timeout waiting for connection'), false);
+  assert.equal(h.ctx.ncMissingTableError_(''), false);
+  assert.equal(h.ctx.ncMissingTableError_(null), false);
+});

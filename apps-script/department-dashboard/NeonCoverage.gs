@@ -13,10 +13,14 @@
  *   call_history_dept    ← 'CDR Historical Data'    (date col 3, INV-52)
  *   direct_call_history  ← 'Direct Call History'    (date col 2)
  *
- * plus `inbound_calls`, which has NO sheet primary (the export tab is a copy,
- * not a source): for it the check flags ZERO-ROW WEEKDAYS inside the window —
- * holiday-aware (COMPANY_HOLIDAYS) and floored at the capture start
- * (MIN(call_date)), since dates before capture went live are expected-empty.
+ * plus the two NO-SHEET-PRIMARY per-call tables, `inbound_calls` and
+ * `outbound_calls` (the export tab is a copy, not a source; outbound has no
+ * export at all): for each the check flags ZERO-ROW WEEKDAYS inside the
+ * window — holiday-aware (COMPANY_HOLIDAYS) and floored at that table's own
+ * capture start (MIN(call_date)), since dates before its capture went live
+ * are expected-empty. An outbound_calls table that doesn't exist yet
+ * (cdr-import not deployed with the Option B capture) is a clean SKIP, not
+ * a probe error (`ncMissingTableError_`).
  *
  * Findings are classified per table:
  *   missing-in-neon  sheet has rows for the date, Neon has none
@@ -102,21 +106,40 @@ function runNeonCoverageCheck() {
       }
     }
 
-    // inbound_calls: zero-row weekday check (no sheet primary).
-    try {
-      var ib = ncNeonDateCounts_(conn, 'inbound_calls', fromIso, toIso);
-      var floorIso = ncNeonMinDate_(conn, 'inbound_calls');
-      var missing = ncExpectedWeekdayGaps_(fromIso, toIso, ib, floorIso, function (iso) {
-        return (typeof isCompanyHoliday_ === 'function') ? isCompanyHoliday_(iso) : false;
-      });
-      out.inbound = { table: 'inbound_calls', captureStart: floorIso, zeroRowWeekdays: missing,
-        fix: 'force re-import the date (heals within the ~14-day Call_Legs retention; older days are unrecoverable — IMP-11)' };
-      out.findings += missing.length;
-    } catch (ie) {
-      var imsg = 'inbound_calls: ' + (ie && ie.message ? ie.message : ie);
-      out.errors.push(imsg);
-      Logger.log('runNeonCoverageCheck inbound failed — ' + imsg);
+    // No-sheet-primary per-call tables: zero-row weekday check. Each entry
+    // is independently try/caught; a table that doesn't exist yet (the
+    // outbound capture not deployed) is a clean skip, not a probe error.
+    var noSheetSpecs = [
+      { table: 'inbound_calls',
+        fix: 'force re-import the date (heals within the ~14-day Call_Legs retention; older days are unrecoverable — IMP-11)' },
+      { table: 'outbound_calls',
+        fix: 'force re-import the date or run backfillOutboundCalls (cdr-import; same ~14-day Call_Legs ceiling — IMP-11)' },
+    ];
+    out.noSheet = [];
+    for (var n = 0; n < noSheetSpecs.length; n++) {
+      var nspec = noSheetSpecs[n];
+      try {
+        var counts = ncNeonDateCounts_(conn, nspec.table, fromIso, toIso);
+        var floorIso = ncNeonMinDate_(conn, nspec.table);
+        var missing = ncExpectedWeekdayGaps_(fromIso, toIso, counts, floorIso, function (iso) {
+          return (typeof isCompanyHoliday_ === 'function') ? isCompanyHoliday_(iso) : false;
+        });
+        out.noSheet.push({ table: nspec.table, captureStart: floorIso,
+          zeroRowWeekdays: missing, fix: nspec.fix });
+        out.findings += missing.length;
+      } catch (ie) {
+        var imsg = nspec.table + ': ' + (ie && ie.message ? ie.message : ie);
+        if (ncMissingTableError_(imsg)) {
+          out.noSheet.push({ table: nspec.table, skipped: 'table not created yet (capture not deployed)' });
+          Logger.log('runNeonCoverageCheck: ' + nspec.table + ' not created yet — skipped.');
+        } else {
+          out.errors.push(imsg);
+          Logger.log('runNeonCoverageCheck no-sheet table failed — ' + imsg);
+        }
+      }
     }
+    // Back-compat alias (pre-outbound shape): out.inbound = the inbound entry.
+    out.inbound = out.noSheet[0] || null;
 
     out.ms = Date.now() - t0;
     var summary = out.findings
@@ -146,6 +169,16 @@ function runNeonCoverageCheck() {
  * The F-3/F-10 rule: writer-side date comparisons go through ISO-normalized
  * DISPLAY values, never String(getValues()).
  */
+/**
+ * PURE. True when a probe error means the TABLE ISN'T CREATED YET (Postgres
+ * undefined_table, surfaced through JDBC as 'relation "x" does not exist')
+ * — a clean skip for the no-sheet-primary tables whose capture may not be
+ * deployed yet, as opposed to a real probe failure worth alarming on.
+ */
+function ncMissingTableError_(msg) {
+  return /relation .* does not exist|does not exist/i.test(String(msg || ''));
+}
+
 function ncCellDateIso_(s) {
   var str = String(s == null ? '' : s).trim();
   if (!str) return null;
@@ -279,16 +312,17 @@ function ncEmailResult_(out, summary) {
       t.countMismatch.forEach(function (f) { lines.push('    COUNT MISMATCH   ' + f.date + '  sheet ' + f.sheetRows + ' vs neon ' + f.neonRows); });
       t.extraInNeon.forEach(function (f) { lines.push('    EXTRA IN NEON    ' + f.date + '  (' + f.neonRows + ' phantom row(s), no sheet rows)'); });
     });
-    if (out.inbound) {
-      var ibm = out.inbound.zeroRowWeekdays || [];
+    (out.noSheet || (out.inbound ? [out.inbound] : [])).forEach(function (ns) {
+      if (ns.skipped) { lines.push(ns.table + ' (no sheet primary): skipped (' + ns.skipped + ')'); return; }
+      var ibm = ns.zeroRowWeekdays || [];
       if (!ibm.length) {
-        lines.push('inbound_calls (no sheet primary): clean — every eligible weekday has rows'
-          + (out.inbound.captureStart ? ' (capture since ' + out.inbound.captureStart + ')' : ''));
+        lines.push(ns.table + ' (no sheet primary): clean — every eligible weekday has rows'
+          + (ns.captureStart ? ' (capture since ' + ns.captureStart + ')' : ''));
       } else {
-        lines.push('inbound_calls (no sheet primary): ' + ibm.length + ' zero-row weekday(s) — fix: ' + out.inbound.fix);
+        lines.push(ns.table + ' (no sheet primary): ' + ibm.length + ' zero-row weekday(s) — fix: ' + ns.fix);
         lines.push('    ' + ibm.join(', '));
       }
-    }
+    });
     (out.errors || []).forEach(function (e) { lines.push('PROBE ERROR: ' + e); });
     if (lines.length > NEON_COVERAGE_MAX_EMAIL_LINES) {
       lines = lines.slice(0, NEON_COVERAGE_MAX_EMAIL_LINES);

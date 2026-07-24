@@ -1916,8 +1916,11 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   sheet-vs-Neon row-count reconciliation over `NEON_COVERAGE_DAYS` (=30,
   ending yesterday) for dqe/qcd/cdr/direct history (findings classified
   missing-in-neon / count-mismatch / extra-in-neon, each emailed with its
-  runbook fix) plus `inbound_calls` zero-row-WEEKDAY gaps (holiday-aware,
-  floored at the capture-start MIN(call_date)); outcome OPS-8-coded in
+  runbook fix) plus zero-row-WEEKDAY gaps on BOTH no-sheet-primary
+  per-call tables, `inbound_calls` AND `outbound_calls` (holiday-aware,
+  each floored at its own capture-start MIN(call_date); a not-yet-created
+  outbound_calls -- capture not deployed -- is a clean skip via
+  `ncMissingTableError_`, not a probe error); outcome OPS-8-coded in
   `NEON_COVERAGE_LAST(_RESULT)` and surfaced as the "Neon coverage — last
   check" row (Op State #35; the outcome classifier also flags a `GAPS`
   prefix). All pinned by `system-health.test.js` / `smoke-check.test.js` /
@@ -3112,9 +3115,12 @@ items for anything it flags or doesn't cover.)
     per date: missing-in-neon / count-mismatch / extra-in-neon (phantoms),
     each emailed with its runbook fix (force re-import /
     `backfillDQEHistoryUpsert` / `backfillCDRHistory` /
-    `backfillDirectCallToNeon`) -- and flags `inbound_calls` zero-row
-    WEEKDAYS (holiday-aware, floored at the capture-start MIN(call_date);
-    days past the ~14-day Call_Legs retention are unrecoverable, IMP-11).
+    `backfillDirectCallToNeon`) -- and flags zero-row WEEKDAYS on the two
+    no-sheet-primary per-call tables, `inbound_calls` AND `outbound_calls`
+    (holiday-aware, each floored at its own capture-start MIN(call_date);
+    an outbound_calls table that doesn't exist yet -- the Option B capture
+    not deployed -- is a clean skip, not a probe error; days past the
+    ~14-day Call_Legs retention are unrecoverable, IMP-11).
     Outcome in `NEON_COVERAGE_LAST(_RESULT)` ('ok clean' / 'GAPS n
     finding(s)' / 'FAILED*'), surfaced as the Health page's "Neon coverage
     -- last check" row. Complements the MAX(call_date)-only mirror-health
