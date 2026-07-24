@@ -279,6 +279,14 @@
     gap: 10px;
   }
   .header-meta .email { font-family: var(--mono); font-size: 12px; }
+  /* R12-3: on phones the meta cluster (email + role tag + view-as) used to
+     overflow the viewport and pan the whole page sideways -- let it wrap
+     and allow the email to break instead. */
+  @media (max-width: 640px) {
+    .header-meta { flex-wrap: wrap; justify-content: flex-end; row-gap: 6px; }
+    .header-meta > div { min-width: 0; }
+    .header-meta .email { overflow-wrap: anywhere; }
+  }
 
   /* Data-freshness pill: sits in .header-meta showing "Data through
      Mon May 19 · 14h ago".  Color cools when data is stale relative
@@ -2698,7 +2706,13 @@
     color: var(--ink);
     cursor: pointer;
   }
-  .ir-sort-control select:focus { outline: none; }
+  /* R12-7: keep a visible focus indicator (the bare outline:none removed the
+     ring with no replacement -- the .ir-search-row accent-ring pattern). */
+  .ir-sort-control select:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent-soft);
+  }
 
   /* Per-agent summary card — hairline panel with display-font agent
      name. KPI grid below uses paper-2 inner tiles for separation. */
@@ -5572,6 +5586,10 @@
      scroll container so it doesn't blow out the modal width. */
   .ov-user-table-wrap {
     margin-top: 18px;
+    /* R12-3: the mini-table must scroll INSIDE its wrap on narrow viewports
+       (the .agents-table-wrap S2-3 pattern) -- it was the last element
+       panning the whole page sideways on phones. */
+    overflow-x: auto;
   }
   .ov-user-table-wrap .ir-chart-header {
     display: flex;

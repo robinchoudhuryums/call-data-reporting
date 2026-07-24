@@ -1058,9 +1058,16 @@
       if (typeof irDrillToAgent_ === 'function') irDrillToAgent_(agent, from, to);
     });
 
-    // Sortable headers
+    // Sortable headers. R12-5: keyboard-operable too -- focusable, with
+    // Enter/Space triggering the same sort (they were click-only).
     document.querySelectorAll('#agents-table thead th[data-sort]').forEach(function (th) {
+      th.tabIndex = 0;
       th.addEventListener('click', function () { onSort(th.getAttribute('data-sort')); });
+      th.addEventListener('keydown', function (e) {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        e.preventDefault();   // Space must not scroll the page
+        onSort(th.getAttribute('data-sort'));
+      });
     });
 
     var deptBucketClose = $('dept-bucket-detail-close');
@@ -1251,6 +1258,17 @@
       var _rb = $('refresh-btn');
       if ((lastSummaryDept_ !== getRequestedDept() || adoptedWin_) && !(_rb && _rb.disabled)) {
         refresh();
+      }
+      // R12-1: re-arm the missed chart when its data landed while this page
+      // was hidden -- the initial refresh() runs during the Overview landing,
+      // so deptMissedDrawChart_'s create-while-hidden guard (MC2) exhausts
+      // its 30 rAF attempts against the display:none page and nothing else
+      // re-draws on page entry (blank chart until a manual Refresh).
+      // Idempotent: if a refresh was also kicked above, its render rebuilds.
+      if (!deptMissedChart && deptMissedLastData
+          && typeof deptMissedDrawChart_ === 'function') {
+        deptMissedDrawAttempts_ = 0;
+        deptMissedDrawChart_(deptMissedLastData);
       }
     }
     // Delegate the active-tab visual indicator to the router so all
@@ -2017,9 +2035,18 @@
     catch (e) { return 'yesterday'; }
   })();
   function ovPeriodStats_(dept) {
-    return (dept && dept.periods && dept.periods[ovCardPeriod])
+    const st = (dept && dept.periods && dept.periods[ovCardPeriod])
       || (dept && dept.latest)
       || { pctFormatted: '—', rung: 0, answered: 0, missed: 0, attFormatted: '—' };
+    // R12-4: a dept with queue/QCD data but ZERO rings in the window (e.g. a
+    // mapped dept whose roster had no agent activity) would headline
+    // "0.0% answered" -- reads as catastrophic when it means "no agent
+    // data". Show the no-data dash instead; a true all-missed day keeps its
+    // real 0.0% because rung > 0 there.
+    if (!(Number(st.rung) > 0)) {
+      return Object.assign({}, st, { pctFormatted: '—', attFormatted: '—' });
+    }
+    return st;
   }
   function ovPeriodCap_() { return (OV_CARD_PERIODS_[ovCardPeriod] || OV_CARD_PERIODS_.yesterday).cap; }
 
@@ -2678,9 +2705,11 @@
       if (key === ovUserSort_.key) {
         arrow.textContent = ovUserSort_.dir === 'asc' ? '▲' : '▼';
         arrow.style.color = THEME.ink || '#374151';
+        th.setAttribute('aria-sort', ovUserSort_.dir === 'asc' ? 'ascending' : 'descending');
       } else {
         arrow.textContent = '▽';
         arrow.style.color = THEME.muted || '#9ca3af';
+        th.removeAttribute('aria-sort');
       }
     });
     var sorted = sortRows(ovUserRows_, ovUserSort_.key, ovUserSort_.dir);
@@ -2720,7 +2749,13 @@
     ovUserSortWired_ = true;
     table.querySelectorAll('thead th[data-sort]').forEach(function (th) {
       th.style.cursor = 'pointer';
+      th.tabIndex = 0;   // R12-5: keyboard-operable sort (was click-only)
       th.addEventListener('click', function () { ovOnUserSort_(th.getAttribute('data-sort')); });
+      th.addEventListener('keydown', function (e) {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        e.preventDefault();
+        ovOnUserSort_(th.getAttribute('data-sort'));
+      });
     });
   }
 
@@ -3425,7 +3460,9 @@
     tabs.forEach(function (t) {
       const on = t.getAttribute('data-metric') === ovChartMetric;
       t.classList.toggle('active', on);
-      t.setAttribute('aria-selected', on ? 'true' : 'false');
+      // R12-6: the toolbar mixes non-tab controls (zoom, range, checkbox), so
+      // it isn't a tablist -- these are toggle buttons (aria-pressed).
+      t.setAttribute('aria-pressed', on ? 'true' : 'false');
     });
     if (ovMetricTabsWired) return;
     ovMetricTabsWired = true;
@@ -3532,7 +3569,11 @@
     document.querySelectorAll('[data-route]').forEach(function (btn) {
       const isActive = btn.getAttribute('data-route') === route;
       btn.classList.toggle('header-nav-current', isActive);
-      btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
+      // R12-6: page-nav semantics, not tab semantics -- these buttons have no
+      // tabpanels/arrow-key model, so aria-selected (a tab attribute) was
+      // announced wrong. aria-current="page" is the nav equivalent.
+      if (isActive) btn.setAttribute('aria-current', 'page');
+      else btn.removeAttribute('aria-current');
     });
     // If the active route lives inside a collapsed header dropdown (the
     // Reports group), its menu-item highlight is hidden, so also light
@@ -7036,9 +7077,11 @@
       if (key === state.sortKey) {
         arrow.textContent = state.sortDir === 'asc' ? '▲' : '▼';
         arrow.style.color = THEME.ink || '#374151';
+        th.setAttribute('aria-sort', state.sortDir === 'asc' ? 'ascending' : 'descending');
       } else {
         arrow.textContent = '▽';
         arrow.style.color = THEME.muted || '#9ca3af';
+        th.removeAttribute('aria-sort');
       }
     });
 
@@ -7220,7 +7263,19 @@
       const sentinel = ctx.fillStyle;
       ctx.fillStyle = color;
       if (ctx.fillStyle === sentinel) return color;
-      return ctx.fillStyle;
+      const out = ctx.fillStyle;
+      // R12-2: modern browsers serialize non-legacy colors (oklch()/oklab()/
+      // color()) back from fillStyle VERBATIM, so the readback alone does NOT
+      // canonicalize them and regex consumers downstream (datalabels' fill
+      // parsing, parseColorRgb_'s arrow gradient) silently fall to their
+      // fallbacks. Resolve those via a painted-pixel readback, which always
+      // yields a real RGB triple.
+      if (/^#|^rgba?\(/i.test(out)) return out;
+      ctx.fillRect(0, 0, 1, 1);
+      const px = ctx.getImageData(0, 0, 1, 1).data;
+      const a = px[3] / 255;
+      return a >= 1 ? 'rgb(' + px[0] + ',' + px[1] + ',' + px[2] + ')'
+        : 'rgba(' + px[0] + ',' + px[1] + ',' + px[2] + ',' + (Math.round(a * 1000) / 1000) + ')';
     } catch (e) { return color; }
   }
 
