@@ -153,6 +153,10 @@ test('email HTML: clean day -- no banner either way; split bar shows share-of-to
   clean.depts[0].totals.abandonedPct = 3.0; clean.depts[0].totals.abandonedPctStr = '3.00%';
   clean.depts[0].totals.violations = 0; clean.depts[0].queues[0].abandonedPct = 3.0;
   clean.depts[0].queues[0].abandonedPctStr = '3.00%'; clean.depts[0].queues[0].violations = 0;
+  // R12-22: single-queue sections render banner-only, so give CSR a second
+  // queue -- the row (and its share bar) must exist for this pin to bite.
+  clean.depts[0].queues.push({ queue: 'A_Q_CSR_2', totalCalls: 10, totalAnswered: 10,
+    abandoned: 0, abandonedPct: 0, abandonedPctStr: '0.00%', violations: 0 });
   clean.grandTotals.abandonedPct = 2.8; clean.grandTotals.abandonedPctStr = '2.80%'; clean.grandTotals.violations = 0;
   const html = h.call('buildQueueReportEmailHtml_', clean, '2026-07-10', false);
   assert.doesNotMatch(html, /All queues held under the 5% line/);   // green banner retired too
@@ -172,9 +176,32 @@ test('email HTML: over-threshold row fills red by its real share, full-strength 
   d.depts[0].queues[0] = { queue: 'A_Q_Denials', totalCalls: 4, totalAnswered: 2,
     abandonedPct: 50, abandonedPctStr: '50.00%', violations: 1 };
   d.depts[0].totals.abandonedPct = 50; d.depts[0].totals.violations = 1;
+  // R12-22: keep the section multi-queue so the Denials ROW (whose bar this
+  // test pins) still renders instead of collapsing into the banner.
+  d.depts[0].queues.push({ queue: 'A_Q_CSR_2', totalCalls: 10, totalAnswered: 10,
+    abandoned: 0, abandonedPct: 0, abandonedPctStr: '0.00%', violations: 0 });
   const html = h.call('buildQueueReportEmailHtml_', d, '2026-07-10', false);
   assert.match(html, /width="50%" style="background:#b23a2c/);   // half red, full-strength (>=5%)
   assert.doesNotMatch(html, /width="100%" style="background:#b23a2c/);
+});
+
+test('R12-22: parent-grouped sections -- child nests as a sub-row, single-queue is banner-only, section total sums', function () {
+  const d = emailFixture();
+  d.depts.push({ dept: 'Spanish', parent: 'CSR',
+    totals: { totalCalls: 20, totalAnswered: 18, abandoned: 2, abandonedPct: 10.0,
+      abandonedPctStr: '10.00%', violations: 1 },
+    queues: [{ queue: 'A_Q_Spanish', totalCalls: 20, totalAnswered: 18, abandoned: 2,
+      abandonedPct: 10.0, abandonedPctStr: '10.00%', violations: 1 }] });
+  const html = h.call('buildQueueReportEmailHtml_', d, '2026-07-10', false);
+  // Spanish renders as an indented sub-row inside CSR, never its own banner.
+  assert.match(html, /&#8627; <b>Spanish<\/b>/);
+  assert.doesNotMatch(html, /bold 13px Arial,sans-serif;color:#101418;">Spanish</);
+  // The CSR banner carries the SECTION total inline: 100+20 calls, 7+2 abandoned.
+  assert.match(html, /120 calls &middot; <span[^>]*>9 abandoned<\/span> \(7\.5%\)/);
+  // Sales stays single-queue: banner-only with the queue name inline -- the
+  // old duplicate row (same numbers twice) is gone.
+  assert.match(html, /Sales <span[^>]*>&middot; A_Q_SALES<\/span>/);
+  assert.equal((html.match(/A_Q_SALES/g) || []).length, 1);
 });
 
 test('email HTML: empty day renders the no-activity note without throwing', function () {
