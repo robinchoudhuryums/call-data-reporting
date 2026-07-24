@@ -577,6 +577,25 @@ function neonGetMaxQcdDate_() {
   }
 }
 
+/** MIN(call_date) twin of neonGetMaxQcdDate_ -- the R12-26 coverage-start
+ * signal for the latestDates blob (same best-effort contract). */
+function neonGetMinQcdDate_() {
+  var conn = (typeof getDashboardNeonConn_ === 'function') ? getDashboardNeonConn_() : null;
+  if (!conn) return null;
+  try {
+    var stmt = conn.createStatement();
+    var rs = stmt.executeQuery('SELECT MIN(call_date)::text AS d FROM qcd_history');
+    var d = rs.next() ? rs.getString('d') : null;
+    rs.close(); stmt.close();
+    return d || null;
+  } catch (e) {
+    Logger.log('neonGetMinQcdDate_ failed: ' + (e && e.message ? e.message : e));
+    return null;
+  } finally {
+    try { conn.close(); } catch (ce) {}
+  }
+}
+
 // rangeOnly (perf): the all-dept Daily Call Queue Report uses ONLY
 // queueBreakdown (range-scoped), never trendData/dailySeries/perQueue -- yet it
 // calls this once per dept, each pass iterating the whole 12-month TREND window

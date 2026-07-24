@@ -1154,6 +1154,10 @@
         // date, so a Monday/holiday open lands on real data instead of
         // an empty literal-yesterday (a weekend).
         if (dates && dates.qcd) latestQcdIso_ = dates.qcd;
+        // R12-26: coverage starts (earliest data per source) for the
+        // shorter-than-claimed-range warnings on the report surfaces.
+        dataCoverage_ = { dqe: (dates && dates.dqeEarliest) || null,
+                          qcd: (dates && dates.qcdEarliest) || null };
         setFreshnessPill_(dates || null);
         refresh();
       })
@@ -5913,6 +5917,56 @@
       .getDepartmentSummary(req);
   }
 
+  // -- Data-coverage warnings (R12-26) ------------------------------------
+  // getLatestDataDates now carries dqeEarliest/qcdEarliest (the earliest date
+  // each source actually holds). When a report's requested From predates the
+  // coverage start, the rendered range is silently SHORTER than the header
+  // claims -- so each main report upserts a warning note with a one-click
+  // "adjust range" that rewrites its From input and re-runs. Best-effort:
+  // unknown coverage (fetch not landed / failed) -> no note.
+  let dataCoverage_ = null;   // { dqe: iso|null, qcd: iso|null }
+  const COVERAGE_ADJUST_ = {
+    dept:     { fromId: 'from-date',        rerun: function () { refresh(); } },
+    ir:       { fromId: 'ir-from',          rerun: function () { const b = $('ir-generate-btn'); if (b && !b.disabled) b.click(); } },
+    insights: { fromId: 'ins-from',         rerun: function () { if (typeof runInsReport === 'function') runInsReport(); } },
+    qcdAll:   { fromId: 'qcd-alldept-from', rerun: function () { const b = $('qcd-alldept-refresh-btn'); if (b) b.click(); } },
+  };
+  function coverageStartFor_(source) {
+    if (!dataCoverage_) return null;
+    return (source === 'qcd' ? dataCoverage_.qcd : dataCoverage_.dqe) || null;
+  }
+  function coverageNoteUpsert_(hostId, report, fromIso, source) {
+    const host = $(hostId);
+    if (!host) return;
+    const old = host.querySelector(':scope > .coverage-note');
+    const start = coverageStartFor_(source);
+    const bad = !!(start && fromIso && fromIso < start);
+    if (!bad) { if (old) old.remove(); return; }
+    const html = '<div class="ds-note coverage-note" role="status">'
+      + '<strong>Data only goes back to ' + escapeHtml(start) + '.</strong> '
+      + 'The selected start (' + escapeHtml(fromIso) + ') predates the earliest available data, '
+      + 'so this report actually covers <strong>' + escapeHtml(start) + ' \u2192 onward</strong>, '
+      + 'not the full selected range. '
+      + '<button type="button" class="link-btn coverage-adjust-btn" data-report="' + report
+      + '" data-start="' + escapeHtml(start) + '">Adjust range to start ' + escapeHtml(start) + '</button>'
+      + '</div>';
+    if (old) old.outerHTML = html;
+    else host.insertAdjacentHTML('afterbegin', html);
+  }
+  document.addEventListener('click', function (e) {
+    const btn = e.target && e.target.closest && e.target.closest('.coverage-adjust-btn');
+    if (!btn) return;
+    const spec = COVERAGE_ADJUST_[btn.getAttribute('data-report')];
+    const start = btn.getAttribute('data-start');
+    if (!spec || !start) return;
+    const input = $(spec.fromId);
+    if (input) {
+      input.value = start;
+      try { input.dispatchEvent(new Event('change', { bubbles: true })); } catch (ce) {}
+    }
+    if (spec.rerun) spec.rerun();
+  });
+
   function refresh() {
     const dept = getRequestedDept();
     if (!dept) {
@@ -5929,6 +5983,7 @@
       return;
     }
     recordPageWindow_('dept', req.from, req.to);   // R9-3: the shared-window store
+    coverageNoteUpsert_('dept-coverage-host', 'dept', req.from, 'dqe');   // R12-26
 
     // M3: when the table already holds data for the SAME dept, frost it in
     // place (blur + ripple) rather than showing the top skeleton that pushes
@@ -8362,6 +8417,7 @@
 
   function irRenderReport(data) {
     irLastData = data;
+    coverageNoteUpsert_('individual-results', 'ir', ($('ir-from') && $('ir-from').value) || null, 'dqe');   // R12-26
     $('ir-results-title').textContent = data.mode === 'comparison'
       ? 'Peer Comparison Report' : 'Individual Performance Report';
     const headerDate = '(' + (data.dateLabel || '')
@@ -13476,6 +13532,8 @@
 
   function insRenderReport_(data, opts) {
     insLastData = data;
+    coverageNoteUpsert_('insights-results', 'insights',
+      (data && data.meta && data.meta.from) || null, 'dqe');   // R12-26
     // D1: apply the density class + toggle state before painting so the
     // Simple gating is in effect for everything below (incl. SWR pre-paints).
     insSyncDensity_();
@@ -19599,6 +19657,11 @@
   }
 
   function qcdAllDeptRender_(data) {
+    // R12-26: host is the RESULTS wrapper, not #qcd-alldept-body -- the body's
+    // innerHTML is rewritten below (which would wipe the note) and the print
+    // clone reads only the body, so the note stays out of print.
+    coverageNoteUpsert_('qcd-alldept-results', 'qcdAll',
+      (data && data.meta && data.meta.from) || null, 'qcd');
     $('qcd-alldept-results-date').textContent = data.dateLabel || '';
     // QV-5: the subscriber blast is single-day only (the engine's unit of
     // send); disable it with a reason on multi-day views.

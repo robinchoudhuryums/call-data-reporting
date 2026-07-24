@@ -116,7 +116,7 @@ function getLatestDataDate() {
  *     qcd: 'yyyy-MM-dd' | null,
  *     latest: 'yyyy-MM-dd' | null }   // MAX of the above
  *
- * Cached 5 min under `latestDates:v1:<source>`. The DQE component comes
+ * Cached 5 min under `latestDates:v2:<source>`. The DQE component comes
  * from the source-aware `getLatestDataDate()`, so the combined blob is
  * source-suffixed too (mirroring `latestDate:v1:<source>`) -- otherwise a
  * `DQE_READ_SOURCE` flip could serve a stale combined value computed from
@@ -137,13 +137,13 @@ function getLatestDataDates() {
   const source = (typeof readSourceCacheTag_ === 'function')
     ? readSourceCacheTag_()
     : ((typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet');
-  const KEY = 'latestDates:v1:' + source;
+  const KEY = 'latestDates:v2:' + source;
   const cached = cache.get(KEY);
   if (cached) {
     try { return JSON.parse(cached); } catch (e) { /* recompute */ }
   }
 
-  const result = { dqe: null, qcd: null, latest: null };
+  const result = { dqe: null, qcd: null, latest: null, dqeEarliest: null, qcdEarliest: null };
   // F6: only cache a result computed WITHOUT a thrown error. A transient read
   // failure (e.g. the QCD scan throwing after DQE was read) would otherwise
   // pin a null/partial blob for the full TTL, blanking the freshness pill even
@@ -166,9 +166,13 @@ function getLatestDataDates() {
     // trimmed/aging, and the pill's QCD component previously went stale
     // with it. Neon null/empty/error falls back to the sheet scan.
     let qcdLatest = '';
+    let qcdEarliest = '';
     if (typeof getQcdReadSource_ === 'function' && getQcdReadSource_() === 'neon'
         && typeof neonGetMaxQcdDate_ === 'function') {
       qcdLatest = neonGetMaxQcdDate_() || '';
+      if (qcdLatest && typeof neonGetMinQcdDate_ === 'function') {
+        qcdEarliest = neonGetMinQcdDate_() || '';
+      }
     }
     if (!qcdLatest) {
       const qcdSheet = ss.getSheetByName('QCD Historical Data');
@@ -181,11 +185,37 @@ function getLatestDataDates() {
           for (let i = 0; i < values.length; i++) {
             const iso = rowDateIso_(values[i][0], ssTZ);
             if (iso && iso > qcdLatest) qcdLatest = iso;
+            if (iso && (!qcdEarliest || iso < qcdEarliest)) qcdEarliest = iso;
           }
         }
       }
     }
     if (qcdLatest) result.qcd = qcdLatest;
+    if (qcdEarliest) result.qcdEarliest = qcdEarliest;
+
+    // R12-26: DQE COVERAGE START -- the earliest date each source actually
+    // holds, so a report whose requested From predates the data can WARN
+    // instead of silently rendering a shorter-than-claimed range. Neon path
+    // = one indexed MIN(call_date); sheet path = its own date-column scan
+    // (same cost class as the QCD scan above; the blob is 5-min cached).
+    let dqeEarliest = '';
+    if (typeof getDqeReadSource_ === 'function' && getDqeReadSource_() === 'neon'
+        && typeof neonGetMinDqeDate_ === 'function') {
+      dqeEarliest = neonGetMinDqeDate_() || '';
+    }
+    if (!dqeEarliest) {
+      const dqeSheet = ss.getSheetByName(SHEETS.HISTORICAL);
+      if (dqeSheet && dqeSheet.getLastRow() >= 2) {
+        const dvals = dqeSheet
+          .getRange(2, HISTORICAL_COLS.DATE, dqeSheet.getLastRow() - 1, 1)
+          .getValues();
+        for (let i = 0; i < dvals.length; i++) {
+          const iso = rowDateIso_(dvals[i][0], ssTZ);
+          if (iso && (!dqeEarliest || iso < dqeEarliest)) dqeEarliest = iso;
+        }
+      }
+    }
+    if (dqeEarliest) result.dqeEarliest = dqeEarliest;
 
     // Overall max -- drives the pill's visible date + age. When
     // both sources agree, the pill matches DQE (normal steady

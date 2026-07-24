@@ -6127,6 +6127,15 @@
   }
   .ds-note__icon { flex: none; color: var(--warn); font-size: 13px; line-height: 1.45; }
   .ds-note strong { color: var(--ink); font-weight: 600; }
+  /* R12-26: shorter-than-claimed-range coverage warning (upserted atop the
+     report surfaces). display:block -- the flex base would lay the inline
+     sentence + button out as columns. */
+  .coverage-note {
+    display: block;
+    background: var(--warn-soft);
+    border-color: color-mix(in srgb, var(--warn) 35%, var(--line));
+  }
+  .coverage-note .coverage-adjust-btn { margin-left: 4px; white-space: nowrap; }
 
   /* 2.7 · Toolbar & segmented control */
   .ds-toolbar {
