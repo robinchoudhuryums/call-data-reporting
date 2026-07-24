@@ -18638,7 +18638,7 @@
     const prev = btn.textContent; btn.textContent = 'Looking up…';
     // C1: signal-rings loader in the results area while the query is in flight.
     const loadEl = $('cl-loading');
-    if (loadEl) loadEl.innerHTML = dsRingsHtml_('Looking up inbound calls…');
+    if (loadEl) loadEl.innerHTML = dsRingsHtml_('Looking up communication history…');
     clShowOnly_('cl-loading');
 
     // R8-A3: monotonic stale-response token (the reportReqSeq_ family). The
@@ -18668,22 +18668,81 @@
     if (meta.configured === false) { clShowOnly_('cl-unconfigured'); return; }
     if (meta.available === false)  { clShowOnly_('cl-unavailable');  return; }
     const calls = (data && data.calls) || [];
-    if (!calls.length) {
+    const outCalls = (data && data.outboundCalls) || [];
+    // Day-level historical outbound: only for dates the per-call capture
+    // doesn't cover (a covered date's per-call records ARE those calls --
+    // showing the aggregate too would double-tell the same story).
+    const outDates = {};
+    outCalls.forEach(function (c) { if (c.callDate) outDates[c.callDate] = true; });
+    const history = ((data && data.outboundHistory) || []).filter(function (e) {
+      return e.callDate && !outDates[e.callDate];
+    });
+    if (!calls.length && !outCalls.length && !history.length) {
       const hint = $('cl-empty-hint');
-      if (hint) hint.textContent = 'No inbound calls from this number between '
+      if (hint) hint.textContent = 'No calls to or from this number between '
         + (meta.from || '?') + ' and ' + (meta.to || '?')
-        + '. Capture starts the day the inbound mirror first ran — older calls were never recorded.';
+        + '. Inbound capture starts the day the inbound mirror first ran; per-call outbound starts '
+        + 'with the outbound capture (day-level outbound reaches back through the CDR mirror).';
       clShowOnly_('cl-empty');
       return;
     }
     const title = $('cl-results-title');
-    if (title) title.textContent = calls.length + ' call' + (calls.length === 1 ? '' : 's')
-      + (calls[0].insurer ? ' · ' + calls[0].insurer : '')
-      + (meta.truncated ? ' (truncated)' : '');
+    if (title) {
+      const parts = [];
+      parts.push(calls.length + ' inbound' + (meta.truncated ? ' (truncated)' : ''));
+      parts.push(outCalls.length + ' outbound' + (meta.outboundTruncated ? ' (truncated)' : '')
+        + (history.length ? ' (+' + history.length + ' earlier day-summar' + (history.length === 1 ? 'y' : 'ies') + ')' : ''));
+      title.textContent = parts.join(' · ')
+        + (calls.length && calls[0].insurer ? ' · ' + calls[0].insurer : '');
+    }
     const dateEl = $('cl-results-date');
     if (dateEl) dateEl.textContent = (meta.from || '') + ' → ' + (meta.to || '');
-    $('cl-call-list').innerHTML = clGroupByDayHtml_(calls);
+
+    // One interleaved timeline: both directions tagged, newest first.
+    const merged = calls.map(function (c) { c._dir = 'in'; return c; })
+      .concat(outCalls.map(function (c) { c._dir = 'out'; return c; }));
+    merged.sort(function (a, b) {
+      const ka = (a.callDate || '') + ' ' + (a.callStart || '');
+      const kb = (b.callDate || '') + ' ' + (b.callStart || '');
+      return ka < kb ? 1 : (ka > kb ? -1 : 0);
+    });
+    let html = merged.length ? clGroupByDayHtml_(merged) : '';
+    if (meta.outboundAvailable === false) {
+      html += '<div class="ds-note">Per-call outbound capture isn’t live yet '
+        + '(deploy cdr-import and run <code>backfillOutboundCalls</code>) — showing inbound calls'
+        + (history.length ? ' plus day-level outbound summaries' : '') + '.</div>';
+    }
+    if (history.length) html += clHistoryHtml_(history);
+    $('cl-call-list').innerHTML = html;
     clShowOnly_('cl-results');
+  }
+
+  // Day-level outbound entries (call_history_phones) for dates before the
+  // per-call capture: one line per (date, agent) -- the data was only ever
+  // stored per agent-day, so this is the ceiling for those dates.
+  function clHistoryHtml_(entries) {
+    const rows = entries.slice().sort(function (a, b) {
+      return (a.callDate || '') < (b.callDate || '') ? 1 : -1;   // newest first
+    }).map(function (e) {
+      const facts = [];
+      facts.push('dialed ×' + (e.dialed || (e.answered + e.missed) || '?'));
+      if (e.answered) facts.push(e.answered + ' answered');
+      if (e.missed) facts.push(e.missed + ' not answered');
+      if (e.talkSeconds > 0) facts.push(fmtDuration(e.talkSeconds) + ' talk');
+      return '<div class="cl-history-row">'
+        + '<span class="cl-history-date">' + escapeHtml(clDayLabel_(e.callDate)) + '</span>'
+        + '<span class="cl-history-agent">' + escapeHtml(e.agentName || '(unknown agent)')
+        + (e.department ? ' · ' + escapeHtml(e.department) : '') + '</span>'
+        + '<span class="cl-history-facts">' + facts.join(' · ') + '</span>'
+        + '</div>';
+    }).join('');
+    return '<details class="cl-day cl-history" open>'
+      + '<summary class="cl-day-head">'
+      +   '<span class="cl-day-date">Earlier outbound activity</span>'
+      +   '<span class="cl-day-count">daily summaries — per-call detail was not captured for these dates</span>'
+      + '</summary>'
+      + '<div class="cl-day-cards">' + rows + '</div>'
+      + '</details>';
   }
 
   // R11-E (item 1): group the call cards into collapsible per-day sections
@@ -18699,19 +18758,25 @@
       if (!byDay[d]) { byDay[d] = []; order.push(d); }
       byDay[d].push(c);
     });
-    // calls arrive newest-first from the server; keep that order for days too.
+    // calls arrive newest-first (clRenderResults_ sorts the merged list);
+    // keep that order for days too. Cards dispatch on direction.
+    const card = function (c) { return c._dir === 'out' ? clOutboundCardHtml_(c) : clCallCardHtml_(c); };
     if (order.length <= 1) {
-      return '<div class="cl-day-cards">' + calls.map(clCallCardHtml_).join('') + '</div>';
+      return '<div class="cl-day-cards">' + calls.map(card).join('') + '</div>';
     }
     return order.map(function (d, i) {
       const list = byDay[d];
       const label = clDayLabel_(d);
+      const nIn = list.filter(function (c) { return c._dir !== 'out'; }).length;
+      const nOut = list.length - nIn;
+      const countLbl = (nIn && nOut) ? (nIn + ' in · ' + nOut + ' out')
+        : list.length + (nOut ? ' outbound' : ' call' + (list.length === 1 ? '' : 's'));
       return '<details class="cl-day"' + (i === 0 ? ' open' : '') + '>'
         + '<summary class="cl-day-head">'
         +   '<span class="cl-day-date">' + escapeHtml(label) + '</span>'
-        +   '<span class="cl-day-count">' + list.length + ' call' + (list.length === 1 ? '' : 's') + '</span>'
+        +   '<span class="cl-day-count">' + countLbl + '</span>'
         + '</summary>'
-        + '<div class="cl-day-cards">' + list.map(clCallCardHtml_).join('') + '</div>'
+        + '<div class="cl-day-cards">' + list.map(card).join('') + '</div>'
         + '</details>';
     }).join('');
   }
@@ -18765,9 +18830,40 @@
     return '<div class="cl-call-card">'
          +   '<div class="cl-call-head">'
          +     '<span class="cl-call-when">' + when + '</span>'
+         +     '<span class="cl-chip cl-chip-dir-in">Inbound</span>'
          +     clOutcomeChip_(c)
          +   '</div>'
          +   (facts.length ? '<div class="cl-call-facts">' + facts.join(' · ') + '</div>' : '')
+         +   body
+         + '</div>';
+  }
+
+  // Outbound per-call card (Option B, `outbound_calls`): who called the
+  // number, whether it connected, talk/ring time. call_start shares the raw
+  // PST convention with inbound, so the same CST display shift applies.
+  function clOutboundCardHtml_(c) {
+    const when = escapeHtml((c.callDate || '?') + (c.callStart ? ' · ' + clCstTime_(c.callStart) : ''));
+    const outcome = c.connected
+      ? '<span class="cl-chip cl-chip-good">Connected</span>'
+      : '<span class="cl-chip cl-chip-muted">Not connected</span>';
+    const facts = [];
+    facts.push('Called by ' + escapeHtml(c.agentName || (c.agentExt ? 'ext ' + c.agentExt : '(unknown)'))
+      + (c.department ? ' (' + escapeHtml(c.department) + ')' : ''));
+    if (c.connected && c.talkSeconds > 0) facts.push('Talked ' + fmtDuration(c.talkSeconds));
+    if (!c.connected && c.ringSeconds != null) facts.push('Rang ' + fmtDuration(c.ringSeconds));
+    if (c.attempts > 1) facts.push(c.attempts + ' attempts');
+    let body = '';
+    if (c.journey && c.journey.length > 1) {
+      body = '<div class="cl-journey">' + c.journey.map(clJourneyRowHtml_).join('')
+           + clJourneyEndRowHtml_(c.journey) + '</div>';
+    }
+    return '<div class="cl-call-card cl-call-card--out">'
+         +   '<div class="cl-call-head">'
+         +     '<span class="cl-call-when">' + when + '</span>'
+         +     '<span class="cl-chip cl-chip-dir-out">Outbound</span>'
+         +     outcome
+         +   '</div>'
+         +   '<div class="cl-call-facts">' + facts.join(' · ') + '</div>'
          +   body
          + '</div>';
   }

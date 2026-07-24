@@ -1962,7 +1962,7 @@
       <div class="modal-panel-body">
         <div class="ir-form-grid">
           <div class="ir-col">
-            <label for="cl-phone">Caller phone number</label>
+            <label for="cl-phone">Phone number</label>
             <input type="tel" id="cl-phone" placeholder="e.g. (214) 555-0123" autocomplete="off">
           </div>
           <div class="ir-col">
@@ -1979,12 +1979,14 @@
           </div>
         </div>
         <div class="ir-hint">
-          Traces every inbound call from this number in <code>inbound_calls</code>
-          (Neon). The number is normalized and HMAC-hashed before querying
-          &mdash; it is never stored, logged, or sent anywhere raw. Calls
-          captured since the journey extension show the full leg-by-leg path
-          (IVR &rarr; queues &rarr; agent rings &rarr; answer / hold); older
-          rows show the entry &rarr; final queue summary.
+          Traces the full communication history with this number: inbound
+          calls from it (<code>inbound_calls</code>) and outbound calls to it
+          (<code>outbound_calls</code> per-call since the outbound capture,
+          plus day-level summaries from the CDR mirror for earlier dates).
+          The number is normalized and HMAC-hashed before querying &mdash; it
+          is never stored, logged, or sent anywhere raw. Calls captured since
+          the journey extension show the full leg-by-leg path; older rows
+          show a summary.
         </div>
         <div id="cl-error" class="status status-error" style="display:none;"></div>
         <div id="cl-status" class="status" style="display:none;"></div>
@@ -1997,8 +1999,8 @@
         </div>
         <div id="cl-unavailable" class="empty-state" style="display:none;">
           <div class="empty-state-icon" aria-hidden="true">&#128246;</div>
-          <div class="empty-state-title">Inbound data unavailable</div>
-          <div class="empty-state-hint">Couldn&rsquo;t read <code>inbound_calls</code> from Neon. Confirm the dashboard&rsquo;s <code>NEON_*</code> Script Properties are set and Neon is reachable.</div>
+          <div class="empty-state-title">Call data unavailable</div>
+          <div class="empty-state-hint">Couldn&rsquo;t read the call tables from Neon. Confirm the dashboard&rsquo;s <code>NEON_*</code> Script Properties are set and Neon is reachable.</div>
         </div>
         <div id="cl-empty" class="empty-state" style="display:none;">
           <div class="empty-state-icon" aria-hidden="true">&#128269;</div>

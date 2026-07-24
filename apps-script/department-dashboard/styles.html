@@ -3854,6 +3854,25 @@
   .cl-chip-good  { background: var(--good-soft); color: var(--good); }
   .cl-chip-warn  { background: var(--warn-soft); color: var(--warn); }
   .cl-chip-muted { background: var(--paper-2);   color: var(--muted); }
+  /* Direction chips (Option B communication history): inbound accent,
+     outbound neutral-outlined so the two directions scan apart at a glance. */
+  .cl-chip-dir-in  { background: var(--accent-soft); color: var(--accent); }
+  .cl-chip-dir-out { background: transparent; color: var(--muted); border: 1px solid var(--line); }
+  .cl-call-card--out { border-left: 3px solid var(--line); }
+  /* Day-level historical outbound rows (pre-capture dates). */
+  .cl-history-row {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    flex-wrap: wrap;
+    padding: 6px 4px;
+    border-bottom: 1px solid var(--line);
+    font-size: 12px;
+  }
+  .cl-history-row:last-child { border-bottom: none; }
+  .cl-history-date { font-family: var(--mono); font-size: 11px; letter-spacing: 0; color: var(--ink); font-weight: 600; }
+  .cl-history-agent { color: var(--ink); }
+  .cl-history-facts { color: var(--muted); margin-left: auto; }
   .cl-call-facts {
     font-size: 12px;
     color: var(--muted);
