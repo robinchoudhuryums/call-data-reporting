@@ -775,7 +775,18 @@
   // Foldable detail-columns toggle for the My Department agent table.
   // Default 'compact' (extra columns hidden); persisted per-browser.
   const DEPT_COLS_KEY = 'cdr.dept.cols';
+  // R12-16 (#4): compact row density for big rosters -- tighter cell padding
+  // via .agents--compact; persisted; applied alongside the cols pref.
+  const DEPT_ROWS_KEY = 'cdr.dept.rowdensity';
   function applyDeptColsPref_() {
+    var dense = (localStorage.getItem(DEPT_ROWS_KEY) === 'compact');
+    var t2 = $('agents-table');
+    if (t2) t2.classList.toggle('agents--compact', dense);
+    var rbtn = $('dept-rows-toggle');
+    if (rbtn) {
+      rbtn.textContent = dense ? 'Comfortable rows' : 'Compact rows';
+      rbtn.setAttribute('aria-pressed', dense ? 'true' : 'false');
+    }
     var compact = (localStorage.getItem(DEPT_COLS_KEY) !== 'all');   // default compact
     var table = $('agents-table');
     if (table) table.classList.toggle('hide-extra', compact);
@@ -1051,6 +1062,12 @@
       try { localStorage.setItem(DEPT_COLS_KEY, next); } catch (e) {}
       applyDeptColsPref_();
     });
+    var rowsBtn = $('dept-rows-toggle');
+    if (rowsBtn) rowsBtn.addEventListener('click', function () {
+      var dense = (localStorage.getItem(DEPT_ROWS_KEY) === 'compact');
+      try { localStorage.setItem(DEPT_ROWS_KEY, dense ? 'comfortable' : 'compact'); } catch (e) {}
+      applyDeptColsPref_();
+    });
     applyDeptColsPref_();
 
     // Drill-through: clicking an agent row opens the Individual Report
@@ -1085,6 +1102,7 @@
     if (deptBucketClose) deptBucketClose.addEventListener('click', function () { deptMissedBucketDetail_.hide(); });
 
     initHelpModal();
+    loadEscBadge_();
     initSettingsModal();
     initCompanyOverview();
     initIndividualReport();
@@ -1297,6 +1315,36 @@
     // adoptSharedWindow_ in the per-page branches above.)
     // R11-C2: arm the cross-page dwell-prefetch (no-op page values clear it).
     if (typeof armDwellPrefetch_ === 'function') armDwellPrefetch_(page);
+  }
+
+  // R12-20 (#1): escalation counts surfaced on the landing chrome -- a count
+  // badge on the Escalations nav tab + a one-line Overview strip. Best-effort
+  // (silent on unavailable/zero); per-viewer scope enforced server-side.
+  function loadEscBadge_() {
+    try {
+      google.script.run.withSuccessHandler(function (b) {
+        if (!b || !b.available) return;
+        var open = Number(b.open) || 0, review = Number(b.review) || 0, over = Number(b.overdue) || 0;
+        var tab = $('escalations-btn');
+        if (tab && (open + review) > 0 && !tab.querySelector('.nav-count-badge')) {
+          var sp = document.createElement('span');
+          sp.className = 'nav-count-badge' + (over > 0 ? ' nav-count-badge--warn' : '');
+          sp.textContent = open + review;
+          sp.title = open + ' open' + (over ? ' (' + over + ' overdue)' : '') + (review ? ' \u00b7 ' + review + ' awaiting review' : '');
+          tab.appendChild(sp);
+        }
+        var strip = $('ov-esc-strip');
+        if (strip && (open + review) > 0) {
+          strip.innerHTML = '\u26a0 <strong>Escalations:</strong> ' + open + ' open'
+            + (over ? ' \u00b7 <span class="ov-esc-overdue">' + over + ' overdue</span>' : '')
+            + (review ? ' \u00b7 ' + review + ' awaiting review' : '')
+            + ' <button type="button" class="link-btn" id="ov-esc-strip-open">Open worklist \u2192</button>';
+          strip.style.display = '';
+          var btn = $('ov-esc-strip-open');
+          if (btn) btn.addEventListener('click', function () { setPage('escalations'); });
+        }
+      }).withFailureHandler(function () { /* silent */ }).getEscalationsBadge();
+    } catch (e) { /* silent */ }
   }
 
   // -- Help & FAQ modal ---------------------------------------------------
@@ -2035,6 +2083,13 @@
   // `periods` block the dept cards' headline stats read; the sparkline, WoW
   // chip, and active-count stay period-independent. Persisted; default keeps
   // the historical latest-day view.
+  // R12-19 (#2, owner-confirmed): ONE window drives the dept cards AND the
+  // agent table (the old Cards:/Table: split was the top "why don't these
+  // match" trap). Migration: new key, else the old TABLE pref (the heavier
+  // fetch), else the old card pref. The chart keeps its own range control
+  // (a trend isn't a snapshot); sparkline/WoW/active-count stay
+  // period-independent (INV-40).
+  const OV_WINDOW_KEY_ = 'cdr.ov.window';
   const OV_CARD_PERIOD_KEY_ = 'cdr.ov.cardperiod';
   const OV_CARD_PERIODS_ = {
     yesterday: { label: 'Yesterday',    cap: 'answered (yesterday)' },
@@ -2042,7 +2097,12 @@
     ytd:       { label: 'YTD',          cap: 'answered (year to date)' },
   };
   let ovCardPeriod = (function () {
-    try { var v = localStorage.getItem(OV_CARD_PERIOD_KEY_); return OV_CARD_PERIODS_[v] ? v : 'yesterday'; }
+    try {
+      var v = localStorage.getItem(OV_WINDOW_KEY_)
+        || localStorage.getItem('cdr.ov.tableperiod.v1')
+        || localStorage.getItem(OV_CARD_PERIOD_KEY_);
+      return OV_CARD_PERIODS_[v] ? v : 'yesterday';
+    }
     catch (e) { return 'yesterday'; }
   })();
   function ovPeriodStats_(dept) {
@@ -2065,7 +2125,12 @@
   // summary for the selected range), separate from the card period above.
   const OV_TABLE_PERIOD_KEY_ = 'cdr.ov.tableperiod.v1';
   let ovTablePeriod = (function () {
-    try { var v = localStorage.getItem(OV_TABLE_PERIOD_KEY_); return OV_CARD_PERIODS_[v] ? v : 'yesterday'; }
+    try {
+      var v = localStorage.getItem(OV_WINDOW_KEY_)
+        || localStorage.getItem(OV_TABLE_PERIOD_KEY_)
+        || localStorage.getItem('cdr.ov.cardperiod');
+      return OV_CARD_PERIODS_[v] ? v : 'yesterday';
+    }
     catch (e) { return 'yesterday'; }
   })();
   // Resolve { from, to } from the latest DQE date + the selected table period.
@@ -2127,8 +2192,14 @@
       const p = b.getAttribute('data-period');
       if (!OV_CARD_PERIODS_[p] || p === ovCardPeriod) return;
       ovCardPeriod = p;
-      try { localStorage.setItem(OV_CARD_PERIOD_KEY_, p); } catch (e2) { /* best-effort */ }
-      if (ovLastData) { ovRenderUserHero_(ovLastData); ovRenderTiles_(ovLastData); }
+      ovTablePeriod = p;   // R12-19: one window, both surfaces
+      try { localStorage.setItem(OV_WINDOW_KEY_, p); } catch (e2) { /* best-effort */ }
+      if (ovLastData) {
+        ovRenderUserHero_(ovLastData); ovRenderTiles_(ovLastData);
+        ovRenderUserTable_(ovLastData);
+        var twrap = $('ov-user-table-wrap');
+        if (twrap) { twrap.classList.remove('ov-tbl-fade'); void twrap.offsetWidth; twrap.classList.add('ov-tbl-fade'); }
+      }
     });
   }
 
@@ -2181,7 +2252,7 @@
          +     '</div>'
          +     '<div class="ov-hero-meta">'
          +       ovBuildAlertPill_(dept)
-         +       '<span class="ov-dept-active" title="' + escapeHtml(ovActiveTooltip_(dept)) + '">'
+         +       (ovCardPeriod === 'yesterday' ? '<span class="ov-dept-active" title="' + escapeHtml(ovActiveTooltip_(dept)) + '">' : '<span class="ov-dept-active" style="display:none;">')
          +         dept.activeAgents + ' of ' + (dept.recentlyActiveCount != null ? dept.recentlyActiveCount : dept.rosterSize) + ' agents active'
          +       '</span>'
          +     '</div>'
@@ -2211,8 +2282,9 @@
     let cls = 'ov-wow-flat';
     if (d > 0.5)  cls = 'ov-wow-up';
     if (d < -0.5) cls = 'ov-wow-down';
-    const tip = 'Last 7 days ' + dept.wow.curPct.toFixed(1) + '% vs prior 7 days '
-              + dept.wow.prevPct.toFixed(1) + '%';
+    const tip = 'Week-over-week answer rate: last 7 days ' + dept.wow.curPct.toFixed(1)
+              + '% vs the prior 7 days ' + dept.wow.prevPct.toFixed(1)
+              + '% \u2014 independent of the window selector above.';
     // R9-7: the QCD caption is NOT appended here anymore -- it used to ride
     // inside this builder, so the `!dept.wow` early-return above silently
     // dropped a dept's QCD chips whenever its DQE rung was zero in either
@@ -2365,7 +2437,7 @@
     return '<div class="' + cls + '" data-dept="' + escapeHtml(dept.name) + '">'
          +   '<div class="ov-dept-tile-head">'
          +     '<span class="ov-dept-name">' + escapeHtml(dept.name) + viewerBadge + '</span>'
-         +     '<span class="ov-dept-active" title="' + escapeHtml(ovActiveTooltip_(dept)) + '">'
+         +     (ovCardPeriod === 'yesterday' ? '<span class="ov-dept-active" title="' + escapeHtml(ovActiveTooltip_(dept)) + '">' : '<span class="ov-dept-active" style="display:none;">')
          +       dept.activeAgents + ' of ' + (dept.recentlyActiveCount != null ? dept.recentlyActiveCount : dept.rosterSize) + ' agents'
          +     '</span>'
          +   '</div>'
@@ -2377,6 +2449,8 @@
          +     ovBuildWowChip_(dept)
          +     ovBuildQcdCaption_(dept)   // R9-7: independent of the WoW chip
          +   '</div>'
+         +   (st.pctFormatted === '\u2014'
+              ? '<div class="ov-dept-nodata-note">No agent call data in this window yet \u2014 queue stats below still count.</div>' : '')
          +   '<div class="ov-dept-tile-row">'
          +     '<span><span class="ov-dept-stat-label">Rung</span> ' + fmtNumber(st.rung) + '</span>'
          +     '<span><span class="ov-dept-stat-label">Ans</span> ' + fmtNumber(st.answered) + '</span>'
@@ -5955,7 +6029,9 @@
     if (!state.rows.length) {
       var hint = state.meta && state.meta.rosterSize === 0
         ? 'No agents are mapped to this department in the roster sheet. Check the DO NOT EDIT! tab or contact your admin.'
-        : 'No activity found for this date range. Try expanding the range, or check that the daily import has run (Pipeline Health in the Alerts modal).';
+        : ((typeof USER !== 'undefined' && USER && USER.role === 'admin')
+            ? 'No activity found for this date range. Try expanding the range, or check that the daily import has run (Pipeline Health in the Alerts modal).'
+            : 'No activity found for this date range. Try expanding the range \u2014 yesterday\u2019s data usually lands by mid-morning Central. If a recent day stays empty, let your admin know.');
       setStatus('empty', hint);
     } else {
       setStatus(null);
@@ -17726,7 +17802,7 @@
     if (!all.length) {
       escSetFilterCount_('');
       const st = (escLastResp_.meta && escLastResp_.meta.status) || 'pending';
-      escShowEmpty_(st === 'pending' ? 'No pending escalations. 🎉'
+      escShowEmpty_(st === 'pending' ? 'No pending escalations. 🎉 New ones appear here when an admin logs one or a team-tools submission is approved.'
         : st === 'pending_review' ? 'No submissions awaiting review. 🎉'
         : 'No escalations to show for this filter.');
       return;
@@ -18060,7 +18136,13 @@
       if (pa.length) body += '<div class="esc-pending-actions">' + pa.join('') + '</div>';
       // Inline resolve form. The "Resolved" checkbox + Save stay DISABLED
       // until a resolution note is entered (mirrors the server requirement).
-      body += '<div class="esc-resolve" data-id="' + idAttr + '">'
+      // R12-15 (P3-2): the form sits behind a disclosure (the Activity
+      // pattern) so a multi-card list isn't a wall of repeated empty
+      // textareas; all field classes/data-ids are unchanged, so the
+      // delegated save/comment handlers are untouched.
+      body += '<details class="esc-resolve-disc">'
+        + '<summary class="esc-resolve-disc-summary">Resolve / comment&hellip;</summary>'
+        + '<div class="esc-resolve" data-id="' + idAttr + '">'
         + '<label class="esc-resolve-label">Resolution (what action was taken — required)'
         + '<textarea class="esc-resolve-text" rows="2" data-id="' + idAttr + '"></textarea></label>'
         + '<label class="esc-resolve-label">Comments <span class="esc-optional">(optional)</span>'
@@ -18070,7 +18152,7 @@
         + '<button class="btn esc-resolve-save" type="button" data-id="' + idAttr + '" disabled>Save resolution</button>'
         + '<button class="btn btn-ghost esc-comment-save" type="button" data-id="' + idAttr + '">Save comment only</button>'
         + '<span class="status status-error esc-row-error" data-id="' + idAttr + '" style="display:none;"></span>'
-        + '</div></div>';
+        + '</div></div></details>';
     }
 
     // §5: append-only activity trail, collapsed by default (progressive
@@ -18143,7 +18225,7 @@
     const btn = document.querySelector('.esc-start[data-id="' + escCssId_(id) + '"]');
     if (btn) { btn.disabled = true; btn.textContent = 'Starting…'; }
     google.script.run
-      .withSuccessHandler(function () { escLoad_(); })
+      .withSuccessHandler(function () { showToast('Saved \u2713', 'success'); escLoad_(); })
       .withFailureHandler(function (err) {
         if (btn) { btn.disabled = false; btn.innerHTML = '&#9680; Start'; }
         escRowError_(id, (err && err.message ? err.message : String(err)));
@@ -18160,7 +18242,7 @@
     const save = document.querySelector('.esc-reopen-save[data-id="' + escCssId_(id) + '"]');
     if (save) { save.disabled = true; save.textContent = 'Reopening…'; }
     google.script.run
-      .withSuccessHandler(function () { escLoad_(); })
+      .withSuccessHandler(function () { showToast('Saved \u2713', 'success'); escLoad_(); })
       .withFailureHandler(function (err) {
         if (save) { save.disabled = false; save.textContent = 'Reopen escalation'; }
         escRowError_(id, (err && err.message ? err.message : String(err)));
@@ -18174,7 +18256,7 @@
     const btn = document.querySelector('.esc-approve[data-id="' + escCssId_(id) + '"]');
     if (btn) { btn.disabled = true; btn.textContent = 'Approving…'; }
     google.script.run
-      .withSuccessHandler(function () { escLoad_(); })
+      .withSuccessHandler(function () { showToast('Saved \u2713', 'success'); escLoad_(); })
       .withFailureHandler(function (err) {
         if (btn) { btn.disabled = false; btn.innerHTML = '&#10003; Approve into worklist'; }
         escRowError_(id, (err && err.message ? err.message : String(err)));
@@ -18191,7 +18273,7 @@
     const save = document.querySelector('.esc-reject-save[data-id="' + escCssId_(id) + '"]');
     if (save) { save.disabled = true; save.textContent = 'Rejecting…'; }
     google.script.run
-      .withSuccessHandler(function () { escLoad_(); })
+      .withSuccessHandler(function () { showToast('Saved \u2713', 'success'); escLoad_(); })
       .withFailureHandler(function (err) {
         if (save) { save.disabled = false; save.textContent = 'Reject submission'; }
         escRowError_(id, (err && err.message ? err.message : String(err)));
@@ -18286,7 +18368,7 @@
     const save = document.querySelector('.esc-resolve-save[data-id="' + escCssId_(id) + '"]');
     if (save) { save.disabled = true; save.textContent = 'Saving…'; }
     google.script.run
-      .withSuccessHandler(function () { escLoad_(); })
+      .withSuccessHandler(function () { showToast('Saved \u2713', 'success'); escLoad_(); })
       .withFailureHandler(function (err) {
         if (save) { save.disabled = false; save.textContent = 'Save resolution'; }
         escRowError_(id, (err && err.message ? err.message : String(err)));
@@ -18298,7 +18380,7 @@
     const comm = document.querySelector('.esc-comments-text[data-id="' + escCssId_(id) + '"]');
     escRowError_(id, '');
     google.script.run
-      .withSuccessHandler(function () { escLoad_(); })
+      .withSuccessHandler(function () { showToast('Saved \u2713', 'success'); escLoad_(); })
       .withFailureHandler(function (err) { escRowError_(id, (err && err.message ? err.message : String(err))); })
       .updateEscalationComment({ id: id, comments: comm ? comm.value.trim() : '' });
   }
@@ -18393,7 +18475,7 @@
       // its step folded into the Help closing step below.)
       { sel: '#freshness-pill',   title: 'Is the data current?',    body: 'Shows the most recent day with data and how long ago that was — it turns orange if the last import is over ~36 hours old.' },
       { sel: '#ov-trend-chart',   title: 'The department trend',    body: 'Each department’s answer rate over time. Click a card below to spotlight its line (Shift-click to compare a few); click a point on a line to open that department & day in My Department. The tabs switch to abandoned calls / %, and the range buttons zoom to 30 / 60 / 90 days.' },
-      { sel: '#ov-period-bar',    title: 'Change the card window',  body: 'Flip the department cards between Yesterday, Last 30 days, and Year-to-date. The trend chart keeps its own range control just beside it.' },
+      { sel: '#ov-period-bar',    title: 'Change the window',  body: 'One Window selector flips the department cards AND the agent table between Yesterday, Last 30 days, and Year-to-date. The trend chart keeps its own Chart: range control beside it.' },
       { sel: '#my-dept-btn',      title: 'My Department',           body: 'Your team’s per-agent table — sortable by any column, worst answer rate first by default. A summary strip up top (% Answered, Queue calls, Answered, Abandoned % for the range) and the full Missed Calls report with per-agent timelines below the table.' },
       { sel: '#escalations-btn',  title: 'Escalations',             body: 'View and resolve escalation calls for your department — start one, mark it resolved with a note on how it was handled, and see the full activity trail.' },
       { sel: '#insights-report-btn', title: 'Insights',             body: 'The flagship report, now a full page: a department rollup, per-agent cards vs the prior period, and queue health. Use the period slider (Last 7 / 30 / MTD / YTD) to reframe it — Insights and My Department share one date window, so whichever you set most recently carries over. Your generated report stays put when you switch tabs.' },
@@ -19257,13 +19339,20 @@
   // nested children). Sums volume/answered/abandoned/violations; longest =
   // MAX; avg answer = volume-weighted -- using the raw *Sec fields the server
   // now sends. Returns the same shape qcdDailyBarCell_ + the row cells read.
+  // R12-24: display violations are MONTH-TO-DATE (server violationsMtd);
+  // fall back to the range figure for a pre-v5 cached payload.
+  function qcdViolShow_(o) {
+    return (o && o.violationsMtd != null) ? (Number(o.violationsMtd) || 0)
+      : (Number((o || {}).violations) || 0);
+  }
   function qcdAllDeptSectionTotal_(queues) {
-    var tot = 0, ans = 0, abnd = 0, viol = 0, longestSec = 0, avgWSum = 0, avgWN = 0;
+    var tot = 0, ans = 0, abnd = 0, viol = 0, violMtd = 0, longestSec = 0, avgWSum = 0, avgWN = 0;
     (queues || []).forEach(function (q) {
       tot  += Number(q.totalCalls)    || 0;
       ans  += Number(q.totalAnswered) || 0;
       abnd += Number(q.abandoned)     || 0;
       viol += Number(q.violations)    || 0;
+      violMtd += qcdViolShow_(q);
       var ls = Number(q.longestWaitSec) || 0;
       if (ls > longestSec) longestSec = ls;
       var as = Number(q.avgAnswerSec) || 0, a = Number(q.totalAnswered) || 0;
@@ -19276,6 +19365,7 @@
       longestWait: qcdSecToHms_(longestSec),
       avgAnswer: qcdSecToHms_(avgWN > 0 ? Math.round(avgWSum / avgWN) : 0),
       violations: viol,
+      violationsMtd: violMtd,
     };
   }
 
@@ -19408,10 +19498,11 @@
     const NCOLS = 6;
     let html = '<table class="qcd-alldept-table agents"><thead><tr>'
       + '<th>Queue</th><th class="num">Total</th><th>Answered vs Abandoned</th>'
-      + '<th class="num">Longest</th><th class="num">Avg ans</th><th class="num">Viol</th>'
+      + '<th class="num">Longest</th><th class="num">Avg ans</th><th class="num" title="Month-to-date 5%-violation days through this report\u2019s end date (not just this range)">Viol (MTD)</th>'
       + '</tr></thead>';
     const queueRow = function (q, sub) {
-      const c = cell(q.abandonedPct, q.violations);
+      const qViolShow = qcdViolShow_(q);
+      const c = cell(q.abandonedPct, qViolShow);
       const subTag = sub ? ' <span class="qcd-alldept-subq">&middot; ' + escapeHtml(sub) + '</span>' : '';
       // #1c: expand into the per-call-source breakdown (+ violation dates).
       const sources = q.bySource || [];
@@ -19424,7 +19515,7 @@
         + '<td class="qcd-daily-bar-cell">' + qcdDailyBarCell_(q, { tick: true }) + '</td>'   // QV-1
         + '<td class="num">' + escapeHtml(q.longestWait) + '</td>'
         + '<td class="num">' + escapeHtml(q.avgAnswer) + '</td>'
-        + '<td class="num' + c.violCls + '">' + fmtNumber(q.violations) + '</td>'
+        + '<td class="num' + c.violCls + '">' + fmtNumber(qViolShow) + '</td>'
         + '</tr>';
       if (hasDetail) {
         let detail = qcdSourceSubtableHtml_(sources);
@@ -19475,27 +19566,27 @@
       // #3: the "(dept) total" row is redundant for a single-queue section
       // (the lone queue line IS the total), so show it only when >1 queue.
       if (secItems.length > 1) {
-        const tc = cell(st.abandonedPct, st.violations);
+        const tc = cell(st.abandonedPct, qcdViolShow_(st));
         html += '<tr class="qcd-alldept-subtotal">'
           + '<td>' + escapeHtml(d.dept) + ' total</td>'
           + '<td class="num">' + fmtNumber(st.totalCalls) + '</td>'
           + '<td class="qcd-daily-bar-cell">' + qcdDailyBarCell_(st, { tick: true }) + '</td>'   // QV-1
           + '<td class="num">' + escapeHtml(st.longestWait) + '</td>'
           + '<td class="num">' + escapeHtml(st.avgAnswer) + '</td>'
-          + '<td class="num' + tc.violCls + '">' + fmtNumber(st.violations) + '</td>'
+          + '<td class="num' + tc.violCls + '">' + fmtNumber(qcdViolShow_(st)) + '</td>'
           + '</tr>';
       }
       html += '</tbody>';
     });
     const g = data.grandTotals || {};
-    const gc = cell(g.abandonedPct, g.violations);
+    const gc = cell(g.abandonedPct, qcdViolShow_(g));
     html += '<tfoot><tr class="qcd-alldept-grand">'
       + '<td>Company total</td>'
       + '<td class="num">' + fmtNumber(g.totalCalls) + '</td>'
       + '<td class="qcd-daily-bar-cell">' + qcdDailyBarCell_(g, { tick: true }) + '</td>'   // QV-1
       + '<td class="num">' + escapeHtml(g.longestWait) + '</td>'
       + '<td class="num">' + escapeHtml(g.avgAnswer) + '</td>'
-      + '<td class="num' + gc.violCls + '">' + fmtNumber(g.violations) + '</td>'
+      + '<td class="num' + gc.violCls + '">' + fmtNumber(qcdViolShow_(g)) + '</td>'
       + '</tr></tfoot></table>';
     body.innerHTML = html;
     // Auto-expand the viewer's own dept section (its per-queue source detail)
@@ -19525,7 +19616,7 @@
     lines.push(row(['Daily Call Queue Report', data.dateLabel || '']));
     lines.push('');
     lines.push(row(['Department', 'Queue', 'Sub-dept', 'Total Calls', 'Answered', 'Abandoned',
-                    'Abandoned %', 'Longest Wait', 'Avg Answer', 'Violations']));
+                    'Abandoned %', 'Longest Wait', 'Avg Answer', 'Violations (MTD)']));
     // Same grouping as the table: children nested under their parent, section
     // total only when the section has >1 queue (#3).
     const depts = data.depts || [];
@@ -19545,17 +19636,17 @@
       secItems.forEach(function (it) {
         const q = it.q;
         lines.push(row([d.dept, q.queue, it.sub, q.totalCalls, q.totalAnswered, q.abandoned,
-                        q.abandonedPctStr, q.longestWait, q.avgAnswer, q.violations]));
+                        q.abandonedPctStr, q.longestWait, q.avgAnswer, qcdViolShow_(q)]));
       });
       if (secItems.length > 1) {
         const t = qcdAllDeptSectionTotal_(secItems.map(function (i) { return i.q; }));
         lines.push(row([d.dept, d.dept + ' total', '', t.totalCalls, t.totalAnswered, t.abandoned,
-                        t.abandonedPctStr, t.longestWait, t.avgAnswer, t.violations]));
+                        t.abandonedPctStr, t.longestWait, t.avgAnswer, qcdViolShow_(t)]));
       }
     });
     const g = data.grandTotals || {};
     lines.push(row(['', 'Company total', '', g.totalCalls, g.totalAnswered, g.abandoned,
-                    g.abandonedPctStr, g.longestWait, g.avgAnswer, g.violations]));
+                    g.abandonedPctStr, g.longestWait, g.avgAnswer, qcdViolShow_(g)]));
     const blob = new Blob([lines.join('\n') + '\n'], { type: 'text/csv;charset=utf-8;' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);

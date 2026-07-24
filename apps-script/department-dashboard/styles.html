@@ -841,6 +841,7 @@
      only the cross-agent CONTROLS (view/basis/metric) + the heavy team blocks
      stay hidden in Simple. */
   #insights-results.ds-density-simple #ins-team-detail,
+  #insights-results.ds-density-simple #ins-queue-health,
   #insights-results.ds-density-simple #ins-trend-wrap,
   #insights-results.ds-density-simple #ins-cards-view-toggle,
   #insights-results.ds-density-simple #ins-cards-chart-mode,
@@ -931,6 +932,16 @@
     padding-top: 8px; padding-bottom: 8px;
   }
   #dept-page .controls { margin-bottom: 14px; }
+  /* R12-18 (#7): on short laptop viewports the sticky strips eat too much
+     vertical budget -- tighten their padding (the max-height pattern the
+     Overview chart band already uses). */
+  @media (max-height: 800px) {
+    #dept-page .controls,
+    #insights-page #insights-results > .ir-results-header {
+      padding-top: 4px; padding-bottom: 4px;
+    }
+    #insights-page #insights-results > .ir-results-header .ins-period-bar { margin-top: 2px; }
+  }
   /* R11-B9: the Insights sticky strip is the WHOLE results header now
      (title + toolbar + period presets -- the My Department pattern). The
      period bar sits as a full-width third row inside the flex header. */
@@ -4431,7 +4442,14 @@
      label+value and the row is slightly smaller overall. */
   .qcd-verdict-value { font: 700 28px/1.1 var(--display); font-variant-numeric: tabular-nums;
     color: var(--ink); margin-top: 6px; }
-  .qcd-verdict-rest .qcd-verdict-tile { text-align: center; padding: 9px 10px; }
+  /* R12-23 (owner): the three secondary tiles center VERTICALLY too, and
+     their numbers read bigger (they looked lost in the card). */
+  .qcd-verdict-rest .qcd-verdict-tile {
+    text-align: center; padding: 9px 10px;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 6px;
+  }
+  .qcd-verdict-rest .qcd-verdict-value { font-size: 34px; margin-top: 0; }
   .qcd-verdict--warn .qcd-verdict-value { color: var(--warn); }
   .qcd-verdict--good .qcd-verdict-value { color: var(--good); }
   .qcd-verdict-callout { margin: 0 0 14px; }
@@ -5611,6 +5629,31 @@
        panning the whole page sideways on phones. */
     overflow-x: auto;
   }
+  /* R12-20 (#1): nav-tab escalation count badge + Overview strip. */
+  .nav-count-badge {
+    display: inline-block; margin-left: 6px; padding: 1px 7px;
+    border-radius: 999px; font: 600 10px/1.5 var(--mono);
+    background: var(--accent-soft); color: var(--accent);
+  }
+  .nav-count-badge--warn { background: var(--warn-soft); color: var(--warn); }
+  .ov-esc-strip {
+    margin: 6px 0 10px; padding: 7px 12px; font-size: 13px;
+    background: var(--paper-card); border: 1px solid var(--line);
+    border-left: 3px solid var(--warn); border-radius: var(--r);
+  }
+  .ov-esc-strip .ov-esc-overdue { color: var(--warn); font-weight: 600; }
+  /* R12-19/#3: zero-ring card note (the R12-4 dash case, explained). */
+  .ov-dept-nodata-note { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  /* R12-16 (#4): compact row density -- tighter cells so Sales-sized rosters
+     fit more agents per screen; toggled via #dept-rows-toggle. The row height
+     is CONTENT-driven by the bar cell, so compact also tightens its inner
+     stack + type, not just cell padding. */
+  #agents-table.agents--compact th, #agents-table.agents--compact td {
+    padding-top: 3px; padding-bottom: 3px;
+  }
+  #agents-table.agents--compact td { line-height: 1.15; font-size: 12px; }
+  #agents-table.agents--compact .ans-bar-cell { padding-top: 2px; padding-bottom: 2px; }
+  #agents-table.agents--compact .ans-bar-cell > div { margin-top: 1px; margin-bottom: 1px; }
   .ov-user-table-wrap .ir-chart-header {
     display: flex;
     align-items: baseline;
@@ -6580,6 +6623,16 @@
   .esc-reopen textarea { width: 100%; box-sizing: border-box; resize: vertical; margin-top: 4px; }
 
   /* §5 activity trail (collapsible, append-only timeline) */
+  /* R12-15 (P3-2): the inline resolve form sits behind a disclosure so a
+     multi-card list isn't a wall of repeated empty textareas. Mirrors the
+     Activity summary styling (accent-tinted since it's the primary action). */
+  .esc-resolve-disc { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 6px; }
+  .esc-resolve-disc > summary { cursor: pointer; font: 600 11px/1 var(--mono); letter-spacing: 0.1em;
+    text-transform: uppercase; color: var(--accent); user-select: none; list-style: none; padding: 2px 0; }
+  .esc-resolve-disc > summary::-webkit-details-marker { display: none; }
+  .esc-resolve-disc > summary::before { content: '▸ '; }
+  .esc-resolve-disc[open] > summary::before { content: '▾ '; }
+  .esc-resolve-disc > summary:hover { color: var(--ink); }
   .esc-activity { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 6px; }
   .esc-activity > summary { cursor: pointer; font: 600 11px/1 var(--mono); letter-spacing: 0.1em;
     text-transform: uppercase; color: var(--muted); user-select: none; list-style: none; padding: 2px 0; }

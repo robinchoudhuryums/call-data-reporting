@@ -53,7 +53,7 @@
 //     sub-queue nesting w/ parent + raw longestWaitSec/avgAnswerSec +
 //     roll-up exclusions). The merged payload carries BOTH; the 6h TTL
 //     makes a stale-shape blob too sticky to risk.
-const QCD_ALLDEPT_CACHE_PREFIX = 'qcdAll:v4';
+const QCD_ALLDEPT_CACHE_PREFIX = 'qcdAll:v5';
 
 // #3: queues excluded from the all-dept Daily Call Queue Report because their
 // calls are ALREADY counted within another queue (Intake / Backup CSR roll
@@ -258,7 +258,13 @@ function computeQcdAllDepartments_(from, to) {
   QCD_ALLDEPT_EXCLUDE_QUEUES.forEach(function (q) { excludeSet[String(q).toLowerCase()] = true; });
 
   // Company grand totals (range-scoped; longest = MAX, avg = volume-weighted).
-  let gTotal = 0, gAns = 0, gAbnd = 0, gLongest = 0, gAvgWSum = 0, gAvgWN = 0, gViol = 0;
+  let gTotal = 0, gAns = 0, gAbnd = 0, gLongest = 0, gAvgWSum = 0, gAvgWN = 0, gViol = 0, gViolMtd = 0;
+  // R12-24 (owner): the Viol column shows MONTH-TO-DATE violations (through
+  // the range END's month), matching the per-dept dashboard tile. The range
+  // `violations` field is KEPT (violation-date expands + tier logic); MTD
+  // rides alongside as `violationsMtd` via a second range pass over
+  // month-start(to)..to (skipped when the range IS that window).
+  const mtdFrom = String(to).slice(0, 8) + '01';
   const gSeenQueues = {};   // F-36: dedupe double-mapped queues in the grand total
 
   allDepts.forEach(function (dept) {
@@ -268,12 +274,19 @@ function computeQcdAllDepartments_(from, to) {
                                   /*includeSubQueues=*/ false,
                                   /*separateSubQueues=*/ false,
                                   /*rangeOnly=*/ true);   // perf: only queueBreakdown is used
+    const mtdRep = (mtdFrom === from)
+      ? rep
+      : computeQcdReport_(dept, mtdFrom, to, false, false, true);
+    const mtdByQueue = {};
+    (mtdRep.queueBreakdown || []).forEach(function (r) {
+      mtdByQueue[r.queue] = Number(r.violations) || 0;
+    });
     // #3: drop roll-up queues already counted within another queue.
     const rows = (rep.queueBreakdown || []).filter(function (r) {
       return !excludeSet[String(r.queue || '').toLowerCase()];
     });
 
-    let dTotal = 0, dAns = 0, dAbnd = 0, dLongest = 0, dAvgWSum = 0, dAvgWN = 0, dViol = 0;
+    let dTotal = 0, dAns = 0, dAbnd = 0, dLongest = 0, dAvgWSum = 0, dAvgWN = 0, dViol = 0, dViolMtd = 0;
     rows.forEach(function (r) {
       dTotal += r.totalCalls; dAns += r.totalAnswered; dAbnd += r.abandoned;
       if (r.longestWaitSec > dLongest) dLongest = r.longestWaitSec;
@@ -282,6 +295,7 @@ function computeQcdAllDepartments_(from, to) {
         dAvgWN   += r.totalAnswered;
       }
       dViol += (Number(r.violations) || 0);
+      dViolMtd += (mtdByQueue[r.queue] || 0);
     });
     if (dTotal === 0) return;   // no activity in range: omit (legacy lists active queues)
 
@@ -298,6 +312,7 @@ function computeQcdAllDepartments_(from, to) {
         longestWait:     formatSecondsHms_(dLongest),
         avgAnswer:       formatSecondsHms_(dAvgWN > 0 ? Math.round(dAvgWSum / dAvgWN) : 0),
         violations:      dViol,
+        violationsMtd:   dViolMtd,
       },
       queues: rows.map(function (r) {
         return {
@@ -314,6 +329,7 @@ function computeQcdAllDepartments_(from, to) {
           longestWaitSec:  Number(r.longestWaitSec) || 0,
           avgAnswerSec:    Number(r.avgAnswerSec) || 0,
           violations:      r.violations,
+          violationsMtd:   mtdByQueue[r.queue] || 0,
           // Per-queue call-source breakdown (data-driven -- each queue shows
           // its own actual sources) + violation dates, for the expandable
           // per-queue detail in the all-dept report.
@@ -338,6 +354,7 @@ function computeQcdAllDepartments_(from, to) {
         gAvgWN   += r.totalAnswered;
       }
       gViol += (Number(r.violations) || 0);
+      gViolMtd += (mtdByQueue[r.queue] || 0);
     });
   });
 
@@ -353,6 +370,7 @@ function computeQcdAllDepartments_(from, to) {
     longestWait:     formatSecondsHms_(gLongest),
     avgAnswer:       formatSecondsHms_(gAvgWN > 0 ? Math.round(gAvgWSum / gAvgWN) : 0),
     violations:      gViol,
+    violationsMtd:   gViolMtd,
   };
 
   const parseIso_ = function (iso) {
