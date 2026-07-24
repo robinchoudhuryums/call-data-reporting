@@ -1399,3 +1399,19 @@ commit/push/deploy direction.
   to ship R11-M/N + R12; the audit's remaining owner-call items: P3-2
   (Escalations 'All' view repeats full resolution forms) + heatmap live
   spot-check; audit phases 1-3 complete, no further phases queued.
+
+- **Increment 54 (DONE — suggestions #1-7 + empty-state sweep + docs, commits
+  c6ecd65/1e0dc20/2ad6a58/+this):** Harness committed as tools/ui-harness
+  (portable paths, README). R12-15 esc resolve disclosure; R12-16 compact
+  rows (-31%); R12-17 QH promoted (Simple-hide preserved); R12-18 short-
+  viewport sticky slimming; toasts on all six esc verbs; R12-19 unified
+  Overview Window bar per the owner's 5 rulings (cdr.ov.window, chart
+  labeled Chart:, yesterday-only agents caption, WoW tooltip explainer,
+  zero-ring no-data note); R12-20 getEscalationsBadge (read-only, scoped)
+  -> nav badge + Overview strip; R12-21 empty-state sweep (role-aware dept
+  hint, esc inflow context, tour text; other states audited healthy).
+  Docs synced (INV-55 callable, prefs keys, density bullet, fix-history
+  R12-15..21). All harness-verified; CI 452/452 throughout. Where I left
+  off: ~8 commits ahead of main un-PR'd; dashboard + cdr-import deploys
+  still pending; next natural steps: PR+merge, deploy, regenerate harness
+  payloads after any server-shape change.
