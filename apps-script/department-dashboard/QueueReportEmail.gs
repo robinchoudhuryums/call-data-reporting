@@ -384,10 +384,42 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
   offenders.sort(function (a, b) { return (b.viol - a.viol) || (b.pct - a.pct); });
 
   // Worst-first dept order (EMAIL ONLY).
-  const ordered = depts.slice().sort(function (a, b) {
-    const pa = Number((a.totals || {}).abandonedPct) || 0, pb = Number((b.totals || {}).abandonedPct) || 0;
-    const va = Number((a.totals || {}).violations) || 0, vb = Number((b.totals || {}).violations) || 0;
-    return (pb - pa) || (vb - va);
+  // R12-22 (owner): sections are PARENT-GROUPED like the web report --
+  // Spanish nests under CSR, PAP under Sales, PAK under Power (the payload's
+  // `parent` field, #3) instead of standing as their own dept sections. The
+  // banner line carries the SECTION total (parent own + children) INLINE, and
+  // a section whose whole story is ONE queue renders banner-only (the old
+  // shape repeated identical numbers on the banner and the lone queue row).
+  const byName = {};
+  depts.forEach(function (d) { byName[d.dept] = d; });
+  const childrenOf = {};
+  const parentsOnly = [];
+  depts.forEach(function (d) {
+    if (d.parent && byName[d.parent]) {
+      (childrenOf[d.parent] = childrenOf[d.parent] || []).push(d);
+    } else {
+      parentsOnly.push(d);
+    }
+  });
+  const secTotals = function (d) {
+    const own = d.totals || {};
+    const t = {
+      calls: Number(own.totalCalls) || 0,
+      abnd: Number(own.abandoned) || 0,
+      viol: Number(own.violations) || 0,
+    };
+    (childrenOf[d.dept] || []).forEach(function (c) {
+      const ct = c.totals || {};
+      t.calls += Number(ct.totalCalls) || 0;
+      t.abnd  += Number(ct.abandoned)  || 0;
+      t.viol  += Number(ct.violations) || 0;
+    });
+    t.pct = t.calls > 0 ? (t.abnd / t.calls * 100) : 0;
+    return t;
+  };
+  const ordered = parentsOnly.slice().sort(function (a, b) {
+    const sa = secTotals(a), sb = secTotals(b);
+    return (sb.pct - sa.pct) || (sb.viol - sa.viol);
   });
 
   const gPct = Number(gt.abandonedPct) || 0;
@@ -439,33 +471,47 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
     + '<td width="150" style="padding:9px 8px;font:600 9px ' + sans + ';letter-spacing:0.8px;text-transform:uppercase;color:#8a97a4;">Abandoned %</td>'
     + '<td align="right" style="padding:9px 12px;font:600 9px ' + sans + ';letter-spacing:0.8px;text-transform:uppercase;color:#8a97a4;">Viol</td></tr>';
   ordered.forEach(function (d) {
-    const dTotals = d.totals || {};
-    const dt = tierOf(dTotals.abandonedPct, dTotals.violations);
+    const sec = secTotals(d);
+    const dt = tierOf(sec.pct, sec.viol);
     // R11-F (owner): the dept name strip carries its health VERDICT as a
     // colored LEFT EDGE (green / watch / red) + a distinct tinted background so
     // it stands out from the queue rows, replacing the HEALTHY/WATCH text
     // label; and its mini-summary now includes the ABANDONED COUNT + % (the
     // web app's QV-2 dept-banner shape) so "how many calls did we lose" reads
     // without opening the dashboard.
-    const dCalls = Number(dTotals.totalCalls) || 0;
-    const dAbnd  = Number(dTotals.abandoned)  || 0;
-    const dPct   = Number(dTotals.abandonedPct) || 0;
-    const dPctStr = dTotals.abandonedPctStr || dPct.toFixed(1) + '%';
+    const dCalls = sec.calls, dAbnd = sec.abnd, dPct = sec.pct;
+    const dPctStr = dPct.toFixed(1) + '%';
+    const kids = childrenOf[d.dept] || [];
+    // One flat row list: own queues, then each child's queues as sub-rows.
+    const rowDefs = deptQueues(d).map(function (q) { return { q: q, sub: null }; });
+    kids.forEach(function (c) {
+      deptQueues(c).forEach(function (q) { rowDefs.push({ q: q, sub: c.dept }); });
+    });
+    const singleRow = rowDefs.length === 1;
+    const bannerName = esc(d.dept)
+      + (singleRow && rowDefs[0].q.queue !== d.dept
+          ? ' <span style="font-weight:normal;font-size:11px;color:' + C.mut + ';">&middot; ' + esc(rowDefs[0].q.queue) + '</span>'
+          : '');
     const stripBg = dt.color === C.bad ? C.badTile : (dt.color === C.watch ? C.alertBg : C.okBg);
     tbl += '<tr><td colspan="4" style="padding:0;border-top:1px solid ' + C.rowline + ';">'
       + '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:' + stripBg + ';border-left:4px solid ' + dt.color + ';border-collapse:separate;"><tr>'
-      +   '<td style="padding:8px 12px;font:bold 13px Arial,sans-serif;color:' + C.ink + ';">' + esc(d.dept) + '</td>'
+      +   '<td style="padding:8px 12px;font:bold 13px Arial,sans-serif;color:' + C.ink + ';">' + bannerName + '</td>'
       +   '<td align="right" style="padding:8px 12px;font:12px ' + sans + ';color:' + C.mut + ';white-space:nowrap;">'
       +     esc(dCalls) + ' calls &middot; <span style="font-weight:bold;color:' + (dPct >= 5 ? C.bad : C.ink) + ';">' + esc(dAbnd) + ' abandoned</span> (' + esc(dPctStr) + ')'
       +   '</td>'
       + '</tr></table></td></tr>';
-    deptQueues(d).forEach(function (q) {
+    if (singleRow) return;   // the banner IS the row -- no duplicate numbers
+    rowDefs.forEach(function (rd) {
+      const q = rd.q;
       const pct = Number(q.abandonedPct) || 0;
       const t = tierOf(pct, q.violations);
       const pctStr = q.abandonedPctStr || pct.toFixed(1) + '%';
       const viol = Number(q.violations) || 0;
+      const rowLbl = rd.sub
+        ? '&#8627; <b>' + esc(rd.sub) + '</b> <span style="color:' + C.mut + ';">&middot; ' + esc(q.queue) + '</span>'
+        : esc(q.queue);
       tbl += '<tr>'
-        + '<td style="padding:6px 12px;font:12px ' + sans + ';color:' + C.ink + ';border-top:1px solid ' + C.rowline + ';">' + esc(q.queue) + '</td>'
+        + '<td style="padding:6px 12px' + (rd.sub ? ' 6px 22px' : '') + ';font:12px ' + sans + ';color:' + C.ink + ';border-top:1px solid ' + C.rowline + ';">' + rowLbl + '</td>'
         + '<td align="right" style="padding:6px 8px;font:12px ' + sans + ';color:' + C.ink + ';border-top:1px solid ' + C.rowline + ';">' + esc(q.totalCalls) + '</td>'
         + '<td style="padding:6px 8px;border-top:1px solid ' + C.rowline + ';">' + barHtml(q, pctStr, pct >= 5 ? t.color : C.mut, pct >= 5) + '</td>'
         + '<td align="right" style="padding:6px 12px;font:' + (viol > 0 ? 'bold ' : '') + '12px ' + sans + ';color:' + (viol > 0 ? t.color : C.mut) + ';border-top:1px solid ' + C.rowline + ';">' + esc(String(viol)) + '</td>'
