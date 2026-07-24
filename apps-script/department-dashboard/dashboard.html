@@ -177,6 +177,8 @@
              opens the Dept Config modal. -->
         <div id="ov-unmapped-nag" class="ov-status-banner" style="display:none;" data-admin-only></div>
         <div class="ov-summary-line" id="ov-summary-line"></div>
+        <!-- R12-20 (#1): per-viewer escalation counts (server-scoped). -->
+        <div id="ov-esc-strip" class="ov-esc-strip" style="display:none;"></div>
         <!-- R10-1: the quick-start question row moved into the Help modal
              (#help-launcher) -- still global, no longer pinned atop every
              page (owner: saves screen space, declutters). -->
@@ -208,8 +210,8 @@
             <!-- Card period slider: swaps which window the dept CARDS' headline
                  stats show (Yesterday / Last 30 days / YTD). Chart + sparklines
                  + active-count stay period-independent. -->
-            <div id="ov-period-bar" class="ov-period-bar" role="group" aria-label="Card period">
-              <span class="ov-period-lbl">Cards:</span>
+            <div id="ov-period-bar" class="ov-period-bar" role="group" aria-label="Overview window">
+              <span class="ov-period-lbl" title="One window for the department cards AND the agent table below. The trend chart keeps its own range control.">Window:</span>
               <button type="button" class="ov-period-btn active" data-period="yesterday" aria-pressed="true">Yesterday</button>
               <button type="button" class="ov-period-btn" data-period="last30" aria-pressed="false">Last 30 days</button>
               <button type="button" class="ov-period-btn" data-period="ytd" aria-pressed="false">YTD</button>
@@ -241,6 +243,7 @@
                    fetches the year-to-date series on demand. All three metrics
                    follow the selected range. -->
               <span id="ov-chart-range" class="ov-chart-range" role="group" aria-label="Chart range">
+                <span class="ov-period-lbl" title="Chart-only range — the trend needs multiple days, so it doesn't follow the Window selector.">Chart:</span>
                 <button type="button" class="ov-range-btn active" data-range="30" aria-pressed="true" title="Last 30 days">30d</button>
                 <button type="button" class="ov-range-btn" data-range="60" aria-pressed="false" title="Last 60 days">60d</button>
                 <button type="button" class="ov-range-btn" data-range="90" aria-pressed="false" title="Last 90 days">90d</button>
@@ -259,15 +262,6 @@
           <div class="ir-chart-header">
             <span id="ov-user-table-title">Department detail</span>
             <span class="ov-user-table-date" id="ov-user-table-date"></span>
-          </div>
-          <!-- O4: period slider for the agent table (re-fetches the dept
-               summary for Yesterday / Last 30 / YTD). Separate from the card
-               period bar above (which drives the dept tiles). -->
-          <div id="ov-user-table-period" class="ov-period-bar" role="group" aria-label="Agent table period">
-            <span class="ov-period-lbl">Table:</span>
-            <button type="button" class="ov-period-btn active" data-period="yesterday" aria-pressed="true">Yesterday</button>
-            <button type="button" class="ov-period-btn" data-period="last30" aria-pressed="false">Last 30 days</button>
-            <button type="button" class="ov-period-btn" data-period="ytd" aria-pressed="false">YTD</button>
           </div>
           <div id="ov-user-table-status" class="status" style="display:none;"></div>
           <table class="agents ov-user-table hide-extra">

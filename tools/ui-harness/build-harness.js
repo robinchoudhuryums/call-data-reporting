@@ -60,6 +60,7 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [] };
     getInsightsReportInit: function () { return P['insights-init']; },
     getInsightsReport: function () { return P['insights']; },
     getMissedCallsSlice: function () { return P['missed-slice']; },
+    getEscalationsBadge: function () { return { available: true, open: 3, review: 2, overdue: 1 }; },
     getEscalationsInit: function () { var e = JSON.parse(JSON.stringify(P['esc-init'])); if (ROLE==='manager'){e.role='manager';e.isAdmin=false;e.department='CSR';e.departments=['CSR'];} return e; },
     getEscalations: function () { return P[ROLE==='manager' ? 'esc-list-mgr' : 'esc-list']; },
     getEscalationActivity: function () { return P['esc-activity']; },

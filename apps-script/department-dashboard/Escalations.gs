@@ -144,6 +144,50 @@ function getEscalationsInit() {
  * { available, rows, meta } -- available=false when Neon is unreachable
  * (NOT cached -- a transient outage shouldn't pin an empty list).
  */
+/**
+ * R12-20 (#1): lightweight per-viewer escalation counts for the landing
+ * chrome (nav-tab badge + Overview strip). READ-ONLY; same signed-in gate +
+ * dept scoping as getEscalations, aggregate query only. Best-effort: any
+ * failure (incl. a not-yet-created table) returns { available: false }.
+ */
+function getEscalationsBadge() {
+  var user = resolveUser_(Session.getActiveUser().getEmail());
+  if (!user || user.role === 'none') throw new Error('Not authorized.');
+  var conn = null;
+  try {
+    conn = getDashboardNeonConn_();
+    if (!conn) return { available: false };
+    var clause = '', params = [];
+    if (!(user.role === 'admin' || user.allDepts)) {
+      var mine = (user.departments && user.departments.length) ? user.departments
+        : (user.department ? [user.department] : []);
+      if (!mine.length) return { available: false };
+      clause = ' WHERE department IN (' + mine.map(function () { return '?'; }).join(',') + ')';
+      params = mine;
+    }
+    var sql = 'SELECT '
+      + "count(*) FILTER (WHERE status IN ('pending','in_progress')) AS n_open, "
+      + "count(*) FILTER (WHERE status = 'pending_review') AS n_review, "
+      + "count(*) FILTER (WHERE status IN ('pending','in_progress') AND occurred_at < now() - interval '3 days') AS n_overdue "
+      + 'FROM escalations' + clause;
+    var stmt = conn.prepareStatement(sql);
+    for (var i = 0; i < params.length; i++) stmt.setString(i + 1, params[i]);
+    var rs = stmt.executeQuery();
+    var out = { available: true, open: 0, review: 0, overdue: 0 };
+    if (rs.next()) {
+      out.open    = Number(rs.getString('n_open'))    || 0;
+      out.review  = Number(rs.getString('n_review'))  || 0;
+      out.overdue = Number(rs.getString('n_overdue')) || 0;
+    }
+    rs.close(); stmt.close();
+    return out;
+  } catch (e) {
+    return { available: false };
+  } finally {
+    if (conn) { try { conn.close(); } catch (e2) {} }
+  }
+}
+
 function getEscalations(req) {
   req = req || {};
   var user = resolveUser_(Session.getActiveUser().getEmail());

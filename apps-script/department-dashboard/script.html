@@ -1102,6 +1102,7 @@
     if (deptBucketClose) deptBucketClose.addEventListener('click', function () { deptMissedBucketDetail_.hide(); });
 
     initHelpModal();
+    loadEscBadge_();
     initSettingsModal();
     initCompanyOverview();
     initIndividualReport();
@@ -1314,6 +1315,36 @@
     // adoptSharedWindow_ in the per-page branches above.)
     // R11-C2: arm the cross-page dwell-prefetch (no-op page values clear it).
     if (typeof armDwellPrefetch_ === 'function') armDwellPrefetch_(page);
+  }
+
+  // R12-20 (#1): escalation counts surfaced on the landing chrome -- a count
+  // badge on the Escalations nav tab + a one-line Overview strip. Best-effort
+  // (silent on unavailable/zero); per-viewer scope enforced server-side.
+  function loadEscBadge_() {
+    try {
+      google.script.run.withSuccessHandler(function (b) {
+        if (!b || !b.available) return;
+        var open = Number(b.open) || 0, review = Number(b.review) || 0, over = Number(b.overdue) || 0;
+        var tab = $('escalations-btn');
+        if (tab && (open + review) > 0 && !tab.querySelector('.nav-count-badge')) {
+          var sp = document.createElement('span');
+          sp.className = 'nav-count-badge' + (over > 0 ? ' nav-count-badge--warn' : '');
+          sp.textContent = open + review;
+          sp.title = open + ' open' + (over ? ' (' + over + ' overdue)' : '') + (review ? ' \u00b7 ' + review + ' awaiting review' : '');
+          tab.appendChild(sp);
+        }
+        var strip = $('ov-esc-strip');
+        if (strip && (open + review) > 0) {
+          strip.innerHTML = '\u26a0 <strong>Escalations:</strong> ' + open + ' open'
+            + (over ? ' \u00b7 <span class="ov-esc-overdue">' + over + ' overdue</span>' : '')
+            + (review ? ' \u00b7 ' + review + ' awaiting review' : '')
+            + ' <button type="button" class="link-btn" id="ov-esc-strip-open">Open worklist \u2192</button>';
+          strip.style.display = '';
+          var btn = $('ov-esc-strip-open');
+          if (btn) btn.addEventListener('click', function () { setPage('escalations'); });
+        }
+      }).withFailureHandler(function () { /* silent */ }).getEscalationsBadge();
+    } catch (e) { /* silent */ }
   }
 
   // -- Help & FAQ modal ---------------------------------------------------
@@ -2052,6 +2083,13 @@
   // `periods` block the dept cards' headline stats read; the sparkline, WoW
   // chip, and active-count stay period-independent. Persisted; default keeps
   // the historical latest-day view.
+  // R12-19 (#2, owner-confirmed): ONE window drives the dept cards AND the
+  // agent table (the old Cards:/Table: split was the top "why don't these
+  // match" trap). Migration: new key, else the old TABLE pref (the heavier
+  // fetch), else the old card pref. The chart keeps its own range control
+  // (a trend isn't a snapshot); sparkline/WoW/active-count stay
+  // period-independent (INV-40).
+  const OV_WINDOW_KEY_ = 'cdr.ov.window';
   const OV_CARD_PERIOD_KEY_ = 'cdr.ov.cardperiod';
   const OV_CARD_PERIODS_ = {
     yesterday: { label: 'Yesterday',    cap: 'answered (yesterday)' },
@@ -2059,7 +2097,12 @@
     ytd:       { label: 'YTD',          cap: 'answered (year to date)' },
   };
   let ovCardPeriod = (function () {
-    try { var v = localStorage.getItem(OV_CARD_PERIOD_KEY_); return OV_CARD_PERIODS_[v] ? v : 'yesterday'; }
+    try {
+      var v = localStorage.getItem(OV_WINDOW_KEY_)
+        || localStorage.getItem('cdr.ov.tableperiod.v1')
+        || localStorage.getItem(OV_CARD_PERIOD_KEY_);
+      return OV_CARD_PERIODS_[v] ? v : 'yesterday';
+    }
     catch (e) { return 'yesterday'; }
   })();
   function ovPeriodStats_(dept) {
@@ -2082,7 +2125,12 @@
   // summary for the selected range), separate from the card period above.
   const OV_TABLE_PERIOD_KEY_ = 'cdr.ov.tableperiod.v1';
   let ovTablePeriod = (function () {
-    try { var v = localStorage.getItem(OV_TABLE_PERIOD_KEY_); return OV_CARD_PERIODS_[v] ? v : 'yesterday'; }
+    try {
+      var v = localStorage.getItem(OV_WINDOW_KEY_)
+        || localStorage.getItem(OV_TABLE_PERIOD_KEY_)
+        || localStorage.getItem('cdr.ov.cardperiod');
+      return OV_CARD_PERIODS_[v] ? v : 'yesterday';
+    }
     catch (e) { return 'yesterday'; }
   })();
   // Resolve { from, to } from the latest DQE date + the selected table period.
@@ -2144,8 +2192,14 @@
       const p = b.getAttribute('data-period');
       if (!OV_CARD_PERIODS_[p] || p === ovCardPeriod) return;
       ovCardPeriod = p;
-      try { localStorage.setItem(OV_CARD_PERIOD_KEY_, p); } catch (e2) { /* best-effort */ }
-      if (ovLastData) { ovRenderUserHero_(ovLastData); ovRenderTiles_(ovLastData); }
+      ovTablePeriod = p;   // R12-19: one window, both surfaces
+      try { localStorage.setItem(OV_WINDOW_KEY_, p); } catch (e2) { /* best-effort */ }
+      if (ovLastData) {
+        ovRenderUserHero_(ovLastData); ovRenderTiles_(ovLastData);
+        ovRenderUserTable_(ovLastData);
+        var twrap = $('ov-user-table-wrap');
+        if (twrap) { twrap.classList.remove('ov-tbl-fade'); void twrap.offsetWidth; twrap.classList.add('ov-tbl-fade'); }
+      }
     });
   }
 
@@ -2198,7 +2252,7 @@
          +     '</div>'
          +     '<div class="ov-hero-meta">'
          +       ovBuildAlertPill_(dept)
-         +       '<span class="ov-dept-active" title="' + escapeHtml(ovActiveTooltip_(dept)) + '">'
+         +       (ovCardPeriod === 'yesterday' ? '<span class="ov-dept-active" title="' + escapeHtml(ovActiveTooltip_(dept)) + '">' : '<span class="ov-dept-active" style="display:none;">')
          +         dept.activeAgents + ' of ' + (dept.recentlyActiveCount != null ? dept.recentlyActiveCount : dept.rosterSize) + ' agents active'
          +       '</span>'
          +     '</div>'
@@ -2228,8 +2282,9 @@
     let cls = 'ov-wow-flat';
     if (d > 0.5)  cls = 'ov-wow-up';
     if (d < -0.5) cls = 'ov-wow-down';
-    const tip = 'Last 7 days ' + dept.wow.curPct.toFixed(1) + '% vs prior 7 days '
-              + dept.wow.prevPct.toFixed(1) + '%';
+    const tip = 'Week-over-week answer rate: last 7 days ' + dept.wow.curPct.toFixed(1)
+              + '% vs the prior 7 days ' + dept.wow.prevPct.toFixed(1)
+              + '% \u2014 independent of the window selector above.';
     // R9-7: the QCD caption is NOT appended here anymore -- it used to ride
     // inside this builder, so the `!dept.wow` early-return above silently
     // dropped a dept's QCD chips whenever its DQE rung was zero in either
@@ -2382,7 +2437,7 @@
     return '<div class="' + cls + '" data-dept="' + escapeHtml(dept.name) + '">'
          +   '<div class="ov-dept-tile-head">'
          +     '<span class="ov-dept-name">' + escapeHtml(dept.name) + viewerBadge + '</span>'
-         +     '<span class="ov-dept-active" title="' + escapeHtml(ovActiveTooltip_(dept)) + '">'
+         +     (ovCardPeriod === 'yesterday' ? '<span class="ov-dept-active" title="' + escapeHtml(ovActiveTooltip_(dept)) + '">' : '<span class="ov-dept-active" style="display:none;">')
          +       dept.activeAgents + ' of ' + (dept.recentlyActiveCount != null ? dept.recentlyActiveCount : dept.rosterSize) + ' agents'
          +     '</span>'
          +   '</div>'
@@ -2394,6 +2449,8 @@
          +     ovBuildWowChip_(dept)
          +     ovBuildQcdCaption_(dept)   // R9-7: independent of the WoW chip
          +   '</div>'
+         +   (st.pctFormatted === '\u2014'
+              ? '<div class="ov-dept-nodata-note">No agent call data in this window yet \u2014 queue stats below still count.</div>' : '')
          +   '<div class="ov-dept-tile-row">'
          +     '<span><span class="ov-dept-stat-label">Rung</span> ' + fmtNumber(st.rung) + '</span>'
          +     '<span><span class="ov-dept-stat-label">Ans</span> ' + fmtNumber(st.answered) + '</span>'

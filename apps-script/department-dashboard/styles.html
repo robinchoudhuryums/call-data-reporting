@@ -5622,6 +5622,21 @@
        panning the whole page sideways on phones. */
     overflow-x: auto;
   }
+  /* R12-20 (#1): nav-tab escalation count badge + Overview strip. */
+  .nav-count-badge {
+    display: inline-block; margin-left: 6px; padding: 1px 7px;
+    border-radius: 999px; font: 600 10px/1.5 var(--mono);
+    background: var(--accent-soft); color: var(--accent);
+  }
+  .nav-count-badge--warn { background: var(--warn-soft); color: var(--warn); }
+  .ov-esc-strip {
+    margin: 6px 0 10px; padding: 7px 12px; font-size: 13px;
+    background: var(--paper-card); border: 1px solid var(--line);
+    border-left: 3px solid var(--warn); border-radius: var(--r);
+  }
+  .ov-esc-strip .ov-esc-overdue { color: var(--warn); font-weight: 600; }
+  /* R12-19/#3: zero-ring card note (the R12-4 dash case, explained). */
+  .ov-dept-nodata-note { font-size: 11px; color: var(--muted); margin-top: 2px; }
   /* R12-16 (#4): compact row density -- tighter cells so Sales-sized rosters
      fit more agents per screen; toggled via #dept-rows-toggle. The row height
      is CONTENT-driven by the bar cell, so compact also tightens its inner
