@@ -19339,13 +19339,20 @@
   // nested children). Sums volume/answered/abandoned/violations; longest =
   // MAX; avg answer = volume-weighted -- using the raw *Sec fields the server
   // now sends. Returns the same shape qcdDailyBarCell_ + the row cells read.
+  // R12-24: display violations are MONTH-TO-DATE (server violationsMtd);
+  // fall back to the range figure for a pre-v5 cached payload.
+  function qcdViolShow_(o) {
+    return (o && o.violationsMtd != null) ? (Number(o.violationsMtd) || 0)
+      : (Number((o || {}).violations) || 0);
+  }
   function qcdAllDeptSectionTotal_(queues) {
-    var tot = 0, ans = 0, abnd = 0, viol = 0, longestSec = 0, avgWSum = 0, avgWN = 0;
+    var tot = 0, ans = 0, abnd = 0, viol = 0, violMtd = 0, longestSec = 0, avgWSum = 0, avgWN = 0;
     (queues || []).forEach(function (q) {
       tot  += Number(q.totalCalls)    || 0;
       ans  += Number(q.totalAnswered) || 0;
       abnd += Number(q.abandoned)     || 0;
       viol += Number(q.violations)    || 0;
+      violMtd += qcdViolShow_(q);
       var ls = Number(q.longestWaitSec) || 0;
       if (ls > longestSec) longestSec = ls;
       var as = Number(q.avgAnswerSec) || 0, a = Number(q.totalAnswered) || 0;
@@ -19358,6 +19365,7 @@
       longestWait: qcdSecToHms_(longestSec),
       avgAnswer: qcdSecToHms_(avgWN > 0 ? Math.round(avgWSum / avgWN) : 0),
       violations: viol,
+      violationsMtd: violMtd,
     };
   }
 
@@ -19490,10 +19498,11 @@
     const NCOLS = 6;
     let html = '<table class="qcd-alldept-table agents"><thead><tr>'
       + '<th>Queue</th><th class="num">Total</th><th>Answered vs Abandoned</th>'
-      + '<th class="num">Longest</th><th class="num">Avg ans</th><th class="num">Viol</th>'
+      + '<th class="num">Longest</th><th class="num">Avg ans</th><th class="num" title="Month-to-date 5%-violation days through this report\u2019s end date (not just this range)">Viol (MTD)</th>'
       + '</tr></thead>';
     const queueRow = function (q, sub) {
-      const c = cell(q.abandonedPct, q.violations);
+      const qViolShow = qcdViolShow_(q);
+      const c = cell(q.abandonedPct, qViolShow);
       const subTag = sub ? ' <span class="qcd-alldept-subq">&middot; ' + escapeHtml(sub) + '</span>' : '';
       // #1c: expand into the per-call-source breakdown (+ violation dates).
       const sources = q.bySource || [];
@@ -19506,7 +19515,7 @@
         + '<td class="qcd-daily-bar-cell">' + qcdDailyBarCell_(q, { tick: true }) + '</td>'   // QV-1
         + '<td class="num">' + escapeHtml(q.longestWait) + '</td>'
         + '<td class="num">' + escapeHtml(q.avgAnswer) + '</td>'
-        + '<td class="num' + c.violCls + '">' + fmtNumber(q.violations) + '</td>'
+        + '<td class="num' + c.violCls + '">' + fmtNumber(qViolShow) + '</td>'
         + '</tr>';
       if (hasDetail) {
         let detail = qcdSourceSubtableHtml_(sources);
@@ -19557,27 +19566,27 @@
       // #3: the "(dept) total" row is redundant for a single-queue section
       // (the lone queue line IS the total), so show it only when >1 queue.
       if (secItems.length > 1) {
-        const tc = cell(st.abandonedPct, st.violations);
+        const tc = cell(st.abandonedPct, qcdViolShow_(st));
         html += '<tr class="qcd-alldept-subtotal">'
           + '<td>' + escapeHtml(d.dept) + ' total</td>'
           + '<td class="num">' + fmtNumber(st.totalCalls) + '</td>'
           + '<td class="qcd-daily-bar-cell">' + qcdDailyBarCell_(st, { tick: true }) + '</td>'   // QV-1
           + '<td class="num">' + escapeHtml(st.longestWait) + '</td>'
           + '<td class="num">' + escapeHtml(st.avgAnswer) + '</td>'
-          + '<td class="num' + tc.violCls + '">' + fmtNumber(st.violations) + '</td>'
+          + '<td class="num' + tc.violCls + '">' + fmtNumber(qcdViolShow_(st)) + '</td>'
           + '</tr>';
       }
       html += '</tbody>';
     });
     const g = data.grandTotals || {};
-    const gc = cell(g.abandonedPct, g.violations);
+    const gc = cell(g.abandonedPct, qcdViolShow_(g));
     html += '<tfoot><tr class="qcd-alldept-grand">'
       + '<td>Company total</td>'
       + '<td class="num">' + fmtNumber(g.totalCalls) + '</td>'
       + '<td class="qcd-daily-bar-cell">' + qcdDailyBarCell_(g, { tick: true }) + '</td>'   // QV-1
       + '<td class="num">' + escapeHtml(g.longestWait) + '</td>'
       + '<td class="num">' + escapeHtml(g.avgAnswer) + '</td>'
-      + '<td class="num' + gc.violCls + '">' + fmtNumber(g.violations) + '</td>'
+      + '<td class="num' + gc.violCls + '">' + fmtNumber(qcdViolShow_(g)) + '</td>'
       + '</tr></tfoot></table>';
     body.innerHTML = html;
     // Auto-expand the viewer's own dept section (its per-queue source detail)
@@ -19607,7 +19616,7 @@
     lines.push(row(['Daily Call Queue Report', data.dateLabel || '']));
     lines.push('');
     lines.push(row(['Department', 'Queue', 'Sub-dept', 'Total Calls', 'Answered', 'Abandoned',
-                    'Abandoned %', 'Longest Wait', 'Avg Answer', 'Violations']));
+                    'Abandoned %', 'Longest Wait', 'Avg Answer', 'Violations (MTD)']));
     // Same grouping as the table: children nested under their parent, section
     // total only when the section has >1 queue (#3).
     const depts = data.depts || [];
@@ -19627,17 +19636,17 @@
       secItems.forEach(function (it) {
         const q = it.q;
         lines.push(row([d.dept, q.queue, it.sub, q.totalCalls, q.totalAnswered, q.abandoned,
-                        q.abandonedPctStr, q.longestWait, q.avgAnswer, q.violations]));
+                        q.abandonedPctStr, q.longestWait, q.avgAnswer, qcdViolShow_(q)]));
       });
       if (secItems.length > 1) {
         const t = qcdAllDeptSectionTotal_(secItems.map(function (i) { return i.q; }));
         lines.push(row([d.dept, d.dept + ' total', '', t.totalCalls, t.totalAnswered, t.abandoned,
-                        t.abandonedPctStr, t.longestWait, t.avgAnswer, t.violations]));
+                        t.abandonedPctStr, t.longestWait, t.avgAnswer, qcdViolShow_(t)]));
       }
     });
     const g = data.grandTotals || {};
     lines.push(row(['', 'Company total', '', g.totalCalls, g.totalAnswered, g.abandoned,
-                    g.abandonedPctStr, g.longestWait, g.avgAnswer, g.violations]));
+                    g.abandonedPctStr, g.longestWait, g.avgAnswer, qcdViolShow_(g)]));
     const blob = new Blob([lines.join('\n') + '\n'], { type: 'text/csv;charset=utf-8;' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);

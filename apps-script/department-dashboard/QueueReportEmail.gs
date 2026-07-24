@@ -366,7 +366,14 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
     if (d.queues && d.queues.length) return d.queues;
     const t = d.totals || {};
     return [{ queue: d.dept, totalCalls: t.totalCalls, abandonedPct: t.abandonedPct,
-              abandonedPctStr: t.abandonedPctStr, violations: t.violations }];
+              abandonedPctStr: t.abandonedPctStr, violations: t.violations,
+              violationsMtd: t.violationsMtd }];
+  };
+  // R12-24 (owner): the Viol column is MONTH-TO-DATE (through the range end's
+  // month) -- falls back to the range figure for a pre-v5 cached payload.
+  const violOf = function (o) {
+    return (o && o.violationsMtd != null) ? Number(o.violationsMtd) || 0
+      : Number((o || {}).violations) || 0;
   };
 
   // Offenders (unique queues >= 5%) for the alert + preheader, worst-first.
@@ -465,11 +472,7 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
     + '</tr></table></td></tr>';
 
   // ---- table (worst-first sections) ----
-  // Viol is RANGE-scoped (this report never mixes in MTD, unlike the per-dept
-  // dashboard tile): the daily subscriber email shows THAT DAY's violations;
-  // the manual ranged email shows the selected range's. Label accordingly.
-  const singleDay = !!(data.meta && data.meta.from && data.meta.from === data.meta.to);
-  const violHdr = singleDay ? 'Viol (day)' : 'Viol (range)';
+  const violHdr = 'Viol (MTD)';
   let tbl = '<tr style="background:' + C.headbg + ';">'
     + '<td style="padding:9px 12px;font:600 9px ' + sans + ';letter-spacing:0.8px;text-transform:uppercase;color:#8a97a4;">Queue</td>'
     + '<td align="right" style="padding:9px 8px;font:600 9px ' + sans + ';letter-spacing:0.8px;text-transform:uppercase;color:#8a97a4;">Total</td>'
@@ -511,7 +514,7 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
       const pct = Number(q.abandonedPct) || 0;
       const t = tierOf(pct, q.violations);
       const pctStr = q.abandonedPctStr || pct.toFixed(1) + '%';
-      const viol = Number(q.violations) || 0;
+      const viol = violOf(q);
       const rowLbl = rd.sub
         ? '&#8627; <b>' + esc(rd.sub) + '</b> <span style="color:' + C.mut + ';">&middot; ' + esc(q.queue) + '</span>'
         : esc(q.queue);
@@ -524,17 +527,18 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
     });
   });
   const gTier = tierOf(gPct, gViol);
+  const gViolShow = violOf(gt);
   tbl += '<tr>'
     + '<td style="padding:9px 12px;font:bold 12px Arial,sans-serif;color:' + C.ink + ';border-top:2px solid ' + C.ink + ';">Company total</td>'
     + '<td align="right" style="padding:9px 8px;font:bold 12px ' + sans + ';color:' + C.ink + ';border-top:2px solid ' + C.ink + ';">' + esc(gTotal) + '</td>'
     + '<td style="padding:9px 8px;border-top:2px solid ' + C.ink + ';">' + barHtml({ totalCalls: gTotal, totalAnswered: gAns, abandonedPct: gPct }, (gt.abandonedPctStr || gPct.toFixed(1) + '%'), gPct >= 5 ? gTier.color : C.mut, true) + '</td>'
-    + '<td align="right" style="padding:9px 12px;font:bold 12px ' + sans + ';color:' + (gViol > 0 ? gTier.color : C.mut) + ';border-top:2px solid ' + C.ink + ';">' + esc(gViol) + '</td>'
+    + '<td align="right" style="padding:9px 12px;font:bold 12px ' + sans + ';color:' + (gViolShow > 0 ? gTier.color : C.mut) + ';border-top:2px solid ' + C.ink + ';">' + esc(gViolShow) + '</td>'
     + '</tr>';
 
   const tableBlock = depts.length
     ? ('<tr><td style="padding:18px 26px 6px;"><table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border:1px solid ' + C.line + ';border-radius:10px;border-collapse:separate;overflow:hidden;">'
       + tbl + '</table>'
-      + '<div style="font:10px ' + sans + ';color:#9aa6b2;padding:8px 2px 0;">Depts sorted worst-first &middot; bars show answered (green) vs abandoned (red) share of calls &middot; full columns (Ans/Longest/Avg) live in the dashboard &middot; Viol counts 5%-violations within this report\u2019s ' + (singleDay ? 'day' : 'range') + ' (not month-to-date).</div>'
+      + '<div style="font:10px ' + sans + ';color:#9aa6b2;padding:8px 2px 0;">Depts sorted worst-first &middot; bars show answered (green) vs abandoned (red) share of calls &middot; full columns (Ans/Longest/Avg) live in the dashboard &middot; Viol = each queue\u2019s 5%-violation days month-to-date (through this report\u2019s end date).</div>'
       + '</td></tr>')
     : '<tr><td style="padding:18px 26px 6px;font:400 14px Arial,sans-serif;color:' + C.mut + ';">No queue activity recorded for this day.</td></tr>';
 

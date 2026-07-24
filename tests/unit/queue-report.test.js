@@ -105,17 +105,17 @@ function emailFixture() {
     depts: [
       { dept: 'CSR', parent: null,
         totals: { totalCalls: 100, totalAnswered: 93, abandoned: 7, abandonedPct: 7.0,
-          abandonedPctStr: '7.00%', longestWait: '0:02:10', avgAnswer: '0:00:20', violations: 2 },
+          abandonedPctStr: '7.00%', longestWait: '0:02:10', avgAnswer: '0:00:20', violations: 2, violationsMtd: 6 },
         queues: [{ queue: 'A_Q_CSR', totalCalls: 100, totalAnswered: 93, abandoned: 7,
-          abandonedPct: 7.0, abandonedPctStr: '7.00%', violations: 2 }] },
+          abandonedPct: 7.0, abandonedPctStr: '7.00%', violations: 2, violationsMtd: 6 }] },
       { dept: 'Sales', parent: null,
         totals: { totalCalls: 40, totalAnswered: 39, abandoned: 1, abandonedPct: 2.5,
-          abandonedPctStr: '2.50%', longestWait: '0:01:00', avgAnswer: '0:00:15', violations: 0 },
+          abandonedPctStr: '2.50%', longestWait: '0:01:00', avgAnswer: '0:00:15', violations: 0, violationsMtd: 1 },
         queues: [{ queue: 'A_Q_SALES', totalCalls: 40, totalAnswered: 39, abandoned: 1,
-          abandonedPct: 2.5, abandonedPctStr: '2.50%', violations: 0 }] },
+          abandonedPct: 2.5, abandonedPctStr: '2.50%', violations: 0, violationsMtd: 1 }] },
     ],
     grandTotals: { totalCalls: 140, totalAnswered: 132, abandoned: 8, abandonedPct: 5.71,
-      abandonedPctStr: '5.71%', longestWait: '0:02:10', avgAnswer: '0:00:18', violations: 2 },
+      abandonedPctStr: '5.71%', longestWait: '0:02:10', avgAnswer: '0:00:18', violations: 2, violationsMtd: 7 },
   };
 }
 
@@ -201,8 +201,10 @@ test('R12-22: parent-grouped sections -- child nests as a sub-row, single-queue 
   assert.match(html, /120 calls &middot; <span style="font-weight:bold;color:#b23a2c;">9 abandoned \(7\.5%\)<\/span>/);
   // <5% (Sales at 2.5%): plain ink, no bold.
   assert.match(html, /40 calls &middot; <span style="color:#101418;">1 abandoned \(2\.5%\)<\/span>/);
-  // Range-accurate Viol header (this fixture carries no meta -> 'range').
-  assert.match(html, /Viol \(range\)/);
+  // R12-24: the Viol column is MONTH-TO-DATE, labeled as such, and shows the
+  // violationsMtd figure (6), not the range figure (2).
+  assert.match(html, /Viol \(MTD\)/);
+  assert.match(html, /month-to-date/);
   // Sales stays single-queue: banner-only with the queue name inline -- the
   // old duplicate row (same numbers twice) is gone.
   assert.match(html, /Sales <span[^>]*>&middot; A_Q_SALES<\/span>/);

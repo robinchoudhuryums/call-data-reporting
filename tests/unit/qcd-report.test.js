@@ -111,6 +111,30 @@ test('F-36: a double-mapped queue counts ONCE in the company grand total (per-de
   assert.equal(rep.grandTotals.violations, 2);
 });
 
+test('R12-24: violationsMtd sums month-to-date through the range end (range violations untouched)', function () {
+  // Range = Jun 10 only (1 violation that day). Earlier SAME-month rows carry
+  // 3 more violations; a PRIOR-month row carries 5 that must NOT count.
+  install(
+    rosterGrid({ Alpha: ['Anna, 201'] }),
+    [dcRow('Alpha', 'A_Q_Alpha')],
+    [
+      qcdRow('2026-05-20', 'A_Q_Alpha', 50, 40, 10, 5),   // prior month: excluded from MTD
+      qcdRow('2026-06-03', 'A_Q_Alpha', 60, 55,  5, 2),   // MTD, before the range
+      qcdRow('2026-06-05', 'A_Q_Alpha', 60, 55,  5, 1),   // MTD, before the range
+      qcdRow('2026-06-10', 'A_Q_Alpha', 80, 70, 10, 1),   // the selected day
+    ]);
+  const rep = h.call('getQcdAllDepartments', { from: '2026-06-10', to: '2026-06-10' });
+  assert.equal(rep.depts.length, 1);
+  const d = rep.depts[0];
+  assert.equal(d.totals.violations, 1, 'range violations stay the selected day');
+  assert.equal(d.totals.violationsMtd, 4, 'MTD = Jun 3 + Jun 5 + Jun 10 (2+1+1), May excluded');
+  assert.equal(d.queues[0].violationsMtd, 4);
+  assert.equal(rep.grandTotals.violations, 1);
+  assert.equal(rep.grandTotals.violationsMtd, 4);
+  // Counts/durations stay range-scoped: only Jun 10 rows.
+  assert.equal(d.totals.totalCalls, 80);
+});
+
 test('rangeOnly perf flag: queueBreakdown + totals are byte-identical to a full compute when out-of-range trend rows exist', function () {
   // The all-departments Daily Call Queue Report consumes ONLY
   // rep.queueBreakdown / rep.totals (it discards trendData / dailySeries /
