@@ -2261,6 +2261,87 @@ if (!skipCDR && obcHD) {
       notifyNeonWriteFailure('processIntegratedHistory:Inbound (' + dateObj.toDateString() + ')', inboundMsg);
     } catch (notifyErr) { /* best-effort */ }
   }
+
+  // Outbound-call capture (Option B: the per-call outbound twin feeding the
+  // Caller Lookup communication history -- outboundCalls.js). Same
+  // best-effort isolation, L2 authoritative per-date replace, and P-1
+  // expected-date guard as the inbound block above; reuses the SAME Raw Data
+  // display rows when the inbound block already read them (var hoisting makes
+  // inboundLegs function-scoped; it's undefined if that read threw).
+  // outbound_calls has NO sheet primary, so failures log a
+  // `processIntegratedHistory:Outbound` Pipeline Health row + email (the F9
+  // rationale).
+  var outboundStart = Date.now();
+  try {
+    var outboundLegs = (typeof inboundLegs !== 'undefined' && inboundLegs) ? inboundLegs : null;
+    if (!outboundLegs && rawDataSheet && rawDataSheet.getLastRow() > 1) {
+      outboundLegs = rawDataSheet.getDataRange().getDisplayValues();
+      outboundLegs.shift();
+    }
+    if (outboundLegs && outboundLegs.length) {
+      var outboundExpectedIso = dateObj.getFullYear() + '-'
+        + ('0' + (dateObj.getMonth() + 1)).slice(-2) + '-'
+        + ('0' + dateObj.getDate()).slice(-2);
+      var outboundRes = writeOutboundCallsToNeon(outboundLegs,
+        { authoritative: true, expectedDateIso: outboundExpectedIso });
+      console.log('processIntegratedHistory: outbound_calls -> ' + JSON.stringify(outboundRes));
+      if (outboundRes && outboundRes.error) {
+        setNeonStatus_('error');
+        try {
+          logPipelineHealthWithFallback_(targetSS, {
+            step: 'processIntegratedHistory:Outbound',
+            status: 'failure',
+            rows: null,
+            durationMs: Date.now() - outboundStart,
+            notes: dateObj.toDateString() + ' | writer reported error (see cdr-import execution log)',
+          });
+        } catch (logErr) { /* best-effort */ }
+        try {
+          notifyNeonWriteFailure('processIntegratedHistory:Outbound (' + dateObj.toDateString() + ')',
+            'writeOutboundCallsToNeon reported an error; outbound_calls was NOT refreshed for this date. '
+            + 'See the cdr-import execution log for the underlying exception. '
+            + 'Re-import the date (or run backfillOutboundCalls) once fixed.');
+        } catch (notifyErr) { /* best-effort */ }
+      } else if (outboundRes && outboundRes.skipped && !outboundRes.inserted) {
+        setNeonStatus_('unreachable');
+        try {
+          logPipelineHealthWithFallback_(targetSS, {
+            step: 'processIntegratedHistory:Outbound',
+            status: 'failure',
+            rows: null,
+            durationMs: Date.now() - outboundStart,
+            notes: dateObj.toDateString() + ' | Neon unreachable (' + outboundRes.skipped + ' records skipped)',
+          });
+        } catch (logErr) { /* best-effort */ }
+      } else if (outboundRes && outboundRes.inserted) {
+        try {
+          logPipelineHealthWithFallback_(targetSS, {
+            step: 'processIntegratedHistory:Outbound',
+            status: 'success',
+            rows: outboundRes.inserted,
+            durationMs: Date.now() - outboundStart,
+            notes: dateObj.toDateString(),
+          });
+        } catch (logErr) { /* best-effort */ }
+      }
+    }
+  } catch (outboundErr) {
+    var outboundMsg = (outboundErr && outboundErr.message) ? outboundErr.message : String(outboundErr);
+    console.log('processIntegratedHistory: outbound_calls capture failed (best-effort): ' + outboundMsg);
+    setNeonStatus_('error');
+    try {
+      logPipelineHealthWithFallback_(targetSS, {
+        step: 'processIntegratedHistory:Outbound',
+        status: 'failure',
+        rows: null,
+        durationMs: Date.now() - outboundStart,
+        notes: dateObj.toDateString() + ' | ' + outboundMsg,
+      });
+    } catch (logErr) { /* best-effort */ }
+    try {
+      notifyNeonWriteFailure('processIntegratedHistory:Outbound (' + dateObj.toDateString() + ')', outboundMsg);
+    } catch (notifyErr) { /* best-effort */ }
+  }
   }
 
   // Deferred mode: enqueue this date for the off-path runNeonMirror_ trigger

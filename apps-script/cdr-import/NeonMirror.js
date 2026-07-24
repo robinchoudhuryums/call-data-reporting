@@ -237,6 +237,7 @@ function neonMirrorDate_(ss, iso) {
   step('QCD', function () { return mirrorQcdForDate_(ss, iso); });
   step('DQE', function () { return mirrorDqeForDate_(ss, iso); });
   step('Inbound', function () { return mirrorInboundForDate_(iso); });
+  step('Outbound', function () { return mirrorOutboundForDate_(iso); });
 
   return allOk;
 }
@@ -528,6 +529,27 @@ function mirrorInboundForDate_(iso) {
     // logs a real failure and keeps the date queued (mirrors how the CDR/QCD/
     // DQE writers surface a non-skip error).
     throw new Error('inbound mirror failed for ' + iso + ' (' + res.failures + ' write failure(s))');
+  }
+  return { rows: (res && res.inserted) || 0 };
+}
+
+/**
+ * Outbound mirror for one date (Option B twin of mirrorInboundForDate_).
+ * Same contract: honor unreachable (date stays queued), throw LOUDLY when
+ * the Call_Legs_<iso> sheet was pruned before the date drained
+ * (outbound_calls has no sheet primary -- the IMP-11 rule) or on a hard
+ * write failure.
+ */
+function mirrorOutboundForDate_(iso) {
+  var res = backfillOutboundCalls(iso, iso, true);
+  if (res && res.unreachable) return { unreachable: true, rows: 0 };
+  if (res && res.sheetsFound === 0) {
+    throw new Error('Call_Legs_' + iso + ' no longer exists (pruned ~14d retention) -- '
+      + 'outbound_calls rows for this date cannot be re-derived and are lost. '
+      + 'Acknowledge via the gave-up email; do not re-enqueue unless the sheet is restored.');
+  }
+  if (res && res.failures) {
+    throw new Error('outbound mirror failed for ' + iso + ' (' + res.failures + ' write failure(s))');
   }
   return { rows: (res && res.inserted) || 0 };
 }

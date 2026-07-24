@@ -119,3 +119,92 @@ test('caller lookup: 10-digit entry also tries the +1-prefixed form', function (
   assert.equal(c11.length, 1);
   assert.equal(c11[0], '+12145550123');
 });
+
+// ---- Option B: outbound + day-level history sections -------------------------
+
+test('caller lookup: outbound row shaping (journey parse, connected/talk/ring)', function () {
+  const shaped = dash.call('callerLookupShapeOutbound_', {
+    call_date: '2026-07-22', call_start: '09:00:00', call_id: '900001',
+    agent_name: 'Maria G', agent_ext: '214', department: 'CSR',
+    connected: true, talk_seconds: 192, ring_seconds: 12, attempts: 1,
+    journey: JSON.stringify([{ t: '09:00:00', name: '(external number)', kind: 'answer', talk: 192 }]),
+  });
+  assert.equal(shaped.callDate, '2026-07-22');
+  assert.equal(shaped.agentName, 'Maria G');
+  assert.equal(shaped.department, 'CSR');
+  assert.equal(shaped.connected, true);
+  assert.equal(shaped.talkSeconds, 192);
+  assert.equal(shaped.ringSeconds, 12);
+  assert.ok(Array.isArray(shaped.journey) && shaped.journey.length === 1);
+
+  const noAnswer = dash.call('callerLookupShapeOutbound_', {
+    call_date: '2026-07-22', call_id: '900002', connected: false, ring_seconds: 35,
+  });
+  assert.equal(noAnswer.connected, false);
+  assert.equal(noAnswer.talkSeconds, 0);
+  assert.equal(noAnswer.ringSeconds, 35);
+  assert.equal(noAnswer.journey, null);
+});
+
+test('caller lookup: history folding — one entry per (date, agent); total is a superset, never summed', function () {
+  const folded = dash.call('callerLookupShapeHistory_', [
+    { call_date: '2026-07-03', department: 'CSR', agent_name: 'Maria G',
+      list_type: 'ob_ext_list_total', duration_sec: 240, occurrences: 2 },
+    { call_date: '2026-07-03', department: 'CSR', agent_name: 'Maria G',
+      list_type: 'ob_ext_list_answered', duration_sec: 240, occurrences: 1 },
+    { call_date: '2026-07-03', department: 'CSR', agent_name: 'Maria G',
+      list_type: 'ob_ext_list_missed', duration_sec: 0, occurrences: 1 },
+    { call_date: '2026-07-05', department: 'Sales', agent_name: 'Bob R',
+      list_type: 'ob_ext_list_total', duration_sec: 60, occurrences: 1 },
+  ]);
+  assert.equal(folded.length, 2);
+  const maria = folded[0];
+  assert.equal(maria.callDate, '2026-07-03');
+  assert.equal(maria.dialed, 2);          // from the TOTAL list only
+  assert.equal(maria.answered, 1);
+  assert.equal(maria.missed, 1);
+  assert.equal(maria.talkSeconds, 240);   // from the ANSWERED list's duration
+  assert.equal(folded[1].agentName, 'Bob R');
+  assert.equal(folded[1].dialed, 1);
+});
+
+test('caller lookup: a failing outbound/history query degrades that section only (inbound intact)', function () {
+  installAdmin();
+  dash.state.props.HMAC_SECRET = 's';
+  // Fake conn: the inbound query succeeds with one call; the outbound +
+  // history queries throw (e.g. outbound_calls not created yet -- dashboard
+  // deployed ahead of cdr-import).
+  dash.ctx.getDashboardNeonConn_ = function () {
+    return {
+      prepareStatement: function (sql) {
+        if (/outbound_calls|call_history_phones/.test(sql)) {
+          throw new Error('relation "outbound_calls" does not exist');
+        }
+        return {
+          setString: function () {},
+          executeQuery: function () {
+            let used = false;
+            return {
+              next: function () { if (used) return false; used = true; return true; },
+              getString: function () {
+                return JSON.stringify([{ call_date: '2026-06-04', call_id: '1', disposition: 'answered' }]);
+              },
+              close: function () {},
+            };
+          },
+          close: function () {},
+        };
+      },
+      close: function () {},
+    };
+  };
+  const out = dash.call('getCallerLookup',
+    { phone: '(214) 555-0123', from: '2026-06-01', to: '2026-06-05' });
+  assert.equal(out.meta.available, true);
+  assert.equal(out.calls.length, 1, 'inbound results survive');
+  assert.equal(out.meta.outboundAvailable, false);
+  assert.equal(out.meta.historyAvailable, false);
+  assert.equal(out.outboundCalls.length, 0);
+  assert.equal(out.outboundHistory.length, 0);
+  delete dash.ctx.getDashboardNeonConn_;
+});

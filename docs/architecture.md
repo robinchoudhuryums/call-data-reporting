@@ -77,7 +77,7 @@ External CDR system (telephony provider)
 
 | Layer | Apps Script project | Files (representative) | This repo path |
 |---|---|---|---|
-| CSV ingest | CDR Import | `autoImport.js`, `importBulkCSVsFromDrive.js` (pending Drive auth), `AbandonedFilter.js`, `CDR Tools.js`, `DeleteOldSheets.js`, `neonWrite.js`, `inboundCalls.js` (per-call inbound capture -> Neon `inbound_calls` + `backfillInboundCalls`), `appsscript.json` | `apps-script/cdr-import/` |
+| CSV ingest | CDR Import | `autoImport.js`, `importBulkCSVsFromDrive.js` (pending Drive auth), `AbandonedFilter.js`, `CDR Tools.js`, `DeleteOldSheets.js`, `neonWrite.js`, `inboundCalls.js` (per-call inbound capture -> Neon `inbound_calls` + `backfillInboundCalls`), `outboundCalls.js` (per-call outbound capture -> Neon `outbound_calls` + `backfillOutboundCalls`, Option B), `appsscript.json` | `apps-script/cdr-import/` |
 | Per-agent aggregation + downstream tooling | CDR Report | `buildDQEHistoricalData.js`, `DQEdrilldown.js`, `DQEDrilldownSidebar.html`, `dashboardCDR.js`, `dataFilters.js` (extraction sidebar), `dbHistorical.js`, `dbReporting.js`, `emailDailyReport.js`, `neonWrite.js`, `neonbackfill.js`, `inboundCallsExport.js` (Neon `inbound_calls` -> "Inbound Calls" fallback tab), `insuranceNumbers.js` (insurer-number hashing -> Neon `insurance_numbers`), `CDR Tools menu.js`, `appsscript.json` | `apps-script/cdr-report/` |
 | Manager dashboard | Department Dashboard (standalone) | `Code.gs`, `Auth.gs`, `Data.gs`, `Config.gs`, `Setup.gs`, `Util.gs`, `Diagnostics.gs`, `MissedCallsReport.gs`, `IndividualReport.gs`, `InsightsReport.gs`, `InboundReport.gs`, `DirectCallReport.gs`, `CallerLookup.gs`, `CompanyOverview.gs`, `QCDReport.gs`, `Alerts.gs`, `Digest.gs`, `OrphanFix.gs`, `DeptConfig.gs`, `Escalations.gs`, `NeonRead.gs`, `NeonKeepWarm.gs`, `CacheWarm.gs`, `IngestWatchdog.gs`, `PipelineWatch.gs`, `NeonBackup.gs`, `NeonCoverage.gs`, `SystemHealth.gs`, `SmokeCheck.gs`, `QueueReportEmail.gs`, `dashboard.html`, `styles.html`, `script.html`, `access_denied.html`, `appsscript.json` | `apps-script/department-dashboard/` |
 | Postgres mirror | shared lib used by both CDR Import and CDR Report | `neonWrite.js` (duplicated across both projects, currently identical) | see [known-issues.md](known-issues.md) |
@@ -253,7 +253,7 @@ canonical and reflects current code.
 | Insights Report (period comparison: team rollup + per-agent cards) | `InsightsReport.gs` | `getInsightsReportInit`, `getInsightsReport`, `sendInsightsReportEmail` | `insights:v19:` | no (per-dept gate like IR/PR/CR) |
 | Inbound Report (per-call inbound view from Neon `inbound_calls`) | `InboundReport.gs` | `getInboundReport`, `getInboundInsurerDaily`, `getInboundHeatmap` (weekday×hour abandon heatmap), `getCallJourney` (per-call path drill; manager fallback entitlement-gated via the dept's own Missed report, F-4) | `inbound:v5:`, `inboundHeatmap:v1:` | TEMPORARILY admin-only while vetted (per-dept manager path kept intact); `getCallJourney` is manager-reachable for own dept |
 | Direct Call Report (per-agent direct-extension metrics from Neon `direct_call_history`) | `DirectCallReport.gs` | `getDirectCallReport` | `directCall:v2:` | TEMPORARILY admin-only while the busy carve-out is vetted (per-dept manager path kept intact) |
-| Caller Lookup (per-caller timeline from Neon `inbound_calls`) | `CallerLookup.gs` | `getCallerLookup` | (intentionally uncached) | yes |
+| Caller Lookup (per-number communication history: inbound per-call from `inbound_calls`, outbound per-call from `outbound_calls`, day-level outbound history from `call_history_phones` -- all the same hash space) | `CallerLookup.gs` | `getCallerLookup` | (intentionally uncached) | yes |
 | Escalations worklist (Neon `escalations` + `escalation_activity`) | `Escalations.gs` | `getEscalationsInit`, `getEscalations`, `getEscalationActivity` (read), `createEscalation`, `updateEscalation` (admin write), `resolveEscalation`, `updateEscalationComment`, `reopenEscalation` (per-dept write, INV-55) | (no cache) | no (per-dept; create/edit admin-only) |
 | Low Answer Rate Alerts | `Alerts.gs` | `getAlertsInit`, `previewAlerts`, `sendAlerts`, `installAlertTrigger`, `uninstallAlertTrigger` (+ `runDailyAlerts_` time trigger) | (no cache) | yes |
 | Manager Digest engine | `Digest.gs` | `getDigestsInit`, `sendPreviewDigest`, `installDigestTriggers`, `uninstallDigestTriggers` (+ `runDailyDigests_`, `runWeeklyDigests_` time triggers) | (no cache) | yes |
@@ -313,6 +313,24 @@ Neon Postgres is the long-term archive and the future query backend.
   `cdr-report/inboundCallsExport.js::exportInboundCalls` mirrors
   `inbound_calls` into the "Inbound Calls" tab as a durable,
   pivot-friendly fallback copy (refresh-in-window semantics).
+- **Per-call outbound capture** (`cdr-import/outboundCalls.js`, Option
+  B — the outbound twin): right after the inbound block,
+  `processIntegratedHistory` builds one record per distinct OUTBOUND
+  external call (a leg group with NO Incoming leg + at least one
+  Outgoing leg to an external number — the no-Incoming gate keeps an
+  answered inbound call's agent 'Outgoing' talk leg out) and upserts to
+  Neon's `outbound_calls` (PK `(call_date, call_id)`, authoritative
+  per-date replace + the P-1 expected-date guard; the writer
+  auto-creates the table + `idx_outbound_calls_callee_hash`). Captures
+  the hashed callee (`callee_hash`, the same HMAC space as
+  `inbound_calls.caller_hash` / `call_history_phones`), the dialing
+  agent, connected/talk/ring/attempts, raw-PST `call_start`, and the
+  PHI-masked journey. NO sheet primary — failures surface as
+  `processIntegratedHistory:Outbound` Pipeline Health rows + email;
+  deferred mode drains it as `neonMirror:Outbound`. History: editor-run
+  `backfillOutboundCalls` (surviving `Call_Legs_*` sheets only). Sole
+  consumer: the Caller Lookup communication history, which also reads
+  `call_history_phones` day-level aggregates for pre-capture dates.
 - **Insurer labeling** (`cdr-report/insuranceNumbers.js`): the
   insurance block in `DO NOT EDIT!` (cols X–AG: header = insurer name,
   rows = that insurer's published numbers) is hashed with the same
