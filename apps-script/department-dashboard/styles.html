@@ -935,6 +935,17 @@
      (title + toolbar + period presets -- the My Department pattern). The
      period bar sits as a full-width third row inside the flex header. */
   #insights-page #insights-results > .ir-results-header { flex-wrap: wrap; }
+  /* R12-10 (I-1): on the Insights page the -8px bleed margins pushed the
+     strip 4px past the viewport (a permanent horizontal wiggle --
+     #insights-page sits OUTSIDE .container, whose padding absorbed the
+     bleed on the dept page). Paint the bleed with spread shadows instead:
+     zero layout impact, same edge coverage. */
+  #insights-page #insights-results > .ir-results-header {
+    margin-left: 0; margin-right: 0;
+    padding-left: 0; padding-right: 0;
+    box-shadow: -8px 0 0 var(--paper), 8px 0 0 var(--paper),
+                0 8px 10px -10px rgba(0, 0, 0, 0.25);
+  }
   #insights-page #insights-results > .ir-results-header .ins-period-bar {
     flex: 1 1 100%; margin: 6px 0 0;
   }
@@ -2668,6 +2679,15 @@
     justify-content: flex-end;
     margin-bottom: 10px;
   }
+  /* R12-12 (I-3): on phones the toolbar (sort + Cards/Chart + basis segments)
+     clipped past the viewport with no visible scroll affordance -- wrap it. */
+  @media (max-width: 700px) {
+    .ir-cards-toolbar {
+      flex-wrap: wrap;
+      justify-content: flex-start;
+      row-gap: 8px;
+    }
+  }
   .ir-sort-control {
     display: inline-flex;
     align-items: center;
@@ -3603,6 +3623,14 @@
     align-items: center;
     justify-content: space-between;
     gap: 12px;
+    flex-wrap: wrap;
+  }
+  /* R12-13 (I-4): the metric dropdown lives in this control cluster now
+     (beside Monthly/Daily + Line/Calendar), so it lays out as one row. */
+  .ins-trend-headctl {
+    display: flex;
+    align-items: center;
+    gap: 10px;
     flex-wrap: wrap;
   }
 

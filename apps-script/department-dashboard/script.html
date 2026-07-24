@@ -12467,6 +12467,19 @@
     // insSyncAbPanel_ reflects state back onto it after each render.
     const abPanel = $('ins-ab-panel');
     if (abPanel) {
+      // R12-11 (I-2): the fixed card sits over real chart/calendar data when
+      // expanded, so it starts COLLAPSED unless the admin last left it open;
+      // the choice persists (localStorage).
+      const AB_OPEN_KEY = 'cdr.ins.abpanel';
+      const abCol = $('ins-ab-collapse');
+      (function () {
+        let open = false;
+        try { open = localStorage.getItem(AB_OPEN_KEY) === 'open'; } catch (e) {}
+        if (!open) {
+          abPanel.classList.add('ins-ab-collapsed');
+          if (abCol) abCol.innerHTML = '+';
+        }
+      })();
       const abForward = function (realId, attr, val) {
         const real = $(realId);
         if (!real) return;
@@ -12478,6 +12491,7 @@
         if (col) {
           const on = abPanel.classList.toggle('ins-ab-collapsed');
           col.innerHTML = on ? '+' : '&#8211;';
+          try { localStorage.setItem(AB_OPEN_KEY, on ? 'collapsed' : 'open'); } catch (e2) {}
           return;
         }
         const vb = e.target.closest('[data-ab-view]');

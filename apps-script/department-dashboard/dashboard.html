@@ -1569,6 +1569,27 @@
           <div class="ins-trend-headrow">
             <div class="ir-chart-header" id="ins-trend-header">12-month team trend</div>
             <div class="ins-trend-headctl">
+              <!-- R11-C3 consolidation: ONE metric dropdown (queue metrics ride
+                   the same list; Avg talk time is admin-only -- the option is
+                   REMOVED for non-admins at init). R12-13: it lives IN the
+                   toolbar row beside Monthly/Daily + Line/Calendar now (it
+                   previously rendered as a detached centered row over the
+                   chart). The calendar's cells follow this same metric. -->
+              <div class="ins-trend-metric-row" id="ins-trend-metric-row">
+                <label class="ir-sort-control">
+                  <span class="ir-sort-label">Metric:</span>
+                  <select id="ins-trend-metric">
+                    <option value="answered">Answered</option>
+                    <option value="pct">% Answered</option>
+                    <option value="missed">Missed</option>
+                    <option value="volume">Call volume (rung)</option>
+                    <option value="att" data-admin-metric="1">Avg talk time</option>
+                    <option value="queues:abandonedPct">Queue: Abandoned %</option>
+                    <option value="queues:totalCalls">Queue: Total calls</option>
+                    <option value="queues:violations">Queue: Violations</option>
+                  </select>
+                </label>
+              </div>
               <div class="segmented" id="ins-trend-view-toggle" role="radiogroup" aria-label="Trend chart view" style="display:none;">
                 <button type="button" class="seg-btn active" data-view="monthly" role="radio" aria-checked="true">Monthly</button>
                 <button type="button" class="seg-btn" data-view="daily" role="radio" aria-checked="false">Daily</button>
@@ -1590,28 +1611,6 @@
               </div>
               <button type="button" class="chart-help-btn" data-charthelp="insTrend" aria-label="Chart tips" title="Chart tips">?</button>
             </div>
-          </div>
-          <!-- R11-C3 (owner-approved consolidation): the metric sub-tabs, the
-               per-queue metric select, and the calendar's own cell-metric
-               segment collapsed into ONE metric dropdown. Queue metrics ride
-               the same list as "Queue: …" entries; Avg talk time stays the
-               admin-only lens (the option is REMOVED for non-admins at init
-               -- <option> can't use the data-admin-only reveal). The
-               calendar's cells follow this same metric. -->
-          <div class="pr-trend-subtabs ins-trend-metric-row" id="ins-trend-metric-row">
-            <label class="ir-sort-control">
-              <span class="ir-sort-label">Metric:</span>
-              <select id="ins-trend-metric">
-                <option value="answered">Answered</option>
-                <option value="pct">% Answered</option>
-                <option value="missed">Missed</option>
-                <option value="volume">Call volume (rung)</option>
-                <option value="att" data-admin-metric="1">Avg talk time</option>
-                <option value="queues:abandonedPct">Queue: Abandoned %</option>
-                <option value="queues:totalCalls">Queue: Total calls</option>
-                <option value="queues:violations">Queue: Violations</option>
-              </select>
-            </label>
           </div>
           <div class="ir-chart-canvas-wrap" id="ins-trend-canvas-wrap"><canvas id="ins-trend-chart"></canvas></div>
           <!-- Phase 2 #10: the calendar day-grid renderer (CSS grid, no
