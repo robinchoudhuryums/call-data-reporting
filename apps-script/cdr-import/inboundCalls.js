@@ -1036,11 +1036,19 @@ function previewInternalTransferPaths(dateIso) {
  * HOW the call reached the abandoning agent (every leg that rang that ext,
  * nearest-in-time first: who was on the other end, whether that leg's call was
  * a captured inbound, and the disposition/talk/timing) and attempts a bounded
- * 1-HOP trace -- if a single upstream agent uniquely answered a captured
- * inbound overlapping the abandon, it reports the full reconstructable path.
- * The tally at the end says how many chained cases a unique 1-hop trace would
- * surface, so a follow-up capture change can be judged against the same
- * 0-ambiguity bar as the base build. Writes nothing; safe to delete.
+ * trace: 1-HOP (a single upstream agent who rang X uniquely answered a
+ * captured inbound overlapping the abandon), then 2-HOP (when X was reached
+ * via a QUEUE ring inside an INTERNAL source group, that queue leg is
+ * intra-group routing -- the entrant is the group's own originating ext, so
+ * the same overlap check runs on the source group's originators; learned from
+ * the first pasted-log review). A chain that stays internal at EVERY hop with
+ * no concurrent captured inbound anywhere is classified INTERNAL-ORIGIN: no
+ * external caller exists on it, so there is no caller journey to enrich and
+ * the base build leaving it alone is correct (corroborated when the source
+ * call continued well past the abandon -- it was not holding a departing
+ * caller). The tally says how many chained cases each unique trace depth
+ * would surface, so a follow-up capture change can be judged against the
+ * same 0-ambiguity bar as the base build. Writes nothing; safe to delete.
  *
  * PHI: external caller numbers/names are NEVER printed -- only internal
  * extensions, queue tokens, and timings. CDR Import editor:
@@ -1112,7 +1120,7 @@ function previewInternalTransferChains(dateIso) {
     if (a.captured && a.answered && a.talk > 0 && a.calleeExt) extAnsweredCaptured[a.calleeExt] = true;
   });
 
-  var nCase = 0, nOneHop = 0, nViaQueue = 0, nNoSource = 0;
+  var nCase = 0, nOneHop = 0, nTwoHop = 0, nInternalOrigin = 0, nViaQueue = 0, nNoSource = 0;
   Object.keys(groups).forEach(function (root) {
     if (captured[root]) return;
     var g = groups[root];
@@ -1148,16 +1156,52 @@ function previewInternalTransferChains(dateIso) {
     //     who rang X also answer a captured inbound overlapping the abandon?
     var upstreamAgents = {};
     delivered.forEach(function (a) { if (a.caller.kind === 'ext' && a.caller.ext) upstreamAgents[a.caller.ext] = true; });
-    var hopRoots = {};
-    Object.keys(upstreamAgents).forEach(function (Y) {
+    var overlapRootsFor = function (Y) {
+      var hr = {};
       allLegs.forEach(function (a) {
         if (a.captured && a.answered && a.talk > 0 && a.calleeExt === Y
             && !isNaN(a.connMs) && !isNaN(a.stopMs) && T >= a.connMs - 5000 && T <= a.stopMs + 5000) {
-          hopRoots[a.root] = Y;
+          hr[a.root] = Y;
         }
       });
+      return hr;
+    };
+    var hopRoots = {};
+    Object.keys(upstreamAgents).forEach(function (Y) {
+      var hr = overlapRootsFor(Y);
+      Object.keys(hr).forEach(function (r) { hopRoots[r] = hr[r]; });
+    });
+    // Hop 2 (from the first pasted-log review): when X was reached via a QUEUE
+    // ring INSIDE an internal source group, that queue leg is intra-group
+    // routing -- the entrant is the group's own originating ext (visible in the
+    // same group), not an unknown queue membership. So the SAME captured-
+    // overlap check runs on each internal source group's originators too.
+    var hop2Agents = {};
+    delivered.forEach(function (a) {
+      if (a.captured) return;
+      (groups[a.root] || []).forEach(function (l) {
+        var ci = callerInfo(l[IC_COL.CALLER]);
+        if (ci.kind === 'ext' && ci.ext && ci.ext !== X) hop2Agents[ci.ext] = true;
+      });
+    });
+    var hop2Roots = {};
+    Object.keys(hop2Agents).forEach(function (Y) {
+      var hr = overlapRootsFor(Y);
+      Object.keys(hr).forEach(function (r) { hop2Roots[r] = hr[r]; });
+    });
+    // Corroboration: an internal source call that kept going well PAST the
+    // abandon was not holding a caller who left at the abandon -- the strongest
+    // internal-origin tell.
+    var continuedSec = null;
+    delivered.forEach(function (a) {
+      if (a.captured || isNaN(a.connMs) || isNaN(a.stopMs)) return;
+      if (a.connMs <= T && a.stopMs >= T) {
+        var c = Math.round((a.stopMs - T) / 1000);
+        if (continuedSec == null || c > continuedSec) continuedSec = c;
+      }
     });
     var roots = Object.keys(hopRoots);
+    var roots2 = Object.keys(hop2Roots);
     if (roots.length === 1) {
       nOneHop++;
       Logger.log('   => 1-HOP RESOLVABLE (unique): captured inbound ' + roots[0]
@@ -1165,6 +1209,23 @@ function previewInternalTransferChains(dateIso) {
         + ' -> ' + queue + ' (ABANDONED).');
     } else if (roots.length > 1) {
       Logger.log('   => 1-hop AMBIGUOUS: ' + roots.length + ' upstream captured inbounds -- would not auto-resolve.');
+    } else if (roots2.length === 1) {
+      nTwoHop++;
+      Logger.log('   => 2-HOP RESOLVABLE (unique): captured inbound ' + roots2[0]
+        + ' answered by ext ' + hop2Roots[roots2[0]] + ' -> (internal group / queue ring) -> ext ' + X
+        + ' -> ' + queue + ' (ABANDONED).');
+    } else if (roots2.length > 1) {
+      Logger.log('   => 2-hop AMBIGUOUS: ' + roots2.length + ' upstream captured inbounds via the source group\'s originators -- would not auto-resolve.');
+    } else if (delivered.length && delivered.every(function (a) { return !a.captured || !(a.connMs <= T && a.stopMs >= T); })
+               && Object.keys(hop2Agents).length) {
+      nInternalOrigin++;
+      Logger.log('   => INTERNAL-ORIGIN: the upstream chain is internal at every hop (originator ext '
+        + Object.keys(hop2Agents).join(', ') + ') with no concurrent captured inbound anywhere -- '
+        + 'no external caller exists on this chain, so there is NO caller journey to enrich; the base build '
+        + 'leaving it alone is CORRECT.'
+        + (continuedSec != null && continuedSec > 60
+            ? (' Corroboration: the source call continued ' + continuedSec + 's PAST the abandon -- it was not holding a departing caller.')
+            : ''));
     } else if (delivered.some(function (a) { return a.caller.kind === 'queue'; })) {
       nViaQueue++;
       Logger.log('   => reached ext ' + X + ' via a QUEUE ring (not an agent transfer) -- upstream is whoever entered that queue; needs queue-membership tracing, not a 1-hop agent trace.');
@@ -1176,7 +1237,9 @@ function previewInternalTransferChains(dateIso) {
   });
 
   Logger.log('previewInternalTransferChains(' + iso + '): ' + nCase + ' chained/uncaptured case(s) -- '
-    + nOneHop + ' resolvable via a UNIQUE 1-hop agent trace, ' + nViaQueue + ' reached via a queue ring, '
+    + nOneHop + ' resolvable via a UNIQUE 1-hop agent trace, ' + nTwoHop + ' via a unique 2-hop trace, '
+    + nInternalOrigin + ' INTERNAL-ORIGIN (no external caller; nothing to enrich), '
+    + nViaQueue + ' reached via a queue ring, '
     + nNoSource + ' with no source leg in the sheet.');
   Logger.log('  (Paste this whole log back: the "<- rung by" lines show the real link structure so the '
     + 'accurate join for these can be designed against the same 0-ambiguity bar.)');
