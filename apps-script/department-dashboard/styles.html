@@ -6391,6 +6391,8 @@
   .dts-track-fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: var(--r-pill);
     background: var(--good); }
   .dts-track-fill.is-under { background: var(--warn); }
+  /* left is set inline from answerTarget_('global') (admin-tunable); 92% here
+     is only the no-inline fallback. */
   .dts-track-tick { position: absolute; top: -2px; bottom: -2px; width: 2px; left: 92%;
     background: var(--ink); opacity: 0.55; }
   @media (max-width: 720px) { .dept-team-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

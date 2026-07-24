@@ -382,3 +382,33 @@ const UI_FLAG_SURFACES = Object.freeze({
   'ins-queue-health':    'Insights — Queue health section',
   'report-headlines':    'Reports — answer-first summary banners (On track / Watch)',
 });
+
+/**
+ * Answer-rate standards (admin-tunable DISPLAY thresholds).
+ *
+ * The company answer-% target drives the display/tone layer only --
+ * benchmark tints (benchValueCls_), the "On track / Watch" headline tones,
+ * the Overview chart baseline, the Insights calendar coloring, the Direct /
+ * Inbound tone rails, and the digest verdict pill. Admin-tunable WITHOUT a
+ * redeploy via the `ANSWER_TARGETS` Script Property (edited from the Alerts
+ * modal's "Answer-rate standards" section), parsed as tolerant `key=value`
+ * pairs (the DIAL_IN_LABELS grammar): `global=92, direct=80`. Each surface
+ * falls back to `global`; `global` falls back to the seed default below.
+ *
+ * CURATED registry (the UI_FLAG_SURFACES discipline): unknown keys are
+ * silently dropped. `direct` / `inbound` exist because those reports'
+ * answer rates are DIFFERENT POPULATIONS (direct-extension calls with the
+ * busy carve-out; share-of-inbound-calls) than the queue-call rate the
+ * 92% standard was set for.
+ *
+ * Deliberately NOT covered: the 5% abandon threshold (baked into the QCD
+ * Violations history written at import time, INV-50 -- making it tunable
+ * would desync tints from recorded violation counts) and the per-dept
+ * ALERT thresholds (Alert Config rows, INV-34 -- already admin-editable).
+ */
+const ANSWER_TARGET_DEFAULT = 92;
+const ANSWER_TARGET_SURFACES = Object.freeze({
+  global:  'All answer-% surfaces (tints, headlines, chart baseline, digest verdict)',
+  direct:  'Direct Call report — direct-extension answer rate (busy-excluded)',
+  inbound: 'Inbound report — share of inbound calls answered',
+});

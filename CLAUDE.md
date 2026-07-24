@@ -91,7 +91,8 @@ bash scripts/check-duplicated-files.sh
 # outbound capture: builder gates + writer authoritative/P-1/hash
 # pins), sheet-repairs-merge, dept-config-neon
 # / config-neon-c3, escalations-hardening, caller-lookup,
-# access-control-editor, neon-coverage (the R7 sheet-vs-Neon
+# answer-targets (the R12-25 tunable display-standards parser + save
+# canonicalizer), access-control-editor, neon-coverage (the R7 sheet-vs-Neon
 # reconciliation's pure pieces), cache-version-sync (doc↔code cache-pin
 # drift).
 # See tests/README.md for design + how to add tests. The neonWrite JDBC
@@ -1154,8 +1155,10 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   the admin-global equivalent.** The headline is
   a STATUS-TONED banner (redesign): a composer may return
   `{sentences, tone}` instead of a bare array, where `tone` comes from
-  `headlineTone_` using ONLY the 92%/5% company standards (answer >=92%
-  -> green "On track"; answer <92% OR abandon >=5% -> orange "Watch");
+  `headlineTone_` using ONLY the two company standards -- the ANSWER TARGET
+  (seed 92%, admin-tunable via ANSWER_TARGETS, Op State #37) and the fixed
+  5% abandon threshold (answer >= target -> green "On track"; answer <
+  target OR abandon >=5% -> orange "Watch");
   absent metric / bare-array return -> neutral "At a glance". Wired for
   Insights (team answer rate) + Inbound (abandon/answer);
   Missed + comparison-mode stay neutral. **EXCEPTION (IR1): the Individual
@@ -1205,9 +1208,16 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `METRIC_GLOSSARY_RICH_` if it's a standards metric), NOT as inline
   `title=` in render code (the applier never clobbers an existing title,
   so per-callsite titles would shadow the dict). (4)
-  **Benchmark tints** -- `benchValueCls_(label, formatted, symmetric)`
-  applies the ONLY two company-wide standards (92% answer-rate target ->
-  `.bm-target` sage; 5% abandon threshold -> `.bm-over` warn) to KPI tile
+  **Benchmark tints** -- `benchValueCls_(label, formatted, symmetric,
+  surface?)` applies the ONLY two company-wide standards: the answer-rate
+  TARGET (-> `.bm-target` sage; seed 92%, ADMIN-TUNABLE via the
+  `ANSWER_TARGETS` Script Property -- Alerts modal "Answer-rate
+  standards", Op State #37 -- with per-surface overrides `direct` /
+  `inbound` for the two reports whose answer rates are different call
+  populations; read through `answerTarget_(surface)` client-side /
+  `getAnswerTargets_()` server-side, NEVER a literal 92) and the FIXED
+  5% abandon threshold (-> `.bm-over` warn; baked into the QCD
+  Violations history written at import, INV-50 -- never tunable) on KPI tile
   values (IR/Insights/Inbound) + inbound abandon-% cells. Default
   is BINARY (highlight only the notable direction -- tables, IR tiles).
   The `symmetric` flag (passed `true` by the ds-kpi tiles -- `dsKpiTile_`,
@@ -3145,6 +3155,24 @@ items for anything it flags or doesn't cover.)
     assigned subset; see the "Role model" gotcha. If a manager who should
     see several depts sees only one, check for a stale 60s auth cache or
     that all their rows share the exact same email.
+37. `ANSWER_TARGETS` Script Property (dashboard; optional, R12-25) -- the
+    admin-tunable answer-rate DISPLAY standards. Tolerant `key=value` pairs
+    (`global=92, direct=80`; keys from `Config.gs::ANSWER_TARGET_SURFACES`:
+    `global` / `direct` / `inbound`; unknown keys + out-of-range values
+    silently dropped by `parseAnswerTargets_`). Unset = the seed 92%
+    everywhere. Drives the benchmark tints (`benchValueCls_` via
+    `answerTarget_(surface)`), the "On track / Watch" headline tones, the
+    Overview chart baseline + team-strip target tick, the Insights calendar
+    coloring, the Direct dept-card tone rail, the metric-glossary text, and
+    the digest verdict pill -- display/tone layer ONLY, so no cache bump;
+    injected as `window.__ANSWER_TARGETS__` at render, so viewers pick a
+    change up on their NEXT page load (emails at their next send). Edit
+    from the Alerts modal's **"Answer-rate standards"** section
+    (`saveAnswerTargets` -- assertAdmin_ + loud validation + LockService +
+    Logger audit; property-only, no sheet write). Deliberately NOT covered:
+    the 5% abandon threshold (baked into written QCD Violations history,
+    INV-50) and the per-dept ALERT thresholds (Alert Config, INV-34).
+    Pinned by `tests/unit/answer-targets.test.js`.
 
 ## Cycle Workflow Config
 

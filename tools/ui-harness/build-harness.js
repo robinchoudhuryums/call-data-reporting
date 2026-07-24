@@ -124,6 +124,7 @@ html = html.replace('<?!= dashboardUrlJson ?>', JSON.stringify('https://example.
 html = html.replace('<?!= workWindowJson ?>', JSON.stringify({ pst: '6:30 AM - 3:00 PM PST', cst: '8:30 AM - 5:00 PM CST' }));
 html = html.replace('<?!= companyHolidaysJson ?>', JSON.stringify([]));
 html = html.replace('<?!= uiFlagsJson ?>', JSON.stringify([]));
+html = html.replace('<?!= answerTargetsJson ?>', JSON.stringify({ global: 92 }));
 
 // Local vendor copies (downloaded by the runner beforehand). Strip SRI (local).
 html = html.replace(/<script src="https:\/\/cdn\.jsdelivr\.net\/npm\/chart\.js[^"]*"[^>]*>/, '<script src="vendor/chart.umd.js">');

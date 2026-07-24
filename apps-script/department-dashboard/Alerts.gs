@@ -110,6 +110,19 @@ function getAlertsInit() {
   } catch (e) {
     Logger.log('computeNeonReadHealth_ failed: %s', e);
   }
+  // Admin-tunable answer-rate standards (ANSWER_TARGETS Script Property,
+  // Config.gs registry). Best-effort: a parse failure just renders the
+  // section with seed defaults.
+  let answerTargets = null;
+  try {
+    answerTargets = {
+      effective: getAnswerTargets_(),
+      surfaces: ANSWER_TARGET_SURFACES,
+      seedDefault: ANSWER_TARGET_DEFAULT,
+    };
+  } catch (e) {
+    Logger.log('getAlertsInit answerTargets failed: %s', e);
+  }
   return {
     config: config,
     drift: drift,
@@ -118,6 +131,7 @@ function getAlertsInit() {
     pipelineHealth: readPipelineHealth_(20),
     neonMirror: neonMirror,
     neonRead: neonRead,
+    answerTargets: answerTargets,
     spreadsheetUrl: 'https://docs.google.com/spreadsheets/d/' + getSpreadsheetId_() + '/edit',
     // O-8: default to the previous BUSINESS day (what the daily trigger
     // actually assesses, INV-33) -- calendar yesterday made every Monday
@@ -125,6 +139,34 @@ function getAlertsInit() {
     // broken pipeline.
     defaultDate: prevBusinessDayIso_(new Date()),
   };
+}
+
+/**
+ * Saves the admin-tunable answer-rate standards (ANSWER_TARGETS Script
+ * Property). Config write path per INV-01: assertAdmin_ + loud validation
+ * (answerTargetsPropertyString_ throws on a non-numeric / out-of-range
+ * value) + LockService + a Logger.log audit line. req = {global, direct,
+ * inbound} -- blank/absent unsets that surface (global then falls back to
+ * the seed default). An all-blank save deletes the property entirely.
+ * Display-layer only: no cache bump needed; viewers pick the change up on
+ * their next page load, emails at their next send.
+ */
+function saveAnswerTargets(req) {
+  assertAdmin_();
+  const propStr = answerTargetsPropertyString_(req || {});
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw new Error('Busy — please retry.');
+  try {
+    const props = PropertiesService.getScriptProperties();
+    if (propStr) props.setProperty('ANSWER_TARGETS', propStr);
+    else props.deleteProperty('ANSWER_TARGETS');
+    ANSWER_TARGETS_MEMO_ = null;   // this execution serves the fresh values
+    Logger.log('AnswerTargets saved by %s: %s',
+      Session.getActiveUser().getEmail(), propStr || '(cleared — seed defaults)');
+  } finally {
+    lock.releaseLock();
+  }
+  return { effective: getAnswerTargets_(), raw: propStr };
 }
 
 /**

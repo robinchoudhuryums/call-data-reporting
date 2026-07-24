@@ -634,3 +634,67 @@ function sheetSafeCell_(v) {
   if (typeof v !== 'string') return v;
   return /^[=+\-@\t\r]/.test(v) ? "'" + v : v;
 }
+
+// -- Answer-rate standards (Config.gs::ANSWER_TARGET_SURFACES) -------------
+
+/**
+ * PURE. Parses the ANSWER_TARGETS Script Property value -- tolerant
+ * comma/newline-separated `key=value` pairs (the DIAL_IN_LABELS / Skip
+ * Dates grammar discipline: admin-curated free text, never throws).
+ * Unknown surface keys and non-numeric / out-of-range (1-100) values are
+ * silently dropped. Values keep one decimal at most.
+ */
+function parseAnswerTargets_(raw) {
+  const out = {};
+  String(raw == null ? '' : raw).split(/[,\n]/).forEach(function (tok) {
+    const eq = tok.indexOf('=');
+    if (eq <= 0) return;
+    const key = tok.slice(0, eq).trim().toLowerCase();
+    if (!Object.prototype.hasOwnProperty.call(ANSWER_TARGET_SURFACES, key)) return;
+    const val = Number(tok.slice(eq + 1).trim().replace(/%$/, ''));
+    if (!isFinite(val) || val < 1 || val > 100) return;
+    out[key] = Math.round(val * 10) / 10;
+  });
+  return out;
+}
+
+var ANSWER_TARGETS_MEMO_ = null;   // var (not let): test harness + resets reach it via the global object
+
+/**
+ * Effective answer-rate targets: the admin-set overrides layered over the
+ * seed default. Always carries `global`; per-surface keys present only when
+ * explicitly set (the client falls back to global per surface). Memoized
+ * per execution; saveAnswerTargets resets the memo after a write.
+ */
+function getAnswerTargets_() {
+  if (ANSWER_TARGETS_MEMO_) return ANSWER_TARGETS_MEMO_;
+  let parsed = {};
+  try {
+    parsed = parseAnswerTargets_(
+      PropertiesService.getScriptProperties().getProperty('ANSWER_TARGETS'));
+  } catch (e) { parsed = {}; }
+  if (parsed.global == null) parsed.global = ANSWER_TARGET_DEFAULT;
+  ANSWER_TARGETS_MEMO_ = parsed;
+  return parsed;
+}
+
+/**
+ * PURE. Canonical ANSWER_TARGETS property string from a save request
+ * ({global, direct, inbound} -- blank/null = unset that surface). THROWS
+ * on an out-of-range or non-numeric provided value (the save path
+ * validates loudly; only the property PARSER is silently tolerant).
+ * Returns '' when nothing is set (caller deletes the property).
+ */
+function answerTargetsPropertyString_(req) {
+  const parts = [];
+  Object.keys(ANSWER_TARGET_SURFACES).forEach(function (key) {
+    const raw = req ? req[key] : null;
+    if (raw == null || String(raw).trim() === '') return;
+    const val = Number(String(raw).trim().replace(/%$/, ''));
+    if (!isFinite(val) || val < 1 || val > 100) {
+      throw new Error('"' + key + '" must be a number between 1 and 100 (got "' + raw + '").');
+    }
+    parts.push(key + '=' + (Math.round(val * 10) / 10));
+  });
+  return parts.join(', ');
+}

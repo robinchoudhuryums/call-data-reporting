@@ -835,7 +835,7 @@
     // R10-4: threshold-aware red -- passing the 92% standard renders the
     // missed segment light/translucent so healthy rows recede; failing keeps
     // the full red + a bold value (styles.html .ans-bar--pass/--fail).
-    var passCls = total ? (rate >= 92 ? ' ans-bar--pass' : ' ans-bar--fail') : '';
+    var passCls = total ? (rate >= answerTarget_('global') ? ' ans-bar--pass' : ' ans-bar--fail') : '';
     return '<div class="ans-bar' + passCls + '" title="' + escapeHtml(title) + '">'
          +   '<div class="ans-track">' + segs + '</div>'
          +   '<div class="ans-nums">'
@@ -2866,7 +2866,7 @@
   const OV_CHART_METRICS_ = {
     pct: {
       field: 'trend', unit: 'pct', axisTitle: '% Answered',
-      baseline: 92, baselineLabel: '92% target',
+      baseline: answerTarget_('global'), baselineLabel: answerTarget_('global') + '% target',
       header: 'Answer rate trend per department (rings)',
       fmt: function (v) { return v.toFixed(1) + '%'; },
     },
@@ -3101,8 +3101,9 @@
         order: 99,
       });
     }
-    // The reference-baseline labels the spotlight + tooltip must skip.
-    const OV_BASELINE_LABELS_ = ['92% target', '5% threshold'];
+    // The reference-baseline labels the spotlight + tooltip must skip
+    // (the target label must match OV_CHART_METRICS_.pct.baselineLabel).
+    const OV_BASELINE_LABELS_ = [answerTarget_('global') + '% target', '5% threshold'];
 
     const ovPlugins = (typeof ChartDataLabels !== 'undefined') ? [ChartDataLabels] : [];
 
@@ -4309,9 +4310,9 @@
     'att': 'Average Talk Time per answered call. Longer isn’t automatically worse — it can mean thorough service; read it alongside % answered.',
     'avg abd wait': 'Average time abandoning callers waited before hanging up (across all of that day’s queues).',
     'csr avg abd wait': 'Average abandon wait for the CSR queues specifically.',
-    '% answered': 'Answered calls as a share of calls that rang. The company-wide target is 92%.',
-    'answer rate': 'Answered calls as a share of calls offered. The company-wide target is 92%.',
-    'answer rate %': 'Answered calls as a share of calls offered. The company-wide target is 92%.',
+    '% answered': 'Answered calls as a share of calls that rang. The company-wide target is ' + answerTarget_('global') + '%.',
+    'answer rate': 'Answered calls as a share of calls offered. The company-wide target is ' + answerTarget_('global') + '%.',
+    'answer rate %': 'Answered calls as a share of calls offered. The company-wide target is ' + answerTarget_('global') + '%.',
     'abandoned': 'Callers who hung up while waiting in the queue, before any agent answered.',
     'abandoned %': 'Share of queue calls where the caller hung up before being answered. 5% or more on a day counts as a violation.',
     'aband. %': 'Share of calls where the caller hung up before being answered. 5% or more is over the abandon threshold.',
@@ -4338,7 +4339,8 @@
     g['total missed'] = g['missed'];
     g['% answered (rings)'] = 'Answered as a share of rings to agents (answered ÷ rung). '
       + 'One call can ring several agents and each ring counts once, so this is ring-level '
-      + '— not the share of unique calls answered. The company-wide target is 92%.';
+      + '— not the share of unique calls answered. The company-wide target is '
+      + answerTarget_('global') + '%.';
     g['total ttt']    = g['ttt'];
     g['avg att']      = g['att'];
     g['avg talk']     = g['att'];
@@ -4356,7 +4358,7 @@
            + '<span>' + body + '</span>'
            + (bench ? '<span class="ds-tip-bench ' + bench.cls + '">' + bench.text + '</span>' : '');
     }
-    const target92 = { cls: 'is-good', text: 'Company target ≥ 92%' };
+    const target92 = { cls: 'is-good', text: 'Company target ≥ ' + answerTarget_('global') + '%' };
     const thresh5  = { cls: 'is-warn', text: '5% or more in a day = violation' };
     const attNote  = { cls: '', text: 'Longer isn’t automatically worse — read with % answered' };
     const m = {};
@@ -4618,13 +4620,27 @@
   }
 
   // -- Universal benchmark tints (anti-intimidation layer) ----------------
-  // The install has exactly two company-wide standards: the 92% answer-
-  // rate target (the Overview chart baseline) and the 5% abandoned-%
-  // violation threshold (the QCD pipeline rule). This helper applies them
-  // consistently to KPI tile values so a manager reading ANY report sees
-  // the same green-at-target / orange-over-threshold language the QCD and
+  // The install has exactly two company-wide standards: the answer-rate
+  // TARGET (seed 92%; admin-tunable via the ANSWER_TARGETS Script Property
+  // -- Alerts modal -> "Answer-rate standards" -- with per-surface
+  // overrides for the Direct / Inbound reports, whose answer rates are
+  // different populations) and the FIXED 5% abandoned-% violation
+  // threshold (the QCD pipeline rule, baked into written Violations
+  // history -- never tunable). This helper applies them consistently to
+  // KPI tile values so a manager reading ANY report sees the same
+  // green-at-target / orange-over-threshold language the QCD and
   // Overview surfaces already speak. Dept-specific ALERT thresholds stay
   // with the Alerts engine -- no invented thresholds here.
+  // Reads window.__ANSWER_TARGETS__ per call (injected before this include)
+  // rather than caching into a module var -- function declarations hoist, so
+  // module-scope consts ABOVE this point can call it safely at load time.
+  function answerTarget_(surface) {
+    var at = (typeof window !== 'undefined' && window.__ANSWER_TARGETS__) || {};
+    var t = Number(at[surface]);
+    if (isFinite(t) && t > 0) return t;
+    var g = Number(at.global);
+    return (isFinite(g) && g > 0) ? g : 92;
+  }
   // Keep a From/To (Start/End) date pair valid: picking a Start past the End
   // (or an End before the Start) nudges the OTHER input so From <= To. ISO
   // 'YYYY-MM-DD' strings compare correctly as plain strings.
@@ -4651,7 +4667,7 @@
     ].forEach(function (p) { linkDateRange_(p[0], p[1]); });
   }
 
-  function benchValueCls_(label, formatted, symmetric) {
+  function benchValueCls_(label, formatted, symmetric, surface) {
     const text = String(label).replace(/<[^>]*>/g, '').toLowerCase();
     const str = String(formatted);
     if (str.indexOf('%') === -1) return '';
@@ -4659,10 +4675,12 @@
     if (!isFinite(num)) return '';
     // Binary by default (highlight only the notable direction -- the documented
     // table behavior). `symmetric` (KPI tiles) tints BOTH sides of the SAME
-    // 92% / 5% standard, so a below-target answer rate reads "watch" (orange)
-    // and a healthy abandon rate reads "good" (green) instead of plain black.
-    // Still no invented thresholds (decision C2).
-    if (/answer/.test(text)) return num >= 92 ? ' bm-target' : (symmetric ? ' bm-over'   : '');
+    // answer-target / 5% standard, so a below-target answer rate reads "watch"
+    // (orange) and a healthy abandon rate reads "good" (green) instead of
+    // plain black. Still no invented thresholds (decision C2); `surface`
+    // ('direct' / 'inbound') picks that report's admin-set override, absent
+    // = the global target.
+    if (/answer/.test(text)) return num >= answerTarget_(surface || 'global') ? ' bm-target' : (symmetric ? ' bm-over' : '');
     if (/aband/.test(text))  return num >= 5  ? ' bm-over'   : (symmetric ? ' bm-target' : '');
     return '';
   }
@@ -4752,7 +4770,7 @@
     const hasA = a != null && isFinite(Number(a));
     const hasB = b != null && isFinite(Number(b));
     if (!hasA && !hasB) return null;
-    const warn = (hasA && Number(a) < 92) || (hasB && Number(b) >= 5);
+    const warn = (hasA && Number(a) < answerTarget_('global')) || (hasB && Number(b) >= 5);
     return warn ? { cls: 'is-warn', badge: 'Watch' } : { cls: 'is-good', badge: 'On track' };
   }
 
@@ -4766,7 +4784,7 @@
   function irHeadlineTone_(agentPct, teamPct) {
     if (agentPct == null || !isFinite(Number(agentPct))) return null;
     const a = Number(agentPct);
-    if (a >= 92) return { cls: 'is-good', badge: 'On track' };
+    if (a >= answerTarget_('global')) return { cls: 'is-good', badge: 'On track' };
     const tp = Number(teamPct);
     if (teamPct != null && isFinite(tp) && tp > 0 && a >= tp) return null;   // neutral
     return { cls: 'is-warn', badge: 'Watch' };
@@ -6983,15 +7001,15 @@
     }
 
     var rateCls = total ? benchValueCls_('% answered', rate + '%', true) : '';
-    var under92 = total && rate < 92;
+    var under92 = total && rate < answerTarget_('global');
     var fillPct = total ? Math.max(0, Math.min(100, rate)) : 0;
 
     var heroTile = '<div class="dts-tile dts-tile--hero">'
       + '<div class="dts-label">% Answered (rings) <span class="dts-scope">this range</span></div>'
       + '<div class="dts-value' + rateCls + '" data-flash-key="dts:rate">' + (total ? rate + '%' : '–') + '</div>'
-      + '<div class="dts-track" title="92% company target">'
+      + '<div class="dts-track" title="' + answerTarget_('global') + '% company target">'
       +   '<span class="dts-track-fill' + (under92 ? ' is-under' : '') + '" style="width:' + fillPct + '%"></span>'
-      +   '<span class="dts-track-tick"></span>'
+      +   '<span class="dts-track-tick" style="left:' + answerTarget_('global') + '%"></span>'
       + '</div>'
       + (rateDeltaHtml ? '<div class="dts-sub">' + rateDeltaHtml + ' vs prior</div>' : '')
       + '</div>';
@@ -9997,6 +10015,52 @@
       $('al-send-btn').disabled = true;
       alClearResults_();
     });
+
+    // Answer-rate standards (ANSWER_TARGETS) save.
+    const targetsSaveBtn = $('al-targets-save-btn');
+    if (targetsSaveBtn) targetsSaveBtn.addEventListener('click', alSaveAnswerTargets_);
+  }
+
+  // -- Answer-rate standards (admin-tunable display thresholds) -----------
+  function alRenderAnswerTargets_(at) {
+    const eff = (at && at.effective) || {};
+    const seed = (at && at.seedDefault) || 92;
+    const g = $('al-target-global'), d = $('al-target-direct'), i = $('al-target-inbound');
+    if (g) { g.value = eff.global != null ? eff.global : ''; g.placeholder = String(seed); }
+    if (d) d.value = eff.direct != null ? eff.direct : '';
+    if (i) i.value = eff.inbound != null ? eff.inbound : '';
+    const st = $('al-targets-status');
+    if (st) {
+      st.textContent = 'Current: Global ' + (eff.global != null ? eff.global : seed) + '%'
+        + ' · Direct ' + (eff.direct != null ? eff.direct + '%' : 'inherits')
+        + ' · Inbound ' + (eff.inbound != null ? eff.inbound + '%' : 'inherits') + '.';
+    }
+  }
+
+  function alSaveAnswerTargets_() {
+    const btn = $('al-targets-save-btn');
+    if (!btn) return;
+    const req = {
+      global:  ($('al-target-global')  && $('al-target-global').value)  || '',
+      direct:  ($('al-target-direct')  && $('al-target-direct').value)  || '',
+      inbound: ($('al-target-inbound') && $('al-target-inbound').value) || '',
+    };
+    btn.disabled = true;
+    const prev = btn.textContent; btn.textContent = 'Saving…';
+    google.script.run
+      .withSuccessHandler(function (res) {
+        btn.disabled = false; btn.textContent = prev;
+        alRenderAnswerTargets_({ effective: (res && res.effective) || {}, seedDefault: 92 });
+        const st = $('al-targets-status');
+        if (st) st.textContent += ' Saved — applies on each viewer’s next page load; emails at their next send.';
+        showToast('Answer-rate standards saved', 'success');
+      })
+      .withFailureHandler(function (err) {
+        btn.disabled = false; btn.textContent = prev;
+        const st = $('al-targets-status');
+        if (st) st.textContent = 'Error: ' + (err && err.message ? err.message : String(err));
+      })
+      .saveAnswerTargets(req);
   }
 
   function alLoadInit_() {
@@ -10007,6 +10071,7 @@
         $('al-loading').style.display = 'none';
         $('al-body').style.display = '';
         alRenderInit_(data);
+        alRenderAnswerTargets_(data && data.answerTargets);
         // Digest subscribers + trigger status is loaded separately
         // so a missing Digest.gs (e.g. mid-deploy) doesn't break the
         // whole Alerts modal.
@@ -14569,7 +14634,7 @@
         ? 'Sage = under the 5% abandon threshold · warmer = at/above it.'
         : (isVol ? 'Darker = more ring events (answered + missed) that day.'
         : (isAns ? 'Darker sage = more answered calls that day.'
-        : 'Sage = at/above the 92% answer target · warmer = further below it.')));
+        : 'Sage = at/above the ' + answerTarget_('global') + '% answer target · warmer = further below it.')));
     const navBtn = function (idx, glyph, label) {
       const ok = idx >= 0 && idx < months.length;
       return '<button type="button" class="ins-cal-nav-btn"' + (ok ? ' data-cal-nav="' + months[idx] + '"' : ' disabled')
@@ -14649,9 +14714,10 @@
               const sevA = maxAns > 0 ? (answeredN / maxAns) : 0;
               style = 'background: color-mix(in srgb, var(--good) ' + Math.round(8 + 34 * sevA) + '%, var(--paper-card));';
             } else {
-              style = pct >= 92
-                ? 'background: color-mix(in srgb, var(--good) ' + Math.round(14 + Math.min(22, (pct - 92) * 3)) + '%, var(--paper-card));'
-                : 'background: color-mix(in srgb, var(--warn) ' + Math.round(14 + Math.min(46, (92 - pct) * 1.6)) + '%, var(--paper-card));';
+              const ansTgt = answerTarget_('global');
+              style = pct >= ansTgt
+                ? 'background: color-mix(in srgb, var(--good) ' + Math.round(14 + Math.min(22, (pct - ansTgt) * 3)) + '%, var(--paper-card));'
+                : 'background: color-mix(in srgb, var(--warn) ' + Math.round(14 + Math.min(46, (ansTgt - pct) * 1.6)) + '%, var(--paper-card));';
             }
             valHtml = isMissed ? String(missed) : (isVol ? String(rung) : (isAns ? String(answeredN) : pct + '%'));
             title = iso + ' — ' + answeredN + ' answered · '
@@ -16101,14 +16167,14 @@
   // pre-formatted value + pre-built delta badge + a bench-tinted caption.
   // (Phase 1 ds-* migration; cap tint preserved by the .ds-kpi__foot.bm-*
   // overrides in styles.html.)
-  function inboundKpiTile_(label, value, cap, deltaHtml, valueCls) {
+  function inboundKpiTile_(label, value, cap, deltaHtml, valueCls, surface) {
     return '<div class="ds-kpi">'
       + '<div class="ds-kpi__top">'
       +   '<span class="ds-kpi__label">' + escapeHtml(label) + '</span>'
       +   (deltaHtml || '')
       + '</div>'
       + '<div class="ds-kpi__value' + (valueCls || '') + '">' + escapeHtml(String(value)) + '</div>'
-      + (cap ? '<div class="ds-kpi__foot' + benchValueCls_(label, cap, true) + '">' + escapeHtml(cap) + '</div>' : '')
+      + (cap ? '<div class="ds-kpi__foot' + benchValueCls_(label, cap, true, surface) + '">' + escapeHtml(cap) + '</div>' : '')
       + '</div>';
   }
 
@@ -16481,7 +16547,7 @@
         (k.anonymous ? fmtNumber(k.anonymous) + ' anonymous' : ''),
         inboundDelta_(k.total, p.total, 'neu', false)),
       inboundKpiTile_('Answered', fmtNumber(k.answered), (k.answerRate || 0) + '%',
-        inboundDelta_(k.answered, p.answered, 'pos', false)),
+        inboundDelta_(k.answered, p.answered, 'pos', false), '', 'inbound'),
       inboundKpiTile_('Abandoned', fmtNumber(k.abandoned), (k.abandonRate || 0) + '%',
         inboundDelta_(k.abandoned, p.abandoned, 'neg', false)),
       inboundKpiTile_('Abandoned on hold', fmtNumber(k.abandonedOnHold), 'caller hung up held',
@@ -17146,7 +17212,8 @@
         fmtNumber(k.ibMissedFree) + ' missed (free)',
         p ? inboundDelta_(k.ibAnswered, p.ibAnswered, 'pos', false) : ''),
       inboundKpiTile_('IB answer rate', k.ibAnswerRate != null ? k.ibAnswerRate + '%' : '—',
-        'busy misses excluded', rateDelta),
+        'busy misses excluded', rateDelta,
+        k.ibAnswerRate != null ? benchValueCls_('% answered', k.ibAnswerRate + '%', true, 'direct') : '', 'direct'),
       inboundKpiTile_('IB missed (busy)', fmtNumber(k.ibMissedBusy), 'excused — on another call', ''),
       inboundKpiTile_('IB ATT', fmtDuration(k.ibAttSec), 'avg talk per answered', ''),
       inboundKpiTile_('OB calls', fmtNumber(k.obTotal),
@@ -17186,7 +17253,7 @@
   // per-dept expanded tables).
   function directAgentRowHtml_(r) {
     const rateStr = r.ibAnswerRate != null ? r.ibAnswerRate + '%' : '—';
-    const rateCls = r.ibAnswerRate != null ? benchValueCls_('% answered', r.ibAnswerRate + '%', true) : '';
+    const rateCls = r.ibAnswerRate != null ? benchValueCls_('% answered', r.ibAnswerRate + '%', true, 'direct') : '';
     return '<tr>'
       + '<td>' + escapeHtml(r.agent) + '</td>'
       + '<td class="num">' + fmtNumber(r.ibAnswered) + '</td>'
@@ -17272,11 +17339,11 @@
       + groups.map(function (g, i) {
         const rateStr = g.ibAnswerRate != null ? g.ibAnswerRate + '%' : '—';
         const rateCls = g.ibAnswerRate != null
-          ? benchValueCls_('% answered', g.ibAnswerRate + '%', true).trim() : '';
+          ? benchValueCls_('% answered', g.ibAnswerRate + '%', true, 'direct').trim() : '';
         // R11-M: a left-rail tone on the whole dept row keyed on the 92%
         // answer-rate standard, so a struggling dept reads distinct at a glance.
         const toneCls = g.ibAnswerRate == null ? 'ddc-tone-muted'
-          : (g.ibAnswerRate >= 92 ? 'ddc-tone-good' : 'ddc-tone-warn');
+          : (g.ibAnswerRate >= answerTarget_('direct') ? 'ddc-tone-good' : 'ddc-tone-warn');
         // R11-M: delta chips vs the prior window (per-dept). answered/OB up=good,
         // missed up=bad, answer% up=good (pctPoints).
         const pr = g.prior;
