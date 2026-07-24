@@ -451,9 +451,18 @@
   function trapFocus_(modal) {
     releaseFocus_();
     var FOCUSABLE = 'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
+    // R12-14: only VISIBLE elements count. The browser skips hidden nodes in
+    // tab order, so if the modal's LAST focusable node is display:none (a
+    // collapsed edit form -- Outlier Fix / Dept Config / Health), focus never
+    // lands on it, the boundary wrap below never fires, and Tab walks out of
+    // the dialog.
+    function focusables() {
+      return Array.prototype.filter.call(modal.querySelectorAll(FOCUSABLE),
+        function (el) { return el.offsetParent !== null; });
+    }
     function handler(e) {
       if (e.key !== 'Tab') return;
-      var els = modal.querySelectorAll(FOCUSABLE);
+      var els = focusables();
       if (!els.length) return;
       var first = els[0], last = els[els.length - 1];
       if (e.shiftKey && document.activeElement === first) {
@@ -464,8 +473,10 @@
     }
     modal.addEventListener('keydown', handler);
     activeFocusTrap_ = { modal: modal, handler: handler };
-    var first = modal.querySelector(FOCUSABLE);
-    if (first) setTimeout(function () { first.focus(); }, 0);
+    setTimeout(function () {
+      var els = focusables();
+      if (els.length) els[0].focus();
+    }, 0);
   }
   function releaseFocus_() {
     if (!activeFocusTrap_) return;
