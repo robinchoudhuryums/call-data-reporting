@@ -613,6 +613,9 @@ function computeInboundReport_(scope) {
       "SELECT json_build_object(" +
         "'kpis', " + kpiSelect(dr) + ", " +
         "'kpisPrior', " + kpiSelect(priorDr) + ", " +
+        // R12-26b: coverage start (earliest captured inbound call, unscoped)
+        // so the client can warn when the requested From predates capture.
+        "'coverageStart', (SELECT MIN(call_date)::text FROM inbound_calls), " +
         // Round 4 (owner): LABELED insurers only. The old '(unlabeled)'
         // catch-all lumped every non-insurer caller (patients, doctor
         // offices, ...) into one misleading mega-row -- insurers are a small
@@ -701,6 +704,7 @@ function computeInboundReport_(scope) {
         companyView: scope.companyView,
         unmapped: false,
         priorFrom: prior.from, priorTo: prior.to,
+        coverageStart: obj.coverageStart || null,   // R12-26b
         rows: kpis.total, generatedAt: new Date().toISOString(),
       },
       kpis: kpis,

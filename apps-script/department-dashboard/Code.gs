@@ -86,6 +86,13 @@ function renderDashboard_(user) {
   let uiFlags = [];
   try { uiFlags = getUiFlags_(); } catch (e) { uiFlags = []; }
   tmpl.uiFlagsJson = JSON.stringify(uiFlags).replace(/</g, '\\u003c');
+  // Admin-tunable answer-rate standards (ANSWER_TARGETS Script Property,
+  // Config.gs registry) so the client's benchmark tints / headline tones /
+  // chart baseline agree with the server-side digest verdict. Seed default
+  // on any failure; changes apply on each viewer's next page load.
+  let answerTargets = { global: ANSWER_TARGET_DEFAULT };
+  try { answerTargets = getAnswerTargets_(); } catch (e) { /* seed default */ }
+  tmpl.answerTargetsJson = JSON.stringify(answerTargets).replace(/</g, '\\u003c');
   return tmpl.evaluate()
     .setTitle('Department Dashboard')
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);

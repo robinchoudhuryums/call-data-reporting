@@ -604,7 +604,7 @@ same time as the code change.
 |---|---|---|
 | `Data.gs` (main table) | `summary:vN:` | `v15` |
 | `Data.gs` (latest-date snap for default From/To) | `latestDate:vN:` | `v1` |
-| `Data.gs` (multi-source latest dates for freshness pill) | `latestDates:vN:` | `v1` |
+| `Data.gs` (multi-source latest dates for freshness pill) | `latestDates:vN:` | `v2` |
 | `IndividualReport.gs` | `individual:vN:` | `v11` |
 | `IndividualReport.gs` (active-in-range subset shared by all three report pickers) | `individual_active:vN:` | `v2` |
 | `PerformanceReport.gs` | `performance:vN:` | RETIRED (Performance Report deleted; Insights is the replacement) |

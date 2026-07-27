@@ -233,7 +233,10 @@ function computeDirectCallReport_(scope) {
               "sum(ib_int_missed_free+ib_ext_missed_free) AS ib_missed_free, " +
               "sum(ib_int_missed_busy+ib_ext_missed_busy) AS ib_missed_busy, " +
               "sum(ob_int_total+ob_ext_total) AS ob_total " +
-            "FROM direct_call_history c WHERE " + priorDr + " GROUP BY department) t2)" +
+            "FROM direct_call_history c WHERE " + priorDr + " GROUP BY department) t2), " +
+        // R12-26b: coverage start (earliest direct-call history date, unscoped)
+        // so the client can warn when the requested From predates the data.
+        "'coverageStart', (SELECT MIN(call_date)::text FROM direct_call_history)" +
       ")::text AS j";
 
     const stmt = conn.createStatement();
@@ -254,6 +257,7 @@ function computeDirectCallReport_(scope) {
       meta: {
         from: from, to: to, department: scope.dept || '',
         companyView: scope.companyView, available: true, vetting: true,
+        coverageStart: obj.coverageStart || null,   // R12-26b
         cacheHit: false, computeMs: 0,
       },
       kpis: {

@@ -879,11 +879,18 @@ function digestStatTile_(label, value) {
 // on), and an email-safe target bar (filled <td> cells, no CSS bars). Leads
 // the summary email so a manager reads "where do we stand" before the tiles.
 // `pctNum` is the numeric answer rate (0-100); `rung` gates the no-data case.
-var DIGEST_ANSWER_TARGET = 92;   // company answer-rate standard (matches benchValueCls_)
+// Company answer-rate standard (matches benchValueCls_): the admin-tunable
+// global target (ANSWER_TARGETS Script Property, Config.gs registry) with
+// the seed default as fallback -- read at send time, so a change applies to
+// the next digest without a redeploy.
+function digestAnswerTarget_() {
+  try { return getAnswerTargets_().global; } catch (e) { return 92; }
+}
 function digestHeroHtml_(pctNum, rung) {
   if (!(Number(rung) > 0)) return '';                 // no calls -> no hero
   var pct = Math.max(0, Number(pctNum) || 0);
-  var onTrack = pct >= DIGEST_ANSWER_TARGET;
+  var answerTarget = digestAnswerTarget_();
+  var onTrack = pct >= answerTarget;
   var accent  = onTrack ? '#059669' : '#d97706';      // green / amber
   var pillBg  = onTrack ? '#ECFDF5' : '#FFFBEB';
   var pillFg  = onTrack ? '#065F46' : '#92400E';
@@ -908,7 +915,7 @@ function digestHeroHtml_(pctNum, rung) {
        +   '</div>'
        +   '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:10px;border-collapse:collapse;"><tr>' + bar + '</tr></table>'
        +   '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;"><tr>'
-       +     '<td width="' + DIGEST_ANSWER_TARGET + '%" style="text-align:right;font-size:10px;color:#6b7280;padding-top:3px;">target ' + DIGEST_ANSWER_TARGET + '% &#9662;</td><td></td>'
+       +     '<td width="' + answerTarget + '%" style="text-align:right;font-size:10px;color:#6b7280;padding-top:3px;">target ' + answerTarget + '% &#9662;</td><td></td>'
        +   '</tr></table>'
        + '</div>';
 }
