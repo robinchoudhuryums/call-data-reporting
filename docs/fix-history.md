@@ -37,6 +37,7 @@ rule changes, update CLAUDE.md; leave the history entry as-is (it's an archive).
 | `INV-01`…`INV-55` | **Current invariants.** Not history — the live contract. | CLAUDE.md → Cycle Workflow Config → Invariant Library |
 | `F-2`…`F-56` (**dashed**) | Dashboard bug fixes / hardening from cycle + audit passes | CLAUDE.md Common Gotchas / INV-## |
 | `F1`,`F2`,`F4`… (**bare, no dash**) | The Neon read-back / feature-flag / router family. **A DIFFERENT family from `F-2`, `F-4`** — see the collision note below | CLAUDE.md F1 gotcha / Operator State #19 |
+| `F1`…`F13` (**Round 13**, 2026-07-27) | Broad-scan finding numbers. **A THIRD `F`-shaped family** — `F1` here is the inbound queue-recognition fix, NOT the Neon read-back flag; `F2` here is the zero-record cleanup, NOT the dup-guard self-heal | the Round-13 section below |
 | `IMP-4`…`IMP-11` | Neon **im**port-mirror write discipline | CLAUDE.md "Neon write discipline" gotcha, INV-16 |
 | `CORE-1`…`CORE-7` | The CORE hardening pass (auth gates, cache-source suffix, config parity) | various INV / Operator State |
 | `DEEP-1` | Companion to CORE-1 (signed-in gate) | Key Design Decisions (auth) |
@@ -46,15 +47,17 @@ rule changes, update CLAUDE.md; leave the history entry as-is (it's an archive).
 | `TST-7` | Test / deploy gating | Key commands, Operator State #2 |
 | `M1`,`M2` | companyOverview v16 population-scoping fixes | INV-30 companyOverview, INV-51 |
 | `E2`…`E10` | **Phase E** UI surfaces (commit 94bbca9 + follow-ons) | CLAUDE.md "Phase E UI surfaces", INV-33/34/51 |
-| `S1`…`S38` | **Regression Scenarios** (Cycle Config) — but a few inline `S#` are batch-step codes, see below | Cycle Workflow Config → Regression Scenarios |
+| `S1`…`S40` | **Regression Scenarios** (Cycle Config) — but a few inline `S#` are batch-step codes, see below. `S39`/`S40` were promoted from a broad-scan Stage-3 OPERATOR VISUAL CHECK | Cycle Workflow Config → Regression Scenarios |
 | `Phase A`–`E`, `Phase 1`–`15`, `Phase D`/`D+1`, `Batch E`/`F` | Redesign / rollout phases named in commit narratives | commit messages + CLAUDE.md prose |
 
 ### ⚠ Two collisions that WILL confuse you
 
-1. **Dashed `F-#` vs bare `F#` are different families.** `F-2` (the AD/AE/AF
-   pairing fix) has nothing to do with `F2` (the dup-guard Neon self-heal).
-   `F-4`/`F4`, `F-5`/`F5` likewise collide. Always preserve the dash (or its
-   absence) when grepping.
+1. **Dashed `F-#` vs bare `F#` are different families — and since Round 13
+   there are THREE.** `F-2` (the AD/AE/AF pairing fix) has nothing to do with
+   `F2` (the dup-guard Neon self-heal), which has nothing to do with Round-13
+   `F2` (the zero-record authoritative cleanup). `F-4`/`F4`, `F-5`/`F5`
+   likewise collide. Always preserve the dash (or its absence) when grepping,
+   and for a bare code check the DATE/section it sits in.
 2. **`S#` is overloaded.** `S1`…`S38` in the Cycle Config are **Regression
    Scenarios**. But inline prose uses `S5` for the *holiday layer*
    (`COMPANY_HOLIDAYS`, Operator State #27), `S1(c)` for `discoverInboundQueues_`
@@ -501,6 +504,36 @@ plan).** Client + email template only; code comments cite `R11-B<n>`:
 | R11-D4 | Escalations Department: **name-as-text for single-dept managers** (previously the control was hidden entirely), **selector for admins / all-dept** — reuses the existing `escInit_.isAdmin \|\| allDepts` signal, no new permission; selector change still runs the normal fetch + server-auth path | code |
 | R11-C6 | Missed chart polish: (a) clicking a bar to open the bucket detail no longer flashes the chart — the detail-toggle's `transitionend` now calls `deptMissedResize_(false)`, so the R11-B6 `tooNarrow` guard can't spuriously fire a full destroy+recreate mid-reflow (initial paint still passes `true`); (b) the per-agent "■ chart" scope button no longer clips at a narrow card's right edge (the `overflow:hidden` card) — the summary row wraps (`flex-wrap`), dropping the meta to a second line fully visible | code (`deptMissedResize_` + `.agent-card-head` CSS) |
 | R11-C5 | Direct report company view renders per-DEPT cards (grouped client-side from the same per-agent rows via `r.dept`): aggregate headline stats on each `<details>` summary (agents / IB answered / missed free+busy / busy-excluded answer % with the 92% tint / answered-weighted IB ATT / OB calls), expanding into that dept's own sortable agent table (shared `directAgentRowHtml_`/`directImpact_`; dynamic `srtWired_` entries are dropped on re-render so sorting re-arms). Card order = the B11 impact score on the dept aggregate. Flat all-agents table stays for single-dept view; CSV already carried the Dept column | Direct-extension bullet, CLAUDE.md |
+
+---
+
+## `F1`…`F13` — broad scan Round 13 (2026-07-27)
+
+Findings from the 2026-07-27 three-stage broad scan, implemented across two
+passes. **NB this is a THIRD `F`-shaped family**, distinct from both dashed
+`F-#` (dashboard fixes) and bare `F#` (Neon read-back / feature flags) — the
+same collision class the taxonomy table warns about. These are numbered by
+SCAN FINDING, not by subsystem.
+
+| Code | What it fixed | Where the live rule lives |
+|---|---|---|
+| `F1` | Inbound queue recognition (`icIsQueueName_`) was a hardcoded pattern, so a queue named outside it captured with `entry_queue=NULL` → attributable to no dept → invisible in every dept's Inbound report. Self-concealing: `scanInboundQueueNames_` and the QCD-parity unattributed list both filter `COALESCE(entry_queue,'') <> ''`, so there was no row to discover. Recognition now ALSO reads the `Dept Config` sheet (QCD Queues + Inbound Queue Aliases) via `icLoadConfiguredQueueNames_`. Strictly additive; `buildInboundCallRecords_` stays pure | Inbound-capture bullet (queue-name recognition), CLAUDE.md; INV-54 |
+| `F1b` | The measured half of F1: `^A_Q_` was ANCHORED, so the brand-prefixed queues `UDC_A_Q_Main` (Universal Dialysis Center) and `UUC_A_Q_Main` (Universal Urgent Care) never matched — a journey leg-name histogram over abandoned NULL-`entry_queue` calls found `UDC_A_Q_Main` on 38 abandons in one ~8-week window, still accruing, while the DQE pipeline had listed BOTH in `DQE_EXCLUDED_AGENTS` all along (the two pipelines disagreed about what a queue is). The `A_Q_` arm now matches at start OR after an underscore. Config alone could NOT have fixed this — an admin can only alias a queue they know is missing | Inbound-capture bullet, CLAUDE.md; Operator State #38 |
+| `F2` | `writeInboundCallsToNeon` / `writeOutboundCallsToNeon` returned BEFORE the authoritative per-date DELETE on an empty record set, so a date whose LEGITIMATE count is zero kept its phantoms forever (neither table has a sheet primary). New `icDeleteDateOnly_`, gated on a NON-EMPTY source so an unreadable grid can't destroy data (the P-3 discipline), reporting `unreachable` so a deferred-mirror date stays queued. The old CLAUDE.md rationale ("an empty payload carries no date to delete") had been stale since P-1 | Neon write discipline rule (4) / P-1 paragraph, CLAUDE.md |
+| `F3` | Escalation "overdue" meant CALENDAR days on the client (`escDaysOpen_`) and 72 HOURS in both server aggregates (`getEscalations` band + `getEscalationsBadge`), so the tile / nav badge could disagree with the ⚑ cards they counted — and a comment claimed they matched. One `ESC_OVERDUE_DAYS` + `ESC_OVERDUE_SQL_` drives both queries | INV-55 (overdue paragraph); S40 |
+| `F6` | **Downgraded, not fixed.** The Overview `cache.put` failure is log-only, but the cached blob was MEASURED at 27 KB / 14 depts (26% of the ~100 KB cap, ~1.9 KB/dept ⇒ ~50+ depts to cross). The Stage-1 estimate of 50–60 KB was ~2× off. Remaining ask: log the serialized length, warn past ~80 KB | open follow-on |
+| `F12` | `neonMirrorDate_`'s `step()` RETHREW on a hard error, so an early failure meant later steps were never attempted across all 8 retries — then the gave-up path dropped the date, permanently losing Inbound/Outbound (no sheet primary, ~14-day source floor) while the step that caused it stayed re-derivable. Errors are collected and thrown ONCE after every step; order is now least-recoverable-first | Operator State #22 (step order + no-skip) |
+| `F13` | Five non-button click targets were mouse-only: the Overview dept tile (solo/compare — the landing page), the My Department agent row (IR drill), `tr.qcd-expandable` on BOTH the all-dept QCD report and Insights Queue health (the per-source breakdown has no other route), and the QCD carousel dots. Shared `keyActivate_`/`makeActivatable_`/`qcdToggleExpandRow_` + focus rings. Table rows get `tabindex` but NO `role="button"` (it would override the implicit row role) | S39; Regression Scenarios |
+
+**Retracted / corrected during the scan** (kept because a wrong finding that
+looks plausible costs the next reader time):
+
+| Claim | Why it was wrong |
+|---|---|
+| "The Overview payload is near the 100 KB cache cap" | Measured 27 KB at 14 depts. Estimate was ~2× high; F6 downgraded to Low |
+| "The R11-N transfer enrichment can leak a raw phone number" | The leg is pre-filtered by `icIsQueueName_`, so the name can only ever be queue-shaped |
+| "The Overview sub-queue chip is mouse-only" | It is already a real `<button aria-expanded>`; the started fix would have DOUBLE-fired on Enter and was reverted |
+| "`entry_queue IS NULL AND disposition='abandoned'` measures F1 exposure" | Unions three causes; measured 9353 of which the real miss was tens of calls. See Operator State #38 for the discriminating probe |
 
 ---
 

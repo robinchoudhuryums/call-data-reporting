@@ -4,6 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const http = require('http');
 const { chromium } = require('playwright');
+const { launchOptions } = require('./chromium-path');   // revision-globbing Chromium resolver
 const SITE = path.join(__dirname, 'site');
 const SHOTS = path.join(__dirname, 'shots');
 const rep = { errors: [], overflow: [], unmocked: {}, notes: {} };
@@ -23,7 +24,7 @@ async function overflowPx(page) {
 (async () => {
   const srv = await srvP;
   const base = 'http://127.0.0.1:' + srv.address().port + '/';
-  const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || '/opt/pw-browsers/chromium' });
+  const browser = await chromium.launch(launchOptions());
 
   async function open(variant, { dark, width } = {}) {
     const ctx = await browser.newContext({ viewport: { width: width || 1440, height: 950 }, deviceScaleFactor: width === 390 ? 2 : 1.5 });

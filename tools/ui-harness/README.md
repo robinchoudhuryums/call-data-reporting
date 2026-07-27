@@ -21,10 +21,29 @@ node build-harness.js admin && node build-harness.js manager
 node drive.js                 # Phase 1: Overview + My Department sweep
 node drive-insights.js        # Phase 2: Insights
 node drive-phase3.js          # Phase 3: Escalations + modals
+node drive-f13.js             # F13: keyboard-only walk of the non-button click targets
 ```
 Output: `shots/*.png` + `report*.json` (console errors, overflow, focus
-walks, contrast, focus-trap escapes). Chromium path: set `CHROMIUM_PATH`
-if not at `/opt/pw-browsers/chromium`.
+walks, contrast, focus-trap escapes); `drive-f13.js` prints PASS/FAIL per
+check and exits non-zero on any failure.
+
+**Chromium path** is resolved by `chromium-path.js` — it globs
+`/opt/pw-browsers/chromium-<rev>/chrome-linux/chrome` (the path carries the
+Playwright browser REVISION, so it moves on image bumps), prefers the full
+browser over `headless_shell`, and falls back to Playwright's own registry.
+Override with `CHROMIUM_PATH` if your binary lives elsewhere. The old
+documented default (`/opt/pw-browsers/chromium`) was a DIRECTORY, not the
+binary, so every driver failed with "executable doesn't exist" until you
+passed the variable by hand.
+
+**Suppress the first-run chrome** in any new driver, or clicks time out on
+the onboarding tour's overlay:
+```js
+await page.addInitScript(() => {
+  localStorage.setItem('cdr.tour.done', '1');
+  localStorage.setItem('cdr.ins.intro.v1', '1');
+});
+```
 
 ## Gotchas learned
 - fullPage screenshots race Chart.js re-layout (Chromium resizes the

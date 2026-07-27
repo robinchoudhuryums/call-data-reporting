@@ -8,9 +8,9 @@
  */
 const path = require('path');
 const { chromium } = require('playwright');
+const { launchOptions } = require('./chromium-path');   // revision-globbing Chromium resolver
 
 const SITE = 'file://' + path.join(__dirname, 'site', 'index-admin.html');
-const EXEC = process.env.CHROMIUM_PATH || '/opt/pw-browsers/chromium/chrome-linux/chrome';
 
 const results = [];
 function record(name, pass, detail) {
@@ -19,7 +19,7 @@ function record(name, pass, detail) {
 }
 
 (async () => {
-  const browser = await chromium.launch({ executablePath: EXEC });
+  const browser = await chromium.launch(launchOptions());
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   const errors = [];
   page.on('pageerror', (e) => errors.push(String(e)));
