@@ -5,9 +5,14 @@
 The project keeps two surfaces:
 
 - **CLAUDE.md = current invariants / live truth.** The rules you must follow
-  now: the Invariant Library (`INV-01`…`INV-55`), the Common Gotchas *rules*,
-  Key Design Decisions, the Operator State Checklist, and the Cycle Workflow
-  Config. If a rule governs how you write code today, it lives in CLAUDE.md.
+  now: the Common Gotchas *rules*, Key Design Decisions, and the Cycle Workflow
+  Config. If a rule governs how you write code today, it lives in CLAUDE.md — or
+  in one of the four reference files the F8 split moved OUT of it, each of which
+  CLAUDE.md still indexes: `docs/invariants.md` (the Invariant Library,
+  `INV-01`…`INV-55`), `docs/operator-state.md` (the numbered Operator State
+  items), `docs/regression-scenarios.md` (`S1`…`S40`), and
+  `docs/client-ui-conventions.md` (the client/presentation-layer conventions).
+  Those four are still LIVE TRUTH, not archive — only their location changed.
 - **This file = the historical fix log.** The commit-by-commit "why": what each
   short fix code (`F-2`, `IMP-7`, `CORE-3`, `RPT-1`, `OPS-7`, `NEO-1`, …) fixed,
   and a pointer to the CLAUDE.md invariant / gotcha the fix produced. Read this
@@ -16,8 +21,9 @@ The project keeps two surfaces:
 
 **How to use it:** codes are terse on purpose. To find a code's full narrative,
 `grep -n "<code>" CLAUDE.md docs/*.md apps-script/**` — the live rule is in
-CLAUDE.md; the reasoning is here or in `docs/known-issues.md`. When a fix code's
-rule changes, update CLAUDE.md; leave the history entry as-is (it's an archive).
+CLAUDE.md or one of its four split reference files (above); the reasoning is here
+or in `docs/known-issues.md`. When a fix code's rule changes, update the live
+rule; leave the history entry as-is (it's an archive).
 
 > Migration note: this file was introduced by splitting the fix-narrative out of
 > CLAUDE.md's prose. CLAUDE.md still contains the interwoven narrative for each
@@ -34,7 +40,7 @@ rule changes, update CLAUDE.md; leave the history entry as-is (it's an archive).
 
 | Family | Meaning | Where the live rule lives |
 |---|---|---|
-| `INV-01`…`INV-55` | **Current invariants.** Not history — the live contract. | CLAUDE.md → Cycle Workflow Config → Invariant Library |
+| `INV-01`…`INV-55` | **Current invariants.** Not history — the live contract. | `docs/invariants.md` (CLAUDE.md → Cycle Workflow Config → Invariant Library holds the index) |
 | `F-2`…`F-56` (**dashed**) | Dashboard bug fixes / hardening from cycle + audit passes | CLAUDE.md Common Gotchas / INV-## |
 | `F1`,`F2`,`F4`… (**bare, no dash**) | The Neon read-back / feature-flag / router family. **A DIFFERENT family from `F-2`, `F-4`** — see the collision note below | CLAUDE.md F1 gotcha / Operator State #19 |
 | `F1`…`F13` (**Round 13**, 2026-07-27) | Broad-scan finding numbers. **A THIRD `F`-shaped family** — `F1` here is the inbound queue-recognition fix, NOT the Neon read-back flag; `F2` here is the zero-record cleanup, NOT the dup-guard self-heal | the Round-13 section below |

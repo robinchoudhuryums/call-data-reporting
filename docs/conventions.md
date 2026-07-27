@@ -464,8 +464,8 @@ Each report file uses its own versioned cache key prefix. Bump the
 version any time the response shape or aggregation rules change so
 stale caches invalidate on deploy.
 
-CLAUDE.md INV-30 is the canonical current-version list. This table
-mirrors it; if the two ever diverge, INV-30 wins.
+INV-30 (`docs/invariants.md`) is the canonical current-version list. This
+table mirrors it; if the two ever diverge, INV-30 wins.
 
 | Source file | Cache prefix | Current version |
 |---|---|---|

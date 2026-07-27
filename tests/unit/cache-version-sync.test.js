@@ -68,7 +68,19 @@ SPECS.forEach(function (s) {
 
 // Files whose prefix-qualified mentions must agree with the code.
 const GS_FILES = fs.readdirSync(DASH).filter(function (f) { return /\.gs$/.test(f); });
-const DOC_FILES = ['CLAUDE.md', 'docs/known-issues.md', 'docs/conventions.md', 'docs/architecture.md'];
+// EXPLICIT list, not a docs/*.md glob, and that is deliberate: docs/fix-history.md
+// and the design specs are ARCHIVES -- they legitimately name past versions
+// ("insights:v18 -> v19", "missed:v14 at the time") and a glob would fail on
+// them. Only CURRENT-TRUTH docs belong here.
+//
+// F8 note: docs/invariants.md carries INV-30 -- the cache-version table itself,
+// and the single densest source of `prefix:vN` claims in the repo. It was inside
+// CLAUDE.md until the F8 split, so leaving it off this list would have silently
+// gutted this guard's coverage the day the split landed. Any future section that
+// moves OUT of CLAUDE.md and states a current cache version must be added here.
+const DOC_FILES = ['CLAUDE.md', 'docs/invariants.md', 'docs/operator-state.md',
+  'docs/client-ui-conventions.md', 'docs/regression-scenarios.md',
+  'docs/known-issues.md', 'docs/conventions.md', 'docs/architecture.md'];
 
 test('cache-version sync: code defines a version for every tracked prefix', function () {
   SPECS.forEach(function (s) {

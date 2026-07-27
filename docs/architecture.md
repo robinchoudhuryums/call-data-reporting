@@ -145,7 +145,7 @@ whose `calleeName`, paren-stripped, matches exactly one roster entry
 is rewritten to that roster name before per-agent aggregation.
 
 It's documented in `loadRosterCanonicalNames_` and called out as
-INV-24 in `CLAUDE.md`. If the roster sheet's layout ever changes
+INV-24 (`docs/invariants.md`; CLAUDE.md carries the index line). If the roster sheet's layout ever changes
 (column F start, name-comma-extensions cell format), update
 `loadRosterCanonicalNames_` in the pipeline at the same time as
 `Data.gs`'s `parseRosterCell_` in the dashboard.
@@ -157,7 +157,7 @@ Each active row -- `Old Name | Canonical Name | Active=TRUE` --
 becomes a higher-priority lookup in the canonicalization map (alias
 > roster-exact > paren-strip). The read is best-effort: missing or
 empty sheet leaves the build's behavior byte-identical to
-pre-OrphanFix. See INV-46 in `CLAUDE.md` for the full contract.
+pre-OrphanFix. See INV-46 in `docs/invariants.md` for the full contract.
 
 ## QCD: dept ↔ queue coupling lives in the dashboard
 
@@ -185,7 +185,7 @@ about which dashboard dept owns which queue. Two consequences:
    doesn't auto-discover dept-name-like values in col D because
    they aren't there to begin with.
 
-See INV-50 / INV-51 in `CLAUDE.md` for the full contract;
+See INV-50 / INV-51 in `docs/invariants.md` for the full contract;
 `known-issues.md` → "QCD Report engine" covers the operator
 onboarding flow.
 
@@ -238,8 +238,8 @@ callables, which have the documented carve-out. Helpers that touch
 spreadsheet state end in `_`. Alerts, Digest, and Orphan Fix
 enforce admin role checks at the server boundary (INV-32).
 
-Cache prefix versions below are reference-only; CLAUDE.md INV-30 is
-canonical and reflects current code.
+Cache prefix versions below are reference-only; INV-30 (`docs/invariants.md`)
+is canonical and reflects current code.
 
 | Report | File | Public entries | Cache prefix | Admin-only |
 |---|---|---|---|---|
