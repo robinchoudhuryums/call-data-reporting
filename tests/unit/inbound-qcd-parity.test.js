@@ -87,3 +87,66 @@ test('parity core: read-only (no INSERT/UPDATE/DELETE in any statement)', functi
     assert.ok(!/insert|update|delete|drop|alter/i.test(sql), 'vetting tool never writes');
   });
 });
+
+// ---- Batch 5: the NO-entry_queue bucket ------------------------------------
+// The unattributed-queue scan filters `COALESCE(entry_queue,'') <> ''`, so a
+// call whose queue the capture never RECOGNIZED (entry_queue NULL) had no row to
+// report -- the same filter that hides it from the Dept Config discovery panel.
+// Those calls count in the ADMIN company view but attribute to NO dept, so they
+// mechanically contribute to any "company total != sum of depts" gap, which is
+// the shape of the discrepancy this check exists to settle.
+
+test('Batch 5: the check probes calls with NO entry_queue and splits them by stage', function () {
+  // Route each SQL to its own fixture: the run issues an unattributed-queue
+  // scan and (new) a no-entry_queue aggregate.
+  const rows = { unattr: [{ q: 'A_Q_Ghost', n: 7 }],
+                 noq: [{ disposition: 'abandoned', stage: 'ivr', n: 41 },
+                       { disposition: 'abandoned', stage: 'direct', n: 6 },
+                       { disposition: 'answered', stage: '(n/a)', n: 12 }] };
+  const sqls = [];
+  const conn = {
+    prepareStatement: function (sql) {
+      sqls.push(sql);
+      const noQueueProbe = /COALESCE\(entry_queue, ''\) = ''/.test(sql);
+      const unattrProbe = /COALESCE\(entry_queue, ''\) <> ''/.test(sql);
+      let done = false;
+      return {
+        setString: function () {}, setInt: function () {},
+        executeQuery: function () {
+          return {
+            next: function () { if (done) return false; done = true; return true; },
+            getString: function () {
+              if (noQueueProbe) return JSON.stringify(rows.noq);
+              if (unattrProbe) return JSON.stringify(rows.unattr);
+              return JSON.stringify([]);           // the per-dept day joins
+            },
+            close: function () {},
+          };
+        },
+        close: function () {},
+      };
+    },
+    close: function () {},
+  };
+  installStubs([]);
+  // Util.gs isn't loaded in this suite (it loads Config + InboundReport), so the
+  // admin gate needs a stub -- the gate itself is pinned in escalations/auth tests.
+  h.ctx.assertAdmin_ = function () {};
+  h.ctx.getDashboardNeonConn_ = function () { return conn; };
+  h.ctx.getAllDepartments_ = function () { return ['CSR']; };
+  h.state.userEmail = 'admin@x.com';
+  h.state.props.ADMIN_EMAILS = 'admin@x.com';
+
+  const out = h.call('runInboundQcdParityCheck');
+  assert.equal(out.available, true);
+  assert.ok(Array.isArray(out.noEntryQueue), 'the new bucket is returned');
+  assert.equal(out.noEntryQueue.length, 3, 'one entry per (disposition, stage)');
+  const ivr = out.noEntryQueue.filter(function (r) {
+    return r.disposition === 'abandoned' && r.stage === 'ivr';
+  })[0];
+  assert.ok(ivr, 'the abandoned+ivr slice -- where an unrecognized queue would hide');
+  assert.equal(ivr.calls, 41);
+  assert.ok(sqls.some(function (s) { return /COALESCE\(entry_queue, ''\) = ''/.test(s); }),
+    'a probe for NULL/empty entry_queue actually ran');
+  assert.ok(out.unattributed.length >= 0, 'the existing unattributed scan still runs');
+});

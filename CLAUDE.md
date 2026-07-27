@@ -2822,7 +2822,20 @@ items for anything it flags or doesn't cover.)
     (NeonRead.gs, editor-run via the `runDqeParityCheck` wrapper -- the Run
     picker hides `_`-suffixed functions) shows parity-clean over a
     representative range AND `dqe_history` is fully backfilled** -- otherwise the read-back serves data that lags the
-    sheet. Reversible with no redeploy (set back to `sheet`); cut-over
+    sheet.
+    **Batch 6 -- the gate contract:** both read-source gates now RETURN a
+    structured verdict (`{clean, compared, missingInNeon, extraInNeon,
+    mismatches, error}`) instead of only logging, and **`clean` can never be
+    true unless rows were actually COMPARED**: a range with zero sheet rows
+    logs `PARITY INCONCLUSIVE` and returns `clean:false` with an `error`. That
+    hole was REAL on the QCD gate -- `neonFetchQcdGrid_` returns a non-null
+    EMPTY grid, so both sides could be empty, all three mismatch counters read
+    0, and it printed `CLEAN ... gate PASSED` on no evidence. The in-source
+    default range is a FIXED WEEK that ages out of the data, so that was the
+    likely first experience of anyone running a gate without setting its
+    `*_PARITY_FROM/_TO` properties. **Never flip a read-source flag on a result
+    carrying `error` or `compared: 0`** -- the CORE-5/F-5 rule the config gates
+    already followed. Pinned by qcd-report.test.js + dal-cutover.test.js. Reversible with no redeploy (set back to `sheet`); cut-over
     readers also fall back to the sheet on any Neon error. After a bulk
     rebuild (which defers the DQE->Neon mirror via `skipNeon`), run
     `backfillDQEHistoryUpsert()` (cdr-report) to populate/refresh
@@ -3065,7 +3078,10 @@ items for anything it flags or doesn't cover.)
     order-independent, unlike a sheet tail-scan). Reversible with no redeploy
     (set back to `sheet`); every path falls back to the sheet on any Neon
     error/unreachable. Independent of `DQE_READ_SOURCE` (QCD is a separate
-    mirror). **Only flip to `neon` after `runQcdParityCheck` (editor-run
+    mirror). SET `QCD_PARITY_FROM`/`QCD_PARITY_TO` before running the gate --
+    the in-source default is a fixed week that ages out, and an empty range is
+    now reported as INCONCLUSIVE rather than clean (see #19's gate contract).
+    **Only flip to `neon` after `runQcdParityCheck` (editor-run
     wrapper for `compareQcdSources_`, QCDReport.gs -- reads the optional
     `QCD_PARITY_FROM`/`QCD_PARITY_TO` Script Properties for its range) reports
     parity-CLEAN over a representative range AND `qcd_history` is fully

@@ -1071,7 +1071,60 @@ function runInboundQcdParityCheck() {
     } else {
       Logger.log('All raw entry-queues in the window attribute to a dept. ✓');
     }
-    return { available: true, from: fromIso, to: toIso, depts: results, unattributed: uq };
+
+    // Batch 5: the NO-ENTRY-QUEUE bucket -- the population this tool was
+    // structurally BLIND to. The unattributed scan above filters
+    // `COALESCE(entry_queue,'') <> ''`, so a call whose queue name the capture
+    // never RECOGNIZED (entry_queue NULL) had no row to report; the same filter
+    // hides it from the Dept Config "Discovered inbound queues" panel. Those
+    // calls count in the ADMIN company view but attribute to NO dept, so they
+    // are a mechanical contributor to any "company total ≠ sum of depts" gap --
+    // which is the shape of the parked QCD-vs-inbound discrepancy this whole
+    // check exists to settle. Split by abandon_stage because that is the
+    // discriminator (Operator State #38): 'direct' = a DID call with no queue
+    // (legitimate), 'ivr' = either a genuine auto-attendant give-up
+    // (legitimate) OR an unrecognized queue (the F1 bug class).
+    var noQueue = [];
+    try {
+      var nqStmt = conn.prepareStatement(
+        "SELECT COALESCE(json_agg(t ORDER BY t.n DESC), '[]')::text AS j FROM ("
+        + "SELECT COALESCE(disposition,'(null)') AS disposition, "
+        + "COALESCE(abandon_stage,'(n/a)') AS stage, count(*) AS n "
+        + 'FROM inbound_calls '
+        + "WHERE call_date BETWEEN ?::date AND ?::date AND COALESCE(entry_queue, '') = '' "
+        + 'GROUP BY 1, 2) t');
+      nqStmt.setString(1, fromIso);
+      nqStmt.setString(2, toIso);
+      var nqRs = nqStmt.executeQuery();
+      var nqJson = nqRs.next() ? nqRs.getString('j') : '[]';
+      nqRs.close(); nqStmt.close();
+      JSON.parse(nqJson || '[]').forEach(function (r) {
+        noQueue.push({ disposition: String(r.disposition), stage: String(r.stage),
+                       calls: Number(r.n) || 0 });
+      });
+    } catch (e) {
+      Logger.log('no-entry_queue probe failed (best-effort): %s', (e && e.message) || e);
+    }
+    if (noQueue.length) {
+      var nqTotal = noQueue.reduce(function (a, r) { return a + r.calls; }, 0);
+      Logger.log('NO entry_queue (attributable to NO dept; counts in the company view only) -- '
+        + nqTotal + ' call(s):');
+      noQueue.forEach(function (r) {
+        Logger.log('   disposition=%s stage=%s -> %s', r.disposition, r.stage, r.calls);
+      });
+      Logger.log('   READ THIS CAREFULLY: an abandoned+ivr count here is NOT automatically a '
+        + 'bug -- it unions genuine auto-attendant give-ups with unrecognized-queue misses. '
+        + 'Run the Operator State #38 journey leg-name histogram to split them, and check the '
+        + 'names against DQE_EXCLUDED_AGENTS (cdr-import/buildDQEHistoricalData.js). Since '
+        + 'F1b, brand-prefixed queues (UDC_/UUC_A_Q_*) DO attribute, so a re-import of dates '
+        + 'inside the ~14-day Call_Legs window shrinks this bucket -- pre-F1b rows keep '
+        + 'entry_queue NULL until re-imported.');
+    } else {
+      Logger.log('Every inbound call in the window carries an entry_queue. ✓');
+    }
+
+    return { available: true, from: fromIso, to: toIso, depts: results,
+             unattributed: uq, noEntryQueue: noQueue };
   } finally {
     try { conn.close(); } catch (ce) {}
   }

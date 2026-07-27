@@ -389,6 +389,16 @@ function compareDqeSources_() {
   // F2: include the Missed-Calls detail columns (19 slots + abandoned IDs/times)
   // in the parity diff so a CLEAN result also certifies the Missed-Calls Neon
   // reader -- previously these were uncovered and required a manual spot-check.
+  // Batch 6: STRUCTURED verdict on every exit (this returned `undefined`), so a
+  // caller -- or a scripted flip-readiness check -- can read the result instead
+  // of parsing log prose. Mirrors the CORE-5/F-5 contract the CONFIG gates use.
+  var verdict = function (o) {
+    var v = { from: COMPARE_FROM, to: COMPARE_TO, clean: false, compared: 0,
+              missingInNeon: 0, extraInNeon: 0, mismatches: 0, error: '' };
+    for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) v[k] = o[k];
+    return v;
+  };
+
   var detailOpts = { includeMissedDetail: true };
   var sheetRows = sheetFetchDqeRows_(COMPARE_FROM, COMPARE_TO, detailOpts);
   var neonRows  = neonFetchDqeRows_(COMPARE_FROM, COMPARE_TO, detailOpts);
@@ -397,7 +407,7 @@ function compareDqeSources_() {
     Logger.log('No Neon rows -- check NEON_* Script Properties + the '
              + 'script.external_request scope on THIS project, or that '
              + 'dqe_history has data in range.');
-    return;
+    return verdict({ error: 'no Neon rows in range (unreachable / unconfigured / empty)' });
   }
 
   var keyOf = function (r) { return r.dateIso + '|' + r.agent; };
@@ -435,15 +445,35 @@ function compareDqeSources_() {
   // EXTRA-in-Neon rows count as NOT clean: with reads on neon they are the
   // phantom-row hazard (split agent / double-counted totals) IMP-5 exists
   // to prevent -- the old verdict ignored them entirely.
+  // Batch 6: an EMPTY comparison must never read as a pass. Today the
+  // extraInNeon check happens to catch the sheet-empty case (every Neon row is
+  // "extra"), but that is incidental -- it would silently become a false CLEAN
+  // if the verdict ever stopped counting extras, which is exactly what the QCD
+  // gate did. Make the requirement explicit rather than emergent.
+  var compared = Object.keys(sMap).length;
+  if (!compared) {
+    Logger.log('=== PARITY INCONCLUSIVE -- ZERO sheet rows in %s..%s, so nothing was '
+      + 'compared. NOT a pass. Point DQE_PARITY_FROM / DQE_PARITY_TO at a range the '
+      + 'DQE sheet actually covers (the in-source default is a fixed week and ages '
+      + 'out), then re-run. Do NOT flip DQE_READ_SOURCE on this. ===',
+      COMPARE_FROM, COMPARE_TO);
+    return verdict({ error: 'no sheet rows in range -- nothing compared',
+                     extraInNeon: extraInNeon.length });
+  }
+
   var clean = (missingInNeon.length === 0 && extraInNeon.length === 0 && mismatches.length === 0);
   Logger.log('=== PARITY %s ===', clean
-    ? 'CLEAN -- dqe_history matches the sheet for this range; read-back gate PASSED'
+    ? 'CLEAN -- dqe_history matches the sheet for this range (' + compared
+      + ' rows compared); read-back gate PASSED'
     : 'MISMATCH -- resolve before relying on the read-back. VALUE mismatches or '
       + 'MISSING-in-Neon rows -> run backfillDQEHistoryUpsert() (cdr-report editor; '
       + 'DO UPDATE re-mirror of the sheet, F-51-sanitized, resumable) -- NOT '
       + 'backfillDQEHistory(), whose DO NOTHING skips every existing row. '
       + 'EXTRA-in-Neon phantoms -> force re-import the date (authoritative '
       + 'replace, IMP-5) or delete those rows in SQL, then re-run this check.');
+  return verdict({ clean: clean, compared: compared,
+                   missingInNeon: missingInNeon.length, extraInNeon: extraInNeon.length,
+                   mismatches: mismatches.length });
 }
 
 /**

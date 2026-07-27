@@ -1156,14 +1156,29 @@ function compareQcdSources_() {
   Logger.log('QCD_READ_SOURCE = %s (neon = the QCD readers are LIVE on qcd_history; sheet = default)',
              getQcdReadSource_());
 
+  // Batch 6 (the CORE-5/F-5 rule, applied to the READ-SOURCE gates): every exit
+  // returns a STRUCTURED verdict, and `clean` is never true unless real rows
+  // were actually compared. These gates return `undefined` on their early exits
+  // before, so a caller (or a scripted flip-readiness check) had nothing to
+  // read, and the operator had only log prose to judge by.
+  var verdict = function (o) {
+    var v = { from: COMPARE_FROM, to: COMPARE_TO, clean: false, compared: 0,
+              missingInNeon: 0, extraInNeon: 0, mismatches: 0, roundingOnly: 0, error: '' };
+    for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) v[k] = o[k];
+    return v;
+  };
+
   var sheetGrid = readQcdSheetData_();
-  if (sheetGrid.missing) { Logger.log('QCD Historical Data sheet missing -- nothing to compare.'); return; }
+  if (sheetGrid.missing) {
+    Logger.log('QCD Historical Data sheet missing -- nothing to compare.');
+    return verdict({ error: 'QCD Historical Data sheet missing' });
+  }
   var neonGrid = neonFetchQcdGrid_(COMPARE_FROM, COMPARE_TO);
   if (!neonGrid) {
     Logger.log('No Neon grid -- check NEON_* Script Properties + the '
              + 'script.external_request scope on THIS project, or that '
              + 'qcd_history has data in range.');
-    return;
+    return verdict({ error: 'Neon grid unavailable (unreachable / unconfigured)' });
   }
 
   // Normalize either grid to comparable rows keyed by date|queue|source over
@@ -1237,12 +1252,36 @@ function compareQcdSources_() {
       roundingOnly);
   }
 
+  // Batch 6 -- the FALSE-CLEAN hole this gate had: with ZERO comparable rows on
+  // both sides (the in-source default range is a hardcoded week that ages out of
+  // the data, a typo'd/future QCD_PARITY_* property, or a trimmed sheet), all
+  // three counters were 0 and the gate printed "CLEAN ... gate PASSED" having
+  // compared NOTHING -- the strongest possible green light for a
+  // QCD_READ_SOURCE=neon flip, on no evidence. `neonFetchQcdGrid_` returns a
+  // non-null EMPTY grid for an empty range, so the `!neonGrid` guard above does
+  // not cover it. An empty comparison is now an explicit NOT-clean error, the
+  // same rule CORE-5/F-5 established for the three CONFIG compare gates.
+  var compared = Object.keys(sMap).length;
+  if (!compared) {
+    Logger.log('=== QCD PARITY INCONCLUSIVE -- ZERO sheet rows in %s..%s, so nothing was '
+      + 'compared. This is NOT a pass. Set QCD_PARITY_FROM / QCD_PARITY_TO to a '
+      + 'range the QCD sheet actually covers (the in-source default is a fixed '
+      + 'week and ages out), then re-run. Do NOT flip QCD_READ_SOURCE on this. ===',
+      COMPARE_FROM, COMPARE_TO);
+    return verdict({ error: 'no sheet rows in range -- nothing compared',
+                     extraInNeon: extraInNeon.length });
+  }
+
   var clean = (missingInNeon.length === 0 && extraInNeon.length === 0 && mismatches.length === 0);
   Logger.log('=== QCD PARITY %s ===', clean
-    ? 'CLEAN -- qcd_history matches the sheet for this range; the QCD read-back gate PASSED'
+    ? 'CLEAN -- qcd_history matches the sheet for this range (' + compared
+      + ' rows compared); the QCD read-back gate PASSED'
     : 'MISMATCH -- resolve before setting QCD_READ_SOURCE=neon. Re-run the daily import '
       + 'for the affected date(s) (writeQCDRowsToNeon is authoritative per-date), or delete '
       + 'EXTRA-in-Neon phantom rows in SQL, then re-run this check.');
+  return verdict({ clean: clean, compared: compared,
+                   missingInNeon: missingInNeon.length, extraInNeon: extraInNeon.length,
+                   mismatches: mismatches.length, roundingOnly: roundingOnly });
 }
 
 /**
