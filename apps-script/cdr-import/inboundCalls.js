@@ -84,9 +84,25 @@ function icIsTrue_(s) { return String(s == null ? '' : s).trim().toUpperCase() =
 // pattern-only, which is exactly the pre-F1 behavior the existing tests pin.
 var IC_KNOWN_QUEUE_NAMES_ = null;    // { lowercased queue name: true } | null
 
+// F1b (measured, not hypothetical): the `^A_Q_` anchor missed every
+// BRAND-PREFIXED queue. `UDC_A_Q_Main` (Universal Dialysis Center) and
+// `UUC_A_Q_Main` (Universal Urgent Care) are both first-class queues -- the DQE
+// pipeline has listed them in DQE_EXCLUDED_AGENTS for some time, and IMP-8's
+// comment discusses UDC_A_Q_Main by name -- but the anchor meant inbound
+// capture never recognized them: entry_queue=NULL, attributable to no dept,
+// invisible in every dept's Inbound report AND in the entry_queue-based
+// discovery panel. A journey-leg histogram over abandoned NULL-entry_queue
+// calls found UDC_A_Q_Main on 38 abandons in one ~8-week window, still
+// accruing. Config alone could not have fixed this: an admin can only add an
+// alias for a queue they know is missing, and nothing surfaced it.
+//
+// So the A_Q_ arm now matches at start OR after an underscore -- `UDC_A_Q_`,
+// `UUC_A_Q_`, and any future brand prefix. The 'Backup CSR' arm stays EXACT
+// (deliberately NOT the DQE pipeline's boundary pattern, which would make
+// "Jane Backup CSR" a queue -- pinned false by the IMP-1 tests).
 function icIsQueueName_(name) {
   var t = String(name == null ? '' : name).trim();
-  if (/^A_Q_/i.test(t) || /^backup csr$/i.test(t)) return true;
+  if (/(?:^|_)A_Q_/i.test(t) || /^backup csr$/i.test(t)) return true;
   return !!(t && IC_KNOWN_QUEUE_NAMES_ && IC_KNOWN_QUEUE_NAMES_[t.toLowerCase()]);
 }
 

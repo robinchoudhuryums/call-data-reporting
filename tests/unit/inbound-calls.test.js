@@ -516,6 +516,42 @@ test('R8-N: no Dept Config reachable -> capture stays raw (best-effort no-op)', 
 // entry_queue=NULL -> attributable to NO dept -> invisible in every dept's
 // Inbound report AND in the two diagnostics that scan entry_queue.
 
+test('F1b: BRAND-PREFIXED queues are recognized without any config (UDC_/UUC_A_Q_*)', function () {
+  h.call('icResetConfigMemos_');   // prove it needs no Dept Config at all
+  // Both are first-class queues per the DQE pipeline's DQE_EXCLUDED_AGENTS;
+  // the old `^A_Q_` anchor made them invisible to the inbound capture
+  // (UDC_A_Q_Main measured at 38 abandoned calls in one ~8-week window).
+  assert.equal(h.call('icIsQueueName_', 'UDC_A_Q_Main'), true);
+  assert.equal(h.call('icIsQueueName_', 'UUC_A_Q_Main'), true);
+  assert.equal(h.call('icIsQueueName_', 'udc_a_q_main'), true, 'case-insensitive');
+  assert.equal(h.call('icIsQueueName_', 'A_Q_CustomerSuccess'), true, 'unprefixed still matches');
+  // The 'Backup CSR' arm must stay EXACT -- widening it the way the DQE
+  // pipeline's boundary pattern does would make a person a queue (IMP-1 pins).
+  assert.equal(h.call('icIsQueueName_', 'Jane Backup CSR'), false);
+  assert.equal(h.call('icIsQueueName_', 'Backup CSR Team'), false);
+  // A brand IVR node is NOT a queue -- it carries no A_Q_ token.
+  assert.equal(h.call('icIsQueueName_', 'Universal Dialysis Center'), false);
+  assert.equal(h.call('icIsQueueName_', 'PAP Advt'), false);
+});
+
+test('F1b: a UDC-prefixed queue abandon is a QUEUE abandon with entry_queue set', function () {
+  h.call('icResetConfigMemos_');
+  const recs = build([
+    leg({ callId: '990100', legId: 1, start: '07/23/2026 10:00:00', stop: '07/23/2026 10:00:12',
+          direction: 'Incoming', caller: '12145551111', callee: '999',
+          calleeName: 'Universal Dialysis Center', dialIn: '18668646332' }),
+    leg({ callId: '990100', legId: 2, start: '07/23/2026 10:00:12', stop: '07/23/2026 10:02:40',
+          direction: 'Incoming', caller: '12145551111', callee: '150',
+          calleeName: 'UDC_A_Q_Main', dialIn: '18668646332',
+          missed: 'Missed', abandoned: 'Abandoned' }),
+  ]);
+  const r = rec(recs, '990100');
+  assert.equal(r.disposition, 'abandoned');
+  assert.equal(r.abandonStage, 'queue', 'was mis-filed as ivr before F1b');
+  assert.equal(r.entryQueue, 'UDC_A_Q_Main', 'attributable now (was NULL)');
+  assert.equal(r.numQueues, 1);
+});
+
 test('F1: a Dept-Config queue name outside the A_Q_/Backup-CSR patterns is recognized', function () {
   h.call('icResetConfigMemos_');
   assert.equal(h.call('icIsQueueName_', 'Sales Overflow'), false,
