@@ -1244,3 +1244,55 @@ function previewInternalTransferChains(dateIso) {
   Logger.log('  (Paste this whole log back: the "<- rung by" lines show the real link structure so the '
     + 'accurate join for these can be designed against the same 0-ambiguity bar.)');
 }
+
+// ── Date-selectable wrappers for the transfer-path diagnostics ──────────────
+//
+// The Apps Script Run picker can't pass arguments, so the two preview
+// diagnostics were latest-sheet-only unless invoked from code. These wrappers
+// resolve a target date three ways, in order:
+//   1. A UI PROMPT (when run from the spreadsheet's CDR Tools menu — the
+//      normal path): type a YYYY-MM-DD, or leave blank for the latest sheet.
+//   2. The TRANSFER_PREVIEW_DATE Script Property (editor runs, where getUi()
+//      has no context — the DQE_PARITY_FROM pattern; clear it to fall back).
+//   3. The latest Call_Legs_* sheet (the diagnostics' own default).
+// Output still lands in the execution log / Executions panel either way.
+
+function icPreviewDateArg_() {
+  var raw = '';
+  try {
+    var ui = SpreadsheetApp.getUi();
+    var resp = ui.prompt('Preview date',
+      'Call_Legs date to analyze (YYYY-MM-DD).\nLeave blank for the most recent sheet.',
+      ui.ButtonSet.OK_CANCEL);
+    if (resp.getSelectedButton() !== ui.Button.OK) return { cancelled: true };
+    raw = String(resp.getResponseText() || '').trim();
+  } catch (e) {
+    // No UI context (editor run) -> Script Property fallback.
+    try {
+      raw = String(PropertiesService.getScriptProperties()
+        .getProperty('TRANSFER_PREVIEW_DATE') || '').trim();
+      if (raw) Logger.log('Using TRANSFER_PREVIEW_DATE=' + raw
+        + ' (no UI context; clear the Script Property to use the latest sheet).');
+    } catch (pe) { raw = ''; }
+  }
+  if (!raw) return { dateIso: null };   // latest sheet
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    Logger.log('Invalid date "' + raw + '" — expected YYYY-MM-DD. Aborting.');
+    return { cancelled: true };
+  }
+  return { dateIso: raw };
+}
+
+/** Menu/editor wrapper: previewInternalTransferChains for a chosen date. */
+function previewInternalTransferChainsForDate() {
+  var arg = icPreviewDateArg_();
+  if (arg.cancelled) return;
+  previewInternalTransferChains(arg.dateIso);
+}
+
+/** Menu/editor wrapper: previewInternalTransferPaths for a chosen date. */
+function previewInternalTransferPathsForDate() {
+  var arg = icPreviewDateArg_();
+  if (arg.cancelled) return;
+  previewInternalTransferPaths(arg.dateIso);
+}

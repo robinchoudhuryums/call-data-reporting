@@ -60,6 +60,13 @@ function onOpen() {
     .addItem("Uninstall Neon Mirror Trigger", "uninstallNeonMirrorTrigger")
     .addItem("Run Neon Mirror Now",           "runNeonMirrorNow")
 
+    .addSeparator()
+
+    // Read-only transfer-path diagnostics (inboundCalls.js). Each prompts for
+    // a Call_Legs date (blank = latest sheet); results in the execution log.
+    .addItem("Preview transfer chains (pick date)…", "previewInternalTransferChainsForDate")
+    .addItem("Preview transfer paths (pick date)…",  "previewInternalTransferPathsForDate")
+
     // .addSeparator()
     // .addItem("Import Bulk CSVs from Drive", "importBulkCSVsFromDrive") // pending Drive permissions
 

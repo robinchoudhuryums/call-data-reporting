@@ -497,7 +497,10 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   diagnostics scoped the fix and its ceiling: `previewInternalTransferPaths`
   (unique/ambiguous/unresolved tally + an unresolved breakdown --
   ironclad-Talk=0-recoverable / time-window near-miss / chained-uncaptured)
-  and `previewInternalTransferChains` (PHI-masked deep-dive on the
+  and `previewInternalTransferChains` (both date-selectable via the CDR
+  Tools menu prompts / `*ForDate` wrappers -- editor runs read the
+  `TRANSFER_PREVIEW_DATE` cdr-import Script Property, blank = latest
+  sheet; R11-N4) (PHI-masked deep-dive on the
   chained bucket + a bounded 1-hop trace; since R11-N3 also a 2-HOP
   trace -- when the agent was reached via a queue ring INSIDE an
   internal source group, the same captured-overlap check runs on that
