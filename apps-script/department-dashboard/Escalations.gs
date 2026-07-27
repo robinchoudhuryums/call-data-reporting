@@ -77,6 +77,21 @@ var ESC_STATUS_REJECTED       = 'rejected';
 // the owner. resolveEscalation accepts it (pending OR in_progress can resolve).
 var ESC_STATUS_IN_PROGRESS = 'in_progress';
 
+// F3: the overdue threshold, in CALENDAR DAYS. One definition, one place.
+// The client's escDaysOpen_ (script.html) computes a DATE-ONLY difference and
+// flags `>= ESC_OVERDUE_DAYS`; the two aggregate queries below previously used
+// `occurred_at < now() - interval '3 days'`, a 72-HOUR comparison, so an
+// escalation 71 hours old on its 3rd calendar day was flagged ⚑ on its card but
+// NOT counted by the band tile / nav badge. Both now compare calendar dates
+// (`CURRENT_DATE - occurred_at::date >= N`) so the count always matches the
+// flags. NULL occurred_at yields NULL -> not counted, matching the client
+// (escDaysOpen_ returns null -> no badge). Residual: CURRENT_DATE is the DB's
+// date and the client's is the browser's, so they can differ for a few hours
+// around midnight across timezones -- bounded and self-correcting, versus the
+// old always-on 1-day skew.
+var ESC_OVERDUE_DAYS = 3;
+var ESC_OVERDUE_SQL_ = "(CURRENT_DATE - occurred_at::date) >= " + ESC_OVERDUE_DAYS;
+
 // ── Phase 2: the external-app INSERT contract ─────────────────────────────
 //
 // The team-tools app submits escalations by INSERTing DIRECTLY into the
@@ -168,7 +183,8 @@ function getEscalationsBadge() {
     var sql = 'SELECT '
       + "count(*) FILTER (WHERE status IN ('pending','in_progress')) AS n_open, "
       + "count(*) FILTER (WHERE status = 'pending_review') AS n_review, "
-      + "count(*) FILTER (WHERE status IN ('pending','in_progress') AND occurred_at < now() - interval '3 days') AS n_overdue "
+      + "count(*) FILTER (WHERE status IN ('pending','in_progress') AND "
+        + ESC_OVERDUE_SQL_ + ') AS n_overdue '
       + 'FROM escalations' + clause;
     var stmt = conn.prepareStatement(sql);
     for (var i = 0; i < params.length; i++) stmt.setString(i + 1, params[i]);
@@ -258,10 +274,9 @@ function getEscalations(req) {
     var counts = { pending: 0, in_progress: 0, pending_review: 0, resolved: 0, rejected: 0 };
     var pendingReview = 0, resolvedMTD = 0, oldestOpen = null, overdue = 0;
     try {
-      // ESC_OVERDUE_DAYS(=3) mirrors the client's overdue threshold; calendar
-      // days here (plain SQL interval) so the band's Overdue count and the
-      // per-card age badge use the SAME definition (client uses calendar days
-      // too -- see escDaysOpen_).
+      // F3: ESC_OVERDUE_SQL_ is the SINGLE definition of "overdue" (calendar
+      // days, matching the client's escDaysOpen_) -- this used to be an inline
+      // 72-hour interval that disagreed with the ⚑ badges it was counting.
       var asql = 'SELECT '
         + "count(*) FILTER (WHERE status = 'pending') AS n_pending, "
         + "count(*) FILTER (WHERE status = 'in_progress') AS n_inprog, "
@@ -269,7 +284,8 @@ function getEscalations(req) {
         + "count(*) FILTER (WHERE status = 'resolved') AS n_resolved, "
         + "count(*) FILTER (WHERE status = 'rejected') AS n_rejected, "
         + "count(*) FILTER (WHERE status = 'resolved' AND resolved_at >= date_trunc('month', now())) AS n_resolved_mtd, "
-        + "count(*) FILTER (WHERE status IN ('pending','in_progress') AND occurred_at < now() - interval '3 days') AS n_overdue, "
+        + "count(*) FILTER (WHERE status IN ('pending','in_progress') AND "
+          + ESC_OVERDUE_SQL_ + ') AS n_overdue, '
         + "min(occurred_at) FILTER (WHERE status IN ('pending','in_progress'))::text AS oldest_open "
         + 'FROM escalations' + (dw.clause ? (' WHERE ' + dw.clause) : '');
       var astmt = conn.prepareStatement(asql);

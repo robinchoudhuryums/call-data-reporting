@@ -181,3 +181,39 @@ test('writer: Neon unreachable -> clean skip status (never throws into the impor
   assert.ok(res.skipped > 0);
   assert.ok(!res.error);
 });
+
+// ---- F2: the zero-record authoritative cleanup ------------------------------
+// outbound_calls has no sheet primary either, so a date whose legitimate
+// outbound count is zero must still be able to shed phantom rows from an
+// earlier import. Gated on a NON-EMPTY source (an unreadable grid must never
+// trigger a delete).
+
+// Inbound-shaped legs: real source rows that produce no OUTBOUND record
+// (the group carries an Incoming leg, so gate 1 rejects it).
+const F2_INBOUND_ONLY = [
+  leg({ callId: '9100', legId: 1, start: '07/22/2026 09:00:00', stop: '07/22/2026 09:00:20',
+        direction: 'Incoming', caller: '12145550000', callee: '103',
+        calleeName: 'A_Q_CSR', answered: 'Answered', talk: '0:00:15' }),
+];
+
+test('F2: authoritative + source rows + zero outbound records -> DELETEs the expected date', function () {
+  const cap = {};
+  h.ctx.getReachableNeonConn_ = function () { return fakeConn(cap); };
+  const res = h.call('writeOutboundCallsToNeon', F2_INBOUND_ONLY,
+    { authoritative: true, expectedDateIso: '2026-07-22' });
+  const del = (cap.executed || []).filter(s => /DELETE FROM outbound_calls/.test(s));
+  assert.equal(del.length, 1, 'the stale date was cleared');
+  assert.match(del[0], /call_date = '2026-07-22'::date/, 'scoped to the EXPECTED date only');
+  assert.equal(res.inserted, 0);
+  assert.ok(!(cap.executed || []).some(s => /INSERT INTO outbound_calls/.test(s)));
+});
+
+test('F2: an EMPTY source never deletes outbound rows', function () {
+  const cap = {};
+  h.ctx.getReachableNeonConn_ = function () { return fakeConn(cap); };
+  const res = h.call('writeOutboundCallsToNeon', [],
+    { authoritative: true, expectedDateIso: '2026-07-22' });
+  assert.equal(res.inserted, 0);
+  assert.equal(res.cleared, undefined, 'no cleanup attempted');
+  assert.equal((cap.executed || []).length, 0, 'no statement ran at all');
+});

@@ -478,12 +478,12 @@ function installDeptConfigN(aliasCell, active) {
 
 test('R8-N: icQueueCanonicalMap_ parses raw=canonical pairs; plain aliases and inactive rows do not map', function () {
   installDeptConfigN('A_Q_CSR=A_Q_CustomerSuccess, Backup CSR');
-  h.ctx.IC_QUEUE_CANON_MEMO_ = null;
+  h.call('icResetConfigMemos_');   // F1: one reset covers every Dept-Config memo
   const map = h.call('icQueueCanonicalMap_');
   assert.equal(map['a_q_csr'], 'A_Q_CustomerSuccess', 'pair maps (case-insensitive key)');
   assert.equal(map['backup csr'], undefined, 'plain alias stays attribution-only');
   installDeptConfigN('A_Q_CSR=A_Q_CustomerSuccess', /*active=*/false);
-  h.ctx.IC_QUEUE_CANON_MEMO_ = null;
+  h.call('icResetConfigMemos_');   // F1: one reset covers every Dept-Config memo
   assert.deepEqual(Object.keys(h.call('icQueueCanonicalMap_')), [], 'inactive row ignored');
   delete h.ctx.getTargetSsId_;
 });
@@ -508,4 +508,103 @@ test('R8-N: no Dept Config reachable -> capture stays raw (best-effort no-op)', 
   h.call('writeInboundCallsToNeon', L2_ROWS);
   const ins = cap.executed.filter(s => /INSERT INTO inbound_calls/.test(s))[0];
   assert.match(ins, /'A_Q_Intake'/, 'raw name preserved when no map is available');
+});
+
+// ---- F1: queue-name recognition is fed by Dept Config, not just the regex ----
+// The hardcoded /^A_Q_/ + 'Backup CSR' patterns already cost one silent,
+// permanent mis-capture (IMP-1). A queue named outside them used to yield
+// entry_queue=NULL -> attributable to NO dept -> invisible in every dept's
+// Inbound report AND in the two diagnostics that scan entry_queue.
+
+test('F1: a Dept-Config queue name outside the A_Q_/Backup-CSR patterns is recognized', function () {
+  h.call('icResetConfigMemos_');
+  assert.equal(h.call('icIsQueueName_', 'Sales Overflow'), false,
+    'not a queue while no config is loaded (pre-F1 behavior)');
+
+  installDeptConfigN('Sales Overflow');          // a RAW inbound alias
+  h.call('icResetConfigMemos_');
+  h.call('icLoadConfiguredQueueNames_');
+  assert.equal(h.call('icIsQueueName_', 'Sales Overflow'), true, 'alias-listed name is a queue');
+  assert.equal(h.call('icIsQueueName_', 'sales overflow'), true, 'match is case-insensitive');
+  assert.equal(h.call('icIsQueueName_', 'A_Q_CustomerSuccess'), true,
+    'the QCD Queues column feeds recognition too');
+  assert.equal(h.call('icIsQueueName_', 'Sales'), false, 'unrelated names are still not queues');
+  assert.equal(h.call('icIsQueueName_', 'A_Q_Anything'), true, 'the regex arm still stands alone');
+  delete h.ctx.getTargetSsId_;
+  h.call('icResetConfigMemos_');
+});
+
+test('F1: the raw side of a raw=canonical pair is recognized; digit-only tokens are not', function () {
+  installDeptConfigN('A_Q_CSR=A_Q_CustomerSuccess, 138');
+  h.call('icResetConfigMemos_');
+  h.call('icLoadConfiguredQueueNames_');
+  assert.equal(h.call('icIsQueueName_', 'A_Q_CSR'), true);
+  assert.equal(h.call('icIsQueueName_', '138'), false,
+    'a digit token is an extension, never a queue name');
+  delete h.ctx.getTargetSsId_;
+  h.call('icResetConfigMemos_');
+});
+
+test('F1: an inactive Dept Config row contributes no queue names', function () {
+  installDeptConfigN('Sales Overflow', /*active=*/false);
+  h.call('icResetConfigMemos_');
+  h.call('icLoadConfiguredQueueNames_');
+  assert.equal(h.call('icIsQueueName_', 'Sales Overflow'), false);
+  delete h.ctx.getTargetSsId_;
+  h.call('icResetConfigMemos_');
+});
+
+// ---- F2: the zero-record authoritative cleanup ------------------------------
+// inbound_calls has no sheet primary, so a date whose legitimate record count
+// is zero could never shed phantom rows from an earlier import: the writer
+// returned before the authoritative DELETE. Gated on a NON-EMPTY source, since
+// an unreadable grid is the one case where deleting would destroy good data.
+
+// Internal-only legs (no Incoming leg): real source rows that yield no
+// INBOUND call record -- the shape of a date whose legitimate count is zero.
+const F2_INTERNAL_ONLY = [
+  leg({ callId: '5001', legId: 1, start: '07/20/2026 09:00:00', stop: '07/20/2026 09:00:30',
+        direction: 'Outgoing', caller: '101', callerName: 'Jane Agent',
+        callee: '102', calleeName: 'Bob Agent', talk: '0:00:25', answered: 'Answered', dept: 'CSR' }),
+];
+
+test('F2: authoritative + source rows + zero records -> DELETEs the expected date', function () {
+  const cap = {};
+  h.ctx.getReachableNeonConn_ = function () { return fakeInboundConn(cap); };
+  const res = h.call('writeInboundCallsToNeon', F2_INTERNAL_ONLY,
+    { authoritative: true, expectedDateIso: '2026-07-20' });
+  const del = (cap.executed || []).filter(s => /DELETE FROM inbound_calls/.test(s));
+  assert.equal(del.length, 1, 'the stale date was deleted');
+  assert.match(del[0], /call_date = '2026-07-20'::date/, 'scoped to the EXPECTED date only');
+  assert.equal(res.inserted, 0);
+  assert.ok(!(cap.executed || []).some(s => /INSERT INTO inbound_calls/.test(s)),
+    'nothing inserted');
+});
+
+test('F2: an EMPTY source never deletes (an unreadable grid must not destroy data)', function () {
+  const cap = {};
+  h.ctx.getReachableNeonConn_ = function () { return fakeInboundConn(cap); };
+  const res = h.call('writeInboundCallsToNeon', [],
+    { authoritative: true, expectedDateIso: '2026-07-20' });
+  // Field-wise, not deepEqual: the object crosses the vm realm boundary, so it
+  // is never reference-equal to a host-realm literal under assert/strict.
+  assert.equal(res.inserted, 0);
+  assert.equal(res.skipped, 0);
+  assert.equal(res.cleared, undefined, 'no cleanup was attempted');
+  assert.equal((cap.executed || []).length, 0, 'no statement ran at all');
+});
+
+test('F2: NON-authoritative zero-record runs never delete', function () {
+  const cap = {};
+  h.ctx.getReachableNeonConn_ = function () { return fakeInboundConn(cap); };
+  h.call('writeInboundCallsToNeon', F2_INTERNAL_ONLY, { expectedDateIso: '2026-07-20' });
+  assert.ok(!(cap.executed || []).some(s => /DELETE FROM inbound_calls/.test(s)));
+});
+
+test('F2: zero records + Neon unreachable -> flagged unreachable so the date is retried', function () {
+  h.ctx.getReachableNeonConn_ = function () { return null; };
+  const res = h.call('writeInboundCallsToNeon', F2_INTERNAL_ONLY,
+    { authoritative: true, expectedDateIso: '2026-07-20' });
+  assert.equal(res.unreachable, true,
+    'the deferred mirror must keep the date queued rather than mark it done');
 });

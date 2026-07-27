@@ -6738,4 +6738,22 @@
   /* Tint the header so the admin always knows they're in preview mode. */
   body[data-view-as="manager"] .view-as-ctl { color: var(--warn); }
   body[data-view-as="manager"] .view-as-ctl select { border-color: var(--warn); }
+
+  /* ── F13: focus rings for the non-button click targets ───────────
+     These four surfaces gained tabindex so they're keyboard-operable
+     (script.html: makeActivatable_ / keyActivate_). A focusable element with
+     no visible focus indicator is still unusable by keyboard, so each gets the
+     same accent outline the existing focus-visible rules use
+     (.ov-subq-strip, .ds-heatmap__cell--drill). Rows use a NEGATIVE
+     outline-offset so the ring isn't clipped by the table's overflow wrapper. */
+  #agents-tbody tr[data-agent]:focus-visible,
+  tr.qcd-expandable:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: -2px;
+  }
+  .ov-dept-tile:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 2px;
+  }
+  .dept-qcd-dot:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 2px;
+  }
 </style>

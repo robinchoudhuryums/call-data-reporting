@@ -188,3 +188,73 @@ test('R8-2 (REP-10 propagated): mirrorDqeForDate_ reads 34 cols (A-AH) -- 36 thr
     assert.equal(captured[0].totalRung, 5);
   } finally { h.ctx.writeDQERowsToNeon = realWrite; }
 });
+
+// ---- F12: every mirror step is attempted, least-recoverable first ------------
+// neonMirrorDate_'s step() used to RETHROW on a hard error, so a failure in an
+// early step aborted the date -- across all NEON_MIRROR_MAX_ATTEMPTS retries --
+// and Inbound/Outbound (no sheet primary, ~14-day source retention) were never
+// attempted before the gave-up path dropped the date. They now run FIRST, and
+// every step gets its turn regardless of an earlier hard error; the aggregated
+// error still throws so the caller's attempt-counting is unchanged.
+
+function stubMirrors_(calls, failing) {
+  const mk = (label) => function () {
+    calls.push(label);
+    if (failing === label) throw new Error(label + ' exploded');
+    return { rows: 1 };
+  };
+  h.ctx.mirrorCdrForDate_      = mk('CDR');
+  h.ctx.mirrorQcdForDate_      = mk('QCD');
+  h.ctx.mirrorDqeForDate_      = mk('DQE');
+  h.ctx.mirrorInboundForDate_  = mk('Inbound');
+  h.ctx.mirrorOutboundForDate_ = mk('Outbound');
+  h.ctx.logPipelineHealthWithFallback_ = function () {};
+}
+
+test('F12: Inbound/Outbound run BEFORE the sheet-derivable types', function () {
+  const calls = [];
+  stubMirrors_(calls, null);
+  const ok = h.fn('neonMirrorDate_')(null, '2026-07-20');
+  assert.equal(ok, true, 'all steps succeeded');
+  deepEqual(calls, ['Inbound', 'Outbound', 'CDR', 'QCD', 'DQE']);
+});
+
+test('F12: a hard error in an early step does NOT skip the later steps', function () {
+  const calls = [];
+  stubMirrors_(calls, 'Inbound');            // the first step blows up
+  assert.throws(function () { h.fn('neonMirrorDate_')(null, '2026-07-20'); },
+    /Inbound exploded/, 'the hard error still propagates to the caller');
+  deepEqual(calls, ['Inbound', 'Outbound', 'CDR', 'QCD', 'DQE'],
+    'every remaining step was still attempted');
+});
+
+test('F12: multiple hard errors are aggregated into ONE throw after every step', function () {
+  const calls = [];
+  const mk = (label, boom) => function () {
+    calls.push(label);
+    if (boom) throw new Error(label + ' exploded');
+    return { rows: 1 };
+  };
+  h.ctx.mirrorInboundForDate_  = mk('Inbound', true);
+  h.ctx.mirrorOutboundForDate_ = mk('Outbound', false);
+  h.ctx.mirrorCdrForDate_      = mk('CDR', true);
+  h.ctx.mirrorQcdForDate_      = mk('QCD', false);
+  h.ctx.mirrorDqeForDate_      = mk('DQE', false);
+  h.ctx.logPipelineHealthWithFallback_ = function () {};
+  assert.throws(function () { h.fn('neonMirrorDate_')(null, '2026-07-20'); },
+    function (e) {
+      assert.match(e.message, /Inbound exploded/);
+      assert.match(e.message, /CDR exploded/, 'both failures are reported');
+      return true;
+    });
+  assert.equal(calls.length, 5, 'all five steps ran');
+});
+
+test('F12: an unreachable step still returns false (date stays queued) without throwing', function () {
+  const calls = [];
+  stubMirrors_(calls, null);
+  h.ctx.mirrorQcdForDate_ = function () { calls.push('QCD'); return { unreachable: true }; };
+  const ok = h.fn('neonMirrorDate_')(null, '2026-07-20');
+  assert.equal(ok, false, 'incomplete -> caller keeps the date queued');
+  assert.equal(calls.length, 5, 'unreachable never short-circuited (unchanged behavior)');
+});
