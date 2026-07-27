@@ -520,6 +520,15 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   both the F1 set and the canonical-name map, so clearing one alone would
   serve a stale read). `buildInboundCallRecords_` stays PURE --
   `IC_KNOWN_QUEUE_NAMES_` is a module global, `null` = pattern-only.
+  **⚠ The DQE and INBOUND recognizers diverge ON PURPOSE -- do not
+  "harmonize" them.** The DQE pipeline's queue regex
+  (`(?:^|[^\w&])(A_Q_[\w&]+|Backup CSR)`, IMP-8) deliberately does NOT capture a
+  brand-prefixed token: an INV-23 sentinel name must START with `A_Q_`, so
+  `UDC_A_Q_Main` correctly yields no match there. The inbound capture MUST
+  capture it verbatim, because `entry_queue` is matched by EXACT name against
+  the Dept Config lists and nothing there requires an `A_Q_` prefix. Widening
+  DQE to match gives you phantom `A_Q_Main` sentinels; re-anchoring inbound
+  makes brand-prefixed queues invisible again. Two subsystems, two rules.
   **Diagnosing a suspected miss:** `entry_queue IS NULL` is NOT by itself a
   signal (see Operator State #38). **Internal-transfer path enrichment (R11-N):** when an agent
   ANSWERS an inbound call and TRANSFERS the caller to a queue where the
@@ -2610,6 +2619,15 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   static markup in `dashboard.html`, no server endpoint.
 
 ## Operator State Checklist
+
+> **Scope note:** this checklist covers OPERATOR INPUTS — Script Properties you
+> set, triggers you install, sheets you create, migrations you run. The code
+> also reads back a family of properties it WRITES ITSELF as outcome state
+> (`*_LAST`, `*_LAST_RESULT`, `INGEST_WATCHDOG_ALERTED`, `PIPELINE_WATCH_*_MARK`,
+> `DIGEST_RUN_MARKER_*`, `QUEUE_REPORT_LAST_SENT`, `CRB_DIAG_COL`, …). Those are
+> deliberately NOT listed as items: you never set them, the Health page reads
+> them, and clearing one just re-arms its engine. Don't file them as
+> undocumented operator state.
 
 When something looks wrong, before assuming a code bug, check:
 (**Start at the admin Health view** — Admin ▾ dropdown → Health, route `#/admin/health`,

@@ -143,6 +143,16 @@ simply don't match (capturing the full prefixed token was NOT an
 option: INV-23 sentinel consumers require names STARTING with `A_Q_`).
 Pinned by `tests/unit/pipeline-build.test.js` (IMP-8 test).
 
+**⚠ The DQE and INBOUND recognizers diverge ON PURPOSE — do not "harmonize"
+them.** DQE must NOT capture a brand-prefixed token (`UDC_A_Q_Main` yields no
+match here, by design, because an INV-23 sentinel name must START with `A_Q_`).
+The inbound capture MUST capture it verbatim, since F1b, because
+`inbound_calls.entry_queue` is matched by exact name against the Dept Config
+lists — nothing there requires an `A_Q_` prefix. Making either regex "match the
+other one" breaks the other subsystem: widen DQE and you get phantom
+`A_Q_Main` sentinels; re-anchor inbound and brand-prefixed queues go invisible
+again (F1b).
+
 ---
 
 ## AD/AE/AF positional pairing (Missed report / journey drill)
@@ -827,28 +837,51 @@ banner). On failure, `notifyDigestFailure_` emails the
 
 ## Two queue-name spaces: raw Raw-Data names vs QCD-canonical names
 
-**Status:** Live landmine. Worked around for the per-call journey drill;
-still latent for the per-dept Inbound report (parked / admin-only).
+**Status:** Partly closed. The BRAND-PREFIX class is FIXED (F1b, 2026-07-27 --
+see below); the raw-vs-canonical SPELLING class is still live, worked around for
+the per-call journey drill and bridged at capture time by R8-N normalization +
+the Dept Config alias union for the per-dept Inbound report.
 
 There are **two different spellings for the same queue** in this install:
 
 - **Raw Data leg names** (CALLER_ID col 22 / CALLEE_NAME col 11): the actual
   queue identifiers the phone system emits, e.g. `A_Q_CSR` (ext 103),
-  `A_Q_Intake` (ext 108), `A_Q_Spanish`, `Backup CSR`. `inbound_calls`
-  captures these into `entry_queue` / `final_queue` (via `icIsQueueName_`,
-  `/^A_Q_/i`).
+  `A_Q_Intake` (ext 108), `A_Q_Spanish`, `Backup CSR`, and the BRAND-PREFIXED
+  `UDC_A_Q_Main` / `UUC_A_Q_Main`. `inbound_calls` captures these into
+  `entry_queue` / `final_queue` via `icIsQueueName_`, which since F1/F1b matches
+  `A_Q_` at string start **or after an underscore**, plus an exact
+  `Backup CSR`, plus any name listed in the `Dept Config` sheet's QCD Queues /
+  Inbound Queue Aliases columns (`icLoadConfiguredQueueNames_`). It was
+  `/^A_Q_/i` alone until 2026-07-27 -- see the F1b entry below.
 - **QCD-canonical names** (QCD Historical Data col D / `DEPT_QCD_QUEUES`): the
   names the QCD pipeline writes, e.g. CSR's main queue is `A_Q_CustomerSuccess`
   (NOT `A_Q_CSR`). `queuesForDept_` / `getDeptQcdQueues_` return THESE.
 
 So `inbound_calls.entry_queue = 'A_Q_CSR'` but `queuesForDept_('CSR')` =
 `['A_Q_CustomerSuccess', 'A_Q_Intake', 'Backup CSR']` -- the CSR main queue
-does **not** match across the two spaces (Intake happens to). NOTE on
-`Backup CSR`: the capture-side `icIsQueueName_` only learned to emit it as a
-queue in the IMP-1 fix — rows captured BEFORE that fix carry
-`abandon_stage='ivr'` / `entry_queue=NULL` for Backup-CSR-only calls and
-only heal via `backfillInboundCalls` while their `Call_Legs_*` sheets
-survive (~14 days); post-fix captures match `queuesForDept_('CSR')` directly.
+does **not** match across the two spaces (Intake happens to).
+
+**NOTE on names the capture didn't recognize yet.** `icIsQueueName_` has twice
+been taught a queue shape it was missing, and BOTH times the pre-fix rows are
+identical in shape: `abandon_stage='ivr'` + `entry_queue=NULL`, attributable to
+no dept, healing only via a re-import/`backfillInboundCalls` while the
+`Call_Legs_*` sheets survive (~14 days) -- older dates are unrecoverable.
+- **`Backup CSR`** — learned in IMP-1.
+- **`UDC_A_Q_Main` / `UUC_A_Q_Main`** — learned in **F1b** (2026-07-27). The
+  `/^A_Q_/i` anchor missed every brand prefix. Measured: a journey leg-name
+  histogram over abandoned NULL-`entry_queue` calls found `UDC_A_Q_Main` on 38
+  abandons in one ~8-week window, still accruing -- while the DQE pipeline had
+  listed BOTH names in `DQE_EXCLUDED_AGENTS` all along, so the two pipelines
+  disagreed about what a queue is.
+
+The miss is **self-concealing**, which is why it survived so long:
+`scanInboundQueueNames_` (the Dept Config "Discovered inbound queues" panel)
+and `runInboundQcdParityCheck`'s unattributed list BOTH filter
+`COALESCE(entry_queue,'') <> ''`, so a queue that was never recognized has no
+row to discover. Diagnose with the journey leg-name histogram in **CLAUDE.md
+Operator State #38** — NOT with a bare `entry_queue IS NULL` count, which
+unions three causes (measured at 9353 here, of which the real miss was tens of
+calls).
 
 **Symptom that surfaced it:** the "↳ path" call-journey drill on abandoned
 rings in the Missed Calls / My Department views returned "No inbound-call path

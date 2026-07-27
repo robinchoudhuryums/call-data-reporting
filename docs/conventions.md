@@ -389,11 +389,19 @@ From/To default (which must snap to DQE specifically).
   dept's QCD report; admins pick any from the dropdown. Same gate
   used by Individual / Performance / Compare Ranges.
 - **Dept ↔ queue mapping** lives in `Config.gs::DEPT_QCD_QUEUES`.
-  `QCD Historical Data` col D holds raw `A_Q_*` queue names; the
+  `QCD Historical Data` col D holds `A_Q_*`-style queue names; the
   dashboard's dept labels (`CSR` / `Sales` / `Power`) only resolve
   through this map. Unmapped depts render an empty modal with a
   hint; see [`known-issues.md`](known-issues.md) → "QCD Report
   engine" for onboarding details.
+  **Careful with the word "raw" here:** col D's spellings are the
+  **QCD-CANONICAL** names, which are NOT the same space as the **raw**
+  phone-system names `inbound_calls.entry_queue` captures (CSR's main
+  queue is `A_Q_CustomerSuccess` in col D but `A_Q_CSR` in Raw Data, and
+  brand-prefixed queues like `UDC_A_Q_Main` exist in the raw space).
+  Bridging the two is what the Dept Config "Inbound queue aliases"
+  column is for — see [`known-issues.md`](known-issues.md) → "Two
+  queue-name spaces".
 - **Source filter**: only rows where `Call Source === 'Total Calls'`
   are summed. Other sources (`CSR`, `Ad-campaign`, `New Call
   Menu`, `Non-CSR (internal)`) are sub-counts that would
