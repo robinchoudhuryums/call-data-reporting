@@ -501,7 +501,10 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   Tools menu prompts / `*ForDate` wrappers -- editor runs read the
   `TRANSFER_PREVIEW_DATE` cdr-import Script Property, blank = latest
   sheet; R11-N4) (PHI-masked deep-dive on the
-  chained bucket + a bounded 1-hop trace; since R11-N3 also a 2-HOP
+  chained bucket + a bounded 1-hop trace -- multi-date review closed the
+  loop (R11-N5): zero externally-rooted chained cases found, the
+  conservative enrichment is COMPLETE, no widening warranted; since
+  R11-N3 also a 2-HOP
   trace -- when the agent was reached via a queue ring INSIDE an
   internal source group, the same captured-overlap check runs on that
   group's own originator exts -- and an INTERNAL-ORIGIN classification:
