@@ -5930,16 +5930,18 @@
     ir:       { fromId: 'ir-from',          rerun: function () { const b = $('ir-generate-btn'); if (b && !b.disabled) b.click(); } },
     insights: { fromId: 'ins-from',         rerun: function () { if (typeof runInsReport === 'function') runInsReport(); } },
     qcdAll:   { fromId: 'qcd-alldept-from', rerun: function () { const b = $('qcd-alldept-refresh-btn'); if (b) b.click(); } },
+    inbound:  { fromId: 'inbound-from',      rerun: function () { const b = $('inbound-generate-btn'); if (b && !b.disabled) b.click(); } },
+    direct:   { fromId: 'direct-call-from',  rerun: function () { const b = $('direct-call-generate-btn'); if (b && !b.disabled) b.click(); } },
   };
   function coverageStartFor_(source) {
     if (!dataCoverage_) return null;
     return (source === 'qcd' ? dataCoverage_.qcd : dataCoverage_.dqe) || null;
   }
-  function coverageNoteUpsert_(hostId, report, fromIso, source) {
+  function coverageNoteUpsert_(hostId, report, fromIso, source, explicitStart) {
     const host = $(hostId);
     if (!host) return;
     const old = host.querySelector(':scope > .coverage-note');
-    const start = coverageStartFor_(source);
+    const start = explicitStart || coverageStartFor_(source);
     const bad = !!(start && fromIso && fromIso < start);
     if (!bad) { if (old) old.remove(); return; }
     const html = '<div class="ds-note coverage-note" role="status">'
@@ -16558,6 +16560,9 @@
   }
 
   function inboundRenderReport_(data, opts) {
+    coverageNoteUpsert_('inbound-body', 'inbound',
+      (data && data.meta && data.meta.from) || null, null,
+      (data && data.meta && data.meta.coverageStart) || null);   // R12-26b
     inboundLastData = data;
     inboundDrillCache = {};   // drill-down series are per (range, dept)
     inboundCollapseDrill_();
@@ -17231,6 +17236,9 @@
 
   function directCallRenderReport_(data) {
     directCallLastData = data;
+    coverageNoteUpsert_('direct-call-body', 'direct',
+      (data && data.meta && data.meta.from) || null, null,
+      (data && data.meta && data.meta.coverageStart) || null);   // R12-26b
     const meta = (data && data.meta) || {};
     const unavail = $('direct-call-unavailable');
     const empty = $('direct-call-empty');
