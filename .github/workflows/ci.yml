@@ -32,3 +32,36 @@ jobs:
         run: node --test
       - name: INV-16 duplicated-file guard
         run: bash scripts/check-duplicated-files.sh
+
+  # F7: the rendered-UI gate. SEPARATE job because it needs playwright + a
+  # browser download, while the unit suite above is deliberately zero-dep. It
+  # boots the REAL client (dashboard.html + script.html + styles.html) in
+  # headless Chromium against payloads computed by the REAL server code and
+  # asserts the failure classes the .gs harness structurally cannot see: page /
+  # console errors, unmocked RPCs, BLANK chart canvases (the R12-1 class), and
+  # horizontal page overflow -- plus the S39 keyboard-access walk (F13).
+  #
+  # `continue-on-error` for now: the gate is new, and a flaky headless render
+  # must not block a correct pipeline fix on day one. Flip it off (delete the
+  # line) once it has run green across a few PRs.
+  ui-harness:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    env:
+      TZ: America/Chicago
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      # Vendor bundles (Chart.js, datalabels, html2canvas-pro) are COMMITTED
+      # under tools/ui-harness/vendor/, so playwright is the only install --
+      # and `npx playwright install` fetches the browser it needs.
+      - name: Install playwright
+        working-directory: tools/ui-harness
+        run: |
+          npm init -y >/dev/null 2>&1
+          npm i --no-audit --no-fund playwright
+          npx playwright install --with-deps chromium
+      - name: Rendered-UI gate (npm run ci:ui)
+        run: npm run ci:ui

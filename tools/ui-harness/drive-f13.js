@@ -126,21 +126,28 @@ function record(name, pass, detail) {
     record('QCD carousel dots present (fixture has ' + dots + ')', true, 'skipped -- single-queue dept');
   }
 
-  // ---- 5. Expandable QCD queue row -----------------------------------------
-  // Exercised on the INSIGHTS Queue-health table: it renders the same
-  // `tr.qcd-expandable` + `tr.qcd-detail-row` pair and shares the same
-  // qcdToggleExpandRow_ helper as the all-departments QCD report, and its
-  // payload is in the fixture (gen-payloads.js dumps no qcdAll payload, so the
-  // all-dept modal has nothing to render here -- see the note in the summary).
-  {
-    await page.click('#insights-report-btn');
-    await page.waitForTimeout(4000);
-    const exp = page.locator('#ins-queue-health tr.qcd-expandable').first();
+  // ---- 5. Expandable QCD queue rows (BOTH surfaces) ------------------------
+  // Insights Queue health and the all-departments QCD report render the same
+  // `tr.qcd-expandable` + `tr.qcd-detail-row` pair and share qcdToggleExpandRow_,
+  // but they wire their own SEPARATE delegated keydown handlers (one on the
+  // Insights tbody, one on #qcd-alldept-body) -- so both need a walk.
+  const expandableSurfaces = [
+    { label: 'Insights Queue health', sel: '#ins-queue-health tr.qcd-expandable',
+      open: async () => { await page.click('#insights-report-btn'); await page.waitForTimeout(4000); } },
+    { label: 'all-dept QCD report', sel: '#qcd-alldept-body tr.qcd-expandable',
+      open: async () => {
+        await page.click('#overview-btn'); await page.waitForTimeout(1200);
+        await page.click('#ov-qcd-alldept-btn'); await page.waitForTimeout(2500);
+      } },
+  ];
+  for (const surface of expandableSurfaces) {
+    await surface.open();
+    const exp = page.locator(surface.sel).first();
     if (await exp.count()) {
       const expAttrs = await exp.evaluate((el) => ({
         tabindex: el.getAttribute('tabindex'), expanded: el.getAttribute('aria-expanded'),
       }));
-      record('expandable QCD row is focusable + reports state',
+      record(surface.label + ': expandable row is focusable + reports state',
         expAttrs.tabindex === '0' && expAttrs.expanded === 'false', JSON.stringify(expAttrs));
       await exp.focus();
       await page.keyboard.press('Enter');
@@ -152,14 +159,14 @@ function record(name, pass, detail) {
           expanded: el.getAttribute('aria-expanded'),
         };
       });
-      record('QCD row Enter expands the per-source detail',
+      record(surface.label + ': Enter expands the per-source detail',
         opened.shown && opened.expanded === 'true', JSON.stringify(opened));
       await page.keyboard.press('Enter');
       await page.waitForTimeout(400);
       const closed = await exp.evaluate((el) => el.getAttribute('aria-expanded'));
-      record('QCD row Enter again collapses it', closed === 'false', 'aria-expanded=' + closed);
+      record(surface.label + ': Enter again collapses it', closed === 'false', 'aria-expanded=' + closed);
     } else {
-      record('expandable QCD row present', false, 'no qcd-expandable row rendered in the fixture');
+      record(surface.label + ': expandable row present', false, 'no qcd-expandable row in the fixture');
     }
   }
 

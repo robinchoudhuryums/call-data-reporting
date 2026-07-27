@@ -100,8 +100,9 @@ bash scripts/check-duplicated-files.sh
 # field mappings, neon-write-mapping.test.js).
 node --test          # from repo root (or: npm test)
 
-# CI: .github/workflows/ci.yml runs `node --test` + the INV-16 guard on
-# push-to-main and every PR (also: `npm run ci` locally).
+# CI: .github/workflows/ci.yml runs TWO jobs on push-to-main + every PR --
+# `test` (`node --test` + the INV-16 guard; = `npm run ci` locally) and
+# `ui-harness` (the rendered-UI gate; = `npm run ci:ui`, see below).
 
 # Deploy helper: push AND roll a project's web-app deployment to a new
 # version in one step (avoids the manual "Manage deployments -> New
@@ -120,19 +121,27 @@ scripts/deploy.sh apps-script/cdr-import <cdr-import-deployment-id>
 # Cycle Workflow Config below. The neonWrite writers themselves are
 # unit-pinned (chunking + field mappings).
 
-# Rendered-UI harness (tools/ui-harness/) -- audit tooling, NEVER deployed,
-# and NOT part of `npm run ci` (wiring it in is an open follow-on). It runs
-# the REAL client (dashboard.html + script.html + styles.html) in headless
-# Chromium against payloads computed by the REAL server code, and it has
-# caught render bugs the .gs unit harness structurally cannot see (R12-1
-# blank missed-chart, R12-2 gray trend arrows). Setup + drivers: see
-# tools/ui-harness/README.md. `drive-f13.js` is the keyboard-access walk
-# behind Regression Scenario S39 -- run it after touching the agent table,
-# the Overview dept grid, or either qcd-expandable table:
-#   cd tools/ui-harness && node gen-payloads.js \
-#     && node build-harness.js admin && node drive-f13.js
-# (chromium-path.js globs the Playwright browser revision, so no
-# CHROMIUM_PATH is needed on the standard image.)
+# Rendered-UI gate (F7). Boots the REAL client (dashboard.html + script.html
+# + styles.html) in headless Chromium against payloads computed by the REAL
+# server code -- the only automated check on ~20K lines of script.html, and
+# it has caught render bugs the .gs harness structurally cannot see (R12-1
+# blank missed-chart, R12-2 gray trend arrows). SEPARATE from `npm run ci`
+# on purpose: that suite is zero-dep, this needs playwright.
+npm run ci:ui                # gen payloads -> build admin+manager -> assert
+# One-time: cd tools/ui-harness && npm init -y && npm i playwright
+# (the Chart.js / datalabels / html2canvas-pro bundles are COMMITTED under
+# tools/ui-harness/vendor/, version-pinned to dashboard.html's CDN tags by
+# tests/unit/ui-harness-vendor.test.js). With playwright absent it SKIPS
+# with a message and exits 0, so it is safe to run anywhere; chromium-path.js
+# globs the Playwright browser revision, so CHROMIUM_PATH is rarely needed.
+# Two ASSERTING drivers gate it -- drive-smoke.js (page/console errors,
+# unmocked RPCs, BLANK chart canvases, horizontal overflow, both roles) and
+# drive-f13.js (the S39 keyboard walk). The other drivers (drive.js /
+# drive-insights.js / drive-phase3.js) emit screenshots + reports for a human
+# and are deliberately NOT in the gate. Runs in CI as the `ui-harness` job
+# (currently `continue-on-error: true` while the gate proves itself -- drop
+# that line once it's been green across a few PRs). Re-run it after touching
+# script.html, styles.html, dashboard.html, or any payload shape.
 ```
 
 ## Common Gotchas

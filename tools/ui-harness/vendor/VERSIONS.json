@@ -1,0 +1,6 @@
+{
+  "_comment": "Vendor bundles for the rendered-UI harness, COMMITTED so the harness needs no npm install beyond playwright. These MUST match the CDN versions dashboard.html pins, or the harness tests the client against a different Chart.js than production ships. tests/unit/ui-harness-vendor.test.js enforces that.",
+  "chart.js": "4.4.4",
+  "chartjs-plugin-datalabels": "2.2.0",
+  "html2canvas-pro": "1.5.11"
+}
