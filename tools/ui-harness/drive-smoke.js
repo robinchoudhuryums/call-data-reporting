@@ -110,6 +110,19 @@ async function horizontalOverflow(page) {
       record(role + '/' + name + ': no horizontal page overflow', overflow <= 0, 'scrollWidth-clientWidth=' + overflow);
     }
 
+    // F10: the escalations nav badge used to be append-only, so every render
+    // path that re-ran it could stack a second count onto the tab. Reload the
+    // list (each mutation reloads it too) and assert the badge stays singular.
+    {
+      await page.click('#escalations-btn');
+      await page.waitForTimeout(1800);
+      const refresh = page.locator('#esc-refresh-btn');
+      if (await refresh.count()) { await refresh.click(); await page.waitForTimeout(1800); }
+      const badges = await page.locator('#escalations-btn .nav-count-badge').count();
+      record(role + ': escalation badge never duplicates on reload', badges <= 1,
+        'badge spans=' + badges);
+    }
+
     // The all-departments QCD report (its fixture payload is new in F7).
     const qcdBtn = page.locator('#ov-qcd-alldept-btn');
     if (await qcdBtn.count()) {

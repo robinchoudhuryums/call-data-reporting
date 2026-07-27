@@ -122,6 +122,7 @@ function install(source) {
     sheets: { 'DO NOT EDIT!': ROSTER, 'DQE Historical Data': dqeSheet(DATASET.map(dqeRow)) },
   });
   h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
+  h.ctx.DQE_DATE_BOUNDS_MEMO_ = null;   // F9: shared date-column bounds scan
   h.state.cache.clear();
   h.ctx.getDashboardNeonConn_ = (source === 'neon')
     ? fakeNeonConn
@@ -294,4 +295,66 @@ test('R8-C2: the sheet source still caches its negative (empty install, no outag
     if (String(k).indexOf('latestDate:') === 0) cachedNegative++;
   });
   assert.equal(cachedNegative, 1, 'sheet-source empty install keeps the cheap negative cache');
+});
+
+// ---- F9: one shared DQE date-column scan for both bounds --------------------
+// getLatestDataDate (MAX) and getLatestDataDates (MAX + MIN/dqeEarliest) each
+// ran their own whole-column getValues(), so a cold cache read a multi-year
+// column TWICE per 5-min expiry. sheetScanDqeDateBounds_ yields both from one
+// scan, memoized per execution.
+
+test('F9: sheetScanDqeDateBounds_ returns both bounds from ONE column read', function () {
+  install('sheet');
+  let reads = 0;
+  const sheet = h.state.spreadsheet.getSheetByName('DQE Historical Data');
+  const realGetRange = sheet.getRange.bind(sheet);
+  sheet.getRange = function (r, c, nr, nc) { reads++; return realGetRange(r, c, nr, nc); };
+
+  const b = h.call('sheetScanDqeDateBounds_');
+  assert.ok(b.max, 'max resolved');
+  assert.ok(b.min, 'min resolved');
+  assert.ok(b.min <= b.max, 'min is not after max');
+  assert.ok(b.rows > 0, 'row count reported');
+  const afterFirst = reads;
+  assert.equal(afterFirst, 1, 'exactly one range read');
+
+  // Memoized: a second call adds no read.
+  h.call('sheetScanDqeDateBounds_');
+  assert.equal(reads, afterFirst, 'second call served from the per-execution memo');
+  sheet.getRange = realGetRange;
+});
+
+test('F9: a COLD cache serves getLatestDataDate + getLatestDataDates from one scan', function () {
+  install('sheet');
+  const sheet = h.state.spreadsheet.getSheetByName('DQE Historical Data');
+  let dateColReads = 0;
+  const realGetRange = sheet.getRange.bind(sheet);
+  sheet.getRange = function (r, c, nr, nc) {
+    // HISTORICAL_COLS.DATE === 2; count only whole-column date scans.
+    if (c === 2 && nc === 1 && nr > 1) dateColReads++;
+    return realGetRange(r, c, nr, nc);
+  };
+  const max = h.call('getLatestDataDate');
+  const blob = h.call('getLatestDataDates');
+  assert.ok(max, 'latest resolved');
+  assert.equal(blob.dqe, max, 'the blob agrees with the single-source reader');
+  assert.ok(blob.dqeEarliest, 'coverage start resolved (R12-26)');
+  assert.ok(blob.dqeEarliest <= blob.dqe, 'earliest is not after latest');
+  assert.equal(dateColReads, 1,
+    'ONE date-column scan for both readers (was 2 before F9)');
+  sheet.getRange = realGetRange;
+});
+
+test('F9: a missing DQE sheet yields empty bounds and still caches the negative', function () {
+  install('sheet');
+  h.state.spreadsheet = makeFakeSpreadsheet({
+    timeZone: 'America/Chicago', sheets: { 'DO NOT EDIT!': ROSTER },
+  });
+  h.ctx.DQE_DATE_BOUNDS_MEMO_ = null;
+  h.state.cache.clear();
+  const b = h.call('sheetScanDqeDateBounds_');
+  assert.equal(b.max, null);
+  assert.equal(b.min, null);
+  assert.equal(b.rows, 0);
+  assert.equal(h.call('getLatestDataDate'), null, 'reader still returns null');
 });

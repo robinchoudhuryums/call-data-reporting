@@ -110,6 +110,13 @@ node --test          # from repo root (or: npm test)
 # comes from `clasp deployments` in that dir (one-time lookup).
 # TST-7: it GATES the push on `npm run ci` (tests + the INV-16 guard);
 # DEPLOY_SKIP_CI=1 skips the gate (emergencies only).
+# Batch 4: it also runs the REMOTE-ORPHAN check first -- `clasp push -f` never
+# deletes remote files (INV-17), so a file removed from the repo stays live and
+# callable until deleted by hand in the web editor. The check pulls the project
+# into a temp dir and lists remote files with no local counterpart. It WARNS by
+# default (an orphan is no reason to block an urgent fix) and skips cleanly when
+# clasp can't authenticate; STRICT_ORPHANS=1 makes it fatal. Standalone:
+#   node scripts/check-remote-orphans.mjs <project-dir>
 scripts/deploy.sh .                      <dashboard-deployment-id>
 scripts/deploy.sh apps-script/cdr-report <cdr-report-deployment-id>
 scripts/deploy.sh apps-script/cdr-import <cdr-import-deployment-id>
@@ -3040,6 +3047,13 @@ items for anything it flags or doesn't cover.)
     `getCompareRanges`, ...) remain callable (same auth gates as before;
     harmless but stale). The retired QCD / Missed surfaces were in-file
     edits, so no other files need manual deletion.
+    **This is now DETECTED rather than remembered (Batch 4):**
+    `scripts/deploy.sh` runs `node scripts/check-remote-orphans.mjs <dir>`
+    before every push, which pulls the project into a throwaway temp dir and
+    names any remote file with no local counterpart (matching `.gs` against the
+    `.js` clasp pull writes). It warns by default and skips cleanly when clasp
+    isn't authenticated; `STRICT_ORPHANS=1` makes it fatal. Run it standalone
+    any time to check whether this item is still open.
 30. `QCD_READ_SOURCE` Script Property (dashboard) -- the #3 Neon read-back
     switch for QCD, read by `getQcdReadSource_()` (QCDReport.gs). Unset /
     `sheet` (default) = `computeQcdReport_` reads the whole `QCD Historical

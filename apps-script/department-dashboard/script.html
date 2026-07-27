@@ -1388,29 +1388,58 @@
   // R12-20 (#1): escalation counts surfaced on the landing chrome -- a count
   // badge on the Escalations nav tab + a one-line Overview strip. Best-effort
   // (silent on unavailable/zero); per-viewer scope enforced server-side.
+  // F10: renders the badge + Overview strip from a counts object, and is
+  // IDEMPOTENT -- it updates an existing badge and REMOVES it when the count
+  // reaches zero. The old version only ever APPENDED (guarded by
+  // `!tab.querySelector('.nav-count-badge')`) and ran once per page load, so
+  // after a manager resolved their last escalation the badge kept the old
+  // number for the rest of the session and the strip stayed visible.
+  function escApplyBadge_(counts) {
+    var open = Number(counts && counts.open) || 0;
+    var review = Number(counts && counts.review) || 0;
+    var over = Number(counts && counts.overdue) || 0;
+    var total = open + review;
+
+    var tab = $('escalations-btn');
+    if (tab) {
+      var sp = tab.querySelector('.nav-count-badge');
+      if (total <= 0) {
+        if (sp) sp.remove();                       // cleared -- don't leave a stale count
+      } else {
+        if (!sp) {
+          sp = document.createElement('span');
+          sp.className = 'nav-count-badge';
+          tab.appendChild(sp);
+        }
+        sp.classList.toggle('nav-count-badge--warn', over > 0);
+        sp.textContent = String(total);
+        sp.title = open + ' open' + (over ? ' (' + over + ' overdue)' : '')
+          + (review ? ' \u00b7 ' + review + ' awaiting review' : '');
+      }
+    }
+
+    var strip = $('ov-esc-strip');
+    if (strip) {
+      if (total <= 0) {
+        strip.style.display = 'none';
+        strip.innerHTML = '';
+      } else {
+        strip.innerHTML = '\u26a0 <strong>Escalations:</strong> ' + open + ' open'
+          + (over ? ' \u00b7 <span class="ov-esc-overdue">' + over + ' overdue</span>' : '')
+          + (review ? ' \u00b7 ' + review + ' awaiting review' : '')
+          + ' <button type="button" class="link-btn" id="ov-esc-strip-open">Open worklist \u2192</button>';
+        strip.style.display = '';
+        var btn = $('ov-esc-strip-open');
+        if (btn) btn.addEventListener('click', function () { setPage('escalations'); });
+      }
+    }
+  }
+
   function loadEscBadge_() {
     try {
       google.script.run.withSuccessHandler(function (b) {
-        if (!b || !b.available) return;
-        var open = Number(b.open) || 0, review = Number(b.review) || 0, over = Number(b.overdue) || 0;
-        var tab = $('escalations-btn');
-        if (tab && (open + review) > 0 && !tab.querySelector('.nav-count-badge')) {
-          var sp = document.createElement('span');
-          sp.className = 'nav-count-badge' + (over > 0 ? ' nav-count-badge--warn' : '');
-          sp.textContent = open + review;
-          sp.title = open + ' open' + (over ? ' (' + over + ' overdue)' : '') + (review ? ' \u00b7 ' + review + ' awaiting review' : '');
-          tab.appendChild(sp);
-        }
-        var strip = $('ov-esc-strip');
-        if (strip && (open + review) > 0) {
-          strip.innerHTML = '\u26a0 <strong>Escalations:</strong> ' + open + ' open'
-            + (over ? ' \u00b7 <span class="ov-esc-overdue">' + over + ' overdue</span>' : '')
-            + (review ? ' \u00b7 ' + review + ' awaiting review' : '')
-            + ' <button type="button" class="link-btn" id="ov-esc-strip-open">Open worklist \u2192</button>';
-          strip.style.display = '';
-          var btn = $('ov-esc-strip-open');
-          if (btn) btn.addEventListener('click', function () { setPage('escalations'); });
-        }
+        if (!b || !b.available) return;   // unavailable -> leave whatever is shown
+        escApplyBadge_(b);
       }).withFailureHandler(function () { /* silent */ }).getEscalationsBadge();
     } catch (e) { /* silent */ }
   }
@@ -17967,6 +17996,15 @@
         if (__tok !== escLoadSeq_) return;   // superseded by a newer load
         if ($('esc-loading')) $('esc-loading').style.display = 'none';
         escRenderList_(resp || {});
+        // F10: refresh the nav badge / Overview strip after every list load --
+        // and every mutation reloads the list, so resolving the last escalation
+        // now clears the badge instead of leaving a stale count for the session.
+        // Deliberately a fresh `getEscalationsBadge()` rather than reusing this
+        // response's `meta.statusCounts`: the list can be filtered to ONE dept
+        // (an admin picking a dept, or view-as), while the badge is scoped to
+        // the viewer's FULL set -- deriving it from a filtered response would
+        // undercount. One cheap COUNT aggregate is the right trade.
+        loadEscBadge_();
       })
       .withFailureHandler(function (err) {
         if (__tok !== escLoadSeq_) return;   // a newer load owns the list

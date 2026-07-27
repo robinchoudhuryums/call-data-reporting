@@ -168,13 +168,42 @@ function getSystemHealth() {
     var installed = {};
     var trig = ScriptApp.getProjectTriggers();
     for (var i = 0; i < trig.length; i++) installed[trig[i].getHandlerFunction()] = true;
-    var svc = function (key, label, fns, required, offHint) {
+    // Batch 3: an engine can be ARMED two ways, and they can disagree. Four of
+    // them gate their handler BODY on an `*_ENABLED` Script Property, so a
+    // trigger that is installed while the flag is off fires on schedule and
+    // returns immediately -- the page said "installed", the operator believed
+    // it was armed, and it did nothing. That mismatch is invisible today and is
+    // exactly the Operator-Only State Gap bug shape. `flagProp` opts a row into
+    // the reconciliation; engines with no flag (alerts, digests, cache warm,
+    // backup) pass nothing and behave as before.
+    var readiness = { armed: 0, attention: 0 };
+    var svc = function (key, label, fns, required, offHint, flagProp) {
       var on = fns.some(function (f) { return !!installed[f]; });
       var missing = fns.filter(function (f) { return !installed[f]; });
-      add('triggers', key, label,
-        on && !missing.length ? 'ok' : (required ? 'warn' : 'muted'),
-        !missing.length ? 'installed' : (on ? ('partial — missing ' + missing.join(', ')) : 'not installed'),
-        (!on || missing.length) ? offHint : '');
+      var complete = on && !missing.length;
+      var flagOn = flagProp ? (String(props.getProperty(flagProp) || '') === 'true') : null;
+
+      var status, value, hint;
+      if (complete && flagOn === false) {
+        // The silent-inert case: scheduled, but every run is a no-op.
+        status = 'warn';
+        value = 'installed but DISABLED (' + flagProp + ' is not "true") — every run is a no-op';
+        hint = 'Set ' + flagProp + '=true, or uninstall the trigger so the page stops implying it is armed.';
+      } else if (!complete && flagOn === true) {
+        // The opposite mismatch: flagged on, nothing to fire it.
+        status = 'warn';
+        value = (on ? ('partial — missing ' + missing.join(', ')) : 'NO trigger installed')
+          + ' but ' + flagProp + '=true — it never runs';
+        hint = offHint || ('Install the trigger, or clear ' + flagProp + '.');
+      } else {
+        status = complete ? 'ok' : (required ? 'warn' : 'muted');
+        value = complete ? ('installed' + (flagOn === true ? ' + enabled' : ''))
+          : (on ? ('partial — missing ' + missing.join(', ')) : 'not installed');
+        hint = complete ? '' : offHint;
+      }
+      if (status === 'warn') readiness.attention++;
+      else if (status === 'ok') readiness.armed++;
+      add('triggers', key, label, status, value, hint);
     };
     svc('trg-alerts',  'Daily alerts trigger',  ['runDailyAlerts_'], true,
       'Alerts only fire on manual Send without it — install from the Alerts modal (Operator State #8).');
@@ -184,18 +213,33 @@ function getSystemHealth() {
     svc('trg-warm',    'Report cache warming',  ['warmReportCaches_'], false,
       'Optional: pre-warms Overview / summaries / all-dept report / Insights after ingest (Operator State #21).');
     svc('trg-keepwarm','Neon keep-warm',        ['keepNeonWarm_'], false,
-      'Optional; only matters once DQE_READ_SOURCE=neon (Operator State #20).');
+      'Optional; only matters once DQE_READ_SOURCE=neon (Operator State #20).',
+      'NEON_KEEPWARM_ENABLED');
     svc('trg-watchdog','Ingest-failure watchdog', ['runIngestWatchdog_'], false,
-      'Optional: emails admins when no fresh DQE build lands (Operator State #23).');
+      'Optional: emails admins when no fresh DQE build lands (Operator State #23).',
+      'INGEST_WATCHDOG_ENABLED');
     svc('trg-pipewatch','Pipeline-failure watchdog', ['runPipelineWatch_'], false,
-      'Optional: emails admins when a Pipeline Health failure row is logged — enable via installPipelineWatchTrigger().');
+      'Optional: emails admins when a Pipeline Health failure row is logged — enable via installPipelineWatchTrigger().',
+      'PIPELINE_WATCH_ENABLED');
     svc('trg-backup',  'Neon backup (escalations / inbound_calls)', ['runNeonBackup_'], false,
       'Optional but recommended: these tables have NO sheet fallback — install via installNeonBackupTrigger().');
     // O-5: the queue-report poller was the one trigger-driven engine this
     // inventory missed -- a deleted trigger was invisible on the page that
     // claims to replace the operator checklist.
     svc('trg-queuereport', 'Daily Call Queue Report email', ['runDailyQueueReport_'], false,
-      'Optional: emails the all-dept queue report to subscribers each weekday morning (Operator State #31).');
+      'Optional: emails the all-dept queue report to subscribers each weekday morning (Operator State #31).',
+      'QUEUE_REPORT_ENABLED');
+    // Batch 3: ONE verdict line so the answer to "is this install armed?" is a
+    // row, not an exercise in reading fifteen. Counts the engine rows above --
+    // `attention` is any row this section flagged warn (missing-but-required,
+    // partial, or a flag/trigger mismatch).
+    add('triggers', 'trg-readiness', 'Install readiness (engines)',
+      readiness.attention ? 'warn' : 'ok',
+      readiness.armed + ' armed, ' + readiness.attention + ' need attention',
+      readiness.attention
+        ? 'Each flagged row above says what to do. A row reading "installed but DISABLED" is the '
+          + 'dangerous one -- it looks scheduled and does nothing.'
+        : '');
   } catch (e) { add('triggers', 'trg-probe', 'Trigger inventory', 'warn', 'probe failed', String(e && e.message || e)); }
 
   // Last outcomes of the optional services (property-backed, cheap).

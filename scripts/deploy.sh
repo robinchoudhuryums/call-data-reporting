@@ -44,6 +44,18 @@ if [ "${DEPLOY_SKIP_CI:-}" != "1" ]; then
   npm run ci
 fi
 
+# Batch 4 (Operator State #29): `clasp push -f` never DELETES remote files
+# (INV-17), so a file removed from the repo stays live and callable in the Apps
+# Script project until someone deletes it by hand in the web editor. Nothing
+# detected that -- PerformanceReport.gs / CompareRangesReport.gs sat orphaned
+# across cycles. This reports them at deploy time, when the operator is already
+# in the right context to go delete them. WARNS by default (an orphan is not a
+# reason to refuse to ship an urgent fix); STRICT_ORPHANS=1 makes it fatal.
+# Runs BEFORE the push so its "remote vs local" comparison isn't confused by
+# the files this push is about to add.
+echo "==> remote-orphan check   (STRICT_ORPHANS=1 to make it fatal)"
+node "$(dirname "$0")/check-remote-orphans.mjs" "$DIR" || exit 1
+
 cd "$DIR"
 echo "==> clasp push -f   ($DIR)"
 clasp push -f
