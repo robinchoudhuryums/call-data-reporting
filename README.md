@@ -550,12 +550,14 @@ the reports intimidating; none add server endpoints or cache bumps:
   and KPI labels everywhere (dotted underline = definition available).
   Add new metric terms to the dictionary, not as inline `title=`
   attributes, so definitions stay consistent across reports.
-- **Benchmark tints** — the two real company-wide standards (the 92%
-  answer-rate target from the Overview baseline, and the 5%
-  abandoned-% violation threshold from the QCD rule) tint KPI values
-  and abandon-% cells consistently across reports
-  (`script.html::benchValueCls_`). Dept-specific alert thresholds
-  intentionally stay with the Alerts engine.
+- **Benchmark tints** — the two real company-wide standards tint KPI
+  values and abandon-% cells consistently across reports
+  (`script.html::benchValueCls_`): the answer-rate target (seed 92%,
+  admin-tunable via the `ANSWER_TARGETS` Script Property — Alerts modal
+  → "Answer-rate standards" — with per-surface overrides for the Direct
+  / Inbound reports) and the FIXED 5% abandoned-% violation threshold
+  from the QCD rule. Dept-specific alert thresholds intentionally stay
+  with the Alerts engine.
 
 Every report's results also open with an "At a glance" block of 2–3
 plain sentences (`reportHeadline_` + per-report composers).
