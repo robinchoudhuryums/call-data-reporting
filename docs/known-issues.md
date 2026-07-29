@@ -907,6 +907,130 @@ banner). On failure, `notifyDigestFailure_` emails the
 
 ---
 
+## QCD Abandoned vs inbound_calls abandons: why the two numbers differ (2026-07 investigation)
+
+**Settled.** The two counts are not in conflict; they answer different
+questions. Recorded in full because four plausible explanations were
+eliminated along the way, and each one will look plausible again to the next
+person who notices the gap.
+
+### The measurement
+
+CSR, `2026-07-15`..`2026-07-24` (8 business days), via
+`runInboundQcdParityCheck` plus direct Neon probes:
+
+| | inbound_calls (`A_Q_CSR` + `A_Q_Intake`) | QCD (`A_Q_CustomerSuccess`) |
+|---|---|---|
+| total calls | 2,583 | 2,737 |
+| answered | 2,424 | 2,708 |
+| abandoned | **113** | **29** |
+| missed | 46 | (no such state) |
+
+The totals agree within 5.6%, so both sources are looking at the SAME calls --
+this is not a population difference. QCD's model is strictly
+`total = answered + abandoned`; it has no third state. All 113 inbound
+abandons carry `abandon_stage = 'queue'`.
+
+### The answer: QCD applies a minimum queue-wait threshold; we apply none
+
+On `2026-07-23` QCD reported **0** abandons for `A_Q_CustomerSuccess`;
+inbound recorded **10**. Reading those 10 journeys leg-by-leg, their actual
+QUEUE waits were 1, 5, 6, 9, 11, 22, 28 and 48 seconds (plus two outliers --
+see Backup CSR below). A Raw Data check confirmed zero CSR abandons at or
+above 1 minute of queue wait that day. So QCD is CORRECT by its own
+definition: it counts callers who waited in a queue past a threshold and gave
+up. The observed threshold is above 48s; a 60s setting fits every
+observation.
+
+The inbound capture has no threshold and answers a broader question: **did
+this caller hang up without ever reaching a human?** Both are legitimate.
+Neither is wrong. They must not be presented side by side without saying so.
+
+### `wait_seconds` is WHOLE-CALL elapsed time, not queue wait
+
+This is the trap that made the gap look far worse than it is, and it is easy
+to fall into twice. `buildInboundCallRecords_` computes
+`waitSeconds = abandonLeg.stop - firstLeg.start` -- measured from **IVR
+pickup**, not from queue entry. The IVR (`Introduction` + `Normal Call Menu`)
+runs 54-65 seconds on nearly every call here, and one sampled call sat in the
+menu for 108s:
+
+```
+#10  17s intro + 37s menu = 54s IVR,  then A_Q_CSR queue  1s  -> wait_seconds 55
+#3   17s intro + 108s menu = 125s IVR, then A_Q_CSR queue  6s  -> wait_seconds 131
+```
+
+Read as queue wait, that says "83% of abandons waited over a minute". Read
+correctly, almost all of them waited seconds. **`wait_seconds` is NOT
+comparable to QCD's threshold** and must not be used as one. The per-leg
+`secs` inside `journey` is where a true queue wait is derivable. Note the
+column feeds the heatmap cell drill under a "wait/hold" label, which is
+misleading for the same reason -- open follow-on, not yet fixed.
+
+### `Backup CSR` overflow is invisible to QCD
+
+The genuinely long waits DO exist, and QCD misses them. On `2026-07-23` two
+callers passed through `A_Q_CSR` in **0 seconds** and then waited **637s
+(10m37s)** and **497s (8m17s)** in `Backup CSR` before abandoning. QCD's
+`A_Q_CustomerSuccess` row for that day reports `abandoned = 0` and
+`longest_wait = 2:42` -- which proves `Backup CSR` is not folded into
+`A_Q_CustomerSuccess`, and it has no `qcd_history` row of its own (the
+window's queue breakdown lists 14 queues; `Backup CSR` is not among them).
+So overflow abandons are structurally invisible on the QCD side regardless of
+threshold. `Backup CSR` IS in CSR's Dept Config QCD-queues list, so the
+mapping is not the problem -- the phone system's queue report appears not to
+cover it. **Confirm upstream before treating this as fixable in code.**
+
+One of those two journeys also shows **24 consecutive 20-second rings to a
+single agent across 11 minutes, every one missed**, while the caller waited.
+Neither report surfaces that pattern today.
+
+### Four hypotheses eliminated (do not re-run these)
+
+1. **Overflow / entry-vs-abandon-queue attribution** -- only 6 of 113 CSR
+   abandons changed queue (5%). Cannot account for the gap. (It IS the
+   mechanism behind the Backup CSR blind spot above, at small volume.)
+2. **QCD filtering short abandons, us counting them** -- inverted: it is QCD
+   that filters, but by QUEUE wait, and our `wait_seconds` measures something
+   else entirely (above).
+3. **Queue name-space mismatch** -- `A_Q_CustomerSuccess` does not exist in
+   Raw Data; it is the pipeline's canonical rollup of `A_Q_CSR` +
+   `A_Q_Intake`, which is exactly what inbound counts. The mapping is
+   CORRECT. (`A_Q_Intake` and `Backup CSR` produce no separate QCD rows,
+   consistent with a rollup.)
+4. **Abandons hidden under a non-`Total Calls` QCD source (INV-50)** -- the
+   other sources (`CSR`, `Call Menu`, `Ad-campaign`, `Non-CSR (internal)`,
+   `New Call Menu`, `Internal`, `Misc`) sum EXACTLY to the `Total Calls` row
+   on both measures: 4,390 calls and 72 abandons. `Total Calls` is a true
+   rollup; summing every source would double-count. **INV-50's
+   single-source filter is confirmed correct.**
+
+### Unrelated bug found by the same run: the answered-on-hold carve-out has never fired
+
+`inboundDeptPredicate_` attributes an answered-then-abandoned-on-hold call by
+`lower(trim(final_dept)) = lower(<dept>)`. The parity check reported
+`onHold = 0.0` for every dept on every day -- but 146 such calls exist in the
+window. `final_dept` holds the raw CDR ORG-CHART labels (`Customer Success`,
+`Inside Sales`, `Patient Care`, `Patient Intake - Supplies`, `Intake -
+Service/Repair`, ...) and **not one of them matches a dashboard dept header**
+(`CSR`, `Sales`, `Power`, ...). The documented soft coupling has never held in
+this install, so all 146 attribute to no dept and are invisible in every
+dept's inbound slice. Fix needs an admin-authored label->dept map (the
+`DIAL_IN_LABELS` shape); the mapping is not one-to-one (four `Intake -*` /
+`Patient Intake -*` labels, plus one blank) so it needs an owner decision, not
+a derived rule.
+
+### Consequence for the un-gating decision
+
+The Inbound + Direct reports stay admin-gated NOT because either number is
+wrong, but because a manager comparing the Inbound abandon count against the
+Daily Queue Report will see roughly 4x and have no way to know why. Releasing
+them needs the report to state that its abandon count has **no minimum-wait
+threshold and includes IVR time**. That caption is the cheap prerequisite;
+the Backup CSR gap and the `wait_seconds` semantics are the substantive ones.
+
+---
+
 ## Two queue-name spaces: raw Raw-Data names vs QCD-canonical names
 
 **Status:** Partly closed. The BRAND-PREFIX class is FIXED (F1b, 2026-07-27 --

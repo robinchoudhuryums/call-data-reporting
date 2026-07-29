@@ -688,6 +688,31 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   UNATTRIBUTED raw entry-queues (fix: the Dept Config "Inbound queue
   aliases" column). Pinned by tests/unit/inbound-qcd-parity.test.js. Run it
   (+ populate aliases, re-run) BEFORE any un-gating decision.
+  **The gap it measures is now SETTLED (2026-07) -- read
+  `docs/known-issues.md` "QCD Abandoned vs inbound_calls abandons" before
+  re-investigating; four plausible explanations were eliminated and they all
+  look plausible again from a standing start.** The three live rules that came
+  out of it: (1) **QCD's Abandoned applies a minimum QUEUE-WAIT threshold
+  (>48s observed; 60s fits) and the inbound capture applies NONE** -- inbound
+  answers "did this caller hang up without reaching a human?", QCD answers
+  "did this caller wait past the threshold and give up?". Both are correct;
+  they are ~4x apart on CSR and must never be shown side by side without
+  saying so (that caption is the prerequisite for un-gating). (2)
+  **`wait_seconds` is WHOLE-CALL elapsed time from IVR pickup
+  (`abandonLeg.stop - firstLeg.start`), NOT queue wait** -- the IVR runs
+  54-65s on nearly every call here, so a 1-second queue abandon stores as
+  `wait_seconds` 55. Never compare it to a queue threshold or read it as
+  "time spent waiting for an agent"; the per-leg `secs` inside `journey` is
+  where a real queue wait is derivable. It feeds the heatmap cell drill's
+  "wait/hold" label, which is misleading for the same reason (open
+  follow-on). (3) **`Backup CSR` has no `qcd_history` row**, so overflow
+  abandons there are invisible to QCD entirely -- two callers waited 10m37s
+  and 8m17s in it on a day QCD reported 0 abandons and a 2:42 longest wait.
+  Also found by that run and NOT yet fixed: **the answered-on-hold carve-out
+  has never fired in this install** -- `final_dept` holds raw CDR org-chart
+  labels (`Customer Success`, `Inside Sales`, `Patient Care`, ...) and not one
+  matches a dashboard dept header, so every such call attributes to no dept
+  (146 in a 2-week window). Needs an admin-authored label->dept map.
   Once released: managers see their own dept's slice; admins can also pick "All
   departments" (the only view that includes the "Abandoned in IVR"
   bucket -- IVR abandons never reached a queue so they're
