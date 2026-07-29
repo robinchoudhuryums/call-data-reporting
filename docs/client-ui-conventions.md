@@ -240,7 +240,7 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   in `renderDeptTeamStrip_` directly above it, whose answer-rate tile is now
   labeled "% Answered (rings)" to match the Insights rollup; R10-5 added an
   answered-weighted "Avg answer" tile for QCD-mapped depts (qcd.range.avgAnswer)
-  and a CSR-only "Transfer %" tile from the `csrTransfer` block (the R10-5 v14 bump); R11-C1 added prior-window delta chips to both via qcd.rangePrior + csrTransfer.prior -- summary:v15.) Insights carries a header **"My Department ->"** button and
+  and a CSR-only "Transfer %" tile from the `csrTransfer` block (the R10-5 v14 bump); R11-C1 added prior-window delta chips to both via qcd.rangePrior + csrTransfer.prior -- summary:v16.) Insights carries a header **"My Department ->"** button and
   a Queue-health **"See missed calls ->"** drill (both -> `handoffToMyDept_`,
   wired in `initInsightsReport`). **R9-3 shared date window (client-only, no
   server/cache change; SUPERSEDED the Batch-E "Use these dates" offer
@@ -790,3 +790,26 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   `CHART_TOOLTIPS_OFF_`) turns the card off across every chart by
   filtering out all items -- live on the next hover, no per-instance
   update, and the hovered point still highlights.
+
+## Sub-queue scope switcher (My Department, Phase 1)
+
+`#dept-subq-bar` sits above `.agents-table-wrap` and is rendered by
+`subqRenderScopeBar_(state)` on every table paint. It shows in EVERY scope --
+including `own`, where the note reads "<subs> is a sub-queue of <dept> — not
+included in these figures". That sentence is the point of the feature: before
+it, the exclusion was completely invisible to a parent-dept manager.
+
+- Scope is persisted per dept in `cdr.dept.subscope` (a `{dept: scope}` JSON
+  blob) and sent as `req.subScope`. It is **omitted when unset**, so the SERVER
+  owns the default (combined for a parent, own otherwise) -- the client must not
+  hardcode the default in a second place, or the two will drift.
+- A CHILD dept renders the upward pointer only, no switcher. One level, matching
+  the server.
+- `subqRowGroups_` returns grouped tbody HTML, or **null** when there is nothing
+  to group -- a single-dept payload then takes the unchanged flat path, which is
+  what keeps 11 of 14 depts byte-identical.
+- Group order follows `meta.deptsShown` (parent first). Sorting stays GLOBAL and
+  applies INSIDE each group, so a manager's chosen sort still means what it did.
+- `subqSubtotalRowHtml_` renders a dept's own subtotal from `deptGroups`; the
+  Source column is blanked (no aggregate). Styled QUIETER than the totals row on
+  purpose: a subtotal is a reading aid, the grand total is the answer.

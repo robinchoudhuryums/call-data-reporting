@@ -266,6 +266,69 @@ function getLatestDataDates() {
   return result;
 }
 
+/**
+ * Sub-queue Phase 1: merge per-department summaries into ONE payload.
+ *
+ * Deliberately built by calling `computeSummary_` once PER DEPARTMENT and
+ * merging the results, rather than teaching `computeSummary_` to aggregate a
+ * list. Two reasons:
+ *   1. `computeSummary_` carries INV-02/04/05/23/53 + S35 + E5 behavior and is
+ *      the most heavily pinned function in the app. Merging outside it leaves
+ *      every one of those rules untouched.
+ *   2. It buys the property the owner actually asked for: a department's
+ *      subtotal in the combined view is produced by the EXACT code path as that
+ *      department's own view, so the two can never disagree. Per-dept team
+ *      averages, floater gates (INV-53) and benchmark tints all stay per-dept,
+ *      which is also the only correct reading -- one average across two teams
+ *      with different call profiles is a worse number, not a better one.
+ *
+ * `primary` is the requested dept. Its `qcd`, `csrTransfer` and `diagnostics`
+ * are the ones kept: **the QCD snapshot must NOT be merged.** `queuesForDept_`
+ * already rolls a parent's sub-queue queues into the parent's snapshot (the v6
+ * change), and that snapshot has its own Main / Sub-queues / All-queues
+ * carousel, so combining across depts here would double-count sub-queue calls.
+ */
+function combineSummaries_(primary, parts) {
+  if (parts.length === 1) return parts[0];
+  const base = parts[0];
+  const rows = [];
+  const groups = [];
+  const grand = { totalUnique: 0, totalRung: 0, totalMissed: 0,
+                  totalAnswered: 0, tttSeconds: 0, rosterAgentCount: 0,
+                  queueOnlyAgentCount: 0 };
+  parts.forEach(function (p) {
+    (p.rows || []).forEach(function (r) { rows.push(r); });
+    const t = p.totals || {};
+    groups.push({ dept: p.meta.department, rowCount: (p.rows || []).length, totals: t });
+    ['totalUnique', 'totalRung', 'totalMissed', 'totalAnswered', 'tttSeconds',
+     'rosterAgentCount', 'queueOnlyAgentCount'].forEach(function (k) {
+      grand[k] += Number(t[k]) || 0;
+    });
+  });
+  // The three DURATION means are per-agent averages, so the grand total is the
+  // agent-count-weighted mean of each dept's mean -- NOT a mean of means, which
+  // would over-weight a small dept. Depts contributing no non-zero agents drop
+  // out of both sides, matching avgNonzero_'s own semantics (v11 / F-29).
+  ['attSeconds', 'avgAbdWaitSeconds', 'csrAvgAbdWaitSeconds'].forEach(function (k) {
+    let num = 0, den = 0;
+    parts.forEach(function (p) {
+      const v = Number((p.totals || {})[k]) || 0;
+      const n = Number((p.totals || {}).rosterAgentCount) || 0;
+      if (v > 0 && n > 0) { num += v * n; den += n; }
+    });
+    grand[k] = den ? Math.round(num / den) : 0;
+  });
+  return {
+    meta: base.meta,          // caller overwrites department/subScope fields
+    rows: rows,
+    totals: grand,
+    deptGroups: groups,       // per-dept subtotals -- the transparency contract
+    qcd: primary.qcd,
+    csrTransfer: primary.csrTransfer,
+    diagnostics: primary.diagnostics,
+  };
+}
+
 function getDepartmentSummary(req) {
   const email = Session.getActiveUser().getEmail();
   const user = resolveUser_(email);
@@ -301,6 +364,32 @@ function getDepartmentSummary(req) {
   // ROSTER / BOTH (no QUEUE floaters). `scope` is in the cache key, so this
   // flip can't serve stale 'both' rows.
   const scope = 'roster';
+
+  // --- Sub-queue scope (Phase 1). ---------------------------------------
+  // 'own'  = this dept only (pre-Phase-1 behavior)
+  // 'subs' = its sub-queues only
+  // 'all'  = this dept + its sub-queues, grouped with per-dept subtotals
+  //
+  // DEFAULT is 'all' when the dept HAS sub-queues (owner decision) and 'own'
+  // otherwise -- so the 11 of 14 departments with no children are byte-for-byte
+  // unchanged, and the three parents (Sales / CSR / Power) open combined. The
+  // familiar own-dept figure is never lost: it stays on screen as that dept's
+  // own subtotal row.
+  const subQueues = (typeof subQueueChildMap_ === 'function')
+    ? ((subQueueChildMap_()[dept]) || []) : [];
+  let subScope = String((req && req.subScope) || '').trim();
+  if (['own', 'subs', 'all'].indexOf(subScope) === -1) {
+    subScope = subQueues.length ? 'all' : 'own';
+  }
+  if (!subQueues.length) subScope = 'own';   // nothing to combine or isolate
+  const deptSet = subScope === 'own'  ? [dept]
+                : subScope === 'subs' ? subQueues.slice()
+                :                       [dept].concat(subQueues);
+  // Every dept in the set is authorized INDEPENDENTLY. Phase 0 put the children
+  // in user.departments, so this normally passes -- but it must be checked, not
+  // assumed: a child whose access edge was dropped by the read-side guards
+  // (cycle / phantom / inactive) must not be reachable by asking for it here.
+  deptSet.forEach(function (d) { assertDeptAccess_(user, d); });
 
   const cache = CacheService.getScriptCache();
   // Bump the version suffix any time the aggregation rules change so
@@ -341,7 +430,11 @@ function getDepartmentSummary(req) {
   // and the CSR-only `csrTransfer` block for the team-strip tiles.
   // v15 (R11-C1): + qcd.rangePrior (the E5 prior window's block) and
   // csrTransfer.prior, feeding the Avg answer / Transfer % delta chips.
-  const cacheKey = 'summary:v15:' + dept + ':' + scope + ':' + from + ':' + to + ':' + summarySource;
+  // v16 (sub-queue Phase 1): `subScope` joins the key. Without it a manager
+  // toggling the switcher inside the 30-min TTL would be served the other
+  // scope's table.
+  const cacheKey = 'summary:v16:' + dept + ':' + scope + ':' + subScope
+                 + ':' + from + ':' + to + ':' + summarySource;
   const cached = cache.get(cacheKey);
   if (cached) {
     try {
@@ -356,7 +449,18 @@ function getDepartmentSummary(req) {
   }
 
   const t0 = Date.now();
-  const data = computeSummary_(dept, from, to, scope);
+  const parts = deptSet.map(function (d) { return computeSummary_(d, from, to, scope); });
+  const primary = (subScope === 'subs') ? parts[0]
+    : parts[Math.max(0, deptSet.indexOf(dept))];
+  const data = combineSummaries_(primary, parts);
+  // The requested dept stays the payload's identity even in 'subs' scope, so
+  // the client header and the dept selector don't jump.
+  data.meta.department = dept;
+  data.meta.subScope = subScope;
+  data.meta.subQueues = subQueues;          // always present -- drives the
+  data.meta.subQueueOf = (typeof getOverviewParentMap_ === 'function')
+    ? (getOverviewParentMap_()[dept] || null) : null;
+  data.meta.deptsShown = deptSet;           // relationship line even in 'own'
   data.meta.computeMs = Date.now() - t0;
   data.meta.cacheHit = false;
 
@@ -737,6 +841,10 @@ function computeSummary_(dept, from, to, scope) {
   totals.csrAvgAbdWaitSeconds = avgNonzero_(rosterRows, 'csrAvgAbdWaitSeconds');
   totals.rosterAgentCount = rosterRows.length;
   totals.queueOnlyAgentCount = rows.length - rosterRows.length;
+  // Sub-queue Phase 1: every row names its OWN department, so a combined
+  // parent+child table can group and label rows without inferring ownership.
+  // Single-dept views ignore it; it is the same value for every row there.
+  rows.forEach(function (r) { r.dept = dept; });
 
   // Diagnostics: roster agents with no data in this range; agents
   // matched only via queue extension overlap (not on roster).

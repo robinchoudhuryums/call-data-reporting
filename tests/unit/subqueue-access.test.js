@@ -210,3 +210,72 @@ test('the OVERVIEW_PARENT_OF constant seeds real edges with no sheet row', funct
   deepEqual(u.departments, ['Sales', 'PAP'],
     'PAP -> Sales comes from the constant, not the sheet');
 });
+
+// -- Phase 1: the combined-view merge layer ----------------------------------
+// Built by calling computeSummary_ per DEPARTMENT and merging, so each dept's
+// subtotal comes from the same code path as its own view and the two can never
+// disagree. That property is the whole reason the owner's "transparent combined
+// view" is trustworthy, so it is pinned rather than assumed.
+
+const hData = loadGas({
+  files: ['Config.gs', 'Util.gs', 'CompanyOverview.gs', 'DeptConfig.gs', 'Data.gs'],
+});
+
+function part(dept, rows, totals) {
+  return { meta: { department: dept }, rows: rows, totals: totals,
+           qcd: { tag: dept }, csrTransfer: null,
+           diagnostics: { rosterWithNoData: [], queueOnlyMatched: [] } };
+}
+
+test('combine: a single part is returned untouched (no merge overhead)', function () {
+  const only = part('Sales', [{ agent: 'A' }], { totalRung: 5 });
+  assert.equal(hData.call('combineSummaries_', only, [only]), only,
+    'single-dept payloads must take the identity path -- 11 of 14 depts');
+});
+
+test('combine: counts sum, and each dept keeps its OWN subtotal', function () {
+  const a = part('Sales', [{ agent: 'A' }, { agent: 'B' }],
+    { totalRung: 10, totalMissed: 2, totalAnswered: 8, totalUnique: 9,
+      tttSeconds: 100, rosterAgentCount: 2, queueOnlyAgentCount: 0,
+      attSeconds: 60, avgAbdWaitSeconds: 0, csrAvgAbdWaitSeconds: 0 });
+  const b = part('PAP', [{ agent: 'C' }],
+    { totalRung: 4, totalMissed: 1, totalAnswered: 3, totalUnique: 4,
+      tttSeconds: 40, rosterAgentCount: 1, queueOnlyAgentCount: 0,
+      attSeconds: 120, avgAbdWaitSeconds: 0, csrAvgAbdWaitSeconds: 0 });
+  const r = hData.call('combineSummaries_', a, [a, b]);
+  assert.equal(r.rows.length, 3);
+  assert.equal(r.totals.totalRung, 14);
+  assert.equal(r.totals.totalAnswered, 11);
+  assert.equal(r.totals.rosterAgentCount, 3);
+  assert.equal(r.deptGroups.length, 2, 'per-dept subtotals are the transparency contract');
+  assert.equal(r.deptGroups[0].dept, 'Sales');
+  assert.equal(r.deptGroups[0].totals.totalRung, 10,
+    'a dept subtotal is its OWN view\'s number, untouched by the merge');
+  assert.equal(r.deptGroups[1].totals.totalRung, 4);
+});
+
+test('combine: duration means are agent-WEIGHTED, not a mean of means', function () {
+  const a = part('Sales', [{}, {}], { rosterAgentCount: 2, attSeconds: 60 });
+  const b = part('PAP', [{}], { rosterAgentCount: 1, attSeconds: 120 });
+  const r = hData.call('combineSummaries_', a, [a, b]);
+  // (60*2 + 120*1) / 3 = 80. A naive mean of means would give 90 and
+  // over-weight the one-agent dept.
+  assert.equal(r.totals.attSeconds, 80);
+});
+
+test('combine: a dept with no non-zero agents drops out of the mean entirely', function () {
+  const a = part('Sales', [{}], { rosterAgentCount: 1, attSeconds: 60 });
+  const b = part('PAP', [{}], { rosterAgentCount: 1, attSeconds: 0 });
+  const r = hData.call('combineSummaries_', a, [a, b]);
+  assert.equal(r.totals.attSeconds, 60,
+    'matches avgNonzero_ semantics (v11/F-29): idle agents must not drag the mean');
+});
+
+test('combine: the QCD snapshot comes from the PRIMARY dept only', function () {
+  const a = part('Sales', [{}], { rosterAgentCount: 1 });
+  const b = part('PAP', [{}], { rosterAgentCount: 1 });
+  const r = hData.call('combineSummaries_', a, [a, b]);
+  assert.equal(r.qcd.tag, 'Sales',
+    'queuesForDept_ already rolls a parent\'s sub-queue queues into its own QCD '
+    + 'snapshot, so merging QCD across depts would DOUBLE-COUNT sub-queue calls');
+});

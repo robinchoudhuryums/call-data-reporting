@@ -1616,6 +1616,26 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `REPORT_CACHE_TTL_SECONDS` and are busted on EVERY write via
   `bustOrphanFixCache_()` / `dcBustCaches_()` -- admin-only surfaces, so the
   shared script cache is safe (no per-viewer personalization).
+- **Sub-queue scope switcher on My Department (Phase 1).** A parent dept
+  (Sales / CSR / Power) renders a three-way segmented control -- `<dept> only`
+  / `<subs> only` / `<dept> + <subs>` -- persisted per dept in
+  `cdr.dept.subscope` and **defaulting to COMBINED** (owner decision). Depts
+  with no sub-queues get no control and no behavior change. `subScope` is a
+  cache-key dimension (`summary:v16`). **Combined means grouped, never merged:**
+  rows carry `dept`, each dept gets a `subq-group-head` subheader and its OWN
+  subtotal row from `deptGroups`, and the grand total is labelled -- so the
+  familiar own-dept figure stays on screen and every number reconciles against
+  that dept's own view. Team averages / benchmark tints stay PER-DEPT (one
+  average across two teams with different call profiles is a worse number).
+  The relationship line renders in EVERY scope, including `own`, where it says
+  the sub-queue is excluded -- that exclusion was previously invisible. A CHILD
+  dept gets an upward pointer only, no switcher (the combined view belongs to
+  the parent, matching the server's one-level rule). Server side is
+  `combineSummaries_` calling `computeSummary_` once per dept: it leaves every
+  INV-02/04/05/23/53 + S35 + E5 rule inside that function untouched, and its
+  duration means are agent-count-WEIGHTED (never a mean of means). **`qcd` is
+  the PRIMARY dept's only** -- `queuesForDept_` already rolls sub-queue queues
+  into a parent's QCD snapshot, so merging it would double-count.
 - **Scope is locked to `roster` (Phase D → redesign cleanup →
   Phase 14/15 roster-only flip).** Pre-Phase-D the dashboard
   shipped a `roster | queue | both` segmented control with

@@ -6079,6 +6079,12 @@
       from: $('from-date').value,
       to: $('to-date').value,
     };
+    // Sub-queue Phase 1: a saved per-dept preference overrides the server's
+    // default (combined for a parent, own for everyone else). Omitted when
+    // unset so the server keeps deciding -- the client must not hardcode the
+    // default in a second place.
+    var __subScope = subqRequestedScope_(dept);
+    if (__subScope) req.subScope = __subScope;
     if (!req.from || !req.to) {
       setStatus('error', 'Pick a from and to date.');
       return;
@@ -6185,6 +6191,9 @@
     var csvBtn = $('csv-export-btn');
     if (csvBtn) csvBtn.style.display = state.rows.length ? '' : 'none';
     state.meta = (data && data.meta) || null;
+    // Sub-queue Phase 1: per-dept subtotals for the combined view. Absent on a
+    // single-dept payload, which is what keeps the flat render path unchanged.
+    state.deptGroups = (data && data.deptGroups) || null;
     state.qcd = (data && data.qcd) || null;   // Batch D: feeds the team-strip range QCD tiles
     state.csrTransfer = (data && data.csrTransfer) || null;   // R10-5: CSR-only Transfer % tile
     state.diagnostics = (data && data.diagnostics) || null;
@@ -7130,6 +7139,153 @@
   // B1: team summary strip (answer rate hero + answered / missed / avg talk)
   // for the selected range. Built from state.totals (roster-only, server-
   // summed) -- no new fetch. Hidden when there are no data rows.
+  // ==== Sub-queue scope (Phase 1) ==========================================
+  // A sub-queue (PAP, Spanish, PAK) is a FULL department with its own roster
+  // column -- NOT a floater (INV-53). The switcher lets a parent manager see
+  // their own dept, the sub-queue alone, or both COMBINED, and "combined" here
+  // means grouped-and-subtotalled: every row keeps its dept, every dept keeps
+  // its own subtotal, and the grand total is explicitly labelled. A single
+  // merged number would be unreconcilable against each dept's own view, which
+  // is exactly what the QCD carousel learned the hard way (P3).
+
+  var SUBQ_PREF_KEY = 'cdr.dept.subscope';
+
+  function subqPrefGet_(dept) {
+    try {
+      var raw = localStorage.getItem(SUBQ_PREF_KEY);
+      var map = raw ? JSON.parse(raw) : {};
+      return (map && map[dept]) || null;
+    } catch (e) { return null; }
+  }
+  function subqPrefSet_(dept, scope) {
+    try {
+      var raw = localStorage.getItem(SUBQ_PREF_KEY);
+      var map = raw ? JSON.parse(raw) : {};
+      if (!map || typeof map !== 'object') map = {};
+      map[dept] = scope;
+      localStorage.setItem(SUBQ_PREF_KEY, JSON.stringify(map));
+    } catch (e) { /* private mode / quota -- the server default still applies */ }
+  }
+
+  /**
+   * The always-on relationship line + the switcher. Renders in EVERY scope,
+   * including 'own', because the whole point is that a manager should not have
+   * to discover that a sub-queue exists and is excluded -- that exclusion was
+   * completely invisible before this.
+   */
+  function subqRenderScopeBar_(state) {
+    var host = $('dept-subq-bar');
+    if (!host) return;
+    var m = (state && state.meta) || {};
+    var subs = m.subQueues || [];
+    var parentOf = m.subQueueOf || null;
+    if (!subs.length && !parentOf) { host.style.display = 'none'; host.innerHTML = ''; return; }
+    host.style.display = '';
+    var dept = m.department || '';
+    var scope = m.subScope || 'own';
+
+    // A CHILD dept just gets the upward pointer -- no switcher, because the
+    // combined view belongs to the parent (one level, matching the server).
+    if (!subs.length && parentOf) {
+      host.innerHTML = '<div class="ds-note subq-note">'
+        + escapeHtml(dept) + ' is a sub-queue of <strong>'
+        + escapeHtml(parentOf) + '</strong>. These figures are '
+        + escapeHtml(dept) + '\u2019s only.</div>';
+      return;
+    }
+
+    var list = subs.map(escapeHtml).join(', ');
+    var opts = [
+      { k: 'own',  label: escapeHtml(dept) + ' only' },
+      { k: 'subs', label: list + ' only' },
+      { k: 'all',  label: escapeHtml(dept) + ' + ' + list },
+    ];
+    var note;
+    if (scope === 'own') {
+      var n = (m.subQueueAgentHint == null) ? '' : m.subQueueAgentHint;
+      note = '<strong>' + list + '</strong> '
+           + (subs.length === 1 ? 'is a sub-queue' : 'are sub-queues')
+           + ' of ' + escapeHtml(dept) + ' \u2014 not included in these figures.';
+    } else if (scope === 'subs') {
+      note = 'Showing <strong>' + list + '</strong> only. '
+           + escapeHtml(dept) + '\u2019s own agents are excluded.';
+    } else {
+      note = 'Combined view: ' + escapeHtml(dept) + ' and <strong>' + list
+           + '</strong>, grouped with each department\u2019s own subtotal.';
+    }
+    host.innerHTML =
+        '<div class="subq-bar-row">'
+      +   '<div class="segmented subq-seg" role="group" aria-label="Sub-queue scope">'
+      +     opts.map(function (o) {
+              return '<button type="button" class="seg-btn subq-seg-btn'
+                + (o.k === scope ? ' is-active' : '') + '" data-subscope="'
+                + o.k + '"' + (o.k === scope ? ' aria-pressed="true"' : ' aria-pressed="false"')
+                + '>' + o.label + '</button>';
+            }).join('')
+      +   '</div>'
+      +   '<div class="ds-note subq-note">' + note + '</div>'
+      + '</div>';
+
+    host.querySelectorAll('.subq-seg-btn').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var next = btn.getAttribute('data-subscope');
+        if (!next || next === scope) return;
+        subqPrefSet_(dept, next);
+        refresh();
+      });
+    });
+  }
+
+  /** The scope to REQUEST: a saved per-dept preference, else the server default. */
+  function subqRequestedScope_(dept) {
+    return dept ? subqPrefGet_(dept) : null;
+  }
+
+  /**
+   * Grouped tbody HTML for a combined view, or null when there is nothing to
+   * group (single-dept payloads take the unchanged flat path).
+   */
+  function subqRowGroups_(state, sorted) {
+    var m = (state && state.meta) || {};
+    var order = m.deptsShown || [];
+    var byDept = state.deptGroups || null;
+    if (!byDept || order.length < 2) return null;
+    var totalsFor = {};
+    byDept.forEach(function (g) { totalsFor[g.dept] = g.totals || {}; });
+    var out = [];
+    order.forEach(function (d) {
+      var rows = sorted.filter(function (r) { return r.dept === d; });
+      if (!rows.length) return;
+      out.push('<tr class="subq-group-head"><td colspan="' + COLUMNS.length + '">'
+        + escapeHtml(d) + (d === m.department ? '' : ' <span class="subq-tag">sub-queue</span>')
+        + ' <span class="subq-count">' + rows.length + ' agent'
+        + (rows.length === 1 ? '' : 's') + '</span></td></tr>');
+      rows.forEach(function (row) { out.push(subqAgentRowHtml_(row)); });
+      out.push(subqSubtotalRowHtml_(d, totalsFor[d] || {}));
+    });
+    return out.join('');
+  }
+
+  function subqAgentRowHtml_(row) {
+    var rowClass = (row.matchedViaQueue && !row.matchedViaRoster) ? 'via-queue' : '';
+    return '<tr data-agent="' + escapeHtml(row.agent) + '" tabindex="0"'
+      + (rowClass ? ' class="' + rowClass + '"' : '')
+      + ' title="Open ' + escapeHtml(row.agent) + '\u2019s Individual Report">'
+      + COLUMNS.map(function (col, i) {
+          var fk = (col.type === 'bar') ? ' data-flash-key="ag:' + escapeHtml(row.agent) + '"' : '';
+          return '<td class="' + cellClass_(col, i) + '"' + fk + '>' + fmtCell(col, row) + '</td>';
+        }).join('') + '</tr>';
+  }
+
+  /** A department's OWN subtotal -- identical to what its own view shows. */
+  function subqSubtotalRowHtml_(dept, totals) {
+    return '<tr class="subq-subtotal">' + COLUMNS.map(function (col, i) {
+      if (i === 0) return '<td>' + escapeHtml(dept) + ' subtotal</td>';
+      if (col.key === 'sourceHomes' || col.type === 'source') return '<td></td>';
+      return '<td class="' + cellClass_(col, i) + '">' + fmtCell(col, totals) + '</td>';
+    }).join('') + '</tr>';
+  }
+
   function renderDeptTeamStrip_(state) {
     var zone = $('dept-team-zone');
     var strip = $('dept-team-strip');
@@ -7350,6 +7506,8 @@
       }
     });
 
+    subqRenderScopeBar_(state);
+
     const tbody = $('agents-tbody');
     const tfoot = $('agents-tfoot');
 
@@ -7362,6 +7520,14 @@
     }
 
     const sorted = sortRows(state.rows, state.sortKey, state.sortDir);
+    // Sub-queue Phase 1: in a COMBINED view, rows are grouped under a per-dept
+    // subheader with that dept's own subtotal, so nothing is silently summed.
+    // Sorting stays GLOBAL within each group (the group order follows
+    // meta.deptsShown, i.e. parent first), so a manager's chosen sort still
+    // means what it did -- it just applies inside each department.
+    const groups = subqRowGroups_(state, sorted);
+    if (groups) { tbody.innerHTML = groups; }
+    else {
     tbody.innerHTML = sorted.map(function (row) {
       // Agents matched only via queue (not in the roster) get a small
       // "(queue-only)" tag next to the name in CSS.
@@ -7384,6 +7550,7 @@
         return '<td class="' + cellClass_(col, i) + '"' + fk + '>' + fmtCell(col, row) + '</td>';
       }).join('') + '</tr>';
     }).join('');
+    }
 
     if (state.totals) {
       // Roster-vs-floater count caption surfaced as the tfoot's
