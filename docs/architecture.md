@@ -145,7 +145,7 @@ whose `calleeName`, paren-stripped, matches exactly one roster entry
 is rewritten to that roster name before per-agent aggregation.
 
 It's documented in `loadRosterCanonicalNames_` and called out as
-INV-24 in `CLAUDE.md`. If the roster sheet's layout ever changes
+INV-24 (`docs/invariants.md`; CLAUDE.md carries the index line). If the roster sheet's layout ever changes
 (column F start, name-comma-extensions cell format), update
 `loadRosterCanonicalNames_` in the pipeline at the same time as
 `Data.gs`'s `parseRosterCell_` in the dashboard.
@@ -157,7 +157,7 @@ Each active row -- `Old Name | Canonical Name | Active=TRUE` --
 becomes a higher-priority lookup in the canonicalization map (alias
 > roster-exact > paren-strip). The read is best-effort: missing or
 empty sheet leaves the build's behavior byte-identical to
-pre-OrphanFix. See INV-46 in `CLAUDE.md` for the full contract.
+pre-OrphanFix. See INV-46 in `docs/invariants.md` for the full contract.
 
 ## QCD: dept ↔ queue coupling lives in the dashboard
 
@@ -185,7 +185,7 @@ about which dashboard dept owns which queue. Two consequences:
    doesn't auto-discover dept-name-like values in col D because
    they aren't there to begin with.
 
-See INV-50 / INV-51 in `CLAUDE.md` for the full contract;
+See INV-50 / INV-51 in `docs/invariants.md` for the full contract;
 `known-issues.md` → "QCD Report engine" covers the operator
 onboarding flow.
 
@@ -238,8 +238,8 @@ callables, which have the documented carve-out. Helpers that touch
 spreadsheet state end in `_`. Alerts, Digest, and Orphan Fix
 enforce admin role checks at the server boundary (INV-32).
 
-Cache prefix versions below are reference-only; CLAUDE.md INV-30 is
-canonical and reflects current code.
+Cache prefix versions below are reference-only; INV-30 (`docs/invariants.md`)
+is canonical and reflects current code.
 
 | Report | File | Public entries | Cache prefix | Admin-only |
 |---|---|---|---|---|
@@ -251,7 +251,7 @@ canonical and reflects current code.
 | Company Overview | `CompanyOverview.gs` | `getCompanyOverview` | `companyOverview:v20` | partial (admin-only `companyAggregate`, `pipelineFreshness`, `orphanNag`, `unmappedQcd` fields) |
 | QCD (retired as a standalone report -- QCD->Insights consolidation; queue data lives in Insights Queue health) | `QCDReport.gs` | `getQcdAllDepartments` (all-departments daily report, open to all signed-in users; `computeQcdReport_` serves Insights + the snapshots) | `qcdAll:v5:` | no (all-dept report is company-wide read-only) |
 | Insights Report (period comparison: team rollup + per-agent cards) | `InsightsReport.gs` | `getInsightsReportInit`, `getInsightsReport`, `sendInsightsReportEmail` | `insights:v19:` | no (per-dept gate like IR/PR/CR) |
-| Inbound Report (per-call inbound view from Neon `inbound_calls`) | `InboundReport.gs` | `getInboundReport`, `getInboundInsurerDaily`, `getInboundHeatmap` (weekday×hour abandon heatmap), `getCallJourney` (per-call path drill; manager fallback entitlement-gated via the dept's own Missed report, F-4) | `inbound:v5:`, `inboundHeatmap:v1:` | TEMPORARILY admin-only while vetted (per-dept manager path kept intact); `getCallJourney` is manager-reachable for own dept |
+| Inbound Report (per-call inbound view from Neon `inbound_calls`) | `InboundReport.gs` | `getInboundReport`, `getInboundInsurerDaily`, `getInboundHeatmap` (weekday×hour abandon heatmap), `getCallJourney` (per-call path drill; manager fallback entitlement-gated via the dept's own Missed report, F-4) | `inbound:v6:`, `inboundHeatmap:v1:` | TEMPORARILY admin-only while vetted (per-dept manager path kept intact); `getCallJourney` is manager-reachable for own dept |
 | Direct Call Report (per-agent direct-extension metrics from Neon `direct_call_history`) | `DirectCallReport.gs` | `getDirectCallReport` | `directCall:v2:` | TEMPORARILY admin-only while the busy carve-out is vetted (per-dept manager path kept intact) |
 | Caller Lookup (per-number communication history: inbound per-call from `inbound_calls`, outbound per-call from `outbound_calls`, day-level outbound history from `call_history_phones` -- all the same hash space) | `CallerLookup.gs` | `getCallerLookup` | (intentionally uncached) | yes |
 | Escalations worklist (Neon `escalations` + `escalation_activity`) | `Escalations.gs` | `getEscalationsInit`, `getEscalationsBadge` (R12-20 nav-badge aggregate), `getEscalations`, `getEscalationActivity` (read), `createEscalation`, `updateEscalation` (admin write), `resolveEscalation`, `startEscalation` (C6), `approveEscalation`/`rejectEscalation` (Phase-2 review), `updateEscalationComment`, `reopenEscalation` (per-dept write, INV-55) | (no cache) | no (per-dept; create/edit admin-only) |

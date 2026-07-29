@@ -10,6 +10,7 @@ const path = require('path');
 const fs = require('fs');
 const http = require('http');
 const { chromium } = require('playwright');
+const { launchOptions } = require('./chromium-path');   // revision-globbing Chromium resolver
 
 const HERE = __dirname;
 const SITE = path.join(HERE, 'site');
@@ -124,7 +125,7 @@ async function focusWalk(page, label, n = 18) {
 (async () => {
   const srv = await serve();
   const base = 'http://127.0.0.1:' + srv.address().port + '/';
-  const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || '/opt/pw-browsers/chromium' });
+  const browser = await chromium.launch(launchOptions());
 
   // ---------------- admin, desktop 1440 ----------------
   for (const dark of [false, true]) {

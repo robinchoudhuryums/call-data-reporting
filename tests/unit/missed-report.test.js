@@ -35,6 +35,7 @@ function install(dataset) {
     sheets: { 'DO NOT EDIT!': ROSTER, 'DQE Historical Data': dqeSheet(dataset.map(dqeRow)) },
   });
   h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
+  h.ctx.DQE_DATE_BOUNDS_MEMO_ = null;   // F9: shared date-column bounds scan
   h.state.cache.clear();
   h.ctx.getDashboardNeonConn_ = function () { return null; };
   // R6: sentinel rows attribute by queue NAME against the dept's effective

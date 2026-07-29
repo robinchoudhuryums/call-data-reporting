@@ -40,6 +40,8 @@ Produce a PROJECT PROFILE:
   error handling patterns, logging patterns]
 - External dependencies: [APIs, databases, cloud services, SDKs]
 - Multi-tenant: [yes/no — how is data isolated?]
+- User-facing surfaces: [web UI / mobile / desktop / TUI / operator
+  console / none — and which subsystem owns each]
 - Key architectural patterns: [monolith/microservices, storage abstraction,
   auth model, job queue, real-time, etc.]
 
@@ -107,6 +109,10 @@ Propose health dimensions for this project's scoring. These should:
 - Be scorable with evidence from code reads
 - Cover both technical health and feature/product effectiveness
 - Include domain-specific dimensions
+- Include one interface dimension (e.g. "UI/UX & Accessibility") if the
+  Phase 1 profile found any user-facing surface. Omit it only when the
+  profile found none — otherwise /broad-scan Stage 3's interface
+  findings have no dimension to score against.
 - Be between 10-15 dimensions total
 
 For each dimension:
@@ -126,7 +132,8 @@ Guarantees, Operator-Only State Gaps, Parallel Source-of-Truth Drift,
 Test Coverage Quality. Keep these unless the domain calls for different
 shapes (e.g. a data pipeline might add "Numerical / Precision Drift," a
 mobile app "Offline / Sync Integrity," a library "Public API
-Compatibility"). Aim for 4–6 categories, each with a name + one-sentence
+Compatibility," a client-heavy app "Visual / Interaction Regression
+Posture"). Aim for 4–6 categories, each with a name + one-sentence
 "what it measures."
 
 ═══════════════════════════════════════════
@@ -170,6 +177,8 @@ OUTPUT 1 — CYCLE WORKFLOW CONFIG (paste into the project's CLAUDE.md):
 
 ### Health Dimensions
 [dim1], [dim2], [dim3], ...
+(include one interface dimension — e.g. "UI/UX & Accessibility" — if the
+ Phase 1 profile found any user-facing surface)
 
 ### Horizontal (Axis B) Categories   ← optional; defaults to the standard 5 if omitted
 [Category name] | [what it measures]
@@ -198,7 +207,9 @@ S1 | [short scenario name] | Subsystem: [name]
     - [step]
     - [step]
   Expected: [outcome]
-(repeat for each scenario; aim for 5–15 covering golden paths and known regression hotspots)
+(repeat for each scenario; aim for 5–15 covering golden paths and known regression hotspots;
+ include a visual check per user-facing surface — /broad-scan Stage 3 emits
+ OPERATOR VISUAL CHECKS in this format so they can be promoted here directly)
 
 ### Frozen Subsystems   ← optional; omit if no subsystems are frozen
 - [subsystem name] — [reason: why frozen, what's replacing it, what would unfreeze it]

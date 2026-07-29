@@ -6,6 +6,7 @@
   "scripts": {
     "test": "node --test",
     "check:dups": "bash scripts/check-duplicated-files.sh",
-    "ci": "node --test && bash scripts/check-duplicated-files.sh"
+    "ci": "node --test && bash scripts/check-duplicated-files.sh",
+    "ci:ui": "node tools/ui-harness/ci.mjs"
   }
 }

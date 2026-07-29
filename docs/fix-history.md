@@ -5,9 +5,14 @@
 The project keeps two surfaces:
 
 - **CLAUDE.md = current invariants / live truth.** The rules you must follow
-  now: the Invariant Library (`INV-01`…`INV-55`), the Common Gotchas *rules*,
-  Key Design Decisions, the Operator State Checklist, and the Cycle Workflow
-  Config. If a rule governs how you write code today, it lives in CLAUDE.md.
+  now: the Common Gotchas *rules*, Key Design Decisions, and the Cycle Workflow
+  Config. If a rule governs how you write code today, it lives in CLAUDE.md — or
+  in one of the four reference files the F8 split moved OUT of it, each of which
+  CLAUDE.md still indexes: `docs/invariants.md` (the Invariant Library,
+  `INV-01`…`INV-55`), `docs/operator-state.md` (the numbered Operator State
+  items), `docs/regression-scenarios.md` (`S1`…`S40`), and
+  `docs/client-ui-conventions.md` (the client/presentation-layer conventions).
+  Those four are still LIVE TRUTH, not archive — only their location changed.
 - **This file = the historical fix log.** The commit-by-commit "why": what each
   short fix code (`F-2`, `IMP-7`, `CORE-3`, `RPT-1`, `OPS-7`, `NEO-1`, …) fixed,
   and a pointer to the CLAUDE.md invariant / gotcha the fix produced. Read this
@@ -16,8 +21,9 @@ The project keeps two surfaces:
 
 **How to use it:** codes are terse on purpose. To find a code's full narrative,
 `grep -n "<code>" CLAUDE.md docs/*.md apps-script/**` — the live rule is in
-CLAUDE.md; the reasoning is here or in `docs/known-issues.md`. When a fix code's
-rule changes, update CLAUDE.md; leave the history entry as-is (it's an archive).
+CLAUDE.md or one of its four split reference files (above); the reasoning is here
+or in `docs/known-issues.md`. When a fix code's rule changes, update the live
+rule; leave the history entry as-is (it's an archive).
 
 > Migration note: this file was introduced by splitting the fix-narrative out of
 > CLAUDE.md's prose. CLAUDE.md still contains the interwoven narrative for each
@@ -34,9 +40,10 @@ rule changes, update CLAUDE.md; leave the history entry as-is (it's an archive).
 
 | Family | Meaning | Where the live rule lives |
 |---|---|---|
-| `INV-01`…`INV-55` | **Current invariants.** Not history — the live contract. | CLAUDE.md → Cycle Workflow Config → Invariant Library |
+| `INV-01`…`INV-55` | **Current invariants.** Not history — the live contract. | `docs/invariants.md` (CLAUDE.md → Cycle Workflow Config → Invariant Library holds the index) |
 | `F-2`…`F-56` (**dashed**) | Dashboard bug fixes / hardening from cycle + audit passes | CLAUDE.md Common Gotchas / INV-## |
 | `F1`,`F2`,`F4`… (**bare, no dash**) | The Neon read-back / feature-flag / router family. **A DIFFERENT family from `F-2`, `F-4`** — see the collision note below | CLAUDE.md F1 gotcha / Operator State #19 |
+| `F1`…`F13` (**Round 13**, 2026-07-27) | Broad-scan finding numbers. **A THIRD `F`-shaped family** — `F1` here is the inbound queue-recognition fix, NOT the Neon read-back flag; `F2` here is the zero-record cleanup, NOT the dup-guard self-heal | the Round-13 section below |
 | `IMP-4`…`IMP-11` | Neon **im**port-mirror write discipline | CLAUDE.md "Neon write discipline" gotcha, INV-16 |
 | `CORE-1`…`CORE-7` | The CORE hardening pass (auth gates, cache-source suffix, config parity) | various INV / Operator State |
 | `DEEP-1` | Companion to CORE-1 (signed-in gate) | Key Design Decisions (auth) |
@@ -46,15 +53,17 @@ rule changes, update CLAUDE.md; leave the history entry as-is (it's an archive).
 | `TST-7` | Test / deploy gating | Key commands, Operator State #2 |
 | `M1`,`M2` | companyOverview v16 population-scoping fixes | INV-30 companyOverview, INV-51 |
 | `E2`…`E10` | **Phase E** UI surfaces (commit 94bbca9 + follow-ons) | CLAUDE.md "Phase E UI surfaces", INV-33/34/51 |
-| `S1`…`S38` | **Regression Scenarios** (Cycle Config) — but a few inline `S#` are batch-step codes, see below | Cycle Workflow Config → Regression Scenarios |
+| `S1`…`S40` | **Regression Scenarios** (Cycle Config) — but a few inline `S#` are batch-step codes, see below. `S39`/`S40` were promoted from a broad-scan Stage-3 OPERATOR VISUAL CHECK | Cycle Workflow Config → Regression Scenarios |
 | `Phase A`–`E`, `Phase 1`–`15`, `Phase D`/`D+1`, `Batch E`/`F` | Redesign / rollout phases named in commit narratives | commit messages + CLAUDE.md prose |
 
 ### ⚠ Two collisions that WILL confuse you
 
-1. **Dashed `F-#` vs bare `F#` are different families.** `F-2` (the AD/AE/AF
-   pairing fix) has nothing to do with `F2` (the dup-guard Neon self-heal).
-   `F-4`/`F4`, `F-5`/`F5` likewise collide. Always preserve the dash (or its
-   absence) when grepping.
+1. **Dashed `F-#` vs bare `F#` are different families — and since Round 13
+   there are THREE.** `F-2` (the AD/AE/AF pairing fix) has nothing to do with
+   `F2` (the dup-guard Neon self-heal), which has nothing to do with Round-13
+   `F2` (the zero-record authoritative cleanup). `F-4`/`F4`, `F-5`/`F5`
+   likewise collide. Always preserve the dash (or its absence) when grepping,
+   and for a bare code check the DATE/section it sits in.
 2. **`S#` is overloaded.** `S1`…`S38` in the Cycle Config are **Regression
    Scenarios**. But inline prose uses `S5` for the *holiday layer*
    (`COMPANY_HOLIDAYS`, Operator State #27), `S1(c)` for `discoverInboundQueues_`
@@ -501,6 +510,40 @@ plan).** Client + email template only; code comments cite `R11-B<n>`:
 | R11-D4 | Escalations Department: **name-as-text for single-dept managers** (previously the control was hidden entirely), **selector for admins / all-dept** — reuses the existing `escInit_.isAdmin \|\| allDepts` signal, no new permission; selector change still runs the normal fetch + server-auth path | code |
 | R11-C6 | Missed chart polish: (a) clicking a bar to open the bucket detail no longer flashes the chart — the detail-toggle's `transitionend` now calls `deptMissedResize_(false)`, so the R11-B6 `tooNarrow` guard can't spuriously fire a full destroy+recreate mid-reflow (initial paint still passes `true`); (b) the per-agent "■ chart" scope button no longer clips at a narrow card's right edge (the `overflow:hidden` card) — the summary row wraps (`flex-wrap`), dropping the meta to a second line fully visible | code (`deptMissedResize_` + `.agent-card-head` CSS) |
 | R11-C5 | Direct report company view renders per-DEPT cards (grouped client-side from the same per-agent rows via `r.dept`): aggregate headline stats on each `<details>` summary (agents / IB answered / missed free+busy / busy-excluded answer % with the 92% tint / answered-weighted IB ATT / OB calls), expanding into that dept's own sortable agent table (shared `directAgentRowHtml_`/`directImpact_`; dynamic `srtWired_` entries are dropped on re-render so sorting re-arms). Card order = the B11 impact score on the dept aggregate. Flat all-agents table stays for single-dept view; CSV already carried the Dept column | Direct-extension bullet, CLAUDE.md |
+
+---
+
+## `F1`…`F13` — broad scan Round 13 (2026-07-27)
+
+Findings from the 2026-07-27 three-stage broad scan, implemented across two
+passes. **NB this is a THIRD `F`-shaped family**, distinct from both dashed
+`F-#` (dashboard fixes) and bare `F#` (Neon read-back / feature flags) — the
+same collision class the taxonomy table warns about. These are numbered by
+SCAN FINDING, not by subsystem.
+
+| Code | What it fixed | Where the live rule lives |
+|---|---|---|
+| `F1` | Inbound queue recognition (`icIsQueueName_`) was a hardcoded pattern, so a queue named outside it captured with `entry_queue=NULL` → attributable to no dept → invisible in every dept's Inbound report. Self-concealing: `scanInboundQueueNames_` and the QCD-parity unattributed list both filter `COALESCE(entry_queue,'') <> ''`, so there was no row to discover. Recognition now ALSO reads the `Dept Config` sheet (QCD Queues + Inbound Queue Aliases) via `icLoadConfiguredQueueNames_`. Strictly additive; `buildInboundCallRecords_` stays pure | Inbound-capture bullet (queue-name recognition), CLAUDE.md; INV-54 |
+| `F1b` | The measured half of F1: `^A_Q_` was ANCHORED, so the brand-prefixed queues `UDC_A_Q_Main` (Universal Dialysis Center) and `UUC_A_Q_Main` (Universal Urgent Care) never matched — a journey leg-name histogram over abandoned NULL-`entry_queue` calls found `UDC_A_Q_Main` on 38 abandons in one ~8-week window, still accruing, while the DQE pipeline had listed BOTH in `DQE_EXCLUDED_AGENTS` all along (the two pipelines disagreed about what a queue is). The `A_Q_` arm now matches at start OR after an underscore. Config alone could NOT have fixed this — an admin can only alias a queue they know is missing | Inbound-capture bullet, CLAUDE.md; Operator State #38 |
+| `F2` | `writeInboundCallsToNeon` / `writeOutboundCallsToNeon` returned BEFORE the authoritative per-date DELETE on an empty record set, so a date whose LEGITIMATE count is zero kept its phantoms forever (neither table has a sheet primary). New `icDeleteDateOnly_`, gated on a NON-EMPTY source so an unreadable grid can't destroy data (the P-3 discipline), reporting `unreachable` so a deferred-mirror date stays queued. The old CLAUDE.md rationale ("an empty payload carries no date to delete") had been stale since P-1 | Neon write discipline rule (4) / P-1 paragraph, CLAUDE.md |
+| `F3` | Escalation "overdue" meant CALENDAR days on the client (`escDaysOpen_`) and 72 HOURS in both server aggregates (`getEscalations` band + `getEscalationsBadge`), so the tile / nav badge could disagree with the ⚑ cards they counted — and a comment claimed they matched. One `ESC_OVERDUE_DAYS` + `ESC_OVERDUE_SQL_` drives both queries | INV-55 (overdue paragraph); S40 |
+| `F6` | **Downgraded, not fixed.** The Overview `cache.put` failure is log-only, but the cached blob was MEASURED at 27 KB / 14 depts (26% of the ~100 KB cap, ~1.9 KB/dept ⇒ ~50+ depts to cross). The Stage-1 estimate of 50–60 KB was ~2× off. Remaining ask: log the serialized length, warn past ~80 KB | open follow-on |
+| `F7` | The client had NO automated check -- ~20K lines of `script.html` verified only by deploying and looking. `npm run ci:ui` (`tools/ui-harness/ci.mjs`) boots the REAL client in headless Chromium against payloads from the REAL server code: `drive-smoke.js` fails on page/console errors, unexpected unmocked RPCs, BLANK chart canvases and horizontal overflow across both roles; `drive-f13.js` walks S39. Kept SEPARATE from `npm run ci`, which is zero-dep by design. Vendor bundles committed + version-pinned to `dashboard.html`'s CDN tags | Key commands (rendered-UI gate); S39 |
+| `F8` | **CLAUDE.md was ~372 KB and is injected into every session's context.** Four reference sections moved out verbatim, each leaving a heading, a one-line index per entry and a pointer: the Invariant Library → `docs/invariants.md`, Regression Scenarios → `docs/regression-scenarios.md`, the numbered Operator State items → `docs/operator-state.md`, and 14 client/presentation gotcha bullets → `docs/client-ui-conventions.md`. 373,570 → ~156 KB. The six client TRAPS (`safeChart_`, `dsConfirm_`, `csvSafeCell_`, datalabels registration, the OKLCH fillStyle rule, the script-tag escape) deliberately stayed. Guarded by `claude-md-split.test.js` (index↔file drift + a 200 KB cap); `cache-version-sync.test.js` needed widening in the same change or it would have gone blind on the moved INV-30 | known-issues "CLAUDE.md's split reference files can drift"; Read first |
+| `F9` | `getLatestDataDate` (MAX) and `getLatestDataDates`' `dqeEarliest` (MIN) each ran their own whole-column `getValues()` on `DQE Historical Data`, so a COLD cache read a multi-year column TWICE per 5-min expiry. One `sheetScanDqeDateBounds_()` yields both, memoized per execution; NOT cached across requests, so each caller keeps its R8-C2 negative-cache semantics. Test-side trap: a fixture swap must reset `DQE_DATE_BOUNDS_MEMO_` | Header freshness pill bullet |
+| `F10` | The escalations nav badge was APPEND-ONLY (`if (!tab.querySelector('.nav-count-badge'))`) and fetched once at init, so a manager who resolved their last escalation kept a stale non-zero badge all session and the Overview strip never hid. `escApplyBadge_()` updates in place and REMOVES at zero; refreshed on every list load. Fetches `getEscalationsBadge()` fresh rather than deriving from the list's `meta.statusCounts`, because the list can be dept-filtered while the badge is viewer-full-scope | "Count badges must be idempotent" bullet |
+| `F12` | `neonMirrorDate_`'s `step()` RETHREW on a hard error, so an early failure meant later steps were never attempted across all 8 retries — then the gave-up path dropped the date, permanently losing Inbound/Outbound (no sheet primary, ~14-day source floor) while the step that caused it stayed re-derivable. Errors are collected and thrown ONCE after every step; order is now least-recoverable-first | Operator State #22 (step order + no-skip) |
+| `F13` | Five non-button click targets were mouse-only: the Overview dept tile (solo/compare — the landing page), the My Department agent row (IR drill), `tr.qcd-expandable` on BOTH the all-dept QCD report and Insights Queue health (the per-source breakdown has no other route), and the QCD carousel dots. Shared `keyActivate_`/`makeActivatable_`/`qcdToggleExpandRow_` + focus rings. Table rows get `tabindex` but NO `role="button"` (it would override the implicit row role) | S39; Regression Scenarios |
+
+**Retracted / corrected during the scan** (kept because a wrong finding that
+looks plausible costs the next reader time):
+
+| Claim | Why it was wrong |
+|---|---|
+| "The Overview payload is near the 100 KB cache cap" | Measured 27 KB at 14 depts. Estimate was ~2× high; F6 downgraded to Low |
+| "The R11-N transfer enrichment can leak a raw phone number" | The leg is pre-filtered by `icIsQueueName_`, so the name can only ever be queue-shaped |
+| "The Overview sub-queue chip is mouse-only" | It is already a real `<button aria-expanded>`; the started fix would have DOUBLE-fired on Enter and was reverted |
+| "`entry_queue IS NULL AND disposition='abandoned'` measures F1 exposure" | Unions three causes; measured 9353 of which the real miss was tens of calls. See Operator State #38 for the discriminating probe |
 
 ---
 

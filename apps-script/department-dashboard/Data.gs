@@ -84,25 +84,58 @@ function getLatestDataDate() {
   const cacheNegative_ = function () { if (!neonAttempted) cachePut(NEGATIVE); };
 
   const _tSheet = Date.now();
+  // F9: one shared bounds scan (see sheetScanDqeDateBounds_) instead of this
+  // function's own whole-column read -- getLatestDataDates needs the MIN from
+  // the same column, and on a cold cache the two used to scan it twice.
+  const bounds = sheetScanDqeDateBounds_();
+  if (!bounds.max) { cacheNegative_(); return null; }   // R8-C2 (missing/empty sheet, or no parseable date)
+  if (typeof logDqeReadTiming_ === 'function') logDqeReadTiming_('getLatestDataDate', 'sheet', _tSheet, bounds.rows);
+  cachePut(bounds.max);
+  return bounds.max;
+}
+
+// F9: per-execution memo for the DQE date-column bounds. Same discipline as
+// DEPT_CONFIG_ROWS_MEMO_ / QCD_SHEET_DATA_MEMO_ -- `var` so the test harness can
+// reset it through the global object between fixture swaps.
+var DQE_DATE_BOUNDS_MEMO_ = null;
+
+/**
+ * F9. ONE scan of `DQE Historical Data`'s date column yielding BOTH bounds,
+ * memoized per execution.
+ *
+ * Two callers want different ends of the same column: `getLatestDataDate` wants
+ * the MAX, and `getLatestDataDates` wants the MIN too (`dqeEarliest`, the R12-26
+ * coverage start). They each ran their own whole-column `getValues()`, so a cold
+ * cache read a multi-year column TWICE per 5-minute expiry -- pure duplicated
+ * cost, since the second scan derived nothing the first couldn't have.
+ *
+ * Returns `{ min, max, rows }` with `max === null` when the sheet is missing,
+ * empty, or holds no parseable date. Callers keep their OWN negative-cache
+ * semantics (R8-C2) -- this helper deliberately doesn't cache across requests,
+ * only within one execution.
+ */
+function sheetScanDqeDateBounds_() {
+  if (DQE_DATE_BOUNDS_MEMO_) return DQE_DATE_BOUNDS_MEMO_;
+  const empty = { min: null, max: null, rows: 0 };
   const ss = openSpreadsheet_();
   const sheet = ss.getSheetByName(SHEETS.HISTORICAL);
-  if (!sheet) { cacheNegative_(); return null; }
+  if (!sheet) { DQE_DATE_BOUNDS_MEMO_ = empty; return empty; }
   const lastRow = sheet.getLastRow();
-  if (lastRow < 2) { cacheNegative_(); return null; }
+  if (lastRow < 2) { DQE_DATE_BOUNDS_MEMO_ = empty; return empty; }
   const ssTZ = ss.getSpreadsheetTimeZone();
-
-  // The Date column is at HISTORICAL_COLS.DATE.  Scan only that
-  // column to keep the read cheap.
+  // The Date column is at HISTORICAL_COLS.DATE. Scan only that column to keep
+  // the read cheap.
   const values = sheet.getRange(2, HISTORICAL_COLS.DATE, lastRow - 1, 1).getValues();
-  let latest = '';
+  let min = '', max = '';
   for (let i = 0; i < values.length; i++) {
     const iso = rowDateIso_(values[i][0], ssTZ);
-    if (iso && iso > latest) latest = iso;
+    if (!iso) continue;
+    if (iso > max) max = iso;
+    if (!min || iso < min) min = iso;
   }
-  if (!latest) { cacheNegative_(); return null; }   // R8-C2
-  if (typeof logDqeReadTiming_ === 'function') logDqeReadTiming_('getLatestDataDate', 'sheet', _tSheet, lastRow - 1);
-  cachePut(latest);
-  return latest;
+  const out = max ? { min: min || null, max: max, rows: lastRow - 1 } : empty;
+  DQE_DATE_BOUNDS_MEMO_ = out;
+  return out;
 }
 
 /**
@@ -204,16 +237,11 @@ function getLatestDataDates() {
       dqeEarliest = neonGetMinDqeDate_() || '';
     }
     if (!dqeEarliest) {
-      const dqeSheet = ss.getSheetByName(SHEETS.HISTORICAL);
-      if (dqeSheet && dqeSheet.getLastRow() >= 2) {
-        const dvals = dqeSheet
-          .getRange(2, HISTORICAL_COLS.DATE, dqeSheet.getLastRow() - 1, 1)
-          .getValues();
-        for (let i = 0; i < dvals.length; i++) {
-          const iso = rowDateIso_(dvals[i][0], ssTZ);
-          if (iso && (!dqeEarliest || iso < dqeEarliest)) dqeEarliest = iso;
-        }
-      }
+      // F9: the SHARED bounds scan -- `result.dqe` above came from
+      // getLatestDataDate, which now reads the same memoized scan, so a cold
+      // cache costs ONE whole-column read here instead of two.
+      const bounds = sheetScanDqeDateBounds_();
+      if (bounds.min) dqeEarliest = bounds.min;
     }
     if (dqeEarliest) result.dqeEarliest = dqeEarliest;
 

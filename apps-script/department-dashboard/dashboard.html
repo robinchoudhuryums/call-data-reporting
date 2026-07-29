@@ -1749,6 +1749,7 @@
         </div>
 
         <div id="inbound-body">
+          <div class="ins-rollup-cap" id="inbound-window-note">Scoped to the 8:30&nbsp;AM&nbsp;&ndash;&nbsp;5:00&nbsp;PM&nbsp;CST work window, matching every other department metric. Calls outside it are summarized separately at the bottom.</div>
           <div id="inbound-kpi-row" class="pr-kpi-row"></div>
 
           <div class="al-section">
@@ -1785,6 +1786,11 @@
         </div>
 
         <div id="inbound-heatmap" class="ds-heatmap-panel" style="display:none;"></div>
+
+          <div class="al-section" id="inbound-outside-section" style="display:none;">
+            <div class="al-section-title">Outside business hours <span class="ins-rollup-cap">(research only &mdash; NOT counted in any figure above, and not a department metric)</span></div>
+            <div id="inbound-outside-body"></div>
+          </div>
       </div>
       </div>
     </div>
@@ -2727,6 +2733,7 @@
               <th>Team-avg excludes</th>
               <th>Queue ext overrides</th>
               <th>Inbound aliases</th>
+              <th>Final dept labels</th>
               <th>Source</th>
               <th>Edit</th>
             </tr></thead>
@@ -2756,6 +2763,10 @@
             <div class="control" style="flex:1 1 240px;">
               <label for="dc-edit-inbound-aliases" title="Raw inbound queue names (as they appear in inbound_calls) that belong to this dept but differ from its QCD queue names. Bridges per-dept Inbound report + call-path attribution.">Inbound queue aliases (raw names)</label>
               <input type="text" id="dc-edit-inbound-aliases" placeholder="A_Q_CSR, Backup CSR">
+            </div>
+            <div class="control" style="flex:1 1 240px;">
+              <label for="dc-edit-final-dept-labels" title="Raw CDR &quot;Departments&quot; org-chart labels (as they appear in inbound_calls.final_dept) that belong to this dept. Used ONLY to attribute answered-then-abandoned-on-hold calls; the dept's own name always matches without being listed.">Final dept labels (raw CDR)</label>
+              <input type="text" id="dc-edit-final-dept-labels" placeholder="Customer Success, Patient Care">
             </div>
             <div class="control" style="flex:1 1 180px;">
               <label for="dc-edit-notes">Notes</label>

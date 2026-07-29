@@ -67,7 +67,7 @@
 // v5 (R5): abandon_stage gains 'direct' (kpis.abandonedDirect; old rows heal
 // on re-import), byDialIn rows carry display labels (DIAL_IN_LABELS map >
 // derived dominant first_agent > raw number; raw kept in `number`).
-const INBOUND_CACHE_KEY_PREFIX = 'inbound:v5';
+const INBOUND_CACHE_KEY_PREFIX = 'inbound:v6';
 const INBOUND_TOP_N = 50;
 // Cap the requested window so an over-wide range can't trigger an
 // unbounded Neon aggregation (mirrors CallerLookup's range guard). A
@@ -181,8 +181,22 @@ function inboundDeptPredicate_(dept, deptQueues) {
   // every dept-scoped inbound query. The live writer always emits TRUE/FALSE,
   // so this is latent hardening for any future backfill that leaves it NULL.
   const isOnHoldAnswered = "(c.disposition='answered' AND COALESCE(c.abandoned_on_hold, false))";
+  // The answered-on-hold carve-out attributes by `final_dept`, which carries the
+  // raw CDR ORG-CHART label ("Customer Success", "Inside Sales - Power
+  // Mobility"), NOT a dashboard dept header. Comparing it to the dept name alone
+  // meant this arm had never fired in this install -- 146 such calls in one
+  // 2-week window attributed to no dept at all. `getFinalDeptLabels_` returns
+  // the admin-mapped labels for the dept (Dept Config "Final Dept Labels"),
+  // ALWAYS including the dept name itself, so an install whose labels happen to
+  // match is byte-equivalent to the old behavior and needs no config.
+  const labels = (typeof getFinalDeptLabels_ === 'function')
+    ? getFinalDeptLabels_(dept)
+    : [String(dept).trim().toLowerCase()];
+  const labelList = labels.length
+    ? labels.map(inboundSqlLit_).join(',')
+    : inboundSqlLit_(String(dept).trim().toLowerCase());
   return ' AND ((' + isOnHoldAnswered
-       + " AND lower(trim(c.final_dept)) = lower(" + inboundSqlLit_(dept) + "))"
+       + ' AND lower(trim(c.final_dept)) IN (' + labelList + '))'
        + ' OR (NOT ' + isOnHoldAnswered
        + ' AND c.entry_queue IN (' + queueList + ')))';
 }
@@ -223,6 +237,34 @@ function inboundDeptPredicate_(dept, deptQueues) {
  * for the admin company view (no scoping). Queue/dept names are config-curated
  * but escaped anyway.
  */
+/**
+ * SQL fragment scoping `inbound_calls` to (or out of) the PST work window.
+ *
+ * QCD's Abandoned column only counts calls inside 6:30 AM - 3:00 PM PST; the
+ * inbound capture runs around the clock. Every dept-facing inbound figure must
+ * therefore be window-scoped, or it counts traffic no other dept metric in this
+ * app includes. `call_start` is stored RAW PST ('HH:MM:SS', the capture does
+ * NOT apply the +2h CST shift), so it compares directly against
+ * INBOUND_WORK_WINDOW_PST with no conversion -- zero-padded 24h times compare
+ * correctly as text.
+ *
+ * NULL `call_start` counts as IN-window: those are pre-extension captures with
+ * no time-of-day at all, and excluding them would silently shrink every
+ * historical date and read as a fixed gap rather than missing data.
+ *
+ * Out-of-window traffic is RESEARCH data (owner ruling) -- surfaced in its own
+ * `outsideWindow` block, never folded into a dept metric.
+ *
+ * NB the abandon HEATMAP does not use this: it is already bounded by
+ * INBOUND_HEATMAP_WINDOW_START_HOUR/END_HOUR (8 AM - 5 PM CST), which is the
+ * INV-18 display convention and 30 min wider at the start on purpose. Leave it.
+ */
+function inboundWindowClause_(inside) {
+  const c = "(c.call_start IS NULL OR (c.call_start >= '" + INBOUND_WORK_WINDOW_PST.start
+          + "' AND c.call_start < '" + INBOUND_WORK_WINDOW_PST.end + "'))";
+  return inside ? c : ('NOT ' + c);
+}
+
 function callJourneyDeptPredicate_(dept, deptQueues) {
   if (!dept) return '';
   const queueList = (deptQueues && deptQueues.length)
@@ -576,8 +618,15 @@ function computeInboundReport_(scope) {
     // per-insurer/per-number cuts (they can't be labeled) but they still
     // count in the headline KPIs + per-queue.
     const deptPred = inboundDeptPredicate_(scope.dept, scope.deptQueues);
-    const dr = "c.call_date BETWEEN '" + from + "'::date AND '" + to + "'::date" + deptPred;
-    const priorDr = "c.call_date BETWEEN '" + prior.from + "'::date AND '" + prior.to + "'::date" + deptPred;
+    // Work-window scope (2026-07). Appending it to `dr`/`priorDr` scopes EVERY
+    // sub-select below in one place -- KPIs, byInsurer, byDialIn, byQueue,
+    // byDialInInsurer and daily -- so no dept-facing figure can drift out of
+    // scope by being added later. `drOutside` feeds the research block only.
+    const dateRange = "c.call_date BETWEEN '" + from + "'::date AND '" + to + "'::date" + deptPred;
+    const dr = dateRange + ' AND ' + inboundWindowClause_(true);
+    const drOutside = dateRange + ' AND ' + inboundWindowClause_(false);
+    const priorDr = "c.call_date BETWEEN '" + prior.from + "'::date AND '" + prior.to
+                  + "'::date" + deptPred + ' AND ' + inboundWindowClause_(true);
     // R5: the derived dial-in agent label reads first_agent, a column the
     // cdr-import capture adds via its idempotent DDL. Guard on its existence
     // so deploying the dashboard BEFORE the next import can't error the
@@ -667,7 +716,24 @@ function computeInboundReport_(scope) {
         "'daily', (SELECT COALESCE(json_agg(t ORDER BY t.d), '[]') FROM (" +
             "SELECT call_date::text AS d, count(*) AS calls, " +
               "count(*) FILTER (WHERE disposition='abandoned') AS abandoned " +
-            "FROM inbound_calls c WHERE " + dr + " GROUP BY 1) t)" +
+            "FROM inbound_calls c WHERE " + dr + " GROUP BY 1) t), " +
+        // RESEARCH ONLY -- outside the work window, split before/after so the
+        // two read differently (before-hours callers largely get answered;
+        // after-hours largely abandon against an unstaffed queue). Never a
+        // dept metric, never part of the KPIs above.
+        "'outsideWindow', (SELECT json_build_object(" +
+            "'calls', count(*), " +
+            "'abandoned', count(*) FILTER (WHERE disposition='abandoned'), " +
+            "'answered', count(*) FILTER (WHERE disposition='answered'), " +
+            "'beforeCalls', count(*) FILTER (WHERE c.call_start < '"
+              + INBOUND_WORK_WINDOW_PST.start + "'), " +
+            "'beforeAbandoned', count(*) FILTER (WHERE c.call_start < '"
+              + INBOUND_WORK_WINDOW_PST.start + "' AND disposition='abandoned'), " +
+            "'afterCalls', count(*) FILTER (WHERE c.call_start >= '"
+              + INBOUND_WORK_WINDOW_PST.end + "'), " +
+            "'afterAbandoned', count(*) FILTER (WHERE c.call_start >= '"
+              + INBOUND_WORK_WINDOW_PST.end + "' AND disposition='abandoned')" +
+          ") FROM inbound_calls c WHERE " + drOutside + ")" +
       ")::text AS j";
 
     const stmt = conn.createStatement();
@@ -714,6 +780,7 @@ function computeInboundReport_(scope) {
       byQueue:         Array.isArray(obj.byQueue)         ? obj.byQueue         : [],
       byDialInInsurer: Array.isArray(obj.byDialInInsurer) ? obj.byDialInInsurer : [],
       daily:           Array.isArray(obj.daily)           ? obj.daily           : [],
+      outsideWindow:   inboundShapeOutside_(obj.outsideWindow),
     };
   } catch (e) {
     // Table missing / Neon error -> graceful empty (modal shows "unavailable").
@@ -783,6 +850,28 @@ function emptyInboundReport_(scope) {
     kpis: inboundShapeKpis_(null),
     kpisPrior: inboundShapeKpis_(null),
     byInsurer: [], byDialIn: [], byQueue: [], byDialInInsurer: [], daily: [],
+    outsideWindow: inboundShapeOutside_(null),
+  };
+}
+
+/**
+ * Normalizes the RESEARCH-ONLY out-of-window block. Always present (zeros when
+ * absent) so the client never has to null-check, and always separate from
+ * `kpis` so an out-of-window call can never reach a dept metric.
+ */
+function inboundShapeOutside_(o) {
+  o = o || {};
+  const n = function (v) { return Number(v) || 0; };
+  const calls = n(o.calls);
+  return {
+    calls: calls,
+    abandoned: n(o.abandoned),
+    answered: n(o.answered),
+    abandonedPct: calls ? Math.round((n(o.abandoned) / calls) * 1000) / 10 : 0,
+    beforeCalls: n(o.beforeCalls),
+    beforeAbandoned: n(o.beforeAbandoned),
+    afterCalls: n(o.afterCalls),
+    afterAbandoned: n(o.afterAbandoned),
   };
 }
 
@@ -838,7 +927,11 @@ function getInboundInsurerDaily(req) {
     if (!conn) { out.meta.available = false; return out; }
 
     const deptPred = inboundDeptPredicate_(scope.dept, scope.deptQueues);
-    const dr = "c.call_date BETWEEN '" + scope.from + "'::date AND '" + scope.to + "'::date" + deptPred;
+    // Same work-window scope as computeInboundReport_ -- this drill hangs off a
+    // byInsurer row, so an unscoped drill would not reconcile with the row's
+    // own count.
+    const dr = "c.call_date BETWEEN '" + scope.from + "'::date AND '" + scope.to + "'::date"
+             + deptPred + ' AND ' + inboundWindowClause_(true);
     const sql =
       "SELECT COALESCE(json_agg(t ORDER BY t.d), '[]')::text AS j FROM (" +
         "SELECT c.call_date::text AS d, count(*) AS calls, " +
@@ -947,7 +1040,8 @@ function scanInboundQueueNames_(lookbackDays) {
 function compareInboundVsQcdAbandons_(dept, fromIso, toIso, conn) {
   const out = { dept: dept, from: fromIso, to: toIso, available: true,
                 qcdQueues: [], inboundQueues: [], days: [],
-                totals: { qcd: 0, inboundAbandoned: 0, inboundOnHold: 0 } };
+                totals: { qcd: 0, inboundAbandoned: 0, inboundOnHold: 0,
+                          outsideWindowAbandoned: 0, outsideWindowCalls: 0 } };
   out.qcdQueues = queuesForDept_(dept);
   out.inboundQueues = inboundQueuesForDept_(dept);
 
@@ -970,12 +1064,28 @@ function compareInboundVsQcdAbandons_(dept, fromIso, toIso, conn) {
 
   // Inbound side: per-day strict abandons + answered-on-hold, dept-attributed
   // by the SAME predicate every inbound surface uses.
+  //
+  // WINDOW-SCOPED (2026-07). QCD's Abandoned column only counts calls inside
+  // the 6:30 AM - 3:00 PM PST work window; `inbound_calls` captures around the
+  // clock. Comparing them unfiltered inflated the inbound side of every row in
+  // this table. `call_start` is raw PST 'HH:MM:SS' (the capture does NOT apply
+  // the +2h CST shift), so it compares directly against
+  // INBOUND_WORK_WINDOW_PST with no conversion. Rows with a NULL call_start
+  // are PRE-EXTENSION captures that carry no time-of-day -- they are counted
+  // as in-window rather than dropped, because dropping them would silently
+  // shrink historical dates and read as a fixed gap. Out-of-window calls are
+  // reported SEPARATELY (owner ruling: research data, never a dept metric).
   const inbByDay = {};
+  const outsideByDay = {};
   const predicate = inboundDeptPredicate_(dept, out.inboundQueues);
+  const inWindow = inboundWindowClause_(true);
   const sql = "SELECT COALESCE(json_agg(t), '[]')::text AS j FROM ("
     + 'SELECT call_date::text AS d, '
-    + "count(*) FILTER (WHERE c.disposition = 'abandoned') AS ab, "
-    + "count(*) FILTER (WHERE c.disposition = 'answered' AND COALESCE(c.abandoned_on_hold, false)) AS hold "
+    + "count(*) FILTER (WHERE c.disposition = 'abandoned' AND " + inWindow + ') AS ab, '
+    + "count(*) FILTER (WHERE c.disposition = 'answered' AND COALESCE(c.abandoned_on_hold, false) AND "
+    + inWindow + ') AS hold, '
+    + "count(*) FILTER (WHERE c.disposition = 'abandoned' AND NOT " + inWindow + ') AS ab_outside, '
+    + 'count(*) FILTER (WHERE NOT ' + inWindow + ') AS calls_outside '
     + 'FROM inbound_calls c WHERE c.call_date BETWEEN ?::date AND ?::date' + predicate
     + ' GROUP BY call_date) t';
   const stmt = conn.prepareStatement(sql);
@@ -986,6 +1096,8 @@ function compareInboundVsQcdAbandons_(dept, fromIso, toIso, conn) {
   rs.close(); stmt.close();
   JSON.parse(json || '[]').forEach(function (r) {
     inbByDay[String(r.d)] = { ab: Number(r.ab) || 0, hold: Number(r.hold) || 0 };
+    outsideByDay[String(r.d)] = { ab: Number(r.ab_outside) || 0,
+                                  calls: Number(r.calls_outside) || 0 };
   });
 
   const allDays = {};
@@ -994,11 +1106,15 @@ function compareInboundVsQcdAbandons_(dept, fromIso, toIso, conn) {
   Object.keys(allDays).sort().forEach(function (d) {
     const q = qcdByDay[d] || 0;
     const b = inbByDay[d] || { ab: 0, hold: 0 };
+    const o = outsideByDay[d] || { ab: 0, calls: 0 };
     out.days.push({ date: d, qcdAbandoned: q, inboundAbandoned: b.ab,
-                    inboundOnHold: b.hold, diff: b.ab - q, diffWithHold: (b.ab + b.hold) - q });
+                    inboundOnHold: b.hold, diff: b.ab - q, diffWithHold: (b.ab + b.hold) - q,
+                    outsideWindowAbandoned: o.ab, outsideWindowCalls: o.calls });
     out.totals.qcd += q;
     out.totals.inboundAbandoned += b.ab;
     out.totals.inboundOnHold += b.hold;
+    out.totals.outsideWindowAbandoned += o.ab;
+    out.totals.outsideWindowCalls += o.calls;
   });
   return out;
 }
@@ -1034,13 +1150,19 @@ function runInboundQcdParityCheck() {
       Logger.log('=== %s  %s..%s  (QCD queues: %s | inbound union: %s)', dept, fromIso, toIso,
         r.qcdQueues.join(', ') || '(none)', r.inboundQueues.join(', ') || '(none)');
       r.days.forEach(function (day) {
-        Logger.log('  %s  qcd=%s  inbound=%s (+%s on-hold)  diff=%s  diffWithHold=%s',
-          day.date, day.qcdAbandoned, day.inboundAbandoned, day.inboundOnHold, day.diff, day.diffWithHold);
+        Logger.log('  %s  qcd=%s  inbound=%s (+%s on-hold)  diff=%s  diffWithHold=%s'
+          + '   [outside window: %s abandoned of %s calls]',
+          day.date, day.qcdAbandoned, day.inboundAbandoned, day.inboundOnHold, day.diff, day.diffWithHold,
+          day.outsideWindowAbandoned, day.outsideWindowCalls);
       });
       Logger.log('  TOTALS qcd=%s inbound=%s onHold=%s diff=%s diffWithHold=%s',
         r.totals.qcd, r.totals.inboundAbandoned, r.totals.inboundOnHold,
         r.totals.inboundAbandoned - r.totals.qcd,
         (r.totals.inboundAbandoned + r.totals.inboundOnHold) - r.totals.qcd);
+      Logger.log('  OUTSIDE WORK WINDOW (%s-%s PST, research only -- NOT a dept metric, '
+        + 'and NOT part of the diff above): %s abandoned of %s calls',
+        INBOUND_WORK_WINDOW_PST.start, INBOUND_WORK_WINDOW_PST.end,
+        r.totals.outsideWindowAbandoned, r.totals.outsideWindowCalls);
     });
 
     // Unattributed raw entry-queues in the window: invisible to EVERY dept's
@@ -1071,7 +1193,60 @@ function runInboundQcdParityCheck() {
     } else {
       Logger.log('All raw entry-queues in the window attribute to a dept. ✓');
     }
-    return { available: true, from: fromIso, to: toIso, depts: results, unattributed: uq };
+
+    // Batch 5: the NO-ENTRY-QUEUE bucket -- the population this tool was
+    // structurally BLIND to. The unattributed scan above filters
+    // `COALESCE(entry_queue,'') <> ''`, so a call whose queue name the capture
+    // never RECOGNIZED (entry_queue NULL) had no row to report; the same filter
+    // hides it from the Dept Config "Discovered inbound queues" panel. Those
+    // calls count in the ADMIN company view but attribute to NO dept, so they
+    // are a mechanical contributor to any "company total ≠ sum of depts" gap --
+    // which is the shape of the parked QCD-vs-inbound discrepancy this whole
+    // check exists to settle. Split by abandon_stage because that is the
+    // discriminator (Operator State #38): 'direct' = a DID call with no queue
+    // (legitimate), 'ivr' = either a genuine auto-attendant give-up
+    // (legitimate) OR an unrecognized queue (the F1 bug class).
+    var noQueue = [];
+    try {
+      var nqStmt = conn.prepareStatement(
+        "SELECT COALESCE(json_agg(t ORDER BY t.n DESC), '[]')::text AS j FROM ("
+        + "SELECT COALESCE(disposition,'(null)') AS disposition, "
+        + "COALESCE(abandon_stage,'(n/a)') AS stage, count(*) AS n "
+        + 'FROM inbound_calls '
+        + "WHERE call_date BETWEEN ?::date AND ?::date AND COALESCE(entry_queue, '') = '' "
+        + 'GROUP BY 1, 2) t');
+      nqStmt.setString(1, fromIso);
+      nqStmt.setString(2, toIso);
+      var nqRs = nqStmt.executeQuery();
+      var nqJson = nqRs.next() ? nqRs.getString('j') : '[]';
+      nqRs.close(); nqStmt.close();
+      JSON.parse(nqJson || '[]').forEach(function (r) {
+        noQueue.push({ disposition: String(r.disposition), stage: String(r.stage),
+                       calls: Number(r.n) || 0 });
+      });
+    } catch (e) {
+      Logger.log('no-entry_queue probe failed (best-effort): %s', (e && e.message) || e);
+    }
+    if (noQueue.length) {
+      var nqTotal = noQueue.reduce(function (a, r) { return a + r.calls; }, 0);
+      Logger.log('NO entry_queue (attributable to NO dept; counts in the company view only) -- '
+        + nqTotal + ' call(s):');
+      noQueue.forEach(function (r) {
+        Logger.log('   disposition=%s stage=%s -> %s', r.disposition, r.stage, r.calls);
+      });
+      Logger.log('   READ THIS CAREFULLY: an abandoned+ivr count here is NOT automatically a '
+        + 'bug -- it unions genuine auto-attendant give-ups with unrecognized-queue misses. '
+        + 'Run the Operator State #38 journey leg-name histogram to split them, and check the '
+        + 'names against DQE_EXCLUDED_AGENTS (cdr-import/buildDQEHistoricalData.js). Since '
+        + 'F1b, brand-prefixed queues (UDC_/UUC_A_Q_*) DO attribute, so a re-import of dates '
+        + 'inside the ~14-day Call_Legs window shrinks this bucket -- pre-F1b rows keep '
+        + 'entry_queue NULL until re-imported.');
+    } else {
+      Logger.log('Every inbound call in the window carries an entry_queue. ✓');
+    }
+
+    return { available: true, from: fromIso, to: toIso, depts: results,
+             unattributed: uq, noEntryQueue: noQueue };
   } finally {
     try { conn.close(); } catch (ce) {}
   }

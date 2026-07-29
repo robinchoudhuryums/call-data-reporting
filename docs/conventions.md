@@ -389,11 +389,30 @@ From/To default (which must snap to DQE specifically).
   dept's QCD report; admins pick any from the dropdown. Same gate
   used by Individual / Performance / Compare Ranges.
 - **Dept ↔ queue mapping** lives in `Config.gs::DEPT_QCD_QUEUES`.
-  `QCD Historical Data` col D holds raw `A_Q_*` queue names; the
+  `QCD Historical Data` col D holds `A_Q_*`-style queue names; the
   dashboard's dept labels (`CSR` / `Sales` / `Power`) only resolve
   through this map. Unmapped depts render an empty modal with a
   hint; see [`known-issues.md`](known-issues.md) → "QCD Report
   engine" for onboarding details.
+  **Careful with the word "raw" here:** col D's spellings are the
+  **QCD-CANONICAL** names, which are NOT the same space as the **raw**
+  phone-system names `inbound_calls.entry_queue` captures (CSR's main
+  queue is `A_Q_CustomerSuccess` in col D but `A_Q_CSR` in Raw Data, and
+  brand-prefixed queues like `UDC_A_Q_Main` exist in the raw space).
+  Bridging the two is what the Dept Config "Inbound queue aliases"
+  column is for — see [`known-issues.md`](known-issues.md) → "Two
+  queue-name spaces".
+  **There is a THIRD upstream name space, and it is not a queue name at
+  all:** `inbound_calls.final_dept` carries the phone system's ORG-CHART
+  label (`Customer Success`, `Inside Sales - Power Mobility`, `Patient
+  Intake - Supplies`), which in this install matches no dashboard dept
+  header either. It is bridged by the Dept Config **"Final dept labels"**
+  column, and it feeds exactly ONE thing — attributing an answered-then-
+  abandoned-ON-HOLD call to a dept. Don't confuse it with the queue
+  aliases: a queue name goes in one column, an org-chart label in the
+  other, and mixing them silently breaks the attribution arm that reads
+  it. See [`known-issues.md`](known-issues.md) → "QCD Abandoned vs
+  inbound_calls abandons".
 - **Source filter**: only rows where `Call Source === 'Total Calls'`
   are summed. Other sources (`CSR`, `Ad-campaign`, `New Call
   Menu`, `Non-CSR (internal)`) are sub-counts that would
@@ -456,8 +475,8 @@ Each report file uses its own versioned cache key prefix. Bump the
 version any time the response shape or aggregation rules change so
 stale caches invalidate on deploy.
 
-CLAUDE.md INV-30 is the canonical current-version list. This table
-mirrors it; if the two ever diverge, INV-30 wins.
+INV-30 (`docs/invariants.md`) is the canonical current-version list. This
+table mirrors it; if the two ever diverge, INV-30 wins.
 
 | Source file | Cache prefix | Current version |
 |---|---|---|
@@ -471,7 +490,7 @@ mirrors it; if the two ever diverge, INV-30 wins.
 | `MissedCallsReport.gs` | `missed:vN:` | `v17` |
 | `CompanyOverview.gs` | `companyOverview:vN` | `v20` |
 | `QCDReport.gs` | `qcd:vN:` | RETIRED (QCD modal deleted; `qcdAll:` remains) |
-| `InboundReport.gs` | `inbound:vN:` | `v5` |
+| `InboundReport.gs` | `inbound:vN:` | `v6` |
 | `InsightsReport.gs` | `insights:vN:` | `v19` |
 | `QCDReport.gs` (all-departments daily report) | `qcdAll:vN:` | `v5` |
 | `InboundReport.gs` (weekday×hour abandon heatmap) | `inboundHeatmap:vN:` | `v1` |

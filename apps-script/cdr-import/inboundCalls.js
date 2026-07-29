@@ -66,11 +66,44 @@ function icIsTrue_(s) { return String(s == null ? '' : s).trim().toUpperCase() =
 // the old /^A_Q_/-only test, a call whose (only) queue leg was Backup CSR
 // was captured with abandon_stage='ivr' and entry_queue=NULL -- it vanished
 // from CSR's per-dept Inbound report/heatmap, and (Call_Legs prune at ~14
-// days) the mis-capture was permanent. Keep this in sync with the DQE
-// pipeline's queue regex if another non-A_Q_ queue is ever added.
+// days) the mis-capture was permanent.
+//
+// F1: that fix was a HARDCODED literal, so the next non-A_Q_ queue would
+// recur the same silent, permanent mis-capture -- and neither diagnostic can
+// see it: `scanInboundQueueNames_` (the Dept Config "Discovered inbound
+// queues" panel) and the QCD-parity check's unattributed-queue list BOTH
+// filter `COALESCE(entry_queue,'') <> ''`, so a queue that was never
+// recognized has no row to discover. Recognition is now ALSO fed from the
+// admin-authored `Dept Config` sheet (QCD Queues + Inbound Queue Aliases),
+// loaded once per run by icLoadConfiguredQueueNames_. Strictly ADDITIVE: the
+// regex below still matches on its own, so this can only ever recognize MORE
+// names than before, never fewer.
+//
+// IC_KNOWN_QUEUE_NAMES_ is a module global (not a parameter) so
+// buildInboundCallRecords_ stays PURE for the unit harness -- null means
+// pattern-only, which is exactly the pre-F1 behavior the existing tests pin.
+var IC_KNOWN_QUEUE_NAMES_ = null;    // { lowercased queue name: true } | null
+
+// F1b (measured, not hypothetical): the `^A_Q_` anchor missed every
+// BRAND-PREFIXED queue. `UDC_A_Q_Main` (Universal Dialysis Center) and
+// `UUC_A_Q_Main` (Universal Urgent Care) are both first-class queues -- the DQE
+// pipeline has listed them in DQE_EXCLUDED_AGENTS for some time, and IMP-8's
+// comment discusses UDC_A_Q_Main by name -- but the anchor meant inbound
+// capture never recognized them: entry_queue=NULL, attributable to no dept,
+// invisible in every dept's Inbound report AND in the entry_queue-based
+// discovery panel. A journey-leg histogram over abandoned NULL-entry_queue
+// calls found UDC_A_Q_Main on 38 abandons in one ~8-week window, still
+// accruing. Config alone could not have fixed this: an admin can only add an
+// alias for a queue they know is missing, and nothing surfaced it.
+//
+// So the A_Q_ arm now matches at start OR after an underscore -- `UDC_A_Q_`,
+// `UUC_A_Q_`, and any future brand prefix. The 'Backup CSR' arm stays EXACT
+// (deliberately NOT the DQE pipeline's boundary pattern, which would make
+// "Jane Backup CSR" a queue -- pinned false by the IMP-1 tests).
 function icIsQueueName_(name) {
   var t = String(name == null ? '' : name).trim();
-  return /^A_Q_/i.test(t) || /^backup csr$/i.test(t);
+  if (/(?:^|_)A_Q_/i.test(t) || /^backup csr$/i.test(t)) return true;
+  return !!(t && IC_KNOWN_QUEUE_NAMES_ && IC_KNOWN_QUEUE_NAMES_[t.toLowerCase()]);
 }
 
 // "H:MM:SS" -> seconds (0 on blank/N/A).
@@ -171,6 +204,48 @@ function icBuildJourney_(legs) {
 function icSqlStr_(s) { return (s == null || s === '') ? 'NULL' : "'" + String(s).replace(/'/g, "''") + "'"; }
 function icSqlInt_(n) { var v = parseInt(n, 10); return isFinite(v) ? String(v) : 'NULL'; }
 function icSqlHash_(h) { return (typeof h === 'string' && /^[0-9a-f]{64}$/.test(h)) ? "'" + h + "'" : 'NULL'; }
+
+/**
+ * F2. Authoritative per-date DELETE with no insert -- the zero-record arm of
+ * the inbound/outbound writers. Used ONLY when the source had rows but produced
+ * no records for `dateIso`, so the date's existing rows are provably stale.
+ *
+ * Shares the writers' contract: never throws (best-effort, like its callers),
+ * and reports `unreachable` so a deferred-mirror date stays queued rather than
+ * being marked done with the phantoms still in place. A missing table is a
+ * clean no-op (nothing to delete yet).
+ */
+function icDeleteDateOnly_(table, dateIso, label) {
+  var conn = null;
+  try {
+    conn = getReachableNeonConn_();
+    if (!conn) {
+      Logger.log('%s: zero records for %s and Neon unreachable — stale rows (if any) '
+        + 'left in place; retry will clear them.', label, dateIso);
+      return { inserted: 0, skipped: 0, unreachable: true };
+    }
+    // Inline literal via icSqlStr_, matching the authoritative DELETE in the
+    // writers above (this file uses createStatement throughout). dateIso is the
+    // caller's own expectedDateIso, and icSqlStr_ escapes it regardless.
+    var stmt = conn.createStatement();
+    stmt.execute('DELETE FROM ' + table + ' WHERE call_date = ' + icSqlStr_(dateIso) + '::date');
+    stmt.close();
+    Logger.log('%s: zero records for %s (source had rows) — cleared any stale %s row(s).',
+      label, dateIso, table);
+    return { inserted: 0, skipped: 0, cleared: true };
+  } catch (e) {
+    var msg = (e && e.message) ? e.message : String(e);
+    // An absent table just means the capture has never written -- nothing stale
+    // to clear, so this is a success, not a failure the caller should log.
+    if (/does not exist|undefined table|relation .* does not exist/i.test(msg)) {
+      return { inserted: 0, skipped: 0, cleared: true };
+    }
+    Logger.log('%s: zero-record cleanup for %s failed (best-effort): %s', label, dateIso, msg);
+    return { inserted: 0, skipped: 0, error: true };
+  } finally {
+    if (conn) { try { conn.close(); } catch (ce) {} }
+  }
+}
 
 // Per-statement budget for the VALUES payload. Apps Script's JDBC bridge
 // rejects oversized SQL strings with "Argument too large: sql" (observed
@@ -498,39 +573,108 @@ function buildInboundCallRecords_(rawRows) {
 // empty map = capture behaves exactly as pre-normalization. The dashboard's
 // union predicates (inboundQueuesForDept_) keep the raw names too, so rows
 // captured BEFORE normalization still attribute.
-var IC_QUEUE_CANON_MEMO_ = null;
-function icQueueCanonicalMap_() {
-  if (IC_QUEUE_CANON_MEMO_) return IC_QUEUE_CANON_MEMO_;
-  var map = {};
+// Shared, per-run read of the dashboard's `Dept Config` sheet (INV-54, the
+// INV-46 cross-project soft-coupling pattern). ONE read serves both the
+// canonical-name map and the F1 queue-name recognition set; best-effort, so a
+// missing/unreadable sheet leaves both empty and the capture behaves exactly
+// as it did before either feature. Returns the ACTIVE rows only.
+var IC_DEPT_CONFIG_ROWS_MEMO_ = null;
+
+/**
+ * Drops every Dept-Config-derived memo so the next call re-reads the sheet.
+ * ONE entry point on purpose: the row cache now feeds BOTH the canonical-name
+ * map and the F1 queue-name set, so clearing just one of them would serve a
+ * stale read from the other. Called at the top of each write run (config can
+ * change between runs) and by the unit tests when they swap the fixture.
+ */
+function icResetConfigMemos_() {
+  IC_DEPT_CONFIG_ROWS_MEMO_ = null;
+  IC_QUEUE_CANON_MEMO_ = null;
+  IC_KNOWN_QUEUE_NAMES_ = null;
+}
+
+function icDeptConfigActiveRows_() {
+  if (IC_DEPT_CONFIG_ROWS_MEMO_) return IC_DEPT_CONFIG_ROWS_MEMO_;
+  var out = [];
   try {
     var ssId = (typeof getTargetSsId_ === 'function') ? getTargetSsId_() : null;
     var ss = ssId ? SpreadsheetApp.openById(ssId) : null;
     var sheet = ss ? ss.getSheetByName('Dept Config') : null;
     if (sheet && sheet.getLastRow() >= 2) {
-      var rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, 10).getValues();
-      rows.forEach(function (r) {
+      sheet.getRange(2, 1, sheet.getLastRow() - 1, 10).getValues().forEach(function (r) {
         // Strict truthy Active (the editor writes TRUE/FALSE) -- an
-        // unrecognized marker means NO normalization from that row, the
-        // safe direction.
-        var active = /^(true|yes|1)$/i.test(String(r[5] == null ? '' : r[5]).trim());
-        if (!active) return;
-        String(r[9] == null ? '' : r[9]).split(',').forEach(function (tok) {
-          var t = String(tok).trim();
-          var eq = t.indexOf('=');
-          if (eq <= 0 || eq === t.length - 1) return;   // plain alias / malformed
-          var raw = t.slice(0, eq).trim();
-          var canonical = t.slice(eq + 1).trim();
-          if (!raw || !canonical) return;
-          var key = raw.toLowerCase();
-          if (map[key] && map[key] !== canonical) {
-            Logger.log('icQueueCanonicalMap_: raw queue "' + raw + '" mapped to both "'
-              + map[key] + '" and "' + canonical + '" -- keeping the first (fix Dept Config).');
-            return;
-          }
-          map[key] = canonical;
-        });
+        // unrecognized marker means the row contributes NOTHING, the safe
+        // direction for both consumers.
+        if (/^(true|yes|1)$/i.test(String(r[5] == null ? '' : r[5]).trim())) out.push(r);
       });
     }
+  } catch (e) {
+    Logger.log('icDeptConfigActiveRows_ (best-effort): ' + (e && e.message ? e.message : e));
+  }
+  IC_DEPT_CONFIG_ROWS_MEMO_ = out;
+  return out;
+}
+
+/**
+ * F1. Populates IC_KNOWN_QUEUE_NAMES_ from the Dept Config sheet so a queue
+ * whose raw phone-system name doesn't match the A_Q_* / Backup CSR patterns is
+ * still recognized as a queue by the capture. Sources BOTH name spaces:
+ *   - "QCD Queues" (col 2)            -- the QCD-canonical names
+ *   - "Inbound Queue Aliases" (col 10) -- the RAW inbound names, including the
+ *     raw side of a `raw=canonical` pair (that pair's whole reason for
+ *     existing is that the raw spelling differs)
+ * Called once per write run. Additive only -- see icIsQueueName_.
+ */
+function icLoadConfiguredQueueNames_() {
+  var set = {};
+  var add = function (v) {
+    var t = String(v == null ? '' : v).trim();
+    // A digit-only token is an extension, not a queue name (the Dept Config
+    // save path rejects those in the alias column for the same reason).
+    if (!t || /^\d+$/.test(t)) return;
+    set[t.toLowerCase()] = true;
+  };
+  try {
+    icDeptConfigActiveRows_().forEach(function (r) {
+      String(r[1] == null ? '' : r[1]).split(',').forEach(add);
+      String(r[9] == null ? '' : r[9]).split(',').forEach(function (tok) {
+        var t = String(tok).trim();
+        var eq = t.indexOf('=');
+        add(eq > 0 ? t.slice(0, eq) : t);   // RAW side of a pair, or a plain alias
+      });
+    });
+  } catch (e) {
+    Logger.log('icLoadConfiguredQueueNames_ (best-effort, patterns still apply): '
+      + (e && e.message ? e.message : e));
+  }
+  IC_KNOWN_QUEUE_NAMES_ = set;
+  var n = Object.keys(set).length;
+  if (n) Logger.log('icLoadConfiguredQueueNames_: %s configured queue name(s) recognized.', n);
+  return set;
+}
+
+var IC_QUEUE_CANON_MEMO_ = null;
+function icQueueCanonicalMap_() {
+  if (IC_QUEUE_CANON_MEMO_) return IC_QUEUE_CANON_MEMO_;
+  var map = {};
+  try {
+    icDeptConfigActiveRows_().forEach(function (r) {
+      String(r[9] == null ? '' : r[9]).split(',').forEach(function (tok) {
+        var t = String(tok).trim();
+        var eq = t.indexOf('=');
+        if (eq <= 0 || eq === t.length - 1) return;   // plain alias / malformed
+        var raw = t.slice(0, eq).trim();
+        var canonical = t.slice(eq + 1).trim();
+        if (!raw || !canonical) return;
+        var key = raw.toLowerCase();
+        if (map[key] && map[key] !== canonical) {
+          Logger.log('icQueueCanonicalMap_: raw queue "' + raw + '" mapped to both "'
+            + map[key] + '" and "' + canonical + '" -- keeping the first (fix Dept Config).');
+          return;
+        }
+        map[key] = canonical;
+      });
+    });
   } catch (e) {
     Logger.log('icQueueCanonicalMap_ (best-effort, capture stays raw): '
       + (e && e.message ? e.message : e));
@@ -548,7 +692,10 @@ function writeInboundCallsToNeon(rawRows, opts) {
   var authoritative = !!(opts && opts.authoritative);
   var expectedDateIso = (opts && opts.expectedDateIso) ? String(opts.expectedDateIso) : '';
   try {
-    IC_QUEUE_CANON_MEMO_ = null;   // fresh map per run (config can change between runs)
+    // Fresh config per run (it can change between runs). The queue-name set
+    // MUST load BEFORE the builder -- icIsQueueName_ runs inside it (F1).
+    icResetConfigMemos_();
+    icLoadConfiguredQueueNames_();
     var records = buildInboundCallRecords_(rawRows).filter(function (r) { return r.callDate; });
     // R8-N: translate the attribution columns to canonical names when the
     // admin has mapped them; everything else (journey, counts) stays raw.
@@ -570,7 +717,23 @@ function writeInboundCallsToNeon(rawRows, opts) {
           strayCount, expectedDateIso);
       }
     }
-    if (!records.length) return { inserted: 0, skipped: 0 };
+    if (!records.length) {
+      // F2 (the P-5 rule, applied to a table with no sheet primary): an
+      // authoritative run whose SOURCE HAD LEGS but yielded zero inbound calls
+      // is a legitimate "this date has none" -- and the date's existing rows
+      // must go, or phantoms from an earlier import survive forever (nothing
+      // else corrects `inbound_calls`). Previously this returned early, so a
+      // date whose legitimate count is zero could never be cleaned.
+      //
+      // Gated on rawRows being NON-EMPTY: an empty/unreadable source is the one
+      // case where deleting would destroy good data, so it keeps the old
+      // early-return. expectedDateIso is required too, so the DELETE can only
+      // ever touch the date the caller vouched for (the P-1 guard).
+      if (authoritative && expectedDateIso && rawRows && rawRows.length) {
+        return icDeleteDateOnly_('inbound_calls', expectedDateIso, 'writeInboundCallsToNeon');
+      }
+      return { inserted: 0, skipped: 0 };
+    }
 
     var secret = PropertiesService.getScriptProperties().getProperty('HMAC_SECRET');
     var conn = getReachableNeonConn_();
@@ -788,8 +951,10 @@ function backfillInboundCalls(fromIso, toIso, force) {
       var res = writeInboundCallsToNeon(legs, { authoritative: true, expectedDateIso: c.iso });
       if (res && res.error) {
         failures.push(c.iso);
-      } else if (res && res.skipped && !res.inserted) {
+      } else if (res && ((res.skipped && !res.inserted) || res.unreachable)) {
         // Neon unreachable for this date -- abort the run; re-run later.
+        // `res.unreachable` also covers the F2 zero-record cleanup arm, which
+        // carries no `skipped` count but still needs the date retried.
         unreachable = true;   // F1: signal the caller so the date stays queued
         stoppedEarly = 'Neon unreachable at ' + c.iso + ' — re-run once Neon is up';
         break;

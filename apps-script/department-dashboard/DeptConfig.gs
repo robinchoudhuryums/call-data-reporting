@@ -154,6 +154,9 @@ function sheetReadDeptConfigRows_() {
             // Appended at the end (col 10 / idx 9); undefined on pre-existing
             // 9-col rows -> dcParseList_ yields [].
             inboundAliases:    dcParseList_(rows[i][9]),
+            // Appended after inboundAliases (col 11 / idx 10); undefined on
+            // pre-existing 10-col rows -> dcParseList_ yields [].
+            finalDeptLabels:   dcParseList_(rows[i][10]),
           });
         }
       }
@@ -178,7 +181,11 @@ function ensureDeptConfigTable_(conn) {
     + 'department text PRIMARY KEY, qcd_queues text, overview_parent text, '
     + 'team_avg_excludes text, queue_ext_overrides text, '
     + 'active boolean NOT NULL DEFAULT true, updated_by text, '
-    + 'updated_at timestamptz DEFAULT now(), notes text, inbound_aliases text)');
+    + 'updated_at timestamptz DEFAULT now(), notes text, inbound_aliases text, '
+    + 'final_dept_labels text)');
+  // Appended after the table shipped -- idempotent add so an existing
+  // dept_config upgrades in place (the CREATE above only fires on a fresh DB).
+  ddl.execute('ALTER TABLE dept_config ADD COLUMN IF NOT EXISTS final_dept_labels text');
   ddl.close();
 }
 
@@ -196,7 +203,7 @@ function neonReadDeptConfigRows_() {
     const sql = "SELECT COALESCE(json_agg(t ORDER BY t.department), '[]')::text AS j FROM ("
       + "SELECT department, qcd_queues, overview_parent, team_avg_excludes, queue_ext_overrides, "
       + "active, updated_by, to_char(updated_at, 'YYYY-MM-DD HH24:MI') AS updated_at, "
-      + "notes, inbound_aliases FROM dept_config) t";
+      + "notes, inbound_aliases, final_dept_labels FROM dept_config) t";
     const stmt = conn.createStatement();
     const rs = stmt.executeQuery(sql);
     const json = rs.next() ? rs.getString('j') : '[]';
@@ -214,6 +221,7 @@ function neonReadDeptConfigRows_() {
         updatedAt:         String(r.updated_at || ''),
         notes:             String(r.notes || ''),
         inboundAliases:    dcParseList_(r.inbound_aliases),
+        finalDeptLabels:   dcParseList_(r.final_dept_labels),
       };
     }).filter(function (r) { return r.dept; });
   } catch (e) {
@@ -309,6 +317,36 @@ function getDeptQueueExtsOverride_(dept) {
  * queuesForDept_(dept) so a call whose entry_queue is a raw alias still
  * attributes to the dept. No QCD / Overview / DQE reader consults this.
  */
+/**
+ * The RAW CDR "Departments" labels that belong to `dept`.
+ *
+ * `inbound_calls.final_dept` carries the phone system's ORG-CHART label
+ * ("Customer Success", "Inside Sales - Power Mobility", ...), which in this
+ * install matches NO dashboard dept header -- so the answered-on-hold carve-out
+ * in `inboundDeptPredicate_`, which compared `final_dept` to the dept name, had
+ * never once fired (146 such calls in a 2-week window all attributed to nobody).
+ * This is the admin-authored bridge between the two name spaces, exactly as
+ * `Inbound Queue Aliases` bridges raw vs QCD-canonical QUEUE names.
+ *
+ * Returns lowercased labels ready for a case-insensitive SQL compare. The dept
+ * NAME itself is always included, so an install whose labels DO match keeps
+ * working with no config -- this is strictly additive.
+ */
+function getFinalDeptLabels_(dept) {
+  const cfg = getActiveDeptConfigMap_()[dept];
+  const out = [];
+  const seen = {};
+  const add = function (v) {
+    const t = String(v == null ? '' : v).trim().toLowerCase();
+    if (!t || seen[t]) return;
+    seen[t] = true;
+    out.push(t);
+  };
+  add(dept);                                     // the pre-config behavior
+  ((cfg && cfg.finalDeptLabels) || []).forEach(add);
+  return out;
+}
+
 function getInboundQueueAliases_(dept) {
   const cfg = getActiveDeptConfigMap_()[dept];
   const entries = (cfg && cfg.inboundAliases.length) ? cfg.inboundAliases : [];
@@ -491,6 +529,7 @@ function getDeptConfigInit() {
       teamAvgExcludes:   getTeamAvgExcludes_(d),
       queueExtOverrides: getDeptQueueExtsOverride_(d),
       inboundAliases:    getInboundQueueAliases_(d),
+      finalDeptLabels:   ((getActiveDeptConfigMap_()[d] || {}).finalDeptLabels || []),
       hasRow:            !!row,
     };
   });
@@ -545,6 +584,7 @@ function saveDeptConfig(req) {
   const teamAvgExcludes   = dcNormalizeList_(req && req.teamAvgExcludes, 'Team Avg Excludes');
   const queueExtOverrides = dcNormalizeList_(req && req.queueExtOverrides, 'Queue Ext Overrides');
   const inboundAliases    = dcNormalizeList_(req && req.inboundAliases, 'Inbound Queue Aliases');
+  const finalDeptLabels   = dcNormalizeList_(req && req.finalDeptLabels, 'Final Dept Labels');
   const active            = !(req && req.active === false);   // default TRUE
   const notes             = String((req && req.notes) || '').trim().slice(0, 500);
 
@@ -681,6 +721,41 @@ function saveDeptConfig(req) {
     }
   }
 
+  // --- Final Dept Labels validation: these are the RAW CDR "Departments"
+  // org-chart strings (e.g. "Customer Success", "Patient Intake - Supplies"),
+  // matched case-insensitively against inbound_calls.final_dept. They cannot be
+  // validated against a known list (they live only in the CDR feed), so the
+  // guards are: no digit-only tokens (that would be an extension), and no label
+  // claimed by ANOTHER dept -- a label mapped twice would attribute one
+  // answered-on-hold call to two departments, breaking the one-call-one-dept
+  // contract the entry-queue arm already honors. ---
+  if (finalDeptLabels.length) {
+    const digitOnly = finalDeptLabels.filter(function (x) { return /^\d+$/.test(String(x)); });
+    if (digitOnly.length) {
+      throw new Error('Final dept label(s) look like extensions: ' + digitOnly.join(', ')
+        + '. Enter the raw CDR "Departments" text (e.g. Customer Success), '
+        + 'not numeric extensions.');
+    }
+    const claimed = {};
+    const cfgMap = getActiveDeptConfigMap_();
+    Object.keys(cfgMap).forEach(function (d) {
+      if (d === dept) return;   // this row is being replaced
+      (cfgMap[d].finalDeptLabels || []).forEach(function (l) {
+        claimed[String(l).trim().toLowerCase()] = d;
+      });
+    });
+    const dupes = [];
+    finalDeptLabels.forEach(function (l) {
+      const owner = claimed[String(l).trim().toLowerCase()];
+      if (owner) dupes.push(l + ' (already mapped to ' + owner + ')');
+    });
+    if (dupes.length) {
+      throw new Error('Final dept label(s) already claimed by another department: '
+        + dupes.join('; ') + '. One label maps to exactly one dept -- remove it '
+        + 'there first if it belongs here.');
+    }
+  }
+
   const admin = Session.getActiveUser().getEmail();
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(15000)) throw new Error('Could not acquire script lock; try again.');
@@ -692,6 +767,7 @@ function saveDeptConfig(req) {
       teamAvgExcludes:   teamAvgExcludes,
       queueExtOverrides: queueExtOverrides,
       inboundAliases:    inboundAliases,
+      finalDeptLabels:   finalDeptLabels,
       active:            active,
       notes:             notes,
       admin:             admin,
@@ -765,6 +841,7 @@ function sheetUpsertDeptConfigRow_(rec) {
     now,
     sheetSafeCell_(rec.notes || ''),
     sheetSafeCell_((rec.inboundAliases || []).join(', ')),   // col 10 (appended)
+    sheetSafeCell_((rec.finalDeptLabels || []).join(', ')),  // col 11 (appended)
   ];
   if (existingRow > 0) {
     sheet.getRange(existingRow, 1, 1, rowValues.length).setValues([rowValues]);
@@ -782,13 +859,15 @@ function neonUpsertDeptConfigRow_(rec) {
   try {
     ensureDeptConfigTable_(conn);
     const sql = 'INSERT INTO dept_config (department, qcd_queues, overview_parent, '
-      + 'team_avg_excludes, queue_ext_overrides, active, updated_by, updated_at, notes, inbound_aliases) '
-      + 'VALUES (?, ?, ?, ?, ?, ?, ?, now(), ?, ?) '
+      + 'team_avg_excludes, queue_ext_overrides, active, updated_by, updated_at, notes, inbound_aliases, '
+      + 'final_dept_labels) '
+      + 'VALUES (?, ?, ?, ?, ?, ?, ?, now(), ?, ?, ?) '
       + 'ON CONFLICT (department) DO UPDATE SET qcd_queues=EXCLUDED.qcd_queues, '
       + 'overview_parent=EXCLUDED.overview_parent, team_avg_excludes=EXCLUDED.team_avg_excludes, '
       + 'queue_ext_overrides=EXCLUDED.queue_ext_overrides, active=EXCLUDED.active, '
       + 'updated_by=EXCLUDED.updated_by, updated_at=now(), notes=EXCLUDED.notes, '
-      + 'inbound_aliases=EXCLUDED.inbound_aliases';
+      + 'inbound_aliases=EXCLUDED.inbound_aliases, '
+      + 'final_dept_labels=EXCLUDED.final_dept_labels';
     const st = conn.prepareStatement(sql);
     st.setString(1, rec.dept);
     st.setString(2, rec.qcdQueues.join(', '));
@@ -799,6 +878,7 @@ function neonUpsertDeptConfigRow_(rec) {
     st.setString(7, rec.admin || '');
     st.setString(8, rec.notes || '');
     st.setString(9, (rec.inboundAliases || []).join(', '));
+    st.setString(10, (rec.finalDeptLabels || []).join(', '));
     st.executeUpdate();
     st.close();
   } finally {

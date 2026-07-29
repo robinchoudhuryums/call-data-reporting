@@ -19,7 +19,8 @@ is wired).
 The `.gs` files run in Google's Apps Script V8 runtime against globals
 that don't exist in Node (`SpreadsheetApp`, `CacheService`, `Session`,
 `Utilities`, …). Historically this repo had **no tests** — verification
-was "deploy + manually walk the Regression Scenarios in CLAUDE.md."
+was "deploy + manually walk the Regression Scenarios" (now in
+`docs/regression-scenarios.md`, indexed from CLAUDE.md).
 
 This harness loads the *real* production `.gs` files into a Node `vm`
 context with mocked Apps Script globals, so the pure-logic functions
@@ -164,9 +165,10 @@ spreadsheet). See `dept-config.test.js` for the fake-spreadsheet pattern.
 - **Not yet covered:** the deferred mirror's sheet-derived payload
   re-derivation (`NeonMirror.js`'s mirror*ForDate_ field mappings) -- the
   writers it calls AND its tail-read are pinned, but the row-to-payload
-  mapping itself is verified via the manual Regression Scenarios.
+  mapping itself is verified via the manual Regression Scenarios
+  (`docs/regression-scenarios.md`).
   The INV-29 trend window IS covered (`trend-window.test.js`).
-- **Regression Scenarios (CLAUDE.md):** the floater-exclusion contract
+- **Regression Scenarios (`docs/regression-scenarios.md`):** the floater-exclusion contract
   (S35) and the Sonia `0:15:03 / 0:03:01` durations (S7) are now asserted
   as unit tests; the rest remain manual deploy-time checks.
 - **No browser/DOM tests.** `script.html` client logic is out of scope

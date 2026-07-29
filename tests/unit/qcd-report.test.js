@@ -395,7 +395,9 @@ function parityRun_() {
     for (let i = 1; i < arguments.length; i++) s = s.replace(/%s/, String(arguments[i]));
     lines.push(s);
   } };
-  try { h.call('compareQcdSources_'); } finally { h.ctx.Logger = realLogger; }
+  let out;
+  try { out = h.call('compareQcdSources_'); } finally { h.ctx.Logger = realLogger; }
+  parityRun_.last = out;   // Batch 6: the gate returns a structured verdict now
   return lines.join('\n');
 }
 
@@ -417,4 +419,73 @@ test('R5: >1s duration drift and count differences still FAIL the gate', functio
   assert.match(parityRun_(), /QCD PARITY MISMATCH/, '5s apart is real drift');
   parityGrids_('0:00:20', '0:00:20', 10, 9);
   assert.match(parityRun_(), /QCD PARITY MISMATCH/, 'counts stay exact');
+});
+
+// ---- Batch 6: the read-source gates must not pass on ZERO comparisons -------
+// This is what made Batch 6 (flip QCD_READ_SOURCE) unsafe: with no comparable
+// rows on either side -- the in-source default range is a fixed week that ages
+// out of the data, or a typo'd/future QCD_PARITY_* property, or a trimmed sheet
+// -- all three mismatch counters were 0 and the gate printed
+// "QCD PARITY CLEAN ... gate PASSED" having compared NOTHING. neonFetchQcdGrid_
+// returns a non-null EMPTY grid for an empty range, so the !neonGrid guard does
+// not cover it. Same false-clean class CORE-5/F-5 fixed for the CONFIG gates.
+
+function parityEmpty_(opts) {
+  const o = opts || {};
+  const grid = function (rows) {
+    return { values: rows || [], displays: (rows || []).map(function () { return []; }),
+             ssTZ: 'America/Chicago', missing: false };
+  };
+  h.ctx.readQcdSheetData_ = function () { return grid(o.sheetRows); };
+  h.ctx.neonFetchQcdGrid_ = function () { return grid(o.neonRows); };
+}
+
+test('Batch 6: ZERO comparable rows is INCONCLUSIVE, never CLEAN', function () {
+  installQcd('sheet');
+  h.state.props.QCD_PARITY_FROM = '2030-01-01';   // a range the data cannot cover
+  h.state.props.QCD_PARITY_TO = '2030-01-07';
+  parityEmpty_({ sheetRows: [], neonRows: [] });
+  const log = parityRun_();
+  assert.doesNotMatch(log, /QCD PARITY CLEAN/, 'must NOT claim a pass on an empty comparison');
+  assert.match(log, /INCONCLUSIVE/, 'says so explicitly');
+  assert.match(log, /Do NOT flip QCD_READ_SOURCE/, 'tells the operator not to act on it');
+  const v = parityRun_.last;
+  assert.equal(v.clean, false, 'structured verdict is not clean');
+  assert.equal(v.compared, 0, 'reports that nothing was compared');
+  assert.ok(v.error, 'carries a reason');
+});
+
+test('Batch 6: an unreachable Neon grid is not-clean WITH a reason (no silent undefined)', function () {
+  installQcd('sheet');
+  h.state.props.QCD_PARITY_FROM = '2026-06-24';
+  h.state.props.QCD_PARITY_TO = '2026-06-24';
+  h.ctx.readQcdSheetData_ = function () {
+    return { values: [], displays: [], ssTZ: 'America/Chicago', missing: false };
+  };
+  h.ctx.neonFetchQcdGrid_ = function () { return null; };   // unreachable / unconfigured
+  parityRun_();
+  const v = parityRun_.last;
+  assert.equal(v.clean, false);
+  assert.match(v.error, /Neon grid unavailable/);
+});
+
+test('Batch 6: a missing QCD sheet is not-clean WITH a reason', function () {
+  installQcd('sheet');
+  h.ctx.readQcdSheetData_ = function () { return { missing: true }; };
+  parityRun_();
+  const v = parityRun_.last;
+  assert.equal(v.clean, false);
+  assert.match(v.error, /sheet missing/);
+});
+
+test('Batch 6: a REAL clean run reports clean + the rows it compared', function () {
+  installQcd('sheet');
+  h.state.props.QCD_PARITY_FROM = '2026-06-24';
+  h.state.props.QCD_PARITY_TO = '2026-06-24';
+  parityGrids_('0:00:20', '0:00:20', 10, 10);   // identical sides
+  const log = parityRun_();
+  assert.match(log, /QCD PARITY CLEAN/);
+  const v = parityRun_.last;
+  assert.equal(v.clean, true);
+  assert.ok(v.compared > 0, 'a pass must be backed by real compared rows');
 });

@@ -110,6 +110,13 @@ function overviewCacheKey_() {
 var OV_CHART_TREND_DAYS = 90;
 var OVERVIEW_CHART_TREND_CACHE_PREFIX = 'overviewChartYtd:v1';
 
+// F6: CacheService's documented per-value ceiling, and the tripwire below it.
+// The Overview blob is the biggest cached payload in the app and its
+// put-failure mode is silent (log-only) + expensive (every request recomputes),
+// so its size is logged on every put and warned about well before the cliff.
+var OVERVIEW_CACHE_MAX_BYTES = 100 * 1024;
+var OVERVIEW_CACHE_WARN_BYTES = 80 * 1024;
+
 /**
  * Weekday-only ISO labels (skips Sat/Sun AND weekday COMPANY_HOLIDAYS, S5) from
  * fromIso..toIso inclusive -- the same axis convention as the 30-day trend.
@@ -768,8 +775,29 @@ function getCompanyOverview(req) {
     // constant-only this request; don't pin the shared blob for the TTL.
     Logger.log('getCompanyOverview: Dept Config read errored -- skipping cache put.');
   } else {
-    try { cache.put(ovCacheKey, JSON.stringify(result), REPORT_CACHE_TTL_SECONDS); }
-    catch (e) { Logger.log('CompanyOverview cache put failed: %s', e); }
+    // F6: MEASURE the blob. CacheService caps a value at ~100 KB, and when the
+    // put fails this endpoint degrades to a full recompute (a 90-day DQE read +
+    // QCD scans) on EVERY request from EVERY viewer, including each open
+    // dashboard's 5-minute auto-refresh -- a silent performance cliff whose only
+    // symptom was a log line nobody greps for. Measured 2026-07: ~27 KB at 14
+    // depts (~1.9 KB/dept), so the cap is ~50+ depts away -- this is a tripwire,
+    // not a live risk. Logging the size on every put also means the trend is
+    // visible in the Executions panel BEFORE it becomes a cliff.
+    const json = JSON.stringify(result);
+    if (json.length >= OVERVIEW_CACHE_WARN_BYTES) {
+      Logger.log('CompanyOverview: cached blob is %s bytes (%s%% of the ~%s cap, %s depts) '
+        + '-- approaching the CacheService limit; past it every request recomputes. '
+        + 'Split a field out to its own key (the getOverviewChartTrend precedent).',
+        json.length, Math.round(json.length / OVERVIEW_CACHE_MAX_BYTES * 100),
+        OVERVIEW_CACHE_MAX_BYTES, depts.length);
+    }
+    try { cache.put(ovCacheKey, json, REPORT_CACHE_TTL_SECONDS); }
+    catch (e) {
+      Logger.log('CompanyOverview cache put FAILED at %s bytes (%s depts): %s '
+        + '-- the Overview is now UNCACHED: every request pays the full compute. '
+        + 'This is the ~%s-byte CacheService cap if the size is near it.',
+        json.length, depts.length, e, OVERVIEW_CACHE_MAX_BYTES);
+    }
   }
 
   return personalizeOverview_(result, user);

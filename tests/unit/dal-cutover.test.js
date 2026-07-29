@@ -122,6 +122,7 @@ function install(source) {
     sheets: { 'DO NOT EDIT!': ROSTER, 'DQE Historical Data': dqeSheet(DATASET.map(dqeRow)) },
   });
   h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
+  h.ctx.DQE_DATE_BOUNDS_MEMO_ = null;   // F9: shared date-column bounds scan
   h.state.cache.clear();
   h.ctx.getDashboardNeonConn_ = (source === 'neon')
     ? fakeNeonConn
@@ -294,4 +295,115 @@ test('R8-C2: the sheet source still caches its negative (empty install, no outag
     if (String(k).indexOf('latestDate:') === 0) cachedNegative++;
   });
   assert.equal(cachedNegative, 1, 'sheet-source empty install keeps the cheap negative cache');
+});
+
+// ---- F9: one shared DQE date-column scan for both bounds --------------------
+// getLatestDataDate (MAX) and getLatestDataDates (MAX + MIN/dqeEarliest) each
+// ran their own whole-column getValues(), so a cold cache read a multi-year
+// column TWICE per 5-min expiry. sheetScanDqeDateBounds_ yields both from one
+// scan, memoized per execution.
+
+test('F9: sheetScanDqeDateBounds_ returns both bounds from ONE column read', function () {
+  install('sheet');
+  let reads = 0;
+  const sheet = h.state.spreadsheet.getSheetByName('DQE Historical Data');
+  const realGetRange = sheet.getRange.bind(sheet);
+  sheet.getRange = function (r, c, nr, nc) { reads++; return realGetRange(r, c, nr, nc); };
+
+  const b = h.call('sheetScanDqeDateBounds_');
+  assert.ok(b.max, 'max resolved');
+  assert.ok(b.min, 'min resolved');
+  assert.ok(b.min <= b.max, 'min is not after max');
+  assert.ok(b.rows > 0, 'row count reported');
+  const afterFirst = reads;
+  assert.equal(afterFirst, 1, 'exactly one range read');
+
+  // Memoized: a second call adds no read.
+  h.call('sheetScanDqeDateBounds_');
+  assert.equal(reads, afterFirst, 'second call served from the per-execution memo');
+  sheet.getRange = realGetRange;
+});
+
+test('F9: a COLD cache serves getLatestDataDate + getLatestDataDates from one scan', function () {
+  install('sheet');
+  const sheet = h.state.spreadsheet.getSheetByName('DQE Historical Data');
+  let dateColReads = 0;
+  const realGetRange = sheet.getRange.bind(sheet);
+  sheet.getRange = function (r, c, nr, nc) {
+    // HISTORICAL_COLS.DATE === 2; count only whole-column date scans.
+    if (c === 2 && nc === 1 && nr > 1) dateColReads++;
+    return realGetRange(r, c, nr, nc);
+  };
+  const max = h.call('getLatestDataDate');
+  const blob = h.call('getLatestDataDates');
+  assert.ok(max, 'latest resolved');
+  assert.equal(blob.dqe, max, 'the blob agrees with the single-source reader');
+  assert.ok(blob.dqeEarliest, 'coverage start resolved (R12-26)');
+  assert.ok(blob.dqeEarliest <= blob.dqe, 'earliest is not after latest');
+  assert.equal(dateColReads, 1,
+    'ONE date-column scan for both readers (was 2 before F9)');
+  sheet.getRange = realGetRange;
+});
+
+test('F9: a missing DQE sheet yields empty bounds and still caches the negative', function () {
+  install('sheet');
+  h.state.spreadsheet = makeFakeSpreadsheet({
+    timeZone: 'America/Chicago', sheets: { 'DO NOT EDIT!': ROSTER },
+  });
+  h.ctx.DQE_DATE_BOUNDS_MEMO_ = null;
+  h.state.cache.clear();
+  const b = h.call('sheetScanDqeDateBounds_');
+  assert.equal(b.max, null);
+  assert.equal(b.min, null);
+  assert.equal(b.rows, 0);
+  assert.equal(h.call('getLatestDataDate'), null, 'reader still returns null');
+});
+
+// ---- Batch 6: the DQE read-source gate must not pass on ZERO comparisons ----
+// Symmetric to the QCD gate fix. Today the extraInNeon check happens to catch
+// the sheet-empty case (every Neon row reads as "extra"), but that protection
+// is incidental -- it would become a false CLEAN the moment the verdict stopped
+// counting extras, which is exactly what the QCD gate did. Made explicit.
+
+function dqeParityRun_() {
+  const lines = [];
+  const realLogger = h.ctx.Logger;
+  h.ctx.Logger = { log: function () {
+    let s = String(arguments[0]);
+    for (let i = 1; i < arguments.length; i++) s = s.replace(/%s/, String(arguments[i]));
+    lines.push(s);
+  } };
+  let out;
+  try { out = h.call('compareDqeSources_'); } finally { h.ctx.Logger = realLogger; }
+  return { log: lines.join('\n'), verdict: out };
+}
+
+test('Batch 6: DQE gate — ZERO sheet rows is INCONCLUSIVE, never a pass', function () {
+  install('sheet');
+  h.state.props.DQE_PARITY_FROM = '2030-01-01';
+  h.state.props.DQE_PARITY_TO = '2030-01-07';
+  h.ctx.sheetFetchDqeRows_ = function () { return []; };
+  h.ctx.neonFetchDqeRows_ = function () { return []; };
+  const r = dqeParityRun_();
+  assert.doesNotMatch(r.log, /PARITY CLEAN/, 'never claims a pass with nothing compared');
+  assert.equal(r.verdict.clean, false);
+  assert.ok(r.verdict.error, 'carries a reason instead of returning undefined');
+  delete h.ctx.sheetFetchDqeRows_; delete h.ctx.neonFetchDqeRows_;
+});
+
+test('Batch 6: DQE gate — a real matching range reports clean + the compared count', function () {
+  install('sheet');
+  h.state.props.DQE_PARITY_FROM = '2026-03-09';
+  h.state.props.DQE_PARITY_TO = '2026-03-09';
+  const row = { dateIso: '2026-03-09', agent: 'Sonia', totalUnique: 1, totalRung: 2,
+                totalMissed: 0, totalAnswered: 2, tttSec: 903, attSec: 181,
+                avgAbdWaitSec: 0, csrAvgAbdWaitSec: 0, queueExt: '103',
+                slots: new Array(19).fill(''), abandonedParentIds: '', abandonedMissedTimes: '' };
+  h.ctx.sheetFetchDqeRows_ = function () { return [row]; };
+  h.ctx.neonFetchDqeRows_ = function () { return [row]; };
+  const r = dqeParityRun_();
+  assert.match(r.log, /PARITY CLEAN/);
+  assert.equal(r.verdict.clean, true);
+  assert.equal(r.verdict.compared, 1, 'a pass is backed by a real compared count');
+  delete h.ctx.sheetFetchDqeRows_; delete h.ctx.neonFetchDqeRows_;
 });

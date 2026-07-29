@@ -247,5 +247,12 @@ try {
   }));
 } catch (e) { console.log('missed-slice skipped: ' + e.message); }
 
+// All-departments Daily Call Queue Report (F7 fixture gap): without this the
+// #qcd-alldept-modal had no payload, so its `tr.qcd-expandable` rows never
+// rendered and the F13 keyboard fix could only be verified on the Insights
+// Queue-health table (same markup + helper, but not the same screen).
+// Single day = the report's own default (the latest queue day).
+dump('qcd-alldept', h.call('getQcdAllDepartments', { from: LATEST, to: LATEST }));
+
 dump('meta', { latest: LATEST, from30: s30.from, ytdStart: yStart });
 console.log('LATEST=' + LATEST);

@@ -143,6 +143,16 @@ simply don't match (capturing the full prefixed token was NOT an
 option: INV-23 sentinel consumers require names STARTING with `A_Q_`).
 Pinned by `tests/unit/pipeline-build.test.js` (IMP-8 test).
 
+**⚠ The DQE and INBOUND recognizers diverge ON PURPOSE — do not "harmonize"
+them.** DQE must NOT capture a brand-prefixed token (`UDC_A_Q_Main` yields no
+match here, by design, because an INV-23 sentinel name must START with `A_Q_`).
+The inbound capture MUST capture it verbatim, since F1b, because
+`inbound_calls.entry_queue` is matched by exact name against the Dept Config
+lists — nothing there requires an `A_Q_` prefix. Making either regex "match the
+other one" breaks the other subsystem: widen DQE and you get phantom
+`A_Q_Main` sentinels; re-anchor inbound and brand-prefixed queues go invisible
+again (F1b).
+
 ---
 
 ## AD/AE/AF positional pairing (Missed report / journey drill)
@@ -466,6 +476,16 @@ RPT-4/5/9/10, TST-1/6/7.
 
 ## Broad-scan Batch 5+6 fixes (2026-07, compact list)
 
+> **Name collision, read this first.** "Batch 5+6" here means the CLIENT
+> fix batches `C-1`…`C-9` from an EARLIER 2026-07 scan round. The Round-13
+> cycle (also 2026-07) numbered its implementation batches 1-7, and ITS
+> "Batch 5 & 6" is a completely different piece of work -- the inbound/QCD
+> parity investigation and the read-source flag flips (see
+> `.cycle/blocks/57-batch5-batch6-broad-implement.md` and the parity-gate
+> rule below). Same words, different rounds; match on the fix codes, not
+> the batch number. This is the same hazard `docs/fix-history.md` documents
+> for the three `F`-shaped families.
+
 Client (script.html): C-1 single `#ins-trend-header` writer (the range label
 renders now), C-2 tour replay closes Settings, C-3 Overview mini-table WoW
 tooltips use their own response meta, C-4/C-9 `escCssId_` escapes (not strips)
@@ -596,9 +616,12 @@ Each report file uses its own versioned cache key prefix. Bump the
 version whenever the response shape or aggregation rules change so
 stale caches invalidate on deploy.
 
-CLAUDE.md INV-30 is the canonical current-version list. This table
-mirrors it; if the two ever diverge, INV-30 wins. Bump both at the
-same time as the code change.
+INV-30 (`docs/invariants.md`, indexed from CLAUDE.md's Cycle Workflow
+Config) is the canonical current-version list. This table mirrors it; if
+the two ever diverge, INV-30 wins. Bump both at the same time as the code
+change -- `tests/unit/cache-version-sync.test.js` extracts the canonical
+version from the code's cache-key LITERAL and fails the build on any doc
+that disagrees, so a missed bump here is a CI failure, not a silent trap.
 
 | Source file | Cache prefix | Current version |
 |---|---|---|
@@ -612,7 +635,7 @@ same time as the code change.
 | `MissedCallsReport.gs` | `missed:vN:` | `v17` |
 | `CompanyOverview.gs` | `companyOverview:vN` | `v20` |
 | `QCDReport.gs` | `qcd:vN:` | RETIRED (QCD modal deleted; `qcdAll:` remains) |
-| `InboundReport.gs` | `inbound:vN:` | `v5` |
+| `InboundReport.gs` | `inbound:vN:` | `v6` |
 | `InsightsReport.gs` | `insights:vN:` | `v19` |
 | `QCDReport.gs` (all-departments daily report) | `qcdAll:vN:` | `v5` |
 | `InboundReport.gs` (weekday×hour abandon heatmap) | `inboundHeatmap:vN:` | `v1` |
@@ -642,6 +665,65 @@ through `colorWithAlpha_`/`rgbaWithAlpha_` (which now handle every
 format), and never "return the input unchanged" when a color transform
 fails to parse; delegate or fail loudly, because the unchanged-input
 path renders plausibly and hides for weeks.
+
+### A compare gate must never print a false PARITY CLEAN
+
+Every "is the mirror safe to read from?" gate in this repo -- the three
+`compare*ConfigSources` config gates, `compareDqeSources_` (NeonRead.gs),
+`compareQcdSources_` (QCDReport.gs) -- exists to authorize an irreversible-
+feeling decision: flipping a `*_READ_SOURCE` / `CONFIG_SOURCE` Script Property
+so production serves from Neon instead of the sheet. **A gate that reports
+CLEAN having compared NOTHING is worse than no gate**, because it converts
+"I have no evidence" into "I have the strongest possible evidence".
+
+This happened. `compareQcdSources_` derived `clean` from three counters
+(`missingInNeon`, `extraInNeon`, `mismatches`); with zero comparable rows all
+three are 0, so it printed `QCD PARITY CLEAN -- the gate PASSED`. The existing
+`!neonGrid` guard did not cover it because `neonFetchQcdGrid_` returns a
+non-null EMPTY grid for an empty range, and the in-source default range is a
+hardcoded week that ages out of the data -- so an operator running the gate
+without setting `QCD_PARITY_FROM`/`_TO` was the likely first victim.
+
+The rule, now applied to all five gates: **a verdict must count what it
+compared, and an empty comparison is INCONCLUSIVE, never CLEAN.** Each gate
+returns a structured `{from, to, clean, compared, ...}` from every exit, and
+the operator contract (Operator State #19) is `clean:true` AND `compared > 0`
+-- an `error` or `compared: 0` is a STOP.
+
+Note `compareDqeSources_` was NOT broken, but only incidentally: its
+`extraInNeon` check catches a sheet-empty range because every Neon row reads
+as "extra". That protection was emergent, not designed, and would have become
+the same false CLEAN the moment the verdict stopped counting extras. It now
+has the explicit guard too. Pinned by `qcd-report.test.js` /
+`dal-cutover.test.js`.
+
+### CLAUDE.md's split reference files can drift from their index
+
+CLAUDE.md reached ~372 KB -- it is injected into every session's context, so
+size is a real cost -- and four reference sections moved into `docs/` with a
+one-line index left behind (`docs/invariants.md`, `docs/operator-state.md`,
+`docs/regression-scenarios.md`, `docs/client-ui-conventions.md`; finding F8).
+
+That trade buys readability and introduces exactly one new failure mode, which
+is silent in the worst direction: **an invariant added to `docs/invariants.md`
+but not to the index is invisible to anyone reading CLAUDE.md**, and an index
+line for an entry that no longer exists sends a reader looking for nothing.
+
+`tests/unit/claude-md-split.test.js` makes either a CI failure -- it checks IDs
+and Subsystem/title strings (never prose; the index line is deliberately a
+summary), that all four files are linked from "Read first" specifically, that
+operator item numbers stay contiguous from 1 (they are cited BY NUMBER across
+the repo), and it **caps CLAUDE.md at 200 KB** so the file cannot regrow
+unnoticed the way it did.
+
+Two things to know: the split also silently widened the blast radius of
+`cache-version-sync.test.js`, whose hardcoded `DOC_FILES` did not include the
+new file holding INV-30 -- the guard would have passed while policing nothing
+(fixed in the same change; the list is explicit rather than a `docs/*.md` glob
+because `fix-history.md` and the design specs legitimately name past versions).
+And **`/setup-cycle` would undo the split**, since it rewrites those sections
+with full bodies; the ID checks would still pass, so the size cap is the
+backstop.
 
 ### Pipeline depends on the dashboard's roster sheet
 
@@ -825,30 +907,271 @@ banner). On failure, `notifyDigestFailure_` emails the
 
 ---
 
+## QCD Abandoned vs inbound_calls abandons: why the two numbers differ (2026-07 investigation)
+
+**Settled.** The two counts are not in conflict; they answer different
+questions. Recorded in full because four plausible explanations were
+eliminated along the way, and each one will look plausible again to the next
+person who notices the gap.
+
+### The measurement
+
+CSR, `2026-07-15`..`2026-07-24` (8 business days), via
+`runInboundQcdParityCheck` plus direct Neon probes:
+
+| | inbound_calls (`A_Q_CSR` + `A_Q_Intake`) | QCD (`A_Q_CustomerSuccess`) |
+|---|---|---|
+| total calls | 2,583 | 2,737 |
+| answered | 2,424 | 2,708 |
+| abandoned | **113** | **29** |
+| missed | 46 | (no such state) |
+
+The totals agree within 5.6%, so both sources are looking at the SAME calls --
+this is not a population difference. QCD's model is strictly
+`total = answered + abandoned`; it has no third state. All 113 inbound
+abandons carry `abandon_stage = 'queue'`.
+
+### The answer: QCD applies a minimum queue-wait threshold; we apply none
+
+On `2026-07-23` QCD reported **0** abandons for `A_Q_CustomerSuccess`;
+inbound recorded **10**. Reading those 10 journeys leg-by-leg, their actual
+QUEUE waits were 1, 5, 6, 9, 11, 22, 28 and 48 seconds (plus two outliers --
+see Backup CSR below). A Raw Data check confirmed zero CSR abandons at or
+above 1 minute of queue wait that day. So QCD is CORRECT by its own
+definition: it counts callers who waited in a queue past a threshold and gave
+up. The observed threshold is above 48s; a 60s setting fits every
+observation.
+
+The inbound capture has no threshold and answers a broader question: **did
+this caller hang up without ever reaching a human?** Both are legitimate.
+Neither is wrong. They must not be presented side by side without saying so.
+
+### `wait_seconds` is WHOLE-CALL elapsed time, not queue wait
+
+This is the trap that made the gap look far worse than it is, and it is easy
+to fall into twice. `buildInboundCallRecords_` computes
+`waitSeconds = abandonLeg.stop - firstLeg.start` -- measured from **IVR
+pickup**, not from queue entry. The IVR (`Introduction` + `Normal Call Menu`)
+runs 54-65 seconds on nearly every call here, and one sampled call sat in the
+menu for 108s:
+
+```
+#10  17s intro + 37s menu = 54s IVR,  then A_Q_CSR queue  1s  -> wait_seconds 55
+#3   17s intro + 108s menu = 125s IVR, then A_Q_CSR queue  6s  -> wait_seconds 131
+```
+
+Read as queue wait, that says "83% of abandons waited over a minute". Read
+correctly, almost all of them waited seconds. **`wait_seconds` is NOT
+comparable to QCD's threshold** and must not be used as one. The per-leg
+`secs` inside `journey` is where a true queue wait is derivable. Note the
+column feeds the heatmap cell drill under a "wait/hold" label, which is
+misleading for the same reason -- open follow-on, not yet fixed.
+
+### RETRACTED: "`Backup CSR` overflow is invisible to QCD"
+
+**This claim was wrong and is recorded so it is not repeated.** It rested on
+two `2026-07-23` calls that passed through `A_Q_CSR` in 0s and then waited
+637s and 497s in `Backup CSR` before abandoning, against a QCD row reporting
+`abandoned = 0, longest_wait = 2:42`.
+
+Both calls started at **17:12 and 17:48 PST = 19:12 and 19:48 CST** -- hours
+past the 3:00 PM PST / 5:00 PM CST cutoff. QCD excluding them is CORRECT. The
+`longest_wait` argument fails for the same reason: QCD would exclude that call
+from `longest_wait` too, so the 2:42 proves nothing about queue membership.
+
+What actually remains is one unexplained fact with a plausible benign reading:
+`Backup CSR` has no `qcd_history` row in the window (the queue breakdown lists
+14 queues and it is not among them), which is what you would expect from an
+overflow queue that mostly catches calls when the main queue is unstaffed --
+i.e. out of hours. **Do not treat this as a code defect without first
+confirming upstream whether the phone system reports queue stats for
+`Backup CSR` at all.**
+
+### The work-window scope: QCD is windowed, the inbound capture is not
+
+Found while investigating the above, and the reason it was missed for so long.
+`buildInboundCallRecords_` captures every inbound call around the clock. QCD's
+Abandoned column only counts calls inside the `DQE_WINDOW_START`..
+`DQE_WINDOW_END` work window (6:30 AM - 3:00 PM PST). So every row of the
+parity table compared an unwindowed count against a windowed one.
+
+Measured for CSR over `2026-07-15`..`2026-07-24`, bucketing on `call_start`
+(raw PST, so it compares directly with no conversion):
+
+| bucket | calls | abandoned | abandon rate |
+|---|---|---|---|
+| before hours (`< 06:30`) | 70 | 2 | 2.9% |
+| **in window** | **2,494** | **102** | **4.1%** |
+| after hours (`>= 15:00`) | 19 | 9 | **47%** |
+
+So the window scope accounts for 11 of the 113 (~10%) -- **real but modest;
+the wait threshold above is still the dominant mechanism.** In-window inbound
+abandons are 102 against QCD's 29, so scoping alone does not close the gap.
+
+Two things worth carrying forward. First, the in-window abandon rate of 4.1%
+sits UNDER the 5% company standard, as does QCD's 1.06% -- the two lenses
+disagree on magnitude but agree on the verdict, which further de-escalates
+this. Second, the **47% after-hours abandon rate on 19 calls** is the useful
+finding here: roughly half of out-of-hours callers give up, which is exactly
+what an unstaffed queue should look like.
+
+**Owner ruling: out-of-window calls are RESEARCH data, never a dept metric.**
+They are tracked and reported separately, never folded into a dept total.
+`compareInboundVsQcdAbandons_` scopes its inbound side to
+`INBOUND_WORK_WINDOW_PST` (Config.gs) and reports
+`outsideWindowAbandoned` / `outsideWindowCalls` as a separate line. Rows with
+a NULL `call_start` (pre-extension captures, no time-of-day) count as
+IN-window rather than being dropped -- dropping them would silently shrink
+historical dates and read as a fixed gap. Pinned by
+`tests/unit/inbound-qcd-parity.test.js`.
+
+**Shipped (`inbound:v6`).** `computeInboundReport_` window-scopes its whole
+payload from one place -- the clause is appended to the shared `dr`/`priorDr`,
+so the KPIs, prior KPIs, all five breakdowns and the daily series inherit it
+and a sub-select added later cannot miss it (pinned by a count-based assertion
+in `tests/unit/inbound-window-scope.test.js`). `getInboundInsurerDaily` is
+scoped identically, since it drills off a `byInsurer` row and would otherwise
+fail to reconcile with the count the user clicked.
+
+**Two deliberate exemptions, both pinned:**
+
+- `coverageStart` answers "when did capture begin" -- a data-availability fact,
+  not a dept metric. Scoping it would move the reported start to the first
+  in-window call and mis-warn on the client's coverage note.
+- **The abandon heatmap is already window-bounded** by
+  `INBOUND_HEATMAP_WINDOW_START_HOUR`/`_END_HOUR` (8 AM - 5 PM CST), which is
+  the INV-18 display convention and 30 minutes WIDER at the start than the work
+  window on purpose. Adding the work-window clause on top would silently narrow
+  the grid's first column. Don't.
+
+The client surfaces the research block as an "Outside business hours" section
+below the heatmap -- muted, captioned as not a department metric, and hidden
+entirely when nothing falls outside the window.
+
+### Hypotheses eliminated (do not re-run these)
+
+1. **Overflow / entry-vs-abandon-queue attribution** -- only 6 of 113 CSR
+   abandons changed queue (5%). Cannot account for the gap. (It IS the
+   mechanism behind the Backup CSR blind spot above, at small volume.)
+2. **QCD filtering short abandons, us counting them** -- inverted: it is QCD
+   that filters, but by QUEUE wait, and our `wait_seconds` measures something
+   else entirely (above).
+3. **Queue name-space mismatch** -- `A_Q_CustomerSuccess` does not exist in
+   Raw Data; it is the pipeline's canonical rollup of `A_Q_CSR` +
+   `A_Q_Intake`, which is exactly what inbound counts. The mapping is
+   CORRECT. (`A_Q_Intake` and `Backup CSR` produce no separate QCD rows,
+   consistent with a rollup.)
+4. **The work-window scope** -- real, but only ~10% of the gap (11 of 113).
+   Worth applying for correctness; does NOT explain the discrepancy.
+5. **Abandons hidden under a non-`Total Calls` QCD source (INV-50)** -- the
+   other sources (`CSR`, `Call Menu`, `Ad-campaign`, `Non-CSR (internal)`,
+   `New Call Menu`, `Internal`, `Misc`) sum EXACTLY to the `Total Calls` row
+   on both measures: 4,390 calls and 72 abandons. `Total Calls` is a true
+   rollup; summing every source would double-count. **INV-50's
+   single-source filter is confirmed correct.**
+
+### Unrelated bug found by the same run: the answered-on-hold carve-out has never fired
+
+`inboundDeptPredicate_` attributes an answered-then-abandoned-on-hold call by
+`lower(trim(final_dept)) = lower(<dept>)`. The parity check reported
+`onHold = 0.0` for every dept on every day -- but 146 such calls exist in the
+window. `final_dept` holds the raw CDR ORG-CHART labels (`Customer Success`,
+`Inside Sales`, `Patient Care`, `Patient Intake - Supplies`, `Intake -
+Service/Repair`, ...) and **not one of them matches a dashboard dept header**
+(`CSR`, `Sales`, `Power`, ...). The documented soft coupling has never held in
+this install, so all 146 attribute to no dept and are invisible in every
+dept's inbound slice. **FIXED (2026-07)** via a `Final Dept Labels` column on the `Dept Config`
+sheet (col 11) -- chosen over a Script Property because the mapping is
+per-dept, belongs beside `Inbound Queue Aliases` (the other raw-upstream-name
+bridge), and is editable in the existing admin modal with no redeploy.
+`getFinalDeptLabels_(dept)` returns the mapped labels ALWAYS prepended with the
+dept's own name, so an install that maps nothing is byte-equivalent to the old
+predicate -- the change is strictly additive. Save-time validation rejects
+digit-only tokens and any label already claimed by another dept, so the
+one-call-one-dept contract the entry-queue arm honors is preserved here too.
+
+The owner-supplied mapping for this install:
+
+| raw `final_dept` | calls | dept |
+|---|---|---|
+| `Customer Success` | 70 | CSR |
+| `Patient Care` | 14 | CSR |
+| `Inside Sales` | 29 | Sales |
+| `Inside Sales - Power Mobility` | 5 | Sales |
+| `Sales/Account Management` | 2 | Sales |
+| `Patient Intake - Supplies` | 7 | Resupply |
+| `Patient Intake - Respiratory` | 1 | Resupply (a RETIRED 8x8 queue, mapped until it is removed upstream) |
+| `Intake - Power Mobility (Complex)` | 5 | Power |
+| `Patient Intake - Power Mobility` | 3 | Power |
+| `Intake - Service/Repair` | 4 | Service |
+| `Field Operations (Market Activity)` | 4 | Field Ops |
+| `Field Operations (Markets)` | 1 | Field Ops |
+| *(blank)* | 1 | deliberately unmapped |
+
+**Verification after entering them:** re-run `runInboundQcdParityCheck` -- the
+`onHold` column must stop reading `0.0` on every dept, and the mapped labels
+should account for 145 of the 146 (the blank is intentionally excluded).
+Expect a few depts' inbound figures to RISE the first time: that is the bug
+being fixed, not a regression.
+
+### Consequence for the un-gating decision
+
+The Inbound + Direct reports stay admin-gated NOT because either number is
+wrong, but because a manager comparing the Inbound abandon count against the
+Daily Queue Report will see roughly 4x and have no way to know why. Releasing
+them needs the report to state that its abandon count has **no minimum-wait
+threshold and includes IVR time**. That caption is the cheap prerequisite;
+the Backup CSR gap and the `wait_seconds` semantics are the substantive ones.
+
+---
+
 ## Two queue-name spaces: raw Raw-Data names vs QCD-canonical names
 
-**Status:** Live landmine. Worked around for the per-call journey drill;
-still latent for the per-dept Inbound report (parked / admin-only).
+**Status:** Partly closed. The BRAND-PREFIX class is FIXED (F1b, 2026-07-27 --
+see below); the raw-vs-canonical SPELLING class is still live, worked around for
+the per-call journey drill and bridged at capture time by R8-N normalization +
+the Dept Config alias union for the per-dept Inbound report.
 
 There are **two different spellings for the same queue** in this install:
 
 - **Raw Data leg names** (CALLER_ID col 22 / CALLEE_NAME col 11): the actual
   queue identifiers the phone system emits, e.g. `A_Q_CSR` (ext 103),
-  `A_Q_Intake` (ext 108), `A_Q_Spanish`, `Backup CSR`. `inbound_calls`
-  captures these into `entry_queue` / `final_queue` (via `icIsQueueName_`,
-  `/^A_Q_/i`).
+  `A_Q_Intake` (ext 108), `A_Q_Spanish`, `Backup CSR`, and the BRAND-PREFIXED
+  `UDC_A_Q_Main` / `UUC_A_Q_Main`. `inbound_calls` captures these into
+  `entry_queue` / `final_queue` via `icIsQueueName_`, which since F1/F1b matches
+  `A_Q_` at string start **or after an underscore**, plus an exact
+  `Backup CSR`, plus any name listed in the `Dept Config` sheet's QCD Queues /
+  Inbound Queue Aliases columns (`icLoadConfiguredQueueNames_`). It was
+  `/^A_Q_/i` alone until 2026-07-27 -- see the F1b entry below.
 - **QCD-canonical names** (QCD Historical Data col D / `DEPT_QCD_QUEUES`): the
   names the QCD pipeline writes, e.g. CSR's main queue is `A_Q_CustomerSuccess`
   (NOT `A_Q_CSR`). `queuesForDept_` / `getDeptQcdQueues_` return THESE.
 
 So `inbound_calls.entry_queue = 'A_Q_CSR'` but `queuesForDept_('CSR')` =
 `['A_Q_CustomerSuccess', 'A_Q_Intake', 'Backup CSR']` -- the CSR main queue
-does **not** match across the two spaces (Intake happens to). NOTE on
-`Backup CSR`: the capture-side `icIsQueueName_` only learned to emit it as a
-queue in the IMP-1 fix — rows captured BEFORE that fix carry
-`abandon_stage='ivr'` / `entry_queue=NULL` for Backup-CSR-only calls and
-only heal via `backfillInboundCalls` while their `Call_Legs_*` sheets
-survive (~14 days); post-fix captures match `queuesForDept_('CSR')` directly.
+does **not** match across the two spaces (Intake happens to).
+
+**NOTE on names the capture didn't recognize yet.** `icIsQueueName_` has twice
+been taught a queue shape it was missing, and BOTH times the pre-fix rows are
+identical in shape: `abandon_stage='ivr'` + `entry_queue=NULL`, attributable to
+no dept, healing only via a re-import/`backfillInboundCalls` while the
+`Call_Legs_*` sheets survive (~14 days) -- older dates are unrecoverable.
+- **`Backup CSR`** — learned in IMP-1.
+- **`UDC_A_Q_Main` / `UUC_A_Q_Main`** — learned in **F1b** (2026-07-27). The
+  `/^A_Q_/i` anchor missed every brand prefix. Measured: a journey leg-name
+  histogram over abandoned NULL-`entry_queue` calls found `UDC_A_Q_Main` on 38
+  abandons in one ~8-week window, still accruing -- while the DQE pipeline had
+  listed BOTH names in `DQE_EXCLUDED_AGENTS` all along, so the two pipelines
+  disagreed about what a queue is.
+
+The miss is **self-concealing**, which is why it survived so long:
+`scanInboundQueueNames_` (the Dept Config "Discovered inbound queues" panel)
+and `runInboundQcdParityCheck`'s unattributed list BOTH filter
+`COALESCE(entry_queue,'') <> ''`, so a queue that was never recognized has no
+row to discover. Diagnose with the journey leg-name histogram in **CLAUDE.md
+Operator State #38** — NOT with a bare `entry_queue IS NULL` count, which
+unions three causes (measured at 9353 here, of which the real miss was tens of
+calls).
 
 **Symptom that surfaced it:** the "↳ path" call-journey drill on abandoned
 rings in the Missed Calls / My Department views returned "No inbound-call path
@@ -977,7 +1300,7 @@ existing per-dept dropdown):
   table showing the dept's most-recent QCD day. Powered by
   `Data.gs::computeDeptQcdSnapshot_` and returned as the new
   `qcd` field on `getDepartmentSummary` (the `summary:` cache prefix
-  was bumped when this shipped; see CLAUDE.md INV-30 for the current
+  was bumped when this shipped; see INV-30 (`docs/invariants.md`) for the current
   version).
 
 **Onboarding a new dept.** When a new dept starts producing rows

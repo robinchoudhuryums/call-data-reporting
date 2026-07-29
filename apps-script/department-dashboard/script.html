@@ -512,6 +512,58 @@
       .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
 
+  // -- F13: keyboard access for non-semantic click targets -----------------
+  // Most affordances in this file are real <button type="button"> elements
+  // (the correct pattern -- keyboard, focus ring and screen-reader role come
+  // free). A handful of older surfaces bind click to a <div>, <span> or <tr>
+  // instead, which makes them mouse-only: the Overview dept tiles + sub-queue
+  // chips, the My Department agent row's IR drill, the expandable QCD queue
+  // rows, and the QCD carousel dots. The heatmap cells (role=button +
+  // tabindex + Enter/Space) already show the house pattern; these two helpers
+  // apply it everywhere else.
+  //
+  // TABLE ROWS are deliberately NOT given role="button": that would override
+  // the implicit `row` role and break the table's semantics for a screen
+  // reader (the row would stop being reported as part of the grid). A row gets
+  // tabindex + a key handler and relies on its existing title/cell text for
+  // its accessible description; a div/span target, which has no semantics to
+  // preserve, gets the full role="button" treatment.
+
+  // Shared expand/collapse for a `tr.qcd-expandable` + its sibling
+  // `tr.qcd-detail-row` (the Insights Queue-health table and the all-dept QCD
+  // report render the same pair). Keeps the chevron glyph and aria-expanded in
+  // step with the row's state, so click and Enter/Space cannot diverge.
+  function qcdToggleExpandRow_(row) {
+    if (!row) return;
+    var detail = row.nextElementSibling;
+    if (!detail || !detail.classList.contains('qcd-detail-row')) return;
+    var open = detail.style.display !== 'none';
+    detail.style.display = open ? 'none' : '';
+    var icon = row.querySelector('.qcd-expand-icon');
+    if (icon) icon.textContent = open ? '▶' : '▼';
+    row.setAttribute('aria-expanded', open ? 'false' : 'true');
+  }
+
+  // Activates on Enter/Space for an element already carrying a click handler.
+  // `fn` receives the originating keyboard event, so shift/meta/ctrl-modified
+  // activation behaves like the modified click it mirrors.
+  function keyActivate_(el, fn) {
+    if (!el) return;
+    el.addEventListener('keydown', function (e) {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      e.preventDefault();           // Space must not scroll the page
+      fn.call(el, e);
+    });
+  }
+
+  // Makes a div/span click target a real, announced button.
+  function makeActivatable_(el, fn) {
+    if (!el) return;
+    el.setAttribute('role', 'button');
+    if (!el.hasAttribute('tabindex')) el.tabIndex = 0;
+    keyActivate_(el, fn);
+  }
+
   // Shared empty-state block so every "no data here" surface reads the
   // same way as the My Department page's empty state (icon + title +
   // hint) instead of ad-hoc one-liners. `icon` is a short emoji/glyph;
@@ -1076,7 +1128,7 @@
     // innerHTML is replaced per render, but the element itself stays), so
     // this listener is wired exactly once.
     var agentsTbody = $('agents-tbody');
-    if (agentsTbody) agentsTbody.addEventListener('click', function (e) {
+    var agentRowDrill_ = function (e) {
       var tr = e.target.closest('tr[data-agent]');
       if (!tr) return;
       var agent = tr.getAttribute('data-agent');   // browser-decoded
@@ -1084,7 +1136,19 @@
       var from = ($('from-date') && $('from-date').value) || '';
       var to   = ($('to-date')   && $('to-date').value)   || '';
       if (typeof irDrillToAgent_ === 'function') irDrillToAgent_(agent, from, to);
-    });
+    };
+    if (agentsTbody) {
+      agentsTbody.addEventListener('click', agentRowDrill_);
+      // F13: the same drill on Enter/Space. Delegated on the persistent tbody
+      // (rows are re-rendered every refresh and carry tabindex in their
+      // markup), so it is wired exactly once like the click handler above.
+      agentsTbody.addEventListener('keydown', function (e) {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        if (!e.target.closest('tr[data-agent]')) return;
+        e.preventDefault();
+        agentRowDrill_(e);
+      });
+    }
 
     // Sortable headers. R12-5: keyboard-operable too -- focusable, with
     // Enter/Space triggering the same sort (they were click-only).
@@ -1324,29 +1388,58 @@
   // R12-20 (#1): escalation counts surfaced on the landing chrome -- a count
   // badge on the Escalations nav tab + a one-line Overview strip. Best-effort
   // (silent on unavailable/zero); per-viewer scope enforced server-side.
+  // F10: renders the badge + Overview strip from a counts object, and is
+  // IDEMPOTENT -- it updates an existing badge and REMOVES it when the count
+  // reaches zero. The old version only ever APPENDED (guarded by
+  // `!tab.querySelector('.nav-count-badge')`) and ran once per page load, so
+  // after a manager resolved their last escalation the badge kept the old
+  // number for the rest of the session and the strip stayed visible.
+  function escApplyBadge_(counts) {
+    var open = Number(counts && counts.open) || 0;
+    var review = Number(counts && counts.review) || 0;
+    var over = Number(counts && counts.overdue) || 0;
+    var total = open + review;
+
+    var tab = $('escalations-btn');
+    if (tab) {
+      var sp = tab.querySelector('.nav-count-badge');
+      if (total <= 0) {
+        if (sp) sp.remove();                       // cleared -- don't leave a stale count
+      } else {
+        if (!sp) {
+          sp = document.createElement('span');
+          sp.className = 'nav-count-badge';
+          tab.appendChild(sp);
+        }
+        sp.classList.toggle('nav-count-badge--warn', over > 0);
+        sp.textContent = String(total);
+        sp.title = open + ' open' + (over ? ' (' + over + ' overdue)' : '')
+          + (review ? ' \u00b7 ' + review + ' awaiting review' : '');
+      }
+    }
+
+    var strip = $('ov-esc-strip');
+    if (strip) {
+      if (total <= 0) {
+        strip.style.display = 'none';
+        strip.innerHTML = '';
+      } else {
+        strip.innerHTML = '\u26a0 <strong>Escalations:</strong> ' + open + ' open'
+          + (over ? ' \u00b7 <span class="ov-esc-overdue">' + over + ' overdue</span>' : '')
+          + (review ? ' \u00b7 ' + review + ' awaiting review' : '')
+          + ' <button type="button" class="link-btn" id="ov-esc-strip-open">Open worklist \u2192</button>';
+        strip.style.display = '';
+        var btn = $('ov-esc-strip-open');
+        if (btn) btn.addEventListener('click', function () { setPage('escalations'); });
+      }
+    }
+  }
+
   function loadEscBadge_() {
     try {
       google.script.run.withSuccessHandler(function (b) {
-        if (!b || !b.available) return;
-        var open = Number(b.open) || 0, review = Number(b.review) || 0, over = Number(b.overdue) || 0;
-        var tab = $('escalations-btn');
-        if (tab && (open + review) > 0 && !tab.querySelector('.nav-count-badge')) {
-          var sp = document.createElement('span');
-          sp.className = 'nav-count-badge' + (over > 0 ? ' nav-count-badge--warn' : '');
-          sp.textContent = open + review;
-          sp.title = open + ' open' + (over ? ' (' + over + ' overdue)' : '') + (review ? ' \u00b7 ' + review + ' awaiting review' : '');
-          tab.appendChild(sp);
-        }
-        var strip = $('ov-esc-strip');
-        if (strip && (open + review) > 0) {
-          strip.innerHTML = '\u26a0 <strong>Escalations:</strong> ' + open + ' open'
-            + (over ? ' \u00b7 <span class="ov-esc-overdue">' + over + ' overdue</span>' : '')
-            + (review ? ' \u00b7 ' + review + ' awaiting review' : '')
-            + ' <button type="button" class="link-btn" id="ov-esc-strip-open">Open worklist \u2192</button>';
-          strip.style.display = '';
-          var btn = $('ov-esc-strip-open');
-          if (btn) btn.addEventListener('click', function () { setPage('escalations'); });
-        }
+        if (!b || !b.available) return;   // unavailable -> leave whatever is shown
+        escApplyBadge_(b);
       }).withFailureHandler(function () { /* silent */ }).getEscalationsBadge();
     } catch (e) { /* silent */ }
   }
@@ -2656,10 +2749,16 @@
       const target = tile.getAttribute('data-dept');
       if (!target) return;
       tile.classList.add('ov-dept-tile-solo');
-      tile.addEventListener('click', function (e) {
+      const solo = function (e) {
         const additive = !!(e && (e.shiftKey || e.metaKey || e.ctrlKey));
         chartSpotlightTogglePin_(ovChartInstance, target, additive);
-      });
+      };
+      tile.addEventListener('click', solo);
+      // F13: the tile is a <div>, so solo/compare was mouse-only on the
+      // Overview -- the default landing page. Shift/Cmd/Ctrl+Enter still adds
+      // to the pinned set, since `solo` reads the modifiers off the event.
+      makeActivatable_(tile, solo);
+      tile.setAttribute('aria-label', 'Isolate ' + target + ' in the trend chart');
       tile.addEventListener('mouseenter', function () { ovSpotlightDept_(target); });
       tile.addEventListener('mouseleave', function () { ovSpotlightDept_(null); });
     });
@@ -6644,9 +6743,13 @@
       if (dotsWrap) {
         const dots = dotsWrap.querySelectorAll('.dept-qcd-dot');
         for (let d = 0; d < dots.length; d++) {
-          dots[d].addEventListener('click', function () {
-            showPage(Number(this.getAttribute('data-idx')));
-          });
+          const jump = function () { showPage(Number(this.getAttribute('data-idx'))); };
+          dots[d].addEventListener('click', jump);
+          // F13: the dots are <span>s. Lower stakes than the other four sites
+          // (the ‹ › navs are real buttons and reach every page), but a
+          // keyboard user could see the dots and not use them.
+          makeActivatable_(dots[d], jump);
+          dots[d].setAttribute('aria-label', 'Show queue page ' + (d + 1));
         }
       }
       showPage(0);
@@ -7268,7 +7371,10 @@
       // emphasis (e.g. user CSS, future hover handling) still works.
       const rowClass = (row.matchedViaQueue && !row.matchedViaRoster) ? 'via-queue' : '';
       // data-agent powers the row drill-through to the Individual Report.
-      return '<tr data-agent="' + escapeHtml(row.agent) + '"'
+      // F13: tabindex makes the drill keyboard-reachable (the delegated
+      // keydown on #agents-tbody activates it); no role override -- see
+      // makeActivatable_'s note on preserving table row semantics.
+      return '<tr data-agent="' + escapeHtml(row.agent) + '" tabindex="0"'
            + (rowClass ? ' class="' + rowClass + '"' : '')
            + ' title="Open ' + escapeHtml(row.agent) + '’s Individual Report">'
            + COLUMNS.map(function (col, i) {
@@ -12026,6 +12132,7 @@
            +   '<td>' + cell((e.teamAvgExcludes || []).join(', ')) + '</td>'
            +   '<td>' + cell((e.queueExtOverrides || []).join(', ')) + '</td>'
            +   '<td>' + cell((e.inboundAliases || []).join(', ')) + '</td>'
+           +   '<td>' + cell((e.finalDeptLabels || []).join(', ')) + '</td>'
            +   '<td>' + source + '</td>'
            +   '<td><button type="button" class="link-btn dc-row-edit" data-idx="' + idx + '">Edit</button></td>'
            + '</tr>';
@@ -12050,6 +12157,8 @@
     $('dc-edit-qext').value     = (eff.queueExtOverrides || []).join(', ');
     var inbAliasEl = $('dc-edit-inbound-aliases');
     if (inbAliasEl) inbAliasEl.value = (eff.inboundAliases || []).join(', ');
+    var fdlEl = $('dc-edit-final-dept-labels');
+    if (fdlEl) fdlEl.value = (eff.finalDeptLabels || []).join(', ');
     $('dc-edit-notes').value    = '';
     // Deactivate only makes sense when a sheet row exists for the dept.
     const deact = $('dc-deactivate-btn');
@@ -12073,6 +12182,7 @@
       teamAvgExcludes:   $('dc-edit-excludes').value,
       queueExtOverrides: $('dc-edit-qext').value,
       inboundAliases:    ($('dc-edit-inbound-aliases') || {}).value || '',
+      finalDeptLabels:   ($('dc-edit-final-dept-labels') || {}).value || '',
       active:            true,
       notes:             $('dc-edit-notes').value,
     };
@@ -14025,7 +14135,9 @@
         // plus the call-source subtable + violation dates when present.
         const hasDetail = true;
         const chevron = ' <span class="qcd-expand-icon">&#9654;</span>';
-        let html = '<tr class="ins-qh-row qcd-expandable">'
+        // F13: focusable + state-announcing (no role override -- see
+        // makeActivatable_'s note on table row semantics).
+        let html = '<tr class="ins-qh-row qcd-expandable" tabindex="0" aria-expanded="false">'
           + '<td>' + escapeHtml(q.queue) + subTag + chevron + srcLine + '</td>'
           + '<td class="num">' + fmtNumber(q.totalCalls) + '</td>'
           + '<td class="num">' + fmtNumber(q.abandoned) + '</td>'
@@ -14079,12 +14191,17 @@
           }
           var row = e.target.closest('.qcd-expandable');
           if (!row || !tbody.contains(row)) return;
-          var detail = row.nextElementSibling;
-          if (!detail || !detail.classList.contains('qcd-detail-row')) return;
-          var open = detail.style.display !== 'none';
-          detail.style.display = open ? 'none' : '';
-          var icon = row.querySelector('.qcd-expand-icon');
-          if (icon) icon.textContent = open ? '▶' : '▼';
+          qcdToggleExpandRow_(row);
+        });
+        // F13: Enter/Space expands too -- the per-source breakdown and
+        // violation dates behind this toggle have no other route.
+        tbody.addEventListener('keydown', function (e) {
+          if (e.key !== 'Enter' && e.key !== ' ') return;
+          var row = e.target.closest && e.target.closest('.qcd-expandable');
+          if (!row || !tbody.contains(row)) return;
+          if (e.target.closest('button')) return;   // let real buttons act
+          e.preventDefault();
+          qcdToggleExpandRow_(row);
         });
         tbody._insQhExpandWired = true;
       }
@@ -16639,6 +16756,7 @@
     inboundRenderTable_('inbound-dialin-tbody', data.byDialIn, false);
     inboundRenderTable_('inbound-queue-tbody', data.byQueue, false);
     inboundRenderCrossTable_(data.byDialInInsurer);
+    inboundRenderOutside_(data.outsideWindow);
     // Temporal abandon heatmap (companion). Separate round-trip via
     // getInboundHeatmap so it can be reused by the QCD report too.
     // Skipped on the SWR pre-paint -- the live repaint fetches it once.
@@ -16660,6 +16778,38 @@
   // response paint a grid that disagrees with the container's stashed
   // data-heat-* scope (which the cell drill re-issues).
   var heatLoadSeq_ = {};
+  /**
+   * RESEARCH-ONLY out-of-hours block. Everything above it is scoped to the
+   * work window (server-side), so this is the only place out-of-window traffic
+   * appears -- and it is deliberately styled MUTED, kept out of the KPI row,
+   * and captioned as not-a-department-metric, because the whole point of the
+   * owner ruling is that these calls are visible without counting against
+   * anyone. Hides itself entirely when there is nothing outside the window.
+   */
+  function inboundRenderOutside_(o) {
+    const sec = $('inbound-outside-section'), body = $('inbound-outside-body');
+    if (!sec || !body) return;
+    if (!o || !o.calls) { sec.style.display = 'none'; body.innerHTML = ''; return; }
+    sec.style.display = '';
+    const pct = function (ab, n) { return n ? (Math.round((ab / n) * 1000) / 10) + '%' : '—'; };
+    const row = function (label, calls, ab, hint) {
+      return '<tr><td>' + escapeHtml(label) + '<span class="ins-rollup-cap"> '
+        + escapeHtml(hint) + '</span></td><td class="num">' + fmtNumber(calls)
+        + '</td><td class="num">' + fmtNumber(ab) + '</td><td class="num">'
+        + pct(ab, calls) + '</td></tr>';
+    };
+    body.innerHTML =
+      '<table class="qcd-source-table"><thead><tr><th>Window</th>'
+      + '<th class="num">Calls</th><th class="num">Abandoned</th>'
+      + '<th class="num">Aband. %</th></tr></thead><tbody>'
+      + row('Before hours', o.beforeCalls, o.beforeAbandoned, '(before 8:30 AM CST)')
+      + row('After hours', o.afterCalls, o.afterAbandoned, '(after 5:00 PM CST)')
+      + '<tr class="agents-totals"><td>Total outside hours</td><td class="num">'
+      + fmtNumber(o.calls) + '</td><td class="num">' + fmtNumber(o.abandoned)
+      + '</td><td class="num">' + pct(o.abandoned, o.calls) + '</td></tr>'
+      + '</tbody></table>';
+  }
+
   function loadAbandonHeatmap_(containerId, dept, from, to) {
     var el = $(containerId);
     if (!el) return;
@@ -17883,6 +18033,15 @@
         if (__tok !== escLoadSeq_) return;   // superseded by a newer load
         if ($('esc-loading')) $('esc-loading').style.display = 'none';
         escRenderList_(resp || {});
+        // F10: refresh the nav badge / Overview strip after every list load --
+        // and every mutation reloads the list, so resolving the last escalation
+        // now clears the badge instead of leaving a stale count for the session.
+        // Deliberately a fresh `getEscalationsBadge()` rather than reusing this
+        // response's `meta.statusCounts`: the list can be filtered to ONE dept
+        // (an admin picking a dept, or view-as), while the badge is scoped to
+        // the viewer's FULL set -- deriving it from a filtered response would
+        // undercount. One cheap COUNT aggregate is the right trade.
+        loadEscBadge_();
       })
       .withFailureHandler(function (err) {
         if (__tok !== escLoadSeq_) return;   // a newer load owns the list
@@ -18005,6 +18164,11 @@
   // only -- no schema field / server alerting). Kept in sync with the server's
   // n_overdue interval in getEscalations so the band count + the card badge use
   // the SAME definition.
+  // F3: must stay in sync with Escalations.gs::ESC_OVERDUE_DAYS, which drives
+  // the server's band-tile / nav-badge counts (the client can't read a .gs
+  // constant -- same two-runtime mirror as DASHBOARD_WORK_WINDOW / INV-06).
+  // Both sides now compare CALENDAR DAYS; the server previously used a 72-hour
+  // interval, so a card could show ⚑ while the tile didn't count it.
   var ESC_OVERDUE_DAYS = 3;
 
   // C3: calendar days an escalation has been open, from occurred_at (nullable
@@ -19431,12 +19595,17 @@
       bodyEl.addEventListener('click', function (e) {
         const row = e.target.closest && e.target.closest('tr.qcd-expandable');
         if (!row) return;
-        const detail = row.nextElementSibling;
-        if (!detail || !detail.classList.contains('qcd-detail-row')) return;
-        const isOpen = detail.style.display !== 'none';
-        detail.style.display = isOpen ? 'none' : '';
-        const icon = row.querySelector('.qcd-expand-icon');
-        if (icon) icon.innerHTML = isOpen ? '&#9654;' : '&#9660;';   // ▶ / ▼ (matches the QCD modal)
+        qcdToggleExpandRow_(row);
+      });
+      // F13: keyboard equivalent (the per-source breakdown + violation dates
+      // are only reachable through this toggle).
+      bodyEl.addEventListener('keydown', function (e) {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        const row = e.target.closest && e.target.closest('tr.qcd-expandable');
+        if (!row) return;
+        if (e.target.closest('button')) return;   // let real buttons act
+        e.preventDefault();
+        qcdToggleExpandRow_(row);
       });
     }
   }
@@ -19743,7 +19912,9 @@
       const hasViolDates = (Number(q.violations) || 0) > 0 && (q.violationDates || []).length;
       const hasDetail = sources.length > 0 || hasViolDates;
       const chevron = hasDetail ? ' <span class="qcd-expand-icon">&#9654;</span>' : '';
-      let out = '<tr class="' + (hasDetail ? 'qcd-expandable' : '') + '">'
+      // F13: only the rows that actually expand become focusable.
+      let out = '<tr class="' + (hasDetail ? 'qcd-expandable' : '') + '"'
+        + (hasDetail ? ' tabindex="0" aria-expanded="false"' : '') + '>'
         + '<td>' + escapeHtml(q.queue) + subTag + chevron + '</td>'
         + '<td class="num">' + fmtNumber(q.totalCalls) + '</td>'
         + '<td class="qcd-daily-bar-cell">' + qcdDailyBarCell_(q, { tick: true }) + '</td>'   // QV-1

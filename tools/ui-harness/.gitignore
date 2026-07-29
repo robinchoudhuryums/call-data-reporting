@@ -1,4 +1,8 @@
 node_modules/
+# vendor/ is COMMITTED (F7): the harness must run without an npm install
+# beyond playwright. Versions are pinned to dashboard.html by
+# tests/unit/ui-harness-vendor.test.js.
+!vendor/
 site/
 shots/
 payloads/

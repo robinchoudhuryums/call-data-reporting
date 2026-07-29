@@ -13,6 +13,21 @@ const HERE = __dirname;
 const SITE = path.join(HERE, 'site');
 fs.mkdirSync(path.join(SITE, 'vendor'), { recursive: true });
 
+// F7: copy the COMMITTED vendor bundles into the built site. They used to be a
+// manual `cp` out of node_modules (README step), which meant a fresh checkout
+// silently built a site whose Chart global was missing -- every chart then
+// rendered through safeChart_'s "unavailable" path and the harness reported
+// nothing useful. tests/unit/ui-harness-vendor.test.js pins these to the same
+// versions dashboard.html loads from the CDN.
+for (const f of ['chart.umd.js', 'datalabels.min.js', 'html2canvas-pro.min.js']) {
+  const src = path.join(HERE, 'vendor', f);
+  if (!fs.existsSync(src)) {
+    console.error('missing committed vendor bundle: tools/ui-harness/vendor/' + f);
+    process.exit(1);
+  }
+  fs.copyFileSync(src, path.join(SITE, 'vendor', f));
+}
+
 const role = process.argv[2] || 'admin';   // admin | manager
 
 let html = fs.readFileSync(path.join(REPO, 'dashboard.html'), 'utf8');
@@ -60,6 +75,7 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [] };
     getInsightsReportInit: function () { return P['insights-init']; },
     getInsightsReport: function () { return P['insights']; },
     getMissedCallsSlice: function () { return P['missed-slice']; },
+    getQcdAllDepartments: function () { return P['qcd-alldept']; },
     getEscalationsBadge: function () { return { available: true, open: 3, review: 2, overdue: 1 }; },
     getEscalationsInit: function () { var e = JSON.parse(JSON.stringify(P['esc-init'])); if (ROLE==='manager'){e.role='manager';e.isAdmin=false;e.department='CSR';e.departments=['CSR'];} return e; },
     getEscalations: function () { return P[ROLE==='manager' ? 'esc-list-mgr' : 'esc-list']; },

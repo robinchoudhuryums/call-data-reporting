@@ -157,6 +157,10 @@ function writeOutboundCallsToNeon(rawRows, opts) {
   var authoritative = !!(opts && opts.authoritative);
   var expectedDateIso = (opts && opts.expectedDateIso) ? String(opts.expectedDateIso) : '';
   try {
+    // F1: the journey builder classifies leg kind via icIsQueueName_, so load
+    // the configured queue names here too (additive; no-op without a sheet).
+    if (typeof icResetConfigMemos_ === 'function') icResetConfigMemos_();
+    if (typeof icLoadConfiguredQueueNames_ === 'function') icLoadConfiguredQueueNames_();
     var records = buildOutboundCallRecords_(rawRows).filter(function (r) { return r.callDate; });
     if (expectedDateIso) {
       var strayCount = 0;
@@ -171,7 +175,16 @@ function writeOutboundCallsToNeon(rawRows, opts) {
           strayCount, expectedDateIso);
       }
     }
-    if (!records.length) return { inserted: 0, skipped: 0 };
+    if (!records.length) {
+      // F2: same zero-record authoritative cleanup as the inbound writer --
+      // `outbound_calls` has no sheet primary either, so a date whose
+      // legitimate count is zero must still be able to shed stale rows.
+      // Gated on a non-empty source so an unreadable grid can't delete data.
+      if (authoritative && expectedDateIso && rawRows && rawRows.length) {
+        return icDeleteDateOnly_('outbound_calls', expectedDateIso, 'writeOutboundCallsToNeon');
+      }
+      return { inserted: 0, skipped: 0 };
+    }
 
     var secret = PropertiesService.getScriptProperties().getProperty('HMAC_SECRET');
     if (!secret) {
@@ -339,7 +352,9 @@ function backfillOutboundCalls(fromIso, toIso, force) {
       var res = writeOutboundCallsToNeon(legs, { authoritative: true, expectedDateIso: c.iso });
       if (res && res.error) {
         failures.push(c.iso);
-      } else if (res && res.skipped && !res.inserted) {
+      } else if (res && ((res.skipped && !res.inserted) || res.unreachable)) {
+        // res.unreachable also covers the F2 zero-record cleanup arm (no
+        // `skipped` count, but the date still needs retrying).
         unreachable = true;
         stoppedEarly = 'Neon unreachable at ' + c.iso + ' — re-run once Neon is up';
         break;

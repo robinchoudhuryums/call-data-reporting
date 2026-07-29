@@ -139,10 +139,19 @@ const ORPHAN_FIX_LOG_HEADERS = Object.freeze([
 //     "A_Q_CustomerSuccess"). Appended at the END (non-destructive: pre-
 //     existing 9-col prod sheets keep working; readDeptConfigRows_ reads it
 //     positionally, empty until an admin fills it). See INV-54.
+//   Final Dept Labels = comma-separated RAW CDR "Departments" ORG-CHART strings
+//     (`Customer Success`, `Patient Intake - Supplies`, ...) that belong to this
+//     dept. A THIRD upstream name space -- not a queue name. Read ONLY by
+//     getFinalDeptLabels_ -> inboundDeptPredicate_'s answered-on-hold arm, which
+//     matches inbound_calls.final_dept case-insensitively. The accessor ALWAYS
+//     prepends the dept's own name, so a blank field = the pre-2026-07 behavior
+//     (strictly additive). Why it exists: no CDR label matches a dashboard dept
+//     header in this install, so that arm had never fired. Appended at the END
+//     (col 11), same non-destructive rules as Inbound Queue Aliases. See INV-54.
 const DEPT_CONFIG_HEADERS = Object.freeze([
   'Department', 'QCD Queues', 'Overview Parent', 'Team Avg Excludes',
   'Queue Ext Overrides', 'Active', 'Updated By', 'Updated At', 'Notes',
-  'Inbound Queue Aliases',
+  'Inbound Queue Aliases', 'Final Dept Labels',
 ]);
 // Report Usage: append-only telemetry of report opens, written by
 // Util.gs::logReportUsage_ from the public report endpoints. This is
@@ -335,6 +344,32 @@ const TEAM_AVG_EXCLUDES = Object.freeze({
 const DASHBOARD_WORK_WINDOW = Object.freeze({
   pst: '6:30 AM – 3:00 PM PST',
   cst: '8:30 AM – 5:00 PM CST',
+});
+
+/**
+ * The SAME window as the strings above, in the machine-comparable form
+ * `inbound_calls.call_start` uses: zero-padded 'HH:MM:SS' in RAW PST (the
+ * inbound capture stores the CDR's native wall-clock and does NOT apply the
+ * +2h PST->CST shift the DQE slot pipeline does). Half-open [start, end),
+ * matching the pipeline's `startPST >= DQE_WINDOW_START && startPST <
+ * DQE_WINDOW_END`.
+ *
+ * INV-06 SYNC OBLIGATION -- this is the THIRD copy of the window (the
+ * pipeline's numeric constants in cdr-import/buildDQEHistoricalData.js are
+ * the source of truth; the strings above are the display mirror; these are
+ * the query mirror). All three must agree. Kept as text so it drops straight
+ * into a SQL comparison against `call_start` with no TZ conversion --
+ * zero-padded 24h times compare correctly lexicographically.
+ *
+ * Why it exists: QCD's Abandoned column is work-window-scoped, `inbound_calls`
+ * captures around the clock, and comparing the two unfiltered overstated the
+ * inbound side. See docs/known-issues.md "QCD Abandoned vs inbound_calls
+ * abandons". Out-of-window calls are RESEARCH data (owner ruling), never a
+ * dept metric -- report them separately, never fold them into a dept total.
+ */
+const INBOUND_WORK_WINDOW_PST = Object.freeze({
+  start: '06:30:00',
+  end:   '15:00:00',
 });
 
 /**

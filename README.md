@@ -33,12 +33,23 @@ If you're new to this codebase or chasing a bug, start with the docs:
   aggregation rules, scope semantics. The "why are TTT and ATT computed
   this way?" reference.
 
+`CLAUDE.md` holds the rules you must follow when changing code. Four of its
+reference sections live in their own files (it got too big to read); **each is
+still LIVE TRUTH, and CLAUDE.md carries a one-line index for each entry** —
+[`docs/invariants.md`](docs/invariants.md) (`INV-01`…`INV-55`),
+[`docs/operator-state.md`](docs/operator-state.md) (the numbered operator
+checklist), [`docs/regression-scenarios.md`](docs/regression-scenarios.md)
+(`S1`…`S40`), and
+[`docs/client-ui-conventions.md`](docs/client-ui-conventions.md) (client /
+presentation layer). So "see CLAUDE.md INV-54" below means: find the index line
+there, read the full entry in `docs/invariants.md`.
+
 ## Repository layout
 
 ```
 call-data-reporting/
 ├── README.md                       ← this file
-├── docs/                           ← architecture / known issues / conventions
+├── docs/                           ← architecture / known issues / conventions + CLAUDE.md's split reference sections
 ├── apps-script/                    ← all Apps Script project sources
 │   ├── department-dashboard/       ← the web app this repo deploys (top-level clasp pushes from here)
 │   ├── cdr-report/                 ← the CDR Report project (data hub spreadsheet)

@@ -204,13 +204,20 @@ function runNeonMirror_() {
 function runNeonMirrorNow() { runNeonMirror_(); }
 
 /**
- * Mirror all four outputs for ONE date from the sheets to Neon. Returns true
+ * Mirror all five outputs for ONE date from the sheets to Neon. Returns true
  * only if every applicable mirror succeeded (or had nothing to mirror); false
  * if any reported Neon-unreachable, so the caller keeps the date queued.
  * Each type logs its own Pipeline Health row (INV-44).
+ *
+ * F12: EVERY step is attempted even when an earlier one hard-errors (they were
+ * previously short-circuited by a rethrow), and the steps run least-recoverable
+ * first (Inbound/Outbound before CDR/QCD/DQE). A hard error still propagates --
+ * aggregated into a single throw after the last step -- so the caller's
+ * attempt-counting and retry cap behave exactly as before.
  */
 function neonMirrorDate_(ss, iso) {
   var allOk = true;
+  var hardErrors = [];
   var step = function (label, fn) {
     var t0 = Date.now();
     var res;
@@ -218,8 +225,19 @@ function neonMirrorDate_(ss, iso) {
       res = fn();
     } catch (e) {
       allOk = false;
-      neonMirrorLog_(ss, 'neonMirror:' + label, 'failure', null, t0, iso + ' | ' + ((e && e.message) ? e.message : String(e)));
-      throw e;   // a hard error keeps the date queued AND surfaces upstream
+      var msg = (e && e.message) ? e.message : String(e);
+      neonMirrorLog_(ss, 'neonMirror:' + label, 'failure', null, t0, iso + ' | ' + msg);
+      // F12: COLLECT, don't rethrow. Rethrowing here aborted the whole date, so
+      // a hard error in an early step meant the LATER steps were never
+      // attempted -- across all NEON_MIRROR_MAX_ATTEMPTS retries -- and then
+      // the date was dropped by the gave-up path. For Inbound/Outbound that was
+      // permanent loss (no sheet primary; past the ~14-day Call_Legs retention
+      // they cannot be re-derived at all), while the CDR/QCD/DQE step that
+      // caused it stays re-derivable from its sheet forever. Every step now
+      // runs; the aggregated error is thrown ONCE at the end, so the caller's
+      // hard-fail semantics (attempt counting + the retry cap) are unchanged.
+      hardErrors.push(label + ': ' + msg);
+      return null;
     }
     if (res && res.unreachable) {
       allOk = false;
@@ -233,11 +251,19 @@ function neonMirrorDate_(ss, iso) {
     return res;
   };
 
+  // F12: ordered by RECOVERABILITY, least-recoverable first. inbound_calls and
+  // outbound_calls have NO sheet primary and a hard ~14-day source-retention
+  // floor, so they get their attempt before the three types that can be
+  // re-mirrored from their Historical Data sheets at any time.
+  step('Inbound', function () { return mirrorInboundForDate_(iso); });
+  step('Outbound', function () { return mirrorOutboundForDate_(iso); });
   step('CDR', function () { return mirrorCdrForDate_(ss, iso); });
   step('QCD', function () { return mirrorQcdForDate_(ss, iso); });
   step('DQE', function () { return mirrorDqeForDate_(ss, iso); });
-  step('Inbound', function () { return mirrorInboundForDate_(iso); });
-  step('Outbound', function () { return mirrorOutboundForDate_(iso); });
+
+  // Surface the hard failure(s) upstream exactly as before -- one throw after
+  // every step has had its turn.
+  if (hardErrors.length) throw new Error(hardErrors.join(' | '));
 
   return allOk;
 }
