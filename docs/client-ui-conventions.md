@@ -834,3 +834,25 @@ after the Active / No-activity / Floaters groups.
 - The group carries an inline note saying the run will use that department's own
   team average, so the behavior is visible before the click rather than
   surprising afterwards.
+
+## Combined-view CSV + the missed section's scope (Phase 1 follow-up / Phase 3)
+
+`exportTableCsv_` gains a leading **Department** column only when
+`meta.deptsShown.length > 1` and `state.deptGroups` exists — so a single-dept
+export is byte-identical to before. Rows are emitted per department followed by
+that department's own subtotal, then a grand total labelled `All shown`.
+
+**No group-header pseudo-rows.** The on-screen table uses them because a human
+reads top-to-bottom; a spreadsheet reader wants a Department COLUMN it can pivot
+and filter on, and banner rows break both. The two surfaces differ on purpose.
+
+The download filename gains a `_subs` / `_all` tag so exporting two scopes of the
+same dept and range doesn't silently overwrite.
+
+The **missed section** follows the switcher only for single-dept scopes
+(`subqMissedDept_`). For `all` it stays on the parent, because the queue-only
+abandoned section already includes the parent's sub-queue queues via
+`queuesForDept_` — merging a child's report in would double-count every queue
+abandon and every abandoned-ring chart bucket. `subqMissedScopeNote_` renders one
+line under the section title saying so, which is the difference between a
+defensible scope and a confusing one.

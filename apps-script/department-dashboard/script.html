@@ -6253,12 +6253,60 @@
     dsFrostShow_(wrap, 'Loading missed calls…');
   }
 
+  /**
+   * The dept the missed section should run on, or null to use the header dept.
+   * Single-dept scopes only -- see the note in deptMissedFetch_ for why 'all'
+   * is deliberately not merged.
+   */
+  function subqMissedDept_() {
+    var m = (state && state.meta) || {};
+    if (m.subScope === 'subs') {
+      var subs = m.subQueues || [];
+      if (subs.length === 1) return subs[0];
+    }
+    return null;
+  }
+
+  /**
+   * One line under the missed-section title naming the scope, so a manager
+   * reading a parent's combined page knows the section is NOT the combined
+   * figure. Renders only when a sub-queue relationship exists.
+   */
+  function subqMissedScopeNote_(shownDept) {
+    var host = $('dept-missed-scope-note');
+    if (!host) return;
+    var m = (state && state.meta) || {};
+    var subs = m.subQueues || [];
+    if (!subs.length) { host.style.display = 'none'; host.innerHTML = ''; return; }
+    var list = subs.map(escapeHtml).join(', ');
+    host.style.display = '';
+    if (m.subScope === 'all') {
+      host.innerHTML = 'Per-agent timelines below are <strong>'
+        + escapeHtml(shownDept) + '</strong>\u2019s only. Queue abandons already '
+        + 'include ' + list + '\u2019s queues, so they are not added twice.';
+    } else if (m.subScope === 'subs') {
+      host.innerHTML = 'Showing <strong>' + escapeHtml(shownDept) + '</strong>.';
+    } else {
+      host.innerHTML = '<strong>' + escapeHtml(shownDept) + '</strong> only \u2014 '
+        + list + ' ' + (subs.length === 1 ? 'is a sub-queue' : 'are sub-queues')
+        + ' with its own missed calls.';
+    }
+  }
+
   function deptMissedFetch_() {
     const wrap = $('dept-missed-section');
     if (!wrap) return;
     // R7 (G-3): surface toggled off -- skip the fetch too (CSS already hides).
     if (uiFlagOn_('dept-missed-section')) { deptMissedScrollPending_ = false; return; }
-    const dept = getRequestedDept();
+    // Sub-queue Phase 3: the missed section follows the switcher when the scope
+    // resolves to a SINGLE department -- 'subs' with one child runs on that
+    // child. It deliberately does NOT merge for 'all': the queue-only abandoned
+    // section already covers a parent's sub-queue queues (`queuesForDept_` rolls
+    // them up), so summing a child's report into the parent's would double-count
+    // every queue abandon and every abandoned-ring bucket in the hour-of-day
+    // chart. `subqMissedScopeNote_` says what is and isn't included instead of
+    // leaving the reader to guess.
+    const dept = subqMissedDept_() || getRequestedDept();
     const from = $('from-date').value, to = $('to-date').value;
     if (!dept || !from || !to) {
       deptMissedScrollPending_ = false;   // no fetch coming -- disarm the one-shot scroll
@@ -6457,6 +6505,7 @@
     const m = (data && data.meta) || {};
     deptMissedLastData = data;            // drill-in reads this
     deptMissedAgentScope_ = null;         // R11-C4: fresh data = dept-wide chart
+    subqMissedScopeNote_(m.department || getRequestedDept());
     deptMissedBucketDetail_.hide();       // reset the panel on every fetch (like the modal)
 
     // Show the section BEFORE the radar is created below: Chart.js measures
@@ -7609,10 +7658,19 @@
     // Owner round 4: the on-screen Total-calls column folded into the bar,
     // but the CSV stays complete -- a numeric Total calls column is spliced
     // in right after the bar column.
-    var cellsFor = function (row, isTotals) {
+    // Sub-queue Phase 1 follow-up: in a COMBINED view the flat CSV was
+    // unreadable -- no way to tell which department a row belonged to, and no
+    // subtotals, so the on-screen grouping was lost entirely on export. A
+    // leading Department column is added ONLY when more than one dept is shown,
+    // so a single-dept export is byte-identical to before.
+    var deptsShown = (state.meta && state.meta.deptsShown) || [];
+    var multiDept = deptsShown.length > 1 && !!state.deptGroups;
+    var cellsFor = function (row, isTotals, deptLabel) {
       var out = [];
+      if (multiDept) out.push(csvEscape(deptLabel == null ? (row.dept || '') : deptLabel));
       COLUMNS.forEach(function (col, i) {
-        if (isTotals && i === 0) { out.push(csvEscape('Total (roster only)')); }
+        if (isTotals && i === 0) { out.push(csvEscape(isTotals === 'sub'
+          ? (deptLabel || '') + ' subtotal' : 'Total (roster only)')); }
         // Source column has no aggregate meaning in the totals row.
         else if (col.type === 'chip' && col.key === 'source') out.push(isTotals ? '' : csvEscape(sourceChipCsv_(row)));
         else if (col.type === 'bar') out.push(csvEscape(barCsv(row)));
@@ -7627,13 +7685,35 @@
       acc.push(csvEscape(c.label));
       if (c.type === 'bar') acc.push(csvEscape('Total calls'));
       return acc;
-    }, []).join(',');
-    var rows = sorted.map(function (row) { return cellsFor(row, false); });
-    if (state.totals) rows.push(cellsFor(state.totals, true));
+    }, multiDept ? [csvEscape('Department')] : []).join(',');
+    var rows = [];
+    if (multiDept) {
+      // Grouped like the table: each dept's rows, then that dept's OWN
+      // subtotal (from deptGroups, i.e. the same numbers its own view shows),
+      // then the labelled grand total. NO group-header pseudo-rows -- a
+      // spreadsheet reader wants a Department COLUMN it can pivot on, not
+      // banner rows that break sorting and filtering.
+      var subtotalFor = {};
+      (state.deptGroups || []).forEach(function (g) { subtotalFor[g.dept] = g.totals || {}; });
+      deptsShown.forEach(function (d) {
+        var mine = sorted.filter(function (r) { return r.dept === d; });
+        if (!mine.length) return;
+        mine.forEach(function (row) { rows.push(cellsFor(row, false)); });
+        rows.push(cellsFor(subtotalFor[d] || {}, 'sub', d));
+      });
+      if (state.totals) rows.push(cellsFor(state.totals, true, 'All shown'));
+    } else {
+      sorted.forEach(function (row) { rows.push(cellsFor(row, false)); });
+      if (state.totals) rows.push(cellsFor(state.totals, true));
+    }
     var blob = new Blob([header + '\n' + rows.join('\n')], { type: 'text/csv' });
     var a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = (getRequestedDept() || 'department') + '_' + (($('from-date') && $('from-date').value) || 'data') + '_to_' + (($('to-date') && $('to-date').value) || 'data') + '.csv';
+    var scopeTag = (state.meta && state.meta.subScope && state.meta.subScope !== 'own')
+      ? '_' + state.meta.subScope : '';
+    a.download = (getRequestedDept() || 'department') + scopeTag + '_'
+      + (($('from-date') && $('from-date').value) || 'data') + '_to_'
+      + (($('to-date') && $('to-date').value) || 'data') + '.csv';
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);

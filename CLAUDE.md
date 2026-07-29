@@ -1645,7 +1645,27 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   selection that spans depts with a reason, because the team average / rollup is
   per-dept (INV-25/27) and averaging two teams with different call profiles is
   the wrong number. Insights' report body is NOT scope-switched -- see the
-  follow-on note in `.cycle/blocks/61-*`. Server side is
+  follow-on note in `.cycle/blocks/61-*`.
+  **CSV (Phase 1 follow-up):** `exportTableCsv_` adds a leading **Department**
+  column ONLY when more than one dept is shown (a single-dept export stays
+  byte-identical), emits each dept's rows followed by that dept's OWN subtotal
+  from `deptGroups`, then a grand total labelled `All shown`. **No group-header
+  pseudo-rows** -- a spreadsheet reader wants a column it can pivot and filter
+  on, not banners that break sorting. The filename gains a `_subs` / `_all`
+  scope tag so two scopes don't overwrite each other. Every cell still routes
+  through `csvSafeCell_` (formula injection).
+  **Phase 3 (Missed + Escalations):** the missed section follows the switcher
+  ONLY when the scope resolves to a SINGLE dept (`subs` with one child runs on
+  that child, via `subqMissedDept_`). It deliberately does **NOT merge for
+  `all`** -- the queue-only abandoned section already covers a parent's
+  sub-queue queues (`queuesForDept_` rolls them up), so summing a child's report
+  into the parent's would double-count every queue abandon and every
+  abandoned-ring bucket in the hour-of-day chart, the same trap as the QCD
+  snapshot. `subqMissedScopeNote_` states what is and isn't included instead of
+  leaving the reader to infer it. **Escalations needed NO code change** --
+  `getEscalations` already scopes by `user.departments`, so Phase 0's widening
+  gave a parent manager their sub-queue's escalations automatically, and
+  `metaDept` already reports the joined list. Server side is
   `combineSummaries_` calling `computeSummary_` once per dept: it leaves every
   INV-02/04/05/23/53 + S35 + E5 rule inside that function untouched, and its
   duration means are agent-count-WEIGHTED (never a mean of means). **`qcd` is
