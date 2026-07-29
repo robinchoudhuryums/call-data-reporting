@@ -1778,7 +1778,10 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   backfillable, and the constant is code — dropping self-parent edges, edges
   naming a non-existent dept, and any cyclic edge; it FAILS CLOSED (an
   unreadable map returns the assigned list unchanged). A dept with no children
-  is untouched, which is 11 of 14 here. **Alerts and Digests are deliberately
+  is untouched, which is 11 of 14 here. **Owner ruling (2026-07): the widening
+  is intended** — a parent dept's managers get their child queues' data,
+  agent-level included (Operator State #39), so don't treat the seeded
+  `PAP`/`Spanish`/`PAK` edges as an accidental grant. **Alerts and Digests are deliberately
   NOT expanded** — they're per-dept subscriptions an admin configured on
   purpose. `OVERVIEW_HIDDEN_DEPTS` is still Overview-only. Adding a sub-queue means: (1) it
   already appears as its own dept everywhere else (it's a real

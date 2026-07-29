@@ -747,10 +747,17 @@ When something looks wrong, before assuming a code bug, check:
     manager can see PAP, every CSR manager can see Spanish, every Power manager
     can see PAK -- agent-level data included.
 
-    **Before deploying, confirm that is what you want**, dept by dept. If any
-    pairing should NOT confer access, clear that dept's `Overview Parent` cell
-    in Dept Config first (it will also stop nesting on the Overview tile grid --
-    the two are the same setting now, which is the trade-off of this design).
+    **CONFIRMED BY THE OWNER (2026-07), so this is no longer a question:**
+    *"Managers of parent dept should have access to child queue data (including
+    agents in that queue)."* All seeded pairings are intended, agent-level data
+    included. Do NOT re-open this on the next read; if a FUTURE pairing should
+    not confer access, that is a new decision about that pairing, not a
+    reconsideration of the rule.
+
+    The knob, if a specific pairing ever needs revoking: clear that dept's
+    `Overview Parent` cell in Dept Config. Note it will also stop nesting on the
+    Overview tile grid -- one cell, two meanings, which is the trade-off of
+    reusing the existing map. Splitting them would need a second map in code.
 
     Also confirm `Field Ops Power`: it looks like a sibling of `Field Ops` in
     the data but is NOT in the parent map, so a Field Ops manager will NOT see
