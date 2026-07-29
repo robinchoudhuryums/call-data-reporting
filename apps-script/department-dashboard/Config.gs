@@ -139,6 +139,15 @@ const ORPHAN_FIX_LOG_HEADERS = Object.freeze([
 //     "A_Q_CustomerSuccess"). Appended at the END (non-destructive: pre-
 //     existing 9-col prod sheets keep working; readDeptConfigRows_ reads it
 //     positionally, empty until an admin fills it). See INV-54.
+//   Final Dept Labels = comma-separated RAW CDR "Departments" ORG-CHART strings
+//     (`Customer Success`, `Patient Intake - Supplies`, ...) that belong to this
+//     dept. A THIRD upstream name space -- not a queue name. Read ONLY by
+//     getFinalDeptLabels_ -> inboundDeptPredicate_'s answered-on-hold arm, which
+//     matches inbound_calls.final_dept case-insensitively. The accessor ALWAYS
+//     prepends the dept's own name, so a blank field = the pre-2026-07 behavior
+//     (strictly additive). Why it exists: no CDR label matches a dashboard dept
+//     header in this install, so that arm had never fired. Appended at the END
+//     (col 11), same non-destructive rules as Inbound Queue Aliases. See INV-54.
 const DEPT_CONFIG_HEADERS = Object.freeze([
   'Department', 'QCD Queues', 'Overview Parent', 'Team Avg Excludes',
   'Queue Ext Overrides', 'Active', 'Updated By', 'Updated At', 'Notes',

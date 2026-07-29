@@ -791,7 +791,13 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   Caller Lookup communication history (above). Pinned by
   `tests/unit/outbound-calls.test.js`.
 - **Temporal abandon heatmap (weekday × hour), sourced from
-  `inbound_calls`.** `InboundReport.gs::getInboundHeatmap({department,
+  `inbound_calls`.** **NOT work-window-scoped, deliberately** -- it is already
+  bounded by its own `INBOUND_HEATMAP_WINDOW_START_HOUR`/`_END_HOUR` band
+  (8 AM-5 PM CST, the INV-18 convention, 30 min WIDER at the start than the
+  6:30 AM-3:00 PM PST work window on purpose), so nothing out-of-hours reaches
+  it. Do NOT add `inboundWindowClause_` here the way the report's dept slices
+  carry it -- that would silently narrow the grid's first column;
+  `tests/unit/inbound-window-scope.test.js` pins the exemption. `InboundReport.gs::getInboundHeatmap({department,
   from, to})` aggregates abandon rate by `ISODOW × hour-slot` in ONE
   json_agg round-trip, reusing `inboundResolveRequest_` (so it inherits
   the inbound report's **admin-only vetting gate** + per-dept scoping) and

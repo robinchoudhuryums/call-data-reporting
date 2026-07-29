@@ -402,6 +402,17 @@ From/To default (which must snap to DQE specifically).
   Bridging the two is what the Dept Config "Inbound queue aliases"
   column is for — see [`known-issues.md`](known-issues.md) → "Two
   queue-name spaces".
+  **There is a THIRD upstream name space, and it is not a queue name at
+  all:** `inbound_calls.final_dept` carries the phone system's ORG-CHART
+  label (`Customer Success`, `Inside Sales - Power Mobility`, `Patient
+  Intake - Supplies`), which in this install matches no dashboard dept
+  header either. It is bridged by the Dept Config **"Final dept labels"**
+  column, and it feeds exactly ONE thing — attributing an answered-then-
+  abandoned-ON-HOLD call to a dept. Don't confuse it with the queue
+  aliases: a queue name goes in one column, an org-chart label in the
+  other, and mixing them silently breaks the attribution arm that reads
+  it. See [`known-issues.md`](known-issues.md) → "QCD Abandoned vs
+  inbound_calls abandons".
 - **Source filter**: only rows where `Call Source === 'Total Calls'`
   are summed. Other sources (`CSR`, `Ad-campaign`, `New Call
   Menu`, `Non-CSR (internal)`) are sub-counts that would
