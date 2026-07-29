@@ -388,7 +388,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `DEPT_QUEUE_EXT_OVERRIDES` are now SEED DEFAULTS layered under the
   admin-authored `Dept Config` sheet (INV-54). Always read through
   `getDeptQcdQueues_` / `getOverviewParentMap_` / `getTeamAvgExcludes_`
-  / `getDeptQueueExtsOverride_` (DeptConfig.gs) so a sheet override
+  / `getDeptQueueExtsOverride_` (DeptConfig.gs -- plus
+  `getInboundQueueAliases_` and `getFinalDeptLabels_`, the two
+  raw-upstream-name bridges that have no constant behind them) so a sheet override
   takes effect; never index the frozen constant directly in new code.
   The accessors fall through to the constant when no Active sheet row
   exists, so behavior is unchanged on installs that haven't re-run
@@ -729,11 +731,15 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   predicate. The client renders the research block as an "Outside business
   hours" section below the heatmap, muted and captioned as not-a-dept-metric,
   hidden entirely when the window is clean.
-  Also found by that run and NOT yet fixed: **the answered-on-hold carve-out
-  has never fired in this install** -- `final_dept` holds raw CDR org-chart
+  Also found by that run and FIXED: **the answered-on-hold carve-out
+  had never fired in this install** -- `final_dept` holds raw CDR org-chart
   labels (`Customer Success`, `Inside Sales`, `Patient Care`, ...) and not one
-  matches a dashboard dept header, so every such call attributes to no dept
-  (146 in a 2-week window). Needs an admin-authored label->dept map.
+  matches a dashboard dept header, so every such call attributed to no dept
+  (146 in a 2-week window). `inboundDeptPredicate_`'s on-hold arm now matches
+  `lower(trim(final_dept))` against `getFinalDeptLabels_(dept)` -- the Dept
+  Config **`Final Dept Labels`** column (INV-54, col 11) -- which ALWAYS
+  prepends the dept's own name, so an unmapped install is byte-equivalent to
+  the old predicate. **Adding a label is a Dept Config edit, no redeploy.**
   Once released: managers see their own dept's slice; admins can also pick "All
   departments" (the only view that includes the "Abandoned in IVR"
   bucket -- IVR abandons never reached a queue so they're

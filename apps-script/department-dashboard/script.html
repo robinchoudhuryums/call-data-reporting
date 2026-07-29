@@ -12132,6 +12132,7 @@
            +   '<td>' + cell((e.teamAvgExcludes || []).join(', ')) + '</td>'
            +   '<td>' + cell((e.queueExtOverrides || []).join(', ')) + '</td>'
            +   '<td>' + cell((e.inboundAliases || []).join(', ')) + '</td>'
+           +   '<td>' + cell((e.finalDeptLabels || []).join(', ')) + '</td>'
            +   '<td>' + source + '</td>'
            +   '<td><button type="button" class="link-btn dc-row-edit" data-idx="' + idx + '">Edit</button></td>'
            + '</tr>';
@@ -12156,6 +12157,8 @@
     $('dc-edit-qext').value     = (eff.queueExtOverrides || []).join(', ');
     var inbAliasEl = $('dc-edit-inbound-aliases');
     if (inbAliasEl) inbAliasEl.value = (eff.inboundAliases || []).join(', ');
+    var fdlEl = $('dc-edit-final-dept-labels');
+    if (fdlEl) fdlEl.value = (eff.finalDeptLabels || []).join(', ');
     $('dc-edit-notes').value    = '';
     // Deactivate only makes sense when a sheet row exists for the dept.
     const deact = $('dc-deactivate-btn');
@@ -12179,6 +12182,7 @@
       teamAvgExcludes:   $('dc-edit-excludes').value,
       queueExtOverrides: $('dc-edit-qext').value,
       inboundAliases:    ($('dc-edit-inbound-aliases') || {}).value || '',
+      finalDeptLabels:   ($('dc-edit-final-dept-labels') || {}).value || '',
       active:            true,
       notes:             $('dc-edit-notes').value,
     };

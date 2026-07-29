@@ -147,3 +147,45 @@ test('heatmap keeps its own INV-18 band and is NOT double-scoped', function () {
   assert.ok(/28800/.test(sql) || /8 \* 3600/.test(sql) || sql.indexOf('28800') !== -1,
     'heatmap still bounded by its own 8 AM CST window start');
 });
+
+
+// -- the answered-on-hold carve-out's final_dept arm (2026-07) ----------------
+// Measured: 146 answered-then-abandoned-on-hold calls in a 2-week window, and
+// the parity check reported onHold=0.0 for EVERY dept on EVERY day. Cause:
+// final_dept holds the raw CDR org-chart label ("Customer Success", "Inside
+// Sales - Power Mobility", "Patient Intake - Supplies") and not one matches a
+// dashboard dept header, so `lower(trim(final_dept)) = lower(<dept>)` never
+// matched. The fix is an admin-authored label map that must stay ADDITIVE.
+
+test('carve-out: with no label map the predicate is equivalent to the old one', function () {
+  install();
+  delete h.ctx.getFinalDeptLabels_;
+  h.ctx.getFinalDeptLabels_ = function (d) { return [String(d).toLowerCase()]; };
+  const p = h.call('inboundDeptPredicate_', 'CSR', ['A_Q_CSR']);
+  assert.ok(p.indexOf("lower(trim(c.final_dept)) IN ('csr')") !== -1,
+    'a dept with no mapped labels still matches its own name -- installs whose '
+    + 'labels happen to match keep working with zero config');
+});
+
+test('carve-out: mapped labels all reach the SQL, lowercased', function () {
+  install();
+  h.ctx.getFinalDeptLabels_ = function () {
+    return ['csr', 'customer success', 'patient care'];
+  };
+  const p = h.call('inboundDeptPredicate_', 'CSR', ['A_Q_CSR']);
+  assert.ok(p.indexOf("IN ('csr','customer success','patient care')") !== -1,
+    'every mapped label is matched, not just the first');
+  // The two arms stay mutually exclusive: an on-hold answered call attributes
+  // by final_dept, everything else by entry_queue. One call, one dept.
+  assert.ok(/OR \(NOT \(c\.disposition='answered'/.test(p),
+    'the entry-queue arm is still NOT-gated on the on-hold predicate');
+  assert.ok(p.indexOf("c.entry_queue IN ('A_Q_CSR')") !== -1);
+});
+
+test('carve-out: a label with a quote is escaped, not injected', function () {
+  install();
+  h.ctx.getFinalDeptLabels_ = function () { return ["o'brien co"]; };
+  const p = h.call('inboundDeptPredicate_', 'CSR', ['A_Q_CSR']);
+  assert.ok(p.indexOf("'o''brien co'") !== -1,
+    'labels are admin free text -- they must route through inboundSqlLit_');
+});

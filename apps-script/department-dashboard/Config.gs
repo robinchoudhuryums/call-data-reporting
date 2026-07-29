@@ -142,7 +142,7 @@ const ORPHAN_FIX_LOG_HEADERS = Object.freeze([
 const DEPT_CONFIG_HEADERS = Object.freeze([
   'Department', 'QCD Queues', 'Overview Parent', 'Team Avg Excludes',
   'Queue Ext Overrides', 'Active', 'Updated By', 'Updated At', 'Notes',
-  'Inbound Queue Aliases',
+  'Inbound Queue Aliases', 'Final Dept Labels',
 ]);
 // Report Usage: append-only telemetry of report opens, written by
 // Util.gs::logReportUsage_ from the public report endpoints. This is

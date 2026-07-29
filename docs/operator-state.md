@@ -145,6 +145,21 @@ When something looks wrong, before assuming a code bug, check:
     needs its RAW phone-system name (e.g. `A_Q_CSR`) added to the
     dept's **"Inbound queue aliases"** field instead (the raw-name
     space; see the two-queue-name-spaces entry in known-issues).
+
+    **Answered-on-hold attribution (2026-07).** The same Dept Config row now
+    carries a **`Final Dept Labels`** field: the raw CDR "Departments"
+    org-chart strings (`Customer Success`, `Patient Intake - Supplies`, ...)
+    that belong to this dept. It feeds ONE thing -- the answered-then-
+    abandoned-ON-HOLD carve-out in the Inbound report's dept attribution,
+    which matches `inbound_calls.final_dept`. Leave it blank and those calls
+    attribute to NO dept and are invisible in every dept slice (that arm had
+    never fired in this install: 146 such calls in a 2-week window). The
+    dept's own name always matches without being listed, so this is purely
+    additive. A label may belong to only one dept -- save rejects a duplicate
+    claim. **Verify by re-running `runInboundQcdParityCheck`: the `onHold`
+    column should stop reading `0.0` on every dept.** Expect a few depts'
+    inbound figures to rise slightly the first time; that is the fix landing,
+    not a regression.
 15. `TARGET_SS_ID` Script Property in CDR Import: must point at
     the CDR Report spreadsheet ID. Without it, `getTargetSsId_()`
     falls back to a hardcoded ID that may not match your install.

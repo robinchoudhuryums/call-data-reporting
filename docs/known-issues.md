@@ -1080,10 +1080,39 @@ window. `final_dept` holds the raw CDR ORG-CHART labels (`Customer Success`,
 Service/Repair`, ...) and **not one of them matches a dashboard dept header**
 (`CSR`, `Sales`, `Power`, ...). The documented soft coupling has never held in
 this install, so all 146 attribute to no dept and are invisible in every
-dept's inbound slice. Fix needs an admin-authored label->dept map (the
-`DIAL_IN_LABELS` shape); the mapping is not one-to-one (four `Intake -*` /
-`Patient Intake -*` labels, plus one blank) so it needs an owner decision, not
-a derived rule.
+dept's inbound slice. **FIXED (2026-07)** via a `Final Dept Labels` column on the `Dept Config`
+sheet (col 11) -- chosen over a Script Property because the mapping is
+per-dept, belongs beside `Inbound Queue Aliases` (the other raw-upstream-name
+bridge), and is editable in the existing admin modal with no redeploy.
+`getFinalDeptLabels_(dept)` returns the mapped labels ALWAYS prepended with the
+dept's own name, so an install that maps nothing is byte-equivalent to the old
+predicate -- the change is strictly additive. Save-time validation rejects
+digit-only tokens and any label already claimed by another dept, so the
+one-call-one-dept contract the entry-queue arm honors is preserved here too.
+
+The owner-supplied mapping for this install:
+
+| raw `final_dept` | calls | dept |
+|---|---|---|
+| `Customer Success` | 70 | CSR |
+| `Patient Care` | 14 | CSR |
+| `Inside Sales` | 29 | Sales |
+| `Inside Sales - Power Mobility` | 5 | Sales |
+| `Sales/Account Management` | 2 | Sales |
+| `Patient Intake - Supplies` | 7 | Resupply |
+| `Patient Intake - Respiratory` | 1 | Resupply (a RETIRED 8x8 queue, mapped until it is removed upstream) |
+| `Intake - Power Mobility (Complex)` | 5 | Power |
+| `Patient Intake - Power Mobility` | 3 | Power |
+| `Intake - Service/Repair` | 4 | Service |
+| `Field Operations (Market Activity)` | 4 | Field Ops |
+| `Field Operations (Markets)` | 1 | Field Ops |
+| *(blank)* | 1 | deliberately unmapped |
+
+**Verification after entering them:** re-run `runInboundQcdParityCheck` -- the
+`onHold` column must stop reading `0.0` on every dept, and the mapped labels
+should account for 145 of the 146 (the blank is intentionally excluded).
+Expect a few depts' inbound figures to RISE the first time: that is the bug
+being fixed, not a regression.
 
 ### Consequence for the un-gating decision
 

@@ -181,8 +181,22 @@ function inboundDeptPredicate_(dept, deptQueues) {
   // every dept-scoped inbound query. The live writer always emits TRUE/FALSE,
   // so this is latent hardening for any future backfill that leaves it NULL.
   const isOnHoldAnswered = "(c.disposition='answered' AND COALESCE(c.abandoned_on_hold, false))";
+  // The answered-on-hold carve-out attributes by `final_dept`, which carries the
+  // raw CDR ORG-CHART label ("Customer Success", "Inside Sales - Power
+  // Mobility"), NOT a dashboard dept header. Comparing it to the dept name alone
+  // meant this arm had never fired in this install -- 146 such calls in one
+  // 2-week window attributed to no dept at all. `getFinalDeptLabels_` returns
+  // the admin-mapped labels for the dept (Dept Config "Final Dept Labels"),
+  // ALWAYS including the dept name itself, so an install whose labels happen to
+  // match is byte-equivalent to the old behavior and needs no config.
+  const labels = (typeof getFinalDeptLabels_ === 'function')
+    ? getFinalDeptLabels_(dept)
+    : [String(dept).trim().toLowerCase()];
+  const labelList = labels.length
+    ? labels.map(inboundSqlLit_).join(',')
+    : inboundSqlLit_(String(dept).trim().toLowerCase());
   return ' AND ((' + isOnHoldAnswered
-       + " AND lower(trim(c.final_dept)) = lower(" + inboundSqlLit_(dept) + "))"
+       + ' AND lower(trim(c.final_dept)) IN (' + labelList + '))'
        + ' OR (NOT ' + isOnHoldAnswered
        + ' AND c.entry_queue IN (' + queueList + ')))';
 }

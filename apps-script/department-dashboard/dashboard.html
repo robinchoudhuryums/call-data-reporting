@@ -2733,6 +2733,7 @@
               <th>Team-avg excludes</th>
               <th>Queue ext overrides</th>
               <th>Inbound aliases</th>
+              <th>Final dept labels</th>
               <th>Source</th>
               <th>Edit</th>
             </tr></thead>
@@ -2762,6 +2763,10 @@
             <div class="control" style="flex:1 1 240px;">
               <label for="dc-edit-inbound-aliases" title="Raw inbound queue names (as they appear in inbound_calls) that belong to this dept but differ from its QCD queue names. Bridges per-dept Inbound report + call-path attribution.">Inbound queue aliases (raw names)</label>
               <input type="text" id="dc-edit-inbound-aliases" placeholder="A_Q_CSR, Backup CSR">
+            </div>
+            <div class="control" style="flex:1 1 240px;">
+              <label for="dc-edit-final-dept-labels" title="Raw CDR &quot;Departments&quot; org-chart labels (as they appear in inbound_calls.final_dept) that belong to this dept. Used ONLY to attribute answered-then-abandoned-on-hold calls; the dept's own name always matches without being listed.">Final dept labels (raw CDR)</label>
+              <input type="text" id="dc-edit-final-dept-labels" placeholder="Customer Success, Patient Care">
             </div>
             <div class="control" style="flex:1 1 180px;">
               <label for="dc-edit-notes">Notes</label>

@@ -27,7 +27,8 @@ function setConfig(rows) {
 }
 
 // Build a Dept Config row in column order:
-// Dept | QCD | Parent | TeamExcl | QueueExt | Active | By | At | Notes | InboundAliases
+// Dept | QCD | Parent | TeamExcl | QueueExt | Active | By | At | Notes
+//      | InboundAliases | FinalDeptLabels
 function row(opts) {
   return [
     opts.dept,
@@ -40,6 +41,7 @@ function row(opts) {
     opts.at || '',
     opts.notes || '',
     opts.inboundAliases || '',
+    opts.finalDeptLabels || '',
   ];
 }
 
@@ -290,4 +292,49 @@ test('R8-N: getInboundQueueAliases_ returns the RAW side of pair entries (union 
   setConfig([row({ dept: 'CSR', inboundAliases: 'A_Q_CSR=A_Q_CustomerSuccess, Backup CSR' })]);
   deepEqual(h.call('getInboundQueueAliases_', 'CSR'), ['A_Q_CSR', 'Backup CSR'],
     'pair entries contribute their raw (left) side; plain entries pass through');
+});
+
+
+// -- Final Dept Labels (2026-07) --------------------------------------------
+// inbound_calls.final_dept carries the phone system's ORG-CHART label
+// ("Customer Success", "Inside Sales - Power Mobility"), which matches NO
+// dashboard dept header in this install -- so the answered-on-hold carve-out in
+// inboundDeptPredicate_, which compared final_dept to the dept NAME, had never
+// fired: 146 such calls in one 2-week window attributed to no dept at all.
+// getFinalDeptLabels_ is the admin-authored bridge, and it must stay ADDITIVE.
+
+test('getFinalDeptLabels_ always includes the dept name, so no config = old behavior', function () {
+  setConfig(null);   // no Dept Config sheet at all
+  deepEqual(h.call('getFinalDeptLabels_', 'CSR'), ['csr'],
+    'an install with no config must behave exactly as the pre-change predicate did');
+});
+
+test('getFinalDeptLabels_ unions the mapped labels, lowercased and de-duped', function () {
+  setConfig([row({ dept: 'CSR', finalDeptLabels: 'Customer Success, Patient Care' })]);
+  deepEqual(h.call('getFinalDeptLabels_', 'CSR'),
+    ['csr', 'customer success', 'patient care'],
+    'lowercased for the case-insensitive SQL compare; dept name first');
+});
+
+test('getFinalDeptLabels_ de-dupes a label that repeats the dept name', function () {
+  setConfig([row({ dept: 'CSR', finalDeptLabels: 'csr, CSR , Customer Success' })]);
+  deepEqual(h.call('getFinalDeptLabels_', 'CSR'), ['csr', 'customer success'],
+    'a redundant self-reference must not emit a duplicate SQL literal');
+});
+
+test('getFinalDeptLabels_ ignores an INACTIVE row', function () {
+  setConfig([row({ dept: 'CSR', finalDeptLabels: 'Customer Success', active: false })]);
+  deepEqual(h.call('getFinalDeptLabels_', 'CSR'), ['csr'],
+    'pausing a row must drop its labels, like every other Dept Config field');
+});
+
+test('getFinalDeptLabels_ tolerates a pre-existing 10-column row', function () {
+  // Prod sheets written before this column existed have no 11th cell.
+  const short = row({ dept: 'CSR', inboundAliases: 'A_Q_CSR' });
+  short.length = 10;
+  setConfig([short]);
+  deepEqual(h.call('getFinalDeptLabels_', 'CSR'), ['csr'],
+    'the append must be non-destructive -- an old row reads as no labels, not a throw');
+  deepEqual(h.call('getInboundQueueAliases_', 'CSR'), ['A_Q_CSR'],
+    'and the pre-existing column still reads correctly');
 });
