@@ -150,9 +150,24 @@ scripts/deploy.sh apps-script/cdr-import <cdr-import-deployment-id>
   sheets.
 - Populate the `Access Control` sheet with one row per manager
   (Email | Department | Notes). A manager is pinned to that one
-  department; set **Department to `ALL`** (or `*`) instead to grant an
-  **all-departments manager** — sees every department's data but no
-  admin-only surfaces.
+  department. Two ways to widen that:
+  - **Several rows with the SAME email**, one per department, grants a
+    **multi-department manager** (Tier C) — the rows are unioned into
+    `user.departments`, the first is the landing dept, and a header
+    department selector appears once they hold more than one. Use this
+    when one person runs two *independent* queues (e.g. `Field Ops` and
+    `Field Ops Power`). It confers data access only, per department, with
+    no relationship implied between them — so no Overview tile nesting
+    and no combined view. Do **not** reach for a Dept Config
+    `Overview Parent` cell for this: that declares a genuine parent/child
+    sub-queue and changes tile layout and rollups as well as access.
+  - Set **Department to `ALL`** (or `*`) instead to grant an
+    **all-departments manager** — sees every department's data but no
+    admin-only surfaces.
+  Note that alerts and digests do **not** follow Access Control: they are
+  driven by their own per-department `Alert Config` / `Digest Config`
+  rows, so a manager who should be emailed about two departments needs a
+  row per department there too.
 - Add yourself to the admin list. Two options:
   - **Preferred:** Project Settings → Script Properties → add
     `ADMIN_EMAILS` set to a comma-separated list of admin emails.

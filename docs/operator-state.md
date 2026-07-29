@@ -774,10 +774,27 @@ When something looks wrong, before assuming a code bug, check:
     Overview tile grid -- one cell, two meanings, which is the trade-off of
     reusing the existing map. Splitting them would need a second map in code.
 
-    Also confirm `Field Ops Power`: it looks like a sibling of `Field Ops` in
-    the data but is NOT in the parent map, so a Field Ops manager will NOT see
-    it. Adding the mapping is a Dept Config edit; leaving it is fine if the two
-    are genuinely independent.
+    **When NOT to use this map: two INDEPENDENT queues that merely share a
+    manager.** The `Overview Parent` cell does four things at once -- nests the
+    Overview tile, turns on the My Department combined view + per-dept
+    subtotals, folds the child's queues into the parent's QCD rollup
+    (`queuesForDept_`), and confers access. If all you need is the last one, use
+    **multiple `Access Control` rows with the same email** instead (Tier C
+    multi-department manager -- the Access Control admin modal's dept picker is
+    a multi-select). That grants per-dept data access with no relationship
+    implied: both depts stay independent tiles, there is no switcher and no
+    combined view, and nothing is rolled up. Using the parent map here would
+    misrepresent the relationship in every rollup, not just the tile grid.
+
+    **`Field Ops Power` is settled (owner, 2026-07) and is deliberately NOT in
+    the parent map:** *"Field Ops Power isn't necessarily a child queue in the
+    same way as the other child queues and should still be represented as a
+    separate queue, but the same manager(s) should be able to see both Field Ops
+    and Field Ops Power data."* So the action for this pair is TWO ACCESS
+    CONTROL ROWS per shared manager, not a Dept Config edit. Do not "finish" the
+    parent map by adding it. (Related, and also settled: the two
+    `Field Operations (...)` labels stay UNMAPPED in Final Dept Labels -- see
+    item 14.)
 
     Admins and all-departments managers are unaffected (they already hold every
     dept). A department with no children is unaffected -- 11 of 14 here.

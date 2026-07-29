@@ -395,7 +395,11 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `getDeptQcdQueues_` / `getOverviewParentMap_` / `getTeamAvgExcludes_`
   / `getDeptQueueExtsOverride_` (DeptConfig.gs -- plus
   `getInboundQueueAliases_` and `getFinalDeptLabels_`, the two
-  raw-upstream-name bridges that have no constant behind them) so a sheet override
+  raw-upstream-name bridges that have no constant behind them, plus
+  `getAllFinalDeptLabels_`, the UNION of every dept's final-dept labels
+  that gates the on-hold arm's entry-queue fallback -- it must keep
+  failing OPEN, since an empty union degrades attribution to the entry
+  queue while a partial one would double-count) so a sheet override
   takes effect; never index the frozen constant directly in new code.
   The accessors fall through to the constant when no Active sheet row
   exists, so behavior is unchanged on installs that haven't re-run
@@ -1149,6 +1153,21 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   (different emails, one row each). Pinned by
   `tests/unit/access-control-editor.test.js` +
   `escalations-hardening.test.js`.
+  **Multi-row rows vs. an `Overview Parent` edge -- pick by whether the two
+  depts are actually related (owner ruling 2026-07).** Both give a manager a
+  second dept's data, and they are NOT interchangeable. **Multiple Access
+  Control rows** confer per-dept data access and nothing else: the depts stay
+  independent top-level tiles, no sub-queue switcher, no combined view, no
+  rollup. **An `Overview Parent` cell** declares a genuine parent/child
+  sub-queue -- it nests the tile, turns on the combined view + per-dept
+  subtotals, folds the child's queues into the parent's QCD rollup
+  (`queuesForDept_`), AND confers access (INV-38). So for two INDEPENDENT
+  queues that merely share a manager, use the rows; reaching for the parent
+  map would misrepresent the relationship in every rollup. `Field Ops` /
+  `Field Ops Power` is exactly this case and is deliberately NOT in the parent
+  map -- the owner ruled they are separate queues whose managers should see
+  both. NB Alerts + Digests follow neither mechanism (their own per-dept
+  config rows), so shared-manager email needs a row per dept there too.
   **ALIAS EMAILS (Tier C).** The optional `EMAIL_ALIASES` Script Property
   (comma/newline-separated `alias@x = canonical@x` pairs, tolerant grammar
   like `DIAL_IN_LABELS`) lets several sign-in addresses resolve to ONE
