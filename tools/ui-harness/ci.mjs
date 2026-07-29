@@ -7,7 +7,8 @@
 //
 // Stages: generate payloads from the REAL server code -> build the admin +
 // manager sites from the REAL client -> run the two ASSERTING drivers
-// (drive-smoke = boot/console/blank-canvas/overflow, drive-f13 = keyboard
+// (drive-smoke = boot/console/blank-canvas/overflow, drive-f13 = keyboard,
+// drive-subqueue = sub-queue scope + the combined-view CSV
 // access). The exploratory drivers (drive.js / drive-insights.js /
 // drive-phase3.js) are NOT run here: they emit screenshots + reports for a human
 // to read, which is not a pass/fail signal.
@@ -32,6 +33,10 @@ const STAGES = [
   ['node', ['build-harness.js', 'manager'], 'build manager site'],
   ['node', ['drive-smoke.js'], 'boot / console / blank-canvas / overflow'],
   ['node', ['drive-f13.js'], 'keyboard access (S39)'],
+  // Sub-queue scope switcher + the combined-view CSV. Also the FIRST automated
+  // coverage of any CSV writer in this repo (S43): the exporter Blob-and-clicks,
+  // so the driver stubs URL.createObjectURL and asserts the real bytes.
+  ['node', ['drive-subqueue.js'], 'sub-queue scope + combined CSV (S35 addendum / S43)'],
 ];
 
 for (const [cmd, args, label] of STAGES) {

@@ -222,6 +222,14 @@ const s30 = span(30);
 dump('summary-30d', h.call('getDepartmentSummary', { department: 'CSR', from: s30.from, to: s30.to }));
 const yStart = iso(new Date(today.getFullYear(), 0, 1));
 dump('summary-ytd', h.call('getDepartmentSummary', { department: 'CSR', from: yStart, to: LATEST }));
+// Sub-queue scopes. The fixture roster already nests Spanish under CSR (the
+// OVERVIEW_PARENT_OF constant), so the DEFAULT CSR payload above is already the
+// COMBINED view -- these two add the other scopes so the switcher round-trip and
+// the subtotal-parity property are testable in the browser rather than assumed.
+dump('summary-30d-own', h.call('getDepartmentSummary',
+  { department: 'CSR', from: s30.from, to: s30.to, subScope: 'own' }));
+dump('summary-30d-subs', h.call('getDepartmentSummary',
+  { department: 'CSR', from: s30.from, to: s30.to, subScope: 'subs' }));
 
 // Missed report: same three windows.
 dump('missed-day', h.call('getMissedCallsReport', { department: 'CSR', from: LATEST, to: LATEST }));

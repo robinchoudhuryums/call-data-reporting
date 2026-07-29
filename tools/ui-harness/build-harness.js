@@ -63,6 +63,11 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [] };
     getCompanyOverview: function () { return P[${JSON.stringify(role)} === 'admin' ? 'ov-admin' : 'ov-manager']; },
     getDepartmentSummary: function (req) {
       var d = spanDays(req);
+      // Sub-queue scope: the 30-day window has all three scopes captured, so the
+      // switcher's round-trip is exercised for real instead of always serving the
+      // combined payload back. Other windows keep the single (combined) fixture.
+      if (d > 2 && d <= 45 && req && req.subScope === 'own')  return P['summary-30d-own'];
+      if (d > 2 && d <= 45 && req && req.subScope === 'subs') return P['summary-30d-subs'];
       if (d <= 2) return P['summary-day'];
       if (d <= 45) return P['summary-30d'];
       return P['summary-ytd'];

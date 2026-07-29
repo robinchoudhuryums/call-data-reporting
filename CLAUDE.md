@@ -170,9 +170,13 @@ npm run ci:ui                # gen payloads -> build admin+manager -> assert
 # tests/unit/ui-harness-vendor.test.js). With playwright absent it SKIPS
 # with a message and exits 0, so it is safe to run anywhere; chromium-path.js
 # globs the Playwright browser revision, so CHROMIUM_PATH is rarely needed.
-# Two ASSERTING drivers gate it -- drive-smoke.js (page/console errors,
-# unmocked RPCs, BLANK chart canvases, horizontal overflow, both roles) and
-# drive-f13.js (the S39 keyboard walk). The other drivers (drive.js /
+# THREE ASSERTING drivers gate it -- drive-smoke.js (page/console errors,
+# unmocked RPCs, BLANK chart canvases, horizontal overflow, both roles),
+# drive-f13.js (the S39 keyboard walk), and drive-subqueue.js (the sub-queue
+# scope switcher, the S35 parent-subtotal parity property, and the
+# combined-view CSV -- the ONLY automated coverage of any CSV writer in this
+# repo, asserted by stubbing URL.createObjectURL and reading the real Blob
+# bytes, S43). The other drivers (drive.js /
 # drive-insights.js / drive-phase3.js) emit screenshots + reports for a human
 # and are deliberately NOT in the gate. Runs in CI as the `ui-harness` job
 # (currently `continue-on-error: true` while the gate proves itself -- drop
