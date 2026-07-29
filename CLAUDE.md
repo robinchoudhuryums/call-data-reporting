@@ -905,7 +905,17 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   trigger). `Data.gs::hashAgents_` MD5-hashes the sorted agent
   list to a 32-char hex digest so the compound key stays bounded
   regardless of selection size. Never concatenate raw agent names
-  into a cache key — always go through `hashAgents_`.
+  into a cache key — always go through `hashAgents_`. **The other
+  CacheService limit is the ~100 KB PER-VALUE cap, and the Overview
+  blob is the only payload near it (F6).** `CompanyOverview.gs` logs
+  the serialized length on every put, warns past
+  `OVERVIEW_CACHE_WARN_BYTES` (80 KB) and, on a failed put, says
+  explicitly that the Overview is now UNCACHED so every request pays
+  the full compute (`OVERVIEW_CACHE_MAX_BYTES` = 100 KB documents the
+  cap; it is not enforced). MEASURED at ~27 KB for 14 depts (~1.9
+  KB/dept) -- roughly 50+ depts away, so this is instrumentation, not
+  a live risk, and it is LOG-only: nothing surfaces on the Health
+  page.
 - **CSV exports must neutralize formula injection.** Agent names
   originate from the external CDR feed and flow into client-side
   CSV downloads, so they're untrusted input to a spreadsheet app
@@ -1096,7 +1106,35 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   data changes how anyone reads the numbers. The single-source
   `getLatestDataDate` is kept for the My Department From/To
   default (which must snap to DQE specifically -- the agent
-  table draws from DQE).
+  table draws from DQE). **Both read ONE date-column scan, not
+  two (F9).** `getLatestDataDate` (MAX) and `getLatestDataDates`'
+  `dqeEarliest` (MIN, R12-26) each ran their own whole-column
+  `getValues()` on `DQE Historical Data`, so a COLD cache read a
+  multi-year column TWICE per 5-min expiry.
+  `Data.gs::sheetScanDqeDateBounds_()` yields `{min, max, rows}`
+  from one read, memoized per EXECUTION in `DQE_DATE_BOUNDS_MEMO_`
+  (the `DEPT_CONFIG_ROWS_MEMO_` discipline) -- deliberately NOT
+  cached across requests, so each caller keeps its own R8-C2
+  negative-cache semantics. **Test-side trap:** a suite that swaps
+  the DQE fixture must reset `DQE_DATE_BOUNDS_MEMO_` in its
+  `install()` or it serves the previous test's bounds (dal-cutover
+  + missed-report already do).
+- **Count badges must be idempotent, not append-only (F10).** The
+  escalations nav badge was rendered behind an
+  `if (!tab.querySelector('.nav-count-badge'))` guard and fetched
+  ONCE at init, so it could neither update nor disappear: a manager
+  who resolved their last escalation kept a stale non-zero badge for
+  the whole session and the Overview strip never hid.
+  `escApplyBadge_(counts)` (script.html) updates the span IN PLACE,
+  REMOVES it at zero, and hides + empties the Overview strip;
+  `escLoad_` calls `loadEscBadge_()` on every list load, and since
+  every mutation reloads the list the badge follows every change.
+  **It fetches `getEscalationsBadge()` fresh rather than deriving
+  from the list's `meta.statusCounts`** -- the list can be filtered
+  to one dept (admin pick / view-as) while the badge is viewer-FULL
+  scope, so deriving it would undercount. Any new count badge should
+  follow this shape; `drive-smoke.js` pins that the badge never
+  duplicates across reloads.
 - **QCD Historical Data col D holds raw queue names, NOT dept
   names.** Real values are queue identifiers like
   `A_Q_CustomerSuccess` (CSR's queue in this install) /
@@ -1309,7 +1347,17 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `NEON_COVERAGE_LAST(_RESULT)` and surfaced as the "Neon coverage — last
   check" row (Op State #35; the outcome classifier also flags a `GAPS`
   prefix). All pinned by `system-health.test.js` / `smoke-check.test.js` /
-  `neon-coverage.test.js`.
+  `neon-coverage.test.js`. **Install readiness (Batch 3.4): a trigger being
+  installed does NOT mean its engine runs.** Four engines gate their handler
+  BODY on an `*_ENABLED` Script Property (`NEON_KEEPWARM`, `INGEST_WATCHDOG`,
+  `PIPELINE_WATCH`, `QUEUE_REPORT`), so a trigger installed with the flag off
+  fires on schedule and returns immediately -- and the page used to report it
+  as simply "installed". `svc()` takes an optional `flagProp` and now flags
+  BOTH mismatch directions ("installed but DISABLED -- every run is a no-op" /
+  "NO trigger installed but flag=true -- it never runs"), plus a single
+  `trg-readiness` verdict row ("N armed, K need attention"). A new
+  flag-gated engine must pass its `flagProp` to `svc()` or it inherits the
+  old blind spot.
 - **Neon read-back (F1) is flag-gated and defaults OFF.** The dashboard
   still reads DQE from the `DQE Historical Data` sheet by default; the
   read-back lives in `NeonRead.gs` behind the `DQE_READ_SOURCE` Script

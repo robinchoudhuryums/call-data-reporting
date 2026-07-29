@@ -207,7 +207,13 @@ When something looks wrong, before assuming a code bug, check:
     readers also fall back to the sheet on any Neon error. After a bulk
     rebuild (which defers the DQE->Neon mirror via `skipNeon`), run
     `backfillDQEHistoryUpsert()` (cdr-report) to populate/refresh
-    `dqe_history` before relying on the read-back. The Alerts modal
+    `dqe_history` before relying on the read-back. It is resumable via
+    the code-written `DQE_UPSERT_RESUME` cursor (clear it to restart from
+    the top), and takes an optional **`DQE_UPSERT_SINCE`** Script Property
+    -- a `YYYY-MM-DD` floor that upserts only rows on/after that date, so
+    a bulk rebuild of a few recent days doesn't redo the whole history.
+    (`DIRECT_UPSERT_SINCE` is the same knob on the Direct backfill, item
+    26.) Unset = full history. The Alerts modal
     shows a **Neon mirror health** line (`computeNeonMirrorHealth_`:
     sheet vs `dqe_history` `MAX(call_date)`) so a stale mirror is
     visible at a glance; a transient outage that left a date

@@ -476,6 +476,16 @@ RPT-4/5/9/10, TST-1/6/7.
 
 ## Broad-scan Batch 5+6 fixes (2026-07, compact list)
 
+> **Name collision, read this first.** "Batch 5+6" here means the CLIENT
+> fix batches `C-1`…`C-9` from an EARLIER 2026-07 scan round. The Round-13
+> cycle (also 2026-07) numbered its implementation batches 1-7, and ITS
+> "Batch 5 & 6" is a completely different piece of work -- the inbound/QCD
+> parity investigation and the read-source flag flips (see
+> `.cycle/blocks/57-batch5-batch6-broad-implement.md` and the parity-gate
+> rule below). Same words, different rounds; match on the fix codes, not
+> the batch number. This is the same hazard `docs/fix-history.md` documents
+> for the three `F`-shaped families.
+
 Client (script.html): C-1 single `#ins-trend-header` writer (the range label
 renders now), C-2 tour replay closes Settings, C-3 Overview mini-table WoW
 tooltips use their own response meta, C-4/C-9 `escCssId_` escapes (not strips)
@@ -606,9 +616,12 @@ Each report file uses its own versioned cache key prefix. Bump the
 version whenever the response shape or aggregation rules change so
 stale caches invalidate on deploy.
 
-CLAUDE.md INV-30 is the canonical current-version list. This table
-mirrors it; if the two ever diverge, INV-30 wins. Bump both at the
-same time as the code change.
+INV-30 (`docs/invariants.md`, indexed from CLAUDE.md's Cycle Workflow
+Config) is the canonical current-version list. This table mirrors it; if
+the two ever diverge, INV-30 wins. Bump both at the same time as the code
+change -- `tests/unit/cache-version-sync.test.js` extracts the canonical
+version from the code's cache-key LITERAL and fails the build on any doc
+that disagrees, so a missed bump here is a CI failure, not a silent trap.
 
 | Source file | Cache prefix | Current version |
 |---|---|---|
@@ -652,6 +665,65 @@ through `colorWithAlpha_`/`rgbaWithAlpha_` (which now handle every
 format), and never "return the input unchanged" when a color transform
 fails to parse; delegate or fail loudly, because the unchanged-input
 path renders plausibly and hides for weeks.
+
+### A compare gate must never print a false PARITY CLEAN
+
+Every "is the mirror safe to read from?" gate in this repo -- the three
+`compare*ConfigSources` config gates, `compareDqeSources_` (NeonRead.gs),
+`compareQcdSources_` (QCDReport.gs) -- exists to authorize an irreversible-
+feeling decision: flipping a `*_READ_SOURCE` / `CONFIG_SOURCE` Script Property
+so production serves from Neon instead of the sheet. **A gate that reports
+CLEAN having compared NOTHING is worse than no gate**, because it converts
+"I have no evidence" into "I have the strongest possible evidence".
+
+This happened. `compareQcdSources_` derived `clean` from three counters
+(`missingInNeon`, `extraInNeon`, `mismatches`); with zero comparable rows all
+three are 0, so it printed `QCD PARITY CLEAN -- the gate PASSED`. The existing
+`!neonGrid` guard did not cover it because `neonFetchQcdGrid_` returns a
+non-null EMPTY grid for an empty range, and the in-source default range is a
+hardcoded week that ages out of the data -- so an operator running the gate
+without setting `QCD_PARITY_FROM`/`_TO` was the likely first victim.
+
+The rule, now applied to all five gates: **a verdict must count what it
+compared, and an empty comparison is INCONCLUSIVE, never CLEAN.** Each gate
+returns a structured `{from, to, clean, compared, ...}` from every exit, and
+the operator contract (Operator State #19) is `clean:true` AND `compared > 0`
+-- an `error` or `compared: 0` is a STOP.
+
+Note `compareDqeSources_` was NOT broken, but only incidentally: its
+`extraInNeon` check catches a sheet-empty range because every Neon row reads
+as "extra". That protection was emergent, not designed, and would have become
+the same false CLEAN the moment the verdict stopped counting extras. It now
+has the explicit guard too. Pinned by `qcd-report.test.js` /
+`dal-cutover.test.js`.
+
+### CLAUDE.md's split reference files can drift from their index
+
+CLAUDE.md reached ~372 KB -- it is injected into every session's context, so
+size is a real cost -- and four reference sections moved into `docs/` with a
+one-line index left behind (`docs/invariants.md`, `docs/operator-state.md`,
+`docs/regression-scenarios.md`, `docs/client-ui-conventions.md`; finding F8).
+
+That trade buys readability and introduces exactly one new failure mode, which
+is silent in the worst direction: **an invariant added to `docs/invariants.md`
+but not to the index is invisible to anyone reading CLAUDE.md**, and an index
+line for an entry that no longer exists sends a reader looking for nothing.
+
+`tests/unit/claude-md-split.test.js` makes either a CI failure -- it checks IDs
+and Subsystem/title strings (never prose; the index line is deliberately a
+summary), that all four files are linked from "Read first" specifically, that
+operator item numbers stay contiguous from 1 (they are cited BY NUMBER across
+the repo), and it **caps CLAUDE.md at 200 KB** so the file cannot regrow
+unnoticed the way it did.
+
+Two things to know: the split also silently widened the blast radius of
+`cache-version-sync.test.js`, whose hardcoded `DOC_FILES` did not include the
+new file holding INV-30 -- the guard would have passed while policing nothing
+(fixed in the same change; the list is explicit rather than a `docs/*.md` glob
+because `fix-history.md` and the design specs legitimately name past versions).
+And **`/setup-cycle` would undo the split**, since it rewrites those sections
+with full bodies; the ID checks would still pass, so the size cap is the
+backstop.
 
 ### Pipeline depends on the dashboard's roster sheet
 
@@ -1010,7 +1082,7 @@ existing per-dept dropdown):
   table showing the dept's most-recent QCD day. Powered by
   `Data.gs::computeDeptQcdSnapshot_` and returned as the new
   `qcd` field on `getDepartmentSummary` (the `summary:` cache prefix
-  was bumped when this shipped; see CLAUDE.md INV-30 for the current
+  was bumped when this shipped; see INV-30 (`docs/invariants.md`) for the current
   version).
 
 **Onboarding a new dept.** When a new dept starts producing rows
