@@ -947,7 +947,8 @@ function scanInboundQueueNames_(lookbackDays) {
 function compareInboundVsQcdAbandons_(dept, fromIso, toIso, conn) {
   const out = { dept: dept, from: fromIso, to: toIso, available: true,
                 qcdQueues: [], inboundQueues: [], days: [],
-                totals: { qcd: 0, inboundAbandoned: 0, inboundOnHold: 0 } };
+                totals: { qcd: 0, inboundAbandoned: 0, inboundOnHold: 0,
+                          outsideWindowAbandoned: 0, outsideWindowCalls: 0 } };
   out.qcdQueues = queuesForDept_(dept);
   out.inboundQueues = inboundQueuesForDept_(dept);
 
@@ -970,12 +971,30 @@ function compareInboundVsQcdAbandons_(dept, fromIso, toIso, conn) {
 
   // Inbound side: per-day strict abandons + answered-on-hold, dept-attributed
   // by the SAME predicate every inbound surface uses.
+  //
+  // WINDOW-SCOPED (2026-07). QCD's Abandoned column only counts calls inside
+  // the 6:30 AM - 3:00 PM PST work window; `inbound_calls` captures around the
+  // clock. Comparing them unfiltered inflated the inbound side of every row in
+  // this table. `call_start` is raw PST 'HH:MM:SS' (the capture does NOT apply
+  // the +2h CST shift), so it compares directly against
+  // INBOUND_WORK_WINDOW_PST with no conversion. Rows with a NULL call_start
+  // are PRE-EXTENSION captures that carry no time-of-day -- they are counted
+  // as in-window rather than dropped, because dropping them would silently
+  // shrink historical dates and read as a fixed gap. Out-of-window calls are
+  // reported SEPARATELY (owner ruling: research data, never a dept metric).
   const inbByDay = {};
+  const outsideByDay = {};
   const predicate = inboundDeptPredicate_(dept, out.inboundQueues);
+  const inWindow = "(c.call_start IS NULL OR (c.call_start >= '"
+    + INBOUND_WORK_WINDOW_PST.start + "' AND c.call_start < '"
+    + INBOUND_WORK_WINDOW_PST.end + "'))";
   const sql = "SELECT COALESCE(json_agg(t), '[]')::text AS j FROM ("
     + 'SELECT call_date::text AS d, '
-    + "count(*) FILTER (WHERE c.disposition = 'abandoned') AS ab, "
-    + "count(*) FILTER (WHERE c.disposition = 'answered' AND COALESCE(c.abandoned_on_hold, false)) AS hold "
+    + "count(*) FILTER (WHERE c.disposition = 'abandoned' AND " + inWindow + ') AS ab, '
+    + "count(*) FILTER (WHERE c.disposition = 'answered' AND COALESCE(c.abandoned_on_hold, false) AND "
+    + inWindow + ') AS hold, '
+    + "count(*) FILTER (WHERE c.disposition = 'abandoned' AND NOT " + inWindow + ') AS ab_outside, '
+    + 'count(*) FILTER (WHERE NOT ' + inWindow + ') AS calls_outside '
     + 'FROM inbound_calls c WHERE c.call_date BETWEEN ?::date AND ?::date' + predicate
     + ' GROUP BY call_date) t';
   const stmt = conn.prepareStatement(sql);
@@ -986,6 +1005,8 @@ function compareInboundVsQcdAbandons_(dept, fromIso, toIso, conn) {
   rs.close(); stmt.close();
   JSON.parse(json || '[]').forEach(function (r) {
     inbByDay[String(r.d)] = { ab: Number(r.ab) || 0, hold: Number(r.hold) || 0 };
+    outsideByDay[String(r.d)] = { ab: Number(r.ab_outside) || 0,
+                                  calls: Number(r.calls_outside) || 0 };
   });
 
   const allDays = {};
@@ -994,11 +1015,15 @@ function compareInboundVsQcdAbandons_(dept, fromIso, toIso, conn) {
   Object.keys(allDays).sort().forEach(function (d) {
     const q = qcdByDay[d] || 0;
     const b = inbByDay[d] || { ab: 0, hold: 0 };
+    const o = outsideByDay[d] || { ab: 0, calls: 0 };
     out.days.push({ date: d, qcdAbandoned: q, inboundAbandoned: b.ab,
-                    inboundOnHold: b.hold, diff: b.ab - q, diffWithHold: (b.ab + b.hold) - q });
+                    inboundOnHold: b.hold, diff: b.ab - q, diffWithHold: (b.ab + b.hold) - q,
+                    outsideWindowAbandoned: o.ab, outsideWindowCalls: o.calls });
     out.totals.qcd += q;
     out.totals.inboundAbandoned += b.ab;
     out.totals.inboundOnHold += b.hold;
+    out.totals.outsideWindowAbandoned += o.ab;
+    out.totals.outsideWindowCalls += o.calls;
   });
   return out;
 }
@@ -1034,13 +1059,19 @@ function runInboundQcdParityCheck() {
       Logger.log('=== %s  %s..%s  (QCD queues: %s | inbound union: %s)', dept, fromIso, toIso,
         r.qcdQueues.join(', ') || '(none)', r.inboundQueues.join(', ') || '(none)');
       r.days.forEach(function (day) {
-        Logger.log('  %s  qcd=%s  inbound=%s (+%s on-hold)  diff=%s  diffWithHold=%s',
-          day.date, day.qcdAbandoned, day.inboundAbandoned, day.inboundOnHold, day.diff, day.diffWithHold);
+        Logger.log('  %s  qcd=%s  inbound=%s (+%s on-hold)  diff=%s  diffWithHold=%s'
+          + '   [outside window: %s abandoned of %s calls]',
+          day.date, day.qcdAbandoned, day.inboundAbandoned, day.inboundOnHold, day.diff, day.diffWithHold,
+          day.outsideWindowAbandoned, day.outsideWindowCalls);
       });
       Logger.log('  TOTALS qcd=%s inbound=%s onHold=%s diff=%s diffWithHold=%s',
         r.totals.qcd, r.totals.inboundAbandoned, r.totals.inboundOnHold,
         r.totals.inboundAbandoned - r.totals.qcd,
         (r.totals.inboundAbandoned + r.totals.inboundOnHold) - r.totals.qcd);
+      Logger.log('  OUTSIDE WORK WINDOW (%s-%s PST, research only -- NOT a dept metric, '
+        + 'and NOT part of the diff above): %s abandoned of %s calls',
+        INBOUND_WORK_WINDOW_PST.start, INBOUND_WORK_WINDOW_PST.end,
+        r.totals.outsideWindowAbandoned, r.totals.outsideWindowCalls);
     });
 
     // Unattributed raw entry-queues in the window: invisible to EVERY dept's

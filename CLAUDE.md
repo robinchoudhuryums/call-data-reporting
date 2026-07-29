@@ -705,9 +705,19 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   "time spent waiting for an agent"; the per-leg `secs` inside `journey` is
   where a real queue wait is derivable. It feeds the heatmap cell drill's
   "wait/hold" label, which is misleading for the same reason (open
-  follow-on). (3) **`Backup CSR` has no `qcd_history` row**, so overflow
-  abandons there are invisible to QCD entirely -- two callers waited 10m37s
-  and 8m17s in it on a day QCD reported 0 abandons and a 2:42 longest wait.
+  follow-on). (3) **QCD is work-window-scoped and the inbound capture
+  is NOT** -- `buildInboundCallRecords_` captures around the clock while QCD's
+  Abandoned only counts 6:30 AM-3:00 PM PST, so any comparison must scope the
+  inbound side to `INBOUND_WORK_WINDOW_PST` (Config.gs -- the THIRD copy of the
+  window, INV-06 sync obligation; text `HH:MM:SS` in raw PST so it compares to
+  `call_start` with no conversion, NULL `call_start` counting as in-window).
+  Measured at ~10% of the CSR gap (11 of 113), so it is a correctness fix, not
+  the explanation. **Out-of-window calls are RESEARCH data, never a dept metric
+  (owner ruling)** -- report them separately, never in a dept total; the
+  after-hours abandon rate is ~47% vs ~4% in-window, which is what an unstaffed
+  queue looks like. `compareInboundVsQcdAbandons_` is scoped + reports the
+  bucket separately; **the Inbound report's own dept slices and the heatmap are
+  NOT yet scoped** (payload change, needs an INV-30 bump).
   Also found by that run and NOT yet fixed: **the answered-on-hold carve-out
   has never fired in this install** -- `final_dept` holds raw CDR org-chart
   labels (`Customer Success`, `Inside Sales`, `Patient Care`, ...) and not one

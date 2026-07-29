@@ -967,25 +967,70 @@ comparable to QCD's threshold** and must not be used as one. The per-leg
 column feeds the heatmap cell drill under a "wait/hold" label, which is
 misleading for the same reason -- open follow-on, not yet fixed.
 
-### `Backup CSR` overflow is invisible to QCD
+### RETRACTED: "`Backup CSR` overflow is invisible to QCD"
 
-The genuinely long waits DO exist, and QCD misses them. On `2026-07-23` two
-callers passed through `A_Q_CSR` in **0 seconds** and then waited **637s
-(10m37s)** and **497s (8m17s)** in `Backup CSR` before abandoning. QCD's
-`A_Q_CustomerSuccess` row for that day reports `abandoned = 0` and
-`longest_wait = 2:42` -- which proves `Backup CSR` is not folded into
-`A_Q_CustomerSuccess`, and it has no `qcd_history` row of its own (the
-window's queue breakdown lists 14 queues; `Backup CSR` is not among them).
-So overflow abandons are structurally invisible on the QCD side regardless of
-threshold. `Backup CSR` IS in CSR's Dept Config QCD-queues list, so the
-mapping is not the problem -- the phone system's queue report appears not to
-cover it. **Confirm upstream before treating this as fixable in code.**
+**This claim was wrong and is recorded so it is not repeated.** It rested on
+two `2026-07-23` calls that passed through `A_Q_CSR` in 0s and then waited
+637s and 497s in `Backup CSR` before abandoning, against a QCD row reporting
+`abandoned = 0, longest_wait = 2:42`.
 
-One of those two journeys also shows **24 consecutive 20-second rings to a
-single agent across 11 minutes, every one missed**, while the caller waited.
-Neither report surfaces that pattern today.
+Both calls started at **17:12 and 17:48 PST = 19:12 and 19:48 CST** -- hours
+past the 3:00 PM PST / 5:00 PM CST cutoff. QCD excluding them is CORRECT. The
+`longest_wait` argument fails for the same reason: QCD would exclude that call
+from `longest_wait` too, so the 2:42 proves nothing about queue membership.
 
-### Four hypotheses eliminated (do not re-run these)
+What actually remains is one unexplained fact with a plausible benign reading:
+`Backup CSR` has no `qcd_history` row in the window (the queue breakdown lists
+14 queues and it is not among them), which is what you would expect from an
+overflow queue that mostly catches calls when the main queue is unstaffed --
+i.e. out of hours. **Do not treat this as a code defect without first
+confirming upstream whether the phone system reports queue stats for
+`Backup CSR` at all.**
+
+### The work-window scope: QCD is windowed, the inbound capture is not
+
+Found while investigating the above, and the reason it was missed for so long.
+`buildInboundCallRecords_` captures every inbound call around the clock. QCD's
+Abandoned column only counts calls inside the `DQE_WINDOW_START`..
+`DQE_WINDOW_END` work window (6:30 AM - 3:00 PM PST). So every row of the
+parity table compared an unwindowed count against a windowed one.
+
+Measured for CSR over `2026-07-15`..`2026-07-24`, bucketing on `call_start`
+(raw PST, so it compares directly with no conversion):
+
+| bucket | calls | abandoned | abandon rate |
+|---|---|---|---|
+| before hours (`< 06:30`) | 70 | 2 | 2.9% |
+| **in window** | **2,494** | **102** | **4.1%** |
+| after hours (`>= 15:00`) | 19 | 9 | **47%** |
+
+So the window scope accounts for 11 of the 113 (~10%) -- **real but modest;
+the wait threshold above is still the dominant mechanism.** In-window inbound
+abandons are 102 against QCD's 29, so scoping alone does not close the gap.
+
+Two things worth carrying forward. First, the in-window abandon rate of 4.1%
+sits UNDER the 5% company standard, as does QCD's 1.06% -- the two lenses
+disagree on magnitude but agree on the verdict, which further de-escalates
+this. Second, the **47% after-hours abandon rate on 19 calls** is the useful
+finding here: roughly half of out-of-hours callers give up, which is exactly
+what an unstaffed queue should look like.
+
+**Owner ruling: out-of-window calls are RESEARCH data, never a dept metric.**
+They are tracked and reported separately, never folded into a dept total.
+`compareInboundVsQcdAbandons_` scopes its inbound side to
+`INBOUND_WORK_WINDOW_PST` (Config.gs) and reports
+`outsideWindowAbandoned` / `outsideWindowCalls` as a separate line. Rows with
+a NULL `call_start` (pre-extension captures, no time-of-day) count as
+IN-window rather than being dropped -- dropping them would silently shrink
+historical dates and read as a fixed gap. Pinned by
+`tests/unit/inbound-qcd-parity.test.js`.
+
+**Still to do:** the Inbound report's own dept slices and the abandon heatmap
+are NOT yet window-scoped, so they still count out-of-hours calls in dept
+figures. That is a payload-shape change needing an INV-30 cache bump, so it
+was staged separately from the parity-tool fix.
+
+### Hypotheses eliminated (do not re-run these)
 
 1. **Overflow / entry-vs-abandon-queue attribution** -- only 6 of 113 CSR
    abandons changed queue (5%). Cannot account for the gap. (It IS the
@@ -998,7 +1043,9 @@ Neither report surfaces that pattern today.
    `A_Q_Intake`, which is exactly what inbound counts. The mapping is
    CORRECT. (`A_Q_Intake` and `Backup CSR` produce no separate QCD rows,
    consistent with a rollup.)
-4. **Abandons hidden under a non-`Total Calls` QCD source (INV-50)** -- the
+4. **The work-window scope** -- real, but only ~10% of the gap (11 of 113).
+   Worth applying for correctness; does NOT explain the discrepancy.
+5. **Abandons hidden under a non-`Total Calls` QCD source (INV-50)** -- the
    other sources (`CSR`, `Call Menu`, `Ad-campaign`, `Non-CSR (internal)`,
    `New Call Menu`, `Internal`, `Misc`) sum EXACTLY to the `Total Calls` row
    on both measures: 4,390 calls and 72 abandons. `Total Calls` is a true

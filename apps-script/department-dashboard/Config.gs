@@ -338,6 +338,32 @@ const DASHBOARD_WORK_WINDOW = Object.freeze({
 });
 
 /**
+ * The SAME window as the strings above, in the machine-comparable form
+ * `inbound_calls.call_start` uses: zero-padded 'HH:MM:SS' in RAW PST (the
+ * inbound capture stores the CDR's native wall-clock and does NOT apply the
+ * +2h PST->CST shift the DQE slot pipeline does). Half-open [start, end),
+ * matching the pipeline's `startPST >= DQE_WINDOW_START && startPST <
+ * DQE_WINDOW_END`.
+ *
+ * INV-06 SYNC OBLIGATION -- this is the THIRD copy of the window (the
+ * pipeline's numeric constants in cdr-import/buildDQEHistoricalData.js are
+ * the source of truth; the strings above are the display mirror; these are
+ * the query mirror). All three must agree. Kept as text so it drops straight
+ * into a SQL comparison against `call_start` with no TZ conversion --
+ * zero-padded 24h times compare correctly lexicographically.
+ *
+ * Why it exists: QCD's Abandoned column is work-window-scoped, `inbound_calls`
+ * captures around the clock, and comparing the two unfiltered overstated the
+ * inbound side. See docs/known-issues.md "QCD Abandoned vs inbound_calls
+ * abandons". Out-of-window calls are RESEARCH data (owner ruling), never a
+ * dept metric -- report them separately, never fold them into a dept total.
+ */
+const INBOUND_WORK_WINDOW_PST = Object.freeze({
+  start: '06:30:00',
+  end:   '15:00:00',
+});
+
+/**
  * Returns the SPREADSHEET_ID Script Property. Throws a clear error if
  * unset so first-run misconfiguration is obvious in the execution log.
  */
