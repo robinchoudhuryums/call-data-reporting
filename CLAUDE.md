@@ -120,7 +120,8 @@ bash scripts/check-duplicated-files.sh
 # answer-targets (the R12-25 tunable display-standards parser + save
 # canonicalizer), access-control-editor, neon-coverage (the R7 sheet-vs-Neon
 # reconciliation's pure pieces), cache-version-sync (doc↔code cache-pin
-# drift), claude-md-split (the F8 index↔file guard: an invariant / scenario /
+# drift), subqueue-access (Phase 0 access widening + the Phase 1 merge layer +
+# the Phase 2 picker groups), claude-md-split (the F8 index↔file guard: an invariant / scenario /
 # operator item that exists in docs/ but not in CLAUDE.md's index -- or vice
 # versa -- fails the build, plus a size cap on CLAUDE.md itself).
 # See tests/README.md for design + how to add tests. The neonWrite JDBC
@@ -1955,7 +1956,11 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   each table's Total row renders from `totals` (never part of the sort).
   CSV export (`exportTableCsv_`) emits ALL columns regardless of the toggle
   and renders the bar as `answered / missed (rate%)` text + the Answer %
-  column via `pctCsv`.
+  column via `pctCsv`. **In a sub-queue COMBINED view it also prepends a
+  `Department` column and emits per-dept subtotals + an `All shown` grand
+  total** (single-dept exports are byte-identical to before) -- see the
+  sub-queue scope-switcher decision above, and S43. There is **no automated
+  coverage for any CSV writer**, so S43 is the only guard.
 - **Source column + roster-only totals (Phase D).** The agent table's
   Source column (between Agent and the Answered/Missed bar) renders one of
   three chips per row: **ROSTER** (accent-soft) for agents on this
@@ -2313,6 +2318,9 @@ S37 | Insights report end-to-end (comparison modes + CR-ported analytics) | Subs
 S38 | Inbound capture -> Inbound report -> insurer labeling end-to-end | Subsystem: Department Dashboard + CDR Import + CDR Reporting Tools
 S39 | Keyboard-only walk of the primary drill paths (F13) | Subsystem: Department Dashboard
 S40 | Escalation overdue count agrees with the flagged cards (F3) | Subsystem: Department Dashboard
+S41 | Theme × mode sweep (perceptual) | Subsystem: Department Dashboard
+S42 | Narrow-viewport trend band (perceptual) | Subsystem: Department Dashboard
+S43 | Combined-view CSV export | Subsystem: Department Dashboard
 
 ### Frozen Subsystems
 - DQE Report Legacy — manager-facing reports in `apps-script/dqe-report/`. Frozen because migration to Department Dashboard is complete: Individual Report, Performance Report, Compare Ranges, Missed Calls Report, and Low Answer Rate Alerts all live in the dashboard. Replacement: Department Dashboard. Awaiting decommission of the legacy spreadsheet. Unfreeze only if a bug is found in legacy that affects production decisions before the spreadsheet is retired.
