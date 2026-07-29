@@ -100,7 +100,8 @@ function canonicalizeEmail_(normalizedEmail) {
 function resolveUser_(email) {
   const normalized = (email || '').toLowerCase().trim();
   if (!normalized) {
-    return { email: '', role: 'none', department: null, departments: [], allDepts: false };
+    return { email: '', role: 'none', department: null, departments: [],
+             assignedDepartments: [], allDepts: false };
   }
   // Tier C: resolve alias -> canonical BEFORE any lookup, so an alias address
   // inherits the canonical user's role + departments. The returned `email` is
@@ -113,6 +114,7 @@ function resolveUser_(email) {
       role: 'admin',
       department: null,
       departments: getAllDepartments_(),
+      assignedDepartments: getAllDepartments_(),
       allDepts: false,
     };
   }
@@ -127,21 +129,38 @@ function resolveUser_(email) {
         role: 'manager',
         department: null,
         departments: getAllDepartments_(),
+        assignedDepartments: getAllDepartments_(),
         allDepts: true,
       };
     }
     // One OR more specific depts: a single-dept manager is just the
     // one-element case (behaves exactly as before).
+    //
+    // SUB-QUEUE EXPANSION (Phase 0). `departments` is the EFFECTIVE list --
+    // assigned depts plus their one-level sub-queues (Overview parent map) --
+    // so every gate that already reads it (assertDeptAccess_,
+    // escAssertRowAccess_, getEscalations' scoping, personalizeOverview_, the
+    // client dept selector via canPickDept_) inherits the widening from one
+    // place instead of six patched call sites. `assignedDepartments` keeps the
+    // raw Access Control assignment for anything that needs the un-widened
+    // identity. `department` stays the ASSIGNED dept, so the landing view is
+    // unchanged. A dept with no children expands to itself, which makes this a
+    // no-op for the 11 of 14 departments that have none.
+    const effective = (typeof expandDeptsWithSubQueues_ === 'function')
+      ? expandDeptsWithSubQueues_(depts)
+      : depts;
     return {
       email: canonical,
       role: 'manager',
       department: depts[0],
-      departments: depts,
+      departments: effective,
+      assignedDepartments: depts,
       allDepts: false,
     };
   }
 
-  return { email: canonical, role: 'none', department: null, departments: [], allDepts: false };
+  return { email: canonical, role: 'none', department: null, departments: [],
+           assignedDepartments: [], allDepts: false };
 }
 
 function isAdmin_(normalizedEmail) {

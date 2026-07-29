@@ -1704,10 +1704,23 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   line) **or the dept-selector dropdown** -- the tile no longer navigates.
   **`refresh()` only writes the header title when `data-page === 'dept'`**
   so it can't clobber the Overview / Escalations / Insights titles.
-- **Overview-only sub-queue nesting.** `OVERVIEW_PARENT_OF` and
-  `OVERVIEW_HIDDEN_DEPTS` in CompanyOverview.gs shape the Overview
-  page only — dept dropdowns, Reports modals, and Alerts treat
-  every dept as independent. Adding a sub-queue means: (1) it
+- **Sub-queue nesting (NO LONGER Overview-only — see INV-38).**
+  `OVERVIEW_PARENT_OF` + the Dept Config `Overview Parent` override shape the
+  Overview tile grid AND, since sub-queue Phase 0, manager ACCESS:
+  `resolveUser_` expands a manager's assigned depts with their **one-level**
+  sub-queues, so a `Sales` manager reaches `PAP` without an Access Control row.
+  `user.departments` is the EFFECTIVE list (assigned ∪ children) that every gate
+  reads — `assertDeptAccess_`, `escAssertRowAccess_`, `getEscalations` scoping,
+  `personalizeOverview_`, and the client selector via `canPickDept_`;
+  `user.assignedDepartments` keeps the raw assignment and `user.department` (the
+  landing dept) is still the assigned one. **The read side re-validates
+  independently of `saveDeptConfig`** — the sheet is hand-editable, Neon is
+  backfillable, and the constant is code — dropping self-parent edges, edges
+  naming a non-existent dept, and any cyclic edge; it FAILS CLOSED (an
+  unreadable map returns the assigned list unchanged). A dept with no children
+  is untouched, which is 11 of 14 here. **Alerts and Digests are deliberately
+  NOT expanded** — they're per-dept subscriptions an admin configured on
+  purpose. `OVERVIEW_HIDDEN_DEPTS` is still Overview-only. Adding a sub-queue means: (1) it
   already appears as its own dept everywhere else (it's a real
   column in `DO NOT EDIT!`), and (2) add a row to
   `OVERVIEW_PARENT_OF` keyed on the column-header text
@@ -2038,7 +2051,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
 > them, and clearing one just re-arms its engine. Don't file them as
 > undocumented operator state.
 
-The 38 numbered items now live in full in
+The 39 numbered items now live in full in
 [`docs/operator-state.md`](docs/operator-state.md) (F8 split). Cited elsewhere
 BY NUMBER ("Operator State #38"), so the numbering is stable — retire an item in
 place rather than renumbering. **Read the full item before acting on it**; the
@@ -2088,6 +2101,7 @@ items for anything it flags or doesn't cover.)
 36. `EMAIL_ALIASES` -- alias sign-in addresses resolving to one identity (+ the multi-dept manager note)
 37. `ANSWER_TARGETS` -- the admin-tunable answer-rate DISPLAY standards (seed 92%)
 38. Diagnosing "a queue's inbound calls are missing" -- the F1/F1b runbook, incl. the ANTI-pattern probe
+39. Sub-queue ACCESS widening -- who gains what on deploy, with no admin edit (INV-38)
 
 ## Cycle Workflow Config
 

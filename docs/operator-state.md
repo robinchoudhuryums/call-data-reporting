@@ -734,3 +734,28 @@ When something looks wrong, before assuming a code bug, check:
     needs ATTRIBUTION:** `UDC_A_Q_Main` / `UUC_A_Q_Main` belong to separate
     brands with no dashboard dept, so they now surface in the discovery panel
     as unattributed until an owner maps them to a dept (or one is created).
+
+39. **Sub-queue access widening (verify who gained what BEFORE deploying).**
+    Since sub-queue Phase 0 a manager assigned to a PARENT department can also
+    reach its one-level sub-queues, via the Overview parent map
+    (`OVERVIEW_PARENT_OF` + Dept Config `Overview Parent`). This is the first
+    time that map affects authorization rather than tile layout -- see INV-38.
+
+    **It takes effect on deploy with NO admin edit**, because the shipped
+    constant already contains `PAP -> Sales`, `PAP Q -> Sales`,
+    `Spanish -> CSR`, `PAK -> Power`. So the moment this deploys: every Sales
+    manager can see PAP, every CSR manager can see Spanish, every Power manager
+    can see PAK -- agent-level data included.
+
+    **Before deploying, confirm that is what you want**, dept by dept. If any
+    pairing should NOT confer access, clear that dept's `Overview Parent` cell
+    in Dept Config first (it will also stop nesting on the Overview tile grid --
+    the two are the same setting now, which is the trade-off of this design).
+
+    Also confirm `Field Ops Power`: it looks like a sibling of `Field Ops` in
+    the data but is NOT in the parent map, so a Field Ops manager will NOT see
+    it. Adding the mapping is a Dept Config edit; leaving it is fine if the two
+    are genuinely independent.
+
+    Admins and all-departments managers are unaffected (they already hold every
+    dept). A department with no children is unaffected -- 11 of 14 here.
