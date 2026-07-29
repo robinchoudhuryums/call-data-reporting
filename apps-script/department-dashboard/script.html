@@ -16752,6 +16752,7 @@
     inboundRenderTable_('inbound-dialin-tbody', data.byDialIn, false);
     inboundRenderTable_('inbound-queue-tbody', data.byQueue, false);
     inboundRenderCrossTable_(data.byDialInInsurer);
+    inboundRenderOutside_(data.outsideWindow);
     // Temporal abandon heatmap (companion). Separate round-trip via
     // getInboundHeatmap so it can be reused by the QCD report too.
     // Skipped on the SWR pre-paint -- the live repaint fetches it once.
@@ -16773,6 +16774,38 @@
   // response paint a grid that disagrees with the container's stashed
   // data-heat-* scope (which the cell drill re-issues).
   var heatLoadSeq_ = {};
+  /**
+   * RESEARCH-ONLY out-of-hours block. Everything above it is scoped to the
+   * work window (server-side), so this is the only place out-of-window traffic
+   * appears -- and it is deliberately styled MUTED, kept out of the KPI row,
+   * and captioned as not-a-department-metric, because the whole point of the
+   * owner ruling is that these calls are visible without counting against
+   * anyone. Hides itself entirely when there is nothing outside the window.
+   */
+  function inboundRenderOutside_(o) {
+    const sec = $('inbound-outside-section'), body = $('inbound-outside-body');
+    if (!sec || !body) return;
+    if (!o || !o.calls) { sec.style.display = 'none'; body.innerHTML = ''; return; }
+    sec.style.display = '';
+    const pct = function (ab, n) { return n ? (Math.round((ab / n) * 1000) / 10) + '%' : '—'; };
+    const row = function (label, calls, ab, hint) {
+      return '<tr><td>' + escapeHtml(label) + '<span class="ins-rollup-cap"> '
+        + escapeHtml(hint) + '</span></td><td class="num">' + fmtNumber(calls)
+        + '</td><td class="num">' + fmtNumber(ab) + '</td><td class="num">'
+        + pct(ab, calls) + '</td></tr>';
+    };
+    body.innerHTML =
+      '<table class="qcd-source-table"><thead><tr><th>Window</th>'
+      + '<th class="num">Calls</th><th class="num">Abandoned</th>'
+      + '<th class="num">Aband. %</th></tr></thead><tbody>'
+      + row('Before hours', o.beforeCalls, o.beforeAbandoned, '(before 8:30 AM CST)')
+      + row('After hours', o.afterCalls, o.afterAbandoned, '(after 5:00 PM CST)')
+      + '<tr class="agents-totals"><td>Total outside hours</td><td class="num">'
+      + fmtNumber(o.calls) + '</td><td class="num">' + fmtNumber(o.abandoned)
+      + '</td><td class="num">' + pct(o.abandoned, o.calls) + '</td></tr>'
+      + '</tbody></table>';
+  }
+
   function loadAbandonHeatmap_(containerId, dept, from, to) {
     var el = $(containerId);
     if (!el) return;

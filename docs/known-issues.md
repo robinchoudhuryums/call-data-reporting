@@ -635,7 +635,7 @@ that disagrees, so a missed bump here is a CI failure, not a silent trap.
 | `MissedCallsReport.gs` | `missed:vN:` | `v17` |
 | `CompanyOverview.gs` | `companyOverview:vN` | `v20` |
 | `QCDReport.gs` | `qcd:vN:` | RETIRED (QCD modal deleted; `qcdAll:` remains) |
-| `InboundReport.gs` | `inbound:vN:` | `v5` |
+| `InboundReport.gs` | `inbound:vN:` | `v6` |
 | `InsightsReport.gs` | `insights:vN:` | `v19` |
 | `QCDReport.gs` (all-departments daily report) | `qcdAll:vN:` | `v5` |
 | `InboundReport.gs` (weekday×hour abandon heatmap) | `inboundHeatmap:vN:` | `v1` |
@@ -1025,10 +1025,28 @@ IN-window rather than being dropped -- dropping them would silently shrink
 historical dates and read as a fixed gap. Pinned by
 `tests/unit/inbound-qcd-parity.test.js`.
 
-**Still to do:** the Inbound report's own dept slices and the abandon heatmap
-are NOT yet window-scoped, so they still count out-of-hours calls in dept
-figures. That is a payload-shape change needing an INV-30 cache bump, so it
-was staged separately from the parity-tool fix.
+**Shipped (`inbound:v6`).** `computeInboundReport_` window-scopes its whole
+payload from one place -- the clause is appended to the shared `dr`/`priorDr`,
+so the KPIs, prior KPIs, all five breakdowns and the daily series inherit it
+and a sub-select added later cannot miss it (pinned by a count-based assertion
+in `tests/unit/inbound-window-scope.test.js`). `getInboundInsurerDaily` is
+scoped identically, since it drills off a `byInsurer` row and would otherwise
+fail to reconcile with the count the user clicked.
+
+**Two deliberate exemptions, both pinned:**
+
+- `coverageStart` answers "when did capture begin" -- a data-availability fact,
+  not a dept metric. Scoping it would move the reported start to the first
+  in-window call and mis-warn on the client's coverage note.
+- **The abandon heatmap is already window-bounded** by
+  `INBOUND_HEATMAP_WINDOW_START_HOUR`/`_END_HOUR` (8 AM - 5 PM CST), which is
+  the INV-18 display convention and 30 minutes WIDER at the start than the work
+  window on purpose. Adding the work-window clause on top would silently narrow
+  the grid's first column. Don't.
+
+The client surfaces the research block as an "Outside business hours" section
+below the heatmap -- muted, captioned as not a department metric, and hidden
+entirely when nothing falls outside the window.
 
 ### Hypotheses eliminated (do not re-run these)
 

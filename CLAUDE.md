@@ -715,9 +715,20 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   the explanation. **Out-of-window calls are RESEARCH data, never a dept metric
   (owner ruling)** -- report them separately, never in a dept total; the
   after-hours abandon rate is ~47% vs ~4% in-window, which is what an unstaffed
-  queue looks like. `compareInboundVsQcdAbandons_` is scoped + reports the
-  bucket separately; **the Inbound report's own dept slices and the heatmap are
-  NOT yet scoped** (payload change, needs an INV-30 bump).
+  queue looks like. Scoped surfaces: `compareInboundVsQcdAbandons_`,
+  the whole `computeInboundReport_` payload (KPIs + all five breakdowns + daily,
+  via one `inboundWindowClause_(true)` appended to the shared `dr`/`priorDr` --
+  `inbound:v6`), and `getInboundInsurerDaily` (so the drill reconciles with the
+  byInsurer row it hangs off). Two deliberate NON-scopings: `coverageStart`
+  (answers "when did capture begin", not a dept metric) and **the abandon
+  HEATMAP, which is already bounded by its own 8 AM-5 PM CST band -- the INV-18
+  convention, 30 min wider at the start on purpose. Do NOT add the work-window
+  clause on top of it**; `tests/unit/inbound-window-scope.test.js` pins both
+  exemptions plus a count-based guard that every `FROM inbound_calls c`
+  sub-select carries the window, so a new one can't be added off an unscoped
+  predicate. The client renders the research block as an "Outside business
+  hours" section below the heatmap, muted and captioned as not-a-dept-metric,
+  hidden entirely when the window is clean.
   Also found by that run and NOT yet fixed: **the answered-on-hold carve-out
   has never fired in this install** -- `final_dept` holds raw CDR org-chart
   labels (`Customer Success`, `Inside Sales`, `Patient Care`, ...) and not one

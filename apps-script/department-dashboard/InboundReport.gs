@@ -67,7 +67,7 @@
 // v5 (R5): abandon_stage gains 'direct' (kpis.abandonedDirect; old rows heal
 // on re-import), byDialIn rows carry display labels (DIAL_IN_LABELS map >
 // derived dominant first_agent > raw number; raw kept in `number`).
-const INBOUND_CACHE_KEY_PREFIX = 'inbound:v5';
+const INBOUND_CACHE_KEY_PREFIX = 'inbound:v6';
 const INBOUND_TOP_N = 50;
 // Cap the requested window so an over-wide range can't trigger an
 // unbounded Neon aggregation (mirrors CallerLookup's range guard). A
@@ -223,6 +223,34 @@ function inboundDeptPredicate_(dept, deptQueues) {
  * for the admin company view (no scoping). Queue/dept names are config-curated
  * but escaped anyway.
  */
+/**
+ * SQL fragment scoping `inbound_calls` to (or out of) the PST work window.
+ *
+ * QCD's Abandoned column only counts calls inside 6:30 AM - 3:00 PM PST; the
+ * inbound capture runs around the clock. Every dept-facing inbound figure must
+ * therefore be window-scoped, or it counts traffic no other dept metric in this
+ * app includes. `call_start` is stored RAW PST ('HH:MM:SS', the capture does
+ * NOT apply the +2h CST shift), so it compares directly against
+ * INBOUND_WORK_WINDOW_PST with no conversion -- zero-padded 24h times compare
+ * correctly as text.
+ *
+ * NULL `call_start` counts as IN-window: those are pre-extension captures with
+ * no time-of-day at all, and excluding them would silently shrink every
+ * historical date and read as a fixed gap rather than missing data.
+ *
+ * Out-of-window traffic is RESEARCH data (owner ruling) -- surfaced in its own
+ * `outsideWindow` block, never folded into a dept metric.
+ *
+ * NB the abandon HEATMAP does not use this: it is already bounded by
+ * INBOUND_HEATMAP_WINDOW_START_HOUR/END_HOUR (8 AM - 5 PM CST), which is the
+ * INV-18 display convention and 30 min wider at the start on purpose. Leave it.
+ */
+function inboundWindowClause_(inside) {
+  const c = "(c.call_start IS NULL OR (c.call_start >= '" + INBOUND_WORK_WINDOW_PST.start
+          + "' AND c.call_start < '" + INBOUND_WORK_WINDOW_PST.end + "'))";
+  return inside ? c : ('NOT ' + c);
+}
+
 function callJourneyDeptPredicate_(dept, deptQueues) {
   if (!dept) return '';
   const queueList = (deptQueues && deptQueues.length)
@@ -576,8 +604,15 @@ function computeInboundReport_(scope) {
     // per-insurer/per-number cuts (they can't be labeled) but they still
     // count in the headline KPIs + per-queue.
     const deptPred = inboundDeptPredicate_(scope.dept, scope.deptQueues);
-    const dr = "c.call_date BETWEEN '" + from + "'::date AND '" + to + "'::date" + deptPred;
-    const priorDr = "c.call_date BETWEEN '" + prior.from + "'::date AND '" + prior.to + "'::date" + deptPred;
+    // Work-window scope (2026-07). Appending it to `dr`/`priorDr` scopes EVERY
+    // sub-select below in one place -- KPIs, byInsurer, byDialIn, byQueue,
+    // byDialInInsurer and daily -- so no dept-facing figure can drift out of
+    // scope by being added later. `drOutside` feeds the research block only.
+    const dateRange = "c.call_date BETWEEN '" + from + "'::date AND '" + to + "'::date" + deptPred;
+    const dr = dateRange + ' AND ' + inboundWindowClause_(true);
+    const drOutside = dateRange + ' AND ' + inboundWindowClause_(false);
+    const priorDr = "c.call_date BETWEEN '" + prior.from + "'::date AND '" + prior.to
+                  + "'::date" + deptPred + ' AND ' + inboundWindowClause_(true);
     // R5: the derived dial-in agent label reads first_agent, a column the
     // cdr-import capture adds via its idempotent DDL. Guard on its existence
     // so deploying the dashboard BEFORE the next import can't error the
@@ -667,7 +702,24 @@ function computeInboundReport_(scope) {
         "'daily', (SELECT COALESCE(json_agg(t ORDER BY t.d), '[]') FROM (" +
             "SELECT call_date::text AS d, count(*) AS calls, " +
               "count(*) FILTER (WHERE disposition='abandoned') AS abandoned " +
-            "FROM inbound_calls c WHERE " + dr + " GROUP BY 1) t)" +
+            "FROM inbound_calls c WHERE " + dr + " GROUP BY 1) t), " +
+        // RESEARCH ONLY -- outside the work window, split before/after so the
+        // two read differently (before-hours callers largely get answered;
+        // after-hours largely abandon against an unstaffed queue). Never a
+        // dept metric, never part of the KPIs above.
+        "'outsideWindow', (SELECT json_build_object(" +
+            "'calls', count(*), " +
+            "'abandoned', count(*) FILTER (WHERE disposition='abandoned'), " +
+            "'answered', count(*) FILTER (WHERE disposition='answered'), " +
+            "'beforeCalls', count(*) FILTER (WHERE c.call_start < '"
+              + INBOUND_WORK_WINDOW_PST.start + "'), " +
+            "'beforeAbandoned', count(*) FILTER (WHERE c.call_start < '"
+              + INBOUND_WORK_WINDOW_PST.start + "' AND disposition='abandoned'), " +
+            "'afterCalls', count(*) FILTER (WHERE c.call_start >= '"
+              + INBOUND_WORK_WINDOW_PST.end + "'), " +
+            "'afterAbandoned', count(*) FILTER (WHERE c.call_start >= '"
+              + INBOUND_WORK_WINDOW_PST.end + "' AND disposition='abandoned')" +
+          ") FROM inbound_calls c WHERE " + drOutside + ")" +
       ")::text AS j";
 
     const stmt = conn.createStatement();
@@ -714,6 +766,7 @@ function computeInboundReport_(scope) {
       byQueue:         Array.isArray(obj.byQueue)         ? obj.byQueue         : [],
       byDialInInsurer: Array.isArray(obj.byDialInInsurer) ? obj.byDialInInsurer : [],
       daily:           Array.isArray(obj.daily)           ? obj.daily           : [],
+      outsideWindow:   inboundShapeOutside_(obj.outsideWindow),
     };
   } catch (e) {
     // Table missing / Neon error -> graceful empty (modal shows "unavailable").
@@ -783,6 +836,28 @@ function emptyInboundReport_(scope) {
     kpis: inboundShapeKpis_(null),
     kpisPrior: inboundShapeKpis_(null),
     byInsurer: [], byDialIn: [], byQueue: [], byDialInInsurer: [], daily: [],
+    outsideWindow: inboundShapeOutside_(null),
+  };
+}
+
+/**
+ * Normalizes the RESEARCH-ONLY out-of-window block. Always present (zeros when
+ * absent) so the client never has to null-check, and always separate from
+ * `kpis` so an out-of-window call can never reach a dept metric.
+ */
+function inboundShapeOutside_(o) {
+  o = o || {};
+  const n = function (v) { return Number(v) || 0; };
+  const calls = n(o.calls);
+  return {
+    calls: calls,
+    abandoned: n(o.abandoned),
+    answered: n(o.answered),
+    abandonedPct: calls ? Math.round((n(o.abandoned) / calls) * 1000) / 10 : 0,
+    beforeCalls: n(o.beforeCalls),
+    beforeAbandoned: n(o.beforeAbandoned),
+    afterCalls: n(o.afterCalls),
+    afterAbandoned: n(o.afterAbandoned),
   };
 }
 
@@ -838,7 +913,11 @@ function getInboundInsurerDaily(req) {
     if (!conn) { out.meta.available = false; return out; }
 
     const deptPred = inboundDeptPredicate_(scope.dept, scope.deptQueues);
-    const dr = "c.call_date BETWEEN '" + scope.from + "'::date AND '" + scope.to + "'::date" + deptPred;
+    // Same work-window scope as computeInboundReport_ -- this drill hangs off a
+    // byInsurer row, so an unscoped drill would not reconcile with the row's
+    // own count.
+    const dr = "c.call_date BETWEEN '" + scope.from + "'::date AND '" + scope.to + "'::date"
+             + deptPred + ' AND ' + inboundWindowClause_(true);
     const sql =
       "SELECT COALESCE(json_agg(t ORDER BY t.d), '[]')::text AS j FROM (" +
         "SELECT c.call_date::text AS d, count(*) AS calls, " +
@@ -985,9 +1064,7 @@ function compareInboundVsQcdAbandons_(dept, fromIso, toIso, conn) {
   const inbByDay = {};
   const outsideByDay = {};
   const predicate = inboundDeptPredicate_(dept, out.inboundQueues);
-  const inWindow = "(c.call_start IS NULL OR (c.call_start >= '"
-    + INBOUND_WORK_WINDOW_PST.start + "' AND c.call_start < '"
-    + INBOUND_WORK_WINDOW_PST.end + "'))";
+  const inWindow = inboundWindowClause_(true);
   const sql = "SELECT COALESCE(json_agg(t), '[]')::text AS j FROM ("
     + 'SELECT call_date::text AS d, '
     + "count(*) FILTER (WHERE c.disposition = 'abandoned' AND " + inWindow + ') AS ab, '
