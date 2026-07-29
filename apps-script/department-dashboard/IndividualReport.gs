@@ -97,12 +97,20 @@ function getIndividualReportInit(req) {
   // team-avg still excludes them per INV-53.
   let activeAgents = null;
   let activeFloaters = null;
+  // Sub-queue Phase 2: a parent dept's children get their OWN picker group, so
+  // a parent manager can run the report on a sub-queue's agents. Selecting from
+  // a sub-queue group SWITCHES the report's department rather than mixing depts
+  // into one run -- the team average is per-dept by design (INV-27), and one
+  // average across two teams with different call profiles is the wrong number.
+  let subQueueGroups = null;
   const from = String((req && req.from) || '').trim();
   const to   = String((req && req.to)   || '').trim();
   if (isIsoDate_(from) && isIsoDate_(to) && from <= to) {
     const active = computeActiveAgentsInRange_(dept, from, to, roster);
     activeAgents   = active.agents;
     activeFloaters = active.floaters;
+    subQueueGroups = (typeof computeSubQueuePickerGroups_ === 'function')
+      ? computeSubQueuePickerGroups_(dept, from, to) : [];
   }
 
   return {
@@ -112,6 +120,7 @@ function getIndividualReportInit(req) {
     defaultEnd: fmt(now),
     activeAgents:   activeAgents,
     activeFloaters: activeFloaters,
+    subQueueGroups: subQueueGroups,
   };
 }
 

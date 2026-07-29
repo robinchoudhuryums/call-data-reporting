@@ -1630,7 +1630,22 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   The relationship line renders in EVERY scope, including `own`, where it says
   the sub-queue is excluded -- that exclusion was previously invisible. A CHILD
   dept gets an upward pointer only, no switcher (the combined view belongs to
-  the parent, matching the server's one-level rule). Server side is
+  the parent, matching the server's one-level rule).
+  **Phase 2 (IR + Insights pickers):** both pickers gain one collapsed group per
+  sub-queue, from `getIndividualReportInit`'s new `subQueueGroups` field
+  (Insights delegates to the same init, so it inherits it). Built by
+  `computeSubQueuePickerGroups_` (Util.gs), which calls
+  `computeActiveAgentsInRange_` once per child with THAT child's roster -- a
+  deliberately SEPARATE helper so the pinned `{agents, floaters}` shape and its
+  INV-53 gate stay untouched and no `individual_active` bump is needed. The
+  group is NOT muted like the inactive/floater groups: a sub-queue is a
+  first-class choice, not something you rarely want. **One report run is ONE
+  department** -- `subqPickerScope_` reads the checked boxes and either runs
+  against the sub-queue dept (selection confined to one group) or REFUSES a
+  selection that spans depts with a reason, because the team average / rollup is
+  per-dept (INV-25/27) and averaging two teams with different call profiles is
+  the wrong number. Insights' report body is NOT scope-switched -- see the
+  follow-on note in `.cycle/blocks/61-*`. Server side is
   `combineSummaries_` calling `computeSummary_` once per dept: it leaves every
   INV-02/04/05/23/53 + S35 + E5 rule inside that function untouched, and its
   duration means are agent-count-WEIGHTED (never a mean of means). **`qcd` is

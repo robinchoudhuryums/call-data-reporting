@@ -279,3 +279,72 @@ test('combine: the QCD snapshot comes from the PRIMARY dept only', function () {
     'queuesForDept_ already rolls a parent\'s sub-queue queues into its own QCD '
     + 'snapshot, so merging QCD across depts would DOUBLE-COUNT sub-queue calls');
 });
+
+// -- Phase 2: the sub-queue PICKER groups ------------------------------------
+// A sub-queue is a full DEPARTMENT, so its agents get their own picker group
+// rather than being folded in as floaters. Deliberately a separate helper from
+// computeActiveAgentsInRange_: that function's {agents, floaters} shape is
+// pinned by individual_active:v2 and consumed by both report pickers, so
+// leaving it untouched means no cache bump and no risk to its INV-53 gate.
+// Each child is computed with ITS OWN roster, so a sub-queue's active set in
+// the parent's picker is identical to what its own report would show.
+
+const hUtil = loadGas({
+  files: ['Config.gs', 'CompanyOverview.gs', 'DeptConfig.gs', 'Util.gs'],
+});
+
+function installPicker(childMap, rosters, active) {
+  hUtil.ctx.subQueueChildMap_ = function () { return childMap; };
+  hUtil.ctx.getRosterForDepartment_ = function (d) {
+    return { names: (rosters[d] || []).slice(), byAgent: {}, allExtensions: {} };
+  };
+  hUtil.ctx.computeActiveAgentsInRange_ = function (d) {
+    return active[d] || { agents: [], floaters: [] };
+  };
+}
+
+test('picker: one group per sub-queue, each from its OWN roster', function () {
+  installPicker({ Sales: ['PAP'] }, { PAP: ['P1', 'P2'] },
+    { PAP: { agents: ['P1'], floaters: [] } });
+  const g = hUtil.call('computeSubQueuePickerGroups_', 'Sales', '2026-06-01', '2026-06-08');
+  assert.equal(g.length, 1);
+  assert.equal(g[0].dept, 'PAP');
+  deepEqual(g[0].agents, ['P1'],
+    'the child\'s ACTIVE subset, identical to what its own report would show');
+});
+
+test('picker: a dept with no sub-queues gets no groups', function () {
+  installPicker({}, {}, {});
+  deepEqual(hUtil.call('computeSubQueuePickerGroups_', 'Resupply', '2026-06-01', '2026-06-08'), []);
+});
+
+test('picker: a child with no activity is omitted entirely', function () {
+  installPicker({ Sales: ['PAP'] }, { PAP: ['P1'] },
+    { PAP: { agents: [], floaters: [] } });
+  deepEqual(hUtil.call('computeSubQueuePickerGroups_', 'Sales', '2026-06-01', '2026-06-08'), [],
+    'an empty group would be noise in the picker');
+});
+
+test('picker: a child with an empty roster is skipped, not thrown on', function () {
+  installPicker({ Sales: ['PAP'] }, { PAP: [] }, { PAP: { agents: ['X'], floaters: [] } });
+  deepEqual(hUtil.call('computeSubQueuePickerGroups_', 'Sales', '2026-06-01', '2026-06-08'), []);
+});
+
+test('picker: a child that THROWS is skipped -- the picker still opens', function () {
+  installPicker({ Sales: ['PAP', 'Other'] }, { PAP: ['P1'], Other: ['O1'] },
+    { PAP: { agents: ['P1'], floaters: [] } });
+  hUtil.ctx.computeActiveAgentsInRange_ = function (d) {
+    if (d === 'Other') throw new Error('scan blew up');
+    return { agents: ['P1'], floaters: [] };
+  };
+  const g = hUtil.call('computeSubQueuePickerGroups_', 'Sales', '2026-06-01', '2026-06-08');
+  assert.equal(g.length, 1,
+    'a picker that fails to open is worse than one missing a group');
+  assert.equal(g[0].dept, 'PAP');
+});
+
+test('picker: an unreadable parent map yields no groups rather than throwing', function () {
+  installPicker({}, {}, {});
+  hUtil.ctx.subQueueChildMap_ = function () { throw new Error('boom'); };
+  deepEqual(hUtil.call('computeSubQueuePickerGroups_', 'Sales', '2026-06-01', '2026-06-08'), []);
+});

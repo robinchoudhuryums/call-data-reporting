@@ -6789,3 +6789,13 @@ tr.subq-subtotal td:first-child { font-weight: 600; opacity: .85; }
 @media (max-width: 700px) {
   .subq-bar-row { flex-direction: column; align-items: stretch; }
 }
+
+/* Sub-queue picker group (Phase 2). A sub-queue is a DEPARTMENT, so its group
+   is NOT muted like the inactive/floater groups -- those are de-emphasised
+   because you rarely want them; a sub-queue is a first-class choice. */
+.ir-agent-details-subq > summary { font-weight: 600; }
+.ir-agent-details-subq .subq-tag {
+  font-size: .78em; font-weight: 500; text-transform: uppercase;
+  letter-spacing: .06em; opacity: .75;
+}
+.subq-picker-note { margin: 2px 0 6px; padding-left: 2px; }

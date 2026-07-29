@@ -813,3 +813,24 @@ it, the exclusion was completely invisible to a parent-dept manager.
 - `subqSubtotalRowHtml_` renders a dept's own subtotal from `deptGroups`; the
   Source column is blanked (no aggregate). Styled QUIETER than the totals row on
   purpose: a subtotal is a reading aid, the grand total is the answer.
+
+## Sub-queue picker groups (IR + Insights, Phase 2)
+
+`irBuildAgentListHtml_(agents, activeAgents, activeFloaters, subQueueGroups)` --
+the shared builder both report pickers use -- renders one collapsed
+`<details class="ir-agent-details-subq" data-subq-dept="...">` per sub-queue,
+after the Active / No-activity / Floaters groups.
+
+- The group is **not** muted. Inactive and floater groups are de-emphasised
+  because you rarely want them; a sub-queue is a department and a first-class
+  choice.
+- `subqPickerScope_(listEl)` reads the checked boxes and returns
+  `{dept, mixed}`. `dept` non-null means the whole selection sits in one
+  sub-queue group, so the run targets that department. `mixed:true` means the
+  selection spans departments and the caller must REFUSE it -- the team
+  average/rollup is per-dept (INV-25/27), so a mixed run would compare agents
+  against the wrong team. Both `runInsReport` and the IR generate handler do
+  this before building their request.
+- The group carries an inline note saying the run will use that department's own
+  team average, so the behavior is visible before the click rather than
+  surprising afterwards.

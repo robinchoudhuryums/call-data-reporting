@@ -8286,7 +8286,8 @@
       $('ir-generate-btn').disabled = true;
       return;
     }
-    list.innerHTML = irBuildAgentListHtml_(agents, activeAgents, activeFloaters);
+    list.innerHTML = irBuildAgentListHtml_(agents, activeAgents, activeFloaters,
+      (irLastRoster && irLastRoster.subQueueGroups) || []);
     list.style.display = '';
 
     if (irListChangeHandler_) list.removeEventListener('change', irListChangeHandler_);
@@ -8310,7 +8311,33 @@
     }
   }
 
-  function irBuildAgentListHtml_(agents, activeAgents, activeFloaters) {
+  /**
+   * Sub-queue Phase 2: which sub-queue DEPARTMENT the current checkbox
+   * selection came from, or null when the selection is the viewed dept's own.
+   *
+   * The picker can offer agents from a parent AND its children, but a single
+   * report run is ONE department -- the team average is per-dept (INV-27).
+   * So a selection that lands entirely inside one sub-queue group runs against
+   * that dept; a selection that SPANS depts is rejected by the caller with a
+   * message, rather than silently averaging two teams together.
+   */
+  function subqPickerScope_(listEl) {
+    if (!listEl) return { dept: null, mixed: false };
+    var seen = {};
+    var any = false;
+    listEl.querySelectorAll('.ir-agent-cb:checked').forEach(function (cb) {
+      any = true;
+      var det = cb.closest('details.ir-agent-details-subq');
+      var d = det ? det.getAttribute('data-subq-dept') : '';
+      seen[d || '__own__'] = true;
+    });
+    if (!any) return { dept: null, mixed: false };
+    var keys = Object.keys(seen);
+    if (keys.length > 1) return { dept: null, mixed: true };
+    return { dept: keys[0] === '__own__' ? null : keys[0], mixed: false };
+  }
+
+  function irBuildAgentListHtml_(agents, activeAgents, activeFloaters, subQueueGroups) {
     // No activity info or no inactive members -> flat list.
     if (!activeAgents) return irAgentItemsHtml_(agents);
     const activeSet = {};
@@ -8321,7 +8348,10 @@
       (activeSet[agents[i]] ? active : inactive).push(agents[i]);
     }
     const floaters = Array.isArray(activeFloaters) ? activeFloaters : [];
-    if (!inactive.length && !floaters.length) return irAgentItemsHtml_(active);
+    const subGroups = Array.isArray(subQueueGroups) ? subQueueGroups : [];
+    if (!inactive.length && !floaters.length && !subGroups.length) {
+      return irAgentItemsHtml_(active);
+    }
 
     let html = '';
     if (active.length) {
@@ -8359,6 +8389,29 @@
             +   '<div class="ir-agent-group ir-agent-group-muted">' + irAgentItemsHtml_(floaters) + '</div>'
             + '</details>';
     }
+    // Sub-queue groups (Phase 2). A sub-queue is a full DEPARTMENT, not a
+    // floater -- so its agents get their own labelled group, one per child,
+    // each carrying a `data-subq-dept` marker. Picking from one of these
+    // SWITCHES the report to that department rather than mixing depts into a
+    // single run: the team average is per-dept (INV-27), and one average across
+    // two teams with different call profiles is the wrong number. The click
+    // handler that acts on the marker lives with each report's picker.
+    subGroups.forEach(function (g) {
+      var names = (g && g.agents) || [];
+      var fl = (g && g.floaters) || [];
+      if (!names.length && !fl.length) return;
+      html += '<details class="ir-agent-details ir-agent-details-subq" data-subq-dept="'
+            +   escapeHtml(g.dept) + '">'
+            +   '<summary class="ir-agent-group-label">'
+            +     escapeHtml(g.dept) + ' <span class="subq-tag">sub-queue</span> '
+            +     '<span class="ir-agent-group-count">(' + (names.length + fl.length) + ')</span>'
+            +   '</summary>'
+            +   '<div class="ds-note subq-picker-note">Selecting from here runs the '
+            +     'report on <strong>' + escapeHtml(g.dept) + '</strong> — its team '
+            +     'average is its own, not ' + escapeHtml(g.dept) + '\u2019s parent\u2019s.</div>'
+            +   '<div class="ir-agent-group">' + irAgentItemsHtml_(names.concat(fl)) + '</div>'
+            + '</details>';
+    });
     return html;
   }
 
@@ -8530,6 +8583,18 @@
     if (from > to)    { irSetFormError('Start date must be on or before end date.'); return; }
     const agents = irGetCheckedAgents_($('ir-agent-list'));
     if (!agents.length) { irSetFormError('Select at least one agent.'); return; }
+    // Sub-queue Phase 2: one report run is ONE department, because the team
+    // average is per-dept (INV-27). A pick confined to a sub-queue group runs
+    // against THAT dept; a pick spanning depts is refused with a reason rather
+    // than silently averaging two teams together.
+    const __sq = subqPickerScope_($('ir-agent-list'));
+    if (__sq.mixed) {
+      irSetFormError('Pick agents from one department at a time — the team '
+        + 'average is per-department, so a mixed selection would compare '
+        + 'agents against the wrong team.');
+      return;
+    }
+    const reportDept = __sq.dept || dept;
 
     const prior = irResolvePriorRange_(from, to);
     if (prior && prior.error) { irSetFormError(prior.error); return; }
@@ -8539,7 +8604,7 @@
     const originalLabel = btn.textContent;
     btn.innerHTML = DS_EQ_HTML_ + 'Loading…';
 
-    const req = { department: dept, from: from, to: to, agents: agents };
+    const req = { department: reportDept, from: from, to: to, agents: agents };
     // R8-D3: prevPeriod sends the MODE and lets the server resolve the
     // window via the canonical computePriorWindow_ (INV-28) -- the client
     // resolver stays for the form HINT only (its math drifted once, R8-5).
@@ -8771,7 +8836,7 @@
       $('ir-edit-compare-mode').value =
         (curMode === 'prevPeriod' || curMode === 'yoy') ? curMode : 'none';
     }
-    list.innerHTML = irBuildAgentListHtml_(irLastRoster.agents || [], irLastRoster.activeAgents, irLastRoster.activeFloaters);
+    list.innerHTML = irBuildAgentListHtml_(irLastRoster.agents || [], irLastRoster.activeAgents, irLastRoster.activeFloaters, irLastRoster.subQueueGroups || []);
     // Pre-check the currently-reported agents.
     const current = (irLastData && irLastData.meta && irLastData.meta.agents) || [];
     irApplyCheckedAgents_(list, current);
@@ -13285,7 +13350,7 @@
     // Insights is roster-only (see computeInsights_ visibleAgents) -- don't
     // offer the queue-only floater group in the picker, so it can't be picked
     // into a report that would then drop it. IR/PR/CR still surface floaters.
-    list.innerHTML = irBuildAgentListHtml_(insLastRoster.agents, insLastRoster.activeAgents, []);
+    list.innerHTML = irBuildAgentListHtml_(insLastRoster.agents, insLastRoster.activeAgents, [], insLastRoster.subQueueGroups || []);
     list.style.display = '';
     if (insListChangeHandler_) list.removeEventListener('change', insListChangeHandler_);
     insListChangeHandler_ = function () { insUpdateGenerate(); insSavePrefs_(); };
@@ -13365,7 +13430,7 @@
     if ($('ins-edit-compare-mode')) $('ins-edit-compare-mode').value = 'keep';
     if ($('ins-edit-prior-row')) $('ins-edit-prior-row').style.display = 'none';   // re-shown on Compare=custom
     // Roster-only list (no floater group), same as the main Insights picker.
-    list.innerHTML = irBuildAgentListHtml_(insLastRoster.agents || [], insLastRoster.activeAgents, []);
+    list.innerHTML = irBuildAgentListHtml_(insLastRoster.agents || [], insLastRoster.activeAgents, [], insLastRoster.subQueueGroups || []);
     // Pre-check the REQUESTED selection -- an agent-free run pre-checks
     // nothing, so an untouched Apply preserves the whole-department run.
     irApplyCheckedAgents_(list, insLastRequestedAgents_ || []);
@@ -13530,9 +13595,21 @@
     // INV-28 auto-adjacent default); yoy/custom -> explicit dates.
     const prior = insResolvePriorRange_(from, to);
     if (prior && prior.error) { insSetFormError(prior.error); return; }
+    // Sub-queue Phase 2: same one-dept-per-run rule as the Individual Report.
+    // Insights' team rollup + per-agent-vs-team comparisons are all per-dept
+    // (INV-25/27), so a selection spanning depts is refused, and a selection
+    // confined to a sub-queue group runs against THAT department.
+    const __sq = subqPickerScope_($('ins-agent-list'));
+    if (__sq.mixed) {
+      insSetFormError('Pick agents from one department at a time — the team '
+        + 'rollup is per-department, so a mixed selection would compare agents '
+        + 'against the wrong team.');
+      return;
+    }
+    const reportDept = __sq.dept || dept;
     insSetFormError('');
     insLastRequestedAgents_ = agents.slice();   // edit popover reads the REQUESTED form
-    const req = { department: dept, from: from, to: to, agents: agents };
+    const req = { department: reportDept, from: from, to: to, agents: agents };
     if (prior) { req.priorFrom = prior.from; req.priorTo = prior.to; }
     const gen = $('ins-generate-btn'); const prev = gen.textContent;
     gen.disabled = true; gen.innerHTML = DS_EQ_HTML_ + 'Generating…';
