@@ -151,15 +151,30 @@ When something looks wrong, before assuming a code bug, check:
     org-chart strings (`Customer Success`, `Patient Intake - Supplies`, ...)
     that belong to this dept. It feeds ONE thing -- the answered-then-
     abandoned-ON-HOLD carve-out in the Inbound report's dept attribution,
-    which matches `inbound_calls.final_dept`. Leave it blank and those calls
-    attribute to NO dept and are invisible in every dept slice (that arm had
-    never fired in this install: 146 such calls in a 2-week window). The
-    dept's own name always matches without being listed, so this is purely
-    additive. A label may belong to only one dept -- save rejects a duplicate
-    claim. **Verify by re-running `runInboundQcdParityCheck`: the `onHold`
-    column should stop reading `0.0` on every dept.** Expect a few depts'
-    inbound figures to rise slightly the first time; that is the fix landing,
-    not a regression.
+    which matches `inbound_calls.final_dept`. The dept's own name always
+    matches without being listed. A label may belong to only one dept -- save
+    rejects a duplicate claim. **Verify by re-running
+    `runInboundQcdParityCheck`: the `onHold` column should stop reading `0.0`
+    on every dept.** Expect a few depts' inbound figures to rise slightly the
+    first time; that is the fix landing, not a regression.
+
+    **A label you leave OUT now falls back to the ENTRY QUEUE, so blank is a
+    legitimate answer (2026-07).** Originally an unmapped label meant the call
+    attributed to no dept at all; it now attributes by `entry_queue`, i.e.
+    wherever the call would have counted had nobody answered it. So the field
+    is for OVERRIDING entry-queue attribution when the answering agent's dept
+    differs from the queue the caller entered -- not a prerequisite for the
+    call being counted.
+
+    **The one case where you MUST leave it blank: a label that two depts share.**
+    `Field Ops` and `Field Ops Power` carry both `Field Operations (Market
+    Activity)` and `Field Operations (Markets)` interchangeably in Raw Data, so
+    no mapping is correct for either -- save will refuse to put a shared label
+    on both (one-call-one-dept), and putting it on one silently steals the
+    other's calls. Because these two queues have no crossover agents, leaving
+    both labels unmapped attributes their on-hold abandons by entry queue, which
+    is right. If the phone system is ever fixed to emit distinct labels per
+    queue, map them then.
 15. `TARGET_SS_ID` Script Property in CDR Import: must point at
     the CDR Report spreadsheet ID. Without it, `getTargetSsId_()`
     falls back to a hardcoded ID that may not match your install.

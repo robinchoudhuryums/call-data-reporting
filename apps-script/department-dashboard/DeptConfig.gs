@@ -442,6 +442,45 @@ function getFinalDeptLabels_(dept) {
   return out;
 }
 
+/**
+ * The UNION of EVERY dept's Final Dept Labels (each dept's own name included,
+ * since `getFinalDeptLabels_` always prepends it), lowercased and deduped.
+ *
+ * Consumed by `inboundDeptPredicate_` to tell an ATTRIBUTABLE label from an
+ * unmapped one. A per-dept list can only answer "is this label MINE?"; it
+ * cannot distinguish "this label belongs to another dept" from "this label
+ * belongs to no dept at all" -- and only the second case needs a fallback.
+ * Without the union, adding one would double-count every call whose label maps
+ * to a dept OTHER than the one being queried.
+ *
+ * Fails OPEN on a config-read error (returns the empty union), which makes
+ * every label look unmapped and sends the on-hold arm to its entry-queue
+ * fallback. That is the safe direction: attribution degrades to the entry queue
+ * rather than a dept losing calls, and it can never double-count.
+ */
+function getAllFinalDeptLabels_() {
+  const out = [];
+  const seen = {};
+  const add = function (v) {
+    const t = String(v == null ? '' : v).trim().toLowerCase();
+    if (!t || seen[t]) return;
+    seen[t] = true;
+    out.push(t);
+  };
+  try {
+    getAllDepartments_().forEach(add);            // every dept name is a label
+    const map = getActiveDeptConfigMap_();
+    Object.keys(map).forEach(function (d) {
+      add(d);                                     // a config row for a retired dept
+      (map[d].finalDeptLabels || []).forEach(add);
+    });
+  } catch (e) {
+    Logger.log('getAllFinalDeptLabels_ failed, treating every label as unmapped: ' + e);
+    return [];
+  }
+  return out;
+}
+
 function getInboundQueueAliases_(dept) {
   const cfg = getActiveDeptConfigMap_()[dept];
   const entries = (cfg && cfg.inboundAliases.length) ? cfg.inboundAliases : [];

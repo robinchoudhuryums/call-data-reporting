@@ -725,7 +725,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   queue looks like. Scoped surfaces: `compareInboundVsQcdAbandons_`,
   the whole `computeInboundReport_` payload (KPIs + all five breakdowns + daily,
   via one `inboundWindowClause_(true)` appended to the shared `dr`/`priorDr` --
-  `inbound:v6`), and `getInboundInsurerDaily` (so the drill reconciles with the
+  `inbound:v7`), and `getInboundInsurerDaily` (so the drill reconciles with the
   byInsurer row it hangs off). Two deliberate NON-scopings: `coverageStart`
   (answers "when did capture begin", not a dept metric) and **the abandon
   HEATMAP, which is already bounded by its own 8 AM-5 PM CST band -- the INV-18
@@ -743,8 +743,23 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   (146 in a 2-week window). `inboundDeptPredicate_`'s on-hold arm now matches
   `lower(trim(final_dept))` against `getFinalDeptLabels_(dept)` -- the Dept
   Config **`Final Dept Labels`** column (INV-54, col 11) -- which ALWAYS
-  prepends the dept's own name, so an unmapped install is byte-equivalent to
-  the old predicate. **Adding a label is a Dept Config edit, no redeploy.**
+  prepends the dept's own name. **Adding a label is a Dept Config edit, no
+  redeploy.** **A label mapped to NO dept falls back to the ENTRY QUEUE
+  (`inbound:v7` / `inboundHeatmap:v2`)** -- the two arms are exclusive on the
+  on-hold flag, so before the fallback an unmapped label made the call attribute
+  to NOBODY (the entry-queue arm was skipped for it). The fallback gates on
+  `getAllFinalDeptLabels_()`, the UNION across every dept, NOT this dept's list:
+  a label mapped to dept A must not ALSO fall back to entry-queue dept B, or both
+  count the call. It fails OPEN (unreadable config ⇒ empty union ⇒ everything
+  falls back to the entry queue -- degraded attribution, never lost calls, never
+  double-counted). **This is what makes an AMBIGUOUS label safe to leave
+  unmapped, which is the only correct handling for one:** `Field Ops` and `Field
+  Ops Power` carry both `Field Operations (Market Activity)` and `Field
+  Operations (Markets)` INTERCHANGEABLY, so no label→dept entry is right for
+  either -- save validation already refuses a label claimed by another dept, and
+  mapping it to one would silently steal the other's calls. Those two depts have
+  no crossover agents, so the entry queue attributes their on-hold abandons
+  correctly with nothing mapped. Leave a shared label out of BOTH rows.
   Once released: managers see their own dept's slice; admins can also pick "All
   departments" (the only view that includes the "Abandoned in IVR"
   bucket -- IVR abandons never reached a queue so they're
@@ -806,7 +821,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   from, to})` aggregates abandon rate by `ISODOW × hour-slot` in ONE
   json_agg round-trip, reusing `inboundResolveRequest_` (so it inherits
   the inbound report's **admin-only vetting gate** + per-dept scoping) and
-  `inboundDeptPredicate_`. Cached `inboundHeatmap:v1`. Rendered by the
+  `inboundDeptPredicate_`. Cached `inboundHeatmap:v2`. Rendered by the
   SHARED client `renderAbandonHeatmap_` / `loadAbandonHeatmap_` as a
   CSS-grid heatmap (no Chart.js dep) in the **Inbound report**
   (`#inbound-heatmap`, always, since that report is admin-only), AND the **Insights report**

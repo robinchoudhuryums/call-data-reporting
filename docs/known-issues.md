@@ -635,10 +635,10 @@ that disagrees, so a missed bump here is a CI failure, not a silent trap.
 | `MissedCallsReport.gs` | `missed:vN:` | `v17` |
 | `CompanyOverview.gs` | `companyOverview:vN` | `v20` |
 | `QCDReport.gs` | `qcd:vN:` | RETIRED (QCD modal deleted; `qcdAll:` remains) |
-| `InboundReport.gs` | `inbound:vN:` | `v6` |
+| `InboundReport.gs` | `inbound:vN:` | `v7` |
 | `InsightsReport.gs` | `insights:vN:` | `v19` |
 | `QCDReport.gs` (all-departments daily report) | `qcdAll:vN:` | `v5` |
-| `InboundReport.gs` (weekday×hour abandon heatmap) | `inboundHeatmap:vN:` | `v1` |
+| `InboundReport.gs` (weekday×hour abandon heatmap) | `inboundHeatmap:vN:` | `v2` |
 | `DirectCallReport.gs` | `directCall:vN:` | `v2` |
 
 `Alerts.gs` holds no cached compute. Preview/send always re-reads the
@@ -1025,7 +1025,7 @@ IN-window rather than being dropped -- dropping them would silently shrink
 historical dates and read as a fixed gap. Pinned by
 `tests/unit/inbound-qcd-parity.test.js`.
 
-**Shipped (`inbound:v6`).** `computeInboundReport_` window-scopes its whole
+**Shipped (`inbound:v7`; this work was v6, and v7 added the unmapped-label fallback below).** `computeInboundReport_` window-scopes its whole
 payload from one place -- the clause is appended to the shared `dr`/`priorDr`,
 so the KPIs, prior KPIs, all five breakdowns and the daily series inherit it
 and a sub-select added later cannot miss it (pinned by a count-based assertion
@@ -1085,10 +1085,33 @@ sheet (col 11) -- chosen over a Script Property because the mapping is
 per-dept, belongs beside `Inbound Queue Aliases` (the other raw-upstream-name
 bridge), and is editable in the existing admin modal with no redeploy.
 `getFinalDeptLabels_(dept)` returns the mapped labels ALWAYS prepended with the
-dept's own name, so an install that maps nothing is byte-equivalent to the old
-predicate -- the change is strictly additive. Save-time validation rejects
-digit-only tokens and any label already claimed by another dept, so the
-one-call-one-dept contract the entry-queue arm honors is preserved here too.
+dept's own name. Save-time validation rejects digit-only tokens and any label
+already claimed by another dept, so the one-call-one-dept contract the
+entry-queue arm honors is preserved here too.
+
+**Follow-on fix (2026-07): an UNMAPPED label now falls back to the ENTRY
+QUEUE** (`inbound:v7` / `inboundHeatmap:v2`), so the label map is an OVERRIDE
+rather than a prerequisite. The original fix left a real hole: the two arms are
+mutually exclusive on the on-hold flag, so an on-hold-answered call whose label
+was mapped nowhere had the entry-queue arm explicitly skipped and attributed to
+*nobody* -- the same silent-disappearance failure the fix was meant to close,
+just relocated from "no dept configured the label" to "this particular label
+wasn't configured". It now attributes by `entry_queue`, where the call would
+have counted had nobody answered it.
+
+The fallback gates on `getAllFinalDeptLabels_()` -- the UNION across every dept,
+**not** the queried dept's list. That distinction is the whole design: a
+per-dept list can only answer "is this label mine?", which cannot separate "this
+label belongs to another dept" (that dept counts it; no fallback) from "this
+label belongs to no dept" (fall back). Gating on the per-dept list instead would
+have counted every cross-dept on-hold call twice -- once by label in dept A,
+once by entry queue in dept B -- and dept totals would have exceeded the company
+total. It fails OPEN: an unreadable config yields an empty union, which makes
+every label look unmapped and sends everything to the entry queue. That degrades
+attribution without losing calls, and an empty union can never double-count.
+
+**Why this was needed at all: an AMBIGUOUS label has no correct mapping, and
+blank had to become a safe answer.** See the Field Ops rows in the table below.
 
 The owner-supplied mapping for this install:
 
@@ -1104,15 +1127,33 @@ The owner-supplied mapping for this install:
 | `Intake - Power Mobility (Complex)` | 5 | Power |
 | `Patient Intake - Power Mobility` | 3 | Power |
 | `Intake - Service/Repair` | 4 | Service |
-| `Field Operations (Market Activity)` | 4 | Field Ops |
-| `Field Operations (Markets)` | 1 | Field Ops |
+| `Field Operations (Market Activity)` | 4 | **deliberately UNMAPPED** -- shared, see below |
+| `Field Operations (Markets)` | 1 | **deliberately UNMAPPED** -- shared, see below |
 | *(blank)* | 1 | deliberately unmapped |
+
+**The two `Field Operations (...)` labels are AMBIGUOUS and must stay blank on
+both rows.** The owner confirmed while entering this map that Raw Data uses both
+strings *interchangeably* for agents in the `Field Ops` queue **and** the `Field
+Ops Power` queue -- the label does not identify the queue. So no entry is
+correct: mapping a shared label to both depts would attribute one call to two
+departments (and save-time validation refuses it outright, per one-call-one-dept),
+while mapping it to one silently steals the other's calls. Leaving both unmapped
+is now the RIGHT answer rather than a data-losing one, thanks to the entry-queue
+fallback above: **these two queues have no crossover agents**, so a call that
+entered the `Field Ops` queue was necessarily answered by a `Field Ops` agent and
+the entry queue attributes it correctly without the label being consulted.
+
+The durable fix is upstream -- have 8x8 emit a distinct `Departments` label per
+queue, the same class of cleanup as the retired `Patient Intake - Respiratory`
+queue above. Map them the day that happens; until then, blank is correct and
+intentional, so don't "complete" the table by filling those two rows in.
 
 **Verification after entering them:** re-run `runInboundQcdParityCheck` -- the
 `onHold` column must stop reading `0.0` on every dept, and the mapped labels
-should account for 145 of the 146 (the blank is intentionally excluded).
-Expect a few depts' inbound figures to RISE the first time: that is the bug
-being fixed, not a regression.
+should account for 140 of the 146 (the blank plus the 5 deliberately-unmapped
+Field Operations calls are excluded; those 5 now attribute by entry queue, so
+they are counted -- just not via a label). Expect a few depts' inbound figures
+to RISE the first time: that is the bug being fixed, not a regression.
 
 ### Consequence for the un-gating decision
 
