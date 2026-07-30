@@ -281,6 +281,101 @@ function getOverviewParentMap_() {
 }
 
 /**
+ * `parent -> [children]`, inverted from `getOverviewParentMap_()`'s
+ * `child -> parent` and filtered down to the edges that are SAFE to confer
+ * data access on.
+ *
+ * Read-side validation is NOT redundant with `saveDeptConfig`'s (which already
+ * rejects a self-parent, an unknown parent, and a cycle via
+ * `dcWouldCreateParentCycle_`): the `Dept Config` SHEET can be hand-edited
+ * outside the modal, the Neon `dept_config` table can be written by the
+ * backfill, and `OVERVIEW_PARENT_OF` is a code constant. A malformed edge must
+ * therefore fail CLOSED here rather than trusting the write path.
+ *
+ * Dropped edges, each of which would otherwise widen access on a config typo:
+ *   - self-parent (`X -> X`)
+ *   - an edge whose child or parent is not a real department
+ *   - any edge that participates in a cycle (`A -> B -> A`): with the
+ *     one-level expansion below a 2-cycle would grant each dept's manager the
+ *     other dept, which is exactly the over-grant this guard exists to stop.
+ */
+function subQueueChildMap_() {
+  const parentOf = getOverviewParentMap_();
+  const real = {};
+  getAllDepartments_().forEach(function (d) { real[d] = true; });
+
+  const inCycle = function (start) {
+    let cur = parentOf[start];
+    const seen = {};
+    while (cur) {
+      if (cur === start) return true;
+      if (seen[cur]) return true;   // pre-existing loop upstream
+      seen[cur] = true;
+      cur = parentOf[cur];
+    }
+    return false;
+  };
+
+  const out = {};
+  Object.keys(parentOf).forEach(function (child) {
+    const parent = parentOf[child];
+    if (!parent || parent === child) return;
+    if (!real[child] || !real[parent]) return;
+    if (inCycle(child)) {
+      Logger.log('subQueueChildMap_: dropping cyclic parent edge ' + child
+        + ' -> ' + parent + ' (confers no access).');
+      return;
+    }
+    if (!out[parent]) out[parent] = [];
+    if (out[parent].indexOf(child) === -1) out[parent].push(child);
+  });
+  return out;
+}
+
+/**
+ * Expands a manager's ASSIGNED departments with their sub-queues, ONE LEVEL
+ * only: the children of an assigned dept, never the children of those children.
+ * Assigned depts keep their order and come first, so `departments[0]` stays the
+ * manager's landing dept.
+ *
+ * This is the first time the Overview parent map affects AUTHORIZATION rather
+ * than tile layout (it was Overview-only until now -- INV-38). Two deliberate
+ * properties:
+ *   - ONE LEVEL. A transitive walk would let a long mis-configured chain
+ *     cascade into broad access from a single bad cell.
+ *   - FAIL CLOSED. Any error reading the map returns the assigned list
+ *     unchanged. Auth must never widen -- or break -- because a config read
+ *     failed, so this is wrapped rather than allowed to throw into
+ *     `resolveUser_`.
+ *
+ * Admins and all-departments managers never reach this: they already resolve to
+ * `getAllDepartments_()`.
+ */
+function expandDeptsWithSubQueues_(depts) {
+  const assigned = Array.isArray(depts) ? depts.slice() : [];
+  if (!assigned.length) return assigned;
+  let childMap;
+  try {
+    childMap = subQueueChildMap_();
+  } catch (e) {
+    Logger.log('expandDeptsWithSubQueues_: parent map unavailable, no expansion ('
+      + (e && e.message ? e.message : e) + ')');
+    return assigned;   // fail closed: assigned depts only
+  }
+  const out = assigned.slice();
+  const seen = {};
+  assigned.forEach(function (d) { seen[d] = true; });
+  assigned.forEach(function (d) {
+    (childMap[d] || []).forEach(function (child) {
+      if (seen[child]) return;
+      seen[child] = true;
+      out.push(child);
+    });
+  });
+  return out;
+}
+
+/**
  * Effective team-average exclusion list for `dept`: the Active config
  * row's Team Avg Excludes if non-empty, else TEAM_AVG_EXCLUDES[dept],
  * else [].
@@ -344,6 +439,45 @@ function getFinalDeptLabels_(dept) {
   };
   add(dept);                                     // the pre-config behavior
   ((cfg && cfg.finalDeptLabels) || []).forEach(add);
+  return out;
+}
+
+/**
+ * The UNION of EVERY dept's Final Dept Labels (each dept's own name included,
+ * since `getFinalDeptLabels_` always prepends it), lowercased and deduped.
+ *
+ * Consumed by `inboundDeptPredicate_` to tell an ATTRIBUTABLE label from an
+ * unmapped one. A per-dept list can only answer "is this label MINE?"; it
+ * cannot distinguish "this label belongs to another dept" from "this label
+ * belongs to no dept at all" -- and only the second case needs a fallback.
+ * Without the union, adding one would double-count every call whose label maps
+ * to a dept OTHER than the one being queried.
+ *
+ * Fails OPEN on a config-read error (returns the empty union), which makes
+ * every label look unmapped and sends the on-hold arm to its entry-queue
+ * fallback. That is the safe direction: attribution degrades to the entry queue
+ * rather than a dept losing calls, and it can never double-count.
+ */
+function getAllFinalDeptLabels_() {
+  const out = [];
+  const seen = {};
+  const add = function (v) {
+    const t = String(v == null ? '' : v).trim().toLowerCase();
+    if (!t || seen[t]) return;
+    seen[t] = true;
+    out.push(t);
+  };
+  try {
+    getAllDepartments_().forEach(add);            // every dept name is a label
+    const map = getActiveDeptConfigMap_();
+    Object.keys(map).forEach(function (d) {
+      add(d);                                     // a config row for a retired dept
+      (map[d].finalDeptLabels || []).forEach(add);
+    });
+  } catch (e) {
+    Logger.log('getAllFinalDeptLabels_ failed, treating every label as unmapped: ' + e);
+    return [];
+  }
   return out;
 }
 

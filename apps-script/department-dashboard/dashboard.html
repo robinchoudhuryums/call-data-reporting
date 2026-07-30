@@ -407,6 +407,7 @@
            INSIDE this container on narrow viewports instead of overflowing the
            page body (the .pr-agent-table-wrap / .ds-heatmap-wrap pattern). The
            table keeps its id/structure, so the render + sort JS is unchanged. -->
+      <div id="dept-subq-bar" class="subq-bar" style="display:none;"></div>
       <div class="agents-table-wrap">
       <table id="agents-table" class="agents">
         <thead>
@@ -443,6 +444,7 @@
             <span class="dept-qcd-date" id="dept-missed-date"></span>
           </div>
           <div id="dept-missed-headline" class="report-headline" style="display:none;"></div>
+          <div class="ds-note subq-note" id="dept-missed-scope-note" style="display:none;"></div>
           <div class="report-summary" id="dept-missed-summary" style="display:none;"></div>
           <!-- Bars/Radar toggle (shared mode, persisted in localStorage). -->
           <!-- R11-B7: the Bars/Radar SEGMENT is ADMIN-ONLY now (owner: fewer

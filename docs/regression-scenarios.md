@@ -257,6 +257,13 @@ S35 | Phase D totals parity (roster-only floater exclusion) | Subsystem: Departm
     - AFTER deploy: open the same dept + date range with default settings (scope=Both — the new default). The agent table will now include queue-only floaters with `QUEUE` chips; the tfoot caption will read "Total (roster only · N floaters excluded)".
     - Compare the post-deploy totals values to the pre-deploy screenshot.
   Expected: every totals cell matches the pre-deploy `scope=Roster` numbers to the digit. Rationale: the new totals filter to `matchedViaRoster=true` only, which is precisely the set the pre-Phase-D `scope=Roster` view summed. Floaters render as new rows but contribute zero to the totals. If the totals DON'T match, the rosterRows filter has regressed -- roll back the Phase D commit and investigate before re-shipping. This is a one-time validation but the scenario stays as a permanent reference for the floater-exclusion contract (see INV-53).
+  ADDENDUM (sub-queue Phase 1) -- the COMBINED-view parity check. On a parent dept (Sales / CSR / Power) the scope switcher adds a second totals concept, so this scenario now also covers:
+    - Set the switcher to `<dept> only` and record the totals row.
+    - Switch to `<dept> + <subs>`. Each dept now gets its own `<dept> subtotal` row plus a labelled combined grand total.
+    - Confirm the PARENT's subtotal row equals, to the digit, the totals row you recorded in `<dept> only` scope.
+    - Confirm the combined grand total's COUNT cells (Unique / Rung / Missed / Answered / TTT) equal the sum of the per-dept subtotals.
+    - Confirm the three DURATION cells (ATT / Avg Abd Wait / CSR Avg Abd Wait) are the agent-count-WEIGHTED mean of the per-dept values, NOT their simple average -- a mean of means would over-weight a one-agent sub-queue.
+  Expected: the parent's subtotal is identical in both scopes (it is produced by the same `computeSummary_` call), counts sum exactly, and durations are weighted. A mismatch on the first point means `combineSummaries_` is mutating a part rather than merging copies; a mismatch on the last means the weighted-mean accumulator regressed (pinned by tests/unit/subqueue-access.test.js, but the live walk covers the render path the harness cannot).
 
 S36 | Dept Config modal: auto-discovery, validation, override round-trip | Subsystem: Department Dashboard
   Steps:
@@ -316,3 +323,27 @@ S40 | Escalation overdue count agrees with the flagged cards (F3) | Subsystem: D
     - Compare the sidebar "Overdue >3d" tile number against the count of cards showing the red ⚑ age badge.
     - Also check the Escalations nav-tab badge tooltip ("N open (M overdue)") against the same cards.
   Expected: the tile, the nav badge, and the ⚑ cards all agree. A card flagged ⚑ that the tile doesn't count (or vice versa) means the server's `ESC_OVERDUE_SQL_` and the client's `escDaysOpen_` have drifted apart again -- they must BOTH be calendar-day comparisons. Note the counts are viewer-scoped and status-independent, so compare against ALL open cards (Pending + In progress), not just the active filter.
+
+S41 | Theme × mode sweep (perceptual) | Subsystem: Department Dashboard
+  Steps:
+    - Open the dashboard in LIGHT theme, then switch to DARK (Settings toggle), on each page: Overview, My Department, Insights, Escalations.
+    - On each, confirm every chart's lines/bars/labels remain legible and no text drops to invisible (the INV-42 OKLCH/datalabels class -- a token that fails to resolve renders an empty fill, which looks like a missing label rather than an error).
+    - Repeat with "Show data labels" ON (IR / Insights), and with reduced-motion enabled at the OS level.
+  Expected: no invisible text, no chart element that changes meaning between themes, no animation that ignores reduced-motion. Proposed in increment 54 as a perceptual check no code can verify; promoted here so it stops being an un-numbered TODO.
+
+S42 | Narrow-viewport trend band (perceptual) | Subsystem: Department Dashboard
+  Steps:
+    - Narrow the browser to ~900px, then ~700px, then ~400px.
+    - On Overview confirm the stacked sticky trend chart collapses without clipping its legend or overflowing horizontally; on My Department confirm the QCD side-card stacks ABOVE the table (`order:-1`) and the sub-queue scope bar wraps to its own line rather than squeezing the note.
+    - Confirm no page scrolls sideways at any width (the drive-smoke gate asserts this at 1440px only).
+  Expected: every page reflows without horizontal overflow or clipped controls. Proposed in increment 54; promoted here for the same reason as S41.
+
+S43 | Combined-view CSV export | Subsystem: Department Dashboard
+  Steps:
+    - On a parent dept (Sales / CSR / Power) with the switcher on `<dept> + <subs>`, use Export -> Download CSV.
+    - Open the file. Confirm a leading `Department` column, each dept's rows grouped together, a `<dept> subtotal` row after each group, and a final `All shown` grand-total row.
+    - Confirm NO group-header banner rows (deliberate: a spreadsheet reader needs a column to pivot/filter on -- see docs/client-ui-conventions.md).
+    - Switch to `<dept> only` and export again. Confirm the `Department` column is ABSENT and the file is otherwise the pre-sub-queue shape.
+    - Confirm the two downloads did not overwrite each other (the filename carries a `_all` scope tag).
+    - Spot-check an agent whose name begins with `=`, `+`, `-` or `@` if one exists: the cell must be quote-prefixed (the `csvSafeCell_` formula-injection rule).
+  Expected: as described. NOTE this is the FIRST scenario covering CSV export at all -- there is no automated coverage for any CSV writer, so a regression here is invisible to both gates.

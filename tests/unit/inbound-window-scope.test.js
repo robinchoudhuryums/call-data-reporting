@@ -49,6 +49,12 @@ function install() {
   h.ctx.computePriorWindow_ = function () { return { from: '2026-06-01', to: '2026-06-08' }; };
   h.ctx.inboundDialInLabels_ = function () { return {}; };
   h.ctx.coverageNoteUpsert_ = function () {};
+  // DeptConfig.gs is not loaded here; the union accessor is stubbed to a
+  // realistic two-dept map so the carve-out tests below exercise the shape the
+  // predicate actually sees in production.
+  h.ctx.getAllFinalDeptLabels_ = function () {
+    return ['csr', 'customer success', 'sales', 'inside sales'];
+  };
 }
 
 test('window clause: in-window bound is raw PST and half-open; NULL counts as in-window', function () {
@@ -175,11 +181,74 @@ test('carve-out: mapped labels all reach the SQL, lowercased', function () {
   const p = h.call('inboundDeptPredicate_', 'CSR', ['A_Q_CSR']);
   assert.ok(p.indexOf("IN ('csr','customer success','patient care')") !== -1,
     'every mapped label is matched, not just the first');
-  // The two arms stay mutually exclusive: an on-hold answered call attributes
-  // by final_dept, everything else by entry_queue. One call, one dept.
-  assert.ok(/OR \(NOT \(c\.disposition='answered'/.test(p),
+  // The arms stay mutually exclusive for a MAPPED label: an on-hold answered
+  // call attributes by final_dept, everything else by entry_queue. One call,
+  // one dept. (An UNMAPPED label takes the entry-queue fallback -- below.)
+  assert.ok(/OR \(\(NOT \(c\.disposition='answered'/.test(p),
     'the entry-queue arm is still NOT-gated on the on-hold predicate');
   assert.ok(p.indexOf("c.entry_queue IN ('A_Q_CSR')") !== -1);
+});
+
+
+// -- the unmapped-label fallback (2026-07, the Field Ops ambiguity) -----------
+// An on-hold-answered call whose raw label is in NO dept's list used to
+// attribute to NOBODY: the on-hold arm is exclusive, so the entry-queue arm was
+// skipped and the call left every dept's report. It now falls back to the entry
+// queue. This is what makes an AMBIGUOUS label safe to leave unmapped, which is
+// the only correct handling: `Field Ops` and `Field Ops Power` carry both
+// "Field Operations (...)" labels interchangeably, so mapping a shared label to
+// both double-counts and mapping it to one steals the other's calls.
+
+test('carve-out: an on-hold call with an UNMAPPED label falls back to the entry queue', function () {
+  install();
+  h.ctx.getFinalDeptLabels_ = function () { return ['field ops']; };
+  const p = h.call('inboundDeptPredicate_', 'Field Ops', ['A_Q_FieldOps']);
+  assert.ok(p.indexOf("NOT IN ('csr','customer success','sales','inside sales')") !== -1,
+    'the fallback gates on the UNION of every dept\'s labels, not this dept\'s');
+  assert.ok(/\(NOT \(c\.disposition='answered' AND COALESCE\(c\.abandoned_on_hold, false\)\) OR lower\(trim\(coalesce\(c\.final_dept,''\)\)\) NOT IN/.test(p),
+    'the entry-queue arm fires when the call is NOT on-hold OR its label is unmapped');
+});
+
+test('carve-out: the fallback gates on the UNION so a mapped label cannot double-count', function () {
+  install();
+  // A call whose label is 'customer success' (mapped to CSR) but whose entry
+  // queue is Sales's. CSR claims it via the label arm; Sales must NOT also
+  // claim it via the fallback, or the dept totals exceed the company total.
+  h.ctx.getFinalDeptLabels_ = function () { return ['sales', 'inside sales']; };
+  const sales = h.call('inboundDeptPredicate_', 'Sales', ['A_Q_Sales']);
+  // 'customer success' is in the union, so Sales's fallback excludes it.
+  assert.ok(sales.indexOf("'customer success'") !== -1,
+    "another dept's mapped label appears in the NOT IN union, closing the "
+    + 'fallback for it -- this is the double-count guard');
+  h.ctx.getFinalDeptLabels_ = function () { return ['csr', 'customer success']; };
+  const csr = h.call('inboundDeptPredicate_', 'CSR', ['A_Q_CSR']);
+  assert.ok(csr.indexOf("lower(trim(c.final_dept)) IN ('csr','customer success')") !== -1,
+    'CSR still claims it by label -- exactly one dept counts the call');
+});
+
+test('carve-out: a blank/NULL final_dept takes the fallback, not oblivion', function () {
+  install();
+  h.ctx.getFinalDeptLabels_ = function () { return ['csr']; };
+  const p = h.call('inboundDeptPredicate_', 'CSR', ['A_Q_CSR']);
+  assert.ok(p.indexOf("coalesce(c.final_dept,'')") !== -1,
+    'NULL is coalesced so `NOT IN` is TRUE rather than NULL -- three-valued '
+    + 'logic would drop the row from BOTH arms (the L10 lesson)');
+  // The empty string must never enter the union, or coalesce(...)='' would be
+  // IN it and a label-less on-hold call would lose the fallback again.
+  const withBlank = h.call('inboundDeptPredicate_', 'CSR', ['A_Q_CSR']);
+  assert.ok(!/NOT IN \([^)]*''[^']/.test(withBlank),
+    "the union must not contain '' -- getAllFinalDeptLabels_ skips empties");
+});
+
+test('carve-out: an unreadable label union fails OPEN to the entry queue', function () {
+  install();
+  h.ctx.getAllFinalDeptLabels_ = function () { return []; };
+  h.ctx.getFinalDeptLabels_ = function () { return ['csr']; };
+  const p = h.call('inboundDeptPredicate_', 'CSR', ['A_Q_CSR']);
+  assert.ok(/OR \(\(NOT \(c\.disposition='answered' AND COALESCE\(c\.abandoned_on_hold, false\)\) OR true\)/.test(p),
+    'an empty union makes every label look unmapped, so on-hold calls attribute '
+    + 'by entry queue. Degrading to the entry queue is the safe direction: no '
+    + 'dept loses calls and nothing can double-count');
 });
 
 test('carve-out: a label with a quote is escaped, not injected', function () {

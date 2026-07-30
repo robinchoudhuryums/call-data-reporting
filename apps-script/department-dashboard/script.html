@@ -6079,6 +6079,12 @@
       from: $('from-date').value,
       to: $('to-date').value,
     };
+    // Sub-queue Phase 1: a saved per-dept preference overrides the server's
+    // default (combined for a parent, own for everyone else). Omitted when
+    // unset so the server keeps deciding -- the client must not hardcode the
+    // default in a second place.
+    var __subScope = subqRequestedScope_(dept);
+    if (__subScope) req.subScope = __subScope;
     if (!req.from || !req.to) {
       setStatus('error', 'Pick a from and to date.');
       return;
@@ -6185,6 +6191,9 @@
     var csvBtn = $('csv-export-btn');
     if (csvBtn) csvBtn.style.display = state.rows.length ? '' : 'none';
     state.meta = (data && data.meta) || null;
+    // Sub-queue Phase 1: per-dept subtotals for the combined view. Absent on a
+    // single-dept payload, which is what keeps the flat render path unchanged.
+    state.deptGroups = (data && data.deptGroups) || null;
     state.qcd = (data && data.qcd) || null;   // Batch D: feeds the team-strip range QCD tiles
     state.csrTransfer = (data && data.csrTransfer) || null;   // R10-5: CSR-only Transfer % tile
     state.diagnostics = (data && data.diagnostics) || null;
@@ -6244,12 +6253,60 @@
     dsFrostShow_(wrap, 'Loading missed calls…');
   }
 
+  /**
+   * The dept the missed section should run on, or null to use the header dept.
+   * Single-dept scopes only -- see the note in deptMissedFetch_ for why 'all'
+   * is deliberately not merged.
+   */
+  function subqMissedDept_() {
+    var m = (state && state.meta) || {};
+    if (m.subScope === 'subs') {
+      var subs = m.subQueues || [];
+      if (subs.length === 1) return subs[0];
+    }
+    return null;
+  }
+
+  /**
+   * One line under the missed-section title naming the scope, so a manager
+   * reading a parent's combined page knows the section is NOT the combined
+   * figure. Renders only when a sub-queue relationship exists.
+   */
+  function subqMissedScopeNote_(shownDept) {
+    var host = $('dept-missed-scope-note');
+    if (!host) return;
+    var m = (state && state.meta) || {};
+    var subs = m.subQueues || [];
+    if (!subs.length) { host.style.display = 'none'; host.innerHTML = ''; return; }
+    var list = subs.map(escapeHtml).join(', ');
+    host.style.display = '';
+    if (m.subScope === 'all') {
+      host.innerHTML = 'Per-agent timelines below are <strong>'
+        + escapeHtml(shownDept) + '</strong>\u2019s only. Queue abandons already '
+        + 'include ' + list + '\u2019s queues, so they are not added twice.';
+    } else if (m.subScope === 'subs') {
+      host.innerHTML = 'Showing <strong>' + escapeHtml(shownDept) + '</strong>.';
+    } else {
+      host.innerHTML = '<strong>' + escapeHtml(shownDept) + '</strong> only \u2014 '
+        + list + ' ' + (subs.length === 1 ? 'is a sub-queue' : 'are sub-queues')
+        + ' with its own missed calls.';
+    }
+  }
+
   function deptMissedFetch_() {
     const wrap = $('dept-missed-section');
     if (!wrap) return;
     // R7 (G-3): surface toggled off -- skip the fetch too (CSS already hides).
     if (uiFlagOn_('dept-missed-section')) { deptMissedScrollPending_ = false; return; }
-    const dept = getRequestedDept();
+    // Sub-queue Phase 3: the missed section follows the switcher when the scope
+    // resolves to a SINGLE department -- 'subs' with one child runs on that
+    // child. It deliberately does NOT merge for 'all': the queue-only abandoned
+    // section already covers a parent's sub-queue queues (`queuesForDept_` rolls
+    // them up), so summing a child's report into the parent's would double-count
+    // every queue abandon and every abandoned-ring bucket in the hour-of-day
+    // chart. `subqMissedScopeNote_` says what is and isn't included instead of
+    // leaving the reader to guess.
+    const dept = subqMissedDept_() || getRequestedDept();
     const from = $('from-date').value, to = $('to-date').value;
     if (!dept || !from || !to) {
       deptMissedScrollPending_ = false;   // no fetch coming -- disarm the one-shot scroll
@@ -6448,6 +6505,7 @@
     const m = (data && data.meta) || {};
     deptMissedLastData = data;            // drill-in reads this
     deptMissedAgentScope_ = null;         // R11-C4: fresh data = dept-wide chart
+    subqMissedScopeNote_(m.department || getRequestedDept());
     deptMissedBucketDetail_.hide();       // reset the panel on every fetch (like the modal)
 
     // Show the section BEFORE the radar is created below: Chart.js measures
@@ -7130,6 +7188,153 @@
   // B1: team summary strip (answer rate hero + answered / missed / avg talk)
   // for the selected range. Built from state.totals (roster-only, server-
   // summed) -- no new fetch. Hidden when there are no data rows.
+  // ==== Sub-queue scope (Phase 1) ==========================================
+  // A sub-queue (PAP, Spanish, PAK) is a FULL department with its own roster
+  // column -- NOT a floater (INV-53). The switcher lets a parent manager see
+  // their own dept, the sub-queue alone, or both COMBINED, and "combined" here
+  // means grouped-and-subtotalled: every row keeps its dept, every dept keeps
+  // its own subtotal, and the grand total is explicitly labelled. A single
+  // merged number would be unreconcilable against each dept's own view, which
+  // is exactly what the QCD carousel learned the hard way (P3).
+
+  var SUBQ_PREF_KEY = 'cdr.dept.subscope';
+
+  function subqPrefGet_(dept) {
+    try {
+      var raw = localStorage.getItem(SUBQ_PREF_KEY);
+      var map = raw ? JSON.parse(raw) : {};
+      return (map && map[dept]) || null;
+    } catch (e) { return null; }
+  }
+  function subqPrefSet_(dept, scope) {
+    try {
+      var raw = localStorage.getItem(SUBQ_PREF_KEY);
+      var map = raw ? JSON.parse(raw) : {};
+      if (!map || typeof map !== 'object') map = {};
+      map[dept] = scope;
+      localStorage.setItem(SUBQ_PREF_KEY, JSON.stringify(map));
+    } catch (e) { /* private mode / quota -- the server default still applies */ }
+  }
+
+  /**
+   * The always-on relationship line + the switcher. Renders in EVERY scope,
+   * including 'own', because the whole point is that a manager should not have
+   * to discover that a sub-queue exists and is excluded -- that exclusion was
+   * completely invisible before this.
+   */
+  function subqRenderScopeBar_(state) {
+    var host = $('dept-subq-bar');
+    if (!host) return;
+    var m = (state && state.meta) || {};
+    var subs = m.subQueues || [];
+    var parentOf = m.subQueueOf || null;
+    if (!subs.length && !parentOf) { host.style.display = 'none'; host.innerHTML = ''; return; }
+    host.style.display = '';
+    var dept = m.department || '';
+    var scope = m.subScope || 'own';
+
+    // A CHILD dept just gets the upward pointer -- no switcher, because the
+    // combined view belongs to the parent (one level, matching the server).
+    if (!subs.length && parentOf) {
+      host.innerHTML = '<div class="ds-note subq-note">'
+        + escapeHtml(dept) + ' is a sub-queue of <strong>'
+        + escapeHtml(parentOf) + '</strong>. These figures are '
+        + escapeHtml(dept) + '\u2019s only.</div>';
+      return;
+    }
+
+    var list = subs.map(escapeHtml).join(', ');
+    var opts = [
+      { k: 'own',  label: escapeHtml(dept) + ' only' },
+      { k: 'subs', label: list + ' only' },
+      { k: 'all',  label: escapeHtml(dept) + ' + ' + list },
+    ];
+    var note;
+    if (scope === 'own') {
+      var n = (m.subQueueAgentHint == null) ? '' : m.subQueueAgentHint;
+      note = '<strong>' + list + '</strong> '
+           + (subs.length === 1 ? 'is a sub-queue' : 'are sub-queues')
+           + ' of ' + escapeHtml(dept) + ' \u2014 not included in these figures.';
+    } else if (scope === 'subs') {
+      note = 'Showing <strong>' + list + '</strong> only. '
+           + escapeHtml(dept) + '\u2019s own agents are excluded.';
+    } else {
+      note = 'Combined view: ' + escapeHtml(dept) + ' and <strong>' + list
+           + '</strong>, grouped with each department\u2019s own subtotal.';
+    }
+    host.innerHTML =
+        '<div class="subq-bar-row">'
+      +   '<div class="segmented subq-seg" role="group" aria-label="Sub-queue scope">'
+      +     opts.map(function (o) {
+              return '<button type="button" class="seg-btn subq-seg-btn'
+                + (o.k === scope ? ' is-active' : '') + '" data-subscope="'
+                + o.k + '"' + (o.k === scope ? ' aria-pressed="true"' : ' aria-pressed="false"')
+                + '>' + o.label + '</button>';
+            }).join('')
+      +   '</div>'
+      +   '<div class="ds-note subq-note">' + note + '</div>'
+      + '</div>';
+
+    host.querySelectorAll('.subq-seg-btn').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var next = btn.getAttribute('data-subscope');
+        if (!next || next === scope) return;
+        subqPrefSet_(dept, next);
+        refresh();
+      });
+    });
+  }
+
+  /** The scope to REQUEST: a saved per-dept preference, else the server default. */
+  function subqRequestedScope_(dept) {
+    return dept ? subqPrefGet_(dept) : null;
+  }
+
+  /**
+   * Grouped tbody HTML for a combined view, or null when there is nothing to
+   * group (single-dept payloads take the unchanged flat path).
+   */
+  function subqRowGroups_(state, sorted) {
+    var m = (state && state.meta) || {};
+    var order = m.deptsShown || [];
+    var byDept = state.deptGroups || null;
+    if (!byDept || order.length < 2) return null;
+    var totalsFor = {};
+    byDept.forEach(function (g) { totalsFor[g.dept] = g.totals || {}; });
+    var out = [];
+    order.forEach(function (d) {
+      var rows = sorted.filter(function (r) { return r.dept === d; });
+      if (!rows.length) return;
+      out.push('<tr class="subq-group-head"><td colspan="' + COLUMNS.length + '">'
+        + escapeHtml(d) + (d === m.department ? '' : ' <span class="subq-tag">sub-queue</span>')
+        + ' <span class="subq-count">' + rows.length + ' agent'
+        + (rows.length === 1 ? '' : 's') + '</span></td></tr>');
+      rows.forEach(function (row) { out.push(subqAgentRowHtml_(row)); });
+      out.push(subqSubtotalRowHtml_(d, totalsFor[d] || {}));
+    });
+    return out.join('');
+  }
+
+  function subqAgentRowHtml_(row) {
+    var rowClass = (row.matchedViaQueue && !row.matchedViaRoster) ? 'via-queue' : '';
+    return '<tr data-agent="' + escapeHtml(row.agent) + '" tabindex="0"'
+      + (rowClass ? ' class="' + rowClass + '"' : '')
+      + ' title="Open ' + escapeHtml(row.agent) + '\u2019s Individual Report">'
+      + COLUMNS.map(function (col, i) {
+          var fk = (col.type === 'bar') ? ' data-flash-key="ag:' + escapeHtml(row.agent) + '"' : '';
+          return '<td class="' + cellClass_(col, i) + '"' + fk + '>' + fmtCell(col, row) + '</td>';
+        }).join('') + '</tr>';
+  }
+
+  /** A department's OWN subtotal -- identical to what its own view shows. */
+  function subqSubtotalRowHtml_(dept, totals) {
+    return '<tr class="subq-subtotal">' + COLUMNS.map(function (col, i) {
+      if (i === 0) return '<td>' + escapeHtml(dept) + ' subtotal</td>';
+      if (col.key === 'sourceHomes' || col.type === 'source') return '<td></td>';
+      return '<td class="' + cellClass_(col, i) + '">' + fmtCell(col, totals) + '</td>';
+    }).join('') + '</tr>';
+  }
+
   function renderDeptTeamStrip_(state) {
     var zone = $('dept-team-zone');
     var strip = $('dept-team-strip');
@@ -7350,6 +7555,8 @@
       }
     });
 
+    subqRenderScopeBar_(state);
+
     const tbody = $('agents-tbody');
     const tfoot = $('agents-tfoot');
 
@@ -7362,6 +7569,14 @@
     }
 
     const sorted = sortRows(state.rows, state.sortKey, state.sortDir);
+    // Sub-queue Phase 1: in a COMBINED view, rows are grouped under a per-dept
+    // subheader with that dept's own subtotal, so nothing is silently summed.
+    // Sorting stays GLOBAL within each group (the group order follows
+    // meta.deptsShown, i.e. parent first), so a manager's chosen sort still
+    // means what it did -- it just applies inside each department.
+    const groups = subqRowGroups_(state, sorted);
+    if (groups) { tbody.innerHTML = groups; }
+    else {
     tbody.innerHTML = sorted.map(function (row) {
       // Agents matched only via queue (not in the roster) get a small
       // "(queue-only)" tag next to the name in CSS.
@@ -7384,6 +7599,7 @@
         return '<td class="' + cellClass_(col, i) + '"' + fk + '>' + fmtCell(col, row) + '</td>';
       }).join('') + '</tr>';
     }).join('');
+    }
 
     if (state.totals) {
       // Roster-vs-floater count caption surfaced as the tfoot's
@@ -7442,10 +7658,19 @@
     // Owner round 4: the on-screen Total-calls column folded into the bar,
     // but the CSV stays complete -- a numeric Total calls column is spliced
     // in right after the bar column.
-    var cellsFor = function (row, isTotals) {
+    // Sub-queue Phase 1 follow-up: in a COMBINED view the flat CSV was
+    // unreadable -- no way to tell which department a row belonged to, and no
+    // subtotals, so the on-screen grouping was lost entirely on export. A
+    // leading Department column is added ONLY when more than one dept is shown,
+    // so a single-dept export is byte-identical to before.
+    var deptsShown = (state.meta && state.meta.deptsShown) || [];
+    var multiDept = deptsShown.length > 1 && !!state.deptGroups;
+    var cellsFor = function (row, isTotals, deptLabel) {
       var out = [];
+      if (multiDept) out.push(csvEscape(deptLabel == null ? (row.dept || '') : deptLabel));
       COLUMNS.forEach(function (col, i) {
-        if (isTotals && i === 0) { out.push(csvEscape('Total (roster only)')); }
+        if (isTotals && i === 0) { out.push(csvEscape(isTotals === 'sub'
+          ? (deptLabel || '') + ' subtotal' : 'Total (roster only)')); }
         // Source column has no aggregate meaning in the totals row.
         else if (col.type === 'chip' && col.key === 'source') out.push(isTotals ? '' : csvEscape(sourceChipCsv_(row)));
         else if (col.type === 'bar') out.push(csvEscape(barCsv(row)));
@@ -7460,13 +7685,35 @@
       acc.push(csvEscape(c.label));
       if (c.type === 'bar') acc.push(csvEscape('Total calls'));
       return acc;
-    }, []).join(',');
-    var rows = sorted.map(function (row) { return cellsFor(row, false); });
-    if (state.totals) rows.push(cellsFor(state.totals, true));
+    }, multiDept ? [csvEscape('Department')] : []).join(',');
+    var rows = [];
+    if (multiDept) {
+      // Grouped like the table: each dept's rows, then that dept's OWN
+      // subtotal (from deptGroups, i.e. the same numbers its own view shows),
+      // then the labelled grand total. NO group-header pseudo-rows -- a
+      // spreadsheet reader wants a Department COLUMN it can pivot on, not
+      // banner rows that break sorting and filtering.
+      var subtotalFor = {};
+      (state.deptGroups || []).forEach(function (g) { subtotalFor[g.dept] = g.totals || {}; });
+      deptsShown.forEach(function (d) {
+        var mine = sorted.filter(function (r) { return r.dept === d; });
+        if (!mine.length) return;
+        mine.forEach(function (row) { rows.push(cellsFor(row, false)); });
+        rows.push(cellsFor(subtotalFor[d] || {}, 'sub', d));
+      });
+      if (state.totals) rows.push(cellsFor(state.totals, true, 'All shown'));
+    } else {
+      sorted.forEach(function (row) { rows.push(cellsFor(row, false)); });
+      if (state.totals) rows.push(cellsFor(state.totals, true));
+    }
     var blob = new Blob([header + '\n' + rows.join('\n')], { type: 'text/csv' });
     var a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = (getRequestedDept() || 'department') + '_' + (($('from-date') && $('from-date').value) || 'data') + '_to_' + (($('to-date') && $('to-date').value) || 'data') + '.csv';
+    var scopeTag = (state.meta && state.meta.subScope && state.meta.subScope !== 'own')
+      ? '_' + state.meta.subScope : '';
+    a.download = (getRequestedDept() || 'department') + scopeTag + '_'
+      + (($('from-date') && $('from-date').value) || 'data') + '_to_'
+      + (($('to-date') && $('to-date').value) || 'data') + '.csv';
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -8119,7 +8366,8 @@
       $('ir-generate-btn').disabled = true;
       return;
     }
-    list.innerHTML = irBuildAgentListHtml_(agents, activeAgents, activeFloaters);
+    list.innerHTML = irBuildAgentListHtml_(agents, activeAgents, activeFloaters,
+      (irLastRoster && irLastRoster.subQueueGroups) || []);
     list.style.display = '';
 
     if (irListChangeHandler_) list.removeEventListener('change', irListChangeHandler_);
@@ -8143,7 +8391,33 @@
     }
   }
 
-  function irBuildAgentListHtml_(agents, activeAgents, activeFloaters) {
+  /**
+   * Sub-queue Phase 2: which sub-queue DEPARTMENT the current checkbox
+   * selection came from, or null when the selection is the viewed dept's own.
+   *
+   * The picker can offer agents from a parent AND its children, but a single
+   * report run is ONE department -- the team average is per-dept (INV-27).
+   * So a selection that lands entirely inside one sub-queue group runs against
+   * that dept; a selection that SPANS depts is rejected by the caller with a
+   * message, rather than silently averaging two teams together.
+   */
+  function subqPickerScope_(listEl) {
+    if (!listEl) return { dept: null, mixed: false };
+    var seen = {};
+    var any = false;
+    listEl.querySelectorAll('.ir-agent-cb:checked').forEach(function (cb) {
+      any = true;
+      var det = cb.closest('details.ir-agent-details-subq');
+      var d = det ? det.getAttribute('data-subq-dept') : '';
+      seen[d || '__own__'] = true;
+    });
+    if (!any) return { dept: null, mixed: false };
+    var keys = Object.keys(seen);
+    if (keys.length > 1) return { dept: null, mixed: true };
+    return { dept: keys[0] === '__own__' ? null : keys[0], mixed: false };
+  }
+
+  function irBuildAgentListHtml_(agents, activeAgents, activeFloaters, subQueueGroups) {
     // No activity info or no inactive members -> flat list.
     if (!activeAgents) return irAgentItemsHtml_(agents);
     const activeSet = {};
@@ -8154,7 +8428,10 @@
       (activeSet[agents[i]] ? active : inactive).push(agents[i]);
     }
     const floaters = Array.isArray(activeFloaters) ? activeFloaters : [];
-    if (!inactive.length && !floaters.length) return irAgentItemsHtml_(active);
+    const subGroups = Array.isArray(subQueueGroups) ? subQueueGroups : [];
+    if (!inactive.length && !floaters.length && !subGroups.length) {
+      return irAgentItemsHtml_(active);
+    }
 
     let html = '';
     if (active.length) {
@@ -8192,6 +8469,29 @@
             +   '<div class="ir-agent-group ir-agent-group-muted">' + irAgentItemsHtml_(floaters) + '</div>'
             + '</details>';
     }
+    // Sub-queue groups (Phase 2). A sub-queue is a full DEPARTMENT, not a
+    // floater -- so its agents get their own labelled group, one per child,
+    // each carrying a `data-subq-dept` marker. Picking from one of these
+    // SWITCHES the report to that department rather than mixing depts into a
+    // single run: the team average is per-dept (INV-27), and one average across
+    // two teams with different call profiles is the wrong number. The click
+    // handler that acts on the marker lives with each report's picker.
+    subGroups.forEach(function (g) {
+      var names = (g && g.agents) || [];
+      var fl = (g && g.floaters) || [];
+      if (!names.length && !fl.length) return;
+      html += '<details class="ir-agent-details ir-agent-details-subq" data-subq-dept="'
+            +   escapeHtml(g.dept) + '">'
+            +   '<summary class="ir-agent-group-label">'
+            +     escapeHtml(g.dept) + ' <span class="subq-tag">sub-queue</span> '
+            +     '<span class="ir-agent-group-count">(' + (names.length + fl.length) + ')</span>'
+            +   '</summary>'
+            +   '<div class="ds-note subq-picker-note">Selecting from here runs the '
+            +     'report on <strong>' + escapeHtml(g.dept) + '</strong> — its team '
+            +     'average is its own, not ' + escapeHtml(g.dept) + '\u2019s parent\u2019s.</div>'
+            +   '<div class="ir-agent-group">' + irAgentItemsHtml_(names.concat(fl)) + '</div>'
+            + '</details>';
+    });
     return html;
   }
 
@@ -8363,6 +8663,18 @@
     if (from > to)    { irSetFormError('Start date must be on or before end date.'); return; }
     const agents = irGetCheckedAgents_($('ir-agent-list'));
     if (!agents.length) { irSetFormError('Select at least one agent.'); return; }
+    // Sub-queue Phase 2: one report run is ONE department, because the team
+    // average is per-dept (INV-27). A pick confined to a sub-queue group runs
+    // against THAT dept; a pick spanning depts is refused with a reason rather
+    // than silently averaging two teams together.
+    const __sq = subqPickerScope_($('ir-agent-list'));
+    if (__sq.mixed) {
+      irSetFormError('Pick agents from one department at a time — the team '
+        + 'average is per-department, so a mixed selection would compare '
+        + 'agents against the wrong team.');
+      return;
+    }
+    const reportDept = __sq.dept || dept;
 
     const prior = irResolvePriorRange_(from, to);
     if (prior && prior.error) { irSetFormError(prior.error); return; }
@@ -8372,7 +8684,7 @@
     const originalLabel = btn.textContent;
     btn.innerHTML = DS_EQ_HTML_ + 'Loading…';
 
-    const req = { department: dept, from: from, to: to, agents: agents };
+    const req = { department: reportDept, from: from, to: to, agents: agents };
     // R8-D3: prevPeriod sends the MODE and lets the server resolve the
     // window via the canonical computePriorWindow_ (INV-28) -- the client
     // resolver stays for the form HINT only (its math drifted once, R8-5).
@@ -8604,7 +8916,7 @@
       $('ir-edit-compare-mode').value =
         (curMode === 'prevPeriod' || curMode === 'yoy') ? curMode : 'none';
     }
-    list.innerHTML = irBuildAgentListHtml_(irLastRoster.agents || [], irLastRoster.activeAgents, irLastRoster.activeFloaters);
+    list.innerHTML = irBuildAgentListHtml_(irLastRoster.agents || [], irLastRoster.activeAgents, irLastRoster.activeFloaters, irLastRoster.subQueueGroups || []);
     // Pre-check the currently-reported agents.
     const current = (irLastData && irLastData.meta && irLastData.meta.agents) || [];
     irApplyCheckedAgents_(list, current);
@@ -13118,7 +13430,7 @@
     // Insights is roster-only (see computeInsights_ visibleAgents) -- don't
     // offer the queue-only floater group in the picker, so it can't be picked
     // into a report that would then drop it. IR/PR/CR still surface floaters.
-    list.innerHTML = irBuildAgentListHtml_(insLastRoster.agents, insLastRoster.activeAgents, []);
+    list.innerHTML = irBuildAgentListHtml_(insLastRoster.agents, insLastRoster.activeAgents, [], insLastRoster.subQueueGroups || []);
     list.style.display = '';
     if (insListChangeHandler_) list.removeEventListener('change', insListChangeHandler_);
     insListChangeHandler_ = function () { insUpdateGenerate(); insSavePrefs_(); };
@@ -13198,7 +13510,7 @@
     if ($('ins-edit-compare-mode')) $('ins-edit-compare-mode').value = 'keep';
     if ($('ins-edit-prior-row')) $('ins-edit-prior-row').style.display = 'none';   // re-shown on Compare=custom
     // Roster-only list (no floater group), same as the main Insights picker.
-    list.innerHTML = irBuildAgentListHtml_(insLastRoster.agents || [], insLastRoster.activeAgents, []);
+    list.innerHTML = irBuildAgentListHtml_(insLastRoster.agents || [], insLastRoster.activeAgents, [], insLastRoster.subQueueGroups || []);
     // Pre-check the REQUESTED selection -- an agent-free run pre-checks
     // nothing, so an untouched Apply preserves the whole-department run.
     irApplyCheckedAgents_(list, insLastRequestedAgents_ || []);
@@ -13363,9 +13675,21 @@
     // INV-28 auto-adjacent default); yoy/custom -> explicit dates.
     const prior = insResolvePriorRange_(from, to);
     if (prior && prior.error) { insSetFormError(prior.error); return; }
+    // Sub-queue Phase 2: same one-dept-per-run rule as the Individual Report.
+    // Insights' team rollup + per-agent-vs-team comparisons are all per-dept
+    // (INV-25/27), so a selection spanning depts is refused, and a selection
+    // confined to a sub-queue group runs against THAT department.
+    const __sq = subqPickerScope_($('ins-agent-list'));
+    if (__sq.mixed) {
+      insSetFormError('Pick agents from one department at a time — the team '
+        + 'rollup is per-department, so a mixed selection would compare agents '
+        + 'against the wrong team.');
+      return;
+    }
+    const reportDept = __sq.dept || dept;
     insSetFormError('');
     insLastRequestedAgents_ = agents.slice();   // edit popover reads the REQUESTED form
-    const req = { department: dept, from: from, to: to, agents: agents };
+    const req = { department: reportDept, from: from, to: to, agents: agents };
     if (prior) { req.priorFrom = prior.from; req.priorTo = prior.to; }
     const gen = $('ins-generate-btn'); const prev = gen.textContent;
     gen.disabled = true; gen.innerHTML = DS_EQ_HTML_ + 'Generating…';

@@ -202,7 +202,7 @@ Per-row aggregates above; the totals row uses the same methods:
 
 - Sum columns sum the rows in the table.
 - Mean columns (ATT, Avg Abd Wait, CSR Avg Abd Wait) take a simple mean
-  of the NONZERO per-agent rows displayed (`avgNonzero_`; introduced in the summary cache's v11 bump — current prefix summary:v15).
+  of the NONZERO per-agent rows displayed (`avgNonzero_`; introduced in the summary cache's v11 bump — current prefix summary:v16).
   Idle roster agents — whose value is 0 for the range — are excluded
   from both numerator and denominator, so they don't drag the dept
   averages (owner decision, F-29 follow-up). This is the same skip-zero
@@ -480,7 +480,7 @@ table mirrors it; if the two ever diverge, INV-30 wins.
 
 | Source file | Cache prefix | Current version |
 |---|---|---|
-| `Data.gs` (main table) | `summary:vN:` | `v15` |
+| `Data.gs` (main table) | `summary:vN:` | `v16` |
 | `Data.gs` (latest-date snap for default From/To) | `latestDate:vN:` | `v1` |
 | `Data.gs` (multi-source latest dates for freshness pill) | `latestDates:vN:` | `v2` |
 | `IndividualReport.gs` | `individual:vN:` | `v11` |
@@ -490,10 +490,10 @@ table mirrors it; if the two ever diverge, INV-30 wins.
 | `MissedCallsReport.gs` | `missed:vN:` | `v17` |
 | `CompanyOverview.gs` | `companyOverview:vN` | `v20` |
 | `QCDReport.gs` | `qcd:vN:` | RETIRED (QCD modal deleted; `qcdAll:` remains) |
-| `InboundReport.gs` | `inbound:vN:` | `v6` |
+| `InboundReport.gs` | `inbound:vN:` | `v7` |
 | `InsightsReport.gs` | `insights:vN:` | `v19` |
 | `QCDReport.gs` (all-departments daily report) | `qcdAll:vN:` | `v5` |
-| `InboundReport.gs` (weekday×hour abandon heatmap) | `inboundHeatmap:vN:` | `v1` |
+| `InboundReport.gs` (weekday×hour abandon heatmap) | `inboundHeatmap:vN:` | `v2` |
 | `DirectCallReport.gs` | `directCall:vN:` | `v2` |
 
 `Alerts.gs` holds no cached compute — preview / send always re-reads

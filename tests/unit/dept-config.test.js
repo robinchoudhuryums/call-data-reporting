@@ -328,6 +328,47 @@ test('getFinalDeptLabels_ ignores an INACTIVE row', function () {
     'pausing a row must drop its labels, like every other Dept Config field');
 });
 
+// getAllFinalDeptLabels_ is the UNION across every dept, and it exists for one
+// reason: inboundDeptPredicate_'s entry-queue fallback must distinguish "this
+// label belongs to ANOTHER dept" (no fallback -- that dept counts it) from
+// "this label belongs to NO dept" (fall back to the entry queue). Gating on a
+// per-dept list instead would double-count every cross-dept on-hold call.
+
+test('getAllFinalDeptLabels_ unions every dept name AND every mapped label', function () {
+  h.ctx.getAllDepartments_ = function () { return ['CSR', 'Sales', 'Field Ops']; };
+  setConfig([
+    row({ dept: 'CSR', finalDeptLabels: 'Customer Success, Patient Care' }),
+    row({ dept: 'Sales', finalDeptLabels: 'Inside Sales' }),
+  ]);
+  const all = h.call('getAllFinalDeptLabels_');
+  ['csr', 'sales', 'field ops', 'customer success', 'patient care', 'inside sales']
+    .forEach(function (l) {
+      assert.ok(all.indexOf(l) !== -1, 'union must contain ' + l);
+    });
+  assert.equal(all.length, new Set(all).size, 'the union is de-duped');
+  assert.ok(all.indexOf('') === -1,
+    "the empty string must never enter the union -- coalesce(final_dept,'') "
+    + 'would then be IN it and a label-less call would lose its fallback');
+});
+
+test('getAllFinalDeptLabels_ excludes an INACTIVE row\'s labels', function () {
+  h.ctx.getAllDepartments_ = function () { return ['CSR']; };
+  setConfig([row({ dept: 'CSR', finalDeptLabels: 'Customer Success', active: false })]);
+  const all = h.call('getAllFinalDeptLabels_');
+  assert.ok(all.indexOf('customer success') === -1,
+    'a paused row contributes nothing, so its label becomes unmapped and falls '
+    + 'back to the entry queue -- consistent with getFinalDeptLabels_');
+  assert.ok(all.indexOf('csr') !== -1, 'the dept name itself is always a label');
+});
+
+test('getAllFinalDeptLabels_ fails OPEN on a config-read error', function () {
+  h.ctx.getAllDepartments_ = function () { throw new Error('sheet unavailable'); };
+  deepEqual(h.call('getAllFinalDeptLabels_'), [],
+    'an empty union makes every label look unmapped, sending on-hold calls to '
+    + 'the entry-queue fallback. That degrades attribution rather than losing '
+    + 'calls, and it can never double-count');
+});
+
 test('getFinalDeptLabels_ tolerates a pre-existing 10-column row', function () {
   // Prod sheets written before this column existed have no 11th cell.
   const short = row({ dept: 'CSR', inboundAliases: 'A_Q_CSR' });

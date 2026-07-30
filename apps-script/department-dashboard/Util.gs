@@ -412,6 +412,46 @@ function buildTeamInsights_(curr, prev, opts) {
  * Cache key `individual_active:v2` -- v2 bumped from v1 because the
  * return shape changed from `string[]` to `{agents, floaters}`.
  */
+/**
+ * Sub-queue Phase 2: the picker groups for a parent dept's SUB-QUEUES.
+ *
+ * Returns `[{ dept, agents, floaters }]`, one entry per one-level sub-queue with
+ * any activity in range, empty for a dept with no children. Each entry is
+ * computed by calling `computeActiveAgentsInRange_` with THAT dept's own roster,
+ * so a sub-queue's active set is identical to what its own report would show.
+ *
+ * Deliberately a SEPARATE helper rather than a new mode on
+ * `computeActiveAgentsInRange_`: that function's `{agents, floaters}` shape is
+ * pinned (`individual_active:v2`) and consumed by both report pickers, so
+ * leaving it untouched means no cache bump and no risk to the INV-53 floater
+ * gate inside it. Each per-child call still uses (and warms) its own
+ * `individual_active` cache entry.
+ *
+ * Best-effort: a child whose roster or scan fails is omitted rather than
+ * throwing, because a picker that fails to open is worse than one missing a
+ * group the manager may not need.
+ */
+function computeSubQueuePickerGroups_(dept, from, to) {
+  if (typeof subQueueChildMap_ !== 'function') return [];
+  let children;
+  try { children = subQueueChildMap_()[dept] || []; }
+  catch (e) { return []; }
+  const out = [];
+  children.forEach(function (child) {
+    try {
+      const roster = getRosterForDepartment_(child);
+      if (!roster || !roster.names.length) return;
+      const active = computeActiveAgentsInRange_(child, from, to, roster);
+      if (!active.agents.length && !active.floaters.length) return;
+      out.push({ dept: child, agents: active.agents, floaters: active.floaters });
+    } catch (e) {
+      Logger.log('computeSubQueuePickerGroups_: skipping ' + child + ' ('
+        + (e && e.message ? e.message : e) + ')');
+    }
+  });
+  return out;
+}
+
 function computeActiveAgentsInRange_(dept, from, to, roster) {
   // CORE-3: like latestDate:v1, the key carries the ACTIVE read source so a
   // DQE_READ_SOURCE flip can't serve a picker subset computed from the

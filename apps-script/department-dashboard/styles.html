@@ -6757,3 +6757,45 @@
     outline: 2px solid var(--accent); outline-offset: 2px;
   }
 </style>
+
+/* ==== Sub-queue scope bar + grouped agent table (Phase 1) ================= */
+/* A sub-queue is a full department, not a floater -- the grouped rows and the
+   per-dept subtotal exist so a combined view stays reconcilable against each
+   department's own view. Deliberately quieter than the totals row: a subtotal
+   is a reading aid, the grand total is the answer. */
+.subq-bar { margin: 0 0 10px; }
+.subq-bar-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; }
+.subq-seg { flex: 0 0 auto; }
+.subq-note { margin: 0; flex: 1 1 260px; min-width: 0; }
+tr.subq-group-head td {
+  background: var(--accent-soft);
+  font-weight: 600;
+  letter-spacing: .01em;
+  padding-top: 10px;
+  padding-bottom: 6px;
+  border-top: 1px solid var(--line);
+}
+tr.subq-group-head .subq-tag {
+  font-size: .78em; font-weight: 500; text-transform: uppercase;
+  letter-spacing: .06em; opacity: .75; margin-left: 4px;
+}
+tr.subq-group-head .subq-count { font-size: .82em; font-weight: 500; opacity: .7; }
+tr.subq-subtotal td {
+  font-variant-numeric: tabular-nums;
+  border-top: 1px solid var(--line);
+  background: color-mix(in oklab, var(--paper) 92%, var(--ink));
+}
+tr.subq-subtotal td:first-child { font-weight: 600; opacity: .85; }
+@media (max-width: 700px) {
+  .subq-bar-row { flex-direction: column; align-items: stretch; }
+}
+
+/* Sub-queue picker group (Phase 2). A sub-queue is a DEPARTMENT, so its group
+   is NOT muted like the inactive/floater groups -- those are de-emphasised
+   because you rarely want them; a sub-queue is a first-class choice. */
+.ir-agent-details-subq > summary { font-weight: 600; }
+.ir-agent-details-subq .subq-tag {
+  font-size: .78em; font-weight: 500; text-transform: uppercase;
+  letter-spacing: .06em; opacity: .75;
+}
+.subq-picker-note { margin: 2px 0 6px; padding-left: 2px; }

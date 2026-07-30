@@ -240,7 +240,7 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   in `renderDeptTeamStrip_` directly above it, whose answer-rate tile is now
   labeled "% Answered (rings)" to match the Insights rollup; R10-5 added an
   answered-weighted "Avg answer" tile for QCD-mapped depts (qcd.range.avgAnswer)
-  and a CSR-only "Transfer %" tile from the `csrTransfer` block (the R10-5 v14 bump); R11-C1 added prior-window delta chips to both via qcd.rangePrior + csrTransfer.prior -- summary:v15.) Insights carries a header **"My Department ->"** button and
+  and a CSR-only "Transfer %" tile from the `csrTransfer` block (the R10-5 v14 bump); R11-C1 added prior-window delta chips to both via qcd.rangePrior + csrTransfer.prior -- summary:v16.) Insights carries a header **"My Department ->"** button and
   a Queue-health **"See missed calls ->"** drill (both -> `handoffToMyDept_`,
   wired in `initInsightsReport`). **R9-3 shared date window (client-only, no
   server/cache change; SUPERSEDED the Batch-E "Use these dates" offer
@@ -790,3 +790,69 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   `CHART_TOOLTIPS_OFF_`) turns the card off across every chart by
   filtering out all items -- live on the next hover, no per-instance
   update, and the hovered point still highlights.
+
+## Sub-queue scope switcher (My Department, Phase 1)
+
+`#dept-subq-bar` sits above `.agents-table-wrap` and is rendered by
+`subqRenderScopeBar_(state)` on every table paint. It shows in EVERY scope --
+including `own`, where the note reads "<subs> is a sub-queue of <dept> — not
+included in these figures". That sentence is the point of the feature: before
+it, the exclusion was completely invisible to a parent-dept manager.
+
+- Scope is persisted per dept in `cdr.dept.subscope` (a `{dept: scope}` JSON
+  blob) and sent as `req.subScope`. It is **omitted when unset**, so the SERVER
+  owns the default (combined for a parent, own otherwise) -- the client must not
+  hardcode the default in a second place, or the two will drift.
+- A CHILD dept renders the upward pointer only, no switcher. One level, matching
+  the server.
+- `subqRowGroups_` returns grouped tbody HTML, or **null** when there is nothing
+  to group -- a single-dept payload then takes the unchanged flat path, which is
+  what keeps 11 of 14 depts byte-identical.
+- Group order follows `meta.deptsShown` (parent first). Sorting stays GLOBAL and
+  applies INSIDE each group, so a manager's chosen sort still means what it did.
+- `subqSubtotalRowHtml_` renders a dept's own subtotal from `deptGroups`; the
+  Source column is blanked (no aggregate). Styled QUIETER than the totals row on
+  purpose: a subtotal is a reading aid, the grand total is the answer.
+
+## Sub-queue picker groups (IR + Insights, Phase 2)
+
+`irBuildAgentListHtml_(agents, activeAgents, activeFloaters, subQueueGroups)` --
+the shared builder both report pickers use -- renders one collapsed
+`<details class="ir-agent-details-subq" data-subq-dept="...">` per sub-queue,
+after the Active / No-activity / Floaters groups.
+
+- The group is **not** muted. Inactive and floater groups are de-emphasised
+  because you rarely want them; a sub-queue is a department and a first-class
+  choice.
+- `subqPickerScope_(listEl)` reads the checked boxes and returns
+  `{dept, mixed}`. `dept` non-null means the whole selection sits in one
+  sub-queue group, so the run targets that department. `mixed:true` means the
+  selection spans departments and the caller must REFUSE it -- the team
+  average/rollup is per-dept (INV-25/27), so a mixed run would compare agents
+  against the wrong team. Both `runInsReport` and the IR generate handler do
+  this before building their request.
+- The group carries an inline note saying the run will use that department's own
+  team average, so the behavior is visible before the click rather than
+  surprising afterwards.
+
+## Combined-view CSV + the missed section's scope (Phase 1 follow-up / Phase 3)
+
+`exportTableCsv_` gains a leading **Department** column only when
+`meta.deptsShown.length > 1` and `state.deptGroups` exists — so a single-dept
+export is byte-identical to before. Rows are emitted per department followed by
+that department's own subtotal, then a grand total labelled `All shown`.
+
+**No group-header pseudo-rows.** The on-screen table uses them because a human
+reads top-to-bottom; a spreadsheet reader wants a Department COLUMN it can pivot
+and filter on, and banner rows break both. The two surfaces differ on purpose.
+
+The download filename gains a `_subs` / `_all` tag so exporting two scopes of the
+same dept and range doesn't silently overwrite.
+
+The **missed section** follows the switcher only for single-dept scopes
+(`subqMissedDept_`). For `all` it stays on the parent, because the queue-only
+abandoned section already includes the parent's sub-queue queues via
+`queuesForDept_` — merging a child's report in would double-count every queue
+abandon and every abandoned-ring chart bucket. `subqMissedScopeNote_` renders one
+line under the section title saying so, which is the difference between a
+defensible scope and a confusing one.

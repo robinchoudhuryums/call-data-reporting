@@ -67,7 +67,7 @@
 // v5 (R5): abandon_stage gains 'direct' (kpis.abandonedDirect; old rows heal
 // on re-import), byDialIn rows carry display labels (DIAL_IN_LABELS map >
 // derived dominant first_agent > raw number; raw kept in `number`).
-const INBOUND_CACHE_KEY_PREFIX = 'inbound:v6';
+const INBOUND_CACHE_KEY_PREFIX = 'inbound:v7';
 const INBOUND_TOP_N = 50;
 // Cap the requested window so an over-wide range can't trigger an
 // unbounded Neon aggregation (mirrors CallerLookup's range guard). A
@@ -195,9 +195,37 @@ function inboundDeptPredicate_(dept, deptQueues) {
   const labelList = labels.length
     ? labels.map(inboundSqlLit_).join(',')
     : inboundSqlLit_(String(dept).trim().toLowerCase());
+  // An on-hold-answered call whose label is in NO dept's list attributed to NO
+  // DEPT AT ALL: the two arms are mutually exclusive on `isOnHoldAnswered`, so
+  // the entry-queue arm was deliberately skipped for those rows and an unmapped
+  // label made the call vanish from every dept's report. It now falls back to
+  // the ENTRY QUEUE -- where the call would have counted had it never been
+  // answered. One call still lands in exactly ONE dept: either a mapped label
+  // claims it, or its entry queue does. The union (not this dept's list) is what
+  // makes that true -- gating the fallback on "not MY label" would count a call
+  // in its own dept AND in the entry queue's dept.
+  //
+  // This is also what makes an AMBIGUOUS label safe to leave unmapped, which is
+  // the only correct handling for one. `Field Ops` and `Field Ops Power` carry
+  // both raw labels ("Field Operations (Market Activity)" / "(Markets)")
+  // interchangeably, so no label->dept entry can be right for either: mapping a
+  // shared label to BOTH double-counts the call, mapping it to ONE silently
+  // steals the other's. Leaving it unmapped is now correct rather than
+  // data-losing, because those two depts have no crossover agents -- a call that
+  // entered the Field Ops queue was answered by a Field Ops agent, so the entry
+  // queue attributes it correctly without the label being consulted at all.
+  const allLabels = (typeof getAllFinalDeptLabels_ === 'function')
+    ? getAllFinalDeptLabels_()
+    : [];
+  // NULL/blank final_dept is NOT IN any list (the accessors never emit ''), so a
+  // label-less on-hold call takes the fallback too.
+  const unmappedLabel = allLabels.length
+    ? ("lower(trim(coalesce(c.final_dept,''))) NOT IN ("
+       + allLabels.map(inboundSqlLit_).join(',') + ')')
+    : 'true';
   return ' AND ((' + isOnHoldAnswered
        + ' AND lower(trim(c.final_dept)) IN (' + labelList + '))'
-       + ' OR (NOT ' + isOnHoldAnswered
+       + ' OR ((NOT ' + isOnHoldAnswered + ' OR ' + unmappedLabel + ')'
        + ' AND c.entry_queue IN (' + queueList + ')))';
 }
 
@@ -1268,7 +1296,7 @@ function runInboundQcdParityCheck() {
 // spot-check shows the columns are off, this single constant is the knob.
 // Pre-extension rows (null/empty call_start) carry no time-of-day and are
 // excluded (documented gap -- they predate the journey extension).
-const INBOUND_HEATMAP_CACHE_KEY_PREFIX = 'inboundHeatmap:v1';
+const INBOUND_HEATMAP_CACHE_KEY_PREFIX = 'inboundHeatmap:v2';
 const INBOUND_HEATMAP_CST_SHIFT_HOURS = 2;    // PST(stored) -> CST(dashboard)
 const INBOUND_HEATMAP_WINDOW_START_HOUR = 8;  // 8 AM CST (matches INV-18)
 const INBOUND_HEATMAP_WINDOW_END_HOUR   = 17; // 5 PM CST (exclusive)

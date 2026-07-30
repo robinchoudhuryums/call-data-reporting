@@ -120,7 +120,8 @@ bash scripts/check-duplicated-files.sh
 # answer-targets (the R12-25 tunable display-standards parser + save
 # canonicalizer), access-control-editor, neon-coverage (the R7 sheet-vs-Neon
 # reconciliation's pure pieces), cache-version-sync (doc↔code cache-pin
-# drift), claude-md-split (the F8 index↔file guard: an invariant / scenario /
+# drift), subqueue-access (Phase 0 access widening + the Phase 1 merge layer +
+# the Phase 2 picker groups), claude-md-split (the F8 index↔file guard: an invariant / scenario /
 # operator item that exists in docs/ but not in CLAUDE.md's index -- or vice
 # versa -- fails the build, plus a size cap on CLAUDE.md itself).
 # See tests/README.md for design + how to add tests. The neonWrite JDBC
@@ -169,9 +170,13 @@ npm run ci:ui                # gen payloads -> build admin+manager -> assert
 # tests/unit/ui-harness-vendor.test.js). With playwright absent it SKIPS
 # with a message and exits 0, so it is safe to run anywhere; chromium-path.js
 # globs the Playwright browser revision, so CHROMIUM_PATH is rarely needed.
-# Two ASSERTING drivers gate it -- drive-smoke.js (page/console errors,
-# unmocked RPCs, BLANK chart canvases, horizontal overflow, both roles) and
-# drive-f13.js (the S39 keyboard walk). The other drivers (drive.js /
+# THREE ASSERTING drivers gate it -- drive-smoke.js (page/console errors,
+# unmocked RPCs, BLANK chart canvases, horizontal overflow, both roles),
+# drive-f13.js (the S39 keyboard walk), and drive-subqueue.js (the sub-queue
+# scope switcher, the S35 parent-subtotal parity property, and the
+# combined-view CSV -- the ONLY automated coverage of any CSV writer in this
+# repo, asserted by stubbing URL.createObjectURL and reading the real Blob
+# bytes, S43). The other drivers (drive.js /
 # drive-insights.js / drive-phase3.js) emit screenshots + reports for a human
 # and are deliberately NOT in the gate. Runs in CI as the `ui-harness` job
 # (currently `continue-on-error: true` while the gate proves itself -- drop
@@ -390,7 +395,11 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `getDeptQcdQueues_` / `getOverviewParentMap_` / `getTeamAvgExcludes_`
   / `getDeptQueueExtsOverride_` (DeptConfig.gs -- plus
   `getInboundQueueAliases_` and `getFinalDeptLabels_`, the two
-  raw-upstream-name bridges that have no constant behind them) so a sheet override
+  raw-upstream-name bridges that have no constant behind them, plus
+  `getAllFinalDeptLabels_`, the UNION of every dept's final-dept labels
+  that gates the on-hold arm's entry-queue fallback -- it must keep
+  failing OPEN, since an empty union degrades attribution to the entry
+  queue while a partial one would double-count) so a sheet override
   takes effect; never index the frozen constant directly in new code.
   The accessors fall through to the constant when no Active sheet row
   exists, so behavior is unchanged on installs that haven't re-run
@@ -720,7 +729,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   queue looks like. Scoped surfaces: `compareInboundVsQcdAbandons_`,
   the whole `computeInboundReport_` payload (KPIs + all five breakdowns + daily,
   via one `inboundWindowClause_(true)` appended to the shared `dr`/`priorDr` --
-  `inbound:v6`), and `getInboundInsurerDaily` (so the drill reconciles with the
+  `inbound:v7`), and `getInboundInsurerDaily` (so the drill reconciles with the
   byInsurer row it hangs off). Two deliberate NON-scopings: `coverageStart`
   (answers "when did capture begin", not a dept metric) and **the abandon
   HEATMAP, which is already bounded by its own 8 AM-5 PM CST band -- the INV-18
@@ -738,8 +747,23 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   (146 in a 2-week window). `inboundDeptPredicate_`'s on-hold arm now matches
   `lower(trim(final_dept))` against `getFinalDeptLabels_(dept)` -- the Dept
   Config **`Final Dept Labels`** column (INV-54, col 11) -- which ALWAYS
-  prepends the dept's own name, so an unmapped install is byte-equivalent to
-  the old predicate. **Adding a label is a Dept Config edit, no redeploy.**
+  prepends the dept's own name. **Adding a label is a Dept Config edit, no
+  redeploy.** **A label mapped to NO dept falls back to the ENTRY QUEUE
+  (`inbound:v7` / `inboundHeatmap:v2`)** -- the two arms are exclusive on the
+  on-hold flag, so before the fallback an unmapped label made the call attribute
+  to NOBODY (the entry-queue arm was skipped for it). The fallback gates on
+  `getAllFinalDeptLabels_()`, the UNION across every dept, NOT this dept's list:
+  a label mapped to dept A must not ALSO fall back to entry-queue dept B, or both
+  count the call. It fails OPEN (unreadable config ⇒ empty union ⇒ everything
+  falls back to the entry queue -- degraded attribution, never lost calls, never
+  double-counted). **This is what makes an AMBIGUOUS label safe to leave
+  unmapped, which is the only correct handling for one:** `Field Ops` and `Field
+  Ops Power` carry both `Field Operations (Market Activity)` and `Field
+  Operations (Markets)` INTERCHANGEABLY, so no label→dept entry is right for
+  either -- save validation already refuses a label claimed by another dept, and
+  mapping it to one would silently steal the other's calls. Those two depts have
+  no crossover agents, so the entry queue attributes their on-hold abandons
+  correctly with nothing mapped. Leave a shared label out of BOTH rows.
   Once released: managers see their own dept's slice; admins can also pick "All
   departments" (the only view that includes the "Abandoned in IVR"
   bucket -- IVR abandons never reached a queue so they're
@@ -801,7 +825,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   from, to})` aggregates abandon rate by `ISODOW × hour-slot` in ONE
   json_agg round-trip, reusing `inboundResolveRequest_` (so it inherits
   the inbound report's **admin-only vetting gate** + per-dept scoping) and
-  `inboundDeptPredicate_`. Cached `inboundHeatmap:v1`. Rendered by the
+  `inboundDeptPredicate_`. Cached `inboundHeatmap:v2`. Rendered by the
   SHARED client `renderAbandonHeatmap_` / `loadAbandonHeatmap_` as a
   CSS-grid heatmap (no Chart.js dep) in the **Inbound report**
   (`#inbound-heatmap`, always, since that report is admin-only), AND the **Insights report**
@@ -1129,6 +1153,21 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   (different emails, one row each). Pinned by
   `tests/unit/access-control-editor.test.js` +
   `escalations-hardening.test.js`.
+  **Multi-row rows vs. an `Overview Parent` edge -- pick by whether the two
+  depts are actually related (owner ruling 2026-07).** Both give a manager a
+  second dept's data, and they are NOT interchangeable. **Multiple Access
+  Control rows** confer per-dept data access and nothing else: the depts stay
+  independent top-level tiles, no sub-queue switcher, no combined view, no
+  rollup. **An `Overview Parent` cell** declares a genuine parent/child
+  sub-queue -- it nests the tile, turns on the combined view + per-dept
+  subtotals, folds the child's queues into the parent's QCD rollup
+  (`queuesForDept_`), AND confers access (INV-38). So for two INDEPENDENT
+  queues that merely share a manager, use the rows; reaching for the parent
+  map would misrepresent the relationship in every rollup. `Field Ops` /
+  `Field Ops Power` is exactly this case and is deliberately NOT in the parent
+  map -- the owner ruled they are separate queues whose managers should see
+  both. NB Alerts + Digests follow neither mechanism (their own per-dept
+  config rows), so shared-manager email needs a row per dept there too.
   **ALIAS EMAILS (Tier C).** The optional `EMAIL_ALIASES` Script Property
   (comma/newline-separated `alias@x = canonical@x` pairs, tolerant grammar
   like `DIAL_IN_LABELS`) lets several sign-in addresses resolve to ONE
@@ -1616,6 +1655,61 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `REPORT_CACHE_TTL_SECONDS` and are busted on EVERY write via
   `bustOrphanFixCache_()` / `dcBustCaches_()` -- admin-only surfaces, so the
   shared script cache is safe (no per-viewer personalization).
+- **Sub-queue scope switcher on My Department (Phase 1).** A parent dept
+  (Sales / CSR / Power) renders a three-way segmented control -- `<dept> only`
+  / `<subs> only` / `<dept> + <subs>` -- persisted per dept in
+  `cdr.dept.subscope` and **defaulting to COMBINED** (owner decision). Depts
+  with no sub-queues get no control and no behavior change. `subScope` is a
+  cache-key dimension (`summary:v16`). **Combined means grouped, never merged:**
+  rows carry `dept`, each dept gets a `subq-group-head` subheader and its OWN
+  subtotal row from `deptGroups`, and the grand total is labelled -- so the
+  familiar own-dept figure stays on screen and every number reconciles against
+  that dept's own view. Team averages / benchmark tints stay PER-DEPT (one
+  average across two teams with different call profiles is a worse number).
+  The relationship line renders in EVERY scope, including `own`, where it says
+  the sub-queue is excluded -- that exclusion was previously invisible. A CHILD
+  dept gets an upward pointer only, no switcher (the combined view belongs to
+  the parent, matching the server's one-level rule).
+  **Phase 2 (IR + Insights pickers):** both pickers gain one collapsed group per
+  sub-queue, from `getIndividualReportInit`'s new `subQueueGroups` field
+  (Insights delegates to the same init, so it inherits it). Built by
+  `computeSubQueuePickerGroups_` (Util.gs), which calls
+  `computeActiveAgentsInRange_` once per child with THAT child's roster -- a
+  deliberately SEPARATE helper so the pinned `{agents, floaters}` shape and its
+  INV-53 gate stay untouched and no `individual_active` bump is needed. The
+  group is NOT muted like the inactive/floater groups: a sub-queue is a
+  first-class choice, not something you rarely want. **One report run is ONE
+  department** -- `subqPickerScope_` reads the checked boxes and either runs
+  against the sub-queue dept (selection confined to one group) or REFUSES a
+  selection that spans depts with a reason, because the team average / rollup is
+  per-dept (INV-25/27) and averaging two teams with different call profiles is
+  the wrong number. Insights' report body is NOT scope-switched -- see the
+  follow-on note in `.cycle/blocks/61-*`.
+  **CSV (Phase 1 follow-up):** `exportTableCsv_` adds a leading **Department**
+  column ONLY when more than one dept is shown (a single-dept export stays
+  byte-identical), emits each dept's rows followed by that dept's OWN subtotal
+  from `deptGroups`, then a grand total labelled `All shown`. **No group-header
+  pseudo-rows** -- a spreadsheet reader wants a column it can pivot and filter
+  on, not banners that break sorting. The filename gains a `_subs` / `_all`
+  scope tag so two scopes don't overwrite each other. Every cell still routes
+  through `csvSafeCell_` (formula injection).
+  **Phase 3 (Missed + Escalations):** the missed section follows the switcher
+  ONLY when the scope resolves to a SINGLE dept (`subs` with one child runs on
+  that child, via `subqMissedDept_`). It deliberately does **NOT merge for
+  `all`** -- the queue-only abandoned section already covers a parent's
+  sub-queue queues (`queuesForDept_` rolls them up), so summing a child's report
+  into the parent's would double-count every queue abandon and every
+  abandoned-ring bucket in the hour-of-day chart, the same trap as the QCD
+  snapshot. `subqMissedScopeNote_` states what is and isn't included instead of
+  leaving the reader to infer it. **Escalations needed NO code change** --
+  `getEscalations` already scopes by `user.departments`, so Phase 0's widening
+  gave a parent manager their sub-queue's escalations automatically, and
+  `metaDept` already reports the joined list. Server side is
+  `combineSummaries_` calling `computeSummary_` once per dept: it leaves every
+  INV-02/04/05/23/53 + S35 + E5 rule inside that function untouched, and its
+  duration means are agent-count-WEIGHTED (never a mean of means). **`qcd` is
+  the PRIMARY dept's only** -- `queuesForDept_` already rolls sub-queue queues
+  into a parent's QCD snapshot, so merging it would double-count.
 - **Scope is locked to `roster` (Phase D → redesign cleanup →
   Phase 14/15 roster-only flip).** Pre-Phase-D the dashboard
   shipped a `roster | queue | both` segmented control with
@@ -1704,10 +1798,26 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   line) **or the dept-selector dropdown** -- the tile no longer navigates.
   **`refresh()` only writes the header title when `data-page === 'dept'`**
   so it can't clobber the Overview / Escalations / Insights titles.
-- **Overview-only sub-queue nesting.** `OVERVIEW_PARENT_OF` and
-  `OVERVIEW_HIDDEN_DEPTS` in CompanyOverview.gs shape the Overview
-  page only — dept dropdowns, Reports modals, and Alerts treat
-  every dept as independent. Adding a sub-queue means: (1) it
+- **Sub-queue nesting (NO LONGER Overview-only — see INV-38).**
+  `OVERVIEW_PARENT_OF` + the Dept Config `Overview Parent` override shape the
+  Overview tile grid AND, since sub-queue Phase 0, manager ACCESS:
+  `resolveUser_` expands a manager's assigned depts with their **one-level**
+  sub-queues, so a `Sales` manager reaches `PAP` without an Access Control row.
+  `user.departments` is the EFFECTIVE list (assigned ∪ children) that every gate
+  reads — `assertDeptAccess_`, `escAssertRowAccess_`, `getEscalations` scoping,
+  `personalizeOverview_`, and the client selector via `canPickDept_`;
+  `user.assignedDepartments` keeps the raw assignment and `user.department` (the
+  landing dept) is still the assigned one. **The read side re-validates
+  independently of `saveDeptConfig`** — the sheet is hand-editable, Neon is
+  backfillable, and the constant is code — dropping self-parent edges, edges
+  naming a non-existent dept, and any cyclic edge; it FAILS CLOSED (an
+  unreadable map returns the assigned list unchanged). A dept with no children
+  is untouched, which is 11 of 14 here. **Owner ruling (2026-07): the widening
+  is intended** — a parent dept's managers get their child queues' data,
+  agent-level included (Operator State #39), so don't treat the seeded
+  `PAP`/`Spanish`/`PAK` edges as an accidental grant. **Alerts and Digests are deliberately
+  NOT expanded** — they're per-dept subscriptions an admin configured on
+  purpose. `OVERVIEW_HIDDEN_DEPTS` is still Overview-only. Adding a sub-queue means: (1) it
   already appears as its own dept everywhere else (it's a real
   column in `DO NOT EDIT!`), and (2) add a row to
   `OVERVIEW_PARENT_OF` keyed on the column-header text
@@ -1887,7 +1997,11 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   each table's Total row renders from `totals` (never part of the sort).
   CSV export (`exportTableCsv_`) emits ALL columns regardless of the toggle
   and renders the bar as `answered / missed (rate%)` text + the Answer %
-  column via `pctCsv`.
+  column via `pctCsv`. **In a sub-queue COMBINED view it also prepends a
+  `Department` column and emits per-dept subtotals + an `All shown` grand
+  total** (single-dept exports are byte-identical to before) -- see the
+  sub-queue scope-switcher decision above, and S43. There is **no automated
+  coverage for any CSV writer**, so S43 is the only guard.
 - **Source column + roster-only totals (Phase D).** The agent table's
   Source column (between Agent and the Answered/Missed bar) renders one of
   three chips per row: **ROSTER** (accent-soft) for agents on this
@@ -2038,7 +2152,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
 > them, and clearing one just re-arms its engine. Don't file them as
 > undocumented operator state.
 
-The 38 numbered items now live in full in
+The 39 numbered items now live in full in
 [`docs/operator-state.md`](docs/operator-state.md) (F8 split). Cited elsewhere
 BY NUMBER ("Operator State #38"), so the numbering is stable — retire an item in
 place rather than renumbering. **Read the full item before acting on it**; the
@@ -2088,6 +2202,7 @@ items for anything it flags or doesn't cover.)
 36. `EMAIL_ALIASES` -- alias sign-in addresses resolving to one identity (+ the multi-dept manager note)
 37. `ANSWER_TARGETS` -- the admin-tunable answer-rate DISPLAY standards (seed 92%)
 38. Diagnosing "a queue's inbound calls are missing" -- the F1/F1b runbook, incl. the ANTI-pattern probe
+39. Sub-queue ACCESS widening -- who gains what on deploy, with no admin edit (INV-38)
 
 ## Cycle Workflow Config
 
@@ -2244,6 +2359,9 @@ S37 | Insights report end-to-end (comparison modes + CR-ported analytics) | Subs
 S38 | Inbound capture -> Inbound report -> insurer labeling end-to-end | Subsystem: Department Dashboard + CDR Import + CDR Reporting Tools
 S39 | Keyboard-only walk of the primary drill paths (F13) | Subsystem: Department Dashboard
 S40 | Escalation overdue count agrees with the flagged cards (F3) | Subsystem: Department Dashboard
+S41 | Theme × mode sweep (perceptual) | Subsystem: Department Dashboard
+S42 | Narrow-viewport trend band (perceptual) | Subsystem: Department Dashboard
+S43 | Combined-view CSV export | Subsystem: Department Dashboard
 
 ### Frozen Subsystems
 - DQE Report Legacy — manager-facing reports in `apps-script/dqe-report/`. Frozen because migration to Department Dashboard is complete: Individual Report, Performance Report, Compare Ranges, Missed Calls Report, and Low Answer Rate Alerts all live in the dashboard. Replacement: Department Dashboard. Awaiting decommission of the legacy spreadsheet. Unfreeze only if a bug is found in legacy that affects production decisions before the spreadsheet is retired.

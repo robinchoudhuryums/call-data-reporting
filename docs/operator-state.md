@@ -151,15 +151,30 @@ When something looks wrong, before assuming a code bug, check:
     org-chart strings (`Customer Success`, `Patient Intake - Supplies`, ...)
     that belong to this dept. It feeds ONE thing -- the answered-then-
     abandoned-ON-HOLD carve-out in the Inbound report's dept attribution,
-    which matches `inbound_calls.final_dept`. Leave it blank and those calls
-    attribute to NO dept and are invisible in every dept slice (that arm had
-    never fired in this install: 146 such calls in a 2-week window). The
-    dept's own name always matches without being listed, so this is purely
-    additive. A label may belong to only one dept -- save rejects a duplicate
-    claim. **Verify by re-running `runInboundQcdParityCheck`: the `onHold`
-    column should stop reading `0.0` on every dept.** Expect a few depts'
-    inbound figures to rise slightly the first time; that is the fix landing,
-    not a regression.
+    which matches `inbound_calls.final_dept`. The dept's own name always
+    matches without being listed. A label may belong to only one dept -- save
+    rejects a duplicate claim. **Verify by re-running
+    `runInboundQcdParityCheck`: the `onHold` column should stop reading `0.0`
+    on every dept.** Expect a few depts' inbound figures to rise slightly the
+    first time; that is the fix landing, not a regression.
+
+    **A label you leave OUT now falls back to the ENTRY QUEUE, so blank is a
+    legitimate answer (2026-07).** Originally an unmapped label meant the call
+    attributed to no dept at all; it now attributes by `entry_queue`, i.e.
+    wherever the call would have counted had nobody answered it. So the field
+    is for OVERRIDING entry-queue attribution when the answering agent's dept
+    differs from the queue the caller entered -- not a prerequisite for the
+    call being counted.
+
+    **The one case where you MUST leave it blank: a label that two depts share.**
+    `Field Ops` and `Field Ops Power` carry both `Field Operations (Market
+    Activity)` and `Field Operations (Markets)` interchangeably in Raw Data, so
+    no mapping is correct for either -- save will refuse to put a shared label
+    on both (one-call-one-dept), and putting it on one silently steals the
+    other's calls. Because these two queues have no crossover agents, leaving
+    both labels unmapped attributes their on-hold abandons by entry queue, which
+    is right. If the phone system is ever fixed to emit distinct labels per
+    queue, map them then.
 15. `TARGET_SS_ID` Script Property in CDR Import: must point at
     the CDR Report spreadsheet ID. Without it, `getTargetSsId_()`
     falls back to a hardcoded ID that may not match your install.
@@ -734,3 +749,52 @@ When something looks wrong, before assuming a code bug, check:
     needs ATTRIBUTION:** `UDC_A_Q_Main` / `UUC_A_Q_Main` belong to separate
     brands with no dashboard dept, so they now surface in the discovery panel
     as unattributed until an owner maps them to a dept (or one is created).
+
+39. **Sub-queue access widening (verify who gained what BEFORE deploying).**
+    Since sub-queue Phase 0 a manager assigned to a PARENT department can also
+    reach its one-level sub-queues, via the Overview parent map
+    (`OVERVIEW_PARENT_OF` + Dept Config `Overview Parent`). This is the first
+    time that map affects authorization rather than tile layout -- see INV-38.
+
+    **It takes effect on deploy with NO admin edit**, because the shipped
+    constant already contains `PAP -> Sales`, `PAP Q -> Sales`,
+    `Spanish -> CSR`, `PAK -> Power`. So the moment this deploys: every Sales
+    manager can see PAP, every CSR manager can see Spanish, every Power manager
+    can see PAK -- agent-level data included.
+
+    **CONFIRMED BY THE OWNER (2026-07), so this is no longer a question:**
+    *"Managers of parent dept should have access to child queue data (including
+    agents in that queue)."* All seeded pairings are intended, agent-level data
+    included. Do NOT re-open this on the next read; if a FUTURE pairing should
+    not confer access, that is a new decision about that pairing, not a
+    reconsideration of the rule.
+
+    The knob, if a specific pairing ever needs revoking: clear that dept's
+    `Overview Parent` cell in Dept Config. Note it will also stop nesting on the
+    Overview tile grid -- one cell, two meanings, which is the trade-off of
+    reusing the existing map. Splitting them would need a second map in code.
+
+    **When NOT to use this map: two INDEPENDENT queues that merely share a
+    manager.** The `Overview Parent` cell does four things at once -- nests the
+    Overview tile, turns on the My Department combined view + per-dept
+    subtotals, folds the child's queues into the parent's QCD rollup
+    (`queuesForDept_`), and confers access. If all you need is the last one, use
+    **multiple `Access Control` rows with the same email** instead (Tier C
+    multi-department manager -- the Access Control admin modal's dept picker is
+    a multi-select). That grants per-dept data access with no relationship
+    implied: both depts stay independent tiles, there is no switcher and no
+    combined view, and nothing is rolled up. Using the parent map here would
+    misrepresent the relationship in every rollup, not just the tile grid.
+
+    **`Field Ops Power` is settled (owner, 2026-07) and is deliberately NOT in
+    the parent map:** *"Field Ops Power isn't necessarily a child queue in the
+    same way as the other child queues and should still be represented as a
+    separate queue, but the same manager(s) should be able to see both Field Ops
+    and Field Ops Power data."* So the action for this pair is TWO ACCESS
+    CONTROL ROWS per shared manager, not a Dept Config edit. Do not "finish" the
+    parent map by adding it. (Related, and also settled: the two
+    `Field Operations (...)` labels stay UNMAPPED in Final Dept Labels -- see
+    item 14.)
+
+    Admins and all-departments managers are unaffected (they already hold every
+    dept). A department with no children is unaffected -- 11 of 14 here.
