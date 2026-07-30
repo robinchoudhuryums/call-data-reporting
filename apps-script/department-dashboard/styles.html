@@ -4321,13 +4321,22 @@
     box-shadow: 0 1px 0 var(--line);
   }
   /* R11-B10: the stuck header should hug the modal's top bar -- the scroll
-     body's 18px top padding read as an awkward gap strip above the pinned
-     row (rows scrolling through it). Move that breathing room onto the
-     first child instead, so the scrollport's top edge is flush. */
+     body's top padding read as an awkward gap strip above the pinned row
+     (rows scrolling through it). `top: 0` on a sticky th is measured from the
+     scrollport's PADDING box, so any padding-top on .modal-panel-body parks
+     the header that far down and lets content slide through the gap. Move
+     that breathing room onto the first child instead, so the scrollport's top
+     edge is flush.
+     The Daily Call Queue Report (#qcd-alldept-modal) was left out of the
+     original fix and showed the same gap -- its sticky header comes from the
+     shared `.agents thead th` rule, so ANY wide modal that scrolls an .agents
+     table needs to be in this list. */
   #inbound-modal .modal-panel-body,
-  #direct-call-modal .modal-panel-body { padding-top: 0; }
+  #direct-call-modal .modal-panel-body,
+  #qcd-alldept-modal .modal-panel-body { padding-top: 0; }
   #inbound-modal .modal-panel-body > :first-child,
-  #direct-call-modal .modal-panel-body > :first-child { margin-top: 14px; }
+  #direct-call-modal .modal-panel-body > :first-child,
+  #qcd-alldept-modal .modal-panel-body > :first-child { margin-top: 14px; }
   /* R11-C5: Direct report company view -- per-dept cards that expand into
      that dept's agent table. <details> disclosure like the missed agent
      cards; the summary carries the dept's aggregate headline stats. */

@@ -123,3 +123,73 @@ test('R8-D2: every UI_FLAG_SURFACES key has a CSS hide rule whose targets exist 
     });
   });
 });
+
+// ---- D3: sticky-header modals must flush their scrollport's top edge -------
+//
+// `top: 0` on a sticky <th> is measured from the SCROLLPORT'S PADDING BOX, so
+// any `padding-top` on `.modal-panel-body` parks the pinned header that far
+// down and lets rows slide through the gap above it. R11-B10 fixed this for
+// the Inbound and Direct modals by moving the breathing room onto the first
+// child; the Daily Call Queue Report was left out and showed the identical
+// awkward strip until an owner reported it.
+//
+// SCOPE, honestly: this pins the OVERRIDE's internal consistency and that the
+// condition making it necessary still holds. It cannot discover a NEW modal
+// that needs the treatment -- the qcd table is built by script.html at
+// runtime, so there is nothing static to match on. The real guard is a
+// rendered-UI check, which needs a harness fixture for the all-dept report
+// that does not exist yet.
+
+test('R8-D3: every modal in the flush-header rule appears in BOTH halves', function () {
+  const styles = read('apps-script/department-dashboard/styles.html');
+  const pad = /([^{}]*)\{\s*padding-top:\s*0;\s*\}/g;
+  let m, padSel = null, kidSel = null;
+  while ((m = pad.exec(styles)) !== null) {
+    if (/modal-panel-body/.test(m[1]) && !/:first-child/.test(m[1])) padSel = m[1];
+  }
+  const kid = /([^{}]*:first-child[^{}]*)\{\s*margin-top:\s*14px;\s*\}/g;
+  while ((m = kid.exec(styles)) !== null) {
+    if (/modal-panel-body/.test(m[1])) kidSel = m[1];
+  }
+  assert.ok(padSel, 'the padding-top:0 half of the flush-header rule is gone -- '
+    + 'every sticky-header modal would regain the gap strip');
+  assert.ok(kidSel, 'the first-child margin half is gone -- headers would be flush '
+    + 'but the modal would lose its breathing room');
+
+  // STRIP CSS COMMENTS FIRST. The captured "selector" text runs back to the
+  // previous `}`, so it swallows the explanatory comment above the rule -- and
+  // that comment names #qcd-alldept-modal in prose. Without this the guard
+  // read the id out of its own documentation and passed even with the selector
+  // deleted, which is exactly the bug it exists to catch. (Found by breaking
+  // it: removing the selector did not fail the test.)
+  // De-duped SET: the halves are compared for membership, and a greedy match
+  // can pick the same id up twice.
+  const ids = function (sel) {
+    const bare = String(sel).replace(/\/\*[\s\S]*?\*\//g, ' ');
+    return Array.from(new Set(bare.match(/#[\w-]+/g) || [])).sort();
+  };
+  assert.deepEqual(ids(padSel), ids(kidSel),
+    'a modal listed in one half but not the other gets either the gap back or '
+    + 'a body jammed against its title bar');
+  assert.ok(ids(padSel).indexOf('#qcd-alldept-modal') !== -1,
+    'the Daily Call Queue Report must stay in the list -- this is the modal an '
+    + 'owner reported the gap on');
+});
+
+test('R8-D3: the override is still NEEDED (wide modal bodies carry top padding)', function () {
+  const styles = read('apps-script/department-dashboard/styles.html');
+  const m = /\.modal-panel-wide \.modal-panel-body\s*\{\s*padding:\s*(\d+)px/.exec(styles);
+  assert.ok(m, '.modal-panel-wide .modal-panel-body padding rule not found -- update this pin');
+  assert.ok(Number(m[1]) > 0,
+    'wide modal bodies no longer have top padding, so the flush-header overrides '
+    + 'are dead code -- delete them rather than leaving a rule nothing needs');
+});
+
+test('R8-D3: the sticky header the rule exists for is still sticky at top: 0', function () {
+  const styles = read('apps-script/department-dashboard/styles.html');
+  const m = /\.agents thead th \{([\s\S]*?)\}/.exec(styles);
+  assert.ok(m, '.agents thead th rule not found -- update this pin');
+  assert.match(m[1], /position:\s*sticky/);
+  assert.match(m[1], /top:\s*0/,
+    'the whole flush-header treatment is downstream of this being top: 0');
+});
