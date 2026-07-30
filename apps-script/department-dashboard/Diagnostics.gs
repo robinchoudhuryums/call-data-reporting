@@ -516,6 +516,7 @@ function auditQueueSplitAttribution() {
 
   let agentRows = 0, splitRows = 0, blankRows = 0, badJson = 0;
   const perQueue = {};        // raw queue name -> { rung, answered, agents:{} }
+  const byAgent = {};         // agent -> queue -> { rung, answered }
   let rollupRung = 0, rollupAns = 0;
 
   rows.forEach(function (r) {
@@ -533,12 +534,14 @@ function auditQueueSplitAttribution() {
     try { split = JSON.parse(raw); } catch (e) { badJson++; return; }
     if (!split || typeof split !== 'object') { badJson++; return; }
     splitRows++;
+    const mine = byAgent[agent] = byAgent[agent] || {};
     Object.keys(split).forEach(function (q) {
       const e = split[q] || {};
       const b = perQueue[q] = perQueue[q] || { rung: 0, answered: 0, agents: {} };
-      b.rung     += Number(e.r) || 0;
-      b.answered += Number(e.a) || 0;
-      b.agents[agent] = true;
+      const r = Number(e.r) || 0, a = Number(e.a) || 0;
+      b.rung += r; b.answered += a; b.agents[agent] = true;
+      const m = mine[q] = mine[q] || { rung: 0, answered: 0 };
+      m.rung += r; m.answered += a;
     });
   });
 
@@ -598,19 +601,33 @@ function auditQueueSplitAttribution() {
 
   Logger.log('');
   Logger.log('--- Per-dept narrowed totals (what My Department will show) ---');
+  // ROSTER-SCOPED, which the first version of this audit was not. computeSummary_
+  // runs at scope='roster': a row is included only when the agent is on THAT
+  // dept's roster, and Phase 2 then narrows it to that dept's queues. Summing a
+  // queue's whole volume instead counts calls that a NON-roster agent handled on
+  // that queue -- which the dashboard excludes -- so the old line could not be
+  // reconciled against the screen, while being labelled as exactly that. The
+  // non-roster remainder is reported separately below, since it is real
+  // cross-dept help rather than an error.
   depts.forEach(function (d) {
-    let rung = 0, ans = 0;
-    const mine = [];
-    Object.keys(perQueue).forEach(function (q) {
-      if (!setByDept[d][q.trim().toLowerCase()]) return;
-      rung += perQueue[q].rung; ans += perQueue[q].answered; mine.push(q);
+    let rung = 0, ans = 0, offRung = 0, offAns = 0;
+    const mine = {};
+    Object.keys(byAgent).forEach(function (agent) {
+      const onRoster = (rosterOf[agent] || []).indexOf(d) !== -1;
+      Object.keys(byAgent[agent]).forEach(function (q) {
+        if (!setByDept[d][q.trim().toLowerCase()]) return;
+        const m = byAgent[agent][q];
+        mine[q] = true;
+        if (onRoster) { rung += m.rung; ans += m.answered; }
+        else { offRung += m.rung; offAns += m.answered; }
+      });
     });
     if (!listByDept[d].length) {
       Logger.log('  %s NO QUEUES MAPPED -- keeps its ALL-QUEUE rollup (fails open)',
         pad(d, 22));
       return;
     }
-    if (!mine.length) {
+    if (!Object.keys(mine).length) {
       // TWO very different causes, and the audit cannot tell them apart on its
       // own -- say so rather than asserting the scarier one. A queue with no
       // agent RINGS on this date is absent from the split entirely and is
@@ -624,8 +641,59 @@ function auditQueueSplitAttribution() {
         + 'Inbound queue aliases.', pad(d, 22), listByDept[d].join(', '));
       return;
     }
-    Logger.log('  %s rung=%s answered=%s  from [%s]',
-      pad(d, 22), pad(rung, 6), pad(ans, 6), mine.join(', '));
+    Logger.log('  %s rung=%s answered=%s  from [%s]%s',
+      pad(d, 22), pad(rung, 6), pad(ans, 6), Object.keys(mine).sort().join(', '),
+      (offRung || offAns)
+        ? ('   (+ rung=' + offRung + ' answered=' + offAns
+           + ' on these queues by NON-roster agents -- excluded from the dept '
+           + 'table by INV-53/scope=roster)')
+        : '');
+    // A mapped queue that was simply QUIET today is invisible above, because
+    // `mine` lists only queues that actually appear in the split. That hides
+    // the thing most worth checking: whether a queue you BELIEVE is mapped
+    // still is. A Dept Config row REPLACES the seed constant wholesale, so a
+    // row listing two queues silently drops a third the constant had --
+    // `Backup CSR` in CSR's seed list is exactly that shape. Naming the idle
+    // ones lets the mapping be verified on any date, not only a busy one.
+    const idle = listByDept[d].filter(function (q) {
+      return !mine[q] && !Object.keys(mine).some(function (k) {
+        return k.trim().toLowerCase() === String(q).trim().toLowerCase();
+      });
+    });
+    if (idle.length) {
+      Logger.log('  %s   mapped but NO calls today: [%s]', pad('', 22), idle.join(', '));
+    }
+  });
+
+  // Roll-call of every queue name any dept maps, so one that is mapped NOWHERE
+  // is visible on a quiet day too -- the orphan check above can only see queues
+  // that had calls, which means a mapping gap stays hidden until the day it
+  // costs you volume.
+  const mappedSomewhere = {};
+  depts.forEach(function (d) {
+    listByDept[d].forEach(function (q) {
+      const k = String(q).trim().toLowerCase();
+      (mappedSomewhere[k] = mappedSomewhere[k] || []).push(d);
+    });
+  });
+  const seenInSplit = {};
+  Object.keys(perQueue).forEach(function (q) { seenInSplit[q.trim().toLowerCase()] = true; });
+  const neverMapped = Object.keys(perQueue).filter(function (q) {
+    return !mappedSomewhere[q.trim().toLowerCase()];
+  });
+  Logger.log('');
+  Logger.log('--- Queue mapping roll-call ---');
+  Logger.log('Queue names mapped by some dept: %s   of those with calls today: %s',
+    Object.keys(mappedSomewhere).length,
+    Object.keys(mappedSomewhere).filter(function (k) { return seenInSplit[k]; }).length);
+  if (neverMapped.length) {
+    Logger.log('!! In the split but mapped by NO dept: %s', neverMapped.join(', '));
+  }
+  Object.keys(mappedSomewhere).sort().forEach(function (k) {
+    if (mappedSomewhere[k].length > 1) {
+      Logger.log('?? %s is mapped by %s -- its calls count for BOTH',
+        k, mappedSomewhere[k].join(' + '));
+    }
   });
 
   Logger.log('');
