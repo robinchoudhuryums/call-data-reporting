@@ -240,7 +240,7 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   in `renderDeptTeamStrip_` directly above it, whose answer-rate tile is now
   labeled "% Answered (rings)" to match the Insights rollup; R10-5 added an
   answered-weighted "Avg answer" tile for QCD-mapped depts (qcd.range.avgAnswer)
-  and a CSR-only "Transfer %" tile from the `csrTransfer` block (the R10-5 v14 bump); R11-C1 added prior-window delta chips to both via qcd.rangePrior + csrTransfer.prior -- summary:v16.) Insights carries a header **"My Department ->"** button and
+  and a CSR-only "Transfer %" tile from the `csrTransfer` block (the R10-5 v14 bump); R11-C1 added prior-window delta chips to both via qcd.rangePrior + csrTransfer.prior -- summary:v17.) Insights carries a header **"My Department ->"** button and
   a Queue-health **"See missed calls ->"** drill (both -> `handoffToMyDept_`,
   wired in `initInsightsReport`). **R9-3 shared date window (client-only, no
   server/cache change; SUPERSEDED the Batch-E "Use these dates" offer

@@ -7608,8 +7608,23 @@
       // tfoot row. Falls back to the plain "Total" label when there
       // are no floaters in the current view.
       const queueCount = state.totals.queueOnlyAgentCount || 0;
-      const totalLabel = queueCount > 0
-        ? 'Total (roster only · ' + queueCount + ' floater' + (queueCount === 1 ? '' : 's') + ' excluded)'
+      // Sub-queue Phase 0: in a combined view an agent on BOTH depts' rosters
+      // is one person shown in two groups, so the grand total counts them ONCE
+      // and is therefore LESS than the sum of the per-dept subtotals. That
+      // mismatch has to be stated: the whole point of per-dept subtotals is
+      // that a reader can add them up, and an unexplained shortfall reads as a
+      // bug. The subtotals stay un-deduped on purpose -- each is exactly what
+      // that dept's own view shows (S35).
+      const crossCount = state.totals.crossoverAgentCount || 0;
+      const parts = [];
+      if (queueCount > 0) {
+        parts.push(queueCount + ' floater' + (queueCount === 1 ? '' : 's') + ' excluded');
+      }
+      if (crossCount > 0) {
+        parts.push(crossCount + ' in both departments, counted once');
+      }
+      const totalLabel = parts.length
+        ? 'Total (roster only · ' + parts.join(' · ') + ')'
         : 'Total';
       tfoot.innerHTML = '<tr>' + COLUMNS.map(function (col, i) {
         if (i === 0) return '<td>' + totalLabel + '</td>';
@@ -7670,7 +7685,14 @@
       if (multiDept) out.push(csvEscape(deptLabel == null ? (row.dept || '') : deptLabel));
       COLUMNS.forEach(function (col, i) {
         if (isTotals && i === 0) { out.push(csvEscape(isTotals === 'sub'
-          ? (deptLabel || '') + ' subtotal' : 'Total (roster only)')); }
+          ? (deptLabel || '') + ' subtotal'
+          // Phase 0: say it here too. A spreadsheet reader is MORE likely than
+          // an on-screen one to add the subtotals up and find them larger than
+          // the grand total, and they have no tooltip to fall back on.
+          : ((state.totals && state.totals.crossoverAgentCount)
+             ? 'Total (roster only · ' + state.totals.crossoverAgentCount
+               + ' in both departments, counted once)'
+             : 'Total (roster only)'))); }
         // Source column has no aggregate meaning in the totals row.
         else if (col.type === 'chip' && col.key === 'source') out.push(isTotals ? '' : csvEscape(sourceChipCsv_(row)));
         else if (col.type === 'bar') out.push(csvEscape(barCsv(row)));

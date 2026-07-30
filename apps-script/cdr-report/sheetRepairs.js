@@ -823,6 +823,14 @@ function mergeDqeDuplicateRows_(dryRun) {
     sheet.getRange(w.row, 11, 1, 19).setNumberFormat('@');   // K-AC slots
     sheet.getRange(w.row, 30, 1, 3).setNumberFormat('@');    // AD/AE/AF
     sheet.getRange(w.row, 4, 1, 31).setValues([w.vals]);
+    // Sub-queue Phase 1: cols D..AH above were RECOMPUTED from the merged
+    // duplicates, but col AI (Queue Split) still holds the FIRST row's split
+    // -- now describing a smaller rollup than the row it sits on. Clear it
+    // rather than leave it stale: '' is the documented "never computed" state,
+    // so a reader falls back to the rollup and marks the date, which is
+    // correct. A merged row is rare and can be re-split by rebuilding the date
+    // while it is still inside the Call_Legs window.
+    if (sheet.getMaxColumns() >= 35) sheet.getRange(w.row, 35).setValue('');
   });
   SpreadsheetApp.flush();
   // Delete extras bottom-up so earlier deletions don't shift later row numbers.

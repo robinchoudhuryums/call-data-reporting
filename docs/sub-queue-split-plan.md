@@ -1,6 +1,6 @@
 # Per-queue split of DQE agent metrics — design plan
 
-**Status:** plan only. Nothing implemented. Owner decisions still open (§6).
+**Status:** Phases 0 and 1 IMPLEMENTED (see §6 for the phase table). Phases 2-4 open.
 **Reported:** 2026-07, after the sub-queue scope switcher shipped — "if I go to
 the Spanish-only view, those agents' numbers are for all of those agents' calls
 from both CSR and Spanish queues, instead of highlighting the respective part of
@@ -123,17 +123,20 @@ create a second source of truth for numbers DQE owns.
 
 Each phase ships independently and leaves the product correct.
 
-**Phase 1 — pipeline writes the breakdown. No reader changes.**
-Group `queueLegs` by `queueName` inside the existing per-agent loop and emit the
-new column; both INV-16 copies. Zero behavior change anywhere, so it can deploy
-immediately and starts accumulating splittable history the same day. Includes a
-`backfillDqeQueueSplit` for the surviving ~14-day window, run once right after
-deploy.
+**Phase 1 — pipeline writes the breakdown. No reader changes.** SHIPPED.
+`dqeQueueSplitForAgent_` groups the agent's window legs by `queueName` and emits
+col **AI** (`HISTORICAL_COLS.QUEUE_SPLIT`, 35) as JSON; both INV-16 copies, plus
+`queue_split` on `dqe_history` and every writer that touches it. Zero behavior
+change anywhere -- cols A..AH are pinned byte-identical -- so it deploys
+immediately and starts accumulating splittable history the same day. No separate
+backfill function: re-running the existing DQE build (force re-import) for a
+surviving date rewrites its rows with the split, which is the documented
+operator step.
 
 **Phase 2 — My Department consumes it.** `computeSummary_` takes the dept's
 queue set and, when the row has a breakdown, uses that dept's slice; otherwise
 the rollup (flagged). Fixes the reported bug, the duplicate row, and the
-double-counted grand total. `summary:v16→v17`.
+double-counted grand total. `summary:v18` (Phase 0 already took v17).
 
 **Phase 3 — Missed report.** Split slots + AD/AE/AF so per-agent timelines and
 the hour-of-day chart are queue-scoped. `missed:v17→v18`.

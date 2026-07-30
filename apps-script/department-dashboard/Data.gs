@@ -296,6 +296,16 @@ function combineSummaries_(primary, parts) {
   const grand = { totalUnique: 0, totalRung: 0, totalMissed: 0,
                   totalAnswered: 0, tttSeconds: 0, rosterAgentCount: 0,
                   queueOnlyAgentCount: 0 };
+  // Sub-queue Phase 0 (the CROSSOVER-AGENT double count). A DQE row is keyed
+  // on (date, agent) with NO queue dimension, so an agent on two depts'
+  // rosters -- CSR + Spanish here -- is returned by BOTH depts'
+  // computeSummary_ calls carrying the SAME whole-day figures. Summing the
+  // part totals therefore counted their calls TWICE in the grand total, and
+  // they appear as two rows.
+  //
+  // This is a MITIGATION, not the fix: each dept still shows the agent's
+  // all-queue numbers. Phase 2 removes the duplication at its source by giving
+  // each dept only its own queues' slice. See docs/sub-queue-split-plan.md.
   parts.forEach(function (p) {
     (p.rows || []).forEach(function (r) { rows.push(r); });
     const t = p.totals || {};
@@ -305,10 +315,55 @@ function combineSummaries_(primary, parts) {
       grand[k] += Number(t[k]) || 0;
     });
   });
+  // Then SUBTRACT each repeat appearance. Deliberately a correction pass over
+  // the untouched accumulation above rather than a re-derivation from `rows`:
+  // when no agent appears twice this loop subtracts nothing and the grand
+  // total is byte-identical to the pre-Phase-0 value BY CONSTRUCTION, which is
+  // the strongest form the "additive" guarantee can take. Re-summing from rows
+  // would also couple the totals to `matchedViaRoster` being set on every row
+  // -- a property of computeSummary_ output this function should not assume.
+  //
+  // Per-dept subtotals are deliberately NOT deduped: each `deptGroups` entry
+  // stays exactly what that dept's own view shows, which is the S35
+  // transparency contract. The consequence is that the grand total can now be
+  // LESS than the sum of the subtotals, so `crossoverAgentCount` ships with it
+  // and the client must say so -- an unexplained mismatch would read as a bug.
+  const seenRoster = {};
+  const seenQueueOnly = {};
+  let crossoverAgentCount = 0;
+  parts.forEach(function (p) {
+    (p.rows || []).forEach(function (r) {
+      const name = String(r.agent || '');
+      if (!name) return;
+      if (r.matchedViaRoster) {
+        if (!seenRoster[name]) { seenRoster[name] = true; return; }
+        crossoverAgentCount++;
+        grand.totalUnique   -= Number(r.totalUnique) || 0;
+        grand.totalRung     -= Number(r.totalRung) || 0;
+        grand.totalMissed   -= Number(r.totalMissed) || 0;
+        grand.totalAnswered -= Number(r.totalAnswered) || 0;
+        grand.tttSeconds    -= Number(r.tttSeconds) || 0;
+        grand.rosterAgentCount -= 1;
+      } else if (r.matchedViaQueue) {
+        if (!seenQueueOnly[name]) { seenQueueOnly[name] = true; return; }
+        grand.queueOnlyAgentCount -= 1;
+      }
+    });
+  });
+  grand.crossoverAgentCount = crossoverAgentCount;
   // The three DURATION means are per-agent averages, so the grand total is the
   // agent-count-weighted mean of each dept's mean -- NOT a mean of means, which
   // would over-weight a small dept. Depts contributing no non-zero agents drop
   // out of both sides, matching avgNonzero_'s own semantics (v11 / F-29).
+  //
+  // Phase 0 deliberately leaves this formula ALONE, crossover agents included.
+  // A doubled SUM is arithmetically wrong and had to be fixed; a mean that
+  // weights one agent in two depts stays in range. Recomputing it from the
+  // deduped rows would move the number for EVERY combined view -- crossover or
+  // not -- because a weighted mean of per-dept `avgNonzero_` results is not
+  // `avgNonzero_` over the union, and that is a wider behavior change than
+  // this mitigation warrants. Phase 2 dissolves the question: with per-queue
+  // slices there is no duplicate row left to weight twice.
   ['attSeconds', 'avgAbdWaitSeconds', 'csrAvgAbdWaitSeconds'].forEach(function (k) {
     let num = 0, den = 0;
     parts.forEach(function (p) {
@@ -433,7 +488,7 @@ function getDepartmentSummary(req) {
   // v16 (sub-queue Phase 1): `subScope` joins the key. Without it a manager
   // toggling the switcher inside the 30-min TTL would be served the other
   // scope's table.
-  const cacheKey = 'summary:v16:' + dept + ':' + scope + ':' + subScope
+  const cacheKey = 'summary:v17:' + dept + ':' + scope + ':' + subScope
                  + ':' + from + ':' + to + ':' + summarySource;
   const cached = cache.get(cacheKey);
   if (cached) {

@@ -61,7 +61,13 @@ function remirrorExistingDqeDate_(dqeSheet, offsets, callDateStr) {
   if (!offsets || !offsets.length) return;
   const firstRow = 2 + offsets[0];                       // sheet row of first match
   const lastRow  = 2 + offsets[offsets.length - 1];      // sheet row of last match
-  const block = dqeSheet.getRange(firstRow, 1, lastRow - firstRow + 1, 34).getDisplayValues();
+  // 35 cols since sub-queue Phase 1 (AI Queue Split). READ ONLY WHAT EXISTS:
+  // getRange past getMaxColumns() THROWS, and a sheet that has not yet been
+  // widened (no Phase 1 build has run on it) is still 34 wide. At width 34,
+  // r[34] is undefined and the mirror maps it to '' below, so an old sheet
+  // re-mirrors byte-identically to before Phase 1.
+  const readWidth = Math.min(35, dqeSheet.getMaxColumns());
+  const block = dqeSheet.getRange(firstRow, 1, lastRow - firstRow + 1, readWidth).getDisplayValues();
   const matched = {};
   offsets.forEach(function (o) { matched[o] = true; });   // absolute data-region offsets
   // F-16: route the coercion-prone abandoned ID/time cells (AD/AE/AF)
@@ -103,7 +109,8 @@ function remirrorExistingDqeDate_(dqeSheet, offsets, callDateStr) {
       abMissedIds:     saneAb(r[30]),
       abMissedTimes:   saneAb(r[31]),
       avgAbdWait:      r[32],
-      csrAvgAbdWait:   r[33]
+      csrAvgAbdWait:   r[33],
+      queueSplit:      r[34] == null ? '' : r[34]   // AI -- sub-queue Phase 1
     });
   }
   if (!neonRows.length) return;
@@ -117,6 +124,85 @@ function remirrorExistingDqeDate_(dqeSheet, offsets, callDateStr) {
     Logger.log('DQE: dup-guard re-mirrored ' + neonRows.length
       + ' existing rows to Neon for ' + callDateStr + '.');
   }
+}
+
+
+// ── Sub-queue Phase 1: per-queue split of one agent's day ────────────────────
+//
+// A DQE row is keyed on (Date, Agent) with NO queue dimension, so an agent on
+// two departments' rosters (CSR + Spanish here) shows the SAME all-queue
+// figures in both departments' views, and a combined view counts them twice.
+// Every queue leg already carries its raw `queueName`; the aggregation simply
+// never grouped by it. This produces that grouping as an ADDITIVE column --
+// cols A-AH keep their existing all-queue meaning as the rollup.
+//
+// This CANNOT be backfilled beyond the Call_Legs retention window (~14 days):
+// the per-leg queue identity exists nowhere else once those sheets are pruned.
+// Every day this does not run is a day that can never be split.
+//
+// Reconciliation rules -- the split must SUM BACK to the rollup, or Phase 2's
+// per-dept slices will silently disagree with the totals above them:
+//
+//   * LEG-level (rung / missed / answered / missed-times) partitions by each
+//     leg's OWN queue. Legs are naturally disjoint, so these sum exactly.
+//   * PARENT-level (unique / TTT) attributes each parent call to exactly ONE
+//     queue -- the queue of its EARLIEST leg for this agent. A call that rang
+//     the same agent through two queues (overflow) would otherwise be counted
+//     in both and the split would exceed the rollup. Rare, but silent.
+//
+// `t`/`n` (talk seconds and the count of parents with talk > 0) are stored
+// rather than a precomputed ATT so a consumer can weight across days; ATT for
+// a queue is t/n, mirroring the rollup's own denominator.
+//
+// PURE and side-effect free, so it is unit-testable without a spreadsheet.
+// Returns a JSON string; '{}' means "computed, nothing in the work window",
+// which is DISTINCT from the empty cell a pre-Phase-1 row carries.
+function dqeQueueSplitForAgent_(windowLegs, talkForParent, pstToCSTFn) {
+  const byQueue = {};
+  const q = function (name) {
+    if (!byQueue[name]) byQueue[name] = { u: 0, r: 0, m: 0, a: 0, t: 0, n: 0, mt: [] };
+    return byQueue[name];
+  };
+  // Earliest-first so parent ownership is deterministic. Legs with no start
+  // time sort last; they can still own a parent nothing else claims.
+  const ordered = windowLegs.slice().sort(function (a, b) {
+    const av = (a.startPST === null || a.startPST === undefined) ? Infinity : a.startPST;
+    const bv = (b.startPST === null || b.startPST === undefined) ? Infinity : b.startPST;
+    return av - bv;
+  });
+
+  const parentOwner = {};
+  ordered.forEach(function (l) {
+    const name = l.queueName || '';
+    const e = q(name);
+    e.r++;
+    if (l.missed) {
+      e.m++;
+      if (l.startPST !== null && l.startPST !== undefined) e.mt.push(pstToCSTFn(l.startPST));
+    }
+    if (l.answered) e.a++;
+    // REP-4: a literal 'N/A' parent id is truthy and would collapse every such
+    // leg into one phantom unique parent, exactly as the rollup excludes it.
+    if (l.parentCallId && l.parentCallId !== 'N/A'
+        && !(l.parentCallId in parentOwner)) {
+      parentOwner[l.parentCallId] = name;
+    }
+  });
+
+  Object.keys(parentOwner).forEach(function (pid) {
+    const e = q(parentOwner[pid]);
+    e.u++;
+    const t = talkForParent(pid);
+    if (t > 0) { e.t += t; e.n++; }
+  });
+
+  const out = {};
+  Object.keys(byQueue).sort().forEach(function (name) {
+    const e = byQueue[name];
+    out[name] = { u: e.u, r: e.r, m: e.m, a: e.a,
+                  t: Math.round(e.t), n: e.n, mt: e.mt.join(',') };
+  });
+  return JSON.stringify(out);
 }
 
 
@@ -619,6 +705,22 @@ function buildDQEHistoricalData(rawSheet, dqeSheet, opts) {
     const attSec = talkTimes.length
       ? talkTimes.reduce((a, b) => a + b, 0) / talkTimes.length : 0;
 
+    // Sub-queue Phase 1. Computed from data already in hand, and wrapped so a
+    // defect here can NEVER cost a day of DQE history: on a throw the column
+    // goes out empty (indistinguishable from a pre-Phase-1 row, which readers
+    // must already handle) and cols A-AH are untouched. Additive by
+    // construction -- nothing above this line reads queueSplitJson.
+    let queueSplitJson = '';
+    try {
+      queueSplitJson = dqeQueueSplitForAgent_(
+        windowLegs,
+        function (pid) { return agentTalkPerParent[pid] || 0; },
+        pstToCSTStr);
+    } catch (splitErr) {
+      Logger.log('DQE: queue split failed for ' + agentName + ' on ' + callDateStr
+                 + ' (row still written, split column blank): ' + splitErr);
+    }
+
     const slotValues = DQE_TIME_SLOTS.map(slot => {
       const hits = windowLegs.filter(l =>
         l.missed && l.startPST !== null && l.startPST >= slot.start && l.startPST < slot.end
@@ -673,7 +775,8 @@ function buildDQEHistoricalData(rawSheet, dqeSheet, opts) {
       abanMissedIds,                            // AE Abandoned Missed Leg IDs
       abanMissedTimes,                          // AF Abandoned Missed Leg Times
       secToHMS(Math.round(avgAbanWaitSec)),     // AG Avg Abd Wait Time
-      secToHMS(Math.round(csrAvgAbanWaitSec))   // AH CSR Avg Abd Wait Time
+      secToHMS(Math.round(csrAvgAbanWaitSec)),  // AH CSR Avg Abd Wait Time
+      queueSplitJson                            // AI Queue Split (Phase 1)
     ]);
   }
 
@@ -839,7 +942,13 @@ function buildDQEHistoricalData(rawSheet, dqeSheet, opts) {
       '',                                       // AE Abandoned Missed Leg IDs (n/a for queue-only)
       allTimesCST,                              // AF Abandoned Missed Leg Times
       '0:00:00',                                // AG Avg Abd Wait Time (queue-level not meaningful here)
-      '0:00:00'                                 // AH CSR Avg Abd Wait Time
+      '0:00:00',                                // AH CSR Avg Abd Wait Time
+      // AI Queue Split: '' ON PURPOSE. An INV-23 sentinel already IS a single
+      // queue -- its name is col C -- so there is nothing to split. A reader
+      // must therefore ask "is this DATE split-aware?" (does any agent row
+      // carry a non-empty AI) rather than testing row by row, or every
+      // sentinel would read as a pre-Phase-1 row.
+      ''
     ]);
   });
 
@@ -847,6 +956,19 @@ function buildDQEHistoricalData(rawSheet, dqeSheet, opts) {
     Logger.log('DQE: No agent rows produced for ' + callDateStr + '.');
     refuseIfForce_('no agent rows produced for ' + callDateStr);
     return;
+  }
+
+  // Sub-queue Phase 1 added col AI (35). Sheets does NOT auto-expand columns --
+  // getRange/setValues past getMaxColumns() throws -- so a sheet created before
+  // Phase 1 must be widened BEFORE any col-35 access below, or the first build
+  // after deploy would throw and lose that day. Idempotent: a sheet already
+  // >= 35 wide is untouched.
+  const DQE_WRITE_WIDTH = 35;
+  if (dqeSheet.getMaxColumns() < DQE_WRITE_WIDTH) {
+    dqeSheet.insertColumnsAfter(dqeSheet.getMaxColumns(),
+      DQE_WRITE_WIDTH - dqeSheet.getMaxColumns());
+    Logger.log('DQE: widened sheet to ' + DQE_WRITE_WIDTH
+      + ' columns for the Phase 1 queue-split column.');
   }
 
   // Force col D to plain text so "1003,183" isn't reformatted as a number
@@ -870,6 +992,11 @@ function buildDQEHistoricalData(rawSheet, dqeSheet, opts) {
   // the whole slot block so single- and multi-value rows are both stored as text.
   dqeSheet.getRange(1, 11, dqeSheet.getMaxRows(), 19).setNumberFormat('@');
 
+  // Sub-queue Phase 1: col AI holds a JSON blob whose values contain
+  // comma-joined time strings. Same coercion class as AD-AF and K-AC -- plain
+  // text it for the same reason, BEFORE it can ever be written unformatted.
+  dqeSheet.getRange(1, 35, dqeSheet.getMaxRows(), 1).setNumberFormat('@');
+
   const firstBlank = dqeSheet.getLastRow() + 1;
   // The whole-column setNumberFormat('@') calls above only reach the prior
   // getMaxRows(); an append that SPILLS PAST it (the sheet auto-expands during
@@ -880,6 +1007,7 @@ function buildDQEHistoricalData(rawSheet, dqeSheet, opts) {
   dqeSheet.getRange(firstBlank, 4,  outputRows.length, 1).setNumberFormat('@');
   dqeSheet.getRange(firstBlank, 11, outputRows.length, 19).setNumberFormat('@');
   dqeSheet.getRange(firstBlank, 30, outputRows.length, 3).setNumberFormat('@');
+  dqeSheet.getRange(firstBlank, 35, outputRows.length, 1).setNumberFormat('@');
   dqeSheet.getRange(firstBlank, 1, outputRows.length, outputRows[0].length).setValues(outputRows);
 
   const newLastRow = dqeSheet.getLastRow();
@@ -919,7 +1047,8 @@ function buildDQEHistoricalData(rawSheet, dqeSheet, opts) {
         abMissedIds:      r[30],
         abMissedTimes:    r[31],
         avgAbdWait:       r[32],
-        csrAvgAbdWait:    r[33]
+        csrAvgAbdWait:    r[33],
+        queueSplit:       r[34]        // AI -- sub-queue Phase 1
       };
     });
     // IMP-5: the build's rows are the COMPLETE set for callDate --

@@ -28,8 +28,12 @@ function read(rel, base) { return fs.readFileSync(path.join(base || ROOT, rel), 
 
 const configGs = read('Config.gs', DASH);
 
-const dqeColsM = /CSR_AVG_ABD_WAIT:\s*(\d+)/.exec(configGs);
-assert.ok(dqeColsM, 'HISTORICAL_COLS.CSR_AVG_ABD_WAIT not found in Config.gs -- update this suite');
+// The LAST DQE column is the sheet width. Sub-queue Phase 1 appended AI
+// (QUEUE_SPLIT), so derive from that and fall back to CSR_AVG_ABD_WAIT -- an
+// append is exactly what this pin exists to propagate.
+const dqeColsM = /QUEUE_SPLIT:\s*(\d+)/.exec(configGs)
+             || /CSR_AVG_ABD_WAIT:\s*(\d+)/.exec(configGs);
+assert.ok(dqeColsM, 'HISTORICAL_COLS last column not found in Config.gs -- update this suite');
 const DQE_COLS = Number(dqeColsM[1]);   // the last DQE column = the sheet width
 
 const qcdColsM = /VIOLATIONS:\s*(\d+)/.exec(configGs);
@@ -41,11 +45,16 @@ const QCD_COLS = Number(qcdColsM[1]);
 test('R8-D1: NeonMirror\'s deferred DQE read width matches the DQE schema (REP-10 propagated)', function () {
   const nm = read('apps-script/cdr-import/NeonMirror.js');
   // mirrorDqeForDate_'s tail read: nmReadDateRowsTail_(sheet, <width>, 1, iso)
-  const m = /function mirrorDqeForDate_[\s\S]*?nmReadDateRowsTail_\(sheet,\s*(\d+),\s*1/.exec(nm);
-  assert.ok(m, 'mirrorDqeForDate_ read call not found -- was it renamed? Update this pin.');
+  // Since Phase 1 the read is Math.min(<schema width>, sheet.getMaxColumns()):
+  // the schema grew to 35 but a sheet that has not been widened yet is still
+  // 34, and a read past getMaxColumns THROWS (the REP-10 failure NeonMirror
+  // re-grew once already). Pin the CEILING, and require the min-guard so the
+  // narrow-sheet case cannot regress.
+  const m = /function mirrorDqeForDate_[\s\S]*?nmReadDateRowsTail_\(sheet,\s*Math\.min\((\d+),\s*sheet\.getMaxColumns\(\)\),\s*1/.exec(nm);
+  assert.ok(m, 'mirrorDqeForDate_ read call not found, or it no longer clamps to '
+    + 'sheet.getMaxColumns() -- an unclamped read throws on a width-trimmed sheet.');
   assert.equal(Number(m[1]), DQE_COLS,
-    'DQE Historical Data is ' + DQE_COLS + ' cols (A-AH, INV-10); a wider read THROWS on a '
-    + 'width-trimmed sheet (the REP-10 failure NeonMirror re-grew once already)');
+    'DQE Historical Data is ' + DQE_COLS + ' cols (A-AI, INV-10)');
 });
 
 test('R8-D1: NeonMirror\'s deferred QCD read width matches the QCD schema', function () {
@@ -55,11 +64,19 @@ test('R8-D1: NeonMirror\'s deferred QCD read width matches the QCD schema', func
   assert.equal(Number(m[1]), QCD_COLS);
 });
 
-test('R8-D1: the duplicate-row merge repair reads the DQE schema width', function () {
+test('R8-D1: the duplicate-row merge repair reads the DQE ROLLUP width', function () {
   const sr = read('apps-script/cdr-report/sheetRepairs.js');
   const m = /function mergeDqeDuplicateRows_[\s\S]*?getRange\(2,\s*1,\s*lastRow\s*-\s*1,\s*(\d+)\)/.exec(sr);
   assert.ok(m, 'mergeDqeDuplicateRows_ read call not found -- update this pin.');
-  assert.equal(Number(m[1]), DQE_COLS);
+  // 34, NOT DQE_COLS: this repair recomputes the ROLLUP columns (D..AH) from
+  // the merged duplicates and has no way to merge two per-queue splits. It
+  // reads the rollup width and CLEARS col AI instead, so the merged row reads
+  // as "not split" rather than carrying a split that describes fewer calls
+  // than the row it sits on.
+  assert.equal(Number(m[1]), 34);
+  assert.ok(/getRange\(w\.row, 35\)\.setValue\(''\)/.test(sr),
+    'the merge must CLEAR col AI -- a stale split on a merged row is worse '
+    + 'than no split, because a reader would trust it');
 });
 
 // ---- D2: UI_FLAGS registry <-> CSS <-> markup parity ------------------------
