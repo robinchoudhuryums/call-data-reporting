@@ -211,6 +211,62 @@ test('R12-22: parent-grouped sections -- child nests as a sub-row, single-queue 
   assert.equal((html.match(/A_Q_SALES/g) || []).length, 1);
 });
 
+// ── Owner round (2026-07): Viol MTD on the banner; no company roll-up ───────
+// Reported: "Resupply did not get a violation that day and is green, so it
+// does not show the Violations MTD value, even if they did get a violation
+// earlier this month." Cause: a section whose whole story is ONE queue renders
+// BANNER-ONLY (no per-queue rows), and the banner had no Viol cell -- so that
+// dept's month-to-date count had nowhere to appear. The fixture's Sales dept
+// is exactly that shape: single queue, 0 violations in range, violationsMtd 1.
+
+test('viol MTD renders on the banner of a GREEN single-queue dept (the reported gap)', function () {
+  h.state.props.DASHBOARD_URL = 'https://example.com/exec';
+  const html = h.call('buildQueueReportEmailHtml_', emailFixture(), '2026-07-10', false);
+  // Sales: 2.5% abandoned, 0 violations TODAY, 1 month-to-date. It renders
+  // banner-only, so before this change the 1 was invisible.
+  assert.match(html, /1 viol MTD/,
+    'a dept green today but carrying an earlier violation must still report it');
+  // And it rides the same banner line as the calls/abandoned summary.
+  assert.match(html, /1 abandoned \(2\.5%\)<\/span>[\s\S]{0,120}1 viol MTD/);
+});
+
+test('viol MTD on the banner is the SECTION total (parent + children)', function () {
+  const fx = emailFixture();
+  fx.depts.push({ dept: 'Spanish', parent: 'CSR',
+    totals: { totalCalls: 20, totalAnswered: 18, abandoned: 2, abandonedPct: 10,
+      abandonedPctStr: '10.00%', longestWait: '0:01:00', avgAnswer: '0:00:10',
+      violations: 1, violationsMtd: 3 },
+    queues: [{ queue: 'A_Q_Spanish', totalCalls: 20, totalAnswered: 18, abandoned: 2,
+      abandonedPct: 10, abandonedPctStr: '10.00%', violations: 1, violationsMtd: 3 }] });
+  const html = h.call('buildQueueReportEmailHtml_', fx, '2026-07-10', false);
+  assert.match(html, /9 viol MTD/,
+    "CSR's own 6 + nested Spanish's 3 -- the banner reports the SECTION, like "
+    + 'the calls and abandoned figures beside it');
+});
+
+test('a dept with NO month-to-date violations renders no MTD chip at all', function () {
+  const fx = emailFixture();
+  fx.depts[1].totals.violationsMtd = 0;
+  fx.depts[1].queues[0].violationsMtd = 0;
+  const html = h.call('buildQueueReportEmailHtml_', fx, '2026-07-10', false);
+  assert.doesNotMatch(html, /0 viol MTD/,
+    'a clean dept says nothing rather than advertising a zero');
+  assert.match(html, /6 viol MTD/, "but CSR's still shows");
+});
+
+test('the company total no longer sums month-to-date violations', function () {
+  const html = h.call('buildQueueReportEmailHtml_', emailFixture(), '2026-07-10', false);
+  // grandTotals.violationsMtd is 7 in the fixture. Summing violation DAYS
+  // across departments is meaningless -- two depts violating on the SAME day
+  // reads as 2, and the figure only grows as depts are added.
+  const foot = html.slice(html.indexOf('Company total'));
+  assert.doesNotMatch(foot, /">7<\/td>/,
+    'the company Viol cell must not carry the summed MTD figure');
+  // The row itself, and every other company figure, is untouched.
+  assert.match(html, /Company total/);
+  assert.match(html, /5\.71%/);
+});
+
 test('email HTML: empty day renders the no-activity note without throwing', function () {
   const html = h.call('buildQueueReportEmailHtml_', { dateLabel: 'Jul 10, 2026', depts: [], grandTotals: {} }, '2026-07-10', false);
   assert.match(html, /No queue activity recorded/);

@@ -147,7 +147,7 @@ function inboundResolveRequest_(req) {
  * same RAW queue names inbound_calls does, so they need the same union.
  * No QCD reader calls this (those stay on queuesForDept_).
  */
-function inboundQueuesForDept_(dept) {
+function inboundQueuesForDept_(dept, opts) {
   if (!dept) return [];
   const out = [];
   const seen = {};
@@ -155,7 +155,14 @@ function inboundQueuesForDept_(dept) {
     const v = String(q == null ? '' : q).trim();
     if (v && !seen[v]) { seen[v] = true; out.push(v); }
   };
-  queuesForDept_(dept).forEach(add);
+  // `queuesForDept_` rolls a parent's CHILD queues in by default (INV-51), which
+  // is right for an inbound/QCD rollup but WRONG for the sub-queue Phase 2
+  // narrowing: a parent narrowed to its own-plus-children set keeps its child's
+  // calls, so the "<dept> only" tab still shows them and a combined view counts
+  // the child twice. Callers that want the dept's OWN queues pass
+  // {includeChildren:false}; every pre-existing caller omits opts and is
+  // byte-identical.
+  queuesForDept_(dept, opts).forEach(add);
   if (typeof getInboundQueueAliases_ === 'function') getInboundQueueAliases_(dept).forEach(add);
   return out;
 }

@@ -309,7 +309,14 @@ function applyQueueSplitToRows_(srcRows, dept) {
 
   let queues = [];
   try {
-    if (typeof inboundQueuesForDept_ === 'function') queues = inboundQueuesForDept_(dept) || [];
+    // includeChildren:FALSE is load-bearing. queuesForDept_ rolls a parent's
+    // child queues in by default, so without this CSR's narrowing set contains
+    // A_Q_Spanish: the "CSR only" tab would still show Spanish's calls, and a
+    // combined view -- which builds Spanish from its OWN computeSummary_ call
+    // -- would count them twice. Each dept narrows to the queues it owns.
+    if (typeof inboundQueuesForDept_ === 'function') {
+      queues = inboundQueuesForDept_(dept, { includeChildren: false }) || [];
+    }
   } catch (e) {
     Logger.log('applyQueueSplitToRows_: queue lookup failed for ' + dept
                + ' -- leaving rows un-narrowed: ' + e);

@@ -1725,8 +1725,16 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   the Phase 0 rule:** a `queueScoped` row is never de-duplicated, because two
   narrowed rows PARTITION the agent's day and summing them is now correct --
   subtracting would under-count. A range that is not fully split renders a
-  warn-tinted "per-queue detail starts `<date>`" note (`subqSplitNote_`), since
-  a split can never reach dates older than the ~14-day `Call_Legs` retention.
+  warn-toned "all queues before `<date>`" CHIP (`subqSplitChip_`) beside the
+  scope tabs, since a split can never reach dates older than the ~14-day
+  `Call_Legs` retention; the chip removes itself once the range is fully split.
+  **Owner round:** the standing explanation banners are retired -- each scope
+  tab carries its own `title` tooltip instead. That only works because the
+  SELECTED tab is now visibly selected: the buttons carried `is-active` while
+  `.segmented` only styles `.active`, so through Phases 1-3 the active tab had
+  NO visual state and the banner was doing that job by accident. They now carry
+  BOTH classes; `drive-subqueue.js` asserts the rendered background actually
+  differs, not just that a class is present.
   See [`docs/sub-queue-split-plan.md`](docs/sub-queue-split-plan.md).
   The relationship line renders in EVERY scope, including `own`, where it says
   the sub-queue is excluded -- that exclusion was previously invisible. A CHILD
@@ -2266,6 +2274,7 @@ items for anything it flags or doesn't cover.)
 38. Diagnosing "a queue's inbound calls are missing" -- the F1/F1b runbook, incl. the ANTI-pattern probe
 39. Sub-queue ACCESS widening -- who gains what on deploy, with no admin edit (INV-38)
 40. Per-queue split backfill -- a ONE-TIME step whose 14-day window CLOSES; miss it and those dates can never be split
+41. A dept's totals changed after a re-import -- `auditQueueSplitAttribution()` separates "the de-dup worked" from "a queue is mapped to no dept and its calls were dropped"
 
 ## Cycle Workflow Config
 

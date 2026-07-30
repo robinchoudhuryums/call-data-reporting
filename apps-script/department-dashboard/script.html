@@ -5924,19 +5924,56 @@
       return JSON.stringify(clone);
     } catch (e) { return ''; }
   }
+  // The store holds up to REPORT_LASTGOOD_SLOTS_ signature-keyed entries per
+  // report, most-recent first.
+  //
+  // It was ONE slot, and that made every A/B toggle a full round trip: flipping
+  // the My Department sub-queue scope (or a date range) back and forth
+  // overwrote the other side's entry every time, so the return trip always
+  // missed and re-fetched. Correctness was never at risk -- the signature match
+  // meant a miss, not a wrong payload -- it was purely slow, which is what the
+  // owner reported.
+  //
+  // Bounded on purpose: a summary payload for a big roster is tens of KB and
+  // localStorage is a ~5 MB budget shared with every other cdr.* key, so this
+  // keeps a few slots rather than growing without limit. Eviction is
+  // least-recently-WRITTEN; a quota error silently drops the write, as before.
+  var REPORT_LASTGOOD_SLOTS_ = 4;
+  function reportLastGoodEntries_(report) {
+    try {
+      var raw = localStorage.getItem(reportLastGoodKey_(report));
+      if (!raw) return [];
+      var obj = JSON.parse(raw);
+      if (Array.isArray(obj)) return obj;
+      // Pre-multi-slot shape ({sig, at, data}) written by an older session --
+      // adopt it as a single entry rather than discarding a usable payload.
+      return (obj && obj.sig) ? [obj] : [];
+    } catch (e) { return []; }
+  }
   function reportLastGoodWrite_(report, sig, data) {
-    try { localStorage.setItem(reportLastGoodKey_(report),
-      JSON.stringify({ sig: sig, at: Date.now(), data: data })); } catch (e) {}
+    try {
+      var list = reportLastGoodEntries_(report)
+        .filter(function (e) { return e && e.sig !== sig; });
+      list.unshift({ sig: sig, at: Date.now(), data: data });
+      localStorage.setItem(reportLastGoodKey_(report),
+        JSON.stringify(list.slice(0, REPORT_LASTGOOD_SLOTS_)));
+    } catch (e) {
+      // Quota exceeded with several slots held: fall back to keeping only the
+      // newest, so a large payload can still be cached at all.
+      try {
+        localStorage.setItem(reportLastGoodKey_(report),
+          JSON.stringify([{ sig: sig, at: Date.now(), data: data }]));
+      } catch (e2) {}
+    }
   }
   // Returns the cached entry ONLY when its signature matches the current
   // request (so a stale, different-params payload is never shown as "current").
   function reportLastGoodRead_(report, sig) {
-    try {
-      var raw = localStorage.getItem(reportLastGoodKey_(report));
-      if (!raw) return null;
-      var obj = JSON.parse(raw);
-      return (obj && obj.sig === sig && obj.data) ? obj : null;
-    } catch (e) { return null; }
+    var list = reportLastGoodEntries_(report);
+    for (var i = 0; i < list.length; i++) {
+      if (list[i] && list[i].sig === sig && list[i].data) return list[i];
+    }
+    return null;
   }
   function reportStaleNote_(at) {
     var when = '';
@@ -7236,46 +7273,52 @@
     // A CHILD dept just gets the upward pointer -- no switcher, because the
     // combined view belongs to the parent (one level, matching the server).
     if (!subs.length && parentOf) {
-      host.innerHTML = '<div class="ds-note subq-note">'
+      host.innerHTML = '<div class="subq-bar-row">'
+        + '<div class="ds-note subq-note">'
         + escapeHtml(dept) + ' is a sub-queue of <strong>'
         + escapeHtml(parentOf) + '</strong>. These figures are '
         + escapeHtml(dept) + '\u2019s only.</div>'
-        + subqSplitNote_(m);
+        + subqSplitChip_(m)
+        + '</div>';
       return;
     }
 
     var list = subs.map(escapeHtml).join(', ');
+    var plain = subs.join(', ');
+    var one = subs.length === 1;
+    var isAre = one ? 'is a sub-queue' : 'are sub-queues';
+    // Owner request: the explanation moves from a standing banner into each
+    // tab's own tooltip. That only works because the SELECTED tab is now
+    // visibly selected -- the banner had been carrying that job by accident.
     var opts = [
-      { k: 'own',  label: escapeHtml(dept) + ' only' },
-      { k: 'subs', label: list + ' only' },
-      { k: 'all',  label: escapeHtml(dept) + ' + ' + list },
+      { k: 'own',  label: escapeHtml(dept) + ' only',
+        hint: dept + ' only. ' + plain + ' ' + isAre + ' of ' + dept
+            + ' and ' + (one ? 'is' : 'are') + ' NOT included in these figures.' },
+      { k: 'subs', label: list + ' only',
+        hint: plain + ' only. ' + dept + '\u2019s own agents are excluded.' },
+      { k: 'all',  label: escapeHtml(dept) + ' + ' + list,
+        hint: 'Combined: ' + dept + ' and ' + plain
+            + ', grouped with each department\u2019s own subtotal.' },
     ];
-    var note;
-    if (scope === 'own') {
-      var n = (m.subQueueAgentHint == null) ? '' : m.subQueueAgentHint;
-      note = '<strong>' + list + '</strong> '
-           + (subs.length === 1 ? 'is a sub-queue' : 'are sub-queues')
-           + ' of ' + escapeHtml(dept) + ' \u2014 not included in these figures.';
-    } else if (scope === 'subs') {
-      note = 'Showing <strong>' + list + '</strong> only. '
-           + escapeHtml(dept) + '\u2019s own agents are excluded.';
-    } else {
-      note = 'Combined view: ' + escapeHtml(dept) + ' and <strong>' + list
-           + '</strong>, grouped with each department\u2019s own subtotal.';
-    }
     host.innerHTML =
         '<div class="subq-bar-row">'
       +   '<div class="segmented subq-seg" role="group" aria-label="Sub-queue scope">'
       +     opts.map(function (o) {
+              // BOTH classes on purpose: `active` is what .segmented actually
+              // styles (the ink inversion), and `is-active` was the only class
+              // here through Phases 1-3 -- which is why the selected tab had NO
+              // visual state at all and the note was doing the work of telling
+              // you where you were. Keeping `is-active` preserves the harness
+              // assertion and any a11y/query hook built on it.
               return '<button type="button" class="seg-btn subq-seg-btn'
-                + (o.k === scope ? ' is-active' : '') + '" data-subscope="'
-                + o.k + '"' + (o.k === scope ? ' aria-pressed="true"' : ' aria-pressed="false"')
+                + (o.k === scope ? ' active is-active' : '') + '" data-subscope="'
+                + o.k + '" title="' + escapeHtml(o.hint || '') + '"'
+                + (o.k === scope ? ' aria-pressed="true"' : ' aria-pressed="false"')
                 + '>' + o.label + '</button>';
             }).join('')
       +   '</div>'
-      +   '<div class="ds-note subq-note">' + note + '</div>'
-      + '</div>'
-      + subqSplitNote_(m);
+      +   subqSplitChip_(m)
+      + '</div>';
 
     host.querySelectorAll('.subq-seg-btn').forEach(function (btn) {
       btn.addEventListener('click', function () {
@@ -7300,31 +7343,43 @@
    * Returns '' when there is nothing to disclose (fully split, or a dept with
    * no sub-queue relationship at all).
    */
-  function subqSplitNote_(m) {
+  function subqSplitChip_(m) {
     if (!m) return '';
     var hasRel = (m.subQueues && m.subQueues.length) || m.subQueueOf;
     if (!hasRel) return '';                       // nothing to be confused by
+    var dept = m.department || 'this department';
+    var label, tip;
     if (m.queueSplitMapped === false) {
-      return '<div class="ds-note subq-split-note">Figures cover <strong>all '
-        + 'queues</strong> these agents worked: no queues are mapped to '
-        + escapeHtml(m.department || 'this department')
-        + ', so there is nothing to narrow them to. Map them in Dept Config.</div>';
+      label = 'all queues';
+      tip = 'These figures cover ALL queues these agents worked. No queues are '
+          + 'mapped to ' + dept + ', so there is nothing to narrow them to \u2014 '
+          + 'map them in Dept Config (Admin \u25be \u2192 Dept Config).';
+    } else {
+      var days = m.queueSplitDays || 0;
+      var total = daysInRangeInclusive_(m.from, m.to);
+      if (days && total && days >= total) return '';   // fully split: say nothing
+      if (!days) {
+        label = 'all queues';
+        tip = 'These figures cover ALL queues these agents worked, not just '
+            + dept + '\u2019s. Per-queue detail is not available for this date '
+            + 'range, so an agent who also works another department\u2019s queue '
+            + 'reads high. Earlier days cannot be split retroactively.';
+      } else {
+        label = 'all queues before ' + (m.queueSplitFrom || '');
+        tip = 'Per-queue detail starts ' + (m.queueSplitFrom || '') + '. Earlier '
+            + 'days in this range count ALL queues an agent worked, so an agent '
+            + 'who also works another department\u2019s queue reads high before '
+            + 'that date. Earlier days cannot be split retroactively.';
+      }
     }
-    var days = m.queueSplitDays || 0;
-    if (!days) {
-      return '<div class="ds-note subq-split-note">Figures cover <strong>all '
-        + 'queues</strong> these agents worked, not just '
-        + escapeHtml(m.department || 'this department')
-        + '\u2019s \u2014 per-queue detail is not available for this date range. '
-        + 'An agent who also works another department\u2019s queue will read high.</div>';
-    }
-    var total = daysInRangeInclusive_(m.from, m.to);
-    if (total && days >= total) return '';        // fully split: nothing to say
-    return '<div class="ds-note subq-split-note">Per-queue detail starts <strong>'
-      + escapeHtml(m.queueSplitFrom || '') + '</strong>. Earlier days in this '
-      + 'range count <strong>all queues</strong> an agent worked, so an agent '
-      + 'who also works another department\u2019s queue reads high before that '
-      + 'date. Earlier days cannot be split retroactively.</div>';
+    // A CHIP, not a banner (owner request), but deliberately still warn-toned
+    // and still on screen: it states that the numbers above include another
+    // department's calls, which changes how they should be read. A pure
+    // tooltip would make that discoverable only by accident -- and right after
+    // deploy EVERY range is pre-split, which is exactly when it matters most.
+    // It removes itself once the range is fully split.
+    return '<span class="subq-split-chip" title="' + escapeHtml(tip) + '">'
+      + '\u26a0 ' + escapeHtml(label) + '</span>';
   }
 
   /** Inclusive day count between two ISO dates; 0 if either is unusable. */

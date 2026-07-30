@@ -840,3 +840,36 @@ When something looks wrong, before assuming a code bug, check:
     step EXPIRES. Nothing in the code will tell you that you missed it: the
     dashboard looks correct while quietly serving all-queue numbers for every
     date you did not reach.
+
+41. **"A department's totals changed after a re-import" -- the queue-split
+    attribution audit.**
+
+    Expected after sub-queue Phase 2: a dept that shares agents with another
+    dept SHOULD drop, because it stopped counting the other dept's calls. What
+    is NOT expected is volume vanishing from every dept at once.
+
+    Phase 2 fails OPEN on an unmapped DEPARTMENT (it keeps the all-queue
+    rollup), but **NOT on an unmapped QUEUE inside an otherwise-mapped dept** --
+    those calls are narrowed out of that dept and land nowhere. From the
+    dashboard the two look identical: a number went down.
+
+    **Run `auditQueueSplitAttribution()`** (dashboard project, editor,
+    admin-gated, read-only; optional `QUEUE_SPLIT_AUDIT_DATE` = YYYY-MM-DD,
+    default = the latest date in DQE Historical Data). It prints every queue in
+    that date's split, which dept claims it, each dept's narrowed totals, and a
+    reconciliation ending in one of two verdicts:
+
+    - *"Every queue is claimed by exactly one dept, so no volume was dropped"* --
+      the de-duplication worked; the fall is the fix.
+    - *"CLAIMED BY NO DEPT"* rows plus a dropped rung/answered tally -- that is
+      the missing volume. It also names the depts whose roster agents worked the
+      orphan queue, which is almost always the row that needs editing.
+
+    **Fix:** add the RAW queue name exactly as printed to that dept's
+    **Inbound queue aliases** in Dept Config (the QCD Queues field takes only
+    CANONICAL names seen in QCD col D, which is why a raw name like `A_Q_CSR`
+    or `A_Q_Intake` belongs in the aliases column). No redeploy; effective on
+    the next request.
+
+    It also flags a queue claimed by TWO depts (double-counted) and a dept whose
+    mapped names appear nowhere in the split (a raw-vs-canonical mismatch).

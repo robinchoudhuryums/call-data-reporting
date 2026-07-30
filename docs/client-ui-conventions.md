@@ -519,6 +519,21 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   with the Alerts engine. The bm-* tint wins on `.ds-kpi__value`/`__foot`
   via the two-class overrides in `styles.html` (the ds-* layer lands
   after `.bm-target`/`.bm-over`).
+- **The keep-last-good (SWR) store is MULTI-SLOT, and that is the point.**
+  `reportLastGoodWrite_` / `reportLastGoodRead_` (script.html) keep up to
+  `REPORT_LASTGOOD_SLOTS_` (=4) signature-keyed entries per report, most-recent
+  first. It was ONE slot, which made every A/B toggle a full server round trip:
+  flipping the My Department sub-queue scope back and forth -- or two date
+  ranges -- overwrote the other side's entry every time, so the return trip
+  always missed. Correctness was never at risk (a signature mismatch is a MISS,
+  never a wrong payload); it was purely slow, which is the kind of thing no
+  assertion watches. Bounded on purpose: a big-roster summary payload is tens
+  of KB against a ~5 MB localStorage budget shared with every other `cdr.*`
+  key, so eviction is least-recently-WRITTEN and a quota error falls back to
+  keeping only the newest entry. It also adopts the pre-multi-slot
+  `{sig, at, data}` shape as a single entry rather than discarding a usable
+  payload written by an older session. `drive-subqueue.js` asserts the store
+  holds both scopes with DISTINCT signatures.
 - **Per-report client prefs in localStorage.** Each report persists its
   own form state under `cdr.ir.prefs.v1:<email>` (via `irPrefsKey_()`, L3)
   and `cdr.ins.prefs.v2:<email>` (via `insPrefsKey_()`). **BOTH keys are

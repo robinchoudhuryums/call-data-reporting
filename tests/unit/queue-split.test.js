@@ -301,6 +301,30 @@ test('P2: a queue belonging to NEITHER dept is dropped, not silently absorbed', 
 // -- the three fail-open paths. Showing a dept ZERO calls is far worse than
 // showing it too many, so every uncertainty keeps the rollup.
 
+test('P2: a PARENT narrows to its OWN queues, not its child\'s as well', function () {
+  // queuesForDept_ rolls child queues into a parent by default (INV-51), which
+  // is right for a QCD rollup and WRONG here. Without includeChildren:false,
+  // CSR's narrowing set contains A_Q_Spanish: the "CSR only" tab still shows
+  // Spanish's calls, AND a combined view -- which builds Spanish from its own
+  // computeSummary_ call -- counts them twice. Shipped in Phase 2 and found
+  // only when the owner's CSR/Spanish totals moved after a re-import.
+  var askedWith = null;
+  hData.ctx.inboundQueuesForDept_ = function (d, opts) {
+    askedWith = opts;
+    // Mimic the real accessor: children roll in UNLESS told otherwise.
+    if (d !== 'CSR') return ['A_Q_Spanish'];
+    return (opts && opts.includeChildren === false)
+      ? ['A_Q_CSR'] : ['A_Q_CSR', 'A_Q_Spanish'];
+  };
+  const rows = [srcRow({ r: 10, m: 3, a: 7, u: 9, t: 700, split: ANNA_SPLIT })];
+  hData.call('applyQueueSplitToRows_', rows, 'CSR');
+  assert.ok(askedWith && askedWith.includeChildren === false,
+    'the narrowing MUST ask for own-queues-only');
+  assert.equal(rows[0].totalRung, 6,
+    "CSR's own 6 -- if Spanish's 4 came along, the 'CSR only' tab would be "
+    + 'showing exactly what the sub-queue feature exists to separate');
+});
+
 test('P2 fail-open: a dept with NO mapped queues keeps its rollup, not zeros', function () {
   withQueues({});
   const rows = [srcRow({ r: 10, m: 3, a: 7, split: ANNA_SPLIT })];

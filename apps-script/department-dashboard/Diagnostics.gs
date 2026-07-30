@@ -436,3 +436,200 @@ function diagnoseAbandoned_() {
   Logger.log('No-ring subset (noRingAbandonCount):              %s',
              Object.keys(parentsSentinel).length);
 }
+
+
+/**
+ * Sub-queue Phase 2: WHERE DID THE CALLS GO? Read-only, admin-gated, editor-run.
+ *
+ * Reconciles a date's per-queue split (col AI) against every department's
+ * narrowing set, and answers the only question that matters after the numbers
+ * move: for each dept, did the calls it lost move to ANOTHER dept, or did they
+ * fall out of the report entirely because no dept claims their queue?
+ *
+ * Phase 2 fails OPEN on an unmapped DEPT (it keeps the all-queue rollup), but
+ * NOT on an unmapped QUEUE inside an otherwise-mapped dept -- those calls are
+ * silently dropped from that dept's totals. That gap is invisible from the
+ * dashboard, which is exactly why this exists: it is the difference between
+ * "the de-duplication worked" and "a Dept Config row is missing a queue".
+ *
+ * Set QUEUE_SPLIT_AUDIT_DATE (YYYY-MM-DD) to pick the date; defaults to the
+ * most recent date in DQE Historical Data. Writes nothing.
+ */
+function auditQueueSplitAttribution() {
+  assertAdmin_();
+  const props = PropertiesService.getScriptProperties();
+  const wanted = String(props.getProperty('QUEUE_SPLIT_AUDIT_DATE') || '').trim();
+
+  const ss = openSpreadsheet_();
+  const sheet = ss.getSheetByName(SHEETS.HISTORICAL);
+  if (!sheet) { Logger.log('No DQE Historical Data sheet.'); return; }
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) { Logger.log('DQE Historical Data is empty.'); return; }
+  const ssTZ = ss.getSpreadsheetTimeZone();
+
+  const width = Math.min(HISTORICAL_COLS.QUEUE_SPLIT, sheet.getMaxColumns());
+  if (width < HISTORICAL_COLS.QUEUE_SPLIT) {
+    Logger.log('!! The sheet is %s columns wide -- col AI (Queue Split) does not '
+      + 'exist yet, so NO date is split. Deploy the Phase 1 pipeline and '
+      + 're-import.', width);
+    return;
+  }
+  const rows = sheet.getRange(2, 1, lastRow - 1, width).getDisplayValues();
+
+  // Resolve the target date.
+  let date = wanted;
+  if (!date) {
+    let max = '';
+    rows.forEach(function (r) {
+      const d = rowDateIso_(r[HISTORICAL_COLS.DATE - 1], ssTZ);
+      if (d && d > max) max = d;
+    });
+    date = max;
+  }
+  if (!date) { Logger.log('Could not resolve a date to audit.'); return; }
+
+  // Every dept's OWN-queue narrowing set, exactly as computeSummary_ builds it.
+  const depts = getAllDepartments_();
+  const setByDept = {}, listByDept = {};
+  depts.forEach(function (d) {
+    let qs = [];
+    try { qs = inboundQueuesForDept_(d, { includeChildren: false }) || []; } catch (e) {}
+    listByDept[d] = qs;
+    const set = {};
+    qs.forEach(function (q) {
+      const v = String(q || '').trim().toLowerCase();
+      if (v) set[v] = true;
+    });
+    setByDept[d] = set;
+  });
+
+  // Roster membership, so a queue's calls can be tied back to the depts whose
+  // agents actually worked them.
+  const rosterOf = {};
+  depts.forEach(function (d) {
+    try {
+      (getRosterForDepartment_(d).names || []).forEach(function (n) {
+        (rosterOf[n] = rosterOf[n] || []).push(d);
+      });
+    } catch (e) {}
+  });
+
+  let agentRows = 0, splitRows = 0, blankRows = 0, badJson = 0;
+  const perQueue = {};        // raw queue name -> { rung, answered, agents:{} }
+  let rollupRung = 0, rollupAns = 0;
+
+  rows.forEach(function (r) {
+    if (rowDateIso_(r[HISTORICAL_COLS.DATE - 1], ssTZ) !== date) return;
+    const agent = String(r[HISTORICAL_COLS.AGENT - 1] || '').trim();
+    if (!agent) return;
+    if (/^A_Q_/.test(agent) || agent === 'Backup CSR') return;   // INV-23 sentinel
+    agentRows++;
+    rollupRung += Number(r[HISTORICAL_COLS.TOTAL_RUNG - 1]) || 0;
+    rollupAns  += Number(r[HISTORICAL_COLS.TOTAL_ANSWERED - 1]) || 0;
+
+    const raw = String(r[HISTORICAL_COLS.QUEUE_SPLIT - 1] || '').trim();
+    if (!raw) { blankRows++; return; }
+    let split;
+    try { split = JSON.parse(raw); } catch (e) { badJson++; return; }
+    if (!split || typeof split !== 'object') { badJson++; return; }
+    splitRows++;
+    Object.keys(split).forEach(function (q) {
+      const e = split[q] || {};
+      const b = perQueue[q] = perQueue[q] || { rung: 0, answered: 0, agents: {} };
+      b.rung     += Number(e.r) || 0;
+      b.answered += Number(e.a) || 0;
+      b.agents[agent] = true;
+    });
+  });
+
+  Logger.log('=== Queue-split attribution audit -- %s ===', date);
+  Logger.log('Agent rows: %s   with a split: %s   blank (pre-Phase-1): %s   unparseable: %s',
+             agentRows, splitRows, blankRows, badJson);
+  if (!splitRows) {
+    Logger.log('');
+    Logger.log('NO row for this date carries a split, so every dept is showing '
+      + 'ALL-QUEUE figures (Phase 2 fails open). Re-import this date while its '
+      + 'Call_Legs sheet still exists.');
+    return;
+  }
+  if (blankRows) {
+    Logger.log('NOTE: %s row(s) have no split and keep their all-queue rollup, so '
+      + 'this date is only PARTLY narrowed.', blankRows);
+  }
+
+  Logger.log('');
+  Logger.log('--- Every queue in the split, and which dept claims it ---');
+  const orphanRung = { v: 0 }, orphanAns = { v: 0 };
+  const claimedBy = {};
+  Object.keys(perQueue).sort().forEach(function (q) {
+    const key = q.trim().toLowerCase();
+    const owners = depts.filter(function (d) { return setByDept[d][key]; });
+    claimedBy[q] = owners;
+    const b = perQueue[q];
+    const who = Object.keys(b.agents).sort();
+    if (!owners.length) {
+      orphanRung.v += b.rung; orphanAns.v += b.answered;
+      // Name the depts whose roster agents worked it -- that is almost always
+      // the dept whose Dept Config row is missing the queue.
+      const homes = {};
+      who.forEach(function (a) { (rosterOf[a] || []).forEach(function (d) { homes[d] = true; }); });
+      Logger.log('  !! %-28s rung=%-5s answered=%-5s  CLAIMED BY NO DEPT  '
+        + '-- worked by agents rostered in: %s',
+        q, b.rung, b.answered, Object.keys(homes).sort().join(', ') || '(none)');
+    } else if (owners.length > 1) {
+      Logger.log('  ?? %-28s rung=%-5s answered=%-5s  claimed by %s  '
+        + '-- DOUBLE-COUNTED across depts', q, b.rung, b.answered, owners.join(' + '));
+    } else {
+      Logger.log('     %-28s rung=%-5s answered=%-5s  -> %s',
+        q, b.rung, b.answered, owners[0]);
+    }
+  });
+
+  Logger.log('');
+  Logger.log('--- Per-dept narrowed totals (what My Department will show) ---');
+  depts.forEach(function (d) {
+    let rung = 0, ans = 0;
+    const mine = [];
+    Object.keys(perQueue).forEach(function (q) {
+      if (!setByDept[d][q.trim().toLowerCase()]) return;
+      rung += perQueue[q].rung; ans += perQueue[q].answered; mine.push(q);
+    });
+    if (!listByDept[d].length) {
+      Logger.log('  %-22s NO QUEUES MAPPED -- keeps its ALL-QUEUE rollup (fails open)', d);
+      return;
+    }
+    if (!mine.length) {
+      Logger.log('  %-22s rung=0 answered=0   mapped=[%s] but NONE of those names '
+        + 'appear in the split -- likely a raw-vs-canonical name mismatch; add the '
+        + 'RAW name to Inbound queue aliases', d, listByDept[d].join(', '));
+      return;
+    }
+    Logger.log('  %-22s rung=%-5s answered=%-5s  from [%s]', d, rung, ans, mine.join(', '));
+  });
+
+  Logger.log('');
+  Logger.log('=== Reconciliation ===');
+  Logger.log('Rollup across agent rows (cols F/H, all queues): rung=%s answered=%s',
+             rollupRung, rollupAns);
+  let splitRung = 0, splitAns = 0;
+  Object.keys(perQueue).forEach(function (q) {
+    splitRung += perQueue[q].rung; splitAns += perQueue[q].answered;
+  });
+  Logger.log('Sum across the split (all queues):              rung=%s answered=%s',
+             splitRung, splitAns);
+  Logger.log('Of that, claimed by NO dept (DROPPED):          rung=%s answered=%s',
+             orphanRung.v, orphanAns.v);
+  if (orphanRung.v || orphanAns.v) {
+    Logger.log('');
+    Logger.log('>> THIS IS YOUR MISSING VOLUME. Those calls belong to a queue that no '
+      + 'department maps, so Phase 2 narrows them out of every dept total. Add the '
+      + 'RAW queue name (exactly as printed above) to the owning dept\'s '
+      + '"Inbound queue aliases" in Dept Config -- no redeploy, effective on the '
+      + 'next request.');
+  } else {
+    Logger.log('');
+    Logger.log('>> Every queue in the split is claimed by exactly one dept, so no '
+      + 'volume was dropped: a dept whose total FELL simply stopped counting '
+      + 'another dept\'s calls, which is the fix working.');
+  }
+}

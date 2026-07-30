@@ -74,9 +74,15 @@ async function openDeptThirtyDays(page) {
       visible: el.offsetParent !== null,
       buttons: Array.from(el.querySelectorAll('.subq-seg-btn')).map((b) => ({
         label: b.textContent.trim(), scope: b.getAttribute('data-subscope'),
-        active: b.classList.contains('is-active'),
+        // `active` is what .segmented actually STYLES. Asserting only
+        // `is-active` is how the selected tab shipped with no visual state at
+        // all -- the class was there, the rule was not.
+        active: b.classList.contains('active'),
+        styledActive: getComputedStyle(b).backgroundColor,
+        hint: b.getAttribute('title') || '',
       })),
-      note: (el.querySelector('.subq-note') || {}).textContent || '',
+      chip: (el.querySelector('.subq-split-chip') || {}).getAttribute
+        ? el.querySelector('.subq-split-chip').getAttribute('title') : '',
     };
   });
   record('scope bar renders for a parent dept', !!(bar && bar.visible),
@@ -87,8 +93,18 @@ async function openDeptThirtyDays(page) {
   record('combined is the DEFAULT for a parent (owner decision)',
     !!bar && (bar.buttons.find((b) => b.active) || {}).scope === 'all',
     bar ? 'active=' + (bar.buttons.find((b) => b.active) || {}).scope : '');
-  record('the note names the sub-queue', !!bar && /Spanish/.test(bar.note),
-    bar ? bar.note.slice(0, 90) : '');
+  record('each tab carries its explanation as a tooltip (banner retired)',
+    !!bar && bar.buttons.every((b) => b.hint.length > 10)
+      && bar.buttons.some((b) => /Spanish/.test(b.hint)),
+    bar ? JSON.stringify(bar.buttons.map((b) => b.hint.slice(0, 40))) : '');
+  // The tooltips only work as the explanation because the SELECTED tab is now
+  // visibly selected. Assert the rendered background actually differs, not just
+  // that a class is present -- the class was present all along.
+  const act = bar && bar.buttons.find((b) => b.active);
+  const inact = bar && bar.buttons.find((b) => !b.active);
+  record('the ACTIVE tab is visually distinct from the others',
+    !!act && !!inact && act.styledActive !== inact.styledActive,
+    act && inact ? act.styledActive + ' vs ' + inact.styledActive : 'missing');
 
   // ---- grouped rows + per-dept subtotals ----------------------------------
   const grouped = await page.evaluate(() => {
@@ -140,17 +156,17 @@ async function openDeptThirtyDays(page) {
   // ---- the switch actually re-fetched a different scope --------------------
   const ownBar = await page.evaluate(() => {
     const el = document.getElementById('dept-subq-bar');
-    const act = el && el.querySelector('.subq-seg-btn.is-active');
+    const act = el && el.querySelector('.subq-seg-btn.active');
     return { scope: act ? act.getAttribute('data-subscope') : null,
-             note: (el && el.querySelector('.subq-note') || {}).textContent || '',
+             hint: act ? (act.getAttribute('title') || '') : '',
              heads: document.querySelectorAll('#agents-tbody tr.subq-group-head').length };
   });
   record('switching to own-scope drops the grouping',
     ownBar.scope === 'own' && ownBar.heads === 0,
     'scope=' + ownBar.scope + ' heads=' + ownBar.heads);
-  record('own-scope note still discloses the excluded sub-queue',
-    /Spanish/.test(ownBar.note) && /not included/i.test(ownBar.note),
-    ownBar.note.slice(0, 100));
+  record('own-scope tooltip still discloses the EXCLUDED sub-queue',
+    /Spanish/.test(ownBar.hint) && /not included/i.test(ownBar.hint),
+    ownBar.hint.slice(0, 100));
 
   // ---- CSV: single-dept export has NO Department column -------------------
   async function exportCsv() {
@@ -189,6 +205,41 @@ async function openDeptThirtyDays(page) {
     allLines.some((l) => /All shown/.test(l)));
   record('combined CSV has NO group-header banner rows (deliberate)',
     !allLines.some((l) => /^(CSR|Spanish),?$/.test(l.trim())));
+
+  // ---- the SWR store holds BOTH scopes, so switching back is instant -------
+  // Reported by the owner: flipping between scope tabs was slow even with the
+  // date range unchanged. The last-good store was ONE slot per report, so each
+  // switch overwrote the other side's entry and the return trip always missed
+  // and re-fetched. Correctness was never at risk (signature-matched), only
+  // speed -- which is exactly the kind of thing no assertion was watching.
+  const swr = await page.evaluate(() => {
+    const keys = Object.keys(localStorage).filter((k) => /lastgood/i.test(k) && /summary/i.test(k));
+    if (!keys.length) return { keys: 0 };
+    let entries;
+    try { entries = JSON.parse(localStorage.getItem(keys[0])); } catch (e) { return { bad: true }; }
+    const list = Array.isArray(entries) ? entries : [entries];
+    return {
+      keys: keys.length,
+      slots: list.length,
+      scopes: list.map((e) => {
+        const m = /"subScope":"([a-z]+)"/.exec(e && e.sig || '');
+        return m ? m[1] : '(none)';
+      }),
+      sigs: list.map((e) => (e && e.sig) || ''),
+    };
+  });
+  record('the summary SWR store keeps MORE THAN ONE scope (instant switch-back)',
+    !!swr && swr.slots >= 2, JSON.stringify(swr));
+  record('and BOTH explicitly-requested scopes are in it',
+    !!swr && !!swr.scopes && swr.scopes.indexOf('own') !== -1
+      && swr.scopes.indexOf('all') !== -1,
+    swr ? JSON.stringify(swr.scopes) : '');
+  // '(none)' entries are legitimate: the first load sends no subScope at all,
+  // letting the server pick the default. What matters is that distinct
+  // requests no longer evict each other.
+  record('stored signatures are DISTINCT (the single-slot collapse is gone)',
+    !!swr && !!swr.scopes && new Set(swr.sigs).size === swr.slots,
+    swr ? swr.slots + ' slots' : '');
 
   // ---- the missed section's scope note ------------------------------------
   const missedNote = await page.evaluate(() => {
