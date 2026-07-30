@@ -516,6 +516,7 @@ function auditQueueSplitAttribution() {
 
   let agentRows = 0, splitRows = 0, blankRows = 0, badJson = 0;
   const perQueue = {};        // raw queue name -> { rung, answered, agents:{} }
+  const byAgent = {};         // agent -> queue -> { rung, answered }
   let rollupRung = 0, rollupAns = 0;
 
   rows.forEach(function (r) {
@@ -533,12 +534,14 @@ function auditQueueSplitAttribution() {
     try { split = JSON.parse(raw); } catch (e) { badJson++; return; }
     if (!split || typeof split !== 'object') { badJson++; return; }
     splitRows++;
+    const mine = byAgent[agent] = byAgent[agent] || {};
     Object.keys(split).forEach(function (q) {
       const e = split[q] || {};
       const b = perQueue[q] = perQueue[q] || { rung: 0, answered: 0, agents: {} };
-      b.rung     += Number(e.r) || 0;
-      b.answered += Number(e.a) || 0;
-      b.agents[agent] = true;
+      const r = Number(e.r) || 0, a = Number(e.a) || 0;
+      b.rung += r; b.answered += a; b.agents[agent] = true;
+      const m = mine[q] = mine[q] || { rung: 0, answered: 0 };
+      m.rung += r; m.answered += a;
     });
   });
 
@@ -598,19 +601,33 @@ function auditQueueSplitAttribution() {
 
   Logger.log('');
   Logger.log('--- Per-dept narrowed totals (what My Department will show) ---');
+  // ROSTER-SCOPED, which the first version of this audit was not. computeSummary_
+  // runs at scope='roster': a row is included only when the agent is on THAT
+  // dept's roster, and Phase 2 then narrows it to that dept's queues. Summing a
+  // queue's whole volume instead counts calls that a NON-roster agent handled on
+  // that queue -- which the dashboard excludes -- so the old line could not be
+  // reconciled against the screen, while being labelled as exactly that. The
+  // non-roster remainder is reported separately below, since it is real
+  // cross-dept help rather than an error.
   depts.forEach(function (d) {
-    let rung = 0, ans = 0;
-    const mine = [];
-    Object.keys(perQueue).forEach(function (q) {
-      if (!setByDept[d][q.trim().toLowerCase()]) return;
-      rung += perQueue[q].rung; ans += perQueue[q].answered; mine.push(q);
+    let rung = 0, ans = 0, offRung = 0, offAns = 0;
+    const mine = {};
+    Object.keys(byAgent).forEach(function (agent) {
+      const onRoster = (rosterOf[agent] || []).indexOf(d) !== -1;
+      Object.keys(byAgent[agent]).forEach(function (q) {
+        if (!setByDept[d][q.trim().toLowerCase()]) return;
+        const m = byAgent[agent][q];
+        mine[q] = true;
+        if (onRoster) { rung += m.rung; ans += m.answered; }
+        else { offRung += m.rung; offAns += m.answered; }
+      });
     });
     if (!listByDept[d].length) {
       Logger.log('  %s NO QUEUES MAPPED -- keeps its ALL-QUEUE rollup (fails open)',
         pad(d, 22));
       return;
     }
-    if (!mine.length) {
+    if (!Object.keys(mine).length) {
       // TWO very different causes, and the audit cannot tell them apart on its
       // own -- say so rather than asserting the scarier one. A queue with no
       // agent RINGS on this date is absent from the split entirely and is
@@ -624,8 +641,13 @@ function auditQueueSplitAttribution() {
         + 'Inbound queue aliases.', pad(d, 22), listByDept[d].join(', '));
       return;
     }
-    Logger.log('  %s rung=%s answered=%s  from [%s]',
-      pad(d, 22), pad(rung, 6), pad(ans, 6), mine.join(', '));
+    Logger.log('  %s rung=%s answered=%s  from [%s]%s',
+      pad(d, 22), pad(rung, 6), pad(ans, 6), Object.keys(mine).sort().join(', '),
+      (offRung || offAns)
+        ? ('   (+ rung=' + offRung + ' answered=' + offAns
+           + ' on these queues by NON-roster agents -- excluded from the dept '
+           + 'table by INV-53/scope=roster)')
+        : '');
   });
 
   Logger.log('');
