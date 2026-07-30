@@ -228,3 +228,156 @@ test('ATT is derivable per queue from t/n, on the rollup denominator', function 
     'n counts parents with talk > 0 -- the rollup ATT denominator, NOT rung');
   assert.equal(s.A_Q_CSR.t / s.A_Q_CSR.n, 150);
 });
+
+
+// ============================================================================
+// Sub-queue Phase 2 -- the READER. applyQueueSplitToRows_ narrows each source
+// row to the department's own queues BEFORE computeSummary_'s aggregation
+// loop, so every rule inside that loop (E5 prior window, INV-53 floater gate,
+// diagnostics, totals) inherits the narrowing without changing.
+//
+// This is where the REPORTED bug is actually fixed: before Phase 2 a
+// Spanish-only view showed a crossover agent's CSR calls too.
+// ============================================================================
+
+const hData = loadGas({
+  files: ['Config.gs', 'Util.gs', 'CompanyOverview.gs', 'DeptConfig.gs', 'Data.gs'],
+});
+
+function srcRow(o) {
+  return {
+    dateIso: o.date || '2026-07-20', agent: o.agent || 'Anna',
+    totalUnique: o.u || 0, totalRung: o.r || 0, totalMissed: o.m || 0,
+    totalAnswered: o.a || 0, tttSec: o.t || 0, attSec: o.att || 0,
+    avgAbdWaitSec: o.aaw || 0, csrAvgAbdWaitSec: o.caw || 0,
+    queueSplit: o.split == null ? '' : o.split,
+  };
+}
+
+// Anna's day: 6 CSR rings + 4 Spanish rings. The rollup (what every column
+// A..AH holds) is the sum; each dept must now see only its own half.
+const ANNA_SPLIT = JSON.stringify({
+  A_Q_CSR:     { u: 5, r: 6, m: 2, a: 4, t: 400, n: 4, mt: '9:00:00,9:30:00' },
+  A_Q_Spanish: { u: 4, r: 4, m: 1, a: 3, t: 300, n: 3, mt: '10:00:00' },
+});
+
+function withQueues(map) {
+  hData.ctx.inboundQueuesForDept_ = function (d) { return map[d] || []; };
+}
+
+test('P2: a dept sees ONLY its own queue\'s calls -- the reported bug', function () {
+  withQueues({ Spanish: ['A_Q_Spanish'], CSR: ['A_Q_CSR'] });
+  const rows = [srcRow({ r: 10, m: 3, a: 7, u: 9, t: 700, att: 100, split: ANNA_SPLIT })];
+  const info = hData.call('applyQueueSplitToRows_', rows, 'Spanish');
+  assert.equal(rows[0].totalRung, 4, 'was 10 -- the CSR rings are no longer Spanish\'s');
+  assert.equal(rows[0].totalMissed, 1);
+  assert.equal(rows[0].totalAnswered, 3);
+  assert.equal(rows[0].totalUnique, 4);
+  assert.equal(rows[0].tttSec, 300);
+  assert.equal(rows[0].attSec, 100, 'ATT recomputed on THIS queue\'s denominator (300/3)');
+  assert.equal(rows[0].queueScoped, true);
+  assert.equal(info.applied, 1);
+});
+
+test('P2: the two depts\' slices PARTITION the rollup -- nothing is lost or doubled', function () {
+  withQueues({ Spanish: ['A_Q_Spanish'], CSR: ['A_Q_CSR'] });
+  const csr = [srcRow({ r: 10, m: 3, a: 7, u: 9, t: 700, split: ANNA_SPLIT })];
+  const spa = [srcRow({ r: 10, m: 3, a: 7, u: 9, t: 700, split: ANNA_SPLIT })];
+  hData.call('applyQueueSplitToRows_', csr, 'CSR');
+  hData.call('applyQueueSplitToRows_', spa, 'Spanish');
+  assert.equal(csr[0].totalRung + spa[0].totalRung, 10, 'sums back to the rollup');
+  assert.equal(csr[0].totalMissed + spa[0].totalMissed, 3);
+  assert.equal(csr[0].totalAnswered + spa[0].totalAnswered, 7);
+  assert.equal(csr[0].tttSec + spa[0].tttSec, 700);
+});
+
+test('P2: a queue belonging to NEITHER dept is dropped, not silently absorbed', function () {
+  withQueues({ CSR: ['A_Q_CSR'] });
+  const rows = [srcRow({ r: 10, split: ANNA_SPLIT })];
+  hData.call('applyQueueSplitToRows_', rows, 'CSR');
+  assert.equal(rows[0].totalRung, 6, 'only CSR\'s 6 -- Spanish\'s 4 belong to Spanish');
+});
+
+// -- the three fail-open paths. Showing a dept ZERO calls is far worse than
+// showing it too many, so every uncertainty keeps the rollup.
+
+test('P2 fail-open: a dept with NO mapped queues keeps its rollup, not zeros', function () {
+  withQueues({});
+  const rows = [srcRow({ r: 10, m: 3, a: 7, split: ANNA_SPLIT })];
+  const info = hData.call('applyQueueSplitToRows_', rows, 'Unmapped');
+  assert.equal(rows[0].totalRung, 10, 'narrowing to an empty queue set would read as "nobody worked"');
+  assert.equal(rows[0].queueScoped, undefined);
+  assert.equal(info.queues.length, 0);
+  assert.equal(info.applied, 0);
+});
+
+test('P2 fail-open: a row with NO split keeps its rollup (pre-Phase-1 date)', function () {
+  withQueues({ CSR: ['A_Q_CSR'] });
+  const rows = [srcRow({ r: 10, split: '' })];
+  const info = hData.call('applyQueueSplitToRows_', rows, 'CSR');
+  assert.equal(rows[0].totalRung, 10);
+  assert.equal(rows[0].queueScoped, undefined, 'and it is FLAGGED as un-narrowed');
+  assert.equal(info.unsplitRows, 1);
+});
+
+test('P2 fail-open: unparseable split JSON keeps the rollup instead of throwing', function () {
+  withQueues({ CSR: ['A_Q_CSR'] });
+  const rows = [srcRow({ r: 10, split: '{not json' })];
+  const info = hData.call('applyQueueSplitToRows_', rows, 'CSR');
+  assert.equal(rows[0].totalRung, 10);
+  assert.equal(info.unsplitRows, 1);
+});
+
+test('P2: an empty split {} narrows to ZERO -- it means "nothing in the window"', function () {
+  withQueues({ CSR: ['A_Q_CSR'] });
+  const rows = [srcRow({ r: 10, split: '{}' })];
+  hData.call('applyQueueSplitToRows_', rows, 'CSR');
+  assert.equal(rows[0].totalRung, 0,
+    "'{}' is COMPUTED-and-empty, unlike '' which is never-computed -- the "
+    + 'distinction Phase 1 stores it for');
+  assert.equal(rows[0].queueScoped, true);
+});
+
+test('P2: queue names match case-insensitively across the two name spaces', function () {
+  withQueues({ CSR: ['a_q_csr'] });   // Dept Config casing need not match capture casing
+  const rows = [srcRow({ r: 10, split: ANNA_SPLIT })];
+  hData.call('applyQueueSplitToRows_', rows, 'CSR');
+  assert.equal(rows[0].totalRung, 6);
+});
+
+test('P2: split-aware DATES are reported for the coverage note', function () {
+  withQueues({ CSR: ['A_Q_CSR'] });
+  const rows = [
+    srcRow({ date: '2026-07-18', r: 10, split: '' }),          // pre-split
+    srcRow({ date: '2026-07-20', r: 10, split: ANNA_SPLIT }),
+    srcRow({ date: '2026-07-21', r: 10, split: ANNA_SPLIT }),
+  ];
+  const info = hData.call('applyQueueSplitToRows_', rows, 'CSR');
+  assert.deepEqual(Object.keys(info.dates).sort(), ['2026-07-20', '2026-07-21'],
+    'the earliest of these becomes the "per-queue detail starts" date');
+  assert.equal(info.unsplitRows, 1);
+});
+
+test('P2 + P0: a SCOPED crossover row is never de-duplicated in the combined total', function () {
+  // Phase 0 subtracts a repeat because both depts carried the SAME all-queue
+  // figures. Once the rows are narrowed they carry DIFFERENT figures that
+  // partition the day, so summing is correct and subtracting would UNDER-count.
+  // This inversion is the one place the two phases could silently fight.
+  const scoped = function (dept, r) {
+    return { meta: { department: dept },
+             rows: [{ agent: 'Anna', matchedViaRoster: true, queueScoped: true,
+                      totalRung: r, totalMissed: 0, totalAnswered: r,
+                      totalUnique: r, tttSeconds: 0 }],
+             totals: { totalRung: r, totalMissed: 0, totalAnswered: r,
+                       totalUnique: r, tttSeconds: 0, rosterAgentCount: 1,
+                       queueOnlyAgentCount: 0 },
+             qcd: null, csrTransfer: null,
+             diagnostics: { rosterWithNoData: [], queueOnlyMatched: [] } };
+  };
+  const a = scoped('CSR', 6), b = scoped('Spanish', 4);
+  const r = hData.call('combineSummaries_', a, [a, b]);
+  assert.equal(r.totals.totalRung, 10,
+    'the slices partition the day -- 6 + 4, NOT 6 (which is what de-duping would give)');
+  assert.equal(r.totals.crossoverAgentCount, 0,
+    'and no caption is rendered, because nothing was double-counted');
+});

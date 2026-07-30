@@ -7239,7 +7239,8 @@
       host.innerHTML = '<div class="ds-note subq-note">'
         + escapeHtml(dept) + ' is a sub-queue of <strong>'
         + escapeHtml(parentOf) + '</strong>. These figures are '
-        + escapeHtml(dept) + '\u2019s only.</div>';
+        + escapeHtml(dept) + '\u2019s only.</div>'
+        + subqSplitNote_(m);
       return;
     }
 
@@ -7273,7 +7274,8 @@
             }).join('')
       +   '</div>'
       +   '<div class="ds-note subq-note">' + note + '</div>'
-      + '</div>';
+      + '</div>'
+      + subqSplitNote_(m);
 
     host.querySelectorAll('.subq-seg-btn').forEach(function (btn) {
       btn.addEventListener('click', function () {
@@ -7283,6 +7285,55 @@
         refresh();
       });
     });
+  }
+
+  /**
+   * Sub-queue Phase 2: the "these numbers are not queue-split yet" disclosure.
+   *
+   * A per-queue split can only exist for dates built after the Phase 1 pipeline
+   * shipped -- Call_Legs is pruned at 14 days, so earlier dates are
+   * PERMANENTLY all-queue. For an agent who works two departments' queues,
+   * an un-split figure includes the OTHER department's calls, which is exactly
+   * the bug this feature exists to fix. Rendering that silently would be worse
+   * than the bug, so the range says which of its days are narrowed.
+   *
+   * Returns '' when there is nothing to disclose (fully split, or a dept with
+   * no sub-queue relationship at all).
+   */
+  function subqSplitNote_(m) {
+    if (!m) return '';
+    var hasRel = (m.subQueues && m.subQueues.length) || m.subQueueOf;
+    if (!hasRel) return '';                       // nothing to be confused by
+    if (m.queueSplitMapped === false) {
+      return '<div class="ds-note subq-split-note">Figures cover <strong>all '
+        + 'queues</strong> these agents worked: no queues are mapped to '
+        + escapeHtml(m.department || 'this department')
+        + ', so there is nothing to narrow them to. Map them in Dept Config.</div>';
+    }
+    var days = m.queueSplitDays || 0;
+    if (!days) {
+      return '<div class="ds-note subq-split-note">Figures cover <strong>all '
+        + 'queues</strong> these agents worked, not just '
+        + escapeHtml(m.department || 'this department')
+        + '\u2019s \u2014 per-queue detail is not available for this date range. '
+        + 'An agent who also works another department\u2019s queue will read high.</div>';
+    }
+    var total = daysInRangeInclusive_(m.from, m.to);
+    if (total && days >= total) return '';        // fully split: nothing to say
+    return '<div class="ds-note subq-split-note">Per-queue detail starts <strong>'
+      + escapeHtml(m.queueSplitFrom || '') + '</strong>. Earlier days in this '
+      + 'range count <strong>all queues</strong> an agent worked, so an agent '
+      + 'who also works another department\u2019s queue reads high before that '
+      + 'date. Earlier days cannot be split retroactively.</div>';
+  }
+
+  /** Inclusive day count between two ISO dates; 0 if either is unusable. */
+  function daysInRangeInclusive_(fromIso, toIso) {
+    if (!fromIso || !toIso) return 0;
+    var a = Date.parse(fromIso + 'T00:00:00Z');
+    var b = Date.parse(toIso + 'T00:00:00Z');
+    if (isNaN(a) || isNaN(b) || b < a) return 0;
+    return Math.round((b - a) / 86400000) + 1;
   }
 
   /** The scope to REQUEST: a saved per-dept preference, else the server default. */

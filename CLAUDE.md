@@ -1683,7 +1683,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   / `<subs> only` / `<dept> + <subs>` -- persisted per dept in
   `cdr.dept.subscope` and **defaulting to COMBINED** (owner decision). Depts
   with no sub-queues get no control and no behavior change. `subScope` is a
-  cache-key dimension (`summary:v17`). **Combined means grouped, never merged:**
+  cache-key dimension (`summary:v18`). **Combined means grouped, never merged:**
   rows carry `dept`, each dept gets a `subq-group-head` subheader and its OWN
   subtotal row from `deptGroups`, and the grand total is labelled -- so the
   familiar own-dept figure stays on screen and every number reconciles against
@@ -1703,9 +1703,23 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   shortfall would read as a bug). The three DURATION means are deliberately NOT
   deduped: a doubled sum is arithmetically wrong, while a mean weighting one
   agent in two depts stays in range, and recomputing it would move the number
-  for EVERY combined view. This is a MITIGATION -- each dept still shows the
-  agent's ALL-QUEUE numbers until the Phase 2 reader lands. See
-  [`docs/sub-queue-split-plan.md`](docs/sub-queue-split-plan.md).
+  for EVERY combined view.
+  **Phase 2 closes it at the source:** `applyQueueSplitToRows_` (Data.gs)
+  narrows each source row to the dept's OWN queues -- matched
+  case-insensitively against `inboundQueuesForDept_`, the raw-name union --
+  BEFORE `computeSummary_`'s aggregation loop, so E5, INV-53, diagnostics and
+  the totals all inherit it unchanged. It **FAILS OPEN three ways** (a dept with
+  no mapped queues, a row with no split, unparseable JSON all keep the rollup),
+  because showing a dept ZERO calls is far worse than too many; each row carries
+  `queueScoped` so the client can say which numbers were narrowed.
+  `avgAbdWait`/`csrAvgAbdWait` are NOT narrowed -- the pipeline stamps one
+  per-DAY value on every row, so they were never per-agent. **Phase 2 INVERTS
+  the Phase 0 rule:** a `queueScoped` row is never de-duplicated, because two
+  narrowed rows PARTITION the agent's day and summing them is now correct --
+  subtracting would under-count. A range that is not fully split renders a
+  warn-tinted "per-queue detail starts `<date>`" note (`subqSplitNote_`), since
+  a split can never reach dates older than the ~14-day `Call_Legs` retention.
+  See [`docs/sub-queue-split-plan.md`](docs/sub-queue-split-plan.md).
   The relationship line renders in EVERY scope, including `own`, where it says
   the sub-queue is excluded -- that exclusion was previously invisible. A CHILD
   dept gets an upward pointer only, no switcher (the combined view belongs to

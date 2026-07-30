@@ -217,7 +217,10 @@ function neonFetchDqeRows_(fromIso, toIso, opts) {
     var sql = "SELECT COALESCE(json_agg(t), '[]')::text AS j FROM ("
             + "SELECT month_year, call_date::text AS d, agent_name, queue_extensions, "
             + "total_unique, total_rung, total_missed, total_answered, "
-            + "ttt, att, avg_abd_wait, csr_avg_abd_wait" + detailCols + " "
+            + "ttt, att, avg_abd_wait, csr_avg_abd_wait, "
+            // Sub-queue Phase 2. COALESCE so a pre-Phase-1 row reads as '' and
+            // takes applyQueueSplitToRows_'s fail-open path rather than null.
+            + "COALESCE(queue_split, '') AS queue_split" + detailCols + " "
             + "FROM dqe_history WHERE call_date BETWEEN ?::date AND ?::date) t";
     var stmt = conn.prepareStatement(sql);
     stmt.setString(1, fromIso);
@@ -243,6 +246,7 @@ function neonFetchDqeRows_(fromIso, toIso, opts) {
         attSec:           parseHmsDisplay_(r.att),
         avgAbdWaitSec:    parseHmsDisplay_(r.avg_abd_wait),
         csrAvgAbdWaitSec: parseHmsDisplay_(r.csr_avg_abd_wait),
+        queueSplit:       String(r.queue_split == null ? '' : r.queue_split).trim(),
       };
       if (includeMissedDetail) {
         row.slots = NEON_DQE_SLOT_COLS.map(function (c) {
@@ -315,7 +319,10 @@ function sheetFetchDqeRows_(fromIso, toIso, opts) {
   var lastRow = sheet.getLastRow();
   if (lastRow < 2) return [];
   var ssTZ = ss.getSpreadsheetTimeZone();
-  var numCols = HISTORICAL_COLS.CSR_AVG_ABD_WAIT;
+  // Phase 2 widened this to col AI, clamped to the sheet's real width because a
+  // getRange past getMaxColumns THROWS (REP-10) and the sheet is 34 wide until
+  // the Phase 1 pipeline runs against it.
+  var numCols = Math.min(HISTORICAL_COLS.QUEUE_SPLIT, sheet.getMaxColumns());
   var range = sheet.getRange(2, 1, lastRow - 1, numCols);
   var values = range.getValues();
   var displays = range.getDisplayValues();
@@ -339,6 +346,9 @@ function sheetFetchDqeRows_(fromIso, toIso, opts) {
       attSec:           parseHmsDisplay_(rd[HISTORICAL_COLS.ATT - 1]),
       avgAbdWaitSec:    parseHmsDisplay_(rd[HISTORICAL_COLS.AVG_ABD_WAIT - 1]),
       csrAvgAbdWaitSec: parseHmsDisplay_(rd[HISTORICAL_COLS.CSR_AVG_ABD_WAIT - 1]),
+      // Sub-queue Phase 2: kept SYMMETRIC with neonFetchDqeRows_ so the two DAL
+      // primitives return the same shape and compareDqeSources_ stays faithful.
+      queueSplit:       String(rd[HISTORICAL_COLS.QUEUE_SPLIT - 1] || '').trim(),
     };
     if (includeMissedDetail) {
       // Slots K..AC + abandoned IDs/times as DISPLAY strings (TZ-safe per INV-02;

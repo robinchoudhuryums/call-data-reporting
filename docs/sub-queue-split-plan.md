@@ -1,6 +1,6 @@
 # Per-queue split of DQE agent metrics — design plan
 
-**Status:** Phases 0 and 1 IMPLEMENTED (see §6 for the phase table). Phases 2-4 open.
+**Status:** Phases 0, 1 and 2 IMPLEMENTED (see §6 for the phase table). Phases 3-4 open.
 **Reported:** 2026-07, after the sub-queue scope switcher shipped — "if I go to
 the Spanish-only view, those agents' numbers are for all of those agents' calls
 from both CSR and Spanish queues, instead of highlighting the respective part of
@@ -133,10 +133,17 @@ backfill function: re-running the existing DQE build (force re-import) for a
 surviving date rewrites its rows with the split, which is the documented
 operator step.
 
-**Phase 2 — My Department consumes it.** `computeSummary_` takes the dept's
-queue set and, when the row has a breakdown, uses that dept's slice; otherwise
-the rollup (flagged). Fixes the reported bug, the duplicate row, and the
-double-counted grand total. `summary:v18` (Phase 0 already took v17).
+**Phase 2 — My Department consumes it.** SHIPPED. `applyQueueSplitToRows_`
+narrows each source row to the dept's own queues (matched case-insensitively
+against `inboundQueuesForDept_`) BEFORE `computeSummary_`'s aggregation loop, so
+every rule inside that loop inherits the narrowing unchanged. **Fails open three
+ways** — an unmapped dept, a row with no split, and unparseable JSON all keep
+the rollup — because showing a department zero calls is far worse than showing
+it too many. Each row carries `queueScoped`, and the client renders a
+warn-tinted "per-queue detail starts `<date>`" note for any range that isn't
+fully split. This also inverts Phase 0: a scoped row is never de-duplicated,
+because two narrowed rows partition the day and summing them is now correct.
+`summary:v18` (Phase 0 took v17).
 
 **Phase 3 — Missed report.** Split slots + AD/AE/AF so per-agent timelines and
 the hour-of-day chart are queue-scoped. `missed:v17→v18`.
@@ -168,7 +175,7 @@ only currently-wrong *total*:
 |---|---|---|
 | 0 | de-dupe crossover agents in the combined grand total | yes — total corrects |
 | 1 | pipeline writes the breakdown + backfill the ~14-day window | no |
-| 2 | My Department consumes it (`summary:v17`) | yes — the reported bug |
+| 2 | My Department consumes it (`summary:v18`) | yes — the reported bug |
 | 3 | Missed report (`missed:v18`) | yes |
 | 4 | IR / Insights (`insights:v20`, `individual:v*`) | yes |
 

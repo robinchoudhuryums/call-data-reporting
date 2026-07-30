@@ -6766,6 +6766,17 @@
 .subq-bar-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; }
 .subq-seg { flex: 0 0 auto; }
 .subq-note { margin: 0; flex: 1 1 260px; min-width: 0; }
+/* Phase 2: the "not queue-split yet" disclosure. Warn-tinted rather than
+   muted -- it changes how the numbers above it should be read, so it must not
+   look like a footnote a manager can skim past. Sits BELOW the scope row on
+   its own line because it applies to the whole table, not to one control. */
+.subq-split-note {
+  margin: 6px 0 0;
+  padding: 6px 9px;
+  border-left: 3px solid var(--warn);
+  background: var(--warn-soft);
+  border-radius: var(--r);
+}
 tr.subq-group-head td {
   background: var(--accent-soft);
   font-weight: 600;
