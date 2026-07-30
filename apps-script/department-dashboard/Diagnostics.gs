@@ -557,6 +557,16 @@ function auditQueueSplitAttribution() {
       + 'this date is only PARTLY narrowed.', blankRows);
   }
 
+  // Logger.log substitutes %s but does NOT honour printf padding (%-28s): the
+  // width forms print literally AND swallow the argument list, which is how the
+  // first run of this audit emitted rows reading "%-28s rung=%-5s ... -> A_Q_CSR"
+  // with every number missing. Pad by hand and pass only plain %s.
+  const pad = function (v, n) {
+    let out = String(v == null ? '' : v);
+    while (out.length < n) out += ' ';
+    return out;
+  };
+
   Logger.log('');
   Logger.log('--- Every queue in the split, and which dept claims it ---');
   const orphanRung = { v: 0 }, orphanAns = { v: 0 };
@@ -573,15 +583,16 @@ function auditQueueSplitAttribution() {
       // the dept whose Dept Config row is missing the queue.
       const homes = {};
       who.forEach(function (a) { (rosterOf[a] || []).forEach(function (d) { homes[d] = true; }); });
-      Logger.log('  !! %-28s rung=%-5s answered=%-5s  CLAIMED BY NO DEPT  '
+      Logger.log('  !! %s rung=%s answered=%s  CLAIMED BY NO DEPT '
         + '-- worked by agents rostered in: %s',
-        q, b.rung, b.answered, Object.keys(homes).sort().join(', ') || '(none)');
+        pad(q, 28), pad(b.rung, 6), pad(b.answered, 6),
+        Object.keys(homes).sort().join(', ') || '(none)');
     } else if (owners.length > 1) {
-      Logger.log('  ?? %-28s rung=%-5s answered=%-5s  claimed by %s  '
-        + '-- DOUBLE-COUNTED across depts', q, b.rung, b.answered, owners.join(' + '));
+      Logger.log('  ?? %s rung=%s answered=%s  claimed by %s -- DOUBLE-COUNTED',
+        pad(q, 28), pad(b.rung, 6), pad(b.answered, 6), owners.join(' + '));
     } else {
-      Logger.log('     %-28s rung=%-5s answered=%-5s  -> %s',
-        q, b.rung, b.answered, owners[0]);
+      Logger.log('     %s rung=%s answered=%s  -> %s',
+        pad(q, 28), pad(b.rung, 6), pad(b.answered, 6), owners[0]);
     }
   });
 
@@ -595,16 +606,26 @@ function auditQueueSplitAttribution() {
       rung += perQueue[q].rung; ans += perQueue[q].answered; mine.push(q);
     });
     if (!listByDept[d].length) {
-      Logger.log('  %-22s NO QUEUES MAPPED -- keeps its ALL-QUEUE rollup (fails open)', d);
+      Logger.log('  %s NO QUEUES MAPPED -- keeps its ALL-QUEUE rollup (fails open)',
+        pad(d, 22));
       return;
     }
     if (!mine.length) {
-      Logger.log('  %-22s rung=0 answered=0   mapped=[%s] but NONE of those names '
-        + 'appear in the split -- likely a raw-vs-canonical name mismatch; add the '
-        + 'RAW name to Inbound queue aliases', d, listByDept[d].join(', '));
+      // TWO very different causes, and the audit cannot tell them apart on its
+      // own -- say so rather than asserting the scarier one. A queue with no
+      // agent RINGS on this date is absent from the split entirely and is
+      // completely normal for a low-volume queue; a name that never matches on
+      // ANY date is the real mismatch. Re-run for a busier date to decide.
+      Logger.log('  %s rung=0 answered=0   mapped=[%s] -- none of those names are '
+        + 'in this date\'s split. Either the queue had NO agent rings today '
+        + '(normal for a low-volume queue -- QCD can still show calls that never '
+        + 'rang anyone), or the mapped name never matches the raw one. Re-run for '
+        + 'a date the queue was busy: if it is still empty, add the RAW name to '
+        + 'Inbound queue aliases.', pad(d, 22), listByDept[d].join(', '));
       return;
     }
-    Logger.log('  %-22s rung=%-5s answered=%-5s  from [%s]', d, rung, ans, mine.join(', '));
+    Logger.log('  %s rung=%s answered=%s  from [%s]',
+      pad(d, 22), pad(rung, 6), pad(ans, 6), mine.join(', '));
   });
 
   Logger.log('');
