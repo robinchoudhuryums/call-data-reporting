@@ -6770,12 +6770,23 @@
    muted -- it changes how the numbers above it should be read, so it must not
    look like a footnote a manager can skim past. Sits BELOW the scope row on
    its own line because it applies to the whole table, not to one control. */
-.subq-split-note {
-  margin: 6px 0 0;
-  padding: 6px 9px;
-  border-left: 3px solid var(--warn);
+/* Phase 2 + owner round: the banner became a CHIP that sits inline with the
+   scope tabs. Still warn-toned and still on screen -- it says the numbers
+   include another department's calls, which changes how they read -- but it no
+   longer occupies a full row. Full sentence lives in its title tooltip. */
+.subq-split-chip {
+  flex: 0 0 auto;
+  align-self: center;
+  padding: 3px 8px;
+  border: 1px solid var(--warn);
   background: var(--warn-soft);
   border-radius: var(--r);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  cursor: help;
 }
 tr.subq-group-head td {
   background: var(--accent-soft);

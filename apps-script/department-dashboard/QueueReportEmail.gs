@@ -414,12 +414,16 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
       calls: Number(own.totalCalls) || 0,
       abnd: Number(own.abandoned) || 0,
       viol: Number(own.violations) || 0,
+      // Owner round: the section's MONTH-TO-DATE violations, so a dept that
+      // rendered banner-only still reports them (see the banner below).
+      violMtd: violOf(own),
     };
     (childrenOf[d.dept] || []).forEach(function (c) {
       const ct = c.totals || {};
       t.calls += Number(ct.totalCalls) || 0;
       t.abnd  += Number(ct.abandoned)  || 0;
       t.viol  += Number(ct.violations) || 0;
+      t.violMtd += violOf(ct);
     });
     t.pct = t.calls > 0 ? (t.abnd / t.calls * 100) : 0;
     return t;
@@ -501,11 +505,23 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
           ? ' <span style="font-weight:normal;font-size:11px;color:' + C.mut + ';">&middot; ' + esc(rowDefs[0].q.queue) + '</span>'
           : '');
     const stripBg = dt.color === C.bad ? C.badTile : (dt.color === C.watch ? C.alertBg : C.okBg);
+    // Owner round: month-to-date violations on the BANNER. A section whose
+    // whole story is one queue renders banner-only (no per-queue rows), so its
+    // MTD count had nowhere to appear -- a dept green TODAY but carrying
+    // violations from earlier in the month showed nothing at all, which is the
+    // opposite of what the column is for. Rendered whenever > 0, on every
+    // section, so it does not depend on today's tier.
+    const secViolMtd = Number(sec.violMtd) || 0;
+    const bannerViol = secViolMtd > 0
+      ? (' &middot; <span style="font-weight:bold;color:' + dt.color + ';">'
+         + esc(String(secViolMtd)) + ' viol MTD</span>')
+      : '';
     tbl += '<tr><td colspan="4" style="padding:0;border-top:1px solid ' + C.rowline + ';">'
       + '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:' + stripBg + ';border-left:4px solid ' + dt.color + ';border-collapse:separate;"><tr>'
       +   '<td style="padding:8px 12px;font:bold 13px Arial,sans-serif;color:' + C.ink + ';">' + bannerName + '</td>'
       +   '<td align="right" style="padding:8px 12px;font:12px ' + sans + ';color:' + C.mut + ';white-space:nowrap;">'
       +     esc(dCalls) + ' calls &middot; <span style="' + (dPct >= 5 ? 'font-weight:bold;color:' + C.bad : 'color:' + C.ink) + ';">' + esc(dAbnd) + ' abandoned (' + esc(dPctStr) + ')</span>'
+      +     bannerViol
       +   '</td>'
       + '</tr></table></td></tr>';
     if (singleRow) return;   // the banner IS the row -- no duplicate numbers
@@ -527,12 +543,16 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
     });
   });
   const gTier = tierOf(gPct, gViol);
-  const gViolShow = violOf(gt);
+  // Owner round: the company total's Viol cell is deliberately BLANK. Summing
+  // month-to-date violation DAYS across departments produces a number with no
+  // meaning -- two depts each violating on the same day reads as 2, and the
+  // figure only grows as more depts are added. The per-section counts are the
+  // real signal; a company roll-up of them invited exactly the wrong reading.
   tbl += '<tr>'
     + '<td style="padding:9px 12px;font:bold 12px Arial,sans-serif;color:' + C.ink + ';border-top:2px solid ' + C.ink + ';">Company total</td>'
     + '<td align="right" style="padding:9px 8px;font:bold 12px ' + sans + ';color:' + C.ink + ';border-top:2px solid ' + C.ink + ';">' + esc(gTotal) + '</td>'
     + '<td style="padding:9px 8px;border-top:2px solid ' + C.ink + ';">' + barHtml({ totalCalls: gTotal, totalAnswered: gAns, abandonedPct: gPct }, (gt.abandonedPctStr || gPct.toFixed(1) + '%'), gPct >= 5 ? gTier.color : C.mut, true) + '</td>'
-    + '<td align="right" style="padding:9px 12px;font:bold 12px ' + sans + ';color:' + (gViolShow > 0 ? gTier.color : C.mut) + ';border-top:2px solid ' + C.ink + ';">' + esc(gViolShow) + '</td>'
+    + '<td align="right" style="padding:9px 12px;border-top:2px solid ' + C.ink + ';">&nbsp;</td>'
     + '</tr>';
 
   const tableBlock = depts.length
