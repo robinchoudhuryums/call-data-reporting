@@ -271,6 +271,87 @@ test('combine: a dept with no non-zero agents drops out of the mean entirely', f
     'matches avgNonzero_ semantics (v11/F-29): idle agents must not drag the mean');
 });
 
+// -- Phase 0: the CROSSOVER-AGENT double count -------------------------------
+// A DQE row is keyed on (date, agent) with no queue dimension, so an agent on
+// two depts' rosters (CSR + Spanish here) is returned by BOTH depts'
+// computeSummary_ calls carrying the SAME whole-day figures -- and the grand
+// total counted their calls twice. See docs/sub-queue-split-plan.md.
+
+function rosterRow(agent, o) {
+  o = o || {};
+  return { agent: agent, matchedViaRoster: true,
+           totalUnique: o.u || 0, totalRung: o.r || 0, totalMissed: o.m || 0,
+           totalAnswered: o.a || 0, tttSeconds: o.t || 0 };
+}
+
+test('combine: an agent on BOTH rosters is counted ONCE in the grand total', function () {
+  const shared = { u: 4, r: 6, m: 1, a: 5, t: 300 };
+  const a = part('CSR', [rosterRow('Anna', shared), rosterRow('Bob', { u: 2, r: 3, m: 0, a: 3, t: 120 })],
+    { totalUnique: 6, totalRung: 9, totalMissed: 1, totalAnswered: 8,
+      tttSeconds: 420, rosterAgentCount: 2, queueOnlyAgentCount: 0 });
+  // Anna's row is IDENTICAL in Spanish -- same DQE row, no queue dimension.
+  const b = part('Spanish', [rosterRow('Anna', shared)],
+    { totalUnique: 4, totalRung: 6, totalMissed: 1, totalAnswered: 5,
+      tttSeconds: 300, rosterAgentCount: 1, queueOnlyAgentCount: 0 });
+  const r = hData.call('combineSummaries_', a, [a, b]);
+
+  assert.equal(r.totals.totalRung, 9, 'was 15 -- Anna\'s 6 counted twice');
+  assert.equal(r.totals.totalAnswered, 8);
+  assert.equal(r.totals.totalMissed, 1);
+  assert.equal(r.totals.totalUnique, 6);
+  assert.equal(r.totals.tttSeconds, 420);
+  assert.equal(r.totals.rosterAgentCount, 2, 'two PEOPLE, three rows');
+  assert.equal(r.totals.crossoverAgentCount, 1);
+
+  // The subtotals stay un-deduped ON PURPOSE: each must remain exactly what
+  // that dept's own view shows (S35). The consequence is that the grand total
+  // is now LESS than their sum, which is why crossoverAgentCount ships -- the
+  // client has to explain the shortfall or it reads as a bug.
+  assert.equal(r.deptGroups[0].totals.totalRung, 9);
+  assert.equal(r.deptGroups[1].totals.totalRung, 6);
+  assert.equal(r.rows.length, 3, 'and the agent is still SHOWN in both groups');
+});
+
+test('combine: with no crossover the grand total is byte-identical', function () {
+  const a = part('Sales', [rosterRow('A', { r: 10, a: 8, m: 2, u: 9, t: 100 })],
+    { totalUnique: 9, totalRung: 10, totalMissed: 2, totalAnswered: 8,
+      tttSeconds: 100, rosterAgentCount: 1, queueOnlyAgentCount: 0 });
+  const b = part('PAP', [rosterRow('B', { r: 4, a: 3, m: 1, u: 4, t: 40 })],
+    { totalUnique: 4, totalRung: 4, totalMissed: 1, totalAnswered: 3,
+      tttSeconds: 40, rosterAgentCount: 1, queueOnlyAgentCount: 0 });
+  const r = hData.call('combineSummaries_', a, [a, b]);
+  assert.equal(r.totals.totalRung, 14, 'the correction pass subtracts nothing');
+  assert.equal(r.totals.rosterAgentCount, 2);
+  assert.equal(r.totals.crossoverAgentCount, 0,
+    'zero means the client renders no explanatory caption at all');
+});
+
+test('combine: a same-named FLOATER in two depts is counted once too', function () {
+  const f = { agent: 'Flo', matchedViaRoster: false, matchedViaQueue: true };
+  const a = part('Sales', [f], { rosterAgentCount: 0, queueOnlyAgentCount: 1 });
+  const b = part('PAP', [f], { rosterAgentCount: 0, queueOnlyAgentCount: 1 });
+  const r = hData.call('combineSummaries_', a, [a, b]);
+  assert.equal(r.totals.queueOnlyAgentCount, 1,
+    'the caption counts PEOPLE excluded, not rows -- INV-53 keeps their '
+    + 'numbers out of the totals either way');
+  assert.equal(r.totals.crossoverAgentCount, 0,
+    'a floater is not a crossover: no roster claims them, so nothing was double-counted');
+});
+
+test('combine: the duration means are deliberately NOT deduped', function () {
+  const shared = { r: 6, a: 5, t: 300 };
+  const a = part('CSR', [rosterRow('Anna', shared)],
+    { rosterAgentCount: 1, attSeconds: 60 });
+  const b = part('Spanish', [rosterRow('Anna', shared)],
+    { rosterAgentCount: 1, attSeconds: 120 });
+  const r = hData.call('combineSummaries_', a, [a, b]);
+  // (60*1 + 120*1)/2 = 90 -- Anna weighted in both depts. A doubled SUM is
+  // arithmetically wrong and had to be fixed; a mean that weights one agent
+  // twice stays in range, and recomputing it would move the number for EVERY
+  // combined view, crossover or not. Phase 2 dissolves the question.
+  assert.equal(r.totals.attSeconds, 90);
+});
+
 test('combine: the QCD snapshot comes from the PRIMARY dept only', function () {
   const a = part('Sales', [{}], { rosterAgentCount: 1 });
   const b = part('PAP', [{}], { rosterAgentCount: 1 });

@@ -267,6 +267,105 @@ function getLatestDataDates() {
 }
 
 /**
+ * Sub-queue Phase 2: narrow each source row to the DEPARTMENT'S OWN QUEUES.
+ *
+ * The bug this closes: a DQE row is keyed on (date, agent) with no queue
+ * dimension, so an agent on two departments' rosters showed the SAME
+ * all-queue figures in both departments' views -- a Spanish-only view
+ * reported that agent's CSR calls too.
+ *
+ * Phase 1 gave every row a per-queue breakdown (col AI / `queue_split`). This
+ * rewrites the six per-agent metrics in place from that department's slice
+ * BEFORE the aggregation loop runs, so every downstream rule -- the E5 prior
+ * window, INV-53 floater gating, diagnostics, the totals row -- inherits the
+ * narrowing with no change of its own. Deliberately a pre-pass rather than
+ * edits inside the loop: `computeSummary_` is the most heavily pinned function
+ * in the app and none of its rules should have to learn about queues.
+ *
+ * FAILS OPEN, in three separate ways, because showing a department ZERO calls
+ * is far worse than showing it too many:
+ *   1. A dept with NO mapped queues is left entirely alone. Its slice would be
+ *      empty, i.e. all zeros, which would read as "nobody worked today".
+ *   2. A row with no split -- built before Phase 1, an INV-23 sentinel, or a
+ *      row whose split threw -- keeps its rollup figures.
+ *   3. Unparseable JSON keeps the rollup rather than throwing.
+ * Every row is tagged `queueScoped` so the caller can tell which of its
+ * numbers were actually narrowed, and the client can say so.
+ *
+ * Queue names are matched case-insensitively on the RAW name the pipeline
+ * captured (`A_Q_CSR`), against `inboundQueuesForDept_` -- `queuesForDept_`
+ * (QCD-canonical) UNIONed with the Dept Config "Inbound queue aliases" raw
+ * names. That union exists precisely because the two name spaces differ, and
+ * the Missed report already matches sentinels the same way (R8-1). Matching
+ * `queuesForDept_` alone would silently drop CSR's main queue.
+ *
+ * Returns { dates: {iso: true} } for the dates that had at least one split --
+ * split-awareness is a property of the DATE, not the row (a sentinel row never
+ * carries one), so this is what the "split from <date>" note is built from.
+ */
+function applyQueueSplitToRows_(srcRows, dept) {
+  const out = { dates: {}, queues: [], applied: 0, unsplitRows: 0 };
+  if (!srcRows || !srcRows.length) return out;
+
+  let queues = [];
+  try {
+    if (typeof inboundQueuesForDept_ === 'function') queues = inboundQueuesForDept_(dept) || [];
+  } catch (e) {
+    Logger.log('applyQueueSplitToRows_: queue lookup failed for ' + dept
+               + ' -- leaving rows un-narrowed: ' + e);
+    return out;
+  }
+  const want = {};
+  queues.forEach(function (q) {
+    const v = String(q == null ? '' : q).trim().toLowerCase();
+    if (v) want[v] = true;
+  });
+  out.queues = queues;
+  // Fail-open #1: no mapped queues -> every row keeps its rollup.
+  if (!queues.length) return out;
+
+  for (let i = 0; i < srcRows.length; i++) {
+    const row = srcRows[i];
+    const raw = String(row.queueSplit == null ? '' : row.queueSplit).trim();
+    if (!raw) { out.unsplitRows++; continue; }          // fail-open #2
+    let split;
+    try { split = JSON.parse(raw); } catch (e) { out.unsplitRows++; continue; }   // #3
+    if (!split || typeof split !== 'object') { out.unsplitRows++; continue; }
+    out.dates[row.dateIso] = true;
+
+    let u = 0, r = 0, m = 0, a = 0, t = 0, n = 0;
+    Object.keys(split).forEach(function (qName) {
+      if (!want[String(qName).trim().toLowerCase()]) return;
+      const e = split[qName] || {};
+      u += Number(e.u) || 0;
+      r += Number(e.r) || 0;
+      m += Number(e.m) || 0;
+      a += Number(e.a) || 0;
+      t += Number(e.t) || 0;
+      n += Number(e.n) || 0;
+    });
+
+    row.totalUnique   = u;
+    row.totalRung     = r;
+    row.totalMissed   = m;
+    row.totalAnswered = a;
+    row.tttSec        = t;
+    // ATT is a MEAN, so it is recomputed on this queue's own denominator
+    // (parents with talk > 0), mirroring the rollup's own formula rather than
+    // scaling the stored value. `n === 0` means this dept's queues produced no
+    // talk time for the agent that day, so 0 is correct, and the accumulator
+    // skips zeros anyway (INV-05 / avgNonzero_).
+    row.attSec        = n ? Math.round(t / n) : 0;
+    // avgAbdWaitSec / csrAvgAbdWaitSec are NOT narrowed: the pipeline computes
+    // them once per DAY and stamps the same value on every agent row, so they
+    // were never per-agent -- and there is nothing per-queue to slice.
+    row.queueScoped   = true;
+    out.applied++;
+  }
+  return out;
+}
+
+/**
  * Sub-queue Phase 1: merge per-department summaries into ONE payload.
  *
  * Deliberately built by calling `computeSummary_` once PER DEPARTMENT and
@@ -296,6 +395,16 @@ function combineSummaries_(primary, parts) {
   const grand = { totalUnique: 0, totalRung: 0, totalMissed: 0,
                   totalAnswered: 0, tttSeconds: 0, rosterAgentCount: 0,
                   queueOnlyAgentCount: 0 };
+  // Sub-queue Phase 0 (the CROSSOVER-AGENT double count). A DQE row is keyed
+  // on (date, agent) with NO queue dimension, so an agent on two depts'
+  // rosters -- CSR + Spanish here -- is returned by BOTH depts'
+  // computeSummary_ calls carrying the SAME whole-day figures. Summing the
+  // part totals therefore counted their calls TWICE in the grand total, and
+  // they appear as two rows.
+  //
+  // This is a MITIGATION, not the fix: each dept still shows the agent's
+  // all-queue numbers. Phase 2 removes the duplication at its source by giving
+  // each dept only its own queues' slice. See docs/sub-queue-split-plan.md.
   parts.forEach(function (p) {
     (p.rows || []).forEach(function (r) { rows.push(r); });
     const t = p.totals || {};
@@ -305,10 +414,67 @@ function combineSummaries_(primary, parts) {
       grand[k] += Number(t[k]) || 0;
     });
   });
+  // Then SUBTRACT each repeat appearance. Deliberately a correction pass over
+  // the untouched accumulation above rather than a re-derivation from `rows`:
+  // when no agent appears twice this loop subtracts nothing and the grand
+  // total is byte-identical to the pre-Phase-0 value BY CONSTRUCTION, which is
+  // the strongest form the "additive" guarantee can take. Re-summing from rows
+  // would also couple the totals to `matchedViaRoster` being set on every row
+  // -- a property of computeSummary_ output this function should not assume.
+  //
+  // Per-dept subtotals are deliberately NOT deduped: each `deptGroups` entry
+  // stays exactly what that dept's own view shows, which is the S35
+  // transparency contract. The consequence is that the grand total can now be
+  // LESS than the sum of the subtotals, so `crossoverAgentCount` ships with it
+  // and the client must say so -- an unexplained mismatch would read as a bug.
+  const seenRoster = {};
+  const seenQueueOnly = {};
+  let crossoverAgentCount = 0;
+  parts.forEach(function (p) {
+    (p.rows || []).forEach(function (r) {
+      const name = String(r.agent || '');
+      if (!name) return;
+      // Phase 2 interaction, and it inverts the rule: once a row is narrowed
+      // to its own dept's queues, the two appearances of a crossover agent
+      // carry DIFFERENT figures that partition their day -- summing them is
+      // now CORRECT, and subtracting one would under-count. So only de-dupe
+      // rows that are still all-queue. During the changeover a range can hold
+      // both kinds; each row is judged on its own flag, which is why
+      // `queueScoped` is per-row and not a payload-level switch.
+      // Deliberately does NOT enter the seen map: a scoped row is not a
+      // duplicate of anything, so it must neither be subtracted nor cause a
+      // later un-scoped row to be. De-duplication is a rule about all-queue
+      // rows only.
+      if (r.queueScoped) return;
+      if (r.matchedViaRoster) {
+        if (!seenRoster[name]) { seenRoster[name] = true; return; }
+        crossoverAgentCount++;
+        grand.totalUnique   -= Number(r.totalUnique) || 0;
+        grand.totalRung     -= Number(r.totalRung) || 0;
+        grand.totalMissed   -= Number(r.totalMissed) || 0;
+        grand.totalAnswered -= Number(r.totalAnswered) || 0;
+        grand.tttSeconds    -= Number(r.tttSeconds) || 0;
+        grand.rosterAgentCount -= 1;
+      } else if (r.matchedViaQueue) {
+        if (!seenQueueOnly[name]) { seenQueueOnly[name] = true; return; }
+        grand.queueOnlyAgentCount -= 1;
+      }
+    });
+  });
+  grand.crossoverAgentCount = crossoverAgentCount;
   // The three DURATION means are per-agent averages, so the grand total is the
   // agent-count-weighted mean of each dept's mean -- NOT a mean of means, which
   // would over-weight a small dept. Depts contributing no non-zero agents drop
   // out of both sides, matching avgNonzero_'s own semantics (v11 / F-29).
+  //
+  // Phase 0 deliberately leaves this formula ALONE, crossover agents included.
+  // A doubled SUM is arithmetically wrong and had to be fixed; a mean that
+  // weights one agent in two depts stays in range. Recomputing it from the
+  // deduped rows would move the number for EVERY combined view -- crossover or
+  // not -- because a weighted mean of per-dept `avgNonzero_` results is not
+  // `avgNonzero_` over the union, and that is a wider behavior change than
+  // this mitigation warrants. Phase 2 dissolves the question: with per-queue
+  // slices there is no duplicate row left to weight twice.
   ['attSeconds', 'avgAbdWaitSeconds', 'csrAvgAbdWaitSeconds'].forEach(function (k) {
     let num = 0, den = 0;
     parts.forEach(function (p) {
@@ -433,7 +599,7 @@ function getDepartmentSummary(req) {
   // v16 (sub-queue Phase 1): `subScope` joins the key. Without it a manager
   // toggling the switcher inside the 30-min TTL would be served the other
   // scope's table.
-  const cacheKey = 'summary:v16:' + dept + ':' + scope + ':' + subScope
+  const cacheKey = 'summary:v18:' + dept + ':' + scope + ':' + subScope
                  + ':' + from + ':' + to + ':' + summarySource;
   const cached = cache.get(cacheKey);
   if (cached) {
@@ -592,7 +758,13 @@ function computeSummary_(dept, from, to, scope) {
     if (!sheet || lastRow < 2) {   // F-35: neon empty AND no sheet to fall back to
       return emptySummary_(dept, from, to, scope, roster.names.length, 0, []);
     }
-    const range = sheet.getRange(2, 1, lastRow - 1, numCols);
+    // Phase 2 needs col AI (QUEUE_SPLIT). Read only what the sheet HAS:
+    // getRange past getMaxColumns THROWS (REP-10), and the DQE sheet is still
+    // 34 wide until the Phase 1 pipeline has run against it once. At 34 the
+    // split cell reads undefined -> '' -> every row keeps its rollup, which is
+    // exactly the pre-Phase-2 behavior.
+    const readCols = Math.min(HISTORICAL_COLS.QUEUE_SPLIT, sheet.getMaxColumns());
+    const range = sheet.getRange(2, 1, lastRow - 1, readCols);
     const values = range.getValues();
     const displays = range.getDisplayValues();
     // Queue-scope/Both-scope matching uses this set, NOT roster.allExtensions
@@ -621,10 +793,18 @@ function computeSummary_(dept, from, to, scope) {
         attSec:           parseHmsDisplay_(rd[HISTORICAL_COLS.ATT - 1]),
         avgAbdWaitSec:    parseHmsDisplay_(rd[HISTORICAL_COLS.AVG_ABD_WAIT - 1]),
         csrAvgAbdWaitSec: parseHmsDisplay_(rd[HISTORICAL_COLS.CSR_AVG_ABD_WAIT - 1]),
+        // Sub-queue Phase 2. Display value: the cell is plain-text JSON, and
+        // getValues would hand back the same string anyway.
+        queueSplit:       String(rd[HISTORICAL_COLS.QUEUE_SPLIT - 1] || '').trim(),
       });
     }
   }
   if (typeof logDqeReadTiming_ === 'function') logDqeReadTiming_('computeSummary_:' + dept, effectiveSource, _tRead, srcRows.length);
+
+  // Sub-queue Phase 2: narrow each row to THIS dept's own queues before any
+  // aggregation happens, so the loop below and every rule inside it are
+  // unchanged. Fails open per-row -- see applyQueueSplitToRows_.
+  const splitInfo = applyQueueSplitToRows_(srcRows, dept);
 
   const acc = {};
   let rowsMatched = 0;
@@ -713,6 +893,12 @@ function computeSummary_(dept, from, to, scope) {
         // separately.
         avgAbdWaitSecondsSum: 0, avgAbdWaitSecondsCount: 0,
         csrAvgAbdWaitSecondsSum: 0, csrAvgAbdWaitSecondsCount: 0,
+        // Phase 2: true only when EVERY contributing row was narrowed to this
+        // dept's queues. One un-narrowed day (a pre-Phase-1 date in the range)
+        // makes the agent's total partly all-queue, and the client has to say
+        // so -- claiming a clean split when part of it isn't is the bug being
+        // fixed, just quieter.
+        queueScoped: true,
         days: {},
       };
       acc[agent] = a;
@@ -721,6 +907,8 @@ function computeSummary_(dept, from, to, scope) {
       if (inRoster) a.matchedViaRoster = true;
       if (inQueue)  a.matchedViaQueue  = true;
     }
+
+    if (!row.queueScoped) a.queueScoped = false;
 
     a.totalUnique   += row.totalUnique;
     a.totalRung     += row.totalRung;
@@ -753,6 +941,12 @@ function computeSummary_(dept, from, to, scope) {
     deptsByAgent = buildDeptsByAgent_();
   }
 
+  // Phase 2: the split-aware dates INSIDE the user window (splitInfo.dates
+  // also covers the E5 prior window, which the caption must not claim).
+  const splitQueueDates = Object.keys(splitInfo.dates)
+    .filter(function (d) { return d >= from && d <= to; })
+    .sort();
+
   // Finalize per-agent rows.
   const rows = [];
   for (const k in acc) {
@@ -780,6 +974,8 @@ function computeSummary_(dept, from, to, scope) {
       matchedViaRoster: a.matchedViaRoster,
       matchedViaQueue: a.matchedViaQueue,
       sourceHomes: sourceHomes,
+      // Phase 2: false when any day in range contributed all-queue figures.
+      queueScoped: a.queueScoped,
       totalUnique: a.totalUnique,
       totalRung: a.totalRung,
       totalMissed: a.totalMissed,
@@ -897,6 +1093,19 @@ function computeSummary_(dept, from, to, scope) {
       // Drives chip tooltip ("Prior period: X – Y") on the client.
       priorFrom: priorFrom,
       priorTo:   priorTo,
+      // Sub-queue Phase 2: how much of this window is actually queue-narrowed.
+      // `queueSplitFrom` is the EARLIEST date in range that carried a split;
+      // dates before it are all-queue and cannot ever be split (the per-leg
+      // queue identity is gone once Call_Legs is pruned at 14 days). null means
+      // the whole range predates the split, or this dept has no mapped queues
+      // -- both of which leave every figure all-queue.
+      queueSplitFrom:    splitQueueDates.length ? splitQueueDates[0] : null,
+      queueSplitDays:    splitQueueDates.length,
+      queueSplitApplied: splitInfo.applied,
+      // A dept with no mapped queues is deliberately left un-narrowed rather
+      // than shown zeros; the client explains that differently from "your
+      // history predates the split".
+      queueSplitMapped:  splitInfo.queues.length > 0,
       generatedAt: new Date().toISOString(),
     },
     rows: rows,

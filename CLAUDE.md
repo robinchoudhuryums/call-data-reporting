@@ -120,7 +120,15 @@ bash scripts/check-duplicated-files.sh
 # answer-targets (the R12-25 tunable display-standards parser + save
 # canonicalizer), access-control-editor, neon-coverage (the R7 sheet-vs-Neon
 # reconciliation's pure pieces), cache-version-sync (doc↔code cache-pin
-# drift), subqueue-access (Phase 0 access widening + the Phase 1 merge layer +
+# drift), html-include-structure (styles.html / script.html are Apps Script
+# INCLUDES whose wrapping <style>/<script> must enclose the WHOLE file --
+# content appended to the END lands OUTSIDE the tag and renders as visible text
+# on the page. That shipped once, and the rendered-UI gate structurally cannot
+# see it: no console error, no blank canvas, no overflow), queue-split (the
+# sub-queue Phase 1 pipeline column -- pins cols A..AH byte-identical so the
+# append stays provably additive -- plus the Phase 2 reader's three fail-open
+# paths and its INVERSION of the Phase 0 crossover de-dup),
+# subqueue-access (Phase 0 access widening + the Phase 1 merge layer +
 # the Phase 2 picker groups), claude-md-split (the F8 index↔file guard: an invariant / scenario /
 # operator item that exists in docs/ but not in CLAUDE.md's index -- or vice
 # versa -- fails the build, plus a size cap on CLAUDE.md itself).
@@ -514,6 +522,29 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   its CDR field-parsing helpers (`cdrTimeToSeconds_`, `cdrHashPhone_`,
   `cdrLooksLikePhone_`, `cdrParseNameFieldJson_`, `cdrParsePhoneField_`)
   so they travel with the duplication.
+- **DQE col AI (`Queue Split`) is the per-queue breakdown -- ADDITIVE, and it
+  cannot be backfilled.** Sub-queue Phase 1 appended col 35
+  (`HISTORICAL_COLS.QUEUE_SPLIT`): JSON keyed by RAW queue name,
+  `{"A_Q_CSR":{u,r,m,a,t,n,mt}}`, produced by the pure `dqeQueueSplitForAgent_`.
+  Cols A-AH keep their ALL-QUEUE meaning as the rollup, so nothing that existed
+  before reads differently -- `tests/unit/queue-split.test.js` pins A..AH
+  byte-identical, and the split's computation is try/catch-wrapped so a defect
+  in it can never cost a day of history (it just leaves AI blank). Three states,
+  NOT interchangeable: `''` = never computed (pre-Phase-1 row, INV-23 sentinel,
+  or a throw), `'{}'` = computed with nothing in the work window, JSON = the
+  split -- so ask "is this DATE split-aware?" (any agent row with a non-empty
+  AI), never row-by-row, or every sentinel reads as pre-Phase-1. It SUMS BACK to
+  the rollup: leg-level figures partition by each leg's own queue, parent-level
+  ones (unique, talk) go to the queue of that parent's EARLIEST leg, so an
+  overflow call that rang the agent through two queues is not counted twice.
+  **`Call_Legs` is pruned at 14 days and the per-leg queue identity exists
+  nowhere else, so history before the deploy is permanently unsplittable** --
+  every day this is not deployed is another one. Two traps: it embeds
+  comma-joined times, so col 35 is plain-texted like AD-AF / K-AC; and Sheets
+  does NOT auto-expand columns, so the writer WIDENS a 34-col sheet before
+  touching col 35 (a getRange past `getMaxColumns` throws -- REP-10). Mirrored
+  to `dqe_history.queue_split` via an idempotent ADD COLUMN, and every upsert
+  COALESCEs so a sheet-sourced NULL can't erase a stored split.
 - **`buildDQEHistoricalData.js` is also duplicated** between
   `apps-script/cdr-report/` and `apps-script/cdr-import/`. Same INV-16
   byte-identical discipline as `neonWrite.js`. cdr-import calls it
@@ -1660,12 +1691,43 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   / `<subs> only` / `<dept> + <subs>` -- persisted per dept in
   `cdr.dept.subscope` and **defaulting to COMBINED** (owner decision). Depts
   with no sub-queues get no control and no behavior change. `subScope` is a
-  cache-key dimension (`summary:v16`). **Combined means grouped, never merged:**
+  cache-key dimension (`summary:v18`). **Combined means grouped, never merged:**
   rows carry `dept`, each dept gets a `subq-group-head` subheader and its OWN
   subtotal row from `deptGroups`, and the grand total is labelled -- so the
   familiar own-dept figure stays on screen and every number reconciles against
   that dept's own view. Team averages / benchmark tints stay PER-DEPT (one
   average across two teams with different call profiles is a worse number).
+  **CROSSOVER AGENTS are the one exception to "every number reconciles"
+  (sub-queue Phase 0).** A DQE row is keyed on (date, agent) with NO queue
+  dimension, so an agent on TWO depts' rosters is returned by BOTH depts'
+  `computeSummary_` calls carrying the SAME whole-day figures -- they show as
+  two rows and their calls were counted TWICE in the grand total.
+  `combineSummaries_` now SUBTRACTS each repeat appearance (a correction pass
+  over the untouched accumulation, so a no-crossover combine is byte-identical
+  BY CONSTRUCTION) and ships `totals.crossoverAgentCount`. Per-dept subtotals
+  stay UN-deduped on purpose -- each must still equal that dept's own view --
+  so **the grand total can now be LESS than the sum of the subtotals**, and
+  both the totals-row caption and the CSV total row say why (an unexplained
+  shortfall would read as a bug). The three DURATION means are deliberately NOT
+  deduped: a doubled sum is arithmetically wrong, while a mean weighting one
+  agent in two depts stays in range, and recomputing it would move the number
+  for EVERY combined view.
+  **Phase 2 closes it at the source:** `applyQueueSplitToRows_` (Data.gs)
+  narrows each source row to the dept's OWN queues -- matched
+  case-insensitively against `inboundQueuesForDept_`, the raw-name union --
+  BEFORE `computeSummary_`'s aggregation loop, so E5, INV-53, diagnostics and
+  the totals all inherit it unchanged. It **FAILS OPEN three ways** (a dept with
+  no mapped queues, a row with no split, unparseable JSON all keep the rollup),
+  because showing a dept ZERO calls is far worse than too many; each row carries
+  `queueScoped` so the client can say which numbers were narrowed.
+  `avgAbdWait`/`csrAvgAbdWait` are NOT narrowed -- the pipeline stamps one
+  per-DAY value on every row, so they were never per-agent. **Phase 2 INVERTS
+  the Phase 0 rule:** a `queueScoped` row is never de-duplicated, because two
+  narrowed rows PARTITION the agent's day and summing them is now correct --
+  subtracting would under-count. A range that is not fully split renders a
+  warn-tinted "per-queue detail starts `<date>`" note (`subqSplitNote_`), since
+  a split can never reach dates older than the ~14-day `Call_Legs` retention.
+  See [`docs/sub-queue-split-plan.md`](docs/sub-queue-split-plan.md).
   The relationship line renders in EVERY scope, including `own`, where it says
   the sub-queue is excluded -- that exclusion was previously invisible. A CHILD
   dept gets an upward pointer only, no switcher (the combined view belongs to
@@ -2177,7 +2239,7 @@ items for anything it flags or doesn't cover.)
 11. Pipeline Health sheet -- a long quiet stretch on `autoImport` or any DQE-freshness step
 12. Manager digest not delivered -- the seven things to check
 13. `ADMIN_EMAILS` Script Property (a new admin who sees no admin features)
-14. A dept shows "No queues mapped" / no QCD chips -- map its queues (Dept Config, no redeploy)
+14. A dept shows "No queues mapped" / no QCD chips -- map its queues (Dept Config, no redeploy); since sub-queue Phase 2 the SAME list narrows My Department's per-agent numbers, so a partially-mapped dept now under-reports
 15. `TARGET_SS_ID` in CDR Import must point at the CDR Report spreadsheet
 16. `NEON_*` Script Properties in CDR Import (without them, mirror writes silently skip)
 17. `HMAC_SECRET` must match across cdr-import, cdr-report AND the dashboard
@@ -2203,6 +2265,7 @@ items for anything it flags or doesn't cover.)
 37. `ANSWER_TARGETS` -- the admin-tunable answer-rate DISPLAY standards (seed 92%)
 38. Diagnosing "a queue's inbound calls are missing" -- the F1/F1b runbook, incl. the ANTI-pattern probe
 39. Sub-queue ACCESS widening -- who gains what on deploy, with no admin edit (INV-38)
+40. Per-queue split backfill -- a ONE-TIME step whose 14-day window CLOSES; miss it and those dates can never be split
 
 ## Cycle Workflow Config
 

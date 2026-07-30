@@ -95,6 +95,21 @@ function makeFakeSheet(name, data) {
       return this._data.reduce(function (m, r) { return Math.max(m, r.length); }, 0);
     },
     getMaxRows: function () { return Math.max(this._data.length, 1000); },
+    // Grid WIDTH, distinct from getLastColumn (the last column with content).
+    // Real Sheets throws on a getRange past getMaxColumns -- it does NOT
+    // auto-expand columns the way it does rows -- which is why writers that
+    // added a column widen the sheet first. `_maxColumns` lets a test pin the
+    // narrow-sheet case; otherwise the grid is treated as wide enough for the
+    // data it holds, with a floor matching a default new sheet.
+    getMaxColumns: function () {
+      if (this._maxColumns != null) return this._maxColumns;
+      return Math.max(this.getLastColumn(), 26);
+    },
+    insertColumnsAfter: function (afterPosition, howMany) {
+      const target = Math.max(this.getMaxColumns(), afterPosition + (howMany || 1));
+      this._maxColumns = target;
+      return this;
+    },
     getRange: function (startRow, startCol, numRows, numCols) {
       return makeFakeRange(this, startRow, startCol, numRows, numCols);
     },

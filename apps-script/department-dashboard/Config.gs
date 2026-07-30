@@ -202,6 +202,13 @@ const HISTORICAL_COLS = Object.freeze({
   ABANDONED_MISSED_TIMES: 32, // AF
   AVG_ABD_WAIT: 33,      // AG - H:MM:SS
   CSR_AVG_ABD_WAIT: 34,  // AH - H:MM:SS
+  // Sub-queue Phase 1: per-queue breakdown of THIS row's figures, as JSON
+  // keyed by raw queue name ({"A_Q_CSR":{u,r,m,a,t,n,mt}, ...}). Cols A-AH keep
+  // their all-queue meaning as the rollup, so this is purely additive.
+  // '' = never computed (a row built before Phase 1, or an INV-23 queue
+  // sentinel); '{}' = computed with nothing in the work window. Cannot be
+  // backfilled past the ~14-day Call_Legs retention.
+  QUEUE_SPLIT: 35,       // AI - JSON
 });
 
 // Sentinel written into abandoned-ID/time cells (AD/AE/AF) whose original

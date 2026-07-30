@@ -46,7 +46,7 @@ function columnsOf(sql) {
 function values(cap) { return cap.params.map(function (p) { return p ? p.v : undefined; }); }
 function methods(cap) { return cap.params.map(function (p) { return p ? p.m : undefined; }); }
 
-test('DQE writer: 34 params bind in the dqe_history column order', function () {
+test('DQE writer: 35 params bind in the dqe_history column order', function () {
   const cap = {};
   install(cap);
   h.fn('writeDQERowsToNeon')([{
@@ -57,6 +57,7 @@ test('DQE writer: 34 params bind in the dqe_history column order', function () {
     slots: ['9:00:00', '', '10:23:33,10:08:41'],
     abParentIds: 'PA,PB', abMissedIds: 'QA', abMissedTimes: '9:05:00',
     avgAbdWait: '0:00:40', csrAvgAbdWait: '',
+    queueSplit: '{"A_Q_CSR":{"u":5,"r":10,"m":2,"a":8,"t":180,"n":1,"mt":"9:05:00"}}',
   }]);
 
   assert.deepEqual(columnsOf(cap.sql), [
@@ -68,8 +69,9 @@ test('DQE writer: 34 params bind in the dqe_history column order', function () {
     'slot_1530_1600', 'slot_1600_1630', 'slot_1630_1700', 'slot_1700_1730',
     'abandoned_parent_ids', 'abandoned_missed_ids', 'abandoned_missed_times',
     'avg_abd_wait', 'csr_avg_abd_wait',
+    'queue_split',                                   // sub-queue Phase 1
   ]);
-  assert.equal(cap.params.length, 34);
+  assert.equal(cap.params.length, 35);
   assert.deepEqual(values(cap), [
     'June 2026', '2026-06-22', 'Anna', '103,204',   // MM/DD/YYYY -> ISO (parseDateForNeon)
     5, 10, 2, 8, '0:15:03', '0:03:01',
@@ -78,6 +80,7 @@ test('DQE writer: 34 params bind in the dqe_history column order', function () {
     null, null, null, null, null, null, null,
     'PA,PB', 'QA', '9:05:00',
     '0:00:40', null,                                 // normalizeDuration: '' -> NULL
+    '{"A_Q_CSR":{"u":5,"r":10,"m":2,"a":8,"t":180,"n":1,"mt":"9:05:00"}}',
   ]);
   // JDBC setter types: counts are ints, everything else strings here.
   assert.deepEqual(methods(cap).slice(4, 10),

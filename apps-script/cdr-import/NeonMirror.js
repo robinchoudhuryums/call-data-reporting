@@ -480,7 +480,11 @@ function mirrorDqeForDate_(ss, iso) {
   // payload below reads r[0]..r[33]. Requesting 36 threw out-of-bounds on a
   // sheet trimmed to exactly the data width -- the same failure REP-10 fixed
   // at neonbackfill.js's three read sites; this copy had kept the old 36.
-  var data = nmReadDateRowsTail_(sheet, 34, 1, iso);   // F-20 bounded tail-scan
+  // 35 cols since sub-queue Phase 1 (AI Queue Split), but never wider than the
+  // sheet: getRange past getMaxColumns() THROWS (the REP-10 lesson), and a
+  // queued date whose sheet predates Phase 1 is still 34 wide. At 34, r[34] is
+  // undefined -> null below, so an old date mirrors exactly as it did before.
+  var data = nmReadDateRowsTail_(sheet, Math.min(35, sheet.getMaxColumns()), 1, iso);   // F-20 bounded tail-scan
   var batch = [];
   data.forEach(function (r) {
     if (!r[1] || !r[2]) return;                 // date (col 2), agent (col 3)
@@ -514,6 +518,9 @@ function mirrorDqeForDate_(ss, iso) {
       abMissedTimes:    sanitizeSlotCellForNeon_(r[31]) || null,
       avgAbdWait:       r[32] || null,
       csrAvgAbdWait:    r[33] || null,
+      // Sub-queue Phase 1. The writer COALESCEs a NULL, so a pre-Phase-1 date
+      // draining from the queue cannot erase a split written by a later build.
+      queueSplit:       r[34] || null,
     });
   });
   if (!batch.length) return { rows: 0 };

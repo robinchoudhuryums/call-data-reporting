@@ -152,6 +152,8 @@ function neonAuthoritativeDateDelete_(conn, table, isoDates) {
 }
 
 // -- DQE writer --------------------------------------------------------------
+// Per-EXECUTION memo for the Phase 1 queue_split column add (see below).
+var DQE_QUEUE_SPLIT_COLUMN_READY_ = false;
 function writeDQERowsToNeon(rows, opts) {
   if (!rows || !rows.length) return { inserted: 0, skipped: 0 };
   // IMP-6: uq_dqe_history is (call_date, agent_name). Key on the SAME
@@ -168,6 +170,16 @@ function writeDQERowsToNeon(rows, opts) {
   conn.setAutoCommit(false);
 
   try {
+    // Sub-queue Phase 1: self-upgrade a pre-Phase-1 dqe_history in place, the
+    // same idempotent pattern inbound_calls uses. Memoized so the DDL costs one
+    // statement per execution, not one per write call. Postgres DDL is
+    // transactional, so it commits or rolls back with the batch below.
+    if (!DQE_QUEUE_SPLIT_COLUMN_READY_) {
+      var ddl = conn.createStatement();
+      ddl.execute('ALTER TABLE dqe_history ADD COLUMN IF NOT EXISTS queue_split text');
+      ddl.close();
+      DQE_QUEUE_SPLIT_COLUMN_READY_ = true;
+    }
     // IMP-5: authoritative per-date replace (see neonAuthoritativeDateDelete_).
     if (opts && opts.authoritative) {
       neonAuthoritativeDateDelete_(conn, 'dqe_history',
@@ -182,7 +194,9 @@ function writeDQERowsToNeon(rows, opts) {
     // under both. Still ONE commit after all chunks (Neon write
     // discipline: batch inserts, commit once).
     var DQE_CHUNK_ROWS = 400;
-    var placeholderRow  = '(' + new Array(34).fill('?').join(',') + ')';
+    // 35 params/row since sub-queue Phase 1 added queue_split. 400 rows/chunk
+    // is still far under Postgres's 65,535 bind-param cap (14,000 params).
+    var placeholderRow  = '(' + new Array(35).fill('?').join(',') + ')';
     for (var off = 0; off < rows.length; off += DQE_CHUNK_ROWS) {
     var chunk = rows.slice(off, off + DQE_CHUNK_ROWS);
     var allPlaceholders = chunk.map(function() { return placeholderRow; }).join(',');
@@ -195,7 +209,7 @@ function writeDQERowsToNeon(rows, opts) {
       'slot_1300_1330, slot_1330_1400, slot_1400_1430, slot_1430_1500, slot_1500_1530, ' +
       'slot_1530_1600, slot_1600_1630, slot_1630_1700, slot_1700_1730, ' +
       'abandoned_parent_ids, abandoned_missed_ids, abandoned_missed_times, ' +
-      'avg_abd_wait, csr_avg_abd_wait' +
+      'avg_abd_wait, csr_avg_abd_wait, queue_split' +
       ') VALUES ' + allPlaceholders +
       ' ON CONFLICT ON CONSTRAINT uq_dqe_history DO UPDATE SET ' +
       'month_year = EXCLUDED.month_year, ' +
@@ -219,7 +233,13 @@ function writeDQERowsToNeon(rows, opts) {
       'abandoned_missed_ids = EXCLUDED.abandoned_missed_ids, ' +
       'abandoned_missed_times = EXCLUDED.abandoned_missed_times, ' +
       'avg_abd_wait = EXCLUDED.avg_abd_wait, ' +
-      'csr_avg_abd_wait = EXCLUDED.csr_avg_abd_wait';
+      'csr_avg_abd_wait = EXCLUDED.csr_avg_abd_wait, ' +
+      // COALESCE, not a plain overwrite. remirrorExistingDqeDate_ re-reads the
+      // SHEET, so a date whose rows predate Phase 1 sends NULL here and would
+      // otherwise erase a queue_split a later build had already mirrored.
+      // A build that genuinely has no split emits '{}', never NULL, so the
+      // only thing COALESCE can preserve is a value nothing intended to clear.
+      'queue_split = COALESCE(EXCLUDED.queue_split, dqe_history.queue_split)';
 
     var stmt = conn.prepareStatement(sql);
     var p = 1;
@@ -243,6 +263,13 @@ function writeDQERowsToNeon(rows, opts) {
       stmt.setString(p++, row.abMissedTimes);
       stmt.setString(p++, normalizeDuration(row.avgAbdWait));
       stmt.setString(p++, normalizeDuration(row.csrAvgAbdWait));
+      // Sub-queue Phase 1. NULL rather than '' for a row with no split (a
+      // pre-Phase-1 sheet row, or an INV-23 queue sentinel), so "never
+      // computed" is distinguishable in SQL from "computed, came out empty"
+      // -- which is '{}'. A partial-set caller that omits the field writes
+      // NULL and the ON CONFLICT update above would then blank an existing
+      // value, so callers must carry it; the row builders all do.
+      stmt.setString(p++, row.queueSplit ? String(row.queueSplit) : null);
     }
 
     stmt.execute();
