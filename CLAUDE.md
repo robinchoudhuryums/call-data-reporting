@@ -120,7 +120,15 @@ bash scripts/check-duplicated-files.sh
 # answer-targets (the R12-25 tunable display-standards parser + save
 # canonicalizer), access-control-editor, neon-coverage (the R7 sheet-vs-Neon
 # reconciliation's pure pieces), cache-version-sync (doc↔code cache-pin
-# drift), subqueue-access (Phase 0 access widening + the Phase 1 merge layer +
+# drift), html-include-structure (styles.html / script.html are Apps Script
+# INCLUDES whose wrapping <style>/<script> must enclose the WHOLE file --
+# content appended to the END lands OUTSIDE the tag and renders as visible text
+# on the page. That shipped once, and the rendered-UI gate structurally cannot
+# see it: no console error, no blank canvas, no overflow), queue-split (the
+# sub-queue Phase 1 pipeline column -- pins cols A..AH byte-identical so the
+# append stays provably additive -- plus the Phase 2 reader's three fail-open
+# paths and its INVERSION of the Phase 0 crossover de-dup),
+# subqueue-access (Phase 0 access widening + the Phase 1 merge layer +
 # the Phase 2 picker groups), claude-md-split (the F8 index↔file guard: an invariant / scenario /
 # operator item that exists in docs/ but not in CLAUDE.md's index -- or vice
 # versa -- fails the build, plus a size cap on CLAUDE.md itself).
@@ -2231,7 +2239,7 @@ items for anything it flags or doesn't cover.)
 11. Pipeline Health sheet -- a long quiet stretch on `autoImport` or any DQE-freshness step
 12. Manager digest not delivered -- the seven things to check
 13. `ADMIN_EMAILS` Script Property (a new admin who sees no admin features)
-14. A dept shows "No queues mapped" / no QCD chips -- map its queues (Dept Config, no redeploy)
+14. A dept shows "No queues mapped" / no QCD chips -- map its queues (Dept Config, no redeploy); since sub-queue Phase 2 the SAME list narrows My Department's per-agent numbers, so a partially-mapped dept now under-reports
 15. `TARGET_SS_ID` in CDR Import must point at the CDR Report spreadsheet
 16. `NEON_*` Script Properties in CDR Import (without them, mirror writes silently skip)
 17. `HMAC_SECRET` must match across cdr-import, cdr-report AND the dashboard
@@ -2257,6 +2265,7 @@ items for anything it flags or doesn't cover.)
 37. `ANSWER_TARGETS` -- the admin-tunable answer-rate DISPLAY standards (seed 92%)
 38. Diagnosing "a queue's inbound calls are missing" -- the F1/F1b runbook, incl. the ANTI-pattern probe
 39. Sub-queue ACCESS widening -- who gains what on deploy, with no admin edit (INV-38)
+40. Per-queue split backfill -- a ONE-TIME step whose 14-day window CLOSES; miss it and those dates can never be split
 
 ## Cycle Workflow Config
 

@@ -139,7 +139,19 @@ When something looks wrong, before assuming a code bug, check:
     effect on the next request, no redeploy (INV-54). Alternatively
     add/edit the `DEPT_QCD_QUEUES` constant + redeploy. New depts
     producing QCD data don't surface until they're mapped one of
-    these two ways. NB (R8-1): the QCD Queues field accepts only
+    these two ways.
+    **Since sub-queue Phase 2 this list ALSO drives My Department's
+    per-agent NUMBERS, and the failure direction inverted.** The agent
+    table narrows each row to the dept's own queues via
+    `inboundQueuesForDept_` (QCD Queues UNION Inbound queue aliases), so
+    a dept missing ONE of its queues now UNDER-reports -- those calls
+    land in no dept at all -- where before an unmapped queue merely meant
+    no QCD chips. Only a dept with NO queues mapped fails open to the old
+    all-queue figures; a partially-mapped dept looks fine and is quietly
+    short. **After deploying Phase 2, spot-check each dept's total
+    against a known day** rather than assuming a mapping that was good
+    enough for QCD chips is complete.
+    NB (R8-1): the QCD Queues field accepts only
     CANONICAL names seen in QCD col D -- a queue missing from the
     Missed report's queue-only card or the Inbound report usually
     needs its RAW phone-system name (e.g. `A_Q_CSR`) added to the
@@ -798,3 +810,33 @@ When something looks wrong, before assuming a code bug, check:
 
     Admins and all-departments managers are unaffected (they already hold every
     dept). A department with no children is unaffected -- 11 of 14 here.
+
+40. **Per-queue split backfill -- a ONE-TIME step whose window CLOSES (do this
+    right after deploying sub-queue Phase 1).**
+
+    The DQE per-queue breakdown (col AI / `dqe_history.queue_split`) is computed
+    from `Call_Legs_*`, and `DeleteOldSheets.js` prunes those sheets at **14
+    days**. The per-leg queue identity exists nowhere else, so:
+
+    > **Any date not rebuilt inside that 14-day window can NEVER be split.**
+
+    There is no repair for it later -- not a backfill, not a re-import, not a
+    Neon fix. Phase 2 falls back to all-queue figures for those dates and says
+    so in the UI, which is correct behavior but permanent.
+
+    **Order matters.** Deploy `cdr-import` and `cdr-report` FIRST, let one build
+    run, then force a re-import for each surviving date (the normal force
+    re-import path -- the build rewrites that date's rows with the split). Only
+    then deploy the dashboard, though deploying it early is harmless: every row
+    fails open to the rollup until splits exist.
+
+    **Verify:** `DQE Historical Data` should be 35 columns wide with JSON in col
+    AI (e.g. `{"A_Q_CSR":{"u":5,...}}`), and `dqe_history` should have a
+    `queue_split` column. The build widens the sheet itself -- Sheets does not
+    auto-expand columns -- so a 34-wide sheet after a successful build means the
+    build did not actually run against it.
+
+    **No new Script Property or trigger.** This item exists purely because the
+    step EXPIRES. Nothing in the code will tell you that you missed it: the
+    dashboard looks correct while quietly serving all-queue numbers for every
+    date you did not reach.
