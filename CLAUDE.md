@@ -2274,6 +2274,7 @@ items for anything it flags or doesn't cover.)
 38. Diagnosing "a queue's inbound calls are missing" -- the F1/F1b runbook, incl. the ANTI-pattern probe
 39. Sub-queue ACCESS widening -- who gains what on deploy, with no admin edit (INV-38)
 40. Per-queue split backfill -- a ONE-TIME step whose 14-day window CLOSES; miss it and those dates can never be split
+41. A dept's totals changed after a re-import -- `auditQueueSplitAttribution()` separates "the de-dup worked" from "a queue is mapped to no dept and its calls were dropped"
 
 ## Cycle Workflow Config
 
