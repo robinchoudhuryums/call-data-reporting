@@ -519,6 +519,34 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   with the Alerts engine. The bm-* tint wins on `.ds-kpi__value`/`__foot`
   via the two-class overrides in `styles.html` (the ds-* layer lands
   after `.bm-target`/`.bm-over`).
+- **Deep-linking to a specific department: `#/dept?dept=<name>`.** The Daily
+  Call Queue Report email hangs this on each department's banner line so a
+  recipient lands on THAT dept's My Department page. **It is not a security
+  boundary and must not be read as one** -- `assertDeptAccess_` gates every
+  report endpoint server-side and rejects a dept outside `user.departments`
+  whatever the client sends. What the client's `SHARE_STATE_['/dept']` provider
+  adds is graceful failure: a dept the viewer does not hold is IGNORED and they
+  land on their own, rather than being shown a server error for a link they were
+  emailed -- and the queue report's subscriber list is not the Access Control
+  roster, so that case is expected rather than exceptional. Matching is EXACT
+  (INV-04); the dept is `encodeURIComponent`-ed because names carry spaces and
+  `&` (`Eligibility MM&R` would truncate otherwise). A single-dept manager has
+  no selector, so it is a no-op for them either way.
+- **The sub-queue scope SWITCHER is retired; the group header is the control.**
+  A parent dept's My Department table is always the combined view, grouped per
+  dept, and each group's heading row toggles its agent rows. Collapsing KEEPS
+  the department's subtotal on screen -- that is the whole point of the
+  disclosure, and it is what made the tabs redundant: "<dept> only" is the
+  combined view with the sub-queue collapsed. The tabs cost a server round trip
+  per view to show the same thing, and put the reader in a mode they had to
+  track. Default is EXPANDED (nothing hidden on open); state persists per parent
+  in `cdr.dept.subqcollapse`. The client no longer sends `subScope`; the server
+  still honors it. A sub-queue's group header also carries the ONLY route to its
+  own missed calls (Phase 3 cannot merge that section without double-counting
+  queue abandons) -- the button re-scopes the section and the scope note offers
+  the way back. `cdr.dept.subscope` is an orphan key, left in place rather than
+  cleared on load: tidying it would be a write on every page view for no user
+  benefit.
 - **The keep-last-good (SWR) store is MULTI-SLOT, and that is the point.**
   `reportLastGoodWrite_` / `reportLastGoodRead_` (script.html) keep up to
   `REPORT_LASTGOOD_SLOTS_` (=4) signature-keyed entries per report, most-recent
@@ -806,20 +834,21 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   filtering out all items -- live on the next hover, no per-instance
   update, and the hovered point still highlights.
 
-## Sub-queue scope switcher (My Department, Phase 1)
+## Sub-queue relationship bar + grouped rows (My Department, Phase 1)
 
 `#dept-subq-bar` sits above `.agents-table-wrap` and is rendered by
-`subqRenderScopeBar_(state)` on every table paint. It shows in EVERY scope --
-including `own`, where the note reads "<subs> is a sub-queue of <dept> — not
-included in these figures". That sentence is the point of the feature: before
-it, the exclusion was completely invisible to a parent-dept manager.
+`subqRenderScopeBar_(state)` on every table paint. It renders whenever a
+sub-queue relationship exists in either direction. That is the point of the
+feature: before it, a parent-dept manager had no way to learn that a sub-queue
+existed at all.
 
-- Scope is persisted per dept in `cdr.dept.subscope` (a `{dept: scope}` JSON
-  blob) and sent as `req.subScope`. It is **omitted when unset**, so the SERVER
-  owns the default (combined for a parent, own otherwise) -- the client must not
-  hardcode the default in a second place, or the two will drift.
-- A CHILD dept renders the upward pointer only, no switcher. One level, matching
-  the server.
+- The three-way scope switcher this bar once carried is **retired** — see
+  "The sub-queue scope SWITCHER is retired; the group header is the control"
+  above for what replaced it and why. The client no longer sends `subScope`;
+  the server still accepts it and still owns the default (combined for a
+  parent, own otherwise), so nothing here should hardcode that default in a
+  second place.
+- A CHILD dept renders the upward pointer only. One level, matching the server.
 - `subqRowGroups_` returns grouped tbody HTML, or **null** when there is nothing
   to group -- a single-dept payload then takes the unchanged flat path, which is
   what keeps 11 of 14 depts byte-identical.
@@ -861,11 +890,16 @@ that department's own subtotal, then a grand total labelled `All shown`.
 reads top-to-bottom; a spreadsheet reader wants a Department COLUMN it can pivot
 and filter on, and banner rows break both. The two surfaces differ on purpose.
 
-The download filename gains a `_subs` / `_all` tag so exporting two scopes of the
-same dept and range doesn't silently overwrite.
+The download filename gains a `_subs` / `_all` tag from `meta.subScope` so
+exporting two scopes of the same dept and range doesn't silently overwrite. The
+client no longer sends a scope, so in practice the tag now reflects the server's
+default — kept because the server still varies it.
 
-The **missed section** follows the switcher only for single-dept scopes
-(`subqMissedDept_`). For `all` it stays on the parent, because the queue-only
+The **missed section** shows ONE dept at a time. It stays on the parent unless a
+sub-queue's group-header button re-scopes it (`subqMissedDept_` reads that
+override and nothing else; it resets on every dept or window change, because a
+child's missed calls left pinned across a department switch would be *wrong*,
+not merely stale). It never merges, because the queue-only
 abandoned section already includes the parent's sub-queue queues via
 `queuesForDept_` — merging a child's report in would double-count every queue
 abandon and every abandoned-ring chart bucket. `subqMissedScopeNote_` renders one

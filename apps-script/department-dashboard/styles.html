@@ -6810,12 +6810,74 @@ tr.subq-group-head .subq-tag {
   letter-spacing: .06em; opacity: .75; margin-left: 4px;
 }
 tr.subq-group-head .subq-count { font-size: .82em; font-weight: 500; opacity: .7; }
+/* Owner round: the group header is now the disclosure control that replaced
+   the three-way scope switcher, so it has to LOOK clickable. */
+tr.subq-group-head { cursor: pointer; }
+tr.subq-group-head:hover td { background: color-mix(in oklab, var(--accent-soft) 80%, var(--ink)); }
+tr.subq-group-head:focus-visible td { outline: 2px solid var(--accent); outline-offset: -2px; }
+tr.subq-group-head .subq-caret {
+  display: inline-block; width: .8em; opacity: .7; font-size: .9em;
+}
+/* The route to a sub-queue's OWN missed calls, which Phase 3 cannot merge into
+   the parent's section without double-counting queue abandons. Deliberately
+   quiet -- it is a secondary action sitting inside a header whose primary
+   action is collapse. */
+tr.subq-group-head .subq-missed-btn {
+  margin-left: 10px;
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  background: var(--paper-card);
+  border-radius: var(--r);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  cursor: pointer;
+}
+tr.subq-group-head .subq-missed-btn:hover { color: var(--ink); border-color: var(--accent); }
 tr.subq-subtotal td {
   font-variant-numeric: tabular-nums;
   border-top: 1px solid var(--line);
   background: color-mix(in oklab, var(--paper) 92%, var(--ink));
 }
 tr.subq-subtotal td:first-child { font-weight: 600; opacity: .85; }
+
+/* Owner round: the AGGREGATE rows -- the grand total and each department's
+   subtotal -- read too much like another agent row. They are a different KIND
+   of number, so they are scaled up rather than merely re-tinted: a reader
+   scanning the column should be able to tell where a group ends without
+   parsing the label.
+
+   Scoped to `.agents` so the Overview mini-table (a deliberately compact
+   glance view) and the Insights reuse of `.ans-bar` are untouched. `em` on
+   the bar/text so a future base-size change carries through instead of
+   re-pinning px in two places. */
+.agents .agents-totals td,
+.agents tr.subq-subtotal td {
+  font-size: 13.5px;
+  padding-top: 9px;
+  padding-bottom: 9px;
+}
+.agents .agents-totals td:first-child,
+.agents tr.subq-subtotal td:first-child {
+  font-size: 12px;
+}
+/* The split bar carries most of the row's visual weight, so it scales too --
+   a same-size bar under bigger numbers reads as a mismatch rather than a
+   hierarchy. */
+.agents .agents-totals .ans-track,
+.agents tr.subq-subtotal .ans-track { height: 11px; }
+.agents .agents-totals .ans-bar,
+.agents tr.subq-subtotal .ans-bar { min-width: 160px; }
+/* The compact-density toggle still wins: someone who asked for tighter rows
+   should not get taller aggregates back. */
+#agents-table.agents--compact .agents-totals td,
+#agents-table.agents--compact tr.subq-subtotal td {
+  font-size: 12.5px; padding-top: 4px; padding-bottom: 4px;
+}
+#agents-table.agents--compact .agents-totals .ans-track,
+#agents-table.agents--compact tr.subq-subtotal .ans-track { height: 9px; }
 @media (max-width: 700px) {
   .subq-bar-row { flex-direction: column; align-items: stretch; }
 }

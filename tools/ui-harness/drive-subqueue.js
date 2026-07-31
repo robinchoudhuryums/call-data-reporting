@@ -66,115 +66,163 @@ async function openDeptThirtyDays(page) {
 
   await openDeptThirtyDays(page);
 
-  // ---- the scope bar ------------------------------------------------------
+  // ---- the combined view + collapsible groups -----------------------------
+  // The three-way scope switcher is RETIRED: every view it offered is reachable
+  // by collapsing a group, instantly and without the server round trip each tab
+  // cost. These assertions replace the tab assertions rather than sitting
+  // alongside them -- a driver that still passed with the tabs present would
+  // not be testing what shipped.
   const bar = await page.evaluate(() => {
     const el = document.getElementById('dept-subq-bar');
     if (!el) return null;
     return {
       visible: el.offsetParent !== null,
-      buttons: Array.from(el.querySelectorAll('.subq-seg-btn')).map((b) => ({
-        label: b.textContent.trim(), scope: b.getAttribute('data-subscope'),
-        // `active` is what .segmented actually STYLES. Asserting only
-        // `is-active` is how the selected tab shipped with no visual state at
-        // all -- the class was there, the rule was not.
-        active: b.classList.contains('active'),
-        styledActive: getComputedStyle(b).backgroundColor,
-        hint: b.getAttribute('title') || '',
-      })),
-      chip: (el.querySelector('.subq-split-chip') || {}).getAttribute
-        ? el.querySelector('.subq-split-chip').getAttribute('title') : '',
+      tabs: el.querySelectorAll('.subq-seg-btn').length,
+      note: (el.querySelector('.subq-note') || {}).textContent || '',
+      chip: !!el.querySelector('.subq-split-chip'),
     };
   });
-  record('scope bar renders for a parent dept', !!(bar && bar.visible),
-    bar ? JSON.stringify(bar.buttons.map((b) => b.scope)) : 'missing');
-  record('scope bar offers own/subs/all',
-    !!bar && bar.buttons.length === 3
-      && bar.buttons.map((b) => b.scope).join(',') === 'own,subs,all');
-  record('combined is the DEFAULT for a parent (owner decision)',
-    !!bar && (bar.buttons.find((b) => b.active) || {}).scope === 'all',
-    bar ? 'active=' + (bar.buttons.find((b) => b.active) || {}).scope : '');
-  record('each tab carries its explanation as a tooltip (banner retired)',
-    !!bar && bar.buttons.every((b) => b.hint.length > 10)
-      && bar.buttons.some((b) => /Spanish/.test(b.hint)),
-    bar ? JSON.stringify(bar.buttons.map((b) => b.hint.slice(0, 40))) : '');
-  // The tooltips only work as the explanation because the SELECTED tab is now
-  // visibly selected. Assert the rendered background actually differs, not just
-  // that a class is present -- the class was present all along.
-  const act = bar && bar.buttons.find((b) => b.active);
-  const inact = bar && bar.buttons.find((b) => !b.active);
-  record('the ACTIVE tab is visually distinct from the others',
-    !!act && !!inact && act.styledActive !== inact.styledActive,
-    act && inact ? act.styledActive + ' vs ' + inact.styledActive : 'missing');
+  record('the scope bar renders for a parent dept', !!(bar && bar.visible));
+  record('the scope TABS are gone (retired for collapsible groups)',
+    !!bar && bar.tabs === 0, bar ? 'tabs=' + bar.tabs : 'missing');
+  record('the relationship line still names the sub-queue',
+    !!bar && /Spanish/.test(bar.note), bar ? bar.note.slice(0, 90) : '');
 
-  // ---- grouped rows + per-dept subtotals ----------------------------------
-  const grouped = await page.evaluate(() => {
-    const tb = document.getElementById('agents-tbody');
-    if (!tb) return null;
-    const heads = Array.from(tb.querySelectorAll('tr.subq-group-head'))
-      .map((r) => r.textContent.replace(/\s+/g, ' ').trim());
-    const subs = Array.from(tb.querySelectorAll('tr.subq-subtotal'))
-      .map((r) => Array.from(r.cells).map((c) => c.textContent.trim()));
-    return { heads: heads, subs: subs, dataRows: tb.querySelectorAll('tr[data-agent]').length };
+  const groups = await page.evaluate(() => {
+    const heads = Array.from(document.querySelectorAll('#agents-tbody tr.subq-group-head'));
+    return heads.map((h) => ({
+      dept: h.getAttribute('data-subq-group'),
+      expanded: h.getAttribute('aria-expanded'),
+      clickable: getComputedStyle(h).cursor,
+      hasMissedBtn: !!h.querySelector('.subq-missed-btn'),
+    }));
   });
-  record('combined table groups by department', !!grouped && grouped.heads.length === 2,
-    grouped ? grouped.heads.join(' | ') : 'missing');
-  record('the child group is tagged as a sub-queue',
-    !!grouped && grouped.heads.some((h) => /Spanish/.test(h) && /sub-queue/i.test(h)));
-  record('each department gets its OWN subtotal row',
-    !!grouped && grouped.subs.length === 2,
-    grouped ? grouped.subs.map((c) => c[0]).join(' | ') : '');
-  record('all agents from both departments render',
-    !!grouped && grouped.dataRows === 7, grouped ? 'rows=' + grouped.dataRows : '');
+  record('both departments render as groups', groups.length === 2,
+    JSON.stringify(groups.map((g) => g.dept)));
+  record('groups start EXPANDED (the combined view is unchanged on open)',
+    groups.every((g) => g.expanded === 'true'));
+  record('the group header looks clickable',
+    groups.every((g) => g.clickable === 'pointer'));
+  record('only the SUB-QUEUE header carries the missed-calls button',
+    groups.filter((g) => g.hasMissedBtn).length === 1,
+    JSON.stringify(groups.map((g) => g.dept + ':' + g.hasMissedBtn)));
+
+  // Collapsing must hide the agent rows and KEEP the subtotal -- that is the
+  // whole point of the disclosure, and the property the retired "own" tab used
+  // to provide via a server round trip.
+  const beforeRows = await page.evaluate(() =>
+    document.querySelectorAll('#agents-tbody tr[data-agent]').length);
+  await page.evaluate(() => {
+    const h = document.querySelector('#agents-tbody tr.subq-group-head[data-subq-group="Spanish"]')
+           || document.querySelectorAll('#agents-tbody tr.subq-group-head')[1];
+    if (h) h.click();
+  });
+  await page.waitForTimeout(400);
+  const afterCollapse = await page.evaluate(() => {
+    const heads = Array.from(document.querySelectorAll('#agents-tbody tr.subq-group-head'));
+    return {
+      rows: document.querySelectorAll('#agents-tbody tr[data-agent]').length,
+      subtotals: document.querySelectorAll('#agents-tbody tr.subq-subtotal').length,
+      collapsedCount: heads.filter((h) => h.getAttribute('aria-expanded') === 'false').length,
+    };
+  });
+  record('collapsing a group hides its agent rows',
+    afterCollapse.rows < beforeRows,
+    beforeRows + ' -> ' + afterCollapse.rows);
+  record('but KEEPS both subtotals on screen (the point of the disclosure)',
+    afterCollapse.subtotals === 2, 'subtotals=' + afterCollapse.subtotals);
+  record('and the collapse is instant -- no server round trip',
+    afterCollapse.collapsedCount === 1, 'collapsed=' + afterCollapse.collapsedCount);
+
+  await page.evaluate(() => {
+    const h = document.querySelector('#agents-tbody tr.subq-group-head[aria-expanded="false"]');
+    if (h) h.click();
+  });
+  await page.waitForTimeout(400);
+  const reExpanded = await page.evaluate(() =>
+    document.querySelectorAll('#agents-tbody tr[data-agent]').length);
+  record('re-expanding restores every agent row', reExpanded === beforeRows,
+    beforeRows + ' -> ' + reExpanded);
+
+  // ---- aggregate rows must be visually DISTINCT from agent rows -----------
+  // Owner round: the totals and per-dept subtotals read like another agent row.
+  // Asserting the rendered font-size/bar-height rather than a class, because a
+  // class with no rule behind it is exactly how the active scope tab shipped
+  // with no visual state at all.
+  const weight = await page.evaluate(() => {
+    const q = (sel) => document.querySelector(sel);
+    const px = (el, prop) => el ? parseFloat(getComputedStyle(el)[prop]) : null;
+    // Measure a NUMERIC cell, not td:first-child. The label cell is uppercase
+    // letter-spaced type by design and is legitimately SMALLER in px while
+    // reading as heavier -- comparing it would test the wrong thing and fail
+    // an intentional treatment.
+    const lastTd = (sel) => {
+      const tds = document.querySelectorAll(sel + ' td');
+      return tds.length ? tds[tds.length - 1] : null;
+    };
+    const agentRow = lastTd('#agents-tbody tr[data-agent]');
+    const subTd = lastTd('#agents-tbody tr.subq-subtotal');
+    const totTd = lastTd('#agents-tfoot tr');
+    return {
+      agent: px(agentRow, 'fontSize'),
+      subtotal: px(subTd, 'fontSize'),
+      total: px(totTd, 'fontSize'),
+      agentBar: px(q('#agents-tbody tr[data-agent] .ans-track'), 'height'),
+      subBar: px(q('#agents-tbody tr.subq-subtotal .ans-track'), 'height'),
+    };
+  });
+  record('per-dept subtotal rows render LARGER than agent rows',
+    !!weight.subtotal && !!weight.agent && weight.subtotal > weight.agent,
+    JSON.stringify(weight));
+  record('the grand total row renders larger than agent rows',
+    !!weight.total && !!weight.agent && weight.total > weight.agent,
+    'total=' + weight.total + ' agent=' + weight.agent);
+  record('and their split bars scale with them',
+    !weight.subBar || !weight.agentBar || weight.subBar > weight.agentBar,
+    'subBar=' + weight.subBar + ' agentBar=' + weight.agentBar);
 
   // ---- the parity property: parent subtotal == its own-scope total --------
+  // Previously this switched to the "own" tab and compared the rendered totals
+  // row. With the tabs retired there is no own-scope RENDER to compare against,
+  // so it now compares the rendered subtotal directly against the SERVER's
+  // own-scope payload -- which is the property itself (a dept's subtotal is
+  // what its own view shows) rather than a UI proxy for it, and it no longer
+  // depends on a round trip the product doesn't make any more.
+  const ownPayload = require('./payloads/summary-30d-own.json');
   const parentSubtotal = await page.evaluate(() => {
     const r = Array.from(document.querySelectorAll('#agents-tbody tr.subq-subtotal'))
       .find((row) => /^CSR subtotal/.test(row.cells[0].textContent.trim()));
-    return r ? Array.from(r.cells).map((c) => c.textContent.trim()) : null;
+    if (!r) return null;
+    // Read the numeric columns by header name so a column re-order cannot make
+    // this silently compare the wrong cells.
+    const heads = Array.from(document.querySelectorAll('#agents-table thead th'))
+      .map((th) => th.textContent.trim().toLowerCase());
+    const out = {};
+    Array.from(r.cells).forEach((c, i) => { out[heads[i] || ('c' + i)] = c.textContent.trim(); });
+    return out;
   });
-  await page.evaluate(() => {
-    const b = document.querySelector('.subq-seg-btn[data-subscope="own"]');
-    if (b) b.click();
-  });
-  await page.waitForTimeout(2200);
-  const ownTotals = await page.evaluate(() => {
-    const r = document.querySelector('#agents-tfoot tr');
-    return r ? Array.from(r.cells).map((c) => c.textContent.trim()) : null;
-  });
-  // Compare the NUMERIC cells only: cell 0 is a label ("CSR subtotal" vs
-  // "Total"), and the Source column carries no aggregate.
-  const parity = (function () {
-    if (!parentSubtotal || !ownTotals || parentSubtotal.length !== ownTotals.length) return false;
-    for (let i = 1; i < parentSubtotal.length; i++) {
-      if (parentSubtotal[i] !== ownTotals[i]) return false;
-    }
-    return true;
-  })();
-  record('parent subtotal in COMBINED equals its own-scope total (S35 addendum)',
-    parity, parity ? '' : 'sub=' + JSON.stringify(parentSubtotal) + ' own=' + JSON.stringify(ownTotals));
+  const ot = (ownPayload && ownPayload.totals) || {};
+  const cellHas = function (obj, frag) {
+    if (!obj) return '';
+    const k = Object.keys(obj).find((x) => x.indexOf(frag) !== -1);
+    return k ? obj[k] : '';
+  };
+  const uniqCell = cellHas(parentSubtotal, 'unique');
+  record('the parent subtotal equals the SERVER own-scope totals (S35 addendum)',
+    !!parentSubtotal && String(ot.totalUnique) === uniqCell.replace(/[^0-9]/g, ''),
+    'rendered unique=' + uniqCell + '  payload totalUnique=' + ot.totalUnique);
+  record('and its answered/missed match that payload too',
+    !!parentSubtotal
+      && cellHas(parentSubtotal, 'answered').indexOf(String(ot.totalAnswered)) !== -1
+      && cellHas(parentSubtotal, 'answered').indexOf(String(ot.totalMissed)) !== -1,
+    'bar cell=' + cellHas(parentSubtotal, 'answered')
+      + '  payload a=' + ot.totalAnswered + ' m=' + ot.totalMissed);
 
-  // ---- the switch actually re-fetched a different scope --------------------
-  const ownBar = await page.evaluate(() => {
-    const el = document.getElementById('dept-subq-bar');
-    const act = el && el.querySelector('.subq-seg-btn.active');
-    return { scope: act ? act.getAttribute('data-subscope') : null,
-             hint: act ? (act.getAttribute('title') || '') : '',
-             heads: document.querySelectorAll('#agents-tbody tr.subq-group-head').length };
-  });
-  record('switching to own-scope drops the grouping',
-    ownBar.scope === 'own' && ownBar.heads === 0,
-    'scope=' + ownBar.scope + ' heads=' + ownBar.heads);
-  record('own-scope tooltip still discloses the EXCLUDED sub-queue',
-    /Spanish/.test(ownBar.hint) && /not included/i.test(ownBar.hint),
-    ownBar.hint.slice(0, 100));
-
-  // ---- CSV: single-dept export has NO Department column -------------------
+  // ---- CSV -----------------------------------------------------------------
   async function exportCsv() {
     await page.evaluate(() => { window.__CSV__.length = 0; });
     const menuBtn = page.locator('#csv-export-btn');
     if (await menuBtn.count()) { await menuBtn.click(); await page.waitForTimeout(300); }
-    // The Download CSV item lives in the Export dropdown (R9-2).
-    const item = page.locator('#csv-export-btn, [id*="csv"]').first();
     await page.evaluate(() => {
       const cands = Array.from(document.querySelectorAll('button, a, .menu-item, .header-menu-item'));
       const hit = cands.find((e) => /download csv/i.test((e.textContent || '').trim()));
@@ -183,18 +231,6 @@ async function openDeptThirtyDays(page) {
     await page.waitForTimeout(600);
     return page.evaluate(() => (window.__CSV__ || [])[0] || '');
   }
-  const csvOwn = await exportCsv();
-  record('CSV export produces a file at all', csvOwn.length > 0, 'bytes=' + csvOwn.length);
-  const ownHeader = (csvOwn.split('\n')[0] || '');
-  record('single-dept CSV has NO Department column (byte-compatible)',
-    csvOwn.length > 0 && !/^Department,/.test(ownHeader), ownHeader.slice(0, 60));
-
-  // ---- CSV: combined export HAS the column, subtotals and grand total -----
-  await page.evaluate(() => {
-    const b = document.querySelector('.subq-seg-btn[data-subscope="all"]');
-    if (b) b.click();
-  });
-  await page.waitForTimeout(2200);
   const csvAll = await exportCsv();
   const allLines = csvAll.split('\n');
   record('combined CSV leads with a Department column',
@@ -206,12 +242,26 @@ async function openDeptThirtyDays(page) {
   record('combined CSV has NO group-header banner rows (deliberate)',
     !allLines.some((l) => /^(CSR|Spanish),?$/.test(l.trim())));
 
-  // ---- the SWR store holds BOTH scopes, so switching back is instant -------
-  // Reported by the owner: flipping between scope tabs was slow even with the
-  // date range unchanged. The last-good store was ONE slot per report, so each
-  // switch overwrote the other side's entry and the return trip always missed
-  // and re-fetched. Correctness was never at risk (signature-matched), only
-  // speed -- which is exactly the kind of thing no assertion was watching.
+  // ---- the SWR store keeps more than one window, so going back is instant --
+  // Reported by the owner as slow scope switching. The last-good store was ONE
+  // slot per report, so each A/B flip overwrote the other side's entry and the
+  // return trip always missed and re-fetched. Correctness was never at risk
+  // (signature-matched), only speed -- exactly the kind of thing no assertion
+  // was watching.
+  //
+  // The scope tabs that first exposed it are retired, so this now exercises the
+  // same store through DATE RANGES, which is the remaining A/B a manager flips
+  // between. The property under test is unchanged: distinct requests must stop
+  // evicting each other.
+  const meta2 = require('./payloads/meta.json');
+  await page.fill('#from-date', meta2.latest);
+  await page.fill('#to-date', meta2.latest);
+  await page.click('#refresh-btn');
+  await page.waitForTimeout(2000);
+  await page.fill('#from-date', meta2.from30);
+  await page.fill('#to-date', meta2.latest);
+  await page.click('#refresh-btn');
+  await page.waitForTimeout(2000);
   const swr = await page.evaluate(() => {
     const keys = Object.keys(localStorage).filter((k) => /lastgood/i.test(k) && /summary/i.test(k));
     if (!keys.length) return { keys: 0 };
@@ -221,25 +271,64 @@ async function openDeptThirtyDays(page) {
     return {
       keys: keys.length,
       slots: list.length,
-      scopes: list.map((e) => {
-        const m = /"subScope":"([a-z]+)"/.exec(e && e.sig || '');
-        return m ? m[1] : '(none)';
-      }),
       sigs: list.map((e) => (e && e.sig) || ''),
     };
   });
-  record('the summary SWR store keeps MORE THAN ONE scope (instant switch-back)',
-    !!swr && swr.slots >= 2, JSON.stringify(swr));
-  record('and BOTH explicitly-requested scopes are in it',
-    !!swr && !!swr.scopes && swr.scopes.indexOf('own') !== -1
-      && swr.scopes.indexOf('all') !== -1,
-    swr ? JSON.stringify(swr.scopes) : '');
-  // '(none)' entries are legitimate: the first load sends no subScope at all,
-  // letting the server pick the default. What matters is that distinct
-  // requests no longer evict each other.
+  record('the summary SWR store keeps MORE THAN ONE window (instant back-and-forth)',
+    !!swr && swr.slots >= 2, JSON.stringify(swr.slots));
   record('stored signatures are DISTINCT (the single-slot collapse is gone)',
-    !!swr && !!swr.scopes && new Set(swr.sigs).size === swr.slots,
+    !!swr && !!swr.sigs && new Set(swr.sigs).size === swr.slots,
     swr ? swr.slots + ' slots' : '');
+
+  // ---- the SINGLE-dept paths, via a dept with no sub-queues ---------------
+  // 11 of 14 real departments have no sub-queue, so this is the COMMON shape,
+  // and the promise made to it is byte-compatibility: nothing about the
+  // sub-queue work may change what those departments render or export. The
+  // assertion lapsed when the scope switcher was retired (the `own` tab was the
+  // only way to get a one-dept payload); `summary-30d-sales` restores it
+  // without touching fixture data -- Sales's seeded child `PAP` is absent from
+  // this roster, and subQueueChildMap_ drops an edge naming a dept that does
+  // not exist.
+  // The switch itself is now an assertion. It threw a ReferenceError until
+  // 2026-07 -- the handler still cleared two roster caches belonging to the
+  // long-retired Performance and Compare Ranges reports, and under 'use strict'
+  // that threw BEFORE the refresh() on the next line, so the selector silently
+  // did nothing for every admin. No automated check had ever switched
+  // departments, which is exactly why it survived so long.
+  const errsBefore = errors.length;
+  await page.selectOption('#dept-selector', 'Sales');
+  await page.waitForTimeout(2500);
+  record('switching department does not throw',
+    errors.length === errsBefore,
+    errors.slice(errsBefore).join(' | ').slice(0, 140));
+  const single = await page.evaluate(() => {
+    const bar = document.getElementById('dept-subq-bar');
+    return {
+      barHidden: !bar || bar.offsetParent === null,
+      groupHeads: document.querySelectorAll('#agents-tbody tr.subq-group-head').length,
+      subtotals: document.querySelectorAll('#agents-tbody tr.subq-subtotal').length,
+      rows: document.querySelectorAll('#agents-tbody tr[data-agent]').length,
+      totalsRow: !!document.querySelector('#agents-tfoot tr'),
+    };
+  });
+  record('a dept with NO sub-queues renders no relationship bar', single.barHidden,
+    JSON.stringify(single));
+  record('and no group headers or per-dept subtotals',
+    single.groupHeads === 0 && single.subtotals === 0);
+  record('but still renders its agents and a totals row',
+    single.rows > 0 && single.totalsRow, 'rows=' + single.rows);
+  record('and the table actually CHANGED dept (the switch took effect)',
+    single.rows !== beforeRows, 'CSR had ' + beforeRows + ', Sales has ' + single.rows);
+
+  const csvSingle = await exportCsv();
+  const singleHeader = (csvSingle.split('\n')[0] || '');
+  record('single-dept CSV has NO Department column (byte-compatible)',
+    csvSingle.length > 0 && !/^Department,/.test(singleHeader), singleHeader.slice(0, 60));
+  record('and carries no per-dept subtotal or All-shown rows',
+    csvSingle.length > 0 && !/ subtotal/.test(csvSingle) && !/All shown/.test(csvSingle));
+
+  await page.selectOption('#dept-selector', 'CSR');
+  await page.waitForTimeout(2500);
 
   // ---- the missed section's scope note ------------------------------------
   const missedNote = await page.evaluate(() => {

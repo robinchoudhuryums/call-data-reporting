@@ -1,6 +1,28 @@
 # Cycle State — resume note
 
-## Latest session (/broad-implement queue-split Phase 2 — the reported bug is FIXED)
+## Latest session (/broad-implement harness single-dept fixture — found a live dept-switch bug)
+Branch `claude/sync-commands-dnxgcv`, **590/590 unit tests**, UI gate 24/24 + 16/16 + **31/31** (was 24). Increment 67.
+- **The fixture work immediately surfaced a PRODUCTION bug: the header department selector threw and did nothing for every admin.** `selectOption('#dept-selector','Sales')` raised `ReferenceError: prLastRoster is not defined` — the change handler still cleared roster caches belonging to the Performance and Compare Ranges reports, retired and DELETED long ago. script.html is `'use strict'`, so the assignment threw, and it threw on the line BEFORE `refresh()`. Two dead lines deleted.
+- **No automated check had ever switched departments**, which is exactly why it survived. The switch is now asserted two ways: that it doesn't throw, AND that the row count actually changed (CSR 7 → Sales 4) — a no-throw check alone would pass if the handler ran but the refresh never landed.
+- **No fixture DATA change was needed for the single-dept payload**, which is worth knowing before someone adds agents for it: Sales's seeded child `PAP` is absent from the harness roster and `subQueueChildMap_` drops edges naming a non-existent dept, so Sales ALREADY renders like the 11 of 14 real depts with no sub-queue. Adding a Billing profile (the other candidate) would have shifted the company Overview payload for every other driver.
+- **Restored coverage:** a sub-queue-less dept renders no relationship bar / group headers / subtotals but still renders agents and a totals row, and its CSV has NO leading `Department` column and no subtotal or `All shown` rows — the byte-compatibility promise to every dept that never had a sub-queue.
+- **Both verified by breaking them:** restoring one `prLastRoster` line reproduces the exact production error and leaves Sales showing CSR's 7 rows.
+- **NET 1 − 0 = 1** — a continuously-firing production bug on the primary admin control, fixed by deleting code.
+- **Where I left off:** committed + pushed. **S2 (admin switches departments) needs a live walk after deploy** — it is the scenario that should have caught this and evidently wasn't being run. Deploy is Department Dashboard only. **Open argument worth acting on:** the `ui-harness` job still carries `continue-on-error: true`, so all 31 assertions are advisory; this increment is a concrete case for dropping it. Other header controls (view-as-manager, theme/mode toggles, the Export dropdown beyond the CSV item) still have no automated interaction and are candidates for the same failure class. Phases 3/4 remain all-queue; the Insights combined view is still unstarted.
+
+## Prior session (/broad-implement — scope switcher retired for collapsible groups)
+Branch `claude/sync-commands-dnxgcv`, **590/590 unit tests**, UI gate 24/24 + 16/16 + 24/24, INV-16 + cache-version-sync + claude-md-split green. Increment 66.
+- **The owner concluded the three-way scope switcher was over-built, and they were right.** Every view it offered is reachable by collapsing a group — "<dept> only" IS the combined view with the sub-queue collapsed — and each dept's subtotal stays on screen either way. The tabs cost a SERVER ROUND TRIP per view to show the same thing.
+- **The group HEADING ROW is now the control.** Collapsing hides agent rows and deliberately KEEPS the subtotal; that is the whole point and exactly what made the tabs redundant. Default EXPANDED so the combined view is unchanged on open.
+- **The client no longer sends `subScope`; the SERVER still honors it** (CSV Department column, combined default). Client retirement, not capability removal — the comment says so, because the obvious later "fix" is to restore a parameter that was never broken.
+- **A sub-queue's group header carries the ONLY route to its missed calls.** Phase 3 can't merge that section (queue abandons would double-count), and the tabs were previously that route. The button re-scopes + scrolls; the note offers "Back to <parent>"; the override RESETS on any dept/window change, since a child's missed calls pinned under a different parent would be wrong rather than stale.
+- **Aggregate rows scaled up** (text + bar height) so totals and subtotals read as a different KIND of number. Asserted by measuring RENDERED font-size, not a class — the first attempt measured `td:first-child` and failed, because the label cell is uppercase letter-spaced type that is legitimately smaller in px.
+- **Driver assertions were REPLACED, not supplemented** — one that still passed with the tabs present wouldn't be testing what shipped. Two were re-targeted rather than deleted: S35 parity now compares against the SERVER's own-scope payload (the property itself, not a UI proxy), and the multi-slot SWR check flips DATE RANGES instead of scopes.
+- **One assertion was genuinely LOST and is named:** "single-dept CSV has no Department column" needed the retired `own` tab to make a one-dept payload; the fixture has no sub-queue-less dept. S43 was rewritten to carry that step manually. A fixture for such a dept would restore it.
+- **NET 1 − 0 = 1** — fixes a real owner-reported slowness; no new failure mode.
+- **Where I left off:** committed + pushed, NOT deployed. PR #211 (roster-scoped audit, idle/unmapped roll-call, call-id sampler) may still be open — check before opening another. Deploy is Department Dashboard only. Tell Sales/CSR/Power managers the tabs are gone. Walk S43 (incl. its new single-dept step), S4, S6, S35. **Next:** Phase 3 (Missed, `missed:v18`) and Phase 4 (IR/Insights, `insights:v20`) are still all-queue, so an IR run for a sub-queue disagrees with My Department for a crossover agent. Open: a harness fixture for a dept with no sub-queues; `meta.subQueueAgentHint` is now unambiguously dead (it was read by the retired own-scope branch); the Insights combined view still unstarted.
+
+## Prior session (/broad-implement queue-split Phase 2 — the reported bug is FIXED)
 Branch `claude/sync-commands-dnxgcv`, **581/581 unit tests** (was 571; +10), INV-16 + cache-version-sync + claude-md-split green, UI gate 24/24 + 16/16 + 19/19. Increment 65.
 - **This is where the owner's reported bug actually gets fixed.** Phase 0 corrected the combined total; Phase 1 captured the data; Phase 2 makes a department's view show only ITS OWN queues' calls.
 - **`applyQueueSplitToRows_` is a PRE-PASS, not edits inside the loop.** It rewrites the six per-agent metrics from the dept's slice before `computeSummary_` aggregates, so E5, the INV-53 floater gate, diagnostics and the totals row all inherit the fix without any of them learning what a queue is. That function is the most heavily pinned in the app; narrowing at the boundary keeps every rule inside it untouched.
@@ -1581,3 +1603,34 @@ commit/push/deploy direction.
   off: ~8 commits ahead of main un-PR'd; dashboard + cdr-import deploys
   still pending; next natural steps: PR+merge, deploy, regenerate harness
   payloads after any server-shape change.
+
+- **Increment 68 (DONE — view-as harness coverage + /sync-docs, commits
+  cc4ce43/+this):** `drive-smoke.js` now exercises VIEW-AS-MANAGER (28 checks):
+  enters preview, hides the admin-only surfaces measured as RENDERED
+  visibility rather than a class, reverses cleanly, throws nothing. That
+  closes the second of the two follow-ons from increment 67; the first (drop
+  `continue-on-error` from the `ui-harness` CI job) shipped in 35c80b3, so the
+  gate is BLOCKING now.
+  **/sync-docs found one substantial class of drift and it was all the same
+  shape:** the sub-queue scope switcher was retired in a4d9673 and the HEAD of
+  each doc entry was updated while the TAIL was not, so CLAUDE.md and
+  docs/client-ui-conventions.md each contained two entries contradicting each
+  other about whether the tabs exist. Fixed in CLAUDE.md (chip placement, the
+  banner/tooltip paragraph rewritten as the lesson it actually taught, the
+  Phase 3 missed-section rule now describing the group-header override that
+  drives it, and the false "no automated coverage for any CSV writer" claim
+  which its own harness paragraph contradicted), client-ui-conventions (the
+  whole "Sub-queue scope switcher" section + the missed-section rule),
+  regression-scenarios S35 (its addendum instructed an IMPOSSIBLE step — "set
+  the switcher to `<dept> only`" — and now also states the crossover-de-dup
+  exception to counts summing), operator-state (switcher phrasing), and
+  script.html (stale jsdoc + a dead `var scope`). Also documented
+  `sampleQueueSplitCallIds()` + its three Script Properties under Op State #41
+  (it was in active owner use but undocumented), and added fix-history
+  R12-22c/R12-22d for the queue-report email changes.
+  CI 593/593; ci:ui 24+16+31. Where I left off: PR opened and merged.
+  OPERATOR: the Department Dashboard deploy for the email + client changes is
+  still pending. Next: Phase 3 (Missed, `missed:v18`) and Phase 4 (IR/Insights,
+  `insights:v20`) of the queue split are still all-queue; the Insights combined
+  view is unstarted; theme/mode toggles and the Export dropdown beyond the CSV
+  item still have no automated interaction.

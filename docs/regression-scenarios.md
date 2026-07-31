@@ -257,13 +257,13 @@ S35 | Phase D totals parity (roster-only floater exclusion) | Subsystem: Departm
     - AFTER deploy: open the same dept + date range with default settings (scope=Both — the new default). The agent table will now include queue-only floaters with `QUEUE` chips; the tfoot caption will read "Total (roster only · N floaters excluded)".
     - Compare the post-deploy totals values to the pre-deploy screenshot.
   Expected: every totals cell matches the pre-deploy `scope=Roster` numbers to the digit. Rationale: the new totals filter to `matchedViaRoster=true` only, which is precisely the set the pre-Phase-D `scope=Roster` view summed. Floaters render as new rows but contribute zero to the totals. If the totals DON'T match, the rosterRows filter has regressed -- roll back the Phase D commit and investigate before re-shipping. This is a one-time validation but the scenario stays as a permanent reference for the floater-exclusion contract (see INV-53).
-  ADDENDUM (sub-queue Phase 1) -- the COMBINED-view parity check. On a parent dept (Sales / CSR / Power) the scope switcher adds a second totals concept, so this scenario now also covers:
-    - Set the switcher to `<dept> only` and record the totals row.
-    - Switch to `<dept> + <subs>`. Each dept now gets its own `<dept> subtotal` row plus a labelled combined grand total.
-    - Confirm the PARENT's subtotal row equals, to the digit, the totals row you recorded in `<dept> only` scope.
-    - Confirm the combined grand total's COUNT cells (Unique / Rung / Missed / Answered / TTT) equal the sum of the per-dept subtotals.
+  ADDENDUM (sub-queue Phase 1) -- the COMBINED-view parity check. A parent dept (Sales / CSR / Power) always renders the combined view, which adds a second totals concept, so this scenario now also covers:
+    - Open the parent. Each dept gets its own `<dept> subtotal` row plus a labelled combined grand total.
+    - The scope switcher that used to produce a one-dept view is RETIRED. To get the parent's own figure for comparison, either read its subtotal row directly, or open a CHILD dept (which renders only its own numbers) and compare that against the child's subtotal in the parent's combined view. Collapsing a group is display-only and does NOT change any number -- that is the property to confirm, not a way to re-scope the request.
+    - Confirm each dept's subtotal row equals, to the digit, that dept's own view.
+    - Confirm the combined grand total's COUNT cells (Unique / Rung / Missed / Answered / TTT) equal the sum of the per-dept subtotals -- EXCEPT where `totals.crossoverAgentCount > 0`, in which case the grand total is deliberately LESS (Phase 0 de-duplicates an agent on two rosters; the totals-row caption says so).
     - Confirm the three DURATION cells (ATT / Avg Abd Wait / CSR Avg Abd Wait) are the agent-count-WEIGHTED mean of the per-dept values, NOT their simple average -- a mean of means would over-weight a one-agent sub-queue.
-  Expected: the parent's subtotal is identical in both scopes (it is produced by the same `computeSummary_` call), counts sum exactly, and durations are weighted. A mismatch on the first point means `combineSummaries_` is mutating a part rather than merging copies; a mismatch on the last means the weighted-mean accumulator regressed (pinned by tests/unit/subqueue-access.test.js, but the live walk covers the render path the harness cannot).
+  Expected: each dept's subtotal is identical to its own view (it is produced by the same `computeSummary_` call), counts sum exactly modulo the crossover de-dup, and durations are weighted. A mismatch on the first point means `combineSummaries_` is mutating a part rather than merging copies; a mismatch on the last means the weighted-mean accumulator regressed (pinned by tests/unit/subqueue-access.test.js; `drive-subqueue.js` asserts the rendered parent subtotal against the server's own-scope payload, and the live walk covers what neither can).
 
 S36 | Dept Config modal: auto-discovery, validation, override round-trip | Subsystem: Department Dashboard
   Steps:
@@ -340,10 +340,10 @@ S42 | Narrow-viewport trend band (perceptual) | Subsystem: Department Dashboard
 
 S43 | Combined-view CSV export | Subsystem: Department Dashboard
   Steps:
-    - On a parent dept (Sales / CSR / Power) with the switcher on `<dept> + <subs>`, use Export -> Download CSV.
+    - On a parent dept (Sales / CSR / Power) -- the combined view is now the only view -- use Export -> Download CSV.
     - Open the file. Confirm a leading `Department` column, each dept's rows grouped together, a `<dept> subtotal` row after each group, and a final `All shown` grand-total row.
     - Confirm NO group-header banner rows (deliberate: a spreadsheet reader needs a column to pivot/filter on -- see docs/client-ui-conventions.md).
-    - Switch to `<dept> only` and export again. Confirm the `Department` column is ABSENT and the file is otherwise the pre-sub-queue shape.
-    - Confirm the two downloads did not overwrite each other (the filename carries a `_all` scope tag).
+    - Now the SINGLE-dept case. Open a dept with NO sub-queues -- 11 of 14 qualify -- and export. Confirm the `Department` column is ABSENT and the file is otherwise the pre-sub-queue shape. This is the byte-compatibility guarantee for every dept that never had a sub-queue. (Re-automated in `drive-subqueue.js` via the `summary-30d-sales` fixture, so this step is now a double-check rather than the only cover.)
+    - Collapse a group, then export again. Confirm the CSV is UNCHANGED: collapsing is a display affordance and must not narrow the export.
     - Spot-check an agent whose name begins with `=`, `+`, `-` or `@` if one exists: the cell must be quote-prefixed (the `csvSafeCell_` formula-injection rule).
-  Expected: as described. NOTE this is the FIRST scenario covering CSV export at all -- there is no automated coverage for any CSV writer, so a regression here is invisible to both gates.
+  Expected: as described. NOTE `drive-subqueue.js` now covers BOTH the combined and single-dept CSV shapes; what stays manual is the formula-injection spot-check and the filename-collision case, which a headless download cannot observe.

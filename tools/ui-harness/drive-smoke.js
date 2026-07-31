@@ -134,6 +134,45 @@ async function horizontalOverflow(page) {
       record(role + ': all-dept QCD report renders expandable rows', rows > 0, 'rows=' + rows);
     }
 
+    // View-as-manager (admin only). Added after the department selector was
+    // found throwing a ReferenceError in production -- no automated check had
+    // ever OPERATED a header control, so any of them could have been broken the
+    // same way and nobody would have known. This is the other admin control
+    // with real behavior behind it: it must not throw, it must hide the
+    // admin-only surfaces, and it must be reversible.
+    const viewAs = page.locator('#view-as-select');
+    if (role === 'admin' && await viewAs.count()) {
+      const errsBefore = errors.length;
+      const opts = await page.evaluate(() =>
+        Array.from(document.querySelectorAll('#view-as-select option'))
+          .map((o) => o.value).filter(Boolean));
+      if (opts.length) {
+        await page.selectOption('#view-as-select', opts[0]);
+        await page.waitForTimeout(1500);
+        const inPreview = await page.evaluate(() => ({
+          flag: document.body.getAttribute('data-view-as'),
+          // An admin-only surface that should now be hidden. Measured as
+          // RENDERED visibility, not a class -- a class with no rule behind it
+          // is how the sub-queue scope tab shipped with no visual state at all.
+          adminTabVisible: (function () {
+            const el = document.querySelector('.header-menu[data-admin-only], [data-admin-only]');
+            return !!(el && el.offsetParent !== null);
+          })(),
+        }));
+        record('admin: view-as enters manager preview', inPreview.flag === 'manager',
+          'data-view-as=' + inPreview.flag);
+        record('admin: view-as hides the admin-only surfaces',
+          !inPreview.adminTabVisible);
+        await page.selectOption('#view-as-select', '');
+        await page.waitForTimeout(1500);
+        const exited = await page.evaluate(() => document.body.getAttribute('data-view-as'));
+        record('admin: leaving view-as restores the admin view', !exited,
+          'data-view-as=' + exited);
+        record('admin: view-as does not throw', errors.length === errsBefore,
+          errors.slice(errsBefore).join(' | ').slice(0, 140));
+      }
+    }
+
     const unmocked = await page.evaluate(() => (window.__HARNESS__ || {}).unmocked || []);
     const unexpected = unmocked.filter((n) => !UNMOCKED_OK.has(n));
     record(role + ': no unexpected unmocked RPCs', unexpected.length === 0,
