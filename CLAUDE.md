@@ -1686,9 +1686,25 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `REPORT_CACHE_TTL_SECONDS` and are busted on EVERY write via
   `bustOrphanFixCache_()` / `dcBustCaches_()` -- admin-only surfaces, so the
   shared script cache is safe (no per-viewer personalization).
-- **Sub-queue scope switcher on My Department (Phase 1).** A parent dept
-  (Sales / CSR / Power) renders a three-way segmented control -- `<dept> only`
-  / `<subs> only` / `<dept> + <subs>` -- persisted per dept in
+- **Sub-queue combined view on My Department (Phase 1; switcher RETIRED in the
+  owner round).** A parent dept (Sales / CSR / Power) renders the COMBINED table
+  always, grouped per dept, and each group's HEADING ROW is a collapse toggle.
+  The former three-way segmented control (`<dept> only` / `<subs> only` /
+  `<dept> + <subs>`) is gone: every view it offered is reachable by collapsing a
+  group -- instantly, and without the SERVER ROUND TRIP each tab cost -- while
+  each dept's subtotal stays on screen either way. Groups default to EXPANDED
+  (the combined view is unchanged on open); collapse state persists per parent
+  in `cdr.dept.subqcollapse`. **The client no longer sends `subScope` at all**;
+  the SERVER still honors it (it drives the CSV's Department column and the
+  combined default), so this is a client retirement, not a capability removal --
+  don't "restore" the parameter thinking it was dropped. `cdr.dept.subscope` is
+  now an orphan key. Because Phase 3 cannot merge the missed section across
+  depts (queue abandons would double-count), each sub-queue's group header
+  carries a **"View <sub-queue>'s missed calls"** button -- the only route to a
+  child's missed timelines now that the scope tabs are gone; it re-scopes the
+  section, offers a "Back to <parent>" link in the scope note, and RESETS on any
+  dept or window change (a child's missed calls pinned under a different parent
+  would be wrong, not merely stale). Previously: persisted per dept in
   `cdr.dept.subscope` and **defaulting to COMBINED** (owner decision). Depts
   with no sub-queues get no control and no behavior change. `subScope` is a
   cache-key dimension (`summary:v18`). **Combined means grouped, never merged:**

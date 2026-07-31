@@ -5471,6 +5471,32 @@
     // Calls modal AND the My Department inline missed section (#9b). Strict
     // no-op unless the click lands on a .pid-copy badge.
     document.addEventListener('click', function (e) {
+      // Sub-queue owner round: "View <sub-queue>'s missed calls" in a group
+      // header. Checked FIRST and stops propagation, so it never also fires the
+      // group's collapse toggle it sits inside -- the same trap the agent-scope
+      // button hits with <details> below.
+      const mbtn = e.target.closest && e.target.closest('.subq-missed-btn');
+      if (mbtn) {
+        e.preventDefault(); e.stopPropagation();
+        subqMissedSetDept_(mbtn.getAttribute('data-subq-missed') || '');
+        return;
+      }
+      const mclr = e.target.closest && e.target.closest('[data-subq-missed-clear]');
+      if (mclr) {
+        e.preventDefault(); e.stopPropagation();
+        subqMissedSetDept_('');
+        return;
+      }
+      // Collapse/expand a department group. The whole header row is the target
+      // (role=button + tabindex), so this must run AFTER the buttons above.
+      const ghead = e.target.closest && e.target.closest('tr.subq-group-head');
+      if (ghead) {
+        e.preventDefault();
+        const parent = (state.meta && state.meta.department) || '';
+        subqCollapsedToggle_(parent, ghead.getAttribute('data-subq-group') || '');
+        render();
+        return;
+      }
       // R11-C4: agent-scope toggle on a missed card (lives inside the card's
       // <summary>, so preventDefault stops the <details> from toggling) + the
       // chart chip's ✕ clear. Both funnel through deptMissedSetScope_'s toggle.
@@ -6116,16 +6142,21 @@
       from: $('from-date').value,
       to: $('to-date').value,
     };
-    // Sub-queue Phase 1: a saved per-dept preference overrides the server's
-    // default (combined for a parent, own for everyone else). Omitted when
-    // unset so the server keeps deciding -- the client must not hardcode the
-    // default in a second place.
-    var __subScope = subqRequestedScope_(dept);
-    if (__subScope) req.subScope = __subScope;
+    // Sub-queue: the client no longer sends `subScope` at all. The scope
+    // switcher is retired -- collapsing a group in the combined table gives
+    // every view it offered, instantly and without a round trip -- so the
+    // SERVER picks: combined for a parent, own for everyone else. Deliberately
+    // omitted rather than hardcoded to 'all' here, so the default lives in one
+    // place; the parameter itself is still honored server-side.
     if (!req.from || !req.to) {
       setStatus('error', 'Pick a from and to date.');
       return;
     }
+    // The missed section's sub-queue override is per (dept, window): a child's
+    // missed calls left pinned across a department switch or a date change
+    // would be WRONG, not merely stale. deptMissedFetch_ then falls back to the
+    // header dept until the button is clicked again.
+    subqMissedDeptOverride_ = null;
     recordPageWindow_('dept', req.from, req.to);   // R9-3: the shared-window store
     coverageNoteUpsert_('dept-coverage-host', 'dept', req.from, 'dqe');   // R12-26
 
@@ -6295,13 +6326,39 @@
    * Single-dept scopes only -- see the note in deptMissedFetch_ for why 'all'
    * is deliberately not merged.
    */
+  /**
+   * Which department the missed section is showing.
+   *
+   * Phase 3 deliberately does NOT merge the missed section across departments:
+   * the queue-only abandoned section already covers a parent's sub-queue queues
+   * (`queuesForDept_` rolls them up), so summing a child's report into the
+   * parent's would double-count every queue abandon and every abandoned-ring
+   * bucket in the hour-of-day chart. It therefore shows exactly ONE department.
+   *
+   * That used to follow the scope switcher. With the switcher retired, the
+   * route to a sub-queue's own missed calls is the explicit button in its group
+   * header, whose choice lands here. Reset on every dept/window change, because
+   * a child's missed calls pinned under a different parent would be wrong
+   * rather than merely stale.
+   */
+  var subqMissedDeptOverride_ = null;
   function subqMissedDept_() {
     var m = (state && state.meta) || {};
-    if (m.subScope === 'subs') {
-      var subs = m.subQueues || [];
-      if (subs.length === 1) return subs[0];
+    var subs = m.subQueues || [];
+    if (subqMissedDeptOverride_ && subs.indexOf(subqMissedDeptOverride_) !== -1) {
+      return subqMissedDeptOverride_;
     }
     return null;
+  }
+  function subqMissedSetDept_(dept) {
+    var next = dept || null;
+    if (subqMissedDeptOverride_ === next) next = null;   // clicking it again clears
+    subqMissedDeptOverride_ = next;
+    deptMissedFetch_();
+    var sec = $('dept-missed-section');
+    if (sec && next) {
+      try { sec.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) {}
+    }
   }
 
   /**
@@ -6317,16 +6374,20 @@
     if (!subs.length) { host.style.display = 'none'; host.innerHTML = ''; return; }
     var list = subs.map(escapeHtml).join(', ');
     host.style.display = '';
-    if (m.subScope === 'all') {
+    if (subqMissedDeptOverride_ && shownDept === subqMissedDeptOverride_) {
+      // Viewing a sub-queue's own missed calls. Must carry its own way back --
+      // the section is far enough down the page that the group header it was
+      // launched from is off screen.
+      host.innerHTML = 'Showing <strong>' + escapeHtml(shownDept)
+        + '</strong>\u2019s missed calls. '
+        + '<button type="button" class="link-btn" data-subq-missed-clear="1">'
+        + 'Back to ' + escapeHtml(m.department || 'the department') + '</button>';
+    } else {
       host.innerHTML = 'Per-agent timelines below are <strong>'
         + escapeHtml(shownDept) + '</strong>\u2019s only. Queue abandons already '
-        + 'include ' + list + '\u2019s queues, so they are not added twice.';
-    } else if (m.subScope === 'subs') {
-      host.innerHTML = 'Showing <strong>' + escapeHtml(shownDept) + '</strong>.';
-    } else {
-      host.innerHTML = '<strong>' + escapeHtml(shownDept) + '</strong> only \u2014 '
-        + list + ' ' + (subs.length === 1 ? 'is a sub-queue' : 'are sub-queues')
-        + ' with its own missed calls.';
+        + 'include ' + list + '\u2019s queues, so they are not added twice. '
+        + 'Use the button on ' + list + '\u2019s heading row above for '
+        + (subs.length === 1 ? 'its' : 'their') + ' own missed calls.';
     }
   }
 
@@ -7234,24 +7295,12 @@
   // merged number would be unreconcilable against each dept's own view, which
   // is exactly what the QCD carousel learned the hard way (P3).
 
-  var SUBQ_PREF_KEY = 'cdr.dept.subscope';
-
-  function subqPrefGet_(dept) {
-    try {
-      var raw = localStorage.getItem(SUBQ_PREF_KEY);
-      var map = raw ? JSON.parse(raw) : {};
-      return (map && map[dept]) || null;
-    } catch (e) { return null; }
-  }
-  function subqPrefSet_(dept, scope) {
-    try {
-      var raw = localStorage.getItem(SUBQ_PREF_KEY);
-      var map = raw ? JSON.parse(raw) : {};
-      if (!map || typeof map !== 'object') map = {};
-      map[dept] = scope;
-      localStorage.setItem(SUBQ_PREF_KEY, JSON.stringify(map));
-    } catch (e) { /* private mode / quota -- the server default still applies */ }
-  }
+  // `cdr.dept.subscope` (the retired scope switcher's saved per-dept view) is
+  // an ORPHAN key: nothing reads or writes it since the switcher was replaced
+  // by collapsible groups. Left un-deleted deliberately -- clearing a key on
+  // load to tidy up is a write on every page view for no user benefit, and the
+  // blob is a few bytes. Listed with the other orphaned prefs in
+  // docs/client-ui-conventions.md.
 
   /**
    * The always-on relationship line + the switcher. Renders in EVERY scope,
@@ -7283,51 +7332,27 @@
       return;
     }
 
+    // OWNER ROUND: the three-way scope switcher is RETIRED. Every view it
+    // offered is reachable from the combined table by collapsing a group --
+    // "<dept> only" is the combined view with the sub-queue collapsed, and vice
+    // versa -- and each dept's subtotal stays on screen either way. The tabs
+    // cost a SERVER ROUND TRIP per view to show what a local toggle shows
+    // instantly, and put the reader in a mode they then had to keep track of.
+    //
+    // The server still accepts `subScope` (it drives the CSV's Department
+    // column and the combined default), so this is a client-side retirement,
+    // not a capability removal. The client simply stops sending one and lets
+    // the server pick: combined for a parent, own for everyone else.
     var list = subs.map(escapeHtml).join(', ');
-    var plain = subs.join(', ');
     var one = subs.length === 1;
-    var isAre = one ? 'is a sub-queue' : 'are sub-queues';
-    // Owner request: the explanation moves from a standing banner into each
-    // tab's own tooltip. That only works because the SELECTED tab is now
-    // visibly selected -- the banner had been carrying that job by accident.
-    var opts = [
-      { k: 'own',  label: escapeHtml(dept) + ' only',
-        hint: dept + ' only. ' + plain + ' ' + isAre + ' of ' + dept
-            + ' and ' + (one ? 'is' : 'are') + ' NOT included in these figures.' },
-      { k: 'subs', label: list + ' only',
-        hint: plain + ' only. ' + dept + '\u2019s own agents are excluded.' },
-      { k: 'all',  label: escapeHtml(dept) + ' + ' + list,
-        hint: 'Combined: ' + dept + ' and ' + plain
-            + ', grouped with each department\u2019s own subtotal.' },
-    ];
     host.innerHTML =
         '<div class="subq-bar-row">'
-      +   '<div class="segmented subq-seg" role="group" aria-label="Sub-queue scope">'
-      +     opts.map(function (o) {
-              // BOTH classes on purpose: `active` is what .segmented actually
-              // styles (the ink inversion), and `is-active` was the only class
-              // here through Phases 1-3 -- which is why the selected tab had NO
-              // visual state at all and the note was doing the work of telling
-              // you where you were. Keeping `is-active` preserves the harness
-              // assertion and any a11y/query hook built on it.
-              return '<button type="button" class="seg-btn subq-seg-btn'
-                + (o.k === scope ? ' active is-active' : '') + '" data-subscope="'
-                + o.k + '" title="' + escapeHtml(o.hint || '') + '"'
-                + (o.k === scope ? ' aria-pressed="true"' : ' aria-pressed="false"')
-                + '>' + o.label + '</button>';
-            }).join('')
-      +   '</div>'
+      +   '<div class="ds-note subq-note">Combined view: <strong>'
+      +     escapeHtml(dept) + '</strong> and <strong>' + list + '</strong>, each '
+      +     'with its own subtotal. ' + (one ? 'It ' : 'They ')
+      +     'can be collapsed from its heading row below.</div>'
       +   subqSplitChip_(m)
       + '</div>';
-
-    host.querySelectorAll('.subq-seg-btn').forEach(function (btn) {
-      btn.addEventListener('click', function () {
-        var next = btn.getAttribute('data-subscope');
-        if (!next || next === scope) return;
-        subqPrefSet_(dept, next);
-        refresh();
-      });
-    });
   }
 
   /**
@@ -7391,10 +7416,6 @@
     return Math.round((b - a) / 86400000) + 1;
   }
 
-  /** The scope to REQUEST: a saved per-dept preference, else the server default. */
-  function subqRequestedScope_(dept) {
-    return dept ? subqPrefGet_(dept) : null;
-  }
 
   /**
    * Grouped tbody HTML for a combined view, or null when there is nothing to
@@ -7407,18 +7428,67 @@
     if (!byDept || order.length < 2) return null;
     var totalsFor = {};
     byDept.forEach(function (g) { totalsFor[g.dept] = g.totals || {}; });
+    var collapsed = subqCollapsedGet_(m.department);
     var out = [];
     order.forEach(function (d) {
       var rows = sorted.filter(function (r) { return r.dept === d; });
       if (!rows.length) return;
-      out.push('<tr class="subq-group-head"><td colspan="' + COLUMNS.length + '">'
-        + escapeHtml(d) + (d === m.department ? '' : ' <span class="subq-tag">sub-queue</span>')
+      var isChild = d !== m.department;
+      var isShut = collapsed.indexOf(d) !== -1;
+      // The group HEADER is the disclosure control. Collapsing hides the agent
+      // rows but deliberately KEEPS the subtotal on screen -- that is the whole
+      // point of the disclosure: you keep the department's number and drop the
+      // detail. Replaces the three-way scope switcher, which needed a server
+      // round trip per view to show the same thing.
+      out.push('<tr class="subq-group-head' + (isShut ? ' is-collapsed' : '')
+        + '" data-subq-group="' + escapeHtml(d) + '" tabindex="0" role="button"'
+        + ' aria-expanded="' + (isShut ? 'false' : 'true') + '"'
+        + ' title="' + (isShut ? 'Show' : 'Hide') + ' ' + escapeHtml(d)
+        + '\u2019s agents (its subtotal stays visible)">'
+        + '<td colspan="' + COLUMNS.length + '">'
+        + '<span class="subq-caret" aria-hidden="true">' + (isShut ? '\u25b8' : '\u25be') + '</span> '
+        + escapeHtml(d) + (isChild ? ' <span class="subq-tag">sub-queue</span>' : '')
         + ' <span class="subq-count">' + rows.length + ' agent'
-        + (rows.length === 1 ? '' : 's') + '</span></td></tr>');
-      rows.forEach(function (row) { out.push(subqAgentRowHtml_(row)); });
+        + (rows.length === 1 ? '' : 's') + '</span>'
+        // Phase 3 does NOT merge the missed section across depts (queue abandons
+        // would double-count), so a sub-queue's own missed calls had no route
+        // once the scope tabs went away. This button is that route.
+        + (isChild
+            ? ' <button type="button" class="subq-missed-btn" data-subq-missed="'
+              + escapeHtml(d) + '">View ' + escapeHtml(d) + '\u2019s missed calls</button>'
+            : '')
+        + '</td></tr>');
+      if (!isShut) rows.forEach(function (row) { out.push(subqAgentRowHtml_(row)); });
       out.push(subqSubtotalRowHtml_(d, totalsFor[d] || {}));
     });
     return out.join('');
+  }
+
+  /**
+   * Which groups are collapsed, per parent dept. Defaults to NONE -- the
+   * combined view stays exactly what it was on open, and hiding is something
+   * the reader chooses rather than something the page decides for them.
+   */
+  var SUBQ_COLLAPSE_KEY_ = 'cdr.dept.subqcollapse';
+  function subqCollapsedGet_(dept) {
+    if (!dept) return [];
+    try {
+      var all = JSON.parse(localStorage.getItem(SUBQ_COLLAPSE_KEY_) || '{}');
+      var v = all && all[dept];
+      return Array.isArray(v) ? v : [];
+    } catch (e) { return []; }
+  }
+  function subqCollapsedToggle_(parentDept, group) {
+    if (!parentDept || !group) return;
+    try {
+      var all = JSON.parse(localStorage.getItem(SUBQ_COLLAPSE_KEY_) || '{}');
+      if (!all || typeof all !== 'object') all = {};
+      var list = Array.isArray(all[parentDept]) ? all[parentDept] : [];
+      var i = list.indexOf(group);
+      if (i === -1) list.push(group); else list.splice(i, 1);
+      all[parentDept] = list;
+      localStorage.setItem(SUBQ_COLLAPSE_KEY_, JSON.stringify(all));
+    } catch (e) { /* a full/blocked store just means collapse won't persist */ }
   }
 
   function subqAgentRowHtml_(row) {

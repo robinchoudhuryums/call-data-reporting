@@ -519,6 +519,21 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   with the Alerts engine. The bm-* tint wins on `.ds-kpi__value`/`__foot`
   via the two-class overrides in `styles.html` (the ds-* layer lands
   after `.bm-target`/`.bm-over`).
+- **The sub-queue scope SWITCHER is retired; the group header is the control.**
+  A parent dept's My Department table is always the combined view, grouped per
+  dept, and each group's heading row toggles its agent rows. Collapsing KEEPS
+  the department's subtotal on screen -- that is the whole point of the
+  disclosure, and it is what made the tabs redundant: "<dept> only" is the
+  combined view with the sub-queue collapsed. The tabs cost a server round trip
+  per view to show the same thing, and put the reader in a mode they had to
+  track. Default is EXPANDED (nothing hidden on open); state persists per parent
+  in `cdr.dept.subqcollapse`. The client no longer sends `subScope`; the server
+  still honors it. A sub-queue's group header also carries the ONLY route to its
+  own missed calls (Phase 3 cannot merge that section without double-counting
+  queue abandons) -- the button re-scopes the section and the scope note offers
+  the way back. `cdr.dept.subscope` is an orphan key, left in place rather than
+  cleared on load: tidying it would be a write on every page view for no user
+  benefit.
 - **The keep-last-good (SWR) store is MULTI-SLOT, and that is the point.**
   `reportLastGoodWrite_` / `reportLastGoodRead_` (script.html) keep up to
   `REPORT_LASTGOOD_SLOTS_` (=4) signature-keyed entries per report, most-recent

@@ -340,10 +340,10 @@ S42 | Narrow-viewport trend band (perceptual) | Subsystem: Department Dashboard
 
 S43 | Combined-view CSV export | Subsystem: Department Dashboard
   Steps:
-    - On a parent dept (Sales / CSR / Power) with the switcher on `<dept> + <subs>`, use Export -> Download CSV.
+    - On a parent dept (Sales / CSR / Power) -- the combined view is now the only view -- use Export -> Download CSV.
     - Open the file. Confirm a leading `Department` column, each dept's rows grouped together, a `<dept> subtotal` row after each group, and a final `All shown` grand-total row.
     - Confirm NO group-header banner rows (deliberate: a spreadsheet reader needs a column to pivot/filter on -- see docs/client-ui-conventions.md).
-    - Switch to `<dept> only` and export again. Confirm the `Department` column is ABSENT and the file is otherwise the pre-sub-queue shape.
-    - Confirm the two downloads did not overwrite each other (the filename carries a `_all` scope tag).
+    - **Now the SINGLE-dept case, which lost its automated coverage when the scope switcher was retired** (the harness fixture has no dept without sub-queues, so the driver can no longer produce a one-dept payload). Open a dept with NO sub-queues -- 11 of 14 qualify -- and export. Confirm the `Department` column is ABSENT and the file is otherwise the pre-sub-queue shape. This is the byte-compatibility guarantee for every dept that never had a sub-queue.
+    - Collapse a group, then export again. Confirm the CSV is UNCHANGED: collapsing is a display affordance and must not narrow the export.
     - Spot-check an agent whose name begins with `=`, `+`, `-` or `@` if one exists: the cell must be quote-prefixed (the `csvSafeCell_` formula-injection rule).
-  Expected: as described. NOTE this is the FIRST scenario covering CSV export at all -- there is no automated coverage for any CSV writer, so a regression here is invisible to both gates.
+  Expected: as described. NOTE there is no automated coverage for any CSV writer beyond the combined-view assertions in drive-subqueue.js, so a regression in the single-dept path is invisible to both gates.
