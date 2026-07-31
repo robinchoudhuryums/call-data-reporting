@@ -547,6 +547,36 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   the way back. `cdr.dept.subscope` is an orphan key, left in place rather than
   cleared on load: tidying it would be a write on every page view for no user
   benefit.
+- **The DEV OVERLAY is a presentation layer, and its admin check is cosmetic
+  (O-11).** `#dev-overlay` is an admin-only diagnostics panel — captured client
+  errors, `google.script.run` timings/failures, app state, and a registry of
+  admin-gated server diagnostics. Toggle: **Ctrl/Cmd+Alt+D** (Chrome reserves
+  Ctrl+Shift+D) or the `#/dev` hash; persisted in `cdr.dev.overlay`.
+  **The security rule that must not erode:** a localStorage flag is not
+  authentication — anyone can set one — so the `role === 'admin'` check only
+  keeps the panel out of a manager's way. Every diagnostic it invokes keeps its
+  own `assertAdmin_()`, and the panel renders only what the server already sent
+  THIS viewer. Never move an authorization decision into it, and never add a
+  `DEV_DIAGNOSTICS_` entry pointing at a callable that is not admin-gated
+  server-side. Entries carry `writes: true` when the diagnostic has a side
+  effect (`runLiveSmoke` / `runNeonCoverageCheck` both email admins and stamp
+  outcome properties) — those confirm before running.
+  **App state is identifiers and flags ONLY, never a payload:** the Overview
+  blob alone is ~27 KB, and re-rendering data the viewer is already looking at
+  costs memory and screenshare exposure for nothing.
+  **Why it exists:** two production bugs survived because the client records
+  nothing — the dept selector threw `ReferenceError: prLastRoster is not
+  defined` on every admin click, and CSS after `</st` + `yle>` rendered as
+  visible text. Before this the client had ZERO `window.onerror` handlers and
+  one `console.error` in ~20K lines.
+  **The RPC probe is the risky part.** `google.script.run` is a getter that
+  returns a FRESH, STATEFUL runner per access (it holds the handlers set on
+  it), so the probe must re-invoke the original accessor every time — capturing
+  one runner at install leaks chain A's handlers into chain B, which shipped in
+  the first draft and was caught by `drive-devoverlay.js`. Comparing two reads
+  for identity does NOT detect it (a new Proxy is minted either way); the check
+  has to be behavioural. The whole install is try/caught and any doubt leaves
+  `google.script.run` untouched — instrumentation is worth zero failed RPCs.
 - **The keep-last-good (SWR) store is MULTI-SLOT, and that is the point.**
   `reportLastGoodWrite_` / `reportLastGoodRead_` (script.html) keep up to
   `REPORT_LASTGOOD_SLOTS_` (=4) signature-keyed entries per report, most-recent

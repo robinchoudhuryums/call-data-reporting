@@ -37,6 +37,12 @@ const STAGES = [
   // coverage of any CSV writer in this repo (S43): the exporter Blob-and-clicks,
   // so the driver stubs URL.createObjectURL and asserts the real bytes.
   ['node', ['drive-subqueue.js'], 'sub-queue scope + combined CSV (S35 addendum / S43)'],
+  // O-11. The dev overlay redefines `google.script.run` for admins -- the one
+  // object every server call in the app passes through -- so a wrong wrapper
+  // breaks everything at once, and nothing in `node --test` can see it. This
+  // stage asserts the app still works WITH the probe installed before it
+  // asserts anything about the overlay.
+  ['node', ['drive-devoverlay.js'], 'dev overlay + the google.script.run probe (O-11)'],
 ];
 
 for (const [cmd, args, label] of STAGES) {
