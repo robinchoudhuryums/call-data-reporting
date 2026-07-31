@@ -20,13 +20,24 @@
  * (QUEUE_REPORT_LAST_SENT dedupes). A fixed hour would skip the whole day if
  * the import ran late.
  *
- * Public entries (google.script.run; all admin-only):
+ * Public entries (google.script.run). Admin-only EXCEPT where noted -- the one
+ * exception is deliberate and must not be assumed away:
  *   getQueueReportInit()          -> status + subscriber list
  *   saveQueueReportSubscriber({email, active, notes})   -> updated list
  *   removeQueueReportSubscriber({email})                -> updated list
  *   installQueueReportTrigger()   -> { installed, enabled }
  *   uninstallQueueReportTrigger() -> { installed, enabled }
  *   sendQueueReportPreview()      -> { to }   (previews to the active admin)
+ *   runQueueReportGateCheck()     -> the O-10 "why hasn't it sent?" readout.
+ *                                    READ-ONLY: no send, no property write,
+ *                                    and it never touches the dedupe marker
+ *                                    (a diagnostic that claimed the marker
+ *                                    would suppress the send it explains)
+ *   sendQcdAllDeptToSubscribers({date}) -> QV-5 manual blast to the list
+ *   sendQcdAllDeptEmail({...})    -> QV-4. *** NOT admin-only ***: any
+ *                                    SIGNED-IN viewer, and it emails the
+ *                                    CALLER ONLY (it resolves the user itself
+ *                                    rather than calling assertAdmin_)
  *
  * Trigger entry point (underscore = not RPC-callable; ScriptApp dispatches by
  * name):
@@ -814,6 +825,134 @@ function uninstallQueueReportTrigger() {
   const props = PropertiesService.getScriptProperties();
   props.deleteProperty(QUEUE_REPORT_ENABLED_PROP);
   return { installed: false, enabled: false };
+}
+
+/**
+ * O-10: PURE verdict for the gate check -- turns a gate reason plus the
+ * resolved inputs into { wouldSend, explanation }. Split out for the same
+ * reason queueReportGateDecision_ is: the interesting cases (already-sent,
+ * not-ready, ready-but-nobody-subscribed) are the ones a wall-clock test can
+ * never reach on demand.
+ *
+ * The load-bearing rule is `wouldSend`: the gate is evaluated BEFORE the
+ * recipient list, so decision.send can be true while the run would deliver
+ * nothing. Reporting that as "ready" tells an admin to expect an email that
+ * will not arrive -- which is the O-9 failure wearing a different hat.
+ */
+function queueReportGateExplain_(ctx) {
+  ctx = ctx || {};
+  const targetIso = ctx.targetIso || '(unknown)';
+  const subs = Number(ctx.activeSubs) || 0;
+  let explanation;
+  if (ctx.reason === 'disabled') {
+    explanation = ctx.installed
+      ? 'The trigger is installed but QUEUE_REPORT_ENABLED is not "true", so every run returns '
+        + 'immediately. Uninstall and re-install from this modal to reset both together.'
+      : 'No trigger is installed and the enable flag is off. Click "Install daily trigger".';
+  } else if (ctx.reason === 'outside-window') {
+    explanation = 'It is ' + ctx.hour + ':00 Central, outside the ' + QUEUE_REPORT_WINDOW_START_HOUR
+      + ':00–' + QUEUE_REPORT_WINDOW_END_HOUR + ':00 send window. Nothing sends until the next '
+      + 'window opens.';
+  } else if (ctx.reason === 'weekend' || ctx.reason === 'holiday') {
+    explanation = 'Today is a ' + ctx.reason + ' — the report only sends on working days.';
+  } else if (ctx.reason === 'already-sent') {
+    explanation = 'The dedupe marker already claims ' + targetIso + ', so this day will not be sent '
+      + 'again. NOTE: before the O-9 fix a run with NO subscribers also claimed this marker, so a '
+      + 'date can be marked sent that nobody received. Use "Send to subscribers…" on the report to '
+      + 'deliver it now; the next working day gets a fresh target and is unaffected.';
+  } else if (ctx.reason === 'not-ready') {
+    explanation = 'QCD Historical Data only reaches ' + (ctx.latestQcd || '(nothing)') + ', so '
+      + targetIso + ' has not been imported + processed yet. The poll retries every '
+      + QUEUE_REPORT_EVERY_MINUTES + ' min until the window closes at '
+      + QUEUE_REPORT_WINDOW_END_HOUR + ':00 Central; after that the day is flagged MISSED and is '
+      + 'NOT retried automatically.';
+  } else if (!subs) {
+    explanation = 'The gate would send, but there are no active Queue Report subscribers — so '
+      + 'nothing would go out. Add a row under Report Subscribers.';
+  } else {
+    explanation = 'The gate would send ' + targetIso + ' to ' + subs + ' subscriber'
+      + (subs === 1 ? '' : 's') + ' on the next poll.';
+  }
+  return { wouldSend: !!ctx.send && subs > 0, explanation: explanation };
+}
+
+/**
+ * O-10: "why hasn't it sent?" -- evaluates the REAL gate against the REAL
+ * clock, properties and sheet, and reports every input plus the decision.
+ * READ-ONLY: sends nothing, writes no property, touches no marker.
+ *
+ * This exists because every non-send path in runDailyQueueReport_ returns
+ * SILENTLY. `disabled`, `outside-window`, `weekend`, `holiday`, `already-sent`
+ * and `not-ready` write nothing anywhere -- QUEUE_REPORT_LAST_RESULT is only
+ * set on a send, a no-subscriber run, a failure, or the post-window MISSED
+ * flag. So an admin whose report hasn't arrived has no way to ask WHY, and the
+ * trigger entry point is `_`-suffixed, which hides it from the editor's Run
+ * picker too (the compareDqeSources_ / runDqeParityCheck precedent). Every
+ * hypothesis then costs a day to test, which is exactly how this played out.
+ *
+ * Returns the gate inputs, the decision, a plain-English explanation, and --
+ * because it is the question that actually follows -- WHEN the next window is
+ * and WHICH date that run will target.
+ */
+function runQueueReportGateCheck() {
+  assertAdmin_();
+  const props = PropertiesService.getScriptProperties();
+  const now = new Date();
+  const targetIso = prevBusinessDayIso_(now);
+  const todayIso = Utilities.formatDate(now, TZ, 'yyyy-MM-dd');
+  const hour = Number(Utilities.formatDate(now, TZ, 'H'));
+  const lastSent = props.getProperty(QUEUE_REPORT_LAST_SENT_PROP) || '';
+  const enabled = props.getProperty(QUEUE_REPORT_ENABLED_PROP) === 'true';
+  const installed = queueReportTriggerInstalled_();
+  // The readiness read is the only non-trivial cost here, and an admin asking
+  // this question always wants to know it -- so unlike the trigger (which
+  // short-circuits before it), always resolve it.
+  const latestQcd = queueReportQcdLatestIso_();
+  const subs = readQueueReportSubscribers_();
+  const activeSubs = subs.filter(function (s) { return s.active && !s.duplicateRow; });
+
+  const decision = queueReportGateDecision_({
+    enabled: enabled, hour: hour, dow: now.getDay(),
+    holiday: isCompanyHoliday_(todayIso),
+    targetIso: targetIso, lastSent: lastSent, latestQcd: latestQcd,
+  });
+
+  const verdict = queueReportGateExplain_({
+    reason: decision.reason, send: decision.send, installed: installed, hour: hour,
+    targetIso: targetIso, latestQcd: latestQcd, activeSubs: activeSubs.length,
+  });
+  const explain = verdict.explanation;
+
+  // "When does it next get a chance, and for which day?" -- walk forward to the
+  // next moment the window + weekday gates both pass, and resolve THAT run's
+  // target. Bounded; holidays are honored via the same helper the gate uses.
+  let nextRun = null, nextTarget = null;
+  const probe = new Date(now.getTime());
+  if (hour >= QUEUE_REPORT_WINDOW_START_HOUR) probe.setDate(probe.getDate() + 1);
+  for (let i = 0; i < 14; i++) {
+    const iso = Utilities.formatDate(probe, TZ, 'yyyy-MM-dd');
+    const dow = probe.getDay();
+    if (dow !== 0 && dow !== 6 && !isCompanyHoliday_(iso)) {
+      nextRun = iso;
+      nextTarget = prevBusinessDayIso_(new Date(probe.getFullYear(), probe.getMonth(), probe.getDate(), 12));
+      break;
+    }
+    probe.setDate(probe.getDate() + 1);
+  }
+
+  const out = {
+    now: Utilities.formatDate(now, TZ, 'yyyy-MM-dd HH:mm') + ' Central',
+    installed: installed, enabled: enabled,
+    windowLabel: QUEUE_REPORT_WINDOW_START_HOUR + ':00–' + QUEUE_REPORT_WINDOW_END_HOUR + ':00 Central, weekdays',
+    targetDate: targetIso, latestQcdDate: latestQcd, lastSentMarker: lastSent,
+    activeSubscribers: activeSubs.length, totalSubscriberRows: subs.length,
+    decision: decision.reason, wouldSend: verdict.wouldSend,
+    explanation: explain,
+    nextWindowDate: nextRun, nextWindowTarget: nextTarget,
+    lastResult: props.getProperty(QUEUE_REPORT_LAST_RESULT_PROP) || '',
+  };
+  Logger.log('runQueueReportGateCheck: %s', JSON.stringify(out, null, 2));
+  return out;
 }
 
 /**

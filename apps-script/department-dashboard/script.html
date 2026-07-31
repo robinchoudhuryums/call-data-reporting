@@ -2,6 +2,182 @@
 (function () {
   'use strict';
 
+  // ══ DEV OVERLAY (O-11) ══════════════════════════════════════════════════
+  //
+  // An admin-only, off-by-default diagnostics panel. Toggle: Ctrl/Cmd+Alt+D,
+  // or the `#/dev` hash. Persisted in `cdr.dev.overlay`.
+  //
+  // WHY IT EXISTS. Two production bugs reached users and stayed there because
+  // nothing in the client records anything: the header dept selector threw
+  // `ReferenceError: prLastRoster is not defined` on EVERY admin click until a
+  // harness driver happened to try it, and CSS appended after `</` + `style>`
+  // rendered as visible text at the top of the page. Before this block the
+  // client had ZERO window.onerror handlers and one console.error in ~20K
+  // lines, so a thrown error went nowhere and nobody ever learned.
+  //
+  // SECURITY -- the rule that must not erode. This overlay is a PRESENTATION
+  // layer and nothing else. A localStorage flag is not authentication (anyone
+  // can set one), so the `role === 'admin'` check below is COSMETIC: it keeps
+  // the panel out of a manager's way, and is not what protects anything. Every
+  // server diagnostic it invokes keeps its own `assertAdmin_()`, and the panel
+  // renders only what the server already sent THIS viewer. Never move an
+  // authorization decision in here, and never add a registry entry to a
+  // callable that is not admin-gated server-side.
+  //
+  // Installed FIRST so it captures errors thrown during the rest of module
+  // load -- which is exactly where the prLastRoster class of bug lives.
+  const DEV_ = {
+    on: false, ready: false, admin: false,
+    errors: [], rpc: [], MAX_ERRORS: 60, MAX_RPC: 120,
+    KEY: 'cdr.dev.overlay',
+  };
+
+  function devIsAdmin_() {
+    try {
+      const u = window.__USER__;
+      return !!(u && u.role === 'admin');
+    } catch (e) { return false; }
+  }
+
+  function devPush_(list, entry, cap) {
+    list.push(entry);
+    if (list.length > cap) list.splice(0, list.length - cap);
+    if (DEV_.on) devScheduleRender_();
+  }
+
+  function devStamp_() {
+    const d = new Date();
+    return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2)
+         + ':' + ('0' + d.getSeconds()).slice(-2);
+  }
+
+  // Error capture. Bounded ring buffers -- a page left open all day on a
+  // throwing handler must not grow without limit.
+  function devInstallErrorCapture_() {
+    window.addEventListener('error', function (e) {
+      devPush_(DEV_.errors, {
+        at: devStamp_(), kind: 'error',
+        msg: (e && e.message) || 'unknown error',
+        where: ((e && e.filename) || '') + (e && e.lineno ? (':' + e.lineno) : ''),
+        stack: (e && e.error && e.error.stack) ? String(e.error.stack).slice(0, 900) : '',
+      }, DEV_.MAX_ERRORS);
+    });
+    window.addEventListener('unhandledrejection', function (e) {
+      const r = e && e.reason;
+      devPush_(DEV_.errors, {
+        at: devStamp_(), kind: 'promise',
+        msg: (r && r.message) ? r.message : String(r),
+        where: '', stack: (r && r.stack) ? String(r.stack).slice(0, 900) : '',
+      }, DEV_.MAX_ERRORS);
+    });
+    // console.error is wrapped rather than replaced: the original ALWAYS runs,
+    // so devtools behavior is unchanged even if this buffer throws.
+    try {
+      const orig = window.console && window.console.error;
+      if (typeof orig === 'function') {
+        window.console.error = function () {
+          try {
+            devPush_(DEV_.errors, {
+              at: devStamp_(), kind: 'console',
+              msg: Array.prototype.map.call(arguments, function (a) {
+                try { return (a && a.message) ? a.message : String(a); } catch (x) { return '?'; }
+              }).join(' ').slice(0, 400),
+              where: '', stack: '',
+            }, DEV_.MAX_ERRORS);
+          } catch (x) { /* never let instrumentation break logging */ }
+          return orig.apply(window.console, arguments);
+        };
+      }
+    } catch (e) { /* console is not writable somewhere -- fine, skip */ }
+  }
+
+  // RPC probe. `google.script.run` is a MAGIC chainable object: every property
+  // access returns a fresh runner, and withSuccessHandler/withFailureHandler/
+  // withUserObject each return a new one. Wrapping it wrong breaks all 91 call
+  // sites in this file, so the whole install is try/caught and ANY doubt
+  // leaves the original object untouched -- instrumentation is worth zero
+  // failed RPCs.
+  function devInstallRpcProbe_() {
+    if (typeof Proxy !== 'function') return;         // no Proxy -> no probe, app unaffected
+    try {
+      const g = window.google && window.google.script;
+      if (!g || !g.run) return;
+      // `run` is a GETTER that hands back a FRESH runner on every access, and
+      // a runner is stateful (it holds the success/failure handlers set on
+      // it). Capturing one runner and reusing it across calls would leak one
+      // call site's handlers into the next -- so keep the original accessor
+      // and invoke it per access, exactly as the platform intends.
+      const desc = Object.getOwnPropertyDescriptor(g, 'run');
+      if (!desc) return;
+      const freshRunner = desc.get
+        ? function () { return desc.get.call(g); }
+        : function () { return desc.value; };
+      const CHAIN = { withSuccessHandler: 1, withFailureHandler: 1, withUserObject: 1 };
+
+      const wrap = function (runner, ctx) {
+        return new Proxy(function () {}, {
+          get: function (_t, prop) {
+            const v = runner[prop];
+            if (typeof v !== 'function') return v;
+            if (CHAIN[prop]) {
+              return function (fn) {
+                // Tap the caller's handlers so timing/outcome is recorded
+                // without changing what they receive or when.
+                const tapped = (typeof fn === 'function' && prop !== 'withUserObject')
+                  ? function () {
+                      try {
+                        if (ctx.t0 && !ctx.done) {
+                          ctx.done = true;
+                          devPush_(DEV_.rpc, {
+                            at: ctx.at, name: ctx.name, ms: Date.now() - ctx.t0,
+                            ok: prop === 'withSuccessHandler',
+                            detail: prop === 'withFailureHandler'
+                              ? String((arguments[0] && arguments[0].message) || arguments[0] || '').slice(0, 200)
+                              : '',
+                          }, DEV_.MAX_RPC);
+                        }
+                      } catch (x) { /* never break a live handler */ }
+                      return fn.apply(this, arguments);
+                    }
+                  : fn;
+                return wrap(v.call(runner, tapped), ctx);
+              };
+            }
+            // A non-chain function is the actual server call.
+            return function () {
+              ctx.name = String(prop);
+              ctx.at = devStamp_();
+              ctx.t0 = Date.now();
+              return v.apply(runner, arguments);
+            };
+          },
+        });
+      };
+
+      Object.defineProperty(g, 'run', {
+        configurable: true,
+        get: function () { return wrap(freshRunner(), {}); },
+      });
+    } catch (e) { /* leave google.script.run exactly as it was */ }
+  }
+
+  let devRenderPending_ = false;
+  function devScheduleRender_() {
+    if (devRenderPending_) return;
+    devRenderPending_ = true;
+    (window.requestAnimationFrame || window.setTimeout)(function () {
+      devRenderPending_ = false;
+      if (DEV_.on) devRender_();
+    }, 0);
+  }
+
+  DEV_.admin = devIsAdmin_();
+  if (DEV_.admin) {
+    devInstallErrorCapture_();
+    devInstallRpcProbe_();
+    try { DEV_.on = localStorage.getItem(DEV_.KEY) === 'on'; } catch (e) {}
+  }
+
   // -- Dark mode toggle (Step 1 of the Call-Analyzer visual parity work).
   // Reads persisted preference and wires the header button. Runs before
   // any other UI setup so the page paints in the right mode immediately.
@@ -10722,6 +10898,8 @@
     if (installQrBtn) installQrBtn.addEventListener('click', alInstallQueueReport_);
     const uninstallQrBtn = $('al-uninstall-qr-btn');
     if (uninstallQrBtn) uninstallQrBtn.addEventListener('click', alUninstallQueueReport_);
+    const whyQrBtn = $('al-qr-why-btn');
+    if (whyQrBtn) whyQrBtn.addEventListener('click', function () { alQrWhy_(whyQrBtn); });
 
     const dateEl = $('al-date');
     if (dateEl) dateEl.addEventListener('change', function () {
@@ -10999,6 +11177,48 @@
       .withSuccessHandler(function (d) { alRenderQueueReport_(d || {}); })
       .withFailureHandler(function (err) { alRenderQueueReport_({ loadError: (err && err.message) ? err.message : String(err) }); })
       .getQueueReportInit();
+  }
+  // O-10: every non-send path in the trigger returns silently, so "it hasn't
+  // arrived" used to cost a day per hypothesis to test. This asks the REAL gate
+  // what it decided, right now, and reads back every input it used.
+  function alQrWhy_(btn) {
+    const host = $('al-qr-why');
+    if (!host) return;
+    if (btn) { btn.disabled = true; btn.textContent = 'Checking…'; }
+    const done = function () {
+      if (btn) { btn.disabled = false; btn.textContent = 'Why hasn’t it sent?'; }
+    };
+    google.script.run
+      .withSuccessHandler(function (d) {
+        done();
+        d = d || {};
+        const row = function (k, v) {
+          return '<div class="al-qr-why-row"><span>' + escapeHtml(k) + '</span><b>'
+            + escapeHtml(v === '' || v == null ? '—' : String(v)) + '</b></div>';
+        };
+        host.style.display = '';
+        host.className = 'al-qr-why ' + (d.wouldSend ? 'is-good' : 'is-warn');
+        host.innerHTML =
+            '<div class="al-qr-why-verdict">' + escapeHtml(d.explanation || '') + '</div>'
+          + row('Checked at', d.now)
+          + row('Gate decision', d.decision)
+          + row('Target date (previous workday)', d.targetDate)
+          + row('QCD data reaches', d.latestQcdDate)
+          + row('Already-sent marker', d.lastSentMarker)
+          + row('Active subscribers', d.activeSubscribers)
+          + row('Trigger installed / enabled', (d.installed ? 'yes' : 'no') + ' / ' + (d.enabled ? 'yes' : 'no'))
+          + row('Send window', d.windowLabel)
+          + (d.nextWindowDate
+              ? row('Next window', d.nextWindowDate + ' — will send ' + (d.nextWindowTarget || '?'))
+              : '');
+      })
+      .withFailureHandler(function (err) {
+        done();
+        host.style.display = '';
+        host.className = 'al-qr-why is-warn';
+        host.textContent = 'Check failed: ' + ((err && err.message) ? err.message : String(err));
+      })
+      .runQueueReportGateCheck();
   }
   function alQrRemove_(idx) {
     const s = alQrRows_[idx]; if (!s) return;
@@ -20674,11 +20894,192 @@
     setTimeout(function () { try { w.print(); } catch (e) {} }, 250);
   }
 
+  // ══ DEV OVERLAY -- panel + registry (O-11) ══════════════════════════════
+  //
+  // The capture half installs at the top of this file (see the block there,
+  // including the security rule). This half is the panel, and it only ever
+  // READS what capture already buffered plus what the server sends back.
+
+  // The registry is the point of the overlay: a new server diagnostic costs
+  // ONE ENTRY here -- no markup, no handler, no style rule. Every `fn` MUST be
+  // admin-gated server-side (assertAdmin_); the overlay is not a gate.
+  // `writes` marks a diagnostic with a SIDE EFFECT so nobody fires one
+  // expecting a passive read -- runLiveSmoke and runNeonCoverageCheck both
+  // email the admin list and stamp their outcome properties.
+  const DEV_DIAGNOSTICS_ = [
+    { fn: 'runQueueReportGateCheck', label: 'Queue report — why hasn’t it sent?',
+      desc: 'Evaluates the real send gate now: target date, QCD readiness, dedupe marker, subscribers, next window.' },
+    { fn: 'getSystemHealth', label: 'System health snapshot',
+      desc: 'The same payload the Health page renders — triggers, outcomes, properties, sheets.' },
+    { fn: 'runLiveSmoke', label: 'Live smoke test', writes: true,
+      desc: 'Read-only sweep of the live read paths. EMAILS the admin list and stamps SMOKE_LAST.' },
+    { fn: 'runNeonCoverageCheck', label: 'Neon coverage check', writes: true,
+      desc: 'Per-date sheet-vs-Neon reconciliation. EMAILS the admin list and stamps NEON_COVERAGE_LAST.' },
+  ];
+
+  function devEsc_(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  function devHost_() {
+    let el = document.getElementById('dev-overlay');
+    if (el) return el;
+    el = document.createElement('div');
+    el.id = 'dev-overlay';
+    el.setAttribute('role', 'complementary');
+    el.setAttribute('aria-label', 'Developer diagnostics');
+    document.body.appendChild(el);
+    return el;
+  }
+
+  // App state. Deliberately IDENTIFIERS AND FLAGS ONLY -- never a payload.
+  // The Overview blob alone is ~27 KB, and dumping data the viewer is already
+  // looking at costs memory and screenshare exposure for nothing.
+  function devStateRows_() {
+    const u = window.__USER__ || {};
+    let slots = 0;
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        // The real prefix constant, not a literal -- a hardcoded guess here
+        // would silently report 0 forever and read as "SWR is not working".
+        if (String(localStorage.key(i)).indexOf(REPORT_LASTGOOD_PREFIX_) === 0) slots++;
+      }
+    } catch (e) {}
+    return [
+      ['role', u.role || '?'],
+      ['email', u.email || '?'],
+      ['department', u.department || '(none)'],
+      ['departments', (u.departments || []).join(', ') || '(single)'],
+      ['allDepts', String(!!u.allDepts)],
+      ['view-as', document.body.getAttribute('data-view-as') || 'off'],
+      ['page', document.body.getAttribute('data-page') || '?'],
+      ['route', (typeof currentRoute !== 'undefined' && currentRoute) || '(none)'],
+      ['mode / theme', (document.body.dataset.mode || 'light') + ' / '
+        + (document.body.dataset.theme || 'default')],
+      ['UI flags', ((window.__UI_FLAGS__ || []).join(', ')) || '(none)'],
+      ['DASHBOARD_URL', window.__DASHBOARD_URL__ ? 'set' : 'NOT SET'],
+      ['SWR slots cached', String(slots)],
+    ];
+  }
+
+  function devRender_() {
+    const host = devHost_();
+    let h = '<div class="dev-bar"><b>Dev overlay</b>'
+      + '<span class="dev-muted">Ctrl/Cmd+Alt+D to close</span>'
+      + '<button type="button" class="dev-x" id="dev-close">✕</button></div>';
+
+    h += '<div class="dev-sec"><div class="dev-h">Client errors <span class="dev-count'
+      + (DEV_.errors.length ? ' is-bad' : '') + '">' + DEV_.errors.length + '</span></div>';
+    if (!DEV_.errors.length) {
+      h += '<div class="dev-empty">None captured this session.</div>';
+    } else {
+      h += DEV_.errors.slice().reverse().map(function (e) {
+        return '<div class="dev-row dev-err"><div><b>' + devEsc_(e.msg) + '</b>'
+          + '<span class="dev-muted"> ' + devEsc_(e.kind) + ' · ' + devEsc_(e.at) + '</span></div>'
+          + (e.where ? '<div class="dev-muted">' + devEsc_(e.where) + '</div>' : '')
+          + (e.stack ? '<pre class="dev-pre">' + devEsc_(e.stack) + '</pre>' : '') + '</div>';
+      }).join('');
+    }
+    h += '</div>';
+
+    const fails = DEV_.rpc.filter(function (r) { return !r.ok; }).length;
+    h += '<div class="dev-sec"><div class="dev-h">Server calls <span class="dev-count'
+      + (fails ? ' is-bad' : '') + '">' + DEV_.rpc.length + (fails ? (' · ' + fails + ' failed') : '')
+      + '</span></div>';
+    if (!DEV_.rpc.length) {
+      h += '<div class="dev-empty">No calls recorded yet.</div>';
+    } else {
+      h += DEV_.rpc.slice().reverse().slice(0, 30).map(function (r) {
+        return '<div class="dev-row' + (r.ok ? '' : ' dev-err') + '">'
+          + '<div class="dev-kv"><span>' + devEsc_(r.name) + '</span>'
+          + '<b>' + (r.ok ? '' : 'FAILED · ') + r.ms + ' ms</b></div>'
+          + (r.detail ? '<div class="dev-muted">' + devEsc_(r.detail) + '</div>' : '')
+          + '</div>';
+      }).join('');
+    }
+    h += '</div>';
+
+    h += '<div class="dev-sec"><div class="dev-h">App state</div>'
+      + devStateRows_().map(function (kv) {
+          return '<div class="dev-row"><div class="dev-kv"><span>' + devEsc_(kv[0])
+            + '</span><b>' + devEsc_(kv[1]) + '</b></div></div>';
+        }).join('')
+      + '</div>';
+
+    h += '<div class="dev-sec"><div class="dev-h">Diagnostics</div>'
+      + DEV_DIAGNOSTICS_.map(function (d, i) {
+          return '<div class="dev-row"><div class="dev-kv"><span>' + devEsc_(d.label)
+            + (d.writes ? ' <b class="dev-warn">side effects</b>' : '')
+            + '</span><button type="button" class="dev-run" data-idx="' + i + '">Run</button></div>'
+            + '<div class="dev-muted">' + devEsc_(d.desc) + '</div>'
+            + '<div class="dev-out" id="dev-out-' + i + '"></div></div>';
+        }).join('')
+      + '</div>';
+
+    host.innerHTML = h;
+    const close = document.getElementById('dev-close');
+    if (close) close.addEventListener('click', function () { devToggle_(false); });
+    host.querySelectorAll('.dev-run').forEach(function (b) {
+      b.addEventListener('click', function () { devRunDiagnostic_(Number(b.getAttribute('data-idx')), b); });
+    });
+  }
+
+  function devRunDiagnostic_(idx, btn) {
+    const d = DEV_DIAGNOSTICS_[idx];
+    if (!d) return;
+    const out = document.getElementById('dev-out-' + idx);
+    if (d.writes && !window.confirm(d.label + ' has side effects (sends email, writes outcome '
+        + 'properties). Run it now?')) return;
+    if (out) out.textContent = 'Running…';
+    btn.disabled = true;
+    // Called through the SAME google.script.run every other caller uses, so
+    // the server's assertAdmin_ applies exactly as it would anywhere else.
+    google.script.run
+      .withSuccessHandler(function (res) {
+        btn.disabled = false;
+        if (out) out.innerHTML = '<pre class="dev-pre">' + devEsc_(JSON.stringify(res, null, 2)) + '</pre>';
+      })
+      .withFailureHandler(function (err) {
+        btn.disabled = false;
+        if (out) out.innerHTML = '<pre class="dev-pre dev-err-text">'
+          + devEsc_((err && err.message) ? err.message : String(err)) + '</pre>';
+      })[d.fn]();
+  }
+
+  function devToggle_(next) {
+    if (!DEV_.admin) return;                 // cosmetic gate; the server gates the data
+    DEV_.on = (next === undefined) ? !DEV_.on : !!next;
+    try { localStorage.setItem(DEV_.KEY, DEV_.on ? 'on' : 'off'); } catch (e) {}
+    const host = devHost_();
+    host.classList.toggle('is-open', DEV_.on);
+    if (DEV_.on) devRender_();
+  }
+
+  function devInstallToggle_() {
+    if (!DEV_.admin) return;
+    document.addEventListener('keydown', function (e) {
+      // Ctrl/Cmd + Alt + D. Chrome reserves Ctrl+Shift+D (bookmark all tabs),
+      // so that chord is deliberately not used.
+      if (e.altKey && (e.ctrlKey || e.metaKey) && (e.key === 'd' || e.key === 'D')) {
+        e.preventDefault();
+        devToggle_();
+      }
+    });
+    // `#/dev` is the no-chord entry point: the whole point of this feature is
+    // that a diagnostic does not need its own button in the header.
+    try {
+      if (String(window.location.hash || '').indexOf('/dev') !== -1) devToggle_(true);
+    } catch (e) {}
+    if (DEV_.on) devToggle_(true);           // restore a persisted open state
+  }
+
   // Wait for DOM, then go.
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
+    document.addEventListener('DOMContentLoaded', function () { init(); devInstallToggle_(); });
   } else {
     init();
+    devInstallToggle_();
   }
 })();
 </script>

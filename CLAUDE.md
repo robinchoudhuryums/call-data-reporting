@@ -178,12 +178,19 @@ npm run ci:ui                # gen payloads -> build admin+manager -> assert
 # tests/unit/ui-harness-vendor.test.js). With playwright absent it SKIPS
 # with a message and exits 0, so it is safe to run anywhere; chromium-path.js
 # globs the Playwright browser revision, so CHROMIUM_PATH is rarely needed.
-# THREE ASSERTING drivers gate it -- drive-smoke.js (page/console errors,
+# FOUR ASSERTING drivers gate it -- drive-smoke.js (page/console errors,
 # unmocked RPCs, BLANK chart canvases, horizontal overflow, both roles, plus
 # VIEW-AS-MANAGER: it enters preview, actually hides the admin-only surfaces
 # -- measured as rendered visibility, not a class -- reverses cleanly, and
 # throws nothing),
-# drive-f13.js (the S39 keyboard walk), and drive-subqueue.js (the collapsible
+# drive-f13.js (the S39 keyboard walk), drive-devoverlay.js (the O-11 dev
+# overlay AND its `google.script.run` probe -- the probe redefines the single
+# object every one of the ~91 server calls passes through, so a wrong wrapper
+# breaks the whole app at once; the driver asserts the app still WORKS with it
+# installed before asserting anything about the panel, and its handler-isolation
+# check is BEHAVIOURAL because comparing two reads for identity does not catch a
+# shared runner -- plus that a manager gets no overlay even with the localStorage
+# flag hand-set), and drive-subqueue.js (the collapsible
 # sub-queue groups, the S35 parent-subtotal parity property, the combined AND
 # single-dept CSV shapes -- the ONLY automated coverage of any CSV writer in
 # this repo, asserted by stubbing URL.createObjectURL and reading the real Blob

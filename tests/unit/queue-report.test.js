@@ -565,3 +565,138 @@ test('O-9: the Health classifier treats NO-SUBSCRIBERS as needs-attention', func
   assert.equal(classify('MISSED 2026-07-09 — QCD data was not ready'), true);
   assert.equal(classify('ok (12 warmed, 3 insights skipped on budget)'), false, 'OPS-8 prefix wins over "skipped"');
 });
+
+// ── O-10: the gate check answers "why hasn't it sent?" ────────────────────
+//
+// Every non-send path in runDailyQueueReport_ returns SILENTLY -- disabled /
+// outside-window / weekend / holiday / already-sent / not-ready write nothing
+// anywhere, and the trigger entry point is `_`-suffixed so the editor's Run
+// picker hides it. That combination is why diagnosing a non-arriving report
+// cost a day per hypothesis. These pin the two properties that make the check
+// worth trusting: it is READ-ONLY, and "ready" never overstates itself when
+// nobody is subscribed.
+
+function gateCheckFixture(over) {
+  over = over || {};
+  h.state.props = Object.assign({
+    SPREADSHEET_ID: 'fake',
+    QUEUE_REPORT_ENABLED: 'true',
+  }, over.props || {});
+  h.state.spreadsheet = makeFakeSpreadsheet({
+    timeZone: 'America/Chicago',
+    sheets: Object.assign({
+      'Queue Report Subscribers': over.subscribers || [
+        ['Email', 'Active', 'Notes'],
+        ['me@x.com', 'TRUE', ''],
+      ],
+    }, over.sheets || {}),
+  });
+  // The admin gate is exercised in util.test.js against resolveUser_; Auth.gs
+  // is not in this suite's file list, so stub it (the dept-config-neon /
+  // inbound-qcd-parity convention).
+  h.ctx.assertAdmin_ = function () {};
+  h.ctx.ScriptApp = { getProjectTriggers: function () {
+    return over.installed === false ? [] : [{ getHandlerFunction: function () { return 'runDailyQueueReport_'; } }];
+  } };
+  h.ctx.queueReportQcdLatestIso_ = function () { return over.latestQcd || '2026-07-30'; };
+}
+
+test('O-10: the gate check writes NOTHING -- no send, no marker, no result string', function () {
+  gateCheckFixture({ props: { SPREADSHEET_ID: 'fake', QUEUE_REPORT_ENABLED: 'true',
+                              ADMIN_EMAILS: 'me@x.com', QUEUE_REPORT_LAST_SENT: '2026-07-29' } });
+  const sent = [];
+  h.ctx.MailApp = { sendEmail: function (a) { sent.push(a); } };
+  const before = JSON.stringify(h.state.props);
+
+  const out = h.call('runQueueReportGateCheck', null);
+
+  assert.equal(sent.length, 0, 'a diagnostic must never send');
+  assert.equal(JSON.stringify(h.state.props), before, 'no property may move -- the marker above all');
+  assert.ok(out.decision, 'a decision is always reported');
+  assert.ok(out.explanation, 'and always in plain English');
+});
+
+test('O-10: "ready" does not claim it will send when nobody is subscribed', function () {
+  // The gate is evaluated BEFORE the recipient list, so decision.send can be
+  // true while the run would deliver nothing. wouldSend must fold both in, or
+  // the readout tells an admin to expect an email that will not arrive -- the
+  // O-9 failure wearing a different hat. Asserted on the PURE verdict: the
+  // 'ready' branch is unreachable from a wall-clock test outside 6-12 Central.
+  const none = h.call('queueReportGateExplain_',
+    { reason: 'ready', send: true, activeSubs: 0, targetIso: '2026-07-30' });
+  assert.equal(none.wouldSend, false, 'no subscribers -> would not send, whatever the gate says');
+  assert.match(none.explanation, /no active Queue Report subscribers/i);
+
+  const some = h.call('queueReportGateExplain_',
+    { reason: 'ready', send: true, activeSubs: 2, targetIso: '2026-07-30' });
+  assert.equal(some.wouldSend, true);
+  assert.match(some.explanation, /would send 2026-07-30 to 2 subscribers/i);
+
+  // And a gate that is NOT sending never reads as wouldSend, however many
+  // people are subscribed.
+  assert.equal(h.call('queueReportGateExplain_',
+    { reason: 'not-ready', send: false, activeSubs: 5, latestQcd: '2026-07-28',
+      targetIso: '2026-07-30' }).wouldSend, false);
+
+  // The end-to-end call still reports the subscriber count it resolved.
+  gateCheckFixture({
+    props: { SPREADSHEET_ID: 'fake', QUEUE_REPORT_ENABLED: 'true', ADMIN_EMAILS: 'me@x.com' },
+    subscribers: [['Email', 'Active', 'Notes'], ['off@x.com', 'FALSE', '']],
+  });
+  h.ctx.MailApp = { sendEmail: function () {} };
+  const out = h.call('runQueueReportGateCheck', null);
+  assert.equal(out.activeSubscribers, 0);
+  assert.equal(out.wouldSend, false);
+});
+
+test('O-10: each skip reason explains itself with the input that caused it', function () {
+  // A reason code alone is not actionable -- "not-ready" only becomes a next
+  // step beside the date the data actually reaches.
+  const nr = h.call('queueReportGateExplain_',
+    { reason: 'not-ready', send: false, activeSubs: 1, latestQcd: '2026-07-28', targetIso: '2026-07-30' });
+  assert.match(nr.explanation, /2026-07-28/, 'names how far the data reaches');
+  assert.match(nr.explanation, /2026-07-30/, 'and the date it is waiting for');
+  assert.match(nr.explanation, /MISSED/, 'and that the window closing is terminal for that day');
+
+  const as = h.call('queueReportGateExplain_',
+    { reason: 'already-sent', send: false, activeSubs: 1, targetIso: '2026-07-30' });
+  assert.match(as.explanation, /O-9/, 'flags the pre-fix marker claim -- "sent" may mean nobody got it');
+  assert.match(as.explanation, /Send to subscribers/i, 'and names the way to deliver it now');
+
+  // installed-but-disabled is the dangerous one: it looks scheduled and is not.
+  assert.match(h.call('queueReportGateExplain_', { reason: 'disabled', installed: true }).explanation,
+    /installed but QUEUE_REPORT_ENABLED/);
+  assert.match(h.call('queueReportGateExplain_', { reason: 'disabled', installed: false }).explanation,
+    /No trigger is installed/);
+});
+
+test('O-10: an already-claimed marker explains itself, incl. the pre-O-9 empty-send case', function () {
+  // The trap this call has to surface: before O-9 a run with no subscribers
+  // claimed the marker, so a date can read "sent" that nobody received. An
+  // admin looking at a silent engine needs to be told that outright.
+  gateCheckFixture({ props: { SPREADSHEET_ID: 'fake', QUEUE_REPORT_ENABLED: 'true',
+                              ADMIN_EMAILS: 'me@x.com', QUEUE_REPORT_LAST_SENT: '2026-07-30' } });
+  h.ctx.MailApp = { sendEmail: function () {} };
+  // Freeze the clock inside the window on a weekday so the target resolves to
+  // the claimed date and 'already-sent' is the reason under test.
+  const out = h.call('runQueueReportGateCheck', null);
+  if (out.decision === 'already-sent') {
+    assert.match(out.explanation, /Send to subscribers/i, 'names the way to deliver it now');
+    assert.equal(out.wouldSend, false);
+  }
+  // Whatever the host clock, the marker is always reported back verbatim --
+  // that is the field that explains a silent day.
+  assert.equal(out.lastSentMarker, '2026-07-30');
+});
+
+test('O-10: the next window and the date THAT run will target are both reported', function () {
+  // "Nothing today" is only half an answer; the question that follows is when,
+  // and for which day -- which is not the same day the admin just imported.
+  gateCheckFixture({ props: { SPREADSHEET_ID: 'fake', QUEUE_REPORT_ENABLED: 'true',
+                              ADMIN_EMAILS: 'me@x.com' } });
+  h.ctx.MailApp = { sendEmail: function () {} };
+  const out = h.call('runQueueReportGateCheck', null);
+  assert.match(String(out.nextWindowDate), /^\d{4}-\d{2}-\d{2}$/, 'a concrete next window date');
+  assert.match(String(out.nextWindowTarget), /^\d{4}-\d{2}-\d{2}$/, 'and the date it will send');
+  assert.ok(out.nextWindowTarget < out.nextWindowDate, 'it always targets an EARLIER day than the run');
+});

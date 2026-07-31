@@ -30,6 +30,21 @@ quietly verify the client against a different Chart.js than production ships.
 - `drive-f13.js` — the S39 keyboard walk: every non-button click target is
   focusable, activates on Enter/Space, shows a focus ring, doesn't scroll on
   Space, and round-trips `aria-expanded`.
+- `drive-subqueue.js` — the collapsible sub-queue groups, the S35
+  parent-subtotal parity property, and the combined **and** single-dept CSV
+  shapes. The **only automated coverage of any CSV writer in this repo** (S43):
+  the exporter Blob-and-clicks, so the driver stubs `URL.createObjectURL` and
+  reads the real bytes. Also the header **department switch**, which threw a
+  `ReferenceError` in production until a driver first tried it.
+- `drive-devoverlay.js` — the O-11 dev overlay and, more importantly, its
+  `google.script.run` **probe**. That probe redefines the single object every
+  one of the ~91 server calls in `script.html` passes through, so a wrong
+  wrapper doesn't degrade a feature — it breaks the whole app while the page
+  still paints. The driver therefore asserts the app **works** with the probe
+  installed before asserting anything about the panel, and its
+  handler-isolation check is **behavioural** (two concurrent chains must each
+  invoke their own handler): comparing two reads for identity does *not* catch
+  a shared runner, because a fresh Proxy is minted either way.
 
 ### Exploratory drivers (artifacts for a human to read — NOT in CI)
 ```bash
@@ -42,7 +57,8 @@ node drive-phase3.js          # Phase 3: Escalations + modals
 ```
 Output: `shots/*.png` + `report*.json` (console errors, overflow, focus walks,
 contrast, focus-trap escapes) — findings to read, not a pass/fail signal, which
-is why CI runs only the two asserting drivers above.
+is why CI runs only the asserting drivers above (all four of them, via
+`ci.mjs`; `npm run ci:ui`).
 
 **Chromium path** is resolved by `chromium-path.js` — it globs
 `/opt/pw-browsers/chromium-<rev>/chrome-linux/chrome` (the path carries the

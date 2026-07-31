@@ -586,8 +586,28 @@ When something looks wrong, before assuming a code bug, check:
     tomorrow's. The modal also says it up front: with the trigger installed and
     zero ACTIVE Queue Report rows, the trigger-status line turns warn-tinted and
     reads "Installed, but NO ONE is subscribed".
-    **Triage order when it has not arrived:** (1) Alerts modal → "Send me a
-    preview" — proves the compose + send path and the data independently of the
+    **Fastest answer when it has not arrived: Alerts → Daily Call Queue Report
+    → "Why hasn't it sent?"** (also the first entry in the O-11 dev overlay,
+    Ctrl/Cmd+Alt+D — same call, no need to open the modal)
+    (`runQueueReportGateCheck`, admin-gated,
+    READ-ONLY — sends nothing, writes no property, never touches the marker).
+    It evaluates the REAL gate against the real clock, properties and sheet and
+    reports every input beside the decision: target date, how far QCD data
+    reaches, the already-sent marker, active subscriber count, installed/enabled,
+    the window, and — the question that always follows — the NEXT window date
+    and which day THAT run will target (not the day you just imported). It
+    exists because every non-send path in `runDailyQueueReport_` returns
+    SILENTLY: `disabled` / `outside-window` / `weekend` / `holiday` /
+    `already-sent` / `not-ready` write nothing anywhere, and the trigger entry
+    point is `_`-suffixed so the editor Run picker hides it too — so each
+    hypothesis used to cost a day to test.
+    **Two timing facts that explain most "it never came" reports, and are not
+    faults:** (a) the window is 6 AM–noon Central on WEEKDAYS, so an import
+    finished Friday afternoon sends nothing until Monday; (b) a run targets the
+    PREVIOUS BUSINESS DAY, so Monday's run sends FRIDAY's data — the Thursday
+    file imported on Friday afternoon is a MISSED day and is never auto-retried.
+    Deliver a missed day with "Send to subscribers…" on the report itself.
+    **Longer triage:** (1) Alerts modal → "Send me a preview" — proves the compose + send path and the data independently of the
     gate; if THAT fails the problem is data or mail scope, not the schedule.
     (2) The Report Subscribers table — is there a row with the **Queue Report**
     chip, your address, Active = Yes, and no "⚠ duplicate"? A row on the
