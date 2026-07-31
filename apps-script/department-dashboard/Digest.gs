@@ -379,35 +379,24 @@ function computeDigestWowDriver_(dept, anchorIso) {
     const rosterSet = {};
     for (let i = 0; i < roster.names.length; i++) rosterSet[roster.names[i]] = true;
 
-    const ss = openSpreadsheet_();
-    const sheet = ss.getSheetByName(SHEETS.HISTORICAL);
-    if (!sheet) return null;
-    const lastRow = sheet.getLastRow();
-    if (lastRow < 2) return null;
-    const ssTZ = ss.getSpreadsheetTimeZone();
-
     // 14-day window ending on the anchor (7 current + 7 prior), the
     // same span computeWowDelta_ walks back from its anchor date.
     const anchorObj = parseIsoNoon_(anchorIso);
     const windowStartIso = Utilities.formatDate(
       new Date(anchorObj.getTime() - 13 * 86400000), TZ, 'yyyy-MM-dd');
 
-    const numCols = HISTORICAL_COLS.TOTAL_ANSWERED;   // need rung/missed/answered
-    const values = sheet.getRange(2, 1, lastRow - 1, numCols).getValues();
-
     const trendByDate = {};        // iso -> { rung, answered }
     const agentTrendByDate = {};   // agent -> iso -> { answered, missed }
-    for (let i = 0; i < values.length; i++) {
-      const r = values[i];
-      const dateIso = rowDateIso_(r[HISTORICAL_COLS.DATE - 1], ssTZ);
-      if (!dateIso || dateIso < windowStartIso || dateIso > anchorIso) continue;
-      const agent = String(r[HISTORICAL_COLS.AGENT - 1] || '').trim();
-      if (!agent) continue;
-      if (/^A_Q_/.test(agent) || agent === 'Backup CSR') continue;   // INV-23 sentinels
-      if (!rosterSet[agent]) continue;                                // roster-only (INV-53)
-      const rung     = Number(r[HISTORICAL_COLS.TOTAL_RUNG - 1])     || 0;
-      const missed   = Number(r[HISTORICAL_COLS.TOTAL_MISSED - 1])   || 0;
-      const answered = Number(r[HISTORICAL_COLS.TOTAL_ANSWERED - 1]) || 0;
+    // Shared accumulator so both sources produce identical shapes.
+    const accept = function (dateIso, agentRaw, rungRaw, missedRaw, answeredRaw) {
+      if (!dateIso || dateIso < windowStartIso || dateIso > anchorIso) return;
+      const agent = String(agentRaw || '').trim();
+      if (!agent) return;
+      if (/^A_Q_/.test(agent) || agent === 'Backup CSR') return;   // INV-23 sentinels
+      if (!rosterSet[agent]) return;                                // roster-only (INV-53)
+      const rung     = Number(rungRaw)     || 0;
+      const missed   = Number(missedRaw)   || 0;
+      const answered = Number(answeredRaw) || 0;
 
       let t = trendByDate[dateIso];
       if (!t) t = trendByDate[dateIso] = { rung: 0, answered: 0 };
@@ -418,6 +407,50 @@ function computeDigestWowDriver_(dept, anchorIso) {
       let b = a[dateIso];
       if (!b) b = a[dateIso] = { answered: 0, missed: 0 };
       b.answered += answered; b.missed += missed;
+    };
+
+    // B-2 DAL cutover (see alertRowsForDate_). Lower stakes than the alert
+    // engine -- this helper is best-effort and a null just drops the digest's
+    // WoW narrative -- but it read the sheet unconditionally, so on the neon
+    // path with an aged sheet the narrative would quietly vanish from every
+    // digest with nothing saying why.
+    const dqeSource = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
+    const neonCapable = (dqeSource === 'neon' && typeof neonFetchDqeRows_ === 'function');
+    let usedNeon = false;
+    if (neonCapable) {
+      try {
+        const dalRows = neonFetchDqeRows_(windowStartIso, anchorIso);
+        if (neonDqeRowsUsable_(dalRows)) {
+          for (let i = 0; i < dalRows.length; i++) {
+            const row = dalRows[i];
+            accept(row.dateIso, row.agent, row.totalRung, row.totalMissed, row.totalAnswered);
+          }
+          usedNeon = true;
+        }
+      } catch (e) {
+        Logger.log('computeDigestWowDriver_: neon read failed, falling back to sheet: '
+          + (e && e.message ? e.message : e));
+        usedNeon = false;
+      }
+    }
+
+    if (!usedNeon) {
+      const ss = openSpreadsheet_();
+      const sheet = ss.getSheetByName(SHEETS.HISTORICAL);
+      if (!sheet) return null;
+      const lastRow = sheet.getLastRow();
+      if (lastRow < 2) return null;
+      const ssTZ = ss.getSpreadsheetTimeZone();
+      const numCols = HISTORICAL_COLS.TOTAL_ANSWERED;   // need rung/missed/answered
+      const values = sheet.getRange(2, 1, lastRow - 1, numCols).getValues();
+      for (let i = 0; i < values.length; i++) {
+        const r = values[i];
+        accept(rowDateIso_(r[HISTORICAL_COLS.DATE - 1], ssTZ),
+               r[HISTORICAL_COLS.AGENT - 1],
+               r[HISTORICAL_COLS.TOTAL_RUNG - 1],
+               r[HISTORICAL_COLS.TOTAL_MISSED - 1],
+               r[HISTORICAL_COLS.TOTAL_ANSWERED - 1]);
+      }
     }
 
     return computeWowDelta_(

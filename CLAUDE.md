@@ -1441,11 +1441,20 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   (autoImport.js): on `force && wroteCount===0` it logs a `<step>` FAILURE
   Pipeline Health row (no throw, so the already-written sheets stand), which
   the System Health **"Recent pipeline step failures"** row + the Alerts
-  Pipeline Health panel both surface. CDR / QPath / CSR are NOT
-  dashboard-read (INV-52 -- legacy DQE Report only), so they're intentionally
-  not guarded. A NON-force empty rebuild is a legitimate no-op (F5) and is
-  never flagged. New force-path writers that delete-then-rebuild must call one
-  of these. **P-3 (ordering):** `processNewImport` reads + validates the SOURCE
+  Pipeline Health panel both surface. **QCD and CSR Transfer are both
+  guarded**; CDR / QPath are NOT dashboard-read (INV-52 -- legacy DQE Report
+  only) so they're intentionally left unguarded. **S2-2 -- the lesson that put
+  CSR on that list:** this bullet used to exempt CSR too, which was correct
+  until R10-5 made `CSR Transfer Historical Data` dashboard-read
+  (`Data.gs::computeCsrTransferRange_`, feeding My Department's team-strip
+  Transfer % tile). The exemption was never revisited, so a force re-import
+  whose CSR rebuild produced zero rows silently deleted that date's transfer
+  history with no failure row and no email. **When a historical sheet gains its
+  first dashboard reader, add its force-path guard in the same commit** --
+  the guard list is keyed on "is this dashboard-read", and that property
+  changes over time. A NON-force empty rebuild is a legitimate no-op (F5) and
+  is never flagged. New force-path writers that delete-then-rebuild must call
+  one of these. **P-3 (ordering):** `processNewImport` reads + validates the SOURCE
   sheet ("Source sheet empty." throw) BEFORE the force-delete block -- a force
   re-run against an existing-but-empty/corrupt `Call_Legs` sheet used to
   destroy the date across all five historical sheets and THEN throw; it is now
@@ -1536,13 +1545,25 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   rows=<n> ms=<elapsed>` line (`logDqeReadTiming_`, NeonRead.gs) so
   sheet-vs-neon read cost is directly comparable in the Executions panel.
   Reuses the dashboard `NEON_*` props + `script.external_request`
-  scope (Operator State #18-19). ALL DQE readers are now cut over: the final
-  two -- **Missed Calls** (via `neonFetchDqeRows_(from, to,
+  scope (Operator State #18-19). ALL DQE readers are now cut over -- but note
+  this bullet ASSERTED that for a while before it was true (B-2): the
+  DAL-cutover phase landed the report readers and left three behind --
+  `Alerts.gs::alertRowsForDate_`, `Digest.gs::computeDigestWowDriver_` and
+  `OrphanFix.gs::computeOrphans_` read the sheet directly. The ALERT one was
+  the dangerous member, because the claim is precisely what justifies trimming
+  the sheet: with `DQE_READ_SOURCE=neon` and a present-but-AGED sheet it
+  returns zero rows for yesterday, so every dept logs `no-data` and the
+  low-answer-rate alerts stop firing entirely behind a full,
+  plausible-looking Alert Log. All three now route through
+  `neonFetchDqeRows_` + `neonDqeRowsUsable_` with the usual sheet fallback.
+  **A NEW DQE reader must be cut over in the same commit** -- an uncut one is
+  invisible until the sheet ages out from under it. The report readers were
+  **Missed Calls** (via `neonFetchDqeRows_(from, to,
   { includeMissedDetail: true })`, which adds the 19 slot_* columns +
   abandoned_parent_ids/_missed_times; a grid adapter
   (`missedGridsFromDal_`) feeds the UNCHANGED compute loop) and
   **`computeActiveAgentsInRange_`** (the IR/Insights agent-picker
-  subset in Util.gs) -- landed in the DAL-cutover phase. Both fall back
+  subset in Util.gs). Both fall back
   to the legacy sheet scan on any Neon error/empty result, and their
   sheet-vs-neon payload parity is pinned byte-identical by
   `tests/unit/dal-cutover.test.js` (fake JDBC conn serving the same

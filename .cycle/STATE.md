@@ -1708,3 +1708,79 @@ commit/push/deploy direction.
   are still all-queue; the Insights combined view is unstarted; the theme/mode
   toggles and the Export dropdown beyond its CSV item still have no automated
   interaction coverage (the same gap class that hid the dept-selector bug).
+
+- **Increment 71 (DONE — broad-scan findings S2-0 / B-1 / B-2 / S2-2; block:
+  `.cycle/blocks/71-S2-0-B-1-B-2-S2-2-broad-implement.md`):** A /broad-scan
+  audit (stages 1-3) found four issues; the owner selected these four to fix.
+
+  **S2-0 is the one that changes behavior.** `applyQueueSplitToRows_` is called
+  from exactly ONE place (`computeSummary_`), so the Phase-2 queue narrowing
+  reached My Department + the manager digests while Overview, Insights, IR,
+  Missed and the low-answer-rate ALERT engine all kept reporting all-queue
+  figures for the same dept and window. A manager comparing the Overview tile
+  to the My Department totals saw two different answer rates with nothing
+  explaining why, and the alert threshold was evaluated on a different number
+  than the dashboard displayed. Now gated on the `QUEUE_SPLIT_SCOPE` Script
+  Property, **default 'off'** — so all six surfaces agree again, at the price
+  of restoring the crossover over-count on Sales / CSR / Power (the pre-Phase-2
+  state, and the chip says so). The gate sits INSIDE the function so Phases 3/4
+  inherit it. Flip to 'dept' only once every DQE surface narrows.
+
+  **B-1** added fail-open #4: the dept has mapped queues and the rows have
+  splits, but no queue name observed across the window matches the dept's list
+  — a name-space config fault (queuesForDept_ returns QCD-canonical
+  `A_Q_CustomerSuccess`, splits carry raw `A_Q_CSR`), which used to render the
+  department as ZERO with every chip silent. Now rolls the window back to its
+  all-queue figures and says so. Assessed per WINDOW not per row, because one
+  row matching nothing is legitimate and failing open there would re-introduce
+  the bug Phase 2 exists to fix.
+
+  **B-2** cut the last three DQE readers over to the DAL — `alertRowsForDate_`,
+  `computeDigestWowDriver_`, `computeOrphans_` — after the docs had claimed for
+  some time that ALL readers were cut over. The alert one was the dangerous
+  member: the claim is what justifies trimming the sheet, and a
+  present-but-aged sheet returns zero rows for yesterday, so every dept logs
+  `no-data` and the alerts stop firing behind a full, plausible-looking Alert
+  Log. A new cross-file tripwire now fails CI if a dashboard `.gs` reads
+  `SHEETS.HISTORICAL` without a Neon path (verified against HEAD: it flags
+  exactly those three).
+
+  **S2-2** guarded the CSR force-rebuild path. `guardForceRebuildLoss_`'s
+  exemption list is keyed on "is this sheet dashboard-read" — true of CSR
+  Transfer until R10-5 made it dashboard-read and nobody revisited it, so a
+  force re-import producing zero CSR rows deleted that date silently.
+
+  CI 610/610 (+9 tests) + INV-16 clean. `npm run ci:ui` could NOT run —
+  playwright will not install in this container and script.html was modified;
+  the blocking `ui-harness` CI job covers it on the PR.
+
+  **WHERE I LEFT OFF / DO THESE FIRST IN A FRESH SESSION:**
+  1. Nothing is committed or pushed yet — 10 modified files on
+     `claude/broad-scan-c9r2z7`. Commit, push, open a PR (ask first; the
+     standing rule is no PR unless asked).
+  2. Confirm the `ui-harness` CI job goes green — it is the only coverage of
+     the `subqSplitChip_` change.
+  3. **DECIDE on QUEUE_SPLIT_SCOPE before deploying.** Unset = 'off' = the
+     consistent state. Do NOT set 'dept' until Phases 3/4 + Overview + Alerts
+     narrow too.
+  4. /sync-docs is needed: CLAUDE.md's queue-split bullets and INV-30 still
+     read as though narrowing is unconditional, and QUEUE_SPLIT_SCOPE needs an
+     Operator State item. (The two FALSE claims — the DQE read-back cutover and
+     the CSR guard exemption — were corrected in this session.)
+  5. Deploy BOTH projects: dashboard (Data/script/Alerts/Digest/OrphanFix/
+     NeonRead) and cdr-import (autoImport).
+  6. Unresolved from the audit sweep, not touched: `deleteOldCDRSheets` has no
+     caller, no menu item and no installer in the repo, yet the ~14-day
+     Call_Legs retention it enforces is what Operator State #40's urgency and
+     IMP-11's "pruned = permanent loss" both rest on. Check the cdr-import
+     Triggers panel.
+  7. Operator State #40 (queue-split backfill window) is still open and still
+     closing — unaffected by this session, since the pipeline still WRITES the
+     split; only the dashboard's use of it is gated.
+
+  **REMAINING AUDIT FINDINGS, not selected:** S2-1 (sub-queue group header is
+  announced as a button but ignores Enter/Space, and carries the `role="button"`
+  S39 explicitly forbids on table rows), B-3 (digest/alert outcomes missing
+  from the Health page; zero-subscriber digest records `ok`), B-5 (sentinel
+  rows bypass the work-window filter), B-6 (combined-view meta describes only
+  the primary dept), plus the small dead-code list in the block file.

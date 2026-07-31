@@ -261,7 +261,17 @@ const ANNA_SPLIT = JSON.stringify({
   A_Q_Spanish: { u: 4, r: 4, m: 1, a: 3, t: 300, n: 3, mt: '10:00:00' },
 });
 
+// S2-0: the narrowing is GATED on QUEUE_SPLIT_SCOPE=dept and defaults OFF, so
+// every test that exercises the narrowing must turn it on explicitly. Doing it
+// here (rather than once at module load) keeps each test honest about which
+// mode it is asserting -- the default-off behavior gets its own test below.
+function enableQueueScope_() {
+  hData.ctx.PropertiesService.getScriptProperties()
+    .setProperty('QUEUE_SPLIT_SCOPE', 'dept');
+}
+
 function withQueues(map) {
+  enableQueueScope_();
   hData.ctx.inboundQueuesForDept_ = function (d) { return map[d] || []; };
 }
 
@@ -309,6 +319,7 @@ test('P2: a PARENT narrows to its OWN queues, not its child\'s as well', functio
   // computeSummary_ call -- counts them twice. Shipped in Phase 2 and found
   // only when the owner's CSR/Spanish totals moved after a re-import.
   var askedWith = null;
+  enableQueueScope_();   // S2-0 gate (this test sets its own accessor, not withQueues)
   hData.ctx.inboundQueuesForDept_ = function (d, opts) {
     askedWith = opts;
     // Mimic the real accessor: children roll in UNLESS told otherwise.
@@ -360,6 +371,103 @@ test('P2: an empty split {} narrows to ZERO -- it means "nothing in the window"'
     "'{}' is COMPUTED-and-empty, unlike '' which is never-computed -- the "
     + 'distinction Phase 1 stores it for');
   assert.equal(rows[0].queueScoped, true);
+});
+
+// -- S2-0: the narrowing is off unless explicitly enabled -------------------
+
+test('S2-0: narrowing is OFF by default -- rows keep the all-queue rollup', function () {
+  // The whole point of the gate. applyQueueSplitToRows_ is called from ONE
+  // place (computeSummary_), so with Phases 3/4 unstarted the narrowing reached
+  // My Department + the digests while Overview / Insights / IR / Missed / the
+  // ALERT engine all still reported all-queue figures for the same dept and
+  // window. Until every surface narrows, one consistent definition beats a
+  // better definition applied to a minority of them.
+  hData.ctx.PropertiesService.getScriptProperties().deleteProperty('QUEUE_SPLIT_SCOPE');
+  hData.ctx.inboundQueuesForDept_ = function () { return ['A_Q_CSR']; };
+  const rows = [srcRow({ r: 10, m: 3, a: 7, u: 9, t: 700, split: ANNA_SPLIT })];
+  const info = hData.call('applyQueueSplitToRows_', rows, 'CSR');
+  assert.equal(rows[0].totalRung, 10, 'untouched rollup');
+  assert.equal(rows[0].queueScoped, undefined);
+  assert.equal(info.applied, 0);
+  assert.equal(info.scope, 'off');
+  assert.equal(Object.keys(info.dates).length, 0, 'no split-aware dates -> the client renders no coverage chip');
+});
+
+test('S2-0: an unrecognized QUEUE_SPLIT_SCOPE value is treated as off, not on', function () {
+  hData.ctx.PropertiesService.getScriptProperties()
+    .setProperty('QUEUE_SPLIT_SCOPE', 'yes please');
+  hData.ctx.inboundQueuesForDept_ = function () { return ['A_Q_CSR']; };
+  const rows = [srcRow({ r: 10, split: ANNA_SPLIT })];
+  const info = hData.call('applyQueueSplitToRows_', rows, 'CSR');
+  assert.equal(rows[0].totalRung, 10, 'a typo must not silently enable a scoping change');
+  assert.equal(info.scope, 'off');
+});
+
+// -- B-1: fail-open #4, the mapping-matches-nothing case --------------------
+
+test('B-1: a dept whose mapped queues match NOTHING keeps the rollup, not zero', function () {
+  // The reachable config fault: queuesForDept_ returns QCD-canonical names
+  // (A_Q_CustomerSuccess) while a split's keys are the RAW pipeline names
+  // (A_Q_CSR). Before this guard the dept reported ZERO calls and every chip
+  // stayed silent, because the range WAS split-aware.
+  withQueues({ CSR: ['A_Q_CustomerSuccess'] });
+  const rows = [
+    srcRow({ date: '2026-07-20', r: 10, m: 3, a: 7, u: 9, t: 700, att: 175, split: ANNA_SPLIT }),
+    srcRow({ date: '2026-07-21', r: 4,  m: 1, a: 3, u: 4, t: 300, att: 100, split: ANNA_SPLIT }),
+  ];
+  const info = hData.call('applyQueueSplitToRows_', rows, 'CSR');
+  assert.equal(rows[0].totalRung, 10, 'rolled back to the all-queue figure');
+  assert.equal(rows[0].attSec, 175, 'ATT restored exactly, not recomputed');
+  assert.equal(rows[1].totalRung, 4);
+  assert.equal(rows[0].queueScoped, undefined, 'and NOT claimed as narrowed');
+  assert.equal(rows[1].queueScoped, undefined);
+  assert.equal(info.applied, 0);
+  assert.equal(info.fellOpenUnmatched, true);
+  assert.equal(Object.keys(info.dates).length, 0,
+    'no split-aware dates either -- claiming coverage while serving the rollup '
+    + 'is what made this invisible');
+  assert.equal(info.unmatchedQueues.join(','), 'A_Q_CSR,A_Q_Spanish');
+});
+
+test('B-1: a PARTIAL mismatch still narrows, but reports the dropped queue', function () {
+  // CSR claims one of the two queues present. Narrowing is correct for the one
+  // it claims, so this must NOT roll back -- but the other queue's calls are
+  // being dropped from CSR's totals and something has to say so.
+  withQueues({ CSR: ['A_Q_CSR'] });
+  const rows = [srcRow({ r: 10, split: ANNA_SPLIT })];
+  const info = hData.call('applyQueueSplitToRows_', rows, 'CSR');
+  assert.equal(rows[0].totalRung, 6, 'still narrowed');
+  assert.equal(info.fellOpenUnmatched, false, 'a partial match is not a config failure');
+  assert.equal(info.unmatchedQueues.join(','), 'A_Q_Spanish');
+});
+
+test('B-1: an idle window ({} splits) still narrows to zero -- not a mapping fault', function () {
+  // The distinction the guard turns on. '{}' carries NO queue names, so there
+  // is no evidence the mapping is wrong -- it means "this agent worked nothing
+  // in the window". Failing open here would re-introduce the very bug Phase 2
+  // fixes (an agent's other-dept calls showing up in this dept).
+  withQueues({ CSR: ['A_Q_CSR'] });
+  const rows = [srcRow({ r: 10, split: '{}' })];
+  const info = hData.call('applyQueueSplitToRows_', rows, 'CSR');
+  assert.equal(rows[0].totalRung, 0);
+  assert.equal(info.fellOpenUnmatched, false);
+  assert.equal(info.unmatchedQueues.length, 0);
+});
+
+test('B-1: one crossover agent working entirely elsewhere is NOT a mapping fault', function () {
+  // Anna's whole day was Spanish; Bob's was CSR. CSR's mapping is fine, so the
+  // window must stay narrowed -- Anna correctly contributes 0 to CSR. Judging
+  // this per-ROW instead of per-window would roll Anna's Spanish calls into
+  // CSR's totals.
+  withQueues({ CSR: ['A_Q_CSR'] });
+  const rows = [
+    srcRow({ agent: 'Anna', r: 4, split: JSON.stringify({ A_Q_Spanish: { r: 4, a: 3 } }) }),
+    srcRow({ agent: 'Bob',  r: 6, split: JSON.stringify({ A_Q_CSR: { r: 6, a: 4 } }) }),
+  ];
+  const info = hData.call('applyQueueSplitToRows_', rows, 'CSR');
+  assert.equal(info.fellOpenUnmatched, false, 'CSR matched Bob -- the mapping works');
+  assert.equal(rows[0].totalRung, 0, "Anna's Spanish-only day is correctly 0 for CSR");
+  assert.equal(rows[1].totalRung, 6);
 });
 
 test('P2: queue names match case-insensitively across the two name spaces', function () {

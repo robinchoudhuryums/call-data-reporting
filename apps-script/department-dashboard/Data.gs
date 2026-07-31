@@ -267,7 +267,50 @@ function getLatestDataDates() {
 }
 
 /**
+ * S2-0 cutover switch for the sub-queue Phase 2 narrowing.
+ *
+ *   'off'  (DEFAULT) -- no narrowing anywhere. Every DQE surface reports the
+ *                       all-queue rollup, which is the last state in which all
+ *                       six of them AGREED.
+ *   'dept'           -- narrow each row to the department's own queues
+ *                       (the Phase 2 behavior).
+ *
+ * WHY THIS DEFAULTS OFF. Phase 2 changed what "a department's calls" means,
+ * and `applyQueueSplitToRows_` is called from exactly ONE place --
+ * `computeSummary_`. So the narrowing reached the My Department table and the
+ * manager digests (which call computeSummary_) while the Company Overview,
+ * Insights, the Individual Report, the Missed Calls report and the
+ * low-answer-rate ALERT engine all kept reporting all-queue figures for the
+ * same dept and window. A manager comparing the Overview tile against the My
+ * Department totals saw two different answer rates with nothing on screen
+ * explaining why, and the alert threshold was evaluated on a different number
+ * than the dashboard displayed.
+ *
+ * That is not a Phase 2 defect so much as an unfinished rollout (Phase 3
+ * = Missed, Phase 4 = IR/Insights; Overview + Alerts were never in the phase
+ * plan at all). Until every surface narrows, ONE consistent definition beats a
+ * more accurate definition applied to a minority of surfaces -- an internal
+ * reporting tool's value is being believed.
+ *
+ * Flipping to 'dept' is a Script Property edit, no redeploy. Do it only when
+ * every DQE reader narrows; the cache key carries this value (see
+ * getDepartmentSummary) so a flip can't serve a cross-mode payload for the TTL.
+ */
+function getQueueSplitScope_() {
+  try {
+    var v = String(PropertiesService.getScriptProperties()
+                     .getProperty('QUEUE_SPLIT_SCOPE') || 'off').toLowerCase().trim();
+    return v === 'dept' ? 'dept' : 'off';
+  } catch (e) { return 'off'; }
+}
+
+/**
  * Sub-queue Phase 2: narrow each source row to the DEPARTMENT'S OWN QUEUES.
+ *
+ * GATED by getQueueSplitScope_() -- a no-op returning the empty shape unless
+ * QUEUE_SPLIT_SCOPE=dept. The gate lives HERE rather than at the call site so
+ * that Phases 3/4 (Missed, IR/Insights) inherit it by adopting this function,
+ * instead of each re-deciding whether the feature is on.
  *
  * The bug this closes: a DQE row is keyed on (date, agent) with no queue
  * dimension, so an agent on two departments' rosters showed the SAME
@@ -282,13 +325,35 @@ function getLatestDataDates() {
  * edits inside the loop: `computeSummary_` is the most heavily pinned function
  * in the app and none of its rules should have to learn about queues.
  *
- * FAILS OPEN, in three separate ways, because showing a department ZERO calls
+ * FAILS OPEN, in FOUR separate ways, because showing a department ZERO calls
  * is far worse than showing it too many:
  *   1. A dept with NO mapped queues is left entirely alone. Its slice would be
  *      empty, i.e. all zeros, which would read as "nobody worked today".
  *   2. A row with no split -- built before Phase 1, an INV-23 sentinel, or a
  *      row whose split threw -- keeps its rollup figures.
  *   3. Unparseable JSON keeps the rollup rather than throwing.
+ *   4. B-1: the dept HAS mapped queues and the rows DO carry splits, but not
+ *      one of the queue names observed across the whole window matches the
+ *      dept's list. That is a CONFIGURATION fault (a name-space mismatch), not
+ *      a quiet day, and narrowing on it zeroes the department -- so the whole
+ *      window is rolled back to its all-queue figures and the fault is
+ *      reported rather than rendered as data.
+ *
+ *      The three original paths all covered "we have no split to apply"; this
+ *      one covers "we applied it and it matched nothing", which is the likely
+ *      failure here because the two name spaces genuinely differ:
+ *      `queuesForDept_` returns QCD-canonical names (`A_Q_CustomerSuccess`)
+ *      while a split's keys are the RAW pipeline names (`A_Q_CSR`). The bridge
+ *      is the admin-populated Dept Config "Inbound queue aliases" column, and
+ *      nothing verifies it is complete.
+ *
+ *      Deliberately assessed PER WINDOW, not per row: a single row matching
+ *      nothing is legitimate (a crossover agent whose whole day was on the
+ *      other dept's queues), and failing open on THAT would re-introduce the
+ *      very bug Phase 2 exists to fix. Only "no row in the window matched any
+ *      observed queue" indicates the mapping itself is wrong. An `{}` split
+ *      contributes no observed queue names, so a genuinely-idle window still
+ *      narrows to zero as it should.
  * Every row is tagged `queueScoped` so the caller can tell which of its
  * numbers were actually narrowed, and the client can say so.
  *
@@ -304,8 +369,18 @@ function getLatestDataDates() {
  * carries one), so this is what the "split from <date>" note is built from.
  */
 function applyQueueSplitToRows_(srcRows, dept) {
-  const out = { dates: {}, queues: [], applied: 0, unsplitRows: 0 };
+  const out = { dates: {}, queues: [], applied: 0, unsplitRows: 0,
+                // B-1 reporting. `unmatchedQueues` lists queue names seen in the
+                // window's splits that this dept claims none of (bounded);
+                // `fellOpenUnmatched` is true when NOTHING matched and the whole
+                // window was rolled back.
+                unmatchedQueues: [], fellOpenUnmatched: false, scope: 'off' };
   if (!srcRows || !srcRows.length) return out;
+  // S2-0: off unless explicitly enabled. Returning the empty shape (applied 0,
+  // no dates) means meta.queueSplitFrom stays null and the client renders no
+  // coverage chip -- the payload is honestly "all queues", same as pre-Phase-2.
+  if (getQueueSplitScope_() !== 'dept') return out;
+  out.scope = 'dept';
 
   let queues = [];
   try {
@@ -331,6 +406,14 @@ function applyQueueSplitToRows_(srcRows, dept) {
   // Fail-open #1: no mapped queues -> every row keeps its rollup.
   if (!queues.length) return out;
 
+  // B-1: window-level evidence that the dept's queue mapping is USABLE.
+  // `observedQueues` counts distinct queue names seen in any split this window;
+  // `matchedQueues` counts how many of those the dept claims. Rollback state is
+  // captured per row so a full rollback is exact rather than recomputed.
+  const observedQueues = {};
+  const matchedQueues  = {};
+  const rollback = [];
+
   for (let i = 0; i < srcRows.length; i++) {
     const row = srcRows[i];
     const raw = String(row.queueSplit == null ? '' : row.queueSplit).trim();
@@ -342,7 +425,10 @@ function applyQueueSplitToRows_(srcRows, dept) {
 
     let u = 0, r = 0, m = 0, a = 0, t = 0, n = 0;
     Object.keys(split).forEach(function (qName) {
-      if (!want[String(qName).trim().toLowerCase()]) return;
+      const key = String(qName).trim().toLowerCase();
+      if (key) observedQueues[key] = qName;   // keep the RAW spelling for the report
+      if (!want[key]) return;
+      matchedQueues[key] = true;
       const e = split[qName] || {};
       u += Number(e.u) || 0;
       r += Number(e.r) || 0;
@@ -350,6 +436,15 @@ function applyQueueSplitToRows_(srcRows, dept) {
       a += Number(e.a) || 0;
       t += Number(e.t) || 0;
       n += Number(e.n) || 0;
+    });
+
+    // Snapshot the pre-narrowing figures so fail-open #4 can restore them
+    // EXACTLY rather than re-deriving them from the (now overwritten) row.
+    rollback.push({
+      row: row,
+      totalUnique: row.totalUnique, totalRung: row.totalRung,
+      totalMissed: row.totalMissed, totalAnswered: row.totalAnswered,
+      tttSec: row.tttSec, attSec: row.attSec,
     });
 
     row.totalUnique   = u;
@@ -369,6 +464,43 @@ function applyQueueSplitToRows_(srcRows, dept) {
     row.queueScoped   = true;
     out.applied++;
   }
+
+  // Fail-open #4 (B-1). Queue names WERE observed this window and the dept
+  // claims none of them -> the mapping is wrong, not the day. Roll the whole
+  // window back to its all-queue figures and report the fault; narrowing on it
+  // would render a department as zero (or, when only some of its queues are
+  // mapped, quietly short) with nothing on screen saying so.
+  const observedKeys = Object.keys(observedQueues);
+  if (observedKeys.length && !Object.keys(matchedQueues).length) {
+    rollback.forEach(function (snap) {
+      const r = snap.row;
+      r.totalUnique   = snap.totalUnique;
+      r.totalRung     = snap.totalRung;
+      r.totalMissed   = snap.totalMissed;
+      r.totalAnswered = snap.totalAnswered;
+      r.tttSec        = snap.tttSec;
+      r.attSec        = snap.attSec;
+      delete r.queueScoped;
+    });
+    out.applied = 0;
+    out.dates = {};
+    out.fellOpenUnmatched = true;
+    Logger.log('applyQueueSplitToRows_: ' + dept + ' claims [' + queues.join(', ')
+      + '] but this window\'s splits only carry [' + observedKeys.map(function (k) {
+        return observedQueues[k];
+      }).join(', ') + '] -- NO overlap, so the dept would have reported zero. '
+      + 'Kept the all-queue rollup. Fix the Dept Config "Inbound queue aliases" '
+      + 'for this dept (Operator State #14), then re-check with '
+      + 'auditQueueSplitAttribution() (Operator State #41).');
+  }
+  // Partial mismatch is NOT rolled back (the matched queues are real and the
+  // narrowing is correct for them), but it is still reported -- a dept matching
+  // 2 of its 3 raw queue names under-reports silently otherwise.
+  out.unmatchedQueues = observedKeys
+    .filter(function (k) { return !matchedQueues[k]; })
+    .map(function (k) { return observedQueues[k]; })
+    .sort()
+    .slice(0, 10);
   return out;
 }
 
@@ -606,8 +738,15 @@ function getDepartmentSummary(req) {
   // v16 (sub-queue Phase 1): `subScope` joins the key. Without it a manager
   // toggling the switcher inside the 30-min TTL would be served the other
   // scope's table.
+  // S2-0: the queue-split SCOPE joins the key for the same reason the read
+  // sources do (the CORE-3 pattern) -- the payload's figures mean something
+  // different in each mode, so flipping QUEUE_SPLIT_SCOPE must not serve the
+  // other mode's table for up to the 30-min TTL. Deliberately a key SUFFIX
+  // rather than a version bump: the version tracks aggregation-RULE changes
+  // (INV-30) and both modes are the same rule under a different scope.
+  const qsScope = (typeof getQueueSplitScope_ === 'function') ? getQueueSplitScope_() : 'off';
   const cacheKey = 'summary:v18:' + dept + ':' + scope + ':' + subScope
-                 + ':' + from + ':' + to + ':' + summarySource;
+                 + ':' + from + ':' + to + ':' + summarySource + ':' + qsScope;
   const cached = cache.get(cacheKey);
   if (cached) {
     try {
@@ -1109,10 +1248,25 @@ function computeSummary_(dept, from, to, scope) {
       queueSplitFrom:    splitQueueDates.length ? splitQueueDates[0] : null,
       queueSplitDays:    splitQueueDates.length,
       queueSplitApplied: splitInfo.applied,
+      // S2-0: 'off' (default) = every figure here is the all-queue rollup, the
+      // same basis every other DQE surface reports on. 'dept' = narrowed.
+      queueSplitScope:   splitInfo.scope,
+      // B-1: queue names this window's splits carry that the dept claims none
+      // of. Non-empty with queueSplitFellOpen=false means a PARTIAL mismatch --
+      // the dept is narrowing correctly for the queues it does claim and
+      // silently omitting the rest.
+      queueSplitUnmatched:  splitInfo.unmatchedQueues,
+      // True when NOTHING matched and the whole window was rolled back to
+      // all-queue figures rather than reported as zero.
+      queueSplitFellOpen:   splitInfo.fellOpenUnmatched,
       // A dept with no mapped queues is deliberately left un-narrowed rather
       // than shown zeros; the client explains that differently from "your
-      // history predates the split".
-      queueSplitMapped:  splitInfo.queues.length > 0,
+      // history predates the split". NULL when the narrowing is switched off
+      // (S2-0): the dept's queues were never looked up, so neither true nor
+      // false is an honest answer, and `false` would have the client say "no
+      // queues are mapped to this department" -- a claim nothing checked.
+      queueSplitMapped:  splitInfo.scope === 'dept'
+        ? (splitInfo.queues.length > 0) : null,
       generatedAt: new Date().toISOString(),
     },
     rows: rows,

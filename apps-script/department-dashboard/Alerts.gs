@@ -528,27 +528,74 @@ function alertRowsForDate_(dateIso) {
   if (ALERT_DATE_ROWS_MEMO_.dateIso === dateIso && ALERT_DATE_ROWS_MEMO_.rows) {
     return ALERT_DATE_ROWS_MEMO_.rows;
   }
-  const ss = openSpreadsheet_();
-  const sheet = ss.getSheetByName(SHEETS.HISTORICAL);
-  if (!sheet) throw new Error('Sheet "' + SHEETS.HISTORICAL + '" not found.');
-  const lastRow = sheet.getLastRow();
   const rows = [];
-  if (lastRow >= 2) {
-    const ssTZ = ss.getSpreadsheetTimeZone();
-    const values = sheet.getRange(2, 1, lastRow - 1, HISTORICAL_COLS.TOTAL_ANSWERED).getValues();
-    for (let i = 0; i < values.length; i++) {
-      const r = values[i];
-      const dIso = rowDateIso_(r[HISTORICAL_COLS.DATE - 1], ssTZ);
-      if (dIso !== dateIso) continue;
-      const agent = String(r[HISTORICAL_COLS.AGENT - 1] || '').trim();
-      if (!agent) continue;
-      if (/^A_Q_/.test(agent) || agent === 'Backup CSR') continue;   // INV-23 sentinels
-      rows.push({
-        agent:    agent,
-        rung:     Number(r[HISTORICAL_COLS.TOTAL_RUNG - 1])     || 0,
-        missed:   Number(r[HISTORICAL_COLS.TOTAL_MISSED - 1])   || 0,
-        answered: Number(r[HISTORICAL_COLS.TOTAL_ANSWERED - 1]) || 0,
-      });
+  // Shared classifier so the two sources produce byte-identical output: same
+  // INV-23 sentinel skip, same numeric coercion.
+  const accept = function (agent, rung, missed, answered) {
+    const a = String(agent || '').trim();
+    if (!a) return;
+    if (/^A_Q_/.test(a) || a === 'Backup CSR') return;   // INV-23 sentinels
+    rows.push({ agent: a, rung: Number(rung) || 0,
+                missed: Number(missed) || 0, answered: Number(answered) || 0 });
+  };
+
+  // B-2 DAL cutover. This reader was left on the sheet when the other DQE
+  // readers were cut over, and the omission is the dangerous kind: with
+  // DQE_READ_SOURCE=neon and the sheet trimmed (the documented end state that
+  // F-35 exists to permit), a PRESENT-but-aged sheet yields zero rows for
+  // yesterday -> stats.rung === 0 -> every dept logs `no-data` -> the
+  // low-answer-rate alerts stop firing entirely, with a full and
+  // plausible-looking Alert Log. Same neonCapable / neonDqeRowsUsable_ /
+  // fall-back-to-sheet shape as computeSummary_ and computeActiveAgentsInRange_.
+  const dqeSource = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
+  const neonCapable = (dqeSource === 'neon' && typeof neonFetchDqeRows_ === 'function');
+  let usedNeon = false;
+  if (neonCapable) {
+    try {
+      const _t0 = Date.now();
+      const dalRows = neonFetchDqeRows_(dateIso, dateIso);
+      if (neonDqeRowsUsable_(dalRows)) {   // LM2: reachable-empty is trusted
+        for (let i = 0; i < dalRows.length; i++) {
+          const row = dalRows[i];
+          if (row.dateIso !== dateIso) continue;   // belt-and-braces; the query is date-bounded
+          accept(row.agent, row.totalRung, row.totalMissed, row.totalAnswered);
+        }
+        usedNeon = true;
+        if (typeof logDqeReadTiming_ === 'function') logDqeReadTiming_('alertRows', 'neon', _t0, dalRows.length);
+      }
+    } catch (e) {
+      Logger.log('alertRowsForDate_: neon read failed, falling back to sheet: '
+        + (e && e.message ? e.message : e));
+      usedNeon = false;
+      rows.length = 0;   // discard a partial neon fill before the sheet re-reads
+    }
+  }
+
+  if (!usedNeon) {
+    const ss = openSpreadsheet_();
+    const sheet = ss.getSheetByName(SHEETS.HISTORICAL);
+    // F-35: hard-require the sheet only when it IS the read source. On the neon
+    // path a missing sheet must not throw the whole alert run -- Neon already
+    // failed or returned unusable, and serving zero rows (every dept `no-data`)
+    // is the honest outcome there.
+    if (!sheet) {
+      if (!neonCapable) throw new Error('Sheet "' + SHEETS.HISTORICAL + '" not found.');
+      Logger.log('alertRowsForDate_: neon unusable AND no DQE sheet -- no rows for ' + dateIso + '.');
+    } else {
+      const lastRow = sheet.getLastRow();
+      if (lastRow >= 2) {
+        const ssTZ = ss.getSpreadsheetTimeZone();
+        const values = sheet.getRange(2, 1, lastRow - 1, HISTORICAL_COLS.TOTAL_ANSWERED).getValues();
+        for (let i = 0; i < values.length; i++) {
+          const r = values[i];
+          const dIso = rowDateIso_(r[HISTORICAL_COLS.DATE - 1], ssTZ);
+          if (dIso !== dateIso) continue;
+          accept(r[HISTORICAL_COLS.AGENT - 1],
+                 r[HISTORICAL_COLS.TOTAL_RUNG - 1],
+                 r[HISTORICAL_COLS.TOTAL_MISSED - 1],
+                 r[HISTORICAL_COLS.TOTAL_ANSWERED - 1]);
+        }
+      }
     }
   }
   ALERT_DATE_ROWS_MEMO_ = { dateIso: dateIso, rows: rows };
