@@ -1634,3 +1634,77 @@ commit/push/deploy direction.
   `insights:v20`) of the queue split are still all-queue; the Insights combined
   view is unstarted; theme/mode toggles and the Export dropdown beyond the CSV
   item still have no automated interaction.
+
+- **Increment 69 (DONE, MERGED + DEPLOYED — O-9, the queue-report email sent
+  nothing and reported success, commits c2d715f / PR #213):** Owner reported
+  the Daily Call Queue Report never arrived after enabling it. Arming the
+  trigger without adding a subscriber row produced a run where
+  `sendQueueReportForDate_` returned `count:0` with no failures — which fell
+  into `runDailyQueueReport_`'s SUCCESS branch, wrote `Sent <iso> to 0
+  subscribers`, and claimed the dedupe marker. The modal prints that verbatim
+  and the Health classifier painted it GREEN (it matches none of the
+  fail/error/skipped bad-words nor the MISSED/GAPS prefixes), so the engine
+  reported success every weekday while nobody received anything. Fixed three
+  ways: recipients resolve BEFORE the report is composed (returning
+  `noRecipients`, and no longer paying the all-dept compute on ~12 polls per
+  window); the runner writes `NO-SUBSCRIBERS <iso>` and does NOT claim the
+  marker (so a subscriber added at 8am still gets that morning's report — the
+  FAILED-ALL rule: nobody received it, so a retry can't duplicate); and the
+  modal warns BEFORE the first morning when the trigger is installed with zero
+  active rows. Plus the `^NO-SUBSCRIBERS` arm on the Health classifier. Same
+  family as F5 and O-7: a no-op does not get to look like work.
+
+- **Increment 70 (DONE, PUSHED, NOT MERGED — O-10 gate check + O-11 dev
+  overlay, commits cafa4cb / b11fd1b):**
+  **O-10** — `runQueueReportGateCheck` (admin-gated, READ-ONLY, button in the
+  Alerts modal). Every non-send path in the trigger returns SILENTLY:
+  disabled / outside-window / weekend / holiday / already-sent / not-ready
+  write nothing anywhere, and the entry point is `_`-suffixed so the editor Run
+  picker hides it too — so each hypothesis cost a day to test. It reports every
+  gate INPUT beside the decision plus the next window and which date THAT run
+  targets. Verdict logic split into a pure `queueReportGateExplain_` (the
+  `queueReportGateDecision_` precedent) because the interesting branches are
+  the ones a wall-clock test can never reach. `wouldSend` folds in the
+  recipient count — a subscriber-less "ready" is the O-9 bug in a new hat.
+  **O-11** — the admin-only dev overlay (`#dev-overlay`, Ctrl/Cmd+Alt+D or
+  `#/dev`, `cdr.dev.overlay`): captured client errors, `google.script.run`
+  timings/failures, app state, and a REGISTRY of admin-gated server
+  diagnostics (a new one costs one line). Owner chose the full scope over three
+  narrower options. Security shape: presentation only, the `role==='admin'`
+  check is COSMETIC (a localStorage flag is not authentication), every
+  diagnostic keeps its own `assertAdmin_`, app state is identifiers/flags never
+  a payload. **A real bug shipped mid-increment and the new driver caught it:**
+  `google.script.run` is a getter returning a FRESH, STATEFUL runner per
+  access; the first draft captured one at install time, leaking chain A's
+  handlers into chain B. Identity-comparing two reads does NOT detect it (a new
+  Proxy is minted either way) — the check had to be behavioural, and the buggy
+  build reports `BB`. New `drive-devoverlay.js` (14 checks) is in the ci:ui
+  gate and asserts the app still WORKS with the probe installed before
+  asserting anything about the panel.
+  CI 601/601; ci:ui 28+16+31+14.
+
+  **WHERE I LEFT OFF / DO THESE FIRST IN A FRESH SESSION:**
+  1. `cafa4cb` + `b11fd1b` are pushed to `claude/sync-commands-dnxgcv` but NOT
+     PR'd and NOT merged. Open a PR and merge (owner has approved this pattern
+     each round, but ask — the standing rule is no PR unless asked).
+  2. Then DEPLOY the Department Dashboard (`clasp push -f` from repo root → new
+     deployment version). O-9 is already deployed; O-10 + O-11 are not.
+  3. **Monday morning (Aug 3): confirm the queue report actually sends.** Its
+     target is FRIDAY Jul 31, so Friday's raw data must be imported before
+     noon Central. If it doesn't arrive, the new "Why hasn't it sent?" button
+     answers it in one click. NOTE the Thursday Jul 30 report will never send
+     automatically — its window closed, and the pre-O-9 code already claimed
+     the dedupe marker for that date; deliver it with "Send to subscribers…".
+  4. **Operator State #40 — the per-queue-split backfill window is CLOSING.**
+     `Call_Legs` is pruned at 14 days and per-leg queue identity exists nowhere
+     else, so every day this is not run is a day that can never be split.
+     Highest-urgency operator item outstanding.
+  5. Regression scenarios still not walked live: S2 (admin switches
+     departments — the one that would have caught the dept-selector bug), S4,
+     S6, S35, S43.
+
+  **STILL OPEN (unstarted, no work in progress):** Phase 3 (Missed,
+  `missed:v18`) and Phase 4 (IR/Insights, `insights:v20`) of the queue split
+  are still all-queue; the Insights combined view is unstarted; the theme/mode
+  toggles and the Export dropdown beyond its CSV item still have no automated
+  interaction coverage (the same gap class that hid the dept-selector bug).
