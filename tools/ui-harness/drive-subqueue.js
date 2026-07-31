@@ -126,6 +126,43 @@ async function openDeptThirtyDays(page) {
   record('all agents from both departments render',
     !!grouped && grouped.dataRows === 7, grouped ? 'rows=' + grouped.dataRows : '');
 
+  // ---- aggregate rows must be visually DISTINCT from agent rows -----------
+  // Owner round: the totals and per-dept subtotals read like another agent row.
+  // Asserting the rendered font-size/bar-height rather than a class, because a
+  // class with no rule behind it is exactly how the active scope tab shipped
+  // with no visual state at all.
+  const weight = await page.evaluate(() => {
+    const q = (sel) => document.querySelector(sel);
+    const px = (el, prop) => el ? parseFloat(getComputedStyle(el)[prop]) : null;
+    // Measure a NUMERIC cell, not td:first-child. The label cell is uppercase
+    // letter-spaced type by design and is legitimately SMALLER in px while
+    // reading as heavier -- comparing it would test the wrong thing and fail
+    // an intentional treatment.
+    const lastTd = (sel) => {
+      const tds = document.querySelectorAll(sel + ' td');
+      return tds.length ? tds[tds.length - 1] : null;
+    };
+    const agentRow = lastTd('#agents-tbody tr[data-agent]');
+    const subTd = lastTd('#agents-tbody tr.subq-subtotal');
+    const totTd = lastTd('#agents-tfoot tr');
+    return {
+      agent: px(agentRow, 'fontSize'),
+      subtotal: px(subTd, 'fontSize'),
+      total: px(totTd, 'fontSize'),
+      agentBar: px(q('#agents-tbody tr[data-agent] .ans-track'), 'height'),
+      subBar: px(q('#agents-tbody tr.subq-subtotal .ans-track'), 'height'),
+    };
+  });
+  record('per-dept subtotal rows render LARGER than agent rows',
+    !!weight.subtotal && !!weight.agent && weight.subtotal > weight.agent,
+    JSON.stringify(weight));
+  record('the grand total row renders larger than agent rows',
+    !!weight.total && !!weight.agent && weight.total > weight.agent,
+    'total=' + weight.total + ' agent=' + weight.agent);
+  record('and their split bars scale with them',
+    !weight.subBar || !weight.agentBar || weight.subBar > weight.agentBar,
+    'subBar=' + weight.subBar + ' agentBar=' + weight.agentBar);
+
   // ---- the parity property: parent subtotal == its own-scope total --------
   const parentSubtotal = await page.evaluate(() => {
     const r = Array.from(document.querySelectorAll('#agents-tbody tr.subq-subtotal'))

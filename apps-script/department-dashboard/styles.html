@@ -6816,6 +6816,42 @@ tr.subq-subtotal td {
   background: color-mix(in oklab, var(--paper) 92%, var(--ink));
 }
 tr.subq-subtotal td:first-child { font-weight: 600; opacity: .85; }
+
+/* Owner round: the AGGREGATE rows -- the grand total and each department's
+   subtotal -- read too much like another agent row. They are a different KIND
+   of number, so they are scaled up rather than merely re-tinted: a reader
+   scanning the column should be able to tell where a group ends without
+   parsing the label.
+
+   Scoped to `.agents` so the Overview mini-table (a deliberately compact
+   glance view) and the Insights reuse of `.ans-bar` are untouched. `em` on
+   the bar/text so a future base-size change carries through instead of
+   re-pinning px in two places. */
+.agents .agents-totals td,
+.agents tr.subq-subtotal td {
+  font-size: 13.5px;
+  padding-top: 9px;
+  padding-bottom: 9px;
+}
+.agents .agents-totals td:first-child,
+.agents tr.subq-subtotal td:first-child {
+  font-size: 12px;
+}
+/* The split bar carries most of the row's visual weight, so it scales too --
+   a same-size bar under bigger numbers reads as a mismatch rather than a
+   hierarchy. */
+.agents .agents-totals .ans-track,
+.agents tr.subq-subtotal .ans-track { height: 11px; }
+.agents .agents-totals .ans-bar,
+.agents tr.subq-subtotal .ans-bar { min-width: 160px; }
+/* The compact-density toggle still wins: someone who asked for tighter rows
+   should not get taller aggregates back. */
+#agents-table.agents--compact .agents-totals td,
+#agents-table.agents--compact tr.subq-subtotal td {
+  font-size: 12.5px; padding-top: 4px; padding-bottom: 4px;
+}
+#agents-table.agents--compact .agents-totals .ans-track,
+#agents-table.agents--compact tr.subq-subtotal .ans-track { height: 9px; }
 @media (max-width: 700px) {
   .subq-bar-row { flex-direction: column; align-items: stretch; }
 }
