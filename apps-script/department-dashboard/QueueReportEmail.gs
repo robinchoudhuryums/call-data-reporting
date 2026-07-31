@@ -108,6 +108,29 @@ function runDailyQueueReport_() {
 
     const result = sendQueueReportForDate_(targetIso, {});
     const failed = result.failed || [];
+
+    // O-9: a run with NO ACTIVE SUBSCRIBERS is not a send, and must never
+    // report as one. It previously fell into the success branch below
+    // (count 0, no failures) and wrote "Sent <iso> to 0 subscribers", which
+    // the modal shows verbatim and the Health page classifies GREEN -- so an
+    // admin who armed the trigger but never added a subscriber row saw a
+    // healthy engine reporting daily success while nobody received anything.
+    // Same rule as the F5 "rows:0 DQE success is a NO-OP, not freshness" and
+    // the O-7 missed-day flag: a no-op does not get to look like work.
+    //
+    // The dedupe marker is deliberately NOT claimed. Nobody received the
+    // report, so a retry cannot duplicate it (the FAILED-ALL rule) -- and it
+    // means an admin who adds themselves at 8am still gets that morning's
+    // report on the next poll instead of having to wait for tomorrow.
+    if (result.noRecipients) {
+      props.setProperty(QUEUE_REPORT_LAST_RESULT_PROP,
+        'NO-SUBSCRIBERS ' + targetIso + ' — the data was ready and the report was NOT sent: '
+        + 'no active Queue Report subscriber rows exist. Add one under Alerts → Report '
+        + 'Subscribers (installing the trigger does not subscribe you). Will send on the '
+        + 'next poll once a subscriber exists. At ' + new Date());
+      return;
+    }
+
     // O-1: marker discipline around per-recipient failures.
     //  - At least one send landed (or a clean no-recipients run): claim the
     //    date. The recipients who already got it must NEVER be re-blasted by
@@ -178,11 +201,9 @@ function queueReportQcdLatestIso_() {
  */
 function sendQueueReportForDate_(targetIso, opts) {
   opts = opts || {};
-  // Batch 1 item 2: reuse the 6h-TTL qcdAll cache the web report warms, so an
-  // admin "Send me a preview" doesn't pay the full cold compute when the exact
-  // (targetIso,targetIso) blob is already warm (and a preview warms it for the
-  // next web open). Falls through to a fresh compute + cache when cold.
-  const data = qcdAllDeptCachedData_(targetIso, targetIso).data;
+  // Recipients are resolved BEFORE the report is composed: an empty list means
+  // there is nothing to do, and composing an all-departments report nobody will
+  // receive is pure waste on every 30-min poll of the window.
   const recipients = opts.to
     ? [String(opts.to).trim()].filter(Boolean)
     : readQueueReportSubscribers_()
@@ -191,9 +212,17 @@ function sendQueueReportForDate_(targetIso, opts) {
 
   if (!recipients.length) {
     Logger.log('sendQueueReportForDate_(%s): no active subscribers -- nothing sent.', targetIso);
-    return { count: 0, to: [], failed: [] };
+    // `noRecipients` is what separates "ran, nobody subscribed" from "ran, sent
+    // to everyone" -- both used to be count:0-with-no-failures, and the caller
+    // reported the first one as a successful send. See runDailyQueueReport_.
+    return { count: 0, to: [], failed: [], noRecipients: true };
   }
 
+  // Batch 1 item 2: reuse the 6h-TTL qcdAll cache the web report warms, so an
+  // admin "Send me a preview" doesn't pay the full cold compute when the exact
+  // (targetIso,targetIso) blob is already warm (and a preview warms it for the
+  // next web open). Falls through to a fresh compute + cache when cold.
+  const data = qcdAllDeptCachedData_(targetIso, targetIso).data;
   const subject = 'Daily Call Queue Report — ' + (data.dateLabel || targetIso);
   const html = buildQueueReportEmailHtml_(data, targetIso, !!opts.isPreview);
   // One send with the full list on `to` would expose every subscriber's

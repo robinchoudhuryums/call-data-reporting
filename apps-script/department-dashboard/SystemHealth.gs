@@ -274,9 +274,13 @@ function getSystemHealth() {
       // O-5: the queue report's not-sent outcome leads with "MISSED <iso>" --
       // none of the substring bad-words match it, so classify by prefix too.
       // R7 (G-2): likewise the coverage check's findings outcome ("GAPS n ...").
+      // O-9: and "NO-SUBSCRIBERS <iso> ..." -- the queue report ran with an
+      // empty recipient list. It reads like a clean run and is the exact state
+      // an admin lands in by installing the trigger without subscribing.
       var bad = !/^ok\b/i.test(res || '')
         && (/fail|error|unreachable|skipped/i.test(res || '')
-            || /^MISSED\b/.test(res || '') || /^GAPS\b/.test(res || ''));
+            || /^MISSED\b/.test(res || '') || /^GAPS\b/.test(res || '')
+            || /^NO-SUBSCRIBERS\b/.test(res || ''));
       add('triggers', outcomes[o][0], outcomes[o][1], bad ? 'warn' : 'ok',
         (res || '') + (at ? (' @ ' + at) : ''));
     }

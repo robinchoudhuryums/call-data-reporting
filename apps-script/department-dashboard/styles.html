@@ -4206,6 +4206,12 @@
   .al-report-chip.al-report-digest { background: var(--accent-soft); color: var(--accent); }
   .al-report-chip.al-report-queue  { background: var(--good-soft); color: var(--good); }
   .al-hint { font-size: 12px; color: var(--muted); margin: 0 0 10px; }
+  /* O-9: a hint that has to be READ, not skimmed past -- currently the
+     queue-report "installed but nobody is subscribed" state, which is a
+     misconfiguration the muted treatment would hide. The tint is the point:
+     a class with no rule behind it is a state that does not exist. */
+  .al-hint.is-warn { color: var(--warn); background: var(--warn-soft);
+                     padding: 8px 10px; border-radius: var(--r); }
   .al-hint a { color: var(--accent); text-decoration: none; }
   /* F2 Neon mirror-health line (sheet-vs-Neon DQE max-date check). */
   .al-neon-mirror { font-size: 12px; line-height: 1.4; margin: 0 0 10px;

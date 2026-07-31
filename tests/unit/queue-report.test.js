@@ -486,3 +486,82 @@ test('QV-5: subscriber blast is admin-only and claims the dedupe marker ONLY for
   delete h.ctx.resolveUser_;
   delete h.ctx.prevBusinessDayIso_;
 });
+
+// ── O-9: an empty subscriber list is not a send ───────────────────────────
+//
+// The failure this pins is a SILENT one, and it was live: arming the trigger
+// without adding a subscriber row produced a run that reported
+// "Sent <iso> to 0 subscribers" and claimed the dedupe marker. The modal shows
+// that string verbatim and the Health page classified it GREEN, so the engine
+// looked healthy every weekday while nobody received anything. Same family as
+// F5 (a rows:0 DQE success is a NO-OP, not freshness) and O-7 (the missed-day
+// flag): a no-op does not get to look like work.
+
+test('O-9: no active subscribers -> noRecipients, and the report is never composed', function () {
+  h.state.props.SPREADSHEET_ID = 'fake';
+  h.state.spreadsheet = makeFakeSpreadsheet({
+    timeZone: 'America/Chicago',
+    sheets: {
+      // Present but every row inactive -- the same end state as an empty sheet,
+      // and the one an admin reaches by toggling their own row off.
+      'Queue Report Subscribers': [
+        ['Email', 'Active', 'Notes'],
+        ['off@x.com', 'FALSE', ''],
+      ],
+    },
+  });
+  let composed = 0;
+  h.ctx.qcdAllDeptCachedData_ = function () {
+    composed++;
+    return { data: { dateLabel: 'Jul 10, 2026', depts: [], grandTotals: {} } };
+  };
+  const sent = [];
+  h.ctx.MailApp = { sendEmail: function (a) { sent.push(a.to); } };
+
+  const res = h.call('sendQueueReportForDate_', '2026-07-10', {});
+  assert.equal(res.noRecipients, true, 'the empty-list case is distinguishable from a real send');
+  assert.equal(res.count, 0);
+  assert.equal(res.failed.length, 0);
+  assert.equal(sent.length, 0, 'nothing sent');
+  // Recipients are resolved first, so a poll with nobody subscribed does not
+  // pay the all-departments compute -- twelve times per morning window.
+  assert.equal(composed, 0, 'the report is not composed when there is no one to send it to');
+});
+
+test('O-9: a real send does NOT carry noRecipients (the flag is not sticky)', function () {
+  h.state.props.SPREADSHEET_ID = 'fake';
+  h.state.spreadsheet = makeFakeSpreadsheet({
+    timeZone: 'America/Chicago',
+    sheets: {
+      'Queue Report Subscribers': [
+        ['Email', 'Active', 'Notes'],
+        ['on@x.com', 'TRUE', ''],
+      ],
+    },
+  });
+  h.ctx.qcdAllDeptCachedData_ = function () {
+    return { data: { dateLabel: 'Jul 10, 2026', depts: [], grandTotals: {} } };
+  };
+  h.ctx.MailApp = { sendEmail: function () {} };
+  const res = h.call('sendQueueReportForDate_', '2026-07-10', {});
+  assert.equal(res.count, 1);
+  assert.ok(!res.noRecipients, 'a delivered run must not look like an empty one');
+});
+
+test('O-9: the Health classifier treats NO-SUBSCRIBERS as needs-attention', function () {
+  // Mirrors the SystemHealth.gs outcome classifier verbatim. The point of the
+  // pin is that "NO-SUBSCRIBERS ..." matches NONE of the bad-word substrings
+  // (no "fail"/"error"/"skipped"), so without an explicit prefix arm it is
+  // classified ok/green -- which is exactly how it went unnoticed.
+  function classify(res) {
+    return !/^ok\b/i.test(res || '')
+      && (/fail|error|unreachable|skipped/i.test(res || '')
+          || /^MISSED\b/.test(res || '') || /^GAPS\b/.test(res || '')
+          || /^NO-SUBSCRIBERS\b/.test(res || ''));
+  }
+  assert.equal(classify('NO-SUBSCRIBERS 2026-07-10 — the data was ready and the report was NOT sent: '
+    + 'no active Queue Report subscriber rows exist.'), true, 'must not read green');
+  assert.equal(classify('Sent 2026-07-10 to 3 subscribers at Fri Jul 10'), false, 'a real send stays green');
+  assert.equal(classify('MISSED 2026-07-09 — QCD data was not ready'), true);
+  assert.equal(classify('ok (12 warmed, 3 insights skipped on budget)'), false, 'OPS-8 prefix wins over "skipped"');
+});
