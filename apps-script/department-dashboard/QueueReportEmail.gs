@@ -20,13 +20,24 @@
  * (QUEUE_REPORT_LAST_SENT dedupes). A fixed hour would skip the whole day if
  * the import ran late.
  *
- * Public entries (google.script.run; all admin-only):
+ * Public entries (google.script.run). Admin-only EXCEPT where noted -- the one
+ * exception is deliberate and must not be assumed away:
  *   getQueueReportInit()          -> status + subscriber list
  *   saveQueueReportSubscriber({email, active, notes})   -> updated list
  *   removeQueueReportSubscriber({email})                -> updated list
  *   installQueueReportTrigger()   -> { installed, enabled }
  *   uninstallQueueReportTrigger() -> { installed, enabled }
  *   sendQueueReportPreview()      -> { to }   (previews to the active admin)
+ *   runQueueReportGateCheck()     -> the O-10 "why hasn't it sent?" readout.
+ *                                    READ-ONLY: no send, no property write,
+ *                                    and it never touches the dedupe marker
+ *                                    (a diagnostic that claimed the marker
+ *                                    would suppress the send it explains)
+ *   sendQcdAllDeptToSubscribers({date}) -> QV-5 manual blast to the list
+ *   sendQcdAllDeptEmail({...})    -> QV-4. *** NOT admin-only ***: any
+ *                                    SIGNED-IN viewer, and it emails the
+ *                                    CALLER ONLY (it resolves the user itself
+ *                                    rather than calling assertAdmin_)
  *
  * Trigger entry point (underscore = not RPC-callable; ScriptApp dispatches by
  * name):

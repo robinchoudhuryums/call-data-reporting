@@ -587,7 +587,9 @@ When something looks wrong, before assuming a code bug, check:
     zero ACTIVE Queue Report rows, the trigger-status line turns warn-tinted and
     reads "Installed, but NO ONE is subscribed".
     **Fastest answer when it has not arrived: Alerts → Daily Call Queue Report
-    → "Why hasn't it sent?"** (`runQueueReportGateCheck`, admin-gated,
+    → "Why hasn't it sent?"** (also the first entry in the O-11 dev overlay,
+    Ctrl/Cmd+Alt+D — same call, no need to open the modal)
+    (`runQueueReportGateCheck`, admin-gated,
     READ-ONLY — sends nothing, writes no property, never touches the marker).
     It evaluates the REAL gate against the real clock, properties and sheet and
     reports every input beside the decision: target date, how far QCD data

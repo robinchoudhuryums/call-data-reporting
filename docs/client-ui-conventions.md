@@ -614,7 +614,10 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   open/collapsed state; default collapsed, R12-11), `cdr.ov.window`
   (R12-19: the ONE Overview window driving cards + agent table --
   superseded `cdr.ov.cardperiod`/`cdr.ov.tableperiod.v1`, migrated
-  table-pref-first), and `cdr.dept.rowdensity` (R12-16 compact rows) — the theme
+  table-pref-first), `cdr.dept.rowdensity` (R12-16 compact rows), and
+  `cdr.dev.overlay` (O-11 dev overlay open/closed; ADMIN-ONLY and read only
+  after the role check — it is a display preference, never an entitlement,
+  and a manager setting it by hand gets nothing) — the theme
   picker re-reads these on every render so no cache bump is needed when
   palette tokens change. Default for first-time visitors
   (no `dash-theme.v1` value) is `cool` since the Phase A redesign
