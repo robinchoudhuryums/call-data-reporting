@@ -10722,6 +10722,8 @@
     if (installQrBtn) installQrBtn.addEventListener('click', alInstallQueueReport_);
     const uninstallQrBtn = $('al-uninstall-qr-btn');
     if (uninstallQrBtn) uninstallQrBtn.addEventListener('click', alUninstallQueueReport_);
+    const whyQrBtn = $('al-qr-why-btn');
+    if (whyQrBtn) whyQrBtn.addEventListener('click', function () { alQrWhy_(whyQrBtn); });
 
     const dateEl = $('al-date');
     if (dateEl) dateEl.addEventListener('change', function () {
@@ -10999,6 +11001,48 @@
       .withSuccessHandler(function (d) { alRenderQueueReport_(d || {}); })
       .withFailureHandler(function (err) { alRenderQueueReport_({ loadError: (err && err.message) ? err.message : String(err) }); })
       .getQueueReportInit();
+  }
+  // O-10: every non-send path in the trigger returns silently, so "it hasn't
+  // arrived" used to cost a day per hypothesis to test. This asks the REAL gate
+  // what it decided, right now, and reads back every input it used.
+  function alQrWhy_(btn) {
+    const host = $('al-qr-why');
+    if (!host) return;
+    if (btn) { btn.disabled = true; btn.textContent = 'Checking…'; }
+    const done = function () {
+      if (btn) { btn.disabled = false; btn.textContent = 'Why hasn’t it sent?'; }
+    };
+    google.script.run
+      .withSuccessHandler(function (d) {
+        done();
+        d = d || {};
+        const row = function (k, v) {
+          return '<div class="al-qr-why-row"><span>' + escapeHtml(k) + '</span><b>'
+            + escapeHtml(v === '' || v == null ? '—' : String(v)) + '</b></div>';
+        };
+        host.style.display = '';
+        host.className = 'al-qr-why ' + (d.wouldSend ? 'is-good' : 'is-warn');
+        host.innerHTML =
+            '<div class="al-qr-why-verdict">' + escapeHtml(d.explanation || '') + '</div>'
+          + row('Checked at', d.now)
+          + row('Gate decision', d.decision)
+          + row('Target date (previous workday)', d.targetDate)
+          + row('QCD data reaches', d.latestQcdDate)
+          + row('Already-sent marker', d.lastSentMarker)
+          + row('Active subscribers', d.activeSubscribers)
+          + row('Trigger installed / enabled', (d.installed ? 'yes' : 'no') + ' / ' + (d.enabled ? 'yes' : 'no'))
+          + row('Send window', d.windowLabel)
+          + (d.nextWindowDate
+              ? row('Next window', d.nextWindowDate + ' — will send ' + (d.nextWindowTarget || '?'))
+              : '');
+      })
+      .withFailureHandler(function (err) {
+        done();
+        host.style.display = '';
+        host.className = 'al-qr-why is-warn';
+        host.textContent = 'Check failed: ' + ((err && err.message) ? err.message : String(err));
+      })
+      .runQueueReportGateCheck();
   }
   function alQrRemove_(idx) {
     const s = alQrRows_[idx]; if (!s) return;

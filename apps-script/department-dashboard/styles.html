@@ -4212,6 +4212,18 @@
      a class with no rule behind it is a state that does not exist. */
   .al-hint.is-warn { color: var(--warn); background: var(--warn-soft);
                      padding: 8px 10px; border-radius: var(--r); }
+  /* O-10: the gate-check readout. Tinted by verdict, and every gate INPUT is
+     shown beside the decision -- "not-ready" is only actionable next to the
+     date the data actually reaches. */
+  .al-qr-why { margin-top: 8px; padding: 10px; border-radius: var(--r);
+               font-size: 12px; background: var(--warn-soft); }
+  .al-qr-why.is-good { background: var(--good-soft); }
+  .al-qr-why-verdict { font-weight: 600; margin-bottom: 8px; line-height: 1.45; }
+  .al-qr-why.is-warn .al-qr-why-verdict { color: var(--warn); }
+  .al-qr-why.is-good .al-qr-why-verdict { color: var(--good); }
+  .al-qr-why-row { display: flex; justify-content: space-between; gap: 12px;
+                   padding: 2px 0; color: var(--muted); }
+  .al-qr-why-row b { color: var(--ink); font-weight: 600; text-align: right; }
   .al-hint a { color: var(--accent); text-decoration: none; }
   /* F2 Neon mirror-health line (sheet-vs-Neon DQE max-date check). */
   .al-neon-mirror { font-size: 12px; line-height: 1.4; margin: 0 0 10px;
