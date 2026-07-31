@@ -574,6 +574,33 @@ When something looks wrong, before assuming a code bug, check:
     `QUEUE_REPORT_LAST_MISSED` property + a `MISSED <iso>` LAST_RESULT + one
     admin email; suppressed on fresh installs with no prior send) instead of
     being silently skipped -- it is NOT auto-retried after the window.
+    **INSTALLING THE TRIGGER DOES NOT SUBSCRIBE YOU (O-9).** They are two
+    separate actions in the same modal section, and doing only the first is the
+    most common way this engine ends up running every weekday and emailing
+    nobody. Until O-9 that state was INVISIBLE: a run with an empty recipient
+    list wrote `Sent <iso> to 0 subscribers`, claimed the dedupe marker, and
+    the Health outcome classifier painted it GREEN (the string matches none of
+    its bad-words). It now writes `NO-SUBSCRIBERS <iso> — ...`, which the
+    classifier flags, and it does NOT claim the marker — so adding yourself at
+    8 AM still gets you that morning's report on the next poll instead of
+    tomorrow's. The modal also says it up front: with the trigger installed and
+    zero ACTIVE Queue Report rows, the trigger-status line turns warn-tinted and
+    reads "Installed, but NO ONE is subscribed".
+    **Triage order when it has not arrived:** (1) Alerts modal → "Send me a
+    preview" — proves the compose + send path and the data independently of the
+    gate; if THAT fails the problem is data or mail scope, not the schedule.
+    (2) The Report Subscribers table — is there a row with the **Queue Report**
+    chip, your address, Active = Yes, and no "⚠ duplicate"? A row on the
+    **Digest** side is a different subscription and does not feed this.
+    (3) The "Last run:" line, which decodes as: blank = the trigger has not had
+    a weekday-morning window yet (install after noon → first run is the next
+    weekday); `NO-SUBSCRIBERS` = case (2); `MISSED <iso>` = the window closed
+    before the import finished; `FAILED` / `FAILED-ALL` = a send or compute
+    error, details in the admin email; `Sent <iso> to N subscribers` with N ≥ 1
+    = it really did send, so check spam/filters. (4) Health page → the
+    `trg-queuereport` row for the installed-vs-`QUEUE_REPORT_ENABLED` mismatch
+    and the `Queue Report Subscribers` sheet row (a missing sheet reads as zero
+    subscribers; `setup()` creates it, Operator State #6).
     Reversible: uninstall clears the flag + removes the
     trigger. Readiness reads the QCD SHEET max date (the authoritative import
     output) even when QCD reads are flipped to Neon -- so a lagging deferred

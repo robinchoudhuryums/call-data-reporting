@@ -10970,10 +10970,22 @@
     const installed = !!data.installed;
     alSetStatePill_('al-qr-pill', installed);
     const statusEl = $('al-qr-trigger-status');
+    // O-9: installing the trigger does NOT subscribe you, and that is the
+    // single easiest way to end up with an engine that runs every weekday and
+    // emails nobody. Say so HERE, on the screen where the trigger was armed,
+    // rather than leaving it to be inferred from a "Last run" line the next
+    // morning. Duplicate rows are inert server-side, so they don't count.
+    const qrActive = (data.subscribers || [])
+      .filter(function (s) { return s.active && !s.duplicateRow; }).length;
     if (statusEl) {
+      statusEl.classList.toggle('is-warn', installed && !qrActive && !data.loadError);
       statusEl.textContent = data.loadError ? ''
         : (installed
-            ? 'Installed — checks each weekday morning and emails once the previous workday’s data is fully processed.'
+            ? (qrActive
+                ? 'Installed — checks each weekday morning and emails once the previous workday’s data is fully processed.'
+                : 'Installed, but NO ONE is subscribed — it will run each weekday and send nothing. '
+                  + 'Add yourself under Report Subscribers above (choose “Queue Report”). '
+                  + 'Installing the trigger does not subscribe you.')
             : 'No trigger installed. Subscribers won’t receive the report until you click Install.');
     }
     const lastEl = $('al-qr-last');
