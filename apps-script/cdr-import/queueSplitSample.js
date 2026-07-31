@@ -57,6 +57,28 @@ function sampleQueueSplitCallIds() {
     return (parseInt(t[0]) || 0) * 3600 + (parseInt(t[1]) || 0) * 60 + (parseInt(t[2]) || 0);
   }
 
+  // ISO-normalize any M/D/YYYY-ish date so the two sides can be compared.
+  //
+  // THE TRAP, and it is a documented one (F-3 / F-10 in known-issues): the
+  // build writes col B as the STRING "07/30/2026", but Sheets COERCES a
+  // date-shaped string cell to a real Date, after which getDisplayValues
+  // returns it in the cell's display format -- "7/30/2026", no leading zeros.
+  // Comparing that to Raw Data's "07/30/2026" matches NOTHING, which is exactly
+  // what happened on the first live run: all 73 agents reported "NO DQE ROW",
+  // including plain names with no paren variant at all, and the tool blamed
+  // canonicalization for it. The standing rule is to compare ISO-NORMALIZED
+  // display values, never raw strings.
+  function dateIso(v) {
+    var t = String(v == null ? '' : v).trim().split(' ')[0];
+    if (!t) return '';
+    var m = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (m) {
+      return m[3] + '-' + ('0' + m[1]).slice(-2) + '-' + ('0' + m[2]).slice(-2);
+    }
+    if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;   // already ISO
+    return t;                                        // unrecognized: compare as-is
+  }
+
   var legsByAgent = {};
   var dateSeen = {};
   var skippedNoQueue = 0, skippedExcluded = 0;
@@ -75,7 +97,7 @@ function sampleQueueSplitCallIds() {
     if (DQE_EXCLUDED_AGENTS.indexOf(agent) !== -1) { skippedExcluded++; continue; }
 
     var startRaw = row[DQE_C.START_TIME];
-    var d = String(startRaw || '').trim().split(' ')[0];
+    var d = dateIso(startRaw);
     if (d) dateSeen[d] = (dateSeen[d] || 0) + 1;
 
     (legsByAgent[agent] = legsByAgent[agent] || []).push({
@@ -113,7 +135,7 @@ function sampleQueueSplitCallIds() {
     if (width >= 35) {
       var drows = dqe.getRange(2, 1, dqe.getLastRow() - 1, width).getDisplayValues();
       for (var r = 0; r < drows.length; r++) {
-        if (String(drows[r][1]).trim() !== dates[0]) continue;
+        if (dateIso(drows[r][1]) !== dates[0]) continue;
         storedByAgent[String(drows[r][2]).trim()] = String(drows[r][34] || '').trim();
       }
     } else {
@@ -177,8 +199,10 @@ function sampleQueueSplitCallIds() {
       if (wantQueue && q.toLowerCase() !== wantQueue) return;
       var e = mine[q];
       var legs = inWin.filter(function (l) { return (l.queueName || '') === q; });
+      // String() each count: Apps Script hands a JS number to Logger as a Java
+      // Double, so a bare %s prints "5.0" where the sheet says 5.
       Logger.log('    %s  rung=%s missed=%s answered=%s  unique=%s',
-        q, e.r, e.m, e.a, e.u);
+        q, String(e.r), String(e.m), String(e.a), String(e.u));
       legs.slice(0, maxIds).forEach(function (l) {
         Logger.log('      %s  call=%s  parent=%s  %s',
           l.startRaw, l.callId, l.parentCallId || '(none)',
@@ -200,14 +224,28 @@ function sampleQueueSplitCallIds() {
     }
   });
 
+  var storedCount = Object.keys(storedByAgent).length;
   if (unmatched.length) {
     Logger.log('');
-    Logger.log('!! %s agent name(s) in Raw Data have no DQE row for this date: %s',
-      unmatched.length, unmatched.join(', '));
-    Logger.log('   This tool does NOT canonicalize agent names (the build does, against '
-      + 'the roster), so a paren variant like "Roman Paulose" vs "Roman (Robin) Paulose" '
-      + 'shows up here rather than being folded in. Their calls DO count on the '
-      + 'dashboard under the canonical name -- check the Outlier Fix modal if a name '
-      + 'looks genuinely unmapped.');
+    if (!storedCount) {
+      // Distinguish a LOOKUP failure from per-agent name variance. If not one
+      // DQE row was found for this date, blaming canonicalization sends the
+      // reader after 73 imaginary problems -- which this tool did on its first
+      // live run, before the date normalization above was fixed.
+      Logger.log('!! NO DQE rows matched %s at all, so EVERY agent reports unmatched. '
+        + 'That is a lookup failure, not 73 name variants. Either the date has not '
+        + 'been built into DQE Historical Data yet, or col B\'s display format is '
+        + 'something dateIso() does not recognize -- check col B for this date.', dates[0]);
+    } else {
+      Logger.log('!! %s of %s agent name(s) in Raw Data have no DQE row for this date '
+        + '(%s DQE rows matched): %s',
+        String(unmatched.length), String(agents.length), String(storedCount),
+        unmatched.join(', '));
+      Logger.log('   This tool does NOT canonicalize agent names (the build does, against '
+        + 'the roster), so a paren variant like "Roman Paulose" vs "Roman (Robin) Paulose" '
+        + 'shows up here rather than being folded in. Their calls DO count on the '
+        + 'dashboard under the canonical name -- check the Outlier Fix modal if a name '
+        + 'looks genuinely unmapped.');
+    }
   }
 }
