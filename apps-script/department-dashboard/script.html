@@ -1011,12 +1011,18 @@
       });
       $('dept-selector-wrap').style.display = '';
       sel.addEventListener('change', function () {
-        // Admin switched depts; all per-report cached agent
-        // rosters are now stale -- wipe so the next modal open
-        // refetches against the new dept.
+        // Admin switched depts; the per-report cached agent roster is now
+        // stale -- wipe so the next modal open refetches against the new dept.
+        //
+        // This ALSO cleared `prLastRoster` and `crLastRoster` until 2026-07,
+        // long after the Performance and Compare Ranges reports were retired
+        // and their variables deleted with them. script.html is 'use strict',
+        // so assigning to an undeclared identifier THROWS -- and the throw
+        // landed before refresh() on the next line, which meant the department
+        // selector silently did nothing for every admin and multi-dept manager.
+        // Found only when a harness driver first tried to switch departments;
+        // no automated check had ever exercised the control.
         irLastRoster = { dept: null, agents: [], activeAgents: null, activeFloaters: null, rangeKey: '' };
-        prLastRoster = { dept: null, agents: [], activeAgents: null, activeFloaters: null, rangeKey: '' };
-        crLastRoster = { dept: null, agents: [], activeAgents: null, activeFloaters: null, rangeKey: '' };
         refresh();
         // If the Overview page is currently visible, re-render its
         // viewer-personalized bits (hero + user-table) so they

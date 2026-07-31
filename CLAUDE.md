@@ -180,11 +180,12 @@ npm run ci:ui                # gen payloads -> build admin+manager -> assert
 # globs the Playwright browser revision, so CHROMIUM_PATH is rarely needed.
 # THREE ASSERTING drivers gate it -- drive-smoke.js (page/console errors,
 # unmocked RPCs, BLANK chart canvases, horizontal overflow, both roles),
-# drive-f13.js (the S39 keyboard walk), and drive-subqueue.js (the sub-queue
-# scope switcher, the S35 parent-subtotal parity property, and the
-# combined-view CSV -- the ONLY automated coverage of any CSV writer in this
-# repo, asserted by stubbing URL.createObjectURL and reading the real Blob
-# bytes, S43). The other drivers (drive.js /
+# drive-f13.js (the S39 keyboard walk), and drive-subqueue.js (the collapsible
+# sub-queue groups, the S35 parent-subtotal parity property, the combined AND
+# single-dept CSV shapes -- the ONLY automated coverage of any CSV writer in
+# this repo, asserted by stubbing URL.createObjectURL and reading the real Blob
+# bytes, S43 -- and the header DEPARTMENT SWITCH, which threw a ReferenceError
+# in production until a driver first tried it). The other drivers (drive.js /
 # drive-insights.js / drive-phase3.js) emit screenshots + reports for a human
 # and are deliberately NOT in the gate. Runs in CI as the `ui-harness` job
 # (currently `continue-on-error: true` while the gate proves itself -- drop

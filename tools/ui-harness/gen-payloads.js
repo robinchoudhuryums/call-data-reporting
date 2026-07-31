@@ -230,6 +230,18 @@ dump('summary-30d-own', h.call('getDepartmentSummary',
   { department: 'CSR', from: s30.from, to: s30.to, subScope: 'own' }));
 dump('summary-30d-subs', h.call('getDepartmentSummary',
   { department: 'CSR', from: s30.from, to: s30.to, subScope: 'subs' }));
+// A dept with NO sub-queues, so the single-dept paths stay covered -- above all
+// the CSV's byte-compatibility guarantee (no leading `Department` column), which
+// lost its automated cover when the scope switcher was retired and there was no
+// one-dept payload left to drive.
+//
+// Sales qualifies WITHOUT any fixture-data change: its seeded child in
+// OVERVIEW_PARENT_OF is `PAP`, which is not in this roster, and
+// subQueueChildMap_ drops an edge naming a dept that does not exist. So Sales
+// renders exactly like the 11 of 14 real departments that never had a
+// sub-queue, while still having agents and data.
+dump('summary-30d-sales', h.call('getDepartmentSummary',
+  { department: 'Sales', from: s30.from, to: s30.to }));
 
 // Missed report: same three windows.
 dump('missed-day', h.call('getMissedCallsReport', { department: 'CSR', from: LATEST, to: LATEST }));

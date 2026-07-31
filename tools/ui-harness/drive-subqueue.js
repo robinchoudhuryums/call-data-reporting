@@ -218,13 +218,7 @@ async function openDeptThirtyDays(page) {
     'bar cell=' + cellHas(parentSubtotal, 'answered')
       + '  payload a=' + ot.totalAnswered + ' m=' + ot.totalMissed);
 
-  // ---- CSV: the combined export ------------------------------------------
-  // COVERAGE LOST, named rather than quietly dropped: the "single-dept export
-  // has NO Department column" assertion required the retired `own` tab to
-  // produce a one-dept payload. The fixture only has CSR-as-parent, so there is
-  // no single-dept view left to drive here. The branch it guarded
-  // (`meta.deptsShown.length > 1`) is unchanged; covering it again needs a
-  // fixture for a dept with no sub-queues. S43's manual walk still covers it.
+  // ---- CSV -----------------------------------------------------------------
   async function exportCsv() {
     await page.evaluate(() => { window.__CSV__.length = 0; });
     const menuBtn = page.locator('#csv-export-btn');
@@ -285,6 +279,56 @@ async function openDeptThirtyDays(page) {
   record('stored signatures are DISTINCT (the single-slot collapse is gone)',
     !!swr && !!swr.sigs && new Set(swr.sigs).size === swr.slots,
     swr ? swr.slots + ' slots' : '');
+
+  // ---- the SINGLE-dept paths, via a dept with no sub-queues ---------------
+  // 11 of 14 real departments have no sub-queue, so this is the COMMON shape,
+  // and the promise made to it is byte-compatibility: nothing about the
+  // sub-queue work may change what those departments render or export. The
+  // assertion lapsed when the scope switcher was retired (the `own` tab was the
+  // only way to get a one-dept payload); `summary-30d-sales` restores it
+  // without touching fixture data -- Sales's seeded child `PAP` is absent from
+  // this roster, and subQueueChildMap_ drops an edge naming a dept that does
+  // not exist.
+  // The switch itself is now an assertion. It threw a ReferenceError until
+  // 2026-07 -- the handler still cleared two roster caches belonging to the
+  // long-retired Performance and Compare Ranges reports, and under 'use strict'
+  // that threw BEFORE the refresh() on the next line, so the selector silently
+  // did nothing for every admin. No automated check had ever switched
+  // departments, which is exactly why it survived so long.
+  const errsBefore = errors.length;
+  await page.selectOption('#dept-selector', 'Sales');
+  await page.waitForTimeout(2500);
+  record('switching department does not throw',
+    errors.length === errsBefore,
+    errors.slice(errsBefore).join(' | ').slice(0, 140));
+  const single = await page.evaluate(() => {
+    const bar = document.getElementById('dept-subq-bar');
+    return {
+      barHidden: !bar || bar.offsetParent === null,
+      groupHeads: document.querySelectorAll('#agents-tbody tr.subq-group-head').length,
+      subtotals: document.querySelectorAll('#agents-tbody tr.subq-subtotal').length,
+      rows: document.querySelectorAll('#agents-tbody tr[data-agent]').length,
+      totalsRow: !!document.querySelector('#agents-tfoot tr'),
+    };
+  });
+  record('a dept with NO sub-queues renders no relationship bar', single.barHidden,
+    JSON.stringify(single));
+  record('and no group headers or per-dept subtotals',
+    single.groupHeads === 0 && single.subtotals === 0);
+  record('but still renders its agents and a totals row',
+    single.rows > 0 && single.totalsRow, 'rows=' + single.rows);
+  record('and the table actually CHANGED dept (the switch took effect)',
+    single.rows !== beforeRows, 'CSR had ' + beforeRows + ', Sales has ' + single.rows);
+
+  const csvSingle = await exportCsv();
+  const singleHeader = (csvSingle.split('\n')[0] || '');
+  record('single-dept CSV has NO Department column (byte-compatible)',
+    csvSingle.length > 0 && !/^Department,/.test(singleHeader), singleHeader.slice(0, 60));
+  record('and carries no per-dept subtotal or All-shown rows',
+    csvSingle.length > 0 && !/ subtotal/.test(csvSingle) && !/All shown/.test(csvSingle));
+
+  await page.selectOption('#dept-selector', 'CSR');
+  await page.waitForTimeout(2500);
 
   // ---- the missed section's scope note ------------------------------------
   const missedNote = await page.evaluate(() => {
