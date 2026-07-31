@@ -7343,10 +7343,13 @@
   // docs/client-ui-conventions.md.
 
   /**
-   * The always-on relationship line + the switcher. Renders in EVERY scope,
-   * including 'own', because the whole point is that a manager should not have
-   * to discover that a sub-queue exists and is excluded -- that exclusion was
-   * completely invisible before this.
+   * The always-on relationship line. Renders whenever a sub-queue relationship
+   * exists in either direction, because the whole point is that a manager
+   * should not have to DISCOVER that a sub-queue exists -- before this, the
+   * relationship was completely invisible from the table.
+   *
+   * (Named for the scope switcher it used to carry; the switcher is retired.
+   * The name is kept because it is referenced from docs and the harness.)
    */
   function subqRenderScopeBar_(state) {
     var host = $('dept-subq-bar');
@@ -7357,9 +7360,8 @@
     if (!subs.length && !parentOf) { host.style.display = 'none'; host.innerHTML = ''; return; }
     host.style.display = '';
     var dept = m.department || '';
-    var scope = m.subScope || 'own';
 
-    // A CHILD dept just gets the upward pointer -- no switcher, because the
+    // A CHILD dept just gets the upward pointer, because the
     // combined view belongs to the parent (one level, matching the server).
     if (!subs.length && parentOf) {
       host.innerHTML = '<div class="subq-bar-row">'

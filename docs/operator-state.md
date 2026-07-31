@@ -798,8 +798,8 @@ When something looks wrong, before assuming a code bug, check:
     **multiple `Access Control` rows with the same email** instead (Tier C
     multi-department manager -- the Access Control admin modal's dept picker is
     a multi-select). That grants per-dept data access with no relationship
-    implied: both depts stay independent tiles, there is no switcher and no
-    combined view, and nothing is rolled up. Using the parent map here would
+    implied: both depts stay independent tiles, neither appears in the other's
+    My Department table, and nothing is rolled up. Using the parent map here would
     misrepresent the relationship in every rollup, not just the tile grid.
 
     **`Field Ops Power` is settled (owner, 2026-07) and is deliberately NOT in
@@ -877,3 +877,24 @@ When something looks wrong, before assuming a code bug, check:
 
     It also flags a queue claimed by TWO depts (double-counted) and a dept whose
     mapped names appear nowhere in the split (a raw-vs-canonical mismatch).
+
+    **When the audit reconciles but a specific agent's number still looks
+    wrong**, drop to `sampleQueueSplitCallIds()` (**cdr-import** project,
+    editor, read-only, writes nothing). Col AI stores per-queue COUNTS, not call
+    ids, so "CSR answered 269 on A_Q_CSR" cannot be checked against the phone
+    system without re-deriving the legs — this lists the ids per agent per
+    queue so they can be pulled up individually.
+
+    Optional Script Properties, all in the **cdr-import** project:
+    `SAMPLE_AGENT` (one agent, exact name as it appears in DQE col C),
+    `SAMPLE_QUEUE` (one raw queue name, e.g. `Backup CSR`), `SAMPLE_MAX_IDS`
+    (ids printed per agent+queue, default 25).
+
+    **It verifies itself, and the verdict is the part to read.** For every agent
+    it recomputes the split through the REAL `dqeQueueSplitForAgent_` and
+    compares against what col AI actually stored; only agents marked `OK` can be
+    sampled with confidence. `MISMATCH` prints both figures and means either the
+    tool's parse drifted from the build's or the sheet is stale relative to Raw
+    Data. **Scope trap:** it reads the `Raw Data` tab, which holds only the MOST
+    RECENTLY IMPORTED date — to sample an older date, re-import it first, and
+    its `Call_Legs` source must still exist (pruned at 14 days).

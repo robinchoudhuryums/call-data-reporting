@@ -179,7 +179,10 @@ npm run ci:ui                # gen payloads -> build admin+manager -> assert
 # with a message and exits 0, so it is safe to run anywhere; chromium-path.js
 # globs the Playwright browser revision, so CHROMIUM_PATH is rarely needed.
 # THREE ASSERTING drivers gate it -- drive-smoke.js (page/console errors,
-# unmocked RPCs, BLANK chart canvases, horizontal overflow, both roles),
+# unmocked RPCs, BLANK chart canvases, horizontal overflow, both roles, plus
+# VIEW-AS-MANAGER: it enters preview, actually hides the admin-only surfaces
+# -- measured as rendered visibility, not a class -- reverses cleanly, and
+# throws nothing),
 # drive-f13.js (the S39 keyboard walk), and drive-subqueue.js (the collapsible
 # sub-queue groups, the S35 parent-subtotal parity property, the combined AND
 # single-dept CSV shapes -- the ONLY automated coverage of any CSV writer in
@@ -1746,20 +1749,21 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   narrowed rows PARTITION the agent's day and summing them is now correct --
   subtracting would under-count. A range that is not fully split renders a
   warn-toned "all queues before `<date>`" CHIP (`subqSplitChip_`) beside the
-  scope tabs, since a split can never reach dates older than the ~14-day
+  relationship line, since a split can never reach dates older than the ~14-day
   `Call_Legs` retention; the chip removes itself once the range is fully split.
-  **Owner round:** the standing explanation banners are retired -- each scope
-  tab carries its own `title` tooltip instead. That only works because the
-  SELECTED tab is now visibly selected: the buttons carried `is-active` while
-  `.segmented` only styles `.active`, so through Phases 1-3 the active tab had
-  NO visual state and the banner was doing that job by accident. They now carry
-  BOTH classes; `drive-subqueue.js` asserts the rendered background actually
-  differs, not just that a class is present.
+  **Lesson carried over from the retired switcher (worth keeping):** when the
+  standing explanation banners were replaced by per-tab `title` tooltips, the
+  tabs turned out to have had NO visual selected state for three phases -- they
+  carried `is-active` while `.segmented` only styles `.active`, and the banner
+  had been doing that job by accident. So a control whose only state is a class
+  is a control with no state. `drive-subqueue.js` now applies the same rule to
+  what replaced it, asserting the group header's COMPUTED `cursor` rather than
+  the presence of a class.
   See [`docs/sub-queue-split-plan.md`](docs/sub-queue-split-plan.md).
-  The relationship line renders in EVERY scope, including `own`, where it says
-  the sub-queue is excluded -- that exclusion was previously invisible. A CHILD
-  dept gets an upward pointer only, no switcher (the combined view belongs to
-  the parent, matching the server's one-level rule).
+  The relationship line renders whenever a sub-queue relationship exists -- the
+  point is that a manager should not have to discover that a sub-queue exists.
+  A CHILD dept gets an upward pointer only (the combined view belongs to the
+  parent, matching the server's one-level rule).
   **Phase 2 (IR + Insights pickers):** both pickers gain one collapsed group per
   sub-queue, from `getIndividualReportInit`'s new `subQueueGroups` field
   (Insights delegates to the same init, so it inherits it). Built by
@@ -1783,10 +1787,11 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   on, not banners that break sorting. The filename gains a `_subs` / `_all`
   scope tag so two scopes don't overwrite each other. Every cell still routes
   through `csvSafeCell_` (formula injection).
-  **Phase 3 (Missed + Escalations):** the missed section follows the switcher
-  ONLY when the scope resolves to a SINGLE dept (`subs` with one child runs on
-  that child, via `subqMissedDept_`). It deliberately does **NOT merge for
-  `all`** -- the queue-only abandoned section already covers a parent's
+  **Phase 3 (Missed + Escalations):** the missed section shows ONE dept at a
+  time. It defaults to the parent and moves only when a sub-queue's group header
+  button explicitly re-scopes it -- `subqMissedDept_` reads that override
+  (`subqMissedDeptOverride_`, reset on every dept or window change), never a
+  scope. It deliberately does **NOT merge** -- the queue-only abandoned section already covers a parent's
   sub-queue queues (`queuesForDept_` rolls them up), so summing a child's report
   into the parent's would double-count every queue abandon and every
   abandoned-ring bucket in the hour-of-day chart, the same trap as the QCD
@@ -2090,8 +2095,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   column via `pctCsv`. **In a sub-queue COMBINED view it also prepends a
   `Department` column and emits per-dept subtotals + an `All shown` grand
   total** (single-dept exports are byte-identical to before) -- see the
-  sub-queue scope-switcher decision above, and S43. There is **no automated
-  coverage for any CSV writer**, so S43 is the only guard.
+  sub-queue combined-view decision above, and S43. `drive-subqueue.js` is the
+  ONLY automated coverage of any CSV writer in this repo (both shapes, asserted
+  from real Blob bytes); S43 remains the manual walk over the rest.
 - **Source column + roster-only totals (Phase D).** The agent table's
   Source column (between Agent and the Answered/Missed bar) renders one of
   three chips per row: **ROSTER** (accent-soft) for agents on this

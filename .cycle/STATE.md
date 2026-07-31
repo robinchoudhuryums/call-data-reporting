@@ -1603,3 +1603,34 @@ commit/push/deploy direction.
   off: ~8 commits ahead of main un-PR'd; dashboard + cdr-import deploys
   still pending; next natural steps: PR+merge, deploy, regenerate harness
   payloads after any server-shape change.
+
+- **Increment 68 (DONE — view-as harness coverage + /sync-docs, commits
+  cc4ce43/+this):** `drive-smoke.js` now exercises VIEW-AS-MANAGER (28 checks):
+  enters preview, hides the admin-only surfaces measured as RENDERED
+  visibility rather than a class, reverses cleanly, throws nothing. That
+  closes the second of the two follow-ons from increment 67; the first (drop
+  `continue-on-error` from the `ui-harness` CI job) shipped in 35c80b3, so the
+  gate is BLOCKING now.
+  **/sync-docs found one substantial class of drift and it was all the same
+  shape:** the sub-queue scope switcher was retired in a4d9673 and the HEAD of
+  each doc entry was updated while the TAIL was not, so CLAUDE.md and
+  docs/client-ui-conventions.md each contained two entries contradicting each
+  other about whether the tabs exist. Fixed in CLAUDE.md (chip placement, the
+  banner/tooltip paragraph rewritten as the lesson it actually taught, the
+  Phase 3 missed-section rule now describing the group-header override that
+  drives it, and the false "no automated coverage for any CSV writer" claim
+  which its own harness paragraph contradicted), client-ui-conventions (the
+  whole "Sub-queue scope switcher" section + the missed-section rule),
+  regression-scenarios S35 (its addendum instructed an IMPOSSIBLE step — "set
+  the switcher to `<dept> only`" — and now also states the crossover-de-dup
+  exception to counts summing), operator-state (switcher phrasing), and
+  script.html (stale jsdoc + a dead `var scope`). Also documented
+  `sampleQueueSplitCallIds()` + its three Script Properties under Op State #41
+  (it was in active owner use but undocumented), and added fix-history
+  R12-22c/R12-22d for the queue-report email changes.
+  CI 593/593; ci:ui 24+16+31. Where I left off: PR opened and merged.
+  OPERATOR: the Department Dashboard deploy for the email + client changes is
+  still pending. Next: Phase 3 (Missed, `missed:v18`) and Phase 4 (IR/Insights,
+  `insights:v20`) of the queue split are still all-queue; the Insights combined
+  view is unstarted; theme/mode toggles and the Export dropdown beyond the CSV
+  item still have no automated interaction.

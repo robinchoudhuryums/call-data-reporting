@@ -834,20 +834,21 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   filtering out all items -- live on the next hover, no per-instance
   update, and the hovered point still highlights.
 
-## Sub-queue scope switcher (My Department, Phase 1)
+## Sub-queue relationship bar + grouped rows (My Department, Phase 1)
 
 `#dept-subq-bar` sits above `.agents-table-wrap` and is rendered by
-`subqRenderScopeBar_(state)` on every table paint. It shows in EVERY scope --
-including `own`, where the note reads "<subs> is a sub-queue of <dept> — not
-included in these figures". That sentence is the point of the feature: before
-it, the exclusion was completely invisible to a parent-dept manager.
+`subqRenderScopeBar_(state)` on every table paint. It renders whenever a
+sub-queue relationship exists in either direction. That is the point of the
+feature: before it, a parent-dept manager had no way to learn that a sub-queue
+existed at all.
 
-- Scope is persisted per dept in `cdr.dept.subscope` (a `{dept: scope}` JSON
-  blob) and sent as `req.subScope`. It is **omitted when unset**, so the SERVER
-  owns the default (combined for a parent, own otherwise) -- the client must not
-  hardcode the default in a second place, or the two will drift.
-- A CHILD dept renders the upward pointer only, no switcher. One level, matching
-  the server.
+- The three-way scope switcher this bar once carried is **retired** — see
+  "The sub-queue scope SWITCHER is retired; the group header is the control"
+  above for what replaced it and why. The client no longer sends `subScope`;
+  the server still accepts it and still owns the default (combined for a
+  parent, own otherwise), so nothing here should hardcode that default in a
+  second place.
+- A CHILD dept renders the upward pointer only. One level, matching the server.
 - `subqRowGroups_` returns grouped tbody HTML, or **null** when there is nothing
   to group -- a single-dept payload then takes the unchanged flat path, which is
   what keeps 11 of 14 depts byte-identical.
@@ -889,11 +890,16 @@ that department's own subtotal, then a grand total labelled `All shown`.
 reads top-to-bottom; a spreadsheet reader wants a Department COLUMN it can pivot
 and filter on, and banner rows break both. The two surfaces differ on purpose.
 
-The download filename gains a `_subs` / `_all` tag so exporting two scopes of the
-same dept and range doesn't silently overwrite.
+The download filename gains a `_subs` / `_all` tag from `meta.subScope` so
+exporting two scopes of the same dept and range doesn't silently overwrite. The
+client no longer sends a scope, so in practice the tag now reflects the server's
+default — kept because the server still varies it.
 
-The **missed section** follows the switcher only for single-dept scopes
-(`subqMissedDept_`). For `all` it stays on the parent, because the queue-only
+The **missed section** shows ONE dept at a time. It stays on the parent unless a
+sub-queue's group-header button re-scopes it (`subqMissedDept_` reads that
+override and nothing else; it resets on every dept or window change, because a
+child's missed calls left pinned across a department switch would be *wrong*,
+not merely stale). It never merges, because the queue-only
 abandoned section already includes the parent's sub-queue queues via
 `queuesForDept_` — merging a child's report in would double-count every queue
 abandon and every abandoned-ring chart bucket. `subqMissedScopeNote_` renders one
