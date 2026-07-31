@@ -219,15 +219,23 @@ test('R12-22: parent-grouped sections -- child nests as a sub-row, single-queue 
 // dept's month-to-date count had nowhere to appear. The fixture's Sales dept
 // is exactly that shape: single queue, 0 violations in range, violationsMtd 1.
 
+// The value sits in the real Viol column, NOT as " N viol MTD" appended to the
+// summary text -- the column already has a header, so the label was repeating
+// it. That means the banner spans 3 columns plus its own 4th cell.
+
 test('viol MTD renders on the banner of a GREEN single-queue dept (the reported gap)', function () {
   h.state.props.DASHBOARD_URL = 'https://example.com/exec';
   const html = h.call('buildQueueReportEmailHtml_', emailFixture(), '2026-07-10', false);
   // Sales: 2.5% abandoned, 0 violations TODAY, 1 month-to-date. It renders
   // banner-only, so before this change the 1 was invisible.
-  assert.match(html, /1 viol MTD/,
-    'a dept green today but carrying an earlier violation must still report it');
-  // And it rides the same banner line as the calls/abandoned summary.
-  assert.match(html, /1 abandoned \(2\.5%\)<\/span>[\s\S]{0,120}1 viol MTD/);
+  assert.doesNotMatch(html, /viol MTD/,
+    'the label is redundant with the column header it sits under');
+  assert.match(html, /colspan="3"/,
+    'the banner spans 3 cols so its 4th cell lands under Viol (MTD)');
+  // The banner's own Viol cell, right after the nested strip table closes.
+  assert.match(html, /<\/table><\/td><td align="right"[^>]*>1<\/td>/,
+    'a dept green today but carrying an earlier violation must still report it, '
+    + 'as a bare number in the Viol column');
 });
 
 test('viol MTD on the banner is the SECTION total (parent + children)', function () {
@@ -239,7 +247,7 @@ test('viol MTD on the banner is the SECTION total (parent + children)', function
     queues: [{ queue: 'A_Q_Spanish', totalCalls: 20, totalAnswered: 18, abandoned: 2,
       abandonedPct: 10, abandonedPctStr: '10.00%', violations: 1, violationsMtd: 3 }] });
   const html = h.call('buildQueueReportEmailHtml_', fx, '2026-07-10', false);
-  assert.match(html, /9 viol MTD/,
+  assert.match(html, /<\/table><\/td><td align="right"[^>]*>9<\/td>/,
     "CSR's own 6 + nested Spanish's 3 -- the banner reports the SECTION, like "
     + 'the calls and abandoned figures beside it');
 });
@@ -249,9 +257,44 @@ test('a dept with NO month-to-date violations renders no MTD chip at all', funct
   fx.depts[1].totals.violationsMtd = 0;
   fx.depts[1].queues[0].violationsMtd = 0;
   const html = h.call('buildQueueReportEmailHtml_', fx, '2026-07-10', false);
-  assert.doesNotMatch(html, /0 viol MTD/,
-    'a clean dept says nothing rather than advertising a zero');
-  assert.match(html, /6 viol MTD/, "but CSR's still shows");
+  assert.doesNotMatch(html, /<\/table><\/td><td align="right"[^>]*>0<\/td>/,
+    'a clean dept leaves the cell EMPTY rather than advertising a zero');
+  assert.match(html, /<\/table><\/td><td align="right"[^>]*>6<\/td>/,
+    "but CSR's still shows");
+});
+
+test('each dept banner links to ITS OWN My Department page', function () {
+  h.state.props.DASHBOARD_URL = 'https://example.com/exec';
+  const html = h.call('buildQueueReportEmailHtml_', emailFixture(), '2026-07-10', false);
+  assert.match(html, /href="https:\/\/example\.com\/exec#\/dept\?dept=CSR"/);
+  assert.match(html, /href="https:\/\/example\.com\/exec#\/dept\?dept=Sales"/);
+  // Authorization is NOT carried by the link. assertDeptAccess_ gates every
+  // endpoint server-side, and the client's '/dept' provider ignores a dept the
+  // viewer does not hold -- so a recipient clicking another dept's line lands
+  // on their OWN dept, not on an error. This report's subscriber list is not
+  // the Access Control roster, so that case is expected.
+  // (The raw-& case is asserted precisely in the next test, against a dept name
+  // that actually contains one. A document-wide scan for a bare `&` here just
+  // matches the `&middot;` separators everywhere else in the email.)
+});
+
+test('a dept name with spaces and & survives the link encoding', function () {
+  h.state.props.DASHBOARD_URL = 'https://example.com/exec';
+  const fx = emailFixture();
+  fx.depts[1].dept = 'Eligibility MM&R';
+  const html = h.call('buildQueueReportEmailHtml_', fx, '2026-07-10', false);
+  // Encoded in the href ('Eligibility MM&R' would otherwise truncate at the &)
+  // and HTML-escaped in the visible label.
+  assert.match(html, /dept=Eligibility%20MM%26R/);
+  assert.match(html, /Eligibility MM&amp;R/);
+});
+
+test('with DASHBOARD_URL unset the banner is plain text, not a dead link', function () {
+  delete h.state.props.DASHBOARD_URL;
+  const html = h.call('buildQueueReportEmailHtml_', emailFixture(), '2026-07-10', false);
+  assert.doesNotMatch(html, /href="#\/dept/,
+    'an unset URL must degrade to plain text, like the CTA block does');
+  assert.match(html, /Company total/, 'and the rest of the email still renders');
 });
 
 test('the company total no longer sums month-to-date violations', function () {

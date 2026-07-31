@@ -500,10 +500,35 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
       deptQueues(c).forEach(function (q) { rowDefs.push({ q: q, sub: c.dept }); });
     });
     const singleRow = rowDefs.length === 1;
-    const bannerName = esc(d.dept)
+    // Owner round: the dept name is a LINK into that dept's My Department page.
+    //
+    // Authorization is NOT delegated to this link, and must never be read as if
+    // it were. `assertDeptAccess_` gates every report endpoint server-side and
+    // rejects a dept outside the viewer's `user.departments` whatever the client
+    // asks for. The client's '/dept' share-state provider additionally IGNORES a
+    // dept the viewer doesn't hold, so a recipient who clicks another
+    // department's line lands on their OWN dept rather than on an error page --
+    // this report goes to a subscriber list that is not the same thing as the
+    // Access Control roster, so that case is expected, not exceptional.
+    //
+    // encodeURIComponent for the value (dept names carry spaces and '&' --
+    // 'Eligibility MM&R' would otherwise truncate at the ampersand), then esc()
+    // for the surrounding HTML attribute.
+    const deptLink = dashUrl
+      ? (dashUrl + '#/dept?dept=' + encodeURIComponent(d.dept))
+      : '';
+    const deptLabel = esc(d.dept)
       + (singleRow && rowDefs[0].q.queue !== d.dept
           ? ' <span style="font-weight:normal;font-size:11px;color:' + C.mut + ';">&middot; ' + esc(rowDefs[0].q.queue) + '</span>'
           : '');
+    // Underline-free + inherited color so the banner looks unchanged; without
+    // the explicit color some clients paint it link-blue against the tinted
+    // strip. Falls back to plain text when DASHBOARD_URL is unset, exactly as
+    // the CTA block below already does.
+    const bannerName = deptLink
+      ? ('<a href="' + esc(deptLink) + '" style="color:' + C.ink
+         + ';text-decoration:none;">' + deptLabel + '</a>')
+      : deptLabel;
     const stripBg = dt.color === C.bad ? C.badTile : (dt.color === C.watch ? C.alertBg : C.okBg);
     // Owner round: month-to-date violations on the BANNER. A section whose
     // whole story is one queue renders banner-only (no per-queue rows), so its
@@ -512,18 +537,26 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
     // opposite of what the column is for. Rendered whenever > 0, on every
     // section, so it does not depend on today's tier.
     const secViolMtd = Number(sec.violMtd) || 0;
-    const bannerViol = secViolMtd > 0
-      ? (' &middot; <span style="font-weight:bold;color:' + dt.color + ';">'
-         + esc(String(secViolMtd)) + ' viol MTD</span>')
-      : '';
-    tbl += '<tr><td colspan="4" style="padding:0;border-top:1px solid ' + C.rowline + ';">'
+    // Owner round: the section's MTD violations move OUT of the summary text and
+    // into the real Viol column, so the banner reads "4" under the "Viol (MTD)"
+    // header instead of repeating the label as " 4 viol MTD". That means the
+    // banner can no longer colspan the whole table -- it spans the first three
+    // columns and gets its own fourth cell, which has to repeat the strip's
+    // background and top border by hand so the row still reads as one band.
+    tbl += '<tr>'
+      + '<td colspan="3" style="padding:0;border-top:1px solid ' + C.rowline + ';">'
       + '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:' + stripBg + ';border-left:4px solid ' + dt.color + ';border-collapse:separate;"><tr>'
       +   '<td style="padding:8px 12px;font:bold 13px Arial,sans-serif;color:' + C.ink + ';">' + bannerName + '</td>'
       +   '<td align="right" style="padding:8px 12px;font:12px ' + sans + ';color:' + C.mut + ';white-space:nowrap;">'
       +     esc(dCalls) + ' calls &middot; <span style="' + (dPct >= 5 ? 'font-weight:bold;color:' + C.bad : 'color:' + C.ink) + ';">' + esc(dAbnd) + ' abandoned (' + esc(dPctStr) + ')</span>'
-      +     bannerViol
       +   '</td>'
-      + '</tr></table></td></tr>';
+      + '</tr></table></td>'
+      + '<td align="right" style="background:' + stripBg + ';border-top:1px solid ' + C.rowline
+      +   ';padding:8px 12px;font:' + (secViolMtd > 0 ? 'bold ' : '') + '12px ' + sans
+      +   ';color:' + (secViolMtd > 0 ? dt.color : C.mut) + ';">'
+      +   (secViolMtd > 0 ? esc(String(secViolMtd)) : '')
+      + '</td>'
+      + '</tr>';
     if (singleRow) return;   // the banner IS the row -- no duplicate numbers
     rowDefs.forEach(function (rd) {
       const q = rd.q;

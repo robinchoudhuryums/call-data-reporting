@@ -41,12 +41,17 @@ jobs:
   # console errors, unmocked RPCs, BLANK chart canvases (the R12-1 class), and
   # horizontal page overflow -- plus the S39 keyboard-access walk (F13).
   #
-  # `continue-on-error` for now: the gate is new, and a flaky headless render
-  # must not block a correct pipeline fix on day one. Flip it off (delete the
-  # line) once it has run green across a few PRs.
+  # BLOCKING since 2026-07. It ran `continue-on-error` while it proved itself,
+  # and it has now caught two bugs that reached production and that nothing else
+  # could see: CSS appended after `</style>` rendering as visible text at the top
+  # of the page, and the header department selector throwing a ReferenceError so
+  # that no admin could change departments. Both were invisible to `node --test`
+  # -- one is markup structure, the other needs a real click -- and both were
+  # found by an assertion that only exists here. Advisory was the right call on
+  # day one and the wrong one now: a gate nobody has to heed is a gate that
+  # reports the next one just as quietly.
   ui-harness:
     runs-on: ubuntu-latest
-    continue-on-error: true
     env:
       TZ: America/Chicago
     steps:

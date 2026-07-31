@@ -519,6 +519,19 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   with the Alerts engine. The bm-* tint wins on `.ds-kpi__value`/`__foot`
   via the two-class overrides in `styles.html` (the ds-* layer lands
   after `.bm-target`/`.bm-over`).
+- **Deep-linking to a specific department: `#/dept?dept=<name>`.** The Daily
+  Call Queue Report email hangs this on each department's banner line so a
+  recipient lands on THAT dept's My Department page. **It is not a security
+  boundary and must not be read as one** -- `assertDeptAccess_` gates every
+  report endpoint server-side and rejects a dept outside `user.departments`
+  whatever the client sends. What the client's `SHARE_STATE_['/dept']` provider
+  adds is graceful failure: a dept the viewer does not hold is IGNORED and they
+  land on their own, rather than being shown a server error for a link they were
+  emailed -- and the queue report's subscriber list is not the Access Control
+  roster, so that case is expected rather than exceptional. Matching is EXACT
+  (INV-04); the dept is `encodeURIComponent`-ed because names carry spaces and
+  `&` (`Eligibility MM&R` would truncate otherwise). A single-dept manager has
+  no selector, so it is a no-op for them either way.
 - **The sub-queue scope SWITCHER is retired; the group header is the control.**
   A parent dept's My Department table is always the combined view, grouped per
   dept, and each group's heading row toggles its agent rows. Collapsing KEEPS

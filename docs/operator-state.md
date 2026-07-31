@@ -45,7 +45,11 @@ When something looks wrong, before assuming a code bug, check:
    the missing sheet, and the Orphan Fix modal will throw "sheet
    missing -- run setup()" on first write.
 7. For alerts AND report-modal new-tab buttons: is the
-   `DASHBOARD_URL` Script Property set? Two consumers since Phase C
+   `DASHBOARD_URL` Script Property set? THREE consumers now -- the third
+   (2026-07) is the **Daily Call Queue Report email's per-dept links**: each
+   department's banner line links to `#/dept?dept=<name>`, and with the
+   property unset the banner degrades to plain text (no dead link, but no
+   route into the app either). The first two, since Phase C
    (commit ce4220a): (a) the "Open Dashboard" link in alert emails
    — without the property, emails still send but omit the link;
    (b) the `↗ Open in new tab` buttons on every report modal —

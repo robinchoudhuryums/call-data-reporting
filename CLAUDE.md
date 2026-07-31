@@ -187,9 +187,12 @@ npm run ci:ui                # gen payloads -> build admin+manager -> assert
 # bytes, S43 -- and the header DEPARTMENT SWITCH, which threw a ReferenceError
 # in production until a driver first tried it). The other drivers (drive.js /
 # drive-insights.js / drive-phase3.js) emit screenshots + reports for a human
-# and are deliberately NOT in the gate. Runs in CI as the `ui-harness` job
-# (currently `continue-on-error: true` while the gate proves itself -- drop
-# that line once it's been green across a few PRs). Re-run it after touching
+# and are deliberately NOT in the gate. Runs in CI as the `ui-harness` job, and is
+# BLOCKING since 2026-07: it has now caught two bugs that reached production and
+# that nothing else could see -- CSS appended after `</style>` rendering as
+# visible text, and the header dept selector throwing so no admin could switch
+# departments. Neither is reachable from `node --test` (one is markup structure,
+# the other needs a real click). Re-run it after touching
 # script.html, styles.html, dashboard.html, or any payload shape.
 ```
 

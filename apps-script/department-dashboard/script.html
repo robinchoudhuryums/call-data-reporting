@@ -4001,6 +4001,40 @@
       { fields: { from: 'ins-from', to: 'ins-to', mode: 'ins-compare-mode', pfrom: 'ins-prior-from', pto: 'ins-prior-to' },
         agentList: 'ins-agent-list' },
       function (list) { insPendingAgentSelection_ = list; }),
+    // '#/dept?dept=<name>' -- the per-dept deep link the Daily Call Queue
+    // Report email hangs on each department's banner line, so a recipient
+    // lands on THAT dept's My Department page instead of their default one.
+    //
+    // THIS IS NOT A SECURITY BOUNDARY, and must not be mistaken for one. The
+    // real gate is server-side `assertDeptAccess_`, which every report endpoint
+    // calls and which rejects a dept outside `user.departments` regardless of
+    // what any client sends. What this does is fail GRACEFULLY: an unauthorized
+    // dept in the link is ignored and the viewer lands on their own dept,
+    // rather than being shown a server error for a link they were emailed. A
+    // single-dept manager has no selector at all, so `getRequestedDept()`
+    // returns their own dept and this is a no-op for them either way.
+    //
+    // Exact match, per INV-04 -- dept names are compared case- and
+    // whitespace-sensitively everywhere else in the app, and a lenient match
+    // here would be the one place that is not true.
+    '/dept': {
+      collect: function () {
+        var d = getRequestedDept();
+        return d ? { dept: d } : null;
+      },
+      apply: function (p) {
+        var want = String((p && p.dept) || '').trim();
+        if (!want) return;
+        var allowed = (typeof USER !== 'undefined' && USER && USER.departments) || [];
+        if (allowed.indexOf(want) === -1) return;   // not theirs -- keep their own
+        var sel = $('dept-selector');
+        if (sel && sel.value !== want) {
+          sel.value = want;
+          if (sel.value !== want) return;           // option absent -- leave as-is
+        }
+        refresh();
+      },
+    },
   };
 
   // Phase 2 #8: the Insights provider also carries the Simple/Detailed mode
