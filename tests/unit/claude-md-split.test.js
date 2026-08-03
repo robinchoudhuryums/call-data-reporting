@@ -162,3 +162,92 @@ test('F8 split: CLAUDE.md stays under the size budget', function () {
     + 'docs/regression-scenarios.md, docs/client-ui-conventions.md) rather than '
     + 'raising this number.');
 });
+
+// ── Per-bullet ratchet ─────────────────────────────────────────────────────
+//
+// The whole-file size cap above is a CLIFF: it fires at 200 KB, by which point
+// the fix is an emergency reorganisation mid-task. It also fires on the wrong
+// author -- whoever happens to add the last paragraph, not whoever has been
+// growing a bullet for weeks.
+//
+// The measured growth pattern says that is the wrong shape. Between the F8
+// split and 2026-08-03 CLAUDE.md went 149.6 KB -> 178.1 KB, and Common Gotchas
+// gained only TWO bullets in that time: ~77% of its growth was EXISTING bullets
+// accreting prose. So the useful signal is per-bullet, and it should fire in
+// the commit that grows one, while the author still has the context to decide
+// what is a RULE (stays) and what is the incident that taught it (belongs in
+// docs/fix-history.md).
+//
+// Design: a RATCHET, not a flat cap. New bullets must come in under
+// MAX_BULLET_BYTES. The bullets already over it are grandfathered at their
+// measured size and may only SHRINK -- growing one fails, and every extraction
+// pass tightens its own budget automatically. Lower a number here when you
+// shrink a bullet; never raise one to make room for new prose.
+//
+// The seeds below were measured at the CLOSE of the 2026-08-03 extraction pass,
+// not during it. That distinction earned itself: a mid-edit snapshot made the
+// ratchet fire on its own author when a separate token-loss check then required
+// restoring three dropped identifiers, and the tempting fix -- shaving unrelated
+// prose until an arbitrary number was satisfied -- would have been the ratchet
+// causing exactly the damage it exists to prevent. Re-seed from a finished
+// state; shave prose only when the prose is the problem.
+const MAX_BULLET_BYTES = 4096;
+const GRANDFATHERED = {
+  'Inbound-call capture is Neon-only and rides the daily import.': 12834,
+  'Role model + the all-departments manager (`allDepts`).': 6160,
+  'Neon read-back (F1) is flag-gated and defaults OFF.': 5554,
+  "Neon write discipline (don't regress this — it caused a daily-import\n  timeout).": 4896,
+  'Direct-extension call metrics are a separate population from the\n  DQE/QCD queue metrics, with a "busy" carve-out.': 4848,
+};
+
+function gotchaBullets() {
+  const i = CLAUDE.indexOf('\n## Common Gotchas');
+  const j = CLAUDE.indexOf('\n## Key Design Decisions');
+  assert.ok(i !== -1 && j > i, 'Common Gotchas / Key Design Decisions headings not found');
+  const body = CLAUDE.slice(i, j);
+  const starts = [];
+  const rx = /^- \*\*/gm;
+  let m;
+  while ((m = rx.exec(body)) !== null) starts.push(m.index);
+  starts.push(body.length);
+  const out = [];
+  for (let k = 0; k < starts.length - 1; k++) {
+    const text = body.slice(starts[k], starts[k + 1]);
+    const title = text.split('**')[1].trim();
+    out.push({ title: title, bytes: Buffer.byteLength(text, 'utf8') });
+  }
+  return out;
+}
+
+test('F8 split: no NEW Common Gotchas bullet exceeds the per-bullet budget', function () {
+  const oversized = gotchaBullets().filter(function (b) {
+    return b.bytes > MAX_BULLET_BYTES
+      && !Object.prototype.hasOwnProperty.call(GRANDFATHERED, b.title);
+  });
+  assert.deepEqual(oversized.map(function (b) { return b.title + ' (' + b.bytes + 'B)'; }), [],
+    'A Common Gotchas bullet is over ' + MAX_BULLET_BYTES + ' bytes. That is '
+    + 'usually a sign the RULE has been buried in the story of the incident that '
+    + 'produced it. Move the narrative to docs/fix-history.md under the fix code '
+    + 'it already cites and leave the rule + a pointer, per the "one bullet, one '
+    + 'rule" note at the top of Common Gotchas. If it genuinely is all rule, add '
+    + 'it to GRANDFATHERED with its measured size.');
+});
+
+test('F8 split: grandfathered bullets may only SHRINK', function () {
+  const bySize = {};
+  gotchaBullets().forEach(function (b) { bySize[b.title] = b.bytes; });
+  const grown = [], gone = [];
+  Object.keys(GRANDFATHERED).forEach(function (title) {
+    if (!(title in bySize)) { gone.push(title); return; }
+    if (bySize[title] > GRANDFATHERED[title]) {
+      grown.push(title + ': ' + GRANDFATHERED[title] + 'B -> ' + bySize[title] + 'B');
+    }
+  });
+  assert.deepEqual(grown, [],
+    'A grandfathered bullet GREW. These are the five biggest bullets in the file '
+    + 'and the ratchet exists so they can only go down: put the addition in '
+    + 'docs/fix-history.md, or shrink something else in the same bullet first.');
+  assert.deepEqual(gone, [],
+    'A GRANDFATHERED title no longer matches any bullet -- if you renamed or '
+    + 'removed it, update the map (and lower the number if it shrank).');
+});

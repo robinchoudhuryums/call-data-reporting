@@ -2,7 +2,7 @@ Read CLAUDE.md and README before starting. Do not make any changes until the com
 
 You are detecting documentation drift — places where the docs no longer match the code, or where state that needs documentation is hiding in the operator's head.
 
-Run all four checks; produce a single drift report at the end.
+Run all five checks; produce a single drift report at the end.
 
 ═══════════════════════════════════════════ CHECK 1 — CLAUDE.md CURRENCY ═══════════════════════════════════════════
 
@@ -42,6 +42,38 @@ For every recent change (since the last /sync-docs run, or the last ~10 commits 
 Does the change introduce behavior that contradicts something in CLAUDE.md or the README?
 Does the change introduce a new design decision or invariant that should be captured?
 Does the change change a command, deploy step, or runtime expectation that the docs still describe in the old way?
+═══════════════════════════════════════════ CHECK 5 — DOC WEIGHT (prune, don't only append) ═══════════════════════════════════════════
+
+Every previous run of this command ADDED. None removed. CLAUDE.md is injected
+into every session's context, so that ratchet has a real cost: it reached
+372 KB once, was split to 150 KB, and grew back to 178 KB within a week —
+~77% of the regrowth being EXISTING bullets accreting prose rather than new
+subjects. Drift is not only "the docs say something false"; it is also "the
+docs say something true at a length nobody will read."
+
+Report the weight, then look for prunable content:
+
+- Current CLAUDE.md size and its headroom against the budget in
+  `tests/unit/claude-md-split.test.js`. Flag if under ~20 KB of headroom.
+- The largest Common Gotchas bullets, and whether any exceeds the per-bullet
+  ratchet in that same test.
+- For each of the biggest: does it contain NARRATIVE that belongs in
+  `docs/fix-history.md`? The test for a sentence is *does a developer need
+  this in context to avoid breaking something, or does it explain how we
+  learned it?* Measurements, eliminated hypotheses, "before the fix it did X",
+  and commit archaeology are all the second kind. Check whether the fix code
+  it cites ALREADY has a fix-history entry — usually it does, which makes the
+  removal a deletion of duplicate rather than a relocation.
+- Any rule now enforced by a test: propose collapsing it to one line naming
+  the test.
+- Any entry describing something as future/planned that has since SHIPPED.
+
+**Do not propose deleting a rule.** The risk in this check is the opposite of
+the others: quietly dropping a load-bearing sentence. Before proposing any
+removal, verify every fix code, `INV-`/`S`/Operator-State reference, backticked
+identifier, and Script Property name in the removed text still resolves
+somewhere in the live doc set — and say so in the report.
+
 ═══════════════════════════════════════════ OUTPUT — DOCUMENTATION DRIFT REPORT ═══════════════════════════════════════════
 
 ---DOCUMENTATION DRIFT REPORT---
@@ -61,6 +93,11 @@ OPERATOR STATE ITEMS NOT DOCUMENTED:
 IMPLEMENTATION DRIFT:
 
 [commit / area] | [what the docs say] | [what the code now does] | [fix] (or "None")
+
+DOC WEIGHT:
+
+CLAUDE.md [size] KB, [headroom] KB headroom. Largest bullets: [list].
+[bullet] | [narrative that belongs in fix-history / rule now covered by a test / shipped-since-written] | [proposed cut, with confirmation that every dropped reference still resolves] (or "None — nothing prunable")
 PROPOSED CHANGES (file-by-file):
 
 [file] | [change] | [rationale]
