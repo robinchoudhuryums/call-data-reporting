@@ -126,8 +126,9 @@ bash scripts/check-duplicated-files.sh
 # on the page. That shipped once, and the rendered-UI gate structurally cannot
 # see it: no console error, no blank canvas, no overflow), queue-split (the
 # sub-queue Phase 1 pipeline column -- pins cols A..AH byte-identical so the
-# append stays provably additive -- plus the Phase 2 reader's three fail-open
-# paths and its INVERSION of the Phase 0 crossover de-dup),
+# append stays provably additive -- plus the Phase 2 reader's FOUR fail-open
+# paths, its S2-0 QUEUE_SPLIT_SCOPE gate (default off) and its INVERSION of the
+# Phase 0 crossover de-dup),
 # subqueue-access (Phase 0 access widening + the Phase 1 merge layer +
 # the Phase 2 picker groups), claude-md-split (the F8 index↔file guard: an invariant / scenario /
 # operator item that exists in docs/ but not in CLAUDE.md's index -- or vice
@@ -559,6 +560,11 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   touching col 35 (a getRange past `getMaxColumns` throws -- REP-10). Mirrored
   to `dqe_history.queue_split` via an idempotent ADD COLUMN, and every upsert
   COALESCEs so a sheet-sourced NULL can't erase a stored split.
+  **The pipeline always WRITES this column; whether any dashboard surface USES
+  it is a separate switch** -- `QUEUE_SPLIT_SCOPE`, default `off` (Operator
+  State #42). So keep deploying and backfilling the split on its own urgency
+  (the 14-day window closes regardless); the reader gate does not slow that
+  down, and turning the gate on later costs nothing extra.
 - **`buildDQEHistoricalData.js` is also duplicated** between
   `apps-script/cdr-report/` and `apps-script/cdr-import/`. Same INV-16
   byte-identical discipline as `neonWrite.js`. cdr-import calls it
@@ -1763,14 +1769,46 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   deduped: a doubled sum is arithmetically wrong, while a mean weighting one
   agent in two depts stays in range, and recomputing it would move the number
   for EVERY combined view.
-  **Phase 2 closes it at the source:** `applyQueueSplitToRows_` (Data.gs)
-  narrows each source row to the dept's OWN queues -- matched
-  case-insensitively against `inboundQueuesForDept_`, the raw-name union --
-  BEFORE `computeSummary_`'s aggregation loop, so E5, INV-53, diagnostics and
-  the totals all inherit it unchanged. It **FAILS OPEN three ways** (a dept with
-  no mapped queues, a row with no split, unparseable JSON all keep the rollup),
-  because showing a dept ZERO calls is far worse than too many; each row carries
-  `queueScoped` so the client can say which numbers were narrowed.
+  **Phase 2 closes it at the source -- but is GATED OFF by default (S2-0).**
+  `applyQueueSplitToRows_` (Data.gs) narrows each source row to the dept's OWN
+  queues -- matched case-insensitively against `inboundQueuesForDept_`, the
+  raw-name union -- BEFORE `computeSummary_`'s aggregation loop, so E5, INV-53,
+  diagnostics and the totals all inherit it unchanged.
+  **Read the gate before reasoning about any dept's numbers:** the narrowing
+  runs only when the `QUEUE_SPLIT_SCOPE` Script Property is `dept` (unset /
+  anything else = `off`, the default). It is off because
+  `applyQueueSplitToRows_` is called from exactly ONE place --
+  `computeSummary_` -- so it reached the My Department table and the manager
+  digests while the Overview, Insights, the Individual Report, the Missed
+  report and the low-answer-rate ALERT engine all kept reporting ALL-QUEUE
+  figures for the same dept and window. Two live definitions of "a
+  department's calls" is worse than one imperfect one: a manager comparing the
+  Overview tile to the My Department totals saw two answer rates with nothing
+  explaining the gap, and the alert threshold was evaluated on a different
+  number than the dashboard displayed. Flip to `dept` only once Phase 3
+  (Missed), Phase 4 (IR/Insights), the Overview and Alerts all narrow too --
+  see Operator State #42. The gate lives INSIDE the function so those phases
+  inherit it by adopting it rather than each re-deciding, and the scope joins
+  the `summary:v18` cache key as a suffix (the CORE-3 read-source pattern) so a
+  flip can't serve the other mode's table for the TTL.
+  It **FAILS OPEN four ways** -- a dept with no mapped queues, a row with no
+  split, and unparseable JSON all keep the rollup; and (B-1) so does a whole
+  window in which the dept's mapped queues match NONE of the queue names the
+  splits actually carry. That fourth one is a CONFIGURATION fault, not a quiet
+  day: `queuesForDept_` returns QCD-canonical names (`A_Q_CustomerSuccess`)
+  while a split's keys are the RAW pipeline names (`A_Q_CSR`), bridged only by
+  the admin-populated Dept Config "Inbound queue aliases" column, and nothing
+  verifies that bridge is complete -- so before the guard a name mismatch
+  rendered the department as ZERO with every chip silent, because the range
+  genuinely WAS split-aware. It is assessed per WINDOW, never per row: one row
+  matching nothing is legitimate (a crossover agent whose whole day was on the
+  other dept's queues) and failing open there would re-introduce the very bug
+  Phase 2 exists to fix. An `{}` split contributes no queue names, so a
+  genuinely idle window still narrows to zero. A PARTIAL mismatch keeps its
+  narrowing but reports the dropped queue (`meta.queueSplitUnmatched` -> a
+  "missing a queue" chip). All four exist because showing a dept ZERO calls is
+  far worse than too many; each row carries `queueScoped` so the client can say
+  which numbers were narrowed.
   `avgAbdWait`/`csrAvgAbdWait` are NOT narrowed -- the pipeline stamps one
   per-DAY value on every row, so they were never per-agent. **Phase 2 INVERTS
   the Phase 0 rule:** a `queueScoped` row is never de-duplicated, because two
@@ -2301,7 +2339,7 @@ items for anything it flags or doesn't cover.)
 11. Pipeline Health sheet -- a long quiet stretch on `autoImport` or any DQE-freshness step
 12. Manager digest not delivered -- the seven things to check
 13. `ADMIN_EMAILS` Script Property (a new admin who sees no admin features)
-14. A dept shows "No queues mapped" / no QCD chips -- map its queues (Dept Config, no redeploy); since sub-queue Phase 2 the SAME list narrows My Department's per-agent numbers, so a partially-mapped dept now under-reports
+14. A dept shows "No queues mapped" / no QCD chips -- map its queues (Dept Config, no redeploy); the SAME list narrows My Department's per-agent numbers WHEN `QUEUE_SPLIT_SCOPE=dept` (#42), so a partially-mapped dept under-reports only in that mode
 15. `TARGET_SS_ID` in CDR Import must point at the CDR Report spreadsheet
 16. `NEON_*` Script Properties in CDR Import (without them, mirror writes silently skip)
 17. `HMAC_SECRET` must match across cdr-import, cdr-report AND the dashboard
@@ -2329,6 +2367,7 @@ items for anything it flags or doesn't cover.)
 39. Sub-queue ACCESS widening -- who gains what on deploy, with no admin edit (INV-38)
 40. Per-queue split backfill -- a ONE-TIME step whose 14-day window CLOSES; miss it and those dates can never be split
 41. A dept's totals changed after a re-import -- `auditQueueSplitAttribution()` separates "the de-dup worked" from "a queue is mapped to no dept and its calls were dropped"
+42. `QUEUE_SPLIT_SCOPE` -- the per-dept queue-narrowing switch (default `off`); what must ship before it can be `dept`, and what each mode makes the numbers mean
 
 ## Cycle Workflow Config
 
