@@ -1784,3 +1784,102 @@ commit/push/deploy direction.
   from the Health page; zero-subscriber digest records `ok`), B-5 (sentinel
   rows bypass the work-window filter), B-6 (combined-view meta describes only
   the primary dept), plus the small dead-code list in the block file.
+
+- **Increment 72 (DONE — CLAUDE.md extraction pass + three process guards;
+  block: `.cycle/blocks/72-claude-md-extraction-broad-implement.md`):** The
+  owner asked whether CLAUDE.md needs a second split. **Answer: no, and a
+  split would have been the wrong fix.** The measurement is what settled it —
+  372 KB → 150 KB at the F8 split, back to 178 KB in seven days; 51 → 53
+  bullets, but only ~3 KB of that from the two NEW bullets and ~10 KB from
+  EXISTING ones growing. Splitting again would move weight without touching
+  the mechanism that produces it, and would buy roughly a week.
+
+  **What shipped instead: one extraction pass plus three things that make the
+  growth visible per commit.**
+
+  **Extraction (5 of the 8 biggest bullets).** Inbound capture 17.5 → 12.8 KB;
+  role model; Neon write discipline; System Health; deferred Neon mirror. The
+  rule in each case survives verbatim — what left is chronology (how a defect
+  was found, which increment fixed it, what four explanations were eliminated),
+  and every fix code cited already had a `docs/fix-history.md` entry, which is
+  what made this deletion-of-duplicate rather than relocation. **I verified
+  that BEFORE editing, and it is the single fact that made the edit low-risk.**
+  One entry was not narrative but STALE — a "future lever" that had since
+  shipped as the deferred mirror. The 3 remaining top-8 bullets (coercion 3.8
+  KB, direct-extension metrics 4.8 KB, read-back 5.6 KB) were assessed and
+  deliberately left: on close reading they are rule, not padding, and the
+  coercion one is the most safety-critical gotcha in the file.
+
+  **The honest number: 178.1 → 171.7 KB, only −6.4 KB.** That is the finding,
+  not a disappointment — the bullets are mostly genuinely rules, so extraction
+  is not the lever. The ratchet is.
+
+  **Suggestion 2 (the durable one): a per-bullet RATCHET in
+  `claude-md-split.test.js`.** New Common Gotchas bullets must be under 4 KB;
+  the five already over are grandfathered at measured size and may only
+  SHRINK. The 200 KB cap is a CLIFF — it fires on whoever adds the last
+  paragraph, not on whoever grew a bullet over six weeks. Negative-tested in
+  both directions.
+
+  **The ratchet fired on its own author, and the resolution is recorded in the
+  test.** Restoring three pointers the loss-checker caught pushed the inbound
+  bullet past its seeded size; I shaved unrelated prose three times before
+  recognising the seed was a MID-EDIT snapshot, not a real previous size. Two
+  lessons, both in the test comment: seed from a FINISHED state, and shaving
+  unrelated prose to satisfy an arbitrary number is the ratchet causing exactly
+  the damage it exists to prevent.
+
+  **Suggestion 1** added the Round-14 fix-history family (S2-0, B-1, B-2,
+  S2-2) so THIS session's commits don't create the drift the pass cleans up.
+  **Suggestion 3** added CHECK 5 (doc weight) to `/sync-docs`, with an explicit
+  counter-instruction — never propose deleting a RULE, and verify every dropped
+  reference still resolves — because this check's failure mode is the opposite
+  of the other four's. **Suggestion 4** put a "how to write one" note atop
+  Common Gotchas carrying the measured evidence and three habits, the
+  load-bearing one being: **write the bullet ONCE at the END of a phased
+  rollout.** Amending per phase is what produced the biggest bullets — the
+  sub-queue work alone added ~12 KB across six commits.
+
+  **The real risk in this edit was not a broken build but quietly deleting a
+  load-bearing sentence**, so it was checked mechanically rather than by eye: a
+  scratch token-loss guard extracts every fix code, INV-/S-/Operator-State
+  reference, backticked identifier and Script Property from the BEFORE text and
+  asserts each dropped one still resolves somewhere in the live doc set. It
+  caught three genuine losses — `REPORT_USAGE_SCAN_CAP_`,
+  `ncMissingTableError_`, `clChainHtml_`/`minDate` — all restored as compact
+  pointers. Final whole-file run clean.
+
+  CI 612/612 (+2), INV-16 clean, F8 split guard green. No `apps-script/` file
+  changed — **nothing to deploy from this increment.** NET 0 − 0 = 0,
+  deliberately: a documentation-and-process change is not a bug fix, and
+  scoring it otherwise would inflate the tally the reflect step exists to keep
+  honest.
+
+  **Also closed this session (items 1 and 4 of increment 71's list):** commits
+  `f6b5113` (the four findings), `6fec21a` (/sync-docs — the queue-split
+  bullets, INV-30, Operator State #42 and the plan doc all now describe the
+  gate) and `3b28a2a` (this pass) are pushed to `claude/broad-scan-c9r2z7`.
+  **No PR opened — the standing rule is none unless asked.**
+
+  **WHERE I LEFT OFF:**
+  1. Three commits pushed, working tree clean, no PR. Confirm the `ui-harness`
+     CI job is green — `script.html` changed in `f6b5113` and playwright will
+     not install in this container, so that job is its only coverage.
+  2. **`QUEUE_SPLIT_SCOPE` must stay unset ('off') until Phases 3/4 + Overview
+     + Alerts narrow too.** Unset is the consistent state; see Operator State
+     #42 for what each mode makes the numbers mean.
+  3. Deploy from increment 71 is still pending: dashboard (Data / script /
+     Alerts / Digest / OrphanFix / NeonRead) **and** cdr-import (autoImport).
+  4. **Operator State #40 (queue-split backfill) is still closing** — the
+     ~14-day `Call_Legs` window is unaffected by any of this session's work,
+     since the pipeline still WRITES the split.
+  5. `deleteOldCDRSheets` still has no caller, menu item or installer in the
+     repo — check the cdr-import Triggers panel (see increment 71 item 6).
+
+  **NEXT, in the order I'd take them:** Key Design Decisions (40.4 KB, 23% of
+  the file) got no extraction pass and has the same shape — it is the obvious
+  next target, and the ratchet does not cover it. Then the unselected audit
+  findings S2-1, B-3, B-5, B-6, and the dead-code list (`escRowDepartment_`,
+  `yesterdayIso_`, `typeOfCell_`, `pullReportData`, plus five `_`-suffixed
+  diagnostics wanting Run-picker wrappers). Growth rate remains the thing to
+  watch: −6.4 KB buys about a week and a half at the observed ~4 KB/day.
