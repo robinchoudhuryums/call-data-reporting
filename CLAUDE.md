@@ -1635,28 +1635,19 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `REPORT_CACHE_TTL_SECONDS` and are busted on EVERY write via
   `bustOrphanFixCache_()` / `dcBustCaches_()` -- admin-only surfaces, so the
   shared script cache is safe (no per-viewer personalization).
-- **Sub-queue combined view on My Department (Phase 1; switcher RETIRED in the
-  owner round).** A parent dept (Sales / CSR / Power) renders the COMBINED table
-  always, grouped per dept, and each group's HEADING ROW is a collapse toggle.
-  The former three-way segmented control (`<dept> only` / `<subs> only` /
-  `<dept> + <subs>`) is gone: every view it offered is reachable by collapsing a
-  group -- instantly, and without the SERVER ROUND TRIP each tab cost -- while
-  each dept's subtotal stays on screen either way. Groups default to EXPANDED
-  (the combined view is unchanged on open); collapse state persists per parent
-  in `cdr.dept.subqcollapse`. **The client no longer sends `subScope` at all**;
-  the SERVER still honors it (it drives the CSV's Department column and the
-  combined default), so this is a client retirement, not a capability removal --
-  don't "restore" the parameter thinking it was dropped. `cdr.dept.subscope` is
-  now an orphan key. Because Phase 3 cannot merge the missed section across
-  depts (queue abandons would double-count), each sub-queue's group header
-  carries a **"View <sub-queue>'s missed calls"** button -- the only route to a
-  child's missed timelines now that the scope tabs are gone; it re-scopes the
-  section, offers a "Back to <parent>" link in the scope note, and RESETS on any
-  dept or window change (a child's missed calls pinned under a different parent
-  would be wrong, not merely stale). Previously: persisted per dept in
-  `cdr.dept.subscope` and **defaulting to COMBINED** (owner decision). Depts
-  with no sub-queues get no control and no behavior change. `subScope` is a
-  cache-key dimension (`summary:v18`). **Combined means grouped, never merged:**
+- **Sub-queue combined view on My Department (Phase 1).** A parent dept
+  (Sales / CSR / Power) always renders the COMBINED table, grouped per dept,
+  with each group's heading row as its collapse toggle; the three-way scope
+  switcher this replaced is retired (the control, the collapse state and the
+  per-sub-queue missed-calls button are all documented in
+  `docs/client-ui-conventions.md`). Depts with no sub-queues get no control and
+  no behavior change. **The client no longer sends `subScope`, but the SERVER
+  still honors it** -- it drives the CSV's Department column and the combined
+  default -- so this is a client retirement, not a capability removal; don't
+  "restore" the parameter thinking it was dropped, and don't hardcode that
+  default in a second place. `subScope` is a cache-key dimension
+  (`summary:v18`); `cdr.dept.subscope` is now an orphan key.
+  **Combined means grouped, never merged:**
   rows carry `dept`, each dept gets a `subq-group-head` subheader and its OWN
   subtotal row from `deptGroups`, and the grand total is labelled -- so the
   familiar own-dept figure stays on screen and every number reconciles against
@@ -1684,21 +1675,14 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   diagnostics and the totals all inherit it unchanged.
   **Read the gate before reasoning about any dept's numbers:** the narrowing
   runs only when the `QUEUE_SPLIT_SCOPE` Script Property is `dept` (unset /
-  anything else = `off`, the default). It is off because
-  `applyQueueSplitToRows_` is called from exactly ONE place --
-  `computeSummary_` -- so it reached the My Department table and the manager
-  digests while the Overview, Insights, the Individual Report, the Missed
-  report and the low-answer-rate ALERT engine all kept reporting ALL-QUEUE
-  figures for the same dept and window. Two live definitions of "a
-  department's calls" is worse than one imperfect one: a manager comparing the
-  Overview tile to the My Department totals saw two answer rates with nothing
-  explaining the gap, and the alert threshold was evaluated on a different
-  number than the dashboard displayed. Flip to `dept` only once Phase 3
-  (Missed), Phase 4 (IR/Insights), the Overview and Alerts all narrow too --
-  see Operator State #42. The gate lives INSIDE the function so those phases
-  inherit it by adopting it rather than each re-deciding, and the scope joins
-  the `summary:v18` cache key as a suffix (the CORE-3 read-source pattern) so a
-  flip can't serve the other mode's table for the TTL.
+  anything else = `off`, the default). It is off because `computeSummary_` is
+  its ONLY call site, so narrowing there gave the app two live definitions of
+  "a department's calls" -- worse than one imperfect one (S2-0). Flip to `dept`
+  only once Phase 3 (Missed), Phase 4 (IR/Insights), the Overview and Alerts
+  all narrow too -- see Operator State #42. The gate lives INSIDE the function
+  so those phases inherit it by adopting it rather than each re-deciding, and
+  the scope joins the `summary:v18` cache key as a suffix (the CORE-3
+  read-source pattern) so a flip can't serve the other mode's table for the TTL.
   It **FAILS OPEN four ways** -- a dept with no mapped queues, a row with no
   split, and unparseable JSON all keep the rollup; and (B-1) so does a whole
   window in which the dept's mapped queues match NONE of the queue names the
@@ -1706,12 +1690,10 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   day: `queuesForDept_` returns QCD-canonical names (`A_Q_CustomerSuccess`)
   while a split's keys are the RAW pipeline names (`A_Q_CSR`), bridged only by
   the admin-populated Dept Config "Inbound queue aliases" column, and nothing
-  verifies that bridge is complete -- so before the guard a name mismatch
-  rendered the department as ZERO with every chip silent, because the range
-  genuinely WAS split-aware. It is assessed per WINDOW, never per row: one row
-  matching nothing is legitimate (a crossover agent whose whole day was on the
-  other dept's queues) and failing open there would re-introduce the very bug
-  Phase 2 exists to fix. An `{}` split contributes no queue names, so a
+  verifies that bridge is complete. It is assessed per WINDOW, never per row:
+  one row matching nothing is legitimate (a crossover agent whose whole day was
+  on the other dept's queues) and failing open there would re-introduce the very
+  bug Phase 2 exists to fix. An `{}` split contributes no queue names, so a
   genuinely idle window still narrows to zero. A PARTIAL mismatch keeps its
   narrowing but reports the dropped queue (`meta.queueSplitUnmatched` -> a
   "missing a queue" chip). All four exist because showing a dept ZERO calls is
@@ -1725,52 +1707,28 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   warn-toned "all queues before `<date>`" CHIP (`subqSplitChip_`) beside the
   relationship line, since a split can never reach dates older than the ~14-day
   `Call_Legs` retention; the chip removes itself once the range is fully split.
-  **Lesson carried over from the retired switcher (worth keeping):** when the
-  standing explanation banners were replaced by per-tab `title` tooltips, the
-  tabs turned out to have had NO visual selected state for three phases -- they
-  carried `is-active` while `.segmented` only styles `.active`, and the banner
-  had been doing that job by accident. So a control whose only state is a class
-  is a control with no state. `drive-subqueue.js` now applies the same rule to
-  what replaced it, asserting the group header's COMPUTED `cursor` rather than
-  the presence of a class.
-  See [`docs/sub-queue-split-plan.md`](docs/sub-queue-split-plan.md).
-  The relationship line renders whenever a sub-queue relationship exists -- the
-  point is that a manager should not have to discover that a sub-queue exists.
-  A CHILD dept gets an upward pointer only (the combined view belongs to the
-  parent, matching the server's one-level rule).
-  **Phase 2 (IR + Insights pickers):** both pickers gain one collapsed group per
-  sub-queue, from `getIndividualReportInit`'s new `subQueueGroups` field
-  (Insights delegates to the same init, so it inherits it). Built by
-  `computeSubQueuePickerGroups_` (Util.gs), which calls
-  `computeActiveAgentsInRange_` once per child with THAT child's roster -- a
-  deliberately SEPARATE helper so the pinned `{agents, floaters}` shape and its
-  INV-53 gate stay untouched and no `individual_active` bump is needed. The
-  group is NOT muted like the inactive/floater groups: a sub-queue is a
-  first-class choice, not something you rarely want. **One report run is ONE
-  department** -- `subqPickerScope_` reads the checked boxes and either runs
-  against the sub-queue dept (selection confined to one group) or REFUSES a
-  selection that spans depts with a reason, because the team average / rollup is
-  per-dept (INV-25/27) and averaging two teams with different call profiles is
-  the wrong number. Insights' report body is NOT scope-switched -- see the
-  follow-on note in `.cycle/blocks/61-*`.
-  **CSV (Phase 1 follow-up):** `exportTableCsv_` adds a leading **Department**
-  column ONLY when more than one dept is shown (a single-dept export stays
-  byte-identical), emits each dept's rows followed by that dept's OWN subtotal
-  from `deptGroups`, then a grand total labelled `All shown`. **No group-header
-  pseudo-rows** -- a spreadsheet reader wants a column it can pivot and filter
-  on, not banners that break sorting. The filename gains a `_subs` / `_all`
-  scope tag so two scopes don't overwrite each other. Every cell still routes
-  through `csvSafeCell_` (formula injection).
-  **Phase 3 (Missed + Escalations):** the missed section shows ONE dept at a
-  time. It defaults to the parent and moves only when a sub-queue's group header
-  button explicitly re-scopes it -- `subqMissedDept_` reads that override
-  (`subqMissedDeptOverride_`, reset on every dept or window change), never a
-  scope. It deliberately does **NOT merge** -- the queue-only abandoned section already covers a parent's
-  sub-queue queues (`queuesForDept_` rolls them up), so summing a child's report
-  into the parent's would double-count every queue abandon and every
-  abandoned-ring bucket in the hour-of-day chart, the same trap as the QCD
-  snapshot. `subqMissedScopeNote_` states what is and isn't included instead of
-  leaving the reader to infer it. **Escalations needed NO code change** --
+  **The CLIENT side of all of this -- the relationship bar, the grouped rows and
+  subtotals, the IR/Insights picker groups, the combined CSV and the missed
+  section's scope -- is in
+  [`docs/client-ui-conventions.md`](docs/client-ui-conventions.md); read it
+  before touching `script.html`.** Three rules from there are load-bearing
+  server-side too: a CHILD dept gets an upward pointer only (one level, matching
+  the server); **one report run is ONE department** (`subqPickerScope_` REFUSES
+  a selection spanning depts -- the team average is per-dept, INV-25/27) fed by
+  `computeSubQueuePickerGroups_` (Util.gs), deliberately SEPARATE from
+  `computeActiveAgentsInRange_` so that helper's pinned `{agents, floaters}`
+  shape and INV-53 gate stay untouched and no `individual_active` bump is
+  needed; and
+  the combined CSV's leading `Department` column appears ONLY when more than one
+  dept is shown, so a single-dept export stays byte-identical. Insights' report
+  body is NOT scope-switched -- see the follow-on note in `.cycle/blocks/61-*`.
+  See also [`docs/sub-queue-split-plan.md`](docs/sub-queue-split-plan.md).
+  **Phase 3 (Missed + Escalations), server side:** the missed section shows ONE
+  dept at a time and deliberately does **NOT merge** -- the queue-only abandoned
+  section already covers a parent's sub-queue queues (`queuesForDept_` rolls
+  them up), so summing a child's report into the parent's would double-count
+  every queue abandon and every abandoned-ring bucket in the hour-of-day chart,
+  the same trap as the QCD snapshot. **Escalations needed NO code change** --
   `getEscalations` already scopes by `user.departments`, so Phase 0's widening
   gave a parent manager their sub-queue's escalations automatically, and
   `metaDept` already reports the joined list. Server side is
@@ -1779,25 +1737,16 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   duration means are agent-count-WEIGHTED (never a mean of means). **`qcd` is
   the PRIMARY dept's only** -- `queuesForDept_` already rolls sub-queue queues
   into a parent's QCD snapshot, so merging it would double-count.
-- **Scope is locked to `roster` (Phase D → redesign cleanup →
-  Phase 14/15 roster-only flip).** Pre-Phase-D the dashboard
-  shipped a `roster | queue | both` segmented control with
-  `roster` default (matching the legacy DQE Report's behavior);
-  Phase D flipped the default to `both` and Source-chip-tagged
-  queue-only floaters so managers could see who handled their
-  queue without polluting totals (INV-53). The toggle was
-  retained for parallel-run validation through Phases D / D+1
-  / E, then retired in the redesign cleanup. **In production the
-  shared-queue-overlap match proved to be mostly false positives**
-  (agents who never actually handled the dept's calls), and
-  genuine cross-dept assist is rare, so both public RPCs were
-  flipped back to roster-only: `Data.gs::getDepartmentSummary`
-  (commit 80e17da, the My Department agent table) and
-  `MissedCallsReport.gs::getMissedCallsReport` (commit 77441a7,
-  the per-agent missed-call timelines) now hardcode
-  `scope = 'roster'`. So the My-Dept table + Missed report
-  timelines list ONLY the dept's `DO NOT EDIT!` roster agents;
-  QUEUE-chipped floaters no longer appear there. **The Missed
+- **Scope is locked to `roster` (Phase 14/15 roster-only flip).** Both public
+  RPCs hardcode `scope = 'roster'` -- `Data.gs::getDepartmentSummary` (the My
+  Department agent table) and `MissedCallsReport.gs::getMissedCallsReport` (the
+  per-agent missed-call timelines) -- so both list ONLY the dept's
+  `DO NOT EDIT!` roster agents and QUEUE-chipped floaters never appear there.
+  **The reason matters if you are tempted to widen it back:** in production the
+  shared-queue-overlap match proved to be mostly FALSE POSITIVES (agents who
+  never actually handled the dept's calls), and genuine cross-dept assist is
+  rare. The `roster | queue | both` segmented control that once exposed this
+  was retired in the redesign cleanup. **The Missed
   report's queue-only ABANDONED section is scope-independent** --
   queue-sentinel rows bypass roster matching entirely (INV-23), so
   genuinely-abandoned no-ring queue calls still surface; since R6
@@ -1830,41 +1779,33 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   Insights.**
   The dashboard is one HTML doc with top-level `<section>` pages toggled
   by `body[data-page="overview|dept|escalations|insights"]` (the `.page`
-  CSS shows only the active one; generalized from the original two-page
-  pair when Escalations became a full page, #6). **Overview is the default
-  landing** for every page load; "My Department" is the per-dept
-  agent table view that used to be the landing; **Escalations** is a
-  full page (route `#/escalations`) — an interactive worklist, not a
-  modal (it was converted from one); **Insights** is a full page too
-  (route `#/report/insights`, converted from a modal --
-  docs/insights-page-plan.md; first entry via `insEnsurePage_`
-  AUTO-GENERATES the report -- restored prefs or the launcher-window
-  default with an agent-free whole-dept run, INV-45; the SETUP-FORM STEP
-  and its "« Back" button are RETIRED (owner) with the form kept hidden
-  as the failure/empty-roster fallback only (`insShowForm`), all editing
-  via the results-header "Edit dates & agents" popover; RE-ENTRY keeps
-  the rendered report; its top-level
-  header tab is visible to ALL roles, replacing the old manager-only
-  solo-button proxy). `setPage(name)` swaps the page,
-  the header kicker/title, and triggers that page's load (Overview ->
-  `ovLoad_`; Escalations -> `escEnsureInit_`+`escLoad_`; Insights ->
-  `insEnsurePage_`). Modals (Help, Settings, Individual,
-  Alerts, Orphan Fix, Dept Config) overlay any page (the standalone
-  Missed Calls modal is RETIRED -- the My Department page's inline
-  missed section is the Missed Calls report -- and the Insights modal
-  became the Insights page).
-  Overview auto-refreshes silently every 5 minutes when the
-  page is active, re-fetching from the server cache. **Overview dept-tile
-  click SOLOS that dept's line on the 30-day trend chart** (#1) --
-  `chartSpotlightTogglePin_(ovChartInstance, dept, additive)`, the same
-  pin-set model the chart legend uses; Shift/Cmd/Ctrl-click ADDS a dept
-  to the pinned set (compare 2+), a plain click on the lone pinned tile
-  releases it. Pinned tiles carry `.ov-tile-soloed` (synced by
-  `ovSyncTilePins_`, guarded to `chart === ovChartInstance` so the QCD
-  chart that reuses the helpers isn't cross-contaminated). **Navigation to
-  My Department is now via a chart POINT click** (`ovHandlePointClick_` ->
-  `ovRouteToDept_(dept, iso)`; admins, or a manager on their own dept's
-  line) **or the dept-selector dropdown** -- the tile no longer navigates.
+  CSS shows only the active one). **Overview is the default landing** for
+  every page load; **My Department** is the per-dept agent table;
+  **Escalations** (`#/escalations`) is an interactive worklist; **Insights**
+  (`#/report/insights`) is a full page whose header tab is visible to ALL
+  roles. `setPage(name)` swaps the page, the header kicker/title, and triggers
+  that page's load (Overview -> `ovLoad_`; Escalations ->
+  `escEnsureInit_`+`escLoad_`; Insights -> `insEnsurePage_`). Modals (Help,
+  Settings, Individual, Alerts, Orphan Fix, Dept Config) overlay any page;
+  there is no standalone Missed Calls modal -- **the My Department page's
+  inline missed section IS the Missed Calls report.**
+  **Insights has no setup-form step:** first entry AUTO-GENERATES the report
+  (restored prefs, or the launcher-window default with an agent-free
+  whole-dept run, INV-45), re-entry keeps the rendered report, and all editing
+  goes through the results-header "Edit dates & agents" popover. The form
+  survives HIDDEN as the failure / empty-roster fallback only (`insShowForm`)
+  -- see docs/insights-page-plan.md.
+  Overview auto-refreshes silently every 5 minutes while active, re-fetching
+  from the server cache. **A dept-TILE click SOLOS that dept's line on the
+  30-day trend chart; it does NOT navigate** --
+  `chartSpotlightTogglePin_(ovChartInstance, dept, additive)`, the same pin-set
+  model the chart legend uses (Shift/Cmd/Ctrl-click ADDS to the pinned set; a
+  plain click on the lone pinned tile releases it). Pinned tiles carry
+  `.ov-tile-soloed`, synced by `ovSyncTilePins_` **guarded to
+  `chart === ovChartInstance`** so the QCD chart that reuses these helpers
+  isn't cross-contaminated. Navigation to My Department is via a chart POINT
+  click (`ovHandlePointClick_` -> `ovRouteToDept_(dept, iso)`; admins, or a
+  manager on their own dept's line) or the dept-selector dropdown.
   **`refresh()` only writes the header title when `data-page === 'dept'`**
   so it can't clobber the Overview / Escalations / Insights titles.
 - **Sub-queue nesting (NO LONGER Overview-only — see INV-38).**
@@ -1928,129 +1869,94 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   strip). It's a VISUAL preview: report endpoints still authorize the
   real admin (entitled), so the admin isn't locked out of clicking
   through; the point is to see the manager's layout/content.
-- **Overview admin-only banners (Phase B).** Pipeline Health
-  banner (`#ov-pipeline-banner`) and Orphan Fix nag
-  (`#ov-orphan-nag`) sit above the summary line on the Overview
-  page and are admin-only. Two layers of gating: (1) the
-  `data-admin-only` attribute on the div is cleared at init for
-  admins (the existing convention -- see the
-  `document.querySelectorAll('[data-admin-only]')` loop in
-  `script.html`); (2) `ovRenderPipelineBanner_` /
-  `ovRenderOrphanNag_` further hide the banner when health is good
-  / no active orphans. Pipeline banner fires when no DQE-freshness
-  success row (`buildDQE` / `processIntegratedHistory:DQE` /
-  `bulkBackfill:DQE`, per INV-44) appears in the last
-  `OVERVIEW_PIPELINE_FRESHNESS_SCAN_ROWS` (=250, widened from 40 in LM1 so a
-  deferred-mirror retry storm can't evict the DQE row and false-warn) Pipeline
-  Health entries, OR the latest one is older than
-  `OVERVIEW_PIPELINE_STALE_HOURS` (=36h, matching the header
-  freshness pill threshold). A `rows:0` DQE-step `success` (a no-op
-  build of an already-in-history date) does NOT count as a freshness
-  success -- `computeOverviewPipelineFreshness_` requires `rows>0` (F5).
-  Orphan nag counts orphans whose
-  `lastSeen` is within `OVERVIEW_ORPHAN_NAG_DAYS` (=7d) and
-  surfaces up to 3 sample names by row-count desc; its Open
-  button programmatically clicks `#orphan-fix-btn` to open the
-  Outlier Fix modal. Both server helpers
-  (`computeOverviewPipelineFreshness_`,
-  `computeOverviewOrphanNag_`) are best-effort -- failures return
-  null and the Overview still renders without the banner.
-  **Unmapped-queue nag (F onboarding):** a third admin-only banner
-  (`#ov-unmapped-nag` / `ovRenderUnmappedNag_`) fires when QCD
-  queues seen in the data map to no department -- it reuses the
-  Dept Config discovery (`discoverQueues_`, the 180-day QCD scan +
-  the effective per-dept map, so it invents no mapping), surfaces up
-  to 3 sample queue names (busiest first), and its Open button clicks
-  `#dept-config-btn` to open the Dept Config modal. Server helper
-  `computeOverviewUnmappedQcd_` (best-effort, null on error) feeds the
-  admin-only `unmappedQcd` payload field (stripped by
-  `personalizeOverview_`; `companyOverview:v20`).
-- **Top-tab router (Phase C).** The header nav was flattened from
-  Reports + Admin dropdowns into a single row of top-level tab
-  buttons (commit ce4220a). Each tab carries a `data-route`
-  attribute and a stable button `id`, so the existing per-modal
-  init functions still wire up modal-open behavior unchanged; the
-  new `initRouter` in `script.html` just tracks `currentRoute` and
-  paints the active-tab indicator via `updateTabActiveState_`.
-  Two groups have since RE-collapsed into `.header-menu` dropdowns
-  (`initHeaderMenus_` wires open/close via `aria-controls`;
-  `updateTabActiveState_` lights any dropdown trigger whose item
-  route is active, generically): the **Reports** group (Individual +
-  the admin-vetted Inbound / Direct) and — post-deploy round 4,
-  owner request — the **Admin** group (`#admin-menu-btn`: Alerts,
-  Outlier Fix, Dept Config, Access, Health; Caller Lookup stays a
-  top-level admin tab). Menu items keep their stable ids +
-  `data-route` + `data-admin-only`, so deep links, the F11 non-admin
-  no-op guard, and the Overview nags' programmatic
-  `#orphan-fix-btn` / `#dept-config-btn` clicks all work unchanged;
-  the wrapper carries `data-admin-only` so view-as-manager hides the
-  whole group. Two
-  click handlers fire per tab — the existing modal-open and the
-  router's data-route tracker — but they don't conflict because
-  each modal's `openModal` is idempotent. **No
-  `google.script.history.push` is used** (spotty browser behavior
-  inside Apps Script web apps); URL hashes are read at init via
-  `google.script.url.getLocation` and written only when a new tab
-  opens. The `↗ Open in new tab` button on report modals
-  (`.modal-open-tab-btn`, positioned at `right: 54px` to the left
-  of the close X) builds `window.__DASHBOARD_URL__ + '#' +
-  currentRoute` and `window.open`s it; `.is-disabled` hides the
-  button when `DASHBOARD_URL` is unset. **State-in-URL:** for the
-  agent reports (IR / Insights) the button also
-  appends the current form state as a `?from=...&agents=a|b` query
-  on the hash (the `SHARE_STATE_` provider registry in script.html
-  collects/applies it); the deep-link reader splits the query off
-  before the `ROUTES_` lookup and applies it AFTER the modal's
-  open-time defaults + prefs restore, with agents landing via each
-  report's pending-selection hook. Generation is deliberately not
-  auto-triggered (async roster load) -- the restored form is one
-  Generate click away. Escape-key modal close
-  doesn't revert the active-tab state in this phase — cosmetic
-  only; clicking any tab refreshes it. **`window.__DASHBOARD_URL__`
-  is injected by `renderDashboard_` (Code.gs) from the
-  `DASHBOARD_URL` Script Property** with the same `<` escape
-  trick as `userJson`; empty string when unset. Don't try to read
-  the deployed URL from `window.location` inside the Apps Script
-  iframe — that resolves to the `n-<hash>-script.googleusercontent.com`
-  wrapper, not the user-facing `/exec` URL. Deep links work for
-  the report routes (`#/report/individual`, `#/admin/alerts`,
-  `#/admin/orphan-fix`; `#/report/insights` AND its three legacy
-  repoints `#/report/performance` / `#/report/compare` / `#/report/qcd`
-  are `kind: 'page'` routes onto the Insights PAGE since the modal->page
-  conversion (docs/insights-page-plan.md) -- the deep-link page branch
-  ALSO applies the route's SHARE_STATE_ ?query form-state after
-  `setPage`, which keeps the Digest.gs email deep links
-  (`#/report/insights?from=...&agents=...`) working even when no header
-  tab carries the route; legacy `#/report/missed`
-  links are a `kind: 'page'` route with `scrollTo: 'dept-missed-section'`
-  since the Missed-modal retirement -- the deep-link reader dispatches
-  page routes with no header tab directly via `setPage` + `refresh()`
-  and arms the one-shot `deptMissedScrollPending_` scroll) plus the
-  three original PAGE routes
-  (`#/overview`, `#/dept`, `#/escalations` — `#/escalations` is now a
-  `kind: 'page'` route, not a modal); unknown / malformed hashes quietly
-  no-op and land on Overview. A deep link to an admin-only route
-  (the `data-admin-only` tabs: alerts / orphan-fix / dept-config)
-  by a non-admin also quietly no-ops -- `initRouter` skips the
-  trigger rather than opening a modal that would only surface an
-  "admin-only" server error (F11).
+- **Overview admin-only banners (Phase B).** Three banners sit above the
+  Overview summary line, all sharing one shape: **two layers of gating** --
+  the div's `data-admin-only` attribute is cleared at init for admins (the
+  `querySelectorAll('[data-admin-only]')` loop in script.html), AND each
+  renderer further hides itself when there's nothing to say -- plus a
+  **best-effort server helper that returns null on failure**, so a broken
+  helper costs the banner, never the Overview.
+  (1) **Pipeline Health** (`#ov-pipeline-banner` / `ovRenderPipelineBanner_` /
+  `computeOverviewPipelineFreshness_`) fires when no DQE-freshness success row
+  (`buildDQE` / `processIntegratedHistory:DQE` / `bulkBackfill:DQE`, per
+  INV-44) appears in the last `OVERVIEW_PIPELINE_FRESHNESS_SCAN_ROWS` (=250 --
+  **do not shrink it**: at 40 a deferred-mirror retry storm evicted the DQE row
+  and false-warned, LM1) Pipeline Health entries, OR the latest is older than
+  `OVERVIEW_PIPELINE_STALE_HOURS` (=36h, matching the header freshness pill).
+  A `rows:0` DQE-step `success` (a no-op build of an already-in-history date)
+  does NOT count as freshness -- the helper requires `rows>0` (F5).
+  (2) **Orphan Fix nag** (`#ov-orphan-nag` / `ovRenderOrphanNag_` /
+  `computeOverviewOrphanNag_`) counts orphans with `lastSeen` inside
+  `OVERVIEW_ORPHAN_NAG_DAYS` (=7d), samples up to 3 names by row-count desc,
+  and its Open button clicks `#orphan-fix-btn`.
+  (3) **Unmapped-queue nag** (`#ov-unmapped-nag` / `ovRenderUnmappedNag_` /
+  `computeOverviewUnmappedQcd_`) fires when QCD queues seen in the data map to
+  no department; it reuses the Dept Config discovery (`discoverQueues_`, the
+  180-day QCD scan + the effective per-dept map, **so it invents no mapping**),
+  samples up to 3 queue names busiest-first, and its Open button clicks
+  `#dept-config-btn`. Its `unmappedQcd` payload field is admin-only and
+  stripped by `personalizeOverview_` (`companyOverview:v20`).
+- **Top-tab router (Phase C).** The header nav is a row of tab buttons plus two
+  `.header-menu` dropdown groups — **Reports** (Individual + the admin-vetted
+  Inbound / Direct) and **Admin** (`#admin-menu-btn`: Alerts, Outlier Fix, Dept
+  Config, Access, Health; Caller Lookup stays a top-level admin tab).
+  **Every tab AND every menu item carries a `data-route` plus a stable button
+  `id`** — that pair is what the per-modal init functions, the deep links, the
+  F11 non-admin no-op guard and the Overview nags' programmatic
+  `#orphan-fix-btn` / `#dept-config-btn` clicks all bind to, so don't rename or
+  drop one when moving an item between the bar and a dropdown. `initRouter`
+  tracks `currentRoute` and paints the indicator via `updateTabActiveState_`,
+  which lights a dropdown trigger generically whenever one of its items' routes
+  is active; `initHeaderMenus_` wires open/close via `aria-controls`. The
+  dropdown WRAPPER carries `data-admin-only` so view-as-manager hides the whole
+  group. Two click handlers fire per tab (modal-open + the route tracker) and
+  don't conflict because `openModal` is idempotent. Escape-key modal close
+  doesn't revert the active-tab state — cosmetic; any tab click refreshes it.
+  **No `google.script.history.push`** (spotty browser behavior inside Apps
+  Script web apps); hashes are read at init via `google.script.url.getLocation`
+  and written only when a new tab opens.
+  **`window.__DASHBOARD_URL__` is injected by `renderDashboard_` (Code.gs)**
+  from the `DASHBOARD_URL` Script Property with the same `<` escape trick as
+  `userJson` (empty string when unset). **Never read the deployed URL from
+  `window.location`** inside the Apps Script iframe — it resolves to the
+  `n-<hash>-script.googleusercontent.com` wrapper, not the user-facing `/exec`
+  URL. The `↗ Open in new tab` button (`.modal-open-tab-btn`, `right: 54px`,
+  left of the close X) builds `__DASHBOARD_URL__ + '#' + currentRoute`;
+  `.is-disabled` hides it when the property is unset.
+  **State-in-URL:** for the agent reports (IR / Insights) that button also
+  appends form state as a `?from=...&agents=a|b` query on the hash, via the
+  `SHARE_STATE_` provider registry (script.html). The deep-link reader splits
+  the query off BEFORE the `ROUTES_` lookup and applies it AFTER the modal's
+  open-time defaults + prefs restore, with agents landing through each report's
+  pending-selection hook; generation is deliberately not auto-triggered (async
+  roster load), so the restored form is one Generate click away.
+  **Routes:** the report modals (`#/report/individual`, `#/admin/alerts`,
+  `#/admin/orphan-fix`); `kind:'page'` routes `#/overview`, `#/dept`,
+  `#/escalations`, `#/report/insights` (plus its three legacy repoints
+  `#/report/performance` / `#/report/compare` / `#/report/qcd`) and
+  `#/report/missed` (which carries `scrollTo: 'dept-missed-section'` and arms
+  the one-shot `deptMissedScrollPending_`). **The page branch ALSO applies the
+  route's `SHARE_STATE_` query after `setPage`** — that is what keeps the
+  Digest.gs email deep links (`#/report/insights?from=...&agents=...`) working
+  when no header tab carries the route. Unknown / malformed hashes quietly no-op
+  onto Overview, and so does a non-admin's deep link to a `data-admin-only`
+  route — `initRouter` skips the trigger rather than opening a modal that would
+  only surface an "admin-only" server error (F11).
 - **Agent table column model (My Department).** The table is rendered
   from the client `COLUMNS` array (script.html) against a matching static
   `<thead>` in `dashboard.html` (1:1 by position; the Overview mini-table
   `ov-user-table` shares `COLUMNS` and must keep its own thead in sync).
   Columns: Agent · Source · **Answered / Missed** (a `type:'bar'` stacked
-  bar — green answered + red missed, total = rung — that FOLDED the former
-  Rung/Missed/Answered numeric columns; built by `answeredBarHtml_`, carries
-  the E5 WoW chips inline on the answered/missed counts, answer-rate gets
-  the 92% benchmark tint, sorts by computed `answerRate` via a special case
-  in `sortRows`; since owner round 4 the bar ALSO carries the rung total
-  inline as a muted "(N)" — the dedicated **Total calls** column was
-  REMOVED from `COLUMNS` + both theads, though the CSV still emits a
-  numeric Total calls column spliced after the bar in `exportTableCsv_`)
-  · **Answer %** (a `type:'pct'`
-  cell = answered/(answered+missed), 92% benchmark tint; added in
-  Batch B (#8) as an always-visible column surfacing what the bar folds;
-  the Answer % column shares the bar's `answerRate` sort key) · Unique ·
+  bar — green answered + red missed, total = rung, which is why there is no
+  separate Rung / Missed / Answered / **Total calls** column; built by
+  `answeredBarHtml_`, carries the E5 WoW chips inline on the answered/missed
+  counts and the rung total as a muted "(N)", answer-rate gets the 92%
+  benchmark tint, sorts by computed `answerRate` via a special case in
+  `sortRows`. **The CSV still emits a numeric Total calls column** spliced
+  after the bar in `exportTableCsv_`) · **Answer %** (a `type:'pct'`
+  cell = answered/(answered+missed), 92% benchmark tint, always visible so the
+  rate the bar folds in is readable without decoding it; shares the bar's
+  `answerRate` sort key) · Unique ·
   TTT · ATT · Avg Abd Wait · CSR Avg Abd Wait. The five `hideable:true`
   columns (Source / Unique / TTT / Avg Abd Wait / CSR Avg Abd Wait) FOLD
   AWAY by default behind the **"Show all columns"** toggle
@@ -2059,11 +1965,11 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   helper); the Overview mini-table carries `hide-extra` permanently
   (glance view). Default sort is `answerRate` ascending (worst answer rate
   first; idle/no-activity agents always sink to the bottom regardless of
-  direction). **The Overview mini-table (`ov-user-table`) is now
-  header-sortable too (Batch B)** with its OWN sort state (`ovUserSort_`,
-  same worst-first default, `ovRenderUserRows_`/`ovOnUserSort_`); `sortRows`
-  is parametrized `(rows, sortKey, sortDir)` so both tables share it, and
-  each table's Total row renders from `totals` (never part of the sort).
+  direction). **The Overview mini-table is header-sortable too**, with its OWN
+  sort state (`ovUserSort_`, same worst-first default,
+  `ovRenderUserRows_`/`ovOnUserSort_`); `sortRows` is parametrized
+  `(rows, sortKey, sortDir)` so both tables share it, and each table's Total
+  row renders from `totals` (never part of the sort).
   CSV export (`exportTableCsv_`) emits ALL columns regardless of the toggle
   and renders the bar as `answered / missed (rate%)` text + the Answer %
   column via `pctCsv`. **In a sub-queue COMBINED view it also prepends a
@@ -2074,108 +1980,76 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   from real Blob bytes); S43 remains the manual walk over the rest.
 - **Source column + roster-only totals (Phase D).** The agent table's
   Source column (between Agent and the Answered/Missed bar) renders one of
-  three chips per row: **ROSTER** (accent-soft) for agents on this
-  dept's roster only, **BOTH** (good-soft) for agents rostered AND
-  matched via shared-queue extensions, **QUEUE** (warn-soft) for
-  queue-only floaters. The QUEUE chip suffixes the floater's
-  `sourceHomes` array as a comma-separated dept list -- e.g.
-  `QUEUE · Sales, Power` for a multi-rostered floater, or bare
-  `QUEUE` for a floater on no dept's roster. `sourceHomes` is
-  built lazily server-side by `Data.gs::buildDeptsByAgent_` (only
-  when at least one queue-only row exists) and iterates every dept
-  including `OVERVIEW_HIDDEN_DEPTS` in `getAllDepartments_`
-  alphabetical order, so the array is stable. Client
-  `sourceChipHtml_` / `sourceChipCsv_` (script.html) array-check
-  defensively and fall back to bare `QUEUE` if the field is missing.
-  **Totals row sums only `matchedViaRoster=true` rows** -- queue-only
-  floaters never factor into dept averages.
-  Totals object carries `rosterAgentCount` + `queueOnlyAgentCount`;
-  the totals row -- rendered as a pinned `<tbody class="agents-totals">`
-  ABOVE the data rows since PR #142 (a real `<tfoot>` always renders at
-  the bottom; the element ids `agents-tfoot` / `ov-user-tfoot` were kept
-  so the JS is unchanged) -- renders 'Total (roster only · N floaters
-  excluded)' in its first cell when `queueOnlyAgentCount > 0`. CSV export uses the
-  same semantics: 'Total (roster only)' for the totals row label.
-  INV-04 (exact agent-name match) and INV-23 (queue-sentinel `A_Q_*`
-  rows skipped) are both preserved. See INV-53 for the
-  floater-exclusion contract spanning all dept-level aggregations.
-  **NOTE (Phase 14, commit 80e17da):** `getDepartmentSummary` now
-  scopes to `roster` (see the "Scope is locked to `roster`" decision
-  above), so queue-only floaters no longer appear as rows in the
-  My-Dept table at all and the QUEUE Source chip never renders here
-  in practice -- `queueOnlyAgentCount` is 0 and the "N floaters
-  excluded" caption stays hidden. The Source column still renders
-  ROSTER / BOTH chips, and the chip helpers + `sourceHomes`
-  machinery survive for the IR picker (which DOES still surface
-  floaters in a separate picker group, INV-53) and Diagnostics.
-- **Phase E UI surfaces.** Four small affordances landed in commit
-  94bbca9, each with a documented data dependency: (1) **work-window
-  pill** on My Department (`#work-window-pill`) reads
-  `window.__WORK_WINDOW__` injected by `renderDashboard_` from
-  `Config.gs::DASHBOARD_WORK_WINDOW` -- the dashboard's read-only
-  mirror of cdr-import's pipeline constants (INV-06; sync required
-  if those change). (2) **Diagnostics severity chip** -- the
-  existing `.diagnostics` block gains `.diag-severity-warn` (warn-soft
-  tint) for 1-5 issues and `.diag-severity-bad` (using the Phase A
-  `--bad` token) for >5 issues, driven by the same
-  `rosterWithNoData.length + queueOnlyMatched.length` total the
-  existing collapsible reads. (3) **EXCLUDED FROM TEAM AVG pill**
-  (`.ir-excluded-pill`) on Individual Report agent cards, surfaced
-  via the new `excludedFromTeamAvg` field on each `summaryData` row
-  (INV-26). (4) **QCD days-to-violation forecast** (`#qcd-forecast`)
-  runs a 7-day linear regression on `dailySeries.abandonedPct` (INV-51)
-  and projects when the 5% threshold will cross -- hidden in three
-  healthy states: currentY >= 5 (already over), slope <= 0.01
-  (flat / improving), or projected crossing > 7 days out. None of
-  these add server endpoints -- E2 is a one-time template inject,
-  E4 adds one flag to the existing IR response (bumping
-  `individual:v6` -> `v7`), and E3 / E9 are pure client. Of the
-  three items originally deferred from Phase E, **E5 (per-row WoW
-  chip) shipped in commit bb77168** -- agent table gains an inline
-  delta chip on Rung / Missed / Answered comparing to a
-  same-length window immediately preceding the selected range
-  (see the "Per-row prior-period chips" gotcha below). **E8 (alert
-  skip-dates) shipped in commit 319eca7** -- new Skip Dates column
-  on the Alert Config sheet honored by the daily trigger only
-  (see INV-33 / INV-34). **E10 (threshold drift) shipped in
-  commit b3a5a51** -- new "Last 30 days" column on the Alerts
-  modal config table summarizing the most-recent ~30
-  daily-trigger entries per dept; classifier flags chronic
-  (>=80% fire ratio = alert fatigue likely) and lenient (0
-  fires + dept averages >= threshold + 10pts = threshold too
-  loose to catch a real degradation) cases (see the E10
-  Common Gotchas bullet).
-- **INV-53 expansion to IR/PR/CR (Phase D+1).** The three
-  agent-level reports gained floater-awareness in commit ba26d48,
-  extending the Phase D My Department contract. Six pieces worth
-  knowing: (1) `Util.gs::computeActiveAgentsInRange_` return shape
-  changed from `string[]` to `{agents, floaters}` -- floaters carry
-  `sourceHomes` (the agent's other-dept roster homes, via
-  `buildDeptsByAgent_`). Cache key bumped `individual_active:v1`
-  -> `v2`. (2) Each report's init endpoint surfaces `activeFloaters`
-  alongside `activeAgents`. (3) The shared client picker builder
-  `irBuildAgentListHtml_` (used by all 3 report pickers) renders a
-  third collapsed `<details>` group titled "Floaters (queue-only)"
-  beneath the existing Active / No-activity groups; entries carry a
-  compact `.ir-agent-floater-chip` showing the floater's other-dept
-  home list. (4) Per-card chip on IR summary cards / PR table rows
-  / CR agent cards reuses `sourceChipHtml_` (the My Dept Source
-  column helper) but only renders when
-  `matchedViaQueue && !matchedViaRoster` -- roster agents stay
-  implicit. (5) **Security:** dropping the roster-only input gate
-  doesn't relax data access. Off-dept names only render if their
-  rows had queue-overlap with the dept's queue extensions (same
-  path My Dept uses to surface floaters). Crafted names with no
-  queue connection produce no rows and fall out of the
-  `visibleAgents` filter. (6) **Implementation detail:** each
-  report pre-populates `agentMatchedViaRoster` for selected roster
-  members upfront (before the row scan) so zero-call roster picks
-  still render their card; `sourceHomes` is built lazily via
-  `buildDeptsByAgent_` only when at least one floater is in the
-  selection. Cache key bumps: `individual:v7` -> `v8`,
-  `performance:v3` -> `v4`, `compareRanges:v3` -> `v4`. INV-53
-  describes the underlying contract; INV-26 describes the separate
-  TEAM_AVG_EXCLUDES path which composes with the floater gate in IR.
+  three chips per row: **ROSTER** (accent-soft), **BOTH** (good-soft, rostered
+  AND matched via shared-queue extensions), **QUEUE** (warn-soft, queue-only
+  floaters) -- the QUEUE chip suffixing the floater's `sourceHomes` as a dept
+  list, e.g. `QUEUE · Sales, Power`, or bare `QUEUE` when on no roster.
+  **In practice the QUEUE chip never renders HERE**, because
+  `getDepartmentSummary` locks scope to `roster` (see the decision above), so
+  `queueOnlyAgentCount` is 0 and the "N floaters excluded" caption stays
+  hidden. The chip helpers and the `sourceHomes` machinery are NOT dead
+  code -- they serve the IR picker's floater group (INV-53) and Diagnostics,
+  which is why the whole path is still documented.
+  `sourceHomes` is built lazily server-side by `Data.gs::buildDeptsByAgent_`
+  (only when at least one queue-only row exists) and iterates every dept
+  including `OVERVIEW_HIDDEN_DEPTS` in `getAllDepartments_` alphabetical
+  order, so the array is stable; client `sourceChipHtml_` / `sourceChipCsv_`
+  array-check defensively and fall back to bare `QUEUE` if it's missing.
+  **The totals row sums only `matchedViaRoster=true` rows** -- queue-only
+  floaters never factor into dept averages -- and the totals object carries
+  `rosterAgentCount` + `queueOnlyAgentCount`, driving a
+  'Total (roster only · N floaters excluded)' caption when the latter is
+  non-zero ('Total (roster only)' in the CSV). **The totals row is a pinned
+  `<tbody class="agents-totals">` ABOVE the data rows, not a `<tfoot>`** -- a
+  real tfoot always renders at the bottom; the element ids `agents-tfoot` /
+  `ov-user-tfoot` were kept so the JS is unchanged. INV-04 (exact agent-name
+  match) and INV-23 (queue-sentinel `A_Q_*` rows skipped) both hold. See
+  INV-53 for the floater-exclusion contract across all dept-level aggregations.
+- **Phase E UI surfaces** (the `E#` codes appear in code comments across
+  script.html / styles.html / Code.gs / IndividualReport.gs / Data.gs, so
+  they stay attached to their affordance). Four client surfaces, each with a
+  data dependency worth knowing: (**E2**) the **work-window pill**
+  (`#work-window-pill`) reads `window.__WORK_WINDOW__`, injected by
+  `renderDashboard_` from `Config.gs::DASHBOARD_WORK_WINDOW` -- the dashboard's
+  read-only mirror of cdr-import's pipeline constants, so **changing those
+  constants requires syncing this one** (INV-06). (**E3**) the `.diagnostics`
+  block's severity chip: `.diag-severity-warn` for 1-5 issues,
+  `.diag-severity-bad` for >5, off the same
+  `rosterWithNoData.length + queueOnlyMatched.length` total the collapsible
+  reads. (**E4**) the **EXCLUDED FROM TEAM AVG pill** (`.ir-excluded-pill`) on
+  IR agent cards, from the `excludedFromTeamAvg` field on each `summaryData`
+  row (INV-26). (**E9**) the **QCD days-to-violation forecast**
+  (`#qcd-forecast`): a 7-day linear regression on `dailySeries.abandonedPct`
+  (INV-51) projecting when the 5% threshold crosses, hidden in three healthy
+  states -- currentY >= 5 (already over), slope <= 0.01 (flat / improving), or
+  a projected crossing more than 7 days out. The three later Phase E items
+  each have their own home: **E5** per-row WoW chips (the "Per-row
+  prior-period chips" gotcha), **E8** alert Skip Dates (INV-33 / INV-34),
+  **E10** threshold drift (its own gotcha bullet).
+- **Floater-awareness in the agent reports (INV-53 expansion, Phase D+1).**
+  The agent-level reports extend the Phase D My Department contract (the
+  Performance and Compare Ranges reports carried it too, until both were
+  retired; IR and Insights are what remain).
+  `Util.gs::computeActiveAgentsInRange_` returns `{agents, floaters}` -- NOT
+  the bare `string[]` its name suggests -- with floaters carrying `sourceHomes`
+  (the agent's other-dept roster homes, via `buildDeptsByAgent_`); each report's
+  init endpoint surfaces `activeFloaters` alongside `activeAgents`. The shared
+  picker builder `irBuildAgentListHtml_` renders a third collapsed `<details>`
+  group, "Floaters (queue-only)", under Active / No-activity, entries tagged
+  with `.ir-agent-floater-chip`. The per-card chip reuses `sourceChipHtml_` (the
+  My Dept Source-column helper) but renders **only** when
+  `matchedViaQueue && !matchedViaRoster` -- roster agents stay implicit.
+  **Security: dropping the roster-only input gate does NOT relax data access.**
+  An off-dept name renders only if its rows had queue-overlap with the dept's
+  queue extensions (the same path My Dept uses to surface floaters); a crafted
+  name with no queue connection produces no rows and falls out of the
+  `visibleAgents` filter. **Two implementation details that look like bugs if
+  you don't know them:** each report pre-populates `agentMatchedViaRoster` for
+  selected roster members BEFORE the row scan, so a zero-call roster pick still
+  renders its card; and `sourceHomes` is built lazily, only when the selection
+  contains at least one floater. INV-53 is the underlying contract; INV-26 is
+  the separate `TEAM_AVG_EXCLUDES` path, which composes with the floater gate
+  in IR.
 - **My Department CSV export.** The agent table has an "Export ▾" menu
   (R9-2: the Insights-toolbar dropdown convention replaced the old
   one-click download icon; the wrap keeps the `#csv-export-btn` id so

@@ -547,6 +547,14 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   the way back. `cdr.dept.subscope` is an orphan key, left in place rather than
   cleared on load: tidying it would be a write on every page view for no user
   benefit.
+- **A control whose only state is a class is a control with NO state, and a
+  driver that asserts the class cannot tell the difference.** The retired tabs
+  carried `is-active` while `.segmented` only styles `.active`, so they had no
+  visual selected state for three phases -- unnoticed because a standing
+  explanation banner had been doing that job by accident, and it was removed in
+  favour of per-tab `title` tooltips. Assert a control's state by its RENDERED
+  effect, never by a class name: `drive-subqueue.js` reads the group header's
+  COMPUTED `cursor`, and the aggregate-row check measures rendered `font-size`.
 - **The DEV OVERLAY is a presentation layer, and its admin check is cosmetic
   (O-11).** `#dev-overlay` is an admin-only diagnostics panel — captured client
   errors, `google.script.run` timings/failures, app state, and a registry of
@@ -929,8 +937,9 @@ client no longer sends a scope, so in practice the tag now reflects the server's
 default — kept because the server still varies it.
 
 The **missed section** shows ONE dept at a time. It stays on the parent unless a
-sub-queue's group-header button re-scopes it (`subqMissedDept_` reads that
-override and nothing else; it resets on every dept or window change, because a
+sub-queue's group-header button re-scopes it (`subqMissedDept_` reads
+`subqMissedDeptOverride_` and nothing else -- never a scope; it resets on every
+dept or window change, because a
 child's missed calls left pinned across a department switch would be *wrong*,
 not merely stale). It never merges, because the queue-only
 abandoned section already includes the parent's sub-queue queues via
