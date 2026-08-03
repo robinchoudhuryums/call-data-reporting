@@ -1883,3 +1883,73 @@ commit/push/deploy direction.
   `yesterdayIso_`, `typeOfCell_`, `pullReportData`, plus five `_`-suffixed
   diagnostics wanting Run-picker wrappers). Growth rate remains the thing to
   watch: −6.4 KB buys about a week and a half at the observed ~4 KB/day.
+
+- **Increment 73 (DONE — Key Design Decisions extraction; ratchet extended to
+  both prose sections):** The follow-on named at the close of increment 72.
+  **40.4 -> 33.7 KB** (CLAUDE.md 171.7 -> 164.9 KB), a bigger proportional cut
+  than the Common Gotchas pass (-17% vs -6%), and for a reason worth carrying
+  forward.
+
+  **The largest win was deleting DUPLICATION, not condensing prose.** Four
+  paragraphs of the sub-queue bullet — the relationship bar, the IR/Insights
+  picker groups, the combined CSV, the missed section's scope — were already
+  written, in more detail, in `docs/client-ui-conventions.md`, the file
+  CLAUDE.md instructs you to read before touching `script.html`. Neither copy
+  was wrong; the F8 split had moved the client conventions out and the bullet
+  kept growing its own version alongside. That bullet went 10.8 -> 7.5 KB by
+  becoming a pointer plus the three rules that are load-bearing SERVER-side.
+  **Check the split files for an existing home before condensing a paragraph
+  — the duplicate may already be better written than what you are editing.**
+
+  Also extracted: the top-tab router's flattened-then-re-collapsed nav history
+  (only the net state matters); the agent table's column-by-column change log;
+  Phase E's three "shipped in commit X" paragraphs, each of which has its own
+  home; the scope toggle's retirement chronology; and the three Overview
+  banners' repeated gating/best-effort boilerplate, now stated once.
+
+  **Two things deliberately kept, both against the instinct to cut.** The
+  `E2`/`E3`/`E4`/`E9` codes stay attached to their affordances because they
+  appear in code comments across five files. And the Source-column bullet
+  still documents machinery that never renders in the My-Dept table — it is
+  not dead code, the IR picker and Diagnostics use it, so the bullet now leads
+  with that instead of trailing a NOTE that contradicts its own opening.
+
+  **One lesson was relocated rather than deleted:** "a control whose only state
+  is a class is a control with no state" existed NOWHERE but CLAUDE.md, so it
+  moved to `docs/client-ui-conventions.md` with the assertion rule it implies
+  (read the rendered effect, not the class name). The token-loss guard is what
+  distinguishes that case from the deletable ones.
+
+  **The ratchet now covers BOTH prose sections.** Leaving Key Design Decisions
+  uncovered would have watched one growth surface while the other regrew
+  freely. Only ONE bullet in the section exceeds the 4 KB budget after the
+  pass, so the same constant works unchanged. Negative-tested both directions.
+  A small lesson recorded in the test: seed a grandfathered size from THAT
+  test's own failure message, not a side script — mine trimmed trailing
+  whitespace differently and was off by one byte.
+
+  Guard results: `npm run ci` 612/612, INV-16 clean, whole-file token-loss
+  check clean apart from five ALL-CAPS prose words the regex misreads
+  (FOLDED / HEADING / RESETS / ROUND / SETUP — each verified by hand to be
+  emphasis in a comment, not a constant). **No `apps-script/` file changed —
+  nothing to deploy.** NET 0 − 0 = 0, same reasoning as increment 72.
+
+  **A process note on my own error:** I reverted the test file with
+  `git checkout` while cleaning up a negative test, discarding unstaged work.
+  The negative-test output had already been captured, so the verification
+  stands and the edits were re-applied — but use a scratch copy for
+  break-it-on-purpose checks rather than `git checkout` on a dirty file.
+
+  **WHERE I LEFT OFF:** `ed72d59` pushed to `claude/broad-scan-c9r2z7`, tree
+  clean, no PR. Everything in increment 72's list is still open and unchanged
+  by this pass — confirm `ui-harness` is green, keep `QUEUE_SPLIT_SCOPE`
+  unset, the increment-71 deploy of both projects, Operator State #40's
+  closing backfill window, and the `deleteOldCDRSheets` trigger check.
+
+  **NEXT for doc weight:** the two big prose sections are now both ratcheted
+  and both freshly extracted, so the remaining growth surfaces are "Key
+  commands" (~14 KB, several entries are effectively prose) and "Read first".
+  Neither is urgent. At 164.9 KB there is 35 KB of headroom under the 200 KB
+  cap — call it three weeks at the observed rate, and the ratchet is what
+  makes that rate visible per commit rather than at the cliff. Unselected
+  audit findings S2-1, B-3, B-5, B-6 and the dead-code list are untouched.
