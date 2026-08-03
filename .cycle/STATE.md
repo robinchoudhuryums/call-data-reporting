@@ -1708,3 +1708,248 @@ commit/push/deploy direction.
   are still all-queue; the Insights combined view is unstarted; the theme/mode
   toggles and the Export dropdown beyond its CSV item still have no automated
   interaction coverage (the same gap class that hid the dept-selector bug).
+
+- **Increment 71 (DONE — broad-scan findings S2-0 / B-1 / B-2 / S2-2; block:
+  `.cycle/blocks/71-S2-0-B-1-B-2-S2-2-broad-implement.md`):** A /broad-scan
+  audit (stages 1-3) found four issues; the owner selected these four to fix.
+
+  **S2-0 is the one that changes behavior.** `applyQueueSplitToRows_` is called
+  from exactly ONE place (`computeSummary_`), so the Phase-2 queue narrowing
+  reached My Department + the manager digests while Overview, Insights, IR,
+  Missed and the low-answer-rate ALERT engine all kept reporting all-queue
+  figures for the same dept and window. A manager comparing the Overview tile
+  to the My Department totals saw two different answer rates with nothing
+  explaining why, and the alert threshold was evaluated on a different number
+  than the dashboard displayed. Now gated on the `QUEUE_SPLIT_SCOPE` Script
+  Property, **default 'off'** — so all six surfaces agree again, at the price
+  of restoring the crossover over-count on Sales / CSR / Power (the pre-Phase-2
+  state, and the chip says so). The gate sits INSIDE the function so Phases 3/4
+  inherit it. Flip to 'dept' only once every DQE surface narrows.
+
+  **B-1** added fail-open #4: the dept has mapped queues and the rows have
+  splits, but no queue name observed across the window matches the dept's list
+  — a name-space config fault (queuesForDept_ returns QCD-canonical
+  `A_Q_CustomerSuccess`, splits carry raw `A_Q_CSR`), which used to render the
+  department as ZERO with every chip silent. Now rolls the window back to its
+  all-queue figures and says so. Assessed per WINDOW not per row, because one
+  row matching nothing is legitimate and failing open there would re-introduce
+  the bug Phase 2 exists to fix.
+
+  **B-2** cut the last three DQE readers over to the DAL — `alertRowsForDate_`,
+  `computeDigestWowDriver_`, `computeOrphans_` — after the docs had claimed for
+  some time that ALL readers were cut over. The alert one was the dangerous
+  member: the claim is what justifies trimming the sheet, and a
+  present-but-aged sheet returns zero rows for yesterday, so every dept logs
+  `no-data` and the alerts stop firing behind a full, plausible-looking Alert
+  Log. A new cross-file tripwire now fails CI if a dashboard `.gs` reads
+  `SHEETS.HISTORICAL` without a Neon path (verified against HEAD: it flags
+  exactly those three).
+
+  **S2-2** guarded the CSR force-rebuild path. `guardForceRebuildLoss_`'s
+  exemption list is keyed on "is this sheet dashboard-read" — true of CSR
+  Transfer until R10-5 made it dashboard-read and nobody revisited it, so a
+  force re-import producing zero CSR rows deleted that date silently.
+
+  CI 610/610 (+9 tests) + INV-16 clean. `npm run ci:ui` could NOT run —
+  playwright will not install in this container and script.html was modified;
+  the blocking `ui-harness` CI job covers it on the PR.
+
+  **WHERE I LEFT OFF / DO THESE FIRST IN A FRESH SESSION:**
+  1. Nothing is committed or pushed yet — 10 modified files on
+     `claude/broad-scan-c9r2z7`. Commit, push, open a PR (ask first; the
+     standing rule is no PR unless asked).
+  2. Confirm the `ui-harness` CI job goes green — it is the only coverage of
+     the `subqSplitChip_` change.
+  3. **DECIDE on QUEUE_SPLIT_SCOPE before deploying.** Unset = 'off' = the
+     consistent state. Do NOT set 'dept' until Phases 3/4 + Overview + Alerts
+     narrow too.
+  4. /sync-docs is needed: CLAUDE.md's queue-split bullets and INV-30 still
+     read as though narrowing is unconditional, and QUEUE_SPLIT_SCOPE needs an
+     Operator State item. (The two FALSE claims — the DQE read-back cutover and
+     the CSR guard exemption — were corrected in this session.)
+  5. Deploy BOTH projects: dashboard (Data/script/Alerts/Digest/OrphanFix/
+     NeonRead) and cdr-import (autoImport).
+  6. Unresolved from the audit sweep, not touched: `deleteOldCDRSheets` has no
+     caller, no menu item and no installer in the repo, yet the ~14-day
+     Call_Legs retention it enforces is what Operator State #40's urgency and
+     IMP-11's "pruned = permanent loss" both rest on. Check the cdr-import
+     Triggers panel.
+  7. Operator State #40 (queue-split backfill window) is still open and still
+     closing — unaffected by this session, since the pipeline still WRITES the
+     split; only the dashboard's use of it is gated.
+
+  **REMAINING AUDIT FINDINGS, not selected:** S2-1 (sub-queue group header is
+  announced as a button but ignores Enter/Space, and carries the `role="button"`
+  S39 explicitly forbids on table rows), B-3 (digest/alert outcomes missing
+  from the Health page; zero-subscriber digest records `ok`), B-5 (sentinel
+  rows bypass the work-window filter), B-6 (combined-view meta describes only
+  the primary dept), plus the small dead-code list in the block file.
+
+- **Increment 72 (DONE — CLAUDE.md extraction pass + three process guards;
+  block: `.cycle/blocks/72-claude-md-extraction-broad-implement.md`):** The
+  owner asked whether CLAUDE.md needs a second split. **Answer: no, and a
+  split would have been the wrong fix.** The measurement is what settled it —
+  372 KB → 150 KB at the F8 split, back to 178 KB in seven days; 51 → 53
+  bullets, but only ~3 KB of that from the two NEW bullets and ~10 KB from
+  EXISTING ones growing. Splitting again would move weight without touching
+  the mechanism that produces it, and would buy roughly a week.
+
+  **What shipped instead: one extraction pass plus three things that make the
+  growth visible per commit.**
+
+  **Extraction (5 of the 8 biggest bullets).** Inbound capture 17.5 → 12.8 KB;
+  role model; Neon write discipline; System Health; deferred Neon mirror. The
+  rule in each case survives verbatim — what left is chronology (how a defect
+  was found, which increment fixed it, what four explanations were eliminated),
+  and every fix code cited already had a `docs/fix-history.md` entry, which is
+  what made this deletion-of-duplicate rather than relocation. **I verified
+  that BEFORE editing, and it is the single fact that made the edit low-risk.**
+  One entry was not narrative but STALE — a "future lever" that had since
+  shipped as the deferred mirror. The 3 remaining top-8 bullets (coercion 3.8
+  KB, direct-extension metrics 4.8 KB, read-back 5.6 KB) were assessed and
+  deliberately left: on close reading they are rule, not padding, and the
+  coercion one is the most safety-critical gotcha in the file.
+
+  **The honest number: 178.1 → 171.7 KB, only −6.4 KB.** That is the finding,
+  not a disappointment — the bullets are mostly genuinely rules, so extraction
+  is not the lever. The ratchet is.
+
+  **Suggestion 2 (the durable one): a per-bullet RATCHET in
+  `claude-md-split.test.js`.** New Common Gotchas bullets must be under 4 KB;
+  the five already over are grandfathered at measured size and may only
+  SHRINK. The 200 KB cap is a CLIFF — it fires on whoever adds the last
+  paragraph, not on whoever grew a bullet over six weeks. Negative-tested in
+  both directions.
+
+  **The ratchet fired on its own author, and the resolution is recorded in the
+  test.** Restoring three pointers the loss-checker caught pushed the inbound
+  bullet past its seeded size; I shaved unrelated prose three times before
+  recognising the seed was a MID-EDIT snapshot, not a real previous size. Two
+  lessons, both in the test comment: seed from a FINISHED state, and shaving
+  unrelated prose to satisfy an arbitrary number is the ratchet causing exactly
+  the damage it exists to prevent.
+
+  **Suggestion 1** added the Round-14 fix-history family (S2-0, B-1, B-2,
+  S2-2) so THIS session's commits don't create the drift the pass cleans up.
+  **Suggestion 3** added CHECK 5 (doc weight) to `/sync-docs`, with an explicit
+  counter-instruction — never propose deleting a RULE, and verify every dropped
+  reference still resolves — because this check's failure mode is the opposite
+  of the other four's. **Suggestion 4** put a "how to write one" note atop
+  Common Gotchas carrying the measured evidence and three habits, the
+  load-bearing one being: **write the bullet ONCE at the END of a phased
+  rollout.** Amending per phase is what produced the biggest bullets — the
+  sub-queue work alone added ~12 KB across six commits.
+
+  **The real risk in this edit was not a broken build but quietly deleting a
+  load-bearing sentence**, so it was checked mechanically rather than by eye: a
+  scratch token-loss guard extracts every fix code, INV-/S-/Operator-State
+  reference, backticked identifier and Script Property from the BEFORE text and
+  asserts each dropped one still resolves somewhere in the live doc set. It
+  caught three genuine losses — `REPORT_USAGE_SCAN_CAP_`,
+  `ncMissingTableError_`, `clChainHtml_`/`minDate` — all restored as compact
+  pointers. Final whole-file run clean.
+
+  CI 612/612 (+2), INV-16 clean, F8 split guard green. No `apps-script/` file
+  changed — **nothing to deploy from this increment.** NET 0 − 0 = 0,
+  deliberately: a documentation-and-process change is not a bug fix, and
+  scoring it otherwise would inflate the tally the reflect step exists to keep
+  honest.
+
+  **Also closed this session (items 1 and 4 of increment 71's list):** commits
+  `f6b5113` (the four findings), `6fec21a` (/sync-docs — the queue-split
+  bullets, INV-30, Operator State #42 and the plan doc all now describe the
+  gate) and `3b28a2a` (this pass) are pushed to `claude/broad-scan-c9r2z7`.
+  **No PR opened — the standing rule is none unless asked.**
+
+  **WHERE I LEFT OFF:**
+  1. Three commits pushed, working tree clean, no PR. Confirm the `ui-harness`
+     CI job is green — `script.html` changed in `f6b5113` and playwright will
+     not install in this container, so that job is its only coverage.
+  2. **`QUEUE_SPLIT_SCOPE` must stay unset ('off') until Phases 3/4 + Overview
+     + Alerts narrow too.** Unset is the consistent state; see Operator State
+     #42 for what each mode makes the numbers mean.
+  3. Deploy from increment 71 is still pending: dashboard (Data / script /
+     Alerts / Digest / OrphanFix / NeonRead) **and** cdr-import (autoImport).
+  4. **Operator State #40 (queue-split backfill) is still closing** — the
+     ~14-day `Call_Legs` window is unaffected by any of this session's work,
+     since the pipeline still WRITES the split.
+  5. `deleteOldCDRSheets` still has no caller, menu item or installer in the
+     repo — check the cdr-import Triggers panel (see increment 71 item 6).
+
+  **NEXT, in the order I'd take them:** Key Design Decisions (40.4 KB, 23% of
+  the file) got no extraction pass and has the same shape — it is the obvious
+  next target, and the ratchet does not cover it. Then the unselected audit
+  findings S2-1, B-3, B-5, B-6, and the dead-code list (`escRowDepartment_`,
+  `yesterdayIso_`, `typeOfCell_`, `pullReportData`, plus five `_`-suffixed
+  diagnostics wanting Run-picker wrappers). Growth rate remains the thing to
+  watch: −6.4 KB buys about a week and a half at the observed ~4 KB/day.
+
+- **Increment 73 (DONE — Key Design Decisions extraction; ratchet extended to
+  both prose sections):** The follow-on named at the close of increment 72.
+  **40.4 -> 33.7 KB** (CLAUDE.md 171.7 -> 164.9 KB), a bigger proportional cut
+  than the Common Gotchas pass (-17% vs -6%), and for a reason worth carrying
+  forward.
+
+  **The largest win was deleting DUPLICATION, not condensing prose.** Four
+  paragraphs of the sub-queue bullet — the relationship bar, the IR/Insights
+  picker groups, the combined CSV, the missed section's scope — were already
+  written, in more detail, in `docs/client-ui-conventions.md`, the file
+  CLAUDE.md instructs you to read before touching `script.html`. Neither copy
+  was wrong; the F8 split had moved the client conventions out and the bullet
+  kept growing its own version alongside. That bullet went 10.8 -> 7.5 KB by
+  becoming a pointer plus the three rules that are load-bearing SERVER-side.
+  **Check the split files for an existing home before condensing a paragraph
+  — the duplicate may already be better written than what you are editing.**
+
+  Also extracted: the top-tab router's flattened-then-re-collapsed nav history
+  (only the net state matters); the agent table's column-by-column change log;
+  Phase E's three "shipped in commit X" paragraphs, each of which has its own
+  home; the scope toggle's retirement chronology; and the three Overview
+  banners' repeated gating/best-effort boilerplate, now stated once.
+
+  **Two things deliberately kept, both against the instinct to cut.** The
+  `E2`/`E3`/`E4`/`E9` codes stay attached to their affordances because they
+  appear in code comments across five files. And the Source-column bullet
+  still documents machinery that never renders in the My-Dept table — it is
+  not dead code, the IR picker and Diagnostics use it, so the bullet now leads
+  with that instead of trailing a NOTE that contradicts its own opening.
+
+  **One lesson was relocated rather than deleted:** "a control whose only state
+  is a class is a control with no state" existed NOWHERE but CLAUDE.md, so it
+  moved to `docs/client-ui-conventions.md` with the assertion rule it implies
+  (read the rendered effect, not the class name). The token-loss guard is what
+  distinguishes that case from the deletable ones.
+
+  **The ratchet now covers BOTH prose sections.** Leaving Key Design Decisions
+  uncovered would have watched one growth surface while the other regrew
+  freely. Only ONE bullet in the section exceeds the 4 KB budget after the
+  pass, so the same constant works unchanged. Negative-tested both directions.
+  A small lesson recorded in the test: seed a grandfathered size from THAT
+  test's own failure message, not a side script — mine trimmed trailing
+  whitespace differently and was off by one byte.
+
+  Guard results: `npm run ci` 612/612, INV-16 clean, whole-file token-loss
+  check clean apart from five ALL-CAPS prose words the regex misreads
+  (FOLDED / HEADING / RESETS / ROUND / SETUP — each verified by hand to be
+  emphasis in a comment, not a constant). **No `apps-script/` file changed —
+  nothing to deploy.** NET 0 − 0 = 0, same reasoning as increment 72.
+
+  **A process note on my own error:** I reverted the test file with
+  `git checkout` while cleaning up a negative test, discarding unstaged work.
+  The negative-test output had already been captured, so the verification
+  stands and the edits were re-applied — but use a scratch copy for
+  break-it-on-purpose checks rather than `git checkout` on a dirty file.
+
+  **WHERE I LEFT OFF:** `ed72d59` pushed to `claude/broad-scan-c9r2z7`, tree
+  clean, no PR. Everything in increment 72's list is still open and unchanged
+  by this pass — confirm `ui-harness` is green, keep `QUEUE_SPLIT_SCOPE`
+  unset, the increment-71 deploy of both projects, Operator State #40's
+  closing backfill window, and the `deleteOldCDRSheets` trigger check.
+
+  **NEXT for doc weight:** the two big prose sections are now both ratcheted
+  and both freshly extracted, so the remaining growth surfaces are "Key
+  commands" (~14 KB, several entries are effectively prose) and "Read first".
+  Neither is urgent. At 164.9 KB there is 35 KB of headroom under the 200 KB
+  cap — call it three weeks at the observed rate, and the ratchet is what
+  makes that rate visible per commit rather than at the cliff. Unselected
+  audit findings S2-1, B-3, B-5, B-6 and the dead-code list are untouched.

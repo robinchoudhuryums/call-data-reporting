@@ -945,3 +945,48 @@ When something looks wrong, before assuming a code bug, check:
     Data. **Scope trap:** it reads the `Raw Data` tab, which holds only the MOST
     RECENTLY IMPORTED date — to sample an older date, re-import it first, and
     its `Call_Legs` source must still exist (pruned at 14 days).
+
+42. **`QUEUE_SPLIT_SCOPE` — the per-dept queue-narrowing switch (dashboard
+    project). Default `off`.**
+
+    Values: `dept` (narrow each agent-day to the department's own queues, the
+    sub-queue Phase 2 behavior) | anything else, including unset, = `off` (every
+    figure is the all-queue rollup). A typo'd value is treated as `off`, never
+    as on.
+
+    **Why it defaults off, and why that is not timidity.** The narrowing is
+    applied by `applyQueueSplitToRows_`, which is called from exactly ONE place
+    — `computeSummary_`. So it reached the My Department agent table and the
+    manager digests, while the Company Overview, Insights, the Individual
+    Report, the Missed Calls report and the low-answer-rate ALERT engine all
+    continued reporting all-queue figures for the same department and window.
+    That left two live definitions of "a department's calls" on screen at once:
+    a manager comparing the Overview tile against the My Department totals saw
+    two different answer rates with nothing explaining the gap, and the alert
+    threshold was evaluated on a different number than the dashboard displayed.
+    For an internal reporting tool whose entire value is being believed, one
+    consistent definition beats a more accurate definition applied to a
+    minority of surfaces.
+
+    **What must ship before setting it to `dept`:** Phase 3 (the Missed Calls
+    report), Phase 4 (the Individual Report + Insights), and — neither of which
+    was in the original phase plan — the Company Overview and the Alerts
+    engine. Until all four narrow, flipping this re-opens the disagreement.
+
+    **What changes when you flip it.** ON: each department sees only its own
+    queues' calls, so a crossover agent (one on two departments' rosters, e.g.
+    CSR + Spanish) no longer contributes their other department's calls to
+    both. OFF: that over-count returns on the three parent depts (Sales / CSR /
+    Power) and the My Department chip says so in as many words. Reversible
+    either way with no redeploy — the scope is part of the `summary:v18` cache
+    key, so a flip cannot serve the other mode's table for the 30-minute TTL.
+
+    **Prerequisite for it to do anything at all:** the Phase 1 pipeline must
+    have populated DQE col AI (`Queue Split`) for the dates being read, and the
+    department's queue names must be mapped so the RAW names in the split match
+    (Dept Config → "Inbound queue aliases"; see #14 and #41). If they do not
+    match, the reader now keeps the all-queue rollup and says "queue mapping
+    mismatch" rather than reporting the department as zero — but that is a
+    fail-safe, not a substitute for mapping the queues.
+
+    Verify with `auditQueueSplitAttribution()` (#41) before and after a flip.

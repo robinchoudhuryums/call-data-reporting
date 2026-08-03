@@ -1977,6 +1977,18 @@ if (!skipCDR && obcHD) {
         monthStr, weekStr, dateObj, agent, transPct, totalCalls, transferred, ...results.csrData.queues[i]
       ]);
     });
+    // S2-2: CSR Transfer became DASHBOARD-READ in R10-5 -- Data.gs's
+    // computeCsrTransferRange_ feeds the My Department team-strip Transfer %
+    // tile and its prior-window delta chip. It is force-deleted above like the
+    // other four historical sheets, but the guard's exemption list still said
+    // "CDR / QPath / CSR are NOT dashboard-read (INV-52 -- legacy DQE Report
+    // only)", which was true when written. Result: a force re-import whose CSR
+    // rebuild yields zero rows deleted that date's transfer history
+    // permanently, with no Pipeline Health failure row and no email -- the tile
+    // just rendered a slightly different weighted percentage. Guarded now, on
+    // the same terms as QCD (log-only; the already-written sheets stand).
+    // CDR / QPath remain unguarded and genuinely not dashboard-read.
+    guardForceRebuildLoss_(targetSS, 'processIntegratedHistory:CSR', dateObj, force, csrBatch.length);
     if (csrBatch.length > 0) {
       csrHD.getRange(csrHD.getLastRow() + 1, 1, csrBatch.length, 18).setValues(csrBatch);
       csrCount = csrBatch.length;

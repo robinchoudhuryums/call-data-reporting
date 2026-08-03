@@ -7592,11 +7592,50 @@
     if (!hasRel) return '';                       // nothing to be confused by
     var dept = m.department || 'this department';
     var label, tip;
-    if (m.queueSplitMapped === false) {
+    // B-1: the dept's mapped queue names matched NOTHING in this window's
+    // per-queue detail, so the server kept the all-queue rollup rather than
+    // reporting the dept as zero. This is a CONFIG fault and it is the loudest
+    // thing this chip can say -- an admin has to fix it, and until they do the
+    // sub-queue separation is simply not happening for this dept.
+    if (m.queueSplitFellOpen) {
+      // NB every branch builds tip as PLAIN text -- the single escapeHtml(tip)
+      // at the return escapes it once. Escaping here too would double-encode
+      // the queue names (which originate in the external CDR feed).
+      label = 'all queues — queue mapping mismatch';
+      tip = 'Per-queue detail exists for this range, but none of the queue names '
+          + 'it carries (' + (m.queueSplitUnmatched || []).join(', ')
+          + ') are mapped to ' + dept + '. Showing ALL-QUEUE figures rather than '
+          + 'zero. Fix this in Dept Config → "Inbound queue aliases" (the raw '
+          + 'phone-system names differ from the QCD-canonical ones), then re-run '
+          + 'auditQueueSplitAttribution().';
+    // S2-0: narrowing is switched OFF (QUEUE_SPLIT_SCOPE unset / 'off'), so
+    // these figures are all-queue BY DESIGN and match every other page. Say
+    // that plainly -- the legacy "detail is not available" wording below would
+    // claim the data is missing when it is merely not being applied.
+    } else if (m.queueSplitScope === 'off') {
+      label = 'all queues';
+      tip = 'These figures cover ALL queues these agents worked, matching the '
+          + 'Overview, Insights and the Individual Report. Per-department '
+          + 'narrowing is currently switched off (QUEUE_SPLIT_SCOPE) so every '
+          + 'page reports the same basis; an agent who also works another '
+          + 'department’s queue is counted in both.';
+    } else if (m.queueSplitMapped === false) {
       label = 'all queues';
       tip = 'These figures cover ALL queues these agents worked. No queues are '
           + 'mapped to ' + dept + ', so there is nothing to narrow them to \u2014 '
           + 'map them in Dept Config (Admin \u25be \u2192 Dept Config).';
+    } else if (m.queueSplitUnmatched && m.queueSplitUnmatched.length) {
+      // B-1, partial case: SOME of the dept's queues matched, so the narrowing
+      // is real and correct for those -- but the unmatched ones are being
+      // dropped from this dept's totals with no other signal. Checked BEFORE
+      // the fully-split early-return below, because a range can be 100%
+      // split-aware and still be short a queue.
+      label = 'missing a queue';
+      tip = 'These figures are narrowed to ' + dept + '’s mapped queues, but '
+          + 'this range also carries calls on ' + m.queueSplitUnmatched.join(', ')
+          + ', which no mapping claims for ' + dept + ' — those calls are NOT '
+          + 'counted here. If any of them belong to ' + dept + ', add them to Dept '
+          + 'Config → "Inbound queue aliases".';
     } else {
       var days = m.queueSplitDays || 0;
       var total = daysInRangeInclusive_(m.from, m.to);

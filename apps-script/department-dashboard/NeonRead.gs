@@ -7,10 +7,22 @@
  * from Neon's `dqe_history` instead:
  *
  *   - `getDqeReadSource_()`  -- the cutover switch (Script Property
- *       `DQE_READ_SOURCE` = 'sheet' (default) | 'neon'). ALL DQE readers
- *       are cut over (Operator State #19): 'neon' serves the dashboard
- *       from dqe_history with per-reader sheet fallback. Default 'sheet'
- *       keeps the legacy behavior.
+ *       `DQE_READ_SOURCE` = 'sheet' (default) | 'neon'). Every DQE reader is
+ *       cut over (Operator State #19): 'neon' serves the dashboard from
+ *       dqe_history with per-reader sheet fallback. Default 'sheet' keeps the
+ *       legacy behavior.
+ *
+ *       B-2: this file claimed "ALL DQE readers are cut over" for a while
+ *       BEFORE it was true -- `Alerts.gs::alertRowsForDate_`,
+ *       `Digest.gs::computeDigestWowDriver_` and `OrphanFix.gs::computeOrphans_`
+ *       still read the sheet directly, and the claim is the sort that justifies
+ *       trimming the sheet. The alert one was the dangerous member: a
+ *       present-but-aged sheet returns zero rows for yesterday, so every dept
+ *       logs `no-data` and the low-answer-rate alerts stop firing with a
+ *       plausible-looking Alert Log. All three now route through
+ *       neonFetchDqeRows_ + neonDqeRowsUsable_ with the same sheet fallback.
+ *       If you add a NEW DQE reader, cut it over in the same commit -- an
+ *       uncut reader is invisible until the sheet ages out from under it.
  *   - `neonFetchDqeRows_(from, to)` / `sheetFetchDqeRows_(from, to)` --
  *       symmetric DAL primitives that return per-(date, agent) DQE rows in
  *       the SAME normalized shape from each source, so they can be diffed

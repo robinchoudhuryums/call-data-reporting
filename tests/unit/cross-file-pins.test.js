@@ -193,3 +193,76 @@ test('R8-D3: the sticky header the rule exists for is still sticky at top: 0', f
   assert.match(m[1], /top:\s*0/,
     'the whole flush-header treatment is downstream of this being top: 0');
 });
+
+// ---- B-2: every DQE reader must be cut over to the DAL ---------------------
+//
+// The DAL cutover was ASSERTED complete ("ALL DQE readers are now cut over")
+// while three readers still went straight to the sheet -- Alerts'
+// alertRowsForDate_, Digest's computeDigestWowDriver_, OrphanFix's
+// computeOrphans_. The claim is what justifies letting the sheet age, and the
+// alert one turns that into silence: a present-but-trimmed sheet yields zero
+// rows for yesterday, so every dept logs `no-data` and the low-answer-rate
+// alerts stop firing behind a full, plausible-looking Alert Log.
+//
+// Doc prose could not keep that true. This can: a dashboard file that reads
+// SHEETS.HISTORICAL must also reference neonFetchDqeRows_, unless it is on the
+// allowlist below WITH a reason. Adding a new DQE reader now fails CI until it
+// is cut over in the same commit.
+const DQE_SHEET_ONLY_ALLOWED = {
+  // The DAL itself: sheetFetchDqeRows_ / dqeSheetMaxDate_ ARE the sheet arm,
+  // and the source-independent max-date probe must never read Neon (it exists
+  // to compare the two).
+  'NeonRead.gs': 'the DAL / the sheet arm it dispatches to',
+  // Editor-run diagnostics that deliberately inspect the SHEET's cells --
+  // dumpCell_ / diagnoseTimes_ exist to show what the spreadsheet holds and
+  // how it coerces, which is meaningless against Neon.
+  'Diagnostics.gs': 'sheet-cell diagnostics; reading Neon would defeat their purpose',
+};
+
+test('B-2: no dashboard file reads the DQE sheet without a Neon path', function () {
+  const files = fs.readdirSync(DASH).filter(function (f) { return /\.gs$/.test(f); });
+  const uncut = [];
+  files.forEach(function (f) {
+    const src = read(f, DASH);
+    if (src.indexOf('SHEETS.HISTORICAL') === -1) return;      // not a DQE reader
+    if (DQE_SHEET_ONLY_ALLOWED[f]) return;                    // documented exemption
+    if (src.indexOf('neonFetchDqeRows_') !== -1) return;      // cut over
+    uncut.push(f);
+  });
+  assert.deepEqual(uncut, [],
+    'these files read DQE Historical Data with no Neon path, so they go blind the '
+    + 'day DQE_READ_SOURCE=neon and the sheet is trimmed: ' + uncut.join(', ')
+    + '. Cut them over via neonFetchDqeRows_ + neonDqeRowsUsable_ (see '
+    + 'alertRowsForDate_), or add an entry to DQE_SHEET_ONLY_ALLOWED with a reason.');
+});
+
+// ---- S2-2: force-path loss guards track the dashboard-read set -------------
+//
+// guardForceRebuildLoss_'s exemption list is keyed on "is this sheet
+// dashboard-read", and that property CHANGES: R10-5 made CSR Transfer
+// dashboard-read (Data.gs::computeCsrTransferRange_ -> the My Department
+// team-strip Transfer % tile) and nobody revisited the guard, so a force
+// re-import producing zero CSR rows deleted that date's history with no
+// failure row and no email. Pin both guarded steps so a future edit that drops
+// one has to argue with a test.
+test('S2-2: processIntegratedHistory guards the force path for QCD and CSR', function () {
+  const src = read('apps-script/cdr-import/autoImport.js');
+  ['processIntegratedHistory:QCD', 'processIntegratedHistory:CSR'].forEach(function (step) {
+    const re = new RegExp('guardForceRebuildLoss_\\(targetSS,\\s*[\'"]'
+      + step.replace(/[:]/g, '[:]') + '[\'"]');
+    assert.match(src, re,
+      step + ' has no guardForceRebuildLoss_ call -- a force rebuild that '
+      + 'produces 0 rows would silently delete that date (the sheet is '
+      + 'dashboard-read, so the loss reaches a tile).');
+  });
+});
+
+test('S2-2: CSR Transfer really is dashboard-read (the reason it is guarded)', function () {
+  // If this ever stops being true the guard above is merely harmless rather
+  // than required -- but the far likelier failure is the reverse, so assert the
+  // premise rather than trusting the comment that states it.
+  const dataGs = read('Data.gs', DASH);
+  assert.match(dataGs, /CSR Transfer Historical Data/,
+    'Data.gs no longer reads CSR Transfer Historical Data -- re-check whether '
+    + 'the S2-2 force-path guard is still warranted before removing it.');
+});

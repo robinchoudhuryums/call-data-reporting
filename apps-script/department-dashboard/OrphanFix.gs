@@ -403,13 +403,6 @@ function addOrphanToRoster(req) {
 const ORPHAN_LOOKBACK_DAYS = 180;
 
 function computeOrphans_() {
-  const ss = openSpreadsheet_();
-  const sheet = ss.getSheetByName(SHEETS.HISTORICAL);
-  if (!sheet) return [];
-  const lastRow = sheet.getLastRow();
-  if (lastRow < 2) return [];
-  const ssTZ = ss.getSpreadsheetTimeZone();
-
   const rosterSet = {};
   collectAllRosterNames_().forEach(function (n) { rosterSet[n] = true; });
 
@@ -417,20 +410,13 @@ function computeOrphans_() {
   const cutoff = new Date(Date.now() - ORPHAN_LOOKBACK_DAYS * 86400000);
   const cutoffIso = Utilities.formatDate(cutoff, TZ, 'yyyy-MM-dd');
 
-  // Read Date + Agent + QueueExt cols only.
-  const numCols = Math.max(
-    HISTORICAL_COLS.DATE, HISTORICAL_COLS.AGENT, HISTORICAL_COLS.QUEUE_EXT
-  );
-  const values = sheet.getRange(2, 1, lastRow - 1, numCols).getValues();
-
   const byName = {};   // name -> { rows, lastSeen, exts: { ext: true } }
-  for (let i = 0; i < values.length; i++) {
-    const dateIso = rowDateIso_(values[i][HISTORICAL_COLS.DATE - 1], ssTZ);
-    if (!dateIso || dateIso < cutoffIso) continue;
-    const agent = String(values[i][HISTORICAL_COLS.AGENT - 1] || '').trim();
-    if (!agent) continue;
-    if (/^A_Q_/.test(agent) || agent === 'Backup CSR') continue;
-    if (rosterSet[agent]) continue;
+  const accept = function (dateIso, agentRaw, extCell) {
+    if (!dateIso || dateIso < cutoffIso) return;
+    const agent = String(agentRaw || '').trim();
+    if (!agent) return;
+    if (/^A_Q_/.test(agent) || agent === 'Backup CSR') return;
+    if (rosterSet[agent]) return;
     let e = byName[agent];
     if (!e) {
       e = { rows: 0, lastSeen: '', exts: {} };
@@ -438,9 +424,53 @@ function computeOrphans_() {
     }
     e.rows++;
     if (dateIso > e.lastSeen) e.lastSeen = dateIso;
-    const exts = parseExtensions_(values[i][HISTORICAL_COLS.QUEUE_EXT - 1]);
+    const exts = parseExtensions_(extCell);
     for (let j = 0; j < exts.length && Object.keys(e.exts).length < 3; j++) {
       e.exts[exts[j]] = true;
+    }
+  };
+
+  // B-2 DAL cutover (see alertRowsForDate_). Left on the sheet when the other
+  // DQE readers were cut over: on the neon path with an aged sheet the orphan
+  // list would silently empty, which reads as "no orphans to fix" and also
+  // stops the admin-only Overview orphan nag from ever firing. The upper bound
+  // is deliberately open-ended so the window matches the sheet scan's
+  // "everything on or after the cutoff" exactly, with no clock-skew clipping.
+  const dqeSource = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
+  const neonCapable = (dqeSource === 'neon' && typeof neonFetchDqeRows_ === 'function');
+  let usedNeon = false;
+  if (neonCapable) {
+    try {
+      const dalRows = neonFetchDqeRows_(cutoffIso, '9999-12-31');
+      if (neonDqeRowsUsable_(dalRows)) {
+        for (let i = 0; i < dalRows.length; i++) {
+          accept(dalRows[i].dateIso, dalRows[i].agent, dalRows[i].queueExt);
+        }
+        usedNeon = true;
+      }
+    } catch (e) {
+      Logger.log('computeOrphans_: neon read failed, falling back to sheet: '
+        + (e && e.message ? e.message : e));
+      usedNeon = false;
+    }
+  }
+
+  if (!usedNeon) {
+    const ss = openSpreadsheet_();
+    const sheet = ss.getSheetByName(SHEETS.HISTORICAL);
+    if (!sheet) return [];
+    const lastRow = sheet.getLastRow();
+    if (lastRow < 2) return [];
+    const ssTZ = ss.getSpreadsheetTimeZone();
+    // Read Date + Agent + QueueExt cols only.
+    const numCols = Math.max(
+      HISTORICAL_COLS.DATE, HISTORICAL_COLS.AGENT, HISTORICAL_COLS.QUEUE_EXT
+    );
+    const values = sheet.getRange(2, 1, lastRow - 1, numCols).getValues();
+    for (let i = 0; i < values.length; i++) {
+      accept(rowDateIso_(values[i][HISTORICAL_COLS.DATE - 1], ssTZ),
+             values[i][HISTORICAL_COLS.AGENT - 1],
+             values[i][HISTORICAL_COLS.QUEUE_EXT - 1]);
     }
   }
   return Object.keys(byName).sort().map(function (name) {

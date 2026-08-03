@@ -133,7 +133,7 @@ backfill function: re-running the existing DQE build (force re-import) for a
 surviving date rewrites its rows with the split, which is the documented
 operator step.
 
-**Phase 2 — My Department consumes it.** SHIPPED. `applyQueueSplitToRows_`
+**Phase 2 — My Department consumes it.** SHIPPED, then GATED OFF (S2-0): it runs only when `QUEUE_SPLIT_SCOPE=dept` (Operator State #42), because it landed on My Department + the digests while Overview / Insights / IR / Missed / Alerts stayed all-queue. Phases 3 and 4 -- plus Overview and Alerts, which were never in this plan -- are the precondition for turning it on. `applyQueueSplitToRows_`
 narrows each source row to the dept's own queues (matched case-insensitively
 against `inboundQueuesForDept_`) BEFORE `computeSummary_`'s aggregation loop, so
 every rule inside that loop inherits the narrowing unchanged. **Fails open three
