@@ -1940,11 +1940,31 @@ commit/push/deploy direction.
   stands and the edits were re-applied — but use a scratch copy for
   break-it-on-purpose checks rather than `git checkout` on a dirty file.
 
-  **WHERE I LEFT OFF:** `ed72d59` pushed to `claude/broad-scan-c9r2z7`, tree
-  clean, no PR. Everything in increment 72's list is still open and unchanged
-  by this pass — confirm `ui-harness` is green, keep `QUEUE_SPLIT_SCOPE`
-  unset, the increment-71 deploy of both projects, Operator State #40's
-  closing backfill window, and the `deleteOldCDRSheets` trigger check.
+  **WHERE I LEFT OFF — increments 71-73 are MERGED TO `main`.** PR #215
+  (`c4e5ecd`) landed all six commits: the four audit findings, the /sync-docs
+  pass, and both CLAUDE.md extraction passes. **Both CI jobs passed, so
+  `ui-harness` is confirmed green** and that item is CLOSED — as is
+  "drop `continue-on-error` from the ui-harness job", which was already done
+  before this session and lingered in older notes. `claude/broad-scan-c9r2z7`
+  has been restarted from `main`; do NOT reuse PR #215.
+
+  **Three things are still open and none of them is code:**
+  1. **DEPLOY — this is the gating step, and it is TWO projects.** cdr-import
+     (`autoImport.js`) and the dashboard (`Data.gs`, `script.html`,
+     `Alerts.gs`, `Digest.gs`, `OrphanFix.gs`, `NeonRead.gs`). The dashboard
+     needs a **new deployment version**, not just `clasp push -f` (Operator
+     State #2); `scripts/deploy.sh <dir> <deployment-id>` does both.
+  2. **Operator State #40 — the queue-split backfill, still on a clock.**
+     `Call_Legs` is pruned at 14 days and per-leg queue identity exists
+     nowhere else, so every undeployed day is permanently unsplittable. Deploy
+     cdr-import, then force re-import the surviving dates. This is the only
+     item with a deadline.
+  3. **Leave `QUEUE_SPLIT_SCOPE` unset.** Unset = `off` = the consistent
+     state, where all six DQE surfaces agree. See Operator State #42.
+
+  Also unverified: the `deleteOldCDRSheets` trigger (no caller, menu item or
+  installer exists in the repo, yet the 14-day retention it enforces is what
+  item 2's urgency rests on — check the cdr-import Triggers panel).
 
   **NEXT for doc weight:** the two big prose sections are now both ratcheted
   and both freshly extracted, so the remaining growth surfaces are "Key
