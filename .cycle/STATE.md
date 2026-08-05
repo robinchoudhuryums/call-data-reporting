@@ -2181,3 +2181,21 @@ commit/push/deploy direction.
      10 (D-8/D-9), strategic items.
   4. /sync-docs queue (4 clauses): harness strictness, C-6 allUnparsed, B-5
      alerts note, deploy.sh's TST-7 sentence now including ci:ui.
+
+- **Increment 80 (DONE — /sync-docs for the Round-15 batch queue):** commit
+  `e4e8601`. The four queued clauses landed (deploy.sh's ci:ui gate, F-9's
+  CI=true fail, harness strictness F-5/F-6, C-6's allUnparsed arm) plus B-5's
+  alerts note, #35's B-2 sheetTrimmed nuance, tests/README's strictness
+  contract, and a fix-history code→block map for every implemented Round-15
+  code. Both ratcheted bullets edited net-NEGATIVE (seeds tightened 4892→4881,
+  6160→6156). CLAUDE.md 170.1 KB (~30 KB headroom). 631/631, guards green.
+  The /sync-docs queue is now EMPTY.
+
+  **WHERE I LEFT OFF:** unchanged from increment 79 — the gating step is the
+  three-project DEPLOY (dashboard new version: 74/76/77/78; cdr-import:
+  74/75/79; cdr-report: 79) + the #43 trigger install. Remaining code work:
+  Batch 9 (C-7, deferred pending the Neon cutover decision), Batch 10
+  (D-8/D-9), strategic tracks. The Neon cutover runbook + its open
+  prerequisites were summarized for the owner in the increment-80 session
+  reply (README "full flip runbook" + Op State #19/#25/#30/#35 are the
+  durable references).
