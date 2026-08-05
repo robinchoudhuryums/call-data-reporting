@@ -210,6 +210,12 @@ function runBatch(reportConfig, reportLabel) {
   debugLog.push(`Total dates in range: ${getDaysInRange(startDate, endDate)}`);
   debugLog.push(`Weekdays found: ${weekdays.length}`);
   debugLog.push(`Weekend days skipped: ${getDaysInRange(startDate, endDate) - weekdays.length}`);
+  if (weekdays._truncatedAfter) {
+    // D-4: say the clip out loud at the TOP of the debug log the email carries.
+    debugLog.unshift('⚠ RANGE TRUNCATED at the 400-day safety cap — nothing after '
+      + weekdays._truncatedAfter.toDateString()
+      + ' is in this batch. Re-run with a smaller range for the remainder.');
+  }
 
   // --- Process each weekday
   for (const currentDate of weekdays) {
@@ -400,7 +406,17 @@ function getWeekdaysInRange(startDate, endDate, timeZone) {
     
     iterationCount++;
   }
-  
+  // D-4: the safety cap used to stop SILENTLY -- a >400-day batch emailed a
+  // zip missing its tail dates with nothing saying the range was clipped.
+  // Mark the truncation (array property, the harness `_neonReachable`
+  // precedent) so the caller can say it out loud.
+  if (iterationCount >= 400) {
+    var lastIncluded = weekdays.length ? weekdays[weekdays.length - 1] : null;
+    weekdays._truncatedAfter = lastIncluded;
+    Logger.log('getWeekdaysInRange: RANGE TRUNCATED at the 400-day safety cap -- dates after '
+      + (lastIncluded ? lastIncluded.toDateString() : '(none)')
+      + ' are NOT included. Split the batch into smaller ranges.');
+  }
   return weekdays;
 }
 

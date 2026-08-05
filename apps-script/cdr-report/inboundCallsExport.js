@@ -176,7 +176,14 @@ function exportInboundCalls(fromIso, toIso) {
     // Normalize booleans/nulls for the sheet.
     var values = rows.map(function (r) {
       r[7] = r[7] === true ? 'TRUE' : (r[7] === false ? 'FALSE' : '');
-      return r.map(function (v) { return v == null ? '' : v; });
+      // D-3: queue/insurer/journey strings originate in the external feed --
+      // neutralize a leading =/+/@ so a crafted name can't land as a live
+      // formula in this tab (typeof guard: helper lives in dashboardCDR.js,
+      // same project global scope).
+      return r.map(function (v) {
+        if (v == null) return '';
+        return (typeof crSheetSafeCell_ === 'function') ? crSheetSafeCell_(v) : v;
+      });
     });
     sheet.getRange(sheet.getLastRow() + 1, 1, values.length, INBOUND_EXPORT_HEADERS.length).setValues(values);
     // Keep the tab chronological -- an explicit mid-history range would

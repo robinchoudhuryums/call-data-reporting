@@ -166,6 +166,14 @@ function showSidebar() {
 
         </div>
         <script>
+          // D-2: header names and every Raw Data cell come from the external
+          // telephony feed -- escape them like DQEDrilldownSidebar.html does
+          // (a caller name containing markup executed in this sidebar).
+          function esc(v) {
+            return String(v === undefined || v === null ? '' : v)
+              .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+              .replace(/"/g, '&quot;');
+          }
           window.onload = function() {
             google.script.run
               .withSuccessHandler(renderCheckboxes)
@@ -185,8 +193,8 @@ function showSidebar() {
             defaults.forEach(item => {
               container.innerHTML +=
                 '<label class="checkbox-item">' +
-                '<input type="checkbox" class="col-check" value="' + item.index + '" data-diag="false" checked> ' +
-                item.name + '</label>';
+                '<input type="checkbox" class="col-check" value="' + esc(item.index) + '" data-diag="false" checked> ' +
+                esc(item.name) + '</label>';
             });
 
             if (diags.length > 0) {
@@ -194,8 +202,8 @@ function showSidebar() {
               diags.forEach(item => {
                 container.innerHTML +=
                   '<label class="checkbox-item">' +
-                  '<input type="checkbox" class="col-check" value="' + item.index + '" data-diag="true"> ' +
-                  '<span class="diag-label">' + item.name + '</span></label>';
+                  '<input type="checkbox" class="col-check" value="' + esc(item.index) + '" data-diag="true"> ' +
+                  '<span class="diag-label">' + esc(item.name) + '</span></label>';
               });
             }
           }
@@ -218,7 +226,7 @@ function showSidebar() {
                 try {
                   const result = JSON.parse(jsonString);
                   if (result.error) {
-                    content.innerHTML = '<p class="error">&#9888; ' + result.error + '</p>';
+                    content.innerHTML = '<p class="error">&#9888; ' + esc(result.error) + '</p>';
                   } else {
                     buildTable(result.headers, result.rows, result.context);
                   }
@@ -229,7 +237,7 @@ function showSidebar() {
                 btn.innerText = '\u25B6 Run for Selected Cell';
               })
               .withFailureHandler(function(err) {
-                content.innerHTML = '<p class="error">Error: ' + err.message + '</p>';
+                content.innerHTML = '<p class="error">Error: ' + esc(err && err.message) + '</p>';
                 btn.disabled  = false;
                 btn.innerText = '\u25B6 Run for Selected Cell';
               })
@@ -253,8 +261,8 @@ function showSidebar() {
             // Context bar
             if (context) {
               html += '<div id="context-bar">' +
-                      '<strong>' + context.rowLabel + '</strong>' +
-                      context.colLabel +
+                      '<strong>' + esc(context.rowLabel) + '</strong>' +
+                      esc(context.colLabel) +
                       '</div>';
             }
 
@@ -277,7 +285,7 @@ function showSidebar() {
             } else if (context && context.isAverage) {
               html += '<p class="result-header match-avg">&#8505; ' + rows.length +
                       ' row' + (rows.length !== 1 ? 's' : '') +
-                      ' used in average &mdash; Dashboard: ' + context.dashboardValue + '</p>';
+                      ' used in average &mdash; Dashboard: ' + esc(context.dashboardValue) + '</p>';
             } else {
               html += '<p class="result-header match-ok">&#9989; Found ' + rows.length + ' rows.</p>';
             }
@@ -285,13 +293,13 @@ function showSidebar() {
             // Table
             html += '<table><thead><tr>';
             checked.forEach(i => {
-              html += '<th>' + (headers[i] || 'Col ' + (i + 1)) + '</th>';
+              html += '<th>' + esc(headers[i] || 'Col ' + (i + 1)) + '</th>';
             });
             html += '</tr></thead><tbody>';
             rows.forEach(row => {
               html += '<tr>';
               checked.forEach(i => {
-                html += '<td>' + (row[i] !== undefined && row[i] !== null ? row[i] : '') + '</td>';
+                html += '<td>' + esc(row[i]) + '</td>';
               });
               html += '</tr>';
             });

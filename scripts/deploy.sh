@@ -42,6 +42,14 @@ fi
 if [ "${DEPLOY_SKIP_CI:-}" != "1" ]; then
   echo "==> npm run ci   (tests + INV-16 guard; DEPLOY_SKIP_CI=1 to skip)"
   npm run ci
+  # F-10: ALSO run the rendered-UI gate -- the only automated coverage of
+  # ~20K lines of script.html, and both production bugs it has caught shipped
+  # through paths `node --test` structurally cannot see. ci.mjs skips cleanly
+  # (exit 0, with a message) when playwright isn't installed, so this is safe
+  # on any machine; a machine WITH playwright gets the full gate before the
+  # code goes live. Same DEPLOY_SKIP_CI escape hatch.
+  echo "==> npm run ci:ui   (rendered-UI gate; skips if playwright absent)"
+  npm run ci:ui
 fi
 
 # Batch 4 (Operator State #29): `clasp push -f` never DELETES remote files

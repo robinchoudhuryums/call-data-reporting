@@ -994,15 +994,17 @@ When something looks wrong, before assuming a code bug, check:
 
     Verify with `auditQueueSplitAttribution()` (#41) before and after a flip.
 
-43. **The `Call_Legs_*` retention prune (`deleteOldCDRSheets`, cdr-import) has
-    NO in-repo installer, menu item, or caller — verify its trigger exists in
-    the cdr-import Triggers panel.** The ~14-day per-day-sheet retention it
-    enforces is load-bearing well beyond disk hygiene: the inbound/outbound
-    journey backfills, the per-queue split backfill window (#40), and the
-    deferred mirror's pruned-sheet detection all assume it runs. If the
-    hand-created trigger is ever lost, the source spreadsheet grows without
-    bound and nothing in the repo or the Health page notices; conversely,
-    when auditing "how far back can X be rebuilt", this trigger's cadence IS
-    the answer. Known gap (audit C-3): give it an installer + a Health-page
-    row like the other engines; until then, this checklist item is the only
-    record that it must exist.
+43. **The `Call_Legs_*` retention prune (`DeleteOldSheets.js`, cdr-import) —
+    install `runRetentionPrune_` via the CDR Tools menu ("Install Retention
+    Prune Trigger", daily ~3 AM) and REMOVE any pre-existing hand-made
+    trigger on `deleteOldCDRSheets` so it doesn't run twice.** The ~14-day
+    per-day-sheet retention it enforces is load-bearing well beyond disk
+    hygiene: the inbound/outbound journey backfills, the per-queue split
+    backfill window (#40), and the deferred mirror's pruned-sheet detection
+    all assume it runs — and when auditing "how far back can X be rebuilt",
+    this trigger's cadence IS the answer. Since the C-3 fix (2026-08) each
+    run logs a `retentionPrune` Pipeline Health row (success + deleted
+    count, or failure), so a broken prune surfaces on the Health page's
+    "Recent pipeline step failures" and via the PipelineWatch push; a long
+    silence on that step means the trigger is NOT installed. Proof-of-life:
+    the most recent `retentionPrune` row's timestamp.

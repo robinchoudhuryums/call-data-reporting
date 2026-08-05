@@ -53,3 +53,24 @@ test('F7: every declared vendor bundle actually exists and is non-trivial', func
     assert.ok(fs.statSync(f).size > 5000, VENDOR_FILES[pkg] + ' looks truncated');
   });
 });
+
+test('F-11: the manifest hash matches the committed bundle BYTES', function () {
+  // The version check above ties the MANIFEST to dashboard.html; nothing tied
+  // the manifest to the bundle CONTENT -- bumping VERSIONS.json without
+  // re-copying the bundle passed, and the harness then verified the client
+  // against a stale library while claiming the new version.
+  const crypto = require('crypto');
+  const manifest = JSON.parse(fs.readFileSync(path.join(VENDOR_DIR, 'VERSIONS.json'), 'utf8'));
+  const hashes = manifest.sha256 || {};
+  Object.keys(VENDOR_FILES).forEach(function (pkg) {
+    const file = VENDOR_FILES[pkg];
+    const expected = hashes[file];
+    assert.ok(expected, 'VERSIONS.json has no sha256 for ' + file);
+    const actual = crypto.createHash('sha256')
+      .update(fs.readFileSync(path.join(VENDOR_DIR, file)))
+      .digest('hex');
+    assert.equal(actual, expected,
+      file + ' does not match its manifest hash -- if you bumped the version, '
+      + 're-copy the bundle AND update sha256 in VERSIONS.json to ' + actual);
+  });
+});

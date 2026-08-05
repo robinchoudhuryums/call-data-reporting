@@ -2151,7 +2151,7 @@ items for anything it flags or doesn't cover.)
 40. Per-queue split backfill -- a ONE-TIME step whose 14-day window CLOSES; miss it and those dates can never be split
 41. A dept's totals changed after a re-import -- `auditQueueSplitAttribution()` separates "the de-dup worked" from "a queue is mapped to no dept and its calls were dropped"
 42. `QUEUE_SPLIT_SCOPE` -- the per-dept queue-narrowing switch (default `off`); what must ship before it can be `dept`, and what each mode makes the numbers mean
-43. The `Call_Legs_*` retention prune (`deleteOldCDRSheets`) has NO in-repo installer or trigger -- verify it exists in the cdr-import Triggers panel; the ~14-day window everything assumes rests on it
+43. The `Call_Legs_*` retention prune -- install `runRetentionPrune_` (CDR Tools menu; logs `retentionPrune` Pipeline Health rows) and remove any hand-made `deleteOldCDRSheets` trigger; the ~14-day window everything assumes rests on it
 
 ## Cycle Workflow Config
 

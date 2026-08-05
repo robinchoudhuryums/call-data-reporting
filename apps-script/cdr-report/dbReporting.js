@@ -50,7 +50,14 @@ function pullReportData(startDate, endDate, department) {
                     .getSheetByName('Report Output');
     if (!sheet) throw new Error('Sheet "Report Output" not found.');
     sheet.clearContents();
-    sheet.getRange(1, 1, output.length, output[0].length).setValues(output);
+    // D-3: agent names come from the feed via Neon -- neutralize formula-
+    // leading strings (numeric strings pass through, see crSheetSafeCell_).
+    const safeOutput = output.map(function (row) {
+      return row.map(function (v) {
+        return (typeof crSheetSafeCell_ === 'function') ? crSheetSafeCell_(v) : v;
+      });
+    });
+    sheet.getRange(1, 1, safeOutput.length, safeOutput[0].length).setValues(safeOutput);
     Logger.log(`Report pulled: ${output.length - 1} rows.`);
   } finally {
     conn.close();

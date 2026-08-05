@@ -1,6 +1,11 @@
 {
-  "_comment": "Vendor bundles for the rendered-UI harness, COMMITTED so the harness needs no npm install beyond playwright. These MUST match the CDN versions dashboard.html pins, or the harness tests the client against a different Chart.js than production ships. tests/unit/ui-harness-vendor.test.js enforces that.",
+  "_comment": "Vendor bundles for the rendered-UI harness, COMMITTED so the harness needs no npm install beyond playwright. These MUST match the CDN versions dashboard.html pins, or the harness tests the client against a different Chart.js than production ships. tests/unit/ui-harness-vendor.test.js enforces that. F-11: sha256 ties the manifest to the BUNDLE BYTES -- when you re-copy a bundle for a version bump, update its hash from the test's failure message (or sha256sum).",
   "chart.js": "4.4.4",
   "chartjs-plugin-datalabels": "2.2.0",
-  "html2canvas-pro": "1.5.11"
+  "html2canvas-pro": "1.5.11",
+  "sha256": {
+    "chart.umd.js": "fed6a739f8d0f0687174de6cd14745fc0fc7809144ab113d22908a26bf0d7fea",
+    "datalabels.min.js": "20c08f3d9c6d2ef76df6d6a6f1127c0013339fe32add24222276c398c6308c38",
+    "html2canvas-pro.min.js": "2f36513254938885534ffe240933172da6eaed4a53d7774ebc35b0650722b6fe"
+  }
 }
