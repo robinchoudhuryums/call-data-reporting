@@ -155,6 +155,40 @@ test('writer P-1: stray-dated records are dropped; DELETE pinned to the expected
   assert.ok(!ins.includes('888888'), 'the stray record is dropped, not written');
 });
 
+test('C-1: an ALL-STRAY yield refuses the zero-record cleanup (wrong-day grid must not delete)', function () {
+  const cap = {};
+  h.ctx.getReachableNeonConn_ = function () { return fakeConn(cap); };
+  const strayOnly = [
+    leg({ callId: '888888', legId: 1, start: '07/21/2026 23:50:00',
+      stop: '07/21/2026 23:51:00', direction: 'Outgoing', talk: '0:00:40', caller: '305',
+      callee: '12145550001', answered: 'Answered', dept: 'Sales' }),
+  ];
+  const res = h.call('writeOutboundCallsToNeon', strayOnly,
+    { authoritative: true, expectedDateIso: '2026-07-22' });
+  assert.equal(res.allStray, true, 'refusal is reported to the caller');
+  assert.equal(res.strayCount, 1);
+  assert.equal(res.cleared, undefined, 'no cleanup happened');
+  assert.equal((cap.executed || []).length, 0,
+    'no statement ran -- the expected date\'s rows are untouched');
+});
+
+test('C-6: an ALL-UNPARSED yield refuses the zero-record cleanup (format drift must not delete)', function () {
+  const cap = {};
+  h.ctx.getReachableNeonConn_ = function () { return fakeConn(cap); };
+  const unparsedOnly = [
+    leg({ callId: '888889', legId: 1, start: '2026-07-22T09:50:00Z',
+      stop: '2026-07-22T09:51:00Z', direction: 'Outgoing', talk: '0:00:40', caller: '305',
+      callee: '12145550001', answered: 'Answered', dept: 'Sales' }),
+  ];
+  const res = h.call('writeOutboundCallsToNeon', unparsedOnly,
+    { authoritative: true, expectedDateIso: '2026-07-22' });
+  assert.equal(res.allUnparsed, true, 'refusal is reported to the caller');
+  assert.equal(res.unparsedDropped, 1);
+  assert.equal(res.cleared, undefined, 'no cleanup happened');
+  assert.equal((cap.executed || []).length, 0,
+    'no statement ran -- the expected date\'s rows are untouched');
+});
+
 test('writer: non-authoritative is upsert-only; HMAC secret inlines the 64-hex hash', function () {
   const cap = {};
   h.ctx.getReachableNeonConn_ = function () { return fakeConn(cap); };

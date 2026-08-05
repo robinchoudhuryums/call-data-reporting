@@ -20,6 +20,16 @@ import { fileURLToPath } from 'node:url';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 if (!existsSync(path.join(HERE, 'node_modules', 'playwright'))) {
+  // F-9: in CI the install step is supposed to have provided playwright --
+  // a missing install there means a broken workflow (e.g. a refactor that
+  // hoisted node_modules away from HERE), and silently exiting 0 would turn
+  // the gate permanently green. Fail loudly under CI; skip cleanly elsewhere.
+  if (process.env.CI) {
+    console.error('ui-harness: playwright not installed but CI=true -- the workflow\'s install '
+      + 'step did not land node_modules under ' + HERE + '. FAILING instead of skipping, '
+      + 'so the gate cannot go silently green.');
+    process.exit(1);
+  }
   console.log('ui-harness: playwright not installed -- SKIPPING the rendered-UI gate.');
   console.log('  Install it with:  cd tools/ui-harness && npm i playwright');
   console.log('  (Vendor bundles are committed, so playwright is the only dependency.)');

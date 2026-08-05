@@ -12,7 +12,15 @@
 function assertAdmin_() {
   const email = Session.getActiveUser().getEmail();
   const user = resolveUser_(email);
-  if (user.role !== 'admin') throw new Error('Alerts are admin-only.');
+  // A-3: this gate guards EVERY admin surface (Dept Config, Caller Lookup,
+  // Orphan Fix, setup(), Health, the Access editor, ...), so the message
+  // must not name one of them -- "Alerts are admin-only." actively misled
+  // during exactly the ADMIN_EMAILS-misconfiguration triage where it shows
+  // (Operator State #13).
+  if (user.role !== 'admin') {
+    throw new Error('This action is admin-only. If you should be an admin, check the '
+      + 'ADMIN_EMAILS Script Property (Operator State #13).');
+  }
 }
 
 /**

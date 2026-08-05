@@ -1973,3 +1973,254 @@ commit/push/deploy direction.
   cap — call it three weeks at the observed rate, and the ratchet is what
   makes that rate visible per commit rather than at the cliff. Unselected
   audit findings S2-1, B-3, B-5, B-6 and the dead-code list are untouched.
+
+- **Increment 74 (DONE — Round-15 broad-scan + six selected fixes):** A fresh
+  three-stage audit (six parallel subsystem passes + a seventh over the
+  script.html regions no prior pass had read line-by-line, all headline
+  findings self-verified in code) produced ~55 findings; the owner selected
+  A-1, G-1, C-1+C-2, B-1, B-3+E-2 for implementation. All six landed in one
+  commit (`9b65772`, pushed to `claude/broad-scan-l9ojgm`); the full summary
+  block is `.cycle/blocks/74-audit-fixes-broad-implement.md`. NOTE: this
+  round's finding IDs (A-#/B-#/C-#...) are per-agent namespaces from THIS
+  audit — the B-3/B-5/B-6 "unselected findings" mentioned by increments 71-73
+  are a DIFFERENT, older numbering; both sets remain open where not fixed.
+
+  Highlights: A-1 was the CONFIG_SOURCE=neon runbook silently wiping Final
+  Dept Labels with its own parity gate certifying the loss (backfill + compare
+  key both blind to col 11; the ongoing save path was fine — the fix is small
+  and the test fixture now carries a non-empty label so the class can't
+  recur). G-1 was a shipped, server-computed, doc'd feature dead client-side:
+  all four roster-cache writers dropped `subQueueGroups`, so parent managers
+  never saw the sub-queue picker groups. C-1/C-2 hardened the no-sheet-primary
+  captures: an all-stray grid (wrong-day signature) no longer triggers the
+  zero-record authoritative DELETE, and the daily import now surfaces every
+  delete-only outcome (unreachable/refused/cleared) instead of logging
+  nothing. B-1 (Direct company view per-(agent,dept) grouping, directCall:v3),
+  B-3 (YTD trend cache-put guards), E-2 (missed-section inline error + Retry)
+  round it out.
+
+  Verification: 615/615 unit tests (+3 pins), INV-16 clean, and — new for this
+  container — the FULL rendered-UI gate ran locally (playwright installs fine
+  into tools/ui-harness after `npm init -y` there; the root-install trap and
+  its package.json pollution are what previously made this look impossible).
+  All drivers passed. NET 2 − 0 = 2 (G-1 + B-1 were live; the rest latent).
+
+  **WHERE I LEFT OFF:**
+  1. Commit `9b65772` is pushed; working tree clean; NO PR opened (standing
+     rule: none unless asked).
+  2. **DEPLOY is the gating step, two projects:** dashboard (NEW VERSION, not
+     just push — Operator State #2) + cdr-import. cdr-report/dqe-report
+     unchanged. `scripts/deploy.sh <dir> <deployment-id>` does both steps.
+  3. Post-deploy: runLiveSmoke, then walk S36 (Dept Config round-trip), S38
+     (inbound capture), and the IR/Insights picker as a parent-dept manager
+     (the G-1 groups + the now-reachable mixed-selection refusal).
+  4. If `backfillDeptConfigToNeon` was ever run pre-fix, re-run it +
+     `compareDeptConfigSources` (Neon's final_dept_labels are blank from the
+     old code). Skip if the C2 migration was never started.
+  5. The audit's full report (ratings, top-5, ~49 unimplemented findings,
+     Stage-3 effectiveness review) is in the session transcript; the
+     follow-on list + doc-drift items are in the increment-74 block file.
+     Next best candidates: C-3 (retention trigger unversioned), B-2
+     (retirement-aware SmokeCheck/NeonCoverage), F-5/F-6 (harness can't
+     enforce REP-10/coercion protections), F-10 (deploy.sh skips ci:ui),
+     G-2/G-3 (stuck export button; hardcoded 95% goal line).
+  6. /sync-docs is warranted for the doc-drift set (F-3's INV-38 index line
+     above all — it misstates an AUTHORIZATION-relevant invariant in the
+     always-loaded file).
+
+- **Increment 75 (DONE — Round-15 Batch 1: capture & force-path data safety):**
+  C-5 / C-6 / C-8 / C-9, all in cdr-import; commit `05ec643`; summary block in
+  `.cycle/blocks/75-batch1-data-safety-broad-implement.md`. 618/618, INV-16
+  clean. NET 0 − 0 = 0 (all latent hardening).
+
+  Shape notes worth keeping: C-6 grew past its audit wording during
+  implementation — an ALL-unparsed grid turned out to pass the C-1 stray gate
+  (date-LESS records are not stray-DATED), so the counter also became a third
+  refusal arm (`allUnparsed`) beside `allStray`; and the two capture builders
+  are asymmetric (inbound emits date-less records for the writer to filter,
+  outbound drops them internally), so outbound counts via a
+  `records._unparsedDropped` array property (the `_neonReachable` precedent).
+  C-5 splits into an input-validation THROW (empty ext maps — structurally
+  zero rows) and a log-only failure row for rebuilt-to-zero-with-deletions
+  (P-5's legitimate force-to-zero preserved). `dcWriteSheet_` now returns
+  `{written, deleted}` — its one caller and one test updated.
+
+  Also this session, before Batch 1: increment 74's /sync-docs pass landed as
+  `4a2a92b` (INV-38 index line, INV-01 bullet, chunking claims, count-free
+  index lines, Operator State #43 for the unversioned `deleteOldCDRSheets`
+  trigger, the #25 re-run warning, the Round-15 fix-history family, two stale
+  in-file comments). The CLAUDE.md per-bullet ratchet seed for the Neon-write-
+  discipline bullet tightened 4896 → 4892.
+
+  **WHERE I LEFT OFF:**
+  1. Commits `4a2a92b` (sync-docs) + `05ec643` (Batch 1) pushed to
+     `claude/broad-scan-l9ojgm`; tree clean; NO PR (standing rule).
+  2. **DEPLOY pending, two projects:** dashboard (increment 74's fixes — NEW
+     VERSION per Operator State #2) and cdr-import (increments 74 + 75).
+     cdr-report has only comment changes (can ride any later deploy).
+  3. Next batch when asked: **Batch 2 — Neon endgame enablers** (B-2
+     retirement-aware SmokeCheck/NeonCoverage, A-2 init-cache guard, B-4
+     case-insensitive entry-queue matching). Full batch list with efforts is
+     in the increment-74 close-out / the sync-docs session reply.
+  4. Minor deferred doc line: mention the C-6 `allUnparsed` arm beside C-1's
+     in the CLAUDE.md F2 sentence at the next /sync-docs.
+
+- **Increment 76 (DONE — Round-15 Batch 2: Neon endgame enablers):** B-2 / A-2
+  / B-4; commit `30bd1ac`; block in
+  `.cycle/blocks/76-batch2-neon-enablers-broad-implement.md`. 622/622, INV-16
+  clean, full ci:ui green. NET 1 − 0 = 1 (B-4 plausibly live: a case-mismatched
+  Dept Config alias attributed calls in the Missed report but silently not in
+  any inbound surface, and the parity check could not show it).
+
+  Shape notes: B-2 landed as a pure `ncReclassifyTrimmed_` + per-table
+  `sourceFn` dispatch (explicit typeof-guarded, NOT this[name] — unreliable
+  across the Apps Script global and the test vm) and a SmokeCheck check 1 that
+  now also verifies the roster tab under either source. B-4 forced
+  `inbound:v8` / `inboundHeatmap:v3` bumps; the cache-version-sync guard's
+  every-mention rule then flagged HISTORICAL `prefix:vN` citations in
+  invariants/known-issues — those were REPHRASED ("the inbound v7 bump"), not
+  deleted, so history stays while the guard tracks only live constants. Note
+  for the next bump author: rephrase historical citations up front.
+  getDeptConfigInit gained its FIRST test coverage (the A-2 pin).
+
+  **WHERE I LEFT OFF:**
+  1. Commits through `30bd1ac` pushed to `claude/broad-scan-l9ojgm`; tree
+     clean; NO PR (standing rule).
+  2. **DEPLOY pending:** dashboard (increments 74 + 76 — NEW VERSION, Op
+     State #2) and cdr-import (74 + 75). After the dashboard deploy, inbound/
+     heatmap counts may shift where alias casing differed — that is B-4
+     working; runInboundQcdParityCheck is the evidence either way.
+  3. Next when asked: **Batch 3 — test-harness teeth** (F-5 fakeSheet
+     getMaxColumns enforcement, F-6 setNumberFormat coercion-protection spy,
+     F-7 Code.gs userJson escape + Setup.gs idempotency pins, + the guard-
+     header note from this increment's follow-on).
+  4. B-2's new behavior only MANIFESTS after a `DQE_READ_SOURCE=neon` flip +
+     sheet trim; under the current sheet source both tools behave as before.
+
+- **Increment 77 (DONE — Round-15 Batches 3+4: harness teeth + client
+  correctness):** F-5/F-6/F-7 + G-2..G-8/E-1/E-3; commit `15cf82c`; block in
+  `.cycle/blocks/77-batch3-batch4-broad-implement.md`. 628/628, INV-16 clean,
+  full ci:ui green. NET 1 − 0 = 1 (G-3's hardcoded 95% goal line was live
+  against the tunable 92 standard).
+
+  The load-bearing change is the HARNESS: fakeSheet now THROWS on a getRange
+  past getMaxColumns (columns only — the REP-10 class) and RECORDS
+  setNumberFormat calls, so the repo's two worst documented failure classes
+  (narrow-sheet writes, plain-text coercion protections) are enforceable for
+  the first time. All three new Batch-3 pins were MUTATION-verified (remove
+  the widen → 7 failures; strip the '@' calls → pin fails; strip the userJson
+  escape → pin fails). Setup.gs gained its first suite (INV-12 enforced).
+  If a future suite needs a narrow sheet deliberately, set `_maxColumns` —
+  do not loosen the fake.
+
+  **WHERE I LEFT OFF:**
+  1. Commits through `15cf82c` pushed to `claude/broad-scan-l9ojgm`; tree
+     clean; NO PR (standing rule).
+  2. **DEPLOY pending, unchanged set:** dashboard (74 + 76 + 77 — one NEW
+     VERSION covers all) and cdr-import (74 + 75).
+  3. Remaining batches by priority: 5 (a11y E-6..E-10), 6 (B-5/B-6/A-3/A-4/
+     A-5/B-8 + the E-5 one-liner), 7 (C-3/F-10/F-9/F-11/F-8), 8 (D-1..D-6),
+     9 (C-7), 10 (D-8/D-9), + strategic (queue-split phases; Inbound/Direct
+     un-gating; G-1-class harness payload-contract assertion).
+  4. Next /sync-docs: one clause on the harness's new strictness in
+     CLAUDE.md's test-command blurb; the C-6 allUnparsed clause from
+     increment 75's note.
+
+- **Increment 78 (DONE — Round-15 Batches 5+6: a11y + server smalls):**
+  E-6..E-10 + B-5/B-6/A-3/A-4/A-5/B-8/E-5; commit `5c710da`; block in
+  `.cycle/blocks/78-batch5-batch6-broad-implement.md`. 630/630, INV-16 clean,
+  ci:ui green. NET 1 − 0 = 1 (B-5: ALL-sentinel managers were receiving NO
+  dept's alerts; they now receive every dept's — intended role semantics,
+  flagged to the operator in the block).
+
+  Two decisions worth carrying: (1) E-6 changed Enter semantics in
+  dsConfirm_ to FOLLOW FOCUS — Cancel-focused Enter cancels; it used to
+  confirm, destructive actions included. (2) B-6 resolved as
+  DOCUMENTED-DELIBERATE, not a code gate: a skipped weekly/monthly run has
+  no later run to cover it (unlike daily's next-weekday walker), so the
+  "missing" gates would lose digests; deferral needs a trigger redesign and
+  was explicitly declined in a comment block at the handlers.
+
+  **WHERE I LEFT OFF:**
+  1. Commits through `5c710da` pushed; tree clean; NO PR (standing rule).
+  2. **DEPLOY pending:** dashboard (74/76/77/78 — one NEW VERSION covers
+     all) + cdr-import (74/75). Post-deploy: quick manual pass on the
+     keyboard paths (menus, dsConfirm_, chart-help) and an AT spot-check.
+  3. Remaining: Batch 7 (C-3/F-10/F-9/F-11/F-8), 8 (D-1..D-6), 9 (C-7),
+     10 (D-8/D-9), strategic items.
+  4. /sync-docs queue: harness-strictness clause, C-6 allUnparsed clause,
+     B-5's alerts note in the role-model bullet.
+  5. New follow-on: script.html ~7758 — the subq group-head <tr> carries the
+     same role="button" class as E-8 (has aria-expanded; right fix may
+     differ).
+
+- **Increment 79 (DONE — Round-15 Batches 7+8: deploy/ops hygiene + cdr-report
+  editor tools):** C-3/F-10/F-9/F-11/F-8 + D-1..D-6; commit `f6e92be`; block in
+  `.cycle/blocks/79-batch7-batch8-broad-implement.md`. 631/631, INV-16 clean,
+  ci:ui green. NET 0 − 0 = 0 (all latent/hygiene — an honest zero).
+
+  C-3 closes the round's longest-standing operational gap: the Call_Legs_*
+  retention prune now has an in-repo installer, a menu entry, and a
+  `retentionPrune` Pipeline Health row per run (INV-44 vocabulary + Operator
+  State #43 + the CLAUDE.md index line all updated to the new reality —
+  #43's ask flipped from "verify the invisible trigger exists" to "install
+  ours, remove the hand-made one"). F-9/F-10/F-11 armor the gate machinery
+  itself; F-8 makes sheetRepairs.js grep-able again. Batch 8 hardened the
+  editor tools that had never seen an audit: width-throw (D-1), sidebar XSS
+  (D-2), sheet formula injection (D-3 — a cdr-report-local crSheetSafeCell_
+  that deliberately passes signed-numeric strings), silent truncation (D-4),
+  falsy-index chains (D-5), and the stranded-Running state (D-6).
+
+  **WHERE I LEFT OFF:**
+  1. Commits through `f6e92be` pushed; tree clean; NO PR (standing rule).
+  2. **DEPLOY now spans all three projects:** dashboard (74/76/77/78, one new
+     version), cdr-import (74/75/79), cdr-report (79 — its first code deploy
+     this round). Then: CDR Tools → Install Retention Prune Trigger + delete
+     any hand-made deleteOldCDRSheets trigger (#43).
+  3. Remaining: Batch 9 (C-7 — defer until the Neon cutover decision), Batch
+     10 (D-8/D-9), strategic items.
+  4. /sync-docs queue (4 clauses): harness strictness, C-6 allUnparsed, B-5
+     alerts note, deploy.sh's TST-7 sentence now including ci:ui.
+
+- **Increment 80 (DONE — /sync-docs for the Round-15 batch queue):** commit
+  `e4e8601`. The four queued clauses landed (deploy.sh's ci:ui gate, F-9's
+  CI=true fail, harness strictness F-5/F-6, C-6's allUnparsed arm) plus B-5's
+  alerts note, #35's B-2 sheetTrimmed nuance, tests/README's strictness
+  contract, and a fix-history code→block map for every implemented Round-15
+  code. Both ratcheted bullets edited net-NEGATIVE (seeds tightened 4892→4881,
+  6160→6156). CLAUDE.md 170.1 KB (~30 KB headroom). 631/631, guards green.
+  The /sync-docs queue is now EMPTY.
+
+  **WHERE I LEFT OFF:** unchanged from increment 79 — the gating step is the
+  three-project DEPLOY (dashboard new version: 74/76/77/78; cdr-import:
+  74/75/79; cdr-report: 79) + the #43 trigger install. Remaining code work:
+  Batch 9 (C-7, deferred pending the Neon cutover decision), Batch 10
+  (D-8/D-9), strategic tracks. The Neon cutover runbook + its open
+  prerequisites were summarized for the owner in the increment-80 session
+  reply (README "full flip runbook" + Op State #19/#25/#30/#35 are the
+  durable references).
+
+- **Increment 81 (DONE — Round-15 Batch 10: frozen-legacy prep + PR):** D-8
+  (the dqe-report dual-onOpen collision resolved by deleting the redundant
+  copy — the menu file's is a strict superset, so this is the freeze's
+  cleanup-deletion class) + D-9 (a 5-item DECOMMISSION CHECKLIST comment in
+  DQEdashboard.js where the deleted function was). Block in
+  `.cycle/blocks/81-batch10-frozen-legacy-broad-implement.md`. 631/631,
+  INV-16 clean. NET 0 − 0 = 0.
+
+  **OWNER DECISIONS recorded:** staying on the Neon FREE tier; the cutover
+  proceeds per the runbook with a MULTI-WEEK soak spanning at least one
+  force re-import before any sheet trim. Batch 9 (C-7) stays deferred until
+  that soak concludes.
+
+  **WHERE I LEFT OFF:** Round-15's batch work is COMPLETE (1-8 + 10; 9
+  deferred by decision). A PR for the whole branch was opened + merged this
+  session (see the PR for the roll-up). Post-merge the operator steps are:
+  the three-project deploy (dashboard new version: 74/76/77/78; cdr-import:
+  74/75/79; cdr-report: 79; dqe-report: 81 cleanup push), the #43 retention
+  trigger install, then the Neon cutover runbook (README + Op State
+  #19/#25/#30/#35 — deploy first, gates before flags, soak before trim).
+  Remaining code work when wanted: strategic tracks (queue-split reader
+  phases → QUEUE_SPLIT_SCOPE flip, Inbound/Direct manager un-gating after
+  B-1's deploy + parity, the G-1-class harness payload-contract assertion)
+  and C-7 after the soak.

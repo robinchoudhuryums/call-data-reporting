@@ -200,12 +200,64 @@ function createCustomReportDashboard() {
    GENERATION ENGINE
    ═══════════════════════════════════════════ */
 
+// D-1 (the REP-10 class): Sheets never auto-expands COLUMNS -- a getRange
+// past getMaxColumns THROWS. A fresh `Custom Report Builder` tab from
+// createCustomReportDashboard is insertSheet's default 26 columns, so the
+// 45-col clear (and a diagnostics panel floating past the report) blew up
+// on first run until someone hand-widened the sheet. Idempotent.
+function crEnsureCols_(sheet, needed) {
+  if (sheet.getMaxColumns() < needed) {
+    sheet.insertColumnsAfter(sheet.getMaxColumns(), needed - sheet.getMaxColumns());
+  }
+}
+
+// D-3: neutralize formula injection on SHEET writes of feed-derived strings
+// (Range.setValues interprets a leading = + - @ / tab / CR as a formula --
+// "=IMPORTXML(...)" as a caller/contact name would EXECUTE in the target
+// tab). The dashboard project defends its sheet writes with sheetSafeCell_
+// (CORE-7) and its CSVs with csvSafeCell_; cdr-report's writers had no
+// equivalent. Differs from the dashboard's copy in ONE way: a purely
+// numeric signed string ("-5", "+12.5") is left alone, because these
+// writers ship numeric grids where a leading apostrophe would turn numbers
+// into text. Single definition; the other cdr-report files call it through
+// a typeof guard (Apps Script's shared global scope).
+function crSheetSafeCell_(v) {
+  if (typeof v !== 'string') return v;
+  if (/^[=+\-@\t\r]/.test(v) && !/^[+-]?\d+(\.\d+)?$/.test(v)) return "'" + v;
+  return v;
+}
+
+// D-6: the core used to run bare off the menu -- any mid-run throw left B8
+// stranded at "⏳ Running…" over a half-cleared report, with the error only
+// in the execution log. The wrapper surfaces it and restores the button.
 function generateCustomReport() {
+  try {
+    generateCustomReportCore_();
+  } catch (e) {
+    var gcrMsg = (e && e.message) ? e.message : String(e);
+    try {
+      var gcrDash = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_NAME);
+      if (gcrDash) gcrDash.getRange('B8').setValue('❌ FAILED — see message / rerun').setFontColor('red');
+    } catch (e2) { /* best-effort */ }
+    try { SpreadsheetApp.getUi().alert('Report generation failed: ' + gcrMsg); }
+    catch (e3) { /* non-UI context */ }
+    throw e;   // keep the execution-log failure record
+  }
+}
+
+function generateCustomReportCore_() {
   const ss        = SpreadsheetApp.getActiveSpreadsheet();
   const dashSheet = ss.getSheetByName(SHEET_NAME);
   const histSheet = ss.getSheetByName(HIST_SHEET_NAME);
 
-  if (!dashSheet || !histSheet) return;
+  if (!dashSheet || !histSheet) {
+    // D-6: this returned SILENTLY -- "Run Report" appearing to do nothing.
+    try {
+      SpreadsheetApp.getUi().alert('Cannot run: missing the "' + SHEET_NAME + '" and/or "'
+        + HIST_SHEET_NAME + '" sheet. Run "Reset Dashboard UI" (or restore the renamed tab).');
+    } catch (e) { /* non-UI context */ }
+    return;
+  }
 
   // ── 1. Read Inputs ────────────────────────────────────────────
   const dept          = dashSheet.getRange('B2').getValue();
@@ -214,7 +266,9 @@ function generateCustomReport() {
   const cStartInput   = dashSheet.getRange('B5').getValue();
   const specificAgent = dashSheet.getRange('B7').getValue();
 
-  if (!dept || !start1 || !end1) {
+  // D-6: `!start1` NEVER fired -- new Date('') is a truthy Invalid Date, so
+  // a blank date produced a silent EMPTY report instead of this alert.
+  if (!dept || isNaN(start1.getTime()) || isNaN(end1.getTime())) {
     SpreadsheetApp.getUi().alert('Please select a Department and Current date range.');
     return;
   }
@@ -276,13 +330,16 @@ function generateCustomReport() {
     OB_EXT_TOT:      getIdx('OB External Total'),
     OB_EXT_ANS_LIST: getIdx('OB External List (Answered)'),
     OB_EXT_MIS_LIST: getIdx('OB External List (Missed)'),
-    OB_EXT_DUR:      getIdx('OB External Total Duration') || getIdx('OB External TTT'),
+    // D-5: idxOr, not `getIdx(a) || getIdx(b)` -- the || chain swallows a
+    // legitimate column at index 0 (the exact falsy-index trap the F25
+    // comment below describes; these three were the stragglers).
+    OB_EXT_DUR:      idxOr(['OB External Total Duration', 'OB External TTT'], undefined),
 
     OB_INT_TOT: getIdx('OB List Total (Internal Direct)'),
     OB_INT_ANS: getIdx('OB List Answered (Internal Direct)'),
 
-    IB_ANS_MIXED: getIdx('IB Answered List (Internal & External)') || getIdx('IB Answered List (Internal & External Direct)'),
-    IB_MIS_MIXED: getIdx('IB Missed List (Internal & External)')  || getIdx('IB Missed List (Internal & External Direct)'),
+    IB_ANS_MIXED: idxOr(['IB Answered List (Internal & External)', 'IB Answered List (Internal & External Direct)'], undefined),
+    IB_MIS_MIXED: idxOr(['IB Missed List (Internal & External)', 'IB Missed List (Internal & External Direct)'], undefined),
   };
 
   // F25: a renamed/missing list-column header maps to undefined here, and
@@ -500,8 +557,8 @@ function generateCustomReport() {
         }
       }
 
-      // Contacts cell
-      row.push(mapToContactString(contactMap));
+      // Contacts cell (D-3: feed-derived names -- neutralize formulas)
+      row.push(crSheetSafeCell_(mapToContactString(contactMap)));
     };
 
     if (cats.OB_EXT) pushData(s.cur.obExt, s.prev.obExt, true,  mergeContactMaps(s.contacts.obExtAns, s.contacts.obExtMis));
@@ -528,6 +585,7 @@ function generateCustomReport() {
     // max of the known ceiling and this run's own width so a future
     // column add can't re-shrink the clear below the render.
     const clearCols = Math.max(45, tableHeaders.length + 1);
+    crEnsureCols_(dashSheet, clearCols);   // D-1: widen before the wide getRange
     const clearRange = dashSheet.getRange(startRow, 1, Math.max(lastRow - startRow + 60, 60), clearCols);
     clearRange.clearContent().clearFormat().setNumberFormat('@');
     clearRange.setNumberFormat('');
@@ -809,6 +867,7 @@ function writeDiagnostics(dashSheet, diag, cats, agents, start1, end1) {
     dashSheet.getRange(1, prevCol, prevRows, 3).clearContent().clearFormat();
   }
   const col = Math.max(DIAG_COL, dashSheet.getLastColumn() + 2);
+  crEnsureCols_(dashSheet, col + 2);   // D-1: the panel writes 3 cols at `col`
   props.setProperty('CRB_DIAG_COL', String(col));
   const maxEntries = 25;   // Cap per category to avoid overwhelming the panel
 

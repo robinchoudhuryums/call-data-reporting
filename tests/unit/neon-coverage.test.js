@@ -39,6 +39,28 @@ test('coverage: classifier splits missing-in-neon / count-mismatch / extra-in-ne
   assert.deepEqual(j(cmp.extraInNeon), [{ date: '2026-07-17', neonRows: 5 }]);
 });
 
+test('B-2: ncReclassifyTrimmed_ moves extra-in-neon to informational sheetTrimmed under a neon read source', function () {
+  const j = function (x) { return JSON.parse(JSON.stringify(x)); };
+  const mk = function () {
+    return h.ctx.ncCompareCoverage_(
+      { '2026-07-15': 41 },
+      { '2026-07-15': 41, '2026-07-17': 5 }   // 07-17 exists in Neon only
+    );
+  };
+  // neon source: the trimmed-sheet end state -- not a phantom finding.
+  const neon = h.ctx.ncReclassifyTrimmed_(mk(), 'neon');
+  assert.equal(neon.extraInNeon.length, 0, 'no phantom findings under neon');
+  assert.deepEqual(j(neon.sheetTrimmed), [{ date: '2026-07-17', neonRows: 5 }]);
+  // sheet source (and anything else): unchanged -- still a real phantom.
+  const sheet = h.ctx.ncReclassifyTrimmed_(mk(), 'sheet');
+  assert.deepEqual(j(sheet.extraInNeon), [{ date: '2026-07-17', neonRows: 5 }]);
+  assert.equal(sheet.sheetTrimmed, undefined);
+  // missing-in-neon stays a finding in BOTH modes (sheet rows must mirror).
+  const still = h.ctx.ncReclassifyTrimmed_(
+    h.ctx.ncCompareCoverage_({ '2026-07-16': 39 }, {}), 'neon');
+  assert.equal(still.missingInNeon.length, 1);
+});
+
 test('coverage: identical maps -> no findings; empty maps -> no findings', function () {
   const clean = h.ctx.ncCompareCoverage_({ '2026-07-14': 12 }, { '2026-07-14': 12 });
   assert.equal(clean.missingInNeon.length + clean.countMismatch.length + clean.extraInNeon.length, 0);

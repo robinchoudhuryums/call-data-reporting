@@ -395,7 +395,10 @@ When something looks wrong, before assuming a code bug, check:
     list cols stored as the same comma-joined text so `dcParseList_` parity is
     exact). **Only flip to `neon` after `backfillDeptConfigToNeon()` (editor-run,
     admin) copies the sheet rows AND `compareDeptConfigSources()` reports parity
-    clean.** Reversible with no redeploy (set back to `sheet`); to revert
+    clean.** ⚠ If the backfill was ever run on code from before 2026-08-05
+    (the A-1 fix), re-run BOTH: the old helpers dropped the `Final Dept
+    Labels` column (Neon's copy is blank) and the old gate could not see the
+    loss. Reversible with no redeploy (set back to `sheet`); to revert
     cleanly after edits were made in Neon, copy them back to the sheet first.
     `dept_config` is created lazily (`CREATE TABLE IF NOT EXISTS`, no setup()
     change). Parity pinned by `tests/unit/dept-config-neon.test.js`. Needs the
@@ -721,7 +724,11 @@ When something looks wrong, before assuming a code bug, check:
     READ-ONLY) reconciles per-date row counts sheet-vs-Neon over
     `NEON_COVERAGE_DAYS` (default 30, ending yesterday) for `dqe_history`,
     `qcd_history`, `call_history_dept`, `direct_call_history` -- findings
-    per date: missing-in-neon / count-mismatch / extra-in-neon (phantoms),
+    per date: missing-in-neon / count-mismatch / extra-in-neon (phantoms --
+    reclassified as informational `sheetTrimmed`, NOT a GAPS finding, when
+    that table's read source is `neon` (B-2): a trimmed sheet is the
+    retirement end state there; missing-in-neon and count-mismatch stay
+    findings in both modes),
     each emailed with its runbook fix (force re-import /
     `backfillDQEHistoryUpsert` / `backfillCDRHistory` /
     `backfillDirectCallToNeon`) -- and flags zero-row WEEKDAYS on the two
@@ -990,3 +997,18 @@ When something looks wrong, before assuming a code bug, check:
     fail-safe, not a substitute for mapping the queues.
 
     Verify with `auditQueueSplitAttribution()` (#41) before and after a flip.
+
+43. **The `Call_Legs_*` retention prune (`DeleteOldSheets.js`, cdr-import) —
+    install `runRetentionPrune_` via the CDR Tools menu ("Install Retention
+    Prune Trigger", daily ~3 AM) and REMOVE any pre-existing hand-made
+    trigger on `deleteOldCDRSheets` so it doesn't run twice.** The ~14-day
+    per-day-sheet retention it enforces is load-bearing well beyond disk
+    hygiene: the inbound/outbound journey backfills, the per-queue split
+    backfill window (#40), and the deferred mirror's pruned-sheet detection
+    all assume it runs — and when auditing "how far back can X be rebuilt",
+    this trigger's cadence IS the answer. Since the C-3 fix (2026-08) each
+    run logs a `retentionPrune` Pipeline Health row (success + deleted
+    count, or failure), so a broken prune surfaces on the Health page's
+    "Recent pipeline step failures" and via the PipelineWatch push; a long
+    silence on that step means the trigger is NOT installed. Proof-of-life:
+    the most recent `retentionPrune` row's timestamp.

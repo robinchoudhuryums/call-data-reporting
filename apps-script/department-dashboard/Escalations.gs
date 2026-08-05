@@ -257,7 +257,11 @@ function getEscalations(req) {
             + (where.length ? (' WHERE ' + where.join(' AND ')) : '')
             // F-46: newest-first cap inside the subquery (json_agg re-sorts
             // the capped set with the same keys, so order is unchanged).
-            + ' ORDER BY occurred_at DESC NULLS LAST, created_at DESC LIMIT ' + ESC_MAX_ROWS
+            // A-4: fetch cap+1 then slice (the CallerLookup NEO-4/R-2
+            // pattern) so `truncated` distinguishes "exactly the cap" from
+            // "more than the cap" -- LIMIT = cap flagged a false positive at
+            // the boundary.
+            + ' ORDER BY occurred_at DESC NULLS LAST, created_at DESC LIMIT ' + (ESC_MAX_ROWS + 1)
             + ') t';
     var stmt = conn.prepareStatement(sql);
     for (var i = 0; i < params.length; i++) stmt.setString(i + 1, params[i]);
@@ -265,6 +269,8 @@ function getEscalations(req) {
     var json = rs.next() ? rs.getString('j') : '[]';
     rs.close(); stmt.close();
     var rows = JSON.parse(json || '[]');
+    var escTruncated = rows.length > ESC_MAX_ROWS;   // A-4
+    if (escTruncated) rows = rows.slice(0, ESC_MAX_ROWS);
     // C1 triage band + Phase-2 review chip: ONE cheap aggregate over the SAME
     // viewer scope as the list (dept or ALL). Computed server-side, NOT from
     // the in-memory rows -- those are filtered to the active status, so the
@@ -312,7 +318,7 @@ function getEscalations(req) {
                      resolvedMTD: resolvedMTD,                // C1 "Resolved · MTD" tile (R11-H)
                      overdueCount: overdue,                   // C1 "Overdue >3d" tile
                      oldestOpenAt: oldestOpen,                // C1 "Oldest open" tile
-                     truncated: rows.length >= ESC_MAX_ROWS } };   // F-46
+                     truncated: escTruncated } };   // F-46 / A-4
   } catch (e) {
     Logger.log('getEscalations failed: ' + (e && e.message ? e.message : e));
     return { available: false, rows: [], meta: { department: metaDept, status: status } };

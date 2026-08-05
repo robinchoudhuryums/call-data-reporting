@@ -36,7 +36,14 @@ tests/
     formatDate.js   Intl-based shim for Utilities.formatDate (IANA-tz aware)
     fakeSheet.js    in-memory SpreadsheetApp fakes; supports a separate
                     { values, displays } grid so duration columns can
-                    model getValue() ≠ getDisplayValue() (INV-02)
+                    model getValue() ≠ getDisplayValue() (INV-02).
+                    STRICT on purpose (F-5/F-6): getRange past
+                    getMaxColumns THROWS like real Sheets (the REP-10
+                    class -- set `_maxColumns` when a test wants a narrow
+                    sheet), and setNumberFormat RECORDS onto
+                    sheet._numberFormats so the plain-text coercion
+                    protections are assertable. Never loosen the fake to
+                    make a fixture fit -- widen the fixture.
     fixtures.js     DQE-row + DO NOT EDIT! roster grid builders
     shim.js         mock Apps Script globals + a `state` handle to drive them
     loadGas.js      loads .gs files into one vm context (shared global scope)
@@ -123,7 +130,8 @@ spreadsheet). See `dept-config.test.js` for the fake-spreadsheet pattern.
     INV-02 (display-vs-value durations), INV-04 (exact name match),
     INV-05 (simple-mean ATT), INV-23 (sentinel skip), INV-53 (floater
     exclusion from totals) + S35 roster/both parity, and the E5
-    prior-window deltas (summary:v8). The Individual Report —
+    prior-window deltas (the summary:v8 bump at the time; INV-30 tracks
+    the current version). The Individual Report —
     INV-25 (answered-weighted ATT, the deliberate contrast to INV-05's
     240-vs-288 case), INV-53 floater fields, INV-26 team-avg exclude via
     a Dept Config override, and the cross-dept auth gate.

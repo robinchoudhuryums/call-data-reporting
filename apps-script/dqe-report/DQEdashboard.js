@@ -50,20 +50,31 @@ var DQE_DASH_CONFIG = {
 
 // -- Menu and triggers -------------------------------------------------------
 
-function onOpen() {
-  SpreadsheetApp.getUi()
-    .createMenu('DQE Tools')
-    .addItem('Refresh dashboard', 'refreshDashboard')
-    .addToUi();
-
-  // On open, set B1 to most recent date and refresh
-  try {
-    setB1ToMostRecentDate();
-    refreshDashboard();
-  } catch (e) {
-    Logger.log('onOpen refresh skipped: ' + e.message);
-  }
-}
+// D-8 (2026-08): this file's onOpen() was DELETED -- a cleanup deletion per
+// the freeze rules (INV-22). Apps Script's flat global scope meant two
+// top-level onOpen declarations (here + "menu DQE Tools.js") silently
+// last-loaded-wins: when THIS one won, the whole DQE Tools menu collapsed to
+// a single "Refresh dashboard" item and every legacy report entry point
+// vanished with no error -- and which one won could flip on any remote file
+// add/delete. The menu file's onOpen is a strict superset (same auto-refresh
+// block, full menu), so it is now the ONLY onOpen (the cdr-report
+// single-onOpen discipline). Deploy note (INV-17): `clasp push -f` updates
+// this FILE in place -- no web-editor deletion needed for a removed function.
+//
+// D-9 -- DECOMMISSION CHECKLIST for this spreadsheet (when the legacy DQE
+// Report is finally retired; migration to the Department Dashboard is
+// complete and this project is frozen):
+//   1. Triggers panel: delete the installable onEditTrigger if present
+//      (repo cannot see whether it was ever installed).
+//   2. Both onOpen paths do a cross-workbook READ of the CDR Report
+//      spreadsheet via the hardcoded cdrReportSsId above on every open --
+//      retiring the spreadsheet ends those reads; nothing else consumes them.
+//   3. The *_Restricted wrappers ("menu DQE Tools.js") still email Robin on
+//      unauthorized attempts, and the report tools self-email screenshots on
+//      use -- all stop with the spreadsheet; no external unsubscribe needed.
+//   4. sendManualAlert is already a neutralized stub (kept per INV-17).
+//   5. Nothing schedules or writes outside this workbook -- deleting the
+//      spreadsheet (after an archive copy/export) is the whole decommission.
 
 // Installable trigger for edits (must be set up via Triggers panel)
 function onEditTrigger(e) {

@@ -49,17 +49,39 @@
 var NEON_COVERAGE_DEFAULT_DAYS = 30;
 var NEON_COVERAGE_MAX_EMAIL_LINES = 40;   // cap the per-finding detail in the email
 
-// Table ↔ sheet registry. dateCol is 1-indexed on the sheet.
+// Table ↔ sheet registry. dateCol is 1-indexed on the sheet. `sourceFn`
+// (B-2) names the read-source getter for tables whose SHEET can be trimmed
+// once the dashboard reads Neon: with that source = 'neon', a date present
+// in Neon but absent from the sheet is the RETIREMENT end state, not a
+// phantom -- reported informationally instead of as a GAPS finding.
 var NEON_COVERAGE_TABLES_ = [
   { table: 'dqe_history',         sheet: 'DQE Historical Data',   dateCol: 2,
+    sourceFn: 'getDqeReadSource_',
     fix: 'force re-import the date, or backfillDQEHistoryUpsert() (cdr-report)' },
   { table: 'qcd_history',         sheet: 'QCD Historical Data',   dateCol: 3,
+    sourceFn: 'getQcdReadSource_',
     fix: 'force re-import the date (QCD mirror is authoritative per-date)' },
   { table: 'call_history_dept',   sheet: 'CDR Historical Data',   dateCol: 3,
     fix: 'force re-import the date, or backfillCDRHistory (cdr-report)' },
   { table: 'direct_call_history', sheet: 'Direct Call History',   dateCol: 2,
     fix: 'force re-import the date, or backfillDirectCallToNeon() (cdr-import)' },
 ];
+
+/**
+ * PURE (B-2, tests/unit/neon-coverage.test.js). Under a 'neon' read source
+ * the sheet is allowed to be trimmed, so extra-in-neon dates are moved to an
+ * informational `sheetTrimmed` list (NOT counted as findings); any other
+ * source keeps them as real phantom findings. missing-in-neon and
+ * count-mismatch stay findings in BOTH modes: rows still on the sheet must
+ * be mirrored regardless of which source serves reads.
+ */
+function ncReclassifyTrimmed_(cmp, source) {
+  if (String(source || '') === 'neon' && cmp && cmp.extraInNeon && cmp.extraInNeon.length) {
+    cmp.sheetTrimmed = cmp.extraInNeon;
+    cmp.extraInNeon = [];
+  }
+  return cmp;
+}
 
 /** Admin/editor entry point. Returns the full result object (also emailed). */
 function runNeonCoverageCheck() {
@@ -97,6 +119,17 @@ function runNeonCoverageCheck() {
         var neonCounts = ncNeonDateCounts_(conn, spec.table, fromIso, toIso);
         var cmp = ncCompareCoverage_(sheetCounts, neonCounts);
         cmp.table = spec.table; cmp.sheet = spec.sheet; cmp.fix = spec.fix;
+        // B-2: resolve the table's read source and reclassify trimmed dates.
+        // Explicit dispatch (not this[name]) -- `this` is unreliable across
+        // the Apps Script global and the test vm.
+        var src = 'sheet';
+        if (spec.sourceFn === 'getDqeReadSource_' && typeof getDqeReadSource_ === 'function') {
+          src = getDqeReadSource_();
+        } else if (spec.sourceFn === 'getQcdReadSource_' && typeof getQcdReadSource_ === 'function') {
+          src = getQcdReadSource_();
+        }
+        cmp.readSource = src;
+        ncReclassifyTrimmed_(cmp, src);
         out.findings += cmp.missingInNeon.length + cmp.countMismatch.length + cmp.extraInNeon.length;
         out.tables.push(cmp);
       } catch (te) {
@@ -311,6 +344,12 @@ function ncEmailResult_(out, summary) {
       t.missingInNeon.forEach(function (f) { lines.push('    MISSING IN NEON  ' + f.date + '  (sheet has ' + f.sheetRows + ' row(s))'); });
       t.countMismatch.forEach(function (f) { lines.push('    COUNT MISMATCH   ' + f.date + '  sheet ' + f.sheetRows + ' vs neon ' + f.neonRows); });
       t.extraInNeon.forEach(function (f) { lines.push('    EXTRA IN NEON    ' + f.date + '  (' + f.neonRows + ' phantom row(s), no sheet rows)'); });
+      if (t.sheetTrimmed && t.sheetTrimmed.length) {
+        // B-2: informational, not a finding -- the read source is neon, so a
+        // trimmed sheet is the intended end state.
+        lines.push('    (info) ' + t.sheetTrimmed.length + ' date(s) in Neon only — expected: '
+          + 'read source is neon and the sheet may be trimmed');
+      }
     });
     (out.noSheet || (out.inbound ? [out.inbound] : [])).forEach(function (ns) {
       if (ns.skipped) { lines.push(ns.table + ' (no sheet primary): skipped (' + ns.skipped + ')'); return; }

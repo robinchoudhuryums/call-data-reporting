@@ -671,7 +671,13 @@ function lookupDeptManagers_(dept) {
     const email = String(values[i][0] || '').trim();
     const d     = String(values[i][1] || '').trim();
     if (!email || !d) continue;
-    if (d === dept) out.push(email);
+    // B-5: an ALL/'*' row (the all-departments manager, Auth.gs) manages
+    // every dept, so they receive every dept's low-answer-rate alert --
+    // the exact-match alone silently opted them out of ALL alert delivery
+    // unless duplicated into Extra Recipients. (Multi-dept managers were
+    // never affected: Tier C stores one row per dept.)
+    const isAll = (typeof isAllDeptsSentinel_ === 'function') && isAllDeptsSentinel_(d);
+    if (d === dept || isAll) out.push(email);
   }
   return out;
 }

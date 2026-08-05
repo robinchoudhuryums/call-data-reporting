@@ -67,7 +67,9 @@
 // v5 (R5): abandon_stage gains 'direct' (kpis.abandonedDirect; old rows heal
 // on re-import), byDialIn rows carry display labels (DIAL_IN_LABELS map >
 // derived dominant first_agent > raw number; raw kept in `number`).
-const INBOUND_CACHE_KEY_PREFIX = 'inbound:v7';
+// v8 (B-4): inboundDeptPredicate_ + callJourneyDeptPredicate_ match queue
+// names case-insensitively (aligning with the Missed report + queue split).
+const INBOUND_CACHE_KEY_PREFIX = 'inbound:v8';
 const INBOUND_TOP_N = 50;
 // Cap the requested window so an over-wide range can't trigger an
 // unbounded Neon aggregation (mirrors CallerLookup's range guard). A
@@ -179,8 +181,14 @@ function inboundSqlLit_(s) {
  */
 function inboundDeptPredicate_(dept, deptQueues) {
   if (!dept) return '';
+  // B-4: queue-name matching is CASE-INSENSITIVE, aligning this predicate
+  // with the Missed report's sentinel attribution and the Phase-2 queue
+  // split (both lower-case both sides). A Dept Config alias whose case
+  // differs from the stored raw name used to attribute calls in the Missed
+  // report but silently NOT here -- an invisible divergence, since the
+  // parity check's unattributed list only shows names that match nothing.
   const queueList = (deptQueues && deptQueues.length)
-    ? deptQueues.map(inboundSqlLit_).join(',')
+    ? deptQueues.map(function (q) { return inboundSqlLit_(String(q).trim().toLowerCase()); }).join(',')
     : 'NULL';   // no mapped queues -> entry-queue arm matches nothing
   // L10: COALESCE the nullable flag to false. A NULL abandoned_on_hold would
   // make isOnHoldAnswered NULL -> NOT isOnHoldAnswered also NULL -> BOTH arms
@@ -233,7 +241,7 @@ function inboundDeptPredicate_(dept, deptQueues) {
   return ' AND ((' + isOnHoldAnswered
        + ' AND lower(trim(c.final_dept)) IN (' + labelList + '))'
        + ' OR ((NOT ' + isOnHoldAnswered + ' OR ' + unmappedLabel + ')'
-       + ' AND c.entry_queue IN (' + queueList + ')))';
+       + " AND lower(trim(coalesce(c.entry_queue,''))) IN (" + queueList + ')))';
 }
 
 /**
@@ -302,10 +310,11 @@ function inboundWindowClause_(inside) {
 
 function callJourneyDeptPredicate_(dept, deptQueues) {
   if (!dept) return '';
+  // B-4: case-insensitive, matching inboundDeptPredicate_ above.
   const queueList = (deptQueues && deptQueues.length)
-    ? deptQueues.map(inboundSqlLit_).join(',') : 'NULL';
-  return ' AND (c.entry_queue IN (' + queueList + ')'
-       + ' OR c.final_queue IN (' + queueList + ')'
+    ? deptQueues.map(function (q) { return inboundSqlLit_(String(q).trim().toLowerCase()); }).join(',') : 'NULL';
+  return " AND (lower(trim(coalesce(c.entry_queue,''))) IN (" + queueList + ')'
+       + " OR lower(trim(coalesce(c.final_queue,''))) IN (" + queueList + ')'
        + " OR lower(trim(coalesce(c.final_dept, ''))) = lower(" + inboundSqlLit_(dept) + '))';
 }
 
@@ -1303,7 +1312,8 @@ function runInboundQcdParityCheck() {
 // spot-check shows the columns are off, this single constant is the knob.
 // Pre-extension rows (null/empty call_start) carry no time-of-day and are
 // excluded (documented gap -- they predate the journey extension).
-const INBOUND_HEATMAP_CACHE_KEY_PREFIX = 'inboundHeatmap:v2';
+// v3: bumped with inbound:v8 (shares inboundDeptPredicate_, B-4).
+const INBOUND_HEATMAP_CACHE_KEY_PREFIX = 'inboundHeatmap:v3';
 const INBOUND_HEATMAP_CST_SHIFT_HOURS = 2;    // PST(stored) -> CST(dashboard)
 const INBOUND_HEATMAP_WINDOW_START_HOUR = 8;  // 8 AM CST (matches INV-18)
 const INBOUND_HEATMAP_WINDOW_END_HOUR   = 17; // 5 PM CST (exclusive)

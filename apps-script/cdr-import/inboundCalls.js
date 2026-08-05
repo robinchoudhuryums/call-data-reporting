@@ -696,7 +696,21 @@ function writeInboundCallsToNeon(rawRows, opts) {
     // MUST load BEFORE the builder -- icIsQueueName_ runs inside it (F1).
     icResetConfigMemos_();
     icLoadConfiguredQueueNames_();
-    var records = buildInboundCallRecords_(rawRows).filter(function (r) { return r.callDate; });
+    // C-6: count the records the builder produced with NO parseable date --
+    // one unparseable INCOMING first leg nulls the whole call's callDate, so
+    // a CDR timestamp-format drift would silently shrink a table with no
+    // sheet primary. The count travels on the result so the daily import can
+    // surface it (the DQE build's F9 unparsedStartCount discipline).
+    var unparsedDropped = 0;
+    var records = buildInboundCallRecords_(rawRows).filter(function (r) {
+      if (r.callDate) return true;
+      unparsedDropped++;
+      return false;
+    });
+    if (unparsedDropped) {
+      Logger.log('writeInboundCallsToNeon: dropped %s record(s) with no parseable call date '
+        + '(unparseable first-leg timestamp?) -- these calls are NOT captured.', unparsedDropped);
+    }
     // R8-N: translate the attribution columns to canonical names when the
     // admin has mapped them; everything else (journey, counts) stays raw.
     var canonMap = icQueueCanonicalMap_();
@@ -729,13 +743,42 @@ function writeInboundCallsToNeon(rawRows, opts) {
       // case where deleting would destroy good data, so it keeps the old
       // early-return. expectedDateIso is required too, so the DELETE can only
       // ever touch the date the caller vouched for (the P-1 guard).
+      //
+      // C-1: ALSO gated on zero strays. "Source had rows but every record it
+      // yielded belonged to ANOTHER date" is not evidence this date has no
+      // calls -- it is the signature of a mislabeled/wrong-day grid, and
+      // deleting on it would wipe the expected date's rows from a table with
+      // no sheet primary (unrecoverable past the Call_Legs retention). Leave
+      // any stale rows in place (recoverable, like the unreachable case) and
+      // tell the caller why so it can surface a Pipeline Health row.
       if (authoritative && expectedDateIso && rawRows && rawRows.length) {
+        if (strayCount) {
+          Logger.log('writeInboundCallsToNeon: REFUSING zero-record cleanup for %s -- the source '
+            + 'grid yielded %s record(s), ALL dated elsewhere (wrong-day grid?). Stale rows (if '
+            + 'any) left in place.', expectedDateIso, strayCount);
+          return { inserted: 0, skipped: 0, allStray: true, strayCount: strayCount };
+        }
+        if (unparsedDropped) {
+          // C-6 (the C-1 sibling): "every record the grid yielded had an
+          // unparseable date" is a format-drift signature, not a zero-call
+          // day -- deleting on it would wipe the date while the capture is
+          // blind. Same refusal semantics as allStray.
+          Logger.log('writeInboundCallsToNeon: REFUSING zero-record cleanup for %s -- the source '
+            + 'grid yielded %s record(s), ALL with unparseable dates (timestamp format drift?). '
+            + 'Stale rows (if any) left in place.', expectedDateIso, unparsedDropped);
+          return { inserted: 0, skipped: 0, allUnparsed: true, unparsedDropped: unparsedDropped };
+        }
         return icDeleteDateOnly_('inbound_calls', expectedDateIso, 'writeInboundCallsToNeon');
       }
-      return { inserted: 0, skipped: 0 };
+      return { inserted: 0, skipped: 0, unparsedDropped: unparsedDropped };
     }
 
     var secret = PropertiesService.getScriptProperties().getProperty('HMAC_SECRET');
+    // C-9: reset the per-run phone-hash memo at this writer's entry too (the
+    // A2 discipline writeCDRRowsToNeon follows) -- a warm instance otherwise
+    // hashes through whatever cache state the previous execution left, which
+    // serves stale hashes after an HMAC_SECRET rotation until a cold start.
+    if (typeof CDR_HMAC_CACHE_ !== 'undefined') CDR_HMAC_CACHE_ = {};
     var conn = getReachableNeonConn_();
     if (!conn) {
       Logger.log('writeInboundCallsToNeon: Neon unreachable — skipping %s records.', records.length);
@@ -829,7 +872,7 @@ function writeInboundCallsToNeon(rawRows, opts) {
       var insertMs = Date.now() - tInsert;
       Logger.log('writeInboundCallsToNeon: wrote ' + records.length + ' inbound-call records | '
         + 'build ' + buildMs + 'ms | insert ' + insertMs + 'ms (' + chunks + ' chunks).');
-      return { inserted: records.length, skipped: 0 };
+      return { inserted: records.length, skipped: 0, unparsedDropped: unparsedDropped };
     } catch (e) {
       try { conn.rollback(); } catch (re) {}
       throw e;
@@ -951,6 +994,14 @@ function backfillInboundCalls(fromIso, toIso, force) {
       var res = writeInboundCallsToNeon(legs, { authoritative: true, expectedDateIso: c.iso });
       if (res && res.error) {
         failures.push(c.iso);
+      } else if (res && (res.allStray || res.allUnparsed)) {
+        // C-1/C-6: the sheet's contents are ALL dated outside its own
+        // name-derived date (mislabeled sheet) or ALL unparseable (format
+        // drift). The writer refused the cleanup; record it as a failure,
+        // not a processed date.
+        failures.push(c.iso + (res.allStray
+          ? ' (all ' + res.strayCount + ' record(s) dated outside the sheet\'s date)'
+          : ' (all ' + res.unparsedDropped + ' record(s) with unparseable dates)'));
       } else if (res && ((res.skipped && !res.inserted) || res.unreachable)) {
         // Neon unreachable for this date -- abort the run; re-run later.
         // `res.unreachable` also covers the F2 zero-record cleanup arm, which

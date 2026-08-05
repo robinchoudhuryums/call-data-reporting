@@ -7,6 +7,11 @@
 // insights v3->v6). This test makes that drift a CI failure instead of a
 // silent trap for the next developer.
 //
+// NOTE for the next bump author (learned in the B-4 v7->v8 bump): the
+// every-mention check below flags HISTORICAL citations too ("shipped in
+// `inbound:v7`") -- rephrase those off the prefix pattern up front (e.g.
+// "the inbound v7 bump") instead of chasing one failure per doc file.
+//
 // Design: the CANONICAL version for each report is EXTRACTED from the code's
 // cache-key literal (never hardcoded here), so the test self-updates when a
 // prefix is bumped -- it only fails when the docs/comments disagree with the

@@ -18,17 +18,21 @@ const h = loadGas({
 });
 const HEADERS = h.consts.DEPT_CONFIG_HEADERS;
 
-// One logical dataset, projected into BOTH sources.
+// One logical dataset, projected into BOTH sources. `finals` (Final Dept
+// Labels, col 11) is non-empty on CSR ON PURPOSE: the A-1 bug was the C2
+// migration helpers silently dropping this appended column, and a fixture
+// without it could never catch that.
 const LOGICAL = [
   { dept: 'CSR', qcd: 'A_Q_Foo, A_Q_Bar', parent: '', excl: 'Robin Choudhury',
-    qext: '103, 108', active: true, notes: 'n', inbound: 'A_Q_CSR, Backup CSR' },
-  { dept: 'Sales', qcd: 'A_Q_Sales', parent: '', excl: '', qext: '', active: true, notes: '', inbound: '' },
-  { dept: 'PAP', qcd: '', parent: 'Sales', excl: '', qext: '', active: false, notes: 'paused', inbound: '' },
+    qext: '103, 108', active: true, notes: 'n', inbound: 'A_Q_CSR, Backup CSR',
+    finals: 'Customer Success, Inside Sales' },
+  { dept: 'Sales', qcd: 'A_Q_Sales', parent: '', excl: '', qext: '', active: true, notes: '', inbound: '', finals: '' },
+  { dept: 'PAP', qcd: '', parent: 'Sales', excl: '', qext: '', active: false, notes: 'paused', inbound: '', finals: '' },
 ];
 
-// Sheet grid row order: Dept | QCD | Parent | TeamExcl | QueueExt | Active | By | At | Notes | InboundAliases
+// Sheet grid row order: Dept | QCD | Parent | TeamExcl | QueueExt | Active | By | At | Notes | InboundAliases | FinalDeptLabels
 function sheetRow(r) {
-  return [r.dept, r.qcd, r.parent, r.excl, r.qext, r.active ? 'TRUE' : 'FALSE', 'admin@x.com', '', r.notes, r.inbound];
+  return [r.dept, r.qcd, r.parent, r.excl, r.qext, r.active ? 'TRUE' : 'FALSE', 'admin@x.com', '', r.notes, r.inbound, r.finals];
 }
 // Neon json_agg row shape (column names as the read SQL aliases them).
 function neonRow(r) {
@@ -36,6 +40,7 @@ function neonRow(r) {
     department: r.dept, qcd_queues: r.qcd, overview_parent: r.parent,
     team_avg_excludes: r.excl, queue_ext_overrides: r.qext, active: r.active,
     updated_by: 'admin@x.com', updated_at: '2026-06-01 09:00', notes: r.notes, inbound_aliases: r.inbound,
+    final_dept_labels: r.finals,
   };
 }
 
@@ -86,7 +91,8 @@ test('CONFIG_SOURCE=neon: readDeptConfigRows_ matches the sheet path row-for-row
     return rows.map(function (r) {
       return { dept: r.dept, qcdQueues: r.qcdQueues, overviewParent: r.overviewParent,
                teamAvgExcludes: r.teamAvgExcludes, queueExtOverrides: r.queueExtOverrides,
-               active: r.active, notes: r.notes, inboundAliases: r.inboundAliases };
+               active: r.active, notes: r.notes, inboundAliases: r.inboundAliases,
+               finalDeptLabels: r.finalDeptLabels };
     });
   };
   deepEqual(JSON.parse(JSON.stringify(strip(fromNeon))), JSON.parse(JSON.stringify(strip(fromSheet))));
@@ -161,4 +167,49 @@ test('CORE-5: compareDeptConfigSources on unreachable Neon -> clean:false + erro
   const bothEmpty = h.call('compareDeptConfigSources');
   equal(bothEmpty.clean, true, 'reachable empty-vs-empty is real parity');
   equal(bothEmpty.error, undefined);
+});
+
+test('A-1: the C2 migration helpers carry finalDeptLabels (backfill record + parity key)', function () {
+  h.state.userEmail = 'admin@x.com';
+  h.state.props.ADMIN_EMAILS = 'admin@x.com';
+  h.state.props.SPREADSHEET_ID = 'fake';
+  h.ctx.assertAdmin_ = function () {};
+
+  // (1) backfillDeptConfigToNeon must pass finalDeptLabels through to the
+  // upsert writer. Stub the writer and capture what it receives -- the bug
+  // was the record simply omitting the field, so the writer nulled col 11.
+  h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
+  h.state.spreadsheet = makeFakeSpreadsheet({
+    timeZone: 'America/Chicago',
+    sheets: { 'Dept Config': [HEADERS].concat(LOGICAL.map(sheetRow)) },
+  });
+  const seen = [];
+  h.ctx.neonUpsertDeptConfigRow_ = function (rec) { seen.push(rec); };
+  h.call('backfillDeptConfigToNeon');
+  delete h.ctx.neonUpsertDeptConfigRow_;
+  equal(seen.length, LOGICAL.length, 'one upsert per sheet row');
+  const csrRec = seen.filter(function (r) { return r.dept === 'CSR'; })[0];
+  deepEqual(JSON.parse(JSON.stringify(csrRec.finalDeptLabels)),
+            ['Customer Success', 'Inside Sales'],
+            'backfill record carries the Final Dept Labels list');
+
+  // (2) compareDeptConfigSources must FLAG a Neon row whose labels were lost
+  // (the exact post-bug state: everything else identical, final_dept_labels
+  // empty). The old key omitted the field and printed PARITY CLEAN here.
+  h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
+  const lostLabels = LOGICAL.map(function (r) {
+    const n = neonRow(r);
+    if (r.dept === 'CSR') n.final_dept_labels = '';
+    return n;
+  });
+  h.ctx.getDashboardNeonConn_ = function () { return fakeDeptConfigConn(lostLabels); };
+  const cmp = h.call('compareDeptConfigSources');
+  equal(cmp.clean, false, 'label loss must not read as parity');
+  deepEqual(JSON.parse(JSON.stringify(cmp.mismatched)), ['CSR']);
+
+  // (3) and with labels intact, the same comparison is clean.
+  h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
+  h.ctx.getDashboardNeonConn_ = function () { return fakeDeptConfigConn(LOGICAL.map(neonRow)); };
+  const ok = h.call('compareDeptConfigSources');
+  equal(ok.clean, true, 'parity with the field present on both sides');
 });

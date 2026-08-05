@@ -186,7 +186,22 @@ test('carve-out: mapped labels all reach the SQL, lowercased', function () {
   // one dept. (An UNMAPPED label takes the entry-queue fallback -- below.)
   assert.ok(/OR \(\(NOT \(c\.disposition='answered'/.test(p),
     'the entry-queue arm is still NOT-gated on the on-hold predicate');
-  assert.ok(p.indexOf("c.entry_queue IN ('A_Q_CSR')") !== -1);
+  // B-4: case-insensitive queue matching (lowercased literal, lower() column).
+  assert.ok(p.indexOf("lower(trim(coalesce(c.entry_queue,''))) IN ('a_q_csr')") !== -1);
+});
+
+test('B-4: a case-mismatched configured queue name still attributes (both sides lowercased)', function () {
+  // A Dept Config alias entered as 'A_Q_Csr' vs a stored raw 'A_Q_CSR' used to
+  // attribute calls in the Missed report (case-insensitive) but silently NOT
+  // here -- and the parity check could not see it, because the name LOOKS
+  // mapped. Both predicates now lowercase both sides.
+  install();
+  const p = h.call('inboundDeptPredicate_', 'CSR', ['A_Q_Csr']);
+  assert.ok(p.indexOf("IN ('a_q_csr')") !== -1,
+    'the configured name is lowercased into the literal, matching any stored casing');
+  const j = h.call('callJourneyDeptPredicate_', 'CSR', ['a_q_CSR']);
+  assert.ok(j.indexOf("lower(trim(coalesce(c.entry_queue,''))) IN ('a_q_csr')") !== -1);
+  assert.ok(j.indexOf("lower(trim(coalesce(c.final_queue,''))) IN ('a_q_csr')") !== -1);
 });
 
 

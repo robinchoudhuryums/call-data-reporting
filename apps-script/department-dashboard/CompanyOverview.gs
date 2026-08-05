@@ -825,7 +825,13 @@ function getOverviewChartTrend(req) {
   const tag = (typeof readSourceCacheTag_ === 'function') ? readSourceCacheTag_() : 'sheet-sheet';
   const cacheKey = OVERVIEW_CHART_TREND_CACHE_PREFIX + ':' + latestDate + ':' + tag;
   const cached = cache.get(cacheKey);
-  if (cached) { try { return JSON.parse(cached); } catch (e) { /* recompute */ } }
+  if (cached) {
+    try {
+      const hit = JSON.parse(cached);
+      logReportUsage_('overviewChartYtd', '(all)', user, true);   // B-8
+      return hit;
+    } catch (e) { /* recompute */ }
+  }
 
   const ss = openSpreadsheet_();
   const ssTZ = ss.getSpreadsheetTimeZone();
@@ -891,6 +897,23 @@ function getOverviewChartTrend(req) {
     trendIsoLabels: labels, trendLabels: displayLabels, depts: depts,
   };
   const json = JSON.stringify(data);
+  // B-3: the R8-C1/R8-C4 cache-put discipline the sibling endpoints follow.
+  // (a) A Dept Config read error this execution means the QCD queue maps fed
+  // to computeQcdSnapshots_ may be constant-only -- don't pin that for the
+  // TTL (mirrors getCompanyOverview's guard above). (b) latestDate is
+  // non-null, so the YTD window contains at least that date's rows by
+  // construction -- an EMPTY dqeRows here is the outage shape (Neon
+  // unusable AND the sheet read failed/empty), not a legitimate quiet
+  // window; caching it would serve an all-null trend to every viewer for
+  // 30 minutes with no meta flag distinguishing it from real data.
+  const configDegraded = (typeof deptConfigReadFailed_ === 'function') && deptConfigReadFailed_();
+  const outageEmpty = dqeRows.length === 0;
+  if (configDegraded || outageEmpty) {
+    Logger.log('overviewChartTrend: skipping cache put (%s) -- degraded payload must not pin.',
+      configDegraded ? 'Dept Config read errored' : 'empty DQE read despite a known latest date');
+    logReportUsage_('overviewChartYtd', '(all)', user, false);   // B-8
+    return data;
+  }
   // Size guard: skip caching an oversized blob (CacheService ~100KB cap) rather
   // than silently failing the put; the YTD fetch is on-demand + rare, so an
   // uncached recompute is acceptable on a very large install.
@@ -898,6 +921,7 @@ function getOverviewChartTrend(req) {
     try { cache.put(cacheKey, json, REPORT_CACHE_TTL_SECONDS); }
     catch (e) { Logger.log('overviewChartTrend cache put failed: %s', e); }
   }
+  logReportUsage_('overviewChartYtd', '(all)', user, false);   // B-8
   return data;
 }
 

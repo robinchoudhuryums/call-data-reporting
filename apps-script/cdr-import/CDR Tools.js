@@ -62,6 +62,16 @@ function onOpen() {
 
     .addSeparator()
 
+    // C-3: the Call_Legs_* retention prune (DeleteOldSheets.js). The ~14-day
+    // window everything assumes (journey backfills, queue-split backfill,
+    // pruned-sheet detection) now has an in-repo installer + telemetry
+    // (`retentionPrune` Pipeline Health rows) -- Operator State #43.
+    .addItem("Install Retention Prune Trigger (daily)", "installRetentionPruneTrigger")
+    .addItem("Uninstall Retention Prune Trigger",       "uninstallRetentionPruneTrigger")
+    .addItem("Run Retention Prune Now",                 "runRetentionPruneNow")
+
+    .addSeparator()
+
     // Read-only transfer-path diagnostics (inboundCalls.js). Each prompts for
     // a Call_Legs date (blank = latest sheet); results in the execution log.
     .addItem("Preview transfer chains (pick date)…", "previewInternalTransferChainsForDate")

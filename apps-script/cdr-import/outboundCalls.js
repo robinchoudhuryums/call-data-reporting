@@ -117,7 +117,11 @@ function buildOutboundCallRecords_(rawRows) {
       ? Math.max(0, Math.round((edgeMs - startMs) / 1000)) : null;
 
     var callDate = icIsoDate_(startMs);
-    if (!callDate) return;
+    // C-6: a date-less group (unparseable first-leg timestamp) is DROPPED
+    // here, before the writer's filter can see it -- count it so the drop is
+    // surfaced (array property, the NeonRead `_neonReachable` precedent;
+    // keeps the return shape an array for every existing caller).
+    if (!callDate) { records._unparsedDropped = (records._unparsedDropped || 0) + 1; return; }
 
     records.push({
       callId:       root,
@@ -161,7 +165,20 @@ function writeOutboundCallsToNeon(rawRows, opts) {
     // the configured queue names here too (additive; no-op without a sheet).
     if (typeof icResetConfigMemos_ === 'function') icResetConfigMemos_();
     if (typeof icLoadConfiguredQueueNames_ === 'function') icLoadConfiguredQueueNames_();
-    var records = buildOutboundCallRecords_(rawRows).filter(function (r) { return r.callDate; });
+    // C-6: count date-less records (unparseable first-leg timestamp) -- the
+    // outbound BUILDER drops them itself (see buildOutboundCallRecords_), so
+    // read its counter; the filter below is a belt-and-suspenders second net.
+    var built = buildOutboundCallRecords_(rawRows);
+    var unparsedDropped = built._unparsedDropped || 0;
+    var records = built.filter(function (r) {
+      if (r.callDate) return true;
+      unparsedDropped++;
+      return false;
+    });
+    if (unparsedDropped) {
+      Logger.log('writeOutboundCallsToNeon: dropped %s record(s) with no parseable call date '
+        + '(unparseable first-leg timestamp?) -- these calls are NOT captured.', unparsedDropped);
+    }
     if (expectedDateIso) {
       var strayCount = 0;
       records = records.filter(function (r) {
@@ -179,11 +196,28 @@ function writeOutboundCallsToNeon(rawRows, opts) {
       // F2: same zero-record authoritative cleanup as the inbound writer --
       // `outbound_calls` has no sheet primary either, so a date whose
       // legitimate count is zero must still be able to shed stale rows.
-      // Gated on a non-empty source so an unreadable grid can't delete data.
+      // Gated on a non-empty source so an unreadable grid can't delete data,
+      // AND (C-1, mirroring the inbound writer) on zero strays: an all-stray
+      // yield is a wrong-day grid, not a zero-call day -- deleting on it
+      // would wipe the expected date unrecoverably.
       if (authoritative && expectedDateIso && rawRows && rawRows.length) {
+        if (strayCount) {
+          Logger.log('writeOutboundCallsToNeon: REFUSING zero-record cleanup for %s -- the source '
+            + 'grid yielded %s record(s), ALL dated elsewhere (wrong-day grid?). Stale rows (if '
+            + 'any) left in place.', expectedDateIso, strayCount);
+          return { inserted: 0, skipped: 0, allStray: true, strayCount: strayCount };
+        }
+        if (unparsedDropped) {
+          // C-6 (the C-1 sibling): all-unparsed = format drift, not a
+          // zero-call day; refuse the delete like the inbound writer.
+          Logger.log('writeOutboundCallsToNeon: REFUSING zero-record cleanup for %s -- the source '
+            + 'grid yielded %s record(s), ALL with unparseable dates (timestamp format drift?). '
+            + 'Stale rows (if any) left in place.', expectedDateIso, unparsedDropped);
+          return { inserted: 0, skipped: 0, allUnparsed: true, unparsedDropped: unparsedDropped };
+        }
         return icDeleteDateOnly_('outbound_calls', expectedDateIso, 'writeOutboundCallsToNeon');
       }
-      return { inserted: 0, skipped: 0 };
+      return { inserted: 0, skipped: 0, unparsedDropped: unparsedDropped };
     }
 
     var secret = PropertiesService.getScriptProperties().getProperty('HMAC_SECRET');
@@ -191,6 +225,9 @@ function writeOutboundCallsToNeon(rawRows, opts) {
       Logger.log('writeOutboundCallsToNeon: HMAC_SECRET not set — writing with NULL callee_hash '
         + '(rows heal on re-import once set).');
     }
+    // C-9: reset the per-run phone-hash memo (the A2 discipline; see the
+    // inbound writer for the rotation rationale).
+    if (typeof CDR_HMAC_CACHE_ !== 'undefined') CDR_HMAC_CACHE_ = {};
     var conn = getReachableNeonConn_();
     if (!conn) {
       Logger.log('writeOutboundCallsToNeon: Neon unreachable — skipping %s records.', records.length);
@@ -257,7 +294,7 @@ function writeOutboundCallsToNeon(rawRows, opts) {
       conn.commit();
       Logger.log('writeOutboundCallsToNeon: wrote ' + records.length + ' outbound-call records ('
         + batches.length + ' chunks).');
-      return { inserted: records.length, skipped: 0 };
+      return { inserted: records.length, skipped: 0, unparsedDropped: unparsedDropped };
     } catch (e) {
       try { conn.rollback(); } catch (re) {}
       throw e;
@@ -352,6 +389,12 @@ function backfillOutboundCalls(fromIso, toIso, force) {
       var res = writeOutboundCallsToNeon(legs, { authoritative: true, expectedDateIso: c.iso });
       if (res && res.error) {
         failures.push(c.iso);
+      } else if (res && (res.allStray || res.allUnparsed)) {
+        // C-1/C-6: mislabeled/wrong-day sheet or all-unparseable dates --
+        // the writer refused; count as a failure.
+        failures.push(c.iso + (res.allStray
+          ? ' (all ' + res.strayCount + ' record(s) dated outside the sheet\'s date)'
+          : ' (all ' + res.unparsedDropped + ' record(s) with unparseable dates)'));
       } else if (res && ((res.skipped && !res.inserted) || res.unreachable)) {
         // res.unreachable also covers the F2 zero-record cleanup arm (no
         // `skipped` count, but the date still needs retrying).

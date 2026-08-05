@@ -110,7 +110,7 @@ function backfillDQEHistory() {
   var lastRow = sheet.getLastRow();
   if (lastRow < 2) { Logger.log('DQE: Sheet is empty.'); return; }
 
-  // Read all 36 columns as display values for consistent string handling
+  // Read up to 35 columns (A..AI) as display values for consistent string handling.
   // REP-10: reading a FIXED width threw on sheets trimmed to exactly the data
   // width, so take what the sheet actually has. 35 cols since sub-queue Phase 1
   // (AI Queue Split); a sheet still 34 wide yields undefined for r[34], which the

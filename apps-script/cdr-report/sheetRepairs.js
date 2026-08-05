@@ -230,8 +230,9 @@ function previewDqeAbandonedIdRepair() {
 
 /**
  * Apply the repair: recover lossless single-value coerced cells as text, mark
- * unrecoverable multi-value cells with the lost sentinel, and lock AD-AF to
- * plain text.
+ * unrecoverable multi-value cells with the lost sentinel, and lock AD-AE to
+ * plain text (T-5: this repair owns the ID columns only -- AF, the
+ * comma-joined TIMES column, is formatted/recovered by the slot repair).
  */
 function repairDqeAbandonedIds() {
   return repairDqeAbandonedIds_(/*dryRun=*/false);
@@ -669,7 +670,7 @@ function mergeDqeDuplicateRows_(dryRun) {
     if (!r[1] || !r[2]) continue;
     var cd = parseDateForNeon(r[1]);
     if (!cd) continue;
-    var key = cd + ' ' + String(r[2]);
+    var key = cd + '\u0000' + String(r[2]);
     (groups[key] = groups[key] || []).push(i);
   }
   var dupKeys = Object.keys(groups).filter(function (k) { return groups[k].length > 1; });
@@ -800,7 +801,7 @@ function mergeDqeDuplicateRows_(dryRun) {
     var firstRow1 = idxs[0] + 2;
     writes.push({ row: firstRow1, vals: m });
     idxs.slice(1).forEach(function (i) { deleteRows.push(i + 2); });
-    summary.push(key.replace(' ', ' / ') + '  rows ' + idxs.map(function (i) { return i + 2; }).join(',')
+    summary.push(key.replace('\u0000', ' / ') + '  rows ' + idxs.map(function (i) { return i + 2; }).join(',')
       + '  -> answered=' + sumAns + ' rung=' + sumRung + ' missed=' + sumMissed + ' unique=' + sumUnique);
   });
 

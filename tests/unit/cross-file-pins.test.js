@@ -266,3 +266,28 @@ test('S2-2: CSR Transfer really is dashboard-read (the reason it is guarded)', f
     'Data.gs no longer reads CSR Transfer Historical Data -- re-check whether '
     + 'the S2-2 force-path guard is still warranted before removing it.');
 });
+
+// ── F-7: the userJson script-tag escape (Code.gs -> dashboard.html) ─────────
+//
+// `<?!= ?>` does NOT HTML-escape, and JSON.stringify does not escape the
+// literal end-of-script-tag pattern inside string values -- a crafted agent /
+// dept / config string containing "</script>" would CLOSE the inline <script>
+// block and inject markup. The documented defense (CLAUDE.md's scriptlet
+// gotcha) is server-side: every tmpl.*Json assignment replaces '<' with
+// < BEFORE it reaches the template. That rule had no pin; this one is
+// GENERIC on purpose -- a future tmpl.<new>Json injection missing the escape
+// fails here without anyone updating a list.
+test('F-7: every tmpl.*Json assignment in Code.gs carries the \\u003c escape', function () {
+  const codeGs = read('Code.gs', DASH);
+  const assigns = codeGs.match(/tmpl\.\w+Json\s*=[^;]+;/g) || [];
+  assert.ok(assigns.length >= 6,
+    'expected the known tmpl.*Json assignments; found ' + assigns.length
+    + ' -- if renderDashboard_ was refactored, re-point this pin');
+  const unescaped = assigns.filter(function (a) {
+    return a.indexOf("replace(/</g, '\\\\u003c')") === -1;
+  });
+  assert.deepEqual(unescaped, [],
+    'tmpl.*Json assignment(s) WITHOUT the \\u003c escape -- a string value '
+    + 'containing an end-of-script tag would break out of the inline script '
+    + 'block (see the CLAUDE.md scriptlet gotcha)');
+});

@@ -685,6 +685,22 @@ function getDeptConfigInit() {
     unmappedCount:   unmappedCount,
     spreadsheetUrl:  'https://docs.google.com/spreadsheets/d/' + getSpreadsheetId_() + '/edit',
   };
+  // A-2 (the R8-C4 discipline, applied to this endpoint's OWN cache): don't
+  // pin a degraded picture of the config for the 30-min TTL. Two degraded
+  // shapes: (a) the config read errored this execution -- `rows` is [] and
+  // `effective` is constants-only, which an admin would read as "nothing is
+  // configured" and might then "correct"; (b) the inbound discovery came
+  // back unavailable while Neon IS configured -- a transient blip, not the
+  // stable unconfigured state (which is fine to cache: it can't heal within
+  // a TTL without an operator adding properties anyway).
+  const cfgDegraded = (typeof deptConfigReadFailed_ === 'function') && deptConfigReadFailed_();
+  const neonConfigured = !!PropertiesService.getScriptProperties().getProperty('NEON_HOST');
+  const discoveryBlip = neonConfigured && inboundDiscovery && inboundDiscovery.available === false;
+  if (cfgDegraded || discoveryBlip) {
+    Logger.log('getDeptConfigInit: skipping cache put (%s) -- degraded init must not pin.',
+      cfgDegraded ? 'Dept Config read errored' : 'inbound discovery unavailable with Neon configured');
+    return init;
+  }
   try { cache.put(DEPT_CONFIG_INIT_CACHE_KEY, JSON.stringify(init), REPORT_CACHE_TTL_SECONDS); }
   catch (e) { /* best-effort */ }
   return init;
@@ -1086,6 +1102,7 @@ function backfillDeptConfigToNeon() {
       teamAvgExcludes: r.teamAvgExcludes, queueExtOverrides: r.queueExtOverrides,
       active: r.active, admin: r.updatedBy || Session.getActiveUser().getEmail(),
       notes: r.notes, inboundAliases: r.inboundAliases,
+      finalDeptLabels: r.finalDeptLabels,
     });
     n++;
   });
@@ -1111,7 +1128,8 @@ function compareDeptConfigSources() {
   }
   const key = function (r) {
     return JSON.stringify([r.qcdQueues, r.overviewParent, r.teamAvgExcludes,
-      r.queueExtOverrides, r.active, r.notes, r.inboundAliases]);
+      r.queueExtOverrides, r.active, r.notes, r.inboundAliases,
+      r.finalDeptLabels]);
   };
   const sMap = {}, nMap = {};
   sheet.forEach(function (r) { sMap[r.dept] = r; });

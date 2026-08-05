@@ -65,11 +65,22 @@ function makeFakeRange(sheet, startRow, startCol, numRows, numCols) {
       }
       return this;
     },
-    // No-ops used by the cdr-report write path (formatting + sort are
-    // cosmetic; tests read values back and filter by key rather than
-    // relying on row order).
-    setNumberFormat: function () { return this; },
+    // F-6: setNumberFormat RECORDS onto the sheet instead of no-opping.
+    // The plain-text ('@') formats are the repo's primary defense against
+    // the comma-joined cell coercion class (CLAUDE.md's largest gotcha) --
+    // with a no-op here, deleting every protection passed all tests. Tests
+    // assert coverage via sheet._numberFormats. Sort stays a no-op (tests
+    // filter by key rather than relying on row order).
+    setNumberFormat: function (fmt) {
+      if (!sheet._numberFormats) sheet._numberFormats = [];
+      sheet._numberFormats.push({ startRow: startRow, startCol: startCol,
+        numRows: numRows, numCols: numCols, format: fmt });
+      return this;
+    },
     sort: function () { return this; },
+    // Cosmetic no-ops (Setup.gs header styling).
+    setFontWeight: function () { return this; },
+    setBackground: function () { return this; },
   };
 }
 
@@ -111,9 +122,24 @@ function makeFakeSheet(name, data) {
       return this;
     },
     getRange: function (startRow, startCol, numRows, numCols) {
+      // F-5: real Sheets THROWS on a getRange past getMaxColumns (columns
+      // never auto-expand -- the REP-10 production failure class). Without
+      // this, deleting a writer's widen-before-write step passed every test.
+      // Column-only on purpose: rows DO effectively auto-grow in the code
+      // paths under test (appendRow / getMaxRows floor), and the documented
+      // incident class is columns.
+      const endCol = (startCol || 1) + ((numCols || 1) - 1);
+      if (endCol > this.getMaxColumns()) {
+        throw new Error('The coordinates or dimensions of the range are invalid. '
+          + '(range ends at column ' + endCol + ' but the sheet has '
+          + this.getMaxColumns() + ' -- widen the sheet first, REP-10)');
+      }
       return makeFakeRange(this, startRow, startCol, numRows, numCols);
     },
     appendRow: function (row) { this._data.push(row.slice()); return this; },
+    // Cosmetic no-ops (Setup.gs).
+    setFrozenRows: function () { return this; },
+    autoResizeColumns: function () { return this; },
     // 1-based row delete (matches SpreadsheetApp). Splices the backing grid;
     // the header is row 1, data rows are 2..N.
     deleteRow: function (rowPosition) {

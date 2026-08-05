@@ -1,0 +1,55 @@
+---BROAD SCAN IMPLEMENTATION SUMMARY---
+Findings implemented:
+Batch 7 (deploy & ops hygiene): C-3 (retention prune had no in-repo installer/telemetry), F-10 (deploy.sh skipped the rendered-UI gate), F-9 (ci.mjs skipped silently when playwright missing under CI), F-11 (vendor manifest not tied to bundle bytes), F-8 (raw NUL bytes made sheetRepairs.js read as binary).
+Batch 8 (cdr-report editor tools): D-1 (Custom Report Builder width throw on a fresh tab), D-2 (unescaped feed strings in the extraction sidebar), D-3 (no formula neutralization on three sheet writers), D-4 (silent 400-day batch truncation), D-5 (three remaining falsy-index || chains), D-6 (silent early-exits + stranded "Running…" + never-firing blank-date check).
+
+Files modified:
+- apps-script/cdr-import/DeleteOldSheets.js (C-3 rewrite: handler + installers + wrapper + counts + openById fallback), "CDR Tools.js" (menu items)
+- scripts/deploy.sh (F-10), tools/ui-harness/ci.mjs (F-9), tools/ui-harness/vendor/VERSIONS.json + tests/unit/ui-harness-vendor.test.js (F-11)
+- apps-script/cdr-report/sheetRepairs.js (F-8: \\u0000 escapes; behavior-identical)
+- apps-script/cdr-report/dashboardCDR.js (D-1 crEnsureCols_ ×2, D-3 helper + contacts, D-5, D-6 wrapper/guards), dataFilters.js (D-2 esc() + 8 interpolation sites), dbReporting.js + inboundCallsExport.js (D-3), emailDailyReport.js (D-4)
+- docs/operator-state.md #43 + CLAUDE.md index line 43 + docs/invariants.md INV-44 vocabulary (C-3 reality sync)
+
+CHANGES:
+C-3 | DeleteOldSheets.js, CDR Tools.js, docs | `runRetentionPrune_` logs a `retentionPrune` Pipeline Health row per run (proof-of-life for Op State #43); daily ~3 AM installer via menu/editor; `deleteOldCDRSheets` keeps its name (pre-existing hand-made triggers keep working — the installer log + #43 tell the operator to remove them to avoid double runs); `getActiveSpreadsheet` gains an openById(getTargetSsId_) fallback for unbound trigger contexts
+F-10 | deploy.sh | `npm run ci:ui` joins the TST-7 gate (skips cleanly sans playwright; DEPLOY_SKIP_CI=1 escapes both)
+F-9 | ci.mjs | playwright-absent + CI=true → exit 1 with a message naming the expected node_modules location; local skip behavior unchanged
+F-11 | VERSIONS.json, ui-harness-vendor.test.js | sha256 per bundle in the manifest; new test recomputes and compares (failure message carries the correct hash for a legitimate bump)
+F-8 | sheetRepairs.js | the two `'\x00'` literals → `'\u0000'` escape sequences (same runtime key separator; file(1) reports UTF-8 text again)
+D-1 | dashboardCDR.js | `crEnsureCols_` before the 45-col clear and before the diagnostics panel's col+2 write
+D-2 | dataFilters.js | client-side `esc()` (the DQEDrilldownSidebar discipline) on headers, cells, context labels, error messages, checkbox values
+D-3 | dashboardCDR.js, dbReporting.js, inboundCallsExport.js | `crSheetSafeCell_` (single definition, typeof-guarded remote callers): prefixes ' on formula-leading strings, deliberately passing pure signed-numeric strings (these writers ship numeric grids — documented divergence from the dashboard's sheetSafeCell_)
+D-4 | emailDailyReport.js | `weekdays._truncatedAfter` marker + a leading ⚠ line in the emailed debug log + a Logger warning
+D-5 | dashboardCDR.js | OB_EXT_DUR / IB_ANS_MIXED / IB_MIS_MIXED via idxOr
+D-6 | dashboardCDR.js | public `generateCustomReport` wraps `generateCustomReportCore_` (throw → B8 "❌ FAILED" + alert + rethrow for the log); missing-sheet alert; `isNaN(getTime())` date guards
+
+TEST RESULTS: passed — node --test 631/631 (+1: the F-11 byte pin), INV-16 clean, ci:ui all stages green, deploy.sh bash -n clean, node --check clean on all five edited cdr .js files. The cdr-report editor tools have no unit harness (known F-7 gap — dashboardCDR/dataFilters/dbReporting remain zero-coverage); D-1..D-6 verification is syntax + read-through, with the live walk deferred to the post-deploy editor session (open the Custom Report Builder fresh, run once with a blank date, once healthy).
+
+REGRESSION RISKS:
+- C-3: if the operator installs the new trigger WITHOUT removing a pre-existing hand-made deleteOldCDRSheets trigger, the prune runs twice daily — harmless (second run deletes nothing) but noisy; the installer log + #43 both call it out.
+- D-3's neutralization changes stored cell text for formula-leading names (leading apostrophe — the standard Sheets escape; display unchanged). Downstream readers of the Inbound Calls tab compare dates/numbers, not name cells, and the tab is a documented fallback COPY.
+- D-6's rethrow keeps executions marked failed (as before) — the change is additive surfacing.
+- F-9 could fail a CI run that PREVIOUSLY (wrongly) passed green if the workflow's install step breaks — that is the point.
+
+INVARIANTS AT RISK: None. INV-44 vocabulary updated WITH the new step (the enumerated list stays true). INV-16 files untouched; guard clean. INV-22 untouched (no dqe-report changes). The D-3 helper is cdr-report-local — no cross-project duplication created.
+
+NET SCORE: 0 − 0 = 0
+(All latent/hygiene: D-1 fires only on a fresh/narrow builder tab, D-2/D-3 need a crafted feed name, C-3/F-9/F-10/F-11 are process armor. Honest zero.)
+
+OPERATOR ACTIONS / DEPLOY:
+- Deploy cdr-import AND cdr-report | BLOCKS DEPLOY: Y (C-3 lives in cdr-import; D-1..D-6 + F-8 in cdr-report — cdr-report's FIRST code deploy this round)
+- CDR Tools menu → "Install Retention Prune Trigger", then DELETE any hand-made deleteOldCDRSheets trigger in the cdr-import Triggers panel (Op State #43) | BLOCKS DEPLOY: N (but the #43 proof-of-life stays silent until done)
+- No new Script Properties or scopes (ScriptApp/trigger scopes already granted for the sibling installers).
+Deploy: scripts/deploy.sh apps-script/cdr-import <cdr-import-deployment-id> ; scripts/deploy.sh apps-script/cdr-report <cdr-report-deployment-id> ; dashboard's accumulated 74/76/77/78 new-version deploy unchanged.
+
+(Not complete in production until blocking operator actions are done AND the deploy step is confirmed.)
+
+FOLLOW-ON ITEMS:
+- Remaining: Batch 9 (C-7 daily-path performance — best after the Neon cutover decision), Batch 10 (D-8/D-9 frozen-legacy prep), strategic items (queue-split phases, Inbound/Direct un-gating, G-1-class payload-contract assertion).
+- The cdr-report editor tools' zero-coverage status (F-7 residue) now has more code worth pinning (crSheetSafeCell_, crEnsureCols_ are pure and cheap to test if a cdr-report suite is ever started).
+- /sync-docs queue (now four clauses): harness strictness, C-6 allUnparsed, B-5 alerts note, and CLAUDE.md's Key-commands deploy.sh description (now also runs ci:ui — the TST-7 sentence).
+
+DOCUMENTATION UPDATES NEEDED:
+- CLAUDE.md Key commands: the deploy.sh entry says it gates on `npm run ci` — now also ci:ui (one clause; queued).
+- Operator State #43 / INV-44 / CLAUDE.md index already synced in this commit.
+---END BROAD SCAN IMPLEMENTATION SUMMARY---
