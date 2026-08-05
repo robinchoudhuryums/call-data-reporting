@@ -665,3 +665,25 @@ test('C-1: an ALL-STRAY yield refuses the zero-record cleanup (wrong-day grid mu
   assert.equal((cap.executed || []).length, 0,
     'no statement ran -- the expected date\'s rows are untouched');
 });
+
+test('C-6: an ALL-UNPARSED yield refuses the zero-record cleanup (format drift must not delete)', function () {
+  // Every record the grid yields has an unparseable first-leg timestamp, so
+  // callDate is null on all of them -- the timestamp-format-drift signature.
+  // Without the C-6 arm these pass the stray gate (they are not stray-DATED,
+  // they are date-LESS) and the delete-only pass would wipe the expected date
+  // while the capture is blind.
+  const cap = {};
+  h.ctx.getReachableNeonConn_ = function () { return fakeInboundConn(cap); };
+  const unparsedOnly = [
+    leg({ callId: '555002', legId: 1, start: '2026-06-04T14:00:00Z', stop: '2026-06-04T14:01:00Z',
+          direction: 'Incoming', caller: '12155550000', callee: '108',
+          calleeName: 'A_Q_Intake', dialIn: '19722281820' }),
+  ];
+  const res = h.call('writeInboundCallsToNeon', unparsedOnly,
+    { authoritative: true, expectedDateIso: '2026-06-04' });
+  assert.equal(res.allUnparsed, true, 'refusal is reported to the caller');
+  assert.equal(res.unparsedDropped, 1);
+  assert.equal(res.cleared, undefined, 'no cleanup happened');
+  assert.equal((cap.executed || []).length, 0,
+    'no statement ran -- the expected date\'s rows are untouched');
+});

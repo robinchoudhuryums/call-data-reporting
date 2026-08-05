@@ -594,6 +594,19 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
                             ' missedBusy=' + dres.meta.missedBusyTotal + ' (skipNeon)',
               });
             } catch (logErr) { /* best-effort */ }
+            if (dres.wrote === 0 && (dres.deletedExisting || 0) > 0) {
+              // C-5: same rebuild-to-zero loss signature as the daily block.
+              try {
+                logPipelineHealthWithFallback_(targetSS, {
+                  step:       'bulkBackfill:Direct',
+                  status:     'failure',
+                  rows:       0,
+                  durationMs: Date.now() - bulkDirectStart,
+                  notes:      dateObj.toDateString() + ' | rebuild wrote 0 rows but DELETED '
+                              + dres.deletedExisting + ' existing row(s) -- verify before trusting this date',
+                });
+              } catch (logErr) { /* best-effort */ }
+            }
           }
         } catch (directErr) {
           const dmsg = (directErr && directErr.message) ? directErr.message : String(directErr);
@@ -2133,6 +2146,25 @@ if (!skipCDR && obcHD) {
             ' missedBusy=' + dres.meta.missedBusyTotal +
             ' missedFree=' + dres.meta.missedFreeTotal + ' neon=' + directNeonStr,
         });
+        if (dres.wrote === 0 && (dres.deletedExisting || 0) > 0) {
+          // C-5 (the S2-2 rule: a dashboard-read sheet's rebuild-to-zero must
+          // SURFACE, never silently return): the refresh deleted existing rows
+          // for the date and wrote nothing back. Logged AFTER the success row
+          // so System Health's most-recent-outcome classifier flags the step
+          // (the guardForceRebuildLoss_ semantics -- log-only, no throw, the
+          // other sheet writes stand).
+          try {
+            logPipelineHealthWithFallback_(targetSS, {
+              step: 'processIntegratedHistory:Direct',
+              status: 'failure',
+              rows: 0,
+              durationMs: Date.now() - directStart,
+              notes: dateObj.toDateString() + ' | rebuild wrote 0 rows but DELETED '
+                + dres.deletedExisting + ' existing row(s) -- verify the date really '
+                + 'dropped to zero direct activity; force re-import to restore',
+            });
+          } catch (logErr) { /* best-effort */ }
+        }
         // R8-A2: the Direct mirror was the only Neon writer outside the
         // L7/F4/F9 failure-row convention -- a mirror skip/error was buried
         // in the SUCCESS row's notes, invisible to System Health's
@@ -2246,11 +2278,15 @@ if (!skipCDR && obcHD) {
             notes: dateObj.toDateString() + ' | Neon unreachable (zero-record day; stale rows, if any, left in place)',
           });
         } catch (logErr) { /* best-effort */ }
-      } else if (inboundRes && inboundRes.allStray) {
-        // C-1: the writer REFUSED the zero-record cleanup -- every record the
-        // grid yielded was dated outside the expected date (wrong-day grid?).
-        // That is a source-data signal, not a quiet day: surface it like the
-        // DQE expected-date refusal (failure row + email).
+      } else if (inboundRes && (inboundRes.allStray || inboundRes.allUnparsed)) {
+        // C-1/C-6: the writer REFUSED the zero-record cleanup -- every record
+        // the grid yielded was either dated outside the expected date
+        // (wrong-day grid) or carried no parseable date at all (timestamp
+        // format drift). Either is a source-data signal, not a quiet day:
+        // surface it like the DQE expected-date refusal (failure row + email).
+        var inbRefuseWhy = inboundRes.allStray
+          ? inboundRes.strayCount + ' record(s) ALL dated outside the expected date (wrong-day grid?)'
+          : inboundRes.unparsedDropped + ' record(s) ALL with unparseable dates (timestamp format drift?)';
         setNeonStatus_('error');
         try {
           logPipelineHealthWithFallback_(targetSS, {
@@ -2258,16 +2294,14 @@ if (!skipCDR && obcHD) {
             status: 'failure',
             rows: null,
             durationMs: Date.now() - inboundStart,
-            notes: dateObj.toDateString() + ' | cleanup refused: ' + inboundRes.strayCount
-              + ' record(s) ALL dated outside the expected date (wrong-day grid?)',
+            notes: dateObj.toDateString() + ' | cleanup refused: ' + inbRefuseWhy,
           });
         } catch (logErr) { /* best-effort */ }
         try {
           notifyNeonWriteFailure('processIntegratedHistory:Inbound (' + dateObj.toDateString() + ')',
-            'writeInboundCallsToNeon refused the zero-record cleanup: the source grid yielded '
-            + inboundRes.strayCount + ' record(s), ALL dated outside the expected date. This is '
-            + 'the wrong-day-grid signature -- verify the Call_Legs sheet for this date before '
-            + 're-importing. No inbound_calls rows were deleted.');
+            'writeInboundCallsToNeon refused the zero-record cleanup: ' + inbRefuseWhy
+            + ' Verify the Call_Legs sheet for this date before re-importing. '
+            + 'No inbound_calls rows were deleted.');
         } catch (notifyErr) { /* best-effort */ }
       } else if (inboundRes && inboundRes.cleared) {
         // C-2: a destructive clear (zero-record day shedding stale rows) gets
@@ -2299,7 +2333,11 @@ if (!skipCDR && obcHD) {
             status: 'success',
             rows: inboundRes.inserted,
             durationMs: Date.now() - inboundStart,
-            notes: dateObj.toDateString(),
+            // C-6: partial unparsed drops ride the success row's notes (the
+            // F9 unparsedStartCount discipline) so a creeping format drift is
+            // visible before it reaches the all-unparsed refusal above.
+            notes: dateObj.toDateString() + ((inboundRes.unparsedDropped || 0) > 0
+              ? ' | ' + inboundRes.unparsedDropped + ' record(s) dropped (unparseable dates)' : ''),
           });
         } catch (logErr) { /* best-effort */ }
       }
@@ -2378,9 +2416,12 @@ if (!skipCDR && obcHD) {
             notes: dateObj.toDateString() + ' | Neon unreachable (zero-record day; stale rows, if any, left in place)',
           });
         } catch (logErr) { /* best-effort */ }
-      } else if (outboundRes && outboundRes.allStray) {
-        // C-1: writer refused the zero-record cleanup -- wrong-day-grid
-        // signature (all yielded records dated outside the expected date).
+      } else if (outboundRes && (outboundRes.allStray || outboundRes.allUnparsed)) {
+        // C-1/C-6: refused zero-record cleanup -- wrong-day grid OR
+        // all-unparsed dates (format drift). Same surfacing as inbound.
+        var obRefuseWhy = outboundRes.allStray
+          ? outboundRes.strayCount + ' record(s) ALL dated outside the expected date (wrong-day grid?)'
+          : outboundRes.unparsedDropped + ' record(s) ALL with unparseable dates (timestamp format drift?)';
         setNeonStatus_('error');
         try {
           logPipelineHealthWithFallback_(targetSS, {
@@ -2388,16 +2429,14 @@ if (!skipCDR && obcHD) {
             status: 'failure',
             rows: null,
             durationMs: Date.now() - outboundStart,
-            notes: dateObj.toDateString() + ' | cleanup refused: ' + outboundRes.strayCount
-              + ' record(s) ALL dated outside the expected date (wrong-day grid?)',
+            notes: dateObj.toDateString() + ' | cleanup refused: ' + obRefuseWhy,
           });
         } catch (logErr) { /* best-effort */ }
         try {
           notifyNeonWriteFailure('processIntegratedHistory:Outbound (' + dateObj.toDateString() + ')',
-            'writeOutboundCallsToNeon refused the zero-record cleanup: the source grid yielded '
-            + outboundRes.strayCount + ' record(s), ALL dated outside the expected date. This is '
-            + 'the wrong-day-grid signature -- verify the Call_Legs sheet for this date before '
-            + 're-importing. No outbound_calls rows were deleted.');
+            'writeOutboundCallsToNeon refused the zero-record cleanup: ' + obRefuseWhy
+            + ' Verify the Call_Legs sheet for this date before re-importing. '
+            + 'No outbound_calls rows were deleted.');
         } catch (notifyErr) { /* best-effort */ }
       } else if (outboundRes && outboundRes.cleared) {
         // C-2: destructive clear on record (zero-record day shed stale rows).
@@ -2428,7 +2467,8 @@ if (!skipCDR && obcHD) {
             status: 'success',
             rows: outboundRes.inserted,
             durationMs: Date.now() - outboundStart,
-            notes: dateObj.toDateString(),
+            notes: dateObj.toDateString() + ((outboundRes.unparsedDropped || 0) > 0
+              ? ' | ' + outboundRes.unparsedDropped + ' record(s) dropped (unparseable dates)' : ''),
           });
         } catch (logErr) { /* best-effort */ }
       }
@@ -2721,6 +2761,14 @@ function appendToAuditLog(targetSS, fnName, details, outcome) {
 
 function updateQcdrOutputSheet(targetSS, qcdData, csrData) {
   const tester = targetSS.getSheetByName("QCDR Output");
+  // C-8: a renamed/deleted tab used to surface as a bare null-deref that
+  // blamed this engine; name the real (config) problem instead. Not created
+  // by any setup() -- it is hand-maintained operator state.
+  if (!tester) {
+    throw new Error('updateQcdrOutputSheet: the "QCDR Output" sheet is missing from the CDR Report '
+      + 'spreadsheet (renamed or deleted?). Restore the tab -- the daily QCD/CSR report engines '
+      + 'read and write it.');
+  }
   if (qcdData) tester.getRange(2, 3, qcdData.output.length, 5).setValues(qcdData.output);
   if (csrData && csrData.agents.length > 0) {
     // Optional but recommended: Clear the old CSR block to prevent leftovers if the team shrinks
@@ -2776,9 +2824,21 @@ function parseDurationDecimal(val) {
 function calcQcdReport(cleanData, targetSS) {
   const rawDisplay = cleanData.slice(1);
   const testerSheet = targetSS.getSheetByName("QCDR Output");
+  if (!testerSheet) {
+    // C-8: name the config fault instead of null-dereffing.
+    throw new Error('calcQcdReport: the "QCDR Output" sheet is missing (renamed or deleted?). '
+      + 'Restore the tab -- its col A/B labels drive the QCD report.');
+  }
   const staticLabels = testerSheet.getRange("A2:B49").getValues();
 
-  const csrRange = targetSS.getRangeByName("csr_team").getValues();
+  const csrTeamRange = targetSS.getRangeByName("csr_team");
+  if (!csrTeamRange) {
+    // C-8: the named range is hand-maintained operator state; losing it (a
+    // row deletion can silently kill a named range) used to null-deref here.
+    throw new Error('calcQcdReport: the "csr_team" named range is missing from the CDR Report '
+      + 'spreadsheet. Re-create it (Data -> Named ranges) over the CSR roster cells.');
+  }
+  const csrRange = csrTeamRange.getValues();
   const csrTeamSet = new Set();
   csrRange.forEach(row => { if (row[0]) csrTeamSet.add(String(row[0]).split(",")[0].trim().toLowerCase()); });
 
@@ -3165,8 +3225,12 @@ if (type === "incoming" && isColGPos) {
 // Memory Calculator for the Transfer Engine (CSR Report)
 function calcCsrReport(cleanData, targetSS) {
   const rawDisplay = cleanData.slice(1);
-  const reportSheet = targetSS.getSheetByName("QCDR Output"); 
-  
+  const reportSheet = targetSS.getSheetByName("QCDR Output");
+  if (!reportSheet) {
+    // C-8: name the config fault instead of null-dereffing.
+    throw new Error('calcCsrReport: the "QCDR Output" sheet is missing (renamed or deleted?). '
+      + 'Restore the tab -- its N1:X1 queue headers drive the CSR transfer report.');
+  }
   const queueHeadersRaw = reportSheet.getRange("N1:X1").getValues()[0];
   const queueHeaders = queueHeadersRaw.map(h => String(h).trim().toLowerCase());
   
@@ -3204,7 +3268,13 @@ function calcCsrReport(cleanData, targetSS) {
     }
   });
   
-  const csrRange = targetSS.getRangeByName("csr_team").getValues();
+  const csrTeamRange = targetSS.getRangeByName("csr_team");
+  if (!csrTeamRange) {
+    // C-8: see calcQcdReport -- name the missing named range.
+    throw new Error('calcCsrReport: the "csr_team" named range is missing from the CDR Report '
+      + 'spreadsheet. Re-create it (Data -> Named ranges) over the CSR roster cells.');
+  }
+  const csrRange = csrTeamRange.getValues();
   const csrNames = [];
   
   csrRange.forEach(row => {

@@ -308,14 +308,15 @@ test('F-3: dcWriteSheet_ deletes the date\'s existing rows even when Sheets coer
   const ss = makeFakeSpreadsheet({
     sheets: { 'Direct Call History': { values: values, displays: displays } },
   });
-  const wrote = h.fn('dcWriteSheet_')(ss, [
+  const res = h.fn('dcWriteSheet_')(ss, [
     { dept: 'CSR', agent: 'Anna',
       ib_int_answered: 1, ib_int_missed_free: 0, ib_int_missed_busy: 0, ib_int_talk_sec: 5,
       ib_ext_answered: 2, ib_ext_missed_free: 1, ib_ext_missed_busy: 0, ib_ext_talk_sec: 60,
       ob_int_total: 0, ob_int_connected: 0, ob_int_talk_sec: 0,
       ob_ext_total: 1, ob_ext_connected: 1, ob_ext_talk_sec: 30 },
   ], 'June 2026', '06/22/2026');
-  assert.equal(wrote, 1);
+  assert.equal(res.written, 1);
+  assert.equal(res.deleted, 2, 'C-5: the refresh reports how many existing rows it removed');
   const data = ss.getSheetByName('Direct Call History')._data;
   // header + Cara's 06/21 row + the ONE fresh 06/22 row (both stale
   // 06/22 rows deleted -- pre-fix this would be 5 rows, dupes kept).

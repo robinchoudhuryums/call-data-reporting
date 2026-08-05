@@ -172,6 +172,23 @@ test('C-1: an ALL-STRAY yield refuses the zero-record cleanup (wrong-day grid mu
     'no statement ran -- the expected date\'s rows are untouched');
 });
 
+test('C-6: an ALL-UNPARSED yield refuses the zero-record cleanup (format drift must not delete)', function () {
+  const cap = {};
+  h.ctx.getReachableNeonConn_ = function () { return fakeConn(cap); };
+  const unparsedOnly = [
+    leg({ callId: '888889', legId: 1, start: '2026-07-22T09:50:00Z',
+      stop: '2026-07-22T09:51:00Z', direction: 'Outgoing', talk: '0:00:40', caller: '305',
+      callee: '12145550001', answered: 'Answered', dept: 'Sales' }),
+  ];
+  const res = h.call('writeOutboundCallsToNeon', unparsedOnly,
+    { authoritative: true, expectedDateIso: '2026-07-22' });
+  assert.equal(res.allUnparsed, true, 'refusal is reported to the caller');
+  assert.equal(res.unparsedDropped, 1);
+  assert.equal(res.cleared, undefined, 'no cleanup happened');
+  assert.equal((cap.executed || []).length, 0,
+    'no statement ran -- the expected date\'s rows are untouched');
+});
+
 test('writer: non-authoritative is upsert-only; HMAC secret inlines the 64-hex hash', function () {
   const cap = {};
   h.ctx.getReachableNeonConn_ = function () { return fakeConn(cap); };

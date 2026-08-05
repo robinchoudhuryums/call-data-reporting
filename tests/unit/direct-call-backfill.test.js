@@ -164,6 +164,22 @@ test('P-5: empty rows with NO date is still a clean no-op (nothing to clear)', f
   assert.equal(cap.executed.length, 0, 'no connection work without a date');
 });
 
+test('C-5: an EMPTY roster read refuses the rebuild (delete-then-rewrite must not erase the date)', function () {
+  // dcBuildExtMaps_ silently returns empty maps on a blank config read; with
+  // no agent extensions the engine cannot produce rows, so the refresh would
+  // delete the date's sheet + Neon rows and write nothing (the C-5 loss
+  // signature). buildDirectCallFromRaw_ must throw BEFORE any write -- ss is
+  // null here to prove nothing was touched.
+  const rawDisp = [
+    ['CALL ID', 'LEG', 'START', 'x'],
+    ['1', '1', '03/09/2026 10:00:00', 'x'],
+  ];
+  const emptyConfig = { getLastRow: function () { return 1; } };
+  assert.throws(function () {
+    h.fn('buildDirectCallFromRaw_')(null, rawDisp, emptyConfig, {});
+  }, /ZERO agent[\s\S]*extensions/);
+});
+
 test('P-4: buildDirectCallFromRaw_ refuses a derived date that disagrees with expectedDate', function () {
   // The guard throws BEFORE any sheet/Neon write touches the derived date, so
   // ss/configSheet are never reached -- pass nulls to prove it.

@@ -414,19 +414,27 @@ function dcDateIso_(v) {
              + '-' + String(parseInt(m[2], 10)).padStart(2, '0');
 }
 
-/** Refresh-in-window write: drop the date's existing rows, append the new ones. */
+/**
+ * Refresh-in-window write: drop the date's existing rows, append the new ones.
+ * Returns {written, deleted} -- `deleted` is how many existing rows the date
+ * refresh removed, so callers can spot the C-5 loss signature (deleted > 0
+ * with written === 0: a rebuild that erased the date and replaced it with
+ * nothing). A legitimate zero-activity date has deleted === 0 too, so the
+ * pair distinguishes "no-op" from "erased".
+ */
 function dcWriteSheet_(ss, rows, monthYear, dateStr) {
   const sh = dcEnsureSheet_(ss);
   const last = sh.getLastRow();
   const targetIso = dcDateIso_(dateStr);
+  let deleted = 0;
   if (last > 1 && targetIso) {
     // getDisplayValues, not getValues (see dcDateIso_ above).
     const dateCol = sh.getRange(2, 2, last - 1, 1).getDisplayValues();  // col B = Date
     for (let i = dateCol.length - 1; i >= 0; i--) {
-      if (dcDateIso_(dateCol[i][0]) === targetIso) sh.deleteRow(i + 2);
+      if (dcDateIso_(dateCol[i][0]) === targetIso) { sh.deleteRow(i + 2); deleted++; }
     }
   }
-  if (!rows.length) return 0;
+  if (!rows.length) return { written: 0, deleted: deleted };
   const out = rows.map(function (r) {
     return [
       monthYear, dateStr, r.dept, r.agent,
@@ -437,7 +445,7 @@ function dcWriteSheet_(ss, rows, monthYear, dateStr) {
     ];
   });
   sh.getRange(sh.getLastRow() + 1, 1, out.length, DIRECT_CALL_HISTORY_HEADERS.length).setValues(out);
-  return out.length;
+  return { written: out.length, deleted: deleted };
 }
 
 // -- Persistence: Neon mirror (reuses getReachableNeonConn_; no INV-16 edit) --
@@ -690,9 +698,33 @@ function buildDirectCallFromRaw_(ss, rawDisp, configSheet, opts) {
   }
 
   const maps = dcBuildExtMaps_(configSheet);
+  // C-5 (the P-3 discipline: validate the source before you delete).
+  // dcBuildExtMaps_ silently returns EMPTY maps when the roster read comes
+  // back blank (lastRow < 2, a transient sheet glitch, a renamed tab passed
+  // in by mistake) -- and with no agent extensions, computeDirectCallMetrics
+  // is structurally incapable of producing rows, so the delete-then-rewrite
+  // below would erase the date from the sheet AND (P-5) direct_call_history
+  // under a success rows:0 row. A healthy install always has extensions, so
+  // refuse loudly instead; the throw lands in every caller's existing
+  // Pipeline-Health-logging catch.
+  if (!Object.keys(maps.extToAgent || {}).length) {
+    throw new Error('buildDirectCallFromRaw_: the DO NOT EDIT! roster read yielded ZERO agent '
+      + 'extensions -- refusing to rebuild (an empty-map rebuild would erase the date\'s '
+      + 'Direct Call History and its Neon mirror). Check the roster sheet, then re-run.');
+  }
   const result = computeDirectCallMetrics(rawDisp, maps, opts);
 
-  const wrote = dcWriteSheet_(ss, result.rows, monthYear, dateStr);
+  const sheetRes = dcWriteSheet_(ss, result.rows, monthYear, dateStr);
+  if (sheetRes.written === 0 && sheetRes.deleted > 0) {
+    // C-5 residual (the guardForceRebuildLoss_ shape, log-only): the rebuild
+    // legitimately CAN drop a date to zero (P-5 exists for exactly that), but
+    // replacing N existing rows with nothing must never pass silently --
+    // callers surface this via `deletedExisting` (failure row on the import
+    // paths); this line covers the editor-run caller's log.
+    Logger.log('buildDirectCallFromRaw_: rebuild of %s wrote 0 rows but DELETED %s existing '
+      + 'row(s) -- if this date was not expected to drop to zero direct activity, '
+      + 'restore via force re-import after fixing the source.', dateStr, sheetRes.deleted);
+  }
   let neon = { inserted: 0 };
   if (!opts.skipNeon) {
     try { neon = writeDirectCallRowsToNeon_(result.rows, monthYear, isoDate); }
@@ -701,7 +733,8 @@ function buildDirectCallFromRaw_(ss, rawDisp, configSheet, opts) {
       neon = { inserted: 0, error: String(e && e.message ? e.message : e) };
     }
   }
-  return { wrote: wrote, dateStr: dateStr, isoDate: isoDate, monthYear: monthYear, meta: result.meta, neon: neon };
+  return { wrote: sheetRes.written, deletedExisting: sheetRes.deleted,
+           dateStr: dateStr, isoDate: isoDate, monthYear: monthYear, meta: result.meta, neon: neon };
 }
 
 // -- Editor-run orchestrator (Phase 1a: manual, numbers-only validation) ------
